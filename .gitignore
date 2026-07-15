@@ -1,0 +1,15 @@
+# Maven
+target/
+*.releaseBackup
+
+# git
+.env
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+out/
+
+# OS X
+.DS_Store
