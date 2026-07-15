@@ -3,7 +3,6 @@ package kr.artel.orchestration.sdk.controller
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.sdk.dto.ClassMetadata
 import kr.artel.orchestration.sdk.dto.MessageType
-import kr.artel.orchestration.sdk.dto.ReportDto
 import kr.artel.orchestration.sdk.dto.WebSocketEnvelope
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.sdk.service.SdkIdVerificationService
@@ -54,10 +53,6 @@ class SdkWebSocketHandler(
                         MessageType.SCAN -> {
                             val metadata = objectMapper.readValue(envelope.payload, ClassMetadata::class.java)
                             logger.info("메타데이터 수신 [sdkId: $sdkId]: 클래스명=${metadata.className}, 변수 수=${metadata.variables.size}, 메서드 수=${metadata.methods.size}")
-                        }
-                        MessageType.REPORT -> {
-                            val report = objectMapper.readValue(envelope.payload, ReportDto::class.java)
-                            logger.info("실행 결과 보고 수신 [sdkId: $sdkId]: 호출메서드=${report.methodName}, 변수=${report.variableName}, 실행전=${report.beforeValue}, 실행후=${report.afterValue}")
                         }
                         else -> {
                             logger.warn("정의되지 않은 메시지 타입 수신 [sdkId: $sdkId]: ${envelope.type}")

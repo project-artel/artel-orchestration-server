@@ -1,19 +1,13 @@
 package kr.artel.orchestration.sdk.controller
 
 import kr.artel.orchestration.sdk.dto.CommandDto
+import kr.artel.orchestration.sdk.dto.SdkIdRegistrationRequest
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.sdk.service.SdkIdVerificationService
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 import reactor.core.publisher.Mono
-
-/**
- * sdkId 등록 요청 시 사용하는 DTO
- */
-data class SdkIdRegistrationRequest(
-    val sdkId: String
-)
 
 /**
  * 외부에서 sdkId를 등록하거나 특정 연결된 클라이언트로 명령을 보낼 때 사용하는 HTTP REST 컨트롤러

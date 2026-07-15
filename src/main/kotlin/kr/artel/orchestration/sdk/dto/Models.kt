@@ -8,7 +8,6 @@ import com.fasterxml.jackson.annotation.JsonProperty
 enum class MessageType {
     SCAN,    // 게임 내 C# 클래스 구조 스캔 데이터 전송용
     COMMAND, // 서버에서 클라이언트로 테스트 실행 명령 푸시용
-    REPORT,  // 클라이언트에서 실행 결과를 서버로 보고하는 용도
     ERROR    // 에러 발생 알림용
 }
 
@@ -18,6 +17,13 @@ enum class MessageType {
 data class WebSocketEnvelope(
     val type: MessageType,
     val payload: String // 실제 전송할 데이터(DTO)가 JSON 문자열 형태로 들어갑니다.
+)
+
+/**
+ * sdkId 등록 요청 시 사용하는 DTO
+ */
+data class SdkIdRegistrationRequest(
+    val sdkId: String
 )
 
 /**
@@ -61,15 +67,4 @@ data class CommandDto(
     @JsonProperty("method_name") val methodName: String,   // 실행할 메서드 이름 (ex: TakeDamage)
     @JsonProperty("variable_name") val variableName: String, // 실행 전후로 값을 관찰할 대상 변수 이름 (ex: health)
     val parameters: List<Int> = emptyList()                  // 메서드 호출 시 전달할 매개변수(인자) 값 목록
-)
-
-/**
- * 클라이언트가 테스트 명령을 실행한 후 결과를 서버로 보고할 때 사용하는 DTO
- */
-data class ReportDto(
-    @JsonProperty("class_name") val className: String,       // 실행된 대상 클래스 이름
-    @JsonProperty("method_name") val methodName: String,     // 실행된 메서드 이름
-    @JsonProperty("variable_name") val variableName: String,   // 관찰된 변수 이름
-    @JsonProperty("before_value") val beforeValue: Double,   // 메서드 실행 전 변수의 값
-    @JsonProperty("after_value") val afterValue: Double      // 메서드 실행 후 변수의 값
 )
