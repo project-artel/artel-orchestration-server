@@ -1,14 +1,14 @@
 package kr.artel.orchestration.sdk.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import kr.artel.orchestration.sdk.dto.CommandDto
+import kr.artel.orchestration.sdk.dto.ActionResponseDto
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Mono
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 현재 연결된 웹소켓 세션들을 관리하고, 서버에서 클라이언트로 메시지(커맨드)를 전송하는 서비스
+ * 현재 연결된 웹소켓 세션들을 관리하고, 서버에서 클라이언트로 메시지(액션)를 전송하는 서비스
  */
 @Service
 class SessionManager(private val objectMapper: ObjectMapper) {
@@ -30,13 +30,13 @@ class SessionManager(private val objectMapper: ObjectMapper) {
         return sessions.containsKey(sdkId)
     }
 
-    fun sendCommand(sdkId: String, command: CommandDto): Mono<Void> {
+    fun sendAction(sdkId: String, action: ActionResponseDto): Mono<Void> {
         val session = sessions[sdkId] ?: return Mono.error(
             IllegalArgumentException("sdkId에 해당하는 활성화된 웹소켓 세션이 없습니다: $sdkId")
         )
         
         return Mono.fromCallable {
-            objectMapper.writeValueAsString(command)
+            objectMapper.writeValueAsString(action)
         }.flatMap { messageJson ->
             val wsMessage = session.textMessage(messageJson)
             session.send(Mono.just(wsMessage))
