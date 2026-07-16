@@ -2,8 +2,6 @@ package kr.artel.orchestration.sdk.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.sdk.dto.CommandDto
-import kr.artel.orchestration.sdk.dto.MessageType
-import kr.artel.orchestration.sdk.dto.WebSocketEnvelope
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Mono
@@ -38,9 +36,7 @@ class SessionManager(private val objectMapper: ObjectMapper) {
         )
         
         return Mono.fromCallable {
-            val commandJson = objectMapper.writeValueAsString(command)
-            val envelope = WebSocketEnvelope(type = MessageType.COMMAND, payload = commandJson)
-            objectMapper.writeValueAsString(envelope)
+            objectMapper.writeValueAsString(command)
         }.flatMap { messageJson ->
             val wsMessage = session.textMessage(messageJson)
             session.send(Mono.just(wsMessage))

@@ -1,6 +1,6 @@
 package kr.artel.orchestration.sdk.config
 
-import kr.artel.orchestration.sdk.controller.SdkWebSocketHandler
+import kr.artel.orchestration.sdk.service.SdkWebSocketHandler
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.web.reactive.HandlerMapping

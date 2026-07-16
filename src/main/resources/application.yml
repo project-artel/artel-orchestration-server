@@ -1,0 +1,10 @@
+logging:
+  level:
+    org:
+      springframework:
+        web: DEBUG
+        web.reactive: DEBUG
+
+artel:
+  agent:
+    base-url: http://localhost:8000

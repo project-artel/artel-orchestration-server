@@ -1,11 +1,10 @@
-package kr.artel.orchestration.sdk.controller
+package kr.artel.orchestration.sdk.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import kr.artel.orchestration.sdk.dto.ClassMetadata
-import kr.artel.orchestration.sdk.dto.MessageType
-import kr.artel.orchestration.sdk.dto.WebSocketEnvelope
+import kr.artel.orchestration.sdk.dto.*
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.sdk.service.SdkIdVerificationService
+import kr.artel.orchestration.sdk.service.GameStateTransformer
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.CloseStatus
@@ -20,7 +19,8 @@ import reactor.core.publisher.Mono
 class SdkWebSocketHandler(
     private val objectMapper: ObjectMapper,
     private val sdkIdVerificationService: SdkIdVerificationService,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    private val agentClient: AgentClient
 ) : WebSocketHandler {
 
     private val logger = LoggerFactory.getLogger(SdkWebSocketHandler::class.java)
@@ -45,21 +45,32 @@ class SdkWebSocketHandler(
         sessionManager.registerSession(sdkId, session)
 
         return session.receive()
-            .doOnNext { message ->
+            .flatMap { message ->
                 val payloadText = message.payloadAsText
                 try {
-                    val envelope = objectMapper.readValue(payloadText, WebSocketEnvelope::class.java)
-                    when (envelope.type) {
-                        MessageType.SCAN -> {
-                            val metadata = objectMapper.readValue(envelope.payload, ClassMetadata::class.java)
-                            logger.info("메타데이터 수신 [sdkId: $sdkId]: 클래스명=${metadata.className}, 변수 수=${metadata.variables.size}, 메서드 수=${metadata.methods.size}")
-                        }
-                        else -> {
-                            logger.warn("정의되지 않은 메시지 타입 수신 [sdkId: $sdkId]: ${envelope.type}")
-                        }
+                    val base = objectMapper.readValue(payloadText, BaseMessage::class.java)
+
+                    if (base.type == "GAME_STATE") {
+                        val sdkGameState = objectMapper.readValue(payloadText, SdkGameState::class.java)
+                        val agentGameState = GameStateTransformer.toAgentGameState(sdkGameState)
+                        val compactJson = objectMapper.writeValueAsString(agentGameState)
+                        logger.info("게임 상태 수신 및 정제 완료 [sdkId: $sdkId]: 씬=${agentGameState.scene}, observables 수=${agentGameState.observables.size}, interactables 수=${agentGameState.interactables.size}")
+                        logger.info("정제 결과 JSON: $compactJson")
+                        
+                        // Agent Server로 전송 (실패하더라도 웹소켓 연결이 끊어지지 않도록 무조건 에러 처리 후 빈 Mono 통과)
+                        agentClient.sendState(agentGameState)
+                            .onErrorResume { err ->
+                                logger.error("Agent Server 전송 최종 실패 처리: ${err.message}")
+                                Mono.empty()
+                            }
+                            .then()
+                    } else {
+                        logger.warn("정의되지 않은 메시지 타입 수신 [sdkId: $sdkId]: ${base.type}")
+                        Mono.empty()
                     }
                 } catch (e: Exception) {
                     logger.error("메시지 처리 에러 [sdkId: $sdkId]: ${e.message}", e)
+                    Mono.empty()
                 }
             }
             .doOnError { error ->

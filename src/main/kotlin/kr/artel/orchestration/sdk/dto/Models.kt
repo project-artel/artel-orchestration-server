@@ -1,22 +1,15 @@
 package kr.artel.orchestration.sdk.dto
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 
-/**
- * 웹소켓 메시지의 성격을 구분하는 열거형(Enum)
- */
-enum class MessageType {
-    SCAN,    // 게임 내 C# 클래스 구조 스캔 데이터 전송용
-    COMMAND, // 서버에서 클라이언트로 테스트 실행 명령 푸시용
-    ERROR    // 에러 발생 알림용
-}
+
 
 /**
- * 웹소켓 통신 시 모든 메시지를 일관된 형식으로 감싸는 봉투(Envelope) 역할의 클래스
+ * 웹소켓으로 들어오는 모든 메시지의 상위 공통 타입을 파악하기 위한 클래스
  */
-data class WebSocketEnvelope(
-    val type: MessageType,
-    val payload: String // 실제 전송할 데이터(DTO)가 JSON 문자열 형태로 들어갑니다.
+data class BaseMessage(
+    val type: String
 )
 
 /**
@@ -27,36 +20,96 @@ data class SdkIdRegistrationRequest(
 )
 
 /**
- * 게임(Unity)의 특정 클래스 구조 전체를 표현하는 메타데이터 DTO
+ * 외부 Artel_SDK로부터 수신하는 전체 게임 상태 구조 (SDK -> Orchestrator)
  */
-data class ClassMetadata(
-    @JsonProperty("class_name") val className: String,
-    val variables: List<VariableMetadata> = emptyList(),
-    val methods: List<MethodMetadata> = emptyList()
+data class SdkGameState(
+    val type: String,
+    val id: Int,
+    val scene: SdkBlock
 )
 
 /**
- * 변수의 메타데이터 (이름과 타입)
+ * 씬 계층 구조 상의 노드(Scene 혹은 Block)를 표현하는 클래스
  */
-data class VariableMetadata(
+data class SdkBlock(
+    val id: Int,
+    val type: String,
     val name: String,
+    val components: List<SdkComponent> = emptyList(),
+    val children: List<SdkBlock> = emptyList()
+)
+
+/**
+ * 컴포넌트 정보
+ */
+data class SdkComponent(
+    val type: String,
+    val name: String,
+    val content: String? = null,
+    val placeholder: String? = null,
+    val states: List<SdkState> = emptyList(),
+    val actions: List<SdkAction> = emptyList()
+)
+
+/**
+ * 컴포넌트의 변수 상태 값
+ */
+data class SdkState(
+    val tag: String,
+    val name: String,
+    val type: String,
+    val value: Any? = null
+)
+
+/**
+ * 컴포넌트의 액션(메서드) 실행 정보
+ */
+data class SdkAction(
+    val sequence: Int,
+    val tag: String,
+    val name: String,
+    val success: Boolean,
+    @JsonProperty("returnValue") val returnValue: Any? = null,
+    val error: SdkError? = null,
+    val timeStamp: String
+)
+
+/**
+ * 액션 실행 실패 시 에러 정보
+ */
+data class SdkError(
+    val type: String,
+    val message: String
+)
+
+/**
+ * 에이전트 서버로 전달할 정제된 컴팩트 게임 상태 구조 (Orchestrator -> Agent)
+ */
+data class AgentGameState(
+    val scene: String,
+    val interactables: List<Interactable> = emptyList(),
+    val observables: Map<String, ObservableValue> = emptyMap()
+)
+
+/**
+ * 관찰 대상의 세부 값과 타입 정보
+ */
+data class ObservableValue(
+    val value: Any?,
     val type: String
 )
 
 /**
- * 메서드의 메타데이터 (이름과 매개변수 목록)
+ * 에이전트가 조작 가능한 타겟 정보
  */
-data class MethodMetadata(
+@JsonInclude(JsonInclude.Include.NON_NULL)
+data class Interactable(
+    val id: Int,
     val name: String,
-    val parameters: List<ParameterMetadata> = emptyList()
-)
-
-/**
- * 메서드 매개변수의 메타데이터 (타입과 이름)
- */
-data class ParameterMetadata(
     val type: String,
-    val name: String
+    val actions: List<String>? = null,
+    val label: String? = null,
+    val placeholder: String? = null
 )
 
 /**
@@ -68,3 +121,4 @@ data class CommandDto(
     @JsonProperty("variable_name") val variableName: String, // 실행 전후로 값을 관찰할 대상 변수 이름 (ex: health)
     val parameters: List<Int> = emptyList()                  // 메서드 호출 시 전달할 매개변수(인자) 값 목록
 )
+
