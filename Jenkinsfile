@@ -16,7 +16,8 @@ pipeline {
 
         stage('Build') {
             steps {
-                sh 'mvn clean package -DskipTests'
+                sh 'chmod +x .mvn/mvnw'
+                sh './.mvn/mvnw clean package -DskipTests'
             }
         }
 
