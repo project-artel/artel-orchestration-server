@@ -92,104 +92,6 @@ class ArtelWebSocketIntegrationTest {
         assertThat(agentGameState.observables).doesNotContainKey("SubmitButton.content")
     }
 
-    /**
-     * 웹소켓 연결수립 -> 스캔데이터 전송 -> 커맨드 푸시 전체 흐름을 테스트합니다.
-     */
-    @Test
-    fun testWebSocketBidirectionalFlow() {
-        Mockito.`when`(agentClient.sendState(anyKotlin(AgentGameState::class.java))).thenReturn(Mono.just("mocked"))
-
-        val testSdkId = UUID.randomUUID().toString()
-        // WebFlux의 non-blocking HTTP 요청 도구인 WebClient 구성
-        val webClient = WebClient.create("http://localhost:$port")
-
-        // ========================================================
-        // Step 1: REST API를 이용해 테스트할 임의의 sdkId를 승인 목록에 등록
-        // ========================================================
-        val registrationResponse = webClient.post()
-            .uri("/api/sdkId")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(SdkIdRegistrationRequest(testSdkId))
-            .retrieve()
-            .toEntity(String::class.java)
-            .block(Duration.ofSeconds(5)) // REST 응답이 올 때까지 최대 5초 대기
-
-        assertThat(registrationResponse?.statusCode?.is2xxSuccessful).isTrue()
-
-        // ========================================================
-        // Step 2: 웹소켓 모킹 클라이언트(Mock SDK Client) 구동 및 연결 시도
-        // ========================================================
-        val wsClient = ReactorNettyWebSocketClient()
-        // 등록된 sdkId를 쿼리 파라미터로 붙여 웹소켓 URI 구성 (?sdkId=...)
-        val wsUri = URI("ws://localhost:$port/ws/sdk?sdkId=$testSdkId")
-
-        // 비동기 스레드간 상태 전이를 안전하게 조율하기 위한 Reactor Sinks 객체들
-        val commandReceivedLatch = Sinks.one<CommandDto>() // 커맨드 정상 수신 여부 조율용
-
-        val clientSessionMono = wsClient.execute(wsUri) { session ->
-            // (1) 모킹 클라이언트가 연결되자마자 서버로 C# 클래스 구조 스캔 데이터(GAME_STATE)를 보냄
-            val scanPayload = createSampleGameState()
-            val scanMessage = session.textMessage(objectMapper.writeValueAsString(scanPayload))
-
-            // 발송 작업을 수행하는 Mono (발송 완료 시 완료 신호 방출)
-            val sender = session.send(Mono.just(scanMessage))
-
-            // (2) 서버에서 전달하는 메시지 수신 리스너 정의 (raw CommandDto 수신 처리)
-            val receiver = session.receive()
-                .doOnNext { message ->
-                    val payload = message.payloadAsText
-                    try {
-                        val command = objectMapper.readValue(payload, CommandDto::class.java)
-                        // 커맨드를 정상 수신했음을 Sinks를 통해 테스트 스레드에 알림
-                        commandReceivedLatch.tryEmitValue(command)
-                    } catch (e: Exception) {
-                        // 무시
-                    }
-                }
-                .then() // 스트림이 닫힐 때까지 대기하도록 설정
-
-            // 송신(sender)을 먼저 완료한 후, 수신 대기 상태(receiver)를 계속 유지하여 연결 소켓을 열어둠
-            sender.then(receiver)
-        }
-
-        // 백그라운드 스레드에서 모킹 클라이언트 웹소켓 활성화
-        val disposable = clientSessionMono.subscribe()
-
-        // 클라이언트가 연결 수립 및 핸드셰이크를 완료할 수 있도록 잠깐(1.5초) 대기
-        Thread.sleep(1500)
-
-        // ========================================================
-        // Step 3: 외부 트리거(REST API)를 호출하여 해당 sdkId 세션에 커맨드 푸시 유도
-        // ========================================================
-        val testCommand = CommandDto(
-            className = "Player",
-            methodName = "TakeDamage",
-            variableName = "health",
-            parameters = listOf(20)
-        )
-
-        val commandTriggerResponse = webClient.post()
-            .uri("/api/orchestration/command/$testSdkId")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(testCommand)
-            .retrieve()
-            .toEntity(String::class.java)
-            .block(Duration.ofSeconds(5))
-
-        assertThat(commandTriggerResponse?.statusCode?.is2xxSuccessful).isTrue()
-
-        // ========================================================
-        // Step 4: 클라이언트가 정상적으로 커맨드를 받고, 결과를 리포트했는지 최종 단언(Assert)
-        // ========================================================
-        // 모킹 클라이언트가 커맨드를 성공적으로 가져갔는지 대기 후 확인
-        val receivedCommand = commandReceivedLatch.asMono().block(Duration.ofSeconds(5))
-        assertThat(receivedCommand).isNotNull
-        assertThat(receivedCommand?.methodName).isEqualTo("TakeDamage")
-
-        // 테스트 종료 후 백그라운드 모킹 소켓 세션 반환
-        disposable.dispose()
-    }
-
     private fun createSampleGameState(): SdkGameState {
         return SdkGameState(
             type = "GAME_STATE",
@@ -285,6 +187,94 @@ class ArtelWebSocketIntegrationTest {
                 )
             )
         )
+    }
+
+    /**
+     * Agent로부터 수신한 ACTION 요청이 웹소켓 클라이언트로 정상 전달되는지 전체 흐름을 테스트합니다.
+     */
+    @Test
+    fun testWebSocketActionForwardingFlow() {
+        val testSdkId = UUID.randomUUID().toString()
+        val webClient = WebClient.create("http://localhost:$port")
+
+        // 1. REST API를 이용해 테스트할 임의의 sdkId를 승인 목록에 등록
+        val registrationResponse = webClient.post()
+            .uri("/api/sdkId")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(SdkIdRegistrationRequest(testSdkId))
+            .retrieve()
+            .toEntity(String::class.java)
+            .block(Duration.ofSeconds(5))
+
+        assertThat(registrationResponse?.statusCode?.is2xxSuccessful).isTrue()
+
+        // 2. 웹소켓 모킹 클라이언트(Mock SDK Client) 구동 및 연결 시도
+        val wsClient = ReactorNettyWebSocketClient()
+        val wsUri = URI("ws://localhost:$port/ws/sdk?sdkId=$testSdkId")
+        val actionReceivedLatch = Sinks.one<ActionResponseDto>()
+
+        val clientSessionMono = wsClient.execute(wsUri) { session ->
+            val receiver = session.receive()
+                .doOnNext { message ->
+                    val payload = message.payloadAsText
+                    try {
+                        val actionResponse = objectMapper.readValue(payload, ActionResponseDto::class.java)
+                        actionReceivedLatch.tryEmitValue(actionResponse)
+                    } catch (e: Exception) {
+                        // ignore other messages
+                    }
+                }
+                .then()
+
+            receiver
+        }
+
+        val disposable = clientSessionMono.subscribe()
+
+        // 소켓 연결이 수립될 때까지 잠시 대기
+        Thread.sleep(1000)
+
+        // 3. HTTP POST로 ACTION 요청 전달 (Agent -> Orchestrator)
+        val actionPayload = ActionResponseDto(
+            type = "ACTION",
+            id = 2,
+            actions = listOf(
+                ActionItemDto(id = 1, jsonrpc = "2.0", method = "button_click", params = listOf(2)),
+                ActionItemDto(id = 2, jsonrpc = "2.0", method = "enter_text", params = listOf(3, "입력할 문자열")),
+                ActionItemDto(id = 3, jsonrpc = "2.0", method = "key_click", params = listOf("Space", 0.5))
+            )
+        )
+
+        val actionResponse = webClient.post()
+            .uri("/api/orchestration/action/$testSdkId")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(actionPayload)
+            .retrieve()
+            .toEntity(String::class.java)
+            .block(Duration.ofSeconds(5))
+
+        assertThat(actionResponse?.statusCode?.is2xxSuccessful).isTrue()
+
+        // 4. 웹소켓 클라이언트가 전송받은 데이터 검증 (Orchestrator -> SDK)
+        val receivedAction = actionReceivedLatch.asMono().block(Duration.ofSeconds(5))
+        assertThat(receivedAction).isNotNull
+        assertThat(receivedAction?.type).isEqualTo("ACTION")
+        assertThat(receivedAction?.id).isEqualTo(2L)
+        assertThat(receivedAction?.actions).hasSize(3)
+
+        val action1 = receivedAction?.actions?.get(0)
+        assertThat(action1?.method).isEqualTo("button_click")
+        assertThat(action1?.params).containsExactly(2)
+
+        val action2 = receivedAction?.actions?.get(1)
+        assertThat(action2?.method).isEqualTo("enter_text")
+        assertThat(action2?.params).containsExactly(3, "입력할 문자열")
+
+        val action3 = receivedAction?.actions?.get(2)
+        assertThat(action3?.method).isEqualTo("key_click")
+        assertThat(action3?.params).containsExactly("Space", 0.5)
+
+        disposable.dispose()
     }
 }
 
