@@ -3,22 +3,6 @@ package kr.artel.orchestration.sdk.dto
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 
-
-
-/**
- * 웹소켓으로 들어오는 모든 메시지의 상위 공통 타입을 파악하기 위한 클래스
- */
-data class BaseMessage(
-    val type: String
-)
-
-/**
- * sdkId 등록 요청 시 사용하는 DTO
- */
-data class SdkIdRegistrationRequest(
-    val sdkId: String
-)
-
 /**
  * 외부 Artel_SDK로부터 수신하는 전체 게임 상태 구조 (SDK -> Orchestrator)
  */
@@ -111,14 +95,3 @@ data class Interactable(
     val label: String? = null,
     val placeholder: String? = null
 )
-
-/**
- * 서버에서 클라이언트로 특정 테스트 명령을 내릴 때 사용하는 DTO
- */
-data class CommandDto(
-    @JsonProperty("class_name") val className: String,     // 대상 클래스 이름 (ex: BattleSystem.Player)
-    @JsonProperty("method_name") val methodName: String,   // 실행할 메서드 이름 (ex: TakeDamage)
-    @JsonProperty("variable_name") val variableName: String, // 실행 전후로 값을 관찰할 대상 변수 이름 (ex: health)
-    val parameters: List<Int> = emptyList()                  // 메서드 호출 시 전달할 매개변수(인자) 값 목록
-)
-
