@@ -16,10 +16,12 @@ import kr.artel.orchestration.sdk.service.AgentClient
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.mockito.Mockito
 import reactor.core.publisher.Sinks
+import org.springframework.test.context.ActiveProfiles
 import java.net.URI
 import java.time.Duration
 import java.util.*
 
+@ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class ArtelWebSocketIntegrationTest {
 
