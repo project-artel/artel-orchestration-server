@@ -1,10 +1,8 @@
 package kr.artel.orchestration.sdk.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import kr.artel.orchestration.sdk.dto.*
-import kr.artel.orchestration.sdk.service.SessionManager
-import kr.artel.orchestration.sdk.service.SdkIdVerificationService
-import kr.artel.orchestration.sdk.service.GameStateTransformer
+import kr.artel.orchestration.sdk.dto.BaseMessage
+import kr.artel.orchestration.sdk.service.handler.SdkMessageHandler
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.CloseStatus
@@ -20,10 +18,11 @@ class SdkWebSocketHandler(
     private val objectMapper: ObjectMapper,
     private val sdkIdVerificationService: SdkIdVerificationService,
     private val sessionManager: SessionManager,
-    private val agentClient: AgentClient
+    handlers: List<SdkMessageHandler>
 ) : WebSocketHandler {
 
     private val logger = LoggerFactory.getLogger(SdkWebSocketHandler::class.java)
+    private val handlerMap = handlers.associateBy { it.messageType }
 
     override fun handle(session: WebSocketSession): Mono<Void> {
         val query = session.handshakeInfo.uri.query ?: ""
@@ -49,21 +48,14 @@ class SdkWebSocketHandler(
                 val payloadText = message.payloadAsText
                 try {
                     val base = objectMapper.readValue(payloadText, BaseMessage::class.java)
-
-                    if (base.type == "GAME_STATE") {
-                        val sdkGameState = objectMapper.readValue(payloadText, SdkGameState::class.java)
-                        val agentGameState = GameStateTransformer.toAgentGameState(sdkGameState)
-                        val compactJson = objectMapper.writeValueAsString(agentGameState)
-                        logger.info("게임 상태 수신 및 정제 완료 [sdkId: $sdkId]: 씬=${agentGameState.scene}, observables 수=${agentGameState.observables.size}, interactables 수=${agentGameState.interactables.size}")
-                        logger.info("정제 결과 JSON: $compactJson")
-                        
-                        // Agent Server로 전송 (실패하더라도 웹소켓 연결이 끊어지지 않도록 무조건 에러 처리 후 빈 Mono 통과)
-                        agentClient.sendState(agentGameState)
+                    val handler = handlerMap[base.type]
+                    
+                    if (handler != null) {
+                        handler.handle(sdkId, payloadText, session)
                             .onErrorResume { err ->
-                                logger.error("Agent Server 전송 최종 실패 처리: ${err.message}")
+                                logger.error("메시지 처리 최종 실패 [type=${base.type}, sdkId=$sdkId]: ${err.message}")
                                 Mono.empty()
                             }
-                            .then()
                     } else {
                         logger.warn("정의되지 않은 메시지 타입 수신 [sdkId: $sdkId]: ${base.type}")
                         Mono.empty()
