@@ -276,5 +276,71 @@ class ArtelWebSocketIntegrationTest {
 
         disposable.dispose()
     }
+
+    /**
+     * SDK가 웹소켓을 통해 보낸 ACTION_RESULT 메시지가 SdkMessageHandler 전략 패턴을 거쳐
+     * AgentClient.sendResult로 올바르게 전달되는지 검증합니다.
+     */
+    @Test
+    fun testWebSocketActionResultForwardingFlow() {
+        val testSdkId = UUID.randomUUID().toString()
+        val webClient = WebClient.create("http://localhost:$port")
+
+        // 1. AgentClient.sendResult 모킹 및 감시
+        val resultReceivedLatch = Sinks.one<String>()
+        Mockito.`when`(agentClient.sendResult(anyKotlin(String::class.java))).thenAnswer { invocation ->
+            val arg = invocation.getArgument<String>(0)
+            resultReceivedLatch.tryEmitValue(arg)
+            Mono.just("mocked")
+        }
+
+        // 2. sdkId 등록
+        val registrationResponse = webClient.post()
+            .uri("/api/sdkId")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(SdkIdRegistrationRequest(testSdkId))
+            .retrieve()
+            .toEntity(String::class.java)
+            .block(Duration.ofSeconds(5))
+
+        assertThat(registrationResponse?.statusCode?.is2xxSuccessful).isTrue()
+
+        // 3. 웹소켓 클라이언트 연결 및 결과 전송
+        val wsClient = ReactorNettyWebSocketClient()
+        val wsUri = URI("ws://localhost:$port/ws/sdk?sdkId=$testSdkId")
+
+        val clientSessionMono = wsClient.execute(wsUri) { session ->
+            val resultPayload = """
+                {
+                  "type": "ACTION_RESULT",
+                  "id": 1,
+                  "results": [
+                    {
+                      "id": 2,
+                      "success": true,
+                      "error": ""
+                    },
+                    {
+                      "id": 3,
+                      "success": false,
+                      "error": "Unknown target id: 123"
+                    }
+                  ]
+                }
+            """.trimIndent()
+            val resultMessage = session.textMessage(resultPayload)
+            session.send(Mono.just(resultMessage)).then()
+        }
+
+        val disposable = clientSessionMono.subscribe()
+
+        // 4. AgentClient로 결과가 전송되었는지 최종 검증
+        val receivedResult = resultReceivedLatch.asMono().block(Duration.ofSeconds(5))
+        assertThat(receivedResult).isNotNull
+        assertThat(receivedResult).contains("ACTION_RESULT")
+        assertThat(receivedResult).contains("Unknown target id: 123")
+
+        disposable.dispose()
+    }
 }
 

@@ -34,4 +34,21 @@ class AgentClient(
                 logger.error("Agent Server 전송 에러 발생: ${error.message}")
             }
     }
+
+    fun sendResult(actionResultJson: String): Mono<String> {
+        val targetUrl = "$agentBaseUrl/gamestate/result"
+        logger.info("Agent Server로 액션 결과 전송 시도: url=$targetUrl")
+        return webClient.post()
+            .uri(targetUrl)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(actionResultJson)
+            .retrieve()
+            .bodyToMono(String::class.java)
+            .doOnSuccess { response ->
+                logger.info("Agent Server 결과 전송 완료 응답: $response")
+            }
+            .doOnError { error ->
+                logger.error("Agent Server 결과 전송 에러 발생: ${error.message}")
+            }
+    }
 }
