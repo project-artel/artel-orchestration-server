@@ -84,6 +84,33 @@ class S3DocumentStorageTest {
     }
 
     /**
+     * yml의 `${VAR:}`는 null이 아니라 빈 문자열로 바인딩된다. 정규화하지 않으면 "비워 둠"이
+     * "빈 값을 지정함"이 되어, 서명 없는 경로 대신 빈 자격증명으로 서명을 시도하게 된다.
+     */
+    @Test
+    fun `reads blank configuration as unset`() {
+        val properties = properties(accessKey = "", secretKey = "   ", endpoint = "")
+
+        assertThat(properties.accessKey).isNull()
+        assertThat(properties.secretKey).isNull()
+        assertThat(properties.endpoint).isNull()
+        assertThat(properties.staticCredentials).isNull()
+    }
+
+    /** 빈 엔드포인트가 URI로 넘어가면 안 된다. 실제로 이 경로에서 500이 났었다. */
+    @Test
+    fun `does not treat a blank endpoint as a url`() {
+        val storage = S3DocumentStorage(
+            properties(endpoint = ""),
+            Clock.systemUTC()
+        )
+
+        val presigned = storage.presignUpload("projects/1/documents/abc/a.pdf", "application/pdf", 10)
+
+        assertThat(presigned.url).startsWith("https://artel-test.s3.ap-northeast-2.amazonaws.com/")
+    }
+
+    /**
      * 자격증명을 어디서도 찾지 못하면 서명 없이 간다.
      *
      * presigned URL은 정의상 서명이므로 이때는 만들 수 없다. 대신 객체를 그대로 가리키는

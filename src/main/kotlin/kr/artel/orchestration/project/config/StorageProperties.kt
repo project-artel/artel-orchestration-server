@@ -25,28 +25,42 @@ import java.time.Duration
  * @property downloadUrlTtl 다운로드 URL 유효 기간
  * @property maxUploadBytes 허용 최대 크기
  */
+// 값을 정규화해서 노출해야 하므로 생성자 파라미터를 그대로 프로퍼티로 쓰지 않는다.
+// data class는 그것을 허용하지 않고, 설정 홀더에 equals/copy가 필요하지도 않다.
 @ConfigurationProperties(prefix = "artel.storage")
-data class StorageProperties(
+class StorageProperties(
     val bucket: String,
     val region: String = "ap-northeast-2",
-    val endpoint: String? = null,
-    val accessKey: String? = null,
-    val secretKey: String? = null,
+    endpoint: String? = null,
+    accessKey: String? = null,
+    secretKey: String? = null,
     val uploadUrlTtl: Duration = Duration.ofMinutes(10),
     val downloadUrlTtl: Duration = Duration.ofMinutes(5),
     val maxUploadBytes: Long = 52_428_800L
 ) {
+    /**
+     * 빈 값은 "설정하지 않음"으로 읽는다.
+     *
+     * yml의 `${VAR:}`는 null이 아니라 빈 문자열로 바인딩된다. 정규화를 여기서 한 번 하지 않으면
+     * 그 빈 문자열이 엔드포인트나 액세스 키로 그대로 흘러가, 설정을 비워 둔 것이 잘못된 값을
+     * 지정한 것으로 둔갑한다. @ConfigurationProperties 바인딩은 SpEL을 처리하지 않으므로
+     * `#{null}` 같은 기본값도 쓸 수 없다.
+     */
+    val endpoint: String? = endpoint?.trim()?.ifBlank { null }
+    val accessKey: String? = accessKey?.trim()?.ifBlank { null }
+    val secretKey: String? = secretKey?.trim()?.ifBlank { null }
+
     /** 둘 다 있어야 쓴다. 하나만 있으면 설정 실수이므로 조용히 기본 체인으로 넘어가지 않는다. */
     val staticCredentials: Pair<String, String>? =
-        if (!accessKey.isNullOrBlank() && !secretKey.isNullOrBlank()) {
-            accessKey to secretKey
+        if (this.accessKey != null && this.secretKey != null) {
+            this.accessKey to this.secretKey
         } else {
             null
         }
 
     init {
         require(bucket.isNotBlank()) { "artel.storage.bucket must not be blank" }
-        require(accessKey.isNullOrBlank() == secretKey.isNullOrBlank()) {
+        require((this.accessKey == null) == (this.secretKey == null)) {
             "artel.storage.access-key and secret-key must be set together, or both left empty"
         }
         require(maxUploadBytes > 0) { "artel.storage.max-upload-bytes must be positive" }
