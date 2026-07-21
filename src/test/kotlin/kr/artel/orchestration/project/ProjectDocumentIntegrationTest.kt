@@ -105,6 +105,37 @@ class ProjectDocumentIntegrationTest {
         assertThat(summary["latestDocument"]["version"].asInt()).isEqualTo(2)
     }
 
+    /**
+     * 동시에 등록해도 두 행이 같은 버전을 갖지 않아야 한다.
+     *
+     * MAX(version) + 1은 읽고 쓰는 사이에 경합이 난다. 유니크 제약이 그 충돌을 예외로 만들고
+     * 서비스가 최대 버전을 다시 읽어 재시도한다. 직렬화되든 실제로 부딪히든 결과는 1과 2여야 한다.
+     */
+    @Test
+    fun `assigns distinct versions to concurrent uploads`() {
+        val token = signIn()
+        val projectId = createProject(token)
+
+        val keys = (1..2).map { index ->
+            ticketFor(token, projectId, "동시$index.pdf").also { fakeStorage.put(it, PDF_BYTES) }
+        }
+
+        val failures = mutableListOf<Throwable>()
+        val threads = keys.map { key ->
+            Thread {
+                runCatching { register(token, projectId, key) }
+                    .onFailure { synchronized(failures) { failures += it } }
+            }
+        }
+        threads.forEach(Thread::start)
+        threads.forEach(Thread::join)
+
+        assertThat(failures).isEmpty()
+
+        val versions = get(token, "/api/projects/$projectId/documents").map { it["version"].asInt() }
+        assertThat(versions).containsExactlyInAnyOrder(2, 1)
+    }
+
     @Test
     fun `rejects a ticket request for anything other than a pdf`() {
         val token = signIn()

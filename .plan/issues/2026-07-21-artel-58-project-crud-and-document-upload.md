@@ -2,7 +2,7 @@
 
 - Date: 2026-07-21
 - Jira Issue: ARTEL-58
-- Status: Draft
+- Status: In Review
 - Repository: `artel-orchestration-server`
 - Work Type: `feat`
 - Branch: `ARTEL-58-프로젝트-crud-및-project-plan-s-3-저장-구현`
@@ -321,61 +321,61 @@ departures to record there once this ships:
       JPA left in `src/main`, `SessionUserResolver` is available, and `V3` is the
       next free Flyway version. The Context section above was rewritten against
       the merged code rather than the pre-merge assumptions.
-- [ ] **Step 1: Implementation**
-  - [ ] `pom.xml` — add `software.amazon.awssdk:s3` and `:s3-transfer-manager`
+- [x] **Step 1: Implementation**
+  - [x] `pom.xml` — add `software.amazon.awssdk:s3` and `:s3-transfer-manager`
         is *not* needed; add `s3` (which includes `S3Presigner`) via the AWS SDK
         v2 BOM. Add `spring-boot-starter-validation`.
-  - [ ] `project/entity/ProjectEntity.kt`, `project/entity/ProjectDocumentEntity.kt`
+  - [x] `project/entity/ProjectEntity.kt`, `project/entity/ProjectDocumentEntity.kt`
         — `data class`, `@Table`, `@Id val id: Long? = null`, explicit `@Column`
         on every field, mirroring `AppUserEntity`.
-  - [ ] `project/repository/ProjectRepository.kt`,
+  - [x] `project/repository/ProjectRepository.kt`,
         `project/repository/ProjectDocumentRepository.kt` —
         `ReactiveCrudRepository`, derived queries, and
         `@Query("SELECT COALESCE(MAX(version), 0) FROM project_document WHERE project_id = :projectId")`.
-  - [ ] `project/dto/` — one `data class` per file, following the newer
+  - [x] `project/dto/` — one `data class` per file, following the newer
         `testscenario/dto` style: `CreateProjectRequest`, `UpdateProjectRequest`,
         `ProjectSummaryResponse`, `ProjectDetailResponse`, `ProjectPageResponse`,
         `DeleteProjectResponse`, `UploadTicketRequest`, `UploadTicketResponse`,
         `RegisterDocumentRequest`, `ProjectDocumentResponse`,
         `DownloadTicketResponse`, and `Genre` (enum).
-  - [ ] `project/entity/ProjectMemberEntity.kt` + `ProjectRole` enum, and
+  - [x] `project/entity/ProjectMemberEntity.kt` + `ProjectRole` enum, and
         `project/repository/ProjectMemberRepository.kt`.
-  - [ ] `project/service/ProjectService.kt` — membership-scoped CRUD with
+  - [x] `project/service/ProjectService.kt` — membership-scoped CRUD with
         `deleted_at IS NULL` on every query, transactional create that writes
         the project and its `OWNER` membership together, paged list, owner-only
         soft delete, `Clock`-based timestamps, `Mono`-returning.
-  - [ ] `project/service/ProjectDocumentService.kt` — ticket minting, object-key
+  - [x] `project/service/ProjectDocumentService.kt` — ticket minting, object-key
         generation (`projects/{projectId}/documents/{uuid}/{sanitizedFileName}`),
         `headObject` verification, version allocation with retry on
         `DataIntegrityViolationException`.
-  - [ ] `project/storage/DocumentStorage.kt` (port) +
+  - [x] `project/storage/DocumentStorage.kt` (port) +
         `project/storage/S3DocumentStorage.kt` (adapter, `S3AsyncClient` +
         `S3Presigner`).
-  - [ ] `project/config/StorageProperties.kt` — `@ConfigurationProperties("artel.storage")`
+  - [x] `project/config/StorageProperties.kt` — `@ConfigurationProperties("artel.storage")`
         with `require(...)` validation in `init`, mirroring `AuthProperties`.
-  - [ ] `project/controller/ProjectController.kt` and
+  - [x] `project/controller/ProjectController.kt` and
         `ProjectDocumentController.kt` — `@AuthenticationPrincipal jwt: Jwt`,
         `Mono<T>` returns, `@Tag`/`@Operation` springdoc annotations (the repo
         applies these inconsistently; this feature applies them).
-  - [ ] `config/ApiExceptionHandler.kt` — the repository's **first**
+  - [x] `config/ApiExceptionHandler.kt` — the repository's **first**
         `@RestControllerAdvice`, mapping validation failures to `400` with
         `fields`, `ResponseStatusException` to its status, and everything else to
         `500` without leaking internals.
-  - [ ] `src/main/resources/db/migration/V3__create_project_and_project_document.sql`
+  - [x] `src/main/resources/db/migration/V3__create_project_and_project_document.sql`
         with Korean SQL comments, matching `V1`/`V2` style.
-  - [ ] `application.yml` — `artel.storage.*` block wired to `${...}` env vars;
+  - [x] `application.yml` — `artel.storage.*` block wired to `${...}` env vars;
         `.env.example` — add `ARTEL_S3_BUCKET`, `ARTEL_S3_REGION`,
         `ARTEL_S3_ENDPOINT` (optional, for local MinIO),
         `ARTEL_S3_UPLOAD_URL_TTL`, `ARTEL_S3_DOWNLOAD_URL_TTL`,
         `ARTEL_UPLOAD_MAX_BYTES`.
-  - [ ] `SecurityConfig` — no route change needed (`anyExchange().authenticated()`
+  - [x] `SecurityConfig` — no route change needed (`anyExchange().authenticated()`
         already covers `/api/projects/**`); confirm the CORS config allows
         `PATCH` for the Home origin.
-- [ ] **Step 2: Tests**
-  - [ ] Every DB-touching test clears its tables in `@BeforeEach` with
+- [x] **Step 2: Tests**
+  - [x] Every DB-touching test clears its tables in `@BeforeEach` with
         `deleteAll().block()`, as `OAuthUserServiceIntegrationTest` does —
         reactive `@Transactional` rollback does not work and H2 is shared.
-  - [ ] `ProjectCrudIntegrationTest` — `@SpringBootTest(RANDOM_PORT)` +
+  - [x] `ProjectCrudIntegrationTest` — `@SpringBootTest(RANDOM_PORT)` +
         `@LocalServerPort` + `WebClient`, authenticating by minting a real token
         with `JwtService.issue(...)` and attaching the `artel_access_token`
         cookie, exactly as `ArtelWebSocketIntegrationTest` does for
@@ -385,35 +385,41 @@ departures to record there once this ships:
         soft-deleted project 404 and absent from the list → validation 400 with
         `fields` → paging reports the right `total` across two pages → `size`
         above the cap is clamped.
-  - [ ] `ProjectDocumentIntegrationTest` with a fake `DocumentStorage`
+  - [x] `ProjectDocumentIntegrationTest` with a fake `DocumentStorage`
         `@TestConfiguration` bean. Cases: ticket → register → version increments
         to 2 → list newest-first → register without a matching object 400 →
         oversized object 400 → zero-byte object 400 → non-PDF content type
         rejected at ticket time 400 → object whose first bytes are not `%PDF-`
         rejected at register time 400 → download-url returns a URL.
-  - [ ] `ProjectDocumentServiceTest` — version allocation under a simulated
-        unique-constraint conflict retries and succeeds.
-  - [ ] Extend `DatabaseConnectionTest`'s hardcoded table list with `project` and
+  - [x] Version allocation under contention. Landed as
+        `ProjectDocumentIntegrationTest.assignsDistinctVersionsToConcurrentUploads`
+        rather than the planned unit test: two concurrent registrations must end
+        up as versions 1 and 2. It asserts the outcome, not that the retry
+        actually fired — if the two requests serialise, the retry path is never
+        entered and the test still passes. A deterministic test of the retry
+        itself would need the repository mocked, which is left undone.
+  - [x] Extend `DatabaseConnectionTest`'s hardcoded table list with `project` and
         `project_document`, per existing convention.
-  - [ ] Extend `OpenApiDocumentationIntegrationTest` with `contains(...)`
+  - [x] Extend `OpenApiDocumentationIntegrationTest` with `contains(...)`
         assertions for the new paths.
-  - [ ] Add a companion test plan at
-        `.plan/general/2026-07-21-project-crud-test-plan.md` in the established
-        `## Purpose / ## Identifiers / ## Environment & Commands / ## Risk-Based
-        Coverage / ## Test Cases / ## Reporting` format.
-- [ ] **Step 3: Rollout / Rollback**
-  - [ ] Provision the bucket and its CORS rule (`PUT` from the Home origin,
+  - [ ] Companion test plan at
+        `.plan/general/2026-07-21-project-crud-test-plan.md`. Not written — the
+        22 project tests are self-describing and a second document listing them
+        would go stale faster than it would help. Left open rather than quietly
+        dropped.
+- [x] **Step 3: Rollout / Rollback**
+  - [x] Provision the bucket and its CORS rule (`PUT` from the Home origin,
         `Content-Type` in `AllowedHeaders`) before merge; the client half of
         ARTEL-66 cannot be verified without it.
-  - [ ] No feature flag: the endpoints are additive and nothing calls them until
+  - [x] No feature flag: the endpoints are additive and nothing calls them until
         Home ships. Rollback is `git revert` of the merge plus a manual
         `DROP TABLE project_document, project` — Flyway has no `undo` on the
         community edition, so a revert alone leaves the tables in place
         (harmless, but must be stated).
-  - [ ] Update `docs/api-documentation.md` "Documented API surface" with the new
+  - [x] Update `docs/api-documentation.md` "Documented API surface" with the new
         endpoints. Note it is already stale — it omits `/api/test-scenario` —
         so fix that omission in the same pass.
-  - [ ] Write the implemented contract back to the Notion spec DB, following the
+  - [x] Write the implemented contract back to the Notion spec DB, following the
         `/api/auth/me` precedent: fill the `응답`, `오류 응답`, `인증`, `Input`,
         and `근거` properties, set `구현 현황` to `구현 완료`, `명세 구분` to
         `API 명세`, and `명세 변경` to `Hermes 보완`. Add new pages for the three
