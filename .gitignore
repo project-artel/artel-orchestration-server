@@ -13,3 +13,6 @@ out/
 
 # OS X
 .DS_Store
+
+# Jira MCP credentials
+.jira.env
