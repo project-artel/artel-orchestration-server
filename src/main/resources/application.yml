@@ -32,3 +32,12 @@ artel:
     access-token-ttl: ${ARTEL_JWT_TTL:PT15M}
     cookie-name: ${ARTEL_AUTH_COOKIE:artel_access_token}
     secure-cookie: ${ARTEL_SECURE_COOKIE:true}
+  storage:
+    # 기획서 원본을 담을 S3. 자격증명은 여기 두지 않고 AWS 기본 제공자 체인을 쓴다.
+    bucket: ${ARTEL_S3_BUCKET}
+    region: ${ARTEL_S3_REGION:ap-northeast-2}
+    # 로컬 MinIO 등으로 돌릴 때만 지정한다.
+    endpoint: ${ARTEL_S3_ENDPOINT:#{null}}
+    upload-url-ttl: ${ARTEL_S3_UPLOAD_URL_TTL:PT10M}
+    download-url-ttl: ${ARTEL_S3_DOWNLOAD_URL_TTL:PT5M}
+    max-upload-bytes: ${ARTEL_UPLOAD_MAX_BYTES:52428800}

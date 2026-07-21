@@ -33,3 +33,11 @@ artel:
     access-token-ttl: PT15M
     cookie-name: artel_access_token
     secure-cookie: false
+  storage:
+    # 테스트는 가짜 DocumentStorage를 등록하므로 실제 S3에 닿지 않는다.
+    # 다만 StorageProperties는 그대로 만들어지므로 버킷 값은 있어야 한다.
+    bucket: test-bucket
+    region: ap-northeast-2
+    upload-url-ttl: PT10M
+    download-url-ttl: PT5M
+    max-upload-bytes: 1048576

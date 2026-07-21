@@ -21,9 +21,12 @@ rule are the foundation for everything after it.
 
 ## Non-goals
 
-- Sharing, membership, roles, or any authorization model beyond single-owner.
-  The Notion draft says deletion is for "owner/admin"; there are no admins yet,
-  so owner-only is the whole rule.
+- Member management endpoints (invite, add, remove, change role). The data model
+  is M:N from the start (see the scope change below), but the only membership
+  this issue creates is the `OWNER` row written when a project is created.
+  Nothing can add a second member yet.
+- Admin roles. The Notion draft says deletion is for "owner/admin"; there are no
+  admins, so `OWNER` is the whole rule.
 - Parsing, indexing, or feeding the planning document into the agent pipeline.
   This issue stores and serves the file and reserves a `parseStatus` field for
   that work; interpreting the file is separate.
@@ -96,14 +99,15 @@ Verified against this worktree after the rebase, not assumed:
    The controller calls `SessionUserResolver.resolve(jwt)` to obtain
    `SessionUser(userId: Long)` — the exact pattern `AuthController.me` uses. No
    `@CurrentUser` argument resolver is introduced here; see Open Questions.
-2. `ProjectService` is the only place that knows the ownership rule. Every read
-   and every write is scoped by `ownerId`, at the query level rather than by
-   post-filtering, so a missing scope cannot silently leak rows.
-3. `ProjectRepository : ReactiveCrudRepository<ProjectEntity, Long>` and
-   `ProjectDocumentRepository : ReactiveCrudRepository<ProjectDocumentEntity, Long>`
-   provide derived queries (`findAllByOwnerIdOrderByUpdatedAtDesc`,
-   `findByIdAndOwnerId`, `findAllByProjectIdOrderByVersionDesc`) plus one
-   `@Query` for the version high-water mark.
+2. `ProjectService` is the only place that knows the access rule. Every read and
+   every write joins `project_member` **in the query** rather than filtering
+   after the fact, so a forgotten scope cannot silently leak rows.
+3. `ProjectRepository`, `ProjectMemberRepository`, and
+   `ProjectDocumentRepository` are all `ReactiveCrudRepository`. The project
+   queries are explicit `@Query` joins (`findPageForMember`, `countForMember`,
+   `findAccessibleById`) because a derived method name cannot express the join;
+   the document queries are derived, plus one `@Query` for the version
+   high-water mark.
 4. Entities copy `AppUserEntity` exactly: `data class`, `@Table`, `@Id val id:
    Long? = null`, explicit `@Column` per field. With a DB-generated `BIGSERIAL`
    key, a null id makes `save()` insert and a non-null id makes it update, so
@@ -137,10 +141,29 @@ Verified against this worktree after the rebase, not assumed:
 
 ## Schema — `V3__create_project_and_project_document.sql`
 
+### Scope change (2026-07-21): project↔user is M:N
+
+The original design gave `project` a single `owner_id`. It is now a many-to-many
+relation through `project_member`, and **`owner_id` is gone entirely** rather
+than kept alongside. Keeping both would put the answer to "who can see this
+project" in two places, and there is no way to tell which one is right when they
+disagree. Ownership is now just a `project_member` row with `role = 'OWNER'`.
+
+Consequences that run through the rest of this plan:
+
+- Every project query joins `project_member`. Membership *is* the access rule.
+- Creating a project writes two rows — the project and the creator's `OWNER`
+  membership — so creation must be transactional. Reactive `@Transactional` is
+  available and already proven in `OAuthUserService`.
+- Access failures split into two cases: a non-member gets **404** (the project's
+  existence is not confirmed), while a member who is not `OWNER` attempting to
+  delete gets **403** (they can already see it, so hiding it would be theatre).
+- Responses carry `myRole` so the client can hide owner-only actions instead of
+  discovering them through a 403.
+
 ```sql
 CREATE TABLE IF NOT EXISTS project (
     id          BIGSERIAL PRIMARY KEY,
-    owner_id    BIGINT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
     name        VARCHAR(80) NOT NULL,
     description VARCHAR(2000),
     genre       VARCHAR(32) NOT NULL,
@@ -148,7 +171,16 @@ CREATE TABLE IF NOT EXISTS project (
     updated_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at  TIMESTAMP WITH TIME ZONE
 );
-CREATE INDEX IF NOT EXISTS idx_project_owner ON project (owner_id);
+CREATE TABLE IF NOT EXISTS project_member (
+    id          BIGSERIAL PRIMARY KEY,
+    project_id  BIGINT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    app_user_id BIGINT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+    role        VARCHAR(16) NOT NULL,          -- OWNER | MEMBER
+    created_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_project_member_project_user UNIQUE (project_id, app_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_project_member_user ON project_member (app_user_id);
+CREATE INDEX IF NOT EXISTS idx_project_member_project ON project_member (project_id);
 
 CREATE TABLE IF NOT EXISTS project_document (
     id           BIGSERIAL PRIMARY KEY,
@@ -173,10 +205,12 @@ CREATE INDEX IF NOT EXISTS idx_project_document_project ON project_document (pro
   read-then-insert of `MAX(version) + 1` is racy; the constraint turns the race
   into a retryable conflict instead of two rows claiming `v3`.
 - Both FKs target `app_user(id)`, created by `V2` and present since `9556dfc`.
-- `deleted_at` implements soft delete. Every owner-scoped query adds
+- `deleted_at` implements soft delete. Every membership-scoped query adds
   `deleted_at IS NULL`; a soft-deleted project behaves exactly like a missing
   one (404), which keeps the delete semantics indistinguishable from the
-  not-owned case already in the contract.
+  not-a-member case already in the contract.
+- `uk_project_member_project_user` makes a duplicate membership impossible, so
+  adding a member twice can never produce two rows with conflicting roles.
 - `parse_status` is written as `PENDING` and never advanced by this issue. It
   exists so the parsing work needs no migration later.
 
@@ -203,11 +237,14 @@ GET    /api/projects/{projectId}/documents/{documentId}/download-url  200 Downlo
 - `ProjectPageResponse`: `{ items, page, size, total }`, matching the Notion
   draft's envelope. `page` defaults to `0`, `size` to `20`, capped at `100`.
 - `ProjectSummaryResponse` (list item): `id, name, genre, description,
-  documentCount, latestDocument, updatedAt`.
-- `ProjectDetailResponse`: `id, name, description, genre, createdAt, updatedAt,
-  document` — where `document` is the **latest version only**, matching the
-  draft's singular `document` field. Full history comes from
+  documentCount, latestDocument, myRole, updatedAt`.
+- `ProjectDetailResponse`: `id, name, description, genre, myRole, createdAt,
+  updatedAt, document` — where `document` is the **latest version only**,
+  matching the draft's singular `document` field. Full history comes from
   `GET .../documents`.
+- `myRole` is `OWNER` or `MEMBER` — the requesting user's role in that project.
+  Only `OWNER` may delete; the client uses this to hide the action rather than
+  letting the user discover it through a 403.
 - `ProjectDocumentResponse`: `id, version, fileName, contentType, sizeBytes,
   uploadedAt, uploadedBy { id, displayName }, parseStatus`. `objectKey` is
   **never** exposed.
@@ -215,8 +252,10 @@ GET    /api/projects/{projectId}/documents/{documentId}/download-url  200 Downlo
 - `DeleteProjectResponse`: `{ deleted: true, projectId }`, per the draft.
   Deletion is **soft** — the row is marked, S3 objects are retained, and the
   project stops appearing in the list.
-- A project that exists but is owned by someone else returns **404, not 403**,
-  so the API does not confirm the existence of other users' projects.
+- A project the caller is not a member of returns **404, not 403**, so the API
+  does not confirm the existence of other users' projects. A member who is not
+  `OWNER` attempting to delete gets **403** — they can already see the project,
+  so a 404 there would only be theatre.
 - Uploading adds a version; it never replaces one. Version numbers are 1-based
   and monotonic per project.
 - Errors return `{ code, message, fields? }`, extending the shape
@@ -299,9 +338,12 @@ departures to record there once this ships:
         `DeleteProjectResponse`, `UploadTicketRequest`, `UploadTicketResponse`,
         `RegisterDocumentRequest`, `ProjectDocumentResponse`,
         `DownloadTicketResponse`, and `Genre` (enum).
-  - [ ] `project/service/ProjectService.kt` — owner-scoped CRUD with
-        `deleted_at IS NULL` on every query, paged list, soft delete,
-        `Clock`-based timestamps, `Mono`-returning.
+  - [ ] `project/entity/ProjectMemberEntity.kt` + `ProjectRole` enum, and
+        `project/repository/ProjectMemberRepository.kt`.
+  - [ ] `project/service/ProjectService.kt` — membership-scoped CRUD with
+        `deleted_at IS NULL` on every query, transactional create that writes
+        the project and its `OWNER` membership together, paged list, owner-only
+        soft delete, `Clock`-based timestamps, `Mono`-returning.
   - [ ] `project/service/ProjectDocumentService.kt` — ticket minting, object-key
         generation (`projects/{projectId}/documents/{uuid}/{sanitizedFileName}`),
         `headObject` verification, version allocation with retry on
@@ -338,10 +380,11 @@ departures to record there once this ships:
         with `JwtService.issue(...)` and attaching the `artel_access_token`
         cookie, exactly as `ArtelWebSocketIntegrationTest` does for
         `/api/auth/me`. Cases: create → list → get → patch → delete →
-        unauthenticated 401 → other user's project 404 → soft-deleted project
-        404 and absent from the list → validation 400 with `fields` → paging
-        reports the right `total` across two pages → `size` above the cap is
-        clamped.
+        unauthenticated 401 → non-member gets 404 → member who is not `OWNER`
+        gets 403 on delete but 200 on patch → creator's `myRole` is `OWNER` →
+        soft-deleted project 404 and absent from the list → validation 400 with
+        `fields` → paging reports the right `total` across two pages → `size`
+        above the cap is clamped.
   - [ ] `ProjectDocumentIntegrationTest` with a fake `DocumentStorage`
         `@TestConfiguration` bean. Cases: ticket → register → version increments
         to 2 → list newest-first → register without a matching object 400 →
