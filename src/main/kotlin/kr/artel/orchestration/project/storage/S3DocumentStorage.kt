@@ -1,8 +1,10 @@
 package kr.artel.orchestration.project.storage
 
 import kr.artel.orchestration.project.config.StorageProperties
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.DisposableBean
 import reactor.core.publisher.Mono
+import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
@@ -32,30 +34,31 @@ import java.time.Instant
  * 서명(presign)은 로컬 HMAC 계산이라 네트워크 I/O가 없어 이벤트 루프에서 불러도 안전하다.
  * 반면 head/read/delete는 실제 호출이므로 반드시 비동기 클라이언트를 쓴다.
  *
- * 클라이언트는 처음 쓸 때 만든다. 테스트가 가짜 저장소를 끼우면 이 구현은 주입되지 않으므로,
- * 자격증명 없이 도는 환경에서도 AWS 객체가 아예 생성되지 않는다.
+ * 자격증명을 어디서도 찾지 못하면 서명 없이 동작한다([credentials]가 null). presigned URL은
+ * 정의상 서명이므로 이때는 만들 수 없고, 대신 객체를 그대로 가리키는 URL을 돌려준다.
+ * 버킷이 익명 접근을 허용할 때만 통하며, 서명이 없으니 만료도 없다.
+ *
+ * 클라이언트는 처음 쓸 때 만든다. 테스트가 가짜 저장소를 끼우면 이 구현은 주입되지 않으므로
+ * AWS 객체가 아예 생성되지 않는다.
  */
-class S3DocumentStorage(
+class S3DocumentStorage internal constructor(
     private val properties: StorageProperties,
-    private val clock: Clock
+    private val clock: Clock,
+    /** null이면 서명 없이 보낸다. */
+    private val credentials: AwsCredentialsProvider?
 ) : DocumentStorage, DisposableBean {
+
+    constructor(properties: StorageProperties, clock: Clock) :
+        this(properties, clock, resolveCredentials(properties))
 
     private val region: Region get() = Region.of(properties.region)
     private val endpoint: URI? get() = properties.endpoint?.let(URI::create)
 
-    /**
-     * 설정에 키가 있으면 그것을 쓰고, 없으면 AWS 기본 제공자 체인에 맡긴다.
-     * 배포는 후자(인스턴스 역할), 로컬과 MinIO는 전자다.
-     */
-    private val credentialsProvider: AwsCredentialsProvider =
-        properties.staticCredentials?.let { (accessKey, secretKey) ->
-            StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey))
-        } ?: DefaultCredentialsProvider.create()
-
     private val lazyClient = lazy {
         S3AsyncClient.builder()
             .region(region)
-            .credentialsProvider(credentialsProvider)
+            // 익명 자격증명은 요청에 서명을 붙이지 않는다.
+            .credentialsProvider(credentials ?: AnonymousCredentialsProvider.create())
             .apply {
                 endpoint?.let {
                     endpointOverride(it)
@@ -69,7 +72,9 @@ class S3DocumentStorage(
     private val lazyPresigner = lazy {
         S3Presigner.builder()
             .region(region)
-            .credentialsProvider(credentialsProvider)
+            .credentialsProvider(
+                requireNotNull(credentials) { "서명할 자격증명이 없으면 presigner를 쓰지 않는다" }
+            )
             .apply {
                 endpoint?.let {
                     endpointOverride(it)
@@ -96,44 +101,55 @@ class S3DocumentStorage(
         contentType: String,
         contentLength: Long
     ): PresignedUpload = wrapping {
-        // Content-Type을 서명에 포함시키면, 다른 타입을 신고한 PUT은 S3가 직접 거부한다.
-        val putRequest = PutObjectRequest.builder()
-            .bucket(properties.bucket)
-            .key(objectKey)
-            .contentType(contentType)
-            .build()
-
-        val presigned = presigner.presignPutObject(
-            PutObjectPresignRequest.builder()
-                .signatureDuration(properties.uploadUrlTtl)
-                .putObjectRequest(putRequest)
+        val url = if (credentials == null) {
+            // 서명할 자격증명이 없다. 익명 쓰기를 허용하는 버킷에서만 통한다.
+            objectUrl(objectKey)
+        } else {
+            // Content-Type을 서명에 포함시키면, 다른 타입을 신고한 PUT은 S3가 직접 거부한다.
+            val putRequest = PutObjectRequest.builder()
+                .bucket(properties.bucket)
+                .key(objectKey)
+                .contentType(contentType)
                 .build()
-        )
+
+            presigner.presignPutObject(
+                PutObjectPresignRequest.builder()
+                    .signatureDuration(properties.uploadUrlTtl)
+                    .putObjectRequest(putRequest)
+                    .build()
+            ).url().toExternalForm()
+        }
 
         PresignedUpload(
-            url = presigned.url().toExternalForm(),
+            url = url,
             requiredHeaders = mapOf("Content-Type" to contentType),
             expiresAt = Instant.now(clock).plus(properties.uploadUrlTtl)
         )
     }
 
     override fun presignDownload(objectKey: String, fileName: String): PresignedDownload = wrapping {
-        val getRequest = GetObjectRequest.builder()
-            .bucket(properties.bucket)
-            .key(objectKey)
-            // 브라우저가 저장소 키가 아니라 원래 올린 이름으로 저장하도록 한다.
-            .responseContentDisposition(contentDisposition(fileName))
-            .build()
-
-        val presigned = presigner.presignGetObject(
-            GetObjectPresignRequest.builder()
-                .signatureDuration(properties.downloadUrlTtl)
-                .getObjectRequest(getRequest)
+        val url = if (credentials == null) {
+            // 서명이 없으면 response-content-disposition도 걸 수 없다. 브라우저는 원래
+            // 파일 이름 대신 키의 마지막 조각으로 저장하게 된다.
+            objectUrl(objectKey)
+        } else {
+            val getRequest = GetObjectRequest.builder()
+                .bucket(properties.bucket)
+                .key(objectKey)
+                // 브라우저가 저장소 키가 아니라 원래 올린 이름으로 저장하도록 한다.
+                .responseContentDisposition(contentDisposition(fileName))
                 .build()
-        )
+
+            presigner.presignGetObject(
+                GetObjectPresignRequest.builder()
+                    .signatureDuration(properties.downloadUrlTtl)
+                    .getObjectRequest(getRequest)
+                    .build()
+            ).url().toExternalForm()
+        }
 
         PresignedDownload(
-            url = presigned.url().toExternalForm(),
+            url = url,
             expiresAt = Instant.now(clock).plus(properties.downloadUrlTtl)
         )
     }
@@ -198,5 +214,50 @@ class S3DocumentStorage(
     private fun contentDisposition(fileName: String): String {
         val encoded = URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20")
         return "attachment; filename*=UTF-8''$encoded"
+    }
+
+    /**
+     * 서명 없는 객체 URL. 커스텀 엔드포인트는 path-style(`{endpoint}/{bucket}/{key}`),
+     * 아니면 가상 호스트 방식(`https://{bucket}.s3.{region}.amazonaws.com/{key}`)이다.
+     */
+    private fun objectUrl(objectKey: String): String {
+        val encodedKey = objectKey.split('/').joinToString("/") {
+            URLEncoder.encode(it, StandardCharsets.UTF_8).replace("+", "%20")
+        }
+        val base = properties.endpoint?.trimEnd('/')?.let { "$it/${properties.bucket}" }
+            ?: "https://${properties.bucket}.s3.${properties.region}.amazonaws.com"
+        return "$base/$encodedKey"
+    }
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(S3DocumentStorage::class.java)
+
+        /**
+         * 설정 키 → AWS 기본 제공자 체인 → 없음 순으로 확인한다.
+         *
+         * 체인은 실제로 자격증명을 꺼내 봐야 있는지 알 수 있고, 없으면 예외를 던진다. 그것을
+         * 여기서 한 번 확인해 두어, 나중에 업로드 요청 한복판에서 터지지 않게 한다.
+         */
+        internal fun resolveCredentials(properties: StorageProperties): AwsCredentialsProvider? {
+            properties.staticCredentials?.let { (accessKey, secretKey) ->
+                return StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create(accessKey, secretKey)
+                )
+            }
+
+            val chain = DefaultCredentialsProvider.create()
+            return try {
+                chain.resolveCredentials()
+                chain
+            } catch (error: SdkException) {
+                logger.warn(
+                    "AWS 자격증명을 찾지 못해 기획서 저장소에 서명 없이 접근한다. " +
+                        "버킷이 익명 접근을 허용해야 하며, 발급되는 URL은 만료되지 않는다. " +
+                        "원인: {}",
+                    error.message
+                )
+                null
+            }
+        }
     }
 }

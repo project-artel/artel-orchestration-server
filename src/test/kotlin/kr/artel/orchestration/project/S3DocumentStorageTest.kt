@@ -82,4 +82,54 @@ class S3DocumentStorageTest {
 
         assertThat(properties.staticCredentials).isNull()
     }
+
+    /**
+     * 자격증명을 어디서도 찾지 못하면 서명 없이 간다.
+     *
+     * presigned URL은 정의상 서명이므로 이때는 만들 수 없다. 대신 객체를 그대로 가리키는
+     * URL을 돌려주며, 버킷이 익명 쓰기를 허용할 때만 통한다.
+     */
+    @Test
+    fun `falls back to an unsigned url when no credentials exist`() {
+        val storage = S3DocumentStorage(
+            properties(accessKey = null, secretKey = null),
+            Clock.systemUTC(),
+            credentials = null
+        )
+
+        val presigned = storage.presignUpload("projects/1/documents/abc/plan.pdf", "application/pdf", 10)
+
+        assertThat(presigned.url)
+            .isEqualTo("https://artel-test.s3.ap-northeast-2.amazonaws.com/projects/1/documents/abc/plan.pdf")
+        assertThat(presigned.url).doesNotContain("X-Amz-Signature")
+        assertThat(presigned.requiredHeaders).containsEntry("Content-Type", "application/pdf")
+    }
+
+    @Test
+    fun `builds an unsigned url against a custom endpoint`() {
+        val storage = S3DocumentStorage(
+            properties(accessKey = null, secretKey = null, endpoint = "http://localhost:9000/"),
+            Clock.systemUTC(),
+            credentials = null
+        )
+
+        val presigned = storage.presignDownload("projects/1/documents/abc/plan.pdf", "plan.pdf")
+
+        assertThat(presigned.url)
+            .isEqualTo("http://localhost:9000/artel-test/projects/1/documents/abc/plan.pdf")
+    }
+
+    /** 키에 한글이나 공백이 있어도 경로 구분자는 살아 있어야 한다. */
+    @Test
+    fun `encodes an unsigned url per path segment`() {
+        val storage = S3DocumentStorage(
+            properties(accessKey = null, secretKey = null),
+            Clock.systemUTC(),
+            credentials = null
+        )
+
+        val presigned = storage.presignUpload("projects/1/documents/abc/기획서 v2.pdf", "application/pdf", 10)
+
+        assertThat(presigned.url).endsWith("/projects/1/documents/abc/%EA%B8%B0%ED%9A%8D%EC%84%9C%20v2.pdf")
+    }
 }
