@@ -13,8 +13,23 @@ spring:
     user: sa
     password:
     locations: classpath:db/migration
+  security:
+    oauth2:
+      client:
+        registration:
+          github:
+            client-id: test-github-client
+            client-secret: test-github-secret
 
 artel:
   agent:
     base-url: http://localhost:8000
     ws-base-url: ws://localhost:8000
+  auth:
+    frontend-url: http://localhost:5173
+    issuer: artel-orchestration-server-test
+    audience: artel-home-test
+    jwt-secret: test-only-secret-that-is-at-least-32-bytes-long
+    access-token-ttl: PT15M
+    cookie-name: artel_access_token
+    secure-cookie: false

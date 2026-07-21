@@ -2,6 +2,16 @@ spring:
   config:
     import:
       - optional:classpath:application-db.yml
+  security:
+    oauth2:
+      client:
+        registration:
+          github:
+            client-id: ${GITHUB_CLIENT_ID}
+            client-secret: ${GITHUB_CLIENT_SECRET}
+            scope:
+              - read:user
+              - user:email
 
 logging:
   level:
@@ -14,3 +24,11 @@ artel:
   agent:
     base-url: ${ARTEL_AGENT_BASE_URL:http://localhost:8000}
     ws-base-url: ${ARTEL_AGENT_WS_BASE_URL:ws://localhost:8000}
+  auth:
+    frontend-url: ${ARTEL_HOME_URL:http://localhost:5173}
+    issuer: ${ARTEL_JWT_ISSUER:artel-orchestration-server}
+    audience: ${ARTEL_JWT_AUDIENCE:artel-home}
+    jwt-secret: ${ARTEL_JWT_SECRET}
+    access-token-ttl: ${ARTEL_JWT_TTL:PT15M}
+    cookie-name: ${ARTEL_AUTH_COOKIE:artel_access_token}
+    secure-cookie: ${ARTEL_SECURE_COOKIE:true}
