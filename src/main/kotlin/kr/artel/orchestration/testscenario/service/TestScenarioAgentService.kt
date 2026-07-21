@@ -3,6 +3,8 @@ package kr.artel.orchestration.testscenario.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.testscenario.dto.AgentScenarioRequest
 import kr.artel.orchestration.testscenario.dto.AgentScenarioResponse
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
+import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
@@ -27,7 +29,8 @@ import java.util.concurrent.ConcurrentHashMap
 class TestScenarioAgentService(
     @Value("\${artel.agent.ws-base-url:ws://localhost:8000}") private val agentWsBaseUrl: String,
     private val objectMapper: ObjectMapper,
-    private val streamManager: TestScenarioStreamManager
+    private val streamManager: TestScenarioStreamManager,
+    private val scenarioRepository: TestScenarioRepository
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val wsClient = ReactorNettyWebSocketClient()
@@ -83,9 +86,43 @@ class TestScenarioAgentService(
             val response = objectMapper.readValue(payloadText, AgentScenarioResponse::class.java)
             response.agentSessionId?.let { streamManager.bindAgentSession(clientId, it) }
             streamManager.emit(clientId, response.type, response.payload)
+
+            // 시나리오 결과(SCENARIO_STEP)는 QA/Report에서 참조하므로 DB에 영속화한다(clientId 기준 upsert).
+            if (response.type == "SCENARIO_STEP") {
+                persistScenario(clientId, response)
+            }
         } catch (e: Exception) {
             logger.error("Agent WS 수신 메시지 처리 실패 [clientId=$clientId]: ${e.message}", e)
         }
+    }
+
+    /**
+     * 시나리오 payload를 clientId 기준으로 upsert 한다. R2DBC 논블로킹 체인이라 별도 스레드 오프로드가 필요 없다.
+     */
+    private fun persistScenario(clientId: String, response: AgentScenarioResponse) {
+        val payloadJson = objectMapper.writeValueAsString(response.payload)
+        scenarioRepository.findByClientId(clientId)
+            .flatMap { existing ->
+                scenarioRepository.save(
+                    existing.copy(
+                        payload = payloadJson,
+                        agentSessionId = response.agentSessionId ?: existing.agentSessionId
+                    )
+                )
+            }
+            .switchIfEmpty(
+                scenarioRepository.save(
+                    TestScenarioEntity(
+                        clientId = clientId,
+                        agentSessionId = response.agentSessionId,
+                        payload = payloadJson
+                    )
+                )
+            )
+            .subscribe(
+                { logger.info("시나리오 저장 완료 [clientId=$clientId, id=${it.id}]") },
+                { err -> logger.error("시나리오 저장 실패 [clientId=$clientId]: ${err.message}") }
+            )
     }
 
     private class AgentConnection(
