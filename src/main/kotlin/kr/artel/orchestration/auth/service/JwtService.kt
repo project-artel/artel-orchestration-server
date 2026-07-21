@@ -33,6 +33,21 @@ data class AuthenticatedUser(
     val avatarUrl: String?
 )
 
+/** 사용자 본체와 연결된 모든 제공자 신원. 세션 조회 응답의 원본이다. */
+data class UserProfile(
+    val userId: String,
+    val displayName: String,
+    val email: String?,
+    val identities: List<LinkedIdentity>
+)
+
+data class LinkedIdentity(
+    val provider: String,
+    val login: String,
+    val displayName: String,
+    val avatarUrl: String?
+)
+
 @Service
 class JwtService(
     private val jwtEncoder: JwtEncoder,

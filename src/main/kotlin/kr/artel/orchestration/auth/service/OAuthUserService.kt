@@ -62,4 +62,31 @@ class OAuthUserService(
             avatarUrl = entity.avatarUrl
         )
     }
+
+    /**
+     * JWT의 sub로 사용자 프로필을 읽는다. 세션이 가리키는 사용자가 더 이상 없으면 null이다.
+     *
+     * 토큰이 아니라 DB에서 읽으므로 프로필 변경이 즉시 반영되고, 삭제된 사용자의 토큰이
+     * 만료 전까지 통하는 문제도 생기지 않는다.
+     */
+    @Transactional(readOnly = true)
+    fun findProfile(userId: String): UserProfile? {
+        // sub가 숫자가 아닌 경우(예: 식별자 형식 변경 전에 발급된 토큰)는 유효한 세션이 아니다.
+        val id = userId.toLongOrNull() ?: return null
+        val appUser = appUserRepository.findById(id).orElse(null) ?: return null
+
+        return UserProfile(
+            userId = appUser.id.toString(),
+            displayName = appUser.displayName,
+            email = appUser.email,
+            identities = identityRepository.findByAppUserIdOrderByLastLoginAtDesc(id).map {
+                LinkedIdentity(
+                    provider = it.provider,
+                    login = it.login,
+                    displayName = it.displayName,
+                    avatarUrl = it.avatarUrl
+                )
+            }
+        )
+    }
 }

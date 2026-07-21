@@ -15,6 +15,8 @@ import reactor.core.publisher.Mono
 import kr.artel.orchestration.sdk.service.AgentClient
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.AuthenticatedUser
+import kr.artel.orchestration.auth.service.OAuthIdentity
+import kr.artel.orchestration.auth.service.OAuthUserService
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.mockito.Mockito
 import reactor.core.publisher.Sinks
@@ -39,6 +41,9 @@ class ArtelWebSocketIntegrationTest {
 
     @Autowired
     private lateinit var jwtService: JwtService
+
+    @Autowired
+    private lateinit var oauthUserService: OAuthUserService
 
     @Suppress("UNCHECKED_CAST")
     private fun <T> anyKotlin(type: Class<T>): T {
@@ -109,15 +114,18 @@ class ArtelWebSocketIntegrationTest {
 
         assertThat(unauthorizedStatus?.value()).isEqualTo(401)
 
-        val token = jwtService.issue(
-            AuthenticatedUser(
-                userId = "1042",
+        // /api/auth/me는 DB에서 프로필을 읽으므로 실제 사용자가 있어야 한다.
+        val user = oauthUserService.upsert(
+            OAuthIdentity(
                 provider = "github",
+                providerUserId = "42",
                 login = "octocat",
                 displayName = "The Octocat",
-                avatarUrl = null
+                avatarUrl = "https://avatars.example/octocat.png",
+                email = "octocat@example.com"
             )
         )
+        val token = jwtService.issue(user)
         val authenticatedResponse = webClient.get()
             .uri("/api/auth/me")
             .cookie("artel_access_token", token)
@@ -125,8 +133,50 @@ class ArtelWebSocketIntegrationTest {
             .bodyToMono(String::class.java)
             .block(Duration.ofSeconds(5))
 
+        assertThat(authenticatedResponse).contains("\"id\":\"${user.userId}\"")
+        assertThat(authenticatedResponse).contains("\"displayName\":\"The Octocat\"")
         assertThat(authenticatedResponse).contains("\"provider\":\"github\"")
         assertThat(authenticatedResponse).contains("\"login\":\"octocat\"")
+    }
+
+    @Test
+    fun `rejects a well-formed token whose user no longer exists`() {
+        val orphanToken = jwtService.issue(
+            AuthenticatedUser(
+                userId = "99999999",
+                provider = "github",
+                login = "ghost",
+                displayName = "Ghost",
+                avatarUrl = null
+            )
+        )
+        val status = WebClient.create("http://localhost:$port").get()
+            .uri("/api/auth/me")
+            .cookie("artel_access_token", orphanToken)
+            .exchangeToMono { Mono.just(it.statusCode()) }
+            .block(Duration.ofSeconds(5))
+
+        assertThat(status?.value()).isEqualTo(401)
+    }
+
+    @Test
+    fun `rejects a token carrying a pre-migration subject format`() {
+        val legacyToken = jwtService.issue(
+            AuthenticatedUser(
+                userId = "github:42",
+                provider = "github",
+                login = "octocat",
+                displayName = "The Octocat",
+                avatarUrl = null
+            )
+        )
+        val status = WebClient.create("http://localhost:$port").get()
+            .uri("/api/auth/me")
+            .cookie("artel_access_token", legacyToken)
+            .exchangeToMono { Mono.just(it.statusCode()) }
+            .block(Duration.ofSeconds(5))
+
+        assertThat(status?.value()).isEqualTo(401)
     }
 
     private fun createSampleGameState(): SdkGameState {
