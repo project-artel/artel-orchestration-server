@@ -1,6 +1,7 @@
 package kr.artel.orchestration.config
 
 import kr.artel.orchestration.project.service.InvalidDocumentException
+import kr.artel.orchestration.project.storage.DocumentStorageException
 import kr.artel.orchestration.project.service.ProjectAccessDeniedException
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
@@ -44,6 +45,21 @@ class ApiExceptionHandler {
                 message = error.message ?: "올바르지 않은 파일입니다."
             )
         )
+
+    /**
+     * 저장소 장애·설정 누락은 요청 잘못이 아니다. 원인은 로그에 남기고, 클라이언트에게는
+     * 다시 시도할 수 있는 일시적 오류로 알린다.
+     */
+    @ExceptionHandler(DocumentStorageException::class)
+    fun handleStorage(error: DocumentStorageException): ResponseEntity<ApiErrorResponse> {
+        logger.error("기획서 저장소 접근 실패", error)
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(
+            ApiErrorResponse(
+                code = "storage_unavailable",
+                message = error.message ?: "기획서 저장소에 접근하지 못했습니다."
+            )
+        )
+    }
 
     @ExceptionHandler(ProjectAccessDeniedException::class)
     fun handleAccessDenied(error: ProjectAccessDeniedException): ResponseEntity<ApiErrorResponse> =

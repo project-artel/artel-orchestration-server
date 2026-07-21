@@ -44,3 +44,9 @@ data class StoredObject(
     val sizeBytes: Long,
     val contentType: String?
 )
+
+/**
+ * 저장소가 응답하지 못했다. 요청이 잘못된 것이 아니라 서버 쪽 설정이나 연결 문제이므로,
+ * 클라이언트에게는 재시도할 수 있는 일시적 오류로 알린다.
+ */
+class DocumentStorageException(message: String, cause: Throwable) : RuntimeException(message, cause)

@@ -3,9 +3,15 @@ package kr.artel.orchestration.project.storage
 import kr.artel.orchestration.project.config.StorageProperties
 import org.springframework.beans.factory.DisposableBean
 import reactor.core.publisher.Mono
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
 import software.amazon.awssdk.core.async.AsyncResponseTransformer
+import software.amazon.awssdk.core.exception.SdkException
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3AsyncClient
+import software.amazon.awssdk.services.s3.S3Configuration
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest
 import software.amazon.awssdk.services.s3.model.GetObjectRequest
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest
@@ -37,17 +43,42 @@ class S3DocumentStorage(
     private val region: Region get() = Region.of(properties.region)
     private val endpoint: URI? get() = properties.endpoint?.let(URI::create)
 
+    /**
+     * 설정에 키가 있으면 그것을 쓰고, 없으면 AWS 기본 제공자 체인에 맡긴다.
+     * 배포는 후자(인스턴스 역할), 로컬과 MinIO는 전자다.
+     */
+    private val credentialsProvider: AwsCredentialsProvider =
+        properties.staticCredentials?.let { (accessKey, secretKey) ->
+            StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey))
+        } ?: DefaultCredentialsProvider.create()
+
     private val lazyClient = lazy {
         S3AsyncClient.builder()
             .region(region)
-            .apply { endpoint?.let(::endpointOverride) }
+            .credentialsProvider(credentialsProvider)
+            .apply {
+                endpoint?.let {
+                    endpointOverride(it)
+                    // MinIO 등 커스텀 엔드포인트는 버킷을 서브도메인으로 붙일 수 없다.
+                    forcePathStyle(true)
+                }
+            }
             .build()
     }
 
     private val lazyPresigner = lazy {
         S3Presigner.builder()
             .region(region)
-            .apply { endpoint?.let(::endpointOverride) }
+            .credentialsProvider(credentialsProvider)
+            .apply {
+                endpoint?.let {
+                    endpointOverride(it)
+                    // 서명 대상 URL 모양이 실제 PUT 대상과 같아야 서명이 맞는다.
+                    serviceConfiguration(
+                        S3Configuration.builder().pathStyleAccessEnabled(true).build()
+                    )
+                }
+            }
             .build()
     }
 
@@ -64,7 +95,7 @@ class S3DocumentStorage(
         objectKey: String,
         contentType: String,
         contentLength: Long
-    ): PresignedUpload {
+    ): PresignedUpload = wrapping {
         // Content-Type을 서명에 포함시키면, 다른 타입을 신고한 PUT은 S3가 직접 거부한다.
         val putRequest = PutObjectRequest.builder()
             .bucket(properties.bucket)
@@ -79,14 +110,14 @@ class S3DocumentStorage(
                 .build()
         )
 
-        return PresignedUpload(
+        PresignedUpload(
             url = presigned.url().toExternalForm(),
             requiredHeaders = mapOf("Content-Type" to contentType),
             expiresAt = Instant.now(clock).plus(properties.uploadUrlTtl)
         )
     }
 
-    override fun presignDownload(objectKey: String, fileName: String): PresignedDownload {
+    override fun presignDownload(objectKey: String, fileName: String): PresignedDownload = wrapping {
         val getRequest = GetObjectRequest.builder()
             .bucket(properties.bucket)
             .key(objectKey)
@@ -101,7 +132,7 @@ class S3DocumentStorage(
                 .build()
         )
 
-        return PresignedDownload(
+        PresignedDownload(
             url = presigned.url().toExternalForm(),
             expiresAt = Instant.now(clock).plus(properties.downloadUrlTtl)
         )
@@ -115,6 +146,7 @@ class S3DocumentStorage(
         }
             .map { StoredObject(sizeBytes = it.contentLength(), contentType = it.contentType()) }
             .onErrorResume(::isMissing) { Mono.empty() }
+            .onErrorMap(::isStorageFault, ::asStorageFault)
 
     override fun readPrefix(objectKey: String, length: Int): Mono<ByteArray> =
         Mono.fromFuture {
@@ -129,17 +161,39 @@ class S3DocumentStorage(
         }
             .map { it.asByteArray() }
             .onErrorResume(::isMissing) { Mono.empty() }
+            .onErrorMap(::isStorageFault, ::asStorageFault)
 
     override fun delete(objectKey: String): Mono<Void> =
         Mono.fromFuture {
             client.deleteObject(
                 DeleteObjectRequest.builder().bucket(properties.bucket).key(objectKey).build()
             )
-        }.then()
+        }
+            .then()
+            .onErrorMap(::isStorageFault, ::asStorageFault)
 
     /** 없는 키는 실패가 아니라 "없음"이다. 비동기 클라이언트는 원인을 한 겹 감싸 던진다. */
     private fun isMissing(error: Throwable): Boolean =
         error is NoSuchKeyException || error.cause is NoSuchKeyException
+
+    /**
+     * 저장소 자체가 응답하지 못한 경우를 [DocumentStorageException]으로 바꾼다.
+     *
+     * 이렇게 하지 않으면 자격증명 누락 같은 설정 문제가 익명의 500으로 나와, 업로드 코드가
+     * 잘못된 것처럼 보인다. 서버 설정이 덜 된 것과 요청이 잘못된 것은 구분되어야 한다.
+     */
+    private fun <T> wrapping(block: () -> T): T =
+        try {
+            block()
+        } catch (error: SdkException) {
+            throw asStorageFault(error)
+        }
+
+    private fun isStorageFault(error: Throwable): Boolean =
+        error is SdkException || error.cause is SdkException
+
+    private fun asStorageFault(error: Throwable) =
+        DocumentStorageException("기획서 저장소에 접근하지 못했습니다.", error)
 
     private fun contentDisposition(fileName: String): String {
         val encoded = URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20")

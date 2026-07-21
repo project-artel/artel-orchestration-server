@@ -33,11 +33,16 @@ artel:
     cookie-name: ${ARTEL_AUTH_COOKIE:artel_access_token}
     secure-cookie: ${ARTEL_SECURE_COOKIE:true}
   storage:
-    # 기획서 원본을 담을 S3. 자격증명은 여기 두지 않고 AWS 기본 제공자 체인을 쓴다.
-    bucket: ${ARTEL_S3_BUCKET}
+    # 기획서 원본을 담을 S3.
+    bucket: ${ARTEL_S3_BUCKET:artel-local}
     region: ${ARTEL_S3_REGION:ap-northeast-2}
     # 로컬 MinIO 등으로 돌릴 때만 지정한다.
     endpoint: ${ARTEL_S3_ENDPOINT:#{null}}
+    # 배포에서는 둘 다 비워 두고 인스턴스 역할을 쓴다.
+    # 로컬에서는 비워 둘 수 없다. spring-dotenv는 .env를 Spring Environment에만 넣고
+    # 프로세스 환경변수로 만들지 못해, .env의 AWS_ACCESS_KEY_ID를 AWS SDK가 보지 못한다.
+    access-key: ${ARTEL_S3_ACCESS_KEY:#{null}}
+    secret-key: ${ARTEL_S3_SECRET_KEY:#{null}}
     upload-url-ttl: ${ARTEL_S3_UPLOAD_URL_TTL:PT10M}
     download-url-ttl: ${ARTEL_S3_DOWNLOAD_URL_TTL:PT5M}
     max-upload-bytes: ${ARTEL_UPLOAD_MAX_BYTES:52428800}
