@@ -40,11 +40,17 @@
 			<artifactId>kotlin-stdlib</artifactId>
 		</dependency>
 
-		<!-- JPA & Database Driver -->
+		<!-- R2DBC (앱 런타임 - 논블로킹 DB 접근) -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-data-jpa</artifactId>
+			<artifactId>spring-boot-starter-data-r2dbc</artifactId>
 		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>r2dbc-postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<!-- PostgreSQL JDBC 드라이버 - Flyway 마이그레이션 전용 (Flyway는 JDBC로만 동작) -->
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
@@ -78,9 +84,16 @@
 			<artifactId>reactor-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<!-- H2 JDBC - 테스트 시 Flyway 마이그레이션 실행용 -->
 		<dependency>
 			<groupId>com.h2database</groupId>
 			<artifactId>h2</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- H2 R2DBC - 테스트 시 앱 런타임 DB 접근용 -->
+		<dependency>
+			<groupId>io.r2dbc</groupId>
+			<artifactId>r2dbc-h2</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>

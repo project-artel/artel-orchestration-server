@@ -1,18 +1,20 @@
 spring:
-  datasource:
-    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+  # 앱 런타임: R2DBC H2 (인메모리)
+  r2dbc:
+    url: r2dbc:h2:mem:///testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
     username: sa
     password:
-    driver-class-name: org.h2.Driver
-  jpa:
-    database-platform: org.hibernate.dialect.H2Dialect
-    hibernate:
-      ddl-auto: validate
+  # 마이그레이션: Flyway는 JDBC H2로 실행. R2DBC와 동일한 인메모리 DB(testdb)를 가리켜야
+  # Flyway가 만든 스키마를 R2DBC 쿼리가 볼 수 있다.
   flyway:
     enabled: true
     baseline-on-migrate: true
+    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    user: sa
+    password:
     locations: classpath:db/migration
 
 artel:
   agent:
     base-url: http://localhost:8000
+    ws-base-url: ws://localhost:8000
