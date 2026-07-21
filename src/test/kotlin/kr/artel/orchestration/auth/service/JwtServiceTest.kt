@@ -3,10 +3,13 @@ package kr.artel.orchestration.auth.service
 import kr.artel.orchestration.auth.config.AuthProperties
 import kr.artel.orchestration.auth.config.SecurityConfig
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.springframework.security.oauth2.jwt.JwtException
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneOffset
 
 class JwtServiceTest {
     private val now = Instant.now()
@@ -45,5 +48,52 @@ class JwtServiceTest {
         assertThat(jwt?.getClaimAsString("login")).isEqualTo("octocat")
         assertThat(jwt?.expiresAt?.epochSecond)
             .isEqualTo(now.plus(Duration.ofMinutes(15)).epochSecond)
+    }
+
+    private val identity = OAuthIdentity(
+        provider = "github",
+        providerUserId = "42",
+        login = "octocat",
+        displayName = "The Octocat",
+        avatarUrl = null
+    )
+
+    private fun issueWith(props: AuthProperties, clock: Clock): String =
+        JwtService(securityConfig.jwtEncoder(props), props, clock).issue(identity)
+
+    @Test
+    fun `rejects an expired token`() {
+        // Issued 20 minutes ago with a 15-minute TTL, so it is already expired now.
+        val pastClock = Clock.fixed(now.minus(Duration.ofMinutes(20)), ZoneOffset.UTC)
+        val token = issueWith(properties, pastClock)
+
+        assertThatThrownBy { securityConfig.jwtDecoder(properties).decode(token).block() }
+            .isInstanceOf(JwtException::class.java)
+    }
+
+    @Test
+    fun `rejects a token whose signature was tampered with`() {
+        val token = issueWith(properties, Clock.fixed(now, ZoneOffset.UTC))
+        val (header, payload, signature) = token.split(".")
+        val tampered = "$header.$payload.${signature.dropLast(1)}${if (signature.last() == 'A') 'B' else 'A'}"
+
+        assertThatThrownBy { securityConfig.jwtDecoder(properties).decode(tampered).block() }
+            .isInstanceOf(JwtException::class.java)
+    }
+
+    @Test
+    fun `rejects a token from an unexpected issuer`() {
+        val token = issueWith(properties.copy(issuer = "evil-issuer"), Clock.fixed(now, ZoneOffset.UTC))
+
+        assertThatThrownBy { securityConfig.jwtDecoder(properties).decode(token).block() }
+            .isInstanceOf(JwtException::class.java)
+    }
+
+    @Test
+    fun `rejects a token for an unexpected audience`() {
+        val token = issueWith(properties.copy(audience = "evil-audience"), Clock.fixed(now, ZoneOffset.UTC))
+
+        assertThatThrownBy { securityConfig.jwtDecoder(properties).decode(token).block() }
+            .isInstanceOf(JwtException::class.java)
     }
 }

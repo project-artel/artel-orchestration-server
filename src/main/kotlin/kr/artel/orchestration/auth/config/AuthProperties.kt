@@ -13,6 +13,10 @@ data class AuthProperties(
     val cookieName: String = "artel_access_token",
     val secureCookie: Boolean = true
 ) {
+    /** Frontend origin without a trailing slash, safe to concatenate redirect paths onto. */
+    val frontendOrigin: String
+        get() = frontendUrl.trimEnd('/')
+
     init {
         require(jwtSecret.toByteArray(Charsets.UTF_8).size >= 32) {
             "ARTEL_JWT_SECRET must contain at least 32 bytes"

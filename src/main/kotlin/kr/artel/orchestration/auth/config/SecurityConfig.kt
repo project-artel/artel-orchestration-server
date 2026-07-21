@@ -18,8 +18,9 @@ import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator
 import org.springframework.security.oauth2.core.OAuth2TokenValidator
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm
 import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.security.oauth2.jwt.JwtClaimValidator
 import org.springframework.security.oauth2.jwt.JwtEncoder
-import org.springframework.security.oauth2.jwt.JwtIssuerValidator
+import org.springframework.security.oauth2.jwt.JwtValidators
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder
 import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder
 import org.springframework.security.oauth2.server.resource.authentication.BearerTokenAuthenticationToken
@@ -76,7 +77,7 @@ class SecurityConfig {
             it.authenticationFailureHandler { webFilterExchange, _ ->
                 webFilterExchange.exchange.response.statusCode = HttpStatus.FOUND
                 webFilterExchange.exchange.response.headers.location =
-                    URI.create("${properties.frontendUrl.trimEnd('/')}/login?error=oauth")
+                    URI.create("${properties.frontendOrigin}/login?error=oauth")
                 webFilterExchange.exchange.response.setComplete()
             }
         }
@@ -106,11 +107,12 @@ class SecurityConfig {
         val decoder = NimbusReactiveJwtDecoder.withSecretKey(key)
             .macAlgorithm(MacAlgorithm.HS256)
             .build()
+        // createDefaultWithIssuer bundles the timestamp (exp/nbf) and issuer validators;
+        // setJwtValidator replaces the decoder default, so the timestamp check must be
+        // included here explicitly or expired tokens would pass.
         val validators: OAuth2TokenValidator<Jwt> = DelegatingOAuth2TokenValidator(
-            JwtIssuerValidator(properties.issuer),
-            org.springframework.security.oauth2.jwt.JwtClaimValidator<List<String>>("aud") {
-                it.contains(properties.audience)
-            }
+            JwtValidators.createDefaultWithIssuer(properties.issuer),
+            JwtClaimValidator<List<String>?>("aud") { it != null && it.contains(properties.audience) }
         )
         decoder.setJwtValidator(validators)
         return decoder
@@ -122,7 +124,7 @@ class SecurityConfig {
     @Bean
     fun corsConfigurationSource(properties: AuthProperties): CorsConfigurationSource {
         val configuration = CorsConfiguration().apply {
-            allowedOrigins = listOf(properties.frontendUrl.trimEnd('/'))
+            allowedOrigins = listOf(properties.frontendOrigin)
             allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
             allowedHeaders = listOf(HttpHeaders.CONTENT_TYPE, HttpHeaders.AUTHORIZATION)
             allowCredentials = true
@@ -154,14 +156,14 @@ class SecurityConfig {
                 val response = webFilterExchange.exchange.response
                 response.addCookie(cookie)
                 response.statusCode = HttpStatus.FOUND
-                response.headers.location = URI.create(properties.frontendUrl.trimEnd('/'))
+                response.headers.location = URI.create(properties.frontendOrigin)
                 response.setComplete()
             }
             .onErrorResume {
                 val response = webFilterExchange.exchange.response
                 response.statusCode = HttpStatus.FOUND
                 response.headers.location =
-                    URI.create("${properties.frontendUrl.trimEnd('/')}/login?error=server")
+                    URI.create("${properties.frontendOrigin}/login?error=server")
                 response.setComplete()
             }
     }
