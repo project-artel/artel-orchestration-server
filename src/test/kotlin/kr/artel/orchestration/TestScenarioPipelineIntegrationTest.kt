@@ -82,7 +82,7 @@ class TestScenarioPipelineIntegrationTest {
 
     private fun subscribeSse(client: WebClient, clientId: String, onEvent: (ServerSentEvent<JsonNode>) -> Unit) =
         client.get()
-            .uri("/api/testscenario/$clientId/stream")
+            .uri("/api/test-scenario/$clientId/stream")
             .accept(MediaType.TEXT_EVENT_STREAM)
             .retrieve()
             .bodyToFlux(sseType)
@@ -91,9 +91,9 @@ class TestScenarioPipelineIntegrationTest {
 
     private fun postMessage(client: WebClient, clientId: String, msg: String) {
         client.post()
-            .uri("/api/testscenario/$clientId/message")
+            .uri("/api/test-scenario/$clientId/message")
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue("""{"type":"USER_MESSAGE","testscenariomsg":"$msg"}""")
+            .bodyValue("""{"type":"USER_MESSAGE","testScenarioMessage":"$msg"}""")
             .retrieve()
             .toEntity(String::class.java)
             .block(Duration.ofSeconds(5))

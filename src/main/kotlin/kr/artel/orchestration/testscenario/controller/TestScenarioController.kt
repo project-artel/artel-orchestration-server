@@ -27,7 +27,7 @@ import reactor.core.publisher.Mono
  * `clientId`는 FE가 발급하는 상관관계 키로, SSE 스트림과 Agent WS 커넥션의 안정적 식별자다.
  */
 @RestController
-@RequestMapping("/api/testscenario")
+@RequestMapping("/api/test-scenario")
 class TestScenarioController(
     private val agentService: TestScenarioAgentService,
     private val streamManager: TestScenarioStreamManager
@@ -53,7 +53,7 @@ class TestScenarioController(
     ): Mono<ResponseEntity<String>> {
         val request = AgentScenarioRequest(
             type = message.type,
-            testscenariomsg = message.testscenariomsg,
+            testScenarioMessage = message.testScenarioMessage,
             clientId = clientId,
             agentSessionId = streamManager.agentSessionOf(clientId)
         )
