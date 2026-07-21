@@ -1,33 +1,28 @@
 package kr.artel.orchestration.auth.entity
 
-import jakarta.persistence.Column
-import jakarta.persistence.Entity
-import jakarta.persistence.GeneratedValue
-import jakarta.persistence.GenerationType
-import jakarta.persistence.Id
-import jakarta.persistence.Table
+import org.springframework.data.annotation.Id
+import org.springframework.data.relational.core.mapping.Column
+import org.springframework.data.relational.core.mapping.Table
 import java.time.Instant
 
 /**
  * Artel 사용자 본체. 연결된 OAuth 제공자와 무관하게 안정적으로 유지되며,
  * 이 id가 JWT의 sub 클레임이 된다.
  */
-@Entity
-@Table(name = "app_user")
-open class AppUserEntity(
+@Table("app_user")
+data class AppUserEntity(
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    open var id: Long? = null,
+    val id: Long? = null,
 
-    @Column(name = "display_name", nullable = false, length = 255)
-    open var displayName: String = "",
+    @Column("display_name")
+    val displayName: String,
 
-    @Column(length = 320)
-    open var email: String? = null,
+    @Column("email")
+    val email: String? = null,
 
-    @Column(name = "created_at", nullable = false, updatable = false)
-    open var createdAt: Instant = Instant.now(),
+    @Column("created_at")
+    val createdAt: Instant,
 
-    @Column(name = "updated_at", nullable = false)
-    open var updatedAt: Instant = Instant.now()
+    @Column("updated_at")
+    val updatedAt: Instant
 )

@@ -34,7 +34,6 @@ import org.springframework.web.cors.CorsConfiguration
 import org.springframework.web.cors.reactive.CorsConfigurationSource
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource
 import reactor.core.publisher.Mono
-import reactor.core.scheduler.Schedulers
 import java.net.URI
 import java.time.Clock
 import javax.crypto.spec.SecretKeySpec
@@ -65,7 +64,9 @@ class SecurityConfig {
                 "/swagger-ui/**",
                 "/ws/sdk",
                 "/api/sdkId",
-                "/api/orchestration/**"
+                "/api/orchestration/**",
+                // SDK/Agent 경로와 같은 신뢰 경계에 있다. 엔드유저 JWT 보호 대상이 아니다.
+                "/api/test-scenario/**"
             ).permitAll()
             it.pathMatchers("/api/auth/**").authenticated()
             it.anyExchange().authenticated()
@@ -142,8 +143,7 @@ class SecurityConfig {
         oauthUserService: OAuthUserService
     ) = ServerAuthenticationSuccessHandler { webFilterExchange, authentication ->
         val identity = identityResolver.resolve(authentication as org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken)
-        Mono.fromCallable { oauthUserService.upsert(identity) }
-            .subscribeOn(Schedulers.boundedElastic())
+        oauthUserService.upsert(identity)
             .flatMap { persistedIdentity ->
                 val token = jwtService.issue(persistedIdentity)
                 val cookie = ResponseCookie.from(properties.cookieName, token)

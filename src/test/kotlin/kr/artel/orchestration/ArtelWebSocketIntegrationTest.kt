@@ -124,7 +124,7 @@ class ArtelWebSocketIntegrationTest {
                 avatarUrl = "https://avatars.example/octocat.png",
                 email = "octocat@example.com"
             )
-        )
+        ).block()!!
         val token = jwtService.issue(user)
         val authenticatedResponse = webClient.get()
             .uri("/api/auth/me")

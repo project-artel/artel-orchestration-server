@@ -1,6 +1,6 @@
 package kr.artel.orchestration.auth.repository
 
 import kr.artel.orchestration.auth.entity.AppUserEntity
-import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.repository.reactive.ReactiveCrudRepository
 
-interface AppUserRepository : JpaRepository<AppUserEntity, Long>
+interface AppUserRepository : ReactiveCrudRepository<AppUserEntity, Long>
