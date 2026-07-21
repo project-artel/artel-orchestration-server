@@ -21,3 +21,6 @@ out/
 *.swp
 *.swo
 *~
+
+# Jira MCP credentials
+.jira.env
