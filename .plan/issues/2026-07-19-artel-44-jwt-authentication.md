@@ -13,15 +13,21 @@ Authenticate Artel Home users through OAuth providers and issue a short-lived JW
 ## Non-goals
 
 - Local username/password authentication.
-- User registration, account administration, roles, or provider-account linking.
+- User registration, account administration, or roles.
 - Replacing the existing Unity SDK `sdkId` authorization or defining Agent Server service authentication.
+
+Scope change (2026-07-21): the data model was split into `app_user` + `oauth_identity` so one user
+can hold several provider identities. The *linking flow* (attaching a second provider while signed
+in) remains out of scope; only the schema and the identifier contract that make it possible landed here.
 
 ## Architecture
 
 1. Spring Security starts the provider flow at `/oauth2/authorization/{registrationId}`.
 2. A provider-specific `OAuthIdentityMapper` normalizes provider attributes into `OAuthIdentity`.
 3. The shared OAuth success handler upserts the normalized user through JPA on a bounded-elastic scheduler.
-4. Flyway V2 owns the PostgreSQL `oauth_user` table and provider identity uniqueness constraint.
+4. Flyway V2 owns the PostgreSQL `app_user` table and the `oauth_identity` table that links provider
+   accounts to it (1:N), with uniqueness on `(provider, provider_user_id)`. An unseen provider account
+   always creates a new `app_user`; identities are never auto-linked by email.
 5. The server creates a JWT containing provider-neutral identity claims.
 6. The server sends the JWT in a Secure, HttpOnly, SameSite=Lax cookie and redirects to Artel Home.
 7. `/api/auth/me` validates the cookie and returns the minimal user view; `/api/auth/logout` clears it.
@@ -33,7 +39,8 @@ Adding another provider requires only its Spring client registration and a new `
 
 - Standard: `sub`, `iss`, `aud`, `iat`, `exp`.
 - Normalized identity: `provider`, `login`, `name`, and optional `avatar_url`.
-- `sub` is namespaced as `{provider}:{providerUserId}` to prevent collisions between providers.
+- `sub` is the `app_user` id. It stays stable as further providers are linked to the same user, and
+  it carries no provider prefix — clients must treat it as opaque.
 
 ## Approach (Checklist)
 
@@ -87,4 +94,18 @@ The GitHub OAuth callback URL is `{orchestration-origin}/login/oauth2/code/githu
 
 ## Deferred Work
 
-Provider-account linking, user authorization, refresh-token rotation, session revocation, and additional provider registrations belong in separate issues.
+The explicit provider-linking flow (endpoints and Home UI for attaching a second provider to a
+signed-in user), user authorization, refresh-token rotation, session revocation, and additional
+provider registrations belong in separate issues.
+
+## Open Questions
+
+- **Cookie policy vs deployment topology.** The JWT cookie is `SameSite=Lax`. If Home and the
+  orchestration server end up cross-site, the cookie will not ride along on credentialed `fetch`
+  and `/api/auth/me` will always return 401. Local development hides this because both sides are
+  `localhost`. Confirm the production domains; cross-site would require `SameSite=None; Secure`
+  and a fresh look at CSRF, which is globally disabled today.
+- **First-login race.** `OAuthUserService.upsert` reads then writes, so two concurrent first logins
+  for the same provider account can collide on `uk_oauth_identity_provider_identity` and bounce one
+  request to `/login?error=server`. The window is narrow; consider a constraint-violation retry or
+  an `ON CONFLICT` upsert.
