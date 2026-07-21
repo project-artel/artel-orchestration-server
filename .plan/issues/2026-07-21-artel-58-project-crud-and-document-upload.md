@@ -21,11 +21,17 @@ rule are the foundation for everything after it.
 
 ## Non-goals
 
-- Project deletion, archiving, or soft-delete. Nothing depends on removal yet.
 - Sharing, membership, roles, or any authorization model beyond single-owner.
+  The Notion draft says deletion is for "owner/admin"; there are no admins yet,
+  so owner-only is the whole rule.
 - Parsing, indexing, or feeding the planning document into the agent pipeline.
-  This issue stores and serves the file; interpreting it is separate work.
-- Pagination, sorting, or search on the project list.
+  This issue stores and serves the file and reserves a `parseStatus` field for
+  that work; interpreting the file is separate.
+- Hard deletion and any retention policy for QA logs, bug reports, or S3
+  objects. Deletion is soft and nothing is reaped — the draft flags a retention
+  policy as still needed, and this issue does not settle it.
+- Sorting or search on the project list. Pagination is in scope; ordering is
+  fixed to most-recently-updated first.
 - Migrating the orphaned `sdk_session_log` / `action_execution_log` tables into
   entities.
 
@@ -139,7 +145,8 @@ CREATE TABLE IF NOT EXISTS project (
     description VARCHAR(2000),
     genre       VARCHAR(32) NOT NULL,
     created_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at  TIMESTAMP WITH TIME ZONE
 );
 CREATE INDEX IF NOT EXISTS idx_project_owner ON project (owner_id);
 
@@ -153,6 +160,7 @@ CREATE TABLE IF NOT EXISTS project_document (
     size_bytes   BIGINT NOT NULL,
     uploaded_by  BIGINT NOT NULL REFERENCES app_user(id),
     uploaded_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    parse_status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
     CONSTRAINT uk_project_document_version UNIQUE (project_id, version)
 );
 CREATE INDEX IF NOT EXISTS idx_project_document_project ON project_document (project_id);
@@ -165,14 +173,24 @@ CREATE INDEX IF NOT EXISTS idx_project_document_project ON project_document (pro
   read-then-insert of `MAX(version) + 1` is racy; the constraint turns the race
   into a retryable conflict instead of two rows claiming `v3`.
 - Both FKs target `app_user(id)`, created by `V2` and present since `9556dfc`.
+- `deleted_at` implements soft delete. Every owner-scoped query adds
+  `deleted_at IS NULL`; a soft-deleted project behaves exactly like a missing
+  one (404), which keeps the delete semantics indistinguishable from the
+  not-owned case already in the contract.
+- `parse_status` is written as `PENDING` and never advanced by this issue. It
+  exists so the parsing work needs no migration later.
 
 ## API Contract (agreed with ARTEL-66)
 
+Reconciled on 2026-07-21 against the Notion API spec database (see
+"Divergences from the Notion draft" below for what changed and why).
+
 ```text
-GET    /api/projects                                          200 ProjectSummary[]
-POST   /api/projects                                          201 ProjectDetail
-GET    /api/projects/{projectId}                              200 ProjectDetail
-PATCH  /api/projects/{projectId}                              200 ProjectDetail
+GET    /api/projects?page=0&size=20                           200 ProjectPageResponse
+POST   /api/projects                                          201 ProjectDetailResponse
+GET    /api/projects/{projectId}                              200 ProjectDetailResponse
+PATCH  /api/projects/{projectId}                              200 ProjectDetailResponse
+DELETE /api/projects/{projectId}                              200 DeleteProjectResponse
 POST   /api/projects/{projectId}/documents/upload-url         200 UploadTicketResponse
 POST   /api/projects/{projectId}/documents                    201 ProjectDocumentResponse
 GET    /api/projects/{projectId}/documents                    200 ProjectDocumentResponse[]
@@ -180,18 +198,66 @@ GET    /api/projects/{projectId}/documents/{documentId}/download-url  200 Downlo
 ```
 
 - IDs serialize as **strings**, matching `AuthUserResponse.id` (`appUser.id.toString()`).
-  The client treats them as opaque.
-- `ProjectSummary`: `id, name, genre, description, documentCount, latestDocument, updatedAt`.
-  `ProjectDetail` adds `createdAt`.
+  Internally they stay `Long`, as the Notion spec requires. The client treats
+  them as opaque.
+- `ProjectPageResponse`: `{ items, page, size, total }`, matching the Notion
+  draft's envelope. `page` defaults to `0`, `size` to `20`, capped at `100`.
+- `ProjectSummaryResponse` (list item): `id, name, genre, description,
+  documentCount, latestDocument, updatedAt`.
+- `ProjectDetailResponse`: `id, name, description, genre, createdAt, updatedAt,
+  document` — where `document` is the **latest version only**, matching the
+  draft's singular `document` field. Full history comes from
+  `GET .../documents`.
 - `ProjectDocumentResponse`: `id, version, fileName, contentType, sizeBytes,
-  uploadedAt, uploadedBy { id, displayName }`. `objectKey` is **never** exposed.
+  uploadedAt, uploadedBy { id, displayName }, parseStatus`. `objectKey` is
+  **never** exposed.
 - `UploadTicketResponse`: `uploadUrl, objectKey, requiredHeaders, expiresAt`.
+- `DeleteProjectResponse`: `{ deleted: true, projectId }`, per the draft.
+  Deletion is **soft** — the row is marked, S3 objects are retained, and the
+  project stops appearing in the list.
 - A project that exists but is owned by someone else returns **404, not 403**,
   so the API does not confirm the existence of other users' projects.
 - Uploading adds a version; it never replaces one. Version numbers are 1-based
   and monotonic per project.
 - Errors return `{ code, message, fields? }`, extending the shape
   `SecurityConfig` already hand-writes for 401 (`{"code":"unauthorized",...}`).
+
+### Divergences from the Notion draft (to be written back after implementation)
+
+The six project pages in the Notion spec DB are all `미구현` with empty `응답`
+properties, meaning their bodies are pre-implementation drafts. `/api/auth/me`
+already demonstrates the house pattern: the body stays as the original draft and
+the **DB properties carry the implemented truth**. These are the deliberate
+departures to record there once this ships:
+
+- **Upload stays presigned, not `multipart/form-data`.** The draft defines one
+  `POST .../documents` carrying the file. Keeping bytes off the server avoids
+  proxy body limits and server bandwidth for a 50 MB PDF. Cost: the draft's
+  single call becomes three, and the format check needs its own step (below).
+- **`genre` is added.** The draft has only `name` / `description`. Genre is a
+  product requirement for this issue.
+- **IDs serialize as strings**, not numbers. The draft says "모든 ID는 Long
+  타입"; that is kept as the internal type, but `/api/auth/me` already ships
+  `"id": "1"` and its client contract says never to parse it. One convention.
+- **`documentFileId` is dropped from project creation.** The draft's
+  `POST /api/projects` takes a `documentFileId`, but the only upload path is
+  `POST /api/projects/{projectId}/documents`, which needs the project to exist
+  first — the draft is circular, and `PATCH` offers no way to attach a document
+  later either. Projects are created empty and documents are uploaded to them.
+- **`storageUrl` is not returned.** The draft's `s3://bucket/project/file.pdf`
+  is unusable by a browser and leaks the bucket name. `GET .../download-url`
+  replaces it.
+- **`parseJobId` is not returned; `parseStatus` is.** There is no parser and no
+  job table, so inventing a job ID would be a lie. Every document gets a
+  `parse_status` column that this issue only ever sets to `PENDING`. The field
+  exists so the parsing work does not require a schema and contract change, but
+  nothing advances it yet — the client must render it as a static state, never
+  as a spinner implying progress.
+- **`lastQaStatus` is omitted from list items.** The draft includes it, but QA
+  runs do not exist yet and a permanently `null` field invites the client to
+  build UI on a value that can never change. It arrives with QA runs.
+- **`structuredDocumentId` is omitted** from the detail response for the same
+  reason — it is a parser output.
 
 ### Decided 2026-07-21
 
@@ -229,11 +295,13 @@ GET    /api/projects/{projectId}/documents/{documentId}/download-url  200 Downlo
         `@Query("SELECT COALESCE(MAX(version), 0) FROM project_document WHERE project_id = :projectId")`.
   - [ ] `project/dto/` — one `data class` per file, following the newer
         `testscenario/dto` style: `CreateProjectRequest`, `UpdateProjectRequest`,
-        `ProjectSummaryResponse`, `ProjectDetailResponse`, `UploadTicketRequest`,
-        `UploadTicketResponse`, `RegisterDocumentRequest`, `ProjectDocumentResponse`,
+        `ProjectSummaryResponse`, `ProjectDetailResponse`, `ProjectPageResponse`,
+        `DeleteProjectResponse`, `UploadTicketRequest`, `UploadTicketResponse`,
+        `RegisterDocumentRequest`, `ProjectDocumentResponse`,
         `DownloadTicketResponse`, and `Genre` (enum).
-  - [ ] `project/service/ProjectService.kt` — owner-scoped CRUD, `Clock`-based
-        timestamps, `Mono`-returning.
+  - [ ] `project/service/ProjectService.kt` — owner-scoped CRUD with
+        `deleted_at IS NULL` on every query, paged list, soft delete,
+        `Clock`-based timestamps, `Mono`-returning.
   - [ ] `project/service/ProjectDocumentService.kt` — ticket minting, object-key
         generation (`projects/{projectId}/documents/{uuid}/{sanitizedFileName}`),
         `headObject` verification, version allocation with retry on
@@ -269,8 +337,11 @@ GET    /api/projects/{projectId}/documents/{documentId}/download-url  200 Downlo
         `@LocalServerPort` + `WebClient`, authenticating by minting a real token
         with `JwtService.issue(...)` and attaching the `artel_access_token`
         cookie, exactly as `ArtelWebSocketIntegrationTest` does for
-        `/api/auth/me`. Cases: create → list → get → patch → unauthenticated 401
-        → other user's project 404 → validation 400 with `fields`.
+        `/api/auth/me`. Cases: create → list → get → patch → delete →
+        unauthenticated 401 → other user's project 404 → soft-deleted project
+        404 and absent from the list → validation 400 with `fields` → paging
+        reports the right `total` across two pages → `size` above the cap is
+        clamped.
   - [ ] `ProjectDocumentIntegrationTest` with a fake `DocumentStorage`
         `@TestConfiguration` bean. Cases: ticket → register → version increments
         to 2 → list newest-first → register without a matching object 400 →
@@ -299,6 +370,14 @@ GET    /api/projects/{projectId}/documents/{documentId}/download-url  200 Downlo
   - [ ] Update `docs/api-documentation.md` "Documented API surface" with the new
         endpoints. Note it is already stale — it omits `/api/test-scenario` —
         so fix that omission in the same pass.
+  - [ ] Write the implemented contract back to the Notion spec DB, following the
+        `/api/auth/me` precedent: fill the `응답`, `오류 응답`, `인증`, `Input`,
+        and `근거` properties, set `구현 현황` to `구현 완료`, `명세 구분` to
+        `API 명세`, and `명세 변경` to `Hermes 보완`. Add new pages for the three
+        endpoints the draft does not have (`upload-url`, document list,
+        `download-url`). Every divergence listed above must be visible there —
+        leaving the drafts untouched would strand the next reader on a contract
+        that was never built.
 
 ## Configuration
 
