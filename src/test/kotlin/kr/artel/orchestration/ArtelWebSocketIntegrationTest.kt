@@ -13,6 +13,8 @@ import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient
 import reactor.core.publisher.Mono
 import kr.artel.orchestration.sdk.service.AgentClient
+import kr.artel.orchestration.auth.service.JwtService
+import kr.artel.orchestration.auth.service.OAuthIdentity
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.mockito.Mockito
 import reactor.core.publisher.Sinks
@@ -34,6 +36,9 @@ class ArtelWebSocketIntegrationTest {
 
     @MockBean
     private lateinit var agentClient: AgentClient
+
+    @Autowired
+    private lateinit var jwtService: JwtService
 
     @Suppress("UNCHECKED_CAST")
     private fun <T> anyKotlin(type: Class<T>): T {
@@ -92,6 +97,36 @@ class ArtelWebSocketIntegrationTest {
         )
         // 버튼 라벨 텍스트는 observables에서 제외되었는지 검증
         assertThat(agentGameState.observables).doesNotContainKey("SubmitButton.content")
+    }
+
+    @Test
+    fun testAuthenticatedUserEndpoint() {
+        val webClient = WebClient.create("http://localhost:$port")
+        val unauthorizedStatus = webClient.get()
+            .uri("/api/auth/me")
+            .exchangeToMono { Mono.just(it.statusCode()) }
+            .block(Duration.ofSeconds(5))
+
+        assertThat(unauthorizedStatus?.value()).isEqualTo(401)
+
+        val token = jwtService.issue(
+            OAuthIdentity(
+                provider = "github",
+                providerUserId = "42",
+                login = "octocat",
+                displayName = "The Octocat",
+                avatarUrl = null
+            )
+        )
+        val authenticatedResponse = webClient.get()
+            .uri("/api/auth/me")
+            .cookie("artel_access_token", token)
+            .retrieve()
+            .bodyToMono(String::class.java)
+            .block(Duration.ofSeconds(5))
+
+        assertThat(authenticatedResponse).contains("\"provider\":\"github\"")
+        assertThat(authenticatedResponse).contains("\"login\":\"octocat\"")
     }
 
     private fun createSampleGameState(): SdkGameState {
@@ -345,4 +380,3 @@ class ArtelWebSocketIntegrationTest {
         disposable.dispose()
     }
 }
-
