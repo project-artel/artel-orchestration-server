@@ -30,7 +30,7 @@ class DatabaseConnectionTest {
 
         // 2. Flyway 마이그레이션으로 생성된 테이블을 R2DBC로 조회할 수 있는지 검증
         //    (인메모리 DB가 다른 테스트와 공유되므로 정확한 건수 대신 조회 가능 여부만 확인한다)
-        val tables = listOf("sdk_session_log", "action_execution_log", "oauth_user")
+        val tables = listOf("sdk_session_log", "action_execution_log", "app_user", "oauth_identity")
         for (table in tables) {
             val count = databaseClient.sql("SELECT COUNT(*) FROM $table")
                 .map { row -> row.get(0, java.lang.Long::class.java) }

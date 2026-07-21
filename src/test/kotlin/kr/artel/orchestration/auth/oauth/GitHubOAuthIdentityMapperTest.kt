@@ -31,7 +31,6 @@ class GitHubOAuthIdentityMapperTest {
 
         assertThat(identity.provider).isEqualTo("github")
         assertThat(identity.providerUserId).isEqualTo("42")
-        assertThat(identity.subject).isEqualTo("github:42")
         assertThat(identity.login).isEqualTo("octocat")
         assertThat(identity.displayName).isEqualTo("The Octocat")
         assertThat(identity.avatarUrl).isEqualTo("https://avatars.example/octocat.png")

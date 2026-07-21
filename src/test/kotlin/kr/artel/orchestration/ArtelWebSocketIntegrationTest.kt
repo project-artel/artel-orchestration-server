@@ -14,7 +14,7 @@ import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClien
 import reactor.core.publisher.Mono
 import kr.artel.orchestration.sdk.service.AgentClient
 import kr.artel.orchestration.auth.service.JwtService
-import kr.artel.orchestration.auth.service.OAuthIdentity
+import kr.artel.orchestration.auth.service.AuthenticatedUser
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.mockito.Mockito
 import reactor.core.publisher.Sinks
@@ -110,9 +110,9 @@ class ArtelWebSocketIntegrationTest {
         assertThat(unauthorizedStatus?.value()).isEqualTo(401)
 
         val token = jwtService.issue(
-            OAuthIdentity(
+            AuthenticatedUser(
+                userId = "1042",
                 provider = "github",
-                providerUserId = "42",
                 login = "octocat",
                 displayName = "The Octocat",
                 avatarUrl = null

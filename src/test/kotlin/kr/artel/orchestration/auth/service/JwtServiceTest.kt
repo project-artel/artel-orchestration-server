@@ -32,9 +32,9 @@ class JwtServiceTest {
         )
 
         val token = service.issue(
-            OAuthIdentity(
+            AuthenticatedUser(
+                userId = "1042",
                 provider = "github",
-                providerUserId = "42",
                 login = "octocat",
                 displayName = "The Octocat",
                 avatarUrl = "https://avatars.example/octocat.png"
@@ -43,23 +43,24 @@ class JwtServiceTest {
         val jwt = securityConfig.jwtDecoder(properties).decode(token).block()
 
         assertThat(jwt).isNotNull
-        assertThat(jwt?.subject).isEqualTo("github:42")
+        // sub는 제공자와 무관한 Artel 사용자 id다.
+        assertThat(jwt?.subject).isEqualTo("1042")
         assertThat(jwt?.getClaimAsString("provider")).isEqualTo("github")
         assertThat(jwt?.getClaimAsString("login")).isEqualTo("octocat")
         assertThat(jwt?.expiresAt?.epochSecond)
             .isEqualTo(now.plus(Duration.ofMinutes(15)).epochSecond)
     }
 
-    private val identity = OAuthIdentity(
+    private val user = AuthenticatedUser(
+        userId = "1042",
         provider = "github",
-        providerUserId = "42",
         login = "octocat",
         displayName = "The Octocat",
         avatarUrl = null
     )
 
     private fun issueWith(props: AuthProperties, clock: Clock): String =
-        JwtService(securityConfig.jwtEncoder(props), props, clock).issue(identity)
+        JwtService(securityConfig.jwtEncoder(props), props, clock).issue(user)
 
     @Test
     fun `rejects an expired token`() {
