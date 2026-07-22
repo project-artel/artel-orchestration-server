@@ -1,6 +1,12 @@
 package kr.artel.orchestration
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.game.entity.GameInstanceEntity
+import kr.artel.orchestration.game.entity.GamePlatform
+import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.project.dto.Genre
+import kr.artel.orchestration.project.entity.ProjectEntity
+import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.sdk.dto.*
 import kr.artel.orchestration.sdk.service.GameStateTransformer
 import org.assertj.core.api.Assertions.assertThat
@@ -23,6 +29,7 @@ import reactor.core.publisher.Sinks
 import org.springframework.test.context.ActiveProfiles
 import java.net.URI
 import java.time.Duration
+import java.time.Instant
 import java.util.*
 
 @ActiveProfiles("test")
@@ -44,6 +51,40 @@ class ArtelWebSocketIntegrationTest {
 
     @Autowired
     private lateinit var oauthUserService: OAuthUserService
+
+    @Autowired
+    private lateinit var projectRepository: ProjectRepository
+
+    @Autowired
+    private lateinit var instanceRepository: GameInstanceRepository
+
+    /**
+     * 웹소켓 인증이 인메모리 목록이 아니라 DB의 게임 인스턴스를 보게 되면서, 연결 전에 실제
+     * 행이 있어야 한다. 프로젝트까지 함께 만드는 이유는 인스턴스 조회가 프로젝트의 삭제
+     * 여부를 조인으로 확인하기 때문이다.
+     */
+    private fun createGameInstance(): GameInstanceEntity {
+        val now = Instant.now()
+        val project = projectRepository.save(
+            ProjectEntity(
+                name = "웹소켓 테스트 프로젝트",
+                genre = Genre.OTHER.name,
+                createdAt = now,
+                updatedAt = now
+            )
+        ).block()!!
+
+        return instanceRepository.save(
+            GameInstanceEntity(
+                projectId = requireNotNull(project.id),
+                name = "웹소켓 테스트 인스턴스",
+                platform = GamePlatform.UNITY.name,
+                instanceKey = UUID.randomUUID().toString().uppercase().take(23),
+                createdAt = now,
+                updatedAt = now
+            )
+        ).block()!!
+    }
 
     @Suppress("UNCHECKED_CAST")
     private fun <T> anyKotlin(type: Class<T>): T {
@@ -281,23 +322,13 @@ class ArtelWebSocketIntegrationTest {
      */
     @Test
     fun testWebSocketActionForwardingFlow() {
-        val testSdkId = UUID.randomUUID().toString()
+        val instance = createGameInstance()
+        val instanceId = requireNotNull(instance.id)
         val webClient = WebClient.create("http://localhost:$port")
 
-        // 1. REST API를 이용해 테스트할 임의의 sdkId를 승인 목록에 등록
-        val registrationResponse = webClient.post()
-            .uri("/api/sdkId")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(SdkIdRegistrationRequest(testSdkId))
-            .retrieve()
-            .toEntity(String::class.java)
-            .block(Duration.ofSeconds(5))
-
-        assertThat(registrationResponse?.statusCode?.is2xxSuccessful).isTrue()
-
-        // 2. 웹소켓 모킹 클라이언트(Mock SDK Client) 구동 및 연결 시도
+        // 1. 웹소켓 모킹 클라이언트(Mock SDK Client) 구동 및 연결 시도
         val wsClient = ReactorNettyWebSocketClient()
-        val wsUri = URI("ws://localhost:$port/ws/sdk?sdkId=$testSdkId")
+        val wsUri = URI("ws://localhost:$port/ws/sdk?instanceKey=${instance.instanceKey}")
         val actionReceivedLatch = Sinks.one<ActionResponseDto>()
 
         val clientSessionMono = wsClient.execute(wsUri) { session ->
@@ -333,7 +364,7 @@ class ArtelWebSocketIntegrationTest {
         )
 
         val actionResponse = webClient.post()
-            .uri("/api/orchestration/action/$testSdkId")
+            .uri("/api/orchestration/action/$instanceId")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(actionPayload)
             .retrieve()
@@ -370,8 +401,7 @@ class ArtelWebSocketIntegrationTest {
      */
     @Test
     fun testWebSocketActionResultForwardingFlow() {
-        val testSdkId = UUID.randomUUID().toString()
-        val webClient = WebClient.create("http://localhost:$port")
+        val instance = createGameInstance()
 
         // 1. AgentClient.sendResult 모킹 및 감시
         val resultReceivedLatch = Sinks.one<String>()
@@ -381,20 +411,9 @@ class ArtelWebSocketIntegrationTest {
             Mono.just("mocked")
         }
 
-        // 2. sdkId 등록
-        val registrationResponse = webClient.post()
-            .uri("/api/sdkId")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(SdkIdRegistrationRequest(testSdkId))
-            .retrieve()
-            .toEntity(String::class.java)
-            .block(Duration.ofSeconds(5))
-
-        assertThat(registrationResponse?.statusCode?.is2xxSuccessful).isTrue()
-
-        // 3. 웹소켓 클라이언트 연결 및 결과 전송
+        // 2. 웹소켓 클라이언트 연결 및 결과 전송
         val wsClient = ReactorNettyWebSocketClient()
-        val wsUri = URI("ws://localhost:$port/ws/sdk?sdkId=$testSdkId")
+        val wsUri = URI("ws://localhost:$port/ws/sdk?instanceKey=${instance.instanceKey}")
 
         val clientSessionMono = wsClient.execute(wsUri) { session ->
             val resultPayload = """

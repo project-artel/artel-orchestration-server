@@ -37,7 +37,9 @@ class DatabaseConnectionTest {
             "oauth_identity",
             "project",
             "project_member",
-            "project_document"
+            "project_document",
+            "game_instance",
+            "game_build"
         )
         for (table in tables) {
             val count = databaseClient.sql("SELECT COUNT(*) FROM $table")

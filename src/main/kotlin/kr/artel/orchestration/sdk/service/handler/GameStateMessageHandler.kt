@@ -22,14 +22,14 @@ class GameStateMessageHandler(
 
     override val messageType: String = "GAME_STATE"
 
-    override fun handle(sdkId: String, payloadText: String, session: WebSocketSession): Mono<Void> {
+    override fun handle(instanceId: String, payloadText: String, session: WebSocketSession): Mono<Void> {
         return Mono.fromCallable {
             val sdkGameState = objectMapper.readValue(payloadText, SdkGameState::class.java)
             val agentGameState = GameStateTransformer.toAgentGameState(sdkGameState)
             sdkGameState to agentGameState
         }.flatMap { (sdkGameState, agentGameState) ->
             val compactJson = objectMapper.writeValueAsString(agentGameState)
-            logger.info("게임 상태 수신 및 정제 완료 [sdkId: $sdkId]: 씬=${agentGameState.scene}, observables 수=${agentGameState.observables.size}, interactables 수=${agentGameState.interactables.size}")
+            logger.info("게임 상태 수신 및 정제 완료 [instanceId: $instanceId]: 씬=${agentGameState.scene}, observables 수=${agentGameState.observables.size}, interactables 수=${agentGameState.interactables.size}")
             logger.info("정제 결과 JSON: $compactJson")
 
             agentClient.sendState(agentGameState)

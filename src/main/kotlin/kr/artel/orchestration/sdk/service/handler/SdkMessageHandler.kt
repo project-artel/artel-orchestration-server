@@ -15,9 +15,9 @@ interface SdkMessageHandler {
     /**
      * 메시지를 처리하는 비동기 비즈니스 로직
      *
-     * @param sdkId 클라이언트의 고유 식별자
+     * @param instanceId 메시지를 보낸 게임 인스턴스의 id
      * @param payloadText 웹소켓으로 수신한 원본 JSON 텍스트
      * @param session 현재 연결된 웹소켓 세션 객체
      */
-    fun handle(sdkId: String, payloadText: String, session: WebSocketSession): Mono<Void>
+    fun handle(instanceId: String, payloadText: String, session: WebSocketSession): Mono<Void>
 }

@@ -19,8 +19,8 @@ Then use:
 
 ## Documented API surface
 
-- `POST /api/sdkId` — register an SDK client ID before session approval.
-- `POST /api/orchestration/action/{sdkId}` — deliver an Agent action list to a connected SDK client.
+- `POST /api/sdk/registrations` — register a running SDK with the instance key issued by the dashboard, and report the game version it was built from. Unauthenticated: the key is the only credential.
+- `POST /api/orchestration/action/{instanceId}` — deliver an Agent action list to a connected game instance.
 - `GET /api/test-scenario/{clientId}/stream` — subscribe to test-scenario events over SSE.
 - `POST /api/test-scenario/{clientId}/message` — relay a user message to the Agent server.
 - `GET /api/auth/me` — read the signed-in user.
@@ -34,12 +34,28 @@ Then use:
 - `POST /api/projects/{projectId}/documents` — register an uploaded object as the next document version.
 - `GET /api/projects/{projectId}/documents` — list document versions, newest first.
 - `GET /api/projects/{projectId}/documents/{documentId}/download-url` — mint a short-lived download URL.
+- `GET /api/projects/{projectId}/game-instances` — list the project's SDK installations.
+- `POST /api/projects/{projectId}/game-instances` — create one and issue its permanent instance key.
+- `PATCH /api/projects/{projectId}/game-instances/{instanceId}` — rename it. The key never changes.
+- `DELETE /api/projects/{projectId}/game-instances/{instanceId}` — soft-delete it; its key stops working immediately.
+- `GET /api/projects/{projectId}/game-builds` — list the versions SDKs have reported, newest first.
+- `PATCH /api/projects/{projectId}/game-builds/{buildId}` — edit `label` and `notes`. `version` is observed, not authored, and cannot be changed.
 
 Planning-document bytes never pass through this server. The client uploads
 directly to S3 with the presigned URL and then calls the register endpoint; a
 document does not exist until that registration succeeds.
 
+Game builds are never created through the API. They appear when an SDK reports a
+version it has not reported before, which is why there is no create or delete
+endpoint for them.
+
 WebSocket communication at `/ws/sdk` is not an HTTP request/response contract. Keep its message format documented separately; OpenAPI only covers the REST endpoints.
+
+The socket authenticates with the same instance key, passed as the `instanceKey`
+query parameter. The server closes with `4001` when the key matches no live
+instance and with `4002` when that instance already has a connection — one
+instance holds one socket, and the newcomer is refused rather than displacing
+the incumbent.
 
 ## Verification
 
