@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testscenario.controller
 
 import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.testscenario.dto.ApproveScenarioRequest
 import kr.artel.orchestration.testscenario.dto.CreateScenarioRequest
 import kr.artel.orchestration.testscenario.dto.CreateScenarioResponse
 import kr.artel.orchestration.testscenario.dto.MessageResponse
@@ -15,6 +16,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.http.codec.ServerSentEvent
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -109,6 +111,29 @@ class TestScenarioController(
             .onErrorResume({ it !is ResponseStatusException }) { error ->
                 Mono.just(ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(error.message))
             }
+    }
+
+    /** 시나리오를 승인(확정)한다: 최종 draft 저장 + 채팅 부산물 정리 + Agent WS/SSE 종료. */
+    @PostMapping("/{testScenarioId}/approve")
+    fun approve(
+        @PathVariable testScenarioId: Long,
+        @RequestBody(required = false) request: ApproveScenarioRequest?,
+        @AuthenticationPrincipal jwt: Jwt
+    ): Mono<ResponseEntity<String>> {
+        val appUserId = requireUser(jwt)
+        return service.approve(appUserId, testScenarioId, request?.draft)
+            .then(Mono.just(ResponseEntity.ok("승인 완료")))
+    }
+
+    /** 시나리오를 삭제한다(Decline): 시나리오+채팅 삭제 + Agent WS/SSE 종료. */
+    @DeleteMapping("/{testScenarioId}")
+    fun delete(
+        @PathVariable testScenarioId: Long,
+        @AuthenticationPrincipal jwt: Jwt
+    ): Mono<ResponseEntity<Void>> {
+        val appUserId = requireUser(jwt)
+        return service.delete(appUserId, testScenarioId)
+            .then(Mono.just(ResponseEntity.noContent().build<Void>()))
     }
 
     /** 유효한 사용자 토큰이 아니면 401. */

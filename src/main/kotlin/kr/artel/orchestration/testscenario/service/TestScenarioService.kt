@@ -93,6 +93,43 @@ class TestScenarioService(
             .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
             .flatMapMany { streamManager.stream(sessionKey(appUserId, testScenarioId)) }
 
+    /**
+     * 시나리오를 승인(확정)한다. 최종 draft가 있으면 payload로 저장하고, 편집 부산물인 채팅 스레드를 정리한 뒤
+     * Agent 세션(WS)과 SSE를 닫는다. 시나리오 자체는 남는다. 접근 불가면 404.
+     */
+    fun approve(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft?): Mono<Void> =
+        accessService.accessibleScenario(testScenarioId, appUserId)
+            .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
+            .flatMap { entity ->
+                val persist: Mono<Void> = if (draft != null) {
+                    scenarioRepository.save(
+                        entity.copy(payload = Json.of(objectMapper.writeValueAsString(draft)))
+                    ).then()
+                } else {
+                    Mono.empty()
+                }
+                persist
+                    .then(messageRepository.deleteByTestScenarioIdAndAppUserId(testScenarioId, appUserId))
+                    .then(Mono.fromRunnable<Void>(closeSession(appUserId, testScenarioId)))
+            }
+
+    /**
+     * 시나리오를 삭제한다(Decline). 시나리오와 그에 딸린 채팅(FK ON DELETE CASCADE)을 제거하고
+     * Agent 세션(WS)과 SSE를 닫는다. 접근 불가면 404.
+     */
+    fun delete(appUserId: Long, testScenarioId: Long): Mono<Void> =
+        accessService.accessibleScenario(testScenarioId, appUserId)
+            .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
+            .flatMap { scenarioRepository.deleteById(testScenarioId) }
+            .then(Mono.fromRunnable<Void>(closeSession(appUserId, testScenarioId)))
+
+    /** Agent WS 세션과 SSE 스트림을 함께 닫는 정리 동작. */
+    private fun closeSession(appUserId: Long, testScenarioId: Long): Runnable = Runnable {
+        val key = sessionKey(appUserId, testScenarioId)
+        agentService.closeSession(key)
+        streamManager.complete(key)
+    }
+
     /** 사용자 입력을 Agent로 중계한다. 접근 불가면 404. */
     fun relay(appUserId: Long, testScenarioId: Long, message: TestScenarioMessage): Mono<Void> =
         accessService.accessibleScenario(testScenarioId, appUserId)
