@@ -1,4 +1,4 @@
--- V3__create_test_scenario.sql
+-- V5__create_test_scenario.sql
 -- TestScenario 챗봇이 생성한 시나리오(step 분리 결과)를 저장하는 테이블.
 --
 -- 한 프로젝트는 여러 시나리오를 가질 수 있다(Project 1:N TestScenario) — UNIQUE 없음.

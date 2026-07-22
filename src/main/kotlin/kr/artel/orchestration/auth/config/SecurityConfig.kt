@@ -67,10 +67,6 @@ class SecurityConfig {
                 // SDK가 instanceKey로 스스로를 등록하는 경로다. 게임을 실행하는 쪽에는
                 // 로그인 세션이 없으므로 엔드유저 JWT로 막을 수 없다.
                 "/api/sdk/registrations",
-                "/api/orchestration/**",
-                // SDK/Agent 경로와 같은 신뢰 경계에 있다. 엔드유저 JWT 보호 대상이 아니다.
-                "/api/test-scenario/**"
-              
                 "/api/orchestration/**"
             ).permitAll()
             it.pathMatchers("/api/auth/**").authenticated()
