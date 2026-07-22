@@ -18,8 +18,8 @@ class ActionResultMessageHandler(
 
     override val messageType: String = "ACTION_RESULT"
 
-    override fun handle(sdkId: String, payloadText: String, session: WebSocketSession): Mono<Void> {
-        logger.info("액션 결과 수신 [sdkId: $sdkId]: $payloadText")
+    override fun handle(instanceId: String, payloadText: String, session: WebSocketSession): Mono<Void> {
+        logger.info("액션 결과 수신 [instanceId: $instanceId]: $payloadText")
         
         return agentClient.sendResult(payloadText)
             .onErrorResume { err ->

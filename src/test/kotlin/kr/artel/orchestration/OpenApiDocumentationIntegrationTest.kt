@@ -24,10 +24,27 @@ class OpenApiDocumentationIntegrationTest {
             .block(Duration.ofSeconds(5))
 
         assertThat(response).contains("Artel Orchestration Server API")
-        assertThat(response).contains("/api/sdkId")
-        assertThat(response).contains("/api/orchestration/action/{sdkId}")
-        assertThat(response).contains("Register an SDK client ID")
-        assertThat(response).contains("Deliver agent actions to an SDK client")
+        assertThat(response).contains("/api/sdk/registrations")
+        assertThat(response).contains("/api/orchestration/action/{instanceId}")
+        assertThat(response).contains("SDK 인스턴스 등록")
+        assertThat(response).contains("Deliver agent actions to a game instance")
+    }
+
+    @Test
+    fun `publishes the game instance and build endpoints`() {
+        val response = WebClient.create("http://localhost:$port")
+            .get()
+            .uri("/v3/api-docs")
+            .retrieve()
+            .bodyToMono(String::class.java)
+            .block(Duration.ofSeconds(5))
+
+        assertThat(response).contains("/api/projects/{projectId}/game-instances")
+        assertThat(response).contains("/api/projects/{projectId}/game-instances/{instanceId}")
+        assertThat(response).contains("/api/projects/{projectId}/game-builds")
+        assertThat(response).contains("/api/projects/{projectId}/game-builds/{buildId}")
+        assertThat(response).contains("게임 인스턴스 생성")
+        assertThat(response).contains("게임 빌드 설명 수정")
     }
 
     @Test

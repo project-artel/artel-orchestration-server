@@ -6,10 +6,3 @@ package kr.artel.orchestration.sdk.dto
 data class BaseMessage(
     val type: String
 )
-
-/**
- * sdkId 등록 요청 시 사용하는 DTO
- */
-data class SdkIdRegistrationRequest(
-    val sdkId: String
-)
