@@ -1,19 +1,13 @@
 package kr.artel.orchestration.testscenario.controller
 
-import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
-import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.testscenario.dto.CreateScenarioRequest
 import kr.artel.orchestration.testscenario.dto.CreateScenarioResponse
 import kr.artel.orchestration.testscenario.dto.MessageResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
+import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.dto.TestScenarioMessage
-import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
-import kr.artel.orchestration.testscenario.repository.TestScenarioMessageRepository
-import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
-import kr.artel.orchestration.testscenario.service.TestScenarioAgentService
-import kr.artel.orchestration.testscenario.service.TestScenarioStreamManager
+import kr.artel.orchestration.testscenario.service.TestScenarioService
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
@@ -33,85 +27,60 @@ import reactor.core.publisher.Mono
 /**
  * QA 대시보드(React)와 통신하는 TestScenario 챗봇 REST 컨트롤러(외부/인증된 요청).
  *
- * 흐름: 시나리오를 먼저 생성(POST /)하여 testScenarioId를 받고, 그 id로 SSE/메시지 세션을 진행한다.
- * 라우팅 키는 `userId:testScenarioId`다. userId는 JWT에서, testScenarioId는 경로 변수에서 얻는다.
+ * 컨트롤러는 얇게 유지한다: JWT에서 userId를 추출하고, 비즈니스 로직은 [TestScenarioService]에 위임하며,
+ * HTTP 상태코드 매핑만 담당한다. 라우팅 키(userId:testScenarioId) 조립·저장/조회는 서비스가 처리한다.
  */
 @RestController
 @RequestMapping("/api/test-scenario")
 class TestScenarioController(
-    private val agentService: TestScenarioAgentService,
-    private val streamManager: TestScenarioStreamManager,
-    private val scenarioRepository: TestScenarioRepository,
-    private val messageRepository: TestScenarioMessageRepository,
-    private val sessionUserResolver: SessionUserResolver,
-    private val objectMapper: ObjectMapper
+    private val service: TestScenarioService,
+    private val sessionUserResolver: SessionUserResolver
 ) {
 
-    /**
-     * 새 시나리오를 생성하고 testScenarioId를 반환한다. 이후 SSE/메시지 세션은 이 id로 진행된다.
-     * payload는 아직 내용이 없으므로 빈 JSON으로 초기화하고, Agent 응답으로 채워진다.
-     */
+    /** 새 시나리오를 생성하고 testScenarioId를 반환한다. */
     @PostMapping
     fun create(
         @RequestBody request: CreateScenarioRequest,
         @AuthenticationPrincipal jwt: Jwt
     ): Mono<ResponseEntity<CreateScenarioResponse>> {
         requireUser(jwt)
-        return scenarioRepository.save(
-            TestScenarioEntity(projectId = request.projectId, payload = Json.of("{}"))
-        ).map { ResponseEntity.ok(CreateScenarioResponse(it.id!!)) }
+        return service.createScenario(request.projectId)
+            .map { ResponseEntity.ok(CreateScenarioResponse(it)) }
     }
 
-    /**
-     * 시나리오 단건 조회. payload(ScenarioDraft, JSONB)를 반환하여 FE가 canvas를 렌더한다(재방문 복원).
-     */
+    /** 시나리오 단건 조회(payload = ScenarioDraft). FE가 canvas 렌더/재방문 복원에 사용. */
     @GetMapping("/{testScenarioId}")
     fun getScenario(
         @PathVariable testScenarioId: Long,
         @AuthenticationPrincipal jwt: Jwt
     ): Mono<ResponseEntity<ScenarioResponse>> {
         requireUser(jwt)
-        return scenarioRepository.findById(testScenarioId)
-            .map { entity ->
-                ResponseEntity.ok(
-                    ScenarioResponse(
-                        testScenarioId = entity.id!!,
-                        projectId = entity.projectId,
-                        payload = objectMapper.readTree(entity.payload.asString())
-                    )
-                )
-            }
+        return service.getScenario(testScenarioId)
+            .map { ResponseEntity.ok(it) }
             .defaultIfEmpty(ResponseEntity.notFound().build())
     }
 
-    /**
-     * 채팅 스레드 조회(사용자별 프라이빗). 재방문 시 본인 대화를 시간순으로 복원한다.
-     */
+    /** 사용자별 프라이빗 채팅 스레드 조회(재방문 복원). */
     @GetMapping("/{testScenarioId}/messages")
     fun getMessages(
         @PathVariable testScenarioId: Long,
         @AuthenticationPrincipal jwt: Jwt
     ): Flux<MessageResponse> {
         val appUserId = requireUser(jwt)
-        return messageRepository
-            .findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(testScenarioId, appUserId)
-            .map { MessageResponse(role = it.role, content = it.content, createdAt = it.createdAt) }
+        return service.getMessages(testScenarioId, appUserId)
     }
 
-    /**
-     * FE가 Agent 응답/폴백 질문을 실시간으로 수신하기 위해 구독하는 SSE 스트림.
-     */
+    /** Agent 응답을 실시간 수신하는 SSE 스트림(타입화된 ScenarioStreamEvent). */
     @GetMapping("/{testScenarioId}/stream", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun stream(
         @PathVariable testScenarioId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): Flux<ServerSentEvent<JsonNode>> {
-        return streamManager.stream(sessionKey(jwt, testScenarioId))
+    ): Flux<ServerSentEvent<ScenarioStreamEvent>> {
+        val appUserId = requireUser(jwt)
+        return service.stream(appUserId, testScenarioId)
     }
 
-    /**
-     * FE로부터 자연어 메시지를 HTTP로 수신하여, Agent 서버로는 WebSocket으로 중계한다.
-     */
+    /** 사용자 자연어 메시지를 수신하여 Agent로 중계한다(→ WebSocket). */
     @PostMapping("/{testScenarioId}/message")
     fun relayMessage(
         @PathVariable testScenarioId: Long,
@@ -119,17 +88,12 @@ class TestScenarioController(
         @AuthenticationPrincipal jwt: Jwt
     ): Mono<ResponseEntity<String>> {
         val appUserId = requireUser(jwt)
-        val sessionKey = "$appUserId:$testScenarioId"
-        return agentService.sendMessage(sessionKey, testScenarioId, appUserId, message.testScenarioMessage, message.draft)
+        return service.relay(appUserId, testScenarioId, message)
             .then(Mono.just(ResponseEntity.ok("메시지 전송 완료")))
             .onErrorResume { error ->
                 Mono.just(ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(error.message))
             }
     }
-
-    /** JWT의 사용자와 testScenarioId를 결합한 세션 키. */
-    private fun sessionKey(jwt: Jwt, testScenarioId: Long): String =
-        "${requireUser(jwt)}:$testScenarioId"
 
     /** 유효한 사용자 토큰이 아니면 401. */
     private fun requireUser(jwt: Jwt): Long =

@@ -1,7 +1,6 @@
 package kr.artel.orchestration.testscenario.dto
 
 import com.fasterxml.jackson.annotation.JsonProperty
-import com.fasterxml.jackson.databind.JsonNode
 
 /**
  * Agent 서버 `POST /sessions` 요청 본문(시나리오 생성 세션 열기).
@@ -31,6 +30,6 @@ data class AgentSessionOpenResponse(
 data class AgentTurnMessage(
     val type: String = "turn",
     @JsonProperty("user_input") val userInput: String,
-    val draft: JsonNode? = null,
+    val draft: ScenarioDraft? = null,
     val model: String? = null
 )

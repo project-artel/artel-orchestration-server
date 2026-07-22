@@ -1,11 +1,12 @@
 package kr.artel.orchestration.testscenario.service
 
-import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
+import kr.artel.orchestration.testscenario.dto.ScenarioDraft
+import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.entity.TestScenarioMessageEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioMessageRepository
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
@@ -58,7 +59,7 @@ class TestScenarioAgentService(
         testScenarioId: Long,
         appUserId: Long,
         userInput: String,
-        draft: JsonNode? = null
+        draft: ScenarioDraft? = null
     ): Mono<Void> {
         val existing = sessions[sessionKey]
         val send = if (existing != null) sendTurn(sessionKey, existing, userInput, draft)
@@ -93,7 +94,7 @@ class TestScenarioAgentService(
         sessionKey: String,
         session: AgentSession,
         userInput: String,
-        draft: JsonNode?
+        draft: ScenarioDraft?
     ): Mono<Void> {
         return Mono.fromCallable {
             val json = objectMapper.writeValueAsString(AgentTurnMessage(userInput = userInput, draft = draft))
@@ -136,24 +137,18 @@ class TestScenarioAgentService(
 
     private fun handleInbound(sessionKey: String, payloadText: String) {
         try {
-            val node = objectMapper.readTree(payloadText)
-            val type = node.get("type")?.asText() ?: "result"
-
-            // Agent 응답을 그대로 FE의 SSE 스트림으로 중계한다(type=result|error).
-            streamManager.emit(sessionKey, type, node)
+            // Agent 응답을 타입화한 봉투로 파싱해 SSE로 중계한다(type=result|error).
+            val event = objectMapper.readValue(payloadText, ScenarioStreamEvent::class.java)
+            streamManager.emit(sessionKey, event)
 
             val session = sessions[sessionKey]
-            if (type == "result" && session != null) {
+            if (event.type == "result" && session != null) {
                 // Agent 메시지를 ASSISTANT 채팅으로 저장.
-                val message = node.get("message")?.asText() ?: ""
-                saveMessage(session.testScenarioId, session.appUserId, "ASSISTANT", message)
+                saveMessage(session.testScenarioId, session.appUserId, "ASSISTANT", event.message ?: "")
                     .subscribe({}, { err -> logger.error("ASSISTANT 메시지 저장 실패 [sessionKey=$sessionKey]: ${err.message}") })
 
                 // scenario를 test_scenario에 저장(UPDATE).
-                val scenario = node.get("scenario")
-                if (scenario != null && !scenario.isNull) {
-                    persistScenario(sessionKey, session.testScenarioId, scenario)
-                }
+                event.scenario?.let { persistScenario(sessionKey, session.testScenarioId, it) }
             }
         } catch (e: Exception) {
             logger.error("Agent WS 수신 메시지 처리 실패 [sessionKey=$sessionKey]: ${e.message}", e)
@@ -172,8 +167,8 @@ class TestScenarioAgentService(
         ).then()
     }
 
-    /** scenario(JSONB)를 testScenarioId로 UPDATE한다. 시나리오는 세션 전에 이미 생성돼 있다. */
-    private fun persistScenario(sessionKey: String, testScenarioId: Long, scenario: JsonNode) {
+    /** scenario를 JSONB로 직렬화해 testScenarioId로 UPDATE한다. 시나리오는 세션 전에 이미 생성돼 있다. */
+    private fun persistScenario(sessionKey: String, testScenarioId: Long, scenario: ScenarioDraft) {
         val payloadJson = Json.of(objectMapper.writeValueAsString(scenario))
         scenarioRepository.findById(testScenarioId)
             .flatMap { existing -> scenarioRepository.save(existing.copy(payload = payloadJson)) }

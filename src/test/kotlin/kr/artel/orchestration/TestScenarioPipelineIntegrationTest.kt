@@ -1,6 +1,5 @@
 package kr.artel.orchestration
 
-import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
@@ -8,6 +7,7 @@ import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.testscenario.dto.CreateScenarioResponse
 import kr.artel.orchestration.testscenario.dto.MessageResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
+import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.repository.TestScenarioMessageRepository
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -62,7 +62,7 @@ class TestScenarioPipelineIntegrationTest {
 
     private fun webClient() = WebClient.create("http://localhost:$port")
 
-    private val sseType = object : ParameterizedTypeReference<ServerSentEvent<JsonNode>>() {}
+    private val sseType = object : ParameterizedTypeReference<ServerSentEvent<ScenarioStreamEvent>>() {}
 
     companion object {
         private lateinit var mockAgent: DisposableServer
@@ -142,7 +142,7 @@ class TestScenarioPipelineIntegrationTest {
     }
 
     private fun subscribeSse(
-        client: WebClient, testScenarioId: Long, token: String, onEvent: (ServerSentEvent<JsonNode>) -> Unit
+        client: WebClient, testScenarioId: Long, token: String, onEvent: (ServerSentEvent<ScenarioStreamEvent>) -> Unit
     ) = client.get()
         .uri("/api/test-scenario/$testScenarioId/stream")
         .accept(MediaType.TEXT_EVENT_STREAM)
@@ -179,7 +179,7 @@ class TestScenarioPipelineIntegrationTest {
         val (appUserId, token) = issueUser("user-$projectId")
         val scenarioId = createScenario(client, token, projectId)
 
-        val eventLatch = Sinks.one<ServerSentEvent<JsonNode>>()
+        val eventLatch = Sinks.one<ServerSentEvent<ScenarioStreamEvent>>()
         val disposable = subscribeSse(client, scenarioId, token) { eventLatch.tryEmitValue(it) }
         Thread.sleep(1000)
 
@@ -189,7 +189,7 @@ class TestScenarioPipelineIntegrationTest {
         val event = eventLatch.asMono().block(Duration.ofSeconds(5))
         assertThat(event).isNotNull
         assertThat(event?.event()).isEqualTo("result")
-        assertThat(event?.data()?.get("scenario")?.get("title")?.asText()).isEqualTo("튜토리얼 시나리오")
+        assertThat(event?.data()?.scenario?.title).isEqualTo("튜토리얼 시나리오")
 
         // 세션 오픈 요청에 첫 user_input이 실렸는지
         Thread.sleep(300)
@@ -230,8 +230,8 @@ class TestScenarioPipelineIntegrationTest {
             .retrieve()
             .bodyToMono(ScenarioResponse::class.java)
             .block(Duration.ofSeconds(5))!!
-        assertThat(scenario.payload.get("title").asText()).isEqualTo("튜토리얼 시나리오")
-        assertThat(scenario.payload.get("steps")).isNotNull
+        assertThat(scenario.payload.title).isEqualTo("튜토리얼 시나리오")
+        assertThat(scenario.payload.steps).isNotEmpty
 
         // 재방문 조회 엔드포인트 — 사용자 프라이빗 채팅
         val fetched = client.get()
