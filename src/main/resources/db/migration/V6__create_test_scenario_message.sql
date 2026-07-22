@@ -1,4 +1,4 @@
--- V4__create_test_scenario_message.sql
+-- V6__create_test_scenario_message.sql
 -- TestScenario 작성 중 오간 채팅 메시지를 사용자별 프라이빗 스레드로 저장한다.
 --
 -- 대화는 공유되지 않고 각 사용자에게만 보인다: 조회는 (test_scenario_id, app_user_id)로 스코프된다.
