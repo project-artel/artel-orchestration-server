@@ -128,7 +128,9 @@ class SecurityConfig {
     @Bean
     fun corsConfigurationSource(properties: AuthProperties): CorsConfigurationSource {
         val configuration = CorsConfiguration().apply {
-            allowedOrigins = listOf(properties.frontendOrigin)
+            // allowCredentials=true에서는 allowedOrigins="*"가 금지되므로, 와일드카드(https://*.artel.kr)까지
+            // 지원하도록 allowedOriginPatterns를 사용한다. stage/prod/프리뷰 등 복수 출처를 설정에서 주입한다.
+            allowedOriginPatterns = properties.corsAllowedOrigins
             allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
             allowedHeaders = listOf(HttpHeaders.CONTENT_TYPE, HttpHeaders.AUTHORIZATION)
             allowCredentials = true
