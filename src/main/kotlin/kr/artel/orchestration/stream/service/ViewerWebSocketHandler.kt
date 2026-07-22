@@ -1,0 +1,179 @@
+package kr.artel.orchestration.stream.service
+
+import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.sdk.service.SessionManager
+import kr.artel.orchestration.stream.config.StreamProperties
+import kr.artel.orchestration.stream.dto.SignalEnvelope
+import kr.artel.orchestration.stream.dto.StreamMessageType
+import kr.artel.orchestration.stream.dto.StreamReadyMessage
+import org.slf4j.LoggerFactory
+import org.springframework.security.core.Authentication
+import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.stereotype.Component
+import org.springframework.web.reactive.socket.CloseStatus
+import org.springframework.web.reactive.socket.WebSocketHandler
+import org.springframework.web.reactive.socket.WebSocketSession
+import org.springframework.web.util.UriComponentsBuilder
+import reactor.core.publisher.Mono
+import java.util.UUID
+import java.util.concurrent.TimeoutException
+
+private const val INSTANCE_ID_PARAM = "instanceId"
+
+/**
+ * 브라우저가 게임 화면을 보기 위해 붙는 웹소켓.
+ *
+ * 이 경로는 `SecurityConfig`의 permitAll 목록에 없다. `anyExchange().authenticated()`가 이미
+ * 덮으므로 핸드셰이크는 다른 브라우저 호출과 같은 `artel_access_token` 쿠키로 인증된다.
+ * 토큰을 쿼리스트링으로 받지 않는 이유는 그렇게 하면 자격증명이 서버 접근 로그에 남기
+ * 때문이다.
+ *
+ * 미디어는 여기를 지나지 않는다. 이 핸들러가 하는 일은 SDP와 ICE를 게임 쪽 소켓으로 옮기는
+ * 것뿐이다.
+ */
+@Component
+class ViewerWebSocketHandler(
+    private val objectMapper: ObjectMapper,
+    private val properties: StreamProperties,
+    private val instanceRepository: GameInstanceRepository,
+    private val sessionUserResolver: SessionUserResolver,
+    private val sessionManager: SessionManager,
+    private val viewers: ViewerSessionRegistry,
+    private val relay: StreamSignalRelay
+) : WebSocketHandler {
+
+    private val logger = LoggerFactory.getLogger(ViewerWebSocketHandler::class.java)
+
+    override fun handle(session: WebSocketSession): Mono<Void> {
+        val instanceId = instanceIdFrom(session)
+            ?: return session.close(CloseStatus(4003, "Missing or malformed instance id"))
+
+        return userIdFrom(session)
+            .flatMap { userId -> instanceRepository.findAccessibleByIdForMember(instanceId, userId) }
+            // singleOptional로 "찾음/못 찾음"을 값으로 바꾼다. switchIfEmpty를 쓰면 연결이
+            // 정상 종료됐을 때(Mono<Void>는 항상 비어 있다) 거절 경로가 다시 돈다.
+            .singleOptional()
+            .flatMap { found ->
+                if (found.isPresent) {
+                    open(session, instanceId.toString())
+                } else {
+                    logger.warn("뷰어 연결 거부: 접근할 수 없는 인스턴스 - instanceId: $instanceId")
+                    session.close(CloseStatus(4403, "Not a member of the owning project"))
+                }
+            }
+    }
+
+    private fun open(session: WebSocketSession, instanceId: String): Mono<Void> {
+        if (!sessionManager.hasSession(instanceId)) {
+            logger.info("뷰어 연결 거부: 게임이 연결되어 있지 않습니다 - instanceId: $instanceId")
+            return session.close(CloseStatus(4404, "Game is not connected"))
+        }
+
+        val streamId = UUID.randomUUID().toString()
+        val (viewer, displaced) = viewers.admit(instanceId, streamId, session)
+
+        if (displaced != null) {
+            logger.info("뷰어 교체 - instanceId: $instanceId, 밀려난 streamId: ${displaced.streamId}")
+            displaced.session
+                .close(CloseStatus(4009, "Taken over by a newer viewer"))
+                .subscribe()
+        }
+
+        logger.info("뷰어 연결 성공 - instanceId: $instanceId, streamId: $streamId")
+
+        // 임대는 수신 흐름의 타임아웃으로 지킨다. 브라우저가 10초마다 갱신을 보내므로, 그보다
+        // 넉넉한 시간 동안 아무 메시지도 없다는 것은 상대가 사라졌다는 뜻이다. 별도의 청소
+        // 스케줄러를 두지 않는 이유는, 죽은 연결을 알아채는 데 필요한 신호가 이미 여기 있기
+        // 때문이다.
+        val receive = session.receive()
+            .timeout(properties.lease)
+            .flatMap { message -> handleViewerMessage(viewer, message.payloadAsText) }
+            .then()
+            .onErrorResume(TimeoutException::class.java) {
+                logger.info("뷰어 임대 만료 - streamId: $streamId")
+                Mono.empty()
+            }
+            .doOnError { error ->
+                logger.error("뷰어 웹소켓 에러 [streamId: $streamId]: ${error.message}", error)
+            }
+            // 정리는 수신이 끝나는 시점에 건다. 전송 쪽이 끝나기를 기다리는 자리에 두면,
+            // 전송은 세션이 지워지며 큐가 닫혀야 끝나므로 서로를 기다리다 멈춘다.
+            .doFinally {
+                // 자기가 현재 뷰어일 때만 스트림을 멈춘다. 밀려난 세션이 뒤늦게 정리되면서
+                // 중단을 보내면 방금 시작한 새 스트림이 꺼진다.
+                if (viewers.release(viewer)) {
+                    relay.stopStream(instanceId, streamId)
+                        .onErrorResume { Mono.empty() }
+                        .subscribe()
+                }
+                logger.info("뷰어 연결 종료 - instanceId: $instanceId, streamId: $streamId")
+            }
+
+        val prologue = Mono.fromRunnable<Void> {
+            viewers.send(viewer, StreamReadyMessage(streamId, properties.iceServers))
+        }.then(relay.startStream(instanceId, streamId))
+
+        return session.send(viewer.outbound().map(session::textMessage))
+            .and(receive)
+            .and(prologue)
+    }
+
+    /**
+     * 브라우저가 보낸 메시지를 처리한다.
+     *
+     * 갱신은 도착한 것만으로 임대가 연장된다(수신 타임아웃이 다시 시작된다). SDK에도 넘기는
+     * 이유는 SDK가 자기 타이머를 따로 돌리기 때문이다. 서버가 죽어도 게임이 스스로 멈추게
+     * 하려면 그 타이머가 서버 바깥에 있어야 한다.
+     */
+    private fun handleViewerMessage(
+        viewer: ViewerSessionRegistry.ViewerSession,
+        payloadText: String
+    ): Mono<Void> {
+        val envelope = try {
+            objectMapper.readValue(payloadText, SignalEnvelope::class.java)
+        } catch (exception: Exception) {
+            logger.warn("뷰어 메시지 파싱 실패 [streamId: ${viewer.streamId}]: ${exception.message}")
+            return Mono.empty()
+        }
+
+        return when (envelope.type) {
+            StreamMessageType.RENEW ->
+                relay.renewStream(viewer.instanceId, viewer.streamId)
+
+            StreamMessageType.STOP ->
+                viewer.session.close(CloseStatus.NORMAL)
+
+            StreamMessageType.WEBRTC_ANSWER, StreamMessageType.WEBRTC_ICE ->
+                relay.toSdk(viewer, envelope.streamId, payloadText)
+
+            else -> {
+                logger.warn("정의되지 않은 뷰어 메시지 [streamId: ${viewer.streamId}]: ${envelope.type}")
+                Mono.empty()
+            }
+        }.onErrorResume { error ->
+            // 게임이 방금 끊겼다면 중계는 실패한다. 그것 때문에 뷰어 연결까지 끊을 필요는
+            // 없다. 스트림 상태는 SDK가 사라진 것으로 곧 드러난다.
+            logger.warn("뷰어 메시지 처리 실패 [streamId: ${viewer.streamId}]: ${error.message}")
+            Mono.empty()
+        }
+    }
+
+    /**
+     * 토큰이 없거나 사용자 식별자 형식이 아니면 빈 Mono다. 호출자가 거절로 옮긴다.
+     */
+    private fun userIdFrom(session: WebSocketSession): Mono<Long> =
+        session.handshakeInfo.principal
+            .flatMap { principal ->
+                val jwt = (principal as? Authentication)?.principal as? Jwt
+                Mono.justOrEmpty(jwt?.let(sessionUserResolver::resolve)?.userId)
+            }
+
+    private fun instanceIdFrom(session: WebSocketSession): Long? =
+        UriComponentsBuilder.fromUri(session.handshakeInfo.uri)
+            .build()
+            .queryParams
+            .getFirst(INSTANCE_ID_PARAM)
+            ?.toLongOrNull()
+}

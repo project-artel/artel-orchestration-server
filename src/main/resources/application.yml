@@ -30,6 +30,23 @@ artel:
   agent:
     base-url: ${ARTEL_AGENT_BASE_URL:http://localhost:8000}
     ws-base-url: ${ARTEL_AGENT_WS_BASE_URL:ws://localhost:8000}
+  stream:
+    enabled: ${ARTEL_STREAM_ENABLED:true}
+    # 브라우저가 10초마다 갱신을 보낸다. 그보다 짧으면 정상 연결을 잘라낸다.
+    lease-seconds: ${ARTEL_STREAM_LEASE_SECONDS:15}
+    # 쉼표 구분. 후보가 늘수록 연결이 느려지므로 1~2개면 충분하다.
+    # 기본값은 Google의 공개 STUN인데, 이것은 Google이 제공하는 서비스가 아니라 인증을 걸어
+    # 두지 않은 자사 인프라다. 약관도 예고도 없고 실제 위험은 다운이 아니라 rate limit이며,
+    # TURN이 없는 구성에서는 그것이 그냥 연결 실패로 나타난다. 배포 시에는 coturn을
+    # STUN-only로 띄워 여기를 가리키게 한다.
+    stun-urls: ${ARTEL_STUN_URLS:stun:stun.l.google.com:19302}
+    # 대칭 NAT나 UDP를 막는 방화벽에서만 필요하다. 그때는 영상 전체가 중계 서버를 지나간다.
+    # 빈 값은 "없음"으로 읽고 ICE 목록에서 아예 뺀다.
+    turn-url: ${ARTEL_TURN_URL:}
+    turn-username: ${ARTEL_TURN_USERNAME:}
+    turn-credential: ${ARTEL_TURN_CREDENTIAL:}
+    max-width: ${ARTEL_STREAM_MAX_WIDTH:1280}
+    max-framerate: ${ARTEL_STREAM_MAX_FRAMERATE:30}
   auth:
     frontend-url: ${ARTEL_HOME_URL:http://localhost:5173}
     # CORS 허용 origin(콤마 구분). frontend-url은 항상 자동 포함된다. 와일드카드(https://*.artel.kr) 허용.
