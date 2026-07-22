@@ -276,6 +276,49 @@ class TestScenarioPipelineIntegrationTest {
         disposable.dispose()
     }
 
+    /**
+     * 실시간 자동저장(PUT): Agent를 거치지 않은 순수 canvas 편집이 payload로 저장되고,
+     * 응답으로 저장된 payload가 되돌아와 FE가 정합성을 맞출 수 있다. 비참여자는 404.
+     */
+    @Test
+    fun testUpdateAutosavesDraft() {
+        val client = webClient()
+        val (appUserId, token) = issueUser("editor-${projectIdSeq.incrementAndGet()}")
+        val projectId = createMemberProject(appUserId)
+        val scenarioId = createScenario(client, token, projectId)
+
+        // 사용자가 canvas에서 스텝을 편집(Agent 미경유).
+        val edited = """{"title":"드래그로 편집","description":"reordered","steps":[{"step":1,"title":"두번째였음","state":"s","action":"a","expected":"e"},{"step":2,"title":"첫번째였음","state":"s","action":"a","expected":"e"}]}"""
+        val saved = client.put()
+            .uri("/api/test-scenario/$scenarioId")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue("""{"draft":$edited}""")
+            .retrieve()
+            .bodyToMono(ScenarioResponse::class.java)
+            .block(Duration.ofSeconds(5))!!
+
+        // 응답이 저장된 상태를 반영(정합성 확인용).
+        assertThat(saved.payload.title).isEqualTo("드래그로 편집")
+        assertThat(saved.payload.steps).hasSize(2)
+        assertThat(saved.payload.steps.first().title).isEqualTo("두번째였음")
+
+        // DB에도 반영됨.
+        val persisted = scenarioRepository.findById(scenarioId).block()!!
+        assertThat(persisted.payload.asString()).contains("드래그로 편집")
+
+        // 비참여자는 저장 불가(404).
+        val (_, outsiderToken) = issueUser("outsider-${projectIdSeq.incrementAndGet()}")
+        val status = client.put()
+            .uri("/api/test-scenario/$scenarioId")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", outsiderToken)
+            .bodyValue("""{"draft":$edited}""")
+            .exchangeToMono { Mono.just(it.statusCode().value()) }
+            .block(Duration.ofSeconds(5))
+        assertThat(status).isEqualTo(404)
+    }
+
     /** 인증 없이 접근하면 401. */
     @Test
     fun testUnauthenticatedIsRejected() {

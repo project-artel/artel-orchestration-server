@@ -17,3 +17,12 @@ data class CreateScenarioRequest(
 data class CreateScenarioResponse(
     val testScenarioId: Long
 )
+
+/**
+ * TestScenario 실시간 자동저장 요청 DTO. FE가 canvas 편집(드래그앤드롭/필드 수정)을 debounce로 묶어
+ * 현재 draft 전체를 보내 payload를 덮어쓴다(last-write-wins). Agent를 거치지 않은 순수 FE 편집을
+ * 영속화하는 유일한 경로다.
+ */
+data class UpdateScenarioRequest(
+    val draft: ScenarioDraft
+)

@@ -67,6 +67,26 @@ class TestScenarioService(
                 .map { MessageResponse(role = it.role, content = it.content, createdAt = it.createdAt) }
         }
 
+    /**
+     * canvas 편집을 실시간 저장한다(자동저장). Agent를 거치지 않은 순수 FE 편집을 payload에 덮어쓰고(last-write-wins),
+     * 저장된 결과를 그대로 되돌려 FE가 로컬 draft와 DB 상태의 정합성을 맞추게 한다. 접근 불가면 404.
+     */
+    fun testScenarioUpdate(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft): Mono<ScenarioResponse> =
+        accessService.accessibleScenario(testScenarioId, appUserId)
+            .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
+            .flatMap { entity ->
+                scenarioRepository.save(
+                    entity.copy(payload = Json.of(objectMapper.writeValueAsString(draft)))
+                )
+            }
+            .map { saved ->
+                ScenarioResponse(
+                    testScenarioId = saved.id!!,
+                    projectId = saved.projectId,
+                    payload = objectMapper.readValue(saved.payload.asString(), ScenarioDraft::class.java)
+                )
+            }
+
     /** FE가 Agent 응답을 실시간 수신하는 SSE 스트림. 접근 불가면 404. */
     fun stream(appUserId: Long, testScenarioId: Long): Flux<ServerSentEvent<ScenarioStreamEvent>> =
         accessService.accessibleScenario(testScenarioId, appUserId)
