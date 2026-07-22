@@ -2,7 +2,6 @@ package kr.artel.orchestration.testscenario.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
-import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.testscenario.dto.MessageResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
@@ -31,7 +30,7 @@ import reactor.core.publisher.Mono
 class TestScenarioService(
     private val scenarioRepository: TestScenarioRepository,
     private val messageRepository: TestScenarioMessageRepository,
-    private val projectMemberRepository: ProjectMemberRepository,
+    private val accessService: TestScenarioAccessService,
     private val agentService: TestScenarioAgentService,
     private val streamManager: TestScenarioStreamManager,
     private val objectMapper: ObjectMapper
@@ -39,7 +38,7 @@ class TestScenarioService(
 
     /** 새 시나리오를 빈 payload로 생성하고 testScenarioId를 반환한다. 비참여자면 빈 Mono(→404). */
     fun createScenario(projectId: Long, appUserId: Long): Mono<Long> =
-        isMember(projectId, appUserId)
+        accessService.isMember(projectId, appUserId)
             .filter { it }
             .flatMap {
                 scenarioRepository.save(
@@ -52,7 +51,7 @@ class TestScenarioService(
 
     /** 시나리오 단건 조회. 없거나 비참여자면 빈 Mono(→404). */
     fun getScenario(testScenarioId: Long, appUserId: Long): Mono<ScenarioResponse> =
-        accessibleScenario(testScenarioId, appUserId).map { entity ->
+        accessService.accessibleScenario(testScenarioId, appUserId).map { entity ->
             ScenarioResponse(
                 testScenarioId = entity.id!!,
                 projectId = entity.projectId,
@@ -62,7 +61,7 @@ class TestScenarioService(
 
     /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다. 접근 불가면 빈 결과. */
     fun getMessages(testScenarioId: Long, appUserId: Long): Flux<MessageResponse> =
-        accessibleScenario(testScenarioId, appUserId).flatMapMany {
+        accessService.accessibleScenario(testScenarioId, appUserId).flatMapMany {
             messageRepository
                 .findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(testScenarioId, appUserId)
                 .map { MessageResponse(role = it.role, content = it.content, createdAt = it.createdAt) }
@@ -70,13 +69,13 @@ class TestScenarioService(
 
     /** FE가 Agent 응답을 실시간 수신하는 SSE 스트림. 접근 불가면 404. */
     fun stream(appUserId: Long, testScenarioId: Long): Flux<ServerSentEvent<ScenarioStreamEvent>> =
-        accessibleScenario(testScenarioId, appUserId)
+        accessService.accessibleScenario(testScenarioId, appUserId)
             .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
             .flatMapMany { streamManager.stream(sessionKey(appUserId, testScenarioId)) }
 
     /** 사용자 입력을 Agent로 중계한다. 접근 불가면 404. */
     fun relay(appUserId: Long, testScenarioId: Long, message: TestScenarioMessage): Mono<Void> =
-        accessibleScenario(testScenarioId, appUserId)
+        accessService.accessibleScenario(testScenarioId, appUserId)
             .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
             .flatMap {
                 agentService.sendMessage(
@@ -87,15 +86,6 @@ class TestScenarioService(
                     message.draft
                 )
             }
-
-    /** 사용자가 해당 프로젝트 참여자인지. */
-    private fun isMember(projectId: Long, appUserId: Long): Mono<Boolean> =
-        projectMemberRepository.findByProjectIdAndAppUserId(projectId, appUserId).hasElement()
-
-    /** 시나리오를 찾고 그 프로젝트 참여자인지 확인. 없거나 비참여자면 빈 Mono. */
-    private fun accessibleScenario(testScenarioId: Long, appUserId: Long): Mono<TestScenarioEntity> =
-        scenarioRepository.findById(testScenarioId)
-            .filterWhen { isMember(it.projectId, appUserId) }
 
     private fun sessionKey(appUserId: Long, testScenarioId: Long) = "$appUserId:$testScenarioId"
 }
