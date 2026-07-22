@@ -97,7 +97,7 @@ class TestScenarioService(
      * 시나리오를 승인(확정)한다. 최종 draft가 있으면 payload로 저장하고, 편집 부산물인 채팅 스레드를 정리한 뒤
      * Agent 세션(WS)과 SSE를 닫는다. 시나리오 자체는 남는다. 접근 불가면 404.
      */
-    fun approve(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft?): Mono<Void> =
+    fun testScenarioApprove(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft?): Mono<Void> =
         accessService.accessibleScenario(testScenarioId, appUserId)
             .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
             .flatMap { entity ->
@@ -117,7 +117,7 @@ class TestScenarioService(
      * 시나리오를 삭제한다(Decline). 시나리오와 그에 딸린 채팅(FK ON DELETE CASCADE)을 제거하고
      * Agent 세션(WS)과 SSE를 닫는다. 접근 불가면 404.
      */
-    fun delete(appUserId: Long, testScenarioId: Long): Mono<Void> =
+    fun testScenarioDelete(appUserId: Long, testScenarioId: Long): Mono<Void> =
         accessService.accessibleScenario(testScenarioId, appUserId)
             .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
             .flatMap { scenarioRepository.deleteById(testScenarioId) }

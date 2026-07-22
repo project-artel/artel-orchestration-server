@@ -115,24 +115,24 @@ class TestScenarioController(
 
     /** 시나리오를 승인(확정)한다: 최종 draft 저장 + 채팅 부산물 정리 + Agent WS/SSE 종료. */
     @PostMapping("/{testScenarioId}/approve")
-    fun approve(
+    fun testScenarioApprove(
         @PathVariable testScenarioId: Long,
         @RequestBody(required = false) request: ApproveScenarioRequest?,
         @AuthenticationPrincipal jwt: Jwt
     ): Mono<ResponseEntity<String>> {
         val appUserId = requireUser(jwt)
-        return service.approve(appUserId, testScenarioId, request?.draft)
+        return service.testScenarioApprove(appUserId, testScenarioId, request?.draft)
             .then(Mono.just(ResponseEntity.ok("승인 완료")))
     }
 
     /** 시나리오를 삭제한다(Decline): 시나리오+채팅 삭제 + Agent WS/SSE 종료. */
     @DeleteMapping("/{testScenarioId}")
-    fun delete(
+    fun testScenarioDelete(
         @PathVariable testScenarioId: Long,
         @AuthenticationPrincipal jwt: Jwt
     ): Mono<ResponseEntity<Void>> {
         val appUserId = requireUser(jwt)
-        return service.delete(appUserId, testScenarioId)
+        return service.testScenarioDelete(appUserId, testScenarioId)
             .then(Mono.just(ResponseEntity.noContent().build<Void>()))
     }
 
