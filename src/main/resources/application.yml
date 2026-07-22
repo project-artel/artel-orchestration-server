@@ -26,6 +26,8 @@ artel:
     ws-base-url: ${ARTEL_AGENT_WS_BASE_URL:ws://localhost:8000}
   auth:
     frontend-url: ${ARTEL_HOME_URL:http://localhost:5173}
+    # CORS 허용 origin(콤마 구분). frontend-url은 항상 자동 포함된다. 와일드카드(https://*.artel.kr) 허용.
+    allowed-origins: ${ARTEL_ALLOWED_ORIGINS:https://home.stage.artel.kr,https://artel.kr,https://www.artel.kr}
     issuer: ${ARTEL_JWT_ISSUER:artel-orchestration-server}
     audience: ${ARTEL_JWT_AUDIENCE:artel-home}
     jwt-secret: ${ARTEL_JWT_SECRET}
