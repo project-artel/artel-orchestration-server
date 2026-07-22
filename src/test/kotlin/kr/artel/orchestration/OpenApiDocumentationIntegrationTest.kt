@@ -29,4 +29,22 @@ class OpenApiDocumentationIntegrationTest {
         assertThat(response).contains("Register an SDK client ID")
         assertThat(response).contains("Deliver agent actions to an SDK client")
     }
+
+    @Test
+    fun `publishes the project and planning-document endpoints`() {
+        val response = WebClient.create("http://localhost:$port")
+            .get()
+            .uri("/v3/api-docs")
+            .retrieve()
+            .bodyToMono(String::class.java)
+            .block(Duration.ofSeconds(5))
+
+        assertThat(response).contains("/api/projects")
+        assertThat(response).contains("/api/projects/{projectId}")
+        assertThat(response).contains("/api/projects/{projectId}/documents")
+        assertThat(response).contains("/api/projects/{projectId}/documents/upload-url")
+        assertThat(response).contains("/api/projects/{projectId}/documents/{documentId}/download-url")
+        assertThat(response).contains("프로젝트 생성")
+        assertThat(response).contains("업로드 URL 발급")
+    }
 }

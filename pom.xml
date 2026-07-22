@@ -16,6 +16,7 @@
 	<properties>
 		<java.version>21</java.version>
 		<kotlin.version>2.3.21</kotlin.version>
+		<aws.sdk.version>2.28.29</aws.sdk.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -84,6 +85,25 @@
 			<groupId>me.paulschwarz</groupId>
 			<artifactId>spring-dotenv</artifactId>
 			<version>4.0.0</version>
+		</dependency>
+
+		<!-- 요청 DTO 검증 (@Valid) -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
+		</dependency>
+
+		<!-- S3 - 기획서 원본 저장. presigner는 로컬 서명만 하므로 네트워크 I/O가 없고,
+		     실제 호출(headObject/getObject)은 논블로킹 비동기 클라이언트로 한다. -->
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>s3</artifactId>
+			<version>${aws.sdk.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>netty-nio-client</artifactId>
+			<version>${aws.sdk.version}</version>
 		</dependency>
 
 		<dependency>

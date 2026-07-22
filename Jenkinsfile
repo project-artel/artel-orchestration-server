@@ -35,17 +35,22 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                sh '''
-                    docker stop $CONTAINER_NAME || true
-                    docker rm $CONTAINER_NAME || true
+                // 애플리케이션 환경변수는 Jenkins Credentials에 Secret file로 등록한
+                // .env에서 온다. 등록 절차는 docs/deployment.md 참조.
+                withCredentials([file(credentialsId: "${env.APP_NAME}-env-${env.TARGET_ENV}", variable: 'ENV_FILE')]) {
+                    sh '''
+                        docker stop $CONTAINER_NAME || true
+                        docker rm $CONTAINER_NAME || true
 
-                    docker run -d \
-                      --name $CONTAINER_NAME \
-                      --restart unless-stopped \
-                      --network app-net \
-                      -e SPRING_PROFILES_ACTIVE=$TARGET_ENV \
-                      $IMAGE_TAG
-                '''
+                        docker run -d \
+                          --name $CONTAINER_NAME \
+                          --restart unless-stopped \
+                          --network app-net \
+                          --env-file "$ENV_FILE" \
+                          -e SPRING_PROFILES_ACTIVE=$TARGET_ENV \
+                          $IMAGE_TAG
+                    '''
+                }
             }
         }
     }
