@@ -1,67 +1,138 @@
 package kr.artel.orchestration.testscenario.controller
 
 import com.fasterxml.jackson.databind.JsonNode
-import kr.artel.orchestration.testscenario.dto.AgentScenarioRequest
+import com.fasterxml.jackson.databind.ObjectMapper
+import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.testscenario.dto.CreateScenarioRequest
+import kr.artel.orchestration.testscenario.dto.CreateScenarioResponse
+import kr.artel.orchestration.testscenario.dto.MessageResponse
+import kr.artel.orchestration.testscenario.dto.ScenarioResponse
 import kr.artel.orchestration.testscenario.dto.TestScenarioMessage
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
+import kr.artel.orchestration.testscenario.repository.TestScenarioMessageRepository
+import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import kr.artel.orchestration.testscenario.service.TestScenarioAgentService
 import kr.artel.orchestration.testscenario.service.TestScenarioStreamManager
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.http.codec.ServerSentEvent
+import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.server.ResponseStatusException
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 
 /**
- * QA 대시보드(React)와 통신하는 TestScenario 챗봇 REST 컨트롤러.
+ * QA 대시보드(React)와 통신하는 TestScenario 챗봇 REST 컨트롤러(외부/인증된 요청).
  *
- * - 자연어 메시지 전송: HTTP POST (`/message`) → Agent로는 WebSocket으로 중계
- * - Agent 응답/폴백 질문 수신: SSE 스트림 (`/stream`)
- *
- * `clientId`는 FE가 발급하는 상관관계 키로, SSE 스트림과 Agent WS 커넥션의 안정적 식별자다.
+ * 흐름: 시나리오를 먼저 생성(POST /)하여 testScenarioId를 받고, 그 id로 SSE/메시지 세션을 진행한다.
+ * 라우팅 키는 `userId:testScenarioId`다. userId는 JWT에서, testScenarioId는 경로 변수에서 얻는다.
  */
 @RestController
 @RequestMapping("/api/test-scenario")
 class TestScenarioController(
     private val agentService: TestScenarioAgentService,
-    private val streamManager: TestScenarioStreamManager
+    private val streamManager: TestScenarioStreamManager,
+    private val scenarioRepository: TestScenarioRepository,
+    private val messageRepository: TestScenarioMessageRepository,
+    private val sessionUserResolver: SessionUserResolver,
+    private val objectMapper: ObjectMapper
 ) {
+
+    /**
+     * 새 시나리오를 생성하고 testScenarioId를 반환한다. 이후 SSE/메시지 세션은 이 id로 진행된다.
+     * payload는 아직 내용이 없으므로 빈 JSON으로 초기화하고, Agent 응답으로 채워진다.
+     */
+    @PostMapping
+    fun create(
+        @RequestBody request: CreateScenarioRequest,
+        @AuthenticationPrincipal jwt: Jwt
+    ): Mono<ResponseEntity<CreateScenarioResponse>> {
+        requireUser(jwt)
+        return scenarioRepository.save(
+            TestScenarioEntity(projectId = request.projectId, payload = Json.of("{}"))
+        ).map { ResponseEntity.ok(CreateScenarioResponse(it.id!!)) }
+    }
+
+    /**
+     * 시나리오 단건 조회. payload(ScenarioDraft, JSONB)를 반환하여 FE가 canvas를 렌더한다(재방문 복원).
+     */
+    @GetMapping("/{testScenarioId}")
+    fun getScenario(
+        @PathVariable testScenarioId: Long,
+        @AuthenticationPrincipal jwt: Jwt
+    ): Mono<ResponseEntity<ScenarioResponse>> {
+        requireUser(jwt)
+        return scenarioRepository.findById(testScenarioId)
+            .map { entity ->
+                ResponseEntity.ok(
+                    ScenarioResponse(
+                        testScenarioId = entity.id!!,
+                        projectId = entity.projectId,
+                        payload = objectMapper.readTree(entity.payload.asString())
+                    )
+                )
+            }
+            .defaultIfEmpty(ResponseEntity.notFound().build())
+    }
+
+    /**
+     * 채팅 스레드 조회(사용자별 프라이빗). 재방문 시 본인 대화를 시간순으로 복원한다.
+     */
+    @GetMapping("/{testScenarioId}/messages")
+    fun getMessages(
+        @PathVariable testScenarioId: Long,
+        @AuthenticationPrincipal jwt: Jwt
+    ): Flux<MessageResponse> {
+        val appUserId = requireUser(jwt)
+        return messageRepository
+            .findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(testScenarioId, appUserId)
+            .map { MessageResponse(role = it.role, content = it.content, createdAt = it.createdAt) }
+    }
 
     /**
      * FE가 Agent 응답/폴백 질문을 실시간으로 수신하기 위해 구독하는 SSE 스트림.
      */
-    @GetMapping("/{clientId}/stream", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
-    fun stream(@PathVariable clientId: String): Flux<ServerSentEvent<JsonNode>> {
-        return streamManager.stream(clientId)
+    @GetMapping("/{testScenarioId}/stream", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
+    fun stream(
+        @PathVariable testScenarioId: Long,
+        @AuthenticationPrincipal jwt: Jwt
+    ): Flux<ServerSentEvent<JsonNode>> {
+        return streamManager.stream(sessionKey(jwt, testScenarioId))
     }
 
     /**
      * FE로부터 자연어 메시지를 HTTP로 수신하여, Agent 서버로는 WebSocket으로 중계한다.
-     * (FE → Orchestration: HTTP 수신 / Orchestration → Agent: WS 송신)
-     * 이전 턴에서 확보한 agentSessionId가 있으면 함께 실어 대화 맥락을 유지한다.
      */
-    @PostMapping("/{clientId}/message")
+    @PostMapping("/{testScenarioId}/message")
     fun relayMessage(
-        @PathVariable clientId: String,
-        @RequestBody message: TestScenarioMessage
+        @PathVariable testScenarioId: Long,
+        @RequestBody message: TestScenarioMessage,
+        @AuthenticationPrincipal jwt: Jwt
     ): Mono<ResponseEntity<String>> {
-        val request = AgentScenarioRequest(
-            type = message.type,
-            testScenarioMessage = message.testScenarioMessage,
-            clientId = clientId,
-            agentSessionId = streamManager.agentSessionOf(clientId)
-        )
-        /* WS를 통해 Agent에 전달 */
-        return agentService.sendMessage(request)
+        val appUserId = requireUser(jwt)
+        val sessionKey = "$appUserId:$testScenarioId"
+        return agentService.sendMessage(sessionKey, testScenarioId, appUserId, message.testScenarioMessage, message.draft)
             .then(Mono.just(ResponseEntity.ok("메시지 전송 완료")))
             .onErrorResume { error ->
                 Mono.just(ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(error.message))
             }
     }
+
+    /** JWT의 사용자와 testScenarioId를 결합한 세션 키. */
+    private fun sessionKey(jwt: Jwt, testScenarioId: Long): String =
+        "${requireUser(jwt)}:$testScenarioId"
+
+    /** 유효한 사용자 토큰이 아니면 401. */
+    private fun requireUser(jwt: Jwt): Long =
+        sessionUserResolver.resolve(jwt)?.userId
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
 }

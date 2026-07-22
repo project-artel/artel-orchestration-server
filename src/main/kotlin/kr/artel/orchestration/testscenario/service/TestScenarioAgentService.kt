@@ -1,11 +1,19 @@
 package kr.artel.orchestration.testscenario.service
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
-import kr.artel.orchestration.testscenario.dto.AgentScenarioRequest
-import kr.artel.orchestration.testscenario.dto.AgentScenarioResponse
+import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
+import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
+import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
+import kr.artel.orchestration.testscenario.entity.TestScenarioMessageEntity
+import kr.artel.orchestration.testscenario.repository.TestScenarioMessageRepository
+import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
+import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient
 import reactor.core.Disposable
 import reactor.core.publisher.Mono
@@ -14,82 +22,173 @@ import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * TestScenario 챗봇의 Agent 서버 연동을 담당하는 WebSocket 클라이언트 서비스.
+ * TestScenario 챗봇의 Agent 서버 연동 서비스. 실제 Agent 서버 계약(FastAPI)에 맞춘다:
  *
- * Orchestration이 여는 쪽(WS 클라이언트)이며, **1 유저 = 1 sessionId = 1 WS 커넥션**으로 1:1 매핑한다.
- * 커넥션 자체가 세션 컨텍스트이므로 별도의 콜백 엔드포인트나 상관관계 해킹이 필요 없다.
+ * 1. 세션 오픈: `POST {base}/sessions {user_input, unity_context, game_context, model}` → `{session_id}`
+ * 2. WS 연결: `WS {ws-base}/sessions/{session_id}`. 연결 시 Agent가 첫 결과를 보낸다(오픈 때 준 user_input 기반).
+ * 3. 후속 턴: WS로 `{type:"turn", user_input, draft?, model?}` 전송.
+ * 4. 결과 수신: `{type:"result", message, scenario}` → SSE 중계 + scenario를 test_scenario에 저장(UPDATE).
  *
- * - 아웃바운드: 사용자 메시지를 해당 clientId 커넥션의 송신 싱크로 흘려보낸다.
- * - 인바운드: Agent가 보낸 응답을 수신해 StreamManager를 통해 FE의 SSE 스트림으로 중계하고,
- *   Agent가 발급한 agentSessionId를 clientId에 매핑한다.
+ * 세션 키(`sessionKey` = userId:testScenarioId)로 Agent 세션(session_id + WS)을 식별한다.
+ * 오간 채팅 메시지는 사용자별 프라이빗 스레드로 test_scenario_message에 저장한다(USER/ASSISTANT).
  */
 @Service
 class TestScenarioAgentService(
+    @Value("\${artel.agent.base-url:http://localhost:8000}") private val agentBaseUrl: String,
     @Value("\${artel.agent.ws-base-url:ws://localhost:8000}") private val agentWsBaseUrl: String,
+    @Value("\${artel.agent.model:openai/gpt-4o-mini}") private val defaultModel: String,
     private val objectMapper: ObjectMapper,
-    private val streamManager: TestScenarioStreamManager
+    private val streamManager: TestScenarioStreamManager,
+    private val scenarioRepository: TestScenarioRepository,
+    private val messageRepository: TestScenarioMessageRepository
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
+    private val webClient = WebClient.create()
     private val wsClient = ReactorNettyWebSocketClient()
-    private val connections = ConcurrentHashMap<String, AgentConnection>()
+    private val sessions = ConcurrentHashMap<String, AgentSession>()
 
     /**
-     * clientId 세션의 Agent 커넥션을 통해 메시지를 전송한다. 커넥션이 없으면 새로 연다.
+     * 사용자 입력을 Agent로 전달한다. 세션이 없으면 오픈(POST /sessions + WS)하고, 있으면 WS 턴으로 보낸다.
+     * 첫 입력은 세션 오픈에 실려 처리되므로 별도 턴을 보내지 않는다(연결 시 Agent가 첫 결과를 반환).
+     * `draft`는 사용자가 편집한 현재 시나리오로, 후속 턴에서 Agent에 전달된다(첫 입력에는 적용되지 않음).
+     * 사용자 입력은 USER 메시지로 채팅 스레드에 저장된다.
      */
-    fun sendMessage(request: AgentScenarioRequest): Mono<Void> {
+    fun sendMessage(
+        sessionKey: String,
+        testScenarioId: Long,
+        appUserId: Long,
+        userInput: String,
+        draft: JsonNode? = null
+    ): Mono<Void> {
+        val existing = sessions[sessionKey]
+        val send = if (existing != null) sendTurn(sessionKey, existing, userInput, draft)
+        else openSession(sessionKey, testScenarioId, appUserId, userInput)
+        return saveMessage(testScenarioId, appUserId, "USER", userInput).then(send)
+    }
+
+    /** 세션의 Agent 커넥션을 닫는다(세션 종료 시). */
+    fun closeConnection(sessionKey: String) {
+        sessions.remove(sessionKey)?.disposable?.dispose()
+    }
+
+    private fun openSession(
+        sessionKey: String,
+        testScenarioId: Long,
+        appUserId: Long,
+        userInput: String
+    ): Mono<Void> {
+        val body = AgentSessionOpenRequest(userInput = userInput, model = defaultModel)
+        logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
+        return webClient.post()
+            .uri("$agentBaseUrl/sessions")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .retrieve()
+            .bodyToMono(AgentSessionOpenResponse::class.java)
+            .doOnNext { resp -> openWebSocket(sessionKey, testScenarioId, appUserId, resp.sessionId) }
+            .then()
+    }
+
+    private fun sendTurn(
+        sessionKey: String,
+        session: AgentSession,
+        userInput: String,
+        draft: JsonNode?
+    ): Mono<Void> {
         return Mono.fromCallable {
-            val connection = connections.computeIfAbsent(request.clientId) { openConnection(it) }
-            val json = objectMapper.writeValueAsString(request)
-            val result = connection.outbound.tryEmitNext(json)
+            val json = objectMapper.writeValueAsString(AgentTurnMessage(userInput = userInput, draft = draft))
+            val result = session.outbound.tryEmitNext(json)
             if (result.isFailure) {
-                throw IllegalStateException("Agent WS 전송 실패 [clientId=${request.clientId}, result=$result]")
+                throw IllegalStateException("Agent WS 턴 전송 실패 [sessionKey=$sessionKey, result=$result]")
             }
         }.then()
     }
 
-    /**
-     * clientId 세션의 Agent 커넥션을 닫는다(세션 종료 시).
-     */
-    fun closeConnection(clientId: String) {
-        connections.remove(clientId)?.disposable?.dispose()
-    }
-
-    private fun openConnection(clientId: String): AgentConnection {
-        // unicast 버퍼: WS 핸드셰이크 완료 전 emit된 최초 메시지도 버퍼링 후 전송된다.
+    private fun openWebSocket(
+        sessionKey: String,
+        testScenarioId: Long,
+        appUserId: Long,
+        agentSessionId: String
+    ) {
         val outbound = Sinks.many().unicast().onBackpressureBuffer<String>()
-        val uri = URI.create("$agentWsBaseUrl/testscenario?clientId=$clientId")
-        logger.info("Agent WS 연결 시도 [clientId=$clientId, uri=$uri]")
+        val session = AgentSession(outbound, testScenarioId, appUserId, agentSessionId)
+        sessions[sessionKey] = session
 
-        val sessionMono = wsClient.execute(uri) { session ->
-            val send = session.send(outbound.asFlux().map(session::textMessage))
-            val receive = session.receive()
-                .doOnNext { message -> handleInbound(clientId, message.payloadAsText) }
+        val uri = URI.create("$agentWsBaseUrl/sessions/$agentSessionId")
+        logger.info("Agent WS 연결 시도 [sessionKey=$sessionKey, uri=$uri]")
+
+        val sessionMono = wsClient.execute(uri) { ws ->
+            val send = ws.send(outbound.asFlux().map(ws::textMessage))
+            val receive = ws.receive()
+                .doOnNext { message -> handleInbound(sessionKey, message.payloadAsText) }
                 .then()
             send.and(receive)
         }.doFinally {
-            connections.remove(clientId)
-            logger.info("Agent WS 연결 종료 및 정리 [clientId=$clientId]")
+            sessions.remove(sessionKey)
+            logger.info("Agent WS 연결 종료 및 정리 [sessionKey=$sessionKey]")
         }
 
-        val disposable = sessionMono.subscribe(
+        session.disposable = sessionMono.subscribe(
             null,
-            { error -> logger.error("Agent WS 세션 에러 [clientId=$clientId]: ${error.message}") }
+            { error -> logger.error("Agent WS 세션 에러 [sessionKey=$sessionKey]: ${error.message}") }
         )
-        return AgentConnection(outbound, disposable)
     }
 
-    private fun handleInbound(clientId: String, payloadText: String) {
+    private fun handleInbound(sessionKey: String, payloadText: String) {
         try {
-            val response = objectMapper.readValue(payloadText, AgentScenarioResponse::class.java)
-            response.agentSessionId?.let { streamManager.bindAgentSession(clientId, it) }
-            streamManager.emit(clientId, response.type, response.payload)
+            val node = objectMapper.readTree(payloadText)
+            val type = node.get("type")?.asText() ?: "result"
+
+            // Agent 응답을 그대로 FE의 SSE 스트림으로 중계한다(type=result|error).
+            streamManager.emit(sessionKey, type, node)
+
+            val session = sessions[sessionKey]
+            if (type == "result" && session != null) {
+                // Agent 메시지를 ASSISTANT 채팅으로 저장.
+                val message = node.get("message")?.asText() ?: ""
+                saveMessage(session.testScenarioId, session.appUserId, "ASSISTANT", message)
+                    .subscribe({}, { err -> logger.error("ASSISTANT 메시지 저장 실패 [sessionKey=$sessionKey]: ${err.message}") })
+
+                // scenario를 test_scenario에 저장(UPDATE).
+                val scenario = node.get("scenario")
+                if (scenario != null && !scenario.isNull) {
+                    persistScenario(sessionKey, session.testScenarioId, scenario)
+                }
+            }
         } catch (e: Exception) {
-            logger.error("Agent WS 수신 메시지 처리 실패 [clientId=$clientId]: ${e.message}", e)
+            logger.error("Agent WS 수신 메시지 처리 실패 [sessionKey=$sessionKey]: ${e.message}", e)
         }
     }
 
-    private class AgentConnection(
+    /** 채팅 메시지를 저장한다(사용자별 프라이빗 스레드). */
+    private fun saveMessage(testScenarioId: Long, appUserId: Long, role: String, content: String): Mono<Void> {
+        return messageRepository.save(
+            TestScenarioMessageEntity(
+                testScenarioId = testScenarioId,
+                appUserId = appUserId,
+                role = role,
+                content = content
+            )
+        ).then()
+    }
+
+    /** scenario(JSONB)를 testScenarioId로 UPDATE한다. 시나리오는 세션 전에 이미 생성돼 있다. */
+    private fun persistScenario(sessionKey: String, testScenarioId: Long, scenario: JsonNode) {
+        val payloadJson = Json.of(objectMapper.writeValueAsString(scenario))
+        scenarioRepository.findById(testScenarioId)
+            .flatMap { existing -> scenarioRepository.save(existing.copy(payload = payloadJson)) }
+            .subscribe(
+                { logger.info("시나리오 저장 완료 [sessionKey=$sessionKey, id=${it.id}]") },
+                { err -> logger.error("시나리오 저장 실패 [sessionKey=$sessionKey]: ${err.message}") }
+            )
+    }
+
+    /** Agent 세션 상태: 송신 싱크, 저장 대상 시나리오 id, 채팅 소유자 appUserId, Agent가 발급한 session_id. */
+    private class AgentSession(
         val outbound: Sinks.Many<String>,
-        val disposable: Disposable
+        val testScenarioId: Long,
+        val appUserId: Long,
+        val agentSessionId: String,
+        @Volatile var disposable: Disposable? = null
     )
 }
