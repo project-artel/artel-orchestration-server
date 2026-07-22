@@ -62,6 +62,7 @@ class SecurityConfig {
                 "/v3/api-docs/**",
                 "/swagger-ui.html",
                 "/swagger-ui/**",
+                // SDK/Agent 서버-투-서버 경로. 엔드유저 JWT 보호 대상이 아니다(사이드이펙트 없음).
                 "/ws/sdk",
                 // SDK가 instanceKey로 스스로를 등록하는 경로다. 게임을 실행하는 쪽에는
                 // 로그인 세션이 없으므로 엔드유저 JWT로 막을 수 없다.
@@ -69,8 +70,12 @@ class SecurityConfig {
                 "/api/orchestration/**",
                 // SDK/Agent 경로와 같은 신뢰 경계에 있다. 엔드유저 JWT 보호 대상이 아니다.
                 "/api/test-scenario/**"
+              
+                "/api/orchestration/**"
             ).permitAll()
             it.pathMatchers("/api/auth/**").authenticated()
+            // test-scenario는 외부(FE) 요청이므로 JWT 인증/인가 대상이다.
+            it.pathMatchers("/api/test-scenario/**").authenticated()
             it.anyExchange().authenticated()
         }
         .oauth2Login {

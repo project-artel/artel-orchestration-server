@@ -1,7 +1,15 @@
 package kr.artel.orchestration
 
-import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.auth.service.JwtService
+import kr.artel.orchestration.auth.service.OAuthIdentity
+import kr.artel.orchestration.auth.service.OAuthUserService
+import kr.artel.orchestration.testscenario.dto.CreateScenarioResponse
+import kr.artel.orchestration.testscenario.dto.MessageResponse
+import kr.artel.orchestration.testscenario.dto.ScenarioResponse
+import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
+import kr.artel.orchestration.testscenario.repository.TestScenarioMessageRepository
+import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Test
@@ -15,21 +23,20 @@ import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.web.reactive.function.client.WebClient
+import reactor.core.publisher.Flux
+import reactor.core.publisher.Mono
 import reactor.core.publisher.Sinks
 import reactor.netty.DisposableServer
 import reactor.netty.http.server.HttpServer
 import java.time.Duration
-import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * TestScenario 챗봇 파이프라인(leg #2 = Agent WebSocket)의 양방향 릴레이를 검증하는 통합 테스트.
+ * TestScenario 파이프라인 통합 테스트: 인증(JWT) → 시나리오 생성 → SSE →
+ * Agent 세션 오픈(POST /sessions) + WS(/sessions/{id}) 왕복 → DB UPDATE.
  *
- * Orchestration이 Agent로 여는 WebSocket을, 테스트 내부에 띄운 목(mock) Agent WS 서버로 받는다.
- * 흐름: FE가 SSE 구독 → POST /message → Orch가 Agent WS로 중계 → 목 Agent가 응답 →
- *      Orch가 SSE로 FE에 전달.
- *
- * 테스트 계획: .plan/general/2026-07-21-testscenario-pipeline-test-plan.md
+ * 실제 Agent 서버 계약을 흉내내는 목 서버(HTTP POST /sessions + WS /sessions/{id})로 검증한다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -41,35 +48,62 @@ class TestScenarioPipelineIntegrationTest {
     @Autowired
     private lateinit var objectMapper: ObjectMapper
 
+    @Autowired
+    private lateinit var jwtService: JwtService
+
+    @Autowired
+    private lateinit var oauthUserService: OAuthUserService
+
+    @Autowired
+    private lateinit var scenarioRepository: TestScenarioRepository
+
+    @Autowired
+    private lateinit var messageRepository: TestScenarioMessageRepository
+
     private fun webClient() = WebClient.create("http://localhost:$port")
 
-    private val sseType = object : ParameterizedTypeReference<ServerSentEvent<JsonNode>>() {}
+    private val sseType = object : ParameterizedTypeReference<ServerSentEvent<ScenarioStreamEvent>>() {}
 
     companion object {
         private lateinit var mockAgent: DisposableServer
+        private const val MOCK_SESSION_ID = "mock-sid-1"
+        private const val RESULT_JSON =
+            """{"type":"result","message":"ok","scenario":{"title":"튜토리얼 시나리오","description":"d","steps":[{"step":1,"title":"t1","state":"s","action":"a","expected":"e"}]}}"""
 
-        /** 목 Agent가 수신한 아웃바운드 메시지(원본 JSON)를 기록 — 아웃바운드 검증용 */
-        private val recordedMessages = CopyOnWriteArrayList<String>()
+        /** Agent가 받은 세션 오픈 요청 본문 */
+        private val openRequests = CopyOnWriteArrayList<String>()
+        /** Agent가 WS로 받은 턴 메시지 */
+        private val turnMessages = CopyOnWriteArrayList<String>()
 
-        private const val ISSUED_SESSION_ID = "agent-sid-abc123"
+        private val projectIdSeq = AtomicLong(1000)
 
-        /**
-         * 목 Agent WebSocket 서버를 임의 포트로 띄우고, Orchestration이 이 서버로 붙도록
-         * `artel.agent.ws-base-url`을 주입한다. 수신 메시지마다 step 응답(agentSessionId 포함)을 돌려준다.
-         */
         @JvmStatic
         @DynamicPropertySource
-        fun registerAgentWsUrl(registry: DynamicPropertyRegistry) {
+        fun registerAgentUrls(registry: DynamicPropertyRegistry) {
             mockAgent = HttpServer.create().port(0).route { routes ->
-                routes.ws("/testscenario") { inbound, outbound ->
+                // 세션 오픈 (HTTP) — session_id 발급
+                routes.post("/sessions") { request, response ->
+                    request.receive().aggregate().asString().defaultIfEmpty("").flatMap { body ->
+                        openRequests.add(body)
+                        response.header("Content-Type", "application/json")
+                            .sendString(Mono.just("""{"session_id":"$MOCK_SESSION_ID"}"""))
+                            .then()
+                    }
+                }
+                // 턴 진행 (WS) — 연결 시 첫 결과, 이후 각 턴마다 결과
+                routes.ws("/sessions/{id}") { inbound, outbound ->
                     outbound.sendString(
-                        inbound.receive().asString().map { msg ->
-                            recordedMessages.add(msg)
-                            """{"type":"SCENARIO_STEP","agentSessionId":"$ISSUED_SESSION_ID","payload":{"echo":true}}"""
-                        }
+                        Flux.concat(
+                            Mono.just(RESULT_JSON),
+                            inbound.receive().asString().map { turn ->
+                                turnMessages.add(turn)
+                                RESULT_JSON
+                            }
+                        )
                     ).then()
                 }
             }.bindNow()
+            registry.add("artel.agent.base-url") { "http://localhost:${mockAgent.port()}" }
             registry.add("artel.agent.ws-base-url") { "ws://localhost:${mockAgent.port()}" }
         }
 
@@ -80,90 +114,149 @@ class TestScenarioPipelineIntegrationTest {
         }
     }
 
-    private fun subscribeSse(client: WebClient, clientId: String, onEvent: (ServerSentEvent<JsonNode>) -> Unit) =
-        client.get()
-            .uri("/api/test-scenario/$clientId/stream")
-            .accept(MediaType.TEXT_EVENT_STREAM)
-            .retrieve()
-            .bodyToFlux(sseType)
-            .doOnNext(onEvent)
-            .subscribe()
+    /** 가상 사용자를 생성하고 (appUserId, JWT)를 반환한다. */
+    private fun issueUser(providerUserId: String): Pair<Long, String> {
+        val user = oauthUserService.upsert(
+            OAuthIdentity(
+                provider = "github",
+                providerUserId = providerUserId,
+                login = "tester-$providerUserId",
+                displayName = "Tester",
+                avatarUrl = null,
+                email = null
+            )
+        ).block()!!
+        return user.userId.toLong() to jwtService.issue(user)
+    }
 
-    private fun postMessage(client: WebClient, clientId: String, msg: String) {
-        client.post()
-            .uri("/api/test-scenario/$clientId/message")
+    private fun createScenario(client: WebClient, token: String, projectId: Long): Long {
+        val res = client.post()
+            .uri("/api/test-scenario")
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue("""{"type":"USER_MESSAGE","testScenarioMessage":"$msg"}""")
+            .cookie("artel_access_token", token)
+            .bodyValue("""{"projectId":$projectId}""")
+            .retrieve()
+            .bodyToMono(CreateScenarioResponse::class.java)
+            .block(Duration.ofSeconds(5))
+        return res!!.testScenarioId
+    }
+
+    private fun subscribeSse(
+        client: WebClient, testScenarioId: Long, token: String, onEvent: (ServerSentEvent<ScenarioStreamEvent>) -> Unit
+    ) = client.get()
+        .uri("/api/test-scenario/$testScenarioId/stream")
+        .accept(MediaType.TEXT_EVENT_STREAM)
+        .cookie("artel_access_token", token)
+        .retrieve()
+        .bodyToFlux(sseType)
+        .doOnNext(onEvent)
+        .subscribe()
+
+    private fun postMessage(
+        client: WebClient, testScenarioId: Long, token: String, msg: String, draftJson: String? = null
+    ) {
+        val body = if (draftJson == null)
+            """{"type":"USER_MESSAGE","testScenarioMessage":"$msg"}"""
+        else
+            """{"type":"USER_MESSAGE","testScenarioMessage":"$msg","draft":$draftJson}"""
+        client.post()
+            .uri("/api/test-scenario/$testScenarioId/message")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue(body)
             .retrieve()
             .toEntity(String::class.java)
             .block(Duration.ofSeconds(5))
     }
 
     /**
-     * 라운드 트립 + 세션 매핑:
-     * 1) FE 메시지가 Agent WS로 중계되고, Agent 응답이 FE의 SSE 스트림으로 전달된다.
-     * 2) Agent가 발급한 agentSessionId가 매핑되어, 이후 턴의 아웃바운드 요청에 실린다.
+     * 생성 → 첫 입력(세션 오픈) → Agent 결과가 SSE로 전달 + scenario가 DB에 저장 → 후속 입력은 WS 턴으로.
      */
     @Test
-    fun testRoundTripAndSessionMapping() {
+    fun testCreateOpenSessionRoundTripAndPersist() {
         val client = webClient()
-        val clientId = UUID.randomUUID().toString()
+        val projectId = projectIdSeq.incrementAndGet()
+        val (appUserId, token) = issueUser("user-$projectId")
+        val scenarioId = createScenario(client, token, projectId)
 
-        val eventLatch = Sinks.one<ServerSentEvent<JsonNode>>()
-        val disposable = subscribeSse(client, clientId) { eventLatch.tryEmitValue(it) }
-        Thread.sleep(1000) // SSE 구독 수립 대기
+        val eventLatch = Sinks.one<ServerSentEvent<ScenarioStreamEvent>>()
+        val disposable = subscribeSse(client, scenarioId, token) { eventLatch.tryEmitValue(it) }
+        Thread.sleep(1000)
 
-        // 1턴: 메시지 전송 → Agent WS 중계 → Agent 응답이 SSE로 도착
-        postMessage(client, clientId, "로그인 시나리오 만들어줘")
+        // 첫 입력 → Agent 세션 오픈(POST /sessions) → WS 연결 시 첫 결과 수신
+        postMessage(client, scenarioId, token, "튜토리얼 시나리오 만들어줘")
 
         val event = eventLatch.asMono().block(Duration.ofSeconds(5))
         assertThat(event).isNotNull
-        assertThat(event?.event()).isEqualTo("SCENARIO_STEP")
-        assertThat(event?.data()?.get("echo")?.asBoolean()).isTrue()
+        assertThat(event?.event()).isEqualTo("result")
+        assertThat(event?.data()?.scenario?.title).isEqualTo("튜토리얼 시나리오")
 
-        // 이벤트 도착 = agentSessionId 매핑 완료(handleInbound에서 bind 후 emit). 2턴 전송.
-        postMessage(client, clientId, "다음 단계")
-        Thread.sleep(300) // 목 Agent 기록 대기
+        // 세션 오픈 요청에 첫 user_input이 실렸는지
+        Thread.sleep(300)
+        val myOpen = openRequests.filter { it.contains("튜토리얼 시나리오 만들어줘") }
+        assertThat(myOpen).isNotEmpty
+        assertThat(objectMapper.readTree(myOpen[0]).get("user_input").asText()).contains("튜토리얼")
 
-        val mine = recordedMessages.filter { it.contains(clientId) }
-        assertThat(mine).hasSizeGreaterThanOrEqualTo(2)
+        // scenario가 DB에 저장(UPDATE)되었는지
+        Thread.sleep(300)
+        val persisted = scenarioRepository.findById(scenarioId).block()
+        assertThat(persisted).isNotNull
+        assertThat(persisted!!.payload.asString()).contains("튜토리얼 시나리오")
 
-        val first = objectMapper.readTree(mine[0])
-        assertThat(first.get("agentSessionId").isNull).isTrue() // 첫 턴은 null
-        val second = objectMapper.readTree(mine[1])
-        assertThat(second.get("agentSessionId").asText()).isEqualTo(ISSUED_SESSION_ID) // 이후 턴은 매핑값
+        // 후속 입력은 WS 턴으로 전송되며, 사용자가 편집한 draft가 함께 실린다
+        val draft = """{"title":"편집됨","description":"user edit","steps":[{"step":1,"title":"t","state":"s","action":"a","expected":"e"}]}"""
+        postMessage(client, scenarioId, token, "2단계 더 구체적으로", draftJson = draft)
+        Thread.sleep(500)
+        val myTurns = turnMessages.filter { it.contains("2단계 더 구체적으로") }
+        assertThat(myTurns).isNotEmpty
+        val turnNode = objectMapper.readTree(myTurns[0])
+        assertThat(turnNode.get("type").asText()).isEqualTo("turn")
+        assertThat(turnNode.get("draft").get("title").asText()).isEqualTo("편집됨")
+
+        // 채팅이 사용자별 프라이빗 스레드로 저장됐는지 (USER/ASSISTANT 구분)
+        Thread.sleep(500)
+        val messages = messageRepository
+            .findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(scenarioId, appUserId)
+            .collectList().block()!!
+        val roles = messages.map { it.role }
+        assertThat(roles).contains("USER", "ASSISTANT")
+        assertThat(messages.first { it.role == "USER" }.content).contains("튜토리얼")
+        assertThat(messages.first { it.role == "ASSISTANT" }.content).isEqualTo("ok")
+
+        // 재방문 조회 엔드포인트 — 시나리오 payload(canvas용)
+        val scenario = client.get()
+            .uri("/api/test-scenario/$scenarioId")
+            .cookie("artel_access_token", token)
+            .retrieve()
+            .bodyToMono(ScenarioResponse::class.java)
+            .block(Duration.ofSeconds(5))!!
+        assertThat(scenario.payload.title).isEqualTo("튜토리얼 시나리오")
+        assertThat(scenario.payload.steps).isNotEmpty
+
+        // 재방문 조회 엔드포인트 — 사용자 프라이빗 채팅
+        val fetched = client.get()
+            .uri("/api/test-scenario/$scenarioId/messages")
+            .cookie("artel_access_token", token)
+            .retrieve()
+            .bodyToFlux(MessageResponse::class.java)
+            .collectList()
+            .block(Duration.ofSeconds(5))!!
+        assertThat(fetched.map { it.role }).contains("USER", "ASSISTANT")
 
         disposable.dispose()
     }
 
-    /**
-     * 스트림 격리: clientA만 메시지를 보내면 clientB의 SSE 스트림은 아무것도 받지 않는다.
-     */
+    /** 인증 없이 접근하면 401. */
     @Test
-    fun testStreamIsolationBetweenClients() {
+    fun testUnauthenticatedIsRejected() {
         val client = webClient()
-        val clientA = UUID.randomUUID().toString()
-        val clientB = UUID.randomUUID().toString()
+        val status = client.post()
+            .uri("/api/test-scenario")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""{"projectId":1}""")
+            .exchangeToMono { Mono.just(it.statusCode()) }
+            .block(Duration.ofSeconds(5))
 
-        val latchA = Sinks.one<ServerSentEvent<JsonNode>>()
-        val receivedB = CopyOnWriteArrayList<ServerSentEvent<JsonNode>>()
-
-        val disposableA = subscribeSse(client, clientA) { latchA.tryEmitValue(it) }
-        val disposableB = subscribeSse(client, clientB) { receivedB.add(it) }
-        Thread.sleep(1000)
-
-        // clientA만 메시지 전송
-        postMessage(client, clientA, "A의 시나리오")
-
-        val eventA = latchA.asMono().block(Duration.ofSeconds(5))
-        assertThat(eventA).isNotNull
-        assertThat(eventA?.data()?.get("echo")?.asBoolean()).isTrue()
-
-        // B는 아무것도 받지 않아야 함
-        Thread.sleep(500)
-        assertThat(receivedB).isEmpty()
-
-        disposableA.dispose()
-        disposableB.dispose()
+        assertThat(status?.value()).isEqualTo(401)
     }
 }
