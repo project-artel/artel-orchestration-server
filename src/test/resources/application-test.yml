@@ -1,18 +1,20 @@
 spring:
-  # 앱 런타임: R2DBC H2 (인메모리)
+  # 테스트도 실제 로컬 PostgreSQL(개발자가 띄워둔 DB)을 사용한다. H2는 JSONB를 지원하지 않으므로
+  # payload(JSONB) 검증을 위해 실 DB에 맞춘다.
   r2dbc:
-    url: r2dbc:h2:mem:///testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
-    username: sa
-    password:
-  # 마이그레이션: Flyway는 JDBC H2로 실행. R2DBC와 동일한 인메모리 DB(testdb)를 가리켜야
-  # Flyway가 만든 스키마를 R2DBC 쿼리가 볼 수 있다.
+    url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:postgres}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+  # 스키마는 Flyway(JDBC)가 구성한다. 볼륨 없는 Docker 컨테이너를 재구동하면 빈 DB가 되고,
+  # 부팅 시 Flyway가 마이그레이션을 새로 적용해 스키마가 초기화된다.
   flyway:
     enabled: true
     baseline-on-migrate: true
-    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
-    user: sa
-    password:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:postgres}
+    user: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
     locations: classpath:db/migration
+    clean-disabled: false
   security:
     oauth2:
       client:
