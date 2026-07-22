@@ -43,9 +43,10 @@ class TestScenarioController(
         @RequestBody request: CreateScenarioRequest,
         @AuthenticationPrincipal jwt: Jwt
     ): Mono<ResponseEntity<CreateScenarioResponse>> {
-        requireUser(jwt)
-        return service.createScenario(request.projectId)
+        val appUserId = requireUser(jwt)
+        return service.createScenario(request.projectId, appUserId)
             .map { ResponseEntity.ok(CreateScenarioResponse(it)) }
+            .defaultIfEmpty(ResponseEntity.notFound().build())
     }
 
     /** 시나리오 단건 조회(payload = ScenarioDraft). FE가 canvas 렌더/재방문 복원에 사용. */
@@ -54,8 +55,8 @@ class TestScenarioController(
         @PathVariable testScenarioId: Long,
         @AuthenticationPrincipal jwt: Jwt
     ): Mono<ResponseEntity<ScenarioResponse>> {
-        requireUser(jwt)
-        return service.getScenario(testScenarioId)
+        val appUserId = requireUser(jwt)
+        return service.getScenario(testScenarioId, appUserId)
             .map { ResponseEntity.ok(it) }
             .defaultIfEmpty(ResponseEntity.notFound().build())
     }
@@ -90,7 +91,8 @@ class TestScenarioController(
         val appUserId = requireUser(jwt)
         return service.relay(appUserId, testScenarioId, message)
             .then(Mono.just(ResponseEntity.ok("메시지 전송 완료")))
-            .onErrorResume { error ->
+            // 접근 거부(404 등 ResponseStatusException)는 그대로 전파하고, Agent 전송 실패만 502로 변환한다.
+            .onErrorResume({ it !is ResponseStatusException }) { error ->
                 Mono.just(ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(error.message))
             }
     }

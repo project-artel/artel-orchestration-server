@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
+import kr.artel.orchestration.project.entity.ProjectEntity
+import kr.artel.orchestration.project.entity.ProjectMemberEntity
+import kr.artel.orchestration.project.repository.ProjectMemberRepository
+import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.testscenario.dto.CreateScenarioResponse
 import kr.artel.orchestration.testscenario.dto.MessageResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
@@ -59,6 +63,12 @@ class TestScenarioPipelineIntegrationTest {
 
     @Autowired
     private lateinit var messageRepository: TestScenarioMessageRepository
+
+    @Autowired
+    private lateinit var projectRepository: ProjectRepository
+
+    @Autowired
+    private lateinit var projectMemberRepository: ProjectMemberRepository
 
     private fun webClient() = WebClient.create("http://localhost:$port")
 
@@ -129,6 +139,26 @@ class TestScenarioPipelineIntegrationTest {
         return user.userId.toLong() to jwtService.issue(user)
     }
 
+    /** 프로젝트를 만들고 사용자를 참여자(OWNER)로 등록한 뒤 projectId 반환. */
+    private fun createMemberProject(appUserId: Long): Long {
+        val now = java.time.Instant.now()
+        val project = projectRepository.save(
+            ProjectEntity(name = "test-project", genre = "RPG", createdAt = now, updatedAt = now)
+        ).block()!!
+        projectMemberRepository.save(
+            ProjectMemberEntity(projectId = project.id!!, appUserId = appUserId, role = "OWNER", createdAt = now)
+        ).block()
+        return project.id!!
+    }
+
+    /** 참여자 없이 프로젝트만 생성(비참여자 검증용). */
+    private fun createEmptyProject(): Long {
+        val now = java.time.Instant.now()
+        return projectRepository.save(
+            ProjectEntity(name = "no-member", genre = "RPG", createdAt = now, updatedAt = now)
+        ).block()!!.id!!
+    }
+
     private fun createScenario(client: WebClient, token: String, projectId: Long): Long {
         val res = client.post()
             .uri("/api/test-scenario")
@@ -175,8 +205,8 @@ class TestScenarioPipelineIntegrationTest {
     @Test
     fun testCreateOpenSessionRoundTripAndPersist() {
         val client = webClient()
-        val projectId = projectIdSeq.incrementAndGet()
-        val (appUserId, token) = issueUser("user-$projectId")
+        val (appUserId, token) = issueUser("user-${projectIdSeq.incrementAndGet()}")
+        val projectId = createMemberProject(appUserId)
         val scenarioId = createScenario(client, token, projectId)
 
         val eventLatch = Sinks.one<ServerSentEvent<ScenarioStreamEvent>>()
@@ -258,5 +288,23 @@ class TestScenarioPipelineIntegrationTest {
             .block(Duration.ofSeconds(5))
 
         assertThat(status?.value()).isEqualTo(401)
+    }
+
+    /** 인증은 됐지만 프로젝트 참여자가 아니면 생성은 404(존재하지 않는 것처럼). */
+    @Test
+    fun testNonMemberCannotCreate() {
+        val client = webClient()
+        val (_, token) = issueUser("outsider-${projectIdSeq.incrementAndGet()}")
+        val otherProjectId = createEmptyProject()  // 이 사용자는 참여자가 아님
+
+        val status = client.post()
+            .uri("/api/test-scenario")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue("""{"projectId":$otherProjectId}""")
+            .exchangeToMono { Mono.just(it.statusCode()) }
+            .block(Duration.ofSeconds(5))
+
+        assertThat(status?.value()).isEqualTo(404)
     }
 }
