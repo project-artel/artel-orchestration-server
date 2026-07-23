@@ -94,7 +94,7 @@ the target workspace/environment `_id`s.
 **Request** (`insomnia.Request.db`):
 ```json
 {"_id":"req_<hex>","type":"Request","parentId":"<workspace_id>","modified":<ms>,
- "created":<ms>,"url":"{{ _.base }}/path","name":"METHOD /path — 설명","description":"IN/OUT ...",
+ "created":<ms>,"url":"{{ _.base }}/path","name":"METHOD /path — 설명","description":"<Markdown — see 'Documenting requests'>",
  "method":"POST","body":{"mimeType":"application/json","text":"{...}"},
  "parameters":[],"headers":[{"disabled":false,"id":"pair_<x>","name":"Content-Type","value":"application/json"}],
  "authentication":{},"metaSortKey":<int, ascending = top→bottom>,"isPrivate":false,"pathParameters":[],
@@ -113,6 +113,37 @@ is `ws(s)://...`, no `method`/`body`.
 "parentId":"<workspace_id>","name":"Base Environment","data":{...vars...},"color":null,
 "isPrivate":false,"metaSortKey":<ms>,"environmentType":"kv"}`. To fill an existing empty
 Base Environment, re-append its doc with the same `_id` and `data` filled.
+
+## Documenting requests (the `description` field)
+
+Insomnia renders a request's `description` as **Markdown** in the Docs/preview panel.
+A single newline (`\n`) does **not** produce a line break — Markdown collapses adjacent
+lines into one paragraph. Terse `\n`-joined text (e.g. `"IN: ...\nOUT: ..."`) shows up as
+one run-on line. Write real Markdown instead:
+
+- Separate blocks with a **blank line** (`\n\n`), never a single `\n`.
+- Use `- ` bullet lists, `**bold**` labels, `## ` headings, and `` `code` `` spans.
+- Do not rely on soft line breaks; use list items or separate paragraphs.
+
+Make each description answer more than input/output — **who calls it, what it does, and
+what the caller does with the result**. Recommended structure (fill every heading):
+
+    **호출 주체**: FE 대시보드(React) → Orchestration   ← 이 API를 어느 서버가 호출하나
+
+    **동작**: 이 엔드포인트가 무엇을 하는지 1–2문장 (서버/DB에서 일어나는 일).
+
+    **Request**
+    - `projectId` (number): 소속 프로젝트 id
+
+    **Response**
+    - `200`: `{ testScenarioId }`
+    - `404`: 프로젝트 비참여자/미존재 (존재하지 않는 것처럼 감춤)
+
+    **활용**: 반환된 `testScenarioId`로 SSE 세션을 시작하고, 이후 요청들의 경로 키로 쓴다.
+
+Build the string in Python with real newlines — a triple-quoted string, or
+`"\n".join([...])` where blank lines are empty `""` entries — so the `\n\n` between blocks
+survives into the stored `description`. JSON-encoding preserves them; Insomnia renders them.
 
 ## Templates
 
