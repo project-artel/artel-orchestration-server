@@ -102,8 +102,19 @@ class OAuthUserService(
                         userId = appUser.id.toString(),
                         displayName = appUser.displayName,
                         email = appUser.email,
+                        locale = appUser.locale,
                         identities = identities
                     )
                 }
+        }
+
+    /**
+     * 표시 언어 설정을 바꾼다. 세션이 가리키는 사용자가 더 이상 없으면 비어 있는 Mono다.
+     * 허용 값 검증은 API 경계에서 끝난 뒤이므로 여기서는 저장만 한다.
+     */
+    @Transactional
+    fun updateLocale(userId: Long, locale: String): Mono<AppUserEntity> =
+        appUserRepository.findById(userId).flatMap { appUser ->
+            appUserRepository.save(appUser.copy(locale = locale, updatedAt = Instant.now(clock)))
         }
 }
