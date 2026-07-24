@@ -1,8 +1,11 @@
 package kr.artel.orchestration.testscenario.service
 
+import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
@@ -43,6 +46,7 @@ class TestScenarioAgentService(
     private val streamManager: TestScenarioStreamManager,
     private val scenarioRepository: TestScenarioRepository,
     private val messageRepository: TestScenarioMessageRepository,
+    private val buildRepository: GameBuildRepository,
     private val appUserRepository: AppUserRepository
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
@@ -59,45 +63,87 @@ class TestScenarioAgentService(
     fun sendMessage(
         sessionKey: String,
         testScenarioId: Long,
+        projectId: Long,
         appUserId: Long,
         userInput: String,
         draft: ScenarioDraft? = null
     ): Mono<Void> {
         val existing = sessions[sessionKey]
         val send = if (existing != null) sendTurn(sessionKey, existing, userInput, draft)
-        else openSession(sessionKey, testScenarioId, appUserId, userInput)
+        else openSession(sessionKey, testScenarioId, projectId, appUserId, userInput)
         return saveMessage(testScenarioId, appUserId, "USER", userInput).then(send)
     }
 
-    /** 세션의 Agent 커넥션을 닫는다(세션 종료 시). */
-    fun closeConnection(sessionKey: String) {
-        sessions.remove(sessionKey)?.disposable?.dispose()
+    /**
+     * Agent 세션을 종료한다(Approve/Delete 시). Agent에 `{type:"close"}`를 통보해 WS와 session_id(Redis)를
+     * 만료시키도록 하고, 우리 쪽 WS 구독도 정리한다. 세션이 없으면(이미 종료) 조용히 무시한다.
+     */
+    fun closeSession(sessionKey: String) {
+        val session = sessions.remove(sessionKey) ?: return
+        try {
+            val json = objectMapper.writeValueAsString(AgentCloseMessage())
+            session.outbound.tryEmitNext(json)
+            session.outbound.tryEmitComplete()
+        } catch (e: Exception) {
+            logger.warn("Agent WS close 통보 실패 [sessionKey=$sessionKey]: ${e.message}")
+        } finally {
+            session.disposable?.dispose()
+            logger.info("Agent 세션 종료 [sessionKey=$sessionKey]")
+        }
     }
 
     private fun openSession(
         sessionKey: String,
         testScenarioId: Long,
+        projectId: Long,
         appUserId: Long,
         userInput: String
     ): Mono<Void> {
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
-        return appUserRepository.findById(appUserId)
+        val localeMono = appUserRepository.findById(appUserId)
             .map { user -> if (user.locale == "ko") "ko" else "en" }
             .defaultIfEmpty("en")
-            .flatMap { locale ->
-                val body = AgentSessionOpenRequest(userInput = userInput, model = defaultModel, locale = locale)
+        return Mono.zip(gameContext(projectId, appUserId), localeMono)
+            .map { tuple ->
+                AgentSessionOpenRequest(
+                    userInput = userInput,
+                    gameContext = tuple.t1,
+                    model = defaultModel,
+                    locale = tuple.t2
+                )
+            }
+            .flatMap { body ->
                 webClient.post()
                     .uri("$agentBaseUrl/sessions")
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(body)
                     .retrieve()
                     .bodyToMono(AgentSessionOpenResponse::class.java)
-                    .doOnNext { resp -> openWebSocket(sessionKey, testScenarioId, appUserId, resp.sessionId) }
             }
+            .doOnNext { resp -> openWebSocket(sessionKey, testScenarioId, appUserId, resp.sessionId) }
             .then()
     }
+
+    /**
+     * 프로젝트의 가장 최근 씬 스캔을 game_context로 만든다. SDK가 등록 때 보고한 빌드의 UI 구성이며,
+     * Agent가 어떤 화면을 대상으로 시나리오를 짜는지 참조한다.
+     *
+     * 최신 빌드가 스캔 없이 등록됐을 수도 있어(구버전 SDK), 스캔을 가진 가장 최근 빌드를 고른다.
+     * 그런 빌드가 하나도 없으면 빈 맵이라 기존과 동일하게 빈 game_context를 보낸다.
+     */
+    private fun gameContext(projectId: Long, appUserId: Long): Mono<Map<String, Any>> =
+        buildRepository.findAllForMember(projectId, appUserId)
+            .filter { it.sceneScan != null }
+            .next()
+            .map { build ->
+                objectMapper.readValue(
+                    build.sceneScan!!.asString(),
+                    object : TypeReference<Map<String, Any>>() {}
+                )
+            }
+            .defaultIfEmpty(emptyMap())
 
     private fun sendTurn(
         sessionKey: String,

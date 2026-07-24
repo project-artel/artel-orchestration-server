@@ -6,7 +6,9 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * Agent 서버 `POST /sessions` 요청 본문(시나리오 생성 세션 열기).
  * 필드명은 Agent 계약(snake_case)에 맞춘다.
  *
- * unity_context/game_context는 SDK/게임 상태에서 오는 값이나 현재는 SDK 연동 보류로 빈 객체를 보낸다.
+ * game_context에는 프로젝트 최신 빌드의 씬 스캔(SDK가 등록 때 보고한 UI 구성)을 담아,
+ * Agent가 어떤 화면을 대상으로 시나리오를 짜는지 참조하게 한다. 스캔을 보고한 빌드가 없으면
+ * 빈 객체다. unity_context는 아직 연동 보류로 빈 객체를 보낸다.
  */
 data class AgentSessionOpenRequest(
     @JsonProperty("user_input") val userInput: String,
@@ -37,4 +39,12 @@ data class AgentTurnMessage(
     @JsonProperty("user_input") val userInput: String,
     val draft: ScenarioDraft? = null,
     val model: String? = null
+)
+
+/**
+ * Agent WS로 보내는 세션 종료 메시지. 사용자가 Approve/Delete로 편집을 마치면 이 메시지를 보내고,
+ * Agent는 WS와 session_id(Redis)를 만료시킨 뒤 연결을 종료한다.
+ */
+data class AgentCloseMessage(
+    val type: String = "close"
 )

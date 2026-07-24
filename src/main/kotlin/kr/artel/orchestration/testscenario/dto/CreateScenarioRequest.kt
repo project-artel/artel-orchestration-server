@@ -26,3 +26,12 @@ data class CreateScenarioResponse(
 data class UpdateScenarioRequest(
     val draft: ScenarioDraft
 )
+
+/**
+ * TestScenario 승인(Approve) 요청 DTO. 사용자가 canvas에서 편집을 마친 최종 초안을 확정 저장한다.
+ *
+ * @property draft 확정할 최종 시나리오. 생략하면 마지막으로 저장된 payload를 그대로 최종본으로 둔다.
+ */
+data class ApproveScenarioRequest(
+    val draft: ScenarioDraft? = null
+)
