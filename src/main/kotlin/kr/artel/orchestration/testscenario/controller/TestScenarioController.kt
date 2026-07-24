@@ -7,6 +7,7 @@ import kr.artel.orchestration.testscenario.dto.MessageResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.dto.TestScenarioMessage
+import kr.artel.orchestration.testscenario.dto.UpdateScenarioRequest
 import kr.artel.orchestration.testscenario.service.TestScenarioService
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
@@ -17,6 +18,7 @@ import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
@@ -79,6 +81,18 @@ class TestScenarioController(
     ): Flux<ServerSentEvent<ScenarioStreamEvent>> {
         val appUserId = requireUser(jwt)
         return service.stream(appUserId, testScenarioId)
+    }
+
+    /** canvas 편집 실시간 자동저장(debounce PUT). 저장된 payload를 되돌려 FE 정합성을 맞춘다. */
+    @PutMapping("/{testScenarioId}")
+    fun testScenarioUpdate(
+        @PathVariable testScenarioId: Long,
+        @RequestBody request: UpdateScenarioRequest,
+        @AuthenticationPrincipal jwt: Jwt
+    ): Mono<ResponseEntity<ScenarioResponse>> {
+        val appUserId = requireUser(jwt)
+        return service.testScenarioUpdate(appUserId, testScenarioId, request.draft)
+            .map { ResponseEntity.ok(it) }
     }
 
     /** 사용자 자연어 메시지를 수신하여 Agent로 중계한다(→ WebSocket). */
