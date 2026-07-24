@@ -2,6 +2,7 @@ package kr.artel.orchestration.sdk.service.handler
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.sdk.dto.SdkGameState
+import kr.artel.orchestration.qa.service.QaSdkBridgeService
 import kr.artel.orchestration.sdk.service.AgentClient
 import kr.artel.orchestration.sdk.service.GameStateTransformer
 import org.slf4j.LoggerFactory
@@ -15,7 +16,8 @@ import reactor.core.publisher.Mono
 @Component
 class GameStateMessageHandler(
     private val objectMapper: ObjectMapper,
-    private val agentClient: AgentClient
+    private val agentClient: AgentClient,
+    private val qaBridge: QaSdkBridgeService
 ) : SdkMessageHandler {
 
     private val logger = LoggerFactory.getLogger(GameStateMessageHandler::class.java)
@@ -32,12 +34,11 @@ class GameStateMessageHandler(
             logger.info("게임 상태 수신 및 정제 완료 [instanceId: $instanceId]: 씬=${agentGameState.scene}, observables 수=${agentGameState.observables.size}, interactables 수=${agentGameState.interactables.size}")
             logger.info("정제 결과 JSON: $compactJson")
 
-            agentClient.sendState(agentGameState)
-                .onErrorResume { err ->
-                    logger.error("Agent Server 상태 전송 최종 실패 처리: ${err.message}")
-                    Mono.empty()
+            qaBridge.routeGameState(instanceId.toLong(), sdkGameState.id.toString(), agentGameState)
+                .flatMap { handledByQa ->
+                    if (handledByQa) Mono.empty()
+                    else agentClient.sendState(agentGameState).then()
                 }
-                .then()
         }
     }
 }
