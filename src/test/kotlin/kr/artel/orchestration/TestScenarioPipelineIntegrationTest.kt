@@ -226,7 +226,10 @@ class TestScenarioPipelineIntegrationTest {
         Thread.sleep(300)
         val myOpen = openRequests.filter { it.contains("튜토리얼 시나리오 만들어줘") }
         assertThat(myOpen).isNotEmpty
-        assertThat(objectMapper.readTree(myOpen[0]).get("user_input").asText()).contains("튜토리얼")
+        val openNode = objectMapper.readTree(myOpen[0])
+        assertThat(openNode.get("user_input").asText()).contains("튜토리얼")
+        // locale 미설정 사용자는 en으로 전달된다(계정에 locale을 고른 적 없음).
+        assertThat(openNode.get("locale").asText()).isEqualTo("en")
 
         // scenario가 DB에 저장(UPDATE)되었는지
         Thread.sleep(300)

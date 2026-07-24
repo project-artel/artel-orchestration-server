@@ -3,6 +3,7 @@ package kr.artel.orchestration.testscenario.service
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
@@ -45,7 +46,8 @@ class TestScenarioAgentService(
     private val streamManager: TestScenarioStreamManager,
     private val scenarioRepository: TestScenarioRepository,
     private val messageRepository: TestScenarioMessageRepository,
-    private val buildRepository: GameBuildRepository
+    private val buildRepository: GameBuildRepository,
+    private val appUserRepository: AppUserRepository
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -98,9 +100,19 @@ class TestScenarioAgentService(
         userInput: String
     ): Mono<Void> {
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
-        return gameContext(projectId, appUserId)
-            .map { context ->
-                AgentSessionOpenRequest(userInput = userInput, gameContext = context, model = defaultModel)
+        // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
+        // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
+        val localeMono = appUserRepository.findById(appUserId)
+            .map { user -> if (user.locale == "ko") "ko" else "en" }
+            .defaultIfEmpty("en")
+        return Mono.zip(gameContext(projectId, appUserId), localeMono)
+            .map { tuple ->
+                AgentSessionOpenRequest(
+                    userInput = userInput,
+                    gameContext = tuple.t1,
+                    model = defaultModel,
+                    locale = tuple.t2
+                )
             }
             .flatMap { body ->
                 webClient.post()
