@@ -5,6 +5,7 @@ import com.nimbusds.jose.proc.SecurityContext
 import kr.artel.orchestration.auth.oauth.OAuthIdentityResolver
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthUserService
+import org.slf4j.LoggerFactory
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -27,6 +28,7 @@ import org.springframework.security.oauth2.server.resource.authentication.Bearer
 import org.springframework.security.oauth2.server.resource.web.server.authentication.ServerBearerTokenAuthenticationConverter
 import org.springframework.security.web.server.SecurityWebFilterChain
 import org.springframework.security.web.server.ServerAuthenticationEntryPoint
+import org.springframework.security.web.server.context.NoOpServerSecurityContextRepository
 import org.springframework.security.web.server.authentication.ServerAuthenticationConverter
 import org.springframework.security.web.server.authentication.ServerAuthenticationSuccessHandler
 import org.springframework.security.web.server.authentication.logout.ServerLogoutSuccessHandler
@@ -43,6 +45,8 @@ import javax.crypto.spec.SecretKeySpec
 @EnableConfigurationProperties(AuthProperties::class)
 class SecurityConfig {
 
+    private val logger = LoggerFactory.getLogger(SecurityConfig::class.java)
+
     @Bean
     fun securityWebFilterChain(
         http: ServerHttpSecurity,
@@ -55,6 +59,10 @@ class SecurityConfig {
         .cors { }
         .httpBasic { it.disable() }
         .formLogin { it.disable() }
+        // 인증 주체는 JWT 쿠키 하나뿐이다. 기본값(WebSession 저장)을 두면 oauth2Login 성공 시점의
+        // OAuth2AuthenticationToken이 세션에 남아, JWT 쿠키 없이도 요청이 인증을 통과한다.
+        // 그 경우 principal이 Jwt가 아니라 OAuth2User라 컨트롤러가 401 대신 500을 낸다.
+        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
         .authorizeExchange {
             it.pathMatchers(
                 "/oauth2/**",
@@ -164,7 +172,10 @@ class SecurityConfig {
                 response.headers.location = URI.create(properties.frontendOrigin)
                 response.setComplete()
             }
-            .onErrorResume {
+            .onErrorResume { error ->
+                // 여기서 실패하면 JWT 쿠키가 발급되지 않아 로그인이 조용히 깨진다.
+                // 원인을 남기지 않으면 프런트에는 error=server만 보이고 서버에는 아무 흔적이 없다.
+                logger.error("OAuth 로그인 후처리 실패", error)
                 val response = webFilterExchange.exchange.response
                 response.statusCode = HttpStatus.FOUND
                 response.headers.location =
