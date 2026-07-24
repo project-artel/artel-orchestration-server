@@ -22,8 +22,10 @@ class AuthController(
     private val sessionUserResolver: SessionUserResolver
 ) {
     @GetMapping("/me")
-    fun me(@AuthenticationPrincipal jwt: Jwt): Mono<AuthUserResponse> =
-        Mono.justOrEmpty<SessionUser>(sessionUserResolver.resolve(jwt))
+    // principal이 Jwt가 아니면 인자 resolver가 예외 대신 null을 넘긴다. 타입을 non-null로 두면
+    // 인증 실패가 401이 아니라 NPE(500)로 새어 나온다.
+    fun me(@AuthenticationPrincipal jwt: Jwt?): Mono<AuthUserResponse> =
+        Mono.justOrEmpty<SessionUser>(jwt?.let(sessionUserResolver::resolve))
             .flatMap { session -> oauthUserService.findProfile(session.userId) }
             .map { it.toResponse() }
             // 서명은 유효하지만 가리키는 사용자가 없는 토큰은 유효한 세션이 아니다.
