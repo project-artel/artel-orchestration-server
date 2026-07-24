@@ -115,6 +115,47 @@ class SdkRegistrationIntegrationTest {
     }
 
     @Test
+    fun `stores the reported scene scan on the build`() {
+        val token = signIn()
+        val projectId = createProject(token)
+        val key = createInstance(token, projectId)["instanceKey"].asText()
+
+        register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main","Level1"],"scannedScenes":[{"name":"Main"}]}""")
+
+        val build = buildRepository.findAll().blockFirst()!!
+        val stored = objectMapper.readTree(build.sceneScan!!.asString())
+        assertThat(stored["scenesInBuild"][0].asText()).isEqualTo("Main")
+        assertThat(stored["scannedScenes"]).hasSize(1)
+    }
+
+    @Test
+    fun `overwrites the scene scan when the same build registers again`() {
+        val token = signIn()
+        val projectId = createProject(token)
+        val key = createInstance(token, projectId)["instanceKey"].asText()
+
+        register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main"]}""")
+        register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main","Level1"]}""")
+
+        assertThat(buildRepository.count().block()).isEqualTo(1L)
+        val stored = objectMapper.readTree(buildRepository.findAll().blockFirst()!!.sceneScan!!.asString())
+        assertThat(stored["scenesInBuild"]).hasSize(2)
+    }
+
+    @Test
+    fun `keeps the previous scene scan when a registration omits it`() {
+        val token = signIn()
+        val projectId = createProject(token)
+        val key = createInstance(token, projectId)["instanceKey"].asText()
+
+        register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main"]}""")
+        register(key, "sdk-uuid-1", "1.2.3")
+
+        val build = buildRepository.findAll().blockFirst()!!
+        assertThat(build.sceneScan).isNotNull()
+    }
+
+    @Test
     fun `refuses an unknown key`() {
         val error = errorOf { register("NOSUCH-KEY-00000-00000", "sdk-uuid-1", "1.0.0") }
 
@@ -141,12 +182,18 @@ class SdkRegistrationIntegrationTest {
         assertThat(error.statusCode.value()).isEqualTo(HttpStatus.NOT_FOUND.value())
     }
 
-    private fun register(instanceKey: String, sdkUuid: String, gameVersion: String) =
+    private fun register(instanceKey: String, sdkUuid: String, gameVersion: String, sceneScan: String? = null) =
         objectMapper.readTree(
             client().post()
                 .uri("/api/sdk/registrations")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("""{"instanceKey":"$instanceKey","sdkUuid":"$sdkUuid","gameVersion":"$gameVersion"}""")
+                .bodyValue(
+                    if (sceneScan == null) {
+                        """{"instanceKey":"$instanceKey","sdkUuid":"$sdkUuid","gameVersion":"$gameVersion"}"""
+                    } else {
+                        """{"instanceKey":"$instanceKey","sdkUuid":"$sdkUuid","gameVersion":"$gameVersion","sceneScan":$sceneScan}"""
+                    }
+                )
                 .retrieve()
                 .bodyToMono(String::class.java)
                 .block()
