@@ -1,5 +1,6 @@
 package kr.artel.orchestration.game.dto
 
+import com.fasterxml.jackson.databind.JsonNode
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 
@@ -12,6 +13,8 @@ import jakarta.validation.constraints.Size
  * @property instanceKey 대시보드에서 발급받은 영구 자격증명. 이 요청의 유일한 인증 수단이다
  * @property sdkUuid 런타임이 스스로 만들어 보관하는 식별자. 자격증명이 아니라 기록이다
  * @property gameVersion Unity Player Settings의 버전 문자열
+ * @property sceneScan SDK가 등록 시점에 만든 씬 스캔 JSON. 구조는 SDK가 정하고 서버는
+ * 해석 없이 게임 빌드에 그대로 저장한다. 스캔이 없는 구버전 SDK는 생략한다
  */
 data class SdkRegistrationRequest(
     @field:NotBlank
@@ -24,7 +27,9 @@ data class SdkRegistrationRequest(
 
     @field:NotBlank
     @field:Size(max = 64)
-    val gameVersion: String
+    val gameVersion: String,
+
+    val sceneScan: JsonNode? = null
 )
 
 /**

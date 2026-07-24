@@ -1,5 +1,6 @@
 package kr.artel.orchestration.game.entity
 
+import io.r2dbc.postgresql.codec.Json
 import org.springframework.data.annotation.Id
 import org.springframework.data.relational.core.mapping.Column
 import org.springframework.data.relational.core.mapping.Table
@@ -14,6 +15,9 @@ import java.time.Instant
  *
  * 인스턴스가 아니라 프로젝트에 매단다. 같은 빌드를 여러 인스턴스가 돌려도 빌드는 하나여야
  * 하고, 인스턴스를 지웠다고 그 빌드 기록이 사라져서도 안 된다.
+ *
+ * [sceneScan]은 SDK가 등록 시 보고한 씬 스캔 JSON을 그대로 담는다. 빌드당 최신본 하나만
+ * 의미가 있어 재등록마다 덮어쓴다. null은 아직 스캔을 보고한 적 없다는 뜻이다.
  */
 @Table("game_build")
 data class GameBuildEntity(
@@ -31,6 +35,9 @@ data class GameBuildEntity(
 
     @Column("notes")
     val notes: String? = null,
+
+    @Column("scene_scan")
+    val sceneScan: Json? = null,
 
     @Column("created_at")
     val createdAt: Instant,
