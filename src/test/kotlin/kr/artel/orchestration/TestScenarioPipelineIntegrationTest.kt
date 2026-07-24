@@ -10,6 +10,7 @@ import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.testscenario.dto.CreateScenarioResponse
 import kr.artel.orchestration.testscenario.dto.MessageResponse
+import kr.artel.orchestration.testscenario.dto.ScenarioListResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.repository.TestScenarioMessageRepository
@@ -331,19 +332,12 @@ class TestScenarioPipelineIntegrationTest {
             .block(Duration.ofSeconds(5))
     }
 
-    private fun deleteScenario(client: WebClient, testScenarioId: Long, token: String): Int =
-        client.delete()
-            .uri("/api/test-scenario/$testScenarioId")
-            .cookie("artel_access_token", token)
-            .exchangeToMono { Mono.just(it.statusCode().value()) }
-            .block(Duration.ofSeconds(5))!!
-
     /**
-     * Approve: 최종 draft가 payload로 확정 저장되고, 편집 부산물인 채팅 스레드는 정리되며,
-     * 시나리오 자체는 남는다. SSE로는 `closed` 종료 이벤트가 전달된다.
+     * Approve: 최종 draft가 payload로 확정 저장되고, 채팅 내역과 시나리오는 그대로 남는다.
+     * SSE로는 `closed` 종료 이벤트가 전달된다.
      */
     @Test
-    fun testApproveFinalizesAndClearsChat() {
+    fun testApproveFinalizesAndKeepsChat() {
         val client = webClient()
         val (appUserId, token) = issueUser("approver-${projectIdSeq.incrementAndGet()}")
         val projectId = createMemberProject(appUserId)
@@ -371,11 +365,11 @@ class TestScenarioPipelineIntegrationTest {
         assertThat(persisted).isNotNull
         assertThat(persisted!!.payload.asString()).contains("최종본")
 
-        // 채팅 부산물은 정리됨.
+        // 채팅 내역은 그대로 남는다(부산물 삭제 없음).
         val remaining = messageRepository
             .findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(scenarioId, appUserId)
             .collectList().block()!!
-        assertThat(remaining).isEmpty()
+        assertThat(remaining).isNotEmpty
 
         // SSE로 종료 이벤트가 전달됨.
         assertThat(events.map { it.event() }).contains("closed")
@@ -383,36 +377,9 @@ class TestScenarioPipelineIntegrationTest {
         disposable.dispose()
     }
 
-    /** Delete(Decline): 시나리오와 딸린 채팅(FK CASCADE)이 모두 삭제되고 204를 반환한다. */
+    /** 비참여자는 approve 404. */
     @Test
-    fun testDeleteRemovesScenarioAndChat() {
-        val client = webClient()
-        val (appUserId, token) = issueUser("decliner-${projectIdSeq.incrementAndGet()}")
-        val projectId = createMemberProject(appUserId)
-        val scenarioId = createScenario(client, token, projectId)
-
-        val disposable = subscribeSse(client, scenarioId, token) { }
-        Thread.sleep(1000)
-        postMessage(client, scenarioId, token, "튜토리얼 시나리오 만들어줘")
-        Thread.sleep(500)
-
-        val status = deleteScenario(client, scenarioId, token)
-        assertThat(status).isEqualTo(204)
-        Thread.sleep(300)
-
-        // 시나리오와 채팅이 모두 사라짐.
-        assertThat(scenarioRepository.findById(scenarioId).block()).isNull()
-        assertThat(
-            messageRepository.findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(scenarioId, appUserId)
-                .collectList().block()!!
-        ).isEmpty()
-
-        disposable.dispose()
-    }
-
-    /** 비참여자는 approve/delete 모두 404. */
-    @Test
-    fun testNonMemberCannotApproveOrDelete() {
+    fun testNonMemberCannotApprove() {
         val client = webClient()
         val (ownerId, ownerToken) = issueUser("owner-${projectIdSeq.incrementAndGet()}")
         val projectId = createMemberProject(ownerId)
@@ -429,11 +396,46 @@ class TestScenarioPipelineIntegrationTest {
             .block(Duration.ofSeconds(5))
         assertThat(approveStatus).isEqualTo(404)
 
-        val deleteStatus = deleteScenario(client, scenarioId, outsiderToken)
-        assertThat(deleteStatus).isEqualTo(404)
-
         // 원 소유자에겐 시나리오가 그대로 남아있다.
         assertThat(scenarioRepository.findById(scenarioId).block()).isNotNull
+    }
+
+    /**
+     * 프로젝트 시나리오 목록/단건 조회: 참여자는 {items:[요약...]} + 단건, 비참여자는 404.
+     */
+    @Test
+    fun testListScenariosByProject() {
+        val client = webClient()
+        val (appUserId, token) = issueUser("lister-${projectIdSeq.incrementAndGet()}")
+        val projectId = createMemberProject(appUserId)
+        val first = createScenario(client, token, projectId)
+        val second = createScenario(client, token, projectId)
+
+        val list = client.get()
+            .uri("/api/projects/$projectId/test-scenario")
+            .cookie("artel_access_token", token)
+            .retrieve()
+            .bodyToMono(ScenarioListResponse::class.java)
+            .block(Duration.ofSeconds(5))!!
+        assertThat(list.items.map { it.testScenarioId }).contains(first, second)
+
+        // 프로젝트 스코프 단건 조회.
+        val one = client.get()
+            .uri("/api/projects/$projectId/test-scenario/$first")
+            .cookie("artel_access_token", token)
+            .retrieve()
+            .bodyToMono(ScenarioResponse::class.java)
+            .block(Duration.ofSeconds(5))!!
+        assertThat(one.testScenarioId).isEqualTo(first)
+
+        // 비참여자는 목록 404.
+        val (_, outsiderToken) = issueUser("outsider-${projectIdSeq.incrementAndGet()}")
+        val status = client.get()
+            .uri("/api/projects/$projectId/test-scenario")
+            .cookie("artel_access_token", outsiderToken)
+            .exchangeToMono { Mono.just(it.statusCode().value()) }
+            .block(Duration.ofSeconds(5))
+        assertThat(status).isEqualTo(404)
     }
 
     /** 인증 없이 접근하면 401. */
