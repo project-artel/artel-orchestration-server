@@ -26,6 +26,9 @@ class QaSdkBridgeService(
         tryRepository.findActiveByGameInstanceId(gameInstanceId)
             .flatMap { qaTry ->
                 val qaTryId = requireNotNull(qaTry.id)
+                // STARTING 상태의 try도 findActiveByGameInstanceId에 잡힌다. 그때 agentSessionId는
+                // 아직 null이므로 evidence만 남기고 Agent 전달은 건너뛴다(붙기 전에는 보낼 곳이 없다).
+                val sessionId = qaTry.agentSessionId
                 val payload = objectMapper.valueToTree<com.fasterxml.jackson.databind.JsonNode>(state)
                 logService.append(
                     qaTryId = qaTryId,
@@ -37,6 +40,7 @@ class QaSdkBridgeService(
                 ).flatMap { inbound ->
                     logService.publish(inbound)
                     if (!inbound.inserted) return@flatMap Mono.just(true)
+                    if (sessionId == null) return@flatMap Mono.just(true)
                     logService.append(
                         qaTryId = qaTryId,
                         direction = "ORCHE_TO_AGENT",
@@ -48,7 +52,7 @@ class QaSdkBridgeService(
                         logService.publish(outbound)
                         sendAgent(
                             qaTryId,
-                            requireNotNull(qaTry.agentSessionId),
+                            sessionId,
                             "GAME_STATE",
                             sdkMessageId,
                             payload
@@ -66,6 +70,7 @@ class QaSdkBridgeService(
                     ?: return@flatMap Mono.error(IllegalArgumentException("ACTION_RESULT.id must be an integer"))
                 val outerIdString = outerId.toString()
                 val qaTryId = requireNotNull(qaTry.id)
+                val sessionId = qaTry.agentSessionId
                 logRepository.findByQaTryIdAndDirectionAndMessageId(
                     qaTryId,
                     "ORCHE_TO_SDK",
@@ -86,6 +91,7 @@ class QaSdkBridgeService(
                     ).flatMap { inbound ->
                         logService.publish(inbound)
                         if (!inbound.inserted) return@flatMap Mono.just(true)
+                        if (sessionId == null) return@flatMap Mono.just(true)
                         logService.append(
                             qaTryId = qaTryId,
                             direction = "ORCHE_TO_AGENT",
@@ -98,7 +104,7 @@ class QaSdkBridgeService(
                             logService.publish(outbound)
                             sendAgent(
                                 qaTryId,
-                                requireNotNull(qaTry.agentSessionId),
+                                sessionId,
                                 "ACTION_RESULT",
                                 correlationId,
                                 payload

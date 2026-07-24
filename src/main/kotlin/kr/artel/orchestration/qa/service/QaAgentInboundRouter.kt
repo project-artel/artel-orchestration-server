@@ -18,8 +18,12 @@ class QaAgentInboundRouter(
     private val clock: Clock
 ) {
     fun handle(envelope: QaAgentEnvelope): Mono<Void> {
-        val qaTryId = parseId(envelope.qaTryId)
-        UUID.fromString(envelope.messageId)
+        // 파싱은 동기 throw 대신 값으로 검증한다. 프레임 하나가 throw하면 receive 파이프라인이
+        // onError로 끊겨 WS가 닫히고, 그게 onDisconnect로 이어져 try 전체가 fail 처리된다.
+        val qaTryId = parseId(envelope.qaTryId) ?: return Mono.empty()
+        if (!isUuid(envelope.messageId)) {
+            return appendError(qaTryId, envelope, "Agent messageId must be a UUID")
+        }
         if (envelope.type !in setOf("LOG", "ACTION", "STATUS", "ERROR")) {
             return appendError(qaTryId, envelope, "Unsupported Agent message type: ${envelope.type}")
         }
@@ -102,7 +106,14 @@ class QaAgentInboundRouter(
             payload = objectMapper.createObjectNode().put("reason", reason)
         ).doOnNext(logService::publish).then()
 
-    private fun parseId(value: String): Long =
+    private fun parseId(value: String): Long? =
         value.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }?.toLongOrNull()
-            ?: throw IllegalArgumentException("qaTryId must be a decimal string")
+
+    private fun isUuid(value: String): Boolean =
+        try {
+            UUID.fromString(value)
+            true
+        } catch (_: IllegalArgumentException) {
+            false
+        }
 }

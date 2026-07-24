@@ -75,8 +75,11 @@ class SdkWebSocketHandler(
 
         logger.info("웹소켓 연결 성공 - instanceId: $instanceId")
 
+        // concatMap: 한 세션의 프레임을 순서대로 하나씩 처리한다. flatMap이면 프레임이 동시에
+        // 처리되어, Agent로 나가는 unicast sink에 동시 tryEmitNext가 걸려 FAIL_NON_SERIALIZED로
+        // 드롭되거나 GAME_STATE 순서가 뒤집힌다.
         val receive = session.receive()
-            .flatMap { message ->
+            .concatMap { message ->
                 val payloadText = message.payloadAsText
                 try {
                     val base = objectMapper.readValue(payloadText, BaseMessage::class.java)

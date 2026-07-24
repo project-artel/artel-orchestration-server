@@ -9,6 +9,7 @@ import kr.artel.orchestration.sdk.dto.ActionResponseDto
 import kr.artel.orchestration.sdk.service.SessionManager
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Service
+import org.springframework.transaction.reactive.TransactionalOperator
 import reactor.core.publisher.Mono
 
 /**
@@ -22,7 +23,8 @@ class QaActionDispatchService(
     private val logService: QaLogService,
     private val databaseClient: DatabaseClient,
     private val sessionManager: SessionManager,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val transactionalOperator: TransactionalOperator
 ) {
     fun dispatch(
         qaTryId: Long,
@@ -43,7 +45,10 @@ class QaActionDispatchService(
             .filter { it.status == "STARTING" || it.status == "RUNNING" }
             .switchIfEmpty(Mono.error(IllegalStateException("QA try is not active")))
             .flatMap { qaTry ->
-                logService.append(
+                // inbound append + outbound append + SDK 전송을 한 트랜잭션으로 묶는다. 원자화 전에는
+                // inbound만 커밋되고 outbound 전에 죽으면, Agent 재시도가 !inserted로 걸려 ACTION이
+                // 영영 안 나가고 무음 삼켜졌다. 이제 실패 시 전부 롤백돼 재시도가 깨끗이 다시 보낸다.
+                val delivery = logService.append(
                     qaTryId = qaTryId,
                     direction = "AGENT_TO_ORCHE",
                     type = "ACTION",
@@ -66,17 +71,19 @@ class QaActionDispatchService(
                             logService.publish(QaLogAppendResult(outbound, true))
                         }
                         .thenReturn(true)
-                        .onErrorResume { error ->
-                            logService.append(
-                                qaTryId = qaTryId,
-                                direction = "ORCHE_INTERNAL",
-                                type = "ERROR",
-                                correlationId = agentMessageId,
-                                message = "SDK action delivery failed.",
-                                payload = objectMapper.createObjectNode().put("error", error.message)
-                            ).doOnNext(logService::publish)
-                                .then(Mono.error(error))
-                        }
+                }.`as`(transactionalOperator::transactional)
+
+                // ERROR 감사 로그는 트랜잭션 밖에서 남긴다. 안에서 남기면 롤백에 함께 지워진다.
+                delivery.onErrorResume { error ->
+                    logService.append(
+                        qaTryId = qaTryId,
+                        direction = "ORCHE_INTERNAL",
+                        type = "ERROR",
+                        correlationId = agentMessageId,
+                        message = "SDK action delivery failed.",
+                        payload = objectMapper.createObjectNode().put("error", error.message)
+                    ).doOnNext(logService::publish)
+                        .then(Mono.error(error))
                 }
             }
     }
@@ -88,7 +95,7 @@ class QaActionDispatchService(
         payload: JsonNode
     ) = databaseClient.sql(
         """
-        WITH allocated AS (SELECT nextval('qa_log_id_seq') AS id)
+        WITH allocated AS (SELECT nextval(pg_get_serial_sequence('qa_log', 'id')) AS id)
         INSERT INTO qa_log (
             id, qa_try_id, message_id, correlation_id, direction, type, message, payload
         )
