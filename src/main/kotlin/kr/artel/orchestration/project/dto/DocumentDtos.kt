@@ -50,7 +50,8 @@ data class RegisterDocumentRequest(
 /**
  * 기획서 한 버전.
  *
- * @property parseStatus 파싱 파이프라인 자리. 지금은 항상 PENDING이며 진행되지 않는다
+ * @property parseStatus 추출 진행 상태. 업로드 직후 PENDING, game_context가 reference_context로
+ *   적재되면 EXTRACTED
  */
 data class ProjectDocumentResponse(
     val id: String,

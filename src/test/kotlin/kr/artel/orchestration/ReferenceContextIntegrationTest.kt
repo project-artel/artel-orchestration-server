@@ -1,5 +1,12 @@
 package kr.artel.orchestration
 
+import kr.artel.orchestration.auth.entity.AppUserEntity
+import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.project.entity.ParseStatus
+import kr.artel.orchestration.project.entity.ProjectDocumentEntity
+import kr.artel.orchestration.project.entity.ProjectEntity
+import kr.artel.orchestration.project.repository.ProjectDocumentRepository
+import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.referencecontext.dto.ReferenceContextListResponse
 import kr.artel.orchestration.referencecontext.repository.ReferenceContextRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -12,6 +19,7 @@ import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.publisher.Mono
 import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -29,6 +37,15 @@ class ReferenceContextIntegrationTest {
 
     @Autowired
     private lateinit var referenceContextRepository: ReferenceContextRepository
+
+    @Autowired
+    private lateinit var projectDocumentRepository: ProjectDocumentRepository
+
+    @Autowired
+    private lateinit var projectRepository: ProjectRepository
+
+    @Autowired
+    private lateinit var appUserRepository: AppUserRepository
 
     private fun webClient() = WebClient.create("http://localhost:$port")
 
@@ -121,6 +138,38 @@ class ReferenceContextIntegrationTest {
         val mechanics = listByType(projectId, "mechanics")
         assertThat(mechanics.items).hasSize(2)
         assertThat(mechanics.items.map { it.sourceDocumentId }).containsExactlyInAnyOrder(10, 20)
+    }
+
+    @Test
+    fun testStoreMarksSourceDocumentExtracted() {
+        val now = Instant.parse("2026-07-24T00:00:00Z")
+        // project_document는 project/app_user FK를 가지므로 실제 행을 먼저 만든다.
+        val uploader = appUserRepository.save(
+            AppUserEntity(displayName = "Uploader", createdAt = now, updatedAt = now)
+        ).block(Duration.ofSeconds(5))!!
+        val project = projectRepository.save(
+            ProjectEntity(name = "ref-ctx-project", genre = "RPG", createdAt = now, updatedAt = now)
+        ).block(Duration.ofSeconds(5))!!
+        // 업로드 직후 상태(PENDING)의 문서
+        val document = projectDocumentRepository.save(
+            ProjectDocumentEntity(
+                projectId = project.id!!,
+                version = 1,
+                objectKey = "projects/${project.id}/doc.pdf",
+                fileName = "doc.pdf",
+                contentType = "application/pdf",
+                sizeBytes = 1024,
+                uploadedBy = uploader.id!!,
+                uploadedAt = now,
+                parseStatus = ParseStatus.PENDING.name
+            )
+        ).block(Duration.ofSeconds(5))!!
+
+        store(project.id!!, sourceDocumentId = document.id!!, gameContextJson = fullContext)
+
+        // 적재가 끝나면 문서 상태가 EXTRACTED로 올라간다.
+        val reloaded = projectDocumentRepository.findById(document.id!!).block(Duration.ofSeconds(5))!!
+        assertThat(reloaded.parseStatus).isEqualTo(ParseStatus.EXTRACTED.name)
     }
 
     @Test

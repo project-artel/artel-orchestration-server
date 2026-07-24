@@ -2,6 +2,8 @@ package kr.artel.orchestration.referencecontext.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.project.entity.ParseStatus
+import kr.artel.orchestration.project.repository.ProjectDocumentRepository
 import kr.artel.orchestration.referencecontext.dto.GameContextPayload
 import kr.artel.orchestration.referencecontext.dto.ReferenceContextEntryResponse
 import kr.artel.orchestration.referencecontext.dto.ReferenceContextListResponse
@@ -21,6 +23,7 @@ import reactor.core.publisher.Mono
 @Service
 class ReferenceContextService(
     private val referenceContextRepository: ReferenceContextRepository,
+    private val projectDocumentRepository: ProjectDocumentRepository,
     private val objectMapper: ObjectMapper
 ) {
 
@@ -28,6 +31,9 @@ class ReferenceContextService(
      * 문서에서 추출한 game_context를 타입별로 저장한다. 같은 (projectId, sourceDocumentId)의
      * 기존 행을 먼저 제거한 뒤 새 타입 행을 넣어, 문서 재추출 시 그 문서분만 교체된다(멱등).
      * 빈 섹션(빈 배열/overview 없음)은 저장하지 않는다.
+     *
+     * 적재가 끝나면 원본 문서(project_document)의 parse_status를 EXTRACTED로 올려
+     * "이 문서는 추출 완료"를 업로드 플로우에 반영한다. 문서 행이 없어도(테스트 등) 오류는 없다.
      */
     fun replaceDocumentReferenceContext(
         projectId: Long,
@@ -38,8 +44,14 @@ class ReferenceContextService(
         return referenceContextRepository
             .deleteByProjectIdAndSourceDocumentId(projectId, sourceDocumentId)
             .thenMany(referenceContextRepository.saveAll(rows))
-            .then()
+            .then(markDocumentExtracted(sourceDocumentId))
     }
+
+    /** 추출 저장이 끝난 문서의 상태를 EXTRACTED로 표시한다. */
+    private fun markDocumentExtracted(sourceDocumentId: Long): Mono<Void> =
+        projectDocumentRepository
+            .updateParseStatus(sourceDocumentId, ParseStatus.EXTRACTED.name)
+            .then()
 
     /** 프로젝트의 특정 타입 항목(문서 전반)을 조회한다. Agent가 타입별로 뽑아 참고한다. */
     fun findReferenceContextByType(projectId: Long, type: String): Mono<ReferenceContextListResponse> =

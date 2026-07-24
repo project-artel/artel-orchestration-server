@@ -10,7 +10,8 @@ import java.time.Instant
  * 한 프로젝트에 여러 행이 남고 가장 큰 버전이 현재 기획서다.
  *
  * 원본 바이트는 S3에 있고 여기에는 메타데이터만 둔다. [objectKey]는 외부에 노출하지 않는다.
- * [parseStatus]는 이후 파싱 파이프라인이 쓸 자리이며 지금은 PENDING에서 움직이지 않는다.
+ * [parseStatus]는 추출 파이프라인의 진행 상태다. 업로드 직후 PENDING이고, Agent가 추출한
+ * game_context가 reference_context로 적재되면 EXTRACTED로 갱신된다.
  */
 @Table("project_document")
 data class ProjectDocumentEntity(
@@ -45,7 +46,12 @@ data class ProjectDocumentEntity(
     val parseStatus: String = ParseStatus.PENDING.name
 )
 
-/** 기획서 파싱 진행 상태. 파서가 아직 없어 지금은 [PENDING]만 기록된다. */
+/**
+ * 참고자료 추출 진행 상태.
+ * - [PENDING]: 업로드만 된 상태(아직 추출 전).
+ * - [EXTRACTED]: Agent가 추출한 game_context가 reference_context로 적재 완료.
+ */
 enum class ParseStatus {
-    PENDING
+    PENDING,
+    EXTRACTED
 }
