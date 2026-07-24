@@ -14,7 +14,7 @@ Fill this document during project initialization. Agents must verify commands ag
 - Entry points: TODO
 - Main modules: TODO
 - Dependency direction: TODO
-- External systems: GitHub repository `project-artel/artel-orchestration-server`; Jira project `ARTEL` via the `mcp-atlassian` MCP server
+- External systems: GitHub repository `project-artel/artel-orchestration-server`; Jira project `ARTEL` via the `mcp-atlassian` MCP server; Insomnia collection repository `project-artel/insomnia-api`
 - Persistent data: TODO
 
 ## Commands
@@ -44,6 +44,24 @@ excludes `.jira.env`; never commit it.
 The server reads that file itself, so the setup does not depend on how Claude
 Code was launched or on which shell exports the variables. Do not register a
 `jira` server in user scope as well, or two copies start.
+
+### Insomnia collections
+
+API collections live in `project-artel/insomnia-api`, one YAML file per
+repository (`orchestration-server.yaml` for this one), and reach people through
+Insomnia's git sync. Publish changes with the `insomnia-sync` skill: it derives
+the API surface from the springdoc contract at `/v3/api-docs`, writes the
+collection file, and opens a PR.
+
+Do not publish by writing into a local Insomnia app — neither through the
+`insomnia` MCP server's write tools nor by editing the `insomnia.*.db` NeDB
+store. Either way only one machine changes and no reviewable diff exists.
+Reading local state is fine.
+
+Environment variables are committed alongside the requests, so every consumer
+gets working URLs on pull. Credentials are excluded: `access_token` for the
+authenticated `/api/test-scenario/**` paths stays in an Insomnia private
+environment. The collection repository is currently public.
 
 ## Constraints
 
