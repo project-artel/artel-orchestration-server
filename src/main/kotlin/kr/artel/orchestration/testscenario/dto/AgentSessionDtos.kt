@@ -12,7 +12,12 @@ data class AgentSessionOpenRequest(
     @JsonProperty("user_input") val userInput: String,
     @JsonProperty("unity_context") val unityContext: Map<String, Any> = emptyMap(),
     @JsonProperty("game_context") val gameContext: Map<String, Any> = emptyMap(),
-    val model: String
+    val model: String,
+    /**
+     * 생성 결과의 출력 언어. Agent 계약의 `locale`(ko|en)에 대응한다.
+     * 사용자의 계정 locale에서 정하며, 미설정 사용자는 en으로 보낸다.
+     */
+    val locale: String
 )
 
 /**

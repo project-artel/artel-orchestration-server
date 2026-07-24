@@ -2,6 +2,7 @@ package kr.artel.orchestration.testscenario.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
@@ -41,7 +42,8 @@ class TestScenarioAgentService(
     private val objectMapper: ObjectMapper,
     private val streamManager: TestScenarioStreamManager,
     private val scenarioRepository: TestScenarioRepository,
-    private val messageRepository: TestScenarioMessageRepository
+    private val messageRepository: TestScenarioMessageRepository,
+    private val appUserRepository: AppUserRepository
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -78,15 +80,22 @@ class TestScenarioAgentService(
         appUserId: Long,
         userInput: String
     ): Mono<Void> {
-        val body = AgentSessionOpenRequest(userInput = userInput, model = defaultModel)
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
-        return webClient.post()
-            .uri("$agentBaseUrl/sessions")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(body)
-            .retrieve()
-            .bodyToMono(AgentSessionOpenResponse::class.java)
-            .doOnNext { resp -> openWebSocket(sessionKey, testScenarioId, appUserId, resp.sessionId) }
+        // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
+        // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
+        return appUserRepository.findById(appUserId)
+            .map { user -> if (user.locale == "ko") "ko" else "en" }
+            .defaultIfEmpty("en")
+            .flatMap { locale ->
+                val body = AgentSessionOpenRequest(userInput = userInput, model = defaultModel, locale = locale)
+                webClient.post()
+                    .uri("$agentBaseUrl/sessions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(AgentSessionOpenResponse::class.java)
+                    .doOnNext { resp -> openWebSocket(sessionKey, testScenarioId, appUserId, resp.sessionId) }
+            }
             .then()
     }
 
