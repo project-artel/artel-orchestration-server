@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
@@ -71,9 +72,22 @@ class TestScenarioAgentService(
         return saveMessage(testScenarioId, appUserId, "USER", userInput).then(send)
     }
 
-    /** 세션의 Agent 커넥션을 닫는다(세션 종료 시). */
-    fun closeConnection(sessionKey: String) {
-        sessions.remove(sessionKey)?.disposable?.dispose()
+    /**
+     * Agent 세션을 종료한다(Approve/Delete 시). Agent에 `{type:"close"}`를 통보해 WS와 session_id(Redis)를
+     * 만료시키도록 하고, 우리 쪽 WS 구독도 정리한다. 세션이 없으면(이미 종료) 조용히 무시한다.
+     */
+    fun closeSession(sessionKey: String) {
+        val session = sessions.remove(sessionKey) ?: return
+        try {
+            val json = objectMapper.writeValueAsString(AgentCloseMessage())
+            session.outbound.tryEmitNext(json)
+            session.outbound.tryEmitComplete()
+        } catch (e: Exception) {
+            logger.warn("Agent WS close 통보 실패 [sessionKey=$sessionKey]: ${e.message}")
+        } finally {
+            session.disposable?.dispose()
+            logger.info("Agent 세션 종료 [sessionKey=$sessionKey]")
+        }
     }
 
     private fun openSession(

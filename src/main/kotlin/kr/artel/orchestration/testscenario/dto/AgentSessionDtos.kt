@@ -35,3 +35,11 @@ data class AgentTurnMessage(
     val draft: ScenarioDraft? = null,
     val model: String? = null
 )
+
+/**
+ * Agent WS로 보내는 세션 종료 메시지. 사용자가 Approve/Delete로 편집을 마치면 이 메시지를 보내고,
+ * Agent는 WS와 session_id(Redis)를 만료시킨 뒤 연결을 종료한다.
+ */
+data class AgentCloseMessage(
+    val type: String = "close"
+)

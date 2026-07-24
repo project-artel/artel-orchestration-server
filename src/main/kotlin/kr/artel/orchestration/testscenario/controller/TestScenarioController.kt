@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testscenario.controller
 
 import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.testscenario.dto.ApproveScenarioRequest
 import kr.artel.orchestration.testscenario.dto.CreateScenarioRequest
 import kr.artel.orchestration.testscenario.dto.CreateScenarioResponse
 import kr.artel.orchestration.testscenario.dto.MessageResponse
@@ -109,6 +110,18 @@ class TestScenarioController(
             .onErrorResume({ it !is ResponseStatusException }) { error ->
                 Mono.just(ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(error.message))
             }
+    }
+
+    /** 시나리오를 승인(확정)한다: 최종 draft 저장 + Agent WS/SSE 종료(채팅·시나리오는 남김). */
+    @PostMapping("/{testScenarioId}/approve")
+    fun testScenarioApprove(
+        @PathVariable testScenarioId: Long,
+        @RequestBody(required = false) request: ApproveScenarioRequest?,
+        @AuthenticationPrincipal jwt: Jwt
+    ): Mono<ResponseEntity<String>> {
+        val appUserId = requireUser(jwt)
+        return service.testScenarioApprove(appUserId, testScenarioId, request?.draft)
+            .then(Mono.just(ResponseEntity.ok("승인 완료")))
     }
 
     /** 유효한 사용자 토큰이 아니면 401. */

@@ -38,6 +38,21 @@ class TestScenarioStreamManager {
     }
 
     /**
+     * SSE 스트림을 강제 종료한다(Approve/Delete로 세션이 닫힐 때). FE의 EventSource는 스트림이 그냥 완료되면
+     * 자동 재연결을 시도하므로, `closed` 이벤트를 먼저 보내 FE가 스스로 EventSource.close()를 호출하게 한 뒤
+     * 스트림을 완료한다. 활성 스트림이 없으면 조용히 무시한다.
+     */
+    fun complete(sessionKey: String) {
+        val sink = streams.remove(sessionKey) ?: return
+        val closed = ServerSentEvent.builder(ScenarioStreamEvent(type = "closed"))
+            .event("closed")
+            .build()
+        sink.tryEmitNext(closed)
+        sink.tryEmitComplete()
+        logger.info("SSE 스트림 종료 이벤트 전송 및 완료 [sessionKey: $sessionKey]")
+    }
+
+    /**
      * Agent 응답 이벤트를 해당 sessionKey의 SSE 스트림으로 전달한다.
      * `event.type`을 SSE 이벤트명으로 사용해 FE가 result/error 등을 구분할 수 있게 한다.
      *

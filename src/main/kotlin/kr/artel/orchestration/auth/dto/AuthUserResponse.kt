@@ -8,8 +8,15 @@ data class AuthUserResponse(
     val id: String,
     val displayName: String,
     val email: String?,
+    /** 홈 UI 표시 언어. null이면 사용자가 아직 고르지 않은 것이다. */
+    val locale: String?,
     /** 최근 로그인한 제공자가 앞에 오도록 정렬된다. */
     val identities: List<LinkedIdentityResponse>
+)
+
+/** `PUT /api/auth/me/locale` 요청 본문. */
+data class UpdateLocaleRequest(
+    val locale: String
 )
 
 data class LinkedIdentityResponse(
