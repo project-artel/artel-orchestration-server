@@ -97,10 +97,11 @@ class TestScenarioService(
     fun relay(appUserId: Long, testScenarioId: Long, message: TestScenarioMessage): Mono<Void> =
         accessService.accessibleScenario(testScenarioId, appUserId)
             .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
-            .flatMap {
+            .flatMap { scenario ->
                 agentService.sendMessage(
                     sessionKey(appUserId, testScenarioId),
                     testScenarioId,
+                    scenario.projectId,
                     appUserId,
                     message.testScenarioMessage,
                     message.draft

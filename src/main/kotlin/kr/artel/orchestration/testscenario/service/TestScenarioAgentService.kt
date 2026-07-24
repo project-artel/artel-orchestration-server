@@ -1,7 +1,9 @@
 package kr.artel.orchestration.testscenario.service
 
+import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
@@ -41,7 +43,8 @@ class TestScenarioAgentService(
     private val objectMapper: ObjectMapper,
     private val streamManager: TestScenarioStreamManager,
     private val scenarioRepository: TestScenarioRepository,
-    private val messageRepository: TestScenarioMessageRepository
+    private val messageRepository: TestScenarioMessageRepository,
+    private val buildRepository: GameBuildRepository
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -57,13 +60,14 @@ class TestScenarioAgentService(
     fun sendMessage(
         sessionKey: String,
         testScenarioId: Long,
+        projectId: Long,
         appUserId: Long,
         userInput: String,
         draft: ScenarioDraft? = null
     ): Mono<Void> {
         val existing = sessions[sessionKey]
         val send = if (existing != null) sendTurn(sessionKey, existing, userInput, draft)
-        else openSession(sessionKey, testScenarioId, appUserId, userInput)
+        else openSession(sessionKey, testScenarioId, projectId, appUserId, userInput)
         return saveMessage(testScenarioId, appUserId, "USER", userInput).then(send)
     }
 
@@ -75,20 +79,45 @@ class TestScenarioAgentService(
     private fun openSession(
         sessionKey: String,
         testScenarioId: Long,
+        projectId: Long,
         appUserId: Long,
         userInput: String
     ): Mono<Void> {
-        val body = AgentSessionOpenRequest(userInput = userInput, model = defaultModel)
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
-        return webClient.post()
-            .uri("$agentBaseUrl/sessions")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(body)
-            .retrieve()
-            .bodyToMono(AgentSessionOpenResponse::class.java)
+        return gameContext(projectId, appUserId)
+            .map { context ->
+                AgentSessionOpenRequest(userInput = userInput, gameContext = context, model = defaultModel)
+            }
+            .flatMap { body ->
+                webClient.post()
+                    .uri("$agentBaseUrl/sessions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(AgentSessionOpenResponse::class.java)
+            }
             .doOnNext { resp -> openWebSocket(sessionKey, testScenarioId, appUserId, resp.sessionId) }
             .then()
     }
+
+    /**
+     * 프로젝트의 가장 최근 씬 스캔을 game_context로 만든다. SDK가 등록 때 보고한 빌드의 UI 구성이며,
+     * Agent가 어떤 화면을 대상으로 시나리오를 짜는지 참조한다.
+     *
+     * 최신 빌드가 스캔 없이 등록됐을 수도 있어(구버전 SDK), 스캔을 가진 가장 최근 빌드를 고른다.
+     * 그런 빌드가 하나도 없으면 빈 맵이라 기존과 동일하게 빈 game_context를 보낸다.
+     */
+    private fun gameContext(projectId: Long, appUserId: Long): Mono<Map<String, Any>> =
+        buildRepository.findAllForMember(projectId, appUserId)
+            .filter { it.sceneScan != null }
+            .next()
+            .map { build ->
+                objectMapper.readValue(
+                    build.sceneScan!!.asString(),
+                    object : TypeReference<Map<String, Any>>() {}
+                )
+            }
+            .defaultIfEmpty(emptyMap())
 
     private fun sendTurn(
         sessionKey: String,
