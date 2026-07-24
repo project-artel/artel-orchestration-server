@@ -1,0 +1,37 @@
+package kr.artel.orchestration.qa.service
+
+import com.fasterxml.jackson.databind.JsonNode
+import reactor.core.publisher.Mono
+import java.time.Instant
+
+data class QaAgentSession(val sessionId: String)
+
+data class QaAgentSessionContext(
+    val qaTryId: String,
+    val gameInstanceId: String,
+    val testScenarioId: String,
+    val scenario: JsonNode
+)
+
+data class QaAgentEnvelope(
+    val messageId: String,
+    val type: String,
+    val qaTryId: String,
+    val correlationId: String? = null,
+    val sequence: Long? = null,
+    val timestamp: Instant,
+    val payload: JsonNode
+)
+
+interface QaAgentPort {
+    fun createSession(
+        context: QaAgentSessionContext,
+        onMessage: (QaAgentEnvelope) -> Mono<Void>,
+        onDisconnect: () -> Mono<Void>
+    ): Mono<QaAgentSession>
+
+    fun send(sessionId: String, envelope: QaAgentEnvelope): Mono<Void>
+    fun close(sessionId: String): Mono<Void>
+}
+
+class QaAgentUnavailableException(message: String) : RuntimeException(message)

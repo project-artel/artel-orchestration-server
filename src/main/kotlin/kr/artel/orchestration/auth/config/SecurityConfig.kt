@@ -80,6 +80,8 @@ class SecurityConfig {
             it.pathMatchers("/api/auth/**").authenticated()
             // test-scenario는 외부(FE) 요청이므로 JWT 인증/인가 대상이다.
             it.pathMatchers("/api/test-scenario/**").authenticated()
+            // QA 실행/로그/SSE도 프로젝트 멤버만 접근하는 엔드유저 API다.
+            it.pathMatchers("/api/qa-tries/**").authenticated()
             it.anyExchange().authenticated()
         }
         .oauth2Login {

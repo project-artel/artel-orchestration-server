@@ -1,6 +1,7 @@
 package kr.artel.orchestration.sdk.service.handler
 
 import kr.artel.orchestration.sdk.service.AgentClient
+import kr.artel.orchestration.qa.service.QaSdkBridgeService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.WebSocketSession
@@ -11,7 +12,8 @@ import reactor.core.publisher.Mono
  */
 @Component
 class ActionResultMessageHandler(
-    private val agentClient: AgentClient
+    private val agentClient: AgentClient,
+    private val qaBridge: QaSdkBridgeService
 ) : SdkMessageHandler {
 
     private val logger = LoggerFactory.getLogger(ActionResultMessageHandler::class.java)
@@ -21,11 +23,10 @@ class ActionResultMessageHandler(
     override fun handle(instanceId: String, payloadText: String, session: WebSocketSession): Mono<Void> {
         logger.info("액션 결과 수신 [instanceId: $instanceId]: $payloadText")
         
-        return agentClient.sendResult(payloadText)
-            .onErrorResume { err ->
-                logger.error("Agent Server 결과 전송 최종 실패 처리: ${err.message}")
-                Mono.empty()
+        return qaBridge.routeActionResult(instanceId.toLong(), payloadText)
+            .flatMap { handledByQa ->
+                if (handledByQa) Mono.empty()
+                else agentClient.sendResult(payloadText).then()
             }
-            .then()
     }
 }

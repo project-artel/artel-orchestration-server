@@ -2,6 +2,7 @@ package kr.artel.orchestration.sdk.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.sdk.dto.BaseMessage
 import kr.artel.orchestration.sdk.service.handler.SdkMessageHandler
 import org.slf4j.LoggerFactory
@@ -28,6 +29,7 @@ class SdkWebSocketHandler(
     private val objectMapper: ObjectMapper,
     private val instanceRepository: GameInstanceRepository,
     private val sessionManager: SessionManager,
+    private val qaExecutionFailureService: QaExecutionFailureService,
     handlers: List<SdkMessageHandler>
 ) : WebSocketHandler {
 
@@ -73,8 +75,11 @@ class SdkWebSocketHandler(
 
         logger.info("웹소켓 연결 성공 - instanceId: $instanceId")
 
+        // concatMap: 한 세션의 프레임을 순서대로 하나씩 처리한다. flatMap이면 프레임이 동시에
+        // 처리되어, Agent로 나가는 unicast sink에 동시 tryEmitNext가 걸려 FAIL_NON_SERIALIZED로
+        // 드롭되거나 GAME_STATE 순서가 뒤집힌다.
         val receive = session.receive()
-            .flatMap { message ->
+            .concatMap { message ->
                 val payloadText = message.payloadAsText
                 try {
                     val base = objectMapper.readValue(payloadText, BaseMessage::class.java)
@@ -105,6 +110,11 @@ class SdkWebSocketHandler(
                 // 자기 세션일 때만 지운다. 늦게 끊긴 좀비 연결이 살아 있는 연결의 자리를
                 // 비우면, SDK는 연결된 채로 액션을 받지 못한다.
                 sessionManager.removeSession(instanceId, session)
+                qaExecutionFailureService.sdkDisconnected(instanceId.toLong())
+                    .subscribe(
+                        {},
+                        { error -> logger.error("QA SDK 연결 종료 처리 실패 [instanceId=$instanceId]", error) }
+                    )
                 logger.info("웹소켓 연결 종료 - instanceId: $instanceId")
             }
 
