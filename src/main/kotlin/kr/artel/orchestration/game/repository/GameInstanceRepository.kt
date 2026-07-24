@@ -40,6 +40,25 @@ interface GameInstanceRepository : ReactiveCrudRepository<GameInstanceEntity, Lo
     fun findAccessibleById(id: Long, projectId: Long, userId: Long): Mono<GameInstanceEntity>
 
     /**
+     * 프로젝트를 모른 채 인스턴스 하나에 대한 접근 권한을 확인한다.
+     *
+     * 화면 스트리밍 웹소켓은 URL에 instanceId만 싣는다. projectId까지 받으면 클라이언트가
+     * 보낸 두 값이 서로 맞는지를 따로 확인해야 하고, 그 확인을 빠뜨리면 남의 프로젝트 id를
+     * 붙여 보내는 것으로 조인을 통과시킬 수 있다. 인스턴스에서 프로젝트를 거슬러 올라가면
+     * 그 경우가 아예 생기지 않는다.
+     */
+    @Query(
+        """
+        SELECT gi.* FROM game_instance gi
+        JOIN project p ON p.id = gi.project_id
+        JOIN project_member m ON m.project_id = gi.project_id
+        WHERE gi.id = :id AND m.app_user_id = :userId
+          AND gi.deleted_at IS NULL AND p.deleted_at IS NULL
+        """
+    )
+    fun findAccessibleByIdForMember(id: Long, userId: Long): Mono<GameInstanceEntity>
+
+    /**
      * SDK가 제시한 키로 인스턴스를 찾는다. 호출자가 로그인한 사용자가 아니므로 참여자 조인은
      * 없지만, 삭제 조건은 그대로다. 지운 인스턴스나 지운 프로젝트의 키는 통하지 않는다.
      */

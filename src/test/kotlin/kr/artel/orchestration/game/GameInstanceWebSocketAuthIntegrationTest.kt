@@ -60,7 +60,7 @@ class GameInstanceWebSocketAuthIntegrationTest {
         val instance = createGameInstance()
         val instanceId = requireNotNull(instance.id).toString()
         val incumbent = Mockito.mock(WebSocketSession::class.java)
-        sessionManager.registerSession(instanceId, incumbent)
+        sessionManager.register(instanceId, incumbent)
 
         try {
             val closeStatus = connectAndAwaitClose(instance.instanceKey)
