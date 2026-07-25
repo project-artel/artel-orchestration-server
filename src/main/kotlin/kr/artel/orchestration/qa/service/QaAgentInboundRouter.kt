@@ -1,6 +1,7 @@
 package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Mono
@@ -31,9 +32,11 @@ class QaAgentInboundRouter(
         if (message.isNullOrBlank()) {
             return appendError(qaTryId, envelope, "${envelope.type} payload.message is required")
         }
+        // A frame for an unknown/already-finished try is dropped, not raised: an error
+        // here propagates out of the WebSocket receive chain, which closes the socket
+        // and fails the whole run via onDisconnect.
         return tryRepository.findById(qaTryId)
             .filter { it.status == "STARTING" || it.status == "RUNNING" }
-            .switchIfEmpty(Mono.error(IllegalStateException("QA try is not active")))
             .flatMap { qaTry ->
                 when (envelope.type) {
                     "ACTION" -> actionDispatch.dispatch(
@@ -62,11 +65,21 @@ class QaAgentInboundRouter(
         envelope: QaAgentEnvelope,
         message: String
     ): Mono<Void> {
-        val requested = envelope.payload.path("status").takeIf { it.isTextual }?.asText()
-        val terminal = requested in setOf("COMPLETED", "FAILED", "CANCELLED")
-        val completedAt = if (terminal) Instant.now(clock) else null
-        val transition = if (terminal) {
-            tryRepository.transition(qaTryId, currentStatus, requested!!, completedAt, completedAt!!)
+        // Agent STATUS is 2-scope: per-step frames reuse COMPLETED/FAILED for the step's
+        // own verdict and carry result=null — they must NOT end the run. Only a
+        // run-terminal frame carries result PASSED|FAILED, and CANCELLED is always
+        // terminal. Key on result, never on the status word alone.
+        val status = envelope.payload.path("status").takeIf { it.isTextual }?.asText()
+        val result = envelope.payload.path("result").takeIf { it.isTextual }?.asText()
+        val resolved = when {
+            status == "CANCELLED" -> "CANCELLED"
+            result == "PASSED" -> "COMPLETED"
+            result == "FAILED" -> "FAILED"
+            else -> null
+        }
+        val completedAt = if (resolved != null) Instant.now(clock) else null
+        val transition = if (resolved != null) {
+            tryRepository.transition(qaTryId, currentStatus, resolved, completedAt, completedAt!!)
                 .filter { it == 1 }
                 .switchIfEmpty(Mono.error(IllegalStateException("Illegal QA status transition")))
                 .then()
@@ -79,16 +92,17 @@ class QaAgentInboundRouter(
                 messageId = envelope.messageId,
                 correlationId = envelope.correlationId,
                 message = message,
-                payload = if (terminal) {
-                    objectMapper.createObjectNode()
-                        .put("message", message)
-                        .put("status", requested)
+                payload = if (resolved != null) {
+                    // Keep the agent's rich terminal payload (result, summary) but stamp
+                    // the resolved try status + completion time for downstream readers.
+                    (envelope.payload.deepCopy() as ObjectNode)
+                        .put("status", resolved)
                         .put("completedAt", completedAt.toString())
                 } else envelope.payload
             )
         ).doOnNext {
             logService.publish(it)
-            if (terminal) streamManager.complete(qaTryId)
+            if (resolved != null) streamManager.complete(qaTryId)
         }.then()
     }
 

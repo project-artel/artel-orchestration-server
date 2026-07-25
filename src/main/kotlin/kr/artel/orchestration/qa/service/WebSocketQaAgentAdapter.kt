@@ -28,8 +28,7 @@ private data class QaSessionOpenContext(
 )
 
 private data class QaSessionOpenResponse(
-    @JsonProperty("session_id") val sessionId: String,
-    val type: String
+    @JsonProperty("session_id") val sessionId: String
 )
 
 @Service
@@ -58,15 +57,12 @@ class WebSocketQaAgentAdapter(
             )
         )
         return webClient.post()
-            .uri("$baseUrl/sessions")
+            .uri("$baseUrl/qa-sessions")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
             .retrieve()
             .bodyToMono(QaSessionOpenResponse::class.java)
             .flatMap { response ->
-                if (response.type != "QA") {
-                    return@flatMap Mono.error(QaAgentUnavailableException("Agent returned a non-QA session"))
-                }
                 openWebSocket(response.sessionId, onMessage, onDisconnect)
                     .thenReturn(QaAgentSession(response.sessionId))
             }
@@ -109,7 +105,7 @@ class WebSocketQaAgentAdapter(
             return Mono.error(IllegalStateException("Duplicate QA Agent session: $sessionId"))
         }
 
-        val disposable = wsClient.execute(URI.create("$wsBaseUrl/sessions/$sessionId")) { ws ->
+        val disposable = wsClient.execute(URI.create("$wsBaseUrl/qa-sessions/$sessionId")) { ws ->
             ready.tryEmitEmpty()
             val send = ws.send(outbound.asFlux().map(ws::textMessage))
             val receive = ws.receive()
@@ -117,6 +113,9 @@ class WebSocketQaAgentAdapter(
                     Mono.fromCallable {
                         objectMapper.readValue(frame.payloadAsText, QaAgentEnvelope::class.java)
                     }.flatMap(onMessage)
+                        // An unparseable frame must not terminate the receive chain:
+                        // that closes the socket and fails the whole run.
+                        .onErrorResume { Mono.empty() }
                 }
                 .then()
             send.and(receive)

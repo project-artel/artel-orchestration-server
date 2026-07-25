@@ -2,6 +2,7 @@ package kr.artel.orchestration.qa.repository
 
 import kr.artel.orchestration.qa.entity.QaLogEntity
 import kr.artel.orchestration.qa.entity.QaTryEntity
+import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.reactive.ReactiveCrudRepository
 import reactor.core.publisher.Flux
@@ -28,6 +29,11 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
     )
     fun findActiveByGameInstanceId(gameInstanceId: Long): Mono<QaTryEntity>
 
+    // @Modifying is what makes these return the affected row count. Without it
+    // Spring Data R2DBC maps the statement as a result set, the Mono completes
+    // empty, and every `filter { it == 1 }` below reads a successful update as a
+    // failure — which then rolls the update back.
+    @Modifying
     @Query(
         """
         UPDATE qa_try
@@ -43,6 +49,7 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
         updatedAt: Instant
     ): Mono<Int>
 
+    @Modifying
     @Query(
         """
         UPDATE qa_try
@@ -52,6 +59,7 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
     )
     fun attachAgentSession(id: Long, agentSessionId: String, updatedAt: Instant): Mono<Int>
 
+    @Modifying
     @Query(
         """
         UPDATE qa_try
@@ -62,6 +70,7 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
     )
     fun failActiveByGameInstanceId(gameInstanceId: Long, completedAt: Instant): Mono<Int>
 
+    @Modifying
     @Query(
         """
         UPDATE qa_try
