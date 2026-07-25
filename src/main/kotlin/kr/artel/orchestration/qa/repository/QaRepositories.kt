@@ -29,6 +29,19 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
     )
     fun findActiveByGameInstanceId(gameInstanceId: Long): Mono<QaTryEntity>
 
+    /** One project's runs, newest first. Membership is what makes them visible. */
+    @Query(
+        """
+        SELECT qt.* FROM qa_try qt
+        JOIN test_scenario ts ON ts.id = qt.test_scenario_id
+        JOIN project_member pm ON pm.project_id = ts.project_id
+        WHERE ts.project_id = :projectId AND pm.app_user_id = :userId
+        ORDER BY qt.id DESC
+        LIMIT :limit
+        """
+    )
+    fun findByProject(projectId: Long, userId: Long, limit: Int): Flux<QaTryEntity>
+
     // @Modifying is what makes these return the affected row count. Without it
     // Spring Data R2DBC maps the statement as a result set, the Mono completes
     // empty, and every `filter { it == 1 }` below reads a successful update as a

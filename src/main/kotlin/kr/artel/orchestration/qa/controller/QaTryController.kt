@@ -38,6 +38,19 @@ class QaTryController(
         service.create(parseId(request.testScenarioId), parseId(request.gameInstanceId), requireUser(jwt))
             .map { ResponseEntity.status(HttpStatus.CREATED).body(it) }
 
+    /** One project's runs, newest first — the way back to a run after its URL is lost. */
+    @GetMapping
+    fun list(
+        @RequestParam projectId: String,
+        @RequestParam(defaultValue = "20") size: Int,
+        @AuthenticationPrincipal jwt: Jwt
+    ): Mono<ResponseEntity<List<QaTryResponse>>> {
+        if (size !in 1..100) throw ResponseStatusException(HttpStatus.BAD_REQUEST, "size must be between 1 and 100")
+        return service.listByProject(parseId(projectId), requireUser(jwt), size)
+            .collectList()
+            .map { ResponseEntity.ok(it) }
+    }
+
     @GetMapping("/{qaTryId}")
     fun get(
         @PathVariable qaTryId: String,

@@ -139,6 +139,9 @@ class QaTryService(
     fun get(qaTryId: Long, userId: Long): Mono<QaTryResponse> =
         tryRepository.findAccessibleById(qaTryId, userId).map { it.toResponse() }
 
+    fun listByProject(projectId: Long, userId: Long, size: Int) =
+        tryRepository.findByProject(projectId, userId, size).map { it.toResponse() }
+
     fun requireAccessible(qaTryId: Long, userId: Long): Mono<QaTryEntity> =
         tryRepository.findAccessibleById(qaTryId, userId)
 
