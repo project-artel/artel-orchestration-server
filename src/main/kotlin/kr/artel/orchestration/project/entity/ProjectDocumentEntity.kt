@@ -47,11 +47,15 @@ data class ProjectDocumentEntity(
 )
 
 /**
- * 참고자료 추출 진행 상태.
+ * 참고자료 추출 진행 상태(업로드 → 추출 파이프라인).
  * - [PENDING]: 업로드만 된 상태(아직 추출 전).
- * - [EXTRACTED]: Agent가 추출한 game_context가 reference_context로 적재 완료.
+ * - [EXTRACTING]: Agent /extract 호출~적재가 진행 중.
+ * - [EXTRACTED]: game_context가 reference_context로 적재 완료.
+ * - [FAILED]: presign/추출/적재 중 실패(원본은 남으므로 재추출로 복구 가능).
  */
 enum class ParseStatus {
     PENDING,
-    EXTRACTED
+    EXTRACTING,
+    EXTRACTED,
+    FAILED
 }

@@ -30,6 +30,14 @@ artel:
   agent:
     base-url: ${ARTEL_AGENT_BASE_URL:http://localhost:8000}
     ws-base-url: ${ARTEL_AGENT_WS_BASE_URL:ws://localhost:8000}
+    # 업로드 문서 → /extract → reference_context 적재(pull 파이프라인).
+    extract:
+      # 로컬에 Agent가 없으면 업로드마다 FAILED로 남으니 끌 수 있게 둔다.
+      enabled: ${ARTEL_AGENT_EXTRACT_ENABLED:true}
+      # 비우면 Agent 기본 모델(openai/gpt-4o-mini)을 쓴다.
+      model: ${ARTEL_AGENT_EXTRACT_MODEL:}
+      # LLM 추출이 길어질 수 있어 넉넉히. 논블로킹이라 스레드를 잡지 않는다.
+      timeout: ${ARTEL_AGENT_EXTRACT_TIMEOUT:PT3M}
   stream:
     enabled: ${ARTEL_STREAM_ENABLED:true}
     # 브라우저가 10초마다 갱신을 보낸다. 그보다 짧으면 정상 연결을 잘라낸다.
