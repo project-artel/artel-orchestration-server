@@ -20,6 +20,10 @@ data class AppUserEntity(
     @Column("email")
     val email: String? = null,
 
+    /** 홈 UI 표시 언어. null이면 아직 고르지 않았고 클라이언트 기본 로직을 따른다. */
+    @Column("locale")
+    val locale: String? = null,
+
     @Column("created_at")
     val createdAt: Instant,
 

@@ -38,6 +38,8 @@ data class UserProfile(
     val userId: String,
     val displayName: String,
     val email: String?,
+    /** 홈 UI 표시 언어. null이면 아직 고르지 않은 것이다. */
+    val locale: String?,
     val identities: List<LinkedIdentity>
 )
 
