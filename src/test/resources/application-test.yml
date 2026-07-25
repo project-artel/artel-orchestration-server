@@ -27,6 +27,10 @@ artel:
   agent:
     base-url: http://localhost:8000
     ws-base-url: ws://localhost:8000
+    # 문서 업로드 테스트가 실제 Agent /extract를 부르지 않도록 기본은 끔.
+    # 추출 파이프라인 테스트는 mock Agent를 띄우고 코디네이터를 직접 호출해 검증한다.
+    extract:
+      enabled: false
   auth:
     frontend-url: http://localhost:5173
     issuer: artel-orchestration-server-test

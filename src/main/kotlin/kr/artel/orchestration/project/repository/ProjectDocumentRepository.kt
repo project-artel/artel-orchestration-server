@@ -1,6 +1,7 @@
 package kr.artel.orchestration.project.repository
 
 import kr.artel.orchestration.project.entity.ProjectDocumentEntity
+import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.reactive.ReactiveCrudRepository
 import reactor.core.publisher.Flux
@@ -52,6 +53,14 @@ interface ProjectDocumentRepository : ReactiveCrudRepository<ProjectDocumentEnti
         """
     )
     fun countByProjectIds(projectIds: Collection<Long>): Flux<ProjectDocumentCount>
+
+    /**
+     * 문서의 추출 진행 상태를 갱신한다. reference_context 적재가 끝나면 EXTRACTED로 올린다.
+     * 존재하지 않는 id면 0행이 갱신되고 오류는 나지 않는다(추출 저장 자체를 막지 않는다).
+     */
+    @Modifying
+    @Query("UPDATE project_document SET parse_status = :parseStatus WHERE id = :documentId")
+    fun updateParseStatus(documentId: Long, parseStatus: String): Mono<Long>
 }
 
 data class ProjectDocumentCount(

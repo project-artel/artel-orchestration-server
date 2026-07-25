@@ -10,10 +10,14 @@ import kr.artel.orchestration.project.entity.ProjectDocumentEntity
 import kr.artel.orchestration.project.repository.ProjectDocumentRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.referencecontext.service.ReferenceContextExtractionService
+import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import reactor.core.publisher.Mono
+import reactor.core.scheduler.Schedulers
 import reactor.util.retry.Retry
 import java.time.Clock
 import java.time.Instant
@@ -41,8 +45,12 @@ class ProjectDocumentService(
     private val documentAssembler: ProjectDocumentAssembler,
     private val storage: DocumentStorage,
     private val properties: StorageProperties,
-    private val clock: Clock
+    private val clock: Clock,
+    private val extractionService: ReferenceContextExtractionService,
+    @Value("\${artel.agent.extract.enabled:true}") private val extractionEnabled: Boolean
 ) {
+    private val logger = LoggerFactory.getLogger(ProjectDocumentService::class.java)
+
     /**
      * 업로드 티켓을 발급한다. 형식과 크기를 여기서 먼저 막아 규격 밖 파일이 S3에 닿지 않게 한다.
      *
@@ -90,7 +98,28 @@ class ProjectDocumentService(
                     sizeBytes = stored.sizeBytes
                 )
             }
-            .flatMap(documentAssembler::toResponse)
+            .flatMap { document ->
+                // 응답은 즉시 반환하고, 추출→적재는 뒤에서 진행한다(완료 여부는 parse_status로 노출).
+                documentAssembler.toResponse(document)
+                    .doOnSuccess { triggerExtractionInBackground(document) }
+            }
+
+    /**
+     * 추출 파이프라인을 요청과 분리해 백그라운드로 띄운다(fire-and-forget).
+     *
+     * 업로드 확정 응답을 LLM 지연에 묶지 않기 위해 별도 스케줄러에서 구독한다. 실패는
+     * 코디네이터가 parse_status=FAILED로 남기므로 여기선 방어적으로 로그만 남긴다.
+     * (프로세스 재시작 중이면 진행 중 작업은 유실될 수 있어, 재추출 트리거는 후속 과제다.)
+     */
+    private fun triggerExtractionInBackground(document: ProjectDocumentEntity) {
+        if (!extractionEnabled) return
+        extractionService.extractAndStoreForDocument(document)
+            .subscribeOn(Schedulers.boundedElastic())
+            .subscribe(
+                {},
+                { error -> logger.error("추출 파이프라인 기동 실패 documentId={}", document.id, error) }
+            )
+    }
 
     @Transactional(readOnly = true)
     fun list(userId: Long, projectId: Long): Mono<List<ProjectDocumentResponse>> =
