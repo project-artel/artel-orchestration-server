@@ -113,6 +113,9 @@ class WebSocketQaAgentAdapter(
                     Mono.fromCallable {
                         objectMapper.readValue(frame.payloadAsText, QaAgentEnvelope::class.java)
                     }.flatMap(onMessage)
+                        // An unparseable frame must not terminate the receive chain:
+                        // that closes the socket and fails the whole run.
+                        .onErrorResume { Mono.empty() }
                 }
                 .then()
             send.and(receive)
