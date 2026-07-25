@@ -28,7 +28,7 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
         """
     )
     fun findActiveByGameInstanceId(gameInstanceId: Long): Mono<QaTryEntity>
-
+  
     /** One project's runs, newest first. Membership is what makes them visible. */
     @Query(
         """
