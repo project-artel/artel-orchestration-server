@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional
 import reactor.core.publisher.Mono
 import java.time.Clock
 import java.time.Instant
+import java.util.UUID
 
 @Service
 class QaExecutionFailurePersistence(
@@ -73,6 +74,46 @@ class QaExecutionFailurePersistence(
                     }
             }
     }
+
+    /**
+     * Marks a run cancelled and records who ended it.
+     *
+     * Orchestration decides this, rather than waiting for the Agent to confirm:
+     * an operator must be able to end a run whose Agent has stopped answering,
+     * which is exactly when ending it matters most. The Agent is told afterwards,
+     * best effort.
+     */
+    @Transactional
+    fun cancelActiveById(qaTryId: Long, reason: String): Mono<FailureLogs> {
+        val completedAt = Instant.now(clock)
+        return tryRepository.findById(qaTryId)
+            .filter { it.status == "STARTING" || it.status == "RUNNING" }
+            .flatMap { active ->
+                tryRepository.cancelActiveById(qaTryId, completedAt)
+                    .filter { it == 1 }
+                    .flatMap {
+                        logService.append(
+                            qaTryId = qaTryId,
+                            direction = "USER_TO_ORCHE",
+                            type = "LOG",
+                            message = reason,
+                            payload = objectMapper.createObjectNode().put("reason", reason)
+                        ).flatMap { requestLog ->
+                            logService.append(
+                                qaTryId = qaTryId,
+                                direction = "ORCHE_INTERNAL",
+                                type = "STATUS",
+                                message = "QA execution was cancelled.",
+                                payload = objectMapper.valueToTree(
+                                    QaStatusPayload("CANCELLED", completedAt)
+                                )
+                            ).map {
+                                FailureLogs(qaTryId, active.agentSessionId, requestLog, it)
+                            }
+                        }
+                    }
+            }
+    }
 }
 
 data class FailureLogs(
@@ -87,7 +128,9 @@ class QaExecutionFailureService(
     private val persistence: QaExecutionFailurePersistence,
     private val logService: QaLogService,
     private val streamManager: QaLogStreamManager,
-    private val agentPort: QaAgentPort
+    private val agentPort: QaAgentPort,
+    private val objectMapper: ObjectMapper,
+    private val clock: Clock
 ) {
     fun sdkDisconnected(gameInstanceId: Long): Mono<Void> =
         persistence.failActiveByInstance(gameInstanceId, "SDK connection closed.")
@@ -102,6 +145,36 @@ class QaExecutionFailureService(
 
     fun agentDisconnected(qaTryId: Long): Mono<Void> =
         fail(qaTryId, "QA Agent connection closed.", closeAgent = false)
+
+    /**
+     * Ends a run because the operator asked. Empty when it had already ended.
+     *
+     * The Agent is told with a CANCEL frame so it can stop mid-step and drop its
+     * session, but neither that send nor the close is allowed to fail the
+     * cancellation — the run is already cancelled in the database by then.
+     */
+    fun cancelled(qaTryId: Long, reason: String): Mono<Boolean> =
+        persistence.cancelActiveById(qaTryId, reason)
+            .flatMap { cancelled ->
+                logService.publish(cancelled.error)
+                logService.publish(cancelled.status)
+                val sessionId = cancelled.agentSessionId
+                val notify = if (sessionId == null) Mono.empty() else {
+                    agentPort.send(
+                        sessionId,
+                        QaAgentEnvelope(
+                            messageId = UUID.randomUUID().toString(),
+                            type = "CANCEL",
+                            qaTryId = qaTryId.toString(),
+                            timestamp = Instant.now(clock),
+                            payload = objectMapper.createObjectNode().put("reason", reason)
+                        )
+                    ).onErrorResume { Mono.empty() }
+                        .then(agentPort.close(sessionId).onErrorResume { Mono.empty() })
+                }
+                notify.doFinally { streamManager.complete(qaTryId) }.thenReturn(true)
+            }
+            .defaultIfEmpty(false)
 
     fun failStarting(qaTryId: Long, reason: String): Mono<Void> =
         fail(qaTryId, reason, closeAgent = true)

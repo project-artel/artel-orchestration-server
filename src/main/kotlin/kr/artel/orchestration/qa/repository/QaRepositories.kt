@@ -92,6 +92,22 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
         """
     )
     fun failActiveById(id: Long, completedAt: Instant): Mono<Int>
+
+    /**
+     * Ends a run at the operator's request.
+     *
+     * Separate from [failActiveById] because a cancelled run is not a failed one:
+     * the distinction is what the timeline and any later report read.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_try
+        SET status = 'CANCELLED', completed_at = :completedAt, updated_at = :completedAt
+        WHERE id = :id AND status IN ('STARTING', 'RUNNING')
+        """
+    )
+    fun cancelActiveById(id: Long, completedAt: Instant): Mono<Int>
 }
 
 interface QaLogRepository : ReactiveCrudRepository<QaLogEntity, Long> {

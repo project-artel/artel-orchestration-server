@@ -87,6 +87,15 @@ class QaTryController(
             .thenReturn(ResponseEntity.accepted().build())
     }
 
+    /** Ends a running QA Try. Already-ended runs answer 409. */
+    @PostMapping("/{qaTryId}/cancel")
+    fun cancel(
+        @PathVariable qaTryId: String,
+        @AuthenticationPrincipal jwt: Jwt
+    ): Mono<ResponseEntity<Void>> =
+        service.cancel(parseId(qaTryId), requireUser(jwt))
+            .thenReturn(ResponseEntity.noContent().build())
+
     @GetMapping("/{qaTryId}/logs")
     fun logs(
         @PathVariable qaTryId: String,

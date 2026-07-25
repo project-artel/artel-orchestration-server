@@ -196,6 +196,22 @@ class QaTryService(
                 }
             }
 
+    /**
+     * Ends a run at the operator's request.
+     *
+     * A run that already finished answers 409 rather than pretending to cancel —
+     * "cancelled" and "completed" mean different things to whoever reads the
+     * timeline later.
+     */
+    fun cancel(qaTryId: Long, userId: Long): Mono<Void> =
+        requireAccessible(qaTryId, userId)
+            .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
+            .flatMap { failureService.cancelled(qaTryId, "QA execution was cancelled by the user.") }
+            .flatMap { cancelled ->
+                if (cancelled) Mono.empty()
+                else Mono.error(ResponseStatusException(HttpStatus.CONFLICT, "QA try has already ended"))
+            }
+
     fun requireAccessible(qaTryId: Long, userId: Long): Mono<QaTryEntity> =
         tryRepository.findAccessibleById(qaTryId, userId)
 
