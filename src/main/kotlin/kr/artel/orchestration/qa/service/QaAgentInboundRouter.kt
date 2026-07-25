@@ -32,9 +32,11 @@ class QaAgentInboundRouter(
         if (message.isNullOrBlank()) {
             return appendError(qaTryId, envelope, "${envelope.type} payload.message is required")
         }
+        // A frame for an unknown/already-finished try is dropped, not raised: an error
+        // here propagates out of the WebSocket receive chain, which closes the socket
+        // and fails the whole run via onDisconnect.
         return tryRepository.findById(qaTryId)
             .filter { it.status == "STARTING" || it.status == "RUNNING" }
-            .switchIfEmpty(Mono.error(IllegalStateException("QA try is not active")))
             .flatMap { qaTry ->
                 when (envelope.type) {
                     "ACTION" -> actionDispatch.dispatch(

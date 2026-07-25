@@ -12,7 +12,9 @@ import org.springframework.stereotype.Service
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import java.nio.charset.StandardCharsets
+import java.time.Clock
 import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
 
 private const val MAX_QA_PAYLOAD_BYTES = 1024 * 1024
@@ -21,11 +23,28 @@ private val TYPES = setOf("LOG", "ACTION", "ACTION_RESULT", "GAME_STATE", "STATU
 
 data class QaLogAppendResult(val log: QaLogResponse, val inserted: Boolean)
 
+private val TERMINAL_STATUSES = setOf("COMPLETED", "FAILED", "CANCELLED")
+
+/**
+ * Whether a STATUS log ends the whole run.
+ *
+ * The status word alone is not enough: the Agent reuses COMPLETED/FAILED for a
+ * single step's verdict. `completedAt` is the run-scoped marker — it is stamped
+ * only by the terminal transition in [QaAgentInboundRouter] and by
+ * [QaExecutionFailurePersistence], and is absent on per-step frames and null on
+ * STARTING/RUNNING.
+ */
+fun isRunTerminal(log: QaLogResponse): Boolean =
+    log.type == "STATUS" &&
+        log.payload.path("status").asText() in TERMINAL_STATUSES &&
+        log.payload.hasNonNull("completedAt")
+
 @Service
 class QaLogService(
     private val repository: QaLogRepository,
     private val objectMapper: ObjectMapper,
-    private val streamManager: QaLogStreamManager
+    private val streamManager: QaLogStreamManager,
+    private val clock: Clock
 ) {
     fun append(
         qaTryId: Long,
@@ -49,7 +68,11 @@ class QaLogService(
             direction = direction,
             type = type,
             message = message,
-            payload = Json.of(serialized)
+            payload = Json.of(serialized),
+            // Stamped here rather than left to the column default: R2DBC does not
+            // read defaulted columns back after an insert, so the saved entity would
+            // carry a null createdAt and every append would fail on the way out.
+            createdAt = Instant.now(clock)
         )
         return repository.save(entity)
             .map { QaLogAppendResult(it.toResponse(), true) }
@@ -97,10 +120,7 @@ class QaLogService(
                             .doOnNext { cursor.set(it.id.toLong()) }
                     }
                 }
-                .takeUntil { log ->
-                    log.type == "STATUS" &&
-                        log.payload.path("status").asText() in setOf("COMPLETED", "FAILED", "CANCELLED")
-                }
+                .takeUntil(::isRunTerminal)
         }
 
     fun response(entity: QaLogEntity): QaLogResponse = entity.toResponse()
