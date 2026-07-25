@@ -40,3 +40,5 @@ data class QaStatusPayload(
     val status: String,
     val completedAt: Instant?
 )
+
+data class SendQaMessageRequest(val message: String)

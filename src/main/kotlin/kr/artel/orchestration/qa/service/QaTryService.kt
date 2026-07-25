@@ -15,6 +15,7 @@ import org.springframework.web.server.ResponseStatusException
 import reactor.core.publisher.Mono
 import java.time.Clock
 import java.time.Instant
+import java.util.UUID
 
 @Service
 class QaTryPersistenceService(
@@ -85,7 +86,8 @@ class QaTryService(
     private val failureService: QaExecutionFailureService,
     private val persistence: QaTryPersistenceService,
     private val logService: QaLogService,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val clock: Clock
 ) {
     fun create(testScenarioId: Long, gameInstanceId: Long, userId: Long): Mono<QaTryResponse> =
         Mono.zip(
@@ -138,6 +140,77 @@ class QaTryService(
 
     fun get(qaTryId: Long, userId: Long): Mono<QaTryResponse> =
         tryRepository.findAccessibleById(qaTryId, userId).map { it.toResponse() }
+
+    fun listByProject(projectId: Long, userId: Long, size: Int) =
+        tryRepository.findByProject(projectId, userId, size).map { it.toResponse() }
+
+    /**
+     * Relays one operator message to the Agent mid-run.
+     *
+     * Persisted before it is sent, and from the user's own direction: the message
+     * steers the next decision, so it is evidence in the same timeline as the
+     * frames it influences. The Agent's reply arrives later as an inbound CHAT
+     * frame, which is why nothing here waits for one.
+     */
+    fun sendMessage(qaTryId: Long, userId: Long, message: String): Mono<Void> =
+        requireAccessible(qaTryId, userId)
+            .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
+            .flatMap { qaTry ->
+                if (qaTry.status != "RUNNING") {
+                    return@flatMap Mono.error<Void>(
+                        ResponseStatusException(HttpStatus.CONFLICT, "QA try is not running")
+                    )
+                }
+                val sessionId = qaTry.agentSessionId
+                    ?: return@flatMap Mono.error<Void>(
+                        ResponseStatusException(HttpStatus.CONFLICT, "QA agent is not attached")
+                    )
+                val payload = objectMapper.createObjectNode().put("message", message)
+                logService.append(
+                    qaTryId = qaTryId,
+                    direction = "USER_TO_ORCHE",
+                    type = "CHAT",
+                    message = message,
+                    payload = payload
+                ).flatMap { inbound ->
+                    logService.publish(inbound)
+                    logService.append(
+                        qaTryId = qaTryId,
+                        direction = "ORCHE_TO_AGENT",
+                        type = "CHAT",
+                        message = message,
+                        payload = payload
+                    ).flatMap { outbound ->
+                        logService.publish(outbound)
+                        agentPort.send(
+                            sessionId,
+                            QaAgentEnvelope(
+                                messageId = UUID.randomUUID().toString(),
+                                type = "CHAT",
+                                qaTryId = qaTryId.toString(),
+                                timestamp = Instant.now(clock),
+                                payload = payload
+                            )
+                        )
+                    }
+                }
+            }
+
+    /**
+     * Ends a run at the operator's request.
+     *
+     * A run that already finished answers 409 rather than pretending to cancel —
+     * "cancelled" and "completed" mean different things to whoever reads the
+     * timeline later.
+     */
+    fun cancel(qaTryId: Long, userId: Long): Mono<Void> =
+        requireAccessible(qaTryId, userId)
+            .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.NOT_FOUND)))
+            .flatMap { failureService.cancelled(qaTryId, "QA execution was cancelled by the user.") }
+            .flatMap { cancelled ->
+                if (cancelled) Mono.empty()
+                else Mono.error(ResponseStatusException(HttpStatus.CONFLICT, "QA try has already ended"))
+            }
 
     fun requireAccessible(qaTryId: Long, userId: Long): Mono<QaTryEntity> =
         tryRepository.findAccessibleById(qaTryId, userId)
