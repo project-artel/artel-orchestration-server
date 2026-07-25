@@ -67,17 +67,3 @@ data class GameGlossaryItem(
 data class GameMiscItem(
     val note: String
 )
-
-/**
- * reference_context 적재 요청. 한 문서(sourceDocumentId)의 game_context를 타입별로 분해해 저장한다.
- * 같은 문서 재추출 시 그 문서의 기존 타입 행은 교체된다(멱등).
- *
- * @property projectId 소속 프로젝트(스코프)
- * @property sourceDocumentId 출처 문서(project_document.id) — 원본(S3) 추적 키
- * @property gameContext Agent가 추출한 game_context
- */
-data class StoreReferenceContextRequest(
-    val projectId: Long,
-    val sourceDocumentId: Long,
-    val gameContext: GameContextPayload
-)

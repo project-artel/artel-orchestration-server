@@ -5,25 +5,27 @@ import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.project.entity.ParseStatus
 import kr.artel.orchestration.project.entity.ProjectDocumentEntity
 import kr.artel.orchestration.project.entity.ProjectEntity
+import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.project.repository.ProjectDocumentRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.referencecontext.dto.GameContextPayload
 import kr.artel.orchestration.referencecontext.dto.ReferenceContextListResponse
 import kr.artel.orchestration.referencecontext.repository.ReferenceContextRepository
+import kr.artel.orchestration.referencecontext.service.ReferenceContextService
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
-import org.springframework.http.MediaType
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
-import reactor.core.publisher.Mono
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * reference_context 통합 테스트: 내부 엔드포인트(permitAll)로 문서 game_context를 타입별로 저장/조회.
+ * reference_context 통합 테스트: 저장은 서비스([ReferenceContextService])로, 조회는 내부 GET
+ * 엔드포인트(permitAll)로 검증한다. (저장 PUT은 제거됐고 적재는 업로드 pull 파이프라인이 담당)
  *
  * 검증: 타입별 저장·조회, 문서 재추출 시 교체(멱등), 다른 문서는 별개 행으로 공존, 프로젝트 격리,
  * 빈 섹션은 저장 안 함. project/문서는 논리참조라 임의 id로 검증한다(FK 없음).
@@ -47,19 +49,21 @@ class ReferenceContextIntegrationTest {
     @Autowired
     private lateinit var appUserRepository: AppUserRepository
 
+    @Autowired
+    private lateinit var referenceContextService: ReferenceContextService
+
+    @Autowired
+    private lateinit var objectMapper: ObjectMapper
+
     private fun webClient() = WebClient.create("http://localhost:$port")
 
     private val projectSeq = AtomicLong(5000)
 
+    /** 저장은 이제 API가 아니라 서비스 호출이다(pull 파이프라인이 실제로 부르는 지점과 동일). */
     private fun store(projectId: Long, sourceDocumentId: Long, gameContextJson: String) {
-        webClient().put()
-            .uri("/api/orchestration/reference-context")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(
-                """{"projectId":$projectId,"sourceDocumentId":$sourceDocumentId,"gameContext":$gameContextJson}"""
-            )
-            .retrieve()
-            .toBodilessEntity()
+        val gameContext = objectMapper.readValue(gameContextJson, GameContextPayload::class.java)
+        referenceContextService
+            .replaceDocumentReferenceContext(projectId, sourceDocumentId, gameContext)
             .block(Duration.ofSeconds(5))
     }
 
