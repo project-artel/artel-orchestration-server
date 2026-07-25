@@ -18,8 +18,15 @@ import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
 
 private const val MAX_QA_PAYLOAD_BYTES = 1024 * 1024
-private val DIRECTIONS = setOf("AGENT_TO_ORCHE", "ORCHE_TO_AGENT", "ORCHE_TO_SDK", "SDK_TO_ORCHE", "ORCHE_INTERNAL")
-private val TYPES = setOf("LOG", "ACTION", "ACTION_RESULT", "GAME_STATE", "STATUS", "ERROR")
+private val DIRECTIONS = setOf(
+    "AGENT_TO_ORCHE",
+    "ORCHE_TO_AGENT",
+    "ORCHE_TO_SDK",
+    "SDK_TO_ORCHE",
+    "ORCHE_INTERNAL",
+    "USER_TO_ORCHE"
+)
+private val TYPES = setOf("LOG", "ACTION", "ACTION_RESULT", "GAME_STATE", "STATUS", "ERROR", "CHAT")
 
 data class QaLogAppendResult(val log: QaLogResponse, val inserted: Boolean)
 

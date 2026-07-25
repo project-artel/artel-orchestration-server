@@ -25,7 +25,7 @@ class QaAgentInboundRouter(
         if (!isUuid(envelope.messageId)) {
             return appendError(qaTryId, envelope, "Agent messageId must be a UUID")
         }
-        if (envelope.type !in setOf("LOG", "ACTION", "STATUS", "ERROR")) {
+        if (envelope.type !in setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT")) {
             return appendError(qaTryId, envelope, "Unsupported Agent message type: ${envelope.type}")
         }
         val message = envelope.payload.path("message").takeIf { it.isTextual }?.asText()
