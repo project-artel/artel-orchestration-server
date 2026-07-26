@@ -8,26 +8,39 @@ import kr.artel.orchestration.sdk.dto.*
  */
 object GameStateTransformer {
 
+    /**
+     * 실행 기록 상한. 씬 전체의 액션을 다 실으면 프레임마다 커지고, 오래된 실행은
+     * 판정에 쓰이지 않는다. 최신 것부터 이만큼만 남긴다.
+     */
+    private const val MAX_RECENT_ACTIONS = 20
+
     fun toAgentGameState(sdkGameState: SdkGameState): AgentGameState {
         val rootNode = sdkGameState.scene
         val sceneName = rootNode.name
 
         val interactables = mutableListOf<Interactable>()
         val observables = mutableMapOf<String, ObservableValue>()
+        val actions = mutableListOf<Pair<Int, AgentActionRecord>>()
 
-        traverse(rootNode, interactables, observables)
+        traverse(rootNode, interactables, observables, actions)
 
         return AgentGameState(
             scene = sceneName,
             interactables = interactables,
-            observables = observables
+            observables = observables,
+            // sequence가 실행 순서다. 최신 N개를 고른 뒤 다시 시간순으로 돌려 준다.
+            recentActions = actions.sortedByDescending { it.first }
+                .take(MAX_RECENT_ACTIONS)
+                .map { it.second }
+                .reversed()
         )
     }
 
     private fun traverse(
         node: SdkBlock,
         interactables: MutableList<Interactable>,
-        observables: MutableMap<String, ObservableValue>
+        observables: MutableMap<String, ObservableValue>,
+        actions: MutableList<Pair<Int, AgentActionRecord>>
     ) {
         val components = node.components
         val hasButton = components.any { it.type == "button" }
@@ -91,11 +104,29 @@ object GameStateTransformer {
                     type = state.type
                 )
             }
+
+            // 3. 실행 기록(Action telemetry) 수집
+            //
+            // 컴포넌트 종류를 가리지 않는다. 위의 조작 후보 추출은 커스텀 컴포넌트만
+            // actions를 보지만, 그것은 "무엇을 부를 수 있는가"를 고르는 자리다. 여기는
+            // "무엇이 실행됐는가"이고, 버튼 클릭이야말로 QA가 확인하려는 것이다.
+            for (action in component.actions) {
+                actions.add(
+                    action.sequence to AgentActionRecord(
+                        target = node.name,
+                        name = action.name,
+                        success = action.success,
+                        returnValue = action.returnValue,
+                        error = action.error?.message,
+                        at = action.timeStamp
+                    )
+                )
+            }
         }
 
         // 자식 노드 재귀 탐색
         for (child in node.children) {
-            traverse(child, interactables, observables)
+            traverse(child, interactables, observables, actions)
         }
     }
 }

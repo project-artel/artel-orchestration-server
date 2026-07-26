@@ -72,7 +72,24 @@ data class SdkError(
 data class AgentGameState(
     val scene: String,
     val interactables: List<Interactable> = emptyList(),
-    val observables: Map<String, ObservableValue> = emptyMap()
+    val observables: Map<String, ObservableValue> = emptyMap(),
+    val recentActions: List<AgentActionRecord> = emptyList()
+)
+
+/**
+ * 게임이 실제로 실행한 액션의 기록 (Orchestrator -> Agent)
+ *
+ * 관찰값 변화와 달리 이것은 추론이 아니라 실행 자체의 증거다. 무엇이 성공했고 무엇을
+ * 반환했는지, 실패라면 왜인지가 그대로 들어 있다. 에이전트가 시키지 않은 액션 —
+ * 게임이 스스로 실행한 것 — 은 ACTION_RESULT로 오지 않으므로 여기서만 관측된다.
+ */
+data class AgentActionRecord(
+    val target: String,
+    val name: String,
+    val success: Boolean,
+    val returnValue: Any? = null,
+    val error: String? = null,
+    val at: String
 )
 
 /**
