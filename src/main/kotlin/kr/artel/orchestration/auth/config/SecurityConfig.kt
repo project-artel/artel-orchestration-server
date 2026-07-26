@@ -82,6 +82,8 @@ class SecurityConfig {
             it.pathMatchers("/api/test-scenario/**").authenticated()
             // QA 실행/로그/SSE도 프로젝트 멤버만 접근하는 엔드유저 API다.
             it.pathMatchers("/api/qa-tries/**").authenticated()
+            // QA 이슈 조회도 프로젝트 멤버만 접근하는 엔드유저 API다(저장은 내부 WS 경로).
+            it.pathMatchers("/api/issues/**").authenticated()
             it.anyExchange().authenticated()
         }
         .oauth2Login {
