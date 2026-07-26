@@ -28,6 +28,19 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
         """
     )
     fun findActiveByGameInstanceId(gameInstanceId: Long): Mono<QaTryEntity>
+  
+    /** One project's runs, newest first. Membership is what makes them visible. */
+    @Query(
+        """
+        SELECT qt.* FROM qa_try qt
+        JOIN test_scenario ts ON ts.id = qt.test_scenario_id
+        JOIN project_member pm ON pm.project_id = ts.project_id
+        WHERE ts.project_id = :projectId AND pm.app_user_id = :userId
+        ORDER BY qt.id DESC
+        LIMIT :limit
+        """
+    )
+    fun findByProject(projectId: Long, userId: Long, limit: Int): Flux<QaTryEntity>
 
     // @Modifying is what makes these return the affected row count. Without it
     // Spring Data R2DBC maps the statement as a result set, the Mono completes
@@ -79,6 +92,22 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
         """
     )
     fun failActiveById(id: Long, completedAt: Instant): Mono<Int>
+
+    /**
+     * Ends a run at the operator's request.
+     *
+     * Separate from [failActiveById] because a cancelled run is not a failed one:
+     * the distinction is what the timeline and any later report read.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_try
+        SET status = 'CANCELLED', completed_at = :completedAt, updated_at = :completedAt
+        WHERE id = :id AND status IN ('STARTING', 'RUNNING')
+        """
+    )
+    fun cancelActiveById(id: Long, completedAt: Instant): Mono<Int>
 }
 
 interface QaLogRepository : ReactiveCrudRepository<QaLogEntity, Long> {
