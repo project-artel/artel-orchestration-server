@@ -66,8 +66,15 @@ class QaSdkBridgeService(
         return tryRepository.findActiveByGameInstanceId(gameInstanceId)
             .flatMap { qaTry ->
                 val payload = objectMapper.readTree(payloadText)
-                val outerId = payload.path("id").takeIf { it.isIntegralNumber }?.longValue()
-                    ?: return@flatMap Mono.error(IllegalArgumentException("ACTION_RESULT.id must be an integer"))
+                // `requestId` echoes the ACTION this answers. `id` is the SDK's own
+                // outgoing message number and shares no sequence with our ids, so
+                // matching on it found nothing — every result read as unknown.
+                // Still read as a fallback for SDKs built before the echo existed.
+                val outerId = payload.path("requestId").takeIf { it.isIntegralNumber }?.longValue()
+                    ?: payload.path("id").takeIf { it.isIntegralNumber }?.longValue()
+                    ?: return@flatMap Mono.error(
+                        IllegalArgumentException("ACTION_RESULT needs an integer requestId or id")
+                    )
                 val outerIdString = outerId.toString()
                 val qaTryId = requireNotNull(qaTry.id)
                 val sessionId = qaTry.agentSessionId
