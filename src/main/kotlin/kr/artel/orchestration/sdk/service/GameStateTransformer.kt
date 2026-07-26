@@ -43,12 +43,19 @@ object GameStateTransformer {
         actions: MutableList<Pair<Int, AgentActionRecord>>
     ) {
         val components = node.components
-        val hasButton = components.any { it.type == "button" }
+
+        // 라벨로 흡수되는 text는 조작 후보로 나가는 버튼의 것뿐이다. 잠긴 버튼은 후보에서 빠지므로
+        // 그 라벨은 아래에서 관찰값으로 남겨야 한다. 그러지 않으면 무엇이 잠겼는지가 두 목록
+        // 어디에도 남지 않는다.
+        val hasInteractableButton = components.any { it.type == "button" && it.interactable }
 
         for (component in components) {
             // 1. 조작 후보(Interactables) 추출
+            //
+            // 게임이 잠가 둔 UI는 후보가 아니다. 사람이 누를 수 없는 것을 에이전트에게 권하면
+            // SDK가 거절하는 액션을 반복해서 고르게 된다.
             when (component.type) {
-                "button" -> {
+                "button" -> if (component.interactable) {
                     // 동일한 블록 내에 text 타입의 컴포넌트가 존재할 경우 그 content를 버튼 라벨로 채택
                     val textComp = components.find { it.type == "text" }
                     val label = textComp?.content
@@ -61,7 +68,7 @@ object GameStateTransformer {
                         )
                     )
                 }
-                "editText" -> {
+                "editText" -> if (component.interactable) {
                     interactables.add(
                         Interactable(
                             id = node.id,
@@ -89,7 +96,7 @@ object GameStateTransformer {
             // 2. 관찰 값(Observables) 추출
             if (component.content != null) {
                 // 버튼 라벨용으로 사용된 text 컴포넌트의 content는 중복 관찰대상에서 배제
-                val skipObservable = (component.type == "text" && hasButton)
+                val skipObservable = (component.type == "text" && hasInteractableButton)
                 if (!skipObservable) {
                     observables["${node.name}.content"] = ObservableValue(
                         value = component.content,

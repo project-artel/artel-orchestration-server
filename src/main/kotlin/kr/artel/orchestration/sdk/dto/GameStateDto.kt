@@ -25,12 +25,17 @@ data class SdkBlock(
 
 /**
  * 컴포넌트 정보
+ *
+ * [interactable]은 사람이 지금 그 UI를 누르거나 입력할 수 있는지다. 버튼과 입력 필드에만 실린다.
+ * 기본값 true는 하위 호환이다. 이 필드를 싣지 않는 구버전 SDK의 페이로드는 종전대로 조작 후보에
+ * 오른다. 배포 순서를 맞출 필요가 없도록 한 것이다.
  */
 data class SdkComponent(
     val type: String,
     val name: String,
     val content: String? = null,
     val placeholder: String? = null,
+    val interactable: Boolean = true,
     val states: List<SdkState> = emptyList(),
     val actions: List<SdkAction> = emptyList()
 )
