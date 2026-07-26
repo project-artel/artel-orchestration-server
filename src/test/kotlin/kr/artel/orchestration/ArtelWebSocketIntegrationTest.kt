@@ -18,7 +18,7 @@ import org.springframework.http.MediaType
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient
 import reactor.core.publisher.Mono
-import kr.artel.orchestration.sdk.service.AgentClient
+import kr.artel.orchestration.qa.service.QaSdkBridgeService
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.OAuthIdentity
@@ -44,7 +44,7 @@ class ArtelWebSocketIntegrationTest {
     private lateinit var objectMapper: ObjectMapper
 
     @MockBean
-    private lateinit var agentClient: AgentClient
+    private lateinit var qaBridge: QaSdkBridgeService
 
     @Autowired
     private lateinit var jwtService: JwtService
@@ -397,18 +397,23 @@ class ArtelWebSocketIntegrationTest {
 
     /**
      * SDK가 웹소켓을 통해 보낸 ACTION_RESULT 메시지가 SdkMessageHandler 전략 패턴을 거쳐
-     * AgentClient.sendResult로 올바르게 전달되는지 검증합니다.
+     * QA 브리지(QaSdkBridgeService)로 전달되는지 검증합니다. Agent Server로 HTTP POST하던
+     * 폴백은 존재하지 않는 엔드포인트라 제거되었고, 이제 QA 브리지가 유일한 소비자입니다.
      */
     @Test
     fun testWebSocketActionResultForwardingFlow() {
         val instance = createGameInstance()
+        val instanceId = requireNotNull(instance.id)
 
-        // 1. AgentClient.sendResult 모킹 및 감시
-        val resultReceivedLatch = Sinks.one<String>()
-        Mockito.`when`(agentClient.sendResult(anyKotlin(String::class.java))).thenAnswer { invocation ->
-            val arg = invocation.getArgument<String>(0)
-            resultReceivedLatch.tryEmitValue(arg)
-            Mono.just("mocked")
+        // 1. QA 브리지 모킹 및 감시
+        val resultReceivedLatch = Sinks.one<Pair<Long, String>>()
+        Mockito.`when`(
+            qaBridge.routeActionResult(Mockito.anyLong(), anyKotlin(String::class.java))
+        ).thenAnswer { invocation ->
+            resultReceivedLatch.tryEmitValue(
+                invocation.getArgument<Long>(0) to invocation.getArgument<String>(1)
+            )
+            Mono.just(true)
         }
 
         // 2. 웹소켓 클라이언트 연결 및 결과 전송
@@ -435,16 +440,20 @@ class ArtelWebSocketIntegrationTest {
                 }
             """.trimIndent()
             val resultMessage = session.textMessage(resultPayload)
-            session.send(Mono.just(resultMessage)).then()
+            // send()가 끝나자마자 핸들러를 완료시키면 클라이언트가 close를 보내고, 서버가
+            // 프레임을 읽기 전에 receive 파이프라인이 끊길 수 있다. 단언이 끝나고 dispose로
+            // 닫을 때까지 세션을 열어 둔다.
+            session.send(Mono.just(resultMessage)).then(Mono.never())
         }
 
         val disposable = clientSessionMono.subscribe()
 
-        // 4. AgentClient로 결과가 전송되었는지 최종 검증
+        // 4. QA 브리지로 결과가 전달되었는지 최종 검증
         val receivedResult = resultReceivedLatch.asMono().block(Duration.ofSeconds(5))
         assertThat(receivedResult).isNotNull
-        assertThat(receivedResult).contains("ACTION_RESULT")
-        assertThat(receivedResult).contains("Unknown target id: 123")
+        assertThat(receivedResult?.first).isEqualTo(instanceId)
+        assertThat(receivedResult?.second).contains("ACTION_RESULT")
+        assertThat(receivedResult?.second).contains("Unknown target id: 123")
 
         disposable.dispose()
     }

@@ -3,7 +3,6 @@ package kr.artel.orchestration.sdk.service.handler
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.sdk.dto.SdkGameState
 import kr.artel.orchestration.qa.service.QaSdkBridgeService
-import kr.artel.orchestration.sdk.service.AgentClient
 import kr.artel.orchestration.sdk.service.GameStateTransformer
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
@@ -11,12 +10,14 @@ import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Mono
 
 /**
- * GAME_STATE 메시지를 정제하여 Agent Server로 중계 전송하는 핸들러 전략
+ * GAME_STATE 메시지를 정제하여 QA 브리지로 중계하는 핸들러 전략.
+ *
+ * 활성 QA try가 없으면 정제 결과만 로그로 남기고 끝난다. 예전에는 Agent Server의
+ * HTTP 엔드포인트로 POST하는 폴백이 있었으나, 그 엔드포인트는 존재하지 않는다.
  */
 @Component
 class GameStateMessageHandler(
     private val objectMapper: ObjectMapper,
-    private val agentClient: AgentClient,
     private val qaBridge: QaSdkBridgeService
 ) : SdkMessageHandler {
 
@@ -35,10 +36,7 @@ class GameStateMessageHandler(
             logger.info("정제 결과 JSON: $compactJson")
 
             qaBridge.routeGameState(instanceId.toLong(), sdkGameState.id.toString(), agentGameState)
-                .flatMap { handledByQa ->
-                    if (handledByQa) Mono.empty()
-                    else agentClient.sendState(agentGameState).then()
-                }
+                .then()
         }
     }
 }
