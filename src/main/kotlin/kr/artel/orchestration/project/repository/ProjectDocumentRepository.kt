@@ -16,6 +16,9 @@ interface ProjectDocumentRepository : ReactiveCrudRepository<ProjectDocumentEnti
 
     fun findByIdAndProjectId(id: Long, projectId: Long): Mono<ProjectDocumentEntity>
 
+    /** 프로젝트 단위 파일 중복 검증용. 같은 프로젝트에 동일 content_hash가 이미 있는지. */
+    fun existsByProjectIdAndContentHash(projectId: Long, contentHash: String): Mono<Boolean>
+
     fun countByProjectId(projectId: Long): Mono<Long>
 
     /**
@@ -55,7 +58,7 @@ interface ProjectDocumentRepository : ReactiveCrudRepository<ProjectDocumentEnti
     fun countByProjectIds(projectIds: Collection<Long>): Flux<ProjectDocumentCount>
 
     /**
-     * 문서의 추출 진행 상태를 갱신한다. reference_context 적재가 끝나면 EXTRACTED로 올린다.
+     * 문서의 추출 진행 상태를 갱신한다. knowledge 적재가 끝나면 EXTRACTED로 올린다.
      * 존재하지 않는 id면 0행이 갱신되고 오류는 나지 않는다(추출 저장 자체를 막지 않는다).
      */
     @Modifying

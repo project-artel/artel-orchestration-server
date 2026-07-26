@@ -3,6 +3,7 @@ package kr.artel.orchestration.project.storage
 import kr.artel.orchestration.project.config.StorageProperties
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.DisposableBean
+import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
@@ -25,6 +26,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.time.Clock
 import java.time.Instant
 
@@ -178,6 +180,28 @@ class S3DocumentStorage internal constructor(
             .map { it.asByteArray() }
             .onErrorResume(::isMissing) { Mono.empty() }
             .onErrorMap(::isStorageFault, ::asStorageFault)
+
+    /**
+     * 객체를 통째로 받지 않고 ByteBuffer 스트림으로 흘리며 SHA-256을 갱신한다. 파일 크기와 무관하게
+     * 상수 메모리다(50MB 파일도 힙에 안 올림). [MessageDigest]는 이 한 스트림 안에서만 쓴다.
+     */
+    override fun sha256(objectKey: String): Mono<String> =
+        Mono.fromFuture {
+            client.getObject(
+                GetObjectRequest.builder().bucket(properties.bucket).key(objectKey).build(),
+                AsyncResponseTransformer.toPublisher()
+            )
+        }
+            .flatMap { publisher ->
+                val digest = MessageDigest.getInstance("SHA-256")
+                Flux.from(publisher)
+                    .doOnNext { buffer -> digest.update(buffer) }
+                    .then(Mono.fromCallable { digest.digest().toHexLower() })
+            }
+            .onErrorResume(::isMissing) { Mono.empty() }
+            .onErrorMap(::isStorageFault, ::asStorageFault)
+
+    private fun ByteArray.toHexLower(): String = joinToString("") { "%02x".format(it) }
 
     override fun delete(objectKey: String): Mono<Void> =
         Mono.fromFuture {

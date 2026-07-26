@@ -5,6 +5,7 @@ import kr.artel.orchestration.project.storage.PresignedDownload
 import kr.artel.orchestration.project.storage.PresignedUpload
 import kr.artel.orchestration.project.storage.StoredObject
 import reactor.core.publisher.Mono
+import java.security.MessageDigest
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
@@ -46,6 +47,11 @@ class FakeDocumentStorage : DocumentStorage {
 
     override fun readPrefix(objectKey: String, length: Int): Mono<ByteArray> =
         Mono.justOrEmpty(objects[objectKey]).map { it.copyOf(minOf(length, it.size)) }
+
+    override fun sha256(objectKey: String): Mono<String> =
+        Mono.justOrEmpty(objects[objectKey]).map { content ->
+            MessageDigest.getInstance("SHA-256").digest(content).joinToString("") { "%02x".format(it) }
+        }
 
     override fun delete(objectKey: String): Mono<Void> {
         objects.remove(objectKey)

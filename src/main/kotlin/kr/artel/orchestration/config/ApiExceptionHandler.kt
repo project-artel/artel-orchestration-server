@@ -1,5 +1,6 @@
 package kr.artel.orchestration.config
 
+import kr.artel.orchestration.project.service.DuplicateDocumentException
 import kr.artel.orchestration.project.service.InvalidDocumentException
 import kr.artel.orchestration.project.storage.DocumentStorageException
 import kr.artel.orchestration.project.service.ProjectAccessDeniedException
@@ -43,6 +44,16 @@ class ApiExceptionHandler {
             ApiErrorResponse(
                 code = "invalid_document",
                 message = error.message ?: "올바르지 않은 파일입니다."
+            )
+        )
+
+    /** 같은 프로젝트에 동일 파일이 이미 있어 업로드를 막을 때. */
+    @ExceptionHandler(DuplicateDocumentException::class)
+    fun handleDuplicateDocument(error: DuplicateDocumentException): ResponseEntity<ApiErrorResponse> =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ApiErrorResponse(
+                code = "duplicate_document",
+                message = error.message ?: "이미 업로드된 파일입니다."
             )
         )
 

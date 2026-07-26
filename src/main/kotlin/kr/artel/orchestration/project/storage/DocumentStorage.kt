@@ -26,6 +26,12 @@ interface DocumentStorage {
      */
     fun readPrefix(objectKey: String, length: Int): Mono<ByteArray>
 
+    /**
+     * 객체 전체의 SHA-256(소문자 hex)을 계산한다. 파일을 통째로 메모리에 올리지 않고 스트리밍하며
+     * 다이제스트를 갱신하므로 파일 크기와 무관하게 상수 메모리다. 없는 객체면 빈 Mono.
+     */
+    fun sha256(objectKey: String): Mono<String>
+
     fun delete(objectKey: String): Mono<Void>
 }
 
