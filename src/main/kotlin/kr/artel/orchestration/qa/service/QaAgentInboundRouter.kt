@@ -3,25 +3,19 @@ package kr.artel.orchestration.qa.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.issue.entity.IssueSeverity
+import kr.artel.orchestration.issue.service.IssueService
 import kr.artel.orchestration.knowledge.dto.KnowledgeIngestRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.service.KnowledgeService
 import kr.artel.orchestration.qa.repository.QaTryRepository
-import kr.artel.orchestration.sdk.service.SessionManager
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Mono
 import java.time.Clock
-import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
-private val SUPPORTED_TYPES = setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "REQUEST_GAME_STATE", "KNOWLEDGE")
-
-/** The SDK answers this with a GAME_STATE message on the same socket. */
-private val GET_GAME_STATE = mapOf("type" to "GET_GAME_STATE")
-
-/** A wait the Agent asks for is bounded here; it is a hint, not a lease. */
-private val MAX_SCENE_WAIT: Duration = Duration.ofSeconds(60)
+private val SUPPORTED_TYPES = setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE")
 
 @Service
 class QaAgentInboundRouter(
@@ -29,7 +23,7 @@ class QaAgentInboundRouter(
     private val logService: QaLogService,
     private val actionDispatch: QaActionDispatchService,
     private val streamManager: QaLogStreamManager,
-    private val sessionManager: SessionManager,
+    private val issueService: IssueService,
     private val knowledgeService: KnowledgeService,
     private val gameInstanceRepository: GameInstanceRepository,
     private val objectMapper: ObjectMapper,
@@ -52,9 +46,9 @@ class QaAgentInboundRouter(
                 .filter { it.status == "STARTING" || it.status == "RUNNING" }
                 .flatMap { qaTry -> routeKnowledge(qaTryId, qaTry.gameInstanceId, envelope) }
         }
-        // A scene request states its `reason` rather than a display `message`;
-        // everything else carries the line the timeline shows.
-        val field = if (envelope.type == "REQUEST_GAME_STATE") "reason" else "message"
+        // 이슈는 표시용 `message` 대신 `title`을 담는다. 나머지 타입은 모두 타임라인에 뜨는
+        // 문구를 message에 싣는다. 아래 non-blank 가드가 곧 "이슈는 title 필수" 역할을 겸한다.
+        val field = if (envelope.type == "ISSUE") "title" else "message"
         val message = envelope.payload.path(field).takeIf { it.isTextual }?.asText()
         if (message.isNullOrBlank()) {
             return appendError(qaTryId, envelope, "${envelope.type} payload.$field is required")
@@ -73,12 +67,7 @@ class QaAgentInboundRouter(
                         envelope.payload
                     ).then()
                     "STATUS" -> routeStatus(qaTry.status, qaTryId, envelope, message)
-                    "REQUEST_GAME_STATE" -> requestGameState(
-                        qaTryId,
-                        qaTry.gameInstanceId,
-                        envelope,
-                        message
-                    )
+                    "ISSUE" -> routeIssue(qaTryId, envelope, message)
                     else -> logService.append(
                         qaTryId = qaTryId,
                         direction = "AGENT_TO_ORCHE",
@@ -90,52 +79,6 @@ class QaAgentInboundRouter(
                     ).doOnNext(logService::publish).then()
                 }
             }
-    }
-
-    /**
-     * Asks the game for its current scene on the Agent's behalf, after the wait
-     * it asked for.
-     *
-     * The delay is scheduled here rather than slept in the Agent: the Agent runs
-     * one session on one receive loop, so sleeping there would stall the
-     * operator's messages too. Delivery is best effort — a disconnected SDK must
-     * not fail the run, and the Agent will ask again on its next turn.
-     */
-    private fun requestGameState(
-        qaTryId: Long,
-        gameInstanceId: Long,
-        envelope: QaAgentEnvelope,
-        reason: String
-    ): Mono<Void> {
-        val requested = envelope.payload.path("after_seconds").takeIf { it.isNumber }?.asDouble() ?: 0.0
-        val wait = Duration.ofMillis((requested.coerceAtLeast(0.0) * 1000).toLong())
-            .coerceAtMost(MAX_SCENE_WAIT)
-        return logService.append(
-            qaTryId = qaTryId,
-            direction = "ORCHE_TO_SDK",
-            type = "GAME_STATE",
-            messageId = envelope.messageId,
-            message = reason,
-            payload = envelope.payload
-        ).doOnNext(logService::publish)
-            .then(
-                Mono.delay(wait)
-                    .then(sessionManager.send(gameInstanceId.toString(), GET_GAME_STATE))
-                    .onErrorResume { error ->
-                        logService.append(
-                            qaTryId = qaTryId,
-                            direction = "ORCHE_INTERNAL",
-                            type = "ERROR",
-                            correlationId = envelope.messageId,
-                            message = "Game state request could not be delivered.",
-                            payload = objectMapper.createObjectNode().put("error", error.message)
-                        ).doOnNext(logService::publish).then()
-                    }
-                    // Detached: the caller is the Agent's receive loop, and holding
-                    // it for the wait would block every other frame of this run.
-                    .subscribe()
-                    .let { Mono.empty() }
-            )
     }
 
     private fun routeStatus(
@@ -218,6 +161,37 @@ class QaAgentInboundRouter(
             .onErrorResume { error ->
                 appendError(qaTryId, envelope, "KNOWLEDGE store failed: ${error.message}")
             }
+    }
+
+    /**
+     * Agent가 보고한 이슈를 issue 도메인에 저장한다(qa_log가 아니다).
+     *
+     * severity는 다른 모든 envelope 필드와 똑같이 여기서 값으로 검증한다: 잘못된 값은 throw
+     * 대신 ORCHE_INTERNAL 에러로 드롭해, 프레임 하나가 receive 체인을 끊어 실행을 실패시키지
+     * 못하게 한다. `title`은 [handle]의 non-blank 가드에서 이미 필수로 걸렀다.
+     */
+    private fun routeIssue(
+        qaTryId: Long,
+        envelope: QaAgentEnvelope,
+        title: String
+    ): Mono<Void> {
+        val severity = envelope.payload.path("severity").takeIf { it.isTextual }?.asText()
+        if (severity == null || severity !in IssueSeverity.NAMES) {
+            return appendError(
+                qaTryId,
+                envelope,
+                "ISSUE payload.severity must be one of ${IssueSeverity.NAMES}"
+            )
+        }
+        return issueService.recordAgentIssue(
+            qaTryId = qaTryId,
+            messageId = envelope.messageId,
+            correlationId = envelope.correlationId,
+            severity = severity,
+            title = title,
+            reportedAt = envelope.timestamp,
+            payload = envelope.payload
+        )
     }
 
     private fun appendError(
