@@ -75,6 +75,9 @@ class SecurityConfig {
                 // SDK가 instanceKey로 스스로를 등록하는 경로다. 게임을 실행하는 쪽에는
                 // 로그인 세션이 없으므로 엔드유저 JWT로 막을 수 없다.
                 "/api/sdk/registrations",
+                // 캡처 서명도 게임이 부른다. 권한은 JWT가 아니라 "그 인스턴스가 지금 QA
+                // 실행 중인가"로 판단하며, 실행 중이 아니면 서비스가 409로 막는다.
+                "/api/sdk/qa-captures/**",
                 "/api/orchestration/**",
                 // knowledge 조회는 Agent/내부 도구용 서버-투-서버 경로(엔드유저 JWT 대상 아님).
                 "/api/knowledge/**"
