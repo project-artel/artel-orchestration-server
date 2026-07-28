@@ -42,9 +42,9 @@ class QaAgentInboundRouter(
         if (envelope.type !in SUPPORTED_TYPES) {
             return appendError(qaTryId, envelope, "Unsupported Agent message type: ${envelope.type}")
         }
-        // A scene request states its `reason` and an issue its `title` rather than a
-        // display `message`; everything else carries the line the timeline shows. The
-        // non-blank guard below then doubles as "issue title is required".
+        // 씬 요청은 표시용 `message` 대신 `reason`을, 이슈는 `title`을 담는다. 나머지 타입은
+        // 모두 타임라인에 뜨는 문구를 message에 싣는다. 아래 non-blank 가드가 곧 "이슈는 title
+        // 필수" 역할을 겸한다.
         val field = when (envelope.type) {
             "REQUEST_GAME_STATE" -> "reason"
             "ISSUE" -> "title"
@@ -182,12 +182,11 @@ class QaAgentInboundRouter(
     }
 
     /**
-     * Persists an Agent-reported issue into the issue domain (not qa_log).
+     * Agent가 보고한 이슈를 issue 도메인에 저장한다(qa_log가 아니다).
      *
-     * Severity is validated here like every other envelope field: a bad value is
-     * dropped as an ORCHE_INTERNAL error rather than thrown, so one malformed frame
-     * cannot break the receive chain and fail the run. `title` was already required
-     * by the non-blank guard in [handle].
+     * severity는 다른 모든 envelope 필드와 똑같이 여기서 값으로 검증한다: 잘못된 값은 throw
+     * 대신 ORCHE_INTERNAL 에러로 드롭해, 프레임 하나가 receive 체인을 끊어 실행을 실패시키지
+     * 못하게 한다. `title`은 [handle]의 non-blank 가드에서 이미 필수로 걸렀다.
      */
     private fun routeIssue(
         qaTryId: Long,

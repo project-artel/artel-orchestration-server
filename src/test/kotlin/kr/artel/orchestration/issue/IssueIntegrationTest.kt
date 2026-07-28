@@ -1,12 +1,10 @@
 package kr.artel.orchestration.issue
 
-import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.AuthenticatedUser
-import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.game.entity.GameInstanceEntity
@@ -29,27 +27,21 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.boot.test.web.server.LocalServerPort
-import org.springframework.http.HttpStatus
 import org.springframework.test.context.ActiveProfiles
-import org.springframework.web.reactive.function.client.WebClient
-import org.springframework.web.reactive.function.client.WebClientResponseException
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
 /**
- * issue 도메인 통합 테스트: 저장은 QA 인바운드 라우터([QaAgentInboundRouter])로, 조회는 엔드유저
- * GET 엔드포인트(JWT + 프로젝트 멤버)로 검증한다. payload(JSONB) 때문에 실제 PostgreSQL을 쓴다.
+ * issue 도메인 통합 테스트: 이슈는 QA 인바운드 라우터([QaAgentInboundRouter])가 Agent 프레임을
+ * 받아 저장하는 내부 도메인이므로, 그 저장 경로만 검증한다(사용자 조회 API는 없다). payload(JSONB)
+ * 때문에 실제 PostgreSQL을 쓴다.
  *
- * 검증: ISSUE 프레임 저장(severity/title/detail), 재전송 멱등, 잘못된 severity는 저장 안 함,
- * 멤버 조회 성공/비멤버 404.
+ * 검증: ISSUE 프레임 저장(severity/title/detail), 재전송 멱등, 잘못된 severity는 저장 안 함.
  */
 @ActiveProfiles("test")
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest
 class IssueIntegrationTest {
-
-    @LocalServerPort private val port: Int = 0
 
     @Autowired private lateinit var inboundRouter: QaAgentInboundRouter
     @Autowired private lateinit var issueRepository: IssueRepository
@@ -60,7 +52,6 @@ class IssueIntegrationTest {
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
-    @Autowired private lateinit var jwtService: JwtService
     @Autowired private lateinit var oauthUserService: OAuthUserService
     @Autowired private lateinit var objectMapper: ObjectMapper
 
@@ -95,7 +86,7 @@ class IssueIntegrationTest {
             extra = """"detail":"Clicking Save shows no feedback and no file is written","step":3"""
         )
 
-        val issues = issueRepository.findByQaTryId(qaTryId, 50).collectList().block(TIMEOUT)!!
+        val issues = issueRepository.findAll().collectList().block(TIMEOUT)!!
         assertThat(issues).hasSize(1)
         val issue = issues.single()
         assertThat(issue.severity).isEqualTo("MAJOR")
@@ -114,7 +105,7 @@ class IssueIntegrationTest {
         deliver(qaTryId, messageId, "CRITICAL", "Crash on level load")
         deliver(qaTryId, messageId, "CRITICAL", "Crash on level load")
 
-        assertThat(issueRepository.findByQaTryId(qaTryId, 50).collectList().block(TIMEOUT)).hasSize(1)
+        assertThat(issueRepository.findAll().collectList().block(TIMEOUT)).hasSize(1)
     }
 
     @Test
@@ -124,35 +115,7 @@ class IssueIntegrationTest {
 
         deliver(qaTryId, UUID.randomUUID().toString(), severity = "SEVERE", title = "Unknown severity")
 
-        assertThat(issueRepository.findByQaTryId(qaTryId, 50).collectList().block(TIMEOUT)).isEmpty()
-    }
-
-    @Test
-    fun `lists issues for a member and hides them from a non-member`() {
-        val owner = signIn("42", "octocat")
-        val stranger = signIn("99", "hubot")
-        val qaTryId = seedRunningQaTry(owner)
-        deliver(qaTryId, UUID.randomUUID().toString(), "MINOR", "Typo on the title screen")
-
-        val listed = get(jwtService.issue(owner), "/api/issues?qaTryId=$qaTryId")
-        assertThat(listed).hasSize(1)
-        assertThat(listed[0]["severity"].asText()).isEqualTo("MINOR")
-        assertThat(listed[0]["title"].asText()).isEqualTo("Typo on the title screen")
-
-        val status = statusOf { get(jwtService.issue(stranger), "/api/issues?qaTryId=$qaTryId") }
-        assertThat(status).isEqualTo(HttpStatus.NOT_FOUND)
-    }
-
-    @Test
-    fun `returns an empty list for a member whose run has no issues yet`() {
-        val owner = signIn("42", "octocat")
-        val qaTryId = seedRunningQaTry(owner)
-
-        // 접근 가능하지만 이슈가 없는 실행은 404가 아니라 200 [] 이어야 한다
-        // (비멤버의 404와 구분되는, listByQaTry가 Mono<List>인 이유).
-        val listed = get(jwtService.issue(owner), "/api/issues?qaTryId=$qaTryId")
-        assertThat(listed.isArray).isTrue()
-        assertThat(listed).isEmpty()
+        assertThat(issueRepository.findAll().collectList().block(TIMEOUT)).isEmpty()
     }
 
     // --- helpers ---
@@ -231,20 +194,6 @@ class IssueIntegrationTest {
                 email = "$login@example.com"
             )
         ).block(TIMEOUT)!!
-
-    private fun get(token: String, uri: String): JsonNode = objectMapper.readTree(
-        WebClient.create("http://localhost:$port").get().uri(uri)
-            .cookie("artel_access_token", token)
-            .retrieve().bodyToMono(String::class.java).block(TIMEOUT)
-    )
-
-    private fun statusOf(call: () -> Any?): HttpStatus =
-        try {
-            call()
-            HttpStatus.OK
-        } catch (error: WebClientResponseException) {
-            HttpStatus.valueOf(error.statusCode.value())
-        }
 
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(5)
