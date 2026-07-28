@@ -1,6 +1,7 @@
 package kr.artel.orchestration.project.storage
 
 import reactor.core.publisher.Mono
+import java.time.Duration
 import java.time.Instant
 
 /**
@@ -12,8 +13,18 @@ interface DocumentStorage {
     /** 업로드용 단기 URL을 만든다. 서명은 로컬 계산이라 네트워크 호출이 없다. */
     fun presignUpload(objectKey: String, contentType: String, contentLength: Long): PresignedUpload
 
-    /** 다운로드용 단기 URL을 만든다. */
-    fun presignDownload(objectKey: String, fileName: String): PresignedDownload
+    /**
+     * 다운로드용 단기 URL을 만든다.
+     *
+     * [ttl]은 기본 유효 기간을 덮어쓴다. 사람이 즉시 클릭하는 링크와, 진행 중인 QA 런이
+     * 끝날 때까지 살아 있어야 하는 캡처 링크는 필요한 수명이 다르다. 기본값을 캡처에 맞춰
+     * 늘리면 기획서 다운로드 URL도 같이 길어지므로 호출 시점에 정한다.
+     */
+    fun presignDownload(
+        objectKey: String,
+        fileName: String,
+        ttl: Duration? = null
+    ): PresignedDownload
 
     /** 객체 메타데이터. 없으면 빈 Mono. */
     fun head(objectKey: String): Mono<StoredObject>

@@ -23,7 +23,9 @@ import java.time.Duration
  * @property secretKey 선택. [accessKey]와 함께 있어야 한다
  * @property uploadUrlTtl 업로드 URL 유효 기간
  * @property downloadUrlTtl 다운로드 URL 유효 기간
+ * @property captureDownloadUrlTtl QA 캡처 다운로드 URL 유효 기간
  * @property maxUploadBytes 허용 최대 크기
+ * @property maxCaptureBytes QA 캡처 한 장의 허용 최대 크기
  */
 // 값을 정규화해서 노출해야 하므로 생성자 파라미터를 그대로 프로퍼티로 쓰지 않는다.
 // data class는 그것을 허용하지 않고, 설정 홀더에 equals/copy가 필요하지도 않다.
@@ -36,7 +38,9 @@ class StorageProperties(
     secretKey: String? = null,
     val uploadUrlTtl: Duration = Duration.ofMinutes(10),
     val downloadUrlTtl: Duration = Duration.ofMinutes(5),
-    val maxUploadBytes: Long = 52_428_800L
+    val captureDownloadUrlTtl: Duration = Duration.ofMinutes(30),
+    val maxUploadBytes: Long = 52_428_800L,
+    val maxCaptureBytes: Long = 5_242_880L
 ) {
     /**
      * 빈 값은 "설정하지 않음"으로 읽는다.
@@ -64,11 +68,24 @@ class StorageProperties(
             "artel.storage.access-key and secret-key must be set together, or both left empty"
         }
         require(maxUploadBytes > 0) { "artel.storage.max-upload-bytes must be positive" }
+        require(maxCaptureBytes > 0) { "artel.storage.max-capture-bytes must be positive" }
         require(!uploadUrlTtl.isZero && !uploadUrlTtl.isNegative) {
             "artel.storage.upload-url-ttl must be positive"
         }
         require(!downloadUrlTtl.isZero && !downloadUrlTtl.isNegative) {
             "artel.storage.download-url-ttl must be positive"
         }
+        // QA 런은 Agent에서 최대 10분(RUN_DEADLINE_SECONDS=600) 돈다. 캡처 URL이 그보다 먼저
+        // 만료되면 런 초반에 찍은 화면을 에이전트가 후반에 열지 못한다. 기동 시에 막지 않으면
+        // 그 실패는 한참 뒤에 "이미지를 받지 못했다"라는 모호한 런 실패로만 나타난다.
+        require(captureDownloadUrlTtl > MIN_CAPTURE_DOWNLOAD_URL_TTL) {
+            "artel.storage.capture-download-url-ttl must outlive the QA run deadline " +
+                "($MIN_CAPTURE_DOWNLOAD_URL_TTL)"
+        }
+    }
+
+    companion object {
+        /** Agent의 `RUN_DEADLINE_SECONDS`. 그 값이 바뀌면 여기도 같이 올린다. */
+        val MIN_CAPTURE_DOWNLOAD_URL_TTL: Duration = Duration.ofSeconds(600)
     }
 }

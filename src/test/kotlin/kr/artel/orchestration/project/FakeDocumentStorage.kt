@@ -6,8 +6,12 @@ import kr.artel.orchestration.project.storage.PresignedUpload
 import kr.artel.orchestration.project.storage.StoredObject
 import reactor.core.publisher.Mono
 import java.security.MessageDigest
+import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+
+private val FIXED_NOW: Instant = Instant.parse("2030-01-01T00:00:00Z")
+private val DEFAULT_DOWNLOAD_TTL: Duration = Duration.ofMinutes(5)
 
 /**
  * 실제 S3 대신 쓰는 인메모리 저장소.
@@ -36,9 +40,15 @@ class FakeDocumentStorage : DocumentStorage {
         expiresAt = Instant.parse("2030-01-01T00:00:00Z")
     )
 
-    override fun presignDownload(objectKey: String, fileName: String) = PresignedDownload(
+    override fun presignDownload(
+        objectKey: String,
+        fileName: String,
+        ttl: Duration?
+    ) = PresignedDownload(
         url = "https://fake-storage.test/$objectKey?download=$fileName",
-        expiresAt = Instant.parse("2030-01-01T00:00:00Z")
+        // 만료 시각을 요청된 수명에서 그대로 계산한다. TTL이 런 데드라인을 넘는지 검증하는
+        // 테스트가 이 값을 읽는다.
+        expiresAt = FIXED_NOW.plus(ttl ?: DEFAULT_DOWNLOAD_TTL)
     )
 
     override fun head(objectKey: String): Mono<StoredObject> =
