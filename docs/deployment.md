@@ -90,7 +90,10 @@ entirely on the credentials-binding console filter, not on how the step is quote
 ## Adding a new environment
 
 1. Add the branch-to-environment mapping in `resolveTargetEnv` in `Jenkinsfile`.
-2. Register a Secret file credential named `artel-orchestration-server-env-<new-env>`.
+2. Add the same branch to the `when { anyOf { ... } }` guard on the `Deploy Pipeline`
+   stage. The guard is what keeps PR and feature-branch builds out of deployment, so a
+   branch missing from it is built but never deployed.
+3. Register a Secret file credential named `artel-orchestration-server-env-<new-env>`.
 
 No other pipeline change is needed.
 
