@@ -26,7 +26,7 @@ data class KnowledgeMetadata(
 
 /**
  * knowledge 한 항목. summary/description은 Agent 생성물로 그대로 TEXT 저장한다.
- * tag는 우리가 정의한 enum 토큰(CONTROL/INFO/MISC).
+ * tag는 우리가 정의한 topic enum 토큰(CONTROL/RULE/OBJECTIVE/UI/MISC).
  */
 data class KnowledgeIngestItem(
     val tag: String? = null,
