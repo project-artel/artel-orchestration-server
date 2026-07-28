@@ -1,11 +1,16 @@
 package kr.artel.orchestration.sdk.service
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import kr.artel.orchestration.sdk.dto.AgentRect
+import kr.artel.orchestration.sdk.dto.AgentScreenSize
 import kr.artel.orchestration.sdk.dto.SdkAction
 import kr.artel.orchestration.sdk.dto.SdkBlock
+import kr.artel.orchestration.sdk.dto.SdkBlockTransform
 import kr.artel.orchestration.sdk.dto.SdkComponent
 import kr.artel.orchestration.sdk.dto.SdkError
 import kr.artel.orchestration.sdk.dto.SdkGameState
+import kr.artel.orchestration.sdk.dto.SdkScreenRect
+import kr.artel.orchestration.sdk.dto.SdkScreenSize
 import kr.artel.orchestration.sdk.dto.SdkState
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -16,6 +21,18 @@ class GameStateTransformerTest {
         type = "GAME_STATE",
         id = 1,
         scene = SdkBlock(id = 0, type = "scene", name = "Lobby", children = children.toList())
+    )
+
+    private fun sceneOf(screen: SdkScreenSize?, vararg children: SdkBlock) = SdkGameState(
+        type = "GAME_STATE",
+        id = 1,
+        scene = SdkBlock(
+            id = 0,
+            type = "scene",
+            name = "Lobby",
+            screen = screen,
+            children = children.toList()
+        )
     )
 
     private fun action(sequence: Int, name: String, success: Boolean = true, error: SdkError? = null) =
@@ -216,6 +233,106 @@ class GameStateTransformerTest {
         val agent = GameStateTransformer.toAgentGameState(state)
 
         assertThat(agent.interactables.single().name).isEqualTo("StartButton")
+    }
+
+    @Test
+    fun `조작 후보는 SDK가 준 화면 좌표를 그대로 싣는다`() {
+        // SDK의 move_mouse가 좌상단 기준 픽셀을 그대로 받아 내부에서 변환한다. 여기서
+        // 뒤집거나 중심점으로 바꾸면 이중 변환이 된다.
+        val state = sceneOf(
+            SdkScreenSize(w = 1920, h = 1080),
+            SdkBlock(
+                id = 1,
+                type = "block",
+                name = "StartButton",
+                transform = SdkBlockTransform(rect = SdkScreenRect(x = 100, y = 200, w = 300, h = 40)),
+                components = listOf(SdkComponent(type = "button", name = "Button"))
+            )
+        )
+
+        val target = GameStateTransformer.toAgentGameState(state).interactables.single()
+
+        assertThat(target.rect).isEqualTo(AgentRect(x = 100, y = 200, w = 300, h = 40))
+        assertThat(target.onScreen).isTrue()
+    }
+
+    @Test
+    fun `씬의 화면 크기가 함께 전달된다`() {
+        // 화면 크기가 없으면 픽셀 rect를 해석할 수 없다. x 860은 1920에서는 한가운데다.
+        val state = sceneOf(
+            SdkScreenSize(w = 1280, h = 720),
+            block(1, "StartButton", SdkComponent(type = "button", name = "Button"))
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.screen).isEqualTo(AgentScreenSize(w = 1280, h = 720))
+    }
+
+    @Test
+    fun `좌표를 싣지 않은 블록의 rect는 0이 아니라 없음이다`() {
+        // 0으로 채우면 "화면 좌상단"이라는 유효한 좌표와 구분되지 않는다. 좌표를 보내지
+        // 않는 구버전 SDK의 페이로드도 그대로 변환되어야 한다.
+        val state = sceneOf(block(1, "StartButton", SdkComponent(type = "button", name = "Button")))
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.screen).isNull()
+        assertThat(agent.interactables.single().rect).isNull()
+        assertThat(agent.interactables.single().onScreen).isTrue()
+    }
+
+    @Test
+    fun `화면 밖 블록은 onScreen이 거짓이고 rect는 그대로 남는다`() {
+        // 얼마나 벗어났는지가 정보이므로 측정값을 지우지 않는다.
+        val state = sceneOf(
+            SdkScreenSize(w = 1920, h = 1080),
+            SdkBlock(
+                id = 1,
+                type = "block",
+                name = "OffscreenButton",
+                transform = SdkBlockTransform(
+                    rect = SdkScreenRect(x = -400, y = 50, w = 120, h = 40),
+                    onScreen = false
+                ),
+                components = listOf(SdkComponent(type = "button", name = "Button"))
+            )
+        )
+
+        val target = GameStateTransformer.toAgentGameState(state).interactables.single()
+
+        assertThat(target.onScreen).isFalse()
+        assertThat(target.rect).isEqualTo(AgentRect(x = -400, y = 50, w = 120, h = 40))
+    }
+
+    @Test
+    fun `좌표를 싣는 페이로드는 역직렬화 경로에서도 값이 보존된다`() {
+        val payload = """
+            {
+              "type": "GAME_STATE",
+              "id": 1,
+              "scene": {
+                "id": 0, "type": "scene", "name": "Lobby",
+                "screen": { "w": 1920, "h": 1080 },
+                "children": [
+                  {
+                    "id": 1, "type": "block", "name": "NameInput",
+                    "transform": {
+                      "rect": { "x": 60, "y": 120, "w": 240, "h": 48 },
+                      "onScreen": true
+                    },
+                    "components": [{ "type": "editText", "name": "Input" }]
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        val state = jacksonObjectMapper().readValue(payload, SdkGameState::class.java)
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.screen).isEqualTo(AgentScreenSize(w = 1920, h = 1080))
+        assertThat(agent.interactables.single().rect).isEqualTo(AgentRect(x = 60, y = 120, w = 240, h = 48))
     }
 
     private fun block(id: Int, name: String, vararg components: SdkComponent) =

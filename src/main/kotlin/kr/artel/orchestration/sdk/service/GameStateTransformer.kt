@@ -26,6 +26,8 @@ object GameStateTransformer {
 
         return AgentGameState(
             scene = sceneName,
+            // 화면 크기는 씬 루트에만 실린다. 이것이 없으면 후보들의 픽셀 rect를 해석할 수 없다.
+            screen = rootNode.screen?.let { AgentScreenSize(w = it.w, h = it.h) },
             interactables = interactables,
             observables = observables,
             // sequence가 실행 순서다. 최신 N개를 고른 뒤 다시 시간순으로 돌려 준다.
@@ -43,6 +45,11 @@ object GameStateTransformer {
         actions: MutableList<Pair<Int, AgentActionRecord>>
     ) {
         val components = node.components
+
+        // 좌표는 컴포넌트가 아니라 블록에 실린다. 이 블록에서 나가는 모든 조작 후보가
+        // 같은 값을 공유한다. SDK가 준 좌상단 픽셀 값을 변환 없이 그대로 옮긴다.
+        val rect = node.transform?.rect?.let { AgentRect(x = it.x, y = it.y, w = it.w, h = it.h) }
+        val onScreen = node.transform?.onScreen ?: true
 
         // 라벨로 흡수되는 text는 조작 후보로 나가는 버튼의 것뿐이다. 잠긴 버튼은 후보에서 빠지므로
         // 그 라벨은 아래에서 관찰값으로 남겨야 한다. 그러지 않으면 무엇이 잠겼는지가 두 목록
@@ -64,7 +71,9 @@ object GameStateTransformer {
                             id = node.id,
                             name = node.name,
                             type = "button",
-                            label = label
+                            label = label,
+                            rect = rect,
+                            onScreen = onScreen
                         )
                     )
                 }
@@ -74,7 +83,9 @@ object GameStateTransformer {
                             id = node.id,
                             name = node.name,
                             type = "editText",
-                            placeholder = component.placeholder
+                            placeholder = component.placeholder,
+                            rect = rect,
+                            onScreen = onScreen
                         )
                     )
                 }
@@ -86,7 +97,9 @@ object GameStateTransformer {
                                 id = node.id,
                                 name = node.name,
                                 type = component.type,
-                                actions = component.actions.map { it.name }
+                                actions = component.actions.map { it.name },
+                                rect = rect,
+                                onScreen = onScreen
                             )
                         )
                     }

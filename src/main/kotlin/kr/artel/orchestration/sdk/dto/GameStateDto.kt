@@ -14,13 +14,52 @@ data class SdkGameState(
 
 /**
  * 씬 계층 구조 상의 노드(Scene 혹은 Block)를 표현하는 클래스
+ *
+ * [screen]은 씬 루트에만, [transform]은 블록에만 실린다. 한 클래스가 두 층을 겸하므로
+ * 둘 다 nullable이다. 좌표를 싣지 않는 구버전 SDK도 그대로 동작한다.
  */
 data class SdkBlock(
     val id: Int,
     val type: String,
     val name: String,
+    val screen: SdkScreenSize? = null,
+    val transform: SdkBlockTransform? = null,
     val components: List<SdkComponent> = emptyList(),
     val children: List<SdkBlock> = emptyList()
+)
+
+/**
+ * 블록의 화면 좌표 정보
+ *
+ * [onScreen]의 기본값 true는 하위 호환이다. 이 값을 싣지 않는 SDK의 블록은 화면 안에
+ * 있는 것으로 본다. 참이라고 해서 눈에 보인다는 뜻은 아니다. 마스크에 잘리거나 다른
+ * 오브젝트에 가려진 블록도 참으로 온다.
+ */
+data class SdkBlockTransform(
+    val rect: SdkScreenRect? = null,
+    val onScreen: Boolean = true
+)
+
+/**
+ * 블록이 화면에서 차지하는 영역. 게임 화면 기준 픽셀이며 원점은 좌상단, [x]/[y]는 중심이
+ * 아니라 좌상단 모서리다.
+ */
+data class SdkScreenRect(
+    val x: Int,
+    val y: Int,
+    val w: Int,
+    val h: Int
+)
+
+/**
+ * 씬의 rect들이 측정된 기준 화면 크기
+ *
+ * 이것이 없으면 픽셀 rect는 의미를 갖지 못한다. x 860은 1920 화면에서는 한가운데지만
+ * 1280 화면에서는 오른쪽이다.
+ */
+data class SdkScreenSize(
+    val w: Int,
+    val h: Int
 )
 
 /**
@@ -73,9 +112,14 @@ data class SdkError(
 
 /**
  * 에이전트 서버로 전달할 정제된 컴팩트 게임 상태 구조 (Orchestrator -> Agent)
+ *
+ * [screen]은 조작 후보들의 rect가 측정된 기준 화면 크기다. SDK가 화면 크기를 싣지 않으면
+ * 키 자체가 나가지 않는다.
  */
+@JsonInclude(JsonInclude.Include.NON_NULL)
 data class AgentGameState(
     val scene: String,
+    val screen: AgentScreenSize? = null,
     val interactables: List<Interactable> = emptyList(),
     val observables: Map<String, ObservableValue> = emptyMap(),
     val recentActions: List<AgentActionRecord> = emptyList()
@@ -107,6 +151,11 @@ data class ObservableValue(
 
 /**
  * 에이전트가 조작 가능한 타겟 정보
+ *
+ * [rect]는 SDK가 보낸 좌상단 기준 픽셀 값을 그대로 옮긴 것이다. 변환하지 않는다.
+ * SDK의 `move_mouse`가 이 값을 그대로 받아 내부에서 변환하므로 여기서 한 번 더 뒤집거나
+ * 중심점으로 바꾸면 이중 적용이 된다. 좌표가 없는 블록은 0이 아니라 null이다. 0은
+ * "화면 좌상단"이라는 유효한 좌표이므로 부재와 구분되어야 한다.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class Interactable(
@@ -115,5 +164,25 @@ data class Interactable(
     val type: String,
     val actions: List<String>? = null,
     val label: String? = null,
-    val placeholder: String? = null
+    val placeholder: String? = null,
+    val rect: AgentRect? = null,
+    val onScreen: Boolean = true
+)
+
+/**
+ * 조작 후보가 화면에서 차지하는 영역. 원점은 좌상단, [x]/[y]는 좌상단 모서리다.
+ */
+data class AgentRect(
+    val x: Int,
+    val y: Int,
+    val w: Int,
+    val h: Int
+)
+
+/**
+ * rect들이 측정된 기준 화면 크기
+ */
+data class AgentScreenSize(
+    val w: Int,
+    val h: Int
 )
