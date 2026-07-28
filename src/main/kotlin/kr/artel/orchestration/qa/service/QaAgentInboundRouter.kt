@@ -5,21 +5,13 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.service.IssueService
 import kr.artel.orchestration.qa.repository.QaTryRepository
-import kr.artel.orchestration.sdk.service.SessionManager
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Mono
 import java.time.Clock
-import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
-private val SUPPORTED_TYPES = setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "REQUEST_GAME_STATE", "ISSUE")
-
-/** The SDK answers this with a GAME_STATE message on the same socket. */
-private val GET_GAME_STATE = mapOf("type" to "GET_GAME_STATE")
-
-/** A wait the Agent asks for is bounded here; it is a hint, not a lease. */
-private val MAX_SCENE_WAIT: Duration = Duration.ofSeconds(60)
+private val SUPPORTED_TYPES = setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE")
 
 @Service
 class QaAgentInboundRouter(
@@ -27,7 +19,6 @@ class QaAgentInboundRouter(
     private val logService: QaLogService,
     private val actionDispatch: QaActionDispatchService,
     private val streamManager: QaLogStreamManager,
-    private val sessionManager: SessionManager,
     private val issueService: IssueService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
@@ -42,14 +33,9 @@ class QaAgentInboundRouter(
         if (envelope.type !in SUPPORTED_TYPES) {
             return appendError(qaTryId, envelope, "Unsupported Agent message type: ${envelope.type}")
         }
-        // 씬 요청은 표시용 `message` 대신 `reason`을, 이슈는 `title`을 담는다. 나머지 타입은
-        // 모두 타임라인에 뜨는 문구를 message에 싣는다. 아래 non-blank 가드가 곧 "이슈는 title
-        // 필수" 역할을 겸한다.
-        val field = when (envelope.type) {
-            "REQUEST_GAME_STATE" -> "reason"
-            "ISSUE" -> "title"
-            else -> "message"
-        }
+        // 이슈는 표시용 `message` 대신 `title`을 담는다. 나머지 타입은 모두 타임라인에 뜨는
+        // 문구를 message에 싣는다. 아래 non-blank 가드가 곧 "이슈는 title 필수" 역할을 겸한다.
+        val field = if (envelope.type == "ISSUE") "title" else "message"
         val message = envelope.payload.path(field).takeIf { it.isTextual }?.asText()
         if (message.isNullOrBlank()) {
             return appendError(qaTryId, envelope, "${envelope.type} payload.$field is required")
@@ -68,12 +54,6 @@ class QaAgentInboundRouter(
                         envelope.payload
                     ).then()
                     "STATUS" -> routeStatus(qaTry.status, qaTryId, envelope, message)
-                    "REQUEST_GAME_STATE" -> requestGameState(
-                        qaTryId,
-                        qaTry.gameInstanceId,
-                        envelope,
-                        message
-                    )
                     "ISSUE" -> routeIssue(qaTryId, envelope, message)
                     else -> logService.append(
                         qaTryId = qaTryId,
@@ -86,52 +66,6 @@ class QaAgentInboundRouter(
                     ).doOnNext(logService::publish).then()
                 }
             }
-    }
-
-    /**
-     * Asks the game for its current scene on the Agent's behalf, after the wait
-     * it asked for.
-     *
-     * The delay is scheduled here rather than slept in the Agent: the Agent runs
-     * one session on one receive loop, so sleeping there would stall the
-     * operator's messages too. Delivery is best effort — a disconnected SDK must
-     * not fail the run, and the Agent will ask again on its next turn.
-     */
-    private fun requestGameState(
-        qaTryId: Long,
-        gameInstanceId: Long,
-        envelope: QaAgentEnvelope,
-        reason: String
-    ): Mono<Void> {
-        val requested = envelope.payload.path("after_seconds").takeIf { it.isNumber }?.asDouble() ?: 0.0
-        val wait = Duration.ofMillis((requested.coerceAtLeast(0.0) * 1000).toLong())
-            .coerceAtMost(MAX_SCENE_WAIT)
-        return logService.append(
-            qaTryId = qaTryId,
-            direction = "ORCHE_TO_SDK",
-            type = "GAME_STATE",
-            messageId = envelope.messageId,
-            message = reason,
-            payload = envelope.payload
-        ).doOnNext(logService::publish)
-            .then(
-                Mono.delay(wait)
-                    .then(sessionManager.send(gameInstanceId.toString(), GET_GAME_STATE))
-                    .onErrorResume { error ->
-                        logService.append(
-                            qaTryId = qaTryId,
-                            direction = "ORCHE_INTERNAL",
-                            type = "ERROR",
-                            correlationId = envelope.messageId,
-                            message = "Game state request could not be delivered.",
-                            payload = objectMapper.createObjectNode().put("error", error.message)
-                        ).doOnNext(logService::publish).then()
-                    }
-                    // Detached: the caller is the Agent's receive loop, and holding
-                    // it for the wait would block every other frame of this run.
-                    .subscribe()
-                    .let { Mono.empty() }
-            )
     }
 
     private fun routeStatus(
