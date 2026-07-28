@@ -2,6 +2,8 @@ package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
+import kr.artel.orchestration.issue.entity.IssueSeverity
+import kr.artel.orchestration.issue.service.IssueService
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
 import org.springframework.stereotype.Service
@@ -11,7 +13,7 @@ import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
-private val SUPPORTED_TYPES = setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "REQUEST_GAME_STATE")
+private val SUPPORTED_TYPES = setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "REQUEST_GAME_STATE", "ISSUE")
 
 /** The SDK answers this with a GAME_STATE message on the same socket. */
 private val GET_GAME_STATE = mapOf("type" to "GET_GAME_STATE")
@@ -26,6 +28,7 @@ class QaAgentInboundRouter(
     private val actionDispatch: QaActionDispatchService,
     private val streamManager: QaLogStreamManager,
     private val sessionManager: SessionManager,
+    private val issueService: IssueService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -39,9 +42,14 @@ class QaAgentInboundRouter(
         if (envelope.type !in SUPPORTED_TYPES) {
             return appendError(qaTryId, envelope, "Unsupported Agent message type: ${envelope.type}")
         }
-        // A scene request states its `reason` rather than a display `message`;
-        // everything else carries the line the timeline shows.
-        val field = if (envelope.type == "REQUEST_GAME_STATE") "reason" else "message"
+        // 씬 요청은 표시용 `message` 대신 `reason`을, 이슈는 `title`을 담는다. 나머지 타입은
+        // 모두 타임라인에 뜨는 문구를 message에 싣는다. 아래 non-blank 가드가 곧 "이슈는 title
+        // 필수" 역할을 겸한다.
+        val field = when (envelope.type) {
+            "REQUEST_GAME_STATE" -> "reason"
+            "ISSUE" -> "title"
+            else -> "message"
+        }
         val message = envelope.payload.path(field).takeIf { it.isTextual }?.asText()
         if (message.isNullOrBlank()) {
             return appendError(qaTryId, envelope, "${envelope.type} payload.$field is required")
@@ -66,6 +74,7 @@ class QaAgentInboundRouter(
                         envelope,
                         message
                     )
+                    "ISSUE" -> routeIssue(qaTryId, envelope, message)
                     else -> logService.append(
                         qaTryId = qaTryId,
                         direction = "AGENT_TO_ORCHE",
@@ -170,6 +179,37 @@ class QaAgentInboundRouter(
             logService.publish(it)
             if (resolved != null) streamManager.complete(qaTryId)
         }.then()
+    }
+
+    /**
+     * Agent가 보고한 이슈를 issue 도메인에 저장한다(qa_log가 아니다).
+     *
+     * severity는 다른 모든 envelope 필드와 똑같이 여기서 값으로 검증한다: 잘못된 값은 throw
+     * 대신 ORCHE_INTERNAL 에러로 드롭해, 프레임 하나가 receive 체인을 끊어 실행을 실패시키지
+     * 못하게 한다. `title`은 [handle]의 non-blank 가드에서 이미 필수로 걸렀다.
+     */
+    private fun routeIssue(
+        qaTryId: Long,
+        envelope: QaAgentEnvelope,
+        title: String
+    ): Mono<Void> {
+        val severity = envelope.payload.path("severity").takeIf { it.isTextual }?.asText()
+        if (severity == null || severity !in IssueSeverity.NAMES) {
+            return appendError(
+                qaTryId,
+                envelope,
+                "ISSUE payload.severity must be one of ${IssueSeverity.NAMES}"
+            )
+        }
+        return issueService.recordAgentIssue(
+            qaTryId = qaTryId,
+            messageId = envelope.messageId,
+            correlationId = envelope.correlationId,
+            severity = severity,
+            title = title,
+            reportedAt = envelope.timestamp,
+            payload = envelope.payload
+        )
     }
 
     private fun appendError(
