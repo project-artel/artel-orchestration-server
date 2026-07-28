@@ -12,6 +12,9 @@ import java.time.Instant
  * [detail]에는 Agent가 보낸 payload 전체가 JSONB로 담긴다(qa_log.payload와 동일 방식).
  * created/updated는 컬럼 기본값 대신 서비스에서 stamp한다 — R2DBC는 insert 후 기본값 컬럼을
  * 다시 읽어오지 않아, 그러지 않으면 저장된 엔티티의 createdAt이 null로 나온다(QaLogEntity와 동일).
+ *
+ * [reportedAt]은 Agent가 프레임에 찍은 이벤트 시각(envelope.timestamp) — 버그가 실제로 관측된
+ * 순간이다. 우리가 저장한 시각인 [createdAt]과 구분된다(네트워크 지연·재전송으로 벌어질 수 있음).
  */
 @Table("issue")
 data class IssueEntity(
@@ -22,6 +25,7 @@ data class IssueEntity(
     val severity: String,
     val title: String,
     val detail: Json = Json.of("{}"),
+    @Column("reported_at") val reportedAt: Instant,
     @Column("created_at") val createdAt: Instant? = null,
     @Column("updated_at") val updatedAt: Instant? = null
 )

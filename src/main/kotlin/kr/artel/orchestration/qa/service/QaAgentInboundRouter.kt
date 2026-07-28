@@ -207,6 +207,7 @@ class QaAgentInboundRouter(
             correlationId = envelope.correlationId,
             severity = severity,
             title = title,
+            reportedAt = envelope.timestamp,
             payload = envelope.payload
         )
     }

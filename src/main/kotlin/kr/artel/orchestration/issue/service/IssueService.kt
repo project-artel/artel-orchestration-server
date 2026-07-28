@@ -33,6 +33,9 @@ class IssueService(
      * 중복 행을 만들지 않고 기존 행으로 흡수된다(QaLogService.append와 동일 패턴).
      *
      * [detail]에는 Agent payload 전체를 담되 1 MiB 상한을 둔다(qa_log와 동일).
+     *
+     * [reportedAt]은 Agent가 프레임에 찍은 이벤트 시각(envelope.timestamp)이다 — 우리가 저장하는
+     * 수신 시각([createdAt])과 달리, 버그가 실제로 관측된 순간을 그대로 보존한다.
      */
     fun recordAgentIssue(
         qaTryId: Long,
@@ -40,6 +43,7 @@ class IssueService(
         correlationId: String?,
         severity: String,
         title: String,
+        reportedAt: Instant,
         payload: JsonNode
     ): Mono<Void> {
         val serialized = objectMapper.writeValueAsString(payload)
@@ -54,6 +58,8 @@ class IssueService(
             severity = severity,
             title = title,
             detail = Json.of(serialized),
+            // Agent가 찍은 이벤트 시각(수신 시각과 구분해 그대로 보존).
+            reportedAt = reportedAt,
             // 컬럼 기본값에 맡기지 않고 여기서 stamp한다: R2DBC가 insert 후 기본값 컬럼을
             // 다시 읽지 않아, 그러지 않으면 저장 결과의 createdAt이 null이다(QaLogService와 동일).
             createdAt = now,

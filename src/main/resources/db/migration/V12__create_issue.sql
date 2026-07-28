@@ -11,6 +11,12 @@
 -- 항상 채워지지만, 컬럼은 qa_log와 동일하게 nullable로 두고 부분 유니크 인덱스로 재전송을 막는다.
 -- title/severity는 조회·정렬을 위해 컬럼으로 승격하고, Agent가 보낸 payload 전체는 detail(JSONB)에
 -- 담아 구조화된 근거(expected/actual, 재현 스텝, 스크린샷 참조 등)를 잃지 않는다.
+--
+-- reported_at vs created_at: 시각이 둘로 갈린다. reported_at은 Agent가 프레임에 찍은 이벤트
+-- 시각(envelope.timestamp) — 게임에서 버그가 실제로 관측된 순간이다. created_at은 우리가 그 프레임을
+-- 받아 DB에 저장한 수신 시각(서버 clock). 네트워크 지연·재전송으로 둘이 벌어질 수 있어, 타임라인의
+-- 정확한 발생 시점은 reported_at을 쓰고 created_at은 수신·감사 기록으로 남긴다. envelope.timestamp는
+-- 모든 Agent 프레임이 항상 채우므로 NOT NULL로 둔다.
 
 CREATE TABLE IF NOT EXISTS issue (
     id BIGSERIAL PRIMARY KEY,
@@ -21,6 +27,7 @@ CREATE TABLE IF NOT EXISTS issue (
         CHECK (severity IN ('BLOCKER', 'CRITICAL', 'MAJOR', 'MINOR', 'TRIVIAL')),
     title TEXT NOT NULL,
     detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+    reported_at TIMESTAMP WITH TIME ZONE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

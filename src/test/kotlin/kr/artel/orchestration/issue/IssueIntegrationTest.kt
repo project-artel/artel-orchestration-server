@@ -94,6 +94,8 @@ class IssueIntegrationTest {
         val detail = objectMapper.readTree(issue.detail.asString())
         assertThat(detail["step"].asInt()).isEqualTo(3)
         assertThat(detail["detail"].asText()).contains("no file is written")
+        // reported_at은 서버 수신 시각이 아니라 Agent가 프레임에 찍은 이벤트 시각을 그대로 보존한다.
+        assertThat(issue.reportedAt).isEqualTo(REPORTED_AT)
     }
 
     @Test
@@ -138,7 +140,7 @@ class IssueIntegrationTest {
                 type = "ISSUE",
                 qaTryId = qaTryId.toString(),
                 correlationId = UUID.randomUUID().toString(),
-                timestamp = Instant.now(),
+                timestamp = REPORTED_AT,
                 payload = objectMapper.readTree(payload)
             )
         ).block(TIMEOUT)
@@ -197,5 +199,9 @@ class IssueIntegrationTest {
 
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(5)
+
+        // Agent가 프레임에 찍는 이벤트 시각. PostgreSQL timestamptz(마이크로초)와 정확히 비교되도록
+        // 마이크로초 정밀도로 고정한다.
+        val REPORTED_AT: Instant = Instant.parse("2026-07-28T12:34:56.123456Z")
     }
 }
