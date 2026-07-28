@@ -22,7 +22,8 @@ object GameStateTransformer {
         val observables = mutableMapOf<String, ObservableValue>()
         val actions = mutableListOf<Pair<Int, AgentActionRecord>>()
 
-        traverse(rootNode, interactables, observables, actions)
+        // 씬 루트는 경로에서 뺀다. 이름이 이미 scene으로 나가므로 모든 키 앞에 한 번 더 붙을 뿐이다.
+        traverse(rootNode, "", interactables, observables, actions)
 
         return AgentGameState(
             scene = sceneName,
@@ -38,8 +39,19 @@ object GameStateTransformer {
         )
     }
 
+    /** 씬 루트 바로 아래 블록은 자기 이름만 갖는다. 평평한 씬의 키가 종전과 같게 유지된다. */
+    private fun childPath(path: String, name: String): String {
+        return if (path.isEmpty()) name else "$path.$name"
+    }
+
+    /**
+     * @param path 이 블록까지의 조상 이름을 `.`으로 이은 경로. 관찰값 키의 앞자리가 된다.
+     *   블록 이름만으로 키를 만들면 서로 다른 패널의 같은 이름이 맵에서 서로를 덮어쓰고,
+     *   어느 쪽이 남았는지 읽는 쪽에서 알 방법이 없다.
+     */
     private fun traverse(
         node: SdkBlock,
+        path: String,
         interactables: MutableList<Interactable>,
         observables: MutableMap<String, ObservableValue>,
         actions: MutableList<Pair<Int, AgentActionRecord>>
@@ -111,7 +123,7 @@ object GameStateTransformer {
                 // 버튼 라벨용으로 사용된 text 컴포넌트의 content는 중복 관찰대상에서 배제
                 val skipObservable = (component.type == "text" && hasInteractableButton)
                 if (!skipObservable) {
-                    observables["${node.name}.content"] = ObservableValue(
+                    observables["$path.content"] = ObservableValue(
                         value = component.content,
                         type = "string"
                     )
@@ -119,7 +131,7 @@ object GameStateTransformer {
             }
 
             for (state in component.states) {
-                observables["${node.name}.${component.type}.${state.name}"] = ObservableValue(
+                observables["$path.${component.type}.${state.name}"] = ObservableValue(
                     value = state.value,
                     type = state.type
                 )
@@ -146,7 +158,7 @@ object GameStateTransformer {
 
         // 자식 노드 재귀 탐색
         for (child in node.children) {
-            traverse(child, interactables, observables, actions)
+            traverse(child, childPath(path, child.name), interactables, observables, actions)
         }
     }
 }

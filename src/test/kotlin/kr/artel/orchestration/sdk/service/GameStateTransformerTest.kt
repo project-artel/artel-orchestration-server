@@ -150,6 +150,50 @@ class GameStateTransformerTest {
     }
 
     @Test
+    fun `관찰값 키는 조상 블록 이름을 모두 이어 붙인다`() {
+        val state = sceneOf(
+            parent(
+                1,
+                "Canvas",
+                parent(
+                    2,
+                    "StatusPanel",
+                    block(3, "nameTMP", SdkComponent(type = "text", name = "Label", content = "Fire"))
+                )
+            )
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        // 씬 이름(Lobby)은 이미 scene으로 나가므로 경로에 들어가지 않는다.
+        assertThat(agent.observables).containsOnlyKeys("Canvas.StatusPanel.nameTMP.content")
+        assertThat(agent.observables["Canvas.StatusPanel.nameTMP.content"]?.value).isEqualTo("Fire")
+    }
+
+    @Test
+    fun `같은 이름의 블록이 다른 부모 아래 있으면 서로 덮어쓰지 않는다`() {
+        // 경로가 없던 시절에는 두 키가 모두 "nameTMP.content"라 나중 것만 남았고, 남은 쪽이
+        // 어느 패널의 것인지 읽는 쪽에서 알 수 없었다.
+        val state = sceneOf(
+            parent(
+                1,
+                "LeftPanel",
+                block(2, "nameTMP", SdkComponent(type = "text", name = "Label", content = "Fire"))
+            ),
+            parent(
+                3,
+                "RightPanel",
+                block(4, "nameTMP", SdkComponent(type = "text", name = "Label", content = "Ice"))
+            )
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.observables["LeftPanel.nameTMP.content"]?.value).isEqualTo("Fire")
+        assertThat(agent.observables["RightPanel.nameTMP.content"]?.value).isEqualTo("Ice")
+    }
+
+    @Test
     fun `잠긴 버튼과 입력 필드는 조작 후보에서 뺀다`() {
         val state = sceneOf(
             block(1, "StartButton", SdkComponent(type = "button", name = "Button")),
@@ -337,4 +381,7 @@ class GameStateTransformerTest {
 
     private fun block(id: Int, name: String, vararg components: SdkComponent) =
         SdkBlock(id = id, type = "block", name = name, components = components.toList())
+
+    private fun parent(id: Int, name: String, vararg children: SdkBlock) =
+        SdkBlock(id = id, type = "block", name = name, children = children.toList())
 }

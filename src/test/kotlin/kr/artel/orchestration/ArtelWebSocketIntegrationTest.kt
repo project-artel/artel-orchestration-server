@@ -134,15 +134,15 @@ class ArtelWebSocketIntegrationTest {
             ObservableValue(value = "Player1", type = "string")
         )
         assertThat(agentGameState.observables).containsEntry(
-            "NameInput.content",
+            "Canvas.NameInput.content",
             ObservableValue(value = "", type = "string")
         )
         assertThat(agentGameState.observables).containsEntry(
-            "TitleLabel.content",
+            "Canvas.TitleLabel.content",
             ObservableValue(value = "Score: 1200", type = "string")
         )
         // 버튼 라벨 텍스트는 observables에서 제외되었는지 검증
-        assertThat(agentGameState.observables).doesNotContainKey("SubmitButton.content")
+        assertThat(agentGameState.observables).doesNotContainKey("Canvas.SubmitButton.content")
     }
 
     @Test
