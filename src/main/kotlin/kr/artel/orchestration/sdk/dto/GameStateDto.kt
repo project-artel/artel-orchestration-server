@@ -68,12 +68,16 @@ data class SdkScreenSize(
  * [interactable]은 사람이 지금 그 UI를 누르거나 입력할 수 있는지다. 버튼과 입력 필드에만 실린다.
  * 기본값 true는 하위 호환이다. 이 필드를 싣지 않는 구버전 SDK의 페이로드는 종전대로 조작 후보에
  * 오른다. 배포 순서를 맞출 필요가 없도록 한 것이다.
+ *
+ * [sprite]는 이미지/스프라이트 컴포넌트가 그리고 있는 에셋 이름이다. 스프라이트가 비어 있으면
+ * SDK가 키 자체를 싣지 않는다.
  */
 data class SdkComponent(
     val type: String,
     val name: String,
     val content: String? = null,
     val placeholder: String? = null,
+    val sprite: String? = null,
     val interactable: Boolean = true,
     val states: List<SdkState> = emptyList(),
     val actions: List<SdkAction> = emptyList()
@@ -115,6 +119,9 @@ data class SdkError(
  *
  * [screen]은 조작 후보들의 rect가 측정된 기준 화면 크기다. SDK가 화면 크기를 싣지 않으면
  * 키 자체가 나가지 않는다.
+ *
+ * [visuals]는 조작도 관찰도 아닌, 화면에 그려지기만 하는 요소다. 이미지 컴포넌트를 싣지 않는
+ * SDK에서는 비어 있는 리스트로 나간다.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class AgentGameState(
@@ -122,7 +129,8 @@ data class AgentGameState(
     val screen: AgentScreenSize? = null,
     val interactables: List<Interactable> = emptyList(),
     val observables: Map<String, ObservableValue> = emptyMap(),
-    val recentActions: List<AgentActionRecord> = emptyList()
+    val recentActions: List<AgentActionRecord> = emptyList(),
+    val visuals: List<Visual> = emptyList()
 )
 
 /**
@@ -165,6 +173,26 @@ data class Interactable(
     val actions: List<String>? = null,
     val label: String? = null,
     val placeholder: String? = null,
+    val rect: AgentRect? = null,
+    val onScreen: Boolean = true
+)
+
+/**
+ * 조작할 수도 관찰할 수도 없고 그려지기만 하는 시각 요소 (Orchestrator -> Agent)
+ *
+ * 배경, 아이콘, 캐릭터 스프라이트처럼 `content`도 `states`도 `actions`도 없는 블록은 종전에
+ * 어느 목록에도 오르지 못해 에이전트에게 아예 보이지 않았다. 보이지 않는 것은 겨눌 수도 없다.
+ *
+ * [type]은 `image`(uGUI Image) 또는 `sprite`(SpriteRenderer)다. [sprite]는 그리고 있는 에셋
+ * 이름이며 비어 있을 수 있다. [rect]/[onScreen]은 [Interactable]과 같은 규칙이다. SDK가 준
+ * 좌상단 기준 픽셀 값을 변환 없이 그대로 옮기고, 좌표가 없으면 0이 아니라 null이다.
+ */
+@JsonInclude(JsonInclude.Include.NON_NULL)
+data class Visual(
+    val id: Int,
+    val name: String,
+    val type: String,
+    val sprite: String? = null,
     val rect: AgentRect? = null,
     val onScreen: Boolean = true
 )

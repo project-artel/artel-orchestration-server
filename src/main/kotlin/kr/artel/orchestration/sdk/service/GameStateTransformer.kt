@@ -14,6 +14,9 @@ object GameStateTransformer {
      */
     private const val MAX_RECENT_ACTIONS = 20
 
+    /** 그려지기만 하는 컴포넌트. uGUI Image와 SpriteRenderer로, SDK가 싣는 문자열 그대로다. */
+    private val VISUAL_TYPES = setOf("image", "sprite")
+
     fun toAgentGameState(sdkGameState: SdkGameState): AgentGameState {
         val rootNode = sdkGameState.scene
         val sceneName = rootNode.name
@@ -21,9 +24,10 @@ object GameStateTransformer {
         val interactables = mutableListOf<Interactable>()
         val observables = mutableMapOf<String, ObservableValue>()
         val actions = mutableListOf<Pair<Int, AgentActionRecord>>()
+        val visuals = mutableListOf<Visual>()
 
         // 씬 루트는 경로에서 뺀다. 이름이 이미 scene으로 나가므로 모든 키 앞에 한 번 더 붙을 뿐이다.
-        traverse(rootNode, "", interactables, observables, actions)
+        traverse(rootNode, "", interactables, observables, actions, visuals)
 
         return AgentGameState(
             scene = sceneName,
@@ -35,7 +39,8 @@ object GameStateTransformer {
             recentActions = actions.sortedByDescending { it.first }
                 .take(MAX_RECENT_ACTIONS)
                 .map { it.second }
-                .reversed()
+                .reversed(),
+            visuals = visuals
         )
     }
 
@@ -54,9 +59,15 @@ object GameStateTransformer {
         path: String,
         interactables: MutableList<Interactable>,
         observables: MutableMap<String, ObservableValue>,
-        actions: MutableList<Pair<Int, AgentActionRecord>>
+        actions: MutableList<Pair<Int, AgentActionRecord>>,
+        visuals: MutableList<Visual>
     ) {
         val components = node.components
+
+        // 이 블록이 조작 후보를 하나라도 만들었는지 판정하는 기준점. 아래 루프가 끝난 뒤의
+        // 크기와 비교한다. 버튼/입력/커스텀 세 갈래를 따로 세지 않아도 되고, 후보 조건이
+        // 나중에 바뀌어도 중복 판정이 저절로 따라간다.
+        val interactableCountBefore = interactables.size
 
         // 좌표는 컴포넌트가 아니라 블록에 실린다. 이 블록에서 나가는 모든 조작 후보가
         // 같은 값을 공유한다. SDK가 준 좌상단 픽셀 값을 변환 없이 그대로 옮긴다.
@@ -156,9 +167,28 @@ object GameStateTransformer {
             }
         }
 
+        // 4. 시각 요소(Visuals) 추출
+        //
+        // 조작 후보를 만든 블록은 여기서 뺀다. 버튼은 대개 배경 Image를 함께 달고 있으므로,
+        // 두 목록에 다 실으면 에이전트가 하나의 UI를 둘로 읽는다.
+        if (interactables.size == interactableCountBefore) {
+            for (component in components.filter { it.type in VISUAL_TYPES }) {
+                visuals.add(
+                    Visual(
+                        id = node.id,
+                        name = node.name,
+                        type = component.type,
+                        sprite = component.sprite,
+                        rect = rect,
+                        onScreen = onScreen
+                    )
+                )
+            }
+        }
+
         // 자식 노드 재귀 탐색
         for (child in node.children) {
-            traverse(child, childPath(path, child.name), interactables, observables, actions)
+            traverse(child, childPath(path, child.name), interactables, observables, actions, visuals)
         }
     }
 }

@@ -379,6 +379,94 @@ class GameStateTransformerTest {
         assertThat(agent.interactables.single().rect).isEqualTo(AgentRect(x = 60, y = 120, w = 240, h = 48))
     }
 
+    @Test
+    fun `이미지뿐인 블록도 시각 요소로 남는다`() {
+        // content도 states도 actions도 없으니 종전에는 어느 목록에도 오르지 못하고 사라졌다.
+        // 보이지 않는 것은 겨눌 수도 없다.
+        val state = sceneOf(
+            SdkScreenSize(w = 1920, h = 1080),
+            SdkBlock(
+                id = 11,
+                type = "block",
+                name = "HeartIcon",
+                transform = SdkBlockTransform(rect = SdkScreenRect(x = 20, y = 30, w = 64, h = 64)),
+                components = listOf(SdkComponent(type = "image", name = "Image", sprite = "heart_full"))
+            )
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        val visual = agent.visuals.single()
+        assertThat(visual.id).isEqualTo(11)
+        assertThat(visual.name).isEqualTo("HeartIcon")
+        assertThat(visual.type).isEqualTo("image")
+        assertThat(visual.sprite).isEqualTo("heart_full")
+        assertThat(visual.rect).isEqualTo(AgentRect(x = 20, y = 30, w = 64, h = 64))
+        assertThat(visual.onScreen).isTrue()
+        assertThat(agent.interactables).isEmpty()
+    }
+
+    @Test
+    fun `스프라이트 블록도 시각 요소로 남는다`() {
+        val state = sceneOf(
+            SdkScreenSize(w = 1920, h = 1080),
+            SdkBlock(
+                id = 12,
+                type = "block",
+                name = "Player",
+                transform = SdkBlockTransform(rect = SdkScreenRect(x = 800, y = 400, w = 96, h = 96)),
+                components = listOf(SdkComponent(type = "sprite", name = "SpriteRenderer", sprite = "hero_idle"))
+            )
+        )
+
+        val visual = GameStateTransformer.toAgentGameState(state).visuals.single()
+
+        assertThat(visual.type).isEqualTo("sprite")
+        assertThat(visual.sprite).isEqualTo("hero_idle")
+        assertThat(visual.rect).isEqualTo(AgentRect(x = 800, y = 400, w = 96, h = 96))
+    }
+
+    @Test
+    fun `이미지를 함께 단 버튼은 조작 후보에만 오른다`() {
+        // 버튼은 대개 배경 Image를 달고 있다. 두 목록에 다 실으면 에이전트가 하나의 UI를 둘로 읽는다.
+        val state = sceneOf(
+            block(
+                1,
+                "StartButton",
+                SdkComponent(type = "button", name = "Button"),
+                SdkComponent(type = "image", name = "Image", sprite = "btn_bg")
+            )
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.interactables.single().name).isEqualTo("StartButton")
+        assertThat(agent.visuals).isEmpty()
+    }
+
+    @Test
+    fun `좌표를 싣지 않은 시각 요소의 rect는 0이 아니라 없음이다`() {
+        // 0으로 채우면 "화면 좌상단"이라는 유효한 좌표와 구분되지 않는다.
+        val state = sceneOf(block(13, "Background", SdkComponent(type = "image", name = "Image")))
+
+        val visual = GameStateTransformer.toAgentGameState(state).visuals.single()
+
+        assertThat(visual.rect).isNull()
+        assertThat(visual.sprite).isNull()
+        assertThat(visual.onScreen).isTrue()
+    }
+
+    @Test
+    fun `시각 요소가 없는 씬의 visuals는 비어 있다`() {
+        // 이미지 컴포넌트를 싣지 않는 구버전 SDK도 유효한 상태를 만들어야 한다.
+        val state = sceneOf(block(1, "StartButton", SdkComponent(type = "button", name = "Button")))
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.visuals).isNotNull()
+        assertThat(agent.visuals).isEmpty()
+    }
+
     private fun block(id: Int, name: String, vararg components: SdkComponent) =
         SdkBlock(id = id, type = "block", name = name, components = components.toList())
 
