@@ -24,3 +24,6 @@ out/
 
 # Jira MCP credentials
 .jira.env
+
+# Notion ntn CLI credentials
+.notion.env
