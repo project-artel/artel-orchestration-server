@@ -18,7 +18,7 @@ import reactor.core.publisher.Mono
  * 조회 로직은 [KnowledgeService]에 위임한다. (Phase 2에서 하이브리드 검색이 여기 붙는다.)
  */
 @RestController
-@RequestMapping("/api/orchestration/knowledge")
+@RequestMapping("/api/knowledge")
 class KnowledgeController(
     private val knowledgeService: KnowledgeService
 ) {

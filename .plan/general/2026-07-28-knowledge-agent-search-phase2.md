@@ -66,7 +66,7 @@ CREATE INDEX idx_knowledge_project_source ON knowledge (project_id, source);
 - 트레이드오프(S3 진입 전 검증 vs 후 검증)는 Notion 김태민 페이지에 문서화됨.
 
 ### 2.5 조회
-- `GET /api/orchestration/knowledge?projectId=&source=&tag=` (내부 permitAll).
+- `GET /api/knowledge?projectId=&source=&tag=` (내부 permitAll).
   provided-but-invalid 필터는 400, 아니면 파생 쿼리로 조회. **이건 Phase 2 서칭 이전의 임시 조회다.**
 
 ---
