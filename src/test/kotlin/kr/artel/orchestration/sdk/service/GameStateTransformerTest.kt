@@ -1,5 +1,6 @@
 package kr.artel.orchestration.sdk.service
 
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import kr.artel.orchestration.sdk.dto.SdkAction
 import kr.artel.orchestration.sdk.dto.SdkBlock
 import kr.artel.orchestration.sdk.dto.SdkComponent
@@ -130,4 +131,93 @@ class GameStateTransformerTest {
         assertThat(agent.interactables.single().type).isEqualTo("editText")
         assertThat(agent.recentActions).isEmpty()
     }
+
+    @Test
+    fun `잠긴 버튼과 입력 필드는 조작 후보에서 뺀다`() {
+        val state = sceneOf(
+            block(1, "StartButton", SdkComponent(type = "button", name = "Button")),
+            block(2, "LockedButton", SdkComponent(type = "button", name = "Button", interactable = false)),
+            block(3, "LockedInput", SdkComponent(type = "editText", name = "Input", interactable = false))
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.interactables.map { it.name }).containsExactly("StartButton")
+    }
+
+    @Test
+    fun `잠긴 버튼의 라벨은 관찰값으로 남긴다`() {
+        // 후보에서 빠진 버튼의 라벨까지 관찰값에서 빼면 무엇이 잠겼는지가 어디에도 남지 않는다.
+        val state = sceneOf(
+            block(
+                1,
+                "LockedButton",
+                SdkComponent(type = "button", name = "Button", interactable = false),
+                SdkComponent(type = "text", name = "Label", content = "구매")
+            ),
+            block(
+                2,
+                "LiveButton",
+                SdkComponent(type = "button", name = "Button"),
+                SdkComponent(type = "text", name = "Label", content = "시작")
+            )
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.observables["LockedButton.content"]?.value).isEqualTo("구매")
+        // 후보로 나가는 버튼의 라벨은 종전대로 label에 실리므로 관찰값에서는 뺀다.
+        assertThat(agent.observables).doesNotContainKey("LiveButton.content")
+        assertThat(agent.interactables.single().label).isEqualTo("시작")
+    }
+
+    @Test
+    fun `잠긴 버튼이 실행한 액션은 기록에 남는다`() {
+        val state = sceneOf(
+            block(
+                1,
+                "LockedButton",
+                SdkComponent(
+                    type = "button",
+                    name = "Button",
+                    interactable = false,
+                    actions = listOf(action(1, "onClick"))
+                )
+            )
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.interactables).isEmpty()
+        assertThat(agent.recentActions.single().name).isEqualTo("onClick")
+    }
+
+    @Test
+    fun `interactable을 싣지 않는 구버전 페이로드는 후보에 그대로 오른다`() {
+        // 배포 순서를 맞추지 않아도 되게 하는 것이 기본값의 목적이므로, DTO를 직접 만드는 대신
+        // 실제 역직렬화 경로로 확인한다.
+        val payload = """
+            {
+              "type": "GAME_STATE",
+              "id": 1,
+              "scene": {
+                "id": 0, "type": "scene", "name": "Lobby",
+                "children": [
+                  {
+                    "id": 1, "type": "block", "name": "StartButton",
+                    "components": [{ "type": "button", "name": "Button" }]
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        val state = jacksonObjectMapper().readValue(payload, SdkGameState::class.java)
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.interactables.single().name).isEqualTo("StartButton")
+    }
+
+    private fun block(id: Int, name: String, vararg components: SdkComponent) =
+        SdkBlock(id = id, type = "block", name = name, components = components.toList())
 }
