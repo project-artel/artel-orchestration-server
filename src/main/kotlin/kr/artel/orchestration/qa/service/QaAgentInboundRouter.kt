@@ -2,8 +2,12 @@ package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
+import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.service.IssueService
+import kr.artel.orchestration.knowledge.dto.KnowledgeIngestRequest
+import kr.artel.orchestration.knowledge.entity.KnowledgeSource
+import kr.artel.orchestration.knowledge.service.KnowledgeService
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.stereotype.Service
 import reactor.core.publisher.Mono
@@ -11,7 +15,7 @@ import java.time.Clock
 import java.time.Instant
 import java.util.UUID
 
-private val SUPPORTED_TYPES = setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE")
+private val SUPPORTED_TYPES = setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE")
 
 @Service
 class QaAgentInboundRouter(
@@ -20,6 +24,8 @@ class QaAgentInboundRouter(
     private val actionDispatch: QaActionDispatchService,
     private val streamManager: QaLogStreamManager,
     private val issueService: IssueService,
+    private val knowledgeService: KnowledgeService,
+    private val gameInstanceRepository: GameInstanceRepository,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -32,6 +38,13 @@ class QaAgentInboundRouter(
         }
         if (envelope.type !in SUPPORTED_TYPES) {
             return appendError(qaTryId, envelope, "Unsupported Agent message type: ${envelope.type}")
+        }
+        // KNOWLEDGE carries a game_context list, not a single display message, so it is
+        // routed before the message-required guard below (which every other type shares).
+        if (envelope.type == "KNOWLEDGE") {
+            return tryRepository.findById(qaTryId)
+                .filter { it.status == "STARTING" || it.status == "RUNNING" }
+                .flatMap { qaTry -> routeKnowledge(qaTryId, qaTry.gameInstanceId, envelope) }
         }
         // 이슈는 표시용 `message` 대신 `title`을 담는다. 나머지 타입은 모두 타임라인에 뜨는
         // 문구를 message에 싣는다. 아래 non-blank 가드가 곧 "이슈는 title 필수" 역할을 겸한다.
@@ -113,6 +126,41 @@ class QaAgentInboundRouter(
             logService.publish(it)
             if (resolved != null) streamManager.complete(qaTryId)
         }.then()
+    }
+
+    /**
+     * QA 실행 중 Agent가 보낸 knowledge 배치를 knowledge 도메인에 저장한다(qa_log 아님).
+     *
+     * payload는 인입 구조({source, metadata, game_context[]})다. source는 런에서 왔으므로 QA로
+     * 고정하고, source_id=qa_try.id, project_id는 게임 인스턴스에서 도출한다. 파싱/빈 배열/저장 실패는
+     * throw하지 않고 ORCHE_INTERNAL 오류 로그로 떨어뜨려(런은 실패 처리 안 함) receive 체인을 끊지 않는다.
+     */
+    private fun routeKnowledge(
+        qaTryId: Long,
+        gameInstanceId: Long,
+        envelope: QaAgentEnvelope
+    ): Mono<Void> {
+        val request = try {
+            objectMapper.treeToValue(envelope.payload, KnowledgeIngestRequest::class.java)
+        } catch (error: Exception) {
+            return appendError(qaTryId, envelope, "KNOWLEDGE payload parse failed: ${error.message}")
+        }
+        if (request.gameContext.isEmpty()) {
+            return appendError(qaTryId, envelope, "KNOWLEDGE payload.game_context is required")
+        }
+        return gameInstanceRepository.findById(gameInstanceId)
+            .flatMap { instance ->
+                knowledgeService.store(
+                    projectId = instance.projectId,
+                    source = KnowledgeSource.QA,
+                    sourceId = qaTryId,
+                    contentHash = request.metadata?.hash,
+                    items = request.gameContext
+                )
+            }
+            .onErrorResume { error ->
+                appendError(qaTryId, envelope, "KNOWLEDGE store failed: ${error.message}")
+            }
     }
 
     /**

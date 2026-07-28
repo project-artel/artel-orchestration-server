@@ -1,4 +1,4 @@
-package kr.artel.orchestration.referencecontext.agent
+package kr.artel.orchestration.knowledge.agent
 
 import io.netty.channel.ChannelOption
 import org.slf4j.LoggerFactory
@@ -37,12 +37,12 @@ class AgentExtractClient(
         .build()
 
     /**
-     * presigned URL의 문서를 Agent가 요약해 game_context를 돌려준다.
+     * presigned URL의 문서를 Agent가 요약해 knowledge 항목들을 돌려준다.
      *
      * @param sourceUrl presigned GET URL(서명 필수)
      * @param filename 포맷 판별용 파일명
      */
-    fun extractGameContext(sourceUrl: String, filename: String): Mono<ExtractResponse> {
+    fun extract(sourceUrl: String, filename: String): Mono<ExtractResponse> {
         val targetUrl = "$agentBaseUrl/extract"
         val request = ExtractRequest(
             sourceUrl = sourceUrl,

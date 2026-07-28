@@ -87,7 +87,9 @@ class ProjectDocumentIntegrationTest {
         val projectId = createProject(token)
 
         upload(token, projectId, "기획서.pdf", PDF_BYTES)
-        val second = upload(token, projectId, "기획서.pdf", PDF_BYTES)
+        // 버전 누적은 "내용이 다른 개정본"에서 일어난다(같은 파일 재업로드는 dedup으로 409).
+        val revised = "%PDF-1.7\nrevised body".toByteArray(Charsets.US_ASCII)
+        val second = upload(token, projectId, "기획서.pdf", revised)
 
         assertThat(second["version"].asInt()).isEqualTo(2)
 
@@ -116,8 +118,10 @@ class ProjectDocumentIntegrationTest {
         val token = signIn()
         val projectId = createProject(token)
 
+        // 내용을 다르게 해야 dedup에 안 걸리고 버전 채번 경합만 검증된다(같은 파일이면 409).
         val keys = (1..2).map { index ->
-            ticketFor(token, projectId, "동시$index.pdf").also { fakeStorage.put(it, PDF_BYTES) }
+            val content = "%PDF-1.7\nconcurrent body $index".toByteArray(Charsets.US_ASCII)
+            ticketFor(token, projectId, "동시$index.pdf").also { fakeStorage.put(it, content) }
         }
 
         val failures = mutableListOf<Throwable>()
@@ -252,6 +256,43 @@ class ProjectDocumentIntegrationTest {
         val status = statusOf { get(strangerToken, "/api/projects/$projectId/documents") }
 
         assertThat(status).isEqualTo(HttpStatus.NOT_FOUND)
+    }
+
+    @Test
+    fun `rejects re-uploading the same file to the same project`() {
+        val token = signIn()
+        val projectId = createProject(token)
+        upload(token, projectId, "기획서.pdf", PDF_BYTES)
+
+        // 같은 내용을 다른 이름으로 다시 올려도 프로젝트 단위 hash 중복 → 409
+        val objectKey = ticketFor(token, projectId, "기획서-복사본.pdf").also { fakeStorage.put(it, PDF_BYTES) }
+        val status = statusOf { register(token, projectId, objectKey) }
+
+        assertThat(status).isEqualTo(HttpStatus.CONFLICT)
+    }
+
+    @Test
+    fun `allows the same file in a different project`() {
+        val token = signIn()
+        val projectA = createProject(token)
+        val projectB = createProject(token)
+        upload(token, projectA, "기획서.pdf", PDF_BYTES)
+
+        // 다른 프로젝트(=파일 공유)면 같은 내용도 허용된다.
+        val document = upload(token, projectB, "기획서.pdf", PDF_BYTES)
+        assertThat(document["id"].asText()).isNotBlank()
+    }
+
+    @Test
+    fun `allows a different file in the same project`() {
+        val token = signIn()
+        val projectId = createProject(token)
+        upload(token, projectId, "v1.pdf", PDF_BYTES)
+
+        // 내용이 다르면 hash가 달라 허용된다(버전 누적).
+        val other = "%PDF-1.7\ndifferent body".toByteArray(Charsets.US_ASCII)
+        val document = upload(token, projectId, "v2.pdf", other)
+        assertThat(document["version"].asInt()).isEqualTo(2)
     }
 
     /** 티켓 발급 → 저장소에 올림 → 등록까지, 클라이언트가 하는 세 단계를 그대로 지난다. */

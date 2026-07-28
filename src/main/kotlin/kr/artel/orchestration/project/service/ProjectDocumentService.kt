@@ -10,7 +10,7 @@ import kr.artel.orchestration.project.entity.ProjectDocumentEntity
 import kr.artel.orchestration.project.repository.ProjectDocumentRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
-import kr.artel.orchestration.referencecontext.service.ReferenceContextExtractionService
+import kr.artel.orchestration.knowledge.service.DocumentKnowledgeExtractionService
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.dao.DataIntegrityViolationException
@@ -46,7 +46,7 @@ class ProjectDocumentService(
     private val storage: DocumentStorage,
     private val properties: StorageProperties,
     private val clock: Clock,
-    private val extractionService: ReferenceContextExtractionService,
+    private val extractionService: DocumentKnowledgeExtractionService,
     @Value("\${artel.agent.extract.enabled:true}") private val extractionEnabled: Boolean
 ) {
     private val logger = LoggerFactory.getLogger(ProjectDocumentService::class.java)
@@ -90,13 +90,18 @@ class ProjectDocumentService(
         requireAccessible(projectId, userId)
             .flatMap { verifyUploadedObject(projectId, request.objectKey) }
             .flatMap { stored ->
-                saveNextVersion(
-                    projectId = projectId,
-                    userId = userId,
-                    objectKey = request.objectKey,
-                    fileName = fileNameFrom(request.objectKey),
-                    sizeBytes = stored.sizeBytes
-                )
+                // 원본을 스트리밍하며 SHA-256 계산 → 프로젝트 단위 중복이면 등록 거부(추출도 안 함).
+                storage.sha256(request.objectKey)
+                    .switchIfEmpty(Mono.error(InvalidDocumentException("업로드된 파일을 찾을 수 없습니다.")))
+                    .flatMap { contentHash ->
+                        rejectDuplicateThenSave(
+                            projectId = projectId,
+                            userId = userId,
+                            objectKey = request.objectKey,
+                            contentHash = contentHash,
+                            sizeBytes = stored.sizeBytes
+                        )
+                    }
             }
             .flatMap { document ->
                 // 응답은 즉시 반환하고, 추출→적재는 뒤에서 진행한다(완료 여부는 parse_status로 노출).
@@ -205,12 +210,35 @@ class ProjectDocumentService(
      * 여기서 다시 읽어 재시도한다. 재시도마다 최대 버전을 새로 조회해야 같은 값으로 계속
      * 부딪히지 않는다.
      */
+    /**
+     * 프로젝트 단위 파일 중복이면 등록을 거부한다. 같은 hash가 이미 있으면 방금 올라온 S3 객체를
+     * 지우고 409로 막아, 중복 파일에 대한 Agent 추출 요청이 아예 안 나가게 한다.
+     * (동시 업로드 경합의 마지막 방어선은 DB 부분 유니크 uk_project_document_project_hash다.)
+     */
+    private fun rejectDuplicateThenSave(
+        projectId: Long,
+        userId: Long,
+        objectKey: String,
+        contentHash: String,
+        sizeBytes: Long
+    ): Mono<ProjectDocumentEntity> =
+        documentRepository.existsByProjectIdAndContentHash(projectId, contentHash)
+            .flatMap { exists ->
+                if (exists) {
+                    storage.delete(objectKey)
+                        .then(Mono.error(DuplicateDocumentException("이미 업로드된 파일입니다.")))
+                } else {
+                    saveNextVersion(projectId, userId, objectKey, fileNameFrom(objectKey), sizeBytes, contentHash)
+                }
+            }
+
     private fun saveNextVersion(
         projectId: Long,
         userId: Long,
         objectKey: String,
         fileName: String,
-        sizeBytes: Long
+        sizeBytes: Long,
+        contentHash: String
     ): Mono<ProjectDocumentEntity> =
         Mono.defer {
             documentRepository.findMaxVersion(projectId).flatMap { maxVersion ->
@@ -223,7 +251,8 @@ class ProjectDocumentService(
                         contentType = PDF_CONTENT_TYPE,
                         sizeBytes = sizeBytes,
                         uploadedBy = userId,
-                        uploadedAt = Instant.now(clock)
+                        uploadedAt = Instant.now(clock),
+                        contentHash = contentHash
                     )
                 )
             }
@@ -256,3 +285,6 @@ class ProjectDocumentService(
 
 /** 업로드 규격을 벗어난 요청. 컨트롤러가 400으로 옮긴다. */
 class InvalidDocumentException(message: String) : RuntimeException(message)
+
+/** 같은 프로젝트에 동일 파일(hash)이 이미 있어 업로드를 거부할 때. 409 Conflict로 매핑된다. */
+class DuplicateDocumentException(message: String) : RuntimeException(message)

@@ -11,7 +11,7 @@ import java.time.Instant
  *
  * 원본 바이트는 S3에 있고 여기에는 메타데이터만 둔다. [objectKey]는 외부에 노출하지 않는다.
  * [parseStatus]는 추출 파이프라인의 진행 상태다. 업로드 직후 PENDING이고, Agent가 추출한
- * game_context가 reference_context로 적재되면 EXTRACTED로 갱신된다.
+ * game_context가 knowledge로 적재되면 EXTRACTED로 갱신된다.
  */
 @Table("project_document")
 data class ProjectDocumentEntity(
@@ -43,14 +43,21 @@ data class ProjectDocumentEntity(
     val uploadedAt: Instant,
 
     @Column("parse_status")
-    val parseStatus: String = ParseStatus.PENDING.name
+    val parseStatus: String = ParseStatus.PENDING.name,
+
+    /**
+     * 원본 파일의 SHA-256(hex). 업로드 확정(register) 때 Orche가 S3 원본을 스트리밍하며 계산한다.
+     * 같은 프로젝트에 동일 hash가 이미 있으면 중복으로 보고 등록을 거부한다(프로젝트 단위 dedup).
+     */
+    @Column("content_hash")
+    val contentHash: String? = null
 )
 
 /**
  * 참고자료 추출 진행 상태(업로드 → 추출 파이프라인).
  * - [PENDING]: 업로드만 된 상태(아직 추출 전).
  * - [EXTRACTING]: Agent /extract 호출~적재가 진행 중.
- * - [EXTRACTED]: game_context가 reference_context로 적재 완료.
+ * - [EXTRACTED]: game_context가 knowledge로 적재 완료.
  * - [FAILED]: presign/추출/적재 중 실패(원본은 남으므로 재추출로 복구 가능).
  */
 enum class ParseStatus {

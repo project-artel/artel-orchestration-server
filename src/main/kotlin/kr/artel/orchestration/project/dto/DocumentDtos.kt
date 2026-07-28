@@ -50,7 +50,7 @@ data class RegisterDocumentRequest(
 /**
  * 기획서 한 버전.
  *
- * @property parseStatus 추출 진행 상태. 업로드 직후 PENDING, game_context가 reference_context로
+ * @property parseStatus 추출 진행 상태. 업로드 직후 PENDING, game_context가 knowledge로
  *   적재되면 EXTRACTED
  */
 data class ProjectDocumentResponse(
