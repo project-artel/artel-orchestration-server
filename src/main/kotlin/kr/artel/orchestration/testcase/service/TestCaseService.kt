@@ -3,8 +3,7 @@ package kr.artel.orchestration.testcase.service
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.reactor.awaitSingleOrNull
-import kr.artel.orchestration.project.repository.ProjectMemberRepository
+import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseResponse
@@ -28,18 +27,15 @@ import org.springframework.web.server.ResponseStatusException
 @Service
 class TestCaseService(
     private val repository: TestCaseRepository,
-    private val projectMemberRepository: ProjectMemberRepository,
+    private val projectAccessService: ProjectAccessService,
 ) {
-    private suspend fun isMember(projectId: Long, userId: Long): Boolean =
-        projectMemberRepository.findByProjectIdAndAppUserId(projectId, userId).awaitSingleOrNull() != null
-
     /** 프로젝트의 케이스 목록. category/verificationStatus로 선택 필터. 비참여자면 빈 목록. */
     suspend fun list(projectId: Long, userId: Long, category: String?, status: String?): TestCaseListResponse {
         val statusName = status?.let {
             VerificationStatus.fromWire(it)?.name
                 ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "verificationStatus must be one of ${VerificationStatus.NAMES}")
         }
-        if (!isMember(projectId, userId)) return TestCaseListResponse(emptyList())
+        if (!projectAccessService.isMember(projectId, userId)) return TestCaseListResponse(emptyList())
         val source = when {
             category != null -> repository.findByProjectIdAndCategoryOrderByIdDesc(projectId, category)
             statusName != null -> repository.findByProjectIdAndVerificationStatusOrderByIdDesc(projectId, statusName)
@@ -55,7 +51,7 @@ class TestCaseService(
 
     /** 케이스 생성. category/title/expected 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404). */
     suspend fun create(projectId: Long, userId: Long, request: TestCaseCreateRequest): TestCaseResponse? {
-        if (!isMember(projectId, userId)) return null
+        if (!projectAccessService.isMember(projectId, userId)) return null
         val entity = TestCaseEntity(
             projectId = projectId,
             category = request.category.requireField("category"),
@@ -95,7 +91,7 @@ class TestCaseService(
 
     private suspend fun accessible(caseId: Long, userId: Long): TestCaseEntity? {
         val entity = repository.findById(caseId) ?: return null
-        return if (isMember(entity.projectId, userId)) entity else null
+        return if (projectAccessService.isMember(entity.projectId, userId)) entity else null
     }
 
     private fun String?.requireField(name: String): String =

@@ -3,8 +3,7 @@ package kr.artel.orchestration.testrun.service
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactor.awaitSingle
-import kotlinx.coroutines.reactor.awaitSingleOrNull
-import kr.artel.orchestration.project.repository.ProjectMemberRepository
+import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testrun.dto.RunScenarioItem
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
 import kr.artel.orchestration.testrun.dto.TestRunCreateRequest
@@ -34,20 +33,17 @@ class TestRunService(
     private val runRepository: TestRunRepository,
     private val runScenarioRepository: TestRunScenarioRepository,
     private val scenarioRepository: TestScenarioRepository,
-    private val projectMemberRepository: ProjectMemberRepository,
+    private val projectAccessService: ProjectAccessService,
     private val transactionalOperator: TransactionalOperator,
 ) {
-    private suspend fun isMember(projectId: Long, userId: Long): Boolean =
-        projectMemberRepository.findByProjectIdAndAppUserId(projectId, userId).awaitSingleOrNull() != null
-
     suspend fun list(projectId: Long, userId: Long): TestRunListResponse {
-        if (!isMember(projectId, userId)) return TestRunListResponse(emptyList())
+        if (!projectAccessService.isMember(projectId, userId)) return TestRunListResponse(emptyList())
         val items = runRepository.findByProjectIdOrderByIdDesc(projectId).map { it.toResponse() }.toList()
         return TestRunListResponse(items)
     }
 
     suspend fun create(projectId: Long, userId: Long, request: TestRunCreateRequest): TestRunResponse? {
-        if (!isMember(projectId, userId)) return null
+        if (!projectAccessService.isMember(projectId, userId)) return null
         val name = request.name?.takeIf { it.isNotBlank() }
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "name is required")
         return runRepository.save(
@@ -116,7 +112,7 @@ class TestRunService(
 
     private suspend fun accessible(runId: Long, userId: Long): TestRunEntity? {
         val run = runRepository.findById(runId) ?: return null
-        return if (isMember(run.projectId, userId)) run else null
+        return if (projectAccessService.isMember(run.projectId, userId)) run else null
     }
 
     private fun TestRunEntity.toResponse(): TestRunResponse =
