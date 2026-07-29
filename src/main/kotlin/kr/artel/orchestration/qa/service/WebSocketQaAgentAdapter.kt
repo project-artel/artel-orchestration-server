@@ -3,6 +3,10 @@ package kr.artel.orchestration.qa.service
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
+import kotlinx.coroutines.reactor.mono
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
@@ -31,6 +35,13 @@ private data class QaSessionOpenResponse(
     @JsonProperty("session_id") val sessionId: String
 )
 
+/**
+ * The QA Agent transport stays on Reactor internally: the WebSocket client, its
+ * outbound/ready sinks, and the receive pipeline are all Reactor primitives. The
+ * [QaAgentPort] surface is `suspend`, so the seam is bridged here — inbound
+ * frames and the disconnect callback are driven through `mono { }`, and the HTTP
+ * open + ready signal are awaited with `awaitSingle`/`awaitSingleOrNull`.
+ */
 @Service
 class WebSocketQaAgentAdapter(
     @Value("\${artel.agent.base-url:http://localhost:8000}") private val baseUrl: String,
@@ -42,11 +53,11 @@ class WebSocketQaAgentAdapter(
     private val wsClient = ReactorNettyWebSocketClient()
     private val sessions = ConcurrentHashMap<String, AgentConnection>()
 
-    override fun createSession(
+    override suspend fun createSession(
         context: QaAgentSessionContext,
-        onMessage: (QaAgentEnvelope) -> Mono<Void>,
-        onDisconnect: () -> Mono<Void>
-    ): Mono<QaAgentSession> {
+        onMessage: suspend (QaAgentEnvelope) -> Unit,
+        onDisconnect: suspend () -> Unit
+    ): QaAgentSession {
         val request = QaSessionOpenRequest(
             model = model,
             context = QaSessionOpenContext(
@@ -56,53 +67,51 @@ class WebSocketQaAgentAdapter(
                 scenario = context.scenario
             )
         )
-        return webClient.post()
-            .uri("$baseUrl/qa-sessions")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(request)
-            .retrieve()
-            .bodyToMono(QaSessionOpenResponse::class.java)
-            .flatMap { response ->
-                openWebSocket(response.sessionId, onMessage, onDisconnect)
-                    .thenReturn(QaAgentSession(response.sessionId))
-            }
-            .onErrorMap { error ->
-                if (error is QaAgentUnavailableException) error
-                else QaAgentUnavailableException("QA Agent session is unavailable: ${error.message}")
-            }
+        try {
+            val response = webClient.post()
+                .uri("$baseUrl/qa-sessions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(QaSessionOpenResponse::class.java)
+                .awaitSingle()
+            openWebSocket(response.sessionId, onMessage, onDisconnect)
+            return QaAgentSession(response.sessionId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            throw if (error is QaAgentUnavailableException) error
+            else QaAgentUnavailableException("QA Agent session is unavailable: ${error.message}")
+        }
     }
 
-    override fun send(sessionId: String, envelope: QaAgentEnvelope): Mono<Void> =
-        Mono.fromCallable { objectMapper.writeValueAsString(envelope) }
-            .flatMap { json ->
-                val connection = sessions[sessionId]
-                    ?: return@flatMap Mono.error(QaAgentUnavailableException("QA Agent WebSocket is not connected"))
-                if (connection.outbound.tryEmitNext(json).isFailure) {
-                    Mono.error(QaAgentUnavailableException("QA Agent WebSocket send queue is closed"))
-                } else {
-                    Mono.empty()
-                }
-            }
-
-    override fun close(sessionId: String): Mono<Void> =
-        Mono.fromRunnable {
-            sessions.remove(sessionId)?.let { connection ->
-                connection.closing = true
-                connection.outbound.tryEmitComplete()
-                connection.disposable?.dispose()
-            }
+    override suspend fun send(sessionId: String, envelope: QaAgentEnvelope) {
+        val json = objectMapper.writeValueAsString(envelope)
+        val connection = sessions[sessionId]
+            ?: throw QaAgentUnavailableException("QA Agent WebSocket is not connected")
+        if (connection.outbound.tryEmitNext(json).isFailure) {
+            throw QaAgentUnavailableException("QA Agent WebSocket send queue is closed")
         }
+    }
 
-    private fun openWebSocket(
+    override suspend fun close(sessionId: String) {
+        sessions.remove(sessionId)?.let { connection ->
+            connection.closing = true
+            connection.outbound.tryEmitComplete()
+            connection.disposable?.dispose()
+        }
+    }
+
+    private suspend fun openWebSocket(
         sessionId: String,
-        onMessage: (QaAgentEnvelope) -> Mono<Void>,
-        onDisconnect: () -> Mono<Void>
-    ): Mono<Void> {
+        onMessage: suspend (QaAgentEnvelope) -> Unit,
+        onDisconnect: suspend () -> Unit
+    ) {
         val ready = Sinks.one<Void>()
         val outbound = Sinks.many().unicast().onBackpressureBuffer<String>()
         val connection = AgentConnection(outbound)
         if (sessions.putIfAbsent(sessionId, connection) != null) {
-            return Mono.error(IllegalStateException("Duplicate QA Agent session: $sessionId"))
+            throw IllegalStateException("Duplicate QA Agent session: $sessionId")
         }
 
         val disposable = wsClient.execute(URI.create("$wsBaseUrl/qa-sessions/$sessionId")) { ws ->
@@ -110,9 +119,10 @@ class WebSocketQaAgentAdapter(
             val send = ws.send(outbound.asFlux().map(ws::textMessage))
             val receive = ws.receive()
                 .concatMap { frame ->
-                    Mono.fromCallable {
-                        objectMapper.readValue(frame.payloadAsText, QaAgentEnvelope::class.java)
-                    }.flatMap(onMessage)
+                    mono {
+                        val envelope = objectMapper.readValue(frame.payloadAsText, QaAgentEnvelope::class.java)
+                        onMessage(envelope)
+                    }.then()
                         // An unparseable frame must not terminate the receive chain:
                         // that closes the socket and fails the whole run.
                         .onErrorResume { Mono.empty() }
@@ -122,14 +132,14 @@ class WebSocketQaAgentAdapter(
         }.doFinally {
             sessions.remove(sessionId, connection)
             if (!connection.closing) {
-                onDisconnect().subscribe()
+                mono { onDisconnect() }.subscribe()
             }
         }.subscribe(
             {},
             { error -> ready.tryEmitError(error) }
         )
         connection.disposable = disposable
-        return ready.asMono()
+        ready.asMono().awaitSingleOrNull()
     }
 
     private class AgentConnection(

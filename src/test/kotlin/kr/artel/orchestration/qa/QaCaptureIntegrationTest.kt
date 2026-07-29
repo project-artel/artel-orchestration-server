@@ -2,6 +2,8 @@ package kr.artel.orchestration.qa
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
 import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
@@ -80,19 +82,19 @@ class QaCaptureIntegrationTest {
     /** qa_try는 game_instance/test_scenario를 하드 FK로 참조하므로 테스트 후에도 반드시 비운다. */
     @BeforeEach
     @AfterEach
-    fun clean() {
-        qaLogRepository.deleteAll().block(TIMEOUT)
-        qaTryRepository.deleteAll().block(TIMEOUT)
-        gameInstanceRepository.deleteAll().block(TIMEOUT)
-        testScenarioRepository.deleteAll().block(TIMEOUT)
-        projectMemberRepository.deleteAll().block(TIMEOUT)
-        projectRepository.deleteAll().block(TIMEOUT)
-        identityRepository.deleteAll().block(TIMEOUT)
-        appUserRepository.deleteAll().block(TIMEOUT)
+    fun clean(): Unit = runBlocking {
+        qaLogRepository.deleteAll()
+        qaTryRepository.deleteAll()
+        gameInstanceRepository.deleteAll()
+        testScenarioRepository.deleteAll()
+        projectMemberRepository.deleteAll()
+        projectRepository.deleteAll()
+        identityRepository.deleteAll()
+        appUserRepository.deleteAll()
     }
 
     @Test
-    fun `issues upload and download urls for a game instance with a running QA`() {
+    fun `issues upload and download urls for a game instance with a running QA`(): Unit = runBlocking {
         val seeded = seedRunningQaTry()
 
         val ticket = issueTicket(seeded.instanceKey, "image/jpeg", 120_000)
@@ -109,7 +111,7 @@ class QaCaptureIntegrationTest {
      * 못한다. 그때의 증상은 "이미지를 받지 못했다"라는 모호한 실패라 원인을 찾기 어렵다.
      */
     @Test
-    fun `keeps the download url alive past the QA run deadline`() {
+    fun `keeps the download url alive past the QA run deadline`(): Unit = runBlocking {
         val seeded = seedRunningQaTry()
 
         val ticket = issueTicket(seeded.instanceKey, "image/png", 40_000)
@@ -123,7 +125,7 @@ class QaCaptureIntegrationTest {
 
     /** 떠도는 게임이 스토리지에 쓰지 못하게 한다. 요청은 옳으니 404가 아니라 409다. */
     @Test
-    fun `refuses a game instance with no running QA`() {
+    fun `refuses a game instance with no running QA`(): Unit = runBlocking {
         val seeded = seedRunningQaTry(status = "COMPLETED")
 
         val error = ticketError(seeded.instanceKey, "image/jpeg", 120_000)
@@ -136,7 +138,7 @@ class QaCaptureIntegrationTest {
      * 중인 QA 프리픽스에 쓰는 서명을 훑어서 받아낼 수 있으므로, 등록과 같은 자격증명을 쓴다.
      */
     @Test
-    fun `refuses an instance key it does not know`() {
+    fun `refuses an instance key it does not know`(): Unit = runBlocking {
         seedRunningQaTry()
 
         val error = ticketError("0123456789abcdef0123", "image/jpeg", 120_000)
@@ -145,7 +147,7 @@ class QaCaptureIntegrationTest {
     }
 
     @Test
-    fun `refuses a content type that is not a screen capture`() {
+    fun `refuses a content type that is not a screen capture`(): Unit = runBlocking {
         val seeded = seedRunningQaTry()
 
         val error = ticketError(seeded.instanceKey, "application/pdf", 120_000)
@@ -155,7 +157,7 @@ class QaCaptureIntegrationTest {
     }
 
     @Test
-    fun `refuses a capture larger than the cap`() {
+    fun `refuses a capture larger than the cap`(): Unit = runBlocking {
         val seeded = seedRunningQaTry()
 
         val error = ticketError(
@@ -172,12 +174,12 @@ class QaCaptureIntegrationTest {
      * 실리면 캡처 한 장마다 DB와 스트림이 함께 부푼다.
      */
     @Test
-    fun `records a small SCREENSHOT log row that points at the image`() {
+    fun `records a small SCREENSHOT log row that points at the image`(): Unit = runBlocking {
         val seeded = seedRunningQaTry()
 
         val ticket = issueTicket(seeded.instanceKey, "image/jpeg", 120_000, targetId = 7)
 
-        val logs = qaLogRepository.findAll().collectList().block(TIMEOUT)!!
+        val logs = qaLogRepository.findAll().toList()
         assertThat(logs).hasSize(1)
         val log = logs.single()
         assertThat(log.type).isEqualTo("SCREENSHOT")
@@ -231,13 +233,13 @@ class QaCaptureIntegrationTest {
 
     private fun client(): WebClient = WebClient.create("http://localhost:$port")
 
-    private fun seedRunningQaTry(status: String = "RUNNING"): SeededRun {
+    private suspend fun seedRunningQaTry(status: String = "RUNNING"): SeededRun {
         val owner = signIn()
         val ownerId = owner.userId.toLong()
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "capture-project", genre = "ACTION", createdAt = now, updatedAt = now)
-        ).block(TIMEOUT)!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -245,10 +247,10 @@ class QaCaptureIntegrationTest {
                 role = ProjectRole.OWNER.name,
                 createdAt = now
             )
-        ).block(TIMEOUT)
+        )
         val scenario = testScenarioRepository.save(
             TestScenarioEntity(projectId = project.id!!, payload = Json.of("{}"))
-        ).block(TIMEOUT)!!
+        )
         val instanceKey = UUID.randomUUID().toString().replace("-", "").take(20)
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
@@ -259,7 +261,7 @@ class QaCaptureIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        ).block(TIMEOUT)!!
+        )
         val qaTry = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -269,11 +271,11 @@ class QaCaptureIntegrationTest {
                 startedAt = now,
                 completedAt = if (status == "RUNNING") null else now
             )
-        ).block(TIMEOUT)!!
+        )
         return SeededRun(instanceKey = instanceKey, qaTryId = qaTry.id!!)
     }
 
-    private fun signIn(): AuthenticatedUser =
+    private suspend fun signIn(): AuthenticatedUser =
         oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
@@ -283,7 +285,7 @@ class QaCaptureIntegrationTest {
                 avatarUrl = null,
                 email = "octocat@example.com"
             )
-        ).block(TIMEOUT)!!
+        )
 
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(10)

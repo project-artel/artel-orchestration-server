@@ -7,7 +7,6 @@ import kr.artel.orchestration.sdk.service.GameStateTransformer
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.WebSocketSession
-import reactor.core.publisher.Mono
 
 /**
  * GAME_STATE 메시지를 정제하여 QA 브리지로 중계하는 핸들러 전략.
@@ -25,18 +24,14 @@ class GameStateMessageHandler(
 
     override val messageType: String = "GAME_STATE"
 
-    override fun handle(instanceId: String, payloadText: String, session: WebSocketSession): Mono<Void> {
-        return Mono.fromCallable {
-            val sdkGameState = objectMapper.readValue(payloadText, SdkGameState::class.java)
-            val agentGameState = GameStateTransformer.toAgentGameState(sdkGameState)
-            sdkGameState to agentGameState
-        }.flatMap { (sdkGameState, agentGameState) ->
-            val compactJson = objectMapper.writeValueAsString(agentGameState)
-            logger.info("게임 상태 수신 및 정제 완료 [instanceId: $instanceId]: 씬=${agentGameState.scene}, observables 수=${agentGameState.observables.size}, interactables 수=${agentGameState.interactables.size}")
-            logger.info("정제 결과 JSON: $compactJson")
+    override suspend fun handle(instanceId: String, payloadText: String, session: WebSocketSession) {
+        val sdkGameState = objectMapper.readValue(payloadText, SdkGameState::class.java)
+        val agentGameState = GameStateTransformer.toAgentGameState(sdkGameState)
 
-            qaBridge.routeGameState(instanceId.toLong(), sdkGameState.id.toString(), agentGameState)
-                .then()
-        }
+        val compactJson = objectMapper.writeValueAsString(agentGameState)
+        logger.info("게임 상태 수신 및 정제 완료 [instanceId: $instanceId]: 씬=${agentGameState.scene}, observables 수=${agentGameState.observables.size}, interactables 수=${agentGameState.interactables.size}")
+        logger.info("정제 결과 JSON: $compactJson")
+
+        qaBridge.routeGameState(instanceId.toLong(), sdkGameState.id.toString(), agentGameState)
     }
 }

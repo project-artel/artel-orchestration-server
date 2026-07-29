@@ -12,7 +12,6 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
-import reactor.core.publisher.Mono
 
 /**
  * SDK가 게임 실행마다 부르는 등록 지점. 엔드유저 JWT가 아니라 instanceKey로 통과한다.
@@ -33,16 +32,12 @@ class SdkRegistrationController(
         description = "instanceKey로 인스턴스를 확인하고, 보고된 게임 버전으로 게임 빌드를 찾거나 만든다."
     )
     @PostMapping
-    fun register(
+    suspend fun register(
         @Valid @RequestBody request: SdkRegistrationRequest
-    ): Mono<SdkRegistrationResponse> =
+    ): SdkRegistrationResponse =
         registrationService.register(request)
-            .switchIfEmpty(
-                Mono.error(
-                    ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        "등록된 게임 인스턴스를 찾을 수 없습니다."
-                    )
-                )
+            ?: throw ResponseStatusException(
+                HttpStatus.NOT_FOUND,
+                "등록된 게임 인스턴스를 찾을 수 없습니다."
             )
 }

@@ -1,6 +1,7 @@
 package kr.artel.orchestration.auth
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.JwtService
@@ -36,13 +37,13 @@ class AuthLocaleIntegrationTest {
      * 인메모리 H2를 다른 테스트와 공유하므로 각 테스트 시작 시 직접 비운다.
      */
     @BeforeEach
-    fun clean() {
-        identityRepository.deleteAll().block()
-        appUserRepository.deleteAll().block()
+    fun clean(): Unit = runBlocking {
+        identityRepository.deleteAll()
+        appUserRepository.deleteAll()
     }
 
     @Test
-    fun `me has no locale until the user picks one`() {
+    fun `me has no locale until the user picks one`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
 
         val me = get(token, "/api/auth/me")
@@ -51,7 +52,7 @@ class AuthLocaleIntegrationTest {
     }
 
     @Test
-    fun `stores a supported locale and exposes it through me`() {
+    fun `stores a supported locale and exposes it through me`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
 
         val status = putLocale(token, """{"locale":"ko"}""")
@@ -61,7 +62,7 @@ class AuthLocaleIntegrationTest {
     }
 
     @Test
-    fun `rejects a locale the UI does not translate`() {
+    fun `rejects a locale the UI does not translate`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
 
         val status = putLocale(token, """{"locale":"fr"}""")
@@ -71,13 +72,13 @@ class AuthLocaleIntegrationTest {
     }
 
     @Test
-    fun `rejects the update without a session`() {
+    fun `rejects the update without a session`(): Unit = runBlocking {
         val status = putLocale(token = null, body = """{"locale":"ko"}""")
 
         assertThat(status).isEqualTo(HttpStatus.UNAUTHORIZED)
     }
 
-    private fun signIn(providerUserId: String, login: String): String {
+    private suspend fun signIn(providerUserId: String, login: String): String {
         val user = oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
@@ -87,7 +88,7 @@ class AuthLocaleIntegrationTest {
                 avatarUrl = null,
                 email = "$login@example.com"
             )
-        ).block()!!
+        )
         return jwtService.issue(user)
     }
 

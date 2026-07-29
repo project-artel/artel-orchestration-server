@@ -1,6 +1,8 @@
 package kr.artel.orchestration.game
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.JwtService
@@ -46,18 +48,18 @@ class SdkRegistrationIntegrationTest {
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
 
     @BeforeEach
-    fun clean() {
-        instanceRepository.deleteAll().block()
-        buildRepository.deleteAll().block()
-        documentRepository.deleteAll().block()
-        memberRepository.deleteAll().block()
-        projectRepository.deleteAll().block()
-        identityRepository.deleteAll().block()
-        appUserRepository.deleteAll().block()
+    fun clean(): Unit = runBlocking {
+        instanceRepository.deleteAll()
+        buildRepository.deleteAll()
+        documentRepository.deleteAll()
+        memberRepository.deleteAll()
+        projectRepository.deleteAll()
+        identityRepository.deleteAll()
+        appUserRepository.deleteAll()
     }
 
     @Test
-    fun `registers with a valid key and records the reported version as a build`() {
+    fun `registers with a valid key and records the reported version as a build`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val instance = createInstance(token, projectId)
@@ -75,7 +77,7 @@ class SdkRegistrationIntegrationTest {
     }
 
     @Test
-    fun `reuses the same build when the version has not changed`() {
+    fun `reuses the same build when the version has not changed`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val key = createInstance(token, projectId)["instanceKey"].asText()
@@ -84,11 +86,11 @@ class SdkRegistrationIntegrationTest {
         val second = register(key, "sdk-uuid-1", "1.2.3")
 
         assertThat(second["gameBuildId"].asText()).isEqualTo(first["gameBuildId"].asText())
-        assertThat(buildRepository.count().block()).isEqualTo(1L)
+        assertThat(buildRepository.count()).isEqualTo(1L)
     }
 
     @Test
-    fun `creates a second build when the reported version changes`() {
+    fun `creates a second build when the reported version changes`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val key = createInstance(token, projectId)["instanceKey"].asText()
@@ -100,7 +102,7 @@ class SdkRegistrationIntegrationTest {
     }
 
     @Test
-    fun `records the runtime that registered so the dashboard can show it`() {
+    fun `records the runtime that registered so the dashboard can show it`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val instance = createInstance(token, projectId)
@@ -110,26 +112,26 @@ class SdkRegistrationIntegrationTest {
         val listed = get(token, "/api/projects/$projectId/game-instances")["items"][0]
         assertThat(listed["lastConnectedAt"].isNull).isFalse()
 
-        val stored = instanceRepository.findById(instance["id"].asText().toLong()).block()!!
+        val stored = instanceRepository.findById(instance["id"].asText().toLong())!!
         assertThat(stored.lastSdkUuid).isEqualTo("sdk-uuid-9")
     }
 
     @Test
-    fun `stores the reported scene scan on the build`() {
+    fun `stores the reported scene scan on the build`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val key = createInstance(token, projectId)["instanceKey"].asText()
 
         register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main","Level1"],"scannedScenes":[{"name":"Main"}]}""")
 
-        val build = buildRepository.findAll().blockFirst()!!
+        val build = buildRepository.findAll().first()
         val stored = objectMapper.readTree(build.sceneScan!!.asString())
         assertThat(stored["scenesInBuild"][0].asText()).isEqualTo("Main")
         assertThat(stored["scannedScenes"]).hasSize(1)
     }
 
     @Test
-    fun `overwrites the scene scan when the same build registers again`() {
+    fun `overwrites the scene scan when the same build registers again`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val key = createInstance(token, projectId)["instanceKey"].asText()
@@ -137,13 +139,13 @@ class SdkRegistrationIntegrationTest {
         register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main"]}""")
         register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main","Level1"]}""")
 
-        assertThat(buildRepository.count().block()).isEqualTo(1L)
-        val stored = objectMapper.readTree(buildRepository.findAll().blockFirst()!!.sceneScan!!.asString())
+        assertThat(buildRepository.count()).isEqualTo(1L)
+        val stored = objectMapper.readTree(buildRepository.findAll().first().sceneScan!!.asString())
         assertThat(stored["scenesInBuild"]).hasSize(2)
     }
 
     @Test
-    fun `keeps the previous scene scan when a registration omits it`() {
+    fun `keeps the previous scene scan when a registration omits it`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val key = createInstance(token, projectId)["instanceKey"].asText()
@@ -151,19 +153,19 @@ class SdkRegistrationIntegrationTest {
         register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main"]}""")
         register(key, "sdk-uuid-1", "1.2.3")
 
-        val build = buildRepository.findAll().blockFirst()!!
+        val build = buildRepository.findAll().first()
         assertThat(build.sceneScan).isNotNull()
     }
 
     @Test
-    fun `refuses an unknown key`() {
+    fun `refuses an unknown key`(): Unit = runBlocking {
         val error = errorOf { register("NOSUCH-KEY-00000-00000", "sdk-uuid-1", "1.0.0") }
 
         assertThat(error.statusCode.value()).isEqualTo(HttpStatus.NOT_FOUND.value())
     }
 
     @Test
-    fun `stops accepting a key once its instance is deleted`() {
+    fun `stops accepting a key once its instance is deleted`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val instance = createInstance(token, projectId)
@@ -205,7 +207,7 @@ class SdkRegistrationIntegrationTest {
     private fun createInstance(token: String, projectId: String) =
         post(token, "/api/projects/$projectId/game-instances", """{"name":"내 맥북","platform":"UNITY"}""")
 
-    private fun signIn(): String {
+    private suspend fun signIn(): String {
         val user = oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
@@ -215,7 +217,7 @@ class SdkRegistrationIntegrationTest {
                 avatarUrl = null,
                 email = "octocat@example.com"
             )
-        ).block()!!
+        )
         return jwtService.issue(user)
     }
 

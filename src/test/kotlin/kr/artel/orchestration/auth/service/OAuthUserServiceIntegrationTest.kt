@@ -1,5 +1,7 @@
 package kr.artel.orchestration.auth.service
 
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -26,9 +28,9 @@ class OAuthUserServiceIntegrationTest {
      * 동작하지 않는다. 인메모리 H2를 다른 테스트와 공유하므로 각 테스트 시작 시 직접 비운다.
      */
     @BeforeEach
-    fun clean() {
-        identityRepository.deleteAll().block()
-        appUserRepository.deleteAll().block()
+    fun clean(): Unit = runBlocking {
+        identityRepository.deleteAll()
+        appUserRepository.deleteAll()
     }
 
     private fun identity(
@@ -48,8 +50,8 @@ class OAuthUserServiceIntegrationTest {
     )
 
     @Test
-    fun `reuses one user and refreshes the profile when the same provider account logs in again`() {
-        val first = service.upsert(identity(avatarUrl = "https://avatars.example/old.png")).block()
+    fun `reuses one user and refreshes the profile when the same provider account logs in again`(): Unit = runBlocking {
+        val first = service.upsert(identity(avatarUrl = "https://avatars.example/old.png"))
         val second = service.upsert(
             identity(
                 login = "octocat-renamed",
@@ -57,12 +59,12 @@ class OAuthUserServiceIntegrationTest {
                 avatarUrl = "https://avatars.example/new.png",
                 email = "octocat@example.com"
             )
-        ).block()
+        )
 
-        assertThat(second?.userId).isEqualTo(first?.userId)
-        assertThat(appUserRepository.findAll().collectList().block()).hasSize(1)
+        assertThat(second.userId).isEqualTo(first.userId)
+        assertThat(appUserRepository.findAll().toList()).hasSize(1)
 
-        val identities = identityRepository.findAll().collectList().block()!!
+        val identities = identityRepository.findAll().toList()
         assertThat(identities).hasSize(1)
         assertThat(identities.single().login).isEqualTo("octocat-renamed")
         assertThat(identities.single().displayName).isEqualTo("Updated Octocat")
@@ -70,19 +72,19 @@ class OAuthUserServiceIntegrationTest {
     }
 
     @Test
-    fun `issues a stable user id that does not encode the provider`() {
-        val user = service.upsert(identity()).block()!!
+    fun `issues a stable user id that does not encode the provider`(): Unit = runBlocking {
+        val user = service.upsert(identity())
 
-        val appUserId = appUserRepository.findAll().collectList().block()!!.single().id.toString()
+        val appUserId = appUserRepository.findAll().toList().single().id.toString()
         assertThat(user.userId).isEqualTo(appUserId)
         assertThat(user.userId).doesNotContain("github")
     }
 
     @Test
-    fun `does not auto-link a different provider account that shares an email`() {
+    fun `does not auto-link a different provider account that shares an email`(): Unit = runBlocking {
         val github = service.upsert(
             identity(provider = "github", providerUserId = "42", email = "same@example.com")
-        ).block()!!
+        )
         val google = service.upsert(
             identity(
                 provider = "google",
@@ -90,28 +92,28 @@ class OAuthUserServiceIntegrationTest {
                 login = "octocat-google",
                 email = "same@example.com"
             )
-        ).block()!!
+        )
 
         // 이메일이 같아도 자동으로 묶이지 않는다. 제공자가 이메일 소유를 보장하지 않기 때문이다.
         assertThat(google.userId).isNotEqualTo(github.userId)
-        assertThat(appUserRepository.findAll().collectList().block()).hasSize(2)
-        assertThat(identityRepository.findAll().collectList().block()).hasSize(2)
+        assertThat(appUserRepository.findAll().toList()).hasSize(2)
+        assertThat(identityRepository.findAll().toList()).hasSize(2)
     }
 
     @Test
-    fun `keeps separate users for different accounts on the same provider`() {
-        val first = service.upsert(identity(providerUserId = "42")).block()!!
-        val second = service.upsert(identity(providerUserId = "43", login = "hubot")).block()!!
+    fun `keeps separate users for different accounts on the same provider`(): Unit = runBlocking {
+        val first = service.upsert(identity(providerUserId = "42"))
+        val second = service.upsert(identity(providerUserId = "43", login = "hubot"))
 
         assertThat(second.userId).isNotEqualTo(first.userId)
-        assertThat(appUserRepository.findAll().collectList().block()).hasSize(2)
+        assertThat(appUserRepository.findAll().toList()).hasSize(2)
     }
 
     @Test
-    fun `reads back the profile with its linked identities`() {
-        val user = service.upsert(identity(email = "octocat@example.com")).block()!!
+    fun `reads back the profile with its linked identities`(): Unit = runBlocking {
+        val user = service.upsert(identity(email = "octocat@example.com"))
 
-        val profile = service.findProfile(user.userId.toLong()).block()!!
+        val profile = service.findProfile(user.userId.toLong())!!
 
         assertThat(profile.userId).isEqualTo(user.userId)
         assertThat(profile.displayName).isEqualTo("The Octocat")
@@ -122,7 +124,7 @@ class OAuthUserServiceIntegrationTest {
     }
 
     @Test
-    fun `returns empty for a user that does not exist`() {
-        assertThat(service.findProfile(99999999L).block()).isNull()
+    fun `returns empty for a user that does not exist`(): Unit = runBlocking {
+        assertThat(service.findProfile(99999999L)).isNull()
     }
 }

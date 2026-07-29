@@ -1,6 +1,8 @@
 package kr.artel.orchestration
 
 import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -21,7 +23,7 @@ class TestScenarioRepositoryTest {
     private lateinit var repository: TestScenarioRepository
 
     @Test
-    fun testSaveAndFindByProjectId() {
+    fun testSaveAndFindByProjectId(): Unit = runBlocking {
         // 고유 projectId로 다른 테스트/실행과 격리
         val projectId = System.nanoTime()
 
@@ -30,27 +32,27 @@ class TestScenarioRepositoryTest {
                 projectId = projectId,
                 payload = Json.of("""{"steps":[{"order":1,"description":"로그인"}]}""")
             )
-        ).block()
+        )
 
         // Auditing이 id/created/updated를 채웠는지 검증
         assertThat(saved).isNotNull
-        assertThat(saved!!.id).isNotNull
+        assertThat(saved.id).isNotNull
         assertThat(saved.createdAt).isNotNull
         assertThat(saved.updatedAt).isNotNull
 
-        val found = repository.findByProjectId(projectId).collectList().block()
+        val found = repository.findByProjectId(projectId).toList()
         assertThat(found).hasSize(1)
-        assertThat(found!![0].payload.asString()).contains("steps")
+        assertThat(found[0].payload.asString()).contains("steps")
     }
 
     @Test
-    fun testProjectCanHaveMultipleScenarios() {
+    fun testProjectCanHaveMultipleScenarios(): Unit = runBlocking {
         val projectId = System.nanoTime()
 
-        repository.save(TestScenarioEntity(projectId = projectId, payload = Json.of("""{"n":1}"""))).block()
-        repository.save(TestScenarioEntity(projectId = projectId, payload = Json.of("""{"n":2}"""))).block()
+        repository.save(TestScenarioEntity(projectId = projectId, payload = Json.of("""{"n":1}""")))
+        repository.save(TestScenarioEntity(projectId = projectId, payload = Json.of("""{"n":2}""")))
 
-        val found = repository.findByProjectId(projectId).collectList().block()
+        val found = repository.findByProjectId(projectId).toList()
         assertThat(found).hasSize(2)
     }
 }

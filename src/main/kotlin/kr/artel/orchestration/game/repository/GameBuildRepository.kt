@@ -1,10 +1,9 @@
 package kr.artel.orchestration.game.repository
 
+import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.game.entity.GameBuildEntity
 import org.springframework.data.r2dbc.repository.Query
-import org.springframework.data.repository.reactive.ReactiveCrudRepository
-import reactor.core.publisher.Flux
-import reactor.core.publisher.Mono
+import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 
 /**
  * 빌드에는 soft delete가 없다. 지워도 SDK가 같은 버전을 다시 보고하는 순간 되살아나므로,
@@ -12,7 +11,7 @@ import reactor.core.publisher.Mono
  *
  * 조회는 프로젝트와 마찬가지로 참여자 조인과 프로젝트의 `deleted_at IS NULL`로 좁힌다.
  */
-interface GameBuildRepository : ReactiveCrudRepository<GameBuildEntity, Long> {
+interface GameBuildRepository : CoroutineCrudRepository<GameBuildEntity, Long> {
 
     @Query(
         """
@@ -24,7 +23,7 @@ interface GameBuildRepository : ReactiveCrudRepository<GameBuildEntity, Long> {
         ORDER BY gb.created_at DESC, gb.id DESC
         """
     )
-    fun findAllForMember(projectId: Long, userId: Long): Flux<GameBuildEntity>
+    fun findAllForMember(projectId: Long, userId: Long): Flow<GameBuildEntity>
 
     @Query(
         """
@@ -35,7 +34,7 @@ interface GameBuildRepository : ReactiveCrudRepository<GameBuildEntity, Long> {
           AND p.deleted_at IS NULL
         """
     )
-    fun findAccessibleById(id: Long, projectId: Long, userId: Long): Mono<GameBuildEntity>
+    suspend fun findAccessibleById(id: Long, projectId: Long, userId: Long): GameBuildEntity?
 
-    fun findByProjectIdAndVersion(projectId: Long, version: String): Mono<GameBuildEntity>
+    suspend fun findByProjectIdAndVersion(projectId: Long, version: String): GameBuildEntity?
 }

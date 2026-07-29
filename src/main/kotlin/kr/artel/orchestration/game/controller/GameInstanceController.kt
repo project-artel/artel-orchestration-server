@@ -4,7 +4,6 @@ import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
-import kr.artel.orchestration.auth.service.SessionUser
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.game.dto.CreateGameInstanceRequest
 import kr.artel.orchestration.game.dto.GameInstanceListResponse
@@ -24,13 +23,14 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
-import reactor.core.publisher.Mono
 
 /**
  * 게임 인스턴스는 SDK 설치본 하나를 가리킨다.
  *
  * 생성 응답에 담긴 instanceKey를 Unity 온보딩 창에 붙여넣으면 그 실행본이 이 인스턴스로
  * 등록된다. 키는 목록에서도 계속 다시 읽을 수 있다.
+ *
+ * 컨트롤러는 얇게: JWT→userId 추출 + 상태코드 매핑(서비스가 null이면 404), 비즈니스는 [GameInstanceService].
  */
 @Tag(name = "Game Instance", description = "프로젝트에 연결된 SDK 설치본 관리")
 @RestController
@@ -45,39 +45,33 @@ class GameInstanceController(
     )
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    fun create(
+    suspend fun create(
         @AuthenticationPrincipal jwt: Jwt,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
         @Valid @RequestBody request: CreateGameInstanceRequest
-    ): Mono<GameInstanceResponse> =
-        session(jwt)
-            .flatMap { instanceService.create(it.userId, projectId, request) }
-            .switchIfEmpty(Mono.error(projectNotFound()))
+    ): GameInstanceResponse =
+        instanceService.create(requireUser(jwt), projectId, request) ?: throw projectNotFound()
 
     @Operation(summary = "게임 인스턴스 목록", description = "최근에 만든 것이 앞에 온다.")
     @GetMapping
-    fun list(
+    suspend fun list(
         @AuthenticationPrincipal jwt: Jwt,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long
-    ): Mono<GameInstanceListResponse> =
-        session(jwt)
-            .flatMap { instanceService.list(it.userId, projectId) }
-            .switchIfEmpty(Mono.error(projectNotFound()))
+    ): GameInstanceListResponse =
+        instanceService.list(requireUser(jwt), projectId) ?: throw projectNotFound()
 
     @Operation(
         summary = "게임 인스턴스 이름 수정",
         description = "이름만 바꿀 수 있다. instanceKey를 바꾸면 설치된 SDK가 전부 연결을 잃는다."
     )
     @PatchMapping("/{instanceId}")
-    fun rename(
+    suspend fun rename(
         @AuthenticationPrincipal jwt: Jwt,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
         @Parameter(description = "게임 인스턴스 id", required = true) @PathVariable instanceId: Long,
         @Valid @RequestBody request: UpdateGameInstanceRequest
-    ): Mono<GameInstanceResponse> =
-        session(jwt)
-            .flatMap { instanceService.rename(it.userId, projectId, instanceId, request) }
-            .switchIfEmpty(Mono.error(instanceNotFound()))
+    ): GameInstanceResponse =
+        instanceService.rename(requireUser(jwt), projectId, instanceId, request) ?: throw instanceNotFound()
 
     @Operation(
         summary = "게임 인스턴스 삭제",
@@ -85,19 +79,17 @@ class GameInstanceController(
     )
     @DeleteMapping("/{instanceId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    fun delete(
+    suspend fun delete(
         @AuthenticationPrincipal jwt: Jwt,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
         @Parameter(description = "게임 인스턴스 id", required = true) @PathVariable instanceId: Long
-    ): Mono<Void> =
-        session(jwt)
-            .flatMap { instanceService.delete(it.userId, projectId, instanceId) }
-            .switchIfEmpty(Mono.error(instanceNotFound()))
-            .then()
+    ) {
+        if (!instanceService.delete(requireUser(jwt), projectId, instanceId)) throw instanceNotFound()
+    }
 
-    private fun session(jwt: Jwt): Mono<SessionUser> =
-        Mono.justOrEmpty<SessionUser>(sessionUserResolver.resolve(jwt))
-            .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.UNAUTHORIZED)))
+    private fun requireUser(jwt: Jwt): Long =
+        sessionUserResolver.resolve(jwt)?.userId
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
 
     /** 참여자가 아닌 프로젝트는 존재 여부조차 알리지 않는다. */
     private fun projectNotFound() =

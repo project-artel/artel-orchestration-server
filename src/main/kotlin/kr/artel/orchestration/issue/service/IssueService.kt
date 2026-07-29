@@ -7,7 +7,6 @@ import kr.artel.orchestration.issue.entity.IssueEntity
 import kr.artel.orchestration.issue.repository.IssueRepository
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
-import reactor.core.publisher.Mono
 import java.nio.charset.StandardCharsets
 import java.time.Clock
 import java.time.Instant
@@ -37,7 +36,7 @@ class IssueService(
      * [reportedAt]은 Agent가 프레임에 찍은 이벤트 시각(envelope.timestamp)이다 — 우리가 저장하는
      * 수신 시각([createdAt])과 달리, 버그가 실제로 관측된 순간을 그대로 보존한다.
      */
-    fun recordAgentIssue(
+    suspend fun recordAgentIssue(
         qaTryId: Long,
         messageId: String?,
         correlationId: String?,
@@ -45,7 +44,7 @@ class IssueService(
         title: String,
         reportedAt: Instant,
         payload: JsonNode
-    ): Mono<Void> {
+    ) {
         val serialized = objectMapper.writeValueAsString(payload)
         require(serialized.toByteArray(StandardCharsets.UTF_8).size <= MAX_ISSUE_DETAIL_BYTES) {
             "Issue detail exceeds 1 MiB"
@@ -65,12 +64,12 @@ class IssueService(
             createdAt = now,
             updatedAt = now
         )
-        return issueRepository.save(entity)
-            .onErrorResume(DataIntegrityViolationException::class.java) { error ->
-                if (messageId == null) Mono.error(error)
-                else issueRepository.findByQaTryIdAndMessageId(qaTryId, messageId)
-                    .switchIfEmpty(Mono.error(error))
-            }
-            .then()
+        try {
+            issueRepository.save(entity)
+        } catch (error: DataIntegrityViolationException) {
+            // messageId로 멱등 흡수: 재전송된 프레임이면 유니크 제약 위반을 기존 행으로 되돌린다.
+            if (messageId == null) throw error
+            issueRepository.findByQaTryIdAndMessageId(qaTryId, messageId) ?: throw error
+        }
     }
 }

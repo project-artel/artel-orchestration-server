@@ -10,7 +10,6 @@ import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.web.server.ResponseStatusException
-import reactor.core.publisher.Mono
 import java.util.UUID
 
 /** 화면 캡처로 받아들이는 형식. 배포마다 달라지면 특정 환경만 열지 못하는 이미지가 생긴다. */
@@ -36,57 +35,46 @@ class QaCaptureService(
     private val properties: StorageProperties,
     private val objectMapper: ObjectMapper
 ) {
-    fun issueTicket(request: QaCaptureTicketRequest): Mono<QaCaptureTicketResponse> {
+    suspend fun issueTicket(request: QaCaptureTicketRequest): QaCaptureTicketResponse {
         val extension = validate(request)
 
-        return instanceRepository.findActiveByInstanceKey(request.instanceKey)
-            .switchIfEmpty(
-                // 등록과 같은 이유로 401이 아니라 404다. 호출자는 로그인할 사용자가 아니라서
-                // 다시 시도할 realm이 없고, 404는 "그런 키는 없다"와 "그 인스턴스는 지워졌다"를
-                // 같은 응답으로 묶어준다.
-                Mono.error(
-                    ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        "등록된 게임 인스턴스를 찾을 수 없습니다."
-                    )
-                )
+        // 등록과 같은 이유로 401이 아니라 404다. 호출자는 로그인할 사용자가 아니라서
+        // 다시 시도할 realm이 없고, 404는 "그런 키는 없다"와 "그 인스턴스는 지워졌다"를
+        // 같은 응답으로 묶어준다.
+        val instance = instanceRepository.findActiveByInstanceKey(request.instanceKey)
+            ?: throw ResponseStatusException(
+                HttpStatus.NOT_FOUND,
+                "등록된 게임 인스턴스를 찾을 수 없습니다."
             )
-            .flatMap { instance -> tryRepository.findActiveByGameInstanceId(requireNotNull(instance.id)) }
-            .switchIfEmpty(
-                // 404가 아니라 409다. 인스턴스는 존재하고 요청도 올바르다. 지금 이 게임이
-                // QA 실행 중이 아니라는 상태 충돌이므로, SDK는 다시 붙어도 소용이 없다.
-                Mono.error(
-                    ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "이 게임 인스턴스에 실행 중인 QA가 없습니다."
-                    )
-                )
+        // 404가 아니라 409다. 인스턴스는 존재하고 요청도 올바르다. 지금 이 게임이
+        // QA 실행 중이 아니라는 상태 충돌이므로, SDK는 다시 붙어도 소용이 없다.
+        val qaTry = tryRepository.findActiveByGameInstanceId(requireNotNull(instance.id))
+            ?: throw ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "이 게임 인스턴스에 실행 중인 QA가 없습니다."
             )
-            .flatMap { qaTry ->
-                val qaTryId = requireNotNull(qaTry.id)
-                val captureId = UUID.randomUUID().toString()
-                val fileName = "$captureId.$extension"
-                val objectKey = "$CAPTURE_KEY_PREFIX/$qaTryId/$fileName"
 
-                val upload = storage.presignUpload(objectKey, request.contentType, request.contentLength)
-                val download = storage.presignDownload(
-                    objectKey,
-                    fileName,
-                    properties.captureDownloadUrlTtl
-                )
+        val qaTryId = requireNotNull(qaTry.id)
+        val captureId = UUID.randomUUID().toString()
+        val fileName = "$captureId.$extension"
+        val objectKey = "$CAPTURE_KEY_PREFIX/$qaTryId/$fileName"
 
-                appendEvidence(qaTryId, captureId, objectKey, download.url, request)
-                    .thenReturn(
-                        QaCaptureTicketResponse(
-                            captureId = captureId,
-                            uploadUrl = upload.url,
-                            requiredHeaders = upload.requiredHeaders,
-                            uploadExpiresAt = upload.expiresAt,
-                            downloadUrl = download.url,
-                            downloadExpiresAt = download.expiresAt
-                        )
-                    )
-            }
+        val upload = storage.presignUpload(objectKey, request.contentType, request.contentLength)
+        val download = storage.presignDownload(
+            objectKey,
+            fileName,
+            properties.captureDownloadUrlTtl
+        )
+
+        appendEvidence(qaTryId, captureId, objectKey, download.url, request)
+        return QaCaptureTicketResponse(
+            captureId = captureId,
+            uploadUrl = upload.url,
+            requiredHeaders = upload.requiredHeaders,
+            uploadExpiresAt = upload.expiresAt,
+            downloadUrl = download.url,
+            downloadExpiresAt = download.expiresAt
+        )
     }
 
     /**
@@ -99,13 +87,13 @@ class QaCaptureService(
      * payload에는 이미지를 가리키는 값만 넣는다. 이 행은 SSE로도 발행되므로 킬로바이트를
      * 넘지 않아야 한다.
      */
-    private fun appendEvidence(
+    private suspend fun appendEvidence(
         qaTryId: Long,
         captureId: String,
         objectKey: String,
         downloadUrl: String,
         request: QaCaptureTicketRequest
-    ): Mono<Void> {
+    ) {
         val payload = objectMapper.createObjectNode()
             .put("captureId", captureId)
             .put("objectKey", objectKey)
@@ -115,14 +103,15 @@ class QaCaptureService(
         request.targetId?.let { payload.put("targetId", it) }
 
         val what = request.targetId?.let { "요소 $it" } ?: "전체 화면"
-        return logService.append(
+        val evidence = logService.append(
             qaTryId = qaTryId,
             direction = "SDK_TO_ORCHE",
             type = "SCREENSHOT",
             messageId = captureId,
             message = "$what 을(를) 캡처했습니다.",
             payload = payload
-        ).doOnNext(logService::publish).then()
+        )
+        logService.publish(evidence)
     }
 
     /** 통과하면 이 형식의 파일 확장자를 돌려준다. */

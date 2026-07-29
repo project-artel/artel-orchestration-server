@@ -3,6 +3,13 @@ package kr.artel.orchestration.testscenario.service
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.reactor.awaitSingle
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
@@ -21,13 +28,12 @@ import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient
 import reactor.core.Disposable
-import reactor.core.publisher.Mono
 import reactor.core.publisher.Sinks
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * TestScenario 챗봇의 Agent 서버 연동 서비스. 실제 Agent 서버 계약(FastAPI)에 맞춘다:
+ * TestScenario 챗봇의 Agent 서버 연동 서비스(코루틴). 실제 Agent 서버 계약(FastAPI)에 맞춘다:
  *
  * 1. 세션 오픈: `POST {base}/sessions {user_input, unity_context, game_context, model}` → `{session_id}`
  * 2. WS 연결: `WS {ws-base}/sessions/{session_id}`. 연결 시 Agent가 첫 결과를 보낸다(오픈 때 준 user_input 기반).
@@ -36,6 +42,9 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * 세션 키(`sessionKey` = userId:testScenarioId)로 Agent 세션(session_id + WS)을 식별한다.
  * 오간 채팅 메시지는 사용자별 프라이빗 스레드로 test_scenario_message에 저장한다(USER/ASSISTANT).
+ *
+ * WS 클라이언트는 [ReactorNettyWebSocketClient](Reactor)를 그대로 쓴다(코틀린 코루틴 WS 클라이언트 대체 없음).
+ * WS 송신 싱크(`outbound`)는 Reactor [Sinks]로 유지하고, WS 수신 콜백 내부의 DB 저장만 [scope]로 코루틴 브리지한다.
  */
 @Service
 class TestScenarioAgentService(
@@ -54,24 +63,31 @@ class TestScenarioAgentService(
     private val wsClient = ReactorNettyWebSocketClient()
     private val sessions = ConcurrentHashMap<String, AgentSession>()
 
+    // WS 수신 콜백(Reactor 컨텍스트)에서 발생하는 DB 저장을 fire-and-forget 코루틴으로 흘리기 위한 스코프.
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
     /**
      * 사용자 입력을 Agent로 전달한다. 세션이 없으면 오픈(POST /sessions + WS)하고, 있으면 WS 턴으로 보낸다.
      * 첫 입력은 세션 오픈에 실려 처리되므로 별도 턴을 보내지 않는다(연결 시 Agent가 첫 결과를 반환).
      * `draft`는 사용자가 편집한 현재 시나리오로, 후속 턴에서 Agent에 전달된다(첫 입력에는 적용되지 않음).
      * 사용자 입력은 USER 메시지로 채팅 스레드에 저장된다.
      */
-    fun sendMessage(
+    suspend fun sendMessage(
         sessionKey: String,
         testScenarioId: Long,
         projectId: Long,
         appUserId: Long,
         userInput: String,
         draft: ScenarioDraft? = null
-    ): Mono<Void> {
+    ) {
+        // 원래 순서대로: 먼저 USER 메시지를 저장한 뒤 Agent로 보낸다.
+        saveMessage(testScenarioId, appUserId, "USER", userInput)
         val existing = sessions[sessionKey]
-        val send = if (existing != null) sendTurn(sessionKey, existing, userInput, draft)
-        else openSession(sessionKey, testScenarioId, projectId, appUserId, userInput)
-        return saveMessage(testScenarioId, appUserId, "USER", userInput).then(send)
+        if (existing != null) {
+            sendTurn(sessionKey, existing, userInput, draft)
+        } else {
+            openSession(sessionKey, testScenarioId, projectId, appUserId, userInput)
+        }
     }
 
     /**
@@ -92,38 +108,33 @@ class TestScenarioAgentService(
         }
     }
 
-    private fun openSession(
+    private suspend fun openSession(
         sessionKey: String,
         testScenarioId: Long,
         projectId: Long,
         appUserId: Long,
         userInput: String
-    ): Mono<Void> {
+    ) {
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
-        val localeMono = appUserRepository.findById(appUserId)
-            .map { user -> if (user.locale == "ko") "ko" else "en" }
-            .defaultIfEmpty("en")
-        return Mono.zip(gameContext(projectId, appUserId), localeMono)
-            .map { tuple ->
-                AgentSessionOpenRequest(
-                    userInput = userInput,
-                    gameContext = tuple.t1,
-                    model = defaultModel,
-                    locale = tuple.t2
-                )
-            }
-            .flatMap { body ->
-                webClient.post()
-                    .uri("$agentBaseUrl/sessions")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(AgentSessionOpenResponse::class.java)
-            }
-            .doOnNext { resp -> openWebSocket(sessionKey, testScenarioId, appUserId, resp.sessionId) }
-            .then()
+        val locale = appUserRepository.findById(appUserId)
+            ?.let { if (it.locale == "ko") "ko" else "en" }
+            ?: "en"
+        val body = AgentSessionOpenRequest(
+            userInput = userInput,
+            gameContext = gameContext(projectId, appUserId),
+            model = defaultModel,
+            locale = locale
+        )
+        val resp = webClient.post()
+            .uri("$agentBaseUrl/sessions")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .retrieve()
+            .bodyToMono(AgentSessionOpenResponse::class.java)
+            .awaitSingle()
+        openWebSocket(sessionKey, testScenarioId, appUserId, resp.sessionId)
     }
 
     /**
@@ -133,31 +144,28 @@ class TestScenarioAgentService(
      * 최신 빌드가 스캔 없이 등록됐을 수도 있어(구버전 SDK), 스캔을 가진 가장 최근 빌드를 고른다.
      * 그런 빌드가 하나도 없으면 빈 맵이라 기존과 동일하게 빈 game_context를 보낸다.
      */
-    private fun gameContext(projectId: Long, appUserId: Long): Mono<Map<String, Any>> =
-        buildRepository.findAllForMember(projectId, appUserId)
+    private suspend fun gameContext(projectId: Long, appUserId: Long): Map<String, Any> {
+        val build = buildRepository.findAllForMember(projectId, appUserId)
             .filter { it.sceneScan != null }
-            .next()
-            .map { build ->
-                objectMapper.readValue(
-                    build.sceneScan!!.asString(),
-                    object : TypeReference<Map<String, Any>>() {}
-                )
-            }
-            .defaultIfEmpty(emptyMap())
+            .firstOrNull()
+            ?: return emptyMap()
+        return objectMapper.readValue(
+            build.sceneScan!!.asString(),
+            object : TypeReference<Map<String, Any>>() {}
+        )
+    }
 
     private fun sendTurn(
         sessionKey: String,
         session: AgentSession,
         userInput: String,
         draft: ScenarioDraft?
-    ): Mono<Void> {
-        return Mono.fromCallable {
-            val json = objectMapper.writeValueAsString(AgentTurnMessage(userInput = userInput, draft = draft))
-            val result = session.outbound.tryEmitNext(json)
-            if (result.isFailure) {
-                throw IllegalStateException("Agent WS 턴 전송 실패 [sessionKey=$sessionKey, result=$result]")
-            }
-        }.then()
+    ) {
+        val json = objectMapper.writeValueAsString(AgentTurnMessage(userInput = userInput, draft = draft))
+        val result = session.outbound.tryEmitNext(json)
+        if (result.isFailure) {
+            throw IllegalStateException("Agent WS 턴 전송 실패 [sessionKey=$sessionKey, result=$result]")
+        }
     }
 
     private fun openWebSocket(
@@ -190,6 +198,10 @@ class TestScenarioAgentService(
         )
     }
 
+    /**
+     * WS 수신 메시지를 처리한다. Reactor WS 콜백에서 동기적으로 불리므로, DB 저장(suspend)은 [scope]로 넘겨
+     * fire-and-forget 코루틴에서 수행한다.
+     */
     private fun handleInbound(sessionKey: String, payloadText: String) {
         try {
             // Agent 응답을 타입화한 봉투로 파싱해 SSE로 중계한다(type=result|error).
@@ -198,12 +210,22 @@ class TestScenarioAgentService(
 
             val session = sessions[sessionKey]
             if (event.type == "result" && session != null) {
-                // Agent 메시지를 ASSISTANT 채팅으로 저장.
-                saveMessage(session.testScenarioId, session.appUserId, "ASSISTANT", event.message ?: "")
-                    .subscribe({}, { err -> logger.error("ASSISTANT 메시지 저장 실패 [sessionKey=$sessionKey]: ${err.message}") })
-
-                // scenario를 test_scenario에 저장(UPDATE).
-                event.scenario?.let { persistScenario(sessionKey, session.testScenarioId, it) }
+                scope.launch {
+                    // Agent 메시지를 ASSISTANT 채팅으로 저장.
+                    try {
+                        saveMessage(session.testScenarioId, session.appUserId, "ASSISTANT", event.message ?: "")
+                    } catch (err: Exception) {
+                        logger.error("ASSISTANT 메시지 저장 실패 [sessionKey=$sessionKey]: ${err.message}")
+                    }
+                    // scenario를 test_scenario에 저장(UPDATE).
+                    event.scenario?.let {
+                        try {
+                            persistScenario(sessionKey, session.testScenarioId, it)
+                        } catch (err: Exception) {
+                            logger.error("시나리오 저장 실패 [sessionKey=$sessionKey]: ${err.message}")
+                        }
+                    }
+                }
             }
         } catch (e: Exception) {
             logger.error("Agent WS 수신 메시지 처리 실패 [sessionKey=$sessionKey]: ${e.message}", e)
@@ -211,26 +233,23 @@ class TestScenarioAgentService(
     }
 
     /** 채팅 메시지를 저장한다(사용자별 프라이빗 스레드). */
-    private fun saveMessage(testScenarioId: Long, appUserId: Long, role: String, content: String): Mono<Void> {
-        return messageRepository.save(
+    private suspend fun saveMessage(testScenarioId: Long, appUserId: Long, role: String, content: String) {
+        messageRepository.save(
             TestScenarioMessageEntity(
                 testScenarioId = testScenarioId,
                 appUserId = appUserId,
                 role = role,
                 content = content
             )
-        ).then()
+        )
     }
 
     /** scenario를 JSONB로 직렬화해 testScenarioId로 UPDATE한다. 시나리오는 세션 전에 이미 생성돼 있다. */
-    private fun persistScenario(sessionKey: String, testScenarioId: Long, scenario: ScenarioDraft) {
+    private suspend fun persistScenario(sessionKey: String, testScenarioId: Long, scenario: ScenarioDraft) {
         val payloadJson = Json.of(objectMapper.writeValueAsString(scenario))
-        scenarioRepository.findById(testScenarioId)
-            .flatMap { existing -> scenarioRepository.save(existing.copy(payload = payloadJson)) }
-            .subscribe(
-                { logger.info("시나리오 저장 완료 [sessionKey=$sessionKey, id=${it.id}]") },
-                { err -> logger.error("시나리오 저장 실패 [sessionKey=$sessionKey]: ${err.message}") }
-            )
+        val existing = scenarioRepository.findById(testScenarioId) ?: return
+        val saved = scenarioRepository.save(existing.copy(payload = payloadJson))
+        logger.info("시나리오 저장 완료 [sessionKey=$sessionKey, id=${saved.id}]")
     }
 
     /** Agent 세션 상태: 송신 싱크, 저장 대상 시나리오 id, 채팅 소유자 appUserId, Agent가 발급한 session_id. */

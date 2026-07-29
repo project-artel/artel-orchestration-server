@@ -2,7 +2,6 @@ package kr.artel.orchestration.testscenario.service
 
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kr.artel.orchestration.testcase.dto.toTestCaseResponse
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.dto.ScenarioCaseItem
@@ -31,13 +30,13 @@ class ScenarioCompositionService(
 ) {
     /** 시나리오의 케이스 조합을 순서대로 조회(케이스 내용 포함). 비접근이면 null. */
     suspend fun getCases(testScenarioId: Long, userId: Long): ScenarioCasesResponse? {
-        accessService.accessibleScenario(testScenarioId, userId).awaitSingleOrNull() ?: return null
+        accessService.accessibleScenario(testScenarioId, userId) ?: return null
         return resolveCases(testScenarioId)
     }
 
     /** 조합 전체 교체. caseIds 순서 = position. 원자적. 반환은 리졸브된 새 조합(비접근 → null). */
     suspend fun setCases(testScenarioId: Long, userId: Long, caseIds: List<Long>): ScenarioCasesResponse? {
-        val scenario = accessService.accessibleScenario(testScenarioId, userId).awaitSingleOrNull() ?: return null
+        val scenario = accessService.accessibleScenario(testScenarioId, userId) ?: return null
         validateCases(scenario.projectId, caseIds)
         transactionalOperator.executeAndAwait {
             scenarioCaseRepository.deleteByTestScenarioId(testScenarioId)

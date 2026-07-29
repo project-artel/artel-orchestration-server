@@ -1,5 +1,7 @@
 package kr.artel.orchestration.knowledge
 
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.knowledge.dto.KnowledgeIngestItem
 import kr.artel.orchestration.knowledge.dto.KnowledgeListResponse
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
@@ -61,7 +63,7 @@ class KnowledgeIntegrationTest {
     }
 
     @Test
-    fun testStoresBatchAndQueriesByProject() {
+    fun testStoresBatchAndQueriesByProject(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
         knowledgeService.store(
             projectId = projectId,
@@ -69,7 +71,7 @@ class KnowledgeIntegrationTest {
             sourceId = 10,
             contentHash = "abc123",
             items = listOf(item("CONTROL", "이동", "WASD로 이동"), item("RULE", "체력", "최대 100"))
-        ).block(Duration.ofSeconds(5))
+        )
 
         val all = listByFilters(projectId)
         assertThat(all.items).hasSize(2)
@@ -80,7 +82,7 @@ class KnowledgeIntegrationTest {
     }
 
     @Test
-    fun testSkipsInvalidItems() {
+    fun testSkipsInvalidItems(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
         knowledgeService.store(
             projectId = projectId,
@@ -93,20 +95,20 @@ class KnowledgeIntegrationTest {
                 item("MISC", "  ", "빈 summary"),          // 빈 summary → 스킵
                 item("CONTROL", "빈 설명", "")             // 빈 description → 스킵
             )
-        ).block(Duration.ofSeconds(5))
+        )
 
         val rows = knowledgeRepository.findByProjectIdOrderByIdDesc(projectId)
-            .collectList().block(Duration.ofSeconds(5))!!
+            .toList()
         assertThat(rows).hasSize(1)
         assertThat(rows[0].tag).isEqualTo("RULE")
         assertThat(rows[0].source).isEqualTo("QA")
     }
 
     @Test
-    fun testFiltersBySourceAndTag() {
+    fun testFiltersBySourceAndTag(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
-        knowledgeService.store(projectId, KnowledgeSource.DOCS, 10, null, listOf(item("CONTROL"))).block(Duration.ofSeconds(5))
-        knowledgeService.store(projectId, KnowledgeSource.QA, 20, null, listOf(item("RULE"), item("CONTROL"))).block(Duration.ofSeconds(5))
+        knowledgeService.store(projectId, KnowledgeSource.DOCS, 10, null, listOf(item("CONTROL")))
+        knowledgeService.store(projectId, KnowledgeSource.QA, 20, null, listOf(item("RULE"), item("CONTROL")))
 
         assertThat(listByFilters(projectId, source = "qa").items).hasSize(2)
         assertThat(listByFilters(projectId, source = "docs").items).hasSize(1)
@@ -115,20 +117,20 @@ class KnowledgeIntegrationTest {
     }
 
     @Test
-    fun testProjectIsolation() {
+    fun testProjectIsolation(): Unit = runBlocking {
         val projectA = projectSeq.incrementAndGet()
         val projectB = projectSeq.incrementAndGet()
-        knowledgeService.store(projectA, KnowledgeSource.DOCS, 10, null, listOf(item("CONTROL"))).block(Duration.ofSeconds(5))
+        knowledgeService.store(projectA, KnowledgeSource.DOCS, 10, null, listOf(item("CONTROL")))
 
         assertThat(listByFilters(projectA).items).hasSize(1)
         assertThat(listByFilters(projectB).items).isEmpty()
     }
 
     @Test
-    fun testEmptyOrAllInvalidBatchStoresNothing() {
+    fun testEmptyOrAllInvalidBatchStoresNothing(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
-        knowledgeService.store(projectId, KnowledgeSource.DOCS, 10, null, emptyList()).block(Duration.ofSeconds(5))
-        knowledgeService.store(projectId, KnowledgeSource.DOCS, 10, null, listOf(item("BAD"))).block(Duration.ofSeconds(5))
+        knowledgeService.store(projectId, KnowledgeSource.DOCS, 10, null, emptyList())
+        knowledgeService.store(projectId, KnowledgeSource.DOCS, 10, null, listOf(item("BAD")))
 
         assertThat(listByFilters(projectId).items).isEmpty()
         // enum 값 존재 확인(회귀 방지)

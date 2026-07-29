@@ -2,6 +2,8 @@ package kr.artel.orchestration.auth.config
 
 import com.nimbusds.jose.jwk.source.ImmutableSecret
 import com.nimbusds.jose.proc.SecurityContext
+import kotlinx.coroutines.reactor.awaitSingleOrNull
+import kotlinx.coroutines.reactor.mono
 import kr.artel.orchestration.auth.oauth.OAuthIdentityResolver
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthUserService
@@ -162,23 +164,24 @@ class SecurityConfig {
         identityResolver: OAuthIdentityResolver,
         oauthUserService: OAuthUserService
     ) = ServerAuthenticationSuccessHandler { webFilterExchange, authentication ->
-        val identity = identityResolver.resolve(authentication as org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken)
-        oauthUserService.upsert(identity)
-            .flatMap { persistedIdentity ->
-                val token = jwtService.issue(persistedIdentity)
-                val cookie = ResponseCookie.from(properties.cookieName, token)
-                    .httpOnly(true)
-                    .secure(properties.secureCookie)
-                    .sameSite("Lax")
-                    .path("/")
-                    .maxAge(properties.accessTokenTtl)
-                    .build()
-                val response = webFilterExchange.exchange.response
-                response.addCookie(cookie)
-                response.statusCode = HttpStatus.FOUND
-                response.headers.location = URI.create(properties.frontendOrigin)
-                response.setComplete()
-            }
+        // Spring Security의 리액티브 콜백은 Mono<Void>를 요구한다. upsert가 suspend라 mono {}로 브리지한다.
+        mono {
+            val identity = identityResolver.resolve(authentication as org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken)
+            val persistedIdentity = oauthUserService.upsert(identity)
+            val token = jwtService.issue(persistedIdentity)
+            val cookie = ResponseCookie.from(properties.cookieName, token)
+                .httpOnly(true)
+                .secure(properties.secureCookie)
+                .sameSite("Lax")
+                .path("/")
+                .maxAge(properties.accessTokenTtl)
+                .build()
+            val response = webFilterExchange.exchange.response
+            response.addCookie(cookie)
+            response.statusCode = HttpStatus.FOUND
+            response.headers.location = URI.create(properties.frontendOrigin)
+            response.setComplete().awaitSingleOrNull()
+        }
             .onErrorResume { error ->
                 // 여기서 실패하면 JWT 쿠키가 발급되지 않아 로그인이 조용히 깨진다.
                 // 원인을 남기지 않으면 프런트에는 error=server만 보이고 서버에는 아무 흔적이 없다.

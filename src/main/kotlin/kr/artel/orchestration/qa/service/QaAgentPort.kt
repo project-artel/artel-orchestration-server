@@ -1,7 +1,6 @@
 package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.databind.JsonNode
-import reactor.core.publisher.Mono
 import java.time.Instant
 
 data class QaAgentSession(val sessionId: String)
@@ -24,14 +23,14 @@ data class QaAgentEnvelope(
 )
 
 interface QaAgentPort {
-    fun createSession(
+    suspend fun createSession(
         context: QaAgentSessionContext,
-        onMessage: (QaAgentEnvelope) -> Mono<Void>,
-        onDisconnect: () -> Mono<Void>
-    ): Mono<QaAgentSession>
+        onMessage: suspend (QaAgentEnvelope) -> Unit,
+        onDisconnect: suspend () -> Unit
+    ): QaAgentSession
 
-    fun send(sessionId: String, envelope: QaAgentEnvelope): Mono<Void>
-    fun close(sessionId: String): Mono<Void>
+    suspend fun send(sessionId: String, envelope: QaAgentEnvelope)
+    suspend fun close(sessionId: String)
 }
 
 class QaAgentUnavailableException(message: String) : RuntimeException(message)

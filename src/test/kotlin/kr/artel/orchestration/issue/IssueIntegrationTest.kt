@@ -1,6 +1,8 @@
 package kr.artel.orchestration.issue
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
 import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
@@ -62,19 +64,19 @@ class IssueIntegrationTest {
      */
     @BeforeEach
     @AfterEach
-    fun clean() {
-        issueRepository.deleteAll().block()
-        qaTryRepository.deleteAll().block()
-        gameInstanceRepository.deleteAll().block()
-        testScenarioRepository.deleteAll().block()
-        projectMemberRepository.deleteAll().block()
-        projectRepository.deleteAll().block()
-        identityRepository.deleteAll().block()
-        appUserRepository.deleteAll().block()
+    fun clean(): Unit = runBlocking {
+        issueRepository.deleteAll()
+        qaTryRepository.deleteAll()
+        gameInstanceRepository.deleteAll()
+        testScenarioRepository.deleteAll()
+        projectMemberRepository.deleteAll()
+        projectRepository.deleteAll()
+        identityRepository.deleteAll()
+        appUserRepository.deleteAll()
     }
 
     @Test
-    fun `persists an agent-reported issue with severity, title and full payload as detail`() {
+    fun `persists an agent-reported issue with severity, title and full payload as detail`(): Unit = runBlocking {
         val owner = signIn("42", "octocat")
         val qaTryId = seedRunningQaTry(owner)
 
@@ -86,7 +88,7 @@ class IssueIntegrationTest {
             extra = """"detail":"Clicking Save shows no feedback and no file is written","step":3"""
         )
 
-        val issues = issueRepository.findAll().collectList().block(TIMEOUT)!!
+        val issues = issueRepository.findAll().toList()
         assertThat(issues).hasSize(1)
         val issue = issues.single()
         assertThat(issue.severity).isEqualTo("MAJOR")
@@ -99,7 +101,7 @@ class IssueIntegrationTest {
     }
 
     @Test
-    fun `is idempotent on message id so a re-delivered frame does not duplicate`() {
+    fun `is idempotent on message id so a re-delivered frame does not duplicate`(): Unit = runBlocking {
         val owner = signIn("42", "octocat")
         val qaTryId = seedRunningQaTry(owner)
         val messageId = UUID.randomUUID().toString()
@@ -107,22 +109,22 @@ class IssueIntegrationTest {
         deliver(qaTryId, messageId, "CRITICAL", "Crash on level load")
         deliver(qaTryId, messageId, "CRITICAL", "Crash on level load")
 
-        assertThat(issueRepository.findAll().collectList().block(TIMEOUT)).hasSize(1)
+        assertThat(issueRepository.findAll().toList()).hasSize(1)
     }
 
     @Test
-    fun `drops a frame whose severity is not on the ladder without persisting`() {
+    fun `drops a frame whose severity is not on the ladder without persisting`(): Unit = runBlocking {
         val owner = signIn("42", "octocat")
         val qaTryId = seedRunningQaTry(owner)
 
         deliver(qaTryId, UUID.randomUUID().toString(), severity = "SEVERE", title = "Unknown severity")
 
-        assertThat(issueRepository.findAll().collectList().block(TIMEOUT)).isEmpty()
+        assertThat(issueRepository.findAll().toList()).isEmpty()
     }
 
     // --- helpers ---
 
-    private fun deliver(
+    private suspend fun deliver(
         qaTryId: Long,
         messageId: String,
         severity: String,
@@ -143,15 +145,15 @@ class IssueIntegrationTest {
                 timestamp = REPORTED_AT,
                 payload = objectMapper.readTree(payload)
             )
-        ).block(TIMEOUT)
+        )
     }
 
-    private fun seedRunningQaTry(owner: AuthenticatedUser): Long {
+    private suspend fun seedRunningQaTry(owner: AuthenticatedUser): Long {
         val ownerId = owner.userId.toLong()
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "issue-project", genre = "ACTION", createdAt = now, updatedAt = now)
-        ).block(TIMEOUT)!!
+        )!!
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -159,10 +161,10 @@ class IssueIntegrationTest {
                 role = ProjectRole.OWNER.name,
                 createdAt = now
             )
-        ).block(TIMEOUT)
+        )
         val scenario = testScenarioRepository.save(
             TestScenarioEntity(projectId = project.id!!, payload = Json.of("{}"))
-        ).block(TIMEOUT)!!
+        )!!
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = project.id!!,
@@ -172,7 +174,7 @@ class IssueIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        ).block(TIMEOUT)!!
+        )!!
         val qaTry = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -181,11 +183,11 @@ class IssueIntegrationTest {
                 status = "RUNNING",
                 startedAt = now
             )
-        ).block(TIMEOUT)!!
+        )!!
         return qaTry.id!!
     }
 
-    private fun signIn(providerUserId: String, login: String): AuthenticatedUser =
+    private suspend fun signIn(providerUserId: String, login: String): AuthenticatedUser =
         oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
@@ -195,7 +197,7 @@ class IssueIntegrationTest {
                 avatarUrl = null,
                 email = "$login@example.com"
             )
-        ).block(TIMEOUT)!!
+        )!!
 
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(5)

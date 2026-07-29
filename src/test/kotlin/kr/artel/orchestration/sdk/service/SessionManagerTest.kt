@@ -1,7 +1,9 @@
 package kr.artel.orchestration.sdk.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.web.reactive.socket.WebSocketSession
@@ -62,8 +64,10 @@ class SessionManagerTest {
 
         StepVerifier.create(outbound)
             .then {
-                sessionManager.send("1", mapOf("type" to "FIRST")).block()
-                sessionManager.send("1", mapOf("type" to "SECOND")).block()
+                runBlocking {
+                    sessionManager.send("1", mapOf("type" to "FIRST"))
+                    sessionManager.send("1", mapOf("type" to "SECOND"))
+                }
                 sessionManager.removeSession("1", session)
             }
             .expectNext("""{"type":"FIRST"}""")
@@ -76,8 +80,9 @@ class SessionManagerTest {
      * 없다는 사실을 호출자가 알아야 재시도나 상태 표시를 결정할 수 있다.
      */
     @Test
-    fun `fails when nothing is connected for the instance`() {
-        StepVerifier.create(sessionManager.send("nobody", mapOf("type" to "ACTION")))
-            .verifyError(IllegalArgumentException::class.java)
+    fun `fails when nothing is connected for the instance`(): Unit = runBlocking {
+        assertThatThrownBy {
+            runBlocking { sessionManager.send("nobody", mapOf("type" to "ACTION")) }
+        }.isInstanceOf(IllegalArgumentException::class.java)
     }
 }

@@ -1,6 +1,7 @@
 package kr.artel.orchestration.game
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.JwtService
@@ -46,18 +47,18 @@ class GameInstanceCrudIntegrationTest {
      * 인메모리 H2를 다른 테스트와 공유하므로 각 테스트 시작 시 직접 비운다.
      */
     @BeforeEach
-    fun clean() {
-        instanceRepository.deleteAll().block()
-        buildRepository.deleteAll().block()
-        documentRepository.deleteAll().block()
-        memberRepository.deleteAll().block()
-        projectRepository.deleteAll().block()
-        identityRepository.deleteAll().block()
-        appUserRepository.deleteAll().block()
+    fun clean(): Unit = runBlocking {
+        instanceRepository.deleteAll()
+        buildRepository.deleteAll()
+        documentRepository.deleteAll()
+        memberRepository.deleteAll()
+        projectRepository.deleteAll()
+        identityRepository.deleteAll()
+        appUserRepository.deleteAll()
     }
 
     @Test
-    fun `creates an instance with a key and lists it`() {
+    fun `creates an instance with a key and lists it`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val projectId = createProject(token)
 
@@ -80,7 +81,7 @@ class GameInstanceCrudIntegrationTest {
     }
 
     @Test
-    fun `issues a different key to every instance`() {
+    fun `issues a different key to every instance`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val projectId = createProject(token)
 
@@ -91,7 +92,7 @@ class GameInstanceCrudIntegrationTest {
     }
 
     @Test
-    fun `renames an instance without changing its key`() {
+    fun `renames an instance without changing its key`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val projectId = createProject(token)
         val created = post(token, "/api/projects/$projectId/game-instances", """{"name":"이전 이름","platform":"UNITY"}""")
@@ -108,7 +109,7 @@ class GameInstanceCrudIntegrationTest {
     }
 
     @Test
-    fun `soft-deletes an instance so it disappears from the list`() {
+    fun `soft-deletes an instance so it disappears from the list`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val projectId = createProject(token)
         val instanceId = post(
@@ -130,11 +131,11 @@ class GameInstanceCrudIntegrationTest {
         assertThat(get(token, "/api/projects/$projectId/game-instances")["items"]).isEmpty()
         // 행은 남아 있어야 한다. 지운 인스턴스와 처음부터 없던 인스턴스를 구분할 수 없으면
         // 나중에 그 키로 들어온 요청이 왜 거절됐는지 설명할 수 없다.
-        assertThat(instanceRepository.count().block()).isEqualTo(1L)
+        assertThat(instanceRepository.count()).isEqualTo(1L)
     }
 
     @Test
-    fun `hides a project's instances from someone who is not a member`() {
+    fun `hides a project's instances from someone who is not a member`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
         val projectId = createProject(ownerToken)
         post(ownerToken, "/api/projects/$projectId/game-instances", """{"name":"내 것","platform":"UNITY"}""")
@@ -146,7 +147,7 @@ class GameInstanceCrudIntegrationTest {
     }
 
     @Test
-    fun `rejects a platform the server does not support`() {
+    fun `rejects a platform the server does not support`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val projectId = createProject(token)
 
@@ -160,7 +161,7 @@ class GameInstanceCrudIntegrationTest {
     private fun createProject(token: String): String =
         post(token, "/api/projects", """{"name":"게임 인스턴스 테스트","genre":"ACTION"}""")["id"].asText()
 
-    private fun signIn(providerUserId: String, login: String): String {
+    private suspend fun signIn(providerUserId: String, login: String): String {
         val user = oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
@@ -170,7 +171,7 @@ class GameInstanceCrudIntegrationTest {
                 avatarUrl = null,
                 email = "$login@example.com"
             )
-        ).block()!!
+        )
         return jwtService.issue(user)
     }
 

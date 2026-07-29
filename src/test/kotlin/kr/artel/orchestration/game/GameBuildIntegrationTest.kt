@@ -1,6 +1,7 @@
 package kr.artel.orchestration.game
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.JwtService
@@ -42,18 +43,18 @@ class GameBuildIntegrationTest {
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
 
     @BeforeEach
-    fun clean() {
-        instanceRepository.deleteAll().block()
-        buildRepository.deleteAll().block()
-        documentRepository.deleteAll().block()
-        memberRepository.deleteAll().block()
-        projectRepository.deleteAll().block()
-        identityRepository.deleteAll().block()
-        appUserRepository.deleteAll().block()
+    fun clean(): Unit = runBlocking {
+        instanceRepository.deleteAll()
+        buildRepository.deleteAll()
+        documentRepository.deleteAll()
+        memberRepository.deleteAll()
+        projectRepository.deleteAll()
+        identityRepository.deleteAll()
+        appUserRepository.deleteAll()
     }
 
     @Test
-    fun `edits the label and notes a person wrote`() {
+    fun `edits the label and notes a person wrote`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val projectId = createProjectWithBuild(token, "1.2.3")
         val buildId = get(token, "/api/projects/$projectId/game-builds")["items"][0]["id"].asText()
@@ -70,7 +71,7 @@ class GameBuildIntegrationTest {
     }
 
     @Test
-    fun `leaves the observed version alone even when the request tries to change it`() {
+    fun `leaves the observed version alone even when the request tries to change it`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val projectId = createProjectWithBuild(token, "1.2.3")
         val buildId = get(token, "/api/projects/$projectId/game-builds")["items"][0]["id"].asText()
@@ -85,7 +86,7 @@ class GameBuildIntegrationTest {
     }
 
     @Test
-    fun `clears a note with an empty string, not with null`() {
+    fun `clears a note with an empty string, not with null`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val projectId = createProjectWithBuild(token, "1.2.3")
         val buildId = get(token, "/api/projects/$projectId/game-builds")["items"][0]["id"].asText()
@@ -98,7 +99,7 @@ class GameBuildIntegrationTest {
     }
 
     @Test
-    fun `hides a project's builds from someone who is not a member`() {
+    fun `hides a project's builds from someone who is not a member`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
         val projectId = createProjectWithBuild(ownerToken, "1.2.3")
 
@@ -128,7 +129,7 @@ class GameBuildIntegrationTest {
         return projectId
     }
 
-    private fun signIn(providerUserId: String, login: String): String {
+    private suspend fun signIn(providerUserId: String, login: String): String {
         val user = oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
@@ -138,7 +139,7 @@ class GameBuildIntegrationTest {
                 avatarUrl = null,
                 email = "$login@example.com"
             )
-        ).block()!!
+        )
         return jwtService.issue(user)
     }
 
