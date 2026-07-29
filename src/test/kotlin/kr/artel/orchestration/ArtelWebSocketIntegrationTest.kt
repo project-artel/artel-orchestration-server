@@ -396,6 +396,105 @@ class ArtelWebSocketIntegrationTest {
     }
 
     /**
+     * SDK(ARTEL-154)가 새로 추가한 마우스/키 ACTION 메서드가 릴레이를 그대로 통과하는지 고정합니다.
+     *
+     * 오케스트레이션은 `method`를 해석하지 않습니다. `ActionItemDto.method`는 enum이 아닌 String이고,
+     * 검증은 `QaActionDispatchService`의 non-blank 확인 한 줄뿐이라 어떤 메서드든 그대로 흘러갑니다.
+     * 이 성질은 코드 어디에도 명시돼 있지 않아, 나중에 누군가 메서드 화이트리스트나 enum을 넣어도
+     * 아무것도 깨지지 않습니다. 이 테스트가 그때 가장 먼저 실패하는 자리입니다.
+     *
+     * 그래서 단언 대상은 "전달됐는가"가 아니라 메서드명, params(값·타입·빈 배열), 그리고 배치 순서가
+     * 무손실인가입니다. 순서는 드래그 앤 드롭이 쓰는 그대로이며, 재정렬되면 조작 의미가 달라집니다.
+     */
+    @Test
+    fun testWebSocketMouseAndKeyActionForwardingFlow() {
+        val instance = createGameInstance()
+        val instanceId = requireNotNull(instance.id)
+        val webClient = WebClient.create("http://localhost:$port")
+
+        val wsClient = ReactorNettyWebSocketClient()
+        val wsUri = URI("ws://localhost:$port/ws/sdk?instanceKey=${instance.instanceKey}")
+        val actionReceivedLatch = Sinks.one<ActionResponseDto>()
+
+        val clientSessionMono = wsClient.execute(wsUri) { session ->
+            session.receive()
+                .doOnNext { message ->
+                    val payload = message.payloadAsText
+                    try {
+                        val actionResponse = objectMapper.readValue(payload, ActionResponseDto::class.java)
+                        actionReceivedLatch.tryEmitValue(actionResponse)
+                    } catch (e: Exception) {
+                        // ignore other messages
+                    }
+                }
+                .then()
+        }
+
+        val disposable = clientSessionMono.subscribe()
+
+        // 소켓 연결이 수립될 때까지 잠시 대기
+        Thread.sleep(1000)
+
+        // 드래그 앤 드롭 한 동작을 이루는 배치. mouse_down은 버튼 인덱스를 명시하고(0=left),
+        // mouse_up은 생략형([])으로 둬서 두 형태가 모두 그대로 건너가는지 함께 태운다.
+        val actionPayload = ActionResponseDto(
+            type = "ACTION",
+            id = 7,
+            actions = listOf(
+                ActionItemDto(id = 1, jsonrpc = "2.0", method = "mouse_down", params = listOf(0)),
+                ActionItemDto(id = 2, jsonrpc = "2.0", method = "move_mouse", params = listOf(120, 640)),
+                ActionItemDto(id = 3, jsonrpc = "2.0", method = "move_mouse", params = listOf(880, 200)),
+                ActionItemDto(id = 4, jsonrpc = "2.0", method = "mouse_up", params = emptyList()),
+                ActionItemDto(id = 5, jsonrpc = "2.0", method = "key_down", params = listOf("Space")),
+                ActionItemDto(id = 6, jsonrpc = "2.0", method = "key_up", params = listOf("Space"))
+            )
+        )
+
+        val actionResponse = webClient.post()
+            .uri("/api/orchestration/action/$instanceId")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(actionPayload)
+            .retrieve()
+            .toEntity(String::class.java)
+            .block(Duration.ofSeconds(5))
+
+        assertThat(actionResponse?.statusCode?.is2xxSuccessful).isTrue()
+
+        val receivedAction = actionReceivedLatch.asMono().block(Duration.ofSeconds(5))
+        assertThat(receivedAction).isNotNull
+        assertThat(receivedAction?.type).isEqualTo("ACTION")
+        assertThat(receivedAction?.id).isEqualTo(7L)
+        assertThat(receivedAction?.actions).hasSize(6)
+
+        // 배치 순서 자체가 계약이다. 개별 항목만 보면 재정렬 회귀를 놓친다.
+        assertThat(receivedAction?.actions?.map { it.method }).containsExactly(
+            "mouse_down", "move_mouse", "move_mouse", "mouse_up", "key_down", "key_up"
+        )
+        assertThat(receivedAction?.actions?.map { it.id }).containsExactly(1L, 2L, 3L, 4L, 5L, 6L)
+
+        val mouseDown = receivedAction?.actions?.get(0)
+        assertThat(mouseDown?.params).containsExactly(0)
+
+        val moveMouseFrom = receivedAction?.actions?.get(1)
+        assertThat(moveMouseFrom?.params).containsExactly(120, 640)
+
+        val moveMouseTo = receivedAction?.actions?.get(2)
+        assertThat(moveMouseTo?.params).containsExactly(880, 200)
+
+        // 빈 params도 손실 없이 건너가야 한다. SDK가 여기서 기본 버튼(0=left)을 채운다.
+        val mouseUp = receivedAction?.actions?.get(3)
+        assertThat(mouseUp?.params).isEmpty()
+
+        val keyDown = receivedAction?.actions?.get(4)
+        assertThat(keyDown?.params).containsExactly("Space")
+
+        val keyUp = receivedAction?.actions?.get(5)
+        assertThat(keyUp?.params).containsExactly("Space")
+
+        disposable.dispose()
+    }
+
+    /**
      * SDK가 웹소켓을 통해 보낸 ACTION_RESULT 메시지가 SdkMessageHandler 전략 패턴을 거쳐
      * QA 브리지(QaSdkBridgeService)로 전달되는지 검증합니다. Agent Server로 HTTP POST하던
      * 폴백은 존재하지 않는 엔드포인트라 제거되었고, 이제 QA 브리지가 유일한 소비자입니다.
