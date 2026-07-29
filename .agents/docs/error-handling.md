@@ -25,10 +25,17 @@ RuntimeException
 응답 body는 항상 같은 모양이다:
 
 ```json
-{ "code": "not_found", "message": "프로젝트를 찾을 수 없습니다.", "fields": {} }
+{ "code": "not_found", "message": "찾을 수 없습니다.", "fields": {} }
 ```
 
 `fields`는 DTO 검증 실패일 때만 채워진다.
+
+> **보안 규약 — message는 클라이언트로 나가지 않는다.**
+> `throw NotFoundException("프로젝트를 찾을 수 없습니다.")`처럼 예외에 실은 message는 **서버
+> 로그 전용**이다(5xx는 원인까지 error, 4xx는 debug). 응답 body의 `message`는 예외 message가
+> 아니라 **상태별 일반 문구**(예: 404 → "찾을 수 없습니다.")로, 어떤 내부 정보도 담지 않는다.
+> 상태와 무관하게(4xx 포함) 이 규약이 적용된다 — 클라이언트는 사람용 카피를 `code`로 매핑한다.
+> 따라서 message에는 사용자에게 보여줄 구체 문구가 아니라, **디버깅에 쓸 원인**을 담아도 된다.
 
 ## How to throw
 
@@ -76,7 +83,8 @@ class DocumentStorageException(message: String, cause: Throwable) :
   선언하면 단일 `handleApi`가 잡는다.
 - 5xx는 원인이 자동으로 error 로그에 남는다(4xx는 소음이라 안 남긴다). 그래서
   외부 의존 실패는 `cause`를 꼭 넘긴다.
-- `message`는 사용자에게 그대로 노출된다. 내부 사정(스택·쿼리·키)을 담지 않는다.
+- `message`는 클라이언트로 나가지 않고 로그로만 간다(위 보안 규약). 그래도 스택/쿼리 전체를
+  담기보다 원인을 짧게 적는다 — cause에 원 예외를 실으면 스택은 그쪽으로 남는다.
 - 예상 못 한 오류는 던지지 말고 그냥 전파한다 — `handleUnexpected`가 500 +
   일반 메시지로 막고 원인만 로그에 남긴다.
 

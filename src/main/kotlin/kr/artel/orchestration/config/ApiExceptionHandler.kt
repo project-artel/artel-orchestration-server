@@ -14,18 +14,25 @@ import org.springframework.web.server.ResponseStatusException
  *
  * `{"code": ..., "message": ..., "fields": ...}` 형태는 SecurityConfig가 401에 직접 쓰고 있던
  * 모양을 그대로 넓힌 것이다. 클라이언트가 상태 코드마다 다른 본문을 파싱하지 않아도 된다.
+ *
+ * **보안 규약**: 서버가 만든 오류 메시지(예외의 message)는 상태와 무관하게 클라이언트로 내보내지
+ * 않는다. 내부 구조·원인(호스트·드라이버·스택 조각 등)이 4xx로도 새어나갈 수 있기 때문이다.
+ * 클라이언트에는 기계 판별용 [ApiErrorResponse.code]와 상태별 **일반 문구**만 준다.
+ * 구체 원인은 서버 로그에만 남긴다(클라이언트는 code로 자체 카피를 매핑한다).
  */
 @RestControllerAdvice
 class ApiExceptionHandler {
 
     private val logger = LoggerFactory.getLogger(ApiExceptionHandler::class.java)
 
-    /** 요청 DTO 검증 실패. 어느 필드가 왜 틀렸는지 함께 준다. */
+    /**
+     * 요청 DTO 검증 실패. 어느 필드가 틀렸는지는 클라이언트가 자기 폼을 고치는 데 필요한
+     * 정보(클라이언트 소유 DTO 필드명)라 필드 키는 준다. 다만 필드별 문구는 서버/검증기
+     * 원문을 흘리지 않도록 일반 문구로 고정한다.
+     */
     @ExceptionHandler(WebExchangeBindException::class)
     fun handleValidation(error: WebExchangeBindException): ResponseEntity<ApiErrorResponse> {
-        val fields = error.fieldErrors.associate {
-            it.field to (it.defaultMessage ?: "올바르지 않은 값입니다.")
-        }
+        val fields = error.fieldErrors.associate { it.field to "올바르지 않은 값입니다." }
         return ResponseEntity.badRequest().body(
             ApiErrorResponse(
                 code = "invalid_request",
@@ -38,27 +45,36 @@ class ApiExceptionHandler {
     /**
      * 모든 도메인 예외의 단일 매핑. [ApiException]을 상속한 일반·특화 예외를 하나로 포괄한다
      * (예외마다 @ExceptionHandler를 추가할 필요 없음 — 새 도메인 오류는 ApiException 하위로 선언만 하면 된다).
-     * 5xx(외부 장애·서버 오류)만 원인을 로그에 남긴다(4xx 클라이언트 오류는 소음이라 안 남긴다).
+     *
+     * 예외의 message는 **클라이언트로 보내지 않는다**(상태 무관). 클라이언트에는 code와 상태별
+     * 일반 문구만 준다. 원문 message는 5xx는 원인(cause)까지 error 로그로, 4xx는 debug 로그로만 남긴다.
      */
     @ExceptionHandler(ApiException::class)
     fun handleApi(error: ApiException): ResponseEntity<ApiErrorResponse> {
-        if (error.status.value() >= 500) logger.error("API 오류 [{}]", error.code, error)
+        if (error.status.value() >= 500) {
+            logger.error("API 오류 [{}]: {}", error.code, error.message, error)
+        } else {
+            logger.debug("API 오류 [{}]: {}", error.code, error.message)
+        }
         return ResponseEntity.status(error.status).body(
-            ApiErrorResponse(
-                code = error.code,
-                message = error.message ?: "요청을 처리할 수 없습니다."
-            )
+            ApiErrorResponse(code = error.code, message = genericMessageFor(error.status.value()))
         )
     }
 
+    /**
+     * 프레임워크가 던지는 ResponseStatusException 폴백. reason에 경로 등 내부 정보가 담길 수
+     * 있어 클라이언트로 흘리지 않고, 상태별 일반 문구로 대체한다.
+     */
     @ExceptionHandler(ResponseStatusException::class)
-    fun handleStatus(error: ResponseStatusException): ResponseEntity<ApiErrorResponse> =
-        ResponseEntity.status(error.statusCode).body(
+    fun handleStatus(error: ResponseStatusException): ResponseEntity<ApiErrorResponse> {
+        if (error.statusCode.value() >= 500) logger.error("상태 오류 [{}]", error.statusCode.value(), error)
+        return ResponseEntity.status(error.statusCode).body(
             ApiErrorResponse(
                 code = error.statusCode.value().toErrorCode(),
-                message = error.reason ?: "요청을 처리할 수 없습니다."
+                message = genericMessageFor(error.statusCode.value())
             )
         )
+    }
 
     /**
      * 예상하지 못한 오류는 내부 사정을 그대로 흘리지 않는다. 원인은 로그에만 남긴다.
@@ -80,6 +96,19 @@ class ApiExceptionHandler {
         HttpStatus.NOT_FOUND.value() -> "not_found"
         HttpStatus.CONFLICT.value() -> "conflict"
         else -> "error"
+    }
+
+    /**
+     * 상태 코드만 보고 만드는 일반 문구. 서버가 만든 구체 message를 대신해 클라이언트에 나가는
+     * 유일한 사람용 텍스트라, 어떤 내부 정보도 담지 않는다(구체 원인은 code와 로그로).
+     */
+    private fun genericMessageFor(status: Int): String = when (status) {
+        HttpStatus.BAD_REQUEST.value() -> "요청 값을 확인해 주세요."
+        HttpStatus.UNAUTHORIZED.value() -> "인증이 필요합니다."
+        HttpStatus.FORBIDDEN.value() -> "권한이 없습니다."
+        HttpStatus.NOT_FOUND.value() -> "찾을 수 없습니다."
+        HttpStatus.CONFLICT.value() -> "요청이 현재 상태와 충돌합니다."
+        else -> "요청을 처리할 수 없습니다."
     }
 }
 
