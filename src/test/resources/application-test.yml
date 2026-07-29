@@ -1,6 +1,7 @@
 spring:
-  # 테스트도 실제 로컬 PostgreSQL(개발자가 띄워둔 DB)을 사용한다. H2는 JSONB를 지원하지 않으므로
-  # payload(JSONB) 검증을 위해 실 DB에 맞춘다.
+  # 테스트 DB는 스위트가 직접 띄우는 PostgreSQL 컨테이너다(PostgresTestContainer). 아래 DB_* 값은
+  # 스위트 시작 시 시스템 프로퍼티로 주입되고, 기본값(localhost)은 그 주입이 없을 때의 안전망일 뿐이다.
+  # H2가 아닌 실 PostgreSQL이어야 하는 이유는 둘이다: JSONB(payload)와 pgvector(knowledge 벡터 색인).
   r2dbc:
     url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:postgres}
     username: ${DB_USERNAME:postgres}

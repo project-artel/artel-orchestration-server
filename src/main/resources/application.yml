@@ -38,6 +38,20 @@ artel:
       model: ${ARTEL_AGENT_EXTRACT_MODEL:}
       # LLM 추출이 길어질 수 있어 넉넉히. 논블로킹이라 스레드를 잡지 않는다.
       timeout: ${ARTEL_AGENT_EXTRACT_TIMEOUT:PT3M}
+  knowledge:
+    # knowledge에 검색용 벡터를 채우는 백필 워커. Agent가 없으면 매 tick 실패만 쌓이므로
+    # 기본은 끈다(로컬·테스트). 배포 환경에서 켠다.
+    backfill:
+      enabled: ${ARTEL_KNOWLEDGE_BACKFILL_ENABLED:false}
+      # Agent 서버의 embedding_model 설정과 반드시 같아야 한다. 다르면 워커가 저장을 거부한다.
+      # 이 값이 바뀌면 그 model로 새 벡터 행이 채워지고, 다 차면 검색을 새 model로 전환한다.
+      model: ${ARTEL_KNOWLEDGE_BACKFILL_MODEL:openai/text-embedding-3-large}
+      # 한 tick 처리 상한. Agent의 /knowledge-queries 배치 상한(32)보다 작아야 한다.
+      batch-size: ${ARTEL_KNOWLEDGE_BACKFILL_BATCH_SIZE:16}
+      # 이 횟수를 넘긴 항목은 큐에서 빠진다(행은 last_error와 함께 남아 조회 가능).
+      max-attempts: ${ARTEL_KNOWLEDGE_BACKFILL_MAX_ATTEMPTS:5}
+      interval-millis: ${ARTEL_KNOWLEDGE_BACKFILL_INTERVAL_MILLIS:60000}
+      timeout: ${ARTEL_KNOWLEDGE_BACKFILL_TIMEOUT:PT2M}
   stream:
     enabled: ${ARTEL_STREAM_ENABLED:true}
     # 브라우저가 10초마다 갱신을 보낸다. 그보다 짧으면 정상 연결을 잘라낸다.
