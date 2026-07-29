@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.common.error.BadRequestException
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testcase.dto.toTestCaseResponse
@@ -8,11 +9,9 @@ import kr.artel.orchestration.testscenario.dto.ScenarioCaseItem
 import kr.artel.orchestration.testscenario.dto.ScenarioCasesResponse
 import kr.artel.orchestration.testscenario.entity.TestScenarioCaseEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
-import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
-import org.springframework.web.server.ResponseStatusException
 
 /**
  * 시나리오 ↔ 케이스 조합(junction) 서비스(코루틴). FE 캔버스가 시나리오를 케이스로 구성/재정렬할 때 쓴다.
@@ -55,9 +54,9 @@ class ScenarioCompositionService(
         val cases = testCaseRepository.findAllById(distinct).toList()
         when {
             cases.size != distinct.size ->
-                throw ResponseStatusException(HttpStatus.BAD_REQUEST, "some test cases were not found")
+                throw BadRequestException("some test cases were not found")
             cases.any { it.projectId != projectId } ->
-                throw ResponseStatusException(HttpStatus.BAD_REQUEST, "a test case belongs to another project")
+                throw BadRequestException("a test case belongs to another project")
         }
     }
 

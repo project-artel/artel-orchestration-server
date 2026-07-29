@@ -1,5 +1,8 @@
 package kr.artel.orchestration.qa.service
 
+import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.ConflictException
+import kr.artel.orchestration.common.error.NotFoundException
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.project.config.StorageProperties
@@ -7,9 +10,7 @@ import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.qa.dto.QaCaptureTicketRequest
 import kr.artel.orchestration.qa.dto.QaCaptureTicketResponse
 import kr.artel.orchestration.qa.repository.QaTryRepository
-import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
-import org.springframework.web.server.ResponseStatusException
 import java.util.UUID
 
 /** 화면 캡처로 받아들이는 형식. 배포마다 달라지면 특정 환경만 열지 못하는 이미지가 생긴다. */
@@ -42,17 +43,11 @@ class QaCaptureService(
         // 다시 시도할 realm이 없고, 404는 "그런 키는 없다"와 "그 인스턴스는 지워졌다"를
         // 같은 응답으로 묶어준다.
         val instance = instanceRepository.findActiveByInstanceKey(request.instanceKey)
-            ?: throw ResponseStatusException(
-                HttpStatus.NOT_FOUND,
-                "등록된 게임 인스턴스를 찾을 수 없습니다."
-            )
+            ?: throw NotFoundException("등록된 게임 인스턴스를 찾을 수 없습니다.")
         // 404가 아니라 409다. 인스턴스는 존재하고 요청도 올바르다. 지금 이 게임이
         // QA 실행 중이 아니라는 상태 충돌이므로, SDK는 다시 붙어도 소용이 없다.
         val qaTry = tryRepository.findActiveByGameInstanceId(requireNotNull(instance.id))
-            ?: throw ResponseStatusException(
-                HttpStatus.CONFLICT,
-                "이 게임 인스턴스에 실행 중인 QA가 없습니다."
-            )
+            ?: throw ConflictException("이 게임 인스턴스에 실행 중인 QA가 없습니다.")
 
         val qaTryId = requireNotNull(qaTry.id)
         val captureId = UUID.randomUUID().toString()
@@ -117,15 +112,9 @@ class QaCaptureService(
     /** 통과하면 이 형식의 파일 확장자를 돌려준다. */
     private fun validate(request: QaCaptureTicketRequest): String {
         val extension = ALLOWED_CONTENT_TYPES[request.contentType]
-            ?: throw ResponseStatusException(
-                HttpStatus.BAD_REQUEST,
-                "지원하지 않는 형식입니다: ${request.contentType}"
-            )
+            ?: throw BadRequestException("지원하지 않는 형식입니다: ${request.contentType}")
         if (request.contentLength > properties.maxCaptureBytes) {
-            throw ResponseStatusException(
-                HttpStatus.BAD_REQUEST,
-                "캡처는 ${properties.maxCaptureBytes / 1024 / 1024}MB를 넘을 수 없습니다."
-            )
+            throw BadRequestException("캡처는 ${properties.maxCaptureBytes / 1024 / 1024}MB를 넘을 수 없습니다.")
         }
         return extension
     }

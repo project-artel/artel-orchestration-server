@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testcase.service
 
+import kr.artel.orchestration.common.error.BadRequestException
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
@@ -12,9 +13,7 @@ import kr.artel.orchestration.testcase.dto.toTestCaseResponse
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
-import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
-import org.springframework.web.server.ResponseStatusException
 
 /**
  * TestCase 도메인 서비스(코루틴). 재사용 케이스 라이브러리의 CRUD를 담당한다.
@@ -33,7 +32,7 @@ class TestCaseService(
     suspend fun list(projectId: Long, userId: Long, category: String?, status: String?): TestCaseListResponse {
         val statusName = status?.let {
             VerificationStatus.fromWire(it)?.name
-                ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "verificationStatus must be one of ${VerificationStatus.NAMES}")
+                ?: throw BadRequestException("verificationStatus must be one of ${VerificationStatus.NAMES}")
         }
         if (!projectAccessService.isMember(projectId, userId)) return TestCaseListResponse(emptyList())
         val source = when {
@@ -72,7 +71,7 @@ class TestCaseService(
         val existing = accessible(caseId, userId) ?: return null
         val statusName = request.verificationStatus?.let {
             VerificationStatus.fromWire(it)?.name
-                ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "verificationStatus must be one of ${VerificationStatus.NAMES}")
+                ?: throw BadRequestException("verificationStatus must be one of ${VerificationStatus.NAMES}")
         }
         val updated = existing.copy(
             category = request.category?.ifBlank { null } ?: existing.category,
@@ -96,5 +95,5 @@ class TestCaseService(
 
     private fun String?.requireField(name: String): String =
         this?.takeIf { it.isNotBlank() }
-            ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "$name is required")
+            ?: throw BadRequestException("$name is required")
 }

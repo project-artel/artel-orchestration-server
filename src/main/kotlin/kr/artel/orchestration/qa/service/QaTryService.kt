@@ -1,5 +1,8 @@
 package kr.artel.orchestration.qa.service
 
+import kr.artel.orchestration.common.error.ConflictException
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.common.error.UpstreamUnavailableException
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -16,11 +19,9 @@ import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
-import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
-import org.springframework.web.server.ResponseStatusException
 import java.time.Clock
 import java.time.Instant
 import java.util.UUID
@@ -100,17 +101,17 @@ class QaTryService(
 ) {
     suspend fun create(testScenarioId: Long, gameInstanceId: Long, userId: Long): QaTryResponse {
         val scenario = scenarioAccessService.accessibleScenario(testScenarioId, userId)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+            ?: throw NotFoundException()
         val instance = instanceRepository.findAccessibleByIdForMember(gameInstanceId, userId)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+            ?: throw NotFoundException()
         if (scenario.projectId != instance.projectId) {
-            throw ResponseStatusException(HttpStatus.NOT_FOUND)
+            throw NotFoundException()
         }
         if (!sessionManager.hasSession(gameInstanceId.toString())) {
-            throw ResponseStatusException(HttpStatus.CONFLICT, "Game instance SDK is not connected")
+            throw ConflictException("Game instance SDK is not connected")
         }
         if (tryRepository.findActiveByGameInstanceId(gameInstanceId) != null) {
-            throw ResponseStatusException(HttpStatus.CONFLICT, "An active QA try already exists")
+            throw ConflictException("An active QA try already exists")
         }
 
         val (starting, startLog) = persistence.createStarting(testScenarioId, gameInstanceId, userId)
@@ -136,7 +137,10 @@ class QaTryService(
             throw error
         } catch (error: Exception) {
             failureService.failStarting(qaTryId, "QA Agent session creation failed.")
-            throw ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, error.message)
+            throw UpstreamUnavailableException(
+                error.message ?: "QA Agent 세션 생성에 실패했습니다.",
+                cause = error
+            )
         }
     }
 
@@ -156,12 +160,12 @@ class QaTryService(
      */
     suspend fun sendMessage(qaTryId: Long, userId: Long, message: String) {
         val qaTry = requireAccessible(qaTryId, userId)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+            ?: throw NotFoundException()
         if (qaTry.status != "RUNNING") {
-            throw ResponseStatusException(HttpStatus.CONFLICT, "QA try is not running")
+            throw ConflictException("QA try is not running")
         }
         val sessionId = qaTry.agentSessionId
-            ?: throw ResponseStatusException(HttpStatus.CONFLICT, "QA agent is not attached")
+            ?: throw ConflictException("QA agent is not attached")
         val payload = objectMapper.createObjectNode().put("message", message)
         val inbound = logService.append(
             qaTryId = qaTryId,
@@ -200,10 +204,10 @@ class QaTryService(
      */
     suspend fun cancel(qaTryId: Long, userId: Long) {
         requireAccessible(qaTryId, userId)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+            ?: throw NotFoundException()
         val cancelled = failureService.cancelled(qaTryId, "QA execution was cancelled by the user.")
         if (!cancelled) {
-            throw ResponseStatusException(HttpStatus.CONFLICT, "QA try has already ended")
+            throw ConflictException("QA try has already ended")
         }
     }
 

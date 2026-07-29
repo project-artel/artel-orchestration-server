@@ -1,5 +1,7 @@
 package kr.artel.orchestration.game.controller
 
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.common.error.UnauthorizedException
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -9,7 +11,6 @@ import kr.artel.orchestration.game.dto.GameBuildListResponse
 import kr.artel.orchestration.game.dto.GameBuildResponse
 import kr.artel.orchestration.game.dto.UpdateGameBuildRequest
 import kr.artel.orchestration.game.service.GameBuildService
-import org.springframework.http.HttpStatus
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.GetMapping
@@ -18,7 +19,6 @@ import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.server.ResponseStatusException
 
 /**
  * 게임 빌드는 SDK가 보고한 버전이다. 만들거나 지우는 엔드포인트는 없다.
@@ -57,11 +57,11 @@ class GameBuildController(
 
     private fun requireUser(jwt: Jwt): Long =
         sessionUserResolver.resolve(jwt)?.userId
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+            ?: throw UnauthorizedException()
 
     private fun projectNotFound() =
-        ResponseStatusException(HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다.")
+        NotFoundException("프로젝트를 찾을 수 없습니다.")
 
     private fun buildNotFound() =
-        ResponseStatusException(HttpStatus.NOT_FOUND, "게임 빌드를 찾을 수 없습니다.")
+        NotFoundException("게임 빌드를 찾을 수 없습니다.")
 }
