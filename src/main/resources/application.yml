@@ -52,6 +52,12 @@ artel:
       max-attempts: ${ARTEL_KNOWLEDGE_BACKFILL_MAX_ATTEMPTS:5}
       interval-millis: ${ARTEL_KNOWLEDGE_BACKFILL_INTERVAL_MILLIS:60000}
       timeout: ${ARTEL_KNOWLEDGE_BACKFILL_TIMEOUT:PT2M}
+    # QA WS의 KNOWLEDGE_SEARCH가 쓰는 벡터 검색. 어느 모델의 벡터를 읽을지는 위 backfill.model을
+    # 그대로 따른다(설정을 둘로 두면 어긋난 순간 결과가 항상 비고, 그것이 오류로 드러나지 않는다).
+    search:
+      default-limit: ${ARTEL_KNOWLEDGE_SEARCH_DEFAULT_LIMIT:5}
+      # 결과가 Agent 컨텍스트로 들어간다. 요청이 더 큰 값을 보내도 여기서 잘린다.
+      max-limit: ${ARTEL_KNOWLEDGE_SEARCH_MAX_LIMIT:20}
   stream:
     enabled: ${ARTEL_STREAM_ENABLED:true}
     # 브라우저가 10초마다 갱신을 보낸다. 그보다 짧으면 정상 연결을 잘라낸다.

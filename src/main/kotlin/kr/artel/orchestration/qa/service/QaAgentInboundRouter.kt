@@ -1,5 +1,6 @@
 package kr.artel.orchestration.qa.service
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.CancellationException
@@ -8,9 +9,13 @@ import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.service.IssueService
 import kr.artel.orchestration.knowledge.dto.KnowledgeIngestRequest
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
+import kr.artel.orchestration.knowledge.dto.KnowledgeSearchRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
+import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.knowledge.service.KnowledgeMutation
+import kr.artel.orchestration.knowledge.service.KnowledgeSearchService
 import kr.artel.orchestration.knowledge.service.KnowledgeService
+import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -24,7 +29,8 @@ import java.util.UUID
 private val KNOWLEDGE_MUTATION_TYPES = setOf("KNOWLEDGE_CREATE", "KNOWLEDGE_UPDATE", "KNOWLEDGE_DELETE")
 
 private val SUPPORTED_TYPES =
-    setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE") + KNOWLEDGE_MUTATION_TYPES
+    setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE", "KNOWLEDGE_SEARCH") +
+        KNOWLEDGE_MUTATION_TYPES
 
 @Service
 class QaAgentInboundRouter(
@@ -34,6 +40,8 @@ class QaAgentInboundRouter(
     private val streamManager: QaLogStreamManager,
     private val issueService: IssueService,
     private val knowledgeService: KnowledgeService,
+    private val knowledgeSearchService: KnowledgeSearchService,
+    private val agentPort: QaAgentPort,
     private val gameInstanceRepository: GameInstanceRepository,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
@@ -61,6 +69,14 @@ class QaAgentInboundRouter(
         if (envelope.type in KNOWLEDGE_MUTATION_TYPES) {
             val qaTry = activeTry(qaTryId) ?: return
             routeKnowledgeMutation(qaTryId, qaTry.gameInstanceId, envelope)
+            return
+        }
+        // KNOWLEDGE_SEARCH carries the search term in payload.query, not a display
+        // message, so it splits before the message-required guard for the same
+        // reason KNOWLEDGE does.
+        if (envelope.type == "KNOWLEDGE_SEARCH") {
+            val qaTry = activeTry(qaTryId) ?: return
+            routeKnowledgeSearch(qaTryId, qaTry, envelope)
             return
         }
         // 이슈는 표시용 `message` 대신 `title`을 담는다. 나머지 타입은 모두 타임라인에 뜨는
@@ -230,6 +246,159 @@ class QaAgentInboundRouter(
         }
         if (result is KnowledgeMutation.Rejected) {
             appendError(qaTryId, envelope, "${envelope.type} rejected: ${result.reason}")
+        }
+    }
+
+    /**
+     * Agent의 지식 검색 요청을 처리하고 결과를 WS로 돌려준다(ARTEL-186).
+     *
+     * 검색 범위는 payload가 아니라 `qaTryId → gameInstanceId → projectId`로 해석한다. Agent가
+     * 프로젝트를 지목할 수 있으면 프레임 하나로 남의 프로젝트 지식을 읽게 된다.
+     *
+     * **성공 응답은 qa_log에 남기지 않는다.** 지식 본문이 타임라인에 통째로 실리면 안 된다(쓰기 쪽
+     * `KNOWLEDGE`도 같은 이유로 남기지 않는다). 실패만 ORCHE_INTERNAL 로그로 남고, 어느 쪽이든
+     * throw하지 않아 receive 체인이 끊기지 않는다.
+     *
+     * 결과가 비는 것은 오류가 아니다 — 백필이 비동기라 벡터가 아직 없는 것이 정상 상태다.
+     */
+    private suspend fun routeKnowledgeSearch(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope
+    ) {
+        // 세션을 가장 먼저 확인한다. 답할 곳이 없으면 검색을 돌려 봐야 결과를 버리게 되고,
+        // 그 사이 임베딩 호출 비용만 나간다. (프레임을 보낸 Agent가 곧 그 세션이라 실제로는
+        // null이 아니지만, 그 가정을 코드가 기대는 대신 확인한다.)
+        val sessionId = qaTry.agentSessionId
+        if (sessionId == null) {
+            appendError(qaTryId, envelope, "KNOWLEDGE_SEARCH has no Agent session to answer")
+            return
+        }
+        // 이후 모든 실패는 감사 로그만이 아니라 ERROR 프레임으로도 답한다 — Agent 도구가 응답을
+        // 기다리고 있어 로그만 남기면 그 도구가 매달린다.
+        val request = try {
+            objectMapper.treeToValue(envelope.payload, KnowledgeSearchRequest::class.java)
+        } catch (error: Exception) {
+            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH payload parse failed: ${error.message}")
+            return
+        }
+        val query = request.query?.trim()
+        if (query.isNullOrEmpty()) {
+            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH payload.query is required")
+            return
+        }
+        // tag는 단수/복수 둘 다 받는다(KnowledgeSearchRequest 주석 참조). 알 수 없는 토큰을 조용히
+        // 버리면 필터가 걸린 줄 알고 넓은 결과를 읽게 되므로, 하나라도 모르면 요청을 거절한다.
+        val requestedTags = request.tags + listOfNotNull(request.tag)
+        val tags = requestedTags.map { KnowledgeTag.fromWire(it) }
+        if (tags.any { it == null }) {
+            failSearch(
+                qaTryId,
+                sessionId,
+                envelope,
+                "KNOWLEDGE_SEARCH payload tags must be one of ${KnowledgeTag.NAMES}: $requestedTags"
+            )
+            return
+        }
+        val source = request.source?.let { KnowledgeSource.fromWire(it) }
+        if (request.source != null && source == null) {
+            failSearch(
+                qaTryId,
+                sessionId,
+                envelope,
+                "KNOWLEDGE_SEARCH payload.source must be one of ${KnowledgeSource.NAMES}: ${request.source}"
+            )
+            return
+        }
+        val instance = gameInstanceRepository.findById(qaTry.gameInstanceId)
+        if (instance == null) {
+            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH cannot resolve the project of this run")
+            return
+        }
+        val response = try {
+            knowledgeSearchService.search(
+                projectId = instance.projectId,
+                query = query,
+                tags = tags.filterNotNull(),
+                source = source,
+                limit = request.limit
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // Agent 호출 실패·모델 불일치·DB 오류가 여기로 온다. 런 전체를 죽이지 않는다.
+            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH failed: ${error.message}")
+            return
+        }
+        sendToAgent(
+            qaTryId,
+            sessionId,
+            "KNOWLEDGE_SEARCH_RESULT",
+            envelope.messageId,
+            objectMapper.valueToTree(response)
+        )
+    }
+
+    /**
+     * 검색 실패를 타임라인에 남기고 Agent에도 ERROR 프레임으로 알린다.
+     *
+     * 두 곳 모두에 남기는 이유가 다르다: qa_log는 나중에 왜 실패했는지 읽기 위한 것이고, ERROR
+     * 프레임은 기다리고 있는 Agent 도구를 풀어 주기 위한 것이다.
+     */
+    private suspend fun failSearch(
+        qaTryId: Long,
+        sessionId: String,
+        envelope: QaAgentEnvelope,
+        reason: String
+    ) {
+        appendError(qaTryId, envelope, reason)
+        sendToAgent(
+            qaTryId,
+            sessionId,
+            "ERROR",
+            envelope.messageId,
+            objectMapper.createObjectNode().put("message", reason)
+        )
+    }
+
+    /**
+     * 응답 프레임을 Agent로 보낸다. `correlationId`에 요청 messageId를 실어 Agent가 자기 도구 호출과
+     * 맞출 수 있게 한다.
+     *
+     * 전송 실패는 여기서 멈춘다. 위로 던지면 receive 체인이 끊겨 WS가 닫히는데, 그것은 "응답 하나를
+     * 못 보냈다"에 대한 대가로 지나치다.
+     */
+    private suspend fun sendToAgent(
+        qaTryId: Long,
+        sessionId: String,
+        type: String,
+        correlationId: String,
+        payload: JsonNode
+    ) {
+        try {
+            agentPort.send(
+                sessionId,
+                QaAgentEnvelope(
+                    messageId = UUID.randomUUID().toString(),
+                    type = type,
+                    qaTryId = qaTryId.toString(),
+                    correlationId = correlationId,
+                    timestamp = Instant.now(clock),
+                    payload = payload
+                )
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val log = logService.append(
+                qaTryId = qaTryId,
+                direction = "ORCHE_INTERNAL",
+                type = "ERROR",
+                correlationId = correlationId,
+                message = "QA Agent $type delivery failed.",
+                payload = objectMapper.createObjectNode().put("error", error.message)
+            )
+            logService.publish(log)
         }
     }
 

@@ -11,5 +11,5 @@ import org.springframework.context.annotation.Configuration
  * [KnowledgeBackfillScheduler]가 아니라 여기에 둔다.
  */
 @Configuration
-@EnableConfigurationProperties(KnowledgeBackfillProperties::class)
+@EnableConfigurationProperties(KnowledgeBackfillProperties::class, KnowledgeSearchProperties::class)
 class KnowledgeConfig
