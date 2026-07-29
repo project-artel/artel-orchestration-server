@@ -153,9 +153,8 @@ class QaCaptureIntegrationTest {
         val error = ticketError(seeded.instanceKey, "application/pdf", 120_000)
 
         assertThat(error.statusCode).isEqualTo(HttpStatus.BAD_REQUEST)
-        // 오류 본문은 code만 주고, 입력(content type)이나 서버 메시지를 되비추지 않는다.
-        assertThat(error.responseBodyAsString).contains("invalid_request")
-        assertThat(error.responseBodyAsString).doesNotContain("application/pdf")
+        // 4xx는 도메인 안내 message를 그대로 준다(서버 내부가 아니라 요청에 대한 안내).
+        assertThat(error.responseBodyAsString).contains("application/pdf")
     }
 
     @Test

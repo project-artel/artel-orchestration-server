@@ -26,13 +26,14 @@ class ApiExceptionHandler {
     private val logger = LoggerFactory.getLogger(ApiExceptionHandler::class.java)
 
     /**
-     * 요청 DTO 검증 실패. 어느 필드가 틀렸는지는 클라이언트가 자기 폼을 고치는 데 필요한
-     * 정보(클라이언트 소유 DTO 필드명)라 필드 키는 준다. 다만 필드별 문구는 서버/검증기
-     * 원문을 흘리지 않도록 일반 문구로 고정한다.
+     * 요청 DTO 검증 실패. 어느 필드가 왜 틀렸는지(제약 조건 안내 = 요청에 대한 도메인 정보)를
+     * 함께 준다 — 서버 내부가 아니라 클라이언트 요청에 대한 피드백이라 4xx 안내로 안전하다.
      */
     @ExceptionHandler(WebExchangeBindException::class)
     fun handleValidation(error: WebExchangeBindException): ResponseEntity<ApiErrorResponse> {
-        val fields = error.fieldErrors.associate { it.field to "올바르지 않은 값입니다." }
+        val fields = error.fieldErrors.associate {
+            it.field to (it.defaultMessage ?: "올바르지 않은 값입니다.")
+        }
         return ResponseEntity.badRequest().body(
             ApiErrorResponse(
                 code = "invalid_request",
@@ -46,18 +47,26 @@ class ApiExceptionHandler {
      * 모든 도메인 예외의 단일 매핑. [ApiException]을 상속한 일반·특화 예외를 하나로 포괄한다
      * (예외마다 @ExceptionHandler를 추가할 필요 없음 — 새 도메인 오류는 ApiException 하위로 선언만 하면 된다).
      *
-     * 예외의 message는 **클라이언트로 보내지 않는다**(상태 무관). 클라이언트에는 code와 상태별
-     * 일반 문구만 준다. 원문 message는 5xx는 원인(cause)까지 error 로그로, 4xx는 debug 로그로만 남긴다.
+     * 클라이언트로 나가는 message 규약:
+     * - **5xx**: 서버가 만든/감싼 원문은 **절대 내보내지 않는다**(내부 구조·원인 유출 방지) → 일반 문구.
+     *   원문 message는 원인(cause)까지 error 로그로만 남긴다.
+     * - **4xx**: 예외의 message(우리가 쓴 **도메인 안내**, 예: "기획서는 PDF만…")를 그대로 준다.
+     *   전제 규약: 4xx 예외는 **잡은 예외의 raw message를 감싸지 않는다**(도메인 상수/입력만). 이 규약을
+     *   지키는 한 4xx로는 내부 정보가 새지 않는다. 진단이 필요하면 debug 로그를 본다.
      */
     @ExceptionHandler(ApiException::class)
     fun handleApi(error: ApiException): ResponseEntity<ApiErrorResponse> {
-        if (error.status.value() >= 500) {
+        val serverError = error.status.value() >= 500
+        if (serverError) {
             logger.error("API 오류 [{}]: {}", error.code, error.message, error)
         } else {
             logger.debug("API 오류 [{}]: {}", error.code, error.message)
         }
+        val clientMessage =
+            if (serverError) genericMessageFor(error.status.value())
+            else error.message ?: genericMessageFor(error.status.value())
         return ResponseEntity.status(error.status).body(
-            ApiErrorResponse(code = error.code, message = genericMessageFor(error.status.value()))
+            ApiErrorResponse(code = error.code, message = clientMessage)
         )
     }
 
