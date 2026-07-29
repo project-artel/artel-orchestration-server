@@ -1,5 +1,7 @@
 package kr.artel.orchestration.qa.controller
 
+import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.UnauthorizedException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kr.artel.orchestration.auth.service.SessionUserResolver
@@ -23,7 +25,6 @@ import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.server.ResponseStatusException
 
 /** Matches the Agent's own payload guard; longer input is a paste, not a message. */
 private const val MAX_QA_MESSAGE_LENGTH = 4000
@@ -50,7 +51,7 @@ class QaTryController(
         @RequestParam(defaultValue = "20") size: Int,
         @AuthenticationPrincipal jwt: Jwt
     ): ResponseEntity<List<QaTryResponse>> {
-        if (size !in 1..100) throw ResponseStatusException(HttpStatus.BAD_REQUEST, "size must be between 1 and 100")
+        if (size !in 1..100) throw BadRequestException("size must be between 1 and 100")
         return ResponseEntity.ok(service.listByProject(parseId(projectId), requireUser(jwt), size))
     }
 
@@ -77,10 +78,10 @@ class QaTryController(
     ): ResponseEntity<Void> {
         val message = request.message.trim()
         if (message.isEmpty()) {
-            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "message must not be blank")
+            throw BadRequestException("message must not be blank")
         }
         if (message.length > MAX_QA_MESSAGE_LENGTH) {
-            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "message is too long")
+            throw BadRequestException("message is too long")
         }
         service.sendMessage(parseId(qaTryId), requireUser(jwt), message)
         return ResponseEntity.accepted().build()
@@ -103,7 +104,7 @@ class QaTryController(
         @RequestParam(defaultValue = "50") size: Int,
         @AuthenticationPrincipal jwt: Jwt
     ): ResponseEntity<QaLogPageResponse> {
-        if (size !in 1..100) throw ResponseStatusException(HttpStatus.BAD_REQUEST, "size must be between 1 and 100")
+        if (size !in 1..100) throw BadRequestException("size must be between 1 and 100")
         return service.logs(parseId(qaTryId), requireUser(jwt), beforeId?.let(::parseId), size)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
@@ -127,11 +128,11 @@ class QaTryController(
     }
 
     private fun requireUser(jwt: Jwt): Long =
-        userResolver.resolve(jwt)?.userId ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+        userResolver.resolve(jwt)?.userId ?: throw UnauthorizedException()
 
     private fun parseId(value: String): Long =
         value.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
             ?.toLongOrNull()
             ?.takeIf { it >= 0 }
-            ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "ID must be a signed 64-bit decimal string")
+            ?: throw BadRequestException("ID must be a signed 64-bit decimal string")
 }

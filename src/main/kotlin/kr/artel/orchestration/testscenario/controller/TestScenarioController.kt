@@ -1,5 +1,7 @@
 package kr.artel.orchestration.testscenario.controller
 
+import kr.artel.orchestration.common.error.ApiException
+import kr.artel.orchestration.common.error.UnauthorizedException
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.testscenario.dto.ApproveScenarioRequest
@@ -24,7 +26,6 @@ import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.server.ResponseStatusException
 
 /**
  * QA 대시보드(React)와 통신하는 TestScenario 챗봇 REST 컨트롤러(외부/인증된 요청, 코루틴).
@@ -105,8 +106,8 @@ class TestScenarioController(
         return try {
             service.relay(appUserId, testScenarioId, message)
             ResponseEntity.ok("메시지 전송 완료")
-        } catch (e: ResponseStatusException) {
-            // 접근 거부(404 등)는 그대로 전파한다.
+        } catch (e: ApiException) {
+            // 접근 거부(404 등) 등 도메인 예외는 그대로 전파해 advice가 매핑하게 둔다.
             throw e
         } catch (e: kotlinx.coroutines.CancellationException) {
             // 요청 취소(클라이언트 끊김)는 삼키지 않고 전파해야 코루틴이 정상 취소된다.
@@ -132,5 +133,5 @@ class TestScenarioController(
     /** 유효한 사용자 토큰이 아니면 401. */
     private fun requireUser(jwt: Jwt): Long =
         sessionUserResolver.resolve(jwt)?.userId
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+            ?: throw UnauthorizedException()
 }

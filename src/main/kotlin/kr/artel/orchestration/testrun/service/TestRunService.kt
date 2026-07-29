@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testrun.service
 
+import kr.artel.orchestration.common.error.BadRequestException
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.service.ProjectAccessService
@@ -14,11 +15,9 @@ import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
-import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
-import org.springframework.web.server.ResponseStatusException
 import java.time.Instant
 
 /**
@@ -42,7 +41,7 @@ class TestRunService(
     suspend fun create(projectId: Long, userId: Long, request: TestRunCreateRequest): TestRunResponse? {
         if (!projectAccessService.isMember(projectId, userId)) return null
         val name = request.name?.takeIf { it.isNotBlank() }
-            ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "name is required")
+            ?: throw BadRequestException("name is required")
         return runRepository.save(
             TestRunEntity(projectId = projectId, name = name, description = request.description?.ifBlank { null })
         ).toResponse()
@@ -93,9 +92,9 @@ class TestRunService(
         val scenarios = scenarioRepository.findAllById(distinct).toList()
         when {
             scenarios.size != distinct.size ->
-                throw ResponseStatusException(HttpStatus.BAD_REQUEST, "some scenarios were not found")
+                throw BadRequestException("some scenarios were not found")
             scenarios.any { it.projectId != projectId } ->
-                throw ResponseStatusException(HttpStatus.BAD_REQUEST, "a scenario belongs to another project")
+                throw BadRequestException("a scenario belongs to another project")
         }
     }
 

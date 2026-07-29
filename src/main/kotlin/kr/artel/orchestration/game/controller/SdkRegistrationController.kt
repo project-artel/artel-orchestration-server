@@ -1,17 +1,16 @@
 package kr.artel.orchestration.game.controller
 
+import kr.artel.orchestration.common.error.NotFoundException
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
 import kr.artel.orchestration.game.dto.SdkRegistrationRequest
 import kr.artel.orchestration.game.dto.SdkRegistrationResponse
 import kr.artel.orchestration.game.service.SdkRegistrationService
-import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.server.ResponseStatusException
 
 /**
  * SDK가 게임 실행마다 부르는 등록 지점. 엔드유저 JWT가 아니라 instanceKey로 통과한다.
@@ -36,8 +35,5 @@ class SdkRegistrationController(
         @Valid @RequestBody request: SdkRegistrationRequest
     ): SdkRegistrationResponse =
         registrationService.register(request)
-            ?: throw ResponseStatusException(
-                HttpStatus.NOT_FOUND,
-                "등록된 게임 인스턴스를 찾을 수 없습니다."
-            )
+            ?: throw NotFoundException("등록된 게임 인스턴스를 찾을 수 없습니다.")
 }

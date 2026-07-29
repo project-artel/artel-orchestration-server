@@ -1,10 +1,11 @@
 package kr.artel.orchestration.testscenario.controller
 
+import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.testscenario.dto.ScenarioCasesResponse
 import kr.artel.orchestration.testscenario.dto.SetScenarioCasesRequest
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
-import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
@@ -14,7 +15,6 @@ import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.server.ResponseStatusException
 
 /**
  * 시나리오의 케이스 조합 REST(외부/인증, 코루틴). FE 캔버스가 시나리오를 케이스로 구성/재정렬한다.
@@ -43,7 +43,7 @@ class TestScenarioCaseController(
         @AuthenticationPrincipal jwt: Jwt
     ): ResponseEntity<ScenarioCasesResponse> {
         val caseIds = request.caseIds.map {
-            it.toLongOrNull() ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid caseId: $it")
+            it.toLongOrNull() ?: throw BadRequestException("invalid caseId: $it")
         }
         return service.setCases(testScenarioId, requireUser(jwt), caseIds)
             ?.let { ResponseEntity.ok(it) }
@@ -52,5 +52,5 @@ class TestScenarioCaseController(
 
     private fun requireUser(jwt: Jwt): Long =
         sessionUserResolver.resolve(jwt)?.userId
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+            ?: throw UnauthorizedException()
 }

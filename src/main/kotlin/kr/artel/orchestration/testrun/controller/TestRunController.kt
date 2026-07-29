@@ -1,5 +1,7 @@
 package kr.artel.orchestration.testrun.controller
 
+import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
 import kr.artel.orchestration.testrun.dto.SetRunScenariosRequest
@@ -20,7 +22,6 @@ import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.server.ResponseStatusException
 
 /**
  * TestRun REST(외부/인증, 코루틴). 여러 시나리오를 묶은 실행 세트를 만들고 시나리오 조합을 편집한다.
@@ -98,7 +99,7 @@ class TestRunController(
         @AuthenticationPrincipal jwt: Jwt
     ): ResponseEntity<RunScenariosResponse> {
         val scenarioIds = request.scenarioIds.map {
-            it.toLongOrNull() ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid scenarioId: $it")
+            it.toLongOrNull() ?: throw BadRequestException("invalid scenarioId: $it")
         }
         return service.setScenarios(runId, requireUser(jwt), scenarioIds)
             ?.let { ResponseEntity.ok(it) }
@@ -107,5 +108,5 @@ class TestRunController(
 
     private fun requireUser(jwt: Jwt): Long =
         sessionUserResolver.resolve(jwt)?.userId
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+            ?: throw UnauthorizedException()
 }
