@@ -1,5 +1,7 @@
 package kr.artel.orchestration.auth.controller
 
+import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.auth.dto.AuthUserResponse
 import kr.artel.orchestration.auth.dto.LinkedIdentityResponse
 import kr.artel.orchestration.auth.dto.UpdateLocaleRequest
@@ -15,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.server.ResponseStatusException
 
 /** 홈 UI가 번역을 제공하는 언어. 새 번역이 추가될 때 함께 넓힌다. */
 private val SUPPORTED_LOCALES = setOf("en", "ko")
@@ -31,10 +32,10 @@ class AuthController(
     // 인증 실패가 401이 아니라 NPE(500)로 새어 나온다.
     suspend fun me(@AuthenticationPrincipal jwt: Jwt?): AuthUserResponse {
         val session = jwt?.let(sessionUserResolver::resolve)
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+            ?: throw UnauthorizedException()
         // 서명은 유효하지만 가리키는 사용자가 없는 토큰은 유효한 세션이 아니다.
         val profile = oauthUserService.findProfile(session.userId)
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+            ?: throw UnauthorizedException()
         return profile.toResponse()
     }
 
@@ -45,13 +46,13 @@ class AuthController(
         @RequestBody request: UpdateLocaleRequest
     ) {
         if (request.locale !in SUPPORTED_LOCALES) {
-            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "unsupported locale")
+            throw BadRequestException("unsupported locale")
         }
         val session = sessionUserResolver.resolve(jwt)
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+            ?: throw UnauthorizedException()
         // me()와 같은 이유: 가리키는 사용자가 없는 토큰은 유효한 세션이 아니다.
         oauthUserService.updateLocale(session.userId, request.locale)
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+            ?: throw UnauthorizedException()
     }
 
     private fun UserProfile.toResponse() = AuthUserResponse(

@@ -1,5 +1,7 @@
 package kr.artel.orchestration.game.controller
 
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.common.error.UnauthorizedException
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -22,7 +24,6 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.server.ResponseStatusException
 
 /**
  * 게임 인스턴스는 SDK 설치본 하나를 가리킨다.
@@ -89,12 +90,12 @@ class GameInstanceController(
 
     private fun requireUser(jwt: Jwt): Long =
         sessionUserResolver.resolve(jwt)?.userId
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+            ?: throw UnauthorizedException()
 
     /** 참여자가 아닌 프로젝트는 존재 여부조차 알리지 않는다. */
     private fun projectNotFound() =
-        ResponseStatusException(HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다.")
+        NotFoundException("프로젝트를 찾을 수 없습니다.")
 
     private fun instanceNotFound() =
-        ResponseStatusException(HttpStatus.NOT_FOUND, "게임 인스턴스를 찾을 수 없습니다.")
+        NotFoundException("게임 인스턴스를 찾을 수 없습니다.")
 }

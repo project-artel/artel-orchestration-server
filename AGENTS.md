@@ -15,6 +15,10 @@ For non-trivial work, follow:
 - `.agents/docs/workflow.md`
 - `.agents/docs/testing.md`
 
+Coding conventions:
+
+- `.agents/docs/error-handling.md` — 오류는 `common/error`의 타입 예외로 던진다(신규 `ResponseStatusException` 금지).
+
 For tracked Git work, follow:
 
 - `.agents/docs/issue.md`

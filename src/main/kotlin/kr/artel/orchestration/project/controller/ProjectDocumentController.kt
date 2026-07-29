@@ -1,5 +1,7 @@
 package kr.artel.orchestration.project.controller
 
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.common.error.UnauthorizedException
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -21,7 +23,6 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.server.ResponseStatusException
 
 /**
  * 기획서 업로드는 세 번의 호출로 이뤄진다(코루틴).
@@ -93,11 +94,11 @@ class ProjectDocumentController(
 
     private fun requireUser(jwt: Jwt): Long =
         sessionUserResolver.resolve(jwt)?.userId
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+            ?: throw UnauthorizedException()
 
     private fun projectNotFound() =
-        ResponseStatusException(HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다.")
+        NotFoundException("프로젝트를 찾을 수 없습니다.")
 
     private fun documentNotFound() =
-        ResponseStatusException(HttpStatus.NOT_FOUND, "기획서를 찾을 수 없습니다.")
+        NotFoundException("기획서를 찾을 수 없습니다.")
 }

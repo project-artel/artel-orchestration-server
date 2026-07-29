@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.common.error.NotFoundException
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.Flow
@@ -15,10 +16,8 @@ import kr.artel.orchestration.testscenario.dto.TestScenarioMessage
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioMessageRepository
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
-import org.springframework.http.HttpStatus
 import org.springframework.http.codec.ServerSentEvent
 import org.springframework.stereotype.Service
-import org.springframework.web.server.ResponseStatusException
 
 /**
  * TestScenario 도메인 서비스(코루틴). 컨트롤러가 얇게 유지되도록 생성/조회/중계/스트림의 비즈니스 로직을 담당한다.
@@ -76,7 +75,7 @@ class TestScenarioService(
      */
     suspend fun listScenarios(projectId: Long, appUserId: Long): ScenarioListResponse {
         if (!accessService.isMember(projectId, appUserId)) {
-            throw ResponseStatusException(HttpStatus.NOT_FOUND)
+            throw NotFoundException()
         }
         val items = scenarioRepository.findByProjectId(projectId)
             .map { toSummary(it) }
@@ -113,7 +112,7 @@ class TestScenarioService(
      */
     suspend fun testScenarioUpdate(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft): ScenarioResponse {
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+            ?: throw NotFoundException()
         val saved = scenarioRepository.save(
             entity.copy(payload = Json.of(objectMapper.writeValueAsString(draft)))
         )
@@ -127,7 +126,7 @@ class TestScenarioService(
     /** FE가 Agent 응답을 실시간 수신하는 SSE 스트림. 접근 불가면 404. */
     suspend fun stream(appUserId: Long, testScenarioId: Long): Flow<ServerSentEvent<ScenarioStreamEvent>> {
         accessService.accessibleScenario(testScenarioId, appUserId)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+            ?: throw NotFoundException()
         return streamManager.stream(sessionKey(appUserId, testScenarioId))
     }
 
@@ -137,7 +136,7 @@ class TestScenarioService(
      */
     suspend fun testScenarioApprove(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft?) {
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+            ?: throw NotFoundException()
         if (draft != null) {
             scenarioRepository.save(
                 entity.copy(payload = Json.of(objectMapper.writeValueAsString(draft)))
@@ -156,7 +155,7 @@ class TestScenarioService(
     /** 사용자 입력을 Agent로 중계한다. 접근 불가면 404. */
     suspend fun relay(appUserId: Long, testScenarioId: Long, message: TestScenarioMessage) {
         val scenario = accessService.accessibleScenario(testScenarioId, appUserId)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+            ?: throw NotFoundException()
         agentService.sendMessage(
             sessionKey(appUserId, testScenarioId),
             testScenarioId,

@@ -1,9 +1,6 @@
 package kr.artel.orchestration.config
 
-import kr.artel.orchestration.project.service.DuplicateDocumentException
-import kr.artel.orchestration.project.service.InvalidDocumentException
-import kr.artel.orchestration.project.storage.DocumentStorageException
-import kr.artel.orchestration.project.service.ProjectAccessDeniedException
+import kr.artel.orchestration.common.error.ApiException
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -38,48 +35,21 @@ class ApiExceptionHandler {
         )
     }
 
-    @ExceptionHandler(InvalidDocumentException::class)
-    fun handleInvalidDocument(error: InvalidDocumentException): ResponseEntity<ApiErrorResponse> =
-        ResponseEntity.badRequest().body(
-            ApiErrorResponse(
-                code = "invalid_document",
-                message = error.message ?: "올바르지 않은 파일입니다."
-            )
-        )
-
-    /** 같은 프로젝트에 동일 파일이 이미 있어 업로드를 막을 때. */
-    @ExceptionHandler(DuplicateDocumentException::class)
-    fun handleDuplicateDocument(error: DuplicateDocumentException): ResponseEntity<ApiErrorResponse> =
-        ResponseEntity.status(HttpStatus.CONFLICT).body(
-            ApiErrorResponse(
-                code = "duplicate_document",
-                message = error.message ?: "이미 업로드된 파일입니다."
-            )
-        )
-
     /**
-     * 저장소 장애·설정 누락은 요청 잘못이 아니다. 원인은 로그에 남기고, 클라이언트에게는
-     * 다시 시도할 수 있는 일시적 오류로 알린다.
+     * 모든 도메인 예외의 단일 매핑. [ApiException]을 상속한 일반·특화 예외를 하나로 포괄한다
+     * (예외마다 @ExceptionHandler를 추가할 필요 없음 — 새 도메인 오류는 ApiException 하위로 선언만 하면 된다).
+     * 5xx(외부 장애·서버 오류)만 원인을 로그에 남긴다(4xx 클라이언트 오류는 소음이라 안 남긴다).
      */
-    @ExceptionHandler(DocumentStorageException::class)
-    fun handleStorage(error: DocumentStorageException): ResponseEntity<ApiErrorResponse> {
-        logger.error("기획서 저장소 접근 실패", error)
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(
+    @ExceptionHandler(ApiException::class)
+    fun handleApi(error: ApiException): ResponseEntity<ApiErrorResponse> {
+        if (error.status.value() >= 500) logger.error("API 오류 [{}]", error.code, error)
+        return ResponseEntity.status(error.status).body(
             ApiErrorResponse(
-                code = "storage_unavailable",
-                message = error.message ?: "기획서 저장소에 접근하지 못했습니다."
+                code = error.code,
+                message = error.message ?: "요청을 처리할 수 없습니다."
             )
         )
     }
-
-    @ExceptionHandler(ProjectAccessDeniedException::class)
-    fun handleAccessDenied(error: ProjectAccessDeniedException): ResponseEntity<ApiErrorResponse> =
-        ResponseEntity.status(HttpStatus.FORBIDDEN).body(
-            ApiErrorResponse(
-                code = "forbidden",
-                message = error.message ?: "권한이 없습니다."
-            )
-        )
 
     @ExceptionHandler(ResponseStatusException::class)
     fun handleStatus(error: ResponseStatusException): ResponseEntity<ApiErrorResponse> =

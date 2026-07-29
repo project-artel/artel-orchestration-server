@@ -1,5 +1,7 @@
 package kr.artel.orchestration.project.controller
 
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.common.error.UnauthorizedException
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -25,7 +27,6 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.server.ResponseStatusException
 
 /**
  * 프로젝트 REST(코루틴). 컨트롤러는 얇게: JWT→userId 추출 + 상태코드 매핑(서비스가 null이면 404),
@@ -90,9 +91,9 @@ class ProjectController(
     private fun requireUser(jwt: Jwt): Long =
         // 서명은 유효하지만 가리키는 사용자가 없는 토큰은 유효한 세션이 아니다.
         sessionUserResolver.resolve(jwt)?.userId
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED)
+            ?: throw UnauthorizedException()
 
     /** 참여자가 아닌 프로젝트는 존재 여부조차 알리지 않는다. */
     private fun projectNotFound() =
-        ResponseStatusException(HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다.")
+        NotFoundException("프로젝트를 찾을 수 없습니다.")
 }
