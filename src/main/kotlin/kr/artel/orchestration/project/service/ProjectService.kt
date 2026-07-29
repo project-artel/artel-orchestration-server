@@ -218,4 +218,5 @@ class ProjectService(
 }
 
 /** 접근은 가능하지만 그 동작에 필요한 역할이 아닐 때. 컨트롤러가 403으로 옮긴다. */
-class ProjectAccessDeniedException(message: String) : RuntimeException(message)
+class ProjectAccessDeniedException(message: String) :
+    kr.artel.orchestration.common.error.ForbiddenException(message)

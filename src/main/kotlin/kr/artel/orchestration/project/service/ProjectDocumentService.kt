@@ -294,7 +294,9 @@ class ProjectDocumentService(
 }
 
 /** 업로드 규격을 벗어난 요청. 컨트롤러가 400으로 옮긴다. */
-class InvalidDocumentException(message: String) : RuntimeException(message)
+class InvalidDocumentException(message: String) :
+    kr.artel.orchestration.common.error.BadRequestException(message, code = "invalid_document")
 
 /** 같은 프로젝트에 동일 파일(hash)이 이미 있어 업로드를 거부할 때. 409 Conflict로 매핑된다. */
-class DuplicateDocumentException(message: String) : RuntimeException(message)
+class DuplicateDocumentException(message: String) :
+    kr.artel.orchestration.common.error.ConflictException(message, code = "duplicate_document")
