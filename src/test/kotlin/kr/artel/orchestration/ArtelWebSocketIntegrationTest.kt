@@ -1,6 +1,7 @@
 package kr.artel.orchestration
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.entity.GamePlatform
 import kr.artel.orchestration.game.repository.GameInstanceRepository
@@ -63,7 +64,7 @@ class ArtelWebSocketIntegrationTest {
      * 행이 있어야 한다. 프로젝트까지 함께 만드는 이유는 인스턴스 조회가 프로젝트의 삭제
      * 여부를 조인으로 확인하기 때문이다.
      */
-    private fun createGameInstance(): GameInstanceEntity {
+    private suspend fun createGameInstance(): GameInstanceEntity {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(
@@ -72,7 +73,7 @@ class ArtelWebSocketIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        ).block()!!
+        )
 
         return instanceRepository.save(
             GameInstanceEntity(
@@ -83,7 +84,7 @@ class ArtelWebSocketIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        ).block()!!
+        )
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -96,7 +97,7 @@ class ArtelWebSocketIntegrationTest {
      * SdkGameState에서 AgentGameState로 정제하는 변환 로직에 대한 단체 단언(Unit Test)
      */
     @Test
-    fun testGameStateTransformation() {
+    fun testGameStateTransformation(): Unit = runBlocking {
         val testGameState = createSampleGameState()
         val agentGameState = GameStateTransformer.toAgentGameState(testGameState)
 
@@ -146,7 +147,7 @@ class ArtelWebSocketIntegrationTest {
     }
 
     @Test
-    fun testAuthenticatedUserEndpoint() {
+    fun testAuthenticatedUserEndpoint(): Unit = runBlocking {
         val webClient = WebClient.create("http://localhost:$port")
         val unauthorizedStatus = webClient.get()
             .uri("/api/auth/me")
@@ -165,7 +166,7 @@ class ArtelWebSocketIntegrationTest {
                 avatarUrl = "https://avatars.example/octocat.png",
                 email = "octocat@example.com"
             )
-        ).block()!!
+        )
         val token = jwtService.issue(user)
         val authenticatedResponse = webClient.get()
             .uri("/api/auth/me")
@@ -181,7 +182,7 @@ class ArtelWebSocketIntegrationTest {
     }
 
     @Test
-    fun `rejects a well-formed token whose user no longer exists`() {
+    fun `rejects a well-formed token whose user no longer exists`(): Unit = runBlocking {
         val orphanToken = jwtService.issue(
             AuthenticatedUser(
                 userId = "99999999",
@@ -201,7 +202,7 @@ class ArtelWebSocketIntegrationTest {
     }
 
     @Test
-    fun `rejects a token carrying a pre-migration subject format`() {
+    fun `rejects a token carrying a pre-migration subject format`(): Unit = runBlocking {
         val legacyToken = jwtService.issue(
             AuthenticatedUser(
                 userId = "github:42",
@@ -321,7 +322,7 @@ class ArtelWebSocketIntegrationTest {
      * Agent로부터 수신한 ACTION 요청이 웹소켓 클라이언트로 정상 전달되는지 전체 흐름을 테스트합니다.
      */
     @Test
-    fun testWebSocketActionForwardingFlow() {
+    fun testWebSocketActionForwardingFlow(): Unit = runBlocking {
         val instance = createGameInstance()
         val instanceId = requireNotNull(instance.id)
         val webClient = WebClient.create("http://localhost:$port")
@@ -407,7 +408,7 @@ class ArtelWebSocketIntegrationTest {
      * 무손실인가입니다. 순서는 드래그 앤 드롭이 쓰는 그대로이며, 재정렬되면 조작 의미가 달라집니다.
      */
     @Test
-    fun testWebSocketMouseAndKeyActionForwardingFlow() {
+    fun testWebSocketMouseAndKeyActionForwardingFlow(): Unit = runBlocking {
         val instance = createGameInstance()
         val instanceId = requireNotNull(instance.id)
         val webClient = WebClient.create("http://localhost:$port")
@@ -500,7 +501,7 @@ class ArtelWebSocketIntegrationTest {
      * 폴백은 존재하지 않는 엔드포인트라 제거되었고, 이제 QA 브리지가 유일한 소비자입니다.
      */
     @Test
-    fun testWebSocketActionResultForwardingFlow() {
+    fun testWebSocketActionResultForwardingFlow(): Unit = runBlocking {
         val instance = createGameInstance()
         val instanceId = requireNotNull(instance.id)
 
@@ -512,7 +513,7 @@ class ArtelWebSocketIntegrationTest {
             resultReceivedLatch.tryEmitValue(
                 invocation.getArgument<Long>(0) to invocation.getArgument<String>(1)
             )
-            Mono.just(true)
+            true
         }
 
         // 2. 웹소켓 클라이언트 연결 및 결과 전송

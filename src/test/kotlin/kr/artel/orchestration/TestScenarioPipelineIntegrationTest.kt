@@ -1,6 +1,8 @@
 package kr.artel.orchestration
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
@@ -126,7 +128,7 @@ class TestScenarioPipelineIntegrationTest {
     }
 
     /** 가상 사용자를 생성하고 (appUserId, JWT)를 반환한다. */
-    private fun issueUser(providerUserId: String): Pair<Long, String> {
+    private suspend fun issueUser(providerUserId: String): Pair<Long, String> {
         val user = oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
@@ -136,28 +138,28 @@ class TestScenarioPipelineIntegrationTest {
                 avatarUrl = null,
                 email = null
             )
-        ).block()!!
+        )!!
         return user.userId.toLong() to jwtService.issue(user)
     }
 
     /** 프로젝트를 만들고 사용자를 참여자(OWNER)로 등록한 뒤 projectId 반환. */
-    private fun createMemberProject(appUserId: Long): Long {
+    private suspend fun createMemberProject(appUserId: Long): Long {
         val now = java.time.Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "test-project", genre = "RPG", createdAt = now, updatedAt = now)
-        ).block()!!
+        )!!
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = project.id!!, appUserId = appUserId, role = "OWNER", createdAt = now)
-        ).block()
+        )
         return project.id!!
     }
 
     /** 참여자 없이 프로젝트만 생성(비참여자 검증용). */
-    private fun createEmptyProject(): Long {
+    private suspend fun createEmptyProject(): Long {
         val now = java.time.Instant.now()
         return projectRepository.save(
             ProjectEntity(name = "no-member", genre = "RPG", createdAt = now, updatedAt = now)
-        ).block()!!.id!!
+        )!!.id!!
     }
 
     private fun createScenario(client: WebClient, token: String, projectId: Long): Long {
@@ -204,7 +206,7 @@ class TestScenarioPipelineIntegrationTest {
      * 생성 → 첫 입력(세션 오픈) → Agent 결과가 SSE로 전달 + scenario가 DB에 저장 → 후속 입력은 WS 턴으로.
      */
     @Test
-    fun testCreateOpenSessionRoundTripAndPersist() {
+    fun testCreateOpenSessionRoundTripAndPersist(): Unit = runBlocking {
         val client = webClient()
         val (appUserId, token) = issueUser("user-${projectIdSeq.incrementAndGet()}")
         val projectId = createMemberProject(appUserId)
@@ -233,7 +235,7 @@ class TestScenarioPipelineIntegrationTest {
 
         // scenario가 DB에 저장(UPDATE)되었는지
         Thread.sleep(300)
-        val persisted = scenarioRepository.findById(scenarioId).block()
+        val persisted = scenarioRepository.findById(scenarioId)
         assertThat(persisted).isNotNull
         assertThat(persisted!!.payload.asString()).contains("튜토리얼 시나리오")
 
@@ -251,7 +253,7 @@ class TestScenarioPipelineIntegrationTest {
         Thread.sleep(500)
         val messages = messageRepository
             .findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(scenarioId, appUserId)
-            .collectList().block()!!
+            .toList()
         val roles = messages.map { it.role }
         assertThat(roles).contains("USER", "ASSISTANT")
         assertThat(messages.first { it.role == "USER" }.content).contains("튜토리얼")
@@ -285,7 +287,7 @@ class TestScenarioPipelineIntegrationTest {
      * 응답으로 저장된 payload가 되돌아와 FE가 정합성을 맞출 수 있다. 비참여자는 404.
      */
     @Test
-    fun testUpdateAutosavesDraft() {
+    fun testUpdateAutosavesDraft(): Unit = runBlocking {
         val client = webClient()
         val (appUserId, token) = issueUser("editor-${projectIdSeq.incrementAndGet()}")
         val projectId = createMemberProject(appUserId)
@@ -308,7 +310,7 @@ class TestScenarioPipelineIntegrationTest {
         assertThat(saved.payload.steps.first().title).isEqualTo("두번째였음")
 
         // DB에도 반영됨.
-        val persisted = scenarioRepository.findById(scenarioId).block()!!
+        val persisted = scenarioRepository.findById(scenarioId)!!
         assertThat(persisted.payload.asString()).contains("드래그로 편집")
 
         // 비참여자는 저장 불가(404).
@@ -340,7 +342,7 @@ class TestScenarioPipelineIntegrationTest {
      * SSE로는 `closed` 종료 이벤트가 전달된다.
      */
     @Test
-    fun testApproveFinalizesAndKeepsChat() {
+    fun testApproveFinalizesAndKeepsChat(): Unit = runBlocking {
         val client = webClient()
         val (appUserId, token) = issueUser("approver-${projectIdSeq.incrementAndGet()}")
         val projectId = createMemberProject(appUserId)
@@ -355,7 +357,7 @@ class TestScenarioPipelineIntegrationTest {
         Thread.sleep(500)
         assertThat(
             messageRepository.findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(scenarioId, appUserId)
-                .collectList().block()!!
+                .toList()
         ).isNotEmpty
 
         // 사용자가 canvas에서 편집한 최종 draft로 승인.
@@ -364,14 +366,14 @@ class TestScenarioPipelineIntegrationTest {
         Thread.sleep(500)
 
         // 시나리오는 남고 payload는 최종본으로 저장됨.
-        val persisted = scenarioRepository.findById(scenarioId).block()
+        val persisted = scenarioRepository.findById(scenarioId)
         assertThat(persisted).isNotNull
         assertThat(persisted!!.payload.asString()).contains("최종본")
 
         // 채팅 내역은 그대로 남는다(부산물 삭제 없음).
         val remaining = messageRepository
             .findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(scenarioId, appUserId)
-            .collectList().block()!!
+            .toList()
         assertThat(remaining).isNotEmpty
 
         // SSE로 종료 이벤트가 전달됨.
@@ -382,7 +384,7 @@ class TestScenarioPipelineIntegrationTest {
 
     /** 비참여자는 approve 404. */
     @Test
-    fun testNonMemberCannotApprove() {
+    fun testNonMemberCannotApprove(): Unit = runBlocking {
         val client = webClient()
         val (ownerId, ownerToken) = issueUser("owner-${projectIdSeq.incrementAndGet()}")
         val projectId = createMemberProject(ownerId)
@@ -400,14 +402,14 @@ class TestScenarioPipelineIntegrationTest {
         assertThat(approveStatus).isEqualTo(404)
 
         // 원 소유자에겐 시나리오가 그대로 남아있다.
-        assertThat(scenarioRepository.findById(scenarioId).block()).isNotNull
+        assertThat(scenarioRepository.findById(scenarioId)).isNotNull
     }
 
     /**
      * 프로젝트 시나리오 목록/단건 조회: 참여자는 {items:[요약...]} + 단건, 비참여자는 404.
      */
     @Test
-    fun testListScenariosByProject() {
+    fun testListScenariosByProject(): Unit = runBlocking {
         val client = webClient()
         val (appUserId, token) = issueUser("lister-${projectIdSeq.incrementAndGet()}")
         val projectId = createMemberProject(appUserId)
@@ -443,7 +445,7 @@ class TestScenarioPipelineIntegrationTest {
 
     /** 인증 없이 접근하면 401. */
     @Test
-    fun testUnauthenticatedIsRejected() {
+    fun testUnauthenticatedIsRejected(): Unit = runBlocking {
         val client = webClient()
         val status = client.post()
             .uri("/api/test-scenario")
@@ -457,7 +459,7 @@ class TestScenarioPipelineIntegrationTest {
 
     /** 인증은 됐지만 프로젝트 참여자가 아니면 생성은 404(존재하지 않는 것처럼). */
     @Test
-    fun testNonMemberCannotCreate() {
+    fun testNonMemberCannotCreate(): Unit = runBlocking {
         val client = webClient()
         val (_, token) = issueUser("outsider-${projectIdSeq.incrementAndGet()}")
         val otherProjectId = createEmptyProject()  // 이 사용자는 참여자가 아님

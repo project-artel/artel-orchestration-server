@@ -8,7 +8,6 @@ import kr.artel.orchestration.sdk.service.SessionManager
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import reactor.core.publisher.Mono
 
 /**
  * 연결된 게임 인스턴스로 명령(액션)을 보낼 때 사용하는 HTTP REST 컨트롤러
@@ -31,15 +30,18 @@ class SdkController(
         summary = "Deliver agent actions to a game instance",
         description = "Forwards an agent action list to the connected game instance identified by instanceId."
     )
-    fun sendAction(
+    suspend fun sendAction(
         @Parameter(description = "Game instance id", required = true)
         @PathVariable instanceId: String,
         @RequestBody action: ActionResponseDto
-    ): Mono<ResponseEntity<String>> {
-        return sessionManager.sendAction(instanceId, action)
-            .map { ResponseEntity.ok("액션 명령어 전송 완료") }
-            .onErrorResume { error ->
-                Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND).body(error.message))
-            }
+    ): ResponseEntity<String> {
+        return try {
+            sessionManager.sendAction(instanceId, action)
+            ResponseEntity.ok("액션 명령어 전송 완료")
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            ResponseEntity.status(HttpStatus.NOT_FOUND).body(error.message)
+        }
     }
 }

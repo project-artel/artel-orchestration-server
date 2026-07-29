@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Flux
-import reactor.core.publisher.Mono
 import reactor.core.publisher.Sinks
 import java.util.concurrent.ConcurrentHashMap
 
@@ -63,19 +62,20 @@ class SessionManager(private val objectMapper: ObjectMapper) {
 
     fun hasSession(instanceId: String): Boolean = sessions.containsKey(instanceId)
 
-    fun sendAction(instanceId: String, action: ActionResponseDto): Mono<Void> =
+    suspend fun sendAction(instanceId: String, action: ActionResponseDto) =
         send(instanceId, action)
 
     /**
      * 임의의 메시지를 연결된 SDK로 보낸다.
      *
-     * 실제 write는 세션의 전송 파이프라인이 한다. 여기서 완료되는 Mono는 "보냈다"가 아니라
+     * 실제 write는 세션의 전송 파이프라인이 한다. 이 함수가 반환됐다는 것은 "보냈다"가 아니라
      * "보낼 줄에 세웠다"는 뜻이다. 소켓에 실제로 나갔는지까지 확인하려면 SDK의 응답을 봐야
      * 하는데, 이 프로토콜에서 그 확인이 필요한 메시지는 없다.
      */
-    fun send(instanceId: String, payload: Any): Mono<Void> =
-        Mono.fromCallable { objectMapper.writeValueAsString(payload) }
-            .flatMap { json -> sendRaw(instanceId, json) }
+    suspend fun send(instanceId: String, payload: Any) {
+        val json = objectMapper.writeValueAsString(payload)
+        sendRaw(instanceId, json)
+    }
 
     /**
      * 이미 JSON인 문자열을 그대로 보낸다.
@@ -83,16 +83,15 @@ class SessionManager(private val objectMapper: ObjectMapper) {
      * 시그널링 중계용이다. 브라우저가 만든 SDP/ICE를 서버가 다시 객체로 읽었다가 직렬화하면,
      * 서버가 모르는 필드가 조용히 사라진다. WebRTC 협상에서 그 손실은 "연결은 되는데 미디어가
      * 없다"처럼 원인을 찾기 어려운 모습으로 나타나므로, 중계는 원문을 건드리지 않는다.
+     *
+     * 세션이 없으면 예외를 던진다. 호출자(컨트롤러)가 이를 404로 옮긴다.
      */
-    fun sendRaw(instanceId: String, json: String): Mono<Void> {
-        val registered = sessions[instanceId] ?: return Mono.error(
-            IllegalArgumentException("게임 인스턴스에 해당하는 활성화된 웹소켓 세션이 없습니다: $instanceId")
-        )
+    suspend fun sendRaw(instanceId: String, json: String) {
+        val registered = sessions[instanceId]
+            ?: throw IllegalArgumentException("게임 인스턴스에 해당하는 활성화된 웹소켓 세션이 없습니다: $instanceId")
 
-        return Mono.fromRunnable {
-            if (!registered.emit(json)) {
-                logger.warn("SDK 메시지 전송 실패 [instanceId: $instanceId]: 전송 큐가 닫혔거나 가득 찼습니다.")
-            }
+        if (!registered.emit(json)) {
+            logger.warn("SDK 메시지 전송 실패 [instanceId: $instanceId]: 전송 큐가 닫혔거나 가득 찼습니다.")
         }
     }
 

@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
-import reactor.core.publisher.Mono
 
 /**
  * SDK가 화면 캡처를 올리기 전에 서명을 받아가는 지점.
@@ -31,7 +30,7 @@ class QaCaptureController(
             "이미지 바이트는 이 서버를 지나가지 않는다."
     )
     @PostMapping("/tickets")
-    fun issueTicket(
+    suspend fun issueTicket(
         @Valid @RequestBody request: QaCaptureTicketRequest
-    ): Mono<QaCaptureTicketResponse> = captureService.issueTicket(request)
+    ): QaCaptureTicketResponse = captureService.issueTicket(request)
 }

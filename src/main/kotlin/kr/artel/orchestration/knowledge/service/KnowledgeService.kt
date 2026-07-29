@@ -7,10 +7,11 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.toList
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import reactor.core.publisher.Flux
-import reactor.core.publisher.Mono
 import java.time.Instant
 
 /**
@@ -30,22 +31,23 @@ class KnowledgeService(
      * 한 출처(문서/QA 런)에서 온 knowledge 항목 배치를 저장한다.
      * 유효 항목이 하나도 없으면 아무것도 저장하지 않는다.
      */
-    fun store(
+    suspend fun store(
         projectId: Long,
         source: KnowledgeSource,
         sourceId: Long?,
         contentHash: String?,
         items: List<KnowledgeIngestItem>
-    ): Mono<Void> {
+    ) {
         val rows = items.mapNotNull { toEntity(projectId, source, sourceId, contentHash, it) }
         if (rows.isEmpty()) {
             logger.warn(
                 "knowledge 저장 스킵: 유효 항목 없음 (project={}, source={}, sourceId={}, 받은수={})",
                 projectId, source, sourceId, items.size
             )
-            return Mono.empty()
+            return
         }
-        return knowledgeRepository.saveAll(rows).then()
+        // saveAll은 콜드 Flow라 반드시 소비해야 실제 저장이 일어난다.
+        knowledgeRepository.saveAll(rows).toList()
     }
 
     /** 유효하지 않은 항목은 null을 돌려 배치에서 제외한다. */
@@ -79,12 +81,12 @@ class KnowledgeService(
     }
 
     /** 프로젝트 스코프 조회(최신순). source/tag는 선택 필터. */
-    fun findForProject(
+    suspend fun findForProject(
         projectId: Long,
         source: KnowledgeSource?,
         tag: KnowledgeTag?
-    ): Mono<KnowledgeListResponse> {
-        val rows: Flux<KnowledgeEntity> = when {
+    ): KnowledgeListResponse {
+        val rows: Flow<KnowledgeEntity> = when {
             source != null && tag != null ->
                 knowledgeRepository.findByProjectIdAndSourceAndTagOrderByIdDesc(projectId, source.name, tag.name)
             source != null ->
@@ -94,7 +96,7 @@ class KnowledgeService(
             else ->
                 knowledgeRepository.findByProjectIdOrderByIdDesc(projectId)
         }
-        return rows.map(::toResponse).collectList().map(::KnowledgeListResponse)
+        return KnowledgeListResponse(rows.map(::toResponse).toList())
     }
 
     private fun toResponse(entity: KnowledgeEntity): KnowledgeResponse =

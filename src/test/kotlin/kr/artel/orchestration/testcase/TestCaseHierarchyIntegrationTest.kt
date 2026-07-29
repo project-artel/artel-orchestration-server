@@ -2,7 +2,6 @@ package kr.artel.orchestration.testcase
 
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
@@ -31,7 +30,7 @@ import java.time.Instant
  *
  * 검증: 케이스 CRUD, 프로젝트 참여 인가(비참여자 null/빈 결과), 시나리오↔케이스 junction의 순서형 조합·
  * 정방향/역방향 조회, 런↔시나리오 조합. app_user/project는 FK가 있어 실제 행을 시딩한다(자동 id라 격리됨).
- * suspend 서비스라 각 테스트를 [runBlocking]으로 감싸고, 시딩용 Reactor 리포는 `awaitSingle()`로 브리지한다.
+ * suspend 서비스라 각 테스트를 [runBlocking]으로 감싼다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -49,7 +48,7 @@ class TestCaseHierarchyIntegrationTest {
     private suspend fun newUser(): Long {
         val now = Instant.now()
         return appUserRepository.save(AppUserEntity(displayName = "tc-user", createdAt = now, updatedAt = now))
-            .awaitSingle().id!!
+            .id!!
     }
 
     /** 새 프로젝트 + 그 프로젝트에 참여하는 사용자 하나를 만든다(실 행, 자동 id). */
@@ -58,16 +57,16 @@ class TestCaseHierarchyIntegrationTest {
         val userId = newUser()
         val projectId = projectRepository.save(
             ProjectEntity(name = "tc-project", genre = "ACTION", createdAt = now, updatedAt = now)
-        ).awaitSingle().id!!
+        ).id!!
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = userId, role = "MEMBER", createdAt = now)
-        ).awaitSingle()
+        )
         return projectId to userId
     }
 
     private suspend fun newScenario(projectId: Long): Long =
         testScenarioRepository.save(TestScenarioEntity(projectId = projectId, payload = Json.of("{}")))
-            .awaitSingle().id!!
+            .id!!
 
     @Test
     fun `케이스 CRUD와 시나리오·런 조합 전체 흐름`(): Unit = runBlocking {

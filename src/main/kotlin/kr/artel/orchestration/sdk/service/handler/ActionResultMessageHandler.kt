@@ -4,7 +4,6 @@ import kr.artel.orchestration.qa.service.QaSdkBridgeService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.WebSocketSession
-import reactor.core.publisher.Mono
 
 /**
  * ACTION_RESULT 메시지를 가공 없이 QA 브리지로 전달하는 핸들러 전략.
@@ -21,9 +20,9 @@ class ActionResultMessageHandler(
 
     override val messageType: String = "ACTION_RESULT"
 
-    override fun handle(instanceId: String, payloadText: String, session: WebSocketSession): Mono<Void> {
+    override suspend fun handle(instanceId: String, payloadText: String, session: WebSocketSession) {
         logger.info("액션 결과 수신 [instanceId: $instanceId]: $payloadText")
 
-        return qaBridge.routeActionResult(instanceId.toLong(), payloadText).then()
+        qaBridge.routeActionResult(instanceId.toLong(), payloadText)
     }
 }

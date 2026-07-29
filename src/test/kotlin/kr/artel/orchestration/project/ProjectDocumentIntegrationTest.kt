@@ -1,6 +1,7 @@
 package kr.artel.orchestration.project
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.JwtService
@@ -55,17 +56,17 @@ class ProjectDocumentIntegrationTest {
     private val fakeStorage: FakeDocumentStorage get() = storage as FakeDocumentStorage
 
     @BeforeEach
-    fun clean() {
-        documentRepository.deleteAll().block()
-        memberRepository.deleteAll().block()
-        projectRepository.deleteAll().block()
-        identityRepository.deleteAll().block()
-        appUserRepository.deleteAll().block()
+    fun clean(): Unit = runBlocking {
+        documentRepository.deleteAll()
+        memberRepository.deleteAll()
+        projectRepository.deleteAll()
+        identityRepository.deleteAll()
+        appUserRepository.deleteAll()
         fakeStorage.clear()
     }
 
     @Test
-    fun `uploads a planning document and makes it the current version`() {
+    fun `uploads a planning document and makes it the current version`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
 
@@ -82,7 +83,7 @@ class ProjectDocumentIntegrationTest {
     }
 
     @Test
-    fun `stacks versions instead of replacing the previous document`() {
+    fun `stacks versions instead of replacing the previous document`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
 
@@ -114,7 +115,7 @@ class ProjectDocumentIntegrationTest {
      * 서비스가 최대 버전을 다시 읽어 재시도한다. 직렬화되든 실제로 부딪히든 결과는 1과 2여야 한다.
      */
     @Test
-    fun `assigns distinct versions to concurrent uploads`() {
+    fun `assigns distinct versions to concurrent uploads`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
 
@@ -141,7 +142,7 @@ class ProjectDocumentIntegrationTest {
     }
 
     @Test
-    fun `rejects a ticket request for anything other than a pdf`() {
+    fun `rejects a ticket request for anything other than a pdf`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
 
@@ -157,7 +158,7 @@ class ProjectDocumentIntegrationTest {
     }
 
     @Test
-    fun `rejects a ticket request above the size limit`() {
+    fun `rejects a ticket request above the size limit`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
 
@@ -173,7 +174,7 @@ class ProjectDocumentIntegrationTest {
     }
 
     @Test
-    fun `refuses to register an object that was never uploaded`() {
+    fun `refuses to register an object that was never uploaded`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val objectKey = ticketFor(token, projectId, "기획서.pdf")
@@ -182,11 +183,11 @@ class ProjectDocumentIntegrationTest {
         val status = statusOf { register(token, projectId, objectKey) }
 
         assertThat(status).isEqualTo(HttpStatus.BAD_REQUEST)
-        assertThat(documentRepository.count().block()).isZero()
+        assertThat(documentRepository.count()).isZero()
     }
 
     @Test
-    fun `refuses to register bytes that are not actually a pdf`() {
+    fun `refuses to register bytes that are not actually a pdf`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val objectKey = ticketFor(token, projectId, "위장.pdf")
@@ -196,11 +197,11 @@ class ProjectDocumentIntegrationTest {
         val status = statusOf { register(token, projectId, objectKey) }
 
         assertThat(status).isEqualTo(HttpStatus.BAD_REQUEST)
-        assertThat(documentRepository.count().block()).isZero()
+        assertThat(documentRepository.count()).isZero()
     }
 
     @Test
-    fun `refuses to register an empty object`() {
+    fun `refuses to register an empty object`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val objectKey = ticketFor(token, projectId, "빈파일.pdf")
@@ -212,7 +213,7 @@ class ProjectDocumentIntegrationTest {
     }
 
     @Test
-    fun `refuses an object key that belongs to another project`() {
+    fun `refuses an object key that belongs to another project`(): Unit = runBlocking {
         val token = signIn()
         val mine = createProject(token)
         val other = createProject(token)
@@ -225,7 +226,7 @@ class ProjectDocumentIntegrationTest {
     }
 
     @Test
-    fun `issues a fresh download url instead of storing a permanent link`() {
+    fun `issues a fresh download url instead of storing a permanent link`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val documentId = upload(token, projectId, "기획서.pdf", PDF_BYTES)["id"].asText()
@@ -237,7 +238,7 @@ class ProjectDocumentIntegrationTest {
     }
 
     @Test
-    fun `never exposes the storage key`() {
+    fun `never exposes the storage key`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         val document = upload(token, projectId, "기획서.pdf", PDF_BYTES)
@@ -247,7 +248,7 @@ class ProjectDocumentIntegrationTest {
     }
 
     @Test
-    fun `hides documents of a project the caller is not a member of`() {
+    fun `hides documents of a project the caller is not a member of`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
         val strangerToken = signIn("99", "hubot")
         val projectId = createProject(ownerToken)
@@ -259,7 +260,7 @@ class ProjectDocumentIntegrationTest {
     }
 
     @Test
-    fun `rejects re-uploading the same file to the same project`() {
+    fun `rejects re-uploading the same file to the same project`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         upload(token, projectId, "기획서.pdf", PDF_BYTES)
@@ -272,7 +273,7 @@ class ProjectDocumentIntegrationTest {
     }
 
     @Test
-    fun `allows the same file in a different project`() {
+    fun `allows the same file in a different project`(): Unit = runBlocking {
         val token = signIn()
         val projectA = createProject(token)
         val projectB = createProject(token)
@@ -284,7 +285,7 @@ class ProjectDocumentIntegrationTest {
     }
 
     @Test
-    fun `allows a different file in the same project`() {
+    fun `allows a different file in the same project`(): Unit = runBlocking {
         val token = signIn()
         val projectId = createProject(token)
         upload(token, projectId, "v1.pdf", PDF_BYTES)
@@ -317,7 +318,7 @@ class ProjectDocumentIntegrationTest {
     private fun createProject(token: String): String =
         post(token, "/api/projects", """{"name":"Demo Day","genre":"ACTION"}""")["id"].asText()
 
-    private fun signIn(providerUserId: String = "42", login: String = "octocat"): String {
+    private suspend fun signIn(providerUserId: String = "42", login: String = "octocat"): String {
         val user = oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
@@ -327,7 +328,7 @@ class ProjectDocumentIntegrationTest {
                 avatarUrl = null,
                 email = "$login@example.com"
             )
-        ).block()!!
+        )
         return jwtService.issue(user)
     }
 

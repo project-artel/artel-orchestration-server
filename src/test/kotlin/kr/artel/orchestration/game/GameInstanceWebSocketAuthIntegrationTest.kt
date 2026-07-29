@@ -1,5 +1,6 @@
 package kr.artel.orchestration.game
 
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.entity.GamePlatform
 import kr.artel.orchestration.game.repository.GameInstanceRepository
@@ -38,14 +39,14 @@ class GameInstanceWebSocketAuthIntegrationTest {
     @Autowired private lateinit var sessionManager: SessionManager
 
     @Test
-    fun `closes with 4001 when the key matches no instance`() {
+    fun `closes with 4001 when the key matches no instance`(): Unit = runBlocking {
         val closeStatus = connectAndAwaitClose("NOSUCH-KEY-00000-00000")
 
         assertThat(closeStatus?.code).isEqualTo(4001)
     }
 
     @Test
-    fun `closes with 4001 when the key is missing entirely`() {
+    fun `closes with 4001 when the key is missing entirely`(): Unit = runBlocking {
         val closeStatus = connectAndAwaitClose(instanceKey = null)
 
         assertThat(closeStatus?.code).isEqualTo(4001)
@@ -56,7 +57,7 @@ class GameInstanceWebSocketAuthIntegrationTest {
      * 소켓을 빼앗긴다.
      */
     @Test
-    fun `closes with 4002 when the instance already has a live connection`() {
+    fun `closes with 4002 when the instance already has a live connection`(): Unit = runBlocking {
         val instance = createGameInstance()
         val instanceId = requireNotNull(instance.id).toString()
         val incumbent = Mockito.mock(WebSocketSession::class.java)
@@ -71,9 +72,9 @@ class GameInstanceWebSocketAuthIntegrationTest {
     }
 
     @Test
-    fun `stops accepting the key of a soft-deleted instance`() {
+    fun `stops accepting the key of a soft-deleted instance`(): Unit = runBlocking {
         val instance = createGameInstance()
-        instanceRepository.save(instance.copy(deletedAt = Instant.now())).block()
+        instanceRepository.save(instance.copy(deletedAt = Instant.now()))
 
         val closeStatus = connectAndAwaitClose(instance.instanceKey)
 
@@ -96,7 +97,7 @@ class GameInstanceWebSocketAuthIntegrationTest {
         return captured.asMono().block(Duration.ofSeconds(5))
     }
 
-    private fun createGameInstance(): GameInstanceEntity {
+    private suspend fun createGameInstance(): GameInstanceEntity {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(
@@ -105,7 +106,7 @@ class GameInstanceWebSocketAuthIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        ).block()!!
+        )
 
         return instanceRepository.save(
             GameInstanceEntity(
@@ -116,6 +117,6 @@ class GameInstanceWebSocketAuthIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        ).block()!!
+        )
     }
 }

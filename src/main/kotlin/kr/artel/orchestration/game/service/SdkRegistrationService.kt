@@ -9,13 +9,12 @@ import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
-import reactor.core.publisher.Mono
-import reactor.util.retry.Retry
+import org.springframework.transaction.reactive.TransactionalOperator
+import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Clock
 import java.time.Instant
 
-private const val BUILD_RETRY_ATTEMPTS = 3L
+private const val BUILD_RETRY_ATTEMPTS = 3
 
 /**
  * SDK가 게임 실행마다 부르는 등록 지점.
@@ -35,34 +34,33 @@ class SdkRegistrationService(
     private val instanceRepository: GameInstanceRepository,
     private val buildRepository: GameBuildRepository,
     private val objectMapper: ObjectMapper,
+    private val transactionalOperator: TransactionalOperator,
     private val clock: Clock
 ) {
-    /** 키로 인스턴스를 찾지 못하면 빈 Mono다. 컨트롤러가 404로 옮긴다. */
-    @Transactional
-    fun register(request: SdkRegistrationRequest): Mono<SdkRegistrationResponse> =
-        instanceRepository.findActiveByInstanceKey(request.instanceKey.trim())
-            .flatMap { instance ->
-                val now = Instant.now(clock)
-                val sceneScan = request.sceneScan?.let { Json.of(objectMapper.writeValueAsString(it)) }
-                findOrCreateBuild(instance.projectId, request.gameVersion.trim(), sceneScan, now)
-                    .flatMap { build ->
-                        instanceRepository.save(
-                            instance.copy(
-                                lastSdkUuid = request.sdkUuid.trim(),
-                                lastConnectedAt = now,
-                                updatedAt = now
-                            )
-                        ).map { saved ->
-                            SdkRegistrationResponse(
-                                instanceId = requireNotNull(saved.id).toString(),
-                                projectId = saved.projectId.toString(),
-                                instanceName = saved.name,
-                                gameBuildId = requireNotNull(build.id).toString(),
-                                gameVersion = build.version
-                            )
-                        }
-                    }
-            }
+    /** 키로 인스턴스를 찾지 못하면 null이다. 컨트롤러가 404로 옮긴다. */
+    suspend fun register(request: SdkRegistrationRequest): SdkRegistrationResponse? {
+        val instance = instanceRepository.findActiveByInstanceKey(request.instanceKey.trim()) ?: return null
+        val now = Instant.now(clock)
+        val sceneScan = request.sceneScan?.let { Json.of(objectMapper.writeValueAsString(it)) }
+        // 빌드 조회·생성과 인스턴스 갱신을 한 트랜잭션으로 묶는다.
+        return transactionalOperator.executeAndAwait {
+            val build = findOrCreateBuild(instance.projectId, request.gameVersion.trim(), sceneScan, now)
+            val saved = instanceRepository.save(
+                instance.copy(
+                    lastSdkUuid = request.sdkUuid.trim(),
+                    lastConnectedAt = now,
+                    updatedAt = now
+                )
+            )
+            SdkRegistrationResponse(
+                instanceId = requireNotNull(saved.id).toString(),
+                projectId = saved.projectId.toString(),
+                instanceName = saved.name,
+                gameBuildId = requireNotNull(build.id).toString(),
+                gameVersion = build.version
+            )
+        }
+    }
 
     /**
      * 같은 (프로젝트, 버전)이면 기존 빌드를 그대로 쓴다. 스캔이 실려 있으면 기존 빌드라도
@@ -74,36 +72,32 @@ class SdkRegistrationService(
      * 테스트가 H2에서 돌기 때문에 PostgreSQL의 ON CONFLICT는 쓸 수 없고, 양쪽에서 동작하는
      * 이 형태를 쓴다.
      */
-    private fun findOrCreateBuild(
+    private suspend fun findOrCreateBuild(
         projectId: Long,
         version: String,
         sceneScan: Json?,
         now: Instant
-    ): Mono<GameBuildEntity> =
-        Mono.defer {
-            buildRepository.findByProjectIdAndVersion(projectId, version)
-                .flatMap { existing ->
-                    if (sceneScan == null) {
-                        Mono.just(existing)
-                    } else {
-                        buildRepository.save(existing.copy(sceneScan = sceneScan, updatedAt = now))
-                    }
-                }
-                .switchIfEmpty(
-                    Mono.defer {
-                        buildRepository.save(
-                            GameBuildEntity(
-                                projectId = projectId,
-                                version = version,
-                                sceneScan = sceneScan,
-                                createdAt = now,
-                                updatedAt = now
-                            )
+    ): GameBuildEntity {
+        var remaining = BUILD_RETRY_ATTEMPTS
+        while (true) {
+            try {
+                val existing = buildRepository.findByProjectIdAndVersion(projectId, version)
+                return when {
+                    existing == null -> buildRepository.save(
+                        GameBuildEntity(
+                            projectId = projectId,
+                            version = version,
+                            sceneScan = sceneScan,
+                            createdAt = now,
+                            updatedAt = now
                         )
-                    }
-                )
-        }.retryWhen(
-            Retry.max(BUILD_RETRY_ATTEMPTS)
-                .filter { it is DataIntegrityViolationException }
-        )
+                    )
+                    sceneScan == null -> existing
+                    else -> buildRepository.save(existing.copy(sceneScan = sceneScan, updatedAt = now))
+                }
+            } catch (e: DataIntegrityViolationException) {
+                if (remaining-- <= 0) throw e
+            }
+        }
+    }
 }

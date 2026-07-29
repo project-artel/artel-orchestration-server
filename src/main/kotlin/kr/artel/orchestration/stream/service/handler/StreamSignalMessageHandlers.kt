@@ -8,7 +8,6 @@ import kr.artel.orchestration.stream.service.StreamSignalRelay
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.WebSocketSession
-import reactor.core.publisher.Mono
 
 /**
  * 게임이 보낸 시그널링을 그 스트림을 보고 있는 브라우저로 넘긴다.
@@ -27,17 +26,16 @@ sealed class StreamSignalMessageHandler(
 
     private val logger = LoggerFactory.getLogger(StreamSignalMessageHandler::class.java)
 
-    override fun handle(instanceId: String, payloadText: String, session: WebSocketSession): Mono<Void> =
-        Mono.fromRunnable {
-            val envelope = try {
-                objectMapper.readValue(payloadText, SignalEnvelope::class.java)
-            } catch (exception: Exception) {
-                logger.warn("SDK 시그널링 파싱 실패 [instanceId: $instanceId]: ${exception.message}")
-                return@fromRunnable
-            }
-
-            relay.toViewer(envelope.streamId, payloadText)
+    override suspend fun handle(instanceId: String, payloadText: String, session: WebSocketSession) {
+        val envelope = try {
+            objectMapper.readValue(payloadText, SignalEnvelope::class.java)
+        } catch (exception: Exception) {
+            logger.warn("SDK 시그널링 파싱 실패 [instanceId: $instanceId]: ${exception.message}")
+            return
         }
+
+        relay.toViewer(envelope.streamId, payloadText)
+    }
 }
 
 @Component

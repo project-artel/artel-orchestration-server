@@ -1,11 +1,12 @@
 package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.CancellationException
 import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
-import reactor.core.publisher.Mono
+import org.springframework.transaction.reactive.TransactionalOperator
+import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Clock
 import java.time.Instant
 import java.util.UUID
@@ -15,65 +16,60 @@ class QaExecutionFailurePersistence(
     private val tryRepository: QaTryRepository,
     private val logService: QaLogService,
     private val objectMapper: ObjectMapper,
+    private val transactionalOperator: TransactionalOperator,
     private val clock: Clock
 ) {
-    @Transactional
-    fun failActiveByInstance(gameInstanceId: Long, reason: String): Mono<FailureLogs> {
-        val completedAt = Instant.now(clock)
-        return tryRepository.findActiveByGameInstanceId(gameInstanceId)
-            .flatMap { active ->
-                tryRepository.failActiveByGameInstanceId(gameInstanceId, completedAt)
-                    .filter { it == 1 }
-                    .flatMap {
-                        val qaTryId = requireNotNull(active.id)
-                        logService.append(
-                            qaTryId = qaTryId,
-                            direction = "ORCHE_INTERNAL",
-                            type = "ERROR",
-                            message = reason,
-                            payload = objectMapper.createObjectNode().put("reason", reason)
-                        ).flatMap { errorLog ->
-                            logService.append(
-                                qaTryId = qaTryId,
-                                direction = "ORCHE_INTERNAL",
-                                type = "STATUS",
-                                message = "QA execution failed because its connection closed.",
-                                payload = objectMapper.valueToTree(QaStatusPayload("FAILED", completedAt))
-                            ).map { statusLog -> FailureLogs(qaTryId, active.agentSessionId, errorLog, statusLog) }
-                        }
-                    }
+    suspend fun failActiveByInstance(gameInstanceId: Long, reason: String): FailureLogs? =
+        transactionalOperator.executeAndAwait {
+            val completedAt = Instant.now(clock)
+            val active = tryRepository.findActiveByGameInstanceId(gameInstanceId)
+                ?: return@executeAndAwait null
+            if (tryRepository.failActiveByGameInstanceId(gameInstanceId, completedAt) != 1) {
+                return@executeAndAwait null
             }
-    }
+            val qaTryId = requireNotNull(active.id)
+            val errorLog = logService.append(
+                qaTryId = qaTryId,
+                direction = "ORCHE_INTERNAL",
+                type = "ERROR",
+                message = reason,
+                payload = objectMapper.createObjectNode().put("reason", reason)
+            )
+            val statusLog = logService.append(
+                qaTryId = qaTryId,
+                direction = "ORCHE_INTERNAL",
+                type = "STATUS",
+                message = "QA execution failed because its connection closed.",
+                payload = objectMapper.valueToTree(QaStatusPayload("FAILED", completedAt))
+            )
+            FailureLogs(qaTryId, active.agentSessionId, errorLog, statusLog)
+        }
 
-    @Transactional
-    fun failActiveById(qaTryId: Long, reason: String): Mono<FailureLogs> {
-        val completedAt = Instant.now(clock)
-        return tryRepository.findById(qaTryId)
-            .filter { it.status == "STARTING" || it.status == "RUNNING" }
-            .flatMap { active ->
-                tryRepository.failActiveById(qaTryId, completedAt)
-                    .filter { it == 1 }
-                    .flatMap {
-                        logService.append(
-                            qaTryId = qaTryId,
-                            direction = "ORCHE_INTERNAL",
-                            type = "ERROR",
-                            message = reason,
-                            payload = objectMapper.createObjectNode().put("reason", reason)
-                        ).flatMap { errorLog ->
-                            logService.append(
-                                qaTryId = qaTryId,
-                                direction = "ORCHE_INTERNAL",
-                                type = "STATUS",
-                                message = "QA execution failed.",
-                                payload = objectMapper.valueToTree(QaStatusPayload("FAILED", completedAt))
-                            ).map {
-                                FailureLogs(qaTryId, active.agentSessionId, errorLog, it)
-                            }
-                        }
-                    }
+    suspend fun failActiveById(qaTryId: Long, reason: String): FailureLogs? =
+        transactionalOperator.executeAndAwait {
+            val completedAt = Instant.now(clock)
+            val active = tryRepository.findById(qaTryId)
+                ?.takeIf { it.status == "STARTING" || it.status == "RUNNING" }
+                ?: return@executeAndAwait null
+            if (tryRepository.failActiveById(qaTryId, completedAt) != 1) {
+                return@executeAndAwait null
             }
-    }
+            val errorLog = logService.append(
+                qaTryId = qaTryId,
+                direction = "ORCHE_INTERNAL",
+                type = "ERROR",
+                message = reason,
+                payload = objectMapper.createObjectNode().put("reason", reason)
+            )
+            val statusLog = logService.append(
+                qaTryId = qaTryId,
+                direction = "ORCHE_INTERNAL",
+                type = "STATUS",
+                message = "QA execution failed.",
+                payload = objectMapper.valueToTree(QaStatusPayload("FAILED", completedAt))
+            )
+            FailureLogs(qaTryId, active.agentSessionId, errorLog, statusLog)
+        }
 
     /**
      * Marks a run cancelled and records who ended it.
@@ -83,37 +79,31 @@ class QaExecutionFailurePersistence(
      * which is exactly when ending it matters most. The Agent is told afterwards,
      * best effort.
      */
-    @Transactional
-    fun cancelActiveById(qaTryId: Long, reason: String): Mono<FailureLogs> {
-        val completedAt = Instant.now(clock)
-        return tryRepository.findById(qaTryId)
-            .filter { it.status == "STARTING" || it.status == "RUNNING" }
-            .flatMap { active ->
-                tryRepository.cancelActiveById(qaTryId, completedAt)
-                    .filter { it == 1 }
-                    .flatMap {
-                        logService.append(
-                            qaTryId = qaTryId,
-                            direction = "USER_TO_ORCHE",
-                            type = "LOG",
-                            message = reason,
-                            payload = objectMapper.createObjectNode().put("reason", reason)
-                        ).flatMap { requestLog ->
-                            logService.append(
-                                qaTryId = qaTryId,
-                                direction = "ORCHE_INTERNAL",
-                                type = "STATUS",
-                                message = "QA execution was cancelled.",
-                                payload = objectMapper.valueToTree(
-                                    QaStatusPayload("CANCELLED", completedAt)
-                                )
-                            ).map {
-                                FailureLogs(qaTryId, active.agentSessionId, requestLog, it)
-                            }
-                        }
-                    }
+    suspend fun cancelActiveById(qaTryId: Long, reason: String): FailureLogs? =
+        transactionalOperator.executeAndAwait {
+            val completedAt = Instant.now(clock)
+            val active = tryRepository.findById(qaTryId)
+                ?.takeIf { it.status == "STARTING" || it.status == "RUNNING" }
+                ?: return@executeAndAwait null
+            if (tryRepository.cancelActiveById(qaTryId, completedAt) != 1) {
+                return@executeAndAwait null
             }
-    }
+            val requestLog = logService.append(
+                qaTryId = qaTryId,
+                direction = "USER_TO_ORCHE",
+                type = "LOG",
+                message = reason,
+                payload = objectMapper.createObjectNode().put("reason", reason)
+            )
+            val statusLog = logService.append(
+                qaTryId = qaTryId,
+                direction = "ORCHE_INTERNAL",
+                type = "STATUS",
+                message = "QA execution was cancelled.",
+                payload = objectMapper.valueToTree(QaStatusPayload("CANCELLED", completedAt))
+            )
+            FailureLogs(qaTryId, active.agentSessionId, requestLog, statusLog)
+        }
 }
 
 data class FailureLogs(
@@ -132,34 +122,35 @@ class QaExecutionFailureService(
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
-    fun sdkDisconnected(gameInstanceId: Long): Mono<Void> =
-        persistence.failActiveByInstance(gameInstanceId, "SDK connection closed.")
-            .flatMap { failed ->
-                logService.publish(failed.error)
-                logService.publish(failed.status)
-                val close = failed.agentSessionId?.let(agentPort::close) ?: Mono.empty()
-                close.onErrorResume { Mono.empty() }
-                    .doFinally { streamManager.complete(failed.qaTryId) }
-            }
-            .then()
+    suspend fun sdkDisconnected(gameInstanceId: Long) {
+        val failed = persistence.failActiveByInstance(gameInstanceId, "SDK connection closed.") ?: return
+        logService.publish(failed.error)
+        logService.publish(failed.status)
+        try {
+            closeQuietly(failed.agentSessionId)
+        } finally {
+            streamManager.complete(failed.qaTryId)
+        }
+    }
 
-    fun agentDisconnected(qaTryId: Long): Mono<Void> =
+    suspend fun agentDisconnected(qaTryId: Long) =
         fail(qaTryId, "QA Agent connection closed.", closeAgent = false)
 
     /**
-     * Ends a run because the operator asked. Empty when it had already ended.
+     * Ends a run because the operator asked. `false` when it had already ended.
      *
      * The Agent is told with a CANCEL frame so it can stop mid-step and drop its
      * session, but neither that send nor the close is allowed to fail the
      * cancellation — the run is already cancelled in the database by then.
      */
-    fun cancelled(qaTryId: Long, reason: String): Mono<Boolean> =
-        persistence.cancelActiveById(qaTryId, reason)
-            .flatMap { cancelled ->
-                logService.publish(cancelled.error)
-                logService.publish(cancelled.status)
-                val sessionId = cancelled.agentSessionId
-                val notify = if (sessionId == null) Mono.empty() else {
+    suspend fun cancelled(qaTryId: Long, reason: String): Boolean {
+        val cancelled = persistence.cancelActiveById(qaTryId, reason) ?: return false
+        logService.publish(cancelled.error)
+        logService.publish(cancelled.status)
+        val sessionId = cancelled.agentSessionId
+        try {
+            if (sessionId != null) {
+                try {
                     agentPort.send(
                         sessionId,
                         QaAgentEnvelope(
@@ -169,25 +160,42 @@ class QaExecutionFailureService(
                             timestamp = Instant.now(clock),
                             payload = objectMapper.createObjectNode().put("reason", reason)
                         )
-                    ).onErrorResume { Mono.empty() }
-                        .then(agentPort.close(sessionId).onErrorResume { Mono.empty() })
+                    )
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    // best effort: the run is already cancelled in the database
                 }
-                notify.doFinally { streamManager.complete(qaTryId) }.thenReturn(true)
+                closeQuietly(sessionId)
             }
-            .defaultIfEmpty(false)
+        } finally {
+            streamManager.complete(qaTryId)
+        }
+        return true
+    }
 
-    fun failStarting(qaTryId: Long, reason: String): Mono<Void> =
+    suspend fun failStarting(qaTryId: Long, reason: String) =
         fail(qaTryId, reason, closeAgent = true)
 
-    private fun fail(qaTryId: Long, reason: String, closeAgent: Boolean): Mono<Void> =
-        persistence.failActiveById(qaTryId, reason)
-            .flatMap { failed ->
-                logService.publish(failed.error)
-                logService.publish(failed.status)
-                val close = if (closeAgent && failed.agentSessionId != null) {
-                    agentPort.close(failed.agentSessionId).onErrorResume { Mono.empty() }
-                } else Mono.empty()
-                close.doFinally { streamManager.complete(failed.qaTryId) }
-            }
-            .then()
+    private suspend fun fail(qaTryId: Long, reason: String, closeAgent: Boolean) {
+        val failed = persistence.failActiveById(qaTryId, reason) ?: return
+        logService.publish(failed.error)
+        logService.publish(failed.status)
+        try {
+            if (closeAgent) closeQuietly(failed.agentSessionId)
+        } finally {
+            streamManager.complete(failed.qaTryId)
+        }
+    }
+
+    private suspend fun closeQuietly(sessionId: String?) {
+        if (sessionId == null) return
+        try {
+            agentPort.close(sessionId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // best effort close
+        }
+    }
 }

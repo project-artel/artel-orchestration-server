@@ -1,5 +1,11 @@
 package kr.artel.orchestration.project.service
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kr.artel.orchestration.project.config.StorageProperties
 import kr.artel.orchestration.project.dto.DownloadTicketResponse
 import kr.artel.orchestration.project.dto.ProjectDocumentResponse
@@ -7,18 +13,16 @@ import kr.artel.orchestration.project.dto.RegisterDocumentRequest
 import kr.artel.orchestration.project.dto.UploadTicketRequest
 import kr.artel.orchestration.project.dto.UploadTicketResponse
 import kr.artel.orchestration.project.entity.ProjectDocumentEntity
+import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.repository.ProjectDocumentRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.project.storage.StoredObject
 import kr.artel.orchestration.knowledge.service.DocumentKnowledgeExtractionService
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
-import reactor.core.publisher.Mono
-import reactor.core.scheduler.Schedulers
-import reactor.util.retry.Retry
 import java.time.Clock
 import java.time.Instant
 import java.util.UUID
@@ -33,10 +37,12 @@ private val PDF_MAGIC = "%PDF-".toByteArray(Charsets.US_ASCII)
 private const val VERSION_RETRY_ATTEMPTS = 5L
 
 /**
- * 기획서 업로드·조회.
+ * 기획서 업로드·조회(코루틴).
  *
  * 원본 바이트는 서버를 지나지 않는다. 클라이언트가 presigned URL로 S3에 직접 올리고,
  * 서버는 티켓을 발급하고 올라온 결과를 검증해 메타데이터만 기록한다.
+ *
+ * 전환 과도기: `DocumentStorage`는 아직 Reactor 포트라 `awaitSingleOrNull()`로 브리지한다.
  */
 @Service
 class ProjectDocumentService(
@@ -52,104 +58,117 @@ class ProjectDocumentService(
     private val logger = LoggerFactory.getLogger(ProjectDocumentService::class.java)
 
     /**
+     * 추출 파이프라인을 요청과 분리해 백그라운드로 띄우는 스코프.
+     *
+     * SupervisorJob이라 한 추출 작업의 실패가 다른 작업이나 스코프 전체를 무너뜨리지 않는다.
+     * 원래 Reactor의 boundedElastic 스케줄러에서 구독하던 것을 대체한다.
+     */
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
      * 업로드 티켓을 발급한다. 형식과 크기를 여기서 먼저 막아 규격 밖 파일이 S3에 닿지 않게 한다.
      *
      * Content-Type은 서명에 포함되므로, 다른 타입을 신고한 PUT은 S3가 직접 거부한다.
+     * 접근할 수 없는 프로젝트면 null(→ 404).
      */
-    fun createUploadTicket(
+    suspend fun createUploadTicket(
         userId: Long,
         projectId: Long,
         request: UploadTicketRequest
-    ): Mono<UploadTicketResponse> =
-        requireAccessible(projectId, userId).map {
-            validateUploadRequest(request)
+    ): UploadTicketResponse? {
+        requireAccessible(projectId, userId) ?: return null
 
-            val objectKey = objectKeyFor(projectId, request.fileName)
-            val presigned = storage.presignUpload(objectKey, PDF_CONTENT_TYPE, request.sizeBytes)
+        validateUploadRequest(request)
 
-            UploadTicketResponse(
-                uploadUrl = presigned.url,
-                objectKey = objectKey,
-                requiredHeaders = presigned.requiredHeaders,
-                expiresAt = presigned.expiresAt
-            )
-        }
+        val objectKey = objectKeyFor(projectId, request.fileName)
+        val presigned = storage.presignUpload(objectKey, PDF_CONTENT_TYPE, request.sizeBytes)
+
+        return UploadTicketResponse(
+            uploadUrl = presigned.url,
+            objectKey = objectKey,
+            requiredHeaders = presigned.requiredHeaders,
+            expiresAt = presigned.expiresAt
+        )
+    }
 
     /**
      * 올라온 객체를 기획서 한 버전으로 등록한다. 이 호출이 성공해야 문서가 존재한다.
      *
      * headObject가 돌려주는 Content-Type은 클라이언트가 신고한 값을 그대로 되돌려주는 것이라
      * 내용을 보장하지 않는다. 그래서 앞부분을 실제로 읽어 PDF 매직 넘버를 확인한다.
+     *
+     * 접근할 수 없는 프로젝트면 null(→ 404). 추출 트리거는 저장 뒤(응답 조립 후) 백그라운드로 띄운다.
+     *
+     * ⚠️ 광역 트랜잭션으로 감싸지 않는다. DB 쓰기는 [saveNextVersion]의 단일 insert 하나뿐(원자적)이고,
+     * 그 insert는 (project_id, version) 유니크 충돌 시 **재시도**해야 하는데, 트랜잭션 안에서 유니크 위반이
+     * 나면 Postgres가 트랜잭션을 abort시켜 재시도가 회복 불가(→ 동시 업로드 500)가 된다. 원본 Reactor의
+     * `retryWhen`이 재구독마다 새로 시작하던 것을, 여기서는 트랜잭션 밖 재시도 루프로 대체한다.
      */
-    @Transactional
-    fun register(
+    suspend fun register(
         userId: Long,
         projectId: Long,
         request: RegisterDocumentRequest
-    ): Mono<ProjectDocumentResponse> =
-        requireAccessible(projectId, userId)
-            .flatMap { verifyUploadedObject(projectId, request.objectKey) }
-            .flatMap { stored ->
-                // 원본을 스트리밍하며 SHA-256 계산 → 프로젝트 단위 중복이면 등록 거부(추출도 안 함).
-                storage.sha256(request.objectKey)
-                    .switchIfEmpty(Mono.error(InvalidDocumentException("업로드된 파일을 찾을 수 없습니다.")))
-                    .flatMap { contentHash ->
-                        rejectDuplicateThenSave(
-                            projectId = projectId,
-                            userId = userId,
-                            objectKey = request.objectKey,
-                            contentHash = contentHash,
-                            sizeBytes = stored.sizeBytes
-                        )
-                    }
-            }
-            .flatMap { document ->
-                // 응답은 즉시 반환하고, 추출→적재는 뒤에서 진행한다(완료 여부는 parse_status로 노출).
-                documentAssembler.toResponse(document)
-                    .doOnSuccess { triggerExtractionInBackground(document) }
-            }
+    ): ProjectDocumentResponse? {
+        requireAccessible(projectId, userId) ?: return null
+        val stored = verifyUploadedObject(projectId, request.objectKey)
+        // 원본을 스트리밍하며 SHA-256 계산 → 프로젝트 단위 중복이면 등록 거부(추출도 안 함).
+        val contentHash = storage.sha256(request.objectKey).awaitSingleOrNull()
+            ?: throw InvalidDocumentException("업로드된 파일을 찾을 수 없습니다.")
+        val document = rejectDuplicateThenSave(
+            projectId = projectId,
+            userId = userId,
+            objectKey = request.objectKey,
+            contentHash = contentHash,
+            sizeBytes = stored.sizeBytes
+        )
+
+        // 응답은 즉시 반환하고, 추출→적재는 뒤에서 진행한다(완료 여부는 parse_status로 노출).
+        val response = documentAssembler.toResponse(document)
+        triggerExtractionInBackground(document)
+        return response
+    }
 
     /**
      * 추출 파이프라인을 요청과 분리해 백그라운드로 띄운다(fire-and-forget).
      *
-     * 업로드 확정 응답을 LLM 지연에 묶지 않기 위해 별도 스케줄러에서 구독한다. 실패는
+     * 업로드 확정 응답을 LLM 지연에 묶지 않기 위해 별도 스코프에서 launch한다. 실패는
      * 코디네이터가 parse_status=FAILED로 남기므로 여기선 방어적으로 로그만 남긴다.
      * (프로세스 재시작 중이면 진행 중 작업은 유실될 수 있어, 재추출 트리거는 후속 과제다.)
      */
     private fun triggerExtractionInBackground(document: ProjectDocumentEntity) {
         if (!extractionEnabled) return
-        extractionService.extractAndStoreForDocument(document)
-            .subscribeOn(Schedulers.boundedElastic())
-            .subscribe(
-                {},
-                { error -> logger.error("추출 파이프라인 기동 실패 documentId={}", document.id, error) }
-            )
+        backgroundScope.launch {
+            try {
+                extractionService.extractAndStoreForDocument(document)
+            } catch (error: Throwable) {
+                logger.error("추출 파이프라인 기동 실패 documentId={}", document.id, error)
+            }
+        }
     }
 
-    @Transactional(readOnly = true)
-    fun list(userId: Long, projectId: Long): Mono<List<ProjectDocumentResponse>> =
-        requireAccessible(projectId, userId)
-            .flatMap {
-                documentRepository.findByProjectIdOrderByVersionDesc(projectId).collectList()
-            }
-            .flatMap(documentAssembler::toResponses)
+    /** 접근할 수 없거나 삭제된 프로젝트면 null(→ 404). */
+    suspend fun list(userId: Long, projectId: Long): List<ProjectDocumentResponse>? {
+        requireAccessible(projectId, userId) ?: return null
+        val documents = documentRepository.findByProjectIdOrderByVersionDesc(projectId)
+            .toList()
+        return documentAssembler.toResponses(documents)
+    }
 
     /** 다운로드 URL은 요청할 때마다 새로 만든다. 오래 사는 링크를 DOM에 박아두지 않기 위해서다. */
-    @Transactional(readOnly = true)
-    fun createDownloadTicket(
+    suspend fun createDownloadTicket(
         userId: Long,
         projectId: Long,
         documentId: Long
-    ): Mono<DownloadTicketResponse> =
-        requireAccessible(projectId, userId)
-            .flatMap { documentRepository.findByIdAndProjectId(documentId, projectId) }
-            .map { document ->
-                val presigned = storage.presignDownload(document.objectKey, document.fileName)
-                DownloadTicketResponse(presigned.url, presigned.expiresAt)
-            }
+    ): DownloadTicketResponse? {
+        requireAccessible(projectId, userId) ?: return null
+        val document = documentRepository.findByIdAndProjectId(documentId, projectId)
+            ?: return null
+        val presigned = storage.presignDownload(document.objectKey, document.fileName)
+        return DownloadTicketResponse(presigned.url, presigned.expiresAt)
+    }
 
-    /** 접근할 수 없거나 삭제된 프로젝트는 빈 Mono다. 컨트롤러가 404로 옮긴다. */
-    private fun requireAccessible(projectId: Long, userId: Long) =
+    /** 접근할 수 없거나 삭제된 프로젝트는 null이다. 호출부가 null→404로 옮긴다. */
+    private suspend fun requireAccessible(projectId: Long, userId: Long): ProjectEntity? =
         projectRepository.findAccessibleById(projectId, userId)
 
     private fun validateUploadRequest(request: UploadTicketRequest) {
@@ -166,42 +185,53 @@ class ProjectDocumentService(
         }
     }
 
-    private fun verifyUploadedObject(projectId: Long, objectKey: String) =
+    private suspend fun verifyUploadedObject(projectId: Long, objectKey: String): StoredObject {
         // 다른 프로젝트의 키를 등록해 남의 기획서를 가져오는 것을 막는다.
         if (!objectKey.startsWith(objectKeyPrefix(projectId))) {
-            Mono.error(InvalidDocumentException("이 프로젝트의 업로드 키가 아닙니다."))
-        } else {
-            storage.head(objectKey)
-                .switchIfEmpty(
-                    Mono.error(InvalidDocumentException("업로드된 파일을 찾을 수 없습니다."))
-                )
-                .flatMap { stored ->
-                    when {
-                        stored.sizeBytes <= 0 ->
-                            Mono.error(InvalidDocumentException("빈 파일은 올릴 수 없습니다."))
-
-                        stored.sizeBytes > properties.maxUploadBytes ->
-                            Mono.error(
-                                InvalidDocumentException(
-                                    "기획서는 ${properties.maxUploadBytes / 1024 / 1024}MB를 넘을 수 없습니다."
-                                )
-                            )
-
-                        else -> requirePdfContent(objectKey).thenReturn(stored)
-                    }
-                }
+            throw InvalidDocumentException("이 프로젝트의 업로드 키가 아닙니다.")
         }
+        val stored = storage.head(objectKey).awaitSingleOrNull()
+            ?: throw InvalidDocumentException("업로드된 파일을 찾을 수 없습니다.")
+        when {
+            stored.sizeBytes <= 0 ->
+                throw InvalidDocumentException("빈 파일은 올릴 수 없습니다.")
 
-    private fun requirePdfContent(objectKey: String): Mono<Void> =
-        storage.readPrefix(objectKey, PDF_MAGIC.size)
-            .switchIfEmpty(Mono.error(InvalidDocumentException("업로드된 파일을 찾을 수 없습니다.")))
-            .flatMap { prefix ->
-                if (prefix.size < PDF_MAGIC.size || !prefix.copyOf(PDF_MAGIC.size).contentEquals(PDF_MAGIC)) {
-                    Mono.error(InvalidDocumentException("PDF 파일이 아닙니다."))
-                } else {
-                    Mono.empty()
-                }
-            }
+            stored.sizeBytes > properties.maxUploadBytes ->
+                throw InvalidDocumentException(
+                    "기획서는 ${properties.maxUploadBytes / 1024 / 1024}MB를 넘을 수 없습니다."
+                )
+        }
+        requirePdfContent(objectKey)
+        return stored
+    }
+
+    private suspend fun requirePdfContent(objectKey: String) {
+        val prefix = storage.readPrefix(objectKey, PDF_MAGIC.size).awaitSingleOrNull()
+            ?: throw InvalidDocumentException("업로드된 파일을 찾을 수 없습니다.")
+        if (prefix.size < PDF_MAGIC.size || !prefix.copyOf(PDF_MAGIC.size).contentEquals(PDF_MAGIC)) {
+            throw InvalidDocumentException("PDF 파일이 아닙니다.")
+        }
+    }
+
+    /**
+     * 프로젝트 단위 파일 중복이면 등록을 거부한다. 같은 hash가 이미 있으면 방금 올라온 S3 객체를
+     * 지우고 409로 막아, 중복 파일에 대한 Agent 추출 요청이 아예 안 나가게 한다.
+     * (동시 업로드 경합의 마지막 방어선은 DB 부분 유니크 uk_project_document_project_hash다.)
+     */
+    private suspend fun rejectDuplicateThenSave(
+        projectId: Long,
+        userId: Long,
+        objectKey: String,
+        contentHash: String,
+        sizeBytes: Long
+    ): ProjectDocumentEntity {
+        val exists = documentRepository.existsByProjectIdAndContentHash(projectId, contentHash)
+        if (exists) {
+            storage.delete(objectKey).awaitSingleOrNull()
+            throw DuplicateDocumentException("이미 업로드된 파일입니다.")
+        }
+        return saveNextVersion(projectId, userId, objectKey, fileNameFrom(objectKey), sizeBytes, contentHash)
+    }
 
     /**
      * 다음 버전으로 저장한다.
@@ -210,39 +240,19 @@ class ProjectDocumentService(
      * 여기서 다시 읽어 재시도한다. 재시도마다 최대 버전을 새로 조회해야 같은 값으로 계속
      * 부딪히지 않는다.
      */
-    /**
-     * 프로젝트 단위 파일 중복이면 등록을 거부한다. 같은 hash가 이미 있으면 방금 올라온 S3 객체를
-     * 지우고 409로 막아, 중복 파일에 대한 Agent 추출 요청이 아예 안 나가게 한다.
-     * (동시 업로드 경합의 마지막 방어선은 DB 부분 유니크 uk_project_document_project_hash다.)
-     */
-    private fun rejectDuplicateThenSave(
-        projectId: Long,
-        userId: Long,
-        objectKey: String,
-        contentHash: String,
-        sizeBytes: Long
-    ): Mono<ProjectDocumentEntity> =
-        documentRepository.existsByProjectIdAndContentHash(projectId, contentHash)
-            .flatMap { exists ->
-                if (exists) {
-                    storage.delete(objectKey)
-                        .then(Mono.error(DuplicateDocumentException("이미 업로드된 파일입니다.")))
-                } else {
-                    saveNextVersion(projectId, userId, objectKey, fileNameFrom(objectKey), sizeBytes, contentHash)
-                }
-            }
-
-    private fun saveNextVersion(
+    private suspend fun saveNextVersion(
         projectId: Long,
         userId: Long,
         objectKey: String,
         fileName: String,
         sizeBytes: Long,
         contentHash: String
-    ): Mono<ProjectDocumentEntity> =
-        Mono.defer {
-            documentRepository.findMaxVersion(projectId).flatMap { maxVersion ->
-                documentRepository.save(
+    ): ProjectDocumentEntity {
+        var remaining = VERSION_RETRY_ATTEMPTS
+        while (true) {
+            try {
+                val maxVersion = documentRepository.findMaxVersion(projectId)
+                return documentRepository.save(
                     ProjectDocumentEntity(
                         projectId = projectId,
                         version = maxVersion + 1,
@@ -255,11 +265,11 @@ class ProjectDocumentService(
                         contentHash = contentHash
                     )
                 )
+            } catch (e: DataIntegrityViolationException) {
+                if (remaining-- <= 0) throw e
             }
-        }.retryWhen(
-            Retry.max(VERSION_RETRY_ATTEMPTS)
-                .filter { it is DataIntegrityViolationException }
-        )
+        }
+    }
 
     /**
      * 키에 프로젝트 id와 무작위 값을 함께 넣는다. 프로젝트 접두사는 등록 시 소유 검증에 쓰이고,

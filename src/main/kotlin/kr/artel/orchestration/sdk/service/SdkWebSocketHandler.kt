@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.CloseStatus
 import org.springframework.web.reactive.socket.WebSocketHandler
 import org.springframework.web.reactive.socket.WebSocketSession
+import kotlinx.coroutines.reactive.awaitFirstOrNull
+import kotlinx.coroutines.reactor.mono
 import org.springframework.web.util.UriComponentsBuilder
 import reactor.core.publisher.Mono
 import java.net.URLDecoder
@@ -36,28 +38,31 @@ class SdkWebSocketHandler(
     private val logger = LoggerFactory.getLogger(SdkWebSocketHandler::class.java)
     private val handlerMap = handlers.associateBy { it.messageType }
 
-    override fun handle(session: WebSocketSession): Mono<Void> {
+    // 인터페이스가 Mono<Void>를 요구하므로 시그니처는 유지하고, 내부는 mono { } 코루틴
+    // 빌더로 감싼다. instanceRepository.findActiveByInstanceKey는 이제 suspend 함수라
+    // 코루틴 컨텍스트가 필요하다. 못 찾음(null)은 명시적으로 분기해 거절한다. switchIfEmpty를
+    // 쓰지 않는 이유는 open()이 반환하는 Mono<Void>가 항상 비어 있어 거절 경로가 다시 도는
+    // 문제를 피하기 위해서다.
+    override fun handle(session: WebSocketSession): Mono<Void> = mono {
         val instanceKey = instanceKeyFrom(session)
 
         if (instanceKey.isNullOrBlank()) {
             logger.warn("웹소켓 연결 거부: instanceKey가 없습니다.")
-            return session.close(CloseStatus(4001, "Missing instance key"))
+            session.close(CloseStatus(4001, "Missing instance key")).awaitFirstOrNull()
+            return@mono
         }
 
-        return instanceRepository.findActiveByInstanceKey(instanceKey)
-            .map { requireNotNull(it.id).toString() }
-            // singleOptional로 "찾음/못 찾음"을 값으로 바꾼다. 여기서 switchIfEmpty를 쓰면
-            // 연결이 정상 종료됐을 때(Mono<Void>는 항상 비어 있다) 거절 경로가 다시 돈다.
-            .singleOptional()
-            .flatMap { found ->
-                if (found.isPresent) {
-                    open(session, found.get())
-                } else {
-                    logger.warn("웹소켓 연결 거부: 유효하지 않은 instanceKey")
-                    session.close(CloseStatus(4001, "Invalid or unauthorized instance key"))
-                }
-            }
-    }
+        val entity = instanceRepository.findActiveByInstanceKey(instanceKey)
+        if (entity == null) {
+            logger.warn("웹소켓 연결 거부: 유효하지 않은 instanceKey")
+            session.close(CloseStatus(4001, "Invalid or unauthorized instance key")).awaitFirstOrNull()
+            return@mono
+        }
+
+        // open()이 반환하는 전송/수신 파이프라인은 소켓이 닫힐 때까지 살아 있어야 한다.
+        // 여기서 await하지 않으면 handle의 Mono가 즉시 완료되어 Spring이 세션을 닫는다.
+        open(session, requireNotNull(entity.id).toString()).awaitFirstOrNull()
+    }.then()
 
     /**
      * 이미 연결된 인스턴스면 새 연결을 거절한다.
@@ -86,7 +91,10 @@ class SdkWebSocketHandler(
                     val handler = handlerMap[base.type]
 
                     if (handler != null) {
-                        handler.handle(instanceId, payloadText, session)
+                        // handler.handle은 이제 suspend 함수라 mono { } 로 감싸 리액티브
+                        // 파이프라인에 다시 얹는다. concatMap이 순서를 보장하는 구조는 그대로다.
+                        mono { handler.handle(instanceId, payloadText, session) }
+                            .then()
                             .onErrorResume { err ->
                                 logger.error("메시지 처리 최종 실패 [type=${base.type}, instanceId=$instanceId]: ${err.message}")
                                 Mono.empty()
@@ -110,7 +118,9 @@ class SdkWebSocketHandler(
                 // 자기 세션일 때만 지운다. 늦게 끊긴 좀비 연결이 살아 있는 연결의 자리를
                 // 비우면, SDK는 연결된 채로 액션을 받지 못한다.
                 sessionManager.removeSession(instanceId, session)
-                qaExecutionFailureService.sdkDisconnected(instanceId.toLong())
+                // sdkDisconnected는 이제 suspend라 doFinally(동기 Reactor 콜백)에서
+                // mono { } 로 감싸 fire-and-forget으로 흘린다.
+                mono { qaExecutionFailureService.sdkDisconnected(instanceId.toLong()) }
                     .subscribe(
                         {},
                         { error -> logger.error("QA SDK 연결 종료 처리 실패 [instanceId=$instanceId]", error) }

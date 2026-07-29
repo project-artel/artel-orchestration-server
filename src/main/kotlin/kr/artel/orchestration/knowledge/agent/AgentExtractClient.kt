@@ -7,7 +7,7 @@ import org.springframework.http.MediaType
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
-import reactor.core.publisher.Mono
+import org.springframework.web.reactive.function.client.awaitBody
 import reactor.netty.http.client.HttpClient
 import java.time.Duration
 
@@ -42,21 +42,26 @@ class AgentExtractClient(
      * @param sourceUrl presigned GET URL(서명 필수)
      * @param filename 포맷 판별용 파일명
      */
-    fun extract(sourceUrl: String, filename: String): Mono<ExtractResponse> {
+    suspend fun extract(sourceUrl: String, filename: String): ExtractResponse {
         val targetUrl = "$agentBaseUrl/extract"
         val request = ExtractRequest(
             sourceUrl = sourceUrl,
             filename = filename,
             model = model?.ifBlank { null }
         )
-        return webClient.post()
-            .uri(targetUrl)
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(request)
-            .retrieve()
-            .bodyToMono(ExtractResponse::class.java)
-            .doOnSubscribe { logger.info("Agent /extract 요청: filename={}", filename) }
-            .doOnSuccess { logger.info("Agent /extract 성공: filename={}", filename) }
-            .doOnError { error -> logger.error("Agent /extract 실패: filename={}, error={}", filename, error.message) }
+        logger.info("Agent /extract 요청: filename={}", filename)
+        try {
+            val response = webClient.post()
+                .uri(targetUrl)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(request)
+                .retrieve()
+                .awaitBody<ExtractResponse>()
+            logger.info("Agent /extract 성공: filename={}", filename)
+            return response
+        } catch (error: Exception) {
+            logger.error("Agent /extract 실패: filename={}, error={}", filename, error.message)
+            throw error
+        }
     }
 }

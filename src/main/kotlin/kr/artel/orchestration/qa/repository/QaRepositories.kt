@@ -1,15 +1,14 @@
 package kr.artel.orchestration.qa.repository
 
+import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.qa.entity.QaLogEntity
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
-import org.springframework.data.repository.reactive.ReactiveCrudRepository
-import reactor.core.publisher.Flux
-import reactor.core.publisher.Mono
+import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 import java.time.Instant
 
-interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
+interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
     @Query(
         """
         SELECT qt.* FROM qa_try qt
@@ -18,7 +17,7 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
         WHERE qt.id = :id AND pm.app_user_id = :userId
         """
     )
-    fun findAccessibleById(id: Long, userId: Long): Mono<QaTryEntity>
+    suspend fun findAccessibleById(id: Long, userId: Long): QaTryEntity?
 
     @Query(
         """
@@ -27,8 +26,8 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
           AND qt.status IN ('STARTING', 'RUNNING')
         """
     )
-    fun findActiveByGameInstanceId(gameInstanceId: Long): Mono<QaTryEntity>
-  
+    suspend fun findActiveByGameInstanceId(gameInstanceId: Long): QaTryEntity?
+
     /** One project's runs, newest first. Membership is what makes them visible. */
     @Query(
         """
@@ -40,11 +39,11 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
         LIMIT :limit
         """
     )
-    fun findByProject(projectId: Long, userId: Long, limit: Int): Flux<QaTryEntity>
+    fun findByProject(projectId: Long, userId: Long, limit: Int): Flow<QaTryEntity>
 
     // @Modifying is what makes these return the affected row count. Without it
-    // Spring Data R2DBC maps the statement as a result set, the Mono completes
-    // empty, and every `filter { it == 1 }` below reads a successful update as a
+    // Spring Data R2DBC maps the statement as a result set, the suspend function
+    // completes empty, and every `== 1` check below reads a successful update as a
     // failure — which then rolls the update back.
     @Modifying
     @Query(
@@ -54,13 +53,13 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
         WHERE id = :id AND status = :expectedStatus
         """
     )
-    fun transition(
+    suspend fun transition(
         id: Long,
         expectedStatus: String,
         nextStatus: String,
         completedAt: Instant?,
         updatedAt: Instant
-    ): Mono<Int>
+    ): Int
 
     @Modifying
     @Query(
@@ -70,7 +69,7 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
         WHERE id = :id AND status = 'STARTING' AND agent_session_id IS NULL
         """
     )
-    fun attachAgentSession(id: Long, agentSessionId: String, updatedAt: Instant): Mono<Int>
+    suspend fun attachAgentSession(id: Long, agentSessionId: String, updatedAt: Instant): Int
 
     @Modifying
     @Query(
@@ -81,7 +80,7 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
           AND status IN ('STARTING', 'RUNNING')
         """
     )
-    fun failActiveByGameInstanceId(gameInstanceId: Long, completedAt: Instant): Mono<Int>
+    suspend fun failActiveByGameInstanceId(gameInstanceId: Long, completedAt: Instant): Int
 
     @Modifying
     @Query(
@@ -91,7 +90,7 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
         WHERE id = :id AND status IN ('STARTING', 'RUNNING')
         """
     )
-    fun failActiveById(id: Long, completedAt: Instant): Mono<Int>
+    suspend fun failActiveById(id: Long, completedAt: Instant): Int
 
     /**
      * Ends a run at the operator's request.
@@ -107,10 +106,10 @@ interface QaTryRepository : ReactiveCrudRepository<QaTryEntity, Long> {
         WHERE id = :id AND status IN ('STARTING', 'RUNNING')
         """
     )
-    fun cancelActiveById(id: Long, completedAt: Instant): Mono<Int>
+    suspend fun cancelActiveById(id: Long, completedAt: Instant): Int
 }
 
-interface QaLogRepository : ReactiveCrudRepository<QaLogEntity, Long> {
+interface QaLogRepository : CoroutineCrudRepository<QaLogEntity, Long> {
     @Query(
         """
         SELECT * FROM qa_log
@@ -119,7 +118,7 @@ interface QaLogRepository : ReactiveCrudRepository<QaLogEntity, Long> {
         LIMIT :limit
         """
     )
-    fun findPage(qaTryId: Long, beforeId: Long?, limit: Int): Flux<QaLogEntity>
+    fun findPage(qaTryId: Long, beforeId: Long?, limit: Int): Flow<QaLogEntity>
 
     @Query(
         """
@@ -128,14 +127,14 @@ interface QaLogRepository : ReactiveCrudRepository<QaLogEntity, Long> {
         ORDER BY id ASC
         """
     )
-    fun findReplay(qaTryId: Long, afterId: Long, highWater: Long): Flux<QaLogEntity>
+    fun findReplay(qaTryId: Long, afterId: Long, highWater: Long): Flow<QaLogEntity>
 
     @Query("SELECT COALESCE(MAX(id), 0) FROM qa_log WHERE qa_try_id = :qaTryId")
-    fun findHighWater(qaTryId: Long): Mono<Long>
+    suspend fun findHighWater(qaTryId: Long): Long
 
-    fun findByQaTryIdAndDirectionAndMessageId(
+    suspend fun findByQaTryIdAndDirectionAndMessageId(
         qaTryId: Long,
         direction: String,
         messageId: String
-    ): Mono<QaLogEntity>
+    ): QaLogEntity?
 }

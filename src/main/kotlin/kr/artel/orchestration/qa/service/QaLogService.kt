@@ -3,19 +3,19 @@ package kr.artel.orchestration.qa.service
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
 import kr.artel.orchestration.qa.entity.QaLogEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
-import reactor.core.publisher.Flux
-import reactor.core.publisher.Mono
 import java.nio.charset.StandardCharsets
 import java.time.Clock
-import java.time.Duration
 import java.time.Instant
-import java.util.concurrent.atomic.AtomicLong
 
 private const val MAX_QA_PAYLOAD_BYTES = 1024 * 1024
 private val DIRECTIONS = setOf(
@@ -54,7 +54,7 @@ class QaLogService(
     private val streamManager: QaLogStreamManager,
     private val clock: Clock
 ) {
-    fun append(
+    suspend fun append(
         qaTryId: Long,
         direction: String,
         type: String,
@@ -62,7 +62,7 @@ class QaLogService(
         correlationId: String? = null,
         message: String? = null,
         payload: JsonNode = objectMapper.createObjectNode()
-    ): Mono<QaLogAppendResult> {
+    ): QaLogAppendResult {
         require(direction in DIRECTIONS) { "Unsupported QA log direction: $direction" }
         require(type in TYPES) { "Unsupported QA log type: $type" }
         val serialized = objectMapper.writeValueAsString(payload)
@@ -82,14 +82,14 @@ class QaLogService(
             // carry a null createdAt and every append would fail on the way out.
             createdAt = Instant.now(clock)
         )
-        return repository.save(entity)
-            .map { QaLogAppendResult(it.toResponse(), true) }
-            .onErrorResume(DataIntegrityViolationException::class.java) { error ->
-                if (messageId == null) Mono.error(error)
-                else repository.findByQaTryIdAndDirectionAndMessageId(qaTryId, direction, messageId)
-                    .map { existing -> QaLogAppendResult(existing.toResponse(), false) }
-                    .switchIfEmpty(Mono.error(error))
-            }
+        return try {
+            QaLogAppendResult(repository.save(entity).toResponse(), true)
+        } catch (error: DataIntegrityViolationException) {
+            if (messageId == null) throw error
+            val existing = repository.findByQaTryIdAndDirectionAndMessageId(qaTryId, direction, messageId)
+                ?: throw error
+            QaLogAppendResult(existing.toResponse(), false)
+        }
     }
 
     /** Call only after the transaction containing the append has committed. */
@@ -97,38 +97,42 @@ class QaLogService(
         if (result.inserted) streamManager.publish(result.log)
     }
 
-    fun page(qaTryId: Long, beforeId: Long?, size: Int): Mono<QaLogPageResponse> =
-        repository.findPage(qaTryId, beforeId, size + 1)
-            .collectList()
-            .map { selected ->
-                val hasMore = selected.size > size
-                val page = selected.take(size).reversed().map { it.toResponse() }
-                QaLogPageResponse(
-                    items = page,
-                    nextBeforeId = if (hasMore) page.firstOrNull()?.id else null,
-                    hasMore = hasMore
-                )
-            }
+    suspend fun page(qaTryId: Long, beforeId: Long?, size: Int): QaLogPageResponse {
+        val selected = repository.findPage(qaTryId, beforeId, size + 1).toList()
+        val hasMore = selected.size > size
+        val page = selected.take(size).reversed().map { it.toResponse() }
+        return QaLogPageResponse(
+            items = page,
+            nextBeforeId = if (hasMore) page.firstOrNull()?.id else null,
+            hasMore = hasMore
+        )
+    }
 
-    fun stream(qaTryId: Long, afterId: Long, terminal: Boolean): Flux<QaLogResponse> =
-        Flux.defer {
+    fun stream(qaTryId: Long, afterId: Long, terminal: Boolean): Flow<QaLogResponse> =
+        flow {
             if (terminal) {
-                return@defer repository.findHighWater(qaTryId)
-                    .flatMapMany { highWater ->
-                        repository.findReplay(qaTryId, afterId, highWater).map { it.toResponse() }
-                    }
+                val highWater = repository.findHighWater(qaTryId)
+                for (entity in repository.findReplay(qaTryId, afterId, highWater).toList()) {
+                    emit(entity.toResponse())
+                }
+                return@flow
             }
-            val cursor = AtomicLong(afterId)
-            Flux.interval(Duration.ZERO, Duration.ofMillis(250))
-                .concatMap {
-                    repository.findHighWater(qaTryId).flatMapMany { highWater ->
-                        if (highWater <= cursor.get()) Flux.empty()
-                        else repository.findReplay(qaTryId, cursor.get(), highWater)
-                            .map { it.toResponse() }
-                            .doOnNext { cursor.set(it.id.toLong()) }
+            // Poll immediately, then every 250ms — the former Flux.interval(ZERO, 250ms).
+            var cursor = afterId
+            while (true) {
+                val highWater = repository.findHighWater(qaTryId)
+                if (highWater > cursor) {
+                    for (entity in repository.findReplay(qaTryId, cursor, highWater).toList()) {
+                        val response = entity.toResponse()
+                        cursor = response.id.toLong()
+                        emit(response)
+                        // takeUntil(::isRunTerminal) was inclusive: emit the terminal
+                        // frame, then stop polling.
+                        if (isRunTerminal(response)) return@flow
                     }
                 }
-                .takeUntil(::isRunTerminal)
+                delay(250)
+            }
         }
 
     fun response(entity: QaLogEntity): QaLogResponse = entity.toResponse()

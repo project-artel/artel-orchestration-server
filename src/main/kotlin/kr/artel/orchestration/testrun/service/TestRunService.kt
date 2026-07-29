@@ -2,9 +2,7 @@ package kr.artel.orchestration.testrun.service
 
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.reactor.awaitSingle
-import kotlinx.coroutines.reactor.awaitSingleOrNull
-import kr.artel.orchestration.project.repository.ProjectMemberRepository
+import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testrun.dto.RunScenarioItem
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
 import kr.artel.orchestration.testrun.dto.TestRunCreateRequest
@@ -26,28 +24,23 @@ import java.time.Instant
 /**
  * TestRun 도메인 서비스(코루틴). 여러 시나리오를 묶은 실행 세트(정의)의 CRUD + 시나리오 조합을 담당한다.
  * 접근은 프로젝트 참여로 인가(비참여자 → null/빈 목록). 조합에 넣는 시나리오는 같은 프로젝트 소속이어야 한다.
- *
- * 참고: `scenarioRepository`는 아직 Reactor(Mono/Flux) 리포라 `awaitSingle*()`로 브리지한다(이번 스코프 밖).
  */
 @Service
 class TestRunService(
     private val runRepository: TestRunRepository,
     private val runScenarioRepository: TestRunScenarioRepository,
     private val scenarioRepository: TestScenarioRepository,
-    private val projectMemberRepository: ProjectMemberRepository,
+    private val projectAccessService: ProjectAccessService,
     private val transactionalOperator: TransactionalOperator,
 ) {
-    private suspend fun isMember(projectId: Long, userId: Long): Boolean =
-        projectMemberRepository.findByProjectIdAndAppUserId(projectId, userId).awaitSingleOrNull() != null
-
     suspend fun list(projectId: Long, userId: Long): TestRunListResponse {
-        if (!isMember(projectId, userId)) return TestRunListResponse(emptyList())
+        if (!projectAccessService.isMember(projectId, userId)) return TestRunListResponse(emptyList())
         val items = runRepository.findByProjectIdOrderByIdDesc(projectId).map { it.toResponse() }.toList()
         return TestRunListResponse(items)
     }
 
     suspend fun create(projectId: Long, userId: Long, request: TestRunCreateRequest): TestRunResponse? {
-        if (!isMember(projectId, userId)) return null
+        if (!projectAccessService.isMember(projectId, userId)) return null
         val name = request.name?.takeIf { it.isNotBlank() }
             ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "name is required")
         return runRepository.save(
@@ -97,8 +90,7 @@ class TestRunService(
     private suspend fun validateScenarios(projectId: Long, scenarioIds: List<Long>) {
         if (scenarioIds.isEmpty()) return
         val distinct = scenarioIds.toSet()
-        // scenarioRepository는 아직 Reactor 리포 → Flux.collectList()로 브리지.
-        val scenarios = scenarioRepository.findAllById(distinct).collectList().awaitSingle()
+        val scenarios = scenarioRepository.findAllById(distinct).toList()
         when {
             scenarios.size != distinct.size ->
                 throw ResponseStatusException(HttpStatus.BAD_REQUEST, "some scenarios were not found")
@@ -116,7 +108,7 @@ class TestRunService(
 
     private suspend fun accessible(runId: Long, userId: Long): TestRunEntity? {
         val run = runRepository.findById(runId) ?: return null
-        return if (isMember(run.projectId, userId)) run else null
+        return if (projectAccessService.isMember(run.projectId, userId)) run else null
     }
 
     private fun TestRunEntity.toResponse(): TestRunResponse =

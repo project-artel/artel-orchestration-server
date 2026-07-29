@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.controller
 
+import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.testscenario.dto.ApproveScenarioRequest
 import kr.artel.orchestration.testscenario.dto.CreateScenarioRequest
@@ -24,11 +25,9 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
-import reactor.core.publisher.Flux
-import reactor.core.publisher.Mono
 
 /**
- * QA 대시보드(React)와 통신하는 TestScenario 챗봇 REST 컨트롤러(외부/인증된 요청).
+ * QA 대시보드(React)와 통신하는 TestScenario 챗봇 REST 컨트롤러(외부/인증된 요청, 코루틴).
  *
  * 컨트롤러는 얇게 유지한다: JWT에서 userId를 추출하고, 비즈니스 로직은 [TestScenarioService]에 위임하며,
  * HTTP 상태코드 매핑만 담당한다. 라우팅 키(userId:testScenarioId) 조립·저장/조회는 서비스가 처리한다.
@@ -42,86 +41,92 @@ class TestScenarioController(
 
     /** 새 시나리오를 생성하고 testScenarioId를 반환한다. */
     @PostMapping
-    fun create(
+    suspend fun create(
         @RequestBody request: CreateScenarioRequest,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<CreateScenarioResponse>> {
+    ): ResponseEntity<CreateScenarioResponse> {
         val appUserId = requireUser(jwt)
         return service.createScenario(request.projectId, appUserId)
-            .map { ResponseEntity.ok(CreateScenarioResponse(it)) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.ok(CreateScenarioResponse(it)) }
+            ?: ResponseEntity.notFound().build()
     }
 
     /** 시나리오 단건 조회(payload = ScenarioDraft). FE가 canvas 렌더/재방문 복원에 사용. */
     @GetMapping("/{testScenarioId}")
-    fun getScenario(
+    suspend fun getScenario(
         @PathVariable testScenarioId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<ScenarioResponse>> {
+    ): ResponseEntity<ScenarioResponse> {
         val appUserId = requireUser(jwt)
         return service.getScenario(testScenarioId, appUserId)
-            .map { ResponseEntity.ok(it) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
     }
 
     /** 사용자별 프라이빗 채팅 스레드 조회(재방문 복원). */
     @GetMapping("/{testScenarioId}/messages")
-    fun getMessages(
+    suspend fun getMessages(
         @PathVariable testScenarioId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): Flux<MessageResponse> {
+    ): List<MessageResponse> {
         val appUserId = requireUser(jwt)
         return service.getMessages(testScenarioId, appUserId)
     }
 
     /** Agent 응답을 실시간 수신하는 SSE 스트림(타입화된 ScenarioStreamEvent). */
     @GetMapping("/{testScenarioId}/stream", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
-    fun stream(
+    suspend fun stream(
         @PathVariable testScenarioId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): Flux<ServerSentEvent<ScenarioStreamEvent>> {
+    ): Flow<ServerSentEvent<ScenarioStreamEvent>> {
         val appUserId = requireUser(jwt)
         return service.stream(appUserId, testScenarioId)
     }
 
     /** canvas 편집 실시간 자동저장(debounce PUT). 저장된 payload를 되돌려 FE 정합성을 맞춘다. */
     @PutMapping("/{testScenarioId}")
-    fun testScenarioUpdate(
+    suspend fun testScenarioUpdate(
         @PathVariable testScenarioId: Long,
         @RequestBody request: UpdateScenarioRequest,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<ScenarioResponse>> {
+    ): ResponseEntity<ScenarioResponse> {
         val appUserId = requireUser(jwt)
-        return service.testScenarioUpdate(appUserId, testScenarioId, request.draft)
-            .map { ResponseEntity.ok(it) }
+        return ResponseEntity.ok(service.testScenarioUpdate(appUserId, testScenarioId, request.draft))
     }
 
     /** 사용자 자연어 메시지를 수신하여 Agent로 중계한다(→ WebSocket). */
     @PostMapping("/{testScenarioId}/message")
-    fun relayMessage(
+    suspend fun relayMessage(
         @PathVariable testScenarioId: Long,
         @RequestBody message: TestScenarioMessage,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<String>> {
+    ): ResponseEntity<String> {
         val appUserId = requireUser(jwt)
-        return service.relay(appUserId, testScenarioId, message)
-            .then(Mono.just(ResponseEntity.ok("메시지 전송 완료")))
-            // 접근 거부(404 등 ResponseStatusException)는 그대로 전파하고, Agent 전송 실패만 502로 변환한다.
-            .onErrorResume({ it !is ResponseStatusException }) { error ->
-                Mono.just(ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(error.message))
-            }
+        return try {
+            service.relay(appUserId, testScenarioId, message)
+            ResponseEntity.ok("메시지 전송 완료")
+        } catch (e: ResponseStatusException) {
+            // 접근 거부(404 등)는 그대로 전파한다.
+            throw e
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 요청 취소(클라이언트 끊김)는 삼키지 않고 전파해야 코루틴이 정상 취소된다.
+            throw e
+        } catch (e: Exception) {
+            // Agent 전송 실패만 502로 변환한다.
+            ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(e.message)
+        }
     }
 
     /** 시나리오를 승인(확정)한다: 최종 draft 저장 + Agent WS/SSE 종료(채팅·시나리오는 남김). */
     @PostMapping("/{testScenarioId}/approve")
-    fun testScenarioApprove(
+    suspend fun testScenarioApprove(
         @PathVariable testScenarioId: Long,
         @RequestBody(required = false) request: ApproveScenarioRequest?,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<String>> {
+    ): ResponseEntity<String> {
         val appUserId = requireUser(jwt)
-        return service.testScenarioApprove(appUserId, testScenarioId, request?.draft)
-            .then(Mono.just(ResponseEntity.ok("승인 완료")))
+        service.testScenarioApprove(appUserId, testScenarioId, request?.draft)
+        return ResponseEntity.ok("승인 완료")
     }
 
     /** 유효한 사용자 토큰이 아니면 401. */

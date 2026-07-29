@@ -1,6 +1,7 @@
 package kr.artel.orchestration.project
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.JwtService
@@ -42,16 +43,16 @@ class ProjectCrudIntegrationTest {
      * 인메모리 H2를 다른 테스트와 공유하므로 각 테스트 시작 시 직접 비운다.
      */
     @BeforeEach
-    fun clean() {
-        documentRepository.deleteAll().block()
-        memberRepository.deleteAll().block()
-        projectRepository.deleteAll().block()
-        identityRepository.deleteAll().block()
-        appUserRepository.deleteAll().block()
+    fun clean(): Unit = runBlocking {
+        documentRepository.deleteAll()
+        memberRepository.deleteAll()
+        projectRepository.deleteAll()
+        identityRepository.deleteAll()
+        appUserRepository.deleteAll()
     }
 
     @Test
-    fun `creates a project and returns it in the owner's list`() {
+    fun `creates a project and returns it in the owner's list`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
 
         val created = post(token, "/api/projects", """{"name":"Demo Day","description":"QA 대상","genre":"ACTION"}""")
@@ -69,7 +70,7 @@ class ProjectCrudIntegrationTest {
     }
 
     @Test
-    fun `reads back a project by id`() {
+    fun `reads back a project by id`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val id = post(token, "/api/projects", """{"name":"Demo Day","genre":"RPG"}""")["id"].asText()
 
@@ -80,7 +81,7 @@ class ProjectCrudIntegrationTest {
     }
 
     @Test
-    fun `patches only the fields that were sent`() {
+    fun `patches only the fields that were sent`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val id = post(
             token,
@@ -96,7 +97,7 @@ class ProjectCrudIntegrationTest {
     }
 
     @Test
-    fun `clears the description with an empty string, not with null`() {
+    fun `clears the description with an empty string, not with null`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val id = post(
             token,
@@ -112,7 +113,7 @@ class ProjectCrudIntegrationTest {
     }
 
     @Test
-    fun `hides a project from users who are not members`() {
+    fun `hides a project from users who are not members`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
         val strangerToken = signIn("99", "hubot")
         val id = post(ownerToken, "/api/projects", """{"name":"비밀 프로젝트","genre":"OTHER"}""")["id"].asText()
@@ -124,7 +125,7 @@ class ProjectCrudIntegrationTest {
     }
 
     @Test
-    fun `soft-deletes a project so it becomes indistinguishable from a missing one`() {
+    fun `soft-deletes a project so it becomes indistinguishable from a missing one`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         val id = post(token, "/api/projects", """{"name":"삭제될 프로젝트","genre":"CASUAL"}""")["id"].asText()
 
@@ -135,11 +136,11 @@ class ProjectCrudIntegrationTest {
         assertThat(get(token, "/api/projects")["total"].asLong()).isZero()
 
         // 행 자체는 남아 있어야 한다. 지운 것이 아니라 지웠다고 표시한 것이다.
-        assertThat(projectRepository.count().block()).isEqualTo(1)
+        assertThat(projectRepository.count()).isEqualTo(1)
     }
 
     @Test
-    fun `rejects a project without a name`() {
+    fun `rejects a project without a name`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
 
         val error = errorOf { post(token, "/api/projects", """{"name":"","genre":"ACTION"}""") }
@@ -151,7 +152,7 @@ class ProjectCrudIntegrationTest {
     }
 
     @Test
-    fun `rejects an unknown genre`() {
+    fun `rejects an unknown genre`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
 
         val status = statusOf { post(token, "/api/projects", """{"name":"X","genre":"MOBA"}""") }
@@ -160,7 +161,7 @@ class ProjectCrudIntegrationTest {
     }
 
     @Test
-    fun `requires a session`() {
+    fun `requires a session`(): Unit = runBlocking {
         val status = statusOf {
             WebClient.create("http://localhost:$port").get().uri("/api/projects")
                 .retrieve().bodyToMono(String::class.java).block()
@@ -170,7 +171,7 @@ class ProjectCrudIntegrationTest {
     }
 
     @Test
-    fun `pages the list and clamps an oversized page size`() {
+    fun `pages the list and clamps an oversized page size`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
         repeat(3) { index ->
             post(token, "/api/projects", """{"name":"프로젝트 $index","genre":"ACTION"}""")
@@ -188,7 +189,7 @@ class ProjectCrudIntegrationTest {
         assertThat(clamped["size"].asInt()).isEqualTo(100)
     }
 
-    private fun signIn(providerUserId: String, login: String): String {
+    private suspend fun signIn(providerUserId: String, login: String): String {
         val user = oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
@@ -198,7 +199,7 @@ class ProjectCrudIntegrationTest {
                 avatarUrl = null,
                 email = "$login@example.com"
             )
-        ).block()!!
+        )
         return jwtService.issue(user)
     }
 

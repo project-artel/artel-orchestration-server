@@ -1,10 +1,9 @@
 package kr.artel.orchestration.game.repository
 
+import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.game.entity.GameInstanceEntity
 import org.springframework.data.r2dbc.repository.Query
-import org.springframework.data.repository.reactive.ReactiveCrudRepository
-import reactor.core.publisher.Flux
-import reactor.core.publisher.Mono
+import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 
 /**
  * 대시보드 조회는 project_member 조인과 두 개의 `deleted_at IS NULL`로 함께 좁힌다.
@@ -14,7 +13,7 @@ import reactor.core.publisher.Mono
  * 프로젝트의 삭제 여부까지 보는 이유는, 프로젝트를 지워도 game_instance 행은 그대로 남기
  * 때문이다. 그 조인이 빠지면 삭제된 프로젝트의 인스턴스가 살아남는다.
  */
-interface GameInstanceRepository : ReactiveCrudRepository<GameInstanceEntity, Long> {
+interface GameInstanceRepository : CoroutineCrudRepository<GameInstanceEntity, Long> {
 
     @Query(
         """
@@ -26,7 +25,7 @@ interface GameInstanceRepository : ReactiveCrudRepository<GameInstanceEntity, Lo
         ORDER BY gi.created_at DESC, gi.id DESC
         """
     )
-    fun findAllForMember(projectId: Long, userId: Long): Flux<GameInstanceEntity>
+    fun findAllForMember(projectId: Long, userId: Long): Flow<GameInstanceEntity>
 
     @Query(
         """
@@ -37,7 +36,7 @@ interface GameInstanceRepository : ReactiveCrudRepository<GameInstanceEntity, Lo
           AND gi.deleted_at IS NULL AND p.deleted_at IS NULL
         """
     )
-    fun findAccessibleById(id: Long, projectId: Long, userId: Long): Mono<GameInstanceEntity>
+    suspend fun findAccessibleById(id: Long, projectId: Long, userId: Long): GameInstanceEntity?
 
     /**
      * 프로젝트를 모른 채 인스턴스 하나에 대한 접근 권한을 확인한다.
@@ -56,7 +55,7 @@ interface GameInstanceRepository : ReactiveCrudRepository<GameInstanceEntity, Lo
           AND gi.deleted_at IS NULL AND p.deleted_at IS NULL
         """
     )
-    fun findAccessibleByIdForMember(id: Long, userId: Long): Mono<GameInstanceEntity>
+    suspend fun findAccessibleByIdForMember(id: Long, userId: Long): GameInstanceEntity?
 
     /**
      * SDK가 제시한 키로 인스턴스를 찾는다. 호출자가 로그인한 사용자가 아니므로 참여자 조인은
@@ -70,5 +69,5 @@ interface GameInstanceRepository : ReactiveCrudRepository<GameInstanceEntity, Lo
           AND gi.deleted_at IS NULL AND p.deleted_at IS NULL
         """
     )
-    fun findActiveByInstanceKey(instanceKey: String): Mono<GameInstanceEntity>
+    suspend fun findActiveByInstanceKey(instanceKey: String): GameInstanceEntity?
 }

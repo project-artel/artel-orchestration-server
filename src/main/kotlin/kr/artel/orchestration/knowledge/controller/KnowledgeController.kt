@@ -9,7 +9,6 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
-import reactor.core.publisher.Mono
 
 /**
  * knowledge 조회 컨트롤러. 저장은 API가 아니라 내부 파이프라인(docs 추출 / QA WS)이 담당하므로
@@ -25,17 +24,16 @@ class KnowledgeController(
 
     /** 프로젝트의 knowledge를 최신순으로 조회한다. source/tag는 선택 필터(잘못된 값이면 400). */
     @GetMapping
-    fun getKnowledgeByProjectAndFilters(
+    suspend fun getKnowledgeByProjectAndFilters(
         @RequestParam projectId: Long,
         @RequestParam(required = false) source: String?,
         @RequestParam(required = false) tag: String?
-    ): Mono<ResponseEntity<KnowledgeListResponse>> {
+    ): ResponseEntity<KnowledgeListResponse> {
         val parsedSource = source?.let { KnowledgeSource.fromWire(it) }
         val parsedTag = tag?.let { KnowledgeTag.fromWire(it) }
         if ((source != null && parsedSource == null) || (tag != null && parsedTag == null)) {
-            return Mono.just(ResponseEntity.badRequest().build())
+            return ResponseEntity.badRequest().build()
         }
-        return knowledgeService.findForProject(projectId, parsedSource, parsedTag)
-            .map { ResponseEntity.ok(it) }
+        return ResponseEntity.ok(knowledgeService.findForProject(projectId, parsedSource, parsedTag))
     }
 }

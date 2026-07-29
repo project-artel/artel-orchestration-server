@@ -1,5 +1,6 @@
 package kr.artel.orchestration.project.service
 
+import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.dto.CreateProjectRequest
 import kr.artel.orchestration.project.dto.DeleteProjectResponse
 import kr.artel.orchestration.project.dto.Genre
@@ -14,8 +15,8 @@ import kr.artel.orchestration.project.repository.ProjectDocumentRepository
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
-import reactor.core.publisher.Mono
+import org.springframework.transaction.reactive.TransactionalOperator
+import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Clock
 import java.time.Instant
 
@@ -23,11 +24,14 @@ import java.time.Instant
 private const val MAX_PAGE_SIZE = 100
 
 /**
- * 프로젝트 접근 규칙이 모이는 곳.
+ * 프로젝트 접근 규칙이 모이는 곳(코루틴).
  *
  * 사용자와 프로젝트는 M:N이고, project_member에 행이 있다는 것이 곧 접근 권한이다.
  * 모든 조회는 그 조인을 질의 안에서 걸어, 조건을 빠뜨렸을 때 남의 프로젝트가 조용히
  * 새어나가는 일이 생기지 않게 한다.
+ *
+ * 단건 멤버십(역할) 조회는 공통 모듈 [ProjectAccessService]를 쓴다.
+ * 쓰기 원자성은 [TransactionalOperator.executeAndAwait]로 감싼다.
  */
 @Service
 class ProjectService(
@@ -35,6 +39,8 @@ class ProjectService(
     private val memberRepository: ProjectMemberRepository,
     private val documentRepository: ProjectDocumentRepository,
     private val documentAssembler: ProjectDocumentAssembler,
+    private val projectAccessService: ProjectAccessService,
+    private val transactionalOperator: TransactionalOperator,
     private val clock: Clock
 ) {
     /**
@@ -43,19 +49,20 @@ class ProjectService(
      * 두 행이 한 트랜잭션이어야 한다. 프로젝트만 만들어지고 참여가 빠지면 만든 사람조차
      * 접근할 수 없는, 어디에도 보이지 않는 프로젝트가 남는다.
      */
-    @Transactional
-    fun create(userId: Long, request: CreateProjectRequest): Mono<ProjectDetailResponse> {
+    suspend fun create(userId: Long, request: CreateProjectRequest): ProjectDetailResponse {
         val now = Instant.now(clock)
 
-        return projectRepository.save(
-            ProjectEntity(
-                name = request.name.trim(),
-                description = request.description?.trim()?.ifBlank { null },
-                genre = request.genre.name,
-                createdAt = now,
-                updatedAt = now
+        return transactionalOperator.executeAndAwait {
+            val project = projectRepository.save(
+                ProjectEntity(
+                    name = request.name.trim(),
+                    description = request.description?.trim()?.ifBlank { null },
+                    genre = request.genre.name,
+                    createdAt = now,
+                    updatedAt = now
+                )
             )
-        ).flatMap { project ->
+
             memberRepository.save(
                 ProjectMemberEntity(
                     projectId = requireNotNull(project.id),
@@ -63,128 +70,114 @@ class ProjectService(
                     role = ProjectRole.OWNER.name,
                     createdAt = now
                 )
-            ).thenReturn(project)
-        }.map { it.toDetail(ProjectRole.OWNER, document = null) }
+            )
+
+            project.toDetail(ProjectRole.OWNER, document = null)
+        }
     }
 
-    @Transactional(readOnly = true)
-    fun list(userId: Long, page: Int, size: Int): Mono<ProjectPageResponse> {
+    suspend fun list(userId: Long, page: Int, size: Int): ProjectPageResponse {
         val safePage = page.coerceAtLeast(0)
         val safeSize = size.coerceIn(1, MAX_PAGE_SIZE)
 
-        return projectRepository
+        val projects = projectRepository
             .findPageForMember(userId, safeSize, safePage.toLong() * safeSize)
-            .collectList()
-            .flatMap { projects ->
-                summaries(userId, projects).flatMap { items ->
-                    projectRepository.countForMember(userId).map { total ->
-                        ProjectPageResponse(
-                            items = items,
-                            page = safePage,
-                            size = safeSize,
-                            total = total
-                        )
-                    }
-                }
-            }
+            .toList()
+        val items = summaries(userId, projects)
+        val total = projectRepository.countForMember(userId)
+
+        return ProjectPageResponse(
+            items = items,
+            page = safePage,
+            size = safeSize,
+            total = total
+        )
     }
 
-    /** 접근할 수 없거나 삭제된 프로젝트는 빈 Mono다. 컨트롤러가 404로 옮긴다. */
-    @Transactional(readOnly = true)
-    fun get(userId: Long, projectId: Long): Mono<ProjectDetailResponse> =
-        projectRepository.findAccessibleById(projectId, userId)
-            .flatMap { project -> withRoleAndLatestDocument(userId, project) }
+    /** 접근할 수 없거나 삭제된 프로젝트는 null이다. 컨트롤러가 404로 옮긴다. */
+    suspend fun get(userId: Long, projectId: Long): ProjectDetailResponse? {
+        val project = projectRepository.findAccessibleById(projectId, userId)
+            ?: return null
+        return withRoleAndLatestDocument(userId, project)
+    }
 
-    @Transactional
-    fun update(
+    suspend fun update(
         userId: Long,
         projectId: Long,
         request: UpdateProjectRequest
-    ): Mono<ProjectDetailResponse> =
-        projectRepository.findAccessibleById(projectId, userId)
-            .flatMap { project ->
-                projectRepository.save(project.applying(request))
-            }
-            .flatMap { project -> withRoleAndLatestDocument(userId, project) }
+    ): ProjectDetailResponse? =
+        transactionalOperator.executeAndAwait {
+            val project = projectRepository.findAccessibleById(projectId, userId)
+                ?: return@executeAndAwait null
+            val saved = projectRepository.save(project.applying(request))
+            withRoleAndLatestDocument(userId, saved)
+        }
 
     /**
      * OWNER만 삭제할 수 있다.
      *
-     * 참여자가 아니면 빈 Mono(→ 404)로, 참여자지만 OWNER가 아니면 [ProjectAccessDeniedException]
+     * 참여자가 아니면 null(→ 404)로, 참여자지만 OWNER가 아니면 [ProjectAccessDeniedException]
      * (→ 403)으로 갈린다. 이미 프로젝트를 볼 수 있는 사람에게 404를 주는 것은 숨기는 시늉일 뿐이다.
      *
      * 실제 행은 지우지 않고 deleted_at만 채운다. S3의 기획서 원본도 그대로 둔다.
      */
-    @Transactional
-    fun delete(userId: Long, projectId: Long): Mono<DeleteProjectResponse> =
-        projectRepository.findAccessibleById(projectId, userId)
-            .flatMap { project ->
-                memberRepository.findByProjectIdAndAppUserId(projectId, userId)
-                    .flatMap { member ->
-                        if (member.role != ProjectRole.OWNER.name) {
-                            Mono.error(ProjectAccessDeniedException("프로젝트 삭제는 소유자만 할 수 있습니다."))
-                        } else {
-                            projectRepository.save(project.copy(deletedAt = Instant.now(clock)))
-                        }
-                    }
+    suspend fun delete(userId: Long, projectId: Long): DeleteProjectResponse? =
+        transactionalOperator.executeAndAwait {
+            val project = projectRepository.findAccessibleById(projectId, userId)
+                ?: return@executeAndAwait null
+            val member = projectAccessService.member(projectId, userId)
+            if (member?.role != ProjectRole.OWNER.name) {
+                throw ProjectAccessDeniedException("프로젝트 삭제는 소유자만 할 수 있습니다.")
             }
-            .map { DeleteProjectResponse(deleted = true, projectId = projectId.toString()) }
+            projectRepository.save(project.copy(deletedAt = Instant.now(clock)))
+            DeleteProjectResponse(deleted = true, projectId = projectId.toString())
+        }
 
-    private fun summaries(
+    private suspend fun summaries(
         userId: Long,
         projects: List<ProjectEntity>
-    ): Mono<List<ProjectSummaryResponse>> {
-        if (projects.isEmpty()) return Mono.just(emptyList())
+    ): List<ProjectSummaryResponse> {
+        if (projects.isEmpty()) return emptyList()
 
         val projectIds = projects.mapNotNull { it.id }
 
-        val roles: Mono<Map<Long, String>> =
+        val roleByProject: Map<Long, String> =
             memberRepository.findByAppUserIdAndProjectIdIn(userId, projectIds)
-                .collectMap({ it.projectId }, { it.role })
-        val counts = documentRepository.countByProjectIds(projectIds)
-            .collectMap({ it.projectId }, { it.documentCount })
-        val latest = documentRepository.findLatestByProjectIds(projectIds)
-            .collectList()
-            .flatMap(documentAssembler::toResponsesByProject)
+                .toList()
+                .associate { it.projectId to it.role }
+        val countByProject = documentRepository.countByProjectIds(projectIds)
+            .toList()
+            .associate { it.projectId to it.documentCount }
+        val latestByProject = documentAssembler.toResponsesByProject(
+            documentRepository.findLatestByProjectIds(projectIds).toList()
+        )
 
-        return Mono.zip(roles, counts, latest).map { combined ->
-            val roleByProject = combined.t1
-            val countByProject = combined.t2
-            val latestByProject = combined.t3
-
-            projects.map { project ->
-                val id = requireNotNull(project.id)
-                ProjectSummaryResponse(
-                    id = id.toString(),
-                    name = project.name,
-                    genre = project.genre.toGenre(),
-                    description = project.description,
-                    documentCount = countByProject[id] ?: 0L,
-                    latestDocument = latestByProject[id],
-                    myRole = roleByProject[id].toRole(),
-                    updatedAt = project.updatedAt
-                )
-            }
+        return projects.map { project ->
+            val id = requireNotNull(project.id)
+            ProjectSummaryResponse(
+                id = id.toString(),
+                name = project.name,
+                genre = project.genre.toGenre(),
+                description = project.description,
+                documentCount = countByProject[id] ?: 0L,
+                latestDocument = latestByProject[id],
+                myRole = roleByProject[id].toRole(),
+                updatedAt = project.updatedAt
+            )
         }
     }
 
-    private fun withRoleAndLatestDocument(
+    private suspend fun withRoleAndLatestDocument(
         userId: Long,
         project: ProjectEntity
-    ): Mono<ProjectDetailResponse> {
+    ): ProjectDetailResponse {
         val projectId = requireNotNull(project.id)
 
-        val role = memberRepository.findByProjectIdAndAppUserId(projectId, userId)
-            .map { it.role.toRole() }
-            .defaultIfEmpty(ProjectRole.MEMBER)
-
+        val resolved = projectAccessService.member(projectId, userId)?.role.toRole()
         val latest = documentRepository.findFirstByProjectIdOrderByVersionDesc(projectId)
-            .flatMap(documentAssembler::toResponse)
+        val document = latest?.let { documentAssembler.toResponse(it) }
 
-        return role.flatMap { resolved ->
-            latest.map { project.toDetail(resolved, it) }
-                .switchIfEmpty(Mono.fromCallable { project.toDetail(resolved, null) })
-        }
+        return project.toDetail(resolved, document)
     }
 
     private fun ProjectEntity.applying(request: UpdateProjectRequest) = copy(
