@@ -214,6 +214,8 @@ class TestScenarioAgentService(
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
                     try {
                         saveMessage(session.testScenarioId, session.appUserId, "ASSISTANT", event.message ?: "")
+                    } catch (err: kotlinx.coroutines.CancellationException) {
+                        throw err
                     } catch (err: Exception) {
                         logger.error("ASSISTANT 메시지 저장 실패 [sessionKey=$sessionKey]: ${err.message}")
                     }
@@ -221,12 +223,16 @@ class TestScenarioAgentService(
                     event.scenario?.let {
                         try {
                             persistScenario(sessionKey, session.testScenarioId, it)
+                        } catch (err: kotlinx.coroutines.CancellationException) {
+                            throw err
                         } catch (err: Exception) {
                             logger.error("시나리오 저장 실패 [sessionKey=$sessionKey]: ${err.message}")
                         }
                     }
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             logger.error("Agent WS 수신 메시지 처리 실패 [sessionKey=$sessionKey]: ${e.message}", e)
         }

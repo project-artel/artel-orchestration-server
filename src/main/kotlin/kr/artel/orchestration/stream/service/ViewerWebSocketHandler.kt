@@ -167,6 +167,9 @@ class ViewerWebSocketHandler(
                 else ->
                     logger.warn("정의되지 않은 뷰어 메시지 [streamId: ${viewer.streamId}]: ${envelope.type}")
             }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            // 뷰어 연결 취소는 삼키지 않고 전파해야 수신 루프가 정상 종료된다.
+            throw error
         } catch (error: Exception) {
             // 게임이 방금 끊겼다면 중계는 실패한다. 그것 때문에 뷰어 연결까지 끊을 필요는
             // 없다. 스트림 상태는 SDK가 사라진 것으로 곧 드러난다.

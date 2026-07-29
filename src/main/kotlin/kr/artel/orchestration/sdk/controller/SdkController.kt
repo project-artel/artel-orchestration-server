@@ -38,6 +38,8 @@ class SdkController(
         return try {
             sessionManager.sendAction(instanceId, action)
             ResponseEntity.ok("액션 명령어 전송 완료")
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
         } catch (error: Exception) {
             ResponseEntity.status(HttpStatus.NOT_FOUND).body(error.message)
         }

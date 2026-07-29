@@ -108,6 +108,9 @@ class TestScenarioController(
         } catch (e: ResponseStatusException) {
             // 접근 거부(404 등)는 그대로 전파한다.
             throw e
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 요청 취소(클라이언트 끊김)는 삼키지 않고 전파해야 코루틴이 정상 취소된다.
+            throw e
         } catch (e: Exception) {
             // Agent 전송 실패만 502로 변환한다.
             ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(e.message)
