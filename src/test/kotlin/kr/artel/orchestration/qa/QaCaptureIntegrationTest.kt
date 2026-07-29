@@ -153,6 +153,7 @@ class QaCaptureIntegrationTest {
         val error = ticketError(seeded.instanceKey, "application/pdf", 120_000)
 
         assertThat(error.statusCode).isEqualTo(HttpStatus.BAD_REQUEST)
+        // 4xx는 도메인 안내 message를 그대로 준다(서버 내부가 아니라 요청에 대한 안내).
         assertThat(error.responseBodyAsString).contains("application/pdf")
     }
 
