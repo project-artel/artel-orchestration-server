@@ -126,16 +126,27 @@
 			<artifactId>reactor-test</artifactId>
 			<scope>test</scope>
 		</dependency>
-		<!-- H2 JDBC - 테스트 시 Flyway 마이그레이션 실행용 -->
+		<!-- Testcontainers - 테스트 DB를 스위트가 직접 띄운다. knowledge 벡터 색인이 pgvector 확장을
+		     요구하는데 Flyway는 모든 @SpringBootTest에서 마이그레이션 전체를 돌리므로, pgvector 없는
+		     DB에서는 벡터 테스트만이 아니라 통합 테스트 전부가 깨진다. 배경은
+		     src/test/kotlin/kr/artel/orchestration/support/PostgresTestContainer.kt 주석 참조.
+		     (H2는 JSONB도 pgvector도 없어 애초에 후보가 아니었고, test 프로파일이 이미 실 PostgreSQL을
+		     보고 있었으므로 남아 있던 H2 의존성을 함께 걷어낸다.) -->
 		<dependency>
-			<groupId>com.h2database</groupId>
-			<artifactId>h2</artifactId>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>postgresql</artifactId>
 			<scope>test</scope>
 		</dependency>
-		<!-- H2 R2DBC - 테스트 시 앱 런타임 DB 접근용 -->
 		<dependency>
-			<groupId>io.r2dbc</groupId>
-			<artifactId>r2dbc-h2</artifactId>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- LauncherSessionListener(테스트 DB 컨테이너 기동)를 컴파일하려면 필요하다. surefire는 이걸
+		     런타임에만 넣어 주므로 명시하지 않으면 test-compile에서 심볼을 못 찾는다. -->
+		<dependency>
+			<groupId>org.junit.platform</groupId>
+			<artifactId>junit-platform-launcher</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>

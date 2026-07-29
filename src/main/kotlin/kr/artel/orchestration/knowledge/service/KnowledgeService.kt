@@ -80,7 +80,10 @@ class KnowledgeService(
         )
     }
 
-    /** 프로젝트 스코프 조회(최신순). source/tag는 선택 필터. */
+    /**
+     * 프로젝트 스코프 조회(최신순). source/tag는 선택 필터.
+     * 소프트삭제된 항목은 리포지토리 쿼리 단계에서 이미 빠진다.
+     */
     suspend fun findForProject(
         projectId: Long,
         source: KnowledgeSource?,
@@ -88,13 +91,15 @@ class KnowledgeService(
     ): KnowledgeListResponse {
         val rows: Flow<KnowledgeEntity> = when {
             source != null && tag != null ->
-                knowledgeRepository.findByProjectIdAndSourceAndTagOrderByIdDesc(projectId, source.name, tag.name)
+                knowledgeRepository.findByProjectIdAndSourceAndTagAndDeletedAtIsNullOrderByIdDesc(
+                    projectId, source.name, tag.name
+                )
             source != null ->
-                knowledgeRepository.findByProjectIdAndSourceOrderByIdDesc(projectId, source.name)
+                knowledgeRepository.findByProjectIdAndSourceAndDeletedAtIsNullOrderByIdDesc(projectId, source.name)
             tag != null ->
-                knowledgeRepository.findByProjectIdAndTagOrderByIdDesc(projectId, tag.name)
+                knowledgeRepository.findByProjectIdAndTagAndDeletedAtIsNullOrderByIdDesc(projectId, tag.name)
             else ->
-                knowledgeRepository.findByProjectIdOrderByIdDesc(projectId)
+                knowledgeRepository.findByProjectIdAndDeletedAtIsNullOrderByIdDesc(projectId)
         }
         return KnowledgeListResponse(rows.map(::toResponse).toList())
     }

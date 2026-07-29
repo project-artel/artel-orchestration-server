@@ -16,6 +16,7 @@ import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
 import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -97,7 +98,7 @@ class KnowledgeIntegrationTest {
             )
         )
 
-        val rows = knowledgeRepository.findByProjectIdOrderByIdDesc(projectId)
+        val rows = knowledgeRepository.findByProjectIdAndDeletedAtIsNullOrderByIdDesc(projectId)
             .toList()
         assertThat(rows).hasSize(1)
         assertThat(rows[0].tag).isEqualTo("RULE")
@@ -136,5 +137,32 @@ class KnowledgeIntegrationTest {
         // enum 값 존재 확인(회귀 방지)
         assertThat(KnowledgeTag.NAMES).containsExactlyInAnyOrder("CONTROL", "RULE", "OBJECTIVE", "UI", "MISC")
         assertThat(KnowledgeSource.NAMES).containsExactlyInAnyOrder("DOCS", "QA")
+    }
+
+    /**
+     * 소프트삭제(ARTEL-188)가 쓸 `deleted_at`은 ARTEL-185의 마이그레이션에서 미리 만들었다.
+     * 삭제 API는 아직 없지만, **읽기 경로가 그 컬럼을 존중하는지는 지금 고정해 둔다** — 나중에
+     * 붙이면 그 사이에 머지되는 검색이 삭제된 항목을 계속 돌려주고 그 결함이 조용히 지나간다.
+     */
+    @Test
+    fun testSoftDeletedItemsDisappearFromReads(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        knowledgeService.store(
+            projectId, KnowledgeSource.DOCS, 10, null,
+            listOf(item("CONTROL", "살아있음"), item("RULE", "지워질 것"))
+        )
+        assertThat(listByFilters(projectId).items).hasSize(2)
+
+        val doomed = knowledgeRepository.findByProjectIdAndDeletedAtIsNullOrderByIdDesc(projectId)
+            .toList()
+            .first { it.summary == "지워질 것" }
+        knowledgeRepository.save(doomed.copy(deletedAt = Instant.now()))
+
+        val remaining = listByFilters(projectId).items
+        assertThat(remaining).hasSize(1)
+        assertThat(remaining.single().summary).isEqualTo("살아있음")
+        // 필터를 건 조회도 마찬가지여야 한다. 한 곳이라도 빠지면 삭제가 삭제가 아니게 된다.
+        assertThat(listByFilters(projectId, tag = "rule").items).isEmpty()
+        assertThat(listByFilters(projectId, source = "docs").items).hasSize(1)
     }
 }
