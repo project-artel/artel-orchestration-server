@@ -52,6 +52,11 @@
 			<groupId>org.jetbrains.kotlin</groupId>
 			<artifactId>kotlin-stdlib</artifactId>
 		</dependency>
+		<!-- Kotlin 코루틴 (Reactor 브리지). 버전은 Spring Boot BOM 관리. -->
+		<dependency>
+			<groupId>org.jetbrains.kotlinx</groupId>
+			<artifactId>kotlinx-coroutines-reactor</artifactId>
+		</dependency>
 
 		<!-- R2DBC (앱 런타임 - 논블로킹 DB 접근) -->
 		<dependency>
