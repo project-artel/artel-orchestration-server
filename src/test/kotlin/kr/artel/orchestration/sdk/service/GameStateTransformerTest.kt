@@ -1,11 +1,16 @@
 package kr.artel.orchestration.sdk.service
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import kr.artel.orchestration.sdk.dto.AgentRect
+import kr.artel.orchestration.sdk.dto.AgentScreenSize
 import kr.artel.orchestration.sdk.dto.SdkAction
 import kr.artel.orchestration.sdk.dto.SdkBlock
+import kr.artel.orchestration.sdk.dto.SdkBlockTransform
 import kr.artel.orchestration.sdk.dto.SdkComponent
 import kr.artel.orchestration.sdk.dto.SdkError
 import kr.artel.orchestration.sdk.dto.SdkGameState
+import kr.artel.orchestration.sdk.dto.SdkScreenRect
+import kr.artel.orchestration.sdk.dto.SdkScreenSize
 import kr.artel.orchestration.sdk.dto.SdkState
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -16,6 +21,18 @@ class GameStateTransformerTest {
         type = "GAME_STATE",
         id = 1,
         scene = SdkBlock(id = 0, type = "scene", name = "Lobby", children = children.toList())
+    )
+
+    private fun sceneOf(screen: SdkScreenSize?, vararg children: SdkBlock) = SdkGameState(
+        type = "GAME_STATE",
+        id = 1,
+        scene = SdkBlock(
+            id = 0,
+            type = "scene",
+            name = "Lobby",
+            screen = screen,
+            children = children.toList()
+        )
     )
 
     private fun action(sequence: Int, name: String, success: Boolean = true, error: SdkError? = null) =
@@ -133,6 +150,50 @@ class GameStateTransformerTest {
     }
 
     @Test
+    fun `관찰값 키는 조상 블록 이름을 모두 이어 붙인다`() {
+        val state = sceneOf(
+            parent(
+                1,
+                "Canvas",
+                parent(
+                    2,
+                    "StatusPanel",
+                    block(3, "nameTMP", SdkComponent(type = "text", name = "Label", content = "Fire"))
+                )
+            )
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        // 씬 이름(Lobby)은 이미 scene으로 나가므로 경로에 들어가지 않는다.
+        assertThat(agent.observables).containsOnlyKeys("Canvas.StatusPanel.nameTMP.content")
+        assertThat(agent.observables["Canvas.StatusPanel.nameTMP.content"]?.value).isEqualTo("Fire")
+    }
+
+    @Test
+    fun `같은 이름의 블록이 다른 부모 아래 있으면 서로 덮어쓰지 않는다`() {
+        // 경로가 없던 시절에는 두 키가 모두 "nameTMP.content"라 나중 것만 남았고, 남은 쪽이
+        // 어느 패널의 것인지 읽는 쪽에서 알 수 없었다.
+        val state = sceneOf(
+            parent(
+                1,
+                "LeftPanel",
+                block(2, "nameTMP", SdkComponent(type = "text", name = "Label", content = "Fire"))
+            ),
+            parent(
+                3,
+                "RightPanel",
+                block(4, "nameTMP", SdkComponent(type = "text", name = "Label", content = "Ice"))
+            )
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.observables["LeftPanel.nameTMP.content"]?.value).isEqualTo("Fire")
+        assertThat(agent.observables["RightPanel.nameTMP.content"]?.value).isEqualTo("Ice")
+    }
+
+    @Test
     fun `잠긴 버튼과 입력 필드는 조작 후보에서 뺀다`() {
         val state = sceneOf(
             block(1, "StartButton", SdkComponent(type = "button", name = "Button")),
@@ -218,6 +279,197 @@ class GameStateTransformerTest {
         assertThat(agent.interactables.single().name).isEqualTo("StartButton")
     }
 
+    @Test
+    fun `조작 후보는 SDK가 준 화면 좌표를 그대로 싣는다`() {
+        // SDK의 move_mouse가 좌상단 기준 픽셀을 그대로 받아 내부에서 변환한다. 여기서
+        // 뒤집거나 중심점으로 바꾸면 이중 변환이 된다.
+        val state = sceneOf(
+            SdkScreenSize(w = 1920, h = 1080),
+            SdkBlock(
+                id = 1,
+                type = "block",
+                name = "StartButton",
+                transform = SdkBlockTransform(rect = SdkScreenRect(x = 100, y = 200, w = 300, h = 40)),
+                components = listOf(SdkComponent(type = "button", name = "Button"))
+            )
+        )
+
+        val target = GameStateTransformer.toAgentGameState(state).interactables.single()
+
+        assertThat(target.rect).isEqualTo(AgentRect(x = 100, y = 200, w = 300, h = 40))
+        assertThat(target.onScreen).isTrue()
+    }
+
+    @Test
+    fun `씬의 화면 크기가 함께 전달된다`() {
+        // 화면 크기가 없으면 픽셀 rect를 해석할 수 없다. x 860은 1920에서는 한가운데다.
+        val state = sceneOf(
+            SdkScreenSize(w = 1280, h = 720),
+            block(1, "StartButton", SdkComponent(type = "button", name = "Button"))
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.screen).isEqualTo(AgentScreenSize(w = 1280, h = 720))
+    }
+
+    @Test
+    fun `좌표를 싣지 않은 블록의 rect는 0이 아니라 없음이다`() {
+        // 0으로 채우면 "화면 좌상단"이라는 유효한 좌표와 구분되지 않는다. 좌표를 보내지
+        // 않는 구버전 SDK의 페이로드도 그대로 변환되어야 한다.
+        val state = sceneOf(block(1, "StartButton", SdkComponent(type = "button", name = "Button")))
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.screen).isNull()
+        assertThat(agent.interactables.single().rect).isNull()
+        assertThat(agent.interactables.single().onScreen).isTrue()
+    }
+
+    @Test
+    fun `화면 밖 블록은 onScreen이 거짓이고 rect는 그대로 남는다`() {
+        // 얼마나 벗어났는지가 정보이므로 측정값을 지우지 않는다.
+        val state = sceneOf(
+            SdkScreenSize(w = 1920, h = 1080),
+            SdkBlock(
+                id = 1,
+                type = "block",
+                name = "OffscreenButton",
+                transform = SdkBlockTransform(
+                    rect = SdkScreenRect(x = -400, y = 50, w = 120, h = 40),
+                    onScreen = false
+                ),
+                components = listOf(SdkComponent(type = "button", name = "Button"))
+            )
+        )
+
+        val target = GameStateTransformer.toAgentGameState(state).interactables.single()
+
+        assertThat(target.onScreen).isFalse()
+        assertThat(target.rect).isEqualTo(AgentRect(x = -400, y = 50, w = 120, h = 40))
+    }
+
+    @Test
+    fun `좌표를 싣는 페이로드는 역직렬화 경로에서도 값이 보존된다`() {
+        val payload = """
+            {
+              "type": "GAME_STATE",
+              "id": 1,
+              "scene": {
+                "id": 0, "type": "scene", "name": "Lobby",
+                "screen": { "w": 1920, "h": 1080 },
+                "children": [
+                  {
+                    "id": 1, "type": "block", "name": "NameInput",
+                    "transform": {
+                      "rect": { "x": 60, "y": 120, "w": 240, "h": 48 },
+                      "onScreen": true
+                    },
+                    "components": [{ "type": "editText", "name": "Input" }]
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        val state = jacksonObjectMapper().readValue(payload, SdkGameState::class.java)
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.screen).isEqualTo(AgentScreenSize(w = 1920, h = 1080))
+        assertThat(agent.interactables.single().rect).isEqualTo(AgentRect(x = 60, y = 120, w = 240, h = 48))
+    }
+
+    @Test
+    fun `이미지뿐인 블록도 시각 요소로 남는다`() {
+        // content도 states도 actions도 없으니 종전에는 어느 목록에도 오르지 못하고 사라졌다.
+        // 보이지 않는 것은 겨눌 수도 없다.
+        val state = sceneOf(
+            SdkScreenSize(w = 1920, h = 1080),
+            SdkBlock(
+                id = 11,
+                type = "block",
+                name = "HeartIcon",
+                transform = SdkBlockTransform(rect = SdkScreenRect(x = 20, y = 30, w = 64, h = 64)),
+                components = listOf(SdkComponent(type = "image", name = "Image", sprite = "heart_full"))
+            )
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        val visual = agent.visuals.single()
+        assertThat(visual.id).isEqualTo(11)
+        assertThat(visual.name).isEqualTo("HeartIcon")
+        assertThat(visual.type).isEqualTo("image")
+        assertThat(visual.sprite).isEqualTo("heart_full")
+        assertThat(visual.rect).isEqualTo(AgentRect(x = 20, y = 30, w = 64, h = 64))
+        assertThat(visual.onScreen).isTrue()
+        assertThat(agent.interactables).isEmpty()
+    }
+
+    @Test
+    fun `스프라이트 블록도 시각 요소로 남는다`() {
+        val state = sceneOf(
+            SdkScreenSize(w = 1920, h = 1080),
+            SdkBlock(
+                id = 12,
+                type = "block",
+                name = "Player",
+                transform = SdkBlockTransform(rect = SdkScreenRect(x = 800, y = 400, w = 96, h = 96)),
+                components = listOf(SdkComponent(type = "sprite", name = "SpriteRenderer", sprite = "hero_idle"))
+            )
+        )
+
+        val visual = GameStateTransformer.toAgentGameState(state).visuals.single()
+
+        assertThat(visual.type).isEqualTo("sprite")
+        assertThat(visual.sprite).isEqualTo("hero_idle")
+        assertThat(visual.rect).isEqualTo(AgentRect(x = 800, y = 400, w = 96, h = 96))
+    }
+
+    @Test
+    fun `이미지를 함께 단 버튼은 조작 후보에만 오른다`() {
+        // 버튼은 대개 배경 Image를 달고 있다. 두 목록에 다 실으면 에이전트가 하나의 UI를 둘로 읽는다.
+        val state = sceneOf(
+            block(
+                1,
+                "StartButton",
+                SdkComponent(type = "button", name = "Button"),
+                SdkComponent(type = "image", name = "Image", sprite = "btn_bg")
+            )
+        )
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.interactables.single().name).isEqualTo("StartButton")
+        assertThat(agent.visuals).isEmpty()
+    }
+
+    @Test
+    fun `좌표를 싣지 않은 시각 요소의 rect는 0이 아니라 없음이다`() {
+        // 0으로 채우면 "화면 좌상단"이라는 유효한 좌표와 구분되지 않는다.
+        val state = sceneOf(block(13, "Background", SdkComponent(type = "image", name = "Image")))
+
+        val visual = GameStateTransformer.toAgentGameState(state).visuals.single()
+
+        assertThat(visual.rect).isNull()
+        assertThat(visual.sprite).isNull()
+        assertThat(visual.onScreen).isTrue()
+    }
+
+    @Test
+    fun `시각 요소가 없는 씬의 visuals는 비어 있다`() {
+        // 이미지 컴포넌트를 싣지 않는 구버전 SDK도 유효한 상태를 만들어야 한다.
+        val state = sceneOf(block(1, "StartButton", SdkComponent(type = "button", name = "Button")))
+
+        val agent = GameStateTransformer.toAgentGameState(state)
+
+        assertThat(agent.visuals).isNotNull()
+        assertThat(agent.visuals).isEmpty()
+    }
+
     private fun block(id: Int, name: String, vararg components: SdkComponent) =
         SdkBlock(id = id, type = "block", name = name, components = components.toList())
+
+    private fun parent(id: Int, name: String, vararg children: SdkBlock) =
+        SdkBlock(id = id, type = "block", name = name, children = children.toList())
 }
