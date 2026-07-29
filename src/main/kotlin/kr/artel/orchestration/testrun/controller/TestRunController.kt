@@ -21,10 +21,9 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
-import reactor.core.publisher.Mono
 
 /**
- * TestRun REST(외부/인증). 여러 시나리오를 묶은 실행 세트를 만들고 시나리오 조합을 편집한다.
+ * TestRun REST(외부/인증, 코루틴). 여러 시나리오를 묶은 실행 세트를 만들고 시나리오 조합을 편집한다.
  */
 @RestController
 @RequestMapping("/api/projects/{projectId}/test-runs")
@@ -34,76 +33,76 @@ class TestRunController(
 ) {
 
     @GetMapping
-    fun list(
+    suspend fun list(
         @PathVariable projectId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<TestRunListResponse> =
+    ): TestRunListResponse =
         service.list(projectId, requireUser(jwt))
 
     @PostMapping
-    fun create(
+    suspend fun create(
         @PathVariable projectId: Long,
         @RequestBody request: TestRunCreateRequest,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<TestRunResponse>> =
+    ): ResponseEntity<TestRunResponse> =
         service.create(projectId, requireUser(jwt), request)
-            .map { ResponseEntity.status(HttpStatus.CREATED).body(it) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.status(HttpStatus.CREATED).body(it) }
+            ?: ResponseEntity.notFound().build()
 
     @GetMapping("/{runId}")
-    fun get(
+    suspend fun get(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<TestRunResponse>> =
+    ): ResponseEntity<TestRunResponse> =
         service.get(runId, requireUser(jwt))
-            .map { ResponseEntity.ok(it) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
 
     @PutMapping("/{runId}")
-    fun update(
+    suspend fun update(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
         @RequestBody request: TestRunUpdateRequest,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<TestRunResponse>> =
+    ): ResponseEntity<TestRunResponse> =
         service.update(runId, requireUser(jwt), request)
-            .map { ResponseEntity.ok(it) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
 
     @DeleteMapping("/{runId}")
-    fun delete(
+    suspend fun delete(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<Void>> =
+    ): ResponseEntity<Void> {
         service.delete(runId, requireUser(jwt))
-            .then(Mono.just(ResponseEntity.noContent().build<Void>()))
-            .defaultIfEmpty(ResponseEntity.noContent().build())
+        return ResponseEntity.noContent().build()
+    }
 
     @GetMapping("/{runId}/scenarios")
-    fun getScenarios(
+    suspend fun getScenarios(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<RunScenariosResponse>> =
+    ): ResponseEntity<RunScenariosResponse> =
         service.getScenarios(runId, requireUser(jwt))
-            .map { ResponseEntity.ok(it) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
 
     @PutMapping("/{runId}/scenarios")
-    fun setScenarios(
+    suspend fun setScenarios(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
         @RequestBody request: SetRunScenariosRequest,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<RunScenariosResponse>> {
+    ): ResponseEntity<RunScenariosResponse> {
         val scenarioIds = request.scenarioIds.map {
             it.toLongOrNull() ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid scenarioId: $it")
         }
         return service.setScenarios(runId, requireUser(jwt), scenarioIds)
-            .map { ResponseEntity.ok(it) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
     }
 
     private fun requireUser(jwt: Jwt): Long =

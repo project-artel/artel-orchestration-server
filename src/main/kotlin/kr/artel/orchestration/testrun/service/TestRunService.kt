@@ -1,5 +1,9 @@
 package kr.artel.orchestration.testrun.service
 
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.testrun.dto.RunScenarioItem
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
@@ -15,14 +19,15 @@ import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
+import org.springframework.transaction.reactive.executeAndAwait
 import org.springframework.web.server.ResponseStatusException
-import reactor.core.publisher.Mono
 import java.time.Instant
 
 /**
- * TestRun 도메인 서비스. 여러 시나리오를 묶은 실행 세트(정의)의 CRUD + 시나리오 조합을 담당한다.
- * 접근은 프로젝트 참여로 인가. 조합에 넣는 시나리오는 같은 프로젝트 소속이어야 한다.
- * (실제 QA 실행 인스턴스(qa_try)와의 배선은 이 단계 범위 밖.)
+ * TestRun 도메인 서비스(코루틴). 여러 시나리오를 묶은 실행 세트(정의)의 CRUD + 시나리오 조합을 담당한다.
+ * 접근은 프로젝트 참여로 인가(비참여자 → null/빈 목록). 조합에 넣는 시나리오는 같은 프로젝트 소속이어야 한다.
+ *
+ * 참고: `scenarioRepository`는 아직 Reactor(Mono/Flux) 리포라 `awaitSingle*()`로 브리지한다(이번 스코프 밖).
  */
 @Service
 class TestRunService(
@@ -32,90 +37,87 @@ class TestRunService(
     private val projectMemberRepository: ProjectMemberRepository,
     private val transactionalOperator: TransactionalOperator,
 ) {
-    private fun isMember(projectId: Long, userId: Long): Mono<Boolean> =
-        projectMemberRepository.findByProjectIdAndAppUserId(projectId, userId).hasElement()
+    private suspend fun isMember(projectId: Long, userId: Long): Boolean =
+        projectMemberRepository.findByProjectIdAndAppUserId(projectId, userId).awaitSingleOrNull() != null
 
-    fun list(projectId: Long, userId: Long): Mono<TestRunListResponse> =
-        isMember(projectId, userId).flatMap { member ->
-            if (!member) return@flatMap Mono.just(TestRunListResponse(emptyList()))
-            runRepository.findByProjectIdOrderByIdDesc(projectId)
-                .map { it.toResponse() }
-                .collectList()
-                .map { TestRunListResponse(it) }
-        }
+    suspend fun list(projectId: Long, userId: Long): TestRunListResponse {
+        if (!isMember(projectId, userId)) return TestRunListResponse(emptyList())
+        val items = runRepository.findByProjectIdOrderByIdDesc(projectId).map { it.toResponse() }.toList()
+        return TestRunListResponse(items)
+    }
 
-    fun create(projectId: Long, userId: Long, request: TestRunCreateRequest): Mono<TestRunResponse> =
-        isMember(projectId, userId).flatMap { member ->
-            if (!member) return@flatMap Mono.empty()
-            val name = request.name?.takeIf { it.isNotBlank() }
-                ?: return@flatMap Mono.error(ResponseStatusException(HttpStatus.BAD_REQUEST, "name is required"))
-            runRepository.save(
-                TestRunEntity(projectId = projectId, name = name, description = request.description?.ifBlank { null })
-            ).map { it.toResponse() }
-        }
+    suspend fun create(projectId: Long, userId: Long, request: TestRunCreateRequest): TestRunResponse? {
+        if (!isMember(projectId, userId)) return null
+        val name = request.name?.takeIf { it.isNotBlank() }
+            ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "name is required")
+        return runRepository.save(
+            TestRunEntity(projectId = projectId, name = name, description = request.description?.ifBlank { null })
+        ).toResponse()
+    }
 
-    fun get(runId: Long, userId: Long): Mono<TestRunResponse> =
-        accessible(runId, userId).map { it.toResponse() }
+    suspend fun get(runId: Long, userId: Long): TestRunResponse? =
+        accessible(runId, userId)?.toResponse()
 
-    fun update(runId: Long, userId: Long, request: TestRunUpdateRequest): Mono<TestRunResponse> =
-        accessible(runId, userId).flatMap { existing ->
-            val updated = existing.copy(
-                name = request.name?.ifBlank { null } ?: existing.name,
-                description = if (request.description == null) existing.description else request.description.ifBlank { null },
-            )
-            runRepository.save(updated).map { it.toResponse() }
-        }
+    suspend fun update(runId: Long, userId: Long, request: TestRunUpdateRequest): TestRunResponse? {
+        val existing = accessible(runId, userId) ?: return null
+        val updated = existing.copy(
+            name = request.name?.ifBlank { null } ?: existing.name,
+            description = if (request.description == null) existing.description else request.description.ifBlank { null },
+        )
+        return runRepository.save(updated).toResponse()
+    }
 
-    /** 런 삭제: 조합 행(test_run_scenario)까지 정리한 뒤 런 행 삭제. */
-    fun delete(runId: Long, userId: Long): Mono<Void> =
-        accessible(runId, userId).flatMap { run ->
+    /** 런 삭제: 조합 행(test_run_scenario)까지 정리한 뒤 런 행 삭제(트랜잭션). 접근 불가면 no-op. */
+    suspend fun delete(runId: Long, userId: Long) {
+        val run = accessible(runId, userId) ?: return
+        transactionalOperator.executeAndAwait {
             runScenarioRepository.deleteByTestRunId(runId)
-                .then(runRepository.delete(run))
-                .`as`(transactionalOperator::transactional)
-                .then()
+            runRepository.delete(run)
         }
-
-    fun getScenarios(runId: Long, userId: Long): Mono<RunScenariosResponse> =
-        accessible(runId, userId).flatMap { resolveScenarios(runId) }
-
-    fun setScenarios(runId: Long, userId: Long, scenarioIds: List<Long>): Mono<RunScenariosResponse> =
-        accessible(runId, userId).flatMap { run ->
-            validateScenarios(run.projectId, scenarioIds)
-                .then(replaceScenarios(runId, scenarioIds).`as`(transactionalOperator::transactional).then())
-                .then(resolveScenarios(runId))
-        }
-
-    private fun replaceScenarios(runId: Long, scenarioIds: List<Long>): Mono<Void> {
-        val rows = scenarioIds.mapIndexed { index, scenarioId ->
-            TestRunScenarioEntity(testRunId = runId, testScenarioId = scenarioId, position = index)
-        }
-        return runScenarioRepository.deleteByTestRunId(runId)
-            .thenMany(runScenarioRepository.saveAll(rows))
-            .then()
     }
 
-    private fun validateScenarios(projectId: Long, scenarioIds: List<Long>): Mono<Void> {
-        if (scenarioIds.isEmpty()) return Mono.empty()
-        val distinct = scenarioIds.toSet()
-        return scenarioRepository.findAllById(distinct).collectList().flatMap { scenarios ->
-            when {
-                scenarios.size != distinct.size ->
-                    Mono.error(ResponseStatusException(HttpStatus.BAD_REQUEST, "some scenarios were not found"))
-                scenarios.any { it.projectId != projectId } ->
-                    Mono.error(ResponseStatusException(HttpStatus.BAD_REQUEST, "a scenario belongs to another project"))
-                else -> Mono.empty()
+    suspend fun getScenarios(runId: Long, userId: Long): RunScenariosResponse? {
+        accessible(runId, userId) ?: return null
+        return resolveScenarios(runId)
+    }
+
+    suspend fun setScenarios(runId: Long, userId: Long, scenarioIds: List<Long>): RunScenariosResponse? {
+        val run = accessible(runId, userId) ?: return null
+        validateScenarios(run.projectId, scenarioIds)
+        transactionalOperator.executeAndAwait {
+            runScenarioRepository.deleteByTestRunId(runId)
+            val rows = scenarioIds.mapIndexed { index, scenarioId ->
+                TestRunScenarioEntity(testRunId = runId, testScenarioId = scenarioId, position = index)
             }
+            runScenarioRepository.saveAll(rows).toList()
+        }
+        return resolveScenarios(runId)
+    }
+
+    private suspend fun validateScenarios(projectId: Long, scenarioIds: List<Long>) {
+        if (scenarioIds.isEmpty()) return
+        val distinct = scenarioIds.toSet()
+        // scenarioRepository는 아직 Reactor 리포 → Flux.collectList()로 브리지.
+        val scenarios = scenarioRepository.findAllById(distinct).collectList().awaitSingle()
+        when {
+            scenarios.size != distinct.size ->
+                throw ResponseStatusException(HttpStatus.BAD_REQUEST, "some scenarios were not found")
+            scenarios.any { it.projectId != projectId } ->
+                throw ResponseStatusException(HttpStatus.BAD_REQUEST, "a scenario belongs to another project")
         }
     }
 
-    private fun resolveScenarios(runId: Long): Mono<RunScenariosResponse> =
-        runScenarioRepository.findByTestRunIdOrderByPosition(runId)
+    private suspend fun resolveScenarios(runId: Long): RunScenariosResponse {
+        val items = runScenarioRepository.findByTestRunIdOrderByPosition(runId)
             .map { RunScenarioItem(it.position, it.testScenarioId.toString()) }
-            .collectList()
-            .map { RunScenariosResponse(runId.toString(), it) }
+            .toList()
+        return RunScenariosResponse(runId.toString(), items)
+    }
 
-    private fun accessible(runId: Long, userId: Long): Mono<TestRunEntity> =
-        runRepository.findById(runId).filterWhen { isMember(it.projectId, userId) }
+    private suspend fun accessible(runId: Long, userId: Long): TestRunEntity? {
+        val run = runRepository.findById(runId) ?: return null
+        return if (isMember(run.projectId, userId)) run else null
+    }
 
     private fun TestRunEntity.toResponse(): TestRunResponse =
         TestRunResponse(

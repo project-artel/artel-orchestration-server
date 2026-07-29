@@ -15,10 +15,9 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
-import reactor.core.publisher.Mono
 
 /**
- * 시나리오의 케이스 조합 REST(외부/인증). FE 캔버스가 시나리오를 케이스로 구성/재정렬한다.
+ * 시나리오의 케이스 조합 REST(외부/인증, 코루틴). FE 캔버스가 시나리오를 케이스로 구성/재정렬한다.
  * 조회는 순서대로 리졸브된 케이스, 저장은 caseIds 전체 교체(드래그앤드롭 결과 반영).
  */
 @RestController
@@ -29,26 +28,26 @@ class TestScenarioCaseController(
 ) {
 
     @GetMapping
-    fun getCases(
+    suspend fun getCases(
         @PathVariable testScenarioId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<ScenarioCasesResponse>> =
+    ): ResponseEntity<ScenarioCasesResponse> =
         service.getCases(testScenarioId, requireUser(jwt))
-            .map { ResponseEntity.ok(it) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
 
     @PutMapping
-    fun setCases(
+    suspend fun setCases(
         @PathVariable testScenarioId: Long,
         @RequestBody request: SetScenarioCasesRequest,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<ScenarioCasesResponse>> {
+    ): ResponseEntity<ScenarioCasesResponse> {
         val caseIds = request.caseIds.map {
             it.toLongOrNull() ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid caseId: $it")
         }
         return service.setCases(testScenarioId, requireUser(jwt), caseIds)
-            .map { ResponseEntity.ok(it) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
     }
 
     private fun requireUser(jwt: Jwt): Long =

@@ -20,11 +20,10 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
-import reactor.core.publisher.Mono
 
 /**
- * 재사용 TestCase 라이브러리 REST(외부/인증). FE 캔버스 좌측 사이드바가 프로젝트의 케이스를 나열·편집한다.
- * 컨트롤러는 얇게: JWT→userId 추출 + 상태코드 매핑, 비즈니스는 [TestCaseService].
+ * 재사용 TestCase 라이브러리 REST(외부/인증, 코루틴). FE 캔버스 좌측 사이드바가 프로젝트의 케이스를 나열·편집한다.
+ * 컨트롤러는 얇게: JWT→userId 추출 + 상태코드 매핑(서비스가 null이면 404), 비즈니스는 [TestCaseService].
  */
 @RestController
 @RequestMapping("/api/projects/{projectId}/test-cases")
@@ -34,54 +33,54 @@ class TestCaseController(
 ) {
 
     @GetMapping
-    fun list(
+    suspend fun list(
         @PathVariable projectId: Long,
         @RequestParam(required = false) category: String?,
         @RequestParam(required = false) status: String?,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<TestCaseListResponse> =
+    ): TestCaseListResponse =
         service.list(projectId, requireUser(jwt), category, status)
 
     @PostMapping
-    fun create(
+    suspend fun create(
         @PathVariable projectId: Long,
         @RequestBody request: TestCaseCreateRequest,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<TestCaseResponse>> =
+    ): ResponseEntity<TestCaseResponse> =
         service.create(projectId, requireUser(jwt), request)
-            .map { ResponseEntity.status(HttpStatus.CREATED).body(it) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.status(HttpStatus.CREATED).body(it) }
+            ?: ResponseEntity.notFound().build()
 
     @GetMapping("/{caseId}")
-    fun get(
+    suspend fun get(
         @PathVariable projectId: Long,
         @PathVariable caseId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<TestCaseResponse>> =
+    ): ResponseEntity<TestCaseResponse> =
         service.get(caseId, requireUser(jwt))
-            .map { ResponseEntity.ok(it) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
 
     @PutMapping("/{caseId}")
-    fun update(
+    suspend fun update(
         @PathVariable projectId: Long,
         @PathVariable caseId: Long,
         @RequestBody request: TestCaseUpdateRequest,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<TestCaseResponse>> =
+    ): ResponseEntity<TestCaseResponse> =
         service.update(caseId, requireUser(jwt), request)
-            .map { ResponseEntity.ok(it) }
-            .defaultIfEmpty(ResponseEntity.notFound().build())
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
 
     @DeleteMapping("/{caseId}")
-    fun delete(
+    suspend fun delete(
         @PathVariable projectId: Long,
         @PathVariable caseId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): Mono<ResponseEntity<Void>> =
+    ): ResponseEntity<Void> {
         service.delete(caseId, requireUser(jwt))
-            .then(Mono.just(ResponseEntity.noContent().build<Void>()))
-            .defaultIfEmpty(ResponseEntity.noContent().build())
+        return ResponseEntity.noContent().build()
+    }
 
     private fun requireUser(jwt: Jwt): Long =
         sessionUserResolver.resolve(jwt)?.userId
