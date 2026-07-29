@@ -4,14 +4,19 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.knowledge.agent.KnowledgeEmbeddingAgent
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
+import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
+import kr.artel.orchestration.knowledge.repository.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.service.KnowledgeEmbeddingBackfillWorker
+import kr.artel.orchestration.knowledge.service.KnowledgeMutation
+import kr.artel.orchestration.knowledge.service.KnowledgeService
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -21,6 +26,7 @@ import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Primary
 import org.springframework.r2dbc.core.DatabaseClient
+import org.springframework.r2dbc.core.flow
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
@@ -31,7 +37,7 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * 검증: 벡터가 없는 항목만 집는지, 한 tick 상한을 지키는지, 실패 시 `attempts`가 오르고 상한을 넘긴
  * 항목을 건너뛰는지, 두 워커가 같은 행을 집지 않는지(SKIP LOCKED), 소프트삭제된 항목을 건드리지
- * 않는지.
+ * 않는지, 그리고 수정·삭제(ARTEL-188)가 임베딩을 무효화해 큐의 원점으로 되돌리는지.
  *
  * Agent는 대역([FakeKnowledgeEmbeddingAgent])이다. ARTEL-184의 실제 엔드포인트와의 연동은 여기서
  * 검증하지 않는다.
@@ -53,6 +59,9 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
 
     @Autowired
     private lateinit var knowledgeRepository: KnowledgeRepository
+
+    @Autowired
+    private lateinit var knowledgeService: KnowledgeService
 
     @Autowired
     private lateinit var embeddingRepository: KnowledgeEmbeddingRepository
@@ -117,6 +126,14 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
         "SELECT COALESCE(MAX(attempts), 0) FROM knowledge_embedding WHERE knowledge_id = :id AND source_text IS NULL",
         "id" to knowledgeId
     )
+
+    /** 완성 행이 어떤 텍스트로 만들어졌는지. 무효화 뒤 새 본문으로 다시 채워졌는지를 여기서 본다. */
+    private suspend fun sourceTexts(knowledgeId: Long): List<String> =
+        databaseClient.sql("SELECT source_text FROM knowledge_embedding WHERE knowledge_id = :id AND source_text IS NOT NULL")
+            .bind("id", knowledgeId)
+            .map { row -> row.get("source_text", String::class.java)!! }
+            .flow()
+            .toList()
 
     private suspend fun lastError(knowledgeId: Long): String? =
         databaseClient.sql("SELECT last_error FROM knowledge_embedding WHERE knowledge_id = :id AND source_text IS NULL")
@@ -237,6 +254,105 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
         assertThat(result.succeeded).isEqualTo(1)
         assertThat(vectorCount(ids[0])).isZero()
         assertThat(vectorCount(ids[1])).isEqualTo(FakeKnowledgeEmbeddingAgent.QUERIES_PER_ITEM.toLong())
+    }
+
+    // -------------------------------------------- 수정·삭제에 의한 무효화 (ARTEL-188)
+
+    /**
+     * 본문이 바뀌면 옛 본문에서 나온 벡터는 틀린 것이 된다. 그대로 두면 바뀌기 전 내용으로 검색되어
+     * 바뀐 내용이 나온다. 무효화는 그 항목을 백필 큐의 원점으로 돌려놓는 것으로 끝나야 한다.
+     */
+    @Test
+    fun `수정하면 임베딩이 무효화되고 백필이 새 본문으로 다시 채운다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val id = knowledgeService
+            .createFromQaTry(projectId, 1L, KnowledgeMutationRequest(tag = "RULE", summary = "옛 요약", description = "설명"))
+            .let { (it as KnowledgeMutation.Applied).knowledgeId }
+
+        worker.runOnce()
+        assertThat(vectorCount(id)).isEqualTo(FakeKnowledgeEmbeddingAgent.QUERIES_PER_ITEM.toLong())
+        assertThat(sourceTexts(id)).allMatch { it.startsWith("옛 요약") }
+
+        knowledgeService.updateFromQaTry(projectId, 2L, KnowledgeMutationRequest(knowledgeId = "$id", summary = "새 요약"))
+
+        // 무효화 직후에는 벡터가 없다 — 틀린 벡터로 검색되느니 검색되지 않는 편이 낫다.
+        assertThat(vectorCount(id)).isZero()
+
+        val result = worker.runOnce()
+        assertThat(result.succeeded).isEqualTo(1)
+        assertThat(vectorCount(id)).isEqualTo(FakeKnowledgeEmbeddingAgent.QUERIES_PER_ITEM.toLong())
+        assertThat(sourceTexts(id)).allMatch { it.startsWith("새 요약") }
+    }
+
+    @Test
+    fun `tag만 바꾸면 임베딩을 건드리지 않는다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val id = knowledgeService
+            .createFromQaTry(projectId, 1L, KnowledgeMutationRequest(tag = "RULE", summary = "요약", description = "설명"))
+            .let { (it as KnowledgeMutation.Applied).knowledgeId }
+        worker.runOnce()
+        val embedCallsBefore = fake.embedCalls.get()
+
+        knowledgeService.updateFromQaTry(projectId, 2L, KnowledgeMutationRequest(knowledgeId = "$id", tag = "UI"))
+
+        // 임베딩 입력은 summary/description뿐이라 벡터는 그대로 유효하다. 무효화하면 값이 같은
+        // 벡터를 다시 청구하게 된다.
+        assertThat(vectorCount(id)).isEqualTo(FakeKnowledgeEmbeddingAgent.QUERIES_PER_ITEM.toLong())
+        assertThat(worker.runOnce().claimed).isZero()
+        assertThat(fake.embedCalls.get()).isEqualTo(embedCallsBefore)
+    }
+
+    @Test
+    fun `소프트삭제하면 벡터가 사라지고 백필이 다시 만들지 않는다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val id = knowledgeService
+            .createFromQaTry(projectId, 1L, KnowledgeMutationRequest(tag = "RULE", summary = "요약", description = "설명"))
+            .let { (it as KnowledgeMutation.Applied).knowledgeId }
+        worker.runOnce()
+        assertThat(vectorCount(id)).isEqualTo(FakeKnowledgeEmbeddingAgent.QUERIES_PER_ITEM.toLong())
+
+        knowledgeService.softDeleteFromQaTry(projectId, 2L, KnowledgeMutationRequest(knowledgeId = "$id"))
+
+        // 읽기 경로가 deleted_at을 걸어 이미 빠지지만, 벡터까지 지워 두면 검색이 조인 조건을
+        // 빠뜨려도 삭제된 항목이 되살아나지 않는다.
+        assertThat(vectorCount(id)).isZero()
+        assertThat(worker.runOnce().claimed).isZero()
+        assertThat(vectorCount(id)).isZero()
+
+        // 되살리면(= deleted_at을 NULL로) 같은 시딩이 다시 채운다 — 되살리는 경로에 할 일이 늘지 않는다.
+        val restored = knowledgeRepository.findById(id)!!
+        knowledgeRepository.save(restored.copy(deletedAt = null))
+        assertThat(worker.runOnce().succeeded).isEqualTo(1)
+        assertThat(vectorCount(id)).isEqualTo(FakeKnowledgeEmbeddingAgent.QUERIES_PER_ITEM.toLong())
+    }
+
+    /**
+     * 워커가 Agent를 부르는 사이에 그 항목이 수정되면, 손에 든 벡터는 이미 옛 본문의 것이다.
+     * 그대로 넣으면 무효화가 무효화되고 아무도 그것을 알아채지 못한다. 대기 행이 사라진 것을
+     * 근거로 버려야 한다.
+     */
+    @Test
+    fun `임베딩 중에 수정되면 옛 본문의 벡터는 버려진다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val id = knowledgeService
+            .createFromQaTry(projectId, 1L, KnowledgeMutationRequest(tag = "RULE", summary = "옛 요약", description = "설명"))
+            .let { (it as KnowledgeMutation.Applied).knowledgeId }
+
+        embeddingRepository.seedPending("QUERY", properties.model, properties.batchSize)
+        val claimed = embeddingRepository.claimPending("QUERY", properties.model, properties.maxAttempts, 1).single()
+
+        // claim과 저장 사이에 수정이 끼어든 상황: 대기 행이 사라진다.
+        knowledgeService.updateFromQaTry(projectId, 2L, KnowledgeMutationRequest(knowledgeId = "$id", summary = "새 요약"))
+
+        embeddingRepository.replacePendingWithVectors(
+            claimed.pendingId, id, "QUERY", properties.model,
+            listOf(EmbeddedText("옛 요약 질문0", List(FakeKnowledgeEmbeddingAgent.VECTOR_DIMENSIONS) { 0.1 }))
+        )
+
+        assertThat(vectorCount(id)).describedAs("옛 본문의 벡터가 남으면 안 된다").isZero()
+        // 그 항목은 여전히 백필 대상이고, 다음 tick이 새 본문으로 채운다.
+        assertThat(worker.runOnce().succeeded).isEqualTo(1)
+        assertThat(sourceTexts(id)).allMatch { it.startsWith("새 요약") }
     }
 
     @Test

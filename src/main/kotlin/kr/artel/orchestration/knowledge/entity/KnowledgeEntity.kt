@@ -57,4 +57,15 @@ data class KnowledgeEntity(
      */
     @Column("deleted_at")
     val deletedAt: Instant? = null,
+
+    /**
+     * 이 항목을 마지막으로 고친/지운 QA 런(ARTEL-188). 사람이나 문서 추출 경로가 만든 항목은 null이다.
+     * 지우고 고치는 주체가 Agent라, 남기지 않으면 지식창고가 잘못 깎여도 알아챌 방법이 없다.
+     * [deletedByQaTryId]는 되살린 뒤에도 지우지 않는다 — "직전에 누가 지웠었나"가 곧 감사 기록이다.
+     */
+    @Column("updated_by_qa_try_id")
+    val updatedByQaTryId: Long? = null,
+
+    @Column("deleted_by_qa_try_id")
+    val deletedByQaTryId: Long? = null,
 )

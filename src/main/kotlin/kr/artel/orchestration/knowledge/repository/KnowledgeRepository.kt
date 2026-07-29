@@ -30,4 +30,14 @@ interface KnowledgeRepository : CoroutineCrudRepository<KnowledgeEntity, Long> {
         source: String,
         tag: String
     ): Flow<KnowledgeEntity>
+
+    /**
+     * 수정·소프트삭제의 대상 조회(ARTEL-188).
+     *
+     * `projectId`가 조건에 함께 들어가는 것이 프로젝트 격리의 실체다. id로 먼저 읽고 서비스에서
+     * 프로젝트를 비교하면 그 비교를 빠뜨릴 수 있지만, 여기서는 다른 프로젝트의 id를 넣으면
+     * 애초에 행이 없다. 이미 소프트삭제된 항목도 없는 것으로 본다 — 지워진 것을 다시 지우거나
+     * 고치려는 요청은 거절되어야 원래 언제 누가 지웠는지를 덮어쓰지 않는다.
+     */
+    suspend fun findByIdAndProjectIdAndDeletedAtIsNull(id: Long, projectId: Long): KnowledgeEntity?
 }
