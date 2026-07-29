@@ -26,7 +26,8 @@ private val DIRECTIONS = setOf(
     "ORCHE_INTERNAL",
     "USER_TO_ORCHE"
 )
-private val TYPES = setOf("LOG", "ACTION", "ACTION_RESULT", "GAME_STATE", "STATUS", "ERROR", "CHAT")
+private val TYPES =
+    setOf("LOG", "ACTION", "ACTION_RESULT", "GAME_STATE", "STATUS", "ERROR", "CHAT", "SCREENSHOT")
 
 data class QaLogAppendResult(val log: QaLogResponse, val inserted: Boolean)
 

@@ -28,6 +28,7 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 
 /**
@@ -129,7 +130,12 @@ class S3DocumentStorage internal constructor(
         )
     }
 
-    override fun presignDownload(objectKey: String, fileName: String): PresignedDownload = wrapping {
+    override fun presignDownload(
+        objectKey: String,
+        fileName: String,
+        ttl: Duration?
+    ): PresignedDownload = wrapping {
+        val validity = ttl ?: properties.downloadUrlTtl
         val url = if (credentials == null) {
             // 서명이 없으면 response-content-disposition도 걸 수 없다. 브라우저는 원래
             // 파일 이름 대신 키의 마지막 조각으로 저장하게 된다.
@@ -144,7 +150,7 @@ class S3DocumentStorage internal constructor(
 
             presigner.presignGetObject(
                 GetObjectPresignRequest.builder()
-                    .signatureDuration(properties.downloadUrlTtl)
+                    .signatureDuration(validity)
                     .getObjectRequest(getRequest)
                     .build()
             ).url().toExternalForm()
@@ -152,7 +158,7 @@ class S3DocumentStorage internal constructor(
 
         PresignedDownload(
             url = url,
-            expiresAt = Instant.now(clock).plus(properties.downloadUrlTtl)
+            expiresAt = Instant.now(clock).plus(validity)
         )
     }
 

@@ -81,3 +81,8 @@ artel:
     upload-url-ttl: ${ARTEL_S3_UPLOAD_URL_TTL:PT10M}
     download-url-ttl: ${ARTEL_S3_DOWNLOAD_URL_TTL:PT5M}
     max-upload-bytes: ${ARTEL_UPLOAD_MAX_BYTES:52428800}
+    # QA 캡처는 기획서와 수명이 다르다. 런이 끝날 때까지(Agent RUN_DEADLINE_SECONDS=600)
+    # 에이전트가 열 수 있어야 하므로 그보다 길게 잡는다. 짧으면 기동 시 검증에서 막힌다.
+    capture-download-url-ttl: ${ARTEL_S3_CAPTURE_DOWNLOAD_URL_TTL:PT30M}
+    # 화면 한 장. 전체 화면 최장 변 1024 JPEG면 수백 KB라 여유가 크다.
+    max-capture-bytes: ${ARTEL_CAPTURE_MAX_BYTES:5242880}
