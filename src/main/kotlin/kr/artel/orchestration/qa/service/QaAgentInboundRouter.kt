@@ -7,7 +7,9 @@ import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.service.IssueService
 import kr.artel.orchestration.knowledge.dto.KnowledgeIngestRequest
+import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
+import kr.artel.orchestration.knowledge.service.KnowledgeMutation
 import kr.artel.orchestration.knowledge.service.KnowledgeService
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.stereotype.Service
@@ -15,7 +17,14 @@ import java.time.Clock
 import java.time.Instant
 import java.util.UUID
 
-private val SUPPORTED_TYPES = setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE")
+/**
+ * knowledge 항목 하나를 다루는 인입 타입(ARTEL-188). 배치 인입인 `KNOWLEDGE`와 공존한다 —
+ * 배치는 한 출처의 관측을 통째로 넣고, 이쪽은 이미 있는 지식창고를 항목 단위로 고치고 지운다.
+ */
+private val KNOWLEDGE_MUTATION_TYPES = setOf("KNOWLEDGE_CREATE", "KNOWLEDGE_UPDATE", "KNOWLEDGE_DELETE")
+
+private val SUPPORTED_TYPES =
+    setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE") + KNOWLEDGE_MUTATION_TYPES
 
 @Service
 class QaAgentInboundRouter(
@@ -46,6 +55,12 @@ class QaAgentInboundRouter(
         if (envelope.type == "KNOWLEDGE") {
             val qaTry = activeTry(qaTryId) ?: return
             routeKnowledge(qaTryId, qaTry.gameInstanceId, envelope)
+            return
+        }
+        // 개별 생성·수정·삭제도 표시용 message 없이 knowledge 필드만 싣는다.
+        if (envelope.type in KNOWLEDGE_MUTATION_TYPES) {
+            val qaTry = activeTry(qaTryId) ?: return
+            routeKnowledgeMutation(qaTryId, qaTry.gameInstanceId, envelope)
             return
         }
         // 이슈는 표시용 `message` 대신 `title`을 담는다. 나머지 타입은 모두 타임라인에 뜨는
@@ -174,6 +189,47 @@ class QaAgentInboundRouter(
             throw error
         } catch (error: Exception) {
             appendError(qaTryId, envelope, "KNOWLEDGE store failed: ${error.message}")
+        }
+    }
+
+    /**
+     * knowledge 항목 하나를 생성·수정·소프트삭제한다(ARTEL-188).
+     *
+     * **프로젝트 격리는 payload가 아니라 런에서 나온다.** projectId를 Agent가 보낸 값으로 받으면
+     * 잘못된 값 하나로 다른 프로젝트의 지식창고를 깎을 수 있다. `qaTryId → game_instance →
+     * project_id`로 도출해 서비스에 넘기고, 서비스는 그 프로젝트 안에서만 대상을 찾는다.
+     *
+     * 검증 실패는 전부 값([KnowledgeMutation.Rejected])으로 돌아와 ERROR 로그가 되고, 저장 중 난
+     * 예외도 마찬가지로 삼킨다 — 프레임 하나가 receive 체인을 끊어 QA 런을 실패시키지 못하게 한다.
+     * `CancellationException`은 예외가 아니라 취소 신호라 반드시 다시 던진다.
+     */
+    private suspend fun routeKnowledgeMutation(
+        qaTryId: Long,
+        gameInstanceId: Long,
+        envelope: QaAgentEnvelope
+    ) {
+        val request = try {
+            objectMapper.treeToValue(envelope.payload, KnowledgeMutationRequest::class.java)
+        } catch (error: Exception) {
+            appendError(qaTryId, envelope, "${envelope.type} payload parse failed: ${error.message}")
+            return
+        }
+        val result = try {
+            val instance = gameInstanceRepository.findById(gameInstanceId) ?: return
+            val projectId = instance.projectId
+            when (envelope.type) {
+                "KNOWLEDGE_CREATE" -> knowledgeService.createFromQaTry(projectId, qaTryId, request)
+                "KNOWLEDGE_UPDATE" -> knowledgeService.updateFromQaTry(projectId, qaTryId, request)
+                else -> knowledgeService.softDeleteFromQaTry(projectId, qaTryId, request)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            appendError(qaTryId, envelope, "${envelope.type} failed: ${error.message}")
+            return
+        }
+        if (result is KnowledgeMutation.Rejected) {
+            appendError(qaTryId, envelope, "${envelope.type} rejected: ${result.reason}")
         }
     }
 

@@ -107,11 +107,16 @@ class KnowledgeEmbeddingRepository(
      * 호출자가 `TransactionalOperator`로 감싼다.
      */
     suspend fun replacePendingWithVectors(pendingId: Long, knowledgeId: Long, kind: String, model: String, vectors: List<EmbeddedText>) {
-        databaseClient.sql("DELETE FROM knowledge_embedding WHERE id = :id")
+        val deletedPendingRows = databaseClient.sql("DELETE FROM knowledge_embedding WHERE id = :id")
             .bind("id", pendingId)
             .fetch()
             .rowsUpdated()
-            .awaitFirstOrNull()
+            .awaitFirstOrNull() ?: 0L
+
+        // 대기 행이 이미 사라졌다면 그 사이에 knowledge가 수정·삭제되어 무효화된 것이다([discardFor]).
+        // 지금 손에 든 벡터는 **바뀌기 전 본문**에서 나온 것이라, 넣으면 검색이 옛 내용으로 새 항목을
+        // 찾아낸다. 넣지 않고 버리면 무효화가 새로 만든 대기 행(또는 다음 시딩)이 새 본문으로 다시 채운다.
+        if (deletedPendingRows == 0L) return
 
         for (vector in vectors) {
             databaseClient.sql(
@@ -146,6 +151,28 @@ class KnowledgeEmbeddingRepository(
             .rowsUpdated()
             .awaitFirstOrNull()
     }
+
+    /**
+     * 한 knowledge의 임베딩 행을 전부 버린다 — 대기 행이든 완성 행이든(ARTEL-188).
+     *
+     * **수정 시**: 본문이 바뀌면 옛 본문에서 나온 검색쿼리 벡터는 틀린 것이 된다. 남겨 두면 바뀌기
+     * 전 내용으로 검색되어 바뀐 내용이 나온다. 지우면 백필 시딩이 "이 (kind, model)로 행이 없다"고
+     * 보아 다시 집어 새 본문으로 채운다 — 되돌릴 상태를 따로 만들지 않고 큐의 원점으로 돌린다.
+     *
+     * **소프트삭제 시**: 읽기 경로가 `deleted_at`을 걸어 이미 빠지지만, 벡터까지 지워 두면 검색이
+     * 조인 조건을 빠뜨리더라도 삭제된 항목이 되살아나지 않는다. 되살리기(`deleted_at`을 NULL로)
+     * 뒤에는 같은 시딩이 다시 채우므로 되살리는 경로에 할 일이 늘지 않는다.
+     *
+     * 행을 지우기만 하므로 `ck_knowledge_embedding_state`(대기 행/완성 행 두 상태)를 건드리지 않는다.
+     *
+     * @return 지운 행 수
+     */
+    suspend fun discardFor(knowledgeId: Long): Long =
+        databaseClient.sql("DELETE FROM knowledge_embedding WHERE knowledge_id = :knowledgeId")
+            .bind("knowledgeId", knowledgeId)
+            .fetch()
+            .rowsUpdated()
+            .awaitFirstOrNull() ?: 0L
 
     /** 대기 행을 버린다. 대상 knowledge가 사라졌거나 삭제된 경우에 쓴다. */
     suspend fun deletePending(pendingId: Long) {
