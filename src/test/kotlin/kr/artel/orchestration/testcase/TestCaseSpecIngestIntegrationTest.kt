@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.common.csv.CsvTable
 import kr.artel.orchestration.common.csv.CsvToXlsxConverter
 import kr.artel.orchestration.common.csv.MalformedCsvException
 import kr.artel.orchestration.project.FakeDocumentStorage
@@ -18,6 +19,7 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.TestConfiguration
@@ -47,10 +49,25 @@ class TestCaseSpecIngestIntegrationTest {
         @Bean
         @Primary
         fun fakeDocumentStorage(): DocumentStorage = FakeDocumentStorage()
+
+        @Bean
+        @Primary
+        fun recordingConverter(): CsvToXlsxConverter = RecordingConverter()
+    }
+
+    /** POI가 실제로 어느 스레드에서 돌았는지 기록한다. 추측 대신 실측하려고 끼운다. */
+    class RecordingConverter : CsvToXlsxConverter() {
+        @Volatile var executedOn: String? = null
+
+        override fun convert(table: CsvTable, sheetName: String): ByteArray {
+            executedOn = Thread.currentThread().name
+            return super.convert(table, sheetName)
+        }
     }
 
     @Autowired private lateinit var service: TestCaseSpecService
     @Autowired private lateinit var storage: DocumentStorage
+    @Autowired private lateinit var converter: CsvToXlsxConverter
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
@@ -74,7 +91,7 @@ class TestCaseSpecIngestIntegrationTest {
         assertThat(cases.first { it.title == "검 구매" }.precondition).isEqualTo("골드 10 이상")
 
         // 산출물은 프로젝트당 한 벌, 고정 키로 올라간다.
-        val objectKey = "projects/$projectId/test-case-spec/test-cases.xlsx"
+        val objectKey = objectKeyOf(projectId)
         val stored = fakeStorage.read(objectKey)
         assertThat(stored).isNotNull()
         assertThat(fakeStorage.contentTypeOf(objectKey))
@@ -144,7 +161,7 @@ class TestCaseSpecIngestIntegrationTest {
     }
 
     @Test
-    fun `열 이름을 알아볼 수 없으면 적재하지 않고 거절한다`(): Unit = runBlocking {
+    fun `열 이름을 알아볼 수 없으면 적재도 저장도 하지 않는다`(): Unit = runBlocking {
         val (projectId, _) = newProjectWithMember()
 
         assertThatThrownBy {
@@ -152,6 +169,49 @@ class TestCaseSpecIngestIntegrationTest {
         }.isInstanceOf(MalformedCsvException::class.java)
 
         assertThat(testCaseRepository.findByProjectIdOrderByIdDesc(projectId).toList()).isEmpty()
+        // S3가 마지막이라 앞 단계에서 멈추면 고아 객체가 남지 않는다.
+        assertThat(fakeStorage.read(objectKeyOf(projectId))).isNull()
+    }
+
+    /**
+     * 적재가 실패하면 S3에도 아무것도 남지 않아야 한다. `category`는 VARCHAR(50)이라 51자를 넣으면
+     * INSERT가 깨지고, 그 지점은 이미 변환이 끝난 뒤다 — 즉 "변환은 됐는데 커밋이 실패한" 상황을
+     * 정확히 재현한다.
+     */
+    @Test
+    fun `적재가 실패하면 XLSX도 남기지 않는다`(): Unit = runBlocking {
+        val (projectId, _) = newProjectWithMember()
+        val tooLongCategory = "가".repeat(51)
+
+        assertThatThrownBy {
+            runBlocking {
+                service.ingest(projectId, "category,title,expected\n$tooLongCategory,상점 입장,진입".toByteArray())
+            }
+        }.isNotNull()
+
+        assertThat(testCaseRepository.findByProjectIdOrderByIdDesc(projectId).toList()).isEmpty()
+        assertThat(fakeStorage.read(objectKeyOf(projectId))).isNull()
+    }
+
+    /**
+     * POI 변환이 이벤트 루프에서 돌지 않는지 **실측**한다. 블로킹 변환이 `reactor-http-nio` 스레드에
+     * 걸리면 그 스레드에 붙은 무관한 요청이 전부 멈춘다.
+     */
+    @Test
+    fun `POI 변환은 이벤트 루프가 아닌 IO 디스패처에서 돈다`(): Unit = runBlocking {
+        val (projectId, _) = newProjectWithMember()
+        val callerThread = Thread.currentThread().name
+
+        service.ingest(projectId, SPEC_CSV)
+
+        val executedOn = (converter as RecordingConverter).executedOn
+        logger.info("호출 스레드 = {} / POI 실행 스레드 = {}", callerThread, executedOn)
+
+        assertThat(executedOn).isNotNull()
+        assertThat(executedOn).doesNotStartWith("reactor-http-nio")
+        // Dispatchers.IO 워커로 넘어갔다는 뜻. 호출 스레드에서 그대로 돌았다면 오프로딩이 없는 것이다.
+        assertThat(executedOn).startsWith("DefaultDispatcher-worker")
+        assertThat(executedOn).isNotEqualTo(callerThread)
     }
 
     @Test
@@ -170,6 +230,8 @@ class TestCaseSpecIngestIntegrationTest {
         assertThat(service.downloadTicket(projectId, userId)).isNull()
     }
 
+    private fun objectKeyOf(projectId: Long) = "projects/$projectId/test-case-spec/test-cases.xlsx"
+
     private suspend fun newUser(): Long {
         val now = Instant.now()
         return appUserRepository.save(AppUserEntity(displayName = "spec-user", createdAt = now, updatedAt = now)).id!!
@@ -186,5 +248,9 @@ class TestCaseSpecIngestIntegrationTest {
             ProjectMemberEntity(projectId = projectId, appUserId = userId, role = "MEMBER", createdAt = now)
         )
         return projectId to userId
+    }
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(TestCaseSpecIngestIntegrationTest::class.java)
     }
 }

@@ -1,7 +1,5 @@
 package kr.artel.orchestration.common.csv
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kr.artel.orchestration.common.error.BadRequestException
 import org.apache.commons.csv.CSVFormat
 import org.apache.commons.csv.CSVParser
@@ -14,8 +12,12 @@ import java.nio.charset.StandardCharsets
 /**
  * CSV 바이트를 [CsvTable]로 읽는다.
  *
- * 파싱은 순수 CPU 작업이고 표가 수천 행을 넘지 않으므로 통째로 메모리에 올린다. 그래도 이벤트
- * 루프(reactor-http-nio)에서 돌리면 그동안 다른 요청이 밀리므로 [Dispatchers.IO]로 옮긴다.
+ * 파싱은 순수 CPU 작업이고 표가 수천 행을 넘지 않으므로 통째로 메모리에 올린다.
+ *
+ * **평범한 블로킹 함수다.** 이벤트 루프(reactor-http-nio)를 잡지 않도록 옮기는 일은 호출부가
+ * 한 번만 한다([TestCaseSpecService.ingest][kr.artel.orchestration.testcase.service.TestCaseSpecService.ingest]의
+ * `withContext(Dispatchers.IO)`). 여기서 또 감싸면 한 요청에 스레드 홉만 늘고, 오프로딩 경계가
+ * 여러 곳에 흩어져 어디서 이벤트 루프를 벗어나는지 코드에서 보이지 않는다.
  *
  * 인코딩은 UTF-8로 고정한다. Agent가 만드는 파일이므로 협상할 상대가 없고, 잘못 짚어 깨진 글자를
  * 그대로 DB에 넣는 것보다 낫다. Excel이 붙이는 BOM은 첫 헤더 이름에 섞이지 않도록 걷어낸다.
@@ -23,11 +25,10 @@ import java.nio.charset.StandardCharsets
 @Component
 class CsvReader {
 
-    suspend fun read(content: ByteArray, maxRows: Int = MAX_ROWS): CsvTable =
-        withContext(Dispatchers.IO) {
-            require(maxRows > 0) { "maxRows must be positive" }
-            parse(content, maxRows)
-        }
+    fun read(content: ByteArray, maxRows: Int = MAX_ROWS): CsvTable {
+        require(maxRows > 0) { "maxRows must be positive" }
+        return parse(content, maxRows)
+    }
 
     private fun parse(content: ByteArray, maxRows: Int): CsvTable {
         val records = try {

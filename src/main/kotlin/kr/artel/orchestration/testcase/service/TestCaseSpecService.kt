@@ -1,6 +1,8 @@
 package kr.artel.orchestration.testcase.service
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.reactor.awaitSingleOrNull
+import kotlinx.coroutines.withContext
 import kr.artel.orchestration.common.csv.CsvReader
 import kr.artel.orchestration.common.csv.CsvTable
 import kr.artel.orchestration.common.csv.CsvToXlsxConverter
@@ -22,8 +24,8 @@ import org.springframework.transaction.reactive.executeAndAwait
  * 1. **XLSX로 변환해 S3에 저장** — 사용자가 명세를 엑셀로 내려받아 공유·검토할 수 있게.
  * 2. **`test_case`로 적재** — 시나리오 저작 챗봇이 검색·연결할 케이스 라이브러리를 채운다.
  *
- * 순서가 중요하다. 저장이 먼저다: 적재는 부분 성공이 남을 수 있지만 원본 산출물(XLSX)은 어떤
- * 경우에도 남아 있어야 사용자가 무엇이 왔는지 직접 확인할 수 있다.
+ * 순서가 중요하다. **S3 저장이 마지막이다**: 앞 단계가 실패했는데 버킷에만 파일이 남는 고아 상태와,
+ * DB와 산출물이 어긋난 채 다운로드되는 상태를 막는다. 자세한 근거는 [ingest] 참조.
  *
  * **전송 방식(WS/HTTP)에 의존하지 않는다.** Agent가 어떤 경로로 CSV를 보내기로 정해지든
  * ([ARTEL-208]의 미확정 항목) 그 수신부가 [ingest]를 바이트로 부르기만 하면 된다.
@@ -39,23 +41,38 @@ class TestCaseSpecService(
 ) {
 
     /**
-     * CSV를 변환·저장하고 케이스를 적재한다.
+     * CSV를 적재하고 XLSX 산출물을 저장한다.
+     *
+     * **오프로딩 경계는 여기 한 곳뿐이다.** CSV 파싱과 POI 변환은 블로킹 CPU 작업이라 이벤트
+     * 루프(reactor-http-nio)에서 돌면 그 스레드에 걸린 무관한 요청이 전부 멈춘다. 아래 컴포넌트들은
+     * 평범한 블로킹 함수로 두고 이 `withContext` 하나로 감싼다 — 각자 감싸면 한 요청에 스레드 홉이
+     * 네 번까지 늘고, 어디서 이벤트 루프를 벗어나는지 코드에서 보이지 않게 된다.
+     *
+     * DB(R2DBC)와 S3(비동기 클라이언트)는 블로킹이 아니라 이 블록 안에서도 스레드를 붙잡지 않고
+     * 코루틴이 그냥 대기한다. 굳이 밖으로 뺄 이유가 없어 경계를 쪼개지 않는다.
+     *
+     * **순서가 계약이다: 검증 → 변환 → DB 커밋 → S3 저장.**
+     * S3를 마지막에 두어야 앞 단계가 실패했을 때 고아 객체가 남지 않는다. 열을 못 알아봐 400을
+     * 냈는데 버킷에는 파일이 올라가 있거나, 트랜잭션이 롤백됐는데 다운로드는 되는 상태를 막는다.
+     * 남는 실패 모드는 "DB는 최신인데 XLSX만 이전 판"뿐이고, 키가 프로젝트별 고정값이라 재전송이
+     * 덮어쓰기(멱등)로 복구한다.
      *
      * 적재는 **title + category 기준 upsert**다. SDK 재등록마다 같은 명세가 다시 오는데 그때마다
      * append하면 몇 백 건이 통째로 복제된다. 이미 있는 케이스는 내용(precondition/expected)만
      * 갱신하고 `verificationStatus`·`lastVerifiedBuildId`는 **건드리지 않는다** — 그 값은 CSV가 아니라
      * QA 런이 만든 결과라, 재적재로 덮으면 검증 이력이 사라진다.
      */
-    suspend fun ingest(projectId: Long, csv: ByteArray): TestCaseSpecIngestResult {
-        val table = csvReader.read(csv)
-        requireKnownColumns(table)
+    suspend fun ingest(projectId: Long, csv: ByteArray): TestCaseSpecIngestResult =
+        withContext(Dispatchers.IO) {
+            val table = csvReader.read(csv)
+            requireKnownColumns(table)
+            val xlsx = converter.convert(table)
 
-        val xlsx = converter.convert(table)
-        storage.put(objectKeyFor(projectId), xlsx, CsvToXlsxConverter.XLSX_CONTENT_TYPE)
-            .awaitSingleOrNull()
-
-        return upsertCases(projectId, table)
-    }
+            val result = upsertCases(projectId, table)
+            storage.put(objectKeyFor(projectId), xlsx, CsvToXlsxConverter.XLSX_CONTENT_TYPE)
+                .awaitSingleOrNull()
+            result
+        }
 
     /**
      * 명세 XLSX 다운로드 티켓. 아직 받은 명세가 없거나 비참여자면 null(→404).

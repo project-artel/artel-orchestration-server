@@ -1,7 +1,5 @@
 package kr.artel.orchestration.common.csv
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.springframework.stereotype.Component
 import java.io.ByteArrayOutputStream
@@ -12,14 +10,15 @@ import java.io.ByteArrayOutputStream
  * 다루는 표는 수백 행(최대 수천 행) 규모라 통짜 [XSSFWorkbook]으로 충분하다. SXSSF(스트리밍)나
  * 임시 파일은 이 규모에서 얻는 것 없이 수명 관리만 늘린다.
  *
- * POI는 블로킹 CPU 작업이다. WebFlux 이벤트 루프(reactor-http-nio)에서 돌면 변환이 끝날 때까지
- * 그 스레드에 걸린 다른 요청이 전부 멈추므로 [Dispatchers.IO]로 옮겨서 실행한다.
+ * POI는 블로킹 CPU 작업이지만, **이 클래스는 평범한 블로킹 함수로 둔다.** 이벤트 루프를 벗어나는
+ * 일은 호출부가 한 번만 한다([TestCaseSpecService.ingest][kr.artel.orchestration.testcase.service.TestCaseSpecService.ingest]).
+ * 여기서 또 `withContext`를 걸면 스레드 홉만 늘고 오프로딩 경계가 흩어진다.
  */
 @Component
 class CsvToXlsxConverter {
 
-    suspend fun convert(table: CsvTable, sheetName: String = DEFAULT_SHEET_NAME): ByteArray =
-        withContext(Dispatchers.IO) { write(table, sheetName) }
+    fun convert(table: CsvTable, sheetName: String = DEFAULT_SHEET_NAME): ByteArray =
+        write(table, sheetName)
 
     private fun write(table: CsvTable, sheetName: String): ByteArray =
         XSSFWorkbook().use { workbook ->
