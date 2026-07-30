@@ -5,8 +5,8 @@ import java.time.Duration
 import java.time.Instant
 
 /**
- * 기획서 원본 저장소. 좁은 포트로 끊어두어 테스트에서 가짜 구현을 끼울 수 있고,
- * 저장소를 바꿔도 서비스 코드가 흔들리지 않는다.
+ * 파일 저장소. 기획서 원본에서 출발했고 지금은 QA 캡처·산출물 파일도 같은 포트를 쓴다.
+ * 좁은 포트로 끊어두어 테스트에서 가짜 구현을 끼울 수 있고, 저장소를 바꿔도 서비스 코드가 흔들리지 않는다.
  */
 interface DocumentStorage {
 
@@ -25,6 +25,15 @@ interface DocumentStorage {
         fileName: String,
         ttl: Duration? = null
     ): PresignedDownload
+
+    /**
+     * 서버가 만든 바이트를 그대로 올린다(같은 키면 덮어쓴다).
+     *
+     * [presignUpload]와 달리 클라이언트를 거치지 않는다. 원본을 올리는 쪽은 사용자지만,
+     * 그 원본에서 파생된 산출물(예: TestCase 명세 XLSX)은 서버가 만들어 두어야 사용자가
+     * 내려받을 수 있다. 실제 네트워크 호출이므로 비동기 클라이언트로 나간다.
+     */
+    fun put(objectKey: String, content: ByteArray, contentType: String): Mono<Void>
 
     /** 객체 메타데이터. 없으면 빈 Mono. */
     fun head(objectKey: String): Mono<StoredObject>

@@ -8,6 +8,12 @@ spring:
   config:
     import:
       - optional:classpath:application-db.yml
+  # 명세 CSV는 본문을 통째로 바이트 배열로 받는다. WebFlux 기본 상한(256KB)은 CsvReader.MAX_ROWS가
+  # 허용하는 크기보다 작아서, 규격 안의 파일이 도메인 검증에 닿기도 전에 DataBufferLimitException으로
+  # 떨어진다. 두 상한이 어긋나면 "왜 거절됐는지" 알 수 없는 실패가 된다. 5,000행 CSV를 여유 있게
+  # 담는 값으로 맞춘다.
+  codec:
+    max-in-memory-size: 2MB
   security:
     oauth2:
       client:

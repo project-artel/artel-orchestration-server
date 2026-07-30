@@ -39,4 +39,12 @@ interface ProjectRepository : CoroutineCrudRepository<ProjectEntity, Long> {
         """
     )
     suspend fun findAccessibleById(id: Long, userId: Long): ProjectEntity?
+
+    /**
+     * 멤버십을 따지지 않는 존재 확인. **서버-투-서버 경로 전용**이다(Agent는 엔드유저가 아니라
+     * 참여자로 판정할 대상이 없다). 삭제된 프로젝트는 여전히 없는 것으로 본다 — 그러지 않으면
+     * 지운 프로젝트에 데이터가 다시 쌓인다.
+     */
+    @Query("SELECT * FROM project WHERE id = :id AND deleted_at IS NULL")
+    suspend fun findActiveById(id: Long): ProjectEntity?
 }

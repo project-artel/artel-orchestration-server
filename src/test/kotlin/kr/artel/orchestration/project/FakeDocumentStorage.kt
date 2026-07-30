@@ -22,13 +22,22 @@ private val DEFAULT_DOWNLOAD_TTL: Duration = Duration.ofMinutes(5)
 class FakeDocumentStorage : DocumentStorage {
 
     private val objects = ConcurrentHashMap<String, ByteArray>()
+    private val contentTypes = ConcurrentHashMap<String, String>()
 
     /** 클라이언트가 presigned URL로 올린 것과 같은 상태를 만든다. */
     fun put(objectKey: String, content: ByteArray) {
         objects[objectKey] = content
     }
 
-    fun clear() = objects.clear()
+    /** 서버가 [DocumentStorage.put]으로 올려 둔 바이트. 테스트가 결과를 확인할 때 쓴다. */
+    fun read(objectKey: String): ByteArray? = objects[objectKey]
+
+    fun contentTypeOf(objectKey: String): String? = contentTypes[objectKey]
+
+    fun clear() {
+        objects.clear()
+        contentTypes.clear()
+    }
 
     override fun presignUpload(
         objectKey: String,
@@ -51,9 +60,20 @@ class FakeDocumentStorage : DocumentStorage {
         expiresAt = FIXED_NOW.plus(ttl ?: DEFAULT_DOWNLOAD_TTL)
     )
 
+    override fun put(objectKey: String, content: ByteArray, contentType: String): Mono<Void> =
+        Mono.fromRunnable {
+            objects[objectKey] = content
+            contentTypes[objectKey] = contentType
+        }
+
     override fun head(objectKey: String): Mono<StoredObject> =
         Mono.justOrEmpty(objects[objectKey])
-            .map { StoredObject(sizeBytes = it.size.toLong(), contentType = "application/pdf") }
+            .map {
+                StoredObject(
+                    sizeBytes = it.size.toLong(),
+                    contentType = contentTypes[objectKey] ?: "application/pdf"
+                )
+            }
 
     override fun readPrefix(objectKey: String, length: Int): Mono<ByteArray> =
         Mono.justOrEmpty(objects[objectKey]).map { it.copyOf(minOf(length, it.size)) }
