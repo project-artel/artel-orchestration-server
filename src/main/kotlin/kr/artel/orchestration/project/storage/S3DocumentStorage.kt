@@ -10,6 +10,7 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+import software.amazon.awssdk.core.async.AsyncRequestBody
 import software.amazon.awssdk.core.async.AsyncResponseTransformer
 import software.amazon.awssdk.core.exception.SdkException
 import software.amazon.awssdk.regions.Region
@@ -161,6 +162,20 @@ class S3DocumentStorage internal constructor(
             expiresAt = Instant.now(clock).plus(validity)
         )
     }
+
+    override fun put(objectKey: String, content: ByteArray, contentType: String): Mono<Void> =
+        Mono.fromFuture {
+            client.putObject(
+                PutObjectRequest.builder()
+                    .bucket(properties.bucket)
+                    .key(objectKey)
+                    .contentType(contentType)
+                    .build(),
+                AsyncRequestBody.fromBytes(content)
+            )
+        }
+            .then()
+            .onErrorMap(::isStorageFault, ::asStorageFault)
 
     override fun head(objectKey: String): Mono<StoredObject> =
         Mono.fromFuture {

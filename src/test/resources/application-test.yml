@@ -6,6 +6,13 @@ spring:
     url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:postgres}
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:postgres}
+    # 스위트에는 @TestConfiguration이 붙은 클래스만큼 서로 다른 Spring 컨텍스트가 뜨고, 각 컨텍스트가
+    # 자기 커넥션 풀을 잡은 채 스위트 끝까지 살아 있다. 기본값(max 10)이면 컨텍스트 열 몇 개만으로
+    # PostgreSQL 기본 한도(max_connections=100)를 넘겨, 그 뒤에 뜨는 컨텍스트가 Flyway 단계에서
+    # "sorry, too many clients already"로 통째로 실패한다. 테스트는 동시성이 필요 없으므로 작게 잡는다.
+    pool:
+      initial-size: 1
+      max-size: 3
   # 스키마는 Flyway(JDBC)가 구성한다. 볼륨 없는 Docker 컨테이너를 재구동하면 빈 DB가 되고,
   # 부팅 시 Flyway가 마이그레이션을 새로 적용해 스키마가 초기화된다.
   flyway:
