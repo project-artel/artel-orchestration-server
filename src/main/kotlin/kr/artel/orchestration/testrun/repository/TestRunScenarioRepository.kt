@@ -16,4 +16,7 @@ interface TestRunScenarioRepository : CoroutineCrudRepository<TestRunScenarioEnt
     fun findByTestScenarioId(testScenarioId: Long): Flow<TestRunScenarioEntity>
 
     suspend fun deleteByTestRunId(testRunId: Long)
+
+    /** 시나리오 삭제 시 그 시나리오가 든 모든 런의 조합 링크를 함께 정리한다. */
+    suspend fun deleteByTestScenarioId(testScenarioId: Long)
 }
