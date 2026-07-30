@@ -7,6 +7,8 @@ import kr.artel.orchestration.common.csv.CsvReader
 import kr.artel.orchestration.common.csv.CsvTable
 import kr.artel.orchestration.common.csv.CsvToXlsxConverter
 import kr.artel.orchestration.common.csv.MalformedCsvException
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.dto.TestCaseSpecDownloadResponse
@@ -37,6 +39,7 @@ class TestCaseSpecService(
     private val storage: DocumentStorage,
     private val repository: TestCaseRepository,
     private val projectAccessService: ProjectAccessService,
+    private val projectRepository: ProjectRepository,
     private val transactionalOperator: TransactionalOperator,
 ) {
 
@@ -64,6 +67,11 @@ class TestCaseSpecService(
      */
     suspend fun ingest(projectId: Long, csv: ByteArray): TestCaseSpecIngestResult =
         withContext(Dispatchers.IO) {
+            // 없는(또는 삭제된) 프로젝트면 여기서 멈춘다. 이 경로에는 엔드유저가 없어 멤버십으로
+            // 걸러낼 수 없고, 확인하지 않으면 오타 난 projectId로 보낸 케이스가 아무도 볼 수 없는
+            // 곳에 조용히 쌓인다.
+            projectRepository.findActiveById(projectId) ?: throw NotFoundException()
+
             val table = csvReader.read(csv)
             requireKnownColumns(table)
             val xlsx = converter.convert(table)

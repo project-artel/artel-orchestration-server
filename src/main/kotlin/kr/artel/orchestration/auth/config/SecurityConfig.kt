@@ -82,7 +82,11 @@ class SecurityConfig {
                 "/api/sdk/qa-captures/**",
                 "/api/orchestration/**",
                 // knowledge 조회는 Agent/내부 도구용 서버-투-서버 경로(엔드유저 JWT 대상 아님).
-                "/api/knowledge/**"
+                "/api/knowledge/**",
+                // Agent가 SDK 등록 시점에 만든 테스트 명세 CSV를 밀어 넣는 경로. 보내는 주체가
+                // Agent 서버라 엔드유저 JWT가 없다. 사용자용 다운로드는 이 경로가 아니라
+                // /api/projects/{id}/test-case-spec/download 이며 그쪽은 인증 대상이다.
+                "/api/test-case-spec/**"
             ).permitAll()
             it.pathMatchers("/api/auth/**").authenticated()
             // test-scenario는 외부(FE) 요청이므로 JWT 인증/인가 대상이다.
