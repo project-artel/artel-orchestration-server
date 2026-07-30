@@ -19,6 +19,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.http.codec.ServerSentEvent
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -128,6 +129,16 @@ class TestScenarioController(
         val appUserId = requireUser(jwt)
         service.testScenarioApprove(appUserId, testScenarioId, request?.draft)
         return ResponseEntity.ok("승인 완료")
+    }
+
+    /** 시나리오와 그 대화·조합 링크를 삭제한다(케이스/런 본체는 남김). 접근 불가/미존재면 404. */
+    @DeleteMapping("/{testScenarioId}")
+    suspend fun delete(
+        @PathVariable testScenarioId: Long,
+        @AuthenticationPrincipal jwt: Jwt
+    ): ResponseEntity<Void> {
+        service.delete(requireUser(jwt), testScenarioId)
+        return ResponseEntity.noContent().build()
     }
 
     /** 유효한 사용자 토큰이 아니면 401. */
