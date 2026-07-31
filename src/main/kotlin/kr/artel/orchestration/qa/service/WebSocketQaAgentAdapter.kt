@@ -1,6 +1,7 @@
 package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
@@ -18,9 +19,11 @@ import reactor.core.publisher.Sinks
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
+@JsonInclude(JsonInclude.Include.NON_NULL)
 private data class QaSessionOpenRequest(
     val type: String = "QA",
-    val model: String,
+    val model: String?,
+    val reasoning: JsonNode?,
     val context: QaSessionOpenContext
 )
 
@@ -46,7 +49,6 @@ private data class QaSessionOpenResponse(
 class WebSocketQaAgentAdapter(
     @Value("\${artel.agent.base-url:http://localhost:8000}") private val baseUrl: String,
     @Value("\${artel.agent.ws-base-url:ws://localhost:8000}") private val wsBaseUrl: String,
-    @Value("\${artel.agent.model:openai/gpt-4o-mini}") private val model: String,
     private val objectMapper: ObjectMapper
 ) : QaAgentPort {
     private val webClient = WebClient.create()
@@ -59,7 +61,8 @@ class WebSocketQaAgentAdapter(
         onDisconnect: suspend () -> Unit
     ): QaAgentSession {
         val request = QaSessionOpenRequest(
-            model = model,
+            model = context.model,
+            reasoning = context.reasoning,
             context = QaSessionOpenContext(
                 qaTryId = context.qaTryId,
                 gameInstanceId = context.gameInstanceId,
@@ -119,8 +122,9 @@ class WebSocketQaAgentAdapter(
             val send = ws.send(outbound.asFlux().map(ws::textMessage))
             val receive = ws.receive()
                 .concatMap { frame ->
+                    val payload = frame.payloadAsText
                     mono {
-                        val envelope = objectMapper.readValue(frame.payloadAsText, QaAgentEnvelope::class.java)
+                        val envelope = objectMapper.readValue(payload, QaAgentEnvelope::class.java)
                         onMessage(envelope)
                     }.then()
                         // An unparseable frame must not terminate the receive chain:

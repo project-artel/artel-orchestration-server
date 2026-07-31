@@ -36,6 +36,7 @@ artel:
   agent:
     base-url: ${ARTEL_AGENT_BASE_URL:http://localhost:8000}
     ws-base-url: ${ARTEL_AGENT_WS_BASE_URL:ws://localhost:8000}
+    model-catalog-ttl: ${ARTEL_AGENT_MODEL_CATALOG_TTL:PT5M}
     # 업로드 문서 → /extract → reference_context 적재(pull 파이프라인).
     extract:
       # 로컬에 Agent가 없으면 업로드마다 FAILED로 남으니 끌 수 있게 둔다.

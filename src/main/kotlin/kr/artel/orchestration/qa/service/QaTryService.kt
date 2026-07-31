@@ -15,6 +15,7 @@ import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
 import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.dto.QaTryResponse
+import kr.artel.orchestration.qa.dto.QaReasoningRequest
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
@@ -25,6 +26,12 @@ import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Clock
 import java.time.Instant
 import java.util.UUID
+
+internal fun QaReasoningRequest.toAgentPayload(objectMapper: ObjectMapper) =
+    objectMapper.createObjectNode().apply {
+        effort?.let { put("effort", it) }
+        maxTokens?.let { put("max_tokens", it) }
+    }
 
 @Service
 class QaTryPersistenceService(
@@ -99,7 +106,13 @@ class QaTryService(
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
-    suspend fun create(testScenarioId: Long, gameInstanceId: Long, userId: Long): QaTryResponse {
+    suspend fun create(
+        testScenarioId: Long,
+        gameInstanceId: Long,
+        userId: Long,
+        model: String? = null,
+        reasoning: QaReasoningRequest? = null
+    ): QaTryResponse {
         val scenario = scenarioAccessService.accessibleScenario(testScenarioId, userId)
             ?: throw NotFoundException()
         val instance = instanceRepository.findAccessibleByIdForMember(gameInstanceId, userId)
@@ -121,7 +134,9 @@ class QaTryService(
             qaTryId = qaTryId.toString(),
             gameInstanceId = gameInstanceId.toString(),
             testScenarioId = testScenarioId.toString(),
-            scenario = objectMapper.readTree(scenario.payload.asString())
+            scenario = objectMapper.readTree(scenario.payload.asString()),
+            model = model,
+            reasoning = reasoning?.toAgentPayload(objectMapper)
         )
 
         return try {
