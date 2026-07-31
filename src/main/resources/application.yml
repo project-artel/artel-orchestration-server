@@ -65,6 +65,17 @@ artel:
       default-limit: ${ARTEL_KNOWLEDGE_SEARCH_DEFAULT_LIMIT:5}
       # 결과가 Agent 컨텍스트로 들어간다. 요청이 더 큰 값을 보내도 여기서 잘린다.
       max-limit: ${ARTEL_KNOWLEDGE_SEARCH_MAX_LIMIT:20}
+  testcase:
+    # 케이스 벡터 백필(ARTEL-216). knowledge와 같은 이연 워커 패턴이되, 초기 대량 적재를 빨리
+    # 소진하도록 버스트 기본값(batch 큰 편, interval 짧은 편). 로컬·테스트는 꺼 둔다.
+    embedding:
+      enabled: ${ARTEL_TESTCASE_EMBEDDING_ENABLED:false}
+      # Agent embedding_model 및 knowledge 백필 model과 같아야 한다(다르면 워커가 저장을 거부).
+      model: ${ARTEL_TESTCASE_EMBEDDING_MODEL:openai/text-embedding-3-large}
+      # CONTENT 1벡터/케이스 → /embed 한 번에 이만큼. Agent /embed 상한(기본 128)보다 작게.
+      batch-size: ${ARTEL_TESTCASE_EMBEDDING_BATCH_SIZE:64}
+      max-attempts: ${ARTEL_TESTCASE_EMBEDDING_MAX_ATTEMPTS:5}
+      interval-millis: ${ARTEL_TESTCASE_EMBEDDING_INTERVAL_MILLIS:10000}
   stream:
     enabled: ${ARTEL_STREAM_ENABLED:true}
     # 브라우저가 10초마다 갱신을 보낸다. 그보다 짧으면 정상 연결을 잘라낸다.
