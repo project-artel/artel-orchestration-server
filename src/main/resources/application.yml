@@ -14,6 +14,13 @@ spring:
   # 담는 값으로 맞춘다.
   codec:
     max-in-memory-size: 2MB
+  # @Scheduled는 앱 전체가 하나의 TaskScheduler 풀을 공유하고 기본 크기가 1이다. 그러면 knowledge·
+  # testcase 백필 tick이 스레드 하나를 두고 직렬화되어, 한쪽이 Agent 응답을 기다리는 동안(최대 PT2M)
+  # 다른 쪽이 굶는다. 독립 백필 워커 수만큼 스레드를 준다(현재 2개). 워커가 늘면 이 값도 올린다.
+  task:
+    scheduling:
+      pool:
+        size: ${ARTEL_SCHEDULING_POOL_SIZE:2}
   security:
     oauth2:
       client:
