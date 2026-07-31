@@ -12,9 +12,9 @@ import java.time.Instant
  * PUT한다. 이미지가 여기를 지나가면 WebFlux 이벤트 루프에 메가바이트 버퍼가 생기고,
  * 같은 바이트가 qa_log와 SSE로도 흘러간다.
  *
- * @property instanceKey 대시보드에서 발급한 인스턴스 자격증명. 등록과 같은 열쇠를 쓴다.
- * 게임 인스턴스 id를 대신 받으면, 이 경로는 엔드유저 JWT로 막히지 않으므로 순번을 훑어
- * 남의 QA 런 프리픽스에 쓰는 서명을 받아낼 수 있다
+ * @property instanceId 등록 응답으로 받은 게임 인스턴스 id. id를 그대로 받아도 되는 이유는
+ * 이 경로가 SDK 토큰으로 인증되고, 그 사용자가 인스턴스의 프로젝트 참여자인지 확인하기
+ * 때문이다. 순번을 훑어 남의 QA 런 프리픽스에 쓰는 서명을 받아낼 수 없다
  * @property contentType 올릴 이미지의 형식. 서명에 포함되므로 다른 타입으로 PUT하면
  * 스토리지가 직접 거부한다
  * @property contentLength 클라이언트가 신고한 크기. 상한을 넘으면 티켓을 주지 않는다
@@ -22,8 +22,7 @@ import java.time.Instant
  */
 data class QaCaptureTicketRequest(
     @field:NotBlank
-    @field:Size(max = 32)
-    val instanceKey: String,
+    val instanceId: String,
 
     @field:NotBlank
     val contentType: String,

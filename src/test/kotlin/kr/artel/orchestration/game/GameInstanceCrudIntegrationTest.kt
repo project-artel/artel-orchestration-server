@@ -18,12 +18,16 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientResponseException
 
+/**
+ * 대시보드에서 하는 일은 조회·이름 변경·삭제뿐이다. 인스턴스를 만드는 것은 SDK 등록이다.
+ */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class GameInstanceCrudIntegrationTest {
@@ -58,111 +62,107 @@ class GameInstanceCrudIntegrationTest {
     }
 
     @Test
-    fun `creates an instance with a key and lists it`(): Unit = runBlocking {
-        val token = signIn("42", "octocat")
-        val projectId = createProject(token)
+    fun `lists the instance the sdk created`(): Unit = runBlocking {
+        val webToken = webToken()
+        val sdkToken = sdkToken()
+        val projectId = createProject(webToken)
+        val registered = register(sdkToken, projectId, "sdk-uuid-1", instanceName = "내 맥북")
 
-        val created = post(
-            token,
-            "/api/projects/$projectId/game-instances",
-            """{"name":"내 맥북","platform":"UNITY"}"""
-        )
+        val list = get(webToken, "/api/projects/$projectId/game-instances")
 
-        assertThat(created["name"].asText()).isEqualTo("내 맥북")
-        assertThat(created["platform"].asText()).isEqualTo("UNITY")
-        assertThat(created["projectId"].asText()).isEqualTo(projectId)
-        assertThat(created["instanceKey"].asText()).isNotBlank()
-        assertThat(created["connected"].asBoolean()).isFalse()
-        assertThat(created["lastConnectedAt"].isNull).isTrue()
-
-        val list = get(token, "/api/projects/$projectId/game-instances")
         assertThat(list["items"]).hasSize(1)
-        assertThat(list["items"][0]["id"].asText()).isEqualTo(created["id"].asText())
+        val listed = list["items"][0]
+        assertThat(listed["id"].asText()).isEqualTo(registered["instanceId"].asText())
+        assertThat(listed["name"].asText()).isEqualTo("내 맥북")
+        assertThat(listed["platform"].asText()).isEqualTo("UNITY")
+        assertThat(listed["connected"].asBoolean()).isFalse()
     }
 
     @Test
-    fun `issues a different key to every instance`(): Unit = runBlocking {
-        val token = signIn("42", "octocat")
-        val projectId = createProject(token)
-
-        val first = post(token, "/api/projects/$projectId/game-instances", """{"name":"A","platform":"UNITY"}""")
-        val second = post(token, "/api/projects/$projectId/game-instances", """{"name":"B","platform":"UNITY"}""")
-
-        assertThat(first["instanceKey"].asText()).isNotEqualTo(second["instanceKey"].asText())
-    }
-
-    @Test
-    fun `renames an instance without changing its key`(): Unit = runBlocking {
-        val token = signIn("42", "octocat")
-        val projectId = createProject(token)
-        val created = post(token, "/api/projects/$projectId/game-instances", """{"name":"이전 이름","platform":"UNITY"}""")
-        val instanceId = created["id"].asText()
+    fun `renames an instance`(): Unit = runBlocking {
+        val webToken = webToken()
+        val sdkToken = sdkToken()
+        val projectId = createProject(webToken)
+        val instanceId = register(sdkToken, projectId, "sdk-uuid-1", instanceName = "이전 이름")["instanceId"].asText()
 
         val renamed = patch(
-            token,
+            webToken,
             "/api/projects/$projectId/game-instances/$instanceId",
             """{"name":"새 이름"}"""
         )
 
         assertThat(renamed["name"].asText()).isEqualTo("새 이름")
-        assertThat(renamed["instanceKey"].asText()).isEqualTo(created["instanceKey"].asText())
     }
 
     @Test
     fun `soft-deletes an instance so it disappears from the list`(): Unit = runBlocking {
-        val token = signIn("42", "octocat")
-        val projectId = createProject(token)
-        val instanceId = post(
-            token,
-            "/api/projects/$projectId/game-instances",
-            """{"name":"지울 것","platform":"UNITY"}"""
-        )["id"].asText()
+        val webToken = webToken()
+        val sdkToken = sdkToken()
+        val projectId = createProject(webToken)
+        val instanceId = register(sdkToken, projectId, "sdk-uuid-1", instanceName = "지울 것")["instanceId"].asText()
 
         val status = statusOf {
             client().delete()
                 .uri("/api/projects/$projectId/game-instances/$instanceId")
-                .cookie("artel_access_token", token)
+                .cookie("artel_access_token", webToken)
                 .retrieve()
                 .toBodilessEntity()
                 .block()
         }
 
         assertThat(status).isEqualTo(HttpStatus.OK)
-        assertThat(get(token, "/api/projects/$projectId/game-instances")["items"]).isEmpty()
+        assertThat(get(webToken, "/api/projects/$projectId/game-instances")["items"]).isEmpty()
         // 행은 남아 있어야 한다. 지운 인스턴스와 처음부터 없던 인스턴스를 구분할 수 없으면
-        // 나중에 그 키로 들어온 요청이 왜 거절됐는지 설명할 수 없다.
+        // 나중에 들어온 요청이 왜 거절됐는지 설명할 수 없다.
         assertThat(instanceRepository.count()).isEqualTo(1L)
     }
 
     @Test
     fun `hides a project's instances from someone who is not a member`(): Unit = runBlocking {
-        val ownerToken = signIn("42", "octocat")
-        val projectId = createProject(ownerToken)
-        post(ownerToken, "/api/projects/$projectId/game-instances", """{"name":"내 것","platform":"UNITY"}""")
+        val webToken = webToken()
+        val sdkToken = sdkToken()
+        val projectId = createProject(webToken)
+        register(sdkToken, projectId, "sdk-uuid-1")
 
-        val strangerToken = signIn("77", "stranger")
+        val strangerToken = signIn("77", "stranger").let { jwtService.issue(it) }
 
         assertThat(statusOf { get(strangerToken, "/api/projects/$projectId/game-instances") })
             .isEqualTo(HttpStatus.NOT_FOUND)
     }
 
-    @Test
-    fun `rejects a platform the server does not support`(): Unit = runBlocking {
-        val token = signIn("42", "octocat")
-        val projectId = createProject(token)
+    // 각 테스트가 시작할 때 사용자 행을 비우므로 토큰도 매번 새로 만든다. 한 번 만들어 재사용하면
+    // sub가 지워진 사용자를 가리킨다.
+    private suspend fun webToken() = jwtService.issue(signIn("42", "octocat"))
 
-        val error = errorOf {
-            post(token, "/api/projects/$projectId/game-instances", """{"name":"콘솔","platform":"PLAYSTATION"}""")
-        }
-
-        assertThat(error.statusCode.value()).isEqualTo(HttpStatus.BAD_REQUEST.value())
-    }
+    private suspend fun sdkToken() = jwtService.issueSdkToken(signIn("42", "octocat").userId).token
 
     private fun createProject(token: String): String =
         post(token, "/api/projects", """{"name":"게임 인스턴스 테스트","genre":"ACTION"}""")["id"].asText()
 
-    private suspend fun signIn(providerUserId: String, login: String): String {
-        val user = oauthUserService.upsert(
+    private fun register(
+        token: String,
+        projectId: String,
+        sdkUuid: String,
+        instanceName: String? = null
+    ) = objectMapper.readTree(
+        client().post()
+            .uri("/api/sdk/registrations")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer $token")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                buildString {
+                    append("""{"projectId":"$projectId","sdkUuid":"$sdkUuid","gameVersion":"1.0.0"""")
+                    if (instanceName != null) append(""","instanceName":"$instanceName"""")
+                    append("}")
+                }
+            )
+            .retrieve()
+            .bodyToMono(String::class.java)
+            .block()
+    )
+
+    private suspend fun signIn(providerUserId: String, login: String) =
+        oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
                 providerUserId = providerUserId,
@@ -172,8 +172,6 @@ class GameInstanceCrudIntegrationTest {
                 email = "$login@example.com"
             )
         )
-        return jwtService.issue(user)
-    }
 
     private fun get(token: String, uri: String) = objectMapper.readTree(
         client().get().uri(uri).cookie("artel_access_token", token)
@@ -200,13 +198,5 @@ class GameInstanceCrudIntegrationTest {
             HttpStatus.OK
         } catch (error: WebClientResponseException) {
             HttpStatus.valueOf(error.statusCode.value())
-        }
-
-    private fun errorOf(call: () -> Any?): WebClientResponseException =
-        try {
-            call()
-            error("요청이 실패해야 하는데 성공했다")
-        } catch (error: WebClientResponseException) {
-            error
         }
 }

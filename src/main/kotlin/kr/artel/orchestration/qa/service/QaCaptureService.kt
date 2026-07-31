@@ -36,13 +36,13 @@ class QaCaptureService(
     private val properties: StorageProperties,
     private val objectMapper: ObjectMapper
 ) {
-    suspend fun issueTicket(request: QaCaptureTicketRequest): QaCaptureTicketResponse {
+    suspend fun issueTicket(request: QaCaptureTicketRequest, userId: Long): QaCaptureTicketResponse {
         val extension = validate(request)
 
-        // 등록과 같은 이유로 401이 아니라 404다. 호출자는 로그인할 사용자가 아니라서
-        // 다시 시도할 realm이 없고, 404는 "그런 키는 없다"와 "그 인스턴스는 지워졌다"를
-        // 같은 응답으로 묶어준다.
-        val instance = instanceRepository.findActiveByInstanceKey(request.instanceKey)
+        // 404는 "그런 인스턴스는 없다", "지워졌다", "남의 것이다"를 같은 응답으로 묶는다.
+        // 구분해서 알려주면 id를 훑어 남의 인스턴스가 존재한다는 사실을 알아낼 수 있다.
+        val instance = request.instanceId.toLongOrNull()
+            ?.let { instanceRepository.findAccessibleByIdForMember(it, userId) }
             ?: throw NotFoundException("등록된 게임 인스턴스를 찾을 수 없습니다.")
         // 404가 아니라 409다. 인스턴스는 존재하고 요청도 올바르다. 지금 이 게임이
         // QA 실행 중이 아니라는 상태 충돌이므로, SDK는 다시 붙어도 소용이 없다.

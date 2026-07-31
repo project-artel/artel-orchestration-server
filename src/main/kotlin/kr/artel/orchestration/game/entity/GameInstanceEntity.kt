@@ -8,14 +8,15 @@ import java.time.Instant
 /**
  * 프로젝트에 붙은 SDK 설치본 하나.
  *
- * [instanceKey]는 SDK가 가진 유일한 자격증명이다. 등록 요청과 웹소켓 핸드셰이크가 모두 이
- * 값으로 통과하며, 만료도 회전도 없다.
+ * [sdkUuid]는 런타임이 스스로 만들어 보관하는 설치 식별자다. 자격증명이 아니다. 요청자가
+ * 누구인지는 SDK 토큰이 말하고, 이 값은 그 사용자의 어느 설치본인지만 가른다. 그래서 값을
+ * 훔쳐도 토큰 없이는 쓸 수 없다.
  *
- * [lastSdkUuid]는 마지막으로 등록한 런타임의 식별자로, 자격증명이 아니라 기록이다.
- * 어느 머신에서 마지막으로 실행됐는지 이상은 의미하지 않는다.
+ * 대시보드에서 만든 인스턴스는 아직 SDK가 붙기 전이라 [sdkUuid]가 비어 있다. 첫 등록에서
+ * 채워진다.
  *
- * [deletedAt]이 채워진 행은 삭제된 것으로 보고, 키 조회를 포함한 어떤 조회에도 나타나지
- * 않는다. 지운 인스턴스의 키가 계속 통하면 대시보드에서 지웠다는 사실이 무의미해진다.
+ * [deletedAt]이 채워진 행은 삭제된 것으로 보고 어떤 조회에도 나타나지 않는다. 지운
+ * 인스턴스가 계속 통하면 대시보드에서 지웠다는 사실이 무의미해진다.
  */
 @Table("game_instance")
 data class GameInstanceEntity(
@@ -31,11 +32,8 @@ data class GameInstanceEntity(
     @Column("platform")
     val platform: String,
 
-    @Column("instance_key")
-    val instanceKey: String,
-
-    @Column("last_sdk_uuid")
-    val lastSdkUuid: String? = null,
+    @Column("sdk_uuid")
+    val sdkUuid: String? = null,
 
     @Column("last_connected_at")
     val lastConnectedAt: Instant? = null,
