@@ -19,6 +19,9 @@ import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.springframework.http.codec.ServerSentEvent
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.executeAndAwait
+import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
+import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import org.springframework.transaction.reactive.TransactionalOperator
 
 /**
  * TestScenario 도메인 서비스(코루틴). 컨트롤러가 얇게 유지되도록 생성/조회/중계/스트림의 비즈니스 로직을 담당한다.
@@ -36,9 +39,9 @@ class TestScenarioService(
     private val accessService: TestScenarioAccessService,
     private val agentService: TestScenarioAgentService,
     private val streamManager: TestScenarioStreamManager,
-    private val scenarioCaseRepository: kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository,
-    private val runScenarioRepository: kr.artel.orchestration.testrun.repository.TestRunScenarioRepository,
-    private val transactionalOperator: org.springframework.transaction.reactive.TransactionalOperator,
+    private val scenarioCaseRepository: TestScenarioCaseRepository,
+    private val runScenarioRepository: TestRunScenarioRepository,
+    private val transactionalOperator: TransactionalOperator,
     private val objectMapper: ObjectMapper
 ) {
 
