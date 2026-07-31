@@ -50,7 +50,7 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
     class FakeAgentConfig {
         @Bean
         @Primary
-        fun fakeAgent(properties: KnowledgeBackfillProperties): KnowledgeEmbeddingAgent =
+        fun fakeAgent(properties: KnowledgeBackfillProperties): FakeKnowledgeEmbeddingAgent =
             FakeKnowledgeEmbeddingAgent(properties.model)
     }
 

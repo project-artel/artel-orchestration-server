@@ -1,7 +1,10 @@
 package kr.artel.orchestration.knowledge.agent
 
 /**
- * Agent 서버의 벡터 생산 능력(ARTEL-184). 벡터를 만들 수 있는 자격증명은 Agent에만 있다.
+ * knowledge 항목에서 검색쿼리를 만드는 능력(ARTEL-184). LLM으로 질문을 생성하는 자격증명은 Agent에만 있다.
+ *
+ * 순수 임베딩(`/embed`)은 도메인 무관이라 [kr.artel.orchestration.common.embedding.agent.EmbeddingClient]로
+ * 분리했다. 이 인터페이스에는 knowledge 특정 능력(검색쿼리 생성)만 남는다.
  *
  * 인터페이스로 두는 이유는 백필 워커 테스트가 실제 LLM 호출 없이 돌아야 하기 때문이다.
  * 워커가 검증해야 하는 것(빈 항목만 집는지, 상한, 실패 시 attempts, 동시성)은 전부 Agent 응답과
@@ -17,7 +20,4 @@ interface KnowledgeEmbeddingAgent {
      * 쪼갤지 포기할지 정해야 한다.
      */
     suspend fun generateQueries(items: List<KnowledgeQueryItem>): KnowledgeQueriesResponse
-
-    /** 문자열들을 벡터로 만든다. 배치 상한은 Agent 설정값(기본 128)이다. */
-    suspend fun embed(texts: List<String>): EmbedResponse
 }

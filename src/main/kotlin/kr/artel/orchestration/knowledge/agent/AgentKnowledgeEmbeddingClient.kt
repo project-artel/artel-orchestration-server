@@ -44,14 +44,4 @@ class AgentKnowledgeEmbeddingClient(
             .retrieve()
             .awaitBody()
     }
-
-    override suspend fun embed(texts: List<String>): EmbedResponse {
-        logger.debug("Agent /embed 요청: {}건", texts.size)
-        return webClient.post()
-            .uri("$agentBaseUrl/embed")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(EmbedRequest(texts))
-            .retrieve()
-            .awaitBody()
-    }
 }

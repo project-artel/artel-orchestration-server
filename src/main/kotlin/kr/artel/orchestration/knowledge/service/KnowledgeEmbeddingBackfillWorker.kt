@@ -8,6 +8,7 @@ import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.repository.ClaimedRow
 import kr.artel.orchestration.common.embedding.EmbeddedText
+import kr.artel.orchestration.common.embedding.agent.EmbeddingClient
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import org.slf4j.LoggerFactory
@@ -36,6 +37,7 @@ class KnowledgeEmbeddingBackfillWorker(
     private val knowledgeRepository: KnowledgeRepository,
     private val embeddingRepository: KnowledgeEmbeddingRepository,
     private val agent: KnowledgeEmbeddingAgent,
+    private val embeddingClient: EmbeddingClient,
     private val properties: KnowledgeBackfillProperties,
     private val transactionalOperator: TransactionalOperator
 ) {
@@ -161,7 +163,7 @@ class KnowledgeEmbeddingBackfillWorker(
      * 낭비를 막는다.
      */
     private suspend fun embedAll(texts: List<String>, model: String): List<EmbeddedText> {
-        val response = agent.embed(texts)
+        val response = embeddingClient.embed(texts)
         if (response.model != model) {
             throw IllegalStateException(
                 "Agent가 돌려준 임베딩 모델(${response.model})이 설정(${model})과 다릅니다. " +
