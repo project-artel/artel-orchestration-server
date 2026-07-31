@@ -186,7 +186,8 @@ class TestScenarioService(
             scenario.projectId,
             appUserId,
             message.testScenarioMessage,
-            message.draft
+            message.draft,
+            message.runId
         )
     }
 
