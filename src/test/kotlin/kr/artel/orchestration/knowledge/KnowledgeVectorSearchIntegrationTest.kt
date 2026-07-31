@@ -3,15 +3,14 @@ package kr.artel.orchestration.knowledge
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.common.error.ApiException
-import kr.artel.orchestration.knowledge.agent.EmbedResponse
-import kr.artel.orchestration.knowledge.agent.KnowledgeEmbeddingAgent
-import kr.artel.orchestration.knowledge.agent.KnowledgeQueryItem
+import kr.artel.orchestration.common.embedding.agent.EmbedResponse
+import kr.artel.orchestration.common.embedding.agent.EmbeddingClient
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.config.KnowledgeSearchProperties
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
-import kr.artel.orchestration.knowledge.repository.EmbeddedText
+import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.service.KnowledgeQueryEmbeddingException
 import kr.artel.orchestration.knowledge.service.KnowledgeSearchService
@@ -53,7 +52,7 @@ class KnowledgeVectorSearchIntegrationTest {
      * 검색어를 미리 등록한 벡터로 바꿔 주는 대역. 등록되지 않은 검색어는 실패시켜, 테스트가
      * 의도하지 않은 검색어로 조용히 엉뚱한 벡터를 쓰는 일을 막는다.
      */
-    class FixedQueryEmbeddingAgent(private val model: String) : KnowledgeEmbeddingAgent {
+    class FixedQueryEmbeddingAgent(private val model: String) : EmbeddingClient {
         val vectorsByQuery: MutableMap<String, List<Double>> = mutableMapOf()
 
         /** true면 `/embed`가 실패한다(Agent 장애 재현). */
@@ -61,9 +60,6 @@ class KnowledgeVectorSearchIntegrationTest {
 
         /** 설정과 다른 모델 slug를 돌려준다(모델 불일치 재현). */
         var modelOverride: String? = null
-
-        override suspend fun generateQueries(items: List<KnowledgeQueryItem>) =
-            throw UnsupportedOperationException("검색 테스트는 검색쿼리 생성을 쓰지 않는다")
 
         override suspend fun embed(texts: List<String>): EmbedResponse {
             if (embedFails) throw IllegalStateException("임베딩 실패(테스트)")
@@ -82,7 +78,7 @@ class KnowledgeVectorSearchIntegrationTest {
     class FixedAgentConfig {
         @Bean
         @Primary
-        fun fixedAgent(properties: KnowledgeBackfillProperties): KnowledgeEmbeddingAgent =
+        fun fixedAgent(properties: KnowledgeBackfillProperties): FixedQueryEmbeddingAgent =
             FixedQueryEmbeddingAgent(properties.model)
     }
 
@@ -91,7 +87,7 @@ class KnowledgeVectorSearchIntegrationTest {
     @Autowired private lateinit var backfillProperties: KnowledgeBackfillProperties
     @Autowired private lateinit var searchProperties: KnowledgeSearchProperties
     @Autowired private lateinit var databaseClient: DatabaseClient
-    @Autowired private lateinit var agent: KnowledgeEmbeddingAgent
+    @Autowired private lateinit var agent: EmbeddingClient
 
     private val fake: FixedQueryEmbeddingAgent get() = agent as FixedQueryEmbeddingAgent
 

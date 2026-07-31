@@ -1,14 +1,14 @@
 package kr.artel.orchestration.knowledge.service
 
+import kr.artel.orchestration.common.embedding.agent.EmbeddingClient
 import kr.artel.orchestration.common.error.UpstreamUnavailableException
-import kr.artel.orchestration.knowledge.agent.KnowledgeEmbeddingAgent
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.config.KnowledgeSearchProperties
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchHit
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchResponse
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
-import kr.artel.orchestration.knowledge.repository.EmbeddedText
+import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeSearchRow
 import kr.artel.orchestration.knowledge.repository.KnowledgeVectorSearchRepository
 import org.slf4j.LoggerFactory
@@ -28,7 +28,7 @@ import org.springframework.stereotype.Service
  */
 @Service
 class KnowledgeSearchService(
-    private val agent: KnowledgeEmbeddingAgent,
+    private val embeddingClient: EmbeddingClient,
     private val searchRepository: KnowledgeVectorSearchRepository,
     private val backfillProperties: KnowledgeBackfillProperties,
     private val searchProperties: KnowledgeSearchProperties
@@ -93,7 +93,7 @@ class KnowledgeSearchService(
      * 엉터리 순위**로 나온다. 조용히 틀리느니 실패하는 편이 낫다(백필 워커도 같은 판단이다).
      */
     private suspend fun embedQuery(query: String, model: String): String {
-        val response = agent.embed(listOf(query))
+        val response = embeddingClient.embed(listOf(query))
         if (response.model != model) {
             throw KnowledgeQueryEmbeddingException(
                 "Agent가 돌려준 임베딩 모델(${response.model})이 검색 설정(${model})과 다릅니다. " +

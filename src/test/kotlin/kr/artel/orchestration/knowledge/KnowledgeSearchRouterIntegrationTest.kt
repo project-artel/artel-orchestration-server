@@ -12,12 +12,11 @@ import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.repository.GameInstanceRepository
-import kr.artel.orchestration.knowledge.agent.EmbedResponse
-import kr.artel.orchestration.knowledge.agent.KnowledgeEmbeddingAgent
-import kr.artel.orchestration.knowledge.agent.KnowledgeQueryItem
+import kr.artel.orchestration.common.embedding.agent.EmbedResponse
+import kr.artel.orchestration.common.embedding.agent.EmbeddingClient
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
-import kr.artel.orchestration.knowledge.repository.EmbeddedText
+import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
@@ -96,11 +95,8 @@ class KnowledgeSearchRouterIntegrationTest {
     }
 
     /** 검색어를 고정 벡터로 바꾸는 대역. 등록되지 않은 검색어는 0번 축으로 답한다. */
-    class StubEmbeddingAgent(private val model: String) : KnowledgeEmbeddingAgent {
+    class StubEmbeddingAgent(private val model: String) : EmbeddingClient {
         var embedFails: Boolean = false
-
-        override suspend fun generateQueries(items: List<KnowledgeQueryItem>) =
-            throw UnsupportedOperationException("라우터 테스트는 검색쿼리 생성을 쓰지 않는다")
 
         override suspend fun embed(texts: List<String>): EmbedResponse {
             if (embedFails) throw IllegalStateException("임베딩 실패(테스트)")
@@ -116,7 +112,7 @@ class KnowledgeSearchRouterIntegrationTest {
     class StubConfig {
         @Bean
         @Primary
-        fun stubEmbeddingAgent(properties: KnowledgeBackfillProperties): KnowledgeEmbeddingAgent =
+        fun stubEmbeddingAgent(properties: KnowledgeBackfillProperties): StubEmbeddingAgent =
             StubEmbeddingAgent(properties.model)
 
         @Bean
@@ -139,7 +135,7 @@ class KnowledgeSearchRouterIntegrationTest {
     @Autowired private lateinit var databaseClient: DatabaseClient
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var agentPort: QaAgentPort
-    @Autowired private lateinit var embeddingAgent: KnowledgeEmbeddingAgent
+    @Autowired private lateinit var embeddingAgent: EmbeddingClient
 
     private val port: RecordingAgentPort get() = agentPort as RecordingAgentPort
     private val agent: StubEmbeddingAgent get() = embeddingAgent as StubEmbeddingAgent

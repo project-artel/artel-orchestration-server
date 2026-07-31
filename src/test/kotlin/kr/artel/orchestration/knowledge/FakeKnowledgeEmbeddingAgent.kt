@@ -1,6 +1,7 @@
 package kr.artel.orchestration.knowledge
 
-import kr.artel.orchestration.knowledge.agent.EmbedResponse
+import kr.artel.orchestration.common.embedding.agent.EmbedResponse
+import kr.artel.orchestration.common.embedding.agent.EmbeddingClient
 import kr.artel.orchestration.knowledge.agent.KnowledgeEmbeddingAgent
 import kr.artel.orchestration.knowledge.agent.KnowledgeItemQueries
 import kr.artel.orchestration.knowledge.agent.KnowledgeQueriesResponse
@@ -16,7 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class FakeKnowledgeEmbeddingAgent(
     private val model: String
-) : KnowledgeEmbeddingAgent {
+) : KnowledgeEmbeddingAgent, EmbeddingClient {
 
     /** 이 knowledge id들에 대해서는 검색쿼리 생성이 실패한다(Agent의 all-or-nothing 422 재현). */
     val failFor: MutableSet<Long> = mutableSetOf()

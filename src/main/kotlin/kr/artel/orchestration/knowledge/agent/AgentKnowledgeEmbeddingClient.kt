@@ -19,7 +19,8 @@ import java.time.Duration
  */
 @Component
 class AgentKnowledgeEmbeddingClient(
-    @Value("\${artel.agent.base-url}") private val agentBaseUrl: String,
+    @Value("" +
+            "\${artel.agent.base-url}") private val agentBaseUrl: String,
     @Value("\${artel.knowledge.backfill.timeout:PT2M}") private val responseTimeout: Duration
 ) : KnowledgeEmbeddingAgent {
 
@@ -41,16 +42,6 @@ class AgentKnowledgeEmbeddingClient(
             .uri("$agentBaseUrl/knowledge-queries")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(KnowledgeQueriesRequest(items))
-            .retrieve()
-            .awaitBody()
-    }
-
-    override suspend fun embed(texts: List<String>): EmbedResponse {
-        logger.debug("Agent /embed 요청: {}건", texts.size)
-        return webClient.post()
-            .uri("$agentBaseUrl/embed")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(EmbedRequest(texts))
             .retrieve()
             .awaitBody()
     }

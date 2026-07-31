@@ -11,7 +11,7 @@ import kr.artel.orchestration.knowledge.agent.KnowledgeEmbeddingAgent
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
-import kr.artel.orchestration.knowledge.repository.EmbeddedText
+import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.service.KnowledgeEmbeddingBackfillWorker
@@ -50,7 +50,7 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
     class FakeAgentConfig {
         @Bean
         @Primary
-        fun fakeAgent(properties: KnowledgeBackfillProperties): KnowledgeEmbeddingAgent =
+        fun fakeAgent(properties: KnowledgeBackfillProperties): FakeKnowledgeEmbeddingAgent =
             FakeKnowledgeEmbeddingAgent(properties.model)
     }
 

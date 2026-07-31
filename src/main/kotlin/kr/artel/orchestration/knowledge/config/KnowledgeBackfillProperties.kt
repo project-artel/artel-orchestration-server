@@ -1,11 +1,13 @@
 package kr.artel.orchestration.knowledge.config
 
+import kr.artel.orchestration.common.embedding.EmbeddingBackfillConfig
 import org.springframework.boot.context.properties.ConfigurationProperties
 
 /**
  * knowledge 벡터 백필 워커 설정(`artel.knowledge.backfill`).
  *
  * 기본값은 Agent 서버(ARTEL-184)의 설정과 맞물려 있다. 그쪽 한계를 넘기면 요청이 422로 떨어진다.
+ * 공용 워커가 읽는 부분은 [EmbeddingBackfillConfig]로 노출한다(enabled·interval은 스케줄러 몫).
  */
 @ConfigurationProperties(prefix = "artel.knowledge.backfill")
 data class KnowledgeBackfillProperties(
@@ -22,7 +24,7 @@ data class KnowledgeBackfillProperties(
      * 실제로 만든 벡터의 라벨이 어긋나므로, 워커는 응답 slug가 이 값과 다르면 저장하지 않고
      * 실패로 기록한다(자세한 이유는 워커 주석 참조).
      */
-    val model: String = "openai/text-embedding-3-large",
+    override val model: String = "openai/text-embedding-3-large",
 
     /**
      * 한 tick에 처리할 knowledge 수의 상한.
@@ -32,17 +34,17 @@ data class KnowledgeBackfillProperties(
      * 왕복 횟수와 그 위험 사이의 절충이다. (항목당 질문 3개 → `/embed`는 최대 48건으로, 그쪽
      * 상한 128에 여유가 있다.)
      */
-    val batchSize: Int = 16,
+    override val batchSize: Int = 16,
 
     /**
      * 한 항목을 몇 번까지 시도할지. 넘긴 항목은 큐 조회에서 빠지되 행은 남아
      * `last_error`와 함께 조회할 수 있다.
      */
-    val maxAttempts: Int = 5,
+    override val maxAttempts: Int = 5,
 
     /** tick 간격(밀리초). 겹치지 않도록 fixedDelay로 쓴다. */
     val intervalMillis: Long = 60_000
-) {
+) : EmbeddingBackfillConfig {
     init {
         require(batchSize > 0) { "artel.knowledge.backfill.batch-size는 1 이상이어야 합니다." }
         require(maxAttempts > 0) { "artel.knowledge.backfill.max-attempts는 1 이상이어야 합니다." }
