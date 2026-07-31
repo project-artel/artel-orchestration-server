@@ -106,7 +106,7 @@ No other pipeline change is needed.
   codes, so without it every SDK sign-in fails:
 
   ```bash
-  docker run -d --name redis --restart unless-stopped --network app-net redis:7-alpine
+  docker run -d --name artel-redis --restart unless-stopped --network app-net redis:7-alpine
   ```
 
   Redis 6.2 or newer is required — the code exchange uses `GETDEL`. Persistence stays
@@ -114,11 +114,11 @@ No other pipeline change is needed.
   restart just means the user clicks sign-in again, while writing it to disk would leak
   live code hashes into backups.
 - **The already-registered `-stage` and `-operation` Secret files must be re-uploaded
-  with `REDIS_HOST` and `REDIS_PORT` before the image that needs them is deployed.**
-  Adding the keys to `.env.example` does not touch a credential that already exists, and
-  "Registering a Secret file" above only runs when adding a new environment. Miss this
-  and `REDIS_HOST` falls back to `localhost`, which inside the container is the app
-  itself — the container starts healthy and only SDK login breaks.
+  with `REDIS_URL=redis://artel-redis:6379` before the image that needs them is
+  deployed.** Adding the key to `.env.example` does not touch a credential that already
+  exists, and "Registering a Secret file" above only runs when adding a new environment.
+  Miss this and `REDIS_URL` falls back to `redis://localhost:6379`, which inside the
+  container is the app itself — the container starts healthy and only SDK login breaks.
 
 Order matters: start Redis, re-upload the Secret files, then deploy. Lettuce connects
 lazily, so skipping either of the first two steps still produces a container that boots

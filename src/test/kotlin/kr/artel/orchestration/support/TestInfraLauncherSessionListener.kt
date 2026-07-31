@@ -8,7 +8,7 @@ import org.junit.platform.launcher.LauncherSessionListener
  *
  * `META-INF/services`로 등록되어 JUnit Platform이 **어떤 테스트 클래스보다 먼저** 부른다. 이 시점이
  * 중요하다 — Spring 컨텍스트가 만들어지기 전에 접속 정보가 시스템 프로퍼티에 들어가 있어야
- * `application-test.yml`의 `${DB_HOST:...}`와 `application.yml`의 `${REDIS_HOST:...}`가 컨테이너를 가리킨다.
+ * `application-test.yml`의 `${DB_HOST:...}`와 `application.yml`의 `${REDIS_URL:...}`이 컨테이너를 가리킨다.
  *
  * 컨테이너마다 리스너를 따로 등록하지는 않는다. `ServiceLoader`가 등록 순서를 보장한다는 근거가
  * 없어서, 뒤에 도는 쪽이 [DockerEnvironment] 확인을 생략하려면 파일 어디에도 적히지 않은 순서

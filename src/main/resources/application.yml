@@ -20,10 +20,13 @@ spring:
   # SDK 로그인만 전부 실패하는, 원인이 드러나지 않는 고장이 된다.
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-      # 빈 값은 "인증 없음"으로 읽힌다(RedisPassword.of("")가 none()을 돌려준다).
-      password: ${REDIS_PASSWORD:}
+      # spring.r2dbc.url, spring.flyway.url과 같은 형식으로 받는다. 비밀번호는
+      # redis://:password@host:port로 URL 안에 싣는다(rediss://면 TLS).
+      #
+      # 경로(redis://host:6379/0)는 붙여도 무시된다. Boot의 parseUrl은 scheme과
+      # userInfo만 읽고, database는 아래 spring.data.redis.database에서만 온다.
+      # /1을 적으면 0번에 조용히 붙으므로 아예 쓰지 않는다.
+      url: ${REDIS_URL:redis://localhost:6379}
   security:
     oauth2:
       client:

@@ -43,14 +43,20 @@
     spring:
       data:
         redis:
-          host: ${REDIS_HOST:localhost}
-          port: ${REDIS_PORT:6379}
-          # 빈 값은 "인증 없음"으로 읽힌다(RedisPassword.of("")가 none()을 돌려준다).
-          # 구현 시 실제로 그런지 확인하고, 아니면 이 줄을 빼고 SPRING_DATA_REDIS_PASSWORD로만 받는다.
-          password: ${REDIS_PASSWORD:}
+          url: ${REDIS_URL:redis://localhost:6379}
     ```
 
-  - `.env.example`: `REDIS_HOST` / `REDIS_PORT` 항목과, 주석 처리한 `REDIS_PASSWORD` 항목 추가.
+    호스트/포트/비밀번호를 각각 받지 않고 URL 하나로 받는다. `spring.r2dbc.url`,
+    `spring.flyway.url`이 이미 그 형식이라 설정 읽는 방식이 갈리지 않는다. 비밀번호는
+    `redis://:password@host:port`로 URL 안에 실리므로 빈 문자열 기본값 문제도 사라진다.
+
+    **경로는 쓰지 않는다.** `redis://host:6379/0`처럼 붙여도 Boot가 버린다 —
+    `RedisConnectionConfiguration.parseUrl`은 scheme과 userInfo만 읽고,
+    `PropertiesRedisConnectionDetails.getStandalone()`이 database를
+    `spring.data.redis.database`에서만 가져온다(3.3.1 소스로 확인). `/0`은 기본값과 같아
+    맞는 것처럼 보이지만 `/1`은 조용히 0번에 붙는다.
+
+  - `.env.example`: `REDIS_URL` 한 줄.
 
 - [ ] **Step 2: 저장소 구현** (`auth/sdk/SdkLoginCodeStore.kt`)
   - 생성자: `(redis: ReactiveStringRedisTemplate, properties: AuthProperties)`. `Clock` 제거.
@@ -58,7 +64,7 @@
   - `suspend fun issue(userId: Long, codeChallenge: String): String`
     - 32바이트 난수 → base64url 코드 생성(기존 그대로).
     - `redis.opsForValue().set(keyOf(code), "$userId:$codeChallenge", properties.sdkLoginCodeTtl).awaitSingle()`.
-    - 값 형식은 `<userId>:<codeChallenge>`. `codeChallenge`는 base64url이라 `:`를 포함하지 않으므로 `split(":", limit = 2)`로 안전하게 갈린다. 필드 둘에 JSON 직렬화를 들일 이유가 없다.
+    - 값 형식은 `<userId>:<codeChallenge>`. 첫 `:`를 경계로 삼는 근거는 **앞쪽**이다 — `userId`는 서버가 찍은 `Long`이라 `:`를 담을 수 없다. `codeChallenge`는 클라이언트가 준 값이고 형식 검증이 없어 `:`가 들어올 수 있지만, 뒤쪽을 통째로 가져오므로 원문 그대로 복원된다. 필드 둘에 JSON 직렬화를 들일 이유가 없다.
   - `suspend fun consume(code: String, codeVerifier: String): Long?`
     - `redis.opsForValue().getAndDelete(keyOf(code)).awaitSingleOrNull() ?: return null`.
     - 값을 갈라 `codeChallenge`가 `challengeOf(codeVerifier)`와 다르면 `null`. 이미 지워진 뒤라 verifier를 바꿔 재시도할 수 없다는 성질은 `GETDEL` 덕에 그대로 유지된다.
@@ -73,11 +79,11 @@
   - `SdkAuthController`: `issue`/`consume`가 `suspend`가 되지만 두 호출부 모두 이미 `suspend fun` 안이라 코드 변경 없음. 컴파일로 확인만 한다.
 
 - [ ] **Step 4: 테스트 인프라** (`src/test/kotlin/kr/artel/orchestration/support/`)
-  - `RedisTestContainer.kt`: `GenericContainer`는 재귀 제네릭 타입이라 Kotlin에서 타입 추론이 안 된다. `PostgresTestContainer`와 같은 형태로 명시한다 — `private val container: GenericContainer<*> by lazy { GenericContainer(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379).also { it.start() } }`. JVM당 하나 띄우고 `REDIS_HOST` / `REDIS_PORT`를 시스템 프로퍼티로 내보낸다. `PostgresTestContainer`와 같은 구조·같은 수명(명시적 `stop()` 없음). 별도 Testcontainers 모듈은 필요 없다 — `GenericContainer`는 `org.testcontainers:postgresql`이 이미 끌어오는 코어에 있다.
+  - `RedisTestContainer.kt`: `GenericContainer`는 재귀 제네릭 타입이라 Kotlin에서 타입 추론이 안 된다. `PostgresTestContainer`와 같은 형태로 명시한다 — `private val container: GenericContainer<*> by lazy { GenericContainer(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379).also { it.start() } }`. JVM당 하나 띄우고 `REDIS_URL`을 시스템 프로퍼티로 내보낸다. `PostgresTestContainer`와 같은 구조·같은 수명(명시적 `stop()` 없음). 별도 Testcontainers 모듈은 필요 없다 — `GenericContainer`는 `org.testcontainers:postgresql`이 이미 끌어오는 코어에 있다.
   - **리스너는 기존 것을 넓힌다.** `PostgresLauncherSessionListener`를 `TestInfraLauncherSessionListener`로 이름만 바꾸고 `RedisTestContainer.startAndExportProperties()` 호출을 한 줄 더한다. `services` 파일의 등록도 그 이름으로 바꾼다.
     - 리스너를 하나 더 등록하는 쪽은 접었다. 두 리스너의 실행 순서를 `ServiceLoader`가 보장한다는 근거가 없는데, 새 리스너가 `DockerEnvironment.verify()`를 생략하려면 Postgres 리스너가 먼저 돌았다는 전제가 필요하다. 파일에 적히지 않은 순서 의존을 만들면서까지 아낄 것이 없다.
     - `DockerEnvironment.verify()`는 지금처럼 맨 앞에서 한 번만 부른다.
-  - `application-test.yml`은 손대지 않는다. `application.yml`의 `${REDIS_HOST:localhost}`가 그대로 살아 있고 컨테이너가 그 프로퍼티를 채운다 — DB가 쓰는 것과 정확히 같은 경로다.
+  - `application-test.yml`은 손대지 않는다. `application.yml`의 `${REDIS_URL:redis://localhost:6379}`가 그대로 살아 있고 컨테이너가 그 프로퍼티를 채운다 — DB가 쓰는 것과 정확히 같은 경로다.
 
 - [ ] **Step 5: 테스트** (`src/test/kotlin/kr/artel/orchestration/auth/sdk/SdkLoginCodeStoreIntegrationTest.kt`)
   - 발급한 코드를 올바른 verifier로 교환하면 발급 대상 `userId`가 나온다.
@@ -91,7 +97,7 @@
 - [ ] **Step 6: 배포 문서** (`docs/deployment.md`)
   - 이 문서는 `.env`와 Jenkins Secret file 취급법만 다룬다. 인프라 런북으로 키우지 않는다. 새 절을 만들지 말고 문서 끝의 기존 `## Prerequisites`에 항목을 더한다:
     - `app-net`에 Redis(6.2 이상, `redis:7-alpine` 기준)가 떠 있어야 한다는 것과 그 `docker run` 한 줄.
-    - **이미 등록된 `artel-orchestration-server-env-stage` / `-operation` Secret file을 `REDIS_HOST`(= Redis 컨테이너 이름)와 `REDIS_PORT`를 넣어 다시 업로드해야 한다.** 이게 이 이슈에서 빠뜨리면 운영이 깨지는 유일한 단계다. 문서의 "Registering a Secret file" 절차는 **새 환경을 등록할 때**만 도는 흐름이라, `.env.example`에 항목을 더하는 것만으로는 이미 올라가 있는 두 파일이 갱신되지 않는다. 갱신하지 않으면 `REDIS_HOST`가 기본값 `localhost`로 떨어지는데 컨테이너 안에서 그것은 앱 자신이라, 기동은 정상이고 SDK 로그인만 전부 500이 된다.
+    - **이미 등록된 `artel-orchestration-server-env-stage` / `-operation` Secret file을 `REDIS_URL=redis://artel-redis:6379`을 넣어 다시 업로드해야 한다.** 이게 이 이슈에서 빠뜨리면 운영이 깨지는 유일한 단계다. 문서의 "Registering a Secret file" 절차는 **새 환경을 등록할 때**만 도는 흐름이라, `.env.example`에 항목을 더하는 것만으로는 이미 올라가 있는 두 파일이 갱신되지 않는다. 갱신하지 않으면 `REDIS_URL`이 기본값 `redis://localhost:6379`로 떨어지는데 컨테이너 안에서 그것은 앱 자신이라, 기동은 정상이고 SDK 로그인만 전부 500이 된다.
     - **순서:** Redis 기동 → Secret file 재업로드 → 이 이미지 배포. Lettuce가 지연 연결이라 앞의 둘을 건너뛰어도 기동은 되고 SDK 로그인만 조용히 실패하므로, 순서를 어기면 부분 장애로 늦게 발견된다.
     - 영속화는 켜지 않는다. 담기는 것이 수명 5분짜리 일회용 코드뿐이라 재시작 시 사라져도 사용자가 로그인을 다시 누르면 끝이고, 디스크에 남기면 오히려 유효 코드 해시가 백업으로 새어나간다.
   - `REDIS_*`의 값 설명 자체는 `.env.example`에 두고 이 문서에 중복해서 적지 않는다.
@@ -119,7 +125,7 @@
   - **배포 순서 의존.** Redis 없이 새 이미지를 올리면 기동은 되지만(Lettuce는 지연 연결) SDK 로그인만 조용히 실패한다. 기동 실패가 아니라 부분 실패라 눈에 늦게 띈다. 배포 문서에 순서를 못 박는 것 외에 방어를 두지 않는다.
   - **`GETDEL` 버전 요구.** Redis 6.2 미만이면 `getAndDelete()`가 실패한다. 이미지를 `redis:7-alpine`으로 고정하고 배포 문서에 최소 버전을 적는다.
   - **테스트 시간·자원 증가.** 스위트가 컨테이너를 하나 더 띄운다. Redis는 가볍고 JVM당 한 번이라 영향은 작지만 0은 아니다.
-  - **인증 없는 Redis.** `REDIS_PASSWORD`를 비워 두고 `app-net` 안에서만 접근 가능하다는 전제에 기댄다. 같은 네트워크의 다른 컨테이너는 유효 코드 해시를 볼 수 있으나, 코드 원문이 아니라 해시라 그것만으로 교환은 불가능하다. 그래도 배포 시 비밀번호를 거는 쪽을 권장으로 적는다.
+  - **인증 없는 Redis.** `REDIS_URL`에 비밀번호를 빼고 `app-net` 안에서만 접근 가능하다는 전제에 기댄다. 같은 네트워크의 다른 컨테이너는 유효 코드 해시를 볼 수 있으나, 코드 원문이 아니라 해시라 그것만으로 교환은 불가능하다. 그래도 배포 시 비밀번호를 거는 쪽을 권장으로 적는다.
 - **Rollback steps:** `git revert`. 인메모리로 돌아가고 남는 Redis 키는 TTL로 5분 안에 자연히 사라진다. Redis 컨테이너는 다음 이슈에서 쓸 것이므로 내리지 않아도 무해하다.
 
 ## Rejected feedback
@@ -130,4 +136,4 @@
 
 ## Open Questions
 
-- 배포 환경 Redis에 비밀번호를 걸지, `app-net` 격리만으로 갈지. 구현은 `REDIS_PASSWORD`를 선택 값으로 받아 양쪽 다 되게 두므로 결정이 구현을 막지는 않는다. 배포 시점에 정하면 된다.
+- 배포 환경 Redis에 비밀번호를 걸지, `app-net` 격리만으로 갈지. 구현은 `REDIS_URL`이 `redis://:password@host:port`를 그대로 받아 양쪽 다 되게 두므로 결정이 구현을 막지는 않는다. 배포 시점에 정하면 된다.

@@ -29,14 +29,13 @@ object RedisTestContainer {
     }
 
     /**
-     * 컨테이너를 띄우고 접속 정보를 시스템 프로퍼티로 내보낸다.
+     * 컨테이너를 띄우고 접속 URL을 시스템 프로퍼티로 내보낸다.
      *
-     * `application.yml`이 이미 `${REDIS_HOST:localhost}` 형태로 값을 읽으므로, 여기서 그 이름들을
-     * 채워 주면 테스트 클래스도 `application-test.yml`도 손대지 않고 컨테이너를 가리킨다.
-     * DB가 `DB_HOST`로 하는 것과 정확히 같은 경로다.
+     * `application.yml`이 이미 `${REDIS_URL:...}` 형태로 값을 읽으므로, 여기서 그 이름을 채워 주면
+     * 테스트 클래스도 `application-test.yml`도 손대지 않고 컨테이너를 가리킨다. DB가 `DB_HOST`로
+     * 하는 것과 같은 경로다.
      */
     fun startAndExportProperties() {
-        System.setProperty("REDIS_HOST", container.host)
-        System.setProperty("REDIS_PORT", container.getMappedPort(REDIS_PORT).toString())
+        System.setProperty("REDIS_URL", "redis://${container.host}:${container.getMappedPort(REDIS_PORT)}")
     }
 }
