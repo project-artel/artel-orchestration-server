@@ -20,7 +20,7 @@ import org.springframework.r2dbc.core.flow
 class EmbeddingQueueRepository(
     private val databaseClient: DatabaseClient,
     spec: EmbeddingTableSpec,
-) {
+) : EmbeddingQueue {
     private val table = spec.embeddingTable
     private val ownerColumn = spec.ownerIdColumn
     private val ownerTable = spec.ownerTable
@@ -36,7 +36,7 @@ class EmbeddingQueueRepository(
      *
      * @return 새로 만들어진 대기 행 수
      */
-    suspend fun seedPending(kind: String, model: String, limit: Int): Long =
+    override suspend fun seedPending(kind: String, model: String, limit: Int): Long =
         databaseClient.sql(
             """
             INSERT INTO $table ($ownerColumn, kind, model)
@@ -69,7 +69,7 @@ class EmbeddingQueueRepository(
      * 계산되어, 워커를 죽이는 항목이 매 tick 되살아나 큐를 점유하는 일이 없다. 잠금은 이 한 문장이
      * 끝나면 풀린다 — 뒤이은 Agent 호출(수십 초)은 락 밖에서 일어난다.
      */
-    suspend fun claimPending(kind: String, model: String, maxAttempts: Int, limit: Int): List<ClaimedRow> =
+    override suspend fun claimPending(kind: String, model: String, maxAttempts: Int, limit: Int): List<ClaimedRow> =
         databaseClient.sql(
             """
             WITH claimed AS (
@@ -115,7 +115,7 @@ class EmbeddingQueueRepository(
      * 지금 손에 든 벡터는 바뀌기 전 본문에서 나온 것이라 넣지 않고 버린다 — 무효화가 새로 만든
      * 대기 행(또는 다음 시딩)이 새 본문으로 다시 채운다.
      */
-    suspend fun replacePendingWithVectors(
+    override suspend fun replacePendingWithVectors(
         pendingId: Long,
         ownerId: Long,
         kind: String,
@@ -149,7 +149,7 @@ class EmbeddingQueueRepository(
     }
 
     /** 실패 사유를 대기 행에 남긴다. `attempts`는 claim 때 이미 올랐다. */
-    suspend fun recordFailure(pendingId: Long, error: String) {
+    override suspend fun recordFailure(pendingId: Long, error: String) {
         databaseClient.sql(
             """
             UPDATE $table
@@ -174,7 +174,7 @@ class EmbeddingQueueRepository(
      *
      * @return 지운 행 수
      */
-    suspend fun discardFor(ownerId: Long): Long =
+    override suspend fun discardFor(ownerId: Long): Long =
         databaseClient.sql("DELETE FROM $table WHERE $ownerColumn = :ownerId")
             .bind("ownerId", ownerId)
             .fetch()
@@ -182,7 +182,7 @@ class EmbeddingQueueRepository(
             .awaitFirstOrNull() ?: 0L
 
     /** 대기 행을 버린다. 대상 소유 행이 사라졌거나 삭제된 경우에 쓴다. */
-    suspend fun deletePending(pendingId: Long) {
+    override suspend fun deletePending(pendingId: Long) {
         databaseClient.sql("DELETE FROM $table WHERE id = :id")
             .bind("id", pendingId)
             .fetch()
