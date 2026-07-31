@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
+import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.test.context.ActiveProfiles
@@ -26,8 +28,8 @@ import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientResponseException
 
 /**
- * SDK 등록은 로그인 세션 없이 instanceKey 하나로 통과한다. 그 키가 곧 인증이자 소속 정보이고,
- * 같은 호출이 게임 버전 보고까지 겸한다.
+ * SDK 등록은 로그인해서 받은 SDK 토큰으로 통과한다. 인스턴스는 대시보드가 아니라 이 호출이
+ * 만들고, (프로젝트, sdkUuid)가 그 정체성이다. 같은 호출이 게임 버전 보고까지 겸한다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -59,31 +61,71 @@ class SdkRegistrationIntegrationTest {
     }
 
     @Test
-    fun `registers with a valid key and records the reported version as a build`(): Unit = runBlocking {
-        val token = signIn()
-        val projectId = createProject(token)
-        val instance = createInstance(token, projectId)
+    fun `creates the instance on first registration and records the reported version`(): Unit = runBlocking {
+        val user = signIn()
+        val projectId = createProject(user.webToken)
 
-        val registered = register(instance["instanceKey"].asText(), "sdk-uuid-1", "1.2.3")
+        val registered = register(user.sdkToken, projectId, "sdk-uuid-1", "1.2.3", instanceName = "내 맥북")
 
-        assertThat(registered["instanceId"].asText()).isEqualTo(instance["id"].asText())
         assertThat(registered["projectId"].asText()).isEqualTo(projectId)
+        assertThat(registered["instanceName"].asText()).isEqualTo("내 맥북")
         assertThat(registered["gameVersion"].asText()).isEqualTo("1.2.3")
 
-        val builds = get(token, "/api/projects/$projectId/game-builds")
+        val listed = get(user.webToken, "/api/projects/$projectId/game-instances")["items"]
+        assertThat(listed).hasSize(1)
+        assertThat(listed[0]["id"].asText()).isEqualTo(registered["instanceId"].asText())
+
+        val builds = get(user.webToken, "/api/projects/$projectId/game-builds")
         assertThat(builds["items"]).hasSize(1)
         assertThat(builds["items"][0]["version"].asText()).isEqualTo("1.2.3")
         assertThat(builds["items"][0]["label"].isNull).isTrue()
     }
 
+    /** 같은 설치본이 다시 실행됐을 뿐인데 인스턴스가 늘어나면 목록이 금세 쓸모없어진다. */
+    @Test
+    fun `reuses the instance when the same sdk uuid registers again`(): Unit = runBlocking {
+        val user = signIn()
+        val projectId = createProject(user.webToken)
+
+        val first = register(user.sdkToken, projectId, "sdk-uuid-1", "1.2.3")
+        val second = register(user.sdkToken, projectId, "sdk-uuid-1", "1.3.0")
+
+        assertThat(second["instanceId"].asText()).isEqualTo(first["instanceId"].asText())
+        assertThat(instanceRepository.count()).isEqualTo(1L)
+    }
+
+    @Test
+    fun `creates a separate instance for a different sdk uuid`(): Unit = runBlocking {
+        val user = signIn()
+        val projectId = createProject(user.webToken)
+
+        val first = register(user.sdkToken, projectId, "sdk-uuid-1", "1.2.3")
+        val second = register(user.sdkToken, projectId, "sdk-uuid-2", "1.2.3")
+
+        assertThat(second["instanceId"].asText()).isNotEqualTo(first["instanceId"].asText())
+        assertThat(instanceRepository.count()).isEqualTo(2L)
+    }
+
+    /** 대시보드에서 고친 이름이 게임을 실행할 때마다 되돌아가면 안 된다. */
+    @Test
+    fun `keeps the dashboard name when the sdk reports a different one`(): Unit = runBlocking {
+        val user = signIn()
+        val projectId = createProject(user.webToken)
+        val instanceId = register(user.sdkToken, projectId, "sdk-uuid-1", "1.0.0", instanceName = "처음 이름")["instanceId"].asText()
+
+        patch(user.webToken, "/api/projects/$projectId/game-instances/$instanceId", """{"name":"내가 고친 이름"}""")
+        val again = register(user.sdkToken, projectId, "sdk-uuid-1", "1.0.0", instanceName = "처음 이름")
+
+        assertThat(again["instanceName"].asText()).isEqualTo("내가 고친 이름")
+    }
+
     @Test
     fun `reuses the same build when the version has not changed`(): Unit = runBlocking {
-        val token = signIn()
-        val projectId = createProject(token)
-        val key = createInstance(token, projectId)["instanceKey"].asText()
+        val user = signIn()
+        val projectId = createProject(user.webToken)
 
-        val first = register(key, "sdk-uuid-1", "1.2.3")
-        val second = register(key, "sdk-uuid-1", "1.2.3")
+        val first = register(user.sdkToken, projectId, "sdk-uuid-1", "1.2.3")
+        val second = register(user.sdkToken, projectId, "sdk-uuid-1", "1.2.3")
 
         assertThat(second["gameBuildId"].asText()).isEqualTo(first["gameBuildId"].asText())
         assertThat(buildRepository.count()).isEqualTo(1L)
@@ -91,38 +133,41 @@ class SdkRegistrationIntegrationTest {
 
     @Test
     fun `creates a second build when the reported version changes`(): Unit = runBlocking {
-        val token = signIn()
-        val projectId = createProject(token)
-        val key = createInstance(token, projectId)["instanceKey"].asText()
+        val user = signIn()
+        val projectId = createProject(user.webToken)
 
-        register(key, "sdk-uuid-1", "1.2.3")
-        register(key, "sdk-uuid-1", "1.3.0")
+        register(user.sdkToken, projectId, "sdk-uuid-1", "1.2.3")
+        register(user.sdkToken, projectId, "sdk-uuid-1", "1.3.0")
 
-        assertThat(get(token, "/api/projects/$projectId/game-builds")["items"]).hasSize(2)
+        assertThat(get(user.webToken, "/api/projects/$projectId/game-builds")["items"]).hasSize(2)
     }
 
     @Test
     fun `records the runtime that registered so the dashboard can show it`(): Unit = runBlocking {
-        val token = signIn()
-        val projectId = createProject(token)
-        val instance = createInstance(token, projectId)
+        val user = signIn()
+        val projectId = createProject(user.webToken)
 
-        register(instance["instanceKey"].asText(), "sdk-uuid-9", "1.0.0")
+        val registered = register(user.sdkToken, projectId, "sdk-uuid-9", "1.0.0")
 
-        val listed = get(token, "/api/projects/$projectId/game-instances")["items"][0]
+        val listed = get(user.webToken, "/api/projects/$projectId/game-instances")["items"][0]
         assertThat(listed["lastConnectedAt"].isNull).isFalse()
 
-        val stored = instanceRepository.findById(instance["id"].asText().toLong())!!
-        assertThat(stored.lastSdkUuid).isEqualTo("sdk-uuid-9")
+        val stored = instanceRepository.findById(registered["instanceId"].asText().toLong())!!
+        assertThat(stored.sdkUuid).isEqualTo("sdk-uuid-9")
     }
 
     @Test
     fun `stores the reported scene scan on the build`(): Unit = runBlocking {
-        val token = signIn()
-        val projectId = createProject(token)
-        val key = createInstance(token, projectId)["instanceKey"].asText()
+        val user = signIn()
+        val projectId = createProject(user.webToken)
 
-        register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main","Level1"],"scannedScenes":[{"name":"Main"}]}""")
+        register(
+            user.sdkToken,
+            projectId,
+            "sdk-uuid-1",
+            "1.2.3",
+            sceneScan = """{"scenesInBuild":["Main","Level1"],"scannedScenes":[{"name":"Main"}]}"""
+        )
 
         val build = buildRepository.findAll().first()
         val stored = objectMapper.readTree(build.sceneScan!!.asString())
@@ -132,12 +177,11 @@ class SdkRegistrationIntegrationTest {
 
     @Test
     fun `overwrites the scene scan when the same build registers again`(): Unit = runBlocking {
-        val token = signIn()
-        val projectId = createProject(token)
-        val key = createInstance(token, projectId)["instanceKey"].asText()
+        val user = signIn()
+        val projectId = createProject(user.webToken)
 
-        register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main"]}""")
-        register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main","Level1"]}""")
+        register(user.sdkToken, projectId, "sdk-uuid-1", "1.2.3", sceneScan = """{"scenesInBuild":["Main"]}""")
+        register(user.sdkToken, projectId, "sdk-uuid-1", "1.2.3", sceneScan = """{"scenesInBuild":["Main","Level1"]}""")
 
         assertThat(buildRepository.count()).isEqualTo(1L)
         val stored = objectMapper.readTree(buildRepository.findAll().first().sceneScan!!.asString())
@@ -146,79 +190,98 @@ class SdkRegistrationIntegrationTest {
 
     @Test
     fun `keeps the previous scene scan when a registration omits it`(): Unit = runBlocking {
-        val token = signIn()
-        val projectId = createProject(token)
-        val key = createInstance(token, projectId)["instanceKey"].asText()
+        val user = signIn()
+        val projectId = createProject(user.webToken)
 
-        register(key, "sdk-uuid-1", "1.2.3", """{"scenesInBuild":["Main"]}""")
-        register(key, "sdk-uuid-1", "1.2.3")
+        register(user.sdkToken, projectId, "sdk-uuid-1", "1.2.3", sceneScan = """{"scenesInBuild":["Main"]}""")
+        register(user.sdkToken, projectId, "sdk-uuid-1", "1.2.3")
 
         val build = buildRepository.findAll().first()
         assertThat(build.sceneScan).isNotNull()
     }
 
     @Test
-    fun `refuses an unknown key`(): Unit = runBlocking {
-        val error = errorOf { register("NOSUCH-KEY-00000-00000", "sdk-uuid-1", "1.0.0") }
+    fun `refuses a project the user does not belong to`(): Unit = runBlocking {
+        val owner = signIn()
+        val projectId = createProject(owner.webToken)
+        val stranger = signIn(providerUserId = "77", login = "stranger")
+
+        val error = errorOf { register(stranger.sdkToken, projectId, "sdk-uuid-1", "1.0.0") }
 
         assertThat(error.statusCode.value()).isEqualTo(HttpStatus.NOT_FOUND.value())
+    }
+
+    /** 브라우저 세션 토큰은 audience가 달라 SDK 경로를 통과하지 못한다. */
+    @Test
+    fun `refuses a browser session token`(): Unit = runBlocking {
+        val user = signIn()
+        val projectId = createProject(user.webToken)
+
+        val error = errorOf { register(user.webToken, projectId, "sdk-uuid-1", "1.0.0") }
+
+        assertThat(error.statusCode.value()).isEqualTo(HttpStatus.UNAUTHORIZED.value())
     }
 
     @Test
-    fun `stops accepting a key once its instance is deleted`(): Unit = runBlocking {
-        val token = signIn()
-        val projectId = createProject(token)
-        val instance = createInstance(token, projectId)
-        val key = instance["instanceKey"].asText()
+    fun `refuses a request without a token`(): Unit = runBlocking {
+        val error = errorOf {
+            objectMapper.readTree(
+                client().post()
+                    .uri("/api/sdk/registrations")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue("""{"projectId":"1","sdkUuid":"sdk-uuid-1","gameVersion":"1.0.0"}""")
+                    .retrieve()
+                    .bodyToMono(String::class.java)
+                    .block()
+            )
+        }
 
-        register(key, "sdk-uuid-1", "1.0.0")
-
-        client().delete()
-            .uri("/api/projects/$projectId/game-instances/${instance["id"].asText()}")
-            .cookie("artel_access_token", token)
-            .retrieve()
-            .toBodilessEntity()
-            .block()
-
-        val error = errorOf { register(key, "sdk-uuid-1", "1.0.0") }
-        assertThat(error.statusCode.value()).isEqualTo(HttpStatus.NOT_FOUND.value())
+        assertThat(error.statusCode.value()).isEqualTo(HttpStatus.UNAUTHORIZED.value())
     }
 
-    private fun register(instanceKey: String, sdkUuid: String, gameVersion: String, sceneScan: String? = null) =
-        objectMapper.readTree(
-            client().post()
-                .uri("/api/sdk/registrations")
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(
-                    if (sceneScan == null) {
-                        """{"instanceKey":"$instanceKey","sdkUuid":"$sdkUuid","gameVersion":"$gameVersion"}"""
-                    } else {
-                        """{"instanceKey":"$instanceKey","sdkUuid":"$sdkUuid","gameVersion":"$gameVersion","sceneScan":$sceneScan}"""
-                    }
-                )
-                .retrieve()
-                .bodyToMono(String::class.java)
-                .block()
-        )
+    private fun register(
+        sdkToken: String,
+        projectId: String,
+        sdkUuid: String,
+        gameVersion: String,
+        instanceName: String? = null,
+        sceneScan: String? = null
+    ) = objectMapper.readTree(
+        client().post()
+            .uri("/api/sdk/registrations")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer $sdkToken")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                buildString {
+                    append("""{"projectId":"$projectId","sdkUuid":"$sdkUuid","gameVersion":"$gameVersion"""")
+                    if (instanceName != null) append(""","instanceName":"$instanceName"""")
+                    if (sceneScan != null) append(""","sceneScan":$sceneScan""")
+                    append("}")
+                }
+            )
+            .retrieve()
+            .bodyToMono(String::class.java)
+            .block()
+    )
 
     private fun createProject(token: String): String =
         post(token, "/api/projects", """{"name":"SDK 등록 테스트","genre":"ACTION"}""")["id"].asText()
 
-    private fun createInstance(token: String, projectId: String) =
-        post(token, "/api/projects/$projectId/game-instances", """{"name":"내 맥북","platform":"UNITY"}""")
+    /** 브라우저 세션 토큰과 SDK 토큰을 한 번에 만든다. 둘은 audience가 다르다. */
+    private data class SignedInUser(val user: AuthenticatedUser, val webToken: String, val sdkToken: String)
 
-    private suspend fun signIn(): String {
+    private suspend fun signIn(providerUserId: String = "42", login: String = "octocat"): SignedInUser {
         val user = oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
-                providerUserId = "42",
-                login = "octocat",
-                displayName = "octocat",
+                providerUserId = providerUserId,
+                login = login,
+                displayName = login,
                 avatarUrl = null,
-                email = "octocat@example.com"
+                email = "$login@example.com"
             )
         )
-        return jwtService.issue(user)
+        return SignedInUser(user, jwtService.issue(user), jwtService.issueSdkToken(user.userId).token)
     }
 
     private fun get(token: String, uri: String) = objectMapper.readTree(
@@ -228,6 +291,12 @@ class SdkRegistrationIntegrationTest {
 
     private fun post(token: String, uri: String, body: String) = objectMapper.readTree(
         client().post().uri(uri).cookie("artel_access_token", token)
+            .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+            .retrieve().bodyToMono(String::class.java).block()
+    )
+
+    private fun patch(token: String, uri: String, body: String) = objectMapper.readTree(
+        client().patch().uri(uri).cookie("artel_access_token", token)
             .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
             .retrieve().bodyToMono(String::class.java).block()
     )

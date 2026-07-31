@@ -58,16 +58,18 @@ interface GameInstanceRepository : CoroutineCrudRepository<GameInstanceEntity, L
     suspend fun findAccessibleByIdForMember(id: Long, userId: Long): GameInstanceEntity?
 
     /**
-     * SDK가 제시한 키로 인스턴스를 찾는다. 호출자가 로그인한 사용자가 아니므로 참여자 조인은
-     * 없지만, 삭제 조건은 그대로다. 지운 인스턴스나 지운 프로젝트의 키는 통하지 않는다.
+     * SDK가 보고한 설치 식별자로 인스턴스를 찾는다.
+     *
+     * 프로젝트 접근 권한은 호출 전에 이미 확인된 상태여야 한다. sdkUuid는 자격증명이 아니라
+     * 같은 프로젝트 안에서 설치본을 가르는 값일 뿐이라, 이 질의만으로는 아무것도 인가하지 않는다.
      */
     @Query(
         """
         SELECT gi.* FROM game_instance gi
         JOIN project p ON p.id = gi.project_id
-        WHERE gi.instance_key = :instanceKey
+        WHERE gi.project_id = :projectId AND gi.sdk_uuid = :sdkUuid
           AND gi.deleted_at IS NULL AND p.deleted_at IS NULL
         """
     )
-    suspend fun findActiveByInstanceKey(instanceKey: String): GameInstanceEntity?
+    suspend fun findActiveBySdkUuid(projectId: Long, sdkUuid: String): GameInstanceEntity?
 }

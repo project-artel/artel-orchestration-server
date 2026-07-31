@@ -7,6 +7,9 @@ import kr.artel.orchestration.game.entity.GamePlatform
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.project.dto.Genre
 import kr.artel.orchestration.project.entity.ProjectEntity
+import kr.artel.orchestration.project.entity.ProjectMemberEntity
+import kr.artel.orchestration.project.entity.ProjectRole
+import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.sdk.dto.*
 import kr.artel.orchestration.sdk.service.GameStateTransformer
@@ -59,12 +62,15 @@ class ArtelWebSocketIntegrationTest {
     @Autowired
     private lateinit var instanceRepository: GameInstanceRepository
 
+    @Autowired
+    private lateinit var memberRepository: ProjectMemberRepository
+
     /**
      * 웹소켓 인증이 인메모리 목록이 아니라 DB의 게임 인스턴스를 보게 되면서, 연결 전에 실제
-     * 행이 있어야 한다. 프로젝트까지 함께 만드는 이유는 인스턴스 조회가 프로젝트의 삭제
-     * 여부를 조인으로 확인하기 때문이다.
+     * 행이 있어야 한다. 프로젝트와 참여자까지 함께 만드는 이유는 인증이 "이 토큰의 사용자가
+     * 이 인스턴스의 프로젝트 참여자인가"로 판단하기 때문이다.
      */
-    private suspend fun createGameInstance(): GameInstanceEntity {
+    private suspend fun createGameInstance(): ConnectableInstance {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(
@@ -74,17 +80,42 @@ class ArtelWebSocketIntegrationTest {
                 updatedAt = now
             )
         )
+        val user = oauthUserService.upsert(
+            OAuthIdentity(
+                provider = "github",
+                providerUserId = UUID.randomUUID().toString(),
+                login = "ws-tester",
+                displayName = "ws-tester",
+                avatarUrl = null,
+                email = "ws-tester@example.com"
+            )
+        )
+        memberRepository.save(
+            ProjectMemberEntity(
+                projectId = requireNotNull(project.id),
+                appUserId = user.userId.toLong(),
+                role = ProjectRole.OWNER.name,
+                createdAt = now
+            )
+        )
 
-        return instanceRepository.save(
+        val instance = instanceRepository.save(
             GameInstanceEntity(
                 projectId = requireNotNull(project.id),
                 name = "웹소켓 테스트 인스턴스",
                 platform = GamePlatform.UNITY.name,
-                instanceKey = UUID.randomUUID().toString().uppercase().take(23),
+                sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
         )
+        return ConnectableInstance(instance, jwtService.issueSdkToken(user.userId).token)
+    }
+
+    /** 인스턴스와 그 인스턴스에 붙을 수 있는 SDK 토큰. 핸드셰이크에 둘 다 필요하다. */
+    private data class ConnectableInstance(val instance: GameInstanceEntity, val sdkToken: String) {
+        val handshakeQuery: String
+            get() = "?token=$sdkToken&instanceId=${requireNotNull(instance.id)}"
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -323,13 +354,13 @@ class ArtelWebSocketIntegrationTest {
      */
     @Test
     fun testWebSocketActionForwardingFlow(): Unit = runBlocking {
-        val instance = createGameInstance()
-        val instanceId = requireNotNull(instance.id)
+        val connectable = createGameInstance()
+        val instanceId = requireNotNull(connectable.instance.id)
         val webClient = WebClient.create("http://localhost:$port")
 
         // 1. 웹소켓 모킹 클라이언트(Mock SDK Client) 구동 및 연결 시도
         val wsClient = ReactorNettyWebSocketClient()
-        val wsUri = URI("ws://localhost:$port/ws/sdk?instanceKey=${instance.instanceKey}")
+        val wsUri = URI("ws://localhost:$port/ws/sdk${connectable.handshakeQuery}")
         val actionReceivedLatch = Sinks.one<ActionResponseDto>()
 
         val clientSessionMono = wsClient.execute(wsUri) { session ->
@@ -409,12 +440,12 @@ class ArtelWebSocketIntegrationTest {
      */
     @Test
     fun testWebSocketMouseAndKeyActionForwardingFlow(): Unit = runBlocking {
-        val instance = createGameInstance()
-        val instanceId = requireNotNull(instance.id)
+        val connectable = createGameInstance()
+        val instanceId = requireNotNull(connectable.instance.id)
         val webClient = WebClient.create("http://localhost:$port")
 
         val wsClient = ReactorNettyWebSocketClient()
-        val wsUri = URI("ws://localhost:$port/ws/sdk?instanceKey=${instance.instanceKey}")
+        val wsUri = URI("ws://localhost:$port/ws/sdk${connectable.handshakeQuery}")
         val actionReceivedLatch = Sinks.one<ActionResponseDto>()
 
         val clientSessionMono = wsClient.execute(wsUri) { session ->
@@ -502,8 +533,8 @@ class ArtelWebSocketIntegrationTest {
      */
     @Test
     fun testWebSocketActionResultForwardingFlow(): Unit = runBlocking {
-        val instance = createGameInstance()
-        val instanceId = requireNotNull(instance.id)
+        val connectable = createGameInstance()
+        val instanceId = requireNotNull(connectable.instance.id)
 
         // 1. QA 브리지 모킹 및 감시
         val resultReceivedLatch = Sinks.one<Pair<Long, String>>()
@@ -518,7 +549,7 @@ class ArtelWebSocketIntegrationTest {
 
         // 2. 웹소켓 클라이언트 연결 및 결과 전송
         val wsClient = ReactorNettyWebSocketClient()
-        val wsUri = URI("ws://localhost:$port/ws/sdk?instanceKey=${instance.instanceKey}")
+        val wsUri = URI("ws://localhost:$port/ws/sdk${connectable.handshakeQuery}")
 
         val clientSessionMono = wsClient.execute(wsUri) { session ->
             val resultPayload = """
