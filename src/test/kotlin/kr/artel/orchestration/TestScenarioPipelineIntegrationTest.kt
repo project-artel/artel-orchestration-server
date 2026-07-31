@@ -41,7 +41,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * TestScenario 파이프라인 통합 테스트: 인증(JWT) → 시나리오 생성 → SSE →
- * Agent 세션 오픈(POST /sessions) + WS(/sessions/{id}) 왕복 → DB UPDATE.
+ * Agent 세션 오픈(POST /sessions) + WS(/sessions/{id}) 왕복 → SSE 중계.
  *
  * 실제 Agent 서버 계약을 흉내내는 목 서버(HTTP POST /sessions + WS /sessions/{id})로 검증한다.
  */
@@ -81,7 +81,7 @@ class TestScenarioPipelineIntegrationTest {
         private lateinit var mockAgent: DisposableServer
         private const val MOCK_SESSION_ID = "mock-sid-1"
         private const val RESULT_JSON =
-            """{"type":"result","message":"ok","scenario":{"title":"튜토리얼 시나리오","description":"d","steps":[{"step":1,"title":"t1","state":"s","action":"a","expected":"e"}]}}"""
+            """{"type":"result","message":"ok","scenarios":[{"title":"튜토리얼 시나리오","description":"d","case_ids":[]}]}"""
 
         /** Agent가 받은 세션 오픈 요청 본문 */
         private val openRequests = CopyOnWriteArrayList<String>()
@@ -222,7 +222,7 @@ class TestScenarioPipelineIntegrationTest {
         val event = eventLatch.asMono().block(Duration.ofSeconds(5))
         assertThat(event).isNotNull
         assertThat(event?.event()).isEqualTo("result")
-        assertThat(event?.data()?.scenario?.title).isEqualTo("튜토리얼 시나리오")
+        assertThat(event?.data()?.scenarios?.first()?.title).isEqualTo("튜토리얼 시나리오")
 
         // 세션 오픈 요청에 첫 user_input이 실렸는지
         Thread.sleep(300)
@@ -233,11 +233,11 @@ class TestScenarioPipelineIntegrationTest {
         // locale 미설정 사용자는 en으로 전달된다(계정에 locale을 고른 적 없음).
         assertThat(openNode.get("locale").asText()).isEqualTo("en")
 
-        // scenario가 DB에 저장(UPDATE)되었는지
+        // 이 흐름은 run_id 없이 세션을 열었으므로(첫 메시지에 runId 미포함) 결과는 중계만 되고 DB 저장은
+        // 건너뛴다. 원본 시나리오 행은 그대로 남는다(빈 payload). scenarios INSERT 반영은 별도 테스트에서
+        // run_id와 함께 검증한다(TestScenarioReconcileIntegrationTest).
         Thread.sleep(300)
-        val persisted = scenarioRepository.findById(scenarioId)
-        assertThat(persisted).isNotNull
-        assertThat(persisted!!.payload.asString()).contains("튜토리얼 시나리오")
+        assertThat(scenarioRepository.findById(scenarioId)).isNotNull
 
         // 후속 입력은 WS 턴으로 전송되며, 사용자가 편집한 draft가 함께 실린다
         val draft = """{"title":"편집됨","description":"user edit","steps":[{"step":1,"title":"t","state":"s","action":"a","expected":"e"}]}"""
@@ -259,15 +259,14 @@ class TestScenarioPipelineIntegrationTest {
         assertThat(messages.first { it.role == "USER" }.content).contains("튜토리얼")
         assertThat(messages.first { it.role == "ASSISTANT" }.content).isEqualTo("ok")
 
-        // 재방문 조회 엔드포인트 — 시나리오 payload(canvas용)
+        // 재방문 조회 엔드포인트 — 원본 시나리오 단건(payload는 신규 저작 반영과 무관하게 유지된다)
         val scenario = client.get()
             .uri("/api/test-scenario/$scenarioId")
             .cookie("artel_access_token", token)
             .retrieve()
             .bodyToMono(ScenarioResponse::class.java)
             .block(Duration.ofSeconds(5))!!
-        assertThat(scenario.payload.title).isEqualTo("튜토리얼 시나리오")
-        assertThat(scenario.payload.steps).isNotEmpty
+        assertThat(scenario.testScenarioId).isEqualTo(scenarioId)
 
         // 재방문 조회 엔드포인트 — 사용자 프라이빗 채팅
         val fetched = client.get()
