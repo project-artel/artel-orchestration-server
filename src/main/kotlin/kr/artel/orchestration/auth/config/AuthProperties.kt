@@ -12,6 +12,14 @@ data class AuthProperties(
     val accessTokenTtl: Duration = Duration.ofMinutes(15),
     val cookieName: String = "artel_access_token",
     val secureCookie: Boolean = true,
+    // refresh 토큰은 access 토큰과 audience를 나눈다. 같으면 refresh 토큰 하나로 API를 그대로
+    // 부를 수 있어, 수명만 긴 access 토큰이 된다. 어느 audience의 access 토큰을 만들 수 있는지는
+    // 토큰 안의 `for` 클레임이 들고 다닌다.
+    val refreshAudience: String = "artel-refresh",
+    val refreshTokenTtl: Duration = Duration.ofDays(14),
+    val refreshCookieName: String = "artel_refresh_token",
+    // SDK는 사람이 창을 띄우기 어려운 환경(빌드 머신, 에디터)에서 돌아 재로그인 비용이 크다.
+    val sdkRefreshTokenTtl: Duration = Duration.ofDays(90),
     // SDK 토큰은 브라우저 세션과 audience를 나눈다. 수명이 30일이라 웹 API까지 열어주면
     // 한 번 새어나간 토큰이 한 달짜리 대시보드 세션이 된다.
     val sdkAudience: String = "artel-sdk",

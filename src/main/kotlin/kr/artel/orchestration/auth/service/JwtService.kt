@@ -81,7 +81,7 @@ class JwtService(
      * 수명이 길어 웹 API까지 열어주면 새어나간 토큰 하나가 한 달짜리 대시보드 세션이 된다.
      * audience를 나눠 두면 SDK 경로 필터 체인만 이 토큰을 받아들인다.
      *
-     * 갱신 수단은 재로그인뿐이다. refresh token은 별도 작업이다.
+     * 만료 후 갱신은 [RefreshTokenService]가 발급한 refresh 토큰으로 한다(`/api/auth/sdk/token/refresh`).
      */
     fun issueSdkToken(userId: String): SdkToken {
         val issuedAt = Instant.now(clock)
