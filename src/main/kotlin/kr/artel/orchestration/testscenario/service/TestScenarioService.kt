@@ -18,6 +18,10 @@ import kr.artel.orchestration.testscenario.repository.TestScenarioMessageReposit
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.springframework.http.codec.ServerSentEvent
 import org.springframework.stereotype.Service
+import org.springframework.transaction.reactive.executeAndAwait
+import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
+import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import org.springframework.transaction.reactive.TransactionalOperator
 
 /**
  * TestScenario 도메인 서비스(코루틴). 컨트롤러가 얇게 유지되도록 생성/조회/중계/스트림의 비즈니스 로직을 담당한다.
@@ -35,6 +39,9 @@ class TestScenarioService(
     private val accessService: TestScenarioAccessService,
     private val agentService: TestScenarioAgentService,
     private val streamManager: TestScenarioStreamManager,
+    private val scenarioCaseRepository: TestScenarioCaseRepository,
+    private val runScenarioRepository: TestRunScenarioRepository,
+    private val transactionalOperator: TransactionalOperator,
     private val objectMapper: ObjectMapper
 ) {
 
@@ -143,6 +150,23 @@ class TestScenarioService(
             )
         }
         closeSession(appUserId, testScenarioId)
+    }
+
+    /**
+     * 시나리오를 완전히 삭제한다. 접근 불가/미존재면 404.
+     *
+     * 정리 순서: Agent 세션·스트림을 닫고(진행 중 작업 중단), 조합 링크(케이스 조합·런 조합)를
+     * 먼저 지운 뒤 시나리오 본체를 지운다. 채팅 메시지는 FK ON DELETE CASCADE로 함께 삭제된다.
+     * 조합 정리와 본체 삭제는 한 트랜잭션으로 묶어 부분 삭제 상태가 남지 않게 한다.
+     */
+    suspend fun delete(appUserId: Long, testScenarioId: Long) {
+        accessService.accessibleScenario(testScenarioId, appUserId) ?: throw NotFoundException()
+        closeSession(appUserId, testScenarioId)
+        transactionalOperator.executeAndAwait {
+            scenarioCaseRepository.deleteByTestScenarioId(testScenarioId)
+            runScenarioRepository.deleteByTestScenarioId(testScenarioId)
+            scenarioRepository.deleteById(testScenarioId)
+        }
     }
 
     /** Agent WS 세션과 SSE 스트림을 함께 닫는 정리 동작. */
