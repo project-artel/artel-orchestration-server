@@ -7,7 +7,6 @@ import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
 import kr.artel.orchestration.auth.service.SessionUserResolver
-import kr.artel.orchestration.game.dto.CreateGameInstanceRequest
 import kr.artel.orchestration.game.dto.GameInstanceListResponse
 import kr.artel.orchestration.game.dto.GameInstanceResponse
 import kr.artel.orchestration.game.dto.UpdateGameInstanceRequest
