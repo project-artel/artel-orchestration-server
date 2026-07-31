@@ -9,7 +9,9 @@ data class QaAgentSessionContext(
     val qaTryId: String,
     val gameInstanceId: String,
     val testScenarioId: String,
-    val scenario: JsonNode
+    val scenario: JsonNode,
+    val model: String?,
+    val reasoning: JsonNode?
 )
 
 data class QaAgentEnvelope(

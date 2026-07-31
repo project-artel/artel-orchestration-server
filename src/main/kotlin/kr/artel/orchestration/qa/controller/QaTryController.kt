@@ -41,7 +41,13 @@ class QaTryController(
         @AuthenticationPrincipal jwt: Jwt
     ): ResponseEntity<QaTryResponse> =
         ResponseEntity.status(HttpStatus.CREATED).body(
-            service.create(parseId(request.testScenarioId), parseId(request.gameInstanceId), requireUser(jwt))
+            service.create(
+                parseId(request.testScenarioId),
+                parseId(request.gameInstanceId),
+                requireUser(jwt),
+                request.model,
+                request.reasoning
+            )
         )
 
     /** One project's runs, newest first — the way back to a run after its URL is lost. */
