@@ -6,7 +6,7 @@ import kr.artel.orchestration.knowledge.agent.KnowledgeEmbeddingAgent
 import kr.artel.orchestration.knowledge.agent.KnowledgeQueryItem
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
-import kr.artel.orchestration.knowledge.repository.ClaimedRow
+import kr.artel.orchestration.common.embedding.ClaimedRow
 import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.common.embedding.agent.EmbeddingClient
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
@@ -55,7 +55,7 @@ class KnowledgeEmbeddingBackfillWorker(
         if (claimed.isEmpty()) return BackfillTickResult.EMPTY
 
         val knowledgeById = loadLiveKnowledge(claimed)
-        val (actionable, orphaned) = claimed.partition { knowledgeById.containsKey(it.knowledgeId) }
+        val (actionable, orphaned) = claimed.partition { knowledgeById.containsKey(it.ownerId) }
 
         // 대상이 사라졌거나 소프트삭제된 대기 행은 큐에서 버린다. 남겨 두면 상한에 닿을 때까지
         // 매 tick 자리를 차지하면서 아무 일도 하지 않는다.
@@ -89,8 +89,8 @@ class KnowledgeEmbeddingBackfillWorker(
         }
 
         // 질문을 못 받은 항목은 이미 실패로 기록됐다. 남은 것만 임베딩한다.
-        val pending = rows.filter { queriesByKnowledgeId.containsKey(it.knowledgeId) }
-        val flattened = pending.flatMap { row -> queriesByKnowledgeId.getValue(row.knowledgeId) }
+        val pending = rows.filter { queriesByKnowledgeId.containsKey(it.ownerId) }
+        val flattened = pending.flatMap { row -> queriesByKnowledgeId.getValue(row.ownerId) }
 
         val embedded = try {
             embedAll(flattened, model)
@@ -106,7 +106,7 @@ class KnowledgeEmbeddingBackfillWorker(
         var failed = rows.size - pending.size
         var cursor = 0
         for (row in pending) {
-            val queries = queriesByKnowledgeId.getValue(row.knowledgeId)
+            val queries = queriesByKnowledgeId.getValue(row.ownerId)
             val slice = embedded.subList(cursor, cursor + queries.size)
             cursor += queries.size
             if (storeVectors(row, kind, model, slice)) succeeded++ else failed++
@@ -125,14 +125,14 @@ class KnowledgeEmbeddingBackfillWorker(
         rows: List<ClaimedRow>,
         knowledgeById: Map<Long, KnowledgeEntity>
     ): Map<Long, List<String>> {
-        val items = rows.map { toQueryItem(knowledgeById.getValue(it.knowledgeId)) }
+        val items = rows.map { toQueryItem(knowledgeById.getValue(it.ownerId)) }
         try {
             return toQueryMap(agent.generateQueries(items))
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
             if (rows.size == 1) {
-                logger.warn("knowledge 백필 검색쿼리 생성 실패 knowledgeId={}: {}", rows[0].knowledgeId, error.message)
+                logger.warn("knowledge 백필 검색쿼리 생성 실패 knowledgeId={}: {}", rows[0].ownerId, error.message)
                 embeddingRepository.recordFailure(rows[0].pendingId, describe(error))
                 return emptyMap()
             }
@@ -141,13 +141,13 @@ class KnowledgeEmbeddingBackfillWorker(
 
         val collected = mutableMapOf<Long, List<String>>()
         for (row in rows) {
-            val item = toQueryItem(knowledgeById.getValue(row.knowledgeId))
+            val item = toQueryItem(knowledgeById.getValue(row.ownerId))
             try {
                 collected += toQueryMap(agent.generateQueries(listOf(item)))
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                logger.warn("knowledge 백필 검색쿼리 생성 실패 knowledgeId={}: {}", row.knowledgeId, error.message)
+                logger.warn("knowledge 백필 검색쿼리 생성 실패 knowledgeId={}: {}", row.ownerId, error.message)
                 embeddingRepository.recordFailure(row.pendingId, describe(error))
             }
         }
@@ -185,19 +185,19 @@ class KnowledgeEmbeddingBackfillWorker(
         // 대기 행 삭제와 벡터 삽입은 한 트랜잭션이어야 한다. 쪼개지면 대기 행은 사라졌는데 벡터가
         // 없는 상태가 되고, 시딩이 그 항목을 다시 집지 않아 영영 검색되지 않는다.
         transactionalOperator.executeAndAwait {
-            embeddingRepository.replacePendingWithVectors(row.pendingId, row.knowledgeId, kind, model, vectors)
+            embeddingRepository.replacePendingWithVectors(row.pendingId, row.ownerId, kind, model, vectors)
         }
         true
     } catch (error: CancellationException) {
         throw error
     } catch (error: Exception) {
-        logger.error("knowledge 백필 저장 실패 knowledgeId={}: {}", row.knowledgeId, error.message)
+        logger.error("knowledge 백필 저장 실패 knowledgeId={}: {}", row.ownerId, error.message)
         embeddingRepository.recordFailure(row.pendingId, describe(error))
         false
     }
 
     private suspend fun loadLiveKnowledge(rows: List<ClaimedRow>): Map<Long, KnowledgeEntity> =
-        knowledgeRepository.findAllById(rows.map { it.knowledgeId })
+        knowledgeRepository.findAllById(rows.map { it.ownerId })
             .toList()
             .filter { it.deletedAt == null }
             .associateBy { requireNotNull(it.id) }

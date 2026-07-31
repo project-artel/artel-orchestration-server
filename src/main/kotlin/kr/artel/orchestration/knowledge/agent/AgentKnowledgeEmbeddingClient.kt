@@ -19,7 +19,8 @@ import java.time.Duration
  */
 @Component
 class AgentKnowledgeEmbeddingClient(
-    @Value("\${artel.agent.base-url}") private val agentBaseUrl: String,
+    @Value("" +
+            "\${artel.agent.base-url}") private val agentBaseUrl: String,
     @Value("\${artel.knowledge.backfill.timeout:PT2M}") private val responseTimeout: Duration
 ) : KnowledgeEmbeddingAgent {
 
