@@ -17,7 +17,7 @@ import kr.artel.orchestration.knowledge.agent.KnowledgeEmbeddingAgent
 import kr.artel.orchestration.knowledge.agent.KnowledgeQueryItem
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
-import kr.artel.orchestration.knowledge.repository.EmbeddedText
+import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity

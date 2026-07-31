@@ -8,7 +8,7 @@ import kr.artel.orchestration.knowledge.dto.KnowledgeSearchHit
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchResponse
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
-import kr.artel.orchestration.knowledge.repository.EmbeddedText
+import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeSearchRow
 import kr.artel.orchestration.knowledge.repository.KnowledgeVectorSearchRepository
 import org.slf4j.LoggerFactory

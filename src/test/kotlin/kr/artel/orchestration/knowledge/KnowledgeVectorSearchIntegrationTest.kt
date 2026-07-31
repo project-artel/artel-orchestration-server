@@ -11,7 +11,7 @@ import kr.artel.orchestration.knowledge.config.KnowledgeSearchProperties
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
-import kr.artel.orchestration.knowledge.repository.EmbeddedText
+import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.service.KnowledgeQueryEmbeddingException
 import kr.artel.orchestration.knowledge.service.KnowledgeSearchService

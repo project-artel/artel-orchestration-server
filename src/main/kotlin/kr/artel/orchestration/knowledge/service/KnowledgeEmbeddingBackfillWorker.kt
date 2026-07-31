@@ -7,7 +7,7 @@ import kr.artel.orchestration.knowledge.agent.KnowledgeQueryItem
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.repository.ClaimedRow
-import kr.artel.orchestration.knowledge.repository.EmbeddedText
+import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import org.slf4j.LoggerFactory

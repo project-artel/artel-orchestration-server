@@ -3,6 +3,7 @@ package kr.artel.orchestration.knowledge.repository
 import io.r2dbc.spi.Readable
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.awaitFirstOrNull
+import kr.artel.orchestration.common.embedding.EmbeddedText
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.r2dbc.core.flow
 import org.springframework.stereotype.Repository
@@ -194,12 +195,3 @@ data class ClaimedRow(
     val pendingId: Long,
     val knowledgeId: Long
 )
-
-/** 임베딩이 끝난 텍스트 한 건. */
-data class EmbeddedText(
-    val text: String,
-    val vector: List<Double>
-) {
-    /** pgvector가 받는 리터럴 형식: `[0.1,0.2,...]`. */
-    fun toVectorLiteral(): String = vector.joinToString(prefix = "[", postfix = "]", separator = ",")
-}
