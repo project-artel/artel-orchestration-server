@@ -14,6 +14,16 @@ spring:
   # 담는 값으로 맞춘다.
   codec:
     max-in-memory-size: 2MB
+  # SDK 로그인 일회용 코드가 여기 산다. DB와 달리 application-db.yml로 빼지 않는다 —
+  # 그 파일은 optional import라 없으면 조용히 넘어가는데, Redis 설정이 조용히 빠지면
+  # 기본값 localhost로 붙는다. 컨테이너 안에서 localhost는 앱 자신이라 기동은 정상이고
+  # SDK 로그인만 전부 실패하는, 원인이 드러나지 않는 고장이 된다.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # 빈 값은 "인증 없음"으로 읽힌다(RedisPassword.of("")가 none()을 돌려준다).
+      password: ${REDIS_PASSWORD:}
   security:
     oauth2:
       client:
