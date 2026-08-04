@@ -18,10 +18,14 @@ import kr.artel.orchestration.testcase.config.TestCaseEmbeddingProperties
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testrun.entity.TestRunEntity
+import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import kr.artel.orchestration.testscenario.entity.TestScenarioCaseEntity
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+import io.r2dbc.postgresql.codec.Json
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeEach
@@ -264,6 +268,84 @@ class TestScenarioReconcileIntegrationTest {
         runLinks = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().size
     )
 
+    // ---- (d) result{scenario_id} → UPDATE(수정) --------------------------------------------
+
+    @Test
+    fun `scenario_id가 있는 결과는 기존 시나리오를 UPDATE한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "RULE", "A")
+        val caseB = insertCase(projectId, "RULE", "B")
+
+        // 런에 기존 시나리오 1개를 심는다(payload=old, 케이스=A).
+        val existing = scenarioRepository.save(
+            TestScenarioEntity(
+                projectId = projectId,
+                payload = Json.of("""{"title":"old","description":"old"}""")
+            )
+        ).id!!
+        runScenarioRepository.save(
+            TestRunScenarioEntity(testRunId = runId, testScenarioId = existing, position = 0)
+        )
+        scenarioCaseRepository.save(
+            TestScenarioCaseEntity(testScenarioId = existing, testCaseId = caseA, position = 0)
+        )
+
+        // Agent가 그 시나리오를 겨냥해 수정 결과를 돌려준다(scenario_id 포함, 케이스는 B로 교체).
+        framesToSend.add(
+            """{"type":"result","message":"수정했어","scenarios":[""" +
+                """{"scenario_id":$existing,"title":"new","description":"nd","case_ids":[$caseB]}]}"""
+        )
+        postMessage(client, projectId, runId, token, "그 시나리오 케이스를 B로 바꿔줘")
+
+        // payload가 new로 바뀔 때까지 기다린다.
+        awaitUntil { scenarioRepository.findById(existing)!!.payload.asString().contains("new") }
+
+        // 같은 시나리오 id 그대로, payload만 갱신됨(새 시나리오가 생기지 않음).
+        assertThat(scenarioRepository.findById(existing)!!.payload.asString()).contains("new")
+        // 런 링크는 그대로 1개(수정은 append하지 않음).
+        val runLinks = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        assertThat(runLinks.map { it.testScenarioId }).containsExactly(existing)
+        // 케이스 링크는 통째 교체(A 제거, B만).
+        val cases = scenarioCaseRepository.findByTestScenarioIdOrderByPosition(existing).toList()
+        assertThat(cases.map { it.testCaseId }).containsExactly(caseB)
+    }
+
+    // ---- (e) autoApply=false → 자동저장 안 함, 커밋으로만 반영 -------------------------------
+
+    @Test
+    fun `autoApply false면 자동저장하지 않고 커밋 엔드포인트로 반영한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "RULE", "A")
+
+        framesToSend.add(
+            """{"type":"result","message":"제안이야","scenarios":[""" +
+                """{"title":"제안 시나리오","description":"d","case_ids":[$caseA]}]}"""
+        )
+        // autoApply=false → 서버는 결과를 저장하지 않고 제안으로만 둔다.
+        postMessage(client, projectId, runId, token, "시나리오 제안해줘", autoApply = false)
+
+        Thread.sleep(1500)
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).isEmpty()
+
+        // 사용자가 카드로 커밋 → 같은 엔진으로 반영된다.
+        commitScenarios(
+            client, projectId, runId, token,
+            """[{"title":"제안 시나리오","description":"d","case_ids":[$caseA]}]"""
+        )
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().size == 1 }
+        val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        assertThat(links).hasSize(1)
+        val committed = scenarioRepository.findById(links[0].testScenarioId)!!
+        assertThat(committed.payload.asString()).contains("제안 시나리오")
+    }
+
     // ---- helpers ----------------------------------------------------------------------------
 
     private suspend fun awaitFrame(predicate: (String) -> Boolean): String? {
@@ -308,12 +390,26 @@ class TestScenarioReconcileIntegrationTest {
         return project.id!!
     }
 
-    private fun postMessage(client: WebClient, projectId: Long, runId: Long, token: String, msg: String) =
+    private fun postMessage(
+        client: WebClient, projectId: Long, runId: Long, token: String, msg: String, autoApply: Boolean = true
+    ) =
         client.post()
             .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
-            .bodyValue("""{"message":"$msg"}""")
+            .bodyValue("""{"message":"$msg","autoApply":$autoApply}""")
+            .retrieve()
+            .toEntity(String::class.java)
+            .block(Duration.ofSeconds(5))
+
+    private fun commitScenarios(
+        client: WebClient, projectId: Long, runId: Long, token: String, scenariosJson: String
+    ) =
+        client.post()
+            .uri("/api/projects/$projectId/test-runs/$runId/scenarios/commit")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue("""{"scenarios":$scenariosJson}""")
             .retrieve()
             .toEntity(String::class.java)
             .block(Duration.ofSeconds(5))

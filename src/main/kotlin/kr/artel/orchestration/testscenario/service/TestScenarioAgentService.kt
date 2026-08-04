@@ -3,41 +3,30 @@ package kr.artel.orchestration.testscenario.service
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
-import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.awaitSingle
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.testcase.service.TestCaseSearchService
 import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
-import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
-import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
-import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchErrorFrame
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchResultFrame
-import kr.artel.orchestration.testscenario.entity.TestScenarioCaseEntity
-import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
-import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
-import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
-import org.springframework.transaction.reactive.TransactionalOperator
-import org.springframework.transaction.reactive.executeAndAwait
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient
 import reactor.core.Disposable
@@ -69,14 +58,11 @@ class TestScenarioAgentService(
     @Value("\${artel.agent.model:openai/gpt-4o-mini}") private val defaultModel: String,
     private val objectMapper: ObjectMapper,
     private val streamManager: TestScenarioStreamManager,
-    private val scenarioRepository: TestScenarioRepository,
     private val runMessageRepository: TestRunMessageRepository,
     private val buildRepository: GameBuildRepository,
     private val appUserRepository: AppUserRepository,
     private val testCaseSearchService: TestCaseSearchService,
-    private val scenarioCaseRepository: TestScenarioCaseRepository,
-    private val runScenarioRepository: TestRunScenarioRepository,
-    private val transactionalOperator: TransactionalOperator
+    private val reconcileService: ScenarioReconcileService
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -97,14 +83,17 @@ class TestScenarioAgentService(
         projectId: Long,
         appUserId: Long,
         userInput: String,
+        autoApply: Boolean,
     ) {
         // 원래 순서대로: 먼저 USER 메시지를 저장한 뒤 Agent로 보낸다.
         saveMessage(runId, appUserId, "USER", userInput)
         val existing = sessions[sessionKey]
         if (existing != null) {
+            // 토글을 매 턴 반영해 대화 중 변경도 다음 결과부터 적용되게 한다.
+            existing.autoApply = autoApply
             sendTurn(sessionKey, existing, userInput)
         } else {
-            openSession(sessionKey, runId, projectId, appUserId, userInput)
+            openSession(sessionKey, runId, projectId, appUserId, userInput, autoApply)
         }
     }
 
@@ -132,6 +121,7 @@ class TestScenarioAgentService(
         projectId: Long,
         appUserId: Long,
         userInput: String,
+        autoApply: Boolean,
     ) {
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
@@ -154,7 +144,7 @@ class TestScenarioAgentService(
             .retrieve()
             .bodyToMono(AgentSessionOpenResponse::class.java)
             .awaitSingle()
-        openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId)
+        openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply)
     }
 
     /**
@@ -193,9 +183,10 @@ class TestScenarioAgentService(
         projectId: Long,
         appUserId: Long,
         agentSessionId: String,
+        autoApply: Boolean,
     ) {
         val outbound = Sinks.many().unicast().onBackpressureBuffer<String>()
-        val session = AgentSession(outbound, runId, projectId, appUserId, agentSessionId)
+        val session = AgentSession(outbound, runId, projectId, appUserId, agentSessionId, autoApply)
         sessions[sessionKey] = session
 
         val uri = URI.create("$agentWsBaseUrl/sessions/$agentSessionId")
@@ -255,13 +246,21 @@ class TestScenarioAgentService(
                     } catch (err: Exception) {
                         logger.error("ASSISTANT 메시지 저장 실패 [sessionKey=$sessionKey]: ${err.message}")
                     }
-                    // scenarios를 test_scenario/test_scenario_case/test_run_scenario에 INSERT(신규 저작).
-                    try {
-                        reconcileScenarios(sessionKey, session, event.scenarios ?: emptyList())
-                    } catch (err: CancellationException) {
-                        throw err
-                    } catch (err: Exception) {
-                        logger.error("시나리오 반영 실패 [sessionKey=$sessionKey]: ${err.message}")
+                    // 결과는 항상 SSE로 중계된다(위). autoApply가 켜져 있을 때만 서버가 즉시 upsert한다.
+                    // 꺼져 있으면(카드 검토 모드) 저장하지 않고 제안으로만 두고, 사용자가 카드로 커밋한다
+                    // (TestRunChatService.commitScenarios). 어느 경우든 빈 배열은 무동작.
+                    if (session.autoApply) {
+                        try {
+                            reconcileService.reconcile(
+                                session.runId,
+                                session.projectId,
+                                event.scenarios ?: emptyList()
+                            )
+                        } catch (err: CancellationException) {
+                            throw err
+                        } catch (err: Exception) {
+                            logger.error("시나리오 반영 실패 [sessionKey=$sessionKey]: ${err.message}")
+                        }
                     }
                 }
             }
@@ -336,67 +335,8 @@ class TestScenarioAgentService(
     }
 
     /**
-     * Agent 턴 결과의 [scenarios]를 런에 반영한다(ARTEL-206 Step 5 Layer 1 — INSERT 전용).
-     *
-     * 각 시나리오마다 한 트랜잭션 안에서:
-     * 1. `test_scenario`를 INSERT({title, description} payload) → id 확보,
-     * 2. `case_ids`를 리스트 인덱스 순서(position)로 `test_scenario_case` 링크 INSERT,
-     * 3. `test_run_scenario`로 런 끝(현재 max position + 1, 배치 내 증가)에 붙인다.
-     *
-     * ⚠️ **안전규칙(협상 불가): [scenarios]가 비면 DB를 절대 건드리지 않는다** — 빈 배열은 질문·거절·무매치
-     * 같은 정상 턴이지 "런을 비워라"가 아니다. 이 경로에는 어떤 삭제도 없다(delete 호출 금지).
-     */
-    private suspend fun reconcileScenarios(
-        sessionKey: String,
-        session: AgentSession,
-        scenarios: List<ScenarioResult>
-    ) {
-        // SAFETY: 빈 배열은 정상 턴 — DB 무변경(삽입도 삭제도 없음).
-        if (scenarios.isEmpty()) {
-            logger.info("빈 scenarios — DB 무변경(정상 턴) [sessionKey=$sessionKey]")
-            return
-        }
-        val runId = session.runId
-        transactionalOperator.executeAndAwait {
-            // 런의 현재 마지막 position 다음부터 붙인다. 비어 있으면 0부터.
-            var runPosition = (runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
-                .maxOfOrNull { it.position } ?: -1) + 1
-            for (scenario in scenarios) {
-                // TODO(ARTEL-206 Step 5 Layer 2): id 기반 upsert(수정) — scenario_id 있으면 UPDATE
-                val payloadJson = Json.of(
-                    objectMapper.writeValueAsString(
-                        mapOf("title" to scenario.title, "description" to scenario.description)
-                    )
-                )
-                val savedScenario = scenarioRepository.save(
-                    TestScenarioEntity(projectId = session.projectId, payload = payloadJson)
-                )
-                val scenarioId = savedScenario.id!!
-                scenario.caseIds.forEachIndexed { index, caseId ->
-                    scenarioCaseRepository.save(
-                        TestScenarioCaseEntity(
-                            testScenarioId = scenarioId,
-                            testCaseId = caseId,
-                            position = index
-                        )
-                    )
-                }
-                runScenarioRepository.save(
-                    TestRunScenarioEntity(
-                        testRunId = runId,
-                        testScenarioId = scenarioId,
-                        position = runPosition
-                    )
-                )
-                runPosition++
-            }
-        }
-        logger.info("시나리오 반영 완료 [sessionKey=$sessionKey, runId=$runId, count=${scenarios.size}]")
-    }
-
-    /**
      * Agent 세션 상태: 송신 싱크, 결과 시나리오가 붙고 채팅이 저장될 runId, 검색·저장 스코프 projectId,
-     * 채팅 소유자 appUserId, Agent가 발급한 session_id.
+     * 채팅 소유자 appUserId, Agent가 발급한 session_id, 결과를 서버가 즉시 반영할지(autoApply, 매 턴 갱신).
      */
     private class AgentSession(
         val outbound: Sinks.Many<String>,
@@ -404,6 +344,7 @@ class TestScenarioAgentService(
         val projectId: Long,
         val appUserId: Long,
         val agentSessionId: String,
+        @Volatile var autoApply: Boolean,
         @Volatile var disposable: Disposable? = null
     )
 }

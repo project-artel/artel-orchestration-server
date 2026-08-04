@@ -4,6 +4,7 @@ import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.UnauthorizedException
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.testrun.dto.CommitScenariosRequest
 import kr.artel.orchestration.testrun.dto.RunChatMessage
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
 import kr.artel.orchestration.testrun.dto.SetRunScenariosRequest
@@ -159,6 +160,24 @@ class TestRunController(
             // Agent 전송 실패만 502로 변환한다.
             ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(e.message)
         }
+    }
+
+    /**
+     * 카드 검토 모드 커밋: 사용자가 카드로 고른/편집한 시나리오를 이 런에 반영한다(추가/수정은 scenario_id로 갈림).
+     * 자동저장(autoApply)과 같은 엔진을 쓴다. 빈 배열은 무동작.
+     */
+    @PostMapping("/{runId}/scenarios/commit")
+    suspend fun commitScenarios(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestBody request: CommitScenariosRequest,
+        @AuthenticationPrincipal jwt: Jwt
+    ): ResponseEntity<RunScenariosResponse> {
+        val appUserId = requireUser(jwt)
+        chatService.commitScenarios(appUserId, runId, request.scenarios)
+        return service.getScenarios(runId, appUserId)
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
     }
 
     /** 저작 세션을 종료한다(런 편집 종료 시): Agent WS/SSE를 닫는다(채팅·시나리오는 남김). */

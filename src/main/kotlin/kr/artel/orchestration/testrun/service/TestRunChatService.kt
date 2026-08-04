@@ -10,7 +10,9 @@ import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.dto.MessageResponse
+import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
+import kr.artel.orchestration.testscenario.service.ScenarioReconcileService
 import kr.artel.orchestration.testscenario.service.TestScenarioAgentService
 import kr.artel.orchestration.testscenario.service.TestScenarioStreamManager
 import org.springframework.http.codec.ServerSentEvent
@@ -33,6 +35,7 @@ class TestRunChatService(
     private val projectAccessService: ProjectAccessService,
     private val agentService: TestScenarioAgentService,
     private val streamManager: TestScenarioStreamManager,
+    private val reconcileService: ScenarioReconcileService,
 ) {
 
     /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다(재방문 복원). 접근 불가면 빈 목록. */
@@ -59,7 +62,18 @@ class TestRunChatService(
             projectId = run.projectId,
             appUserId = appUserId,
             userInput = message.message,
+            autoApply = message.autoApply,
         )
+    }
+
+    /**
+     * 카드 검토 모드에서 사용자가 카드로 고른/편집한 [scenarios]를 이 런에 커밋한다(수동 트리거).
+     * 자동저장과 **같은 reconcile 엔진**을 쓴다 — 추가/수정은 항목별 scenario_id로 갈린다. 접근 불가면 404.
+     * @return 실제로 반영된 시나리오 수(추가 + 수정).
+     */
+    suspend fun commitScenarios(appUserId: Long, runId: Long, scenarios: List<ScenarioResult>): Int {
+        val run = accessible(runId, appUserId) ?: throw NotFoundException()
+        return reconcileService.reconcile(runId, run.projectId, scenarios)
     }
 
     /**
