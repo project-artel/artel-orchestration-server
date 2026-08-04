@@ -7,7 +7,6 @@ import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
 import kr.artel.orchestration.auth.service.SessionUserResolver
-import kr.artel.orchestration.game.dto.CreateGameInstanceRequest
 import kr.artel.orchestration.game.dto.GameInstanceListResponse
 import kr.artel.orchestration.game.dto.GameInstanceResponse
 import kr.artel.orchestration.game.dto.UpdateGameInstanceRequest
@@ -40,19 +39,7 @@ class GameInstanceController(
     private val instanceService: GameInstanceService,
     private val sessionUserResolver: SessionUserResolver
 ) {
-    @Operation(
-        summary = "게임 인스턴스 생성",
-        description = "영구 자격증명인 instanceKey를 함께 발급한다. 지금은 UNITY만 받는다."
-    )
-    @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    suspend fun create(
-        @AuthenticationPrincipal jwt: Jwt,
-        @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
-        @Valid @RequestBody request: CreateGameInstanceRequest
-    ): GameInstanceResponse =
-        instanceService.create(requireUser(jwt), projectId, request) ?: throw projectNotFound()
-
+    // 생성 경로는 없다. 인스턴스는 SDK가 로그인 후 처음 등록할 때 생긴다.
     @Operation(summary = "게임 인스턴스 목록", description = "최근에 만든 것이 앞에 온다.")
     @GetMapping
     suspend fun list(
@@ -63,7 +50,7 @@ class GameInstanceController(
 
     @Operation(
         summary = "게임 인스턴스 이름 수정",
-        description = "이름만 바꿀 수 있다. instanceKey를 바꾸면 설치된 SDK가 전부 연결을 잃는다."
+        description = "이름만 바꿀 수 있다. 플랫폼은 SDK가 이미 그 위에서 돌고 있어 바꾸면 실제와 어긋난다."
     )
     @PatchMapping("/{instanceId}")
     suspend fun rename(

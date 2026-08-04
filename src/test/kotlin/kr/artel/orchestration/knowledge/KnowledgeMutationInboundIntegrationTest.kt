@@ -223,7 +223,7 @@ class KnowledgeMutationInboundIntegrationTest {
                 projectId = project.id!!,
                 name = "instance",
                 platform = "UNITY",
-                instanceKey = UUID.randomUUID().toString().replace("-", "").take(20),
+                sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )

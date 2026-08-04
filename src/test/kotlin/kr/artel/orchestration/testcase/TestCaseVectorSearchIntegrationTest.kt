@@ -22,7 +22,7 @@ import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
 import java.util.concurrent.atomic.AtomicLong
 
-/** V20의 vector(1024)와 같아야 한다. */
+/** V23의 vector(1024)와 같아야 한다. */
 private const val DIMENSIONS = 1024
 
 /** 좌표축 단위 벡터. 서로 다른 축은 코사인 거리 1(완전 직교), 같은 축은 0. */

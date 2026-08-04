@@ -25,7 +25,7 @@ import org.springframework.test.context.ActiveProfiles
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
-/** V20의 vector(1024)와 같아야 한다. 다르면 INSERT가 거절된다. */
+/** V23의 vector(1024)와 같아야 한다. 다르면 INSERT가 거절된다. */
 private const val DIMENSIONS = 1024
 
 /**

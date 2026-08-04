@@ -50,7 +50,7 @@ import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
-/** V20의 vector(1024)와 같아야 한다. */
+/** V23의 vector(1024)와 같아야 한다. */
 private const val DIMENSIONS = 1024
 
 /** 좌표축 단위 벡터. 같은 축은 코사인 거리 0(완전 일치). */

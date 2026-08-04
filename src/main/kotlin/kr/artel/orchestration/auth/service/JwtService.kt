@@ -74,4 +74,31 @@ class JwtService(
         val headers = JwsHeader.with(MacAlgorithm.HS256).build()
         return jwtEncoder.encode(JwtEncoderParameters.from(headers, claims)).tokenValue
     }
+
+    /**
+     * SDK 런타임이 들고 다니는 토큰. 브라우저 세션과 audience가 다르다.
+     *
+     * 수명이 길어 웹 API까지 열어주면 새어나간 토큰 하나가 한 달짜리 대시보드 세션이 된다.
+     * audience를 나눠 두면 SDK 경로 필터 체인만 이 토큰을 받아들인다.
+     *
+     * 갱신 수단은 재로그인뿐이다. refresh token은 별도 작업이다.
+     */
+    fun issueSdkToken(userId: String): SdkToken {
+        val issuedAt = Instant.now(clock)
+        val expiresAt = issuedAt.plus(properties.sdkTokenTtl)
+        val claims = JwtClaimsSet.builder()
+            .issuer(properties.issuer)
+            .audience(listOf(properties.sdkAudience))
+            .issuedAt(issuedAt)
+            .expiresAt(expiresAt)
+            .subject(userId)
+            .build()
+
+        val headers = JwsHeader.with(MacAlgorithm.HS256).build()
+        val token = jwtEncoder.encode(JwtEncoderParameters.from(headers, claims)).tokenValue
+        return SdkToken(token, expiresAt)
+    }
 }
+
+/** 발급된 SDK 토큰. 만료 시각을 함께 주어야 SDK가 재로그인 시점을 스스로 판단할 수 있다. */
+data class SdkToken(val token: String, val expiresAt: Instant)

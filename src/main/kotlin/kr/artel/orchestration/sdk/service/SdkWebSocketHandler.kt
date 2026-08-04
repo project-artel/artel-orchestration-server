@@ -1,11 +1,14 @@
 package kr.artel.orchestration.sdk.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.sdk.dto.BaseMessage
 import kr.artel.orchestration.sdk.service.handler.SdkMessageHandler
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.CloseStatus
 import org.springframework.web.reactive.socket.WebSocketHandler
@@ -17,14 +20,19 @@ import reactor.core.publisher.Mono
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
-private const val INSTANCE_KEY_PARAM = "instanceKey"
+private const val TOKEN_PARAM = "token"
+private const val INSTANCE_ID_PARAM = "instanceId"
 
 /**
- * 실시간 웹소켓 연결 수립, 핸드셰이크 시점의 인증(instanceKey), 메시지 수신 및 분기를 처리하는
- * 핵심 핸들러
+ * 실시간 웹소켓 연결 수립, 핸드셰이크 시점의 인증, 메시지 수신 및 분기를 처리하는 핵심 핸들러
  *
- * 자격증명은 instanceKey지만 그 뒤로는 게임 인스턴스 id만 들고 다닌다. 키는 인증에만 쓰고
- * 세션 맵이나 로그에는 남기지 않는다.
+ * 자격증명은 SDK 토큰이고, 대상은 instanceId다. 토큰을 쿼리 파라미터로 받는 이유는 브라우저가
+ * 아닌 클라이언트라도 웹소켓 핸드셰이크에 헤더를 싣기가 라이브러리마다 다르기 때문이다.
+ * 헤더가 아니라 URL에 실리므로 시큐리티 필터 체인이 걸러낼 수 없고, 검증을 여기서 직접 한다.
+ * 토큰은 인증에만 쓰고 세션 맵이나 로그에는 남기지 않는다.
+ *
+ * ponytail: 쿼리 토큰. 프록시 접근 로그에 남을 수 있다. WebSocketSharp 커스텀 헤더로 옮기려면
+ * SDK도 같이 바꿔야 한다.
  */
 @Component
 class SdkWebSocketHandler(
@@ -32,6 +40,9 @@ class SdkWebSocketHandler(
     private val instanceRepository: GameInstanceRepository,
     private val sessionManager: SessionManager,
     private val qaExecutionFailureService: QaExecutionFailureService,
+    // 디코더가 두 개다. 브라우저 쪽이 @Primary라 이름만으로는 그쪽이 주입된다.
+    @Qualifier("sdkJwtDecoder") private val sdkJwtDecoder: ReactiveJwtDecoder,
+    private val sessionUserResolver: SessionUserResolver,
     handlers: List<SdkMessageHandler>
 ) : WebSocketHandler {
 
@@ -39,23 +50,33 @@ class SdkWebSocketHandler(
     private val handlerMap = handlers.associateBy { it.messageType }
 
     // 인터페이스가 Mono<Void>를 요구하므로 시그니처는 유지하고, 내부는 mono { } 코루틴
-    // 빌더로 감싼다. instanceRepository.findActiveByInstanceKey는 이제 suspend 함수라
-    // 코루틴 컨텍스트가 필요하다. 못 찾음(null)은 명시적으로 분기해 거절한다. switchIfEmpty를
-    // 쓰지 않는 이유는 open()이 반환하는 Mono<Void>가 항상 비어 있어 거절 경로가 다시 도는
-    // 문제를 피하기 위해서다.
+    // 빌더로 감싼다. 저장소 조회가 suspend 함수라 코루틴 컨텍스트가 필요하다. 못 찾음(null)은
+    // 명시적으로 분기해 거절한다. switchIfEmpty를 쓰지 않는 이유는 open()이 반환하는
+    // Mono<Void>가 항상 비어 있어 거절 경로가 다시 도는 문제를 피하기 위해서다.
     override fun handle(session: WebSocketSession): Mono<Void> = mono {
-        val instanceKey = instanceKeyFrom(session)
+        val token = queryParam(session, TOKEN_PARAM)
+        val requestedInstanceId = queryParam(session, INSTANCE_ID_PARAM)?.toLongOrNull()
 
-        if (instanceKey.isNullOrBlank()) {
-            logger.warn("웹소켓 연결 거부: instanceKey가 없습니다.")
-            session.close(CloseStatus(4001, "Missing instance key")).awaitFirstOrNull()
+        if (token.isNullOrBlank() || requestedInstanceId == null) {
+            logger.warn("웹소켓 연결 거부: 토큰 또는 instanceId가 없습니다.")
+            session.close(CloseStatus(4001, "Missing credentials")).awaitFirstOrNull()
             return@mono
         }
 
-        val entity = instanceRepository.findActiveByInstanceKey(instanceKey)
+        // 서명·만료·issuer·audience 검증은 디코더가 한다. 실패는 예외로 오므로 거절로 옮긴다.
+        val userId = runCatching { sdkJwtDecoder.decode(token).awaitFirstOrNull() }
+            .getOrNull()
+            ?.let(sessionUserResolver::resolve)
+            ?.userId
+
+        // 토큰이 유효해도 남의 인스턴스면 붙을 수 없다. 인스턴스에서 프로젝트를 거슬러 올라가
+        // 참여자인지 확인하므로, 클라이언트가 보낸 두 값이 서로 맞는지 따로 볼 필요가 없다.
+        val entity = userId?.let {
+            instanceRepository.findAccessibleByIdForMember(requestedInstanceId, it)
+        }
         if (entity == null) {
-            logger.warn("웹소켓 연결 거부: 유효하지 않은 instanceKey")
-            session.close(CloseStatus(4001, "Invalid or unauthorized instance key")).awaitFirstOrNull()
+            logger.warn("웹소켓 연결 거부: 유효하지 않은 토큰이거나 접근할 수 없는 인스턴스입니다.")
+            session.close(CloseStatus(4001, "Invalid or unauthorized credentials")).awaitFirstOrNull()
             return@mono
         }
 
@@ -133,10 +154,10 @@ class SdkWebSocketHandler(
         return session.send(outbound.map(session::textMessage)).and(receive)
     }
 
-    private fun instanceKeyFrom(session: WebSocketSession): String? =
+    private fun queryParam(session: WebSocketSession, name: String): String? =
         UriComponentsBuilder.fromUri(session.handshakeInfo.uri)
             .build()
             .queryParams
-            .getFirst(INSTANCE_KEY_PARAM)
+            .getFirst(name)
             ?.let { URLDecoder.decode(it, StandardCharsets.UTF_8) }
 }

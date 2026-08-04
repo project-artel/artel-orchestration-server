@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.test.context.ActiveProfiles
@@ -110,24 +111,41 @@ class GameBuildIntegrationTest {
     }
 
     /** 빌드는 사람이 만들 수 없으므로, SDK 등록을 한 번 거쳐 실제 경로로 만든다. */
-    private fun createProjectWithBuild(token: String, version: String): String {
+    private suspend fun createProjectWithBuild(
+        token: String,
+        version: String,
+        providerUserId: String = "42",
+        login: String = "octocat"
+    ): String {
         val projectId = post(token, "/api/projects", """{"name":"게임 빌드 테스트","genre":"ACTION"}""")["id"].asText()
-        val key = post(
-            token,
-            "/api/projects/$projectId/game-instances",
-            """{"name":"내 맥북","platform":"UNITY"}"""
-        )["instanceKey"].asText()
+        val sdkToken = sdkTokenFor(providerUserId, login)
 
         client().post()
             .uri("/api/sdk/registrations")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer $sdkToken")
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue("""{"instanceKey":"$key","sdkUuid":"sdk-uuid-1","gameVersion":"$version"}""")
+            .bodyValue("""{"projectId":"$projectId","sdkUuid":"sdk-uuid-1","gameVersion":"$version"}""")
             .retrieve()
             .bodyToMono(String::class.java)
             .block()
 
         return projectId
     }
+
+    /** 브라우저 세션과 같은 사용자로 SDK 토큰을 만든다. upsert라 사용자가 새로 생기지 않는다. */
+    private suspend fun sdkTokenFor(providerUserId: String, login: String): String =
+        jwtService.issueSdkToken(
+            oauthUserService.upsert(
+                OAuthIdentity(
+                    provider = "github",
+                    providerUserId = providerUserId,
+                    login = login,
+                    displayName = login,
+                    avatarUrl = null,
+                    email = "$login@example.com"
+                )
+            ).userId
+        ).token
 
     private suspend fun signIn(providerUserId: String, login: String): String {
         val user = oauthUserService.upsert(

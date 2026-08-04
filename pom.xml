@@ -65,6 +65,12 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-r2dbc</artifactId>
 		</dependency>
+		<!-- Redis (SDK 로그인 일회용 코드). reactive 스타터라야 Lettuce를 논블로킹으로 쓴다.
+		     블로킹 RedisTemplate을 WebFlux 이벤트 루프에서 부르면 스레드가 묶인다. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-redis-reactive</artifactId>
+		</dependency>
 		<!-- compile 스코프: JSONB 매핑을 위해 io.r2dbc.postgresql.codec.Json 타입을 코드에서 사용 -->
 		<dependency>
 			<groupId>org.postgresql</groupId>

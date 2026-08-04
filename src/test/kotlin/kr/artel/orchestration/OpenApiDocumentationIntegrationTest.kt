@@ -43,7 +43,9 @@ class OpenApiDocumentationIntegrationTest {
         assertThat(response).contains("/api/projects/{projectId}/game-instances/{instanceId}")
         assertThat(response).contains("/api/projects/{projectId}/game-builds")
         assertThat(response).contains("/api/projects/{projectId}/game-builds/{buildId}")
-        assertThat(response).contains("게임 인스턴스 생성")
+        // 인스턴스 생성은 대시보드가 아니라 SDK 등록이 한다.
+        assertThat(response).contains("게임 인스턴스 목록")
+        assertThat(response).contains("SDK 인스턴스 등록")
         assertThat(response).contains("게임 빌드 설명 수정")
     }
 

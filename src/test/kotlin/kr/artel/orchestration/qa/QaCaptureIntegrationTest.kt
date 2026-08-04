@@ -8,6 +8,7 @@ import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.AuthenticatedUser
+import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.game.entity.GameInstanceEntity
@@ -35,6 +36,7 @@ import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Primary
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.test.context.ActiveProfiles
@@ -48,8 +50,9 @@ import java.util.UUID
 /**
  * QA 캡처 업로드 서명 경로.
  *
- * 이 엔드포인트는 로그인 세션 없이 게임이 직접 부른다. 그래서 권한 판정은 JWT가 아니라
- * "그 인스턴스가 지금 QA 실행 중인가" 하나뿐이고, 그 판정이 이 테스트의 핵심이다.
+ * 이 엔드포인트는 게임이 SDK 토큰으로 직접 부른다. 권한 판정이 두 겹이라 그 둘이 이 테스트의
+ * 핵심이다. 토큰의 사용자가 그 인스턴스의 프로젝트 참여자인가, 그리고 그 인스턴스가 지금 QA
+ * 실행 중인가.
  *
  * payload(JSONB)를 검증하므로 실제 PostgreSQL을 쓴다.
  */
@@ -78,6 +81,7 @@ class QaCaptureIntegrationTest {
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
     @Autowired private lateinit var oauthUserService: OAuthUserService
+    @Autowired private lateinit var jwtService: JwtService
 
     /** qa_try는 game_instance/test_scenario를 하드 FK로 참조하므로 테스트 후에도 반드시 비운다. */
     @BeforeEach
@@ -97,7 +101,7 @@ class QaCaptureIntegrationTest {
     fun `issues upload and download urls for a game instance with a running QA`(): Unit = runBlocking {
         val seeded = seedRunningQaTry()
 
-        val ticket = issueTicket(seeded.instanceKey, "image/jpeg", 120_000)
+        val ticket = issueTicket(seeded.sdkToken, seeded.instanceId, "image/jpeg", 120_000)
 
         assertThat(ticket["captureId"].asText()).isNotBlank()
         assertThat(ticket["uploadUrl"].asText()).contains("qa-captures/${seeded.qaTryId}/")
@@ -114,7 +118,7 @@ class QaCaptureIntegrationTest {
     fun `keeps the download url alive past the QA run deadline`(): Unit = runBlocking {
         val seeded = seedRunningQaTry()
 
-        val ticket = issueTicket(seeded.instanceKey, "image/png", 40_000)
+        val ticket = issueTicket(seeded.sdkToken, seeded.instanceId, "image/png", 40_000)
 
         val issuedAt = Instant.parse(ticket["uploadExpiresAt"].asText())
             .minus(storageProperties.uploadUrlTtl)
@@ -128,29 +132,40 @@ class QaCaptureIntegrationTest {
     fun `refuses a game instance with no running QA`(): Unit = runBlocking {
         val seeded = seedRunningQaTry(status = "COMPLETED")
 
-        val error = ticketError(seeded.instanceKey, "image/jpeg", 120_000)
+        val error = ticketError(seeded.sdkToken, seeded.instanceId, "image/jpeg", 120_000)
 
         assertThat(error.statusCode).isEqualTo(HttpStatus.CONFLICT)
     }
 
     /**
-     * 이 경로는 엔드유저 JWT로 막히지 않는다. 인스턴스를 순번 id로 지목하게 두면 남의 실행
-     * 중인 QA 프리픽스에 쓰는 서명을 훑어서 받아낼 수 있으므로, 등록과 같은 자격증명을 쓴다.
+     * 순번 id를 훑어 남의 실행 중인 QA 프리픽스에 쓰는 서명을 받아낼 수 없어야 한다. 토큰의
+     * 사용자가 그 인스턴스의 프로젝트 참여자인지 확인하고, 아니면 없는 것과 같은 응답을 준다.
      */
     @Test
-    fun `refuses an instance key it does not know`(): Unit = runBlocking {
-        seedRunningQaTry()
+    fun `refuses an instance the caller cannot access`(): Unit = runBlocking {
+        val seeded = seedRunningQaTry()
+        val stranger = signIn(providerUserId = "77", login = "stranger")
+        val strangerToken = jwtService.issueSdkToken(stranger.userId).token
 
-        val error = ticketError("0123456789abcdef0123", "image/jpeg", 120_000)
+        val error = ticketError(strangerToken, seeded.instanceId, "image/jpeg", 120_000)
 
         assertThat(error.statusCode).isEqualTo(HttpStatus.NOT_FOUND)
+    }
+
+    @Test
+    fun `refuses a request without a token`(): Unit = runBlocking {
+        val seeded = seedRunningQaTry()
+
+        val error = ticketError(token = null, instanceId = seeded.instanceId, contentType = "image/jpeg", contentLength = 120_000)
+
+        assertThat(error.statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
     }
 
     @Test
     fun `refuses a content type that is not a screen capture`(): Unit = runBlocking {
         val seeded = seedRunningQaTry()
 
-        val error = ticketError(seeded.instanceKey, "application/pdf", 120_000)
+        val error = ticketError(seeded.sdkToken, seeded.instanceId, "application/pdf", 120_000)
 
         assertThat(error.statusCode).isEqualTo(HttpStatus.BAD_REQUEST)
         // 4xx는 도메인 안내 message를 그대로 준다(서버 내부가 아니라 요청에 대한 안내).
@@ -162,7 +177,8 @@ class QaCaptureIntegrationTest {
         val seeded = seedRunningQaTry()
 
         val error = ticketError(
-            seeded.instanceKey,
+            seeded.sdkToken,
+            seeded.instanceId,
             "image/jpeg",
             storageProperties.maxCaptureBytes + 1
         )
@@ -178,7 +194,7 @@ class QaCaptureIntegrationTest {
     fun `records a small SCREENSHOT log row that points at the image`(): Unit = runBlocking {
         val seeded = seedRunningQaTry()
 
-        val ticket = issueTicket(seeded.instanceKey, "image/jpeg", 120_000, targetId = 7)
+        val ticket = issueTicket(seeded.sdkToken, seeded.instanceId, "image/jpeg", 120_000, targetId = 7)
 
         val logs = qaLogRepository.findAll().toList()
         assertThat(logs).hasSize(1)
@@ -196,37 +212,40 @@ class QaCaptureIntegrationTest {
 
     // --- helpers ---
 
-    private data class SeededRun(val instanceKey: String, val qaTryId: Long)
+    private data class SeededRun(val sdkToken: String, val instanceId: String, val qaTryId: Long)
 
     private fun issueTicket(
-        instanceKey: String,
+        token: String?,
+        instanceId: String,
         contentType: String,
         contentLength: Long,
         targetId: Int? = null
     ): JsonNode =
         client().post()
             .uri("/api/sdk/qa-captures/tickets")
+            .apply { if (token != null) header(HttpHeaders.AUTHORIZATION, "Bearer $token") }
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(body(instanceKey, contentType, contentLength, targetId))
+            .bodyValue(body(instanceId, contentType, contentLength, targetId))
             .retrieve()
             .bodyToMono(JsonNode::class.java)
             .block(TIMEOUT)!!
 
     private fun ticketError(
-        instanceKey: String,
+        token: String?,
+        instanceId: String,
         contentType: String,
         contentLength: Long
     ): WebClientResponseException =
-        runCatching { issueTicket(instanceKey, contentType, contentLength) }
+        runCatching { issueTicket(token, instanceId, contentType, contentLength) }
             .exceptionOrNull() as WebClientResponseException
 
     private fun body(
-        instanceKey: String,
+        instanceId: String,
         contentType: String,
         contentLength: Long,
         targetId: Int?
     ): Map<String, Any> = buildMap {
-        put("instanceKey", instanceKey)
+        put("instanceId", instanceId)
         put("contentType", contentType)
         put("contentLength", contentLength)
         targetId?.let { put("targetId", it) }
@@ -252,13 +271,12 @@ class QaCaptureIntegrationTest {
         val scenario = testScenarioRepository.save(
             TestScenarioEntity(projectId = project.id!!, payload = Json.of("{}"))
         )
-        val instanceKey = UUID.randomUUID().toString().replace("-", "").take(20)
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = project.id!!,
                 name = "instance",
                 platform = "UNITY",
-                instanceKey = instanceKey,
+                sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
@@ -273,18 +291,25 @@ class QaCaptureIntegrationTest {
                 completedAt = if (status == "RUNNING") null else now
             )
         )
-        return SeededRun(instanceKey = instanceKey, qaTryId = qaTry.id!!)
+        return SeededRun(
+            sdkToken = jwtService.issueSdkToken(owner.userId).token,
+            instanceId = instance.id!!.toString(),
+            qaTryId = qaTry.id!!
+        )
     }
 
-    private suspend fun signIn(): AuthenticatedUser =
+    private suspend fun signIn(
+        providerUserId: String = "42",
+        login: String = "octocat"
+    ): AuthenticatedUser =
         oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
-                providerUserId = "42",
-                login = "octocat",
-                displayName = "octocat",
+                providerUserId = providerUserId,
+                login = login,
+                displayName = login,
                 avatarUrl = null,
-                email = "octocat@example.com"
+                email = "$login@example.com"
             )
         )
 

@@ -8,9 +8,12 @@ import kr.artel.orchestration.auth.oauth.OAuthIdentityResolver
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthUserService
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.context.annotation.Primary
+import org.springframework.core.annotation.Order
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseCookie
@@ -34,6 +37,7 @@ import org.springframework.security.web.server.context.NoOpServerSecurityContext
 import org.springframework.security.web.server.authentication.ServerAuthenticationConverter
 import org.springframework.security.web.server.authentication.ServerAuthenticationSuccessHandler
 import org.springframework.security.web.server.authentication.logout.ServerLogoutSuccessHandler
+import org.springframework.security.web.server.util.matcher.PathPatternParserServerWebExchangeMatcher
 import org.springframework.web.cors.CorsConfiguration
 import org.springframework.web.cors.reactive.CorsConfigurationSource
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource
@@ -48,6 +52,40 @@ import javax.crypto.spec.SecretKeySpec
 class SecurityConfig {
 
     private val logger = LoggerFactory.getLogger(SecurityConfig::class.java)
+
+    /**
+     * SDK 런타임 전용 체인. 브라우저 체인보다 먼저 잡아야 SDK 경로가 쿠키 세션으로
+     * 통과하지 못한다.
+     *
+     * 체인을 나누는 이유는 audience다. SDK 토큰은 수명이 30일이라 같은 체인에 두면 한 번
+     * 새어나간 토큰이 한 달짜리 대시보드 세션이 된다. 여기서는 `aud=artel-sdk`만 받고,
+     * 브라우저 체인은 `aud=artel-home`만 받는다.
+     *
+     * 자격증명은 Authorization 헤더뿐이다. 쿠키 컨버터를 붙이지 않으므로 브라우저 세션으로는
+     * 이 경로에 들어올 수 없다.
+     */
+    @Bean
+    @Order(1)
+    fun sdkSecurityWebFilterChain(
+        http: ServerHttpSecurity,
+        // 이름만으로는 @Primary인 브라우저 디코더가 주입된다. 그러면 SDK 토큰이 전부 401이 된다.
+        @Qualifier("sdkJwtDecoder") sdkJwtDecoder: NimbusReactiveJwtDecoder
+    ): SecurityWebFilterChain = http
+        .securityMatcher(PathPatternParserServerWebExchangeMatcher("/api/sdk/**"))
+        .csrf { it.disable() }
+        .cors { }
+        .httpBasic { it.disable() }
+        .formLogin { it.disable() }
+        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+        .authorizeExchange { it.anyExchange().authenticated() }
+        .oauth2ResourceServer {
+            it.jwt { jwt -> jwt.jwtDecoder(sdkJwtDecoder) }
+            it.authenticationEntryPoint(jsonAuthenticationEntryPoint())
+        }
+        .exceptionHandling {
+            it.authenticationEntryPoint(jsonAuthenticationEntryPoint())
+        }
+        .build()
 
     @Bean
     fun securityWebFilterChain(
@@ -72,14 +110,11 @@ class SecurityConfig {
                 "/v3/api-docs/**",
                 "/swagger-ui.html",
                 "/swagger-ui/**",
-                // SDK/Agent 서버-투-서버 경로. 엔드유저 JWT 보호 대상이 아니다(사이드이펙트 없음).
+                // 핸드셰이크가 쿼리 파라미터로 SDK 토큰을 싣는다. 헤더가 아니라 여기서는
+                // 걸러낼 수 없어, 검증은 SdkWebSocketHandler가 직접 한다.
                 "/ws/sdk",
-                // SDK가 instanceKey로 스스로를 등록하는 경로다. 게임을 실행하는 쪽에는
-                // 로그인 세션이 없으므로 엔드유저 JWT로 막을 수 없다.
-                "/api/sdk/registrations",
-                // 캡처 서명도 게임이 부른다. 권한은 JWT가 아니라 "그 인스턴스가 지금 QA
-                // 실행 중인가"로 판단하며, 실행 중이 아니면 서비스가 409로 막는다.
-                "/api/sdk/qa-captures/**",
+                // SDK가 코드를 토큰으로 바꾸는 경로. 이 요청에는 아직 세션도 토큰도 없다.
+                "/api/auth/sdk/token",
                 "/api/orchestration/**",
                 // knowledge 조회는 Agent/내부 도구용 서버-투-서버 경로(엔드유저 JWT 대상 아님).
                 "/api/knowledge/**",
@@ -126,8 +161,19 @@ class SecurityConfig {
         return NimbusJwtEncoder(ImmutableSecret<SecurityContext>(key))
     }
 
+    // 두 디코더가 같은 타입이라, 리소스 서버가 타입으로 찾아 쓰는 브라우저 쪽을 @Primary로 둔다.
+    // SDK 체인은 sdkJwtDecoder를 이름으로 받아 명시적으로 지정한다.
     @Bean
-    fun jwtDecoder(properties: AuthProperties): NimbusReactiveJwtDecoder {
+    @Primary
+    fun jwtDecoder(properties: AuthProperties): NimbusReactiveJwtDecoder =
+        decoderFor(properties, properties.audience)
+
+    /** SDK 토큰 전용 디코더. audience가 다른 토큰(브라우저 세션)은 여기서 떨어진다. */
+    @Bean
+    fun sdkJwtDecoder(properties: AuthProperties): NimbusReactiveJwtDecoder =
+        decoderFor(properties, properties.sdkAudience)
+
+    private fun decoderFor(properties: AuthProperties, audience: String): NimbusReactiveJwtDecoder {
         val key = SecretKeySpec(properties.jwtSecret.toByteArray(Charsets.UTF_8), "HmacSHA256")
         val decoder = NimbusReactiveJwtDecoder.withSecretKey(key)
             .macAlgorithm(MacAlgorithm.HS256)
@@ -137,7 +183,7 @@ class SecurityConfig {
         // included here explicitly or expired tokens would pass.
         val validators: OAuth2TokenValidator<Jwt> = DelegatingOAuth2TokenValidator(
             JwtValidators.createDefaultWithIssuer(properties.issuer),
-            JwtClaimValidator<List<String>?>("aud") { it != null && it.contains(properties.audience) }
+            JwtClaimValidator<List<String>?>("aud") { it != null && it.contains(audience) }
         )
         decoder.setJwtValidator(validators)
         return decoder
