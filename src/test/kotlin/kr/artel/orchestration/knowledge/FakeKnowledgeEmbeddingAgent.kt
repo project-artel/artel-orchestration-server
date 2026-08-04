@@ -28,7 +28,10 @@ class FakeKnowledgeEmbeddingAgent(
     val generateQueriesCalls = AtomicInteger()
     val embedCalls = AtomicInteger()
 
-    override suspend fun generateQueries(items: List<KnowledgeQueryItem>): KnowledgeQueriesResponse {
+    override suspend fun generateQueries(
+        items: List<KnowledgeQueryItem>,
+        projectId: Long?
+    ): KnowledgeQueriesResponse {
         generateQueriesCalls.incrementAndGet()
         // 실제 엔드포인트는 배치 중 하나만 실패해도 요청 전체를 422로 떨어뜨린다.
         val doomed = items.filter { it.id.toLongOrNull() in failFor }

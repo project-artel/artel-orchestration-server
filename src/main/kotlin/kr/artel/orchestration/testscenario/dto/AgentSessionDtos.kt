@@ -19,7 +19,13 @@ data class AgentSessionOpenRequest(
      * 생성 결과의 출력 언어. Agent 계약의 `locale`(ko|en)에 대응한다.
      * 사용자의 계정 locale에서 정하며, 미설정 사용자는 en으로 보낸다.
      */
-    val locale: String
+    val locale: String,
+    /**
+     * 이 세션이 편집하는 `test_scenario.id`. Agent는 그대로 되돌려주지 않고, 세션 중 발생한 LLM
+     * 호출을 사용량 기록(`llm_usage.reference_id`, service=SCENARIO)에 귀속시키는 데 쓴다(ARTEL-233).
+     * optional 필드라 아직 받지 않는 Agent 버전에도 안전하다.
+     */
+    @JsonProperty("test_scenario_id") val testScenarioId: Long? = null
 )
 
 /**

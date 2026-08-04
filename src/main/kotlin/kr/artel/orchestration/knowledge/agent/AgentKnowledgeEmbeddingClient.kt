@@ -36,12 +36,15 @@ class AgentKnowledgeEmbeddingClient(
         )
         .build()
 
-    override suspend fun generateQueries(items: List<KnowledgeQueryItem>): KnowledgeQueriesResponse {
+    override suspend fun generateQueries(
+        items: List<KnowledgeQueryItem>,
+        projectId: Long?
+    ): KnowledgeQueriesResponse {
         logger.debug("Agent /knowledge-queries 요청: {}건", items.size)
         return webClient.post()
             .uri("$agentBaseUrl/knowledge-queries")
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(KnowledgeQueriesRequest(items))
+            .bodyValue(KnowledgeQueriesRequest(items, projectId))
             .retrieve()
             .awaitBody()
     }

@@ -125,7 +125,9 @@ class TestScenarioAgentService(
             userInput = userInput,
             gameContext = gameContext(projectId, appUserId),
             model = defaultModel,
-            locale = locale
+            locale = locale,
+            // Agent가 이 세션의 LLM 사용량을 test_scenario에 귀속시킬 수 있도록 id를 함께 보낸다.
+            testScenarioId = testScenarioId
         )
         val resp = webClient.post()
             .uri("$agentBaseUrl/sessions")

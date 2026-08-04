@@ -18,6 +18,12 @@ interface KnowledgeEmbeddingAgent {
      * **all-or-nothing이다.** 배치 중 한 항목이라도 생성에 실패하면 요청 전체가 422로 떨어진다
      * (agent-server `KnowledgeQueryAgent.run_batch`). 호출자는 그 실패를 배치 단위로 받아
      * 쪼갤지 포기할지 정해야 한다.
+     *
+     * @param projectId 배치가 한 프로젝트에 속할 때 그 `project.id`. Agent의 LLM 사용량
+     * 귀속용이며(ARTEL-233), 여러 프로젝트가 섞인 배치면 null이다.
      */
-    suspend fun generateQueries(items: List<KnowledgeQueryItem>): KnowledgeQueriesResponse
+    suspend fun generateQueries(
+        items: List<KnowledgeQueryItem>,
+        projectId: Long? = null
+    ): KnowledgeQueriesResponse
 }
