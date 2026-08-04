@@ -20,6 +20,7 @@ import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
+import kr.artel.orchestration.testscenario.dto.CurrentScenario
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchErrorFrame
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchResultFrame
@@ -84,6 +85,7 @@ class TestScenarioAgentService(
         appUserId: Long,
         userInput: String,
         autoApply: Boolean,
+        currentScenarios: List<CurrentScenario>,
     ) {
         // 원래 순서대로: 먼저 USER 메시지를 저장한 뒤 Agent로 보낸다.
         saveMessage(runId, appUserId, "USER", userInput)
@@ -91,9 +93,9 @@ class TestScenarioAgentService(
         if (existing != null) {
             // 토글을 매 턴 반영해 대화 중 변경도 다음 결과부터 적용되게 한다.
             existing.autoApply = autoApply
-            sendTurn(sessionKey, existing, userInput)
+            sendTurn(sessionKey, existing, userInput, currentScenarios)
         } else {
-            openSession(sessionKey, runId, projectId, appUserId, userInput, autoApply)
+            openSession(sessionKey, runId, projectId, appUserId, userInput, autoApply, currentScenarios)
         }
     }
 
@@ -122,6 +124,7 @@ class TestScenarioAgentService(
         appUserId: Long,
         userInput: String,
         autoApply: Boolean,
+        currentScenarios: List<CurrentScenario>,
     ) {
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
@@ -135,7 +138,8 @@ class TestScenarioAgentService(
             model = defaultModel,
             locale = locale,
             projectId = projectId,
-            runId = runId
+            runId = runId,
+            currentScenarios = currentScenarios
         )
         val resp = webClient.post()
             .uri("$agentBaseUrl/sessions")
@@ -169,8 +173,11 @@ class TestScenarioAgentService(
         sessionKey: String,
         session: AgentSession,
         userInput: String,
+        currentScenarios: List<CurrentScenario>,
     ) {
-        val json = objectMapper.writeValueAsString(AgentTurnMessage(userInput = userInput))
+        val json = objectMapper.writeValueAsString(
+            AgentTurnMessage(userInput = userInput, currentScenarios = currentScenarios)
+        )
         val result = session.outbound.tryEmitNext(json)
         if (result.isFailure) {
             throw IllegalStateException("Agent WS 턴 전송 실패 [sessionKey=$sessionKey, result=$result]")

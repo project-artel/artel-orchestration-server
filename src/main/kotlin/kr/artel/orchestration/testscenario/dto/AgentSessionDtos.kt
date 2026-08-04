@@ -14,6 +14,9 @@ import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
  * project_id/run_id는 저작 세션의 스코프다(ARTEL-206 Step 6). Agent는 `test_case_search` 프레임의
  * 검색을 이 프로젝트로 좁히고, 턴 결과 시나리오는 이 런에 추가·수정된다. 세션이 런 단위이므로 run_id는
  * 항상 존재한다.
+ *
+ * current_scenarios는 런의 현재 시나리오 구성이다 — Agent가 사용자 자연어에서 어느 기존 시나리오를
+ * 수정할지 id로 지목하는 근거다(없으면 빈 배열 = 아직 빈 런).
  */
 data class AgentSessionOpenRequest(
     @JsonProperty("user_input") val userInput: String,
@@ -26,7 +29,8 @@ data class AgentSessionOpenRequest(
      */
     val locale: String,
     @JsonProperty("project_id") val projectId: Long,
-    @JsonProperty("run_id") val runId: Long
+    @JsonProperty("run_id") val runId: Long,
+    @JsonProperty("current_scenarios") val currentScenarios: List<CurrentScenario> = emptyList()
 )
 
 /**
@@ -39,12 +43,13 @@ data class AgentSessionOpenResponse(
 /**
  * Agent WS로 보내는 턴 메시지. 세션 오픈 이후의 후속 사용자 입력에 사용한다(첫 입력은 세션 오픈에 실린다).
  *
- * @property draft 사용자가 수정한 현재 초안(있으면 이걸 기준으로 진행). 현재는 미사용(null).
+ * @property currentScenarios 턴 시점의 런 현재 시나리오 구성. 이전 턴에서 추가·수정된 결과가 반영된 최신
+ *   상태를 매 턴 다시 실어, Agent가 수정 대상을 정확한 id로 지목하게 한다.
  */
 data class AgentTurnMessage(
     val type: String = "turn",
     @JsonProperty("user_input") val userInput: String,
-    val draft: ScenarioDraft? = null,
+    @JsonProperty("current_scenarios") val currentScenarios: List<CurrentScenario> = emptyList(),
     val model: String? = null
 )
 

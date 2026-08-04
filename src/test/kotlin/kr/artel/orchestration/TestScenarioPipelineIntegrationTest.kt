@@ -239,14 +239,20 @@ class TestScenarioPipelineIntegrationTest {
         assertThat(openNode.get("run_id").asLong()).isEqualTo(runId)
         // locale 미설정 사용자는 en으로 전달된다(계정에 locale을 고른 적 없음).
         assertThat(openNode.get("locale").asText()).isEqualTo("en")
+        // 빈 런으로 열었으니 current_scenarios는 빈 배열로 실린다.
+        assertThat(openNode.get("current_scenarios").isArray).isTrue()
+        assertThat(openNode.get("current_scenarios")).isEmpty()
 
-        // 후속 입력은 WS 턴으로 전송된다.
+        // 후속 입력은 WS 턴으로 전송된다. 첫 결과(RESULT_JSON)가 자동저장(autoApply 기본 true)되어
+        // 런에 시나리오 1개가 생겼으므로, 턴의 current_scenarios에 그게 반영돼야 한다.
         postMessage(client, projectId, runId, token, "2단계 더 구체적으로")
         Thread.sleep(500)
         val myTurns = turnMessages.filter { it.contains("2단계 더 구체적으로") }
         assertThat(myTurns).isNotEmpty
         val turnNode = objectMapper.readTree(myTurns[0])
         assertThat(turnNode.get("type").asText()).isEqualTo("turn")
+        assertThat(turnNode.get("current_scenarios")).hasSize(1)
+        assertThat(turnNode.get("current_scenarios").first().get("title").asText()).isEqualTo("튜토리얼 시나리오")
 
         // 채팅이 사용자별 프라이빗 스레드(런 단위)로 저장됐는지 (USER/ASSISTANT 구분)
         Thread.sleep(500)

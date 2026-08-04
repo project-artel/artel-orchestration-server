@@ -36,6 +36,7 @@ class TestRunChatService(
     private val agentService: TestScenarioAgentService,
     private val streamManager: TestScenarioStreamManager,
     private val reconcileService: ScenarioReconcileService,
+    private val runScenarioReader: RunScenarioReader,
 ) {
 
     /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다(재방문 복원). 접근 불가면 빈 목록. */
@@ -63,6 +64,7 @@ class TestRunChatService(
             appUserId = appUserId,
             userInput = message.message,
             autoApply = message.autoApply,
+            currentScenarios = runScenarioReader.currentScenarios(runId),
         )
     }
 
