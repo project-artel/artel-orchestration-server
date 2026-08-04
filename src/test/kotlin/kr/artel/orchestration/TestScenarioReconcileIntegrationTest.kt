@@ -20,7 +20,6 @@ import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
-import kr.artel.orchestration.testscenario.dto.CreateScenarioResponse
 import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -164,7 +163,7 @@ class TestScenarioReconcileIntegrationTest {
         val client = webClient()
         val (appUserId, token) = issueUser()
         val projectId = createMemberProject(appUserId)
-        val scenarioId = createScenario(client, token, projectId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
 
         // 프로젝트 안에 검색으로 잡힐 케이스(벡터 axis(0))를 심는다.
         val hitCase = insertCase(projectId, "RULE", "골드 차감")
@@ -175,7 +174,7 @@ class TestScenarioReconcileIntegrationTest {
         framesToSend.add("""{"type":"test_case_search","messageId":"search-1","query":"골드","limit":5}""")
 
         // 첫 메시지가 세션(POST /sessions + WS)을 연다 → 연결 시 위 프레임이 흐른다.
-        postMessage(client, scenarioId, token, "케이스 찾아줘")
+        postMessage(client, projectId, runId, token, "케이스 찾아줘")
 
         val frame = awaitFrame { it.contains("test_case_search_result") }
         assertThat(frame).isNotNull
@@ -198,7 +197,6 @@ class TestScenarioReconcileIntegrationTest {
         val client = webClient()
         val (appUserId, token) = issueUser()
         val projectId = createMemberProject(appUserId)
-        val scenarioId = createScenario(client, token, projectId)
         val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
 
         val caseA = insertCase(projectId, "RULE", "A")
@@ -211,8 +209,8 @@ class TestScenarioReconcileIntegrationTest {
                 """{"title":"판매 여정","description":"d2","case_ids":[$caseC]}]}"""
         )
 
-        // 첫 메시지에 runId를 실어 세션을 이 런에 바인딩한다(FE가 Step 6에서 보내는 값).
-        postMessageWithRun(client, scenarioId, token, "시나리오 만들어줘", runId)
+        // 세션은 런 단위 — 런 채팅 엔드포인트로 첫 메시지를 보내 세션을 이 런에 바인딩한다.
+        postMessage(client, projectId, runId, token, "시나리오 만들어줘")
 
         // 반영은 fire-and-forget 코루틴이라 잠시 기다렸다 단정한다. 런 조합을 기준으로 삼는다 —
         // 시나리오는 createScenario가 만든 원본(빈 payload)까지 프로젝트에 있어 개수로 세면 헷갈린다.
@@ -243,16 +241,15 @@ class TestScenarioReconcileIntegrationTest {
         val client = webClient()
         val (appUserId, token) = issueUser()
         val projectId = createMemberProject(appUserId)
-        val scenarioId = createScenario(client, token, projectId)
         val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
 
-        // createScenario가 만든 원본(빈 payload) 1건만 프로젝트에 있고, 런엔 아무 것도 없다.
+        // 채팅은 시나리오 없이 런만으로 시작한다 — 프로젝트/런 모두 비어 있다.
         // 스코프별로 세어 다른 테스트 클래스가 동시에 넣는 행에 흔들리지 않게 한다.
         val before = scopedCounts(projectId, runId)
-        assertThat(before).isEqualTo(Counts(scenarioInProject = 1, runLinks = 0))
+        assertThat(before).isEqualTo(Counts(scenarioInProject = 0, runLinks = 0))
 
         framesToSend.add("""{"type":"result","message":"그건 좀 애매한데요","scenarios":[]}""")
-        postMessageWithRun(client, scenarioId, token, "애매한 요청", runId)
+        postMessage(client, projectId, runId, token, "애매한 요청")
 
         // ASSISTANT 채팅 저장까지 처리될 시간을 준 뒤, 이 스코프의 행 수가 그대로인지 확인한다.
         Thread.sleep(1500)
@@ -311,37 +308,15 @@ class TestScenarioReconcileIntegrationTest {
         return project.id!!
     }
 
-    private fun createScenario(client: WebClient, token: String, projectId: Long): Long =
+    private fun postMessage(client: WebClient, projectId: Long, runId: Long, token: String, msg: String) =
         client.post()
-            .uri("/api/test-scenario")
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
-            .bodyValue("""{"projectId":$projectId}""")
-            .retrieve()
-            .bodyToMono(CreateScenarioResponse::class.java)
-            .block(Duration.ofSeconds(5))!!
-            .testScenarioId
-
-    private fun postMessage(client: WebClient, testScenarioId: Long, token: String, msg: String) =
-        client.post()
-            .uri("/api/test-scenario/$testScenarioId/message")
-            .contentType(MediaType.APPLICATION_JSON)
-            .cookie("artel_access_token", token)
-            .bodyValue("""{"type":"USER_MESSAGE","testScenarioMessage":"$msg"}""")
+            .bodyValue("""{"message":"$msg"}""")
             .retrieve()
             .toEntity(String::class.java)
             .block(Duration.ofSeconds(5))
-
-    private fun postMessageWithRun(
-        client: WebClient, testScenarioId: Long, token: String, msg: String, runId: Long
-    ) = client.post()
-        .uri("/api/test-scenario/$testScenarioId/message")
-        .contentType(MediaType.APPLICATION_JSON)
-        .cookie("artel_access_token", token)
-        .bodyValue("""{"type":"USER_MESSAGE","testScenarioMessage":"$msg","runId":$runId}""")
-        .retrieve()
-        .toEntity(String::class.java)
-        .block(Duration.ofSeconds(5))
 
     private suspend fun insertCase(projectId: Long, category: String, title: String): Long =
         testCaseRepository.save(

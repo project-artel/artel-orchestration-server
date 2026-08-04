@@ -16,22 +16,21 @@ import kotlinx.coroutines.reactor.awaitSingle
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.testcase.service.TestCaseSearchService
+import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
+import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
-import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchErrorFrame
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchResultFrame
 import kr.artel.orchestration.testscenario.entity.TestScenarioCaseEntity
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
-import kr.artel.orchestration.testscenario.entity.TestScenarioMessageEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
-import kr.artel.orchestration.testscenario.repository.TestScenarioMessageRepository
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
@@ -47,17 +46,18 @@ import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * TestScenario 챗봇의 Agent 서버 연동 서비스(코루틴). 실제 Agent 서버 계약(FastAPI)에 맞춘다:
+ * 저작 챗봇의 Agent 서버 연동 서비스(코루틴). 실제 Agent 서버 계약(FastAPI)에 맞춘다:
  *
- * 1. 세션 오픈: `POST {base}/sessions {user_input, unity_context, game_context, model}` → `{session_id}`
+ * 1. 세션 오픈: `POST {base}/sessions {user_input, unity_context, game_context, model, project_id, run_id}` → `{session_id}`
  * 2. WS 연결: `WS {ws-base}/sessions/{session_id}`. 연결 시 Agent가 첫 결과를 보낸다(오픈 때 준 user_input 기반).
- * 3. 후속 턴: WS로 `{type:"turn", user_input, draft?, model?}` 전송.
+ * 3. 후속 턴: WS로 `{type:"turn", user_input, model?}` 전송.
  * 4. 결과 수신: `{type:"result", message, scenarios[]}` → SSE 중계 + scenarios를 test_scenario/
  *    test_scenario_case/test_run_scenario에 INSERT(신규 저작. 빈 배열이면 DB 무변경).
  * 5. 인입 검색: `{type:"test_case_search", ...}` → TestCaseSearchService로 답(`test_case_search_result`).
  *
- * 세션 키(`sessionKey` = userId:testScenarioId)로 Agent 세션(session_id + WS)을 식별한다.
- * 오간 채팅 메시지는 사용자별 프라이빗 스레드로 test_scenario_message에 저장한다(USER/ASSISTANT).
+ * **세션은 런 단위다**(ARTEL-206 Step 6): 세션 키(`sessionKey` = userId:runId)로 Agent 세션(session_id + WS)을
+ * 식별한다. 한 번의 대화로 여러 시나리오를 추가·수정하므로 대화의 주체가 시나리오가 아니라 런이며, 대화·저장·
+ * 검색 스코프가 모두 런이다. 오간 채팅 메시지는 사용자별 프라이빗 스레드로 test_run_message에 저장한다(USER/ASSISTANT).
  *
  * WS 클라이언트는 [ReactorNettyWebSocketClient](Reactor)를 그대로 쓴다(코틀린 코루틴 WS 클라이언트 대체 없음).
  * WS 송신 싱크(`outbound`)는 Reactor [Sinks]로 유지하고, WS 수신 콜백 내부의 DB 저장만 [scope]로 코루틴 브리지한다.
@@ -70,7 +70,7 @@ class TestScenarioAgentService(
     private val objectMapper: ObjectMapper,
     private val streamManager: TestScenarioStreamManager,
     private val scenarioRepository: TestScenarioRepository,
-    private val messageRepository: TestScenarioMessageRepository,
+    private val runMessageRepository: TestRunMessageRepository,
     private val buildRepository: GameBuildRepository,
     private val appUserRepository: AppUserRepository,
     private val testCaseSearchService: TestCaseSearchService,
@@ -89,30 +89,27 @@ class TestScenarioAgentService(
     /**
      * 사용자 입력을 Agent로 전달한다. 세션이 없으면 오픈(POST /sessions + WS)하고, 있으면 WS 턴으로 보낸다.
      * 첫 입력은 세션 오픈에 실려 처리되므로 별도 턴을 보내지 않는다(연결 시 Agent가 첫 결과를 반환).
-     * `draft`는 사용자가 편집한 현재 시나리오로, 후속 턴에서 Agent에 전달된다(첫 입력에는 적용되지 않음).
-     * 사용자 입력은 USER 메시지로 채팅 스레드에 저장된다.
+     * 사용자 입력은 USER 메시지로 런의 채팅 스레드에 저장된다.
      */
     suspend fun sendMessage(
         sessionKey: String,
-        testScenarioId: Long,
+        runId: Long,
         projectId: Long,
         appUserId: Long,
         userInput: String,
-        draft: ScenarioDraft? = null,
-        runId: Long? = null
     ) {
         // 원래 순서대로: 먼저 USER 메시지를 저장한 뒤 Agent로 보낸다.
-        saveMessage(testScenarioId, appUserId, "USER", userInput)
+        saveMessage(runId, appUserId, "USER", userInput)
         val existing = sessions[sessionKey]
         if (existing != null) {
-            sendTurn(sessionKey, existing, userInput, draft)
+            sendTurn(sessionKey, existing, userInput)
         } else {
-            openSession(sessionKey, testScenarioId, projectId, appUserId, userInput, runId)
+            openSession(sessionKey, runId, projectId, appUserId, userInput)
         }
     }
 
     /**
-     * Agent 세션을 종료한다(Approve/Delete 시). Agent에 `{type:"close"}`를 통보해 WS와 session_id(Redis)를
+     * Agent 세션을 종료한다(런 편집 종료 시). Agent에 `{type:"close"}`를 통보해 WS와 session_id(Redis)를
      * 만료시키도록 하고, 우리 쪽 WS 구독도 정리한다. 세션이 없으면(이미 종료) 조용히 무시한다.
      */
     fun closeSession(sessionKey: String) {
@@ -131,11 +128,10 @@ class TestScenarioAgentService(
 
     private suspend fun openSession(
         sessionKey: String,
-        testScenarioId: Long,
+        runId: Long,
         projectId: Long,
         appUserId: Long,
         userInput: String,
-        runId: Long?
     ) {
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
@@ -158,7 +154,7 @@ class TestScenarioAgentService(
             .retrieve()
             .bodyToMono(AgentSessionOpenResponse::class.java)
             .awaitSingle()
-        openWebSocket(sessionKey, testScenarioId, projectId, appUserId, resp.sessionId, runId)
+        openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId)
     }
 
     /**
@@ -183,9 +179,8 @@ class TestScenarioAgentService(
         sessionKey: String,
         session: AgentSession,
         userInput: String,
-        draft: ScenarioDraft?
     ) {
-        val json = objectMapper.writeValueAsString(AgentTurnMessage(userInput = userInput, draft = draft))
+        val json = objectMapper.writeValueAsString(AgentTurnMessage(userInput = userInput))
         val result = session.outbound.tryEmitNext(json)
         if (result.isFailure) {
             throw IllegalStateException("Agent WS 턴 전송 실패 [sessionKey=$sessionKey, result=$result]")
@@ -194,14 +189,13 @@ class TestScenarioAgentService(
 
     private fun openWebSocket(
         sessionKey: String,
-        testScenarioId: Long,
+        runId: Long,
         projectId: Long,
         appUserId: Long,
         agentSessionId: String,
-        runId: Long?
     ) {
         val outbound = Sinks.many().unicast().onBackpressureBuffer<String>()
-        val session = AgentSession(outbound, testScenarioId, projectId, appUserId, agentSessionId, runId)
+        val session = AgentSession(outbound, runId, projectId, appUserId, agentSessionId)
         sessions[sessionKey] = session
 
         val uri = URI.create("$agentWsBaseUrl/sessions/$agentSessionId")
@@ -230,7 +224,7 @@ class TestScenarioAgentService(
      *
      * 인입 프레임은 두 갈래다:
      * - `test_case_search`: Agent가 케이스 검색을 요청한다. 여기서 답할 뿐 SSE로 중계하지 않는다.
-     *   [QaAgentInboundRouter]의 검색 라우팅과 같은 규칙 — 실패해도 절대 throw하지 않아 WS/세션이 죽지 않는다.
+     *   검색 라우팅과 같은 규칙 — 실패해도 절대 throw하지 않아 WS/세션이 죽지 않는다.
      * - `result`/`error`: Agent 턴 결과. SSE로 FE에 중계하고, `result`면 ASSISTANT 채팅 저장 + 시나리오 반영.
      */
     private fun handleInbound(sessionKey: String, payloadText: String) {
@@ -255,7 +249,7 @@ class TestScenarioAgentService(
                 scope.launch {
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
                     try {
-                        saveMessage(session.testScenarioId, session.appUserId, "ASSISTANT", event.message ?: "")
+                        saveMessage(session.runId, session.appUserId, "ASSISTANT", event.message ?: "")
                     } catch (err: CancellationException) {
                         throw err
                     } catch (err: Exception) {
@@ -329,11 +323,11 @@ class TestScenarioAgentService(
         }
     }
 
-    /** 채팅 메시지를 저장한다(사용자별 프라이빗 스레드). */
-    private suspend fun saveMessage(testScenarioId: Long, appUserId: Long, role: String, content: String) {
-        messageRepository.save(
-            TestScenarioMessageEntity(
-                testScenarioId = testScenarioId,
+    /** 채팅 메시지를 저장한다(런 단위, 사용자별 프라이빗 스레드). */
+    private suspend fun saveMessage(runId: Long, appUserId: Long, role: String, content: String) {
+        runMessageRepository.save(
+            TestRunMessageEntity(
+                testRunId = runId,
                 appUserId = appUserId,
                 role = role,
                 content = content
@@ -351,8 +345,6 @@ class TestScenarioAgentService(
      *
      * ⚠️ **안전규칙(협상 불가): [scenarios]가 비면 DB를 절대 건드리지 않는다** — 빈 배열은 질문·거절·무매치
      * 같은 정상 턴이지 "런을 비워라"가 아니다. 이 경로에는 어떤 삭제도 없다(delete 호출 금지).
-     *
-     * run_id가 없으면(FE가 Step 6에서 채우기 전) 붙일 런이 없어 반영을 건너뛴다(메시지만 중계된 상태).
      */
     private suspend fun reconcileScenarios(
         sessionKey: String,
@@ -365,16 +357,12 @@ class TestScenarioAgentService(
             return
         }
         val runId = session.runId
-        if (runId == null) {
-            logger.warn("run_id 없이 scenarios 수신 — 런 반영 생략 [sessionKey=$sessionKey]")
-            return
-        }
         transactionalOperator.executeAndAwait {
             // 런의 현재 마지막 position 다음부터 붙인다. 비어 있으면 0부터.
             var runPosition = (runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
                 .maxOfOrNull { it.position } ?: -1) + 1
             for (scenario in scenarios) {
-                // TODO(ARTEL-206 Step 5 Layer 2): id 기반 upsert + 런 현재 시나리오 컨텍스트
+                // TODO(ARTEL-206 Step 5 Layer 2): id 기반 upsert(수정) — scenario_id 있으면 UPDATE
                 val payloadJson = Json.of(
                     objectMapper.writeValueAsString(
                         mapOf("title" to scenario.title, "description" to scenario.description)
@@ -407,16 +395,15 @@ class TestScenarioAgentService(
     }
 
     /**
-     * Agent 세션 상태: 송신 싱크, 채팅 저장 대상 시나리오 id, 검색·저장 스코프 projectId, 채팅 소유자
-     * appUserId, Agent가 발급한 session_id, 결과 시나리오가 붙을 runId(없으면 null).
+     * Agent 세션 상태: 송신 싱크, 결과 시나리오가 붙고 채팅이 저장될 runId, 검색·저장 스코프 projectId,
+     * 채팅 소유자 appUserId, Agent가 발급한 session_id.
      */
     private class AgentSession(
         val outbound: Sinks.Many<String>,
-        val testScenarioId: Long,
+        val runId: Long,
         val projectId: Long,
         val appUserId: Long,
         val agentSessionId: String,
-        val runId: Long?,
         @Volatile var disposable: Disposable? = null
     )
 }

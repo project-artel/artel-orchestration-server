@@ -10,12 +10,14 @@ import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.testrun.entity.TestRunEntity
+import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
+import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.dto.CreateScenarioResponse
 import kr.artel.orchestration.testscenario.dto.MessageResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioListResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
-import kr.artel.orchestration.testscenario.repository.TestScenarioMessageRepository
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
@@ -40,9 +42,10 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * TestScenario 파이프라인 통합 테스트: 인증(JWT) → 시나리오 생성 → SSE →
+ * TestScenario 파이프라인 통합 테스트: 인증(JWT) → 런 생성 → 저작 챗봇 SSE →
  * Agent 세션 오픈(POST /sessions) + WS(/sessions/{id}) 왕복 → SSE 중계.
  *
+ * 저작 챗봇 대화는 **런 단위**다(ARTEL-206 Step 6): 세션/SSE/채팅이 (userId, runId)로 스코프된다.
  * 실제 Agent 서버 계약을 흉내내는 목 서버(HTTP POST /sessions + WS /sessions/{id})로 검증한다.
  */
 @ActiveProfiles("test")
@@ -65,7 +68,10 @@ class TestScenarioPipelineIntegrationTest {
     private lateinit var scenarioRepository: TestScenarioRepository
 
     @Autowired
-    private lateinit var messageRepository: TestScenarioMessageRepository
+    private lateinit var runMessageRepository: TestRunMessageRepository
+
+    @Autowired
+    private lateinit var runRepository: TestRunRepository
 
     @Autowired
     private lateinit var projectRepository: ProjectRepository
@@ -162,6 +168,9 @@ class TestScenarioPipelineIntegrationTest {
         )!!.id!!
     }
 
+    private suspend fun createRun(projectId: Long): Long =
+        runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
     private fun createScenario(client: WebClient, token: String, projectId: Long): Long {
         val res = client.post()
             .uri("/api/test-scenario")
@@ -175,9 +184,10 @@ class TestScenarioPipelineIntegrationTest {
     }
 
     private fun subscribeSse(
-        client: WebClient, testScenarioId: Long, token: String, onEvent: (ServerSentEvent<ScenarioStreamEvent>) -> Unit
+        client: WebClient, projectId: Long, runId: Long, token: String,
+        onEvent: (ServerSentEvent<ScenarioStreamEvent>) -> Unit
     ) = client.get()
-        .uri("/api/test-scenario/$testScenarioId/stream")
+        .uri("/api/projects/$projectId/test-runs/$runId/chat/stream")
         .accept(MediaType.TEXT_EVENT_STREAM)
         .cookie("artel_access_token", token)
         .retrieve()
@@ -185,92 +195,72 @@ class TestScenarioPipelineIntegrationTest {
         .doOnNext(onEvent)
         .subscribe()
 
-    private fun postMessage(
-        client: WebClient, testScenarioId: Long, token: String, msg: String, draftJson: String? = null
-    ) {
-        val body = if (draftJson == null)
-            """{"type":"USER_MESSAGE","testScenarioMessage":"$msg"}"""
-        else
-            """{"type":"USER_MESSAGE","testScenarioMessage":"$msg","draft":$draftJson}"""
+    private fun postMessage(client: WebClient, projectId: Long, runId: Long, token: String, msg: String) {
         client.post()
-            .uri("/api/test-scenario/$testScenarioId/message")
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
-            .bodyValue(body)
+            .bodyValue("""{"message":"$msg"}""")
             .retrieve()
             .toEntity(String::class.java)
             .block(Duration.ofSeconds(5))
     }
 
     /**
-     * 생성 → 첫 입력(세션 오픈) → Agent 결과가 SSE로 전달 + scenario가 DB에 저장 → 후속 입력은 WS 턴으로.
+     * 런 첫 입력(세션 오픈) → Agent 결과가 SSE로 전달 → 후속 입력은 WS 턴으로. 채팅은 런 스레드에 저장된다.
      */
     @Test
     fun testCreateOpenSessionRoundTripAndPersist(): Unit = runBlocking {
         val client = webClient()
         val (appUserId, token) = issueUser("user-${projectIdSeq.incrementAndGet()}")
         val projectId = createMemberProject(appUserId)
-        val scenarioId = createScenario(client, token, projectId)
+        val runId = createRun(projectId)
 
         val eventLatch = Sinks.one<ServerSentEvent<ScenarioStreamEvent>>()
-        val disposable = subscribeSse(client, scenarioId, token) { eventLatch.tryEmitValue(it) }
+        val disposable = subscribeSse(client, projectId, runId, token) { eventLatch.tryEmitValue(it) }
         Thread.sleep(1000)
 
-        // 첫 입력 → Agent 세션 오픈(POST /sessions) → WS 연결 시 첫 결과 수신
-        postMessage(client, scenarioId, token, "튜토리얼 시나리오 만들어줘")
+        // 첫 입력 → Agent 세션 오픈(POST /sessions) → WS 연결 시 첫 결과 수신.
+        // openRequests는 companion(테스트 간 공유)이라 run 마커를 넣어 이 테스트의 요청만 골라낸다.
+        val firstMsg = "튜토리얼 시나리오 만들어줘 run$runId"
+        postMessage(client, projectId, runId, token, firstMsg)
 
         val event = eventLatch.asMono().block(Duration.ofSeconds(5))
         assertThat(event).isNotNull
         assertThat(event?.event()).isEqualTo("result")
         assertThat(event?.data()?.scenarios?.first()?.title).isEqualTo("튜토리얼 시나리오")
 
-        // 세션 오픈 요청에 첫 user_input이 실렸는지
+        // 세션 오픈 요청에 첫 user_input + run_id가 실렸는지
         Thread.sleep(300)
-        val myOpen = openRequests.filter { it.contains("튜토리얼 시나리오 만들어줘") }
+        val myOpen = openRequests.filter { it.contains("run$runId") }
         assertThat(myOpen).isNotEmpty
         val openNode = objectMapper.readTree(myOpen[0])
         assertThat(openNode.get("user_input").asText()).contains("튜토리얼")
+        assertThat(openNode.get("run_id").asLong()).isEqualTo(runId)
         // locale 미설정 사용자는 en으로 전달된다(계정에 locale을 고른 적 없음).
         assertThat(openNode.get("locale").asText()).isEqualTo("en")
 
-        // 이 흐름은 run_id 없이 세션을 열었으므로(첫 메시지에 runId 미포함) 결과는 중계만 되고 DB 저장은
-        // 건너뛴다. 원본 시나리오 행은 그대로 남는다(빈 payload). scenarios INSERT 반영은 별도 테스트에서
-        // run_id와 함께 검증한다(TestScenarioReconcileIntegrationTest).
-        Thread.sleep(300)
-        assertThat(scenarioRepository.findById(scenarioId)).isNotNull
-
-        // 후속 입력은 WS 턴으로 전송되며, 사용자가 편집한 draft가 함께 실린다
-        val draft = """{"title":"편집됨","description":"user edit","steps":[{"step":1,"title":"t","state":"s","action":"a","expected":"e"}]}"""
-        postMessage(client, scenarioId, token, "2단계 더 구체적으로", draftJson = draft)
+        // 후속 입력은 WS 턴으로 전송된다.
+        postMessage(client, projectId, runId, token, "2단계 더 구체적으로")
         Thread.sleep(500)
         val myTurns = turnMessages.filter { it.contains("2단계 더 구체적으로") }
         assertThat(myTurns).isNotEmpty
         val turnNode = objectMapper.readTree(myTurns[0])
         assertThat(turnNode.get("type").asText()).isEqualTo("turn")
-        assertThat(turnNode.get("draft").get("title").asText()).isEqualTo("편집됨")
 
-        // 채팅이 사용자별 프라이빗 스레드로 저장됐는지 (USER/ASSISTANT 구분)
+        // 채팅이 사용자별 프라이빗 스레드(런 단위)로 저장됐는지 (USER/ASSISTANT 구분)
         Thread.sleep(500)
-        val messages = messageRepository
-            .findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(scenarioId, appUserId)
+        val messages = runMessageRepository
+            .findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
             .toList()
         val roles = messages.map { it.role }
         assertThat(roles).contains("USER", "ASSISTANT")
         assertThat(messages.first { it.role == "USER" }.content).contains("튜토리얼")
         assertThat(messages.first { it.role == "ASSISTANT" }.content).isEqualTo("ok")
 
-        // 재방문 조회 엔드포인트 — 원본 시나리오 단건(payload는 신규 저작 반영과 무관하게 유지된다)
-        val scenario = client.get()
-            .uri("/api/test-scenario/$scenarioId")
-            .cookie("artel_access_token", token)
-            .retrieve()
-            .bodyToMono(ScenarioResponse::class.java)
-            .block(Duration.ofSeconds(5))!!
-        assertThat(scenario.testScenarioId).isEqualTo(scenarioId)
-
-        // 재방문 조회 엔드포인트 — 사용자 프라이빗 채팅
+        // 재방문 조회 엔드포인트 — 런 스코프 사용자 프라이빗 채팅
         val fetched = client.get()
-            .uri("/api/test-scenario/$scenarioId/messages")
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/messages")
             .cookie("artel_access_token", token)
             .retrieve()
             .bodyToFlux(MessageResponse::class.java)
@@ -337,25 +327,22 @@ class TestScenarioPipelineIntegrationTest {
     }
 
     /**
-     * Approve: 최종 draft가 payload로 확정 저장되고, 채팅 내역과 시나리오는 그대로 남는다.
-     * SSE로는 `closed` 종료 이벤트가 전달된다.
+     * Approve: 최종 draft가 payload로 확정 저장된다. 대화 세션은 런 단위라 시나리오 하나의 승인으로
+     * 닫히지 않으며, 채팅 내역과 시나리오는 그대로 남는다.
      */
     @Test
     fun testApproveFinalizesAndKeepsChat(): Unit = runBlocking {
         val client = webClient()
         val (appUserId, token) = issueUser("approver-${projectIdSeq.incrementAndGet()}")
         val projectId = createMemberProject(appUserId)
+        val runId = createRun(projectId)
         val scenarioId = createScenario(client, token, projectId)
 
-        val events = CopyOnWriteArrayList<ServerSentEvent<ScenarioStreamEvent>>()
-        val disposable = subscribeSse(client, scenarioId, token) { events.add(it) }
-        Thread.sleep(1000)
-
-        // 세션을 열고 채팅을 쌓는다.
-        postMessage(client, scenarioId, token, "튜토리얼 시나리오 만들어줘")
+        // 런 세션을 열고 채팅을 쌓는다.
+        postMessage(client, projectId, runId, token, "튜토리얼 시나리오 만들어줘")
         Thread.sleep(500)
         assertThat(
-            messageRepository.findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(scenarioId, appUserId)
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
                 .toList()
         ).isNotEmpty
 
@@ -370,13 +357,45 @@ class TestScenarioPipelineIntegrationTest {
         assertThat(persisted!!.payload.asString()).contains("최종본")
 
         // 채팅 내역은 그대로 남는다(부산물 삭제 없음).
-        val remaining = messageRepository
-            .findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(scenarioId, appUserId)
+        val remaining = runMessageRepository
+            .findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
             .toList()
         assertThat(remaining).isNotEmpty
+    }
 
-        // SSE로 종료 이벤트가 전달됨.
+    /**
+     * 저작 세션 종료(chat/close): SSE로 `closed` 종료 이벤트가 전달되고, 채팅 내역은 그대로 남는다.
+     */
+    @Test
+    fun testChatCloseEmitsClosedAndKeepsChat(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser("closer-${projectIdSeq.incrementAndGet()}")
+        val projectId = createMemberProject(appUserId)
+        val runId = createRun(projectId)
+
+        val events = CopyOnWriteArrayList<ServerSentEvent<ScenarioStreamEvent>>()
+        val disposable = subscribeSse(client, projectId, runId, token) { events.add(it) }
+        Thread.sleep(1000)
+
+        postMessage(client, projectId, runId, token, "튜토리얼 시나리오 만들어줘")
+        Thread.sleep(500)
+
+        // 세션 종료 → SSE로 closed 이벤트.
+        client.post()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/close")
+            .cookie("artel_access_token", token)
+            .retrieve()
+            .toEntity(String::class.java)
+            .block(Duration.ofSeconds(5))
+        Thread.sleep(500)
+
         assertThat(events.map { it.event() }).contains("closed")
+
+        // 채팅 내역은 그대로 남는다.
+        val remaining = runMessageRepository
+            .findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList()
+        assertThat(remaining).isNotEmpty
 
         disposable.dispose()
     }
