@@ -10,6 +10,8 @@ import kr.artel.orchestration.issue.service.IssueService
 import kr.artel.orchestration.knowledge.dto.KnowledgeIngestRequest
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchRequest
+import kr.artel.orchestration.knowledge.entity.KnowledgeMode
+import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.knowledge.service.KnowledgeMutation
@@ -18,6 +20,7 @@ import kr.artel.orchestration.knowledge.service.KnowledgeSearchService
 import kr.artel.orchestration.knowledge.service.KnowledgeService
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
 import java.time.Instant
@@ -29,9 +32,14 @@ import java.util.UUID
  */
 private val KNOWLEDGE_MUTATION_TYPES = setOf("KNOWLEDGE_CREATE", "KNOWLEDGE_UPDATE", "KNOWLEDGE_DELETE")
 
+/**
+ * 지식창고에 **쓰는** 인입 타입 전부(ARTEL-256). `knowledge_mode`가 `learning`이 아닌 런에서는
+ * 이 타입들이 거부된다. 새 쓰기 타입이 생기면 여기에 넣어야 게이트가 따라온다.
+ */
+private val KNOWLEDGE_WRITE_TYPES = KNOWLEDGE_MUTATION_TYPES + "KNOWLEDGE"
+
 private val SUPPORTED_TYPES =
-    setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE", "KNOWLEDGE_SEARCH") +
-        KNOWLEDGE_MUTATION_TYPES
+    setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH") + KNOWLEDGE_WRITE_TYPES
 
 @Service
 class QaAgentInboundRouter(
@@ -47,6 +55,8 @@ class QaAgentInboundRouter(
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
+    private val logger = LoggerFactory.getLogger(QaAgentInboundRouter::class.java)
+
     suspend fun handle(envelope: QaAgentEnvelope) {
         // 파싱은 동기 throw 대신 값으로 검증한다. 프레임 하나가 throw하면 receive 파이프라인이
         // onError로 끊겨 WS가 닫히고, 그게 onDisconnect로 이어져 try 전체가 fail 처리된다.
@@ -59,17 +69,21 @@ class QaAgentInboundRouter(
             appendError(qaTryId, envelope, "Unsupported Agent message type: ${envelope.type}")
             return
         }
-        // KNOWLEDGE carries a game_context list, not a single display message, so it is
-        // routed before the message-required guard below (which every other type shares).
-        if (envelope.type == "KNOWLEDGE") {
+        // 지식창고에 쓰는 타입은 모두 여기 하나로 모인다. 배치 인입(KNOWLEDGE)은 game_context
+        // 리스트를, 개별 생성·수정·삭제는 knowledge 필드를 싣기 때문에 둘 다 표시용 message가
+        // 없다 — 아래 message 필수 가드보다 앞서야 하는 이유가 그것이다.
+        //
+        // knowledge_mode 게이트를 분기 **전에** 한 번만 두는 것이 중요하다(ARTEL-256). 타입마다
+        // 따로 걸면 새 쓰기 타입이 생겼을 때 빠뜨리기 쉽고, 빠뜨린 타입만 조용히 지식창고를 바꿔
+        // frozen으로 돌린 arm이 사실은 학습을 한 셈이 된다.
+        if (envelope.type in KNOWLEDGE_WRITE_TYPES) {
             val qaTry = activeTry(qaTryId) ?: return
-            routeKnowledge(qaTryId, qaTry.gameInstanceId, envelope)
-            return
-        }
-        // 개별 생성·수정·삭제도 표시용 message 없이 knowledge 필드만 싣는다.
-        if (envelope.type in KNOWLEDGE_MUTATION_TYPES) {
-            val qaTry = activeTry(qaTryId) ?: return
-            routeKnowledgeMutation(qaTryId, qaTry.gameInstanceId, envelope)
+            if (!allowKnowledgeWrite(qaTryId, qaTry, envelope)) return
+            if (envelope.type == "KNOWLEDGE") {
+                routeKnowledge(qaTryId, qaTry, envelope)
+            } else {
+                routeKnowledgeMutation(qaTryId, qaTry, envelope)
+            }
             return
         }
         // KNOWLEDGE_SEARCH carries the search term in payload.query, not a display
@@ -118,6 +132,66 @@ class QaAgentInboundRouter(
 
     private suspend fun activeTry(qaTryId: Long) =
         tryRepository.findById(qaTryId)?.takeIf { it.status == "STARTING" || it.status == "RUNNING" }
+
+    /**
+     * 이 런이 읽고 쓰는 지식 스코프(ARTEL-256).
+     *
+     * 스코프는 **payload가 아니라 런에서 나온다.** Agent가 스코프를 지목할 수 있으면 프레임 하나로
+     * 격리를 통과해 다른 arm의 지식을 읽거나 운영 지식창고에 쓸 수 있고, 그렇게 뚫린 실험은
+     * 결과가 그럴듯해서 아무도 못 알아챈다. projectId를 런에서 도출하는 것과 같은 판단이다.
+     */
+    private fun scopeOf(qaTry: QaTryEntity) = KnowledgeScope.of(qaTry.knowledgeScopeId)
+
+    /**
+     * 이 런의 지식 모드. `run_config.knowledge_mode`가 진실이고, 없으면 [KnowledgeMode.DEFAULT]다.
+     *
+     * 값이 없는 런은 이 기능 이전의 런과 구버전 Agent가 붙은 런이다. 둘 다 지금까지처럼 읽고 써야
+     * 한다 — 모드를 모르는 런이 실패하면 그것은 실험의 공백이 아니라 장애다(V25의 판단과 같다).
+     *
+     * 파싱 실패도 같은 이유로 기본값으로 떨어뜨린다. run_config는 Agent 응답이 섞이는 자리라
+     * 여기서 throw하면 프레임 하나가 WS 수신 체인을 끊어 런 전체를 죽인다. 다만 **알 수 없는 값은
+     * 로그로 남긴다** — 오타 하나로 `frozen`이 조용히 `learning`이 되면 그 arm의 결과가 통째로
+     * 잘못 해석된다. (API가 이미 값을 검증하므로 여기 걸리는 것은 DB를 손으로 고친 경우다.)
+     */
+    private fun knowledgeModeOf(qaTry: QaTryEntity): KnowledgeMode {
+        val raw = try {
+            objectMapper.readTree(qaTry.runConfig.asString()).path(KNOWLEDGE_MODE_FIELD)
+        } catch (error: Exception) {
+            logger.warn("qa_try {} run_config 파싱 실패 — knowledge_mode 기본값 사용: {}", qaTry.id, error.message)
+            return KnowledgeMode.DEFAULT
+        }
+        if (raw.isMissingNode || raw.isNull) return KnowledgeMode.DEFAULT
+        return KnowledgeMode.fromWire(raw.asText())
+            ?: KnowledgeMode.DEFAULT.also {
+                logger.warn(
+                    "qa_try {} run_config.knowledge_mode={} 를 해석할 수 없어 {}로 처리한다",
+                    qaTry.id, raw.asText(), it.wire
+                )
+            }
+    }
+
+    /**
+     * 지식창고 쓰기 프레임을 이 런이 보내도 되는가(ARTEL-256).
+     *
+     * `learning`이 아니면 거부하고 ERROR 로그만 남긴다. **throw하지 않는 것이 이 함수의 요점이다** —
+     * 거부는 정상 동작이고, 여기서 예외가 WS 수신 체인 밖으로 나가면 소켓이 닫혀 런 전체가 실패한다
+     * (파일 상단 [handle]의 판단과 같다). 쓰기 프레임은 애초에 응답을 기다리지 않는 단방향이라
+     * Agent에 따로 알릴 것도 없다.
+     */
+    private suspend fun allowKnowledgeWrite(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope
+    ): Boolean {
+        val mode = knowledgeModeOf(qaTry)
+        if (mode.writable) return true
+        appendError(
+            qaTryId,
+            envelope,
+            "${envelope.type} rejected: knowledge_mode=${mode.wire} does not allow writing to the knowledge base"
+        )
+        return false
+    }
 
     private suspend fun routeStatus(
         currentStatus: String,
@@ -175,12 +249,13 @@ class QaAgentInboundRouter(
      * QA 실행 중 Agent가 보낸 knowledge 배치를 knowledge 도메인에 저장한다(qa_log 아님).
      *
      * payload는 인입 구조({source, metadata, game_context[]})다. source는 런에서 왔으므로 QA로
-     * 고정하고, source_id=qa_try.id, project_id는 게임 인스턴스에서 도출한다. 파싱/빈 배열/저장 실패는
-     * throw하지 않고 ORCHE_INTERNAL 오류 로그로 떨어뜨려(런은 실패 처리 안 함) receive 체인을 끊지 않는다.
+     * 고정하고, source_id=qa_try.id, project_id는 게임 인스턴스에서, 지식 스코프는 런에서 도출한다.
+     * 파싱/빈 배열/저장 실패는 throw하지 않고 ORCHE_INTERNAL 오류 로그로 떨어뜨려(런은 실패 처리
+     * 안 함) receive 체인을 끊지 않는다.
      */
     private suspend fun routeKnowledge(
         qaTryId: Long,
-        gameInstanceId: Long,
+        qaTry: QaTryEntity,
         envelope: QaAgentEnvelope
     ) {
         val request = try {
@@ -194,9 +269,10 @@ class QaAgentInboundRouter(
             return
         }
         try {
-            val instance = gameInstanceRepository.findById(gameInstanceId) ?: return
+            val instance = gameInstanceRepository.findById(qaTry.gameInstanceId) ?: return
             knowledgeService.store(
                 projectId = instance.projectId,
+                scope = scopeOf(qaTry),
                 source = KnowledgeSource.QA,
                 sourceId = qaTryId,
                 contentHash = request.metadata?.hash,
@@ -212,9 +288,13 @@ class QaAgentInboundRouter(
     /**
      * knowledge 항목 하나를 생성·수정·소프트삭제한다(ARTEL-188).
      *
-     * **프로젝트 격리는 payload가 아니라 런에서 나온다.** projectId를 Agent가 보낸 값으로 받으면
-     * 잘못된 값 하나로 다른 프로젝트의 지식창고를 깎을 수 있다. `qaTryId → game_instance →
-     * project_id`로 도출해 서비스에 넘기고, 서비스는 그 프로젝트 안에서만 대상을 찾는다.
+     * **프로젝트 격리도 스코프 격리도 payload가 아니라 런에서 나온다.** projectId를 Agent가 보낸
+     * 값으로 받으면 잘못된 값 하나로 다른 프로젝트의 지식창고를 깎을 수 있다. `qaTryId →
+     * game_instance → project_id`로 도출해 서비스에 넘기고, 서비스는 그 프로젝트 안에서만 대상을
+     * 찾는다. 지식 스코프도 같은 이유로 `qa_try.knowledge_scope_id`에서만 온다(ARTEL-256).
+     *
+     * 스코프 런이 운영 지식(baseline)을 고치거나 지우려 하면 서비스가 원본 대신 그림자 행을 만든다.
+     * 라우터는 그 분기를 알지 않는다 — 어디에 쓸지는 스코프를 아는 쪽이 정한다.
      *
      * 검증 실패는 전부 값([KnowledgeMutation.Rejected])으로 돌아와 ERROR 로그가 되고, 저장 중 난
      * 예외도 마찬가지로 삼킨다 — 프레임 하나가 receive 체인을 끊어 QA 런을 실패시키지 못하게 한다.
@@ -222,7 +302,7 @@ class QaAgentInboundRouter(
      */
     private suspend fun routeKnowledgeMutation(
         qaTryId: Long,
-        gameInstanceId: Long,
+        qaTry: QaTryEntity,
         envelope: QaAgentEnvelope
     ) {
         val request = try {
@@ -232,12 +312,13 @@ class QaAgentInboundRouter(
             return
         }
         val result = try {
-            val instance = gameInstanceRepository.findById(gameInstanceId) ?: return
+            val instance = gameInstanceRepository.findById(qaTry.gameInstanceId) ?: return
             val projectId = instance.projectId
+            val scope = scopeOf(qaTry)
             when (envelope.type) {
-                "KNOWLEDGE_CREATE" -> knowledgeService.createFromQaTry(projectId, qaTryId, request)
-                "KNOWLEDGE_UPDATE" -> knowledgeService.updateFromQaTry(projectId, qaTryId, request)
-                else -> knowledgeService.softDeleteFromQaTry(projectId, qaTryId, request)
+                "KNOWLEDGE_CREATE" -> knowledgeService.createFromQaTry(projectId, scope, qaTryId, request)
+                "KNOWLEDGE_UPDATE" -> knowledgeService.updateFromQaTry(projectId, scope, qaTryId, request)
+                else -> knowledgeService.softDeleteFromQaTry(projectId, scope, qaTryId, request)
             }
         } catch (error: CancellationException) {
             throw error
@@ -254,7 +335,11 @@ class QaAgentInboundRouter(
      * Agent의 지식 검색 요청을 처리하고 결과를 WS로 돌려준다(ARTEL-186).
      *
      * 검색 범위는 payload가 아니라 `qaTryId → gameInstanceId → projectId`로 해석한다. Agent가
-     * 프로젝트를 지목할 수 있으면 프레임 하나로 남의 프로젝트 지식을 읽게 된다.
+     * 프로젝트를 지목할 수 있으면 프레임 하나로 남의 프로젝트 지식을 읽게 된다. 지식 스코프와
+     * 모드도 같은 이유로 런에서만 온다(ARTEL-256).
+     *
+     * `knowledge_mode=off`인 런에서는 검색 서비스가 빈 결과로 답한다. 그것도 정상 `..._RESULT`
+     * 프레임이다 — ERROR로 답하면 Agent가 도구 실패로 보고 재시도해, 없애려던 변수가 다시 든다.
      *
      * **성공 응답은 qa_log에 남기지 않는다.** 지식 본문이 타임라인에 통째로 실리면 안 된다(쓰기 쪽
      * `KNOWLEDGE`도 같은 이유로 남기지 않는다). 실패만 ORCHE_INTERNAL 로그로 남고, 어느 쪽이든
@@ -319,6 +404,8 @@ class QaAgentInboundRouter(
         val outcome = try {
             knowledgeSearchService.search(
                 projectId = instance.projectId,
+                scope = scopeOf(qaTry),
+                mode = knowledgeModeOf(qaTry),
                 query = query,
                 tags = tags.filterNotNull(),
                 source = source,

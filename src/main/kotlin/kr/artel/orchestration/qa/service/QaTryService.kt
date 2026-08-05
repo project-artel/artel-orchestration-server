@@ -1,10 +1,13 @@
 package kr.artel.orchestration.qa.service
 
+import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.common.error.UpstreamUnavailableException
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
+import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
@@ -12,6 +15,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
 import kr.artel.orchestration.qa.dto.QaStatusPayload
@@ -28,6 +32,15 @@ import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Clock
 import java.time.Instant
 import java.util.UUID
+
+/**
+ * `qa_try.run_config` 안에서 지식 게이트가 사는 키(ARTEL-256).
+ *
+ * 여기서 쓰고 [kr.artel.orchestration.qa.service.QaAgentInboundRouter]가 읽는다. Agent가 채우는
+ * 다른 키들과 달리 이것은 Orchestration이 넣는 값이지만, 축별 집계(ARTEL-243)가 run_config 한 곳만
+ * 읽게 하려고 같은 객체에 둔다.
+ */
+internal const val KNOWLEDGE_MODE_FIELD = "knowledge_mode"
 
 internal fun QaReasoningRequest.toAgentPayload(objectMapper: ObjectMapper) =
     objectMapper.createObjectNode().apply {
@@ -63,6 +76,36 @@ fun CreateQaTryRequest.toRunSettings(objectMapper: ObjectMapper) = QaRunSettings
 )
 
 /**
+ * 이 런에 지식창고를 어떻게 열어 줄지(ARTEL-256).
+ *
+ * [QaRunSettings]와 나란히 두되 합치지 않는다. 저쪽은 **Agent에 전달되어 Agent가 해석하는** 값이고,
+ * 이쪽은 Orchestration이 직접 집행하는 값이다. 지식 게이트가 Agent로 넘어가면 arm마다 Agent
+ * 프롬프트가 달라져, 실험에서 달라지는 변수가 "지식 가용성" 하나로 좁혀지지 않는다.
+ *
+ * @param scopeId 이 런이 읽고 쓸 스코프. null이면 운영 런이라 이 기능 이전과 동작이 같다.
+ * @param mode 읽기/쓰기 게이트. 기본값은 지금까지의 동작([KnowledgeMode.LEARNING])이다.
+ */
+data class QaKnowledgeSettings(
+    val scopeId: Long? = null,
+    val mode: KnowledgeMode = KnowledgeMode.DEFAULT
+)
+
+/**
+ * 요청의 지식 설정을 파싱한다. 잘못된 값은 [BadRequestException]으로 거절한다 — 조용히 기본값으로
+ * 떨어지면 대조군으로 돌린 arm이 사실은 학습을 하고, 그 오염은 결과가 그럴듯해서 드러나지 않는다.
+ */
+fun CreateQaTryRequest.toKnowledgeSettings(): QaKnowledgeSettings {
+    val scopeId = knowledgeScopeId?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        it.toLongOrNull() ?: throw BadRequestException("knowledgeScopeId must be a decimal string")
+    }
+    val mode = knowledgeMode?.let {
+        KnowledgeMode.fromWire(it)
+            ?: throw BadRequestException("knowledgeMode must be one of ${KnowledgeMode.WIRE_NAMES}")
+    } ?: KnowledgeMode.DEFAULT
+    return QaKnowledgeSettings(scopeId = scopeId, mode = mode)
+}
+
+/**
  * The comparison axes, lifted out of the Agent's resolved config.
  *
  * Copies, deliberately: the whole config is stored as JSONB and is the record,
@@ -86,10 +129,17 @@ class QaTryPersistenceService(
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock
 ) {
+    /**
+     * @param knowledge 이 런의 지식 스코프와 모드(ARTEL-256). **런이 만들어지는 순간 기록된다.**
+     *   Agent 세션이 붙기를 기다리지 않는 것이 중요하다: 세션 개설 중에도 try는 이미 STARTING이라
+     *   라우터가 프레임을 받고, 그 사이 모드가 비어 있으면 `frozen`으로 돌린 arm이 그 창에서
+     *   지식창고에 쓸 수 있다. `attachAndMarkRunning`이 Agent 설정을 덮어쓸 때 같은 값을 다시 얹는다.
+     */
     suspend fun createStarting(
         testScenarioId: Long,
         gameInstanceId: Long,
-        startedBy: Long
+        startedBy: Long,
+        knowledge: QaKnowledgeSettings
     ): Pair<QaTryEntity, QaLogAppendResult> =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -99,6 +149,12 @@ class QaTryPersistenceService(
                     gameInstanceId = gameInstanceId,
                     startedBy = startedBy,
                     status = "STARTING",
+                    knowledgeScopeId = knowledge.scopeId,
+                    runConfig = Json.of(
+                        objectMapper.writeValueAsString(
+                            objectMapper.createObjectNode().put(KNOWLEDGE_MODE_FIELD, knowledge.mode.wire)
+                        )
+                    ),
                     startedAt = now
                 )
             )
@@ -126,6 +182,15 @@ class QaTryPersistenceService(
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
             val id = requireNotNull(qaTry.id)
+            // Agent 스냅샷이 객체가 아니면(없거나 스칼라) 빈 객체에서 시작한다.
+            //
+            // knowledge_mode는 **호출자가 다시 주는 것이 아니라 STARTING 행에서 옮겨 온다**
+            // (ARTEL-256). 이 UPDATE가 run_config를 통째로 갈아치우므로 어디선가는 다시 얹어야
+            // 하는데, 파라미터로 받으면 호출자가 createStarting 때와 다른 값을 넘길 수 있고 그러면
+            // 게이트가 이미 집행된 뒤에 기록만 바뀐다. 여기서 읽어 오면 그 어긋남이 불가능하다.
+            val carriedMode = objectMapper.readTree(qaTry.runConfig.asString()).path(KNOWLEDGE_MODE_FIELD)
+            val storedConfig = ((runConfig as? ObjectNode)?.deepCopy() ?: objectMapper.createObjectNode())
+                .apply { if (carriedMode.isTextual) put(KNOWLEDGE_MODE_FIELD, carriedMode.asText()) }
             // The settings ride along with the session id rather than following in
             // a second update: two statements would leave a window where the try
             // reads as started and is not attributable, and nothing goes back for it.
@@ -138,7 +203,7 @@ class QaTryPersistenceService(
                     promptVersion = runConfig.textAt("prompt_version"),
                     agentArch = runConfig.textAt("agent_arch"),
                     agentFingerprint = runConfig.textAt("agent_fingerprint"),
-                    runConfig = objectMapper.writeValueAsString(runConfig ?: objectMapper.createObjectNode()),
+                    runConfig = objectMapper.writeValueAsString(storedConfig),
                     updatedAt = now
                 ) != 1
             ) {
@@ -177,7 +242,8 @@ class QaTryService(
         testScenarioId: Long,
         gameInstanceId: Long,
         userId: Long,
-        settings: QaRunSettings = QaRunSettings()
+        settings: QaRunSettings = QaRunSettings(),
+        knowledge: QaKnowledgeSettings = QaKnowledgeSettings()
     ): QaTryResponse {
         val scenario = scenarioAccessService.accessibleScenario(testScenarioId, userId)
             ?: throw NotFoundException()
@@ -193,7 +259,7 @@ class QaTryService(
             throw ConflictException("An active QA try already exists")
         }
 
-        val (starting, startLog) = persistence.createStarting(testScenarioId, gameInstanceId, userId)
+        val (starting, startLog) = persistence.createStarting(testScenarioId, gameInstanceId, userId, knowledge)
         logService.publish(startLog)
         val qaTryId = requireNotNull(starting.id)
         val context = QaAgentSessionContext(
@@ -327,6 +393,7 @@ class QaTryService(
         promptVersion = promptVersion,
         agentArch = agentArch,
         agentFingerprint = agentFingerprint,
-        runConfig = objectMapper.readTree(runConfig.asString())
+        runConfig = objectMapper.readTree(runConfig.asString()),
+        knowledgeScopeId = knowledgeScopeId?.toString()
     )
 }

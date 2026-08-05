@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.knowledge.dto.KnowledgeIngestItem
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeEventEntity
+import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.repository.KnowledgeEventRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
@@ -59,13 +60,14 @@ class KnowledgeEventIntegrationTest {
 
         knowledgeService.store(
             projectId = projectId,
+            scope = KnowledgeScope.PRODUCTION,
             source = KnowledgeSource.DOCS,
             sourceId = 77,
             contentHash = "hash",
             items = listOf(item("CONTROL", "이동", "WASD"), item("RULE", "체력", "최대 100"))
         )
 
-        val ids = knowledgeRepository.findByProjectIdAndDeletedAtIsNullOrderByIdDesc(projectId).toList()
+        val ids = knowledgeRepository.findVisible(projectId, null, null, null).toList()
         assertThat(ids).hasSize(2)
         ids.forEach { row ->
             val events = eventsOf(row.id!!)
@@ -87,13 +89,14 @@ class KnowledgeEventIntegrationTest {
 
         knowledgeService.store(
             projectId = projectId,
+            scope = KnowledgeScope.PRODUCTION,
             source = KnowledgeSource.QA,
             sourceId = qaTryId,
             contentHash = null,
             items = listOf(item("UI", "체력바", "좌상단"))
         )
 
-        val row = knowledgeRepository.findByProjectIdAndDeletedAtIsNullOrderByIdDesc(projectId).toList().single()
+        val row = knowledgeRepository.findVisible(projectId, null, null, null).toList().single()
         assertThat(eventsOf(row.id!!).single().qaTryId).isEqualTo(qaTryId)
     }
 
@@ -104,7 +107,7 @@ class KnowledgeEventIntegrationTest {
 
         val id = applied(
             knowledgeService.createFromQaTry(
-                projectId, qaTryId,
+                projectId, KnowledgeScope.PRODUCTION, qaTryId,
                 KnowledgeMutationRequest(tag = "RULE", summary = "낙하 데미지", description = "5m부터 1당 2")
             )
         )
@@ -129,7 +132,8 @@ class KnowledgeEventIntegrationTest {
         val id = givenEntry(projectId, creator)
 
         val result = knowledgeService.updateFromQaTry(
-            projectId, editor, KnowledgeMutationRequest(knowledgeId = id.toString(), summary = "새 요약")
+            projectId, KnowledgeScope.PRODUCTION, editor,
+            KnowledgeMutationRequest(knowledgeId = id.toString(), summary = "새 요약")
         )
 
         assertThat(result).isInstanceOf(KnowledgeMutation.Applied::class.java)
@@ -154,7 +158,7 @@ class KnowledgeEventIntegrationTest {
         val id = givenEntry(projectId, qaTrySeq.incrementAndGet())
 
         knowledgeService.updateFromQaTry(
-            projectId, qaTrySeq.incrementAndGet(),
+            projectId, KnowledgeScope.PRODUCTION, qaTrySeq.incrementAndGet(),
             KnowledgeMutationRequest(knowledgeId = id.toString(), tag = "UI")
         )
 
@@ -173,7 +177,7 @@ class KnowledgeEventIntegrationTest {
         val id = givenEntry(projectId, qaTrySeq.incrementAndGet())
 
         knowledgeService.updateFromQaTry(
-            projectId, editor,
+            projectId, KnowledgeScope.PRODUCTION, editor,
             KnowledgeMutationRequest(knowledgeId = id.toString(), summary = "요약", description = "설명")
         )
 
@@ -193,7 +197,7 @@ class KnowledgeEventIntegrationTest {
         val id = givenEntry(projectId, qaTrySeq.incrementAndGet())
 
         knowledgeService.softDeleteFromQaTry(
-            projectId, deleter, KnowledgeMutationRequest(knowledgeId = id.toString())
+            projectId, KnowledgeScope.PRODUCTION, deleter, KnowledgeMutationRequest(knowledgeId = id.toString())
         )
 
         assertThat(knowledgeRepository.findById(id)!!.version)
@@ -225,7 +229,7 @@ class KnowledgeEventIntegrationTest {
 
         val failure = runCatching {
             knowledgeService.updateFromQaTry(
-                projectId, qaTrySeq.incrementAndGet(),
+                projectId, KnowledgeScope.PRODUCTION, qaTrySeq.incrementAndGet(),
                 KnowledgeMutationRequest(knowledgeId = id.toString(), summary = "충돌하는 수정")
             )
         }
@@ -256,7 +260,7 @@ class KnowledgeEventIntegrationTest {
     private suspend fun givenEntry(projectId: Long, qaTryId: Long): Long =
         applied(
             knowledgeService.createFromQaTry(
-                projectId, qaTryId,
+                projectId, KnowledgeScope.PRODUCTION, qaTryId,
                 KnowledgeMutationRequest(tag = "RULE", summary = "요약", description = "설명")
             )
         )

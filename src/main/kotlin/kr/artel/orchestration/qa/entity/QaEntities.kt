@@ -27,6 +27,13 @@ data class QaTryEntity(
     @Column("agent_arch") val agentArch: String? = null,
     @Column("agent_fingerprint") val agentFingerprint: String? = null,
     @Column("run_config") val runConfig: Json = Json.of("{}"),
+    // 이 런이 읽고 쓰는 지식 스코프(ARTEL-256). null이면 운영 런이라 운영 지식창고를 그대로
+    // 읽고 쓴다 — 이 컬럼이 생기기 전과 동작이 같다. 세션 개설 시점에 정해지고 런 도중 안 바뀐다:
+    // 중간에 바뀌면 그 런이 무엇을 봤는지 사후에 재구성할 수 없다.
+    //
+    // 읽기/쓰기를 아예 끄는 knowledge_mode는 여기가 아니라 runConfig 안에 있다. 그쪽은 비교 축이라
+    // 집계가 run_config를 함께 읽고(ARTEL-243), 이쪽은 격리 경계라 질의 술어로 직접 들어간다.
+    @Column("knowledge_scope_id") val knowledgeScopeId: Long? = null,
     @Column("started_at") val startedAt: Instant,
     @Column("completed_at") val completedAt: Instant? = null,
     @Column("created_at") val createdAt: Instant? = null,

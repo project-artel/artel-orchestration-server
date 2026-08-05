@@ -7,6 +7,8 @@ import kr.artel.orchestration.common.embedding.agent.EmbedResponse
 import kr.artel.orchestration.common.embedding.agent.EmbeddingClient
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.config.KnowledgeSearchProperties
+import kr.artel.orchestration.knowledge.entity.KnowledgeMode
+import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
@@ -61,7 +63,11 @@ class KnowledgeVectorSearchIntegrationTest {
         /** 설정과 다른 모델 slug를 돌려준다(모델 불일치 재현). */
         var modelOverride: String? = null
 
+        /** `/embed` 호출 횟수. knowledge_mode=off가 임베딩을 아예 부르지 않는지 보는 데 쓴다. */
+        var embedCalls: Int = 0
+
         override suspend fun embed(texts: List<String>): EmbedResponse {
+            embedCalls++
             if (embedFails) throw IllegalStateException("임베딩 실패(테스트)")
             val vectors = texts.map {
                 vectorsByQuery[it] ?: throw IllegalStateException("등록되지 않은 검색어: $it")
@@ -96,6 +102,10 @@ class KnowledgeVectorSearchIntegrationTest {
         private val projectSeq = AtomicLong(30_000)
 
         private const val NEAR = "가까운 검색어"
+
+        /** 스코프 런 두 개. 값 자체는 의미가 없다 — 서로 다르고 NULL이 아니면 된다. */
+        private val SCOPE_A = KnowledgeScope.of(7_001L)
+        private val SCOPE_B = KnowledgeScope.of(7_002L)
     }
 
     @BeforeEach
@@ -103,6 +113,7 @@ class KnowledgeVectorSearchIntegrationTest {
         fake.vectorsByQuery.clear()
         fake.embedFails = false
         fake.modelOverride = null
+        fake.embedCalls = 0
         // knowledge_embedding은 FK ON DELETE CASCADE라 knowledge를 지우면 함께 사라진다.
         knowledgeRepository.deleteAll()
         // 검색어는 0번 축을 가리킨다. 0번 축 벡터를 가진 항목이 거리 0으로 가장 가깝다.
@@ -131,10 +142,16 @@ class KnowledgeVectorSearchIntegrationTest {
         projectId: Long,
         summary: String,
         tag: KnowledgeTag = KnowledgeTag.RULE,
-        source: KnowledgeSource = KnowledgeSource.DOCS
+        source: KnowledgeSource = KnowledgeSource.DOCS,
+        scope: KnowledgeScope = KnowledgeScope.PRODUCTION,
+        shadowsId: Long? = null,
+        deletedAt: Instant? = null
     ): Long = knowledgeRepository.save(
         KnowledgeEntity(
             projectId = projectId,
+            scopeId = scope.id,
+            shadowsId = shadowsId,
+            deletedAt = deletedAt,
             source = source.name,
             tag = tag.name,
             summary = summary,
@@ -178,13 +195,18 @@ class KnowledgeVectorSearchIntegrationTest {
      * 이 테스트가 보는 것은 Agent로 나가는 응답이다. 검색은 그 응답과 기록용 사실을
      * `KnowledgeSearchOutcome`으로 갈라 돌려주므로(ARTEL-255) 여기서는 응답 쪽만 집는다 —
      * 사용 로그 검증은 `KnowledgeSearchRouterIntegrationTest`가 맡는다.
+     *
+     * 스코프와 모드는 서비스가 기본값 없이 요구한다(프로덕션 코드에서 빠뜨릴 수 없게). 테스트에서만
+     * 지금까지의 동작을 기본값으로 주고, 스코프·모드 테스트에서 명시한다.
      */
     private suspend fun search(
         projectId: Long,
         tags: List<KnowledgeTag> = emptyList(),
         source: KnowledgeSource? = null,
-        limit: Int? = null
-    ) = searchService.search(projectId, NEAR, tags, source, limit).response
+        limit: Int? = null,
+        scope: KnowledgeScope = KnowledgeScope.PRODUCTION,
+        mode: KnowledgeMode = KnowledgeMode.LEARNING
+    ) = searchService.search(projectId, scope, mode, NEAR, tags, source, limit).response
 
     // ------------------------------------------------------------------ tests
 
@@ -344,5 +366,99 @@ class KnowledgeVectorSearchIntegrationTest {
         assertThat(error).isInstanceOf(KnowledgeQueryEmbeddingException::class.java)
         assertThat(error).isInstanceOf(ApiException::class.java)
         assertThat(error!!.message).contains("openai/some-other-embedding-model")
+    }
+
+    // ---------------------------------------------------------- 스코프 격리 (ARTEL-256)
+
+    /**
+     * 검색은 지식창고를 읽는 가장 넓은 경로다. 목록 조회에만 스코프를 걸고 여기를 빠뜨리면 격리가
+     * 사실상 없는 것이 되는데, 결과가 그럴듯해서 아무도 못 알아챈다.
+     */
+    @Test
+    fun `검색은 baseline과 자기 스코프만 본다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val baseline = givenKnowledge(projectId, "운영 지식")
+        val ofA = givenKnowledge(projectId, "A의 지식", scope = SCOPE_A)
+        val ofB = givenKnowledge(projectId, "B의 지식", scope = SCOPE_B)
+        listOf(baseline, ofA, ofB).forEach { givenVector(it, axis(0)) }
+
+        assertThat(search(projectId, scope = SCOPE_A).results.map { it.id })
+            .containsExactlyInAnyOrder(baseline.toString(), ofA.toString())
+        assertThat(search(projectId, scope = SCOPE_B).results.map { it.id })
+            .containsExactlyInAnyOrder(baseline.toString(), ofB.toString())
+        // 운영 런은 실험 지식을 보지 않는다 — 이 기능 이전과 결과가 같다.
+        assertThat(search(projectId).results.map { it.id }).containsExactly(baseline.toString())
+    }
+
+    /**
+     * 그림자가 가리는 baseline은 검색 결과에서 빠져야 한다. 빠뜨리면 **원본과 수정본이 둘 다** 나와
+     * Agent가 같은 지식의 두 판본을 함께 읽는다.
+     */
+    @Test
+    fun `수정 그림자가 가리는 baseline은 검색에서 빠진다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val baseline = givenKnowledge(projectId, "옛 내용")
+        val shadow = givenKnowledge(projectId, "A가 고친 내용", scope = SCOPE_A, shadowsId = baseline)
+        givenVector(baseline, axis(0))
+        givenVector(shadow, axis(0))
+
+        assertThat(search(projectId, scope = SCOPE_A).results.map { it.id }).containsExactly(shadow.toString())
+        assertThat(search(projectId).results.map { it.id }).containsExactly(baseline.toString())
+        assertThat(search(projectId, scope = SCOPE_B).results.map { it.id }).containsExactly(baseline.toString())
+    }
+
+    /**
+     * 툼스톤도 baseline을 가려야 한다. 툼스톤 자신은 `deleted_at`이 있어 빠지므로, 가리지 않으면
+     * 스코프 런이 자기가 지운 항목을 계속 돌려받는다.
+     *
+     * 툼스톤에 벡터를 심어 두는 것이 이 테스트의 요점이다 — 실제로는 백필이 삭제된 행을 건너뛰지만,
+     * 검색이 `deleted_at`만 믿고 있으면 여기서 툼스톤이 결과로 새어 나온다.
+     */
+    @Test
+    fun `툼스톤이 가리는 baseline은 검색에서 빠지고 툼스톤도 나오지 않는다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val baseline = givenKnowledge(projectId, "지워질 운영 지식")
+        val tombstone = givenKnowledge(
+            projectId, "지워질 운영 지식",
+            scope = SCOPE_A, shadowsId = baseline, deletedAt = Instant.now()
+        )
+        givenVector(baseline, axis(0))
+        givenVector(tombstone, axis(0))
+
+        assertThat(search(projectId, scope = SCOPE_A).results).isEmpty()
+        assertThat(search(projectId).results.map { it.id }).containsExactly(baseline.toString())
+    }
+
+    // ------------------------------------------------------- knowledge_mode (ARTEL-256)
+
+    /**
+     * `off`는 지식 없이 도는 대조군이다. 오류가 아니라 정상적인 빈 결과여야 한다 — 오류로 답하면
+     * Agent가 도구 실패로 보고 재시도해, 없애려던 변수가 다른 축으로 다시 들어온다.
+     */
+    @Test
+    fun `knowledge_mode off는 지식이 있어도 빈 결과를 준다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        givenVector(givenKnowledge(projectId, "있음"), axis(0))
+        val embedCallsBefore = fake.embedCalls
+
+        val response = search(projectId, mode = KnowledgeMode.OFF)
+
+        assertThat(response.results).isEmpty()
+        assertThat(response.query).isEqualTo(NEAR)
+        assertThat(response.model).isEqualTo(backfillProperties.model)
+        // 어차피 버릴 벡터를 만들지 않는다. 대조군 arm에서만 /embed 비용과 지연이 붙으면
+        // 그 지연 자체가 새 변수가 된다.
+        assertThat(fake.embedCalls).isEqualTo(embedCallsBefore)
+    }
+
+    /** `frozen`은 읽기만 막지 않는다 — 검색은 평소대로 돈다. 쓰기 차단은 라우터의 몫이다. */
+    @Test
+    fun `knowledge_mode frozen은 읽기를 막지 않는다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val id = givenKnowledge(projectId, "있음")
+        givenVector(id, axis(0))
+
+        assertThat(search(projectId, mode = KnowledgeMode.FROZEN).results.map { it.id })
+            .containsExactly(id.toString())
     }
 }

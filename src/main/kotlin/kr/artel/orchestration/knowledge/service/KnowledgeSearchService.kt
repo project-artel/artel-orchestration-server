@@ -6,6 +6,8 @@ import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.config.KnowledgeSearchProperties
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchHit
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchResponse
+import kr.artel.orchestration.knowledge.entity.KnowledgeMode
+import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.common.embedding.EmbeddedText
@@ -43,7 +45,7 @@ class KnowledgeSearchService(
     private val logger = LoggerFactory.getLogger(KnowledgeSearchService::class.java)
 
     /**
-     * [projectId] 안에서 [query]에 의미가 가까운 knowledge를 찾는다.
+     * [projectId]의 [scope] 안에서 [query]에 의미가 가까운 knowledge를 찾는다.
      *
      * 결과가 비는 것은 정상이다 — 백필이 비동기라 벡터가 아직 없을 수 있고, 필터가 전부 걸러낼 수도
      * 있다. 그 경우 빈 [KnowledgeSearchResponse.results]로 답한다.
@@ -51,9 +53,15 @@ class KnowledgeSearchService(
      * 돌려주는 [KnowledgeSearchOutcome]은 **Agent로 나가는 응답과 기록용 사실을 갈라 둔 것**이다
      * (ARTEL-255). 버전을 [KnowledgeSearchHit]에 얹으면 WS payload가 달라지는데, 이 작업은 순수
      * 추가여야 하고 기존 읽기 경로의 결과가 달라져서는 안 된다.
+     *
+     * [scope]는 기본값이 없다(ARTEL-256). 검색은 지식창고를 읽는 가장 넓은 경로라, 여기서 스코프를
+     * 빠뜨리면 실험 런이 다른 arm이 쌓은 지식을 그대로 읽는다 — 그리고 그 결과는 그럴듯해서 아무도
+     * 알아채지 못한다. 빠뜨린 호출이 컴파일되지 않게 둔다.
      */
     suspend fun search(
         projectId: Long,
+        scope: KnowledgeScope,
+        mode: KnowledgeMode,
         query: String,
         tags: List<KnowledgeTag>,
         source: KnowledgeSource?,
@@ -64,8 +72,25 @@ class KnowledgeSearchService(
         val model = backfillProperties.model
         val resolvedLimit = resolveLimit(limit)
 
+        // knowledge_mode=off는 지식 없이 도는 대조군이다(ARTEL-256). 오류가 아니라 **정상적인 빈
+        // 결과**로 답한다 — 빈 결과는 이미 계약상 정상이고(백필이 비동기라 늘 일어난다), 오류로
+        // 답하면 Agent가 도구 실패로 보고 재시도하며 arm의 행동이 달라진다.
+        //
+        // 임베딩 호출 전에 끊는 것도 의도다. 어차피 버릴 벡터를 만드느라 대조군 arm에서만 /embed
+        // 비용과 지연이 발생하면, 없애려던 변수를 다른 축으로 다시 들여오는 셈이다.
+        if (!mode.readable) {
+            logger.info("knowledge 검색 생략: project={}, scope={}, mode={}", projectId, scope, mode.wire)
+            // 내보낸 것이 없으므로 남길 사용 기록(ARTEL-255)도 없다. 빈 결과를 "검색은 했는데 아무도
+            // 안 걸렸다"로 기록하면 대조군 arm이 지식을 조회한 것처럼 집계된다.
+            return KnowledgeSearchOutcome(
+                response = KnowledgeSearchResponse(query = query, model = model, results = emptyList()),
+                retrievals = emptyList()
+            )
+        }
+
         val rows = searchRepository.searchNearest(
             projectId = projectId,
+            scope = scope,
             queryVector = embedQuery(query, model),
             kind = QUERY_KIND,
             model = model,
@@ -77,8 +102,8 @@ class KnowledgeSearchService(
         // 검색어 본문과 결과 본문은 qa_log에 남기지 않는다(지식 본문이 타임라인을 오염시킨다).
         // 그래도 "검색이 돌긴 했는지"는 볼 수 있어야 하므로 여기서 길이와 개수만 남긴다.
         logger.info(
-            "knowledge 검색: project={}, 검색어 {}자, tags={}, source={}, limit={}, 결과={}건",
-            projectId, query.length, tags, source, resolvedLimit, rows.size
+            "knowledge 검색: project={}, scope={}, 검색어 {}자, tags={}, source={}, limit={}, 결과={}건",
+            projectId, scope, query.length, tags, source, resolvedLimit, rows.size
         )
         return KnowledgeSearchOutcome(
             response = KnowledgeSearchResponse(

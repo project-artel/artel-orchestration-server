@@ -14,6 +14,7 @@ import kr.artel.orchestration.qa.dto.QaTryResponse
 import kr.artel.orchestration.qa.dto.SendQaMessageRequest
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.qa.service.QaTryService
+import kr.artel.orchestration.qa.service.toKnowledgeSettings
 import kr.artel.orchestration.qa.service.toRunSettings
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
@@ -51,7 +52,8 @@ class QaTryController(
                 parseId(request.testScenarioId),
                 parseId(request.gameInstanceId),
                 requireUser(jwt),
-                request.toRunSettings(objectMapper)
+                request.toRunSettings(objectMapper),
+                request.toKnowledgeSettings()
             )
         )
 

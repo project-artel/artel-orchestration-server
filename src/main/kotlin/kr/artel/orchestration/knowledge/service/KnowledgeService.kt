@@ -9,12 +9,12 @@ import kr.artel.orchestration.knowledge.dto.KnowledgeResponse
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEventEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEventType
+import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeEventRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import org.slf4j.LoggerFactory
@@ -39,6 +39,24 @@ import java.time.Instant
  * 반드시 같은 트랜잭션이다 — 쪼개지면 `knowledge.version`과 이력의 최대 content 버전이 어긋난 채
  * 굳고, 그 상태는 아무도 알려 주지 않는다. QA 경로는 `qa_try_id`를 채우고 문서 경로는 null이며,
  * "어떤 런이 만든 지식을 나중 런이 지웠나"라는 결과 지표가 전부 그 구분 위에 선다.
+ *
+ * ## 스코프 (ARTEL-256)
+ *
+ * 모든 진입점이 [KnowledgeScope]를 **기본값 없이** 받는다. 읽기 경로를 하나라도 빠뜨리면 격리가
+ * 뚫리고 뚫린 격리는 조용하므로, 빠뜨린 호출이 컴파일되지 않게 만든다. 이 서비스가 스코프를
+ * `Long?`로 푸는 유일한 자리다 — 리포지토리 아래로는 그 값만 내려간다.
+ *
+ * 규칙은 두 줄이다.
+ * - 읽기: baseline(`scope_id IS NULL`) + 자기 스코프. 그림자에 가려진 baseline은 뺀다.
+ * - 쓰기: 항상 자기 스코프. 운영 런은 [KnowledgeScope.PRODUCTION]이라 이 변경 전과 동일하다.
+ *
+ * 스코프 런이 baseline을 고치거나 지울 때 **그 행을 직접 건드리지 않는다.** 대신 그 baseline을
+ * 가리는 그림자 행을 자기 스코프에 만든다. 운영 지식창고가 실험 때문에 깎여나가면 실험이 끝나도
+ * 되돌아오지 않기 때문이다.
+ *
+ * 그림자도 knowledge 행이므로 자기 이력을 남긴다. 다만 **스코프 행은 `knowledge_entry_facts`
+ * view에서 빠진다**(V27) — ARTEL-255의 지표는 "후속 런이 앞선 런의 지식을 지웠나"이고, 실험
+ * 스코프에는 심판이 될 후속 런이 없다. 넣으면 실험 산물이 운영 지표를 오염시킨다.
  */
 @Service
 class KnowledgeService(
@@ -57,19 +75,23 @@ class KnowledgeService(
      *
      * 저장과 CREATE 이벤트 기록은 한 트랜잭션이다. 배치가 부분 저장되는 실패 모드는 원래도
      * 없었고(`saveAll` 한 번), 실패는 호출자가 이미 삼켜 `parse_status=FAILED`로 남긴다.
+     *
+     * @param scope 이 배치가 들어갈 스코프. 문서 추출 경로는 언제나 [KnowledgeScope.PRODUCTION]이고
+     *   (사람이 올린 문서는 실험의 산물이 아니다), QA 경로는 그 런의 스코프다.
      */
     suspend fun store(
         projectId: Long,
+        scope: KnowledgeScope,
         source: KnowledgeSource,
         sourceId: Long?,
         contentHash: String?,
         items: List<KnowledgeIngestItem>
     ) {
-        val rows = items.mapNotNull { toEntity(projectId, source, sourceId, contentHash, it) }
+        val rows = items.mapNotNull { toEntity(projectId, scope, source, sourceId, contentHash, it) }
         if (rows.isEmpty()) {
             logger.warn(
-                "knowledge 저장 스킵: 유효 항목 없음 (project={}, source={}, sourceId={}, 받은수={})",
-                projectId, source, sourceId, items.size
+                "knowledge 저장 스킵: 유효 항목 없음 (project={}, scope={}, source={}, sourceId={}, 받은수={})",
+                projectId, scope, source, sourceId, items.size
             )
             return
         }
@@ -86,6 +108,7 @@ class KnowledgeService(
     /** 유효하지 않은 항목은 null을 돌려 배치에서 제외한다. */
     private fun toEntity(
         projectId: Long,
+        scope: KnowledgeScope,
         source: KnowledgeSource,
         sourceId: Long?,
         contentHash: String?,
@@ -104,6 +127,7 @@ class KnowledgeService(
         }
         return KnowledgeEntity(
             projectId = projectId,
+            scopeId = scope.id,
             source = source.name,
             sourceId = sourceId,
             contentHash = contentHash,
@@ -120,9 +144,13 @@ class KnowledgeService(
      * 규칙이라 나중에 "이 항목은 어느 런이 만들었나"를 두 경로에서 같은 방식으로 읽을 수 있다.
      * 생성의 출처는 그 source_id다. `updated_by_qa_try_id`는 비워 둬야 "만들어진 뒤 누가 손댔나"의
      * 신호로 쓸 수 있다.
+     *
+     * 새로 만드는 항목은 가릴 baseline이 없으므로 그림자가 아니다 — 스코프 런에서도 `shadows_id`는
+     * 비어 있고, 그 스코프 안에서만 보이는 평범한 항목이 된다.
      */
     suspend fun createFromQaTry(
         projectId: Long,
+        scope: KnowledgeScope,
         qaTryId: Long,
         request: KnowledgeMutationRequest
     ): KnowledgeMutation {
@@ -137,6 +165,7 @@ class KnowledgeService(
             val row = knowledgeRepository.save(
                 KnowledgeEntity(
                     projectId = projectId,
+                    scopeId = scope.id,
                     source = KnowledgeSource.QA.name,
                     sourceId = qaTryId,
                     tag = tag.name,
@@ -167,9 +196,15 @@ class KnowledgeService(
      * 값이 하나도 실제로 바뀌지 않은 요청은 버전을 올리지 않고 이벤트도 남기지 않는다 — 같은
      * `after`를 가진 이벤트가 쌓이면 이력이 "몇 번 호출됐나"의 기록이 되어 버린다. 행 저장 자체와
      * `updated_by_qa_try_id` 기록은 그대로 한다(누가 손댔는지는 여전히 사실이다).
+     *
+     * **스코프 런이 baseline을 고치면 그 행 대신 그림자를 만든다**(ARTEL-256). 그림자에는 원본의
+     * 모든 필드를 복사한 뒤 요청분을 얹는다 — 그림자가 그 스코프에서 원본을 완전히 대체하므로
+     * 일부만 담으면 안 고친 필드가 사라진다. 이때 **원본의 임베딩은 건드리지 않는다**: 그 벡터는
+     * 운영과 다른 스코프가 계속 쓰고 있다. 그림자의 벡터는 백필이 새로 채운다.
      */
     suspend fun updateFromQaTry(
         projectId: Long,
+        scope: KnowledgeScope,
         qaTryId: Long,
         request: KnowledgeMutationRequest
     ): KnowledgeMutation {
@@ -188,21 +223,48 @@ class KnowledgeService(
             return KnowledgeMutation.Rejected("description must not be blank")
         }
 
-        // 프로젝트 격리: 다른 프로젝트의 id를 넣으면 여기서 행이 잡히지 않는다.
-        val current = knowledgeRepository.findByIdAndProjectIdAndDeletedAtIsNull(knowledgeId, projectId)
-            ?: return KnowledgeMutation.Rejected("knowledge $knowledgeId not found in project $projectId")
+        // 프로젝트·스코프 격리: 다른 프로젝트나 다른 스코프의 id를 넣으면 여기서 행이 잡히지 않는다.
+        val current = knowledgeRepository.findVisibleById(knowledgeId, projectId, scope.id)
+            ?: return KnowledgeMutation.Rejected(describeMissing(knowledgeId, projectId, scope))
 
-        val updated = current.copy(
+        val next = current.copy(
             tag = tag?.name ?: current.tag,
             summary = summary ?: current.summary,
             description = description ?: current.description,
             updatedByQaTryId = qaTryId
         )
-        val embeddedTextChanged =
-            updated.summary != current.summary || updated.description != current.description
-        val contentChanged = embeddedTextChanged || updated.tag != current.tag
-        val versioned = if (contentChanged) updated.copy(version = current.version + 1) else updated
+        val embeddedTextChanged = next.summary != current.summary || next.description != current.description
+        val contentChanged = embeddedTextChanged || next.tag != current.tag
 
+        if (shadowRequired(current, scope)) {
+            val shadow = transactionalOperator.executeAndAwait {
+                val row = knowledgeRepository.save(
+                    next.copy(
+                        id = null,
+                        scopeId = scope.id,
+                        shadowsId = current.id,
+                        // 그림자는 이 스코프에 처음 생긴 행이다. 버전을 원본에서 물려받으면 이벤트가
+                        // 없는 채로 version이 2 이상이 되어 `knowledge.version = max(event.version)`
+                        // 불변식이 깨진다(ARTEL-255). 생성·수정 시각도 물려받으면 언제 갈라져 나왔는지를
+                        // 잃는다.
+                        version = 1,
+                        createdAt = null,
+                        updatedAt = null
+                    )
+                )
+                // 행 수준에서 이것은 CREATE다 — 이 스코프에 없던 행이 이 런에 의해 생겼다.
+                // "baseline을 고친 것"이라는 사실은 이벤트가 아니라 `shadows_id`가 진다.
+                eventRepository.save(contentEvent(row, KnowledgeEventType.CREATE, qaTryId))
+                row
+            }
+            logger.info(
+                "knowledge 스코프 수정(그림자 생성): baseline={}, shadow={}, project={}, scope={}, qaTry={}",
+                knowledgeId, shadow?.id, projectId, scope, qaTryId
+            )
+            return KnowledgeMutation.Applied(requireNotNull(shadow?.id))
+        }
+
+        val versioned = if (contentChanged) next.copy(version = current.version + 1) else next
         transactionalOperator.executeAndAwait {
             knowledgeRepository.save(versioned)
             if (contentChanged) {
@@ -211,8 +273,8 @@ class KnowledgeService(
             if (embeddedTextChanged) embeddingRepository.discardFor(knowledgeId)
         }
         logger.info(
-            "knowledge 수정: id={}, project={}, qaTry={}, version={}, 임베딩 무효화={}",
-            knowledgeId, projectId, qaTryId, versioned.version, embeddedTextChanged
+            "knowledge 수정: id={}, project={}, scope={}, qaTry={}, version={}, 임베딩 무효화={}",
+            knowledgeId, projectId, scope, qaTryId, versioned.version, embeddedTextChanged
         )
         return KnowledgeMutation.Applied(knowledgeId)
     }
@@ -223,21 +285,62 @@ class KnowledgeService(
      *
      * 임베딩 행도 함께 버린다. 읽기 경로가 `deleted_at`을 걸어 이미 빠지지만, 벡터까지 지워 두면
      * 검색이 조인 조건을 빠뜨려도 삭제된 항목이 되살아나지 않는다. 되살리면 백필이 다시 채운다.
+     *
+     * **스코프 런이 baseline을 지우면 원본은 그대로 두고 툼스톤 그림자를 만든다**(ARTEL-256).
+     * 그 런에서는 사라지지만 운영과 다른 스코프에는 남는다. 원본의 임베딩도 그래서 버리지 않는다 —
+     * 그 벡터는 아직 쓰이고 있다. 툼스톤 자신은 `deleted_at`이 찍혀 있어 백필 큐에 들어가지 않는다.
      */
     suspend fun softDeleteFromQaTry(
         projectId: Long,
+        scope: KnowledgeScope,
         qaTryId: Long,
         request: KnowledgeMutationRequest
     ): KnowledgeMutation {
         val knowledgeId = parseKnowledgeId(request.knowledgeId)
             ?: return KnowledgeMutation.Rejected("knowledge_id must be a numeric id")
-        val current = knowledgeRepository.findByIdAndProjectIdAndDeletedAtIsNull(knowledgeId, projectId)
-            ?: return KnowledgeMutation.Rejected("knowledge $knowledgeId not found in project $projectId")
+        val current = knowledgeRepository.findVisibleById(knowledgeId, projectId, scope.id)
+            ?: return KnowledgeMutation.Rejected(describeMissing(knowledgeId, projectId, scope))
+
+        val deletedAt = Instant.now(clock)
+        if (shadowRequired(current, scope)) {
+            val tombstone = transactionalOperator.executeAndAwait {
+                val row = knowledgeRepository.save(
+                    current.copy(
+                        id = null,
+                        scopeId = scope.id,
+                        shadowsId = current.id,
+                        deletedAt = deletedAt,
+                        deletedByQaTryId = qaTryId,
+                        // 그림자와 같은 이유로 버전을 물려받지 않는다.
+                        version = 1,
+                        createdAt = null,
+                        updatedAt = null
+                    )
+                )
+                // DELETE 이벤트만 남기고 CREATE는 남기지 않는다 — 이 런은 지식을 만든 것이 아니라
+                // 가린 것이고, `after`가 null이라 content 버전을 만들지도 않는다.
+                eventRepository.save(
+                    KnowledgeEventEntity(
+                        knowledgeId = requireNotNull(row.id),
+                        projectId = row.projectId,
+                        qaTryId = qaTryId,
+                        event = KnowledgeEventType.DELETE.name,
+                        version = row.version,
+                        after = null,
+                        createdAt = deletedAt
+                    )
+                )
+                row
+            }
+            logger.info(
+                "knowledge 스코프 삭제(툼스톤 생성): baseline={}, tombstone={}, project={}, scope={}, qaTry={}",
+                knowledgeId, tombstone?.id, projectId, scope, qaTryId
+            )
+            return KnowledgeMutation.Applied(requireNotNull(tombstone?.id))
+        }
 
         transactionalOperator.executeAndAwait {
-            knowledgeRepository.save(
-                current.copy(deletedAt = Instant.now(clock), deletedByQaTryId = qaTryId)
-            )
+            knowledgeRepository.save(current.copy(deletedAt = deletedAt, deletedByQaTryId = qaTryId))
             // version을 올리지 않고 현재 값을 그대로 싣는다 — 삭제는 본문을 바꾸지 않는다.
             // `after`가 null이라 부분 유니크 인덱스에 걸리지 않고, 같은 항목을 지웠다 되살리기를
             // 반복해도 이력이 계속 쌓인다.
@@ -249,14 +352,47 @@ class KnowledgeService(
                     event = KnowledgeEventType.DELETE.name,
                     version = current.version,
                     after = null,
-                    createdAt = Instant.now(clock)
+                    createdAt = deletedAt
                 )
             )
             embeddingRepository.discardFor(knowledgeId)
         }
         // 지우는 주체가 Agent라 삭제는 반드시 눈에 보여야 한다. 출처는 컬럼에도 남는다.
-        logger.info("knowledge 소프트삭제: id={}, project={}, qaTry={}", knowledgeId, projectId, qaTryId)
+        logger.info(
+            "knowledge 소프트삭제: id={}, project={}, scope={}, qaTry={}",
+            knowledgeId, projectId, scope, qaTryId
+        )
         return KnowledgeMutation.Applied(knowledgeId)
+    }
+
+    /**
+     * 이 쓰기가 원본 대신 그림자로 가야 하는가.
+     *
+     * 스코프 런이 baseline(`scope_id IS NULL`)을 건드릴 때만 참이다. 운영 런은 스코프가 없으니
+     * 언제나 원본을 직접 고치고(이 변경 전과 동일), 스코프 런이 **자기 스코프의 행**(자기가 만든
+     * 항목이든 앞서 만든 그림자든)을 고칠 때도 그 행이 이미 자기 것이라 직접 고친다.
+     */
+    private fun shadowRequired(target: KnowledgeEntity, scope: KnowledgeScope): Boolean =
+        !scope.isProduction && target.scopeId == null
+
+    /**
+     * 대상을 못 찾은 이유를 Agent가 다음 행동을 정할 수 있는 문장으로 만든다.
+     *
+     * 스코프 런에서 "없다"는 세 가지다: 정말 없거나, 이 스코프에서 이미 지웠거나(툼스톤), 이미
+     * 고쳐서 그림자가 원본을 대신하고 있거나. 셋을 한 문장으로 뭉개면 Agent가 방금 자기가 고친
+     * 항목을 옛 id로 계속 다시 부르며 런을 태운다. 고친 경우에는 새 id를 알려 준다.
+     *
+     * 다른 스코프에 대해서는 아무것도 말하지 않는다 — 자기 스코프의 그림자만 조회한다.
+     */
+    private suspend fun describeMissing(knowledgeId: Long, projectId: Long, scope: KnowledgeScope): String {
+        val notFound = "knowledge $knowledgeId not found in project $projectId"
+        val scopeId = scope.id ?: return notFound
+        val shadow = knowledgeRepository.findShadow(scopeId, knowledgeId) ?: return notFound
+        return if (shadow.deletedAt != null) {
+            "knowledge $knowledgeId is already deleted in this run's knowledge scope"
+        } else {
+            "knowledge $knowledgeId was modified in this run's knowledge scope; use id ${shadow.id}"
+        }
     }
 
     /**
@@ -300,27 +436,19 @@ class KnowledgeService(
 
     /**
      * 프로젝트 스코프 조회(최신순). source/tag는 선택 필터.
-     * 소프트삭제된 항목은 리포지토리 쿼리 단계에서 이미 빠진다.
+     * 소프트삭제된 항목과 스코프 밖 항목은 리포지토리 쿼리 단계에서 이미 빠진다.
      */
     suspend fun findForProject(
         projectId: Long,
+        scope: KnowledgeScope,
         source: KnowledgeSource?,
         tag: KnowledgeTag?
-    ): KnowledgeListResponse {
-        val rows: Flow<KnowledgeEntity> = when {
-            source != null && tag != null ->
-                knowledgeRepository.findByProjectIdAndSourceAndTagAndDeletedAtIsNullOrderByIdDesc(
-                    projectId, source.name, tag.name
-                )
-            source != null ->
-                knowledgeRepository.findByProjectIdAndSourceAndDeletedAtIsNullOrderByIdDesc(projectId, source.name)
-            tag != null ->
-                knowledgeRepository.findByProjectIdAndTagAndDeletedAtIsNullOrderByIdDesc(projectId, tag.name)
-            else ->
-                knowledgeRepository.findByProjectIdAndDeletedAtIsNullOrderByIdDesc(projectId)
-        }
-        return KnowledgeListResponse(rows.map(::toResponse).toList())
-    }
+    ): KnowledgeListResponse =
+        KnowledgeListResponse(
+            knowledgeRepository.findVisible(projectId, scope.id, source?.name, tag?.name)
+                .map(::toResponse)
+                .toList()
+        )
 
     private fun toResponse(entity: KnowledgeEntity): KnowledgeResponse =
         KnowledgeResponse(

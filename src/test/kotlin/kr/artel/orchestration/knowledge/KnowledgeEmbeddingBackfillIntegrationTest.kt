@@ -11,6 +11,7 @@ import kr.artel.orchestration.knowledge.agent.KnowledgeEmbeddingAgent
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
+import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
@@ -266,14 +267,20 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
     fun `수정하면 임베딩이 무효화되고 백필이 새 본문으로 다시 채운다`(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
         val id = knowledgeService
-            .createFromQaTry(projectId, 1L, KnowledgeMutationRequest(tag = "RULE", summary = "옛 요약", description = "설명"))
+            .createFromQaTry(
+                projectId, KnowledgeScope.PRODUCTION, 1L,
+                KnowledgeMutationRequest(tag = "RULE", summary = "옛 요약", description = "설명")
+            )
             .let { (it as KnowledgeMutation.Applied).knowledgeId }
 
         worker.runOnce()
         assertThat(vectorCount(id)).isEqualTo(FakeKnowledgeEmbeddingAgent.QUERIES_PER_ITEM.toLong())
         assertThat(sourceTexts(id)).allMatch { it.startsWith("옛 요약") }
 
-        knowledgeService.updateFromQaTry(projectId, 2L, KnowledgeMutationRequest(knowledgeId = "$id", summary = "새 요약"))
+        knowledgeService.updateFromQaTry(
+            projectId, KnowledgeScope.PRODUCTION, 2L,
+            KnowledgeMutationRequest(knowledgeId = "$id", summary = "새 요약")
+        )
 
         // 무효화 직후에는 벡터가 없다 — 틀린 벡터로 검색되느니 검색되지 않는 편이 낫다.
         assertThat(vectorCount(id)).isZero()
@@ -288,12 +295,18 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
     fun `tag만 바꾸면 임베딩을 건드리지 않는다`(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
         val id = knowledgeService
-            .createFromQaTry(projectId, 1L, KnowledgeMutationRequest(tag = "RULE", summary = "요약", description = "설명"))
+            .createFromQaTry(
+                projectId, KnowledgeScope.PRODUCTION, 1L,
+                KnowledgeMutationRequest(tag = "RULE", summary = "요약", description = "설명")
+            )
             .let { (it as KnowledgeMutation.Applied).knowledgeId }
         worker.runOnce()
         val embedCallsBefore = fake.embedCalls.get()
 
-        knowledgeService.updateFromQaTry(projectId, 2L, KnowledgeMutationRequest(knowledgeId = "$id", tag = "UI"))
+        knowledgeService.updateFromQaTry(
+            projectId, KnowledgeScope.PRODUCTION, 2L,
+            KnowledgeMutationRequest(knowledgeId = "$id", tag = "UI")
+        )
 
         // 임베딩 입력은 summary/description뿐이라 벡터는 그대로 유효하다. 무효화하면 값이 같은
         // 벡터를 다시 청구하게 된다.
@@ -306,12 +319,18 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
     fun `소프트삭제하면 벡터가 사라지고 백필이 다시 만들지 않는다`(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
         val id = knowledgeService
-            .createFromQaTry(projectId, 1L, KnowledgeMutationRequest(tag = "RULE", summary = "요약", description = "설명"))
+            .createFromQaTry(
+                projectId, KnowledgeScope.PRODUCTION, 1L,
+                KnowledgeMutationRequest(tag = "RULE", summary = "요약", description = "설명")
+            )
             .let { (it as KnowledgeMutation.Applied).knowledgeId }
         worker.runOnce()
         assertThat(vectorCount(id)).isEqualTo(FakeKnowledgeEmbeddingAgent.QUERIES_PER_ITEM.toLong())
 
-        knowledgeService.softDeleteFromQaTry(projectId, 2L, KnowledgeMutationRequest(knowledgeId = "$id"))
+        knowledgeService.softDeleteFromQaTry(
+            projectId, KnowledgeScope.PRODUCTION, 2L,
+            KnowledgeMutationRequest(knowledgeId = "$id")
+        )
 
         // 읽기 경로가 deleted_at을 걸어 이미 빠지지만, 벡터까지 지워 두면 검색이 조인 조건을
         // 빠뜨려도 삭제된 항목이 되살아나지 않는다.
@@ -335,14 +354,20 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
     fun `임베딩 중에 수정되면 옛 본문의 벡터는 버려진다`(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
         val id = knowledgeService
-            .createFromQaTry(projectId, 1L, KnowledgeMutationRequest(tag = "RULE", summary = "옛 요약", description = "설명"))
+            .createFromQaTry(
+                projectId, KnowledgeScope.PRODUCTION, 1L,
+                KnowledgeMutationRequest(tag = "RULE", summary = "옛 요약", description = "설명")
+            )
             .let { (it as KnowledgeMutation.Applied).knowledgeId }
 
         embeddingRepository.seedPending("QUERY", properties.model, properties.batchSize)
         val claimed = embeddingRepository.claimPending("QUERY", properties.model, properties.maxAttempts, 1).single()
 
         // claim과 저장 사이에 수정이 끼어든 상황: 대기 행이 사라진다.
-        knowledgeService.updateFromQaTry(projectId, 2L, KnowledgeMutationRequest(knowledgeId = "$id", summary = "새 요약"))
+        knowledgeService.updateFromQaTry(
+            projectId, KnowledgeScope.PRODUCTION, 2L,
+            KnowledgeMutationRequest(knowledgeId = "$id", summary = "새 요약")
+        )
 
         embeddingRepository.replacePendingWithVectors(
             claimed.pendingId, id, "QUERY", properties.model,

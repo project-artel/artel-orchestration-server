@@ -70,6 +70,27 @@ data class KnowledgeEntity(
     val deletedByQaTryId: Long? = null,
 
     /**
+     * 이 항목이 속한 지식 스코프(ARTEL-256). null이면 운영 공용(baseline)이다.
+     * 스코프 런은 baseline + 자기 스코프를 읽고 쓰기는 전부 자기 스코프로 보내므로, 운영
+     * 지식창고는 실험 런 때문에 한 행도 바뀌지 않는다. 값의 의미는 [KnowledgeScope] 참조.
+     */
+    @Column("scope_id")
+    val scopeId: Long? = null,
+
+    /**
+     * 이 스코프 행이 가리는 baseline 항목의 id(ARTEL-256). null이면 그림자가 아니다.
+     *
+     * 스코프 런이 baseline을 고치거나 지울 때 그 행을 직접 건드리면 운영 지식창고가 실험 때문에
+     * 깎여나간다. 대신 baseline 하나를 가리는 스코프 행을 만든다.
+     * - [deletedAt]이 null인 그림자 = 그 스코프 안에서의 수정(본문은 이 행에 있다)
+     * - [deletedAt]이 찍힌 그림자    = 그 스코프 안에서의 삭제(툼스톤)
+     *
+     * 어느 쪽이든 읽기 질의는 가려진 baseline을 결과에서 뺀다([KnowledgeScopeSql.VISIBLE]).
+     */
+    @Column("shadows_id")
+    val shadowsId: Long? = null,
+
+    /**
      * 현재 content의 버전(ARTEL-255). `knowledge_event`의 최대 content 버전과 같아야 한다 —
      * 그 불변식이 깨지면 쓰기 버그다.
      *
@@ -83,6 +104,10 @@ data class KnowledgeEntity(
      * `replaces_id` 컬럼은 일부러 매핑하지 않는다. 이번 범위에서 채우지 않는 자리라, 엔티티에
      * 실으면 "쓰지 않는다"는 결정이 코드에서 보이지 않게 된다. R2DBC는 매핑 안 된 컬럼을
      * 건드리지 않으므로 UPDATE가 값을 지우지도 않는다.
+     *
+     * **그림자 행은 버전 1에서 새로 시작한다**(ARTEL-256). baseline을 copy 해 만들더라도 그것은
+     * 그 스코프에 처음 생긴 행이고, 원본의 버전을 물려받으면 이벤트가 없는 채로 version이 2 이상이
+     * 되어 `knowledge.version = max(event.version)` 불변식이 깨진다.
      */
     @Column("version")
     val version: Int = 1,

@@ -12,6 +12,7 @@ import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
@@ -82,6 +83,9 @@ class KnowledgeStatsIntegrationTest {
     /** 두 축 조합. 이 둘이 갈리는지가 이 테스트의 전부다. */
     private var runA: Long = 0
     private var runB: Long = 0
+
+    /** 실험 스코프 하나(ARTEL-256). 값 자체는 의미가 없다 — 운영(NULL)이 아니기만 하면 된다. */
+    private val EXPERIMENT_SCOPE = KnowledgeScope.of(6_001L)
 
     /**
      * 리액티브 트랜잭션은 테스트 롤백이 안 되고 실 DB를 공유하므로 FK 순서대로 직접 비운다.
@@ -278,6 +282,53 @@ class KnowledgeStatsIntegrationTest {
         assertThat(aggregate.total!!.entryVersions).isZero()
     }
 
+    // ------------------------------------------------ 실험 스코프 격리 (ARTEL-256)
+
+    /**
+     * 실험 스코프의 지식은 이 지표에 들어오지 않는다.
+     *
+     * 이 view의 착상이 "후속 런이 공짜 심판"인데 실험 스코프에는 심판이 될 후속 런이 없다 — 그
+     * 스코프를 쓰는 런은 그 arm 하나뿐이다. 넣으면 심판받지 않은 항목이 분모만 키운다. 격리의
+     * 목적이 운영 오염 방지인데 지표 레이어에서 그 오염을 허용하면 막은 것이 아니다.
+     */
+    @Test
+    fun `스코프 런이 만든 지식은 운영 지표에 들어오지 않는다`(): Unit = runBlocking {
+        createEntry(runA, "운영 지식")
+        knowledgeService.createFromQaTry(
+            projectId, EXPERIMENT_SCOPE, runB,
+            KnowledgeMutationRequest(tag = "RULE", summary = "실험 지식", description = "d")
+        )
+
+        assertThat(entryFacts()).hasSize(1)
+        assertThat(aggregate().total!!.entryVersions).isEqualTo(1)
+    }
+
+    /**
+     * 툼스톤이 지표에 들어오면 **폐기율이 실험 횟수만큼 부풀려진다** — 그림자는 운영 항목을 가리는
+     * 별도 행이라, view가 그것을 담으면 "누군가 지운 지식"이 arm 수만큼 늘어난다. 그리고 가려진
+     * 운영 항목 자체는 아무것도 잃지 않아야 한다.
+     */
+    @Test
+    fun `스코프 런의 그림자와 툼스톤도 지표에 들어오지 않는다`(): Unit = runBlocking {
+        val edited = createEntry(runA, "고쳐질 운영 지식")
+        val doomed = createEntry(runA, "지워질 운영 지식")
+
+        knowledgeService.updateFromQaTry(
+            projectId, EXPERIMENT_SCOPE, runB,
+            KnowledgeMutationRequest(knowledgeId = edited.toString(), summary = "실험이 고친 것")
+        )
+        knowledgeService.softDeleteFromQaTry(
+            projectId, EXPERIMENT_SCOPE, runB,
+            KnowledgeMutationRequest(knowledgeId = doomed.toString())
+        )
+
+        // 운영 항목 두 개만 남고, 둘 다 지워지지 않은 것으로 읽힌다.
+        val facts = entryFacts()
+        assertThat(facts.map { it.knowledgeId }).containsExactlyInAnyOrder(edited, doomed)
+        assertThat(facts).allMatch { it.deletedByQaTryId == null }
+        assertThat(aggregate().total!!.repudiatedVersions).isZero()
+    }
+
     // --------------------------------------------------------------- helpers
 
     private suspend fun aggregate() = statsRepository.aggregateByRunConfig(
@@ -293,20 +344,21 @@ class KnowledgeStatsIntegrationTest {
 
     private suspend fun createEntry(qaTryId: Long, summary: String): Long =
         (knowledgeService.createFromQaTry(
-            projectId, qaTryId,
+            projectId, KnowledgeScope.PRODUCTION, qaTryId,
             KnowledgeMutationRequest(tag = "RULE", summary = summary, description = "$summary 설명")
         ) as KnowledgeMutation.Applied).knowledgeId
 
     private suspend fun updateEntry(qaTryId: Long, knowledgeId: Long, summary: String) {
         knowledgeService.updateFromQaTry(
-            projectId, qaTryId,
+            projectId, KnowledgeScope.PRODUCTION, qaTryId,
             KnowledgeMutationRequest(knowledgeId = knowledgeId.toString(), summary = summary)
         )
     }
 
     private suspend fun deleteEntry(qaTryId: Long, knowledgeId: Long) {
         knowledgeService.softDeleteFromQaTry(
-            projectId, qaTryId, KnowledgeMutationRequest(knowledgeId = knowledgeId.toString())
+            projectId, KnowledgeScope.PRODUCTION, qaTryId,
+            KnowledgeMutationRequest(knowledgeId = knowledgeId.toString())
         )
     }
 

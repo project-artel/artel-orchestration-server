@@ -85,6 +85,14 @@ class KnowledgeEmbeddingSource(
         return collected to failures
     }
 
+    /**
+     * 백필은 **스코프를 가리지 않는다**(ARTEL-256). 다른 읽기 경로와 다른 유일한 자리라 명시해 둔다.
+     *
+     * 스코프 행과 그림자 행도 각자 자기 벡터가 있어야 그 스코프의 검색에 잡힌다. 여기서 스코프를
+     * 걸면 어느 스코프의 것인지 모른 채 큐를 도는 워커가 자기 것이 아닌 행을 전부 orphan으로
+     * 버리게 되고, 스코프 런은 자기가 쓴 지식을 영영 못 찾는다. 큐가 이미 knowledge_id로 대상을
+     * 지목하므로 여기에 프로젝트·스코프 격리를 걸 이유도 없다 — 이 경로는 목록 조회가 아니다.
+     */
     private suspend fun loadLiveKnowledge(claimed: List<ClaimedRow>): Map<Long, KnowledgeEntity> =
         knowledgeRepository.findAllById(claimed.map { it.ownerId })
             .toList()
