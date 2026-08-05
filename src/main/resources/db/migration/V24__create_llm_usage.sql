@@ -6,7 +6,7 @@
 -- (`POST /api/orchestration/llm-usage`)를 여기에 두고 agent가 배치로 밀어 넣는다.
 --
 -- **왜 FK를 걸지 않나.** reference_id는 service 값에 따라 서로 다른 테이블을 가리키는 다형
--- 참조다: QA_RUN→qa_try.id, SCENARIO→test_scenario.id, GAME_CONTEXT→project_document.id,
+-- 참조다: QA_RUN→qa_try.id, SCENARIO→test_run.id, GAME_CONTEXT→project_document.id,
 -- KNOWLEDGE_QUERY/EMBEDDING→project.id. 대상 테이블이 하나가 아니라 FK를 걸 수 없고, 걸 수
 -- 있더라도 걸지 않는다 — 지출 기록은 회계 사실이라 원본 행이 지워져도 남아야 한다(qa_try를
 -- 지웠다고 그 달에 쓴 돈이 사라지지는 않는다). 그래서 reference_id는 nullable이고, 대상이

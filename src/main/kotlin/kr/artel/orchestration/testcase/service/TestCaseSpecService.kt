@@ -14,6 +14,7 @@ import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.dto.TestCaseSpecDownloadResponse
 import kr.artel.orchestration.testcase.dto.TestCaseSpecIngestResult
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.repository.TestCaseEmbeddingRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -41,6 +42,7 @@ class TestCaseSpecService(
     private val projectAccessService: ProjectAccessService,
     private val projectRepository: ProjectRepository,
     private val transactionalOperator: TransactionalOperator,
+    private val embeddingRepository: TestCaseEmbeddingRepository,
 ) {
 
     /**
@@ -129,6 +131,8 @@ class TestCaseSpecService(
                     projectId, row.category, row.title
                 )
                 if (existing == null) {
+                    // 신규 케이스의 임베딩은 여기서 만들지 않는다 — 백필 워커의 주기 seedPending이
+                    // 아직 벡터 없는 케이스를 자동으로 픽업한다(적재를 LLM 호출로 늦추지 않는다).
                     repository.save(
                         TestCaseEntity(
                             projectId = projectId,
@@ -140,6 +144,11 @@ class TestCaseSpecService(
                     )
                     created++
                 } else {
+                    // 임베딩 텍스트(category/title/precondition/expected) 중 매칭 키(category/title)는
+                    // 불변이라, 내용 변화는 precondition/expected로만 온다. 바뀌었을 때만 옛 벡터를 버려
+                    // 다음 백필 tick이 새 본문으로 재임베딩하게 한다(안 바뀌면 불필요한 재임베딩을 피한다).
+                    val contentChanged =
+                        existing.precondition != row.precondition || existing.expected != row.expected
                     // verificationStatus/lastVerifiedBuildId는 의도적으로 그대로 둔다(QA 런의 결과).
                     repository.save(
                         existing.copy(
@@ -147,6 +156,7 @@ class TestCaseSpecService(
                             expected = row.expected,
                         )
                     )
+                    if (contentChanged) embeddingRepository.discardFor(existing.id!!)
                     updated++
                 }
             }

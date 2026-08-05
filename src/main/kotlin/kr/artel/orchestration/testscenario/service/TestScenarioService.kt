@@ -3,20 +3,14 @@ package kr.artel.orchestration.testscenario.service
 import kr.artel.orchestration.common.error.NotFoundException
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
-import kr.artel.orchestration.testscenario.dto.MessageResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.dto.ScenarioListResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioSummary
-import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
-import kr.artel.orchestration.testscenario.dto.TestScenarioMessage
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
-import kr.artel.orchestration.testscenario.repository.TestScenarioMessageRepository
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
-import org.springframework.http.codec.ServerSentEvent
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.executeAndAwait
 import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
@@ -24,21 +18,16 @@ import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import org.springframework.transaction.reactive.TransactionalOperator
 
 /**
- * TestScenario 도메인 서비스(코루틴). 컨트롤러가 얇게 유지되도록 생성/조회/중계/스트림의 비즈니스 로직을 담당한다.
+ * TestScenario 도메인 서비스(코루틴). 시나리오 본체의 생성/조회/수정/삭제를 담당한다(챗봇 대화는 런 단위이므로
+ * [kr.artel.orchestration.testrun.service.TestRunChatService]로 분리됨 — ARTEL-206 Step 6).
  *
  * 모든 작업은 **프로젝트 참여자(project_member)인지 검증**한다. 비참여자에게는 프로젝트/시나리오가
  * 존재하지 않는 것처럼(null → 404) 보인다. 인증(JWT)만으로는 부족하고 해당 프로젝트 소속이어야 한다.
- *
- * 세션 키(`userId:testScenarioId`) 조립, 엔티티 조립·JSON 직렬화는 여기서 처리하고,
- * Agent 프로토콜(WS)과 SSE Sink 관리는 각각 [TestScenarioAgentService]/[TestScenarioStreamManager]에 위임한다.
  */
 @Service
 class TestScenarioService(
     private val scenarioRepository: TestScenarioRepository,
-    private val messageRepository: TestScenarioMessageRepository,
     private val accessService: TestScenarioAccessService,
-    private val agentService: TestScenarioAgentService,
-    private val streamManager: TestScenarioStreamManager,
     private val scenarioCaseRepository: TestScenarioCaseRepository,
     private val runScenarioRepository: TestRunScenarioRepository,
     private val transactionalOperator: TransactionalOperator,
@@ -65,15 +54,6 @@ class TestScenarioService(
             projectId = entity.projectId,
             payload = objectMapper.readValue(entity.payload.asString(), ScenarioDraft::class.java)
         )
-    }
-
-    /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다. 접근 불가면 빈 목록. */
-    suspend fun getMessages(testScenarioId: Long, appUserId: Long): List<MessageResponse> {
-        accessService.accessibleScenario(testScenarioId, appUserId) ?: return emptyList()
-        return messageRepository
-            .findByTestScenarioIdAndAppUserIdOrderByCreatedAtAsc(testScenarioId, appUserId)
-            .map { MessageResponse(role = it.role, content = it.content, createdAt = it.createdAt) }
-            .toList()
     }
 
     /**
@@ -130,16 +110,9 @@ class TestScenarioService(
         )
     }
 
-    /** FE가 Agent 응답을 실시간 수신하는 SSE 스트림. 접근 불가면 404. */
-    suspend fun stream(appUserId: Long, testScenarioId: Long): Flow<ServerSentEvent<ScenarioStreamEvent>> {
-        accessService.accessibleScenario(testScenarioId, appUserId)
-            ?: throw NotFoundException()
-        return streamManager.stream(sessionKey(appUserId, testScenarioId))
-    }
-
     /**
-     * 시나리오를 승인(확정)한다. 최종 draft가 있으면 payload로 저장하고 Agent 세션(WS)과 SSE를 닫는다.
-     * 채팅 내역과 시나리오는 그대로 남는다(부산물 삭제 없음). 접근 불가면 404.
+     * 시나리오를 승인(확정)한다. 최종 draft가 있으면 payload로 저장한다. 대화 세션은 런 단위라 시나리오 하나의
+     * 승인으로 닫지 않는다(런 대화는 계속된다). 접근 불가면 404.
      */
     suspend fun testScenarioApprove(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft?) {
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
@@ -149,46 +122,20 @@ class TestScenarioService(
                 entity.copy(payload = Json.of(objectMapper.writeValueAsString(draft)))
             )
         }
-        closeSession(appUserId, testScenarioId)
     }
 
     /**
      * 시나리오를 완전히 삭제한다. 접근 불가/미존재면 404.
      *
-     * 정리 순서: Agent 세션·스트림을 닫고(진행 중 작업 중단), 조합 링크(케이스 조합·런 조합)를
-     * 먼저 지운 뒤 시나리오 본체를 지운다. 채팅 메시지는 FK ON DELETE CASCADE로 함께 삭제된다.
-     * 조합 정리와 본체 삭제는 한 트랜잭션으로 묶어 부분 삭제 상태가 남지 않게 한다.
+     * 정리 순서: 조합 링크(케이스 조합·런 조합)를 먼저 지운 뒤 시나리오 본체를 지운다. 한 트랜잭션으로 묶어
+     * 부분 삭제 상태가 남지 않게 한다. 대화 세션은 런 단위라 여기서 닫지 않는다(런 대화는 계속된다).
      */
     suspend fun delete(appUserId: Long, testScenarioId: Long) {
         accessService.accessibleScenario(testScenarioId, appUserId) ?: throw NotFoundException()
-        closeSession(appUserId, testScenarioId)
         transactionalOperator.executeAndAwait {
             scenarioCaseRepository.deleteByTestScenarioId(testScenarioId)
             runScenarioRepository.deleteByTestScenarioId(testScenarioId)
             scenarioRepository.deleteById(testScenarioId)
         }
     }
-
-    /** Agent WS 세션과 SSE 스트림을 함께 닫는 정리 동작. */
-    private fun closeSession(appUserId: Long, testScenarioId: Long) {
-        val key = sessionKey(appUserId, testScenarioId)
-        agentService.closeSession(key)
-        streamManager.complete(key)
-    }
-
-    /** 사용자 입력을 Agent로 중계한다. 접근 불가면 404. */
-    suspend fun relay(appUserId: Long, testScenarioId: Long, message: TestScenarioMessage) {
-        val scenario = accessService.accessibleScenario(testScenarioId, appUserId)
-            ?: throw NotFoundException()
-        agentService.sendMessage(
-            sessionKey(appUserId, testScenarioId),
-            testScenarioId,
-            scenario.projectId,
-            appUserId,
-            message.testScenarioMessage,
-            message.draft
-        )
-    }
-
-    private fun sessionKey(appUserId: Long, testScenarioId: Long) = "$appUserId:$testScenarioId"
 }
