@@ -2,7 +2,29 @@
 
 - Date: 2026-08-05
 - Jira: ARTEL-206
-- Status: Planned (설계 확정 · 착수 대기 — 실행부 팀원 트랙 합류 시 진행)
+- Status: In Progress (Orche 측 완료 — 저장·캐리포워드·조회노출·cases 전달. 다음: Agent 브랜치에서 cases 소비 / FE 저작 UI / steps 쓰기 API)
+
+## Orche → Agent 전달 계약 (ARTEL-254, 구현 완료)
+
+QA 세션 오픈 시 Agent에 보내는 `scenario` JSON에 조합을 실어 준다(`ScenarioCompositionService.agentScenario`):
+
+```json
+{
+  "title": "...", "description": "...",
+  "cases": [
+    { "position": 0, "title": "상점 진입", "category": "RULE", "precondition": null, "expected": "...",
+      "steps": [ { "id":"s1", "kind":"setup", "assert": false, "intent":"상점으로 이동", "hint": null, "input": null, "observe": null } ] },
+    { "position": 1, "title": "구매 확인", "category": "UI", "precondition": "...", "expected": "...",
+      "steps": [ { "id":"s2", "kind":"guide", "assert": true, "intent":"구매 버튼 누름", "hint":"Enter" } ] }
+  ]
+}
+```
+
+- `cases[]` = position 순서. 각 항목 = TC 내용 + 그 자리의 저작 Step 배열.
+- `kind`: setup(사전조건 도달, assert=false·fast-forward) / guide(TC 실행) / verify(검증).
+- 추가 필드라 아직 cases를 안 읽는 Agent엔 무영향(기존 `steps`는 비어 no-op).
+
+**Agent 측 할 일(다음 브랜치):** cases를 가공해 실행 스텝 생성 — setup은 fast-forward(판정X), guide는 실행, arrange 실패는 SETUP-FAILED 귀속. 키류 조작(hint)은 게임지식/런타임 해소.
 
 ## Goal
 
