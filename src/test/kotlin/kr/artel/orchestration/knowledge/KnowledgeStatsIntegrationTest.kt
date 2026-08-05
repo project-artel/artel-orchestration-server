@@ -218,7 +218,7 @@ class KnowledgeStatsIntegrationTest {
                 projectId = projectId,
                 source = "DOCS",
                 tag = "RULE",
-                summary = "V26 이전에 만들어진 지식",
+                summary = "V27 이전에 만들어진 지식",
                 description = "이벤트 이력이 없다"
             )
         ).id!!
