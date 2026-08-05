@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
+import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.common.error.BadRequestException
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
@@ -38,9 +39,17 @@ class ScenarioCompositionService(
         val scenario = accessService.accessibleScenario(testScenarioId, userId) ?: return null
         validateCases(scenario.projectId, caseIds)
         transactionalOperator.executeAndAwait {
+            // 자리(testCaseId, position)가 유지되는 스텝은 삭제 전 스냅샷해 캐리포워드한다(자리 사라지면 폐기).
+            val preserved = scenarioCaseRepository.findByTestScenarioIdOrderByPosition(testScenarioId).toList()
+                .associate { (it.testCaseId to it.position) to it.steps }
             scenarioCaseRepository.deleteByTestScenarioId(testScenarioId)
             val rows = caseIds.mapIndexed { index, caseId ->
-                TestScenarioCaseEntity(testScenarioId = testScenarioId, testCaseId = caseId, position = index)
+                TestScenarioCaseEntity(
+                    testScenarioId = testScenarioId,
+                    testCaseId = caseId,
+                    position = index,
+                    steps = preserved[caseId to index] ?: Json.of("[]"),
+                )
             }
             scenarioCaseRepository.saveAll(rows).toList()
         }

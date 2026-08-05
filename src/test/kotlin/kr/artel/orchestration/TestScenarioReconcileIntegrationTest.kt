@@ -346,6 +346,55 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(committed.payload.asString()).contains("제안 시나리오")
     }
 
+    // ---- (f) 수정 시 steps 캐리포워드(자리 유지 보존 / 자리 변경 폐기) --------------------------
+
+    @Test
+    fun `수정 시 자리가 유지되는 steps는 보존하고 바뀐 자리는 폐기한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "RULE", "A")
+        val caseB = insertCase(projectId, "RULE", "B")
+
+        // 런에 기존 시나리오: caseA(pos0)+스텝, caseB(pos1)+스텝.
+        val existing = scenarioRepository.save(
+            TestScenarioEntity(projectId = projectId, payload = Json.of("""{"title":"old","description":"old"}"""))
+        ).id!!
+        runScenarioRepository.save(
+            TestRunScenarioEntity(testRunId = runId, testScenarioId = existing, position = 0)
+        )
+        scenarioCaseRepository.save(
+            TestScenarioCaseEntity(
+                testScenarioId = existing, testCaseId = caseA, position = 0,
+                steps = Json.of("""[{"id":"a","kind":"guide","assert":true,"intent":"A진행"}]""")
+            )
+        )
+        scenarioCaseRepository.save(
+            TestScenarioCaseEntity(
+                testScenarioId = existing, testCaseId = caseB, position = 1,
+                steps = Json.of("""[{"id":"b","kind":"setup","assert":false,"intent":"B도달"}]""")
+            )
+        )
+
+        // reconcile UPDATE: 조합을 [A, A]로 교체 — pos0은 caseA 그대로(자리 유지), pos1은 caseB→caseA(자리 변경).
+        framesToSend.add(
+            """{"type":"result","message":"수정","scenarios":[""" +
+                """{"scenario_id":$existing,"title":"new","description":"nd","case_ids":[$caseA,$caseA]}]}"""
+        )
+        postMessage(client, projectId, runId, token, "수정해줘")
+
+        awaitUntil { scenarioRepository.findById(existing)!!.payload.asString().contains("new") }
+
+        val cases = scenarioCaseRepository.findByTestScenarioIdOrderByPosition(existing).toList()
+        assertThat(cases.map { it.testCaseId }).containsExactly(caseA, caseA)
+        // pos0: (caseA,0) 자리 유지 → 스텝 보존.
+        assertThat(cases[0].steps.asString()).contains("A진행")
+        // pos1: 원래 (caseB,1)였고 이제 (caseA,1) — 스냅샷에 없어 빈 배열로 초기화(B도달은 폐기).
+        assertThat(cases[1].steps.asString()).isEqualTo("[]")
+    }
+
     // ---- helpers ----------------------------------------------------------------------------
 
     private suspend fun awaitFrame(predicate: (String) -> Boolean): String? {

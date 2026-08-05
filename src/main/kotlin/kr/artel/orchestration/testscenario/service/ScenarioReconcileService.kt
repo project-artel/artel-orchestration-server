@@ -71,8 +71,10 @@ class ScenarioReconcileService(
                         continue
                     }
                     scenarioRepository.save(existing.copy(payload = payloadJson))
+                    // 케이스 링크를 통째 교체하되, 자리(testCaseId, position)가 유지되는 스텝은 보존한다.
+                    val preserved = snapshotSteps(scenarioId)
                     scenarioCaseRepository.deleteByTestScenarioId(scenarioId)
-                    saveCaseLinks(scenarioId, scenario.caseIds)
+                    saveCaseLinks(scenarioId, scenario.caseIds, preserved)
                     // 런 링크는 그대로 둔다(수정은 위치를 바꾸지 않는다). 이미 이 런에 속한 시나리오를 겨냥한다.
                     applied++
                 } else {
@@ -94,10 +96,27 @@ class ScenarioReconcileService(
         return applied
     }
 
-    private suspend fun saveCaseLinks(scenarioId: Long, caseIds: List<Long>) {
+    /**
+     * 링크 삭제 전의 스텝을 (testCaseId, position)로 스냅샷한다. delete+재삽입으로 자리가 유지되는
+     * 스텝을 캐리포워드하기 위한 것 — 자리가 사라지면(재정렬/삭제) 그 스텝은 폐기된다.
+     */
+    private suspend fun snapshotSteps(scenarioId: Long): Map<Pair<Long, Int>, Json> =
+        scenarioCaseRepository.findByTestScenarioIdOrderByPosition(scenarioId).toList()
+            .associate { (it.testCaseId to it.position) to it.steps }
+
+    private suspend fun saveCaseLinks(
+        scenarioId: Long,
+        caseIds: List<Long>,
+        preserved: Map<Pair<Long, Int>, Json> = emptyMap(),
+    ) {
         caseIds.forEachIndexed { index, caseId ->
             scenarioCaseRepository.save(
-                TestScenarioCaseEntity(testScenarioId = scenarioId, testCaseId = caseId, position = index)
+                TestScenarioCaseEntity(
+                    testScenarioId = scenarioId,
+                    testCaseId = caseId,
+                    position = index,
+                    steps = preserved[caseId to index] ?: Json.of("[]"),
+                )
             )
         }
     }
