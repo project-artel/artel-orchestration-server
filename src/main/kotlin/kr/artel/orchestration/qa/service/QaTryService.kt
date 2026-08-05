@@ -22,7 +22,9 @@ import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.dto.QaTryResponse
 import kr.artel.orchestration.qa.dto.CreateQaTryRequest
 import kr.artel.orchestration.qa.dto.QaReasoningRequest
+import kr.artel.orchestration.qa.entity.QaRunEntity
 import kr.artel.orchestration.qa.entity.QaTryEntity
+import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
@@ -121,9 +123,13 @@ private fun JsonNode?.textAt(vararg path: String): String? {
     return node.takeIf { it.isTextual }?.asText()
 }
 
+/** 런 단위 실행 적재 결과: 부모 qa_run(STARTING) + 시나리오당 qa_try(PENDING) N개(순서=시나리오 순서). */
+data class QaRunStarting(val qaRun: QaRunEntity, val tries: List<QaTryEntity>)
+
 @Service
 class QaTryPersistenceService(
     private val tryRepository: QaTryRepository,
+    private val runRepository: QaRunRepository,
     private val logService: QaLogService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
@@ -167,6 +173,52 @@ class QaTryPersistenceService(
             )
             qaTry to startLog
         } ?: error("QA try creation returned no result")
+
+    /**
+     * 런 단위 실행을 적재한다(ARTEL-259): qa_run(STARTING) 하나 + 시나리오당 qa_try(PENDING) N개를
+     * 한 트랜잭션으로 만든다. [scenarioIds]는 런의 시나리오 순서(position). 각 qa_try는 qa_run_id로
+     * 부모를 가리키고, 자기 차례가 오면 PENDING→RUNNING으로 활성된다(활성은 항상 하나).
+     */
+    suspend fun createRunStarting(
+        testRunId: Long,
+        gameInstanceId: Long,
+        startedBy: Long,
+        scenarioIds: List<Long>
+    ): QaRunStarting =
+        transactionalOperator.executeAndAwait {
+            val now = Instant.now(clock)
+            val qaRun = runRepository.save(
+                QaRunEntity(
+                    testRunId = testRunId,
+                    gameInstanceId = gameInstanceId,
+                    startedBy = startedBy,
+                    status = "STARTING",
+                    startedAt = now
+                )
+            )
+            val runId = requireNotNull(qaRun.id)
+            val tries = scenarioIds.map { scenarioId ->
+                val qaTry = tryRepository.save(
+                    QaTryEntity(
+                        testScenarioId = scenarioId,
+                        gameInstanceId = gameInstanceId,
+                        qaRunId = runId,
+                        startedBy = startedBy,
+                        status = "PENDING",
+                        startedAt = now
+                    )
+                )
+                logService.append(
+                    qaTryId = requireNotNull(qaTry.id),
+                    direction = "ORCHE_INTERNAL",
+                    type = "STATUS",
+                    message = "QA scenario is queued.",
+                    payload = objectMapper.valueToTree(QaStatusPayload("PENDING", null))
+                )
+                qaTry
+            }
+            QaRunStarting(qaRun, tries)
+        } ?: error("QA run creation returned no result")
 
     /**
      * @param runConfig what the Agent resolved the session to, or null if it did
