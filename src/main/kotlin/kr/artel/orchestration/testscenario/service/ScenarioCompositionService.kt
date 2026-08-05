@@ -1,5 +1,7 @@
 package kr.artel.orchestration.testscenario.service
 
+import com.fasterxml.jackson.core.type.TypeReference
+import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.common.error.BadRequestException
 import kotlinx.coroutines.flow.map
@@ -8,6 +10,7 @@ import kr.artel.orchestration.testcase.dto.toTestCaseResponse
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.dto.ScenarioCaseItem
 import kr.artel.orchestration.testscenario.dto.ScenarioCasesResponse
+import kr.artel.orchestration.testscenario.dto.ScenarioStepDto
 import kr.artel.orchestration.testscenario.entity.TestScenarioCaseEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
 import org.springframework.stereotype.Service
@@ -27,6 +30,7 @@ class ScenarioCompositionService(
     private val scenarioCaseRepository: TestScenarioCaseRepository,
     private val testCaseRepository: TestCaseRepository,
     private val transactionalOperator: TransactionalOperator,
+    private val objectMapper: ObjectMapper,
 ) {
     /** 시나리오의 케이스 조합을 순서대로 조회(케이스 내용 포함). 비접근이면 null. */
     suspend fun getCases(testScenarioId: Long, userId: Long): ScenarioCasesResponse? {
@@ -74,8 +78,17 @@ class ScenarioCompositionService(
         if (rows.isEmpty()) return ScenarioCasesResponse(testScenarioId.toString(), emptyList())
         val caseById = testCaseRepository.findAllById(rows.map { it.testCaseId }).toList().associateBy { requireNotNull(it.id) }
         val items = rows.mapNotNull { row ->
-            caseById[row.testCaseId]?.let { ScenarioCaseItem(row.position, it.toTestCaseResponse()) }
+            caseById[row.testCaseId]?.let {
+                ScenarioCaseItem(row.position, it.toTestCaseResponse(), parseSteps(row.steps))
+            }
         }
         return ScenarioCasesResponse(testScenarioId.toString(), items)
+    }
+
+    /** JSONB steps 컬럼을 타입화된 Step 목록으로 파싱. 빈 배열/공백은 빈 목록. */
+    private fun parseSteps(steps: Json): List<ScenarioStepDto> {
+        val text = steps.asString()
+        if (text.isBlank() || text == "[]") return emptyList()
+        return objectMapper.readValue(text, object : TypeReference<List<ScenarioStepDto>>() {})
     }
 }
