@@ -34,3 +34,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_qa_run_active_instance
 -- (무손상; 단독 실행 경로는 하위호환으로 유지).
 ALTER TABLE qa_try ADD COLUMN IF NOT EXISTS qa_run_id BIGINT REFERENCES qa_run (id);
 CREATE INDEX IF NOT EXISTS idx_qa_try_run_id ON qa_try (qa_run_id);
+
+-- 런의 시나리오 N개를 qa_try N개로 미리 적재하되, 활성(STARTING/RUNNING)은 항상 하나여야
+-- uk_qa_try_active_instance를 위반하지 않는다. 그래서 "생성됐지만 자기 차례 대기" 상태 PENDING을
+-- 더한다: PENDING → (차례가 오면) RUNNING → 종단. PENDING은 활성 유니크·활성 필터에 안 잡힌다.
+ALTER TABLE qa_try DROP CONSTRAINT IF EXISTS qa_try_status_check;
+ALTER TABLE qa_try ADD CONSTRAINT qa_try_status_check
+    CHECK (status IN ('PENDING', 'STARTING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED'));
+
+-- completed_at 불변식도 PENDING을 "미완료" 쪽에 포함한다(PENDING은 completed_at NULL).
+ALTER TABLE qa_try DROP CONSTRAINT IF EXISTS ck_qa_try_completed_at;
+ALTER TABLE qa_try ADD CONSTRAINT ck_qa_try_completed_at CHECK (
+    (status IN ('PENDING', 'STARTING', 'RUNNING') AND completed_at IS NULL)
+    OR (status IN ('COMPLETED', 'FAILED', 'CANCELLED') AND completed_at IS NOT NULL)
+);
