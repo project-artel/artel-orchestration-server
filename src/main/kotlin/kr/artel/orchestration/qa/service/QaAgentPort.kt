@@ -3,7 +3,14 @@ package kr.artel.orchestration.qa.service
 import com.fasterxml.jackson.databind.JsonNode
 import java.time.Instant
 
-data class QaAgentSession(val sessionId: String)
+/**
+ * @param runConfig what the Agent resolved this session to, or null from an Agent
+ *   that does not report it. Kept rather than dropped because it — not the
+ *   request — is what makes a finished run attributable: the request carries
+ *   aliases ("newest prompt", "vision auto") whose meaning is settled on the
+ *   Agent side and changes over time.
+ */
+data class QaAgentSession(val sessionId: String, val runConfig: JsonNode? = null)
 
 data class QaAgentSessionContext(
     val qaTryId: String,
@@ -11,7 +18,10 @@ data class QaAgentSessionContext(
     val testScenarioId: String,
     val scenario: JsonNode,
     val model: String?,
-    val reasoning: JsonNode?
+    val language: String? = null,
+    val promptVersion: String? = null,
+    val reasoning: JsonNode? = null,
+    val arch: JsonNode? = null
 )
 
 data class QaAgentEnvelope(

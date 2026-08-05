@@ -1,6 +1,7 @@
 package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -19,23 +20,33 @@ import reactor.core.publisher.Sinks
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
+// NON_NULL matters here: an axis nobody chose must be absent, not null. The Agent
+// applies its own default for a missing field, and sending an explicit null would
+// be Orchestration overriding that default with nothing.
 @JsonInclude(JsonInclude.Include.NON_NULL)
-private data class QaSessionOpenRequest(
+internal data class QaSessionOpenRequest(
     val type: String = "QA",
     val model: String?,
     val reasoning: JsonNode?,
+    @JsonProperty("language") val language: String?,
+    @JsonProperty("prompt_version") val promptVersion: String?,
+    val arch: JsonNode?,
     val context: QaSessionOpenContext
 )
 
-private data class QaSessionOpenContext(
+internal data class QaSessionOpenContext(
     @JsonProperty("qa_try_id") val qaTryId: String,
     @JsonProperty("game_instance_id") val gameInstanceId: String,
     @JsonProperty("test_scenario_id") val testScenarioId: String,
     val scenario: JsonNode
 )
 
-private data class QaSessionOpenResponse(
-    @JsonProperty("session_id") val sessionId: String
+@JsonIgnoreProperties(ignoreUnknown = true)
+internal data class QaSessionOpenResponse(
+    @JsonProperty("session_id") val sessionId: String,
+    // Absent from an Agent that predates reporting it. Null here means "not told",
+    // which is why the try is still allowed to start — see QaTryPersistenceService.
+    @JsonProperty("run_config") val runConfig: JsonNode? = null
 )
 
 /**
@@ -63,6 +74,9 @@ class WebSocketQaAgentAdapter(
         val request = QaSessionOpenRequest(
             model = context.model,
             reasoning = context.reasoning,
+            language = context.language,
+            promptVersion = context.promptVersion,
+            arch = context.arch,
             context = QaSessionOpenContext(
                 qaTryId = context.qaTryId,
                 gameInstanceId = context.gameInstanceId,
@@ -79,7 +93,7 @@ class WebSocketQaAgentAdapter(
                 .bodyToMono(QaSessionOpenResponse::class.java)
                 .awaitSingle()
             openWebSocket(response.sessionId, onMessage, onDisconnect)
-            return QaAgentSession(response.sessionId)
+            return QaAgentSession(response.sessionId, response.runConfig)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {

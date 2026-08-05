@@ -10,7 +10,9 @@ import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
 import kr.artel.orchestration.qa.dto.QaTryResponse
 import kr.artel.orchestration.qa.dto.SendQaMessageRequest
+import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.qa.service.QaTryService
+import kr.artel.orchestration.qa.service.toRunSettings
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
@@ -33,7 +35,8 @@ private const val MAX_QA_MESSAGE_LENGTH = 4000
 @RequestMapping("/api/qa-tries")
 class QaTryController(
     private val service: QaTryService,
-    private val userResolver: SessionUserResolver
+    private val userResolver: SessionUserResolver,
+    private val objectMapper: ObjectMapper
 ) {
     @PostMapping
     suspend fun create(
@@ -45,8 +48,7 @@ class QaTryController(
                 parseId(request.testScenarioId),
                 parseId(request.gameInstanceId),
                 requireUser(jwt),
-                request.model,
-                request.reasoning
+                request.toRunSettings(objectMapper)
             )
         )
 
