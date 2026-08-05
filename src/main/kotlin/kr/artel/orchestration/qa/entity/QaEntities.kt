@@ -6,11 +6,32 @@ import org.springframework.data.relational.core.mapping.Column
 import org.springframework.data.relational.core.mapping.Table
 import java.time.Instant
 
+/**
+ * QA 실행 런(TR) 단위 (ARTEL-259). 한 qa_run = 한 세션이 런의 시나리오들을 순차 실행하는 단위이며,
+ * 그 아래 [QaTryEntity]가 시나리오당 하나씩 달린다. [runConfig]는 세션 공통 설정 스냅샷.
+ */
+@Table("qa_run")
+data class QaRunEntity(
+    @Id val id: Long? = null,
+    @Column("test_run_id") val testRunId: Long,
+    @Column("game_instance_id") val gameInstanceId: Long,
+    @Column("started_by") val startedBy: Long,
+    @Column("agent_session_id") val agentSessionId: String? = null,
+    val status: String,
+    @Column("run_config") val runConfig: Json = Json.of("{}"),
+    @Column("started_at") val startedAt: Instant,
+    @Column("completed_at") val completedAt: Instant? = null,
+    @Column("created_at") val createdAt: Instant? = null,
+    @Column("updated_at") val updatedAt: Instant? = null
+)
+
 @Table("qa_try")
 data class QaTryEntity(
     @Id val id: Long? = null,
     @Column("test_scenario_id") val testScenarioId: Long,
     @Column("game_instance_id") val gameInstanceId: Long,
+    // 부모 런(qa_run). 단독 실행(하위호환)은 null.
+    @Column("qa_run_id") val qaRunId: Long? = null,
     @Column("started_by") val startedBy: Long,
     @Column("agent_session_id") val agentSessionId: String? = null,
     val status: String,
