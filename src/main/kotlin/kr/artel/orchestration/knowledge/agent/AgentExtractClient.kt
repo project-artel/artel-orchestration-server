@@ -41,13 +41,15 @@ class AgentExtractClient(
      *
      * @param sourceUrl presigned GET URL(서명 필수)
      * @param filename 포맷 판별용 파일명
+     * @param documentId 대상 `project_document.id`. Agent의 LLM 사용량 귀속용(ARTEL-233).
      */
-    suspend fun extract(sourceUrl: String, filename: String): ExtractResponse {
+    suspend fun extract(sourceUrl: String, filename: String, documentId: Long? = null): ExtractResponse {
         val targetUrl = "$agentBaseUrl/extract"
         val request = ExtractRequest(
             sourceUrl = sourceUrl,
             filename = filename,
-            model = model?.ifBlank { null }
+            model = model?.ifBlank { null },
+            documentId = documentId
         )
         logger.info("Agent /extract 요청: filename={}", filename)
         try {

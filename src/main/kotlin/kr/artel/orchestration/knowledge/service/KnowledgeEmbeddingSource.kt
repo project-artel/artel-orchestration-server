@@ -53,8 +53,11 @@ class KnowledgeEmbeddingSource(
         live: Map<Long, KnowledgeEntity>,
     ): Pair<Map<Long, List<String>>, Map<Long, String>> {
         val items = actionable.map { toQueryItem(live.getValue(it.ownerId)) }
+        // 배치는 프로젝트를 가로질러 묶일 수 있다. 한 프로젝트로 떨어질 때만 id를 실어 Agent가 LLM
+        // 사용량을 그 프로젝트에 귀속시키게 한다(ARTEL-233) — 섞였으면 null이라 지출만 남는다.
+        val projectId = actionable.map { live.getValue(it.ownerId).projectId }.distinct().singleOrNull()
         try {
-            return toQueryMap(agent.generateQueries(items)) to emptyMap()
+            return toQueryMap(agent.generateQueries(items, projectId)) to emptyMap()
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -68,9 +71,10 @@ class KnowledgeEmbeddingSource(
         val collected = mutableMapOf<Long, List<String>>()
         val failures = mutableMapOf<Long, String>()
         for (row in actionable) {
-            val item = toQueryItem(live.getValue(row.ownerId))
+            val entity = live.getValue(row.ownerId)
+            val item = toQueryItem(entity)
             try {
-                collected += toQueryMap(agent.generateQueries(listOf(item)))
+                collected += toQueryMap(agent.generateQueries(listOf(item), entity.projectId))
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {

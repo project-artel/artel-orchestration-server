@@ -35,7 +35,7 @@ class DocumentKnowledgeExtractionService(
         try {
             markStatus(documentId, ParseStatus.EXTRACTING)
             val downloadUrl = presignDownloadUrl(document)
-            val response = agentExtractClient.extract(downloadUrl, document.fileName)
+            val response = agentExtractClient.extract(downloadUrl, document.fileName, documentId)
             knowledgeService.store(
                 projectId = document.projectId,
                 source = KnowledgeSource.DOCS,
