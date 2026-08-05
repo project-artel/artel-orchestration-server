@@ -15,6 +15,9 @@ import java.time.Instant
  *
  * [reportedAt]은 Agent가 프레임에 찍은 이벤트 시각(envelope.timestamp) — 버그가 실제로 관측된
  * 순간이다. 우리가 저장한 시각인 [createdAt]과 구분된다(네트워크 지연·재전송으로 벌어질 수 있음).
+ *
+ * [status]/[resolvedAt]/[resolvedBy]는 사람이 남기는 유일한 흔적이다(ARTEL-245). 저장 경로는
+ * 이 셋을 넘기지 않으므로 기본값이 곧 신규 이슈의 상태다 — Agent가 보고한 이슈는 항상 OPEN이다.
  */
 @Table("issue")
 data class IssueEntity(
@@ -26,6 +29,9 @@ data class IssueEntity(
     val title: String,
     val detail: Json = Json.of("{}"),
     @Column("reported_at") val reportedAt: Instant,
+    val status: String = IssueStatus.OPEN.name,
+    @Column("resolved_at") val resolvedAt: Instant? = null,
+    @Column("resolved_by") val resolvedBy: Long? = null,
     @Column("created_at") val createdAt: Instant? = null,
     @Column("updated_at") val updatedAt: Instant? = null
 )

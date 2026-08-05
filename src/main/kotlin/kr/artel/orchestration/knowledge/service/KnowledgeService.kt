@@ -1,13 +1,18 @@
 package kr.artel.orchestration.knowledge.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.knowledge.dto.KnowledgeIngestItem
 import kr.artel.orchestration.knowledge.dto.KnowledgeListResponse
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.dto.KnowledgeResponse
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
+import kr.artel.orchestration.knowledge.entity.KnowledgeEventEntity
+import kr.artel.orchestration.knowledge.entity.KnowledgeEventType
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
+import kr.artel.orchestration.knowledge.repository.KnowledgeEventRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -29,12 +34,19 @@ import java.time.Instant
  * 항목 하나를 다루는 경로(생성/수정/소프트삭제, ARTEL-188)는 배치와 달리 결과를 [KnowledgeMutation]
  * **값으로** 돌려준다. 호출자가 QA WS 라우터라, 거절을 예외로 알리면 receive 파이프라인이 끊겨
  * 프레임 하나가 QA 런 전체를 실패시킨다.
+ *
+ * **쓰는 경로는 전부 `knowledge_event`에 이력을 남긴다**(ARTEL-255). 행 갱신과 이벤트 삽입은
+ * 반드시 같은 트랜잭션이다 — 쪼개지면 `knowledge.version`과 이력의 최대 content 버전이 어긋난 채
+ * 굳고, 그 상태는 아무도 알려 주지 않는다. QA 경로는 `qa_try_id`를 채우고 문서 경로는 null이며,
+ * "어떤 런이 만든 지식을 나중 런이 지웠나"라는 결과 지표가 전부 그 구분 위에 선다.
  */
 @Service
 class KnowledgeService(
     private val knowledgeRepository: KnowledgeRepository,
     private val embeddingRepository: KnowledgeEmbeddingRepository,
+    private val eventRepository: KnowledgeEventRepository,
     private val transactionalOperator: TransactionalOperator,
+    private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
     private val logger = LoggerFactory.getLogger(KnowledgeService::class.java)
@@ -42,6 +54,9 @@ class KnowledgeService(
     /**
      * 한 출처(문서/QA 런)에서 온 knowledge 항목 배치를 저장한다.
      * 유효 항목이 하나도 없으면 아무것도 저장하지 않는다.
+     *
+     * 저장과 CREATE 이벤트 기록은 한 트랜잭션이다. 배치가 부분 저장되는 실패 모드는 원래도
+     * 없었고(`saveAll` 한 번), 실패는 호출자가 이미 삼켜 `parse_status=FAILED`로 남긴다.
      */
     suspend fun store(
         projectId: Long,
@@ -58,8 +73,14 @@ class KnowledgeService(
             )
             return
         }
-        // saveAll은 콜드 Flow라 반드시 소비해야 실제 저장이 일어난다.
-        knowledgeRepository.saveAll(rows).toList()
+        // QA 배치의 source_id는 그 런(qa_try.id)이고 문서 배치는 project_document.id다(V13).
+        // 이벤트의 qa_try_id는 전자일 때만 채워야 하며, 그 구분이 곧 "런에 귀속되는 지식"의 정의다.
+        val qaTryId = sourceId.takeIf { source == KnowledgeSource.QA }
+        transactionalOperator.executeAndAwait {
+            // saveAll은 콜드 Flow라 반드시 소비해야 실제 저장이 일어난다.
+            val saved = knowledgeRepository.saveAll(rows).toList()
+            eventRepository.saveAll(saved.map { contentEvent(it, KnowledgeEventType.CREATE, qaTryId) }).toList()
+        }
     }
 
     /** 유효하지 않은 항목은 null을 돌려 배치에서 제외한다. */
@@ -112,17 +133,21 @@ class KnowledgeService(
         if (summary.isNullOrEmpty() || description.isNullOrEmpty()) {
             return KnowledgeMutation.Rejected("summary and description are required")
         }
-        val saved = knowledgeRepository.save(
-            KnowledgeEntity(
-                projectId = projectId,
-                source = KnowledgeSource.QA.name,
-                sourceId = qaTryId,
-                tag = tag.name,
-                summary = summary,
-                description = description
+        val saved = transactionalOperator.executeAndAwait {
+            val row = knowledgeRepository.save(
+                KnowledgeEntity(
+                    projectId = projectId,
+                    source = KnowledgeSource.QA.name,
+                    sourceId = qaTryId,
+                    tag = tag.name,
+                    summary = summary,
+                    description = description
+                )
             )
-        )
-        return KnowledgeMutation.Applied(requireNotNull(saved.id))
+            eventRepository.save(contentEvent(row, KnowledgeEventType.CREATE, qaTryId))
+            row
+        }
+        return KnowledgeMutation.Applied(requireNotNull(saved?.id))
     }
 
     /**
@@ -133,6 +158,15 @@ class KnowledgeService(
      * 한 트랜잭션이어야 한다 — 쪼개져 저장만 성공하면 그 잘못된 상태가 그대로 굳는다.
      * tag만 바뀐 경우에는 무효화하지 않는다: 임베딩 입력은 summary/description뿐이라 벡터가 그대로
      * 유효하고, 무효화하면 값이 같은 벡터를 다시 청구하게 된다.
+     *
+     * **버전 판정과 임베딩 판정은 일부러 다르다**(ARTEL-255). 버전은 tag를 포함한 content 셋이
+     * 바뀌면 오른다 — 이벤트의 `after`가 셋을 통째로 스냅샷하므로, tag 변경에 버전을 안 올리면
+     * 그 버전의 스냅샷이 행과 어긋나고 `knowledge.version = max(event.version)` 불변식이 깨진다.
+     * 임베딩은 위 이유로 summary/description만 본다.
+     *
+     * 값이 하나도 실제로 바뀌지 않은 요청은 버전을 올리지 않고 이벤트도 남기지 않는다 — 같은
+     * `after`를 가진 이벤트가 쌓이면 이력이 "몇 번 호출됐나"의 기록이 되어 버린다. 행 저장 자체와
+     * `updated_by_qa_try_id` 기록은 그대로 한다(누가 손댔는지는 여전히 사실이다).
      */
     suspend fun updateFromQaTry(
         projectId: Long,
@@ -166,14 +200,19 @@ class KnowledgeService(
         )
         val embeddedTextChanged =
             updated.summary != current.summary || updated.description != current.description
+        val contentChanged = embeddedTextChanged || updated.tag != current.tag
+        val versioned = if (contentChanged) updated.copy(version = current.version + 1) else updated
 
         transactionalOperator.executeAndAwait {
-            knowledgeRepository.save(updated)
+            knowledgeRepository.save(versioned)
+            if (contentChanged) {
+                eventRepository.save(contentEvent(versioned, KnowledgeEventType.UPDATE, qaTryId))
+            }
             if (embeddedTextChanged) embeddingRepository.discardFor(knowledgeId)
         }
         logger.info(
-            "knowledge 수정: id={}, project={}, qaTry={}, 임베딩 무효화={}",
-            knowledgeId, projectId, qaTryId, embeddedTextChanged
+            "knowledge 수정: id={}, project={}, qaTry={}, version={}, 임베딩 무효화={}",
+            knowledgeId, projectId, qaTryId, versioned.version, embeddedTextChanged
         )
         return KnowledgeMutation.Applied(knowledgeId)
     }
@@ -199,12 +238,63 @@ class KnowledgeService(
             knowledgeRepository.save(
                 current.copy(deletedAt = Instant.now(clock), deletedByQaTryId = qaTryId)
             )
+            // version을 올리지 않고 현재 값을 그대로 싣는다 — 삭제는 본문을 바꾸지 않는다.
+            // `after`가 null이라 부분 유니크 인덱스에 걸리지 않고, 같은 항목을 지웠다 되살리기를
+            // 반복해도 이력이 계속 쌓인다.
+            eventRepository.save(
+                KnowledgeEventEntity(
+                    knowledgeId = knowledgeId,
+                    projectId = current.projectId,
+                    qaTryId = qaTryId,
+                    event = KnowledgeEventType.DELETE.name,
+                    version = current.version,
+                    after = null,
+                    createdAt = Instant.now(clock)
+                )
+            )
             embeddingRepository.discardFor(knowledgeId)
         }
         // 지우는 주체가 Agent라 삭제는 반드시 눈에 보여야 한다. 출처는 컬럼에도 남는다.
         logger.info("knowledge 소프트삭제: id={}, project={}, qaTry={}", knowledgeId, projectId, qaTryId)
         return KnowledgeMutation.Applied(knowledgeId)
     }
+
+    /**
+     * content를 만든 이벤트(CREATE/UPDATE) 한 건을 짓는다.
+     *
+     * [entity]는 **저장된 뒤의** 행이어야 한다 — `after`가 그 시점의 content 스냅샷이고,
+     * `version`도 거기서 온다. 저장 전 값으로 지으면 이력이 행보다 한 발 앞서거나 뒤처진다.
+     */
+    private fun contentEvent(
+        entity: KnowledgeEntity,
+        event: KnowledgeEventType,
+        qaTryId: Long?
+    ) = KnowledgeEventEntity(
+        knowledgeId = requireNotNull(entity.id),
+        projectId = entity.projectId,
+        qaTryId = qaTryId,
+        event = event.name,
+        version = entity.version,
+        after = contentSnapshot(entity),
+        createdAt = Instant.now(clock)
+    )
+
+    /**
+     * 이벤트에 실을 content 스냅샷.
+     *
+     * 문자열을 손으로 잇지 않고 [ObjectMapper]를 태운다 — summary/description은 Agent가 만든
+     * 자유 텍스트라 따옴표와 줄바꿈이 그대로 들어온다.
+     */
+    private fun contentSnapshot(entity: KnowledgeEntity): Json =
+        Json.of(
+            objectMapper.writeValueAsString(
+                mapOf(
+                    "tag" to entity.tag,
+                    "summary" to entity.summary,
+                    "description" to entity.description
+                )
+            )
+        )
 
     private fun parseKnowledgeId(raw: String?): Long? = raw?.trim()?.toLongOrNull()
 

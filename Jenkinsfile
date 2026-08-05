@@ -14,6 +14,32 @@ pipeline {
             }
         }
 
+        // Flyway 버전 충돌은 병합까지 조용하다가 배포된 컨테이너의 기동 실패로만 드러난다.
+        // Build는 -DskipTests라 마이그레이션을 한 번도 실행하지 않으므로, 이 스테이지가
+        // 파이프라인에서 충돌을 볼 수 있는 유일한 지점이다. Deploy Pipeline보다 앞에 두어
+        // 이미 깨진 develop이 배포되지 않게 한다.
+        //
+        // 종료 코드 1은 실제 충돌(빌드 실패), 2는 아직 병합되지 않은 다른 브랜치가 같은
+        // 번호를 선점한 경우다. 후자는 상대가 영영 병합되지 않을 수도 있어 차단 근거로
+        // 약하므로 unstable로만 남긴다. 상대가 먼저 병합되면 그때 1로 승격된다.
+        stage('Flyway Migration Check') {
+            steps {
+                sh 'chmod +x scripts/check-flyway-migrations.sh'
+                script {
+                    def status = sh(
+                        returnStatus: true,
+                        script: "./scripts/check-flyway-migrations.sh '${env.CHANGE_TARGET ?: 'develop'}'",
+                    )
+
+                    if (status == 2) {
+                        unstable 'Flyway 마이그레이션 버전을 다른 브랜치가 선점했다'
+                    } else if (status != 0) {
+                        error 'Flyway 마이그레이션 버전 검사 실패'
+                    }
+                }
+            }
+        }
+
         stage('Build') {
             steps {
                 sh 'chmod +x mvnw'

@@ -59,6 +59,9 @@ class KnowledgeVectorSearchRepository(
                    k.source       AS source,
                    k.summary      AS summary,
                    k.description  AS description,
+                   -- 검색이 내보낸 시점의 버전. 사용 로그가 이 값으로 붙어야 나중에 항목이
+                   -- 고쳐져도 "그때 이 런이 읽은 것"이 보존된다(ARTEL-255). 순위와 무관하다.
+                   k.version      AS version,
                    MIN(e.embedding <=> CAST(:queryVector AS vector)) AS distance
               FROM knowledge_embedding e
               JOIN knowledge k ON k.id = e.knowledge_id
@@ -69,7 +72,7 @@ class KnowledgeVectorSearchRepository(
                AND e.embedding IS NOT NULL
                $tagClause
                $sourceClause
-             GROUP BY k.id, k.tag, k.source, k.summary, k.description
+             GROUP BY k.id, k.tag, k.source, k.summary, k.description, k.version
              -- 동점일 때 순서가 흔들리면 같은 질의가 실행마다 다른 top-k를 준다. id로 못박는다.
              ORDER BY distance ASC, k.id DESC
              LIMIT :limit
@@ -92,6 +95,7 @@ class KnowledgeVectorSearchRepository(
                     source = row.get("source", String::class.java)!!,
                     summary = row.get("summary", String::class.java)!!,
                     description = row.get("description", String::class.java)!!,
+                    version = row.get("version", java.lang.Integer::class.java)!!.toInt(),
                     distance = row.get("distance", java.lang.Double::class.java)!!.toDouble()
                 )
             }
@@ -103,6 +107,7 @@ class KnowledgeVectorSearchRepository(
 /**
  * 접힌 검색 결과 한 줄.
  *
+ * @param version 이 항목의 현재 content 버전. Agent에게는 나가지 않고 사용 로그에만 쓰인다.
  * @param distance 코사인 **거리**(0에 가까울수록 가깝다). 유사도로의 변환은 서비스가 한다 —
  *   리포지토리는 DB가 준 값을 그대로 올린다.
  */
@@ -112,5 +117,6 @@ data class KnowledgeSearchRow(
     val source: String,
     val summary: String,
     val description: String,
+    val version: Int,
     val distance: Double
 )
