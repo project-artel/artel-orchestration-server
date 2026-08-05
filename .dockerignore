@@ -1,0 +1,36 @@
+# Dockerfile이 컨텍스트에서 쓰는 것은 target/*.jar 하나뿐이다. 나머지는 데몬으로
+# 전송되기만 하고 이미지에 들어가지 않는다. 빌드를 멀티스테이지로 옮겨 소스가
+# 필요해지면 이 파일부터 고쳐야 한다.
+#
+# target/은 클래스 파일과 test-classes까지 들어 있어 컨텍스트에서 가장 크다.
+# 통째로 빼면 COPY ${JAR_FILE}이 대상을 찾지 못하므로 jar만 되살린다.
+target/*
+!target/*.jar
+
+.git
+.gitignore
+.worktrees/
+
+.plan/
+.agents/
+.claude/
+.codex/
+docs/
+*.md
+
+src/
+.mvn/
+mvnw
+mvnw.cmd
+
+# 비밀값. 이미지 레이어에 남으면 회수할 수 없다.
+.env*
+.jira.env
+.notion.env
+
+.idea/
+*.iml
+*.iws
+.DS_Store
+*.swp
+*.swo

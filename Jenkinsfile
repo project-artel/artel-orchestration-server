@@ -1,6 +1,24 @@
 pipeline {
     agent any
 
+    // 멈춘 빌드는 executor를 무기한 점유하고, 그러면 뒤따르는 PR 빌드가 큐에 갇혀
+    // GitHub 체크가 'Waiting for status to be reported'에서 풀리지 않는다. 상한을
+    // 두어 잘려 나가게 한다.
+    //
+    // disableConcurrentBuilds에 abortPrevious는 쓰지 않는다. Deploy는
+    // stop → rm → run 세 단계라 원자적이지 않고, rm과 run 사이에서 중단되면
+    // 컨테이너가 사라진 채 남는다. 같은 잡의 큐 항목은 Jenkins가 하나로 합치므로
+    // 인자 없이도 적체는 막힌다.
+    //
+    // buildDiscarder는 브랜치마다 워크스페이스가 새로 파이는 멀티브랜치에서
+    // 컨트롤러 디스크가 차는 것을 막는다. 디스크가 임계 밑으로 내려가면 Jenkins가
+    // 노드를 offline으로 돌리고, executor는 있는데 아무 빌드도 시작되지 않는다.
+    options {
+        disableConcurrentBuilds()
+        timeout(time: 45, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
     environment {
         APP_NAME = 'artel-orchestration-server'
         IMAGE_NAME = 'artel-orchestration-server'
@@ -15,8 +33,9 @@ pipeline {
         }
 
         // Flyway 버전 충돌은 병합까지 조용하다가 배포된 컨테이너의 기동 실패로만 드러난다.
-        // Build는 -DskipTests라 마이그레이션을 한 번도 실행하지 않으므로, 이 스테이지가
-        // 파이프라인에서 충돌을 볼 수 있는 유일한 지점이다. Deploy Pipeline보다 앞에 두어
+        // Build & Test가 빈 DB에 마이그레이션을 새로 적용하지만 그것으로는 부족하다.
+        // 빈 DB에서는 어떤 순서도 어떤 checksum도 성공하므로, 순서 엉킴과 병합된
+        // 마이그레이션 변조는 이 스테이지에서만 드러난다. Deploy Pipeline보다 앞에 두어
         // 이미 깨진 develop이 배포되지 않게 한다.
         //
         // 종료 코드 1은 실제 충돌(빌드 실패), 2는 아직 병합되지 않은 다른 브랜치가 같은
@@ -40,10 +59,17 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        // verify는 package와 테스트를 한 번에 돈다. -DskipTests를 쓰던 동안
+        // 파이프라인에는 검증 지점이 없었고, PR 체크가 초록이어도 통과한 것은
+        // 컴파일뿐이었다. 이 스테이지는 배포 브랜치 가드 바깥이므로 PR과 피처
+        // 브랜치에서도 돈다 — PR을 검증하는 것이 목적이다.
+        //
+        // 통합 테스트는 Testcontainers로 PostgreSQL과 Redis를 띄우므로 에이전트의
+        // docker 소켓이 필요하다. Deploy가 docker run에 쓰는 그 소켓이다.
+        stage('Build & Test') {
             steps {
                 sh 'chmod +x mvnw'
-                sh './mvnw clean package -DskipTests'
+                sh './mvnw -B clean verify'
             }
         }
 
