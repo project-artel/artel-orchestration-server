@@ -2,11 +2,58 @@ package kr.artel.orchestration.qa.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.qa.entity.QaLogEntity
+import kr.artel.orchestration.qa.entity.QaRunEntity
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 import java.time.Instant
+
+
+/** QA 실행 런(TR) 단위 리포지토리 (ARTEL-259). 한 게임 인스턴스에 활성 런은 하나. */
+interface QaRunRepository : CoroutineCrudRepository<QaRunEntity, Long> {
+    @Query(
+        """
+        SELECT * FROM qa_run
+        WHERE game_instance_id = :gameInstanceId AND status IN ('STARTING', 'RUNNING')
+        """
+    )
+    suspend fun findActiveByGameInstanceId(gameInstanceId: Long): QaRunEntity?
+
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_run
+        SET status = :nextStatus, completed_at = :completedAt, updated_at = :updatedAt
+        WHERE id = :id AND status = :expectedStatus
+        """
+    )
+    suspend fun transition(
+        id: Long,
+        expectedStatus: String,
+        nextStatus: String,
+        completedAt: Instant?,
+        updatedAt: Instant
+    ): Int
+
+    /** 세션 부착 + Agent가 확정한 세션 공통 run_config를 한 문장으로 반영. */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_run
+        SET agent_session_id = :agentSessionId,
+            run_config = CAST(:runConfig AS jsonb),
+            updated_at = :updatedAt
+        WHERE id = :id AND status = 'STARTING' AND agent_session_id IS NULL
+        """
+    )
+    suspend fun attachAgentSession(
+        id: Long,
+        agentSessionId: String,
+        runConfig: String,
+        updatedAt: Instant
+    ): Int
+}
 
 interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
     @Query(
