@@ -47,6 +47,9 @@ artel:
     access-token-ttl: PT15M
     cookie-name: artel_access_token
     secure-cookie: false
+    refresh-audience: artel-refresh-test
+    refresh-token-ttl: P14D
+    refresh-cookie-name: artel_refresh_token
   storage:
     # 테스트는 가짜 DocumentStorage를 등록하므로 실제 S3에 닿지 않는다.
     # 다만 StorageProperties는 그대로 만들어지므로 버킷 값은 있어야 한다.

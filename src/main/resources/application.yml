@@ -128,6 +128,12 @@ artel:
     access-token-ttl: ${ARTEL_JWT_TTL:PT15M}
     cookie-name: ${ARTEL_AUTH_COOKIE:artel_access_token}
     secure-cookie: ${ARTEL_SECURE_COOKIE:true}
+    # refresh 토큰. audience가 access와 달라 이 토큰으로는 API를 부를 수 없다.
+    # 회전시키지 않으므로 이 TTL이 재로그인 없이 유지되는 세션의 절대 상한이다.
+    refresh-audience: ${ARTEL_JWT_REFRESH_AUDIENCE:artel-refresh}
+    refresh-token-ttl: ${ARTEL_JWT_REFRESH_TTL:P14D}
+    refresh-cookie-name: ${ARTEL_REFRESH_COOKIE:artel_refresh_token}
+    sdk-refresh-token-ttl: ${ARTEL_SDK_REFRESH_TTL:P90D}
   storage:
     # 기획서 원본을 담을 S3.
     bucket: ${ARTEL_S3_BUCKET:artel-local}

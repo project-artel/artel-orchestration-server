@@ -7,6 +7,7 @@ import kotlinx.coroutines.reactor.mono
 import kr.artel.orchestration.auth.oauth.OAuthIdentityResolver
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthUserService
+import kr.artel.orchestration.auth.service.RefreshTokenService
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.context.properties.EnableConfigurationProperties
@@ -16,7 +17,6 @@ import org.springframework.context.annotation.Primary
 import org.springframework.core.annotation.Order
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
-import org.springframework.http.ResponseCookie
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity
 import org.springframework.security.config.web.server.ServerHttpSecurity
 import org.springframework.security.core.Authentication
@@ -92,6 +92,8 @@ class SecurityConfig {
         http: ServerHttpSecurity,
         properties: AuthProperties,
         jwtService: JwtService,
+        refreshTokenService: RefreshTokenService,
+        authCookies: AuthCookies,
         identityResolver: OAuthIdentityResolver,
         oauthUserService: OAuthUserService
     ): SecurityWebFilterChain = http
@@ -115,6 +117,10 @@ class SecurityConfig {
                 "/ws/sdk",
                 // SDK가 코드를 토큰으로 바꾸는 경로. 이 요청에는 아직 세션도 토큰도 없다.
                 "/api/auth/sdk/token",
+                // 재발급 경로. access 토큰이 만료된 뒤에 부르는 것이 목적이라 인증을 걸면 쓸 수 없다.
+                // 자격증명은 refresh 토큰이며 컨트롤러가 직접 검증한다.
+                "/api/auth/refresh",
+                "/api/auth/sdk/token/refresh",
                 "/api/orchestration/**",
                 // knowledge 조회는 Agent/내부 도구용 서버-투-서버 경로(엔드유저 JWT 대상 아님).
                 "/api/knowledge/**",
@@ -132,7 +138,14 @@ class SecurityConfig {
         }
         .oauth2Login {
             it.authenticationSuccessHandler(
-                oauthSuccessHandler(properties, jwtService, identityResolver, oauthUserService)
+                oauthSuccessHandler(
+                    properties,
+                    jwtService,
+                    refreshTokenService,
+                    authCookies,
+                    identityResolver,
+                    oauthUserService
+                )
             )
             it.authenticationFailureHandler { webFilterExchange, _ ->
                 webFilterExchange.exchange.response.statusCode = HttpStatus.FOUND
@@ -151,7 +164,7 @@ class SecurityConfig {
         }
         .logout {
             it.logoutUrl("/api/auth/logout")
-            it.logoutSuccessHandler(cookieLogoutHandler(properties))
+            it.logoutSuccessHandler(cookieLogoutHandler(authCookies))
         }
         .build()
 
@@ -172,6 +185,11 @@ class SecurityConfig {
     @Bean
     fun sdkJwtDecoder(properties: AuthProperties): NimbusReactiveJwtDecoder =
         decoderFor(properties, properties.sdkAudience)
+
+    /** refresh 토큰 전용 디코더. access 토큰을 재발급 경로에 내밀면 여기서 떨어진다. */
+    @Bean
+    fun refreshJwtDecoder(properties: AuthProperties): NimbusReactiveJwtDecoder =
+        decoderFor(properties, properties.refreshAudience)
 
     private fun decoderFor(properties: AuthProperties, audience: String): NimbusReactiveJwtDecoder {
         val key = SecretKeySpec(properties.jwtSecret.toByteArray(Charsets.UTF_8), "HmacSHA256")
@@ -211,6 +229,8 @@ class SecurityConfig {
     private fun oauthSuccessHandler(
         properties: AuthProperties,
         jwtService: JwtService,
+        refreshTokenService: RefreshTokenService,
+        authCookies: AuthCookies,
         identityResolver: OAuthIdentityResolver,
         oauthUserService: OAuthUserService
     ) = ServerAuthenticationSuccessHandler { webFilterExchange, authentication ->
@@ -219,15 +239,14 @@ class SecurityConfig {
             val identity = identityResolver.resolve(authentication as org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken)
             val persistedIdentity = oauthUserService.upsert(identity)
             val token = jwtService.issue(persistedIdentity)
-            val cookie = ResponseCookie.from(properties.cookieName, token)
-                .httpOnly(true)
-                .secure(properties.secureCookie)
-                .sameSite("Lax")
-                .path("/")
-                .maxAge(properties.accessTokenTtl)
-                .build()
+            val refresh = refreshTokenService.issue(
+                persistedIdentity.userId,
+                properties.audience,
+                properties.refreshTokenTtl
+            )
             val response = webFilterExchange.exchange.response
-            response.addCookie(cookie)
+            response.addCookie(authCookies.access(token))
+            response.addCookie(authCookies.refresh(refresh.token))
             response.statusCode = HttpStatus.FOUND
             response.headers.location = URI.create(properties.frontendOrigin)
             response.setComplete().awaitSingleOrNull()
@@ -263,16 +282,8 @@ class SecurityConfig {
         exchange.response.writeWith(Mono.just(body))
     }
 
-    private fun cookieLogoutHandler(properties: AuthProperties) = ServerLogoutSuccessHandler { exchange, _ ->
-        exchange.exchange.response.addCookie(
-            ResponseCookie.from(properties.cookieName, "")
-                .httpOnly(true)
-                .secure(properties.secureCookie)
-                .sameSite("Lax")
-                .path("/")
-                .maxAge(java.time.Duration.ZERO)
-                .build()
-        )
+    private fun cookieLogoutHandler(authCookies: AuthCookies) = ServerLogoutSuccessHandler { exchange, _ ->
+        authCookies.cleared().forEach(exchange.exchange.response::addCookie)
         exchange.exchange.response.statusCode = HttpStatus.NO_CONTENT
         exchange.exchange.response.setComplete()
     }
