@@ -2,6 +2,8 @@ package kr.artel.orchestration.knowledge.repository
 
 import io.r2dbc.spi.Readable
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.knowledge.entity.KnowledgeScope
+import kr.artel.orchestration.knowledge.entity.KnowledgeScopeSql
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.r2dbc.core.flow
 import org.springframework.stereotype.Repository
@@ -31,14 +33,21 @@ class KnowledgeVectorSearchRepository(
      * 접기를 애플리케이션이 아니라 SQL에서 하는 이유는 `LIMIT`이 **접은 뒤에** 걸려야 하기 때문이다.
      * DB에서 넉넉히 받아 코드에서 접으면 몇 개가 남을지 알 수 없어 상한이 상한 노릇을 못 한다.
      *
-     * 스코프 조건 셋은 뺄 수 없다:
+     * 범위 조건 넷은 뺄 수 없다:
      * - `k.project_id = :projectId` — 다른 프로젝트의 지식이 새면 안 된다.
      * - `k.deleted_at IS NULL` — 소프트삭제(ARTEL-188)된 항목은 읽기 경로에서 빠져야 한다.
+     * - [KnowledgeScopeSql.VISIBLE] — 다른 스코프의 지식이 새면 안 되고, 이 스코프의 그림자에
+     *   가려진 baseline도 빠져야 한다(ARTEL-256). 목록 조회와 **같은 술어**를 쓴다.
      * - `e.embedding IS NOT NULL` — 대기 행(V18의 큐 센티널)은 벡터가 없다. 빼지 않으면 거리가
      *   NULL인 그룹이 만들어져 아직 백필되지 않은 항목이 결과에 섞인다.
+     *
+     * ⚠️ 스코프 런이 baseline을 고치면 그 baseline은 즉시 가려지지만 그림자의 벡터는 비동기
+     * 백필이 채운다. 그 사이 그 항목은 이 검색에서 잠시 사라진다. 새 동작이 아니다 — 지금도
+     * 본문을 고치면 옛 벡터를 버리므로(`KnowledgeService.updateFromQaTry`) 같은 구간이 생긴다.
      */
     suspend fun searchNearest(
         projectId: Long,
+        scope: KnowledgeScope,
         queryVector: String,
         kind: String,
         model: String,
@@ -67,6 +76,7 @@ class KnowledgeVectorSearchRepository(
                AND e.kind = :kind
                AND e.model = :model
                AND e.embedding IS NOT NULL
+               AND ${KnowledgeScopeSql.VISIBLE}
                $tagClause
                $sourceClause
              GROUP BY k.id, k.tag, k.source, k.summary, k.description
@@ -80,6 +90,11 @@ class KnowledgeVectorSearchRepository(
             .bind("kind", kind)
             .bind("model", model)
             .bind("limit", limit)
+
+        // 운영 런은 scope가 NULL이다. 타입 없는 NULL을 보내면 Postgres가 파라미터 타입을 정하지
+        // 못해 질의 자체가 실패하므로 BIGINT로 못박아 보낸다.
+        spec = scope.id?.let { spec.bind("scopeId", it) }
+            ?: spec.bindNull("scopeId", java.lang.Long::class.java)
 
         tags.forEachIndexed { index, tag -> spec = spec.bind("tag$index", tag) }
         if (source != null) spec = spec.bind("source", source)

@@ -90,7 +90,7 @@ class KnowledgeMutationInboundIntegrationTest {
 
         deliver(run.qaTryId, "KNOWLEDGE_CREATE", """{"tag":"RULE","summary":"낙하 데미지","description":"5m부터 1당 2"}""")
 
-        val stored = knowledgeRepository.findByProjectIdAndDeletedAtIsNullOrderByIdDesc(run.projectId).toList()
+        val stored = knowledgeRepository.findVisible(run.projectId, null, null, null).toList()
         assertThat(stored).hasSize(1)
         assertThat(stored.single().source).isEqualTo("QA")
         assertThat(stored.single().sourceId).isEqualTo(run.qaTryId)
@@ -123,7 +123,7 @@ class KnowledgeMutationInboundIntegrationTest {
         assertThat(row!!.deletedAt).isNotNull()
         assertThat(row.deletedByQaTryId).isEqualTo(run.qaTryId)
         // 읽기 경로에서는 사라진다.
-        assertThat(knowledgeRepository.findByProjectIdAndDeletedAtIsNullOrderByIdDesc(run.projectId).toList()).isEmpty()
+        assertThat(knowledgeRepository.findVisible(run.projectId, null, null, null).toList()).isEmpty()
     }
 
     /** 범위가 런에서 나오므로, 다른 프로젝트의 id를 지목해도 그 항목에 닿지 않는다. */
@@ -149,7 +149,7 @@ class KnowledgeMutationInboundIntegrationTest {
         deliver(run.qaTryId, "KNOWLEDGE_UPDATE", """{"summary":"s"}""")
         deliver(run.qaTryId, "KNOWLEDGE_DELETE", """{"knowledge_id":"abc"}""")
 
-        assertThat(knowledgeRepository.findByProjectIdAndDeletedAtIsNullOrderByIdDesc(run.projectId).toList()).isEmpty()
+        assertThat(knowledgeRepository.findVisible(run.projectId, null, null, null).toList()).isEmpty()
         assertThat(errorLogs(run.qaTryId)).hasSize(3)
         // 런이 살아 있어야 한다. 여기가 FAILED면 프레임 하나가 QA 런을 죽인 것이다.
         assertThat(qaTryRepository.findById(run.qaTryId)!!.status).isEqualTo("RUNNING")
@@ -166,8 +166,100 @@ class KnowledgeMutationInboundIntegrationTest {
         )
         deliver(run.qaTryId, "KNOWLEDGE_CREATE", """{"tag":"RULE","summary":"낙하","description":"5m부터"}""")
 
-        val stored = knowledgeRepository.findByProjectIdAndDeletedAtIsNullOrderByIdDesc(run.projectId).toList()
+        val stored = knowledgeRepository.findVisible(run.projectId, null, null, null).toList()
         assertThat(stored.map { it.summary }).containsExactlyInAnyOrder("체력바", "낙하")
+        assertThat(errorLogs(run.qaTryId)).isEmpty()
+    }
+
+    // ------------------------------------------ 스코프와 knowledge_mode (ARTEL-256)
+
+    /**
+     * 스코프도 프로젝트와 같이 **런에서 나온다.** Agent가 프레임으로 스코프를 지목할 수 있으면
+     * 격리가 프레임 하나로 뚫리고, 그렇게 뚫린 실험은 결과가 그럴듯해서 아무도 못 알아챈다.
+     */
+    @Test
+    fun `스코프 런의 쓰기는 그 스코프로 간다`(): Unit = runBlocking {
+        val run = seedRunningQaTry(knowledgeScopeId = 5_001L)
+
+        deliver(run.qaTryId, "KNOWLEDGE_CREATE", """{"tag":"RULE","summary":"실험 지식","description":"d"}""")
+        deliver(
+            run.qaTryId,
+            "KNOWLEDGE",
+            """{"source":"qa","game_context":[{"tag":"UI","summary":"실험 배치","description":"d"}]}"""
+        )
+
+        // 운영 조회에는 잡히지 않는다.
+        assertThat(knowledgeRepository.findVisible(run.projectId, null, null, null).toList()).isEmpty()
+        val inScope = knowledgeRepository.findVisible(run.projectId, 5_001L, null, null).toList()
+        assertThat(inScope.map { it.summary }).containsExactlyInAnyOrder("실험 지식", "실험 배치")
+        assertThat(errorLogs(run.qaTryId)).isEmpty()
+    }
+
+    /** 스코프 런의 삭제는 운영 행을 건드리지 않고 툼스톤 그림자를 남긴다. */
+    @Test
+    fun `스코프 런의 DELETE는 운영 행을 건드리지 않는다`(): Unit = runBlocking {
+        val run = seedRunningQaTry(knowledgeScopeId = 5_002L)
+        val baseline = givenKnowledge(run.projectId, summary = "운영 지식")
+
+        deliver(run.qaTryId, "KNOWLEDGE_DELETE", """{"knowledge_id":"$baseline"}""")
+
+        assertThat(knowledgeRepository.findById(baseline)!!.deletedAt).isNull()
+        assertThat(knowledgeRepository.findVisible(run.projectId, 5_002L, null, null).toList()).isEmpty()
+        assertThat(knowledgeRepository.findVisible(run.projectId, null, null, null).toList()).hasSize(1)
+        assertThat(errorLogs(run.qaTryId)).isEmpty()
+    }
+
+    /**
+     * `frozen`은 쓰기 프레임 전부를 거부한다 — 개별 변이든 배치 인입이든.
+     *
+     * **거부가 런을 죽이면 안 된다.** 거절은 정상 동작이고, 여기서 예외가 WS 수신 체인 밖으로 나가면
+     * 소켓이 닫혀 그 arm의 런이 통째로 실패한다.
+     */
+    @Test
+    fun `frozen 런의 쓰기는 거부되고 런은 계속된다`(): Unit = runBlocking {
+        val run = seedRunningQaTry(knowledgeMode = "frozen")
+
+        deliver(run.qaTryId, "KNOWLEDGE_CREATE", """{"tag":"RULE","summary":"쓰면 안 됨","description":"d"}""")
+        deliver(
+            run.qaTryId,
+            "KNOWLEDGE",
+            """{"source":"qa","game_context":[{"tag":"UI","summary":"이것도 안 됨","description":"d"}]}"""
+        )
+        val victim = givenKnowledge(run.projectId, summary = "그대로")
+        deliver(run.qaTryId, "KNOWLEDGE_UPDATE", """{"knowledge_id":"$victim","summary":"바뀌면 안 됨"}""")
+        deliver(run.qaTryId, "KNOWLEDGE_DELETE", """{"knowledge_id":"$victim"}""")
+
+        val rows = knowledgeRepository.findVisible(run.projectId, null, null, null).toList()
+        assertThat(rows.map { it.summary }).containsExactly("그대로")
+        assertThat(errorLogs(run.qaTryId)).hasSize(4)
+        assertThat(errorLogs(run.qaTryId)).allMatch { it.message!!.contains("knowledge_mode=frozen") }
+        assertThat(qaTryRepository.findById(run.qaTryId)!!.status).isEqualTo("RUNNING")
+    }
+
+    /** `off`는 읽기까지 막으므로 쓰기도 당연히 막힌다. */
+    @Test
+    fun `off 런의 쓰기도 거부된다`(): Unit = runBlocking {
+        val run = seedRunningQaTry(knowledgeMode = "off")
+
+        deliver(run.qaTryId, "KNOWLEDGE_CREATE", """{"tag":"RULE","summary":"쓰면 안 됨","description":"d"}""")
+
+        assertThat(knowledgeRepository.findVisible(run.projectId, null, null, null).toList()).isEmpty()
+        assertThat(errorLogs(run.qaTryId).single().message).contains("knowledge_mode=off")
+        assertThat(qaTryRepository.findById(run.qaTryId)!!.status).isEqualTo("RUNNING")
+    }
+
+    /**
+     * 회귀 방어. `run_config`에 `knowledge_mode`가 없는 런은 이 기능 이전의 런과 구버전 Agent가
+     * 붙은 런이다. 둘 다 지금까지처럼 읽고 써야 한다 — 모드를 모르는 런이 실패하면 실험의 공백이
+     * 아니라 장애다.
+     */
+    @Test
+    fun `run_config에 모드가 없으면 지금까지처럼 쓴다`(): Unit = runBlocking {
+        val run = seedRunningQaTry(knowledgeMode = null)
+
+        deliver(run.qaTryId, "KNOWLEDGE_CREATE", """{"tag":"RULE","summary":"저장된다","description":"d"}""")
+
+        assertThat(knowledgeRepository.findVisible(run.projectId, null, null, null).toList()).hasSize(1)
         assertThat(errorLogs(run.qaTryId)).isEmpty()
     }
 
@@ -200,7 +292,10 @@ class KnowledgeMutationInboundIntegrationTest {
             )
         ).id!!
 
-    private suspend fun seedRunningQaTry(): RunningQaTry {
+    private suspend fun seedRunningQaTry(
+        knowledgeScopeId: Long? = null,
+        knowledgeMode: String? = null
+    ): RunningQaTry {
         val owner = signIn(UUID.randomUUID().toString().take(8))
         val ownerId = owner.userId.toLong()
         val now = Instant.now()
@@ -234,6 +329,11 @@ class KnowledgeMutationInboundIntegrationTest {
                 gameInstanceId = instance.id!!,
                 startedBy = ownerId,
                 status = "RUNNING",
+                knowledgeScopeId = knowledgeScopeId,
+                // 모드가 null인 런은 이 기능 이전의 런과 구버전 Agent가 붙은 런을 재현한다.
+                runConfig = knowledgeMode
+                    ?.let { Json.of("""{"knowledge_mode":"$it"}""") }
+                    ?: Json.of("{}"),
                 startedAt = now
             )
         )!!

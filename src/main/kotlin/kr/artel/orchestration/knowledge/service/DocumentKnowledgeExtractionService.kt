@@ -1,6 +1,7 @@
 package kr.artel.orchestration.knowledge.service
 
 import kr.artel.orchestration.knowledge.agent.AgentExtractClient
+import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.project.entity.ParseStatus
 import kr.artel.orchestration.project.entity.ProjectDocumentEntity
@@ -38,6 +39,10 @@ class DocumentKnowledgeExtractionService(
             val response = agentExtractClient.extract(downloadUrl, document.fileName, documentId)
             knowledgeService.store(
                 projectId = document.projectId,
+                // 사람이 올린 문서에서 나온 지식은 언제나 운영 지식창고의 것이다(ARTEL-256).
+                // 실험 arm이 문서를 올리는 경로는 없고, 있어도 그 문서는 프로젝트의 사실이지
+                // 그 arm의 산물이 아니다.
+                scope = KnowledgeScope.PRODUCTION,
                 source = KnowledgeSource.DOCS,
                 sourceId = documentId,
                 // Orche가 업로드 확정 때 계산해 보존한 파일 hash를 재사용한다(Agent metadata 대신

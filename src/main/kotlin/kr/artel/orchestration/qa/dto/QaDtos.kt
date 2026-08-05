@@ -19,7 +19,21 @@ data class CreateQaTryRequest(
      * Agent already rejects an unknown or out-of-range knob with a 422, which
      * surfaces as a failed try rather than a run quietly using something else.
      */
-    val arch: JsonNode? = null
+    val arch: JsonNode? = null,
+    /**
+     * 이 런이 읽고 쓸 지식 스코프(ARTEL-256). 생략하면 운영 런이라 운영 지식창고를 그대로 쓴다.
+     *
+     * 실험 엔티티(qa_experiment / qa_experiment_arm)가 아직 없어 지금은 이 필드가 스코프를 정하는
+     * 유일한 입구다. 값의 출처를 서버가 검증하지 않는 것은 그래서다 — 지금 형식을 못박으면 실험
+     * 엔티티가 그 형식을 따라가야 하는 순서가 된다. 그때가 오면 이 필드는 그 엔티티가 채운다.
+     */
+    val knowledgeScopeId: String? = null,
+    /**
+     * 이 런에 지식창고를 얼마나 열어 줄지: `learning`(기본) / `frozen` / `off`. 잘못된 값은 400이다 —
+     * 조용히 기본값으로 떨어지면 대조군으로 돌린 arm이 사실은 학습을 하고, 그 결과는 그럴듯해서
+     * 실험이 끝날 때까지 아무도 못 알아챈다.
+     */
+    val knowledgeMode: String? = null
 )
 
 data class QaReasoningRequest(
@@ -64,7 +78,12 @@ data class QaTryResponse(
     val promptVersion: String? = null,
     val agentArch: String? = null,
     val agentFingerprint: String? = null,
-    val runConfig: JsonNode? = null
+    val runConfig: JsonNode? = null,
+    /**
+     * 이 런이 쓴 지식 스코프(ARTEL-256). null이면 운영 런이다. `knowledge_mode`는 별도 필드가
+     * 아니라 [runConfig] 안에 있다 — 비교 축은 전부 그 스냅샷에 모여야 집계가 한 곳만 읽는다.
+     */
+    val knowledgeScopeId: String? = null
 )
 
 data class QaLogResponse(

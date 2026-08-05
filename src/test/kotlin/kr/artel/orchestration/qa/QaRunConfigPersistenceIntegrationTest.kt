@@ -9,20 +9,26 @@ import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.OAuthUserService
+import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.qa.dto.CreateQaTryRequest
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.qa.service.QaKnowledgeSettings
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
+import kr.artel.orchestration.qa.service.toKnowledgeSettings
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -143,7 +149,91 @@ class QaRunConfigPersistenceIntegrationTest {
         assertThat(running.agentSessionId).isEqualTo("session-1")
         assertThat(running.model).isNull()
         assertThat(running.agentFingerprint).isNull()
-        assertThat(objectMapper.readTree(running.runConfig.asString()).isEmpty).isTrue()
+        // Agent 가 아무것도 말하지 않아도 knowledge_mode 는 남는다 — Orchestration 이 집행하는
+        // 값이라 Agent 의 침묵과 무관하고, 빠지면 그 런이 어느 arm 이었는지 알 수 없다(ARTEL-256).
+        val stored = objectMapper.readTree(running.runConfig.asString())
+        assertThat(stored.fieldNames().asSequence().toList()).containsExactly("knowledge_mode")
+        assertThat(stored.path("knowledge_mode").asText()).isEqualTo("learning")
+    }
+
+    // ---------------------------------------------------- 지식 스코프·모드 (ARTEL-256)
+
+    /**
+     * 스코프와 모드는 **런이 만들어지는 순간** 기록된다. 세션 부착을 기다리면 그 사이 try 는 이미
+     * STARTING 이라 라우터가 프레임을 받는데, 그 창에서 모드가 비어 있으면 `frozen` 으로 돌린 arm 이
+     * 지식창고에 쓸 수 있다.
+     */
+    @Test
+    fun `지식 스코프와 모드는 세션 부착 전에 이미 기록된다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val (starting, _) = persistence.createStarting(
+            ids.scenarioId,
+            ids.instanceId,
+            ids.ownerId,
+            QaKnowledgeSettings(scopeId = 8_001L, mode = KnowledgeMode.FROZEN)
+        )
+
+        assertThat(starting.status).isEqualTo("STARTING")
+        assertThat(starting.knowledgeScopeId).isEqualTo(8_001L)
+        assertThat(objectMapper.readTree(starting.runConfig.asString()).path("knowledge_mode").asText())
+            .isEqualTo("frozen")
+    }
+
+    /**
+     * Agent 스냅샷이 run_config 를 통째로 덮어써도 모드는 살아남아야 한다.
+     *
+     * 모드를 **호출자가 다시 주지 않는다** — `attachAndMarkRunning` 이 STARTING 행에서 옮겨 온다.
+     * 파라미터로 받으면 호출자가 createStarting 때와 다른 값을 넘길 수 있고, 그러면 게이트가 이미
+     * 집행된 뒤에 기록만 바뀐다.
+     */
+    @Test
+    fun `Agent 스냅샷을 덮어써도 knowledge_mode 는 남는다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val knowledge = QaKnowledgeSettings(scopeId = 8_002L, mode = KnowledgeMode.OFF)
+        val (starting, _) =
+            persistence.createStarting(ids.scenarioId, ids.instanceId, ids.ownerId, knowledge)
+
+        val (running, _) = persistence.attachAndMarkRunning(
+            starting,
+            "session-1",
+            objectMapper.readTree(resolvedConfig)
+        )
+
+        val stored = objectMapper.readTree(running.runConfig.asString())
+        assertThat(stored.path("knowledge_mode").asText()).isEqualTo("off")
+        // Agent 스냅샷도 그대로 있다 — 얹는 것이지 갈아치우는 것이 아니다.
+        assertThat(stored.path("agent_fingerprint").asText()).isEqualTo("a3f1c9d2e8b0")
+        assertThat(running.knowledgeScopeId).isEqualTo(8_002L)
+    }
+
+    /** 요청이 지식 설정을 주지 않으면 운영 런이고 지금까지의 동작(learning)이다. */
+    @Test
+    fun `지식 설정이 없으면 운영 런에 learning 이다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val (starting, _) =
+            persistence.createStarting(ids.scenarioId, ids.instanceId, ids.ownerId, QaKnowledgeSettings())
+
+        assertThat(starting.knowledgeScopeId).isNull()
+        assertThat(objectMapper.readTree(starting.runConfig.asString()).path("knowledge_mode").asText())
+            .isEqualTo("learning")
+    }
+
+    /**
+     * 잘못된 모드 토큰은 요청 단계에서 거절한다. 조용히 기본값으로 떨어지면 대조군으로 돌린 arm 이
+     * 사실은 학습을 하고, 그 오염은 결과가 그럴듯해서 실험이 끝날 때까지 드러나지 않는다.
+     */
+    @Test
+    fun `잘못된 지식 설정은 요청 단계에서 거절된다`() {
+        val base = CreateQaTryRequest(testScenarioId = "1", gameInstanceId = "2")
+
+        assertThat(base.toKnowledgeSettings()).isEqualTo(QaKnowledgeSettings())
+        assertThat(base.copy(knowledgeScopeId = "42", knowledgeMode = "FROZEN").toKnowledgeSettings())
+            .isEqualTo(QaKnowledgeSettings(scopeId = 42L, mode = KnowledgeMode.FROZEN))
+
+        assertThatThrownBy { base.copy(knowledgeMode = "learnign").toKnowledgeSettings() }
+            .isInstanceOf(BadRequestException::class.java)
+        assertThatThrownBy { base.copy(knowledgeScopeId = "not-a-number").toKnowledgeSettings() }
+            .isInstanceOf(BadRequestException::class.java)
     }
 
     @Test
@@ -182,9 +272,11 @@ class QaRunConfigPersistenceIntegrationTest {
 
     // ----------------------------------------------------------------- seeding
 
-    private suspend fun seedStartingQaTry(): QaTryEntity {
-        val owner = signIn()
-        val ownerId = owner.userId.toLong()
+    private data class SeedIds(val ownerId: Long, val scenarioId: Long, val instanceId: Long)
+
+    /** 런 하나를 만들 수 있는 최소 배경(사용자·프로젝트·시나리오·인스턴스). */
+    private suspend fun seedIds(): SeedIds {
+        val ownerId = signIn().userId.toLong()
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "run-config-project", genre = "ACTION", createdAt = now, updatedAt = now)
@@ -210,15 +302,21 @@ class QaRunConfigPersistenceIntegrationTest {
                 updatedAt = now
             )
         )!!
-        return qaTryRepository.save(
-            QaTryEntity(
-                testScenarioId = scenario.id!!,
-                gameInstanceId = instance.id!!,
-                startedBy = ownerId,
-                status = "STARTING",
-                startedAt = now
-            )
-        )!!
+        return SeedIds(ownerId = ownerId, scenarioId = scenario.id!!, instanceId = instance.id!!)
+    }
+
+    /**
+     * 실제 생성 경로로 STARTING 런을 만든다.
+     *
+     * 엔티티를 직접 save 하지 않는 것은 `createStarting` 이 run_config 에 knowledge_mode 를 미리
+     * 심기 때문이다(ARTEL-256). 직접 save 하면 실제 런에는 없는 "모드가 비어 있는 STARTING 행"을
+     * 만들어 놓고 그 위에서 부착을 검증하게 된다.
+     */
+    private suspend fun seedStartingQaTry(): QaTryEntity {
+        val ids = seedIds()
+        val (starting, _) =
+            persistence.createStarting(ids.scenarioId, ids.instanceId, ids.ownerId, QaKnowledgeSettings())
+        return starting
     }
 
     private suspend fun signIn(): AuthenticatedUser =

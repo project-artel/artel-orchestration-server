@@ -68,4 +68,25 @@ data class KnowledgeEntity(
 
     @Column("deleted_by_qa_try_id")
     val deletedByQaTryId: Long? = null,
+
+    /**
+     * 이 항목이 속한 지식 스코프(ARTEL-256). null이면 운영 공용(baseline)이다.
+     * 스코프 런은 baseline + 자기 스코프를 읽고 쓰기는 전부 자기 스코프로 보내므로, 운영
+     * 지식창고는 실험 런 때문에 한 행도 바뀌지 않는다. 값의 의미는 [KnowledgeScope] 참조.
+     */
+    @Column("scope_id")
+    val scopeId: Long? = null,
+
+    /**
+     * 이 스코프 행이 가리는 baseline 항목의 id(ARTEL-256). null이면 그림자가 아니다.
+     *
+     * 스코프 런이 baseline을 고치거나 지울 때 그 행을 직접 건드리면 운영 지식창고가 실험 때문에
+     * 깎여나간다. 대신 baseline 하나를 가리는 스코프 행을 만든다.
+     * - [deletedAt]이 null인 그림자 = 그 스코프 안에서의 수정(본문은 이 행에 있다)
+     * - [deletedAt]이 찍힌 그림자    = 그 스코프 안에서의 삭제(툼스톤)
+     *
+     * 어느 쪽이든 읽기 질의는 가려진 baseline을 결과에서 뺀다([KnowledgeScopeSql.VISIBLE]).
+     */
+    @Column("shadows_id")
+    val shadowsId: Long? = null,
 )
