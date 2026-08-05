@@ -98,6 +98,7 @@ class TestScenarioReconcileIntegrationTest {
     @Autowired private lateinit var oauthUserService: OAuthUserService
     @Autowired private lateinit var scenarioRepository: TestScenarioRepository
     @Autowired private lateinit var scenarioCaseRepository: TestScenarioCaseRepository
+    @Autowired private lateinit var compositionService: kr.artel.orchestration.testscenario.service.ScenarioCompositionService
     @Autowired private lateinit var runScenarioRepository: TestRunScenarioRepository
     @Autowired private lateinit var runRepository: TestRunRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
@@ -393,6 +394,51 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(cases[0].steps.asString()).contains("A진행")
         // pos1: 원래 (caseB,1)였고 이제 (caseA,1) — 스냅샷에 없어 빈 배열로 초기화(B도달은 폐기).
         assertThat(cases[1].steps.asString()).isEqualTo("[]")
+    }
+
+    // ---- (g) 실행용 시나리오 조립: 조합 TC + steps를 cases[]로 실어 준다 ----------------------
+
+    @Test
+    fun `agentScenario가 조합 TC와 steps를 cases 배열로 실어 준다`(): Unit = runBlocking {
+        val (appUserId, _) = issueUser()
+        val projectId = createMemberProject(appUserId)
+
+        val caseA = insertCase(projectId, "RULE", "상점 진입")
+        val caseB = insertCase(projectId, "UI", "구매 확인")
+
+        val scenarioId = scenarioRepository.save(
+            TestScenarioEntity(projectId = projectId, payload = Json.of("""{"title":"구매","description":"d"}"""))
+        ).id!!
+        // caseA(pos0): setup 스텝 / caseB(pos1): guide 스텝
+        scenarioCaseRepository.save(
+            TestScenarioCaseEntity(
+                testScenarioId = scenarioId, testCaseId = caseA, position = 0,
+                steps = Json.of("""[{"id":"s1","kind":"setup","assert":false,"intent":"상점으로 이동"}]""")
+            )
+        )
+        scenarioCaseRepository.save(
+            TestScenarioCaseEntity(
+                testScenarioId = scenarioId, testCaseId = caseB, position = 1,
+                steps = Json.of("""[{"id":"s2","kind":"guide","assert":true,"intent":"구매 버튼 누름","hint":"Enter"}]""")
+            )
+        )
+
+        val node = compositionService.agentScenario(scenarioId, appUserId, """{"title":"구매","description":"d"}""")
+
+        assertThat(node.get("title").asText()).isEqualTo("구매")
+        val cases = node.get("cases")
+        assertThat(cases).hasSize(2)
+        // pos0: caseA + setup 스텝
+        assertThat(cases[0].get("position").asInt()).isEqualTo(0)
+        assertThat(cases[0].get("title").asText()).isEqualTo("상점 진입")
+        assertThat(cases[0].get("expected").asText()).isEqualTo("상점 진입 기대결과")
+        assertThat(cases[0].get("steps")).hasSize(1)
+        assertThat(cases[0].get("steps")[0].get("kind").asText()).isEqualTo("setup")
+        assertThat(cases[0].get("steps")[0].get("intent").asText()).isEqualTo("상점으로 이동")
+        // pos1: caseB + guide 스텝(hint 포함)
+        assertThat(cases[1].get("title").asText()).isEqualTo("구매 확인")
+        assertThat(cases[1].get("steps")[0].get("kind").asText()).isEqualTo("guide")
+        assertThat(cases[1].get("steps")[0].get("hint").asText()).isEqualTo("Enter")
     }
 
     // ---- helpers ----------------------------------------------------------------------------

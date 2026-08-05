@@ -21,6 +21,7 @@ import kr.artel.orchestration.qa.dto.QaReasoningRequest
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
+import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
@@ -163,6 +164,7 @@ class QaTryPersistenceService(
 class QaTryService(
     private val tryRepository: QaTryRepository,
     private val scenarioAccessService: TestScenarioAccessService,
+    private val compositionService: ScenarioCompositionService,
     private val instanceRepository: GameInstanceRepository,
     private val sessionManager: SessionManager,
     private val agentPort: QaAgentPort,
@@ -200,7 +202,7 @@ class QaTryService(
             qaTryId = qaTryId.toString(),
             gameInstanceId = gameInstanceId.toString(),
             testScenarioId = testScenarioId.toString(),
-            scenario = objectMapper.readTree(scenario.payload.asString()),
+            scenario = compositionService.agentScenario(testScenarioId, userId, scenario.payload.asString()),
             model = settings.model,
             language = settings.language,
             promptVersion = settings.promptVersion,

@@ -1,7 +1,9 @@
 package kr.artel.orchestration.testscenario.service
 
 import com.fasterxml.jackson.core.type.TypeReference
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.common.error.BadRequestException
 import kotlinx.coroutines.flow.map
@@ -83,6 +85,29 @@ class ScenarioCompositionService(
             }
         }
         return ScenarioCasesResponse(testScenarioId.toString(), items)
+    }
+
+    /**
+     * QA 실행 시 Agent에 보낼 시나리오 JSON을 조립한다(ARTEL-254): payload(title/description)에
+     * 조합을 `cases[]`(position 순서, 각 자리의 TC 내용 + 저작 Step)로 실어 준다. Agent가 이 cases를
+     * 가공해 실행 스텝을 만든다. 접근 불가/미조합이면 payload에 빈 `cases`만 붙는다.
+     */
+    suspend fun agentScenario(testScenarioId: Long, userId: Long, payloadJson: String): JsonNode {
+        val node = objectMapper.readTree(payloadJson) as? ObjectNode ?: objectMapper.createObjectNode()
+        val items = getCases(testScenarioId, userId)?.items ?: emptyList()
+        val cases = objectMapper.createArrayNode()
+        for (item in items) {
+            val c = objectMapper.createObjectNode()
+            c.put("position", item.position)
+            c.put("title", item.case.title)
+            c.put("category", item.case.category)
+            if (item.case.precondition != null) c.put("precondition", item.case.precondition) else c.putNull("precondition")
+            c.put("expected", item.case.expected)
+            c.set<JsonNode>("steps", objectMapper.valueToTree(item.steps))
+            cases.add(c)
+        }
+        node.set<JsonNode>("cases", cases)
+        return node
     }
 
     /** JSONB steps 컬럼을 타입화된 Step 목록으로 파싱. 빈 배열/공백은 빈 목록. */
