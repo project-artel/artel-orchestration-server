@@ -18,6 +18,7 @@ import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
+import kr.artel.orchestration.knowledge.repository.KnowledgeUsageRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
@@ -122,6 +123,7 @@ class KnowledgeSearchRouterIntegrationTest {
 
     @Autowired private lateinit var inboundRouter: QaAgentInboundRouter
     @Autowired private lateinit var knowledgeRepository: KnowledgeRepository
+    @Autowired private lateinit var usageRepository: KnowledgeUsageRepository
     @Autowired private lateinit var qaTryRepository: QaTryRepository
     @Autowired private lateinit var qaLogRepository: QaLogRepository
     @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
@@ -162,6 +164,7 @@ class KnowledgeSearchRouterIntegrationTest {
 
     private suspend fun wipe() {
         qaLogRepository.deleteAll()
+        usageRepository.deleteAll()
         qaTryRepository.deleteAll()
         knowledgeRepository.deleteAll()
         gameInstanceRepository.deleteAll()
@@ -284,6 +287,70 @@ class KnowledgeSearchRouterIntegrationTest {
         assertRunStillActive()
     }
 
+    // ------------------------------------------------------- 검색 사용 로그 (ARTEL-255)
+
+    /**
+     * 검색이 무엇을 내보냈는지가 "이 런이 만든 지식이 쓸모 있었나"의 분모다. 소급이 안 되므로
+     * 검색이 도는 지금 남기지 않으면 영영 없다.
+     */
+    @Test
+    fun `검색 한 번이 히트 수만큼 usage 행을 rank와 score로 남긴다`(): Unit = runBlocking {
+        // 이 대역은 모든 벡터를 같은 방향으로 만든다. 여기서 보는 것은 순위 계산이 아니라
+        // "히트 수만큼 남는가"이므로 거리를 구분할 필요가 없다(순위 검증은 벡터 검색 테스트의 몫).
+        val one = givenKnowledgeWithVector("지식 하나")
+        val other = givenKnowledgeWithVector("지식 둘")
+
+        deliver(UUID.randomUUID().toString(), """{"query":"질문"}""")
+
+        val rows = usageRepository.findByQaTryIdOrderByIdAsc(qaTryId).toList()
+        assertThat(rows).hasSize(2)
+        assertThat(rows.map { it.knowledgeId }).containsExactlyInAnyOrder(one, other)
+        // 순위는 응답에 실린 순서와 같아야 한다 — 다르면 나중에 순위와 유용성을 견줄 수 없다.
+        val reply = port.sent.single().payload.path("results")
+        assertThat(rows.sortedBy { it.rank }.map { it.knowledgeId.toString() })
+            .containsExactly(reply[0]["id"].asText(), reply[1]["id"].asText())
+        assertThat(rows.map { it.rank }).containsExactlyInAnyOrder(1, 2)
+        rows.forEach {
+            assertThat(it.score).isNotNull()
+            assertThat(it.knowledgeVersion).isEqualTo(1)
+            // 둘 다 이번 범위에서는 채우지 않는다. cited가 false로 채워지면 이 시기의 런 전부가
+            // "아무것도 인용하지 않았다"로 읽힌다.
+            assertThat(it.step).isNull()
+            assertThat(it.cited).isNull()
+        }
+    }
+
+    @Test
+    fun `결과가 비면 usage 행을 남기지 않는다`(): Unit = runBlocking {
+        deliver(UUID.randomUUID().toString(), """{"query":"아무거나"}""")
+
+        assertThat(port.sent.single().type).isEqualTo("KNOWLEDGE_SEARCH_RESULT")
+        assertThat(usageRepository.findByQaTryIdOrderByIdAsc(qaTryId).toList()).isEmpty()
+    }
+
+    /**
+     * 기록은 부가 데이터다. 실패했다고 ERROR로 답하면 이미 만들어진 멀쩡한 검색 결과가 실패로
+     * 뒤집히고, Agent 도구는 답 대신 오류를 받는다. 감사 로그만 남기고 결과는 그대로 나가야 한다.
+     */
+    @Test
+    fun `usage 기록이 실패해도 결과는 전달되고 런은 살아 있다`(): Unit = runBlocking {
+        givenKnowledgeWithVector("가까운 지식")
+        blockUsageWrites()
+        try {
+            deliver(UUID.randomUUID().toString(), """{"query":"질문"}""")
+        } finally {
+            allowUsageWrites()
+        }
+
+        val reply = port.sent.single()
+        assertThat(reply.type)
+            .describedAs("기록 실패가 검색 실패로 번지면 안 된다")
+            .isEqualTo("KNOWLEDGE_SEARCH_RESULT")
+        assertThat(reply.payload.path("results").size()).isEqualTo(1)
+        assertInternalErrorLogged("usage logging failed")
+        assertRunStillActive()
+    }
+
     @Test
     fun `단수 tag도 받는다`(): Unit = runBlocking {
         givenKnowledgeWithVector("규칙 항목", tag = "RULE")
@@ -320,6 +387,25 @@ class KnowledgeSearchRouterIntegrationTest {
 
     private suspend fun assertRunStillActive() {
         assertThat(qaTryRepository.findById(qaTryId)!!.status).isEqualTo("RUNNING")
+    }
+
+    /**
+     * usage INSERT를 실패시킨다. 실제로 일어날 실패는 DB 장애이고, 그 경로를 그대로 재현하는 것이
+     * 서비스를 대역으로 갈아 끼우는 것보다 정직하다 — 라우터가 삼키는 것이 바로 이 예외다.
+     *
+     * `NOT VALID`라 기존 행을 검사하지 않고 새 INSERT만 막는다. 반드시 [allowUsageWrites]로
+     * 되돌려야 한다 — 스위트가 DB 하나를 공유하므로 남으면 다음 테스트가 이유 없이 깨진다.
+     */
+    private suspend fun blockUsageWrites() {
+        execute("ALTER TABLE knowledge_usage ADD CONSTRAINT ck_usage_test_block CHECK (false) NOT VALID")
+    }
+
+    private suspend fun allowUsageWrites() {
+        execute("ALTER TABLE knowledge_usage DROP CONSTRAINT IF EXISTS ck_usage_test_block")
+    }
+
+    private suspend fun execute(sql: String) {
+        databaseClient.sql(sql).fetch().rowsUpdated().awaitFirstOrNull()
     }
 
     private suspend fun givenKnowledgeWithVector(summary: String, tag: String = "RULE"): Long {
