@@ -8,7 +8,18 @@ data class CreateQaTryRequest(
     val testScenarioId: String,
     val gameInstanceId: String,
     val model: String? = null,
-    val reasoning: QaReasoningRequest? = null
+    val language: String? = null,
+    val promptVersion: String? = null,
+    val reasoning: QaReasoningRequest? = null,
+    /**
+     * The agent's structure — loop bounds, per-run allowances, vision, middleware.
+     *
+     * Opaque on purpose. Restating the Agent's knob schema here would be a second
+     * copy to keep in sync, and the copy would be the one that goes stale: the
+     * Agent already rejects an unknown or out-of-range knob with a 422, which
+     * surfaces as a failed try rather than a run quietly using something else.
+     */
+    val arch: JsonNode? = null
 )
 
 data class QaReasoningRequest(
@@ -42,7 +53,18 @@ data class QaTryResponse(
     val startedBy: String,
     val status: String,
     val startedAt: Instant,
-    val completedAt: Instant?
+    val completedAt: Instant?,
+    /**
+     * What the run was actually executed with, as the Agent resolved it — null on
+     * tries that predate this being recorded, and on any whose Agent did not
+     * report it. The four promoted fields are the comparison axes; [runConfig] is
+     * the whole snapshot and the one to trust when they disagree.
+     */
+    val model: String? = null,
+    val promptVersion: String? = null,
+    val agentArch: String? = null,
+    val agentFingerprint: String? = null,
+    val runConfig: JsonNode? = null
 )
 
 data class QaLogResponse(

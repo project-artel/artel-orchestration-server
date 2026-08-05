@@ -61,15 +61,44 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
         updatedAt: Instant
     ): Int
 
+    /**
+     * Attaches the Agent session and the settings that session resolved.
+     *
+     * One statement, not two: a run whose session is attached but whose settings
+     * are still empty is a window in which the try looks started and is not
+     * attributable, and nothing later goes back to fill it in.
+     *
+     * The settings are all nullable because an Agent that does not report them —
+     * one deployed before it could — must still produce a running try. A run
+     * missing from the comparison is a gap; a run that fails to start is an
+     * outage.
+     */
     @Modifying
     @Query(
         """
         UPDATE qa_try
-        SET agent_session_id = :agentSessionId, updated_at = :updatedAt
+        SET agent_session_id = :agentSessionId,
+            model = :model,
+            reasoning_effort = :reasoningEffort,
+            prompt_version = :promptVersion,
+            agent_arch = :agentArch,
+            agent_fingerprint = :agentFingerprint,
+            run_config = CAST(:runConfig AS jsonb),
+            updated_at = :updatedAt
         WHERE id = :id AND status = 'STARTING' AND agent_session_id IS NULL
         """
     )
-    suspend fun attachAgentSession(id: Long, agentSessionId: String, updatedAt: Instant): Int
+    suspend fun attachAgentSession(
+        id: Long,
+        agentSessionId: String,
+        model: String?,
+        reasoningEffort: String?,
+        promptVersion: String?,
+        agentArch: String?,
+        agentFingerprint: String?,
+        runConfig: String,
+        updatedAt: Instant
+    ): Int
 
     @Modifying
     @Query(

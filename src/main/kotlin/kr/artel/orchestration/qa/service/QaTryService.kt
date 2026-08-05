@@ -3,6 +3,7 @@ package kr.artel.orchestration.qa.service
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.common.error.UpstreamUnavailableException
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -15,6 +16,7 @@ import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
 import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.dto.QaTryResponse
+import kr.artel.orchestration.qa.dto.CreateQaTryRequest
 import kr.artel.orchestration.qa.dto.QaReasoningRequest
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaTryRepository
@@ -32,6 +34,49 @@ internal fun QaReasoningRequest.toAgentPayload(objectMapper: ObjectMapper) =
         effort?.let { put("effort", it) }
         maxTokens?.let { put("max_tokens", it) }
     }
+
+/**
+ * What a caller asked one run to be executed with.
+ *
+ * Grouped rather than passed as five nullable parameters in a row, which is a
+ * shape two of them will eventually be swapped in. Every field is optional and
+ * an absent one is not forwarded at all, so the Agent applies its own default —
+ * see [QaSessionOpenRequest]'s NON_NULL.
+ *
+ * None of this is what gets recorded. These are wishes; the Agent answers with
+ * what it resolved them to, and that answer is what reaches [QaTryEntity].
+ */
+data class QaRunSettings(
+    val model: String? = null,
+    val language: String? = null,
+    val promptVersion: String? = null,
+    val reasoning: JsonNode? = null,
+    val arch: JsonNode? = null
+)
+
+fun CreateQaTryRequest.toRunSettings(objectMapper: ObjectMapper) = QaRunSettings(
+    model = model,
+    language = language,
+    promptVersion = promptVersion,
+    reasoning = reasoning?.toAgentPayload(objectMapper),
+    arch = arch
+)
+
+/**
+ * The comparison axes, lifted out of the Agent's resolved config.
+ *
+ * Copies, deliberately: the whole config is stored as JSONB and is the record,
+ * while these four are columns so that grouping a few thousand runs by model or
+ * by structure is an index scan rather than a JSON traversal per row. When the
+ * two disagree the JSONB is right — a column is only ever derived from it.
+ */
+private fun JsonNode?.textAt(vararg path: String): String? {
+    var node: JsonNode = this ?: return null
+    for (name in path) {
+        node = node.get(name) ?: return null
+    }
+    return node.takeIf { it.isTextual }?.asText()
+}
 
 @Service
 class QaTryPersistenceService(
@@ -67,14 +112,36 @@ class QaTryPersistenceService(
             qaTry to startLog
         } ?: error("QA try creation returned no result")
 
+    /**
+     * @param runConfig what the Agent resolved the session to, or null if it did
+     *   not say. A run whose settings are unknown is a gap in the comparison; a
+     *   run that refuses to start over it is an outage, so null is written
+     *   through rather than rejected.
+     */
     suspend fun attachAndMarkRunning(
         qaTry: QaTryEntity,
-        agentSessionId: String
+        agentSessionId: String,
+        runConfig: JsonNode? = null
     ): Pair<QaTryEntity, QaLogAppendResult> =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
             val id = requireNotNull(qaTry.id)
-            if (tryRepository.attachAgentSession(id, agentSessionId, now) != 1) {
+            // The settings ride along with the session id rather than following in
+            // a second update: two statements would leave a window where the try
+            // reads as started and is not attributable, and nothing goes back for it.
+            if (
+                tryRepository.attachAgentSession(
+                    id = id,
+                    agentSessionId = agentSessionId,
+                    model = runConfig.textAt("model"),
+                    reasoningEffort = runConfig.textAt("reasoning", "effort"),
+                    promptVersion = runConfig.textAt("prompt_version"),
+                    agentArch = runConfig.textAt("agent_arch"),
+                    agentFingerprint = runConfig.textAt("agent_fingerprint"),
+                    runConfig = objectMapper.writeValueAsString(runConfig ?: objectMapper.createObjectNode()),
+                    updatedAt = now
+                ) != 1
+            ) {
                 throw IllegalStateException("QA try cannot attach an Agent session")
             }
             if (tryRepository.transition(id, "STARTING", "RUNNING", null, now) != 1) {
@@ -110,8 +177,7 @@ class QaTryService(
         testScenarioId: Long,
         gameInstanceId: Long,
         userId: Long,
-        model: String? = null,
-        reasoning: QaReasoningRequest? = null
+        settings: QaRunSettings = QaRunSettings()
     ): QaTryResponse {
         val scenario = scenarioAccessService.accessibleScenario(testScenarioId, userId)
             ?: throw NotFoundException()
@@ -135,8 +201,11 @@ class QaTryService(
             gameInstanceId = gameInstanceId.toString(),
             testScenarioId = testScenarioId.toString(),
             scenario = objectMapper.readTree(scenario.payload.asString()),
-            model = model,
-            reasoning = reasoning?.toAgentPayload(objectMapper)
+            model = settings.model,
+            language = settings.language,
+            promptVersion = settings.promptVersion,
+            reasoning = settings.reasoning,
+            arch = settings.arch
         )
 
         return try {
@@ -145,7 +214,8 @@ class QaTryService(
                 onMessage = { envelope -> inboundRouter.handle(envelope) },
                 onDisconnect = { failureService.agentDisconnected(qaTryId) }
             )
-            val (running, runningLog) = persistence.attachAndMarkRunning(starting, agent.sessionId)
+            val (running, runningLog) =
+                persistence.attachAndMarkRunning(starting, agent.sessionId, agent.runConfig)
             logService.publish(runningLog)
             running.toResponse()
         } catch (error: CancellationException) {
@@ -252,6 +322,11 @@ class QaTryService(
         startedBy = startedBy.toString(),
         status = status,
         startedAt = startedAt,
-        completedAt = completedAt
+        completedAt = completedAt,
+        model = model,
+        promptVersion = promptVersion,
+        agentArch = agentArch,
+        agentFingerprint = agentFingerprint,
+        runConfig = objectMapper.readTree(runConfig.asString())
     )
 }
