@@ -1,6 +1,12 @@
 -- knowledge의 버전 이력과 검색 사용 로그를 남기고, 둘을 항목별 사실로 접는 view를 만든다.
 -- (2026-08-05, ARTEL-255)
 --
+-- ⚠️ 처음 V26으로 머지됐다가 V27로 밀었다(ARTEL-260). ARTEL-245의 V26__add_issue_resolution이
+-- 먼저 머지돼 있었는데 둘 다 26을 잡는 바람에 Flyway가
+-- "Found more than one migration with version 26"으로 기동을 거부했다. 먼저 머지된 쪽은 그 사이
+-- develop이 정상이었어 이미 적용된 환경이 있을 수 있으므로 건드리지 않고, 한 번도 적용된 적 없는
+-- 이쪽(머지 이후 develop이 뜬 적이 없다)을 밀었다.
+--
 -- 목적은 V25의 짝이다. V25는 QA 런을 **무엇으로** 돌렸는지(model / prompt_version / agent_arch /
 -- reasoning_effort)를 남겼고, 여기는 그 축에 붙일 **결과**를 남긴다. 지금은 "이 런이 만든 지식이
 -- 쓸모 있었나"를 잴 근거가 어디에도 없다 — knowledge 행은 마지막 수정자만 들고 있어(V19) 이력이
