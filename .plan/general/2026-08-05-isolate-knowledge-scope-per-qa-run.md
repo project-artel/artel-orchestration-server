@@ -46,7 +46,18 @@ QA 런이 쓰는 지식창고를 **스코프 하나로 격리**해 두 가지를
 **기존 데이터.** 기존 행은 전부 `scope_id` NULL이고 그게 맞다. 운영 런의 동작은 이 작업 전후로
 완전히 동일해야 한다.
 
-**Flyway 번호.** develop과 열린 모든 원격 브랜치를 확인한 결과 최고 번호는 V25다. V26을 쓴다.
+**Flyway 번호.** 처음 V26으로 잡았으나, 그 사이 develop에 ARTEL-245와 ARTEL-255가 **둘 다 V26으로**
+머지되어 Flyway가 `Found more than one migration with version 26`으로 부팅을 거부하는 상태가 되었다.
+나중에 머지된 ARTEL-255를 V27로 밀고(먼저 머지된 `V26__add_issue_resolution`은 이미 적용된 환경이
+있을 수 있어 건드리지 않는다) 이 작업이 V28을 쓴다.
+
+**ARTEL-255(knowledge 이력/사용 로그)와의 합류.** 병행 진행 중이던 그 작업이 먼저 머지되어 이제
+같은 파일을 건드린다. 합류에서 나온 판단 셋:
+- 그림자·툼스톤은 **버전 1에서 새로 시작하고 자기 이벤트를 남긴다.** 원본 버전을 물려받으면
+  이벤트가 없는 채로 version이 2 이상이 되어 `knowledge.version = max(event.version)` 불변식이 깨진다.
+- 툼스톤은 DELETE 이벤트만 남기고 CREATE는 남기지 않는다 — 그 런은 지식을 만든 것이 아니라 가렸다.
+- **`knowledge_entry_facts` view에서 스코프 행을 뺀다.** 그 view는 `KnowledgeStatsRepository`의
+  유일한 소스이고, 안 빼면 실험 산물이 운영 지표를 오염시킨다(아래 Risks 참조).
 
 ## Approach (Checklist)
 
@@ -96,7 +107,7 @@ QA 런이 쓰는 지식창고를 **스코프 하나로 격리**해 두 가지를
 
 - **Commands to run:** `./mvnw test` (전체). 마이그레이션은 별도로 임시 Postgres에 V1~V25 를
   적용하고 기존 knowledge 행·벡터를 넣은 뒤 V26 을 올려 확인했다.
-- **Result:** `Tests run: 302, Failures: 0, Errors: 0, Skipped: 0`. 기존 데이터가 있는 DB 에
+- **Result:** `Tests run: 344, Failures: 0, Errors: 0, Skipped: 0` (develop 머지 후). 기존 데이터가 있는 DB 에
   V26 을 올렸을 때 기존 행 2/2 가 `scope_id IS NULL AND shadows_id IS NULL`(baseline)로 남고,
   인덱스가 scope 포함본으로 교체되며, 같은 baseline 에 그림자를 둘 만들면
   `uq_knowledge_scope_shadow` 가 거절했다.
@@ -108,6 +119,8 @@ QA 런이 쓰는 지식창고를 **스코프 하나로 격리**해 두 가지를
   - 스코프 런이 baseline을 지우면 그 런에서는 사라지고 운영에는 남는다
   - 스코프 런이 baseline을 고치면 그 런에서 수정본 하나만 나온다 (원본과 중복 없음)
   - `frozen`에서 쓰기가 거부되고 런이 안 죽는다, `off`에서 검색이 빈 결과다
+  - 스코프 런이 만든 지식·그림자·툼스톤이 `knowledge_entry_facts`와 축별 롤업에 들어오지 않는다
+    (view 필터를 빼면 두 테스트가 실제로 실패하는 것까지 확인했다)
 
 ## Risks & Rollback
 
@@ -120,6 +133,9 @@ QA 런이 쓰는 지식창고를 **스코프 하나로 격리**해 두 가지를
 - **임베딩 지연(기존과 동일).** 벡터 생성이 비동기 백필이라 방금 쓴 지식은 같은 런에서 검색에
   안 잡히는 구간이 있다. 스코프 런에만 생기는 문제가 아니라 지금도 그렇다. 이번 범위에서
   고치지 않고 사실만 남긴다.
+- **ARTEL-255의 지표는 스코프 런을 보지 않는다.** view에서 뺐으므로 실험 arm의 지식은 "만든 런 /
+  지운 런" 귀속에 잡히지 않는다. 그것이 의도지만, 실험 arm별 점수를 내려면 후속 실험 기능이
+  `shadows_id`와 `qa_try.knowledge_scope_id`로 자기 롤업을 따로 만들어야 한다.
 - **그림자 임베딩 비용.** 스코프 런이 baseline을 고치면 그림자 행이 자기 벡터를 새로 청구한다.
   arm 수 × 수정 건수만큼 임베딩이 늘어난다.
 - **Rollback:** `git revert`. V26은 `ADD COLUMN IF NOT EXISTS`뿐이라 컬럼이 남아도 무해하다

@@ -11,10 +11,15 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.common.embedding.EmbeddedText
+import kr.artel.orchestration.knowledge.entity.KnowledgeUsageEntity
 import kr.artel.orchestration.knowledge.repository.KnowledgeSearchRow
+import kr.artel.orchestration.knowledge.repository.KnowledgeUsageRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeVectorSearchRepository
+import kotlinx.coroutines.flow.collect
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import java.time.Clock
+import java.time.Instant
 
 /**
  * knowledge 벡터 검색(ARTEL-186). QA WebSocket의 `KNOWLEDGE_SEARCH`가 이 서비스를 부른다.
@@ -32,8 +37,10 @@ import org.springframework.stereotype.Service
 class KnowledgeSearchService(
     private val embeddingClient: EmbeddingClient,
     private val searchRepository: KnowledgeVectorSearchRepository,
+    private val usageRepository: KnowledgeUsageRepository,
     private val backfillProperties: KnowledgeBackfillProperties,
-    private val searchProperties: KnowledgeSearchProperties
+    private val searchProperties: KnowledgeSearchProperties,
+    private val clock: Clock
 ) {
     private val logger = LoggerFactory.getLogger(KnowledgeSearchService::class.java)
 
@@ -42,6 +49,10 @@ class KnowledgeSearchService(
      *
      * 결과가 비는 것은 정상이다 — 백필이 비동기라 벡터가 아직 없을 수 있고, 필터가 전부 걸러낼 수도
      * 있다. 그 경우 빈 [KnowledgeSearchResponse.results]로 답한다.
+     *
+     * 돌려주는 [KnowledgeSearchOutcome]은 **Agent로 나가는 응답과 기록용 사실을 갈라 둔 것**이다
+     * (ARTEL-255). 버전을 [KnowledgeSearchHit]에 얹으면 WS payload가 달라지는데, 이 작업은 순수
+     * 추가여야 하고 기존 읽기 경로의 결과가 달라져서는 안 된다.
      *
      * [scope]는 기본값이 없다(ARTEL-256). 검색은 지식창고를 읽는 가장 넓은 경로라, 여기서 스코프를
      * 빠뜨리면 실험 런이 다른 arm이 쌓은 지식을 그대로 읽는다 — 그리고 그 결과는 그럴듯해서 아무도
@@ -55,7 +66,7 @@ class KnowledgeSearchService(
         tags: List<KnowledgeTag>,
         source: KnowledgeSource?,
         limit: Int?
-    ): KnowledgeSearchResponse {
+    ): KnowledgeSearchOutcome {
         // 검색이 읽을 파티션은 백필이 쓴 파티션이어야 한다. 그래서 model은 검색 설정이 아니라
         // 백필 설정에서 온다(KnowledgeSearchProperties 주석 참조).
         val model = backfillProperties.model
@@ -69,7 +80,12 @@ class KnowledgeSearchService(
         // 비용과 지연이 발생하면, 없애려던 변수를 다른 축으로 다시 들여오는 셈이다.
         if (!mode.readable) {
             logger.info("knowledge 검색 생략: project={}, scope={}, mode={}", projectId, scope, mode.wire)
-            return KnowledgeSearchResponse(query = query, model = model, results = emptyList())
+            // 내보낸 것이 없으므로 남길 사용 기록(ARTEL-255)도 없다. 빈 결과를 "검색은 했는데 아무도
+            // 안 걸렸다"로 기록하면 대조군 arm이 지식을 조회한 것처럼 집계된다.
+            return KnowledgeSearchOutcome(
+                response = KnowledgeSearchResponse(query = query, model = model, results = emptyList()),
+                retrievals = emptyList()
+            )
         }
 
         val rows = searchRepository.searchNearest(
@@ -89,11 +105,51 @@ class KnowledgeSearchService(
             "knowledge 검색: project={}, scope={}, 검색어 {}자, tags={}, source={}, limit={}, 결과={}건",
             projectId, scope, query.length, tags, source, resolvedLimit, rows.size
         )
-        return KnowledgeSearchResponse(
-            query = query,
-            model = model,
-            results = rows.map(::toHit)
+        return KnowledgeSearchOutcome(
+            response = KnowledgeSearchResponse(
+                query = query,
+                model = model,
+                results = rows.map(::toHit)
+            ),
+            // 순위는 이 목록의 순서다. 리포지토리가 동점까지 id로 못박아 정렬하므로 같은 질의는
+            // 같은 순위를 낸다 — 기록된 rank가 재현 가능해야 나중에 순위와 유용성을 견줄 수 있다.
+            retrievals = rows.mapIndexed { index, row ->
+                KnowledgeRetrieval(
+                    knowledgeId = row.knowledgeId,
+                    version = row.version,
+                    rank = index + 1,
+                    score = 1.0 - row.distance
+                )
+            }
         )
+    }
+
+    /**
+     * 검색이 [qaTryId]에 내보낸 히트를 기록한다(ARTEL-255).
+     *
+     * **실패를 삼키지 않는다** — 이 클래스의 나머지와 같은 규칙이다. 무엇을 어떻게 무마할지는
+     * WS 계약을 아는 호출자(라우터)의 몫이고, 여기서 조용히 넘기면 기록이 빠진 것을 아무도 모른다.
+     *
+     * `step`과 `cited`는 채우지 않는다. 전자는 `KnowledgeSearchRequest`가 step을 안 싣기 때문이고,
+     * 후자는 인용 보고 기능이 아직 없기 때문이다. 둘 다 null이 "모른다"는 뜻이며, 특히 `cited`를
+     * false로 채우면 이 시기의 런 전부가 "아무것도 인용하지 않았다"로 읽힌다.
+     */
+    suspend fun recordRetrievals(qaTryId: Long, retrievals: List<KnowledgeRetrieval>) {
+        if (retrievals.isEmpty()) return
+        val now = Instant.now(clock)
+        usageRepository.saveAll(
+            retrievals.map {
+                KnowledgeUsageEntity(
+                    qaTryId = qaTryId,
+                    knowledgeId = it.knowledgeId,
+                    knowledgeVersion = it.version,
+                    rank = it.rank,
+                    score = it.score.toFloat(),
+                    retrievedAt = now
+                )
+            }
+            // saveAll은 콜드 Flow라 소비해야 실제 저장이 일어난다.
+        ).collect()
     }
 
     /**
@@ -147,6 +203,33 @@ class KnowledgeSearchService(
         const val QUERY_KIND = "QUERY"
     }
 }
+
+/**
+ * 검색 한 번의 결과. Agent로 나갈 응답과 남길 사실을 갈라 둔다(ARTEL-255).
+ *
+ * 한 타입에 합치지 않은 이유는 [response]가 **WS 계약 그 자체**이기 때문이다. 여기에 기록용 필드를
+ * 얹으면 그대로 Agent에게 나가고, 이 작업은 기존 읽기 경로의 결과를 바꾸지 않아야 한다.
+ *
+ * @property retrievals 응답에 실린 히트와 **같은 순서**의 기록용 사실. 비어 있으면 남길 것이 없다.
+ */
+data class KnowledgeSearchOutcome(
+    val response: KnowledgeSearchResponse,
+    val retrievals: List<KnowledgeRetrieval>
+)
+
+/**
+ * 검색이 내보낸 히트 하나에 대해 남길 사실.
+ *
+ * @property version 내보낸 시점의 content 버전. 나중에 그 항목이 고쳐져도 이 런이 읽은 것은 이 버전이다.
+ * @property rank 1부터.
+ * @property score 코사인 유사도. Agent에게 나간 값과 같다.
+ */
+data class KnowledgeRetrieval(
+    val knowledgeId: Long,
+    val version: Int,
+    val rank: Int,
+    val score: Double
+)
 
 /**
  * Agent가 검색어를 쓸 수 있는 벡터로 만들어 주지 못했다.

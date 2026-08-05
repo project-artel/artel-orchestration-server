@@ -15,6 +15,7 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.knowledge.service.KnowledgeMutation
+import kr.artel.orchestration.knowledge.service.KnowledgeRetrieval
 import kr.artel.orchestration.knowledge.service.KnowledgeSearchService
 import kr.artel.orchestration.knowledge.service.KnowledgeService
 import kr.artel.orchestration.qa.entity.QaTryEntity
@@ -400,7 +401,7 @@ class QaAgentInboundRouter(
             failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH cannot resolve the project of this run")
             return
         }
-        val response = try {
+        val outcome = try {
             knowledgeSearchService.search(
                 projectId = instance.projectId,
                 scope = scopeOf(qaTry),
@@ -417,13 +418,40 @@ class QaAgentInboundRouter(
             failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH failed: ${error.message}")
             return
         }
+        recordSearchUsage(qaTryId, envelope, outcome.retrievals)
         sendToAgent(
             qaTryId,
             sessionId,
             "KNOWLEDGE_SEARCH_RESULT",
             envelope.messageId,
-            objectMapper.valueToTree(response)
+            objectMapper.valueToTree(outcome.response)
         )
+    }
+
+    /**
+     * 검색이 무엇을 내보냈는지 남긴다(ARTEL-255). 이 로그가 "이 런이 만든 지식이 쓸모 있었나"의
+     * 분모이고, 소급이 안 되므로 검색이 도는 지금 남기지 않으면 영영 없다.
+     *
+     * **응답 전송보다 먼저 부른다.** 뒤로 미루면 Agent에는 갔는데 기록은 안 된 창이 생긴다.
+     * 추가 비용은 INSERT 한 문장이고, 이미 임베딩 왕복(네트워크)을 마친 뒤라 무시할 수준이다.
+     *
+     * **실패는 삼킨다.** 이 시점에 검색 결과는 이미 만들어졌고 Agent 도구는 그것을 기다리고 있다.
+     * 기록이 안 됐다고 [failSearch]로 답하면 멀쩡한 검색이 실패로 뒤집힌다. ERROR 프레임을 보내지
+     * 않고 감사 로그만 남기는 것이 이 경로가 다른 실패들과 다른 점이다.
+     * `CancellationException`은 오류가 아니라 취소 신호라 반드시 다시 던진다.
+     */
+    private suspend fun recordSearchUsage(
+        qaTryId: Long,
+        envelope: QaAgentEnvelope,
+        retrievals: List<KnowledgeRetrieval>
+    ) {
+        try {
+            knowledgeSearchService.recordRetrievals(qaTryId, retrievals)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            appendError(qaTryId, envelope, "KNOWLEDGE_SEARCH usage logging failed: ${error.message}")
+        }
     }
 
     /**

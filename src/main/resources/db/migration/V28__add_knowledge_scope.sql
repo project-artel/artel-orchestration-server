@@ -1,5 +1,15 @@
 -- 지식창고를 QA 런 단위 스코프로 격리한다. (2026-08-05, ARTEL-256)
 --
+-- 번호 이야기가 길다. develop에서 ARTEL-245(issue resolution)와 ARTEL-255(knowledge 이력)가 V26을
+-- **둘 다** 가져가, Flyway가 "Found more than one migration with version 26"으로 부팅을 거부하는
+-- 상태였다. 나중에 머지된 ARTEL-255 쪽을 V27로 밀고(먼저 머지된 V26__add_issue_resolution은 이미
+-- 적용된 환경이 있을 수 있어 건드리지 않는다) 이 마이그레이션이 V28을 쓴다.
+--
+-- 순서가 중요하다: 아래 3절이 ARTEL-255의 knowledge_entry_facts view를 CREATE OR REPLACE 하므로
+-- 그 view를 만드는 V27 뒤에 와야 한다.
+--
+-- V25가 ARTEL-233에 V24를 내준 것과 같은 종류의 사고다.
+--
 -- V25가 비교 축(model / prompt_version / agent_arch / reasoning_effort)을 qa_try에 남겼지만, 그것만으로는
 -- 비교가 성립하지 않는다. 지식창고가 런 사이를 넘나들기 때문이다: 설정 A로 돈 런이 지식을 쌓고
 -- 설정 B로 돈 런이 그것을 읽으므로 **나중에 돈 쪽이 앞선 런들의 지식을 물려받아 유리해진다.**
@@ -85,3 +95,96 @@ DROP INDEX IF EXISTS idx_knowledge_project_source;
 -- V18의 uq_knowledge_embedding_pending과 같은 이유다 — 이 유일성이 깨지면 결과가 조용히 틀린다.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_scope_shadow
     ON knowledge (scope_id, shadows_id) WHERE shadows_id IS NOT NULL;
+
+--------------------------------------------------------------------------------
+-- 3. knowledge_entry_facts — 실험 스코프 행을 뺀다
+--------------------------------------------------------------------------------
+-- V27(ARTEL-255)이 만든 view는 scope를 모른다. 그대로 두면 실험 arm이 만든 지식과 그림자·툼스톤이
+-- 운영 지표에 섞이는데, 이 view를 읽는 KnowledgeStatsRepository는 축별 롤업의 유일한 소스다.
+--
+-- **빼는 것이 맞는 이유.** ARTEL-255의 착상은 "후속 런이 공짜 심판"이다 — 어떤 런이 만든 지식을
+-- 나중 런이 지우면 그것이 부정 신호다. 그런데 실험 스코프에는 심판이 될 후속 런이 없다(그 스코프를
+-- 쓰는 런은 그 arm뿐이고, 끝나면 아무도 그 지식을 다시 안 본다). 넣으면 심판받지 않은 항목이
+-- 분모만 키우고, 스코프 런이 baseline을 가리려고 만든 툼스톤은 "누군가 지운 지식" 한 줄이 되어
+-- 폐기율을 실험 횟수만큼 부풀린다. 격리의 목적이 운영 오염 방지인데 지표 레이어에서 그 오염을
+-- 허용하면 막은 것이 아니다.
+--
+-- 실험 arm별 점수는 이 view가 아니라 후속 실험 기능이 `shadows_id`와 `qa_try.knowledge_scope_id`로
+-- 따로 낸다. 그때 이 필터를 파라미터로 바꿀지, 스코프용 view를 따로 둘지 정한다.
+--
+-- CREATE OR REPLACE라 **컬럼 이름·타입·순서를 하나도 바꾸지 않는다**(V27 주석의 제약). 바뀐 것은
+-- 맨 끝의 WHERE 한 줄뿐이고, 나머지는 V27 정의를 그대로 옮겨 왔다.
+CREATE OR REPLACE VIEW knowledge_entry_facts AS
+WITH content_event AS (
+    -- 버전 목록의 원천. after가 있는 이벤트만이 버전을 만든다.
+    SELECT e.knowledge_id,
+           e.version,
+           e.qa_try_id,
+           e.created_at
+      FROM knowledge_event e
+     WHERE e.after IS NOT NULL
+),
+entry_version AS (
+    SELECT ce.knowledge_id,
+           ce.version,
+           ce.qa_try_id AS created_by_qa_try_id,
+           ce.created_at
+      FROM content_event ce
+    UNION ALL
+    -- 이 마이그레이션 이전에 만들어진 행에는 이벤트가 없다. 백필하지 않는 대신 버전 1을 여기서
+    -- 합성한다. created_by_qa_try_id는 NULL — 만든 런을 **모른다**는 뜻이고, 지어내지 않는다.
+    -- created_at은 knowledge 행의 실제 값이다.
+    --
+    -- 합성하지 않고 그냥 빼면 그 항목들에 대한 knowledge_usage가 어디에도 집계되지 않아
+    -- "검색된 적 없는 지식"으로 보인다. 축별 롤업은 qa_try INNER JOIN이라 이 합성 행이 자동으로
+    -- 빠지므로, 축을 모르는 행이 축 통계를 오염시키지도 않는다.
+    SELECT k.id,
+           1,
+           NULL::BIGINT,
+           k.created_at
+      FROM knowledge k
+     WHERE NOT EXISTS (
+               SELECT 1
+                 FROM content_event ce
+                WHERE ce.knowledge_id = k.id
+                  AND ce.version = 1
+           )
+),
+usage_rollup AS (
+    SELECT u.knowledge_id,
+           u.knowledge_version,
+           COUNT(*)                                  AS retrieval_count,
+           COUNT(*) FILTER (WHERE u.cited)           AS citation_count,
+           COUNT(*) FILTER (WHERE u.cited IS NOT NULL) AS citation_known_count
+      FROM knowledge_usage u
+     GROUP BY u.knowledge_id, u.knowledge_version
+)
+SELECT k.project_id,
+       ev.knowledge_id,
+       ev.version,
+       (ev.version = k.version)                      AS is_current,
+       ev.created_by_qa_try_id,
+       ev.created_at,
+       -- 삭제는 **현재 버전 줄에만, 그리고 실제로 삭제 상태일 때만** 실린다.
+       --   모든 버전에 달면 삭제 한 번이 버전 수만큼 세어진다.
+       --   deleted_at을 안 보고 deleted_by만 실으면, V19가 감사용으로 남겨 둔 값 때문에
+       --   되살아난 항목이 계속 "지워진 것"으로 읽힌다.
+       CASE WHEN ev.version = k.version THEN k.deleted_at END AS deleted_at,
+       CASE
+           WHEN ev.version = k.version AND k.deleted_at IS NOT NULL
+               THEN k.deleted_by_qa_try_id
+       END                                           AS deleted_by_qa_try_id,
+       -- 검색된 적 없는 버전도 줄은 나와야 한다(0과 "행 없음"은 다르다).
+       COALESCE(ur.retrieval_count, 0)               AS retrieval_count,
+       COALESCE(ur.citation_count, 0)                AS citation_count,
+       COALESCE(ur.citation_known_count, 0)          AS citation_known_count
+  FROM entry_version ev
+  JOIN knowledge k ON k.id = ev.knowledge_id
+  LEFT JOIN usage_rollup ur
+         ON ur.knowledge_id = ev.knowledge_id
+        AND ur.knowledge_version = ev.version
+ -- ARTEL-256: 실험 스코프 행은 이 view에 담지 않는다. 아래 "왜"를 참조.
+ WHERE k.scope_id IS NULL;
+
+COMMENT ON VIEW knowledge_entry_facts IS
+    'knowledge 항목의 (id, version)당 한 줄. 운영 스코프(scope_id IS NULL)만 담는다. 기간·축 롤업은 KnowledgeStatsRepository가 한다.';

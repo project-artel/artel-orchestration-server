@@ -5,6 +5,8 @@ import kr.artel.orchestration.common.error.UnauthorizedException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.issue.dto.IssuePageResponse
+import kr.artel.orchestration.issue.service.IssueService
 import kr.artel.orchestration.qa.dto.CreateQaTryRequest
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
@@ -36,6 +38,7 @@ private const val MAX_QA_MESSAGE_LENGTH = 4000
 @RequestMapping("/api/qa-tries")
 class QaTryController(
     private val service: QaTryService,
+    private val issueService: IssueService,
     private val userResolver: SessionUserResolver,
     private val objectMapper: ObjectMapper
 ) {
@@ -119,6 +122,25 @@ class QaTryController(
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
     }
+
+    /**
+     * 이 실행이 남긴 이슈, 최신순 한 페이지(ARTEL-245).
+     *
+     * 로그와 같은 자리에 있지만 다른 도메인이다 — `logs`가 `QaLogService`에 위임하듯 이쪽은
+     * `IssueService`에 위임한다. 접근 판정도 그 서비스가 한다.
+     */
+    @GetMapping("/{qaTryId}/issues")
+    suspend fun issues(
+        @PathVariable qaTryId: String,
+        @RequestParam(required = false) beforeId: String?,
+        @RequestParam(defaultValue = "50") size: Int,
+        @AuthenticationPrincipal jwt: Jwt
+    ): IssuePageResponse = issueService.listByQaTry(
+        parseId(qaTryId),
+        requireUser(jwt),
+        beforeId?.let(::parseId),
+        size
+    )
 
     @GetMapping("/{qaTryId}/events", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun events(

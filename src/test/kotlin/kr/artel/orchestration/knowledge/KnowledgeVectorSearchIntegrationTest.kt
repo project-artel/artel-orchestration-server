@@ -191,8 +191,14 @@ class KnowledgeVectorSearchIntegrationTest {
             .awaitFirstOrNull()
     }
 
-    // 서비스는 스코프와 모드를 기본값 없이 요구한다(프로덕션 코드에서 빠뜨릴 수 없게). 테스트에서만
-    // 지금까지의 동작을 기본값으로 주고, 스코프·모드 테스트에서 명시한다.
+    /**
+     * 이 테스트가 보는 것은 Agent로 나가는 응답이다. 검색은 그 응답과 기록용 사실을
+     * `KnowledgeSearchOutcome`으로 갈라 돌려주므로(ARTEL-255) 여기서는 응답 쪽만 집는다 —
+     * 사용 로그 검증은 `KnowledgeSearchRouterIntegrationTest`가 맡는다.
+     *
+     * 스코프와 모드는 서비스가 기본값 없이 요구한다(프로덕션 코드에서 빠뜨릴 수 없게). 테스트에서만
+     * 지금까지의 동작을 기본값으로 주고, 스코프·모드 테스트에서 명시한다.
+     */
     private suspend fun search(
         projectId: Long,
         tags: List<KnowledgeTag> = emptyList(),
@@ -200,7 +206,7 @@ class KnowledgeVectorSearchIntegrationTest {
         limit: Int? = null,
         scope: KnowledgeScope = KnowledgeScope.PRODUCTION,
         mode: KnowledgeMode = KnowledgeMode.LEARNING
-    ) = searchService.search(projectId, scope, mode, NEAR, tags, source, limit)
+    ) = searchService.search(projectId, scope, mode, NEAR, tags, source, limit).response
 
     // ------------------------------------------------------------------ tests
 
