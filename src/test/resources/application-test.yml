@@ -32,6 +32,11 @@ spring:
             client-secret: test-github-secret
 
 artel:
+  # 스위트에는 서로 다른 Spring 컨텍스트가 여럿 뜨고 각자 내부 API 서버를 하나씩 띄운다.
+  # 고정 포트면 두 번째 컨텍스트부터 바인드 충돌로 죽는다. 0이면 OS가 빈 포트를 고르고,
+  # 테스트는 InternalApiServer.port로 실제 값을 읽는다.
+  internal-api:
+    port: 0
   agent:
     base-url: http://localhost:8000
     ws-base-url: ws://localhost:8000

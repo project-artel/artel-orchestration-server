@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.config.InternalApiServer
 import kr.artel.orchestration.project.FakeDocumentStorage
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
@@ -60,7 +61,18 @@ class TestCaseSpecHttpIntegrationTest {
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
 
+    @Autowired private lateinit var internalApiServer: InternalApiServer
+
     private val client: WebClient get() = WebClient.create("http://localhost:$port")
+
+    /**
+     * 명세 수신은 무인증 내부 경로라 공개 포트가 아니라 내부 포트에만 있다(ARTEL-266).
+     * 같은 파일의 다운로드 테스트는 엔드유저 경로라 [client]를 그대로 쓴다 — 둘을 한 클라이언트로
+     * 합치면 그쪽 401 단언이 404로 바뀌어 조용히 무의미해진다.
+     */
+    private val internalClient: WebClient
+        get() = WebClient.create("http://localhost:${internalApiServer.port}")
+
     private val fakeStorage: FakeDocumentStorage get() = storage as FakeDocumentStorage
 
     @Test
@@ -132,7 +144,7 @@ class TestCaseSpecHttpIntegrationTest {
     }
 
     private fun post(projectId: Long, csv: ByteArray): JsonNode =
-        client.post().uri("/internal/test-case-spec/$projectId")
+        internalClient.post().uri("/internal/test-case-spec/$projectId")
             .contentType(MediaType.parseMediaType("text/csv"))
             .bodyValue(csv)
             .retrieve()
