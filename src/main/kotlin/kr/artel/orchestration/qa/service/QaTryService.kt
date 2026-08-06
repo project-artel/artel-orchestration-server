@@ -423,7 +423,11 @@ class QaTryService(
         val now = Instant.now(clock)
         val runId = requireNotNull(started.qaRun.id)
         runCatching {
+            // 세션이 붙기 전(STARTING)이든 실행 중(RUNNING)이든 모두 FAILED로 닫는다. 둘 중
+            // 실제 상태에 맞는 한 문장만 1행을 바꾸고 나머지는 no-op이다. RUNNING을 빠뜨리면
+            // 런이 영구히 활성으로 남아 그 게임 인스턴스의 다음 런을 막는다(과거 버그).
             runRepository.transition(runId, "STARTING", "FAILED", now, now)
+            runRepository.transition(runId, "RUNNING", "FAILED", now, now)
             tryRepository.failByQaRunId(runId, now)
         }
     }
@@ -514,6 +518,31 @@ class QaTryService(
         if (!cancelled) {
             throw ConflictException("QA try has already ended")
         }
+    }
+
+    /**
+     * 런(TR) 전체를 취소한다. 활성 시나리오 try는 Agent 세션 종료까지 포함해 취소하고, 아직 차례가
+     * 오지 않은(PENDING 등) 미종단 try는 정리한 뒤 qa_run을 CANCELLED로 닫는다. 이미 끝난 런은 409.
+     *
+     * 재실행 가드는 qa_run(STARTING/RUNNING)을 보므로, 이 경로가 있어야 스테일 런이 게임 인스턴스를
+     * 영구 점유하지 않는다("먼저 열어보거나 종료하라"의 실제 종료 동작).
+     */
+    suspend fun cancelRun(qaRunId: Long, userId: Long) {
+        val run = runRepository.findAccessibleById(qaRunId, userId) ?: throw NotFoundException()
+        if (run.status != "STARTING" && run.status != "RUNNING") {
+            throw ConflictException("QA run has already ended")
+        }
+        val active = tryRepository.findByQaRunId(qaRunId).toList()
+            .firstOrNull { it.status == "STARTING" || it.status == "RUNNING" }
+        if (active != null) {
+            // 활성 try는 Agent에 CANCEL 통보 + 세션 종료까지 포함해 취소.
+            failureService.cancelled(requireNotNull(active.id), "QA run was cancelled by the user.")
+        }
+        val now = Instant.now(clock)
+        // 아직 안 돈 미종단(PENDING 등) try를 정리하고, 런을 CANCELLED로 닫는다.
+        tryRepository.failByQaRunId(qaRunId, now)
+        runRepository.transition(qaRunId, "STARTING", "CANCELLED", now, now)
+        runRepository.transition(qaRunId, "RUNNING", "CANCELLED", now, now)
     }
 
     suspend fun requireAccessible(qaTryId: Long, userId: Long): QaTryEntity? =

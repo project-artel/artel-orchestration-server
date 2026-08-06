@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.service.IssueService
@@ -34,6 +35,9 @@ private val KNOWLEDGE_MUTATION_TYPES = setOf("KNOWLEDGE_CREATE", "KNOWLEDGE_UPDA
 private val SUPPORTED_TYPES =
     setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE", "KNOWLEDGE_SEARCH") +
         KNOWLEDGE_MUTATION_TYPES
+
+/** qa_try의 종단 상태들. 런의 모든 try가 여기 들면 그 런은 실행이 끝난 것이다. */
+private val TERMINAL_TRY_STATUSES = setOf("COMPLETED", "FAILED", "CANCELLED")
 
 @Service
 class QaAgentInboundRouter(
@@ -102,7 +106,7 @@ class QaAgentInboundRouter(
                 message,
                 envelope.payload
             )
-            "STATUS" -> routeStatus(qaTry.status, qaTryId, envelope, message)
+            "STATUS" -> routeStatus(qaTry, qaTryId, envelope, message)
             "ISSUE" -> routeIssue(qaTryId, envelope, message)
             else -> {
                 val log = logService.append(
@@ -173,11 +177,12 @@ class QaAgentInboundRouter(
     }
 
     private suspend fun routeStatus(
-        currentStatus: String,
+        qaTry: QaTryEntity,
         qaTryId: Long,
         envelope: QaAgentEnvelope,
         message: String
     ) {
+        val currentStatus = qaTry.status
         // Agent STATUS is 2-scope: per-step frames reuse COMPLETED/FAILED for the step's
         // own verdict and carry result=null — they must NOT end the run. Only a
         // run-terminal frame carries result PASSED|FAILED, and CANCELLED is always
@@ -222,6 +227,23 @@ class QaAgentInboundRouter(
         )
         logService.publish(log)
         streamManager.complete(qaTryId)
+        // 방금 이 시나리오 try가 종단됐다. 런의 모든 시나리오 try가 종단이면 부모 qa_run도 완료로
+        // 닫는다 — 안 그러면 qa_run이 RUNNING으로 남아 그 게임 인스턴스의 다음 런을 영구 차단한다.
+        completeRunIfAllTriesDone(qaTry.qaRunId, completedAt)
+    }
+
+    /**
+     * 런의 모든 qa_try가 종단(COMPLETED/FAILED/CANCELLED)이면 qa_run을 RUNNING→COMPLETED로 닫는다.
+     * 개별 시나리오의 합격/불합격은 각 try에 남고, 런의 COMPLETED는 "모든 시나리오 실행을 마쳤다"는
+     * 뜻이다(하나가 FAILED여도 런은 끝난 것). RUNNING이 아닐 땐 no-op이라 취소/실패로 이미 닫힌 런을
+     * 되돌리지 않는다.
+     */
+    private suspend fun completeRunIfAllTriesDone(qaRunId: Long?, completedAt: Instant) {
+        if (qaRunId == null) return
+        val tries = tryRepository.findByQaRunId(qaRunId).toList()
+        if (tries.isNotEmpty() && tries.all { it.status in TERMINAL_TRY_STATUSES }) {
+            runRepository.transition(qaRunId, "RUNNING", "COMPLETED", completedAt, completedAt)
+        }
     }
 
     /**
