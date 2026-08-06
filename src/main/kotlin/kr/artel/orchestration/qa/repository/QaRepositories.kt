@@ -169,6 +169,38 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
     )
     suspend fun failActiveByGameInstanceId(gameInstanceId: Long, completedAt: Instant): Int
 
+    /**
+     * 런 안 시나리오의 차례가 왔을 때 PENDING → RUNNING으로 활성한다(ARTEL-259). 세션 공통 설정을
+     * 그 try에도 새겨 attribution을 남긴다. WHERE status='PENDING'이라 이미 돈 try는 안 건드린다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_try
+        SET status = 'RUNNING',
+            agent_session_id = :agentSessionId,
+            model = :model,
+            reasoning_effort = :reasoningEffort,
+            prompt_version = :promptVersion,
+            agent_arch = :agentArch,
+            agent_fingerprint = :agentFingerprint,
+            run_config = CAST(:runConfig AS jsonb),
+            updated_at = :updatedAt
+        WHERE id = :id AND status = 'PENDING'
+        """
+    )
+    suspend fun activatePending(
+        id: Long,
+        agentSessionId: String,
+        model: String?,
+        reasoningEffort: String?,
+        promptVersion: String?,
+        agentArch: String?,
+        agentFingerprint: String?,
+        runConfig: String,
+        updatedAt: Instant
+    ): Int
+
     @Modifying
     @Query(
         """
