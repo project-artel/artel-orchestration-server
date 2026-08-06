@@ -27,20 +27,41 @@ data class ScenarioDraft(
 )
 
 /**
- * Agent 턴 결과가 참조하는 시나리오 하나(ARTEL-206 Step 5·6). Agent는 이미 존재하는 TestCase들을
- * [caseIds]로 엮은 시나리오를 **여러 개** 돌려주며, 한 응답에 **추가와 수정이 섞여** 올 수 있다.
+ * Agent가 저작한 Step 한 칸(ARTEL-281). Agent 계약의 `steps[]` 항목을 미러링한다 —
+ * `kind`(setup|guide), `intent`, 선택 `hint`/`input`. 검증(verify)은 만들지 않는다(검증은 케이스
+ * expected로 흡수). 판정 여부(`assert`)는 여기 없다 — Orche가 `kind`에서 유도한다(setup=판정 안 함).
+ */
+data class AgentAuthoredStep(
+    val kind: String = "guide",
+    val intent: String = "",
+    val hint: String? = null,
+    val input: String? = null
+)
+
+/**
+ * Agent가 낸 시나리오의 한 자리(ARTEL-281): 참조할 기존 TestCase id + 그 자리의 저작 Step.
+ * 리스트 순서가 곧 position. Agent 계약의 `cases[]`(각 `case_id`, `steps`)에 대응한다.
+ */
+data class ScenarioResultCase(
+    @JsonProperty("case_id") val caseId: Long,
+    val steps: List<AgentAuthoredStep> = emptyList()
+)
+
+/**
+ * Agent 턴 결과가 참조하는 시나리오 하나(ARTEL-206 Step 5·6, ARTEL-281). Agent는 이미 존재하는
+ * TestCase들을 [cases]로 엮은 시나리오를 **여러 개** 돌려주며, 각 자리마다 저작 Step까지 함께 낸다.
+ * 한 응답에 **추가와 수정이 섞여** 올 수 있다.
  *
  * @property scenarioId 수정 대상 식별자. `null`이면 **새 시나리오 추가**(INSERT + 런 append), 값이 있으면
- *   그 **기존 시나리오 수정**(payload·케이스 링크 UPDATE)이다. Agent가 사용자 자연어에서 겨냥한 시나리오를
- *   판단해 그 id를 되돌린다(런 현재 시나리오 컨텍스트 기반). Agent 계약의 `scenario_id`에 대응한다.
- * @property caseIds 이 시나리오가 담는 TestCase id들. 리스트 순서가 곧 시나리오 내 의미적 순서(position)다.
- *   Agent 계약의 `case_ids`(정수 배열)에 대응한다.
+ *   그 **기존 시나리오 수정**(payload·케이스 링크 UPDATE)이다. Agent 계약의 `scenario_id`에 대응한다.
+ * @property cases 이 시나리오가 담는 자리들(각 TestCase id + 저작 Step). 순서가 곧 position.
+ *   Agent 계약의 `cases`(ARTEL-281; 이전 `case_ids` 대체)에 대응한다.
  */
 data class ScenarioResult(
     @JsonProperty("scenario_id") val scenarioId: Long? = null,
     val title: String = "",
     val description: String = "",
-    @JsonProperty("case_ids") val caseIds: List<Long> = emptyList()
+    val cases: List<ScenarioResultCase> = emptyList()
 )
 
 /**

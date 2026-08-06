@@ -1,11 +1,15 @@
 package kr.artel.orchestration.testrun.service
 
+import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
-import kotlinx.coroutines.flow.map
+import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import kr.artel.orchestration.testscenario.dto.AgentAuthoredStep
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
+import kr.artel.orchestration.testscenario.dto.ScenarioResultCase
+import kr.artel.orchestration.testscenario.dto.ScenarioStepDto
 import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.springframework.stereotype.Service
@@ -28,16 +32,27 @@ class RunScenarioReader(
         return links.mapNotNull { link ->
             val scenario = scenarioRepository.findById(link.testScenarioId) ?: return@mapNotNull null
             val draft = objectMapper.readValue(scenario.payload.asString(), ScenarioDraft::class.java)
-            val caseIds = scenarioCaseRepository
+            val cases = scenarioCaseRepository
                 .findByTestScenarioIdOrderByPosition(link.testScenarioId)
-                .map { it.testCaseId }
                 .toList()
+                .map { row -> ScenarioResultCase(caseId = row.testCaseId, steps = parseSteps(row.steps)) }
             CurrentScenario(
                 scenarioId = link.testScenarioId,
                 title = draft.title,
                 description = draft.description,
-                caseIds = caseIds
+                cases = cases
             )
         }
+    }
+
+    /**
+     * 저장된 steps(JSONB, ScenarioStepDto 배열)를 Agent에 보낼 형태(AuthoredStep)로 되돌린다 —
+     * 그래야 Agent가 기존 저작 Step을 보고 편집할 수 있다. 저장 전용 필드(id/assert/observe)는 뺀다.
+     */
+    private fun parseSteps(steps: Json): List<AgentAuthoredStep> {
+        val text = steps.asString()
+        if (text.isBlank() || text == "[]") return emptyList()
+        return objectMapper.readValue(text, object : TypeReference<List<ScenarioStepDto>>() {})
+            .map { AgentAuthoredStep(kind = it.kind, intent = it.intent, hint = it.hint, input = it.input) }
     }
 }

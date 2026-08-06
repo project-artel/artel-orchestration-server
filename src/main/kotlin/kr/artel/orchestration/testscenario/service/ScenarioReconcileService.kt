@@ -5,7 +5,10 @@ import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import kr.artel.orchestration.testscenario.dto.AgentAuthoredStep
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
+import kr.artel.orchestration.testscenario.dto.ScenarioResultCase
+import kr.artel.orchestration.testscenario.dto.ScenarioStepDto
 import kr.artel.orchestration.testscenario.entity.TestScenarioCaseEntity
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
@@ -74,7 +77,7 @@ class ScenarioReconcileService(
                     // 케이스 링크를 통째 교체하되, 자리(testCaseId, position)가 유지되는 스텝은 보존한다.
                     val preserved = snapshotSteps(scenarioId)
                     scenarioCaseRepository.deleteByTestScenarioId(scenarioId)
-                    saveCaseLinks(scenarioId, scenario.caseIds, preserved)
+                    saveCaseLinks(scenarioId, scenario.cases, preserved)
                     // 런 링크는 그대로 둔다(수정은 위치를 바꾸지 않는다). 이미 이 런에 속한 시나리오를 겨냥한다.
                     applied++
                 } else {
@@ -83,7 +86,7 @@ class ScenarioReconcileService(
                         TestScenarioEntity(projectId = projectId, payload = payloadJson)
                     )
                     val newId = saved.id!!
-                    saveCaseLinks(newId, scenario.caseIds)
+                    saveCaseLinks(newId, scenario.cases)
                     runScenarioRepository.save(
                         TestRunScenarioEntity(testRunId = runId, testScenarioId = newId, position = runPosition)
                     )
@@ -106,18 +109,46 @@ class ScenarioReconcileService(
 
     private suspend fun saveCaseLinks(
         scenarioId: Long,
-        caseIds: List<Long>,
+        cases: List<ScenarioResultCase>,
         preserved: Map<Pair<Long, Int>, Json> = emptyMap(),
     ) {
-        caseIds.forEachIndexed { index, caseId ->
+        cases.forEachIndexed { index, case ->
+            // Agent가 이 자리의 저작 Step을 냈으면 그게 권위다. 안 냈으면(빈) 자리 유지 시 캐리포워드,
+            // 그것도 없으면 빈 배열.
+            val steps = if (case.steps.isNotEmpty()) {
+                stepsJson(case.steps)
+            } else {
+                preserved[case.caseId to index] ?: Json.of("[]")
+            }
             scenarioCaseRepository.save(
                 TestScenarioCaseEntity(
                     testScenarioId = scenarioId,
-                    testCaseId = caseId,
+                    testCaseId = case.caseId,
                     position = index,
-                    steps = preserved[caseId to index] ?: Json.of("[]"),
+                    steps = steps,
                 )
             )
         }
     }
+
+    /**
+     * Agent 저작 Step을 저장 형식(test_scenario_case.steps = ScenarioStepDto 배열)으로 직렬화한다.
+     * 판정 여부(`assert`)는 `kind`에서 유도한다 — setup은 사전조건 도달이라 판정하지 않는다.
+     */
+    private fun stepsJson(steps: List<AgentAuthoredStep>): Json =
+        Json.of(
+            objectMapper.writeValueAsString(
+                steps.map { step ->
+                    ScenarioStepDto(
+                        id = "",
+                        kind = step.kind,
+                        assert = step.kind != "setup",
+                        intent = step.intent,
+                        hint = step.hint,
+                        input = step.input,
+                        observe = null,
+                    )
+                }
+            )
+        )
 }

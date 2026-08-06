@@ -210,8 +210,8 @@ class TestScenarioReconcileIntegrationTest {
 
         framesToSend.add(
             """{"type":"result","message":"두 시나리오 만들었어","scenarios":[""" +
-                """{"title":"구매 여정","description":"d1","case_ids":[$caseA,$caseB]},""" +
-                """{"title":"판매 여정","description":"d2","case_ids":[$caseC]}]}"""
+                """{"title":"구매 여정","description":"d1","cases":[{"case_id":$caseA},{"case_id":$caseB}]},""" +
+                """{"title":"판매 여정","description":"d2","cases":[{"case_id":$caseC}]}]}"""
         )
 
         // 세션은 런 단위 — 런 채팅 엔드포인트로 첫 메시지를 보내 세션을 이 런에 바인딩한다.
@@ -298,7 +298,7 @@ class TestScenarioReconcileIntegrationTest {
         // Agent가 그 시나리오를 겨냥해 수정 결과를 돌려준다(scenario_id 포함, 케이스는 B로 교체).
         framesToSend.add(
             """{"type":"result","message":"수정했어","scenarios":[""" +
-                """{"scenario_id":$existing,"title":"new","description":"nd","case_ids":[$caseB]}]}"""
+                """{"scenario_id":$existing,"title":"new","description":"nd","cases":[{"case_id":$caseB}]}]}"""
         )
         postMessage(client, projectId, runId, token, "그 시나리오 케이스를 B로 바꿔줘")
 
@@ -327,7 +327,7 @@ class TestScenarioReconcileIntegrationTest {
 
         framesToSend.add(
             """{"type":"result","message":"제안이야","scenarios":[""" +
-                """{"title":"제안 시나리오","description":"d","case_ids":[$caseA]}]}"""
+                """{"title":"제안 시나리오","description":"d","cases":[{"case_id":$caseA}]}]}"""
         )
         // autoApply=false → 서버는 결과를 저장하지 않고 제안으로만 둔다.
         postMessage(client, projectId, runId, token, "시나리오 제안해줘", autoApply = false)
@@ -338,7 +338,7 @@ class TestScenarioReconcileIntegrationTest {
         // 사용자가 카드로 커밋 → 같은 엔진으로 반영된다.
         commitScenarios(
             client, projectId, runId, token,
-            """[{"title":"제안 시나리오","description":"d","case_ids":[$caseA]}]"""
+            """[{"title":"제안 시나리오","description":"d","cases":[{"case_id":$caseA}]}]"""
         )
         awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().size == 1 }
         val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
@@ -382,7 +382,7 @@ class TestScenarioReconcileIntegrationTest {
         // reconcile UPDATE: 조합을 [A, A]로 교체 — pos0은 caseA 그대로(자리 유지), pos1은 caseB→caseA(자리 변경).
         framesToSend.add(
             """{"type":"result","message":"수정","scenarios":[""" +
-                """{"scenario_id":$existing,"title":"new","description":"nd","case_ids":[$caseA,$caseA]}]}"""
+                """{"scenario_id":$existing,"title":"new","description":"nd","cases":[{"case_id":$caseA},{"case_id":$caseA}]}]}"""
         )
         postMessage(client, projectId, runId, token, "수정해줘")
 
@@ -394,6 +394,37 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(cases[0].steps.asString()).contains("A진행")
         // pos1: 원래 (caseB,1)였고 이제 (caseA,1) — 스냅샷에 없어 빈 배열로 초기화(B도달은 폐기).
         assertThat(cases[1].steps.asString()).isEqualTo("[]")
+    }
+
+    @Test
+    fun `agent가 낸 저작 Step을 그 자리의 steps로 저장한다(ARTEL-281)`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "RULE", "A")
+
+        // Agent가 case에 setup(도달)+guide(실행) Step을 함께 낸다.
+        framesToSend.add(
+            """{"type":"result","message":"만들었어","scenarios":[""" +
+                """{"title":"시작 흐름","description":"d","cases":[{"case_id":$caseA,"steps":[""" +
+                """{"kind":"setup","intent":"타이틀로 이동","hint":"Esc"},""" +
+                """{"kind":"guide","intent":"시작을 누른다"}]}]}]}"""
+        )
+        postMessage(client, projectId, runId, token, "만들어줘")
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().size == 1 }
+
+        val link = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().single()
+        val steps = scenarioCaseRepository.findByTestScenarioIdOrderByPosition(link.testScenarioId)
+            .toList().single().steps.asString()
+
+        // 저작 Step이 그대로 저장되고, assert는 kind에서 유도된다(setup=판정 안 함, guide=판정).
+        // JSONB는 콜론 뒤에 공백을 넣어 정규화하므로 파싱해서 값으로 단정한다(포맷 비의존).
+        val parsed = objectMapper.readTree(steps)
+        assertThat(parsed.map { it.get("kind").asText() }).containsExactly("setup", "guide")
+        assertThat(parsed.map { it.get("assert").asBoolean() }).containsExactly(false, true)
+        assertThat(parsed.map { it.get("intent").asText() }).containsExactly("타이틀로 이동", "시작을 누른다")
+        assertThat(parsed[0].get("hint").asText()).isEqualTo("Esc")
     }
 
     // ---- (g) 실행용 시나리오 조립: 조합 TC + steps를 cases[]로 실어 준다 ----------------------
