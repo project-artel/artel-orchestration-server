@@ -3,7 +3,10 @@ package kr.artel.orchestration.knowledge.service
 import kr.artel.orchestration.common.embedding.agent.EmbeddingClient
 import kr.artel.orchestration.common.error.UpstreamUnavailableException
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
+import kr.artel.orchestration.knowledge.config.KnowledgeGraphProperties
 import kr.artel.orchestration.knowledge.config.KnowledgeSearchProperties
+import kr.artel.orchestration.knowledge.dto.KnowledgeExpandResponse
+import kr.artel.orchestration.knowledge.dto.KnowledgeNeighbour
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchHit
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchResponse
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
@@ -13,6 +16,7 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.entity.KnowledgeUsageEntity
 import kr.artel.orchestration.knowledge.repository.KnowledgeSearchRow
+import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeUsageRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeVectorSearchRepository
 import kotlinx.coroutines.flow.collect
@@ -38,8 +42,11 @@ class KnowledgeSearchService(
     private val embeddingClient: EmbeddingClient,
     private val searchRepository: KnowledgeVectorSearchRepository,
     private val usageRepository: KnowledgeUsageRepository,
+    private val knowledgeRepository: KnowledgeRepository,
+    private val knowledgeGraphService: KnowledgeGraphService,
     private val backfillProperties: KnowledgeBackfillProperties,
     private val searchProperties: KnowledgeSearchProperties,
+    private val graphProperties: KnowledgeGraphProperties,
     private val clock: Clock
 ) {
     private val logger = LoggerFactory.getLogger(KnowledgeSearchService::class.java)
@@ -105,14 +112,20 @@ class KnowledgeSearchService(
             "knowledge 검색: project={}, scope={}, 검색어 {}자, tags={}, source={}, limit={}, 결과={}건",
             projectId, scope, query.length, tags, source, resolvedLimit, rows.size
         )
+        // 히트마다 한 홉 이웃을 붙인다(ARTEL-275). 관계가 하나도 없으면 인덱스 질의 하나가 빈
+        // 결과를 내고 끝이라, 그래프가 쌓이기 전의 비용이 사실상 없다.
+        val expansion = expandHits(projectId, scope, rows)
+
         return KnowledgeSearchOutcome(
             response = KnowledgeSearchResponse(
                 query = query,
                 model = model,
-                results = rows.map(::toHit)
+                results = rows.map { row -> toHit(row, expansion.byHit[row.knowledgeId].orEmpty()) }
             ),
             // 순위는 이 목록의 순서다. 리포지토리가 동점까지 id로 못박아 정렬하므로 같은 질의는
             // 같은 순위를 낸다 — 기록된 rank가 재현 가능해야 나중에 순위와 유용성을 견줄 수 있다.
+            //
+            // 이웃의 기록은 뒤에 붙인다. rank가 null이라 히트의 순위를 흐리지 않는다.
             retrievals = rows.mapIndexed { index, row ->
                 KnowledgeRetrieval(
                     knowledgeId = row.knowledgeId,
@@ -120,8 +133,51 @@ class KnowledgeSearchService(
                     rank = index + 1,
                     score = 1.0 - row.distance
                 )
-            }
+            } + expansion.retrievals
         )
+    }
+
+    /**
+     * 히트마다 1홉 이웃을 데려온다(ARTEL-275).
+     *
+     * **한 번의 확장으로 히트 전부를 편다.** 히트마다 따로 부르면 같은 이웃이 여러 히트에 중복으로
+     * 붙고 총 상한도 히트 수만큼 늘어난다. [KnowledgeGraphService.expand]가 seed 여럿을 받고
+     * visited 집합을 공유하는 이유가 이것이다.
+     *
+     * `via`로 어느 히트에 매달렸는지가 돌아오므로 그 값으로 다시 나눈다. 다만 `via`는 **정규 id**이고
+     * 히트의 id는 이 스코프에서 보이는 행의 id라, 그림자가 낀 경우 둘이 다르다 — 그래서 정규 id로
+     * 되짚는 표를 만든다.
+     *
+     * 실패를 삼키지 않는 이 클래스의 규칙은 여기에도 적용된다. 이웃을 못 가져오는 것은 DB 오류이지
+     * "이웃이 없음"이 아니고, 빈 목록으로 뭉개면 그래프가 비어 있는 것과 구분되지 않는다.
+     */
+    private suspend fun expandHits(
+        projectId: Long,
+        scope: KnowledgeScope,
+        rows: List<KnowledgeSearchRow>
+    ): HitExpansion {
+        if (!graphProperties.expandSearchHits || rows.isEmpty()) return HitExpansion(emptyMap(), emptyList())
+
+        val outcome = knowledgeGraphService.expand(
+            projectId = projectId,
+            scope = scope,
+            seedIds = rows.map { it.knowledgeId },
+            depth = 1,
+            fanout = graphProperties.searchFanout,
+            nodeBudget = graphProperties.searchNeighbourLimit,
+            // 검색 자체가 벡터 검색이라 히트의 벡터 이웃은 limit을 올렸으면 나왔을 것에 가깝다.
+            // 자동으로 붙이면 "limit 올리기"가 분장한 것이 되고 전사 비용만 두 배가 된다.
+            similar = null
+        )
+        if (outcome.neighbours.isEmpty()) return HitExpansion(emptyMap(), emptyList())
+
+        val hitIdByCanonical = knowledgeGraphService.canonicalIndex(projectId, scope, rows.map { it.knowledgeId })
+        val byHit = outcome.neighbours
+            .groupBy { hitIdByCanonical[it.via.toLong()] }
+            .filterKeys { it != null }
+            .mapKeys { (key, _) -> key!! }
+            .mapValues { (_, value) -> value.map { it.toDto() } }
+        return HitExpansion(byHit, outcome.retrievals)
     }
 
     /**
@@ -134,6 +190,75 @@ class KnowledgeSearchService(
      * 후자는 인용 보고 기능이 아직 없기 때문이다. 둘 다 null이 "모른다"는 뜻이며, 특히 `cited`를
      * false로 채우면 이 시기의 런 전부가 "아무것도 인용하지 않았다"로 읽힌다.
      */
+    suspend fun expand(
+        projectId: Long,
+        scope: KnowledgeScope,
+        mode: KnowledgeMode,
+        knowledgeId: Long,
+        depth: Int?,
+        includeSimilar: Boolean
+    ): KnowledgeExpandServiceOutcome {
+        val empty = KnowledgeExpandServiceOutcome(
+            response = KnowledgeExpandResponse(
+                id = knowledgeId.toString(),
+                summary = "",
+                neighbors = emptyList(),
+                truncated = false
+            ),
+            retrievals = emptyList()
+        )
+        // 확장도 검색과 **같은 게이트를 지난다.** off면 빈 결과이고 오류가 아니다 — 대조군 arm에서
+        // 도구가 실패하면 Agent가 재시도하며 행동이 달라지고, 없애려던 변수가 다시 든다.
+        if (!mode.readable) {
+            logger.info("knowledge 확장 생략: project={}, scope={}, mode={}", projectId, scope, mode.wire)
+            return empty
+        }
+
+        // 없는 항목·다른 프로젝트·다른 스코프의 항목은 여기서 걸린다. 오류가 아니라 빈 결과다 —
+        // 스코프 런이 방금 자기가 지운 항목을 펴려는 경우가 정상 경로에 있다.
+        val seed = knowledgeRepository.findVisibleById(knowledgeId, projectId, scope.id) ?: return empty
+
+        // 상한으로 자르되 거절하지 않는다(resolveLimit과 같은 판단). 결과가 Agent 컨텍스트로
+        // 들어가는 것을 막는 것이 목적이지 도구 호출을 실패시키는 것이 목적이 아니다.
+        val resolvedDepth = (depth ?: graphProperties.defaultDepth).coerceIn(1, graphProperties.maxDepth)
+
+        val outcome = knowledgeGraphService.expand(
+            projectId = projectId,
+            scope = scope,
+            seedIds = listOf(knowledgeId),
+            depth = resolvedDepth,
+            fanout = graphProperties.fanout,
+            nodeBudget = graphProperties.nodeBudget,
+            similar = if (!includeSimilar || graphProperties.similarLimit == 0) {
+                null
+            } else {
+                // 모델은 백필 설정에서 온다. 검색이 그러는 것과 같은 이유이고, 갈라 두면 실패가
+                // 오류가 아니라 조용한 빈 결과다.
+                SimilarSpec(
+                    kind = QUERY_KIND,
+                    model = backfillProperties.model,
+                    maxDistance = graphProperties.similarMaxDistance,
+                    limit = graphProperties.similarLimit
+                )
+            }
+        )
+
+        // 검색과 같은 이유로 본문은 남기지 않고 개수만 남긴다.
+        logger.info(
+            "knowledge 확장: project={}, scope={}, seed={}, depth={}, 이웃={}건, truncated={}",
+            projectId, scope, knowledgeId, resolvedDepth, outcome.neighbours.size, outcome.truncated
+        )
+        return KnowledgeExpandServiceOutcome(
+            response = KnowledgeExpandResponse(
+                id = knowledgeId.toString(),
+                summary = seed.summary,
+                neighbors = outcome.neighbours.map { it.toDto() },
+                truncated = outcome.truncated
+            ),
+            retrievals = outcome.retrievals
+        )
+    }
+
     suspend fun recordRetrievals(qaTryId: Long, retrievals: List<KnowledgeRetrieval>) {
         if (retrievals.isEmpty()) return
         val now = Instant.now(clock)
@@ -144,7 +269,7 @@ class KnowledgeSearchService(
                     knowledgeId = it.knowledgeId,
                     knowledgeVersion = it.version,
                     rank = it.rank,
-                    score = it.score.toFloat(),
+                    score = it.score?.toFloat(),
                     retrievedAt = now
                 )
             }
@@ -189,13 +314,20 @@ class KnowledgeSearchService(
     /**
      * 코사인 거리를 유사도로 뒤집는다. pgvector의 `<=>`는 `1 - cosine_similarity`라 그대로 되돌린다.
      */
-    private fun toHit(row: KnowledgeSearchRow) = KnowledgeSearchHit(
+    private fun toHit(row: KnowledgeSearchRow, neighbours: List<KnowledgeNeighbour>) = KnowledgeSearchHit(
         id = row.knowledgeId.toString(),
         tag = row.tag,
         source = row.source,
         summary = row.summary,
         description = row.description,
-        score = 1.0 - row.distance
+        score = 1.0 - row.distance,
+        neighbors = neighbours
+    )
+
+    /** 히트별 이웃과 이웃의 기록. 한 번의 확장 결과를 히트로 다시 나눈 것이다. */
+    private data class HitExpansion(
+        val byHit: Map<Long, List<KnowledgeNeighbour>>,
+        val retrievals: List<KnowledgeRetrieval>
     )
 
     private companion object {
@@ -218,17 +350,30 @@ data class KnowledgeSearchOutcome(
 )
 
 /**
+ * 확장 한 번의 결과. [KnowledgeSearchOutcome]과 같은 이유로 응답과 기록을 갈라 둔다.
+ *
+ * 서비스 계층의 [KnowledgeExpandOutcome]과 이름이 비슷하지만 층이 다르다: 그쪽은 `version`을 든
+ * 내부 표현이고, 이쪽은 WS로 나갈 payload가 이미 만들어진 상태다.
+ */
+data class KnowledgeExpandServiceOutcome(
+    val response: KnowledgeExpandResponse,
+    val retrievals: List<KnowledgeRetrieval>
+)
+
+/**
  * 검색이 내보낸 히트 하나에 대해 남길 사실.
  *
  * @property version 내보낸 시점의 content 버전. 나중에 그 항목이 고쳐져도 이 런이 읽은 것은 이 버전이다.
- * @property rank 1부터.
- * @property score 코사인 유사도. Agent에게 나간 값과 같다.
+ * @property rank 1부터. **그래프 이웃은 null이다**(ARTEL-275) — 이웃은 관련도 순위를 매긴 결과가
+ *   아니라 관계를 타고 온 것이라, 0이나 임의의 값으로 채우면 순위와 유용성을 견주는 질의가
+ *   조용히 틀린다. null이 "모른다"인 그 컬럼의 관례 그대로다.
+ * @property score 코사인 유사도. Agent에게 나간 값과 같다. 관계로 온 이웃은 유사도가 없어 null이다.
  */
 data class KnowledgeRetrieval(
     val knowledgeId: Long,
     val version: Int,
-    val rank: Int,
-    val score: Double
+    val rank: Int?,
+    val score: Double?
 )
 
 /**

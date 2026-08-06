@@ -29,6 +29,13 @@ data class KnowledgeSearchRequest(
  * @property score 코사인 유사도(1에 가까울수록 가깝다). 항목당 벡터가 여럿이므로 **가장 가까운
  *   벡터의 값**이다. 원시 거리 대신 유사도로 내보내는 이유는 이 값이 Agent 프롬프트에 그대로
  *   들어가서인데, "작을수록 좋다"는 거리는 그 자리에서 거꾸로 읽히기 쉽다.
+ * @property neighbors 이 항목에 한 홉으로 붙은 관계(ARTEL-275). **순수 추가 필드다** — JSON 객체에
+ *   필드를 더하는 것이고 Agent의 pydantic 모델이 `extra="allow"`라, 이 필드를 모르는 Agent는
+ *   통째로 무시한다. 그래서 Orchestration을 먼저 내보낼 수 있다.
+ *
+ *   `version`을 이 타입에 얹지 않은 기존 판단(ARTEL-255)과의 차이도 의도다: `version`은 기록용
+ *   사실이라 [kr.artel.orchestration.knowledge.service.KnowledgeSearchOutcome] 쪽에 남고,
+ *   이웃은 **Agent가 읽을 것**이라 WS 계약 객체에 속한다.
  */
 data class KnowledgeSearchHit(
     val id: String,
@@ -36,7 +43,8 @@ data class KnowledgeSearchHit(
     val source: String,
     val summary: String,
     val description: String,
-    val score: Double
+    val score: Double,
+    val neighbors: List<KnowledgeNeighbour> = emptyList()
 )
 
 /**

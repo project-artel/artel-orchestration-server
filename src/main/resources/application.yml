@@ -98,6 +98,23 @@ artel:
       default-limit: ${ARTEL_KNOWLEDGE_SEARCH_DEFAULT_LIMIT:5}
       # 결과가 Agent 컨텍스트로 들어간다. 요청이 더 큰 값을 보내도 여기서 잘린다.
       max-limit: ${ARTEL_KNOWLEDGE_SEARCH_MAX_LIMIT:20}
+    # 지식 그래프 탐색(ARTEL-275). 여기 값 전부가 Agent 컨텍스트 예산이다 — 이웃은 검색 결과에
+    # 딸려 나가 런이 끝날 때까지 전사에 남으므로, 상한이 없으면 검색 한 번이 그래프 전부를 끈다.
+    graph:
+      # 검색 히트마다 1홉 이웃을 붙인다. edge가 비어 있으면 빈 결과를 내는 인덱스 질의 하나라
+      # 관계가 쌓이기 전의 부담이 사실상 없다. 문제가 되면 재배포 없이 끄는 킬 스위치다.
+      expand-search-hits: ${ARTEL_KNOWLEDGE_GRAPH_EXPAND_SEARCH_HITS:true}
+      search-fanout: ${ARTEL_KNOWLEDGE_GRAPH_SEARCH_FANOUT:2}
+      # 히트 수 × fanout이 아니라 별도 상한이다. 이것이 검색당 전사 증가를 한 자릿수 줄에서 멈춘다.
+      search-neighbour-limit: ${ARTEL_KNOWLEDGE_GRAPH_SEARCH_NEIGHBOUR_LIMIT:8}
+      default-depth: ${ARTEL_KNOWLEDGE_GRAPH_DEFAULT_DEPTH:1}
+      # 3 이상은 노드 수가 컨텍스트 예산을 넘는다(fanout 3에서 깊이 2는 13노드, 깊이 3은 40노드).
+      max-depth: ${ARTEL_KNOWLEDGE_GRAPH_MAX_DEPTH:2}
+      fanout: ${ARTEL_KNOWLEDGE_GRAPH_FANOUT:3}
+      node-budget: ${ARTEL_KNOWLEDGE_GRAPH_NODE_BUDGET:20}
+      similar-limit: ${ARTEL_KNOWLEDGE_GRAPH_SIMILAR_LIMIT:3}
+      # ⚠️ 추측된 값이다. 실제 코퍼스의 쌍별 거리 분포를 보고 무릎을 찾기 전까지 믿지 말 것.
+      similar-max-distance: ${ARTEL_KNOWLEDGE_GRAPH_SIMILAR_MAX_DISTANCE:0.40}
   testcase:
     # 케이스 벡터 백필(ARTEL-216). knowledge와 같은 이연 워커 패턴이되, 초기 대량 적재를 빨리
     # 소진하도록 버스트 기본값(batch 큰 편, interval 짧은 편). 로컬·테스트는 꺼 둔다.
