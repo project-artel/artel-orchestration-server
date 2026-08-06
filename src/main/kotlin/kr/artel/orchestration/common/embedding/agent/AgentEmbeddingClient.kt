@@ -36,6 +36,10 @@ class AgentEmbeddingClient(
                     .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
             )
         )
+        // 임베딩 응답은 배치당 (건수 × 차원)개의 float라 기본 256KB 코덱 버퍼를 쉽게 넘긴다
+        // (예: 64건 × 1024차원 ≈ 1MB+). 넉넉히 32MB로 올리지 않으면 200 응답을 디코딩하지 못해
+        // 백필이 매 배치 통째로 실패한다.
+        .codecs { it.defaultCodecs().maxInMemorySize(32 * 1024 * 1024) }
         .build()
 
     override suspend fun embed(texts: List<String>): EmbedResponse {
