@@ -134,6 +134,8 @@ class SecurityConfig {
             it.pathMatchers("/api/test-scenario/**").authenticated()
             // QA 실행/로그/SSE도 프로젝트 멤버만 접근하는 엔드유저 API다.
             it.pathMatchers("/api/qa-tries/**").authenticated()
+            // 런(TR) 단위 QA 실행/조회도 같은 엔드유저 API(ARTEL-259).
+            it.pathMatchers("/api/qa-runs/**").authenticated()
             it.anyExchange().authenticated()
         }
         .oauth2Login {

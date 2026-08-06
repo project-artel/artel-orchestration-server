@@ -22,6 +22,7 @@ import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.qa.service.QaAgentEnvelope
 import kr.artel.orchestration.qa.service.QaAgentInboundRouter
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
+import kr.artel.orchestration.qa.service.QaTryService
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
@@ -47,6 +48,7 @@ import java.util.UUID
 class QaRunInboundActivationIntegrationTest {
 
     @Autowired private lateinit var router: QaAgentInboundRouter
+    @Autowired private lateinit var service: QaTryService
     @Autowired private lateinit var persistence: QaTryPersistenceService
     @Autowired private lateinit var qaTryRepository: QaTryRepository
     @Autowired private lateinit var qaRunRepository: QaRunRepository
@@ -151,6 +153,28 @@ class QaRunInboundActivationIntegrationTest {
         assertThat(logs.count { it.message == RUNNING_LOG }).isEqualTo(1)
     }
 
+    @Test
+    fun `getRun은 런과 시나리오별 try를 순서대로 돌려주고 비멤버에겐 안 보인다`(): Unit = runBlocking {
+        val run = runningRun()
+
+        val response = service.getRun(run.runId, run.ownerId)!!
+        assertThat(response.id).isEqualTo(run.runId.toString())
+        assertThat(response.status).isEqualTo("RUNNING")
+        // 적재 순서(=시나리오 순서)대로, 첫 시나리오는 활성(RUNNING)·나머진 대기(PENDING).
+        assertThat(response.tries.map { it.id })
+            .containsExactly(run.firstTryId.toString(), run.pendingTryId.toString())
+        assertThat(response.tries.map { it.status }).containsExactly("RUNNING", "PENDING")
+
+        // 프로젝트 비멤버에게는 런이 존재하지 않는 것과 같다(null → 컨트롤러에서 404).
+        val stranger = oauthUserService.upsert(
+            OAuthIdentity(
+                provider = "github", providerUserId = "9999", login = "stranger",
+                displayName = "stranger", avatarUrl = null, email = "stranger@example.com"
+            )
+        )!!
+        assertThat(service.getRun(run.runId, stranger.userId.toLong())).isNull()
+    }
+
     // ----------------------------------------------------------------- helpers
 
     /** 시나리오 1을 정상 종료시킨다 — 활성 유니크(uk_qa_try_active_instance)를 비워 2가 활성될 자리를 낸다. */
@@ -168,7 +192,12 @@ class QaRunInboundActivationIntegrationTest {
             payload = objectMapper.readTree("""{"message":"$message"}""")
         )
 
-    private data class RunningRun(val runId: Long, val firstTryId: Long, val pendingTryId: Long)
+    private data class RunningRun(
+        val runId: Long,
+        val firstTryId: Long,
+        val pendingTryId: Long,
+        val ownerId: Long
+    )
 
     /** qa_run RUNNING + 첫 시나리오 RUNNING(활성) + 두 번째 시나리오 PENDING(대기)인 런을 만든다. */
     private suspend fun runningRun(): RunningRun {
@@ -199,7 +228,7 @@ class QaRunInboundActivationIntegrationTest {
         persistence.attachRunAndMarkRunning(
             started.qaRun, firstTryId, "session-run-1", objectMapper.readTree(resolvedConfig)
         )
-        return RunningRun(started.qaRun.id!!, firstTryId, pendingTryId)
+        return RunningRun(started.qaRun.id!!, firstTryId, pendingTryId, ownerId)
     }
 
     private suspend fun signIn(): AuthenticatedUser =

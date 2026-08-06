@@ -20,6 +20,17 @@ interface QaRunRepository : CoroutineCrudRepository<QaRunEntity, Long> {
     )
     suspend fun findActiveByGameInstanceId(gameInstanceId: Long): QaRunEntity?
 
+    /** 런은 그 test_run이 속한 프로젝트의 멤버에게만 보인다(qa_try 조회와 같은 가시성 규칙). */
+    @Query(
+        """
+        SELECT qr.* FROM qa_run qr
+        JOIN test_run tr ON tr.id = qr.test_run_id
+        JOIN project_member pm ON pm.project_id = tr.project_id
+        WHERE qr.id = :id AND pm.app_user_id = :userId
+        """
+    )
+    suspend fun findAccessibleById(id: Long, userId: Long): QaRunEntity?
+
     @Modifying
     @Query(
         """
@@ -74,6 +85,10 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
         """
     )
     suspend fun findActiveByGameInstanceId(gameInstanceId: Long): QaTryEntity?
+
+    /** 한 런의 시나리오별 qa_try를 적재 순서(id 오름차순 = 시나리오 순서)로. */
+    @Query("SELECT * FROM qa_try WHERE qa_run_id = :qaRunId ORDER BY id ASC")
+    fun findByQaRunId(qaRunId: Long): Flow<QaTryEntity>
 
     /** One project's runs, newest first. Membership is what makes them visible. */
     @Query(

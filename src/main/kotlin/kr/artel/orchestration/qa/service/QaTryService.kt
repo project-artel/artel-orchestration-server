@@ -439,6 +439,16 @@ class QaTryService(
         tries = tries.map { it.toResponse() }
     )
 
+    /**
+     * 런 하나 + 그 아래 시나리오별 qa_try. FE 런 화면이 이것을 (종단까지) 폴링해 시나리오별
+     * 진행 상태를 따라간다. 실시간 상세는 여전히 qa_try의 SSE — 여긴 개요다.
+     */
+    suspend fun getRun(qaRunId: Long, userId: Long): QaRunResponse? {
+        val run = runRepository.findAccessibleById(qaRunId, userId) ?: return null
+        val tries = tryRepository.findByQaRunId(qaRunId).toList()
+        return run.toRunResponse(tries)
+    }
+
     suspend fun get(qaTryId: Long, userId: Long): QaTryResponse? =
         tryRepository.findAccessibleById(qaTryId, userId)?.toResponse()
 
