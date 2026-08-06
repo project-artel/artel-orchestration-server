@@ -12,7 +12,9 @@ import kr.artel.orchestration.testcase.dto.TestCaseResponse
  * @property input 선택: `keyboard`|`click`(interactable 유무로 추론). @property observe verify가 볼 대상.
  */
 data class ScenarioStepDto(
-    val id: String,
+    // 저작 입력에서는 생략할 수 있다(빈 문자열 기본) — 클라이언트가 자리 핸들로 쓰는 값이라
+    // 서버는 요구하지 않는다. 조회 응답에는 저장된 값이 그대로 실린다.
+    val id: String = "",
     val kind: String,
     val assert: Boolean = true,
     val intent: String,
@@ -34,7 +36,20 @@ data class ScenarioCasesResponse(
     val items: List<ScenarioCaseItem>,
 )
 
-/** 시나리오 조합 전체 교체(FE 드래그앤드롭 저장). caseIds 순서가 곧 position. id는 문자열. */
+/** 저작 쓰기 입력 한 칸(ARTEL-269): 그 자리의 케이스 + 그 자리의 저작 Step. */
+data class ScenarioCaseInput(
+    val caseId: String,
+    val steps: List<ScenarioStepDto> = emptyList(),
+)
+
+/**
+ * 시나리오 조합 전체 교체. 순서가 곧 position. id는 문자열.
+ *
+ * 두 형태를 받는다. [items]가 있으면 자리별 저작 Step까지 함께 저장하는 **쓰기 경로**(ARTEL-269)로,
+ * 입력 steps가 권위다(빈 배열이면 그 자리 steps를 비운다). 없으면 [caseIds] 순서만 받는 기존
+ * 경로(FE 드래그앤드롭)로, 자리가 유지되는 steps는 캐리포워드한다.
+ */
 data class SetScenarioCasesRequest(
     val caseIds: List<String> = emptyList(),
+    val items: List<ScenarioCaseInput>? = null,
 )

@@ -20,6 +20,17 @@ import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
 
 /**
+ * 조합 한 자리에 넣을 케이스 + 그 자리의 저작 Step(ARTEL-269).
+ *
+ * [steps]가 null이면 "이 자리 steps는 건드리지 말고 자리가 유지되면 캐리포워드"라는 뜻(순서만
+ * 바꾸는 기존 경로), 비어 있지 않거나 빈 목록이면 그 값을 그대로 저장한다(저작 쓰기 경로).
+ */
+data class ScenarioCasePlacement(
+    val caseId: Long,
+    val steps: List<ScenarioStepDto>?,
+)
+
+/**
  * 시나리오 ↔ 케이스 조합(junction) 서비스(코루틴). FE 캔버스가 시나리오를 케이스로 구성/재정렬할 때 쓴다.
  *
  * 조회는 조합 행을 순서대로 읽고 케이스 내용을 리졸브한다(한 번의 findAllById로 N+1 회피).
@@ -40,21 +51,45 @@ class ScenarioCompositionService(
         return resolveCases(testScenarioId)
     }
 
-    /** 조합 전체 교체. caseIds 순서 = position. 원자적. 반환은 리졸브된 새 조합(비접근 → null). */
-    suspend fun setCases(testScenarioId: Long, userId: Long, caseIds: List<Long>): ScenarioCasesResponse? {
+    /**
+     * 조합 전체 교체(순서만). position별 steps는 자리가 유지되면 캐리포워드한다(기존 FE 경로).
+     * 원자적. 반환은 리졸브된 새 조합(비접근 → null).
+     */
+    suspend fun setCases(testScenarioId: Long, userId: Long, caseIds: List<Long>): ScenarioCasesResponse? =
+        applyCases(testScenarioId, userId, caseIds.map { ScenarioCasePlacement(it, steps = null) })
+
+    /**
+     * 조합 전체 교체 + 자리별 저작 Step 저장(ARTEL-269). 각 placement의 steps가 **권위**다 —
+     * 준 대로 저장하고(빈 목록이면 비운다), 캐리포워드하지 않는다.
+     */
+    suspend fun setCasesWithSteps(
+        testScenarioId: Long,
+        userId: Long,
+        placements: List<ScenarioCasePlacement>
+    ): ScenarioCasesResponse? = applyCases(testScenarioId, userId, placements)
+
+    private suspend fun applyCases(
+        testScenarioId: Long,
+        userId: Long,
+        placements: List<ScenarioCasePlacement>
+    ): ScenarioCasesResponse? {
         val scenario = accessService.accessibleScenario(testScenarioId, userId) ?: return null
-        validateCases(scenario.projectId, caseIds)
+        validateCases(scenario.projectId, placements.map { it.caseId })
         transactionalOperator.executeAndAwait {
             // 자리(testCaseId, position)가 유지되는 스텝은 삭제 전 스냅샷해 캐리포워드한다(자리 사라지면 폐기).
+            // 입력이 steps를 명시한 placement는 그 값이 이겨서 스냅샷을 쓰지 않는다.
             val preserved = scenarioCaseRepository.findByTestScenarioIdOrderByPosition(testScenarioId).toList()
                 .associate { (it.testCaseId to it.position) to it.steps }
             scenarioCaseRepository.deleteByTestScenarioId(testScenarioId)
-            val rows = caseIds.mapIndexed { index, caseId ->
+            val rows = placements.mapIndexed { index, placement ->
                 TestScenarioCaseEntity(
                     testScenarioId = testScenarioId,
-                    testCaseId = caseId,
+                    testCaseId = placement.caseId,
                     position = index,
-                    steps = preserved[caseId to index] ?: Json.of("[]"),
+                    steps = placement.steps
+                        ?.let { Json.of(objectMapper.writeValueAsString(it)) }
+                        ?: preserved[placement.caseId to index]
+                        ?: Json.of("[]"),
                 )
             }
             scenarioCaseRepository.saveAll(rows).toList()

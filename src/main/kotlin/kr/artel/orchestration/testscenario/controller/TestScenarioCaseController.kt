@@ -5,6 +5,7 @@ import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.testscenario.dto.ScenarioCasesResponse
 import kr.artel.orchestration.testscenario.dto.SetScenarioCasesRequest
+import kr.artel.orchestration.testscenario.service.ScenarioCasePlacement
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -42,13 +43,21 @@ class TestScenarioCaseController(
         @RequestBody request: SetScenarioCasesRequest,
         @AuthenticationPrincipal jwt: Jwt
     ): ResponseEntity<ScenarioCasesResponse> {
-        val caseIds = request.caseIds.map {
-            it.toLongOrNull() ?: throw BadRequestException("invalid caseId: $it")
+        val userId = requireUser(jwt)
+        // items가 오면 자리별 저작 Step까지 저장하는 경로(ARTEL-269), 없으면 순서만 받는 기존 경로.
+        val result = if (request.items != null) {
+            val placements = request.items.map { item ->
+                ScenarioCasePlacement(caseId = parseCaseId(item.caseId), steps = item.steps)
+            }
+            service.setCasesWithSteps(testScenarioId, userId, placements)
+        } else {
+            service.setCases(testScenarioId, userId, request.caseIds.map { parseCaseId(it) })
         }
-        return service.setCases(testScenarioId, requireUser(jwt), caseIds)
-            ?.let { ResponseEntity.ok(it) }
-            ?: ResponseEntity.notFound().build()
+        return result?.let { ResponseEntity.ok(it) } ?: ResponseEntity.notFound().build()
     }
+
+    private fun parseCaseId(raw: String): Long =
+        raw.toLongOrNull() ?: throw BadRequestException("invalid caseId: $raw")
 
     private fun requireUser(jwt: Jwt): Long =
         sessionUserResolver.resolve(jwt)?.userId
