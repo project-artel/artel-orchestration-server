@@ -3,6 +3,7 @@ package kr.artel.orchestration.qa.controller
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.qa.dto.CreateQaRunRequest
 import kr.artel.orchestration.qa.dto.QaRunResponse
@@ -12,6 +13,8 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -41,6 +44,14 @@ class QaRunController(
                 request.toRunSettings(objectMapper)
             )
         )
+
+    /** 런 하나 + 시나리오별 try 상태. FE 런 화면이 종단까지 폴링하는 개요. */
+    @GetMapping("/{id}")
+    suspend fun get(
+        @PathVariable id: String,
+        @AuthenticationPrincipal jwt: Jwt
+    ): QaRunResponse =
+        service.getRun(parseId(id), requireUser(jwt)) ?: throw NotFoundException()
 
     private fun requireUser(jwt: Jwt): Long =
         userResolver.resolve(jwt)?.userId ?: throw UnauthorizedException()
