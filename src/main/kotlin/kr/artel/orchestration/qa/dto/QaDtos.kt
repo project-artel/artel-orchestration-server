@@ -22,6 +22,17 @@ data class CreateQaTryRequest(
     val arch: JsonNode? = null
 )
 
+/** 런(TR) 단위 QA 시작 요청(ARTEL-259). [testRunId]의 시나리오들을 순차 실행한다. 설정은 QaTry와 동일. */
+data class CreateQaRunRequest(
+    val testRunId: String,
+    val gameInstanceId: String,
+    val model: String? = null,
+    val language: String? = null,
+    val promptVersion: String? = null,
+    val reasoning: QaReasoningRequest? = null,
+    val arch: JsonNode? = null
+)
+
 data class QaReasoningRequest(
     val effort: String? = null,
     val maxTokens: Int? = null
@@ -65,6 +76,21 @@ data class QaTryResponse(
     val agentArch: String? = null,
     val agentFingerprint: String? = null,
     val runConfig: JsonNode? = null
+)
+
+/**
+ * 런 단위 QA 실행 응답(ARTEL-259). 한 qa_run + 그 아래 시나리오별 qa_try들. [tries]로 FE가 각
+ * 시나리오의 실행/결과에 접근한다(qa_try 기준 조회·이슈·통계 그대로).
+ */
+data class QaRunResponse(
+    val id: String,
+    val testRunId: String,
+    val gameInstanceId: String,
+    val startedBy: String,
+    val status: String,
+    val startedAt: Instant,
+    val completedAt: Instant?,
+    val tries: List<QaTryResponse> = emptyList()
 )
 
 data class QaLogResponse(
