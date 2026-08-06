@@ -13,12 +13,14 @@ import org.springframework.web.bind.annotation.RestController
 
 /**
  * knowledge 조회 컨트롤러. 저장은 API가 아니라 내부 파이프라인(docs 추출 / QA WS)이 담당하므로
- * 조회만 노출한다. 내부 경로(api/orchestration 하위, permitAll — 엔드유저 JWT 아님)이며,
- * Agent/FE가 프로젝트 스코프로 source/tag를 걸어 조회한다. 컨트롤러는 얇게: 필터 파싱·검증만 하고
+ * 조회만 노출한다. 내부 경로(`/internal/` 하위, permitAll — 엔드유저 JWT 아님)이며,
+ * Agent/내부 도구가 프로젝트 스코프로 source/tag를 걸어 조회한다. FE는 부르지 않는다 — 접두사가
+ * 무인증 서버-투-서버 전용이라 엔드유저 세션으로는 여기에 올 일이 없다. QA Agent의 knowledge
+ * 접근도 REST가 아니라 QA WS 세션 채널이다. 컨트롤러는 얇게: 필터 파싱·검증만 하고
  * 조회 로직은 [KnowledgeService]에 위임한다. (Phase 2에서 하이브리드 검색이 여기 붙는다.)
  */
 @RestController
-@RequestMapping("/api/knowledge")
+@RequestMapping("/internal/knowledge")
 class KnowledgeController(
     private val knowledgeService: KnowledgeService
 ) {

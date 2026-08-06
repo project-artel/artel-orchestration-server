@@ -132,7 +132,7 @@ class TestCaseSpecHttpIntegrationTest {
     }
 
     private fun post(projectId: Long, csv: ByteArray): JsonNode =
-        client.post().uri("/api/test-case-spec/$projectId")
+        client.post().uri("/internal/test-case-spec/$projectId")
             .contentType(MediaType.parseMediaType("text/csv"))
             .bodyValue(csv)
             .retrieve()

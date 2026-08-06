@@ -14,14 +14,16 @@ import org.springframework.web.bind.annotation.RestController
  * Agent가 SDK 등록 시점에 만든 **기능 테스트 명세 CSV**를 받는 서버-투-서버 경로(코루틴).
  *
  * **엔드유저 JWT 대상이 아니다.** 게임 SDK를 등록하는 쪽에는 로그인 세션이 없고, 보내는 주체는
- * 사람이 아니라 Agent 서버다. knowledge 조회 경로와 같은 취급으로 SecurityConfig에서 permitAll이다.
+ * 사람이 아니라 Agent 서버다. 그래서 무인증 내부 접두사인 `/internal/` 아래에 산다.
+ * 사용자용 다운로드는 이 경로가 아니라 `/api/projects/{id}/test-case-spec/download`이며,
+ * 그쪽은 인증 대상이다 — 접두사가 두 신뢰 모델을 갈라놓는다.
  *
  * 본문은 CSV 원문 바이트를 그대로 받는다. multipart를 쓰지 않는 이유는 파일이 **하나뿐이고**
  * 파일명·필드명 같은 곁다리 메타데이터가 필요 없기 때문이다. 보내는 쪽도 바이트를 그대로
  * 실으면 되고 경계 파싱이 없다.
  */
 @RestController
-@RequestMapping("/api/test-case-spec")
+@RequestMapping("/internal/test-case-spec")
 class TestCaseSpecIngestController(
     private val service: TestCaseSpecService
 ) {

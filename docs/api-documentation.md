@@ -20,7 +20,7 @@ Then use:
 ## Documented API surface
 
 - `POST /api/sdk/registrations` — register a running SDK with the instance key issued by the dashboard, and report the game version it was built from. Unauthenticated: the key is the only credential.
-- `POST /api/orchestration/action/{instanceId}` — deliver an Agent action list to a connected game instance.
+- `POST /internal/action/{instanceId}` — deliver an Agent action list to a connected game instance. `/internal/**` is the unauthenticated server-to-server prefix; nothing under it takes an end-user JWT.
 - `GET /api/test-scenario/{clientId}/stream` — subscribe to test-scenario events over SSE.
 - `POST /api/test-scenario/{clientId}/message` — relay a user message to the Agent server.
 - `GET /api/auth/me` — read the signed-in user.
