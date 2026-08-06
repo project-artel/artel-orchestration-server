@@ -16,7 +16,9 @@ import kr.artel.orchestration.knowledge.service.KnowledgeMutation
 import kr.artel.orchestration.knowledge.service.KnowledgeRetrieval
 import kr.artel.orchestration.knowledge.service.KnowledgeSearchService
 import kr.artel.orchestration.knowledge.service.KnowledgeService
+import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.entity.QaTryEntity
+import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -36,6 +38,7 @@ private val SUPPORTED_TYPES =
 @Service
 class QaAgentInboundRouter(
     private val tryRepository: QaTryRepository,
+    private val runRepository: QaRunRepository,
     private val logService: QaLogService,
     private val actionDispatch: QaActionDispatchService,
     private val streamManager: QaLogStreamManager,
@@ -116,8 +119,58 @@ class QaAgentInboundRouter(
         }
     }
 
-    private suspend fun activeTry(qaTryId: Long) =
-        tryRepository.findById(qaTryId)?.takeIf { it.status == "STARTING" || it.status == "RUNNING" }
+    private suspend fun activeTry(qaTryId: Long): QaTryEntity? {
+        val qaTry = tryRepository.findById(qaTryId) ?: return null
+        return when (qaTry.status) {
+            "STARTING", "RUNNING" -> qaTry
+            // 런의 다음 시나리오가 보낸 첫 프레임 — 이제 그 차례다. 런이 아직 살아 있으면
+            // PENDING→RUNNING으로 활성해 그 프레임부터 정상 라우팅한다(ARTEL-259 시나리오 전환).
+            "PENDING" -> activatePending(qaTry)
+            else -> null
+        }
+    }
+
+    /**
+     * PENDING qa_try를 그 부모 런의 세션 공통 설정으로 활성한다. 런이 RUNNING이 아니면(끝났거나
+     * 실패) 활성하지 않고 프레임을 버린다. 경합으로 이미 활성됐으면 다시 읽어 RUNNING이면 태운다.
+     */
+    private suspend fun activatePending(qaTry: QaTryEntity): QaTryEntity? {
+        val runId = qaTry.qaRunId ?: return null
+        val run = runRepository.findById(runId)?.takeIf { it.status == "RUNNING" } ?: return null
+        val sessionId = run.agentSessionId ?: return null
+        val id = requireNotNull(qaTry.id)
+        val configJson = run.runConfig.asString()
+        val config = objectMapper.readTree(configJson)
+        val activated = tryRepository.activatePending(
+            id = id,
+            agentSessionId = sessionId,
+            model = config.textAt("model"),
+            reasoningEffort = config.textAt("reasoning", "effort"),
+            promptVersion = config.textAt("prompt_version"),
+            agentArch = config.textAt("agent_arch"),
+            agentFingerprint = config.textAt("agent_fingerprint"),
+            runConfig = configJson,
+            updatedAt = Instant.now(clock)
+        )
+        if (activated != 1) return tryRepository.findById(id)?.takeIf { it.status == "RUNNING" }
+        val log = logService.append(
+            qaTryId = id,
+            direction = "ORCHE_INTERNAL",
+            type = "STATUS",
+            message = "QA execution is running.",
+            payload = objectMapper.valueToTree(QaStatusPayload("RUNNING", null))
+        )
+        logService.publish(log)
+        return tryRepository.findById(id)
+    }
+
+    private fun JsonNode?.textAt(vararg path: String): String? {
+        var node: JsonNode = this ?: return null
+        for (name in path) {
+            node = node.get(name) ?: return null
+        }
+        return node.takeIf { it.isTextual }?.asText()
+    }
 
     private suspend fun routeStatus(
         currentStatus: String,
