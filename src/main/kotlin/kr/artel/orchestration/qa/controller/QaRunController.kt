@@ -53,6 +53,19 @@ class QaRunController(
     ): QaRunResponse =
         service.getRun(parseId(id), requireUser(jwt)) ?: throw NotFoundException()
 
+    /**
+     * 런(TR) 전체를 취소한다. 활성 시나리오는 Agent 세션 종료까지 포함해 취소되고 qa_run이 닫혀,
+     * 그 게임 인스턴스로 다시 런을 시작할 수 있게 된다. 이미 끝난 런은 409.
+     */
+    @PostMapping("/{id}/cancel")
+    suspend fun cancel(
+        @PathVariable id: String,
+        @AuthenticationPrincipal jwt: Jwt
+    ): ResponseEntity<Void> {
+        service.cancelRun(parseId(id), requireUser(jwt))
+        return ResponseEntity.noContent().build()
+    }
+
     private fun requireUser(jwt: Jwt): Long =
         userResolver.resolve(jwt)?.userId ?: throw UnauthorizedException()
 

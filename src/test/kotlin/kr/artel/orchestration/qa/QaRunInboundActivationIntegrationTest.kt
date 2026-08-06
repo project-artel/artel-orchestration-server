@@ -175,6 +175,40 @@ class QaRunInboundActivationIntegrationTest {
         assertThat(service.getRun(run.runId, stranger.userId.toLong())).isNull()
     }
 
+    @Test
+    fun `모든 시나리오 try가 끝나면 qa_run이 COMPLETED로 닫혀 인스턴스가 풀린다`(): Unit = runBlocking {
+        val run = runningRun()
+
+        // 시나리오 1 종단 — 아직 시나리오 2가 PENDING이라 런은 RUNNING을 유지한다.
+        router.handle(terminalStatusFrame(run.firstTryId))
+        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("RUNNING")
+
+        // 시나리오 2 활성(첫 프레임) 후 종단 — 이제 모든 try가 종단이라 런이 닫힌다.
+        router.handle(logFrame(run.pendingTryId, "s2 turn"))
+        router.handle(terminalStatusFrame(run.pendingTryId))
+
+        val closed = qaRunRepository.findById(run.runId)!!
+        assertThat(closed.status).isEqualTo("COMPLETED")
+        assertThat(closed.completedAt).isNotNull()
+        // 재실행 가드는 STARTING/RUNNING만 센다 — 이제 이 인스턴스로 다시 런을 시작할 수 있다.
+        assertThat(qaRunRepository.findActiveByGameInstanceId(run.instanceId)).isNull()
+    }
+
+    @Test
+    fun `cancelRun은 미종단 try를 정리하고 qa_run을 CANCELLED로 닫아 인스턴스를 푼다`(): Unit = runBlocking {
+        val run = runningRun()
+        // 활성 try(Agent 세션 필요)의 취소 네트워크 경로를 피하려 시나리오 1은 미리 종료해 둔다.
+        completeFirstScenario(run.firstTryId)
+
+        service.cancelRun(run.runId, run.ownerId)
+
+        val cancelled = qaRunRepository.findById(run.runId)!!
+        assertThat(cancelled.status).isEqualTo("CANCELLED")
+        // 아직 안 돈 PENDING 시나리오는 미종단 정리로 FAILED가 된다.
+        assertThat(qaTryRepository.findById(run.pendingTryId)!!.status).isEqualTo("FAILED")
+        assertThat(qaRunRepository.findActiveByGameInstanceId(run.instanceId)).isNull()
+    }
+
     // ----------------------------------------------------------------- helpers
 
     /** 시나리오 1을 정상 종료시킨다 — 활성 유니크(uk_qa_try_active_instance)를 비워 2가 활성될 자리를 낸다. */
@@ -196,7 +230,8 @@ class QaRunInboundActivationIntegrationTest {
         val runId: Long,
         val firstTryId: Long,
         val pendingTryId: Long,
-        val ownerId: Long
+        val ownerId: Long,
+        val instanceId: Long
     )
 
     /** qa_run RUNNING + 첫 시나리오 RUNNING(활성) + 두 번째 시나리오 PENDING(대기)인 런을 만든다. */
@@ -228,8 +263,19 @@ class QaRunInboundActivationIntegrationTest {
         persistence.attachRunAndMarkRunning(
             started.qaRun, firstTryId, "session-run-1", objectMapper.readTree(resolvedConfig)
         )
-        return RunningRun(started.qaRun.id!!, firstTryId, pendingTryId, ownerId)
+        return RunningRun(started.qaRun.id!!, firstTryId, pendingTryId, ownerId, instance.id!!)
     }
+
+    private fun terminalStatusFrame(qaTryId: Long) =
+        QaAgentEnvelope(
+            messageId = UUID.randomUUID().toString(),
+            type = "STATUS",
+            qaTryId = qaTryId.toString(),
+            timestamp = Instant.now(),
+            payload = objectMapper.readTree(
+                """{"status":"COMPLETED","result":"PASSED","message":"scenario done"}"""
+            )
+        )
 
     private suspend fun signIn(): AuthenticatedUser =
         oauthUserService.upsert(
