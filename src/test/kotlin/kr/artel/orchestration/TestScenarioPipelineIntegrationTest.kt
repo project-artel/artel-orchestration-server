@@ -10,6 +10,10 @@ import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.game.entity.GameInstanceEntity
+import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.qa.entity.QaTryEntity
+import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
 import kr.artel.orchestration.testrun.repository.TestRunRepository
@@ -78,6 +82,12 @@ class TestScenarioPipelineIntegrationTest {
 
     @Autowired
     private lateinit var projectMemberRepository: ProjectMemberRepository
+
+    @Autowired
+    private lateinit var gameInstanceRepository: GameInstanceRepository
+
+    @Autowired
+    private lateinit var qaTryRepository: QaTryRepository
 
     private fun webClient() = WebClient.create("http://localhost:$port")
 
@@ -497,5 +507,72 @@ class TestScenarioPipelineIntegrationTest {
             .block(Duration.ofSeconds(5))
 
         assertThat(status?.value()).isEqualTo(404)
+    }
+
+    private fun deleteScenario(client: WebClient, token: String, testScenarioId: Long, force: Boolean = false): Int {
+        val suffix = if (force) "?force=true" else ""
+        return client.delete()
+            .uri("/api/test-scenario/$testScenarioId$suffix")
+            .cookie("artel_access_token", token)
+            .exchangeToMono { Mono.just(it.statusCode()) }
+            .block(Duration.ofSeconds(5))!!
+            .value()
+    }
+
+    private fun getScenarioStatus(client: WebClient, token: String, testScenarioId: Long): Int =
+        client.get()
+            .uri("/api/test-scenario/$testScenarioId")
+            .cookie("artel_access_token", token)
+            .exchangeToMono { Mono.just(it.statusCode()) }
+            .block(Duration.ofSeconds(5))!!
+            .value()
+
+    /** 실행 이력이 없는 시나리오는 그냥 삭제된다(204) → 재조회 404. */
+    @Test
+    fun testDeleteWithoutRunHistorySucceeds(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser("del-plain-${projectIdSeq.incrementAndGet()}")
+        val projectId = createMemberProject(appUserId)
+        val scenarioId = createScenario(client, token, projectId)
+
+        assertThat(deleteScenario(client, token, scenarioId)).isEqualTo(204)
+        assertThat(getScenarioStatus(client, token, scenarioId)).isEqualTo(404)
+    }
+
+    /**
+     * QA 실행 이력(qa_try)이 있는 시나리오는 기본 삭제가 409(scenario_has_qa_history)로 막히고,
+     * force=true면 이력까지 지우며 삭제된다(204) → 재조회 404, qa_try도 사라진다(ARTEL-207).
+     */
+    @Test
+    fun testDeleteBlockedByRunHistoryThenForced(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser("del-run-${projectIdSeq.incrementAndGet()}")
+        val projectId = createMemberProject(appUserId)
+        val scenarioId = createScenario(client, token, projectId)
+
+        val now = java.time.Instant.now()
+        val instance = gameInstanceRepository.save(
+            GameInstanceEntity(
+                projectId = projectId, name = "inst", platform = "UNITY",
+                createdAt = now, updatedAt = now
+            )
+        )!!
+        // 종료된(active 아닌) 실행 이력 한 건: uk_qa_try_active_instance(STARTING/RUNNING)와 무관.
+        qaTryRepository.save(
+            QaTryEntity(
+                testScenarioId = scenarioId, gameInstanceId = instance.id!!,
+                startedBy = appUserId, status = "COMPLETED", startedAt = now, completedAt = now
+            )
+        )
+
+        // 기본 삭제는 실행 이력 때문에 409로 막힌다.
+        assertThat(deleteScenario(client, token, scenarioId, force = false)).isEqualTo(409)
+        assertThat(getScenarioStatus(client, token, scenarioId)).isEqualTo(200)
+        assertThat(qaTryRepository.countByTestScenarioId(scenarioId)).isEqualTo(1L)
+
+        // force면 이력까지 지우고 삭제된다.
+        assertThat(deleteScenario(client, token, scenarioId, force = true)).isEqualTo(204)
+        assertThat(getScenarioStatus(client, token, scenarioId)).isEqualTo(404)
+        assertThat(qaTryRepository.countByTestScenarioId(scenarioId)).isEqualTo(0L)
     }
 }

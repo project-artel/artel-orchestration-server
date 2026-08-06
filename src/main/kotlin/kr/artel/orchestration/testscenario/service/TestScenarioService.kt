@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.executeAndAwait
 import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.transaction.reactive.TransactionalOperator
 
 /**
@@ -30,6 +32,7 @@ class TestScenarioService(
     private val accessService: TestScenarioAccessService,
     private val scenarioCaseRepository: TestScenarioCaseRepository,
     private val runScenarioRepository: TestRunScenarioRepository,
+    private val qaTryRepository: QaTryRepository,
     private val transactionalOperator: TransactionalOperator,
     private val objectMapper: ObjectMapper
 ) {
@@ -127,12 +130,27 @@ class TestScenarioService(
     /**
      * 시나리오를 완전히 삭제한다. 접근 불가/미존재면 404.
      *
-     * 정리 순서: 조합 링크(케이스 조합·런 조합)를 먼저 지운 뒤 시나리오 본체를 지운다. 한 트랜잭션으로 묶어
+     * QA 실행 이력(qa_try) 보호: 한 번이라도 실행된 시나리오는 실행 기록·발견 이슈가 붙어 있어
+     * 기본적으로 삭제를 **차단(409)**한다 — `qa_try.test_scenario_id` FK(RESTRICT)가 실제로도 막고,
+     * 그 이력이 조용히 사라지지 않게 하기 위함이다. [force]가 true면 그 시나리오의 qa_try를 먼저 지우고
+     * (qa_log·issue는 FK CASCADE로 함께 삭제) 본체까지 삭제한다.
+     *
+     * 정리 순서: (force면) qa_try → 조합 링크(케이스 조합·런 조합) → 시나리오 본체. 한 트랜잭션으로 묶어
      * 부분 삭제 상태가 남지 않게 한다. 대화 세션은 런 단위라 여기서 닫지 않는다(런 대화는 계속된다).
      */
-    suspend fun delete(appUserId: Long, testScenarioId: Long) {
+    suspend fun delete(appUserId: Long, testScenarioId: Long, force: Boolean = false) {
         accessService.accessibleScenario(testScenarioId, appUserId) ?: throw NotFoundException()
+        val runCount = qaTryRepository.countByTestScenarioId(testScenarioId)
+        if (runCount > 0 && !force) {
+            throw ConflictException(
+                message = "이 시나리오에는 QA 실행 이력이 있어 삭제할 수 없습니다. 실행 기록과 발견된 이슈까지 함께 지우려면 강제 삭제를 사용하세요.",
+                code = "scenario_has_qa_history"
+            )
+        }
         transactionalOperator.executeAndAwait {
+            if (runCount > 0) {
+                qaTryRepository.deleteByTestScenarioId(testScenarioId)
+            }
             scenarioCaseRepository.deleteByTestScenarioId(testScenarioId)
             runScenarioRepository.deleteByTestScenarioId(testScenarioId)
             scenarioRepository.deleteById(testScenarioId)
