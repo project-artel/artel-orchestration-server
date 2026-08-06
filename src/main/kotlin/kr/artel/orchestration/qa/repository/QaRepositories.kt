@@ -201,6 +201,17 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
         updatedAt: Instant
     ): Int
 
+    /** 런 시작 실패 시 그 런의 미종단 qa_try(PENDING/STARTING/RUNNING)를 모두 FAILED로 정리한다. */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_try
+        SET status = 'FAILED', completed_at = :completedAt, updated_at = :completedAt
+        WHERE qa_run_id = :qaRunId AND status IN ('PENDING', 'STARTING', 'RUNNING')
+        """
+    )
+    suspend fun failByQaRunId(qaRunId: Long, completedAt: Instant): Int
+
     @Modifying
     @Query(
         """

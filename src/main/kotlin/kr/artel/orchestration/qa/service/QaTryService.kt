@@ -18,8 +18,10 @@ import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
+import kr.artel.orchestration.qa.dto.QaRunResponse
 import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.dto.QaTryResponse
+import kr.artel.orchestration.qa.dto.CreateQaRunRequest
 import kr.artel.orchestration.qa.dto.CreateQaTryRequest
 import kr.artel.orchestration.qa.dto.QaReasoningRequest
 import kr.artel.orchestration.qa.entity.QaRunEntity
@@ -27,6 +29,8 @@ import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
+import kr.artel.orchestration.testrun.service.TestRunService
+import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
@@ -70,6 +74,14 @@ data class QaRunSettings(
 )
 
 fun CreateQaTryRequest.toRunSettings(objectMapper: ObjectMapper) = QaRunSettings(
+    model = model,
+    language = language,
+    promptVersion = promptVersion,
+    reasoning = reasoning?.toAgentPayload(objectMapper),
+    arch = arch
+)
+
+fun CreateQaRunRequest.toRunSettings(objectMapper: ObjectMapper) = QaRunSettings(
     model = model,
     language = language,
     promptVersion = promptVersion,
@@ -221,6 +233,52 @@ class QaTryPersistenceService(
         } ?: error("QA run creation returned no result")
 
     /**
+     * 런 세션을 부착하고 실행 상태로 만든다(ARTEL-259): qa_run STARTING→RUNNING + Agent가 확정한
+     * 세션 공통 run_config 반영 + 첫 시나리오 qa_try PENDING→RUNNING(활성). 이후 시나리오는 인바운드
+     * 라우터가 그 차례에 activatePending으로 활성한다.
+     */
+    suspend fun attachRunAndMarkRunning(
+        qaRun: QaRunEntity,
+        firstTryId: Long,
+        agentSessionId: String,
+        runConfig: JsonNode? = null
+    ): QaRunEntity =
+        transactionalOperator.executeAndAwait {
+            val now = Instant.now(clock)
+            val runId = requireNotNull(qaRun.id)
+            val configJson = objectMapper.writeValueAsString(runConfig ?: objectMapper.createObjectNode())
+            if (runRepository.attachAgentSession(runId, agentSessionId, configJson, now) != 1) {
+                throw IllegalStateException("QA run cannot attach an Agent session")
+            }
+            if (runRepository.transition(runId, "STARTING", "RUNNING", null, now) != 1) {
+                throw IllegalStateException("QA run is no longer STARTING")
+            }
+            if (
+                tryRepository.activatePending(
+                    id = firstTryId,
+                    agentSessionId = agentSessionId,
+                    model = runConfig.textAt("model"),
+                    reasoningEffort = runConfig.textAt("reasoning", "effort"),
+                    promptVersion = runConfig.textAt("prompt_version"),
+                    agentArch = runConfig.textAt("agent_arch"),
+                    agentFingerprint = runConfig.textAt("agent_fingerprint"),
+                    runConfig = configJson,
+                    updatedAt = now
+                ) != 1
+            ) {
+                throw IllegalStateException("first QA try cannot be activated")
+            }
+            logService.append(
+                qaTryId = firstTryId,
+                direction = "ORCHE_INTERNAL",
+                type = "STATUS",
+                message = "QA execution is running.",
+                payload = objectMapper.valueToTree(QaStatusPayload("RUNNING", null))
+            )
+            requireNotNull(runRepository.findById(runId))
+        } ?: error("QA run transition returned no result")
+
+    /**
      * @param runConfig what the Agent resolved the session to, or null if it did
      *   not say. A run whose settings are unknown is a gap in the comparison; a
      *   run that refuses to start over it is an outage, so null is written
@@ -279,7 +337,10 @@ class QaTryPersistenceService(
 @Service
 class QaTryService(
     private val tryRepository: QaTryRepository,
+    private val runRepository: QaRunRepository,
     private val scenarioAccessService: TestScenarioAccessService,
+    private val compositionService: ScenarioCompositionService,
+    private val testRunService: TestRunService,
     private val instanceRepository: GameInstanceRepository,
     private val sessionManager: SessionManager,
     private val agentPort: QaAgentPort,
@@ -346,6 +407,103 @@ class QaTryService(
             )
         }
     }
+
+    /**
+     * 런(TR) 단위 QA를 시작한다(ARTEL-259): 런의 시나리오들을 qa_run + 시나리오당 qa_try(PENDING)로
+     * 적재하고, scenarios[](각 qa_try_id + cases 본문)를 담아 Agent 세션을 연다. 세션이 붙으면 첫
+     * 시나리오가 활성되고, 이후 시나리오는 인바운드 라우터가 그 차례에 활성한다. 실패 시 런과 그
+     * 시나리오 try를 모두 FAILED로 정리한다.
+     */
+    suspend fun createRun(
+        testRunId: Long,
+        gameInstanceId: Long,
+        userId: Long,
+        settings: QaRunSettings = QaRunSettings()
+    ): QaRunResponse {
+        val scenarios = testRunService.getScenarios(testRunId, userId)
+            ?: throw NotFoundException()
+        val scenarioIds = scenarios.items.map { it.testScenarioId.toLong() }
+        if (scenarioIds.isEmpty()) {
+            throw ConflictException("Test run has no scenarios to execute")
+        }
+        val instance = instanceRepository.findAccessibleByIdForMember(gameInstanceId, userId)
+            ?: throw NotFoundException()
+        val firstScenario = scenarioAccessService.accessibleScenario(scenarioIds.first(), userId)
+            ?: throw NotFoundException()
+        if (firstScenario.projectId != instance.projectId) {
+            throw NotFoundException()
+        }
+        if (!sessionManager.hasSession(gameInstanceId.toString())) {
+            throw ConflictException("Game instance SDK is not connected")
+        }
+        if (
+            runRepository.findActiveByGameInstanceId(gameInstanceId) != null ||
+            tryRepository.findActiveByGameInstanceId(gameInstanceId) != null
+        ) {
+            throw ConflictException("An active QA run already exists")
+        }
+
+        val started = persistence.createRunStarting(testRunId, gameInstanceId, userId, scenarioIds)
+        val agentScenarios = started.tries.zip(scenarioIds).map { (qaTry, scenarioId) ->
+            val entity = scenarioAccessService.accessibleScenario(scenarioId, userId)
+                ?: throw NotFoundException()
+            QaAgentScenario(
+                qaTryId = requireNotNull(qaTry.id).toString(),
+                testScenarioId = scenarioId.toString(),
+                scenario = compositionService.agentScenario(scenarioId, userId, entity.payload.asString())
+            )
+        }
+        val context = QaAgentSessionContext(
+            gameInstanceId = gameInstanceId.toString(),
+            qaRunId = requireNotNull(started.qaRun.id).toString(),
+            scenarios = agentScenarios,
+            model = settings.model,
+            language = settings.language,
+            promptVersion = settings.promptVersion,
+            reasoning = settings.reasoning,
+            arch = settings.arch
+        )
+
+        return try {
+            val agent = agentPort.createSession(
+                context = context,
+                onMessage = { envelope -> inboundRouter.handle(envelope) },
+                onDisconnect = { failRun(started) }
+            )
+            val running = persistence.attachRunAndMarkRunning(
+                started.qaRun, requireNotNull(started.tries.first().id), agent.sessionId, agent.runConfig
+            )
+            running.toRunResponse(started.tries)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            failRun(started)
+            throw UpstreamUnavailableException(
+                error.message ?: "QA Run 세션 생성에 실패했습니다.",
+                cause = error
+            )
+        }
+    }
+
+    private suspend fun failRun(started: QaRunStarting) {
+        val now = Instant.now(clock)
+        val runId = requireNotNull(started.qaRun.id)
+        runCatching {
+            runRepository.transition(runId, "STARTING", "FAILED", now, now)
+            tryRepository.failByQaRunId(runId, now)
+        }
+    }
+
+    private fun QaRunEntity.toRunResponse(tries: List<QaTryEntity>) = QaRunResponse(
+        id = requireNotNull(id).toString(),
+        testRunId = testRunId.toString(),
+        gameInstanceId = gameInstanceId.toString(),
+        startedBy = startedBy.toString(),
+        status = status,
+        startedAt = startedAt,
+        completedAt = completedAt,
+        tries = tries.map { it.toResponse() }
+    )
 
     suspend fun get(qaTryId: Long, userId: Long): QaTryResponse? =
         tryRepository.findAccessibleById(qaTryId, userId)?.toResponse()
