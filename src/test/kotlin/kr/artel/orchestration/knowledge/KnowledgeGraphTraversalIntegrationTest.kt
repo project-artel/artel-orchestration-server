@@ -88,6 +88,61 @@ class KnowledgeGraphTraversalIntegrationTest {
         assertThat(neighbours.single().direction).isEqualTo("NONE")
     }
 
+    /**
+     * seed 둘이 같은 이웃을 가리키면 한 줄만 나와야 한다. 리포지토리의 창 함수는
+     * `(via, 이웃, relation)`까지만 접으므로 via가 다른 중복은 서비스가 접는다.
+     */
+    @Test
+    fun `두 seed가 같은 이웃을 데려와도 한 줄만 나온다`(): Unit = runBlocking {
+        val left = knowledge("left")
+        val right = knowledge("right")
+        val shared = knowledge("shared")
+        edge(left, shared, "REFINES")
+        edge(right, shared, "REFINES")
+
+        val neighbours = expand(listOf(left, right), depth = 1).neighbours
+        assertThat(neighbours.map { it.id.toLong() }).containsExactly(shared)
+    }
+
+    /**
+     * 중복은 **예산을 재기 전에** 접혀야 한다. 뒤에 접으면 중복이 자리를 먹어 실제로 내보낼 수
+     * 있는 것보다 적게 나가고, 아무것도 안 잘렸는데 `truncated`가 선다.
+     */
+    @Test
+    fun `중복이 예산을 먹지 않는다`(): Unit = runBlocking {
+        val left = knowledge("left")
+        val right = knowledge("right")
+        val shared = knowledge("shared")
+        val onlyLeft = knowledge("only-left")
+        edge(left, shared, "REFINES")
+        edge(right, shared, "REFINES")
+        edge(left, onlyLeft, "REFINES")
+
+        // 서로 다른 이웃은 둘뿐이므로 예산 2면 전부 들어가고 잘린 것이 없다.
+        val outcome = expand(listOf(left, right), depth = 1, nodeBudget = 2)
+        assertThat(outcome.neighbours.map { it.id.toLong() }).containsExactlyInAnyOrder(shared, onlyLeft)
+        assertThat(outcome.truncated).describedAs("접힌 중복은 잘린 것이 아니다").isFalse()
+    }
+
+    /**
+     * 한 레벨에서 상한에 밀린 노드는 **내보낸 적이 없으므로** visited에 들어가면 안 된다.
+     * 들어가면 다음 레벨에서 다른 경로로 닿아도 영영 안 나온다.
+     */
+    @Test
+    fun `상한에 밀린 노드는 다음 레벨에서 다시 후보가 된다`(): Unit = runBlocking {
+        val seed = knowledge("seed")
+        val first = knowledge("first")
+        val second = knowledge("second")
+        edge(seed, first, "REFINES")
+        edge(seed, second, "REFINES")
+        edge(first, second, "REFINES")
+
+        // fanout 1이라 레벨 1은 하나만 통과시킨다. 밀린 쪽이 레벨 2에서 나와야 한다.
+        val outcome = expand(listOf(seed), depth = 2, fanout = 1, nodeBudget = 20)
+        assertThat(outcome.neighbours.map { it.id.toLong() }).containsExactly(first, second)
+        assertThat(outcome.neighbours.map { it.depth }).containsExactly(1, 2)
+    }
+
     @Test
     fun `노드 예산을 넘기면 잘라내고 truncated를 세운다`(): Unit = runBlocking {
         val seed = knowledge("seed")

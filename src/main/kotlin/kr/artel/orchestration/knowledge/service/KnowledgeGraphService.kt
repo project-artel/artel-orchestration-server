@@ -237,13 +237,20 @@ class KnowledgeGraphService(
             val rows = traversalRepository.neighboursOf(projectId, scope, frontier, visited, fanout)
             if (rows.isEmpty()) break
 
+            // 같은 레벨에서 두 seed가 같은 이웃을 데려올 수 있다. 리포지토리의 창 함수는
+            // (via, 이웃, relation)까지만 접으므로 **via가 다른 중복**은 여기까지 온다.
+            // visited는 레벨 **사이**만 막지 레벨 **안**은 못 막는다.
+            //
+            // **예산을 재기 전에 접는다.** 뒤에 접으면 중복이 예산을 먹어 실제로 내보낼 수 있는
+            // 것보다 적게 나가고, `truncated`가 아무것도 잘리지 않았는데도 선다.
+            val distinct = rows.distinctBy { it.canonicalId }
             val room = nodeBudget - neighbours.size
-            if (rows.size > room) truncated = true
-            val taken = rows.take(room)
+            if (distinct.size > room) truncated = true
+            val fresh = distinct.take(room)
 
-            // 같은 레벨에서 두 seed가 같은 이웃을 데려올 수 있다. 먼저 붙은 쪽만 남긴다 —
-            // visited는 레벨 **사이**만 막지 레벨 안은 못 막는다.
-            val fresh = taken.filter { visited.add(it.canonicalId) }
+            // visited에는 **실제로 내보낸 것만** 넣는다. 예산에 밀린 노드까지 넣으면 그 노드는
+            // 다음 레벨에서도 제외되어, 자리가 남아도 영영 안 나온다.
+            fresh.forEach { visited.add(it.canonicalId) }
             neighbours += fresh.map { it.toNeighbour(level) }
             frontier = fresh.map { it.canonicalId }
         }
