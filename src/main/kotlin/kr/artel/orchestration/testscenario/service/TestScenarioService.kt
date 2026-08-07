@@ -14,7 +14,6 @@ import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.executeAndAwait
-import kr.artel.orchestration.testscenario.repository.TestScenarioCaseRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.transaction.reactive.TransactionalOperator
@@ -30,7 +29,6 @@ import org.springframework.transaction.reactive.TransactionalOperator
 class TestScenarioService(
     private val scenarioRepository: TestScenarioRepository,
     private val accessService: TestScenarioAccessService,
-    private val scenarioCaseRepository: TestScenarioCaseRepository,
     private val runScenarioRepository: TestRunScenarioRepository,
     private val qaTryRepository: QaTryRepository,
     private val transactionalOperator: TransactionalOperator,
@@ -151,7 +149,6 @@ class TestScenarioService(
             if (runCount > 0) {
                 qaTryRepository.deleteByTestScenarioId(testScenarioId)
             }
-            scenarioCaseRepository.deleteByTestScenarioId(testScenarioId)
             runScenarioRepository.deleteByTestScenarioId(testScenarioId)
             scenarioRepository.deleteById(testScenarioId)
         }

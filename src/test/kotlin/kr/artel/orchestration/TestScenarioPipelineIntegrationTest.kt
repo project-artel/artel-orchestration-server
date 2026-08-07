@@ -97,7 +97,7 @@ class TestScenarioPipelineIntegrationTest {
         private lateinit var mockAgent: DisposableServer
         private const val MOCK_SESSION_ID = "mock-sid-1"
         private const val RESULT_JSON =
-            """{"type":"result","message":"ok","scenarios":[{"title":"튜토리얼 시나리오","description":"d","case_ids":[]}]}"""
+            """{"type":"result","message":"ok","scenarios":[{"title":"튜토리얼 시나리오","description":"d","steps":[]}]}"""
 
         /** Agent가 받은 세션 오픈 요청 본문 */
         private val openRequests = CopyOnWriteArrayList<String>()
@@ -298,8 +298,8 @@ class TestScenarioPipelineIntegrationTest {
         val projectId = createMemberProject(appUserId)
         val scenarioId = createScenario(client, token, projectId)
 
-        // 사용자가 canvas에서 스텝을 편집(Agent 미경유).
-        val edited = """{"title":"드래그로 편집","description":"reordered","steps":[{"step":1,"title":"두번째였음","state":"s","action":"a","expected":"e"},{"step":2,"title":"첫번째였음","state":"s","action":"a","expected":"e"}]}"""
+        // 사용자가 canvas에서 스텝을 편집(Agent 미경유). 스텝 = 행위 하나(재설계); 검증 스텝은 caseId를 단다.
+        val edited = """{"title":"드래그로 편집","description":"reordered","steps":[{"action":"두번째였음"},{"action":"첫번째였음"}]}"""
         val saved = client.put()
             .uri("/api/test-scenario/$scenarioId")
             .contentType(MediaType.APPLICATION_JSON)
@@ -312,7 +312,7 @@ class TestScenarioPipelineIntegrationTest {
         // 응답이 저장된 상태를 반영(정합성 확인용).
         assertThat(saved.payload.title).isEqualTo("드래그로 편집")
         assertThat(saved.payload.steps).hasSize(2)
-        assertThat(saved.payload.steps.first().title).isEqualTo("두번째였음")
+        assertThat(saved.payload.steps.first().action).isEqualTo("두번째였음")
 
         // DB에도 반영됨.
         val persisted = scenarioRepository.findById(scenarioId)!!
