@@ -8,12 +8,16 @@ import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.service.IssueService
 import kr.artel.orchestration.knowledge.dto.KnowledgeIngestRequest
+import kr.artel.orchestration.knowledge.dto.KnowledgeLinkRequest
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchRequest
+import kr.artel.orchestration.knowledge.dto.KnowledgeUnlinkRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
+import kr.artel.orchestration.knowledge.service.KnowledgeGraphMutation
+import kr.artel.orchestration.knowledge.service.KnowledgeGraphService
 import kr.artel.orchestration.knowledge.service.KnowledgeMutation
 import kr.artel.orchestration.knowledge.service.KnowledgeRetrieval
 import kr.artel.orchestration.knowledge.service.KnowledgeSearchService
@@ -33,10 +37,19 @@ import java.util.UUID
 private val KNOWLEDGE_MUTATION_TYPES = setOf("KNOWLEDGE_CREATE", "KNOWLEDGE_UPDATE", "KNOWLEDGE_DELETE")
 
 /**
+ * 지식 **그래프**를 다루는 인입 타입(ARTEL-274). 항목이 아니라 항목 **사이의 관계**를 만들고 거둔다.
+ *
+ * [KNOWLEDGE_MUTATION_TYPES]에 넣지 않는 것이 중요하다 — 그 집합은 `KnowledgeMutationRequest`를
+ * 파싱하는 단일 디스패치를 몰고 다니는데, 링크의 payload는 그 스키마와 필드가 겹치지 않는다.
+ * 대신 아래 [KNOWLEDGE_WRITE_TYPES]에는 들어가야 `knowledge_mode` 게이트가 따라온다.
+ */
+private val KNOWLEDGE_GRAPH_TYPES = setOf("KNOWLEDGE_LINK", "KNOWLEDGE_UNLINK")
+
+/**
  * 지식창고에 **쓰는** 인입 타입 전부(ARTEL-256). `knowledge_mode`가 `learning`이 아닌 런에서는
  * 이 타입들이 거부된다. 새 쓰기 타입이 생기면 여기에 넣어야 게이트가 따라온다.
  */
-private val KNOWLEDGE_WRITE_TYPES = KNOWLEDGE_MUTATION_TYPES + "KNOWLEDGE"
+private val KNOWLEDGE_WRITE_TYPES = KNOWLEDGE_MUTATION_TYPES + KNOWLEDGE_GRAPH_TYPES + "KNOWLEDGE"
 
 private val SUPPORTED_TYPES =
     setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH") + KNOWLEDGE_WRITE_TYPES
@@ -49,6 +62,7 @@ class QaAgentInboundRouter(
     private val streamManager: QaLogStreamManager,
     private val issueService: IssueService,
     private val knowledgeService: KnowledgeService,
+    private val knowledgeGraphService: KnowledgeGraphService,
     private val knowledgeSearchService: KnowledgeSearchService,
     private val agentPort: QaAgentPort,
     private val gameInstanceRepository: GameInstanceRepository,
@@ -79,10 +93,10 @@ class QaAgentInboundRouter(
         if (envelope.type in KNOWLEDGE_WRITE_TYPES) {
             val qaTry = activeTry(qaTryId) ?: return
             if (!allowKnowledgeWrite(qaTryId, qaTry, envelope)) return
-            if (envelope.type == "KNOWLEDGE") {
-                routeKnowledge(qaTryId, qaTry, envelope)
-            } else {
-                routeKnowledgeMutation(qaTryId, qaTry, envelope)
+            when {
+                envelope.type == "KNOWLEDGE" -> routeKnowledge(qaTryId, qaTry, envelope)
+                envelope.type in KNOWLEDGE_GRAPH_TYPES -> routeKnowledgeGraph(qaTryId, qaTry, envelope)
+                else -> routeKnowledgeMutation(qaTryId, qaTry, envelope)
             }
             return
         }
@@ -327,6 +341,45 @@ class QaAgentInboundRouter(
             return
         }
         if (result is KnowledgeMutation.Rejected) {
+            appendError(qaTryId, envelope, "${envelope.type} rejected: ${result.reason}")
+        }
+    }
+
+    /**
+     * Agent가 주장하거나 거두는 지식 **관계**를 처리한다(ARTEL-274).
+     *
+     * [routeKnowledgeMutation]과 같은 모양이고 같은 이유를 진다: 프로젝트와 스코프는 payload가
+     * 아니라 `qaTryId → game_instance → project_id` / `qa_try.knowledge_scope_id`에서 나오고,
+     * 검증 실패는 값([KnowledgeGraphMutation.Rejected])으로 돌아와 ERROR 로그가 되며, 저장 중
+     * 예외도 삼킨다 — 프레임 하나가 receive 체인을 끊어 QA 런을 실패시키지 못하게 한다.
+     *
+     * 링크 프레임은 **단방향이라 응답이 없다.** 거절도 Agent에게 내려가지 않으므로, Agent 쪽은
+     * 보낼 수 있는 것만 보내도록 자기 손에서 먼저 검증한다. 여기 남는 ERROR 로그가 그 검증이
+     * 뚫렸을 때 사람이 볼 유일한 흔적이다.
+     */
+    private suspend fun routeKnowledgeGraph(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope
+    ) {
+        val result = try {
+            val instance = gameInstanceRepository.findById(qaTry.gameInstanceId) ?: return
+            val projectId = instance.projectId
+            val scope = scopeOf(qaTry)
+            if (envelope.type == "KNOWLEDGE_LINK") {
+                val request = objectMapper.treeToValue(envelope.payload, KnowledgeLinkRequest::class.java)
+                knowledgeGraphService.link(projectId, scope, qaTryId, request)
+            } else {
+                val request = objectMapper.treeToValue(envelope.payload, KnowledgeUnlinkRequest::class.java)
+                knowledgeGraphService.unlink(projectId, scope, qaTryId, request)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            appendError(qaTryId, envelope, "${envelope.type} failed: ${error.message}")
+            return
+        }
+        if (result is KnowledgeGraphMutation.Rejected) {
             appendError(qaTryId, envelope, "${envelope.type} rejected: ${result.reason}")
         }
     }

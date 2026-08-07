@@ -183,10 +183,12 @@ data class KnowledgeStatsAggregate(
  * @param deletedVersions 그중 현재 삭제 상태인 것.
  * @param repudiatedVersions 삭제하되 **만든 런과 다른 런이** 지운 것. "공짜 심판" 신호가 이 값이다.
  *
- *   ⚠️ **지금은 수리와 폐기가 섞여 있다.** Agent에 update 도구가 없어 항목을 고칠 때 지우고 다시
- *   기록하므로(artel-agent-server `FORGET_KNOWLEDGE_DESCRIPTION`의 명시적 결정), 수리 한 번이
- *   DELETE + CREATE로 나가 여기 잡힌다. Agent에 update 도구가 붙거나 `replaces_id`가 채워지기
- *   전까지 이 값은 **"수리 + 폐기"의 합**으로 읽어야 한다.
+ *   ⚠️ **아직 수리와 폐기가 섞여 있을 수 있다.** 항목을 지우고 다시 기록하는 경로가 여전히
+ *   열려 있어(artel-agent-server `FORGET_KNOWLEDGE_DESCRIPTION`) 수리 한 번이 DELETE + CREATE로
+ *   나가면 여기 잡힌다. 둘을 가르려면 대체본이 원본을 `knowledge_edge`의 `REPLACES` 관계로
+ *   가리켜야 한다(ARTEL-274). 그 관계가 실제로 쌓이기 전까지 이 값은 **"수리 + 폐기"의 합**으로
+ *   읽어야 한다. (`update_knowledge`가 생긴 뒤로는 지우지 않는 수리가 늘어 섞임이 줄었지만,
+ *   0이 됐다고 가정할 근거는 없다.)
  * @param retrievalTotal 이 런들이 만든 버전이 검색으로 나간 총 횟수.
  * @param citationTotal 그중 인용된 횟수.
  * @param citationKnownTotal 인용 여부를 **알 수 있었던** 횟수. 인용 보고 기능이 붙기 전에는 0이며,

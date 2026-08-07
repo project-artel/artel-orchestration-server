@@ -78,4 +78,28 @@ interface KnowledgeRepository : CoroutineCrudRepository<KnowledgeEntity, Long> {
      */
     @Query("SELECT * FROM knowledge WHERE scope_id = :scopeId AND shadows_id = :shadowsId")
     suspend fun findShadow(scopeId: Long, shadowsId: Long): KnowledgeEntity?
+
+    /**
+     * [findVisibleById]와 같되 **소프트삭제된 행도 돌려준다**(ARTEL-274).
+     *
+     * ⚠️ 이 파일에서 `DeletedAtIsNull`을 걸지 않는 유일한 조회다. 그래서 왜 있는지를 여기 못박아
+     * 둔다 — 이유가 안 적혀 있으면 다음 사람이 "필터가 빠졌다"고 읽고 일반 조회에 갖다 쓴다.
+     *
+     * **쓰는 곳은 `knowledge_edge`의 끝점 해석 하나뿐이다.**
+     * - `REPLACES`의 `to` 끝점은 지워졌을 것이 **정상이다.** 대체된 항목은 소프트삭제되는 것이
+     *   그 관계의 뜻이고, 살아 있는 것만 허용하면 REPLACES는 영영 못 만든다.
+     * - unlink는 이미 지워진 항목에 걸린 관계도 거둘 수 있어야 한다. 항목이 사라졌다고 그
+     *   항목을 가리키던 edge가 저절로 없어지지는 않는다(하드 FK를 걸지 않은 대가다).
+     *
+     * 스코프 술어는 그대로 걸린다 — 지워진 것을 본다고 남의 스코프까지 보면 안 된다.
+     */
+    @Query(
+        """
+        SELECT k.* FROM knowledge k
+         WHERE k.id = :id
+           AND k.project_id = :projectId
+           AND ${KnowledgeScopeSql.VISIBLE}
+        """
+    )
+    suspend fun findVisibleByIdIncludingDeleted(id: Long, projectId: Long, scopeId: Long?): KnowledgeEntity?
 }
