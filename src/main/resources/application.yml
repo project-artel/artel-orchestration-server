@@ -1,4 +1,11 @@
 server:
+  # 공개 포트. 리버스 프록시가 넘기는 유일한 포트이며 `/api/**`·`/oauth2/**`·`/ws/**`가 여기 산다.
+  # 무인증 내부 API(`/internal/**`)는 여기에 **없다** — 아래 artel.internal-api.port 참고.
+  # Boot 기본값과 같지만, 두 포트가 한눈에 보이도록 명시한다. 환경변수로 받는 이유는
+  # 아래 internal-api.port와 대칭을 맞추기 위해서다 — 컨테이너에서는 relaxed binding으로
+  # SERVER_PORT가 먹지만 로컬 `.env`는 spring-dotenv가 키를 그대로만 찾으므로, 명시하지
+  # 않으면 같은 변수가 배포에서만 동작하고 로컬에서는 조용히 무시된다.
+  port: ${SERVER_PORT:8080}
   # 리버스 프록시(Nginx Proxy Manager) 뒤에서는 프록시-백엔드 구간이 http라, 기본값 none이면
   # OAuth2의 {baseUrl}이 http로 조립되어 redirect_uri가 등록값(https)과 어긋난다.
   # 프록시가 넘기는 X-Forwarded-Proto를 반영하도록 한다. WebFlux라 native가 아닌 framework다.
@@ -53,6 +60,12 @@ logging:
         web.reactive: DEBUG
 
 artel:
+  # 무인증 서버-투-서버 API(`/internal/**`) 전용 포트. 공개 포트와 갈라 두는 것이 목적이며,
+  # 리버스 프록시는 8080만 프록시하므로 이 포트는 인터넷에서 존재하지 않는다.
+  # ⚠️ 이 포트를 호스트에 게시하지 않는 것(=`docker run`에 `-p`를 붙이지 않는 것)이 외부
+  # 차단의 실질 근거다. docs/deployment.md 참고.
+  internal-api:
+    port: ${ARTEL_INTERNAL_API_PORT:8081}
   agent:
     base-url: ${ARTEL_AGENT_BASE_URL:http://localhost:8000}
     ws-base-url: ${ARTEL_AGENT_WS_BASE_URL:ws://localhost:8000}

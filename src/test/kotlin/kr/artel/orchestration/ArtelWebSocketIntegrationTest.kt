@@ -2,6 +2,7 @@ package kr.artel.orchestration
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.config.InternalApiServer
 import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.entity.GamePlatform
 import kr.artel.orchestration.game.repository.GameInstanceRepository
@@ -43,6 +44,10 @@ class ArtelWebSocketIntegrationTest {
     // 스프링이 랜덤으로 띄운 내장 Netty 서버의 포트를 주입받음
     @LocalServerPort
     private val port: Int = 0
+
+    // 무인증 내부 API는 두 번째 서버에 뜬다(ARTEL-266). 액션 전달 경로가 여기에 있다.
+    @Autowired
+    private lateinit var internalApiServer: InternalApiServer
 
     @Autowired
     private lateinit var objectMapper: ObjectMapper
@@ -356,7 +361,9 @@ class ArtelWebSocketIntegrationTest {
     fun testWebSocketActionForwardingFlow(): Unit = runBlocking {
         val connectable = createGameInstance()
         val instanceId = requireNotNull(connectable.instance.id)
-        val webClient = WebClient.create("http://localhost:$port")
+        // 액션 전달은 무인증 내부 경로라 내부 포트에만 있다(ARTEL-266). WS 핸드셰이크는
+        // 엔드유저 경로 그대로 공개 포트를 쓴다.
+        val webClient = WebClient.create("http://localhost:${internalApiServer.port}")
 
         // 1. 웹소켓 모킹 클라이언트(Mock SDK Client) 구동 및 연결 시도
         val wsClient = ReactorNettyWebSocketClient()
@@ -442,7 +449,9 @@ class ArtelWebSocketIntegrationTest {
     fun testWebSocketMouseAndKeyActionForwardingFlow(): Unit = runBlocking {
         val connectable = createGameInstance()
         val instanceId = requireNotNull(connectable.instance.id)
-        val webClient = WebClient.create("http://localhost:$port")
+        // 액션 전달은 무인증 내부 경로라 내부 포트에만 있다(ARTEL-266). WS 핸드셰이크는
+        // 엔드유저 경로 그대로 공개 포트를 쓴다.
+        val webClient = WebClient.create("http://localhost:${internalApiServer.port}")
 
         val wsClient = ReactorNettyWebSocketClient()
         val wsUri = URI("ws://localhost:$port/ws/sdk${connectable.handshakeQuery}")

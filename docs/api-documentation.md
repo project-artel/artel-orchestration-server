@@ -17,10 +17,15 @@ Then use:
 | `/swagger-ui.html` | Interactive Swagger UI |
 | `/v3/api-docs` | OpenAPI JSON contract |
 
+Both live on the public port (8080). The internal port (8081, `ARTEL_INTERNAL_API_PORT`)
+serves `/internal/**` and nothing else, so requesting the docs there returns 404. The
+contract still documents the `/internal/**` endpoints — it describes the whole
+application, not one port. See `docs/deployment.md` § Ports.
+
 ## Documented API surface
 
 - `POST /api/sdk/registrations` — register a running SDK with the instance key issued by the dashboard, and report the game version it was built from. Unauthenticated: the key is the only credential.
-- `POST /internal/action/{instanceId}` — deliver an Agent action list to a connected game instance. `/internal/**` is the unauthenticated server-to-server prefix; nothing under it takes an end-user JWT.
+- `POST /internal/action/{instanceId}` — deliver an Agent action list to a connected game instance. `/internal/**` is the unauthenticated server-to-server prefix; nothing under it takes an end-user JWT, and it is served only on the internal port.
 - `GET /api/test-scenario/{clientId}/stream` — subscribe to test-scenario events over SSE.
 - `POST /api/test-scenario/{clientId}/message` — relay a user message to the Agent server.
 - `GET /api/auth/me` — read the signed-in user.

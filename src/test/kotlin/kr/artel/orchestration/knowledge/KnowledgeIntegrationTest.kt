@@ -16,7 +16,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.boot.test.web.server.LocalServerPort
+import kr.artel.orchestration.config.InternalApiServer
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
 import java.time.Duration
@@ -37,16 +37,20 @@ import java.util.concurrent.atomic.AtomicLong
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class KnowledgeIntegrationTest {
 
-    @LocalServerPort
-    private val port: Int = 0
-
     @Autowired
     private lateinit var knowledgeService: KnowledgeService
 
     @Autowired
     private lateinit var knowledgeRepository: KnowledgeRepository
 
-    private fun webClient() = WebClient.create("http://localhost:$port")
+    @Autowired
+    private lateinit var internalApiServer: InternalApiServer
+
+    /**
+     * knowledge 조회는 무인증 내부 경로라 공개 포트가 아니라 내부 포트에만 있다(ARTEL-266).
+     * 공개 포트로 부르면 404다.
+     */
+    private fun webClient() = WebClient.create("http://localhost:${internalApiServer.port}")
 
     companion object {
         // JUnit은 테스트 메서드마다 새 인스턴스를 만든다. 인스턴스 필드면 매번 초기화돼 메서드 간

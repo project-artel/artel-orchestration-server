@@ -18,6 +18,83 @@ environment — the AWS SDK's default credential provider chain, for one — can
 branch rather than from the secret file. Do not put it in the `.env`; see the format
 rules below.
 
+## Ports
+
+The application listens on **two** ports, and which port an endpoint answers on is the
+trust boundary (ARTEL-266).
+
+| Port | Env var | Serves | Reachable from |
+|---|---|---|---|
+| 8080 | `SERVER_PORT` | `/api/**`, `/oauth2/**`, `/login/oauth2/**`, `/ws/**`, Swagger | the internet, through Nginx Proxy Manager |
+| 8081 | `ARTEL_INTERNAL_API_PORT` | `/internal/**` only | `app-net` containers only |
+
+The split is enforced in the application: 8080 answers `404` for `/internal/**`, and the
+internal port answers `404` for everything else. Two `HttpHandler` chains are assembled
+from the same application context, and a request is routed by *which server accepted the
+connection* — see `config/InternalApiConfig.kt`. A `404` rather than a `401` is
+deliberate: `401` would reveal that the endpoint exists and only needs credentials.
+
+`/internal/**` is unauthenticated by design — the callers are servers, not people, and
+they hold no end-user JWT. That is safe only while the port stays off the public network.
+
+### Never publish the internal port
+
+**Do not add `-p` to the `docker run` in `Jenkinsfile`, and do not point the reverse proxy
+at 8081.** The container joins `app-net` and publishes nothing to the host, so the
+internal port is reachable only from sibling containers. That absence is the actual
+control — the application-level split makes the boundary reviewable, but it cannot stop a
+port mapping someone adds later.
+
+`EXPOSE 8080 8081` in the `Dockerfile` is documentation only. It does not publish
+anything, and it is not what keeps 8081 private.
+
+Nginx Proxy Manager needs no change, but note what it is: the proxy sits on `app-net`
+too — it has to, in order to reach 8080 at all — so it is the one container that can
+*both* reach 8081 and accept traffic from the internet. Nothing stops it at the network
+layer. The guarantee is that it is not **configured** to route there, and must not be.
+What ARTEL-266 removes is the need for a `/internal/` deny rule on the public host: that
+path no longer exists on 8080, so a mistake in the proxy's public-host configuration can
+no longer expose it.
+
+### Deployment checklist
+
+Internal callers reach this server by container name and internal port, so they never
+traverse the proxy. Getting there takes one coordinated window:
+
+1. Update `ORCHESTRATION_BASE_URL` in the stage/operation `.env` to the `app-net` address
+   **including the internal port** — `http://artel-orchestration-server-<env>:8081` — and
+   re-upload the Secret file (see "Registering a Secret file").
+2. Deploy orchestration (ARTEL-265 + ARTEL-266 together).
+3. Deploy agent-server with **ARTEL-267**, which changes its `USAGE_PATH` to
+   `/internal/llm-usage`. Without it the old path 404s no matter what the URL says.
+4. Confirm `docker port <container>` prints **nothing**. If 8081 appears, stop — the
+   internal API is on the host network.
+5. Confirm the public host does not serve internal paths:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' \
+     'https://stage-orch.artel.kr/internal/knowledge?projectId=1'   # expect 404
+   ```
+
+6. From another `app-net` container, confirm the internal port does:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' \
+     'http://artel-orchestration-server-<env>:8081/internal/knowledge?projectId=1'  # expect 200
+   curl -s -o /dev/null -w '%{http_code}\n' \
+     'http://artel-orchestration-server-<env>:8081/api/projects'                    # expect 404
+   ```
+
+   Use this read-only path rather than `/internal/llm-usage`, which is POST-only and
+   would answer `405` to a probe. **Treat the deploy as complete only after step 6
+   passes** — waiting on row counts finds the failure far later.
+7. Confirm new rows appear in `llm_usage`.
+
+Steps 1 and 3 are the ones that fail silently. Miss either and the container looks
+healthy while usage reporting dies: `usage.py` buffers without retrying, so whatever it
+sends during the gap is lost. Nothing else in agent-server calls this server, which is
+why one variable plus one deploy covers it.
+
 ## Credential IDs
 
 The pipeline derives the credential ID as `${APP_NAME}-env-${TARGET_ENV}`.
