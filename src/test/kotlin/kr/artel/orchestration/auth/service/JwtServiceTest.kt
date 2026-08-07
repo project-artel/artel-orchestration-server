@@ -72,11 +72,16 @@ class JwtServiceTest {
             .isInstanceOf(JwtException::class.java)
     }
 
+    /**
+     * 변조는 [tamperSignature]로 만든다. 서명 문자열의 마지막 글자를 바꾸는 방식은 그 자리의
+     * 하위 2비트가 base64url 패딩이라 약 6% 확률로 바이트가 그대로 남고, 그때 서명이 여전히
+     * 유효해 이 테스트가 간헐 실패한다. 이유는 [tamperSignature]의 KDoc에 있다.
+     */
     @Test
     fun `rejects a token whose signature was tampered with`() {
         val token = issueWith(properties, Clock.fixed(now, ZoneOffset.UTC))
-        val (header, payload, signature) = token.split(".")
-        val tampered = "$header.$payload.${signature.dropLast(1)}${if (signature.last() == 'A') 'B' else 'A'}"
+
+        val tampered = tamperSignature(token)
 
         assertThatThrownBy { securityConfig.jwtDecoder(properties).decode(tampered).block() }
             .isInstanceOf(JwtException::class.java)
