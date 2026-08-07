@@ -1,13 +1,18 @@
 package kr.artel.orchestration.knowledge.service
 
 import kr.artel.orchestration.knowledge.dto.KnowledgeLinkRequest
+import kr.artel.orchestration.knowledge.dto.KnowledgeNeighbour
 import kr.artel.orchestration.knowledge.dto.KnowledgeUnlinkRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeEdgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeRelation
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
+import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeAmongRow
 import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeRepository
+import kr.artel.orchestration.knowledge.repository.KnowledgeGraphTraversalRepository
+import kr.artel.orchestration.knowledge.repository.KnowledgeNeighbourRow
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
+import kr.artel.orchestration.knowledge.repository.KnowledgeSimilarRow
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -41,6 +46,7 @@ import java.time.Instant
 class KnowledgeGraphService(
     private val knowledgeRepository: KnowledgeRepository,
     private val edgeRepository: KnowledgeEdgeRepository,
+    private val traversalRepository: KnowledgeGraphTraversalRepository,
     private val clock: Clock
 ) {
     private val logger = LoggerFactory.getLogger(KnowledgeGraphService::class.java)
@@ -191,6 +197,165 @@ class KnowledgeGraphService(
     }
 
     /**
+     * [seedIds]에서 시작해 그래프를 [depth]홉 편다(ARTEL-275).
+     *
+     * **레벨당 질의 한 번**이고 노드당이 아니다. 재귀 CTE도 쓰지 않는다 — 깊이 상한이 2라
+     * 반복 두 번이면 끝이고, 그 편이 상한과 예산을 코드에서 읽을 수 있게 남긴다.
+     *
+     * seed는 **Agent가 아는 id**(이 스코프에서 보이는 행)로 들어와 정규 id로 접힌다. 접지 않으면
+     * 스코프 런에서 그림자 id로 시작한 확장이 baseline에 걸린 edge를 하나도 못 찾는다.
+     *
+     * `visited`는 seed를 포함해 이미 내보낸 노드 전부다. **사이클은 이 집합만으로 죽는다** —
+     * `A REFINES B`, `B CONTRADICTS A`는 한 행을 양방향에서 읽으므로 없으면 핑퐁한다.
+     *
+     * 벡터 이웃은 seed가 **하나일 때만** 붙인다. 검색 자동 확장(seed가 여럿)에는 붙이지 않는데,
+     * 히트를 낸 검색 자체가 벡터 검색이라 히트의 벡터 이웃은 `limit`을 올렸으면 나왔을 것에
+     * 가깝기 때문이다 — 자동으로 붙이면 "limit 올리기"가 분장한 것이 되고 전사 비용만 두 배가 된다.
+     */
+    suspend fun expand(
+        projectId: Long,
+        scope: KnowledgeScope,
+        seedIds: List<Long>,
+        depth: Int,
+        fanout: Int,
+        nodeBudget: Int,
+        similar: SimilarSpec?
+    ): KnowledgeExpandOutcome {
+        val seeds = seedIds.distinct().mapNotNull { id ->
+            knowledgeRepository.findVisibleById(id, projectId, scope.id)?.let { id to canonicalIdOf(it) }
+        }
+        if (seeds.isEmpty()) return KnowledgeExpandOutcome(emptyList(), emptyList(), truncated = false)
+
+        val canonicalBySeed = seeds.toMap()
+        val visited = canonicalBySeed.values.toMutableSet()
+        val neighbours = mutableListOf<NeighbourWithVersion>()
+        var truncated = false
+
+        var frontier = canonicalBySeed.values.toList()
+        for (level in 1..depth) {
+            if (frontier.isEmpty() || neighbours.size >= nodeBudget) break
+            val rows = traversalRepository.neighboursOf(projectId, scope, frontier, visited, fanout)
+            if (rows.isEmpty()) break
+
+            // 같은 레벨에서 두 seed가 같은 이웃을 데려올 수 있다. 리포지토리의 창 함수는
+            // (via, 이웃, relation)까지만 접으므로 **via가 다른 중복**은 여기까지 온다.
+            // visited는 레벨 **사이**만 막지 레벨 **안**은 못 막는다.
+            //
+            // **예산을 재기 전에 접는다.** 뒤에 접으면 중복이 예산을 먹어 실제로 내보낼 수 있는
+            // 것보다 적게 나가고, `truncated`가 아무것도 잘리지 않았는데도 선다.
+            val distinct = rows.distinctBy { it.canonicalId }
+            val room = nodeBudget - neighbours.size
+            if (distinct.size > room) truncated = true
+            val fresh = distinct.take(room)
+
+            // visited에는 **실제로 내보낸 것만** 넣는다. 예산에 밀린 노드까지 넣으면 그 노드는
+            // 다음 레벨에서도 제외되어, 자리가 남아도 영영 안 나온다.
+            fresh.forEach { visited.add(it.canonicalId) }
+            neighbours += fresh.map { it.toNeighbour(level) }
+            frontier = fresh.map { it.canonicalId }
+        }
+
+        if (similar != null && seeds.size == 1) {
+            val (seedId, seedCanonical) = seeds.single()
+            val rows = traversalRepository.similarTo(
+                projectId = projectId,
+                scope = scope,
+                knowledgeId = seedId,
+                canonicalId = seedCanonical,
+                kind = similar.kind,
+                model = similar.model,
+                excludeCanonicalIds = visited,
+                maxDistance = similar.maxDistance,
+                limit = similar.limit
+            )
+            neighbours += rows.map { it.toNeighbour(seedCanonical) }
+        }
+
+        return KnowledgeExpandOutcome(
+            neighbours = neighbours,
+            // 이웃도 런의 컨텍스트에 들어갔으므로 사용 기록에 남긴다(ARTEL-255). 로그를 우회하면
+            // "이 지식이 쓸모 있었나"의 분모가 조용히 모자라고, 그 오류는 아무도 알려 주지 않는다.
+            //
+            // rank는 null이다 — 이웃은 관련도 순위를 매긴 결과가 아니라 그래프를 타고 온 것이다.
+            // score도 벡터 이웃에만 있다. 둘 다 "모른다"가 null인 그 컬럼들의 관례 그대로다.
+            retrievals = neighbours.map {
+                KnowledgeRetrieval(
+                    knowledgeId = it.id.toLong(),
+                    version = it.version,
+                    rank = null,
+                    score = it.score
+                )
+            },
+            truncated = truncated
+        )
+    }
+
+    /**
+     * 이 항목들 **사이**에 걸린 관계(ARTEL-275).
+     *
+     * [expand]는 visited 집합 때문에 이런 edge를 뺀다. 그런데 "히트 1이 히트 3과 모순"은 이 기능이
+     * 말할 수 있는 가장 값진 것이라 따로 건진다.
+     */
+    suspend fun edgesAmong(
+        projectId: Long,
+        scope: KnowledgeScope,
+        knowledgeIds: List<Long>
+    ): List<KnowledgeEdgeAmongRow> {
+        val canonicals = knowledgeIds.distinct().mapNotNull { id ->
+            knowledgeRepository.findVisibleById(id, projectId, scope.id)?.let(::canonicalIdOf)
+        }
+        return traversalRepository.edgesAmong(projectId, scope, canonicals)
+    }
+
+    /**
+     * `정규 id → Agent가 아는 id` 표.
+     *
+     * 이웃은 `via`를 **정규 id**로 달고 돌아오는데, 검색 히트의 id는 이 스코프에서 보이는 행의
+     * id다. 그림자가 낀 경우 둘이 달라, 이 표 없이는 이웃을 어느 히트 밑에 붙일지 알 수 없다.
+     */
+    suspend fun canonicalIndex(
+        projectId: Long,
+        scope: KnowledgeScope,
+        knowledgeIds: List<Long>
+    ): Map<Long, Long> =
+        knowledgeIds.distinct().mapNotNull { id ->
+            knowledgeRepository.findVisibleById(id, projectId, scope.id)?.let { canonicalIdOf(it) to id }
+        }.toMap()
+
+    private fun KnowledgeNeighbourRow.toNeighbour(depth: Int) = NeighbourWithVersion(
+        id = knowledgeId.toString(),
+        relation = relation,
+        origin = ORIGIN_EDGE,
+        // 대칭 관계에 방향을 실어 보내면 렌더가 "…에 의해 모순됨" 같은 문장을 짓게 된다.
+        direction = if (KnowledgeRelation.fromWire(relation)?.symmetric == true) "NONE" else direction,
+        note = note,
+        tag = tag,
+        source = source,
+        summary = summary,
+        depth = depth,
+        score = null,
+        via = viaCanonicalId.toString(),
+        version = version
+    )
+
+    private fun KnowledgeSimilarRow.toNeighbour(viaCanonicalId: Long) = NeighbourWithVersion(
+        id = knowledgeId.toString(),
+        relation = RELATION_SIMILAR,
+        origin = ORIGIN_VECTOR,
+        direction = "NONE",
+        // 아무도 주장한 적이 없다. 빈 문자열로 두면 "이유를 안 적은 관계"로 읽힌다.
+        note = null,
+        tag = tag,
+        source = source,
+        summary = summary,
+        depth = 1,
+        // pgvector의 `<=>`는 `1 - cosine_similarity`라 그대로 되돌린다(KnowledgeSearchService와 동일).
+        score = 1.0 - distance,
+        via = viaCanonicalId.toString(),
+        version = version
+    )
+
+    /**
      * edge 끝점으로 쓸 항목을 이 프로젝트·스코프 안에서 찾는다.
      *
      * [allowDeleted]는 `REPLACES`의 `to` 끝점만을 위한 것이다 — 이유는
@@ -231,6 +396,82 @@ class KnowledgeGraphService(
     private fun parseId(raw: String?): Long? = raw?.trim()?.toLongOrNull()
 
     private fun rejected(reason: String) = KnowledgeGraphMutation.Rejected(reason)
+
+    companion object {
+        /** 런이 이유를 적어 주장한 관계. */
+        const val ORIGIN_EDGE = "EDGE"
+
+        /** 조회 시점에 계산한 유사도. 아무도 주장한 적이 없다. */
+        const val ORIGIN_VECTOR = "VECTOR"
+
+        /**
+         * 벡터 이웃의 표시용 관계명.
+         *
+         * [KnowledgeRelation]에 **없다.** enum에 넣으면 CHECK를 통과해 저장될 수 있게 되는데,
+         * 저장된 유사도는 임베딩 모델이 바뀌는 순간 조용히 거짓이 된다.
+         */
+        const val RELATION_SIMILAR = "SIMILAR"
+    }
+}
+
+/**
+ * 벡터 이웃을 붙일지와 어떻게 붙일지. null이면 안 붙인다.
+ *
+ * 모델을 여기까지 들고 오는 이유는 그것이 `artel.knowledge.backfill.model`에서 와야 하기
+ * 때문이다 — 그래프 전용 설정을 만들면 읽기/쓰기 파티션이 갈라지고, 그 실패는 오류가 아니라
+ * 조용한 빈 결과다([KnowledgeSearchProperties]의 KDoc과 같은 이유).
+ */
+data class SimilarSpec(
+    val kind: String,
+    val model: String,
+    val maxDistance: Double,
+    val limit: Int
+)
+
+/**
+ * 확장 한 번의 결과. [KnowledgeSearchOutcome]의 선례대로 **Agent로 나갈 것과 남길 사실을 가른다**.
+ *
+ * [neighbours]가 DTO가 아니라 [NeighbourWithVersion]인 것이 그 가름이다. `version`은 사용 로그에만
+ * 쓰이고 WS 계약에는 없어야 하는데, 한 타입에 합치면 그대로 Agent에게 나간다.
+ */
+data class KnowledgeExpandOutcome(
+    val neighbours: List<NeighbourWithVersion>,
+    val retrievals: List<KnowledgeRetrieval>,
+    val truncated: Boolean
+)
+
+/**
+ * 이웃 하나 + 기록용 `version`.
+ *
+ * @property version 내보낸 시점의 content 버전. 나중에 그 항목이 고쳐져도 이 런이 읽은 것은 이 값이다.
+ */
+data class NeighbourWithVersion(
+    val id: String,
+    val relation: String,
+    val origin: String,
+    val direction: String,
+    val note: String?,
+    val tag: String,
+    val source: String,
+    val summary: String,
+    val depth: Int,
+    val score: Double?,
+    val via: String,
+    val version: Int
+) {
+    fun toDto() = KnowledgeNeighbour(
+        id = id,
+        relation = relation,
+        origin = origin,
+        direction = direction,
+        note = note,
+        tag = tag,
+        source = source,
+        summary = summary,
+        depth = depth,
+        score = score,
+        via = via
+    )
 }
 
 /**

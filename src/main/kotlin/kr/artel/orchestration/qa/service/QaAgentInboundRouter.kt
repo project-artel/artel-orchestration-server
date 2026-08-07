@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.service.IssueService
+import kr.artel.orchestration.knowledge.dto.KnowledgeExpandRequest
 import kr.artel.orchestration.knowledge.dto.KnowledgeIngestRequest
 import kr.artel.orchestration.knowledge.dto.KnowledgeLinkRequest
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
@@ -52,7 +53,8 @@ private val KNOWLEDGE_GRAPH_TYPES = setOf("KNOWLEDGE_LINK", "KNOWLEDGE_UNLINK")
 private val KNOWLEDGE_WRITE_TYPES = KNOWLEDGE_MUTATION_TYPES + KNOWLEDGE_GRAPH_TYPES + "KNOWLEDGE"
 
 private val SUPPORTED_TYPES =
-    setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH") + KNOWLEDGE_WRITE_TYPES
+    setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH", "KNOWLEDGE_EXPAND") +
+        KNOWLEDGE_WRITE_TYPES
 
 @Service
 class QaAgentInboundRouter(
@@ -106,6 +108,12 @@ class QaAgentInboundRouter(
         if (envelope.type == "KNOWLEDGE_SEARCH") {
             val qaTry = activeTry(qaTryId) ?: return
             routeKnowledgeSearch(qaTryId, qaTry, envelope)
+            return
+        }
+        // 확장도 payload에 표시용 message가 없고 응답을 기다린다 — 검색과 같은 자리에 둔다.
+        if (envelope.type == "KNOWLEDGE_EXPAND") {
+            val qaTry = activeTry(qaTryId) ?: return
+            routeKnowledgeExpand(qaTryId, qaTry, envelope)
             return
         }
         // 이슈는 표시용 `message` 대신 `title`을 담는다. 나머지 타입은 모두 타임라인에 뜨는
@@ -476,6 +484,69 @@ class QaAgentInboundRouter(
             qaTryId,
             sessionId,
             "KNOWLEDGE_SEARCH_RESULT",
+            envelope.messageId,
+            objectMapper.valueToTree(outcome.response)
+        )
+    }
+
+    /**
+     * Agent가 지목한 항목에서 그래프를 더 편다(ARTEL-275).
+     *
+     * [routeKnowledgeSearch]와 같은 골격이고 같은 이유를 진다: 세션을 가장 먼저 보고(답할 곳이
+     * 없으면 일을 시작하지 않는다), 이후 모든 실패는 [failSearch]로 ERROR 프레임까지 보내
+     * 기다리는 도구를 풀어 주며, 사용 기록은 **응답 전에** 남긴다.
+     *
+     * `knowledge_mode=off`면 빈 결과로 답한다. 오류가 아니라 정상 `..._RESULT`인 것도 검색과 같은
+     * 판단이다 — ERROR로 답하면 Agent가 도구 실패로 보고 재시도해, 없애려던 변수가 다시 든다.
+     *
+     * 성공 응답은 qa_log에 남기지 않는다. 지식 본문이 타임라인에 통째로 실리면 안 된다.
+     */
+    private suspend fun routeKnowledgeExpand(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope
+    ) {
+        val sessionId = qaTry.agentSessionId
+        if (sessionId == null) {
+            appendError(qaTryId, envelope, "KNOWLEDGE_EXPAND has no Agent session to answer")
+            return
+        }
+        val request = try {
+            objectMapper.treeToValue(envelope.payload, KnowledgeExpandRequest::class.java)
+        } catch (error: Exception) {
+            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND payload parse failed: ${error.message}")
+            return
+        }
+        val knowledgeId = request.knowledgeId?.trim()?.toLongOrNull()
+        if (knowledgeId == null) {
+            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND payload.knowledge_id must be a numeric id")
+            return
+        }
+        val instance = gameInstanceRepository.findById(qaTry.gameInstanceId)
+        if (instance == null) {
+            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND cannot resolve the project of this run")
+            return
+        }
+        val outcome = try {
+            knowledgeSearchService.expand(
+                projectId = instance.projectId,
+                scope = scopeOf(qaTry),
+                mode = knowledgeModeOf(qaTry),
+                knowledgeId = knowledgeId,
+                depth = request.depth,
+                includeSimilar = request.includeSimilar
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND failed: ${error.message}")
+            return
+        }
+        recordSearchUsage(qaTryId, envelope, outcome.retrievals)
+        sendToAgent(
+            qaTryId,
+            sessionId,
+            "KNOWLEDGE_EXPAND_RESULT",
             envelope.messageId,
             objectMapper.valueToTree(outcome.response)
         )
