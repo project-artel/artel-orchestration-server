@@ -11,9 +11,9 @@ import java.time.Instant
  * TestCase — 기능 1개 검증의 재사용 라이브러리 항목. Agent가 빌드타임 메타데이터+문서로 작성한다.
  *
  * 값(category/title/precondition/expected)은 전부 자연어(TEXT/VARCHAR)로 저장한다. 최적화용
- * 구조화 술어·entryState 등은 이 단계에서 넣지 않는다(후속). 시나리오와의 조합은 test_scenario_case
- * junction으로 표현하며, 이 테이블에는 링크를 두지 않는다(재사용이라 다대다).
- * FK 없음(프로젝트는 논리 참조). id가 null이면 INSERT.
+ * 구조화 술어·entryState 등은 이 단계에서 넣지 않는다(후속). 시나리오와의 연결은 시나리오
+ * payload.steps의 각 스텝이 caseId로 옵션 참조한다(재설계) — 이 테이블에는 링크를 두지 않는다
+ * (재사용이라 다대다). FK 없음(프로젝트는 논리 참조). id가 null이면 INSERT.
  */
 @Table("test_case")
 data class TestCaseEntity(
