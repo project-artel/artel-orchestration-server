@@ -101,7 +101,7 @@ class KnowledgeIntegrationTest {
 
     private fun listByFilters(projectId: Long, source: String? = null, tag: String? = null): KnowledgeListResponse {
         val query = buildString {
-            append("/api/knowledge?projectId=").append(projectId)
+            append("/internal/knowledge?projectId=").append(projectId)
             if (source != null) append("&source=").append(source)
             if (tag != null) append("&tag=").append(tag)
         }

@@ -396,7 +396,7 @@ class ArtelWebSocketIntegrationTest {
         )
 
         val actionResponse = webClient.post()
-            .uri("/api/orchestration/action/$instanceId")
+            .uri("/internal/action/$instanceId")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(actionPayload)
             .retrieve()
@@ -483,7 +483,7 @@ class ArtelWebSocketIntegrationTest {
         )
 
         val actionResponse = webClient.post()
-            .uri("/api/orchestration/action/$instanceId")
+            .uri("/internal/action/$instanceId")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(actionPayload)
             .retrieve()

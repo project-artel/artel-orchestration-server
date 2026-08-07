@@ -111,7 +111,7 @@ class LlmUsageIntegrationTest {
 
     private fun post(body: String): WebTestClient.ResponseSpec =
         webTestClient.post()
-            .uri("/api/orchestration/llm-usage")
+            .uri("/internal/llm-usage")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(body)
             .exchange()

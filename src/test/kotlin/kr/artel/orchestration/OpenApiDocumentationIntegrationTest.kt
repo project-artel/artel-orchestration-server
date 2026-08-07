@@ -25,7 +25,7 @@ class OpenApiDocumentationIntegrationTest {
 
         assertThat(response).contains("Artel Orchestration Server API")
         assertThat(response).contains("/api/sdk/registrations")
-        assertThat(response).contains("/api/orchestration/action/{instanceId}")
+        assertThat(response).contains("/internal/action/{instanceId}")
         assertThat(response).contains("SDK 인스턴스 등록")
         assertThat(response).contains("Deliver agent actions to a game instance")
     }
