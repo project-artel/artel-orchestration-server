@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -81,13 +82,19 @@ class TestScenarioController(
         return ResponseEntity.ok("승인 완료")
     }
 
-    /** 시나리오와 그 조합 링크를 삭제한다(케이스/런 본체는 남김). 접근 불가/미존재면 404. */
+    /**
+     * 시나리오와 그 조합 링크를 삭제한다(케이스/런 본체는 남김). 접근 불가/미존재면 404.
+     *
+     * QA 실행 이력이 있으면 기본적으로 409(`scenario_has_qa_history`)로 막는다. `?force=true`면
+     * 실행 이력(qa_try·qa_log·issue)까지 지우고 삭제한다.
+     */
     @DeleteMapping("/{testScenarioId}")
     suspend fun delete(
         @PathVariable testScenarioId: Long,
+        @RequestParam(required = false, defaultValue = "false") force: Boolean,
         @AuthenticationPrincipal jwt: Jwt
     ): ResponseEntity<Void> {
-        service.delete(requireUser(jwt), testScenarioId)
+        service.delete(requireUser(jwt), testScenarioId, force)
         return ResponseEntity.noContent().build()
     }
 

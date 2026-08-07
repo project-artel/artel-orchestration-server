@@ -41,6 +41,17 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
     )
     fun findByProject(projectId: Long, userId: Long, limit: Int): Flow<QaTryEntity>
 
+    /** 시나리오에 딸린 QA 실행 이력 수. 시나리오 삭제 가드(실행 이력 있으면 차단)가 쓴다(ARTEL-207). */
+    suspend fun countByTestScenarioId(testScenarioId: Long): Long
+
+    /**
+     * 시나리오의 모든 qa_try를 지운다(강제 삭제 경로). qa_log·issue는 qa_try FK가
+     * ON DELETE CASCADE라 함께 사라진다. 부모 qa_run은 test_run 스코프라 건드리지 않는다.
+     */
+    @Modifying
+    @Query("DELETE FROM qa_try WHERE test_scenario_id = :testScenarioId")
+    suspend fun deleteByTestScenarioId(testScenarioId: Long): Int
+
     // @Modifying is what makes these return the affected row count. Without it
     // Spring Data R2DBC maps the statement as a result set, the suspend function
     // completes empty, and every `== 1` check below reads a successful update as a
