@@ -1,9 +1,11 @@
 package kr.artel.orchestration.testscenario.service
 
-import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testscenario.dto.AgentCase
+import kr.artel.orchestration.testscenario.dto.AgentScenario
+import kr.artel.orchestration.testscenario.dto.AgentStep
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import org.springframework.stereotype.Service
 
@@ -26,10 +28,11 @@ class ScenarioCompositionService(
     private val objectMapper: ObjectMapper,
 ) {
     /**
-     * QA 실행용 시나리오 JSON을 만든다. [payloadJson]은 test_scenario.payload(ScenarioDraft) 문자열이며,
-     * 접근 검증은 호출부([kr.artel.orchestration.qa.service.QaTryService])가 이미 마친 뒤 넘긴다.
+     * QA 실행용 시나리오 계약([AgentScenario])을 만든다. 직렬화는 Jackson에 맡긴다(예전엔 JsonNode를 손으로
+     * 조립했으나 타입 DTO로 전환 — 팀 리뷰 피드백). [payloadJson]은 test_scenario.payload(ScenarioDraft)
+     * 문자열이며, 접근 검증은 호출부([kr.artel.orchestration.qa.service.QaTryService])가 이미 마친 뒤 넘긴다.
      */
-    suspend fun agentScenario(testScenarioId: Long, userId: Long, payloadJson: String): JsonNode {
+    suspend fun agentScenario(testScenarioId: Long, userId: Long, payloadJson: String): AgentScenario {
         val draft = objectMapper.readValue(payloadJson, ScenarioDraft::class.java)
         val caseIds = draft.steps.mapNotNull { it.caseId }.toSet()
         val caseById = if (caseIds.isEmpty()) {
@@ -38,34 +41,27 @@ class ScenarioCompositionService(
             testCaseRepository.findAllById(caseIds).toList().associateBy { requireNotNull(it.id) }
         }
 
-        val node = objectMapper.createObjectNode()
-        node.put("title", draft.title)
-        node.put("description", draft.description)
-        val stepsArr = objectMapper.createArrayNode()
-        for (step in draft.steps) {
-            val s = objectMapper.createObjectNode()
-            s.put("action", step.action)
-            if (step.caseId != null) s.put("case_id", step.caseId) else s.putNull("case_id")
-            if (step.hint != null) s.put("hint", step.hint) else s.putNull("hint")
-            if (step.input != null) s.put("input", step.input) else s.putNull("input")
+        val steps = draft.steps.map { step ->
+            // caseId가 있는 스텝엔 그 TC 스펙(CSV: 씬/사전조건/테스트 스텝/기대 결과)을 리졸브해 동봉.
+            // 현행 TestCase 필드를 계약 이름으로 투영(category=씬, title=테스트 스텝). TC가 스펙으로
+            // 재구조화되면 이 매핑만 바꾸면 되고 계약 필드명(@JsonProperty)은 그대로다.
             val tc = step.caseId?.let { caseById[it] }
-            if (tc != null) {
-                // TC 임베드 = TC 스펙(CSV) 미러: scene/precondition/test_step/expected(+예약 basis).
-                // 현행 TestCase 필드를 그 이름으로 투영한다(category=씬, title=테스트 스텝). TC가 스펙으로
-                // 재구조화되면 이 매핑만 바꾸면 되고 계약 필드명은 그대로다.
-                val c = objectMapper.createObjectNode()
-                c.put("id", requireNotNull(tc.id))
-                c.put("scene", tc.category)
-                if (tc.precondition != null) c.put("precondition", tc.precondition) else c.putNull("precondition")
-                c.put("test_step", tc.title)
-                c.put("expected", tc.expected)
-                s.set<JsonNode>("case", c)
-            } else {
-                s.putNull("case")
-            }
-            stepsArr.add(s)
+            AgentStep(
+                action = step.action,
+                caseId = step.caseId,
+                hint = step.hint,
+                input = step.input,
+                case = tc?.let {
+                    AgentCase(
+                        id = requireNotNull(it.id),
+                        scene = it.category,
+                        precondition = it.precondition,
+                        testStep = it.title,
+                        expected = it.expected,
+                    )
+                },
+            )
         }
-        node.set<JsonNode>("steps", stepsArr)
-        return node
+        return AgentScenario(title = draft.title, description = draft.description, steps = steps)
     }
 }

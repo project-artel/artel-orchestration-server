@@ -347,23 +347,22 @@ class TestScenarioReconcileIntegrationTest {
             TestScenarioEntity(projectId = projectId, payload = Json.of(payload))
         ).id!!
 
-        val node = compositionService.agentScenario(scenarioId, appUserId, payload)
+        val scenario = compositionService.agentScenario(scenarioId, appUserId, payload)
 
-        assertThat(node.get("title").asText()).isEqualTo("구매")
-        val steps = node.get("steps")
-        assertThat(steps).hasSize(3)
-        // 조작 스텝: case_id/case 없음(null).
-        assertThat(steps[0].get("action").asText()).isEqualTo("상점으로 이동")
-        assertThat(steps[0].get("case_id").isNull).isTrue()
-        assertThat(steps[0].get("case").isNull).isTrue()
+        assertThat(scenario.title).isEqualTo("구매")
+        assertThat(scenario.steps).hasSize(3)
+        // 조작 스텝: caseId/case 없음(null).
+        assertThat(scenario.steps[0].action).isEqualTo("상점으로 이동")
+        assertThat(scenario.steps[0].caseId).isNull()
+        assertThat(scenario.steps[0].case).isNull()
         // 검증 스텝: caseId + TC 내용(CSV 스펙 이름: scene/precondition/test_step/expected) 리졸브 동봉.
-        assertThat(steps[1].get("case_id").asLong()).isEqualTo(caseA)
-        assertThat(steps[1].get("case").get("scene").asText()).isEqualTo("RULE")
-        assertThat(steps[1].get("case").get("test_step").asText()).isEqualTo("상점 진입")
-        assertThat(steps[1].get("case").get("expected").asText()).isEqualTo("상점 진입 기대결과")
+        assertThat(scenario.steps[1].caseId).isEqualTo(caseA)
+        assertThat(scenario.steps[1].case!!.scene).isEqualTo("RULE")
+        assertThat(scenario.steps[1].case!!.testStep).isEqualTo("상점 진입")
+        assertThat(scenario.steps[1].case!!.expected).isEqualTo("상점 진입 기대결과")
         // hint 보존, 두 번째 검증 스텝.
-        assertThat(steps[2].get("hint").asText()).isEqualTo("Enter")
-        assertThat(steps[2].get("case").get("test_step").asText()).isEqualTo("구매 확인")
+        assertThat(scenario.steps[2].hint).isEqualTo("Enter")
+        assertThat(scenario.steps[2].case!!.testStep).isEqualTo("구매 확인")
     }
 
     // ---- helpers ----------------------------------------------------------------------------
