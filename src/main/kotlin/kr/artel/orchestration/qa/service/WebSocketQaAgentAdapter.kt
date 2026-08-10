@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.testscenario.dto.AgentScenario
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
@@ -37,7 +38,7 @@ internal data class QaSessionOpenRequest(
 internal data class QaSessionOpenScenario(
     @JsonProperty("qa_try_id") val qaTryId: String,
     @JsonProperty("test_scenario_id") val testScenarioId: String,
-    val scenario: JsonNode
+    val scenario: AgentScenario
 )
 
 // NON_NULL: 런 단위(scenarios[])와 단일(qa_try_id/…) 중 채운 쪽만 나간다. Agent가 둘 다 받는다.

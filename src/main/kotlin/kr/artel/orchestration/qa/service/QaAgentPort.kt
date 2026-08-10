@@ -1,6 +1,7 @@
 package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.databind.JsonNode
+import kr.artel.orchestration.testscenario.dto.AgentScenario
 import java.time.Instant
 
 /**
@@ -12,11 +13,11 @@ import java.time.Instant
  */
 data class QaAgentSession(val sessionId: String, val runConfig: JsonNode? = null)
 
-/** 런 안의 시나리오 하나 = 자기 qa_try_id + 실행 본문(cases 포함). ids는 문자열(FE 64bit 정밀도 관례). */
+/** 런 안의 시나리오 하나 = 자기 qa_try_id + 실행 본문([AgentScenario], cases 포함). ids는 문자열(FE 64bit 정밀도 관례). */
 data class QaAgentScenario(
     val qaTryId: String,
     val testScenarioId: String,
-    val scenario: JsonNode
+    val scenario: AgentScenario
 )
 
 /**
