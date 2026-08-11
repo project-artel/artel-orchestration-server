@@ -87,6 +87,24 @@ class QaStatsRepository(
                  WHERE u.service = 'QA_RUN'
                    AND u.reference_id IN (SELECT id FROM scoped)
                  GROUP BY u.reference_id
+            ),
+            -- 기대-라벨 채점을 런당 한 줄로 접는다(ARTEL-301). 재채점하면 같은 런에
+            -- grader_version이 다른 행이 여러 개 서므로, 접지 않고 조인하면 그 런이 버전 수만큼
+            -- 복제돼 합계가 부풀고 scored_runs가 런 수가 아니라 채점 횟수를 센다.
+            -- 최신 것 하나만 쓴다 — 옛 판정은 대조용으로 남아 있을 뿐 현재 성적이 아니다.
+            -- grader 이름은 ExpectedStepsGrader의 EXPECTED_STEPS_GRADER와 같아야 한다.
+            run_score AS (
+                SELECT DISTINCT ON (sc.qa_try_id)
+                       sc.qa_try_id,
+                       (sc.detail -> 'matrix' ->> 'correct_pass')::int AS correct_pass,
+                       (sc.detail -> 'matrix' ->> 'false_alarm')::int  AS false_alarm,
+                       (sc.detail -> 'matrix' ->> 'miss')::int         AS miss,
+                       (sc.detail -> 'matrix' ->> 'correct_fail')::int AS correct_fail,
+                       (sc.detail ->> 'unreported')::int               AS unreported
+                  FROM qa_try_score sc
+                 WHERE sc.grader = 'expected-steps'
+                   AND sc.qa_try_id IN (SELECT id FROM scoped)
+                 ORDER BY sc.qa_try_id, sc.id DESC
             )
             SELECT GROUPING(s.model, s.reasoning_effort, s.prompt_version, s.agent_arch) AS grouping_mask,
                    s.model                                                    AS model,
@@ -118,9 +136,22 @@ class QaStatsRepository(
                    COALESCE(SUM(s.steps_total), 0)                            AS steps_total,
                    COALESCE(SUM(s.steps_passed), 0)                           AS steps_passed,
                    COALESCE(SUM(s.cases_total), 0)                            AS cases_total,
-                   COALESCE(SUM(s.cases_passed), 0)                           AS cases_passed
+                   COALESCE(SUM(s.cases_passed), 0)                           AS cases_passed,
+                   -- 채점 커버리지의 분모(ARTEL-301). verdict_known과 **다른 수다**: 요약은 멀쩡히
+                   -- 받았지만 시나리오에 기대 라벨이 하나도 없어 채점 대상이 아닌 런이 있다.
+                   -- 0이면 아래 다섯도 0인데 그것은 "채점할 것이 없었다"이지 "0점"이 아니다.
+                   COUNT(rs.qa_try_id)                                        AS scored_runs,
+                   -- 오탐과 미탐을 한 숫자로 접지 않는다 — QA 에이전트에게 미탐이 훨씬 나쁘고
+                   -- (못 찾은 버그는 출시된다), 접으면 그 방향이 사라져 두 종류의 나쁜 설정이
+                   -- 같은 점수로 보인다.
+                   COALESCE(SUM(rs.correct_pass), 0)                          AS correct_pass,
+                   COALESCE(SUM(rs.false_alarm), 0)                           AS false_alarm,
+                   COALESCE(SUM(rs.miss), 0)                                  AS miss,
+                   COALESCE(SUM(rs.correct_fail), 0)                          AS correct_fail,
+                   COALESCE(SUM(rs.unreported), 0)                            AS unreported
               FROM scoped s
               LEFT JOIN run_usage ru ON ru.qa_try_id = s.id
+              LEFT JOIN run_score rs ON rs.qa_try_id = s.id
              GROUP BY GROUPING SETS (
                  (s.model, s.reasoning_effort, s.prompt_version, s.agent_arch),
                  ()
@@ -177,7 +208,13 @@ class QaStatsRepository(
         stepsTotal = longAt("steps_total"),
         stepsPassed = longAt("steps_passed"),
         casesTotal = longAt("cases_total"),
-        casesPassed = longAt("cases_passed")
+        casesPassed = longAt("cases_passed"),
+        scoredRuns = longAt("scored_runs"),
+        correctPass = longAt("correct_pass"),
+        falseAlarm = longAt("false_alarm"),
+        miss = longAt("miss"),
+        correctFail = longAt("correct_fail"),
+        unreported = longAt("unreported")
     )
 
     private fun Readable.longAt(name: String): Long =
@@ -234,5 +271,11 @@ data class QaStatsRow(
     val stepsTotal: Long,
     val stepsPassed: Long,
     val casesTotal: Long,
-    val casesPassed: Long
+    val casesPassed: Long,
+    val scoredRuns: Long,
+    val correctPass: Long,
+    val falseAlarm: Long,
+    val miss: Long,
+    val correctFail: Long,
+    val unreported: Long
 )

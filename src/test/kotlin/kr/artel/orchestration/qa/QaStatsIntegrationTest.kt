@@ -53,6 +53,7 @@ class QaStatsIntegrationTest {
     @Autowired private lateinit var statsService: QaStatsService
     @Autowired private lateinit var qaTryRepository: QaTryRepository
     @Autowired private lateinit var qaLogRepository: QaLogRepository
+    @Autowired private lateinit var scoreRepository: kr.artel.orchestration.qa.repository.QaTryScoreRepository
     @Autowired private lateinit var llmUsageRepository: LlmUsageRepository
     @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
     @Autowired private lateinit var testScenarioRepository: TestScenarioRepository
@@ -97,6 +98,7 @@ class QaStatsIntegrationTest {
     fun clean(): Unit = runBlocking { wipe() }
 
     private suspend fun wipe() {
+        scoreRepository.deleteAll()
         llmUsageRepository.deleteAll()
         qaLogRepository.deleteAll()
         qaTryRepository.deleteAll()
@@ -257,6 +259,44 @@ class QaStatsIntegrationTest {
     }
 
     @Test
+    fun `채점 결과가 축별로 접히고 재채점이 런 수를 부풀리지 않는다`(): Unit = runBlocking {
+        val a = seedRun(model = "sonnet-5", status = "COMPLETED", stepsTotal = 4, stepsPassed = 3)
+        val b = seedRun(model = "sonnet-5", status = "FAILED", stepsTotal = 4, stepsPassed = 1)
+        // 라벨이 하나도 없어 채점 대상이 아닌 런. 판정은 멀쩡히 받았다.
+        seedRun(model = "sonnet-5", status = "COMPLETED", stepsTotal = 4, stepsPassed = 4)
+
+        seedScore(a, correctPass = 2, falseAlarm = 1, miss = 0, correctFail = 1, unreported = 0)
+        seedScore(b, correctPass = 0, falseAlarm = 0, miss = 2, correctFail = 0, unreported = 2)
+        // 같은 런을 새 기준으로 재채점했다. 접지 않고 조인하면 이 런이 두 번 세어진다.
+        seedScore(a, correctPass = 3, falseAlarm = 0, miss = 0, correctFail = 1, unreported = 0, version = "2")
+
+        val cell = stats().cellFor(model = "sonnet-5")
+
+        assertThat(cell.runs).isEqualTo(3)
+        assertThat(cell.verdictKnown).isEqualTo(3)
+        // 셋 중 둘만 채점됐다 — verdictKnown과 다른 수다.
+        assertThat(cell.scoredRuns).isEqualTo(2)
+        // 재채점한 런은 **최신 판정만** 센다.
+        assertThat(cell.correctPass).isEqualTo(3)
+        assertThat(cell.falseAlarm).isEqualTo(0)
+        assertThat(cell.miss).isEqualTo(2)
+        assertThat(cell.correctFail).isEqualTo(1)
+        assertThat(cell.unreported).isEqualTo(2)
+    }
+
+    @Test
+    fun `채점된 런이 없으면 scoredRuns가 0이고 합계도 0이다`(): Unit = runBlocking {
+        seedRun(model = "sonnet-5", status = "COMPLETED", stepsTotal = 4, stepsPassed = 4)
+
+        val cell = stats().cellFor(model = "sonnet-5")
+
+        // "채점할 것이 없었다"이지 "0점"이 아니다 — 그 구분은 scoredRuns가 진다.
+        assertThat(cell.scoredRuns).isEqualTo(0)
+        assertThat(cell.miss).isEqualTo(0)
+        assertThat(cell.unreported).isEqualTo(0)
+    }
+
+    @Test
     fun `the window includes from and excludes to`(): Unit = runBlocking {
         seedRun(model = "before", status = "COMPLETED", startedAt = windowStart.minusSeconds(1))
         seedRun(model = "at-from", status = "COMPLETED", startedAt = windowStart)
@@ -354,6 +394,28 @@ class QaStatsIntegrationTest {
                 completedAt = if (terminal) startedAt.plusMillis(durationMs) else null
             )
         )!!.id!!
+    }
+
+    /** `grader='expected-steps'` 채점 한 줄. detail 모양은 ExpectedStepsGrader가 쓰는 것과 같다. */
+    private suspend fun seedScore(
+        qaTryId: Long,
+        correctPass: Int,
+        falseAlarm: Int,
+        miss: Int,
+        correctFail: Int,
+        unreported: Int,
+        version: String = "1"
+    ) {
+        scoreRepository.insertIfAbsent(
+            qaTryId = qaTryId,
+            grader = "expected-steps",
+            graderVersion = version,
+            detail = """
+                {"unreported":$unreported,
+                 "matrix":{"correct_pass":$correctPass,"false_alarm":$falseAlarm,
+                           "miss":$miss,"correct_fail":$correctFail}}
+            """.trimIndent()
+        )
     }
 
     private suspend fun seedUsage(
