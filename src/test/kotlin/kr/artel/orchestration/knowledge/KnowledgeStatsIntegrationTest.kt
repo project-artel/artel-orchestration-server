@@ -23,6 +23,7 @@ import kr.artel.orchestration.knowledge.service.KnowledgeMutation
 import kr.artel.orchestration.knowledge.service.KnowledgeRetrieval
 import kr.artel.orchestration.knowledge.service.KnowledgeSearchService
 import kr.artel.orchestration.knowledge.service.KnowledgeService
+import kr.artel.orchestration.knowledge.service.KnowledgeStatsService
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
@@ -32,7 +33,9 @@ import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+import kr.artel.orchestration.common.error.BadRequestException
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -41,6 +44,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.r2dbc.core.flow
 import org.springframework.test.context.ActiveProfiles
+import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -65,6 +69,7 @@ class KnowledgeStatsIntegrationTest {
     @Autowired private lateinit var knowledgeService: KnowledgeService
     @Autowired private lateinit var searchService: KnowledgeSearchService
     @Autowired private lateinit var statsRepository: KnowledgeStatsRepository
+    @Autowired private lateinit var statsService: KnowledgeStatsService
     @Autowired private lateinit var knowledgeRepository: KnowledgeRepository
     @Autowired private lateinit var usageRepository: KnowledgeUsageRepository
     @Autowired private lateinit var qaTryRepository: QaTryRepository
@@ -327,6 +332,77 @@ class KnowledgeStatsIntegrationTest {
         assertThat(facts.map { it.knowledgeId }).containsExactlyInAnyOrder(edited, doomed)
         assertThat(facts).allMatch { it.deletedByQaTryId == null }
         assertThat(aggregate().total!!.repudiatedVersions).isZero()
+    }
+
+    // ------------------------------------------------------ 조회 API (서비스 층)
+
+    /**
+     * 기본 창이 QA 집계(30일)보다 넓다.
+     *
+     * 지식은 만들어진 뒤 **후속 런이** 지우거나 인용해야 신호가 생기고, 그 후속 런은 같은 날
+     * 돌지 않는다. 좁게 자르면 창 끝자락의 지식이 평가받을 시간을 갖지 못한 채 "아직 아무도
+     * 안 지웠다"로 집계되어, 최근에 만든 지식일수록 좋아 보인다.
+     */
+    @Test
+    fun `기간을 생략하면 90일 창을 본다`(): Unit = runBlocking {
+        createEntry(runA, "A-1")
+
+        val response = statsService.stats(
+            projectId = projectId,
+            userId = userId,
+            from = null,
+            to = null,
+            cellLimit = 200
+        )
+        assertThat(Duration.between(response.from, response.to).toDays()).isEqualTo(90)
+        assertThat(response.total.entryVersions).isEqualTo(1)
+    }
+
+    /**
+     * 인용을 못 재는 동안 `citationKnownTotal`이 0으로 나가는 것이 응답의 계약이다.
+     *
+     * 화면은 인용률을 `citationTotal / citationKnownTotal`로 내고, 이 값이 0이면 0%가 아니라
+     * 미상으로 그린다. 응답이 이 둘을 한 숫자로 접어 보내면 그 구분이 서버에서 이미 사라져
+     * 화면이 복원할 방법이 없다.
+     */
+    @Test
+    fun `응답이 인용 건수와 판정 가능 건수를 따로 싣는다`(): Unit = runBlocking {
+        val knowledgeId = createEntry(runA, "A-1")
+        recordRetrieval(runA, knowledgeId, version = 1)
+
+        val response = statsService.stats(
+            projectId = projectId,
+            userId = userId,
+            from = Instant.now().minus(1, ChronoUnit.HOURS),
+            to = Instant.now().plus(1, ChronoUnit.HOURS),
+            cellLimit = 200
+        )
+        val cell = response.cells.single { it.model == "openai/gpt-a" }
+        assertThat(cell.retrievalTotal).isEqualTo(1)
+        assertThat(cell.citationTotal).isZero()
+        assertThat(cell.citationKnownTotal).isZero()
+    }
+
+    @Test
+    fun `cellLimit이 범위를 벗어나면 거절한다`(): Unit = runBlocking {
+        assertThatThrownBy {
+            runBlocking { statsService.stats(projectId, userId, null, null, cellLimit = 0) }
+        }.isInstanceOf(BadRequestException::class.java)
+
+        assertThatThrownBy {
+            runBlocking { statsService.stats(projectId, userId, null, null, cellLimit = 501) }
+        }.isInstanceOf(BadRequestException::class.java)
+    }
+
+    /** 뒤집힌 기간은 빈 결과가 아니라 거절이다. 빈 집계로 답하면 오타가 "데이터 없음"으로 읽힌다. */
+    @Test
+    fun `from이 to보다 늦으면 거절한다`(): Unit = runBlocking {
+        val now = Instant.now()
+        assertThatThrownBy {
+            runBlocking {
+                statsService.stats(projectId, userId, from = now, to = now.minusSeconds(1), cellLimit = 10)
+            }
+        }.isInstanceOf(BadRequestException::class.java)
     }
 
     // --------------------------------------------------------------- helpers
