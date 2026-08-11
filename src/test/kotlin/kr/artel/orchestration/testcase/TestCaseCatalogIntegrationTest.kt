@@ -24,7 +24,8 @@ import java.time.Instant
  * 이 카탈로그가 지키는 약속은 세 가지이고, 셋 다 깨져도 코드는 잘 도는 것처럼 보인다:
  * 1. **전량이다** — 걸러지면 "존재를 몰라서 빠뜨리는" 실패가 그대로 남는다.
  * 2. **오름차순이다** — 순서가 흔들리면 Agent 프롬프트 캐시가 매 턴 깨진다(비용만 오르고 결과는 같다).
- * 3. **본문이 없다** — 필드가 새어 들어오면 세션당 부피가 조용히 몇 배가 된다.
+ * 3. **스텝을 쓸 수 있을 만큼 담는다** — 사전조건·기대결과가 빠지면 Agent가 고른 뒤 다시 가져와야 하고,
+ *    그 왕복 횟수가 곧 새로운 상한이 된다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -82,15 +83,20 @@ class TestCaseCatalogIntegrationTest {
     }
 
     @Test
-    fun `카탈로그 한 줄에는 본문이 없고 Agent 계약 이름으로 직렬화된다`(): Unit = runBlocking {
+    fun `카탈로그 한 줄은 스텝 작성에 필요한 만큼 담고 Agent 계약 이름으로 직렬화된다`(): Unit = runBlocking {
         val (projectId, userId) = newProjectWithMember()
         createCase(projectId, userId, 1)
 
         val entry = testCaseService.getTestCaseCatalog(projectId, userId).items.single()
         val fields = objectMapper.readTree(objectMapper.writeValueAsString(entry))
 
-        assertThat(fields.fieldNames().asSequence().toSet())
-            .containsExactlyInAnyOrder("id", "category", "title", "verification_status")
+        // 본문 두 필드가 빠지면 Agent가 고른 케이스로 스텝을 쓸 수 없어 왕복이 생긴다.
+        // 반대로 여기 없는 컬럼(타임스탬프 등)이 새어 들어오면 세션당 부피만 는다.
+        assertThat(fields.fieldNames().asSequence().toSet()).containsExactlyInAnyOrder(
+            "id", "category", "title", "precondition", "expected", "verification_status"
+        )
+        assertThat(fields["precondition"].asText()).isEqualTo("사전조건 1")
+        assertThat(fields["expected"].asText()).isEqualTo("기대결과 1")
         // Agent가 이 값을 그대로 스텝의 case_id로 돌려주므로 숫자여야 한다(FE 응답과 달리 문자열이 아니다).
         assertThat(fields["id"].isNumber).isTrue()
         assertThat(fields["verification_status"].asText()).isEqualTo("DRAFT")
