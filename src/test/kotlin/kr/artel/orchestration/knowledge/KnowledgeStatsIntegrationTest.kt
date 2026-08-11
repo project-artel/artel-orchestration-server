@@ -1,6 +1,5 @@
 package kr.artel.orchestration.knowledge
 
-import io.r2dbc.postgresql.codec.Json
 import io.r2dbc.spi.Readable
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.awaitFirstOrNull
@@ -15,6 +14,7 @@ import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
+import kr.artel.orchestration.knowledge.entity.KnowledgeRetrievalKind
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeStatsRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeStatsRow
@@ -366,7 +366,15 @@ class KnowledgeStatsIntegrationTest {
     private suspend fun recordRetrieval(qaTryId: Long, knowledgeId: Long, version: Int) {
         searchService.recordRetrievals(
             qaTryId,
-            listOf(KnowledgeRetrieval(knowledgeId = knowledgeId, version = version, rank = 1, score = 0.9))
+            listOf(
+                KnowledgeRetrieval(
+                    knowledgeId = knowledgeId,
+                    version = version,
+                    rank = 1,
+                    score = 0.9,
+                    kind = KnowledgeRetrievalKind.DIRECT
+                )
+            )
         )
     }
 
@@ -410,7 +418,7 @@ class KnowledgeStatsIntegrationTest {
     ): Long {
         val now = Instant.now()
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = projectId, payload = Json.of("{}"))
+            TestScenarioEntity(projectId = projectId)
         )!!
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(

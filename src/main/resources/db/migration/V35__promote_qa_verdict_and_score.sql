@@ -1,8 +1,11 @@
 -- QA 런의 **판정**을 축별 집계가 읽을 수 있는 자리에 올리고, 나중 채점이 쌓일 자리를 만든다.
 -- (2026-08-11, ARTEL-299)
 --
--- V32는 미머지 브랜치 ARTEL-291이 이미 잡았다(V32__promote_test_scenario_payload_columns.sql).
--- check-flyway-migrations.sh의 peer 스캔으로 확인하고 번호만 밀었으며, 내용은 그쪽과 무관하다.
+-- ⚠️ 처음 V32로 잡았다가 V33으로, 다시 V35로 밀었다. V32는 ARTEL-291(test_scenario 컬럼 승격)이
+-- 먼저 잡았고, 그 뒤 ARTEL-291(V32)과 ARTEL-293(V34)이 이 브랜치보다 **먼저 develop에 머지됐다**.
+-- V33은 이제 develop의 최고 번호보다 낮아 이미 마이그레이션된 DB가 영영 적용하지 않는 번호다
+-- (check-flyway-migrations.sh가 말하는 tangle). 번호는 develop 최고치 위로 올린다.
+-- 내용은 그 두 마이그레이션과 무관하다 — 번호만 비켰다.
 --
 -- V25는 런을 **무엇으로** 돌렸는지를 남겼고 V27은 그 축에 붙일 지식창고 쪽 결과를 남겼다.
 -- 그런데 "그래서 QA를 잘했나"는 아직 못 잰다. 지금 대시보드가 qa_try.status로 세는 것은 런

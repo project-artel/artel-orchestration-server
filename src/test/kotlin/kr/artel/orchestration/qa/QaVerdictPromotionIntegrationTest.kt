@@ -1,7 +1,6 @@
 package kr.artel.orchestration.qa
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
@@ -278,7 +277,7 @@ class QaVerdictPromotionIntegrationTest {
         val testRun = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))
         val scenarioIds = (1..scenarioCount).map {
             testScenarioRepository.save(
-                TestScenarioEntity(projectId = project.id!!, payload = Json.of("{}"))
+                TestScenarioEntity(projectId = project.id!!)
             ).id!!
         }
 

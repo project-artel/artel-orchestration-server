@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
-import kr.artel.orchestration.testscenario.dto.ScenarioDraft
+import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.springframework.stereotype.Service
 
@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service
  *
  * 세션 오픈·턴마다 이 목록을 Agent에 실어, Agent가 "어느 기존 시나리오를 수정할지"를 id로 지목하고
  * 그 시나리오의 **기존 steps까지 보고** 편집하게 한다. 조회는 런 조합 순서(position)를 따르며, 각
- * 시나리오의 본문(payload = title/description/steps)을 그대로 담는다.
+ * 시나리오의 본문(title/description/steps)을 그대로 담는다.
  */
 @Service
 class RunScenarioReader(
@@ -26,7 +26,7 @@ class RunScenarioReader(
         val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
         return links.mapNotNull { link ->
             val scenario = scenarioRepository.findById(link.testScenarioId) ?: return@mapNotNull null
-            val draft = objectMapper.readValue(scenario.payload.asString(), ScenarioDraft::class.java)
+            val draft = scenario.toDraft(objectMapper)
             CurrentScenario(
                 scenarioId = link.testScenarioId,
                 title = draft.title,

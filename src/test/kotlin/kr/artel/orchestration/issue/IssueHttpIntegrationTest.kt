@@ -183,7 +183,7 @@ class IssueHttpIntegrationTest {
             )
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = project.id!!, payload = Json.of("{}"))
+            TestScenarioEntity(projectId = project.id!!)
         )!!
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(

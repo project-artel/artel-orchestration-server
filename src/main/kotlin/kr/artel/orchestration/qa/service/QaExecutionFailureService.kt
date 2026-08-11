@@ -2,6 +2,7 @@ package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
+import kr.artel.orchestration.knowledge.service.KnowledgeCitationService
 import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.stereotype.Service
@@ -113,12 +114,22 @@ data class FailureLogs(
     val status: QaLogAppendResult
 )
 
+/**
+ * 런이 정상 종료 외의 경로로 끝나는 자리 전부. 소켓 사망, Agent 세션 생성 실패, 운영자 취소가
+ * 여기로 모인다.
+ *
+ * **그래서 인용 확정도 여기 걸린다**(ARTEL-293). 정상 종료(`QaAgentInboundRouter.routeStatus`)에만
+ * 걸면 실패한 런의 `knowledge_usage.cited`가 영영 NULL로 남아, "보고할 수 없었던 런"과
+ * "보고했는데 인용하지 않은 런"이 갈리지 않는다. 확정은 상태 전이가 **커밋된 뒤에** 부른다 —
+ * 트랜잭션 안에서 실패하면 그 트랜잭션이 통째로 되돌아가 런 종료 자체가 깨진다.
+ */
 @Service
 class QaExecutionFailureService(
     private val persistence: QaExecutionFailurePersistence,
     private val logService: QaLogService,
     private val streamManager: QaLogStreamManager,
     private val agentPort: QaAgentPort,
+    private val citationService: KnowledgeCitationService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -126,6 +137,7 @@ class QaExecutionFailureService(
         val failed = persistence.failActiveByInstance(gameInstanceId, "SDK connection closed.") ?: return
         logService.publish(failed.error)
         logService.publish(failed.status)
+        citationService.finalizeTry(failed.qaTryId)
         try {
             closeQuietly(failed.agentSessionId)
         } finally {
@@ -147,6 +159,7 @@ class QaExecutionFailureService(
         val cancelled = persistence.cancelActiveById(qaTryId, reason) ?: return false
         logService.publish(cancelled.error)
         logService.publish(cancelled.status)
+        citationService.finalizeTry(qaTryId)
         val sessionId = cancelled.agentSessionId
         try {
             if (sessionId != null) {
@@ -181,6 +194,7 @@ class QaExecutionFailureService(
         val failed = persistence.failActiveById(qaTryId, reason) ?: return
         logService.publish(failed.error)
         logService.publish(failed.status)
+        citationService.finalizeTry(qaTryId)
         try {
             if (closeAgent) closeQuietly(failed.agentSessionId)
         } finally {

@@ -19,8 +19,8 @@ data class ScenarioStep(
 )
 
 /**
- * 시나리오 초안(ScenarioDraft). test_scenario.payload(JSONB)에 저장되고, SSE 이벤트·조회 응답으로 FE에
- * 전달된다. **시나리오 = steps의 순서 집합**(재설계). 생성 직후(빈 시나리오)를 위해 기본값을 둔다.
+ * 시나리오 초안(ScenarioDraft). test_scenario의 title/description/steps 컬럼으로 저장되고(ARTEL-291),
+ * SSE 이벤트·조회 응답으로 FE에 전달된다. **시나리오 = steps의 순서 집합**(재설계). 생성 직후(빈 시나리오)를 위해 기본값을 둔다.
  */
 data class ScenarioDraft(
     val title: String = "",
@@ -33,7 +33,7 @@ data class ScenarioDraft(
  * **여러 개** 돌려주며, 각 시나리오는 [steps]의 순서 집합이다. 한 응답에 **추가와 수정이 섞여** 올 수 있다.
  *
  * @property scenarioId `null`이면 **새 시나리오 추가**(INSERT + 런 append), 값이 있으면 그 **기존 시나리오
- *   수정**(payload 통째 교체). Agent 계약의 `scenario_id`에 대응한다.
+ *   수정**(본문 통째 교체). Agent 계약의 `scenario_id`에 대응한다.
  * @property steps 이 시나리오의 스텝들(순서=실행 순서). 각 스텝은 행위 + 선택적 caseId. Agent 계약의
  *   `steps`에 대응한다.
  */

@@ -150,19 +150,22 @@ DB가 거절하고, 아래 §3의 삼킴이 그것을 로그로 떨어뜨린다.
 남는 것이 목적**이라 하드 FK가 그 목적을 깬다. `qa_try`는 하드삭제된다
 (`deleteByTestScenarioId` — 시나리오 강제 삭제 경로). CASCADE는 그 정리를 막지도 않는다.
 
-### 6. Flyway 번호 = V33
+### 6. Flyway 번호 = V35
 
-`develop`은 V31까지. V32는 미머지 브랜치 ARTEL-291
-(`V32__promote_test_scenario_payload_columns.sql`)이 이미 잡았다 — `check-flyway-migrations.sh`의
-peer 스캔으로 확인했다. 충돌 경고를 만들지 않으려고 V33을 쓴다. ARTEL-291이 끝내 머지되지
-않으면 V32가 비지만, Flyway에서 번호 공백은 무해하다.
+처음엔 V33이었다. `develop`이 V31까지였고 V32는 미머지 브랜치 ARTEL-291
+(`V32__promote_test_scenario_payload_columns.sql`)이 이미 잡고 있었기 때문이다 —
+`check-flyway-migrations.sh`의 peer 스캔으로 확인했다.
+
+그 뒤 ARTEL-291(V32)과 ARTEL-293(V34)이 이 브랜치보다 먼저 `develop`에 머지됐다. V33은 이제
+`develop` 최고 번호보다 **낮아서**, 이미 마이그레이션된 DB가 영영 적용하지 않는 번호다
+(같은 스크립트가 tangle로 잡는다). 그래서 develop 최고치 위인 V35로 민다.
 
 ## Approach (Checklist)
 
 - [x] **Step 0: Recon** — V25/V27 주석의 판단, `routeStatus`의 2-scope 규칙,
       `QaStatsRepository.aggregateByRunConfig`, agent 쪽 `build_summary` / `_send_terminal`,
       `check-flyway-migrations.sh` peer 스캔
-- [ ] **Step 1: 마이그레이션** — `V33__promote_qa_verdict_and_score.sql`
+- [ ] **Step 1: 마이그레이션** — `V35__promote_qa_verdict_and_score.sql`
       - `qa_try`에 `steps_total` / `steps_passed` / `cases_total` / `cases_passed` (INT, nullable)
         + `COMMENT ON COLUMN`으로 "GROUP BY용 사본, 진실은 qa_log payload" 명시
       - `qa_try_score` 테이블 + `uq_qa_try_score (qa_try_id, grader, grader_version)`.
@@ -181,7 +184,7 @@ peer 스캔으로 확인했다. 충돌 경고를 만들지 않으려고 V33을 �
 
 - **Commands to run:**
   - `./scripts/check-flyway-migrations.sh` (0 기대)
-  - `./scripts/verify-flyway-upgrade.sh` (develop 마이그레이션 위에 V33 적용 + validate)
+  - `./scripts/verify-flyway-upgrade.sh` (develop 마이그레이션 위에 V35 적용 + validate)
   - `./mvnw test -Dtest=QaVerdictPromotionIntegrationTest`
   - `./mvnw clean test`
 - **Expected output:** 위 전부 통과. 특히 다음이 테스트로 못박혀야 한다.
@@ -199,7 +202,7 @@ peer 스캔으로 확인했다. 충돌 경고를 만들지 않으려고 V33을 �
     진실은 `qa_log` payload에 남아 재구성 가능하다.
   - `QaStatsResponse`에 필드가 늘어난다. 추가라 하위호환이지만 대시보드가 새 필드를 쓰기 전까지
     커버리지는 응답에만 있고 화면에는 없다.
-  - Flyway V32를 ARTEL-291이 먼저 머지하지 않으면 번호가 하나 빈다(무해).
+  - Flyway 번호가 V33 → V35로 밀리며 V33이 빈다. Flyway에서 번호 공백은 무해하다.
 - **Rollback steps:** 코드 `git revert`. 마이그레이션은 되돌리지 않는다 — 컬럼과 테이블은
   전부 nullable/미사용이라 남아 있어도 아무 동작도 바꾸지 않는다.
 

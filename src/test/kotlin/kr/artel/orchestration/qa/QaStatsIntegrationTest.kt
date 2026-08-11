@@ -1,6 +1,5 @@
 package kr.artel.orchestration.qa
 
-import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
@@ -90,7 +89,7 @@ class QaStatsIntegrationTest {
             )
         )
         scenarioId = testScenarioRepository.save(
-            TestScenarioEntity(projectId = projectId, payload = Json.of("{}"))
+            TestScenarioEntity(projectId = projectId)
         )!!.id!!
     }
 

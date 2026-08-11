@@ -1,6 +1,5 @@
 package kr.artel.orchestration.testcase
 
-import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
@@ -25,7 +24,7 @@ import java.time.Instant
 /**
  * 3계층(TestCase → TestScenario → TestRun) 구조 통합 테스트(코루틴). 서비스 레이어로 검증한다(HTTP/인증 우회).
  *
- * 재설계(2026-08-07): 시나리오 본문은 payload의 steps 리스트이고, 시나리오↔케이스 junction(조합)은 폐기됐다.
+ * 재설계(2026-08-07): 시나리오 본문은 steps 리스트이고, 시나리오↔케이스 junction(조합)은 폐기됐다.
  * 여기서는 케이스 CRUD·프로젝트 참여 인가·런↔시나리오 조합을 검증한다(케이스↔시나리오 매핑은 이제 스텝의
  * caseId로 표현되며 실행 계약 테스트에서 다룬다). app_user/project는 FK가 있어 실제 행을 시딩한다.
  */
@@ -60,7 +59,7 @@ class TestCaseHierarchyIntegrationTest {
     }
 
     private suspend fun newScenario(projectId: Long): Long =
-        testScenarioRepository.save(TestScenarioEntity(projectId = projectId, payload = Json.of("{}")))
+        testScenarioRepository.save(TestScenarioEntity(projectId = projectId))
             .id!!
 
     @Test

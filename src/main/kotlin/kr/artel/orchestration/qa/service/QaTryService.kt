@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
+import kr.artel.orchestration.knowledge.service.KnowledgeCitationService
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
 import kr.artel.orchestration.qa.dto.QaRunResponse
@@ -30,6 +31,7 @@ import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.testrun.service.TestRunService
+import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
 import org.springframework.stereotype.Service
@@ -346,6 +348,7 @@ class QaTryService(
     private val agentPort: QaAgentPort,
     private val inboundRouter: QaAgentInboundRouter,
     private val failureService: QaExecutionFailureService,
+    private val citationService: KnowledgeCitationService,
     private val persistence: QaTryPersistenceService,
     private val logService: QaLogService,
     private val objectMapper: ObjectMapper,
@@ -379,7 +382,7 @@ class QaTryService(
             qaTryId = qaTryId.toString(),
             gameInstanceId = gameInstanceId.toString(),
             testScenarioId = testScenarioId.toString(),
-            scenario = objectMapper.readTree(scenario.payload.asString()),
+            scenario = objectMapper.valueToTree(scenario.toDraft(objectMapper)),
             model = settings.model,
             language = settings.language,
             promptVersion = settings.promptVersion,
@@ -450,7 +453,7 @@ class QaTryService(
             QaAgentScenario(
                 qaTryId = requireNotNull(qaTry.id).toString(),
                 testScenarioId = scenarioId.toString(),
-                scenario = compositionService.agentScenario(scenarioId, userId, entity.payload.asString())
+                scenario = compositionService.agentScenario(entity.toDraft(objectMapper))
             )
         }
         val context = QaAgentSessionContext(
@@ -496,6 +499,10 @@ class QaTryService(
             runRepository.transition(runId, "RUNNING", "FAILED", now, now)
             tryRepository.failByQaRunId(runId, now)
         }
+        // try들이 방금 종단으로 갔으므로 미인용 행을 확정한다(ARTEL-293). 세션 개설 실패는
+        // 검색이 한 번도 안 돌았을 가능성이 높지만 "높다"는 근거가 아니다 — 시나리오 하나를
+        // 돌린 뒤 소켓이 죽은 런도 이 경로로 온다.
+        citationService.finalizeRun(runId)
     }
 
     private fun QaRunEntity.toRunResponse(tries: List<QaTryEntity>) = QaRunResponse(
@@ -609,6 +616,9 @@ class QaTryService(
         tryRepository.failByQaRunId(qaRunId, now)
         runRepository.transition(qaRunId, "STARTING", "CANCELLED", now, now)
         runRepository.transition(qaRunId, "RUNNING", "CANCELLED", now, now)
+        // 활성 try는 위 `failureService.cancelled`가 이미 확정했다. 여기서 남는 것은 그 앞뒤로
+        // 종단이 된 시나리오들이며, 두 번 도는 것이 안전하다(확정은 cited IS NULL만 건드린다).
+        citationService.finalizeRun(qaRunId)
     }
 
     suspend fun requireAccessible(qaTryId: Long, userId: Long): QaTryEntity? =

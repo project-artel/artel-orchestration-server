@@ -3,6 +3,7 @@ package kr.artel.orchestration.knowledge
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.knowledge.entity.KnowledgeEdgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
+import kr.artel.orchestration.knowledge.entity.KnowledgeRetrievalKind
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
@@ -318,7 +319,10 @@ class KnowledgeGraphTraversalIntegrationTest {
         depth = depth,
         fanout = fanout,
         nodeBudget = nodeBudget,
-        similar = null
+        similar = null,
+        // 이 테스트가 보는 것은 탐색 결과이지 기록 경로가 아니다. 종류는 아무 값이나 한 개만
+        // 필요해서 검색 확장의 값을 쓴다(기록 자체의 검증은 KnowledgeUsageKindIntegrationTest).
+        kind = KnowledgeRetrievalKind.SEARCH_NEIGHBOR
     )
 
     private suspend fun knowledge(summary: String, projectId: Long = PROJECT): Long =

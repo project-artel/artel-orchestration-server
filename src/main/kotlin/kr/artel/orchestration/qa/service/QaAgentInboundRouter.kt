@@ -18,6 +18,7 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
+import kr.artel.orchestration.knowledge.service.KnowledgeCitationService
 import kr.artel.orchestration.knowledge.service.KnowledgeGraphMutation
 import kr.artel.orchestration.knowledge.service.KnowledgeGraphService
 import kr.artel.orchestration.knowledge.service.KnowledgeMutation
@@ -62,6 +63,15 @@ private val SUPPORTED_TYPES =
 /** qa_try의 종단 상태들. 런의 모든 try가 여기 들면 그 런은 실행이 끝난 것이다. */
 private val TERMINAL_TRY_STATUSES = setOf("COMPLETED", "FAILED", "CANCELLED")
 
+/**
+ * 스텝 판정 STATUS가 인용을 싣는 필드(ARTEL-293). Agent의 `report_step`이 채운다.
+ *
+ * 판정 프레임에만 있고 액션 프레임에는 없다. 지식은 스텝 판단에 작용하지 개별 클릭에 작용하지
+ * 않으며, 클릭마다 인용하게 하면 10클릭짜리 스텝의 항목이 1클릭짜리보다 10배 유용해 보인다 —
+ * 지표가 유용성이 아니라 액션 수 가중치가 된다.
+ */
+private const val USED_KNOWLEDGE_IDS_FIELD = "used_knowledge_ids"
+
 @Service
 class QaAgentInboundRouter(
     private val tryRepository: QaTryRepository,
@@ -73,6 +83,7 @@ class QaAgentInboundRouter(
     private val knowledgeService: KnowledgeService,
     private val knowledgeGraphService: KnowledgeGraphService,
     private val knowledgeSearchService: KnowledgeSearchService,
+    private val knowledgeCitationService: KnowledgeCitationService,
     private val agentPort: QaAgentPort,
     private val gameInstanceRepository: GameInstanceRepository,
     private val objectMapper: ObjectMapper,
@@ -292,6 +303,9 @@ class QaAgentInboundRouter(
             else -> null
         }
         if (resolved == null) {
+            // 스텝 판정이 인용을 실어 온다(ARTEL-293). 표시를 **로그보다 먼저** 한다: 뒤로
+            // 미루면 판정은 타임라인에 남았는데 인용은 안 찍힌 창이 생긴다.
+            recordCitations(qaTryId, envelope)
             val log = logService.append(
                 qaTryId = qaTryId,
                 direction = "AGENT_TO_ORCHE",
@@ -327,6 +341,10 @@ class QaAgentInboundRouter(
         )
         logService.publish(log)
         streamManager.complete(qaTryId)
+        // 이 시나리오 try가 방금 끝났으므로 미인용 행을 여기서 확정한다(ARTEL-293). **런이 아니라
+        // try 단위인 것이 요점이다** — 세션 하나가 시나리오들을 순차 실행하므로, 런이나 세션이
+        // 끝날 때까지 미루면 앞선 시나리오들의 확정이 늦거나 다음 시나리오의 검색과 뒤섞인다.
+        knowledgeCitationService.finalizeTry(qaTryId)
         // 방금 이 시나리오 try가 종단됐다. 런의 모든 시나리오 try가 종단이면 부모 qa_run도 완료로
         // 닫는다 — 안 그러면 qa_run이 RUNNING으로 남아 그 게임 인스턴스의 다음 런을 영구 차단한다.
         completeRunIfAllTriesDone(qaTry.qaRunId, completedAt)
@@ -376,6 +394,40 @@ class QaAgentInboundRouter(
             throw error
         } catch (error: Exception) {
             appendError(qaTryId, envelope, "STATUS verdict promotion failed: ${error.message}")
+        }
+    }
+
+    /**
+     * 스텝 판정이 보고한 인용을 표시한다(ARTEL-293).
+     *
+     * **실패를 삼킨다.** 여기서 나간 예외는 WS 수신 체인 밖으로 나가 소켓을 닫고, 그것이
+     * onDisconnect로 이어져 런 전체를 실패시킨다 — 기록 하나가 런을 죽여서는 안 된다는 이 파일의
+     * 규칙 그대로다(`recordSearchUsage`도 같다). 감사 로그만 남긴다.
+     *
+     * **거부된 id는 조용히 버리지 않는다.** 환각 인용률 자체가 모델 비교 지표라, 개수를 세어
+     * 타임라인에 남긴다. 이 로그가 그 신호의 유일한 기록이다 — 인용은 성공하면 usage 행에
+     * 남지만, 실패한 인용은 남을 행이 없다.
+     */
+    private suspend fun recordCitations(qaTryId: Long, envelope: QaAgentEnvelope) {
+        val ids = envelope.payload.path(USED_KNOWLEDGE_IDS_FIELD)
+            .takeIf { it.isArray }
+            ?.mapNotNull { node -> node.takeIf { it.isTextual || it.isNumber }?.asText() }
+            .orEmpty()
+        if (ids.isEmpty()) return
+        try {
+            val outcome = knowledgeCitationService.recordCitations(qaTryId, ids)
+            if (outcome.rejected.isNotEmpty()) {
+                appendError(
+                    qaTryId,
+                    envelope,
+                    "STATUS cited ${outcome.rejected.size} knowledge id(s) this run never retrieved: " +
+                        "${outcome.rejected}"
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            appendError(qaTryId, envelope, "STATUS citation recording failed: ${error.message}")
         }
     }
 
@@ -618,7 +670,7 @@ class QaAgentInboundRouter(
             failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH failed: ${error.message}")
             return
         }
-        recordSearchUsage(qaTryId, envelope, outcome.retrievals)
+        recordSearchUsage(qaTryId, envelope, outcome.retrievals, request.step)
         sendToAgent(
             qaTryId,
             sessionId,
@@ -681,7 +733,7 @@ class QaAgentInboundRouter(
             failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND failed: ${error.message}")
             return
         }
-        recordSearchUsage(qaTryId, envelope, outcome.retrievals)
+        recordSearchUsage(qaTryId, envelope, outcome.retrievals, request.step)
         sendToAgent(
             qaTryId,
             sessionId,
@@ -706,10 +758,11 @@ class QaAgentInboundRouter(
     private suspend fun recordSearchUsage(
         qaTryId: Long,
         envelope: QaAgentEnvelope,
-        retrievals: List<KnowledgeRetrieval>
+        retrievals: List<KnowledgeRetrieval>,
+        step: Int?
     ) {
         try {
-            knowledgeSearchService.recordRetrievals(qaTryId, retrievals)
+            knowledgeSearchService.recordRetrievals(qaTryId, retrievals, step)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {

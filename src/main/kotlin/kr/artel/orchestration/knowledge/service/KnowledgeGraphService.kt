@@ -6,6 +6,7 @@ import kr.artel.orchestration.knowledge.dto.KnowledgeUnlinkRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeEdgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeRelation
+import kr.artel.orchestration.knowledge.entity.KnowledgeRetrievalKind
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeAmongRow
 import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeRepository
@@ -211,6 +212,10 @@ class KnowledgeGraphService(
      * 벡터 이웃은 seed가 **하나일 때만** 붙인다. 검색 자동 확장(seed가 여럿)에는 붙이지 않는데,
      * 히트를 낸 검색 자체가 벡터 검색이라 히트의 벡터 이웃은 `limit`을 올렸으면 나왔을 것에
      * 가깝기 때문이다 — 자동으로 붙이면 "limit 올리기"가 분장한 것이 되고 전사 비용만 두 배가 된다.
+     *
+     * [kind]는 **호출자가 준다**(ARTEL-293). 이 함수는 검색이 히트에 이웃을 밀어넣느라 부른
+     * 것인지 에이전트가 `expand_knowledge`로 직접 부른 것인지 알 수 없고, 둘의 신호 세기는
+     * 다르다 — 여기서 추측하면 그 구분이 조용히 틀린다.
      */
     suspend fun expand(
         projectId: Long,
@@ -219,7 +224,8 @@ class KnowledgeGraphService(
         depth: Int,
         fanout: Int,
         nodeBudget: Int,
-        similar: SimilarSpec?
+        similar: SimilarSpec?,
+        kind: KnowledgeRetrievalKind
     ): KnowledgeExpandOutcome {
         val seeds = seedIds.distinct().mapNotNull { id ->
             knowledgeRepository.findVisibleById(id, projectId, scope.id)?.let { id to canonicalIdOf(it) }
@@ -283,7 +289,8 @@ class KnowledgeGraphService(
                     knowledgeId = it.id.toLong(),
                     version = it.version,
                     rank = null,
-                    score = it.score
+                    score = it.score,
+                    kind = kind
                 )
             },
             truncated = truncated

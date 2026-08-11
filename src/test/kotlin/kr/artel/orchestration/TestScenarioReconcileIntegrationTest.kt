@@ -22,9 +22,11 @@ import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
+import kr.artel.orchestration.testscenario.dto.ScenarioStep
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
+import kr.artel.orchestration.testscenario.entity.toDraft
+import kr.artel.orchestration.testscenario.entity.withDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
-import io.r2dbc.postgresql.codec.Json
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeEach
@@ -63,11 +65,11 @@ private fun axis(index: Int): List<Double> = List(DIMENSIONS) { if (it == index)
  *
  * 검증:
  * (a) 인입 `test_case_search` → `test_case_search_result`(correlationId + 히트).
- * (b) `result{scenarios:[…]}` → test_scenario(payload.steps) + test_run_scenario 올바른 position으로 INSERT.
+ * (b) `result{scenarios:[…]}` → test_scenario(본문 steps) + test_run_scenario 올바른 position으로 INSERT.
  * (c) `result{scenarios:[]}` → DB 무변경(안전규칙 가드).
- * (d) `scenario_id` 있는 결과 → 기존 시나리오 payload UPDATE.
+ * (d) `scenario_id` 있는 결과 → 기존 시나리오 본문 UPDATE.
  * (e) autoApply=false → 자동저장 안 함, 커밋 엔드포인트로만 반영.
- * (f) 실행 계약: `agentScenario`가 payload.steps를 읽어 caseId 스텝에 TC 내용을 리졸브해 넘긴다.
+ * (f) 실행 계약: `agentScenario`가 steps를 읽어 caseId 스텝에 TC 내용을 리졸브해 넘긴다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -112,9 +114,8 @@ class TestScenarioReconcileIntegrationTest {
     private fun webClient() = WebClient.create("http://localhost:$port")
     private val model: String get() = properties.model
 
-    private fun payloadSteps(scenarioId: Long): List<kr.artel.orchestration.testscenario.dto.ScenarioStep> = runBlocking {
-        val s = scenarioRepository.findById(scenarioId)!!
-        objectMapper.readValue(s.payload.asString(), ScenarioDraft::class.java).steps
+    private fun storedSteps(scenarioId: Long): List<kr.artel.orchestration.testscenario.dto.ScenarioStep> = runBlocking {
+        scenarioRepository.findById(scenarioId)!!.toDraft(objectMapper).steps
     }
 
     companion object {
@@ -192,7 +193,7 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(hit.has("verificationStatus")).isTrue()
     }
 
-    // ---- (b) result{scenarios:[…]} → INSERT(payload.steps) ---------------------------------
+    // ---- (b) result{scenarios:[…]} → INSERT(본문 steps) ---------------------------------
 
     @Test
     fun `scenarios 결과를 런에 INSERT하고 position을 매긴다`(): Unit = runBlocking {
@@ -221,14 +222,14 @@ class TestScenarioReconcileIntegrationTest {
         val purchase = scenarioRepository.findById(runLinks[0].testScenarioId)!!
         val sale = scenarioRepository.findById(runLinks[1].testScenarioId)!!
         assertThat(purchase.projectId).isEqualTo(projectId)
-        assertThat(purchase.payload.asString()).contains("구매 여정")
-        assertThat(sale.payload.asString()).contains("판매 여정")
+        assertThat(purchase.title).isEqualTo("구매 여정")
+        assertThat(sale.title).isEqualTo("판매 여정")
 
-        // payload.steps: 순서 유지, 검증 스텝의 caseId, 조작 스텝은 null.
-        val purchaseSteps = payloadSteps(purchase.id!!)
+        // steps: 순서 유지, 검증 스텝의 caseId, 조작 스텝은 null.
+        val purchaseSteps = storedSteps(purchase.id!!)
         assertThat(purchaseSteps.map { it.action }).containsExactly("상점 이동", "A확인", "B확인")
         assertThat(purchaseSteps.map { it.caseId }).containsExactly(null, caseA, caseB)
-        assertThat(payloadSteps(sale.id!!).map { it.caseId }).containsExactly(caseC)
+        assertThat(storedSteps(sale.id!!).map { it.caseId }).containsExactly(caseC)
     }
 
     // ---- (c) result{scenarios:[]} → DB 무변경 ------------------------------------------------
@@ -270,11 +271,15 @@ class TestScenarioReconcileIntegrationTest {
         val caseA = insertCase(projectId, "RULE", "A")
         val caseB = insertCase(projectId, "RULE", "B")
 
-        // 런에 기존 시나리오 1개(payload=old, steps=caseA).
+        // 런에 기존 시나리오 1개(제목=old, steps=caseA).
         val existing = scenarioRepository.save(
-            TestScenarioEntity(
-                projectId = projectId,
-                payload = Json.of("""{"title":"old","description":"old","steps":[{"action":"a","case_id":$caseA}]}""")
+            TestScenarioEntity(projectId = projectId).withDraft(
+                ScenarioDraft(
+                    title = "old",
+                    description = "old",
+                    steps = listOf(ScenarioStep(action = "a", caseId = caseA)),
+                ),
+                objectMapper,
             )
         ).id!!
         runScenarioRepository.save(
@@ -288,10 +293,10 @@ class TestScenarioReconcileIntegrationTest {
         )
         postMessage(client, projectId, runId, token, "그 시나리오를 B로 바꿔줘")
 
-        awaitUntil { scenarioRepository.findById(existing)!!.payload.asString().contains("new") }
+        awaitUntil { scenarioRepository.findById(existing)!!.title == "new" }
 
-        // 같은 시나리오 id 그대로, payload(steps 포함)만 갱신됨.
-        assertThat(payloadSteps(existing).map { it.caseId }).containsExactly(caseB)
+        // 같은 시나리오 id 그대로, 본문(steps 포함)만 갱신됨.
+        assertThat(storedSteps(existing).map { it.caseId }).containsExactly(caseB)
         // 런 링크는 그대로 1개(수정은 append하지 않음).
         assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().map { it.testScenarioId })
             .containsExactly(existing)
@@ -324,11 +329,11 @@ class TestScenarioReconcileIntegrationTest {
         val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
         assertThat(links).hasSize(1)
         val committed = scenarioRepository.findById(links[0].testScenarioId)!!
-        assertThat(committed.payload.asString()).contains("제안 시나리오")
-        assertThat(payloadSteps(committed.id!!).map { it.caseId }).containsExactly(caseA)
+        assertThat(committed.title).isEqualTo("제안 시나리오")
+        assertThat(storedSteps(committed.id!!).map { it.caseId }).containsExactly(caseA)
     }
 
-    // ---- (f) 실행 계약: agentScenario가 payload.steps를 TC 리졸브해 넘긴다 -----------------------
+    // ---- (f) 실행 계약: agentScenario가 steps를 TC 리졸브해 넘긴다 -------------------------------
 
     @Test
     fun `agentScenario가 steps를 읽어 caseId 스텝에 TC를 리졸브해 넘긴다`(): Unit = runBlocking {
@@ -338,16 +343,20 @@ class TestScenarioReconcileIntegrationTest {
         val caseA = insertCase(projectId, "RULE", "상점 진입")
         val caseB = insertCase(projectId, "UI", "구매 확인")
 
-        val payload =
-            """{"title":"구매","description":"d","steps":[""" +
-                """{"action":"상점으로 이동"},""" +
-                """{"action":"검 구매","case_id":$caseA},""" +
-                """{"action":"구매 버튼 누름","case_id":$caseB,"hint":"Enter"}]}"""
-        val scenarioId = scenarioRepository.save(
-            TestScenarioEntity(projectId = projectId, payload = Json.of(payload))
-        ).id!!
+        val draft = ScenarioDraft(
+            title = "구매",
+            description = "d",
+            steps = listOf(
+                ScenarioStep(action = "상점으로 이동"),
+                ScenarioStep(action = "검 구매", caseId = caseA),
+                ScenarioStep(action = "구매 버튼 누름", caseId = caseB, hint = "Enter"),
+            ),
+        )
+        val stored = scenarioRepository.save(
+            TestScenarioEntity(projectId = projectId).withDraft(draft, objectMapper)
+        )
 
-        val scenario = compositionService.agentScenario(scenarioId, appUserId, payload)
+        val scenario = compositionService.agentScenario(stored.toDraft(objectMapper))
 
         assertThat(scenario.title).isEqualTo("구매")
         assertThat(scenario.steps).hasSize(3)
