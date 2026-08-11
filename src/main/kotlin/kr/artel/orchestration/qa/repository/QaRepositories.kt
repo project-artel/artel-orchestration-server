@@ -173,6 +173,43 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
         updatedAt: Instant
     ): Int
 
+    /**
+     * Copies the verdict the Agent reported onto the try (ARTEL-299).
+     *
+     * Separate from [transition] rather than folded into it. Only a terminal STATUS
+     * frame can carry a verdict, while `transition` is shared by cancellation,
+     * failure cleanup, and the run's own close — folding four columns in would make
+     * every one of those callers drag NULLs it has nothing to say about.
+     *
+     * The counts are `Long` and go straight into `INT` columns on purpose. Narrowing
+     * them in Kotlin would store a number the Agent never reported; letting the
+     * column type reject it drops the report instead, which the caller logs. A wrong
+     * verdict is worse than a missing one.
+     *
+     * Every value is nullable and written as given: an absent field means the Agent
+     * did not report that count, and NULL is how the table says so.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_try
+        SET steps_total = :stepsTotal,
+            steps_passed = :stepsPassed,
+            cases_total = :casesTotal,
+            cases_passed = :casesPassed,
+            updated_at = :updatedAt
+        WHERE id = :id
+        """
+    )
+    suspend fun promoteVerdict(
+        id: Long,
+        stepsTotal: Long?,
+        stepsPassed: Long?,
+        casesTotal: Long?,
+        casesPassed: Long?,
+        updatedAt: Instant
+    ): Int
+
     @Modifying
     @Query(
         """

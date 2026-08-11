@@ -38,6 +38,12 @@ data class QaStatsResponse(
  * @property active 아직 도는 런(`STARTING`/`RUNNING`). 완주율 분모에서 빠진다.
  * @property costUsd 단가를 아는 호출이 하나도 없으면 null. 0(공짜)과 다르다.
  * @property avgCompletedDurationMs 완주한 런만의 평균 소요 ms. 완주 런이 없으면 null.
+ * @property verdictKnown 판정을 아는 런 수(ARTEL-299). 아래 네 합계의 분모다. [runs]와 이 값의
+ *   차이가 판정을 **모르는** 런이고, 그것은 판정이 0점인 런과 다르다 — 소켓 사망·취소로 요약
+ *   없이 끝난 런이 여기 들어간다.
+ * @property stepsPassed 판정을 아는 런들의 통과 스텝 수 합. 합격률은 이 값을 [stepsTotal]로
+ *   나눠 화면이 낸다. 서버가 평균을 내지 않는 것은 의도다 — 평균만 주면 그것이 몇 개의 런에
+ *   얹힌 값인지가 응답에서 사라지고, 잘 죽는 축일수록 그 비율이 위로 편향된다.
  */
 data class QaRunConfigStatsCell(
     val model: String?,
@@ -55,7 +61,12 @@ data class QaRunConfigStatsCell(
     val reasoningTokens: Long,
     val costUsd: BigDecimal?,
     val llmCalls: Long,
-    val avgCompletedDurationMs: Double?
+    val avgCompletedDurationMs: Double?,
+    val verdictKnown: Long,
+    val stepsTotal: Long,
+    val stepsPassed: Long,
+    val casesTotal: Long,
+    val casesPassed: Long
 )
 
 /** [QaRunConfigStatsCell]에서 축만 뺀 전체 합계. 축이 없으므로 별도 타입이다. */
@@ -71,5 +82,10 @@ data class QaStatsTotals(
     val reasoningTokens: Long,
     val costUsd: BigDecimal?,
     val llmCalls: Long,
-    val avgCompletedDurationMs: Double?
+    val avgCompletedDurationMs: Double?,
+    val verdictKnown: Long,
+    val stepsTotal: Long,
+    val stepsPassed: Long,
+    val casesTotal: Long,
+    val casesPassed: Long
 )

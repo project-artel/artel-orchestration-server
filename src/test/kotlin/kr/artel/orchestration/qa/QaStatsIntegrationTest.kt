@@ -217,6 +217,46 @@ class QaStatsIntegrationTest {
     }
 
     @Test
+    fun `verdict sums come with the run count they rest on`(): Unit = runBlocking {
+        seedRun(
+            model = "sonnet-5", status = "COMPLETED",
+            stepsTotal = 5, stepsPassed = 5, casesTotal = 2, casesPassed = 2
+        )
+        seedRun(
+            model = "sonnet-5", status = "FAILED",
+            stepsTotal = 5, stepsPassed = 1, casesTotal = 2, casesPassed = 0
+        )
+        // 소켓이 죽어 요약 없이 끝난 런. 판정을 **모르는** 것이지 0점이 아니다.
+        seedRun(model = "sonnet-5", status = "FAILED")
+
+        val cell = stats().cellFor(model = "sonnet-5")
+
+        assertThat(cell.runs).isEqualTo(3)
+        // 셋 중 둘만 판정을 안다. 이 차이가 보이지 않으면 6/10을 세 런의 성적으로 읽게 되고,
+        // 그 비율은 깔끔하게 끝난 런에만 조건부다.
+        assertThat(cell.verdictKnown).isEqualTo(2)
+        assertThat(cell.stepsTotal).isEqualTo(10)
+        assertThat(cell.stepsPassed).isEqualTo(6)
+        assertThat(cell.casesTotal).isEqualTo(4)
+        assertThat(cell.casesPassed).isEqualTo(2)
+    }
+
+    @Test
+    fun `a scope with no promoted verdict reports zero known, not a null sum`(): Unit = runBlocking {
+        seedRun(model = "sonnet-5", status = "COMPLETED")
+
+        val cell = stats().cellFor(model = "sonnet-5")
+
+        // SUM은 전부 NULL이면 NULL을 낸다. 그대로 내보내면 화면이 "0점"과 구분할 수 없으므로
+        // 합계는 0으로 접고, 그것이 미측정이라는 사실은 verdictKnown이 진다.
+        assertThat(cell.verdictKnown).isEqualTo(0)
+        assertThat(cell.stepsTotal).isEqualTo(0)
+        assertThat(cell.stepsPassed).isEqualTo(0)
+        assertThat(cell.casesTotal).isEqualTo(0)
+        assertThat(cell.casesPassed).isEqualTo(0)
+    }
+
+    @Test
     fun `the window includes from and excludes to`(): Unit = runBlocking {
         seedRun(model = "before", status = "COMPLETED", startedAt = windowStart.minusSeconds(1))
         seedRun(model = "at-from", status = "COMPLETED", startedAt = windowStart)
@@ -278,7 +318,12 @@ class QaStatsIntegrationTest {
         arch: String? = "v2-tool-loop",
         status: String,
         startedAt: Instant = now.minus(Duration.ofDays(1)),
-        durationMs: Long = 30_000
+        durationMs: Long = 30_000,
+        // 판정 승격(ARTEL-299). null이면 요약 없이 끝난 런이라 컬럼이 전부 NULL이다.
+        stepsTotal: Int? = null,
+        stepsPassed: Int? = null,
+        casesTotal: Int? = null,
+        casesPassed: Int? = null
     ): Long {
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
@@ -301,6 +346,10 @@ class QaStatsIntegrationTest {
                 reasoningEffort = effort,
                 promptVersion = promptVersion,
                 agentArch = arch,
+                stepsTotal = stepsTotal,
+                stepsPassed = stepsPassed,
+                casesTotal = casesTotal,
+                casesPassed = casesPassed,
                 startedAt = startedAt,
                 completedAt = if (terminal) startedAt.plusMillis(durationMs) else null
             )

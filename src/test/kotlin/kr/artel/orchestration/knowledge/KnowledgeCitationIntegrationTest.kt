@@ -612,7 +612,7 @@ class KnowledgeCitationIntegrationTest {
             )
         )
         scenarioId = testScenarioRepository.save(
-            TestScenarioEntity(projectId = projectId, payload = Json.of("{}"))
+            TestScenarioEntity(projectId = projectId)
         )!!.id!!
         testRunId = testRunRepository.save(
             TestRunEntity(projectId = projectId, name = "citation-run", createdAt = now, updatedAt = now)

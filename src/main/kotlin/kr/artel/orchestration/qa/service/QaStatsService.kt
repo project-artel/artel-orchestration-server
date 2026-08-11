@@ -79,7 +79,12 @@ private fun QaStatsRow?.toTotals(): QaStatsTotals =
         reasoningTokens = this?.reasoningTokens ?: 0,
         costUsd = this?.costUsd,
         llmCalls = this?.llmCalls ?: 0,
-        avgCompletedDurationMs = this?.avgCompletedDurationMs
+        avgCompletedDurationMs = this?.avgCompletedDurationMs,
+        verdictKnown = this?.verdictKnown ?: 0,
+        stepsTotal = this?.stepsTotal ?: 0,
+        stepsPassed = this?.stepsPassed ?: 0,
+        casesTotal = this?.casesTotal ?: 0,
+        casesPassed = this?.casesPassed ?: 0
     )
 
 private fun QaStatsRow.toCell() = QaRunConfigStatsCell(
@@ -98,5 +103,10 @@ private fun QaStatsRow.toCell() = QaRunConfigStatsCell(
     reasoningTokens = reasoningTokens,
     costUsd = costUsd,
     llmCalls = llmCalls,
-    avgCompletedDurationMs = avgCompletedDurationMs
+    avgCompletedDurationMs = avgCompletedDurationMs,
+    verdictKnown = verdictKnown,
+    stepsTotal = stepsTotal,
+    stepsPassed = stepsPassed,
+    casesTotal = casesTotal,
+    casesPassed = casesPassed
 )

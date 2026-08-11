@@ -55,6 +55,18 @@ data class QaTryEntity(
     // 읽기/쓰기를 아예 끄는 knowledge_mode는 여기가 아니라 runConfig 안에 있다. 그쪽은 비교 축이라
     // 집계가 run_config를 함께 읽고(ARTEL-243), 이쪽은 격리 경계라 질의 술어로 직접 들어간다.
     @Column("knowledge_scope_id") val knowledgeScopeId: Long? = null,
+    // 이 런의 판정(ARTEL-299). Agent가 종단 STATUS에 싣는 2단 요약에서 승격한 사본이고,
+    // 진실은 그 프레임이 통째로 들어간 qa_log의 payload다 — 위 축 컬럼들과 run_config의 관계와 같다.
+    //
+    // **전부 nullable이고 NULL은 0이 아니라 "모른다"다.** 요약이 없는 종료 경로가 있다(소켓 사망,
+    // 운영자 취소, state 없이 끝나는 경로). 0으로 채우면 잘 죽는 모델이 전부 0점으로 보인다.
+    //
+    // cases는 steps에서 유도되지 않는다 — case_id가 없는 스텝이 존재해서, 케이스 없이 저작된
+    // 시나리오는 스텝 판정만 있고 cases_total이 0이다(측정된 0이라 NULL과 다르다).
+    @Column("steps_total") val stepsTotal: Int? = null,
+    @Column("steps_passed") val stepsPassed: Int? = null,
+    @Column("cases_total") val casesTotal: Int? = null,
+    @Column("cases_passed") val casesPassed: Int? = null,
     @Column("started_at") val startedAt: Instant,
     @Column("completed_at") val completedAt: Instant? = null,
     @Column("created_at") val createdAt: Instant? = null,
