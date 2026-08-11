@@ -2,7 +2,7 @@
 
 - Date: 2026-08-11
 - Jira: ARTEL-312
-- Status: Reviewed (self-review, fast/medium/heavy roles — 서브에이전트 미사용)
+- Status: Implemented — PR https://github.com/project-artel/artel-orchestration-server/pull/111
 
 ## Goal
 
@@ -54,7 +54,7 @@ WebFlux 어노테이션 컨트롤러도 MVC와 같은 `HandlerMethodArgumentReso
   - 기존 테스트가 이미 401/404 경로를 덮는지 확인
     (`IssueHttpIntegrationTest`가 세션 없는 요청 401을 검증).
 
-- [ ] **Step 1: Implementation**
+- [x] **Step 1: Implementation**
   - `auth/web/CurrentUserId.kt` — 파라미터 어노테이션.
   - `auth/web/CurrentUserIdArgumentResolver.kt` — `SessionUserResolver`에 위임하고
     실패 시 `UnauthorizedException`.
@@ -64,24 +64,30 @@ WebFlux 어노테이션 컨트롤러도 MVC와 같은 `HandlerMethodArgumentReso
     `requireUser(jwt)` → `appUserId`, `private fun requireUser` 제거, 쓰이지 않게 된
     `SessionUserResolver` 주입 제거, 죽은 import 제거.
 
-- [ ] **Step 2: Tests**
+- [x] **Step 2: Tests**
   - `auth/web/CurrentUserIdArgumentResolverIntegrationTest` — 유효 세션은 id를 받고,
     `sub`가 사용자 id 형식이 아니면 401, 세션이 없으면 401.
   - `OpenApiDocumentationIntegrationTest`에 `appUserId`가 쿼리 파라미터로 새지 않는지
     검증 추가.
   - 기존 HTTP 통합 테스트(이슈/프로젝트/문서/테스트케이스)로 회귀 확인.
 
-- [ ] **Step 3: Rollout / Rollback**
+- [x] **Step 3: Rollout / Rollback**
   - 순수 리팩터링이라 플래그·마이그레이션 없음. 되돌리려면 커밋 revert.
 
 ## Validation
 
-- **Commands to run:**
-  - `./mvnw -q -Dtest='CurrentUserIdArgumentResolverIntegrationTest' test`
-  - `./mvnw -q -Dtest='IssueHttpIntegrationTest,OpenApiDocumentationIntegrationTest' test`
-  - `./mvnw test` (전체 회귀)
-- **Expected output:** 전부 통과. 특히 세션 없는 요청은 여전히 401, 남의 프로젝트 접근은
-  여전히 404.
+실제로 돌린 것:
+
+- `./mvnw -o -Dtest='CurrentUserIdArgumentResolverIntegrationTest,OpenApiDocumentationIntegrationTest' test`
+  — 8/8 통과.
+- `./mvnw -o test` — **437/437 통과**(신규 5건 포함).
+- `grep -rn requireUser src/main/kotlin` — 0건. `@AuthenticationPrincipal` 잔여는 범위 밖
+  nullable 컨트롤러 5개뿐.
+
+돌리지 않은 것: 수동 브라우저 확인. HTTP 통합 테스트가 401/404/200 경로를 덮는다.
+
+계획과 달라진 점: 대상 컨트롤러는 15개가 아니라 **14개**였다. `KnowledgeStatsController`가
+아직 develop에 없다.
 
 ## Risks & Rollback
 

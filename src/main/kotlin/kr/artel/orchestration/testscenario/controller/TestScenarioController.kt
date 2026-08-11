@@ -73,13 +73,11 @@ class TestScenarioController(
     suspend fun updateExpectedLabels(
         @PathVariable testScenarioId: Long,
         @RequestBody request: UpdateExpectedLabelsRequest,
-        @AuthenticationPrincipal jwt: Jwt
-    ): ResponseEntity<ScenarioResponse> {
-        val appUserId = requireUser(jwt)
-        return ResponseEntity.ok(
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<ScenarioResponse> =
+        ResponseEntity.ok(
             service.updateExpectedLabels(appUserId, testScenarioId, request.toLabelMap())
         )
-    }
 
     /** 시나리오를 승인(확정)한다: 최종 draft 저장(대화 세션은 런 단위라 유지). */
     @PostMapping("/{testScenarioId}/approve")
