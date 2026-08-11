@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.qa.entity.QaLogEntity
 import kr.artel.orchestration.qa.entity.QaRunEntity
 import kr.artel.orchestration.qa.entity.QaTryEntity
+import kr.artel.orchestration.qa.entity.QaTryScoreEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
@@ -319,4 +320,60 @@ interface QaLogRepository : CoroutineCrudRepository<QaLogEntity, Long> {
         direction: String,
         messageId: String
     ): QaLogEntity?
+
+    /**
+     * 이 런의 **스텝 판정** 프레임을 도착 순서로 준다(ARTEL-301 채점 입력).
+     *
+     * 스텝 판정은 `result`가 없고 `step`이 있는 STATUS 프레임이다 — 종단 프레임은 `result`를 실으므로
+     * 그 조건 하나로 갈린다(라우터의 2-scope 규칙과 같은 기준). `direction`은 에이전트가 보낸 것만
+     * 남기고 Orchestration이 스스로 남긴 STARTING/RUNNING/FAILED 상태 로그를 걷어낸다.
+     *
+     * 채점이 요약 대신 이 프레임들을 읽는 이유: 소켓이 죽은 런에는 요약이 없지만 그때까지의 스텝
+     * 판정은 남아 있다. 요약만 보면 그런 런이 통째로 미보고가 되어, 실제로는 절반을 판정하고 죽은
+     * 런과 아무것도 못 한 런이 같아진다.
+     *
+     * `payload ->> 'step'`을 쓴다(`payload ? 'step'` 아님) — `?`는 R2DBC 파라미터 자리로 먹힌다.
+     */
+    @Query(
+        """
+        SELECT * FROM qa_log
+        WHERE qa_try_id = :qaTryId
+          AND direction = 'AGENT_TO_ORCHE'
+          AND type = 'STATUS'
+          AND payload ->> 'result' IS NULL
+          AND payload ->> 'step' IS NOT NULL
+        ORDER BY id ASC
+        """
+    )
+    fun findStepVerdicts(qaTryId: Long): Flow<QaLogEntity>
+}
+
+/** 채점 결과 저장소(ARTEL-301). 읽기는 후속 점수 화면이 쓴다. */
+interface QaTryScoreRepository : CoroutineCrudRepository<QaTryScoreEntity, Long> {
+    @Query("SELECT * FROM qa_try_score WHERE qa_try_id = :qaTryId ORDER BY id ASC")
+    fun findByQaTryId(qaTryId: Long): Flow<QaTryScoreEntity>
+
+    /**
+     * 채점 결과를 남기되 **같은 (런, 채점자, 버전)이 이미 있으면 아무것도 하지 않는다.**
+     *
+     * 종료 경로가 여럿이라 한 런이 두 번 채점될 수 있다(예: 운영자가 취소한 직후 에이전트의 종단
+     * 프레임이 지각 도착). 그때 먼저 남은 판정이 옳다 — 나중 것은 같은 입력에 대한 같은 계산이거나,
+     * 이미 끝난 런을 다시 본 것이다. 예외로 만들면 그 지각 프레임이 런을 죽인다.
+     *
+     * 재채점은 `grader_version`을 올려서 한다. 그때는 충돌이 아니라 새 행이다.
+     */
+    @Modifying
+    @Query(
+        """
+        INSERT INTO qa_try_score (qa_try_id, grader, grader_version, detail)
+        VALUES (:qaTryId, :grader, :graderVersion, CAST(:detail AS jsonb))
+        ON CONFLICT ON CONSTRAINT uq_qa_try_score DO NOTHING
+        """
+    )
+    suspend fun insertIfAbsent(
+        qaTryId: Long,
+        grader: String,
+        graderVersion: String,
+        detail: String
+    ): Int
 }

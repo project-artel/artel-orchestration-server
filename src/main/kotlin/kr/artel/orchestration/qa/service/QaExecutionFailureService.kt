@@ -130,6 +130,7 @@ class QaExecutionFailureService(
     private val streamManager: QaLogStreamManager,
     private val agentPort: QaAgentPort,
     private val citationService: KnowledgeCitationService,
+    private val grader: ExpectedStepsGrader,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -137,7 +138,10 @@ class QaExecutionFailureService(
         val failed = persistence.failActiveByInstance(gameInstanceId, "SDK connection closed.") ?: return
         logService.publish(failed.error)
         logService.publish(failed.status)
+        // 기록이 먼저고 파생이 나중이다: 인용 확정은 이 런이 무엇을 썼는지를 못박고,
+        // 채점은 그 뒤에 판정을 기대 라벨과 대조한다. 둘 다 스스로 실패를 삼킨다.
         citationService.finalizeTry(failed.qaTryId)
+        grader.grade(failed.qaTryId)
         try {
             closeQuietly(failed.agentSessionId)
         } finally {
@@ -160,6 +164,7 @@ class QaExecutionFailureService(
         logService.publish(cancelled.error)
         logService.publish(cancelled.status)
         citationService.finalizeTry(qaTryId)
+        grader.grade(qaTryId)
         val sessionId = cancelled.agentSessionId
         try {
             if (sessionId != null) {
@@ -190,11 +195,18 @@ class QaExecutionFailureService(
     suspend fun failStarting(qaTryId: Long, reason: String) =
         fail(qaTryId, reason, closeAgent = true)
 
+    /**
+     * 채점은 종단 경로 **전부**에서 돈다(ARTEL-301). 정상 종료에만 걸면 소켓이 죽거나 취소된 런이
+     * 영영 채점되지 않고, 그러면 잘 죽는 모델의 최악 런이 통째로 집계에서 빠져 그 모델이 실제보다
+     * 좋아 보인다 — 커버리지를 세는 이유와 같은 편향이다. 미보고 스텝이 그 자체로 기록되는 것이
+     * 요점이라, 판정을 하나도 못 낸 런에도 행이 선다.
+     */
     private suspend fun fail(qaTryId: Long, reason: String, closeAgent: Boolean) {
         val failed = persistence.failActiveById(qaTryId, reason) ?: return
         logService.publish(failed.error)
         logService.publish(failed.status)
         citationService.finalizeTry(qaTryId)
+        grader.grade(qaTryId)
         try {
             if (closeAgent) closeQuietly(failed.agentSessionId)
         } finally {

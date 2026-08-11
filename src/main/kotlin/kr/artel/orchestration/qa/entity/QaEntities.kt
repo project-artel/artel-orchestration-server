@@ -73,6 +73,26 @@ data class QaTryEntity(
     @Column("updated_at") val updatedAt: Instant? = null
 )
 
+/**
+ * qa_try 하나에 대한 채점 결과(ARTEL-299가 자리를 만들고 ARTEL-301이 첫 채점자를 넣는다).
+ *
+ * `(qaTryId, grader, graderVersion)`이 유일하다. 채점 기준이 바뀌면 **재채점**해야 하는데, 점수를
+ * qa_try 컬럼으로 뒀다면 덮어써서 이력이 죽는다. 버전을 키로 두면 새 판정이 옛 판정 옆에 서고 둘을
+ * 대조할 수 있다.
+ *
+ * [detail]에 무엇이 들었는지는 채점자마다 다르다. 지표 컬럼을 승격하지 않은 이유는
+ * [kr.artel.orchestration.qa.service.ExpectedStepsGrader]의 주석에 있다.
+ */
+@Table("qa_try_score")
+data class QaTryScoreEntity(
+    @Id val id: Long? = null,
+    @Column("qa_try_id") val qaTryId: Long,
+    val grader: String,
+    @Column("grader_version") val graderVersion: String,
+    val detail: Json = Json.of("{}"),
+    @Column("created_at") val createdAt: Instant? = null
+)
+
 @Table("qa_log")
 data class QaLogEntity(
     @Id val id: Long? = null,
