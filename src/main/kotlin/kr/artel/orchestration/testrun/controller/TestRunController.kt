@@ -34,7 +34,7 @@ import org.springframework.web.bind.annotation.RestController
 /**
  * TestRun REST(외부/인증, 코루틴). 여러 시나리오를 묶은 실행 세트를 만들고 시나리오 조합을 편집한다.
  *
- * 저작 챗봇 대화(메시지/스트림/중계/종료)는 런 단위이므로 여기에 함께 둔다(ARTEL-206 Step 6): 한 번의 대화로
+ * 작성 챗봇 대화(메시지/스트림/중계/종료)는 런 단위이므로 여기에 함께 둔다(ARTEL-206 Step 6): 한 번의 대화로
  * 여러 시나리오를 추가·수정하며, 결과는 이 런에 반영된다. 대화 로직은 [TestRunChatService]에 위임한다.
  */
 @RestController
@@ -118,7 +118,7 @@ class TestRunController(
             ?: ResponseEntity.notFound().build()
     }
 
-    // --- 저작 챗봇 대화(런 단위) — ARTEL-206 Step 6 ---
+    // --- 작성 챗봇 대화(런 단위) — ARTEL-206 Step 6 ---
 
     /** 사용자별 프라이빗 채팅 스레드 조회(재방문 복원). */
     @GetMapping("/{runId}/chat/messages")
@@ -180,7 +180,7 @@ class TestRunController(
             ?: ResponseEntity.notFound().build()
     }
 
-    /** 저작 세션을 종료한다(런 편집 종료 시): Agent WS/SSE를 닫는다(채팅·시나리오는 남김). */
+    /** 작성 세션을 종료한다(런 편집 종료 시): Agent WS/SSE를 닫는다(채팅·시나리오는 남김). */
     @PostMapping("/{runId}/chat/close")
     suspend fun chatClose(
         @PathVariable projectId: Long,

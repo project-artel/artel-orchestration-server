@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
 /**
- * TestCase 벡터 검색(ARTEL-206). 시나리오 저작 세션의 `TEST_CASE_SEARCH` 프레임(후속 Step)이 이
+ * TestCase 벡터 검색(ARTEL-206). 시나리오 작성 세션의 `TEST_CASE_SEARCH` 프레임(후속 Step)이 이
  * 서비스를 부른다. knowledge 검색과 대칭이다.
  *
  * **검색어 임베딩을 Agent에 맡긴다.** 벡터를 만들 자격증명이 Agent에만 있어, 검색 시점에

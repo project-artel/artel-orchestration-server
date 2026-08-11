@@ -7,7 +7,7 @@ import org.springframework.r2dbc.core.flow
 import org.springframework.stereotype.Repository
 
 /**
- * `test_case_embedding`에 대한 코사인 거리 검색(ARTEL-206). 시나리오 저작 챗봇이 자연어 의도로 이
+ * `test_case_embedding`에 대한 코사인 거리 검색(ARTEL-206). 시나리오 작성 챗봇이 자연어 의도로 이
  * 벡터를 검색해 케이스를 매핑한다.
  *
  * [TestCaseEmbeddingRepository](쓰기/큐)와 같은 테이블을 보지만 분리했다 — 이쪽은 읽기 경로다.
@@ -29,7 +29,7 @@ class TestCaseVectorSearchRepository(
      * - `t.project_id = :projectId` — 다른 프로젝트의 케이스가 새면 안 된다(프레임이 아닌 세션 바인딩에서 파생).
      * - `e.kind`/`e.model` — 백필이 쓴 파티션과 같아야 한다.
      * - `e.embedding IS NOT NULL` — 대기 행(백필 큐 센티널)은 벡터가 없어 제외한다.
-     * - `t.category = :category` — 선택. 저작 시 특정 기능군으로 좁힐 때 쓴다(null이면 전체).
+     * - `t.category = :category` — 선택. 작성 시 특정 기능군으로 좁힐 때 쓴다(null이면 전체).
      *
      * (test_case는 소프트삭제가 없어 alive 조건이 없다.)
      */

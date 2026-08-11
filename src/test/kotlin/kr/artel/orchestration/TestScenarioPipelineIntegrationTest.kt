@@ -46,10 +46,10 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * TestScenario 파이프라인 통합 테스트: 인증(JWT) → 런 생성 → 저작 챗봇 SSE →
+ * TestScenario 파이프라인 통합 테스트: 인증(JWT) → 런 생성 → 작성 챗봇 SSE →
  * Agent 세션 오픈(POST /sessions) + WS(/sessions/{id}) 왕복 → SSE 중계.
  *
- * 저작 챗봇 대화는 **런 단위**다(ARTEL-206 Step 6): 세션/SSE/채팅이 (userId, runId)로 스코프된다.
+ * 작성 챗봇 대화는 **런 단위**다(ARTEL-206 Step 6): 세션/SSE/채팅이 (userId, runId)로 스코프된다.
  * 실제 Agent 서버 계약을 흉내내는 목 서버(HTTP POST /sessions + WS /sessions/{id})로 검증한다.
  */
 @ActiveProfiles("test")
@@ -383,7 +383,7 @@ class TestScenarioPipelineIntegrationTest {
     }
 
     /**
-     * 저작 세션 종료(chat/close): SSE로 `closed` 종료 이벤트가 전달되고, 채팅 내역은 그대로 남는다.
+     * 작성 세션 종료(chat/close): SSE로 `closed` 종료 이벤트가 전달되고, 채팅 내역은 그대로 남는다.
      */
     @Test
     fun testChatCloseEmitsClosedAndKeepsChat(): Unit = runBlocking {

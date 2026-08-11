@@ -58,7 +58,7 @@ private const val DIMENSIONS = 1024
 private fun axis(index: Int): List<Double> = List(DIMENSIONS) { if (it == index) 1.0 else 0.0 }
 
 /**
- * 저작 세션의 케이스 검색 루프와 결과 반영(재설계 2026-08-07 — 시나리오 = steps 리스트).
+ * 작성 세션의 케이스 검색 루프와 결과 반영(재설계 2026-08-07 — 시나리오 = steps 리스트).
  *
  * 실제 Agent를 흉내내는 목 서버(POST /sessions + WS)로 검증한다. 목은 WS 연결 시 [framesToSend]에
  * 담긴 프레임을 그대로 보내고, Orchestration이 되돌린 프레임을 [receivedFrames]에 기록한다.

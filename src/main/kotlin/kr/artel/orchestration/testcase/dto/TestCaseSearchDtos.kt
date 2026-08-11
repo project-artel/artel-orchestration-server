@@ -3,7 +3,7 @@ package kr.artel.orchestration.testcase.dto
 /**
  * TestCase 벡터 검색 결과 한 항목(ARTEL-206).
  *
- * @property id 케이스 id(문자열). 저작 에이전트가 이 값을 caseIds로 되돌려 시나리오에 연결한다.
+ * @property id 케이스 id(문자열). 작성 에이전트가 이 값을 caseIds로 되돌려 시나리오에 연결한다.
  * @property verificationStatus DRAFT/VERIFIED/BROKEN. 에이전트가 VERIFIED를 우선하거나 BROKEN을
  *   피하는 판단에 쓴다.
  * @property score 코사인 유사도(1에 가까울수록 가깝다). 원시 거리 대신 유사도로 내보내는 이유는

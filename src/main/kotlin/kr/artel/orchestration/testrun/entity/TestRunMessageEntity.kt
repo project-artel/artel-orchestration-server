@@ -7,7 +7,7 @@ import org.springframework.data.relational.core.mapping.Table
 import java.time.Instant
 
 /**
- * 저작 챗봇 대화 메시지(런 단위, 사용자별 프라이빗 스레드) — ARTEL-206 Step 6.
+ * 작성 챗봇 대화 메시지(런 단위, 사용자별 프라이빗 스레드) — ARTEL-206 Step 6.
  *
  * 한 번의 대화로 여러 시나리오를 추가·수정하므로 스레드의 주체는 시나리오가 아니라 [testRunId]다.
  * 같은 런 안에서는 어떤 시나리오를 편집하든 대화가 이어진다. `appUserId`는 스레드 소유자(공유 안 함),

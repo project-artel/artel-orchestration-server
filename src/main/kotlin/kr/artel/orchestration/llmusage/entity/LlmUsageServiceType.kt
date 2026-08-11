@@ -5,7 +5,7 @@ package kr.artel.orchestration.llmusage.entity
  * (다형 참조라 이 값 없이는 reference_id를 해석할 수 없다):
  *
  * - [QA_RUN]          : `qa_try.id`
- * - [SCENARIO]        : `test_run.id` — 저작 세션이 런 단위라 한 세션의 지출이 시나리오 하나에
+ * - [SCENARIO]        : `test_run.id` — 작성 세션이 런 단위라 한 세션의 지출이 시나리오 하나에
  *                       귀속되지 않는다(ARTEL-206 Step 6). 시나리오별 드릴다운이 필요해지면
  *                       Agent가 시나리오를 확정한 뒤 별도 컬럼으로 받아야 한다.
  * - [KNOWLEDGE_QUERY] : `project.id`
