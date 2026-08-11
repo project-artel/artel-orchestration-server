@@ -297,6 +297,89 @@ class QaStatsIntegrationTest {
     }
 
     @Test
+    fun `오탐과 미탐이 축별로 갈려 나온다`(): Unit = runBlocking {
+        // 관대한 모델: 실패해야 할 것을 통과라 했다.
+        val lenient = seedRun(model = "lenient", status = "COMPLETED", stepsTotal = 5, stepsPassed = 5)
+        seedScore(lenient, correctPass = 3, falseAlarm = 0, miss = 2, correctFail = 0, unreported = 0)
+        // 까다로운 모델: 멀쩡한 것을 실패라 했다. **틀린 개수는 같다.**
+        val strict = seedRun(model = "strict", status = "COMPLETED", stepsTotal = 5, stepsPassed = 3)
+        seedScore(strict, correctPass = 1, falseAlarm = 2, miss = 0, correctFail = 2, unreported = 0)
+
+        val stats = stats()
+
+        // 스칼라 하나로 접었다면 둘이 같은 점수로 보인다. QA 에이전트에게 미탐이 훨씬 나쁘고
+        // (못 찾은 버그는 출시된다), 그 방향이 여기서 사라지면 화면이 되살릴 수 없다.
+        assertThat(stats.cellFor(model = "lenient").miss).isEqualTo(2)
+        assertThat(stats.cellFor(model = "lenient").falseAlarm).isEqualTo(0)
+        assertThat(stats.cellFor(model = "strict").miss).isEqualTo(0)
+        assertThat(stats.cellFor(model = "strict").falseAlarm).isEqualTo(2)
+        assertThat(stats.total.miss).isEqualTo(2)
+        assertThat(stats.total.falseAlarm).isEqualTo(2)
+    }
+
+    @Test
+    fun `detail 모양이 다른 채점 행이 집계를 죽이지 않고 분모에서 빠진다`(): Unit = runBlocking {
+        val scored = seedRun(model = "sonnet-5", status = "COMPLETED", stepsTotal = 4, stepsPassed = 3)
+        seedScore(scored, correctPass = 1, falseAlarm = 0, miss = 0, correctFail = 1, unreported = 0)
+        val broken = seedRun(model = "sonnet-5", status = "COMPLETED", stepsTotal = 4, stepsPassed = 4)
+        // detail은 JSONB라 스키마가 강제되지 않는다. 이 행 하나로 `::int` 캐스트가 던지면
+        // 이 프로젝트의 대시보드가 통째로 500이 된다.
+        scoreRepository.insertIfAbsent(
+            qaTryId = broken,
+            grader = "expected-steps",
+            graderVersion = "9",
+            detail = """{"matrix":{"correct_pass":"두 개"},"unreported":null}"""
+        )
+
+        val cell = stats().cellFor(model = "sonnet-5")
+
+        assertThat(cell.runs).isEqualTo(2)
+        // 걸러진 행은 분모에도 안 들어간다 — "0점"이 아니라 "채점을 모른다"로 남는다.
+        assertThat(cell.scoredRuns).isEqualTo(1)
+        assertThat(cell.correctPass).isEqualTo(1)
+        assertThat(cell.correctFail).isEqualTo(1)
+    }
+
+    @Test
+    fun `모양이 깨진 재채점이 멀쩡한 옛 판정을 가리지 않는다`(): Unit = runBlocking {
+        val qaTryId = seedRun(model = "sonnet-5", status = "COMPLETED", stepsTotal = 4, stepsPassed = 3)
+        seedScore(qaTryId, correctPass = 2, falseAlarm = 1, miss = 0, correctFail = 1, unreported = 0)
+        // 나중에 들어온 행이라 DISTINCT ON이 이것을 고를 차례다. 가드가 없으면 캐스트가 던지고,
+        // 가드가 행 단위가 아니라 런 단위로 걸리면 이 런의 멀쩡한 판정까지 통째로 사라진다.
+        scoreRepository.insertIfAbsent(
+            qaTryId = qaTryId,
+            grader = "expected-steps",
+            graderVersion = "2",
+            detail = """{"matrix":{"miss":null},"unreported":"셋"}"""
+        )
+
+        val cell = stats().cellFor(model = "sonnet-5")
+
+        assertThat(cell.scoredRuns).isEqualTo(1)
+        assertThat(cell.correctPass).isEqualTo(2)
+        assertThat(cell.falseAlarm).isEqualTo(1)
+    }
+
+    @Test
+    fun `축이 전부 NULL인 런의 점수도 총계에 남는다`(): Unit = runBlocking {
+        // ARTEL-239 이전 런이라 축이 전부 NULL이지만 채점은 붙어 있다.
+        val legacy = seedRun(
+            model = null, arch = null, promptVersion = null, effort = null,
+            status = "COMPLETED", stepsTotal = 4, stepsPassed = 1
+        )
+        seedScore(legacy, correctPass = 1, falseAlarm = 0, miss = 3, correctFail = 0, unreported = 0)
+
+        val stats = stats()
+
+        val unknown = stats.cells.single { it.model == null }
+        assertThat(unknown.scoredRuns).isEqualTo(1)
+        assertThat(unknown.miss).isEqualTo(3)
+        // 버리면 미탐이 총계에만 남고 어느 축의 것인지 설명할 자리가 사라진다.
+        assertThat(stats.total.miss).isEqualTo(3)
+        assertThat(stats.cells.sumOf { it.scoredRuns }).isEqualTo(stats.total.scoredRuns)
+    }
+
+    @Test
     fun `the window includes from and excludes to`(): Unit = runBlocking {
         seedRun(model = "before", status = "COMPLETED", startedAt = windowStart.minusSeconds(1))
         seedRun(model = "at-from", status = "COMPLETED", startedAt = windowStart)
