@@ -61,6 +61,10 @@ class QaStatsRepository(
                        qt.prompt_version,
                        qt.agent_arch,
                        qt.status,
+                       qt.steps_total,
+                       qt.steps_passed,
+                       qt.cases_total,
+                       qt.cases_passed,
                        qt.started_at,
                        qt.completed_at
                   FROM qa_try qt
@@ -103,7 +107,18 @@ class QaStatsRepository(
                    SUM(ru.cost_usd)                                           AS cost_usd,
                    COALESCE(SUM(ru.calls), 0)                                 AS llm_calls,
                    AVG(EXTRACT(EPOCH FROM (s.completed_at - s.started_at))::double precision * 1000)
-                       FILTER (WHERE s.status = 'COMPLETED')                  AS avg_completed_duration_ms
+                       FILTER (WHERE s.status = 'COMPLETED')                  AS avg_completed_duration_ms,
+                   -- 판정 커버리지의 분모. 승격 값이 있는 런만 세면 그 셀의 합격률은 "깔끔하게
+                   -- 종료된 런"에 조건부라 위로 편향되고, 잘 죽는 모델일수록 자기 최악 런이 빠져
+                   -- 편향 크기가 축마다 다르다. 이 값을 같은 줄에 실어 그 차이를 숨길 수 없게 한다.
+                   -- 네 컬럼은 함께 쓰이거나 함께 비므로 steps_total 하나가 기준이 된다.
+                   COUNT(*) FILTER (WHERE s.steps_total IS NOT NULL)          AS verdict_known,
+                   -- 평균이 아니라 합계를 낸다. 평균은 분모를 구조적으로 숨기지만, 합계는
+                   -- verdict_known 없이는 아무 비율도 낼 수 없어 둘을 함께 읽게 만든다.
+                   COALESCE(SUM(s.steps_total), 0)                            AS steps_total,
+                   COALESCE(SUM(s.steps_passed), 0)                           AS steps_passed,
+                   COALESCE(SUM(s.cases_total), 0)                            AS cases_total,
+                   COALESCE(SUM(s.cases_passed), 0)                           AS cases_passed
               FROM scoped s
               LEFT JOIN run_usage ru ON ru.qa_try_id = s.id
              GROUP BY GROUPING SETS (
@@ -157,7 +172,12 @@ class QaStatsRepository(
         reasoningTokens = longAt("reasoning_tokens"),
         costUsd = get("cost_usd", BigDecimal::class.java),
         llmCalls = longAt("llm_calls"),
-        avgCompletedDurationMs = get("avg_completed_duration_ms", java.lang.Double::class.java)?.toDouble()
+        avgCompletedDurationMs = get("avg_completed_duration_ms", java.lang.Double::class.java)?.toDouble(),
+        verdictKnown = longAt("verdict_known"),
+        stepsTotal = longAt("steps_total"),
+        stepsPassed = longAt("steps_passed"),
+        casesTotal = longAt("cases_total"),
+        casesPassed = longAt("cases_passed")
     )
 
     private fun Readable.longAt(name: String): Long =
@@ -186,6 +206,11 @@ data class QaStatsAggregate(
  * @param costUsd 단가를 아는 호출이 하나도 없으면 null. 0과 다르다.
  * @param avgCompletedDurationMs 완주한 런만의 평균 소요. 실패·취소는 중단 시점이 제각각이라
  *   같이 평균 내면 "빠른 실패"가 성능 개선으로 읽힌다.
+ * @param verdictKnown 판정을 승격받은 런 수(ARTEL-299). 아래 네 합계의 분모이고, [runs]와의 차이가
+ *   곧 판정을 모르는 런이다. 요약 없이 끝난 런(소켓 사망·취소)이 여기서 빠지므로, 이 값을 보지
+ *   않고 합격률을 내면 그 비율은 깔끔하게 끝난 런에 조건부다.
+ * @param stepsTotal 판정을 아는 런들의 스텝 수 합. 평균이 아니라 합계인 것은 [verdictKnown] 없이는
+ *   비율을 낼 수 없게 하기 위해서다.
  */
 data class QaStatsRow(
     val groupingMask: Int,
@@ -204,5 +229,10 @@ data class QaStatsRow(
     val reasoningTokens: Long,
     val costUsd: BigDecimal?,
     val llmCalls: Long,
-    val avgCompletedDurationMs: Double?
+    val avgCompletedDurationMs: Double?,
+    val verdictKnown: Long,
+    val stepsTotal: Long,
+    val stepsPassed: Long,
+    val casesTotal: Long,
+    val casesPassed: Long
 )
