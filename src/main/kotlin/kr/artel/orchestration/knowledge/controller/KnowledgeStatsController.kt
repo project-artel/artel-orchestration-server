@@ -62,7 +62,7 @@ class KnowledgeStatsController(
         value.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
             ?.toLongOrNull()
             ?.takeIf { it >= 0 }
-            ?: throw BadRequestException("ID must be a signed 64-bit decimal string")
+            ?: throw BadRequestException("ID must be a non-negative 64-bit decimal string")
 
     /**
      * 프레임워크 변환에 맡기지 않고 직접 읽는다. 맡기면 오타 하나가 이 컨트롤러의 문맥이 없는
