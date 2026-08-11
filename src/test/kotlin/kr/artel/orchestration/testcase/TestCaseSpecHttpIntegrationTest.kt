@@ -28,18 +28,31 @@ import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientResponseException
 import java.time.Instant
 
-private val SPEC_CSV = """
-    category,title,precondition,expected
-    CONTROL,상점 입장,로비에 있음,상점 화면 진입
-    RULE,검 구매,골드 10 이상,골드 차감 + 검 획득
+/** 명세 한 벌. `revision`을 바꿔야 재적재가 스킵되지 않는다(같은 판은 통째로 건너뛴다). */
+private fun specJson(revision: Int = 1): ByteArray = """
+    {
+      "id": "spec-doc-1",
+      "revision": $revision,
+      "cases": [
+        { "schema_version": "test-case.v1",
+          "spec": { "scene": "TitleScene", "precondition": "로비에 있음",
+                    "step": "상점 입장", "expected_value": "상점 화면 진입", "status": "ready" },
+          "metadata": { "source": { "spec_id": "scenario:http:1" } } },
+        { "schema_version": "test-case.v1",
+          "spec": { "scene": "TitleScene", "precondition": "골드 10 이상",
+                    "step": "검 구매", "expected_value": "골드 차감 + 검 획득", "status": "ready" },
+          "metadata": { "source": { "spec_id": "scenario:http:2" } } }
+      ],
+      "created_at": "2026-08-11T00:00:00Z"
+    }
 """.trimIndent().toByteArray()
 
 /**
- * Agent → Orchestration CSV 수신 경로의 HTTP 통합 테스트.
+ * Agent → Orchestration 명세 JSON 수신 경로의 HTTP 통합 테스트.
  *
  * 서비스 계층 검증([TestCaseSpecIngestIntegrationTest])과 달리 **실제 HTTP로** 찌른다.
  * 여기서만 확인되는 것: 인증 없이 통과하는지(서버-투-서버 경로라 permitAll), 원문 바이트가
- * `text/csv`로 그대로 실려 오는지, 오류가 약속한 상태 코드로 매핑되는지.
+ * JSON 본문이 그대로 실려 오는지, 오류가 약속한 상태 코드로 매핑되는지.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -76,26 +89,27 @@ class TestCaseSpecHttpIntegrationTest {
     private val fakeStorage: FakeDocumentStorage get() = storage as FakeDocumentStorage
 
     @Test
-    fun `Agent는 인증 없이 CSV를 올리고 적재 결과를 돌려받는다`(): Unit = runBlocking {
+    fun `Agent는 인증 없이 명세를 올리고 적재 결과를 돌려받는다`(): Unit = runBlocking {
         val projectId = newProject()
 
-        val body = post(projectId, SPEC_CSV)
+        val body = post(projectId, specJson())
 
-        assertThat(body["totalRows"].asInt()).isEqualTo(2)
+        assertThat(body["totalCases"].asInt()).isEqualTo(2)
         assertThat(body["created"].asInt()).isEqualTo(2)
         assertThat(body["updated"].asInt()).isZero()
 
         val cases = testCaseRepository.findByProjectIdOrderByIdDesc(projectId).toList()
-        assertThat(cases.map { it.title }).containsExactlyInAnyOrder("상점 입장", "검 구매")
+        assertThat(cases.map { it.step }).containsExactlyInAnyOrder("상점 입장", "검 구매")
         assertThat(fakeStorage.read("projects/$projectId/test-case-spec/test-cases.xlsx")).isNotNull()
     }
 
     @Test
     fun `재전송해도 중복이 쌓이지 않는다`(): Unit = runBlocking {
         val projectId = newProject()
-        post(projectId, SPEC_CSV)
+        post(projectId, specJson(revision = 1))
 
-        val body = post(projectId, SPEC_CSV)
+        // 같은 revision은 통째로 스킵되므로, 갱신 경로를 보려면 판을 올려 보낸다.
+        val body = post(projectId, specJson(revision = 2))
 
         assertThat(body["created"].asInt()).isZero()
         assertThat(body["updated"].asInt()).isEqualTo(2)
@@ -104,16 +118,16 @@ class TestCaseSpecHttpIntegrationTest {
 
     @Test
     fun `없는 프로젝트로 보내면 404다`(): Unit = runBlocking {
-        val error = postExpectingError(999_999L, SPEC_CSV)
+        val error = postExpectingError(999_999L, specJson())
 
         assertThat(error.statusCode).isEqualTo(HttpStatus.NOT_FOUND)
     }
 
     @Test
-    fun `CSV가 아니면 400이고 아무것도 남지 않는다`(): Unit = runBlocking {
+    fun `JSON이 아니면 400이고 아무것도 남지 않는다`(): Unit = runBlocking {
         val projectId = newProject()
 
-        val error = postExpectingError(projectId, "foo,bar\n1,2".toByteArray())
+        val error = postExpectingError(projectId, "{ not json".toByteArray())
 
         assertThat(error.statusCode).isEqualTo(HttpStatus.BAD_REQUEST)
         assertThat(testCaseRepository.findByProjectIdOrderByIdDesc(projectId).toList()).isEmpty()
@@ -133,7 +147,7 @@ class TestCaseSpecHttpIntegrationTest {
     @Test
     fun `다운로드는 인증 없이 열리지 않는다`(): Unit = runBlocking {
         val projectId = newProject()
-        post(projectId, SPEC_CSV)
+        post(projectId, specJson())
 
         val error = runCatching {
             client.get().uri("/api/projects/$projectId/test-case-spec/download")
@@ -143,16 +157,16 @@ class TestCaseSpecHttpIntegrationTest {
         assertThat(error.statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
     }
 
-    private fun post(projectId: Long, csv: ByteArray): JsonNode =
+    private fun post(projectId: Long, body: ByteArray): JsonNode =
         internalClient.post().uri("/internal/test-case-spec/$projectId")
-            .contentType(MediaType.parseMediaType("text/csv"))
-            .bodyValue(csv)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
             .retrieve()
             .bodyToMono(JsonNode::class.java)
             .block()!!
 
-    private fun postExpectingError(projectId: Long, csv: ByteArray): WebClientResponseException =
-        runCatching { post(projectId, csv) }.exceptionOrNull() as WebClientResponseException
+    private fun postExpectingError(projectId: Long, body: ByteArray): WebClientResponseException =
+        runCatching { post(projectId, body) }.exceptionOrNull() as WebClientResponseException
 
     /** 명세 수신은 멤버십을 보지 않지만, 프로젝트 자체는 실재해야 한다. */
     private suspend fun newProject(): Long {

@@ -7,8 +7,8 @@ import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 
 /**
- * TestCase 조회 리포지토리(코루틴). 조회는 프로젝트 스코프이며, 대분류(category)·검증상태로 선택 필터한다.
- * 멱등 적재(Agent 재전송 중복 방지)를 위해 (project_id, category, title) 조회도 제공한다.
+ * TestCase 조회 리포지토리(코루틴). 조회는 프로젝트 스코프이며, 씬(scene)·검증상태로 선택 필터한다.
+ * 멱등 적재(Agent 재전송 중복 방지)를 위해 spec_id 조회와 (project_id, scene, step) 조회를 함께 제공한다.
  */
 interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
 
@@ -27,7 +27,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      */
     @Query(
         """
-        SELECT id, category, title, precondition, expected, verification_status
+        SELECT id, scene, step, precondition, expected_value, verification_status
         FROM test_case
         WHERE project_id = :projectId
         ORDER BY id ASC
@@ -35,12 +35,23 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     )
     fun findTestCaseListByProjectIdOrderByIdAsc(projectId: Long): Flow<TestCaseListItem>
 
-    fun findByProjectIdAndCategoryOrderByIdDesc(projectId: Long, category: String): Flow<TestCaseEntity>
+    fun findByProjectIdAndSceneOrderByIdDesc(projectId: Long, scene: String): Flow<TestCaseEntity>
 
     fun findByProjectIdAndVerificationStatusOrderByIdDesc(
         projectId: Long,
         verificationStatus: String
     ): Flow<TestCaseEntity>
 
-    suspend fun findByProjectIdAndCategoryAndTitle(projectId: Long, category: String, title: String): TestCaseEntity?
+    suspend fun findByProjectIdAndSceneAndStep(projectId: Long, scene: String, step: String): TestCaseEntity?
+
+    /** 명세 적재의 멱등 키(ARTEL-329). spec_id가 있는 케이스는 문구가 바뀌어도 같은 행으로 이어진다. */
+    suspend fun findByProjectIdAndSpecId(projectId: Long, specId: String): TestCaseEntity?
+
+    /**
+     * 이 프로젝트가 이미 그 판의 명세를 받아 뒀는가(ARTEL-329).
+     *
+     * SDK 재등록마다 같은 명세가 다시 오는데, 그때마다 수백 행을 upsert하고 XLSX를 새로 써서
+     * S3에 올릴 이유가 없다. 한 건이라도 그 revision이면 같은 판이 이미 반영된 것이다.
+     */
+    suspend fun existsByProjectIdAndSpecRevision(projectId: Long, specRevision: Int): Boolean
 }

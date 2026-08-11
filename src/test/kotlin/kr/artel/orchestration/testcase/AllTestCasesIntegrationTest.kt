@@ -60,10 +60,10 @@ class AllTestCasesIntegrationTest {
             projectId,
             userId,
             TestCaseCreateRequest(
-                category = "로그인",
-                title = "케이스 $n",
+                scene = "로그인",
+                step = "케이스 $n",
                 precondition = "사전조건 $n",
-                expected = "기대결과 $n",
+                expectedValue = "기대결과 $n",
             )
         )!!.id.toLong()
 
@@ -93,10 +93,10 @@ class AllTestCasesIntegrationTest {
         // 본문 두 필드가 빠지면 Agent가 고른 케이스로 스텝을 쓸 수 없어 왕복이 생긴다.
         // 반대로 여기 없는 컬럼(타임스탬프 등)이 새어 들어오면 세션당 부피만 는다.
         assertThat(fields.fieldNames().asSequence().toSet()).containsExactlyInAnyOrder(
-            "id", "category", "title", "precondition", "expected", "verification_status"
+            "id", "scene", "step", "precondition", "expected_value", "verification_status"
         )
         assertThat(fields["precondition"].asText()).isEqualTo("사전조건 1")
-        assertThat(fields["expected"].asText()).isEqualTo("기대결과 1")
+        assertThat(fields["expected_value"].asText()).isEqualTo("기대결과 1")
         // Agent가 이 값을 그대로 스텝의 case_id로 돌려주므로 숫자여야 한다(FE 응답과 달리 문자열이 아니다).
         assertThat(fields["id"].isNumber).isTrue()
         assertThat(fields["verification_status"].asText()).isEqualTo("DRAFT")

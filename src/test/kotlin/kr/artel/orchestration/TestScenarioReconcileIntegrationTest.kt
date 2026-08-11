@@ -189,7 +189,7 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(results).hasSize(1)
         val hit = results.first()
         assertThat(hit.get("id").asText()).isEqualTo(hitCase.toString())
-        assertThat(hit.get("title").asText()).isEqualTo("골드 차감")
+        assertThat(hit.get("step").asText()).isEqualTo("골드 차감")
         assertThat(hit.has("verificationStatus")).isTrue()
     }
 
@@ -446,10 +446,10 @@ class TestScenarioReconcileIntegrationTest {
         testCaseRepository.save(
             TestCaseEntity(
                 projectId = projectId,
-                category = category,
-                title = title,
+                scene = category,
+                step = title,
                 precondition = null,
-                expected = "$title 기대결과",
+                expectedValue = "$title 기대결과",
             )
         ).id!!
 

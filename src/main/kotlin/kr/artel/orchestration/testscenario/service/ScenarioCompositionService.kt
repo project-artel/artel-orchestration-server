@@ -51,10 +51,10 @@ class ScenarioCompositionService(
                 case = tc?.let {
                     AgentCase(
                         id = requireNotNull(it.id),
-                        scene = it.category,
+                        scene = it.scene,
                         precondition = it.precondition,
-                        testStep = it.title,
-                        expected = it.expected,
+                        testStep = it.step,
+                        expected = it.expectedValue,
                     )
                 },
             )
