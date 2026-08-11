@@ -1,4 +1,17 @@
-# Flyway Migration Version Check
+# Flyway Migrations in CI
+
+Two checks guard the migrations, and they catch different things.
+
+| | Sees | Cost |
+|---|---|---|
+| `scripts/check-flyway-migrations.sh` | file names, version numbers, and numbers claimed by other unmerged branches | seconds, git only |
+| `scripts/verify-flyway-upgrade.sh` | the SQL itself, executed along the upgrade path a deployment takes | ~30s, needs Docker |
+
+Neither replaces the other. The static check is the only one that can see a
+branch that has not merged yet. The upgrade check is the only one that can see
+whether the SQL runs at all.
+
+## Version check
 
 Migrations live in `src/main/resources/db/migration/` and are named
 `V<version>__<description>.sql`. The version number is global and immutable:
@@ -11,7 +24,7 @@ That has happened repeatedly — `Flyway V20 충돌 해소 (ARTEL-216)`,
 which ARTEL-260 had to unpick. `scripts/check-flyway-migrations.sh` moves that
 discovery to CI.
 
-## Running it
+### Running it
 
 ```bash
 ./scripts/check-flyway-migrations.sh
@@ -24,7 +37,7 @@ free.
 
 Exit codes: `0` clean, `1` error, `2` warnings only.
 
-## Why this is a git check and not a test
+### Why this is a git check and not a test
 
 Flyway breaks in three ways, and only one of them is visible from the files in
 one working tree.
@@ -41,7 +54,12 @@ exist only relative to a database that already ran the base branch's migrations,
 and the branch this one merges into is the closest available stand-in. Hence a
 comparison of git trees rather than a test.
 
-## What it checks
+`scripts/verify-flyway-upgrade.sh` builds that database instead of inferring it,
+so it sees the same two failures by execution. The git comparison is still what
+catches a version another *unmerged* branch has claimed — that branch is not in
+any database yet, and nothing an execution does can reveal it.
+
+### What it checks
 
 Always, with no base branch needed:
 
@@ -79,7 +97,7 @@ a warning and skips checks 3–5 for that number. Otherwise the branch that
 renumbers the duplicate — the only branch that can fix it — would fail for
 removing a migration.
 
-## Fixing a failure
+### Fixing a failure
 
 **Reused, out-of-order, or peer-claimed version.** Renumber your own migration
 above the highest version on `develop`; never renumber the one that is already
@@ -96,8 +114,74 @@ successfully anywhere — the ARTEL-260 case. No database holds its checksum, so
 renumbering it in place is safe. Confirm that the stage server never came up on
 it before assuming this.
 
+## Upgrade verification
+
+The version check reads file names. A migration whose name is correct but whose
+SQL is malformed, or which references a column that does not exist, passes it
+untouched — and `Build` runs `-DskipTests`, so nothing else in the pipeline
+executes the SQL either. The first thing that does is the deployed container,
+which dies in the Flyway step.
+
+`scripts/verify-flyway-upgrade.sh` executes it in CI instead.
+
+### Running it
+
+```bash
+./scripts/verify-flyway-upgrade.sh          # against develop
+./scripts/verify-flyway-upgrade.sh stage    # against another base
+```
+
+Needs a working Docker. Takes about 30 seconds once the images are cached.
+
+Exit codes: `0` clean, `1` this branch breaks the upgrade, `2` the base branch is
+already broken.
+
+### What it does
+
+1. Starts `pgvector/pgvector:pg16` — not stock `postgres`, because
+   `V18__create_knowledge_embedding.sql` runs `CREATE EXTENSION vector` and the
+   whole chain fails from there on an image without it. `PostgresTestContainer`
+   picks the same image for the same reason.
+2. **Phase 1** — applies the *base branch's* migrations, read straight out of the
+   git tree with `git archive`. This is the state a deployed database is in.
+3. **Phase 2** — applies *this branch's* migrations on top. Only the new ones
+   run; the rest are already in `flyway_schema_history`.
+4. **Phase 3** — `flyway validate`.
+
+Applying everything at once would be a different question. That is the
+fresh-install path, and on an empty database every ordering and every checksum
+succeeds — which is exactly why the two phases are separate.
+
+The Flyway image is pinned to the version Spring Boot's BOM manages, so CI
+validates with the engine the deployed container runs. Bump both together.
+
+On a deploy branch (`main`, `operation`, `develop`, `stage`) there is no base to
+upgrade from, so phase 1 is skipped and the run becomes a fresh install. That is
+still the only place the merged tree's SQL is executed before the stage server
+tries it.
+
+Containers are labelled and removed by a `trap`, including on `SIGTERM` from an
+aborted build. The `post` block in `Jenkinsfile` sweeps this build's label as a
+backstop.
+
+### Fixing a failure
+
+**Exit 1.** Read Flyway's own error; it names the file, the line, and the
+statement. A checksum mismatch here means an already-merged migration was
+edited — restore it and express the change as a new migration.
+
+**Exit 2.** The base branch is broken and this branch did not cause it. Fix the
+base first. The build is marked unstable rather than failed for that reason.
+
 ## CI
 
-`Jenkinsfile` runs the check in the `Flyway Migration Check` stage, ahead of
-`Build` and `Deploy Pipeline`, on every branch and PR. Exit code `1` fails the
-build; exit code `2` marks it unstable.
+`Jenkinsfile` runs both, ahead of `Build` and `Deploy Pipeline`, on every branch
+and PR:
+
+| Stage | Script | `1` | `2` |
+|---|---|---|---|
+| `Flyway Migration Check` | `check-flyway-migrations.sh` | fail | unstable (another branch claims the number) |
+| `Flyway Upgrade Verify` | `verify-flyway-upgrade.sh` | fail | unstable (the base branch is broken) |
+
+Both put the failure ahead of the deploy, so an already-broken `develop` does not
+reach the stage server.

@@ -57,7 +57,18 @@ and every checksum succeeds. Exit code `1` must be fixed; `2` means another
 branch claims the same number, so coordinate before merging. See
 `docs/flyway-migrations.md`.
 
-Then run the suite for SQL correctness:
+Then run the SQL along the path a deployment takes — `develop`'s migrations
+applied first, yours on top, then `validate`:
+
+```bash
+./scripts/verify-flyway-upgrade.sh
+```
+
+This is what catches a name that is fine and SQL that is not. Exit code `1` is
+your migration; `2` means `develop` was already broken before you started. Needs
+Docker, takes about 30 seconds.
+
+Then run the suite for SQL correctness against the application's own mappings:
 
 ```bash
 ./mvnw clean test

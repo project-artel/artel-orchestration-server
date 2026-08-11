@@ -40,6 +40,34 @@ pipeline {
             }
         }
 
+        // 앞 스테이지는 git 트리만 본다. 파일 이름과 번호가 맞고 내용이 깨진 마이그레이션은
+        // 그대로 통과하고, Build가 -DskipTests라 SQL은 파이프라인 어디에서도 실행되지 않는다.
+        // 그 결함은 배포된 컨테이너가 Flyway 단계에서 죽을 때 처음 드러난다.
+        //
+        // 빈 DB에 전부 적용해 보는 것으로는 부족하다. 그것은 신규 설치 경로이고, 실제 배포는
+        // 이미 마이그레이션된 DB 위에 새 것만 얹는다. 스크립트가 base의 마이그레이션을 먼저
+        // 적용한 뒤 이 브랜치의 것을 그 위에 얹는 이유다.
+        //
+        // 종료 코드 2는 base 자체가 깨진 경우다. 이 브랜치의 결함이 아니므로 unstable로만
+        // 남긴다. 그렇지 않으면 develop이 깨진 동안 모든 PR이 자기 잘못으로 빨갛게 선다.
+        stage('Flyway Upgrade Verify') {
+            steps {
+                sh 'chmod +x scripts/verify-flyway-upgrade.sh'
+                script {
+                    def status = sh(
+                        returnStatus: true,
+                        script: "./scripts/verify-flyway-upgrade.sh '${env.CHANGE_TARGET ?: 'develop'}'",
+                    )
+
+                    if (status == 2) {
+                        unstable 'base 브랜치의 마이그레이션이 이미 깨져 있다'
+                    } else if (status != 0) {
+                        error 'Flyway 마이그레이션 업그레이드 검증 실패'
+                    }
+                }
+            }
+        }
+
         stage('Build') {
             steps {
                 sh 'chmod +x mvnw'
@@ -93,6 +121,22 @@ pipeline {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // verify-flyway-upgrade.sh는 trap으로 스스로 정리한다. 이것은 잡이 강제 종료돼 trap이
+    // 돌지 못한 경우의 안전망이다. 이 빌드가 붙인 라벨 값만 지운다 —
+    // disableConcurrentBuilds가 없어 같은 에이전트에서 다른 브랜치 잡이 동시에 돌 수 있고,
+    // 라벨 키만으로 지우면 남의 검증용 DB를 죽인다.
+    post {
+        always {
+            script {
+                def runLabel = env.BUILD_TAG ? env.BUILD_TAG.replaceAll(/[^A-Za-z0-9._-]/, '_') : 'local'
+                sh(
+                    returnStatus: true,
+                    script: "docker ps -aq --filter 'label=artel-flyway-upgrade=${runLabel}' | xargs -r docker rm -f",
+                )
             }
         }
     }
