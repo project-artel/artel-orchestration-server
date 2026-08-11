@@ -16,6 +16,24 @@ data class ScenarioStep(
     @JsonProperty("case_id") val caseId: Long? = null,
     val hint: String? = null,
     val input: String? = null,
+    /**
+     * 이 스텝이 **통과해야 하는지 실패해야 하는지**에 대한 사람의 판단(ARTEL-301). QA 에이전트의
+     * 스텝 판정은 자기채점이라, 이 라벨과 대조하지 않으면 관대한 모델이 높은 점수를 받고 "전부
+     * 통과"라고 답하는 전략이 만점이 된다.
+     *
+     * **nullable이고 기본값이 없다. null은 "채점하지 않음"이지 "통과해야 함"이 아니다.** 기본값을
+     * true로 두면 라벨을 안 단 스텝이 전부 통과 기대로 세어져 정확도가 부풀려지고, 그 오류는 조용히
+     * 지나간다(V27의 `knowledge_usage.cited`와 같은 규율). 이 필드가 생기기 전에 만들어진 시나리오는
+     * 전부 null이며 백필하지 않는다 — 사람이 판단해야 하는 값을 기계가 지어내면 정답지가 오염된다.
+     *
+     * 검증 스텝(구간의 마지막 스텝)의 라벨이 곧 그 TC의 기대 판정이다. 일반 스텝의 라벨은 부가지만
+     * 둘 다 채점 대상이다.
+     *
+     * ⚠️ **이 값은 실행 계약으로 나가면 안 된다.** 에이전트가 답을 알고 실행하면 이 측정 전체가
+     * 무의미해지고, 그 사고는 점수가 좋아 보일 뿐이라 조용하다. 에이전트가 읽는 두 경로는 타입으로
+     * 갈라져 있다: QA 실행은 [AgentStep], 작성 챗봇은 [ChatScenarioStep] — 둘 다 이 필드가 없다.
+     */
+    @JsonProperty("expected_passed") val expectedPassed: Boolean? = null,
 )
 
 /**
@@ -35,13 +53,14 @@ data class ScenarioDraft(
  * @property scenarioId `null`이면 **새 시나리오 추가**(INSERT + 런 append), 값이 있으면 그 **기존 시나리오
  *   수정**(본문 통째 교체). Agent 계약의 `scenario_id`에 대응한다.
  * @property steps 이 시나리오의 스텝들(순서=실행 순서). 각 스텝은 행위 + 선택적 caseId. Agent 계약의
- *   `steps`에 대응한다.
+ *   `steps`에 대응한다. 타입이 [ScenarioStep]이 아니라 [ChatScenarioStep]인 것은 의도다 — 에이전트는
+ *   기대 판정 라벨을 본 적이 없고, 이 타입에는 그 필드가 아예 없어 되돌려 보낼 수도 없다(ARTEL-301).
  */
 data class ScenarioResult(
     @JsonProperty("scenario_id") val scenarioId: Long? = null,
     val title: String = "",
     val description: String = "",
-    val steps: List<ScenarioStep> = emptyList()
+    val steps: List<ChatScenarioStep> = emptyList()
 )
 
 /**
