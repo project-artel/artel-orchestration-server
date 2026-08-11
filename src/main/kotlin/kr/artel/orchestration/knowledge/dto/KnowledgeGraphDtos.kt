@@ -46,6 +46,11 @@ data class KnowledgeExpandRequest(
     @JsonProperty("knowledge_id") val knowledgeId: String? = null,
     val depth: Int? = null,
     @JsonProperty("include_similar") val includeSimilar: Boolean = true,
+    /**
+     * 이 확장이 난 런 스텝(선택, ARTEL-293). 검색과 같은 이유로 받는다 — 확장도 usage 행을
+     * 남기므로, 검색만 좌표를 갖고 확장은 못 갖는 것은 같은 표에 두 규칙을 두는 셈이다.
+     */
+    val step: Int? = null,
 )
 
 /**
