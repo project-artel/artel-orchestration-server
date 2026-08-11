@@ -33,13 +33,13 @@ class TestCaseSearchService(
     private val logger = LoggerFactory.getLogger(TestCaseSearchService::class.java)
 
     /**
-     * [projectId] 안에서 [query]에 의미가 가까운 케이스를 찾는다. [category]로 기능군을 좁힐 수 있다.
+     * [projectId] 안에서 [query]에 의미가 가까운 케이스를 찾는다. [scene]으로 화면을 좁힐 수 있다.
      * 결과가 비는 것은 정상이다(백필 미완료·필터로 전부 걸러짐).
      */
     suspend fun search(
         projectId: Long,
         query: String,
-        category: String?,
+        scene: String?,
         limit: Int?,
     ): TestCaseSearchResponse {
         val model = embeddingProperties.model
@@ -50,13 +50,13 @@ class TestCaseSearchService(
             queryVector = embedQuery(query, model),
             kind = CONTENT_KIND,
             model = model,
-            category = category,
+            scene = scene,
             limit = resolvedLimit,
         )
 
         logger.info(
-            "TestCase 검색: project={}, 검색어 {}자, category={}, limit={}, 결과={}건",
-            projectId, query.length, category, resolvedLimit, rows.size
+            "TestCase 검색: project={}, 검색어 {}자, scene={}, limit={}, 결과={}건",
+            projectId, query.length, scene, resolvedLimit, rows.size
         )
         return TestCaseSearchResponse(query = query, model = model, results = rows.map(::toHit))
     }
@@ -84,10 +84,10 @@ class TestCaseSearchService(
     /** 코사인 거리를 유사도로 뒤집는다. pgvector의 `<=>`는 `1 - cosine_similarity`라 그대로 되돌린다. */
     private fun toHit(row: TestCaseSearchRow) = TestCaseSearchHit(
         id = row.testCaseId.toString(),
-        category = row.category,
-        title = row.title,
+        scene = row.scene,
+        step = row.step,
         precondition = row.precondition,
-        expected = row.expected,
+        expectedValue = row.expectedValue,
         verificationStatus = row.verificationStatus,
         score = 1.0 - row.distance,
     )

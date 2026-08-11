@@ -27,10 +27,11 @@ import com.fasterxml.jackson.annotation.JsonProperty
  */
 data class TestCaseListItem(
     val id: Long,
-    val category: String,
-    val title: String,
+    val scene: String,
+    val step: String,
     val precondition: String?,
-    val expected: String,
+    @JsonProperty("expected_value")
+    val expectedValue: String,
     @JsonProperty("verification_status")
     val verificationStatus: String,
 )

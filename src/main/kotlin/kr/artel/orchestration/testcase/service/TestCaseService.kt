@@ -29,21 +29,21 @@ class TestCaseService(
     private val repository: TestCaseRepository,
     private val projectAccessService: ProjectAccessService,
 ) {
-    /** 프로젝트의 케이스 목록. category/verificationStatus로 선택 필터. 비참여자면 빈 목록. */
-    suspend fun list(projectId: Long, userId: Long, category: String?, status: String?): TestCaseListResponse {
+    /** 프로젝트의 케이스 목록. scene/verificationStatus로 선택 필터. 비참여자면 빈 목록. */
+    suspend fun list(projectId: Long, userId: Long, scene: String?, status: String?): TestCaseListResponse {
         val statusName = status?.let {
             VerificationStatus.fromWire(it)?.name
                 ?: throw BadRequestException("verificationStatus must be one of ${VerificationStatus.NAMES}")
         }
         if (!projectAccessService.isMember(projectId, userId)) return TestCaseListResponse(emptyList())
         val source = when {
-            category != null -> repository.findByProjectIdAndCategoryOrderByIdDesc(projectId, category)
+            scene != null -> repository.findByProjectIdAndSceneOrderByIdDesc(projectId, scene)
             statusName != null -> repository.findByProjectIdAndVerificationStatusOrderByIdDesc(projectId, statusName)
             else -> repository.findByProjectIdOrderByIdDesc(projectId)
         }
         val items = source
             .filter { statusName == null || it.verificationStatus == statusName }
-            .filter { category == null || it.category == category }
+            .filter { scene == null || it.scene == scene }
             .map { it.toTestCaseResponse() }
             .toList()
         return TestCaseListResponse(items)
@@ -65,15 +65,15 @@ class TestCaseService(
         return AllTestCasesResponse(repository.findTestCaseListByProjectIdOrderByIdAsc(projectId).toList())
     }
 
-    /** 케이스 생성. category/title/expected 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404). */
+    /** 케이스 생성. scene/step/expectedValue 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404). */
     suspend fun create(projectId: Long, userId: Long, request: TestCaseCreateRequest): TestCaseResponse? {
         if (!projectAccessService.isMember(projectId, userId)) return null
         val entity = TestCaseEntity(
             projectId = projectId,
-            category = request.category.requireField("category"),
-            title = request.title.requireField("title"),
+            scene = request.scene.requireField("scene"),
+            step = request.step.requireField("step"),
             precondition = request.precondition?.ifBlank { null },
-            expected = request.expected.requireField("expected"),
+            expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
         )
         return repository.save(entity).toTestCaseResponse()
@@ -91,10 +91,10 @@ class TestCaseService(
                 ?: throw BadRequestException("verificationStatus must be one of ${VerificationStatus.NAMES}")
         }
         val updated = existing.copy(
-            category = request.category?.ifBlank { null } ?: existing.category,
-            title = request.title?.ifBlank { null } ?: existing.title,
+            scene = request.scene?.ifBlank { null } ?: existing.scene,
+            step = request.step?.ifBlank { null } ?: existing.step,
             precondition = if (request.precondition == null) existing.precondition else request.precondition.ifBlank { null },
-            expected = request.expected?.ifBlank { null } ?: existing.expected,
+            expectedValue = request.expectedValue?.ifBlank { null } ?: existing.expectedValue,
             verificationStatus = statusName ?: existing.verificationStatus,
         )
         return repository.save(updated).toTestCaseResponse()

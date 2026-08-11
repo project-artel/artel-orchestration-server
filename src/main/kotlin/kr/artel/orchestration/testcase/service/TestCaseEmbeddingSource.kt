@@ -37,12 +37,12 @@ class TestCaseEmbeddingSource(
 
     /**
      * 케이스를 임베딩할 CONTENT 텍스트로 합성한다. 검색은 사용자의 자연어 의도를 이 본문에 의미적으로
-     * 매칭하므로, 분류·제목·사전조건·기대결과를 모두 담아 검색 표면을 넓힌다.
+     * 매칭하므로, 씬·스텝·사전조건·기대결과를 모두 담아 검색 표면을 넓힌다.
      */
     private fun composeContent(case: TestCaseEntity): String = buildString {
-        append(case.category).append('\n')
-        append(case.title)
+        append(case.scene).append('\n')
+        append(case.step)
         case.precondition?.takeIf { it.isNotBlank() }?.let { append('\n').append(it) }
-        append('\n').append(case.expected)
+        append('\n').append(case.expectedValue)
     }
 }
