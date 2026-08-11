@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.RestController
  * QA 대시보드(React)와 통신하는 TestScenario 본체 REST 컨트롤러(외부/인증된 요청, 코루틴).
  *
  * 컨트롤러는 얇게 유지한다: JWT에서 userId를 추출하고, 비즈니스 로직은 [TestScenarioService]에 위임하며,
- * HTTP 상태코드 매핑만 담당한다. 저작 챗봇 대화(메시지/스트림/중계)는 런 단위이므로
+ * HTTP 상태코드 매핑만 담당한다. 작성 챗봇 대화(메시지/스트림/중계)는 런 단위이므로
  * [kr.artel.orchestration.testrun.controller.TestRunController]로 분리됐다(ARTEL-206 Step 6).
  */
 @RestController

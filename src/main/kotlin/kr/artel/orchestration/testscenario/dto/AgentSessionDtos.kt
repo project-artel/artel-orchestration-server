@@ -11,7 +11,7 @@ import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
  * Agent가 어떤 화면을 대상으로 시나리오를 짜는지 참조하게 한다. 스캔을 보고한 빌드가 없으면
  * 빈 객체다. unity_context는 아직 연동 보류로 빈 객체를 보낸다.
  *
- * project_id/run_id는 저작 세션의 스코프다(ARTEL-206 Step 6). Agent는 `test_case_search` 프레임의
+ * project_id/run_id는 작성 세션의 스코프다(ARTEL-206 Step 6). Agent는 `test_case_search` 프레임의
  * 검색을 이 프로젝트로 좁히고, 턴 결과 시나리오는 이 런에 추가·수정된다. 세션이 런 단위이므로 run_id는
  * 항상 존재한다.
  *

@@ -36,13 +36,13 @@ import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 저작 챗봇의 Agent 서버 연동 서비스(코루틴). 실제 Agent 서버 계약(FastAPI)에 맞춘다:
+ * 작성 챗봇의 Agent 서버 연동 서비스(코루틴). 실제 Agent 서버 계약(FastAPI)에 맞춘다:
  *
  * 1. 세션 오픈: `POST {base}/sessions {user_input, unity_context, game_context, model, project_id, run_id}` → `{session_id}`
  * 2. WS 연결: `WS {ws-base}/sessions/{session_id}`. 연결 시 Agent가 첫 결과를 보낸다(오픈 때 준 user_input 기반).
  * 3. 후속 턴: WS로 `{type:"turn", user_input, model?}` 전송.
  * 4. 결과 수신: `{type:"result", message, scenarios[]}` → SSE 중계 + scenarios를 test_scenario
- *    (payload.steps JSONB)·test_run_scenario에 반영(신규 저작. 빈 배열이면 DB 무변경).
+ *    (payload.steps JSONB)·test_run_scenario에 반영(신규 작성. 빈 배열이면 DB 무변경).
  * 5. 인입 검색: `{type:"test_case_search", ...}` → TestCaseSearchService로 답(`test_case_search_result`).
  *
  * **세션은 런 단위다**(ARTEL-206 Step 6): 세션 키(`sessionKey` = userId:runId)로 Agent 세션(session_id + WS)을

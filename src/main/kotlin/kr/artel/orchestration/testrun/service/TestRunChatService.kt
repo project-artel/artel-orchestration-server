@@ -19,9 +19,9 @@ import org.springframework.http.codec.ServerSentEvent
 import org.springframework.stereotype.Service
 
 /**
- * 저작 챗봇의 런 스코프 대화 서비스(코루틴) — ARTEL-206 Step 6.
+ * 작성 챗봇의 런 스코프 대화 서비스(코루틴) — ARTEL-206 Step 6.
  *
- * v2 저작은 한 번의 대화로 여러 시나리오를 추가·수정하므로 대화의 주체는 시나리오가 아니라 **런**이다.
+ * v2 작성은 한 번의 대화로 여러 시나리오를 추가·수정하므로 대화의 주체는 시나리오가 아니라 **런**이다.
  * 따라서 세션·SSE·채팅 저장을 모두 (userId, runId)로 스코프한다 — 같은 런 안에서는 어떤 시나리오를
  * 편집하든 대화가 이어진다.
  *
@@ -79,7 +79,7 @@ class TestRunChatService(
     }
 
     /**
-     * 저작 세션을 종료한다(사용자가 런 편집을 마치고 나갈 때). Agent WS 세션과 SSE 스트림을 함께 닫는다.
+     * 작성 세션을 종료한다(사용자가 런 편집을 마치고 나갈 때). Agent WS 세션과 SSE 스트림을 함께 닫는다.
      * 채팅 내역·시나리오는 그대로 남는다. 접근 불가면 404.
      */
     suspend fun close(appUserId: Long, runId: Long) {
