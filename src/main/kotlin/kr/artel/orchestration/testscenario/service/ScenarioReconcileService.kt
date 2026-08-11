@@ -101,33 +101,13 @@ class ScenarioReconcileService(
      * 에이전트가 돌려준 시나리오를 저장 본문으로 만든다. [previous]는 교체되기 전의 스텝들이다.
      *
      * 에이전트 계약([ChatScenarioStep])에는 기대 판정 라벨이 없다 — 보여준 적이 없으니 돌려받을
-     * 것도 없다(ARTEL-301). 그래서 여기서 살려 얹지 않으면 챗봇 편집 한 번에 그 시나리오의 정답지가
-     * 통째로 지워진다.
+     * 것도 없다(ARTEL-301). 그래서 [ExpectedLabelPolicy]를 통과시키지 않으면 챗봇 편집 한 번에 그
+     * 시나리오의 정답지가 통째로 지워진다. 규칙 자체는 그쪽에 있다 — 저장 경로가 셋이라 각자
+     * 적어 두면 그중 하나가 언젠가 빠진다.
      */
     private fun draftFor(scenario: ScenarioResult, previous: List<ScenarioStep>) = ScenarioDraft(
         title = scenario.title,
         description = scenario.description,
-        steps = carryLabels(scenario.steps.map { it.toStoredStep() }, previous),
+        steps = ExpectedLabelPolicy.carryOver(scenario.steps.map { it.toStoredStep() }, previous),
     )
-
-    /**
-     * 같은 자리에 **그대로 남은** 스텝에만 옛 라벨을 다시 붙인다.
-     *
-     * 라벨은 "이 스텝이 통과해야 하는가"에 대한 사람의 판단이다. 스텝의 행위나 검증 대상 TC가
-     * 바뀌었다면 그 판단은 더 이상 그 스텝에 대한 것이 아니므로, 옮겨 붙이지 않고 미지정으로 둔다.
-     *
-     * **위치만 보고 옮기지 않는 이유**가 이것이다. 에이전트는 스텝을 끼워 넣고 지우고 순서를 바꾸므로
-     * 인덱스만으로 이으면 라벨이 엉뚱한 스텝에 달라붙는다. 잘못 달린 라벨은 없는 라벨보다 나쁘다 —
-     * 기계가 지어낸 정답지가 되고, 채점은 그것을 사람의 판단으로 믿는다. 살릴 수 있는 것만 살리고
-     * 나머지는 사람이 다시 단다.
-     */
-    private fun carryLabels(next: List<ScenarioStep>, previous: List<ScenarioStep>) =
-        next.mapIndexed { index, step ->
-            val old = previous.getOrNull(index)
-            if (old != null && old.action == step.action && old.caseId == step.caseId) {
-                step.copy(expectedPassed = old.expectedPassed)
-            } else {
-                step
-            }
-        }
 }

@@ -2,7 +2,14 @@ package kr.artel.orchestration.testscenario
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
+import kr.artel.orchestration.auth.service.OAuthIdentity
+import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.project.entity.ProjectEntity
+import kr.artel.orchestration.project.entity.ProjectMemberEntity
+import kr.artel.orchestration.project.entity.ProjectRole
+import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -21,6 +28,7 @@ import kr.artel.orchestration.testscenario.entity.withDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.testscenario.service.ScenarioReconcileService
+import kr.artel.orchestration.testscenario.service.TestScenarioService
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -43,6 +51,7 @@ import java.time.Instant
 class ExpectedLabelLeakIntegrationTest {
 
     @Autowired private lateinit var compositionService: ScenarioCompositionService
+    @Autowired private lateinit var scenarioService: TestScenarioService
     @Autowired private lateinit var reconcileService: ScenarioReconcileService
     @Autowired private lateinit var runScenarioReader: RunScenarioReader
     @Autowired private lateinit var scenarioRepository: TestScenarioRepository
@@ -50,20 +59,37 @@ class ExpectedLabelLeakIntegrationTest {
     @Autowired private lateinit var runRepository: TestRunRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
+    @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
+    @Autowired private lateinit var appUserRepository: AppUserRepository
+    @Autowired private lateinit var identityRepository: OAuthIdentityRepository
+    @Autowired private lateinit var oauthUserService: OAuthUserService
     @Autowired private lateinit var objectMapper: ObjectMapper
 
     private var projectId: Long = 0
     private var caseId: Long = 0
+    private var ownerId: Long = 0
 
     @BeforeEach
     fun seed(): Unit = runBlocking {
         wipe()
         val now = Instant.now()
+        ownerId = oauthUserService.upsert(
+            OAuthIdentity(
+                provider = "github", providerUserId = "302", login = "labeler",
+                displayName = "labeler", avatarUrl = null, email = "labeler@example.com"
+            )
+        )!!.userId.toLong()
         projectId = requireNotNull(
             projectRepository.save(
                 ProjectEntity(name = "label-p", genre = "ACTION", createdAt = now, updatedAt = now)
             )
         ).id!!
+        projectMemberRepository.save(
+            ProjectMemberEntity(
+                projectId = projectId, appUserId = ownerId,
+                role = ProjectRole.OWNER.name, createdAt = now
+            )
+        )
         caseId = requireNotNull(
             testCaseRepository.save(
                 TestCaseEntity(
@@ -82,7 +108,10 @@ class ExpectedLabelLeakIntegrationTest {
         runRepository.deleteAll()
         scenarioRepository.deleteAll()
         testCaseRepository.deleteAll()
+        projectMemberRepository.deleteAll()
         projectRepository.deleteAll()
+        identityRepository.deleteAll()
+        appUserRepository.deleteAll()
     }
 
     // ------------------------------------------------------------------ tests
@@ -178,6 +207,79 @@ class ExpectedLabelLeakIntegrationTest {
 
         // 잘못 달린 라벨은 없는 라벨보다 나쁘다 — 기계가 지어낸 정답지가 되기 때문이다.
         assertThat(storedSteps(scenarioId).map { it.expectedPassed }).containsExactly(null, null, null)
+    }
+
+    @Test
+    fun `저작 자동저장은 라벨을 지우지 못한다`(): Unit = runBlocking {
+        val scenarioId = saveScenario(labelledDraft())
+
+        // 저작 화면은 라벨을 모른다 — 자동저장이 보내는 draft에는 그 키가 없다(전부 null).
+        // 그대로 저장했다면 스텝을 한 글자 고쳤을 뿐인데 정답지가 통째로 사라진다.
+        scenarioService.testScenarioUpdate(
+            ownerId, scenarioId,
+            ScenarioDraft(
+                title = "상점(수정)", description = "구매 흐름",
+                steps = listOf(
+                    ScenarioStep(action = "상점을 연다"),
+                    ScenarioStep(action = "구매 버튼을 누른다", caseId = caseId),
+                    ScenarioStep(action = "완전히 다른 행위"),
+                )
+            )
+        )
+
+        val stored = storedSteps(scenarioId)
+        assertThat(storedDraft(scenarioId).title).isEqualTo("상점(수정)")
+        assertThat(stored.map { it.expectedPassed }).containsExactly(true, false, null)
+    }
+
+    @Test
+    fun `저작 자동저장이 라벨을 실어 보내도 그 값은 버려진다`(): Unit = runBlocking {
+        val scenarioId = saveScenario(labelledDraft())
+
+        // 라벨을 아는 클라이언트가 생겨도 이 경로로는 못 바꾼다. 규칙이 UI 관례가 아니라
+        // 서버에 있다는 것이 이 테스트의 요점이다.
+        scenarioService.testScenarioUpdate(
+            ownerId, scenarioId,
+            ScenarioDraft(
+                title = "상점", description = "구매 흐름",
+                steps = listOf(
+                    ScenarioStep(action = "상점을 연다", expectedPassed = false),
+                    ScenarioStep(action = "구매 버튼을 누른다", caseId = caseId, expectedPassed = true),
+                    ScenarioStep(action = "완전히 다른 행위", expectedPassed = true),
+                )
+            )
+        )
+
+        assertThat(storedSteps(scenarioId).map { it.expectedPassed }).containsExactly(true, false, null)
+    }
+
+    @Test
+    fun `라벨 전용 경로만 라벨을 바꾸고 본문은 안 건드린다`(): Unit = runBlocking {
+        val scenarioId = saveScenario(labelledDraft())
+
+        scenarioService.updateExpectedLabels(
+            ownerId, scenarioId,
+            // 3번은 미지정 → 실패 기대, 1번은 통과 기대 → 미지정으로 되돌린다.
+            mapOf(1 to null, 3 to false)
+        )
+
+        val stored = storedSteps(scenarioId)
+        assertThat(stored.map { it.expectedPassed }).containsExactly(null, false, false)
+        // 본문은 그대로다 — 라벨링 도구가 저작자가 방금 고친 스텝을 되돌리지 않는다.
+        assertThat(stored.map { it.action })
+            .containsExactly("상점을 연다", "구매 버튼을 누른다", "완전히 다른 행위")
+        assertThat(stored[1].caseId).isEqualTo(caseId)
+    }
+
+    @Test
+    fun `라벨 전용 경로에서 범위 밖 스텝 번호는 버려진다`(): Unit = runBlocking {
+        val scenarioId = saveScenario(labelledDraft())
+
+        // 라벨링 화면이 읽은 뒤 저작자가 스텝을 지웠을 수 있다. 그 경합으로 요청 전체를 거절하면
+        // 나머지 라벨까지 못 들어간다.
+        scenarioService.updateExpectedLabels(ownerId, scenarioId, mapOf(3 to true, 99 to true))
+
+        assertThat(storedSteps(scenarioId).map { it.expectedPassed }).containsExactly(true, false, true)
     }
 
     @Test

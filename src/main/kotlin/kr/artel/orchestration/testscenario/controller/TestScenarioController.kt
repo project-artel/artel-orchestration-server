@@ -6,6 +6,7 @@ import kr.artel.orchestration.testscenario.dto.ApproveScenarioRequest
 import kr.artel.orchestration.testscenario.dto.CreateScenarioRequest
 import kr.artel.orchestration.testscenario.dto.CreateScenarioResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
+import kr.artel.orchestration.testscenario.dto.UpdateExpectedLabelsRequest
 import kr.artel.orchestration.testscenario.dto.UpdateScenarioRequest
 import kr.artel.orchestration.testscenario.service.TestScenarioService
 import org.springframework.http.ResponseEntity
@@ -68,6 +69,26 @@ class TestScenarioController(
     ): ResponseEntity<ScenarioResponse> {
         val appUserId = requireUser(jwt)
         return ResponseEntity.ok(service.testScenarioUpdate(appUserId, testScenarioId, request.draft))
+    }
+
+    /**
+     * 스텝의 기대 판정 라벨만 갈아끼운다(ARTEL-301). **라벨을 바꿀 수 있는 유일한 경로다.**
+     *
+     * 위 자동저장(PUT)과 아래 승인은 들어온 라벨을 버리고 기존 값을 보존한다 — 저작 클라이언트는
+     * 라벨을 모르므로, 그쪽으로 받으면 스텝을 한 글자 고쳤을 뿐인데 정답지가 통째로 사라진다.
+     * 본문과 라벨을 한 요청으로 받지 않는 것도 같은 이유의 뒷면이다: 함께 받으면 라벨링 도구가
+     * 본문을 되돌린다.
+     */
+    @PutMapping("/{testScenarioId}/expected-labels")
+    suspend fun updateExpectedLabels(
+        @PathVariable testScenarioId: Long,
+        @RequestBody request: UpdateExpectedLabelsRequest,
+        @AuthenticationPrincipal jwt: Jwt
+    ): ResponseEntity<ScenarioResponse> {
+        val appUserId = requireUser(jwt)
+        return ResponseEntity.ok(
+            service.updateExpectedLabels(appUserId, testScenarioId, request.toLabelMap())
+        )
     }
 
     /** 시나리오를 승인(확정)한다: 최종 draft 저장(대화 세션은 런 단위라 유지). */

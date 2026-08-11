@@ -96,7 +96,13 @@ class TestScenarioService(
     suspend fun testScenarioUpdate(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft): ScenarioResponse {
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
             ?: throw NotFoundException()
-        val saved = scenarioRepository.save(entity.withDraft(draft, objectMapper))
+        // 기대 판정 라벨은 이 경로로 못 들어온다(ARTEL-301). 저작 화면은 라벨을 모르므로 자동저장이
+        // 라벨 없는 steps를 보내고, 그대로 저장하면 스텝을 한 글자 고쳤을 뿐인데 그 시나리오의
+        // 정답지가 통째로 사라진다. 규칙과 이유는 [ExpectedLabelPolicy]에 있다.
+        val safe = draft.copy(
+            steps = ExpectedLabelPolicy.carryOver(draft.steps, entity.toDraft(objectMapper).steps)
+        )
+        val saved = scenarioRepository.save(entity.withDraft(safe, objectMapper))
         return ScenarioResponse(
             testScenarioId = saved.id!!,
             projectId = saved.projectId,
@@ -112,8 +118,49 @@ class TestScenarioService(
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
             ?: throw NotFoundException()
         if (draft != null) {
-            scenarioRepository.save(entity.withDraft(draft, objectMapper))
+            // 승인도 본문 저장 경로라 같은 규칙을 진다 — 라벨은 여기로 들어오지도 나가지도 않는다.
+            val safe = draft.copy(
+                steps = ExpectedLabelPolicy.carryOver(draft.steps, entity.toDraft(objectMapper).steps)
+            )
+            scenarioRepository.save(entity.withDraft(safe, objectMapper))
         }
+    }
+
+    /**
+     * 스텝의 기대 판정 라벨만 갈아끼운다(ARTEL-301). 본문은 건드리지 않는다.
+     *
+     * **라벨을 바꿀 수 있는 유일한 경로다.** 다른 저장 경로는 전부 [ExpectedLabelPolicy.carryOver]를
+     * 지나며 들어온 라벨을 버리므로, 라벨을 모르는 클라이언트가 정답지를 지울 방법이 없다.
+     *
+     * 본문과 함께 받지 않는 것도 의도다. 한 요청으로 받으면 라벨링 도구가 본문까지 덮어쓸 수 있고,
+     * 그러면 저작자가 방금 고친 스텝이 라벨 저장 한 번에 되돌아간다.
+     *
+     * @param labels 스텝 번호(1부터) → 라벨. 값이 `null`이면 **미지정으로 되돌린다**(키를 빼는 것과
+     *   다르다 — 키가 없는 스텝은 손대지 않는다). 범위 밖 번호는 조용히 버린다.
+     *
+     * ⚠️ 접근 제어는 프로젝트 멤버십까지다. 이 리포에는 프로젝트 밖의 관리자 개념이 없어
+     *   "내부 도구만 만진다"를 역할로 강제하지는 못한다 — 경로를 가른 것과 라벨링 화면을
+     *   admin-page에만 두는 것이 현재의 경계다.
+     */
+    suspend fun updateExpectedLabels(
+        appUserId: Long,
+        testScenarioId: Long,
+        labels: Map<Int, Boolean?>
+    ): ScenarioResponse {
+        val entity = accessService.accessibleScenario(testScenarioId, appUserId)
+            ?: throw NotFoundException()
+        val draft = entity.toDraft(objectMapper)
+        val saved = scenarioRepository.save(
+            entity.withDraft(
+                draft.copy(steps = ExpectedLabelPolicy.apply(draft.steps, labels)),
+                objectMapper
+            )
+        )
+        return ScenarioResponse(
+            testScenarioId = saved.id!!,
+            projectId = saved.projectId,
+            payload = saved.toDraft(objectMapper)
+        )
     }
 
     /**
