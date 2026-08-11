@@ -1,7 +1,6 @@
 package kr.artel.orchestration.qa
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
@@ -254,8 +253,8 @@ class QaRunInboundActivationIntegrationTest {
             )
         )!!
         val testRun = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))!!
-        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!, payload = Json.of("{}")))!!
-        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!, payload = Json.of("{}")))!!
+        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
 
         val started = persistence.createRunStarting(testRun.id!!, instance.id!!, ownerId, listOf(s1.id!!, s2.id!!))
         val firstTryId = started.tries.first().id!!

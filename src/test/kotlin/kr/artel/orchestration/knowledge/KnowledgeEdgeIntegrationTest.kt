@@ -457,7 +457,7 @@ class KnowledgeEdgeIntegrationTest {
             )
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = resolvedProjectId, payload = Json.of("{}"))
+            TestScenarioEntity(projectId = resolvedProjectId)
         )!!
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(

@@ -4,6 +4,9 @@ import java.time.Instant
 
 /**
  * 시나리오 단건 조회 응답. `payload`는 Agent가 생성한 ScenarioDraft로, FE가 canvas 렌더에 사용한다.
+ *
+ * 저장이 컬럼으로 쪼개진 뒤에도(ARTEL-291) 이 필드명은 FE 계약이라 그대로 둔다 — 서버가 세 컬럼을
+ * 다시 ScenarioDraft로 조립해 내려준다.
  */
 data class ScenarioResponse(
     val testScenarioId: Long,
@@ -21,8 +24,8 @@ data class MessageResponse(
 )
 
 /**
- * 프로젝트 시나리오 목록의 한 항목(요약). 목록 화면 렌더용으로 payload 전체 대신 제목만 담는다.
- * 제목은 payload(ScenarioDraft)의 title에서 추출한다.
+ * 프로젝트 시나리오 목록의 한 항목(요약). 목록 화면 렌더용으로 본문 전체 대신 제목만 담는다.
+ * 제목은 test_scenario.title 컬럼에서 그대로 온다(스텝을 역직렬화하지 않는다).
  */
 data class ScenarioSummary(
     val testScenarioId: Long,

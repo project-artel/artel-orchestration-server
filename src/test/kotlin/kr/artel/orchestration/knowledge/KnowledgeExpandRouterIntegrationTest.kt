@@ -344,7 +344,7 @@ class KnowledgeExpandRouterIntegrationTest {
             ProjectMemberEntity(projectId = projectId, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now)
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = projectId, payload = Json.of("{}"))
+            TestScenarioEntity(projectId = projectId)
         )!!
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
