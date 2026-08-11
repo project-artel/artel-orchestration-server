@@ -17,8 +17,9 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     /**
      * 저작 Agent에 실을 전량 목록(ARTEL-318). 엔티티가 아니라 [TestCaseCatalogEntry]로 좁혀 읽는다.
      *
-     * **네 컬럼만 고르는 것이 이 질의의 요점이다.** 전량을 읽으므로 `precondition`/`expected`(TEXT)까지
-     * 끌어오면 프로젝트당 수백 KB가 오가는데, 목록은 그 본문을 쓰지 않는다.
+     * 엔티티를 그대로 읽지 않는 것은 Agent가 쓰지 않는 컬럼(`last_verified_build_id`, 타임스탬프)까지
+     * 프롬프트로 흘러가지 않게 하기 위해서다. 본문(`precondition`/`expected`)은 **의도적으로 포함한다** —
+     * 고른 케이스로 스텝을 쓰려면 필요하고, 빼면 다시 가져오는 왕복이 생긴다([TestCaseCatalogEntry] 참고).
      *
      * **`ORDER BY id ASC`는 취향이 아니라 계약이다.** 이 목록은 Agent 프롬프트의 앞쪽 고정 블록에
      * 실려 프롬프트 캐시를 타므로, 줄 순서가 조회마다 흔들리면 캐시가 통째로 깨져 전량을 매 턴 다시
@@ -26,7 +27,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      */
     @Query(
         """
-        SELECT id, category, title, verification_status
+        SELECT id, category, title, precondition, expected, verification_status
         FROM test_case
         WHERE project_id = :projectId
         ORDER BY id ASC

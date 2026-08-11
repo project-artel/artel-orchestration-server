@@ -54,7 +54,7 @@ class TestCaseService(
      *
      * [list]와 달리 필터가 없다. **거르지 않는 것이 이 조회의 목적**이기 때문이다 — 지금 Agent는
      * 벡터 검색으로 30~40건만 보고, 나머지는 존재조차 모른 채 시나리오를 만든다. 그 실패를 없애려면
-     * 전량이어야 하고, 전량이라서 본문 없이 [TestCaseCatalogEntry]로 좁혀 읽는다.
+     * 전량이어야 한다. 전량을 실어도 되는지는 측정으로 답이 났다(1000건 기준 74.4k, 캐시 대상).
      *
      * 정렬을 `id ASC`로 고정하는 이유는 [TestCaseRepository.findCatalogByProjectIdOrderByIdAsc]에 적었다.
      *
