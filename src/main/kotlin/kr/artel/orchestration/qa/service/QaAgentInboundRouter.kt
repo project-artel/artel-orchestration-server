@@ -308,6 +308,10 @@ class QaAgentInboundRouter(
         if (tryRepository.transition(qaTryId, currentStatus, resolved, completedAt, completedAt) != 1) {
             throw IllegalStateException("Illegal QA status transition")
         }
+        // 판정 승격은 **이 분기 안에서만** 일어난다 — 위 resolved == null 갈래(스텝 판정 프레임)는
+        // 런을 끝내지도, 판정을 싣지도 않는다. 전이 **뒤**인 것도 의도다: 앞에 두면 종단되지 않은
+        // 런에 판정이 새겨질 수 있다.
+        promoteVerdict(qaTryId, envelope, completedAt)
         val log = logService.append(
             qaTryId = qaTryId,
             direction = "AGENT_TO_ORCHE",
@@ -326,6 +330,66 @@ class QaAgentInboundRouter(
         // 방금 이 시나리오 try가 종단됐다. 런의 모든 시나리오 try가 종단이면 부모 qa_run도 완료로
         // 닫는다 — 안 그러면 qa_run이 RUNNING으로 남아 그 게임 인스턴스의 다음 런을 영구 차단한다.
         completeRunIfAllTriesDone(qaTry.qaRunId, completedAt)
+    }
+
+    /**
+     * 종단 STATUS가 실어 온 2단 요약을 qa_try 컬럼으로 승격한다(ARTEL-299).
+     *
+     * **컬럼은 GROUP BY용 사본이고 진실은 방금 qa_log에 들어간 payload다**(V25의 run_config와
+     * 축 컬럼의 관계와 같다). 여기 쓰는 목적은 여러 런을 축으로 접는 집계가 qa_log 전체 스캔 +
+     * JSONB 경로 필터를 하지 않게 하는 것뿐이다.
+     *
+     * **요약이 없으면 아무것도 쓰지 않는다.** 소켓 사망·취소·state 없이 끝나는 경로는 요약을
+     * 싣지 못하고, 그런 런은 판정이 0인 것이 아니라 **모르는** 것이다. 0으로 채우면 잘 죽는
+     * 모델이 전부 0점으로 보이고 그 오류는 조용히 지나간다.
+     *
+     * 네 값은 각각 독립으로 읽는다. 하나가 없으면 그 컬럼만 NULL이고 나머지는 채운다 — "요약이
+     * 온전할 때만 쓴다"로 하면 필드 하나가 빠졌다는 이유로 나머지 셋까지 미지가 되어 커버리지가
+     * 실제보다 낮게 보고된다.
+     *
+     * **실패는 삼킨다.** 여기서 나간 예외는 WS 수신 체인 밖으로 나가 소켓을 닫고, 그것이
+     * onDisconnect로 이어져 이미 정상 종료한 런을 실패로 뒤집는다. 판정 사본 하나를 못 쓴 대가로는
+     * 지나치다 — 원본은 qa_log에 남아 있어 나중에 다시 낼 수 있다. `CancellationException`은
+     * 오류가 아니라 취소 신호라 반드시 먼저 다시 던진다([recordSearchUsage]와 같은 규율).
+     */
+    private suspend fun promoteVerdict(
+        qaTryId: Long,
+        envelope: QaAgentEnvelope,
+        updatedAt: Instant
+    ) {
+        val summary = envelope.payload.path("summary").takeIf { it.isObject } ?: return
+        val stepsTotal = summary.longAt("steps", "total")
+        val stepsPassed = summary.longAt("steps", "passed")
+        val casesTotal = summary.longAt("cases", "total")
+        val casesPassed = summary.longAt("cases", "passed")
+        if (stepsTotal == null && stepsPassed == null && casesTotal == null && casesPassed == null) return
+        try {
+            tryRepository.promoteVerdict(
+                id = qaTryId,
+                stepsTotal = stepsTotal,
+                stepsPassed = stepsPassed,
+                casesTotal = casesTotal,
+                casesPassed = casesPassed,
+                updatedAt = updatedAt
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            appendError(qaTryId, envelope, "STATUS verdict promotion failed: ${error.message}")
+        }
+    }
+
+    /**
+     * 정수 값을 **좁히지 않고** 읽는다. `asInt()`로 접으면 INT를 넘는 수가 조용히 다른 수로
+     * 저장되는데, 판정 지표에서 그것은 못 읽은 것보다 나쁘다. 안 들어가는 값은 컬럼 타입이
+     * 거절하고 [promoteVerdict]의 삼킴이 그것을 로그로 떨어뜨린다.
+     */
+    private fun JsonNode.longAt(vararg path: String): Long? {
+        var node: JsonNode = this
+        for (name in path) {
+            node = node.get(name) ?: return null
+        }
+        return node.takeIf { it.isIntegralNumber }?.asLong()
     }
 
     /**
