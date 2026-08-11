@@ -14,13 +14,18 @@ package kr.artel.orchestration.knowledge.dto
  *   "필터가 안 걸린 결과"라 오류로 드러나지 않는다. 두 값은 합집합으로 쓴다.
  * @property source `DOCS`/`QA` 필터(선택, 대소문자 무시).
  * @property limit 돌려받을 항목 수(선택). `artel.knowledge.search`의 상한으로 잘린다.
+ * @property step 이 검색이 난 런 스텝(선택, ARTEL-293). `knowledge_usage.step`에 그대로 남는다.
+ *   **검색 결과를 바꾸지 않는다** — 필터가 아니라 기록용 좌표다. 구버전 Agent는 싣지 않고,
+ *   그때 값은 null("모른다")이 된다. 값을 검증하지 않는 것도 의도다: 잘못된 스텝 번호 때문에
+ *   멀쩡한 검색을 거절하면, 기록 하나 때문에 런의 도구가 실패한다.
  */
 data class KnowledgeSearchRequest(
     val query: String? = null,
     val tags: List<String> = emptyList(),
     val tag: String? = null,
     val source: String? = null,
-    val limit: Int? = null
+    val limit: Int? = null,
+    val step: Int? = null
 )
 
 /**

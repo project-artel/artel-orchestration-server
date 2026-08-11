@@ -10,6 +10,7 @@ import kr.artel.orchestration.knowledge.dto.KnowledgeNeighbour
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchHit
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchResponse
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
+import kr.artel.orchestration.knowledge.entity.KnowledgeRetrievalKind
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
@@ -131,7 +132,9 @@ class KnowledgeSearchService(
                     knowledgeId = row.knowledgeId,
                     version = row.version,
                     rank = index + 1,
-                    score = 1.0 - row.distance
+                    score = 1.0 - row.distance,
+                    // 질의에 직접 걸린 히트. 이웃과 갈라 두는 이유는 KnowledgeRetrievalKind에 있다.
+                    kind = KnowledgeRetrievalKind.DIRECT
                 )
             } + expansion.retrievals
         )
@@ -167,7 +170,10 @@ class KnowledgeSearchService(
             nodeBudget = graphProperties.searchNeighbourLimit,
             // 검색 자체가 벡터 검색이라 히트의 벡터 이웃은 limit을 올렸으면 나왔을 것에 가깝다.
             // 자동으로 붙이면 "limit 올리기"가 분장한 것이 되고 전사 비용만 두 배가 된다.
-            similar = null
+            similar = null,
+            // 에이전트가 요청한 적 없이 밀어넣은 이웃이다. 안 쓰는 것이 정상이라, 직접 요청한
+            // 이웃(EXPAND)과 같은 분모에 담기면 인용률이 검색 설정에 따라 흔들린다.
+            kind = KnowledgeRetrievalKind.SEARCH_NEIGHBOR
         )
         if (outcome.neighbours.isEmpty()) return HitExpansion(emptyMap(), emptyList())
 
@@ -180,16 +186,6 @@ class KnowledgeSearchService(
         return HitExpansion(byHit, outcome.retrievals)
     }
 
-    /**
-     * 검색이 [qaTryId]에 내보낸 히트를 기록한다(ARTEL-255).
-     *
-     * **실패를 삼키지 않는다** — 이 클래스의 나머지와 같은 규칙이다. 무엇을 어떻게 무마할지는
-     * WS 계약을 아는 호출자(라우터)의 몫이고, 여기서 조용히 넘기면 기록이 빠진 것을 아무도 모른다.
-     *
-     * `step`과 `cited`는 채우지 않는다. 전자는 `KnowledgeSearchRequest`가 step을 안 싣기 때문이고,
-     * 후자는 인용 보고 기능이 아직 없기 때문이다. 둘 다 null이 "모른다"는 뜻이며, 특히 `cited`를
-     * false로 채우면 이 시기의 런 전부가 "아무것도 인용하지 않았다"로 읽힌다.
-     */
     suspend fun expand(
         projectId: Long,
         scope: KnowledgeScope,
@@ -240,7 +236,10 @@ class KnowledgeSearchService(
                     maxDistance = graphProperties.similarMaxDistance,
                     limit = graphProperties.similarLimit
                 )
-            }
+            },
+            // 에이전트가 `expand_knowledge`로 **직접 요청한** 이웃이다. 요청해 놓고 안 쓴 것은
+            // 밀어넣은 이웃을 안 쓴 것보다 훨씬 강한 부정 신호라 따로 센다.
+            kind = KnowledgeRetrievalKind.EXPAND
         )
 
         // 검색과 같은 이유로 본문은 남기지 않고 개수만 남긴다.
@@ -259,7 +258,25 @@ class KnowledgeSearchService(
         )
     }
 
-    suspend fun recordRetrievals(qaTryId: Long, retrievals: List<KnowledgeRetrieval>) {
+    /**
+     * 검색이 [qaTryId]에 내보낸 히트를 기록한다(ARTEL-255).
+     *
+     * **실패를 삼키지 않는다** — 이 클래스의 나머지와 같은 규칙이다. 무엇을 어떻게 무마할지는
+     * WS 계약을 아는 호출자(라우터)의 몫이고, 여기서 조용히 넘기면 기록이 빠진 것을 아무도 모른다.
+     *
+     * `cited`는 여기서 채우지 않는다. 검색 시점에는 그 항목이 쓰일지 알 수 없고, 답은 나중에
+     * 스텝 판정이 가져온다([KnowledgeCitationService]). null이 "모른다"이며, false로 채우면
+     * 인용을 보고할 수 없는 런까지 "아무것도 인용하지 않았다"로 읽힌다.
+     *
+     * @param step 이 검색이 난 런 스텝. Agent가 프레임에 실어 주면 값이 있고, 싣지 않는 런에서는
+     *   null이다(ARTEL-293). 기록되는 메타데이터일 뿐 인용 매칭의 키가 아니다 — 앞선 스텝에서
+     *   검색한 것을 뒤 스텝에서 인용하는 것이 정상 동작이라, 키로 삼으면 그 인용이 증발한다.
+     */
+    suspend fun recordRetrievals(
+        qaTryId: Long,
+        retrievals: List<KnowledgeRetrieval>,
+        step: Int? = null
+    ) {
         if (retrievals.isEmpty()) return
         val now = Instant.now(clock)
         usageRepository.saveAll(
@@ -268,8 +285,12 @@ class KnowledgeSearchService(
                     qaTryId = qaTryId,
                     knowledgeId = it.knowledgeId,
                     knowledgeVersion = it.version,
+                    step = step,
                     rank = it.rank,
                     score = it.score?.toFloat(),
+                    // 종류는 만든 자리에서 실려 온다. 여기서 rank로 유추하면, 새 검색 경로가
+                    // 생겼을 때 조용히 틀린다.
+                    retrievalKind = it.kind.name,
                     retrievedAt = now
                 )
             }
@@ -368,12 +389,16 @@ data class KnowledgeExpandServiceOutcome(
  *   아니라 관계를 타고 온 것이라, 0이나 임의의 값으로 채우면 순위와 유용성을 견주는 질의가
  *   조용히 틀린다. null이 "모른다"인 그 컬럼의 관례 그대로다.
  * @property score 코사인 유사도. Agent에게 나간 값과 같다. 관계로 온 이웃은 유사도가 없어 null이다.
+ * @property kind 이 사실이 **어느 경로로** 만들어졌는지(ARTEL-293). [rank]가 null인 두 경로를
+ *   가르는 것이 이 필드의 존재 이유이고, 그래서 **만드는 자리에서 실린다** — 공용 싱크인
+ *   [KnowledgeSearchService.recordRetrievals]는 여기 실린 값을 그대로 저장할 뿐 추측하지 않는다.
  */
 data class KnowledgeRetrieval(
     val knowledgeId: Long,
     val version: Int,
     val rank: Int?,
-    val score: Double?
+    val score: Double?,
+    val kind: KnowledgeRetrievalKind
 )
 
 /**
