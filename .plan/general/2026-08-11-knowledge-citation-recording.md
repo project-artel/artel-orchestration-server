@@ -85,7 +85,7 @@ NULL인 런(설정을 보고하지 않은 Agent)에서 판정이 불가능하기
 - [ ] **Step 0: Recon** — V27/V28 주석, `KnowledgeSearchService`, `KnowledgeGraphService.expand`,
       `KnowledgeUsageEntity/Repository`, `QaAgentInboundRouter.routeStatus`,
       `QaExecutionFailureService`, `QaTryService.failRun/cancelRun`
-- [ ] **Step 1: 마이그레이션** — `V32__add_knowledge_usage_citation.sql`
+- [ ] **Step 1: 마이그레이션** — `V34__add_knowledge_usage_citation.sql`
       - `ALTER TABLE knowledge_usage ADD COLUMN IF NOT EXISTS retrieval_kind VARCHAR(20)`
       - nullable, 기본값 없음, 백필 없음. 기존 행은 출처를 **모르는** 것이지 DIRECT가 아니다.
       - `step` / `cited` 컬럼 COMMENT 갱신(V27이 "이번 범위에서는 항상 NULL"이라 적어 둔 것을

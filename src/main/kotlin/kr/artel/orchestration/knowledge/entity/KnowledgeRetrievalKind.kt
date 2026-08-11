@@ -12,7 +12,7 @@ package kr.artel.orchestration.knowledge.entity
  * [kr.artel.orchestration.knowledge.service.KnowledgeRetrieval]에 실리고, 공용 싱크인
  * `recordRetrievals`는 실린 값을 그대로 저장한다.
  *
- * DB에는 이름 그대로 저장되고 CHECK는 없다 — 이유는 V32 주석에 있다(값이 wire에서 오지 않으므로
+ * DB에는 이름 그대로 저장되고 CHECK는 없다 — 이유는 V34 주석에 있다(값이 wire에서 오지 않으므로
  * 오타는 이 enum이 잡고, 경로가 늘 때마다 마이그레이션을 요구하지 않는다).
  */
 enum class KnowledgeRetrievalKind {
