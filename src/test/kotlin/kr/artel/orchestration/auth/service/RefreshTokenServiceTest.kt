@@ -74,11 +74,16 @@ class RefreshTokenServiceTest {
         assertThat(serviceAt(now).verify(accessToken, properties.audience)).isNull()
     }
 
+    /**
+     * 변조는 [tamperSignature]로 만든다. 서명 문자열의 마지막 글자를 바꾸는 방식은 그 자리의
+     * 하위 2비트가 base64url 패딩이라 약 6% 확률로 바이트가 그대로 남고, 그때 토큰이 검증을
+     * 통과해 이 테스트가 간헐 실패한다. 이유는 [tamperSignature]의 KDoc에 있다.
+     */
     @Test
     fun `rejects a token whose signature was tampered with`(): Unit = runBlocking {
         val issued = serviceAt(now).issue("1042", properties.audience, Duration.ofDays(14))
-        val (header, payload, signature) = issued.token.split(".")
-        val tampered = "$header.$payload.${signature.dropLast(1)}${if (signature.last() == 'A') 'B' else 'A'}"
+
+        val tampered = tamperSignature(issued.token)
 
         assertThat(serviceAt(now).verify(tampered, properties.audience)).isNull()
     }
