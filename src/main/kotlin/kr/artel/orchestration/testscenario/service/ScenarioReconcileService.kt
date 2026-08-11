@@ -4,9 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
+import kr.artel.orchestration.testscenario.dto.ScenarioStep
+import kr.artel.orchestration.testscenario.dto.toStoredStep
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
+import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.entity.withDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.slf4j.LoggerFactory
@@ -57,11 +61,6 @@ class ScenarioReconcileService(
             var runPosition = (runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
                 .maxOfOrNull { it.position } ?: -1) + 1
             for (scenario in scenarios) {
-                val draft = ScenarioDraft(
-                    title = scenario.title,
-                    description = scenario.description,
-                    steps = scenario.steps,
-                )
                 val scenarioId = scenario.scenarioId
                 if (scenarioId != null) {
                     // 수정: 기존 시나리오 본문을 통째로 교체한다.
@@ -71,13 +70,20 @@ class ScenarioReconcileService(
                         logger.warn("수정 대상 시나리오 무효 — 스킵 [runId=$runId, scenarioId=$scenarioId]")
                         continue
                     }
-                    scenarioRepository.save(existing.withDraft(draft, objectMapper))
+                    // 교체 전에 사람이 단 기대 판정 라벨을 건져 온다(ARTEL-301). 에이전트는 라벨을
+                    // 본 적도 돌려준 적도 없으므로, 그냥 덮어쓰면 챗봇으로 시나리오를 한 번 고칠
+                    // 때마다 그 시나리오의 정답지가 통째로 사라진다.
+                    val previous = existing.toDraft(objectMapper).steps
+                    scenarioRepository.save(
+                        existing.withDraft(draftFor(scenario, previous), objectMapper)
+                    )
                     // 런 링크는 그대로 둔다(수정은 위치를 바꾸지 않는다).
                     applied++
                 } else {
-                    // 추가: 새 시나리오 INSERT + 런 끝에 append.
+                    // 추가: 새 시나리오 INSERT + 런 끝에 append. 새 시나리오에는 살릴 라벨이 없다.
                     val saved = scenarioRepository.save(
-                        TestScenarioEntity(projectId = projectId).withDraft(draft, objectMapper)
+                        TestScenarioEntity(projectId = projectId)
+                            .withDraft(draftFor(scenario, emptyList()), objectMapper)
                     )
                     runScenarioRepository.save(
                         TestRunScenarioEntity(testRunId = runId, testScenarioId = saved.id!!, position = runPosition)
@@ -90,4 +96,18 @@ class ScenarioReconcileService(
         logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${scenarios.size}]")
         return applied
     }
+
+    /**
+     * 에이전트가 돌려준 시나리오를 저장 본문으로 만든다. [previous]는 교체되기 전의 스텝들이다.
+     *
+     * 에이전트 계약([ChatScenarioStep])에는 기대 판정 라벨이 없다 — 보여준 적이 없으니 돌려받을
+     * 것도 없다(ARTEL-301). 그래서 [ExpectedLabelPolicy]를 통과시키지 않으면 챗봇 편집 한 번에 그
+     * 시나리오의 정답지가 통째로 지워진다. 규칙 자체는 그쪽에 있다 — 저장 경로가 셋이라 각자
+     * 적어 두면 그중 하나가 언젠가 빠진다.
+     */
+    private fun draftFor(scenario: ScenarioResult, previous: List<ScenarioStep>) = ScenarioDraft(
+        title = scenario.title,
+        description = scenario.description,
+        steps = ExpectedLabelPolicy.carryOver(scenario.steps.map { it.toStoredStep() }, previous),
+    )
 }

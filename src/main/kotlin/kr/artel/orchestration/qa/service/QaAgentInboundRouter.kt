@@ -86,6 +86,7 @@ class QaAgentInboundRouter(
     private val knowledgeCitationService: KnowledgeCitationService,
     private val agentPort: QaAgentPort,
     private val gameInstanceRepository: GameInstanceRepository,
+    private val grader: ExpectedStepsGrader,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -326,6 +327,10 @@ class QaAgentInboundRouter(
         // 런을 끝내지도, 판정을 싣지도 않는다. 전이 **뒤**인 것도 의도다: 앞에 두면 종단되지 않은
         // 런에 판정이 새겨질 수 있다.
         promoteVerdict(qaTryId, envelope, completedAt)
+        // 자기채점된 판정을 사람이 단 기대 라벨과 대조한다(ARTEL-301). 승격과 같은 자리인 것이
+        // 자연스럽다 — 둘 다 "이 런이 끝났고, 그 결과를 기록한다"의 일부다. 채점자는 스스로
+        // 삼키므로 여기서 감싸지 않는다.
+        grader.grade(qaTryId)
         val log = logService.append(
             qaTryId = qaTryId,
             direction = "AGENT_TO_ORCHE",

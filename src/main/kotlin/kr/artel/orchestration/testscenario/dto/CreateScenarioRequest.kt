@@ -35,3 +35,23 @@ data class UpdateScenarioRequest(
 data class ApproveScenarioRequest(
     val draft: ScenarioDraft? = null
 )
+
+/**
+ * 기대 판정 라벨 일괄 수정 요청(ARTEL-301). 본문은 담지 않는다 — 라벨링 도구가 저작자가 방금 고친
+ * 스텝을 되돌리지 못하게 하는 것이 이 분리의 요점이다.
+ *
+ * `expectedPassed`가 `null`이면 그 스텝을 **미지정으로 되돌린다.** 목록에서 항목을 빼는 것과 다르다 —
+ * 목록에 없는 스텝은 손대지 않는다. 3상태를 그대로 실어 나르려면 둘이 구분돼야 한다.
+ */
+data class UpdateExpectedLabelsRequest(
+    val labels: List<ExpectedLabelEntry> = emptyList()
+) {
+    /** 같은 스텝이 두 번 실리면 뒤엣것이 이긴다 — 요청 하나 안의 순서가 곧 사용자의 최종 입장이다. */
+    fun toLabelMap(): Map<Int, Boolean?> = labels.associate { it.step to it.expectedPassed }
+}
+
+/** 스텝 번호(1부터)와 그 스텝의 기대 판정. */
+data class ExpectedLabelEntry(
+    val step: Int,
+    @com.fasterxml.jackson.annotation.JsonProperty("expected_passed") val expectedPassed: Boolean?
+)

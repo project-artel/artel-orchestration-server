@@ -11,10 +11,15 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * @property scenarioId 이 시나리오의 id. Agent가 수정 결과의 `scenario_id`로 그대로 되돌린다.
  * @property steps 시나리오의 스텝들(순서=실행 순서, 각 스텝은 행위 + 선택적 caseId). Agent 결과의
  *   `steps`와 같은 형태라, Agent가 그대로 편집해 되돌릴 수 있다.
+ *
+ *   타입이 저장 모델([ScenarioStep])이 아니라 [ChatScenarioStep]인 것은 의도다 — 저장 모델에는
+ *   기대 판정 라벨(`expected_passed`)이 있고, 그것이 여기 실리면 에이전트가 답을 알고 시나리오를
+ *   다루게 된다(ARTEL-301). 작성 에이전트는 실행하지 않지만, 라벨을 본 에이전트가 그것을 근거로
+ *   스텝을 고치면 정답지와 시나리오가 서로를 오염시킨다.
  */
 data class CurrentScenario(
     @JsonProperty("scenario_id") val scenarioId: Long,
     val title: String,
     val description: String,
-    val steps: List<ScenarioStep>
+    val steps: List<ChatScenarioStep>
 )

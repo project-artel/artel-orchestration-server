@@ -84,7 +84,13 @@ private fun QaStatsRow?.toTotals(): QaStatsTotals =
         stepsTotal = this?.stepsTotal ?: 0,
         stepsPassed = this?.stepsPassed ?: 0,
         casesTotal = this?.casesTotal ?: 0,
-        casesPassed = this?.casesPassed ?: 0
+        casesPassed = this?.casesPassed ?: 0,
+        scoredRuns = this?.scoredRuns ?: 0,
+        correctPass = this?.correctPass ?: 0,
+        falseAlarm = this?.falseAlarm ?: 0,
+        miss = this?.miss ?: 0,
+        correctFail = this?.correctFail ?: 0,
+        unreported = this?.unreported ?: 0
     )
 
 private fun QaStatsRow.toCell() = QaRunConfigStatsCell(
@@ -108,5 +114,11 @@ private fun QaStatsRow.toCell() = QaRunConfigStatsCell(
     stepsTotal = stepsTotal,
     stepsPassed = stepsPassed,
     casesTotal = casesTotal,
-    casesPassed = casesPassed
+    casesPassed = casesPassed,
+    scoredRuns = scoredRuns,
+    correctPass = correctPass,
+    falseAlarm = falseAlarm,
+    miss = miss,
+    correctFail = correctFail,
+    unreported = unreported
 )

@@ -66,7 +66,13 @@ data class QaRunConfigStatsCell(
     val stepsTotal: Long,
     val stepsPassed: Long,
     val casesTotal: Long,
-    val casesPassed: Long
+    val casesPassed: Long,
+    val scoredRuns: Long,
+    val correctPass: Long,
+    val falseAlarm: Long,
+    val miss: Long,
+    val correctFail: Long,
+    val unreported: Long
 )
 
 /** [QaRunConfigStatsCell]에서 축만 뺀 전체 합계. 축이 없으므로 별도 타입이다. */
@@ -87,5 +93,11 @@ data class QaStatsTotals(
     val stepsTotal: Long,
     val stepsPassed: Long,
     val casesTotal: Long,
-    val casesPassed: Long
+    val casesPassed: Long,
+    val scoredRuns: Long,
+    val correctPass: Long,
+    val falseAlarm: Long,
+    val miss: Long,
+    val correctFail: Long,
+    val unreported: Long
 )

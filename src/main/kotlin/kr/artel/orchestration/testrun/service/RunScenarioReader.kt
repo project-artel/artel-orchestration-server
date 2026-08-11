@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
+import kr.artel.orchestration.testscenario.dto.toChatStep
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.springframework.stereotype.Service
@@ -31,7 +32,9 @@ class RunScenarioReader(
                 scenarioId = link.testScenarioId,
                 title = draft.title,
                 description = draft.description,
-                steps = draft.steps,
+                // 저장 스텝을 챗봇 계약으로 투영한다. 기대 판정 라벨은 여기서 떨어지며, 그것이
+                // 이 한 줄의 요점이다 — 에이전트에게 정답지를 보여주지 않는다(ARTEL-301).
+                steps = draft.steps.map { it.toChatStep() },
             )
         }
     }
