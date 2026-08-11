@@ -2,11 +2,69 @@ package kr.artel.orchestration.qa.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.qa.entity.QaLogEntity
+import kr.artel.orchestration.qa.entity.QaRunEntity
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 import java.time.Instant
+
+
+/** QA 실행 런(TR) 단위 리포지토리 (ARTEL-259). 한 게임 인스턴스에 활성 런은 하나. */
+interface QaRunRepository : CoroutineCrudRepository<QaRunEntity, Long> {
+    @Query(
+        """
+        SELECT * FROM qa_run
+        WHERE game_instance_id = :gameInstanceId AND status IN ('STARTING', 'RUNNING')
+        """
+    )
+    suspend fun findActiveByGameInstanceId(gameInstanceId: Long): QaRunEntity?
+
+    /** 런은 그 test_run이 속한 프로젝트의 멤버에게만 보인다(qa_try 조회와 같은 가시성 규칙). */
+    @Query(
+        """
+        SELECT qr.* FROM qa_run qr
+        JOIN test_run tr ON tr.id = qr.test_run_id
+        JOIN project_member pm ON pm.project_id = tr.project_id
+        WHERE qr.id = :id AND pm.app_user_id = :userId
+        """
+    )
+    suspend fun findAccessibleById(id: Long, userId: Long): QaRunEntity?
+
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_run
+        SET status = :nextStatus, completed_at = :completedAt, updated_at = :updatedAt
+        WHERE id = :id AND status = :expectedStatus
+        """
+    )
+    suspend fun transition(
+        id: Long,
+        expectedStatus: String,
+        nextStatus: String,
+        completedAt: Instant?,
+        updatedAt: Instant
+    ): Int
+
+    /** 세션 부착 + Agent가 확정한 세션 공통 run_config를 한 문장으로 반영. */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_run
+        SET agent_session_id = :agentSessionId,
+            run_config = CAST(:runConfig AS jsonb),
+            updated_at = :updatedAt
+        WHERE id = :id AND status = 'STARTING' AND agent_session_id IS NULL
+        """
+    )
+    suspend fun attachAgentSession(
+        id: Long,
+        agentSessionId: String,
+        runConfig: String,
+        updatedAt: Instant
+    ): Int
+}
 
 interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
     @Query(
@@ -27,6 +85,10 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
         """
     )
     suspend fun findActiveByGameInstanceId(gameInstanceId: Long): QaTryEntity?
+
+    /** 한 런의 시나리오별 qa_try를 적재 순서(id 오름차순 = 시나리오 순서)로. */
+    @Query("SELECT * FROM qa_try WHERE qa_run_id = :qaRunId ORDER BY id ASC")
+    fun findByQaRunId(qaRunId: Long): Flow<QaTryEntity>
 
     /** One project's runs, newest first. Membership is what makes them visible. */
     @Query(
@@ -121,6 +183,49 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
         """
     )
     suspend fun failActiveByGameInstanceId(gameInstanceId: Long, completedAt: Instant): Int
+
+    /**
+     * 런 안 시나리오의 차례가 왔을 때 PENDING → RUNNING으로 활성한다(ARTEL-259). 세션 공통 설정을
+     * 그 try에도 새겨 attribution을 남긴다. WHERE status='PENDING'이라 이미 돈 try는 안 건드린다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_try
+        SET status = 'RUNNING',
+            agent_session_id = :agentSessionId,
+            model = :model,
+            reasoning_effort = :reasoningEffort,
+            prompt_version = :promptVersion,
+            agent_arch = :agentArch,
+            agent_fingerprint = :agentFingerprint,
+            run_config = CAST(:runConfig AS jsonb),
+            updated_at = :updatedAt
+        WHERE id = :id AND status = 'PENDING'
+        """
+    )
+    suspend fun activatePending(
+        id: Long,
+        agentSessionId: String,
+        model: String?,
+        reasoningEffort: String?,
+        promptVersion: String?,
+        agentArch: String?,
+        agentFingerprint: String?,
+        runConfig: String,
+        updatedAt: Instant
+    ): Int
+
+    /** 런 시작 실패 시 그 런의 미종단 qa_try(PENDING/STARTING/RUNNING)를 모두 FAILED로 정리한다. */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_try
+        SET status = 'FAILED', completed_at = :completedAt, updated_at = :completedAt
+        WHERE qa_run_id = :qaRunId AND status IN ('PENDING', 'STARTING', 'RUNNING')
+        """
+    )
+    suspend fun failByQaRunId(qaRunId: Long, completedAt: Instant): Int
 
     @Modifying
     @Query(

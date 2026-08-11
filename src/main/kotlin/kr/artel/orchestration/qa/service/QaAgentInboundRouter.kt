@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.service.IssueService
@@ -23,7 +24,9 @@ import kr.artel.orchestration.knowledge.service.KnowledgeMutation
 import kr.artel.orchestration.knowledge.service.KnowledgeRetrieval
 import kr.artel.orchestration.knowledge.service.KnowledgeSearchService
 import kr.artel.orchestration.knowledge.service.KnowledgeService
+import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.entity.QaTryEntity
+import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -56,9 +59,13 @@ private val SUPPORTED_TYPES =
     setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH", "KNOWLEDGE_EXPAND") +
         KNOWLEDGE_WRITE_TYPES
 
+/** qa_try의 종단 상태들. 런의 모든 try가 여기 들면 그 런은 실행이 끝난 것이다. */
+private val TERMINAL_TRY_STATUSES = setOf("COMPLETED", "FAILED", "CANCELLED")
+
 @Service
 class QaAgentInboundRouter(
     private val tryRepository: QaTryRepository,
+    private val runRepository: QaRunRepository,
     private val logService: QaLogService,
     private val actionDispatch: QaActionDispatchService,
     private val streamManager: QaLogStreamManager,
@@ -135,7 +142,7 @@ class QaAgentInboundRouter(
                 message,
                 envelope.payload
             )
-            "STATUS" -> routeStatus(qaTry.status, qaTryId, envelope, message)
+            "STATUS" -> routeStatus(qaTry, qaTryId, envelope, message)
             "ISSUE" -> routeIssue(qaTryId, envelope, message)
             else -> {
                 val log = logService.append(
@@ -152,8 +159,58 @@ class QaAgentInboundRouter(
         }
     }
 
-    private suspend fun activeTry(qaTryId: Long) =
-        tryRepository.findById(qaTryId)?.takeIf { it.status == "STARTING" || it.status == "RUNNING" }
+    private suspend fun activeTry(qaTryId: Long): QaTryEntity? {
+        val qaTry = tryRepository.findById(qaTryId) ?: return null
+        return when (qaTry.status) {
+            "STARTING", "RUNNING" -> qaTry
+            // 런의 다음 시나리오가 보낸 첫 프레임 — 이제 그 차례다. 런이 아직 살아 있으면
+            // PENDING→RUNNING으로 활성해 그 프레임부터 정상 라우팅한다(ARTEL-259 시나리오 전환).
+            "PENDING" -> activatePending(qaTry)
+            else -> null
+        }
+    }
+
+    /**
+     * PENDING qa_try를 그 부모 런의 세션 공통 설정으로 활성한다. 런이 RUNNING이 아니면(끝났거나
+     * 실패) 활성하지 않고 프레임을 버린다. 경합으로 이미 활성됐으면 다시 읽어 RUNNING이면 태운다.
+     */
+    private suspend fun activatePending(qaTry: QaTryEntity): QaTryEntity? {
+        val runId = qaTry.qaRunId ?: return null
+        val run = runRepository.findById(runId)?.takeIf { it.status == "RUNNING" } ?: return null
+        val sessionId = run.agentSessionId ?: return null
+        val id = requireNotNull(qaTry.id)
+        val configJson = run.runConfig.asString()
+        val config = objectMapper.readTree(configJson)
+        val activated = tryRepository.activatePending(
+            id = id,
+            agentSessionId = sessionId,
+            model = config.textAt("model"),
+            reasoningEffort = config.textAt("reasoning", "effort"),
+            promptVersion = config.textAt("prompt_version"),
+            agentArch = config.textAt("agent_arch"),
+            agentFingerprint = config.textAt("agent_fingerprint"),
+            runConfig = configJson,
+            updatedAt = Instant.now(clock)
+        )
+        if (activated != 1) return tryRepository.findById(id)?.takeIf { it.status == "RUNNING" }
+        val log = logService.append(
+            qaTryId = id,
+            direction = "ORCHE_INTERNAL",
+            type = "STATUS",
+            message = "QA execution is running.",
+            payload = objectMapper.valueToTree(QaStatusPayload("RUNNING", null))
+        )
+        logService.publish(log)
+        return tryRepository.findById(id)
+    }
+
+    private fun JsonNode?.textAt(vararg path: String): String? {
+        var node: JsonNode = this ?: return null
+        for (name in path) {
+            node = node.get(name) ?: return null
+        }
+        return node.takeIf { it.isTextual }?.asText()
+    }
 
     /**
      * 이 런이 읽고 쓰는 지식 스코프(ARTEL-256).
@@ -216,11 +273,12 @@ class QaAgentInboundRouter(
     }
 
     private suspend fun routeStatus(
-        currentStatus: String,
+        qaTry: QaTryEntity,
         qaTryId: Long,
         envelope: QaAgentEnvelope,
         message: String
     ) {
+        val currentStatus = qaTry.status
         // Agent STATUS is 2-scope: per-step frames reuse COMPLETED/FAILED for the step's
         // own verdict and carry result=null — they must NOT end the run. Only a
         // run-terminal frame carries result PASSED|FAILED, and CANCELLED is always
@@ -265,6 +323,23 @@ class QaAgentInboundRouter(
         )
         logService.publish(log)
         streamManager.complete(qaTryId)
+        // 방금 이 시나리오 try가 종단됐다. 런의 모든 시나리오 try가 종단이면 부모 qa_run도 완료로
+        // 닫는다 — 안 그러면 qa_run이 RUNNING으로 남아 그 게임 인스턴스의 다음 런을 영구 차단한다.
+        completeRunIfAllTriesDone(qaTry.qaRunId, completedAt)
+    }
+
+    /**
+     * 런의 모든 qa_try가 종단(COMPLETED/FAILED/CANCELLED)이면 qa_run을 RUNNING→COMPLETED로 닫는다.
+     * 개별 시나리오의 합격/불합격은 각 try에 남고, 런의 COMPLETED는 "모든 시나리오 실행을 마쳤다"는
+     * 뜻이다(하나가 FAILED여도 런은 끝난 것). RUNNING이 아닐 땐 no-op이라 취소/실패로 이미 닫힌 런을
+     * 되돌리지 않는다.
+     */
+    private suspend fun completeRunIfAllTriesDone(qaRunId: Long?, completedAt: Instant) {
+        if (qaRunId == null) return
+        val tries = tryRepository.findByQaRunId(qaRunId).toList()
+        if (tries.isNotEmpty() && tries.all { it.status in TERMINAL_TRY_STATUSES }) {
+            runRepository.transition(qaRunId, "RUNNING", "COMPLETED", completedAt, completedAt)
+        }
     }
 
     /**

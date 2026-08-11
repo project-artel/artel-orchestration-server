@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.testscenario.dto.AgentScenario
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
@@ -34,11 +35,21 @@ internal data class QaSessionOpenRequest(
     val context: QaSessionOpenContext
 )
 
-internal data class QaSessionOpenContext(
+internal data class QaSessionOpenScenario(
     @JsonProperty("qa_try_id") val qaTryId: String,
-    @JsonProperty("game_instance_id") val gameInstanceId: String,
     @JsonProperty("test_scenario_id") val testScenarioId: String,
-    val scenario: JsonNode
+    val scenario: AgentScenario
+)
+
+// NON_NULL: 런 단위(scenarios[])와 단일(qa_try_id/…) 중 채운 쪽만 나간다. Agent가 둘 다 받는다.
+@JsonInclude(JsonInclude.Include.NON_NULL)
+internal data class QaSessionOpenContext(
+    @JsonProperty("game_instance_id") val gameInstanceId: String,
+    @JsonProperty("qa_run_id") val qaRunId: String? = null,
+    val scenarios: List<QaSessionOpenScenario>? = null,
+    @JsonProperty("qa_try_id") val qaTryId: String? = null,
+    @JsonProperty("test_scenario_id") val testScenarioId: String? = null,
+    val scenario: JsonNode? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -78,8 +89,12 @@ class WebSocketQaAgentAdapter(
             promptVersion = context.promptVersion,
             arch = context.arch,
             context = QaSessionOpenContext(
-                qaTryId = context.qaTryId,
                 gameInstanceId = context.gameInstanceId,
+                qaRunId = context.qaRunId,
+                scenarios = context.scenarios?.map {
+                    QaSessionOpenScenario(it.qaTryId, it.testScenarioId, it.scenario)
+                },
+                qaTryId = context.qaTryId,
                 testScenarioId = context.testScenarioId,
                 scenario = context.scenario
             )

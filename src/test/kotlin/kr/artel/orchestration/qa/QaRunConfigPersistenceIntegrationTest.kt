@@ -21,10 +21,13 @@ import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.qa.dto.CreateQaTryRequest
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
+import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.qa.service.QaKnowledgeSettings
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
 import kr.artel.orchestration.qa.service.toKnowledgeSettings
+import kr.artel.orchestration.testrun.entity.TestRunEntity
+import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -52,6 +55,8 @@ class QaRunConfigPersistenceIntegrationTest {
 
     @Autowired private lateinit var persistence: QaTryPersistenceService
     @Autowired private lateinit var qaTryRepository: QaTryRepository
+    @Autowired private lateinit var qaRunRepository: QaRunRepository
+    @Autowired private lateinit var testRunRepository: TestRunRepository
     @Autowired private lateinit var qaLogRepository: QaLogRepository
     @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
     @Autowired private lateinit var testScenarioRepository: TestScenarioRepository
@@ -91,7 +96,9 @@ class QaRunConfigPersistenceIntegrationTest {
     private suspend fun wipe() {
         qaLogRepository.deleteAll()
         qaTryRepository.deleteAll()
+        qaRunRepository.deleteAll()
         gameInstanceRepository.deleteAll()
+        testRunRepository.deleteAll()
         testScenarioRepository.deleteAll()
         projectMemberRepository.deleteAll()
         projectRepository.deleteAll()
@@ -268,6 +275,41 @@ class QaRunConfigPersistenceIntegrationTest {
         val stored = qaTryRepository.findAll().toList().single()
         assertThat(stored.agentSessionId).isEqualTo("session-1")
         assertThat(stored.agentFingerprint).isEqualTo("a3f1c9d2e8b0")
+    }
+
+    @Test
+    fun `createRunStarting은 qa_run 하나와 시나리오당 PENDING qa_try N개를 적재한다`(): Unit = runBlocking {
+        val owner = signIn()
+        val ownerId = owner.userId.toLong()
+        val now = Instant.now()
+        val project = projectRepository.save(
+            ProjectEntity(name = "run-p", genre = "ACTION", createdAt = now, updatedAt = now)
+        )!!
+        projectMemberRepository.save(
+            ProjectMemberEntity(
+                projectId = project.id!!, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now
+            )
+        )
+        val instance = gameInstanceRepository.save(
+            GameInstanceEntity(
+                projectId = project.id!!, name = "inst", platform = "UNITY",
+                sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now
+            )
+        )!!
+        val run = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))!!
+        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!, payload = Json.of("{}")))!!
+        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!, payload = Json.of("{}")))!!
+
+        val started = persistence.createRunStarting(run.id!!, instance.id!!, ownerId, listOf(s1.id!!, s2.id!!))
+
+        // 부모 런은 STARTING, 자식 qa_try는 시나리오당 PENDING — 2개 PENDING이 활성 유니크
+        // (uk_qa_try_active_instance)를 위반하지 않는다(적재 성공 자체가 증거).
+        assertThat(started.qaRun.status).isEqualTo("STARTING")
+        assertThat(started.qaRun.testRunId).isEqualTo(run.id)
+        assertThat(started.tries.map { it.status }).containsExactly("PENDING", "PENDING")
+        assertThat(started.tries.map { it.testScenarioId }).containsExactly(s1.id, s2.id)
+        assertThat(started.tries.all { it.qaRunId == started.qaRun.id }).isTrue()
+        assertThat(qaTryRepository.findById(started.tries[0].id!!)!!.status).isEqualTo("PENDING")
     }
 
     // ----------------------------------------------------------------- seeding
