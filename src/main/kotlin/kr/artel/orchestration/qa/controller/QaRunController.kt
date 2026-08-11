@@ -27,17 +27,17 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/qa-runs")
 class QaRunController(
-    private val service: QaTryService,
+    private val qaTryService: QaTryService,
     private val userResolver: SessionUserResolver,
     private val objectMapper: ObjectMapper
 ) {
     @PostMapping
-    suspend fun create(
+    suspend fun createQaRun(
         @RequestBody request: CreateQaRunRequest,
         @AuthenticationPrincipal jwt: Jwt
     ): ResponseEntity<QaRunResponse> =
         ResponseEntity.status(HttpStatus.CREATED).body(
-            service.createRun(
+            qaTryService.createRun(
                 parseId(request.testRunId),
                 parseId(request.gameInstanceId),
                 requireUser(jwt),
@@ -46,29 +46,30 @@ class QaRunController(
         )
 
     /** 런 하나 + 시나리오별 try 상태. FE 런 화면이 종단까지 폴링하는 개요. */
-    @GetMapping("/{id}")
-    suspend fun get(
-        @PathVariable id: String,
+    @GetMapping("/{qaRunId}")
+    suspend fun getQaRun(
+        @PathVariable qaRunId: String,
         @AuthenticationPrincipal jwt: Jwt
     ): QaRunResponse =
-        service.getRun(parseId(id), requireUser(jwt)) ?: throw NotFoundException()
+        qaTryService.getRun(parseId(qaRunId), requireUser(jwt)) ?: throw NotFoundException()
 
     /**
      * 런(TR) 전체를 취소한다. 활성 시나리오는 Agent 세션 종료까지 포함해 취소되고 qa_run이 닫혀,
      * 그 게임 인스턴스로 다시 런을 시작할 수 있게 된다. 이미 끝난 런은 409.
      */
-    @PostMapping("/{id}/cancel")
-    suspend fun cancel(
-        @PathVariable id: String,
+    @PostMapping("/{qaRunId}/cancel")
+    suspend fun cancelQaRun(
+        @PathVariable qaRunId: String,
         @AuthenticationPrincipal jwt: Jwt
     ): ResponseEntity<Void> {
-        service.cancelRun(parseId(id), requireUser(jwt))
+        qaTryService.cancelRun(parseId(qaRunId), requireUser(jwt))
         return ResponseEntity.noContent().build()
     }
 
     private fun requireUser(jwt: Jwt): Long =
         userResolver.resolve(jwt)?.userId ?: throw UnauthorizedException()
 
-    private fun parseId(raw: String): Long =
-        raw.toLongOrNull() ?: throw BadRequestException("invalid id: $raw")
+    // testRunId·gameInstanceId·qaRunId 등 여러 엔티티 id 문자열을 공통 파싱하는 범용 헬퍼.
+    private fun parseId(rawId: String): Long =
+        rawId.toLongOrNull() ?: throw BadRequestException("invalid id: $rawId")
 }
