@@ -1,12 +1,9 @@
 package kr.artel.orchestration.testcase.controller
 
-import kr.artel.orchestration.auth.service.SessionUserResolver
-import kr.artel.orchestration.common.error.UnauthorizedException
+import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testcase.dto.TestCaseSpecDownloadResponse
 import kr.artel.orchestration.testcase.service.TestCaseSpecService
 import org.springframework.http.ResponseEntity
-import org.springframework.security.core.annotation.AuthenticationPrincipal
-import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
@@ -25,21 +22,16 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/projects/{projectId}/test-case-spec")
 class TestCaseSpecController(
-    private val service: TestCaseSpecService,
-    private val sessionUserResolver: SessionUserResolver
+    private val service: TestCaseSpecService
 ) {
 
     /** 아직 받은 명세가 없거나 프로젝트 참여자가 아니면 404. */
     @GetMapping("/download")
     suspend fun download(
         @PathVariable projectId: Long,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<TestCaseSpecDownloadResponse> =
-        service.downloadTicket(projectId, requireUser(jwt))
+        service.downloadTicket(projectId, appUserId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
-
-    private fun requireUser(jwt: Jwt): Long =
-        sessionUserResolver.resolve(jwt)?.userId
-            ?: throw UnauthorizedException()
 }

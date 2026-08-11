@@ -1,10 +1,9 @@
 package kr.artel.orchestration.qa.controller
 
 import kr.artel.orchestration.common.error.BadRequestException
-import kr.artel.orchestration.common.error.UnauthorizedException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.issue.dto.IssuePageResponse
 import kr.artel.orchestration.issue.service.IssueService
 import kr.artel.orchestration.qa.dto.CreateQaTryRequest
@@ -20,8 +19,6 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.http.codec.ServerSentEvent
-import org.springframework.security.core.annotation.AuthenticationPrincipal
-import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -39,19 +36,18 @@ private const val MAX_QA_MESSAGE_LENGTH = 4000
 class QaTryController(
     private val service: QaTryService,
     private val issueService: IssueService,
-    private val userResolver: SessionUserResolver,
     private val objectMapper: ObjectMapper
 ) {
     @PostMapping
     suspend fun create(
         @RequestBody request: CreateQaTryRequest,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<QaTryResponse> =
         ResponseEntity.status(HttpStatus.CREATED).body(
             service.create(
                 parseId(request.testScenarioId),
                 parseId(request.gameInstanceId),
-                requireUser(jwt),
+                appUserId,
                 request.toRunSettings(objectMapper),
                 request.toKnowledgeSettings()
             )
@@ -62,18 +58,18 @@ class QaTryController(
     suspend fun list(
         @RequestParam projectId: String,
         @RequestParam(defaultValue = "20") size: Int,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<List<QaTryResponse>> {
         if (size !in 1..100) throw BadRequestException("size must be between 1 and 100")
-        return ResponseEntity.ok(service.listByProject(parseId(projectId), requireUser(jwt), size))
+        return ResponseEntity.ok(service.listByProject(parseId(projectId), appUserId, size))
     }
 
     @GetMapping("/{qaTryId}")
     suspend fun get(
         @PathVariable qaTryId: String,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<QaTryResponse> =
-        service.get(parseId(qaTryId), requireUser(jwt))
+        service.get(parseId(qaTryId), appUserId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 
@@ -87,7 +83,7 @@ class QaTryController(
     suspend fun sendMessage(
         @PathVariable qaTryId: String,
         @RequestBody request: SendQaMessageRequest,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<Void> {
         val message = request.message.trim()
         if (message.isEmpty()) {
@@ -96,7 +92,7 @@ class QaTryController(
         if (message.length > MAX_QA_MESSAGE_LENGTH) {
             throw BadRequestException("message is too long")
         }
-        service.sendMessage(parseId(qaTryId), requireUser(jwt), message)
+        service.sendMessage(parseId(qaTryId), appUserId, message)
         return ResponseEntity.accepted().build()
     }
 
@@ -104,9 +100,9 @@ class QaTryController(
     @PostMapping("/{qaTryId}/cancel")
     suspend fun cancel(
         @PathVariable qaTryId: String,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<Void> {
-        service.cancel(parseId(qaTryId), requireUser(jwt))
+        service.cancel(parseId(qaTryId), appUserId)
         return ResponseEntity.noContent().build()
     }
 
@@ -115,10 +111,10 @@ class QaTryController(
         @PathVariable qaTryId: String,
         @RequestParam(required = false) beforeId: String?,
         @RequestParam(defaultValue = "50") size: Int,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<QaLogPageResponse> {
         if (size !in 1..100) throw BadRequestException("size must be between 1 and 100")
-        return service.logs(parseId(qaTryId), requireUser(jwt), beforeId?.let(::parseId), size)
+        return service.logs(parseId(qaTryId), appUserId, beforeId?.let(::parseId), size)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
     }
@@ -134,10 +130,10 @@ class QaTryController(
         @PathVariable qaTryId: String,
         @RequestParam(required = false) beforeId: String?,
         @RequestParam(defaultValue = "50") size: Int,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): IssuePageResponse = issueService.listByQaTry(
         parseId(qaTryId),
-        requireUser(jwt),
+        appUserId,
         beforeId?.let(::parseId),
         size
     )
@@ -147,10 +143,10 @@ class QaTryController(
         @PathVariable qaTryId: String,
         @RequestParam(required = false) afterId: String?,
         @RequestHeader(name = "Last-Event-ID", required = false) lastEventId: String?,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): Flow<ServerSentEvent<QaLogResponse>> {
         val cursor = (lastEventId ?: afterId)?.let(::parseId) ?: 0L
-        return service.events(parseId(qaTryId), requireUser(jwt), cursor)
+        return service.events(parseId(qaTryId), appUserId, cursor)
             .map { log ->
                 ServerSentEvent.builder(log)
                     .id(log.id)
@@ -158,9 +154,6 @@ class QaTryController(
                     .build()
             }
     }
-
-    private fun requireUser(jwt: Jwt): Long =
-        userResolver.resolve(jwt)?.userId ?: throw UnauthorizedException()
 
     private fun parseId(value: String): Long =
         value.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }

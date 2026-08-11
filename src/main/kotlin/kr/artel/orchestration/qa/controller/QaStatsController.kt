@@ -1,13 +1,10 @@
 package kr.artel.orchestration.qa.controller
 
-import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.common.error.BadRequestException
-import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.qa.dto.QaStatsResponse
 import kr.artel.orchestration.qa.service.QaStatsService
 import org.springframework.http.ResponseEntity
-import org.springframework.security.core.annotation.AuthenticationPrincipal
-import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
@@ -24,8 +21,7 @@ import java.time.format.DateTimeParseException
 @RestController
 @RequestMapping("/api/qa-stats")
 class QaStatsController(
-    private val service: QaStatsService,
-    private val userResolver: SessionUserResolver
+    private val service: QaStatsService
 ) {
     /**
      * @param from,to ISO-8601 instant(`2026-08-01T00:00:00Z`). 생략하면 최근 30일.
@@ -37,20 +33,17 @@ class QaStatsController(
         @RequestParam(required = false) from: String?,
         @RequestParam(required = false) to: String?,
         @RequestParam(defaultValue = "200") cellLimit: Int,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<QaStatsResponse> =
         ResponseEntity.ok(
             service.stats(
                 projectId = parseId(projectId),
-                userId = requireUser(jwt),
+                userId = appUserId,
                 from = parseInstant(from, "from"),
                 to = parseInstant(to, "to"),
                 cellLimit = cellLimit
             )
         )
-
-    private fun requireUser(jwt: Jwt): Long =
-        userResolver.resolve(jwt)?.userId ?: throw UnauthorizedException()
 
     private fun parseId(value: String): Long =
         value.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }

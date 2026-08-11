@@ -1,11 +1,8 @@
 package kr.artel.orchestration.issue.controller
 
-import kr.artel.orchestration.auth.service.SessionUserResolver
-import kr.artel.orchestration.common.error.UnauthorizedException
+import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.issue.service.IssueService
 import org.springframework.http.ResponseEntity
-import org.springframework.security.core.annotation.AuthenticationPrincipal
-import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
@@ -23,16 +20,15 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/issues")
 class IssueController(
-    private val service: IssueService,
-    private val userResolver: SessionUserResolver
+    private val service: IssueService
 ) {
     /** 해결로 표시. 없거나 접근 불가면 404. */
     @PostMapping("/{issueId}/resolve")
     suspend fun resolve(
         @PathVariable issueId: Long,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<Void> {
-        service.resolve(issueId, requireUser(jwt))
+        service.resolve(issueId, appUserId)
         return ResponseEntity.noContent().build()
     }
 
@@ -40,12 +36,9 @@ class IssueController(
     @PostMapping("/{issueId}/reopen")
     suspend fun reopen(
         @PathVariable issueId: Long,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<Void> {
-        service.reopen(issueId, requireUser(jwt))
+        service.reopen(issueId, appUserId)
         return ResponseEntity.noContent().build()
     }
-
-    private fun requireUser(jwt: Jwt): Long =
-        userResolver.resolve(jwt)?.userId ?: throw UnauthorizedException()
 }

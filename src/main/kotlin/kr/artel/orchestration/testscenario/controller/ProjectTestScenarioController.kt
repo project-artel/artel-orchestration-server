@@ -1,13 +1,10 @@
 package kr.artel.orchestration.testscenario.controller
 
-import kr.artel.orchestration.common.error.UnauthorizedException
-import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testscenario.dto.ScenarioListResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
 import kr.artel.orchestration.testscenario.service.TestScenarioService
 import org.springframework.http.ResponseEntity
-import org.springframework.security.core.annotation.AuthenticationPrincipal
-import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
@@ -23,35 +20,25 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/projects/{projectId}/test-scenario")
 class ProjectTestScenarioController(
-    private val service: TestScenarioService,
-    private val sessionUserResolver: SessionUserResolver
+    private val service: TestScenarioService
 ) {
 
     /** 프로젝트의 시나리오 목록(요약). FE 목록 화면 렌더용. 비참여자면 404. */
     @GetMapping
     suspend fun list(
         @PathVariable projectId: Long,
-        @AuthenticationPrincipal jwt: Jwt
-    ): ScenarioListResponse {
-        val appUserId = requireUser(jwt)
-        return service.listScenarios(projectId, appUserId)
-    }
+        @CurrentUserId appUserId: Long
+    ): ScenarioListResponse =
+        service.listScenarios(projectId, appUserId)
 
     /** 프로젝트 스코프 시나리오 단건 조회(payload = ScenarioDraft). 없거나 접근 불가면 404. */
     @GetMapping("/{testScenarioId}")
     suspend fun getOne(
         @PathVariable projectId: Long,
         @PathVariable testScenarioId: Long,
-        @AuthenticationPrincipal jwt: Jwt
-    ): ResponseEntity<ScenarioResponse> {
-        val appUserId = requireUser(jwt)
-        return service.getScenarioInProject(projectId, testScenarioId, appUserId)
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<ScenarioResponse> =
+        service.getScenarioInProject(projectId, testScenarioId, appUserId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
-    }
-
-    /** 유효한 사용자 토큰이 아니면 401. */
-    private fun requireUser(jwt: Jwt): Long =
-        sessionUserResolver.resolve(jwt)?.userId
-            ?: throw UnauthorizedException()
 }
