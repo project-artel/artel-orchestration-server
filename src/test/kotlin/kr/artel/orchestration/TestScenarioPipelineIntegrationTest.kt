@@ -288,8 +288,8 @@ class TestScenarioPipelineIntegrationTest {
     }
 
     /**
-     * 실시간 자동저장(PUT): Agent를 거치지 않은 순수 canvas 편집이 payload로 저장되고,
-     * 응답으로 저장된 payload가 되돌아와 FE가 정합성을 맞출 수 있다. 비참여자는 404.
+     * 실시간 자동저장(PUT): Agent를 거치지 않은 순수 canvas 편집이 본문 컬럼으로 저장되고,
+     * 응답으로 저장된 본문이 되돌아와 FE가 정합성을 맞출 수 있다. 비참여자는 404.
      */
     @Test
     fun testUpdateAutosavesDraft(): Unit = runBlocking {
@@ -314,9 +314,11 @@ class TestScenarioPipelineIntegrationTest {
         assertThat(saved.payload.steps).hasSize(2)
         assertThat(saved.payload.steps.first().action).isEqualTo("두번째였음")
 
-        // DB에도 반영됨.
+        // DB에도 반영됨 — 제목은 컬럼, 스텝은 JSONB.
         val persisted = scenarioRepository.findById(scenarioId)!!
-        assertThat(persisted.payload.asString()).contains("드래그로 편집")
+        assertThat(persisted.title).isEqualTo("드래그로 편집")
+        assertThat(persisted.description).isEqualTo("reordered")
+        assertThat(persisted.steps.asString()).contains("두번째였음")
 
         // 비참여자는 저장 불가(404).
         val (_, outsiderToken) = issueUser("outsider-${projectIdSeq.incrementAndGet()}")
@@ -363,14 +365,15 @@ class TestScenarioPipelineIntegrationTest {
         ).isNotEmpty
 
         // 사용자가 canvas에서 편집한 최종 draft로 승인.
-        val finalDraft = """{"title":"최종본","description":"final","steps":[{"step":1,"title":"t","state":"s","action":"a","expected":"e"}]}"""
+        val finalDraft = """{"title":"최종본","description":"final","steps":[{"action":"로비 진입","case_id":3}]}"""
         approveScenario(client, scenarioId, token, finalDraft)
         Thread.sleep(500)
 
-        // 시나리오는 남고 payload는 최종본으로 저장됨.
+        // 시나리오는 남고 본문은 최종본으로 저장됨.
         val persisted = scenarioRepository.findById(scenarioId)
         assertThat(persisted).isNotNull
-        assertThat(persisted!!.payload.asString()).contains("최종본")
+        assertThat(persisted!!.title).isEqualTo("최종본")
+        assertThat(persisted.steps.asString()).contains("로비 진입")
 
         // 채팅 내역은 그대로 남는다(부산물 삭제 없음).
         val remaining = runMessageRepository

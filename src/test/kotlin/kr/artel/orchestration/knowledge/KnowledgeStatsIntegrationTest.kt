@@ -1,6 +1,5 @@
 package kr.artel.orchestration.knowledge
 
-import io.r2dbc.postgresql.codec.Json
 import io.r2dbc.spi.Readable
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.awaitFirstOrNull
@@ -410,7 +409,7 @@ class KnowledgeStatsIntegrationTest {
     ): Long {
         val now = Instant.now()
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = projectId, payload = Json.of("{}"))
+            TestScenarioEntity(projectId = projectId)
         )!!
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(

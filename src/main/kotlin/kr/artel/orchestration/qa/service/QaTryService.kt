@@ -30,6 +30,7 @@ import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.testrun.service.TestRunService
+import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
 import org.springframework.stereotype.Service
@@ -379,7 +380,7 @@ class QaTryService(
             qaTryId = qaTryId.toString(),
             gameInstanceId = gameInstanceId.toString(),
             testScenarioId = testScenarioId.toString(),
-            scenario = objectMapper.readTree(scenario.payload.asString()),
+            scenario = objectMapper.valueToTree(scenario.toDraft(objectMapper)),
             model = settings.model,
             language = settings.language,
             promptVersion = settings.promptVersion,
@@ -450,7 +451,7 @@ class QaTryService(
             QaAgentScenario(
                 qaTryId = requireNotNull(qaTry.id).toString(),
                 testScenarioId = scenarioId.toString(),
-                scenario = compositionService.agentScenario(scenarioId, userId, entity.payload.asString())
+                scenario = compositionService.agentScenario(entity.toDraft(objectMapper))
             )
         }
         val context = QaAgentSessionContext(

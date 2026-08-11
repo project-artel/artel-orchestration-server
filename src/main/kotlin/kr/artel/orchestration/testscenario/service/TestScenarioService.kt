@@ -3,7 +3,6 @@ package kr.artel.orchestration.testscenario.service
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
 import com.fasterxml.jackson.databind.ObjectMapper
-import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
@@ -11,6 +10,8 @@ import kr.artel.orchestration.testscenario.dto.ScenarioListResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioSummary
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
+import kr.artel.orchestration.testscenario.entity.toDraft
+import kr.artel.orchestration.testscenario.entity.withDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.executeAndAwait
@@ -35,15 +36,10 @@ class TestScenarioService(
     private val objectMapper: ObjectMapper
 ) {
 
-    /** 새 시나리오를 빈 payload로 생성하고 testScenarioId를 반환한다. 비참여자면 null(→404). */
+    /** 새 시나리오를 빈 본문으로 생성하고 testScenarioId를 반환한다. 비참여자면 null(→404). */
     suspend fun createScenario(projectId: Long, appUserId: Long): Long? {
         if (!accessService.isMember(projectId, appUserId)) return null
-        val saved = scenarioRepository.save(
-            TestScenarioEntity(
-                projectId = projectId,
-                payload = Json.of(objectMapper.writeValueAsString(ScenarioDraft()))
-            )
-        )
+        val saved = scenarioRepository.save(TestScenarioEntity(projectId = projectId))
         return saved.id!!
     }
 
@@ -53,7 +49,7 @@ class TestScenarioService(
         return ScenarioResponse(
             testScenarioId = entity.id!!,
             projectId = entity.projectId,
-            payload = objectMapper.readValue(entity.payload.asString(), ScenarioDraft::class.java)
+            payload = entity.toDraft(objectMapper)
         )
     }
 
@@ -78,50 +74,45 @@ class TestScenarioService(
         return ScenarioResponse(
             testScenarioId = entity.id!!,
             projectId = entity.projectId,
-            payload = objectMapper.readValue(entity.payload.asString(), ScenarioDraft::class.java)
+            payload = entity.toDraft(objectMapper)
         )
     }
 
-    /** 목록 응답용 요약 변환. 제목은 payload에서 추출한다. */
-    private fun toSummary(entity: TestScenarioEntity): ScenarioSummary {
-        val draft = objectMapper.readValue(entity.payload.asString(), ScenarioDraft::class.java)
-        return ScenarioSummary(
+    /** 목록 응답용 요약 변환. 제목은 컬럼이라 스텝을 역직렬화하지 않는다. */
+    private fun toSummary(entity: TestScenarioEntity): ScenarioSummary =
+        ScenarioSummary(
             testScenarioId = entity.id!!,
             projectId = entity.projectId,
-            title = draft.title,
+            title = entity.title,
             createdAt = entity.createdAt,
             updatedAt = entity.updatedAt
         )
-    }
 
     /**
-     * canvas 편집을 실시간 저장한다(자동저장). Agent를 거치지 않은 순수 FE 편집을 payload에 덮어쓰고(last-write-wins),
-     * 저장된 결과를 그대로 되돌려 FE가 로컬 draft와 DB 상태의 정합성을 맞추게 한다. 접근 불가면 404.
+     * canvas 편집을 실시간 저장한다(자동저장). Agent를 거치지 않은 순수 FE 편집을 본문 컬럼에 덮어쓰고
+     * (last-write-wins), 저장된 결과를 그대로 되돌려 FE가 로컬 draft와 DB 상태의 정합성을 맞추게 한다.
+     * 접근 불가면 404.
      */
     suspend fun testScenarioUpdate(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft): ScenarioResponse {
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
             ?: throw NotFoundException()
-        val saved = scenarioRepository.save(
-            entity.copy(payload = Json.of(objectMapper.writeValueAsString(draft)))
-        )
+        val saved = scenarioRepository.save(entity.withDraft(draft, objectMapper))
         return ScenarioResponse(
             testScenarioId = saved.id!!,
             projectId = saved.projectId,
-            payload = objectMapper.readValue(saved.payload.asString(), ScenarioDraft::class.java)
+            payload = saved.toDraft(objectMapper)
         )
     }
 
     /**
-     * 시나리오를 승인(확정)한다. 최종 draft가 있으면 payload로 저장한다. 대화 세션은 런 단위라 시나리오 하나의
-     * 승인으로 닫지 않는다(런 대화는 계속된다). 접근 불가면 404.
+     * 시나리오를 승인(확정)한다. 최종 draft가 있으면 본문 컬럼에 저장한다. 대화 세션은 런 단위라 시나리오
+     * 하나의 승인으로 닫지 않는다(런 대화는 계속된다). 접근 불가면 404.
      */
     suspend fun testScenarioApprove(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft?) {
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
             ?: throw NotFoundException()
         if (draft != null) {
-            scenarioRepository.save(
-                entity.copy(payload = Json.of(objectMapper.writeValueAsString(draft)))
-            )
+            scenarioRepository.save(entity.withDraft(draft, objectMapper))
         }
     }
 

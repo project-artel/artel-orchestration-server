@@ -1,7 +1,6 @@
 package kr.artel.orchestration.knowledge
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.runBlocking
@@ -445,7 +444,7 @@ class KnowledgeSearchRouterIntegrationTest {
             ProjectMemberEntity(projectId = projectId, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now)
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = projectId, payload = Json.of("{}"))
+            TestScenarioEntity(projectId = projectId)
         )!!
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
