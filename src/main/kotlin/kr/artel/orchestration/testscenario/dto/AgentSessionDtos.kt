@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.dto
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
@@ -33,9 +34,10 @@ data class AgentSessionOpenRequest(
      *
      * **기본값이 빈 목록인 것은 하위 호환 장치다.** Agent는 이 값이 비면 기존 검색 경로로 동작하므로,
      * 되돌릴 때 양쪽을 다시 배포하지 않아도 된다.
-     */
+    */
     @JsonProperty("test_case_list") val testCaseList: List<TestCaseListItem> = emptyList(),
-    val model: String,
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    val model: String? = null,
     /**
      * 생성 결과의 출력 언어. Agent 계약의 `locale`(ko|en)에 대응한다.
      * 사용자의 계정 locale에서 정하며, 미설정 사용자는 en으로 보낸다.

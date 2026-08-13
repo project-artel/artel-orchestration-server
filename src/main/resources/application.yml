@@ -74,7 +74,7 @@ artel:
     extract:
       # 로컬에 Agent가 없으면 업로드마다 FAILED로 남으니 끌 수 있게 둔다.
       enabled: ${ARTEL_AGENT_EXTRACT_ENABLED:true}
-      # 비우면 Agent 기본 모델(openai/gpt-4o-mini)을 쓴다.
+      # 비우면 모델 필드를 생략하고 Agent가 자신의 기본 모델을 선택한다.
       model: ${ARTEL_AGENT_EXTRACT_MODEL:}
       # LLM 추출이 길어질 수 있어 넉넉히. 논블로킹이라 스레드를 잡지 않는다.
       timeout: ${ARTEL_AGENT_EXTRACT_TIMEOUT:PT3M}

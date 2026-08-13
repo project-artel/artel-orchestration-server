@@ -58,7 +58,7 @@ import java.util.concurrent.ConcurrentHashMap
 class TestScenarioAgentService(
     @Value("\${artel.agent.base-url:http://localhost:8000}") private val agentBaseUrl: String,
     @Value("\${artel.agent.ws-base-url:ws://localhost:8000}") private val agentWsBaseUrl: String,
-    @Value("\${artel.agent.model:openai/gpt-4o-mini}") private val defaultModel: String,
+    @Value("\${artel.agent.model:}") private val configuredModel: String,
     private val objectMapper: ObjectMapper,
     private val streamManager: TestScenarioStreamManager,
     private val runMessageRepository: TestRunMessageRepository,
@@ -139,7 +139,9 @@ class TestScenarioAgentService(
             userInput = userInput,
             gameContext = gameContext(projectId, appUserId),
             testCaseList = testCaseList(projectId, appUserId),
-            model = defaultModel,
+            // 모델 선택의 기본값은 모델 카탈로그를 소유한 Agent가 결정한다. Orchestration은
+            // 명시적 override가 있을 때만 model을 보내 모델 교체 때 구 slug를 강제하지 않는다.
+            model = configuredModel.takeIf { it.isNotBlank() },
             locale = locale,
             projectId = projectId,
             runId = runId,
