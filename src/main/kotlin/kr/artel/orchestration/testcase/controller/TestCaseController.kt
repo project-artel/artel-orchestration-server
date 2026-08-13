@@ -3,6 +3,7 @@ package kr.artel.orchestration.testcase.controller
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
+import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.TestCaseListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseResponse
 import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
@@ -41,8 +42,8 @@ class TestCaseController(
     /**
      * 저작 Agent 세션에 싣는 전량 목록을 그대로 낸다(ARTEL-318).
      *
-     * 세션을 열지 않고 "Agent가 실제로 무엇을 보고 있는지"를 확인하는 창구다. 본문(사전조건/기대결과)은
-     * 없다 — 목록의 일은 "무엇이 존재하는가"까지이고, 본문은 Agent가 id로 따로 조회한다.
+     * 세션을 열지 않고 "Agent가 실제로 무엇을 보고 있는지"를 확인하는 창구다. 본문(사전조건/기대결과)까지
+     * 담기며, 왜 담는지는 [kr.artel.orchestration.testcase.dto.TestCaseListItem]에 적었다.
      *
      * `/{caseId}`(Long)와 같은 자리를 다투는 것처럼 보이지만, PathPattern은 변수보다 리터럴 구간을
      * 먼저 고르므로 `/all`은 이쪽으로 온다.
@@ -64,13 +65,14 @@ class TestCaseController(
             ?.let { ResponseEntity.status(HttpStatus.CREATED).body(it) }
             ?: ResponseEntity.notFound().build()
 
+    /** 케이스 단건. 목록보다 한 필드(`evidenceGaps`) 더 낸다 — [TestCaseDetailResponse] 참조. */
     @GetMapping("/{caseId}")
-    suspend fun get(
+    suspend fun getTestCase(
         @PathVariable projectId: Long,
         @PathVariable caseId: Long,
         @CurrentUserId appUserId: Long
-    ): ResponseEntity<TestCaseResponse> =
-        service.get(caseId, appUserId)
+    ): ResponseEntity<TestCaseDetailResponse> =
+        service.getTestCase(caseId, appUserId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 

@@ -14,6 +14,7 @@ import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.dto.TestCaseSpecEntry
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testcase.service.TestCaseSpecService
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.assertj.core.api.Assertions.assertThat
@@ -54,6 +55,7 @@ private fun case(
     precondition: String? = "TitleScene 화면인 상태",
     expectedValue: String,
     status: String = "ready",
+    evidenceGaps: List<String> = emptyList(),
 ): String = """
     {
       "schema_version": "test-case.v1",
@@ -66,7 +68,8 @@ private fun case(
       },
       "metadata": {
         "source": { "spec_id": "$specId", "scene_key": "$scene",
-                    "used_step_indexes": [0], "evidence_gaps": [] },
+                    "used_step_indexes": [0],
+                    "evidence_gaps": [${evidenceGaps.joinToString(",") { "\"$it\"" }}] },
         "generation": { "build_evidence": "3acc85dd94fe227e", "capture": "editor",
                         "prompt_version": null, "llm_model": null }
       }
@@ -116,6 +119,7 @@ class TestCaseSpecIngestIntegrationTest {
     @Autowired private lateinit var storage: DocumentStorage
     @Autowired private lateinit var xlsxWriter: SpecXlsxWriter
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
+    @Autowired private lateinit var testCaseService: TestCaseService
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
@@ -322,6 +326,46 @@ class TestCaseSpecIngestIntegrationTest {
         val (projectId, userId) = newProjectWithMember()
 
         assertThat(service.downloadTicket(projectId, userId)).isNull()
+    }
+
+    /**
+     * `evidence_gaps`는 JSONB 안에만 있고 컬럼이 아니다. 그래서 "적재됐다"와 "화면에 낼 수 있다"가
+     * 따로 깨질 수 있어 둘 다 본다 — 그리고 **목록에는 안 실린다**는 쪽이 이 필드의 설계 근거라
+     * 그것까지 같이 못박는다(ARTEL-380).
+     */
+    @Test
+    fun `근거 부족 사유는 단건 조회에만 실린다`(): Unit = runBlocking {
+        val (projectId, userId) = newProjectWithMember()
+        service.ingest(
+            projectId,
+            spec(
+                cases = listOf(
+                    case(
+                        specId = "scenario:gap:1",
+                        step = "장비 강화",
+                        expectedValue = "강화 성공 연출",
+                        status = "candidate",
+                        evidenceGaps = listOf("no_expected_value_in_build", "scene_not_reached"),
+                    ),
+                    case(specId = "scenario:gap:2", step = "상점 입장", expectedValue = "상점 화면 진입"),
+                ).joinToString(","),
+            ),
+        )
+
+        val gapped = testCaseRepository.findByProjectIdAndSpecId(projectId, "scenario:gap:1")!!
+        val detail = testCaseService.getTestCase(gapped.id!!, userId)!!
+        assertThat(detail.status).isEqualTo("candidate")
+        assertThat(detail.evidenceGaps)
+            .containsExactly("no_expected_value_in_build", "scene_not_reached")
+
+        // 사유가 없는 케이스는 빈 목록 — 화면이 "이유 없음"과 "이유가 비어 있음"을 구분할 필요가 없다.
+        val clean = testCaseRepository.findByProjectIdAndSpecId(projectId, "scenario:gap:2")!!
+        assertThat(testCaseService.getTestCase(clean.id!!, userId)!!.evidenceGaps).isEmpty()
+
+        // 목록 응답 타입에는 이 필드가 아예 없다(1000건 × 매 조회로 불어나는 값이라 상세에만 둔다).
+        val listed = testCaseService.list(projectId, userId, null, null).items
+        assertThat(listed).hasSize(2)
+        assertThat(listed.map { it.status }).containsExactlyInAnyOrder("candidate", "ready")
     }
 
     private fun objectKeyOf(projectId: Long) = "projects/$projectId/test-case-spec/test-cases.xlsx"

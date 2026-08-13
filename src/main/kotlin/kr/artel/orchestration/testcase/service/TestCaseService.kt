@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testcase.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.BadRequestException
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
@@ -7,9 +8,11 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
+import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.TestCaseListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseResponse
 import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
+import kr.artel.orchestration.testcase.dto.toTestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.toTestCaseResponse
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.VerificationStatus
@@ -28,6 +31,7 @@ import org.springframework.stereotype.Service
 class TestCaseService(
     private val repository: TestCaseRepository,
     private val projectAccessService: ProjectAccessService,
+    private val objectMapper: ObjectMapper,
 ) {
     /** 프로젝트의 케이스 목록. scene/verificationStatus로 선택 필터. 비참여자면 빈 목록. */
     suspend fun list(projectId: Long, userId: Long, scene: String?, status: String?): TestCaseListResponse {
@@ -79,9 +83,13 @@ class TestCaseService(
         return repository.save(entity).toTestCaseResponse()
     }
 
-    /** 케이스 단건 조회(프로젝트 참여자만). 없거나 비참여자면 null. */
-    suspend fun get(caseId: Long, userId: Long): TestCaseResponse? =
-        accessible(caseId, userId)?.toTestCaseResponse()
+    /**
+     * 케이스 단건 조회(프로젝트 참여자만). 없거나 비참여자면 null.
+     *
+     * 목록과 달리 `evidenceGaps`까지 낸다 — 왜 상세에만 싣는지는 [TestCaseDetailResponse] 참조.
+     */
+    suspend fun getTestCase(caseId: Long, userId: Long): TestCaseDetailResponse? =
+        accessible(caseId, userId)?.toTestCaseDetailResponse(objectMapper)
 
     /** 케이스 수정. 준 필드만 반영. verificationStatus는 enum 검증. */
     suspend fun update(caseId: Long, userId: Long, request: TestCaseUpdateRequest): TestCaseResponse? {
