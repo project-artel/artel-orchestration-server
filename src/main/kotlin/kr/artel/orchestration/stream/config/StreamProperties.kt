@@ -20,7 +20,7 @@ import java.time.Duration
 @ConfigurationProperties("artel.stream")
 data class StreamProperties(
     val enabled: Boolean = true,
-    val leaseSeconds: Long = 15,
+    val leaseSeconds: Long = 90,
     val stunUrls: String = "",
     val turnUrl: String = "",
     val turnUsername: String = "",
@@ -35,8 +35,17 @@ data class StreamProperties(
     }
 
     /**
-     * 이 시간 안에 뷰어에게서 아무 메시지도 오지 않으면 세션을 끝낸다. 브라우저는 10초마다
-     * 갱신을 보내므로, 이 값이 그보다 넉넉해야 정상 연결이 잘려나가지 않는다.
+     * 이 시간 안에 뷰어에게서 아무 메시지도 오지 않으면 세션을 끝낸다.
+     *
+     * 기준은 포그라운드 갱신 주기(10초)가 아니라 **조여진 탭의 갱신 주기**다. 브라우저는 숨겨진
+     * 탭의 타이머를 조이고, 가장 나쁜 경우가 1분에 1회다. 그보다 짧은 임대는 탭을 다른 창 뒤로
+     * 보낸 것만으로 정상 시청을 매 주기 잘라낸다. 기본값은 그 1분에 스케줄링 드리프트와 전송
+     * 지연을 얹을 여유를 더해 잡혀 있다.
+     *
+     * 이것은 정지 신호가 아니라 백스톱이다. 뷰어 소켓이 닫히면 임대와 무관하게 그 자리에서
+     * 스트림이 멈춘다([kr.artel.orchestration.stream.service.ViewerWebSocketHandler]). 임대가
+     * 실제로 일하는 경우는 소켓이 닫히지 않고 사라졌을 때뿐이고, 그래서 이 값을 늘린 대가는
+     * 정상 종료가 아니라 그 경우에 게임이 헛되이 인코딩하는 시간이다.
      */
     val lease: Duration get() = Duration.ofSeconds(leaseSeconds)
 
@@ -66,7 +75,16 @@ data class StreamProperties(
         }
 
     private companion object {
-        /** 갱신 주기가 10초라, 그보다 짧은 임대는 정상 연결을 끊는 설정이다. */
-        const val MINIMUM_LEASE_SECONDS = 11L
+        /**
+         * 이 하한이 정하는 것은 "임대가 갱신 주기보다 긴가"가 아니라 **갱신을 몇 번까지 놓쳐도
+         * 되는가**다.
+         *
+         * 그래서 기준이 포그라운드의 10초일 수 없다. 숨겨진 탭의 갱신은 1분에 1회까지 조여지고,
+         * 그 주기를 못 넘는 임대는 유실 허용 폭이 0이라 정상 시청을 매번 잘라낸다. 60을 넘기는
+         * 가장 작은 값이 그 폭이 존재하기 시작하는 지점이다.
+         *
+         * 하한이지 권고값이 아니다. 포그라운드만 도는 뷰어를 운영한다면 이 근처 값도 정당하다.
+         */
+        const val MINIMUM_LEASE_SECONDS = 61L
     }
 }

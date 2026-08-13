@@ -56,13 +56,55 @@ the game each round. `4009` is terminal; recovery is a user action.
 
 `STREAM_START` carries `leaseSeconds`. The browser sends `RENEW` every 10s; the
 server forwards it as `STREAM_RENEW`; the SDK runs its own timer per `streamId`
-and tears the peer down when it expires.
+and tears the peer down when it expires. The same value is the server's receive
+timeout on `/ws/viewer`, so one number governs both ends.
 
 The timer lives in the SDK on purpose. A clean disconnect is not the case worth
 designing for — a closed laptop lid, a killed browser, or this server going down
 all leave the game encoding video for nobody. The SDK stopping on its own is the
 only version of "stop when nobody is watching" that does not depend on being
 told.
+
+### Sizing the lease
+
+**The lease is a missed-renew tolerance, not a multiple of the renew interval.**
+Sizing it against the 10s foreground cadence is what produced the old 15s
+default, and 15s does not survive even a single missed renew: the next one is
+20s away.
+
+The interval to size against is the throttled one. Browsers clamp timers in
+hidden tabs, and the worst documented case is **one wake per minute** — Chrome's
+intensive throttling, which applies once a tab has been hidden for five minutes.
+An active `RTCPeerConnection` exempts the tab in some browsers and versions, but
+that is not a guarantee to design against. So the floor is 60s, and anything
+below it cuts a perfectly healthy viewer every cycle the moment its tab goes
+behind another window.
+
+The default is **90s** — the throttled minute plus room for scheduling drift and
+delivery, and nine foreground renew cycles, so eight consecutive renews can be
+lost. Going further, to 120s, would only help a tab that misses a wake-up
+entirely; a tab that misses one is frozen rather than throttled, and a frozen tab
+is painting no video for anyone. `MINIMUM_LEASE_SECONDS` rejects anything below
+61s outright, because below that the tolerance is zero.
+
+### What a longer lease costs
+
+Nothing on the normal path. A viewer socket that closes stops the stream
+immediately, through `doFinally` in `ViewerWebSocketHandler` — the lease is not
+consulted, and raising it does not delay that by a millisecond.
+
+The lease only ever runs out for a viewer that **vanished without closing its
+socket**: a closed laptop lid, a killed browser, a dropped network. For those,
+the lease is exactly how long the game keeps encoding and sending video to
+nobody. Raising the default from 15s to 90s lengthens that window by 75s. That is
+the trade being made — a rare wasted 90 seconds of encoding, against a common
+viewer being disconnected every 15.
+
+Deployments that weight it differently set `ARTEL_STREAM_LEASE_SECONDS`. Note
+that `/ws/**` reaches this server through a reverse proxy, whose idle timeout
+caps the real survival time independently: a throttled viewer sends one frame a
+minute and the server sends nothing between events, so a proxy read timeout
+shorter than the lease ends the session first, whatever this value says.
 
 ## Messages
 
@@ -151,7 +193,8 @@ its cookie and 401s.
 artel:
   stream:
     enabled: ${ARTEL_STREAM_ENABLED:true}
-    lease-seconds: ${ARTEL_STREAM_LEASE_SECONDS:15}
+    # 갱신 유실 허용 폭. 숨겨진 탭의 1분 갱신 주기 기준이며 61 미만은 거절된다.
+    lease-seconds: ${ARTEL_STREAM_LEASE_SECONDS:90}
     # 쉼표 구분. 후보가 늘수록 연결이 느려지므로 1~2개면 충분하다.
     stun-urls: ${ARTEL_STUN_URLS:stun:stun.l.google.com:19302}
     # 대칭 NAT나 UDP를 막는 방화벽에서만 필요하다. 빈 값은 "없음"으로 읽는다.
