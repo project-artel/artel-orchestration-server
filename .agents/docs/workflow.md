@@ -78,6 +78,23 @@ end-to-end development. Jira access is described in `project.md`.
    manually with the same name — do not invent a different one, and do not
    report the automation as broken before checking.
 
+   **Look at the base's migrations before writing anything.**
+   `scripts/check-flyway-migrations.sh` compares this branch against its base, so
+   a migration merged into `develop` after the branch was cut reads as a
+   migration this branch *removed*, and the build fails even when the branch
+   never touched SQL. Two habits avoid it:
+
+   - When an open PR adds a file under `src/main/resources/db/migration/`, start
+     this branch from that PR's branch instead of `develop` and retarget this
+     PR's base to it. Its migration is then already here whenever it merges
+     first. Once it does merge, GitHub retargets this PR to `develop` and its
+     branch is deleted — catch up with `develop` at that point.
+   - Before every push, catch up with the base if it has gained a migration.
+     Merge it in, or rebase onto it while the branch is yours alone.
+
+   `docs/flyway-migrations.md` covers what the check reads and how to recover
+   from each failure it reports.
+
    The issue key in the branch name is what ties branch, commits, and PR back
    to the issue, so never create the branch before the issue exists. Keep one
    issue per branch, never force-push a shared branch without coordination,
