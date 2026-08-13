@@ -78,6 +78,16 @@ private val ANSWERED_WRITE_TYPES = KNOWLEDGE_MUTATION_TYPES + KNOWLEDGE_GRAPH_TY
  */
 private const val KNOWLEDGE_WRITE_RESULT_TYPE = "KNOWLEDGE_WRITE_RESULT"
 
+/**
+ * 이슈 보고의 응답 프레임 타입(ARTEL-366).
+ *
+ * [KNOWLEDGE_WRITE_RESULT_TYPE]을 일반화해 같이 쓰지 않는다. payload 모양은 똑같지만(요청 타입
+ * echo + id 하나) 그 이름은 지식 쓰기 한 가족을 뜻하고, 이슈는 다른 도메인이다 — 저장하는 테이블도
+ * 수명도 소비자도 다르다. 이름을 넓히면 "지식 쓰기의 답"이라는 뜻이 사라지고, 그 뜻이 사라진 뒤에는
+ * 다음 사람이 아무 프레임의 답이나 그 타입으로 보내게 된다.
+ */
+private const val ISSUE_RESULT_TYPE = "ISSUE_RESULT"
+
 private val SUPPORTED_TYPES =
     setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH", "KNOWLEDGE_EXPAND") +
         KNOWLEDGE_WRITE_TYPES
@@ -177,7 +187,7 @@ class QaAgentInboundRouter(
                 envelope.payload
             )
             "STATUS" -> routeStatus(qaTry, qaTryId, envelope, message)
-            "ISSUE" -> routeIssue(qaTryId, envelope, message)
+            "ISSUE" -> routeIssue(qaTryId, qaTry, envelope, message)
             else -> {
                 val log = logService.append(
                     qaTryId = qaTryId,
@@ -949,32 +959,82 @@ class QaAgentInboundRouter(
      * Agent가 보고한 이슈를 issue 도메인에 저장한다(qa_log가 아니다).
      *
      * severity는 다른 모든 envelope 필드와 똑같이 여기서 값으로 검증한다: 잘못된 값은 throw
-     * 대신 ORCHE_INTERNAL 에러로 드롭해, 프레임 하나가 receive 체인을 끊어 실행을 실패시키지
-     * 못하게 한다. `title`은 [handle]의 non-blank 가드에서 이미 필수로 걸렀다.
+     * 대신 값으로 처리해, 프레임 하나가 receive 체인을 끊어 실행을 실패시키지 못하게 한다.
+     * `title`은 [handle]의 non-blank 가드에서 이미 필수로 걸렀다.
+     *
+     * **성공과 거절 모두 Agent에 답한다**(ARTEL-366). 그 전에는 성공이 침묵이고 거절도 운영자
+     * 타임라인의 ERROR 행뿐이라, severity 오타 하나면 버그 보고가 조용히 사라지고 모델은 보고했다고
+     * 믿었다. 잃는 것이 지식보다 크다 — 지식은 다음 런이 다시 배울 수 있지만 이 런이 본 버그는
+     * 이 런에서만 볼 수 있었다.
+     *
+     * 계약은 지식 쓰기의 것을 그대로 쓴다(ARTEL-331): 성공은 RESULT, 거절은 요청의 correlation을
+     * 문 ERROR. 세션이 없으면 저장은 하고 답만 못 한다 — 쓰기와 같은 판단이고 이유도 같다.
      */
     private suspend fun routeIssue(
         qaTryId: Long,
+        qaTry: QaTryEntity,
         envelope: QaAgentEnvelope,
         title: String
     ) {
         val severity = envelope.payload.path("severity").takeIf { it.isTextual }?.asText()
         if (severity == null || severity !in IssueSeverity.NAMES) {
-            appendError(
+            rejectIssue(
                 qaTryId,
+                qaTry,
                 envelope,
                 "ISSUE payload.severity must be one of ${IssueSeverity.NAMES}"
             )
             return
         }
-        issueService.recordAgentIssue(
-            qaTryId = qaTryId,
-            messageId = envelope.messageId,
-            correlationId = envelope.correlationId,
-            severity = severity,
-            title = title,
-            reportedAt = envelope.timestamp,
-            payload = envelope.payload
+        val issueId = try {
+            issueService.recordAgentIssue(
+                qaTryId = qaTryId,
+                messageId = envelope.messageId,
+                correlationId = envelope.correlationId,
+                severity = severity,
+                title = title,
+                reportedAt = envelope.timestamp,
+                payload = envelope.payload
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // 1 MiB 상한 위반이 여기로 온다. 그 전에는 예외가 receive 체인 밖으로 나가 런을
+            // 죽였다 — 보고 하나가 실행을 끝내는 것은 이 파일의 다른 어떤 경로도 하지 않는 일이다.
+            rejectIssue(qaTryId, qaTry, envelope, "ISSUE failed: ${error.message}")
+            return
+        }
+        val sessionId = qaTry.agentSessionId ?: return
+        sendToAgent(
+            qaTryId,
+            sessionId,
+            ISSUE_RESULT_TYPE,
+            envelope.messageId,
+            objectMapper.createObjectNode()
+                .put("type", "ISSUE")
+                // 조회 응답과 같은 이유로 문자열이다 — 64비트 id가 JSON 숫자로 나가면 깎인다.
+                .put("issue_id", issueId.toString())
         )
+    }
+
+    /**
+     * 이슈 보고의 거절을 타임라인에 남기고 Agent에도 알린다(ARTEL-366).
+     *
+     * [rejectWrite]와 같은 모양이되 응답 대상 판정이 없다 — 이슈는 타입이 하나뿐이고 그것은
+     * 언제나 답을 기다린다.
+     */
+    private suspend fun rejectIssue(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope,
+        reason: String
+    ) {
+        val sessionId = qaTry.agentSessionId
+        if (sessionId == null) {
+            appendError(qaTryId, envelope, reason)
+            return
+        }
+        answerWithError(qaTryId, sessionId, envelope, reason)
     }
 
     private suspend fun appendError(
