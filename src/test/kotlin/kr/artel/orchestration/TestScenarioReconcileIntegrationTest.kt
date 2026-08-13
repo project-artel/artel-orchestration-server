@@ -104,6 +104,7 @@ class TestScenarioReconcileIntegrationTest {
     @Autowired private lateinit var compositionService: kr.artel.orchestration.testscenario.service.ScenarioCompositionService
     @Autowired private lateinit var runScenarioRepository: TestRunScenarioRepository
     @Autowired private lateinit var runRepository: TestRunRepository
+    @Autowired private lateinit var runMessageRepository: kr.artel.orchestration.testrun.repository.TestRunMessageRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
@@ -123,6 +124,14 @@ class TestScenarioReconcileIntegrationTest {
         private const val MOCK_SESSION_ID = "reconcile-sid"
 
         private val framesToSend = CopyOnWriteArrayList<String>()
+
+        /**
+         * 목이 **인입 턴에 답할** 프레임들. 하나 받을 때마다 앞에서 하나 꺼내 보낸다.
+         *
+         * 재작성 루프는 "결과 → (서버가 다시 시킴) → 결과"라 목이 대답을 할 줄 알아야 검증된다.
+         * 비어 있으면 예전처럼 아무것도 답하지 않으므로 기존 테스트는 그대로 돈다.
+         */
+        private val turnReplies = java.util.concurrent.ConcurrentLinkedQueue<String>()
         private val receivedFrames = CopyOnWriteArrayList<String>()
         private val seq = AtomicLong(500_000)
 
@@ -141,7 +150,7 @@ class TestScenarioReconcileIntegrationTest {
                             Flux.fromIterable(framesToSend.toList()),
                             inbound.receive().asString()
                                 .doOnNext { receivedFrames.add(it) }
-                                .flatMap { Mono.empty<String>() }
+                                .concatMap { Mono.justOrEmpty(turnReplies.poll()) }
                         )
                     ).then()
                 }
@@ -161,6 +170,7 @@ class TestScenarioReconcileIntegrationTest {
     fun reset() {
         framesToSend.clear()
         receivedFrames.clear()
+        turnReplies.clear()
         fake.vectorsByQuery.clear()
     }
 
@@ -230,6 +240,94 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(purchaseSteps.map { it.action }).containsExactly("상점 이동", "A확인", "B확인")
         assertThat(purchaseSteps.map { it.caseId }).containsExactly(null, caseA, caseB)
         assertThat(storedSteps(sale.id!!).map { it.caseId }).containsExactly(caseC)
+    }
+
+    // ---- (b2) 검수 누락 → 재작성 요청 → 합쳐서 저장 (ARTEL-403) ------------------------------
+
+    /**
+     * 판정해 놓고 안 담은 케이스가 있으면, 그것만 다시 쓰게 하고 **앞 결과와 합쳐 한 번에** 저장한다.
+     *
+     * 실측에서 나온 실패다(2026-08-13): word-venture 66건을 전부 쓰라고 시켰더니 에이전트가
+     * "각 테스트 케이스를 빠짐없이 연결했습니다"라고 답하면서 1건을 빠뜨렸다. 그 1건이 자기가
+     * `in`으로 판정한 케이스였다.
+     *
+     * E2E로는 이 경로를 부를 수 없다 — 누락이 확률적이라 같은 요청이 66/66으로 통과하기도 한다.
+     * 그래서 여기서 못 박는다.
+     */
+    @Test
+    fun `판정한 케이스가 빠지면 그것만 다시 쓰게 하고 합쳐서 저장한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "RULE", "A")
+        val caseB = insertCase(projectId, "RULE", "B")
+
+        // 1차 결과: 둘 다 관련 있다고 판정해 놓고 A만 담았다.
+        framesToSend.add(
+            """{"type":"result","message":"빠짐없이 연결했습니다","reviewed":{"in":[$caseA,$caseB],"out":[]},""" +
+                """"scenarios":[{"title":"첫 시나리오","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        // 재작성 턴에 대한 답: 빠졌던 B만 새 시나리오로.
+        turnReplies.add(
+            """{"type":"result","message":"B를 추가했습니다","reviewed":{"in":[$caseB],"out":[$caseA]},""" +
+                """"scenarios":[{"title":"보강 시나리오","description":"d","steps":[{"action":"B확인","case_id":$caseB}]}]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "전부 써줘")
+
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().size == 2 }
+
+        // 재작성 지시가 빠진 id를 지목했는지.
+        val repairTurn = receivedFrames.firstOrNull { it.contains("\"type\":\"turn\"") }
+        assertThat(repairTurn).isNotNull()
+        assertThat(repairTurn!!).contains("$caseB")
+
+        // 합쳐서 저장됐다: 앞 결과 + 보강분.
+        val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        val titles = links.map { scenarioRepository.findById(it.testScenarioId)!!.title }
+        assertThat(titles).containsExactly("첫 시나리오", "보강 시나리오")
+
+        // 사용자에게 재작성 사실과 결과를 알렸는지 — 말하지 않으면 그냥 느린 것과 구분되지 않는다.
+        val messages = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+            .map { it.content }
+        assertThat(messages).anyMatch { it.contains("다시 작성하도록 요청") }
+        assertThat(messages).anyMatch { it.contains("반영했습니다") }
+    }
+
+    /**
+     * 재검수는 **처음 판정 기준**이다. 재작성 응답이 빠뜨린 케이스를 `out`으로 옮겨도 통과시키지 않는다 —
+     * 그걸 허용하면 에이전트가 스스로 합격 기준을 낮출 수 있고, 검사가 있으나 마나가 된다.
+     */
+    @Test
+    fun `재작성이 판정을 바꿔도 처음 선언 기준으로 다시 본다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "RULE", "A")
+        val caseB = insertCase(projectId, "RULE", "B")
+
+        framesToSend.add(
+            """{"type":"result","message":"했습니다","reviewed":{"in":[$caseA,$caseB],"out":[]},""" +
+                """"scenarios":[{"title":"첫 시나리오","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        // 재작성이랍시고 B를 out으로 옮겨 "이제 통과"라고 주장한다.
+        turnReplies.add(
+            """{"type":"result","message":"B는 관련 없었습니다","reviewed":{"in":[$caseA],"out":[$caseB]},"scenarios":[]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "전부 써줘")
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.content.contains("저장하지 않았습니다") }
+        }
+
+        // 한 줄도 저장되지 않는다.
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).isEmpty()
     }
 
     // ---- (c) result{scenarios:[]} → DB 무변경 ------------------------------------------------

@@ -26,6 +26,8 @@ import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
+import kr.artel.orchestration.testscenario.dto.ReviewedCases
+import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchErrorFrame
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchResultFrame
@@ -213,6 +215,78 @@ class TestScenarioAgentService(
         return testCaseRepository.findUncoveredIdsByProjectId(projectId).toList()
     }
 
+    /**
+     * 결과를 검수해 저장하거나, 빠진 것이 있으면 **그것만 다시 쓰게 하고 합쳐서** 저장한다(ARTEL-403).
+     *
+     * 재작성을 orche가 조립하는 이유는 저장을 안 했기 때문이다 — DB에 `scenario_id`가 없으니
+     * 에이전트에게 "그 시나리오를 고쳐라"라고 지목할 수가 없다. 그래서 막힌 결과를 세션에 쥐고,
+     * 빠진 케이스만 새로 받아 앞 결과와 합친 뒤 **다시 검수해서 한 번에** 저장한다. 저장은 끝까지
+     * 전부-아니면-전무다.
+     *
+     * 재검수는 **처음 판정 기준**이다. 재작성 때 판정을 새로 받으면 에이전트가 빠뜨린 케이스를
+     * out으로 옮겨 스스로 통과시킬 수 있는데, 그러면 검사가 있으나 마나가 된다.
+     *
+     * 재작성을 거는 조건은 누락뿐이다. 검토 누락(전량을 안 봤다)이나 유령 번호(없는 걸 지목했다)는
+     * 결과 전체를 의심해야 하는 신호라 "빠진 것만 더 써라"로 고칠 수 있는 종류가 아니다.
+     */
+    private suspend fun applyOrRepair(
+        sessionKey: String,
+        session: AgentSession,
+        event: ScenarioStreamEvent,
+    ) {
+        val pending = session.repair
+        session.repair = null
+
+        val incoming = event.scenarios ?: emptyList()
+        // 재작성 턴이면 앞서 막힌 결과에 새로 받은 것을 얹어 통째로 다시 본다.
+        val scenarios = if (pending != null) pending.scenarios + incoming else incoming
+        val reviewed = pending?.reviewed ?: event.reviewed
+
+        val outcome = reconcileService.reconcile(session.runId, session.projectId, scenarios, reviewed)
+        if (!outcome.rejected) {
+            if (pending != null) {
+                saveMessage(
+                    session.runId, session.appUserId, "ASSISTANT",
+                    "빠졌던 케이스를 다시 작성해 시나리오에 반영했습니다."
+                )
+            }
+            return
+        }
+
+        val attempts = (pending?.attempts ?: 0) + 1
+        val repairable = outcome.findings.missing.isNotEmpty() &&
+            outcome.findings.unreviewed.isEmpty() &&
+            outcome.findings.ghost.isEmpty()
+
+        if (!repairable || attempts > MAX_REPAIR_ATTEMPTS || reviewed == null) {
+            // 더 못 고친다. 저장하지 않고 사람에게 넘긴다 — 사용자는 시나리오가 나왔다고 믿고
+            // 있으므로, 여기서 말하지 않으면 저장되지 않았다는 사실을 알 길이 없다.
+            saveMessage(
+                session.runId, session.appUserId, "ASSISTANT",
+                outcome.findings.rejectionMessage()
+            )
+            return
+        }
+
+        session.repair = PendingRepair(scenarios, reviewed, attempts)
+        // 재작성을 시켰다는 사실을 사용자에게 알린다. 이 시간 동안 화면은 답을 기다리는 것처럼
+        // 보이는데, 무슨 일이 일어나는지 말하지 않으면 그냥 느린 것과 구분되지 않는다.
+        saveMessage(
+            session.runId, session.appUserId, "ASSISTANT",
+            "검토 결과 ${outcome.findings.missing.size}건이 시나리오에 빠져 있어 그 부분만 다시 작성하도록 요청했습니다."
+        )
+        sendTurn(sessionKey, session, repairPrompt(outcome.findings.missing), emptyList())
+    }
+
+    /**
+     * 재작성 지시문. **빠진 case_id만** 다루게 하고 앞서 쓴 것은 다시 쓰지 말라고 못 박는다 —
+     * 전체를 다시 만들면 출력 예산을 통째로 한 번 더 쓰고, 이미 통과한 부분까지 흔들린다.
+     */
+    private fun repairPrompt(missing: List<Long>): String =
+        "이전 응답에서 관련 있다고 판단한 케이스 중 ${missing.joinToString(", ")} 번이 어떤 스텝에도 담기지 않았습니다. " +
+            "이 케이스들만 검증하는 시나리오를 새로 작성해 주세요(scenario_id는 null). " +
+            "앞서 작성한 시나리오는 다시 보내지 마세요 — 그대로 유지됩니다."
+
     private fun sendTurn(
         sessionKey: String,
         session: AgentSession,
@@ -302,20 +376,7 @@ class TestScenarioAgentService(
                     // (TestRunChatService.commitScenarios). 어느 경우든 빈 배열은 무동작.
                     if (session.autoApply) {
                         try {
-                            val outcome = reconcileService.reconcile(
-                                session.runId,
-                                session.projectId,
-                                event.scenarios ?: emptyList(),
-                                event.reviewed,
-                            )
-                            // 검수에서 막혔으면 조용히 넘기지 않는다. 사용자는 시나리오가 나왔다고
-                            // 믿고 있고, 저장 안 됐다는 사실을 여기서 말하지 않으면 알 길이 없다.
-                            if (outcome.rejected) {
-                                saveMessage(
-                                    session.runId, session.appUserId, "ASSISTANT",
-                                    outcome.findings.rejectionMessage()
-                                )
-                            }
+                            applyOrRepair(sessionKey, session, event)
                         } catch (err: CancellationException) {
                             throw err
                         } catch (err: Exception) {
@@ -405,6 +466,37 @@ class TestScenarioAgentService(
         val appUserId: Long,
         val agentSessionId: String,
         @Volatile var autoApply: Boolean,
-        @Volatile var disposable: Disposable? = null
+        @Volatile var disposable: Disposable? = null,
+        /** 검수에서 막혀 재작성을 기다리는 중인 결과. null이면 평범한 턴이다. */
+        @Volatile var repair: PendingRepair? = null
     )
+
+    /**
+     * 검수에 걸린 결과를 들고 재작성을 기다리는 상태(ARTEL-403).
+     *
+     * **막힌 시나리오를 여기 들고 있는 이유**: 저장을 안 했으니 DB에 `scenario_id`가 없고, 그러면
+     * 에이전트에게 "그 시나리오를 고쳐라"라고 지목할 방법이 없다. 그렇다고 통과한 것만 먼저 저장하면
+     * 부분 저장이 되는데, 그건 "일부만 검증된 시나리오"를 남기므로 검사를 안 한 것보다 나쁘다.
+     *
+     * 그래서 앞 결과를 메모리에 쥐고, 빠진 것만 새로 받아 **합쳐서 다시 검수한 뒤 한 번에** 저장한다.
+     * 재작성 출력이 작아지는 것은 덤이고, 본질은 저장이 여전히 전부-아니면-전무라는 점이다.
+     *
+     * @property reviewed 처음 판정. 재검수도 **이 선언 기준**이다 — 재작성 때 판정을 다시 받으면
+     *   에이전트가 빠뜨린 것을 out으로 옮겨 스스로 통과시킬 수 있다.
+     */
+    private class PendingRepair(
+        val scenarios: List<ScenarioResult>,
+        val reviewed: ReviewedCases,
+        val attempts: Int,
+    )
+
+    companion object {
+        /**
+         * 재작성을 몇 번까지 시킬지.
+         *
+         * 1회다. 같은 지적을 두 번 받고도 못 고치면 세 번째라고 달라질 이유가 없고, 그동안 사용자는
+         * 답을 기다린다. 상한에 걸리면 저장하지 않고 무엇이 빠졌는지 사람에게 넘긴다.
+         */
+        private const val MAX_REPAIR_ATTEMPTS = 1
+    }
 }
