@@ -72,4 +72,13 @@ interface GameInstanceRepository : CoroutineCrudRepository<GameInstanceEntity, L
         """
     )
     suspend fun findActiveBySdkUuid(projectId: Long, sdkUuid: String): GameInstanceEntity?
+
+    @Query(
+        """
+        SELECT gi.* FROM game_instance gi
+        WHERE gi.project_id = :projectId AND gi.sdk_uuid = :sdkUuid
+          AND gi.deleted_at IS NOT NULL
+        """
+    )
+    suspend fun findRetiredBySdkUuid(projectId: Long, sdkUuid: String): GameInstanceEntity?
 }

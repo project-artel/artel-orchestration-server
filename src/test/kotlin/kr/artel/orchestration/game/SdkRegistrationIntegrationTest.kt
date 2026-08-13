@@ -95,6 +95,23 @@ class SdkRegistrationIntegrationTest {
     }
 
     @Test
+    fun `returns a stable conflict when a retired sdk uuid registers again`(): Unit = runBlocking {
+        val user = signIn()
+        val projectId = createProject(user.webToken)
+        val registered = register(user.sdkToken, projectId, "sdk-uuid-retired", "1.2.3")
+        val instance = instanceRepository.findById(registered["instanceId"].asLong())!!
+        instanceRepository.save(instance.copy(deletedAt = java.time.Instant.now()))
+
+        val error = errorOf {
+            register(user.sdkToken, projectId, "sdk-uuid-retired", "1.2.3")
+        }
+
+        assertThat(error.statusCode).isEqualTo(HttpStatus.CONFLICT)
+        assertThat(objectMapper.readTree(error.responseBodyAsString)["code"].asText())
+            .isEqualTo("SDK_INSTANCE_RETIRED")
+    }
+
+    @Test
     fun `creates a separate instance for a different sdk uuid`(): Unit = runBlocking {
         val user = signIn()
         val projectId = createProject(user.webToken)
