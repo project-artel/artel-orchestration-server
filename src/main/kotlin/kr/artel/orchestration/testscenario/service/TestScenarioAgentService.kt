@@ -256,7 +256,10 @@ class TestScenarioAgentService(
                     "빠졌던 부분을 다시 작성해 시나리오에 반영했습니다."
                 )
             }
-            recommendRemaining(session)
+            // 저장이 있었던 턴에만 잔량을 알린다. 질문·거절 턴에서는 남은 수가 그대로일 뿐 아니라,
+            // 방금 에이전트가 같은 값을 더 자세히 답했을 수 있다 — 그 뒤에 한 줄을 더 붙이면 같은
+            // 말을 두 번 하는 셈이 된다.
+            if (outcome.applied > 0) recommendRemaining(session)
             return
         }
 

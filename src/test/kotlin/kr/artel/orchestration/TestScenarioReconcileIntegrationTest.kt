@@ -449,6 +449,34 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(notices).isEqualTo(1)
     }
 
+    /**
+     * 저장이 없는 턴에는 잔량을 알리지 않는다.
+     *
+     * 질문 턴에서는 에이전트가 방금 같은 값을 더 자세히 답했을 수 있는데, 그 뒤에 요약 한 줄을 더
+     * 붙이면 같은 말을 두 번 하는 셈이 된다. 실측에서 실제로 그렇게 나왔다(2026-08-13).
+     */
+    @Test
+    fun `질문만 한 턴에는 잔량을 알리지 않는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        insertCase(projectId, "TitleScene", "A")
+
+        // 시나리오 없이 답만 하는 정상 턴(질문·조회·거절).
+        framesToSend.add("""{"type":"result","message":"남은 건 이러이러합니다","scenarios":[]}""")
+        postMessage(client, projectId, runId, token, "뭐 남았어?")
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.role == "ASSISTANT" }
+        }
+
+        val messages = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().map { it.content }
+        assertThat(messages).noneMatch { it.contains("남았습니다") }
+    }
+
     // ---- (c) result{scenarios:[]} → DB 무변경 ------------------------------------------------
 
     @Test
