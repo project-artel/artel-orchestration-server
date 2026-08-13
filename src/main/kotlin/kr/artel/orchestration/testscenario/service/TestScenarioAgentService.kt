@@ -330,21 +330,30 @@ class TestScenarioAgentService(
      */
     private suspend fun recommendRemaining(session: AgentSession) {
         val uncovered = try {
-            testCaseRepository.findUncoveredIdsByProjectId(session.projectId).toList()
+            testCaseRepository.findScenesOfUncovered(session.projectId).toList()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             logger.warn("미커버 조회 실패 — 추천 생략 [runId=${session.runId}]: ${e.message}")
             return
         }
-        if (uncovered.isEmpty()) return
+        val total = uncovered.sumOf { it.count }
+        if (total == 0L) return
 
-        val scenes = testCaseRepository.findScenesOfUncovered(session.projectId).toList()
-        val where = if (scenes.isEmpty()) "" else " (${scenes.joinToString(", ") { "${it.scene} ${it.count}건" }})"
+        // 숫자가 그대로면 말하지 않는다. 이번 턴이 새로 덮은 것이 없다는 뜻이고(질문·편집·거절),
+        // 같은 수를 매 턴 반복하면 좁은 작업을 이어가는 사람에게는 그게 소음이다.
+        if (total == session.lastReportedUncovered) return
+        session.lastReportedUncovered = total
+
+        // 씬이 여섯 개인 프로젝트에서 여섯 줄이 매번 붙으면 읽히지 않는다. 많은 순 셋까지만.
+        val shown = uncovered.take(MAX_SCENES_IN_RECOMMENDATION)
+        val rest = uncovered.size - shown.size
+        val breakdown = shown.joinToString(", ") { "${it.scene} ${it.count}" } +
+            if (rest > 0) " 외 ${rest}개 씬" else ""
+
         saveMessage(
             session.runId, session.appUserId, "ASSISTANT",
-            "이번 작업 뒤에도 아직 어떤 시나리오에도 담기지 않은 케이스가 ${uncovered.size}건 남아 있습니다$where. " +
-                "이어서 다루려면 말씀해 주세요."
+            "아직 어떤 시나리오에도 담기지 않은 케이스가 ${total}건 남았습니다 — $breakdown. 이어서 만들까요?"
         )
     }
 
@@ -529,7 +538,12 @@ class TestScenarioAgentService(
         @Volatile var autoApply: Boolean,
         @Volatile var disposable: Disposable? = null,
         /** 검수에서 막혀 재작성을 기다리는 중인 결과. null이면 평범한 턴이다. */
-        @Volatile var repair: PendingRepair? = null
+        @Volatile var repair: PendingRepair? = null,
+        /**
+         * 마지막으로 사용자에게 알린 미커버 건수. 같은 수를 두 번 말하지 않기 위한 값이다 —
+         * 좁은 작업을 이어가는 대화에서 매 턴 같은 줄이 붙으면 읽히지 않는다.
+         */
+        @Volatile var lastReportedUncovered: Long? = null
     )
 
     /**
@@ -559,5 +573,8 @@ class TestScenarioAgentService(
          * 답을 기다린다. 상한에 걸리면 저장하지 않고 무엇이 빠졌는지 사람에게 넘긴다.
          */
         private const val MAX_REPAIR_ATTEMPTS = 1
+
+        /** 남은 씬을 몇 개까지 나열할지. 나머지는 "외 N개 씬"으로 접는다. */
+        private const val MAX_SCENES_IN_RECOMMENDATION = 3
     }
 }

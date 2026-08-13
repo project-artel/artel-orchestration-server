@@ -393,14 +393,60 @@ class TestScenarioReconcileIntegrationTest {
 
         awaitUntil {
             runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
-                .any { it.content.contains("남아 있습니다") }
+                .any { it.content.contains("남았습니다") }
         }
 
         val recommendation = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
-            .toList().first { it.content.contains("남아 있습니다") }.content
+            .toList().first { it.content.contains("남았습니다") }.content
         // 건수와 씬을 함께 말한다 — id로 말하면 사람이 못 알아듣고, 번호는 화면에 내보내지도 않는다.
         assertThat(recommendation).contains("2건")
         assertThat(recommendation).contains("EndingScene")
+        // 한 줄로 끝난다. 좁은 작업을 이어가는 사람에게 여러 줄은 소음이다.
+        assertThat(recommendation.lines()).hasSize(1)
+    }
+
+    /**
+     * 숫자가 그대로면 다시 말하지 않는다.
+     *
+     * 좁은 범위를 여러 턴에 걸쳐 다듬는 대화가 정상적인 사용법인데, 매 턴 같은 잔량 줄이 붙으면
+     * 출력이 읽히지 않는다. 새로 덮은 것이 없다 = 알릴 변화가 없다.
+     */
+    @Test
+    fun `잔량이 그대로면 두 번 말하지 않는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "TitleScene", "A")
+        val caseB = insertCase(projectId, "EndingScene", "B")
+
+        val authored =
+            """{"type":"result","message":"타이틀","reviewed":{"in":[$caseA],"out":[$caseB]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        framesToSend.add(authored)
+        postMessage(client, projectId, runId, token, "타이틀만")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.content.contains("남았습니다") }
+        }
+
+        // 같은 시나리오를 다시 저장한다 — 새로 덮이는 케이스가 없으므로 잔량은 그대로다.
+        turnReplies.add(authored)
+        postMessage(client, projectId, runId, token, "조금만 다듬어줘")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .count { it.role == "USER" } == 2
+        }
+        // 두 번째 턴이 처리될 시간을 준 뒤에도 잔량 안내가 한 번뿐이어야 한다.
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.content.contains("타이틀") && it.role == "ASSISTANT" }
+        }
+
+        val notices = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().count { it.content.contains("남았습니다") }
+        assertThat(notices).isEqualTo(1)
     }
 
     // ---- (c) result{scenarios:[]} → DB 무변경 ------------------------------------------------
