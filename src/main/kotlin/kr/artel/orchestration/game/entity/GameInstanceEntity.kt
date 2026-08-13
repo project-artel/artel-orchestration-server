@@ -38,6 +38,19 @@ data class GameInstanceEntity(
     @Column("last_connected_at")
     val lastConnectedAt: Instant? = null,
 
+    /**
+     * 마지막 등록에서 SDK가 보고한 빌드.
+     *
+     * 등록은 원래 빌드를 응답으로만 돌려주고 인스턴스에는 남기지 않았다. 웹소켓이 열릴 때
+     * "지금 붙은 런타임이 어느 빌드인가"를 알 방법이 없으면 성능 런을 빌드에 묶을 수 없어
+     * 빌드 추세가 성립하지 않는다(ARTEL-378). 그래서 등록이 그 값을 여기 남긴다.
+     *
+     * 자격증명이 아니라 기록이다. 대시보드에서 만들었지만 아직 SDK가 붙지 않은 인스턴스는
+     * 비어 있다.
+     */
+    @Column("last_game_build_id")
+    val lastGameBuildId: Long? = null,
+
     @Column("created_at")
     val createdAt: Instant,
 
