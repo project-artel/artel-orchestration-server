@@ -185,7 +185,7 @@ class ExpectedStepsGradingIntegrationTest {
         failureService.agentDisconnected(run.tryId)
 
         assertThat(qaTryRepository.findById(run.tryId)!!.status).isEqualTo("FAILED")
-        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("COMPLETED")
+        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("FAILED")
         val detail = detailOf(run.tryId)
         assertThat(detail.get("reported").asInt()).isEqualTo(1)
         assertThat(detail.get("unreported").asInt()).isEqualTo(1)
@@ -198,7 +198,7 @@ class ExpectedStepsGradingIntegrationTest {
         failureService.sdkDisconnected(run.instanceId)
 
         assertThat(qaTryRepository.findById(run.tryId)!!.status).isEqualTo("FAILED")
-        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("COMPLETED")
+        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("FAILED")
     }
 
     @Test
@@ -209,7 +209,7 @@ class ExpectedStepsGradingIntegrationTest {
         failureService.cancelled(run.tryId, "운영자가 중단했습니다.")
 
         assertThat(qaTryRepository.findById(run.tryId)!!.status).isEqualTo("CANCELLED")
-        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("COMPLETED")
+        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("CANCELLED")
         assertThat(detailOf(run.tryId).get("matrix").get("correct_fail").asInt()).isEqualTo(1)
     }
 

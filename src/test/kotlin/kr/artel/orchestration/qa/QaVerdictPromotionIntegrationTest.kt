@@ -211,7 +211,7 @@ class QaVerdictPromotionIntegrationTest {
         assertThat(second.stepsTotal to second.stepsPassed).isEqualTo(6 to 2)
         assertThat(first.casesPassed).isEqualTo(2)
         assertThat(second.casesPassed).isEqualTo(1)
-        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("COMPLETED")
+        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("FAILED")
     }
 
     // ----------------------------------------------------------------- helpers
