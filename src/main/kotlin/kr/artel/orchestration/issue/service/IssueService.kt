@@ -57,6 +57,10 @@ class IssueService(
      *
      * [reportedAt]은 Agent가 프레임에 찍은 이벤트 시각(envelope.timestamp)이다 — 우리가 저장하는
      * 수신 시각([createdAt])과 달리, 버그가 실제로 관측된 순간을 그대로 보존한다.
+     *
+     * @return 저장된 이슈의 id. 재전송이면 첫 번째 보고의 id다(ARTEL-366). 라우터가 이것을 응답에
+     *   실어 Agent가 "무엇이 저장됐나"를 알게 한다 — 그 전에는 성공이 침묵이라, 거절과 구분되지
+     *   않았다.
      */
     suspend fun recordAgentIssue(
         qaTryId: Long,
@@ -66,7 +70,7 @@ class IssueService(
         title: String,
         reportedAt: Instant,
         payload: JsonNode
-    ) {
+    ): Long {
         val serialized = objectMapper.writeValueAsString(payload)
         require(serialized.toByteArray(StandardCharsets.UTF_8).size <= MAX_ISSUE_DETAIL_BYTES) {
             "Issue detail exceeds 1 MiB"
@@ -86,13 +90,16 @@ class IssueService(
             createdAt = now,
             updatedAt = now
         )
-        try {
+        val saved = try {
             issueRepository.save(entity)
         } catch (error: DataIntegrityViolationException) {
             // messageId로 멱등 흡수: 재전송된 프레임이면 유니크 제약 위반을 기존 행으로 되돌린다.
             if (messageId == null) throw error
             issueRepository.findByQaTryIdAndMessageId(qaTryId, messageId) ?: throw error
         }
+        // 저장된 행의 id를 돌려준다(ARTEL-366). 재전송이면 **첫 번째 보고의 id**다 — 그래야 같은
+        // 프레임을 두 번 보낸 Agent가 두 번 다 같은 답을 받는다.
+        return requireNotNull(saved.id)
     }
 
     /**
