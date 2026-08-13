@@ -45,6 +45,33 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     fun findIdsByProjectId(projectId: Long): Flow<Long>
 
     /**
+     * 어떤 시나리오도 아직 건드리지 않은 케이스의 id(2단계).
+     *
+     * 커버 집합은 `test_scenario.steps`의 `case_id` 합집합이다 — **원장을 따로 저장하지 않는다.**
+     * 값이 이미 있는데 복제하면 진실이 둘이 되고, 시나리오를 고칠 때마다 동기화가 숙제로 남는다.
+     *
+     * `case_id`가 없는 스텝(이동·준비 같은 브리지)은 자연히 빠진다 — 검증을 하지 않으므로 무엇도
+     * 커버하지 않는다.
+     *
+     * 정렬을 `id ASC`로 고정하는 이유는 전량 목록과 같다: 이 값도 세션 프롬프트로 나가므로 순서가
+     * 흔들리면 캐시 접두사가 깨진다.
+     */
+    @Query(
+        """
+        SELECT c.id FROM test_case c
+        WHERE c.project_id = :projectId
+          AND NOT EXISTS (
+            SELECT 1 FROM test_scenario s, jsonb_array_elements(s.steps) e
+            WHERE s.project_id = :projectId
+              AND e->>'case_id' IS NOT NULL
+              AND (e->>'case_id')::bigint = c.id
+          )
+        ORDER BY c.id ASC
+        """
+    )
+    fun findUncoveredIdsByProjectId(projectId: Long): Flow<Long>
+
+    /**
      * 명세 적재의 **보조** 키 — `spec_id`가 아직 없는 행만 고른다(ARTEL-329).
      *
      * spec_id가 붙기 전에 만들어진 행(손으로 만든 케이스, 이 계약 이전의 적재)을 새 명세가 이어받게

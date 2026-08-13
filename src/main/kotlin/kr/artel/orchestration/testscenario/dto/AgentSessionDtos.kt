@@ -36,6 +36,19 @@ data class AgentSessionOpenRequest(
      * 되돌릴 때 양쪽을 다시 배포하지 않아도 된다.
     */
     @JsonProperty("test_case_list") val testCaseList: List<TestCaseListItem> = emptyList(),
+    /**
+     * 아직 어떤 시나리오도 건드리지 않은 케이스의 id(ARTEL-403).
+     *
+     * **본문을 싣지 않고 id만 보낸다** — 본문은 이미 [testCaseList]에 있고, 같은 글을 두 번 보내면
+     * 프롬프트가 그만큼 두 배가 된다. 이 목록이 하는 일은 "저 중에서 골라라"를 가리키는 것까지다.
+     *
+     * [testCaseList]와 **같은 시점의 스냅샷**이어야 한다. 둘이 어긋나면 여기 있는 id가 저기 없는
+     * 상황이 생기고, 그건 Agent가 존재하지 않는 케이스를 지목하게 만든다.
+     *
+     * 기본값이 빈 목록인 것은 [testCaseList]와 같은 이유다 — 비어 있으면 Agent는 이 신호가 없는
+     * 것으로 보고 평소대로 동작한다.
+     */
+    @JsonProperty("uncovered_case_ids") val uncoveredCaseIds: List<Long> = emptyList(),
     @JsonInclude(JsonInclude.Include.NON_NULL)
     val model: String? = null,
     /**

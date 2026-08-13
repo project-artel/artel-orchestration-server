@@ -9,11 +9,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.awaitSingle
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.service.TestCaseSearchService
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
@@ -40,7 +43,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 작성 챗봇의 Agent 서버 연동 서비스(코루틴). 실제 Agent 서버 계약(FastAPI)에 맞춘다:
  *
- * 1. 세션 오픈: `POST {base}/sessions {user_input, unity_context, game_context, test_case_list, model, project_id, run_id}` → `{session_id}`
+ * 1. 세션 오픈: `POST {base}/sessions {user_input, unity_context, game_context, test_case_list, uncovered_case_ids, model, project_id, run_id}` → `{session_id}`
  * 2. WS 연결: `WS {ws-base}/sessions/{session_id}`. 연결 시 Agent가 첫 결과를 보낸다(오픈 때 준 user_input 기반).
  * 3. 후속 턴: WS로 `{type:"turn", user_input, model?}` 전송.
  * 4. 결과 수신: `{type:"result", message, scenarios[]}` → SSE 중계 + scenarios를 test_scenario
@@ -66,6 +69,8 @@ class TestScenarioAgentService(
     private val appUserRepository: AppUserRepository,
     private val testCaseSearchService: TestCaseSearchService,
     private val testCaseService: TestCaseService,
+    private val testCaseRepository: TestCaseRepository,
+    private val projectAccessService: ProjectAccessService,
     private val reconcileService: ScenarioReconcileService
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
@@ -139,6 +144,7 @@ class TestScenarioAgentService(
             userInput = userInput,
             gameContext = gameContext(projectId, appUserId),
             testCaseList = testCaseList(projectId, appUserId),
+            uncoveredCaseIds = uncoveredCaseIds(projectId, appUserId),
             // 모델 선택의 기본값은 모델 카탈로그를 소유한 Agent가 결정한다. Orchestration은
             // 명시적 override가 있을 때만 model을 보내 모델 교체 때 구 slug를 강제하지 않는다.
             model = configuredModel.takeIf { it.isNotBlank() },
@@ -189,6 +195,23 @@ class TestScenarioAgentService(
      */
     private suspend fun testCaseList(projectId: Long, appUserId: Long): List<TestCaseListItem> =
         testCaseService.getAllTestCases(projectId, appUserId).items
+
+    /**
+     * 아직 어떤 시나리오도 건드리지 않은 케이스의 id(ARTEL-403). Agent가 "다음에 뭘 하면 좋을까"에
+     * 답할 때의 근거이고, 사용자가 막연히 요청했을 때 여기서 고른다.
+     *
+     * **id만 낸다** — 본문은 [testCaseList]에 이미 있다. 같은 글을 두 번 보내면 프롬프트가 그만큼
+     * 두 배가 되는데, 이 목록이 하는 일은 "저 중에서 골라라"를 가리키는 것까지다.
+     *
+     * [testCaseList]와 **같은 시점**에 읽는다. 둘이 어긋나면 여기 있는 id가 저기 없는 상황이 생기고,
+     * 그건 Agent가 존재하지 않는 케이스를 지목하게 만든다.
+     *
+     * 비참여자면 빈 목록 — 전량 목록과 같은 판단이다(존재 자체를 숨긴다).
+     */
+    private suspend fun uncoveredCaseIds(projectId: Long, appUserId: Long): List<Long> {
+        if (!projectAccessService.isMember(projectId, appUserId)) return emptyList()
+        return testCaseRepository.findUncoveredIdsByProjectId(projectId).toList()
+    }
 
     private fun sendTurn(
         sessionKey: String,
