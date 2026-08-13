@@ -1,7 +1,7 @@
 package kr.artel.orchestration.testscenario.dto
 
 import com.fasterxml.jackson.annotation.JsonProperty
-import kr.artel.orchestration.testcase.dto.TestCaseCatalogEntry
+import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
 
 /**
@@ -19,7 +19,7 @@ import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
  * current_scenarios는 런의 현재 시나리오 구성이다 — Agent가 사용자 자연어에서 어느 기존 시나리오를
  * 수정할지 id로 지목하는 근거다(없으면 빈 배열 = 아직 빈 런).
  *
- * case_catalog는 프로젝트 TestCase 전량의 압축 목록이다(ARTEL-318). game_context와 같은 성격 —
+ * test_case_list는 프로젝트 TestCase 전량의 압축 목록이다(ARTEL-318). game_context와 같은 성격 —
  * 세션 오픈 때 한 번 실어 보내고 Agent가 대화 내내 들고 있는 배경 지식이며, 툴 호출이 아니다.
  */
 data class AgentSessionOpenRequest(
@@ -34,7 +34,7 @@ data class AgentSessionOpenRequest(
      * **기본값이 빈 목록인 것은 하위 호환 장치다.** Agent는 이 값이 비면 기존 검색 경로로 동작하므로,
      * 되돌릴 때 양쪽을 다시 배포하지 않아도 된다.
      */
-    @JsonProperty("case_catalog") val caseCatalog: List<TestCaseCatalogEntry> = emptyList(),
+    @JsonProperty("test_case_list") val testCaseList: List<TestCaseListItem> = emptyList(),
     val model: String,
     /**
      * 생성 결과의 출력 언어. Agent 계약의 `locale`(ko|en)에 대응한다.

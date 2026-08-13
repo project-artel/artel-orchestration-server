@@ -25,7 +25,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * @property verificationStatus 케이스 자체가 유효한지(DRAFT/VERIFIED/BROKEN). 한 단어라 부피가 거의
  *   없는 반면, Agent가 `BROKEN`을 피하고 `VERIFIED`를 먼저 고르게 하는 근거가 된다.
  */
-data class TestCaseCatalogEntry(
+data class TestCaseListItem(
     val id: Long,
     val category: String,
     val title: String,
@@ -40,7 +40,7 @@ data class TestCaseCatalogEntry(
  *
  * 배열을 그대로 내지 않고 감싸는 것은 [TestCaseListResponse]와 같은 관례이기도 하고, 나중에 목록에
  * 곁들일 값(예: 상한에 걸려 잘렸는지)이 생겨도 와이어 모양이 깨지지 않게 하기 위해서다.
- * Agent에 보내는 `case_catalog`는 이 껍데기 없이 [items]만 싣는다 — 프롬프트에 렌더링될 값이라
+ * Agent에 보내는 `test_case_list`는 이 껍데기 없이 [items]만 싣는다 — 프롬프트에 렌더링될 값이라
  * 중첩이 한 겹이라도 적은 편이 낫다.
  */
-data class TestCaseCatalogResponse(val items: List<TestCaseCatalogEntry>)
+data class AllTestCasesResponse(val items: List<TestCaseListItem>)
