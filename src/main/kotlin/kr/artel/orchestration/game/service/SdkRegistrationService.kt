@@ -61,8 +61,14 @@ class SdkRegistrationService(
         return transactionalOperator.executeAndAwait {
             val build = findOrCreateBuild(projectId, request.gameVersion.trim(), sceneScan, now)
             val instance = findOrCreateInstance(projectId, sdkUuid, request.instanceName, now)
+            // 빌드 id를 인스턴스에 남긴다. 곧 열릴 웹소켓의 성능 런이 이 값을 읽어 자신을
+            // 빌드에 묶는다(ARTEL-378 빌드 추세). 응답으로만 돌려주면 소켓 쪽에서 알 길이 없다.
             val saved = instanceRepository.save(
-                instance.copy(lastConnectedAt = now, updatedAt = now)
+                instance.copy(
+                    lastConnectedAt = now,
+                    lastGameBuildId = build.id,
+                    updatedAt = now
+                )
             )
             SdkRegistrationResponse(
                 instanceId = requireNotNull(saved.id).toString(),

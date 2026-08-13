@@ -105,30 +105,7 @@ class SdkWebSocketHandler(
         // 처리되어, Agent로 나가는 unicast sink에 동시 tryEmitNext가 걸려 FAIL_NON_SERIALIZED로
         // 드롭되거나 GAME_STATE 순서가 뒤집힌다.
         val receive = session.receive()
-            .concatMap { message ->
-                val payloadText = message.payloadAsText
-                try {
-                    val base = objectMapper.readValue(payloadText, BaseMessage::class.java)
-                    val handler = handlerMap[base.type]
-
-                    if (handler != null) {
-                        // handler.handle은 이제 suspend 함수라 mono { } 로 감싸 리액티브
-                        // 파이프라인에 다시 얹는다. concatMap이 순서를 보장하는 구조는 그대로다.
-                        mono { handler.handle(instanceId, payloadText, session) }
-                            .then()
-                            .onErrorResume { err ->
-                                logger.error("메시지 처리 최종 실패 [type=${base.type}, instanceId=$instanceId]: ${err.message}")
-                                Mono.empty()
-                            }
-                    } else {
-                        logger.warn("정의되지 않은 메시지 타입 수신 [instanceId: $instanceId]: ${base.type}")
-                        Mono.empty()
-                    }
-                } catch (e: Exception) {
-                    logger.error("메시지 처리 에러 [instanceId: $instanceId]: ${e.message}", e)
-                    Mono.empty()
-                }
-            }
+            .concatMap { message -> dispatch(instanceId, message.payloadAsText, session) }
             .doOnError { error ->
                 logger.error("웹소켓 에러 발생 [instanceId: $instanceId]: ${error.message}", error)
             }
@@ -153,6 +130,27 @@ class SdkWebSocketHandler(
         // 형태 그대로다.
         return session.send(outbound.map(session::textMessage)).and(receive)
     }
+
+    /** 미지원·손상 프레임은 그 프레임만 버리고 연결과 다음 프레임은 계속 처리한다. */
+    internal fun dispatch(instanceId: String, payloadText: String, session: WebSocketSession): Mono<Void> =
+        try {
+            val base = objectMapper.readValue(payloadText, BaseMessage::class.java)
+            val handler = handlerMap[base.type]
+            if (handler == null) {
+                logger.warn("정의되지 않은 메시지 타입 수신 [instanceId: $instanceId]: ${base.type}")
+                Mono.empty()
+            } else {
+                mono { handler.handle(instanceId, payloadText, session) }
+                    .then()
+                    .onErrorResume { error ->
+                        logger.error("메시지 처리 최종 실패 [type=${base.type}, instanceId=$instanceId]: ${error.message}")
+                        Mono.empty()
+                    }
+            }
+        } catch (error: Exception) {
+            logger.error("메시지 처리 에러 [instanceId: $instanceId]: ${error.message}", error)
+            Mono.empty()
+        }
 
     private fun queryParam(session: WebSocketSession, name: String): String? =
         UriComponentsBuilder.fromUri(session.handshakeInfo.uri)
