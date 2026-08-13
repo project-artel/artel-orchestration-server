@@ -22,8 +22,12 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * DB 조회 projection으로도 이 클래스를 그대로 쓴다 — 한 줄에 클래스를 둘로 두면 같은 이름을 두 곳에
  * 적게 되고, 한쪽만 고쳐지는 순간 조용히 어긋난다.
  *
- * @property verificationStatus 케이스 자체가 유효한지(DRAFT/VERIFIED/BROKEN). 한 단어라 부피가 거의
- *   없는 반면, Agent가 `BROKEN`을 피하고 `VERIFIED`를 먼저 고르게 하는 근거가 된다.
+ * @property verificationStatus **우리 QA 런이** 통과시켰는지(DRAFT/VERIFIED/BROKEN). 한 단어라 부피가
+ *   거의 없는 반면, Agent가 `BROKEN`을 피하고 `VERIFIED`를 먼저 고르게 하는 근거가 된다.
+ * @property status **명세를 만든 쪽이** 매긴 신뢰도 등급(`ready`/`candidate`). [verificationStatus]와
+ *   나란히 싣는 이유는 둘이 다른 것을 말하기 때문이다 — 저쪽은 "실행으로 확인됐나", 이쪽은 "텍스트
+ *   자체를 믿을 만한가"다. `candidate`는 기대결과가 아직 확정되지 않았을 수 있다는 뜻이고, 그것이 곧
+ *   "그럴듯하지만 실행하면 실패하는" 스텝의 재료다. 값이 없는 케이스(구 데이터)는 null.
  */
 data class TestCaseListItem(
     val id: Long,
@@ -34,6 +38,7 @@ data class TestCaseListItem(
     val expectedValue: String,
     @JsonProperty("verification_status")
     val verificationStatus: String,
+    val status: String?,
 )
 
 /**

@@ -25,7 +25,7 @@ import java.time.Instant
  * 1. **전량이다** — 걸러지면 "존재를 몰라서 빠뜨리는" 실패가 그대로 남는다.
  * 2. **오름차순이다** — 순서가 흔들리면 Agent 프롬프트 캐시가 매 턴 깨진다(비용만 오르고 결과는 같다).
  * 3. **스텝을 쓸 수 있을 만큼 담는다** — 사전조건·기대결과가 빠지면 Agent가 고른 뒤 다시 가져와야 하고,
- *    그 왕복 횟수가 곧 새로운 상한이 된다.
+ *    그 왕복 횟수가 곧 새로운 상한이 된다. 신뢰도 두 축(우리 판정·명세 등급)도 같은 이유로 함께 간다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -93,13 +93,15 @@ class AllTestCasesIntegrationTest {
         // 본문 두 필드가 빠지면 Agent가 고른 케이스로 스텝을 쓸 수 없어 왕복이 생긴다.
         // 반대로 여기 없는 컬럼(타임스탬프 등)이 새어 들어오면 세션당 부피만 는다.
         assertThat(fields.fieldNames().asSequence().toSet()).containsExactlyInAnyOrder(
-            "id", "scene", "step", "precondition", "expected_value", "verification_status"
+            "id", "scene", "step", "precondition", "expected_value", "verification_status", "status"
         )
         assertThat(fields["precondition"].asText()).isEqualTo("사전조건 1")
         assertThat(fields["expected_value"].asText()).isEqualTo("기대결과 1")
         // Agent가 이 값을 그대로 스텝의 case_id로 돌려주므로 숫자여야 한다(FE 응답과 달리 문자열이 아니다).
         assertThat(fields["id"].isNumber).isTrue()
         assertThat(fields["verification_status"].asText()).isEqualTo("DRAFT")
+        // 명세 신뢰도는 우리 판정과 다른 축이라 나란히 실린다. 화면에서 만든 케이스에는 없어서 null.
+        assertThat(fields["status"].isNull).isTrue()
     }
 
     @Test

@@ -27,7 +27,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      */
     @Query(
         """
-        SELECT id, scene, step, precondition, expected_value, verification_status
+        SELECT id, scene, step, precondition, expected_value, verification_status, status
         FROM test_case
         WHERE project_id = :projectId
         ORDER BY id ASC
