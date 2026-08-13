@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.service.ProjectAccessService
+import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseResponse
@@ -46,6 +47,22 @@ class TestCaseService(
             .map { it.toTestCaseResponse() }
             .toList()
         return TestCaseListResponse(items)
+    }
+
+    /**
+     * 저작 Agent에 실을 프로젝트 TestCase 전량 목록(ARTEL-318).
+     *
+     * [list]와 달리 필터가 없다. **거르지 않는 것이 이 조회의 목적**이기 때문이다 — 지금 Agent는
+     * 벡터 검색으로 30~40건만 보고, 나머지는 존재조차 모른 채 시나리오를 만든다. 그 실패를 없애려면
+     * 전량이어야 한다. 전량을 실어도 되는지는 측정으로 답이 났다(1000건 기준 74.4k, 캐시 대상).
+     *
+     * 정렬을 `id ASC`로 고정하는 이유는 [TestCaseRepository.findTestCaseListByProjectIdOrderByIdAsc]에 적었다.
+     *
+     * 비참여자에겐 빈 목록 — [list]와 같은 판단이다(존재 자체를 숨긴다).
+     */
+    suspend fun getAllTestCases(projectId: Long, userId: Long): AllTestCasesResponse {
+        if (!projectAccessService.isMember(projectId, userId)) return AllTestCasesResponse(emptyList())
+        return AllTestCasesResponse(repository.findTestCaseListByProjectIdOrderByIdAsc(projectId).toList())
     }
 
     /** 케이스 생성. category/title/expected 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404). */
