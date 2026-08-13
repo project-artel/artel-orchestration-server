@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
+import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
@@ -70,6 +71,31 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
     )
     fun findUncoveredIdsByProjectId(projectId: Long): Flow<Long>
+
+    /**
+     * 미커버가 **어느 씬에 몇 건씩** 남았는지(ARTEL-403). 저작이 끝난 뒤 다음에 할 일을 권할 때 쓴다.
+     *
+     * id 목록만으로는 사람이 무엇이 남았는지 알 수 없다 — 번호는 화면에 내보내지도 않는 값이다.
+     * 씬은 사용자가 아는 말이라 "전투 화면 12건이 남았다"가 곧 다음 요청이 된다.
+     *
+     * 많은 순으로 낸다. 다음에 할 일을 고르는 자리라 큰 덩어리가 먼저 보이는 편이 쓸모 있다.
+     */
+    @Query(
+        """
+        SELECT c.scene AS scene, count(*) AS count
+        FROM test_case c
+        WHERE c.project_id = :projectId
+          AND NOT EXISTS (
+            SELECT 1 FROM test_scenario s, jsonb_array_elements(s.steps) e
+            WHERE s.project_id = :projectId
+              AND e->>'case_id' IS NOT NULL
+              AND (e->>'case_id')::bigint = c.id
+          )
+        GROUP BY c.scene
+        ORDER BY count(*) DESC, c.scene ASC
+        """
+    )
+    fun findScenesOfUncovered(projectId: Long): Flow<UncoveredScene>
 
     /**
      * 명세 적재의 **보조** 키 — `spec_id`가 아직 없는 행만 고른다(ARTEL-329).

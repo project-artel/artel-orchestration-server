@@ -45,3 +45,14 @@ data class TestCaseListItem(
  * 중첩이 한 겹이라도 적은 편이 낫다.
  */
 data class AllTestCasesResponse(val items: List<TestCaseListItem>)
+
+/**
+ * 미커버가 남은 씬 하나와 그 건수(ARTEL-403).
+ *
+ * 저작이 끝난 뒤 "다음에 뭘 할까"를 권하는 자리에 쓴다. id로 말하면 사람이 못 알아듣고, 애초에
+ * 케이스 번호는 화면에 내보내지 않는 값이다 — 씬은 사용자가 아는 말이라 그대로 다음 요청이 된다.
+ */
+data class UncoveredScene(
+    val scene: String,
+    val count: Long,
+)

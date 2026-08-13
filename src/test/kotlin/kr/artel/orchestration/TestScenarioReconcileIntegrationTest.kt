@@ -330,6 +330,79 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).isEmpty()
     }
 
+    /**
+     * **좁은 요청을 통째로 버리지 않는다.** 사용자가 일부만 짜 달라고 했을 때 에이전트가 나머지를
+     * 판정하지 않으면 검토 누락이 뜨는데, 그 이유로 멀쩡한 시나리오를 거부하면 안 된다.
+     * 판정만 더 받아 통과시킨다 — 스텝을 다시 쓸 필요가 없으니 값도 거의 안 든다.
+     */
+    @Test
+    fun `좁은 요청에서 판정이 모자라면 판정만 더 받아 저장한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "TitleScene", "A")
+        val caseB = insertCase(projectId, "EndingScene", "B")
+
+        // 타이틀만 짜 달라고 했고, 에이전트는 A만 판정하고 B는 아예 언급하지 않았다.
+        framesToSend.add(
+            """{"type":"result","message":"타이틀 흐름입니다","reviewed":{"in":[$caseA],"out":[]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        // 나머지에 대한 판정만 답한다(시나리오 없음).
+        turnReplies.add(
+            """{"type":"result","message":"B는 이번 요청과 무관합니다","reviewed":{"in":[],"out":[$caseB]},"scenarios":[]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "타이틀 화면만 짜줘")
+
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().size == 1 }
+
+        // 판정만 보강해서 통과했고, 시나리오는 처음 것 그대로다.
+        val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        assertThat(scenarioRepository.findById(links[0].testScenarioId)!!.title).isEqualTo("타이틀")
+    }
+
+    /**
+     * 저작이 끝나면 아직 아무 시나리오도 건드리지 않은 케이스가 몇 건 남았는지 알린다.
+     *
+     * 이 수를 에이전트가 세게 하지 않는다 — 빠짐없이 세는 일이 에이전트가 못하는 일이라는 것이
+     * 이 작업 전체의 전제다. 저장 직후의 DB가 답을 알고 있다.
+     */
+    @Test
+    fun `저장 뒤 남은 미커버를 씬과 함께 알린다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "TitleScene", "A")
+        val caseB = insertCase(projectId, "EndingScene", "B")
+        val caseC = insertCase(projectId, "EndingScene", "C")
+
+        framesToSend.add(
+            """{"type":"result","message":"타이틀만 했습니다","reviewed":{"in":[$caseA],"out":[]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        turnReplies.add(
+            """{"type":"result","message":"나머지는 이번 요청과 무관합니다","reviewed":{"in":[],"out":[$caseB,$caseC]},"scenarios":[]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "타이틀만")
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.content.contains("남아 있습니다") }
+        }
+
+        val recommendation = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().first { it.content.contains("남아 있습니다") }.content
+        // 건수와 씬을 함께 말한다 — id로 말하면 사람이 못 알아듣고, 번호는 화면에 내보내지도 않는다.
+        assertThat(recommendation).contains("2건")
+        assertThat(recommendation).contains("EndingScene")
+    }
+
     // ---- (c) result{scenarios:[]} → DB 무변경 ------------------------------------------------
 
     @Test

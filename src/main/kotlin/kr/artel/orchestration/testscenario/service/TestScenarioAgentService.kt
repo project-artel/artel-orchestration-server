@@ -240,23 +240,26 @@ class TestScenarioAgentService(
         val incoming = event.scenarios ?: emptyList()
         // 재작성 턴이면 앞서 막힌 결과에 새로 받은 것을 얹어 통째로 다시 본다.
         val scenarios = if (pending != null) pending.scenarios + incoming else incoming
-        val reviewed = pending?.reviewed ?: event.reviewed
+        val reviewed = if (pending != null) mergeVerdicts(pending.reviewed, event.reviewed) else event.reviewed
 
         val outcome = reconcileService.reconcile(session.runId, session.projectId, scenarios, reviewed)
         if (!outcome.rejected) {
             if (pending != null) {
                 saveMessage(
                     session.runId, session.appUserId, "ASSISTANT",
-                    "빠졌던 케이스를 다시 작성해 시나리오에 반영했습니다."
+                    "빠졌던 부분을 다시 작성해 시나리오에 반영했습니다."
                 )
             }
+            recommendRemaining(session)
             return
         }
 
         val attempts = (pending?.attempts ?: 0) + 1
-        val repairable = outcome.findings.missing.isNotEmpty() &&
-            outcome.findings.unreviewed.isEmpty() &&
-            outcome.findings.ghost.isEmpty()
+        // 유령 번호는 결과 전체를 의심해야 하는 신호다 — 없는 케이스를 지어냈다면 나머지도 믿을
+        // 근거가 없으므로 "더 써라"로 고칠 종류가 아니다. 나머지 둘은 고칠 수 있다:
+        // 누락은 스텝을 더 쓰면 되고, 검토 누락은 판정만 더 받으면 된다.
+        val repairable = outcome.findings.ghost.isEmpty() &&
+            (outcome.findings.missing.isNotEmpty() || outcome.findings.unreviewed.isNotEmpty())
 
         if (!repairable || attempts > MAX_REPAIR_ATTEMPTS || reviewed == null) {
             // 더 못 고친다. 저장하지 않고 사람에게 넘긴다 — 사용자는 시나리오가 나왔다고 믿고
@@ -273,19 +276,77 @@ class TestScenarioAgentService(
         // 보이는데, 무슨 일이 일어나는지 말하지 않으면 그냥 느린 것과 구분되지 않는다.
         saveMessage(
             session.runId, session.appUserId, "ASSISTANT",
-            "검토 결과 ${outcome.findings.missing.size}건이 시나리오에 빠져 있어 그 부분만 다시 작성하도록 요청했습니다."
+            "검토 결과 ${outcome.findings.summary()} — 그 부분만 다시 작성하도록 요청했습니다."
         )
-        sendTurn(sessionKey, session, repairPrompt(outcome.findings.missing), emptyList())
+        sendTurn(sessionKey, session, repairPrompt(outcome.findings), emptyList())
     }
 
     /**
-     * 재작성 지시문. **빠진 case_id만** 다루게 하고 앞서 쓴 것은 다시 쓰지 말라고 못 박는다 —
-     * 전체를 다시 만들면 출력 예산을 통째로 한 번 더 쓰고, 이미 통과한 부분까지 흔들린다.
+     * 재작성 응답의 판정을 처음 선언에 **더하기만** 한다.
+     *
+     * 처음 `in`은 줄어들지 않는다. 재작성이 판정을 통째로 갈아치우게 두면 에이전트가 빠뜨린 케이스를
+     * `out`으로 옮겨 스스로 통과시킬 수 있고, 그러면 검사가 있으나 마나가 된다.
+     *
+     * 반대로 **새로 판정된 id는 받아들인다.** 좁은 요청에서 에이전트가 전량을 판정하지 않아 검토
+     * 누락이 뜬 경우, 나머지에 대한 판정을 받는 것이 곧 그 지적을 고치는 일이다.
      */
-    private fun repairPrompt(missing: List<Long>): String =
-        "이전 응답에서 관련 있다고 판단한 케이스 중 ${missing.joinToString(", ")} 번이 어떤 스텝에도 담기지 않았습니다. " +
-            "이 케이스들만 검증하는 시나리오를 새로 작성해 주세요(scenario_id는 null). " +
-            "앞서 작성한 시나리오는 다시 보내지 마세요 — 그대로 유지됩니다."
+    private fun mergeVerdicts(first: ReviewedCases, extra: ReviewedCases?): ReviewedCases {
+        if (extra == null) return first
+        val locked = first.included.toSet()
+        val newlyExcluded = (first.excluded + extra.excluded).distinct().filterNot { it in locked }
+        return ReviewedCases(
+            included = (first.included + extra.included).distinct(),
+            excluded = newlyExcluded,
+        )
+    }
+
+    /**
+     * 재작성 지시문. 지적된 것만 다루게 하고 앞서 쓴 것은 다시 쓰지 말라고 못 박는다 — 전체를 다시
+     * 만들면 출력 예산을 통째로 한 번 더 쓰고, 이미 통과한 부분까지 흔들린다.
+     */
+    private fun repairPrompt(findings: ScenarioCoverageAudit.Findings): String = buildString {
+        if (findings.missing.isNotEmpty()) {
+            append("이전 응답에서 관련 있다고 판단한 케이스 중 ")
+            append(findings.missing.joinToString(", "))
+            append("번이 어떤 스텝에도 담기지 않았습니다. 이 케이스들만 검증하는 시나리오를 새로 작성해 주세요(scenario_id는 null). ")
+        }
+        if (findings.unreviewed.isNotEmpty()) {
+            append("그리고 ")
+            append(findings.unreviewed.joinToString(", "))
+            append("번은 in에도 out에도 없습니다. 이번 요청과 관련이 있는지 판단해 reviewed에 넣어 주세요. ")
+            append("관련이 없다면 out이면 충분하고 시나리오를 쓸 필요는 없습니다. ")
+        }
+        append("앞서 작성한 시나리오는 다시 보내지 마세요 — 그대로 유지됩니다.")
+    }
+
+    /**
+     * 저장이 끝난 뒤 **아직 아무 시나리오도 건드리지 않은 케이스**를 사용자에게 알린다(ARTEL-403).
+     *
+     * 이 수를 에이전트가 세게 하지 않는 이유는 두 가지다. 세션에 실은 미커버 목록은 세션을 열 때의
+     * 스냅샷이라 방금 저장한 것이 반영돼 있지 않고, 무엇보다 **빠짐없이 세는 일은 에이전트가 못하는
+     * 일**이다 — 이 작업 전체가 그 전제 위에 있다. 저장 직후의 DB가 답을 알고 있으니 거기서 읽는다.
+     *
+     * 전부 덮였으면 아무 말도 하지 않는다. "남은 것 없음"은 매번 붙으면 소음이 된다.
+     */
+    private suspend fun recommendRemaining(session: AgentSession) {
+        val uncovered = try {
+            testCaseRepository.findUncoveredIdsByProjectId(session.projectId).toList()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn("미커버 조회 실패 — 추천 생략 [runId=${session.runId}]: ${e.message}")
+            return
+        }
+        if (uncovered.isEmpty()) return
+
+        val scenes = testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+        val where = if (scenes.isEmpty()) "" else " (${scenes.joinToString(", ") { "${it.scene} ${it.count}건" }})"
+        saveMessage(
+            session.runId, session.appUserId, "ASSISTANT",
+            "이번 작업 뒤에도 아직 어떤 시나리오에도 담기지 않은 케이스가 ${uncovered.size}건 남아 있습니다$where. " +
+                "이어서 다루려면 말씀해 주세요."
+        )
+    }
 
     private fun sendTurn(
         sessionKey: String,
