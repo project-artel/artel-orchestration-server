@@ -30,6 +30,7 @@ import kr.artel.orchestration.testscenario.dto.ReviewedCases
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchErrorFrame
+import kr.artel.orchestration.testscenario.dto.UncoveredCasesResultFrame
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchResultFrame
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
@@ -146,7 +147,6 @@ class TestScenarioAgentService(
             userInput = userInput,
             gameContext = gameContext(projectId, appUserId),
             testCaseList = testCaseList(projectId, appUserId),
-            uncoveredCaseIds = uncoveredCaseIds(projectId, appUserId),
             // 모델 선택의 기본값은 모델 카탈로그를 소유한 Agent가 결정한다. Orchestration은
             // 명시적 override가 있을 때만 model을 보내 모델 교체 때 구 slug를 강제하지 않는다.
             model = configuredModel.takeIf { it.isNotBlank() },
@@ -199,36 +199,42 @@ class TestScenarioAgentService(
         testCaseService.getAllTestCases(projectId, appUserId).items
 
     /**
-     * 아직 어떤 시나리오도 건드리지 않은 케이스의 id(ARTEL-403). Agent가 "다음에 뭘 하면 좋을까"에
-     * 답할 때의 근거이고, 사용자가 막연히 요청했을 때 여기서 고른다.
+     * 미커버 조회 프레임에 답한다(ARTEL-403).
      *
-     * **id만 낸다** — 본문은 [testCaseList]에 이미 있다. 같은 글을 두 번 보내면 프롬프트가 그만큼
-     * 두 배가 되는데, 이 목록이 하는 일은 "저 중에서 골라라"를 가리키는 것까지다.
+     * **밀어 넣지 않고 물어보게 하는 이유**: 이 값은 저작이 진행될수록 줄어든다. 세션 오픈 때 한 번
+     * 실어 보내면 둘째 턴부터 틀린 값이 되고, 매 턴 다시 실으면 턴 메시지가 붓거나 — system 프롬프트에
+     * 두면 더 나쁘게 — 전량 목록(74k) 캐시를 매 턴 통째로 버린다. 도구 호출은 물어볼 때만 값을 낸다.
      *
-     * [testCaseList]와 **같은 시점**에 읽는다. 둘이 어긋나면 여기 있는 id가 저기 없는 상황이 생기고,
-     * 그건 Agent가 존재하지 않는 케이스를 지목하게 만든다.
-     *
-     * 비참여자면 빈 목록 — 전량 목록과 같은 판단이다(존재 자체를 숨긴다).
+     * 검색과 같은 규칙으로 **실패해도 절대 throw하지 않는다.** 커버리지를 못 읽는 것이 WS나 세션을
+     * 죽일 이유는 없다.
      */
-    private suspend fun uncoveredCaseIds(projectId: Long, appUserId: Long): List<Long> {
-        if (!projectAccessService.isMember(projectId, appUserId)) return emptyList()
-        return testCaseRepository.findUncoveredIdsByProjectId(projectId).toList()
+    private suspend fun handleUncoveredRequest(sessionKey: String, session: AgentSession, node: JsonNode) {
+        val correlationId = node.path("messageId").asText(null)
+        try {
+            val ids = testCaseRepository.findUncoveredIdsByProjectId(session.projectId).toList()
+            val scenes = testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+            sendFrame(
+                sessionKey, session,
+                UncoveredCasesResultFrame(correlationId = correlationId, ids = ids, scenes = scenes)
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.error("미커버 조회 실패 [sessionKey=$sessionKey]: ${e.message}")
+            sendFrame(
+                sessionKey, session,
+                TestCaseSearchErrorFrame(correlationId = correlationId, detail = "미커버 조회에 실패했습니다.")
+            )
+        }
     }
 
-    /**
-     * 결과를 검수해 저장하거나, 빠진 것이 있으면 **그것만 다시 쓰게 하고 합쳐서** 저장한다(ARTEL-403).
-     *
-     * 재작성을 orche가 조립하는 이유는 저장을 안 했기 때문이다 — DB에 `scenario_id`가 없으니
-     * 에이전트에게 "그 시나리오를 고쳐라"라고 지목할 수가 없다. 그래서 막힌 결과를 세션에 쥐고,
-     * 빠진 케이스만 새로 받아 앞 결과와 합친 뒤 **다시 검수해서 한 번에** 저장한다. 저장은 끝까지
-     * 전부-아니면-전무다.
-     *
-     * 재검수는 **처음 판정 기준**이다. 재작성 때 판정을 새로 받으면 에이전트가 빠뜨린 케이스를
-     * out으로 옮겨 스스로 통과시킬 수 있는데, 그러면 검사가 있으나 마나가 된다.
-     *
-     * 재작성을 거는 조건은 누락뿐이다. 검토 누락(전량을 안 봤다)이나 유령 번호(없는 걸 지목했다)는
-     * 결과 전체를 의심해야 하는 신호라 "빠진 것만 더 써라"로 고칠 수 있는 종류가 아니다.
-     */
+    private fun sendFrame(sessionKey: String, session: AgentSession, frame: Any) {
+        val result = session.outbound.tryEmitNext(objectMapper.writeValueAsString(frame))
+        if (result.isFailure) {
+            logger.warn("프레임 전송 실패 [sessionKey=$sessionKey, result=$result]")
+        }
+    }
+
     private suspend fun applyOrRepair(
         sessionKey: String,
         session: AgentSession,
@@ -417,6 +423,14 @@ class TestScenarioAgentService(
         try {
             val node = objectMapper.readTree(payloadText)
             val session = sessions[sessionKey]
+            if (node.path("type").asText() == "uncovered_cases") {
+                if (session == null) {
+                    logger.warn("uncovered_cases를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
+                    return
+                }
+                scope.launch { handleUncoveredRequest(sessionKey, session, node) }
+                return
+            }
             if (node.path("type").asText() == "test_case_search") {
                 if (session == null) {
                     logger.warn("test_case_search를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")

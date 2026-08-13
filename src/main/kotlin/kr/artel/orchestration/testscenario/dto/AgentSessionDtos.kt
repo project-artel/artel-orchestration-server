@@ -3,6 +3,7 @@ package kr.artel.orchestration.testscenario.dto
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
+import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
 
 /**
@@ -36,19 +37,6 @@ data class AgentSessionOpenRequest(
      * 되돌릴 때 양쪽을 다시 배포하지 않아도 된다.
     */
     @JsonProperty("test_case_list") val testCaseList: List<TestCaseListItem> = emptyList(),
-    /**
-     * 아직 어떤 시나리오도 건드리지 않은 케이스의 id(ARTEL-403).
-     *
-     * **본문을 싣지 않고 id만 보낸다** — 본문은 이미 [testCaseList]에 있고, 같은 글을 두 번 보내면
-     * 프롬프트가 그만큼 두 배가 된다. 이 목록이 하는 일은 "저 중에서 골라라"를 가리키는 것까지다.
-     *
-     * [testCaseList]와 **같은 시점의 스냅샷**이어야 한다. 둘이 어긋나면 여기 있는 id가 저기 없는
-     * 상황이 생기고, 그건 Agent가 존재하지 않는 케이스를 지목하게 만든다.
-     *
-     * 기본값이 빈 목록인 것은 [testCaseList]와 같은 이유다 — 비어 있으면 Agent는 이 신호가 없는
-     * 것으로 보고 평소대로 동작한다.
-     */
-    @JsonProperty("uncovered_case_ids") val uncoveredCaseIds: List<Long> = emptyList(),
     @JsonInclude(JsonInclude.Include.NON_NULL)
     val model: String? = null,
     /**
@@ -110,4 +98,21 @@ data class TestCaseSearchErrorFrame(
     val type: String = "error",
     val correlationId: String?,
     val detail: String
+)
+
+/**
+ * Agent의 `uncovered_cases` 프레임에 대한 응답(ARTEL-403).
+ *
+ * 세션 오픈에 실어 보내지 않고 **물어볼 때 답하는** 이유는 이 값이 저작 중에 줄어들기 때문이다.
+ * 스냅샷은 둘째 턴부터 틀리고, 매 턴 다시 실으면 턴 메시지가 붓거나 system 프롬프트에 있을 경우
+ * 전량 목록 캐시를 통째로 버린다.
+ *
+ * @property ids Agent가 케이스 본문을 자기 목록에서 찾아 인용하는 데 쓴다.
+ * @property scenes 사람에게 답할 축. 번호는 화면에 내보내지 않는 값이라 씬과 건수가 있어야 말이 된다.
+ */
+data class UncoveredCasesResultFrame(
+    val type: String = "uncovered_cases_result",
+    val correlationId: String?,
+    val ids: List<Long>,
+    val scenes: List<UncoveredScene>
 )
