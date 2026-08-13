@@ -59,7 +59,6 @@ CREATE TABLE IF NOT EXISTS sdk_performance_run_summary (
     frame_p99_weighted_sum DOUBLE PRECISION NOT NULL DEFAULT 0,
     one_low_weighted_sum DOUBLE PRECISION NOT NULL DEFAULT 0,
     hitch_count BIGINT NOT NULL DEFAULT 0,
-    budget_weighted_sum DOUBLE PRECISION NOT NULL DEFAULT 0,
     budget_mode_ms DOUBLE PRECISION,
     process_sample_count BIGINT NOT NULL DEFAULT 0,
     cpu_weighted_sum DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -72,8 +71,20 @@ CREATE TABLE IF NOT EXISTS sdk_performance_run_summary (
     discharging_sample_count BIGINT NOT NULL DEFAULT 0,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
+-- 빌드 추세는 에디터 런만 뺀다. is_editor가 NULL인 런(DEVICE_CONTEXT를 못 받은 런)은
+-- 에디터라고 단정할 근거가 없으므로 남긴다. `= FALSE`로 적으면 NULL까지 조용히 빠져
+-- 화면에서 런이 이유 없이 사라진다.
 CREATE INDEX IF NOT EXISTS idx_sdk_performance_summary_build
-    ON sdk_performance_run_summary (game_build_id, qa_run_id) WHERE is_editor = FALSE;
+    ON sdk_performance_run_summary (game_build_id, qa_run_id) WHERE is_editor IS DISTINCT FROM TRUE;
+
+-- budget_ms 최빈값을 증분으로 구하기 위한 런별 도수분포. 값 종류가 몇 개뿐이라 런당
+-- 행이 한 줌이고, 원본 샘플을 매 초 훑지 않고도 최빈값을 갱신할 수 있다.
+CREATE TABLE IF NOT EXISTS sdk_performance_run_budget (
+    qa_run_id BIGINT NOT NULL REFERENCES qa_run (id) ON DELETE CASCADE,
+    budget_ms DOUBLE PRECISION NOT NULL,
+    sample_count BIGINT NOT NULL,
+    PRIMARY KEY (qa_run_id, budget_ms)
+);
 
 -- Read-optimized one-second cells. Missing cells are generated as null by query.
 CREATE TABLE IF NOT EXISTS sdk_performance_run_series (

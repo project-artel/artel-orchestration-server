@@ -33,8 +33,9 @@ class PerformanceMessageHandler(
 /**
  * 연결당 한 번 오는 DEVICE_CONTEXT를 런에 붙인다 (ARTEL-372).
  *
- * 이 메시지가 오지 않은 런은 `isEditor`를 알 수 없고, 빌드 추세에서 제외된다. 에디터가
- * 아니라고 단정할 근거가 없기 때문이다.
+ * 이 메시지가 오지 않은 런은 `isEditor`를 알 수 없다. 그래도 빌드 추세에는 남는다 —
+ * 계약이 제외하라고 한 것은 `isEditor`"인" 런이지 모르는 런이 아니고, 조용히 빼면 화면에서
+ * 런이 이유 없이 사라진다.
  */
 @Component
 class DeviceContextMessageHandler(
