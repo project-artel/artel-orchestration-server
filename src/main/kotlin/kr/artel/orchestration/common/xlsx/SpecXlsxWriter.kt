@@ -2,6 +2,8 @@ package kr.artel.orchestration.common.xlsx
 
 import kr.artel.orchestration.testcase.dto.TestCaseSpecEntry
 import org.jetbrains.kotlinx.dataframe.api.dataFrameOf
+import org.apache.poi.ss.usermodel.VerticalAlignment
+import org.apache.poi.ss.util.CellRangeAddress
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.jetbrains.kotlinx.dataframe.io.writeExcel
 import org.springframework.stereotype.Component
@@ -36,10 +38,47 @@ class SpecXlsxWriter {
         // 바이트로 뽑는다 — 시트를 채우는 일 자체는 여전히 DataFrame이 한다.
         return XSSFWorkbook().use { workbook ->
             frame.writeExcel(workbook, sheetName = SHEET_NAME)
+            mergeSceneRuns(workbook, entries.map { it.spec.scene.orEmpty() })
             ByteArrayOutputStream().use { out ->
                 workbook.write(out)
                 out.toByteArray()
             }
+        }
+    }
+
+    /**
+     * 같은 씬이 연달아 나오는 구간의 씬 칸을 하나로 합친다.
+     *
+     * **정렬하지 않는다.** 보낸 순서가 곧 시트의 순서다 — 명세가 이미 씬별로 뭉쳐 오고(실측: 66건이
+     * 6개 구간 = 6개 씬), 순서를 우리가 다시 매기면 보낸 쪽이 의도한 흐름 순서가 사라진다. 뭉치지
+     * 않은 채로 오면 같은 씬이 여러 블록으로 나뉘어 보이는데, 그게 실제 모습이므로 그대로 두는 것이 맞다.
+     *
+     * 합쳐지는 아래 칸의 값은 지운다. 병합은 보이는 것만 가리므로 값이 남아 있으면 병합을 풀거나
+     * 다른 도구로 읽을 때 같은 씬이 여러 번 나온다.
+     */
+    private fun mergeSceneRuns(workbook: XSSFWorkbook, scenes: List<String>) {
+        if (scenes.size < 2) return
+        val sheet = workbook.getSheet(SHEET_NAME) ?: return
+        val sceneStyle = workbook.createCellStyle().apply {
+            verticalAlignment = VerticalAlignment.CENTER
+        }
+
+        var start = 0
+        while (start < scenes.size) {
+            var end = start
+            while (end + 1 < scenes.size && scenes[end + 1] == scenes[start]) end++
+
+            // 헤더가 0행이라 데이터는 1행부터다.
+            val firstRow = start + HEADER_ROWS
+            val lastRow = end + HEADER_ROWS
+            sheet.getRow(firstRow)?.getCell(SCENE_COLUMN)?.cellStyle = sceneStyle
+            if (lastRow > firstRow) {
+                for (rowIndex in (firstRow + 1)..lastRow) {
+                    sheet.getRow(rowIndex)?.getCell(SCENE_COLUMN)?.setBlank()
+                }
+                sheet.addMergedRegion(CellRangeAddress(firstRow, lastRow, SCENE_COLUMN, SCENE_COLUMN))
+            }
+            start = end + 1
         }
     }
 
@@ -49,16 +88,26 @@ class SpecXlsxWriter {
 
         private const val SHEET_NAME = "테스트케이스"
 
+        /** 헤더가 차지하는 행 수. 데이터는 이 다음 행부터 시작한다. */
+        private const val HEADER_ROWS = 1
+
+        /** 병합 대상인 씬 열의 위치. [COLUMNS]의 첫 열이다. */
+        private const val SCENE_COLUMN = 0
+
         /**
          * 시트의 열. 순서가 곧 열 순서다.
+         *
+         * 씬 다음이 **테스트 스텝**인 것은 읽는 사람이 먼저 찾는 것이 "무엇을 하는가"이기 때문이다.
+         * 사전조건은 그 스텝을 돌리기 위한 조건이라 스텝을 읽은 뒤에 필요해지고, 실제 명세에서 가장
+         * 긴 칸이기도 해서 앞에 두면 스텝과 기대 결과가 화면 밖으로 밀린다.
          *
          * 한국어 헤더인 것은 이 파일을 여는 사람이 QA 담당자이기 때문이다. `spec`의 영문 키를 그대로
          * 쓰면 저장 스키마와는 맞지만 읽는 사람과는 안 맞는다.
          */
         private val COLUMNS: Map<String, (TestCaseSpecEntry) -> String> = linkedMapOf(
             "씬" to { it.spec.scene.orEmpty() },
-            "사전조건" to { it.spec.precondition.orEmpty() },
             "테스트 스텝" to { it.spec.step.orEmpty() },
+            "사전조건" to { it.spec.precondition.orEmpty() },
             "기대 결과" to { it.spec.expectedValue.orEmpty() },
             "상태" to { it.spec.status.orEmpty() },
         )
