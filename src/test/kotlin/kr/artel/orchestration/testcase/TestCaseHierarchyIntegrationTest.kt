@@ -66,19 +66,19 @@ class TestCaseHierarchyIntegrationTest {
     fun `케이스 CRUD와 런·시나리오 조합 흐름`(): Unit = runBlocking {
         val (projectId, userId) = newProjectWithMember()
 
-        val c1 = testCaseService.create(
-            projectId, userId, TestCaseCreateRequest(category = "CONTROL", title = "상점 입장", expected = "상점 화면 진입")
+        val c1 = testCaseService.createTestCase(
+            projectId, userId, TestCaseCreateRequest(scene = "CONTROL", step = "상점 입장", expectedValue = "상점 화면 진입")
         )!!
-        testCaseService.create(
+        testCaseService.createTestCase(
             projectId, userId,
-            TestCaseCreateRequest(category = "RULE", title = "검 구매", precondition = "골드 10 이상", expected = "골드 차감 + 검 획득")
+            TestCaseCreateRequest(scene = "RULE", step = "검 구매", precondition = "골드 10 이상", expectedValue = "골드 차감 + 검 획득")
         )!!
 
-        val list = testCaseService.list(projectId, userId, null, null)
+        val list = testCaseService.listTestCases(projectId, userId)
         assertThat(list.items).hasSize(2)
         assertThat(list.items.map { it.verificationStatus }).containsOnly("DRAFT")
 
-        val verified = testCaseService.update(c1.id.toLong(), userId, TestCaseUpdateRequest(verificationStatus = "verified"))!!
+        val verified = testCaseService.updateTestCase(c1.id.toLong(), userId, TestCaseUpdateRequest(verificationStatus = "verified"))!!
         assertThat(verified.verificationStatus).isEqualTo("VERIFIED")
 
         // 런 ↔ 시나리오 조합(런 링크는 그대로 존속).
@@ -93,9 +93,9 @@ class TestCaseHierarchyIntegrationTest {
         val (projectId, _) = newProjectWithMember()
         val stranger = newUser()
 
-        assertThat(testCaseService.list(projectId, stranger, null, null).items).isEmpty()
-        val created = testCaseService.create(
-            projectId, stranger, TestCaseCreateRequest(category = "X", title = "Y", expected = "Z")
+        assertThat(testCaseService.listTestCases(projectId, stranger).items).isEmpty()
+        val created = testCaseService.createTestCase(
+            projectId, stranger, TestCaseCreateRequest(scene = "X", step = "Y", expectedValue = "Z")
         )
         assertThat(created).isNull()
     }

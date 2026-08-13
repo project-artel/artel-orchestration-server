@@ -16,8 +16,8 @@ import org.springframework.web.bind.annotation.RestController
  * 방식이다 — 수백 KB짜리 파일을 매번 애플리케이션이 중계하면 이벤트 루프만 붙잡고, S3가 직접
  * 내려주는 것보다 나은 점이 없다.
  *
- * 명세를 만드는 쪽(Agent → CSV 수신)은 이 컨트롤러에 없다. 전송 방식이 확정되면 그 수신부가
- * [TestCaseSpecService.ingest]를 부른다.
+ * 명세를 받는 쪽은 이 컨트롤러에 없다. Agent가 보내는 JSON은 내부 포트로 들어와
+ * [TestCaseSpecService.ingest]로 간다.
  */
 @RestController
 @RequestMapping("/api/projects/{projectId}/test-case-spec")

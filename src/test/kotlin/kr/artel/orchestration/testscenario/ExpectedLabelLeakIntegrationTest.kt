@@ -93,8 +93,8 @@ class ExpectedLabelLeakIntegrationTest {
         caseId = requireNotNull(
             testCaseRepository.save(
                 TestCaseEntity(
-                    projectId = projectId, category = "상점", title = "구매 버튼을 누른다",
-                    precondition = "골드 100 이상", expected = "인벤토리에 아이템이 들어온다"
+                    projectId = projectId, scene = "상점", step = "구매 버튼을 누른다",
+                    precondition = "골드 100 이상", expectedValue = "인벤토리에 아이템이 들어온다"
                 )
             ).id
         )

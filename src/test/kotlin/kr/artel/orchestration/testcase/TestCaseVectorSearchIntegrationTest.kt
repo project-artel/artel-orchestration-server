@@ -169,10 +169,10 @@ class TestCaseVectorSearchIntegrationTest {
         testCaseRepository.save(
             TestCaseEntity(
                 projectId = projectId,
-                category = category,
-                title = title,
+                scene = category,
+                step = title,
                 precondition = null,
-                expected = "$title 기대결과",
+                expectedValue = "$title 기대결과",
             )
         ).id!!
 

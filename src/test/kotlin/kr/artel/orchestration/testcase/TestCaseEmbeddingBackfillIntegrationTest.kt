@@ -162,10 +162,10 @@ class TestCaseEmbeddingBackfillIntegrationTest {
     ): Long = testCaseRepository.save(
         TestCaseEntity(
             projectId = projectId,
-            category = category,
-            title = title,
+            scene = category,
+            step = title,
             precondition = precondition,
-            expected = expected,
+            expectedValue = expected,
         )
     ).id!!
 

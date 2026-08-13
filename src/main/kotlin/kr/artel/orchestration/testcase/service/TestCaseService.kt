@@ -1,15 +1,17 @@
 package kr.artel.orchestration.testcase.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.BadRequestException
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
+import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.TestCaseListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseResponse
 import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
+import kr.artel.orchestration.testcase.dto.toTestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.toTestCaseResponse
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.VerificationStatus
@@ -28,22 +30,18 @@ import org.springframework.stereotype.Service
 class TestCaseService(
     private val repository: TestCaseRepository,
     private val projectAccessService: ProjectAccessService,
+    private val objectMapper: ObjectMapper,
 ) {
-    /** 프로젝트의 케이스 목록. category/verificationStatus로 선택 필터. 비참여자면 빈 목록. */
-    suspend fun list(projectId: Long, userId: Long, category: String?, status: String?): TestCaseListResponse {
-        val statusName = status?.let {
-            VerificationStatus.fromWire(it)?.name
-                ?: throw BadRequestException("verificationStatus must be one of ${VerificationStatus.NAMES}")
-        }
+    /**
+     * 화면이 읽는 케이스 목록(최근 것부터). 비참여자면 빈 목록.
+     *
+     * 씬/검증상태 필터가 있었지만 지웠다 — 보내는 쪽이 없었다. 화면은 전량을 받아 브라우저에서
+     * 거르고, 필터를 타는 경로가 없으니 그 코드는 "동작한다"고 말할 근거도 없었다.
+     * 서버에서 걸러야 할 만큼 목록이 커지면 그때 실제 소비자에 맞춰 다시 넣는 편이 낫다.
+     */
+    suspend fun listTestCases(projectId: Long, userId: Long): TestCaseListResponse {
         if (!projectAccessService.isMember(projectId, userId)) return TestCaseListResponse(emptyList())
-        val source = when {
-            category != null -> repository.findByProjectIdAndCategoryOrderByIdDesc(projectId, category)
-            statusName != null -> repository.findByProjectIdAndVerificationStatusOrderByIdDesc(projectId, statusName)
-            else -> repository.findByProjectIdOrderByIdDesc(projectId)
-        }
-        val items = source
-            .filter { statusName == null || it.verificationStatus == statusName }
-            .filter { category == null || it.category == category }
+        val items = repository.findByProjectIdOrderByIdDesc(projectId)
             .map { it.toTestCaseResponse() }
             .toList()
         return TestCaseListResponse(items)
@@ -52,56 +50,60 @@ class TestCaseService(
     /**
      * 저작 Agent에 실을 프로젝트 TestCase 전량 목록(ARTEL-318).
      *
-     * [list]와 달리 필터가 없다. **거르지 않는 것이 이 조회의 목적**이기 때문이다 — 지금 Agent는
+     * [listTestCases]와 달리 좁게 낸다. **거르지 않는 것이 이 조회의 목적**이기 때문이다 — 지금 Agent는
      * 벡터 검색으로 30~40건만 보고, 나머지는 존재조차 모른 채 시나리오를 만든다. 그 실패를 없애려면
      * 전량이어야 한다. 전량을 실어도 되는지는 측정으로 답이 났다(1000건 기준 74.4k, 캐시 대상).
      *
      * 정렬을 `id ASC`로 고정하는 이유는 [TestCaseRepository.findTestCaseListByProjectIdOrderByIdAsc]에 적었다.
      *
-     * 비참여자에겐 빈 목록 — [list]와 같은 판단이다(존재 자체를 숨긴다).
+     * 비참여자에겐 빈 목록 — [listTestCases]와 같은 판단이다(존재 자체를 숨긴다).
      */
     suspend fun getAllTestCases(projectId: Long, userId: Long): AllTestCasesResponse {
         if (!projectAccessService.isMember(projectId, userId)) return AllTestCasesResponse(emptyList())
         return AllTestCasesResponse(repository.findTestCaseListByProjectIdOrderByIdAsc(projectId).toList())
     }
 
-    /** 케이스 생성. category/title/expected 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404). */
-    suspend fun create(projectId: Long, userId: Long, request: TestCaseCreateRequest): TestCaseResponse? {
+    /** 케이스 생성. scene/step/expectedValue 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404). */
+    suspend fun createTestCase(projectId: Long, userId: Long, request: TestCaseCreateRequest): TestCaseResponse? {
         if (!projectAccessService.isMember(projectId, userId)) return null
         val entity = TestCaseEntity(
             projectId = projectId,
-            category = request.category.requireField("category"),
-            title = request.title.requireField("title"),
+            scene = request.scene.requireField("scene"),
+            step = request.step.requireField("step"),
             precondition = request.precondition?.ifBlank { null },
-            expected = request.expected.requireField("expected"),
+            expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
         )
         return repository.save(entity).toTestCaseResponse()
     }
 
-    /** 케이스 단건 조회(프로젝트 참여자만). 없거나 비참여자면 null. */
-    suspend fun get(caseId: Long, userId: Long): TestCaseResponse? =
-        accessible(caseId, userId)?.toTestCaseResponse()
+    /**
+     * 케이스 단건 조회(프로젝트 참여자만). 없거나 비참여자면 null.
+     *
+     * 목록과 달리 `evidenceGaps`까지 낸다 — 왜 상세에만 싣는지는 [TestCaseDetailResponse] 참조.
+     */
+    suspend fun getTestCase(caseId: Long, userId: Long): TestCaseDetailResponse? =
+        accessible(caseId, userId)?.toTestCaseDetailResponse(objectMapper)
 
     /** 케이스 수정. 준 필드만 반영. verificationStatus는 enum 검증. */
-    suspend fun update(caseId: Long, userId: Long, request: TestCaseUpdateRequest): TestCaseResponse? {
+    suspend fun updateTestCase(caseId: Long, userId: Long, request: TestCaseUpdateRequest): TestCaseResponse? {
         val existing = accessible(caseId, userId) ?: return null
         val statusName = request.verificationStatus?.let {
             VerificationStatus.fromWire(it)?.name
                 ?: throw BadRequestException("verificationStatus must be one of ${VerificationStatus.NAMES}")
         }
         val updated = existing.copy(
-            category = request.category?.ifBlank { null } ?: existing.category,
-            title = request.title?.ifBlank { null } ?: existing.title,
+            scene = request.scene?.ifBlank { null } ?: existing.scene,
+            step = request.step?.ifBlank { null } ?: existing.step,
             precondition = if (request.precondition == null) existing.precondition else request.precondition.ifBlank { null },
-            expected = request.expected?.ifBlank { null } ?: existing.expected,
+            expectedValue = request.expectedValue?.ifBlank { null } ?: existing.expectedValue,
             verificationStatus = statusName ?: existing.verificationStatus,
         )
         return repository.save(updated).toTestCaseResponse()
     }
 
     /** 케이스 삭제(참여자만). 접근 불가면 조용히 no-op(존재 숨김). 조합 정리는 별도. */
-    suspend fun delete(caseId: Long, userId: Long) {
+    suspend fun deleteTestCase(caseId: Long, userId: Long) {
         accessible(caseId, userId)?.let { repository.delete(it) }
     }
 

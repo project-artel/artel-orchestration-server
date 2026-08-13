@@ -11,10 +11,10 @@ package kr.artel.orchestration.testcase.dto
  */
 data class TestCaseSearchHit(
     val id: String,
-    val category: String,
-    val title: String,
+    val scene: String,
+    val step: String,
     val precondition: String?,
-    val expected: String,
+    val expectedValue: String,
     val verificationStatus: String,
     val score: Double,
 )

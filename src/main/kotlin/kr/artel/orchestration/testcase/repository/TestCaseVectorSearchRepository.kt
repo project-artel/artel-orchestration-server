@@ -29,7 +29,7 @@ class TestCaseVectorSearchRepository(
      * - `t.project_id = :projectId` — 다른 프로젝트의 케이스가 새면 안 된다(프레임이 아닌 세션 바인딩에서 파생).
      * - `e.kind`/`e.model` — 백필이 쓴 파티션과 같아야 한다.
      * - `e.embedding IS NOT NULL` — 대기 행(백필 큐 센티널)은 벡터가 없어 제외한다.
-     * - `t.category = :category` — 선택. 작성 시 특정 기능군으로 좁힐 때 쓴다(null이면 전체).
+     * - `t.scene = :scene` — 선택. 작성 시 특정 화면으로 좁힐 때 쓴다(null이면 전체).
      *
      * (test_case는 소프트삭제가 없어 alive 조건이 없다.)
      */
@@ -38,18 +38,18 @@ class TestCaseVectorSearchRepository(
         queryVector: String,
         kind: String,
         model: String,
-        category: String?,
+        scene: String?,
         limit: Int,
     ): List<TestCaseSearchRow> {
-        val categoryClause = if (category == null) "" else "AND t.category = :category"
+        val sceneClause = if (scene == null) "" else "AND t.scene = :scene"
 
         var spec = databaseClient.sql(
             """
             SELECT t.id                  AS test_case_id,
-                   t.category            AS category,
-                   t.title               AS title,
+                   t.scene               AS scene,
+                   t.step                AS step,
                    t.precondition        AS precondition,
-                   t.expected            AS expected,
+                   t.expected_value      AS expected_value,
                    t.verification_status AS verification_status,
                    MIN(e.embedding <=> CAST(:queryVector AS vector)) AS distance
               FROM test_case_embedding e
@@ -58,8 +58,8 @@ class TestCaseVectorSearchRepository(
                AND e.kind = :kind
                AND e.model = :model
                AND e.embedding IS NOT NULL
-               $categoryClause
-             GROUP BY t.id, t.category, t.title, t.precondition, t.expected, t.verification_status
+               $sceneClause
+             GROUP BY t.id, t.scene, t.step, t.precondition, t.expected_value, t.verification_status
              -- 동점일 때 순서가 흔들리면 같은 질의가 실행마다 다른 top-k를 준다. id로 못박는다.
              ORDER BY distance ASC, t.id DESC
              LIMIT :limit
@@ -71,16 +71,16 @@ class TestCaseVectorSearchRepository(
             .bind("model", model)
             .bind("limit", limit)
 
-        if (category != null) spec = spec.bind("category", category)
+        if (scene != null) spec = spec.bind("scene", scene)
 
         return spec
             .map { row: Readable ->
                 TestCaseSearchRow(
                     testCaseId = row.get("test_case_id", java.lang.Long::class.java)!!.toLong(),
-                    category = row.get("category", String::class.java)!!,
-                    title = row.get("title", String::class.java)!!,
+                    scene = row.get("scene", String::class.java)!!,
+                    step = row.get("step", String::class.java)!!,
                     precondition = row.get("precondition", String::class.java),
-                    expected = row.get("expected", String::class.java)!!,
+                    expectedValue = row.get("expected_value", String::class.java)!!,
                     verificationStatus = row.get("verification_status", String::class.java)!!,
                     distance = row.get("distance", java.lang.Double::class.java)!!.toDouble()
                 )
@@ -97,10 +97,10 @@ class TestCaseVectorSearchRepository(
  */
 data class TestCaseSearchRow(
     val testCaseId: Long,
-    val category: String,
-    val title: String,
+    val scene: String,
+    val step: String,
     val precondition: String?,
-    val expected: String,
+    val expectedValue: String,
     val verificationStatus: String,
     val distance: Double,
 )

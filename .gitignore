@@ -27,3 +27,5 @@ out/
 
 # Notion ntn CLI credentials
 .notion.env
+
+.vscode
