@@ -35,7 +35,22 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     )
     fun findTestCaseListByProjectIdOrderByIdAsc(projectId: Long): Flow<TestCaseListItem>
 
-    suspend fun findByProjectIdAndSceneAndStep(projectId: Long, scene: String, step: String): TestCaseEntity?
+    /**
+     * 명세 적재의 **보조** 키 — `spec_id`가 아직 없는 행만 고른다(ARTEL-329).
+     *
+     * spec_id가 붙기 전에 만들어진 행(손으로 만든 케이스, 이 계약 이전의 적재)을 새 명세가 이어받게
+     * 하려고 둔다. **이미 다른 spec_id를 가진 행은 절대 고르지 않는다** — 씬+스텝은 케이스를 유일하게
+     * 가리키지 못하기 때문이다. 실제 명세에서 `Map_scene / Map_scene에 진입해 관찰한다` 하나가
+     * 사전조건만 다른 6건이었고, 이 조건이 없을 때 그 6건이 한 행으로 겹쳐 5건이 조용히 사라졌다.
+     *
+     * `findFirst`인 이유도 같다: 같은 씬+스텝이 여럿인 것이 정상이라, 단건 반환 시그니처는 언젠가
+     * "결과가 유일하지 않다"로 적재 전체를 세운다. 정렬을 고정해 어느 행을 잇는지도 결정적으로 둔다.
+     */
+    suspend fun findFirstByProjectIdAndSceneAndStepAndSpecIdIsNullOrderByIdAsc(
+        projectId: Long,
+        scene: String,
+        step: String
+    ): TestCaseEntity?
 
     /** 명세 적재의 멱등 키(ARTEL-329). spec_id가 있는 케이스는 문구가 바뀌어도 같은 행으로 이어진다. */
     suspend fun findByProjectIdAndSpecId(projectId: Long, specId: String): TestCaseEntity?

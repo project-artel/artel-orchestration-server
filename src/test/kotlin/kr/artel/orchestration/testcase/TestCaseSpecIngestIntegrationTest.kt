@@ -13,6 +13,7 @@ import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.dto.TestCaseSpecEntry
+import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testcase.service.TestCaseSpecService
@@ -326,6 +327,111 @@ class TestCaseSpecIngestIntegrationTest {
         val (projectId, userId) = newProjectWithMember()
 
         assertThat(service.downloadTicket(projectId, userId)).isNull()
+    }
+
+    /**
+     * 씬+스텝이 같고 사전조건만 다른 **형제 케이스**들이 한 행으로 겹치지 않아야 한다.
+     *
+     * 실측에서 나온 실패다: word-venture 명세 66건을 넣었더니 41행만 남았다. 씬+스텝은 케이스를
+     * 유일하게 가리키지 못하는데(`Map_scene / Map_scene에 진입해 관찰한다`가 사전조건만 다른 6건이었다),
+     * spec_id로 못 찾았을 때의 보조 조회가 **다른 spec_id를 가진 행까지** 후보로 삼아 서로 다른
+     * 케이스를 덮었다. 응답은 `created:41 updated:25`라 성공으로 보였고 그래서 더 위험했다.
+     */
+    @Test
+    fun `씬과 스텝이 같아도 spec_id가 다르면 각각 남는다`(): Unit = runBlocking {
+        val (projectId, _) = newProjectWithMember()
+
+        val result = service.ingest(
+            projectId,
+            spec(
+                cases = listOf(
+                    case(
+                        specId = "scenario:sib:1",
+                        scene = "Map_scene",
+                        step = "Map_scene에 진입해 관찰한다",
+                        precondition = "StagePosition == 1",
+                        expectedValue = "wordHead가 battle1 위치에 있다",
+                    ),
+                    case(
+                        specId = "scenario:sib:2",
+                        scene = "Map_scene",
+                        step = "Map_scene에 진입해 관찰한다",
+                        precondition = "StagePosition == 2",
+                        expectedValue = "wordHead가 battle2 위치에 있다",
+                    ),
+                    case(
+                        specId = "scenario:sib:3",
+                        scene = "Map_scene",
+                        step = "Map_scene에 진입해 관찰한다",
+                        precondition = "StagePosition == 3",
+                        expectedValue = "wordHead가 battle3 위치에 있다",
+                    ),
+                ).joinToString(","),
+            ),
+        )
+
+        assertThat(result.created).isEqualTo(3)
+        assertThat(result.updated).isZero()
+        assertThat(result.skipped).isZero()
+
+        val cases = testCaseRepository.findByProjectIdOrderByIdDesc(projectId).toList()
+        assertThat(cases).hasSize(3)
+        assertThat(cases.map { it.precondition })
+            .containsExactlyInAnyOrder("StagePosition == 1", "StagePosition == 2", "StagePosition == 3")
+        assertThat(cases.map { it.specId })
+            .containsExactlyInAnyOrder("scenario:sib:1", "scenario:sib:2", "scenario:sib:3")
+
+        // 재전송해도 늘지 않는다 — 형제를 가른 뒤에도 멱등이 유지되는지가 진짜 확인점이다.
+        val again = service.ingest(projectId, spec(revision = 2, cases = listOf(
+            case(specId = "scenario:sib:1", scene = "Map_scene", step = "Map_scene에 진입해 관찰한다",
+                 precondition = "StagePosition == 1", expectedValue = "wordHead가 battle1 위치에 있다"),
+            case(specId = "scenario:sib:2", scene = "Map_scene", step = "Map_scene에 진입해 관찰한다",
+                 precondition = "StagePosition == 2", expectedValue = "wordHead가 battle2 위치에 있다"),
+            case(specId = "scenario:sib:3", scene = "Map_scene", step = "Map_scene에 진입해 관찰한다",
+                 precondition = "StagePosition == 3", expectedValue = "wordHead가 battle3 위치에 있다"),
+        ).joinToString(",")))
+
+        assertThat(again.created).isZero()
+        assertThat(again.updated).isEqualTo(3)
+        assertThat(testCaseRepository.findByProjectIdOrderByIdDesc(projectId).toList()).hasSize(3)
+    }
+
+    /**
+     * spec_id가 없던 옛 행은 새 명세가 이어받는다 — 보조 조회를 남겨 둔 이유가 이것이다.
+     * 위 테스트의 제약(다른 spec_id는 안 건드린다)과 이 입양이 함께 성립해야 한다.
+     */
+    @Test
+    fun `spec_id가 없는 옛 행은 새 명세가 이어받는다`(): Unit = runBlocking {
+        val (projectId, _) = newProjectWithMember()
+
+        // 손으로 만든 케이스처럼 spec_id 없이 저장된 행.
+        val legacy = testCaseRepository.save(
+            TestCaseEntity(
+                projectId = projectId,
+                scene = "TitleScene",
+                step = "상점 입장",
+                precondition = "로비에 있음",
+                expectedValue = "상점 화면 진입",
+                verificationStatus = "VERIFIED",
+                lastVerifiedBuildId = 7L,
+            )
+        )
+
+        val result = service.ingest(
+            projectId,
+            spec(cases = case(specId = "scenario:adopt:1", step = "상점 입장", expectedValue = "상점 화면 진입(명세)")),
+        )
+
+        assertThat(result.created).isZero()
+        assertThat(result.updated).isEqualTo(1)
+
+        val adopted = testCaseRepository.findByProjectIdOrderByIdDesc(projectId).toList().single()
+        assertThat(adopted.id).isEqualTo(legacy.id)
+        assertThat(adopted.specId).isEqualTo("scenario:adopt:1")
+        assertThat(adopted.expectedValue).isEqualTo("상점 화면 진입(명세)")
+        // 입양이 QA 런의 결과를 덮지 않는다.
+        assertThat(adopted.verificationStatus).isEqualTo("VERIFIED")
+        assertThat(adopted.lastVerifiedBuildId).isEqualTo(7L)
     }
 
     /**

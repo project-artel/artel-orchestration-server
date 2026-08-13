@@ -161,8 +161,13 @@ class TestCaseSpecService(
 
         transactionalOperator.executeAndAwait {
             parsed.forEach { row ->
+                // spec_id로 못 찾으면 **아직 spec_id가 없는** 같은 씬+스텝 행만 이어받는다. 씬+스텝은
+                // 케이스를 유일하게 가리키지 못해서(사전조건만 다른 형제들이 흔하다), 이미 다른
+                // spec_id를 가진 행까지 후보로 두면 서로 다른 케이스가 한 행으로 겹쳐 덮인다.
                 val existing = row.specId?.let { repository.findByProjectIdAndSpecId(projectId, it) }
-                    ?: repository.findByProjectIdAndSceneAndStep(projectId, row.scene, row.step)
+                    ?: repository.findFirstByProjectIdAndSceneAndStepAndSpecIdIsNullOrderByIdAsc(
+                        projectId, row.scene, row.step
+                    )
 
                 if (existing == null) {
                     // 신규 케이스의 임베딩은 여기서 만들지 않는다 — 백필 워커의 주기 seedPending이
