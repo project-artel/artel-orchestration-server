@@ -12,17 +12,27 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeEventType
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
+import kr.artel.orchestration.knowledge.entity.QaKnowledgeWriteEntity
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeEventRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import org.slf4j.LoggerFactory
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Clock
 import java.time.Instant
+
+/**
+ * 멱등 원장이 기록하는 프레임 타입(ARTEL-364). `qa_knowledge_write.type`의 CHECK와 같은 값이고,
+ * Agent가 보내는 프레임 타입 이름 그대로다 — 재전송의 응답에 그대로 실려 나가므로 다르면 안 된다.
+ */
+private const val CREATE_FRAME = "KNOWLEDGE_CREATE"
+private const val UPDATE_FRAME = "KNOWLEDGE_UPDATE"
+private const val DELETE_FRAME = "KNOWLEDGE_DELETE"
 
 /**
  * 통합 지식창고(knowledge) 저장/조회. docs 추출 경로와 QA WS 경로가 공통으로 이 서비스에 저장한다.
@@ -63,6 +73,7 @@ class KnowledgeService(
     private val knowledgeRepository: KnowledgeRepository,
     private val embeddingRepository: KnowledgeEmbeddingRepository,
     private val eventRepository: KnowledgeEventRepository,
+    private val ledger: KnowledgeWriteLedger,
     private val transactionalOperator: TransactionalOperator,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
@@ -152,7 +163,8 @@ class KnowledgeService(
         projectId: Long,
         scope: KnowledgeScope,
         qaTryId: Long,
-        request: KnowledgeMutationRequest
+        request: KnowledgeMutationRequest,
+        messageId: String? = null
     ): KnowledgeMutation {
         val tag = KnowledgeTag.fromWire(request.tag)
             ?: return KnowledgeMutation.Rejected("tag must be one of ${KnowledgeTag.NAMES}")
@@ -161,22 +173,76 @@ class KnowledgeService(
         if (summary.isNullOrEmpty() || description.isNullOrEmpty()) {
             return KnowledgeMutation.Rejected("summary and description are required")
         }
-        val saved = transactionalOperator.executeAndAwait {
-            val row = knowledgeRepository.save(
-                KnowledgeEntity(
-                    projectId = projectId,
-                    scopeId = scope.id,
-                    source = KnowledgeSource.QA.name,
-                    sourceId = qaTryId,
-                    tag = tag.name,
-                    summary = summary,
-                    description = description
-                )
+
+        // 같은 사실이 이 스코프에 이미 살아 있으면 그것이 답이다(ARTEL-364). 이 조회가 없어도
+        // `uk_knowledge_content_key`가 결국 막지만, 막는 것과 답하는 것은 다르다 — 제약이 예외로
+        // 드러나면 그것은 거절이 되고, 재기록한 런은 자기가 아는 사실의 id를 못 받는다.
+        val contentKey = KnowledgeWriteLedger.contentKeyOf(tag.name, summary, description)
+        knowledgeRepository.findAliveByContentKey(projectId, scope.id, contentKey)?.let { existing ->
+            logger.info(
+                "knowledge 재기록 흡수: id={}, project={}, scope={}, qaTry={}",
+                existing.id, projectId, scope, qaTryId
             )
-            eventRepository.save(contentEvent(row, KnowledgeEventType.CREATE, qaTryId))
-            row
+            return KnowledgeMutation.Applied(requireNotNull(existing.id))
         }
-        return KnowledgeMutation.Applied(requireNotNull(saved?.id))
+
+        return applyOnce(qaTryId, messageId, CREATE_FRAME) {
+            val saved = transactionalOperator.executeAndAwait {
+                val row = knowledgeRepository.save(
+                    KnowledgeEntity(
+                        projectId = projectId,
+                        scopeId = scope.id,
+                        source = KnowledgeSource.QA.name,
+                        sourceId = qaTryId,
+                        tag = tag.name,
+                        summary = summary,
+                        description = description,
+                        contentKey = contentKey
+                    )
+                )
+                eventRepository.save(contentEvent(row, KnowledgeEventType.CREATE, qaTryId))
+                ledger.record(qaTryId, messageId, CREATE_FRAME, knowledgeId = row.id)
+                row
+            }
+            KnowledgeMutation.Applied(requireNotNull(saved?.id))
+        }
+    }
+
+    /**
+     * 이미 적용한 프레임이면 그때의 결과를, 아니면 [write]의 결과를 돌려준다(ARTEL-364).
+     *
+     * 순차 재전송은 앞의 조회에서 끝난다. 동시 재전송만 [write] 안의 원장 삽입까지 가서
+     * `uk_qa_knowledge_write_message`에 걸리고, 그 위반이 **쓰기까지 함께 되돌린다** — 원장 삽입이
+     * 쓰기와 같은 트랜잭션인 이유가 그것이다. 되돌린 뒤 원장을 다시 읽어 먼저 이긴 쪽의 결과로
+     * 답한다. `IssueService`가 유일 제약 위반을 기존 행으로 되돌리는 것과 같은 모양이다.
+     *
+     * 원장으로 설명되지 않는 무결성 위반은 다시 던진다. 삼키면 이 함수가 모든 제약 위반을 "이미
+     * 했다"로 바꿔 읽는 곳이 된다.
+     */
+    private suspend fun applyOnce(
+        qaTryId: Long,
+        messageId: String?,
+        type: String,
+        write: suspend () -> KnowledgeMutation
+    ): KnowledgeMutation {
+        ledger.previous(qaTryId, messageId)?.let { return replayOf(it, type) }
+        return try {
+            write()
+        } catch (error: DataIntegrityViolationException) {
+            val previous = ledger.previous(qaTryId, messageId) ?: throw error
+            replayOf(previous, type)
+        }
+    }
+
+    private fun replayOf(previous: QaKnowledgeWriteEntity, type: String): KnowledgeMutation {
+        // 같은 messageId가 다른 뜻으로 다시 오는 것은 프로토콜 위반이다. 조용히 첫 번째 결과를
+        // 돌려주면 두 번째 요청이 한 적 없는 일을 했다고 답하게 된다.
+        if (previous.type != type) {
+            return KnowledgeMutation.Rejected(
+                "this messageId was already used for ${previous.type}"
+            )
+        }
+        return KnowledgeMutation.Applied(requireNotNull(previous.knowledgeId))
     }
 
     /**
@@ -206,7 +272,18 @@ class KnowledgeService(
         projectId: Long,
         scope: KnowledgeScope,
         qaTryId: Long,
-        request: KnowledgeMutationRequest
+        request: KnowledgeMutationRequest,
+        messageId: String? = null
+    ): KnowledgeMutation = applyOnce(qaTryId, messageId, UPDATE_FRAME) {
+        updateOnce(projectId, scope, qaTryId, request, messageId)
+    }
+
+    private suspend fun updateOnce(
+        projectId: Long,
+        scope: KnowledgeScope,
+        qaTryId: Long,
+        request: KnowledgeMutationRequest,
+        messageId: String?
     ): KnowledgeMutation {
         val knowledgeId = parseKnowledgeId(request.knowledgeId)
             ?: return KnowledgeMutation.Rejected("knowledge_id must be a numeric id")
@@ -255,6 +332,7 @@ class KnowledgeService(
                 // 행 수준에서 이것은 CREATE다 — 이 스코프에 없던 행이 이 런에 의해 생겼다.
                 // "baseline을 고친 것"이라는 사실은 이벤트가 아니라 `shadows_id`가 진다.
                 eventRepository.save(contentEvent(row, KnowledgeEventType.CREATE, qaTryId))
+                ledger.record(qaTryId, messageId, UPDATE_FRAME, knowledgeId = row.id)
                 row
             }
             logger.info(
@@ -271,6 +349,7 @@ class KnowledgeService(
                 eventRepository.save(contentEvent(versioned, KnowledgeEventType.UPDATE, qaTryId))
             }
             if (embeddedTextChanged) embeddingRepository.discardFor(knowledgeId)
+            ledger.record(qaTryId, messageId, UPDATE_FRAME, knowledgeId = knowledgeId)
         }
         logger.info(
             "knowledge 수정: id={}, project={}, scope={}, qaTry={}, version={}, 임베딩 무효화={}",
@@ -294,7 +373,18 @@ class KnowledgeService(
         projectId: Long,
         scope: KnowledgeScope,
         qaTryId: Long,
-        request: KnowledgeMutationRequest
+        request: KnowledgeMutationRequest,
+        messageId: String? = null
+    ): KnowledgeMutation = applyOnce(qaTryId, messageId, DELETE_FRAME) {
+        softDeleteOnce(projectId, scope, qaTryId, request, messageId)
+    }
+
+    private suspend fun softDeleteOnce(
+        projectId: Long,
+        scope: KnowledgeScope,
+        qaTryId: Long,
+        request: KnowledgeMutationRequest,
+        messageId: String?
     ): KnowledgeMutation {
         val knowledgeId = parseKnowledgeId(request.knowledgeId)
             ?: return KnowledgeMutation.Rejected("knowledge_id must be a numeric id")
@@ -330,6 +420,7 @@ class KnowledgeService(
                         createdAt = deletedAt
                     )
                 )
+                ledger.record(qaTryId, messageId, DELETE_FRAME, knowledgeId = row.id)
                 row
             }
             logger.info(
@@ -356,6 +447,7 @@ class KnowledgeService(
                 )
             )
             embeddingRepository.discardFor(knowledgeId)
+            ledger.record(qaTryId, messageId, DELETE_FRAME, knowledgeId = knowledgeId)
         }
         // 지우는 주체가 Agent라 삭제는 반드시 눈에 보여야 한다. 출처는 컬럼에도 남는다.
         logger.info(

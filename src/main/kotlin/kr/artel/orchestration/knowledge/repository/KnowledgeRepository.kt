@@ -102,4 +102,33 @@ interface KnowledgeRepository : CoroutineCrudRepository<KnowledgeEntity, Long> {
         """
     )
     suspend fun findVisibleByIdIncludingDeleted(id: Long, projectId: Long, scopeId: Long?): KnowledgeEntity?
+
+    /**
+     * 같은 스코프에 이미 살아 있는, 내용이 같은 항목(ARTEL-364).
+     *
+     * 재기록 backstop의 조회 쪽이다. `uk_knowledge_content_key`가 같은 조건 위에 서 있고, 이 조회는
+     * 그 제약이 예외로 드러나기 전에 정상 분기로 처리되게 한다 — `findShadow`가
+     * `uq_knowledge_scope_shadow`에 대해 하는 것과 같은 역할이다.
+     *
+     * **`VISIBLE` 술어를 쓰지 않고 `scope_id`를 직접 맞춘다.** 그쪽은 "이 스코프에서 읽히는가"를
+     * 묻고 baseline까지 포함하지만, 여기서 필요한 것은 "인덱스가 충돌할 행이 있는가"다. 운영
+     * baseline과 스코프 행은 인덱스에서 서로 다른 키이므로, 스코프 런이 운영에 있는 것과 같은
+     * 내용을 자기 스코프에 쓰는 것은 막히지 않아야 한다.
+     *
+     * `IS NOT DISTINCT FROM`은 운영 스코프의 NULL을 값으로 맞추기 위한 것이다. `=`로 쓰면 운영 런의
+     * 조회가 언제나 빈 결과가 되어 backstop이 조용히 꺼진다 — 인덱스에 `NULLS NOT DISTINCT`가 필요한
+     * 것과 같은 이유이고, 같은 함정이다.
+     */
+    @Query(
+        """
+        SELECT * FROM knowledge
+         WHERE project_id = :projectId
+           AND scope_id IS NOT DISTINCT FROM :scopeId
+           AND content_key = :contentKey
+           AND deleted_at IS NULL
+         ORDER BY id ASC
+         LIMIT 1
+        """
+    )
+    suspend fun findAliveByContentKey(projectId: Long, scopeId: Long?, contentKey: String): KnowledgeEntity?
 }

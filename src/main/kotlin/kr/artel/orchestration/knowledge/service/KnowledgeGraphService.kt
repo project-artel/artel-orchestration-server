@@ -8,6 +8,7 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeRelation
 import kr.artel.orchestration.knowledge.entity.KnowledgeRetrievalKind
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
+import kr.artel.orchestration.knowledge.entity.QaKnowledgeWriteEntity
 import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeAmongRow
 import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeGraphTraversalRepository
@@ -15,9 +16,18 @@ import kr.artel.orchestration.knowledge.repository.KnowledgeNeighbourRow
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeSimilarRow
 import org.slf4j.LoggerFactory
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
+import org.springframework.transaction.reactive.TransactionalOperator
+import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Clock
 import java.time.Instant
+
+/**
+ * 멱등 원장이 기록하는 관계 프레임 타입(ARTEL-364). `qa_knowledge_write.type`의 CHECK와 같은 값이다.
+ */
+private const val LINK_FRAME = "KNOWLEDGE_LINK"
+private const val UNLINK_FRAME = "KNOWLEDGE_UNLINK"
 
 /**
  * 지식 그래프의 쓰기 경로(ARTEL-274). QA WebSocket의 `KNOWLEDGE_LINK` / `KNOWLEDGE_UNLINK`가
@@ -48,6 +58,8 @@ class KnowledgeGraphService(
     private val knowledgeRepository: KnowledgeRepository,
     private val edgeRepository: KnowledgeEdgeRepository,
     private val traversalRepository: KnowledgeGraphTraversalRepository,
+    private val ledger: KnowledgeWriteLedger,
+    private val transactionalOperator: TransactionalOperator,
     private val clock: Clock
 ) {
     private val logger = LoggerFactory.getLogger(KnowledgeGraphService::class.java)
@@ -69,7 +81,18 @@ class KnowledgeGraphService(
         projectId: Long,
         scope: KnowledgeScope,
         qaTryId: Long,
-        request: KnowledgeLinkRequest
+        request: KnowledgeLinkRequest,
+        messageId: String? = null
+    ): KnowledgeGraphMutation = applyOnce(qaTryId, messageId, LINK_FRAME) {
+        linkOnce(projectId, scope, qaTryId, request, messageId)
+    }
+
+    private suspend fun linkOnce(
+        projectId: Long,
+        scope: KnowledgeScope,
+        qaTryId: Long,
+        request: KnowledgeLinkRequest,
+        messageId: String?
     ): KnowledgeGraphMutation {
         val relation = KnowledgeRelation.fromWire(request.relation)
             ?: return rejected("relation must be one of ${KnowledgeRelation.NAMES}")
@@ -106,22 +129,26 @@ class KnowledgeGraphService(
         edgeRepository.findVisibleEdge(projectId, scope.id, storedFrom, storedTo, relation.name)
             ?.let { return rejected("$storedFrom ${relation.name} $storedTo is already linked") }
 
-        val saved = edgeRepository.save(
-            KnowledgeEdgeEntity(
-                projectId = projectId,
-                scopeId = scope.id,
-                fromKnowledgeId = storedFrom,
-                toKnowledgeId = storedTo,
-                relation = relation.name,
-                note = note,
-                createdByQaTryId = qaTryId
+        val saved = transactionalOperator.executeAndAwait {
+            val row = edgeRepository.save(
+                KnowledgeEdgeEntity(
+                    projectId = projectId,
+                    scopeId = scope.id,
+                    fromKnowledgeId = storedFrom,
+                    toKnowledgeId = storedTo,
+                    relation = relation.name,
+                    note = note,
+                    createdByQaTryId = qaTryId
+                )
             )
-        )
+            ledger.record(qaTryId, messageId, LINK_FRAME, edgeId = row.id)
+            row
+        }
         logger.info(
             "knowledge 링크: edge={}, {} {} {}, project={}, scope={}, qaTry={}",
-            saved.id, storedFrom, relation.name, storedTo, projectId, scope, qaTryId
+            saved?.id, storedFrom, relation.name, storedTo, projectId, scope, qaTryId
         )
-        return KnowledgeGraphMutation.Applied(requireNotNull(saved.id))
+        return KnowledgeGraphMutation.Applied(requireNotNull(saved?.id))
     }
 
     /**
@@ -139,7 +166,18 @@ class KnowledgeGraphService(
         projectId: Long,
         scope: KnowledgeScope,
         qaTryId: Long,
-        request: KnowledgeUnlinkRequest
+        request: KnowledgeUnlinkRequest,
+        messageId: String? = null
+    ): KnowledgeGraphMutation = applyOnce(qaTryId, messageId, UNLINK_FRAME) {
+        unlinkOnce(projectId, scope, qaTryId, request, messageId)
+    }
+
+    private suspend fun unlinkOnce(
+        projectId: Long,
+        scope: KnowledgeScope,
+        qaTryId: Long,
+        request: KnowledgeUnlinkRequest,
+        messageId: String?
     ): KnowledgeGraphMutation {
         val relation = KnowledgeRelation.fromWire(request.relation)
             ?: return rejected("relation must be one of ${KnowledgeRelation.NAMES}")
@@ -168,33 +206,72 @@ class KnowledgeGraphService(
             // VISIBLE이 이미 툼스톤에 가려진 baseline을 뺐으므로 여기 걸리는 일은 경합뿐이다.
             edgeRepository.findTombstone(requireNotNull(scope.id), baselineId)
                 ?.let { return rejected("$storedFrom ${relation.name} $storedTo is already unlinked in this run's knowledge scope") }
-            val tombstone = edgeRepository.save(
-                edge.copy(
-                    id = null,
-                    scopeId = scope.id,
-                    shadowsEdgeId = baselineId,
-                    deletedAt = deletedAt,
-                    deletedByQaTryId = qaTryId,
-                    // 이 스코프에 처음 생긴 행이므로 만든 시각도 물려받지 않는다.
-                    createdAt = null,
-                    // 이 런이 만든 행이라는 것은 사실이다. 가린 대상은 shadows_edge_id가 진다.
-                    createdByQaTryId = qaTryId
+            val tombstone = transactionalOperator.executeAndAwait {
+                val row = edgeRepository.save(
+                    edge.copy(
+                        id = null,
+                        scopeId = scope.id,
+                        shadowsEdgeId = baselineId,
+                        deletedAt = deletedAt,
+                        deletedByQaTryId = qaTryId,
+                        // 이 스코프에 처음 생긴 행이므로 만든 시각도 물려받지 않는다.
+                        createdAt = null,
+                        // 이 런이 만든 행이라는 것은 사실이다. 가린 대상은 shadows_edge_id가 진다.
+                        createdByQaTryId = qaTryId
+                    )
                 )
-            )
+                ledger.record(qaTryId, messageId, UNLINK_FRAME, edgeId = row.id)
+                row
+            }
             logger.info(
                 "knowledge 스코프 링크 해제(툼스톤 생성): baseline={}, tombstone={}, project={}, scope={}, qaTry={}",
-                baselineId, tombstone.id, projectId, scope, qaTryId
+                baselineId, tombstone?.id, projectId, scope, qaTryId
             )
-            return KnowledgeGraphMutation.Applied(requireNotNull(tombstone.id))
+            return KnowledgeGraphMutation.Applied(requireNotNull(tombstone?.id))
         }
 
-        edgeRepository.save(edge.copy(deletedAt = deletedAt, deletedByQaTryId = qaTryId))
+        transactionalOperator.executeAndAwait {
+            edgeRepository.save(edge.copy(deletedAt = deletedAt, deletedByQaTryId = qaTryId))
+            ledger.record(qaTryId, messageId, UNLINK_FRAME, edgeId = edge.id)
+        }
         // 지우는 주체가 Agent라 삭제는 반드시 눈에 보여야 한다(knowledge 소프트삭제와 같은 이유).
         logger.info(
             "knowledge 링크 해제: edge={}, {} {} {}, project={}, scope={}, qaTry={}",
             edge.id, storedFrom, relation.name, storedTo, projectId, scope, qaTryId
         )
         return KnowledgeGraphMutation.Applied(requireNotNull(edge.id))
+    }
+
+    /**
+     * 이미 적용한 프레임이면 그때의 결과를, 아니면 [write]의 결과를 돌려준다(ARTEL-364).
+     *
+     * [KnowledgeService.applyOnce]와 같은 모양이고 같은 이유를 진다. 하나로 합치지 않은 것은
+     * 돌려주는 타입과 원장에서 읽을 id 필드가 서로 다르기 때문이다 — 공용으로 만들면 "재현할
+     * 결과", "타입이 어긋났을 때의 결과", "실제 쓰기" 세 람다를 받는 함수가 되고, 그것은 여기
+     * 열두 줄보다 읽기 어렵다.
+     */
+    private suspend fun applyOnce(
+        qaTryId: Long,
+        messageId: String?,
+        type: String,
+        write: suspend () -> KnowledgeGraphMutation
+    ): KnowledgeGraphMutation {
+        ledger.previous(qaTryId, messageId)?.let { return replayOf(it, type) }
+        return try {
+            write()
+        } catch (error: DataIntegrityViolationException) {
+            val previous = ledger.previous(qaTryId, messageId) ?: throw error
+            replayOf(previous, type)
+        }
+    }
+
+    private fun replayOf(previous: QaKnowledgeWriteEntity, type: String): KnowledgeGraphMutation {
+        // 같은 messageId가 다른 뜻으로 다시 오는 것은 프로토콜 위반이다. 첫 번째 결과를 그대로
+        // 돌려주면 두 번째 요청이 한 적 없는 일을 했다고 답하게 된다.
+        if (previous.type != type) {
+            return rejected("this messageId was already used for ${previous.type}")
+        }
+        return KnowledgeGraphMutation.Applied(requireNotNull(previous.edgeId))
     }
 
     /**

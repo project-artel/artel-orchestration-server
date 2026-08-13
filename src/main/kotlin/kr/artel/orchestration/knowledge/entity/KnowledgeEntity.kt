@@ -33,6 +33,18 @@ data class KnowledgeEntity(
     @Column("content_hash")
     val contentHash: String? = null,
 
+    /**
+     * 같은 사실인지 판정하는 키(ARTEL-364). QA 런의 `record_knowledge`가 만든 행에만 찬다.
+     *
+     * [contentHash]와 다른 것이다. 그쪽은 DOCS 업로드 파일의 해시이고 V13이 "멱등키 아님"이라고
+     * 명시했다. 의미를 겹쳐 쓰면 문서 인입과 QA 쓰기가 서로를 막는다.
+     *
+     * 수정으로는 바뀌지 않는다. 바꾸면 `uk_knowledge_content_key`가 "고친 결과가 다른 행과
+     * 같아졌다"까지 막게 되는데, 그것은 멱등이 아니라 병합이고 다른 판단이다.
+     */
+    @Column("content_key")
+    val contentKey: String? = null,
+
     @Column("tag")
     val tag: String,
 

@@ -571,9 +571,9 @@ class QaAgentInboundRouter(
             val projectId = instance.projectId
             val scope = scopeOf(qaTry)
             when (envelope.type) {
-                "KNOWLEDGE_CREATE" -> knowledgeService.createFromQaTry(projectId, scope, qaTryId, request)
-                "KNOWLEDGE_UPDATE" -> knowledgeService.updateFromQaTry(projectId, scope, qaTryId, request)
-                else -> knowledgeService.softDeleteFromQaTry(projectId, scope, qaTryId, request)
+                "KNOWLEDGE_CREATE" -> knowledgeService.createFromQaTry(projectId, scope, qaTryId, request, envelope.messageId)
+                "KNOWLEDGE_UPDATE" -> knowledgeService.updateFromQaTry(projectId, scope, qaTryId, request, envelope.messageId)
+                else -> knowledgeService.softDeleteFromQaTry(projectId, scope, qaTryId, request, envelope.messageId)
             }
         } catch (error: CancellationException) {
             throw error
@@ -621,10 +621,10 @@ class QaAgentInboundRouter(
             val scope = scopeOf(qaTry)
             if (envelope.type == "KNOWLEDGE_LINK") {
                 val request = objectMapper.treeToValue(envelope.payload, KnowledgeLinkRequest::class.java)
-                knowledgeGraphService.link(projectId, scope, qaTryId, request)
+                knowledgeGraphService.link(projectId, scope, qaTryId, request, envelope.messageId)
             } else {
                 val request = objectMapper.treeToValue(envelope.payload, KnowledgeUnlinkRequest::class.java)
-                knowledgeGraphService.unlink(projectId, scope, qaTryId, request)
+                knowledgeGraphService.unlink(projectId, scope, qaTryId, request, envelope.messageId)
             }
         } catch (error: CancellationException) {
             throw error
