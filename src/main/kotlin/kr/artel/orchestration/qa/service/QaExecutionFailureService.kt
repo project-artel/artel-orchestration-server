@@ -2,8 +2,10 @@ package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.knowledge.service.KnowledgeCitationService
 import kr.artel.orchestration.qa.dto.QaStatusPayload
+import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
@@ -15,6 +17,7 @@ import java.util.UUID
 @Service
 class QaExecutionFailurePersistence(
     private val tryRepository: QaTryRepository,
+    private val runRepository: QaRunRepository,
     private val logService: QaLogService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
@@ -28,6 +31,7 @@ class QaExecutionFailurePersistence(
             if (tryRepository.failActiveByGameInstanceId(gameInstanceId, completedAt) != 1) {
                 return@executeAndAwait null
             }
+            completeRunIfAllTriesDone(active.qaRunId, completedAt)
             val qaTryId = requireNotNull(active.id)
             val errorLog = logService.append(
                 qaTryId = qaTryId,
@@ -55,6 +59,7 @@ class QaExecutionFailurePersistence(
             if (tryRepository.failActiveById(qaTryId, completedAt) != 1) {
                 return@executeAndAwait null
             }
+            completeRunIfAllTriesDone(active.qaRunId, completedAt)
             val errorLog = logService.append(
                 qaTryId = qaTryId,
                 direction = "ORCHE_INTERNAL",
@@ -89,6 +94,7 @@ class QaExecutionFailurePersistence(
             if (tryRepository.cancelActiveById(qaTryId, completedAt) != 1) {
                 return@executeAndAwait null
             }
+            completeRunIfAllTriesDone(active.qaRunId, completedAt)
             val requestLog = logService.append(
                 qaTryId = qaTryId,
                 direction = "USER_TO_ORCHE",
@@ -105,7 +111,17 @@ class QaExecutionFailurePersistence(
             )
             FailureLogs(qaTryId, active.agentSessionId, requestLog, statusLog)
         }
+
+    private suspend fun completeRunIfAllTriesDone(qaRunId: Long?, completedAt: Instant) {
+        if (qaRunId == null) return
+        val tries = tryRepository.findByQaRunId(qaRunId).toList()
+        if (tries.isNotEmpty() && tries.all { it.status in TERMINAL_TRY_STATUSES }) {
+            runRepository.transition(qaRunId, "RUNNING", "COMPLETED", completedAt, completedAt)
+        }
+    }
 }
+
+private val TERMINAL_TRY_STATUSES = setOf("COMPLETED", "FAILED", "CANCELLED")
 
 data class FailureLogs(
     val qaTryId: Long,

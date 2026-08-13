@@ -185,9 +185,20 @@ class ExpectedStepsGradingIntegrationTest {
         failureService.agentDisconnected(run.tryId)
 
         assertThat(qaTryRepository.findById(run.tryId)!!.status).isEqualTo("FAILED")
+        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("COMPLETED")
         val detail = detailOf(run.tryId)
         assertThat(detail.get("reported").asInt()).isEqualTo(1)
         assertThat(detail.get("unreported").asInt()).isEqualTo(1)
+    }
+
+    @Test
+    fun `SDK 연결이 끊겨 마지막 try가 실패하면 부모 run도 완료된다`(): Unit = runBlocking {
+        val run = runningRun(listOf(true))
+
+        failureService.sdkDisconnected(run.instanceId)
+
+        assertThat(qaTryRepository.findById(run.tryId)!!.status).isEqualTo("FAILED")
+        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("COMPLETED")
     }
 
     @Test
@@ -198,6 +209,7 @@ class ExpectedStepsGradingIntegrationTest {
         failureService.cancelled(run.tryId, "운영자가 중단했습니다.")
 
         assertThat(qaTryRepository.findById(run.tryId)!!.status).isEqualTo("CANCELLED")
+        assertThat(qaRunRepository.findById(run.runId)!!.status).isEqualTo("COMPLETED")
         assertThat(detailOf(run.tryId).get("matrix").get("correct_fail").asInt()).isEqualTo(1)
     }
 
@@ -230,7 +242,12 @@ class ExpectedStepsGradingIntegrationTest {
 
     // ----------------------------------------------------------------- helpers
 
-    private data class RunningRun(val runId: Long, val tryId: Long, val scenarioId: Long)
+    private data class RunningRun(
+        val runId: Long,
+        val tryId: Long,
+        val scenarioId: Long,
+        val instanceId: Long
+    )
 
     /** [labels] 길이만큼 스텝을 가진 시나리오 하나로 런을 열고 RUNNING까지 만든다. */
     private suspend fun runningRun(labels: List<Boolean?>): RunningRun {
@@ -272,7 +289,7 @@ class ExpectedStepsGradingIntegrationTest {
             started.qaRun, tryId, "session-grade-1",
             objectMapper.readTree("""{"model":"anthropic/claude-sonnet-5"}""")
         )
-        return RunningRun(requireNotNull(started.qaRun.id), tryId, scenarioId)
+        return RunningRun(requireNotNull(started.qaRun.id), tryId, scenarioId, instance.id!!)
     }
 
     private fun draftFor(labels: List<Boolean?>) = ScenarioDraft(
