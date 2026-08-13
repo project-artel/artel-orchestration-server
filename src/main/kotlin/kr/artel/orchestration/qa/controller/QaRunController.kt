@@ -1,18 +1,15 @@
 package kr.artel.orchestration.qa.controller
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
-import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.qa.dto.CreateQaRunRequest
 import kr.artel.orchestration.qa.dto.QaRunResponse
 import kr.artel.orchestration.qa.service.QaTryService
 import kr.artel.orchestration.qa.service.toRunSettings
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
-import org.springframework.security.core.annotation.AuthenticationPrincipal
-import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -28,19 +25,18 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/qa-runs")
 class QaRunController(
     private val qaTryService: QaTryService,
-    private val userResolver: SessionUserResolver,
     private val objectMapper: ObjectMapper
 ) {
     @PostMapping
     suspend fun createQaRun(
         @RequestBody request: CreateQaRunRequest,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<QaRunResponse> =
         ResponseEntity.status(HttpStatus.CREATED).body(
             qaTryService.createRun(
                 parseId(request.testRunId),
                 parseId(request.gameInstanceId),
-                requireUser(jwt),
+                appUserId,
                 request.toRunSettings(objectMapper)
             )
         )
@@ -49,9 +45,9 @@ class QaRunController(
     @GetMapping("/{qaRunId}")
     suspend fun getQaRun(
         @PathVariable qaRunId: String,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): QaRunResponse =
-        qaTryService.getRun(parseId(qaRunId), requireUser(jwt)) ?: throw NotFoundException()
+        qaTryService.getRun(parseId(qaRunId), appUserId) ?: throw NotFoundException()
 
     /**
      * 런(TR) 전체를 취소한다. 활성 시나리오는 Agent 세션 종료까지 포함해 취소되고 qa_run이 닫혀,
@@ -60,14 +56,11 @@ class QaRunController(
     @PostMapping("/{qaRunId}/cancel")
     suspend fun cancelQaRun(
         @PathVariable qaRunId: String,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<Void> {
-        qaTryService.cancelRun(parseId(qaRunId), requireUser(jwt))
+        qaTryService.cancelRun(parseId(qaRunId), appUserId)
         return ResponseEntity.noContent().build()
     }
-
-    private fun requireUser(jwt: Jwt): Long =
-        userResolver.resolve(jwt)?.userId ?: throw UnauthorizedException()
 
     // testRunId·gameInstanceId·qaRunId 등 여러 엔티티 id 문자열을 공통 파싱하는 범용 헬퍼.
     private fun parseId(rawId: String): Long =

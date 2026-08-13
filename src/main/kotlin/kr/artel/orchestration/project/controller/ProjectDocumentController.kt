@@ -1,12 +1,11 @@
 package kr.artel.orchestration.project.controller
 
 import kr.artel.orchestration.common.error.NotFoundException
-import kr.artel.orchestration.common.error.UnauthorizedException
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
-import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.project.dto.DownloadTicketResponse
 import kr.artel.orchestration.project.dto.ProjectDocumentResponse
 import kr.artel.orchestration.project.dto.RegisterDocumentRequest
@@ -15,8 +14,6 @@ import kr.artel.orchestration.project.dto.UploadTicketResponse
 import kr.artel.orchestration.project.service.ProjectDocumentService
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
-import org.springframework.security.core.annotation.AuthenticationPrincipal
-import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -31,14 +28,13 @@ import org.springframework.web.bind.annotation.RestController
  * 2. 클라이언트가 그 URL로 S3에 직접 PUT (서버를 지나지 않는다)
  * 3. 등록 — 이 호출이 성공해야 기획서가 존재한다
  *
- * 컨트롤러는 얇게: JWT→userId 추출 + 상태코드 매핑(서비스가 null이면 404), 비즈니스는 [ProjectDocumentService].
+ * 컨트롤러는 얇게: 상태코드 매핑(서비스가 null이면 404)만 하고, 비즈니스는 [ProjectDocumentService].
  */
 @Tag(name = "Project Document", description = "프로젝트 기획서 업로드·조회")
 @RestController
 @RequestMapping("/api/projects/{projectId}/documents")
 class ProjectDocumentController(
-    private val documentService: ProjectDocumentService,
-    private val sessionUserResolver: SessionUserResolver
+    private val documentService: ProjectDocumentService
 ) {
     @Operation(
         summary = "업로드 URL 발급",
@@ -46,11 +42,11 @@ class ProjectDocumentController(
     )
     @PostMapping("/upload-url")
     suspend fun createUploadTicket(
-        @AuthenticationPrincipal jwt: Jwt,
+        @CurrentUserId appUserId: Long,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
         @Valid @RequestBody request: UploadTicketRequest
     ): ResponseEntity<UploadTicketResponse> =
-        documentService.createUploadTicket(requireUser(jwt), projectId, request)
+        documentService.createUploadTicket(appUserId, projectId, request)
             ?.let { ResponseEntity.ok(it) }
             ?: throw projectNotFound()
 
@@ -60,21 +56,21 @@ class ProjectDocumentController(
     )
     @PostMapping
     suspend fun register(
-        @AuthenticationPrincipal jwt: Jwt,
+        @CurrentUserId appUserId: Long,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
         @Valid @RequestBody request: RegisterDocumentRequest
     ): ResponseEntity<ProjectDocumentResponse> =
-        documentService.register(requireUser(jwt), projectId, request)
+        documentService.register(appUserId, projectId, request)
             ?.let { ResponseEntity.status(HttpStatus.CREATED).body(it) }
             ?: throw projectNotFound()
 
     @Operation(summary = "기획서 이력", description = "최신 버전이 앞에 온다.")
     @GetMapping
     suspend fun list(
-        @AuthenticationPrincipal jwt: Jwt,
+        @CurrentUserId appUserId: Long,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long
     ): ResponseEntity<List<ProjectDocumentResponse>> =
-        documentService.list(requireUser(jwt), projectId)
+        documentService.list(appUserId, projectId)
             ?.let { ResponseEntity.ok(it) }
             ?: throw projectNotFound()
 
@@ -84,17 +80,13 @@ class ProjectDocumentController(
     )
     @GetMapping("/{documentId}/download-url")
     suspend fun createDownloadTicket(
-        @AuthenticationPrincipal jwt: Jwt,
+        @CurrentUserId appUserId: Long,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
         @Parameter(description = "기획서 id", required = true) @PathVariable documentId: Long
     ): ResponseEntity<DownloadTicketResponse> =
-        documentService.createDownloadTicket(requireUser(jwt), projectId, documentId)
+        documentService.createDownloadTicket(appUserId, projectId, documentId)
             ?.let { ResponseEntity.ok(it) }
             ?: throw documentNotFound()
-
-    private fun requireUser(jwt: Jwt): Long =
-        sessionUserResolver.resolve(jwt)?.userId
-            ?: throw UnauthorizedException()
 
     private fun projectNotFound() =
         NotFoundException("프로젝트를 찾을 수 없습니다.")

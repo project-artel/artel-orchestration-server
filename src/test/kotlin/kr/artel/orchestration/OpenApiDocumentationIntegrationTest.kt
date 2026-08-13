@@ -66,4 +66,23 @@ class OpenApiDocumentationIntegrationTest {
         assertThat(response).contains("프로젝트 생성")
         assertThat(response).contains("업로드 URL 발급")
     }
+
+    /**
+     * `@CurrentUserId`는 세션에서 오는 값이지 호출자가 보내는 값이 아니다(ARTEL-312).
+     *
+     * springdoc은 모르는 파라미터 어노테이션을 쿼리 파라미터로 문서화한다. 무시 목록에서 빠지면
+     * 인증 엔드포인트마다 `appUserId`가 **필수 쿼리 파라미터**로 계약에 실리고, 이 문서에서
+     * 파생되는 Insomnia 컬렉션이 그 값을 요구하게 된다.
+     */
+    @Test
+    fun `keeps the session-derived user id out of the contract`() {
+        val response = WebClient.create("http://localhost:$port")
+            .get()
+            .uri("/v3/api-docs")
+            .retrieve()
+            .bodyToMono(String::class.java)
+            .block(Duration.ofSeconds(5))
+
+        assertThat(response).doesNotContain("appUserId")
+    }
 }

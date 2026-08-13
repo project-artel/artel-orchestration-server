@@ -1,9 +1,8 @@
 package kr.artel.orchestration.testrun.controller
 
 import kr.artel.orchestration.common.error.BadRequestException
-import kr.artel.orchestration.common.error.UnauthorizedException
 import kotlinx.coroutines.flow.Flow
-import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testrun.dto.CommitScenariosRequest
 import kr.artel.orchestration.testrun.dto.RunChatMessage
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
@@ -20,8 +19,6 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.http.codec.ServerSentEvent
-import org.springframework.security.core.annotation.AuthenticationPrincipal
-import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -41,24 +38,23 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/projects/{projectId}/test-runs")
 class TestRunController(
     private val service: TestRunService,
-    private val chatService: TestRunChatService,
-    private val sessionUserResolver: SessionUserResolver
+    private val chatService: TestRunChatService
 ) {
 
     @GetMapping
     suspend fun list(
         @PathVariable projectId: Long,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): TestRunListResponse =
-        service.list(projectId, requireUser(jwt))
+        service.list(projectId, appUserId)
 
     @PostMapping
     suspend fun create(
         @PathVariable projectId: Long,
         @RequestBody request: TestRunCreateRequest,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<TestRunResponse> =
-        service.create(projectId, requireUser(jwt), request)
+        service.create(projectId, appUserId, request)
             ?.let { ResponseEntity.status(HttpStatus.CREATED).body(it) }
             ?: ResponseEntity.notFound().build()
 
@@ -66,9 +62,9 @@ class TestRunController(
     suspend fun get(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<TestRunResponse> =
-        service.get(runId, requireUser(jwt))
+        service.get(runId, appUserId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 
@@ -77,9 +73,9 @@ class TestRunController(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
         @RequestBody request: TestRunUpdateRequest,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<TestRunResponse> =
-        service.update(runId, requireUser(jwt), request)
+        service.update(runId, appUserId, request)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 
@@ -87,9 +83,9 @@ class TestRunController(
     suspend fun delete(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<Void> {
-        service.delete(runId, requireUser(jwt))
+        service.delete(runId, appUserId)
         return ResponseEntity.noContent().build()
     }
 
@@ -97,9 +93,9 @@ class TestRunController(
     suspend fun getScenarios(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<RunScenariosResponse> =
-        service.getScenarios(runId, requireUser(jwt))
+        service.getScenarios(runId, appUserId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 
@@ -108,12 +104,12 @@ class TestRunController(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
         @RequestBody request: SetRunScenariosRequest,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<RunScenariosResponse> {
         val scenarioIds = request.scenarioIds.map {
             it.toLongOrNull() ?: throw BadRequestException("invalid scenarioId: $it")
         }
-        return service.setScenarios(runId, requireUser(jwt), scenarioIds)
+        return service.setScenarios(runId, appUserId, scenarioIds)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
     }
@@ -125,18 +121,18 @@ class TestRunController(
     suspend fun chatMessages(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): List<MessageResponse> =
-        chatService.getMessages(runId, requireUser(jwt))
+        chatService.getMessages(runId, appUserId)
 
     /** Agent 응답을 실시간 수신하는 SSE 스트림(타입화된 ScenarioStreamEvent). */
     @GetMapping("/{runId}/chat/stream", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     suspend fun chatStream(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): Flow<ServerSentEvent<ScenarioStreamEvent>> =
-        chatService.stream(requireUser(jwt), runId)
+        chatService.stream(appUserId, runId)
 
     /** 사용자 자연어 메시지를 수신하여 Agent로 중계한다(→ WebSocket). 결과 시나리오는 이 런에 반영된다. */
     @PostMapping("/{runId}/chat/message")
@@ -144,9 +140,8 @@ class TestRunController(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
         @RequestBody message: RunChatMessage,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<String> {
-        val appUserId = requireUser(jwt)
         return try {
             chatService.relay(appUserId, runId, message)
             ResponseEntity.ok("메시지 전송 완료")
@@ -171,9 +166,8 @@ class TestRunController(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
         @RequestBody request: CommitScenariosRequest,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<RunScenariosResponse> {
-        val appUserId = requireUser(jwt)
         chatService.commitScenarios(appUserId, runId, request.scenarios)
         return service.getScenarios(runId, appUserId)
             ?.let { ResponseEntity.ok(it) }
@@ -185,13 +179,9 @@ class TestRunController(
     suspend fun chatClose(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): ResponseEntity<String> {
-        chatService.close(requireUser(jwt), runId)
+        chatService.close(appUserId, runId)
         return ResponseEntity.ok("세션 종료 완료")
     }
-
-    private fun requireUser(jwt: Jwt): Long =
-        sessionUserResolver.resolve(jwt)?.userId
-            ?: throw UnauthorizedException()
 }

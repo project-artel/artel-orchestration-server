@@ -1,11 +1,8 @@
 package kr.artel.orchestration.issue.controller
 
-import kr.artel.orchestration.auth.service.SessionUserResolver
-import kr.artel.orchestration.common.error.UnauthorizedException
+import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.issue.dto.IssuePageResponse
 import kr.artel.orchestration.issue.service.IssueService
-import org.springframework.security.core.annotation.AuthenticationPrincipal
-import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
@@ -23,8 +20,7 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/projects/{projectId}/issues")
 class ProjectIssueController(
-    private val service: IssueService,
-    private val userResolver: SessionUserResolver
+    private val service: IssueService
 ) {
     /**
      * @param status 없으면 해결·미해결 모두. `OPEN`/`RESOLVED` 외의 값은 400.
@@ -38,10 +34,7 @@ class ProjectIssueController(
         @RequestParam(required = false) severity: String?,
         @RequestParam(required = false) beforeId: Long?,
         @RequestParam(defaultValue = "50") size: Int,
-        @AuthenticationPrincipal jwt: Jwt
+        @CurrentUserId appUserId: Long
     ): IssuePageResponse =
-        service.listByProject(projectId, requireUser(jwt), status, severity, beforeId, size)
-
-    private fun requireUser(jwt: Jwt): Long =
-        userResolver.resolve(jwt)?.userId ?: throw UnauthorizedException()
+        service.listByProject(projectId, appUserId, status, severity, beforeId, size)
 }
