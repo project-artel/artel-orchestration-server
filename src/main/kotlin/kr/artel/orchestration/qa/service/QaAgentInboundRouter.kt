@@ -56,6 +56,28 @@ private val KNOWLEDGE_GRAPH_TYPES = setOf("KNOWLEDGE_LINK", "KNOWLEDGE_UNLINK")
  */
 private val KNOWLEDGE_WRITE_TYPES = KNOWLEDGE_MUTATION_TYPES + KNOWLEDGE_GRAPH_TYPES + "KNOWLEDGE"
 
+/**
+ * 쓰기 중 **응답을 받는** 타입(ARTEL-331). Agent의 도구가 이 프레임들의 답을 기다린다.
+ *
+ * 배치 인입 `KNOWLEDGE`가 빠진 것이 이 집합의 요점이다. 그것은 도구 호출이 아니라 런 초기의 일괄
+ * 적재라 기다리는 호출부가 없고, 답한다면 id 하나가 아니라 N개를 실어야 해서 payload 모양도 다르다.
+ * 나중에 Agent가 배치 결과를 쓰게 되면 그때 `knowledge_ids` 배열로 확장하고 여기 넣는다.
+ */
+private val ANSWERED_WRITE_TYPES = KNOWLEDGE_MUTATION_TYPES + KNOWLEDGE_GRAPH_TYPES
+
+/**
+ * 쓰기 응답 프레임의 타입. 다섯 쓰기가 **하나의 타입**으로 답한다(ARTEL-331).
+ *
+ * `KNOWLEDGE_SEARCH_RESULT`/`KNOWLEDGE_EXPAND_RESULT`처럼 요청마다 쪼개지 않는다. 저 둘은 1:1
+ * 요청-응답이지만 쓰기는 다섯이 한 가족이고 응답이 id 필드 하나만 다르다. 타입을 하나로 두면 다음
+ * 쓰기 타입이 계약을 자동으로 물려받는다 — KNOWLEDGE_UPDATE(ARTEL-257)와 LINK/UNLINK(ARTEL-274)가
+ * 각각 "답이 있나 없나"를 다시 정했던 것이 이 이슈의 원인이다.
+ *
+ * 무엇의 답인지는 payload의 `type`이 말한다. correlation은 messageId 기준이라 매칭에는 쓰이지
+ * 않고, 로그를 읽는 사람과 소비자의 분기를 위한 것이다.
+ */
+private const val KNOWLEDGE_WRITE_RESULT_TYPE = "KNOWLEDGE_WRITE_RESULT"
+
 private val SUPPORTED_TYPES =
     setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH", "KNOWLEDGE_EXPAND") +
         KNOWLEDGE_WRITE_TYPES
@@ -264,10 +286,13 @@ class QaAgentInboundRouter(
     /**
      * 지식창고 쓰기 프레임을 이 런이 보내도 되는가(ARTEL-256).
      *
-     * `learning`이 아니면 거부하고 ERROR 로그만 남긴다. **throw하지 않는 것이 이 함수의 요점이다** —
-     * 거부는 정상 동작이고, 여기서 예외가 WS 수신 체인 밖으로 나가면 소켓이 닫혀 런 전체가 실패한다
-     * (파일 상단 [handle]의 판단과 같다). 쓰기 프레임은 애초에 응답을 기다리지 않는 단방향이라
-     * Agent에 따로 알릴 것도 없다.
+     * `learning`이 아니면 거부한다. **throw하지 않는 것이 이 함수의 요점이다** — 거부는 정상
+     * 동작이고, 여기서 예외가 WS 수신 체인 밖으로 나가면 소켓이 닫혀 런 전체가 실패한다
+     * (파일 상단 [handle]의 판단과 같다).
+     *
+     * 거부도 [ANSWERED_WRITE_TYPES]이면 Agent에 답한다(ARTEL-331). 여기서 답하지 않으면
+     * `frozen`/`off` 런의 **모든** 쓰기가 Agent 쪽 타임아웃을 통째로 태운다 — 실험용 arm이 가장
+     * 느려지는, 지표에는 실패로 남지 않는 종류의 회귀다.
      */
     private suspend fun allowKnowledgeWrite(
         qaTryId: Long,
@@ -276,8 +301,9 @@ class QaAgentInboundRouter(
     ): Boolean {
         val mode = knowledgeModeOf(qaTry)
         if (mode.writable) return true
-        appendError(
+        rejectWrite(
             qaTryId,
+            qaTry,
             envelope,
             "${envelope.type} rejected: knowledge_mode=${mode.wire} does not allow writing to the knowledge base"
         )
@@ -514,9 +540,14 @@ class QaAgentInboundRouter(
      * 스코프 런이 운영 지식(baseline)을 고치거나 지우려 하면 서비스가 원본 대신 그림자 행을 만든다.
      * 라우터는 그 분기를 알지 않는다 — 어디에 쓸지는 스코프를 아는 쪽이 정한다.
      *
-     * 검증 실패는 전부 값([KnowledgeMutation.Rejected])으로 돌아와 ERROR 로그가 되고, 저장 중 난
-     * 예외도 마찬가지로 삼킨다 — 프레임 하나가 receive 체인을 끊어 QA 런을 실패시키지 못하게 한다.
+     * 검증 실패는 전부 값([KnowledgeMutation.Rejected])으로 돌아와 ERROR가 되고, 저장 중 난 예외도
+     * 마찬가지로 삼킨다 — 프레임 하나가 receive 체인을 끊어 QA 런을 실패시키지 못하게 한다.
      * `CancellationException`은 예외가 아니라 취소 신호라 반드시 다시 던진다.
+     *
+     * 성공하면 [KNOWLEDGE_WRITE_RESULT_TYPE]으로 답하고 만들어진 항목의 id를 싣는다(ARTEL-331).
+     * 그 id는 [KnowledgeMutation.Applied]가 지는 값 그대로다 — 스코프 런에서 그림자나 툼스톤이
+     * 만들어졌으면 **그 행의** id다. baseline id를 돌려주면 그 런에서 다시 지목할 수 없는 id를
+     * 주게 된다.
      */
     private suspend fun routeKnowledgeMutation(
         qaTryId: Long,
@@ -526,11 +557,17 @@ class QaAgentInboundRouter(
         val request = try {
             objectMapper.treeToValue(envelope.payload, KnowledgeMutationRequest::class.java)
         } catch (error: Exception) {
-            appendError(qaTryId, envelope, "${envelope.type} payload parse failed: ${error.message}")
+            rejectWrite(qaTryId, qaTry, envelope, "${envelope.type} payload parse failed: ${error.message}")
             return
         }
         val result = try {
-            val instance = gameInstanceRepository.findById(qaTry.gameInstanceId) ?: return
+            val instance = gameInstanceRepository.findById(qaTry.gameInstanceId)
+                ?: return rejectWrite(
+                    qaTryId,
+                    qaTry,
+                    envelope,
+                    "${envelope.type} cannot resolve the project of this run"
+                )
             val projectId = instance.projectId
             val scope = scopeOf(qaTry)
             when (envelope.type) {
@@ -541,11 +578,14 @@ class QaAgentInboundRouter(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            appendError(qaTryId, envelope, "${envelope.type} failed: ${error.message}")
+            rejectWrite(qaTryId, qaTry, envelope, "${envelope.type} failed: ${error.message}")
             return
         }
-        if (result is KnowledgeMutation.Rejected) {
-            appendError(qaTryId, envelope, "${envelope.type} rejected: ${result.reason}")
+        when (result) {
+            is KnowledgeMutation.Rejected ->
+                rejectWrite(qaTryId, qaTry, envelope, "${envelope.type} rejected: ${result.reason}")
+            is KnowledgeMutation.Applied ->
+                answerWrite(qaTryId, qaTry, envelope, "knowledge_id", result.knowledgeId)
         }
     }
 
@@ -554,12 +594,15 @@ class QaAgentInboundRouter(
      *
      * [routeKnowledgeMutation]과 같은 모양이고 같은 이유를 진다: 프로젝트와 스코프는 payload가
      * 아니라 `qaTryId → game_instance → project_id` / `qa_try.knowledge_scope_id`에서 나오고,
-     * 검증 실패는 값([KnowledgeGraphMutation.Rejected])으로 돌아와 ERROR 로그가 되며, 저장 중
-     * 예외도 삼킨다 — 프레임 하나가 receive 체인을 끊어 QA 런을 실패시키지 못하게 한다.
+     * 검증 실패는 값([KnowledgeGraphMutation.Rejected])으로 돌아와 ERROR가 되며, 저장 중 예외도
+     * 삼킨다 — 프레임 하나가 receive 체인을 끊어 QA 런을 실패시키지 못하게 한다.
      *
-     * 링크 프레임은 **단방향이라 응답이 없다.** 거절도 Agent에게 내려가지 않으므로, Agent 쪽은
-     * 보낼 수 있는 것만 보내도록 자기 손에서 먼저 검증한다. 여기 남는 ERROR 로그가 그 검증이
-     * 뚫렸을 때 사람이 볼 유일한 흔적이다.
+     * 성공은 [routeKnowledgeMutation]과 같은 프레임으로 답하되 id 필드가 `edge_id`다(ARTEL-331).
+     * 거두기(UNLINK)의 id는 지워진 간선의 것이고, 스코프 런이 baseline 간선을 거둔 경우에만 그것을
+     * 가린 툼스톤 행의 id다 — 어느 쪽이든 "그 런에서 이 사실을 지고 있는 행"이라는 점은 같다.
+     *
+     * Agent 쪽 로컬 검증(관계 이름, 양 끝 id)은 응답이 생겨도 그대로 둔다. 왕복 한 번을 아끼는
+     * 값어치가 남고, 보낼 수 없는 프레임을 보내지 않는 것이 여전히 더 싸다.
      */
     private suspend fun routeKnowledgeGraph(
         qaTryId: Long,
@@ -567,7 +610,13 @@ class QaAgentInboundRouter(
         envelope: QaAgentEnvelope
     ) {
         val result = try {
-            val instance = gameInstanceRepository.findById(qaTry.gameInstanceId) ?: return
+            val instance = gameInstanceRepository.findById(qaTry.gameInstanceId)
+                ?: return rejectWrite(
+                    qaTryId,
+                    qaTry,
+                    envelope,
+                    "${envelope.type} cannot resolve the project of this run"
+                )
             val projectId = instance.projectId
             val scope = scopeOf(qaTry)
             if (envelope.type == "KNOWLEDGE_LINK") {
@@ -580,11 +629,14 @@ class QaAgentInboundRouter(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            appendError(qaTryId, envelope, "${envelope.type} failed: ${error.message}")
+            rejectWrite(qaTryId, qaTry, envelope, "${envelope.type} failed: ${error.message}")
             return
         }
-        if (result is KnowledgeGraphMutation.Rejected) {
-            appendError(qaTryId, envelope, "${envelope.type} rejected: ${result.reason}")
+        when (result) {
+            is KnowledgeGraphMutation.Rejected ->
+                rejectWrite(qaTryId, qaTry, envelope, "${envelope.type} rejected: ${result.reason}")
+            is KnowledgeGraphMutation.Applied ->
+                answerWrite(qaTryId, qaTry, envelope, "edge_id", result.edgeId)
         }
     }
 
@@ -622,12 +674,12 @@ class QaAgentInboundRouter(
         val request = try {
             objectMapper.treeToValue(envelope.payload, KnowledgeSearchRequest::class.java)
         } catch (error: Exception) {
-            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH payload parse failed: ${error.message}")
+            answerWithError(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH payload parse failed: ${error.message}")
             return
         }
         val query = request.query?.trim()
         if (query.isNullOrEmpty()) {
-            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH payload.query is required")
+            answerWithError(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH payload.query is required")
             return
         }
         // tag는 단수/복수 둘 다 받는다(KnowledgeSearchRequest 주석 참조). 알 수 없는 토큰을 조용히
@@ -635,7 +687,7 @@ class QaAgentInboundRouter(
         val requestedTags = request.tags + listOfNotNull(request.tag)
         val tags = requestedTags.map { KnowledgeTag.fromWire(it) }
         if (tags.any { it == null }) {
-            failSearch(
+            answerWithError(
                 qaTryId,
                 sessionId,
                 envelope,
@@ -645,7 +697,7 @@ class QaAgentInboundRouter(
         }
         val source = request.source?.let { KnowledgeSource.fromWire(it) }
         if (request.source != null && source == null) {
-            failSearch(
+            answerWithError(
                 qaTryId,
                 sessionId,
                 envelope,
@@ -655,7 +707,7 @@ class QaAgentInboundRouter(
         }
         val instance = gameInstanceRepository.findById(qaTry.gameInstanceId)
         if (instance == null) {
-            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH cannot resolve the project of this run")
+            answerWithError(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH cannot resolve the project of this run")
             return
         }
         val outcome = try {
@@ -672,7 +724,7 @@ class QaAgentInboundRouter(
             throw error
         } catch (error: Exception) {
             // Agent 호출 실패·모델 불일치·DB 오류가 여기로 온다. 런 전체를 죽이지 않는다.
-            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH failed: ${error.message}")
+            answerWithError(qaTryId, sessionId, envelope, "KNOWLEDGE_SEARCH failed: ${error.message}")
             return
         }
         recordSearchUsage(qaTryId, envelope, outcome.retrievals, request.step)
@@ -689,7 +741,7 @@ class QaAgentInboundRouter(
      * Agent가 지목한 항목에서 그래프를 더 편다(ARTEL-275).
      *
      * [routeKnowledgeSearch]와 같은 골격이고 같은 이유를 진다: 세션을 가장 먼저 보고(답할 곳이
-     * 없으면 일을 시작하지 않는다), 이후 모든 실패는 [failSearch]로 ERROR 프레임까지 보내
+     * 없으면 일을 시작하지 않는다), 이후 모든 실패는 [answerWithError]로 ERROR 프레임까지 보내
      * 기다리는 도구를 풀어 주며, 사용 기록은 **응답 전에** 남긴다.
      *
      * `knowledge_mode=off`면 빈 결과로 답한다. 오류가 아니라 정상 `..._RESULT`인 것도 검색과 같은
@@ -710,17 +762,17 @@ class QaAgentInboundRouter(
         val request = try {
             objectMapper.treeToValue(envelope.payload, KnowledgeExpandRequest::class.java)
         } catch (error: Exception) {
-            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND payload parse failed: ${error.message}")
+            answerWithError(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND payload parse failed: ${error.message}")
             return
         }
         val knowledgeId = request.knowledgeId?.trim()?.toLongOrNull()
         if (knowledgeId == null) {
-            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND payload.knowledge_id must be a numeric id")
+            answerWithError(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND payload.knowledge_id must be a numeric id")
             return
         }
         val instance = gameInstanceRepository.findById(qaTry.gameInstanceId)
         if (instance == null) {
-            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND cannot resolve the project of this run")
+            answerWithError(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND cannot resolve the project of this run")
             return
         }
         val outcome = try {
@@ -735,7 +787,7 @@ class QaAgentInboundRouter(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            failSearch(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND failed: ${error.message}")
+            answerWithError(qaTryId, sessionId, envelope, "KNOWLEDGE_EXPAND failed: ${error.message}")
             return
         }
         recordSearchUsage(qaTryId, envelope, outcome.retrievals, request.step)
@@ -756,7 +808,7 @@ class QaAgentInboundRouter(
      * 추가 비용은 INSERT 한 문장이고, 이미 임베딩 왕복(네트워크)을 마친 뒤라 무시할 수준이다.
      *
      * **실패는 삼킨다.** 이 시점에 검색 결과는 이미 만들어졌고 Agent 도구는 그것을 기다리고 있다.
-     * 기록이 안 됐다고 [failSearch]로 답하면 멀쩡한 검색이 실패로 뒤집힌다. ERROR 프레임을 보내지
+     * 기록이 안 됐다고 [answerWithError]로 답하면 멀쩡한 검색이 실패로 뒤집힌다. ERROR 프레임을 보내지
      * 않고 감사 로그만 남기는 것이 이 경로가 다른 실패들과 다른 점이다.
      * `CancellationException`은 오류가 아니라 취소 신호라 반드시 다시 던진다.
      */
@@ -776,12 +828,15 @@ class QaAgentInboundRouter(
     }
 
     /**
-     * 검색 실패를 타임라인에 남기고 Agent에도 ERROR 프레임으로 알린다.
+     * 요청 실패를 타임라인에 남기고 Agent에도 ERROR 프레임으로 알린다.
      *
      * 두 곳 모두에 남기는 이유가 다르다: qa_log는 나중에 왜 실패했는지 읽기 위한 것이고, ERROR
      * 프레임은 기다리고 있는 Agent 도구를 풀어 주기 위한 것이다.
+     *
+     * 검색·확장과 쓰기(ARTEL-331)가 이 하나를 공유한다. 실패를 알리는 방법이 요청 종류마다 다르면
+     * 소비자가 그만큼 분기해야 하는데, Agent 쪽은 correlation 하나로 대기를 푸는 것이 전부다.
      */
-    private suspend fun failSearch(
+    private suspend fun answerWithError(
         qaTryId: Long,
         sessionId: String,
         envelope: QaAgentEnvelope,
@@ -795,6 +850,58 @@ class QaAgentInboundRouter(
             envelope.messageId,
             objectMapper.createObjectNode().put("message", reason)
         )
+    }
+
+    /**
+     * 지식 쓰기가 성공했음을 Agent에 알린다(ARTEL-331). [idField]는 `knowledge_id` 또는 `edge_id`다.
+     *
+     * id를 문자열로 싣는다. 조회 응답이 같은 이유로 그렇게 한다 — 64비트 id가 JSON 숫자로 나가면
+     * 자바스크립트 소비자에서 정밀도가 깎인다.
+     *
+     * 성공 응답은 qa_log에 남기지 않는다. 변이 사실은 이미 `knowledge_event`에 남고 이 프레임은
+     * id만 진 파생물이다(확장 응답을 남기지 않는 것과 같은 판단).
+     */
+    private suspend fun answerWrite(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope,
+        idField: String,
+        id: Long
+    ) {
+        val sessionId = qaTry.agentSessionId ?: return
+        sendToAgent(
+            qaTryId,
+            sessionId,
+            KNOWLEDGE_WRITE_RESULT_TYPE,
+            envelope.messageId,
+            objectMapper.createObjectNode()
+                .put("type", envelope.type)
+                .put(idField, id.toString())
+        )
+    }
+
+    /**
+     * 지식 쓰기의 거절을 타임라인에 남기고, 답을 기다리는 타입이면 Agent에도 알린다(ARTEL-331).
+     *
+     * **세션이 없어도 쓰기 자체는 이미 수행됐다.** 검색·확장은 답할 곳이 없으면 일을 시작조차 하지
+     * 않지만(그쪽은 결과가 곧 목적이다) 쓰기가 그러면 지식이 저장되지 않는다. 그래서 여기서는
+     * 세션 없음이 "답을 못 보낸다"일 뿐이고, 그때도 감사 로그는 남는다.
+     *
+     * 배치 인입(`KNOWLEDGE`)은 [ANSWERED_WRITE_TYPES]에 없어 로그만 남는다. 기다리는 호출부가
+     * 없는 프레임에 ERROR를 내려보내면 Agent 쪽에서 짝 없는 응답이 되어 경고만 쌓인다.
+     */
+    private suspend fun rejectWrite(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope,
+        reason: String
+    ) {
+        val sessionId = qaTry.agentSessionId
+        if (sessionId == null || envelope.type !in ANSWERED_WRITE_TYPES) {
+            appendError(qaTryId, envelope, reason)
+            return
+        }
+        answerWithError(qaTryId, sessionId, envelope, reason)
     }
 
     /**
