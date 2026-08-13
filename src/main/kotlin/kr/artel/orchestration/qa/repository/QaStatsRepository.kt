@@ -104,6 +104,18 @@ class QaStatsRepository(
                   FROM qa_try_score sc
                  WHERE sc.grader = 'expected-steps'
                    AND sc.qa_try_id IN (SELECT id FROM scoped)
+                   -- 캐스트가 던지지 않도록 모양을 먼저 본다. `detail`은 JSONB라 스키마가 강제되지
+                   -- 않으므로, 모양이 다른 행 **하나가** 이 프로젝트의 대시보드 전체를 500으로
+                   -- 만든다. 걸러진 행은 scored_runs에도 안 들어가 "채점을 모른다"로 남고,
+                   -- "0점"이 되지 않는다 — 이 파일이 verdict_known에서 지키는 규율과 같다.
+                   -- ⚠️ detail 모양을 바꾸는 grader_version은 여기서 **조용히** 빠진다. 모양을
+                   -- 바꾸는 쪽이 이 투영을 같이 고쳐야 한다. 던지게 두는 대안은 그 순간 화면이
+                   -- 통째로 죽는 것이라 택하지 않았다.
+                   AND jsonb_typeof(sc.detail -> 'matrix' -> 'correct_pass') = 'number'
+                   AND jsonb_typeof(sc.detail -> 'matrix' -> 'false_alarm') = 'number'
+                   AND jsonb_typeof(sc.detail -> 'matrix' -> 'miss') = 'number'
+                   AND jsonb_typeof(sc.detail -> 'matrix' -> 'correct_fail') = 'number'
+                   AND jsonb_typeof(sc.detail -> 'unreported') = 'number'
                  ORDER BY sc.qa_try_id, sc.id DESC
             )
             SELECT GROUPING(s.model, s.reasoning_effort, s.prompt_version, s.agent_arch) AS grouping_mask,
