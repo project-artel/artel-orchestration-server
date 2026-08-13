@@ -2,6 +2,7 @@ package kr.artel.orchestration.sdkperf.repository
 
 import io.r2dbc.spi.Readable
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kr.artel.orchestration.sdkperf.dto.SdkDeviceInfo
 import kr.artel.orchestration.sdkperf.dto.SdkPerformanceMessage
 import org.springframework.r2dbc.core.DatabaseClient
@@ -106,7 +107,9 @@ class SdkPerformanceRepository(private val db: DatabaseClient) {
         """SELECT 1 FROM game_build gb JOIN project_member pm ON pm.project_id=gb.project_id
            WHERE gb.id=:buildId AND gb.project_id=:projectId AND pm.app_user_id=:userId""")
         .bind("buildId",buildId).bind("projectId",projectId).bind("userId",userId)
-        .map { _,_->true }.flow().toList().firstOrNull() ?: false
+        // 권한 판정은 최대 한 행이다. 전체 Flow 수집으로 연결 완료를 기다리지 않고 one()의
+        // 단일 결과를 await해, 조회 응답이 이 단계에서 열린 채 남지 않게 한다.
+        .map { _,_->true }.one().awaitSingleOrNull() ?: false
 
     private fun DatabaseClient.GenericExecuteSpec.bindDevice(d:SdkDeviceInfo):DatabaseClient.GenericExecuteSpec = this
         .bindNullable("deviceModel",d.deviceModel,String::class.java).bindNullable("processorType",d.processorType,String::class.java)
