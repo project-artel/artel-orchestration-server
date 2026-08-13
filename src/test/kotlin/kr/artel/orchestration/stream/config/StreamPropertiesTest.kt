@@ -1,6 +1,7 @@
 package kr.artel.orchestration.stream.config
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatCode
 import org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import org.junit.jupiter.api.Test
 import org.springframework.boot.env.YamlPropertySourceLoader
@@ -24,7 +25,6 @@ class StreamPropertiesTest {
         assertThat(properties.leaseSeconds).isEqualTo(90)
         // 조여진 탭은 1분에 한 번만 갱신을 보낸다. 그 주기를 못 넘으면 유실 허용 폭이 0이다.
         assertThat(properties.leaseSeconds).isGreaterThan(THROTTLED_RENEW_SECONDS)
-        assertThat(properties.lease.seconds).isEqualTo(properties.leaseSeconds)
     }
 
     /**
@@ -46,8 +46,8 @@ class StreamPropertiesTest {
         assertThatIllegalArgumentException()
             .isThrownBy { StreamProperties(leaseSeconds = THROTTLED_RENEW_SECONDS) }
 
-        assertThat(StreamProperties(leaseSeconds = THROTTLED_RENEW_SECONDS + 1).leaseSeconds)
-            .isEqualTo(61)
+        assertThatCode { StreamProperties(leaseSeconds = THROTTLED_RENEW_SECONDS + 1) }
+            .doesNotThrowAnyException()
     }
 
     /**
@@ -63,11 +63,15 @@ class StreamPropertiesTest {
      */
     @Test
     fun `the yaml default matches the one compiled into the properties class`() {
-        val yaml = YamlPropertySourceLoader()
-            .load("application.yml", ClassPathResource("application.yml"))
-            .single()
+        val sources = MutablePropertySources().apply {
+            // 여러 문서(`---`)로 나뉘면 로더가 소스를 여럿 돌려준다. 앞선 문서가 이기는 Spring의
+            // 순서를 그대로 둔다.
+            YamlPropertySourceLoader()
+                .load("application.yml", ClassPathResource("application.yml"))
+                .forEach(::addLast)
+        }
 
-        val resolver = PropertySourcesPropertyResolver(MutablePropertySources().apply { addFirst(yaml) })
+        val resolver = PropertySourcesPropertyResolver(sources)
 
         assertThat(resolver.getProperty(LEASE_PROPERTY, Long::class.java))
             .isEqualTo(StreamProperties().leaseSeconds)

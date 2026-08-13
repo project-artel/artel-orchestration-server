@@ -74,18 +74,23 @@ default, and 15s does not survive even a single missed renew: the next one is
 
 The interval to size against is the throttled one. Browsers clamp timers in
 hidden tabs, and the worst documented case is **one wake per minute** — Chrome's
-intensive throttling, which applies once a tab has been hidden for five minutes.
-An active `RTCPeerConnection` exempts the tab in some browsers and versions, but
-that is not a guarantee to design against. So the floor is 60s, and anything
-below it cuts a perfectly healthy viewer every cycle the moment its tab goes
-behind another window.
+intensive throttling, which takes effect once a tab has been hidden for about
+five minutes. Before that mark the clamp is one wake per second, which even the
+old default survived; that staging is why the failure looked intermittent and
+read as a network fault rather than a configuration one. An active
+`RTCPeerConnection` exempts the tab in some browsers and versions, but that is
+not a guarantee to design against.
+
+So the floor is 60s. Below it, a viewer whose tab has sat in the background long
+enough to be throttled is cut every cycle, however healthy the connection is.
 
 The default is **90s** — the throttled minute plus room for scheduling drift and
-delivery, and nine foreground renew cycles, so eight consecutive renews can be
-lost. Going further, to 120s, would only help a tab that misses a wake-up
-entirely; a tab that misses one is frozen rather than throttled, and a frozen tab
-is painting no video for anyone. `MINIMUM_LEASE_SECONDS` rejects anything below
-61s outright, because below that the tolerance is zero.
+delivery. In foreground terms that is nine renew cycles, so seven consecutive
+renews can be lost and the eighth still lands inside the window. Going further,
+to 120s, would only help a tab that misses a wake-up entirely; a tab that misses
+one is frozen rather than throttled, and a frozen tab is painting no video for
+anyone. `MINIMUM_LEASE_SECONDS` rejects anything below 61s outright, because
+below that the tolerance is zero.
 
 ### What a longer lease costs
 
@@ -202,6 +207,15 @@ artel:
     turn-username: ${ARTEL_TURN_USERNAME:}
     turn-credential: ${ARTEL_TURN_CREDENTIAL:}
 ```
+
+`lease-seconds` below 61 is refused at startup, and the refusal takes the whole
+application down rather than just streaming — it is a `require` in
+`StreamProperties`, evaluated while the context builds. That is deliberate: a
+lease that cannot survive a throttled tab is the defect this default exists to
+remove, and booting with it would keep the failure alive while making it look
+like a network problem. Check for a pinned `ARTEL_STREAM_LEASE_SECONDS` in the
+deployment `.env` before rolling out; the fix is to raise the value or drop the
+line.
 
 STUN는 리스트가 아니라 쉼표 문자열로 받는다. `List` 바인딩은 환경변수로 덮으려면
 `ARTEL_..._0_URLS` 같은 인덱스 변수를 써야 하는데, 배포는 `.env` 한 장으로 이뤄지므로
