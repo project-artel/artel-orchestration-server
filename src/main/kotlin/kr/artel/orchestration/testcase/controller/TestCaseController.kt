@@ -2,7 +2,7 @@ package kr.artel.orchestration.testcase.controller
 
 import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.auth.service.SessionUserResolver
-import kr.artel.orchestration.testcase.dto.TestCaseCatalogResponse
+import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseResponse
@@ -49,14 +49,14 @@ class TestCaseController(
      * 없다 — 목록의 일은 "무엇이 존재하는가"까지이고, 본문은 Agent가 id로 따로 조회한다.
      *
      * `/{caseId}`(Long)와 같은 자리를 다투는 것처럼 보이지만, PathPattern은 변수보다 리터럴 구간을
-     * 먼저 고르므로 `/catalog`는 이쪽으로 온다.
+     * 먼저 고르므로 `/all`은 이쪽으로 온다.
      */
-    @GetMapping("/catalog")
-    suspend fun getTestCaseCatalog(
+    @GetMapping("/all")
+    suspend fun getAllTestCases(
         @PathVariable projectId: Long,
         @AuthenticationPrincipal jwt: Jwt
-    ): TestCaseCatalogResponse =
-        service.getTestCaseCatalog(projectId, requireUser(jwt))
+    ): AllTestCasesResponse =
+        service.getAllTestCases(projectId, requireUser(jwt))
 
     @PostMapping
     suspend fun create(

@@ -13,7 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.awaitSingle
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
-import kr.artel.orchestration.testcase.dto.TestCaseCatalogEntry
+import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.service.TestCaseSearchService
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
@@ -40,7 +40,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 작성 챗봇의 Agent 서버 연동 서비스(코루틴). 실제 Agent 서버 계약(FastAPI)에 맞춘다:
  *
- * 1. 세션 오픈: `POST {base}/sessions {user_input, unity_context, game_context, case_catalog, model, project_id, run_id}` → `{session_id}`
+ * 1. 세션 오픈: `POST {base}/sessions {user_input, unity_context, game_context, test_case_list, model, project_id, run_id}` → `{session_id}`
  * 2. WS 연결: `WS {ws-base}/sessions/{session_id}`. 연결 시 Agent가 첫 결과를 보낸다(오픈 때 준 user_input 기반).
  * 3. 후속 턴: WS로 `{type:"turn", user_input, model?}` 전송.
  * 4. 결과 수신: `{type:"result", message, scenarios[]}` → SSE 중계 + scenarios를 test_scenario
@@ -138,7 +138,7 @@ class TestScenarioAgentService(
         val body = AgentSessionOpenRequest(
             userInput = userInput,
             gameContext = gameContext(projectId, appUserId),
-            caseCatalog = caseCatalog(projectId, appUserId),
+            testCaseList = testCaseList(projectId, appUserId),
             model = defaultModel,
             locale = locale,
             projectId = projectId,
@@ -174,7 +174,7 @@ class TestScenarioAgentService(
     }
 
     /**
-     * 프로젝트 TestCase 전량을 case_catalog로 만든다(ARTEL-318). Agent가 "무엇을 검증할 수 있는지"의
+     * 프로젝트 TestCase 전량을 test_case_list로 만든다(ARTEL-318). Agent가 "무엇을 검증할 수 있는지"의
      * 전체 목록이며, 여기 없는 케이스는 애초에 지목될 수 없다.
      *
      * **세션 오픈 시점의 스냅샷이고 턴마다 갱신하지 않는다.** 이 목록은 Agent 프롬프트의 앞쪽 고정
@@ -185,8 +185,8 @@ class TestScenarioAgentService(
      * [gameContext]와 같은 자리·같은 성격이다: 툴 호출이 아니라 첫 턴부터 쥐고 있는 배경 지식.
      * 비참여자면 빈 목록이라 기존과 동일하게 동작한다.
      */
-    private suspend fun caseCatalog(projectId: Long, appUserId: Long): List<TestCaseCatalogEntry> =
-        testCaseService.getTestCaseCatalog(projectId, appUserId).items
+    private suspend fun testCaseList(projectId: Long, appUserId: Long): List<TestCaseListItem> =
+        testCaseService.getAllTestCases(projectId, appUserId).items
 
     private fun sendTurn(
         sessionKey: String,
