@@ -94,10 +94,10 @@ class ViewerWebSocketHandler(
 
         logger.info("뷰어 연결 성공 - instanceId: $instanceId, streamId: $streamId")
 
-        // 임대는 수신 흐름의 타임아웃으로 지킨다. 브라우저가 10초마다 갱신을 보내므로, 그보다
-        // 넉넉한 시간 동안 아무 메시지도 없다는 것은 상대가 사라졌다는 뜻이다. 별도의 청소
-        // 스케줄러를 두지 않는 이유는, 죽은 연결을 알아채는 데 필요한 신호가 이미 여기 있기
-        // 때문이다.
+        // 임대는 수신 흐름의 타임아웃으로 지킨다. 이 시간 동안 아무 메시지도 없다는 것은 상대가
+        // 사라졌다는 뜻이다. 그 폭을 무엇에 맞춰 잡았는지는 StreamProperties.lease가 설명한다.
+        // 별도의 청소 스케줄러를 두지 않는 이유는, 죽은 연결을 알아채는 데 필요한 신호가 이미
+        // 여기 있기 때문이다.
         val receive = session.receive()
             .timeout(properties.lease)
             // handleViewerMessage는 이제 suspend라 mono { } 로 감싸 리액티브 파이프라인에

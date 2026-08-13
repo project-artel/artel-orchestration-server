@@ -133,8 +133,11 @@ artel:
       max-limit: ${ARTEL_TESTCASE_SEARCH_MAX_LIMIT:20}
   stream:
     enabled: ${ARTEL_STREAM_ENABLED:true}
-    # 브라우저가 10초마다 갱신을 보낸다. 그보다 짧으면 정상 연결을 잘라낸다.
-    lease-seconds: ${ARTEL_STREAM_LEASE_SECONDS:15}
+    # 갱신 유실 허용 폭이다. 브라우저는 10초마다 갱신을 보내지만, 탭이 숨겨지면 그 주기가
+    # 1분에 1회까지 조여진다. 기본값은 그 1분에 여유를 얹은 값이고, 61 미만은 아예 거절된다.
+    # 늘리면 뚜껑 닫은 노트북처럼 소켓이 닫히지 않고 사라진 뷰어를 위해 게임이 헛되이
+    # 인코딩하는 시간도 함께 늘어난다. 정상 종료는 임대와 무관하게 즉시 멈춘다.
+    lease-seconds: ${ARTEL_STREAM_LEASE_SECONDS:90}
     # 쉼표 구분. 후보가 늘수록 연결이 느려지므로 1~2개면 충분하다.
     # 기본값은 Google의 공개 STUN인데, 이것은 Google이 제공하는 서비스가 아니라 인증을 걸어
     # 두지 않은 자사 인프라다. 약관도 예고도 없고 실제 위험은 다운이 아니라 rate limit이며,
