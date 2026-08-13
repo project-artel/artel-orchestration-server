@@ -36,6 +36,15 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     fun findTestCaseListByProjectIdOrderByIdAsc(projectId: Long): Flow<TestCaseListItem>
 
     /**
+     * 이 프로젝트의 TestCase id 전량(2단계).
+     *
+     * 저작 결과를 검사하는 두 기준이 이 집합이다: 판정이 전량을 덮었는지, 스텝이 지목한 번호가
+     * 실재하는지. 본문은 필요 없어서 id만 읽는다 — 1000건이라도 한 컬럼이다.
+     */
+    @Query("SELECT id FROM test_case WHERE project_id = :projectId")
+    fun findIdsByProjectId(projectId: Long): Flow<Long>
+
+    /**
      * 명세 적재의 **보조** 키 — `spec_id`가 아직 없는 행만 고른다(ARTEL-329).
      *
      * spec_id가 붙기 전에 만들어진 행(손으로 만든 케이스, 이 계약 이전의 적재)을 새 명세가 이어받게

@@ -64,15 +64,40 @@ data class ScenarioResult(
 )
 
 /**
+ * Agent가 이번 요청에 대해 프로젝트 TestCase **전 건**을 어떻게 판정했는지(2단계).
+ *
+ * 포함 목록만 받지 않는 이유가 이 클래스의 존재 이유다. 포함된 것만 오면 나머지를 *검토하고 뺀 것*
+ * 인지 *아예 안 본 것*인지 구분할 수단이 없어, "다 봤는가"를 검사할 대상 자체가 생기지 않는다.
+ * 전 건 판정을 받으면 **판정이 빠진 id = 검토하지 않은 케이스**가 되어 기계가 뺄셈으로 센다
+ * ([kr.artel.orchestration.testscenario.service.ScenarioCoverageAudit]).
+ *
+ * 두 배열로 나눈 것은 비용 때문이다. 실측(2026-08-13) 1000건 기준 이 모양이 3,005 tok인 반면
+ * `{"82":1,…}` 맵 모양은 5,001 tok으로 40% 비싸고, 검사도 이쪽이 단순하다 — `in ∪ out`이 전량과
+ * 같은지만 보면 된다.
+ *
+ * 제외 사유는 받지 않는다. 건당 사유를 붙이면 1000건에서 출력이 배로 뛰고, 무엇보다 그것도 다시
+ * Agent의 자기 서술이라 검사할 수 없다. 포함 쪽의 근거는 스텝이 증명한다.
+ */
+data class ReviewedCases(
+    @JsonProperty("in") val included: List<Long> = emptyList(),
+    @JsonProperty("out") val excluded: List<Long> = emptyList(),
+)
+
+/**
  * SSE로 FE에 전달하는 이벤트 봉투. Agent 응답(result/error)을 타입화한다.
  *
  * - `type == "result"` → `message` + `scenarios`(0개 이상. 빈 배열은 "질문/거절/무매치" 같은 정상 턴이다)
  * - `type == "error"`  → `code` + `detail`
+ *
+ * @property reviewed 전 건 판정(2단계). **null이면 검사를 건너뛴다** — 이 필드를 보내지 않는 구버전
+ *   Agent와 함께 배포되기 위해서다. 검사를 끄는 스위치가 이 null 하나뿐이라 롤백이 Agent
+ *   재배포만으로 끝난다.
  */
 data class ScenarioStreamEvent(
     val type: String,
     val message: String? = null,
     val scenarios: List<ScenarioResult>? = null,
+    val reviewed: ReviewedCases? = null,
     val code: String? = null,
     val detail: String? = null
 )

@@ -279,11 +279,20 @@ class TestScenarioAgentService(
                     // (TestRunChatService.commitScenarios). 어느 경우든 빈 배열은 무동작.
                     if (session.autoApply) {
                         try {
-                            reconcileService.reconcile(
+                            val outcome = reconcileService.reconcile(
                                 session.runId,
                                 session.projectId,
-                                event.scenarios ?: emptyList()
+                                event.scenarios ?: emptyList(),
+                                event.reviewed,
                             )
+                            // 검수에서 막혔으면 조용히 넘기지 않는다. 사용자는 시나리오가 나왔다고
+                            // 믿고 있고, 저장 안 됐다는 사실을 여기서 말하지 않으면 알 길이 없다.
+                            if (outcome.rejected) {
+                                saveMessage(
+                                    session.runId, session.appUserId, "ASSISTANT",
+                                    outcome.findings.rejectionMessage()
+                                )
+                            }
                         } catch (err: CancellationException) {
                             throw err
                         } catch (err: Exception) {
