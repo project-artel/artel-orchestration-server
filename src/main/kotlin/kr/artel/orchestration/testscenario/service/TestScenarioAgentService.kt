@@ -213,6 +213,13 @@ class TestScenarioAgentService(
         try {
             val ids = testCaseRepository.findUncoveredIdsByProjectId(session.projectId).toList()
             val scenes = testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+            // 성공도 남긴다. 이 경로가 조용하면 "도구를 안 불렀다"와 "불렀는지 알 수 없다"가
+            // 로그에서 같아 보이고, 에이전트가 숫자를 지어냈는지 확인할 방법이 사라진다.
+            logger.info(
+                "미커버 조회 응답 [sessionKey={}, projectId={}] {}건 · {}",
+                sessionKey, session.projectId, ids.size,
+                scenes.joinToString(", ") { "${it.scene} ${it.count}" }
+            )
             sendFrame(
                 sessionKey, session,
                 UncoveredCasesResultFrame(correlationId = correlationId, ids = ids, scenes = scenes)
