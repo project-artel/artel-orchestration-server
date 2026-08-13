@@ -35,13 +35,6 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     )
     fun findTestCaseListByProjectIdOrderByIdAsc(projectId: Long): Flow<TestCaseListItem>
 
-    fun findByProjectIdAndSceneOrderByIdDesc(projectId: Long, scene: String): Flow<TestCaseEntity>
-
-    fun findByProjectIdAndVerificationStatusOrderByIdDesc(
-        projectId: Long,
-        verificationStatus: String
-    ): Flow<TestCaseEntity>
-
     suspend fun findByProjectIdAndSceneAndStep(projectId: Long, scene: String, step: String): TestCaseEntity?
 
     /** 명세 적재의 멱등 키(ARTEL-329). spec_id가 있는 케이스는 문구가 바뀌어도 같은 행으로 이어진다. */

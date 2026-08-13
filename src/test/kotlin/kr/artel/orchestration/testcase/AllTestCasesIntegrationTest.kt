@@ -56,7 +56,7 @@ class AllTestCasesIntegrationTest {
     }
 
     private suspend fun createCase(projectId: Long, userId: Long, n: Int): Long =
-        testCaseService.create(
+        testCaseService.createTestCase(
             projectId,
             userId,
             TestCaseCreateRequest(
@@ -78,7 +78,7 @@ class AllTestCasesIntegrationTest {
 
         // 오름차순은 취향이 아니라 캐시 계약이다. 같은 데이터를 최신순으로 내는 list()와 대비해
         // 두 조회가 서로 다른 정렬을 의도적으로 쓴다는 사실을 못박는다.
-        assertThat(testCaseService.list(projectId, userId, null, null).items.map { it.id.toLong() })
+        assertThat(testCaseService.listTestCases(projectId, userId).items.map { it.id.toLong() })
             .isEqualTo(createdIds.sortedDescending())
     }
 

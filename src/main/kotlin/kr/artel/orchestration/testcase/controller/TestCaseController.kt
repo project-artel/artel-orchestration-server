@@ -17,7 +17,6 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
-import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -30,14 +29,22 @@ class TestCaseController(
     private val service: TestCaseService
 ) {
 
+    /**
+     * 화면이 읽는 케이스 목록. 프로젝트의 케이스를 최근 것부터(`id DESC`) 전부 낸다.
+     *
+     * 필터는 없다. 유일한 소비자인 케이스 라이브러리 화면이 전량을 받아 브라우저에서 거르기
+     * 때문이다 — 서버에 씬/상태 파라미터가 있었지만 **보내는 쪽이 없어** 지웠다.
+     *
+     * [getAllTestCases]와 둘 다 "전량"이지만 받는 쪽이 다르다: 이쪽은 화면용이라 id를 문자열로
+     * 내고 명세 등급·생성시각까지 담는 [TestCaseResponse]이고, 저쪽은 Agent 계약이라 필드가 좁고
+     * snake_case이며 순서가 `id ASC`로 고정된다(캐시 접두사).
+     */
     @GetMapping
-    suspend fun list(
+    suspend fun listTestCases(
         @PathVariable projectId: Long,
-        @RequestParam(required = false) category: String?,
-        @RequestParam(required = false) status: String?,
         @CurrentUserId appUserId: Long
     ): TestCaseListResponse =
-        service.list(projectId, appUserId, category, status)
+        service.listTestCases(projectId, appUserId)
 
     /**
      * 저작 Agent 세션에 싣는 전량 목록을 그대로 낸다(ARTEL-318).
@@ -56,12 +63,12 @@ class TestCaseController(
         service.getAllTestCases(projectId, appUserId)
 
     @PostMapping
-    suspend fun create(
+    suspend fun createTestCase(
         @PathVariable projectId: Long,
         @RequestBody request: TestCaseCreateRequest,
         @CurrentUserId appUserId: Long
     ): ResponseEntity<TestCaseResponse> =
-        service.create(projectId, appUserId, request)
+        service.createTestCase(projectId, appUserId, request)
             ?.let { ResponseEntity.status(HttpStatus.CREATED).body(it) }
             ?: ResponseEntity.notFound().build()
 
@@ -77,23 +84,23 @@ class TestCaseController(
             ?: ResponseEntity.notFound().build()
 
     @PutMapping("/{caseId}")
-    suspend fun update(
+    suspend fun updateTestCase(
         @PathVariable projectId: Long,
         @PathVariable caseId: Long,
         @RequestBody request: TestCaseUpdateRequest,
         @CurrentUserId appUserId: Long
     ): ResponseEntity<TestCaseResponse> =
-        service.update(caseId, appUserId, request)
+        service.updateTestCase(caseId, appUserId, request)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 
     @DeleteMapping("/{caseId}")
-    suspend fun delete(
+    suspend fun deleteTestCase(
         @PathVariable projectId: Long,
         @PathVariable caseId: Long,
         @CurrentUserId appUserId: Long
     ): ResponseEntity<Void> {
-        service.delete(caseId, appUserId)
+        service.deleteTestCase(caseId, appUserId)
         return ResponseEntity.noContent().build()
     }
 }

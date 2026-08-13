@@ -363,7 +363,7 @@ class TestCaseSpecIngestIntegrationTest {
         assertThat(testCaseService.getTestCase(clean.id!!, userId)!!.evidenceGaps).isEmpty()
 
         // 목록 응답 타입에는 이 필드가 아예 없다(1000건 × 매 조회로 불어나는 값이라 상세에만 둔다).
-        val listed = testCaseService.list(projectId, userId, null, null).items
+        val listed = testCaseService.listTestCases(projectId, userId).items
         assertThat(listed).hasSize(2)
         assertThat(listed.map { it.status }).containsExactlyInAnyOrder("candidate", "ready")
     }
