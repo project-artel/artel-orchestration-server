@@ -74,7 +74,9 @@ Against the base branch (a PR job's `CHANGE_TARGET`, otherwise `develop`):
    filename.
 4. **No modified migration** — a file the base already has, with different
    content.
-5. **No removed migration** — a file the base has and this branch does not.
+5. **No removed migration** — a file the base has and this branch does not. A
+   branch that has simply fallen behind trips this without deleting anything;
+   see *Fixing a failure*.
 6. **No out-of-order version** — every new number sorts above the base's highest.
 
 Against other remote branches:
@@ -103,6 +105,15 @@ removing a migration.
 above the highest version on `develop`; never renumber the one that is already
 merged. Rename the file and update any reference to it. Because the number is
 only a name, nothing else changes.
+
+**Removed because the branch is behind.** Check 5 cannot tell a deleted file
+from one that never arrived. A migration merged into the base after this branch
+was cut is missing here for the second reason, and the fix is to catch up with
+the base — merge it in, or rebase onto it while the branch is yours alone — not
+to restore anything. ARTEL-388 hit this with a branch that changed one
+configuration value and two documents; it never touched SQL. Rule out staleness
+before reading the paragraph below, because the two failures print the same
+line. `.agents/docs/workflow.md` carries the habit that avoids it.
 
 **Modified or removed migration.** Restore the file to its merged content and
 express the change as a new migration. A database that already applied the

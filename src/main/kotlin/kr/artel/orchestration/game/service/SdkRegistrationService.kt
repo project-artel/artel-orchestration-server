@@ -10,6 +10,7 @@ import kr.artel.orchestration.game.entity.GamePlatform
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.common.error.ConflictException
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
@@ -98,6 +99,7 @@ class SdkRegistrationService(
         var remaining = INSTANCE_RETRY_ATTEMPTS
         while (true) {
             instanceRepository.findActiveBySdkUuid(projectId, sdkUuid)?.let { return it }
+            rejectRetiredInstance(projectId, sdkUuid)
             try {
                 return instanceRepository.save(
                     GameInstanceEntity(
@@ -110,8 +112,18 @@ class SdkRegistrationService(
                     )
                 )
             } catch (e: DataIntegrityViolationException) {
+                rejectRetiredInstance(projectId, sdkUuid)
                 if (remaining-- <= 0) throw e
             }
+        }
+    }
+
+    private suspend fun rejectRetiredInstance(projectId: Long, sdkUuid: String) {
+        if (instanceRepository.findRetiredBySdkUuid(projectId, sdkUuid) != null) {
+            throw ConflictException(
+                message = "삭제된 SDK 인스턴스 식별자는 다시 사용할 수 없습니다.",
+                code = "SDK_INSTANCE_RETIRED"
+            )
         }
     }
 
