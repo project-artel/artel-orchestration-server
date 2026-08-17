@@ -39,6 +39,7 @@ class ScenarioCoverageIntegrationTest {
     @Autowired private lateinit var reconcileService: ScenarioReconcileService
     @Autowired private lateinit var scenarioRepository: TestScenarioRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
+    @Autowired private lateinit var testCaseService: kr.artel.orchestration.testcase.service.TestCaseService
     @Autowired private lateinit var runRepository: TestRunRepository
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
@@ -141,6 +142,44 @@ class ScenarioCoverageIntegrationTest {
         assertThat(testCaseRepository.findUncoveredIdsByProjectId(projectId).toList())
             .containsExactlyElementsOf(cases)
     }
+
+    @Test
+    fun `커버리지는 저작 축과 검증 축을 함께 낸다`(): Unit = runBlocking {
+        val (projectId, runId, cases) = fixture(4)
+        // 하나는 QA 런이 통과시킨 상태로 만든다 — 저작 여부와 검증 여부는 다른 축이다.
+        testCaseRepository.findById(cases[0])!!
+            .let { testCaseRepository.save(it.copy(verificationStatus = "VERIFIED")) }
+        reconcileService.reconcile(runId, projectId, listOf(scenario(cases[0], cases[1])))
+
+        val coverage = testCaseService.coverage(projectId, memberOf(projectId))
+
+        assertThat(coverage.total).isEqualTo(4)
+        assertThat(coverage.authored).isEqualTo(2)
+        assertThat(coverage.unauthored).isEqualTo(2)
+        // 저작된 2건 중 1건만 검증됐다. 두 축이 같은 값이 아니라는 것이 이 응답의 요점이다.
+        assertThat(coverage.verified).isEqualTo(1)
+        assertThat(coverage.draft).isEqualTo(3)
+        assertThat(coverage.broken).isZero()
+        assertThat(coverage.uncoveredScenes.sumOf { it.count }).isEqualTo(2)
+    }
+
+    @Test
+    fun `비참여자에게는 전부 0으로 답한다`(): Unit = runBlocking {
+        val (projectId, _, _) = fixture(3)
+        val outsider = appUserRepository.save(
+            AppUserEntity(displayName = "outsider", createdAt = Instant.now(), updatedAt = Instant.now())
+        ).id!!
+
+        val coverage = testCaseService.coverage(projectId, outsider)
+
+        // 건수를 흘리는 것도 존재를 알리는 일이다 — 목록과 같은 판단.
+        assertThat(coverage.total).isZero()
+        assertThat(coverage.uncoveredScenes).isEmpty()
+    }
+
+    /** 이 프로젝트의 참여자 id. fixture가 만든 사용자를 되찾는다. */
+    private suspend fun memberOf(projectId: Long): Long =
+        projectMemberRepository.findByProjectId(projectId).toList().first().appUserId
 
     /** 프로젝트 + 참여자 + 런 + 케이스 [count]건. 케이스 id는 오름차순. */
     private suspend fun fixture(count: Int): Triple<Long, Long, List<Long>> {

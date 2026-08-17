@@ -56,3 +56,32 @@ data class UncoveredScene(
     val scene: String,
     val count: Long,
 )
+
+/**
+ * 프로젝트의 TestCase 커버리지(ARTEL-403).
+ *
+ * **두 축을 함께 낸다.** 저작 커버리지는 "어떤 시나리오가 이 케이스를 참조하는가"이고, 검증
+ * 커버리지는 "QA 런이 실제로 돌아 무엇이 나왔는가"다. 저작만 되고 한 번도 안 돌린 케이스와
+ * 돌렸는데 깨진 케이스는 사용자가 할 일이 다르므로, 한 숫자로 합치면 그 차이가 사라진다.
+ *
+ * 원장을 테이블로 두지 않고 매번 세는 이유는 값이 이미 `test_scenario.steps`에 있기 때문이다 —
+ * 복제하면 진실이 둘이 되고, 시나리오를 고칠 때마다 동기화가 숙제로 남는다.
+ *
+ * @property total 프로젝트의 전체 케이스 수.
+ * @property authored 어떤 시나리오든 참조하는 케이스 수(저작 커버리지).
+ * @property unauthored 아직 어떤 시나리오도 건드리지 않은 수. `total - authored`지만 화면이
+ *   빼기를 하지 않게 함께 낸다 — 두 곳에서 계산하면 언젠가 두 값이 갈린다.
+ * @property verified QA 런이 통과시킨 수. @property draft 아직 안 돌린 수.
+ *   @property broken 돌렸는데 깨진 수.
+ * @property uncoveredScenes 미커버가 남은 씬과 건수(많은 순). 사용자가 다음에 무엇을 할지
+ *   고르는 축이라 id가 아니라 씬으로 낸다.
+ */
+data class TestCaseCoverageResponse(
+    val total: Int,
+    val authored: Int,
+    val unauthored: Int,
+    val verified: Int,
+    val draft: Int,
+    val broken: Int,
+    val uncoveredScenes: List<UncoveredScene>,
+)

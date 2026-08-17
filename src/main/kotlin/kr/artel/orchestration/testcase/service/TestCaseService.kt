@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
+import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.TestCaseListResponse
@@ -61,6 +62,40 @@ class TestCaseService(
     suspend fun getAllTestCases(projectId: Long, userId: Long): AllTestCasesResponse {
         if (!projectAccessService.isMember(projectId, userId)) return AllTestCasesResponse(emptyList())
         return AllTestCasesResponse(repository.findTestCaseListByProjectIdOrderByIdAsc(projectId).toList())
+    }
+
+    /**
+     * 프로젝트의 커버리지(ARTEL-403). 비참여자면 전부 0 — 목록과 같은 판단이다(존재를 숨긴다).
+     *
+     * **두 축을 함께 낸다.** 저작 커버리지(어떤 시나리오가 참조하는가)와 검증 커버리지(QA 런이
+     * 무엇을 냈는가)는 다른 질문이고, 사용자가 할 일도 다르다 — 저작만 되고 안 돌린 케이스는
+     * 실행할 것이고, 깨진 케이스는 고칠 것이다.
+     *
+     * `unauthored`를 따로 내는 것은 화면이 빼기를 하지 않게 하기 위해서다. 같은 수를 두 곳에서
+     * 계산하면 언젠가 두 값이 갈리고, 그때 어느 쪽이 맞는지 알 수 없다.
+     */
+    suspend fun coverage(projectId: Long, userId: Long): TestCaseCoverageResponse {
+        if (!projectAccessService.isMember(projectId, userId)) {
+            return TestCaseCoverageResponse(0, 0, 0, 0, 0, 0, emptyList())
+        }
+        val total = repository.countByProjectId(projectId).toInt()
+        val uncoveredScenes = repository.findScenesOfUncovered(projectId).toList()
+        val unauthored = uncoveredScenes.sumOf { it.count }.toInt()
+        return TestCaseCoverageResponse(
+            total = total,
+            authored = total - unauthored,
+            unauthored = unauthored,
+            verified = repository.countByProjectIdAndVerificationStatus(
+                projectId, VerificationStatus.VERIFIED.name
+            ).toInt(),
+            draft = repository.countByProjectIdAndVerificationStatus(
+                projectId, VerificationStatus.DRAFT.name
+            ).toInt(),
+            broken = repository.countByProjectIdAndVerificationStatus(
+                projectId, VerificationStatus.BROKEN.name
+            ).toInt(),
+            uncoveredScenes = uncoveredScenes,
+        )
     }
 
     /** 케이스 생성. scene/step/expectedValue 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404). */

@@ -97,6 +97,18 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     )
     fun findScenesOfUncovered(projectId: Long): Flow<UncoveredScene>
 
+    /** 프로젝트의 전체 케이스 수(ARTEL-403). 커버리지의 분모다. */
+    suspend fun countByProjectId(projectId: Long): Long
+
+    /**
+     * 검증 상태별 건수(ARTEL-403). 화면의 두 축 중 "QA 런이 실제로 무엇을 냈는가" 쪽이다.
+     *
+     * 상태마다 한 번씩 부른다. 한 질의로 GROUP BY 하는 편이 짧지만 그러려면 (상태, 건수) 짝을
+     * 담을 타입이 필요한데, 있는 타입을 재사용하면 필드 이름이 거짓말을 하게 된다(`scene`에
+     * `VERIFIED`가 들어간다). 세 번 세는 값이 세 줄일 뿐이다.
+     */
+    suspend fun countByProjectIdAndVerificationStatus(projectId: Long, verificationStatus: String): Long
+
     /**
      * 명세 적재의 **보조** 키 — `spec_id`가 아직 없는 행만 고른다(ARTEL-329).
      *
