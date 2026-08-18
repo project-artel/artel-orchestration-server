@@ -48,6 +48,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.r2dbc.core.DatabaseClient
+import org.springframework.r2dbc.core.awaitRowsUpdated
 import org.springframework.test.context.ActiveProfiles
 import java.time.Instant
 
@@ -88,16 +89,24 @@ class ContentMapSchemaTest {
      * 다른 테스트들이 `DELETE FROM project` 로 정리하는데, 남은 qa_run 이 game_instance 삭제를
      * 막아 그 정리를 통째로 깨뜨린다. 격리는 남기지 않는 쪽이 지킨다.
      */
-    private val createdRuns = mutableListOf<Triple<Long, Long, Long>>()
+    private data class RunFixture(
+        val runId: Long,
+        val testRunId: Long,
+        val instanceId: Long,
+        val userId: Long,
+    )
+
+    private val createdRuns = mutableListOf<RunFixture>()
 
     @AfterEach
     fun cleanUpRuns(): Unit = runBlocking {
-        createdRuns.forEach { (runId, instanceId, userId) ->
-            // 삭제 순서를 FK 가 정한다. qa_run 이 test_run 과 game_instance 를 참조하므로 먼저다.
-            exec("DELETE FROM test_run WHERE id IN (SELECT test_run_id FROM qa_run WHERE id = $runId)")
-            exec("DELETE FROM qa_run WHERE id = $runId")
-            exec("DELETE FROM game_instance WHERE id = $instanceId")
-            exec("DELETE FROM app_user WHERE id = $userId")
+        createdRuns.forEach { fixture ->
+            // 삭제 순서를 FK 가 정한다. qa_run 이 test_run · game_instance · app_user 를 전부
+            // 참조하므로 qa_run 이 먼저 사라져야 한다.
+            exec("DELETE FROM qa_run WHERE id = ${fixture.runId}")
+            exec("DELETE FROM test_run WHERE id = ${fixture.testRunId}")
+            exec("DELETE FROM game_instance WHERE id = ${fixture.instanceId}")
+            exec("DELETE FROM app_user WHERE id = ${fixture.userId}")
         }
         createdRuns.clear()
     }
@@ -125,7 +134,7 @@ class ContentMapSchemaTest {
             "INSERT INTO qa_run (test_run_id, game_instance_id, started_by, status, started_at) " +
                 "VALUES ($testRunId, $instanceId, $userId, 'RUNNING', now()) RETURNING id"
         )
-        createdRuns += Triple(runId, instanceId, userId)
+        createdRuns += RunFixture(runId, testRunId, instanceId, userId)
         return runId
     }
 
