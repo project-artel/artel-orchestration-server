@@ -23,7 +23,7 @@ data class CapabilityEffectEntity(
 
     /** [EffectOrigin] 중 하나. */
     @Column("origin")
-    val origin: String = EffectOrigin.EVIDENCE,
+    val origin: String = EffectOrigin.EVIDENCE.wire,
 
     /** [EffectCategory] 중 하나. */
     @Column("category")
