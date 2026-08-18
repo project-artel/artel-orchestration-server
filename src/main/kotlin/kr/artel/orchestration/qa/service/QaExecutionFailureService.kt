@@ -15,6 +15,7 @@ import java.util.UUID
 @Service
 class QaExecutionFailurePersistence(
     private val tryRepository: QaTryRepository,
+    private val runRollupService: QaRunRollupService,
     private val logService: QaLogService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
@@ -28,6 +29,7 @@ class QaExecutionFailurePersistence(
             if (tryRepository.failActiveByGameInstanceId(gameInstanceId, completedAt) != 1) {
                 return@executeAndAwait null
             }
+            runRollupService.rollUpIfAllTriesDone(active.qaRunId, completedAt)
             val qaTryId = requireNotNull(active.id)
             val errorLog = logService.append(
                 qaTryId = qaTryId,
@@ -55,6 +57,7 @@ class QaExecutionFailurePersistence(
             if (tryRepository.failActiveById(qaTryId, completedAt) != 1) {
                 return@executeAndAwait null
             }
+            runRollupService.rollUpIfAllTriesDone(active.qaRunId, completedAt)
             val errorLog = logService.append(
                 qaTryId = qaTryId,
                 direction = "ORCHE_INTERNAL",
@@ -89,6 +92,7 @@ class QaExecutionFailurePersistence(
             if (tryRepository.cancelActiveById(qaTryId, completedAt) != 1) {
                 return@executeAndAwait null
             }
+            runRollupService.rollUpIfAllTriesDone(active.qaRunId, completedAt)
             val requestLog = logService.append(
                 qaTryId = qaTryId,
                 direction = "USER_TO_ORCHE",
@@ -105,6 +109,7 @@ class QaExecutionFailurePersistence(
             )
             FailureLogs(qaTryId, active.agentSessionId, requestLog, statusLog)
         }
+
 }
 
 data class FailureLogs(

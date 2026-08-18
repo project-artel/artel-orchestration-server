@@ -92,9 +92,6 @@ private val SUPPORTED_TYPES =
     setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH", "KNOWLEDGE_EXPAND") +
         KNOWLEDGE_WRITE_TYPES
 
-/** qa_try의 종단 상태들. 런의 모든 try가 여기 들면 그 런은 실행이 끝난 것이다. */
-private val TERMINAL_TRY_STATUSES = setOf("COMPLETED", "FAILED", "CANCELLED")
-
 /**
  * 스텝 판정 STATUS가 인용을 싣는 필드(ARTEL-293). Agent의 `report_step`이 채운다.
  *
@@ -108,6 +105,7 @@ private const val USED_KNOWLEDGE_IDS_FIELD = "used_knowledge_ids"
 class QaAgentInboundRouter(
     private val tryRepository: QaTryRepository,
     private val runRepository: QaRunRepository,
+    private val runRollupService: QaRunRollupService,
     private val logService: QaLogService,
     private val actionDispatch: QaActionDispatchService,
     private val streamManager: QaLogStreamManager,
@@ -386,9 +384,9 @@ class QaAgentInboundRouter(
         // try 단위인 것이 요점이다** — 세션 하나가 시나리오들을 순차 실행하므로, 런이나 세션이
         // 끝날 때까지 미루면 앞선 시나리오들의 확정이 늦거나 다음 시나리오의 검색과 뒤섞인다.
         knowledgeCitationService.finalizeTry(qaTryId)
-        // 방금 이 시나리오 try가 종단됐다. 런의 모든 시나리오 try가 종단이면 부모 qa_run도 완료로
-        // 닫는다 — 안 그러면 qa_run이 RUNNING으로 남아 그 게임 인스턴스의 다음 런을 영구 차단한다.
-        completeRunIfAllTriesDone(qaTry.qaRunId, completedAt)
+        // 방금 이 시나리오 try가 종단됐다. 모두 끝났으면 FAILED > CANCELLED > COMPLETED 우선순위로
+        // 부모 run에 올린다 — 안 그러면 RUNNING으로 남아 다음 런을 영구 차단한다.
+        runRollupService.rollUpIfAllTriesDone(qaTry.qaRunId, completedAt)
     }
 
     /**
@@ -483,20 +481,6 @@ class QaAgentInboundRouter(
             node = node.get(name) ?: return null
         }
         return node.takeIf { it.isIntegralNumber }?.asLong()
-    }
-
-    /**
-     * 런의 모든 qa_try가 종단(COMPLETED/FAILED/CANCELLED)이면 qa_run을 RUNNING→COMPLETED로 닫는다.
-     * 개별 시나리오의 합격/불합격은 각 try에 남고, 런의 COMPLETED는 "모든 시나리오 실행을 마쳤다"는
-     * 뜻이다(하나가 FAILED여도 런은 끝난 것). RUNNING이 아닐 땐 no-op이라 취소/실패로 이미 닫힌 런을
-     * 되돌리지 않는다.
-     */
-    private suspend fun completeRunIfAllTriesDone(qaRunId: Long?, completedAt: Instant) {
-        if (qaRunId == null) return
-        val tries = tryRepository.findByQaRunId(qaRunId).toList()
-        if (tries.isNotEmpty() && tries.all { it.status in TERMINAL_TRY_STATUSES }) {
-            runRepository.transition(qaRunId, "RUNNING", "COMPLETED", completedAt, completedAt)
-        }
     }
 
     /**
