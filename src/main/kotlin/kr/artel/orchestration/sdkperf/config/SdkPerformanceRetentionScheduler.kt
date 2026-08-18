@@ -36,8 +36,14 @@ class SdkPerformanceRetentionScheduler(
     private val repository: SdkPerformanceRepository,
     private val clock: Clock,
     @Value("\${artel.sdk-performance.retention.days:30}") private val retentionDays: Long,
-    /** 한 tick이 지우는 최대 행 수. 한 번에 다 지우면 긴 잠금이 수신 경로를 막는다. */
-    @Value("\${artel.sdk-performance.retention.batch-size:5000}") private val batchSize: Int
+    /** 한 번의 DELETE가 지우는 행 수. 한 문장으로 다 지우면 긴 잠금이 수신 경로를 막는다. */
+    @Value("\${artel.sdk-performance.retention.batch-size:5000}") private val batchSize: Int,
+    /**
+     * 한 tick의 상한. 배치 하나로 끝내면 삭제 속도가 유입 속도를 못 따라간다 — 인스턴스 하나가
+     * 시간당 3600행을 만드는데 시간당 5000행만 지우면 동시 접속 두 개부터 기준선이 영영
+     * 전진하지 않고, `deleted > 0`이 계속 참이라 로그만 보면 정상으로 보인다.
+     */
+    @Value("\${artel.sdk-performance.retention.max-rows-per-tick:500000}") private val maxRowsPerTick: Int
 ) {
     private val logger = LoggerFactory.getLogger(SdkPerformanceRetentionScheduler::class.java)
 
@@ -49,8 +55,18 @@ class SdkPerformanceRetentionScheduler(
         runBlocking {
             try {
                 val cutoff = clock.instant().minus(Duration.ofDays(retentionDays))
-                val deleted = repository.deleteSamplesOlderThan(cutoff, batchSize)
+                var deleted = 0L
+                while (deleted < maxRowsPerTick) {
+                    val batch = repository.deleteSamplesOlderThan(cutoff, batchSize)
+                    deleted += batch
+                    if (batch < batchSize) break
+                }
                 if (deleted > 0) logger.info("성능 원본 표본 {}건 삭제 (기준 {})", deleted, cutoff)
+                // 상한에 닿았다는 것은 이 tick이 밀린 분량을 다 못 지웠다는 뜻이다. 조용히 넘기면
+                // 보존 기준선이 전진하지 않는 것을 아무도 모른다.
+                if (deleted >= maxRowsPerTick) {
+                    logger.warn("성능 원본 표본 삭제가 tick 상한({})에 도달했다. 보존 기준선이 밀리는 중일 수 있다.", maxRowsPerTick)
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {

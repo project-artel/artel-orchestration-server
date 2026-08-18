@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.sdkperf.dto.MetricGroupAvailability
+import kr.artel.orchestration.sdkperf.metrics.MetricGroupReader
 import kr.artel.orchestration.sdkperf.dto.SdkDeviceContextMessage
 import kr.artel.orchestration.sdkperf.dto.SdkDeviceInfo
 import kr.artel.orchestration.sdkperf.dto.SdkFrameTimes
@@ -272,6 +273,120 @@ class SdkPerformanceIntegrationTest {
         exec("DELETE FROM app_user WHERE id=$stranger")
     }
 
+
+    /**
+     * 재연결 순서. `DEVICE_CONTEXT`는 표본보다 늦게 올 수 있고, 그때는 요약 행이 이미 있어
+     * `saveDevice`의 UPDATE 경로가 `collected_groups`를 옮긴다. 앞선 테스트들은 전부 반대
+     * 순서라 이 경로를 지나지 않았다.
+     */
+    @Test
+    fun `collectedGroups reaches the summary when the device context arrives after the first sample`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 3)
+
+        ingest.recordPerformance(instance, "ws", performance(process = null))
+        ingest.recordDeviceContext(
+            instance, "ws",
+            SdkDeviceContextMessage(
+                "DEVICE_CONTEXT", 1,
+                SdkDeviceInfo(isEditor = false, collectedGroups = listOf("renderCounters"))
+            )
+        )
+
+        val groups = query.runDetail(run, world.user)!!.summary!!.groups
+        assertThat(groups.getValue("renderCounters").availability).isEqualTo(MetricGroupAvailability.UNSUPPORTED)
+        assertThat(groups.getValue("gc").availability).isEqualTo(MetricGroupAvailability.NOT_REPORTED)
+
+        world.cleanUp()
+    }
+
+    /**
+     * 봉투만 오고 숫자 잎이 없는 군은 `MEASURED`가 아니다.
+     *
+     * 계약이 `MEASURED`를 "값이 온 적 있음"으로 정의한다. 봉투만으로 `MEASURED`를 주면
+     * `sampleRatio: 1.0`에 `metrics: {}`라는, 재보니 아무것도 없더라는 뜻의 응답이 나간다.
+     * `source`는 값이 없어도 알 수 있으므로 잃지 않는다.
+     */
+    @Test
+    fun `a group envelope carrying no numeric leaf is UNSUPPORTED rather than MEASURED`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+        ingest.recordPerformance(instance, "ws", performanceFromJson(
+            """{"renderCounters":{"source":"PROFILER_RECORDER"}}"""))
+
+        val group = query.runDetail(run, world.user)!!.summary!!.groups.getValue("renderCounters")
+        assertThat(group.availability).isEqualTo(MetricGroupAvailability.UNSUPPORTED)
+        assertThat(group.metrics).isNull()
+        assertThat(group.source).isEqualTo("PROFILER_RECORDER")
+
+        world.cleanUp()
+    }
+
+    /**
+     * 상한은 모르는 payload를 받아들이는 대가를 막는 장치다. 넘치면 잘라내고 나머지는 정상
+     * 저장해야 한다 — 표본을 통째로 버리면 프레임 지표까지 함께 사라진다.
+     */
+    @Test
+    fun `a payload past the group and leaf caps is trimmed instead of failing the sample`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+        val manyGroups = (1..MetricGroupReader.MAX_GROUPS_PER_SAMPLE + 8)
+            .joinToString(",") { """"g$it":{"v":$it}""" }
+        val fatGroup = """"gc":{${(1..MetricGroupReader.MAX_LEAVES_PER_GROUP + 8).joinToString(",") { """"leaf$it":$it""" }}}"""
+
+        ingest.recordPerformance(instance, "ws", performanceFromJson("{$manyGroups,$fatGroup}"))
+
+        val detail = query.runDetail(run, world.user)!!
+        // 프레임 지표는 살아 있다. 이것이 상한의 목적이다.
+        assertThat(detail.summary!!.sampleCount).isEqualTo(1)
+        assertThat(count("SELECT COUNT(*) FROM sdk_performance_sample_group"))
+            .isEqualTo(MetricGroupReader.MAX_GROUPS_PER_SAMPLE.toLong())
+        assertThat(count("SELECT COUNT(*) FROM sdk_performance_run_group_metric WHERE group_name='gc'"))
+            .isLessThanOrEqualTo(MetricGroupReader.MAX_LEAVES_PER_GROUP.toLong())
+
+        world.cleanUp()
+    }
+
+    /**
+     * 같은 경로로 접히는 두 키(`{"a":{"b":1},"a.b":2}`)가 한 upsert 문장에 두 번 들어가면
+     * Postgres가 21000으로 문장 전체를 거부하고, 트랜잭션이 롤백돼 표본이 통째로 사라진다.
+     * 모르는 payload를 받는 것이 이 기능의 전제라 방어되어 있어야 한다.
+     */
+    @Test
+    fun `leaf paths that collide after flattening do not abort the sample`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+
+        ingest.recordPerformance(instance, "ws", performanceFromJson("""{"gc":{"a":{"b":1},"a.b":2}}"""))
+
+        assertThat(query.runDetail(run, world.user)!!.summary!!.sampleCount).isEqualTo(1)
+        assertThat(count("SELECT COUNT(*) FROM sdk_performance_run_group_metric WHERE group_name='gc' AND leaf_path='a.b'"))
+            .isEqualTo(1)
+
+        world.cleanUp()
+    }
+
+    /** `source`가 컬럼 폭을 넘겨도 표본이 사라지면 안 된다. 잘라서 담는다. */
+    @Test
+    fun `an over long source is truncated rather than rolling back the sample`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+        val long = "E".repeat(MetricGroupReader.MAX_SOURCE_LENGTH + 20)
+
+        ingest.recordPerformance(instance, "ws", performanceFromJson("""{"renderCounters":{"source":"$long","drawCalls":10}}"""))
+
+        val group = query.runDetail(run, world.user)!!.summary!!.groups.getValue("renderCounters")
+        assertThat(group.availability).isEqualTo(MetricGroupAvailability.MEASURED)
+        assertThat(group.source).hasSize(MetricGroupReader.MAX_SOURCE_LENGTH)
+
+        world.cleanUp()
+    }
+
     // ---- 시드 ----
 
     private inner class World(val user: Long, val project: Long, val build: Long, val testRun: Long) {
@@ -430,9 +545,9 @@ class SdkPerformanceIntegrationTest {
         val metrics = query.runDetail(run, world.user)!!.summary!!.groups.getValue("gc").metrics!!
         @Suppress("UNCHECKED_CAST")
         val collections = metrics["collections"] as Map<String, Any?>
-        assertThat(collections).containsEntry("gen0", 8.0).containsEntry("gen1", 1.0)
+        assertThat(collections).containsEntry("gen0", 8L).containsEntry("gen1", 1L)
         // gen2는 두 표본 모두 0이다. 없음이 아니라 "재봤더니 0"이므로 자리를 지킨다.
-        assertThat(collections).containsEntry("gen2", 0.0)
+        assertThat(collections).containsEntry("gen2", 0L)
         assertThat(metrics).containsEntry("allocatedInFrameBytesMean", 2000.0)
         assertThat(metrics).containsEntry("allocatedInFrameBytesMax", 3000.0)
 

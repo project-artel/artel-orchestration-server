@@ -93,35 +93,45 @@ class SdkPerformanceRepository(
     suspend fun aggregateSampleGroups(runId: Long, at: Instant, groups: List<MetricGroupSample>) {
         if (groups.isEmpty()) return
         upsertGroupPresence(runId, groups)
+        // 중첩 키와 점 찍힌 키가 같은 경로로 접히면(`{"a":{"b":1},"a.b":2}`) 한 문장 안에 같은
+        // 충돌 키가 두 번 들어가고, Postgres가 21000으로 문장 전체를 거부한다. 모르는 payload를
+        // 받는 것이 이 기능의 전제라 방어해야 한다.
         val leaves = groups.flatMap { group -> group.leaves.map { group.name to it } }
+            .distinctBy { (group, leaf) -> group to leaf.path }
         if (leaves.isEmpty()) return
         upsertRunLeaves(runId, leaves)
         upsertSeriesLeaves(runId, at, leaves)
     }
 
+    /**
+     * `sample_count`는 **값을 실은** 표본만 센다. 봉투만 오고 숫자 잎이 없는 군은 0으로 남아
+     * `UNSUPPORTED`가 된다 — 계약이 `MEASURED`를 "값이 온 적 있음"으로 정의하기 때문이다.
+     * 그래도 행은 만든다. `source`는 값이 없어도 알 수 있고, 그것을 잃으면 출처를 구분할 수 없다.
+     */
     private suspend fun upsertGroupPresence(runId: Long, groups: List<MetricGroupSample>) {
-        val rows = groups.indices.joinToString(",") { "(:runId,:g$it,1,:s$it)" }
+        val rows = groups.indices.joinToString(",") { "(:runId,:g$it,:c$it,:s$it)" }
         var spec = db.sql(
             """INSERT INTO sdk_performance_run_group(qa_run_id,group_name,sample_count,source) VALUES $rows
                ON CONFLICT(qa_run_id,group_name) DO UPDATE SET
-                 sample_count=sdk_performance_run_group.sample_count+1,
+                 sample_count=sdk_performance_run_group.sample_count+EXCLUDED.sample_count,
                  source=COALESCE(EXCLUDED.source,sdk_performance_run_group.source)"""
         ).bind("runId", runId)
         groups.forEachIndexed { i, group ->
-            spec = spec.bind("g$i", group.name).bindNullable("s$i", group.source, String::class.java)
+            spec = spec.bind("g$i", group.name)
+                .bind("c$i", if (group.leaves.isEmpty()) 0L else 1L)
+                .bindNullable("s$i", group.source, String::class.java)
         }
         spec.fetch().awaitRowsUpdated()
     }
 
     private suspend fun upsertRunLeaves(runId: Long, leaves: List<Pair<String, kr.artel.orchestration.sdkperf.metrics.MetricLeaf>>) {
-        val rows = leaves.indices.joinToString(",") { "(:runId,:g$it,:p$it,1,:v$it,:v$it,:v$it)" }
+        val rows = leaves.indices.joinToString(",") { "(:runId,:g$it,:p$it,1,:v$it,:v$it)" }
         var spec = db.sql(
-            """INSERT INTO sdk_performance_run_group_metric(qa_run_id,group_name,leaf_path,sample_count,value_sum,value_max,value_min) VALUES $rows
+            """INSERT INTO sdk_performance_run_group_metric(qa_run_id,group_name,leaf_path,sample_count,value_sum,value_max) VALUES $rows
                ON CONFLICT(qa_run_id,group_name,leaf_path) DO UPDATE SET
                  sample_count=sdk_performance_run_group_metric.sample_count+1,
                  value_sum=sdk_performance_run_group_metric.value_sum+EXCLUDED.value_sum,
-                 value_max=GREATEST(sdk_performance_run_group_metric.value_max,EXCLUDED.value_max),
-                 value_min=LEAST(sdk_performance_run_group_metric.value_min,EXCLUDED.value_min)"""
+                 value_max=GREATEST(sdk_performance_run_group_metric.value_max,EXCLUDED.value_max)"""
         ).bind("runId", runId)
         leaves.forEachIndexed { i, (group, leaf) ->
             spec = spec.bind("g$i", group).bind("p$i", leaf.path).bind("v$i", leaf.value)
@@ -245,7 +255,7 @@ class SdkPerformanceRepository(
         nullableLong("hitch_count"),nullableDouble("budget_mode_ms"),nullableLong("process_sample_count"),nullableDouble("cpu_weighted_sum"),
         nullableDouble("cpu_weight_ms"),nullableDouble("cpu_percent_max"),nullableLong("working_set_bytes_max"),nullableLong("gen0_collections"),
         nullableLong("gen1_collections"),nullableLong("gen2_collections"),nullableLong("discharging_sample_count"),stringArray("collected_groups"))
-    private fun Readable.toDevice()=DeviceRow(nullableBoolean("is_editor"),string("scripting_backend"),string("sdk_version"),string("device_model"),string("processor_type"),nullableInt("processor_count"),string("graphics_device_name"),string("graphics_device_type"),string("operating_system"),nullableInt("target_frame_rate"),nullableInt("v_sync_count"),nullableDouble("refresh_rate_hz"),stringArray("collected_groups"))
+    private fun Readable.toDevice()=DeviceRow(nullableBoolean("is_editor"),string("scripting_backend"),string("sdk_version"),string("device_model"),string("processor_type"),nullableInt("processor_count"),string("graphics_device_name"),string("graphics_device_type"),string("operating_system"),nullableInt("target_frame_rate"),nullableInt("v_sync_count"),nullableDouble("refresh_rate_hz"))
     private fun Readable.toSeries()=SeriesRow(instant("bucket_at"),long("sample_count"),long("frame_count"),double("sampled_ms"),double("frame_time_sum_ms"),double("p95_sum"),double("frame_max_ms"),long("hitch_count"),long("process_count"),double("cpu_sum"),double("cpu_ms"),nullableLong("working_set"),long("focused_count"))
     private fun Readable.long(n:String)=get(n,java.lang.Long::class.java)!!.toLong(); private fun Readable.nullableLong(n:String)=get(n,java.lang.Long::class.java)?.toLong()
     private fun Readable.nullableInt(n:String)=get(n,java.lang.Integer::class.java)?.toInt(); private fun Readable.double(n:String)=get(n,java.lang.Double::class.java)!!.toDouble(); private fun Readable.nullableDouble(n:String)=get(n,java.lang.Double::class.java)?.toDouble()
@@ -281,8 +291,7 @@ class SdkPerformanceRepository(
 }
 
 data class RunRow(val runId:Long,val gameInstanceId:Long,val gameBuildId:Long?,val startedAt:Instant,val completedAt:Instant?,val status:String?,val isEditor:Boolean?,val sampleCount:Long?,val coveredMs:Double?,val frameCount:Long?,val frameTimeSum:Double?,val p95Sum:Double?,val p99Sum:Double?,val oneLowSum:Double?,val hitchCount:Long?,val budgetMs:Double?,val processCount:Long?,val cpuSum:Double?,val cpuMs:Double?,val cpuMax:Double?,val workingSetMax:Long?,val gen0:Long?,val gen1:Long?,val gen2:Long?,val dischargingCount:Long?,val collectedGroups:List<String>?)
-/** @property collectedGroups SDK가 수집을 *시도하는* 군. `null`이면 이 필드 이전 SDK다. */
-data class DeviceRow(val isEditor:Boolean?,val backend:String?,val sdk:String?,val model:String?,val processor:String?,val processorCount:Int?,val graphics:String?,val graphicsType:String?,val os:String?,val target:Int?,val vsync:Int?,val refresh:Double?,val collectedGroups:List<String>?)
+data class DeviceRow(val isEditor:Boolean?,val backend:String?,val sdk:String?,val model:String?,val processor:String?,val processorCount:Int?,val graphics:String?,val graphicsType:String?,val os:String?,val target:Int?,val vsync:Int?,val refresh:Double?)
 data class GroupRow(val runId:Long,val name:String,val sampleCount:Long,val source:String?)
 data class GroupMetricRow(val runId:Long,val group:String,val leafPath:String,val sampleCount:Long,val sum:Double,val max:Double)
 data class SeriesGroupRow(val at:Instant,val group:String,val leafPath:String,val sampleCount:Long,val sum:Double,val max:Double)

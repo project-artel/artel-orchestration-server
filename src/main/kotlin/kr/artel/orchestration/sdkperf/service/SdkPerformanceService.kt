@@ -22,6 +22,7 @@ import kr.artel.orchestration.sdkperf.repository.GroupRow
 import kr.artel.orchestration.sdkperf.repository.SeriesGroupRow
 import kr.artel.orchestration.sdkperf.repository.RunRow
 import kr.artel.orchestration.sdkperf.repository.SdkPerformanceRepository
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
@@ -47,6 +48,8 @@ class SdkPerfIngestService(
     private val repository: SdkPerformanceRepository,
     private val clock: Clock
 ) {
+    private val logger = LoggerFactory.getLogger(SdkPerfIngestService::class.java)
+
     /**
      * 표본은 언제나 저장하고, 도착 시각에 진행 중이던 런이 있을 때만 집계에 반영한다.
      *
@@ -60,6 +63,13 @@ class SdkPerfIngestService(
         val sampleId = repository.insertSample(instanceId, sessionId, runId, receivedAt, message)
         // 서버가 아는 군만 남기지 않는다. 모르는 군도 원본에 그대로 들어가고 롤업까지 흐른다.
         val groups = MetricGroupReader.read(message.groups)
+        // 상한을 넘겨 잘린 것을 조용히 넘기면, 정상적인 군이 몇 개 사라진 것을 아무도 모른다.
+        if (message.groups.size > groups.size) {
+            logger.warn(
+                "성능 지표군 상한 초과로 {}개 중 {}개만 저장 [instanceId={}]",
+                message.groups.size, groups.size, instanceId
+            )
+        }
         if (sampleId != null) repository.insertSampleGroups(sampleId, groups)
         if (runId != null) {
             repository.aggregateSample(runId, instanceId, receivedAt, message)
@@ -219,7 +229,9 @@ class SdkPerfQueryService(
         metricRows: List<GroupMetricRow>
     ): Map<String, PerformanceGroupResponse> {
         val samples = run.sampleCount ?: return emptyMap()
-        val declared = run.collectedGroups.orEmpty().toSet()
+        // 선언 목록도 상한을 건다. payload 쪽 군만 막고 선언 쪽을 열어 두면, 수천 개를 선언한
+        // SDK 하나가 모든 런 상세와 빌드 추세 응답을 부풀린다.
+        val declared = run.collectedGroups.orEmpty().take(MetricGroupReader.MAX_GROUPS_PER_SAMPLE).toSet()
         val seen = groupRows.filter { it.runId == run.runId }.associateBy { it.name }
         val leaves = metricRows.filter { it.runId == run.runId }.groupBy { it.group }
         return (KnownMetricGroups.names + declared + seen.keys).associateWith { name ->
@@ -237,15 +249,16 @@ class SdkPerfQueryService(
                     source = row.source
                 )
                 // 선언했는데 값이 없다 = 재려 했으나 이 플랫폼·빌드에 카운터가 없었다.
-                name in declared -> unmeasured(MetricGroupAvailability.UNSUPPORTED)
+                // 봉투만 오고 숫자 잎이 없던 군도 여기다 — 값이 온 적 없으므로 MEASURED가 아니다.
+                name in declared || row != null -> unmeasured(MetricGroupAvailability.UNSUPPORTED, row?.source)
                 // 선언조차 없다 = 이 SDK는 이 군을 모른다. collected_groups가 NULL인 구버전도 여기다.
-                else -> unmeasured(MetricGroupAvailability.NOT_REPORTED)
+                else -> unmeasured(MetricGroupAvailability.NOT_REPORTED, null)
             }
         }
     }
 
-    private fun unmeasured(availability: MetricGroupAvailability) =
-        PerformanceGroupResponse(availability, sampleRatio = 0.0, metrics = null)
+    private fun unmeasured(availability: MetricGroupAvailability, source: String?) =
+        PerformanceGroupResponse(availability, sampleRatio = 0.0, metrics = null, source = source)
 
     private fun RunRow.summary(
         durationMs: Long,

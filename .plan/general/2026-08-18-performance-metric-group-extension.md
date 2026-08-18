@@ -2,7 +2,7 @@
 
 - Date: 2026-08-18
 - Jira: ARTEL-435 (엄브렐러 ARTEL-434)
-- Status: In progress
+- Status: Implemented
 
 ## Goal
 
@@ -123,12 +123,20 @@ ARTEL-378이 Non-goals로 미뤄둔 항목(`원본 롤업·삭제 정책 (보존
   군 잎 수만큼 더 붙는다. 잎을 한 문장의 다중 VALUES로 묶어 군당 1쿼리로 잡는다.
   ARTEL-378 댓글이 "초당 1건 × 동시 세션" 부하는 측정하지 않았다고 남겼고, 이번에도 측정하지
   않는다. **미검증으로 기록한다.**
-- 모르는 군을 그대로 저장하므로 SDK 버그가 쓰레기 군을 보내면 그대로 쌓인다. 군 이름 길이와
-  군 수에 상한을 둔다.
+- 모르는 군을 그대로 저장하므로 SDK 버그가 쓰레기 군을 보내면 그대로 쌓인다. 군 수·잎 수·이름
+  길이·`source` 길이·중첩 깊이에 상한을 둔다. `collectedGroups`(선언 목록)도 같이 막는다 —
+  payload만 막으면 수천 개를 선언한 SDK 하나가 모든 응답을 부풀린다. 상한에 걸려 잘리면 WARN을
+  남긴다. 조용히 자르면 정상적인 군이 몇 개 사라진 것을 아무도 모른다.
+- **`sdk_performance_run_series_group`이 영구 보존 쪽에서 가장 빨리 는다.** 버킷 × 잎이라
+  10분 런이 약 600 × 25 = 1.5만 행이고, V38의 시계열이 같은 런에서 600행이다. 보존 정책이 이
+  테이블을 지우지 않으므로 회수되지 않는다. 이번에는 측정하지 않고 **미검증으로 기록한다.**
+  파티셔닝·잎 화이트리스트는 실제 증가를 본 뒤에 판단한다.
 
 ## Validation
 
 - `./scripts/check-flyway-migrations.sh`, `./scripts/verify-flyway-upgrade.sh`
 - `./mvnw test` 전체
 - 새 경계: 군 전체 없는 런 / 일부 군만 있는 런 / `collectedGroups` 없는 구버전 런 /
-  `collectedGroups`에 있으나 값이 안 온 군 / 계약에 없는 임의 군
+  `collectedGroups`에 있으나 값이 안 온 군 / 계약에 없는 임의 군 / 봉투만 있고 숫자 잎이 없는
+  군 / 상한을 넘긴 payload / 접히면 충돌하는 잎 경로 / 컬럼 폭을 넘긴 `source` /
+  `DEVICE_CONTEXT`가 표본보다 늦게 온 런 / 보존 삭제 뒤에도 온전한 런 상세

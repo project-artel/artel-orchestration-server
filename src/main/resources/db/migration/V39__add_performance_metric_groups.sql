@@ -25,12 +25,12 @@ CREATE TABLE IF NOT EXISTS sdk_performance_sample_group (
     PRIMARY KEY (sample_id, group_name)
 );
 
--- 런에서 그 군이 실려 온 표본 수. sampleRatio의 분자이고 MEASURED 판정의 근거다.
--- metrics가 비어 잎이 하나도 없는 군도 여기서는 세어진다.
+-- 런에서 그 군의 값이 실려 온 표본 수. sampleRatio의 분자이고 MEASURED 판정의 근거다.
 CREATE TABLE IF NOT EXISTS sdk_performance_run_group (
     qa_run_id BIGINT NOT NULL REFERENCES qa_run (id) ON DELETE CASCADE,
     group_name VARCHAR(64) NOT NULL,
     sample_count BIGINT NOT NULL,
+    -- 값을 실은 표본만 센다. 봉투만 오고 숫자 잎이 없는 군은 0으로 남아 UNSUPPORTED가 된다.
     -- 숫자가 아닌 군 속성. 지금은 renderCounters.source(PROFILER_RECORDER /
     -- EDITOR_UNITY_STATS)뿐이다. 출처가 다른 같은 이름의 값을 한 필드에 담지 않기 위해
     -- 응답에 실어 화면이 검증할 수 있게 한다.
@@ -46,7 +46,6 @@ CREATE TABLE IF NOT EXISTS sdk_performance_run_group_metric (
     sample_count BIGINT NOT NULL,
     value_sum DOUBLE PRECISION NOT NULL,
     value_max DOUBLE PRECISION NOT NULL,
-    value_min DOUBLE PRECISION NOT NULL,
     PRIMARY KEY (qa_run_id, group_name, leaf_path)
 );
 

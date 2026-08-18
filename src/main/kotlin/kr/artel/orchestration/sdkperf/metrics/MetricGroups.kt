@@ -39,6 +39,12 @@ object MetricGroupReader {
     const val MAX_GROUP_NAME_LENGTH = 64
     const val MAX_LEAF_PATH_LENGTH = 128
 
+    /**
+     * `sdk_performance_run_group.source`의 폭과 같아야 한다. 넘치면 22001로 표본 저장 전체가
+     * 롤백되고, 프레임 지표까지 함께 사라진다 — 상한이 막으려던 바로 그 실패다.
+     */
+    const val MAX_SOURCE_LENGTH = 32
+
     /** 중첩 상한. 계약의 가장 깊은 잎이 `collections.gen0`(2단계)이라 넉넉하다. */
     private const val MAX_DEPTH = 4
 
@@ -50,7 +56,7 @@ object MetricGroupReader {
                 MetricGroupSample(
                     name = name,
                     payload = payload,
-                    source = payload["source"] as? String,
+                    source = (payload["source"] as? String)?.take(MAX_SOURCE_LENGTH),
                     leaves = flatten(payload)
                 )
             }
@@ -143,10 +149,11 @@ object MetricRollupAssembler {
     data class LeafRollup(val path: String, val sampleCount: Long, val sum: Double, val max: Double)
 
     fun metrics(group: String, leaves: List<LeafRollup>): Map<String, Any?> {
-        val flat = linkedMapOf<String, Double>()
+        val flat = linkedMapOf<String, Number>()
         for (leaf in leaves) {
             when (GroupRollupSpec.rollupFor(group, leaf.path)) {
-                MetricRollup.SUM -> flat[leaf.path] = leaf.sum
+                // 카운터의 합은 횟수다. 계약의 예시(`"gen0": 240`)와 같은 모양으로 내보낸다.
+                MetricRollup.SUM -> flat[leaf.path] = whole(leaf.sum)
                 MetricRollup.MEAN_AND_MAX -> {
                     if (leaf.sampleCount > 0) flat["${leaf.path}Mean"] = leaf.sum / leaf.sampleCount
                     flat["${leaf.path}Max"] = leaf.max
@@ -156,7 +163,10 @@ object MetricRollupAssembler {
         return nest(flat)
     }
 
-    private fun nest(flat: Map<String, Double>): Map<String, Any?> {
+    private fun whole(value: Double): Number =
+        if (value % 1.0 == 0.0 && value.isFinite()) value.toLong() else value
+
+    private fun nest(flat: Map<String, Number>): Map<String, Any?> {
         val root = linkedMapOf<String, Any?>()
         leaves@ for ((path, value) in flat) {
             val segments = path.split('.')
@@ -167,7 +177,9 @@ object MetricRollupAssembler {
                 @Suppress("UNCHECKED_CAST")
                 node = (child as? LinkedHashMap<String, Any?>) ?: continue@leaves
             }
-            node[segments.last()] = value
+            // 반대 방향도 같다. 이미 가지가 선 자리에 잎을 덮으면 그 아래가 통째로 사라진다.
+            val leaf = segments.last()
+            if (node[leaf] !is Map<*, *>) node[leaf] = value
         }
         return root
     }
