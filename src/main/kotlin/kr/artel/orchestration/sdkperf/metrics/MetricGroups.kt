@@ -5,6 +5,11 @@ package kr.artel.orchestration.sdkperf.metrics
  *
  * 군마다 코틀린 타입을 하나씩 만들면 군이 늘 때마다 DTO·집계·마이그레이션이 같이 움직인다.
  * 여기서는 군 이름과 잎 경로를 데이터로 두어, 서버가 모르는 군도 저장되고 응답에 흐르게 한다.
+ *
+ * `coding-style.md`의 `Data Shapes`가 정한 예외 두 가지에 해당한다 — 군 payload는 그대로
+ * `jsonb`에 넣는 passthrough이고, 그 스키마는 설계상 열려 있다. 그 조항이 요구하는 "다음
+ * 단계에서 타입화"는 [MetricGroupReader]가 맡는다: 원시 맵은 여기서 한 번만 읽히고, 그
+ * 아래로는 [MetricGroupSample]과 [MetricLeaf]만 흐른다. 원시 맵을 더 깊이 들고 다니지 않는다.
  */
 
 /** 군 payload에서 뽑은 숫자 잎 하나. `collections.gen0`처럼 점으로 이어진 경로를 쓴다. */

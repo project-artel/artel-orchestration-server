@@ -36,6 +36,10 @@ data class SdkPerformanceMessage(
      *
      * 서버가 아는 군만 남기고 나머지를 버리면, SDK가 군을 하나 더할 때마다 서버를 먼저 고쳐야
      * 배포 순서가 성립한다. 여기서 통째로 받아 두면 서버 코드를 고치지 않아도 값이 흐른다.
+     *
+     * 이 원시 맵은 여기까지만 산다. `coding-style.md`의 `Data Shapes`가 요구하는 대로
+     * `MetricGroupReader`가 경계에서 한 번 읽어 타입 있는 값으로 바꾸고, 그 아래로는 원시
+     * 맵이 흐르지 않는다.
      */
     @get:JsonIgnore
     val groups: MutableMap<String, Map<String, Any?>> = linkedMapOf()
