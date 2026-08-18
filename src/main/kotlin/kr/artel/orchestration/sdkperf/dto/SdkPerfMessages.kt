@@ -1,5 +1,7 @@
 package kr.artel.orchestration.sdkperf.dto
 
+import com.fasterxml.jackson.annotation.JsonAnySetter
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 
@@ -25,7 +27,26 @@ data class SdkPerformanceMessage(
     val frameTimes: SdkFrameTimes,
     val status: SdkRunStatus,
     val process: SdkProcessMetrics? = null
-)
+) {
+    /**
+     * 이름을 모르는 지표군 (ARTEL-435).
+     *
+     * 최상위의 **객체** 필드 중 위에서 이름을 붙이지 않은 것이 지표군이다. SDK는 이미 군 단위로
+     * 묶어 보내고(`PerformanceMessageDto`의 클래스 주석), 못 잰 군은 필드째 뺀다.
+     *
+     * 서버가 아는 군만 남기고 나머지를 버리면, SDK가 군을 하나 더할 때마다 서버를 먼저 고쳐야
+     * 배포 순서가 성립한다. 여기서 통째로 받아 두면 서버 코드를 고치지 않아도 값이 흐른다.
+     */
+    @get:JsonIgnore
+    val groups: MutableMap<String, Map<String, Any?>> = linkedMapOf()
+
+    @JsonAnySetter
+    @Suppress("UNCHECKED_CAST")
+    fun captureUnknown(name: String, value: Any?) {
+        // 스칼라는 군이 아니다. 군은 언제나 한 단계 아래로 묶인 객체다.
+        if (value is Map<*, *>) groups[name] = value as Map<String, Any?>
+    }
+}
 
 /**
  * @property sampledMs 이 창이 실제로 덮은 시간. 전송 주기(1초)와 다르다 — 포커스를 잃은
@@ -112,5 +133,17 @@ data class SdkDeviceInfo(
     @JsonProperty("isDebugBuild")
     val isDebugBuild: Boolean? = null,
     val scriptingBackend: String? = null,
-    val sdkVersion: String? = null
+    val sdkVersion: String? = null,
+    /**
+     * 이 SDK 빌드가 수집을 **시도하는** 지표군 이름 (ARTEL-435).
+     *
+     * 값이 오지 않은 군을 두고 "재려다 못 쟀다"(`UNSUPPORTED`)와 "이 SDK는 이 군을
+     * 모른다"(`NOT_REPORTED`)를 가르는 유일한 근거다. 둘을 구분하지 못하면 값이 사라졌을 때
+     * 게임 코드 탓인지 SDK 탓인지 알 수 없어 빌드 간 회귀 판단이 성립하지 않는다.
+     *
+     * `null`이면 이 필드 이전 SDK다. 그 연결의 새 군은 전부 `NOT_REPORTED`이며 그것이 정확한
+     * 답이다 — 서버에 SDK 버전 표를 두는 대안은 릴리스마다 서버를 고쳐야 하고, 잊으면 조용히
+     * 틀린 답을 낸다.
+     */
+    val collectedGroups: List<String>? = null
 )
