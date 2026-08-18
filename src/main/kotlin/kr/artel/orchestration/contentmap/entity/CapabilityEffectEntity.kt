@@ -52,4 +52,13 @@ data class CapabilityEffectEntity(
      */
     @Column("watchable")
     val watchable: Boolean = false,
+
+    /**
+     * 이 효과가 나온 IL 위치. 근거 원본이 `effects[]` 마다 이미 주는 값이다.
+     *
+     * 같은 메서드가 **위치에 따라 다른 효과를 낸다**는 것을 표현할 수 있는 유일한 자리다. 이것이
+     * 없으면 한 메서드의 효과 전부가 기능 하나에 뭉쳐 붙는다.
+     */
+    @Column("il_offset")
+    val ilOffset: Int? = null,
 )

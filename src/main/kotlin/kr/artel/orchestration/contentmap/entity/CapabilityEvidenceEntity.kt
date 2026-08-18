@@ -49,9 +49,25 @@ data class CapabilityEvidenceEntity(
     @Column("method")
     val method: String,
 
-    /** 다른 레코드의 `calls[].targetId` 가 가리키는 값. */
+    /**
+     * 다른 레코드의 `calls[].targetId` 가 가리키는 값.
+     *
+     * null 이면 [gaps] 에 [EvidenceGap.METHOD_ID_MISSING] 이 있어야 한다. DB CHECK 가 강제한다 —
+     * 조용히 비면 "적재기가 못 채운 것"과 "근거에 원래 없는 것"이 구분되지 않는다.
+     */
     @Column("method_id")
     val methodId: String? = null,
+
+    /**
+     * 이 기능이 갈라져 나온 IL 위치.
+     *
+     * [entryId] 만으로는 근거 주소가 **메서드까지만** 남아, 한 `Update()` 안의 서로 다른 지점에서
+     * 나온 기능들이 하나로 눌린다. 실측에서 `CharacterMove` 가 9건이어야 할 자리에 3건이었다.
+     *
+     * 근거 원본이 이미 주는 값이라 새로 분석할 것이 없다.
+     */
+    @Column("branch_offset")
+    val branchOffset: Int? = null,
 
     /** [RecordKind] 중 하나. */
     @Column("record_kind")
@@ -86,7 +102,11 @@ data class CapabilityEvidenceEntity(
     @Column("binding_receiver")
     val bindingReceiver: String? = null,
 
-    /** 진입점부터 실제 동작까지의 호출 경로. 사람이 검증할 유일한 출처. */
+    /**
+     * 진입점부터 실제 동작까지의 호출 경로. 사람이 검증할 유일한 출처.
+     *
+     * 비어 있으면 [gaps] 에 [EvidenceGap.CALL_PATH_MISSING] 이 있어야 한다. DB CHECK 가 강제한다.
+     */
     @Column("call_path")
     val callPath: Json = Json.of("[]"),
 

@@ -33,6 +33,14 @@ data class ContentMapCapabilityRow(
     @Column("capability_id")
     val capabilityId: Long,
 
+    /**
+     * 재적재를 넘어 살아남는 참조 키. [capabilityId] 는 표시·조인용이고 **기억해 둘 값은 이쪽**이다.
+     *
+     * evidence 출신이 아니면 null 이다 — 산식의 입력인 `entry_id` 가 없다.
+     */
+    @Column("capability_key")
+    val capabilityKey: String?,
+
     @Column("origin")
     val origin: String,
 
@@ -72,9 +80,13 @@ data class ContentMapCapabilityRow(
     @Column("hint_action_params")
     val hintActionParams: Json?,
 
-    /** evidence 출신이 아니면 아래 다섯은 전부 null 이다. 그것이 정직한 상태다. */
+    /** evidence 출신이 아니면 아래 여섯은 전부 null 이다. 그것이 정직한 상태다. */
     @Column("entry_id")
     val entryId: String?,
+
+    /** [entryId] 만으로는 근거 주소가 메서드까지다. 갈래를 짚으려면 둘이 함께 있어야 한다. */
+    @Column("branch_offset")
+    val branchOffset: Int?,
 
     @Column("record_kind")
     val recordKind: String?,

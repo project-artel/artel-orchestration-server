@@ -44,6 +44,7 @@ import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
 import java.time.Instant
 
@@ -75,6 +76,7 @@ class ContentMapSchemaTest {
     @Autowired private lateinit var screens: ScreenRepository
     @Autowired private lateinit var transitions: ScreenTransitionRepository
     @Autowired private lateinit var screenCapabilities: ScreenCapabilityRepository
+    @Autowired private lateinit var db: DatabaseClient
 
     /** 게임 빌드는 프로젝트에 FK 로 매달려 있어 프로젝트부터 만든다. */
     private suspend fun newGameBuild(): GameBuildEntity {
@@ -183,6 +185,7 @@ class ContentMapSchemaTest {
         val fromEvidence = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "`Canvas/MapSceneButton` 클릭 → `TitleSceneManager.InitPlayerData()`",
                 interaction = Interaction.CLICK.wire,
@@ -196,16 +199,20 @@ class ContentMapSchemaTest {
                 entryId = "Assembly-CSharp|Scenes.TitleSceneManager|InitPlayerData|System.Void()",
                 ownerType = "Scenes.TitleSceneManager",
                 method = "InitPlayerData",
+                methodId = "Scenes.TitleSceneManager::InitPlayerData",
+                branchOffset = 12,
                 recordKind = RecordKind.CANDIDATE.wire,
                 triggerKind = TriggerKind.UNITY_EVENT.wire,
                 analysisConfidence = AnalysisConfidence.DERIVED.wire,
                 conditionTree = Json.of("""{"kind":"always"}"""),
+                callPath = Json.of("""["Scenes.TitleSceneManager::InitPlayerData"]"""),
             )
         )
 
         val fromObservation = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 verification = VerificationState.CONFIRMED.wire,
                 summary = "`Canvas/LogoImage` 를 3회 연속 클릭하면 `DebugPanel` 이 열린다",
@@ -241,6 +248,7 @@ class ContentMapSchemaTest {
                 capabilities.save(
                     CapabilityEntity(
                         sceneId = scene.id!!,
+                        contentMapId = scene.contentMapId,
                         origin = CapabilityOrigin.EVIDENCE.wire,
                         summary = "키 없는 press",
                         interaction = Interaction.PRESS.wire,
@@ -255,6 +263,7 @@ class ContentMapSchemaTest {
                 capabilities.save(
                     CapabilityEntity(
                         sceneId = scene.id!!,
+                        contentMapId = scene.contentMapId,
                         origin = CapabilityOrigin.EVIDENCE.wire,
                         summary = "클릭인데 키가 붙었다",
                         interaction = Interaction.CLICK.wire,
@@ -282,6 +291,7 @@ class ContentMapSchemaTest {
         val runnable = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`DebugCanvas/TurnEndButton` 클릭 → `TurnBattleSystem.TurnEndButton()`",
                 interaction = Interaction.CLICK.wire,
@@ -291,6 +301,7 @@ class ContentMapSchemaTest {
         capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`WaveEndSensor()` 코루틴이 마지막 웨이브 뒤 `GameClearScene` 으로 보낸다",
                 interaction = Interaction.NONE.wire,
@@ -300,6 +311,7 @@ class ContentMapSchemaTest {
         val merged = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "나중에 evidence 로도 확인되어 접힌 기능",
                 interaction = Interaction.CLICK.wire,
@@ -331,6 +343,7 @@ class ContentMapSchemaTest {
         val needsProbe = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`key:RightArrow` 를 누르면 `MapMove.position` 에 +1 을 쓴다",
                 interaction = Interaction.PRESS.wire,
@@ -354,6 +367,7 @@ class ContentMapSchemaTest {
         capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "자동 전이",
                 interaction = Interaction.NONE.wire,
@@ -365,6 +379,7 @@ class ContentMapSchemaTest {
         val runnable = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`key:Return` 을 누르면 `TurnBattleScene` 으로 이동",
                 interaction = Interaction.PRESS.wire,
@@ -441,6 +456,7 @@ class ContentMapSchemaTest {
         capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 verification = VerificationState.CONFIRMED.wire,
                 summary = "확인된 기능",
@@ -451,6 +467,7 @@ class ContentMapSchemaTest {
         capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "아직 안 눌러본 기능",
                 interaction = Interaction.CLICK.wire,
@@ -461,6 +478,7 @@ class ContentMapSchemaTest {
         capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 verification = VerificationState.CONFIRMED.wire,
                 summary = "관측으로 배운 기능",
@@ -490,6 +508,7 @@ class ContentMapSchemaTest {
         val observed = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "눌러보고 배운 기능",
                 interaction = Interaction.CLICK.wire,
@@ -505,6 +524,8 @@ class ContentMapSchemaTest {
                         entryId = "Assembly-CSharp|X|Y|System.Void()",
                         ownerType = "X",
                         method = "Y",
+                        methodId = "X::Y",
+                        callPath = Json.of("""["X::Y"]"""),
                         recordKind = RecordKind.CANDIDATE.wire,
                         triggerKind = TriggerKind.UNITY_EVENT.wire,
                         analysisConfidence = AnalysisConfidence.VERIFIED.wire,
@@ -530,6 +551,7 @@ class ContentMapSchemaTest {
         val orphan = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "근거 행이 딸려오지 않은 기능",
                 interaction = Interaction.CLICK.wire,
@@ -557,6 +579,7 @@ class ContentMapSchemaTest {
             val capability = capabilities.save(
                 CapabilityEntity(
                     sceneId = scene.id!!,
+                    contentMapId = scene.contentMapId,
                     origin = CapabilityOrigin.EVIDENCE.wire,
                     summary = summary,
                     interaction = Interaction.CLICK.wire,
@@ -569,6 +592,8 @@ class ContentMapSchemaTest {
                     entryId = "Assembly-CSharp|T|$summary|System.Void()",
                     ownerType = "T",
                     method = summary,
+                    methodId = "T::$summary",
+                    callPath = Json.of("""["T::$summary"]"""),
                     recordKind = RecordKind.CANDIDATE.wire,
                     triggerKind = TriggerKind.UNITY_EVENT.wire,
                     analysisConfidence = confidence,
@@ -624,6 +649,7 @@ class ContentMapSchemaTest {
         val both = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "조건도 반쪽이고 결과도 내부 상태뿐",
                 interaction = Interaction.CLICK.wire,
@@ -636,6 +662,8 @@ class ContentMapSchemaTest {
                 entryId = "Assembly-CSharp|T|both|System.Void()",
                 ownerType = "T",
                 method = "both",
+                methodId = "T::both",
+                callPath = Json.of("""["T::both"]"""),
                 recordKind = RecordKind.CANDIDATE.wire,
                 triggerKind = TriggerKind.UNITY_EVENT.wire,
                 analysisConfidence = AnalysisConfidence.PARTIAL.wire,
@@ -713,6 +741,7 @@ class ContentMapSchemaTest {
         val capability = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "관측된 기능",
                 interaction = Interaction.CLICK.wire,
@@ -730,5 +759,227 @@ class ContentMapSchemaTest {
         assertThat(rows[0].observedCount).isEqualTo(3)
         // 세 번 눌러 두 번만 무언가 변했다. 그 차이가 결함 신호다.
         assertThat(rows[0].firedCount).isEqualTo(2)
+    }
+
+    /**
+     * 같은 메서드 안의 서로 다른 지점이 서로 다른 기능으로 산다.
+     *
+     * `entry_id` 만으로 가르면 한 `Update()` 밑의 갈래 넷이 기능 하나로 눌린다. 실측에서
+     * `CharacterMove` 가 9건이어야 할 자리에 3건이었다. 가르는 값은 `branch_offset` 하나뿐이라
+     * 그것이 실제로 공존을 허용하는지 확인한다.
+     */
+    @Test
+    fun `같은 메서드라도 갈라져 나온 위치가 다르면 별개 기능이다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "Map_scene")
+        val entry = "Assembly-CSharp|Player.MapMove|Update|System.Void()"
+
+        val offsets = listOf(24, 61, 98)
+        val saved = offsets.map { offset ->
+            val capability = capabilities.save(
+                CapabilityEntity(
+                    sceneId = scene.id!!,
+                    contentMapId = scene.contentMapId,
+                    origin = CapabilityOrigin.EVIDENCE.wire,
+                    summary = "`key:RightArrow` 누르면 `MapMove.position` 이 바뀐다 (offset $offset)",
+                    interaction = Interaction.PRESS.wire,
+                    inputKey = "RightArrow",
+                    status = SpecStatus.RUNNABLE.wire,
+                    capabilityKey = "cap-$offset",
+                )
+            )
+            evidences.upsert(
+                CapabilityEvidenceEntity(
+                    capabilityId = capability.id!!,
+                    entryId = entry,
+                    ownerType = "Player.MapMove",
+                    method = "Update",
+                    methodId = "Player.MapMove::Update",
+                    branchOffset = offset,
+                    recordKind = RecordKind.CANDIDATE.wire,
+                    triggerKind = TriggerKind.LIFECYCLE.wire,
+                    analysisConfidence = AnalysisConfidence.DERIVED.wire,
+                    conditionTree = Json.of("""{"kind":"always"}"""),
+                    callPath = Json.of("""["Player.MapMove::Update"]"""),
+                )
+            )
+            capability
+        }
+
+        val stored = saved.mapNotNull { evidences.findById(it.id!!) }
+        assertThat(stored).hasSize(3)
+        assertThat(stored.map { it.branchOffset }).containsExactlyInAnyOrderElementsOf(offsets)
+        // 주소가 메서드까지가 아니라 갈래까지 내려간다.
+        assertThat(stored.map { it.entryId }.distinct()).hasSize(1)
+    }
+
+    /**
+     * 안정 키는 content_map 안에서 하나뿐이다.
+     *
+     * 씬 단위로 잡으면 같은 타입이 두 씬에 놓였을 때 서로 다른 기능이 같은 키를 들 수 있고,
+     * `scene_edge` 가 든 참조가 어느 쪽인지 못 가린다.
+     */
+    @Test
+    fun `안정 키가 한 지도 안에서 중복되면 거절한다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val title = newScene(map.id!!, "TitleScene")
+        val battle = newScene(map.id!!, "TurnBattleScene")
+
+        capabilities.save(
+            CapabilityEntity(
+                sceneId = title.id!!,
+                contentMapId = title.contentMapId,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = "먼저 자리를 잡은 기능",
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
+                capabilityKey = "cap-a1b2c3d4",
+            )
+        )
+
+        // 씬이 달라도 같은 지도라 거절된다.
+        assertThatThrownBy {
+            runBlocking {
+                capabilities.save(
+                    CapabilityEntity(
+                        sceneId = battle.id!!,
+                        contentMapId = battle.contentMapId,
+                        origin = CapabilityOrigin.EVIDENCE.wire,
+                        summary = "같은 키를 든 다른 기능",
+                        interaction = Interaction.CLICK.wire,
+                        status = SpecStatus.RUNNABLE.wire,
+                        capabilityKey = "cap-a1b2c3d4",
+                    )
+                )
+            }
+        }.hasMessageContaining("uk_capability_map_key")
+    }
+
+    /**
+     * 키가 없는 기능은 여럿이어도 된다.
+     *
+     * observed · inferred · human 출신은 `entry_id` 가 없어 산식의 입력이 없다. 없는 것이 정상이라
+     * UNIQUE 가 그것들을 서로 막으면 안 된다 — Postgres 가 NULL 을 서로 다르게 보는 것에 기댄다.
+     */
+    @Test
+    fun `안정 키가 없는 기능은 한 지도에 여럿 산다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TitleScene")
+
+        repeat(2) { index ->
+            capabilities.save(
+                CapabilityEntity(
+                    sceneId = scene.id!!,
+                    contentMapId = scene.contentMapId,
+                    origin = CapabilityOrigin.OBSERVED.wire,
+                    verification = VerificationState.CONFIRMED.wire,
+                    summary = "눌러보고 배운 기능 $index",
+                    interaction = Interaction.CLICK.wire,
+                    status = SpecStatus.RUNNABLE.wire,
+                )
+            )
+        }
+
+        val observed = capabilities
+            .findBySceneIdAndOriginOrderByIdAsc(scene.id!!, CapabilityOrigin.OBSERVED.wire)
+            .toList()
+        assertThat(observed).hasSize(2)
+        assertThat(observed.map { it.capabilityKey }).containsOnlyNulls()
+    }
+
+    /**
+     * `capability.content_map_id` 는 씬의 것과 어긋날 수 없다.
+     *
+     * 씬을 통해 이미 알 수 있는 값을 한 벌 더 든 것이라, 막지 않으면 두 벌이 갈라진다. 갈라지는
+     * 순간 안정 키의 유일성 범위가 조용히 다른 맵으로 새어 나간다 — UNIQUE 는 이 컬럼만 보므로
+     * 거짓 값이면 거짓 범위를 지킨다.
+     */
+    @Test
+    fun `기능이 든 지도가 씬의 지도와 다르면 거절한다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val other = newContentMap(capture = Capture.PLAYER.wire)
+        val scene = newScene(map.id!!, "TitleScene")
+
+        assertThatThrownBy {
+            runBlocking {
+                capabilities.save(
+                    CapabilityEntity(
+                        sceneId = scene.id!!,
+                        // 씬은 map 소속인데 다른 지도를 든다.
+                        contentMapId = other.id!!,
+                        origin = CapabilityOrigin.EVIDENCE.wire,
+                        summary = "엉뚱한 지도를 든 기능",
+                        interaction = Interaction.CLICK.wire,
+                        status = SpecStatus.RUNNABLE.wire,
+                    )
+                )
+            }
+        }.hasMessageContaining("fk_capability_scene_map")
+    }
+
+    /**
+     * 되짚기의 두 축은 비어도 되지만, 비었다면 **왜** 비었는지가 남아야 한다.
+     *
+     * 실측에서 `method_id` 는 18건 중 2건, `call_path` 는 1건만 실려 있었고 그 사실이 아무 데도
+     * 안 남아 "적재기가 못 채운 것"과 "근거에 원래 없는 것"이 구분되지 않았다.
+     */
+    @Test
+    fun `되짚기 축이 비면 사유를 요구한다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TitleScene")
+
+        suspend fun evidenceFor(
+            summary: String,
+            methodId: String?,
+            callPath: String,
+            gaps: String,
+        ) {
+            val capability = capabilities.save(
+                CapabilityEntity(
+                    sceneId = scene.id!!,
+                    contentMapId = scene.contentMapId,
+                    origin = CapabilityOrigin.EVIDENCE.wire,
+                    summary = summary,
+                    interaction = Interaction.CLICK.wire,
+                    status = SpecStatus.RUNNABLE.wire,
+                )
+            )
+            evidences.upsert(
+                CapabilityEvidenceEntity(
+                    capabilityId = capability.id!!,
+                    entryId = "Assembly-CSharp|T|$summary|System.Void()",
+                    ownerType = "T",
+                    method = summary,
+                    methodId = methodId,
+                    recordKind = RecordKind.CANDIDATE.wire,
+                    triggerKind = TriggerKind.UNITY_EVENT.wire,
+                    analysisConfidence = AnalysisConfidence.PARTIAL.wire,
+                    conditionTree = Json.of("""{"kind":"always"}"""),
+                    callPath = Json.of(callPath),
+                    gaps = Json.of(gaps),
+                )
+            )
+        }
+
+        // 사유를 남기면 비어도 통과한다.
+        evidenceFor(
+            summary = "gap-declared",
+            methodId = null,
+            callPath = "[]",
+            gaps = """["${EvidenceGap.METHOD_ID_MISSING.wire}","${EvidenceGap.CALL_PATH_MISSING.wire}"]""",
+        )
+
+        // 사유 없이 비면 거절된다.
+        assertThatThrownBy {
+            runBlocking {
+                evidenceFor(summary = "silent-method", methodId = null, callPath = """["T::x"]""", gaps = "[]")
+            }
+        }.hasMessageContaining("ck_capability_evidence_method_id_or_gap")
+
+        assertThatThrownBy {
+            runBlocking {
+                evidenceFor(summary = "silent-path", methodId = "T::y", callPath = "[]", gaps = "[]")
+            }
+        }.hasMessageContaining("ck_capability_evidence_call_path_or_gap")
     }
 }

@@ -37,6 +37,30 @@ data class CapabilityEntity(
     @Column("scene_id")
     val sceneId: Long,
 
+    /**
+     * 씬을 통해 이미 알 수 있는 값이지만 함께 든다. [capabilityKey] 의 유일성 범위가 content_map
+     * 단위라, 그 제약을 DB 가 걸려면 같은 테이블에 있어야 한다.
+     *
+     * `(scene_id, content_map_id)` 복합 FK 가 씬의 것과 어긋날 수 없게 묶으므로 두 벌이 갈라지지
+     * 않는다.
+     */
+    @Column("content_map_id")
+    val contentMapId: Long,
+
+    /**
+     * 재적재를 넘어 살아남는 내용 기반 키. `(entry_id, branch_offset, 정규화한 condition_tree)`
+     * 에서 만든다 — 산식은 적재기(ARTEL-442)가 확정한다.
+     *
+     * [id] 는 `BIGSERIAL` 이라 적재기가 evidence 기능을 지웠다 넣으면 새로 발급되고, 갈래를
+     * 펼치면 번호가 통째로 밀린다. `scene_edge.capability_id` 와 `screen_transition.capability_id`
+     * 는 **런타임에 알아낸 지식을 든 참조**라, 번호가 밀리면 그 지식이 엉뚱한 기능에 붙는다.
+     *
+     * null 인 이유: observed · inferred · human 출신은 `entry_id` 도 `branch_offset` 도 없어
+     * 산식의 입력이 없다. 없는 것이 정상이고, 더미값을 넣으면 그 순간 키가 키가 아니게 된다.
+     */
+    @Column("capability_key")
+    val capabilityKey: String? = null,
+
     /** [CapabilityOrigin] 중 하나. */
     @Column("origin")
     val origin: String,

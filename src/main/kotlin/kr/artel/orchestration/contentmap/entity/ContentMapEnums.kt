@@ -243,7 +243,18 @@ enum class EvidenceGap(val wire: String) {
     CALLEE_CONDITION_NOT_COMPOSED("callee-condition-not-composed"),
 
     /** 조건을 읽지 못했다. 조건이 없는 게 아니라 모르는 것이다. */
-    UNREAD_CONDITION("unread-condition");
+    UNREAD_CONDITION("unread-condition"),
+
+    /**
+     * `method_id` 를 못 채웠다. 되짚기의 한쪽 축이 비었다는 뜻이다.
+     *
+     * DB 가 `method_id IS NULL` 인 행에 이 토큰을 요구한다 — 조용히 비면 "적재기가 못 채운 것"과
+     * "근거에 원래 없는 것"이 구분되지 않는다.
+     */
+    METHOD_ID_MISSING("method-id-missing"),
+
+    /** `call_path` 가 비었다. 어느 호출 사슬에서 나온 규칙인지 모른다는 뜻이다. */
+    CALL_PATH_MISSING("call-path-missing");
 
     companion object {
         fun from(wire: String?): EvidenceGap? = entries.firstOrNull { it.wire == wire }

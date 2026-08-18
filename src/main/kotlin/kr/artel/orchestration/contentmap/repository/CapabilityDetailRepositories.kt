@@ -37,11 +37,11 @@ interface CapabilityEvidenceRepository : CoroutineCrudRepository<CapabilityEvide
     @Query(
         """
         INSERT INTO capability_evidence (
-            capability_id, origin, entry_id, owner_type, method, method_id,
+            capability_id, origin, entry_id, owner_type, method, method_id, branch_offset,
             record_kind, trigger_kind, analysis_confidence,
             condition_tree, binding_event, binding_receiver, call_path, gaps
         ) VALUES (
-            :capabilityId, 'evidence', :entryId, :ownerType, :method, :methodId,
+            :capabilityId, 'evidence', :entryId, :ownerType, :method, :methodId, :branchOffset,
             :recordKind, :triggerKind, :analysisConfidence,
             :conditionTree, :bindingEvent, :bindingReceiver, :callPath, :gaps
         )
@@ -50,6 +50,7 @@ interface CapabilityEvidenceRepository : CoroutineCrudRepository<CapabilityEvide
             owner_type = EXCLUDED.owner_type,
             method = EXCLUDED.method,
             method_id = EXCLUDED.method_id,
+            branch_offset = EXCLUDED.branch_offset,
             record_kind = EXCLUDED.record_kind,
             trigger_kind = EXCLUDED.trigger_kind,
             analysis_confidence = EXCLUDED.analysis_confidence,
@@ -66,6 +67,7 @@ interface CapabilityEvidenceRepository : CoroutineCrudRepository<CapabilityEvide
         ownerType: String,
         method: String,
         methodId: String?,
+        branchOffset: Int?,
         recordKind: String,
         triggerKind: String,
         analysisConfidence: String,
@@ -84,6 +86,7 @@ suspend fun CapabilityEvidenceRepository.upsert(evidence: CapabilityEvidenceEnti
     ownerType = evidence.ownerType,
     method = evidence.method,
     methodId = evidence.methodId,
+    branchOffset = evidence.branchOffset,
     recordKind = evidence.recordKind,
     triggerKind = evidence.triggerKind,
     analysisConfidence = evidence.analysisConfidence,
