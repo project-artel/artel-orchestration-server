@@ -43,7 +43,7 @@ data class CapabilityEntity(
 
     /** [VerificationState] 중 하나. */
     @Column("verification")
-    val verification: String = VerificationState.UNVERIFIED,
+    val verification: String = VerificationState.UNVERIFIED.wire,
 
     /**
      * 식별자를 남긴 설명. 모든 [origin] 공통.

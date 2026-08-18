@@ -13,8 +13,12 @@ import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 /**
  * evidence 출신 기능의 근거. `capability_id` 가 PK 라 [CoroutineCrudRepository] 의 id 가 그것이다.
  *
- * `origin='evidence'` 인 기능은 여기 행을 반드시 가져야 한다 — 스키마가 강제하지 못하는 불변식이라
- * 적재기와 테스트가 지킨다.
+ * 방향이 둘인 불변식인데 강제 수단이 다르다.
+ * - 관측 출신 기능에 근거를 붙이는 것은 **복합 FK 가 막는다**(`(capability_id, origin)` →
+ *   `capability (id, origin)`)
+ * - evidence 출신인데 근거가 없는 것은 선언으로 못 막는다(행이 두 INSERT 로 나뉜다).
+ *   대신 `v_spec_gap` 이 `evidence-missing` 으로 세어 드러낸다 — 그것이 세어지면 고칠 곳은
+ *   SDK 가 아니라 우리 적재기다
  */
 interface CapabilityEvidenceRepository : CoroutineCrudRepository<CapabilityEvidenceEntity, Long> {
 
@@ -33,11 +37,11 @@ interface CapabilityEvidenceRepository : CoroutineCrudRepository<CapabilityEvide
     @Query(
         """
         INSERT INTO capability_evidence (
-            capability_id, entry_id, owner_type, method, method_id,
+            capability_id, origin, entry_id, owner_type, method, method_id,
             record_kind, trigger_kind, analysis_confidence,
             condition_tree, binding_event, binding_receiver, call_path, gaps
         ) VALUES (
-            :capabilityId, :entryId, :ownerType, :method, :methodId,
+            :capabilityId, 'evidence', :entryId, :ownerType, :method, :methodId,
             :recordKind, :triggerKind, :analysisConfidence,
             :conditionTree, :bindingEvent, :bindingReceiver, :callPath, :gaps
         )

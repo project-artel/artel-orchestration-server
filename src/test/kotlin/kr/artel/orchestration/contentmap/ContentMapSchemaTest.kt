@@ -2,6 +2,7 @@ package kr.artel.orchestration.contentmap
 
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.reactive.awaitSingle
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.contentmap.entity.AnalysisConfidence
 import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
@@ -15,7 +16,13 @@ import kr.artel.orchestration.contentmap.entity.Interaction
 import kr.artel.orchestration.contentmap.entity.RecordKind
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
 import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.ScreenEntity
+import kr.artel.orchestration.contentmap.entity.ScreenTransitionEntity
+import kr.artel.orchestration.contentmap.entity.TransitionKind
 import kr.artel.orchestration.contentmap.entity.SpecGapReason
+import kr.artel.orchestration.contentmap.entity.EdgeSource
+import kr.artel.orchestration.contentmap.entity.EvidenceGap
+import kr.artel.orchestration.contentmap.entity.InputPhase
 import kr.artel.orchestration.contentmap.entity.SpecStatus
 import kr.artel.orchestration.contentmap.entity.TriggerKind
 import kr.artel.orchestration.contentmap.entity.VerificationState
@@ -25,16 +32,22 @@ import kr.artel.orchestration.contentmap.repository.upsert
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
+import kr.artel.orchestration.contentmap.repository.QaRunTargetRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
+import kr.artel.orchestration.contentmap.repository.ScreenCapabilityRepository
+import kr.artel.orchestration.contentmap.repository.ScreenRepository
+import kr.artel.orchestration.contentmap.repository.ScreenTransitionRepository
 import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.repository.ProjectRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
 import java.time.Instant
 
@@ -63,6 +76,66 @@ class ContentMapSchemaTest {
     @Autowired private lateinit var evidences: CapabilityEvidenceRepository
     @Autowired private lateinit var effects: CapabilityEffectRepository
     @Autowired private lateinit var edges: SceneEdgeRepository
+    @Autowired private lateinit var screens: ScreenRepository
+    @Autowired private lateinit var transitions: ScreenTransitionRepository
+    @Autowired private lateinit var screenCapabilities: ScreenCapabilityRepository
+    @Autowired private lateinit var targets: QaRunTargetRepository
+    @Autowired private lateinit var db: DatabaseClient
+
+    /**
+     * 이 클래스가 만든 런 배경. [cleanUpRuns] 가 지운다.
+     *
+     * 다른 테스트들이 `DELETE FROM project` 로 정리하는데, 남은 qa_run 이 game_instance 삭제를
+     * 막아 그 정리를 통째로 깨뜨린다. 격리는 남기지 않는 쪽이 지킨다.
+     */
+    private val createdRuns = mutableListOf<Triple<Long, Long, Long>>()
+
+    @AfterEach
+    fun cleanUpRuns(): Unit = runBlocking {
+        createdRuns.forEach { (runId, instanceId, userId) ->
+            // 삭제 순서를 FK 가 정한다. qa_run 이 test_run 과 game_instance 를 참조하므로 먼저다.
+            exec("DELETE FROM test_run WHERE id IN (SELECT test_run_id FROM qa_run WHERE id = $runId)")
+            exec("DELETE FROM qa_run WHERE id = $runId")
+            exec("DELETE FROM game_instance WHERE id = $instanceId")
+            exec("DELETE FROM app_user WHERE id = $userId")
+        }
+        createdRuns.clear()
+    }
+
+    /**
+     * qa_run 은 test_run · game_instance · app_user 를 요구한다. 이 테스트가 검증하는 것은
+     * 조준 해석표이지 런 생성이 아니므로 raw SQL 로 최소한만 세운다(SdkPerformanceIntegrationTest
+     * 와 같은 방식).
+     */
+    private suspend fun newQaRun(scene: SceneEntity): Long {
+        val map = contentMaps.findById(scene.contentMapId)!!
+        val build = gameBuilds.findById(map.gameBuildId)!!
+        val projectId = build.projectId
+        val userId = insertReturningId(
+            "INSERT INTO app_user (display_name) VALUES ('content-map-test') RETURNING id"
+        )
+        val testRunId = insertReturningId(
+            "INSERT INTO test_run (project_id, name) VALUES ($projectId, 'content-map') RETURNING id"
+        )
+        val instanceId = insertReturningId(
+            "INSERT INTO game_instance (project_id, name, platform) " +
+                "VALUES ($projectId, 'content-map', 'UNITY') RETURNING id"
+        )
+        val runId = insertReturningId(
+            "INSERT INTO qa_run (test_run_id, game_instance_id, started_by, status, started_at) " +
+                "VALUES ($testRunId, $instanceId, $userId, 'RUNNING', now()) RETURNING id"
+        )
+        createdRuns += Triple(runId, instanceId, userId)
+        return runId
+    }
+
+    private suspend fun exec(sql: String) {
+        db.sql(sql).fetch().awaitRowsUpdated()
+    }
+
+    private suspend fun insertReturningId(sql: String): Long =
+        db.sql(sql).map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .one().awaitSingle()
 
     /** 게임 빌드는 프로젝트에 FK 로 매달려 있어 프로젝트부터 만든다. */
     private suspend fun newGameBuild(): GameBuildEntity {
@@ -85,7 +158,7 @@ class ContentMapSchemaTest {
         )
     }
 
-    private suspend fun newContentMap(capture: String = Capture.EDITOR): ContentMapEntity {
+    private suspend fun newContentMap(capture: String = Capture.EDITOR.wire): ContentMapEntity {
         val build = newGameBuild()
         return contentMaps.save(
             ContentMapEntity(
@@ -121,7 +194,7 @@ class ContentMapSchemaTest {
             ContentMapEntity(
                 gameBuildId = build.id!!,
                 schemaVersion = 6,
-                capture = Capture.EDITOR,
+                capture = Capture.EDITOR.wire,
                 evidenceDigest = "aaaa",
             )
         )
@@ -129,13 +202,13 @@ class ContentMapSchemaTest {
             ContentMapEntity(
                 gameBuildId = build.id!!,
                 schemaVersion = 6,
-                capture = Capture.PLAYER,
+                capture = Capture.PLAYER.wire,
                 evidenceDigest = "aaaa",
             )
         )
 
         assertThat(editor.id).isNotEqualTo(player.id)
-        assertThat(contentMaps.findByGameBuildIdAndCapture(build.id!!, Capture.EDITOR)?.id)
+        assertThat(contentMaps.findByGameBuildIdAndCapture(build.id!!, Capture.EDITOR.wire)?.id)
             .isEqualTo(editor.id)
         assertThat(contentMaps.findByGameBuildIdOrderByIdDesc(build.id!!).toList()).hasSize(2)
     }
@@ -171,11 +244,11 @@ class ContentMapSchemaTest {
         val fromEvidence = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                origin = CapabilityOrigin.EVIDENCE,
+                origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "`Canvas/MapSceneButton` 클릭 → `TitleSceneManager.InitPlayerData()`",
-                interaction = Interaction.CLICK,
+                interaction = Interaction.CLICK.wire,
                 controlSelector = "Canvas[2]/MapSceneButton[1]",
-                status = SpecStatus.RUNNABLE,
+                status = SpecStatus.RUNNABLE.wire,
             )
         )
         evidences.upsert(
@@ -184,9 +257,9 @@ class ContentMapSchemaTest {
                 entryId = "Assembly-CSharp|Scenes.TitleSceneManager|InitPlayerData|System.Void()",
                 ownerType = "Scenes.TitleSceneManager",
                 method = "InitPlayerData",
-                recordKind = RecordKind.CANDIDATE,
-                triggerKind = TriggerKind.UNITY_EVENT,
-                analysisConfidence = AnalysisConfidence.DERIVED,
+                recordKind = RecordKind.CANDIDATE.wire,
+                triggerKind = TriggerKind.UNITY_EVENT.wire,
+                analysisConfidence = AnalysisConfidence.DERIVED.wire,
                 conditionTree = Json.of("""{"kind":"always"}"""),
             )
         )
@@ -194,12 +267,12 @@ class ContentMapSchemaTest {
         val fromObservation = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                origin = CapabilityOrigin.OBSERVED,
-                verification = VerificationState.CONFIRMED,
+                origin = CapabilityOrigin.OBSERVED.wire,
+                verification = VerificationState.CONFIRMED.wire,
                 summary = "`Canvas/LogoImage` 를 3회 연속 클릭하면 `DebugPanel` 이 열린다",
-                interaction = Interaction.CLICK,
+                interaction = Interaction.CLICK.wire,
                 controlSelector = "Canvas[2]/LogoImage[4]",
-                status = SpecStatus.RUNNABLE,
+                status = SpecStatus.RUNNABLE.wire,
             )
         )
 
@@ -208,7 +281,7 @@ class ContentMapSchemaTest {
         assertThat(evidences.findById(fromObservation.id!!)).isNull()
 
         val byOrigin = capabilities
-            .findBySceneIdAndOriginOrderByIdAsc(scene.id!!, CapabilityOrigin.OBSERVED)
+            .findBySceneIdAndOriginOrderByIdAsc(scene.id!!, CapabilityOrigin.OBSERVED.wire)
             .toList()
         assertThat(byOrigin).hasSize(1)
         assertThat(byOrigin[0].id).isEqualTo(fromObservation.id)
@@ -229,10 +302,10 @@ class ContentMapSchemaTest {
                 capabilities.save(
                     CapabilityEntity(
                         sceneId = scene.id!!,
-                        origin = CapabilityOrigin.EVIDENCE,
+                        origin = CapabilityOrigin.EVIDENCE.wire,
                         summary = "키 없는 press",
-                        interaction = Interaction.PRESS,
-                        status = SpecStatus.RUNNABLE,
+                        interaction = Interaction.PRESS.wire,
+                        status = SpecStatus.RUNNABLE.wire,
                     )
                 )
             }
@@ -243,11 +316,11 @@ class ContentMapSchemaTest {
                 capabilities.save(
                     CapabilityEntity(
                         sceneId = scene.id!!,
-                        origin = CapabilityOrigin.EVIDENCE,
+                        origin = CapabilityOrigin.EVIDENCE.wire,
                         summary = "클릭인데 키가 붙었다",
-                        interaction = Interaction.CLICK,
+                        interaction = Interaction.CLICK.wire,
                         inputKey = "Return",
-                        status = SpecStatus.RUNNABLE,
+                        status = SpecStatus.RUNNABLE.wire,
                     )
                 )
             }
@@ -265,31 +338,33 @@ class ContentMapSchemaTest {
         val map = newContentMap()
         val scene = newScene(map.id!!, "TurnBattleScene")
 
+        // 관측 출신으로 만든다. evidence 출신은 근거 행을 반드시 가져야 하므로, 근거 없이
+        // 만들면 이 테스트가 스스로 불변식을 어긴다.
         val runnable = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                origin = CapabilityOrigin.EVIDENCE,
+                origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`DebugCanvas/TurnEndButton` 클릭 → `TurnBattleSystem.TurnEndButton()`",
-                interaction = Interaction.CLICK,
-                status = SpecStatus.RUNNABLE,
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
             )
         )
         capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                origin = CapabilityOrigin.EVIDENCE,
+                origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`WaveEndSensor()` 코루틴이 마지막 웨이브 뒤 `GameClearScene` 으로 보낸다",
-                interaction = Interaction.NONE,
-                status = SpecStatus.NOT_A_STEP,
+                interaction = Interaction.NONE.wire,
+                status = SpecStatus.NOT_A_STEP.wire,
             )
         )
         val merged = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                origin = CapabilityOrigin.OBSERVED,
+                origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "나중에 evidence 로도 확인되어 접힌 기능",
-                interaction = Interaction.CLICK,
-                status = SpecStatus.RUNNABLE,
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
             )
         )
         capabilities.save(merged.copy(mergedInto = runnable.id))
@@ -298,7 +373,7 @@ class ContentMapSchemaTest {
 
         assertThat(rows.map { it.capabilityId }).containsExactly(runnable.id)
         assertThat(rows[0].sceneName).isEqualTo("TurnBattleScene")
-        // evidence 행이 없으므로 근거 컬럼은 null 이다. 그것이 정직한 상태다.
+        // 관측 출신이라 IL 근거가 없고, 그래서 근거 컬럼이 null 이다. 그것이 정직한 상태다.
         assertThat(rows[0].entryId).isNull()
     }
 
@@ -317,18 +392,18 @@ class ContentMapSchemaTest {
         val needsProbe = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                origin = CapabilityOrigin.EVIDENCE,
+                origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`key:RightArrow` 를 누르면 `MapMove.position` 에 +1 을 쓴다",
-                interaction = Interaction.PRESS,
+                interaction = Interaction.PRESS.wire,
                 inputKey = "RightArrow",
-                inputPhase = "down",
-                status = SpecStatus.NEEDS_PROBE,
+                inputPhase = InputPhase.DOWN.wire,
+                status = SpecStatus.NEEDS_PROBE.wire,
             )
         )
         effects.save(
             CapabilityEffectEntity(
                 capabilityId = needsProbe.id!!,
-                category = EffectCategory.STATE,
+                category = EffectCategory.STATE.wire,
                 kind = "write",
                 target = "MapMove.position",
                 detail = "+1",
@@ -340,10 +415,10 @@ class ContentMapSchemaTest {
         capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                origin = CapabilityOrigin.EVIDENCE,
+                origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "자동 전이",
-                interaction = Interaction.NONE,
-                status = SpecStatus.NOT_A_STEP,
+                interaction = Interaction.NONE.wire,
+                status = SpecStatus.NOT_A_STEP.wire,
             )
         )
 
@@ -351,18 +426,18 @@ class ContentMapSchemaTest {
         val runnable = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                origin = CapabilityOrigin.EVIDENCE,
+                origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`key:Return` 을 누르면 `TurnBattleScene` 으로 이동",
-                interaction = Interaction.PRESS,
+                interaction = Interaction.PRESS.wire,
                 inputKey = "Return",
-                inputPhase = "down",
-                status = SpecStatus.RUNNABLE,
+                inputPhase = InputPhase.DOWN.wire,
+                status = SpecStatus.RUNNABLE.wire,
             )
         )
         effects.save(
             CapabilityEffectEntity(
                 capabilityId = runnable.id!!,
-                category = EffectCategory.OBSERVABLE,
+                category = EffectCategory.OBSERVABLE.wire,
                 kind = "scene",
                 target = "TurnBattleScene",
                 detail = "TurnBattleScene",
@@ -372,8 +447,8 @@ class ContentMapSchemaTest {
 
         val gaps = contentMaps.findSpecGaps(map.id!!).toList().associate { it.capabilityId to it.reason }
 
-        assertThat(gaps[needsProbe.id]).isEqualTo(SpecGapReason.THEN_MISSING)
-        assertThat(gaps.values).contains(SpecGapReason.WHEN_MISSING)
+        assertThat(gaps[needsProbe.id]).isEqualTo(SpecGapReason.THEN_MISSING.wire)
+        assertThat(gaps.values).contains(SpecGapReason.WHEN_MISSING.wire)
         // 세 칸이 다 찬 기능은 사유 목록에 없다
         assertThat(gaps).doesNotContainKey(runnable.id)
     }
@@ -394,7 +469,7 @@ class ContentMapSchemaTest {
                 fromSceneId = title.id!!,
                 toSceneName = "Map_scene",
                 givenText = "`SaveLoadController.LoadPlayData() != -1`",
-                source = "static",
+                source = EdgeSource.STATIC.wire,
             )
         )
         edges.save(
@@ -402,7 +477,7 @@ class ContentMapSchemaTest {
                 fromSceneId = title.id!!,
                 toSceneName = "StoryScene",
                 givenText = "`SaveLoadController.LoadPlayData() == -1`",
-                source = "static",
+                source = EdgeSource.STATIC.wire,
                 verifiedAt = Instant.now(),
                 observedCount = 2,
             )
@@ -427,31 +502,31 @@ class ContentMapSchemaTest {
         capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                origin = CapabilityOrigin.EVIDENCE,
-                verification = VerificationState.CONFIRMED,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                verification = VerificationState.CONFIRMED.wire,
                 summary = "확인된 기능",
-                interaction = Interaction.CLICK,
-                status = SpecStatus.RUNNABLE,
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
             )
         )
         capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                origin = CapabilityOrigin.EVIDENCE,
+                origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "아직 안 눌러본 기능",
-                interaction = Interaction.CLICK,
-                status = SpecStatus.RUNNABLE,
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
             )
         )
         // 관측 출신은 분모에 들어가지 않는다 — 정적 분석이 알아낸 것이 아니다
         capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                origin = CapabilityOrigin.OBSERVED,
-                verification = VerificationState.CONFIRMED,
+                origin = CapabilityOrigin.OBSERVED.wire,
+                verification = VerificationState.CONFIRMED.wire,
                 summary = "관측으로 배운 기능",
-                interaction = Interaction.CLICK,
-                status = SpecStatus.RUNNABLE,
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
             )
         )
 
@@ -460,5 +535,286 @@ class ContentMapSchemaTest {
         assertThat(count).isNotNull
         assertThat(count!!.total).isEqualTo(2)
         assertThat(count.verified).isEqualTo(1)
+    }
+
+    /**
+     * 관측 출신 기능에는 IL 근거를 붙일 수 없다. **복합 FK 가 막는다.**
+     *
+     * 이것을 막지 않으면 근거 없이 배운 기능이 `entry_id` 를 갖게 되고, 읽는 쪽이 그것을 IL 이
+     * 증명한 사실로 읽는다 — "축이 둘"이라는 전제가 반대쪽에서 무너지는 자리다.
+     */
+    @Test
+    fun `관측 출신 기능에는 근거를 붙일 수 없다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TitleScene")
+
+        val observed = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                origin = CapabilityOrigin.OBSERVED.wire,
+                summary = "눌러보고 배운 기능",
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
+            )
+        )
+
+        assertThatThrownBy {
+            runBlocking {
+                evidences.upsert(
+                    CapabilityEvidenceEntity(
+                        capabilityId = observed.id!!,
+                        entryId = "Assembly-CSharp|X|Y|System.Void()",
+                        ownerType = "X",
+                        method = "Y",
+                        recordKind = RecordKind.CANDIDATE.wire,
+                        triggerKind = TriggerKind.UNITY_EVENT.wire,
+                        analysisConfidence = AnalysisConfidence.VERIFIED.wire,
+                        conditionTree = Json.of("""{"kind":"always"}"""),
+                    )
+                )
+            }
+        }.hasMessageContaining("fk_capability_evidence_origin")
+    }
+
+    /**
+     * 반대 방향(evidence 출신인데 근거가 없음)은 선언으로 막을 수 없다 — 행이 두 INSERT 로
+     * 나뉘기 때문이다. 대신 `v_spec_gap` 이 `evidence-missing` 으로 **세어서 드러낸다.**
+     *
+     * 이 사유가 세어지면 고칠 곳은 SDK 가 아니라 우리 적재기다. `then-missing` 으로 뭉뚱그리면
+     * 수집기를 고치러 가서 헛짚는다.
+     */
+    @Test
+    fun `근거를 잃은 기능은 적재기 결함으로 드러난다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TitleScene")
+
+        val orphan = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = "근거 행이 딸려오지 않은 기능",
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
+            )
+        )
+
+        val gaps = contentMaps.findSpecGaps(map.id!!).toList().associate { it.capabilityId to it.reason }
+
+        assertThat(gaps[orphan.id]).isEqualTo(SpecGapReason.EVIDENCE_MISSING.wire)
+    }
+
+    /**
+     * 근거의 `gaps` 토큰이 사유로 번역된다.
+     *
+     * 입력 어휘([EvidenceGap])와 출력 어휘([SpecGapReason])가 다르다는 것이 이 테스트의 요점이다.
+     * 적재기가 출력 이름을 넣으면 분기가 영영 안 걸리고 뷰는 조용히 다른 사유를 낸다.
+     */
+    @Test
+    fun `근거의 gaps 토큰이 사유로 번역된다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "Map_scene")
+
+        suspend fun withGaps(summary: String, gapToken: String?, confidence: String): Long {
+            val capability = capabilities.save(
+                CapabilityEntity(
+                    sceneId = scene.id!!,
+                    origin = CapabilityOrigin.EVIDENCE.wire,
+                    summary = summary,
+                    interaction = Interaction.CLICK.wire,
+                    status = SpecStatus.RUNNABLE.wire,
+                )
+            )
+            evidences.upsert(
+                CapabilityEvidenceEntity(
+                    capabilityId = capability.id!!,
+                    entryId = "Assembly-CSharp|T|$summary|System.Void()",
+                    ownerType = "T",
+                    method = summary,
+                    recordKind = RecordKind.CANDIDATE.wire,
+                    triggerKind = TriggerKind.UNITY_EVENT.wire,
+                    analysisConfidence = confidence,
+                    conditionTree = Json.of("""{"kind":"always"}"""),
+                    gaps = Json.of(gapToken?.let { """["$it"]""" } ?: "[]"),
+                )
+            )
+            // 관측 가능한 효과를 붙여 then-* 분기가 가리지 않게 한다
+            effects.save(
+                CapabilityEffectEntity(
+                    capabilityId = capability.id!!,
+                    category = EffectCategory.OBSERVABLE.wire,
+                    kind = "scene",
+                    target = "SomeScene",
+                    detail = "SomeScene",
+                    watchable = true,
+                )
+            )
+            return capability.id!!
+        }
+
+        val subjectLost = withGaps("subjectLost", EvidenceGap.SUBJECT_NULL.wire, AnalysisConfidence.DERIVED.wire)
+        val notComposed = withGaps(
+            "notComposed",
+            EvidenceGap.CALLEE_CONDITION_NOT_COMPOSED.wire,
+            AnalysisConfidence.DERIVED.wire,
+        )
+        val unread = withGaps("unread", EvidenceGap.UNREAD_CONDITION.wire, AnalysisConfidence.DERIVED.wire)
+        val partial = withGaps("partial", null, AnalysisConfidence.PARTIAL.wire)
+        val clean = withGaps("clean", null, AnalysisConfidence.VERIFIED.wire)
+
+        val gaps = contentMaps.findSpecGaps(map.id!!).toList().associate { it.capabilityId to it.reason }
+
+        assertThat(gaps[subjectLost]).isEqualTo(SpecGapReason.GIVEN_SUBJECT_UNKNOWN.wire)
+        assertThat(gaps[notComposed]).isEqualTo(SpecGapReason.GIVEN_INCOMPLETE.wire)
+        assertThat(gaps[unread]).isEqualTo(SpecGapReason.GIVEN_UNREAD.wire)
+        assertThat(gaps[partial]).isEqualTo(SpecGapReason.GIVEN_INCOMPLETE.wire)
+        assertThat(gaps).doesNotContainKey(clean)
+    }
+
+    /**
+     * 사유가 여럿 성립하면 먼저 걸리는 것 하나만 나온다.
+     *
+     * 순서가 바뀌면 이 테스트가 깨진다 — 그러라고 있는 테스트다. given-* 를 앞에 둔 대가로
+     * then-missing 이 과소계상된다는 것이 여기 박제된다.
+     */
+    @Test
+    fun `사유가 경합하면 given 이 then 을 가린다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "Map_scene")
+
+        // 조건도 불완전하고 관측 가능한 효과도 없다 — 두 사유가 동시에 성립한다
+        val both = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = "조건도 반쪽이고 결과도 내부 상태뿐",
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.NEEDS_PROBE.wire,
+            )
+        )
+        evidences.upsert(
+            CapabilityEvidenceEntity(
+                capabilityId = both.id!!,
+                entryId = "Assembly-CSharp|T|both|System.Void()",
+                ownerType = "T",
+                method = "both",
+                recordKind = RecordKind.CANDIDATE.wire,
+                triggerKind = TriggerKind.UNITY_EVENT.wire,
+                analysisConfidence = AnalysisConfidence.PARTIAL.wire,
+                conditionTree = Json.of("""{"kind":"unknown"}"""),
+            )
+        )
+        effects.save(
+            CapabilityEffectEntity(
+                capabilityId = both.id!!,
+                category = EffectCategory.STATE.wire,
+                kind = "write",
+                target = "T.counter",
+                detail = "+1",
+            )
+        )
+
+        val gaps = contentMaps.findSpecGaps(map.id!!).toList().associate { it.capabilityId to it.reason }
+
+        assertThat(gaps[both.id]).isEqualTo(SpecGapReason.GIVEN_INCOMPLETE.wire)
+    }
+
+    /**
+     * 자동 전이(기능 없이 일어나는 것)가 중복 누적되지 않는다.
+     *
+     * Postgres 는 UNIQUE 에서 NULL 을 서로 다른 값으로 보므로 `(from, to, capability_id)` 만으로는
+     * `capability_id IS NULL` 인 행을 막지 못한다. 그런데 자동 전이야말로 반복 관측되는 것이라,
+     * 막지 않으면 `observed_count` 가 중복 행에 쪼개져 누적된다.
+     */
+    @Test
+    fun `자동 전이는 화면 쌍마다 하나다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TurnBattleScene")
+        val from = screens.save(
+            ScreenEntity(sceneId = scene.id!!, discriminator = Json.of("""[{"a":1}]"""))
+        )
+        val to = screens.save(
+            ScreenEntity(sceneId = scene.id!!, discriminator = Json.of("""[{"a":2}]"""))
+        )
+
+        transitions.save(
+            ScreenTransitionEntity(
+                fromScreenId = from.id!!,
+                toScreenId = to.id!!,
+                kind = TransitionKind.AUTO.wire,
+                crossesScene = false,
+            )
+        )
+
+        assertThatThrownBy {
+            runBlocking {
+                transitions.save(
+                    ScreenTransitionEntity(
+                        fromScreenId = from.id!!,
+                        toScreenId = to.id!!,
+                        kind = TransitionKind.AUTO.wire,
+                        crossesScene = false,
+                    )
+                )
+            }
+        }.hasMessageContaining("uk_screen_transition_auto")
+    }
+
+    /**
+     * 화면이 기능을 제공하더라는 관측이 누적되고, 눌렀는데 아무것도 안 변한 횟수가 따로 센다.
+     *
+     * 손으로 쓴 upsert SQL 이라 실행해 보지 않으면 조용히 틀린다.
+     */
+    @Test
+    fun `화면의 기능 관측이 누적된다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TitleScene")
+        val screen = screens.save(
+            ScreenEntity(sceneId = scene.id!!, discriminator = Json.of("""[{"active":true}]"""))
+        )
+        val capability = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                origin = CapabilityOrigin.OBSERVED.wire,
+                summary = "관측된 기능",
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
+            )
+        )
+
+        screenCapabilities.observe(screen.id!!, capability.id!!, firedIncrement = 1)
+        screenCapabilities.observe(screen.id!!, capability.id!!, firedIncrement = 0)
+        screenCapabilities.observe(screen.id!!, capability.id!!, firedIncrement = 1)
+
+        val rows = screenCapabilities.findByScreenId(screen.id!!).toList()
+
+        assertThat(rows).hasSize(1)
+        assertThat(rows[0].observedCount).isEqualTo(3)
+        // 세 번 눌러 두 번만 무언가 변했다. 그 차이가 결함 신호다.
+        assertThat(rows[0].firedCount).isEqualTo(2)
+    }
+
+    /**
+     * 조준 해석표는 **더 나중 판독에서 온 값만** 이긴다.
+     *
+     * 늦게 도착한 옛 판독이 최신 instance id 를 덮으면, 그 뒤 액션이 전부 낡은 id 로 나간다.
+     * 이 규칙이 손으로 쓴 SQL 의 `WHERE` 절 한 줄에 걸려 있어 실행 검증이 필요하다.
+     */
+    @Test
+    fun `늦게 도착한 옛 판독이 최신 조준값을 덮지 않는다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TitleScene")
+        val run = newQaRun(scene)
+
+        targets.upsert(run, "TitleScene", "Canvas[2]/continue[2]", instanceId = 100, reading = 5)
+        // 더 나중 판독 — 이긴다
+        targets.upsert(run, "TitleScene", "Canvas[2]/continue[2]", instanceId = 200, reading = 9)
+        // 늦게 도착한 옛 판독 — 무시된다
+        targets.upsert(run, "TitleScene", "Canvas[2]/continue[2]", instanceId = 300, reading = 7)
+
+        val target = targets.findOne(run, "TitleScene", "Canvas[2]/continue[2]")
+
+        assertThat(target).isNotNull
+        assertThat(target!!.instanceId).isEqualTo(200)
+        assertThat(target.reading).isEqualTo(9)
     }
 }

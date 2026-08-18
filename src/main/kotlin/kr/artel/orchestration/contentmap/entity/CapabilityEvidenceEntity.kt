@@ -23,6 +23,15 @@ data class CapabilityEvidenceEntity(
     val capabilityId: Long,
 
     /**
+     * 항상 `evidence`. 값을 담으려는 컬럼이 아니라 **복합 FK 의 한쪽 다리**다 —
+     * `(capability_id, origin)` 이 `capability (id, origin)` 을 참조해, 이 행이 evidence 출신
+     * 기능에만 붙는다는 것을 DB 가 강제한다. 없으면 관측 출신 기능에 IL 근거를 붙일 수 있고
+     * "축이 둘"이라는 전제가 반대쪽에서 무너진다.
+     */
+    @Column("origin")
+    val origin: String = CapabilityOrigin.EVIDENCE.wire,
+
+    /**
      * `Assembly-CSharp|타입|메서드|시그니처`. 난독화에도 살아남는 안정 키.
      *
      * 표시용 이름이 아니라 이쪽으로 조인한다.
