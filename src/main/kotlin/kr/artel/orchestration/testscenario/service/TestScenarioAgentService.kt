@@ -9,11 +9,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.awaitSingle
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.service.TestCaseSearchService
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
@@ -23,8 +26,11 @@ import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
+import kr.artel.orchestration.testscenario.dto.ReviewedCases
+import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchErrorFrame
+import kr.artel.orchestration.testscenario.dto.UncoveredCasesResultFrame
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchResultFrame
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
@@ -40,7 +46,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 작성 챗봇의 Agent 서버 연동 서비스(코루틴). 실제 Agent 서버 계약(FastAPI)에 맞춘다:
  *
- * 1. 세션 오픈: `POST {base}/sessions {user_input, unity_context, game_context, test_case_list, model, project_id, run_id}` → `{session_id}`
+ * 1. 세션 오픈: `POST {base}/sessions {user_input, unity_context, game_context, test_case_list, uncovered_case_ids, model, project_id, run_id}` → `{session_id}`
  * 2. WS 연결: `WS {ws-base}/sessions/{session_id}`. 연결 시 Agent가 첫 결과를 보낸다(오픈 때 준 user_input 기반).
  * 3. 후속 턴: WS로 `{type:"turn", user_input, model?}` 전송.
  * 4. 결과 수신: `{type:"result", message, scenarios[]}` → SSE 중계 + scenarios를 test_scenario
@@ -66,6 +72,8 @@ class TestScenarioAgentService(
     private val appUserRepository: AppUserRepository,
     private val testCaseSearchService: TestCaseSearchService,
     private val testCaseService: TestCaseService,
+    private val testCaseRepository: TestCaseRepository,
+    private val projectAccessService: ProjectAccessService,
     private val reconcileService: ScenarioReconcileService
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
@@ -190,6 +198,181 @@ class TestScenarioAgentService(
     private suspend fun testCaseList(projectId: Long, appUserId: Long): List<TestCaseListItem> =
         testCaseService.getAllTestCases(projectId, appUserId).items
 
+    /**
+     * 미커버 조회 프레임에 답한다(ARTEL-403).
+     *
+     * **밀어 넣지 않고 물어보게 하는 이유**: 이 값은 저작이 진행될수록 줄어든다. 세션 오픈 때 한 번
+     * 실어 보내면 둘째 턴부터 틀린 값이 되고, 매 턴 다시 실으면 턴 메시지가 붓거나 — system 프롬프트에
+     * 두면 더 나쁘게 — 전량 목록(74k) 캐시를 매 턴 통째로 버린다. 도구 호출은 물어볼 때만 값을 낸다.
+     *
+     * 검색과 같은 규칙으로 **실패해도 절대 throw하지 않는다.** 커버리지를 못 읽는 것이 WS나 세션을
+     * 죽일 이유는 없다.
+     */
+    private suspend fun handleUncoveredRequest(sessionKey: String, session: AgentSession, node: JsonNode) {
+        val correlationId = node.path("messageId").asText(null)
+        try {
+            val ids = testCaseRepository.findUncoveredIdsByProjectId(session.projectId).toList()
+            val scenes = testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+            // 성공도 남긴다. 이 경로가 조용하면 "도구를 안 불렀다"와 "불렀는지 알 수 없다"가
+            // 로그에서 같아 보이고, 에이전트가 숫자를 지어냈는지 확인할 방법이 사라진다.
+            logger.info(
+                "미커버 조회 응답 [sessionKey={}, projectId={}] {}건 · {}",
+                sessionKey, session.projectId, ids.size,
+                scenes.joinToString(", ") { "${it.scene} ${it.count}" }
+            )
+            sendFrame(
+                sessionKey, session,
+                UncoveredCasesResultFrame(correlationId = correlationId, ids = ids, scenes = scenes)
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.error("미커버 조회 실패 [sessionKey=$sessionKey]: ${e.message}")
+            sendFrame(
+                sessionKey, session,
+                TestCaseSearchErrorFrame(correlationId = correlationId, detail = "미커버 조회에 실패했습니다.")
+            )
+        }
+    }
+
+    private fun sendFrame(sessionKey: String, session: AgentSession, frame: Any) {
+        val result = session.outbound.tryEmitNext(objectMapper.writeValueAsString(frame))
+        if (result.isFailure) {
+            logger.warn("프레임 전송 실패 [sessionKey=$sessionKey, result=$result]")
+        }
+    }
+
+    private suspend fun applyOrRepair(
+        sessionKey: String,
+        session: AgentSession,
+        event: ScenarioStreamEvent,
+    ) {
+        val pending = session.repair
+        session.repair = null
+
+        val incoming = event.scenarios ?: emptyList()
+        // 재작성 턴이면 앞서 막힌 결과에 새로 받은 것을 얹어 통째로 다시 본다.
+        val scenarios = if (pending != null) pending.scenarios + incoming else incoming
+        val reviewed = if (pending != null) mergeVerdicts(pending.reviewed, event.reviewed) else event.reviewed
+
+        val outcome = reconcileService.reconcile(session.runId, session.projectId, scenarios, reviewed)
+        if (!outcome.rejected) {
+            if (pending != null) {
+                saveMessage(
+                    session.runId, session.appUserId, "ASSISTANT",
+                    "빠졌던 부분을 다시 작성해 시나리오에 반영했습니다."
+                )
+            }
+            // 저장이 있었던 턴에만 잔량을 알린다. 질문·거절 턴에서는 남은 수가 그대로일 뿐 아니라,
+            // 방금 에이전트가 같은 값을 더 자세히 답했을 수 있다 — 그 뒤에 한 줄을 더 붙이면 같은
+            // 말을 두 번 하는 셈이 된다.
+            if (outcome.applied > 0) recommendRemaining(session)
+            return
+        }
+
+        val attempts = (pending?.attempts ?: 0) + 1
+        // 유령 번호는 결과 전체를 의심해야 하는 신호다 — 없는 케이스를 지어냈다면 나머지도 믿을
+        // 근거가 없으므로 "더 써라"로 고칠 종류가 아니다. 나머지 둘은 고칠 수 있다:
+        // 누락은 스텝을 더 쓰면 되고, 검토 누락은 판정만 더 받으면 된다.
+        val repairable = outcome.findings.ghost.isEmpty() &&
+            (outcome.findings.missing.isNotEmpty() || outcome.findings.unreviewed.isNotEmpty())
+
+        if (!repairable || attempts > MAX_REPAIR_ATTEMPTS || reviewed == null) {
+            // 더 못 고친다. 저장하지 않고 사람에게 넘긴다 — 사용자는 시나리오가 나왔다고 믿고
+            // 있으므로, 여기서 말하지 않으면 저장되지 않았다는 사실을 알 길이 없다.
+            saveMessage(
+                session.runId, session.appUserId, "ASSISTANT",
+                outcome.findings.rejectionMessage()
+            )
+            return
+        }
+
+        session.repair = PendingRepair(scenarios, reviewed, attempts)
+        // 재작성을 시켰다는 사실을 사용자에게 알린다. 이 시간 동안 화면은 답을 기다리는 것처럼
+        // 보이는데, 무슨 일이 일어나는지 말하지 않으면 그냥 느린 것과 구분되지 않는다.
+        saveMessage(
+            session.runId, session.appUserId, "ASSISTANT",
+            "검토 결과 ${outcome.findings.summary()} — 그 부분만 다시 작성하도록 요청했습니다."
+        )
+        sendTurn(sessionKey, session, repairPrompt(outcome.findings), emptyList())
+    }
+
+    /**
+     * 재작성 응답의 판정을 처음 선언에 **더하기만** 한다.
+     *
+     * 처음 `in`은 줄어들지 않는다. 재작성이 판정을 통째로 갈아치우게 두면 에이전트가 빠뜨린 케이스를
+     * `out`으로 옮겨 스스로 통과시킬 수 있고, 그러면 검사가 있으나 마나가 된다.
+     *
+     * 반대로 **새로 판정된 id는 받아들인다.** 좁은 요청에서 에이전트가 전량을 판정하지 않아 검토
+     * 누락이 뜬 경우, 나머지에 대한 판정을 받는 것이 곧 그 지적을 고치는 일이다.
+     */
+    private fun mergeVerdicts(first: ReviewedCases, extra: ReviewedCases?): ReviewedCases {
+        if (extra == null) return first
+        val locked = first.included.toSet()
+        val newlyExcluded = (first.excluded + extra.excluded).distinct().filterNot { it in locked }
+        return ReviewedCases(
+            included = (first.included + extra.included).distinct(),
+            excluded = newlyExcluded,
+        )
+    }
+
+    /**
+     * 재작성 지시문. 지적된 것만 다루게 하고 앞서 쓴 것은 다시 쓰지 말라고 못 박는다 — 전체를 다시
+     * 만들면 출력 예산을 통째로 한 번 더 쓰고, 이미 통과한 부분까지 흔들린다.
+     */
+    private fun repairPrompt(findings: ScenarioCoverageAudit.Findings): String = buildString {
+        if (findings.missing.isNotEmpty()) {
+            append("이전 응답에서 관련 있다고 판단한 케이스 중 ")
+            append(findings.missing.joinToString(", "))
+            append("번이 어떤 스텝에도 담기지 않았습니다. 이 케이스들만 검증하는 시나리오를 새로 작성해 주세요(scenario_id는 null). ")
+        }
+        if (findings.unreviewed.isNotEmpty()) {
+            append("그리고 ")
+            append(findings.unreviewed.joinToString(", "))
+            append("번은 in에도 out에도 없습니다. 이번 요청과 관련이 있는지 판단해 reviewed에 넣어 주세요. ")
+            append("관련이 없다면 out이면 충분하고 시나리오를 쓸 필요는 없습니다. ")
+        }
+        append("앞서 작성한 시나리오는 다시 보내지 마세요 — 그대로 유지됩니다.")
+    }
+
+    /**
+     * 저장이 끝난 뒤 **아직 아무 시나리오도 건드리지 않은 케이스**를 사용자에게 알린다(ARTEL-403).
+     *
+     * 이 수를 에이전트가 세게 하지 않는 이유는 두 가지다. 세션에 실은 미커버 목록은 세션을 열 때의
+     * 스냅샷이라 방금 저장한 것이 반영돼 있지 않고, 무엇보다 **빠짐없이 세는 일은 에이전트가 못하는
+     * 일**이다 — 이 작업 전체가 그 전제 위에 있다. 저장 직후의 DB가 답을 알고 있으니 거기서 읽는다.
+     *
+     * 전부 덮였으면 아무 말도 하지 않는다. "남은 것 없음"은 매번 붙으면 소음이 된다.
+     */
+    private suspend fun recommendRemaining(session: AgentSession) {
+        val uncovered = try {
+            testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn("미커버 조회 실패 — 추천 생략 [runId=${session.runId}]: ${e.message}")
+            return
+        }
+        val total = uncovered.sumOf { it.count }
+        if (total == 0L) return
+
+        // 숫자가 그대로면 말하지 않는다. 이번 턴이 새로 덮은 것이 없다는 뜻이고(질문·편집·거절),
+        // 같은 수를 매 턴 반복하면 좁은 작업을 이어가는 사람에게는 그게 소음이다.
+        if (total == session.lastReportedUncovered) return
+        session.lastReportedUncovered = total
+
+        // 씬이 여섯 개인 프로젝트에서 여섯 줄이 매번 붙으면 읽히지 않는다. 많은 순 셋까지만.
+        val shown = uncovered.take(MAX_SCENES_IN_RECOMMENDATION)
+        val rest = uncovered.size - shown.size
+        val breakdown = shown.joinToString(", ") { "${it.scene} ${it.count}" } +
+            if (rest > 0) " 외 ${rest}개 씬" else ""
+
+        saveMessage(
+            session.runId, session.appUserId, "ASSISTANT",
+            "아직 어떤 시나리오에도 담기지 않은 케이스가 ${total}건 남았습니다 — $breakdown. 이어서 만들까요?"
+        )
+    }
+
     private fun sendTurn(
         sessionKey: String,
         session: AgentSession,
@@ -250,6 +433,14 @@ class TestScenarioAgentService(
         try {
             val node = objectMapper.readTree(payloadText)
             val session = sessions[sessionKey]
+            if (node.path("type").asText() == "uncovered_cases") {
+                if (session == null) {
+                    logger.warn("uncovered_cases를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
+                    return
+                }
+                scope.launch { handleUncoveredRequest(sessionKey, session, node) }
+                return
+            }
             if (node.path("type").asText() == "test_case_search") {
                 if (session == null) {
                     logger.warn("test_case_search를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
@@ -279,11 +470,7 @@ class TestScenarioAgentService(
                     // (TestRunChatService.commitScenarios). 어느 경우든 빈 배열은 무동작.
                     if (session.autoApply) {
                         try {
-                            reconcileService.reconcile(
-                                session.runId,
-                                session.projectId,
-                                event.scenarios ?: emptyList()
-                            )
+                            applyOrRepair(sessionKey, session, event)
                         } catch (err: CancellationException) {
                             throw err
                         } catch (err: Exception) {
@@ -373,6 +560,45 @@ class TestScenarioAgentService(
         val appUserId: Long,
         val agentSessionId: String,
         @Volatile var autoApply: Boolean,
-        @Volatile var disposable: Disposable? = null
+        @Volatile var disposable: Disposable? = null,
+        /** 검수에서 막혀 재작성을 기다리는 중인 결과. null이면 평범한 턴이다. */
+        @Volatile var repair: PendingRepair? = null,
+        /**
+         * 마지막으로 사용자에게 알린 미커버 건수. 같은 수를 두 번 말하지 않기 위한 값이다 —
+         * 좁은 작업을 이어가는 대화에서 매 턴 같은 줄이 붙으면 읽히지 않는다.
+         */
+        @Volatile var lastReportedUncovered: Long? = null
     )
+
+    /**
+     * 검수에 걸린 결과를 들고 재작성을 기다리는 상태(ARTEL-403).
+     *
+     * **막힌 시나리오를 여기 들고 있는 이유**: 저장을 안 했으니 DB에 `scenario_id`가 없고, 그러면
+     * 에이전트에게 "그 시나리오를 고쳐라"라고 지목할 방법이 없다. 그렇다고 통과한 것만 먼저 저장하면
+     * 부분 저장이 되는데, 그건 "일부만 검증된 시나리오"를 남기므로 검사를 안 한 것보다 나쁘다.
+     *
+     * 그래서 앞 결과를 메모리에 쥐고, 빠진 것만 새로 받아 **합쳐서 다시 검수한 뒤 한 번에** 저장한다.
+     * 재작성 출력이 작아지는 것은 덤이고, 본질은 저장이 여전히 전부-아니면-전무라는 점이다.
+     *
+     * @property reviewed 처음 판정. 재검수도 **이 선언 기준**이다 — 재작성 때 판정을 다시 받으면
+     *   에이전트가 빠뜨린 것을 out으로 옮겨 스스로 통과시킬 수 있다.
+     */
+    private class PendingRepair(
+        val scenarios: List<ScenarioResult>,
+        val reviewed: ReviewedCases,
+        val attempts: Int,
+    )
+
+    companion object {
+        /**
+         * 재작성을 몇 번까지 시킬지.
+         *
+         * 1회다. 같은 지적을 두 번 받고도 못 고치면 세 번째라고 달라질 이유가 없고, 그동안 사용자는
+         * 답을 기다린다. 상한에 걸리면 저장하지 않고 무엇이 빠졌는지 사람에게 넘긴다.
+         */
+        private const val MAX_REPAIR_ATTEMPTS = 1
+
+        /** 남은 씬을 몇 개까지 나열할지. 나머지는 "외 N개 씬"으로 접는다. */
+        private const val MAX_SCENES_IN_RECOMMENDATION = 3
+    }
 }

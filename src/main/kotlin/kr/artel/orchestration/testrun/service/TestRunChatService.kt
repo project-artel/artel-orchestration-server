@@ -75,7 +75,9 @@ class TestRunChatService(
      */
     suspend fun commitScenarios(appUserId: Long, runId: Long, scenarios: List<ScenarioResult>): Int {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
-        return reconcileService.reconcile(runId, run.projectId, scenarios)
+        // 판정을 넘기지 않는다 — 이 경로의 시나리오는 사용자가 카드로 직접 고른 것이라 "Agent가 다
+        // 봤는가"를 물을 대상이 아니다. 사람이 고른 것이 곧 요구다.
+        return reconcileService.reconcile(runId, run.projectId, scenarios).applied
     }
 
     /**

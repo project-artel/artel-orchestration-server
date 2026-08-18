@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
+import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
@@ -34,6 +35,79 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
     )
     fun findTestCaseListByProjectIdOrderByIdAsc(projectId: Long): Flow<TestCaseListItem>
+
+    /**
+     * 이 프로젝트의 TestCase id 전량(2단계).
+     *
+     * 저작 결과를 검사하는 두 기준이 이 집합이다: 판정이 전량을 덮었는지, 스텝이 지목한 번호가
+     * 실재하는지. 본문은 필요 없어서 id만 읽는다 — 1000건이라도 한 컬럼이다.
+     */
+    @Query("SELECT id FROM test_case WHERE project_id = :projectId")
+    fun findIdsByProjectId(projectId: Long): Flow<Long>
+
+    /**
+     * 어떤 시나리오도 아직 건드리지 않은 케이스의 id(2단계).
+     *
+     * 커버 집합은 `test_scenario.steps`의 `case_id` 합집합이다 — **원장을 따로 저장하지 않는다.**
+     * 값이 이미 있는데 복제하면 진실이 둘이 되고, 시나리오를 고칠 때마다 동기화가 숙제로 남는다.
+     *
+     * `case_id`가 없는 스텝(이동·준비 같은 브리지)은 자연히 빠진다 — 검증을 하지 않으므로 무엇도
+     * 커버하지 않는다.
+     *
+     * 정렬을 `id ASC`로 고정하는 이유는 전량 목록과 같다: 이 값도 세션 프롬프트로 나가므로 순서가
+     * 흔들리면 캐시 접두사가 깨진다.
+     */
+    @Query(
+        """
+        SELECT c.id FROM test_case c
+        WHERE c.project_id = :projectId
+          AND NOT EXISTS (
+            SELECT 1 FROM test_scenario s, jsonb_array_elements(s.steps) e
+            WHERE s.project_id = :projectId
+              AND e->>'case_id' IS NOT NULL
+              AND (e->>'case_id')::bigint = c.id
+          )
+        ORDER BY c.id ASC
+        """
+    )
+    fun findUncoveredIdsByProjectId(projectId: Long): Flow<Long>
+
+    /**
+     * 미커버가 **어느 씬에 몇 건씩** 남았는지(ARTEL-403). 저작이 끝난 뒤 다음에 할 일을 권할 때 쓴다.
+     *
+     * id 목록만으로는 사람이 무엇이 남았는지 알 수 없다 — 번호는 화면에 내보내지도 않는 값이다.
+     * 씬은 사용자가 아는 말이라 "전투 화면 12건이 남았다"가 곧 다음 요청이 된다.
+     *
+     * 많은 순으로 낸다. 다음에 할 일을 고르는 자리라 큰 덩어리가 먼저 보이는 편이 쓸모 있다.
+     */
+    @Query(
+        """
+        SELECT c.scene AS scene, count(*) AS count
+        FROM test_case c
+        WHERE c.project_id = :projectId
+          AND NOT EXISTS (
+            SELECT 1 FROM test_scenario s, jsonb_array_elements(s.steps) e
+            WHERE s.project_id = :projectId
+              AND e->>'case_id' IS NOT NULL
+              AND (e->>'case_id')::bigint = c.id
+          )
+        GROUP BY c.scene
+        ORDER BY count(*) DESC, c.scene ASC
+        """
+    )
+    fun findScenesOfUncovered(projectId: Long): Flow<UncoveredScene>
+
+    /** 프로젝트의 전체 케이스 수(ARTEL-403). 커버리지의 분모다. */
+    suspend fun countByProjectId(projectId: Long): Long
+
+    /**
+     * 검증 상태별 건수(ARTEL-403). 화면의 두 축 중 "QA 런이 실제로 무엇을 냈는가" 쪽이다.
+     *
+     * 상태마다 한 번씩 부른다. 한 질의로 GROUP BY 하는 편이 짧지만 그러려면 (상태, 건수) 짝을
+     * 담을 타입이 필요한데, 있는 타입을 재사용하면 필드 이름이 거짓말을 하게 된다(`scene`에
+     * `VERIFIED`가 들어간다). 세 번 세는 값이 세 줄일 뿐이다.
+     */
+    suspend fun countByProjectIdAndVerificationStatus(projectId: Long, verificationStatus: String): Long
 
     /**
      * 명세 적재의 **보조** 키 — `spec_id`가 아직 없는 행만 고른다(ARTEL-329).
