@@ -578,6 +578,100 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(storedSteps(committed.id!!).map { it.caseId }).containsExactly(caseA)
     }
 
+    // ---- (e2) 저작 단계 중계(ARTEL-419) --------------------------------------------------------
+
+    /**
+     * 도구를 부르지 않는 턴에도 **종착 단계가 온다.**
+     *
+     * 화면이 멈춰 보이지 않는 조건이 이것이다. 가운데 단계(케이스 확인·작성)는 없을 수 있고 없는 것이
+     * 정상이지만, 시작하고 끝나지 않는 일은 있어서는 안 된다 — 그러면 스테퍼가 켜진 채 영영 남는다.
+     */
+    @Test
+    fun `도구를 부르지 않은 턴도 sent로 열고 종착 단계로 닫는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "RULE", "A")
+
+        val stream = openStream(client, projectId, runId, token)
+        framesToSend.add(
+            """{"type":"result","message":"했습니다","reviewed":{"in":[$caseA],"out":[]},""" +
+                """"scenarios":[{"title":"시나리오","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        postMessage(client, projectId, runId, token, "만들어줘")
+
+        assertThat(stream.awaitStage("saved")).isTrue()
+        assertThat(stream.stages()).containsExactly("sent", "checking", "saved")
+        stream.close()
+    }
+
+    /**
+     * 도구를 부른 턴은 **부른 사실과 답을 넘긴 사실**이 각각 단계가 된다.
+     *
+     * 턴을 보낸 뒤 결과가 올 때까지 오케스트레이션은 아무것도 보지 못한다. 그 침묵 한가운데서 도구
+     * 프레임 하나가 "멎지 않았다"의 유일한 증거라, 이 두 단계가 곧 이 이슈가 풀려는 문제 자체다.
+     */
+    @Test
+    fun `도구를 부른 턴은 looking_up_cases와 writing을 거친다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "RULE", "A")
+
+        val stream = openStream(client, projectId, runId, token)
+        // 목이 도구를 먼저 부르고, 우리가 답한 뒤에야 결과를 낸다 — 실제 순서 그대로다.
+        framesToSend.add("""{"type":"uncovered_cases","messageId":"unc-1"}""")
+        turnReplies.add(
+            """{"type":"result","message":"했습니다","reviewed":{"in":[$caseA],"out":[]},""" +
+                """"scenarios":[{"title":"시나리오","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        postMessage(client, projectId, runId, token, "남은 거 만들어줘")
+
+        assertThat(stream.awaitStage("saved")).isTrue()
+        assertThat(stream.stages())
+            .containsExactly("sent", "looking_up_cases", "writing", "checking", "saved")
+        stream.close()
+    }
+
+    /**
+     * 검사에 걸린 턴은 **다시 쓰는 중**과 **저장 안 함**이 화면에서 갈린다.
+     *
+     * 그리고 서버가 쓴 문장이 그 자리에서 보인다. 이 문장들은 결과를 중계한 뒤에 만들어지는데, 그때
+     * 화면은 이미 답을 다 받았다고 여겨 더 기다리지 않는다 — `notice`로 흘리지 않으면 "한 줄도
+     * 저장하지 않았습니다"가 새로고침 전까지 보이지 않는다.
+     */
+    @Test
+    fun `재작성과 저장 거부가 각각 단계와 notice로 온다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "RULE", "A")
+        val caseB = insertCase(projectId, "RULE", "B")
+
+        val stream = openStream(client, projectId, runId, token)
+        // B를 담겠다고 선언하고 A만 담았다. 재작성 응답도 B를 담지 않는다.
+        framesToSend.add(
+            """{"type":"result","message":"했습니다","reviewed":{"in":[$caseA,$caseB],"out":[]},""" +
+                """"scenarios":[{"title":"시나리오","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        turnReplies.add("""{"type":"result","message":"더 못 쓰겠습니다","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+
+        postMessage(client, projectId, runId, token, "전부 써줘")
+
+        assertThat(stream.awaitStage("blocked")).isTrue()
+        // 재작성을 한 번 시도한 뒤 막았다 — 두 상태가 별개로 보인다.
+        assertThat(stream.stages()).containsSubsequence("repairing", "blocked")
+        val notices = stream.notices()
+        assertThat(notices).anyMatch { it.contains("다시 작성하도록 요청했습니다") }
+        assertThat(notices).anyMatch { it.contains("저장하지 않았습니다") }
+        // 말만 하고 저장은 하지 않는다.
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).isEmpty()
+        stream.close()
+    }
+
     // ---- (f) 실행 계약: agentScenario가 steps를 TC 리졸브해 넘긴다 -------------------------------
 
     @Test
@@ -620,6 +714,55 @@ class TestScenarioReconcileIntegrationTest {
     }
 
     // ---- helpers ----------------------------------------------------------------------------
+
+    /**
+     * 구독 중인 SSE 스트림 하나(ARTEL-419 검증용). 받은 이벤트 본문을 순서대로 쌓아 둔다.
+     *
+     * 이벤트 **이름** 대신 본문의 `type`을 보는 이유는 `bodyToFlux(String)`이 `data:` 줄만 주기 때문이다.
+     * 둘은 같은 값이다 — [kr.artel.orchestration.testscenario.service.TestScenarioStreamManager]가
+     * `event.type`을 그대로 이벤트명으로 쓴다.
+     */
+    private inner class OpenStream(
+        private val subscription: reactor.core.Disposable,
+        private val received: CopyOnWriteArrayList<String>,
+    ) {
+        private fun typed(type: String) = received.mapNotNull { objectMapper.readTree(it) }
+            .filter { it.path("type").asText() == type }
+
+        fun stages(): List<String> = typed("progress").map { it.path("stage").asText() }
+
+        fun notices(): List<String> = typed("notice").map { it.path("message").asText() }
+
+        fun awaitStage(stage: String): Boolean {
+            repeat(60) {
+                if (stages().contains(stage)) return true
+                Thread.sleep(100)
+            }
+            return stages().contains(stage)
+        }
+
+        fun close() = subscription.dispose()
+    }
+
+    /**
+     * SSE를 구독하고 **스트림이 실제로 열릴 때까지 기다린다.**
+     *
+     * 기다리지 않으면 첫 단계(`sent`)를 놓친다. 스트림 sink는 구독 시점에 만들어지는데, 구독은
+     * 비동기라 바로 다음 줄에서 메시지를 보내면 아직 등록 전일 수 있다. 열렸다는 신호가 따로 없어
+     * 짧게 재운다 — 놓치면 단계 목록이 어긋나 테스트가 실패하므로 조용히 넘어가지는 않는다.
+     */
+    private fun openStream(client: WebClient, projectId: Long, runId: Long, token: String): OpenStream {
+        val received = CopyOnWriteArrayList<String>()
+        val subscription = client.get()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/stream")
+            .accept(MediaType.TEXT_EVENT_STREAM)
+            .cookie("artel_access_token", token)
+            .retrieve()
+            .bodyToFlux(String::class.java)
+            .subscribe { received.add(it) }
+        Thread.sleep(500)
+        return OpenStream(subscription, received)
+    }
 
     private suspend fun awaitFrame(predicate: (String) -> Boolean): String? {
         repeat(50) {
