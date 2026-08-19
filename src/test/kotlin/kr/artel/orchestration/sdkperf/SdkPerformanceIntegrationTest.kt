@@ -1,13 +1,17 @@
 package kr.artel.orchestration.sdkperf
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.sdkperf.dto.MetricGroupAvailability
+import kr.artel.orchestration.sdkperf.metrics.MetricGroupReader
 import kr.artel.orchestration.sdkperf.dto.SdkDeviceContextMessage
 import kr.artel.orchestration.sdkperf.dto.SdkDeviceInfo
 import kr.artel.orchestration.sdkperf.dto.SdkFrameTimes
 import kr.artel.orchestration.sdkperf.dto.SdkPerformanceMessage
 import kr.artel.orchestration.sdkperf.dto.SdkProcessMetrics
 import kr.artel.orchestration.sdkperf.dto.SdkRunStatus
+import kr.artel.orchestration.sdkperf.repository.SdkPerformanceRepository
 import kr.artel.orchestration.sdkperf.service.SdkPerfIngestService
 import kr.artel.orchestration.sdkperf.service.SdkPerfQueryService
 import org.assertj.core.api.Assertions.assertThat
@@ -32,8 +36,10 @@ import java.util.UUID
 class SdkPerformanceIntegrationTest {
 
     @Autowired lateinit var db: DatabaseClient
+    @Autowired lateinit var objectMapper: ObjectMapper
     @Autowired lateinit var ingest: SdkPerfIngestService
     @Autowired lateinit var query: SdkPerfQueryService
+    @Autowired lateinit var repository: SdkPerformanceRepository
 
     @Test
     fun `raw samples survive outside runs and the active run gets an incremental summary`(): Unit = runBlocking {
@@ -267,6 +273,120 @@ class SdkPerformanceIntegrationTest {
         exec("DELETE FROM app_user WHERE id=$stranger")
     }
 
+
+    /**
+     * 재연결 순서. `DEVICE_CONTEXT`는 표본보다 늦게 올 수 있고, 그때는 요약 행이 이미 있어
+     * `saveDevice`의 UPDATE 경로가 `collected_groups`를 옮긴다. 앞선 테스트들은 전부 반대
+     * 순서라 이 경로를 지나지 않았다.
+     */
+    @Test
+    fun `collectedGroups reaches the summary when the device context arrives after the first sample`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 3)
+
+        ingest.recordPerformance(instance, "ws", performance(process = null))
+        ingest.recordDeviceContext(
+            instance, "ws",
+            SdkDeviceContextMessage(
+                "DEVICE_CONTEXT", 1,
+                SdkDeviceInfo(isEditor = false, collectedGroups = listOf("renderCounters"))
+            )
+        )
+
+        val groups = query.runDetail(run, world.user)!!.summary!!.groups
+        assertThat(groups.getValue("renderCounters").availability).isEqualTo(MetricGroupAvailability.UNSUPPORTED)
+        assertThat(groups.getValue("gc").availability).isEqualTo(MetricGroupAvailability.NOT_REPORTED)
+
+        world.cleanUp()
+    }
+
+    /**
+     * 봉투만 오고 숫자 잎이 없는 군은 `MEASURED`가 아니다.
+     *
+     * 계약이 `MEASURED`를 "값이 온 적 있음"으로 정의한다. 봉투만으로 `MEASURED`를 주면
+     * `sampleRatio: 1.0`에 `metrics: {}`라는, 재보니 아무것도 없더라는 뜻의 응답이 나간다.
+     * `source`는 값이 없어도 알 수 있으므로 잃지 않는다.
+     */
+    @Test
+    fun `a group envelope carrying no numeric leaf is UNSUPPORTED rather than MEASURED`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+        ingest.recordPerformance(instance, "ws", performanceFromJson(
+            """{"renderCounters":{"source":"PROFILER_RECORDER"}}"""))
+
+        val group = query.runDetail(run, world.user)!!.summary!!.groups.getValue("renderCounters")
+        assertThat(group.availability).isEqualTo(MetricGroupAvailability.UNSUPPORTED)
+        assertThat(group.metrics).isNull()
+        assertThat(group.source).isEqualTo("PROFILER_RECORDER")
+
+        world.cleanUp()
+    }
+
+    /**
+     * 상한은 모르는 payload를 받아들이는 대가를 막는 장치다. 넘치면 잘라내고 나머지는 정상
+     * 저장해야 한다 — 표본을 통째로 버리면 프레임 지표까지 함께 사라진다.
+     */
+    @Test
+    fun `a payload past the group and leaf caps is trimmed instead of failing the sample`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+        val manyGroups = (1..MetricGroupReader.MAX_GROUPS_PER_SAMPLE + 8)
+            .joinToString(",") { """"g$it":{"v":$it}""" }
+        val fatGroup = """"gc":{${(1..MetricGroupReader.MAX_LEAVES_PER_GROUP + 8).joinToString(",") { """"leaf$it":$it""" }}}"""
+
+        ingest.recordPerformance(instance, "ws", performanceFromJson("{$manyGroups,$fatGroup}"))
+
+        val detail = query.runDetail(run, world.user)!!
+        // 프레임 지표는 살아 있다. 이것이 상한의 목적이다.
+        assertThat(detail.summary!!.sampleCount).isEqualTo(1)
+        assertThat(count("SELECT COUNT(*) FROM sdk_performance_sample_group"))
+            .isEqualTo(MetricGroupReader.MAX_GROUPS_PER_SAMPLE.toLong())
+        assertThat(count("SELECT COUNT(*) FROM sdk_performance_run_group_metric WHERE group_name='gc'"))
+            .isLessThanOrEqualTo(MetricGroupReader.MAX_LEAVES_PER_GROUP.toLong())
+
+        world.cleanUp()
+    }
+
+    /**
+     * 같은 경로로 접히는 두 키(`{"a":{"b":1},"a.b":2}`)가 한 upsert 문장에 두 번 들어가면
+     * Postgres가 21000으로 문장 전체를 거부하고, 트랜잭션이 롤백돼 표본이 통째로 사라진다.
+     * 모르는 payload를 받는 것이 이 기능의 전제라 방어되어 있어야 한다.
+     */
+    @Test
+    fun `leaf paths that collide after flattening do not abort the sample`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+
+        ingest.recordPerformance(instance, "ws", performanceFromJson("""{"gc":{"a":{"b":1},"a.b":2}}"""))
+
+        assertThat(query.runDetail(run, world.user)!!.summary!!.sampleCount).isEqualTo(1)
+        assertThat(count("SELECT COUNT(*) FROM sdk_performance_run_group_metric WHERE group_name='gc' AND leaf_path='a.b'"))
+            .isEqualTo(1)
+
+        world.cleanUp()
+    }
+
+    /** `source`가 컬럼 폭을 넘겨도 표본이 사라지면 안 된다. 잘라서 담는다. */
+    @Test
+    fun `an over long source is truncated rather than rolling back the sample`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+        val long = "E".repeat(MetricGroupReader.MAX_SOURCE_LENGTH + 20)
+
+        ingest.recordPerformance(instance, "ws", performanceFromJson("""{"renderCounters":{"source":"$long","drawCalls":10}}"""))
+
+        val group = query.runDetail(run, world.user)!!.summary!!.groups.getValue("renderCounters")
+        assertThat(group.availability).isEqualTo(MetricGroupAvailability.MEASURED)
+        assertThat(group.source).hasSize(MetricGroupReader.MAX_SOURCE_LENGTH)
+
+        world.cleanUp()
+    }
+
     // ---- 시드 ----
 
     private inner class World(val user: Long, val project: Long, val build: Long, val testRun: Long) {
@@ -279,6 +399,9 @@ class SdkPerformanceIntegrationTest {
             "INSERT INTO qa_run(test_run_id,game_instance_id,started_by,status,started_at) " +
                 "VALUES($testRun,$instance,$user,'RUNNING',now()-interval '$startedSecondsAgo seconds') RETURNING id"
         )
+
+        suspend fun completeRun(run: Long) =
+            exec("UPDATE qa_run SET status='COMPLETED',completed_at=now() WHERE id=$run")
 
         /**
          * 삭제 순서는 FK가 정한다. qa_run을 지우면 요약·시계열·budget 도수는 CASCADE로 따라
@@ -320,6 +443,220 @@ class SdkPerformanceIntegrationTest {
         status = SdkRunStatus(isFocused = true, batteryStatus = "Charging"),
         process = process
     )
+
+
+    // ---- 지표군 확장 (ARTEL-435) ----
+
+    /**
+     * 이 작업의 핵심 성질. **계약에도 서버 코드에도 없는 군을 보내도 저장되고 응답에 나온다.**
+     *
+     * 이것이 깨지면 SDK가 지표군을 하나 더할 때마다 서버를 먼저 고쳐야 값이 남고, 그 구조가
+     * 곧 "군 하나 추가에 마이그레이션 하나"로 돌아간다.
+     *
+     * 일부러 실제 JSON에서 역직렬화한다. `@JsonAnySetter`가 끊기면 군이 조용히 사라지는데,
+     * 코틀린 생성자로 만든 객체로는 그 회귀가 잡히지 않는다.
+     */
+    @Test
+    fun `an undeclared metric group survives ingestion and appears in the response`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+
+        ingest.recordPerformance(instance, "ws", performanceFromJson("""{"somethingNobodyDeclared":{"weird":12.5}}"""))
+
+        assertThat(count("SELECT COUNT(*) FROM sdk_performance_sample_group WHERE group_name='somethingNobodyDeclared'"))
+            .isEqualTo(1)
+        val group = query.runDetail(run, world.user)!!.summary!!.groups.getValue("somethingNobodyDeclared")
+        assertThat(group.availability).isEqualTo(MetricGroupAvailability.MEASURED)
+        assertThat(group.sampleRatio).isEqualTo(1.0)
+        // 모르는 잎의 기본 롤업은 평균과 최대다.
+        assertThat(group.metrics).containsEntry("weirdMean", 12.5).containsEntry("weirdMax", 12.5)
+
+        world.cleanUp()
+    }
+
+    /**
+     * `null`(값 하나 없음)·`0`(재봤더니 0) 위의 세 번째 상태.
+     *
+     * "재려 했으나 카운터가 없었다"와 "이 SDK는 이 군을 모른다"를 뭉개면, 값이 사라졌을 때
+     * 게임 코드 탓인지 SDK 탓인지 알 수 없어 빌드 간 회귀 판단이 성립하지 않는다.
+     */
+    @Test
+    fun `collectedGroups separates a group that could not be measured from one the SDK never collects`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+        ingest.recordDeviceContext(
+            instance, "ws",
+            SdkDeviceContextMessage(
+                "DEVICE_CONTEXT", 1,
+                SdkDeviceInfo(isEditor = false, collectedGroups = listOf("gc", "renderCounters"))
+            )
+        )
+
+        // gc만 실제로 값이 온다. renderCounters는 선언됐지만 이 플랫폼에서 카운터가 없었다.
+        ingest.recordPerformance(instance, "ws", performanceFromJson("""{"gc":{"gcUsedBytes":1024}}"""))
+
+        val groups = query.runDetail(run, world.user)!!.summary!!.groups
+        assertThat(groups.getValue("gc").availability).isEqualTo(MetricGroupAvailability.MEASURED)
+        assertThat(groups.getValue("renderCounters").availability).isEqualTo(MetricGroupAvailability.UNSUPPORTED)
+        assertThat(groups.getValue("renderCounters").metrics).isNull()
+        // 선언조차 되지 않은 군.
+        assertThat(groups.getValue("sdkOverhead").availability).isEqualTo(MetricGroupAvailability.NOT_REPORTED)
+
+        world.cleanUp()
+    }
+
+    /** `collectedGroups` 이전 SDK. 새 군을 안 보내는 것이지 못 재는 것이 아니다. */
+    @Test
+    fun `an SDK that predates collectedGroups reports every new group as NOT_REPORTED`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+        ingest.recordDeviceContext(
+            instance, "ws",
+            SdkDeviceContextMessage("DEVICE_CONTEXT", 1, SdkDeviceInfo(isEditor = false, sdkVersion = "0.1.0"))
+        )
+        ingest.recordPerformance(instance, "ws", performance(process = null))
+
+        val groups = query.runDetail(run, world.user)!!.summary!!.groups
+        assertThat(groups.getValue("gc").availability).isEqualTo(MetricGroupAvailability.NOT_REPORTED)
+        assertThat(groups.getValue("renderCounters").availability).isEqualTo(MetricGroupAvailability.NOT_REPORTED)
+
+        world.cleanUp()
+    }
+
+    /**
+     * 델타 카운터는 합, 그 밖은 평균·최대.
+     *
+     * GC가 런 전체에서 몇 번 돌았는지가 필요하지, 창당 평균 몇 번인지가 필요한 것이 아니다.
+     */
+    @Test
+    fun `counter leaves sum across samples while gauge leaves average`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 3)
+
+        ingest.recordPerformance(instance, "ws", performanceFromJson(
+            """{"gc":{"collections":{"gen0":3,"gen1":1,"gen2":0},"allocatedInFrameBytes":1000}}"""))
+        ingest.recordPerformance(instance, "ws", performanceFromJson(
+            """{"gc":{"collections":{"gen0":5,"gen1":0,"gen2":0},"allocatedInFrameBytes":3000}}"""))
+
+        val metrics = query.runDetail(run, world.user)!!.summary!!.groups.getValue("gc").metrics!!
+        @Suppress("UNCHECKED_CAST")
+        val collections = metrics["collections"] as Map<String, Any?>
+        assertThat(collections).containsEntry("gen0", 8L).containsEntry("gen1", 1L)
+        // gen2는 두 표본 모두 0이다. 없음이 아니라 "재봤더니 0"이므로 자리를 지킨다.
+        assertThat(collections).containsEntry("gen2", 0L)
+        assertThat(metrics).containsEntry("allocatedInFrameBytesMean", 2000.0)
+        assertThat(metrics).containsEntry("allocatedInFrameBytesMax", 3000.0)
+
+        world.cleanUp()
+    }
+
+    /**
+     * 출처가 다른 같은 이름의 값을 한 필드에 담지 않는다.
+     *
+     * Editor `UnityStats`의 draw call과 Standalone `ProfilerRecorder`의 draw call은 이름이 같아도
+     * 다른 값이다. 화면이 두 런을 같은 선에 잇지 않으려면 응답에 출처가 있어야 한다.
+     */
+    @Test
+    fun `renderCounters carries its source through to the build trend`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+        ingest.recordDeviceContext(
+            instance, "ws", SdkDeviceContextMessage("DEVICE_CONTEXT", 1, SdkDeviceInfo(isEditor = false))
+        )
+        ingest.recordPerformance(instance, "ws", performanceFromJson(
+            """{"renderCounters":{"source":"PROFILER_RECORDER","drawCalls":812}}"""))
+        world.completeRun(run)
+
+        val trend = query.buildTrend(world.project, world.build, world.user)!!
+        val group = trend.runs.single().groups.getValue("renderCounters")
+        assertThat(group.source).isEqualTo("PROFILER_RECORDER")
+        assertThat(group.metrics).containsEntry("drawCallsMean", 812.0)
+
+        world.cleanUp()
+    }
+
+    /** 표본이 없던 버킷에는 군 키 자체가 없다. 빈 군을 채우면 응답이 버킷 수 × 군 수로 부푼다. */
+    @Test
+    fun `series points carry group metrics only for buckets that had samples`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 4)
+        ingest.recordPerformance(instance, "ws", performanceFromJson("""{"gc":{"gcUsedBytes":2048}}"""))
+
+        val points = query.runDetail(run, world.user)!!.series.points
+        assertThat(points.count { it.groups.containsKey("gc") }).isEqualTo(1)
+        assertThat(points.first { it.groups.containsKey("gc") }.groups.getValue("gc").metrics)
+            .containsEntry("gcUsedBytesMax", 2048.0)
+        // 나머지 점은 미측정 구간이라 군이 비어 있다.
+        assertThat(points.any { it.groups.isEmpty() }).isTrue()
+
+        world.cleanUp()
+    }
+
+    /**
+     * 보존 정책은 원본만 지운다 (ARTEL-434).
+     *
+     * 요약과 시계열이 함께 사라지면 오래된 런의 상세 화면이 통째로 비어, 보존 정책이 조회 계약을
+     * 바꿔 버린다. 지워지는 것은 표본 단위 드릴다운뿐이어야 한다.
+     */
+    @Test
+    fun `retention removes raw samples while the run detail response stays whole`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+        ingest.recordPerformance(instance, "ws", performanceFromJson("""{"gc":{"gcUsedBytes":4096}}"""))
+        exec("UPDATE sdk_performance_sample SET received_at=now()-interval '90 days' WHERE qa_run_id=$run")
+
+        val deleted = repository.deleteSamplesOlderThan(java.time.Instant.now().minus(java.time.Duration.ofDays(30)), 1000)
+
+        assertThat(deleted).isEqualTo(1)
+        assertThat(count("SELECT COUNT(*) FROM sdk_performance_sample WHERE qa_run_id=$run")).isEqualTo(0)
+        // 군 payload는 원본을 따라 CASCADE로 사라진다.
+        assertThat(count("SELECT COUNT(*) FROM sdk_performance_sample_group")).isEqualTo(0)
+
+        val detail = query.runDetail(run, world.user)!!
+        assertThat(detail.summary!!.sampleCount).isEqualTo(1)
+        assertThat(detail.summary!!.groups.getValue("gc").availability).isEqualTo(MetricGroupAvailability.MEASURED)
+        assertThat(detail.series.points.any { it.groups.containsKey("gc") }).isTrue()
+
+        world.cleanUp()
+    }
+
+    /** 최상위 스칼라는 군이 아니다. `type`/`id`가 군으로 잡히면 롤업 테이블이 오염된다. */
+    @Test
+    fun `top level scalars are not mistaken for metric groups`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("main")
+        val run = world.startRun(instance, startedSecondsAgo = 2)
+        ingest.recordPerformance(instance, "ws", performanceFromJson("""{"gc":{"gcUsedBytes":1}}"""))
+
+        val measured = query.runDetail(run, world.user)!!.summary!!.groups
+            .filterValues { it.availability == MetricGroupAvailability.MEASURED }
+        assertThat(measured.keys).containsExactly("gc")
+
+        world.cleanUp()
+    }
+
+    /**
+     * 지표군은 `@JsonAnySetter`로만 들어온다. 코틀린 생성자로 만든 객체는 그 경로를 지나지 않아
+     * 역직렬화가 끊겨도 테스트가 통과해 버린다. 실제 와이어 JSON에서 만든다.
+     *
+     * @param groupsJson `{"gc":{...}}` 형태. 최상위 봉투에 그대로 합쳐진다.
+     */
+    private fun performanceFromJson(groupsJson: String): SdkPerformanceMessage {
+        val envelope = """{"type":"PERFORMANCE","id":1,""" +
+            """"frameTimes":{"frameCount":60,"sampledMs":1000.0,"meanMs":16.67,"minMs":15.0,"maxMs":40.0,""" +
+            """"p95Ms":18.0,"p99Ms":30.0,"onePercentLowFps":25.0,"pointOnePercentLowFps":25.0,""" +
+            """"hitchCount":2,"hitchThresholdMs":33.33,"budgetMs":16.67},""" +
+            """"status":{"isFocused":true,"batteryStatus":"Charging"}"""
+        val groups = groupsJson.trim().removePrefix("{").removeSuffix("}")
+        return objectMapper.readValue("$envelope,$groups}", SdkPerformanceMessage::class.java)
+    }
 
     private suspend fun id(sql: String): Long =
         db.sql(sql).map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }.flow().toList().single()

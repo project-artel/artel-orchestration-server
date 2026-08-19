@@ -55,11 +55,11 @@ Fill this document during project initialization. Agents must verify commands ag
 | Purpose | Command |
 |---|---|
 | Install dependencies | TODO |
-| Run locally | TODO |
+| Run locally | `docker start artel-local-postgres artel-local-redis && ./mvnw spring-boot:run` — 자세한 것은 `.agents/docs/local-stack.md` |
 | Format | TODO |
 | Lint | TODO |
 | Type-check | TODO |
-| Unit tests | TODO |
+| Unit tests | `./mvnw test` (Testcontainers가 Postgres를 띄우므로 docker 필요) |
 | Integration tests | TODO |
 | Build | TODO |
 | Set up Jira credentials | `cp .jira.env.example .jira.env` |

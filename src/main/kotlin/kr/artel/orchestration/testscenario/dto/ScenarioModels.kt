@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testscenario.dto
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonValue
 
 /**
  * 시나리오 스텝 하나 = **행위 하나**(재설계 2026-08-07). 시나리오는 스텝의 순서 있는 집합이고,
@@ -84,14 +85,59 @@ data class ReviewedCases(
 )
 
 /**
- * SSE로 FE에 전달하는 이벤트 봉투. Agent 응답(result/error)을 타입화한다.
+ * 저작 한 턴이 지나는 단계(ARTEL-419). `progress` 이벤트의 유일한 내용이다.
  *
- * - `type == "result"` → `message` + `scenarios`(0개 이상. 빈 배열은 "질문/거절/무매치" 같은 정상 턴이다)
- * - `type == "error"`  → `code` + `detail`
+ * **오케스트레이션이 실제로 본 것만 단계가 된다.** 모델이 무엇을 생각하는지는 볼 수 없고, 볼 필요도
+ * 없다 — 사용자가 알고 싶은 것은 "느린 것인가 멎은 것인가"이고, 그 답은 턴의 경계에서 나온다.
+ *
+ * 순서는 [SENT] → ([LOOKING_UP_CASES] → [WRITING]) → [CHECKING] → 종착([SAVED]/[REPAIRING]/[BLOCKED])이지만
+ * **가운데 둘은 없을 수 있다.** 도구를 부르지 않는 턴이 정상이기 때문이다. 그래서 화면은 고정된
+ * 눈금을 그려 놓고 채우는 것이 아니라 **받은 단계만** 그린다 — 일어나지 않은 일을 지나갔다고
+ * 말하지 않기 위해서다.
+ */
+enum class AuthoringStage(@get:JsonValue val wire: String) {
+    /** 턴을 Agent로 보냈다. 여기서부터 응답이 오기 전까지 오케스트레이션은 아무것도 보지 못한다. */
+    SENT("sent"),
+
+    /** Agent가 케이스를 물어봤다(`uncovered_cases`/`test_case_search`). 멎지 않았다는 첫 증거다. */
+    LOOKING_UP_CASES("looking_up_cases"),
+
+    /**
+     * 케이스를 넘겨줬고 아직 결과가 오지 않았다.
+     *
+     * **이것만은 관측이 아니라 추론이다.** 넘겨준 자료로 쓰고 있는지, 도구를 한 번 더 부를지
+     * 오케스트레이션은 알지 못한다. 아는 것은 자료가 건너갔다는 사실뿐이라 문구도 거기까지만 말한다.
+     */
+    WRITING("writing"),
+
+    /** 결과가 도착해 전 건 판정과 대조하는 중(ARTEL-403). */
+    CHECKING("checking"),
+
+    /** 검사를 통과해 시나리오를 저장했다. */
+    SAVED("saved"),
+
+    /** 빠진 부분을 다시 쓰라고 되돌려 보냈다. 종착이 아니다 — 결과가 한 번 더 온다. */
+    REPAIRING("repairing"),
+
+    /** 검사를 통과하지 못했고 더 고칠 수 없어 **한 줄도 저장하지 않았다.** */
+    BLOCKED("blocked"),
+}
+
+/**
+ * SSE로 FE에 전달하는 이벤트 봉투. Agent 응답(result/error)과 서버가 만든 알림을 타입화한다.
+ *
+ * - `type == "result"`   → `message` + `scenarios`(0개 이상. 빈 배열은 "질문/거절/무매치" 같은 정상 턴이다)
+ * - `type == "error"`    → `code` + `detail`
+ * - `type == "progress"` → `stage`(ARTEL-419)
+ * - `type == "notice"`   → `message`. 서버가 쓴 ASSISTANT 메시지다(재작성 통보·검사 실패·잔량 안내).
+ *
+ * `type`이 그대로 SSE 이벤트명이 되므로([TestScenarioStreamManager.emit]) 새 타입을 더하는 것은
+ * **하위 호환이 공짜다** — 모르는 이벤트명은 `EventSource`가 리스너 없이 흘려보낸다.
  *
  * @property reviewed 전 건 판정(2단계). **null이면 검사를 건너뛴다** — 이 필드를 보내지 않는 구버전
  *   Agent와 함께 배포되기 위해서다. 검사를 끄는 스위치가 이 null 하나뿐이라 롤백이 Agent
  *   재배포만으로 끝난다.
+ * @property stage `progress`의 내용(ARTEL-419).
  */
 data class ScenarioStreamEvent(
     val type: String,
@@ -99,5 +145,6 @@ data class ScenarioStreamEvent(
     val scenarios: List<ScenarioResult>? = null,
     val reviewed: ReviewedCases? = null,
     val code: String? = null,
-    val detail: String? = null
+    val detail: String? = null,
+    val stage: AuthoringStage? = null
 )
