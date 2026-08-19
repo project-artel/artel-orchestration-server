@@ -188,3 +188,14 @@ artel:
     capture-download-url-ttl: ${ARTEL_S3_CAPTURE_DOWNLOAD_URL_TTL:PT30M}
     # 화면 한 장. 전체 화면 최장 변 1024 JPEG면 수백 KB라 여유가 크다.
     max-capture-bytes: ${ARTEL_CAPTURE_MAX_BYTES:5242880}
+
+  # 원본 성능 표본 보존 정책 (ARTEL-435). 요약·시계열은 영구 보존이라 조회 응답은 영향받지
+  # 않는다. 지워지는 것은 표본 단위 드릴다운뿐이다.
+  # 배포의 부수 효과로 운영 데이터가 지워지지 않도록 기본값은 꺼짐이다.
+  sdk-performance:
+    retention:
+      enabled: ${ARTEL_SDK_PERFORMANCE_RETENTION_ENABLED:false}
+      days: ${ARTEL_SDK_PERFORMANCE_RETENTION_DAYS:30}
+      batch-size: ${ARTEL_SDK_PERFORMANCE_RETENTION_BATCH_SIZE:5000}
+      max-rows-per-tick: ${ARTEL_SDK_PERFORMANCE_RETENTION_MAX_ROWS_PER_TICK:500000}
+      interval-millis: ${ARTEL_SDK_PERFORMANCE_RETENTION_INTERVAL_MILLIS:3600000}

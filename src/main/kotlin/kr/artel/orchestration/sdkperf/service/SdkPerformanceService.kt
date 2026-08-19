@@ -1,6 +1,9 @@
 package kr.artel.orchestration.sdkperf.service
 
 import kr.artel.orchestration.sdkperf.dto.GcCollectionsResponse
+import kr.artel.orchestration.sdkperf.dto.MetricGroupAvailability
+import kr.artel.orchestration.sdkperf.dto.PerformanceGroupResponse
+import kr.artel.orchestration.sdkperf.dto.PerformancePointGroupResponse
 import kr.artel.orchestration.sdkperf.dto.PerformanceBuildRunResponse
 import kr.artel.orchestration.sdkperf.dto.PerformanceBuildTrendResponse
 import kr.artel.orchestration.sdkperf.dto.PerformanceDeviceResponse
@@ -10,9 +13,16 @@ import kr.artel.orchestration.sdkperf.dto.PerformanceSeriesResponse
 import kr.artel.orchestration.sdkperf.dto.PerformanceSummaryResponse
 import kr.artel.orchestration.sdkperf.dto.SdkDeviceContextMessage
 import kr.artel.orchestration.sdkperf.dto.SdkPerformanceMessage
+import kr.artel.orchestration.sdkperf.metrics.KnownMetricGroups
+import kr.artel.orchestration.sdkperf.metrics.MetricGroupReader
+import kr.artel.orchestration.sdkperf.metrics.MetricRollupAssembler
 import kr.artel.orchestration.sdkperf.repository.DeviceRow
+import kr.artel.orchestration.sdkperf.repository.GroupMetricRow
+import kr.artel.orchestration.sdkperf.repository.GroupRow
+import kr.artel.orchestration.sdkperf.repository.SeriesGroupRow
 import kr.artel.orchestration.sdkperf.repository.RunRow
 import kr.artel.orchestration.sdkperf.repository.SdkPerformanceRepository
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
@@ -38,6 +48,8 @@ class SdkPerfIngestService(
     private val repository: SdkPerformanceRepository,
     private val clock: Clock
 ) {
+    private val logger = LoggerFactory.getLogger(SdkPerfIngestService::class.java)
+
     /**
      * 표본은 언제나 저장하고, 도착 시각에 진행 중이던 런이 있을 때만 집계에 반영한다.
      *
@@ -48,8 +60,21 @@ class SdkPerfIngestService(
     suspend fun recordPerformance(instanceId: Long, sessionId: String, message: SdkPerformanceMessage) {
         val receivedAt = Instant.now(clock)
         val runId = repository.activeRunId(instanceId)
-        repository.insertSample(instanceId, sessionId, runId, receivedAt, message)
-        if (runId != null) repository.aggregateSample(runId, instanceId, receivedAt, message)
+        val sampleId = repository.insertSample(instanceId, sessionId, runId, receivedAt, message)
+        // 서버가 아는 군만 남기지 않는다. 모르는 군도 원본에 그대로 들어가고 롤업까지 흐른다.
+        val groups = MetricGroupReader.read(message.groups)
+        // 상한을 넘겨 잘린 것을 조용히 넘기면, 정상적인 군이 몇 개 사라진 것을 아무도 모른다.
+        if (message.groups.size > groups.size) {
+            logger.warn(
+                "성능 지표군 상한 초과로 {}개 중 {}개만 저장 [instanceId={}]",
+                message.groups.size, groups.size, instanceId
+            )
+        }
+        if (sampleId != null) repository.insertSampleGroups(sampleId, groups)
+        if (runId != null) {
+            repository.aggregateSample(runId, instanceId, receivedAt, message)
+            repository.aggregateSampleGroups(runId, receivedAt, groups)
+        }
     }
 
     @Transactional
@@ -77,13 +102,18 @@ class SdkPerfQueryService(
         val points =
             if (run.sampleCount == null) emptyList()
             else gapFilledPoints(runId, run.startedAt, durationMs, bucketMs)
+        val groups = groupsFor(
+            run,
+            repository.findRunGroups(listOf(runId)),
+            repository.findRunGroupMetrics(listOf(runId))
+        )
         return PerformanceRunDetailResponse(
             runId = run.runId,
             gameInstanceId = run.gameInstanceId,
             gameBuildId = run.gameBuildId,
             startedAt = run.startedAt,
             completedAt = run.completedAt,
-            summary = run.summary(durationMs),
+            summary = run.summary(durationMs, groups),
             device = repository.findDevice(run.gameInstanceId, end)?.toResponse(),
             series = PerformanceSeriesResponse(bucketMs, points)
         )
@@ -92,10 +122,15 @@ class SdkPerfQueryService(
     suspend fun buildTrend(projectId: Long, gameBuildId: Long, userId: Long): PerformanceBuildTrendResponse? {
         if (!repository.buildAccessible(projectId, gameBuildId, userId)) return null
         // isEditor 런 제외는 조회 SQL이 한다. 여기서 다시 거르지 않는다.
-        val runs = repository.findBuildRuns(projectId, gameBuildId, userId).mapNotNull { run ->
+        val buildRuns = repository.findBuildRuns(projectId, gameBuildId, userId)
+        // 런마다 따로 읽으면 조회가 런 수에 비례한다. 두 번에 나눠 한꺼번에 읽고 메모리에서 짝짓는다.
+        val runIds = buildRuns.map { it.runId }
+        val groupRows = repository.findRunGroups(runIds)
+        val metricRows = repository.findRunGroupMetrics(runIds)
+        val runs = buildRuns.mapNotNull { run ->
             val durationMs = max(0L, Duration.between(run.startedAt, run.completedAt ?: Instant.now(clock)).toMillis())
             // 이 목록은 요약 테이블에서 나오므로 표본 없는 런은 애초에 들어오지 않는다.
-            run.summary(durationMs)?.let { summary ->
+            run.summary(durationMs, groupsFor(run, groupRows, metricRows))?.let { summary ->
                 PerformanceBuildRunResponse(
                     runId = run.runId,
                     startedAt = run.startedAt,
@@ -111,7 +146,8 @@ class SdkPerfQueryService(
                     workingSetBytesMax = summary.workingSetBytesMax,
                     coverageRatio = summary.coverageRatio,
                     dischargingRatio = summary.dischargingRatio,
-                    processSampleRatio = summary.processSampleRatio
+                    processSampleRatio = summary.processSampleRatio,
+                    groups = summary.groups
                 )
             }
         }
@@ -138,11 +174,13 @@ class SdkPerfQueryService(
     ): List<PerformancePointResponse> {
         val cells = repository.findSeries(runId, bucketMs / BASE_BUCKET_MS)
             .associateBy { bucketIndex(it.at, bucketMs) }
+        val groupCells = repository.findSeriesGroups(runId, bucketMs / BASE_BUCKET_MS)
+            .groupBy { bucketIndex(it.at, bucketMs) }
         return generateSequence(0L) { it + bucketMs }
             .takeWhile { it <= durationMs }
             .map { atMs ->
                 val cell = cells[bucketIndex(startedAt.plusMillis(atMs), bucketMs)]
-                    ?: return@map PerformancePointResponse(atMs, null, null, null, null, null, null, false)
+                    ?: return@map PerformancePointResponse(atMs, null, null, null, null, null, null, false, emptyMap())
                 PerformancePointResponse(
                     atMs = atMs,
                     frameMeanMs = ratio(cell.frameTimeSum, cell.frames.toDouble()),
@@ -151,16 +189,81 @@ class SdkPerfQueryService(
                     hitchCount = cell.hitches,
                     cpuPercent = ratio(cell.cpuSum, cell.cpuMs),
                     workingSetBytes = cell.workingSet,
-                    isFocused = cell.focused > 0
+                    isFocused = cell.focused > 0,
+                    groups = pointGroups(groupCells[bucketIndex(startedAt.plusMillis(atMs), bucketMs)])
                 )
             }
             .toList()
     }
 
+    /**
+     * 이 버킷에 값이 온 군만 싣는다. 표본이 없는 군은 키 자체가 빠진다 — 점 단위에서 빈 군을
+     * 채우면 응답이 버킷 수 × 군 수만큼 부풀고, 화면은 어차피 값의 유무로 공백을 판정한다.
+     */
+    private fun pointGroups(rows: List<SeriesGroupRow>?): Map<String, PerformancePointGroupResponse> =
+        rows.orEmpty().groupBy { it.group }.mapValues { (group, leaves) ->
+            PerformancePointGroupResponse(
+                MetricRollupAssembler.metrics(
+                    group,
+                    leaves.map { MetricRollupAssembler.LeafRollup(it.leafPath, it.sampleCount, it.sum, it.max) }
+                )
+            )
+        }
+
     /** 셀 묶음은 SQL이 epoch 기준으로 하므로 조회 쪽 색인도 같은 기준이어야 짝이 맞는다. */
     private fun bucketIndex(at: Instant, bucketMs: Long): Long = Math.floorDiv(at.toEpochMilli(), bucketMs)
 
-    private fun RunRow.summary(durationMs: Long): PerformanceSummaryResponse? {
+    /**
+     * 군 하나의 가용성을 판정한다 (ARTEL-435).
+     *
+     * `MEASURED`는 값이 온 적 있는 군, `UNSUPPORTED`는 SDK가 수집 대상으로 선언했는데 값이 한
+     * 번도 안 온 군, `NOT_REPORTED`는 선언조차 하지 않은 군이다. 뒤의 둘을 뭉개면 값이 사라졌을
+     * 때 게임 코드 탓인지 SDK 탓인지 알 수 없다.
+     *
+     * 이름 목록은 [KnownMetricGroups]와 SDK가 선언한 목록, 실제로 값이 온 군의 합집합이다.
+     * 목록 밖의 군도 값이 오면 그대로 실린다 — 서버 코드를 고치지 않아도 새 군이 흐른다.
+     */
+    private fun groupsFor(
+        run: RunRow,
+        groupRows: List<GroupRow>,
+        metricRows: List<GroupMetricRow>
+    ): Map<String, PerformanceGroupResponse> {
+        val samples = run.sampleCount ?: return emptyMap()
+        // 선언 목록도 상한을 건다. payload 쪽 군만 막고 선언 쪽을 열어 두면, 수천 개를 선언한
+        // SDK 하나가 모든 런 상세와 빌드 추세 응답을 부풀린다.
+        val declared = run.collectedGroups.orEmpty().take(MetricGroupReader.MAX_GROUPS_PER_SAMPLE).toSet()
+        val seen = groupRows.filter { it.runId == run.runId }.associateBy { it.name }
+        val leaves = metricRows.filter { it.runId == run.runId }.groupBy { it.group }
+        return (KnownMetricGroups.names + declared + seen.keys).associateWith { name ->
+            val row = seen[name]
+            when {
+                row != null && row.sampleCount > 0 -> PerformanceGroupResponse(
+                    availability = MetricGroupAvailability.MEASURED,
+                    sampleRatio = if (samples > 0) row.sampleCount.toDouble() / samples else 0.0,
+                    metrics = MetricRollupAssembler.metrics(
+                        name,
+                        leaves[name].orEmpty().map {
+                            MetricRollupAssembler.LeafRollup(it.leafPath, it.sampleCount, it.sum, it.max)
+                        }
+                    ),
+                    source = row.source
+                )
+                // 선언했는데 값이 없다 = 재려 했으나 이 플랫폼·빌드에 카운터가 없었다.
+                // 봉투만 오고 숫자 잎이 없던 군도 여기다 — 값이 온 적 없으므로 MEASURED가 아니다.
+                name in declared || row != null -> unmeasured(MetricGroupAvailability.UNSUPPORTED, row?.source)
+                // 선언조차 없다 = 이 SDK는 이 군을 모른다. collected_groups가 NULL인 구버전도 여기다.
+                else -> unmeasured(MetricGroupAvailability.NOT_REPORTED, null)
+            }
+        }
+    }
+
+    private fun unmeasured(availability: MetricGroupAvailability, source: String?) =
+        PerformanceGroupResponse(availability, sampleRatio = 0.0, metrics = null, source = source)
+
+    private fun RunRow.summary(
+        durationMs: Long,
+        groups: Map<String, PerformanceGroupResponse>
+    ): PerformanceSummaryResponse? {
         val samples = sampleCount ?: return null
         val covered = coveredMs ?: 0.0
         val frames = (frameCount ?: 0).toDouble()
@@ -185,7 +288,8 @@ class SdkPerfQueryService(
             workingSetBytesMax = workingSetMax,
             gcCollections = gcCollections(processSamples),
             dischargingRatio = ratio((dischargingCount ?: 0).toDouble(), samples.toDouble()) ?: 0.0,
-            processSampleRatio = ratio(processSamples.toDouble(), samples.toDouble()) ?: 0.0
+            processSampleRatio = ratio(processSamples.toDouble(), samples.toDouble()) ?: 0.0,
+            groups = groups
         )
     }
 
