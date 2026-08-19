@@ -4,6 +4,7 @@ import io.r2dbc.postgresql.codec.Json
 import org.springframework.data.annotation.CreatedDate
 import org.springframework.data.annotation.Id
 import org.springframework.data.annotation.LastModifiedDate
+import org.springframework.data.annotation.ReadOnlyProperty
 import org.springframework.data.relational.core.mapping.Column
 import org.springframework.data.relational.core.mapping.Table
 import java.time.Instant
@@ -103,6 +104,39 @@ data class CapabilityEntity(
     @Column("control_label")
     val controlLabel: String? = null,
 
+    /**
+     * 이 기능을 든 타입을 **무엇이 만드는가**. `unplaced[type].createdBy` 항목 원문이다.
+     * 예: `Cards.CardManager.cardPrefab`.
+     *
+     * 프리팹 위에만 사는 타입은 씬 오브젝트의 컴포넌트 목록에 없어 배선으로는 구조적으로 0건이고,
+     * 씬에 귀속시키는 유일한 주소가 이것이다. 비면 씬만 남고 입구가 사라진다.
+     *
+     * 배선으로 찾은 기능에서는 null 이다. 값이 있으면 [controlPath] · [controlSelector] ·
+     * [controlLabel] 은 비어야 하고, [interaction] 은 [Interaction.NONE] · [actionability] 는
+     * [Actionability.NOT_A_STEP] 이어야 한다 — DB CHECK 가 강제한다. 축까지 묶는 이유는
+     * [actionability] 의 기본값이 `runnable` 이라, 명시하지 않으면 조작 없는 행이 TC 창구를
+     * 통과하기 때문이다.
+     *
+     * `createdBy` 는 목록이지만 이 칸은 **씬 귀속을 실제로 결정한 하나**만 담는다. 한 씬에 후보가
+     * 둘 이상이면 비우고 근거의 gaps 에 사유를 남긴다.
+     */
+    @Column("spawned_by_field")
+    val spawnedByField: String? = null,
+
+    /**
+     * [spawnedByField] 를 쥔 씬 오브젝트 경로. 예: `CardSystem/CardManager`.
+     * 근거의 `objects[].components[].refs[].carries` 가 줄 때만 찬다 — **NULL 이 정상이다.**
+     *
+     * 있으면 귀속이 정확(문서가 경로를 줬다)하고, 없으면 유도(오너 타입의 배치에서 씬만 얻었다)다.
+     * 그 정밀도는 귀속 단계의 `capability_proof.resolution` 으로 들어가고, `analysis_confidence` 는
+     * 사슬 전체의 최솟값에서 따라 나온다.
+     *
+     * 이 값을 [controlPath] 로 옮겨 담지 않는다 — 만드는 쪽의 주소를 조준 대상으로 내주면 TC 가
+     * 만드는 쪽을 눌러 만들어지는 쪽을 확인했다고 말하게 된다.
+     */
+    @Column("spawned_by_scene_path")
+    val spawnedByScenePath: String? = null,
+
     /** [Interaction] 중 하나. 프로토콜 메서드가 아니라 의도다. */
     @Column("interaction")
     val interaction: String,
@@ -145,9 +179,35 @@ data class CapabilityEntity(
     @Column("hint_from_qa_run_id")
     val hintFromQaRunId: Long? = null,
 
-    /** [SpecStatus] 중 하나. */
+    /**
+     * 실행 가능성 — 이 조작을 실제로 할 수 있는가. [Actionability] 중 하나.
+     *
+     * gap 이 남았는지를 보는 판정이 정한다. 관측 가능 여부는 여기서 보지 않는다.
+     */
+    @Column("actionability")
+    val actionability: String = Actionability.RUNNABLE.wire,
+
+    /**
+     * 관측 가능성 — 그 결과를 볼 수 있는가. [Observability] 중 하나.
+     *
+     * `capability_effect.watchable` 이 정하는 상한이 이 축으로 올라온다.
+     */
+    @Column("observability")
+    val observability: String = Observability.UNKNOWN.wire,
+
+    /** 적용 가능성 — 이 빌드에 이 규칙이 적용되는가. [Applicability] 중 하나. */
+    @Column("applicability")
+    val applicability: String = Applicability.APPLIES.wire,
+
+    /**
+     * [SpecStatus] 중 하나. **세 축에서 유도된 값이라 쓰지 않는다.**
+     *
+     * DB 생성 컬럼이므로 여기에 값을 담아 보내면 INSERT 가 거절된다. 축을 정하면 이 값이 따라오고,
+     * 그래서 축과 어긋난 행이 존재할 수 없다 — 어긋난 뒤에는 어느 쪽이 참인지 아무도 모른다.
+     */
+    @ReadOnlyProperty
     @Column("status")
-    val status: String,
+    val status: String? = null,
 
     /** 관측으로 발견한 것이 나중에 evidence 로도 확인되면 이쪽으로 접는다. */
     @Column("merged_into")

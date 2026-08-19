@@ -47,8 +47,21 @@ data class ContentMapCapabilityRow(
     @Column("verification")
     val verification: String,
 
+    /** 세 축에서 유도된 값. 아래 축들이 그 값을 낳은 이유다. */
     @Column("status")
     val status: String,
+
+    /** 실행 가능성 — 이 조작을 실제로 할 수 있는가. */
+    @Column("actionability")
+    val actionability: String,
+
+    /** 관측 가능성 — 그 결과를 볼 수 있는가. `unobservable` 은 조작 스텝으로는 쓸 수 있다. */
+    @Column("observability")
+    val observability: String,
+
+    /** 적용 가능성 — 이 빌드에 이 규칙이 적용되는가. `not-applicable` 은 아예 쓸 수 없다. */
+    @Column("applicability")
+    val applicability: String,
 
     @Column("summary")
     val summary: String,
