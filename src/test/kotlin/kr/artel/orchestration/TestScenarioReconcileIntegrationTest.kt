@@ -203,6 +203,53 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(hit.has("verificationStatus")).isTrue()
     }
 
+    /**
+     * 경로 조회 프레임에 답한다(ARTEL-466).
+     *
+     * 씬 명세가 없는 프로젝트라 답은 `UNKNOWN` 이다 — **그것이 정답이다.** 지어내지 않고
+     * 무엇이 막는지를 말하는 것이 이 툴의 절반이고, 명세가 없는 프로젝트에서도 세션이 죽지
+     * 않아야 한다.
+     */
+    @Test
+    fun `인입 find_path에 결과 프레임으로 답한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val a = insertCase(projectId, "Map_scene", "A")
+        val b = insertCase(projectId, "Map_scene", "B")
+
+        framesToSend.add(
+            """{"type":"find_path","messageId":"path-1","from_case_id":$a,"to_case_id":$b}"""
+        )
+        postMessage(client, projectId, runId, token, "경로 좀")
+
+        val frame = awaitFrame { it.contains("find_path_result") }
+        assertThat(frame).isNotNull
+        val node = objectMapper.readTree(frame)
+        assertThat(node.get("type").asText()).isEqualTo("find_path_result")
+        assertThat(node.get("correlationId").asText()).isEqualTo("path-1")
+        assertThat(node.get("result").asText()).isEqualTo("UNKNOWN")
+        assertThat(node.get("blockedBy").asText()).isEqualTo("content-map")
+    }
+
+    /** 인자가 빠진 프레임에도 에러로 답해 대기 중인 도구를 푼다. 세션은 죽지 않는다. */
+    @Test
+    fun `find_path에 케이스 id가 빠지면 에러 프레임으로 답한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        framesToSend.add("""{"type":"find_path","messageId":"path-2"}""")
+        postMessage(client, projectId, runId, token, "경로 좀")
+
+        val frame = awaitFrame { it.contains("path-2") && it.contains("error") }
+        assertThat(frame).isNotNull
+        assertThat(objectMapper.readTree(frame).get("detail").asText()).contains("from_case_id")
+    }
+
     // ---- (b) result{scenarios:[…]} → INSERT(본문 steps) ---------------------------------
 
     @Test

@@ -116,3 +116,26 @@ data class UncoveredCasesResultFrame(
     val ids: List<Long>,
     val scenes: List<UncoveredScene>
 )
+
+/**
+ * Agent의 `find_path` 프레임에 대한 응답(ARTEL-466).
+ *
+ * **경로 계산이 Agent가 아니라 여기 있는 이유**는 검증 때문이다. 그래프를 Agent에만 두면
+ * 나중에 "정말 모르는 길이었나"를 대조할 쪽이 없어지고, 그러면 전부 모른다고 적는 것이 가장
+ * 싼 통과 방법이 된다. 계산하는 쪽과 검사하는 쪽이 같아야 그 구멍이 막힌다.
+ *
+ * @property result `KNOWN`|`NOT_REQUIRED`|`UNKNOWN`. 셋이 "사이에 스텝이 필요한가"라는 한 질문의 답이다.
+ * @property capabilityIds `KNOWN`일 때 순서대로. 스텝의 근거로 그대로 옮겨 적게 한다.
+ * @property actions [capabilityIds]와 같은 길이의 사람 말. Agent가 스텝 문장으로 베낀다.
+ * @property blockedBy `UNKNOWN`일 때 막는 것 — 씬 쌍(`A→B`) 또는 변수명. **지어내지 말라는 말보다
+ *   무엇이 막는지를 주는 편이 낫다** — 사용자에게 물어볼 거리가 그 이름이다.
+ */
+data class ScenarioPathResultFrame(
+    val type: String = "find_path_result",
+    val correlationId: String?,
+    val result: String,
+    val capabilityIds: List<Long> = emptyList(),
+    val actions: List<String> = emptyList(),
+    val blockedBy: String? = null,
+    val note: String = ""
+)

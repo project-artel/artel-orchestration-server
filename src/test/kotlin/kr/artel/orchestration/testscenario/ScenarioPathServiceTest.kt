@@ -150,6 +150,46 @@ class ScenarioPathServiceTest {
         assertThat(answer.note).contains("명세에 없다")
     }
 
+    /**
+     * 출발 상태의 절반은 사전조건이 아니라 **그 케이스가 바꾼 값**에서 온다
+     * (`metadata.source.state_after`). 그것을 읽지 않으면 이미 옮겨 놓은 상태를 모르고
+     * 필요 없는 브리지를 끼우게 된다.
+     */
+    @Test
+    fun `케이스가 바꾼 값을 출발 상태로 읽는다`(): Unit = runBlocking {
+        // 사전조건은 position == 0 이지만, 이 케이스를 실행하면 1이 된다.
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 0",
+                     stateAfter = "MapMove.position=1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 1")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        // 이미 1이므로 사이에 할 것이 없다. state_after 를 안 읽으면 0→1 을 메우려 든다.
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.NOT_REQUIRED)
+    }
+
+    /**
+     * 값을 **직접 쓰는** 기능이 있으면 되풀이가 아니라 그 기능 한 번이다.
+     * `+1` 만 다루던 판은 이 분기를 한 번도 지나가지 않았다.
+     */
+    @Test
+    fun `구체값을 쓰는 기능은 되풀이 없이 한 번으로 답한다`(): Unit = runBlocking {
+        val reset = capability(mapSceneId, interaction = "click", label = "처음으로")
+        effect(reset, target = "MapMove.position", detail = "0")
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 3")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 0")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.capabilityIds).containsExactly(reset)
+        assertThat(answer.actions.single())
+            .contains("처음으로")
+            .contains("position → 0")
+            .doesNotContain("되풀이")
+    }
+
     @Test
     fun `씬 간선이 있으면 그 조작을 답한다`(): Unit = runBlocking {
         val enter = capability(mapSceneId, interaction = "press", inputKey = "Return")

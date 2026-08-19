@@ -27,6 +27,7 @@ import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
 import kr.artel.orchestration.testscenario.dto.ReviewedCases
+import kr.artel.orchestration.testscenario.dto.ScenarioPathResultFrame
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchErrorFrame
@@ -74,7 +75,8 @@ class TestScenarioAgentService(
     private val testCaseService: TestCaseService,
     private val testCaseRepository: TestCaseRepository,
     private val projectAccessService: ProjectAccessService,
-    private val reconcileService: ScenarioReconcileService
+    private val reconcileService: ScenarioReconcileService,
+    private val pathService: ScenarioPathService,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -231,6 +233,57 @@ class TestScenarioAgentService(
             sendFrame(
                 sessionKey, session,
                 TestCaseSearchErrorFrame(correlationId = correlationId, detail = "미커버 조회에 실패했습니다.")
+            )
+        }
+    }
+
+    /**
+     * 경로 조회 프레임에 답한다(ARTEL-466).
+     *
+     * 미커버 조회와 같은 규칙이다 — **실패해도 절대 throw하지 않는다.** 길을 못 읽는 것이 WS나
+     * 세션을 죽일 이유는 없다. 그리고 성공도 로그로 남긴다. 이 경로가 조용하면 "안 불렀다"와
+     * "불렀는지 알 수 없다"가 로그에서 같아 보이는데, ARTEL-403 에서 실제로 그 때문에 도구를
+     * 안 부른다고 잘못 진단한 적이 있다.
+     */
+    private suspend fun handleFindPathRequest(sessionKey: String, session: AgentSession, node: JsonNode) {
+        val correlationId = node.path("messageId").asText(null)
+        try {
+            val from = node.path("from_case_id").asLong(0)
+            val to = node.path("to_case_id").asLong(0)
+            if (from == 0L || to == 0L) {
+                sendFrame(
+                    sessionKey, session,
+                    TestCaseSearchErrorFrame(
+                        correlationId = correlationId,
+                        detail = "find_path 에는 from_case_id 와 to_case_id 가 모두 필요합니다.",
+                    )
+                )
+                return
+            }
+            val answer = pathService.findPath(session.projectId, session.appUserId, from, to)
+            logger.info(
+                "경로 조회 응답 [sessionKey={}, projectId={}] {}→{} {} {}",
+                sessionKey, session.projectId, from, to, answer.result,
+                answer.blockedBy?.let { "막힘=$it" } ?: answer.capabilityIds.toString()
+            )
+            sendFrame(
+                sessionKey, session,
+                ScenarioPathResultFrame(
+                    correlationId = correlationId,
+                    result = answer.result.name,
+                    capabilityIds = answer.capabilityIds,
+                    actions = answer.actions,
+                    blockedBy = answer.blockedBy,
+                    note = answer.note,
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.error("경로 조회 실패 [sessionKey=$sessionKey]: ${e.message}")
+            sendFrame(
+                sessionKey, session,
+                TestCaseSearchErrorFrame(correlationId = correlationId, detail = "경로 조회에 실패했습니다.")
             )
         }
     }
@@ -439,6 +492,14 @@ class TestScenarioAgentService(
                     return
                 }
                 scope.launch { handleUncoveredRequest(sessionKey, session, node) }
+                return
+            }
+            if (node.path("type").asText() == "find_path") {
+                if (session == null) {
+                    logger.warn("find_path를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
+                    return
+                }
+                scope.launch { handleFindPathRequest(sessionKey, session, node) }
                 return
             }
             if (node.path("type").asText() == "test_case_search") {
