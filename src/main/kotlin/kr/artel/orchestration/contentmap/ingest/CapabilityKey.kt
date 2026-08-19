@@ -24,6 +24,8 @@ import java.security.MessageDigest
  * | 조건 | **실측 `ShowBattle` 의 다섯 branch 는 offset 이 전부 `@3`** 이다. 조건만이 그 다섯을 가른다 |
  * | `inputKey` | `either` 를 쪼갠 두 후보는 가드를 공유해 조건까지 같을 수 있다 |
  * | `control_path` | 조인은 컨트롤마다 후보를 낸다. 한 씬의 두 버튼이 같은 메서드를 부르면 겹친다 |
+ * | 배선 이벤트 | 한 오브젝트가 두 이벤트로 같은 메서드를 부르면(`m_OnClick` 과 `m_OnValueChanged`)
+ *   경로가 같아 겹친다. 누르는 방식이 다르면 다른 스텝이다 |
  * | `spawned_by_field` | 한 씬에 `SpawnOrigin` 이 둘이면 겹친다 |
  *
  * 요구는 하나다 — **한 문서의 후보 목록 위에서 단사(injective)여야 한다.** 겹치면 `uk_capability_map_key`
@@ -41,6 +43,7 @@ object CapabilityKey {
             canonical(candidate.condition),
             candidate.inputKey.orEmpty(),
             candidate.binding?.placement?.path.orEmpty(),
+            candidate.binding?.event.orEmpty(),
             candidate.spawn?.field.orEmpty(),
         ).joinToString(FIELD_SEPARATOR)
     )
@@ -57,11 +60,16 @@ object CapabilityKey {
      */
     fun canonical(node: ConditionNode): String = when (node) {
         is ConditionNode.Always -> "always"
-        is ConditionNode.Test -> "test(left=${node.left},operator=${node.operator},right=${node.right}," +
-            "context=${node.context},offset=${node.offset},subjectLost=${node.subjectLost})"
-        is ConditionNode.Gesture -> "gesture(input=${node.input},offset=${node.offset})"
-        is ConditionNode.Group -> node.kind.wire + "[" + node.parts.joinToString(",") { canonical(it) } + "]"
-        is ConditionNode.Unknown -> "unknown(reason=${node.reason},unread=${node.unread})"
+        // 값 안에 `,` 나 `=` 가 있어도 칸이 섞이지 않게 NUL 로 가른다. 위의 FIELD_SEPARATOR 와 같은 이유다.
+        is ConditionNode.Test -> listOf(
+            "test", node.left, node.operator, node.right,
+            node.context.toString(), node.offset.toString(), node.subjectLost.toString(),
+        ).joinToString(FIELD_SEPARATOR)
+        is ConditionNode.Gesture -> listOf("gesture", node.input, node.offset.toString()).joinToString(FIELD_SEPARATOR)
+        is ConditionNode.Group ->
+            node.kind.wire + "[" + node.parts.joinToString(FIELD_SEPARATOR) { canonical(it) } + "]"
+        is ConditionNode.Unknown ->
+            listOf("unknown", node.reason.toString(), node.unread.toString()).joinToString(FIELD_SEPARATOR)
     }
 
     private fun sha256Hex(value: String): String =

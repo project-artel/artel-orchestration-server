@@ -185,18 +185,6 @@ class CapabilityKeyTest {
     }
 
     /**
-     * 같은 후보를 두 번 해시해도 같은 키가 나온다.
-     *
-     * `CapabilityKey.of` 가 후보 값 밖의 것(시각, 난수, 객체 정체성)에 기대면 재적재마다 키가 흔들린다.
-     */
-    @Test
-    fun `같은 후보를 두 번 해시하면 같은 키가 나온다`() {
-        val candidate = join.candidates().first()
-
-        assertThat(CapabilityKey.of(candidate)).isEqualTo(CapabilityKey.of(candidate))
-    }
-
-    /**
      * 문서를 다시 파싱해도 같은 위치의 후보는 같은 키를 낸다.
      *
      * "재적재를 넘어 살아남는다"는 말의 실체가 이것이다 — 같은 문서를 다시 구워 다시 적재해도
