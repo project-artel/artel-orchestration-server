@@ -22,6 +22,7 @@ import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
+import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
@@ -108,6 +109,9 @@ class TestScenarioAgentService(
         } else {
             openSession(sessionKey, runId, projectId, appUserId, userInput, autoApply, currentScenarios)
         }
+        // 보낸 뒤에 알린다. 세션 오픈이나 턴 전송이 실패하면 "보냈다"가 거짓이 되고,
+        // 그 경우 사용자는 진행 중인 것처럼 보이는 화면 앞에서 오지 않을 답을 기다리게 된다.
+        progress(sessionKey, AuthoringStage.SENT)
     }
 
     /**
@@ -224,6 +228,7 @@ class TestScenarioAgentService(
                 sessionKey, session,
                 UncoveredCasesResultFrame(correlationId = correlationId, ids = ids, scenes = scenes)
             )
+            progress(sessionKey, AuthoringStage.WRITING)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -255,18 +260,20 @@ class TestScenarioAgentService(
         val scenarios = if (pending != null) pending.scenarios + incoming else incoming
         val reviewed = if (pending != null) mergeVerdicts(pending.reviewed, event.reviewed) else event.reviewed
 
+        progress(sessionKey, AuthoringStage.CHECKING)
         val outcome = reconcileService.reconcile(session.runId, session.projectId, scenarios, reviewed)
         if (!outcome.rejected) {
+            progress(sessionKey, AuthoringStage.SAVED)
             if (pending != null) {
-                saveMessage(
-                    session.runId, session.appUserId, "ASSISTANT",
+                saveAndNotify(
+                    sessionKey, session,
                     "빠졌던 부분을 다시 작성해 시나리오에 반영했습니다."
                 )
             }
             // 저장이 있었던 턴에만 잔량을 알린다. 질문·거절 턴에서는 남은 수가 그대로일 뿐 아니라,
             // 방금 에이전트가 같은 값을 더 자세히 답했을 수 있다 — 그 뒤에 한 줄을 더 붙이면 같은
             // 말을 두 번 하는 셈이 된다.
-            if (outcome.applied > 0) recommendRemaining(session)
+            if (outcome.applied > 0) recommendRemaining(sessionKey, session)
             return
         }
 
@@ -280,18 +287,17 @@ class TestScenarioAgentService(
         if (!repairable || attempts > MAX_REPAIR_ATTEMPTS || reviewed == null) {
             // 더 못 고친다. 저장하지 않고 사람에게 넘긴다 — 사용자는 시나리오가 나왔다고 믿고
             // 있으므로, 여기서 말하지 않으면 저장되지 않았다는 사실을 알 길이 없다.
-            saveMessage(
-                session.runId, session.appUserId, "ASSISTANT",
-                outcome.findings.rejectionMessage()
-            )
+            progress(sessionKey, AuthoringStage.BLOCKED)
+            saveAndNotify(sessionKey, session, outcome.findings.rejectionMessage())
             return
         }
 
         session.repair = PendingRepair(scenarios, reviewed, attempts)
         // 재작성을 시켰다는 사실을 사용자에게 알린다. 이 시간 동안 화면은 답을 기다리는 것처럼
         // 보이는데, 무슨 일이 일어나는지 말하지 않으면 그냥 느린 것과 구분되지 않는다.
-        saveMessage(
-            session.runId, session.appUserId, "ASSISTANT",
+        progress(sessionKey, AuthoringStage.REPAIRING)
+        saveAndNotify(
+            sessionKey, session,
             "검토 결과 ${outcome.findings.summary()} — 그 부분만 다시 작성하도록 요청했습니다."
         )
         sendTurn(sessionKey, session, repairPrompt(outcome.findings), emptyList())
@@ -344,7 +350,7 @@ class TestScenarioAgentService(
      *
      * 전부 덮였으면 아무 말도 하지 않는다. "남은 것 없음"은 매번 붙으면 소음이 된다.
      */
-    private suspend fun recommendRemaining(session: AgentSession) {
+    private suspend fun recommendRemaining(sessionKey: String, session: AgentSession) {
         val uncovered = try {
             testCaseRepository.findScenesOfUncovered(session.projectId).toList()
         } catch (e: CancellationException) {
@@ -367,10 +373,37 @@ class TestScenarioAgentService(
         val breakdown = shown.joinToString(", ") { "${it.scene} ${it.count}" } +
             if (rest > 0) " 외 ${rest}개 씬" else ""
 
-        saveMessage(
-            session.runId, session.appUserId, "ASSISTANT",
+        saveAndNotify(
+            sessionKey, session,
             "아직 어떤 시나리오에도 담기지 않은 케이스가 ${total}건 남았습니다 — $breakdown. 이어서 만들까요?"
         )
+    }
+
+    /**
+     * 저작 한 턴이 지금 어느 단계인지 알린다(ARTEL-419).
+     *
+     * 실패해도 아무 일도 하지 않는다. 스트림이 없다는 것은 그 화면을 보는 사람이 없다는 뜻이고,
+     * **보는 사람이 없다는 이유로 저작이 멈춰서는 안 된다.** [TestScenarioStreamManager.emit]이 이미
+     * 경고를 남기므로 여기서 더 할 말도 없다.
+     */
+    private fun progress(sessionKey: String, stage: AuthoringStage) {
+        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "progress", stage = stage))
+    }
+
+    /**
+     * **서버가** 쓴 ASSISTANT 메시지를 저장하고 동시에 화면으로 흘린다(ARTEL-419).
+     *
+     * 저장만 하던 것을 고친다. 재작성 통보·검사 실패·잔량 안내는 모두 결과(`result`)를 중계한 **뒤에**
+     * 만들어지는데, 그때 화면은 이미 답을 다 받았다고 여기고 더 기다리지 않는다. 그래서 이 문장들은
+     * 새로고침하기 전에는 보이지 않았다 — 특히 "한 줄도 저장하지 않았습니다"가 그랬고, 그건 사용자가
+     * 가장 즉시 알아야 하는 문장이다.
+     *
+     * `result` 대신 `notice`를 쓰는 이유는 이 이벤트가 턴의 끝이 아니기 때문이다. `result`로 보내면
+     * 화면이 기다림을 끝내 버리는데, 재작성 통보 뒤에는 결과가 한 번 더 온다.
+     */
+    private suspend fun saveAndNotify(sessionKey: String, session: AgentSession, content: String) {
+        saveMessage(session.runId, session.appUserId, "ASSISTANT", content)
+        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = content))
     }
 
     private fun sendTurn(
@@ -438,6 +471,9 @@ class TestScenarioAgentService(
                     logger.warn("uncovered_cases를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
                     return
                 }
+                // 도구 프레임은 "멎지 않았다"의 첫 증거다(ARTEL-419). 턴을 보낸 뒤 여기까지는
+                // 오케스트레이션이 아무것도 보지 못하므로, 이 한 줄이 침묵과 진행을 가른다.
+                progress(sessionKey, AuthoringStage.LOOKING_UP_CASES)
                 scope.launch { handleUncoveredRequest(sessionKey, session, node) }
                 return
             }
@@ -446,6 +482,7 @@ class TestScenarioAgentService(
                     logger.warn("test_case_search를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
                     return
                 }
+                progress(sessionKey, AuthoringStage.LOOKING_UP_CASES)
                 // 검색은 임베딩(Agent /embed) 호출을 동반하는 suspend라 코루틴으로 넘긴다.
                 scope.launch { handleCaseSearch(sessionKey, session, node) }
                 return
@@ -511,6 +548,7 @@ class TestScenarioAgentService(
                 session,
                 TestCaseSearchResultFrame(correlationId = messageId, results = response.results)
             )
+            progress(sessionKey, AuthoringStage.WRITING)
         } catch (err: CancellationException) {
             throw err
         } catch (err: Exception) {
