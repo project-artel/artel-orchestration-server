@@ -74,6 +74,12 @@ data class ContentMapCapabilityRow(
     @Column("input_phase")
     val inputPhase: String?,
 
+    /**
+     * 한 번인지 끝날 때까지인지. `false` 가 기본이라 이 칸을 모르는 소비자도 기존과 같이 읽는다.
+     */
+    @Column("repeat_until_done")
+    val repeatUntilDone: Boolean,
+
     @Column("hint_action_method")
     val hintActionMethod: String?,
 

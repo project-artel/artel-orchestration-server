@@ -888,6 +888,88 @@ class ContentMapSchemaTest {
     }
 
     /**
+     * "대사가 끝날 때까지 아무 키를 누른다"가 **스텝으로** 적힌다.
+     *
+     * 이 자리가 없으면 반복이 사전조건으로 밀려나 "대사를 모두 넘긴 상태"가 되는데, 그것은 실행
+     * 에이전트가 확인할 수 없는 전제다. `press` 가 키를 요구하므로 sentinel `any` 로 적는다.
+     */
+    @Test
+    fun `끝날 때까지 반복하는 조작이 스텝으로 적힌다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "StoryScene")
+
+        val saved = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = "아무 키를 `StoryController` 의 대사가 끝날 때까지 반복해 누른다",
+                interaction = Interaction.PRESS.wire,
+                inputKey = Interaction.ANY_INPUT_KEY,
+                inputPhase = InputPhase.DOWN.wire,
+                status = SpecStatus.RUNNABLE.wire,
+                repeatUntilDone = true,
+                // 확인할 수 없는 전제를 given 에 남기지 않는다. 종료 조건은 then 이 든다.
+                givenText = null,
+            )
+        )
+
+        val stored = capabilities.findById(saved.id!!)
+        assertThat(stored).isNotNull
+        assertThat(stored!!.repeatUntilDone).isTrue()
+        assertThat(stored.inputKey).isEqualTo("any")
+        assertThat(stored.givenText).isNull()
+    }
+
+    /** 기본값이 `false` 라, 반복을 모르는 적재 경로가 그대로 동작한다. */
+    @Test
+    fun `반복 표시는 기본이 꺼짐이다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TitleScene")
+
+        val saved = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = "`Canvas/MapSceneButton` 클릭",
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
+            )
+        )
+
+        assertThat(capabilities.findById(saved.id!!)!!.repeatUntilDone).isFalse()
+    }
+
+    /**
+     * 조작이 없는 것은 반복일 수 없다.
+     *
+     * `interaction='none'` 은 타이머·로딩·코루틴이라 누를 것이 없다. 그것을 "끝날 때까지
+     * 반복한다"고 적으면 TC 가 지시할 수 없는 것을 지시하게 된다.
+     */
+    @Test
+    fun `조작 없는 기능은 반복으로 적을 수 없다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TurnBattleScene")
+
+        assertThatThrownBy {
+            runBlocking {
+                capabilities.save(
+                    CapabilityEntity(
+                        sceneId = scene.id!!,
+                        contentMapId = scene.contentMapId,
+                        origin = CapabilityOrigin.EVIDENCE.wire,
+                        summary = "코루틴이 웨이브를 끝낸다",
+                        interaction = Interaction.NONE.wire,
+                        status = SpecStatus.NOT_A_STEP.wire,
+                        repeatUntilDone = true,
+                    )
+                )
+            }
+        }.hasMessageContaining("ck_capability_repeat_needs_interaction")
+    }
+
+    /**
      * `capability.content_map_id` 는 씬의 것과 어긋날 수 없다.
      *
      * 씬을 통해 이미 알 수 있는 값을 한 벌 더 든 것이라, 막지 않으면 두 벌이 갈라진다. 갈라지는

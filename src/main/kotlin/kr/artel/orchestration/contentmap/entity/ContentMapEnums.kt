@@ -76,6 +76,17 @@ enum class Interaction(val wire: String) {
 
     companion object {
         fun from(wire: String?): Interaction? = entries.firstOrNull { it.wire == wire }
+
+        /**
+         * "아무 키" 조작의 `input_key` 표기.
+         *
+         * `ck_capability_press_needs_key` 가 `press` 에 키를 요구하는데, 근거는 특정 키를 지목하지
+         * 않는다("대사가 끝날 때까지 아무 키를 누른다"). 실제 키 하나를 골라 적으면 거짓 명세가
+         * 되므로 sentinel 을 둔다.
+         *
+         * **키 이름이 아니다.** 실행 에이전트는 이 값을 보면 아무 키나 골라 보낸다.
+         */
+        const val ANY_INPUT_KEY: String = "any"
     }
 }
 
