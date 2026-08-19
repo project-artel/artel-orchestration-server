@@ -104,6 +104,33 @@ data class CapabilityEntity(
     @Column("control_label")
     val controlLabel: String? = null,
 
+    /**
+     * 이 기능을 든 타입을 **무엇이 만드는가**. `unplaced[type].createdBy` 항목 원문이다.
+     * 예: `Cards.CardManager.cardPrefab`.
+     *
+     * 프리팹 위에만 사는 타입은 씬 오브젝트의 컴포넌트 목록에 없어 배선으로는 구조적으로 0건이고,
+     * 씬에 귀속시키는 유일한 주소가 이것이다. 비면 씬만 남고 입구가 사라진다.
+     *
+     * 배선으로 찾은 기능에서는 null 이다. 값이 있으면 [controlPath] · [controlSelector] 는 비어야
+     * 하고 [interaction] 은 [Interaction.NONE] 이어야 한다 — DB CHECK 가 강제한다.
+     *
+     * `createdBy` 는 목록이지만 이 칸은 **씬 귀속을 실제로 결정한 하나**만 담는다. 한 씬에 후보가
+     * 둘 이상이면 비우고 근거의 gaps 에 사유를 남긴다.
+     */
+    @Column("spawned_by_field")
+    val spawnedByField: String? = null,
+
+    /**
+     * [spawnedByField] 를 쥔 씬 오브젝트 경로. 예: `CardSystem/CardManager`.
+     * 근거의 `objects[].components[].refs[].carries` 가 줄 때만 찬다 — **NULL 이 정상이다.**
+     *
+     * 있으면 귀속이 정확(문서가 경로를 줬다)하고, 없으면 유도(오너 타입의 배치에서 씬만 얻었다)다.
+     * 이 값을 [controlPath] 로 옮겨 담지 않는다 — 만드는 쪽의 주소를 조준 대상으로 내주면 TC 가
+     * 만드는 쪽을 눌러 만들어지는 쪽을 확인했다고 말하게 된다.
+     */
+    @Column("spawned_by_scene_path")
+    val spawnedByScenePath: String? = null,
+
     /** [Interaction] 중 하나. 프로토콜 메서드가 아니라 의도다. */
     @Column("interaction")
     val interaction: String,

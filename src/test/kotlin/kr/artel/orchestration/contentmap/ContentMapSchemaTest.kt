@@ -1439,4 +1439,197 @@ class ContentMapSchemaTest {
             }
         }.hasMessageContaining("ck_capability_evidence_call_path_or_gap")
     }
+
+    /**
+     * 프리팹 위에만 사는 타입은 배선으로 찾을 수 없고, **무엇이 만드는가**가 유일한 주소다.
+     *
+     * 그 주소를 담을 자리가 없으면 씬만 남고 입구가 사라진다 — 실측(`wv-editor-latest.json`)에서
+     * `unplaced` 10타입 · evidence 111건이 이 자리에 걸린다.
+     */
+    @Test
+    fun `스폰으로 씬에 붙은 기능은 만드는 쪽을 적는다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TurnBattleScene")
+
+        val spawned = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = "`Cards.Card` 가 뒤집힌다",
+                // 조작이 아니다. 만들어지는 쪽을 누를 방법이 없다.
+                interaction = Interaction.NONE.wire,
+                actionability = Actionability.NOT_A_STEP.wire,
+                spawnedByField = "Cards.CardManager.cardPrefab",
+                spawnedByScenePath = "CardSystem/CardManager",
+            )
+        )
+
+        val stored = capabilities.findById(spawned.id!!)!!
+        assertThat(stored.spawnedByField).isEqualTo("Cards.CardManager.cardPrefab")
+        assertThat(stored.spawnedByScenePath).isEqualTo("CardSystem/CardManager")
+        // 조준 대상은 비어 있다. 만드는 쪽의 경로는 누를 자리가 아니다.
+        assertThat(stored.controlPath).isNull()
+        assertThat(stored.controlSelector).isNull()
+    }
+
+    /**
+     * 이 마이그레이션의 본체다.
+     *
+     * 만드는 쪽의 주소를 조준 대상으로 내주면 TC 는 **카드 매니저를 눌러 카드가 뒤집혔다**고
+     * 적는다. 조작이 아닌 것이 조작인 척하는 이 한 줄이 근거 없는 명세 중 가장 비싸다.
+     */
+    @Test
+    fun `스폰 출처를 조준 대상으로 옮겨 담을 수 없다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TurnBattleScene")
+
+        suspend fun save(
+            summary: String,
+            controlPath: String? = null,
+            controlSelector: String? = null,
+            interaction: String = Interaction.NONE.wire,
+        ) {
+            capabilities.save(
+                CapabilityEntity(
+                    sceneId = scene.id!!,
+                    contentMapId = scene.contentMapId,
+                    origin = CapabilityOrigin.EVIDENCE.wire,
+                    summary = summary,
+                    interaction = interaction,
+                    controlPath = controlPath,
+                    controlSelector = controlSelector,
+                    actionability = Actionability.NOT_A_STEP.wire,
+                    spawnedByField = "Cards.CardManager.cardPrefab",
+                )
+            )
+        }
+
+        // 쥔 오브젝트의 사람용 경로도,
+        assertThatThrownBy {
+            runBlocking { save(summary = "경로를 든 스폰 행", controlPath = "CardSystem/CardManager") }
+        }.hasMessageContaining("ck_capability_spawn_has_no_control")
+
+        // 조준용 selector 도,
+        assertThatThrownBy {
+            runBlocking { save(summary = "selector 를 든 스폰 행", controlSelector = "CardSystem[1]/CardManager[1]") }
+        }.hasMessageContaining("ck_capability_spawn_has_no_control")
+
+        // 누를 자리 없이 남은 조작 종류도 막는다.
+        assertThatThrownBy {
+            runBlocking { save(summary = "클릭이라 적힌 스폰 행", interaction = Interaction.CLICK.wire) }
+        }.hasMessageContaining("ck_capability_spawn_has_no_control")
+    }
+
+    /**
+     * 스폰 출처는 근거 문서만 말할 수 있다.
+     *
+     * QA 가 관측으로 배운 기능에 "무엇이 만든다"를 적으면 추측이 근거와 같은 칸에 들어가고,
+     * 축이 둘이라는 전제가 반대쪽에서 무너진다.
+     */
+    @Test
+    fun `관측으로 배운 기능에는 스폰 출처를 적을 수 없다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TurnBattleScene")
+
+        assertThatThrownBy {
+            runBlocking {
+                capabilities.save(
+                    CapabilityEntity(
+                        sceneId = scene.id!!,
+                        contentMapId = scene.contentMapId,
+                        origin = CapabilityOrigin.OBSERVED.wire,
+                        summary = "관측이 본 카드",
+                        interaction = Interaction.NONE.wire,
+                        actionability = Actionability.NOT_A_STEP.wire,
+                        spawnedByField = "Cards.CardManager.cardPrefab",
+                    )
+                )
+            }
+        }.hasMessageContaining("ck_capability_spawn_needs_evidence")
+    }
+
+    /**
+     * 경로는 필드를 설명하는 값이라 혼자 서지 못한다.
+     *
+     * 경로만 남으면 "이 오브젝트가 만든다"까지만 있고 무엇으로 만드는지가 없어, 재적재 때 같은
+     * 사실인지 확인할 수 없다.
+     */
+    @Test
+    fun `만드는 쪽 필드 없이 경로만 적을 수 없다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TurnBattleScene")
+
+        assertThatThrownBy {
+            runBlocking {
+                capabilities.save(
+                    CapabilityEntity(
+                        sceneId = scene.id!!,
+                        contentMapId = scene.contentMapId,
+                        origin = CapabilityOrigin.EVIDENCE.wire,
+                        summary = "경로만 든 스폰 행",
+                        interaction = Interaction.NONE.wire,
+                        actionability = Actionability.NOT_A_STEP.wire,
+                        spawnedByScenePath = "CardSystem/CardManager",
+                    )
+                )
+            }
+        }.hasMessageContaining("ck_capability_spawn_path_needs_field")
+    }
+
+    /**
+     * 스폰 행은 조작이 **없어야 맞는** 행이라 when-missing 을 채우지 않는다.
+     *
+     * v_spec_gap 은 "다음에 무엇을 고칠까"에 답하는 표다. 실측 111건이 when-missing 으로 쏟아지면
+     * 실제로 조작을 잃은 행이 그 밑에 묻힌다. 대신 then-missing 으로 남아야 한다 — 적이 공격할 때
+     * 무엇이 달라지는지를 판독으로 확인할 근거가 아직 없다는 것이 이 행들의 진짜 구멍이다.
+     */
+    @Test
+    fun `스폰 행은 조작 없음을 구멍으로 세지 않는다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TurnBattleScene")
+
+        suspend fun save(summary: String, spawnedByField: String?): Long {
+            val capability = capabilities.save(
+                CapabilityEntity(
+                    sceneId = scene.id!!,
+                    contentMapId = scene.contentMapId,
+                    origin = CapabilityOrigin.EVIDENCE.wire,
+                    summary = summary,
+                    interaction = Interaction.NONE.wire,
+                    actionability = Actionability.NOT_A_STEP.wire,
+                    spawnedByField = spawnedByField,
+                )
+            )
+            evidences.upsert(
+                CapabilityEvidenceEntity(
+                    capabilityId = capability.id!!,
+                    entryId = "Assembly-CSharp|Cards.Card|$summary|System.Void()",
+                    ownerType = "Cards.Card",
+                    method = summary,
+                    methodId = "Cards.Card::$summary",
+                    recordKind = RecordKind.CANDIDATE.wire,
+                    triggerKind = TriggerKind.LIFECYCLE.wire,
+                    analysisConfidence = AnalysisConfidence.DERIVED.wire,
+                    conditionTree = Json.of("""{"kind":"always"}"""),
+                    callPath = Json.of("""["Cards.Card::$summary"]"""),
+                )
+            )
+            return capability.id!!
+        }
+
+        val spawned = save(summary = "spawned", spawnedByField = "Cards.CardManager.cardPrefab")
+        val lostInteraction = save(summary = "lost", spawnedByField = null)
+
+        // reason 이 NULL 이면 구멍이 아니라는 뜻이라 빈 문자열로 받는다.
+        suspend fun reasonOf(capabilityId: Long): String = db
+            .sql("SELECT coalesce(reason, '') AS reason FROM v_spec_gap WHERE capability_id = :id")
+            .bind("id", capabilityId)
+            .map { row, _ -> row.get("reason", String::class.java) ?: "" }
+            .one()
+            .awaitSingle()
+
+        assertThat(reasonOf(spawned)).isEqualTo(SpecGapReason.THEN_MISSING.wire)
+        assertThat(reasonOf(lostInteraction)).isEqualTo(SpecGapReason.WHEN_MISSING.wire)
+    }
 }
