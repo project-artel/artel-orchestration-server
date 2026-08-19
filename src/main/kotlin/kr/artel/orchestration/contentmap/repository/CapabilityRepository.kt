@@ -2,6 +2,7 @@ package kr.artel.orchestration.contentmap.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
+import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 
@@ -44,6 +45,137 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
         """
     )
     suspend fun countEvidenceVerification(contentMapId: Long): VerificationCount?
+
+    /**
+     * 안정 키로 넣거나 갱신하고 id 를 돌려준다.
+     *
+     * `save()` 를 못 쓰는 이유: 적재기는 id 를 모르고 키만 안다. 조회 후 분기하면 같은 문서를 두 번
+     * 적재할 때 경합에서 유니크에 걸린다.
+     *
+     * **`verification` 을 UPDATE 절에 두지 않는다.** 되돌릴지는 근거가 실제로 달라졌는지가 정하고, 그
+     * 판정은 적재기가 따로 내린다 — 여기서 매번 덮으면 재적재가 확인을 통째로 버린다. `created_at` 도
+     * 그대로 둔다. 처음 안 시점은 스캔이 다시 돌았다고 바뀌지 않는다.
+     *
+     * **`@Modifying` 을 붙이지 않는다.** 붙이면 Spring Data 가 반환값을 "영향받은 행 수"로 읽어
+     * `RETURNING id` 대신 늘 1 이 돌아오고, 그 1 이 id 로 쓰여 **모든 근거 행이 첫 기능에 붙는다.**
+     */
+    @Query(
+        """
+        INSERT INTO capability (
+            scene_id, content_map_id, capability_key, origin, verification, summary, given_text,
+            control_selector, control_path, control_label, spawned_by_field, spawned_by_scene_path,
+            interaction, input_key, input_phase, actionability, observability, applicability
+        ) VALUES (
+            :sceneId, :contentMapId, :capabilityKey, 'evidence', :verification, :summary, :givenText,
+            :controlSelector, :controlPath, :controlLabel, :spawnedByField, :spawnedByScenePath,
+            :interaction, :inputKey, :inputPhase, :actionability, :observability, :applicability
+        )
+        ON CONFLICT (content_map_id, capability_key) DO UPDATE SET
+            scene_id = EXCLUDED.scene_id,
+            summary = EXCLUDED.summary,
+            given_text = EXCLUDED.given_text,
+            control_selector = EXCLUDED.control_selector,
+            control_path = EXCLUDED.control_path,
+            control_label = EXCLUDED.control_label,
+            spawned_by_field = EXCLUDED.spawned_by_field,
+            spawned_by_scene_path = EXCLUDED.spawned_by_scene_path,
+            interaction = EXCLUDED.interaction,
+            input_key = EXCLUDED.input_key,
+            input_phase = EXCLUDED.input_phase,
+            actionability = EXCLUDED.actionability,
+            observability = EXCLUDED.observability,
+            applicability = EXCLUDED.applicability,
+            updated_at = CURRENT_TIMESTAMP
+        RETURNING id
+        """
+    )
+    suspend fun upsertByKey(
+        sceneId: Long,
+        contentMapId: Long,
+        capabilityKey: String,
+        verification: String,
+        summary: String,
+        givenText: String?,
+        controlSelector: String?,
+        controlPath: String?,
+        controlLabel: String?,
+        spawnedByField: String?,
+        spawnedByScenePath: String?,
+        interaction: String,
+        inputKey: String?,
+        inputPhase: String?,
+        actionability: String,
+        observability: String,
+        applicability: String,
+    ): Long
+
+    /** 안정 키로 기존 행 찾기. 재적재가 무엇을 덮어쓰는지 알아야 확인을 되돌릴지 정할 수 있다. */
+    suspend fun findByContentMapIdAndCapabilityKey(contentMapId: Long, capabilityKey: String): CapabilityEntity?
+
+    /**
+     * 근거가 달라진 기능의 확인을 되돌린다.
+     *
+     * 재적재마다 무조건 되돌리지 않는 이유: 문서는 코드 한 줄만 바뀌어도 새로 구워지고, 그때 멀쩡한
+     * 기능 수백 개의 확인을 함께 버리면 QA 가 매번 같은 것을 다시 눌러야 한다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE capability SET verification = 'unverified', updated_at = CURRENT_TIMESTAMP
+        WHERE id = :id AND verification <> 'unverified'
+        """
+    )
+    suspend fun resetVerification(id: Long): Long
+
+    /** 이 지도의 근거 출신 기능 전부. 이번 문서에 없는 것을 가리려면 먼저 있는 것을 알아야 한다. */
+    @Query(
+        """
+        SELECT c.* FROM capability c
+        WHERE c.content_map_id = :contentMapId AND c.origin = 'evidence' AND c.merged_into IS NULL
+        ORDER BY c.id ASC
+        """
+    )
+    fun findEvidenceCapabilitiesOfMap(contentMapId: Long): Flow<CapabilityEntity>
+
+    /**
+     * 이 기능에 런타임 지식이 매달려 있나.
+     *
+     * 매달린 것이 있으면 지우지 않는다 — `capability_observation` · `screen_capability` 는 CASCADE 라
+     * 관측이 통째로 사라지고, `scene_edge` · `screen_transition` 은 SET NULL 이라 지식이 주인을 잃는다.
+     * 사라진 기능을 표에서 내리는 일이 QA 가 실제로 눌러 본 기록을 지울 값을 하지는 않는다.
+     */
+    @Query(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM capability_observation o WHERE o.capability_id = :capabilityId
+            UNION ALL
+            SELECT 1 FROM screen_capability sc WHERE sc.capability_id = :capabilityId
+            UNION ALL
+            SELECT 1 FROM scene_edge e WHERE e.capability_id = :capabilityId
+            UNION ALL
+            SELECT 1 FROM screen_transition t WHERE t.capability_id = :capabilityId
+            UNION ALL
+            SELECT 1 FROM capability m WHERE m.merged_into = :capabilityId
+        )
+        """
+    )
+    suspend fun hasRuntimeReferences(capabilityId: Long): Boolean
+
+
+    /**
+     * 참조가 매달린 사라진 기능을 내리는 자리. 행은 남고 TC 창구에서만 빠진다.
+     *
+     * 이미 내려간 행은 건드리지 않는다(갱신 0건). 다시 세면 적재 결과의 "이번에 내린 수"가 매 적재마다
+     * 같은 행을 다시 세어, 표가 안정된 뒤에도 계속 무언가 벌어지는 것처럼 보인다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE capability SET applicability = 'not-applicable', updated_at = CURRENT_TIMESTAMP
+        WHERE id = :id AND applicability <> 'not-applicable'
+        """
+    )
+    suspend fun markNotApplicable(id: Long): Long
 }
 
 /** [CapabilityRepository.countEvidenceVerification] 결과. */

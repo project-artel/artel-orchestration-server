@@ -156,7 +156,7 @@ class TestCaseSpecIngestIntegrationTest {
         assertThat(metadata).contains("build_evidence").contains("scene_key")
 
         val objectKey = objectKeyOf(projectId)
-        val stored = fakeStorage.read(objectKey)
+        val stored = fakeStorage.bytesOf(objectKey)
         assertThat(stored).isNotNull()
         assertThat(fakeStorage.contentTypeOf(objectKey)).isEqualTo(SpecXlsxWriter.XLSX_CONTENT_TYPE)
         XSSFWorkbook(stored!!.inputStream()).use { workbook ->
@@ -216,7 +216,7 @@ class TestCaseSpecIngestIntegrationTest {
         assertThat(result.created).isZero()
         assertThat(result.updated).isZero()
         // XLSX도 다시 쓰지 않는다 — 스킵의 값어치가 DB뿐이면 S3 왕복은 그대로 남는다.
-        assertThat(fakeStorage.read(objectKeyOf(projectId))).isNull()
+        assertThat(fakeStorage.bytesOf(objectKeyOf(projectId))).isNull()
     }
 
     @Test
@@ -249,7 +249,7 @@ class TestCaseSpecIngestIntegrationTest {
 
         assertThat(testCaseRepository.findByProjectIdOrderByIdDesc(projectId).toList()).isEmpty()
         // S3가 마지막이라 앞 단계에서 멈추면 고아 객체가 남지 않는다.
-        assertThat(fakeStorage.read(objectKeyOf(projectId))).isNull()
+        assertThat(fakeStorage.bytesOf(objectKeyOf(projectId))).isNull()
     }
 
     @Test
@@ -260,7 +260,7 @@ class TestCaseSpecIngestIntegrationTest {
             runBlocking { service.ingest(projectId, spec(cases = "")) }
         }.isInstanceOf(BadRequestException::class.java)
 
-        assertThat(fakeStorage.read(objectKeyOf(projectId))).isNull()
+        assertThat(fakeStorage.bytesOf(objectKeyOf(projectId))).isNull()
     }
 
     /**
@@ -289,7 +289,7 @@ class TestCaseSpecIngestIntegrationTest {
         }.isNotNull()
 
         assertThat(testCaseRepository.findByProjectIdOrderByIdDesc(projectId).toList()).isEmpty()
-        assertThat(fakeStorage.read(objectKeyOf(projectId))).isNull()
+        assertThat(fakeStorage.bytesOf(objectKeyOf(projectId))).isNull()
     }
 
     /**

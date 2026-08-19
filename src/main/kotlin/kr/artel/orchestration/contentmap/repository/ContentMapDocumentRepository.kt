@@ -2,8 +2,10 @@ package kr.artel.orchestration.contentmap.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
+import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
+import java.time.Instant
 
 /**
  * 근거 문서 포인터 조회.
@@ -34,4 +36,20 @@ interface ContentMapDocumentRepository : CoroutineCrudRepository<ContentMapDocum
         """
     )
     fun findPending(limit: Int): Flow<ContentMapDocumentEntity>
+
+    /**
+     * 적재 도장. **행 전체를 저장하지 않고 두 칸만 갱신한다.**
+     *
+     * `save(entity.copy(...))` 는 UPDATE 에 모든 칸을 실어, 읽어 온 엔티티에 없던 값(`received_at` 은
+     * DB 기본값으로 채워진다)을 null 로 덮어쓴다. 도장은 도장만 찍어야 한다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE content_map_document
+           SET ingested_by = :ingestedBy, ingested_at = :ingestedAt
+         WHERE id = :id
+        """
+    )
+    suspend fun stampIngested(id: Long, ingestedBy: String, ingestedAt: Instant): Long
 }

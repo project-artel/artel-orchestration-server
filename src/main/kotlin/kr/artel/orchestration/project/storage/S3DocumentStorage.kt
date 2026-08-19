@@ -202,6 +202,17 @@ class S3DocumentStorage internal constructor(
             .onErrorResume(::isMissing) { Mono.empty() }
             .onErrorMap(::isStorageFault, ::asStorageFault)
 
+    override fun read(objectKey: String): Mono<ByteArray> =
+        Mono.fromFuture {
+            client.getObject(
+                GetObjectRequest.builder().bucket(properties.bucket).key(objectKey).build(),
+                AsyncResponseTransformer.toBytes()
+            )
+        }
+            .map { it.asByteArray() }
+            .onErrorResume(::isMissing) { Mono.empty() }
+            .onErrorMap(::isStorageFault, ::asStorageFault)
+
     /**
      * 객체를 통째로 받지 않고 ByteBuffer 스트림으로 흘리며 SHA-256을 갱신한다. 파일 크기와 무관하게
      * 상수 메모리다(50MB 파일도 힙에 안 올림). [MessageDigest]는 이 한 스트림 안에서만 쓴다.
