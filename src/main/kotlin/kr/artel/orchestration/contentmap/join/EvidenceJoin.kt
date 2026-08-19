@@ -10,13 +10,12 @@ import kr.artel.orchestration.contentmap.evidence.EvidenceRecord
  *
  * 각 단계는 자기 파일에 있고 여기는 **순서와 우선순위만** 정한다:
  *
- * ```
- * placement()  타입이 놓인 자리          PlacementIndex
- * wiring()     컨트롤 → 코드 (길 셋)     SceneWiringIndex
- * arrivals()   alsoReachedBy 펴기        SceneWiringIndex 안
- * spawning()   프리팹 위 타입의 주소      SpawnAttribution
- * reach        조건 갈래 + 조작 어휘      ConditionBranches · RecordTranslation
- * ```
+ * | 단계 | 어디 |
+ * |---|---|
+ * | 타입이 놓인 자리 | [PlacementIndex] |
+ * | 컨트롤에서 코드로 가는 길 셋(`alsoReachedBy` 펴기 포함) | [SceneWiringIndex] |
+ * | 프리팹 위에만 사는 타입의 주소 | [SpawnAttribution] |
+ * | 조건 갈래 쪼개기와 DB 어휘 번역 | [ConditionBranches] · [RecordTranslation] |
  *
  * DB 도 Spring 도 없다. 적재(ARTEL-442)는 이 목록을 받아 행으로 바꾼다.
  */
@@ -41,6 +40,11 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
      *    경우다. 컨트롤마다 후보가 따로 난다 — 같은 메서드라도 누르는 자리가 다르면 다른 스텝이다.
      * 2. **없으면 오너 타입이 놓인 씬으로 떨어진다.** 키보드 트리거가 이 길로 온다. 키 입력은
      *    컨트롤에 물리지 않아 배선이 구조적으로 없고, 대신 그 스크립트가 놓인 씬에서만 성립한다.
+     *
+     * 배선이 있으면 **그 컨트롤이 있는 씬만** 낸다. 같은 스크립트가 다른 씬에도 놓여 있어도 거기서는
+     * 누를 자리가 없기 때문이다 — 실측에서 `Core.SaveLoadController` 가 `TitleScene` 과 `Map_scene`
+     * 양쪽에 놓여 있는데 배선은 `TitleScene` 쪽뿐이라, 배선된 레코드는 `TitleScene` 만 내고 배선 없는
+     * 레코드(`Awake` 등)는 두 씬을 다 낸다. 자리 없는 씬까지 조작으로 내면 TC 가 없는 버튼을 누른다.
      *
      * 둘 다 못 찾은 레코드는 후보가 되지 않는다([unaddressedRecords] 가 센다). 씬을 모르면 명세의
      * `given` 자리가 통째로 비어 TC 가 어디서 시작해야 할지 말할 수 없다 — 아무 씬에나 붙이는 것이
@@ -94,6 +98,7 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
                 record = record,
                 binding = binding,
                 spawn = spawn,
+                confidence = RecordTranslation.confidenceOf(record.confidence),
                 interaction = interaction.interaction.wire,
                 inputKey = interaction.inputKey,
                 inputPhase = interaction.inputPhase?.wire,
@@ -117,15 +122,30 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
     }
 
     /**
-     * 씬을 못 찾아 후보가 되지 못한 레코드 수.
+     * 씬에 놓인 타입 중 주소를 못 찾은 레코드 수. **실측 0** — 놓인 타입은 배선이 없어도 배치가 있다.
      *
-     * 0 이 목표가 아니다 — 죽은 코드와 아직 안 걸어 본 씬이 여기 섞여 있고, 이 수가 갑자기 늘면
-     * 배선 조인이나 배치 색인이 깨진 것이다. 그때 알아채라고 세어 둔다.
+     * 0 인데도 세는 이유: 이 수가 늘면 배선 조인이나 배치 색인이 깨진 것이고, 그때 조용히 후보만
+     * 줄어드는 것이 가장 알아채기 어려운 고장이다.
      */
     fun unaddressedRecords(): Int =
         document.types.values.flatten().count { record ->
             wiring.bindingsFor(record).isEmpty() && placements.scenesOf(record.owner).isEmpty()
         }
+
+    /**
+     * 프리팹 위 타입 중 씬에 못 붙은 근거 수. **실측 17건** — 죽은 코드 후보 3타입의 16건과
+     * `Cards.Util` 1건이다.
+     *
+     * [unaddressedRecords] 와 나누어 세는 이유: 저쪽이 늘면 조인이 깨진 것이고, 이쪽이 늘면 게임이
+     * 프리팹으로 옮겨 갔거나 `createdBy` 추적이 짧아진 것이다. 고칠 곳이 서로 다르다.
+     *
+     * `Cards.Util` 이 여기 있는 것은 정상이다 — `calledBy` 가 차 있어 죽은 코드는 아니지만, 부르는
+     * 쪽이 씬 어디에 있는지는 `createdBy` 없이 알 수 없다.
+     */
+    fun unattributedSpawnRecords(): Int {
+        val attributed = spawns.attribute().keys
+        return document.unplaced.filterKeys { it !in attributed }.values.sumOf { it.evidence.size }
+    }
 
     /** [SpawnAttribution.deadCodeCandidates] 를 그대로 낸다. 판정이 아니라 후보 목록이다. */
     fun deadCodeCandidates(): List<String> = spawns.deadCodeCandidates()

@@ -67,6 +67,9 @@ class SpawnAttribution(
             return SpawnOrigin(scene = scene, field = null, scenePath = null, ambiguousCandidates = candidates)
         }
         // 같은 후보가 한 씬의 두 오브젝트에 실려 있으면 경로도 정할 수 없다. 하나일 때만 적는다.
+        //
+        // 그 경우 경로가 null 이 되어, 읽는 쪽에서는 "유도 경로라 경로가 없다"와 구분되지 않는다.
+        // 실측에는 없는 사례라 사유 토큰을 새로 짓지 않았다 — 생기면 그때가 토큰을 만들 때다.
         return SpawnOrigin(
             scene = scene,
             field = candidates.single(),

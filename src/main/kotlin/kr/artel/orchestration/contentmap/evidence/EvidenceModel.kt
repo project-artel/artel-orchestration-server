@@ -33,8 +33,13 @@ data class EvidenceDocumentModel(
     /** 문서 수준의 공백. 예: `dont-destroy-on-load-not-walked`. */
     val gaps: List<String>,
 ) {
-    /** [objects] + [persistentObjects]. 배선을 찾을 때 둘을 가르지 않는다. */
-    val allObjects: List<SceneObject> get() = objects + persistentObjects
+    /**
+     * [objects] + [persistentObjects]. 배선을 찾을 때 둘을 가르지 않는다.
+     *
+     * `get()` 이 아니라 값이다 — 스폰 귀속이 `createdBy` 항목마다 이 목록을 훑어, 접근자로 두면
+     * 참조 수만큼 목록을 다시 만든다.
+     */
+    val allObjects: List<SceneObject> = objects + persistentObjects
 }
 
 data class EvidenceBuild(
@@ -108,14 +113,7 @@ data class EvidenceRecord(
     val loopsBackTo: Int? = null,
     /** 코루틴 등으로 제어를 넘긴 자리. */
     val handedOverTo: String? = null,
-) {
-    /**
-     * 이 레코드에 이를 수 있는 모든 진입점의 안정 키 — [entryId] 와 [alsoReachedBy] 를 편 것.
-     *
-     * 배선 조인은 이 집합을 본다.
-     */
-    val arrivalEntryIds: List<String> get() = listOf(entryId) + alsoReachedBy.map { it.entryId }
-}
+)
 
 /** `alsoReachedBy` 항목. `recordKind` 나 `confidence` 는 담기지 않는다 — 문서에 없다. */
 data class EvidenceArrival(
@@ -267,13 +265,14 @@ data class SceneVisual(
  */
 sealed interface ConditionNode {
 
-    /** 조건 없음. 실측 85건. */
+    /** 조건 없음. 실측 151건(`types` 318 + `unplaced` 128 = 446 레코드 기준. `types` 만 보면 85건). */
     data object Always : ConditionNode
 
     /**
      * 비교 하나.
      *
-     * [context] 가 null 이면 주어를 못 찾은 것이고 [subjectLost] 가 그 사유를 든다(실측 47건, 항상 동반).
+     * [context] 가 null 이면 주어를 못 찾은 것이고 [subjectLost] 가 그 사유를 든다
+     * (실측 47건, 446 레코드 기준. 항상 동반한다).
      * **그 조건은 given 으로 쓸 수 없다** — 여기서 주어를 상상하는 것이 가장 비싼 거짓 명세다.
      */
     data class Test(

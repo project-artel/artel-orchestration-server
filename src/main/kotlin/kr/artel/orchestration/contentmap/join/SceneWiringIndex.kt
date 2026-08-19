@@ -27,7 +27,7 @@ import kr.artel.orchestration.contentmap.evidence.EvidenceRecord
  * 위한 규칙을 지어내는 것은 이 이슈가 금지한 것이다. 못 맞추면 배선이 없는 것으로 남는다.
  */
 class SceneWiringIndex private constructor(
-    private val controls: List<WiredControl>,
+    private val controlsByTarget: Map<Pair<String, String>, List<WiredControl>>,
     private val records: List<EvidenceRecord>,
 ) {
 
@@ -36,18 +36,28 @@ class SceneWiringIndex private constructor(
      *
      * [records] 에 없는 레코드(예: `unplaced` 의 근거)를 넣어도 답한다 — 판정에 필요한 것은 레코드가
      * 든 키뿐이라, 인덱스는 씬 쪽 절반만 미리 세워 둔다.
+     *
+     * 컨트롤 전체를 훑지 않고 **레코드가 든 키로 찾아 들어간다.** 훑으면 (레코드 × 컨트롤)마다 안정 키를
+     * 다시 쪼개게 되고, 오늘 318×7 인 것이 게임이 커지면 그대로 곱해진다. 배치 색인이 축을 뒤집어 둔 것과
+     * 같은 이유다.
      */
-    fun bindingsFor(record: EvidenceRecord): List<ControlBinding> =
-        controls.mapNotNull { control ->
-            // 한 컨트롤이 두 길로 걸릴 수 있다(진입점이자 도착점인 경우). 그때는 가장 곧은 길만 남긴다 —
-            // 같은 배선을 두 줄로 내면 세는 쪽이 조작이 둘이라고 읽는다.
-            val via = pathsTo(record, control.target).firstOrNull() ?: return@mapNotNull null
-            ControlBinding(
-                placement = control.placement,
-                event = if (via == WiringPath.HANDLE) handleTo(record, control.target)?.channel else control.event,
-                via = via,
-            )
-        }.distinct()
+    fun bindingsFor(record: EvidenceRecord): List<ControlBinding> {
+        val keys = keysOf(record)
+        return keys.all()
+            .flatMap { controlsByTarget[it].orEmpty() }
+            .distinctBy { it.order }
+            .sortedBy { it.order }
+            .map { control ->
+                // 한 컨트롤이 두 길로 걸릴 수 있다(진입점이자 도착점인 경우). 그때는 가장 곧은 길만
+                // 남긴다 — 같은 배선을 두 줄로 내면 세는 쪽이 조작이 둘이라고 읽는다.
+                val via = keys.straightestPathTo(control.target)
+                ControlBinding(
+                    placement = control.placement,
+                    event = if (via == WiringPath.HANDLE) keys.handles[control.target]?.channel else control.event,
+                    via = via,
+                )
+            }.distinct()
+    }
 
     /**
      * [path] 하나로 걸리는 (타입, 메서드) 쌍들. null 이면 세 길의 합집합이다.
@@ -57,42 +67,58 @@ class SceneWiringIndex private constructor(
      * (합이 7을 넘는 것은 한 쌍이 여러 길로 걸리기 때문이고, 여기서는 겹침을 접지 않는다).
      */
     fun matchedPairs(path: WiringPath? = null): Set<Pair<String, String>> =
-        records.flatMapTo(LinkedHashSet<Pair<String, String>>()) { record ->
-            controls.map { it.target }.filter { target ->
-                val found = pathsTo(record, target)
-                if (path == null) found.isNotEmpty() else path in found
-            }
+        records.flatMapTo(LinkedHashSet()) { record ->
+            val keys = keysOf(record)
+            val targets = if (path == null) keys.all() else keys.of(path)
+            targets.filter { it in controlsByTarget }
         }
 
     /** 씬이 들고 있는 배선의 수. 실측 7 — 매칭 성공과 무관하게 "몇 건을 이으려 했는가"다. */
-    val wiredControlCount: Int get() = controls.size
+    val wiredControlCount: Int get() = controlsByTarget.values.sumOf { it.size }
 
     /**
-     * 이 레코드가 [target] 에 닿는 **모든** 길. 곧은 순서([WiringPath.ENTRY] → [WiringPath.ARRIVAL] →
-     * [WiringPath.HANDLE])라 [bindingsFor] 는 첫 값만 쓴다.
+     * 레코드 하나가 배선의 반대편으로 내미는 키들. 레코드마다 한 번만 계산한다.
+     *
+     * `entryId` 만 보면 실측 7쌍 중 5쌍이다. 진입점은 인라인·중복접기로 다른 이름이 되지만 `owner` 는
+     * 레코드가 매달린 타입 키라 흔들리지 않아(실측 318건 중 71건이 `entryId` 의 타입과 어긋난다),
+     * `owner` + `methodId` 의 메서드명을 함께 봐야 6쌍이 된다.
      */
-    private fun pathsTo(record: EvidenceRecord, target: Pair<String, String>): List<WiringPath> = buildList {
-        if (matchesEntry(record, target)) add(WiringPath.ENTRY)
-        // [EvidenceRecord.arrivalEntryIds] 를 쓰지 않는다. 그쪽은 entryId 를 앞에 끼워 편 목록이라,
-        // 여기 쓰면 ENTRY 로 걸린 것이 ARRIVAL 로도 걸렸다고 기록돼 길 이름이 거짓이 된다.
-        if (record.alsoReachedBy.any { stableIdTarget(it.entryId) == target }) add(WiringPath.ARRIVAL)
-        if (handleTo(record, target) != null) add(WiringPath.HANDLE)
-    }
-
-    private fun matchesEntry(record: EvidenceRecord, target: Pair<String, String>): Boolean {
-        if (stableIdTarget(record.entryId) == target) return true
-        // 둘째 절: 진입점이 아니라 **레코드가 말하는 메서드**가 그 컨트롤이 부르는 메서드일 때다.
-        // 진입점은 인라인·중복접기로 다른 이름이 되지만 `owner` 는 레코드가 매달린 타입 키라 흔들리지
-        // 않는다(실측 318건 중 entryId 의 타입과 71건이 어긋난다). 이 절 하나가 7건 중 6건을 덮는다.
-        val method = stableIdTarget(record.methodId)?.second ?: return false
-        return (record.owner to method) == target
-    }
-
-    /** 이 레코드가 런타임에 [target] 을 매단 자리. [ControlBinding.event] 도 여기서 나온다. */
-    private fun handleTo(record: EvidenceRecord, target: Pair<String, String>): EvidenceHandle? =
-        record.handles.firstOrNull { handle ->
-            handle.handlerId?.let { stableIdTarget(it) } == target
+    private fun keysOf(record: EvidenceRecord): RecordKeys {
+        val entry = buildSet {
+            stableIdTarget(record.entryId)?.let { add(it) }
+            stableIdTarget(record.methodId)?.second?.let { add(record.owner to it) }
         }
+        return RecordKeys(
+            entry = entry,
+            // `alsoReachedBy` 에 entryId 를 끼워 넣지 않는다. 끼우면 ENTRY 로 걸린 것이 ARRIVAL 로도
+            // 걸렸다고 기록돼 길 이름이 거짓이 된다.
+            arrivals = record.alsoReachedBy.mapNotNull { stableIdTarget(it.entryId) }.toSet(),
+            handles = record.handles.mapNotNull { handle ->
+                handle.handlerId?.let { stableIdTarget(it) }?.let { it to handle }
+            }.toMap(),
+        )
+    }
+
+    private data class RecordKeys(
+        val entry: Set<Pair<String, String>>,
+        val arrivals: Set<Pair<String, String>>,
+        val handles: Map<Pair<String, String>, EvidenceHandle>,
+    ) {
+        fun all(): List<Pair<String, String>> = (entry + arrivals + handles.keys).toList()
+
+        fun of(path: WiringPath): Set<Pair<String, String>> = when (path) {
+            WiringPath.ENTRY -> entry
+            WiringPath.ARRIVAL -> arrivals
+            WiringPath.HANDLE -> handles.keys
+        }
+
+        /** 곧은 순서: 진입점 → 도착점 → 런타임 배선. */
+        fun straightestPathTo(target: Pair<String, String>): WiringPath = when (target) {
+            in entry -> WiringPath.ENTRY
+            in arrivals -> WiringPath.ARRIVAL
+            else -> WiringPath.HANDLE
+        }
+    }
 
     /** 배선 하나의 씬 쪽 절반 — 어떤 자리의 어떤 이벤트가 어떤 (타입, 메서드) 를 부르는가. */
     private data class WiredControl(
@@ -100,21 +126,27 @@ class SceneWiringIndex private constructor(
         /** `m_OnClick` 등. */
         val event: String,
         val target: Pair<String, String>,
+        /** 씬 문서에서의 순서. 키로 찾아 들어가도 원래 순서로 되돌리려고 든다. */
+        val order: Int,
     )
 
     companion object {
 
-        fun build(document: EvidenceDocumentModel): SceneWiringIndex = SceneWiringIndex(
-            controls = document.allObjects.flatMap { obj ->
+        fun build(document: EvidenceDocumentModel): SceneWiringIndex {
+            var order = 0
+            val controls = document.allObjects.flatMap { obj ->
                 val placement = obj.toPlacement()
                 obj.components.flatMap { it.calls }.map { call ->
-                    WiredControl(placement, call.event, call.targetType to call.method)
+                    WiredControl(placement, call.event, call.targetType to call.method, order++)
                 }
-            },
-            // `types` 만 본다. `unplaced` 의 근거는 자리가 없어 배선의 반대편이 될 수 없고, 실측에서도
-            // 넣든 빼든 걸리는 쌍이 7로 같다 — 그쪽은 [SpawnOrigin] 이 붙일 몫이다.
-            records = document.types.values.flatten(),
-        )
+            }
+            return SceneWiringIndex(
+                controlsByTarget = controls.groupBy { it.target },
+                // `types` 만 본다. `unplaced` 의 근거는 자리가 없어 배선의 반대편이 될 수 없고, 실측에서도
+                // 넣든 빼든 걸리는 쌍이 7로 같다 — 그쪽은 [SpawnOrigin] 이 붙일 몫이다.
+                records = document.types.values.flatten(),
+            )
+        }
     }
 }
 

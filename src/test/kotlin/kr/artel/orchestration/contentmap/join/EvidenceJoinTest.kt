@@ -1,9 +1,12 @@
 package kr.artel.orchestration.contentmap.join
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.contentmap.entity.AnalysisConfidence
 import kr.artel.orchestration.contentmap.entity.EvidenceGap
 import kr.artel.orchestration.contentmap.entity.Interaction
+import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
+import kr.artel.orchestration.contentmap.evidence.flatten
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -40,19 +43,21 @@ class EvidenceJoinTest {
     /**
      * 배선이 있으면 컨트롤이 주소다.
      *
-     * `Canvas/continue` 는 `alsoReachedBy` 를 펴야만 걸리는 자리다(레코드의 `entry` 는
-     * `InitPlayerData()` 이고 실제로 물린 것은 `LoadStoryScene()`). 안 펴면 이 버튼이 통째로
-     * 사라지므로, 후보 목록에 그 경로가 살아 있는지로 arrivals 단계를 지킨다.
+     * `Canvas/continue` 로는 arrivals 단계를 지킬 수 없다 — 그 자리는 `owner` + `methodId` 절이
+     * 이미 잡아 `ENTRY` 로 걸린다. **arrivals 가 유일한 길인 배선은 따로 있다**:
+     * `Core.SaveLoadController` 의 저장·불러오기 레코드가 그 길로만 컨트롤에 닿는다(실측 3건).
+     * 그 길을 지우면 이 목록이 빈다.
      */
     @Test
-    fun `배선된 컨트롤이 후보의 주소가 된다`() {
+    fun `도착점으로만 걸리는 배선이 후보에 살아 있다`() {
         val wired = join.candidates().filter { it.binding != null }
+        val throughArrival = wired.filter { it.binding!!.via == WiringPath.ARRIVAL }
 
-        assertThat(wired).isNotEmpty
         assertThat(wired.map { it.binding!!.placement.path }).contains("Canvas/continue")
-        // 배선으로 온 후보는 클릭이거나(컨트롤을 누르는 것 자체가 조작) 키 입력이다. 조작 없음이
-        // 섞이면 컨트롤을 찾아 놓고 누를 방법을 잃은 것이다.
-        assertThat(wired.map { it.interaction }).doesNotContain(Interaction.NONE.wire)
+        assertThat(throughArrival).isNotEmpty
+        assertThat(throughArrival.map { it.record.owner }.distinct()).containsExactly("Core.SaveLoadController")
+        assertThat(throughArrival.map { it.binding!!.placement.path }.distinct())
+            .containsExactlyInAnyOrder("Canvas/continue", "Canvas/Button (Legacy)")
     }
 
     /**
@@ -83,15 +88,19 @@ class EvidenceJoinTest {
     fun `스폰으로 붙은 후보는 조작을 갖지 않는다`() {
         val spawned = join.candidates().filter { it.spawn != null }
 
-        assertThat(spawned).isNotEmpty
-        assertThat(spawned).allSatisfy {
-            assertThat(it.interaction).isEqualTo(Interaction.NONE.wire)
-            assertThat(it.binding).isNull()
-            assertThat(it.inputKey).isNull()
-        }
         // 실측: createdBy 가 찬 unplaced 10타입. 그 무게가 전투 씬 대부분이다.
         assertThat(spawned.map { it.record.owner }.distinct()).hasSize(10)
         assertThat(spawned.map { it.scene }).contains("TurnBattleScene")
+        assertThat(spawned).allSatisfy { assertThat(it.interaction).isEqualTo(Interaction.NONE.wire) }
+
+        // 스폰 근거에 gesture 가 섞여 들어와도 조작이 되지 않는다. 오늘 실측은 0건이라, 이 규칙이
+        // 무너지는 것은 문서가 달라지는 날이고 그때 여기서 걸려야 한다.
+        val gestureBearing = document.unplaced.values
+            .flatMap { it.evidence }
+            .filter { record -> record.condition.flatten().any { it is ConditionNode.Gesture } }
+        assertThat(gestureBearing).isEmpty()
+        assertThat(spawned.filter { it.record in gestureBearing })
+            .allSatisfy { assertThat(it.interaction).isEqualTo(Interaction.NONE.wire) }
     }
 
     /**
@@ -157,18 +166,43 @@ class EvidenceJoinTest {
     }
 
     /**
-     * 씬을 못 찾은 레코드는 후보가 되지 않는다.
+     * 주소를 못 찾은 근거는 조용히 빠지지 않고 두 갈래로 세어진다.
      *
-     * 0 이 목표가 아니다 — 아직 안 걸어 본 씬과 죽은 코드가 여기 섞인다. 이 수가 갑자기 늘면
-     * 배선 조인이나 배치 색인이 깨진 것이라 그때 알아채라고 센다.
+     * 놓인 타입 쪽은 실측 0 이고, 프리팹 쪽은 17건이다. 나눠 세는 이유는 고칠 곳이 다르기 때문이다 —
+     * 앞이 늘면 조인이 깨진 것이고, 뒤가 늘면 `createdBy` 추적이 짧아진 것이다.
      */
     @Test
     fun `주소를 못 찾은 레코드는 조용히 사라지지 않고 세어진다`() {
-        val unaddressed = join.unaddressedRecords()
         val addressed = join.candidates().filter { it.spawn == null }.map { it.record }.distinct().size
 
-        assertThat(unaddressed).isGreaterThanOrEqualTo(0)
-        assertThat(unaddressed + addressed).isEqualTo(document.types.values.sumOf { it.size })
+        // 놓인 타입은 배선이 없어도 배치가 있어 실측 0 이다. 이 수가 늘면 조인이 깨진 것이다.
+        assertThat(join.unaddressedRecords()).isZero()
+        assertThat(addressed).isEqualTo(document.types.values.sumOf { it.size })
+
+        // 프리팹 쪽은 다르다. 죽은 코드 후보 3타입 16건과 `Cards.Util` 1건이 붙을 자리가 없다 —
+        // 사라지는 것이 아니라 세어진다.
+        assertThat(join.unattributedSpawnRecords()).isEqualTo(17)
+    }
+
+    /**
+     * 문서의 확신도 어휘가 후보에 실려 나간다.
+     *
+     * 여기서 옮기지 않으면 적재기가 `verified` 같은 문서 문자열을 다시 비교하게 되고, 어휘가 두 곳에서
+     * 갈라진다. 문서가 새 값을 쓰기 시작해도 `exact` 로 부풀지 않는다는 것이 이 번역의 핵심이다.
+     */
+    @Test
+    fun `확신도가 스키마 어휘로 옮겨져 실린다`() {
+        val confidences = join.candidates().map { it.confidence }.distinct()
+
+        assertThat(confidences).isNotEmpty
+        assertThat(confidences).allSatisfy { assertThat(AnalysisConfidence.entries).contains(it) }
+        // 실측 문서 어휘는 셋(verified · derived · partial)이라 셋만 나온다. unresolved 가 보이면
+        // 문서가 모르는 값을 쓰기 시작한 것이다.
+        assertThat(confidences).containsExactlyInAnyOrder(
+            AnalysisConfidence.EXACT,
+            AnalysisConfidence.DERIVED,
+            AnalysisConfidence.AMBIGUOUS,
+        )
     }
 
     private companion object {

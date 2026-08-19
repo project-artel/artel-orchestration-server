@@ -1,5 +1,6 @@
 package kr.artel.orchestration.contentmap.join
 
+import kr.artel.orchestration.contentmap.entity.AnalysisConfidence
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.contentmap.evidence.EvidenceRecord
 
@@ -84,6 +85,13 @@ data class CapabilityCandidate(
     val condition: ConditionNode,
     /** 이 갈래를 가른 IL 위치. 한 메서드 안의 서로 다른 지점을 구분한다. */
     val branchOffset: Int?,
+    /**
+     * 문서의 확신도를 스키마 어휘로 옮긴 값.
+     *
+     * 여기서 옮겨 두지 않으면 적재기가 `verified` 같은 문서 문자열을 다시 비교하게 되고, 어휘가 두
+     * 곳에서 갈라진다. 옮기는 규칙과 근거는 [RecordTranslation.confidenceOf] 에 있다.
+     */
+    val confidence: AnalysisConfidence,
     /** 근거가 말한 공백 + 조인이 판정한 공백. `subject-null` · `spawn-origin-ambiguous` 등. */
     val gaps: List<String>,
 )
