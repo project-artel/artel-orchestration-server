@@ -52,7 +52,8 @@ data class SpawnOrigin(
     val scenePath: String?,
     val ambiguousCandidates: List<String> = emptyList(),
 ) {
-    val ambiguous: Boolean get() = field == null
+    // `field` 만 쓰면 접근자 안에서는 뒷받침 필드 키워드로 읽혀 컴파일되지 않는다.
+    val ambiguous: Boolean get() = this.field == null
 }
 
 /**
