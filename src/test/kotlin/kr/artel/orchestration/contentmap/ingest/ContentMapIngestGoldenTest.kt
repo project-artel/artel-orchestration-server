@@ -51,11 +51,11 @@ import java.time.Instant
  * | 조작을 든 것 | 51 | click 24 + press 27. 나머지 478 은 `interaction='none'` |
  * | 효과 | 486 | 후보들이 든 `effects[]` 의 합 |
  *
- * **전제 하나가 이 파일 전체를 떠받친다 — `capability_key` 는 한 문서의 후보 목록 위에서
- * 단사(injective)여야 한다.** 겹치면 적재기가 [ContentMapIngestService.ingest] 안에서 그 자리에
- * 멈춘다(`check(keptKeys.add(key))`). 겹친 키를 조용히 덮어쓰면 서로 다른 스텝 둘이 한 줄로 접혀
- * TC 가 시험하지 않는 기능이 생기므로, 멈추는 쪽이 옳다. 다만 그때 이 테스트는 **적재 결과가 아니라
- * 키 산식**을 가리키고 있는 것이다.
+ * **전제 하나가 이 파일 전체를 떠받친다 — `capability_key` 가 같은 후보는 같은 명세여야 한다.**
+ * 적재기는 키로 후보를 묶어 한 줄로 쓰고(효과는 합친다), 몇 건을 접었는지 `IngestResult.collapsed`
+ * 에 남긴다. 키가 서로 다른 스텝을 접기 시작하면 그 수가 뛰고, TC 가 시험하지 않는 기능이 생긴다 —
+ * 그때 이 테스트는 **적재 결과가 아니라 키 산식**을 가리키고 있는 것이다
+ * (`CapabilityKeyTest` 가 접히는 것이 정말 같은 (given, when) 인지 따로 확인한다).
  */
 @ActiveProfiles("test")
 @SpringBootTest

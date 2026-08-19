@@ -14,8 +14,11 @@ import kr.artel.orchestration.contentmap.entity.EffectCategory
 import kr.artel.orchestration.contentmap.entity.EvidenceGap
 import kr.artel.orchestration.contentmap.entity.Interaction
 import kr.artel.orchestration.contentmap.entity.Observability
+import kr.artel.orchestration.contentmap.entity.RecordKind
+import kr.artel.orchestration.contentmap.entity.TriggerKind
 import kr.artel.orchestration.contentmap.entity.SceneEntity
 import kr.artel.orchestration.contentmap.entity.VerificationState
+import kr.artel.orchestration.contentmap.evidence.EvidenceEffect
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.join.CapabilityCandidate
 import kr.artel.orchestration.contentmap.join.EvidenceJoin
@@ -28,7 +31,8 @@ import kr.artel.orchestration.contentmap.repository.upsert
 import kr.artel.orchestration.project.storage.DocumentStorage
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.reactive.TransactionalOperator
+import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Clock
 import java.time.Instant
 
@@ -59,6 +63,7 @@ class ContentMapIngestService(
     private val effects: CapabilityEffectRepository,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
+    private val transactionalOperator: TransactionalOperator,
     private val clock: Clock,
 ) {
 
@@ -77,9 +82,17 @@ class ContentMapIngestService(
                 .getOrNull()
         }
 
-    /** 문서 하나를 적재한다. 성공하면 도장이 찍히고, 실패하면 트랜잭션째 되돌아간다. */
-    @Transactional
-    suspend fun ingest(document: ContentMapDocumentEntity): IngestResult {
+    /**
+     * 문서 하나를 적재한다. 성공하면 도장이 찍히고, 실패하면 트랜잭션째 되돌아간다.
+     *
+     * `@Transactional` 이 아니라 [TransactionalOperator] 인 이유: [ingestPending] 이 같은 클래스의
+     * 이 함수를 부른다. 어노테이션은 프록시를 거쳐야 걸리는데 자기호출은 프록시를 지나지 않아,
+     * **배치 경로에서만 트랜잭션이 조용히 사라진다.** 그 경로가 나중에 트리거가 붙을 유일한 입구다.
+     */
+    suspend fun ingest(document: ContentMapDocumentEntity): IngestResult =
+        transactionalOperator.executeAndAwait { ingestInTransaction(document) }
+
+    private suspend fun ingestInTransaction(document: ContentMapDocumentEntity): IngestResult {
         val bytes = storage.read(document.objectKey).awaitSingleOrNull()
             ?: throw NotFoundException("적재할 근거 문서를 스토리지에서 찾을 수 없습니다.")
 
@@ -102,7 +115,11 @@ class ContentMapIngestService(
             val candidate = group.firstOrNull { it.record.recordKind == RECORD_KIND_CANDIDATE } ?: group.first()
             val sceneId = sceneIds.getValue(candidate.scene)
 
-            val row = CapabilityRow.of(candidate)
+            // 효과를 먼저 합친다. 관측 축이 대표 레코드의 효과만 보면, 효과만 다른 조각이 접힌 그룹에서
+            // "행에는 관측 가능한 효과가 달려 있는데 축은 unknown" 인 줄이 나온다.
+            val mergedEffects = group.flatMap { it.record.effects }
+                .distinctBy { listOf(it.category, it.kind, it.target, it.detail, it.offset) }
+            val row = CapabilityRow.of(candidate, mergedEffects)
             // 덮어쓰기 전에 근거가 달라졌는지 본다. upsert 뒤에는 옛 값이 없다.
             val previous = capabilities.findByContentMapIdAndCapabilityKey(document.contentMapId, key)
             val previousEvidence = previous?.id?.let { evidences.findById(it) }
@@ -128,7 +145,7 @@ class ContentMapIngestService(
             )
 
             writeEvidence(capabilityId, candidate, group)
-            writeEffects(capabilityId, group)
+            writeEffects(capabilityId, mergedEffects)
 
             // 근거가 달라졌으면 확인을 되돌린다. 코드가 바뀌었는데 "확인됨"이 남아 있으면 그 표시가
             // 지금 코드에 대한 것이 아니게 되고, 아무도 그 사실을 모른다.
@@ -151,6 +168,23 @@ class ContentMapIngestService(
             collapsed = collapsed,
         )
     }
+
+    /**
+     * 이 줄의 `given` 으로 실릴 조건 JSON.
+     *
+     * 쪼개지지 않은 갈래는 **문서 원문 그대로** 싣는다 — 타입 트리에서 되쓰면 우리가 못 담은 키가
+     * 조용히 사라진다.
+     *
+     * 입력을 가르는 `either` 를 쪼갠 갈래는 원문을 실을 수 없다. 원문은 두 키를 모두 담고 있어,
+     * `input_key` 가 하나인 줄의 `given` 이 "둘 중 아무거나"가 된다 — 쪼갠 이유가 그 자리에서 무너진다.
+     * 그때만 타입 트리를 직렬화해 **이 갈래의 조건만** 싣는다.
+     */
+    private fun conditionJsonOf(candidate: CapabilityCandidate): String =
+        if (candidate.condition == candidate.record.condition) {
+            candidate.record.conditionJson
+        } else {
+            objectMapper.writeValueAsString(candidate.condition)
+        }
 
     /**
      * 안정 키에서 메서드 이름만 뽑는다.
@@ -220,14 +254,15 @@ class ContentMapIngestService(
                 capabilityId = capabilityId,
                 entryId = record.entryId,
                 ownerType = record.owner,
-                method = methodNameOf(record.methodId),
+                method = methodNameOf(record.methodId).take(METHOD_WIDTH),
                 methodId = record.methodId.ifBlank { null },
                 branchOffset = candidate.branchOffset,
-                recordKind = record.recordKind,
-                triggerKind = record.triggerKind,
+                // 문서 어휘를 그대로 넣지 않는다. 모르는 값이면 CHECK 가 INSERT 를 거절하고, 그
+                // 거절은 문서 하나를 통째로 되돌린 뒤 다음 tick 에 똑같이 되풀이된다.
+                recordKind = RecordKind.from(record.recordKind)?.wire ?: RecordKind.FLOW.wire,
+                triggerKind = TriggerKind.from(record.triggerKind)?.wire ?: TriggerKind.LIFECYCLE.wire,
                 analysisConfidence = candidate.confidence.wire,
-                // 원본 그대로다. 타입 트리에서 되쓰면 우리가 못 담은 키가 조용히 사라진다.
-                conditionTree = Json.of(record.conditionJson),
+                conditionTree = Json.of(conditionJsonOf(candidate)),
                 bindingEvent = candidate.binding?.event,
                 bindingReceiver = candidate.binding?.placement?.path,
                 callPath = Json.of(objectMapper.writeValueAsString(record.callPath)),
@@ -242,21 +277,19 @@ class ContentMapIngestService(
      * 관측이 남긴 효과(`origin='observed'`)는 건드리지 않는다. `watchable` 은 기본값 그대로 둔다 —
      * 무엇을 볼 수 있는지는 판독과 대조해야 알고, 그것은 ARTEL-452 다.
      */
-    private suspend fun writeEffects(capabilityId: Long, group: List<CapabilityCandidate>) {
+    private suspend fun writeEffects(capabilityId: Long, merged: List<EvidenceEffect>) {
         effects.deleteEvidenceEffects(capabilityId)
-        // 접힌 조각들의 효과를 합친다. 같은 자리에서 같은 값을 두 번 말한 것만 접는다 — 효과를 버리면
-        // then 칸이 비고, 그 줄은 "무엇이 달라지는지 모르는 기능"이 된다.
-        val merged = group.flatMap { it.record.effects }
-            .distinctBy { listOf(it.category, it.kind, it.target, it.detail, it.offset) }
         for (effect in merged) {
             if (EffectCategory.entries.none { it.wire == effect.category }) continue
             effects.save(
                 CapabilityEffectEntity(
                     capabilityId = capabilityId,
                     category = effect.category,
-                    kind = effect.kind,
-                    target = effect.target,
-                    detail = effect.detail,
+                    // 문서 값이 컬럼 폭을 넘으면 그 한 줄이 문서 전체를 되돌린다. 잘라서 싣고,
+                    // 잘렸다는 사실은 원본 문서가 스토리지에 그대로 있어 언제든 되찾을 수 있다.
+                    kind = effect.kind.take(EFFECT_KIND_WIDTH),
+                    target = effect.target?.take(EFFECT_TARGET_WIDTH),
+                    detail = effect.detail?.take(EFFECT_DETAIL_WIDTH),
                     ilOffset = effect.offset,
                 )
             )
@@ -299,6 +332,17 @@ class ContentMapIngestService(
 
         /** 조작 후보. `flow` 는 흐름만 말하는 조각이다. */
         private const val RECORD_KIND_CANDIDATE = "candidate"
+
+        /**
+         * 컬럼 폭. 문서 값이 이보다 길면 그 한 줄이 문서 전체를 되돌린다.
+         *
+         * 잘라서 싣는 것이 버리는 것이 아니다 — 원본 문서는 스토리지에 그대로 있고, 잘린 값은
+         * 표시와 조인에만 쓰인다.
+         */
+        private const val METHOD_WIDTH = 255
+        private const val EFFECT_KIND_WIDTH = 32
+        private const val EFFECT_TARGET_WIDTH = 1024
+        private const val EFFECT_DETAIL_WIDTH = 512
     }
 }
 
@@ -341,7 +385,7 @@ private data class CapabilityRow(
     val observability: String,
 ) {
     companion object {
-        fun of(candidate: CapabilityCandidate): CapabilityRow {
+        fun of(candidate: CapabilityCandidate, mergedEffects: List<EvidenceEffect>): CapabilityRow {
             val spawned = candidate.spawn?.field != null
             return CapabilityRow(
                 summary = summaryOf(candidate),
@@ -357,7 +401,7 @@ private data class CapabilityRow(
                 inputKey = if (spawned) null else candidate.inputKey,
                 inputPhase = if (spawned) null else candidate.inputPhase,
                 actionability = actionabilityOf(candidate, spawned),
-                observability = observabilityOf(candidate),
+                observability = observabilityOf(mergedEffects),
             )
         }
 
@@ -381,9 +425,11 @@ private data class CapabilityRow(
          * 멀쩡히 효과를 말한 기능까지 TC 가 실행하지 못한다. 근거가 관측 가능한 효과를 하나라도 말했으면
          * 일단 볼 수 있다고 적고, 판독이 아니라고 하면 그때 내린다.
          */
-        private fun observabilityOf(candidate: CapabilityCandidate): String {
+        private fun observabilityOf(mergedEffects: List<EvidenceEffect>): String {
             val watchableCategories = setOf(EffectCategory.OBSERVABLE.wire, EffectCategory.AVAILABILITY.wire)
-            val hasVisibleEffect = candidate.record.effects.any { it.category in watchableCategories }
+            // 이 줄에 **실제로 실릴** 효과를 본다. 대표 레코드만 보면, 효과만 다른 조각이 접힌 그룹에서
+            // 행에는 관측 가능한 효과가 달렸는데 축은 unknown 인 줄이 나온다.
+            val hasVisibleEffect = mergedEffects.any { it.category in watchableCategories }
             return if (hasVisibleEffect) Observability.OBSERVABLE.wire else Observability.UNKNOWN.wire
         }
 
