@@ -15,8 +15,9 @@
 ## Non-goals
 
 - 적재 로직. 두 컬럼을 채우는 규칙은 ARTEL-442 가 정한다
-- `actionability` 를 CHECK 로 묶는 것. 축은 판정이고 나중에 다른 이슈가 옮긴다
-  (ARTEL-452 관측 축 · ARTEL-461 실행 축)
+- 관측 축 · 적용 축을 CHECK 로 묶는 것. 그 둘은 판정이고 나중에 다른 이슈가 옮긴다
+  (ARTEL-452 · ARTEL-461). 실행 축만 묶는다 — 만들어지는 쪽은 스텝이 될 수 없다는 것은
+  판정이 아니라 정의고, 기본값이 `runnable` 이라 안 묶으면 TC 창구로 샌다
 - `createdBy` 가 객체 배열이 되는 schema 7 대응 (ARTEL-459). 그때는 flat 컬럼을 늘리지 않고
   `spawn_origin JSONB` 한 칸으로 바꾼다 — 세 칸째가 붙는 순간이 JSONB 가 값을 하는 지점이다
 - 인덱스. 111행짜리 테이블에 한 번 쓰는 검증 질의를 위한 인덱스는 넣지 않는다.
@@ -44,11 +45,12 @@
   - `v_spec_gap` 재생성 — `when-missing` 분기에서 스폰 행을 뺀다
 - [x] **Step 2: 엔티티** — `CapabilityEntity.spawnedByField` · `spawnedByScenePath` (기본값 `null`)
 - [x] **Step 3: 테스트** — `ContentMapSchemaTest` 에 다섯 가지
-  - 스폰 행이 왕복하고 조준 대상이 비어 있다
-  - 조준 대상(`control_path` · `control_selector` · `interaction`)으로 옮겨 담으면 거절된다
+  - 스폰 행이 왕복하고 `status` 가 `not-a-step` 이다
+  - 조준 대상 넷(`control_path` · `control_selector` · `control_label` · `interaction`)과
+    축을 안 정한 경우가 각각 거절된다
   - 관측 출신 기능에는 스폰 출처를 적을 수 없다
   - 필드 없이 경로만 적을 수 없다
-  - 스폰 행이 `when-missing` 이 아니라 `then-missing` 으로 세어진다
+  - 스폰 행이 `when-missing` 에서 빠지고 나머지 분기로 간다
 - [ ] **Step 4: PR** — base 는 `feat/...-ARTEL-479`. 스택 위에 얹는다
 
 ## Validation
