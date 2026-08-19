@@ -18,9 +18,11 @@
 
 - **적재 로직**(ARTEL-442). 조인·필터·status 판정은 전부 그쪽이다.
 - **조회 API**(ARTEL-446), **의사 C# 렌더**(ARTEL-443).
-- **판독 수용**(ARTEL-449). `qa_run_reading_index`는 pulse 중계(ARTEL-414)가 선행이라 이번에 만들지 않는다.
-  이번에 만드는 런타임 쪽 테이블은 **적재 대상이 아니라 그릇**이다(`screen`, `capability_observation`,
-  `qa_run_target`) — 지금 만들어야 후속 이슈가 마이그레이션 없이 코드만 붙인다.
+- **판독 수용**(ARTEL-449). `qa_run_reading_index`도 `qa_run_target`도 이번에 만들지 않는다. pulse
+  중계(ARTEL-414)가 선행이고, 둘 다 판독을 받는 쪽이 자기 마이그레이션으로 가져간다.
+  `qa_run_target`은 처음에 그릇으로 넣었다가 뺐다 — 사유는 아래 "조준 해석표를 왜 뺐나".
+  이번에 만드는 런타임 쪽 테이블은 **적재 대상이 아니라 그릇**이다(`screen`,
+  `capability_observation`) — 지금 만들어야 후속 이슈가 마이그레이션 없이 코드만 붙인다.
 - **기능 간 조인**(`capability_link`, `condition_atom`). 일부러 뺐다. 사유와 재도입 조건은 설계 문서.
 - **씬 오브젝트 전량(raw list)**. 기능에 딸리지 않은 오브젝트는 담지 않는다.
 - **원본 문서 보관**(`content_map_document`)과 **렌더 캐시**(`content_map_render`). 각각 ARTEL-441/448이
@@ -93,7 +95,23 @@ evidence 출신과 같은 통에 들어가는 순간, TC가 근거 없는 것을
 
 `control_selector`는 실행 간 유지되는 안정 식별자다. 그런데 현재 액션 프로토콜은 `int` instance id를 받고
 (`ActionExecutor`의 `button_click params [targetId]`), 그 숫자는 프로세스를 넘지 못한다. 실행 시 해석은
-`qa_run_target`이 맡는다 — content_map이 아니라 **런 단위** 표인 이유가 이것이다.
+`qa_run_target`이 맡는다 — content_map이 아니라 **런 단위** 표인 이유가 이것이다. 그 표는 이번 범위가
+아니다(ARTEL-449).
+
+### 조준 해석표를 왜 뺐나
+
+`qa_run_target`을 그릇으로 미리 만들었다가 제거했다. 셋 다 아직 안 정해졌다.
+
+1. **`scene_name`이 PK 구성원인데 지속 오브젝트에는 씬이 없다.** 근거 문서의 `gaps`가
+   `dont-destroy-on-load-not-walked`를 적고 `persistentObjects`가 빈 배열이다. 활성 씬으로 넣을지
+   센티널을 쓸지 정하지 않은 채 PK를 굳히면 후속이 PK 마이그레이션을 쓴다.
+2. **selector의 안정성 등급이 미정이다.** selector는 형제 인덱스가 붙은 위치 경로라 한 판독 안에서는
+   유일하지만, 형제가 생기거나 사라지면 인덱스가 밀린다. 안정 키(selector-v2)를 SDK가 내보내게 되면
+   해석표의 키가 통째로 바뀐다.
+3. **쓰는 코드가 여기 없다.** 판독이 도착하지 않으므로 머지 후 0행이고, 스펙 원본은 ARTEL-449 본문에
+   SQL 그대로 있다. 그쪽에서 만드는 편이 위 둘을 정하고 만드는 것이다.
+
+`capability.control_selector`는 남는다 — 명세가 드는 값이고, 해석표 없이도 사람과 TC 생성기가 읽는다.
 
 ## Approach (Checklist)
 
@@ -103,9 +121,9 @@ evidence 출신과 같은 통에 들어가는 순간, TC가 근거 없는 것을
   - [ ] `qa_run`/`game_build` 컬럼명 재확인(FK 대상)
 
 - [ ] **Step 1: 마이그레이션** — `src/main/resources/db/migration/V39__create_content_map.sql`
-  - 12 테이블: `content_map` · `scene` · `screen` · `capability` · `capability_evidence` ·
+  - 11 테이블: `content_map` · `scene` · `screen` · `capability` · `capability_evidence` ·
     `capability_inference` · `capability_effect` · `capability_observation` · `screen_capability` ·
-    `screen_transition` · `scene_edge` · `qa_run_target`
+    `screen_transition` · `scene_edge`
   - 2 뷰: `v_content_map_capability`(TC 입력 창구) · `v_spec_gap`(명세의 어느 칸을 못 채웠나)
   - `IF NOT EXISTS`, `TIMESTAMP WITH TIME ZONE`, CHECK 제약으로 열거값 고정
   - 주석은 **왜**를 적는다 — capture를 키에 넣는 이유, 축이 둘인 이유, 조인을 뺀 이유
@@ -145,7 +163,7 @@ evidence 출신과 같은 통에 들어가는 순간, TC가 근거 없는 것을
     존재한다. 이것은 의도다 — 후속이 마이그레이션 없이 코드만 붙일 수 있게.
   - **뷰가 굳는다.** `v_spec_gap`의 분류 규칙은 적재(ARTEL-442)가 `gaps`에 무엇을 넣느냐에 달려 있다.
     적재를 짜면서 규칙이 흔들릴 수 있고, 그때는 뷰를 고치는 후속 마이그레이션이 필요하다.
-  - **`screen`/`capability_observation`/`qa_run_target`은 이번에 쓰이지 않는다.** 판독 수용(ARTEL-449)
+  - **`screen`/`capability_observation`은 이번에 쓰이지 않는다.** 판독 수용(ARTEL-449)
     전까지 0행이다.
 - **Rollback steps:** `git revert`. 테이블이 비어 있고 다른 스키마를 건드리지 않으므로 되돌리기가 안전하다
   (기존 테이블 ALTER 없음).

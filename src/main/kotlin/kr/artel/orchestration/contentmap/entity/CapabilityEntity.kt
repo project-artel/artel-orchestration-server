@@ -59,10 +59,14 @@ data class CapabilityEntity(
     val givenText: String? = null,
 
     /**
-     * 씬 안에서 유일한 안정 식별자(`Canvas[2]/MapSceneButton[1]`). 실행 간 유지된다.
+     * 형제 인덱스가 붙은 위치 경로(`Canvas[2]/MapSceneButton[1]`).
+     *
+     * 한 판독 안에서는 반드시 하나를 가리킨다 — `(부모, 형제 인덱스)` 가 transform 하나만
+     * 지목하기 때문이다. 다만 **계층이 정적일 때만 실행 간 유지된다** — 형제가 생기거나
+     * 사라지면 인덱스가 밀려 같은 문자열이 다른 오브젝트를 가리킨다.
      *
      * **조준에 직접 쓰지 못한다** — 현재 액션 프로토콜은 `int` instance id 를 받고 그 숫자는
-     * 프로세스를 넘지 못한다. 실행 시 해석은 [QaRunTargetEntity] 가 맡는다.
+     * 프로세스를 넘지 못한다. 실행 시 해석표는 판독을 받는 ARTEL-449 가 가져간다.
      */
     @Column("control_selector")
     val controlSelector: String? = null,

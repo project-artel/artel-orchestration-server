@@ -1,7 +1,6 @@
 package kr.artel.orchestration.contentmap.repository
 
 import kotlinx.coroutines.flow.Flow
-import kr.artel.orchestration.contentmap.entity.QaRunTargetEntity
 import kr.artel.orchestration.contentmap.entity.ScreenCapabilityEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
@@ -34,44 +33,4 @@ interface ScreenCapabilityRepository : CoroutineCrudRepository<ScreenCapabilityE
         """
     )
     suspend fun observe(screenId: Long, capabilityId: Long, firedIncrement: Int): Long
-}
-
-/**
- * 런 단위 조준 해석표.
- *
- * 판독마다 갱신되므로 upsert 가 기본 쓰기다. [reading] 이 낡음 판정의 근거이고, 액션 실패가
- * "버튼이 안 먹었다"인지 "id 가 낡았다"인지를 여기서 가른다.
- */
-interface QaRunTargetRepository : CoroutineCrudRepository<QaRunTargetEntity, Long> {
-
-    fun findByQaRunIdAndSceneName(qaRunId: Long, sceneName: String): Flow<QaRunTargetEntity>
-
-    @Query(
-        """
-        SELECT * FROM qa_run_target
-        WHERE qa_run_id = :qaRunId AND scene_name = :sceneName AND selector = :selector
-        """
-    )
-    suspend fun findOne(qaRunId: Long, sceneName: String, selector: String): QaRunTargetEntity?
-
-    /** 더 나중 판독에서 온 값만 이긴다. 늦게 도착한 옛 판독이 최신 id 를 덮지 않게 한다. */
-    @Modifying
-    @Query(
-        """
-        INSERT INTO qa_run_target (qa_run_id, scene_name, selector, instance_id, reading, updated_at)
-        VALUES (:qaRunId, :sceneName, :selector, :instanceId, :reading, CURRENT_TIMESTAMP)
-        ON CONFLICT (qa_run_id, scene_name, selector) DO UPDATE SET
-            instance_id = EXCLUDED.instance_id,
-            reading = EXCLUDED.reading,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE qa_run_target.reading <= EXCLUDED.reading
-        """
-    )
-    suspend fun upsert(
-        qaRunId: Long,
-        sceneName: String,
-        selector: String,
-        instanceId: Int,
-        reading: Long,
-    ): Long
 }

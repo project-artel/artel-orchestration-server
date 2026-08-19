@@ -2,7 +2,6 @@ package kr.artel.orchestration.contentmap
 
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.reactive.awaitSingle
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.contentmap.entity.AnalysisConfidence
 import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
@@ -32,7 +31,6 @@ import kr.artel.orchestration.contentmap.repository.upsert
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
-import kr.artel.orchestration.contentmap.repository.QaRunTargetRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.contentmap.repository.ScreenCapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ScreenRepository
@@ -43,12 +41,9 @@ import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.repository.ProjectRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
-import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.r2dbc.core.DatabaseClient
-import org.springframework.r2dbc.core.awaitRowsUpdated
 import org.springframework.test.context.ActiveProfiles
 import java.time.Instant
 
@@ -80,71 +75,6 @@ class ContentMapSchemaTest {
     @Autowired private lateinit var screens: ScreenRepository
     @Autowired private lateinit var transitions: ScreenTransitionRepository
     @Autowired private lateinit var screenCapabilities: ScreenCapabilityRepository
-    @Autowired private lateinit var targets: QaRunTargetRepository
-    @Autowired private lateinit var db: DatabaseClient
-
-    /**
-     * 이 클래스가 만든 런 배경. [cleanUpRuns] 가 지운다.
-     *
-     * 다른 테스트들이 `DELETE FROM project` 로 정리하는데, 남은 qa_run 이 game_instance 삭제를
-     * 막아 그 정리를 통째로 깨뜨린다. 격리는 남기지 않는 쪽이 지킨다.
-     */
-    private data class RunFixture(
-        val runId: Long,
-        val testRunId: Long,
-        val instanceId: Long,
-        val userId: Long,
-    )
-
-    private val createdRuns = mutableListOf<RunFixture>()
-
-    @AfterEach
-    fun cleanUpRuns(): Unit = runBlocking {
-        createdRuns.forEach { fixture ->
-            // 삭제 순서를 FK 가 정한다. qa_run 이 test_run · game_instance · app_user 를 전부
-            // 참조하므로 qa_run 이 먼저 사라져야 한다.
-            exec("DELETE FROM qa_run WHERE id = ${fixture.runId}")
-            exec("DELETE FROM test_run WHERE id = ${fixture.testRunId}")
-            exec("DELETE FROM game_instance WHERE id = ${fixture.instanceId}")
-            exec("DELETE FROM app_user WHERE id = ${fixture.userId}")
-        }
-        createdRuns.clear()
-    }
-
-    /**
-     * qa_run 은 test_run · game_instance · app_user 를 요구한다. 이 테스트가 검증하는 것은
-     * 조준 해석표이지 런 생성이 아니므로 raw SQL 로 최소한만 세운다(SdkPerformanceIntegrationTest
-     * 와 같은 방식).
-     */
-    private suspend fun newQaRun(scene: SceneEntity): Long {
-        val map = contentMaps.findById(scene.contentMapId)!!
-        val build = gameBuilds.findById(map.gameBuildId)!!
-        val projectId = build.projectId
-        val userId = insertReturningId(
-            "INSERT INTO app_user (display_name) VALUES ('content-map-test') RETURNING id"
-        )
-        val testRunId = insertReturningId(
-            "INSERT INTO test_run (project_id, name) VALUES ($projectId, 'content-map') RETURNING id"
-        )
-        val instanceId = insertReturningId(
-            "INSERT INTO game_instance (project_id, name, platform) " +
-                "VALUES ($projectId, 'content-map', 'UNITY') RETURNING id"
-        )
-        val runId = insertReturningId(
-            "INSERT INTO qa_run (test_run_id, game_instance_id, started_by, status, started_at) " +
-                "VALUES ($testRunId, $instanceId, $userId, 'RUNNING', now()) RETURNING id"
-        )
-        createdRuns += RunFixture(runId, testRunId, instanceId, userId)
-        return runId
-    }
-
-    private suspend fun exec(sql: String) {
-        db.sql(sql).fetch().awaitRowsUpdated()
-    }
-
-    private suspend fun insertReturningId(sql: String): Long =
-        db.sql(sql).map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
-            .one().awaitSingle()
 
     /** 게임 빌드는 프로젝트에 FK 로 매달려 있어 프로젝트부터 만든다. */
     private suspend fun newGameBuild(): GameBuildEntity {
@@ -800,30 +730,5 @@ class ContentMapSchemaTest {
         assertThat(rows[0].observedCount).isEqualTo(3)
         // 세 번 눌러 두 번만 무언가 변했다. 그 차이가 결함 신호다.
         assertThat(rows[0].firedCount).isEqualTo(2)
-    }
-
-    /**
-     * 조준 해석표는 **더 나중 판독에서 온 값만** 이긴다.
-     *
-     * 늦게 도착한 옛 판독이 최신 instance id 를 덮으면, 그 뒤 액션이 전부 낡은 id 로 나간다.
-     * 이 규칙이 손으로 쓴 SQL 의 `WHERE` 절 한 줄에 걸려 있어 실행 검증이 필요하다.
-     */
-    @Test
-    fun `늦게 도착한 옛 판독이 최신 조준값을 덮지 않는다`(): Unit = runBlocking {
-        val map = newContentMap()
-        val scene = newScene(map.id!!, "TitleScene")
-        val run = newQaRun(scene)
-
-        targets.upsert(run, "TitleScene", "Canvas[2]/continue[2]", instanceId = 100, reading = 5)
-        // 더 나중 판독 — 이긴다
-        targets.upsert(run, "TitleScene", "Canvas[2]/continue[2]", instanceId = 200, reading = 9)
-        // 늦게 도착한 옛 판독 — 무시된다
-        targets.upsert(run, "TitleScene", "Canvas[2]/continue[2]", instanceId = 300, reading = 7)
-
-        val target = targets.findOne(run, "TitleScene", "Canvas[2]/continue[2]")
-
-        assertThat(target).isNotNull
-        assertThat(target!!.instanceId).isEqualTo(200)
-        assertThat(target.reading).isEqualTo(9)
     }
 }

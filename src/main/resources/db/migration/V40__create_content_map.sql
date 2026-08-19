@@ -125,9 +125,14 @@ CREATE TABLE IF NOT EXISTS capability (
     given_text TEXT,
 
     -- when.
-    -- selector 는 실행 간 유지되는 안정 식별자다. 조준에 직접 쓰지 못한다 — 현재 액션
-    -- 프로토콜은 int instance id 를 받고 그 숫자는 프로세스를 넘지 못한다. 실행 시 해석은
-    -- qa_run_target 이 맡는다.
+    -- selector 는 형제 인덱스가 붙은 위치 경로다(Canvas[2]/MapSceneButton[1]). 한 판독 안에서는
+    -- 반드시 하나를 가리키지만, 계층이 정적일 때만 실행 간 유지된다 — 형제가 생기거나 사라지면
+    -- 인덱스가 밀려 같은 문자열이 다른 오브젝트를 가리킨다. 런타임에 스폰되는 목록에는 채우지
+    -- 않는 편이 맞다.
+    --
+    -- 조준에 직접 쓰지도 못한다 — 현재 액션 프로토콜은 int instance id 를 받고 그 숫자는
+    -- 프로세스를 넘지 못한다. 실행 시 해석표는 판독을 받는 ARTEL-449 가 자기 마이그레이션으로
+    -- 가져간다.
     control_selector VARCHAR(512),
     control_path VARCHAR(512),
     control_label TEXT,
@@ -365,28 +370,7 @@ CREATE INDEX IF NOT EXISTS idx_capability_merged_into
     ON capability (merged_into) WHERE merged_into IS NOT NULL;
 
 --------------------------------------------------------------------------------
--- 12. qa_run_target — 런 단위 조준 해석표
---------------------------------------------------------------------------------
--- content_map 에 두지 않는다. instance id 는 프로세스를 넘지 못하므로 런이 끝나면
--- 쓰레기다.
---
--- reading 을 같이 두는 이유: 액션 실패가 "버튼이 안 먹었다"인지 "id 가 낡았다"인지 갈라야
--- 한다. 실패 시 reading 이 최신인지 보고 아니면 재조회 후 1회 재시도.
---
--- 이 치환은 agent 가 아니라 서버가 한다. 기계적인 일이고, agent 에게 시키면 판독 전체를
--- 프롬프트에 넣어야 한다.
-CREATE TABLE IF NOT EXISTS qa_run_target (
-    qa_run_id BIGINT NOT NULL REFERENCES qa_run (id) ON DELETE CASCADE,
-    scene_name VARCHAR(255) NOT NULL,
-    selector VARCHAR(512) NOT NULL,
-    instance_id INT NOT NULL,
-    reading BIGINT NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (qa_run_id, scene_name, selector)
-);
-
---------------------------------------------------------------------------------
--- 13. v_content_map_capability — TC 생성기가 읽는 유일한 창구
+-- 12. v_content_map_capability — TC 생성기가 읽는 유일한 창구
 --------------------------------------------------------------------------------
 -- 효과는 여기 접지 않는다. 행이 여러 개라 조인하면 곱해진다.
 CREATE OR REPLACE VIEW v_content_map_capability AS
@@ -424,7 +408,7 @@ WHERE c.merged_into IS NULL
   AND c.status <> 'not-a-step';
 
 --------------------------------------------------------------------------------
--- 14. v_spec_gap — 명세의 어느 칸을 못 채웠나
+-- 13. v_spec_gap — 명세의 어느 칸을 못 채웠나
 --------------------------------------------------------------------------------
 -- 테이블이 아니라 뷰인 이유: 전부 다른 컬럼에서 계산되므로 적재 코드를 두면 낡는다.
 --
