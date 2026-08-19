@@ -148,6 +148,14 @@ interface CapabilityEffectRepository : CoroutineCrudRepository<CapabilityEffectE
 
     /** 효과가 가리키는 값으로 되찾기. 관측이 어느 기능의 결과인지 맞출 때 쓴다. */
     fun findByTarget(target: String): Flow<CapabilityEffectEntity>
+
+    /**
+     * 재적재가 근거 출신 효과만 갈아엎는다. 효과에는 안정 키가 없어 지우고 다시 넣는 것이 유일한 길이고,
+     * `origin` 으로 좁히지 않으면 관측이 남긴 효과까지 스캔이 지운다.
+     */
+    @Modifying
+    @Query("DELETE FROM capability_effect WHERE capability_id = :capabilityId AND origin = 'evidence'")
+    suspend fun deleteEvidenceEffects(capabilityId: Long): Long
 }
 
 /**

@@ -30,7 +30,11 @@ class FakeDocumentStorage : DocumentStorage {
     }
 
     /** 서버가 [DocumentStorage.put]으로 올려 둔 바이트. 테스트가 결과를 확인할 때 쓴다. */
-    fun read(objectKey: String): ByteArray? = objects[objectKey]
+    /** 테스트가 저장된 바이트를 직접 들여다볼 때. 인터페이스의 [read] 와 달리 없는 키면 null 이다. */
+    fun bytesOf(objectKey: String): ByteArray? = objects[objectKey]
+
+    override fun read(objectKey: String): Mono<ByteArray> =
+        objects[objectKey]?.let { Mono.just(it) } ?: Mono.empty()
 
     fun contentTypeOf(objectKey: String): String? = contentTypes[objectKey]
 

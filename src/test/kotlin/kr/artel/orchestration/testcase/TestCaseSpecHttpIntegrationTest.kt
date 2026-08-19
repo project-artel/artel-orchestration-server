@@ -100,7 +100,7 @@ class TestCaseSpecHttpIntegrationTest {
 
         val cases = testCaseRepository.findByProjectIdOrderByIdDesc(projectId).toList()
         assertThat(cases.map { it.step }).containsExactlyInAnyOrder("상점 입장", "검 구매")
-        assertThat(fakeStorage.read("projects/$projectId/test-case-spec/test-cases.xlsx")).isNotNull()
+        assertThat(fakeStorage.bytesOf("projects/$projectId/test-case-spec/test-cases.xlsx")).isNotNull()
     }
 
     @Test
@@ -131,7 +131,7 @@ class TestCaseSpecHttpIntegrationTest {
 
         assertThat(error.statusCode).isEqualTo(HttpStatus.BAD_REQUEST)
         assertThat(testCaseRepository.findByProjectIdOrderByIdDesc(projectId).toList()).isEmpty()
-        assertThat(fakeStorage.read("projects/$projectId/test-case-spec/test-cases.xlsx")).isNull()
+        assertThat(fakeStorage.bytesOf("projects/$projectId/test-case-spec/test-cases.xlsx")).isNull()
     }
 
     @Test

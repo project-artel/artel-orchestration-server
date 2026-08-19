@@ -380,7 +380,7 @@ class EvidenceDocumentServiceTest {
         val secondKey = upload(userId, buildId, bytes)
         service.register(userId, buildId, RegisterEvidenceDocumentRequest(secondKey))
 
-        assertThat(fakeStorage.read(firstKey)).isNotNull()
-        assertThat(fakeStorage.read(secondKey)).isNull()
+        assertThat(fakeStorage.bytesOf(firstKey)).isNotNull()
+        assertThat(fakeStorage.bytesOf(secondKey)).isNull()
     }
 }
