@@ -17,6 +17,7 @@ For non-trivial work, follow:
 
 Coding conventions:
 
+- `.agents/docs/coding-style.md`
 - `.agents/docs/error-handling.md` — 오류는 `common/error`의 타입 예외로 던진다(신규 `ResponseStatusException` 금지).
 
 For tracked Git work, follow:
