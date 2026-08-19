@@ -61,4 +61,16 @@ data class CapabilityEffectEntity(
      */
     @Column("il_offset")
     val ilOffset: Int? = null,
+
+    /**
+     * 이 효과를 얼마나 확실하게 짚었나. [AnalysisConfidence] 중 하나이며
+     * [CapabilityProofEntity] 사슬의 **최솟값**이다.
+     *
+     * `capability_evidence.analysis_confidence` 는 기능 전체의 등급이라 어느 효과가 흐린지 말하지
+     * 못한다. 효과마다 두면 "이 `then` 은 단정 근거로 쓸 수 있고 저것은 아니다"가 갈린다.
+     *
+     * null 인 이유: [EffectOrigin.OBSERVED] 인 효과는 유도가 아니라 관측이라 사슬이 없다.
+     */
+    @Column("resolution")
+    val resolution: String? = null,
 )

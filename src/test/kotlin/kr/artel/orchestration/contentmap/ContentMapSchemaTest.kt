@@ -2,11 +2,13 @@ package kr.artel.orchestration.contentmap
 
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.reactive.awaitSingle
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.contentmap.entity.AnalysisConfidence
 import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityEvidenceEntity
+import kr.artel.orchestration.contentmap.entity.CapabilityProofEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityOrigin
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
@@ -26,6 +28,7 @@ import kr.artel.orchestration.contentmap.entity.SpecStatus
 import kr.artel.orchestration.contentmap.entity.TriggerKind
 import kr.artel.orchestration.contentmap.entity.VerificationState
 import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
+import kr.artel.orchestration.contentmap.repository.CapabilityProofRepository
 import kr.artel.orchestration.contentmap.repository.CapabilityEvidenceRepository
 import kr.artel.orchestration.contentmap.repository.upsert
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
@@ -45,6 +48,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.r2dbc.core.DatabaseClient
+import org.springframework.r2dbc.core.awaitRowsUpdated
 import org.springframework.test.context.ActiveProfiles
 import java.time.Instant
 
@@ -72,6 +76,7 @@ class ContentMapSchemaTest {
     @Autowired private lateinit var capabilities: CapabilityRepository
     @Autowired private lateinit var evidences: CapabilityEvidenceRepository
     @Autowired private lateinit var effects: CapabilityEffectRepository
+    @Autowired private lateinit var proofs: CapabilityProofRepository
     @Autowired private lateinit var edges: SceneEdgeRepository
     @Autowired private lateinit var screens: ScreenRepository
     @Autowired private lateinit var transitions: ScreenTransitionRepository
@@ -528,7 +533,7 @@ class ContentMapSchemaTest {
                         callPath = Json.of("""["X::Y"]"""),
                         recordKind = RecordKind.CANDIDATE.wire,
                         triggerKind = TriggerKind.UNITY_EVENT.wire,
-                        analysisConfidence = AnalysisConfidence.VERIFIED.wire,
+                        analysisConfidence = AnalysisConfidence.EXACT.wire,
                         conditionTree = Json.of("""{"kind":"always"}"""),
                     )
                 )
@@ -622,15 +627,15 @@ class ContentMapSchemaTest {
             AnalysisConfidence.DERIVED.wire,
         )
         val unread = withGaps("unread", EvidenceGap.UNREAD_CONDITION.wire, AnalysisConfidence.DERIVED.wire)
-        val partial = withGaps("partial", null, AnalysisConfidence.PARTIAL.wire)
-        val clean = withGaps("clean", null, AnalysisConfidence.VERIFIED.wire)
+        val ambiguous = withGaps("ambiguous", null, AnalysisConfidence.AMBIGUOUS.wire)
+        val clean = withGaps("clean", null, AnalysisConfidence.EXACT.wire)
 
         val gaps = contentMaps.findSpecGaps(map.id!!).toList().associate { it.capabilityId to it.reason }
 
         assertThat(gaps[subjectLost]).isEqualTo(SpecGapReason.GIVEN_SUBJECT_UNKNOWN.wire)
         assertThat(gaps[notComposed]).isEqualTo(SpecGapReason.GIVEN_INCOMPLETE.wire)
         assertThat(gaps[unread]).isEqualTo(SpecGapReason.GIVEN_UNREAD.wire)
-        assertThat(gaps[partial]).isEqualTo(SpecGapReason.GIVEN_INCOMPLETE.wire)
+        assertThat(gaps[ambiguous]).isEqualTo(SpecGapReason.GIVEN_INCOMPLETE.wire)
         assertThat(gaps).doesNotContainKey(clean)
     }
 
@@ -666,7 +671,7 @@ class ContentMapSchemaTest {
                 callPath = Json.of("""["T::both"]"""),
                 recordKind = RecordKind.CANDIDATE.wire,
                 triggerKind = TriggerKind.UNITY_EVENT.wire,
-                analysisConfidence = AnalysisConfidence.PARTIAL.wire,
+                analysisConfidence = AnalysisConfidence.AMBIGUOUS.wire,
                 conditionTree = Json.of("""{"kind":"unknown"}"""),
             )
         )
@@ -888,6 +893,203 @@ class ContentMapSchemaTest {
     }
 
     /**
+     * 확실성이 **어느 단계에서** 내려갔는지 읽힌다.
+     *
+     * 등급 하나로는 "이 결론이 틀렸다"까지만 말할 수 있다. 사슬이 있어야 호출을 잘못 따라간 것인지
+     * 필드 쓰기를 잘못 읽은 것인지 갈리고, 그것이 적재기 규칙을 고칠 자리다.
+     */
+    @Test
+    fun `사슬이 어느 단계에서 흐려졌는지 말한다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "GameClearScene")
+        val capability = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = "`Canvas/RewardButton` 클릭 → 보상 카드가 생성된다",
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
+            )
+        )
+        val effect = effects.save(
+            CapabilityEffectEntity(
+                capabilityId = capability.id!!,
+                category = EffectCategory.OBSERVABLE.wire,
+                kind = "instantiate",
+                target = "GameClearController.magicCard",
+                resolution = AnalysisConfidence.AMBIGUOUS.wire,
+            )
+        )
+
+        val chain = listOf(
+            Triple(0, AnalysisConfidence.EXACT.wire, "binding-from-scene-calls"),
+            Triple(1, AnalysisConfidence.DERIVED.wire, "callee-effect-composition"),
+            Triple(2, AnalysisConfidence.AMBIGUOUS.wire, "prefab-field-resolution"),
+        )
+        chain.forEach { (seq, resolution, rule) ->
+            proofs.save(
+                CapabilityProofEntity(
+                    capabilityId = capability.id!!,
+                    effectId = effect.id!!,
+                    seq = seq,
+                    source = "GameClearController::ShowReward",
+                    relation = "calls",
+                    target = "GameClearController.magicCard",
+                    resolution = resolution,
+                    rule = rule,
+                )
+            )
+        }
+
+        val stored = proofs.findByEffectIdOrderBySeqAsc(effect.id!!).toList()
+        assertThat(stored).hasSize(3)
+        // 흐려진 단계와 그때 적용한 규칙이 함께 읽힌다.
+        val blurred = stored.single { it.resolution == AnalysisConfidence.AMBIGUOUS.wire }
+        assertThat(blurred.seq).isEqualTo(2)
+        assertThat(blurred.rule).isEqualTo("prefab-field-resolution")
+        // 효과의 등급은 사슬의 최솟값과 같다.
+        assertThat(effects.findById(effect.id!!)!!.resolution)
+            .isEqualTo(AnalysisConfidence.AMBIGUOUS.wire)
+    }
+
+    /**
+     * `v_content_map_capability` 의 행 수가 사슬 때문에 흔들리지 않는다.
+     *
+     * 그 뷰는 효과조차 접지 않는다 — 행이 곱해지기 때문이다. 사슬은 효과마다 여러 단계라 더
+     * 곱해지므로, 조인했다면 TC 생성기가 받는 행 수가 사슬 길이에 따라 달라졌을 것이다.
+     */
+    @Test
+    fun `사슬을 쌓아도 TC 창구의 행 수는 그대로다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TitleScene")
+        val capability = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = "`Canvas/MapSceneButton` 클릭",
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
+            )
+        )
+
+        suspend fun rowsInWindow(): Int = db
+            .sql("SELECT count(*) FROM v_content_map_capability WHERE capability_id = :id")
+            .bind("id", capability.id!!)
+            .map { row, _ -> (row.get(0) as Number).toInt() }
+            .one()
+            .awaitSingle()
+
+        val before = rowsInWindow()
+
+        repeat(5) { seq ->
+            proofs.save(
+                CapabilityProofEntity(
+                    capabilityId = capability.id!!,
+                    seq = seq,
+                    source = "Scenes.TitleSceneManager::InitPlayerData",
+                    relation = "calls",
+                    resolution = AnalysisConfidence.DERIVED.wire,
+                    rule = "callee-effect-composition",
+                )
+            )
+        }
+
+        assertThat(proofs.findByCapabilityIdOrderBySeqAsc(capability.id!!).toList()).hasSize(5)
+        assertThat(rowsInWindow()).isEqualTo(before)
+    }
+
+    /**
+     * 사슬 적재의 **크기 대가**를 잰다.
+     *
+     * 행이 기능당 수 배로 늘어나는 구조라, 얼마나 무거운지를 숫자로 알고 시작해야 한다. 골든 맵
+     * 규모(기능 18 × 효과 2 × 단계 3 = 108 행)를 넣고 실제 점유를 읽는다.
+     *
+     * 상한이 헐거운 이유: 정확한 바이트는 PostgreSQL 판·정렬 패딩에 달렸다. 여기서 잡으려는 것은
+     * 미세한 변동이 아니라 **한 자릿수가 바뀌는 회귀**다 — 사슬에 JSONB 를 하나 얹는 식의 변경.
+     */
+    @Test
+    fun `사슬 적재의 크기 대가를 잰다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TitleScene")
+        val capability = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = "크기를 재려고 세운 기능",
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
+            )
+        )
+
+        repeat(108) { seq ->
+            proofs.save(
+                CapabilityProofEntity(
+                    capabilityId = capability.id!!,
+                    seq = seq,
+                    source = "Assembly-CSharp|Scenes.TitleSceneManager|InitPlayerData|System.Void()",
+                    relation = "calls",
+                    target = "Scenes.TitleSceneManager.saveLoadController.LoadPlayData",
+                    resolution = AnalysisConfidence.DERIVED.wire,
+                    rule = "callee-effect-composition",
+                )
+            )
+        }
+
+        // 이 클래스의 다른 테스트가 남긴 행이 섞이므로 이 기능 것만 센다. 페이지 단위인
+        // pg_total_relation_size 는 이 규모에서 고정 오버헤드가 지배해 per-row 값이 뜻을 잃는다.
+        // 튜플 실측은 pg_column_size 합으로 읽는다.
+        val measured = db
+            .sql(
+                """
+                SELECT count(*) AS rows, sum(pg_column_size(p.*)) AS bytes
+                FROM capability_proof p WHERE p.capability_id = :id
+                """
+            )
+            .bind("id", capability.id!!)
+            .map { row, _ -> (row.get("rows") as Number).toLong() to (row.get("bytes") as Number).toLong() }
+            .one()
+            .awaitSingle()
+        val (rows, bytes) = measured
+
+        println("capability_proof rows=$rows tuple_bytes=$bytes bytes_per_row=${bytes / rows}")
+        assertThat(rows).isEqualTo(108L)
+        assertThat(bytes / rows).isLessThan(400L)
+    }
+
+    /** 한 사슬 안에서 순서가 겹치면 거절한다. 겹치면 "몇 번째 단계"가 뜻을 잃는다. */
+    @Test
+    fun `사슬의 순서는 겹치지 않는다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TitleScene")
+        val capability = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = "사슬이 붙는 기능",
+                interaction = Interaction.CLICK.wire,
+                status = SpecStatus.RUNNABLE.wire,
+            )
+        )
+        fun step() = CapabilityProofEntity(
+            capabilityId = capability.id!!,
+            seq = 0,
+            source = "T::M",
+            relation = "calls",
+            resolution = AnalysisConfidence.EXACT.wire,
+            rule = "binding-from-scene-calls",
+        )
+
+        proofs.save(step())
+
+        assertThatThrownBy { runBlocking { proofs.save(step()) } }
+            .hasMessageContaining("uk_capability_proof_capability_seq")
+    }
+
+    /**
      * "대사가 끝날 때까지 아무 키를 누른다"가 **스텝으로** 적힌다.
      *
      * 이 자리가 없으면 반복이 사전조건으로 밀려나 "대사를 모두 넘긴 상태"가 되는데, 그것은 실행
@@ -1035,7 +1237,7 @@ class ContentMapSchemaTest {
                     methodId = methodId,
                     recordKind = RecordKind.CANDIDATE.wire,
                     triggerKind = TriggerKind.UNITY_EVENT.wire,
-                    analysisConfidence = AnalysisConfidence.PARTIAL.wire,
+                    analysisConfidence = AnalysisConfidence.AMBIGUOUS.wire,
                     conditionTree = Json.of("""{"kind":"always"}"""),
                     callPath = Json.of(callPath),
                     gaps = Json.of(gaps),

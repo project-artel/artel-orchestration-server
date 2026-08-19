@@ -6,6 +6,7 @@ import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityEvidenceEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityInferenceEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityObservationEntity
+import kr.artel.orchestration.contentmap.entity.CapabilityProofEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
@@ -147,6 +148,24 @@ interface CapabilityEffectRepository : CoroutineCrudRepository<CapabilityEffectE
 
     /** 효과가 가리키는 값으로 되찾기. 관측이 어느 기능의 결과인지 맞출 때 쓴다. */
     fun findByTarget(target: String): Flow<CapabilityEffectEntity>
+}
+
+/**
+ * 사슬. 한 단계가 한 행이다.
+ *
+ * `v_content_map_capability` 에 조인하지 않는다 — 그 뷰는 효과조차 접지 않는다(행 곱셈). 사슬은
+ * 효과마다 여러 단계라 더 곱해지므로 읽는 창구를 따로 둔다.
+ */
+interface CapabilityProofRepository : CoroutineCrudRepository<CapabilityProofEntity, Long> {
+
+    fun findByCapabilityIdOrderBySeqAsc(capabilityId: Long): Flow<CapabilityProofEntity>
+
+    fun findByEffectIdOrderBySeqAsc(effectId: Long): Flow<CapabilityProofEntity>
+
+    /**
+     * 규칙별로 흐린 단계를 센다. 같은 이름이 뭉쳐 나오는 자리가 고칠 규칙이다.
+     */
+    fun countByRuleAndResolution(rule: String, resolution: String): Long
 }
 
 /** 관측. 조작 한 번이 한 행. */

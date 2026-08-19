@@ -181,11 +181,25 @@ enum class TriggerKind(val wire: String) {
 /**
  * IL 분석기의 자기 확신도. **실행 확인이 아니다** — 그것은 [VerificationState] 다.
  * 이름이 겹쳐 혼동되던 자리라 서브테이블로 내려두었다.
+ *
+ * 어휘는 agent-server 의 `specs_v2` `Resolution` 과 같다. 이 값은 사슬
+ * ([CapabilityProofEntity.resolution]) 의 **최솟값으로 정의되는 유도값**이라, 두 어휘가 다르면
+ * 계산한 값과 저장된 값을 비교할 수 없다.
+ *
+ * 선언 순서가 곧 확실성의 순서다 — 앞이 확실하고 뒤가 흐리다.
  */
 enum class AnalysisConfidence(val wire: String) {
-    VERIFIED("verified"),
+    /** 그 자리에서 확정했다. */
+    EXACT("exact"),
+
+    /** 유도했다. */
     DERIVED("derived"),
-    PARTIAL("partial");
+
+    /** 후보가 여럿이라 하나로 못 좁혔다. */
+    AMBIGUOUS("ambiguous"),
+
+    /** 못 풀었다. */
+    UNRESOLVED("unresolved");
 
     companion object {
         fun from(wire: String?): AnalysisConfidence? = entries.firstOrNull { it.wire == wire }
