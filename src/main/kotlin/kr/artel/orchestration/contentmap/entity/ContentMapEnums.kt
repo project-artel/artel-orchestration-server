@@ -300,7 +300,15 @@ enum class EvidenceGap(val wire: String) {
     METHOD_ID_MISSING("method-id-missing"),
 
     /** `call_path` 가 비었다. 어느 호출 사슬에서 나온 규칙인지 모른다는 뜻이다. */
-    CALL_PATH_MISSING("call-path-missing");
+    CALL_PATH_MISSING("call-path-missing"),
+
+    /**
+     * 한 씬에서 이 타입을 만드는 후보가 둘 이상이라 `spawned_by_field` 를 못 정했다.
+     *
+     * 실측에서 `Cards.Card` · `Cards.Order` · `Combat.UI.DraggableCard` 가 각 3건이다. 첫 항목을
+     * 조용히 집으면 "누가 만드는지 안다"와 "여럿 중 하나를 골랐다"가 구분되지 않는다.
+     */
+    SPAWN_ORIGIN_AMBIGUOUS("spawn-origin-ambiguous");
 
     companion object {
         fun from(wire: String?): EvidenceGap? = entries.firstOrNull { it.wire == wire }

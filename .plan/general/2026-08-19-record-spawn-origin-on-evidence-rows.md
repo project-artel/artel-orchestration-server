@@ -38,8 +38,9 @@
   - `capability.spawned_by_scene_path VARCHAR(512)` (폭은 `control_path` 와 같다)
   - `ck_capability_spawn_path_needs_field` — 경로만 있고 필드가 없는 행을 막는다
   - `ck_capability_spawn_needs_evidence` — `origin='evidence'` 인 행만 스폰 출처를 갖는다
-  - `ck_capability_spawn_has_no_control` — 스폰 행은 `control_path` · `control_selector` 가 비고
-    `interaction='none'` 이다. **이 이슈의 본체**
+  - `ck_capability_spawn_has_no_control` — 스폰 행은 `control_path` · `control_selector` ·
+    `control_label` 이 비고 `interaction='none'` · `input_phase IS NULL` ·
+    `actionability='not-a-step'` 이다. **이 이슈의 본체**
   - `v_spec_gap` 재생성 — `when-missing` 분기에서 스폰 행을 뺀다
 - [x] **Step 2: 엔티티** — `CapabilityEntity.spawnedByField` · `spawnedByScenePath` (기본값 `null`)
 - [x] **Step 3: 테스트** — `ContentMapSchemaTest` 에 다섯 가지
@@ -85,5 +86,18 @@
   줬다)한지 *유도*(오너 타입의 배치에서 씬만 얻었다)인지가 사라진다. 적재기가
   `analysis_confidence` 를 그 둘로 가르므로 같은 이슈에서 나온다
 - **"`v_content_map_capability` 에도 두 칸을 노출하라"** (fast) — 스폰 행은 `not-a-step` 이라 그 뷰의
-  `WHERE status <> 'not-a-step'` 에 이미 걸러진다. 창구에 안 나오는 행의 컬럼을 창구에 더하는
-  것은 소비자에게 죽은 칸을 주는 것이다
+  `WHERE status <> 'not-a-step'` 에 걸러진다. 창구에 안 나오는 행의 컬럼을 창구에 더하는 것은
+  소비자에게 죽은 칸을 주는 것이다.
+
+  단, 구현 검토(pair-review)가 이 근거의 구멍을 짚었다: `actionability` 기본값이 `runnable` 이라
+  축을 명시하지 않고 넣은 스폰 행은 `status` 가 `needs-probe` 로 유도돼 **창구를 통과한다.**
+  그래서 축을 CHECK 에 묶었고, 그 뒤에야 이 거절이 성립한다
+
+## 구현 검토에서 고친 것
+
+- `control_label` · `input_phase` · `actionability` 를 조준 누출 CHECK 에 함께 묶었다
+- `EvidenceGap.SPAWN_ORIGIN_AMBIGUOUS` 를 어휘에 더했다. 후보가 둘 이상일 때 남길 사유가
+  닫힌 enum 에 없으면 `v_spec_gap` 이 영영 그 분기를 못 만난다
+- `spawned_by_scene_path` 의 정밀도를 `analysis_confidence` 로 직접 정한다고 쓴 주석을 고쳤다.
+  V44 가 그 값을 사슬 최솟값으로 정의했으므로, 귀속 단계는 `capability_proof.resolution` 으로 들어간다
+- 다시 낸 `v_spec_gap` 에 V45 가 들고 있던 분기 순서·대가 설명을 그대로 옮겼다

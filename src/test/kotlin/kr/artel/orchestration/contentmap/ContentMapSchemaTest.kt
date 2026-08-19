@@ -1468,9 +1468,8 @@ class ContentMapSchemaTest {
         val stored = capabilities.findById(spawned.id!!)!!
         assertThat(stored.spawnedByField).isEqualTo("Cards.CardManager.cardPrefab")
         assertThat(stored.spawnedByScenePath).isEqualTo("CardSystem/CardManager")
-        // 조준 대상은 비어 있다. 만드는 쪽의 경로는 누를 자리가 아니다.
-        assertThat(stored.controlPath).isNull()
-        assertThat(stored.controlSelector).isNull()
+        // 조작으로 세어지지 않는다. 축은 CHECK 가 강제하고, 그 결과 TC 창구에서 빠진다.
+        assertThat(stored.status).isEqualTo(SpecStatus.NOT_A_STEP.wire)
     }
 
     /**
@@ -1488,7 +1487,9 @@ class ContentMapSchemaTest {
             summary: String,
             controlPath: String? = null,
             controlSelector: String? = null,
+            controlLabel: String? = null,
             interaction: String = Interaction.NONE.wire,
+            actionability: String = Actionability.NOT_A_STEP.wire,
         ) {
             capabilities.save(
                 CapabilityEntity(
@@ -1499,7 +1500,8 @@ class ContentMapSchemaTest {
                     interaction = interaction,
                     controlPath = controlPath,
                     controlSelector = controlSelector,
-                    actionability = Actionability.NOT_A_STEP.wire,
+                    controlLabel = controlLabel,
+                    actionability = actionability,
                     spawnedByField = "Cards.CardManager.cardPrefab",
                 )
             )
@@ -1515,9 +1517,21 @@ class ContentMapSchemaTest {
             runBlocking { save(summary = "selector 를 든 스폰 행", controlSelector = "CardSystem[1]/CardManager[1]") }
         }.hasMessageContaining("ck_capability_spawn_has_no_control")
 
+        // 프롬프트 재료가 되는 글자도 막는다. 경로만 비우고 이름을 남기면 "만드는 쪽을 눌러라"가
+        // 문장으로 되살아난다.
+        assertThatThrownBy {
+            runBlocking { save(summary = "이름을 든 스폰 행", controlLabel = "카드 매니저") }
+        }.hasMessageContaining("ck_capability_spawn_has_no_control")
+
         // 누를 자리 없이 남은 조작 종류도 막는다.
         assertThatThrownBy {
             runBlocking { save(summary = "클릭이라 적힌 스폰 행", interaction = Interaction.CLICK.wire) }
+        }.hasMessageContaining("ck_capability_spawn_has_no_control")
+
+        // 축을 명시하지 않으면 기본값 runnable 이 status 를 needs-probe 로 유도해 TC 창구를
+        // 통과한다. 조작 없는 행이 거기 나타나는 것이 이 CHECK 가 막는 마지막 구멍이다.
+        assertThatThrownBy {
+            runBlocking { save(summary = "축을 안 정한 스폰 행", actionability = Actionability.RUNNABLE.wire) }
         }.hasMessageContaining("ck_capability_spawn_has_no_control")
     }
 
@@ -1581,8 +1595,9 @@ class ContentMapSchemaTest {
      * 스폰 행은 조작이 **없어야 맞는** 행이라 when-missing 을 채우지 않는다.
      *
      * v_spec_gap 은 "다음에 무엇을 고칠까"에 답하는 표다. 실측 111건이 when-missing 으로 쏟아지면
-     * 실제로 조작을 잃은 행이 그 밑에 묻힌다. 대신 then-missing 으로 남아야 한다 — 적이 공격할 때
-     * 무엇이 달라지는지를 판독으로 확인할 근거가 아직 없다는 것이 이 행들의 진짜 구멍이다.
+     * 조작을 못 가진 다른 행들이 그 밑에 묻힌다. 빼고 나면 스폰 행도 나머지 분기를 그대로
+     * 지나간다 — 조건이 흐리면 given-incomplete, 관측 가능 효과가 없으면 then-missing 이다.
+     * 아래 사례는 조건이 derived 라 뒤쪽까지 간다.
      */
     @Test
     fun `스폰 행은 조작 없음을 구멍으로 세지 않는다`(): Unit = runBlocking {
@@ -1619,7 +1634,9 @@ class ContentMapSchemaTest {
         }
 
         val spawned = save(summary = "spawned", spawnedByField = "Cards.CardManager.cardPrefab")
-        val lostInteraction = save(summary = "lost", spawnedByField = null)
+        // 스폰이 아닌 조작 없는 행. 조작을 잃은 것인지 원래 자동인 것(타이머·코루틴)인지는
+        // 이 칸이 아직 가르지 못한다 — when-missing 에 남은 몫이다.
+        val withoutInteraction = save(summary = "lost", spawnedByField = null)
 
         // reason 이 NULL 이면 구멍이 아니라는 뜻이라 빈 문자열로 받는다.
         suspend fun reasonOf(capabilityId: Long): String = db
@@ -1630,6 +1647,6 @@ class ContentMapSchemaTest {
             .awaitSingle()
 
         assertThat(reasonOf(spawned)).isEqualTo(SpecGapReason.THEN_MISSING.wire)
-        assertThat(reasonOf(lostInteraction)).isEqualTo(SpecGapReason.WHEN_MISSING.wire)
+        assertThat(reasonOf(withoutInteraction)).isEqualTo(SpecGapReason.WHEN_MISSING.wire)
     }
 }

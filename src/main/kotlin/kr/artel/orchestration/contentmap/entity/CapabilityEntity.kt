@@ -111,8 +111,11 @@ data class CapabilityEntity(
      * 프리팹 위에만 사는 타입은 씬 오브젝트의 컴포넌트 목록에 없어 배선으로는 구조적으로 0건이고,
      * 씬에 귀속시키는 유일한 주소가 이것이다. 비면 씬만 남고 입구가 사라진다.
      *
-     * 배선으로 찾은 기능에서는 null 이다. 값이 있으면 [controlPath] · [controlSelector] 는 비어야
-     * 하고 [interaction] 은 [Interaction.NONE] 이어야 한다 — DB CHECK 가 강제한다.
+     * 배선으로 찾은 기능에서는 null 이다. 값이 있으면 [controlPath] · [controlSelector] ·
+     * [controlLabel] 은 비어야 하고, [interaction] 은 [Interaction.NONE] · [actionability] 는
+     * [Actionability.NOT_A_STEP] 이어야 한다 — DB CHECK 가 강제한다. 축까지 묶는 이유는
+     * [actionability] 의 기본값이 `runnable` 이라, 명시하지 않으면 조작 없는 행이 TC 창구를
+     * 통과하기 때문이다.
      *
      * `createdBy` 는 목록이지만 이 칸은 **씬 귀속을 실제로 결정한 하나**만 담는다. 한 씬에 후보가
      * 둘 이상이면 비우고 근거의 gaps 에 사유를 남긴다.
@@ -125,6 +128,9 @@ data class CapabilityEntity(
      * 근거의 `objects[].components[].refs[].carries` 가 줄 때만 찬다 — **NULL 이 정상이다.**
      *
      * 있으면 귀속이 정확(문서가 경로를 줬다)하고, 없으면 유도(오너 타입의 배치에서 씬만 얻었다)다.
+     * 그 정밀도는 귀속 단계의 `capability_proof.resolution` 으로 들어가고, `analysis_confidence` 는
+     * 사슬 전체의 최솟값에서 따라 나온다.
+     *
      * 이 값을 [controlPath] 로 옮겨 담지 않는다 — 만드는 쪽의 주소를 조준 대상으로 내주면 TC 가
      * 만드는 쪽을 눌러 만들어지는 쪽을 확인했다고 말하게 된다.
      */

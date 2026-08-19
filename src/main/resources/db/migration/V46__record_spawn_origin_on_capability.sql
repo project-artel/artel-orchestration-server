@@ -11,7 +11,8 @@
 --
 -- 담는 것:
 --   1. capability.spawned_by_field · spawned_by_scene_path — 만드는 쪽의 주소
---   2. 그 주소가 조준 대상(control_*)으로 새지 못하게 하는 CHECK 셋
+--   2. CHECK 셋 — 경로는 필드를 요구하고, 스폰 출처는 근거 출신만 갖고, 그 주소는 조준 대상으로
+--      새지 못한다
 --   3. v_spec_gap — 스폰 행이 when-missing 을 덮지 않게 한다
 --
 -- capability_evidence 가 아니라 capability 에 두는 이유: 이 값이 지켜야 하는 불변식이 전부
@@ -41,7 +42,9 @@ ALTER TABLE capability
 -- 되짚기 축(method_id · call_path)과 달리 이 값은 근거가 줄 때만 있는 덤이다.
 --
 -- 그럼에도 따로 담는 이유: 이 값이 있으면 귀속이 **정확**(문서가 경로를 줬다)하고, 없으면
--- **유도**(오너 타입의 배치에서 씬만 얻었다)다. 적재기가 analysis_confidence 를 그 둘로 가른다.
+-- **유도**(오너 타입의 배치에서 씬만 얻었다)다. 그 정밀도는 귀속 단계의 capability_proof.resolution
+-- 으로 들어가고, analysis_confidence 는 V44 가 정한 대로 사슬 전체의 최솟값에서 따라 나온다 —
+-- 이 컬럼 하나로 직접 정하지 않는다.
 ALTER TABLE capability
     ADD COLUMN IF NOT EXISTS spawned_by_scene_path VARCHAR(512);
 
@@ -72,17 +75,28 @@ ALTER TABLE capability
 -- 가장 비싸다.
 --
 -- interaction='none' 을 함께 묶는 이유: 조준 대상만 비우고 조작 종류를 남겨 두면 실행기가
--- 누를 자리 없이 누르라는 스텝을 받는다.
+-- 누를 자리 없이 누르라는 스텝을 받는다. control_label 도 같이 묶는다 — 프롬프트 재료로 쓰이는
+-- 글자라, 경로만 비우고 이름을 남기면 "만드는 쪽을 눌러라"가 문장으로 되살아난다.
 --
--- actionability 는 묶지 않는다. 적재기는 이 행을 not-a-step 으로 넣지만, 그것은 축이고 축은
--- 나중에 다른 이슈가 옮긴다(ARTEL-452 관측 축 · ARTEL-461 실행 축). 주소는 사실이고 축은 판정이다.
+-- actionability 를 묶는 이유는 따로 있다. 기본값이 'runnable' 이라, 축을 명시하지 않고 넣은
+-- 스폰 행은 status 가 'needs-probe' 로 유도돼 v_content_map_capability 의
+-- `status <> 'not-a-step'` 필터를 **통과한다.** 조작이 없는 행이 TC 생성기의 유일한 창구에
+-- 나타나는 것이라, 이 한 축만은 판정이 아니라 정의다 — 만들어지는 쪽은 스텝이 될 수 없다.
+-- 나머지 두 축(관측 · 적용)은 묶지 않는다. 그쪽은 나중에 ARTEL-452 · ARTEL-461 이 옮긴다.
 ALTER TABLE capability
     DROP CONSTRAINT IF EXISTS ck_capability_spawn_has_no_control;
 ALTER TABLE capability
     ADD CONSTRAINT ck_capability_spawn_has_no_control
         CHECK (
             spawned_by_field IS NULL
-                OR (control_path IS NULL AND control_selector IS NULL AND interaction = 'none')
+                OR (
+                    control_path IS NULL
+                        AND control_selector IS NULL
+                        AND control_label IS NULL
+                        AND interaction = 'none'
+                        AND input_phase IS NULL
+                        AND actionability = 'not-a-step'
+                )
         );
 
 --------------------------------------------------------------------------------
@@ -92,11 +106,31 @@ ALTER TABLE capability
 -- 것"을 세는 칸인데, 스폰 행은 조작이 **없어야 맞는** 행이라 그대로 두면 111건이 이 칸을 채워
 -- 실제 결함을 덮는다.
 --
--- 그래서 when-missing 에서만 뺀다. 맨 앞에 새 사유를 세우지 않는 것은 의도다 — 스폰 행이 정작
--- 필요한 신호는 then-missing 이다. 적이 공격할 때 무엇이 달라지는지를 판독으로 확인할 근거가
--- 지금 명세에 아예 없고, 그것이 이 행들을 담는 이유다.
+-- 그래서 when-missing 에서만 뺀다. 맨 앞에 새 사유를 세우지 않는 것은 의도다 — 빼고 나면 스폰
+-- 행도 나머지 분기를 그대로 지나가고, 조건이 흐린 행은 given-incomplete 로, 관측 가능 효과가
+-- 없는 행은 then-missing 으로 각자 걸린다. 뒤쪽이 이 행들을 담은 이유에 가깝다: 적이 공격할 때
+-- 무엇이 달라지는지를 판독으로 확인할 근거가 지금 명세에 아예 없다.
 --
--- 나머지 분기와 사유 어휘는 V45 정의 그대로다.
+-- 아래는 V45 정의에 그 한 줄만 더한 것이다. 사유 어휘도 분기 순서도 그대로고, 왜 그 순서인지를
+-- 함께 옮긴다 — 가장 새 정의만 읽어도 이유가 서게 하려는 것이다.
+--
+-- 이것은 QA 결함이 아니라 개발 우선순위 신호다. then-missing 이 많으면 수집기(SDK)를 고칠
+-- 차례이고, given-subject-unknown 이 많으면 조건 분석기의 주어 추적이 약한 것이다.
+-- agent 가 메울 수 있는 것이 아니다 — 근거에 없는 것을 메우면 그럴듯한 거짓말이 된다.
+--
+-- 사유가 여럿 성립하면 먼저 걸리는 것 하나만 나온다. 순서가 이런 이유:
+--
+--   when-missing 이 맨 앞     조작이 없으면 given 과 then 을 아무리 알아도 명세가 아니다
+--   given-* 가 then-* 보다 앞  then 이 비었다는 것은 status='needs-probe' 로도 알 수 있지만,
+--                             given 이 왜 불완전한지는 여기 말고 나오는 데가 없다
+--
+-- 그 순서의 대가: 조건이 ambiguous 이면서 관측 가능 효과도 없는 행은 given-incomplete 로만 잡혀
+-- then-missing 집계가 그만큼 적게 나온다. 두 사유를 다 세야 하면 이 뷰가 아니라 사유별
+-- EXISTS 를 각각 세는 질의를 따로 써야 한다.
+--
+-- not-a-step 을 거르지 않는 것도 의도다. 무엇이 조작을 갖지 못했는지가 이 표가 답해야 할
+-- 질문이다. 대신 status 를 함께 내서, TC 생성기가 실제로 받는 행(v_content_map_capability 가
+-- 내주는 것)만 세고 싶은 쪽이 걸러 쓸 수 있게 한다.
 DROP VIEW IF EXISTS v_spec_gap;
 CREATE VIEW v_spec_gap AS
 SELECT
@@ -105,9 +139,14 @@ SELECT
     c.id AS capability_id,
     c.status,
     CASE
+        -- 적재기 결함이다. 게임의 근거가 부족한 것이 아니라 우리가 근거를 잃은 것이라,
+        -- then-missing 으로 뭉뚱그리면 SDK 를 고치러 가서 헛짚는다.
         WHEN c.origin = 'evidence' AND ce.capability_id IS NULL THEN 'evidence-missing'
+        -- 스폰 행만 여기서 빠진다. 나머지는 V45 와 같다.
         WHEN c.interaction = 'none' AND c.spawned_by_field IS NULL THEN 'when-missing'
         WHEN ce.gaps @> '["subject-null"]'::jsonb THEN 'given-subject-unknown'
+        -- ambiguous 는 "후보가 여럿", unresolved 는 "못 풀었다". 둘 다 조건을 단정할 수 없다는
+        -- 뜻이라 같은 사유로 낸다. 어느 단계에서 그렇게 됐는지는 capability_proof 가 답한다.
         WHEN ce.analysis_confidence IN ('ambiguous', 'unresolved')
           OR ce.gaps @> '["callee-condition-not-composed"]'::jsonb THEN 'given-incomplete'
         WHEN ce.gaps @> '["unread-condition"]'::jsonb THEN 'given-unread'
