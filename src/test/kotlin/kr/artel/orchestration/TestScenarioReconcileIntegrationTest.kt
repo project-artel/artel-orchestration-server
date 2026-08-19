@@ -104,6 +104,7 @@ class TestScenarioReconcileIntegrationTest {
     @Autowired private lateinit var compositionService: kr.artel.orchestration.testscenario.service.ScenarioCompositionService
     @Autowired private lateinit var runScenarioRepository: TestRunScenarioRepository
     @Autowired private lateinit var runRepository: TestRunRepository
+    @Autowired private lateinit var runMessageRepository: kr.artel.orchestration.testrun.repository.TestRunMessageRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
@@ -123,6 +124,14 @@ class TestScenarioReconcileIntegrationTest {
         private const val MOCK_SESSION_ID = "reconcile-sid"
 
         private val framesToSend = CopyOnWriteArrayList<String>()
+
+        /**
+         * 목이 **인입 턴에 답할** 프레임들. 하나 받을 때마다 앞에서 하나 꺼내 보낸다.
+         *
+         * 재작성 루프는 "결과 → (서버가 다시 시킴) → 결과"라 목이 대답을 할 줄 알아야 검증된다.
+         * 비어 있으면 예전처럼 아무것도 답하지 않으므로 기존 테스트는 그대로 돈다.
+         */
+        private val turnReplies = java.util.concurrent.ConcurrentLinkedQueue<String>()
         private val receivedFrames = CopyOnWriteArrayList<String>()
         private val seq = AtomicLong(500_000)
 
@@ -141,7 +150,7 @@ class TestScenarioReconcileIntegrationTest {
                             Flux.fromIterable(framesToSend.toList()),
                             inbound.receive().asString()
                                 .doOnNext { receivedFrames.add(it) }
-                                .flatMap { Mono.empty<String>() }
+                                .concatMap { Mono.justOrEmpty(turnReplies.poll()) }
                         )
                     ).then()
                 }
@@ -161,6 +170,7 @@ class TestScenarioReconcileIntegrationTest {
     fun reset() {
         framesToSend.clear()
         receivedFrames.clear()
+        turnReplies.clear()
         fake.vectorsByQuery.clear()
     }
 
@@ -230,6 +240,241 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(purchaseSteps.map { it.action }).containsExactly("상점 이동", "A확인", "B확인")
         assertThat(purchaseSteps.map { it.caseId }).containsExactly(null, caseA, caseB)
         assertThat(storedSteps(sale.id!!).map { it.caseId }).containsExactly(caseC)
+    }
+
+    // ---- (b2) 검수 누락 → 재작성 요청 → 합쳐서 저장 (ARTEL-403) ------------------------------
+
+    /**
+     * 판정해 놓고 안 담은 케이스가 있으면, 그것만 다시 쓰게 하고 **앞 결과와 합쳐 한 번에** 저장한다.
+     *
+     * 실측에서 나온 실패다(2026-08-13): word-venture 66건을 전부 쓰라고 시켰더니 에이전트가
+     * "각 테스트 케이스를 빠짐없이 연결했습니다"라고 답하면서 1건을 빠뜨렸다. 그 1건이 자기가
+     * `in`으로 판정한 케이스였다.
+     *
+     * E2E로는 이 경로를 부를 수 없다 — 누락이 확률적이라 같은 요청이 66/66으로 통과하기도 한다.
+     * 그래서 여기서 못 박는다.
+     */
+    @Test
+    fun `판정한 케이스가 빠지면 그것만 다시 쓰게 하고 합쳐서 저장한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "RULE", "A")
+        val caseB = insertCase(projectId, "RULE", "B")
+
+        // 1차 결과: 둘 다 관련 있다고 판정해 놓고 A만 담았다.
+        framesToSend.add(
+            """{"type":"result","message":"빠짐없이 연결했습니다","reviewed":{"in":[$caseA,$caseB],"out":[]},""" +
+                """"scenarios":[{"title":"첫 시나리오","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        // 재작성 턴에 대한 답: 빠졌던 B만 새 시나리오로.
+        turnReplies.add(
+            """{"type":"result","message":"B를 추가했습니다","reviewed":{"in":[$caseB],"out":[$caseA]},""" +
+                """"scenarios":[{"title":"보강 시나리오","description":"d","steps":[{"action":"B확인","case_id":$caseB}]}]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "전부 써줘")
+
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().size == 2 }
+
+        // 재작성 지시가 빠진 id를 지목했는지.
+        val repairTurn = receivedFrames.firstOrNull { it.contains("\"type\":\"turn\"") }
+        assertThat(repairTurn).isNotNull()
+        assertThat(repairTurn!!).contains("$caseB")
+
+        // 합쳐서 저장됐다: 앞 결과 + 보강분.
+        val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        val titles = links.map { scenarioRepository.findById(it.testScenarioId)!!.title }
+        assertThat(titles).containsExactly("첫 시나리오", "보강 시나리오")
+
+        // 사용자에게 재작성 사실과 결과를 알렸는지 — 말하지 않으면 그냥 느린 것과 구분되지 않는다.
+        val messages = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+            .map { it.content }
+        assertThat(messages).anyMatch { it.contains("다시 작성하도록 요청") }
+        assertThat(messages).anyMatch { it.contains("반영했습니다") }
+    }
+
+    /**
+     * 재검수는 **처음 판정 기준**이다. 재작성 응답이 빠뜨린 케이스를 `out`으로 옮겨도 통과시키지 않는다 —
+     * 그걸 허용하면 에이전트가 스스로 합격 기준을 낮출 수 있고, 검사가 있으나 마나가 된다.
+     */
+    @Test
+    fun `재작성이 판정을 바꿔도 처음 선언 기준으로 다시 본다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "RULE", "A")
+        val caseB = insertCase(projectId, "RULE", "B")
+
+        framesToSend.add(
+            """{"type":"result","message":"했습니다","reviewed":{"in":[$caseA,$caseB],"out":[]},""" +
+                """"scenarios":[{"title":"첫 시나리오","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        // 재작성이랍시고 B를 out으로 옮겨 "이제 통과"라고 주장한다.
+        turnReplies.add(
+            """{"type":"result","message":"B는 관련 없었습니다","reviewed":{"in":[$caseA],"out":[$caseB]},"scenarios":[]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "전부 써줘")
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.content.contains("저장하지 않았습니다") }
+        }
+
+        // 한 줄도 저장되지 않는다.
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).isEmpty()
+    }
+
+    /**
+     * **좁은 요청을 통째로 버리지 않는다.** 사용자가 일부만 짜 달라고 했을 때 에이전트가 나머지를
+     * 판정하지 않으면 검토 누락이 뜨는데, 그 이유로 멀쩡한 시나리오를 거부하면 안 된다.
+     * 판정만 더 받아 통과시킨다 — 스텝을 다시 쓸 필요가 없으니 값도 거의 안 든다.
+     */
+    @Test
+    fun `좁은 요청에서 판정이 모자라면 판정만 더 받아 저장한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "TitleScene", "A")
+        val caseB = insertCase(projectId, "EndingScene", "B")
+
+        // 타이틀만 짜 달라고 했고, 에이전트는 A만 판정하고 B는 아예 언급하지 않았다.
+        framesToSend.add(
+            """{"type":"result","message":"타이틀 흐름입니다","reviewed":{"in":[$caseA],"out":[]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        // 나머지에 대한 판정만 답한다(시나리오 없음).
+        turnReplies.add(
+            """{"type":"result","message":"B는 이번 요청과 무관합니다","reviewed":{"in":[],"out":[$caseB]},"scenarios":[]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "타이틀 화면만 짜줘")
+
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().size == 1 }
+
+        // 판정만 보강해서 통과했고, 시나리오는 처음 것 그대로다.
+        val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        assertThat(scenarioRepository.findById(links[0].testScenarioId)!!.title).isEqualTo("타이틀")
+    }
+
+    /**
+     * 저작이 끝나면 아직 아무 시나리오도 건드리지 않은 케이스가 몇 건 남았는지 알린다.
+     *
+     * 이 수를 에이전트가 세게 하지 않는다 — 빠짐없이 세는 일이 에이전트가 못하는 일이라는 것이
+     * 이 작업 전체의 전제다. 저장 직후의 DB가 답을 알고 있다.
+     */
+    @Test
+    fun `저장 뒤 남은 미커버를 씬과 함께 알린다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "TitleScene", "A")
+        val caseB = insertCase(projectId, "EndingScene", "B")
+        val caseC = insertCase(projectId, "EndingScene", "C")
+
+        framesToSend.add(
+            """{"type":"result","message":"타이틀만 했습니다","reviewed":{"in":[$caseA],"out":[]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        turnReplies.add(
+            """{"type":"result","message":"나머지는 이번 요청과 무관합니다","reviewed":{"in":[],"out":[$caseB,$caseC]},"scenarios":[]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "타이틀만")
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.content.contains("남았습니다") }
+        }
+
+        val recommendation = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().first { it.content.contains("남았습니다") }.content
+        // 건수와 씬을 함께 말한다 — id로 말하면 사람이 못 알아듣고, 번호는 화면에 내보내지도 않는다.
+        assertThat(recommendation).contains("2건")
+        assertThat(recommendation).contains("EndingScene")
+        // 한 줄로 끝난다. 좁은 작업을 이어가는 사람에게 여러 줄은 소음이다.
+        assertThat(recommendation.lines()).hasSize(1)
+    }
+
+    /**
+     * 숫자가 그대로면 다시 말하지 않는다.
+     *
+     * 좁은 범위를 여러 턴에 걸쳐 다듬는 대화가 정상적인 사용법인데, 매 턴 같은 잔량 줄이 붙으면
+     * 출력이 읽히지 않는다. 새로 덮은 것이 없다 = 알릴 변화가 없다.
+     */
+    @Test
+    fun `잔량이 그대로면 두 번 말하지 않는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "TitleScene", "A")
+        val caseB = insertCase(projectId, "EndingScene", "B")
+
+        val authored =
+            """{"type":"result","message":"타이틀","reviewed":{"in":[$caseA],"out":[$caseB]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        framesToSend.add(authored)
+        postMessage(client, projectId, runId, token, "타이틀만")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.content.contains("남았습니다") }
+        }
+
+        // 같은 시나리오를 다시 저장한다 — 새로 덮이는 케이스가 없으므로 잔량은 그대로다.
+        turnReplies.add(authored)
+        postMessage(client, projectId, runId, token, "조금만 다듬어줘")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .count { it.role == "USER" } == 2
+        }
+        // 두 번째 턴이 처리될 시간을 준 뒤에도 잔량 안내가 한 번뿐이어야 한다.
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.content.contains("타이틀") && it.role == "ASSISTANT" }
+        }
+
+        val notices = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().count { it.content.contains("남았습니다") }
+        assertThat(notices).isEqualTo(1)
+    }
+
+    /**
+     * 저장이 없는 턴에는 잔량을 알리지 않는다.
+     *
+     * 질문 턴에서는 에이전트가 방금 같은 값을 더 자세히 답했을 수 있는데, 그 뒤에 요약 한 줄을 더
+     * 붙이면 같은 말을 두 번 하는 셈이 된다. 실측에서 실제로 그렇게 나왔다(2026-08-13).
+     */
+    @Test
+    fun `질문만 한 턴에는 잔량을 알리지 않는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        insertCase(projectId, "TitleScene", "A")
+
+        // 시나리오 없이 답만 하는 정상 턴(질문·조회·거절).
+        framesToSend.add("""{"type":"result","message":"남은 건 이러이러합니다","scenarios":[]}""")
+        postMessage(client, projectId, runId, token, "뭐 남았어?")
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.role == "ASSISTANT" }
+        }
+
+        val messages = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().map { it.content }
+        assertThat(messages).noneMatch { it.contains("남았습니다") }
     }
 
     // ---- (c) result{scenarios:[]} → DB 무변경 ------------------------------------------------
@@ -333,6 +578,100 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(storedSteps(committed.id!!).map { it.caseId }).containsExactly(caseA)
     }
 
+    // ---- (e2) 저작 단계 중계(ARTEL-419) --------------------------------------------------------
+
+    /**
+     * 도구를 부르지 않는 턴에도 **종착 단계가 온다.**
+     *
+     * 화면이 멈춰 보이지 않는 조건이 이것이다. 가운데 단계(케이스 확인·작성)는 없을 수 있고 없는 것이
+     * 정상이지만, 시작하고 끝나지 않는 일은 있어서는 안 된다 — 그러면 스테퍼가 켜진 채 영영 남는다.
+     */
+    @Test
+    fun `도구를 부르지 않은 턴도 sent로 열고 종착 단계로 닫는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "RULE", "A")
+
+        val stream = openStream(client, projectId, runId, token)
+        framesToSend.add(
+            """{"type":"result","message":"했습니다","reviewed":{"in":[$caseA],"out":[]},""" +
+                """"scenarios":[{"title":"시나리오","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        postMessage(client, projectId, runId, token, "만들어줘")
+
+        assertThat(stream.awaitStage("saved")).isTrue()
+        assertThat(stream.stages()).containsExactly("sent", "checking", "saved")
+        stream.close()
+    }
+
+    /**
+     * 도구를 부른 턴은 **부른 사실과 답을 넘긴 사실**이 각각 단계가 된다.
+     *
+     * 턴을 보낸 뒤 결과가 올 때까지 오케스트레이션은 아무것도 보지 못한다. 그 침묵 한가운데서 도구
+     * 프레임 하나가 "멎지 않았다"의 유일한 증거라, 이 두 단계가 곧 이 이슈가 풀려는 문제 자체다.
+     */
+    @Test
+    fun `도구를 부른 턴은 looking_up_cases와 writing을 거친다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "RULE", "A")
+
+        val stream = openStream(client, projectId, runId, token)
+        // 목이 도구를 먼저 부르고, 우리가 답한 뒤에야 결과를 낸다 — 실제 순서 그대로다.
+        framesToSend.add("""{"type":"uncovered_cases","messageId":"unc-1"}""")
+        turnReplies.add(
+            """{"type":"result","message":"했습니다","reviewed":{"in":[$caseA],"out":[]},""" +
+                """"scenarios":[{"title":"시나리오","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        postMessage(client, projectId, runId, token, "남은 거 만들어줘")
+
+        assertThat(stream.awaitStage("saved")).isTrue()
+        assertThat(stream.stages())
+            .containsExactly("sent", "looking_up_cases", "writing", "checking", "saved")
+        stream.close()
+    }
+
+    /**
+     * 검사에 걸린 턴은 **다시 쓰는 중**과 **저장 안 함**이 화면에서 갈린다.
+     *
+     * 그리고 서버가 쓴 문장이 그 자리에서 보인다. 이 문장들은 결과를 중계한 뒤에 만들어지는데, 그때
+     * 화면은 이미 답을 다 받았다고 여겨 더 기다리지 않는다 — `notice`로 흘리지 않으면 "한 줄도
+     * 저장하지 않았습니다"가 새로고침 전까지 보이지 않는다.
+     */
+    @Test
+    fun `재작성과 저장 거부가 각각 단계와 notice로 온다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "RULE", "A")
+        val caseB = insertCase(projectId, "RULE", "B")
+
+        val stream = openStream(client, projectId, runId, token)
+        // B를 담겠다고 선언하고 A만 담았다. 재작성 응답도 B를 담지 않는다.
+        framesToSend.add(
+            """{"type":"result","message":"했습니다","reviewed":{"in":[$caseA,$caseB],"out":[]},""" +
+                """"scenarios":[{"title":"시나리오","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        turnReplies.add("""{"type":"result","message":"더 못 쓰겠습니다","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+
+        postMessage(client, projectId, runId, token, "전부 써줘")
+
+        assertThat(stream.awaitStage("blocked")).isTrue()
+        // 재작성을 한 번 시도한 뒤 막았다 — 두 상태가 별개로 보인다.
+        assertThat(stream.stages()).containsSubsequence("repairing", "blocked")
+        val notices = stream.notices()
+        assertThat(notices).anyMatch { it.contains("다시 작성하도록 요청했습니다") }
+        assertThat(notices).anyMatch { it.contains("저장하지 않았습니다") }
+        // 말만 하고 저장은 하지 않는다.
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).isEmpty()
+        stream.close()
+    }
+
     // ---- (f) 실행 계약: agentScenario가 steps를 TC 리졸브해 넘긴다 -------------------------------
 
     @Test
@@ -375,6 +714,55 @@ class TestScenarioReconcileIntegrationTest {
     }
 
     // ---- helpers ----------------------------------------------------------------------------
+
+    /**
+     * 구독 중인 SSE 스트림 하나(ARTEL-419 검증용). 받은 이벤트 본문을 순서대로 쌓아 둔다.
+     *
+     * 이벤트 **이름** 대신 본문의 `type`을 보는 이유는 `bodyToFlux(String)`이 `data:` 줄만 주기 때문이다.
+     * 둘은 같은 값이다 — [kr.artel.orchestration.testscenario.service.TestScenarioStreamManager]가
+     * `event.type`을 그대로 이벤트명으로 쓴다.
+     */
+    private inner class OpenStream(
+        private val subscription: reactor.core.Disposable,
+        private val received: CopyOnWriteArrayList<String>,
+    ) {
+        private fun typed(type: String) = received.mapNotNull { objectMapper.readTree(it) }
+            .filter { it.path("type").asText() == type }
+
+        fun stages(): List<String> = typed("progress").map { it.path("stage").asText() }
+
+        fun notices(): List<String> = typed("notice").map { it.path("message").asText() }
+
+        fun awaitStage(stage: String): Boolean {
+            repeat(60) {
+                if (stages().contains(stage)) return true
+                Thread.sleep(100)
+            }
+            return stages().contains(stage)
+        }
+
+        fun close() = subscription.dispose()
+    }
+
+    /**
+     * SSE를 구독하고 **스트림이 실제로 열릴 때까지 기다린다.**
+     *
+     * 기다리지 않으면 첫 단계(`sent`)를 놓친다. 스트림 sink는 구독 시점에 만들어지는데, 구독은
+     * 비동기라 바로 다음 줄에서 메시지를 보내면 아직 등록 전일 수 있다. 열렸다는 신호가 따로 없어
+     * 짧게 재운다 — 놓치면 단계 목록이 어긋나 테스트가 실패하므로 조용히 넘어가지는 않는다.
+     */
+    private fun openStream(client: WebClient, projectId: Long, runId: Long, token: String): OpenStream {
+        val received = CopyOnWriteArrayList<String>()
+        val subscription = client.get()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/stream")
+            .accept(MediaType.TEXT_EVENT_STREAM)
+            .cookie("artel_access_token", token)
+            .retrieve()
+            .bodyToFlux(String::class.java)
+            .subscribe { received.add(it) }
+        Thread.sleep(500)
+        return OpenStream(subscription, received)
+    }
 
     private suspend fun awaitFrame(predicate: (String) -> Boolean): String? {
         repeat(50) {

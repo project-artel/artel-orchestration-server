@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.controller
 
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
+import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.TestCaseListResponse
@@ -61,6 +62,18 @@ class TestCaseController(
         @CurrentUserId appUserId: Long
     ): AllTestCasesResponse =
         service.getAllTestCases(projectId, appUserId)
+
+    /**
+     * 프로젝트의 커버리지 수치(ARTEL-403). 화면이 "무엇이 아직 안 다뤄졌나"를 보여주는 근거다.
+     *
+     * `/all`과 같은 이유로 리터럴 경로가 `/{caseId}`보다 먼저 잡힌다.
+     */
+    @GetMapping("/coverage")
+    suspend fun getCoverage(
+        @PathVariable projectId: Long,
+        @CurrentUserId appUserId: Long
+    ): TestCaseCoverageResponse =
+        service.coverage(projectId, appUserId)
 
     @PostMapping
     suspend fun createTestCase(

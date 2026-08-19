@@ -2,10 +2,13 @@ package kr.artel.orchestration.testscenario.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.toSet
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
+import kr.artel.orchestration.testscenario.dto.ReviewedCases
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStep
 import kr.artel.orchestration.testscenario.dto.toStoredStep
@@ -42,19 +45,63 @@ class ScenarioReconcileService(
     private val runScenarioRepository: TestRunScenarioRepository,
     private val transactionalOperator: TransactionalOperator,
     private val objectMapper: ObjectMapper,
+    private val testCaseRepository: TestCaseRepository,
 ) {
     private val logger = LoggerFactory.getLogger(ScenarioReconcileService::class.java)
 
     /**
-     * [scenarios]를 [runId]/[projectId]에 upsert한다. 빈 배열이면 아무것도 하지 않는다.
-     * @return 실제로 반영된 시나리오 수(추가 + 수정). 빈 입력이거나 전부 방어 스킵되면 0.
+     * 반영 결과. 개수만으로는 **"0건 반영"과 "검수에서 막힘"이 구분되지 않는다** — 앞은 정상 턴이고
+     * 뒤는 사용자에게 이유를 말해야 하는 실패다.
+     *
+     * @property applied 실제로 반영된 시나리오 수(추가 + 수정).
+     * @property findings 검수 결과. 판정 필드가 없어 검사를 건너뛴 경우에도 빈 [Findings]가 들어온다.
      */
-    suspend fun reconcile(runId: Long, projectId: Long, scenarios: List<ScenarioResult>): Int {
+    data class ReconcileOutcome(
+        val applied: Int,
+        val findings: ScenarioCoverageAudit.Findings = ScenarioCoverageAudit.Findings(),
+    ) {
+        val rejected: Boolean get() = findings.rejected
+    }
+
+    /**
+     * [scenarios]를 [runId]/[projectId]에 upsert한다. 빈 배열이면 아무것도 하지 않는다.
+     *
+     * [reviewed]가 있으면 **저장 전에** 검수한다(2단계). 통과하지 못하면 한 줄도 저장하지 않는다 —
+     * 절반만 저장하면 "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어
+     * 보인다). 규칙은 [ScenarioCoverageAudit]에 있다.
+     */
+    suspend fun reconcile(
+        runId: Long,
+        projectId: Long,
+        scenarios: List<ScenarioResult>,
+        reviewed: ReviewedCases? = null,
+    ): ReconcileOutcome {
         // SAFETY: 빈 배열은 정상 턴 — DB 무변경(삽입도 삭제도 없음).
         if (scenarios.isEmpty()) {
             logger.info("빈 scenarios — DB 무변경(정상 턴) [runId=$runId]")
-            return 0
+            return ReconcileOutcome(0)
         }
+
+        // 검수는 저장 **전에** 끝난다. 통과하지 못한 결과는 한 줄도 들어가지 않는다 — 절반만 저장하면
+        // "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어 보인다).
+        val findings = ScenarioCoverageAudit.audit(
+            projectCaseIds = testCaseRepository.findIdsByProjectId(projectId).toSet(),
+            reviewed = reviewed,
+            scenarios = scenarios,
+        )
+        if (findings.rejected) {
+            logger.warn(
+                "저작 검수 실패 — 저장하지 않음 [runId={}] {} · unreviewed={} missing={} ghost={}",
+                runId, findings.summary(), findings.unreviewed, findings.missing, findings.ghost
+            )
+            return ReconcileOutcome(0, findings)
+        }
+        if (findings.excess.isNotEmpty()) {
+            // 거부하지 않는 이유는 ScenarioCoverageAudit.Findings에 적었다. 남기는 이유는, 이 값이
+            // 늘어나면 1패스 판정이 좁다는 뜻이라 프롬프트를 고칠 근거가 되기 때문이다.
+            logger.info("판정 밖 케이스 담김(허용) [runId={}] excess={}", runId, findings.excess)
+        }
+
         var applied = 0
         transactionalOperator.executeAndAwait {
             // 새 시나리오는 런의 현재 마지막 position 다음부터 붙인다. 비어 있으면 0부터.
@@ -94,7 +141,7 @@ class ScenarioReconcileService(
             }
         }
         logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${scenarios.size}]")
-        return applied
+        return ReconcileOutcome(applied, findings)
     }
 
     /**

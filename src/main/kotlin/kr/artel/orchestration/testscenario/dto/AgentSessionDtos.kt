@@ -3,6 +3,7 @@ package kr.artel.orchestration.testscenario.dto
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
+import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
 
 /**
@@ -97,4 +98,21 @@ data class TestCaseSearchErrorFrame(
     val type: String = "error",
     val correlationId: String?,
     val detail: String
+)
+
+/**
+ * Agent의 `uncovered_cases` 프레임에 대한 응답(ARTEL-403).
+ *
+ * 세션 오픈에 실어 보내지 않고 **물어볼 때 답하는** 이유는 이 값이 저작 중에 줄어들기 때문이다.
+ * 스냅샷은 둘째 턴부터 틀리고, 매 턴 다시 실으면 턴 메시지가 붓거나 system 프롬프트에 있을 경우
+ * 전량 목록 캐시를 통째로 버린다.
+ *
+ * @property ids Agent가 케이스 본문을 자기 목록에서 찾아 인용하는 데 쓴다.
+ * @property scenes 사람에게 답할 축. 번호는 화면에 내보내지 않는 값이라 씬과 건수가 있어야 말이 된다.
+ */
+data class UncoveredCasesResultFrame(
+    val type: String = "uncovered_cases_result",
+    val correlationId: String?,
+    val ids: List<Long>,
+    val scenes: List<UncoveredScene>
 )
