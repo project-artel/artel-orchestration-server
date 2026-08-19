@@ -3,16 +3,13 @@ package kr.artel.orchestration.contentmap.controller
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
-import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.common.error.NotFoundException
-import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.contentmap.dto.EvidenceUploadTicketRequest
 import kr.artel.orchestration.contentmap.dto.EvidenceUploadTicketResponse
 import kr.artel.orchestration.contentmap.dto.RegisterEvidenceDocumentRequest
 import kr.artel.orchestration.contentmap.dto.RegisterEvidenceDocumentResponse
 import kr.artel.orchestration.contentmap.service.EvidenceDocumentService
-import org.springframework.security.core.annotation.AuthenticationPrincipal
-import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -38,26 +35,20 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/sdk/game-builds/{gameBuildId}/content-map")
 class SdkContentMapController(
     private val service: EvidenceDocumentService,
-    private val sessionUserResolver: SessionUserResolver,
 ) {
 
-    /**
-     * principal 을 non-null 로 두면 인증 실패가 401 이 아니라 NPE(500)로 새어 나간다.
-     */
     @Operation(
         summary = "근거 문서 업로드 티켓",
         description = "스토리지에 직접 올릴 단기 URL 을 발급한다. 바이트는 서버를 지나가지 않는다.",
     )
     @PostMapping("/ticket")
     suspend fun createTicket(
-        @AuthenticationPrincipal jwt: Jwt?,
+        @CurrentUserId appUserId: Long,
         @PathVariable gameBuildId: Long,
         @Valid @RequestBody request: EvidenceUploadTicketRequest,
-    ): EvidenceUploadTicketResponse {
-        val session = jwt?.let(sessionUserResolver::resolve) ?: throw UnauthorizedException()
-        return service.createUploadTicket(session.userId, gameBuildId, request)
+    ): EvidenceUploadTicketResponse =
+        service.createUploadTicket(appUserId, gameBuildId, request)
             ?: throw NotFoundException("등록할 수 있는 게임 빌드를 찾을 수 없습니다.")
-    }
 
     @Operation(
         summary = "근거 문서 등록",
@@ -66,12 +57,10 @@ class SdkContentMapController(
     )
     @PostMapping
     suspend fun register(
-        @AuthenticationPrincipal jwt: Jwt?,
+        @CurrentUserId appUserId: Long,
         @PathVariable gameBuildId: Long,
         @Valid @RequestBody request: RegisterEvidenceDocumentRequest,
-    ): RegisterEvidenceDocumentResponse {
-        val session = jwt?.let(sessionUserResolver::resolve) ?: throw UnauthorizedException()
-        return service.register(session.userId, gameBuildId, request)
+    ): RegisterEvidenceDocumentResponse =
+        service.register(appUserId, gameBuildId, request)
             ?: throw NotFoundException("등록할 수 있는 게임 빌드를 찾을 수 없습니다.")
-    }
 }
