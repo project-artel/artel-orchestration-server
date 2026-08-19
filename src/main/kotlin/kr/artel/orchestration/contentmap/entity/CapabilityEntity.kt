@@ -4,6 +4,7 @@ import io.r2dbc.postgresql.codec.Json
 import org.springframework.data.annotation.CreatedDate
 import org.springframework.data.annotation.Id
 import org.springframework.data.annotation.LastModifiedDate
+import org.springframework.data.annotation.ReadOnlyProperty
 import org.springframework.data.relational.core.mapping.Column
 import org.springframework.data.relational.core.mapping.Table
 import java.time.Instant
@@ -145,9 +146,35 @@ data class CapabilityEntity(
     @Column("hint_from_qa_run_id")
     val hintFromQaRunId: Long? = null,
 
-    /** [SpecStatus] 중 하나. */
+    /**
+     * 실행 가능성 — 이 조작을 실제로 할 수 있는가. [Actionability] 중 하나.
+     *
+     * gap 이 남았는지를 보는 판정이 정한다. 관측 가능 여부는 여기서 보지 않는다.
+     */
+    @Column("actionability")
+    val actionability: String = Actionability.RUNNABLE.wire,
+
+    /**
+     * 관측 가능성 — 그 결과를 볼 수 있는가. [Observability] 중 하나.
+     *
+     * `capability_effect.watchable` 이 정하는 상한이 이 축으로 올라온다.
+     */
+    @Column("observability")
+    val observability: String = Observability.UNKNOWN.wire,
+
+    /** 적용 가능성 — 이 빌드에 이 규칙이 적용되는가. [Applicability] 중 하나. */
+    @Column("applicability")
+    val applicability: String = Applicability.APPLIES.wire,
+
+    /**
+     * [SpecStatus] 중 하나. **세 축에서 유도된 값이라 쓰지 않는다.**
+     *
+     * DB 생성 컬럼이므로 여기에 값을 담아 보내면 INSERT 가 거절된다. 축을 정하면 이 값이 따라오고,
+     * 그래서 축과 어긋난 행이 존재할 수 없다 — 어긋난 뒤에는 어느 쪽이 참인지 아무도 모른다.
+     */
+    @ReadOnlyProperty
     @Column("status")
-    val status: String,
+    val status: String? = null,
 
     /** 관측으로 발견한 것이 나중에 evidence 로도 확인되면 이쪽으로 접는다. */
     @Column("merged_into")

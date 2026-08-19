@@ -24,6 +24,9 @@ import kr.artel.orchestration.contentmap.entity.SpecGapReason
 import kr.artel.orchestration.contentmap.entity.EdgeSource
 import kr.artel.orchestration.contentmap.entity.EvidenceGap
 import kr.artel.orchestration.contentmap.entity.InputPhase
+import kr.artel.orchestration.contentmap.entity.Actionability
+import kr.artel.orchestration.contentmap.entity.Applicability
+import kr.artel.orchestration.contentmap.entity.Observability
 import kr.artel.orchestration.contentmap.entity.SpecStatus
 import kr.artel.orchestration.contentmap.entity.TriggerKind
 import kr.artel.orchestration.contentmap.entity.VerificationState
@@ -82,6 +85,11 @@ class ContentMapSchemaTest {
     @Autowired private lateinit var transitions: ScreenTransitionRepository
     @Autowired private lateinit var screenCapabilities: ScreenCapabilityRepository
     @Autowired private lateinit var db: DatabaseClient
+
+    /** 스키마 제약을 직접 두드릴 때 쓴다 — 엔티티를 거치면 거절 시점이 가려진다. */
+    private suspend fun exec(sql: String) {
+        db.sql(sql).fetch().awaitRowsUpdated()
+    }
 
     /** 게임 빌드는 프로젝트에 FK 로 매달려 있어 프로젝트부터 만든다. */
     private suspend fun newGameBuild(): GameBuildEntity {
@@ -195,7 +203,8 @@ class ContentMapSchemaTest {
                 summary = "`Canvas/MapSceneButton` 클릭 → `TitleSceneManager.InitPlayerData()`",
                 interaction = Interaction.CLICK.wire,
                 controlSelector = "Canvas[2]/MapSceneButton[1]",
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
         evidences.upsert(
@@ -223,7 +232,8 @@ class ContentMapSchemaTest {
                 summary = "`Canvas/LogoImage` 를 3회 연속 클릭하면 `DebugPanel` 이 열린다",
                 interaction = Interaction.CLICK.wire,
                 controlSelector = "Canvas[2]/LogoImage[4]",
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
 
@@ -257,7 +267,8 @@ class ContentMapSchemaTest {
                         origin = CapabilityOrigin.EVIDENCE.wire,
                         summary = "키 없는 press",
                         interaction = Interaction.PRESS.wire,
-                        status = SpecStatus.RUNNABLE.wire,
+                        actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
                     )
                 )
             }
@@ -273,7 +284,8 @@ class ContentMapSchemaTest {
                         summary = "클릭인데 키가 붙었다",
                         interaction = Interaction.CLICK.wire,
                         inputKey = "Return",
-                        status = SpecStatus.RUNNABLE.wire,
+                        actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
                     )
                 )
             }
@@ -300,7 +312,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`DebugCanvas/TurnEndButton` 클릭 → `TurnBattleSystem.TurnEndButton()`",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
         capabilities.save(
@@ -310,7 +323,7 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`WaveEndSensor()` 코루틴이 마지막 웨이브 뒤 `GameClearScene` 으로 보낸다",
                 interaction = Interaction.NONE.wire,
-                status = SpecStatus.NOT_A_STEP.wire,
+                actionability = Actionability.NOT_A_STEP.wire,
             )
         )
         val merged = capabilities.save(
@@ -320,7 +333,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "나중에 evidence 로도 확인되어 접힌 기능",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
         capabilities.save(merged.copy(mergedInto = runnable.id))
@@ -354,7 +368,7 @@ class ContentMapSchemaTest {
                 interaction = Interaction.PRESS.wire,
                 inputKey = "RightArrow",
                 inputPhase = InputPhase.DOWN.wire,
-                status = SpecStatus.NEEDS_PROBE.wire,
+                actionability = Actionability.NEEDS_PROBE.wire,
             )
         )
         effects.save(
@@ -376,7 +390,7 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "자동 전이",
                 interaction = Interaction.NONE.wire,
-                status = SpecStatus.NOT_A_STEP.wire,
+                actionability = Actionability.NOT_A_STEP.wire,
             )
         )
 
@@ -390,7 +404,8 @@ class ContentMapSchemaTest {
                 interaction = Interaction.PRESS.wire,
                 inputKey = "Return",
                 inputPhase = InputPhase.DOWN.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
         effects.save(
@@ -466,7 +481,8 @@ class ContentMapSchemaTest {
                 verification = VerificationState.CONFIRMED.wire,
                 summary = "확인된 기능",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
         capabilities.save(
@@ -476,7 +492,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "아직 안 눌러본 기능",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
         // 관측 출신은 분모에 들어가지 않는다 — 정적 분석이 알아낸 것이 아니다
@@ -488,7 +505,8 @@ class ContentMapSchemaTest {
                 verification = VerificationState.CONFIRMED.wire,
                 summary = "관측으로 배운 기능",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
 
@@ -517,7 +535,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "눌러보고 배운 기능",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
 
@@ -560,7 +579,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "근거 행이 딸려오지 않은 기능",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
 
@@ -588,7 +608,8 @@ class ContentMapSchemaTest {
                     origin = CapabilityOrigin.EVIDENCE.wire,
                     summary = summary,
                     interaction = Interaction.CLICK.wire,
-                    status = SpecStatus.RUNNABLE.wire,
+                    actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
                 )
             )
             evidences.upsert(
@@ -658,7 +679,7 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "조건도 반쪽이고 결과도 내부 상태뿐",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.NEEDS_PROBE.wire,
+                actionability = Actionability.NEEDS_PROBE.wire,
             )
         )
         evidences.upsert(
@@ -750,7 +771,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "관측된 기능",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
 
@@ -789,7 +811,8 @@ class ContentMapSchemaTest {
                     summary = "`key:RightArrow` 누르면 `MapMove.position` 이 바뀐다 (offset $offset)",
                     interaction = Interaction.PRESS.wire,
                     inputKey = "RightArrow",
-                    status = SpecStatus.RUNNABLE.wire,
+                    actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
                     capabilityKey = "cap-$offset",
                 )
             )
@@ -837,7 +860,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "먼저 자리를 잡은 기능",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
                 capabilityKey = "cap-a1b2c3d4",
             )
         )
@@ -852,7 +876,8 @@ class ContentMapSchemaTest {
                         origin = CapabilityOrigin.EVIDENCE.wire,
                         summary = "같은 키를 든 다른 기능",
                         interaction = Interaction.CLICK.wire,
-                        status = SpecStatus.RUNNABLE.wire,
+                        actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
                         capabilityKey = "cap-a1b2c3d4",
                     )
                 )
@@ -880,7 +905,8 @@ class ContentMapSchemaTest {
                     verification = VerificationState.CONFIRMED.wire,
                     summary = "눌러보고 배운 기능 $index",
                     interaction = Interaction.CLICK.wire,
-                    status = SpecStatus.RUNNABLE.wire,
+                    actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
                 )
             )
         }
@@ -890,6 +916,145 @@ class ContentMapSchemaTest {
             .toList()
         assertThat(observed).hasSize(2)
         assertThat(observed.map { it.capabilityKey }).containsOnlyNulls()
+    }
+
+    /**
+     * "실행 가능 · 관측 불가"와 "적용 불가"가 서로 다르게 조회된다.
+     *
+     * 축을 나누기 전에는 둘 다 `needs-probe` 한 통이었다. 앞은 조작 스텝으로는 쓸 수 있고 판정
+     * 근거로만 못 쓴다. 뒤는 아예 쓸 수 없다. 소비자가 그것을 가려야 한다.
+     */
+    @Test
+    fun `관측 불가와 적용 불가가 갈린다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "Map_scene")
+
+        suspend fun save(
+            summary: String,
+            observability: Observability,
+            applicability: Applicability,
+        ) = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = summary,
+                interaction = Interaction.CLICK.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = observability.wire,
+                applicability = applicability.wire,
+            )
+        )
+
+        val unobservable = save("실행은 되는데 결과를 못 본다", Observability.UNOBSERVABLE, Applicability.APPLIES)
+        val notApplicable = save("이 빌드엔 없다", Observability.OBSERVABLE, Applicability.NOT_APPLICABLE)
+
+        // status 만 보면 둘 다 "쓸 수 없음" 쪽이지만 같은 값이 아니다.
+        assertThat(capabilities.findById(unobservable.id!!)!!.status)
+            .isEqualTo(SpecStatus.NEEDS_PROBE.wire)
+        assertThat(capabilities.findById(notApplicable.id!!)!!.status)
+            .isEqualTo(SpecStatus.UNREACHABLE_PRECONDITION.wire)
+
+        // 축으로 보면 왜 그런지가 갈린다.
+        val byAxis = db
+            .sql(
+                """
+                SELECT capability_id, actionability, observability, applicability
+                FROM v_content_map_capability
+                WHERE scene_id = :sceneId
+                ORDER BY capability_id
+                """
+            )
+            .bind("sceneId", scene.id!!)
+            .map { row, _ ->
+                Triple(
+                    row.get("actionability", String::class.java),
+                    row.get("observability", String::class.java),
+                    row.get("applicability", String::class.java),
+                )
+            }
+            .all()
+            .collectList()
+            .awaitSingle()
+
+        assertThat(byAxis).containsExactly(
+            Triple("runnable", "unobservable", "applies"),
+            Triple("runnable", "observable", "not-applicable"),
+        )
+    }
+
+    /**
+     * `status` 는 축에서 유도된 값이라 **따로 쓸 수 없다.**
+     *
+     * 쓸 수 있으면 언젠가 축과 어긋나고, 어긋난 뒤에는 어느 쪽이 참인지 아무도 모른다. 생성
+     * 컬럼이라 DB 가 그 쓰기를 거절한다.
+     */
+    @Test
+    fun `status 는 축과 어긋나게 쓸 수 없다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TitleScene")
+
+        assertThatThrownBy {
+            runBlocking {
+                exec(
+                    """
+                    INSERT INTO capability
+                        (scene_id, content_map_id, origin, summary, interaction, actionability, status)
+                    VALUES
+                        (${scene.id}, ${scene.contentMapId}, 'evidence', '거짓 status', 'click',
+                         'not-a-step', 'runnable')
+                    """
+                )
+            }
+        }.hasMessageContaining("status")
+
+        // 축만 정하면 status 가 따라온다.
+        val saved = capabilities.save(
+            CapabilityEntity(
+                sceneId = scene.id!!,
+                contentMapId = scene.contentMapId,
+                origin = CapabilityOrigin.EVIDENCE.wire,
+                summary = "축만 정한 기능",
+                interaction = Interaction.NONE.wire,
+                actionability = Actionability.NOT_A_STEP.wire,
+            )
+        )
+        assertThat(capabilities.findById(saved.id!!)!!.status).isEqualTo(SpecStatus.NOT_A_STEP.wire)
+    }
+
+    /** 코드의 유도 규칙이 DB 생성 컬럼과 같은 답을 낸다. 두 벌이라 어긋나면 조용히 갈린다. */
+    @Test
+    fun `코드의 유도 규칙이 DB 와 같은 답을 낸다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = newScene(map.id!!, "TurnBattleScene")
+
+        val cases = listOf(
+            Triple(Actionability.RUNNABLE, Observability.OBSERVABLE, Applicability.APPLIES),
+            Triple(Actionability.RUNNABLE, Observability.UNOBSERVABLE, Applicability.APPLIES),
+            Triple(Actionability.RUNNABLE, Observability.OBSERVABLE, Applicability.NOT_APPLICABLE),
+            Triple(Actionability.NEEDS_PROBE, Observability.OBSERVABLE, Applicability.APPLIES),
+            Triple(Actionability.UNREACHABLE_PRECONDITION, Observability.OBSERVABLE, Applicability.APPLIES),
+            Triple(Actionability.NOT_A_STEP, Observability.UNOBSERVABLE, Applicability.NOT_APPLICABLE),
+            Triple(Actionability.RUNNABLE, Observability.UNKNOWN, Applicability.UNKNOWN),
+        )
+
+        cases.forEachIndexed { index, (actionability, observability, applicability) ->
+            val saved = capabilities.save(
+                CapabilityEntity(
+                    sceneId = scene.id!!,
+                    contentMapId = scene.contentMapId,
+                    origin = CapabilityOrigin.EVIDENCE.wire,
+                    summary = "축 조합 $index",
+                    interaction = Interaction.CLICK.wire,
+                    actionability = actionability.wire,
+                    observability = observability.wire,
+                    applicability = applicability.wire,
+                )
+            )
+            assertThat(capabilities.findById(saved.id!!)!!.status)
+                .describedAs("$actionability / $observability / $applicability")
+                .isEqualTo(SpecStatus.derive(actionability, observability, applicability).wire)
+        }
     }
 
     /**
@@ -909,7 +1074,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "`Canvas/RewardButton` 클릭 → 보상 카드가 생성된다",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
         val effect = effects.save(
@@ -970,7 +1136,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "`Canvas/MapSceneButton` 클릭",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
 
@@ -1020,7 +1187,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "크기를 재려고 세운 기능",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
 
@@ -1071,7 +1239,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "사슬이 붙는 기능",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
         fun step() = CapabilityProofEntity(
@@ -1109,7 +1278,8 @@ class ContentMapSchemaTest {
                 interaction = Interaction.PRESS.wire,
                 inputKey = Interaction.ANY_INPUT_KEY,
                 inputPhase = InputPhase.DOWN.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
                 repeatUntilDone = true,
                 // 확인할 수 없는 전제를 given 에 남기지 않는다. 종료 조건은 then 이 든다.
                 givenText = null,
@@ -1136,7 +1306,8 @@ class ContentMapSchemaTest {
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "`Canvas/MapSceneButton` 클릭",
                 interaction = Interaction.CLICK.wire,
-                status = SpecStatus.RUNNABLE.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
             )
         )
 
@@ -1163,7 +1334,7 @@ class ContentMapSchemaTest {
                         origin = CapabilityOrigin.EVIDENCE.wire,
                         summary = "코루틴이 웨이브를 끝낸다",
                         interaction = Interaction.NONE.wire,
-                        status = SpecStatus.NOT_A_STEP.wire,
+                        actionability = Actionability.NOT_A_STEP.wire,
                         repeatUntilDone = true,
                     )
                 )
@@ -1194,7 +1365,8 @@ class ContentMapSchemaTest {
                         origin = CapabilityOrigin.EVIDENCE.wire,
                         summary = "엉뚱한 지도를 든 기능",
                         interaction = Interaction.CLICK.wire,
-                        status = SpecStatus.RUNNABLE.wire,
+                        actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
                     )
                 )
             }
@@ -1225,7 +1397,8 @@ class ContentMapSchemaTest {
                     origin = CapabilityOrigin.EVIDENCE.wire,
                     summary = summary,
                     interaction = Interaction.CLICK.wire,
-                    status = SpecStatus.RUNNABLE.wire,
+                    actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
                 )
             )
             evidences.upsert(

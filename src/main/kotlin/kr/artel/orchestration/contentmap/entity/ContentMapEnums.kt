@@ -101,7 +101,10 @@ enum class InputPhase(val wire: String) {
 }
 
 /**
- * TC 로 만들 수 있는가.
+ * TC 로 만들 수 있는가. **세 축([Actionability] · [Observability] · [Applicability])에서 유도된
+ * 값이며 직접 쓰지 않는다** — DB 생성 컬럼이라 적재기가 쓰려 해도 거절된다.
+ *
+ * 값 집합은 축을 나누기 전과 같다. 이 값을 읽던 소비자는 바뀐 것을 느끼지 못한다.
  *
  * [NEEDS_PROBE] 는 실패가 아니다. 조작은 지시할 수 있고 기대 결과만 모르는 것이라, 1회차 QA 런이
  * 관측을 기록하면 2회차부터 그 관측이 기대 결과가 된다.
@@ -121,6 +124,24 @@ enum class SpecStatus(val wire: String) {
 
     companion object {
         fun from(wire: String?): SpecStatus? = entries.firstOrNull { it.wire == wire }
+
+        /**
+         * DB 생성 컬럼이 쓰는 유도 규칙과 같은 것. 적재기가 축을 정하기 전에 미리 볼 때 쓴다.
+         *
+         * **권위는 DB 에 있다.** 여기 것과 어긋나면 DB 가 맞다 — 저장되는 값이 그쪽이므로.
+         */
+        fun derive(
+            actionability: Actionability,
+            observability: Observability,
+            applicability: Applicability,
+        ): SpecStatus = when {
+            actionability == Actionability.NOT_A_STEP -> NOT_A_STEP
+            applicability == Applicability.NOT_APPLICABLE -> UNREACHABLE_PRECONDITION
+            actionability == Actionability.UNREACHABLE_PRECONDITION -> UNREACHABLE_PRECONDITION
+            actionability == Actionability.NEEDS_PROBE -> NEEDS_PROBE
+            observability != Observability.OBSERVABLE -> NEEDS_PROBE
+            else -> RUNNABLE
+        }
     }
 }
 
@@ -283,5 +304,60 @@ enum class EvidenceGap(val wire: String) {
 
     companion object {
         fun from(wire: String?): EvidenceGap? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * 실행 가능성 — **이 조작을 실제로 할 수 있는가.**
+ *
+ * gap 이 남은 기능의 `runnable` 을 막는 판정(ARTEL-461)이 정하는 축이다. 관측 가능 여부는 여기서
+ * 보지 않는다 — 그것은 [Observability] 의 몫이고, 한 컬럼에 밀어 넣으면 서로의 판정을 덮어쓴다.
+ */
+enum class Actionability(val wire: String) {
+    RUNNABLE("runnable"),
+    NEEDS_PROBE("needs-probe"),
+
+    /** 조건은 아는데 그 상태를 만드는 절차가 근거에 없다. */
+    UNREACHABLE_PRECONDITION("unreachable-precondition"),
+
+    /** 조작이 없다. 단독 명세가 아니라 given/then 의 재료로만 쓴다. */
+    NOT_A_STEP("not-a-step");
+
+    companion object {
+        fun from(wire: String?): Actionability? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * 관측 가능성 — **그 결과를 볼 수 있는가.**
+ *
+ * `capability_effect.watchable` 이 정하는 상한(ARTEL-452)이 이 축으로 올라온다. [UNOBSERVABLE] 은
+ * 조작 스텝으로는 쓸 수 있고 **판정 근거로만** 못 쓴다는 뜻이다.
+ */
+enum class Observability(val wire: String) {
+    OBSERVABLE("observable"),
+    UNOBSERVABLE("unobservable"),
+
+    /** 아직 안 봤다. "볼 수 없다"와 다르다. */
+    UNKNOWN("unknown");
+
+    companion object {
+        fun from(wire: String?): Observability? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * 적용 가능성 — **이 빌드에 이 규칙이 적용되는가.**
+ *
+ * [NOT_APPLICABLE] 은 아예 쓸 수 없다는 뜻이라 [Observability.UNOBSERVABLE] 과 다르다. 축을
+ * 나누기 전에는 둘 다 `needs-probe` 한 통에 들어가 소비자가 가릴 수 없었다.
+ */
+enum class Applicability(val wire: String) {
+    APPLIES("applies"),
+    NOT_APPLICABLE("not-applicable"),
+    UNKNOWN("unknown");
+
+    companion object {
+        fun from(wire: String?): Applicability? = entries.firstOrNull { it.wire == wire }
     }
 }
