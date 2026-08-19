@@ -16,7 +16,7 @@ import java.io.File
  * 조인이 근거의 3분의 1을 조용히 버리기 시작했다는 뜻이다.
  *
  * Spring 도 DB 도 쓰지 않는다 — [SpawnAttribution] 은 순수 계산이고, 컨텍스트를 세우면 계산이 아니라
- * 배선을 검증하게 된다. 문서 파싱은 한 번만 한다(1.4MB).
+ * `wiring`을 검증하게 된다. 문서 파싱은 한 번만 한다(1.4MB).
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class SpawnAttributionTest {
@@ -49,7 +49,7 @@ class SpawnAttributionTest {
     private fun attribution() = SpawnAttribution(document, placementLookup())
 
     /**
-     * 귀속의 총량. 프리팹 위에만 사는 타입은 구조적으로 배선 0건이라, 이 10개를 놓치면 근거 111건이
+     * 귀속의 총량. 프리팹 위에만 사는 타입은 구조적으로 `wiring` 0건이라, 이 10개를 놓치면 근거 111건이
      * 어디에도 붙지 않고 사라진다 — 실패가 조용해서 총량으로 잡아야 한다.
      */
     @Test

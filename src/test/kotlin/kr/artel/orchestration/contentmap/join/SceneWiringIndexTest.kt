@@ -8,11 +8,11 @@ import org.junit.jupiter.api.Test
 import java.io.File
 
 /**
- * 배선 조인의 세 길이 **각각 값을 한다**는 것을 실측 문서로 못박는다.
+ * `wiring` 조인의 세 길이 **각각 값을 한다**는 것을 실측 문서로 못박는다.
  *
- * 이 파일이 지키는 것은 개수가 아니라 개수의 이유다. 길 하나를 지우면 어느 배선이 사라지는지를 길마다
+ * 이 파일이 지키는 것은 개수가 아니라 개수의 이유다. 길 하나를 지우면 어느 `wiring`이 사라지는지를 길마다
  * 따로 단언해, 나중에 "ENTRY 하나면 충분해 보인다"는 판단으로 길이 지워지면 여기서 먼저 깨지게 한다.
- * 실측: 씬이 든 배선 7건, 합집합 7쌍, ENTRY 6쌍, ARRIVAL 2쌍, HANDLE 1쌍.
+ * 실측: 씬이 든 `wiring` 7건, 합집합 7쌍, ENTRY 6쌍, ARRIVAL 2쌍, HANDLE 1쌍.
  *
  * 스프링 컨텍스트는 쓰지 않는다 — 조인은 파싱된 모델만 먹는 순수 계산이다.
  */
@@ -61,11 +61,11 @@ class SceneWiringIndexTest {
     }
 
     /**
-     * 씬 절반이 문서 전체의 실배선 전부다(`triggerKind: unity-event` 레코드 112건과 헷갈리면 안 된다).
+     * 씬 절반이 문서 전체의 실`wiring` 전부다(`triggerKind: unity-event` 레코드 112건과 헷갈리면 안 된다).
      * 세 길을 다 걸었을 때 그 7건이 하나도 빠지지 않고 코드 절반에 닿는다는 것이 이 조인의 목표다.
      */
     @Test
-    fun `세 길을 다 걸어야 배선 7건이 모두 걸린다`() {
+    fun `세 길을 다 걸어야 wiring 7건이 모두 걸린다`() {
         assertThat(index.wiredControlCount).isEqualTo(7)
         assertThat(index.matchedPairs()).containsExactlyInAnyOrder(
             "Scenes.TitleSceneManager" to "InitPlayerData",
@@ -84,7 +84,7 @@ class SceneWiringIndexTest {
      * 있는 이유이므로, 문서가 바뀌어 5가 6이 되면 규칙을 다시 재야 한다.
      */
     @Test
-    fun `entryId 비교만으로는 배선 5건에서 멈춘다`() {
+    fun `entryId 비교만으로는 wiring 5건에서 멈춘다`() {
         val wired = index.matchedPairs()
         val byEntryId = document.types.values.flatten()
             .mapNotNull { stableIdTarget(it.entryId) }
@@ -111,7 +111,7 @@ class SceneWiringIndexTest {
      * 인스펙터 쪽 진입점이 없다 — 이 길을 지우면 합집합이 7에서 6으로 떨어진다.
      */
     @Test
-    fun `HANDLE 을 빼면 CombineZone 배선이 통째로 사라진다`() {
+    fun `HANDLE 을 빼면 CombineZone wiring이 통째로 사라진다`() {
         assertThat(index.matchedPairs(WiringPath.HANDLE)).containsExactly(COMBINE_ZONE_CLICK)
 
         val withoutHandle = index.matchedPairs(WiringPath.ENTRY) + index.matchedPairs(WiringPath.ARRIVAL)
@@ -123,7 +123,7 @@ class SceneWiringIndexTest {
      * ARRIVAL 이 여는 것은 **새 쌍이 아니라 새 레코드**다. `Core.SaveLoadController` 의 세이브 레코드는
      * 진입점이 `InitPlayerData()` 라 `Canvas/MapSceneButton` 에는 바로 닿지만, 같은 사실에 이르는 둘째
      * 길(`alsoReachedBy` 의 `LoadStoryScene`)을 펴지 않으면 `Canvas/continue` 를 눌렀을 때 세이브가
-     * 일어난다는 사실이 사라진다. 실측에서 이 길로만 생기는 배선이 3건이다.
+     * 일어난다는 사실이 사라진다. 실측에서 이 길로만 생기는 `wiring`이 3건이다.
      */
     @Test
     fun `ARRIVAL 을 빼면 SaveLoadController 가 Canvas continue 를 잃는다`() {
@@ -150,11 +150,11 @@ class SceneWiringIndexTest {
     }
 
     /**
-     * HANDLE 로 걸린 배선의 이벤트 이름은 인스펙터의 `m_OnClick` 이 아니라 코드가 매단 채널이다.
+     * HANDLE 로 걸린 `wiring`의 이벤트 이름은 인스펙터의 `m_OnClick` 이 아니라 코드가 매단 채널이다.
      * 컨트롤 쪽 이벤트를 그대로 쓰면 "버튼의 onClick" 이라는, 문서가 하지 않은 말이 된다.
      */
     @Test
-    fun `HANDLE 로 걸린 배선의 이벤트는 handles 의 채널이다`() {
+    fun `HANDLE 로 걸린 wiring의 이벤트는 handles 의 채널이다`() {
         val addCard = document.types.getValue("Combat.UI.CombineZone")
             .first { it.source.contains("AddCard") }
 
@@ -168,11 +168,11 @@ class SceneWiringIndexTest {
     }
 
     /**
-     * `LoadStoryScene` 레코드는 `Canvas/continue` 에 ENTRY(둘째 절)로도, ARRIVAL 로도 닿는다. 배선을
+     * `LoadStoryScene` 레코드는 `Canvas/continue` 에 ENTRY(둘째 절)로도, ARRIVAL 로도 닿는다. `wiring`을
      * 길마다 한 줄씩 내면 세는 쪽이 조작이 둘이라고 읽으므로, 가장 곧은 길 하나만 남긴다.
      */
     @Test
-    fun `한 컨트롤이 두 길로 걸려도 배선은 하나다`() {
+    fun `한 컨트롤이 두 길로 걸려도 wiring은 하나다`() {
         val loadStoryScene = document.types.getValue("Scenes.TitleSceneManager")
             .first { it.source.contains("LoadStoryScene") }
 
@@ -183,18 +183,18 @@ class SceneWiringIndexTest {
     }
 
     /**
-     * 배선이 없는 것은 실패가 아니라 문서가 말하는 사실이다(실측 318건 중 대부분). 여기서 무엇이든
+     * `wiring`이 없는 것은 실패가 아니라 문서가 말하는 사실이다(실측 318건 중 대부분). 여기서 무엇이든
      * 지어내면 눌러 볼 수 없는 기능이 명세에 실린다.
      */
     @Test
-    fun `배선에 닿지 않는 레코드는 빈 목록을 돌려준다`() {
+    fun `wiring에 닿지 않는 레코드는 빈 목록을 돌려준다`() {
         val notWired = document.types.getValue("Combat.Enemies.BattleWaveController").first()
 
         assertThat(index.bindingsFor(notWired)).isEmpty()
     }
 
     /**
-     * 배선이 어긋나면 이 키 파싱이 첫 용의자다. 특히 컴파일러가 만든 중첩 타입을 접지 않으면
+     * `wiring`이 어긋나면 이 키 파싱이 첫 용의자다. 특히 컴파일러가 만든 중첩 타입을 접지 않으면
      * 코루틴을 쓰는 레코드는 어떤 컨트롤에도 닿지 못한다(실측 methodId 318건 중 31건이 그 모양이다).
      */
     @Test
@@ -209,7 +209,7 @@ class SceneWiringIndexTest {
     }
 
     /**
-     * 형식이 아닌 키를 빈 문자열로 채우면 빈 타입끼리 서로 맞아 없는 배선이 생긴다. 못 읽으면
+     * 형식이 아닌 키를 빈 문자열로 채우면 빈 타입끼리 서로 맞아 없는 `wiring`이 생긴다. 못 읽으면
      * 안 걸리는 것이 맞다.
      */
     @Test

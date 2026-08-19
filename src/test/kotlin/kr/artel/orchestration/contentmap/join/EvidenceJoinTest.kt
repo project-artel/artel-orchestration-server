@@ -14,7 +14,7 @@ import java.io.File
 /**
  * 조인 다섯 단계를 이어 붙인 결과를 골든 문서로 고정한다.
  *
- * 단계별 테스트는 각자 자기 규칙만 본다. 여기서 보는 것은 **순서와 우선순위** — 배선이 있으면
+ * 단계별 테스트는 각자 자기 규칙만 본다. 여기서 보는 것은 **순서와 우선순위** — `wiring`이 있으면
  * 컨트롤이 주소이고, 없으면 오너 타입의 씬으로 떨어지며, 프리팹 위 타입은 스폰으로 붙되 조작인
  * 척하지 않는다는 것.
  *
@@ -41,15 +41,15 @@ class EvidenceJoinTest {
     }
 
     /**
-     * 배선이 있으면 컨트롤이 주소다.
+     * `wiring`이 있으면 컨트롤이 주소다.
      *
      * `Canvas/continue` 로는 arrivals 단계를 지킬 수 없다 — 그 자리는 `owner` + `methodId` 절이
-     * 이미 잡아 `ENTRY` 로 걸린다. **arrivals 가 유일한 길인 배선은 따로 있다**:
+     * 이미 잡아 `ENTRY` 로 걸린다. **arrivals 가 유일한 길인 `wiring`은 따로 있다**:
      * `Core.SaveLoadController` 의 저장·불러오기 레코드가 그 길로만 컨트롤에 닿는다(실측 3건).
      * 그 길을 지우면 이 목록이 빈다.
      */
     @Test
-    fun `도착점으로만 걸리는 배선이 후보에 살아 있다`() {
+    fun `도착점으로만 걸리는 wiring이 후보에 살아 있다`() {
         val wired = join.candidates().filter { it.binding != null }
         val throughArrival = wired.filter { it.binding!!.via == WiringPath.ARRIVAL }
 
@@ -61,18 +61,18 @@ class EvidenceJoinTest {
     }
 
     /**
-     * 배선이 없는 키 입력은 오너 타입이 놓인 씬으로 떨어진다.
+     * `wiring`이 없는 키 입력은 오너 타입이 놓인 씬으로 떨어진다.
      *
-     * 키는 컨트롤에 물리지 않아 배선이 구조적으로 없다. 이 길이 없으면 `Map.MapMove` 의 방향키
+     * 키는 컨트롤에 물리지 않아 `wiring`이 구조적으로 없다. 이 길이 없으면 `Map.MapMove` 의 방향키
      * 조작이 전부 사라진다 — 실측에서 `either` 가 입력을 가르는 레코드가 여기 몰려 있다.
      */
     @Test
-    fun `키 입력은 배선 없이 오너의 씬에서 성립한다`() {
+    fun `키 입력은 wiring 없이 오너의 씬에서 성립한다`() {
         val presses = join.candidates().filter { it.interaction == Interaction.PRESS.wire }
 
         assertThat(presses).isNotEmpty
         assertThat(presses).allSatisfy { assertThat(it.inputKey).isNotNull() }
-        // 한 갈래에 키 하나. `either` 를 쪼개지 않으면 여기서 두 키가 한 후보에 남는다.
+        // 한 `branch`에 키 하나. `either` 를 쪼개지 않으면 여기서 두 키가 한 후보에 남는다.
         assertThat(presses.map { it.inputKey }).doesNotContain(null)
         assertThat(presses.filter { it.record.owner == "Map.MapMove" }.map { it.inputKey })
             .contains("LeftArrow", "DownArrow")
@@ -166,7 +166,7 @@ class EvidenceJoinTest {
     }
 
     /**
-     * 주소를 못 찾은 근거는 조용히 빠지지 않고 두 갈래로 세어진다.
+     * 주소를 못 찾은 근거는 조용히 빠지지 않고 두 `branch`로 세어진다.
      *
      * 놓인 타입 쪽은 실측 0 이고, 프리팹 쪽은 17건이다. 나눠 세는 이유는 고칠 곳이 다르기 때문이다 —
      * 앞이 늘면 조인이 깨진 것이고, 뒤가 늘면 `createdBy` 추적이 짧아진 것이다.
@@ -175,7 +175,7 @@ class EvidenceJoinTest {
     fun `주소를 못 찾은 레코드는 조용히 사라지지 않고 세어진다`() {
         val addressed = join.candidates().filter { it.spawn == null }.map { it.record }.distinct().size
 
-        // 놓인 타입은 배선이 없어도 배치가 있어 실측 0 이다. 이 수가 늘면 조인이 깨진 것이다.
+        // 놓인 타입은 `wiring`이 없어도 배치가 있어 실측 0 이다. 이 수가 늘면 조인이 깨진 것이다.
         assertThat(join.unaddressedRecords()).isZero()
         assertThat(addressed).isEqualTo(document.types.values.sumOf { it.size })
 

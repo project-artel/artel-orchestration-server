@@ -44,7 +44,7 @@ class RecordTranslationTest {
     private fun onlyBranch(record: EvidenceRecord, scene: String): ConditionBranch =
         ConditionBranches.from(record, scene).single()
 
-    /** 실측 인스펙터 배선 7건 중 하나를 문서에서 그대로 집어 온다. 배선 판정은 다른 단계의 몫이라 값만 쓴다. */
+    /** 실측 인스펙터 `wiring` 7건 중 하나를 문서에서 그대로 집어 온다. `wiring` 판정은 다른 단계의 몫이라 값만 쓴다. */
     private fun bindingFor(targetType: String, method: String): ControlBinding {
         val obj = document.allObjects.single { candidate ->
             candidate.components.any { component ->
@@ -95,12 +95,12 @@ class RecordTranslationTest {
     }
 
     /**
-     * 배선된 버튼에는 키 조건이 없다 — 누르는 것 자체가 조작이라 조건 트리에 gesture 가 없다.
-     * 여기서 [Interaction.NONE] 을 내면 실측 배선 7건이 전부 "TC 가 지시할 수 없음"이 된다.
+     * `wiring`된 버튼에는 키 조건이 없다 — 누르는 것 자체가 조작이라 조건 트리에 gesture 가 없다.
+     * 여기서 [Interaction.NONE] 을 내면 실측 `wiring` 7건이 전부 "TC 가 지시할 수 없음"이 된다.
      * `button_click` 같은 SDK 프로토콜 이름을 내는 것도 금지다 — 이 칸은 의도를 담는다.
      */
     @Test
-    fun `gesture 가 없고 배선만 있으면 click 이다`() {
+    fun `gesture 가 없고 wiring만 있으면 click 이다`() {
         val record = records(BACK_BUTTON).single()
 
         val translated = RecordTranslation.interactionOf(
@@ -114,11 +114,11 @@ class RecordTranslationTest {
     }
 
     /**
-     * gesture 도 배선도 없으면 조작이 없는 것이다. 실측 `Scenes.TitleSceneManager::Start()` 는
+     * gesture 도 `wiring`도 없으면 조작이 없는 것이다. 실측 `Scenes.TitleSceneManager::Start()` 는
      * 수명주기라 TC 가 지시할 수 없고, 그 사실을 `none` 이 담는다.
      */
     @Test
-    fun `gesture 도 배선도 없으면 none 이다`() {
+    fun `gesture 도 wiring도 없으면 none 이다`() {
         val record = records(TITLE_SCENE_MANAGER).first {
             it.source.endsWith("::Start()") && it.condition is ConditionNode.Always
         }
@@ -134,7 +134,7 @@ class RecordTranslationTest {
      * `inputs[]` 와 조건 트리는 1:1 이 아니다. 실측 `Story.StoryController::IsAdvanceKeyDown` 은
      * `inputs[]` 에 `key:any` 와 `mouse:2` 를 함께 들었지만 트리에는 `key:any` gesture 하나뿐이고,
      * 문서가 스스로 `input-not-branched` gap 을 남긴다. `inputs[]` 를 권위로 삼으면 어느 입력이
-     * 어느 갈래의 것인지 알 수 없는 채로 `input_key` 한 칸을 채우게 된다 — 트리를 따르고, 빠진
+     * 어느 `branch`의 것인지 알 수 없는 채로 `input_key` 한 칸을 채우게 된다 — 트리를 따르고, 빠진
      * 입력은 문서의 gap 토큰이 계속 말하게 둔다.
      */
     @Test

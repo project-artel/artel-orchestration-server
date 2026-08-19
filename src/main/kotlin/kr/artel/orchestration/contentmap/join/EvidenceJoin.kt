@@ -15,7 +15,7 @@ import kr.artel.orchestration.contentmap.evidence.EvidenceRecord
  * | 타입이 놓인 자리 | [PlacementIndex] |
  * | 컨트롤에서 코드로 가는 길 셋(`alsoReachedBy` 펴기 포함) | [SceneWiringIndex] |
  * | 프리팹 위에만 사는 타입의 주소 | [SpawnAttribution] |
- * | 조건 갈래 쪼개기와 DB 어휘 번역 | [ConditionBranches] · [RecordTranslation] |
+ * | 조건 `branch` 쪼개기와 DB 어휘 번역 | [ConditionBranches] · [RecordTranslation] |
  *
  * DB 도 Spring 도 없다. 적재(ARTEL-442)는 이 목록을 받아 행으로 바꾼다.
  */
@@ -36,14 +36,14 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
      *
      * 주소를 찾는 순서가 뜻을 정한다:
      *
-     * 1. **배선이 있으면 그 컨트롤이 주소다.** 무엇을 누르면 이 코드가 도는지를 문서가 직접 말한
+     * 1. **`wiring`이 있으면 그 컨트롤이 주소다.** 무엇을 누르면 이 코드가 도는지를 문서가 직접 말한
      *    경우다. 컨트롤마다 후보가 따로 난다 — 같은 메서드라도 누르는 자리가 다르면 다른 스텝이다.
      * 2. **없으면 오너 타입이 놓인 씬으로 떨어진다.** 키보드 트리거가 이 길로 온다. 키 입력은
-     *    컨트롤에 물리지 않아 배선이 구조적으로 없고, 대신 그 스크립트가 놓인 씬에서만 성립한다.
+     *    컨트롤에 물리지 않아 `wiring`이 구조적으로 없고, 대신 그 스크립트가 놓인 씬에서만 성립한다.
      *
-     * 배선이 있으면 **그 컨트롤이 있는 씬만** 낸다. 같은 스크립트가 다른 씬에도 놓여 있어도 거기서는
+     * `wiring`이 있으면 **그 컨트롤이 있는 씬만** 낸다. 같은 스크립트가 다른 씬에도 놓여 있어도 거기서는
      * 누를 자리가 없기 때문이다 — 실측에서 `Core.SaveLoadController` 가 `TitleScene` 과 `Map_scene`
-     * 양쪽에 놓여 있는데 배선은 `TitleScene` 쪽뿐이라, 배선된 레코드는 `TitleScene` 만 내고 배선 없는
+     * 양쪽에 놓여 있는데 `wiring`은 `TitleScene` 쪽뿐이라, `wiring`된 레코드는 `TitleScene` 만 내고 `wiring` 없는
      * 레코드(`Awake` 등)는 두 씬을 다 낸다. 자리 없는 씬까지 조작으로 내면 TC 가 없는 버튼을 누른다.
      *
      * 둘 다 못 찾은 레코드는 후보가 되지 않는다([unaddressedRecords] 가 센다). 씬을 모르면 명세의
@@ -122,9 +122,9 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
     }
 
     /**
-     * 씬에 놓인 타입 중 주소를 못 찾은 레코드 수. **실측 0** — 놓인 타입은 배선이 없어도 배치가 있다.
+     * 씬에 놓인 타입 중 주소를 못 찾은 레코드 수. **실측 0** — 놓인 타입은 `wiring`이 없어도 배치가 있다.
      *
-     * 0 인데도 세는 이유: 이 수가 늘면 배선 조인이나 배치 색인이 깨진 것이고, 그때 조용히 후보만
+     * 0 인데도 세는 이유: 이 수가 늘면 `wiring` 조인이나 배치 색인이 깨진 것이고, 그때 조용히 후보만
      * 줄어드는 것이 가장 알아채기 어려운 고장이다.
      */
     fun unaddressedRecords(): Int =

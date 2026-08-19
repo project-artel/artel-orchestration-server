@@ -18,7 +18,7 @@ import java.io.File
  *
  * 손으로 만든 조건 트리는 아무것도 증명하지 못한다 — 우리가 상상한 모양이 문서의 모양이라는 것이
  * 바로 이 단계에서 가장 자주 틀리는 가정이다. 씬 이름 비교의 따옴표, `either` 가 `every` 안에
- * 들어앉은 자리, 가드 test 를 갈래끼리 공유하는 방식은 전부 실측에서만 나온다.
+ * 들어앉은 자리, 가드 test 를 `branch`끼리 공유하는 방식은 전부 실측에서만 나온다.
  *
  * 문서는 한 번만 읽는다(`PER_CLASS` + `@BeforeAll`) — 1.4MB 를 테스트마다 다시 파싱할 이유가 없다.
  */
@@ -35,7 +35,7 @@ class ConditionBranchesTest {
 
     private fun records(type: String): List<EvidenceRecord> = document.types.getValue(type)
 
-    /** 조건 트리 루트가 `either` 이고 갈래마다 다른 키를 든 실측 레코드들. */
+    /** 조건 트리 루트가 `either` 이고 `branch`마다 다른 키를 든 실측 레코드들. */
     private fun inputSplittingRecords(): List<EvidenceRecord> =
         records(MAP_MOVE).filter { record ->
             val root = record.condition
@@ -53,7 +53,7 @@ class ConditionBranchesTest {
      * 영영 만들어지지 않는다.
      */
     @Test
-    fun `either 레코드는 키마다 갈래 하나로 쪼개진다`() {
+    fun `either 레코드는 키마다 branch 하나로 쪼개진다`() {
         val record = inputSplittingRecords().first { record ->
             record.condition.gestureInputs() == listOf("key:LeftArrow (down)", "key:DownArrow (down)") &&
                 record.inputs.any { it.offset == 202 }
@@ -68,12 +68,12 @@ class ConditionBranchesTest {
     }
 
     /**
-     * 갈래를 쪼개면서 가드 조건을 흘리면 "언제나 되는 이동"이 되어 거짓 명세가 된다. 실측에서
-     * 두 갈래는 같은 가드 두 개(`MapMove.position == 1` @119, `InteractionLock.IsLocked == 0` @5)를
+     * `branch`를 쪼개면서 가드 조건을 흘리면 "언제나 되는 이동"이 되어 거짓 명세가 된다. 실측에서
+     * 두 `branch`는 같은 가드 두 개(`MapMove.position == 1` @119, `InteractionLock.IsLocked == 0` @5)를
      * 공유하므로, 쪼갠 뒤에도 양쪽에 그대로 남아 있어야 한다.
      */
     @Test
-    fun `쪼갠 갈래는 자기 가드 테스트를 그대로 들고 간다`() {
+    fun `쪼갠 branch는 자기 가드 테스트를 그대로 들고 간다`() {
         val record = inputSplittingRecords().first { it.inputs.any { input -> input.offset == 202 } }
 
         val branches = ConditionBranches.from(record, MAP_SCENE)
@@ -90,7 +90,7 @@ class ConditionBranchesTest {
     /**
      * `either` 를 `every` 로 접으면 "둘 중 하나"가 "둘 다"가 되어 절대 성립하지 않는 조건이 된다.
      * 실측 68건 중 입력을 가르지 않는 64건은 쪼개지도 접지도 않고 그 모양 그대로 남아야 한다 —
-     * `Map.MapMove::CharacterMove` 의 `position == 4` 또는 `position == 5` 갈래가 그 경우다.
+     * `Map.MapMove::CharacterMove` 의 `position == 4` 또는 `position == 5` `branch`가 그 경우다.
      */
     @Test
     fun `입력을 가르지 않는 either 는 쪼개지도 every 로 접히지도 않는다`() {
@@ -116,7 +116,7 @@ class ConditionBranchesTest {
      * 가른다. 씬을 보지 않으면 두 화면에 서로의 기능이 섞인다.
      */
     @Test
-    fun `GameClearScene 에서는 GameOverScene 쪽 갈래가 빠진다`() {
+    fun `GameClearScene 에서는 GameOverScene 쪽 branch가 빠진다`() {
         val gameOverOnly = records(GAME_CLEAR_CONTROLLER).single { record ->
             record.condition.tests().any { it.left == ACTIVE_SCENE_NAME && it.operator == "!=" }
         }
@@ -126,11 +126,11 @@ class ConditionBranchesTest {
     }
 
     /**
-     * 반대 방향도 같아야 한다. `== "GameClearScene"` 갈래가 `GameOverScene` 에 남으면 게임오버
+     * 반대 방향도 같아야 한다. `== "GameClearScene"` `branch`가 `GameOverScene` 에 남으면 게임오버
      * 화면에 "카드를 받는다"는 기능이 생긴다.
      */
     @Test
-    fun `GameOverScene 에서는 GameClearScene 쪽 갈래가 빠진다`() {
+    fun `GameOverScene 에서는 GameClearScene 쪽 branch가 빠진다`() {
         val gameClearOnly = records(GAME_CLEAR_CONTROLLER).filter { record ->
             record.condition.tests().any { it.left == ACTIVE_SCENE_NAME && it.operator == "==" }
         }
@@ -159,11 +159,11 @@ class ConditionBranchesTest {
     }
 
     /**
-     * 살아남은 갈래는 다시 쓰지 않는다. `condition_tree` 를 사람이 되짚을 때 보는 것은 원본 모양이고,
+     * 살아남은 `branch`는 다시 쓰지 않는다. `condition_tree` 를 사람이 되짚을 때 보는 것은 원본 모양이고,
      * 우리가 정규화한 모양은 근거 문서 어디에도 없어 대조할 수 없다.
      */
     @Test
-    fun `살아남은 갈래는 원본 트리를 그대로 들고 있다`() {
+    fun `살아남은 branch는 원본 트리를 그대로 들고 있다`() {
         val record = records(GAME_CLEAR_CONTROLLER).first { record ->
             record.condition.tests().any { it.left == ACTIVE_SCENE_NAME && it.operator == "==" }
         }
@@ -174,8 +174,8 @@ class ConditionBranchesTest {
 
     /**
      * `branchOffset` 은 한 메서드 안의 서로 다른 지점을 가른다. gesture 가 있으면 그 자리가 곧
-     * 갈래를 다르게 만든 자리이므로 그 offset 을 쓴다 — 가드 test 는 갈래끼리 공유되어 최솟값이
-     * 겹친다(실측: 두 갈래 모두 `InteractionLock.IsLocked` @5 를 든다).
+     * `branch`를 다르게 만든 자리이므로 그 offset 을 쓴다 — 가드 test 는 `branch`끼리 공유되어 최솟값이
+     * 겹친다(실측: 두 `branch` 모두 `InteractionLock.IsLocked` @5 를 든다).
      */
     @Test
     fun `branchOffset 은 gesture 위치를 먼저 쓴다`() {
@@ -187,8 +187,8 @@ class ConditionBranchesTest {
     }
 
     /**
-     * gesture 가 없으면 갈래 안 가장 작은 offset 으로 떨어진다. 조건이 `always` 면 IL 위치 자체가
-     * 없으므로 null 이어야 한다 — 0 으로 채우면 실제 offset 0 인 갈래와 구분되지 않는다.
+     * gesture 가 없으면 `branch` 안 가장 작은 offset 으로 떨어진다. 조건이 `always` 면 IL 위치 자체가
+     * 없으므로 null 이어야 한다 — 0 으로 채우면 실제 offset 0 인 `branch`와 구분되지 않는다.
      */
     @Test
     fun `gesture 가 없으면 가장 작은 offset 을 쓰고 always 는 null 이다`() {
@@ -204,13 +204,13 @@ class ConditionBranchesTest {
     /**
      * 문서 전체를 훑어 폭발과 충돌을 함께 막는다.
      *
-     * 실측 `types` 318 레코드 중 입력을 가르는 것은 4건뿐이라 `GameClearScene` 기준 갈래는 321개다
+     * 실측 `types` 318 레코드 중 입력을 가르는 것은 4건뿐이라 `GameClearScene` 기준 `branch`는 321개다
      * (318 + 4 − 씬 조건으로 죽는 1건). 순수 상태 논리합까지 펼쳤다면 `Cards.CardManager` 의
-     * 중첩 `either` 9개짜리 레코드가 곱해져 수십 배가 된다. 한 레코드 안 갈래들의 offset 이 겹치면
+     * 중첩 `either` 9개짜리 레코드가 곱해져 수십 배가 된다. 한 레코드 안 `branch`들의 offset 이 겹치면
      * 적재기가 두 후보를 하나로 볼 수 있으므로 그것도 같이 본다.
      */
     @Test
-    fun `문서 전체를 갈라도 갈래 수가 폭발하지 않고 offset 이 겹치지 않는다`() {
+    fun `문서 전체를 갈라도 branch 수가 폭발하지 않고 offset 이 겹치지 않는다`() {
         val branchesByRecord = document.types.values.flatten()
             .map { it to ConditionBranches.from(it, GAME_CLEAR_SCENE) }
 
@@ -224,11 +224,11 @@ class ConditionBranchesTest {
     }
 
     /**
-     * 갈래마다 gesture 는 최대 하나여야 한다. 둘이면 `input_key` 한 칸에 무엇을 적을지 정할 수 없고,
+     * `branch`마다 gesture 는 최대 하나여야 한다. 둘이면 `input_key` 한 칸에 무엇을 적을지 정할 수 없고,
      * 하나를 고르는 순간 나머지가 근거 없이 사라진다.
      */
     @Test
-    fun `갈래 하나에 gesture 는 최대 하나다`() {
+    fun `branch 하나에 gesture 는 최대 하나다`() {
         val branches = document.types.values.flatten()
             .flatMap { ConditionBranches.from(it, GAME_CLEAR_SCENE) }
 

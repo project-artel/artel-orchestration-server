@@ -21,7 +21,7 @@ data class ScenePlacement(
     val label: String?,
 )
 
-/** 배선을 찾은 길. 어느 길로 걸렸는지가 곧 신뢰도라 값에 남긴다. */
+/** `wiring`을 찾은 길. 어느 길로 걸렸는지가 곧 신뢰도라 값에 남긴다. */
 enum class WiringPath {
     /** 컨트롤이 부르는 (타입, 메서드) 가 레코드의 진입점과 바로 맞았다. */
     ENTRY,
@@ -29,7 +29,7 @@ enum class WiringPath {
     /** `alsoReachedBy` 를 펴야 맞았다. `DuplicateVariants` 가 접어 둔 둘째 길이다. */
     ARRIVAL,
 
-    /** 코드가 런타임에 `AddListener` 로 매단 것이라 인스펙터 배선에는 없다. */
+    /** 코드가 런타임에 `AddListener` 로 매단 것이라 인스펙터 `wiring`에는 없다. */
     HANDLE,
 }
 
@@ -67,9 +67,9 @@ data class CapabilityCandidate(
     val scene: String,
     /** 이 후보를 낳은 근거 레코드. 되짚기의 출처다. */
     val record: EvidenceRecord,
-    /** 배선으로 찾았으면 그 컨트롤. 스폰으로 붙었으면 null. */
+    /** `wiring`으로 찾았으면 그 컨트롤. 스폰으로 붙었으면 null. */
     val binding: ControlBinding?,
-    /** 스폰으로 붙었으면 그 출처. 배선으로 찾았으면 null. */
+    /** 스폰으로 붙었으면 그 출처. `wiring`으로 찾았으면 null. */
     val spawn: SpawnOrigin?,
     /** `click` · `press` · `none` 등. 액션 프로토콜 어휘가 아니라 의도다. */
     val interaction: String,
@@ -77,13 +77,13 @@ data class CapabilityCandidate(
     val inputKey: String? = null,
     val inputPhase: String? = null,
     /**
-     * 이 후보만 남긴 조건 갈래.
+     * 이 후보만 남긴 조건 `branch`.
      *
-     * `either` 를 쪼개면 갈래마다 다른 트리가 되고, 씬 이름 조건으로 거르면 또 달라진다. 원본
+     * `either` 를 쪼개면 `branch`마다 다른 트리가 되고, 씬 이름 조건으로 거르면 또 달라진다. 원본
      * 전체는 [EvidenceRecord.conditionJson] 이 계속 들고 있다.
      */
     val condition: ConditionNode,
-    /** 이 갈래를 가른 IL 위치. 한 메서드 안의 서로 다른 지점을 구분한다. */
+    /** 이 `branch`를 가른 IL 위치. 한 메서드 안의 서로 다른 지점을 구분한다. */
     val branchOffset: Int?,
     /**
      * 문서의 확신도를 스키마 어휘로 옮긴 값.

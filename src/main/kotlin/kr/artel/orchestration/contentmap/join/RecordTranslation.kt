@@ -15,23 +15,23 @@ import kr.artel.orchestration.contentmap.evidence.flatten
  * 믿을 수 있나"를 말한다. 옮기는 자리가 여기 하나뿐이어야 어긋난 값을 한 군데서 고칠 수 있다 —
  * 적재기가 문자열을 직접 비교하기 시작하면 어휘가 늘 때 조용히 새는 분기가 생긴다.
  *
- * 계산은 순수하다. 씬도 배선도 여기서 찾지 않는다 — 이미 찾은 것을 인자로 받는다.
+ * 계산은 순수하다. 씬도 `wiring`도 여기서 찾지 않는다 — 이미 찾은 것을 인자로 받는다.
  */
 object RecordTranslation {
 
     /**
-     * 이 갈래가 요구하는 조작을 [Interaction] 어휘로 옮긴다.
+     * 이 `branch`가 요구하는 조작을 [Interaction] 어휘로 옮긴다.
      *
      * **`condition` 의 gesture 노드가 권위다. `inputs[]` 는 아니다.** 둘은 1:1 이 아니다 — 실측에서
      * `Story.StoryController::IsAdvanceKeyDown` 2건은 `inputs[]` 에 `key:any` 와 `mouse:2` 를 함께
      * 들고 있는데 조건 트리에는 `key:any` gesture 하나뿐이고, 문서 스스로 `input-not-branched` gap
-     * 을 남긴다. `inputs[]` 는 메서드 전체의 평평한 목록이라 **어느 입력이 어느 갈래의 것인지**
-     * 말하지 못하고, `capability.input_key` 는 단일 컬럼이다. 둘 중 하나를 골라야 한다면 갈래를
+     * 을 남긴다. `inputs[]` 는 메서드 전체의 평평한 목록이라 **어느 입력이 어느 `branch`의 것인지**
+     * 말하지 못하고, `capability.input_key` 는 단일 컬럼이다. 둘 중 하나를 골라야 한다면 `branch`를
      * 아는 쪽이어야 한다. `inputs[]` 에만 있던 입력은 사라지지 않는다 — 문서가 남긴
      * `input-not-branched` 토큰이 [gapsOf] 를 그대로 통과해 "이 조작은 이게 전부가 아니다"를 남긴다.
      *
      * gesture 가 없고 [binding] 만 있으면 [Interaction.CLICK] 이다 — 컨트롤이 부르는 메서드인데
-     * 키 조건이 없다는 것은 그 컨트롤을 누르는 것 자체가 조작이라는 뜻이다(실측 인스펙터 배선 7건).
+     * 키 조건이 없다는 것은 그 컨트롤을 누르는 것 자체가 조작이라는 뜻이다(실측 인스펙터 `wiring` 7건).
      * 둘 다 없으면 [Interaction.NONE] — 타이머·코루틴·수명주기라 TC 가 지시할 수 없다.
      *
      * SDK 의 액션 프로토콜 메서드 이름(`button_click` 등)은 절대 내지 않는다. 저 이름은 배포마다
@@ -51,12 +51,12 @@ object RecordTranslation {
                 inputPhase = InputPhase.from(gesture.phase),
             )
 
-            // 실측 gesture 25건은 전부 `key:` 다. 마우스는 `inputs[]` 에만 2건 있어 이 갈래는 아직
+            // 실측 gesture 25건은 전부 `key:` 다. 마우스는 `inputs[]` 에만 2건 있어 이 `branch`는 아직
             // 데이터로 확인되지 않았다 — 오브젝트 위에서 누르는 마우스 버튼은 클릭이므로 그렇게
             // 옮기되, 버튼 번호를 `input_key` 에 적지는 않는다(그 컬럼은 키 이름을 담는다).
             MOUSE_GESTURE -> BranchInteraction(Interaction.CLICK, null, null)
 
-            // 못 읽은 gesture 문자열은 조작이 없는 것으로 치지 않고 배선 쪽 판정으로 떨어진다.
+            // 못 읽은 gesture 문자열은 조작이 없는 것으로 치지 않고 `wiring` 쪽 판정으로 떨어진다.
             // 문서 세대가 바뀌어 표기가 달라지면 여기가 조용히 `none` 을 쏟아내면 안 된다.
             else -> if (binding != null) {
                 BranchInteraction(Interaction.CLICK, null, null)
@@ -91,7 +91,7 @@ object RecordTranslation {
     }
 
     /**
-     * `capability_evidence.gaps` 에 들어갈 토큰들 — 문서가 말한 것 + 이 갈래를 보고 우리가 판정한 것.
+     * `capability_evidence.gaps` 에 들어갈 토큰들 — 문서가 말한 것 + 이 `branch`를 보고 우리가 판정한 것.
      *
      * **문서 토큰은 손대지 않고 그대로 통과시킨다.** [EvidenceGap] 이 모르는 토큰도 버리지 않는다 —
      * 실측 6종 중 `singleton-plumbing` · `composed-on-same-object` · `input-not-branched` ·
@@ -102,13 +102,13 @@ object RecordTranslation {
      * 못 찾은 것이고(실측 47건, 전부 `subjectLost` 를 동반한다), 그 조건은 given 으로 쓸 수 없다.
      * 주어를 상상해 채우는 것이 가장 비싼 거짓 명세라 문서 대신 우리가 표시한다.
      *
-     * 판정은 갈래 전체를 편 결과로 한다 — `either` 안이든 밖이든 주어가 없으면 없는 것이다.
+     * 판정은 `branch` 전체를 편 결과로 한다 — `either` 안이든 밖이든 주어가 없으면 없는 것이다.
      */
     fun gapsOf(record: EvidenceRecord, branch: ConditionBranch): List<String> {
         val subjectLost = branch.condition.flatten()
             .filterIsInstance<ConditionNode.Test>()
             .any { it.context == null }
-        // `distinct()` 는 문서가 같은 토큰을 두 번 준 경우와, 한 갈래에 주어 없는 test 가 여럿인
+        // `distinct()` 는 문서가 같은 토큰을 두 번 준 경우와, 한 `branch`에 주어 없는 test 가 여럿인
         // 경우(실측: `Story.StoryController::SwitchBackground` 는 2건)를 함께 눌러 준다.
         return (record.gaps + listOfNotNull(EvidenceGap.SUBJECT_NULL.wire.takeIf { subjectLost })).distinct()
     }
@@ -140,7 +140,7 @@ object RecordTranslation {
 }
 
 /**
- * 한 갈래가 요구하는 조작. `capability` 의 `interaction` · `input_key` · `input_phase` 세 칸이다.
+ * 한 `branch`가 요구하는 조작. `capability` 의 `interaction` · `input_key` · `input_phase` 세 칸이다.
  *
  * 세 값을 따로 돌려주지 않는 이유: `press` 인데 키가 없으면 `ck_capability_press_needs_key` 가
  * 거절한다. 함께 정해지는 값은 함께 다녀야 중간에서 한 칸만 갈아끼우는 일이 생기지 않는다.

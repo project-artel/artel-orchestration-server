@@ -57,7 +57,7 @@ class PlacementIndex private constructor(
 /**
  * 씬 오브젝트를 자리 값으로 옮긴다.
  *
- * 배선 조인도 컨트롤이 놓인 자리를 같은 규칙으로 만든다. 변환이 두 벌이 되면 `selector-v1` 을
+ * `wiring` 조인도 컨트롤이 놓인 자리를 같은 규칙으로 만든다. 변환이 두 벌이 되면 `selector-v1` 을
  * 약속하지 않은 문서에서 한쪽만 조준 경로를 잃는 식으로 조용히 갈린다.
  */
 internal fun SceneObject.toPlacement(): ScenePlacement =

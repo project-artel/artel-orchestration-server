@@ -5,7 +5,7 @@ import kr.artel.orchestration.contentmap.evidence.EvidenceDocumentModel
 /**
  * 프리팹 위에만 사는 타입을 씬에 귀속시킨다.
  *
- * 이런 타입은 `objects[].components[]` 에 한 번도 나타나지 않아 배선 조인이 구조적으로 0건을 낸다.
+ * 이런 타입은 `objects[].components[]` 에 한 번도 나타나지 않아 `wiring` 조인이 구조적으로 0건을 낸다.
  * **죽은 코드라서가 아니라 주소가 없어서다** — 프리팹은 씬 계층 밖에 있고, 씬은 그것을 참조로만 든다.
  * 실측 `wv-editor-latest.json`(schema 6)에서 unplaced 14개 중 `createdBy` 가 찬 10개가 근거 레코드
  * 111건을 들고 있고, 그게 전투 씬의 대부분이다. 여기서 붙이지 않으면 그 111건이 통째로 사라진다.

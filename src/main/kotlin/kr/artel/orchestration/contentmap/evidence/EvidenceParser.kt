@@ -220,7 +220,7 @@ class EvidenceParser(private val objectMapper: ObjectMapper) {
     }
 
     companion object {
-        /** 이 파서가 아는 가장 낮은 세대. schema 5 이하는 `alsoReachedBy` 가 없어 배선이 통째로 샌다. */
+        /** 이 파서가 아는 가장 낮은 세대. schema 5 이하는 `alsoReachedBy` 가 없어 `wiring`이 통째로 샌다. */
         const val MIN_SUPPORTED_SCHEMA = 6
     }
 }

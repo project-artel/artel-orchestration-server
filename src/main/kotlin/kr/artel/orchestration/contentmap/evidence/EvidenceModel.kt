@@ -28,13 +28,13 @@ data class EvidenceDocumentModel(
     /** 아직 씬 오브젝트에 놓이지 못한 타입. 프리팹 위에만 사는 것들이 여기 있다. */
     val unplaced: Map<String, UnplacedType>,
     val objects: List<SceneObject>,
-    /** `DontDestroyOnLoad` 로 씬을 넘어 사는 오브젝트. 배선은 [objects] 와 같은 모양이다. */
+    /** `DontDestroyOnLoad` 로 씬을 넘어 사는 오브젝트. `wiring`은 [objects] 와 같은 모양이다. */
     val persistentObjects: List<SceneObject>,
     /** 문서 수준의 공백. 예: `dont-destroy-on-load-not-walked`. */
     val gaps: List<String>,
 ) {
     /**
-     * [objects] + [persistentObjects]. 배선을 찾을 때 둘을 가르지 않는다.
+     * [objects] + [persistentObjects]. `wiring`을 찾을 때 둘을 가르지 않는다.
      *
      * `get()` 이 아니라 값이다 — 스폰 귀속이 `createdBy` 항목마다 이 목록을 훑어, 접근자로 두면
      * 참조 수만큼 목록을 다시 만든다.
@@ -97,12 +97,12 @@ data class EvidenceRecord(
     val inputs: List<EvidenceInput>,
     val effects: List<EvidenceEffect>,
     val calls: List<EvidenceCall>,
-    /** 런타임 `AddListener` 배선. 인스펙터 배선과 달리 코드 쪽에만 남는다. */
+    /** 런타임 `AddListener` `wiring`. 인스펙터 `wiring`과 달리 코드 쪽에만 남는다. */
     val handles: List<EvidenceHandle>,
     /**
      * 같은 사실에 이르는 다른 길. `DuplicateVariants` 가 접은 것이라 **첫 길만 [entry] 에 있다.**
      *
-     * 펴지 않으면 배선된 버튼이 통째로 사라진다 — 실측에서 `Canvas/continue` 가 그 경우다.
+     * 펴지 않으면 `wiring`된 버튼이 통째로 사라진다 — 실측에서 `Canvas/continue` 가 그 경우다.
      */
     val alsoReachedBy: List<EvidenceArrival>,
     /** 문서가 "못 읽었다"고 말한 것. `callee-condition-not-composed` · `unread-condition` 등. */
@@ -166,7 +166,7 @@ data class EvidenceEffect(
     val offset: Int,
 )
 
-/** 런타임에 이벤트에 매단 처리기. `AddListener` 로만 물린 배선이 여기 남는다. */
+/** 런타임에 이벤트에 매단 처리기. `AddListener` 로만 물린 `wiring`이 여기 남는다. */
 data class EvidenceHandle(
     /** `CombineZone.activateButton.onClick` 등. 없을 수 있다. */
     val channel: String?,
@@ -174,7 +174,7 @@ data class EvidenceHandle(
     /** `AddListener` 등. */
     val member: String?,
     val handler: String?,
-    /** 매달린 메서드의 안정 키. 배선 조인의 셋째 길이다. */
+    /** 매달린 메서드의 안정 키. `wiring` 조인의 셋째 길이다. */
     val handlerId: String?,
     val offset: Int,
 )
@@ -221,12 +221,12 @@ data class SceneObject(
 
 data class SceneComponent(
     val type: String,
-    /** 인스펙터가 물어 둔 배선. 실측 7건이 문서 전체의 실배선 전부다. */
+    /** 인스펙터가 물어 둔 `wiring`. 실측 7건이 문서 전체의 실`wiring` 전부다. */
     val calls: List<ComponentCall>,
     val refs: List<ComponentRef>,
 )
 
-/** 인스펙터 이벤트 배선 — "이 컨트롤을 누르면 저 타입의 저 메서드를 부른다". */
+/** 인스펙터 이벤트 `wiring` — "이 컨트롤을 누르면 저 타입의 저 메서드를 부른다". */
 data class ComponentCall(
     /** `m_OnClick` 등. */
     val event: String,
