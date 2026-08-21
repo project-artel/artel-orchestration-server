@@ -76,8 +76,10 @@ object ScenarioQuestionBuilder {
             why = describe(taken).ifBlank { null }?.let {
                 "$it 과 같은 자리의 다른 갈래인데, 둘은 동시에 성립할 수 없어 함께 담을 수 없습니다."
             } ?: "같은 자리의 다른 갈래인데, 둘은 동시에 성립할 수 없어 함께 담을 수 없습니다.",
+            // **보기는 짧게.** 무엇에 대한 답인지는 오케가 질문 문장을 붙여 보내므로 여기서
+            // 되풀이할 필요가 없다 — 화면에서는 질문을 그대로 옮겨 적은 버튼이 세 줄로 접힌다.
             options = listOf(
-                ScenarioQuestionOption("add", "$other 도 별도 시나리오로 만들어 줘"),
+                ScenarioQuestionOption("add", "네, 만들어 주세요", other),
                 ScenarioQuestionOption("skip", "이번엔 그대로 두기"),
             ),
             source = ScenarioQuestionSource.CODE,
@@ -95,11 +97,7 @@ object ScenarioQuestionBuilder {
             text = "덜 담긴 씬이 있습니다. 더 담을까요?",
             why = "이번에 담은 범위 — $tally",
             options = scope.map { (scene, taken, all) ->
-                ScenarioQuestionOption(
-                    "scene:$scene",
-                    "$scene 의 나머지도 담아 줘",
-                    "지금 $taken/$all 입니다.",
-                )
+                ScenarioQuestionOption("scene:$scene", "$scene 마저 담기", "지금 $taken/$all 입니다.")
             } + ScenarioQuestionOption("keep", "이대로 좋아"),
             source = ScenarioQuestionSource.CODE,
         )

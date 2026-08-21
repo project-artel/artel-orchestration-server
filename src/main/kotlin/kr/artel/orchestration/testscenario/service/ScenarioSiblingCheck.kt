@@ -115,7 +115,14 @@ object ScenarioSiblingCheck {
      * 어느 갈래인지 갈린다.
      */
     fun describe(fact: CaseFact): String {
-        val where = listOfNotNull(fact.scene, fact.step.ifBlank { null }).joinToString(" · ")
+        val step = fact.step.trim()
+        // 스텝 문구가 이미 씬 이름으로 시작하는 일이 흔하다("StoryScene에서 Space 입력을 한다").
+        // 그대로 앞에 붙이면 "StoryScene · StoryScene에서…"가 된다.
+        val where = when {
+            step.isBlank() -> fact.scene.orEmpty()
+            fact.scene == null || step.contains(fact.scene) -> step
+            else -> "${fact.scene} · $step"
+        }
         val guards = fact.guards.joinToString(", ") { "${it.variable} ${it.operator} ${it.value}" }
         return if (guards.isBlank()) where else "$where ($guards)"
     }

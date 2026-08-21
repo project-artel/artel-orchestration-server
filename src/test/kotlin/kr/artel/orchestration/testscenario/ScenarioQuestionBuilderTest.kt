@@ -73,6 +73,7 @@ class ScenarioQuestionBuilderTest {
         // 씬마다 보기를 준다 — "나머지 전부"만 주면 스물몇 건짜리 씬까지 딸려 온다.
         assertThat(question?.options?.map { it.id })
             .containsExactly("scene:TitleScene", "scene:Map_scene", "keep")
+        assertThat(question?.options?.first()?.label).isEqualTo("TitleScene 마저 담기")
     }
 
     @Test
@@ -86,7 +87,9 @@ class ScenarioQuestionBuilderTest {
             describe = { "Map_scene · 관찰한다 (StagePosition == 5)" },
         )
 
-        assertThat(question?.options?.first()?.label)
-            .isEqualTo("Map_scene · 관찰한다 (StagePosition == 5) 도 별도 시나리오로 만들어 줘")
+        // 보기는 짧게. 무엇에 대한 답인지는 오케가 질문 문장을 붙여 보낸다 — 버튼에 질문을
+        // 통째로 옮겨 적으면 화면에서 세 줄로 접힌다.
+        assertThat(question?.options?.first()?.label).isEqualTo("네, 만들어 주세요")
+        assertThat(question?.options?.first()?.detail).contains("StagePosition == 5")
     }
 }

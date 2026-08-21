@@ -506,7 +506,7 @@ class TestScenarioReconcileIntegrationTest {
 
         awaitUntil { receivedFrames.any { it.contains("앞서 물어본 것") } }
         val relayed = receivedFrames.first { it.contains("앞서 물어본 것") }
-        assertThat(relayed).contains("TitleScene 의 나머지도 담아 줘")
+        assertThat(relayed).contains("TitleScene 마저 담기")
     }
 
     /**

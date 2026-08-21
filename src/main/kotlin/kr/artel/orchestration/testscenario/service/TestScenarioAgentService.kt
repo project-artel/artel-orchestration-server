@@ -134,8 +134,10 @@ class TestScenarioAgentService(
         // 엉뚱한 질문에 붙는다. 화면의 보기는 저장된 질문으로 계속 답할 수 있다.
         sessions[sessionKey]?.question = null
 
-        // 원래 순서대로: 먼저 USER 메시지를 저장한 뒤 Agent로 보낸다.
-        saveMessage(runId, appUserId, "USER", turnInput)
+        // **대화에는 사용자가 한 말만 남긴다.** 모델에게 붙여 보내는 맥락(직전 질문, 고른 보기)은
+        // 전달을 위한 것이지 사용자가 쓴 문장이 아니다 — 말풍선에 그대로 뜨면 자기가 하지 않은
+        // 말을 한 것처럼 보인다.
+        saveMessage(runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) })
         val existing = sessions[sessionKey]
         if (existing != null) {
             // 토글을 매 턴 반영해 대화 중 변경도 다음 결과부터 적용되게 한다.
@@ -591,6 +593,12 @@ class TestScenarioAgentService(
         )
     }.onFailure { logger.warn("저장된 질문을 읽지 못했다 — 평범한 메시지로 다룬다: ${it.message}") }
         .getOrNull()
+
+    /** 보기만 누른 턴에 대화에 남길 말. 고른 문구가 곧 사용자가 한 말이다. */
+    private fun answerSummary(pending: ScenarioQuestion?, answer: ScenarioQuestionAnswer?): String {
+        if (answer == null || pending == null || pending.id != answer.questionId) return ""
+        return pending.options.filter { it.id in answer.optionIds }.joinToString(" / ") { it.label }
+    }
 
     /**
      * 고른 보기를 **모델이 읽을 수 있는 한 줄**로 만든다(ARTEL-487).
