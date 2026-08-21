@@ -75,11 +75,47 @@ class ContentMapIngestService(
      * 한 문서가 실패해도 나머지를 계속한다. 한 게임의 문서가 깨졌다고 다른 게임의 적재가 멈추면,
      * 고치는 사람이 **깨진 문서를 찾기 전에** 큐가 밀린 것부터 보게 된다.
      */
-    suspend fun ingestPending(limit: Int = DEFAULT_BATCH): List<IngestResult> =
-        documents.findPending(limit).toList().mapNotNull { document ->
+    suspend fun ingestPending(limit: Int = DEFAULT_BATCH): List<IngestOutcome> =
+        ingestEach(documents.findPending(limit).toList())
+
+    /**
+     * 이 빌드의 대기 문서를 적재한다. 사람이 화면에서 버튼을 누르면 이쪽이 돈다.
+     *
+     * 전역 [ingestPending] 과 **같은 루프를 쓴다** — 실패를 기록하는 자리가 한 곳이어야, 자동 경로는
+     * 로그만 남기고 버튼 경로만 기록하는 어긋남이 생기지 않는다.
+     */
+    suspend fun ingestBuild(gameBuildId: Long, limit: Int = DEFAULT_BATCH): List<IngestOutcome> =
+        ingestEach(documents.findPendingByGameBuild(gameBuildId, limit).toList())
+
+    /**
+     * 문서마다 적재하고, 깨진 것은 문서에 적고 넘어간다.
+     *
+     * **이 함수는 트랜잭션 안에 있으면 안 된다.** [ingest] 하나가 트랜잭션이고, 실패 기록은 그것이
+     * 되돌아간 **뒤에** 새 트랜잭션으로 써야 남는다. 여기에 바깥 트랜잭션이 걸리면 그 기록이
+     * rollback-only 에 묶여 조용히 사라지거나 커밋에서 터진다.
+     *
+     * 한 문서가 깨져도 나머지를 계속하는 이유: 한 게임의 문서가 깨졌다고 다른 게임의 적재가 멈추면,
+     * 고치는 사람이 **깨진 문서를 찾기 전에** 큐가 밀린 것부터 보게 된다.
+     */
+    private suspend fun ingestEach(pending: List<ContentMapDocumentEntity>): List<IngestOutcome> =
+        pending.map { document ->
             runCatching { ingest(document) }
-                .onFailure { logger.error("근거 문서 적재 실패 (documentId={}): {}", document.id, it.message, it) }
-                .getOrNull()
+                .fold(
+                    onSuccess = { IngestOutcome.Ingested(it) },
+                    onFailure = { failure ->
+                        logger.error("근거 문서 적재 실패 (documentId={}): {}", document.id, failure.message, failure)
+                        val reason = (failure.message ?: failure::class.simpleName.orEmpty())
+                            .take(INGEST_ERROR_WIDTH)
+                        // 기록이 또 깨져도 배치를 멈추지 않는다. 그때는 로그만 남고 사람은 화면에서
+                        // 사유를 못 보지만, 데이터가 틀어지지는 않는다.
+                        runCatching {
+                            documents.recordIngestFailure(document.id!!, Instant.now(clock), reason)
+                        }.onFailure {
+                            logger.error("적재 실패 기록 실패 (documentId={})", document.id, it)
+                        }
+                        IngestOutcome.Failed(document.id!!, reason)
+                    },
+                )
         }
 
     /**
@@ -330,6 +366,9 @@ class ContentMapIngestService(
 
         private const val DEFAULT_BATCH = 5
 
+        /** `content_map_document.ingest_error` 의 폭. 스택 트레이스가 아니라 한 줄을 담는 칸이다. */
+        private const val INGEST_ERROR_WIDTH = 512
+
         /** 조작 후보. `flow` 는 흐름만 말하는 조각이다. */
         private const val RECORD_KIND_CANDIDATE = "candidate"
 
@@ -344,6 +383,17 @@ class ContentMapIngestService(
         private const val EFFECT_TARGET_WIDTH = 1024
         private const val EFFECT_DETAIL_WIDTH = 512
     }
+}
+
+/**
+ * 문서 하나를 적재해 본 결과. 성공과 실패를 한 목록에 담기 위한 자리다.
+ *
+ * 실패를 조용히 버리지 않는 이유: 버튼을 누른 사람에게 "몇 개가 앉았고 무엇이 왜 안 앉았나"를
+ * 그대로 돌려줘야, 다시 누를지 문서를 고칠지 판단할 수 있다.
+ */
+sealed interface IngestOutcome {
+    data class Ingested(val result: IngestResult) : IngestOutcome
+    data class Failed(val documentId: Long, val error: String) : IngestOutcome
 }
 
 /** 한 문서를 적재하고 남은 것. 워커가 로그로 남기고 테스트가 읽는다. */

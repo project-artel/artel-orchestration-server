@@ -98,14 +98,22 @@ class ContentMapIngestTransactionTest {
     @Test
     fun `깨진 문서가 배치를 멈추지 않는다`(): Unit = runBlocking {
         val broken = newContentMap()
-        newDocument(broken.id!!, documentWithOverlongInputKey())
+        val brokenDocument = newDocument(broken.id!!, documentWithOverlongInputKey())
 
         val healthy = newContentMap(capture = Capture.PLAYER.wire)
         val healthyDocument = newDocument(healthy.id!!, minimalDocument())
 
         val results = service.ingestPending(limit = 10)
 
-        assertThat(results.map { it.documentId }).contains(healthyDocument.id)
+        // 성공과 실패가 한 목록에 담긴다. 깨진 문서는 버려지지 않고 사유와 함께 나온다.
+        //
+        // 전역 큐를 도는 경로라 다른 테스트가 남긴 대기 문서도 함께 잡힌다. 그래서 수를 세지 않고
+        // **이 테스트의 두 문서**만 짚는다 — 수를 세면 같은 DB 를 쓰는 이웃 테스트가 이 단언을 깬다.
+        val ingested = results.filterIsInstance<IngestOutcome.Ingested>()
+        val failed = results.filterIsInstance<IngestOutcome.Failed>()
+        assertThat(ingested.map { it.result.documentId }).contains(healthyDocument.id)
+        assertThat(failed.map { it.documentId }).contains(brokenDocument.id)
+        assertThat(failed.single { it.documentId == brokenDocument.id }.error).isNotBlank()
         assertThat(capabilities.findEvidenceCapabilitiesOfMap(healthy.id!!).toList()).isNotEmpty()
         assertThat(capabilities.findEvidenceCapabilitiesOfMap(broken.id!!).toList()).isEmpty()
         assertThat(documents.findById(healthyDocument.id!!)!!.ingestedAt).isNotNull()

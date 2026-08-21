@@ -50,8 +50,9 @@ class EvidenceDocumentService(
         userId: Long,
         gameBuildId: Long,
         request: EvidenceUploadTicketRequest,
+        projectId: Long? = null,
     ): EvidenceUploadTicketResponse? {
-        requireAccessibleBuild(gameBuildId, userId) ?: return null
+        requireAccessibleBuild(gameBuildId, userId, projectId) ?: return null
 
         if (request.contentLength > properties.maxUploadBytes) {
             throw BadRequestException(
@@ -81,8 +82,9 @@ class EvidenceDocumentService(
         userId: Long,
         gameBuildId: Long,
         request: RegisterEvidenceDocumentRequest,
+        projectId: Long? = null,
     ): RegisterEvidenceDocumentResponse? {
-        requireAccessibleBuild(gameBuildId, userId) ?: return null
+        requireAccessibleBuild(gameBuildId, userId, projectId) ?: return null
 
         // 남의 빌드에 올린 키를 등록해 그 문서를 가져오는 것을 막는다.
         if (!request.objectKey.startsWith("$EVIDENCE_KEY_PREFIX/$gameBuildId/")) {
@@ -200,8 +202,22 @@ class EvidenceDocumentService(
     )
 
     /** 빌드가 없거나 그 프로젝트의 참여자가 아니면 null. 호출자가 404 로 바꾼다. */
-    private suspend fun requireAccessibleBuild(gameBuildId: Long, userId: Long): Long? =
-        gameBuilds.findAccessibleByIdForMember(gameBuildId, userId)?.id
+    /**
+     * 접근할 수 있는 빌드인가. 아니면 null 이고 부르는 쪽이 404 로 옮긴다 — 부재와 권한 없음을 가르지
+     * 않는 것은 id 를 훑어 남의 빌드가 존재한다는 사실을 알아내지 못하게 하려는 것이다.
+     *
+     * [projectId] 가 있으면 그 프로젝트의 빌드인지도 본다. 브라우저 경로는 `/projects/{projectId}/`
+     * 를 지나오므로 그 값을 검사하지 않으면 **경로의 projectId 가 장식이 된다** — 아무 프로젝트 id 나
+     * 넣어도 통과하고, 그 화면이 다른 프로젝트의 빌드를 자기 것처럼 보여 준다.
+     *
+     * SDK 경로는 projectId 를 모르고 알 필요도 없다(빌드 토큰 하나로 온다). 그쪽은 null 로 부른다.
+     */
+    private suspend fun requireAccessibleBuild(gameBuildId: Long, userId: Long, projectId: Long?): Long? =
+        if (projectId == null) {
+            gameBuilds.findAccessibleByIdForMember(gameBuildId, userId)?.id
+        } else {
+            gameBuilds.findAccessibleById(gameBuildId, projectId, userId)?.id
+        }
 
     companion object {
         private const val EVIDENCE_KEY_PREFIX = "content-map-evidence"
