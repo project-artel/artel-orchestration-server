@@ -1,6 +1,7 @@
 package kr.artel.orchestration.contentmap.repository
 
 import kotlinx.coroutines.flow.Flow
+import kr.artel.orchestration.contentmap.dto.SceneCapabilityCountRow
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
@@ -45,6 +46,37 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
         """
     )
     suspend fun countEvidenceVerification(contentMapId: Long): VerificationCount?
+
+    /**
+     * 씬별 상태 분포. **뷰가 아니라 `capability` 를 직접 센다.**
+     *
+     * `v_content_map_capability` 로는 답할 수 없는 질문이다 — 그 뷰는 `status <> 'not-a-step'` 으로
+     * 이미 걸러 내므로 `not_a_step` 이 구조적으로 0 이고, 씬별 합이 지도의 기능 총수와 어긋난다.
+     * 뷰가 쓰는 나머지 필터(`merged_into IS NULL`)만 같이 두어, `total - not_a_step` 이 뷰의 행
+     * 수와 같아지게 한다.
+     *
+     * Kotlin 에서 [findEvidenceCapabilitiesOfMap] 을 훑어 세지 않는 이유: 정수 다섯 개를 얻으려고
+     * 스키마에서 가장 넓은 표의 수백 행을 조건 트리·힌트 파라미터까지 통째로 실어 나른다. `GROUP BY`
+     * 는 씬당 한 줄이다.
+     *
+     * `status` 로 세는 것은 축 셋(`actionability`·`observability`·`applicability`)으로 각각 세는 것과
+     * 다르다. 화면이 묻는 것은 "TC 로 만들 수 있나"이고 그 답이 유도 컬럼인 `status` 다.
+     */
+    @Query(
+        """
+        SELECT c.scene_id                                                   AS scene_id,
+               count(*)                                                     AS total,
+               count(*) FILTER (WHERE c.status = 'runnable')                 AS runnable,
+               count(*) FILTER (WHERE c.status = 'needs-probe')              AS needs_probe,
+               count(*) FILTER (WHERE c.status = 'not-a-step')               AS not_a_step,
+               count(*) FILTER (WHERE c.status = 'unreachable-precondition') AS unreachable_precondition
+        FROM capability c
+        JOIN scene s ON s.id = c.scene_id
+        WHERE s.content_map_id = :contentMapId AND c.merged_into IS NULL
+        GROUP BY c.scene_id
+        """
+    )
+    fun countByScene(contentMapId: Long): Flow<SceneCapabilityCountRow>
 
     /**
      * 안정 키로 넣거나 갱신하고 id 를 돌려준다.
