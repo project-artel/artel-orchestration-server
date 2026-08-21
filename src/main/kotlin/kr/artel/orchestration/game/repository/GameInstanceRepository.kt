@@ -81,4 +81,28 @@ interface GameInstanceRepository : CoroutineCrudRepository<GameInstanceEntity, L
         """
     )
     suspend fun findRetiredBySdkUuid(projectId: Long, sdkUuid: String): GameInstanceEntity?
+
+    /**
+     * 이 빌드를 마지막으로 보고한 인스턴스들. 원격 스캔이 "어디로 보낼까"를 여기서 고른다.
+     *
+     * 빌드에서 살아 있는 인스턴스로 가는 FK 경로가 없다 — WebSocket 세션은 `gameInstanceId` 로
+     * 묶이고 근거 문서는 `gameBuildId` 로 묶인다. [GameInstanceEntity.lastGameBuildId] 가 바로 그
+     * 틈을 메우려고 있는 칸이고(등록이 남긴다), 이 질의가 그것을 거슬러 올라간다.
+     *
+     * **붙어 있는지는 여기서 보지 않는다.** 그것은 DB 가 아니라 `SessionManager` 가 아는 사실이라,
+     * 호출자가 이 목록을 받아 걸러 낸다. 순서를 최근에 붙은 것부터로 두는 이유: 같은 빌드를 두 대에서
+     * 돌리는 것은 개발 중 흔하고, 그때 사람이 보고 있는 것은 방금 띄운 쪽이다. 한 번도 붙어 본 적
+     * 없는 인스턴스(`last_connected_at IS NULL`)가 그것을 앞지르지 않게 `NULLS LAST` 로 둔다.
+     */
+    @Query(
+        """
+        SELECT gi.* FROM game_instance gi
+        JOIN project p ON p.id = gi.project_id
+        JOIN project_member m ON m.project_id = gi.project_id
+        WHERE gi.last_game_build_id = :gameBuildId AND m.app_user_id = :userId
+          AND gi.deleted_at IS NULL AND p.deleted_at IS NULL
+        ORDER BY gi.last_connected_at DESC NULLS LAST, gi.id DESC
+        """
+    )
+    fun findByLastGameBuildIdForMember(gameBuildId: Long, userId: Long): Flow<GameInstanceEntity>
 }

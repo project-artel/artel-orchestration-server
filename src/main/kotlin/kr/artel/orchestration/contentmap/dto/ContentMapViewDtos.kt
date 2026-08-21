@@ -1,6 +1,8 @@
 package kr.artel.orchestration.contentmap.dto
 
 import io.swagger.v3.oas.annotations.media.Schema
+import kr.artel.orchestration.contentmap.scan.ScanState
+import kr.artel.orchestration.contentmap.scan.ScanStatus
 import java.time.Instant
 
 /**
@@ -33,6 +35,8 @@ data class ContentMapResponse(
     val verification: VerificationResponse,
     @Schema(description = "등록됐지만 아직 앉지 못한 문서")
     val pendingDocuments: List<PendingDocumentResponse>,
+    @Schema(description = "이 빌드에 마지막으로 시킨 원격 스캔. null 이면 이 서버가 뜬 뒤로 시킨 적이 없다")
+    val lastScan: LastScanResponse? = null,
 ) {
     companion object {
         /**
@@ -216,4 +220,60 @@ data class PendingDocumentResponse(
     val ingestFailedAt: Instant?,
     @Schema(description = "마지막 실패 사유 한 줄")
     val ingestError: String?,
+)
+
+/**
+ * 마지막 원격 스캔의 상태. **화면이 "눌렀는데 어떻게 됐나"를 읽는 자리다.**
+ *
+ * 이것이 없으면 스캔 버튼은 202 를 받고 끝난다 — 요청이 갔다는 것만 알고, 게임이 스캔에 실패했는지
+ * 문서가 못 앉았는지 아직 도는 중인지를 구분할 방법이 없다.
+ *
+ * **프로세스 메모리에 산다.** 서버가 재시작하면 null 로 돌아간다. 스캔 자체가 실패하면 SDK 가
+ * 아무것도 올리지 않아 적을 문서 행이 없기 때문이고, 그 성질이 여기서는 맞다 — 이 값이 답하는
+ * 질문은 "방금 누른 버튼이 어떻게 됐나"이고 재시작 뒤의 옳은 답은 "다시 눌러라"다.
+ * 내구성이 필요한 것, 즉 **어떤 문서가 왜 못 앉았나**는 [PendingDocumentResponse.ingestError] 에
+ * 그대로 남는다.
+ */
+@Schema(description = "마지막 원격 스캔의 상태")
+data class LastScanResponse(
+    @Schema(description = "REQUESTED · SUCCEEDED · FAILED")
+    val state: ScanState,
+    @Schema(description = "명령을 받은 게임 인스턴스")
+    val gameInstanceId: Long,
+    val gameInstanceName: String,
+    val requestedAt: Instant,
+    @Schema(description = "끝난 시각. REQUESTED 이면 null")
+    val finishedAt: Instant?,
+    @Schema(description = "이번 스캔이 앉힌 문서 수. SUCCEEDED 인데 0 이면 올라온 문서가 없었다는 뜻")
+    val ingestedDocuments: Int?,
+    @Schema(description = "FAILED 일 때 사람에게 보여 줄 사유")
+    val error: String?,
+) {
+    companion object {
+        fun of(status: ScanStatus) = LastScanResponse(
+            state = status.state,
+            gameInstanceId = status.gameInstanceId,
+            gameInstanceName = status.gameInstanceName,
+            requestedAt = status.requestedAt,
+            finishedAt = status.finishedAt,
+            ingestedDocuments = status.ingestedDocuments,
+            error = status.error,
+        )
+    }
+}
+
+/**
+ * 스캔을 시켰다는 답. **202 가 무엇을 기다리면 되는지 말하는 자리다.**
+ *
+ * 어느 인스턴스가 받았는지를 싣는 이유: 같은 빌드를 두 대에서 돌리는 것은 개발 중 흔하고, 그때
+ * 사람은 자기가 보고 있는 게임이 명령을 받았는지 알아야 한다.
+ */
+@Schema(description = "원격 스캔 요청 결과")
+data class StartContentMapScanResponse(
+    @Schema(description = "명령을 받은 게임 인스턴스")
+    val gameInstanceId: Long,
+    val gameInstanceName: String,
+    @Schema(description = "늘 REQUESTED 다. 조회 API 의 lastScan.state 가 여기서 움직이는 것을 본다")
+    val state: ScanState,
+    val requestedAt: Instant,
 )
