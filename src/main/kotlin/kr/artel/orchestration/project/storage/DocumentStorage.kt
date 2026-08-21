@@ -47,6 +47,15 @@ interface DocumentStorage {
     fun readPrefix(objectKey: String, length: Int): Mono<ByteArray>
 
     /**
+     * 객체를 통째로 읽는다. 없는 객체면 빈 Mono.
+     *
+     * [readPrefix] 와 나뉜 이유: 저쪽은 형식 검증용이라 앞부분만 가져오는 것이 요점이다. 적재는
+     * 문서 전부가 있어야 조인을 돌릴 수 있어 통째로 든다 — 근거 문서 실측이 1.4MB 이고 업로드
+     * 상한이 그 자리를 이미 정해 두었다.
+     */
+    fun read(objectKey: String): Mono<ByteArray>
+
+    /**
      * 객체 전체의 SHA-256(소문자 hex)을 계산한다. 파일을 통째로 메모리에 올리지 않고 스트리밍하며
      * 다이제스트를 갱신하므로 파일 크기와 무관하게 상수 메모리다. 없는 객체면 빈 Mono.
      */
