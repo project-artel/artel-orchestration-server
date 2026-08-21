@@ -23,6 +23,18 @@ import kr.artel.orchestration.testscenario.dto.ScenarioQuestionSource
  */
 object ScenarioQuestionBuilder {
 
+    /** 미상 구간 질문의 id 앞머리. 뒤에는 막은 것(`StoryScene→Map_scene`)이 그대로 붙는다. */
+    const val GAP_PREFIX = "gap:"
+
+    /** 조작 없이 넘어간다는 답. 사용자가 따로 적지 않으면 이 문장이 스텝이 된다. */
+    const val GAP_AUTO = "auto"
+
+    /** 지금은 채우지 않겠다는 답. */
+    const val GAP_LEAVE = "leave"
+
+    /** [GAP_AUTO] 를 골랐을 때 자리에 남길 말. */
+    const val AUTOMATIC_HOP = "조작 없이 다음 화면으로 전환될 때까지 기다린다."
+
     /**
      * @param blockedGaps 메우지 못한 구간을 막은 것들(씬 쌍 또는 변수명).
      * @param untestedArms `담긴 케이스 → 빠진 갈래` 쌍.
@@ -45,16 +57,16 @@ object ScenarioQuestionBuilder {
      * 담기지 않는다. 그래도 두 가지는 보기로 둘 만하다: 저절로 넘어가는 경우와, 그대로 두는 경우.
      */
     private fun gapQuestion(blockedBy: String) = ScenarioQuestion(
-        id = "gap:$blockedBy",
+        id = "$GAP_PREFIX$blockedBy",
         text = "$blockedBy 구간을 어떻게 넘어가나요?",
         why = "이 전환이 씬 명세에 없어 시나리오에 미상으로 남겨 두었습니다.",
         options = listOf(
             ScenarioQuestionOption(
-                "auto", "저절로 넘어감",
+                GAP_AUTO, "저절로 넘어감",
                 "조작 없이 전환되는 구간이면 그렇게 적습니다.",
             ),
             ScenarioQuestionOption(
-                "leave", "그대로 두기",
+                GAP_LEAVE, "그대로 두기",
                 "지금은 미상으로 두고 나중에 채웁니다.",
             ),
         ),

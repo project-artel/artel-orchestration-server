@@ -89,6 +89,7 @@ class TestScenarioAgentService(
     private val reconcileService: ScenarioReconcileService,
     private val pathService: ScenarioPathService,
     private val caseFactService: ScenarioCaseFactService,
+    private val gapFiller: ScenarioGapFiller,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -118,6 +119,23 @@ class TestScenarioAgentService(
         // 세션에 없으면 **저장된 질문**에서 찾는다. 카드 저장으로 물었거나, 서버가 다시 떴거나,
         // 사용자가 새로고침한 화면에서 답할 수 있다 — 그때 답을 잃으면 물어본 보람이 없다.
         val pending = sessions[sessionKey]?.question ?: lastQuestion(runId, appUserId)
+
+        // 미상 구간에 대한 답은 **코드가 그 자리에 넣는다**(ARTEL-487). 모델에게 넘겨 다시 쓰게
+        // 했더니 "StoryScene→Map_scene 을 어떻게 가나요"의 답이 엉뚱한 6번 자리에 들어가고 정작
+        // 그 구간의 알림은 그대로 남았다 — 사용자가 보기에는 답을 했는데 아무 일도 안 일어났다.
+        // 어느 자리인지는 질문 id 에 들어 있어 계산으로 끝난다. 판단이 없으니 모델을 부르지 않는다.
+        gapHowTo(pending, answer)?.let { howTo ->
+            val blockedBy = pending!!.id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)
+            if (gapFiller.fill(runId, blockedBy, howTo) > 0) {
+                sessions[sessionKey]?.question = null
+                saveMessage(runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) })
+                notifyGapFilled(sessionKey, runId, appUserId, blockedBy, howTo)
+                return
+            }
+            // 그 구간이 이미 채워졌거나 사용자가 손으로 지웠다. 답을 삼키지 말고 평소대로 보낸다.
+            logger.info("채울 미상 구간이 남아 있지 않다 [runId={}] {}", runId, blockedBy)
+        }
+
         val turnInput = when {
             // 보기를 눌렀다 — 무엇에 대한 답인지 붙여 보낸다.
             answerText(pending, answer) != null ->
@@ -594,10 +612,36 @@ class TestScenarioAgentService(
     }.onFailure { logger.warn("저장된 질문을 읽지 못했다 — 평범한 메시지로 다룬다: ${it.message}") }
         .getOrNull()
 
-    /** 보기만 누른 턴에 대화에 남길 말. 고른 문구가 곧 사용자가 한 말이다. */
+    /**
+     * 질문 카드로 답한 턴에 대화에 남길 말. 고른 문구와 적은 문장이 곧 사용자가 한 말이다.
+     *
+     * 적은 문장도 남긴다. 보기만 세다가 자유 서술을 빠뜨렸더니 말풍선이 **빈 줄**로 저장됐다 —
+     * 사용자는 방법을 적었는데 대화에는 아무 말도 하지 않은 것으로 남았다.
+     */
     private fun answerSummary(pending: ScenarioQuestion?, answer: ScenarioQuestionAnswer?): String {
         if (answer == null || pending == null || pending.id != answer.questionId) return ""
-        return pending.options.filter { it.id in answer.optionIds }.joinToString(" / ") { it.label }
+        val chosen = pending.options.filter { it.id in answer.optionIds }.map { it.label }
+        val said = answer.text?.trim().orEmpty()
+        return (chosen + listOfNotNull(said.ifBlank { null })).joinToString(" / ")
+    }
+
+    /**
+     * 미상 구간을 물었고 **방법을 들었으면** 그 말을 돌려준다(ARTEL-487). 아니면 null.
+     *
+     * "그대로 두기"는 방법이 아니다 — 채우지 않는 것이 답이므로 평소대로 모델에게 넘긴다.
+     *
+     * **질문 카드로 답한 것만** 본다. 대화창에 그냥 쓴 말은 답일 수도, 딴 요청일 수도 있어서
+     * 코드가 시나리오를 고칠 근거가 되지 못한다 — 그건 지금처럼 모델이 판단한다.
+     */
+    private fun gapHowTo(pending: ScenarioQuestion?, answer: ScenarioQuestionAnswer?): String? {
+        if (pending == null || !pending.id.startsWith(ScenarioQuestionBuilder.GAP_PREFIX)) return null
+        if (answer == null || answer.questionId != pending.id) return null
+        if (ScenarioQuestionBuilder.GAP_LEAVE in answer.optionIds) return null
+        val said = answer.text?.trim().orEmpty()
+        if (ScenarioQuestionBuilder.GAP_AUTO in answer.optionIds) {
+            return said.ifBlank { ScenarioQuestionBuilder.AUTOMATIC_HOP }
+        }
+        return said.ifBlank { null }
     }
 
     /**
@@ -843,6 +887,32 @@ class TestScenarioAgentService(
         }
         val id = question.id.ifBlank { "agent:" + question.text.hashCode().toString(16) }
         return question.copy(id = id, source = ScenarioQuestionSource.AGENT)
+    }
+
+    /**
+     * 미상 구간을 사용자 말로 채웠다고 알린다.
+     *
+     * 채팅에 한 줄 남기고 화면에 `applied` 를 흘린다. 시나리오가 바뀌었는데 화면이 그대로면
+     * 사용자는 알림 블록이 여전히 거기 있는 줄 알고 같은 답을 또 하게 된다.
+     */
+    private suspend fun notifyGapFilled(
+        sessionKey: String,
+        runId: Long,
+        appUserId: Long,
+        blockedBy: String,
+        howTo: String,
+    ) {
+        val message = "$blockedBy 구간을 알려 주신 대로 채웠습니다 — “$howTo”. " +
+            "이 스텝은 명세가 아니라 사용자가 알려 준 것이라 실행이 통과/실패를 매기지 않습니다."
+        // **답이 끝났다고 기록에 남긴다.** 저장된 질문은 `payload` 가 붙은 마지막 메시지로 찾으므로,
+        // 여기서 다른 `kind` 를 남기지 않으면 이미 답한 질문이 다음 턴의 맥락으로 또 따라붙는다.
+        saveMessage(
+            runId, appUserId, "ASSISTANT", message,
+            mapOf("kind" to "answered", "id" to "${ScenarioQuestionBuilder.GAP_PREFIX}$blockedBy"),
+        )
+        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
+        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "applied"))
+        progress(sessionKey, AuthoringStage.SAVED)
     }
 
     /**
