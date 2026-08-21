@@ -10,7 +10,8 @@ import org.junit.jupiter.api.Test
  * 같은 자리의 케이스들(ARTEL-466). 실측에서 가져온 무리로 고정한다 —
  * `StoryScene에 진입해 관찰한다` 가 셋이고 각각 `i < …` · `StagePosition != 5` · `== 5` 였다.
  *
- * **막는 것 하나, 말하는 것 둘**이라는 구분이 이 테스트의 요지다.
+ * 세는 것은 **배타성 하나뿐**이라는 것이 이 테스트의 요지다. 그 위의 판단(막을지·나눌지)은
+ * 부르는 쪽 몫이고, 지금은 셋 다 막지 않는다(ARTEL-497).
  */
 class ScenarioSiblingCheckTest {
 
@@ -31,8 +32,8 @@ class ScenarioSiblingCheckTest {
     private val early = case(132, guards = listOf(Guard("i", "<", "9")))
 
     @Test
-    fun `동시에 성립할 수 없는 둘이 한 시나리오에 있으면 막는다`() {
-        // 취향이 아니라 실행이 불가능하다 — 어느 쪽도 통과할 수 없는 시나리오가 된다.
+    fun `동시에 성립할 수 없는 둘이 한 시나리오에 있으면 센다`() {
+        // 실행이 불가능한 조합이다. 세는 것까지가 여기 몫이고, 막을지 물을지는 부르는 쪽이 정한다.
         val findings = ScenarioSiblingCheck.analyze(
             listOf(notFive, five, early),
             split = listOf(listOf(133L, 134L)),
@@ -123,5 +124,85 @@ class ScenarioSiblingCheckTest {
         )
 
         assertThat(findings.splitApart).isEmpty()
+    }
+
+    // --- 범위끼리의 배타 (ARTEL-497) ------------------------------------------------
+
+    @Test
+    fun `부등식끼리도 겹치는 값이 없으면 배타다`() {
+        // word-venture TurnBattleScene 24건에서 실제로 나온 모양이다. 사망(hp <= 0) 2건과
+        // 생존(hp > 0) 8건이 한 시나리오에 담겼는데, 양쪽 다 확정값이 없어 16쌍이 통과했다.
+        val dead = case(1284, step = "EnemyProjectile 충돌", guards = listOf(Guard("hp", "<=", "0", "Player.hp")))
+        val alive = case(1293, step = "TakeHit 이후 관찰", guards = listOf(Guard("hp", ">", "0", "Player.hp")))
+
+        val findings = ScenarioSiblingCheck.analyze(listOf(dead, alive), split = listOf(listOf(1284L, 1293L)))
+
+        assertThat(findings.conflicting).containsExactly(1284L to 1293L)
+    }
+
+    @Test
+    fun `같은 값을 다른 경로로 불러도 같은 변수로 본다`() {
+        // `Player.hp` 와 `Player.PlayerInt().hp` 는 같은 값이다. 사전조건 파서가 뒤엣것에서
+        // `hp` 만 건져 오므로, 경로가 서로의 꼬리이면 같은 변수로 맞춘다.
+        val dead = case(1284, guards = listOf(Guard("hp", "<=", "0", "Player.hp")))
+        val alive = case(1300, guards = listOf(Guard("hp", ">", "0", "hp")))
+
+        val findings = ScenarioSiblingCheck.analyze(listOf(dead, alive), split = listOf(listOf(1284L, 1300L)))
+
+        assertThat(findings.conflicting).containsExactly(1284L to 1300L)
+    }
+
+    @Test
+    fun `마디만 겹치는 다른 변수는 충돌이 아니다`() {
+        // `magicTypeCards.Count` 와 `spellCards.Count` 는 둘 다 `Count` 지만 다른 값이다.
+        // 뭉개면 멀쩡한 시나리오에 대고 잘못된 질문을 하게 된다.
+        val one = case(1296, guards = listOf(Guard("Count", "==", "1", "magicTypeCards.Count")))
+        val two = case(1287, guards = listOf(Guard("Count", "==", "2", "spellCards.Count")))
+
+        val findings = ScenarioSiblingCheck.analyze(listOf(one, two), split = listOf(listOf(1296L, 1287L)))
+
+        assertThat(findings.conflicting).isEmpty()
+    }
+
+    @Test
+    fun `구간이 한 점에서라도 겹치면 배타가 아니다`() {
+        val atLeast = case(1, guards = listOf(Guard("wave", ">=", "1", "wave")))
+        val atMost = case(2, guards = listOf(Guard("wave", "<=", "1", "wave")))
+
+        val findings = ScenarioSiblingCheck.analyze(listOf(atLeast, atMost), split = listOf(listOf(1L, 2L)))
+
+        assertThat(findings.conflicting).isEmpty()
+    }
+
+    @Test
+    fun `비교할 수 없는 값은 충돌이라 부르지 않는다`() {
+        // 문자열에 부등식을 쓴 사전조건이 무슨 뜻인지 코드는 모른다. 모르는 것을 충돌이라 부르면
+        // 멀쩡한 요청이 잘못된 질문을 받는다.
+        val a = case(1, guards = listOf(Guard("tag", ">", "Enemy", "collision.tag")))
+        val b = case(2, guards = listOf(Guard("tag", "<", "Enemy", "collision.tag")))
+
+        val findings = ScenarioSiblingCheck.analyze(listOf(a, b), split = listOf(listOf(1L, 2L)))
+
+        assertThat(findings.conflicting).isEmpty()
+    }
+
+    @Test
+    fun `같은 점을 빼는 것과 그 점을 요구하는 것은 배타다`() {
+        val not5 = case(1, guards = listOf(Guard("StagePosition", "!=", "5", "StagePosition")))
+        val is5 = case(2, guards = listOf(Guard("StagePosition", "==", "5", "StagePosition")))
+
+        val findings = ScenarioSiblingCheck.analyze(listOf(not5, is5), split = listOf(listOf(1L, 2L)))
+
+        assertThat(findings.conflicting).containsExactly(1L to 2L)
+    }
+
+    @Test
+    fun `그 밖의 값을 빼는 것은 배타가 아니다`() {
+        val not5 = case(1, guards = listOf(Guard("StagePosition", "!=", "5", "StagePosition")))
+        val over10 = case(2, guards = listOf(Guard("StagePosition", ">", "10", "StagePosition")))
+
+        val findings = ScenarioSiblingCheck.analyze(listOf(not5, over10), split = listOf(listOf(1L, 2L)))
+
+        assertThat(findings.conflicting).isEmpty()
     }
 }

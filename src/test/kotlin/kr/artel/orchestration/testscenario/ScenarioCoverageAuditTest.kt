@@ -228,4 +228,16 @@ class ScenarioCoverageAuditTest {
             .contains("존재하지 않는")
             .contains("저장하지 않았습니다")
     }
+
+    @Test
+    fun `함께 담을 수 없는 케이스는 막지 않는다`() {
+        // 한때는 막았다(ARTEL-466). 실제 요청이 "TurnBattleScene 24건을 담아줘"였고, 거절당한
+        // 사용자에게는 다음 수가 없었다 — 재작성 대상도 아니다. 무엇을 어떤 묶음으로 검증할지는
+        // 요청이 정하는 것이라 지금은 저장하고 되묻는다(ARTEL-497).
+        val findings = ScenarioCoverageAudit.audit(project, null, withSteps(step(caseId = 1L)))
+            .copy(conflicting = listOf(1284L to 1293L))
+
+        assertThat(findings.rejected).isFalse()
+        assertThat(findings.summary()).contains("동거 불가 1쌍")
+    }
 }

@@ -147,12 +147,19 @@ class ScenarioReconcileService(
         // 질문이 다시 만들어지는데, 그것을 그대로 내보내면 "그대로 두기"를 누른 사용자에게 같은
         // 것을 계속 묻는 셈이 된다. 답한 기록은 대화에 `answered` 로 남아 있다.
         val answered = answeredQuestionIds(runId, appUserId)
-        val question = ScenarioQuestionBuilder.from(blocked, siblings.untestedArms, scope, describe)
-            ?.takeIf { it.id !in answered }
+        val question = ScenarioQuestionBuilder.from(
+            siblings.conflicting, blocked, siblings.untestedArms, scope, describe,
+        )?.takeIf { it.id !in answered }
         val asked = question?.id?.substringBefore(":")
         val allNotices = buildList {
             if (asked != "gap") addAll(notices)
-            addAll(siblingNotices(siblings, describe, skipArms = asked == "arm"))
+            addAll(
+                siblingNotices(
+                    siblings, describe,
+                    skipArms = asked == "arm",
+                    skipConflicts = asked == "conflict",
+                )
+            )
             if (asked != "scope" && scope.isNotEmpty()) {
                 add(
                     "이번에 담은 범위 — " +
@@ -419,7 +426,19 @@ class ScenarioReconcileService(
         findings: ScenarioSiblingCheck.Findings,
         describe: (Long) -> String,
         skipArms: Boolean = false,
+        skipConflicts: Boolean = false,
     ): List<String> = buildList {
+        // 함께 담을 수 없는 것을 담았다(ARTEL-497). **막지 않고 말한다** — 요청이 그것이었을 수
+        // 있고, 거절하면 사용자에게 남는 것이 없다. 몇 쌍인지와 한 예만 든다. 여덟 쌍을 모두
+        // 늘어놓으면 읽히지 않고, 어느 것을 손볼지는 어차피 사람이 정한다.
+        if (!skipConflicts && findings.conflicting.isNotEmpty()) {
+            val (a, b) = findings.conflicting.first()
+            add(
+                "함께 담을 수 없는 케이스가 ${findings.conflicting.size}쌍 있습니다 — " +
+                    "예: ${describe(a)} ↔ ${describe(b)}. 사전조건이 어긋나 한 번의 실행으로 둘 다 " +
+                    "볼 수 없습니다. 나누려면 말씀해 주세요."
+            )
+        }
         findings.splitApart.forEach { (a, b) ->
             add(
                 "${describe(a)} 와 ${describe(b)} 는 같은 자리의 케이스이고 동시에 성립합니다 — " +

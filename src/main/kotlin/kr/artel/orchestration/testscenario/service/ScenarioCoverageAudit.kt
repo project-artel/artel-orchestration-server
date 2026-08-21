@@ -40,17 +40,25 @@ object ScenarioCoverageAudit {
         /**
          * 한 시나리오 안에 있는 **동시에 성립할 수 없는** 케이스 쌍(ARTEL-466).
          *
-         * 취향 문제가 아니라 실행 자체가 불가능한 것이라 막는다 — `StagePosition == 5` 와 `!= 5`
-         * 를 한 흐름에 담으면 어느 쪽도 통과할 수 없다. 나누고 합치는 다른 판단들과 달리
-         * 사용자가 이것을 원할 수 있는 여지가 없다.
+         * **막지 않는다**(ARTEL-497). 한때는 막았다 — 실행이 불가능하니 사용자가 그것을 원할
+         * 여지가 없다고 봤다. 실제로는 원했다: "TurnBattleScene 24건을 담아줘"가 그 요청이고,
+         * 거절당한 사용자에게는 다음 수가 없었다(재작성 대상도 아니다). 무엇을 어떤 묶음으로
+         * 검증할지는 요청이 정하는 것이라, 지금은 저장하고 알리고 **나눌지 되묻는다.**
+         *
+         * 계속 막는 것은 모델의 조작 오류뿐이다 — 유령 번호·근거 없는 스텝·거짓 "모름".
          */
         val conflicting: List<Pair<Long, Long>> = emptyList(),
     ) {
-        /** 저장을 막아야 하는가. 초과는 여기 들어가지 않는다(위 참조). */
+        /**
+         * 저장을 막아야 하는가.
+         *
+         * **사용자가 원할 수 있는 것은 여기 들어가지 않는다** — 초과(`excess`)도, 동거
+         * 불가(`conflicting`)도 그래서 빠져 있다. 남은 것은 모델이 지어냈거나 거짓으로 적은 것뿐이고,
+         * 그건 사용자가 요청했을 리 없다.
+         */
         val rejected: Boolean
             get() = unreviewed.isNotEmpty() || missing.isNotEmpty() || ghost.isNotEmpty() ||
-                ungrounded.isNotEmpty() ||
-                conflicting.isNotEmpty() || falseUnknowns.isNotEmpty()
+                ungrounded.isNotEmpty() || falseUnknowns.isNotEmpty()
 
         /** 사용자에게 돌려줄 문구. 시나리오가 왜 저장되지 않았는지 이것 말고는 알 길이 없다. */
         fun rejectionMessage(): String = buildList {
@@ -60,9 +68,8 @@ object ScenarioCoverageAudit {
             if (ungrounded.isNotEmpty()) add("근거 없는 스텝이 ${ungrounded.size}개 있습니다")
             if (falseUnknowns.isNotEmpty())
                 add("길을 모른다고 한 ${falseUnknowns.size}곳이 사실은 명세에 있습니다")
-            // 번호로 부르지 않는다 — 다른 사유들과 같은 규칙이다. 어느 쌍인지는 로그가 싣는다.
-            if (conflicting.isNotEmpty())
-                add("동시에 성립할 수 없는 케이스 ${conflicting.size}쌍이 한 시나리오에 담겼습니다")
+            // 동거 불가는 여기 없다 — 저장을 막지 않으므로 거절 사유가 아니다(ARTEL-497).
+            // 그것은 알림과 되묻기로 나간다.
         }.joinToString(", ") + ". 저장하지 않았습니다."
 
         /** 사람이 읽을 한 줄. 무엇이 몇 건 어긋났는지만 말한다 — id는 로그와 재시도 프레임이 싣는다. */
