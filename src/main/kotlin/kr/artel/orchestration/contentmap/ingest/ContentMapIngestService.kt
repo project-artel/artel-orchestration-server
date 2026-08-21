@@ -310,7 +310,6 @@ class ContentMapIngestService(
             if (existing.capabilityKey in keptKeys) continue
             if (capabilities.hasRuntimeReferences(existing.id!!)) {
                 // 이미 내려간 행은 0건을 돌려준다. 세는 것은 **이번에 내린 것**뿐이다.
-                // 이미 내려간 행은 0건을 돌려준다. 세는 것은 **이번에 내린 것**뿐이다.
                 if (capabilities.markNotApplicable(existing.id) > 0) marked++
             } else {
                 capabilities.deleteById(existing.id)
