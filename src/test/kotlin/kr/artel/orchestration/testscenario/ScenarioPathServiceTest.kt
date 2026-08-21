@@ -2,11 +2,13 @@ package kr.artel.orchestration.testscenario
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
+import kr.artel.orchestration.contentmap.entity.CapabilityEvidenceEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
 import kr.artel.orchestration.contentmap.entity.SceneEntity
@@ -60,6 +62,7 @@ class ScenarioPathServiceTest {
     @Autowired private lateinit var effectRepository: CapabilityEffectRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
     @Autowired private lateinit var oauthUserService: OAuthUserService
+    @Autowired private lateinit var template: org.springframework.data.r2dbc.core.R2dbcEntityTemplate
 
     private val seq = AtomicLong(900_000)
 
@@ -492,6 +495,56 @@ class ScenarioPathServiceTest {
         assertThat(answer.actions.single()).contains("되풀이한다")
     }
 
+    // ---- 이미 한 조작 -----------------------------------------------------------------
+
+    /**
+     * 실측(런 32). "맵에서 Return 을 누른다"를 검증하는 케이스 바로 뒤에 같은 Return 을 누르는
+     * 브리지가 붙었다 — 실행하는 사람은 같은 것을 두 번 하게 되고 화면에는 스텝이 중복돼 보인다.
+     */
+    @Test
+    fun `출발 케이스가 이미 그 조작이면 브리지를 넣지 않는다`(): Unit = runBlocking {
+        val enter = capability(mapSceneId, interaction = "press", inputKey = "Return")
+        evidence(enter, "Assembly-CSharp|Map.MapMove|SelectStage|System.Void(System.Int32)")
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+        // 이 케이스가 가리키는 코드가 곧 그 기능이다.
+        val press = case(
+            "Map_scene", "Map_scene 화면인 상태",
+            evidence = "Assembly-CSharp|WordVenture.Map.MapMove|SelectStage|System.Void(System.Int32)@12",
+        )
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, press, inBattle)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.NOT_REQUIRED)
+        assertThat(answer.capabilityIds).isEmpty()
+    }
+
+    @Test
+    fun `다른 케이스라면 그대로 브리지를 넣는다`(): Unit = runBlocking {
+        val enter = capability(mapSceneId, interaction = "press", inputKey = "Return")
+        evidence(enter, "Assembly-CSharp|Map.MapMove|SelectStage|System.Void(System.Int32)")
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+        // 근거가 없는 케이스는 판단하지 않는다 — 모르면 넣는 쪽이 안전하다. 빠뜨린 스텝은 눈에
+        // 띄지만 없는 스텝은 실행할 때까지 모른다.
+        val watch = case("Map_scene", "Map_scene 화면인 상태")
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, watch, inBattle)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.capabilityIds).containsExactly(enter)
+    }
+
     // ---- 순서 ------------------------------------------------------------------------
 
     /**
@@ -542,10 +595,19 @@ class ScenarioPathServiceTest {
 
     // ---- 픽스처 ----------------------------------------------------------------------
 
-    private suspend fun case(scene: String, precondition: String, stateAfter: String? = null): Long {
-        val metadata = stateAfter?.let {
-            Json.of(objectMapper.writeValueAsString(mapOf("source" to mapOf("state_after" to it))))
-        } ?: Json.of("{}")
+    private suspend fun case(
+        scene: String,
+        precondition: String,
+        stateAfter: String? = null,
+        evidence: String? = null,
+    ): Long {
+        val source = buildMap {
+            stateAfter?.let { put("state_after", it) }
+            evidence?.let { put("evidence", it) }
+        }
+        val metadata =
+            if (source.isEmpty()) Json.of("{}")
+            else Json.of(objectMapper.writeValueAsString(mapOf("source" to source)))
         return testCaseRepository.save(
             TestCaseEntity(
                 projectId = projectId, scene = scene, step = "step-${seq.incrementAndGet()}",
@@ -569,6 +631,19 @@ class ScenarioPathServiceTest {
             status = "runnable",
         )
     ).id!!
+
+    private suspend fun evidence(capabilityId: Long, methodId: String) {
+        template.insert(
+            CapabilityEvidenceEntity(
+                capabilityId = capabilityId,
+                entryId = "Assembly-CSharp|Map.MapMove|Update|System.Void()",
+                ownerType = "Map.MapMove", method = methodId.split("|")[2], methodId = methodId,
+                recordKind = "candidate", triggerKind = "lifecycle", analysisConfidence = "derived",
+                conditionTree = Json.of("{}"),
+                callPath = Json.of("[\"System.Void Map.MapMove::Update()\"]"),
+            )
+        ).awaitSingle()
+    }
 
     private suspend fun effect(
         capabilityId: Long,

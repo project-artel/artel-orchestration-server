@@ -510,6 +510,40 @@ class TestScenarioReconcileIntegrationTest {
     }
 
     /**
+     * 카드로 저장해도 알림과 질문이 나간다(ARTEL-487).
+     *
+     * 카드 검토 모드는 챗봇이 아니라 REST 로 저장한다. 그 경로가 반영 건수만 돌려주는 바람에
+     * 검수가 계산해 둔 것이 조용히 버려졌고, 사용자에게는 미상 스텝만 남았다(런 32).
+     */
+    @Test
+    fun `카드로 커밋해도 되묻는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "TitleScene", "A")
+        insertCase(projectId, "TitleScene", "B")
+
+        client.post()
+            .uri("/api/projects/$projectId/test-runs/$runId/scenarios/commit")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue(
+                """{"scenarios":[{"title":"타이틀","description":"d",""" +
+                    """"steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+            )
+            .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(10))
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.payload != null }
+        }
+        val asked = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().first { it.payload != null }
+        assertThat(objectMapper.readTree(asked.payload!!.asString())["id"].asText()).startsWith("scope:")
+    }
+
+    /**
      * 모델이 스스로 물은 것도 같은 자리로 나간다(ARTEL-487).
      *
      * 코드가 아는 것은 코드가 묻고(구간·갈래·범위), 요청의 뜻이 갈리는 것은 모델이 묻는다.

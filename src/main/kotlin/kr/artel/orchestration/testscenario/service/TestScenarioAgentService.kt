@@ -114,7 +114,9 @@ class TestScenarioAgentService(
     ) {
         // 되묻는 질문에 대한 답이면 **무엇에 대한 답인지 함께 실어 보낸다**(ARTEL-487). 보기 id만
         // 보내면 모델은 그것이 무슨 뜻인지 모른다 — 질문과 보기 문구를 여기서 다시 붙인다.
-        val pending = sessions[sessionKey]?.question
+        // 세션에 없으면 **저장된 질문**에서 찾는다. 카드 저장으로 물었거나, 서버가 다시 떴거나,
+        // 사용자가 새로고침한 화면에서 답할 수 있다 — 그때 답을 잃으면 물어본 보람이 없다.
+        val pending = sessions[sessionKey]?.question ?: answer?.let { lastQuestion(runId, appUserId) }
         val turnInput = answerText(pending, answer)?.let { answered ->
             if (userInput.isBlank()) answered else "$answered\n\n$userInput"
         } ?: userInput
@@ -545,6 +547,16 @@ class TestScenarioAgentService(
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = content))
     }
 
+    /** 이 런에 마지막으로 저장된 질문. 세션이 끊겨도 답을 잇기 위한 자리다. */
+    private suspend fun lastQuestion(runId: Long, appUserId: Long): ScenarioQuestion? = runCatching {
+        runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList()
+            .lastOrNull { it.payload != null }
+            ?.payload
+            ?.let { objectMapper.readValue(it.asString(), ScenarioQuestion::class.java) }
+    }.onFailure { logger.warn("저장된 질문을 읽지 못했다 — 평범한 메시지로 다룬다: ${it.message}") }
+        .getOrNull()
+
     /**
      * 고른 보기를 **모델이 읽을 수 있는 한 줄**로 만든다(ARTEL-487).
      *
@@ -788,6 +800,39 @@ class TestScenarioAgentService(
         }
         val id = question.id.ifBlank { "agent:" + question.text.hashCode().toString(16) }
         return question.copy(id = id, source = ScenarioQuestionSource.AGENT)
+    }
+
+    /**
+     * 저장 경로가 어디였든 **알림과 질문을 같은 자리로 흘린다**(ARTEL-487).
+     *
+     * 카드 검토 모드는 챗봇이 아니라 REST 로 저장한다(`/scenarios/commit`). 그 경로가 반영 건수만
+     * 돌려주는 바람에, 검수가 계산해 둔 알림과 질문이 조용히 버려지고 있었다 — 사용자에게는 GAP
+     * 스텝만 남고 왜 그런지도, 무엇을 답하면 되는지도 보이지 않았다. 실제로 런 32 에서 그렇게 나왔다.
+     *
+     * 세션이 없어도 저장은 한다. 대화 기록에 남아야 새로고침한 화면이 그 질문을 다시 띄운다.
+     */
+    suspend fun deliver(
+        appUserId: Long,
+        runId: Long,
+        notices: List<String>,
+        question: ScenarioQuestion?,
+    ) {
+        val sessionKey = "$appUserId:$runId"
+        val session = sessions[sessionKey]
+        if (notices.isNotEmpty()) {
+            saveMessage(runId, appUserId, "ASSISTANT", notices.joinToString("\n"))
+            streamManager.emit(
+                sessionKey,
+                ScenarioStreamEvent(type = "notice", message = notices.joinToString("\n")),
+            )
+        }
+        if (question == null) return
+        session?.question = question
+        saveMessage(runId, appUserId, "ASSISTANT", question.text, question.payload())
+        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "question", question = question))
+        logger.info(
+            "되물음(카드 저장) [runId={}, id={}, 보기={}건]", runId, question.id, question.options.size,
+        )
     }
 
     /**

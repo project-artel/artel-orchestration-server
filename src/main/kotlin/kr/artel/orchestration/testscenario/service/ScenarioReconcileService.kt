@@ -317,6 +317,7 @@ class ScenarioReconcileService(
                 ?.filter { it.matchedBy == "evidence" }
                 ?.singleOrNull()
                 ?.input
+                ?.ifBlank { null }
         }
 
         return scenarios.map { scenario ->

@@ -55,7 +55,7 @@ class ScenarioCaseFactService(
                 note = "이 프로젝트에는 씬 명세가 아직 없어 조작을 확인할 수 없다.",
             )
 
-        val byEvidence = evidenceTails(case).flatMap { tail ->
+        val byEvidence = ScenarioStateReader.evidenceTails(case, objectMapper).flatMap { tail ->
             factRepository.findByEvidenceTail(contentMapId, tail).toList()
         }.distinctBy { it.id }
         val byEffect = supportingVariable(case)?.let { variable ->
@@ -94,25 +94,6 @@ class ScenarioCaseFactService(
     private fun observable(capabilities: List<CapabilityEntity>): Boolean =
         capabilities.any { it.observability == Observability.OBSERVABLE.wire }
 
-    /**
-     * 근거 키를 지도가 쓰는 꼬리 패턴으로 바꾼다.
-     *
-     * 케이스는 `Assembly-CSharp|WordVenture.Map.MapMove|CharacterMove|System.Void()@79` 처럼 적고
-     * 여러 개를 ` / ` 로 잇는다. 지도는 같은 것을 `Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()`
-     * 로 부른다 — 네임스페이스 접두가 다르고 오프셋이 없다. 그래서 **타입의 마지막 두 마디부터**
-     * 뒤를 맞춘다. `object:Canvas[2]/ExitButton[3]@?` 같은 UI 근거는 이 형식이 아니라 걸러진다.
-     */
-    private fun evidenceTails(case: TestCaseEntity): List<String> = runCatching {
-        val raw = objectMapper.readTree(case.metadata.asString())
-            .path("source").path("evidence").asText(null) ?: return emptyList()
-        raw.split(" / ").mapNotNull { entry ->
-            val parts = entry.trim().substringBeforeLast('@').split("|")
-            if (parts.size != 4) return@mapNotNull null
-            val type = parts[1].substringBefore('/').split(".").takeLast(2).joinToString(".")
-            "%$type|${parts[2]}|${parts[3]}"
-        }.distinct()
-    }.getOrElse { emptyList() }
-
     /** `` `MapMove.position` write `+1` `` 에서 변수 이름만 뽑는다. */
     private fun supportingVariable(case: TestCaseEntity): String? = runCatching {
         val raw = objectMapper.readTree(case.metadata.asString())
@@ -122,11 +103,13 @@ class ScenarioCaseFactService(
 
     private fun view(capability: CapabilityEntity, matchedBy: String) = CaseOperation(
         capabilityId = capability.id!!,
+        // **누를 것이 없으면 빈 값이다.** 예전에는 `interaction` 을 그대로 넣어 조작 없이 일어나는
+        // 기능이 `input: "none"` 으로 스텝에 박혔다 — 실행하는 쪽에서 보면 누르라는 뜻으로 읽힌다.
         input = when {
             capability.inputKey != null -> "key:${capability.inputKey}"
             capability.controlPath != null -> "click:${capability.controlPath}"
             capability.controlLabel != null -> "click:${capability.controlLabel}"
-            else -> capability.interaction
+            else -> ""
         },
         label = capability.controlLabel ?: capability.controlPath,
         summary = capability.summary,

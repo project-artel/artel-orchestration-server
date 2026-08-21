@@ -14,6 +14,7 @@ import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testscenario.repository.ScenarioCaseFactRepository
 import kr.artel.orchestration.testscenario.repository.ScenarioPathRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -42,6 +43,7 @@ class ScenarioPathService(
     private val sceneEdgeRepository: SceneEdgeRepository,
     private val capabilityRepository: CapabilityRepository,
     private val pathRepository: ScenarioPathRepository,
+    private val factRepository: ScenarioCaseFactRepository,
 ) {
     private val logger = LoggerFactory.getLogger(ScenarioPathService::class.java)
 
@@ -86,6 +88,12 @@ class ScenarioPathService(
 
         if (fromScene != null && toScene != null && fromScene != toScene) {
             val hop = sceneHop(contentMapId, fromScene, toScene, state)
+            // **출발 케이스가 이미 그 조작이면 또 넣지 않는다.** 실측(런 32)에서 "맵에서 Return 을
+            // 누른다"를 검증하는 케이스 바로 뒤에 같은 Return 을 누르는 브리지가 붙었다 — 실행하는
+            // 사람은 같은 것을 두 번 하게 되고, 화면에는 스텝이 중복돼 보인다.
+            if (hop is Hop.By && performs(contentMapId, from, hop.step.capabilityId)) {
+                return withOrdering(ordering, resolveGuards(contentMapId, emptyMap(), want, steps))
+            }
             if (hop !is Hop.By) {
                 return withOrdering(ordering, when (hop) {
                     is Hop.Blocked -> ScenarioPathAnswer(
@@ -279,6 +287,18 @@ class ScenarioPathService(
         capability.interaction != Interaction.NONE.wire &&
             capability.actionability != Actionability.NOT_A_STEP.wire &&
             capability.actionability != Actionability.UNREACHABLE_PRECONDITION.wire
+
+    /**
+     * 이 케이스가 **그 기능을 직접 실행하는가.**
+     *
+     * 케이스의 근거 키가 가리키는 코드와 기능의 근거가 같으면, 그 케이스를 수행하는 것이 곧 그
+     * 조작이다. 근거가 없는 케이스(형식이 다른 UI 근거 등)는 판단하지 않는다 — 모르면 넣는 쪽이
+     * 안전하다. 빠뜨린 스텝은 눈에 띄지만, 없는 스텝은 실행할 때까지 모른다.
+     */
+    private suspend fun performs(contentMapId: Long, case: TestCaseEntity, capabilityId: Long): Boolean =
+        ScenarioStateReader.evidenceTails(case, objectMapper).any { tail ->
+            factRepository.findByEvidenceTail(contentMapId, tail).toList().any { it.id == capabilityId }
+        }
 
     // ---- 씬 간선 ---------------------------------------------------------------------
 

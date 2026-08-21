@@ -92,9 +92,13 @@ class TestRunChatService(
         // 판정을 넘기지 않는다 — 이 경로의 시나리오는 사용자가 카드로 직접 고른 것이라 "Agent가 다
         // 봤는가"를 물을 대상이 아니다. 사람이 고른 것이 곧 요구다.
         //
-        // 브리지 삽입(ARTEL-468)은 여기서도 일어나지만 미상 안내는 응답에 담기지 않는다 — 이 경로의
-        // 응답은 반영 건수 하나이고, 화면에는 커밋된 시나리오가 바로 펼쳐진다(미상 스텝이 그 안에 보인다).
-        return reconcileService.reconcile(runId, run.projectId, appUserId, scenarios).applied
+        val outcome = reconcileService.reconcile(runId, run.projectId, appUserId, scenarios)
+        // **알림과 질문은 저장 경로와 무관하게 나간다**(ARTEL-487). 이 경로의 응답은 반영 건수
+        // 하나라 거기 실을 자리가 없어서, 챗봇과 같은 자리(대화 기록 + SSE)로 흘린다 — 예전에는
+        // 여기서 조용히 버려져, 카드로 저장한 사용자에게는 미상 스텝만 남고 이유도 답할 방법도
+        // 보이지 않았다.
+        agentService.deliver(appUserId, runId, outcome.notices, outcome.question)
+        return outcome.applied
     }
 
     /**

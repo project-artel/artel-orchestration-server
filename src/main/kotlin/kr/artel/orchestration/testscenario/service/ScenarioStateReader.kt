@@ -58,6 +58,25 @@ object ScenarioStateReader {
     }.getOrElse { emptyMap() }
 
     /**
+     * 케이스가 가리키는 코드를 **지도가 쓰는 꼬리 패턴**으로 바꾼다.
+     *
+     * 케이스는 `Assembly-CSharp|WordVenture.Map.MapMove|CharacterMove|System.Void()@79` 처럼 적고
+     * 여러 개를 ` / ` 로 잇는다. 지도는 같은 것을 `Assembly-CSharp|Map.MapMove|CharacterMove|...`
+     * 로 부른다 — 네임스페이스 접두가 다르고 오프셋이 없다. 그래서 **타입의 마지막 두 마디부터**
+     * 뒤를 맞춘다. `object:Canvas[2]/ExitButton[3]@?` 같은 UI 근거는 이 형식이 아니라 걸러진다.
+     */
+    fun evidenceTails(case: TestCaseEntity, objectMapper: ObjectMapper): List<String> = runCatching {
+        val raw = objectMapper.readTree(case.metadata.asString())
+            .path("source").path("evidence").asText(null) ?: return emptyList()
+        raw.split(" / ").mapNotNull { entry ->
+            val parts = entry.trim().substringBeforeLast('@').split("|")
+            if (parts.size != 4) return@mapNotNull null
+            val type = parts[1].substringBefore('/').split(".").takeLast(2).joinToString(".")
+            "%$type|${parts[2]}|${parts[3]}"
+        }.distinct()
+    }.getOrElse { emptyList() }
+
+    /**
      * 이 사전조건이 [state]와 어긋나는가. 어긋나는 **첫 가드**를 돌려주고, 없으면 null 이다.
      *
      * 값을 모르는 변수는 어긋난다고 보지 않는다 — 경로 계산 전체를 관통하는 규칙이다. 대부분의
