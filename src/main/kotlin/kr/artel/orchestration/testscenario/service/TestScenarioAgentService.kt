@@ -24,6 +24,8 @@ import kr.artel.orchestration.testcase.service.TestCaseSearchService
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
+import kr.artel.orchestration.testscenario.agent.PhrasedStep
+import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
@@ -90,6 +92,7 @@ class TestScenarioAgentService(
     private val pathService: ScenarioPathService,
     private val caseFactService: ScenarioCaseFactService,
     private val gapFiller: ScenarioGapFiller,
+    private val phrasingClient: ScenarioStepPhrasingClient,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -123,17 +126,31 @@ class TestScenarioAgentService(
         // 미상 구간에 대한 답은 **코드가 그 자리에 넣는다**(ARTEL-487). 모델에게 넘겨 다시 쓰게
         // 했더니 "StoryScene→Map_scene 을 어떻게 가나요"의 답이 엉뚱한 6번 자리에 들어가고 정작
         // 그 구간의 알림은 그대로 남았다 — 사용자가 보기에는 답을 했는데 아무 일도 안 일어났다.
-        // 어느 자리인지는 질문 id 에 들어 있어 계산으로 끝난다. 판단이 없으니 모델을 부르지 않는다.
+        //
+        // **자리는 코드가, 문장은 모델이.** 어느 자리인지는 질문 id 에 들어 있어 계산으로 끝나고,
+        // 사용자가 적은 말을 앞뒤 스텝과 같은 결로 다듬는 것은 모델이 낫다. 다듬기가 실패하면
+        // 적은 말을 그대로 넣는다 — 어색한 문장보다 알려준 것이 사라지는 쪽이 나쁘다.
         gapHowTo(pending, answer)?.let { howTo ->
             val blockedBy = pending!!.id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)
-            if (gapFiller.fill(runId, blockedBy, howTo) > 0) {
+            // 다듬는 데도 모델이 한 번 돌아 몇 초가 걸린다. 말없이 기다리게 두면 답이 먹히지
+            // 않은 것처럼 보인다 — 실제로 일어나는 일이 모델 호출이므로 같은 단계로 말한다.
+            progress(sessionKey, AuthoringStage.THINKING)
+            val written = mutableListOf<String>()
+            val filled = gapFiller.fill(runId, blockedBy) { before, after ->
+                val lines = phrasingClient.phrase(howTo, blockedBy, before, after, localeOf(appUserId))
+                    ?: listOf(PhrasedStep(action = howTo))
+                written += lines.map { it.action }
+                lines
+            }
+            if (filled > 0) {
                 sessions[sessionKey]?.question = null
                 saveMessage(runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) })
-                notifyGapFilled(sessionKey, runId, appUserId, blockedBy, howTo)
+                notifyGapFilled(sessionKey, runId, appUserId, blockedBy, written)
                 return
             }
-            // 그 구간이 이미 채워졌거나 사용자가 손으로 지웠다. 답을 삼키지 말고 평소대로 보낸다.
-            logger.info("채울 미상 구간이 남아 있지 않다 [runId={}] {}", runId, blockedBy)
+            // 채울 자리가 없거나(이미 채워졌다) 적은 말이 통과 방법이 아니었다("잘 모르겠는데").
+            // 어느 쪽이든 답을 삼키지 말고 평소대로 대화로 넘긴다.
+            logger.info("미상 구간을 채우지 않았다 — 대화로 넘긴다 [runId={}] {}", runId, blockedBy)
         }
 
         val turnInput = when {
@@ -199,9 +216,7 @@ class TestScenarioAgentService(
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
-        val locale = appUserRepository.findById(appUserId)
-            ?.let { if (it.locale == "ko") "ko" else "en" }
-            ?: "en"
+        val locale = localeOf(appUserId)
         val body = AgentSessionOpenRequest(
             userInput = userInput,
             gameContext = gameContext(),
@@ -223,6 +238,13 @@ class TestScenarioAgentService(
             .awaitSingle()
         openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply)
     }
+
+    /**
+     * 사용자 계정 locale 을 Agent 계약의 허용 값으로 좁힌다(`ko`|`en`). 미설정이나 그 밖의 값은
+     * `en` 이다 — 계약에 없는 값을 보내 세션이 열리지 않는 것보다 낫다.
+     */
+    private suspend fun localeOf(appUserId: Long): String =
+        appUserRepository.findById(appUserId)?.let { if (it.locale == "ko") "ko" else "en" } ?: "en"
 
     /**
      * 저작 세션은 **씬 스캔을 싣지 않는다**(ARTEL-466).
@@ -738,6 +760,7 @@ class TestScenarioAgentService(
                     logger.warn("explain_case를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
                     return
                 }
+                progress(sessionKey, AuthoringStage.READING_CASE)
                 scope.launch { handleExplainCaseRequest(sessionKey, session, node) }
                 return
             }
@@ -746,7 +769,17 @@ class TestScenarioAgentService(
                     logger.warn("find_path를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
                     return
                 }
+                progress(sessionKey, AuthoringStage.FINDING_PATH)
                 scope.launch { handleFindPathRequest(sessionKey, session, node) }
+                return
+            }
+            // Agent 가 알려 주는 단계(ARTEL-487). **모르는 값은 버린다** — 단계는 알리는 것이지
+            // 시키는 것이 아니라서, 구버전 오케가 새 단계를 받아 터지느니 그 줄만 없는 편이 낫다.
+            if (node.path("type").asText() == "progress") {
+                val wire = node.path("stage").asText("")
+                val stage = AuthoringStage.entries.firstOrNull { it.wire == wire }
+                if (stage == null) logger.debug("모르는 단계라 흘려보낸다 [{}] {}", sessionKey, wire)
+                else progress(sessionKey, stage)
                 return
             }
             if (node.path("type").asText() == "test_case_search") {
@@ -900,9 +933,12 @@ class TestScenarioAgentService(
         runId: Long,
         appUserId: Long,
         blockedBy: String,
-        howTo: String,
+        written: List<String>,
     ) {
-        val message = "$blockedBy 구간을 알려 주신 대로 채웠습니다 — “$howTo”. " +
+        // 무엇이 들어갔는지 그대로 보여 준다. 다듬은 문장이 사용자가 적은 말과 다를 수 있고,
+        // 그 차이를 감추면 시나리오를 열어 보기 전까지 무엇이 저장됐는지 알 수 없다.
+        val quoted = written.joinToString("\n") { "· $it" }
+        val message = "$blockedBy 구간을 알려 주신 대로 채웠습니다.\n$quoted\n" +
             "이 스텝은 명세가 아니라 사용자가 알려 준 것이라 실행이 통과/실패를 매기지 않습니다."
         // **답이 끝났다고 기록에 남긴다.** 저장된 질문은 `payload` 가 붙은 마지막 메시지로 찾으므로,
         // 여기서 다른 `kind` 를 남기지 않으면 이미 답한 질문이 다음 턴의 맥락으로 또 따라붙는다.

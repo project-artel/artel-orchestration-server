@@ -10,6 +10,7 @@ import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import kr.artel.orchestration.testscenario.agent.PhrasedStep
 import kr.artel.orchestration.testscenario.dto.ScenarioStep
 import kr.artel.orchestration.testscenario.dto.ScenarioStepKind
 import kr.artel.orchestration.testscenario.dto.ScenarioStepSource
@@ -66,7 +67,12 @@ class ScenarioGapFillerTest {
             step("Map_scene에 진입해 튜토리얼 대화를 확인한다.", caseId = 12),
         )
 
-        val filled = filler.fill(runId, "StoryScene→Map_scene", "대화가 끝날 때까지 Space를 누른다.")
+        val filled = filler.fill(runId, "StoryScene→Map_scene") { before, after ->
+            // 다듬는 쪽은 앞뒤 스텝을 본다 — 같은 결로 쓰라고 준 자료다.
+            assertThat(before).isEqualTo("StoryScene에서 Space 입력을 한다.")
+            assertThat(after).isEqualTo("Map_scene에 진입해 튜토리얼 대화를 확인한다.")
+            listOf(PhrasedStep("대화가 끝날 때까지 Space를 누른다.", input = "Space"))
+        }
 
         assertThat(filled).isEqualTo(1)
         val steps = scenarioRepository.findById(scenarioId)!!.toDraft(objectMapper).steps
@@ -79,6 +85,7 @@ class ScenarioGapFillerTest {
         assertThat(steps[1].stepSource).isEqualTo(ScenarioStepSource.HUMAN)
         assertThat(steps[1].stepKind).isEqualTo(ScenarioStepKind.ACTION)
         assertThat(steps[1].caseId).isNull()
+        assertThat(steps[1].input).isEqualTo("Space")
         assertThat(steps[1].stepUnknownReason).isNull()
     }
 
@@ -90,7 +97,9 @@ class ScenarioGapFillerTest {
             gap("Map_scene→TurnBattleScene"),
         )
 
-        val filled = filler.fill(runId, "StoryScene→Map_scene", "저절로 넘어간다.")
+        val filled = filler.fill(runId, "StoryScene→Map_scene") { _, _ ->
+            listOf(PhrasedStep("저절로 넘어간다."))
+        }
 
         assertThat(filled).isEqualTo(1)
         val steps = scenarioRepository.findById(scenarioId)!!.toDraft(objectMapper).steps
@@ -107,18 +116,47 @@ class ScenarioGapFillerTest {
     fun `채울 자리가 없으면 그대로 둔다`(): Unit = runBlocking {
         val scenarioId = save(step("StoryScene에서 Space 입력을 한다.", caseId = 11))
 
-        val filled = filler.fill(runId, "StoryScene→Map_scene", "대화를 넘긴다.")
+        val filled = filler.fill(runId, "StoryScene→Map_scene") { _, _ ->
+            listOf(PhrasedStep("대화를 넘긴다."))
+        }
 
         assertThat(filled).isZero()
         assertThat(scenarioRepository.findById(scenarioId)!!.toDraft(objectMapper).steps).hasSize(1)
     }
 
-    /** 빈 답은 답이 아니다. 그것으로 알림을 지우면 미상이 빈 줄로 바뀔 뿐이다. */
+    /**
+     * 적은 말이 통과 방법이 아니면("잘 모르겠는데") 다듬는 쪽이 빈 목록을 돌려준다. 그때는
+     * 알림을 그대로 둔다 — 지우면 미상이 빈 줄로 바뀔 뿐이고, 그 말은 대화로 넘어가야 한다.
+     */
     @Test
-    fun `빈 답으로는 채우지 않는다`(): Unit = runBlocking {
-        save(gap("StoryScene→Map_scene"))
+    fun `넣을 말이 없으면 알림을 그대로 둔다`(): Unit = runBlocking {
+        val scenarioId = save(gap("StoryScene→Map_scene"))
 
-        assertThat(filler.fill(runId, "StoryScene→Map_scene", "   ")).isZero()
+        assertThat(filler.fill(runId, "StoryScene→Map_scene") { _, _ -> emptyList() }).isZero()
+        val steps = scenarioRepository.findById(scenarioId)!!.toDraft(objectMapper).steps
+        assertThat(steps.single().stepKind).isEqualTo(ScenarioStepKind.GAP)
+    }
+
+    /** 한 문장에 동작이 둘이면 두 줄이 되고, 뒤 스텝은 뒤로 밀린다. */
+    @Test
+    fun `한 알림이 여러 스텝으로 바뀐다`(): Unit = runBlocking {
+        val scenarioId = save(
+            gap("StoryScene→Map_scene"),
+            step("Map_scene에 진입해 튜토리얼 대화를 확인한다.", caseId = 12),
+        )
+
+        val filled = filler.fill(runId, "StoryScene→Map_scene") { _, _ ->
+            listOf(PhrasedStep("Space를 눌러 대화를 끝낸다."), PhrasedStep("시작 버튼을 클릭한다."))
+        }
+
+        assertThat(filled).isEqualTo(2)
+        val steps = scenarioRepository.findById(scenarioId)!!.toDraft(objectMapper).steps
+        assertThat(steps.map { it.action }).containsExactly(
+            "Space를 눌러 대화를 끝낸다.",
+            "시작 버튼을 클릭한다.",
+            "Map_scene에 진입해 튜토리얼 대화를 확인한다.",
+        )
+        assertThat(steps[1].stepSource).isEqualTo(ScenarioStepSource.HUMAN)
     }
 
     private fun step(action: String, caseId: Long) = ScenarioStep(
