@@ -499,7 +499,10 @@ class ContentMapReingestTest {
         assertThat(row["status"]).isEqualTo(SpecStatus.UNREACHABLE_PRECONDITION.wire)
 
         // 매달려 있던 지식이 주인을 잃지 않았다. 이것이 지우지 않은 이유 전부다.
-        val edge = edges.findByFromSceneIdOrderByIdAsc(scene.id!!).toList().single()
+        //
+        // 도착 씬 이름으로 짚는다. 적재기가 ARTEL-445 부터 `startGame` 의 `kind='scene'` 효과로
+        // `TitleScene → MapScene` 정적 간선을 함께 쓰므로, 이 씬에서 나가는 간선은 하나가 아니다.
+        val edge = edges.findByFromSceneIdAndToSceneName(scene.id!!, "OptionsScene").toList().single()
         assertThat(edge.capabilityId).isEqualTo(vanishing)
         assertThat(edge.observedCount).isEqualTo(3)
 
