@@ -113,7 +113,11 @@ class ContentMapIngestTransactionTest {
         val failed = results.filterIsInstance<IngestOutcome.Failed>()
         assertThat(ingested.map { it.result.documentId }).contains(healthyDocument.id)
         assertThat(failed.map { it.documentId }).contains(brokenDocument.id)
-        assertThat(failed.single { it.documentId == brokenDocument.id }.error).isNotBlank()
+        // 사람에게 나가는 문구는 우리가 정한 것이다. 내부 예외 메시지(SQL·컬럼 타입)가 아니다.
+        assertThat(failed.single { it.documentId == brokenDocument.id }.clientMessage)
+            .isEqualTo("적재 중 오류가 발생했습니다.")
+        // 원문은 문서 행에만 남는다.
+        assertThat(documents.findById(brokenDocument.id!!)!!.ingestError).isNotBlank()
         assertThat(capabilities.findEvidenceCapabilitiesOfMap(healthy.id!!).toList()).isNotEmpty()
         assertThat(capabilities.findEvidenceCapabilitiesOfMap(broken.id!!).toList()).isEmpty()
         assertThat(documents.findById(healthyDocument.id!!)!!.ingestedAt).isNotNull()

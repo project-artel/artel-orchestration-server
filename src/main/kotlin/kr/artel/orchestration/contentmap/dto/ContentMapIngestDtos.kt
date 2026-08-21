@@ -1,6 +1,7 @@
 package kr.artel.orchestration.contentmap.dto
 
 import io.swagger.v3.oas.annotations.media.Schema
+import kr.artel.orchestration.contentmap.ingest.BuildIngestOutcome
 import kr.artel.orchestration.contentmap.ingest.IngestOutcome
 
 /**
@@ -16,28 +17,37 @@ data class IngestContentMapResponse(
     val documents: List<IngestedDocumentResponse>,
     @Schema(description = "적재하지 못한 문서와 그 사유")
     val failed: List<FailedDocumentResponse>,
+    @Schema(description = "이번에 처리하지 못하고 남은 대기 문서가 있나. 있으면 다시 눌러야 한다")
+    val pendingRemaining: Boolean,
 ) {
     companion object {
-        fun of(outcomes: List<IngestOutcome>) = IngestContentMapResponse(
-            documents = outcomes.filterIsInstance<IngestOutcome.Ingested>()
-                .map { IngestedDocumentResponse.of(it) },
-            failed = outcomes.filterIsInstance<IngestOutcome.Failed>()
-                .map { FailedDocumentResponse(it.documentId.toString(), it.error) },
-        )
+        fun of(outcome: BuildIngestOutcome): IngestContentMapResponse {
+            val documents = mutableListOf<IngestedDocumentResponse>()
+            val failed = mutableListOf<FailedDocumentResponse>()
+            // `filterIsInstance` 두 번이 아니라 총망라 `when` 인 이유: 결과 종류가 하나 늘면 저쪽은
+            // 조용히 양쪽 목록에서 빠져 응답이 짧아질 뿐이고, 이쪽은 컴파일이 막는다.
+            outcome.outcomes.forEach {
+                when (it) {
+                    is IngestOutcome.Ingested -> documents += IngestedDocumentResponse.of(it)
+                    is IngestOutcome.Failed -> failed += FailedDocumentResponse(it.documentId, it.clientMessage)
+                }
+            }
+            return IngestContentMapResponse(documents, failed, outcome.pendingRemaining)
+        }
     }
 }
 
 /**
  * 문서 하나가 앉은 결과.
  *
- * `IngestResult` 를 그대로 직렬화하지 않고 옮겨 담는 이유는 id 하나 때문이다 — 브라우저용 경로는
- * `game` 모듈처럼 id 를 **문자열**로 낸다. 적재기의 결과 타입은 서버 안에서 `Long` 으로 다니는 것이
- * 맞고, 그 둘을 맞추는 자리가 여기다.
+ * id 를 `Long` 으로 내는 것은 **같은 컨트롤러의 등록 응답**(`RegisterEvidenceDocumentResponse`)이
+ * 그렇게 내기 때문이다. `game` 모듈은 문자열 규약이지만, 한 화면이 같은 `documentId` 를 어떤 요청에서는
+ * 숫자로 어떤 요청에서는 문자열로 받는 것이 두 규약 중 어느 쪽을 고르는 것보다 나쁘다.
  */
 @Schema(description = "적재된 문서 하나")
 data class IngestedDocumentResponse(
-    val documentId: String,
-    val contentMapId: String,
+    val documentId: Long,
+    val contentMapId: Long,
     @Schema(description = "앉은 씬 수")
     val scenes: Int,
     @Schema(description = "앉은 기능 수")
@@ -52,8 +62,8 @@ data class IngestedDocumentResponse(
     companion object {
         fun of(ingested: IngestOutcome.Ingested) = with(ingested.result) {
             IngestedDocumentResponse(
-                documentId = documentId.toString(),
-                contentMapId = contentMapId.toString(),
+                documentId = documentId,
+                contentMapId = contentMapId,
                 scenes = scenes,
                 capabilities = capabilities,
                 collapsed = collapsed,
@@ -67,7 +77,7 @@ data class IngestedDocumentResponse(
 /** 적재하지 못한 문서. 사유는 문서 행에도 남아 있어 다음 조회에서 다시 읽을 수 있다. */
 @Schema(description = "적재 실패한 문서")
 data class FailedDocumentResponse(
-    val documentId: String,
-    @Schema(description = "실패 사유 한 줄")
+    val documentId: Long,
+    @Schema(description = "사람에게 보여 줄 사유. 내부 예외 메시지는 로그와 문서 행에만 남는다")
     val error: String,
 )

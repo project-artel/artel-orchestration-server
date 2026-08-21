@@ -3,6 +3,7 @@ package kr.artel.orchestration.contentmap
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.contentmap.dto.EvidenceUploadTicketRequest
 import kr.artel.orchestration.contentmap.dto.RegisterEvidenceDocumentRequest
+import kr.artel.orchestration.contentmap.ingest.ContentMapIngestService
 import kr.artel.orchestration.contentmap.service.EvidenceDocumentService
 import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
@@ -45,6 +46,7 @@ class ProjectContentMapAccessTest {
     }
 
     @Autowired private lateinit var service: EvidenceDocumentService
+    @Autowired private lateinit var ingest: ContentMapIngestService
     @Autowired private lateinit var storage: DocumentStorage
     @Autowired private lateinit var projects: ProjectRepository
     @Autowired private lateinit var members: ProjectMemberRepository
@@ -102,9 +104,27 @@ class ProjectContentMapAccessTest {
         val project = newProject(userId)
         val build = newBuild(project)
 
-        val ticket = service.createUploadTicket(userId, build, EvidenceUploadTicketRequest(10))
+        val ticket = service.createUploadTicket(userId, build, EvidenceUploadTicketRequest(10), projectId = null)
 
         assertThat(ticket).isNotNull()
+    }
+
+    /**
+     * 적재도 같은 검사를 지난다. **컨트롤러가 아니라 서비스가** 검사하는 자리라, 적재를 시작하는
+     * 유일한 문을 지나는 누구도 검사를 빠뜨릴 수 없다.
+     *
+     * 이 단언이 없으면 `ingestBuild` 에서 검사를 지워도 테스트가 전부 통과한다 — 그러면 인증된
+     * 사용자가 아무 빌드 id 나 넣어 남의 지도를 적재할 수 있다.
+     */
+    @Test
+    fun `경로의 프로젝트가 다르면 적재도 안 된다`(): Unit = runBlocking {
+        val userId = newUser()
+        val mine = newProject(userId)
+        val other = newProject(userId)
+        val build = newBuild(mine)
+
+        assertThat(ingest.ingestBuild(userId, other, build)).isNull()
+        assertThat(ingest.ingestBuild(userId, mine, build)).isNotNull()
     }
 
     // ---------- 픽스처 ----------

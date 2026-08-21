@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactor.awaitSingleOrNull
+import kr.artel.orchestration.common.error.ApiException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.entity.Actionability
 import kr.artel.orchestration.contentmap.entity.Applicability
@@ -28,6 +29,7 @@ import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.contentmap.repository.upsert
+import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -61,6 +63,7 @@ class ContentMapIngestService(
     private val capabilities: CapabilityRepository,
     private val evidences: CapabilityEvidenceRepository,
     private val effects: CapabilityEffectRepository,
+    private val gameBuilds: GameBuildRepository,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
@@ -84,8 +87,24 @@ class ContentMapIngestService(
      * 전역 [ingestPending] 과 **같은 루프를 쓴다** — 실패를 기록하는 자리가 한 곳이어야, 자동 경로는
      * 로그만 남기고 버튼 경로만 기록하는 어긋남이 생기지 않는다.
      */
-    suspend fun ingestBuild(gameBuildId: Long, limit: Int = DEFAULT_BATCH): List<IngestOutcome> =
-        ingestEach(documents.findPendingByGameBuild(gameBuildId, limit).toList())
+    suspend fun ingestBuild(
+        userId: Long,
+        projectId: Long,
+        gameBuildId: Long,
+        limit: Int = DEFAULT_BATCH,
+    ): BuildIngestOutcome? {
+        // 접근 검사가 컨트롤러가 아니라 여기 있는 이유: 적재를 시작하는 유일한 문이 이 함수라,
+        // 검사를 옆에 두면 이 함수를 부르는 누구도 검사를 빠뜨릴 수 없다.
+        gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: return null
+
+        // 하나 더 집어 "남은 것이 있나"를 안다. 응답이 그 사실을 말하지 않으면, 문서 여섯 개를 올린
+        // 사람은 다섯 개만 앉고 하나가 조용히 사라진 것을 알 방법이 없다.
+        val picked = documents.findPendingByGameBuild(gameBuildId, limit + 1).toList()
+        return BuildIngestOutcome(
+            outcomes = ingestEach(picked.take(limit)),
+            pendingRemaining = picked.size > limit,
+        )
+    }
 
     /**
      * 문서마다 적재하고, 깨진 것은 문서에 적고 넘어간다.
@@ -113,7 +132,7 @@ class ContentMapIngestService(
                         }.onFailure {
                             logger.error("적재 실패 기록 실패 (documentId={})", document.id, it)
                         }
-                        IngestOutcome.Failed(document.id!!, reason)
+                        IngestOutcome.Failed(document.id!!, recorded = reason, clientMessage = clientMessageOf(failure))
                     },
                 )
         }
@@ -249,6 +268,19 @@ class ContentMapIngestService(
     }
 
     /**
+     * 사람에게 그대로 보여도 되는 문구.
+     *
+     * 잡은 예외의 raw message 를 응답에 실으면 이 경로로 내부가 샌다(`error-handling.md`) — 실제로
+     * 컬럼 폭에 걸린 실패는 R2DBC 예외가 SQL 문과 테이블·컬럼 타입을 그대로 들고 온다. 원문은
+     * 로그와 `ingest_error` 칸에만 남고, 나가는 것은 우리가 정한 문구뿐이다.
+     */
+    private fun clientMessageOf(failure: Throwable): String =
+        (failure as? ApiException)
+            ?.takeIf { it.status.is4xxClientError }
+            ?.message
+            ?: GENERIC_INGEST_FAILURE
+
+    /**
      * 씬 행을 이름으로 맞춘다.
      *
      * 이미 있으면 **그대로 둔다.** `walked` · `image_object_key` 는 QA 런이 쓴 값이라, 스캔이 다시
@@ -369,6 +401,9 @@ class ContentMapIngestService(
         /** `content_map_document.ingest_error` 의 폭. 스택 트레이스가 아니라 한 줄을 담는 칸이다. */
         private const val INGEST_ERROR_WIDTH = 512
 
+        /** 우리가 뜻을 정하지 못한 실패에 붙는 문구. 원문은 로그와 문서 행에만 남는다. */
+        private const val GENERIC_INGEST_FAILURE = "적재 중 오류가 발생했습니다."
+
         /** 조작 후보. `flow` 는 흐름만 말하는 조각이다. */
         private const val RECORD_KIND_CANDIDATE = "candidate"
 
@@ -393,8 +428,28 @@ class ContentMapIngestService(
  */
 sealed interface IngestOutcome {
     data class Ingested(val result: IngestResult) : IngestOutcome
-    data class Failed(val documentId: Long, val error: String) : IngestOutcome
+
+    /**
+     * [recorded] 는 문서 행과 로그에 남는 원문이고, [clientMessage] 는 사람에게 나가는 문구다.
+     * 둘을 한 칸으로 합치면 내부 메시지가 그대로 브라우저까지 간다.
+     */
+    data class Failed(
+        val documentId: Long,
+        val recorded: String,
+        val clientMessage: String,
+    ) : IngestOutcome
 }
+
+/**
+ * 빌드 하나를 적재한 결과.
+ *
+ * [pendingRemaining] 이 없으면 한 번에 처리하는 수를 넘긴 문서가 조용히 사라진다 — 사람은 다시
+ * 누를 이유를 모른다.
+ */
+data class BuildIngestOutcome(
+    val outcomes: List<IngestOutcome>,
+    val pendingRemaining: Boolean,
+)
 
 /** 한 문서를 적재하고 남은 것. 워커가 로그로 남기고 테스트가 읽는다. */
 data class IngestResult(

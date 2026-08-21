@@ -50,7 +50,7 @@ class EvidenceDocumentService(
         userId: Long,
         gameBuildId: Long,
         request: EvidenceUploadTicketRequest,
-        projectId: Long? = null,
+        projectId: Long?,
     ): EvidenceUploadTicketResponse? {
         requireAccessibleBuild(gameBuildId, userId, projectId) ?: return null
 
@@ -82,7 +82,7 @@ class EvidenceDocumentService(
         userId: Long,
         gameBuildId: Long,
         request: RegisterEvidenceDocumentRequest,
-        projectId: Long? = null,
+        projectId: Long?,
     ): RegisterEvidenceDocumentResponse? {
         requireAccessibleBuild(gameBuildId, userId, projectId) ?: return null
 

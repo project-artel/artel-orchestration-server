@@ -43,6 +43,10 @@ interface ContentMapDocumentRepository : CoroutineCrudRepository<ContentMapDocum
      * 전역 [findPending] 을 그대로 쓰지 않는 이유: 남의 프로젝트 문서가 그 요청 시간에 섞여 들어가고,
      * 실패도 그 사람의 응답에 섞인다.
      *
+     * **한 번도 시도하지 않은 문서가 먼저다.** 결정적으로 깨지는 문서는 도장이 안 찍혀 영원히 대기로
+     * 남는데, 받은 순서로만 고르면 그것이 큐 머리를 잡고 앉아 새로 올린 문서에 차례가 오지 않는다.
+     * 실패한 것들끼리는 오래 전에 실패한 것부터 다시 돌려 본다.
+     *
      * `content_map_document` 에는 `game_build_id` 가 없어 `content_map` 을 조인한다. 기존 부분 인덱스는
      * `(received_at) WHERE ingested_at IS NULL` 이라 빌드 필터를 덮지 않는다 — 지금 행 수에서는 문제가
      * 아니라 인덱스를 새로 만들지 않는다.
@@ -52,7 +56,7 @@ interface ContentMapDocumentRepository : CoroutineCrudRepository<ContentMapDocum
         SELECT d.* FROM content_map_document d
         JOIN content_map m ON m.id = d.content_map_id
         WHERE m.game_build_id = :gameBuildId AND d.ingested_at IS NULL
-        ORDER BY d.received_at ASC
+        ORDER BY d.ingest_failed_at ASC NULLS FIRST, d.received_at ASC
         LIMIT :limit
         """
     )

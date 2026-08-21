@@ -12,6 +12,8 @@ import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.FakeDocumentStorage
 import kr.artel.orchestration.project.entity.ProjectEntity
+import kr.artel.orchestration.project.entity.ProjectMemberEntity
+import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import org.assertj.core.api.Assertions.assertThat
@@ -21,6 +23,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Primary
+import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
 import java.time.Instant
 
@@ -47,6 +50,8 @@ class ContentMapIngestFailureRecordTest {
 
     @Autowired private lateinit var service: ContentMapIngestService
     @Autowired private lateinit var projects: ProjectRepository
+    @Autowired private lateinit var members: ProjectMemberRepository
+    @Autowired private lateinit var db: DatabaseClient
     @Autowired private lateinit var gameBuilds: GameBuildRepository
     @Autowired private lateinit var contentMaps: ContentMapRepository
     @Autowired private lateinit var documents: ContentMapDocumentRepository
@@ -60,7 +65,7 @@ class ContentMapIngestFailureRecordTest {
     @Test
     fun `적재 실패가 문서에 사유로 남는다`(): Unit = runBlocking {
         val build = newBuild()
-        val map = newContentMap(build.id!!)
+        val map = newContentMap(build.id)
         val document = documents.save(
             ContentMapDocumentEntity(
                 contentMapId = map.id!!,
@@ -72,7 +77,7 @@ class ContentMapIngestFailureRecordTest {
             )
         )
 
-        val outcomes = service.ingestBuild(build.id!!)
+        val outcomes = service.ingestBuild(build.userId, build.projectId, build.id)!!.outcomes
 
         val failed = outcomes.filterIsInstance<IngestOutcome.Failed>()
         assertThat(failed).hasSize(1)
@@ -95,7 +100,7 @@ class ContentMapIngestFailureRecordTest {
     @Test
     fun `자동 경로도 같은 사유를 남긴다`(): Unit = runBlocking {
         val build = newBuild()
-        val map = newContentMap(build.id!!)
+        val map = newContentMap(build.id)
         val document = documents.save(
             ContentMapDocumentEntity(
                 contentMapId = map.id!!,
@@ -123,12 +128,12 @@ class ContentMapIngestFailureRecordTest {
     fun `다른 빌드의 대기 문서는 집지 않는다`(): Unit = runBlocking {
         val mine = newBuild()
         val other = newBuild()
-        val myMap = newContentMap(mine.id!!)
-        val otherMap = newContentMap(other.id!!)
+        val myMap = newContentMap(mine.id)
+        val otherMap = newContentMap(other.id)
         val myDocument = documents.save(pendingDocument(myMap.id!!))
         val otherDocument = documents.save(pendingDocument(otherMap.id!!))
 
-        val outcomes = service.ingestBuild(mine.id!!)
+        val outcomes = service.ingestBuild(mine.userId, mine.projectId, mine.id)!!.outcomes
 
         val touched = outcomes.map {
             when (it) {
@@ -150,14 +155,24 @@ class ContentMapIngestFailureRecordTest {
         receivedAt = Instant.now(),
     )
 
-    private suspend fun newBuild(): GameBuildEntity {
+    /** 적재를 부르려면 접근 가능한 빌드여야 한다 — 사용자·프로젝트·멤버십까지 한 벌로 만든다. */
+    private data class AccessibleBuild(val userId: Long, val projectId: Long, val id: Long)
+
+    private suspend fun newBuild(): AccessibleBuild {
         val now = Instant.now()
+        val userId = db.sql("INSERT INTO app_user (display_name) VALUES ('ingest') RETURNING id")
+            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .one().block()!!
         val project = projects.save(
             ProjectEntity(name = "ingest-fail-${System.nanoTime()}", genre = "ACTION", createdAt = now, updatedAt = now)
         )
-        return gameBuilds.save(
-            GameBuildEntity(projectId = project.id!!, version = "v${System.nanoTime()}", createdAt = now, updatedAt = now)
+        members.save(
+            ProjectMemberEntity(projectId = project.id!!, appUserId = userId, role = "OWNER", createdAt = now)
         )
+        val build = gameBuilds.save(
+            GameBuildEntity(projectId = project.id, version = "v${System.nanoTime()}", createdAt = now, updatedAt = now)
+        )
+        return AccessibleBuild(userId, project.id, build.id!!)
     }
 
     private suspend fun newContentMap(gameBuildId: Long): ContentMapEntity =

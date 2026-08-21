@@ -47,7 +47,9 @@ class SdkContentMapController(
         @PathVariable gameBuildId: Long,
         @Valid @RequestBody request: EvidenceUploadTicketRequest,
     ): EvidenceUploadTicketResponse =
-        service.createUploadTicket(appUserId, gameBuildId, request)
+        // SDK 는 프로젝트 id 를 모른다(빌드 토큰 하나로 온다). null 을 **명시해** 약한 검사가
+        // 실수로 기본값이 되지 않게 한다.
+        service.createUploadTicket(appUserId, gameBuildId, request, projectId = null)
             ?: throw NotFoundException("등록할 수 있는 게임 빌드를 찾을 수 없습니다.")
 
     @Operation(
@@ -61,6 +63,6 @@ class SdkContentMapController(
         @PathVariable gameBuildId: Long,
         @Valid @RequestBody request: RegisterEvidenceDocumentRequest,
     ): RegisterEvidenceDocumentResponse =
-        service.register(appUserId, gameBuildId, request)
+        service.register(appUserId, gameBuildId, request, projectId = null)
             ?: throw NotFoundException("등록할 수 있는 게임 빌드를 찾을 수 없습니다.")
 }

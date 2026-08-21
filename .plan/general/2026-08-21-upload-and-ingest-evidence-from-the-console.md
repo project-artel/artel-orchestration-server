@@ -48,12 +48,15 @@
 
 ### 2. 실패한 문서를 어떻게 남기나
 
-**마이그레이션 V47** 로 `content_map_document` 에 두 칸을 더한다:
+**마이그레이션 V48** 로 `content_map_document` 에 두 칸을 더한다:
 
 | 칸 | 왜 |
 |---|---|
 | `ingest_failed_at TIMESTAMPTZ` | 마지막 실패 시각 |
 | `ingest_error VARCHAR(512)` | 마지막 실패 사유. 화면이 사람에게 보여 줄 유일한 단서 |
+
+번호가 V47 이 아니라 V48 인 이유: ARTEL-466(PR #143)이 V47 을 이미 집었다. 이 브랜치가 스택 아래라
+나중에 머지되므로 이쪽이 비킨다.
 
 **시도 횟수 칸과 `findPending` 의 상한 조건은 넣지 않는다.** 계획 검토가 짚었다 — 이 이슈에는
 스케줄러가 없고(`findPending` 은 프로덕션 호출자가 0이다), 버튼 경로는 상한을 일부러 무시한다.
@@ -94,7 +97,7 @@ POST .../content-map/ingest
 
 ## Approach (Checklist)
 
-- [ ] **Step 1: 마이그레이션** — V47, 위 두 칸. `findPending` 은 건드리지 않는다
+- [ ] **Step 1: 마이그레이션** — V48, 위 두 칸. `findPending` 은 건드리지 않는다
 - [ ] **Step 2: 저장소** — `findPendingByGameBuild`, `recordIngestFailure`
 - [ ] **Step 3: 서비스 — 새 클래스를 만들지 않는다**
   - `EvidenceDocumentService` 의 `createUploadTicket` · `register` 와 private `requireAccessibleBuild`

@@ -13,7 +13,6 @@ import kr.artel.orchestration.contentmap.dto.RegisterEvidenceDocumentRequest
 import kr.artel.orchestration.contentmap.dto.RegisterEvidenceDocumentResponse
 import kr.artel.orchestration.contentmap.ingest.ContentMapIngestService
 import kr.artel.orchestration.contentmap.service.EvidenceDocumentService
-import kr.artel.orchestration.game.repository.GameBuildRepository
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -47,7 +46,6 @@ import org.springframework.web.bind.annotation.RestController
 class ProjectContentMapController(
     private val evidenceDocuments: EvidenceDocumentService,
     private val ingest: ContentMapIngestService,
-    private val gameBuilds: GameBuildRepository,
 ) {
 
     @Operation(
@@ -96,10 +94,10 @@ class ProjectContentMapController(
         @CurrentUserId appUserId: Long,
         @PathVariable projectId: Long,
         @PathVariable gameBuildId: Long,
-    ): IngestContentMapResponse {
-        gameBuilds.findAccessibleById(gameBuildId, projectId, appUserId) ?: throw buildNotFound()
-        return IngestContentMapResponse.of(ingest.ingestBuild(gameBuildId))
-    }
+    ): IngestContentMapResponse =
+        ingest.ingestBuild(appUserId, projectId, gameBuildId)
+            ?.let { IngestContentMapResponse.of(it) }
+            ?: throw buildNotFound()
 
     private fun buildNotFound() = NotFoundException("게임 빌드를 찾을 수 없습니다.")
 }

@@ -127,7 +127,7 @@ class EvidenceDocumentServiceTest {
     }
 
     private suspend fun upload(userId: Long, buildId: Long, bytes: ByteArray): String {
-        val ticket = service.createUploadTicket(userId, buildId, EvidenceUploadTicketRequest(bytes.size.toLong()))!!
+        val ticket = service.createUploadTicket(userId, buildId, EvidenceUploadTicketRequest(bytes.size.toLong()), projectId = null)!!
         fakeStorage.put(ticket.objectKey, bytes)
         return ticket.objectKey
     }
@@ -143,7 +143,7 @@ class EvidenceDocumentServiceTest {
         val (userId, _, buildId) = seed()
         val key = upload(userId, buildId, evidenceDocument())
 
-        val result = service.register(userId, buildId, RegisterEvidenceDocumentRequest(key))!!
+        val result = service.register(userId, buildId, RegisterEvidenceDocumentRequest(key), projectId = null)!!
 
         assertThat(result.schemaVersion).isEqualTo(6)
         assertThat(result.capture).isEqualTo(Capture.EDITOR.wire)
@@ -168,7 +168,7 @@ class EvidenceDocumentServiceTest {
         val key = upload(userId, buildId, evidenceDocument(schema = 5))
 
         assertThatThrownBy {
-            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(key)) }
+            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(key), projectId = null) }
         }.isInstanceOf(BadRequestException::class.java)
             .hasMessageContaining("schema 5")
 
@@ -183,7 +183,7 @@ class EvidenceDocumentServiceTest {
         val key = upload(userId, buildId, """{"objects":[]}""".toByteArray())
 
         assertThatThrownBy {
-            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(key)) }
+            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(key), projectId = null) }
         }.isInstanceOf(BadRequestException::class.java)
     }
 
@@ -194,8 +194,8 @@ class EvidenceDocumentServiceTest {
     fun `같은 문서 재전송은 기존 등록을 돌려준다`(): Unit = runBlocking {
         val (userId, _, buildId) = seed()
         val bytes = evidenceDocument()
-        val first = service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, bytes)))!!
-        val second = service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, bytes)))!!
+        val first = service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, bytes)), projectId = null)!!
+        val second = service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, bytes)), projectId = null)!!
 
         assertThat(second.alreadyRegistered).isTrue()
         assertThat(second.documentId).isEqualTo(first.documentId)
@@ -209,10 +209,12 @@ class EvidenceDocumentServiceTest {
         val first = service.register(
             userId, buildId,
             RegisterEvidenceDocumentRequest(upload(userId, buildId, evidenceDocument(digest = "aaaa"))),
+            projectId = null,
         )!!
         val second = service.register(
             userId, buildId,
             RegisterEvidenceDocumentRequest(upload(userId, buildId, evidenceDocument(digest = "bbbb"))),
+            projectId = null,
         )!!
 
         assertThat(second.alreadyRegistered).isFalse()
@@ -229,10 +231,12 @@ class EvidenceDocumentServiceTest {
         val editor = service.register(
             userId, buildId,
             RegisterEvidenceDocumentRequest(upload(userId, buildId, evidenceDocument(capture = Capture.EDITOR.wire))),
+            projectId = null,
         )!!
         val player = service.register(
             userId, buildId,
             RegisterEvidenceDocumentRequest(upload(userId, buildId, evidenceDocument(capture = Capture.PLAYER.wire))),
+            projectId = null,
         )!!
 
         assertThat(player.contentMapId).isNotEqualTo(editor.contentMapId)
@@ -251,8 +255,8 @@ class EvidenceDocumentServiceTest {
             .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
             .one().block()!!
 
-        assertThat(service.createUploadTicket(stranger, buildId, EvidenceUploadTicketRequest(10))).isNull()
-        assertThat(service.register(stranger, buildId, RegisterEvidenceDocumentRequest("x"))).isNull()
+        assertThat(service.createUploadTicket(stranger, buildId, EvidenceUploadTicketRequest(10), projectId = null)).isNull()
+        assertThat(service.register(stranger, buildId, RegisterEvidenceDocumentRequest("x"), projectId = null)).isNull()
     }
 
     /** 다른 빌드에 올린 키를 등록해 그 문서를 가져오지 못한다. */
@@ -263,7 +267,7 @@ class EvidenceDocumentServiceTest {
         val otherKey = upload(otherUser, otherBuild, evidenceDocument())
 
         assertThatThrownBy {
-            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(otherKey)) }
+            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(otherKey), projectId = null) }
         }.isInstanceOf(BadRequestException::class.java)
     }
 
@@ -289,7 +293,7 @@ class EvidenceDocumentServiceTest {
             }
         """.trimIndent().toByteArray(Charsets.UTF_8)
 
-        val result = service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, bytes)))!!
+        val result = service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, bytes)), projectId = null)!!
 
         assertThat(result.schemaVersion).isEqualTo(6)
         assertThat(result.evidenceDigest).isEqualTo("d4b31e4da9504b7d")
@@ -309,7 +313,7 @@ class EvidenceDocumentServiceTest {
         """.trimIndent().toByteArray(Charsets.UTF_8)
 
         assertThatThrownBy {
-            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, bytes))) }
+            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, bytes)), projectId = null) }
         }.isInstanceOf(BadRequestException::class.java)
             .hasMessageContaining("capabilities")
     }
@@ -321,7 +325,7 @@ class EvidenceDocumentServiceTest {
         val key = upload(userId, buildId, evidenceDocument(capture = "headless"))
 
         assertThatThrownBy {
-            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(key)) }
+            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(key), projectId = null) }
         }.isInstanceOf(BadRequestException::class.java)
             .hasMessageContaining("headless")
     }
@@ -337,7 +341,7 @@ class EvidenceDocumentServiceTest {
         val key = upload(userId, buildId, evidenceDocument(digest = "f".repeat(64)))
 
         assertThatThrownBy {
-            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(key)) }
+            runBlocking { service.register(userId, buildId, RegisterEvidenceDocumentRequest(key), projectId = null) }
         }.isInstanceOf(BadRequestException::class.java)
             .hasMessageContaining("build.evidence")
     }
@@ -352,13 +356,14 @@ class EvidenceDocumentServiceTest {
     fun `옛 문서 재전송이 지문을 되돌리지 않는다`(): Unit = runBlocking {
         val (userId, _, buildId) = seed()
         val old = evidenceDocument(digest = "aaaa")
-        val first = service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, old)))!!
+        val first = service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, old)), projectId = null)!!
         service.register(
             userId, buildId,
             RegisterEvidenceDocumentRequest(upload(userId, buildId, evidenceDocument(digest = "bbbb"))),
+            projectId = null,
         )
 
-        val again = service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, old)))!!
+        val again = service.register(userId, buildId, RegisterEvidenceDocumentRequest(upload(userId, buildId, old)), projectId = null)!!
 
         assertThat(again.alreadyRegistered).isTrue()
         assertThat(contentMaps.findById(first.contentMapId)!!.evidenceDigest).isEqualTo("bbbb")
@@ -375,10 +380,10 @@ class EvidenceDocumentServiceTest {
         val (userId, _, buildId) = seed()
         val bytes = evidenceDocument()
         val firstKey = upload(userId, buildId, bytes)
-        service.register(userId, buildId, RegisterEvidenceDocumentRequest(firstKey))
+        service.register(userId, buildId, RegisterEvidenceDocumentRequest(firstKey), projectId = null)
 
         val secondKey = upload(userId, buildId, bytes)
-        service.register(userId, buildId, RegisterEvidenceDocumentRequest(secondKey))
+        service.register(userId, buildId, RegisterEvidenceDocumentRequest(secondKey), projectId = null)
 
         assertThat(fakeStorage.bytesOf(firstKey)).isNotNull()
         assertThat(fakeStorage.bytesOf(secondKey)).isNull()
