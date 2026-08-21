@@ -37,6 +37,7 @@ import kr.artel.orchestration.testscenario.dto.CaseOperationFrame
 import kr.artel.orchestration.testscenario.dto.ScenarioPathResultFrame
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestion
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestionAnswer
+import kr.artel.orchestration.testscenario.dto.ScenarioQuestionOption
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestionSource
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
@@ -116,13 +117,22 @@ class TestScenarioAgentService(
         // 보내면 모델은 그것이 무슨 뜻인지 모른다 — 질문과 보기 문구를 여기서 다시 붙인다.
         // 세션에 없으면 **저장된 질문**에서 찾는다. 카드 저장으로 물었거나, 서버가 다시 떴거나,
         // 사용자가 새로고침한 화면에서 답할 수 있다 — 그때 답을 잃으면 물어본 보람이 없다.
-        val pending = sessions[sessionKey]?.question ?: answer?.let { lastQuestion(runId, appUserId) }
-        val turnInput = answerText(pending, answer)?.let { answered ->
-            if (userInput.isBlank()) answered else "$answered\n\n$userInput"
-        } ?: userInput
-        if (answer != null && pending != null && pending.id == answer.questionId) {
-            sessions[sessionKey]?.question = null
+        val pending = sessions[sessionKey]?.question ?: lastQuestion(runId, appUserId)
+        val turnInput = when {
+            // 보기를 눌렀다 — 무엇에 대한 답인지 붙여 보낸다.
+            answerText(pending, answer) != null ->
+                answerText(pending, answer)!!.let { if (userInput.isBlank()) it else "$it\n\n$userInput" }
+            // 그냥 말로 답했다. **모델은 그 질문을 본 적이 없다** — 코드가 만든 질문은 오케가
+            // 저장·전송하고 모델의 대화에는 들어가지 않는다. 그래서 "응" 한 마디가 무엇에 대한
+            // 것인지 알 길이 없었다. 물어본 것을 붙여 주고 판단은 모델에 맡긴다 — 이어지는 말이
+            // 아닐 수도 있어서 "답"이라고 단정하지 않는다.
+            pending != null && userInput.isNotBlank() ->
+                "(직전에 물어본 것: ${pending.text})\n\n$userInput"
+            else -> userInput
         }
+        // 물어본 것은 한 턴만 산다. 답이든 딴 얘기든 다음 턴까지 끌고 가면, 한참 뒤의 "응"이
+        // 엉뚱한 질문에 붙는다. 화면의 보기는 저장된 질문으로 계속 답할 수 있다.
+        sessions[sessionKey]?.question = null
 
         // 원래 순서대로: 먼저 USER 메시지를 저장한 뒤 Agent로 보낸다.
         saveMessage(runId, appUserId, "USER", turnInput)
@@ -547,13 +557,38 @@ class TestScenarioAgentService(
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = content))
     }
 
-    /** 이 런에 마지막으로 저장된 질문. 세션이 끊겨도 답을 잇기 위한 자리다. */
+    /**
+     * 이 런에 마지막으로 저장된 질문. 세션이 끊겨도 답을 잇기 위한 자리다.
+     *
+     * **트리에서 직접 읽는다.** 저장 본문은 화면이 읽는 모양(`kind`·`source: "code"`)이라 타입에
+     * 그대로 붙지 않는다 — 클래스에 맞춰 저장 모양을 바꾸면 이번엔 화면이 못 읽는다. 읽는 쪽이
+     * 하나뿐인 값이므로 여기서 풀어 쓴다.
+     */
     private suspend fun lastQuestion(runId: Long, appUserId: Long): ScenarioQuestion? = runCatching {
-        runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+        val payload = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
             .toList()
             .lastOrNull { it.payload != null }
-            ?.payload
-            ?.let { objectMapper.readValue(it.asString(), ScenarioQuestion::class.java) }
+            ?.payload ?: return null
+        val node = objectMapper.readTree(payload.asString())
+        if (node.path("kind").asText() != "question") return null
+        val id = node.path("id").asText("")
+        val text = node.path("text").asText("")
+        if (id.isBlank() || text.isBlank()) return null
+        ScenarioQuestion(
+            id = id,
+            text = text,
+            why = node.path("why").asText(null),
+            options = node.path("options").map {
+                ScenarioQuestionOption(
+                    id = it.path("id").asText(""),
+                    label = it.path("label").asText(""),
+                    detail = it.path("detail").asText(null),
+                )
+            },
+            allowFreeText = node.path("allow_free_text").asBoolean(true),
+            source = if (node.path("source").asText() == "agent") ScenarioQuestionSource.AGENT
+            else ScenarioQuestionSource.CODE,
+        )
     }.onFailure { logger.warn("저장된 질문을 읽지 못했다 — 평범한 메시지로 다룬다: ${it.message}") }
         .getOrNull()
 

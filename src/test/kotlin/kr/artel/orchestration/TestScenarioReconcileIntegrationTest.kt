@@ -510,6 +510,41 @@ class TestScenarioReconcileIntegrationTest {
     }
 
     /**
+     * 말로 답해도 알아듣는다(ARTEL-487).
+     *
+     * **모델은 코드가 만든 질문을 본 적이 없다** — 오케가 저장하고 화면에 흘릴 뿐 모델의 대화에는
+     * 들어가지 않는다. 그래서 "응" 한 마디가 무엇에 대한 것인지 알 길이 없었다(런 32에서 실제로
+     * 그랬다). 물어본 것을 붙여 주고 판단은 모델에 맡긴다.
+     */
+    @Test
+    fun `보기를 안 누르고 말로 답해도 물어본 것을 함께 보낸다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "TitleScene", "A")
+        val caseB = insertCase(projectId, "TitleScene", "B")
+
+        // 전 건을 판정해야 저장까지 간다(검수에서 막히면 질문이 아니라 재작성 루프로 빠진다).
+        framesToSend.add(
+            """{"type":"result","message":"A만 담았습니다","reviewed":{"in":[$caseA],"out":[$caseB]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "타이틀 시나리오")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.payload != null }
+        }
+
+        // 보기를 누르지 않고 그냥 "응" 이라고 적는다.
+        postMessage(client, projectId, runId, token, "응")
+
+        awaitUntil { receivedFrames.any { it.contains("응") } }
+        assertThat(receivedFrames.first { it.contains("응") }).contains("직전에 물어본 것")
+    }
+
+    /**
      * 카드로 저장해도 알림과 질문이 나간다(ARTEL-487).
      *
      * 카드 검토 모드는 챗봇이 아니라 REST 로 저장한다. 그 경로가 반영 건수만 돌려주는 바람에
