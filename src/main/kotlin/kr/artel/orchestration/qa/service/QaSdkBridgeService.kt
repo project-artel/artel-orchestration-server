@@ -54,6 +54,52 @@ class QaSdkBridgeService(
         return true
     }
 
+    /**
+     * 판독을 받은 그대로 agent 로 흘린다.
+     *
+     * **이 메서드의 전부는 옮기는 것이다.** 파싱은 `jsonb` 컬럼에 넣고 봉투에 실으려는 것뿐이고,
+     * 필드를 읽어 판단하지 않는다 — 그래서 문서의 모양이 바뀌어도 여기는 따라 움직이지 않는다.
+     * `coding-style.md` 의 `Data Shapes` 가 DTO 대신 raw JSON 을 허용하는 첫 번째 경우다:
+     * 필드를 읽지 않고 저장하거나 전달하기만 하는 통과 경로.
+     *
+     * [routeGameState] 와 달리 정제기를 거치지 않는다. 이유는 [PulseMessageHandler] 에 적었다.
+     *
+     * `messageId` 는 있으면 쓰고 없으면 비운다. 그것이 채워지면 같은 판독의 재전송이 유니크에
+     * 걸려 한 번만 적재되고, 비면 그 보호가 없을 뿐 나머지는 그대로 동작한다 — 어느 쪽을 보낼지는
+     * 보내는 쪽(ARTEL-399)이 정한다.
+     */
+    suspend fun routePulse(gameInstanceId: Long, payloadText: String): Boolean {
+        val qaTry = tryRepository.findActiveByGameInstanceId(gameInstanceId) ?: return false
+        val payload = objectMapper.readTree(payloadText)
+        val qaTryId = requireNotNull(qaTry.id)
+        // STARTING 상태의 try 도 findActiveByGameInstanceId 에 잡힌다. 그때 agentSessionId 는
+        // 아직 null 이므로 로그만 남기고 전달은 건너뛴다(붙기 전에는 보낼 곳이 없다).
+        val sessionId = qaTry.agentSessionId
+        val messageId = payload.path("id").takeIf { it.isIntegralNumber }?.longValue()?.toString()
+        val inbound = logService.append(
+            qaTryId = qaTryId,
+            direction = "SDK_TO_ORCHE",
+            type = "PULSE",
+            messageId = messageId,
+            message = "Pulse received.",
+            payload = payload
+        )
+        logService.publish(inbound)
+        if (!inbound.inserted) return true
+        if (sessionId == null) return true
+        val outbound = logService.append(
+            qaTryId = qaTryId,
+            direction = "ORCHE_TO_AGENT",
+            type = "PULSE",
+            messageId = messageId,
+            message = "Pulse relayed.",
+            payload = payload
+        )
+        logService.publish(outbound)
+        sendAgent(qaTryId, sessionId, "PULSE", messageId, payload)
+        return true
+    }
+
     suspend fun routeActionResult(gameInstanceId: Long, payloadText: String): Boolean {
         val qaTry = tryRepository.findActiveByGameInstanceId(gameInstanceId) ?: return false
         val payload = objectMapper.readTree(payloadText)

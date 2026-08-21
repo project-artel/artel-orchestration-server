@@ -597,4 +597,84 @@ class ArtelWebSocketIntegrationTest {
 
         disposable.dispose()
     }
+
+    /**
+     * SDK가 보낸 판독(PULSE)이 **글자 하나 바뀌지 않고** QA 브리지에 도착하는지 고정합니다
+     * (ARTEL-414).
+     *
+     * 단언 대상이 "전달됐는가"가 아니라 **원문과 같은가**인 이유가 이 이슈의 전부입니다.
+     * `GAME_STATE`는 `GameStateTransformer`가 조작 후보와 관찰값으로 접는데, 판독에 같은 일을
+     * 하면 판독을 도입한 이유가 사라집니다. 그래서 본문에 접히면 사라질 것들을 일부러 담았습니다 —
+     * `statics`(GameObject에 걸리지 않은 값), `changed`(무엇이 움직였는지), `deactive`(꺼진 것을
+     * 빼지 않고 따로), `unwatchable`(못 읽은 것을 못 읽었다고 말하는 것), 그리고 전량/델타를
+     * 가르는 `whole`.
+     *
+     * 나중에 누군가 이 경로에 정제기를 끼우면 그 순간 이 테스트가 가장 먼저 실패합니다.
+     */
+    @Test
+    fun testWebSocketPulseRelayedVerbatim(): Unit = runBlocking {
+        val connectable = createGameInstance()
+        val instanceId = requireNotNull(connectable.instance.id)
+
+        val pulseReceivedLatch = Sinks.one<Pair<Long, String>>()
+        Mockito.`when`(
+            qaBridge.routePulse(Mockito.anyLong(), anyKotlin(String::class.java))
+        ).thenAnswer { invocation ->
+            pulseReceivedLatch.tryEmitValue(
+                invocation.getArgument<Long>(0) to invocation.getArgument<String>(1)
+            )
+            true
+        }
+
+        // 전량 판독 하나. 델타와 구분되는 것은 `whole`뿐이고, 중계는 그것을 읽지 않습니다.
+        val pulsePayload = """
+            {
+              "type": "PULSE",
+              "id": 7,
+              "schema": 2,
+              "reading": 12,
+              "frame": 3401,
+              "scene": "TurnBattleScene",
+              "whole": true,
+              "changed": ["StageManager.turn", "CardManager.handCount"],
+              "statics": [
+                { "on": "Combat.Stage.StageDataSingleton", "member": "stage", "value": 3 }
+              ],
+              "active": [
+                {
+                  "scene": "TurnBattleScene",
+                  "id": 26168,
+                  "path": "Canvas/continue",
+                  "selector": "Canvas[2]/continue[1]",
+                  "members": [
+                    { "on": "Battle.Turns.TurnBattleSystem", "member": "turn", "value": 2, "asked": true }
+                  ]
+                }
+              ],
+              "deactive": [
+                { "scene": "TurnBattleScene", "id": 26170, "path": "Canvas/GameOver", "selector": "Canvas[2]/GameOver[4]" }
+              ],
+              "unwatchable": 1126
+            }
+        """.trimIndent()
+
+        val wsClient = ReactorNettyWebSocketClient()
+        val wsUri = URI("ws://localhost:$port/ws/sdk${connectable.handshakeQuery}")
+
+        val clientSessionMono = wsClient.execute(wsUri) { session ->
+            // ACTION_RESULT 쪽과 같은 이유로 단언이 끝날 때까지 세션을 열어 둡니다.
+            session.send(Mono.just(session.textMessage(pulsePayload))).then(Mono.never())
+        }
+
+        val disposable = clientSessionMono.subscribe()
+
+        val receivedPulse = pulseReceivedLatch.asMono().block(Duration.ofSeconds(5))
+        assertThat(receivedPulse).isNotNull
+        assertThat(receivedPulse?.first).isEqualTo(instanceId)
+        // 이 한 줄이 이 이슈의 계약입니다. `contains`가 아니라 동치입니다 — 필드를 접거나
+        // 이름을 바꾸거나 순서를 건드리면 전부 여기서 걸립니다.
+        assertThat(receivedPulse?.second).isEqualTo(pulsePayload)
+
+        disposable.dispose()
+    }
 }
