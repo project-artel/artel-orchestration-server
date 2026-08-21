@@ -226,8 +226,12 @@ class TestScenarioPipelineIntegrationTest {
         val projectId = createMemberProject(appUserId)
         val runId = createRun(projectId)
 
+        // **`result` 만 기다린다.** 저작 단계 표시(ARTEL-419)가 붙은 뒤로 첫 이벤트는 `progress` 다 —
+        // 첫 이벤트를 결과로 단정하면 진행 표시를 하나 더 낼 때마다 이 테스트가 깨진다.
         val eventLatch = Sinks.one<ServerSentEvent<ScenarioStreamEvent>>()
-        val disposable = subscribeSse(client, projectId, runId, token) { eventLatch.tryEmitValue(it) }
+        val disposable = subscribeSse(client, projectId, runId, token) {
+            if (it.event() == "result") eventLatch.tryEmitValue(it)
+        }
         Thread.sleep(1000)
 
         // 첫 입력 → Agent 세션 오픈(POST /sessions) → WS 연결 시 첫 결과 수신.

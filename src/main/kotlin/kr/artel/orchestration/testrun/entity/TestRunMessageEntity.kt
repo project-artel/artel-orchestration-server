@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testrun.entity
 
 import org.springframework.data.annotation.CreatedDate
+import io.r2dbc.postgresql.codec.Json
 import org.springframework.data.annotation.Id
 import org.springframework.data.relational.core.mapping.Column
 import org.springframework.data.relational.core.mapping.Table
@@ -29,6 +30,18 @@ data class TestRunMessageEntity(
 
     @Column("content")
     val content: String,
+
+    /**
+     * 구조적 본문. 지금은 되묻는 질문 하나가 쓴다(ARTEL-487).
+     *
+     * 사람이 읽는 문장은 [content] 에 그대로 있고, 이 칸은 **화면이 눌러야 할 것**을 담는다 —
+     * 선택지 없이 문장만 있으면 사용자는 무엇을 답해야 하는지 알 수 없고, SSE 로만 흘리면
+     * 새로고침 한 번에 선택지가 사라져 답할 방법만 없어진다.
+     *
+     * 종류는 본문 안의 `kind` 가 말한다. 앞으로 생길 구조적 본문도 같은 칸을 쓴다.
+     */
+    @Column("payload")
+    val payload: Json? = null,
 
     @CreatedDate
     @Column("created_at")

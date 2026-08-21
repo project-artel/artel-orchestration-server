@@ -20,7 +20,14 @@ data class ScenarioResponse(
 data class MessageResponse(
     val role: String,
     val content: String,
-    val createdAt: Instant?
+    val createdAt: Instant?,
+    /**
+     * 구조적 본문(ARTEL-487). 지금은 되묻는 질문 하나가 쓴다 — `kind: "question"` 과 선택지.
+     *
+     * 이력에도 싣는 이유는 **새로고침 뒤에도 답할 수 있어야** 하기 때문이다. SSE 로만 흘리면
+     * 질문은 대화에 남았는데 누를 것만 사라진다.
+     */
+    val payload: Map<String, Any?>? = null,
 )
 
 /**

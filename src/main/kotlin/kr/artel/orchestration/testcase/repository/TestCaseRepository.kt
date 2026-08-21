@@ -16,6 +16,14 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     fun findByProjectIdOrderByIdDesc(projectId: Long): Flow<TestCaseEntity>
 
     /**
+     * 저작 세션에 실을 전량. **id 오름차순은 계약이다** — 이 목록이 프롬프트 앞 고정 블록에 실려
+     * 캐시를 타므로 순서가 흔들리면 매 턴 전량을 다시 청구한다([findTestCaseListByProjectIdOrderByIdAsc]와
+     * 같은 이유). 그쪽과 달리 엔티티를 통째로 읽는 것은 `metadata` 가 필요하기 때문이다 — 케이스가
+     * 실행 뒤 무엇을 확정하는지(`source.state_after`)가 거기 있고, 그 값이 정규화해 보낼 상태의 절반이다.
+     */
+    fun findByProjectIdOrderByIdAsc(projectId: Long): Flow<TestCaseEntity>
+
+    /**
      * 저작 Agent에 실을 전량 목록(ARTEL-318). 엔티티가 아니라 [TestCaseListItem]로 좁혀 읽는다.
      *
      * 엔티티를 그대로 읽지 않는 것은 Agent가 쓰지 않는 컬럼(`last_verified_build_id`, 타임스탬프)까지
