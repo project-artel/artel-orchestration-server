@@ -25,10 +25,14 @@ object ScenarioConflictSplit {
     /**
      * @property scenarios 나눈 결과. 나눌 것이 없으면 받은 것 그대로다.
      * @property notes 나눈 시나리오의 `제목 → 조각 수`. 사용자에게 알릴 것이 여기서 나온다.
+     * @property anchorOf `조각의 자리 → 첫 조각의 자리`(ARTEL-518). 나눠서 생긴 조각을 **원본 옆에**
+     *   놓으려면 어느 것에서 갈라졌는지 알아야 한다. 첫 조각은 자기 자신을 가리키지 않는다 —
+     *   여기 있는 것은 새로 생기는 조각뿐이다.
      */
     data class Outcome(
         val scenarios: List<ScenarioResult>,
         val notes: List<Pair<String, Int>> = emptyList(),
+        val anchorOf: Map<Int, Int> = emptyMap(),
     )
 
     /**
@@ -37,6 +41,7 @@ object ScenarioConflictSplit {
     fun apply(scenarios: List<ScenarioResult>, exclusive: (Long, Long) -> Boolean): Outcome {
         val out = mutableListOf<ScenarioResult>()
         val notes = mutableListOf<Pair<String, Int>>()
+        val anchorOf = mutableMapOf<Int, Int>()
 
         for (scenario in scenarios) {
             val groups = group(scenario.steps.mapNotNull { it.caseId }.distinct(), exclusive)
@@ -44,11 +49,14 @@ object ScenarioConflictSplit {
                 out += scenario
                 continue
             }
+            val first = out.size
             val parts = cut(scenario, groups)
             out += parts
+            // 첫 조각을 뺀 나머지가 새로 생기는 것이고, 그것들이 원본 옆에 놓여야 한다.
+            for (offset in 1 until parts.size) anchorOf[first + offset] = first
             notes += scenario.title to parts.size
         }
-        return Outcome(out, notes)
+        return Outcome(out, notes, anchorOf)
     }
 
     /**
@@ -97,10 +105,29 @@ object ScenarioConflictSplit {
         return groups.indices.map { part ->
             ScenarioResult(
                 scenarioId = if (part == 0) scenario.scenarioId else null,
-                title = if (part == 0) scenario.title else "${scenario.title} (${part + 1})",
+                title = titleOf(scenario.title, part),
                 description = scenario.description,
                 steps = steps.filterIndexed { index, _ -> owner[index] == part },
             )
         }
     }
+
+    /**
+     * 조각의 제목.
+     *
+     * **접미를 겹쳐 붙이지 않는다**(ARTEL-518). 이미 나뉜 조각을 또 나누는 일이 실제로 일어나고
+     * (런 155: 사용자가 지운 케이스를 "다시 담아줘" 하자 `…(5)` 를 다시 나눴다), 그때 그냥 붙이면
+     * `…(5) (2)` 가 된다. 한 번 더 나누면 `(5) (2) (2)` 다. 번호를 점으로 이어 괄호는 하나로 둔다.
+     */
+    private fun titleOf(title: String, part: Int): String {
+        if (part == 0) return title
+        val trimmed = title.trim()
+        val nested = PART_SUFFIX.find(trimmed)
+        if (nested != null) {
+            return trimmed.removeRange(nested.range).trimEnd() + " (${nested.groupValues[1]}.${part + 1})"
+        }
+        return "$trimmed (${part + 1})"
+    }
+
+    private val PART_SUFFIX = Regex("""\s*\((\d+(?:\.\d+)*)\)$""")
 }

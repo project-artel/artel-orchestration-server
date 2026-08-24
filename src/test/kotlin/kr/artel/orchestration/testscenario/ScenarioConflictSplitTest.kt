@@ -99,4 +99,35 @@ class ScenarioConflictSplitTest {
         assertThat(outcome.scenarios).hasSize(3)
         assertThat(outcome.notes).containsExactly("전투 전량" to 3)
     }
+
+    // --- 조각의 제목과 자리 (ARTEL-518) ---------------------------------------------
+
+    @Test
+    fun `이미 나뉜 조각을 또 나눠도 괄호는 하나다`() {
+        // 실측(런 155): 사용자가 지운 케이스를 "다시 담아줘" 하자 `…(5)` 를 다시 나눴고,
+        // 제목이 `…(5) (2)` 가 됐다. 한 번 더 나누면 `(5) (2) (2)` 다.
+        val outcome = ScenarioConflictSplit.apply(
+            listOf(scenario(step(2), step(3), title = "맵 이동 (5)")), parity,
+        )
+
+        assertThat(outcome.scenarios.map { it.title }).containsExactly("맵 이동 (5)", "맵 이동 (5.2)")
+    }
+
+    @Test
+    fun `조각이 어느 것에서 갈라졌는지 남긴다`() {
+        // 원본 옆에 놓으려면 이것이 필요하다. 첫 조각은 원본 자신이라 들어 있지 않다.
+        val outcome = ScenarioConflictSplit.apply(
+            listOf(scenario(step(1)), scenario(step(2), step(3), step(5))), parity,
+        )
+
+        assertThat(outcome.scenarios).hasSize(3)
+        assertThat(outcome.anchorOf).isEqualTo(mapOf(2 to 1))
+    }
+
+    @Test
+    fun `나눌 것이 없으면 갈라진 자리도 없다`() {
+        val outcome = ScenarioConflictSplit.apply(listOf(scenario(step(2), step(4))), parity)
+
+        assertThat(outcome.anchorOf).isEmpty()
+    }
 }

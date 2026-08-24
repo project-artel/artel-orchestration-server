@@ -571,6 +571,70 @@ class ScenarioBridgeInsertionIntegrationTest {
         assertThat(second.notices).noneMatch { it.contains("빠졌습니다") }
     }
 
+    /**
+     * 나눠서 생긴 조각은 **원본 바로 뒤**에 놓인다(ARTEL-518).
+     *
+     * 새 시나리오는 런 끝에 붙는 것이 기본이고 대부분 그게 맞다. 그런데 나눠서 생긴 조각은 새로
+     * 만든 것이 아니라 원본의 나머지 반쪽이다 — 실측(런 155)에서 맵 구간(position 2~8)을 나눈
+     * 조각이 EndingScene 뒤인 position 21 에 놓였고, 흐름을 순서대로 읽는 화면에서 그 조각은
+     * 아무 데서도 이어지지 않았다.
+     */
+    @Test
+    fun `나눈 조각은 런 끝이 아니라 원본 바로 뒤에 놓인다`(): Unit = runBlocking {
+        val dead = case("Map_scene", "Map_scene 화면인 상태 / Player.hp <= 0", step = "쓰러진 뒤 관찰한다")
+        val alive = case("Map_scene", "Map_scene 화면인 상태 / Player.hp > 0", step = "버틴 뒤 관찰한다")
+        val other = case("Map_scene", "Map_scene 화면인 상태", step = "그냥 관찰한다")
+
+        // 먼저 나뉠 시나리오를 만들고, 그 뒤에 다른 시나리오를 붙여 런 끝을 차지하게 한다.
+        reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "생사 혼재", description = "d",
+                    steps = listOf(ChatScenarioStep(action = "확인", caseId = dead)),
+                )
+            ),
+        )
+        reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "맨 뒤", description = "d",
+                    steps = listOf(ChatScenarioStep(action = "확인", caseId = other)),
+                )
+            ),
+        )
+        val split = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        val origin = split.first().testScenarioId
+        val last = split.last().testScenarioId
+
+        // 이제 첫 시나리오를 고쳐 쓰면서 함께 담을 수 없는 케이스를 넣는다 → 나뉜다.
+        val outcome = reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    scenarioId = origin, title = "생사 혼재", description = "d",
+                    steps = listOf(
+                        ChatScenarioStep(action = "확인", caseId = dead),
+                        ChatScenarioStep(action = "확인", caseId = alive),
+                    ),
+                )
+            ),
+        )
+
+        assertThat(outcome.applied).isEqualTo(2)
+        val order = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+            .map { it.testScenarioId }
+        // 원본 · 조각 · 그다음에 원래 맨 뒤였던 것.
+        assertThat(order).hasSize(3)
+        assertThat(order[0]).isEqualTo(origin)
+        assertThat(order[2]).isEqualTo(last)
+        // 자리 번호는 빈틈 없이 다시 매겨진다.
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().map { it.position })
+            .containsExactly(0, 1, 2)
+        assertThat(outcome.notices).anyMatch { it.contains("새 시나리오 1개") }
+    }
+
     // ---- 픽스처 ----------------------------------------------------------------------
 
     private suspend fun storedSteps(run: Long = runId): List<ChatScenarioStep> {
