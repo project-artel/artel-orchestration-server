@@ -5,6 +5,8 @@ import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testrun.dto.CommitScenariosRequest
 import kr.artel.orchestration.testrun.dto.RunChatMessage
+import kr.artel.orchestration.testrun.dto.RunDeletionPreview
+import kr.artel.orchestration.testrun.dto.RunDeletionResult
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
 import kr.artel.orchestration.testrun.dto.SetRunScenariosRequest
 import kr.artel.orchestration.testrun.dto.TestRunCreateRequest
@@ -26,6 +28,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -79,15 +82,30 @@ class TestRunController(
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 
+    /** 이 런을 지우면 무엇이 같이 없어지는지(ARTEL-487). 삭제 확인창이 물어보기 위해 읽는다. */
+    @GetMapping("/{runId}/deletion-preview")
+    suspend fun deletionPreview(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<RunDeletionPreview> =
+        service.deletionPreview(runId, appUserId)
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
+
+    /**
+     * 런 삭제. `dropScenarios=true` 면 **이 런에만 담긴** 시나리오도 함께 지운다(ARTEL-487).
+     *
+     * 기본값은 남기기다 — 되돌릴 수 없는 삭제의 기본값은 덜 지우는 쪽이어야 한다. 화면이 미리
+     * 세어 보고(`/deletion-preview`) 사용자에게 물은 뒤 그 답을 여기로 보낸다.
+     */
     @DeleteMapping("/{runId}")
     suspend fun delete(
         @PathVariable projectId: Long,
         @PathVariable runId: Long,
+        @RequestParam(required = false, defaultValue = "false") dropScenarios: Boolean,
         @CurrentUserId appUserId: Long
-    ): ResponseEntity<Void> {
-        service.delete(runId, appUserId)
-        return ResponseEntity.noContent().build()
-    }
+    ): RunDeletionResult = service.delete(runId, appUserId, dropScenarios)
 
     @GetMapping("/{runId}/scenarios")
     suspend fun getScenarios(

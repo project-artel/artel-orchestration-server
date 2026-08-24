@@ -13,6 +13,15 @@ import java.time.Instant
 
 /** QA 실행 런(TR) 단위 리포지토리 (ARTEL-259). 한 게임 인스턴스에 활성 런은 하나. */
 interface QaRunRepository : CoroutineCrudRepository<QaRunEntity, Long> {
+
+    /**
+     * 이 TR 로 돌린 QA 런 수. **TR 삭제를 막는 근거다**(ARTEL-487).
+     *
+     * `qa_run.test_run_id` 는 cascade 없는 외래키라, 실행 이력이 있는 TR 을 지우면 DB 가 거절해
+     * 500 으로 튄다. 세어 보고 미리 409 로 답하면 사용자는 무엇이 막는지 읽을 수 있다.
+     */
+    suspend fun countByTestRunId(testRunId: Long): Long
+
     @Query(
         """
         SELECT * FROM qa_run

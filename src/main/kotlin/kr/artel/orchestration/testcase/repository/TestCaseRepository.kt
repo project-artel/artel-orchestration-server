@@ -59,6 +59,14 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      * 커버 집합은 `test_scenario.steps`의 `case_id` 합집합이다 — **원장을 따로 저장하지 않는다.**
      * 값이 이미 있는데 복제하면 진실이 둘이 되고, 시나리오를 고칠 때마다 동기화가 숙제로 남는다.
      *
+     * **어떤 런에도 담기지 않은 시나리오는 세지 않는다**(ARTEL-495). 커버리지가 프로젝트의 모든
+     * 시나리오를 세던 때에는, 런을 지우면 남은 시나리오가 케이스를 계속 "담긴 것"으로 만들어
+     * 사용자가 보기에 숫자가 그대로였다. 지금은 런에서 떨어지는 순간 커버에서 빠지고, 그 시나리오를
+     * 다른 런에 다시 넣으면 그대로 돌아온다 — **시나리오는 지우지 않고 커버리지만 따라간다.**
+     *
+     * 뜻으로도 이쪽이 맞다: 어느 런에도 없는 시나리오는 실행될 일이 없고, 실행되지 않는 것이
+     * 케이스를 검증한다고 말할 수는 없다. 대신 런에 넣지 않은 채 만든 시나리오는 미커버로 보인다.
+     *
      * `case_id`가 없는 스텝(이동·준비 같은 브리지)은 자연히 빠진다 — 검증을 하지 않으므로 무엇도
      * 커버하지 않는다.
      *
@@ -74,6 +82,9 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
             WHERE s.project_id = :projectId
               AND e->>'case_id' IS NOT NULL
               AND (e->>'case_id')::bigint = c.id
+              AND EXISTS (
+                SELECT 1 FROM test_run_scenario rs WHERE rs.test_scenario_id = s.id
+              )
           )
         ORDER BY c.id ASC
         """
@@ -85,6 +96,9 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      *
      * id 목록만으로는 사람이 무엇이 남았는지 알 수 없다 — 번호는 화면에 내보내지도 않는 값이다.
      * 씬은 사용자가 아는 말이라 "전투 화면 12건이 남았다"가 곧 다음 요청이 된다.
+     *
+     * 세는 범위는 [findUncoveredIdsByProjectId] 와 같다 — 어떤 런에도 담기지 않은 시나리오는 빼고
+     * 센다(ARTEL-495). 두 질의가 다른 것을 세면 화면의 숫자와 권하는 문구가 갈린다.
      *
      * 많은 순으로 낸다. 다음에 할 일을 고르는 자리라 큰 덩어리가 먼저 보이는 편이 쓸모 있다.
      */
@@ -98,6 +112,9 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
             WHERE s.project_id = :projectId
               AND e->>'case_id' IS NOT NULL
               AND (e->>'case_id')::bigint = c.id
+              AND EXISTS (
+                SELECT 1 FROM test_run_scenario rs WHERE rs.test_scenario_id = s.id
+              )
           )
         GROUP BY c.scene
         ORDER BY count(*) DESC, c.scene ASC
