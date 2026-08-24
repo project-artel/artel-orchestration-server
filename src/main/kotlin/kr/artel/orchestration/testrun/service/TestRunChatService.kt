@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testrun.service
 
+import com.fasterxml.jackson.core.type.TypeReference
 import kr.artel.orchestration.common.error.NotFoundException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -37,6 +38,7 @@ class TestRunChatService(
     private val streamManager: TestScenarioStreamManager,
     private val reconcileService: ScenarioReconcileService,
     private val runScenarioReader: RunScenarioReader,
+    private val objectMapper: com.fasterxml.jackson.databind.ObjectMapper,
 ) {
 
     /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다(재방문 복원). 접근 불가면 빈 목록. */
@@ -44,7 +46,18 @@ class TestRunChatService(
         accessible(runId, appUserId) ?: return emptyList()
         return runMessageRepository
             .findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
-            .map { MessageResponse(role = it.role, content = it.content, createdAt = it.createdAt) }
+            .map {
+                MessageResponse(
+                    role = it.role,
+                    content = it.content,
+                    createdAt = it.createdAt,
+                    payload = it.payload?.let { raw ->
+                        runCatching {
+                            objectMapper.readValue(raw.asString(), object : TypeReference<Map<String, Any?>>() {})
+                        }.getOrNull()
+                    },
+                )
+            }
             .toList()
     }
 
@@ -65,6 +78,7 @@ class TestRunChatService(
             userInput = message.message,
             autoApply = message.autoApply,
             currentScenarios = runScenarioReader.currentScenarios(runId),
+            answer = message.answer,
         )
     }
 
@@ -77,7 +91,14 @@ class TestRunChatService(
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
         // 판정을 넘기지 않는다 — 이 경로의 시나리오는 사용자가 카드로 직접 고른 것이라 "Agent가 다
         // 봤는가"를 물을 대상이 아니다. 사람이 고른 것이 곧 요구다.
-        return reconcileService.reconcile(runId, run.projectId, scenarios).applied
+        //
+        val outcome = reconcileService.reconcile(runId, run.projectId, appUserId, scenarios)
+        // **알림과 질문은 저장 경로와 무관하게 나간다**(ARTEL-487). 이 경로의 응답은 반영 건수
+        // 하나라 거기 실을 자리가 없어서, 챗봇과 같은 자리(대화 기록 + SSE)로 흘린다 — 예전에는
+        // 여기서 조용히 버려져, 카드로 저장한 사용자에게는 미상 스텝만 남고 이유도 답할 방법도
+        // 보이지 않았다.
+        agentService.deliver(appUserId, runId, outcome.notices, outcome.question)
+        return outcome.applied
     }
 
     /**

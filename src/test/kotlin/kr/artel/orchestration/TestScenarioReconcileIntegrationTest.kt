@@ -203,6 +203,53 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(hit.has("verificationStatus")).isTrue()
     }
 
+    /**
+     * 경로 조회 프레임에 답한다(ARTEL-466).
+     *
+     * 씬 명세가 없는 프로젝트라 답은 `UNKNOWN` 이다 — **그것이 정답이다.** 지어내지 않고
+     * 무엇이 막는지를 말하는 것이 이 툴의 절반이고, 명세가 없는 프로젝트에서도 세션이 죽지
+     * 않아야 한다.
+     */
+    @Test
+    fun `인입 find_path에 결과 프레임으로 답한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val a = insertCase(projectId, "Map_scene", "A")
+        val b = insertCase(projectId, "Map_scene", "B")
+
+        framesToSend.add(
+            """{"type":"find_path","messageId":"path-1","from_case_id":$a,"to_case_id":$b}"""
+        )
+        postMessage(client, projectId, runId, token, "경로 좀")
+
+        val frame = awaitFrame { it.contains("find_path_result") }
+        assertThat(frame).isNotNull
+        val node = objectMapper.readTree(frame)
+        assertThat(node.get("type").asText()).isEqualTo("find_path_result")
+        assertThat(node.get("correlationId").asText()).isEqualTo("path-1")
+        assertThat(node.get("result").asText()).isEqualTo("UNKNOWN")
+        assertThat(node.get("blockedBy").asText()).isEqualTo("content-map")
+    }
+
+    /** 인자가 빠진 프레임에도 에러로 답해 대기 중인 도구를 푼다. 세션은 죽지 않는다. */
+    @Test
+    fun `find_path에 케이스 id가 빠지면 에러 프레임으로 답한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        framesToSend.add("""{"type":"find_path","messageId":"path-2"}""")
+        postMessage(client, projectId, runId, token, "경로 좀")
+
+        val frame = awaitFrame { it.contains("path-2") && it.contains("error") }
+        assertThat(frame).isNotNull
+        assertThat(objectMapper.readTree(frame).get("detail").asText()).contains("from_case_id")
+    }
+
     // ---- (b) result{scenarios:[…]} → INSERT(본문 steps) ---------------------------------
 
     @Test
@@ -403,6 +450,173 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(recommendation).contains("EndingScene")
         // 한 줄로 끝난다. 좁은 작업을 이어가는 사람에게 여러 줄은 소음이다.
         assertThat(recommendation.lines()).hasSize(1)
+    }
+
+    /**
+     * 되묻고, 답을 받아 다음 턴에 잇는다(ARTEL-487).
+     *
+     * 지금까지 없던 것은 묻는 능력이 아니라 **질문을 담을 자리**였다. 산문 속 질문은 설명으로
+     * 읽히고, 답해도 그 맥락이 다음 턴까지 살아남지 않았다.
+     */
+    @Test
+    fun `덜 담긴 씬이 있으면 되묻고 답을 다음 턴에 잇는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "TitleScene", "A")
+        val caseB = insertCase(projectId, "TitleScene", "B")
+
+        framesToSend.add(
+            """{"type":"result","message":"A만 담았습니다","reviewed":{"in":[$caseA],"out":[$caseB]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        turnReplies.add("""{"type":"result","message":"넣었습니다","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+
+        postMessage(client, projectId, runId, token, "타이틀 시나리오")
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.payload != null }
+        }
+
+        // 질문은 **저장된다.** SSE 로만 흘리면 새로고침 한 번에 선택지가 사라져, 질문은 기록에
+        // 남았는데 답할 방법만 없어진다.
+        val asked = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().first { it.payload != null }
+        val payload = objectMapper.readTree(asked.payload!!.asString())
+        assertThat(payload["kind"].asText()).isEqualTo("question")
+        assertThat(payload["id"].asText()).startsWith("scope:")
+        assertThat(payload["options"].map { it["id"].asText() }).contains("scene:TitleScene", "keep")
+
+        // 저장은 막히지 않았다 — 답하지 않아도 그 턴의 결과물은 남는다.
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).hasSize(1)
+
+        // 답하면 **무엇에 대한 답인지** 함께 실려 나간다. 보기 id 만 보내면 모델은 뜻을 모른다.
+        val questionId = payload["id"].asText()
+        client.post()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue(
+                """{"message":"","answer":{"question_id":"$questionId","option_ids":["scene:TitleScene"]}}"""
+            )
+            .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(5))
+
+        awaitUntil { receivedFrames.any { it.contains("앞서 물어본 것") } }
+        val relayed = receivedFrames.first { it.contains("앞서 물어본 것") }
+        assertThat(relayed).contains("TitleScene 마저 담기")
+    }
+
+    /**
+     * 말로 답해도 알아듣는다(ARTEL-487).
+     *
+     * **모델은 코드가 만든 질문을 본 적이 없다** — 오케가 저장하고 화면에 흘릴 뿐 모델의 대화에는
+     * 들어가지 않는다. 그래서 "응" 한 마디가 무엇에 대한 것인지 알 길이 없었다(런 32에서 실제로
+     * 그랬다). 물어본 것을 붙여 주고 판단은 모델에 맡긴다.
+     */
+    @Test
+    fun `보기를 안 누르고 말로 답해도 물어본 것을 함께 보낸다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "TitleScene", "A")
+        val caseB = insertCase(projectId, "TitleScene", "B")
+
+        // 전 건을 판정해야 저장까지 간다(검수에서 막히면 질문이 아니라 재작성 루프로 빠진다).
+        framesToSend.add(
+            """{"type":"result","message":"A만 담았습니다","reviewed":{"in":[$caseA],"out":[$caseB]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "타이틀 시나리오")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.payload != null }
+        }
+
+        // 보기를 누르지 않고 그냥 "응" 이라고 적는다.
+        postMessage(client, projectId, runId, token, "응")
+
+        awaitUntil { receivedFrames.any { it.contains("응") } }
+        assertThat(receivedFrames.first { it.contains("응") }).contains("직전에 물어본 것")
+    }
+
+    /**
+     * 카드로 저장해도 알림과 질문이 나간다(ARTEL-487).
+     *
+     * 카드 검토 모드는 챗봇이 아니라 REST 로 저장한다. 그 경로가 반영 건수만 돌려주는 바람에
+     * 검수가 계산해 둔 것이 조용히 버려졌고, 사용자에게는 미상 스텝만 남았다(런 32).
+     */
+    @Test
+    fun `카드로 커밋해도 되묻는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "TitleScene", "A")
+        insertCase(projectId, "TitleScene", "B")
+
+        client.post()
+            .uri("/api/projects/$projectId/test-runs/$runId/scenarios/commit")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue(
+                """{"scenarios":[{"title":"타이틀","description":"d",""" +
+                    """"steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+            )
+            .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(10))
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.payload != null }
+        }
+        val asked = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().first { it.payload != null }
+        assertThat(objectMapper.readTree(asked.payload!!.asString())["id"].asText()).startsWith("scope:")
+    }
+
+    /**
+     * 모델이 스스로 물은 것도 같은 자리로 나간다(ARTEL-487).
+     *
+     * 코드가 아는 것은 코드가 묻고(구간·갈래·범위), 요청의 뜻이 갈리는 것은 모델이 묻는다.
+     * 화면이 두 벌을 그릴 이유가 없고 답이 돌아오는 길도 하나여야 한다.
+     */
+    @Test
+    fun `모델이 낸 질문도 저장되고 출처가 모델로 남는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val caseA = insertCase(projectId, "TitleScene", "A")
+
+        framesToSend.add(
+            """{"type":"result","message":"어느 쪽을 뜻하시는지 확인이 필요합니다",""" +
+                """"reviewed":{"in":[$caseA],"out":[]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}],""" +
+                """"question":{"id":"agent:scope","text":"전투는 어느 쪽을 뜻하나요?",""" +
+                """"why":"요청이 두 가지로 읽힙니다","options":[{"id":"turn","label":"턴 전투만 담아 줘"}]}}"""
+        )
+
+        postMessage(client, projectId, runId, token, "전투 시나리오")
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.payload != null }
+        }
+
+        val asked = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().first { it.payload != null }
+        val payload = objectMapper.readTree(asked.payload!!.asString())
+        assertThat(payload["id"].asText()).isEqualTo("agent:scope")
+        assertThat(asked.content).isEqualTo("전투는 어느 쪽을 뜻하나요?")
+        // 출처는 프레임 값을 믿지 않고 여기서 못 박는다 — 모델이 자기 질문을 코드가 계산한
+        // 것처럼 표시할 수 있고, 근거 있는 질문과의 구분이 이 필드 하나에 걸려 있다.
+        assertThat(payload["source"].asText()).isEqualTo("agent")
+        // 물음은 저장을 막지 않는다.
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).hasSize(1)
     }
 
     /**

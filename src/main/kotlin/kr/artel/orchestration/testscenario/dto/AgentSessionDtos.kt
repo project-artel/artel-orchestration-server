@@ -2,7 +2,7 @@ package kr.artel.orchestration.testscenario.dto
 
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
-import kr.artel.orchestration.testcase.dto.TestCaseListItem
+import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
 
@@ -36,7 +36,7 @@ data class AgentSessionOpenRequest(
      * **기본값이 빈 목록인 것은 하위 호환 장치다.** Agent는 이 값이 비면 기존 검색 경로로 동작하므로,
      * 되돌릴 때 양쪽을 다시 배포하지 않아도 된다.
     */
-    @JsonProperty("test_case_list") val testCaseList: List<TestCaseListItem> = emptyList(),
+    @JsonProperty("test_case_list") val testCaseList: List<AuthoringTestCase> = emptyList(),
     @JsonInclude(JsonInclude.Include.NON_NULL)
     val model: String? = null,
     /**
@@ -115,4 +115,73 @@ data class UncoveredCasesResultFrame(
     val correlationId: String?,
     val ids: List<Long>,
     val scenes: List<UncoveredScene>
+)
+
+/**
+ * Agent의 `find_path` 프레임에 대한 응답(ARTEL-466).
+ *
+ * **경로 계산이 Agent가 아니라 여기 있는 이유**는 검증 때문이다. 그래프를 Agent에만 두면
+ * 나중에 "정말 모르는 길이었나"를 대조할 쪽이 없어지고, 그러면 전부 모른다고 적는 것이 가장
+ * 싼 통과 방법이 된다. 계산하는 쪽과 검사하는 쪽이 같아야 그 구멍이 막힌다.
+ *
+ * @property result `KNOWN`|`NOT_REQUIRED`|`UNKNOWN`. 셋이 "사이에 스텝이 필요한가"라는 한 질문의 답이다.
+ * @property capabilityIds `KNOWN`일 때 순서대로. 스텝의 근거로 그대로 옮겨 적게 한다.
+ * @property actions [capabilityIds]와 같은 길이의 사람 말. Agent가 스텝 문장으로 베낀다.
+ * @property inputs [capabilityIds]와 같은 길이의 **정규화된 조작**(`key:Return`·`click:경로`).
+ *   Agent는 이 값을 스텝의 `input`에 그대로 넣는다 — 문장에서 다시 뽑아 쓰지 않게 하려는 것이다.
+ * @property blockedBy `UNKNOWN`일 때 막는 것 — 씬 쌍(`A→B`) 또는 변수명. **지어내지 말라는 말보다
+ *   무엇이 막는지를 주는 편이 낫다** — 사용자에게 물어볼 거리가 그 이름이다.
+ */
+data class ScenarioPathResultFrame(
+    val type: String = "find_path_result",
+    val correlationId: String?,
+    val result: String,
+    val capabilityIds: List<Long> = emptyList(),
+    val actions: List<String> = emptyList(),
+    val inputs: List<String> = emptyList(),
+    /** `REVERSED` 면 **메우기 전에 순서를 보라는 뜻**이다. `CHAINED`·`NO_OPINION` 은 그대로 진행. */
+    val ordering: String = "NO_OPINION",
+    val blockedBy: String? = null,
+    val note: String = ""
+)
+
+/**
+ * Agent의 `explain_case` 프레임에 대한 응답(ARTEL-466).
+ *
+ * "이 케이스는 무엇으로 이루어져 있나"에 대한 답이다. 케이스 목록에는 그 케이스가 몇 번의
+ * 조작인지, 그 조작을 뭐라고 부르는지가 없다 — 그래서 저작이 케이스 제목을 옮겨 적은 문장을
+ * 스텝으로 쓰고 브리지를 한 줄로 뭉갠다. 지도에는 있으므로 물어보면 답한다.
+ *
+ * @property operations 이 케이스가 가리키는 조작들. **빈 배열이 정상적인 답이다** — 지도가 아직
+ *   그 기능을 모른다는 뜻이고, 그때는 조작 이름을 지어내지 않는 것이 옳다.
+ * @property observable 기대결과를 실행 중에 되읽을 수 있나. 조작을 못 찾았으면 null(모름).
+ */
+data class CaseFactsResultFrame(
+    val type: String = "explain_case_result",
+    val correlationId: String?,
+    val testCaseId: Long,
+    val scene: String? = null,
+    val stateBefore: List<CaseGuardFrame> = emptyList(),
+    val stateAfter: Map<String, String> = emptyMap(),
+    val operations: List<CaseOperationFrame> = emptyList(),
+    val observable: Boolean? = null,
+    val note: String = "",
+)
+
+data class CaseGuardFrame(val variable: String, val operator: String, val value: String)
+
+/**
+ * @property input 스텝의 `input`에 그대로 넣는 값(`key:Return`·`click:경로`).
+ * @property matchedBy `evidence`는 그 케이스가 가리키는 코드 자체, `effect`는 같은 값을 건드리는
+ *   기능이라 여럿일 수 있다. 뭉뚱그리면 "정확히 이것"과 "아마 이 중 하나"가 구분되지 않는다.
+ */
+data class CaseOperationFrame(
+    val capabilityId: Long,
+    val input: String,
+    val label: String?,
+    val summary: String,
+    val given: String?,
+    /** 실행 축(ARTEL-479). 관측 불가까지 섞인 `status` 대신 이것을 낸다. */
+    val actionability: String,
+    val matchedBy: String,
 )

@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
+import kr.artel.orchestration.testcase.dto.AuthoringTestCase
+import kr.artel.orchestration.testcase.dto.CaseGuard
 import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
@@ -17,6 +19,7 @@ import kr.artel.orchestration.testcase.dto.toTestCaseResponse
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import org.springframework.stereotype.Service
 
 /**
@@ -62,6 +65,32 @@ class TestCaseService(
     suspend fun getAllTestCases(projectId: Long, userId: Long): AllTestCasesResponse {
         if (!projectAccessService.isMember(projectId, userId)) return AllTestCasesResponse(emptyList())
         return AllTestCasesResponse(repository.findTestCaseListByProjectIdOrderByIdAsc(projectId).toList())
+    }
+
+    /**
+     * 저작 세션에 실을 전량. [getAllTestCases]에 **정규화된 상태**를 얹은 것이다(ARTEL-466).
+     *
+     * 사전조건 문장을 Agent와 오케가 각자 해석하던 것을 한쪽으로 모은다 — 두 해석이 어긋나면
+     * Agent가 짠 순서를 코드가 다른 상태로 계산해 메우게 되고, 그 어긋남은 화면에 아무 표시도
+     * 남기지 않는다. 읽는 규칙은 경로 계산이 쓰는 것과 같은 [ScenarioStateReader]다.
+     *
+     * 비참여자에겐 빈 목록 — 다른 조회와 같은 판단이다(존재 자체를 숨긴다).
+     */
+    suspend fun getAuthoringCases(projectId: Long, userId: Long): List<AuthoringTestCase> {
+        if (!projectAccessService.isMember(projectId, userId)) return emptyList()
+        return repository.findByProjectIdOrderByIdAsc(projectId).map { case ->
+            AuthoringTestCase(
+                id = case.id!!,
+                scene = ScenarioStateReader.sceneOf(case) ?: case.scene,
+                step = case.step,
+                precondition = case.precondition,
+                expectedValue = case.expectedValue,
+                verificationStatus = case.verificationStatus,
+                stateBefore = ScenarioStateReader.guardsOf(case.precondition)
+                    .map { CaseGuard(it.variable, it.operator, it.value) },
+                stateAfter = ScenarioStateReader.stateAfter(case, objectMapper),
+            )
+        }.toList()
     }
 
     /**

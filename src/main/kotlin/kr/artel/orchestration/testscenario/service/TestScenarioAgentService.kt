@@ -2,8 +2,11 @@ package kr.artel.orchestration.testscenario.service
 
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.JsonNode
+import io.r2dbc.postgresql.codec.Json
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -15,12 +18,14 @@ import kotlinx.coroutines.reactor.awaitSingle
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
-import kr.artel.orchestration.testcase.dto.TestCaseListItem
+import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.service.TestCaseSearchService
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
+import kr.artel.orchestration.testscenario.agent.PhrasedStep
+import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
@@ -28,6 +33,14 @@ import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
 import kr.artel.orchestration.testscenario.dto.ReviewedCases
+import kr.artel.orchestration.testscenario.dto.CaseFactsResultFrame
+import kr.artel.orchestration.testscenario.dto.CaseGuardFrame
+import kr.artel.orchestration.testscenario.dto.CaseOperationFrame
+import kr.artel.orchestration.testscenario.dto.ScenarioPathResultFrame
+import kr.artel.orchestration.testscenario.dto.ScenarioQuestion
+import kr.artel.orchestration.testscenario.dto.ScenarioQuestionAnswer
+import kr.artel.orchestration.testscenario.dto.ScenarioQuestionOption
+import kr.artel.orchestration.testscenario.dto.ScenarioQuestionSource
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchErrorFrame
@@ -75,7 +88,11 @@ class TestScenarioAgentService(
     private val testCaseService: TestCaseService,
     private val testCaseRepository: TestCaseRepository,
     private val projectAccessService: ProjectAccessService,
-    private val reconcileService: ScenarioReconcileService
+    private val reconcileService: ScenarioReconcileService,
+    private val pathService: ScenarioPathService,
+    private val caseFactService: ScenarioCaseFactService,
+    private val gapFiller: ScenarioGapFiller,
+    private val phrasingClient: ScenarioStepPhrasingClient,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -98,16 +115,94 @@ class TestScenarioAgentService(
         userInput: String,
         autoApply: Boolean,
         currentScenarios: List<CurrentScenario>,
+        answer: ScenarioQuestionAnswer? = null,
     ) {
-        // 원래 순서대로: 먼저 USER 메시지를 저장한 뒤 Agent로 보낸다.
-        saveMessage(runId, appUserId, "USER", userInput)
+        // 되묻는 질문에 대한 답이면 **무엇에 대한 답인지 함께 실어 보낸다**(ARTEL-487). 보기 id만
+        // 보내면 모델은 그것이 무슨 뜻인지 모른다 — 질문과 보기 문구를 여기서 다시 붙인다.
+        // 세션에 없으면 **저장된 질문**에서 찾는다. 카드 저장으로 물었거나, 서버가 다시 떴거나,
+        // 사용자가 새로고침한 화면에서 답할 수 있다 — 그때 답을 잃으면 물어본 보람이 없다.
+        val pending = sessions[sessionKey]?.question ?: lastQuestion(runId, appUserId)
+
+        // 미상 구간에 대한 답은 **코드가 그 자리에 넣는다**(ARTEL-487). 모델에게 넘겨 다시 쓰게
+        // 했더니 "StoryScene→Map_scene 을 어떻게 가나요"의 답이 엉뚱한 6번 자리에 들어가고 정작
+        // 그 구간의 알림은 그대로 남았다 — 사용자가 보기에는 답을 했는데 아무 일도 안 일어났다.
+        //
+        // **자리는 코드가, 문장은 모델이.** 어느 자리인지는 질문 id 에 들어 있어 계산으로 끝나고,
+        // 사용자가 적은 말을 앞뒤 스텝과 같은 결로 다듬는 것은 모델이 낫다. 다듬기가 실패하면
+        // 적은 말을 그대로 넣는다 — 어색한 문장보다 알려준 것이 사라지는 쪽이 나쁘다.
+        gapHowTo(pending, answer)?.let { howTo ->
+            val blockedBy = pending!!.id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)
+            // 다듬는 데도 모델이 한 번 돌아 몇 초가 걸린다. 말없이 기다리게 두면 답이 먹히지
+            // 않은 것처럼 보인다 — 실제로 일어나는 일이 모델 호출이므로 같은 단계로 말한다.
+            progress(sessionKey, AuthoringStage.THINKING)
+            val written = mutableListOf<String>()
+            val filled = gapFiller.fill(runId, blockedBy) { before, after ->
+                val lines = phrasingClient.phrase(howTo, blockedBy, before, after, localeOf(appUserId))
+                    ?: listOf(PhrasedStep(action = howTo))
+                written += lines.map { it.action }
+                lines
+            }
+            if (filled > 0) {
+                sessions[sessionKey]?.question = null
+                saveMessage(runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) })
+                notifyGapFilled(sessionKey, runId, appUserId, blockedBy, written)
+                return
+            }
+            // 채울 자리가 없거나(이미 채워졌다) 적은 말이 통과 방법이 아니었다("잘 모르겠는데").
+            // 어느 쪽이든 답을 삼키지 말고 평소대로 대화로 넘긴다.
+            logger.info("미상 구간을 채우지 않았다 — 대화로 넘긴다 [runId={}] {}", runId, blockedBy)
+        }
+
+        // **"안 할래"는 코드가 아는 답이다**(ARTEL-487). 거절을 모델에게 넘기면 값을 치르고도
+        // 얻는 것이 없다 — 모델이 시나리오를 그대로 돌려주면 검수가 다시 돌고, 같은 조건이 또
+        // 걸려 **방금 거절한 질문이 다시 나갔다.** 여기서 받아서, 무엇을 그대로 뒀는지와 마음이
+        // 바뀌면 무엇을 하면 되는지만 말한다.
+        if (declined(pending, answer, userInput)) {
+            sessions[sessionKey]?.question = null
+            saveMessage(runId, appUserId, "USER", answerSummary(pending, answer))
+            notifyDeclined(sessionKey, runId, appUserId, pending!!)
+            return
+        }
+
+        val turnInput = when {
+            // 보기를 눌렀다 — 무엇에 대한 답인지 붙여 보낸다.
+            answerText(pending, answer) != null ->
+                answerText(pending, answer)!!.let { if (userInput.isBlank()) it else "$it\n\n$userInput" }
+            // 그냥 말로 답했다. **모델은 그 질문을 본 적이 없다** — 코드가 만든 질문은 오케가
+            // 저장·전송하고 모델의 대화에는 들어가지 않는다. 그래서 "응" 한 마디가 무엇에 대한
+            // 것인지 알 길이 없었다. 물어본 것을 붙여 주고 판단은 모델에 맡긴다 — 이어지는 말이
+            // 아닐 수도 있어서 "답"이라고 단정하지 않는다.
+            pending != null && userInput.isNotBlank() ->
+                "(직전에 물어본 것: ${pending.text})\n\n$userInput"
+            else -> userInput
+        }
+        // **보낼 말이 없으면 보내지 않는다**(ARTEL-487). 이미 답한 질문의 보기를 한 번 더 누르면
+        // 여기까지 온다 — 새로고침한 화면이 그 버튼을 되살려 주기 때문이다(런 150). 그때 빈 턴을
+        // 모델에게 넘기면 "실행 목표가 비어 있어 판단할 수 없다"는 답이 돌아오고, 사용자는 자기가
+        // 무엇을 잘못했는지 모른 채 그 말을 읽는다. 답이 이미 끝난 질문이면 그때 한 말을 되풀이한다.
+        if (turnInput.isBlank()) {
+            answer?.questionId?.takeIf { it in answeredQuestionIds(runId, appUserId) }?.let { id ->
+                saveMessage(runId, appUserId, "ASSISTANT", ScenarioDeclineReply.advice(ScenarioQuestion(id, "")))
+                logger.info("이미 답한 질문에 다시 답했다 — 같은 안내를 되풀이한다 [runId={}] {}", runId, id)
+            } ?: logger.info("보낼 말이 없는 턴 — 모델을 부르지 않는다 [runId={}]", runId)
+            return
+        }
+
+        // 물어본 것은 한 턴만 산다. 답이든 딴 얘기든 다음 턴까지 끌고 가면, 한참 뒤의 "응"이
+        // 엉뚱한 질문에 붙는다. 화면의 보기는 저장된 질문으로 계속 답할 수 있다.
+        sessions[sessionKey]?.question = null
+
+        // **대화에는 사용자가 한 말만 남긴다.** 모델에게 붙여 보내는 맥락(직전 질문, 고른 보기)은
+        // 전달을 위한 것이지 사용자가 쓴 문장이 아니다 — 말풍선에 그대로 뜨면 자기가 하지 않은
+        // 말을 한 것처럼 보인다.
+        saveMessage(runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) })
         val existing = sessions[sessionKey]
         if (existing != null) {
             // 토글을 매 턴 반영해 대화 중 변경도 다음 결과부터 적용되게 한다.
             existing.autoApply = autoApply
-            sendTurn(sessionKey, existing, userInput, currentScenarios)
+            sendTurn(sessionKey, existing, turnInput, currentScenarios)
         } else {
-            openSession(sessionKey, runId, projectId, appUserId, userInput, autoApply, currentScenarios)
+            openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios)
         }
         // 보낸 뒤에 알린다. 세션 오픈이나 턴 전송이 실패하면 "보냈다"가 거짓이 되고,
         // 그 경우 사용자는 진행 중인 것처럼 보이는 화면 앞에서 오지 않을 답을 기다리게 된다.
@@ -144,12 +239,10 @@ class TestScenarioAgentService(
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
-        val locale = appUserRepository.findById(appUserId)
-            ?.let { if (it.locale == "ko") "ko" else "en" }
-            ?: "en"
+        val locale = localeOf(appUserId)
         val body = AgentSessionOpenRequest(
             userInput = userInput,
-            gameContext = gameContext(projectId, appUserId),
+            gameContext = gameContext(),
             testCaseList = testCaseList(projectId, appUserId),
             // 모델 선택의 기본값은 모델 카탈로그를 소유한 Agent가 결정한다. Orchestration은
             // 명시적 override가 있을 때만 model을 보내 모델 교체 때 구 slug를 강제하지 않는다.
@@ -170,22 +263,27 @@ class TestScenarioAgentService(
     }
 
     /**
-     * 프로젝트의 가장 최근 씬 스캔을 game_context로 만든다. SDK가 등록 때 보고한 빌드의 UI 구성이며,
-     * Agent가 어떤 화면을 대상으로 시나리오를 짜는지 참조한다.
-     *
-     * 최신 빌드가 스캔 없이 등록됐을 수도 있어(구버전 SDK), 스캔을 가진 가장 최근 빌드를 고른다.
-     * 그런 빌드가 하나도 없으면 빈 맵이라 기존과 동일하게 빈 game_context를 보낸다.
+     * 사용자 계정 locale 을 Agent 계약의 허용 값으로 좁힌다(`ko`|`en`). 미설정이나 그 밖의 값은
+     * `en` 이다 — 계약에 없는 값을 보내 세션이 열리지 않는 것보다 낫다.
      */
-    private suspend fun gameContext(projectId: Long, appUserId: Long): Map<String, Any> {
-        val build = buildRepository.findAllForMember(projectId, appUserId)
-            .filter { it.sceneScan != null }
-            .firstOrNull()
-            ?: return emptyMap()
-        return objectMapper.readValue(
-            build.sceneScan!!.asString(),
-            object : TypeReference<Map<String, Any>>() {}
-        )
-    }
+    private suspend fun localeOf(appUserId: Long): String =
+        appUserRepository.findById(appUserId)?.let { if (it.locale == "ko") "ko" else "en" } ?: "en"
+
+    /**
+     * 저작 세션은 **씬 스캔을 싣지 않는다**(ARTEL-466).
+     *
+     * 예전에는 빌드의 `scene_scan` 을 `game_context` 로 실어 보냈다. 그 내용이 "어떤 씬이 있고
+     * 거기서 무엇을 할 수 있나"인데, 그것은 지금 씬 명세가 답하는 질문과 **같은 질문**이다. 같은
+     * 것을 두 곳에서 주면 둘이 갈라지고, 갈라진 뒤에는 어느 쪽이 맞는지 알 수 없다 — 실제로 로컬
+     * 빌드에는 프로토타입 때 손으로 넣은 낡은 요약이 남아 매 세션 7.4KB 씩 나가고 있었다.
+     *
+     * 프롬프트에 싣는 형태가 더 나쁘다는 것도 실측(2026-08-18)에서 나왔다. 같은 지식을 프롬프트
+     * 텍스트로 준 조건이 아예 주지 않은 것보다 나빴고(도달 불가 75.0% vs 66.7%), 계산된 답만
+     * 툴로 주자 0%가 됐다. 그래서 이 자리는 비워 두고 `find_path` · `explain_case` 가 답한다.
+     *
+     * 컬럼 자체는 남는다 — SDK 가 보내는 값이고 다른 소비자가 생길 수 있다. 저작이 안 읽을 뿐이다.
+     */
+    private fun gameContext(): Map<String, Any> = emptyMap()
 
     /**
      * 프로젝트 TestCase 전량을 test_case_list로 만든다(ARTEL-318). Agent가 "무엇을 검증할 수 있는지"의
@@ -199,8 +297,8 @@ class TestScenarioAgentService(
      * [gameContext]와 같은 자리·같은 성격이다: 툴 호출이 아니라 첫 턴부터 쥐고 있는 배경 지식.
      * 비참여자면 빈 목록이라 기존과 동일하게 동작한다.
      */
-    private suspend fun testCaseList(projectId: Long, appUserId: Long): List<TestCaseListItem> =
-        testCaseService.getAllTestCases(projectId, appUserId).items
+    private suspend fun testCaseList(projectId: Long, appUserId: Long): List<AuthoringTestCase> =
+        testCaseService.getAuthoringCases(projectId, appUserId)
 
     /**
      * 미커버 조회 프레임에 답한다(ARTEL-403).
@@ -240,8 +338,112 @@ class TestScenarioAgentService(
         }
     }
 
-    private fun sendFrame(sessionKey: String, session: AgentSession, frame: Any) {
-        val result = session.outbound.tryEmitNext(objectMapper.writeValueAsString(frame))
+    /**
+     * 경로 조회 프레임에 답한다(ARTEL-466).
+     *
+     * 미커버 조회와 같은 규칙이다 — **실패해도 절대 throw하지 않는다.** 길을 못 읽는 것이 WS나
+     * 세션을 죽일 이유는 없다. 그리고 성공도 로그로 남긴다. 이 경로가 조용하면 "안 불렀다"와
+     * "불렀는지 알 수 없다"가 로그에서 같아 보이는데, ARTEL-403 에서 실제로 그 때문에 도구를
+     * 안 부른다고 잘못 진단한 적이 있다.
+     */
+    private suspend fun handleFindPathRequest(sessionKey: String, session: AgentSession, node: JsonNode) {
+        val correlationId = node.path("messageId").asText(null)
+        try {
+            val from = node.path("from_case_id").asLong(0)
+            val to = node.path("to_case_id").asLong(0)
+            if (from == 0L || to == 0L) {
+                sendFrame(
+                    sessionKey, session,
+                    TestCaseSearchErrorFrame(
+                        correlationId = correlationId,
+                        detail = "find_path 에는 from_case_id 와 to_case_id 가 모두 필요합니다.",
+                    )
+                )
+                return
+            }
+            val answer = pathService.findPath(session.projectId, session.appUserId, from, to)
+            logger.info(
+                "경로 조회 응답 [sessionKey={}, projectId={}] {}→{} {} {} 순서={}",
+                sessionKey, session.projectId, from, to, answer.result,
+                answer.blockedBy?.let { "막힘=$it" } ?: answer.capabilityIds.toString(),
+                answer.ordering,
+            )
+            sendFrame(
+                sessionKey, session,
+                ScenarioPathResultFrame(
+                    correlationId = correlationId,
+                    result = answer.result.name,
+                    capabilityIds = answer.capabilityIds,
+                    actions = answer.actions,
+                    inputs = answer.inputs,
+                    ordering = answer.ordering.name,
+                    blockedBy = answer.blockedBy,
+                    note = answer.note,
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.error("경로 조회 실패 [sessionKey=$sessionKey]: ${e.message}")
+            sendFrame(
+                sessionKey, session,
+                TestCaseSearchErrorFrame(correlationId = correlationId, detail = "경로 조회에 실패했습니다.")
+            )
+        }
+    }
+
+    /**
+     * 케이스 하나를 지도에 비춰 답한다(ARTEL-466).
+     *
+     * 경로 조회와 같은 규칙이다 — **실패해도 절대 throw하지 않는다.** 지도를 못 읽는 것이 WS나
+     * 세션을 죽일 이유는 없고, 성공도 로그로 남긴다(안 불렀다와 못 읽었다가 같아 보이면 안 된다).
+     */
+    private suspend fun handleExplainCaseRequest(sessionKey: String, session: AgentSession, node: JsonNode) {
+        val correlationId = node.path("messageId").asText(null)
+        val testCaseId = node.path("testCaseId").asLong(0)
+        try {
+            val facts = caseFactService.explain(session.projectId, session.appUserId, testCaseId)
+            logger.info(
+                "케이스 설명 [sessionKey={}, caseId={}] 조작 {}건 · 관측가능={}",
+                sessionKey, testCaseId, facts.operations.size, facts.observable,
+            )
+            sendFrame(
+                sessionKey, session,
+                CaseFactsResultFrame(
+                    correlationId = correlationId,
+                    testCaseId = facts.testCaseId,
+                    scene = facts.scene,
+                    stateBefore = facts.stateBefore.map { CaseGuardFrame(it.variable, it.operator, it.value) },
+                    stateAfter = facts.stateAfter,
+                    operations = facts.operations.map {
+                        CaseOperationFrame(
+                            capabilityId = it.capabilityId, input = it.input, label = it.label,
+                            summary = it.summary, given = it.given, actionability = it.actionability,
+                            matchedBy = it.matchedBy,
+                        )
+                    },
+                    observable = facts.observable,
+                    note = facts.note,
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.error("케이스 설명 실패 [sessionKey=$sessionKey]: ${e.message}")
+            sendFrame(
+                sessionKey, session,
+                TestCaseSearchErrorFrame(correlationId = correlationId, detail = "케이스 설명에 실패했습니다.")
+            )
+        }
+    }
+
+    /**
+     * 툴 답 프레임을 보낸다. **한 세션에서는 한 번에 하나씩만 나간다** — 동시에 내보내면 싱크가
+     * 거절하고 그 답이 사라진다(위 [AgentSession.sendLock] 참고).
+     */
+    private suspend fun sendFrame(sessionKey: String, session: AgentSession, frame: Any) {
+        val json = objectMapper.writeValueAsString(frame)
+        val result = session.sendLock.withLock { session.outbound.tryEmitNext(json) }
         if (result.isFailure) {
             logger.warn("프레임 전송 실패 [sessionKey=$sessionKey, result=$result]")
         }
@@ -261,7 +463,9 @@ class TestScenarioAgentService(
         val reviewed = if (pending != null) mergeVerdicts(pending.reviewed, event.reviewed) else event.reviewed
 
         progress(sessionKey, AuthoringStage.CHECKING)
-        val outcome = reconcileService.reconcile(session.runId, session.projectId, scenarios, reviewed)
+        val outcome = reconcileService.reconcile(
+            session.runId, session.projectId, session.appUserId, scenarios, reviewed,
+        )
         if (!outcome.rejected) {
             progress(sessionKey, AuthoringStage.SAVED)
             if (pending != null) {
@@ -270,6 +474,18 @@ class TestScenarioAgentService(
                     "빠졌던 부분을 다시 작성해 시나리오에 반영했습니다."
                 )
             }
+            // 메우지 못한 구간은 **말로도** 알린다(ARTEL-468). 스텝에만 미상이라고 적어 두면
+            // 사용자는 스크롤해서 찾기 전까지 모르고, 프로토타입에서 코드가 조용히 채우자 "모른다"고
+            // 말한 실행이 4/5에서 1/5로 줄었다.
+            if (outcome.notices.isNotEmpty()) {
+                saveMessage(
+                    session.runId, session.appUserId, "ASSISTANT",
+                    outcome.notices.joinToString("\n")
+                )
+            }
+            // 되묻는다(ARTEL-487). **저장은 이미 끝났다** — 답하지 않아도 결과물은 남고, 답하면
+            // 다음 턴이 그 답을 받아 고친다. 코드가 아는 것이라 보기까지 계산돼 있다.
+            outcome.question?.let { ask(sessionKey, session, it) }
             // 저장이 있었던 턴에만 잔량을 알린다. 질문·거절 턴에서는 남은 수가 그대로일 뿐 아니라,
             // 방금 에이전트가 같은 값을 더 자세히 답했을 수 있다 — 그 뒤에 한 줄을 더 붙이면 같은
             // 말을 두 번 하는 셈이 된다.
@@ -406,6 +622,131 @@ class TestScenarioAgentService(
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = content))
     }
 
+    /**
+     * 이 런에 마지막으로 저장된 질문. 세션이 끊겨도 답을 잇기 위한 자리다.
+     *
+     * **트리에서 직접 읽는다.** 저장 본문은 화면이 읽는 모양(`kind`·`source: "code"`)이라 타입에
+     * 그대로 붙지 않는다 — 클래스에 맞춰 저장 모양을 바꾸면 이번엔 화면이 못 읽는다. 읽는 쪽이
+     * 하나뿐인 값이므로 여기서 풀어 쓴다.
+     */
+    private suspend fun lastQuestion(runId: Long, appUserId: Long): ScenarioQuestion? = runCatching {
+        val payload = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList()
+            .lastOrNull { it.payload != null }
+            ?.payload ?: return null
+        val node = objectMapper.readTree(payload.asString())
+        if (node.path("kind").asText() != "question") return null
+        val id = node.path("id").asText("")
+        val text = node.path("text").asText("")
+        if (id.isBlank() || text.isBlank()) return null
+        ScenarioQuestion(
+            id = id,
+            text = text,
+            why = node.path("why").asText(null),
+            options = node.path("options").map {
+                ScenarioQuestionOption(
+                    id = it.path("id").asText(""),
+                    label = it.path("label").asText(""),
+                    detail = it.path("detail").asText(null),
+                )
+            },
+            allowFreeText = node.path("allow_free_text").asBoolean(true),
+            source = if (node.path("source").asText() == "agent") ScenarioQuestionSource.AGENT
+            else ScenarioQuestionSource.CODE,
+        )
+    }.onFailure { logger.warn("저장된 질문을 읽지 못했다 — 평범한 메시지로 다룬다: ${it.message}") }
+        .getOrNull()
+
+    /**
+     * 질문 카드로 답한 턴에 대화에 남길 말. 고른 문구와 적은 문장이 곧 사용자가 한 말이다.
+     *
+     * 적은 문장도 남긴다. 보기만 세다가 자유 서술을 빠뜨렸더니 말풍선이 **빈 줄**로 저장됐다 —
+     * 사용자는 방법을 적었는데 대화에는 아무 말도 하지 않은 것으로 남았다.
+     */
+    private fun answerSummary(pending: ScenarioQuestion?, answer: ScenarioQuestionAnswer?): String {
+        if (answer == null || pending == null || pending.id != answer.questionId) return ""
+        val chosen = pending.options.filter { it.id in answer.optionIds }.map { it.label }
+        val said = answer.text?.trim().orEmpty()
+        return (chosen + listOfNotNull(said.ifBlank { null })).joinToString(" / ")
+    }
+
+    /**
+     * 이 런에서 이미 답한 질문의 id. 대화에 `kind=answered` 로 남아 있다(ARTEL-487).
+     *
+     * 읽지 못하면 빈 집합이다 — 그때는 되풀이 안내가 없을 뿐, 빈 턴을 보내지는 않는다.
+     */
+    private suspend fun answeredQuestionIds(runId: Long, appUserId: Long): Set<String> = runCatching {
+        runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList()
+            .mapNotNull { row -> row.payload?.let { objectMapper.readTree(it.asString()) } }
+            .filter { it.path("kind").asText() == "answered" }
+            .mapNotNull { it.path("id").asText().takeIf(String::isNotBlank) }
+            .toSet()
+    }.getOrDefault(emptySet())
+
+    /** 이번 답이 거절인가. 규칙은 [ScenarioDeclineReply] 에 있다. */
+    private fun declined(pending: ScenarioQuestion?, answer: ScenarioQuestionAnswer?, userInput: String): Boolean {
+        if (answer == null || pending == null || answer.questionId != pending.id) return false
+        val said = userInput.isNotBlank() || !answer.text.isNullOrBlank()
+        return ScenarioDeclineReply.isDecline(pending, answer.optionIds, said)
+    }
+
+    /**
+     * 그대로 두기로 했다고 알린다. **다음 수를 함께 준다** — 거절이 막다른 길이 되면, 사용자는
+     * 마음이 바뀌었을 때 무엇을 말해야 하는지 스스로 지어내야 한다.
+     *
+     * `answered` 로 남겨 **같은 질문이 다시 나가지 않게 한다**(ScenarioReconcileService 가 읽는다).
+     */
+    private suspend fun notifyDeclined(
+        sessionKey: String,
+        runId: Long,
+        appUserId: Long,
+        question: ScenarioQuestion,
+    ) {
+        val message = ScenarioDeclineReply.advice(question)
+        saveMessage(runId, appUserId, "ASSISTANT", message, mapOf("kind" to "answered", "id" to question.id))
+        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
+        progress(sessionKey, AuthoringStage.SAVED)
+        logger.info("되묻기 거절 — 모델을 부르지 않는다 [runId={}, id={}]", runId, question.id)
+    }
+
+    /**
+     * 미상 구간을 물었고 **방법을 들었으면** 그 말을 돌려준다(ARTEL-487). 아니면 null.
+     *
+     * "그대로 두기"는 방법이 아니다 — 채우지 않는 것이 답이므로 평소대로 모델에게 넘긴다.
+     *
+     * **질문 카드로 답한 것만** 본다. 대화창에 그냥 쓴 말은 답일 수도, 딴 요청일 수도 있어서
+     * 코드가 시나리오를 고칠 근거가 되지 못한다 — 그건 지금처럼 모델이 판단한다.
+     */
+    private fun gapHowTo(pending: ScenarioQuestion?, answer: ScenarioQuestionAnswer?): String? {
+        if (pending == null || !pending.id.startsWith(ScenarioQuestionBuilder.GAP_PREFIX)) return null
+        if (answer == null || answer.questionId != pending.id) return null
+        if (ScenarioQuestionBuilder.GAP_LEAVE in answer.optionIds) return null
+        val said = answer.text?.trim().orEmpty()
+        if (ScenarioQuestionBuilder.GAP_AUTO in answer.optionIds) {
+            return said.ifBlank { ScenarioQuestionBuilder.AUTOMATIC_HOP }
+        }
+        return said.ifBlank { null }
+    }
+
+    /**
+     * 고른 보기를 **모델이 읽을 수 있는 한 줄**로 만든다(ARTEL-487).
+     *
+     * 보기 id 는 화면과 오케 사이의 값이지 모델의 어휘가 아니다. 질문과 고른 문구를 다시 붙여야
+     * 모델이 무엇에 답한 것인지 안다.
+     *
+     * 질문이 남아 있지 않거나 id 가 어긋나면 **답으로 다루지 않는다** — 오래된 화면이 지난 질문의
+     * 답을 보낼 수 있고, 그때 턴을 잃는 것보다 사용자가 적은 말만 그대로 보내는 편이 낫다.
+     */
+    private fun answerText(pending: ScenarioQuestion?, answer: ScenarioQuestionAnswer?): String? {
+        if (answer == null || pending == null || pending.id != answer.questionId) return null
+        val chosen = pending.options.filter { it.id in answer.optionIds }.map { it.label }
+        val said = answer.text?.trim().orEmpty()
+        val body = (chosen + listOfNotNull(said.ifBlank { null })).joinToString(" / ")
+        if (body.isBlank()) return null
+        return "앞서 물어본 것(${pending.text})에 대한 답: $body"
+    }
+
     private fun sendTurn(
         sessionKey: String,
         session: AgentSession,
@@ -477,6 +818,33 @@ class TestScenarioAgentService(
                 scope.launch { handleUncoveredRequest(sessionKey, session, node) }
                 return
             }
+            if (node.path("type").asText() == "explain_case") {
+                if (session == null) {
+                    logger.warn("explain_case를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
+                    return
+                }
+                progress(sessionKey, AuthoringStage.READING_CASE)
+                scope.launch { handleExplainCaseRequest(sessionKey, session, node) }
+                return
+            }
+            if (node.path("type").asText() == "find_path") {
+                if (session == null) {
+                    logger.warn("find_path를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
+                    return
+                }
+                progress(sessionKey, AuthoringStage.FINDING_PATH)
+                scope.launch { handleFindPathRequest(sessionKey, session, node) }
+                return
+            }
+            // Agent 가 알려 주는 단계(ARTEL-487). **모르는 값은 버린다** — 단계는 알리는 것이지
+            // 시키는 것이 아니라서, 구버전 오케가 새 단계를 받아 터지느니 그 줄만 없는 편이 낫다.
+            if (node.path("type").asText() == "progress") {
+                val wire = node.path("stage").asText("")
+                val stage = AuthoringStage.entries.firstOrNull { it.wire == wire }
+                if (stage == null) logger.debug("모르는 단계라 흘려보낸다 [{}] {}", sessionKey, wire)
+                else progress(sessionKey, stage)
+                return
+            }
             if (node.path("type").asText() == "test_case_search") {
                 if (session == null) {
                     logger.warn("test_case_search를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
@@ -497,6 +865,9 @@ class TestScenarioAgentService(
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
                     try {
                         saveMessage(session.runId, session.appUserId, "ASSISTANT", event.message ?: "")
+                        // 모델이 스스로 물은 것도 같은 모양으로 나간다 — 화면이 두 벌을 그릴
+                        // 이유가 없고, 답이 돌아오는 길도 하나여야 한다.
+                        fromAgent(event.question)?.let { ask(sessionKey, session, it) }
                     } catch (err: CancellationException) {
                         throw err
                     } catch (err: Exception) {
@@ -576,14 +947,121 @@ class TestScenarioAgentService(
     }
 
     /** 채팅 메시지를 저장한다(런 단위, 사용자별 프라이빗 스레드). */
-    private suspend fun saveMessage(runId: Long, appUserId: Long, role: String, content: String) {
+    private suspend fun saveMessage(
+        runId: Long,
+        appUserId: Long,
+        role: String,
+        content: String,
+        payload: Map<String, Any?>? = null,
+    ) {
         runMessageRepository.save(
             TestRunMessageEntity(
                 testRunId = runId,
                 appUserId = appUserId,
                 role = role,
-                content = content
+                content = content,
+                payload = payload?.let { Json.of(objectMapper.writeValueAsString(it)) },
             )
+        )
+    }
+
+    /**
+     * 모델이 낸 질문을 우리 것과 같은 모양으로 맞춘다(ARTEL-487).
+     *
+     * 출처를 여기서 못 박는 이유는, 프레임에 적힌 값을 그대로 믿으면 모델이 자기 질문을 코드가
+     * 계산한 것처럼 표시할 수 있기 때문이다 — 근거 있는 질문과 그렇지 않은 질문의 구분이 이
+     * 한 필드에 걸려 있다.
+     *
+     * 물음이 비었거나 id 가 없으면 **묻지 않는다.** 빈 질문은 사용자에게 답할 수 없는 것을
+     * 내미는 일이고, id 가 없으면 답이 돌아와도 무엇에 대한 것인지 잇지 못한다.
+     */
+    private fun fromAgent(question: ScenarioQuestion?): ScenarioQuestion? {
+        if (question == null) return null
+        if (question.text.isBlank()) {
+            logger.warn("빈 질문이 와서 묻지 않는다")
+            return null
+        }
+        val id = question.id.ifBlank { "agent:" + question.text.hashCode().toString(16) }
+        return question.copy(id = id, source = ScenarioQuestionSource.AGENT)
+    }
+
+    /**
+     * 미상 구간을 사용자 말로 채웠다고 알린다.
+     *
+     * 채팅에 한 줄 남기고 화면에 `applied` 를 흘린다. 시나리오가 바뀌었는데 화면이 그대로면
+     * 사용자는 알림 블록이 여전히 거기 있는 줄 알고 같은 답을 또 하게 된다.
+     */
+    private suspend fun notifyGapFilled(
+        sessionKey: String,
+        runId: Long,
+        appUserId: Long,
+        blockedBy: String,
+        written: List<String>,
+    ) {
+        // 무엇이 들어갔는지 그대로 보여 준다. 다듬은 문장이 사용자가 적은 말과 다를 수 있고,
+        // 그 차이를 감추면 시나리오를 열어 보기 전까지 무엇이 저장됐는지 알 수 없다.
+        val quoted = written.joinToString("\n") { "· $it" }
+        val message = "$blockedBy 구간을 알려 주신 대로 채웠습니다.\n$quoted\n" +
+            "이 스텝은 명세가 아니라 사용자가 알려 준 것이라 실행이 통과/실패를 매기지 않습니다."
+        // **답이 끝났다고 기록에 남긴다.** 저장된 질문은 `payload` 가 붙은 마지막 메시지로 찾으므로,
+        // 여기서 다른 `kind` 를 남기지 않으면 이미 답한 질문이 다음 턴의 맥락으로 또 따라붙는다.
+        saveMessage(
+            runId, appUserId, "ASSISTANT", message,
+            mapOf("kind" to "answered", "id" to "${ScenarioQuestionBuilder.GAP_PREFIX}$blockedBy"),
+        )
+        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
+        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "applied"))
+        progress(sessionKey, AuthoringStage.SAVED)
+    }
+
+    /**
+     * 저장 경로가 어디였든 **알림과 질문을 같은 자리로 흘린다**(ARTEL-487).
+     *
+     * 카드 검토 모드는 챗봇이 아니라 REST 로 저장한다(`/scenarios/commit`). 그 경로가 반영 건수만
+     * 돌려주는 바람에, 검수가 계산해 둔 알림과 질문이 조용히 버려지고 있었다 — 사용자에게는 GAP
+     * 스텝만 남고 왜 그런지도, 무엇을 답하면 되는지도 보이지 않았다. 실제로 런 32 에서 그렇게 나왔다.
+     *
+     * 세션이 없어도 저장은 한다. 대화 기록에 남아야 새로고침한 화면이 그 질문을 다시 띄운다.
+     */
+    suspend fun deliver(
+        appUserId: Long,
+        runId: Long,
+        notices: List<String>,
+        question: ScenarioQuestion?,
+    ) {
+        val sessionKey = "$appUserId:$runId"
+        val session = sessions[sessionKey]
+        if (notices.isNotEmpty()) {
+            saveMessage(runId, appUserId, "ASSISTANT", notices.joinToString("\n"))
+            streamManager.emit(
+                sessionKey,
+                ScenarioStreamEvent(type = "notice", message = notices.joinToString("\n")),
+            )
+        }
+        if (question == null) return
+        session?.question = question
+        saveMessage(runId, appUserId, "ASSISTANT", question.text, question.payload())
+        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "question", question = question))
+        logger.info(
+            "되물음(카드 저장) [runId={}, id={}, 보기={}건]", runId, question.id, question.options.size,
+        )
+    }
+
+    /**
+     * 사용자에게 되묻는다(ARTEL-487).
+     *
+     * **저장하고 흘린다.** 선택지를 SSE 로만 보내면 새로고침 한 번에 사라져, 질문은 기록에 남았는데
+     * 답할 방법만 없어진다. 문장은 채팅 본문으로 그대로 남고 누를 것은 payload 가 든다.
+     *
+     * 세션에 하나만 매단다. 여러 개를 쌓으면 사용자는 어느 것에 답한 것인지 말해 줄 방법이 없다.
+     */
+    private suspend fun ask(sessionKey: String, session: AgentSession, question: ScenarioQuestion) {
+        session.question = question
+        saveMessage(session.runId, session.appUserId, "ASSISTANT", question.text, question.payload())
+        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "question", question = question))
+        logger.info(
+            "되물음 [sessionKey={}, id={}, 보기={}건, 출처={}]",
+            sessionKey, question.id, question.options.size, question.source,
         )
     }
 
@@ -598,9 +1076,26 @@ class TestScenarioAgentService(
         val appUserId: Long,
         val agentSessionId: String,
         @Volatile var autoApply: Boolean,
+        /**
+         * WS 송신 직렬화용 잠금.
+         *
+         * Reactor 싱크는 **동시 방출을 허용하지 않는다.** 한 턴에 툴 호출이 여러 개 오면 각 답을
+         * 별도 코루틴이 내보내고, 그때 `tryEmitNext` 가 `FAIL_NON_SERIALIZED` 로 떨어져 **답 프레임이
+         * 조용히 사라진다.** 에이전트는 그 답을 못 받은 채 타임아웃까지 기다렸다가 "조회가 안 됐다"로
+         * 진행한다 — 모델 탓이 아닌 변동이고, 같은 요청이 매번 다른 결과를 내는 원인이 된다.
+         */
+        val sendLock: Mutex = Mutex(),
+
         @Volatile var disposable: Disposable? = null,
         /** 검수에서 막혀 재작성을 기다리는 중인 결과. null이면 평범한 턴이다. */
         @Volatile var repair: PendingRepair? = null,
+        /**
+         * 답을 기다리는 질문(ARTEL-487). **턴을 넘어 산다** — 질문은 이번 턴에 나가고 답은 다음
+         * 턴에 오므로, 여기 없으면 답이 무엇에 대한 것인지 잇지 못한다.
+         *
+         * 하나만 둔다. 여러 개를 쌓으면 사용자는 어느 것에 답한 것인지 말해 줄 방법이 없다.
+         */
+        @Volatile var question: ScenarioQuestion? = null,
         /**
          * 마지막으로 사용자에게 알린 미커버 건수. 같은 수를 두 번 말하지 않기 위한 값이다 —
          * 좁은 작업을 이어가는 대화에서 매 턴 같은 줄이 붙으면 읽히지 않는다.

@@ -55,7 +55,7 @@ class ScenarioCoverageIntegrationTest {
         val (projectId, runId, cases) = fixture(3)
 
         val outcome = reconcileService.reconcile(
-            runId, projectId,
+            runId, projectId, memberOf(projectId),
             listOf(scenario(cases[0])),
             ReviewedCases(included = listOf(cases[0], cases[1]), excluded = listOf(cases[2])),
         )
@@ -73,7 +73,7 @@ class ScenarioCoverageIntegrationTest {
 
         // 판정이 두 건만 덮는다. 셋째는 어느 배열에도 없다 = 보지 않았다.
         val outcome = reconcileService.reconcile(
-            runId, projectId,
+            runId, projectId, memberOf(projectId),
             listOf(scenario(cases[0])),
             ReviewedCases(included = listOf(cases[0]), excluded = listOf(cases[1])),
         )
@@ -88,7 +88,7 @@ class ScenarioCoverageIntegrationTest {
         val ghost = cases.max() + 9_999
 
         val outcome = reconcileService.reconcile(
-            runId, projectId,
+            runId, projectId, memberOf(projectId),
             listOf(scenario(cases[0], ghost)),
             ReviewedCases(included = listOf(cases[0]), excluded = listOf(cases[1])),
         )
@@ -102,7 +102,7 @@ class ScenarioCoverageIntegrationTest {
         val (projectId, runId, cases) = fixture(3)
 
         val outcome = reconcileService.reconcile(
-            runId, projectId,
+            runId, projectId, memberOf(projectId),
             listOf(scenario(cases[0], null), scenario(cases[1])),
             ReviewedCases(included = listOf(cases[0], cases[1]), excluded = listOf(cases[2])),
         )
@@ -117,7 +117,7 @@ class ScenarioCoverageIntegrationTest {
         // 구버전 Agent 경로. 이 null 하나가 롤백 스위치이므로 저장이 막히면 안 된다.
         val (projectId, runId, cases) = fixture(2)
 
-        val outcome = reconcileService.reconcile(runId, projectId, listOf(scenario(cases[0])))
+        val outcome = reconcileService.reconcile(runId, projectId, memberOf(projectId), listOf(scenario(cases[0])))
 
         assertThat(outcome.rejected).isFalse()
         assertThat(outcome.applied).isEqualTo(1)
@@ -129,7 +129,7 @@ class ScenarioCoverageIntegrationTest {
         val (projectId, runId, cases) = fixture(4)
 
         // 셋 중 둘만 담는다. 브리지 스텝(case_id null)은 아무것도 커버하지 않아야 한다.
-        reconcileService.reconcile(runId, projectId, listOf(scenario(cases[0], null, cases[2])))
+        reconcileService.reconcile(runId, projectId, memberOf(projectId), listOf(scenario(cases[0], null, cases[2])))
 
         assertThat(testCaseRepository.findUncoveredIdsByProjectId(projectId).toList())
             .containsExactly(cases[1], cases[3])
@@ -149,7 +149,7 @@ class ScenarioCoverageIntegrationTest {
         // 하나는 QA 런이 통과시킨 상태로 만든다 — 저작 여부와 검증 여부는 다른 축이다.
         testCaseRepository.findById(cases[0])!!
             .let { testCaseRepository.save(it.copy(verificationStatus = "VERIFIED")) }
-        reconcileService.reconcile(runId, projectId, listOf(scenario(cases[0], cases[1])))
+        reconcileService.reconcile(runId, projectId, memberOf(projectId), listOf(scenario(cases[0], cases[1])))
 
         val coverage = testCaseService.coverage(projectId, memberOf(projectId))
 

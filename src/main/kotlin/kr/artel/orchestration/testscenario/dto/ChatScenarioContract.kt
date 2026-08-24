@@ -24,6 +24,12 @@ data class ChatScenarioStep(
     @JsonProperty("case_id") val caseId: Long? = null,
     val hint: String? = null,
     val input: String? = null,
+    /** 이 스텝을 어디서 가져왔는가(ARTEL-467). null이면 검사를 건너뛴다 — 구버전 Agent 호환. */
+    @JsonProperty("step_source") val stepSource: ScenarioStepSource? = null,
+    /** 할 일인가 알림인가(ARTEL-468). `GAP`은 오케가 붙인다 — Agent는 보내지 않는다. */
+    @JsonProperty("step_kind") val stepKind: ScenarioStepKind? = null,
+    @JsonProperty("step_source_capability_id") val stepSourceCapabilityId: Long? = null,
+    @JsonProperty("step_unknown_reason") val stepUnknownReason: String? = null,
 )
 
 /** 저장 스텝을 작성 챗봇 계약으로 투영한다. 라벨은 여기서 떨어진다 — 그것이 이 함수의 요점이다. */
@@ -32,6 +38,10 @@ fun ScenarioStep.toChatStep() = ChatScenarioStep(
     caseId = caseId,
     hint = hint,
     input = input,
+    stepSource = stepSource,
+    stepKind = stepKind,
+    stepSourceCapabilityId = stepSourceCapabilityId,
+    stepUnknownReason = stepUnknownReason,
 )
 
 /**
@@ -44,4 +54,8 @@ fun ChatScenarioStep.toStoredStep() = ScenarioStep(
     caseId = caseId,
     hint = hint,
     input = input,
+    stepSource = stepSource,
+    stepKind = stepKind,
+    stepSourceCapabilityId = stepSourceCapabilityId,
+    stepUnknownReason = stepUnknownReason,
 )

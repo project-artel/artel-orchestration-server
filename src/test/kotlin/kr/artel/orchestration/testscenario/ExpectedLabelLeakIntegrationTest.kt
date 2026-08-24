@@ -162,7 +162,7 @@ class ExpectedLabelLeakIntegrationTest {
 
         // 에이전트는 1·2번 스텝을 그대로 두고 3번의 문구만 고쳐 돌려준다.
         reconcileService.reconcile(
-            runId, projectId,
+            runId, projectId, ownerId,
             listOf(
                 ScenarioResult(
                     scenarioId = scenarioId, title = "상점", description = "구매 흐름",
@@ -192,7 +192,7 @@ class ExpectedLabelLeakIntegrationTest {
 
         // 맨 앞에 스텝 하나가 끼어들었다. 위치만 보고 이으면 라벨이 통째로 한 칸씩 밀린다.
         reconcileService.reconcile(
-            runId, projectId,
+            runId, projectId, ownerId,
             listOf(
                 ScenarioResult(
                     scenarioId = scenarioId, title = "상점", description = "구매 흐름",

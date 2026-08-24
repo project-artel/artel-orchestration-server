@@ -35,7 +35,83 @@ data class ScenarioStep(
      * 갈라져 있다: QA 실행은 [AgentStep], 작성 챗봇은 [ChatScenarioStep] — 둘 다 이 필드가 없다.
      */
     @JsonProperty("expected_passed") val expectedPassed: Boolean? = null,
+    /**
+     * 이 스텝을 **어디서 가져왔는가**(ARTEL-467). `CASE`|`CAPABILITY`|`UNKNOWN`.
+     *
+     * 검증 스텝은 원래 근거가 있었다 — [caseId]가 "이 스텝은 이 케이스를 본다"고 말해 준다.
+     * **브리지 스텝만 근거가 없었고**, 그래서 지어낸 스텝과 알고 쓴 스텝을 기계가 구분할 수 없었다.
+     * 그 구분이 없는 것이 실행 중에 터지는 지점이다.
+     *
+     * **null이면 검사를 건너뛴다.** 이 필드를 보내지 않는 구버전 Agent와 함께 배포되기 위해서이고,
+     * 되돌리는 스위치가 이 null 하나뿐이라 롤백이 Agent 재배포만으로 끝난다([ReviewedCases]와 같은 규율).
+     */
+    @JsonProperty("step_source") val stepSource: ScenarioStepSource? = null,
+    /**
+     * 할 일인가 알림인가(ARTEL-468). null은 [ScenarioStepKind.ACTION] — 이 필드가 없던 시절의
+     * 시나리오다. [ScenarioStepKind.GAP]은 수행 대상도 판정 대상도 아니다.
+     */
+    @JsonProperty("step_kind") val stepKind: ScenarioStepKind? = null,
+    /** [stepSource]가 `CAPABILITY`일 때 그 기능의 id. `capability.id`와 타입이 같아 검사가 조건문 하나다. */
+    @JsonProperty("step_source_capability_id") val stepSourceCapabilityId: Long? = null,
+    /** [stepSource]가 `UNKNOWN`일 때 **무엇이 막는지**. 사용자에게 물어볼 거리가 이 문장이다. */
+    @JsonProperty("step_unknown_reason") val stepUnknownReason: String? = null,
 )
+
+/**
+ * 스텝의 근거 종류(ARTEL-467).
+ *
+ * 한 문자열에 담지 않고 [ScenarioStep.stepSource]·[ScenarioStep.stepSourceCapabilityId]·
+ * [ScenarioStep.stepUnknownReason] 셋으로 나눈 것은 프로토타입에서 한 필드(`"unknown:StagePosition을…"`)로
+ * 두었다가 파싱이 필요해졌고, `case_id`가 있는데 근거는 간선이라고 적은 **계약 위반이 8건** 나왔기
+ * 때문이다. 셋으로 나누면 검사가 조건문 셋으로 끝난다.
+ */
+enum class ScenarioStepSource {
+    /** 이 스텝은 [ScenarioStep.caseId]의 케이스를 검증한다. */
+    CASE,
+
+    /** 이 스텝은 씬 명세의 그 기능을 탄다. `find_path`가 답한 것을 그대로 옮긴 자리다. */
+    CAPABILITY,
+
+    /**
+     * 길을 모른다.
+     *
+     * **통과 사유이면서 검사 대상이다.** 무조건 통과시키면 전부 이것으로 적는 것이 가장 싼 통과
+     * 방법이 되어 검사가 무의미해진다. 명세가 아는 길에 이것을 적었으면 거짓이므로 거부한다.
+     */
+    UNKNOWN,
+
+    /**
+     * 사람이 직접 쓴 스텝.
+     *
+     * 명세가 모르는 자리를 사용자가 메운 것이라 **코드가 건드리지 않는다** — 지우지도, 알림
+     * 블록으로 접지도 않는다. 근거를 묻는 검사도 여기서 멈춘다: 사람이 적었다는 것이 근거다.
+     *
+     * 이 값이 없으면 사용자가 손으로 채운 스텝이 다음 저장 때 "확인되지 않은 브리지"로 취급돼
+     * 알림 안의 인용문으로 접힌다 — 사용자가 답을 줬는데 그 답이 사라진다.
+     */
+    HUMAN,
+}
+
+/**
+ * 이 줄이 **할 일인가, 알림인가**(ARTEL-468).
+ *
+ * [GAP]은 실행할 것이 아니다 — 두 검증 사이의 경로를 명세가 몰라 **비워 둔 자리**이고, 그 사실을
+ * 사람에게 알리는 블록이다. 수행 대상도 판정 대상도 아니다.
+ *
+ * 예전에는 이것도 스텝으로 넣었다. 그러면 "명세에 없다"는 문장을 실행 에이전트가 수행하려 들고
+ * 판정 대상으로도 세어진다 — **못 한 일이 실패로 기록되는 셈**이라 실측이 오염된다. 종류를 나눠
+ * 두면 반대로 쓸모가 생긴다: 여기가 모르는 구간이라는 것을 실행하는 쪽이 미리 알고, 그 자리를
+ * 먼저 탐색할 수 있다.
+ *
+ * null은 [ACTION]이다 — 이 필드가 없던 시절에 저장된 시나리오가 전부 그렇다.
+ */
+enum class ScenarioStepKind {
+    /** 수행하는 줄. */
+    ACTION,
+
+    /** 메우지 못한 자리를 알리는 블록. 수행하지도 판정하지도 않는다. */
+    GAP,
+}
 
 /**
  * 시나리오 초안(ScenarioDraft). test_scenario의 title/description/steps 컬럼으로 저장되고(ARTEL-291),
@@ -87,20 +163,34 @@ data class ReviewedCases(
 /**
  * 저작 한 턴이 지나는 단계(ARTEL-419). `progress` 이벤트의 유일한 내용이다.
  *
- * **오케스트레이션이 실제로 본 것만 단계가 된다.** 모델이 무엇을 생각하는지는 볼 수 없고, 볼 필요도
- * 없다 — 사용자가 알고 싶은 것은 "느린 것인가 멎은 것인가"이고, 그 답은 턴의 경계에서 나온다.
+ * **누군가가 실제로 본 것만 단계가 된다.** 대부분은 오케스트레이션이 본 것이고([SENT]·도구 프레임·
+ * 검사 결과), [THINKING] 하나만 Agent 가 알려 준다 — 모델이 도는 시간은 이쪽에서 보이지 않는데
+ * 그 시간이 턴의 대부분이라, 없으면 "케이스 조회" 한 줄만 띄운 채 몇십 초가 지나간다.
  *
- * 순서는 [SENT] → ([LOOKING_UP_CASES] → [WRITING]) → [CHECKING] → 종착([SAVED]/[REPAIRING]/[BLOCKED])이지만
- * **가운데 둘은 없을 수 있다.** 도구를 부르지 않는 턴이 정상이기 때문이다. 그래서 화면은 고정된
+ * 순서는 [SENT] → ([THINKING] ↔ 도구) → [WRITING] → [CHECKING] → 종착([SAVED]/[REPAIRING]/[BLOCKED])이지만
+ * **가운데는 없을 수 있다.** 도구를 부르지 않는 턴이 정상이기 때문이다. 그래서 화면은 고정된
  * 눈금을 그려 놓고 채우는 것이 아니라 **받은 단계만** 그린다 — 일어나지 않은 일을 지나갔다고
- * 말하지 않기 위해서다.
+ * 말하지 않기 위해서다. 같은 단계가 잇달아 오면 화면이 한 줄로 접고 횟수를 센다(도는 중이라는 뜻).
  */
 enum class AuthoringStage(@get:JsonValue val wire: String) {
     /** 턴을 Agent로 보냈다. 여기서부터 응답이 오기 전까지 오케스트레이션은 아무것도 보지 못한다. */
     SENT("sent"),
 
+    /**
+     * 모델이 한 턴을 시작했다(ARTEL-487). **Agent가 알려 주는 유일한 단계다** — 도구 호출은
+     * 프레임으로 보이지만 그 사이의 시간은 오케에서 보이지 않아, 길어질수록 침묵과 구분되지 않았다.
+     * 도구와 번갈아 나타나므로 몇 번을 돌고 있는지도 이 줄로 읽힌다.
+     */
+    THINKING("thinking"),
+
     /** Agent가 케이스를 물어봤다(`uncovered_cases`/`test_case_search`). 멎지 않았다는 첫 증거다. */
     LOOKING_UP_CASES("looking_up_cases"),
+
+    /** Agent가 케이스 하나의 근거를 물어봤다(`explain_case`). 무엇으로 스텝을 쓸지 확인하는 중이다. */
+    READING_CASE("reading_case"),
+
+    /** Agent가 두 케이스 사이의 경로를 물어봤다(`find_path`). 씬 명세를 걷는 시간이다. */
+    FINDING_PATH("finding_path"),
 
     /**
      * 케이스를 넘겨줬고 아직 결과가 오지 않았다.
@@ -146,5 +236,10 @@ data class ScenarioStreamEvent(
     val reviewed: ReviewedCases? = null,
     val code: String? = null,
     val detail: String? = null,
-    val stage: AuthoringStage? = null
+    val stage: AuthoringStage? = null,
+    /**
+     * 사용자에게 되묻는 질문(ARTEL-487). Agent 결과에 실려 오거나, 오케가 계산된 사실로 만들어
+     * `question` 이벤트로 내보낸다. **저장을 막지 않는다** — 답하지 않아도 그 턴의 결과물은 남는다.
+     */
+    val question: ScenarioQuestion? = null
 )

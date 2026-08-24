@@ -8,7 +8,11 @@ import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.testcase.dto.CaseGuard
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
+import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import org.assertj.core.api.Assertions.assertThat
@@ -32,6 +36,7 @@ import java.time.Instant
 class AllTestCasesIntegrationTest {
 
     @Autowired private lateinit var testCaseService: TestCaseService
+    @Autowired private lateinit var testCaseRepository: TestCaseRepository
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
@@ -115,7 +120,7 @@ class AllTestCasesIntegrationTest {
     fun `세션 오픈 본문은 전량 목록을 test_case_list 배열로 싣는다`(): Unit = runBlocking {
         val (projectId, userId) = newProjectWithMember()
         createCase(projectId, userId, 1)
-        val items = testCaseService.getAllTestCases(projectId, userId).items
+        val items = testCaseService.getAuthoringCases(projectId, userId)
 
         val body = objectMapper.readTree(
             objectMapper.writeValueAsString(
@@ -133,6 +138,33 @@ class AllTestCasesIntegrationTest {
         assertThat(body["test_case_list"].isArray).isTrue()
         assertThat(body["test_case_list"].size()).isEqualTo(1)
         assertThat(body["test_case_list"][0]["id"].asLong()).isEqualTo(items.single().id)
+    }
+
+    @Test
+    fun `저작 목록은 사전조건을 파싱해 정규화한 상태와 함께 나간다`(): Unit = runBlocking {
+        // Agent 와 오케가 같은 문장을 각자 해석하면 어긋나고, 그 어긋남은 조용하다. 읽는 쪽을
+        // 하나로 두고 그 결과를 실어 보낸다.
+        val (projectId, userId) = newProjectWithMember()
+        testCaseRepository.save(
+            TestCaseEntity(
+                projectId = projectId, scene = "Map_scene",
+                step = "오른쪽으로 이동", expectedValue = "이동한다",
+                precondition = "Map_scene 화면인 상태 / (MapMove.StagePosition >= 1 그리고 MapMove.position == 0)",
+                metadata = Json.of("""{"source":{"state_after":"MapMove.position=1"}}"""),
+            )
+        )
+
+        val case = testCaseService.getAuthoringCases(projectId, userId)
+            .single { it.scene == "Map_scene" }
+
+        assertThat(case.stateBefore).containsExactly(
+            CaseGuard("StagePosition", ">=", "1"),
+            CaseGuard("position", "==", "0"),
+        )
+        // 다음 케이스의 출발 상태가 이 값이다. 사전조건만 읽으면 0 인 채로 남는다.
+        assertThat(case.stateAfter).containsEntry("position", "1")
+        // 원문도 그대로 둔다 — 정규화가 놓치는 서술이 있고 그건 사람 말로만 있다.
+        assertThat(case.precondition).contains("화면인 상태")
     }
 
     @Test

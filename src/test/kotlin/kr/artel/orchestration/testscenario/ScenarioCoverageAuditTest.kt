@@ -3,6 +3,7 @@ package kr.artel.orchestration.testscenario
 import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
 import kr.artel.orchestration.testscenario.dto.ReviewedCases
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
+import kr.artel.orchestration.testscenario.dto.ScenarioStepSource
 import kr.artel.orchestration.testscenario.service.ScenarioCoverageAudit
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -126,6 +127,90 @@ class ScenarioCoverageAuditTest {
 
         assertThat(findings.rejected).isFalse()
         assertThat(findings.unreviewed).isEmpty()
+    }
+
+    // ---- 스텝 근거(ARTEL-467) -----------------------------------------------------------
+    //
+    // 여기서 보는 것은 **형식뿐이다.** 인용한 기능이 실재하는지, `UNKNOWN`이 정말 모르는 길인지는
+    // 씬 명세를 봐야 알고 그건 reconcile 쪽에서 대조한다.
+
+    private fun step(
+        caseId: Long? = null,
+        source: ScenarioStepSource? = null,
+        capabilityId: Long? = null,
+        unknownReason: String? = null,
+    ) = ChatScenarioStep(
+        action = "행위", caseId = caseId, stepSource = source,
+        stepSourceCapabilityId = capabilityId, stepUnknownReason = unknownReason,
+    )
+
+    private fun withSteps(vararg steps: ChatScenarioStep) =
+        listOf(ScenarioResult(title = "t", description = "d", steps = steps.toList()))
+
+    @Test
+    fun `근거를 아예 안 보낸 스텝은 통과시킨다`() {
+        // 이 필드가 없는 구버전 Agent와 함께 배포되기 위한 자리다. 되돌리는 스위치가 이 null 하나뿐이다.
+        val findings = ScenarioCoverageAudit.audit(
+            project, null, withSteps(step(caseId = 1L), step()),
+        )
+
+        assertThat(findings.ungrounded).isEmpty()
+        assertThat(findings.rejected).isFalse()
+    }
+
+    @Test
+    fun `케이스를 보는 스텝이 다른 근거를 대면 막는다`() {
+        val findings = ScenarioCoverageAudit.audit(
+            project, null,
+            withSteps(step(caseId = 1L, source = ScenarioStepSource.CAPABILITY, capabilityId = 7L)),
+        )
+
+        assertThat(findings.ungrounded).hasSize(1)
+        assertThat(findings.ungrounded.single().reason).contains("CASE여야")
+        assertThat(findings.rejected).isTrue()
+    }
+
+    @Test
+    fun `기능을 인용했는데 어느 기능인지 없으면 막는다`() {
+        val findings = ScenarioCoverageAudit.audit(
+            project, null, withSteps(step(source = ScenarioStepSource.CAPABILITY)),
+        )
+
+        assertThat(findings.ungrounded.single().reason).contains("어느 기능인지 없다")
+    }
+
+    @Test
+    fun `모른다고만 하고 무엇이 막는지 안 적으면 막는다`() {
+        val findings = ScenarioCoverageAudit.audit(
+            project, null, withSteps(step(source = ScenarioStepSource.UNKNOWN)),
+        )
+
+        assertThat(findings.ungrounded.single().reason).contains("무엇이 막는지 없다")
+    }
+
+    @Test
+    fun `무엇이 막는지 적은 모름은 통과시킨다`() {
+        // 모른다는 것도 답이다. 지어낸 스텝과 구분되는 지점이 바로 이 문장이다.
+        val findings = ScenarioCoverageAudit.audit(
+            project, null,
+            withSteps(step(source = ScenarioStepSource.UNKNOWN, unknownReason = "StagePosition")),
+        )
+
+        assertThat(findings.ungrounded).isEmpty()
+        assertThat(findings.rejected).isFalse()
+    }
+
+    @Test
+    fun `어긋난 스텝의 자리를 함께 낸다`() {
+        // 건수만 알려주면 에이전트가 전체를 다시 쓰고, 그때 이미 통과한 부분까지 흔들린다.
+        val findings = ScenarioCoverageAudit.audit(
+            project, null,
+            withSteps(step(caseId = 1L, source = ScenarioStepSource.CASE), step(source = ScenarioStepSource.CAPABILITY)),
+        )
+
+        val ref = findings.ungrounded.single()
+        assertThat(ref.scenarioIndex).isEqualTo(0)
+        assertThat(ref.stepIndex).isEqualTo(1)
     }
 
     @Test
