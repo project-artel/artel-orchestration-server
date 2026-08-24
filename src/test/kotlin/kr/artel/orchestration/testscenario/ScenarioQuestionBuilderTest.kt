@@ -14,13 +14,33 @@ class ScenarioQuestionBuilderTest {
 
     @Test
     fun `물을 것이 없으면 묻지 않는다`() {
-        assertThat(ScenarioQuestionBuilder.from(emptyList(), emptyList(), emptyList())).isNull()
+        assertThat(ScenarioQuestionBuilder.from(emptyList(), emptyList(), emptyList(), emptyList())).isNull()
     }
 
     @Test
-    fun `메우지 못한 구간을 가장 먼저 묻는다`() {
+    fun `함께 담을 수 없는 케이스를 가장 먼저 묻는다`() {
+        // 저장된 시나리오가 끝까지 돌 수 없다는 뜻이라 가장 무겁다. 그래도 **막지는 않는다** —
+        // "24건 전부 담아줘"가 실제 요청이었고, 거절하면 사용자에게 남는 것이 없다(ARTEL-497).
+        val question = ScenarioQuestionBuilder.from(
+            conflicting = listOf(1284L to 1293L, 1285L to 1297L),
+            blockedGaps = listOf("StoryScene→Map_scene"),
+            untestedArms = listOf(133L to 134L),
+            scope = listOf(Triple("TitleScene", 2, 5)),
+            describe = { id -> "TurnBattleScene · 관찰한다 (hp ${if (id == 1284L) "<=" else ">"} 0)" },
+        )
+
+        assertThat(question?.id).isEqualTo("conflict:1284-1293,1285-1297")
+        assertThat(question?.text).contains("2쌍")
+        // 번호로 부르지 않는다 — 사전조건으로 부른다.
+        assertThat(question?.why).contains("hp <= 0").contains("hp > 0").doesNotContain("1284번")
+        assertThat(question?.options?.map { it.id }).containsExactly("split", "keep")
+    }
+
+    @Test
+    fun `함께 담을 수 없는 것이 없으면 메우지 못한 구간을 묻는다`() {
         // 실행하면 거기서 멎는다. 나머지 둘은 결과가 좁을 뿐 돌아는 간다.
         val question = ScenarioQuestionBuilder.from(
+            conflicting = emptyList(),
             blockedGaps = listOf("StoryScene→Map_scene"),
             untestedArms = listOf(133L to 134L),
             scope = listOf(Triple("TitleScene", 2, 5)),
@@ -35,6 +55,7 @@ class ScenarioQuestionBuilderTest {
     @Test
     fun `구간이 여럿이면 하나만 묻는다`() {
         val question = ScenarioQuestionBuilder.from(
+            conflicting = emptyList(),
             blockedGaps = listOf("A→B", "StagePosition"),
             untestedArms = emptyList(),
             scope = emptyList(),
@@ -46,6 +67,7 @@ class ScenarioQuestionBuilderTest {
     @Test
     fun `구간이 없으면 빠진 갈래를 묻는다`() {
         val question = ScenarioQuestionBuilder.from(
+            conflicting = emptyList(),
             blockedGaps = emptyList(),
             untestedArms = listOf(133L to 134L),
             scope = listOf(Triple("TitleScene", 2, 5)),
@@ -63,6 +85,7 @@ class ScenarioQuestionBuilderTest {
     @Test
     fun `마지막으로 담은 범위를 묻는다`() {
         val question = ScenarioQuestionBuilder.from(
+            conflicting = emptyList(),
             blockedGaps = emptyList(),
             untestedArms = emptyList(),
             scope = listOf(Triple("TitleScene", 2, 5), Triple("Map_scene", 4, 21)),
@@ -81,6 +104,7 @@ class ScenarioQuestionBuilderTest {
         // 고른 답은 이 문장으로 모델에게 되돌아간다. 모델이 따로 해석할 것이 없어야 오케에
         // 새 실행 경로를 만들지 않아도 된다.
         val question = ScenarioQuestionBuilder.from(
+            conflicting = emptyList(),
             blockedGaps = emptyList(),
             untestedArms = listOf(133L to 134L),
             scope = emptyList(),

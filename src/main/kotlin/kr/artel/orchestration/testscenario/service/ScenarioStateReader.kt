@@ -36,7 +36,13 @@ object ScenarioStateReader {
     fun comparisonsIn(expr: String?): List<Guard> {
         if (expr.isNullOrBlank()) return emptyList()
         return COMPARISON.findAll(expr).map {
-            Guard(normalize(it.groupValues[1]), it.groupValues[2], it.groupValues[3].trim().trim('`'))
+            val written = it.groupValues[1].trim().trim('`')
+            Guard(
+                variable = normalize(written),
+                operator = it.groupValues[2],
+                value = it.groupValues[3].trim().trim('`'),
+                path = written,
+            )
         }.toList()
     }
 
@@ -102,8 +108,21 @@ object ScenarioStateReader {
     private val COMPARISON = Regex("""([A-Za-z_][\w.]*)\s*(==|!=|>=|<=|>|<)\s*([^\s그리고또는()]+)""")
 }
 
-/** 비교 하나. `holds` 는 비교할 수 없으면 **위반이라고 말하지 않는다**. */
-data class Guard(val variable: String, val operator: String, val value: String) {
+/**
+ * 비교 하나. `holds` 는 비교할 수 없으면 **위반이라고 말하지 않는다**.
+ *
+ * @property variable 맞춰 보기 위해 마지막 마디만 남긴 이름(`Player.hp` → `hp`).
+ * @property path 사전조건에 **적힌 그대로**의 이름. [variable] 만으로는 마디가 겹치는 서로 다른
+ *   변수가 한 이름이 된다 — `magicTypeCards.Count` 와 `spellCards.Count` 가 둘 다 `Count` 다.
+ *   같은 값을 다른 경로로 부르는 것(`Player.hp` · `Player.PlayerInt().hp`)과 그것을 가르려면
+ *   적힌 이름이 남아 있어야 한다(ARTEL-497).
+ */
+data class Guard(
+    val variable: String,
+    val operator: String,
+    val value: String,
+    val path: String = variable,
+) {
     fun holds(have: String): Boolean {
         if (operator == "==") return have == value
         if (operator == "!=") return have != value

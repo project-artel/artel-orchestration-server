@@ -453,9 +453,9 @@ class ScenarioBridgeInsertionIntegrationTest {
     // ---- 같은 자리의 케이스 -----------------------------------------------------------
 
     @Test
-    fun `동시에 성립할 수 없는 두 케이스를 한 시나리오에 담으면 저장하지 않는다`(): Unit = runBlocking {
-        // 취향이 아니라 실행이 불가능하다. 나누고 합치는 다른 판단들과 달리 사용자가 이것을
-        // 원할 수 있는 여지가 없어 막는다.
+    fun `동시에 성립할 수 없는 두 케이스를 한 시나리오에 담으면 저장하고 되묻는다`(): Unit = runBlocking {
+        // 실행이 불가능한 조합이지만 **막지 않는다**(ARTEL-497). "24건 전부 담아줘"가 실제 요청이었고,
+        // 거절당한 사용자에게는 다음 수가 없었다 — 무엇을 어떤 묶음으로 볼지는 요청이 정한다.
         val notFive = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition != 5", step = "관찰한다")
         val five = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 5", step = "관찰한다")
 
@@ -472,11 +472,38 @@ class ScenarioBridgeInsertionIntegrationTest {
             ),
         )
 
-        assertThat(outcome.applied).isZero()
-        assertThat(outcome.rejected).isTrue()
+        assertThat(outcome.applied).isEqualTo(1)
+        assertThat(outcome.rejected).isFalse()
         assertThat(outcome.findings.conflicting).containsExactly(notFive to five)
-        // 거부 사유도 건수로만 말한다 — 다른 사유들과 같은 규칙이고, 어느 쌍인지는 로그가 싣는다.
-        assertThat(outcome.findings.rejectionMessage()).contains("동시에 성립할 수 없는 케이스 1쌍")
+        // 묻는다 — 그리고 물은 것은 통보로 되풀이하지 않는다.
+        assertThat(outcome.question?.id).startsWith("conflict:")
+        assertThat(outcome.question?.options?.map { it.id }).containsExactly("split", "keep")
+        assertThat(outcome.notices).noneMatch { it.contains("함께 담을 수 없는") }
+    }
+
+    @Test
+    fun `부등식끼리 어긋난 둘도 함께 담을 수 없다고 말한다`(): Unit = runBlocking {
+        // 확정값이 없어 예전에는 통과하던 모양이다(ARTEL-497). word-venture TurnBattleScene 에서
+        // 사망(hp <= 0)과 생존(hp > 0)이 한 시나리오에 담긴 것이 이 경우다.
+        val dead = case("Map_scene", "Map_scene 화면인 상태 / Player.hp <= 0", step = "쓰러진 뒤 관찰한다")
+        val alive = case("Map_scene", "Map_scene 화면인 상태 / Player.hp > 0", step = "버틴 뒤 관찰한다")
+
+        val outcome = reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "생사 혼재", description = "d",
+                    steps = listOf(
+                        ChatScenarioStep(action = "확인", caseId = dead),
+                        ChatScenarioStep(action = "확인", caseId = alive),
+                    ),
+                )
+            ),
+        )
+
+        assertThat(outcome.findings.conflicting).containsExactly(dead to alive)
+        assertThat(outcome.applied).isEqualTo(1)
+        assertThat(outcome.question?.id).startsWith("conflict:")
     }
 
     @Test

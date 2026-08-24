@@ -133,15 +133,80 @@ object ScenarioSiblingCheck {
     /**
      * 두 케이스가 **동시에 성립할 수 없나.**
      *
-     * 한쪽이 확정한 값이 다른 쪽의 요구를 어기면 배타적이다 — `StagePosition == 5` 와 `!= 5` 가
-     * 그것이다. 확정된 값이 없거나 서로 다른 변수만 말하면 배타적이라고 하지 않는다. 모르는 것을
-     * 충돌이라 부르면 멀쩡한 시나리오가 막힌다.
+     * 두 갈래로 본다:
+     *
+     * 1. 한쪽이 확정한 값이 다른 쪽의 요구를 어긴다 — `StagePosition == 5` 와 `!= 5`.
+     * 2. 같은 변수를 두고 **어느 값도 양쪽을 만족시키지 못한다** — `hp <= 0` 과 `hp > 0`(ARTEL-497).
+     *
+     * 2번이 없을 때 무엇을 놓쳤는지가 이 함수를 고친 이유다. word-venture `TurnBattleScene` 24건
+     * 요청에서 사망(`Player.hp <= 0`) 2건과 생존(`hp > 0`) 8건이 한 시나리오에 함께 담겼는데,
+     * 양쪽 다 부등식이라 확정값이 없어 **16쌍이 전부 통과했다.** 사망 케이스 뒤의 생존 전제
+     * 케이스는 실행이 도달할 수 없다.
+     *
+     * 모르는 것은 충돌이라 부르지 않는다 — 비교할 수 없는 값(문자열 부등식 등)은 겹친다고 본다.
      */
     private fun exclusive(a: CaseFact, b: CaseFact): Boolean =
-        violates(a.declared, b.guards) || violates(b.declared, a.guards)
+        violates(a.declared, b.guards) || violates(b.declared, a.guards) || disjoint(a.guards, b.guards)
 
     private fun violates(declared: Map<String, String>, guards: List<Guard>): Boolean =
         guards.any { guard -> declared[guard.variable]?.let { !guard.holds(it) } ?: false }
+
+    /** 같은 변수를 두고 겹치는 값이 없는 요구가 하나라도 있나. */
+    private fun disjoint(a: List<Guard>, b: List<Guard>): Boolean =
+        a.any { x -> b.any { y -> sameVariable(x, y) && !overlaps(x, y) } }
+
+    /**
+     * 두 가드가 **같은 값**을 말하나.
+     *
+     * 마지막 마디만으로는 모자란다. `magicTypeCards.Count` 와 `spellCards.Count` 는 둘 다 `Count`
+     * 지만 서로 다른 값이고, 그것을 한 변수로 뭉개면 `== 1` 과 `== 2` 가 충돌로 잡힌다.
+     * 적힌 경로가 서로의 꼬리일 때만 같은 것으로 본다 — `Player.hp` 와 `hp`(`Player.PlayerInt().hp`
+     * 에서 읽힌 것)가 그 경우다.
+     */
+    private fun sameVariable(x: Guard, y: Guard): Boolean =
+        x.variable == y.variable &&
+            (x.path == y.path || x.path.endsWith(".${y.path}") || y.path.endsWith(".${x.path}"))
+
+    /**
+     * 두 요구를 **동시에 만족시키는 값이 있나.**
+     *
+     * 숫자로 읽히면 구간으로 바꿔 겹치는지 본다. 열린 경계를 살리려고 `>` 는 값보다 [EPSILON] 만큼
+     * 큰 곳에서 시작한다 — 그러지 않으면 `<= 0` 과 `> 0` 이 0 에서 만나 겹친다고 나온다.
+     *
+     * 숫자가 아니면 `==`·`!=` 만 뜻이 있다. 문자열에 `>` 를 쓴 사전조건이 무슨 뜻인지 코드는
+     * 모르고, 모르는 것은 겹친다고 본다.
+     */
+    private fun overlaps(x: Guard, y: Guard): Boolean {
+        val xv = x.value.toDoubleOrNull()
+        val yv = y.value.toDoubleOrNull()
+        if (xv == null || yv == null) {
+            if (x.operator == "==" && y.operator == "==") return x.value == y.value
+            if (x.operator == "==" && y.operator == "!=") return x.value != y.value
+            if (x.operator == "!=" && y.operator == "==") return x.value != y.value
+            return true
+        }
+        // `!=` 는 점 하나만 뺀다. 그 점을 콕 집어 요구하는 상대가 아니면 언제나 겹칠 수 있다.
+        if (x.operator == "!=" || y.operator == "!=") {
+            val (excluded, other) = if (x.operator == "!=") xv to y else yv to x
+            return !(other.operator == "==" && other.value.toDoubleOrNull() == excluded)
+        }
+        val (lowX, highX) = range(x.operator, xv)
+        val (lowY, highY) = range(y.operator, yv)
+        return maxOf(lowX, lowY) <= minOf(highX, highY)
+    }
+
+    /** 비교 하나를 구간으로. 모르는 연산자는 열린 구간이라 아무것도 배제하지 않는다. */
+    private fun range(operator: String, value: Double): Pair<Double, Double> = when (operator) {
+        "==" -> value to value
+        ">" -> value + EPSILON to Double.POSITIVE_INFINITY
+        ">=" -> value to Double.POSITIVE_INFINITY
+        "<" -> Double.NEGATIVE_INFINITY to value - EPSILON
+        "<=" -> Double.NEGATIVE_INFINITY to value
+        else -> Double.NEGATIVE_INFINITY to Double.POSITIVE_INFINITY
+    }
+
+    /** 열린 경계를 닫힌 구간 계산으로 다루기 위한 최소 간격. 게임 상태값은 대개 정수다. */
+    private const val EPSILON = 1e-9
 
     private fun scenarioOf(split: List<List<Long>>, caseId: Long): Int =
         split.indexOfFirst { caseId in it }

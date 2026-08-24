@@ -36,20 +36,52 @@ object ScenarioQuestionBuilder {
     const val AUTOMATIC_HOP = "조작 없이 다음 화면으로 전환될 때까지 기다린다."
 
     /**
+     * @param conflicting 한 시나리오에 함께 담긴 배타적 케이스 쌍(ARTEL-497).
      * @param blockedGaps 메우지 못한 구간을 막은 것들(씬 쌍 또는 변수명).
      * @param untestedArms `담긴 케이스 → 빠진 갈래` 쌍.
      * @param scope 씬별 `담김/전체`. 전부 담긴 씬은 빼고 넘긴다.
      */
     fun from(
+        conflicting: List<Pair<Long, Long>>,
         blockedGaps: List<String>,
         untestedArms: List<Pair<Long, Long>>,
         scope: List<Triple<String, Int, Int>>,
         describe: (Long) -> String = { "" },
     ): ScenarioQuestion? {
+        conflicting.firstOrNull()?.let { return conflictQuestion(conflicting, it, describe) }
         blockedGaps.distinct().firstOrNull()?.let { return gapQuestion(it) }
         untestedArms.firstOrNull()?.let { return armQuestion(it.first, it.second, describe) }
         if (scope.isNotEmpty()) return scopeQuestion(scope)
         return null
+    }
+
+    /**
+     * 한 시나리오에 배타적인 케이스가 함께 담긴 자리(ARTEL-497). **가장 먼저 묻는다** — 다른
+     * 셋은 결과가 좁거나 한 구간이 막힌 것이지만, 이건 저장된 시나리오가 끝까지 돌 수 없다는 뜻이다.
+     *
+     * **막지 않고 묻는다.** 사용자가 "24건 전부 담아줘"라고 했을 때 거절하면 남는 것이 없다.
+     * 담아 두고, 왜 그대로면 곤란한지 말하고, 나눌지 고르게 한다.
+     */
+    private fun conflictQuestion(
+        all: List<Pair<Long, Long>>,
+        first: Pair<Long, Long>,
+        describe: (Long) -> String,
+    ): ScenarioQuestion {
+        val pair = listOf(first.first, first.second).map(describe).filter { it.isNotBlank() }
+        val example = if (pair.size == 2) "예: ${pair[0]} ↔ ${pair[1]}" else null
+        return ScenarioQuestion(
+            id = "conflict:" + all.joinToString(",") { "${it.first}-${it.second}" },
+            text = "한 시나리오에 함께 담을 수 없는 케이스가 ${all.size}쌍 있습니다. 나눠 드릴까요?",
+            why = listOfNotNull(
+                "사전조건이 서로 어긋나 한 번의 실행으로 둘 다 볼 수 없습니다 — 그대로 두면 뒤쪽에서 멎습니다.",
+                example,
+            ).joinToString(" "),
+            options = listOf(
+                ScenarioQuestionOption("split", "네, 나눠 주세요", "함께 볼 수 없는 것끼리 시나리오를 가릅니다."),
+                ScenarioQuestionOption("keep", "그대로 둘게요"),
+            ),
+            source = ScenarioQuestionSource.CODE,
+        )
     }
 
     /**
