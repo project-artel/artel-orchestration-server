@@ -1,6 +1,7 @@
 package kr.artel.orchestration.contentmap.repository
 
 import kotlinx.coroutines.flow.Flow
+import kr.artel.orchestration.contentmap.dto.ContentMapSceneEdgeRow
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
 import kr.artel.orchestration.contentmap.entity.ScreenEntity
 import kr.artel.orchestration.contentmap.entity.ScreenTransitionEntity
@@ -119,4 +120,34 @@ interface SceneEdgeRepository : CoroutineCrudRepository<SceneEdgeEntity, Long> {
         """
     )
     suspend fun retireStaleStaticEdges(contentMapId: Long, keptIds: Array<Long>): Long
+
+    /**
+     * 지도 한 장의 간선 전부. 화면이 씬 그래프를 한 번에 그린다.
+     *
+     * 씬마다 [findByFromSceneIdOrderByIdAsc] 를 부르지 않는 이유: 씬 수만큼 왕복이 생기고, 씬이
+     * 없는 지도와 간선이 없는 지도가 같은 비용을 낸다. `scene` 조인 한 번이 같은 답을 준다.
+     *
+     * `capability` 를 `LEFT JOIN` 하는 것은 간선에 붙일 글자를 얻기 위해서다. `capability_id` 가
+     * 단일 FK 라 **행이 곱해지지 않는다** — 효과(`capability_effect`)를 접지 않는 것과는 사정이
+     * 다르다. `LEFT` 인 이유는 자동 전이의 `capability_id` 가 null 이고, 재적재가 기능을 지우면
+     * `ON DELETE SET NULL` 로도 null 이 되기 때문이다. 그때도 "갔다는 사실"은 남아야 한다.
+     */
+    @Query(
+        """
+        SELECT e.from_scene_id,
+               e.to_scene_name,
+               e.to_scene_id,
+               e.capability_id,
+               c.summary AS capability_summary,
+               e.given_text,
+               e.source,
+               e.verified_at
+        FROM scene_edge e
+        JOIN scene s ON s.id = e.from_scene_id
+        LEFT JOIN capability c ON c.id = e.capability_id
+        WHERE s.content_map_id = :contentMapId
+        ORDER BY e.from_scene_id ASC, e.id ASC
+        """
+    )
+    fun findByContentMapId(contentMapId: Long): Flow<ContentMapSceneEdgeRow>
 }
