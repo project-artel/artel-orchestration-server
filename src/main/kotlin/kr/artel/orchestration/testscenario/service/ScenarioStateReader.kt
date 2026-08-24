@@ -28,9 +28,18 @@ object ScenarioStateReader {
      *
      * **부등식까지 읽는다.** `==` 만 보던 판을 실측했더니 실제 사전조건의 비교 중 58%가
      * `>`·`!=`·`>=`·`<=`·`<` 였고, 그것을 전부 "충돌 없음"으로 통과시키고 있었다.
+     *
+     * **씬 접두가 없는 행도 읽는다**(ARTEL-519). 구분자가 없으면 빈 문자열을 읽고 있었고, 그러면
+     * 그 케이스의 사전조건이 코드에 통째로 안 보인다. word-venture 의 `1277` 이 그렇다 —
+     * `StageDataSingleton.StagePosition == 4` 뿐이고 씬은 `scene` 컬럼에만 있다. 그 케이스가
+     * 말하는 것은 "GameClearScene 은 그 값이면 입력 없이 EndingScene 으로 빠진다"인데, 가드가
+     * 안 읽히니 충돌 판정도 경로 계산도 그것을 모른다.
+     *
+     * 앞부분을 함께 읽어도 안전하다. 씬 접두(`<씬> 화면인 상태`)에는 비교 연산자가 없어 [COMPARISON]
+     * 이 아무것도 집지 않는다.
      */
     fun guardsOf(precondition: String?): List<Guard> =
-        comparisonsIn(precondition?.substringAfter(" / ", ""))
+        comparisonsIn(precondition?.let { it.substringAfter(" / ", it) })
 
     /**
      * 식에서 비교를 뽑는다. 백틱은 벗긴다.
