@@ -45,4 +45,15 @@ data class ContentMapDocumentEntity(
 
     @Column("received_at")
     val receivedAt: Instant? = null,
+
+    /**
+     * 마지막 적재 실패 시각. 성공해도 지우지 않는다 — "예전에 깨졌지만 지금은 앉아 있다"가 남아야
+     * 같은 문서가 되풀이해 깨지는 것을 알아볼 수 있다.
+     */
+    @Column("ingest_failed_at")
+    val ingestFailedAt: Instant? = null,
+
+    /** 마지막 실패 사유 한 줄. 화면이 사람에게 보여 줄 유일한 단서다. */
+    @Column("ingest_error")
+    val ingestError: String? = null,
 )
