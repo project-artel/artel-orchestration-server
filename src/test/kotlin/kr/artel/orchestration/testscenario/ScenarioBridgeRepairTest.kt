@@ -346,4 +346,77 @@ class ScenarioBridgeRepairTest {
 
         assertThat(repaired.steps).hasSize(1)
     }
+
+    // --- 앞 케이스가 이미 한 조작 (ARTEL-468) ----------------------------------------
+
+    @Test
+    fun `앞 케이스가 방금 한 조작을 첫 홉이 되풀이하면 뺀다`() {
+        // 런 149 에서 실제로 나온 모양이다. 케이스가 이미 그 버튼을 눌렀는데 브리지가 또 눌러,
+        // 두 번째 클릭이 다음 화면에서 일어난다.
+        val click = ChatScenarioStep(
+            action = "TitleScene에서 `Canvas/MapSceneButton`를 클릭한다", caseId = 1248,
+            input = "click:Canvas/MapSceneButton",
+        )
+        val next = verify(1252, "StoryScene에 진입해 관찰한다")
+        val answer = ScenarioPathAnswer(
+            result = ScenarioPathResult.KNOWN,
+            capabilityIds = listOf(4L),
+            actions = listOf("Canvas/MapSceneButton 을(를) 클릭한다 (TitleScene → StoryScene)"),
+            inputs = listOf("click:Canvas/MapSceneButton"),
+        )
+
+        val repaired = ScenarioBridgeRepair.apply(listOf(click, next), mapOf(0 to answer))
+
+        assertThat(repaired.steps.map { it.action }).containsExactly(click.action, next.action)
+    }
+
+    @Test
+    fun `조작이 다르면 그대로 넣는다`() {
+        val click = ChatScenarioStep(action = "확인한다", caseId = 1, input = "key:Space")
+        val next = verify(2)
+        val answer = ScenarioPathAnswer(
+            result = ScenarioPathResult.KNOWN,
+            capabilityIds = listOf(9L),
+            actions = listOf("버튼을 클릭한다"),
+            inputs = listOf("click:Canvas/Start"),
+        )
+
+        val repaired = ScenarioBridgeRepair.apply(listOf(click, next), mapOf(0 to answer))
+
+        assertThat(repaired.steps).hasSize(3)
+    }
+
+    @Test
+    fun `되풀이하라고 적힌 홉은 같은 조작이어도 빼지 않는다`() {
+        // 명세가 여러 번 하라고 말한 자리다. 한 번 했다고 지우면 조건이 안 풀린다.
+        val press = ChatScenarioStep(action = "Space 입력을 한다", caseId = 1, input = "key:Space")
+        val next = verify(2)
+        val answer = ScenarioPathAnswer(
+            result = ScenarioPathResult.KNOWN,
+            capabilityIds = listOf(9L),
+            actions = listOf("Space 를 누른다 — i 가 >= 9 가 될 때까지 되풀이한다"),
+            inputs = listOf("key:Space"),
+        )
+
+        val repaired = ScenarioBridgeRepair.apply(listOf(press, next), mapOf(0 to answer))
+
+        assertThat(repaired.steps).hasSize(3)
+    }
+
+    @Test
+    fun `둘째 홉부터는 같은 조작이어도 빼지 않는다`() {
+        // 그 뒤의 홉은 앞 조작이 일으킨 화면에서 일어나는 일이다.
+        val click = ChatScenarioStep(action = "클릭한다", caseId = 1, input = "click:A")
+        val next = verify(2)
+        val answer = ScenarioPathAnswer(
+            result = ScenarioPathResult.KNOWN,
+            capabilityIds = listOf(9L, 10L),
+            actions = listOf("B 를 클릭한다", "A 를 클릭한다"),
+            inputs = listOf("click:B", "click:A"),
+        )
+
+        val repaired = ScenarioBridgeRepair.apply(listOf(click, next), mapOf(0 to answer))
+
+        assertThat(repaired.steps).hasSize(4)
+    }
 }

@@ -19,6 +19,9 @@ import kr.artel.orchestration.testscenario.dto.ScenarioStepSource
  */
 object ScenarioBridgeRepair {
 
+    /** 되풀이하라고 적힌 홉의 표시([ScenarioPathService] 가 붙인다). 그런 홉은 빼지 않는다. */
+    private const val REPEATS = "되풀이한다"
+
     /**
      * 메울 자리 하나. [at]은 두 검증 구간 사이에 있는 브리지 스텝들의 범위이고 **비어 있을 수 있다** —
      * 씬을 통째로 건너뛴 결과가 바로 그 모양(빈 자리)이라, 길이 0인 구간이 오히려 주된 대상이다.
@@ -69,7 +72,7 @@ object ScenarioBridgeRepair {
             if (answer == null) {
                 out += existing
             } else {
-                val filled = bridge(existing, answer)
+                val filled = bridge(existing, dropRepeatOf(steps.getOrNull(gap.at.first - 1), answer))
                 out += filled
                 // 알림은 **알림 블록이 실제로 들어갔을 때만** 낸다. 사람이 이미 손으로 채운 구간까지
                 // 말하면, 답을 준 사용자에게 같은 것을 다시 묻는 꼴이 된다.
@@ -134,6 +137,39 @@ object ScenarioBridgeRepair {
      * 계산된 경로보다 **많이** 쓴 나머지는 그대로 둔다. 명세에 없다는 것이 틀렸다는 뜻은 아니고,
      * 여기서 지워 버리면 관측되지 않은 조작을 코드가 매번 삼키게 된다.
      */
+    /**
+     * 앞 케이스가 **방금 한 조작**을 첫 홉이 되풀이하면 그 홉을 뺀다(ARTEL-468).
+     *
+     * 런 149 에서 실제로 나온 모양이다:
+     *
+     * ```
+     * 3  TC1248  CASE        click:Canvas/MapSceneButton   MapSceneButton 를 클릭한다
+     * 4          CAPABILITY  click:Canvas/MapSceneButton   MapSceneButton 을(를) 클릭한다 (TitleScene → StoryScene)
+     * ```
+     *
+     * 경로 계산이 "그 버튼을 누르면 StoryScene 으로 간다"고 답했는데, 케이스가 이미 그 버튼을
+     * 누르고 있었다. 두 번 누르면 두 번째 클릭은 **다음 화면에서** 일어난다.
+     *
+     * 이미 [ScenarioReconcileService.performs] 가 같은 것을 막으려 하지만 **근거 키로 대조한다.**
+     * 지도의 UI 기능은 `method_id` 가 비어 있는 일이 흔해(`Canvas/MapSceneButton` 이 그렇다) 대조할
+     * 것이 없으면 못 알아본다. 조작 값은 그 대신 늘 있다 — 같은 `input` 이면 같은 조작이다.
+     *
+     * **첫 홉만** 본다. 그 뒤의 홉은 앞 조작이 일으킨 화면에서 일어나는 일이라 같은 값이어도
+     * 되풀이가 아니다. 되풀이해야 하는 조작(`…되풀이한다`)도 빼지 않는다 — 그건 명세가 여러 번
+     * 하라고 말한 자리다.
+     */
+    private fun dropRepeatOf(previous: ChatScenarioStep?, answer: ScenarioPathAnswer): ScenarioPathAnswer {
+        val done = previous?.takeIf { it.caseId != null }?.input ?: return answer
+        val first = answer.inputs.firstOrNull() ?: return answer
+        if (first != done) return answer
+        if (answer.actions.firstOrNull()?.contains(REPEATS) == true) return answer
+        return answer.copy(
+            capabilityIds = answer.capabilityIds.drop(1),
+            actions = answer.actions.drop(1),
+            inputs = answer.inputs.drop(1),
+        )
+    }
+
     private fun bridge(existing: List<ChatScenarioStep>, answer: ScenarioPathAnswer): List<ChatScenarioStep> {
         if (answer.result == ScenarioPathResult.NOT_REQUIRED) return existing
         // 사람이 손으로 채운 구간은 그대로 둔다. 명세가 모르는 것을 사용자가 알려준 자리라,
