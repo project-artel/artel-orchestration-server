@@ -184,8 +184,16 @@ class ScenarioReconcileService(
         val allNotices = buildList {
             // 나눈 것은 **먼저** 말한다. 시나리오 수가 달라진 이유이므로, 아래 알림들보다 먼저
             // 읽혀야 화면에 늘어난 카드가 무엇인지 알 수 있다.
+            // **위의 답변과 어긋나지 않게 말한다**(ARTEL-518). 모델은 "기존 시나리오에 담았다"고
+            // 답했는데 화면에는 새 시나리오가 늘어나 있는 일이 실제로 나왔다(런 155) — 모델이
+            // 거짓말을 한 것이 아니라 그 뒤에 코드가 나눴기 때문이다. 몇 개가 새로 생겼는지까지
+            // 말해 주면 둘이 이어진다.
             divided.notes.forEach { (title, parts) ->
-                add("‘$title’ 은 함께 담을 수 없는 케이스가 있어 ${parts}개로 나눴습니다 — 사전조건이 어긋나 한 번의 실행으로 다 볼 수 없습니다.")
+                add(
+                    "‘$title’ 은 함께 담을 수 없는 케이스가 있어 코드가 ${parts}개로 나눴습니다" +
+                        "(새 시나리오 ${parts - 1}개가 바로 뒤에 붙었습니다) — " +
+                        "사전조건이 어긋나 한 번의 실행으로 다 볼 수 없습니다."
+                )
             }
             if (asked != "gap") addAll(notices)
             addAll(siblingNotices(siblings, describe, skipArms = asked == "arm"))
@@ -201,10 +209,13 @@ class ScenarioReconcileService(
 
         var applied = 0
         transactionalOperator.executeAndAwait {
+            val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
             // 새 시나리오는 런의 현재 마지막 position 다음부터 붙인다. 비어 있으면 0부터.
-            var runPosition = (runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
-                .maxOfOrNull { it.position } ?: -1) + 1
-            for (scenario in repaired) {
+            var runPosition = (links.maxOfOrNull { it.position } ?: -1) + 1
+            // 나눠서 생긴 조각을 원본 옆으로 옮기려면 저장된 id 를 자리별로 들고 있어야 한다.
+            val savedId = arrayOfNulls<Long>(repaired.size)
+            val fromSplit = mutableListOf<Pair<Long, Int>>()
+            for ((index, scenario) in repaired.withIndex()) {
                 val scenarioId = scenario.scenarioId
                 if (scenarioId != null) {
                     // 수정: 기존 시나리오 본문을 통째로 교체한다.
@@ -222,6 +233,7 @@ class ScenarioReconcileService(
                         existing.withDraft(draftFor(scenario, previous), objectMapper)
                     )
                     // 런 링크는 그대로 둔다(수정은 위치를 바꾸지 않는다).
+                    savedId[index] = scenarioId
                     applied++
                 } else {
                     // 추가: 새 시나리오 INSERT + 런 끝에 append. 새 시나리오에는 살릴 라벨이 없다.
@@ -233,12 +245,65 @@ class ScenarioReconcileService(
                         TestRunScenarioEntity(testRunId = runId, testScenarioId = saved.id!!, position = runPosition)
                     )
                     runPosition++
+                    savedId[index] = saved.id
+                    divided.anchorOf[index]?.let { anchor -> fromSplit += saved.id!! to anchor }
                     applied++
                 }
+            }
+            if (fromSplit.isNotEmpty()) {
+                placeBesideOrigin(runId, fromSplit.mapNotNull { (id, anchor) -> savedId[anchor]?.let { id to it } })
             }
         }
         logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${repaired.size}]")
         return ReconcileOutcome(applied, findings, allNotices, question)
+    }
+
+    /**
+     * 나눠서 생긴 조각을 **원본 바로 뒤로** 옮긴다(ARTEL-518).
+     *
+     * 새 시나리오는 런 끝에 붙는다. 대부분은 그게 맞다 — 새로 만든 것은 마지막에 하면 된다.
+     * 그런데 나눠서 생긴 조각은 새로 만든 것이 아니라 **원본의 나머지 반쪽**이다. 실측(런 155)에서
+     * 맵 구간(position 2~8)을 나눈 조각이 EndingScene 뒤인 position 21 에 놓였다. 흐름을 순서대로
+     * 읽는 화면에서 그 조각은 아무 데서도 이어지지 않는다.
+     *
+     * `(test_run_id, position)` 이 유일하므로 한 번에 옮길 수 없다. 전부 멀리 밀어 둔 뒤 최종
+     * 번호를 다시 매긴다 — 그 사이에도 유일성이 깨지지 않는다.
+     *
+     * @param parts `조각 시나리오 id → 원본 시나리오 id`. 같은 원본의 조각들은 받은 순서대로 붙는다.
+     */
+    private suspend fun placeBesideOrigin(runId: Long, parts: List<Pair<Long, Long>>) {
+        val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        val order = links.map { it.testScenarioId }.toMutableList()
+
+        // 한 원본에서 여러 조각이 나오면 **받은 순서대로** 이어 붙인다. 매번 원본 바로 뒤에
+        // 꽂으면 순서가 뒤집힌다.
+        val after = mutableMapOf<Long, Long>()
+        var moved = false
+        for ((part, origin) in parts) {
+            val from = order.indexOf(part)
+            val previous = after[origin] ?: origin
+            // 원본이 이 런에 없으면(다른 런의 시나리오를 고친 경우) 끝에 그대로 둔다.
+            if (from < 0 || order.indexOf(previous) < 0) continue
+            order.removeAt(from)
+            order.add(order.indexOf(previous) + 1, part)
+            after[origin] = part
+            moved = true
+        }
+        if (!moved || order == links.map { it.testScenarioId }) return
+
+        // 1) 자리를 비운다. 유일 제약 때문에 한 행씩 최종 번호로 바로 못 간다.
+        //
+        // 밀어 두는 거리는 **지금 쓰이는 자리에서 계산한다.** 최종 번호는 0부터 `links.size - 1`
+        // 까지이므로, 지금 가장 큰 자리보다 하나 더 큰 곳부터 밀면 그 구간과 겹치지 않는다.
+        // 상수로 박아 두면 그 수를 넘는 런에서 조용히 부딪힌다.
+        val parking = maxOf(links.maxOf { it.position } + 1, links.size)
+        links.forEach { runScenarioRepository.save(it.copy(position = it.position + parking)) }
+        // 2) 최종 번호.
+        val byScenario = links.associateBy { it.testScenarioId }
+        order.forEachIndexed { position, scenarioId ->
+            byScenario[scenarioId]?.let { runScenarioRepository.save(it.copy(position = position)) }
+        }
+        logger.info("나눈 조각을 원본 옆으로 옮겼다 [runId={}] {}건", runId, parts.size)
     }
 
     /**
