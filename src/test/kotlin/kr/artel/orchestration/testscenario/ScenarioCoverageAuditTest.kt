@@ -240,4 +240,59 @@ class ScenarioCoverageAuditTest {
         assertThat(findings.rejected).isFalse()
         assertThat(findings.summary()).contains("동거 불가 1쌍")
     }
+
+    // --- 근거를 적지 않은 스텝 (ARTEL-515) ------------------------------------------
+
+    /**
+     * **막지 않는다.** 실측(project 20, 99스텝)에서 빈 것이 13개였고 전부 `case_id` 가 없는 전제
+     * 세팅 동작이었다 — 적을 값이 계약에 없어서 비운 것이지 모델이 게을러서가 아니다. 막으면
+     * 모델은 미상 블록을 쏟아내게 되고, 그건 지금보다 나쁘다.
+     */
+    @Test
+    fun `근거를 적지 않은 스텝은 세되 막지 않는다`() {
+        val findings = ScenarioCoverageAudit.audit(
+            projectCaseIds = setOf(1L),
+            reviewed = null,
+            scenarios = listOf(
+                ScenarioResult(
+                    title = "t", description = "d",
+                    steps = listOf(
+                        ChatScenarioStep(action = "확인한다", caseId = 1, stepSource = ScenarioStepSource.CASE),
+                        ChatScenarioStep(action = "전투 화면에 진입한다"),
+                    ),
+                )
+            ),
+        )
+
+        assertThat(findings.unsourced).hasSize(1)
+        assertThat(findings.unsourced.single().stepIndex).isEqualTo(1)
+        assertThat(findings.rejected).isFalse()
+    }
+
+    /**
+     * 되돌리는 스위치는 그대로 산다 — 이 필드를 아예 모르는 Agent 의 결과는 통째로 건너뛴다.
+     *
+     * 판단이 **결과 단위**인 것이 요점이다. 스텝 단위로 걸려 있던 예전 규칙은 "이 Agent 는 필드를
+     * 모른다"와 "아는데 이 스텝만 비웠다"를 구분하지 못해, 필드를 비우는 것이 가장 싼 통과 방법이
+     * 되어 있었다.
+     */
+    @Test
+    fun `아무 스텝도 근거를 안 보냈으면 구버전으로 보고 세지 않는다`() {
+        val findings = ScenarioCoverageAudit.audit(
+            projectCaseIds = setOf(1L),
+            reviewed = null,
+            scenarios = listOf(
+                ScenarioResult(
+                    title = "t", description = "d",
+                    steps = listOf(
+                        ChatScenarioStep(action = "확인한다", caseId = 1),
+                        ChatScenarioStep(action = "전투 화면에 진입한다"),
+                    ),
+                )
+            ),
+        )
+
+        assertThat(findings.unsourced).isEmpty()
+        assertThat(findings.rejected).isFalse()
+    }
 }
