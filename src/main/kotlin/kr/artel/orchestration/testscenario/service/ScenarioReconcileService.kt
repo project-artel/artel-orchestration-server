@@ -161,6 +161,11 @@ class ScenarioReconcileService(
             // 늘어나면 1패스 판정이 좁다는 뜻이라 프롬프트를 고칠 근거가 되기 때문이다.
             logger.info("판정 밖 케이스 담김(허용) [runId={}] excess={}", runId, findings.excess)
         }
+        if (findings.unsourced.isNotEmpty()) {
+            // 막지 않는 이유는 ScenarioCoverageAudit.Findings 에 적었다. 남기는 이유도 excess 와
+            // 같다 — 이 값이 늘어나면 스텝 계약에 자리가 없다는 뜻이라 계약을 고칠 근거가 된다.
+            logger.info("근거를 적지 않은 스텝(허용) [runId={}] {}개", runId, findings.unsourced.size)
+        }
 
         val scope = partialScenes(facts, split)
         // **물은 것은 통보로 되풀이하지 않는다.** 같은 말이 두 줄로 붙으면 어느 쪽에 답해야 하는지
@@ -181,6 +186,7 @@ class ScenarioReconcileService(
             }
             if (asked != "gap") addAll(notices)
             addAll(siblingNotices(siblings, describe, skipArms = asked == "arm"))
+            unsourcedNotice(findings, repaired)?.let(::add)
             if (asked != "scope" && scope.isNotEmpty()) {
                 add(
                     "이번에 담은 범위 — " +
@@ -442,6 +448,27 @@ class ScenarioReconcileService(
             .toSet()
     }.onFailure { logger.warn("답한 질문을 읽지 못했다 — 다시 물을 수 있다: ${it.message}") }
         .getOrDefault(emptySet())
+
+    /**
+     * 근거를 적지 않은 스텝을 **말만 한다**(ARTEL-515). 막지 않는 이유는 [ScenarioCoverageAudit.Findings]에 있다.
+     *
+     * 실측에서 이런 스텝은 전부 한 종류였다 — `case_id` 가 없는 전제 세팅 동작("스테이지 위치가
+     * 5인 상태로 EndingScene에 진입한다"). 실행하는 사람이 **그 자리에서 막힌다**는 뜻이므로,
+     * 조용히 저장하면 실행하다 만난다.
+     *
+     * 한 예만 든다. 열세 줄을 늘어놓으면 읽히지 않고, 어느 것을 손볼지는 어차피 사람이 정한다.
+     */
+    private fun unsourcedNotice(
+        findings: ScenarioCoverageAudit.Findings,
+        scenarios: List<ScenarioResult>,
+    ): String? {
+        val first = findings.unsourced.firstOrNull() ?: return null
+        val example = scenarios.getOrNull(first.scenarioIndex)
+            ?.steps?.getOrNull(first.stepIndex)?.action?.trim()?.ifBlank { null }
+        return "어떻게 하는지 적히지 않은 준비 동작이 ${findings.unsourced.size}개 있습니다" +
+            (example?.let { " — 예: $it" } ?: "") +
+            ". 실행하기 전에 그 자리를 채워 두세요."
+    }
 
     private fun siblingNotices(
         findings: ScenarioSiblingCheck.Findings,
