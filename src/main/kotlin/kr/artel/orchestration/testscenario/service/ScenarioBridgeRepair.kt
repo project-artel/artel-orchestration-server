@@ -55,7 +55,8 @@ object ScenarioBridgeRepair {
         describe: (Long) -> String = { "" },
     ): Repaired {
         val gaps = gaps(steps)
-        if (gaps.isEmpty()) return Repaired(steps.map { ground(it) }, emptyList())
+        // 메울 자리가 없어도 접기는 한다 — 중복은 사이가 비어서 생기는 것이 아니다.
+        if (gaps.isEmpty()) return Repaired(collapseRepeats(steps.map { ground(it) }), emptyList())
 
         val out = mutableListOf<ChatScenarioStep>()
         val notices = mutableListOf<String>()
@@ -90,8 +91,37 @@ object ScenarioBridgeRepair {
         }
         while (cursor < steps.size) out += ground(steps[cursor++])
 
-        return Repaired(out, notices.distinct())
+        return Repaired(collapseRepeats(out), notices.distinct())
     }
+
+    /**
+     * 잇달아 **완전히 같은** 스텝은 하나로 접는다(ARTEL-468).
+     *
+     * 실측(런 146)에서 모델이 `StoryScene에서 Space 입력을 한다` 를 글자까지 똑같이 두 줄 썼다.
+     * 바로 다음 줄에 자기가 `…마지막 내용에 도달할 때까지 반복한다` 라고 적어 놓고서다. 몇 번
+     * 눌러야 하는지 알 길이 없으니 "모르니까 두 번쯤"이 된 것이고, 그 근거가 없는 이유는
+     * **지도가 아직 `repeat_until_done` 을 채우지 않기 때문**이다(골든 지도의 기능 324개가 전부
+     * false 다). 반복은 코드가 브리지를 쓸 때만 문장이 되고, 모델이 쓴 검증 스텝에는 규칙이 없었다.
+     *
+     * 접어도 판정은 그대로다 — 연속된 같은 `case_id` 는 그 케이스의 검증 **구간**이고 판정은 구간의
+     * 마지막에서 한 번 난다. 반대로 접지 않으면 소음으로 끝나지 않는다: 같은 조작이 한 번 더 들어가면
+     * 대화가 한 줄 더 넘어가 **다음 스텝의 전제가 어긋난다**(런 146 의 `마지막 대화` 스텝이 그 자리다).
+     *
+     * **글자까지 같을 때만 접는다.** "비슷한" 두 줄을 같다고 보는 것은 판단이고, 두 번 눌러야 하는
+     * 조작을 코드가 한 번으로 줄이면 그건 시나리오를 틀리게 고치는 것이다. 같은 문장이 떨어져 있으면
+     * (사이에 다른 스텝이 있으면) 그대로 둔다 — 그 사이에 상태가 바뀌었을 수 있다.
+     */
+    fun collapseRepeats(steps: List<ChatScenarioStep>): List<ChatScenarioStep> =
+        steps.filterIndexed { index, step ->
+            index == 0 || !identical(steps[index - 1], step)
+        }
+
+    private fun identical(a: ChatScenarioStep, b: ChatScenarioStep): Boolean =
+        a.caseId == b.caseId &&
+            a.action.trim() == b.action.trim() &&
+            a.input == b.input &&
+            a.stepSource == b.stepSource &&
+            a.stepKind == b.stepKind
 
     /**
      * 한 구간의 스텝들.

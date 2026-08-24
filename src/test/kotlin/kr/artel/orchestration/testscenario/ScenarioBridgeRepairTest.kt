@@ -291,4 +291,59 @@ class ScenarioBridgeRepairTest {
         assertThat(repaired.steps[0].stepSource).isEqualTo(ScenarioStepSource.CASE)
         assertThat(repaired.steps[0].stepSourceCapabilityId).isNull()
     }
+
+    // --- 되풀이된 스텝 접기 (ARTEL-468) ---------------------------------------------
+
+    @Test
+    fun `잇달아 똑같은 스텝은 한 줄로 접는다`() {
+        // 런 146 에서 실제로 나온 모양이다. 모델이 같은 문장을 두 줄 쓰고, 바로 다음 줄에
+        // 자기가 "…까지 반복한다"라고 적었다. 몇 번인지 알 근거가 없어서 생기는 일이다.
+        val space = ChatScenarioStep(action = "StoryScene에서 Space 입력을 한다.", caseId = 1255, input = "key:Space")
+        val repeat = ChatScenarioStep(
+            action = "마지막 내용에 도달할 때까지 Space 입력을 반복한다.", caseId = 1255, input = "key:Space",
+        )
+
+        val out = ScenarioBridgeRepair.collapseRepeats(listOf(space, space, repeat))
+
+        assertThat(out.map { it.action }).containsExactly(space.action, repeat.action)
+    }
+
+    @Test
+    fun `문구가 다르면 접지 않는다`() {
+        // "비슷하다"는 판단이다. 두 번 눌러야 하는 조작을 코드가 한 번으로 줄이면 시나리오를
+        // 틀리게 고치는 것이 된다.
+        val first = ChatScenarioStep(action = "Space 입력을 한다.", caseId = 1255)
+        val second = ChatScenarioStep(action = "Space 입력을 한 번 더 한다.", caseId = 1255)
+
+        assertThat(ScenarioBridgeRepair.collapseRepeats(listOf(first, second))).hasSize(2)
+    }
+
+    @Test
+    fun `사이에 다른 스텝이 있으면 접지 않는다`() {
+        // 그 사이에 상태가 바뀌었을 수 있다. 떨어져 있는 같은 문장은 되풀이가 아니라 재방문이다.
+        val space = ChatScenarioStep(action = "Space 입력을 한다.", caseId = 1255)
+        val other = ChatScenarioStep(action = "대화 내용을 확인한다.", caseId = 1252)
+
+        assertThat(ScenarioBridgeRepair.collapseRepeats(listOf(space, other, space))).hasSize(3)
+    }
+
+    @Test
+    fun `케이스가 다르면 문장이 같아도 접지 않는다`() {
+        // 검증 대상이 다르다. 같은 조작으로 다른 케이스를 보는 것은 정상이고, 접으면 한 케이스의
+        // 판정 구간이 통째로 사라진다.
+        val a = ChatScenarioStep(action = "Space 입력을 한다.", caseId = 1255)
+        val b = ChatScenarioStep(action = "Space 입력을 한다.", caseId = 1250)
+
+        assertThat(ScenarioBridgeRepair.collapseRepeats(listOf(a, b))).hasSize(2)
+    }
+
+    @Test
+    fun `메울 자리가 없는 시나리오에서도 접는다`() {
+        // 중복은 사이가 비어서 생기는 것이 아니다.
+        val step = ChatScenarioStep(action = "확인한다.", caseId = 7)
+
+        val repaired = ScenarioBridgeRepair.apply(listOf(step, step), emptyMap())
+
+        assertThat(repaired.steps).hasSize(1)
+    }
 }
