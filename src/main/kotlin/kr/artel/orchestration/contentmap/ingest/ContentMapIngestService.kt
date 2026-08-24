@@ -2,6 +2,7 @@ package kr.artel.orchestration.contentmap.ingest
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kr.artel.orchestration.common.error.NotFoundException
@@ -74,13 +75,65 @@ class ContentMapIngestService(
      *
      * 한 문서가 실패해도 나머지를 계속한다. 한 게임의 문서가 깨졌다고 다른 게임의 적재가 멈추면,
      * 고치는 사람이 **깨진 문서를 찾기 전에** 큐가 밀린 것부터 보게 된다.
+     *
+     * [maxAttempts] 번을 채운 문서는 큐에서 빠진다. 행과 `last_error` 는 남아 조회할 수 있다.
+     * 상한이 없으면 파싱에서 죽는 문서 하나가 매 tick 마다 스토리지에서 1.4 MB 를 다시 읽고,
+     * `received_at ASC` 라 언제나 앞자리를 차지한다 — 영영 성공하지 못하면서 영영 재시도된다.
+     *
+     * 시도 횟수를 올리는 것은 [ContentMapDocumentRepository.claimPending] 이다. 여기가 아니라
+     * 거기인 이유는 그쪽 주석에 있다.
      */
-    suspend fun ingestPending(limit: Int = DEFAULT_BATCH): List<IngestResult> =
-        documents.findPending(limit).toList().mapNotNull { document ->
+    suspend fun ingestPending(
+        limit: Int = DEFAULT_BATCH,
+        maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
+    ): List<IngestResult> =
+        documents.claimPending(limit, maxAttempts).toList().mapNotNull { document ->
             runCatching { ingest(document) }
-                .onFailure { logger.error("근거 문서 적재 실패 (documentId={}): {}", document.id, it.message, it) }
+                .onFailure { failure -> recordFailure(document, maxAttempts, failure) }
                 .getOrNull()
         }
+
+    /**
+     * 실패를 장부에 적는다. 적재 트랜잭션 밖이라 롤백이 이것까지 되돌리지 않는다.
+     *
+     * 장부를 적다 실패해도 배치를 세우지 않는다. 사유를 남기지 못하는 것과 큐를 멈추는 것은
+     * 서로 다른 크기의 사고다.
+     */
+    private suspend fun recordFailure(
+        document: ContentMapDocumentEntity,
+        maxAttempts: Int,
+        failure: Throwable,
+    ) {
+        if (failure is CancellationException) throw failure
+
+        logger.error("근거 문서 적재 실패 (documentId={}): {}", document.id, failure.message, failure)
+
+        // 더하지 않는다. `claimPending` 의 `RETURNING` 은 UPDATE 뒤의 값을 돌려주므로 이 숫자에는
+        // 이번 시도가 이미 들어 있다. 여기서 한 번 더 세면 경고가 한 시도 이르게 뜨고, 그 줄이
+        // "5/5" 라고 적으면서 정작 문서는 한 번 더 집힌다.
+        val attempts = document.ingestAttempts
+        if (attempts >= maxAttempts) {
+            // 조용히 큐에서 빠지면 아무도 모른다. 빠지는 순간이 그것을 말할 유일한 자리다.
+            logger.warn(
+                "근거 문서가 적재 시도 상한에 닿아 대기 목록에서 빠진다 (documentId={}, attempts={}/{}). " +
+                    "last_error 와 함께 행은 남는다.",
+                document.id, attempts, maxAttempts,
+            )
+        }
+
+        runCatching { documents.recordFailure(document.id!!, describe(failure)) }
+            .onFailure { logger.error("적재 실패 사유를 남기지 못했다 (documentId={}): {}", document.id, it.message, it) }
+    }
+
+    /**
+     * 실패 사유를 컬럼에 앉을 크기로 줄인다.
+     *
+     * 파싱 오류는 문서 원문을 인용한다. 실측 문서가 1.4 MB 라 자르지 않으면 장부가 문서의
+     * 사본이 되고, 큐를 들여다보는 사람이 읽으려던 한 줄이 그 안에 묻힌다. 원본은 스토리지에
+     * 그대로 있으니 잘라도 잃는 것이 없다 — 컬럼 폭을 자르는 것과 같은 이유다.
+     */
+    private fun describe(failure: Throwable): String =
+        "${failure::class.simpleName}: ${failure.message.orEmpty()}".take(ERROR_WIDTH)
 
     /**
      * 문서 하나를 적재한다. 성공하면 도장이 찍히고, 실패하면 트랜잭션째 되돌아간다.
@@ -328,6 +381,17 @@ class ContentMapIngestService(
         const val INGESTER_VERSION = "content-map-ingest-1"
 
         private const val DEFAULT_BATCH = 5
+
+        /**
+         * 한 문서를 몇 번까지 시도할지의 기본값. 스케줄러는 설정값을 넘긴다.
+         *
+         * `artel.knowledge.backfill.max-attempts` 와 같은 5다. 같은 종류의 판단이라 다른 숫자를
+         * 고를 이유를 찾지 못했다.
+         */
+        private const val DEFAULT_MAX_ATTEMPTS = 5
+
+        /** `last_error` 에 싣는 사유의 길이 상한. */
+        private const val ERROR_WIDTH = 1000
 
         /** 조작 후보. `flow` 는 흐름만 말하는 조각이다. */
         private const val RECORD_KIND_CANDIDATE = "candidate"

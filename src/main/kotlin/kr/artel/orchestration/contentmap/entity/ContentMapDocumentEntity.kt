@@ -43,6 +43,20 @@ data class ContentMapDocumentEntity(
     @Column("ingested_at")
     val ingestedAt: Instant? = null,
 
+    /**
+     * 적재를 몇 번 시도했나. 실패할 때가 아니라 **집을 때** 오른다.
+     *
+     * 실패 시점에만 올리면 적재기를 죽이는 문서는 시도가 한 번도 기록되지 않아 상한에 닿지
+     * 못한다 — 장부를 달아 놓고도 그 문서만은 무한 재시도가 남는다. 1.4 MB 파싱은 프로세스를
+     * 죽일 수 있는 종류의 일이라 이 구멍이 가정이 아니다.
+     */
+    @Column("ingest_attempts")
+    val ingestAttempts: Int = 0,
+
+    /** 마지막 실패 사유. 로그는 돌지만 행은 남는다. */
+    @Column("last_error")
+    val lastError: String? = null,
+
     @Column("received_at")
     val receivedAt: Instant? = null,
 )

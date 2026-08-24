@@ -166,7 +166,17 @@ class ContentMapIngestGoldenTest {
         assertThat(stamped.ingestedAt).isBeforeOrEqualTo(Instant.now())
 
         // 도장이 찍힌 문서는 대기열에서 빠진다. 안 빠지면 워커가 같은 1.4MB 를 영원히 다시 읽는다.
-        assertThat(documents.findPending(50).toList().map { it.id }).doesNotContain(documentId)
+        //
+        // 대기 조건을 직접 묻는다. `claimPending` 을 부르면 이 문서는 안 집히지만 다른 테스트가
+        // 남긴 대기 문서의 시도 횟수가 함께 오른다 — 읽기만 하려던 단언이 남의 장부를 건드린다.
+        val stillPending = db.sql(
+            "SELECT count(*) FROM content_map_document WHERE id = :id AND ingested_at IS NULL"
+        )
+            .bind("id", documentId)
+            .map { row, _ -> (row.get(0) as Number).toLong() }
+            .one()
+            .awaitSingle()
+        assertThat(stillPending).isZero()
     }
 
     /**

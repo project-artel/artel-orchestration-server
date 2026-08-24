@@ -111,6 +111,116 @@ class ContentMapIngestTransactionTest {
         assertThat(documents.findById(healthyDocument.id!!)!!.ingestedAt).isNotNull()
     }
 
+    /**
+     * 실패한 문서에 시도 횟수와 사유가 남는다 (ARTEL-502).
+     *
+     * 이 장부가 없으면 트리거를 켤 수 없다. 파싱에서 죽는 문서 하나가 매 tick 마다 스토리지에서
+     * 1.4 MB 를 다시 읽고, `received_at ASC` 라 언제나 큐의 앞자리를 차지한다.
+     *
+     * **횟수는 적재 트랜잭션 밖에서 올라야 한다.** 안에서 올리면 적재가 되돌아갈 때 장부도 함께
+     * 되돌아가 영영 0이다 — 이 단언이 지키는 것이 그것이다.
+     */
+    @Test
+    fun `실패한 문서에 시도 횟수와 사유가 남는다`(): Unit = runBlocking {
+        val broken = newContentMap()
+        val document = newDocument(broken.id!!, documentWithOverlongInputKey())
+
+        service.ingestPending(limit = 50)
+
+        val reloaded = documents.findById(document.id!!)!!
+        assertThat(reloaded.ingestAttempts).isEqualTo(1)
+        assertThat(reloaded.lastError).isNotNull()
+        // 실패했으므로 도장은 없다. 다음 tick 이 다시 집을 수 있어야 한다.
+        assertThat(reloaded.ingestedAt).isNull()
+    }
+
+    /**
+     * 집어 온 문서에는 **이번 시도가 이미 들어 있다.**
+     *
+     * `claimPending` 의 `RETURNING` 이 UPDATE 뒤의 값을 돌려주기 때문이다. 적재기의 상한 경고가
+     * 이 전제 위에 서 있어서 — 여기서 한 번 더 세면 경고가 한 시도 이르게 뜨고, 그 줄이 "5/5"
+     * 라고 적으면서 정작 문서는 한 번 더 집힌다. 조용히 틀리는 종류라 못으로 박아 둔다.
+     */
+    @Test
+    fun `집어 온 문서는 이번 시도가 이미 세어진 채로 온다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val document = newDocument(map.id!!, minimalDocument())
+
+        val claimed = documents.claimPending(limit = 50, maxAttempts = 5).toList()
+            .first { it.id == document.id }
+
+        assertThat(claimed.ingestAttempts).isEqualTo(1)
+        assertThat(documents.findById(document.id!!)!!.ingestAttempts).isEqualTo(1)
+    }
+
+    /**
+     * 시도 상한을 넘긴 문서는 큐에서 빠진다.
+     *
+     * 빠졌다는 증거는 **횟수가 더 오르지 않는 것**이다. `claimPending` 이 집는 그 자리에서 올리므로,
+     * 다시 집혔다면 숫자가 움직였을 것이다.
+     */
+    @Test
+    fun `시도 상한을 넘긴 문서는 더는 집히지 않는다`(): Unit = runBlocking {
+        val broken = newContentMap()
+        val document = newDocument(broken.id!!, documentWithOverlongInputKey())
+
+        service.ingestPending(limit = 50, maxAttempts = 1)
+        assertThat(documents.findById(document.id!!)!!.ingestAttempts).isEqualTo(1)
+
+        service.ingestPending(limit = 50, maxAttempts = 1)
+
+        val reloaded = documents.findById(document.id!!)!!
+        assertThat(reloaded.ingestAttempts).isEqualTo(1)
+        // 행은 남는다. 왜 실패했는지는 여기서만 읽을 수 있다 — 로그는 돌지만 이것은 남는다.
+        assertThat(reloaded.lastError).isNotNull()
+    }
+
+    /**
+     * 상한을 넘겨 큐에서 빠진 문서가 있어도 나머지는 계속 적재된다.
+     *
+     * 상한의 목적이 큐를 세우는 것이 아니라 **비켜 주는 것**이라는 단언이다.
+     */
+    @Test
+    fun `상한을 넘긴 문서가 나머지를 막지 않는다`(): Unit = runBlocking {
+        val broken = newContentMap()
+        val brokenDocument = newDocument(broken.id!!, documentWithOverlongInputKey())
+
+        // 상한까지 태운다.
+        service.ingestPending(limit = 50, maxAttempts = 1)
+        assertThat(documents.findById(brokenDocument.id!!)!!.ingestAttempts).isEqualTo(1)
+
+        // 깨진 문서보다 나중에 도착했지만, 앞자리가 비켜 있으므로 이번 tick 에 적재된다.
+        val healthy = newContentMap(capture = Capture.PLAYER.wire)
+        val healthyDocument = newDocument(healthy.id!!, minimalDocument())
+
+        val results = service.ingestPending(limit = 50, maxAttempts = 1)
+
+        assertThat(results.map { it.documentId }).contains(healthyDocument.id)
+        assertThat(documents.findById(healthyDocument.id!!)!!.ingestedAt).isNotNull()
+        assertThat(documents.findById(brokenDocument.id!!)!!.ingestAttempts).isEqualTo(1)
+    }
+
+    /**
+     * 적재된 문서는 큐에서 빠진다.
+     *
+     * 도장이 큐의 조건(`ingested_at IS NULL`)이기도 하다는 것을 고정한다. 빠지지 않으면 같은
+     * 문서가 매 tick 다시 적재되고, `retireVanished` 가 그때마다 돈다.
+     */
+    @Test
+    fun `적재된 문서는 다시 집히지 않는다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val document = newDocument(map.id!!, minimalDocument())
+
+        service.ingestPending(limit = 50)
+        val ingested = documents.findById(document.id!!)!!
+        assertThat(ingested.ingestedAt).isNotNull()
+        val attemptsAfterIngest = ingested.ingestAttempts
+
+        service.ingestPending(limit = 50)
+
+        assertThat(documents.findById(document.id!!)!!.ingestAttempts).isEqualTo(attemptsAfterIngest)
+    }
+
     // ---------- 픽스처 ----------
 
     private suspend fun countOfMap(from: String, contentMapId: Long): Long =
