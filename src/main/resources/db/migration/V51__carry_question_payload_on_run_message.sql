@@ -1,4 +1,4 @@
--- V47__carry_question_payload_on_run_message.sql
+-- V51__carry_question_payload_on_run_message.sql
 --
 -- 저작이 사용자에게 **되묻는** 자리를 만든다(ARTEL-487).
 --
