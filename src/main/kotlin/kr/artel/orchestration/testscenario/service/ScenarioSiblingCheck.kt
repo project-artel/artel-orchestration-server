@@ -145,7 +145,7 @@ object ScenarioSiblingCheck {
      *
      * 모르는 것은 충돌이라 부르지 않는다 — 비교할 수 없는 값(문자열 부등식 등)은 겹친다고 본다.
      */
-    private fun exclusive(a: CaseFact, b: CaseFact): Boolean =
+    fun exclusive(a: CaseFact, b: CaseFact): Boolean =
         violates(a.declared, b.guards) || violates(b.declared, a.guards) || disjoint(a.guards, b.guards)
 
     private fun violates(declared: Map<String, String>, guards: List<Guard>): Boolean =
@@ -177,6 +177,8 @@ object ScenarioSiblingCheck {
      * 모르고, 모르는 것은 겹친다고 본다.
      */
     private fun overlaps(x: Guard, y: Guard): Boolean {
+        // 오른쪽이 다른 변수인 비교는 값을 모르는 것이다. 모르는 것은 겹친다고 본다.
+        if (x.symbolic || y.symbolic) return true
         val xv = x.value.toDoubleOrNull()
         val yv = y.value.toDoubleOrNull()
         if (xv == null || yv == null) {

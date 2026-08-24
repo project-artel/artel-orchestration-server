@@ -453,9 +453,12 @@ class ScenarioBridgeInsertionIntegrationTest {
     // ---- 같은 자리의 케이스 -----------------------------------------------------------
 
     @Test
-    fun `동시에 성립할 수 없는 두 케이스를 한 시나리오에 담으면 저장하고 되묻는다`(): Unit = runBlocking {
+    fun `동시에 성립할 수 없는 두 케이스를 한 시나리오에 담으면 나눠 저장한다`(): Unit = runBlocking {
         // 실행이 불가능한 조합이지만 **막지 않는다**(ARTEL-497). "24건 전부 담아줘"가 실제 요청이었고,
         // 거절당한 사용자에게는 다음 수가 없었다 — 무엇을 어떤 묶음으로 볼지는 요청이 정한다.
+        //
+        // **묻지도 않는다.** 되묻기로 해 봤더니 답이 무엇을 뜻하는지 모델이 몰라 같은 질문이 답할
+        // 때마다 다시 나갔다(런 152). 나누는 일은 계산이므로 코드가 한다.
         val notFive = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition != 5", step = "관찰한다")
         val five = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 5", step = "관찰한다")
 
@@ -472,17 +475,17 @@ class ScenarioBridgeInsertionIntegrationTest {
             ),
         )
 
-        assertThat(outcome.applied).isEqualTo(1)
+        // 한 벌로 왔지만 두 벌로 저장된다.
+        assertThat(outcome.applied).isEqualTo(2)
         assertThat(outcome.rejected).isFalse()
-        assertThat(outcome.findings.conflicting).containsExactly(notFive to five)
-        // 묻는다 — 그리고 물은 것은 통보로 되풀이하지 않는다.
-        assertThat(outcome.question?.id).startsWith("conflict:")
-        assertThat(outcome.question?.options?.map { it.id }).containsExactly("split", "keep")
-        assertThat(outcome.notices).noneMatch { it.contains("함께 담을 수 없는") }
+        // 나눴으므로 남은 동거 불가가 없다.
+        assertThat(outcome.findings.conflicting).isEmpty()
+        assertThat(outcome.question?.id.orEmpty()).doesNotStartWith("conflict:")
+        assertThat(outcome.notices).anyMatch { it.contains("2개로 나눴습니다") }
     }
 
     @Test
-    fun `부등식끼리 어긋난 둘도 함께 담을 수 없다고 말한다`(): Unit = runBlocking {
+    fun `부등식끼리 어긋난 둘도 나눠 담는다`(): Unit = runBlocking {
         // 확정값이 없어 예전에는 통과하던 모양이다(ARTEL-497). word-venture TurnBattleScene 에서
         // 사망(hp <= 0)과 생존(hp > 0)이 한 시나리오에 담긴 것이 이 경우다.
         val dead = case("Map_scene", "Map_scene 화면인 상태 / Player.hp <= 0", step = "쓰러진 뒤 관찰한다")
@@ -501,9 +504,9 @@ class ScenarioBridgeInsertionIntegrationTest {
             ),
         )
 
-        assertThat(outcome.findings.conflicting).containsExactly(dead to alive)
-        assertThat(outcome.applied).isEqualTo(1)
-        assertThat(outcome.question?.id).startsWith("conflict:")
+        assertThat(outcome.findings.conflicting).isEmpty()
+        assertThat(outcome.applied).isEqualTo(2)
+        assertThat(outcome.notices).anyMatch { it.contains("2개로 나눴습니다") }
     }
 
     @Test
