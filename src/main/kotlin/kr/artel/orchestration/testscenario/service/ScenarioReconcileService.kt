@@ -94,14 +94,32 @@ class ScenarioReconcileService(
             return ReconcileOutcome(0)
         }
 
-        // 같은 자리의 케이스들을 본다(ARTEL-466). 배타적인 둘이 한 시나리오에 있으면 막고,
-        // 나누고 합치는 문제는 말만 한다 — 그건 요청이 정하는 것이지 코드가 정할 일이 아니다.
+        // 같은 자리의 케이스들을 본다(ARTEL-466). 나누고 합치는 문제는 말만 한다 — 그건 요청이
+        // 정하는 것이지 코드가 정할 일이 아니다.
         val facts = caseFacts(projectId)
         // 케이스를 사람 말로 부르는 함수. 내부 번호는 사용자가 읽는 글에 넣지 않는다.
         val byId = facts.associateBy { it.id }
         val describe: (Long) -> String = { id -> byId[id]?.let(ScenarioSiblingCheck::describe).orEmpty() }
-        val split = repairedSplit(scenarios)
+
+        // **함께 담을 수 없는 것은 묻지 않고 나눈다**(ARTEL-497). 되묻기로는 끝나지 않았다 —
+        // 이유는 [ScenarioConflictSplit] 에 적었다(런 152: 같은 질문이 답할 때마다 다시 나갔다).
+        val exclusive: (Long, Long) -> Boolean = { a, b ->
+            val left = byId[a]
+            val right = byId[b]
+            left != null && right != null && ScenarioSiblingCheck.exclusive(left, right)
+        }
+        val divided = ScenarioConflictSplit.apply(scenarios, exclusive)
+        val given = divided.scenarios
+        divided.notes.forEach { (title, parts) ->
+            logger.info("함께 담을 수 없어 나눴다 [runId={}] {} → {}조각", runId, title, parts)
+        }
+
+        val split = repairedSplit(given)
         val siblings = ScenarioSiblingCheck.analyze(facts, split)
+        if (siblings.conflicting.isNotEmpty()) {
+            // 나눈 뒤에도 남았다면 나누는 쪽에 구멍이 있다는 뜻이다. 저장은 막지 않되 남긴다.
+            logger.warn("나눈 뒤에도 동거 불가가 남았다 [runId={}] {}", runId, siblings.conflicting)
+        }
 
         // 경로 조회는 한 번만 한다. 메우는 쪽과 검수하는 쪽이 같은 질문을 하기 때문에, 따로 물으면
         // 한 턴에 같은 케이스 쌍을 두 번씩 조회하게 된다.
@@ -109,7 +127,7 @@ class ScenarioReconcileService(
 
         // 검수보다 **먼저** 메운다. 순서가 반대면 코드가 고칠 수 있는 것 때문에 저장이 막히고,
         // 그러면 에이전트에게 다시 쓰라고 시키게 된다 — 그 방법이 안 통한다는 것이 이 작업의 전제다.
-        val (bridged, notices, blocked) = repairByInsertion(routes, scenarios, describe)
+        val (bridged, notices, blocked) = repairByInsertion(routes, given, describe)
         val repaired = withCaseOperations(projectId, appUserId, bridged)
 
         // 검수는 저장 **전에** 끝난다. 통과하지 못한 결과는 한 줄도 들어가지 않는다 — 절반만 저장하면
@@ -148,18 +166,17 @@ class ScenarioReconcileService(
         // 것을 계속 묻는 셈이 된다. 답한 기록은 대화에 `answered` 로 남아 있다.
         val answered = answeredQuestionIds(runId, appUserId)
         val question = ScenarioQuestionBuilder.from(
-            siblings.conflicting, blocked, siblings.untestedArms, scope, describe,
+            blocked, siblings.untestedArms, scope, describe,
         )?.takeIf { it.id !in answered }
         val asked = question?.id?.substringBefore(":")
         val allNotices = buildList {
+            // 나눈 것은 **먼저** 말한다. 시나리오 수가 달라진 이유이므로, 아래 알림들보다 먼저
+            // 읽혀야 화면에 늘어난 카드가 무엇인지 알 수 있다.
+            divided.notes.forEach { (title, parts) ->
+                add("‘$title’ 은 함께 담을 수 없는 케이스가 있어 ${parts}개로 나눴습니다 — 사전조건이 어긋나 한 번의 실행으로 다 볼 수 없습니다.")
+            }
             if (asked != "gap") addAll(notices)
-            addAll(
-                siblingNotices(
-                    siblings, describe,
-                    skipArms = asked == "arm",
-                    skipConflicts = asked == "conflict",
-                )
-            )
+            addAll(siblingNotices(siblings, describe, skipArms = asked == "arm"))
             if (asked != "scope" && scope.isNotEmpty()) {
                 add(
                     "이번에 담은 범위 — " +
@@ -426,17 +443,15 @@ class ScenarioReconcileService(
         findings: ScenarioSiblingCheck.Findings,
         describe: (Long) -> String,
         skipArms: Boolean = false,
-        skipConflicts: Boolean = false,
     ): List<String> = buildList {
-        // 함께 담을 수 없는 것을 담았다(ARTEL-497). **막지 않고 말한다** — 요청이 그것이었을 수
-        // 있고, 거절하면 사용자에게 남는 것이 없다. 몇 쌍인지와 한 예만 든다. 여덟 쌍을 모두
-        // 늘어놓으면 읽히지 않고, 어느 것을 손볼지는 어차피 사람이 정한다.
-        if (!skipConflicts && findings.conflicting.isNotEmpty()) {
+        // 함께 담을 수 없는 것은 [ScenarioConflictSplit] 이 이미 나눴다. 여기까지 남았다면 나누는
+        // 쪽이 못 푼 것이므로 **말은 해 준다** — 조용히 두면 실행하다 멎는 이유를 알 수 없다.
+        if (findings.conflicting.isNotEmpty()) {
             val (a, b) = findings.conflicting.first()
             add(
-                "함께 담을 수 없는 케이스가 ${findings.conflicting.size}쌍 있습니다 — " +
+                "함께 담을 수 없는 케이스가 ${findings.conflicting.size}쌍 남았습니다 — " +
                     "예: ${describe(a)} ↔ ${describe(b)}. 사전조건이 어긋나 한 번의 실행으로 둘 다 " +
-                    "볼 수 없습니다. 나누려면 말씀해 주세요."
+                    "볼 수 없습니다."
             )
         }
         findings.splitApart.forEach { (a, b) ->
