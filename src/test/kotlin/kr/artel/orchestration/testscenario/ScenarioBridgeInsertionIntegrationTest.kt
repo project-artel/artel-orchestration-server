@@ -26,6 +26,8 @@ import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
+import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
+import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
@@ -67,6 +69,7 @@ class ScenarioBridgeInsertionIntegrationTest {
     @Autowired private lateinit var runRepository: TestRunRepository
     @Autowired private lateinit var runScenarioRepository: TestRunScenarioRepository
     @Autowired private lateinit var scenarioRepository: TestScenarioRepository
+    @Autowired private lateinit var runMessageRepository: TestRunMessageRepository
     @Autowired private lateinit var oauthUserService: OAuthUserService
     @Autowired private lateinit var template: org.springframework.data.r2dbc.core.R2dbcEntityTemplate
 
@@ -550,4 +553,36 @@ class ScenarioBridgeInsertionIntegrationTest {
             )
         ).id!!
 
+
+    @Test
+    fun `한 번 거절한 질문은 다시 묻지 않는다`(): Unit = runBlocking {
+        // 조건은 그대로라 같은 질문이 매 턴 다시 만들어진다. 그것을 그대로 내보내면 "그대로 두기"를
+        // 누른 사용자에게 같은 것을 계속 묻는 셈이 된다(ARTEL-487).
+        val notFive = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition != 5", step = "관찰한다")
+        case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 5", step = "관찰한다")
+        val one = ScenarioResult(
+            title = "한 갈래", description = "d",
+            steps = listOf(ChatScenarioStep(action = "확인", caseId = notFive)),
+        )
+
+        val asked = reconcileService.reconcile(runId, projectId, userId, listOf(one))
+        assertThat(asked.question?.id).startsWith("arm:")
+
+        // 사용자가 "이번엔 그대로 두기"를 눌렀다 — 대화에 답한 기록이 남는다.
+        runMessageRepository.save(
+            TestRunMessageEntity(
+                testRunId = runId, appUserId = userId, role = "ASSISTANT",
+                content = "그대로 두었습니다.",
+                payload = Json.of(
+                    objectMapper.writeValueAsString(mapOf("kind" to "answered", "id" to asked.question!!.id))
+                ),
+            )
+        )
+
+        val again = reconcileService.reconcile(runId, projectId, userId, listOf(one))
+
+        assertThat(again.question).isNull()
+        // 묻지 않는 대신 통보는 남는다 — 조건이 사라진 것이 아니라 답을 들은 것뿐이다.
+        assertThat(again.notices).anyMatch { it.contains("다른 갈래") }
+    }
 }

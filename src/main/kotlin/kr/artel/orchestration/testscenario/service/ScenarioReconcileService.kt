@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.toSet
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
+import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
@@ -50,6 +51,7 @@ class ScenarioReconcileService(
     private val testCaseRepository: TestCaseRepository,
     private val pathService: ScenarioPathService,
     private val caseFactService: ScenarioCaseFactService,
+    private val runMessageRepository: TestRunMessageRepository,
 ) {
     private val logger = LoggerFactory.getLogger(ScenarioReconcileService::class.java)
 
@@ -141,7 +143,12 @@ class ScenarioReconcileService(
         val scope = partialScenes(facts, split)
         // **물은 것은 통보로 되풀이하지 않는다.** 같은 말이 두 줄로 붙으면 어느 쪽에 답해야 하는지
         // 알 수 없고, 질문은 답할 자리가 있는 쪽이다.
+        // **한 번 거절한 질문은 다시 묻지 않는다**(ARTEL-487). 조건은 그대로이므로 매 턴 같은
+        // 질문이 다시 만들어지는데, 그것을 그대로 내보내면 "그대로 두기"를 누른 사용자에게 같은
+        // 것을 계속 묻는 셈이 된다. 답한 기록은 대화에 `answered` 로 남아 있다.
+        val answered = answeredQuestionIds(runId, appUserId)
         val question = ScenarioQuestionBuilder.from(blocked, siblings.untestedArms, scope, describe)
+            ?.takeIf { it.id !in answered }
         val asked = question?.id?.substringBefore(":")
         val allNotices = buildList {
             if (asked != "gap") addAll(notices)
@@ -389,6 +396,25 @@ class ScenarioReconcileService(
      * 막지 않는 이유는 하나다. 무엇을 어떤 묶음으로 검증할지는 요청이 정하는 것이고, 코드가
      * 이기면 "133번만 보고 싶다"는 요청이 영영 통하지 않는다.
      */
+    /**
+     * 이 런에서 **이미 답한** 질문의 id(ARTEL-487).
+     *
+     * 거절도 답이다. 답한 질문을 다시 묻지 않으려면 무엇에 답했는지 알아야 하고, 그 기록은
+     * 대화에 남는다 — 질문은 `kind=question`, 답하고 닫힌 것은 `kind=answered` 다.
+     *
+     * 읽지 못하면 빈 집합이다. 그때는 예전처럼 한 번 더 묻게 되는데, 못 읽었다고 질문을 통째로
+     * 삼키는 것보다는 낫다.
+     */
+    private suspend fun answeredQuestionIds(runId: Long, appUserId: Long): Set<String> = runCatching {
+        runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList()
+            .mapNotNull { row -> row.payload?.let { objectMapper.readTree(it.asString()) } }
+            .filter { it.path("kind").asText() == "answered" }
+            .mapNotNull { it.path("id").asText().takeIf(String::isNotBlank) }
+            .toSet()
+    }.onFailure { logger.warn("답한 질문을 읽지 못했다 — 다시 물을 수 있다: ${it.message}") }
+        .getOrDefault(emptySet())
+
     private fun siblingNotices(
         findings: ScenarioSiblingCheck.Findings,
         describe: (Long) -> String,

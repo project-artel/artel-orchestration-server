@@ -153,6 +153,17 @@ class TestScenarioAgentService(
             logger.info("미상 구간을 채우지 않았다 — 대화로 넘긴다 [runId={}] {}", runId, blockedBy)
         }
 
+        // **"안 할래"는 코드가 아는 답이다**(ARTEL-487). 거절을 모델에게 넘기면 값을 치르고도
+        // 얻는 것이 없다 — 모델이 시나리오를 그대로 돌려주면 검수가 다시 돌고, 같은 조건이 또
+        // 걸려 **방금 거절한 질문이 다시 나갔다.** 여기서 받아서, 무엇을 그대로 뒀는지와 마음이
+        // 바뀌면 무엇을 하면 되는지만 말한다.
+        if (declined(pending, answer, userInput)) {
+            sessions[sessionKey]?.question = null
+            saveMessage(runId, appUserId, "USER", answerSummary(pending, answer))
+            notifyDeclined(sessionKey, runId, appUserId, pending!!)
+            return
+        }
+
         val turnInput = when {
             // 보기를 눌렀다 — 무엇에 대한 답인지 붙여 보낸다.
             answerText(pending, answer) != null ->
@@ -645,6 +656,32 @@ class TestScenarioAgentService(
         val chosen = pending.options.filter { it.id in answer.optionIds }.map { it.label }
         val said = answer.text?.trim().orEmpty()
         return (chosen + listOfNotNull(said.ifBlank { null })).joinToString(" / ")
+    }
+
+    /** 이번 답이 거절인가. 규칙은 [ScenarioDeclineReply] 에 있다. */
+    private fun declined(pending: ScenarioQuestion?, answer: ScenarioQuestionAnswer?, userInput: String): Boolean {
+        if (answer == null || pending == null || answer.questionId != pending.id) return false
+        val said = userInput.isNotBlank() || !answer.text.isNullOrBlank()
+        return ScenarioDeclineReply.isDecline(pending, answer.optionIds, said)
+    }
+
+    /**
+     * 그대로 두기로 했다고 알린다. **다음 수를 함께 준다** — 거절이 막다른 길이 되면, 사용자는
+     * 마음이 바뀌었을 때 무엇을 말해야 하는지 스스로 지어내야 한다.
+     *
+     * `answered` 로 남겨 **같은 질문이 다시 나가지 않게 한다**(ScenarioReconcileService 가 읽는다).
+     */
+    private suspend fun notifyDeclined(
+        sessionKey: String,
+        runId: Long,
+        appUserId: Long,
+        question: ScenarioQuestion,
+    ) {
+        val message = ScenarioDeclineReply.advice(question)
+        saveMessage(runId, appUserId, "ASSISTANT", message, mapOf("kind" to "answered", "id" to question.id))
+        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
+        progress(sessionKey, AuthoringStage.SAVED)
+        logger.info("되묻기 거절 — 모델을 부르지 않는다 [runId={}, id={}]", runId, question.id)
     }
 
     /**
