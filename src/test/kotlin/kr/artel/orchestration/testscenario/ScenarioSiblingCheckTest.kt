@@ -265,4 +265,30 @@ class ScenarioSiblingCheckTest {
 
         assertThat(findings.conflicting).containsExactly(1284L to 1293L)
     }
+
+    // --- 덜 담긴 것은 런 전체로 (ARTEL-516) ----------------------------------------
+
+    @Test
+    fun `다른 시나리오에 이미 있는 갈래는 빠졌다고 하지 않는다`() {
+        // 실측(런 155): 미커버 0/66 인 화면에서 "이 갈래도 만들까요?"가 계속 나왔다. 이번 턴에
+        // 쓴 것만 보고 있었기 때문이다 — 134 는 런의 다른 시나리오에 이미 들어 있었다.
+        val findings = ScenarioSiblingCheck.analyze(
+            listOf(notFive, five),
+            split = listOf(listOf(133L)),
+            covered = setOf(133L, 134L),
+        )
+
+        assertThat(findings.untestedArms).isEmpty()
+    }
+
+    @Test
+    fun `런 어디에도 없는 갈래는 여전히 말한다`() {
+        val findings = ScenarioSiblingCheck.analyze(
+            listOf(notFive, five),
+            split = listOf(listOf(133L)),
+            covered = setOf(133L),
+        )
+
+        assertThat(findings.untestedArms).containsExactly(133L to 134L)
+    }
 }

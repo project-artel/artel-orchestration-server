@@ -530,6 +530,47 @@ class ScenarioBridgeInsertionIntegrationTest {
         assertThat(outcome.question?.options?.map { it.id }).containsExactly("add", "skip")
     }
 
+    /**
+     * 덜 담긴 것은 **런 전체로** 본다(ARTEL-516).
+     *
+     * 실측(런 155): TC 66건을 전부 담아 미커버 0/66 인 화면에서 "이 갈래도 만들까요?"가 계속
+     * 나왔다. 판정이 이번 턴에 쓴 시나리오만 보고 있었기 때문이다 — 나머지 갈래는 런의 다른
+     * 시나리오에 이미 들어 있었다.
+     */
+    @Test
+    fun `다른 시나리오가 이미 담은 갈래는 다시 묻지 않는다`(): Unit = runBlocking {
+        val notFive = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition != 5", step = "관찰한다")
+        val five = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 5", step = "관찰한다")
+
+        // 첫 턴: 한 갈래만 담는다 → 나머지 갈래를 묻는다.
+        val first = reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "한 갈래", description = "d",
+                    steps = listOf(ChatScenarioStep(action = "확인", caseId = notFive)),
+                )
+            ),
+        )
+        assertThat(first.question?.id).isEqualTo("arm:$notFive:$five")
+
+        // 둘째 턴: 나머지 갈래를 **새 시나리오로** 담는다. 이제 런에는 둘 다 있다.
+        val second = reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "다른 갈래", description = "d",
+                    steps = listOf(ChatScenarioStep(action = "확인", caseId = five)),
+                )
+            ),
+        )
+
+        assertThat(second.applied).isEqualTo(1)
+        // 이번 턴만 보면 notFive 가 "빠졌다"로 보인다. 런 전체로 보면 담겨 있다.
+        assertThat(second.question?.id.orEmpty()).doesNotStartWith("arm:")
+        assertThat(second.notices).noneMatch { it.contains("빠졌습니다") }
+    }
+
     // ---- 픽스처 ----------------------------------------------------------------------
 
     private suspend fun storedSteps(run: Long = runId): List<ChatScenarioStep> {

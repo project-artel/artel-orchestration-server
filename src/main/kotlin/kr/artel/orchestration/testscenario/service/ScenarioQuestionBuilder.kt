@@ -111,7 +111,7 @@ object ScenarioQuestionBuilder {
         return ScenarioQuestion(
             id = "scope:" + scope.joinToString(",") { it.first },
             text = "덜 담긴 씬이 있습니다. 더 담을까요?",
-            why = "이번에 담은 범위 — $tally",
+            why = "이 런에 담긴 범위 — $tally",
             options = scope.map { (scene, taken, all) ->
                 ScenarioQuestionOption("scene:$scene", "$scene 마저 담기", "지금 $taken/$all 입니다.")
             } + ScenarioQuestionOption("keep", "이대로 좋아"),

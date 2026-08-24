@@ -115,7 +115,10 @@ class ScenarioReconcileService(
         }
 
         val split = repairedSplit(given)
-        val siblings = ScenarioSiblingCheck.analyze(facts, split)
+        // **덜 담긴 것은 런 전체로 본다**(ARTEL-516). 이번 턴에 쓴 것만 보면, 다른 시나리오에
+        // 이미 있는 갈래를 "빠졌다"고 세어 전건을 담은 뒤에도 되묻기가 멈추지 않는다.
+        val covered = coveredInRun(runId, given, split)
+        val siblings = ScenarioSiblingCheck.analyze(facts, split, covered)
         if (siblings.conflicting.isNotEmpty()) {
             // 나눈 뒤에도 남았다면 나누는 쪽에 구멍이 있다는 뜻이다. 저장은 막지 않되 남긴다.
             logger.warn("나눈 뒤에도 동거 불가가 남았다 [runId={}] {}", runId, siblings.conflicting)
@@ -167,7 +170,7 @@ class ScenarioReconcileService(
             logger.info("근거를 적지 않은 스텝(허용) [runId={}] {}개", runId, findings.unsourced.size)
         }
 
-        val scope = partialScenes(facts, split)
+        val scope = partialScenes(facts, split, covered)
         // **물은 것은 통보로 되풀이하지 않는다.** 같은 말이 두 줄로 붙으면 어느 쪽에 답해야 하는지
         // 알 수 없고, 질문은 답할 자리가 있는 쪽이다.
         // **한 번 거절한 질문은 다시 묻지 않는다**(ARTEL-487). 조건은 그대로이므로 매 턴 같은
@@ -189,7 +192,7 @@ class ScenarioReconcileService(
             unsourcedNotice(findings, repaired)?.let(::add)
             if (asked != "scope" && scope.isNotEmpty()) {
                 add(
-                    "이번에 담은 범위 — " +
+                    "이 런에 담긴 범위 — " +
                         scope.joinToString(" · ") { (scene, taken, all) -> "$scene $taken/$all" } +
                         ". 같은 씬의 나머지도 담으려면 말씀해 주세요."
                 )
@@ -404,10 +407,17 @@ class ScenarioReconcileService(
      *
      * 씬별 비율만 낸다. id 를 늘어놓으면 스물몇 건짜리 씬에서 읽히지 않고, 사용자가 다음에 할
      * 말("타이틀 것도 다 넣어줘")에 필요한 것은 비율까지다.
+     *
+     * **어느 씬을 말할지는 이번 턴이 정하고, 몇 건인지는 런 전체가 정한다**(ARTEL-516). 둘을
+     * 갈라야 하는 이유가 실측에 있다(런 155): 비율을 이번 턴으로 세면 미커버 0/66 인 화면에서
+     * "덜 담긴 씬이 있습니다 — StoryScene 2/6"이 뜬다. 화면의 배지와 정면으로 어긋나고, 사용자는
+     * 둘 중 무엇을 믿어야 하는지 알 수 없다. 반대로 씬 목록까지 런 전체로 하면 이번 요청과
+     * 상관없는 씬이 매 턴 딸려 온다.
      */
     private fun partialScenes(
         facts: List<ScenarioSiblingCheck.CaseFact>,
         split: List<List<Long>>,
+        covered: Set<Long>,
     ): List<Triple<String, Int, Int>> {
         val used = split.flatten().toSet()
         if (used.isEmpty() || facts.isEmpty()) return emptyList()
@@ -417,11 +427,42 @@ class ScenarioReconcileService(
             .map { scene ->
                 Triple(
                     scene,
-                    facts.count { it.scene == scene && it.id in used },
+                    facts.count { it.scene == scene && it.id in covered },
                     facts.count { it.scene == scene },
                 )
             }
             .filter { (_, taken, all) -> taken < all }
+    }
+
+    /**
+     * **이 런에 지금 담겨 있는 케이스 전량**(ARTEL-516).
+     *
+     * 이번 턴에 쓴 것과, 런의 다른 시나리오에 이미 들어 있는 것을 합친 값이다. 이번 턴이 기존
+     * 시나리오를 고쳐 쓰는 경우 **그 시나리오의 옛 내용은 세지 않는다** — 곧 덮어쓸 것이라,
+     * 그것까지 담긴 것으로 세면 방금 빠진 케이스가 담겨 있다고 나온다.
+     *
+     * 조회가 터지면 이번 턴만 돌려준다. 예전 동작이고, 되묻기가 한 번 더 나갈 뿐이다 — 읽지
+     * 못했다고 저작을 막을 일은 아니다.
+     */
+    private suspend fun coveredInRun(
+        runId: Long,
+        turn: List<ScenarioResult>,
+        split: List<List<Long>>,
+    ): Set<Long> {
+        val thisTurn = split.flatten().toSet()
+        val rewritten = turn.mapNotNull { it.scenarioId }.toSet()
+        return runCatching {
+            val elsewhere = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+                .map { it.testScenarioId }
+                .filterNot { it in rewritten }
+                .flatMap { scenarioId ->
+                    scenarioRepository.findById(scenarioId)
+                        ?.toDraft(objectMapper)?.steps.orEmpty()
+                        .mapNotNull { it.caseId }
+                }
+            thisTurn + elsewhere
+        }.onFailure { logger.warn("런에 담긴 케이스를 읽지 못했다 — 이번 턴만 본다: ${it.message}") }
+            .getOrDefault(thisTurn)
     }
 
     /**
