@@ -176,6 +176,18 @@ class TestScenarioAgentService(
                 "(직전에 물어본 것: ${pending.text})\n\n$userInput"
             else -> userInput
         }
+        // **보낼 말이 없으면 보내지 않는다**(ARTEL-487). 이미 답한 질문의 보기를 한 번 더 누르면
+        // 여기까지 온다 — 새로고침한 화면이 그 버튼을 되살려 주기 때문이다(런 150). 그때 빈 턴을
+        // 모델에게 넘기면 "실행 목표가 비어 있어 판단할 수 없다"는 답이 돌아오고, 사용자는 자기가
+        // 무엇을 잘못했는지 모른 채 그 말을 읽는다. 답이 이미 끝난 질문이면 그때 한 말을 되풀이한다.
+        if (turnInput.isBlank()) {
+            answer?.questionId?.takeIf { it in answeredQuestionIds(runId, appUserId) }?.let { id ->
+                saveMessage(runId, appUserId, "ASSISTANT", ScenarioDeclineReply.advice(ScenarioQuestion(id, "")))
+                logger.info("이미 답한 질문에 다시 답했다 — 같은 안내를 되풀이한다 [runId={}] {}", runId, id)
+            } ?: logger.info("보낼 말이 없는 턴 — 모델을 부르지 않는다 [runId={}]", runId)
+            return
+        }
+
         // 물어본 것은 한 턴만 산다. 답이든 딴 얘기든 다음 턴까지 끌고 가면, 한참 뒤의 "응"이
         // 엉뚱한 질문에 붙는다. 화면의 보기는 저장된 질문으로 계속 답할 수 있다.
         sessions[sessionKey]?.question = null
@@ -657,6 +669,20 @@ class TestScenarioAgentService(
         val said = answer.text?.trim().orEmpty()
         return (chosen + listOfNotNull(said.ifBlank { null })).joinToString(" / ")
     }
+
+    /**
+     * 이 런에서 이미 답한 질문의 id. 대화에 `kind=answered` 로 남아 있다(ARTEL-487).
+     *
+     * 읽지 못하면 빈 집합이다 — 그때는 되풀이 안내가 없을 뿐, 빈 턴을 보내지는 않는다.
+     */
+    private suspend fun answeredQuestionIds(runId: Long, appUserId: Long): Set<String> = runCatching {
+        runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList()
+            .mapNotNull { row -> row.payload?.let { objectMapper.readTree(it.asString()) } }
+            .filter { it.path("kind").asText() == "answered" }
+            .mapNotNull { it.path("id").asText().takeIf(String::isNotBlank) }
+            .toSet()
+    }.getOrDefault(emptySet())
 
     /** 이번 답이 거절인가. 규칙은 [ScenarioDeclineReply] 에 있다. */
     private fun declined(pending: ScenarioQuestion?, answer: ScenarioQuestionAnswer?, userInput: String): Boolean {
