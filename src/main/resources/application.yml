@@ -189,6 +189,18 @@ artel:
     # 화면 한 장. 전체 화면 최장 변 1024 JPEG면 수백 KB라 여유가 크다.
     max-capture-bytes: ${ARTEL_CAPTURE_MAX_BYTES:5242880}
 
+  # 등록된 근거 문서를 씬·기능 행으로 적재하는 배치 (ARTEL-502). 등록은 문서 포인터만 만들고
+  # 즉시 돌아오고, 실제 파싱은 이 배치가 한다 — 실측 문서가 1.4 MB라 등록 응답에 매달 수 없다.
+  # 적재는 이번 문서에 없는 기능을 내리므로, 배포의 부수 효과로 시작되지 않게 기본값은 꺼짐이다.
+  content-map:
+    ingest:
+      enabled: ${ARTEL_CONTENT_MAP_INGEST_ENABLED:false}
+      # 문서 하나가 1.4 MB 파싱이라 크게 둘 값이 아니다.
+      batch-size: ${ARTEL_CONTENT_MAP_INGEST_BATCH_SIZE:5}
+      # 이 횟수를 넘긴 문서는 큐에서 빠진다(행은 last_error와 함께 남아 조회 가능).
+      max-attempts: ${ARTEL_CONTENT_MAP_INGEST_MAX_ATTEMPTS:5}
+      interval-millis: ${ARTEL_CONTENT_MAP_INGEST_INTERVAL_MILLIS:60000}
+
   # 원본 성능 표본 보존 정책 (ARTEL-435). 요약·시계열은 영구 보존이라 조회 응답은 영향받지
   # 않는다. 지워지는 것은 표본 단위 드릴다운뿐이다.
   # 배포의 부수 효과로 운영 데이터가 지워지지 않도록 기본값은 꺼짐이다.
