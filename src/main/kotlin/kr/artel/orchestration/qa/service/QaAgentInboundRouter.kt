@@ -106,6 +106,7 @@ class QaAgentInboundRouter(
     private val tryRepository: QaTryRepository,
     private val runRepository: QaRunRepository,
     private val runRollupService: QaRunRollupService,
+    private val readings: QaReadingsService,
     private val logService: QaLogService,
     private val actionDispatch: QaActionDispatchService,
     private val streamManager: QaLogStreamManager,
@@ -387,6 +388,9 @@ class QaAgentInboundRouter(
         // 방금 이 시나리오 try가 종단됐다. 모두 끝났으면 FAILED > CANCELLED > COMPLETED 우선순위로
         // 부모 run에 올린다 — 안 그러면 RUNNING으로 남아 다음 런을 영구 차단한다.
         runRollupService.rollUpIfAllTriesDone(qaTry.qaRunId, completedAt)
+        // 런이 정말 끝났을 때만 판독이 멈춘다 — 시나리오가 여럿이면 이 시도가 끝나도 다음이 남아
+        // 있고, 그 판단은 `stopIfIdle` 안에 있다 (ARTEL-507).
+        readings.stopIfIdle(qaTry.gameInstanceId)
     }
 
     /**

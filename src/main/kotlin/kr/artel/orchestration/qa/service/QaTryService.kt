@@ -350,6 +350,7 @@ class QaTryService(
     private val failureService: QaExecutionFailureService,
     private val citationService: KnowledgeCitationService,
     private val persistence: QaTryPersistenceService,
+    private val readings: QaReadingsService,
     private val logService: QaLogService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
@@ -399,6 +400,9 @@ class QaTryService(
             val (running, runningLog) =
                 persistence.attachAndMarkRunning(starting, agent.sessionId, agent.runConfig)
             logService.publish(runningLog)
+            // 런이 정말 시작한 뒤에 켠다 (ARTEL-507). 연결이 아니라 세션이 켜는 이유는
+            // `QaReadingsService` 주석에 있다 — 연결 시점은 전체 씬 순회와 겹친다.
+            readings.start(gameInstanceId)
             running.toResponse()
         } catch (error: CancellationException) {
             throw error
@@ -476,6 +480,9 @@ class QaTryService(
             val running = persistence.attachRunAndMarkRunning(
                 started.qaRun, requireNotNull(started.tries.first().id), agent.sessionId, agent.runConfig
             )
+            // 시나리오가 여럿이어도 여기서 한 번이다. 판독은 인스턴스에 붙는 것이지 시나리오에
+            // 붙는 것이 아니라, 시나리오마다 켜면 같은 말을 N 번 하는 것이 된다.
+            readings.start(gameInstanceId)
             running.toRunResponse(started.tries)
         } catch (error: CancellationException) {
             throw error
@@ -503,6 +510,10 @@ class QaTryService(
         // 검색이 한 번도 안 돌았을 가능성이 높지만 "높다"는 근거가 아니다 — 시나리오 하나를
         // 돌린 뒤 소켓이 죽은 런도 이 경로로 온다.
         citationService.finalizeRun(runId)
+        // 같은 이유로 판독도 여기서 끈다 (ARTEL-507). 이 경로는 `onDisconnect` 로도 오는데,
+        // 그때는 런이 이미 돌고 있었으므로 판독이 켜져 있다. 세션 개설이 실패한 경우에는 아직
+        // 켠 적이 없지만 `stopIfIdle` 이 멱등이라 무해하다.
+        readings.stopIfIdle(started.qaRun.gameInstanceId)
     }
 
     private fun QaRunEntity.toRunResponse(tries: List<QaTryEntity>) = QaRunResponse(
@@ -619,6 +630,9 @@ class QaTryService(
         // 활성 try는 위 `failureService.cancelled`가 이미 확정했다. 여기서 남는 것은 그 앞뒤로
         // 종단이 된 시나리오들이며, 두 번 도는 것이 안전하다(확정은 cited IS NULL만 건드린다).
         citationService.finalizeRun(qaRunId)
+        // 런과 그 시도들이 전부 닫힌 뒤다. 활성 시도가 있었다면 `failureService.cancelled` 가
+        // 이미 한 번 껐지만 `stopIfIdle` 은 멱등이고, 활성 시도가 없던 런은 여기서만 꺼진다.
+        readings.stopIfIdle(run.gameInstanceId)
     }
 
     suspend fun requireAccessible(qaTryId: Long, userId: Long): QaTryEntity? =
