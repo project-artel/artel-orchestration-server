@@ -26,8 +26,22 @@ private val DIRECTIONS = setOf(
     "ORCHE_INTERNAL",
     "USER_TO_ORCHE"
 )
-private val TYPES =
-    setOf("LOG", "ACTION", "ACTION_RESULT", "GAME_STATE", "STATUS", "ERROR", "CHAT", "SCREENSHOT")
+/**
+ * 적재를 허용하는 타입.
+ *
+ * **게이트가 둘이다.** 여기의 `require` 와 `qa_log_type_check` 제약이 같은 목록을 각자 들고
+ * 있고, 한쪽만 열면 통과한 값이 INSERT 에서 죽는다. 두 목록이 어긋나면
+ * [kr.artel.orchestration.qa.QaLogTypeGateParityTest] 가 실패한다 — `internal` 인 이유가
+ * 그 테스트다.
+ */
+internal val TYPES =
+    setOf(
+        "LOG", "ACTION", "ACTION_RESULT", "GAME_STATE", "STATUS", "ERROR", "CHAT", "SCREENSHOT",
+        // 판독(ARTEL-414). 전량이 실측 약 18 KB 라 다른 타입보다 무겁고, 이 행은 SSE 로도
+        // 발행된다. 원문을 런 단위 스토리지로 옮기고 여기엔 도착 사실만 남기는 것이
+        // ARTEL-449 의 몫이다 — 그때까지는 본문째 남는다.
+        "PULSE"
+    )
 
 data class QaLogAppendResult(val log: QaLogResponse, val inserted: Boolean)
 
