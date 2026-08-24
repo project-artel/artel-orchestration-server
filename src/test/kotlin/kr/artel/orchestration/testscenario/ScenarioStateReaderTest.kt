@@ -67,4 +67,21 @@ class ScenarioStateReaderTest {
         assertThat(ScenarioStateReader.knownValuesOf("Map_scene 화면인 상태 / (StagePosition == 5)"))
             .containsEntry("StagePosition", "5")
     }
+
+    @Test
+    fun `씬 접두가 없는 사전조건도 읽는다`() {
+        // word-venture 1277. 씬은 `scene` 컬럼에만 있고 사전조건은 식 하나뿐이다. 구분자가 없다고
+        // 빈 문자열을 읽으면 이 케이스의 요구가 코드에 통째로 안 보인다 — 그 값이면 GameClearScene
+        // 이 입력 없이 EndingScene 으로 빠진다는 사실을 아무도 모르게 된다.
+        assertThat(guards("StageDataSingleton.StagePosition == 4"))
+            .containsExactly("StagePosition == 4")
+        assertThat(ScenarioStateReader.knownValuesOf("StageDataSingleton.StagePosition == 4"))
+            .containsEntry("StagePosition", "4")
+    }
+
+    @Test
+    fun `씬 접두는 가드가 아니다`() {
+        // 앞부분을 함께 읽어도 안전한 이유 — 접두에는 비교 연산자가 없다.
+        assertThat(guards("Map_scene 화면인 상태")).isEmpty()
+    }
 }
