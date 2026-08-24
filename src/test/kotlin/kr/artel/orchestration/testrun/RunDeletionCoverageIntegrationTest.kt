@@ -26,10 +26,13 @@ import java.time.Instant
 /**
  * 런을 지운 뒤 **커버리지가 따라오는가**(ARTEL-487).
  *
- * 런 삭제는 조합만 끊고 시나리오는 남기는데, 커버리지는 런과 무관하게 프로젝트의 모든 시나리오를
- * 센다. 그래서 런만 지우면 어디에도 담기지 않은 시나리오가 케이스를 계속 "담긴 것"으로 만들고,
- * 사용자가 보기에는 지웠는데 숫자가 그대로다. 지울 때 함께 지울지 묻고, 그 답이 실제로 숫자를
- * 움직이는지가 여기서 보는 것이다.
+ * 런 삭제는 조합만 끊고 시나리오는 남긴다. 예전에는 커버리지가 프로젝트의 모든 시나리오를 세서,
+ * 런만 지우면 어디에도 담기지 않은 시나리오가 케이스를 계속 "담긴 것"으로 만들었다 — 사용자가
+ * 보기에는 지웠는데 숫자가 그대로였다.
+ *
+ * 지금은 **커버리지가 런에 담긴 시나리오만 센다.** 그래서 시나리오를 남기든 함께 지우든 숫자는
+ * 맞고, 남긴 시나리오는 다른 런에 넣는 순간 커버리지가 돌아온다 — 재사용을 막지 않으면서
+ * 숫자가 따라오는 것이 여기서 보는 것이다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -44,7 +47,9 @@ class RunDeletionCoverageIntegrationTest {
     @Autowired private lateinit var objectMapper: ObjectMapper
 
     @Test
-    fun `런만 지우면 커버리지가 그대로고, 함께 지우면 풀린다`(): Unit = runBlocking {
+    fun `런을 지우면 시나리오를 남겨도 커버리지가 따라간다`(): Unit = runBlocking {
+        // 시나리오를 남기는 선택이 **커버리지를 어긋난 채로 두는 선택이 되면 안 된다**(ARTEL-495).
+        // 커버리지는 런에 담긴 시나리오만 세므로, 런에서 떨어지는 순간 커버에서 빠진다.
         val (projectId, userId) = project()
         val caseId = case(projectId, userId)
         val scenarioId = scenario(projectId, caseId)
@@ -52,15 +57,37 @@ class RunDeletionCoverageIntegrationTest {
         runService.setScenarios(run.id.toLong(), userId, listOf(scenarioId))
         assertThat(testCaseService.coverage(projectId, userId).unauthored).isZero()
 
-        // 남기면 시나리오가 살아 있고, 그 시나리오가 케이스를 여전히 담고 있다.
         runService.delete(run.id.toLong(), userId, dropScenarios = false)
+
+        // 시나리오는 살아 있다 — 스텝도 case_id 도 그대로다. 커버리지만 풀렸다.
         assertThat(scenarioRepository.findById(scenarioId)).isNotNull()
-        assertThat(testCaseService.coverage(projectId, userId).unauthored).isZero()
+        assertThat(testCaseService.coverage(projectId, userId).unauthored).isEqualTo(1)
+    }
+
+    @Test
+    fun `남긴 시나리오를 다른 런에 넣으면 커버리지가 돌아온다`(): Unit = runBlocking {
+        // 남기는 선택의 값이 여기 있다. 시나리오가 온전하므로 다시 쓰면 그대로 산다.
+        val (projectId, userId) = project()
+        val scenarioId = scenario(projectId, case(projectId, userId))
+        val first = runService.create(projectId, userId, TestRunCreateRequest(name = "런"))!!
+        runService.setScenarios(first.id.toLong(), userId, listOf(scenarioId))
+        runService.delete(first.id.toLong(), userId, dropScenarios = false)
+        assertThat(testCaseService.coverage(projectId, userId).unauthored).isEqualTo(1)
 
         val second = runService.create(projectId, userId, TestRunCreateRequest(name = "런2"))!!
         runService.setScenarios(second.id.toLong(), userId, listOf(scenarioId))
 
-        val result = runService.delete(second.id.toLong(), userId, dropScenarios = true)
+        assertThat(testCaseService.coverage(projectId, userId).unauthored).isZero()
+    }
+
+    @Test
+    fun `함께 지우면 시나리오도 커버리지도 사라진다`(): Unit = runBlocking {
+        val (projectId, userId) = project()
+        val scenarioId = scenario(projectId, case(projectId, userId))
+        val run = runService.create(projectId, userId, TestRunCreateRequest(name = "런"))!!
+        runService.setScenarios(run.id.toLong(), userId, listOf(scenarioId))
+
+        val result = runService.delete(run.id.toLong(), userId, dropScenarios = true)
 
         assertThat(result.deletedScenarioCount).isEqualTo(1)
         assertThat(scenarioRepository.findById(scenarioId)).isNull()
