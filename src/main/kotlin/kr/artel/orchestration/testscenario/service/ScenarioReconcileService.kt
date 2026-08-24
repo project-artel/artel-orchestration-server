@@ -128,7 +128,11 @@ class ScenarioReconcileService(
         // 검수보다 **먼저** 메운다. 순서가 반대면 코드가 고칠 수 있는 것 때문에 저장이 막히고,
         // 그러면 에이전트에게 다시 쓰라고 시키게 된다 — 그 방법이 안 통한다는 것이 이 작업의 전제다.
         val (bridged, notices, blocked) = repairByInsertion(routes, given, describe)
-        val repaired = withCaseOperations(projectId, appUserId, bridged)
+        // 글자까지 같은 스텝이 서로 다른 케이스를 보면 무엇이 다른지 붙인다. 화면에서는 같은 줄이
+        // 두 번 있는 것으로 보이고, 실행하는 사람은 중복이라 여겨 하나를 건너뛴다.
+        val repaired = ScenarioSiblingLabel.apply(
+            withCaseOperations(projectId, appUserId, bridged),
+        ) { id -> byId[id]?.guards.orEmpty() }
 
         // 검수는 저장 **전에** 끝난다. 통과하지 못한 결과는 한 줄도 들어가지 않는다 — 절반만 저장하면
         // "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어 보인다).
