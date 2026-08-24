@@ -45,7 +45,7 @@ class QaExecutionFailurePersistence(
                 message = "QA execution failed because its connection closed.",
                 payload = objectMapper.valueToTree(QaStatusPayload("FAILED", completedAt))
             )
-            FailureLogs(qaTryId, active.agentSessionId, errorLog, statusLog)
+            FailureLogs(qaTryId, active.gameInstanceId, active.agentSessionId, errorLog, statusLog)
         }
 
     suspend fun failActiveById(qaTryId: Long, reason: String): FailureLogs? =
@@ -72,7 +72,7 @@ class QaExecutionFailurePersistence(
                 message = "QA execution failed.",
                 payload = objectMapper.valueToTree(QaStatusPayload("FAILED", completedAt))
             )
-            FailureLogs(qaTryId, active.agentSessionId, errorLog, statusLog)
+            FailureLogs(qaTryId, active.gameInstanceId, active.agentSessionId, errorLog, statusLog)
         }
 
     /**
@@ -107,13 +107,15 @@ class QaExecutionFailurePersistence(
                 message = "QA execution was cancelled.",
                 payload = objectMapper.valueToTree(QaStatusPayload("CANCELLED", completedAt))
             )
-            FailureLogs(qaTryId, active.agentSessionId, requestLog, statusLog)
+            FailureLogs(qaTryId, active.gameInstanceId, active.agentSessionId, requestLog, statusLog)
         }
 
 }
 
 data class FailureLogs(
     val qaTryId: Long,
+    /** 판독을 끌 대상. 트랜잭션이 커밋된 뒤에 쓰이므로 여기 실어 내보낸다 (ARTEL-507). */
+    val gameInstanceId: Long,
     val agentSessionId: String?,
     val error: QaLogAppendResult,
     val status: QaLogAppendResult
@@ -131,6 +133,7 @@ data class FailureLogs(
 @Service
 class QaExecutionFailureService(
     private val persistence: QaExecutionFailurePersistence,
+    private val readings: QaReadingsService,
     private val logService: QaLogService,
     private val streamManager: QaLogStreamManager,
     private val agentPort: QaAgentPort,
@@ -147,6 +150,8 @@ class QaExecutionFailureService(
         // 채점은 그 뒤에 판정을 기대 라벨과 대조한다. 둘 다 스스로 실패를 삼킨다.
         citationService.finalizeTry(failed.qaTryId)
         grader.grade(failed.qaTryId)
+        // 판독을 끄지 않는다. 소켓이 이미 죽어 보낼 곳이 없고, SDK 는 연결이 끊기면
+        // `EndDiscovery` 로 스스로 멈춘다(ARTEL-417). 여기서 보내면 매 절단마다 실패 경고만 쌓인다.
         try {
             closeQuietly(failed.agentSessionId)
         } finally {
@@ -170,6 +175,8 @@ class QaExecutionFailureService(
         logService.publish(cancelled.status)
         citationService.finalizeTry(qaTryId)
         grader.grade(qaTryId)
+        // 상태 전이가 커밋된 뒤라야 `stopIfIdle` 이 방금 끝낸 시도를 끝난 것으로 읽는다 (ARTEL-507).
+        readings.stopIfIdle(cancelled.gameInstanceId)
         val sessionId = cancelled.agentSessionId
         try {
             if (sessionId != null) {
@@ -212,6 +219,7 @@ class QaExecutionFailureService(
         logService.publish(failed.status)
         citationService.finalizeTry(qaTryId)
         grader.grade(qaTryId)
+        readings.stopIfIdle(failed.gameInstanceId)
         try {
             if (closeAgent) closeQuietly(failed.agentSessionId)
         } finally {
