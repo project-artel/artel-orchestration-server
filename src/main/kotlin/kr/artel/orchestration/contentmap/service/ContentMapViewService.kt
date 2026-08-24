@@ -7,6 +7,7 @@ import kr.artel.orchestration.contentmap.dto.ContentMapEdgeResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapSceneResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapSummaryResponse
+import kr.artel.orchestration.contentmap.dto.LastScanResponse
 import kr.artel.orchestration.contentmap.dto.PendingDocumentResponse
 import kr.artel.orchestration.contentmap.dto.SceneCapabilityCountResponse
 import kr.artel.orchestration.contentmap.dto.SpecGapCountResponse
@@ -19,6 +20,7 @@ import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
+import kr.artel.orchestration.contentmap.scan.ScanStatusRegistry
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import org.springframework.stereotype.Service
 
@@ -44,6 +46,7 @@ class ContentMapViewService(
     private val capabilities: CapabilityRepository,
     private val sceneEdges: SceneEdgeRepository,
     private val documents: ContentMapDocumentRepository,
+    private val scanStatuses: ScanStatusRegistry,
 ) {
 
     /**
@@ -65,7 +68,12 @@ class ContentMapViewService(
     ): ContentMapResponse? {
         gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: return null
 
-        val contentMap = selectContentMap(gameBuildId, capture) ?: return ContentMapResponse.EMPTY
+        // 마지막 스캔은 지도가 있든 없든 답한다. 지도가 없을 때야말로 화면이 그것을 물어야 한다 —
+        // "아직 스캔한 적이 없다"와 "눌렀는데 게임이 실패로 답했다"가 여기서 갈린다.
+        val lastScan = scanStatuses.find(gameBuildId)?.let(LastScanResponse::of)
+
+        val contentMap = selectContentMap(gameBuildId, capture)
+            ?: return ContentMapResponse.EMPTY.copy(lastScan = lastScan)
         val contentMapId = contentMap.id!!
 
         // 문서 목록 **하나**가 두 칸을 답한다 — 마지막 적재 시각과 대기 문서. 질의를 둘로 나누면
@@ -81,6 +89,7 @@ class ContentMapViewService(
             pendingDocuments = allDocuments
                 .filter { it.ingestedAt == null }
                 .map(::pendingOf),
+            lastScan = lastScan,
         )
     }
 

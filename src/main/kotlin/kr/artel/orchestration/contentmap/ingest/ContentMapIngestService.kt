@@ -2,8 +2,10 @@ package kr.artel.orchestration.contentmap.ingest
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactor.awaitSingleOrNull
+import kr.artel.orchestration.common.error.ApiException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.entity.Actionability
 import kr.artel.orchestration.contentmap.entity.Applicability
@@ -83,6 +85,55 @@ class ContentMapIngestService(
                 .onFailure { logger.error("근거 문서 적재 실패 (documentId={}): {}", document.id, it.message, it) }
                 .getOrNull()
         }
+
+    /**
+     * **이 빌드의** 대기 문서를 [limit] 개까지 적재한다. 원격 스캔 결과가 돌아오면 이쪽이 돈다.
+     *
+     * 전역 [ingestPending] 과 갈라져 있는 이유는 두 가지다. 하나는 남의 프로젝트 문서가 이 사람의
+     * 스캔 결과에 섞이면 안 된다는 것이고, 다른 하나는 **깨진 문서를 문서에 적어야** 한다는 것이다 —
+     * 그래야 조회 API 가 그 사유를 실어 내고 화면이 "눌렀는데 안 됐다"를 말할 수 있다.
+     * [ingestPending] 은 프로덕션 호출자가 아직 없어 지금처럼 로그만 남긴다. 스케줄러를 만드는
+     * 이슈가 이쪽 모양으로 옮겨 간다.
+     *
+     * **이 함수에 트랜잭션이 걸리면 안 된다.** [ingest] 하나가 트랜잭션이고, 실패 기록은 그것이
+     * 되돌아간 **뒤에** 새 트랜잭션으로 써야 남는다. 여기에 바깥 트랜잭션이 있으면 그 기록이
+     * rollback-only 에 묶여 조용히 사라진다.
+     */
+    suspend fun ingestBuild(gameBuildId: Long, limit: Int = DEFAULT_BATCH): List<IngestOutcome> =
+        documents.findPendingByGameBuild(gameBuildId, limit).toList().map { document ->
+            val documentId = document.id!!
+            try {
+                IngestOutcome.Ingested(ingest(document))
+            } catch (cancelled: CancellationException) {
+                // 취소는 오류가 아니다. 넓은 catch 앞에서 먼저 전파해야 요청 취소가 정상 동작한다.
+                throw cancelled
+            } catch (failure: Exception) {
+                // 원문은 **여기에만** 남는다. 아래 shown 이 DB 칸과 화면으로 가는 값이다.
+                logger.error("근거 문서 적재 실패 (documentId={}): {}", documentId, failure.message, failure)
+                val shown = clientMessageOf(failure).take(INGEST_ERROR_WIDTH)
+                // 기록이 또 깨져도 배치를 멈추지 않는다. 그때는 사람이 사유를 못 보지만
+                // 데이터가 틀어지지는 않는다 — 문서는 여전히 대기 상태다.
+                runCatching { documents.recordIngestFailure(documentId, Instant.now(clock), shown) }
+                    .onFailure { logger.error("적재 실패 기록 실패 (documentId={})", documentId, it) }
+                IngestOutcome.Failed(documentId, shown)
+            }
+        }
+
+    /**
+     * 사람에게 그대로 보여도 되는 문구. **`ingest_error` 칸에 들어가는 것이 이 값이다.**
+     *
+     * 그 칸은 조회 API 가 `pendingDocuments[].ingestError` 로 브라우저에 그대로 내보내는 값이고,
+     * `ContentMapViewDtos` 가 이미 "내부 예외 원문은 로그에만 남는다"로 못 박아 뒀다. 잡은 예외의
+     * raw message 를 넣으면 이 경로로 내부가 샌다 — 컬럼 폭에 걸린 실패는 R2DBC 예외가 SQL 문과
+     * 테이블·컬럼 타입을 그대로 들고 오고, 그것이 화면까지 간다.
+     *
+     * 4xx 도메인 예외만 그 문구를 쓴다. 그것은 우리가 사용자용으로 쓴 문장이기 때문이다.
+     */
+    private fun clientMessageOf(failure: Throwable): String =
+        (failure as? ApiException)
+            ?.takeIf { it.status.is4xxClientError }
+            ?.message
+            ?: GENERIC_INGEST_FAILURE
 
     /**
      * 문서 하나를 적재한다. 성공하면 도장이 찍히고, 실패하면 트랜잭션째 되돌아간다.
@@ -388,6 +439,15 @@ class ContentMapIngestService(
 
         private const val DEFAULT_BATCH = 5
 
+        /**
+         * `ingest_error` 의 컬럼 폭(V48). 넘치면 자른다 — 넘친 채로 쓰면 그 UPDATE 가 깨지고,
+         * 실패를 적으려다 실패를 하나 더 만든다.
+         */
+        private const val INGEST_ERROR_WIDTH = 512
+
+        /** 4xx 도메인 예외가 아닌 실패에 쓰는 문구. 원인은 로그에만 남는다. */
+        private const val GENERIC_INGEST_FAILURE = "근거 문서를 씬 명세로 앉히지 못했습니다."
+
         /** 조작 후보. `flow` 는 흐름만 말하는 조각이다. */
         private const val RECORD_KIND_CANDIDATE = "candidate"
 
@@ -414,6 +474,24 @@ class ContentMapIngestService(
         /** `scene_edge.to_scene_name` 의 폭. `capability_effect.target` 의 1024 보다 좁다. */
         private const val TO_SCENE_NAME_WIDTH = 255
     }
+}
+
+/**
+ * 문서 하나에 대한 적재 시도의 결말.
+ *
+ * [IngestResult] 를 그대로 쓰지 않는 이유: 실패한 문서에는 셀 것이 없고, 대신 **사람에게 보여 줄
+ * 사유**가 있다. 둘을 한 타입에 섞으면 모든 칸이 nullable 이 되고 "성공인가"를 매번 다시 판정해야
+ * 한다.
+ */
+sealed interface IngestOutcome {
+    val documentId: Long
+
+    data class Ingested(val result: IngestResult) : IngestOutcome {
+        override val documentId: Long get() = result.documentId
+    }
+
+    /** [reason] 은 이미 사람에게 보여 줄 문구다. 예외 원문이 아니다 — 그것은 로그에만 있다. */
+    data class Failed(override val documentId: Long, val reason: String) : IngestOutcome
 }
 
 /** 한 문서를 적재하고 남은 것. 워커가 로그로 남기고 테스트가 읽는다. */
