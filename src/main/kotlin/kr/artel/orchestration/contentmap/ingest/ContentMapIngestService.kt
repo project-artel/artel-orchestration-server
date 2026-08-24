@@ -2,8 +2,10 @@ package kr.artel.orchestration.contentmap.ingest
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactor.awaitSingleOrNull
+import kr.artel.orchestration.common.error.ApiException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.entity.Actionability
 import kr.artel.orchestration.contentmap.entity.Applicability
@@ -26,6 +28,7 @@ import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
 import kr.artel.orchestration.contentmap.repository.CapabilityEvidenceRepository
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
+import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.contentmap.repository.upsert
 import kr.artel.orchestration.project.storage.DocumentStorage
@@ -43,7 +46,7 @@ import java.time.Instant
  * ```
  * content_map_document (ingested_at IS NULL)
  *   → DocumentStorage.read → EvidenceParser → EvidenceJoin.candidates()
- *   → scene · capability · capability_evidence · capability_effect
+ *   → scene · capability · capability_evidence · capability_effect · scene_edge
  *   → ingested_by / ingested_at 도장
  * ```
  *
@@ -61,6 +64,7 @@ class ContentMapIngestService(
     private val capabilities: CapabilityRepository,
     private val evidences: CapabilityEvidenceRepository,
     private val effects: CapabilityEffectRepository,
+    private val sceneEdges: SceneEdgeRepository,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
@@ -81,6 +85,55 @@ class ContentMapIngestService(
                 .onFailure { logger.error("근거 문서 적재 실패 (documentId={}): {}", document.id, it.message, it) }
                 .getOrNull()
         }
+
+    /**
+     * **이 빌드의** 대기 문서를 [limit] 개까지 적재한다. 원격 스캔 결과가 돌아오면 이쪽이 돈다.
+     *
+     * 전역 [ingestPending] 과 갈라져 있는 이유는 두 가지다. 하나는 남의 프로젝트 문서가 이 사람의
+     * 스캔 결과에 섞이면 안 된다는 것이고, 다른 하나는 **깨진 문서를 문서에 적어야** 한다는 것이다 —
+     * 그래야 조회 API 가 그 사유를 실어 내고 화면이 "눌렀는데 안 됐다"를 말할 수 있다.
+     * [ingestPending] 은 프로덕션 호출자가 아직 없어 지금처럼 로그만 남긴다. 스케줄러를 만드는
+     * 이슈가 이쪽 모양으로 옮겨 간다.
+     *
+     * **이 함수에 트랜잭션이 걸리면 안 된다.** [ingest] 하나가 트랜잭션이고, 실패 기록은 그것이
+     * 되돌아간 **뒤에** 새 트랜잭션으로 써야 남는다. 여기에 바깥 트랜잭션이 있으면 그 기록이
+     * rollback-only 에 묶여 조용히 사라진다.
+     */
+    suspend fun ingestBuild(gameBuildId: Long, limit: Int = DEFAULT_BATCH): List<IngestOutcome> =
+        documents.findPendingByGameBuild(gameBuildId, limit).toList().map { document ->
+            val documentId = document.id!!
+            try {
+                IngestOutcome.Ingested(ingest(document))
+            } catch (cancelled: CancellationException) {
+                // 취소는 오류가 아니다. 넓은 catch 앞에서 먼저 전파해야 요청 취소가 정상 동작한다.
+                throw cancelled
+            } catch (failure: Exception) {
+                // 원문은 **여기에만** 남는다. 아래 shown 이 DB 칸과 화면으로 가는 값이다.
+                logger.error("근거 문서 적재 실패 (documentId={}): {}", documentId, failure.message, failure)
+                val shown = clientMessageOf(failure).take(INGEST_ERROR_WIDTH)
+                // 기록이 또 깨져도 배치를 멈추지 않는다. 그때는 사람이 사유를 못 보지만
+                // 데이터가 틀어지지는 않는다 — 문서는 여전히 대기 상태다.
+                runCatching { documents.recordIngestFailure(documentId, Instant.now(clock), shown) }
+                    .onFailure { logger.error("적재 실패 기록 실패 (documentId={})", documentId, it) }
+                IngestOutcome.Failed(documentId, shown)
+            }
+        }
+
+    /**
+     * 사람에게 그대로 보여도 되는 문구. **`ingest_error` 칸에 들어가는 것이 이 값이다.**
+     *
+     * 그 칸은 조회 API 가 `pendingDocuments[].ingestError` 로 브라우저에 그대로 내보내는 값이고,
+     * `ContentMapViewDtos` 가 이미 "내부 예외 원문은 로그에만 남는다"로 못 박아 뒀다. 잡은 예외의
+     * raw message 를 넣으면 이 경로로 내부가 샌다 — 컬럼 폭에 걸린 실패는 R2DBC 예외가 SQL 문과
+     * 테이블·컬럼 타입을 그대로 들고 오고, 그것이 화면까지 간다.
+     *
+     * 4xx 도메인 예외만 그 문구를 쓴다. 그것은 우리가 사용자용으로 쓴 문장이기 때문이다.
+     */
+    private fun clientMessageOf(failure: Throwable): String =
+        (failure as? ApiException)
+            ?.takeIf { it.status.is4xxClientError }
+            ?.message
+            ?: GENERIC_INGEST_FAILURE
 
     /**
      * 문서 하나를 적재한다. 성공하면 도장이 찍히고, 실패하면 트랜잭션째 되돌아간다.
@@ -108,6 +161,9 @@ class ContentMapIngestService(
         val grouped = candidates.groupBy { CapabilityKey.of(it) }
         val keptKeys = grouped.keys
         val collapsed = candidates.size - grouped.size
+
+        // 이번 문서가 다시 말한 정적 전이의 id. 여기 없는 정적 간선이 곧 사라진 전이다.
+        val keptEdgeIds = mutableListOf<Long>()
 
         for ((key, group) in grouped) {
             // 조작 후보가 흐름보다 먼저다. 같은 자리에서 `candidate` 와 `flow` 가 함께 나오면
@@ -146,6 +202,7 @@ class ContentMapIngestService(
 
             writeEvidence(capabilityId, candidate, group)
             writeEffects(capabilityId, mergedEffects)
+            keptEdgeIds += writeSceneEdges(document.contentMapId, sceneId, capabilityId, mergedEffects)
 
             // 근거가 달라졌으면 확인을 되돌린다. 코드가 바뀌었는데 "확인됨"이 남아 있으면 그 표시가
             // 지금 코드에 대한 것이 아니게 되고, 아무도 그 사실을 모른다.
@@ -153,6 +210,11 @@ class ContentMapIngestService(
                 capabilities.resetVerification(capabilityId)
             }
         }
+
+        // **`retireVanished` 보다 먼저다.** 저쪽은 `hasRuntimeReferences` 로 기능을 지울지 정하는데 그
+        // 검사가 `scene_edge` 를 참조로 세, 지식 없는 정적 간선이 남아 있으면 사라진 기능이 영영
+        // 지워지지 않는다.
+        sceneEdges.retireStaleStaticEdges(document.contentMapId, keptEdgeIds.toTypedArray())
 
         val retired = retireVanished(document.contentMapId, keptKeys)
 
@@ -163,6 +225,7 @@ class ContentMapIngestService(
             contentMapId = document.contentMapId,
             scenes = sceneIds.size,
             capabilities = keptKeys.size,
+            sceneEdges = keptEdgeIds.size,
             deleted = retired.deleted,
             markedNotApplicable = retired.markedNotApplicable,
             collapsed = collapsed,
@@ -297,6 +360,53 @@ class ContentMapIngestService(
     }
 
     /**
+     * 씬 전이 후보. **새 추출이 아니라 한 걸음의 매핑이다.**
+     *
+     * `SceneManager.LoadScene("X")` 는 이미 근거 문서에 `kind='scene'` 효과로 들어 있다(실측
+     * `wv-editor-latest.json` 에서 15건, 전부 `category='observable'`). 그 효과의 [EvidenceEffect.target]
+     * 이 도착 씬 이름이고, 출발 씬은 그 기능이 앉은 씬이다. 여기서 옮기지 않으면 `scene_edge` 는
+     * 영원히 0행이고, "이 씬에서 저 씬으로 갈 수 있다"가 표 어디에도 없다.
+     *
+     * **간선 수는 효과 수와 다르다 — 실측 15건이 19행이 된다.** 조인이 컨트롤 배선마다 · 스폰마다
+     * 후보를 내므로 한 레코드의 효과가 여러 기능 행에 실린다(문서 효과 395건이 `capability_effect`
+     * 486행이 되는 것과 같은 이유). `Player::Death` 의 `GameOverScene` 효과 하나가 진입점 넷에서
+     * 간선 넷이 되고, 그 넷을 접으면 "무엇을 해서 죽었나"가 사라진다. 반대로 줄기도 한다 — 한 기능이
+     * 같은 씬을 두 지점에서 부르면 아래 `distinct` 가 한 행으로 접는다.
+     *
+     * 자기 씬으로 가는 간선을 거르지 않는다. `LoadScene(현재 씬)` 은 재시작이고 실제로 일어나는
+     * 전이라, 거르면 "이 버튼을 누르면 씬이 다시 로드된다"가 표에서 사라진다.
+     *
+     * `given_text` 는 비워 둔다. 오늘 `capability.given_text` 는 전부 null 이고 문장 생성은 ARTEL-447
+     * 몫이다 — 없는 값을 지어내면 조건으로 갈리는 간선의 설명이 거짓이 된다.
+     *
+     * 돌려주는 것은 이번에 쓴 행의 id 다. [SceneEdgeRepository.retireStaleStaticEdges] 가 그 목록에
+     * 없는 정적 간선을 내린다. `runtime` 행과 겹쳐 갱신이 0행이면 null 이 오고, 그 행은 우리 것이
+     * 아니므로 목록에 넣지 않는다.
+     */
+    private suspend fun writeSceneEdges(
+        contentMapId: Long,
+        sceneId: Long,
+        capabilityId: Long,
+        merged: List<EvidenceEffect>,
+    ): List<Long> = merged
+        .filter { it.kind == SCENE_EFFECT_KIND }
+        // 문서 값이 컬럼 폭을 넘으면 그 한 줄이 문서 전체를 되돌린다. 잘라서 싣고, 잘린 이름은
+        // 어떤 씬과도 맞지 않아 `to_scene_id` 가 null 로 남는다 — 원본은 스토리지에 그대로 있다.
+        .mapNotNull { it.target?.trim()?.takeIf(String::isNotEmpty)?.take(TO_SCENE_NAME_WIDTH) }
+        // 한 기능이 같은 씬을 두 지점에서 부르면(`GameClearController::Update` 가 `Map_scene` 을
+        // `@72` 와 `@90` 에서) 효과는 둘이지만 `uk_scene_edge` 는 한 행이다. 여기서 접지 않으면
+        // 둘째 upsert 가 첫째를 덮어 같은 id 를 두 번 세고, 간선 수가 실제보다 부푼다.
+        .distinct()
+        .mapNotNull { toSceneName ->
+            sceneEdges.upsertStatic(
+                fromSceneId = sceneId,
+                toSceneName = toSceneName,
+                capabilityId = capabilityId,
+                contentMapId = contentMapId,
+            )
+        }
+
+    /**
      * 이번 문서에 없는 근거 출신 기능을 내린다.
      *
      * 참조가 없으면 지운다 — 재계산 가능한 파생물이다. 참조가 있으면 **남기고 적용 불가로 내린다.**
@@ -329,8 +439,26 @@ class ContentMapIngestService(
 
         private const val DEFAULT_BATCH = 5
 
+        /**
+         * `ingest_error` 의 컬럼 폭(V48). 넘치면 자른다 — 넘친 채로 쓰면 그 UPDATE 가 깨지고,
+         * 실패를 적으려다 실패를 하나 더 만든다.
+         */
+        private const val INGEST_ERROR_WIDTH = 512
+
+        /** 4xx 도메인 예외가 아닌 실패에 쓰는 문구. 원인은 로그에만 남는다. */
+        private const val GENERIC_INGEST_FAILURE = "근거 문서를 씬 명세로 앉히지 못했습니다."
+
         /** 조작 후보. `flow` 는 흐름만 말하는 조각이다. */
         private const val RECORD_KIND_CANDIDATE = "candidate"
+
+        /**
+         * 씬 전이를 말하는 효과 종류. `SceneManager.LoadScene` 이 이 값으로 문서에 실린다.
+         *
+         * `category` 로 거르지 않는다. 실측 15건이 전부 `observable` 이지만, 어느 날 문서가 씬 전환을
+         * `state` 로 분류하기 시작하면 그 전이가 조용히 사라진다 — 씬이 바뀌는 것은 정의상 볼 수 있는
+         * 일이고, 그 판정은 여기서 다시 내릴 것이 아니다.
+         */
+        private const val SCENE_EFFECT_KIND = "scene"
 
         /**
          * 컬럼 폭. 문서 값이 이보다 길면 그 한 줄이 문서 전체를 되돌린다.
@@ -342,7 +470,28 @@ class ContentMapIngestService(
         private const val EFFECT_KIND_WIDTH = 32
         private const val EFFECT_TARGET_WIDTH = 1024
         private const val EFFECT_DETAIL_WIDTH = 512
+
+        /** `scene_edge.to_scene_name` 의 폭. `capability_effect.target` 의 1024 보다 좁다. */
+        private const val TO_SCENE_NAME_WIDTH = 255
     }
+}
+
+/**
+ * 문서 하나에 대한 적재 시도의 결말.
+ *
+ * [IngestResult] 를 그대로 쓰지 않는 이유: 실패한 문서에는 셀 것이 없고, 대신 **사람에게 보여 줄
+ * 사유**가 있다. 둘을 한 타입에 섞으면 모든 칸이 nullable 이 되고 "성공인가"를 매번 다시 판정해야
+ * 한다.
+ */
+sealed interface IngestOutcome {
+    val documentId: Long
+
+    data class Ingested(val result: IngestResult) : IngestOutcome {
+        override val documentId: Long get() = result.documentId
+    }
+
+    /** [reason] 은 이미 사람에게 보여 줄 문구다. 예외 원문이 아니다 — 그것은 로그에만 있다. */
+    data class Failed(override val documentId: Long, val reason: String) : IngestOutcome
 }
 
 /** 한 문서를 적재하고 남은 것. 워커가 로그로 남기고 테스트가 읽는다. */
@@ -351,6 +500,14 @@ data class IngestResult(
     val contentMapId: Long,
     val scenes: Int,
     val capabilities: Int,
+    /**
+     * 이번 문서가 말한 정적 씬 전이 수(`scene_edge`, `source='static'`).
+     *
+     * 0 이면 근거가 씬 전환을 하나도 말하지 않은 것이다 — 그때는 커버리지 구멍 목록이 통째로 비어
+     * QA agent 에게 다음에 무엇을 시도할지 알려줄 것이 없다. 문서에 `kind='scene'` 효과가 있는데
+     * 여기가 0 이면 옮기는 길이 끊긴 것이다.
+     */
+    val sceneEdges: Int,
     val deleted: Int,
     val markedNotApplicable: Int,
     /**
