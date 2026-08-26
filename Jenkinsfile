@@ -1,6 +1,15 @@
 pipeline {
     agent any
 
+    // 빌드 기록에 상한이 없었다. 이 잡의 로그는 maven 출력과 Flyway 검증 전량을 담는데,
+    // 아무것도 그것을 지우지 않는다. 상한을 두지 않으면 디스크가 유일한 상한이고, 그 상한은
+    // 상관없는 다른 잡을 실패시키는 방식으로 말한다.
+    //
+    // 30 은 지금 되돌아볼 만한 폭이다. 그보다 오래된 빌드는 로그를 열어 본 적이 없다.
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+    }
+
     environment {
         APP_NAME = 'artel-orchestration-server'
         IMAGE_NAME = 'artel-orchestration-server'
@@ -119,6 +128,28 @@ pipeline {
                                   $IMAGE_TAG
                             '''
                         }
+
+                        // 배포 이미지는 빌드 번호로 태그가 갈려 재사용되지 않는다. 지우지 않으면
+                        // 배포할 때마다 앞의 것이 디스크에 영원히 남는다 — temurin JRE 에 fat jar
+                        // 를 얹은 것이라 하나가 가볍지 않다. 셋을 남기는 것은 지금 도는 것 하나와,
+                        // 손으로 되돌릴 자리 둘이다.
+                        //
+                        // `-f` 를 쓰지 않는다. 컨테이너가 쓰고 있는 이미지는 `docker rmi` 가
+                        // 거절하고, 그 거절이 도는 stage 를 발밑에서 빼가지 않게 하는 유일한
+                        // 방어다.
+                        //
+                        // 생성 시각이 아니라 빌드 번호로 정렬한다. `docker images` 의 기본 순서를
+                        // 믿고 짰다가 같은 초에 만들어진 다섯 개가 뒤섞여 나오는 것을 봤다 — 그
+                        // 정렬은 초 단위라 동률에서 순서를 보장하지 않는다. 태그 뒤쪽의 빌드
+                        // 번호는 단조 증가하므로 동률이 없다.
+                        sh '''
+                            docker images --filter "reference=$IMAGE_NAME:$TARGET_ENV-*" \
+                              --format '{{.Tag}}' \
+                              | sort -t- -k2 -n -r \
+                              | tail -n +4 \
+                              | sed "s|^|$IMAGE_NAME:|" \
+                              | xargs -r docker rmi || true
+                        '''
                     }
                 }
             }
@@ -135,9 +166,26 @@ pipeline {
                 def runLabel = env.BUILD_TAG ? env.BUILD_TAG.replaceAll(/[^A-Za-z0-9._-]/, '_') : 'local'
                 sh(
                     returnStatus: true,
-                    script: "docker ps -aq --filter 'label=artel-flyway-upgrade=${runLabel}' | xargs -r docker rm -f",
+                    script: "docker ps -aq --filter 'label=artel-flyway-upgrade=${runLabel}' | xargs -r docker rm -fv",
                 )
             }
+
+            // 남의 것을 건드리지 않는 것만 고른다 — `agent any` 라 세 레포의 잡이 같은 에이전트를
+            // 나눠 쓴다. `image prune` 은 태그 없는 고아만, `builder prune` 은 일주일 넘게 안 쓰인
+            // 캐시만 가져간다. `system prune -a` 나 `volume prune` 이었다면 옆에서 도는 잡의
+            // 이미지와, 이름 붙은 볼륨까지 죽였을 것이다.
+            sh '''
+                docker image prune -f
+                docker builder prune -f --filter until=168h
+            '''
+
+            // `./mvnw clean package` 의 clean 은 시작할 때 돌아서, 끝난 뒤 target/ 이 fat jar 를
+            // 담은 채 남는다. 멀티브랜치 잡은 브랜치마다 · PR 마다 워크스페이스를 따로 파므로
+            // 존재했던 모든 PR 의 fat jar 가 하나씩 남아 있었다.
+            //
+            // 여기 남는 것 중 다음 빌드가 쓰는 것은 없다. `checkout scm` 이 트리를 다시 만들고,
+            // maven 저장소는 워크스페이스가 아니라 에이전트 홈에 있어 다시 받지 않는다.
+            deleteDir()
         }
     }
 }
