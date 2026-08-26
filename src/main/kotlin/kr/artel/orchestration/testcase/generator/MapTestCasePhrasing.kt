@@ -40,6 +40,18 @@ object MapTestCasePhrasing {
     }
 
     /**
+     * 두 조건을 **함께 성립해야 하는 것**으로 잇는다(ARTEL-554).
+     *
+     * 다른 갈래에서 결과를 빌려 오면 그 결과가 나려면 양쪽 조건이 다 참이어야 한다. 한쪽이 없으면
+     * 나머지만 낸다.
+     */
+    fun both(a: ConditionNode?, b: ConditionNode?): ConditionNode? = when {
+        b == null -> a
+        a == null -> b
+        else -> ConditionNode.Group(GroupKind.EVERY, listOf(a, b))
+    }
+
+    /**
      * **무엇을 하나.** 조준 대상이 있으면 그것을, 없으면 입력 키를 부른다.
      *
      * `any` 키는 특별히 다룬다 — 그대로 쓰면 "`any` 키를 누른다"가 되어 무엇을 누르라는 것인지
@@ -99,7 +111,10 @@ object MapTestCasePhrasing {
      */
     private fun outcome(effect: CapabilityEffectEntity): String? {
         val target = effect.target?.takeIf { it.isNotBlank() } ?: return null
-        val detail = effect.detail?.takeIf { it.isNotBlank() }
+        // 값을 못 읽은 자리는 문서가 그렇게 적어 둔다(`(not a literal)` · `(not a simple receiver)`).
+        // 그대로 내면 "표시 상태가 `(not a literal)`" 처럼 읽을 수 없는 문장이 된다 — 값을 빼고
+        // "바뀐다"로 말한다. 무엇으로 바뀌는지는 모르지만 **바뀐다는 것은 안다.**
+        val detail = effect.detail?.takeIf { it.isNotBlank() && !it.startsWith("(") }
         return when (effect.kind) {
             "scene" -> "`$target` 화면으로 전환된다"
             "active-state" -> "`$target` 의 표시 상태가 ${detail?.let { "`$it`" } ?: "바뀐다"}"
@@ -130,7 +145,11 @@ object MapTestCasePhrasing {
         is ConditionNode.Test -> "${node.left} ${node.operator} ${node.right}".trim().ifBlank { null }
         is ConditionNode.Group -> {
             val joiner = if (node.kind == GroupKind.EVERY) " 그리고 " else " 또는 "
-            node.parts.mapNotNull { stateText(it) }.distinct().ifEmpty { null }?.joinToString(joiner)
+            // 갈래를 이어 붙이면 같은 비교가 여러 번 들어온다(호출자 조건과 불린 쪽 조건이 겹친다).
+            // 사람이 읽는 글이라 같은 말을 두 번 하지 않는다.
+            node.parts.flatMap { part -> stateText(part)?.split(joiner).orEmpty() }
+                .map { it.trim() }.filter { it.isNotBlank() }.distinct()
+                .ifEmpty { null }?.joinToString(joiner)
         }
     }
 
