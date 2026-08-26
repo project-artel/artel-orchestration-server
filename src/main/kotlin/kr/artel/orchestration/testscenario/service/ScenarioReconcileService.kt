@@ -94,14 +94,35 @@ class ScenarioReconcileService(
             return ReconcileOutcome(0)
         }
 
-        // 같은 자리의 케이스들을 본다(ARTEL-466). 배타적인 둘이 한 시나리오에 있으면 막고,
-        // 나누고 합치는 문제는 말만 한다 — 그건 요청이 정하는 것이지 코드가 정할 일이 아니다.
+        // 같은 자리의 케이스들을 본다(ARTEL-466). 나누고 합치는 문제는 말만 한다 — 그건 요청이
+        // 정하는 것이지 코드가 정할 일이 아니다.
         val facts = caseFacts(projectId)
         // 케이스를 사람 말로 부르는 함수. 내부 번호는 사용자가 읽는 글에 넣지 않는다.
         val byId = facts.associateBy { it.id }
         val describe: (Long) -> String = { id -> byId[id]?.let(ScenarioSiblingCheck::describe).orEmpty() }
-        val split = repairedSplit(scenarios)
-        val siblings = ScenarioSiblingCheck.analyze(facts, split)
+
+        // **함께 담을 수 없는 것은 묻지 않고 나눈다**(ARTEL-497). 되묻기로는 끝나지 않았다 —
+        // 이유는 [ScenarioConflictSplit] 에 적었다(런 152: 같은 질문이 답할 때마다 다시 나갔다).
+        val exclusive: (Long, Long) -> Boolean = { a, b ->
+            val left = byId[a]
+            val right = byId[b]
+            left != null && right != null && ScenarioSiblingCheck.exclusive(left, right)
+        }
+        val divided = ScenarioConflictSplit.apply(scenarios, exclusive)
+        val given = divided.scenarios
+        divided.notes.forEach { (title, parts) ->
+            logger.info("함께 담을 수 없어 나눴다 [runId={}] {} → {}조각", runId, title, parts)
+        }
+
+        val split = repairedSplit(given)
+        // **덜 담긴 것은 런 전체로 본다**(ARTEL-516). 이번 턴에 쓴 것만 보면, 다른 시나리오에
+        // 이미 있는 갈래를 "빠졌다"고 세어 전건을 담은 뒤에도 되묻기가 멈추지 않는다.
+        val covered = coveredInRun(runId, given, split)
+        val siblings = ScenarioSiblingCheck.analyze(facts, split, covered)
+        if (siblings.conflicting.isNotEmpty()) {
+            // 나눈 뒤에도 남았다면 나누는 쪽에 구멍이 있다는 뜻이다. 저장은 막지 않되 남긴다.
+            logger.warn("나눈 뒤에도 동거 불가가 남았다 [runId={}] {}", runId, siblings.conflicting)
+        }
 
         // 경로 조회는 한 번만 한다. 메우는 쪽과 검수하는 쪽이 같은 질문을 하기 때문에, 따로 물으면
         // 한 턴에 같은 케이스 쌍을 두 번씩 조회하게 된다.
@@ -109,8 +130,12 @@ class ScenarioReconcileService(
 
         // 검수보다 **먼저** 메운다. 순서가 반대면 코드가 고칠 수 있는 것 때문에 저장이 막히고,
         // 그러면 에이전트에게 다시 쓰라고 시키게 된다 — 그 방법이 안 통한다는 것이 이 작업의 전제다.
-        val (bridged, notices, blocked) = repairByInsertion(routes, scenarios, describe)
-        val repaired = withCaseOperations(projectId, appUserId, bridged)
+        val (bridged, notices, blocked) = repairByInsertion(routes, given, describe)
+        // 글자까지 같은 스텝이 서로 다른 케이스를 보면 무엇이 다른지 붙인다. 화면에서는 같은 줄이
+        // 두 번 있는 것으로 보이고, 실행하는 사람은 중복이라 여겨 하나를 건너뛴다.
+        val repaired = ScenarioSiblingLabel.apply(
+            withCaseOperations(projectId, appUserId, bridged),
+        ) { id -> byId[id]?.guards.orEmpty() }
 
         // 검수는 저장 **전에** 끝난다. 통과하지 못한 결과는 한 줄도 들어가지 않는다 — 절반만 저장하면
         // "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어 보인다).
@@ -139,8 +164,13 @@ class ScenarioReconcileService(
             // 늘어나면 1패스 판정이 좁다는 뜻이라 프롬프트를 고칠 근거가 되기 때문이다.
             logger.info("판정 밖 케이스 담김(허용) [runId={}] excess={}", runId, findings.excess)
         }
+        if (findings.unsourced.isNotEmpty()) {
+            // 막지 않는 이유는 ScenarioCoverageAudit.Findings 에 적었다. 남기는 이유도 excess 와
+            // 같다 — 이 값이 늘어나면 스텝 계약에 자리가 없다는 뜻이라 계약을 고칠 근거가 된다.
+            logger.info("근거를 적지 않은 스텝(허용) [runId={}] {}개", runId, findings.unsourced.size)
+        }
 
-        val scope = partialScenes(facts, split)
+        val scope = partialScenes(facts, split, covered)
         // **물은 것은 통보로 되풀이하지 않는다.** 같은 말이 두 줄로 붙으면 어느 쪽에 답해야 하는지
         // 알 수 없고, 질문은 답할 자리가 있는 쪽이다.
         // **한 번 거절한 질문은 다시 묻지 않는다**(ARTEL-487). 조건은 그대로이므로 매 턴 같은
@@ -148,21 +178,29 @@ class ScenarioReconcileService(
         // 것을 계속 묻는 셈이 된다. 답한 기록은 대화에 `answered` 로 남아 있다.
         val answered = answeredQuestionIds(runId, appUserId)
         val question = ScenarioQuestionBuilder.from(
-            siblings.conflicting, blocked, siblings.untestedArms, scope, describe,
+            blocked, siblings.untestedArms, scope, describe,
         )?.takeIf { it.id !in answered }
         val asked = question?.id?.substringBefore(":")
         val allNotices = buildList {
-            if (asked != "gap") addAll(notices)
-            addAll(
-                siblingNotices(
-                    siblings, describe,
-                    skipArms = asked == "arm",
-                    skipConflicts = asked == "conflict",
+            // 나눈 것은 **먼저** 말한다. 시나리오 수가 달라진 이유이므로, 아래 알림들보다 먼저
+            // 읽혀야 화면에 늘어난 카드가 무엇인지 알 수 있다.
+            // **위의 답변과 어긋나지 않게 말한다**(ARTEL-518). 모델은 "기존 시나리오에 담았다"고
+            // 답했는데 화면에는 새 시나리오가 늘어나 있는 일이 실제로 나왔다(런 155) — 모델이
+            // 거짓말을 한 것이 아니라 그 뒤에 코드가 나눴기 때문이다. 몇 개가 새로 생겼는지까지
+            // 말해 주면 둘이 이어진다.
+            divided.notes.forEach { (title, parts) ->
+                add(
+                    "‘$title’ 은 함께 담을 수 없는 케이스가 있어 코드가 ${parts}개로 나눴습니다" +
+                        "(새 시나리오 ${parts - 1}개가 바로 뒤에 붙었습니다) — " +
+                        "사전조건이 어긋나 한 번의 실행으로 다 볼 수 없습니다."
                 )
-            )
+            }
+            if (asked != "gap") addAll(notices)
+            addAll(siblingNotices(siblings, describe, skipArms = asked == "arm"))
+            unsourcedNotice(findings, repaired)?.let(::add)
             if (asked != "scope" && scope.isNotEmpty()) {
                 add(
-                    "이번에 담은 범위 — " +
+                    "이 런에 담긴 범위 — " +
                         scope.joinToString(" · ") { (scene, taken, all) -> "$scene $taken/$all" } +
                         ". 같은 씬의 나머지도 담으려면 말씀해 주세요."
                 )
@@ -171,10 +209,13 @@ class ScenarioReconcileService(
 
         var applied = 0
         transactionalOperator.executeAndAwait {
+            val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
             // 새 시나리오는 런의 현재 마지막 position 다음부터 붙인다. 비어 있으면 0부터.
-            var runPosition = (runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
-                .maxOfOrNull { it.position } ?: -1) + 1
-            for (scenario in repaired) {
+            var runPosition = (links.maxOfOrNull { it.position } ?: -1) + 1
+            // 나눠서 생긴 조각을 원본 옆으로 옮기려면 저장된 id 를 자리별로 들고 있어야 한다.
+            val savedId = arrayOfNulls<Long>(repaired.size)
+            val fromSplit = mutableListOf<Pair<Long, Int>>()
+            for ((index, scenario) in repaired.withIndex()) {
                 val scenarioId = scenario.scenarioId
                 if (scenarioId != null) {
                     // 수정: 기존 시나리오 본문을 통째로 교체한다.
@@ -192,6 +233,7 @@ class ScenarioReconcileService(
                         existing.withDraft(draftFor(scenario, previous), objectMapper)
                     )
                     // 런 링크는 그대로 둔다(수정은 위치를 바꾸지 않는다).
+                    savedId[index] = scenarioId
                     applied++
                 } else {
                     // 추가: 새 시나리오 INSERT + 런 끝에 append. 새 시나리오에는 살릴 라벨이 없다.
@@ -203,12 +245,65 @@ class ScenarioReconcileService(
                         TestRunScenarioEntity(testRunId = runId, testScenarioId = saved.id!!, position = runPosition)
                     )
                     runPosition++
+                    savedId[index] = saved.id
+                    divided.anchorOf[index]?.let { anchor -> fromSplit += saved.id!! to anchor }
                     applied++
                 }
+            }
+            if (fromSplit.isNotEmpty()) {
+                placeBesideOrigin(runId, fromSplit.mapNotNull { (id, anchor) -> savedId[anchor]?.let { id to it } })
             }
         }
         logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${repaired.size}]")
         return ReconcileOutcome(applied, findings, allNotices, question)
+    }
+
+    /**
+     * 나눠서 생긴 조각을 **원본 바로 뒤로** 옮긴다(ARTEL-518).
+     *
+     * 새 시나리오는 런 끝에 붙는다. 대부분은 그게 맞다 — 새로 만든 것은 마지막에 하면 된다.
+     * 그런데 나눠서 생긴 조각은 새로 만든 것이 아니라 **원본의 나머지 반쪽**이다. 실측(런 155)에서
+     * 맵 구간(position 2~8)을 나눈 조각이 EndingScene 뒤인 position 21 에 놓였다. 흐름을 순서대로
+     * 읽는 화면에서 그 조각은 아무 데서도 이어지지 않는다.
+     *
+     * `(test_run_id, position)` 이 유일하므로 한 번에 옮길 수 없다. 전부 멀리 밀어 둔 뒤 최종
+     * 번호를 다시 매긴다 — 그 사이에도 유일성이 깨지지 않는다.
+     *
+     * @param parts `조각 시나리오 id → 원본 시나리오 id`. 같은 원본의 조각들은 받은 순서대로 붙는다.
+     */
+    private suspend fun placeBesideOrigin(runId: Long, parts: List<Pair<Long, Long>>) {
+        val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        val order = links.map { it.testScenarioId }.toMutableList()
+
+        // 한 원본에서 여러 조각이 나오면 **받은 순서대로** 이어 붙인다. 매번 원본 바로 뒤에
+        // 꽂으면 순서가 뒤집힌다.
+        val after = mutableMapOf<Long, Long>()
+        var moved = false
+        for ((part, origin) in parts) {
+            val from = order.indexOf(part)
+            val previous = after[origin] ?: origin
+            // 원본이 이 런에 없으면(다른 런의 시나리오를 고친 경우) 끝에 그대로 둔다.
+            if (from < 0 || order.indexOf(previous) < 0) continue
+            order.removeAt(from)
+            order.add(order.indexOf(previous) + 1, part)
+            after[origin] = part
+            moved = true
+        }
+        if (!moved || order == links.map { it.testScenarioId }) return
+
+        // 1) 자리를 비운다. 유일 제약 때문에 한 행씩 최종 번호로 바로 못 간다.
+        //
+        // 밀어 두는 거리는 **지금 쓰이는 자리에서 계산한다.** 최종 번호는 0부터 `links.size - 1`
+        // 까지이므로, 지금 가장 큰 자리보다 하나 더 큰 곳부터 밀면 그 구간과 겹치지 않는다.
+        // 상수로 박아 두면 그 수를 넘는 런에서 조용히 부딪힌다.
+        val parking = maxOf(links.maxOf { it.position } + 1, links.size)
+        links.forEach { runScenarioRepository.save(it.copy(position = it.position + parking)) }
+        // 2) 최종 번호.
+        val byScenario = links.associateBy { it.testScenarioId }
+        order.forEachIndexed { position, scenarioId ->
+            byScenario[scenarioId]?.let { runScenarioRepository.save(it.copy(position = position)) }
+        }
+        logger.info("나눈 조각을 원본 옆으로 옮겼다 [runId={}] {}건", runId, parts.size)
     }
 
     /**
@@ -377,10 +472,17 @@ class ScenarioReconcileService(
      *
      * 씬별 비율만 낸다. id 를 늘어놓으면 스물몇 건짜리 씬에서 읽히지 않고, 사용자가 다음에 할
      * 말("타이틀 것도 다 넣어줘")에 필요한 것은 비율까지다.
+     *
+     * **어느 씬을 말할지는 이번 턴이 정하고, 몇 건인지는 런 전체가 정한다**(ARTEL-516). 둘을
+     * 갈라야 하는 이유가 실측에 있다(런 155): 비율을 이번 턴으로 세면 미커버 0/66 인 화면에서
+     * "덜 담긴 씬이 있습니다 — StoryScene 2/6"이 뜬다. 화면의 배지와 정면으로 어긋나고, 사용자는
+     * 둘 중 무엇을 믿어야 하는지 알 수 없다. 반대로 씬 목록까지 런 전체로 하면 이번 요청과
+     * 상관없는 씬이 매 턴 딸려 온다.
      */
     private fun partialScenes(
         facts: List<ScenarioSiblingCheck.CaseFact>,
         split: List<List<Long>>,
+        covered: Set<Long>,
     ): List<Triple<String, Int, Int>> {
         val used = split.flatten().toSet()
         if (used.isEmpty() || facts.isEmpty()) return emptyList()
@@ -390,11 +492,42 @@ class ScenarioReconcileService(
             .map { scene ->
                 Triple(
                     scene,
-                    facts.count { it.scene == scene && it.id in used },
+                    facts.count { it.scene == scene && it.id in covered },
                     facts.count { it.scene == scene },
                 )
             }
             .filter { (_, taken, all) -> taken < all }
+    }
+
+    /**
+     * **이 런에 지금 담겨 있는 케이스 전량**(ARTEL-516).
+     *
+     * 이번 턴에 쓴 것과, 런의 다른 시나리오에 이미 들어 있는 것을 합친 값이다. 이번 턴이 기존
+     * 시나리오를 고쳐 쓰는 경우 **그 시나리오의 옛 내용은 세지 않는다** — 곧 덮어쓸 것이라,
+     * 그것까지 담긴 것으로 세면 방금 빠진 케이스가 담겨 있다고 나온다.
+     *
+     * 조회가 터지면 이번 턴만 돌려준다. 예전 동작이고, 되묻기가 한 번 더 나갈 뿐이다 — 읽지
+     * 못했다고 저작을 막을 일은 아니다.
+     */
+    private suspend fun coveredInRun(
+        runId: Long,
+        turn: List<ScenarioResult>,
+        split: List<List<Long>>,
+    ): Set<Long> {
+        val thisTurn = split.flatten().toSet()
+        val rewritten = turn.mapNotNull { it.scenarioId }.toSet()
+        return runCatching {
+            val elsewhere = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+                .map { it.testScenarioId }
+                .filterNot { it in rewritten }
+                .flatMap { scenarioId ->
+                    scenarioRepository.findById(scenarioId)
+                        ?.toDraft(objectMapper)?.steps.orEmpty()
+                        .mapNotNull { it.caseId }
+                }
+            thisTurn + elsewhere
+        }.onFailure { logger.warn("런에 담긴 케이스를 읽지 못했다 — 이번 턴만 본다: ${it.message}") }
+            .getOrDefault(thisTurn)
     }
 
     /**
@@ -422,21 +555,40 @@ class ScenarioReconcileService(
     }.onFailure { logger.warn("답한 질문을 읽지 못했다 — 다시 물을 수 있다: ${it.message}") }
         .getOrDefault(emptySet())
 
+    /**
+     * 근거를 적지 않은 스텝을 **말만 한다**(ARTEL-515). 막지 않는 이유는 [ScenarioCoverageAudit.Findings]에 있다.
+     *
+     * 실측에서 이런 스텝은 전부 한 종류였다 — `case_id` 가 없는 전제 세팅 동작("스테이지 위치가
+     * 5인 상태로 EndingScene에 진입한다"). 실행하는 사람이 **그 자리에서 막힌다**는 뜻이므로,
+     * 조용히 저장하면 실행하다 만난다.
+     *
+     * 한 예만 든다. 열세 줄을 늘어놓으면 읽히지 않고, 어느 것을 손볼지는 어차피 사람이 정한다.
+     */
+    private fun unsourcedNotice(
+        findings: ScenarioCoverageAudit.Findings,
+        scenarios: List<ScenarioResult>,
+    ): String? {
+        val first = findings.unsourced.firstOrNull() ?: return null
+        val example = scenarios.getOrNull(first.scenarioIndex)
+            ?.steps?.getOrNull(first.stepIndex)?.action?.trim()?.ifBlank { null }
+        return "어떻게 하는지 적히지 않은 준비 동작이 ${findings.unsourced.size}개 있습니다" +
+            (example?.let { " — 예: $it" } ?: "") +
+            ". 실행하기 전에 그 자리를 채워 두세요."
+    }
+
     private fun siblingNotices(
         findings: ScenarioSiblingCheck.Findings,
         describe: (Long) -> String,
         skipArms: Boolean = false,
-        skipConflicts: Boolean = false,
     ): List<String> = buildList {
-        // 함께 담을 수 없는 것을 담았다(ARTEL-497). **막지 않고 말한다** — 요청이 그것이었을 수
-        // 있고, 거절하면 사용자에게 남는 것이 없다. 몇 쌍인지와 한 예만 든다. 여덟 쌍을 모두
-        // 늘어놓으면 읽히지 않고, 어느 것을 손볼지는 어차피 사람이 정한다.
-        if (!skipConflicts && findings.conflicting.isNotEmpty()) {
+        // 함께 담을 수 없는 것은 [ScenarioConflictSplit] 이 이미 나눴다. 여기까지 남았다면 나누는
+        // 쪽이 못 푼 것이므로 **말은 해 준다** — 조용히 두면 실행하다 멎는 이유를 알 수 없다.
+        if (findings.conflicting.isNotEmpty()) {
             val (a, b) = findings.conflicting.first()
             add(
-                "함께 담을 수 없는 케이스가 ${findings.conflicting.size}쌍 있습니다 — " +
+                "함께 담을 수 없는 케이스가 ${findings.conflicting.size}쌍 남았습니다 — " +
                     "예: ${describe(a)} ↔ ${describe(b)}. 사전조건이 어긋나 한 번의 실행으로 둘 다 " +
-                    "볼 수 없습니다. 나누려면 말씀해 주세요."
+                    "볼 수 없습니다."
             )
         }
         findings.splitApart.forEach { (a, b) ->
