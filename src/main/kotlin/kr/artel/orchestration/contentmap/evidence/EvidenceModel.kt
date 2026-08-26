@@ -188,17 +188,37 @@ data class EvidenceHandle(
 data class UnplacedType(
     val evidence: List<EvidenceRecord>,
     /**
-     * 이 타입을 만드는 필드들. schema 6 에서는 **문자열** `"<OwnerType>.<field>"` 다.
-     * 예: `Combat.Enemies.EnemyPoolController.enemyDataContainer`.
+     * 이 타입을 만드는 자리들.
      *
-     * ScriptableObject 를 거쳐 두 홉까지 추적된 결과가 이미 이 한 문자열에 담겨 있다.
+     * ScriptableObject 를 거쳐 두 홉까지 추적된 결과가 이미 [CreatedBy.field] 한 문자열에 담겨 있다.
      */
-    val createdBy: List<String>,
+    val createdBy: List<CreatedBy>,
     /**
      * 이 타입을 부르는 것들. **`types[].calledBy` 와 형식이 다르다** — 여기는 타입 이름(`Cards.CardManager`),
      * 저기는 메서드 안정 키다.
      */
     val calledBy: List<String>,
+)
+
+/**
+ * 이 타입을 만드는 자리 하나.
+ *
+ * schema 6 은 문자열 `"<OwnerType>.<field>"` 하나였고, **두 항목이 같은 프리팹인지 알 수 없었다.**
+ * 실측에서 `MagicEnemy.fireShoot` 와 `BossEnemy.fireShoot` 는 서로 다른 프리팹이었는데 리포트만
+ * 봐서는 그 둘이 구분되지 않았다. schema 7 이 항목을 객체로 바꾸면서 [prefab] 과 [prefabId] 가
+ * 함께 온다.
+ *
+ * [prefabId] 는 같은 문서의 `refs[].id` 와 같은 값이라 **문서 한 벌 안에서만** 프리팹 단위 조인이
+ * 성립한다. 실행을 넘는 지문이 아니므로 행에 그대로 저장해 다음 스캔과 비교하면 안 된다 —
+ * 실행이 바뀌면 번호도 바뀐다.
+ */
+data class CreatedBy(
+    /** `"<OwnerType>.<field>"`. schema 6 의 문자열이 그대로 이 자리에 온다. */
+    val field: String,
+    /** 프리팹 이름. schema 6 문서에서는 null 이다. */
+    val prefab: String? = null,
+    /** 문서 안에서만 뜻이 있는 번호. schema 6 문서에서는 null 이다. */
+    val prefabId: Long? = null,
 )
 
 /** 씬에 실제로 놓인 오브젝트. */

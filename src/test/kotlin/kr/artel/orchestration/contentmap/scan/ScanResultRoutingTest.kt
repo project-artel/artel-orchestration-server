@@ -96,6 +96,48 @@ class ScanResultRoutingTest {
     }
 
     /**
+     * **로컬 스택에서 실제로 받은 프레임 문자열 그대로**가 적재까지 간다.
+     *
+     * 이 테스트가 이 파일에서 가장 중요한 이유: 나머지는 우리가 만든 픽스처를 우리가 읽는 것이고,
+     * 이것만이 **SDK 가 진짜로 보낸 바이트**를 읽는다. 2026-08-26 10:12:03 에 instanceId 9 가 보낸
+     * 프레임을 서버 로그에서 그대로 옮겼다.
+     *
+     * 앞서 이 파일의 픽스처가 `action` 을 최상위에 두는 모양이었고, 그 모양은 계약 문서에만 있었다.
+     * 테스트 13건이 통과하는 동안 프로덕션에서는 프레임이 조용히 QA 브리지로 흘러 **적재가 한 번도
+     * 돌지 않았다** — 문서는 등록되는데 씬·기능 행이 0인 채였고 오류 로그도 없었다.
+     */
+    @Test
+    fun `실측 프레임 그대로가 적재까지 간다`(): Unit = runBlocking {
+        val world = newWorld()
+        val document = newDocument(world.contentMapId, healthyDocument())
+        statuses.put(requestedStatus(world))
+
+        val captured = """{"type":"ACTION_RESULT","id":12,"requestId":1,"results":[""" +
+            """{"id":1,"success":true,"error":"","action":"scan_evidence","returnValue":""" +
+            """{"objectKey":"content-map-evidence/1/34b8be56-52b4-4aa4-93ad-08152233ba90.json",""" +
+            """"evidenceDigest":"d4b31e4da9504b7d","byteSize":695510,"schemaVersion":7,""" +
+            """"sceneCount":7,"alreadyRegistered":false}}]}"""
+
+        assertThat(router.handle(world.instanceId, captured)).isTrue()
+
+        assertThat(documents.findById(document.id!!)!!.ingestedAt).isNotNull()
+        assertThat(capabilities.findEvidenceCapabilitiesOfMap(world.contentMapId).toList()).isNotEmpty()
+        assertThat(statuses.find(world.gameBuildId)!!.state).isEqualTo(ScanState.SUCCEEDED)
+    }
+
+    /** 액션 이름이 최상위에 있는 모양도 계속 받는다. 프레임이 바뀌어도 조용히 멎지 않게 하는 방어다. */
+    @Test
+    fun `평평한 모양도 받는다`(): Unit = runBlocking {
+        val world = newWorld()
+        val document = newDocument(world.contentMapId, healthyDocument())
+        statuses.put(requestedStatus(world))
+
+        assertThat(router.handle(world.instanceId, flatActionResult(success = true))).isTrue()
+
+        assertThat(documents.findById(document.id!!)!!.ingestedAt).isNotNull()
+    }
+
+    /**
      * 적재가 깨지면 **`ingest_failed_at` · `ingest_error` 에 남고 조회 API 가 그것을 실어 낸다.**
      *
      * 이 두 칸은 V48 이 만들었지만 적는 코드가 없었다. 없으면 실패한 문서는 도장이 안 찍힌 채로만
@@ -232,7 +274,25 @@ class ScanResultRoutingTest {
         requestedAt = Instant.now(),
     )
 
-    private fun actionResult(success: Boolean) =
+    /**
+     * **실측 프레임의 모양이다.** SDK 는 결과를 `results[]` 배열에 싣는다.
+     *
+     * 이 헬퍼가 처음에는 `action` 과 `success` 를 최상위에 두는 평평한 모양을 만들었다. 그 모양은
+     * 계약 문서에만 있었고 SDK 가 실제로 보내는 것이 아니었다 — 그래서 이 파일의 테스트가 전부
+     * 통과하는 동안 프로덕션에서는 적재가 한 번도 돌지 않았다. 픽스처가 실물과 다르면 테스트는
+     * 자기 자신을 검증한다.
+     */
+    private fun actionResult(success: Boolean, error: String? = null) =
+        """{"type":"ACTION_RESULT","id":12,"requestId":1,"results":[""" +
+            """{"id":1,"success":$success,"error":${error?.let { "\"$it\"" } ?: "\"\""},""" +
+            """"action":"scan_evidence"}]}"""
+
+    /**
+     * 액션 이름이 최상위에 있는 모양도 계속 받는다.
+     *
+     * 프레임이 한 결과만 평평하게 싣는 모양으로 바뀌어도 이쪽이 조용히 멎지 않게 하는 방어다.
+     */
+    private fun flatActionResult(success: Boolean) =
         """{"type":"ACTION_RESULT","action":"scan_evidence","success":$success,"error":null}"""
 
     private suspend fun newWorld(): World {

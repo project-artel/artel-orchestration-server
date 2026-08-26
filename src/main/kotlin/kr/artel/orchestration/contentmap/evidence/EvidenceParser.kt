@@ -64,9 +64,34 @@ class EvidenceParser(private val objectMapper: ObjectMapper) {
             val blob = path(type)
             UnplacedType(
                 evidence = blob.path("evidence").arrayItems().map { it.toRecord(owner = type) },
-                createdBy = blob.path("createdBy").textList(),
+                createdBy = blob.path("createdBy").toCreatedBy(),
                 calledBy = blob.path("calledBy").textList(),
             )
+        }
+
+    /**
+     * 두 세대를 한 자리에서 읽는다.
+     *
+     * schema 6 은 문자열 `"<OwnerType>.<field>"`, schema 7 은 `{field, prefab, prefabId}` 객체다.
+     * **분기를 여기 한 곳에 두는 이유:** 아래 소비자(`SpawnAttribution`, 렌더)는 `field` 만 쓰므로
+     * 세대를 알 필요가 없다. 저쪽에서 갈라 놓으면 세대가 하나 더 늘 때 고칠 곳이 흩어진다.
+     *
+     * 객체인데 `field` 가 없으면 **버린다.** 그것 없이는 어느 필드가 만들었는지 모르고, 프리팹 이름만
+     * 든 항목은 씬 위의 자리를 못 찾아 스폰 귀속에 쓸 수 없다.
+     */
+    private fun JsonNode.toCreatedBy(): List<CreatedBy> =
+        arrayItems().mapNotNull { item ->
+            if (item.isTextual) {
+                item.asText().takeIf { it.isNotBlank() }?.let { CreatedBy(field = it) }
+            } else {
+                item.path("field").asTextOrNull()?.let { field ->
+                    CreatedBy(
+                        field = field,
+                        prefab = item.path("prefab").asTextOrNull(),
+                        prefabId = item.path("prefabId").asLongOrNull(),
+                    )
+                }
+            }
         }
 
     /**
@@ -233,6 +258,9 @@ private fun JsonNode?.asTextOrNull(): String? =
 
 private fun JsonNode?.asIntOrNull(): Int? =
     if (this == null || isMissingNode || isNull || !isNumber) null else asInt()
+
+private fun JsonNode?.asLongOrNull(): Long? =
+    if (this == null || isMissingNode || isNull || !isNumber) null else asLong()
 
 /**
  * 배열이면 요소들, 아니면 빈 목록.

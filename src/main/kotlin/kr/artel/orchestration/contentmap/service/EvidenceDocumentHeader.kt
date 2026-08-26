@@ -46,7 +46,12 @@ object EvidenceDocumentHeaderReader {
      * 보여주는 것"에서 "누를 수 있는 것에 쓰인 글자"로 좁아졌고, 5 로 읽으면 적의 남은 체력을
      * 컨트롤 이름으로 읽는다(샘플 게임 22개 중 16개가 그 경우였다). 그래서 아는 번호만 받는다.
      */
-    val SUPPORTED_SCHEMA_VERSIONS = setOf(6)
+    /**
+     * 7 이 더해진 이유: `createdBy` 항목이 문자열에서 `{field, prefab, prefabId}` 객체로 바뀌었다.
+     * **늘어나기만 한 변경이라** 6 의 뜻이 좁아지지 않았고, 파서가 두 모양을 한 자리에서 읽는다.
+     * 6 을 계속 두는 것은 이미 앉은 지도와 저장소의 골든 픽스처가 6 이기 때문이다.
+     */
+    val SUPPORTED_SCHEMA_VERSIONS = setOf(6, 7)
 
     /** 헤더를 담기에 넉넉한 양. 실측 헤더는 400 바이트 안쪽이다. */
     const val PREFIX_BYTES = 16 * 1024

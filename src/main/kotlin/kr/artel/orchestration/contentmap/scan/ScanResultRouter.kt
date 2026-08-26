@@ -41,9 +41,7 @@ class ScanResultRouter(
      */
     suspend fun handle(gameInstanceId: Long, payloadText: String): Boolean {
         val payload = runCatching { objectMapper.readTree(payloadText) }.getOrNull() ?: return false
-        if (payload.path(ACTION_FIELD).asText(null) != ContentMapScanService.SCAN_EVIDENCE) {
-            return false
-        }
+        val result = scanResultOf(payload) ?: return false
 
         // 인스턴스가 마지막으로 보고한 빌드가 곧 SDK 가 문서를 올린 빌드다. 우리가 인스턴스를 고른
         // 기준도 그 칸이었으므로 둘은 구성상 같은 값이다.
@@ -55,10 +53,10 @@ class ScanResultRouter(
             return true
         }
 
-        if (!payload.path(SUCCESS_FIELD).asBoolean(false)) {
+        if (!result.path(SUCCESS_FIELD).asBoolean(false)) {
             // 게임이 스캔에 실패했다고 답했다. 올라온 문서가 없으니 문서 행에 적을 것이 없다 —
             // 이 자리가 그 사실을 남길 유일한 곳이다.
-            val reason = sdkErrorOf(payload)
+            val reason = sdkErrorOf(result)
             logger.warn("근거 스캔 실패 [gameBuildId={}]: {}", gameBuildId, reason)
             statuses.complete(gameBuildId) {
                 it.copy(state = ScanState.FAILED, finishedAt = Instant.now(clock), error = reason)
@@ -68,6 +66,35 @@ class ScanResultRouter(
 
         ingestFor(gameBuildId)
         return true
+    }
+
+    /**
+     * 프레임에서 근거 스캔 결과 항목을 골라낸다. 없으면 null 이고, 그때 이 프레임은 우리 것이 아니다.
+     *
+     * **`results[]` 를 먼저 봐야 한다.** SDK 의 `ACTION_RESULT` 는 액션 하나가 아니라 **여러 결과를
+     * 배열로** 싣는다 — 실측 프레임이 그렇다:
+     *
+     * ```
+     * {"type":"ACTION_RESULT","id":12,"requestId":1,
+     *  "results":[{"id":1,"success":true,"action":"scan_evidence","returnValue":{...}}]}
+     * ```
+     *
+     * 최상위에서 `action` 을 찾으면 없다. 처음 이 클래스는 그렇게 찾았고, 그래서 스캔 결과가 조용히
+     * QA 브리지로 흘러가 **적재가 한 번도 돌지 않았다.** 로그에는 "액션 결과 수신"만 남고 오류는
+     * 없었다 — 문서는 등록되는데 씬·기능 행이 0인 상태가 된다.
+     *
+     * 최상위도 함께 보는 이유는 방어다. 프레임이 한 결과만 평평하게 싣는 모양으로 바뀌어도 이쪽이
+     * 조용히 멎지 않는다.
+     */
+    private fun scanResultOf(payload: JsonNode): JsonNode? {
+        if (payload.path(ACTION_FIELD).asText(null) == ContentMapScanService.SCAN_EVIDENCE) {
+            return payload
+        }
+        val results = payload.path(RESULTS_FIELD)
+        if (!results.isArray) return null
+        return results.firstOrNull {
+            it.path(ACTION_FIELD).asText(null) == ContentMapScanService.SCAN_EVIDENCE
+        }
     }
 
     /**
@@ -133,6 +160,7 @@ class ScanResultRouter(
 
     private companion object {
         const val ACTION_FIELD = "action"
+        const val RESULTS_FIELD = "results"
         const val SUCCESS_FIELD = "success"
         const val ERROR_FIELD = "error"
 

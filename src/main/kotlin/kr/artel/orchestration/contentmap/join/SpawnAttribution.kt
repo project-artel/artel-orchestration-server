@@ -1,5 +1,6 @@
 package kr.artel.orchestration.contentmap.join
 
+import kr.artel.orchestration.contentmap.evidence.CreatedBy
 import kr.artel.orchestration.contentmap.evidence.EvidenceDocumentModel
 
 /**
@@ -47,8 +48,10 @@ class SpawnAttribution(
             .keys
             .toList()
 
-    private fun originsOf(type: String, createdBy: List<String>): List<SpawnOrigin> {
-        val sites = createdBy.mapNotNull(::parseCreatedBy).flatMap { sitesOf(type, it) }.distinct()
+    private fun originsOf(type: String, createdBy: List<CreatedBy>): List<SpawnOrigin> {
+        val sites = createdBy.mapNotNull { parseCreatedBy(it.field) }
+            .flatMap { sitesOf(type, it) }
+            .distinct()
         return sites.groupBy { it.scene }.map { (scene, sceneSites) -> toOrigin(scene, sceneSites) }
     }
 

@@ -43,7 +43,11 @@ class EvidenceDocument private constructor(private val root: JsonNode) {
             val blob = node.path(name)
             UnplacedBlob(
                 evidence = blob.path("evidence").arrayOrEmpty(),
-                createdBy = blob.path("createdBy").arrayOrEmpty().map { it.asText() },
+                // schema 7 은 항목이 `{field, prefab, prefabId}` 객체다. `asText()` 만 부르면 객체 노드가
+                // 빈 문자열이 되어 주석에 `// created by: , , ` 만 남는다 — 오류 없이 정보만 사라진다.
+                createdBy = blob.path("createdBy").arrayOrEmpty().mapNotNull {
+                    if (it.isTextual) it.asText() else it.path("field").takeIf { f -> f.isTextual }?.asText()
+                },
             )
         }
     }
