@@ -294,7 +294,7 @@ class ScenarioPathService(
         // 지시할 수 있는 것이 하나도 없다 — 값이 바뀌기는 하는데 저절로 바뀐다. **그 코드가 도는
         // 조건을 함께 낸다**(ARTEL-532). 지도가 그 조건을 이미 들고 있으므로 "방법이 없다"로
         // 끝낼 이유가 없다.
-        if (usable.isEmpty()) return Writer.Automatic(triggerOf(effects, guard, state))
+        if (usable.isEmpty()) return Writer.Automatic(automaticTrigger(effects, guard, state))
 
         // **그 조작 자신이 지금 가능한가.** 같은 변수를 쓰는 기능이 여럿이고 각자 성립 조건이
         // 다르므로(맵의 방향키가 각각 다른 `position` 에서만 성립한다), 이것을 보는 것은 거르는
@@ -333,6 +333,16 @@ class ScenarioPathService(
                     ?.condition?.violatedIn(state)
                     ?.let { return Writer.Blocked(it) }
             }
+            // 지시할 수 있는 것들이 하나도 그 값을 못 만들었다. **그렇다고 방법이 없는 것은
+            // 아니다**(ARTEL-534) — 저절로 쓰는 코드가 그 값을 만들 수 있으면 그것을 말한다.
+            //
+            // 실측(적재기가 앉힌 지도)에서 `MapMove.StagePosition` 을 쓰는 기능은 다섯이고, 그중
+            // 넷이 지시할 수 있는 것(`PlayerPrefs.GetInt(...)` · `0`)이다. 넷 다 `== 2` 를 못
+            // 만들지만 다섯째가 `+1` 을 쓰는 자동 코드이고 그 코드가 도는 조건이 명세에 있다.
+            // 지시할 수 있는 것이 하나라도 끼어 있다는 이유로 "방법이 명세에 없다"로 끝내면
+            // **명세가 아는 것을 사용자에게 되묻는 꼴**이 된다.
+            ?: automaticWriterFor(effects, guard, state)
+                ?.let { return Writer.Automatic(conditionReader.of(it).text) }
             ?: return Writer.None
 
         // 되풀이해야 하는지는 **지도가 말해 준다**(ARTEL-473). `repeat_until_done` 이 그 자리이고,
@@ -440,27 +450,48 @@ class ScenarioPathService(
      * 저절로 일어나는 쓰기가 **도는 조건**(ARTEL-532).
      *
      * `interaction=none` · `not-a-step` 인 기능은 시킬 수 없다. 그렇다고 아무것도 모르는 것은
-     * 아니다 — 지도는 그 코드가 언제 도는지를 `given_text` 에 들고 있다. 실측(word-venture):
+     * 아니다 — 지도는 그 코드가 언제 도는지를 들고 있다. 실측(적재기가 앉힌 word-venture 지도의
+     * 기능 63번):
      *
      * ```
-     * given_text = `wave >= battleScript.GetBattleWaveDatas().Count`
-     * effect     = MapMove.StagePosition +1
+     * condition = BattleWaveController.wave >= BattleWaveController.battleScript.GetBattleWaveDatas().Count
+     * effect    = MapMove.StagePosition +1
      * ```
      *
      * 즉 "웨이브를 끝까지 올리면 스테이지 위치가 오른다"가 적혀 있다. 이것을 빼고 "만드는 방법이
      * 명세에 없다"로 끝내면 사용자는 **없는 것을 알려주려 하게 되고**, 정작 채워야 할 자리(어떻게
      * 그 조건을 만드나)는 가려진다.
      *
-     * 원하는 방향으로 값을 미는 쓰기만 본다 — 지시할 수 있는 쪽을 고를 때와 같은 규칙이다.
+     * 조건을 어디서 읽는지는 [ScenarioConditionReader] 가 안다 — 적재기는 `given_text` 를 채우지
+     * 않으므로 그 칸만 보면 실제 지도에서 항상 빈손이다(ARTEL-533).
      */
-    private suspend fun triggerOf(
+    private suspend fun automaticTrigger(
         effects: List<CapabilityEffectEntity>,
         guard: Guard,
         state: Map<String, String>,
-    ): String? {
+    ): String? = automaticWriterFor(effects, guard, state)?.let { conditionReader.of(it).text }
+
+    /**
+     * 이 값을 만들 수 있는 **저절로 도는** 기능. 없으면 `null`.
+     *
+     * 고르는 규칙은 지시할 수 있는 쪽을 고를 때와 같다 — 값을 정하는 쓰기가 먼저고, 없으면 원하는
+     * 방향으로 미는 증감이다. 반대로 미는 것을 집으면 "그렇게 하면 된다"고 말해 놓고 영영 도달하지
+     * 않는 안내가 된다.
+     *
+     * **지시할 수 있는 기능은 여기서 뺀다.** 그것을 골라 놓고 "저절로 일어나는 것"이라 말하면
+     * 거짓이다. 효과의 `resolution` 이 흐려 [writerFor] 의 후보에서 빠진 기능도 마찬가지로 뺀다 —
+     * 그쪽은 지시할 수 있는데 단정 근거가 약한 것이지 저절로 도는 것이 아니다.
+     */
+    private suspend fun automaticWriterFor(
+        effects: List<CapabilityEffectEntity>,
+        guard: Guard,
+        state: Map<String, String>,
+    ): CapabilityEntity? {
         val toward = push(guard, state[guard.variable])
         val candidates = effects.mapNotNull { effect ->
-            capabilityRepository.findById(effect.capabilityId)?.let { effect to it }
+            capabilityRepository.findById(effect.capabilityId)
+                ?.takeIf { !instructable(it) }
+                ?.let { effect to it }
         }
         val chosen = candidates.firstOrNull { (e, _) ->
             e.detail != null && increment(e.detail) == null && guard.holds(e.detail!!)
@@ -468,7 +499,7 @@ class ScenarioPathService(
             val by = increment(e.detail) ?: return@firstOrNull false
             toward == null || toward == Push.of(by)
         }
-        return chosen?.second?.let { conditionReader.of(it).text }
+        return chosen?.second
     }
 
     /** 씬이 저절로 넘어가는 자리에서 남길 말. [trigger] 와 같은 규칙으로, 조건을 알면 싣는다. */
