@@ -96,6 +96,54 @@ data class ContentMapSceneResponse(
     @Schema(description = "순회했나. false 면 기능이 비어 있는 것이 정상이다")
     val walked: Boolean,
     val capabilities: SceneCapabilityCountResponse,
+    @Schema(description = "이 씬의 조작 단계. not-a-step 은 빠진다")
+    val steps: List<SceneStepResponse> = emptyList(),
+)
+
+/**
+ * 이 씬에서 **할 수 있는 일 하나.** 개수가 답하지 못하는 "그게 무엇인가"를 답하는 줄이다.
+ *
+ * `not-a-step` 은 여기 오지 않는다. 조작이 없어 단독 명세가 될 수 없는 행이고, 단계가 아닌 것을
+ * 단계 목록에 넣으면 화면이 누를 수 없는 것을 누르라고 그린다. 골든 문서에서 기능 491행 중 440행이
+ * 거기라, 실으면 응답이 아홉 배가 되기도 한다. 그 수는 [SceneCapabilityCountResponse.notAStep] 이
+ * 이미 답한다.
+ *
+ * 그래서 **`steps.size` 는 `capabilities.total - capabilities.notAStep` 과 같다.** 두 칸이 같은 표를
+ * 본다는 뜻이고, 어긋나면 목록이나 카운트 한쪽이 거짓말을 시작한 것이다.
+ *
+ * 효과(`then`)는 여기 없다. 기능 하나에 여러 개라 접으면 행이 곱해진다 —
+ * `v_content_map_capability` 가 효과를 빼는 것과 같은 판단이다.
+ *
+ * @property id `capability.id`. 재적재를 넘어 기억해 둘 값은 `capability_key` 쪽이고, 이것은
+ *   표시·조인용이다
+ * @property status `runnable` · `needs-probe` · `unreachable-precondition` 중 하나.
+ *   `needs-probe` 는 **실패가 아니다** — 조작은 지시할 수 있고 기대 결과만 모르는 것이라, 1회차
+ *   QA 런이 관측을 기록하면 2회차부터 그 관측이 기대 결과가 된다
+ * @property interaction `click` · `press` · `drag` · `none` 등. 프로토콜 메서드가 아니라 의도다
+ * @property givenText 조건을 한 줄로 옮긴 사람용 글. **오늘은 전부 null 이다**(ARTEL-447 미완).
+ *   화면은 `givenText ?? given` 으로 고른다
+ * @property given 정규화된 조건 트리. **`givenText` 가 빌 때 두 줄을 가르는 유일한 값이다.**
+ *   null 이면 근거 출신이 아니라 조건을 아예 모르는 것이고, `{kind:"always"}` 와 다른 말이다
+ */
+@Schema(description = "씬 하나의 조작 단계")
+data class SceneStepResponse(
+    @Schema(description = "capability.id")
+    val id: Long,
+    val summary: String,
+    @Schema(description = "runnable · needs-probe · unreachable-precondition")
+    val status: String,
+    @Schema(description = "click · press · drag · none 등")
+    val interaction: String,
+    @Schema(description = "press 일 때의 키 이름")
+    val inputKey: String?,
+    @Schema(description = "누를 수 있는 것에 쓰인 글자")
+    val controlLabel: String?,
+    @Schema(description = "사람이 읽는 계층 경로")
+    val controlPath: String?,
+    @Schema(description = "조건 한 줄. 오늘은 전부 null 이다(ARTEL-447)")
+    val givenText: String?,
+    @Schema(description = "정규화된 조건 트리. null 이면 근거가 없어 조건을 모른다")
+    val given: ConditionNodeResponse?,
 )
 
 /**
