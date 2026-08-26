@@ -33,11 +33,29 @@ object MapTestCasePhrasing {
      *
      * 조건이 없으면 화면만 남는다. 그것도 사전조건이다 — "그 화면이기만 하면 된다".
      */
-    fun precondition(scene: String, condition: ConditionNode?): String {
+    fun precondition(scene: String, condition: ConditionNode?, inputKey: String? = null): String {
         val state = "$scene 화면인 상태"
-        val text = stateText(condition) ?: return state
+        val text = stateText(condition, scene)
+            ?.let { if (inputKey == null) it else withoutInputCheck(it) }
+            ?.ifBlank { null }
+            ?: return state
         return "$state / $text"
     }
+
+    /**
+     * **행동이 이미 말하는 입력 판정을 뺀다.**
+     *
+     * 게임이 입력을 자기 메서드로 감싸면(`IsAdvanceKeyDown()` · `IsAnyKeyDown()`) 그것이 조건에
+     * `test` 로 들어온다 — `gesture` 노드가 아니라 걸러지지 않는다. 그대로 두면
+     * "`IsAdvanceKeyDown() != 0` 인 상태에서 아무 키나 누른다"가 되어 같은 말을 두 번 한다.
+     *
+     * **키를 든 조작에서만** 뺀다. 조작이 없는 자리에서는 그 판정이 진짜 사전조건일 수 있다.
+     * 이름을 보지 않는다 — `Key`/`Button`/`Input` 을 낀 **호출**이라는 모양만 본다.
+     */
+    private fun withoutInputCheck(text: String): String = text
+        .split(AND)
+        .filterNot { part -> INPUT_CHECK.containsMatchIn(part) }
+        .joinToString(AND)
 
     /**
      * 두 조건을 **함께 성립해야 하는 것**으로 잇는다(ARTEL-554).
@@ -138,16 +156,26 @@ object MapTestCasePhrasing {
      * 것**이기 때문이다 — 코드가 근거로 쓸 때는 좁혀야 하지만(`ScenarioConditionTree.guards`),
      * 사람에게는 명세가 말한 대로 보여 주는 것이 맞다.
      */
-    private fun stateText(node: ConditionNode?): String? = when (node) {
+    private fun stateText(node: ConditionNode?, scene: String): String? = when (node) {
         null, is ConditionNode.Always, is ConditionNode.Gesture -> null
         // 못 읽은 조건을 사전조건에 적으면 실행하는 사람이 만들 수 없는 상태를 요구받는다.
         is ConditionNode.Unknown -> null
-        is ConditionNode.Test -> "${node.left} ${node.operator} ${node.right}".trim().ifBlank { null }
+        // **"그 화면인 상태"를 두 번 말하지 않는다.** 코드가 `SceneManager.GetActiveScene().name`
+        // 으로 자기 화면을 확인하는 것은 흔하고, 그것을 그대로 실으면 사전조건 첫 줄이 화면 이름을
+        // 두 번 부른다. 구버전도 같은 자리를 흡수한다(`absorb_active_scene_condition`).
+        is ConditionNode.Test ->
+            if (node.operator == "==" && ACTIVE_SCENE.matches(node.left) &&
+                node.right.trim('"') == scene
+            ) {
+                null
+            } else {
+                "${node.left} ${node.operator} ${node.right}".trim().ifBlank { null }
+            }
         is ConditionNode.Group -> {
             val joiner = if (node.kind == GroupKind.EVERY) " 그리고 " else " 또는 "
             // 갈래를 이어 붙이면 같은 비교가 여러 번 들어온다(호출자 조건과 불린 쪽 조건이 겹친다).
             // 사람이 읽는 글이라 같은 말을 두 번 하지 않는다.
-            node.parts.flatMap { part -> stateText(part)?.split(joiner).orEmpty() }
+            node.parts.flatMap { part -> stateText(part, scene)?.split(joiner).orEmpty() }
                 .map { it.trim() }.filter { it.isNotBlank() }.distinct()
                 .ifEmpty { null }?.joinToString(joiner)
         }
@@ -155,6 +183,17 @@ object MapTestCasePhrasing {
 
     private fun verb(interaction: String): String =
         if (interaction == Interaction.PRESS.wire) "누른다" else "입력한다"
+
+    private const val AND = " 그리고 "
+
+    /**
+     * 입력을 묻는 **호출**. `IsAdvanceKeyDown()` · `IsAnyKeyDown()` · `GetButtonDown()` 같은 모양이다.
+     * 특정 이름을 넣지 않는다 — 키·버튼·입력을 낀 판정 호출이라는 구조만 본다.
+     */
+    private val INPUT_CHECK = Regex("""\b\w*(Key|Button|Input)\w*\s*\(\s*\)""")
+
+    /** 지금 화면을 코드가 스스로 확인하는 자리. 사전조건이 이미 그 화면을 말했다. */
+    private val ACTIVE_SCENE = Regex("""SceneManager\.GetActiveScene\(\)\.name""")
 
     /** 명세가 "아무 키나"라고 말한 자리. 키 이름이 아니다. */
     private const val ANY_KEY = "any"

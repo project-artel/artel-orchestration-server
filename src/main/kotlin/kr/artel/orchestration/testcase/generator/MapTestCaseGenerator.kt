@@ -81,7 +81,7 @@ class MapTestCaseGenerator(
 
         val seen = mutableSetOf<String>()
         return sources.flatMap { (situation, effectRows) ->
-            val precondition = MapTestCasePhrasing.precondition(row.sceneName, situation)
+            val precondition = MapTestCasePhrasing.precondition(row.sceneName, situation, row.inputKey)
             MapTestCasePhrasing.expectedEach(effectRows)
                 .filter { seen.add(precondition + "\u0000" + it) }
                 .map { outcome ->
@@ -125,11 +125,13 @@ class MapTestCaseGenerator(
 
             val rows = effects.findByCapabilityIdOrderByIdAsc(borrowed.capabilityId).toList()
             if (rows.isEmpty()) return@mapNotNull null
-            val situation = MapTestCasePhrasing.both(
-                MapTestCasePhrasing.both(condition, callerCondition),
-                ownCondition,
-            )
-            situation to rows
+            // **호출자 조건은 판정에만 쓰고 문장에는 싣지 않는다.** 그것은 "코드가 그 호출에
+            // 닿는 조건"이지 테스터가 만들 것이 아니다 — 코루틴이 몇 번째 대사를 넘겼는지 같은
+            // 내부 진행 상태다. 사전조건에 실으면 사람이 만들 수 없는 것을 요구하게 되고,
+            // 실측에서 그것 때문에 전제가 구버전의 2.5배로 부풀었다.
+            //
+            // 판정에서는 여전히 본다. 모순되는 갈래를 잇지 않으려면 필요하다.
+            MapTestCasePhrasing.both(condition, ownCondition) to rows
         }
 
     private fun parse(json: io.r2dbc.postgresql.codec.Json?): ConditionNode? {
