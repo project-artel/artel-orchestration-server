@@ -59,19 +59,35 @@ object MapTestCasePhrasing {
     }
 
     /**
-     * **무엇이 일어나나.** `then` 에 쓸 수 있는 효과만 읽는다.
+     * **무엇이 일어나나.** 확인할 수 있는 효과 **하나마다 한 줄**을 낸다.
      *
-     * `state` 는 뺀다 — 값이 바뀌는 것은 사실이지만 **화면에서 확인할 수 없다.**
-     * `EffectCategory.assertable` 이 그 판정을 이미 들고 있고, `v_spec_gap` 의 `then-missing` 도
-     * 같은 규칙으로 센다. 여기서 따로 정하면 두 곳이 갈린다.
+     * ## 왜 합치지 않나
      *
-     * 쓸 수 있는 효과가 하나도 없으면 `null` 이다. **그 기능은 케이스가 되지 못한다** —
-     * 확인할 것이 없는 케이스는 실행해도 통과·실패를 말할 수 없다.
+     * 처음에는 쉼표로 이어 한 줄로 냈다. 실측(적재기 지도의 `Map.MapMove.CharacterMove`)에서 그
+     * 결과가 이렇게 나온다:
+     *
+     * ```
+     * 행동     : `RightArrow` 키를 누른다
+     * 기대결과 : …battle1 로 바뀐다, …battle2 로 바뀐다, …boss 로 바뀐다
+     * ```
+     *
+     * **실행하는 사람이 무엇을 볼지 알 수 없다.** 셋 다 확인하라는 것인지 하나만인지 문장이 말하지
+     * 않는다. 구버전 생성기는 같은 기능에서 케이스 **9개**를 냈고 각각이 하나씩 확인한다 — 같은 키를
+     * 눌러도 지금 위치에 따라 결과가 다르니 각각 확인해야 하는 것이 맞다.
+     *
+     * ## `state` 는 뺀다
+     *
+     * 값이 바뀌는 것은 사실이지만 **화면에서 확인할 수 없다.** `EffectCategory.assertable` 이 그
+     * 판정을 이미 들고 있고 `v_spec_gap` 의 `then-missing` 도 같은 규칙으로 센다 — 여기서 따로
+     * 정하면 두 곳이 갈린다.
+     *
+     * 쓸 수 있는 효과가 하나도 없으면 빈 목록이다. **그 기능은 케이스가 되지 못한다** — 확인할 것이
+     * 없는 케이스는 실행해도 통과·실패를 말할 수 없다.
      */
-    fun expected(effects: List<CapabilityEffectEntity>): String? {
-        val assertable = effects.filter { EffectCategory.from(it.category)?.assertable == true }
-        return assertable.mapNotNull(::outcome).distinct().ifEmpty { null }?.joinToString(", ")
-    }
+    fun expectedEach(effects: List<CapabilityEffectEntity>): List<String> =
+        effects.filter { EffectCategory.from(it.category)?.assertable == true }
+            .mapNotNull(::outcome)
+            .distinct()
 
     // --- 조각 ------------------------------------------------------------------------
 
