@@ -100,9 +100,20 @@ class ViewerWebSocketHandler(
         // 여기 있기 때문이다.
         val receive = session.receive()
             .timeout(properties.lease)
-            // handleViewerMessage는 이제 suspend라 mono { } 로 감싸 리액티브 파이프라인에
-            // 다시 얹는다. flatMap이 프레임 처리 순서를 그대로 유지한다.
-            .flatMap { message -> mono { handleViewerMessage(viewer, message.payloadAsText) }.then() }
+            // 페이로드를 **여기서** 읽는다. `mono { }` 안이 아니다.
+            //
+            // `mono { }` 는 구독 시점에 코루틴을 띄우므로 그 안의 읽기는 다음 틱으로 밀린다.
+            // 그 사이 Netty 가 프레임 버퍼를 반납하고, 뒤늦은 `payloadAsText` 는
+            // `IllegalReferenceCountException: refCnt: 0` 으로 죽는다. 뷰어가 처음 보내는
+            // 것이 10초 주기의 `RENEW` 라, 이 자리는 붙자마자 밟혔다 — stage 에서 연결
+            // 144밀리초 만에 소켓이 닫혔다(ARTEL-526).
+            //
+            // 밖으로 꺼낸 것은 이미 복사된 문자열이라 버퍼 수명과 무관하다. 코루틴이 언제
+            // 돌든 안전하다. `flatMap` 이 프레임 처리 순서를 지키는 성질은 그대로다.
+            .flatMap { message ->
+                val text = message.payloadAsText
+                mono { handleViewerMessage(viewer, text) }.then()
+            }
             .then()
             .onErrorResume(TimeoutException::class.java) {
                 logger.info("뷰어 임대 만료 - streamId: $streamId")
