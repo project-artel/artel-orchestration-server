@@ -1,8 +1,11 @@
 package kr.artel.orchestration.contentmap.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.contentmap.dto.ConditionNodeResponse
+import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import kr.artel.orchestration.contentmap.dto.ContentMapEdgeResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapSceneResponse
@@ -10,11 +13,13 @@ import kr.artel.orchestration.contentmap.dto.ContentMapSummaryResponse
 import kr.artel.orchestration.contentmap.dto.LastScanResponse
 import kr.artel.orchestration.contentmap.dto.PendingDocumentResponse
 import kr.artel.orchestration.contentmap.dto.SceneCapabilityCountResponse
+import kr.artel.orchestration.contentmap.dto.SceneStepResponse
 import kr.artel.orchestration.contentmap.dto.SpecGapCountResponse
 import kr.artel.orchestration.contentmap.dto.VerificationResponse
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
+import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
@@ -47,7 +52,17 @@ class ContentMapViewService(
     private val sceneEdges: SceneEdgeRepository,
     private val documents: ContentMapDocumentRepository,
     private val scanStatuses: ScanStatusRegistry,
+    private val objectMapper: ObjectMapper,
 ) {
+
+    /**
+     * `condition_tree` 를 되읽는 파서. **적재기와 같은 것을 쓴다.**
+     *
+     * 조건 정규화를 이 서비스에 한 벌 더 쓰지 않는 이유: 두 벌이 되면 **두 곳이 서로 다르게
+     * 관대해진다.** 파서가 대문자 `EVERY` 나 이름표 없는 노드를 읽게 되는 날, 이 응답도 같은 날
+     * 그것을 읽어야 한다.
+     */
+    private val evidence = EvidenceParser(objectMapper)
 
     /**
      * 이 빌드의 씬 명세를 읽는다. 접근할 수 없는 빌드면 null(→ 404).
@@ -108,14 +123,29 @@ class ContentMapViewService(
         }
 
     /**
-     * 씬과 그 상태 분포.
+     * 씬과 그 상태 분포, 그리고 **무엇을 할 수 있는지의 목록.**
      *
      * 기능이 한 줄도 없는 씬은 집계에 행이 없다(`GROUP BY` 라). 그 씬을 목록에서 빼지 않고 0 으로
      * 채우는 것이 요점이다 — `walked=false` 인 씬은 비어 있는 것이 **정상**이고, 목록에서 사라지면
      * 화면이 그 씬의 존재 자체를 모른다.
+     *
+     * **카운트와 목록의 출처가 다르고, 달라야 한다.**
+     *
+     * | | 출처 | 왜 |
+     * |---|---|---|
+     * | 카운트 | `capability` 직접 집계 | 뷰가 `not-a-step` 을 걸러 내 그 칸이 구조적으로 0 이 된다 |
+     * | 목록 | `v_content_map_capability` | 그 뷰가 곧 "무엇이 단계인가"의 정의다 |
+     *
+     * 목록 쪽 필터를 손으로 베껴 `capability` 를 직접 읽지 않는 이유: 베끼는 순간 단계의 정의가 두
+     * 곳이 되고, 다음에 뷰가 필터를 하나 더 걸 때 화면만 낡는다. 게다가 그 뷰는 TC 생성기가 읽는
+     * 창구라, 같은 창구를 읽는다는 것은 **화면이 보는 단계와 TC 생성기가 받는 단계가 갈릴 수 없다**는
+     * 뜻이기도 하다.
+     *
+     * 두 출처가 만나는 등식이 그래서 성립한다: `steps.size == total - notAStep`.
      */
     private suspend fun scenesOf(contentMapId: Long): List<ContentMapSceneResponse> {
         val counts = capabilities.countByScene(contentMapId).toList().associateBy { it.sceneId }
+        val steps = stepsByScene(contentMapId)
         return scenes.findByContentMapIdOrderByNameAsc(contentMapId).toList().map { scene ->
             ContentMapSceneResponse(
                 id = scene.id!!,
@@ -124,9 +154,66 @@ class ContentMapViewService(
                 capabilities = counts[scene.id]
                     ?.let(SceneCapabilityCountResponse::of)
                     ?: SceneCapabilityCountResponse.NONE,
+                steps = steps[scene.id].orEmpty(),
             )
         }
     }
+
+    /**
+     * 조작 단계를 씬별로 묶는다. **기능 하나에 줄 하나다.**
+     *
+     * `v_content_map_capability` 는 `LEFT JOIN capability_evidence ce ON ce.capability_id = c.id`
+     * 로 근거를 붙이고, **그 조인을 접는 장치가 뷰 안에 없다.** 오늘은
+     * `capability_evidence.capability_id` 가 PK 라 1:1 이고 실측 465건도 전부 정확히 1건이지만, 그
+     * 가정을 여기 두지 않는다 — 근거가 기능당 여러 행이 되는 날 같은 기능이 두 줄 서고,
+     * `steps.size == total - notAStep` 등식이 **조용히** 깨진다. 컴파일 오류가 아니라 틀린 화면으로
+     * 나타나는 종류의 고장이다.
+     *
+     * 접기 전에 다시 정렬하는 것이 요점이다. 뷰 질의의 `ORDER BY` 는 `(scene_name, capability_id)` 라
+     * 같은 기능을 든 행들 사이의 순서가 정의되지 않고, 그대로 [distinctBy] 하면 **어느 근거가
+     * 남는지가 우연**이 된다. `(id, entryId, branchOffset)` 로 다시 세워 그 선택을 코드가 적어 둔다.
+     *
+     * 그 정렬은 씬 안의 줄 순서도 정한다 — `capability.id` 오름차순, 즉 적재 순서이자 문서 순서다.
+     * 화면이 정렬을 다시 하지 않아도 되게 서버가 순서를 정하는 것은 씬을 이름순으로 내는 것과 같은
+     * 판단이고, 같은 문서를 다시 적재해도 흔들리지 않는다.
+     */
+    private suspend fun stepsByScene(contentMapId: Long): Map<Long, List<SceneStepResponse>> =
+        contentMaps.findCapabilityRows(contentMapId).toList()
+            .sortedWith(
+                compareBy(
+                    { it.capabilityId },
+                    { it.entryId.orEmpty() },
+                    { it.branchOffset ?: Int.MIN_VALUE },
+                )
+            )
+            .distinctBy { it.capabilityId }
+            .groupBy({ it.sceneId }, ::stepOf)
+
+    /**
+     * 뷰 한 줄을 단계 한 줄로.
+     *
+     * `condition_tree` 가 null 이면 [SceneStepResponse.given] 도 **null 이다.** `{kind:"always"}` 로
+     * 채우지 않는다 — 그 칸이 비는 것은 근거 출신이 아닌 기능(observed · inferred · human)이라
+     * `capability_evidence` 행 자체가 없다는 뜻이고, "조건이 없다"와 "근거가 없어 조건을 모른다"는
+     * 다른 말이다. 뒤쪽을 앞쪽으로 적으면 TC 가 없는 근거를 지어낸다.
+     *
+     * `{}` 는 다르다. 근거가 "조건 없음"이라고 말한 것이라 파서가 `always` 로 읽고 그대로 나간다.
+     *
+     * `readTree` 가 실패할 수 없다 — 입력이 `jsonb` 컬럼이라 DB 가 이미 JSON 임을 보증한다. 파서도
+     * 이 경로에서는 던지지 않는다(모르는 `kind` 는 `unknown` 으로 남는다).
+     */
+    private fun stepOf(row: ContentMapCapabilityRow) = SceneStepResponse(
+        id = row.capabilityId,
+        summary = row.summary,
+        status = row.status,
+        interaction = row.interaction,
+        inputKey = row.inputKey,
+        controlLabel = row.controlLabel,
+        controlPath = row.controlPath,
+        givenText = row.givenText,
+        given = row.conditionTree
+            ?.let { ConditionNodeResponse.of(evidence.parseCondition(objectMapper.readTree(it.asString()))) },
+    )
 
     /**
      * 사유별 분포. **집계는 Kotlin 에서 한다.**

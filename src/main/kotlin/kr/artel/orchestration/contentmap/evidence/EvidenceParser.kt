@@ -44,6 +44,19 @@ class EvidenceParser(private val objectMapper: ObjectMapper) {
         )
     }
 
+    /**
+     * 조건 트리 **한 그루만** 읽는다. 문서 전체가 아니라 이미 떼어 둔 트리를 가진 쪽을 위한 창구다.
+     *
+     * `capability_evidence.condition_tree` 에 앉은 원본을 되읽어 응답에 싣는
+     * `ContentMapViewService` 가 이것을 쓴다. 정규화를 그쪽에 한 벌 더 쓰지 않는 것이 요점이다 —
+     * 두 벌이 되면 **두 곳이 서로 다르게 관대해진다.** 파서가 읽을 수 있게 되는 것은 곧바로
+     * 조회 응답이 읽을 수 있게 되는 것이어야 한다.
+     *
+     * 던지지 않는다. 모르는 `kind` 는 [ConditionNode.Unknown] 으로 남고, 빈 노드는
+     * [ConditionNode.Always] 다 — 조건을 못 읽은 것을 오류로 만들면 지도 한 장이 통째로 안 나온다.
+     */
+    fun parseCondition(node: JsonNode): ConditionNode = node.toCondition()
+
     private fun JsonNode.toBuild() = EvidenceBuild(
         unity = path("unity").asTextOrNull(),
         platform = path("platform").asTextOrNull(),
@@ -213,40 +226,115 @@ class EvidenceParser(private val objectMapper: ObjectMapper) {
     /**
      * 조건 트리는 `kind` 로 갈리는 다형 트리다. 모르는 `kind` 는 [ConditionNode.Unknown] 으로 남긴다 —
      * 버리면 "조건이 없다"가 되고, 그것은 문서가 하지 않은 말이다.
+     *
+     * **[ConditionNode.Always] 는 문서가 "조건 없음"이라고 말했을 때만 나온다.** 못 읽은 것을 그리로
+     * 보내면 "아무 때나 할 수 있는 행동"과 "전제가 있는 행동"이 같은 모양이 되고, 진짜 전제가 예외도
+     * 로그도 없이 사라진다. 판단이 안 서는 자리의 정답은 전부 [ConditionNode.Unknown] 이다.
+     *
+     * 판정 순서가 곧 규칙이다. 아래 셋은 자리를 바꾸면 뜻이 달라진다:
+     *
+     * 1. 객체가 아닌 조건(문자열·배열)을 **모양 추론보다 먼저** 걸러 낸다. 객체가 아니면 아래의 필드
+     *    검사가 전부 조용히 false 라, 뒤에 두면 "필드가 하나도 없음"에 걸려 [ConditionNode.Always] 가 된다.
+     * 2. `kind` 정규화는 [conditionKind] 한 곳에서만 한다. 그래서 [GroupKind.from] 은 소문자만 받으면
+     *    되고, 대소문자 정책이 두 곳으로 갈라져 한쪽만 고쳐지는 일이 없다.
+     * 3. 이름표가 있으면 모양으로 다시 추측하지 않는다. 문서가 자기가 무엇인지 말했는데 우리가 그 말을
+     *    모르는 것이므로, 모르는 채로 남기는 것이 맞다.
      */
     private fun JsonNode.toCondition(): ConditionNode {
         if (isMissingNode || isNull) return ConditionNode.Always
-        return when (val kind = path("kind").asTextOrNull()) {
-            "always", null -> ConditionNode.Always
-            "test" -> ConditionNode.Test(
-                left = path("left").asTextOrNull().orEmpty(),
-                operator = path("operator").asTextOrNull().orEmpty(),
-                right = path("right").asTextOrNull().orEmpty(),
-                context = path("context").asTextOrNull(),
-                offset = path("offset").asInt(0),
-                subjectLost = path("subjectLost").asTextOrNull(),
-            )
-            "gesture" -> ConditionNode.Gesture(
-                input = path("input").asTextOrNull().orEmpty(),
-                offset = path("offset").asInt(0),
-            )
-            else -> {
-                val group = GroupKind.from(kind)
-                if (group != null) {
-                    ConditionNode.Group(group, path("parts").arrayItems().map { it.toCondition() })
-                } else {
-                    ConditionNode.Unknown(
-                        reason = path("reason").asTextOrNull() ?: kind,
-                        unread = path("unread").asTextOrNull(),
-                    )
-                }
-            }
+        if (!isObject) return ConditionNode.Unknown(reason = CONDITION_NOT_AN_OBJECT, unread = null)
+
+        val kind = conditionKind() ?: return inferByShape()
+        return when (kind) {
+            "always" -> ConditionNode.Always
+            "test" -> toTest()
+            "gesture" -> toGesture()
+            // 원문 `kind` 를 사유로 남긴다. 정규화한 소문자가 아니라 문서가 쓴 글자여야, 그 값이
+            // `CapabilityKey.canonical` 을 타고 키에 실렸을 때 되짚어 찾을 수 있다.
+            else -> GroupKind.from(kind)?.let { ConditionNode.Group(it, toParts()) }
+                ?: toUnknown(fallbackReason = path("kind").asTextOrNull())
         }
     }
+
+    /**
+     * `kind` 를 어휘 한 벌로 정규화한다 — 앞뒤 공백을 떼고 소문자로, 남는 것이 없으면 null.
+     *
+     * 대문자 `"EVERY"` 가 [GroupKind.from] 의 정확한 문자열 비교에서 떨어져 그룹 전체가
+     * [ConditionNode.Unknown] 이 되는 일이 실제로 있었다. `Unknown` 은 자식을 담지 않으므로 그 아래
+     * 트리가 통째로 파싱되지도 않는다. `test`·`gesture`·`always` 도 같은 사고를 겪을 수 있어 어휘 전체를
+     * 여기서 한 번에 접는다.
+     */
+    private fun JsonNode.conditionKind(): String? =
+        path("kind").asTextOrNull()?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+
+    /**
+     * 이름표 없는 노드를 모양으로 읽는다.
+     *
+     * 이 자리에 오는 것은 실측에서 두 모양뿐이다 — `left`/`operator`/`right` 를 든 test 20개와 `input` 을
+     * 든 gesture 8개(2026-08-26 로컬 스택 `capability_evidence` 465행 기준). 고치기 전에는 그 28개가
+     * 전부 [ConditionNode.Always] 가 됐다.
+     *
+     * **`parts` 를 든 노드는 그룹인 줄 알면서도 [ConditionNode.Unknown] 으로 남긴다.** 모양은 그것이
+     * 그룹이라는 데까지만 말하고 `every` 인지 `either` 인지는 말하지 않는데, 거기서 찍으면 "둘 중 하나"가
+     * "둘 다"로 뒤집힌다 — 조건을 삼키는 것과 방향만 반대인 같은 사고이고, [ConditionNode] 가 "평탄화
+     * 금지"로 막아 둔 것과 같은 사고다. 이 모양을 만드는 생산자도 없다: 근거 문서는 그룹에 소문자 `kind`
+     * 를 쓰고, 우리 쪽 직렬화는 대문자 `kind` 를 쓴다.
+     */
+    private fun JsonNode.inferByShape(): ConditionNode = when {
+        // 필드가 하나도 없는 노드. `ConditionNode.Always` 를 직렬화하면 정확히 이 모양(`{}`)이 된다.
+        size() == 0 -> ConditionNode.Always
+        path("parts").isArray -> toUnknown(fallbackReason = GROUP_KIND_MISSING)
+        hasNonNull("left") && hasNonNull("operator") && hasNonNull("right") -> toTest()
+        hasNonNull("input") -> toGesture()
+        else -> toUnknown(fallbackReason = CONDITION_KIND_MISSING)
+    }
+
+    /**
+     * 비교 하나.
+     *
+     * 이름표로 온 길과 모양으로 읽은 길이 **같은 이 함수**를 부른다. 두 길이 필드를 따로 읽으면 같은
+     * 노드가 길에 따라 다른 값이 되고, 그것이 이 이슈를 다시 여는 방법이다.
+     */
+    private fun JsonNode.toTest() = ConditionNode.Test(
+        left = path("left").asTextOrNull().orEmpty(),
+        operator = path("operator").asTextOrNull().orEmpty(),
+        right = path("right").asTextOrNull().orEmpty(),
+        context = path("context").asTextOrNull(),
+        offset = path("offset").asInt(0),
+        subjectLost = path("subjectLost").asTextOrNull(),
+    )
+
+    /** 입력 조건 하나. [toTest] 와 같은 이유로 두 길이 이 함수를 함께 쓴다. */
+    private fun JsonNode.toGesture() = ConditionNode.Gesture(
+        input = path("input").asTextOrNull().orEmpty(),
+        offset = path("offset").asInt(0),
+    )
+
+    private fun JsonNode.toParts(): List<ConditionNode> = path("parts").arrayItems().map { it.toCondition() }
+
+    /**
+     * 못 읽은 노드.
+     *
+     * 노드가 **자기 사유를 들고 있으면 그것을 그대로 쓴다.** [fallbackReason] 은 문서가 사유를 말하지
+     * 않았을 때만 들어간다 — 우리가 왜 못 읽었는지가 그 자리의 유일한 단서이기 때문이다.
+     */
+    private fun JsonNode.toUnknown(fallbackReason: String?) = ConditionNode.Unknown(
+        reason = path("reason").asTextOrNull() ?: fallbackReason,
+        unread = path("unread").asTextOrNull(),
+    )
 
     companion object {
         /** 이 파서가 아는 가장 낮은 세대. schema 5 이하는 `alsoReachedBy` 가 없어 `wiring`이 통째로 샌다. */
         const val MIN_SUPPORTED_SCHEMA = 6
+
+        /** `parts` 를 들었지만 `every` 인지 `either` 인지 말하지 않은 노드의 사유. */
+        const val GROUP_KIND_MISSING = "group-kind-missing"
+
+        /** 이름표도 없고 아는 모양도 아닌 노드의 사유. */
+        const val CONDITION_KIND_MISSING = "condition-kind-missing"
+
+        /** 조건 자리에 객체가 아닌 것(문자열·숫자·배열)이 온 사유. */
+        const val CONDITION_NOT_AN_OBJECT = "condition-not-an-object"
     }
 }
 
