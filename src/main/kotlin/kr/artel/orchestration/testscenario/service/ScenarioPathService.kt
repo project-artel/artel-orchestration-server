@@ -147,6 +147,22 @@ class ScenarioPathService(
         }
     }
 
+    /**
+     * 이 프로젝트 씬 명세의 **씬 이름 전부**(ARTEL-528).
+     *
+     * 케이스가 끝난 뒤 어느 화면인지를 읽는 데 쓴다([ScenarioStateReader.sceneAfter]). 이름을 코드에
+     * 적지 않고 명세에서 가져오는 것이 요점이다 — 그래야 특정 게임에 붙지 않는다.
+     *
+     * 지도가 없으면 빈 집합이다. 그러면 화면이 바뀌는지 아무도 모르게 되는데, 그건 이 기능이 생기기
+     * 전과 같은 상태이지 새로 나빠지는 것이 아니다.
+     */
+    suspend fun sceneNames(projectId: Long, appUserId: Long): Set<String> {
+        val contentMapId = contentMapIdOf(projectId, appUserId) ?: return emptySet()
+        return sceneRepository.findByContentMapIdOrderByNameAsc(contentMapId).toList()
+            .mapNotNull { it.name.takeIf(String::isNotBlank) }
+            .toSet()
+    }
+
     // ---- 가드 해소 -------------------------------------------------------------------
 
     /**

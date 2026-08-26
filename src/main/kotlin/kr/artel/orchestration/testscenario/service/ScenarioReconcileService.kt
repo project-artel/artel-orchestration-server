@@ -170,6 +170,15 @@ class ScenarioReconcileService(
             logger.info("근거를 적지 않은 스텝(허용) [runId={}] {}개", runId, findings.unsourced.size)
         }
 
+        // **실행이 도중에 막히는 자리를 찾는다**(ARTEL-528). 저장을 막지 않는다 — 무엇을 담을지는
+        // 요청이 정하고, 여기서 하는 일은 그 결과가 끝까지 도는지 말해 주는 것뿐이다.
+        val blockedSpots = ScenarioReachabilityCheck.analyze(
+            repaired, reachabilityFacts(projectId, appUserId),
+        )
+        if (blockedSpots.isNotEmpty()) {
+            logger.info("실행이 막히는 자리 [runId={}] {}군데", runId, blockedSpots.size)
+        }
+
         val scope = partialScenes(facts, split, covered)
         // **물은 것은 통보로 되풀이하지 않는다.** 같은 말이 두 줄로 붙으면 어느 쪽에 답해야 하는지
         // 알 수 없고, 질문은 답할 자리가 있는 쪽이다.
@@ -198,6 +207,7 @@ class ScenarioReconcileService(
             if (asked != "gap") addAll(notices)
             addAll(siblingNotices(siblings, describe, skipArms = asked == "arm"))
             unsourcedNotice(findings, repaired)?.let(::add)
+            addAll(reachabilityNotices(repaired, blockedSpots))
             if (asked != "scope" && scope.isNotEmpty()) {
                 add(
                     "이 런에 담긴 범위 — " +
@@ -461,6 +471,54 @@ class ScenarioReconcileService(
         }
     }.onFailure { logger.warn("케이스 전량 조회 실패 — 검사들을 넘어간다: ${it.message}") }
         .getOrElse { emptyList() }
+
+    /**
+     * 도달성 검사가 쓰는 케이스 사실(ARTEL-528).
+     *
+     * [caseFacts] 와 따로 두는 이유는 **묻는 것이 다르기 때문**이다. 그쪽은 "같은 자리의 케이스끼리
+     * 함께 담을 수 있나"를 보고, 이쪽은 "이 순서로 실행이 이어지나"를 본다 — 화면 전이와 실행 뒤
+     * 값이 필요한 것은 이쪽뿐이다.
+     *
+     * 조회가 터지면 빈 지도다. 그러면 검사가 조용해질 뿐 저작은 그대로 저장된다.
+     */
+    private suspend fun reachabilityFacts(
+        projectId: Long,
+        appUserId: Long,
+    ): Map<Long, ScenarioReachabilityCheck.CaseFact> = runCatching {
+        val scenes = pathService.sceneNames(projectId, appUserId)
+        testCaseRepository.findByProjectIdOrderByIdAsc(projectId).toList().associate { case ->
+            case.id!! to ScenarioReachabilityCheck.CaseFact(
+                scene = ScenarioStateReader.sceneOf(case),
+                moves = ScenarioStateReader.sceneAfter(case, scenes),
+                requires = ScenarioStateReader.guardsOf(case.precondition),
+                declares = ScenarioStateReader.knownValuesOf(case.precondition),
+                leaves = ScenarioStateReader.stateAfter(case, objectMapper),
+            )
+        }
+    }.onFailure { logger.warn("도달성 검사를 위한 조회 실패 — 검사를 넘어간다: ${it.message}") }
+        .getOrElse { emptyMap() }
+
+    /**
+     * 실행이 도중에 막히는 자리를 **말한다**(ARTEL-528). 막지는 않는다.
+     *
+     * 저작이 완벽할 수 없다는 것은 이미 받아들인 전제다. 좁힌 목표는 하나 — 실행이 막히는
+     * 시나리오를 사용자가 **모른 채** 받지는 않게 한다. 무엇을 담을지는 요청이 정하지만, 이 순서로는
+     * 두 번째 줄에서 멎는다는 것은 계산되는 사실이다.
+     *
+     * 한 시나리오에 여러 자리가 막혀도 **한 줄로 말한다.** 열 줄을 늘어놓으면 읽히지 않고, 어디부터
+     * 손볼지는 어차피 사람이 정한다.
+     */
+    private fun reachabilityNotices(
+        scenarios: List<ScenarioResult>,
+        blocked: List<ScenarioReachabilityCheck.Blocked>,
+    ): List<String> = blocked.groupBy { it.scenarioIndex }.map { (index, spots) ->
+        val title = scenarios.getOrNull(index)?.title?.trim().orEmpty().ifBlank { "이름 없는 시나리오" }
+        val first = spots.first()
+        val where = first.stepIndex + 1
+        val more = if (spots.size > 1) " (이런 자리가 ${spots.size}군데)" else ""
+        "‘$title’ 은 ${where}번째 스텝에서 실행이 막힙니다 — ${first.reason}$more. " +
+            "그 앞에 필요한 동작을 넣거나 시나리오를 나눠 주세요."
+    }
 
     /**
      * **이번에 무엇을 고른 것인지 한 줄로 드러낸다**(ARTEL-466).

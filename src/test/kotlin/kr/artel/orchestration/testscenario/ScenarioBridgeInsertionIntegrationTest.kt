@@ -246,7 +246,12 @@ class ScenarioBridgeInsertionIntegrationTest {
         // 다루면 지도가 아직 없는 모든 프로젝트의 스텝 사이마다 "모른다" 줄이 하나씩 붙는다.
         val stored = storedSteps(bareRun)
         assertThat(stored.map { it.action }).containsExactly("맵", "전투")
-        assertThat(outcome.notices).isEmpty()
+        assertThat(outcome.notices).noneMatch { it.contains("미상") || it.contains("실행 방법") }
+
+        // **도달성은 다른 물음이다**(ARTEL-528). 지도가 없어 사이를 못 메웠으므로 이 시나리오는
+        // 실제로 두 번째 줄에서 멎는다 — 그 사실까지 삼키면 사용자는 못 도는 결과를 조용히 받는다.
+        // 지도가 없어도 케이스가 어느 화면에서 시작하는지는 케이스 자신이 말해 준다.
+        assertThat(outcome.notices).anyMatch { it.contains("실행이 막힙니다") }
     }
 
     @Test
