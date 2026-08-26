@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import com.fasterxml.jackson.databind.JsonNode
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
+import kr.artel.orchestration.contentmap.evidence.ConditionOverlap
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
@@ -113,11 +114,20 @@ class MapTestCaseGenerator(
         edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
     ): List<Pair<ConditionNode?, List<CapabilityEffectEntity>>> =
         MapTestCaseSiblings.of(row.capabilityId, edges).mapNotNull { borrowed ->
+            val callerCondition = parse(borrowed.callerCondition)
+            val ownCondition = parse(borrowed.ownCondition)
+            // **모순되는 갈래는 잇지 않는다.** 이은 케이스의 사전조건이 양쪽을 함께 드는데 둘이
+            // 모순이면 절대 만들 수 없는 전제가 된다 — 실측에서 `waitingForAcknowledge != 0` 과
+            // `== 0` 이 한 줄에 들어왔다. 만들 수 없는 것을 만들라고 적는 것이 곧 거짓 명세다.
+            if (!ConditionOverlap.compatible(condition, callerCondition)) return@mapNotNull null
+            if (!ConditionOverlap.compatible(condition, ownCondition)) return@mapNotNull null
+            if (!ConditionOverlap.compatible(callerCondition, ownCondition)) return@mapNotNull null
+
             val rows = effects.findByCapabilityIdOrderByIdAsc(borrowed.capabilityId).toList()
             if (rows.isEmpty()) return@mapNotNull null
             val situation = MapTestCasePhrasing.both(
-                MapTestCasePhrasing.both(condition, parse(borrowed.callerCondition)),
-                parse(borrowed.ownCondition),
+                MapTestCasePhrasing.both(condition, callerCondition),
+                ownCondition,
             )
             situation to rows
         }
