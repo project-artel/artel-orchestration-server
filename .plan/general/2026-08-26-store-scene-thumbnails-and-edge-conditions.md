@@ -31,9 +31,8 @@ Evidence JSON digest and duplicate detection must remain stable. Old SDK registr
 
 ## What landed
 
-- `V53__add_content_map_scene_capture.sql` — `content_map_scene_capture` table plus four nullable
-  image columns on `scene`. Renumbered from V52, which `feat/orchestration-TC-가-기능을-가리킨다-ARTEL-553`
-  already claims on origin.
+- `V54__add_content_map_scene_capture.sql` — `content_map_scene_capture` table plus four nullable
+  image columns on `scene`. V52 는 ARTEL-553 이, V53 은 ARTEL-554·555 가 origin 에서 먼저 claim 해 두 번 옮겼다.
 - `POST /api/game-builds/{gameBuildId}/content-map/scene-captures/tickets` — batch presigned upload
   tickets, JPEG only, one per scene, object key prefixed with the build id.
 - `RegisterEvidenceDocumentRequest.sceneCaptures` — optional; each entry is either a success
