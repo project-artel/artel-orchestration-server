@@ -37,7 +37,8 @@ class QaRunController(
                 parseId(request.testRunId),
                 parseId(request.gameInstanceId),
                 appUserId,
-                request.toRunSettings(objectMapper)
+                request.toRunSettings(objectMapper),
+                request.force
             )
         )
 
