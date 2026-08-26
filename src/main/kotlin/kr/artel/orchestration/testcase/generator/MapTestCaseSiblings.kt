@@ -42,12 +42,42 @@ object MapTestCaseSiblings {
     fun of(capabilityId: Long, edges: List<ContentMapCallEdge>): List<Borrowed> {
         val callers = edges.filter { it.capabilityId == capabilityId }
         if (callers.isEmpty()) return emptyList()
-        val callerMethods = callers.map { it.callerMethodId }.toSet()
+        val callerMethods = callers.map { sourceMethod(it.callerMethodId) }.toSet()
         return edges
-            .filter { it.callerMethodId in callerMethods && it.capabilityId != capabilityId }
+            .filter { sourceMethod(it.callerMethodId) in callerMethods && it.capabilityId != capabilityId }
             .map { Borrowed(it.capabilityId, it.callerCondition, it.conditionTree) }
             .distinctBy { it.capabilityId }
     }
+
+    /**
+     * 컴파일러가 만든 이름을 **원래 메서드**로 되돌린다.
+     *
+     * C# 컴파일러는 코루틴과 람다를 별도 타입·메서드로 쪼갠다. 한 메서드가 둘로 갈리고, 그러면
+     * 같은 소스 메서드가 부르는 것들이 서로 다른 `method_id` 아래 흩어진다. 실측
+     * (`StoryController.StoryTelling()`):
+     *
+     * ```
+     * Story.StoryController|<StoryTelling>b__8_0          ← 람다. IsAdvanceKeyDown 을 부른다
+     * Story.StoryController/<StoryTelling>d__8|MoveNext   ← 상태 머신. LoadMapScene 을 부른다
+     * ```
+     *
+     * 둘을 안 묶으면 **입력과 화면 전환이 영영 안 만난다.** StoryScene · EndingScene 의 케이스가
+     * "어느 화면으로 가는지"를 말하지 못한 것이 이 때문이다.
+     *
+     * `<이름>` 안의 것이 원래 메서드 이름이다. 타입 쪽(`Owner/<Name>d__8`)에 있을 수도 있고
+     * 메서드 쪽(`<Name>b__8_0`)에 있을 수도 있다. 게임에 붙는 규칙이 아니라 **컴파일러 관용구**다.
+     */
+    fun sourceMethod(methodId: String): String {
+        val parts = methodId.split("|")
+        if (parts.size < 3) return methodId
+        val owner = parts[1].substringBefore('/')
+        val generated = GENERATED.find(parts[1])?.groupValues?.get(1)
+            ?: GENERATED.find(parts[2])?.groupValues?.get(1)
+        return owner + "|" + (generated ?: parts[2])
+    }
+
+    /** `<StoryTelling>d__8` · `<StoryTelling>b__8_0` 에서 원래 이름을 꺼낸다. */
+    private val GENERATED = Regex("""<([^>]+)>""")
 
     /**
      * @property capabilityId 결과를 든 기능.

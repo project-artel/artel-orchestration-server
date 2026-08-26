@@ -98,14 +98,14 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     /**
-     * 문서 한 장이 케이스 **105개**로 앉는다.
+     * 문서 한 장이 케이스 **135개**로 앉는다.
      *
      * 그 수가 어디서 오는가:
      *
      * ```
      * 기능            491     적재기가 앉힌 행 전부
      *  → 창구           51     뷰가 `not-a-step` 과 `merged_into` 를 거른다
-     *  → 케이스        105     확인할 수 있는 효과 하나마다 한 줄
+     *  → 케이스        135     확인할 수 있는 효과 하나마다 한 줄
      * ```
      *
      * 자기 효과를 든 갈래는 그것으로, 안 든 갈래는 **공통 호출자를 통해 빌려 온다**
@@ -116,8 +116,54 @@ class MapTestCaseGeneratorGoldenTest {
      * 아무 데서도 오류가 나지 않는다.
      */
     @Test
-    fun `문서 한 장이 케이스 105개가 된다`() {
-        assertThat(cases).hasSize(105)
+    fun `문서 한 장이 케이스 135개가 된다`() {
+        assertThat(cases).hasSize(135)
+    }
+
+    /**
+     * **씬 전환을 케이스가 스스로 말한다.**
+     *
+     * 저작의 도달성 검사는 케이스가 끝난 뒤 어느 화면인지를 알아야 하는데, 지금은 `expected_value`
+     * 산문에서 씬 이름을 찾아 추측한다(ARTEL-528). 케이스가 직접 말하면 그 추측이 사라진다.
+     *
+     * 구버전은 같은 문서에서 17건이 말했다. 여기는 20건이다.
+     */
+    @Test
+    fun `씬 전환을 스스로 말하는 케이스가 스무 건이다`() {
+        val moves = cases.filter { it.expected.contains("화면으로 전환된다") }
+
+        assertThat(moves).hasSize(20)
+        // 오늘 저작이 막히던 자리 — StoryScene · EndingScene 이 어디로 가는지 말한다.
+        assertThat(moves.map { it.scene }.distinct()).contains("StoryScene", "EndingScene")
+    }
+
+    /**
+     * **모순된 전제를 내지 않는다.**
+     *
+     * 갈래에서 결과를 빌려 오면 사전조건이 양쪽 조건을 함께 드는데, 둘이 모순이면 절대 만들 수 없는
+     * 전제가 된다. 실측에서 실제로 나왔다 — `waitingForAcknowledge != 0` 과 `== 0` 이 한 줄에.
+     * QA 담당자는 그 전제를 만들 수 없고, 만들 수 없는 것을 만들라고 적는 것이 곧 거짓 명세다.
+     *
+     * `ConditionOverlap` 이 그 자리를 막는다. 실측에서 4건이 걸린다(105 → 101).
+     */
+    @Test
+    fun `같은 변수를 두고 모순되는 전제를 내지 않는다`() {
+        assertThat(cases).allSatisfy { case ->
+            val comparisons = case.precondition.substringAfter(" / ", "")
+                .split(" 그리고 ").mapNotNull { part ->
+                    Regex("""^(\S+)\s+(==|!=|>=|<=|>|<)\s+(\S+)$""").find(part.trim())
+                        ?.destructured?.let { (name, op, value) -> Triple(name, op, value) }
+                }
+            comparisons.forEach { (name, op, value) ->
+                if (op == "==") {
+                    assertThat(comparisons).noneSatisfy { other ->
+                        assertThat(other.first).isEqualTo(name)
+                        assertThat(other.second).isEqualTo("!=")
+                        assertThat(other.third).isEqualTo(value)
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -132,7 +178,7 @@ class MapTestCaseGeneratorGoldenTest {
      * 몰랐다.
      *
      * ```
-     * Map_scene 28 · GameClearScene 26 · StoryScene 18 · EndingScene 18
+     * Map_scene 28 · GameClearScene 26 · StoryScene 33 · EndingScene 33
      * TitleScene 8 · TurnBattleScene 6 · GameOverScene 1
      * ```
      */
@@ -141,8 +187,8 @@ class MapTestCaseGeneratorGoldenTest {
         val byScene = cases.groupingBy { it.scene }.eachCount()
 
         assertThat(byScene).hasSize(7)
-        assertThat(byScene["StoryScene"]).isEqualTo(18)
-        assertThat(byScene["EndingScene"]).isEqualTo(18)
+        assertThat(byScene["StoryScene"]).isEqualTo(33)
+        assertThat(byScene["EndingScene"]).isEqualTo(33)
         assertThat(byScene["Map_scene"]).isEqualTo(28)
     }
 
