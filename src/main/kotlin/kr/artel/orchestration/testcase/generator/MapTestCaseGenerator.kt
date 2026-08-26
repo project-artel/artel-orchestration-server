@@ -3,8 +3,10 @@ package kr.artel.orchestration.testcase.generator
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
+import com.fasterxml.jackson.databind.JsonNode
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
+import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import org.springframework.stereotype.Service
@@ -48,8 +50,10 @@ class MapTestCaseGenerator(
     private val objectMapper: ObjectMapper,
 ) {
 
-    suspend fun generate(contentMapId: Long): List<MapTestCase> =
-        contentMaps.findCapabilityRows(contentMapId).toList().flatMap { row -> casesOf(row) }
+    suspend fun generate(contentMapId: Long): List<MapTestCase> {
+        val edges = contentMaps.findCallEdges(contentMapId).toList()
+        return contentMaps.findCapabilityRows(contentMapId).toList().flatMap { row -> casesOf(row, edges) }
+    }
 
     /**
      * 기능 하나에서 케이스 **여럿**이 나온다 — 확인할 수 있는 효과 하나마다 하나다.
@@ -57,29 +61,73 @@ class MapTestCaseGenerator(
      * 합쳐서 한 줄로 내면 실행하는 사람이 무엇을 볼지 모른다([MapTestCasePhrasing.expectedEach] 의
      * 주석에 실측이 있다). 구버전도 같은 기능에서 아홉 줄을 냈다.
      */
-    private suspend fun casesOf(row: ContentMapCapabilityRow): List<MapTestCase> {
+    private suspend fun casesOf(
+        row: ContentMapCapabilityRow,
+        edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
+    ): List<MapTestCase> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
         val key = row.capabilityKey ?: return emptyList()
-        val effectRows = effects.findByCapabilityIdOrderByIdAsc(row.capabilityId).toList()
-        val outcomes = MapTestCasePhrasing.expectedEach(effectRows)
-        if (outcomes.isEmpty()) return emptyList()
-
         val condition = conditionOf(row)
-        val precondition = MapTestCasePhrasing.precondition(row.sceneName, condition)
         val step = MapTestCasePhrasing.step(row.interaction, row.inputKey, row.controlLabel, row.controlPath)
         val gaps = gapsOf(row)
-        return outcomes.map { outcome ->
-            MapTestCase(
-                capabilityKey = key,
-                scene = row.sceneName,
-                precondition = precondition,
-                step = step,
-                expected = outcome,
-                status = row.status,
-                gaps = gaps,
-            )
+
+        // 자기 효과가 먼저다. 없을 때만 공통 호출자를 통해 빌려 온다 — 자기가 결과를 들고 있으면
+        // 그것이 이 조작의 결과이고, 남의 것까지 끌어오면 무관한 결과가 붙는다.
+        val own = effects.findByCapabilityIdOrderByIdAsc(row.capabilityId).toList()
+        val sources: List<Pair<ConditionNode?, List<CapabilityEffectEntity>>> =
+            if (own.isNotEmpty()) listOf(condition to own) else borrowed(row, condition, edges)
+
+        val seen = mutableSetOf<String>()
+        return sources.flatMap { (situation, effectRows) ->
+            val precondition = MapTestCasePhrasing.precondition(row.sceneName, situation)
+            MapTestCasePhrasing.expectedEach(effectRows)
+                .filter { seen.add(precondition + "\u0000" + it) }
+                .map { outcome ->
+                    MapTestCase(
+                        capabilityKey = key,
+                        scene = row.sceneName,
+                        precondition = precondition,
+                        step = step,
+                        expected = outcome,
+                        status = row.status,
+                        gaps = gaps,
+                    )
+                }
         }
+    }
+
+    /**
+     * 자기 효과가 없는 조작 갈래가 **공통 호출자**를 통해 결과를 빌려 온다(ARTEL-554).
+     *
+     * 실측: StoryScene · EndingScene 의 `press any` 갈래는 효과가 0이고, 결과는
+     * `UpdateChatStream` · `SetAnyKeyPromptVisible` · `LoadMapScene` 에 있다. 셋을 다 부르는
+     * `StoryController.StoryTelling()` 이 그 셋과 입력 갈래를 잇는 유일한 자리다.
+     *
+     * 빌려 온 케이스의 사전조건은 **세 조건을 함께** 든다 — 자기 조건, 그 호출이 일어나는 조건,
+     * 결과 갈래 자신의 조건. 셋이 다 참일 때만 그 결과가 난다.
+     */
+    private suspend fun borrowed(
+        row: ContentMapCapabilityRow,
+        condition: ConditionNode?,
+        edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
+    ): List<Pair<ConditionNode?, List<CapabilityEffectEntity>>> =
+        MapTestCaseSiblings.of(row.capabilityId, edges).mapNotNull { borrowed ->
+            val rows = effects.findByCapabilityIdOrderByIdAsc(borrowed.capabilityId).toList()
+            if (rows.isEmpty()) return@mapNotNull null
+            val situation = MapTestCasePhrasing.both(
+                MapTestCasePhrasing.both(condition, parse(borrowed.callerCondition)),
+                parse(borrowed.ownCondition),
+            )
+            situation to rows
+        }
+
+    private fun parse(json: io.r2dbc.postgresql.codec.Json?): ConditionNode? {
+        val node: JsonNode = json
+            ?.let { runCatching { objectMapper.readTree(it.asString()) }.getOrNull() }
+            ?.takeIf { it.isObject && !it.isEmpty }
+            ?: return null
+        return EvidenceParser(objectMapper).parseCondition(node)
     }
 
     /**

@@ -98,67 +98,67 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     /**
-     * 문서 한 장이 케이스 **35개**로 앉는다.
+     * 문서 한 장이 케이스 **105개**로 앉는다.
      *
      * 그 수가 어디서 오는가:
      *
      * ```
      * 기능            491     적재기가 앉힌 행 전부
      *  → 창구           51     뷰가 `not-a-step` 과 `merged_into` 를 거른다
-     *    - 효과 없음    12     전부 `record_kind = 'flow'` — 명세 후보가 아니라 연결점이다
-     *    - state 만      8     값은 바뀌는데 화면에서 확인할 수 없다
-     *  = 기능           31
-     *  → 케이스         35     확인할 수 있는 효과 하나마다 한 줄
+     *  → 케이스        105     확인할 수 있는 효과 하나마다 한 줄
      * ```
      *
-     * **버리는 것이 아니다.** 20행은 `v_spec_gap` 이 세고 있고 "QA 결함이 아니라 개발 우선순위
-     * 신호"로 화면에 나간다.
+     * 자기 효과를 든 갈래는 그것으로, 안 든 갈래는 **공통 호출자를 통해 빌려 온다**
+     * ([MapTestCaseSiblings]). 코루틴·상태 머신에서는 입력을 받는 갈래와 결과를 내는 갈래가 다른
+     * 행이라, 빌려 오지 않으면 그 조작은 케이스가 되지 못한다.
      *
-     * **구버전과 아직 차이가 있다.** 같은 문서에서 구버전은 실행 가능한 것만 53건을 낸다:
-     *
-     * ```
-     * 씬                구버전   여기   차이
-     * Map_scene           25     14    -11   조작 없는 "진입해 관찰" 케이스가 여기 없다
-     * TurnBattleScene     11      6     -5
-     * EndingScene          5      0     -5   효과가 호출한 다른 기능에 달려 있다
-     * StoryScene           5      0     -5   같음
-     * TitleScene           5      4     -1
-     * GameClearScene       2     10     +8   효과를 갈라 여기가 더 많다
-     * GameOverScene        0      1     +1
-     * ```
-     *
-     * 그 차이를 메우는 것은 ARTEL-556 의 일이다. **이 수가 줄면 케이스가 조용히 사라진 것이다.**
+     * **이 수가 줄면 케이스가 조용히 사라진 것이다.** 확인할 것이 있는데 못 내는 자리가 생겨도
+     * 아무 데서도 오류가 나지 않는다.
      */
     @Test
-    fun `문서 한 장이 케이스 35개가 된다`() {
-        assertThat(cases).hasSize(35)
+    fun `문서 한 장이 케이스 105개가 된다`() {
+        assertThat(cases).hasSize(105)
     }
 
     /**
-     * **두 씬은 케이스가 하나도 안 나온다.** 지어낸 것이 아니라 지도가 그렇다.
+     * **모든 씬에서 케이스가 나온다.**
      *
-     * ```
-     * Map_scene 14 · GameClearScene 10 · TurnBattleScene 6 · TitleScene 4 · GameOverScene 1
-     * StoryScene 0 · EndingScene 0
-     * ```
-     *
-     * 그 둘의 지시 가능한 기능은 `Story.StoryController.IsAdvanceKeyDown()` 뿐이고 **그 기능에는
-     * 효과가 달려 있지 않다.** 효과는 그것이 호출하는 다른 기능(`SetAnyKeyPromptVisible` ·
-     * `LoadMapScene`)에 있고, 구버전은 호출 그래프를 타고 내려가 그것을 끌어와 케이스 5건씩을
-     * 만든다. 이 생성기는 `capability_effect` 만 본다.
+     * 호출 엣지를 싣기 전에는 StoryScene 과 EndingScene 이 **0건**이었다. 그 둘의 지시 가능한
+     * 기능은 `Story.StoryController.IsAdvanceKeyDown()` 뿐이고 효과가 하나도 없다 — 결과는
+     * `UpdateChatStream` · `SetAnyKeyPromptVisible` · `LoadMapScene` 에 있고, 셋을 다 부르는
+     * `StoryController.StoryTelling()` 코루틴만이 그것들과 입력 갈래를 잇는다.
      *
      * 하필 그 둘이 실측(런 155·158)에서 저작이 막히던 씬이다. 케이스가 없으니 저작이 무엇을 담을지
-     * 모르고, 사이를 메울 근거도 없다. **이 수가 0 을 벗어나면 그쪽이 고쳐진 것이다.**
+     * 몰랐다.
+     *
+     * ```
+     * Map_scene 28 · GameClearScene 26 · StoryScene 18 · EndingScene 18
+     * TitleScene 8 · TurnBattleScene 6 · GameOverScene 1
+     * ```
      */
     @Test
-    fun `케이스가 나오지 않는 씬이 둘이다`() {
+    fun `일곱 씬 모두에서 케이스가 나온다`() {
         val byScene = cases.groupingBy { it.scene }.eachCount()
 
-        assertThat(byScene).containsOnlyKeys(
-            "Map_scene", "GameClearScene", "TurnBattleScene", "TitleScene", "GameOverScene",
-        )
-        assertThat(byScene["Map_scene"]).isEqualTo(14)
-        assertThat(byScene["GameClearScene"]).isEqualTo(10)
+        assertThat(byScene).hasSize(7)
+        assertThat(byScene["StoryScene"]).isEqualTo(18)
+        assertThat(byScene["EndingScene"]).isEqualTo(18)
+        assertThat(byScene["Map_scene"]).isEqualTo(28)
+    }
+
+    /**
+     * **읽을 수 없는 값은 문장에 넣지 않는다.**
+     *
+     * 문서가 값을 못 읽은 자리를 `(not a literal)` · `(not a simple receiver)` 로 적어 둔다. 그대로
+     * 내면 "표시 상태가 `(not a literal)`" 처럼 실행하는 사람이 무엇을 볼지 알 수 없는 문장이 된다.
+     * 값을 빼고 "바뀐다"로 말한다 — 무엇으로 바뀌는지는 몰라도 **바뀐다는 것은 안다.**
+     */
+    @Test
+    fun `문서가 못 읽은 값을 문장에 싣지 않는다`() {
+        assertThat(cases).allSatisfy {
+            assertThat(it.expected).doesNotContain("(not a")
+            assertThat(it.precondition).doesNotContain("(not a")
+        }
     }
 
     /** 케이스는 전부 지도를 되짚을 수 있어야 한다 — 그것이 이 개편의 목적이다. */

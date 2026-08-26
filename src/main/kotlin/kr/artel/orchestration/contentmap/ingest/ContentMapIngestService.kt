@@ -406,6 +406,9 @@ class ContentMapIngestService(
                 bindingEvent = candidate.binding?.event,
                 bindingReceiver = candidate.binding?.placement?.path,
                 callPath = Json.of(objectMapper.writeValueAsString(record.callPath)),
+                // **조작 갈래와 결과 갈래를 잇는 유일한 인과**(ARTEL-554). 코루틴에서는 입력을
+                // 받는 갈래와 결과를 내는 갈래가 다른 행이고, 공통 호출자를 통해서만 이어진다.
+                calls = Json.of(objectMapper.writeValueAsString(record.calls)),
                 gaps = Json.of(objectMapper.writeValueAsString(gaps)),
             )
         )
