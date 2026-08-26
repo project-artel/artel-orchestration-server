@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testscenario
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.testscenario.service.Guard
 import kr.artel.orchestration.testscenario.service.ScenarioConditionTree
 import org.assertj.core.api.Assertions.assertThat
@@ -17,7 +18,12 @@ class ScenarioConditionTreeTest {
 
     private val mapper = ObjectMapper()
 
-    private fun tree(json: String) = mapper.readTree(json)
+    /**
+     * 저장된 원문을 **파서를 거쳐** 읽는다. 이 테스트가 파서를 지나는 것이 요점이다 — 대문자
+     * `kind` 와 이름표 없는 노드를 다루는 관대함이 그쪽에 있고, 여기서 그것을 다시 구현하면
+     * 두 곳이 서로 다르게 관대해진다.
+     */
+    private fun tree(json: String) = EvidenceParser(mapper).parseCondition(mapper.readTree(json))
 
     // --- 실측에서 나온 모양 ---------------------------------------------------------
 

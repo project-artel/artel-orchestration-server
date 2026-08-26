@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testscenario.service
 
-import com.fasterxml.jackson.databind.JsonNode
+import kr.artel.orchestration.contentmap.evidence.ConditionNode
+import kr.artel.orchestration.contentmap.evidence.GroupKind
 
 /**
  * 명세가 든 **조건 트리**를 저작이 쓰는 모양으로 읽는다(ARTEL-533).
@@ -27,6 +28,15 @@ import com.fasterxml.jackson.databind.JsonNode
  * 오른쪽이 괄호를 못 갖게 되어 있어서(`(a 또는 b)` 를 잘못 자르지 않으려는 조치다)
  * `GetBattleWaveDatas().Count` 가 `GetBattleWaveDatas` 로 잘린다. 트리에서는 그런 잘림이 없다.
  *
+ * ## 읽는 일은 파서가 한다
+ *
+ * JSON 을 [ConditionNode] 로 옮기는 것은 **`EvidenceParser.parseCondition` 이 한다.** 여기서 한 벌
+ * 더 쓰지 않는다 — 두 벌이 되면 두 곳이 서로 다르게 관대해지고, 실제로 그렇게 될 뻔했다. 저장된
+ * 트리에는 `kind` 가 대문자이거나 아예 없는 노드가 섞여 있는데(적재기가 갈래를 쪼갤 때 타입 트리를
+ * 그대로 직렬화한다), 그 관대함은 파서가 이미 갖추었다.
+ *
+ * 이 파일에 남는 것은 **저작의 판단**뿐이다 — 무엇을 근거로 쓰고 무엇을 안 쓰나.
+ *
  * ## 읽는 규칙
  *
  * - `every` — 모두 성립해야 하므로 **합집합**
@@ -35,25 +45,6 @@ import com.fasterxml.jackson.databind.JsonNode
  * - `always` — 조건 없음
  * - `gesture` — 상태가 아니라 입력이다. 값 비교로 쓰지 않고 [text] 에만 싣는다
  * - `unknown` — 문서가 못 읽은 조건이다. **있으면 단정하지 않는다**
- *
- * ## 이름표가 없는 노드는 모양으로 읽는다
- *
- * 저장된 트리에는 `kind` 가 없는 노드가 섞여 있다(실측 8건의 트리). 적재기가 갈래를 쪼갤 때
- * 타입 트리를 그대로 직렬화하는데, `ConditionNode.Test` · `Gesture` 에는 `kind` 필드가 없어
- * 이름표 없이 나간다 — **우리가 쓴 것을 우리가 못 읽는 자리다.**
- *
- * ```json
- * {"kind":"EVERY","parts":[{"input":"key:DownArrow (down)","offset":214},
- *                          {"left":"MapMove.position","operator":"==","right":"1","context":"this"},
- *                          {"left":"InteractionLock.IsLocked","operator":"==","right":"0","context":"static"}]}
- * ```
- *
- * 이 여덟이 하필 맵 이동 조작들이다 — 저작이 가장 많이 묻는 자리다. 이름표만 보고 넘기면 그
- * 조작들의 사전조건이 통째로 사라진다.
- *
- * 쓰는 쪽을 고치는 것이 근본이고 그것은 별건이다(#176 이 읽는 쪽을 파서에서 고치는 중이다).
- * **여기서도 읽는 이유는 이미 그렇게 앉아 있는 행들 때문이다** — 파서가 고쳐져도 다시 적재하기
- * 전까지는 저장된 트리가 그대로다.
  *
  * ## `context` 가 없는 비교는 버린다
  *
@@ -64,19 +55,19 @@ import com.fasterxml.jackson.databind.JsonNode
 object ScenarioConditionTree {
 
     /**
-     * 반드시 성립해야 하는 비교들. 트리가 없거나 조건이 없으면 빈 목록이다.
+     * 반드시 성립해야 하는 비교들. 조건이 없거나 못 읽었으면 빈 목록이다.
      *
      * 빈 목록은 "조건 없음"과 "못 읽었음"을 구분하지 않는다. 경로 계산은 둘 다 **막지 않는 쪽**으로
-     * 다루므로(모르는 값은 위반으로 세지 않는다) 여기서 갈라 봐야 쓰는 데가 없다.
+     * 다루므로(모르는 값은 위반으로 세지 않는다) 여기서 갈라 봐야 쓰는 데가 없다. 갈라야 하는
+     * 소비자는 [incomplete] 를 묻는다.
      */
-    fun guards(tree: JsonNode?): List<Guard> {
-        val node = tree?.takeIf { !it.isNull && !it.isMissingNode } ?: return emptyList()
-        return when (kindOf(node)) {
-            "test" -> testOf(node)?.let(::listOf).orEmpty()
-            "every" -> partsOf(node).flatMap { guards(it) }.distinct()
-            "either" -> partsOf(node).map { guards(it).toSet() }
+    fun guards(node: ConditionNode?): List<Guard> = when (node) {
+        null, is ConditionNode.Always, is ConditionNode.Gesture, is ConditionNode.Unknown -> emptyList()
+        is ConditionNode.Test -> testOf(node)?.let(::listOf).orEmpty()
+        is ConditionNode.Group -> when (node.kind) {
+            GroupKind.EVERY -> node.parts.flatMap { guards(it) }.distinct()
+            GroupKind.EITHER -> node.parts.map { guards(it).toSet() }
                 .reduceOrNull { common, next -> common intersect next }.orEmpty().toList()
-            else -> emptyList()
         }
     }
 
@@ -86,61 +77,27 @@ object ScenarioConditionTree {
      * [guards] 가 버리는 것도 여기서는 싣는다 — 주어를 못 찾은 비교도, 입력 조건도 사용자가 읽으면
      * 뜻이 통한다. 걸러야 하는 것은 **코드가 그것을 근거로 판단할 때**지 사람이 읽을 때가 아니다.
      */
-    fun text(tree: JsonNode?): String? {
-        val node = tree?.takeIf { !it.isNull && !it.isMissingNode } ?: return null
-        return when (val kind = kindOf(node)) {
-            "test" -> "${str(node, "left")} ${str(node, "operator")} ${str(node, "right")}".trim()
-                .ifBlank { null }
-            "gesture" -> str(node, "input").ifBlank { null }
-            "every", "either" -> {
-                val joiner = if (kind == "every") " 그리고 " else " 또는 "
-                partsOf(node).mapNotNull { text(it) }.ifEmpty { null }?.joinToString(joiner)
-            }
-            else -> null
+    fun text(node: ConditionNode?): String? = when (node) {
+        null, is ConditionNode.Always, is ConditionNode.Unknown -> null
+        is ConditionNode.Test -> "${node.left} ${node.operator} ${node.right}".trim().ifBlank { null }
+        is ConditionNode.Gesture -> node.input.ifBlank { null }
+        is ConditionNode.Group -> {
+            val joiner = if (node.kind == GroupKind.EVERY) " 그리고 " else " 또는 "
+            node.parts.mapNotNull { text(it) }.ifEmpty { null }?.joinToString(joiner)
         }
     }
 
-    /** 트리의 어느 가지든 `unknown` 이면 참. 이 조건으로는 무엇도 단정할 수 없다. */
-    fun incomplete(tree: JsonNode?): Boolean {
-        val node = tree?.takeIf { !it.isNull && !it.isMissingNode } ?: return false
-        return kindOf(node) in UNREADABLE || partsOf(node).any { incomplete(it) }
+    /** 어느 가지든 못 읽은 것이 섞였나. 이 조건으로는 무엇도 단정할 수 없다. */
+    fun incomplete(node: ConditionNode?): Boolean = when (node) {
+        is ConditionNode.Unknown -> true
+        is ConditionNode.Group -> node.parts.any { incomplete(it) }
+        else -> false
     }
 
-    /**
-     * 이 노드가 무엇인가. **이름표가 있으면 그 말을 따르고, 없으면 모양으로 읽는다.**
-     *
-     * 이름표는 대문자로 담기기도 한다(실측 8건의 `EVERY`). 접어서 맞춘다.
-     *
-     * `parts` 를 들었는데 이름표가 없으면 `every` 인지 `either` 인지 **알 수 없다.** 둘은 정반대로
-     * 접히므로(합집합 · 교집합) 하나로 정하면 없는 사전조건을 만들거나 있는 것을 지운다. 그래서
-     * 따로 부르고, [guards] 는 아무것도 내지 않는다.
-     */
-    private fun kindOf(node: JsonNode): String {
-        val declared = node.path("kind").asText("").trim().lowercase()
-        if (declared.isNotEmpty()) return declared
-        return when {
-            node.has("parts") -> GROUP_UNKNOWN
-            node.has("left") && node.has("operator") && node.has("right") -> "test"
-            node.has("input") -> "gesture"
-            node.isObject && node.isEmpty -> "always"
-            else -> "unknown"
-        }
+    private fun testOf(node: ConditionNode.Test): Guard? {
+        if (node.context == null) return null
+        val left = node.left.ifBlank { return null }
+        val operator = node.operator.ifBlank { return null }
+        return Guard(ScenarioStateReader.normalize(left), operator, node.right)
     }
-
-    private fun partsOf(node: JsonNode): List<JsonNode> =
-        node.path("parts").takeIf { it.isArray }?.toList().orEmpty()
-
-    private fun testOf(node: JsonNode): Guard? {
-        if (node.path("context").isNull || node.path("context").isMissingNode) return null
-        val left = str(node, "left").ifBlank { return null }
-        val operator = str(node, "operator").ifBlank { return null }
-        return Guard(ScenarioStateReader.normalize(left), operator, str(node, "right"))
-    }
-
-    private fun str(node: JsonNode, field: String): String = node.path(field).asText("").trim()
-
-    /** 갈래를 들었는데 어떻게 묶이는지 모르는 노드. */
-    private const val GROUP_UNKNOWN = "group-unknown"
-
-    private val UNREADABLE = setOf("unknown", GROUP_UNKNOWN)
 }

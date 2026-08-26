@@ -2,6 +2,7 @@ package kr.artel.orchestration.testscenario.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
+import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.repository.CapabilityEvidenceRepository
 import org.springframework.stereotype.Service
 
@@ -53,15 +54,18 @@ class ScenarioConditionReader(
      * 트리가 없는 지도(손적재·구 문서)는 예전처럼 문자열을 읽는다.
      */
     suspend fun of(capability: CapabilityEntity): Condition {
-        val tree = capability.id
+        val json = capability.id
             ?.let { evidenceRepository.findById(it) }
             ?.conditionTree
             ?.let { runCatching { objectMapper.readTree(it.asString()) }.getOrNull() }
-            ?.takeIf { it.hasNonNull("kind") }
+            ?.takeIf { it.isObject && !it.isEmpty }
             ?: return Condition(
                 ScenarioStateReader.comparisonsIn(capability.givenText),
                 ScenarioStateReader.conditionText(capability.givenText),
             )
+        // 읽는 일은 파서가 한다. 대문자 `kind` 도 이름표 없는 노드도 그쪽이 이미 다룬다 —
+        // 여기서 한 벌 더 쓰면 두 곳이 서로 다르게 관대해진다.
+        val tree = EvidenceParser(objectMapper).parseCondition(json)
         return Condition(ScenarioConditionTree.guards(tree), ScenarioConditionTree.text(tree))
     }
 }
