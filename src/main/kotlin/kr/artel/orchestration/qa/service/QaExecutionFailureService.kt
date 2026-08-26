@@ -204,6 +204,19 @@ class QaExecutionFailureService(
         return true
     }
 
+    /**
+     * 이미 DB에서 닫힌 런의 Agent 세션을 끊는다. 상태는 건드리지 않는다.
+     *
+     * [cancelled]는 활성 try의 `agent_session_id`로 세션을 찾는데, 런에는 활성 try가 없는 창이
+     * 있다(시나리오 사이, 그리고 세션이 붙기 전). 그 창을 메우려면 **런이 들고 있는** 세션 id로
+     * 끊어야 한다. 여기서는 CANCEL 프레임을 보내지 않고 소켓만 닫는다 — CANCEL 봉투는 실재하는
+     * qa_try_id를 요구하는데 이 경로에는 그런 try가 없고, 소켓이 닫히면 Agent는 어차피 그 런을
+     * 취소한다.
+     *
+     * 이미 닫힌 세션이면 아무 일도 하지 않는다(중복 호출 안전).
+     */
+    suspend fun releaseAgentSession(sessionId: String?) = closeQuietly(sessionId)
+
     suspend fun failStarting(qaTryId: Long, reason: String) =
         fail(qaTryId, reason, closeAgent = true)
 

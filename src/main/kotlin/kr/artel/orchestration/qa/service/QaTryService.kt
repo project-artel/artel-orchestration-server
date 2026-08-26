@@ -370,10 +370,10 @@ class QaTryService(
             throw NotFoundException()
         }
         if (!sessionManager.hasSession(gameInstanceId.toString())) {
-            throw ConflictException("Game instance SDK is not connected")
+            throw SdkDisconnectedException()
         }
         if (tryRepository.findActiveByGameInstanceId(gameInstanceId) != null) {
-            throw ConflictException("An active QA try already exists")
+            throw ActiveQaRunException("An active QA try already exists")
         }
 
         val (starting, startLog) = persistence.createStarting(testScenarioId, gameInstanceId, userId, knowledge)
@@ -425,13 +425,14 @@ class QaTryService(
         testRunId: Long,
         gameInstanceId: Long,
         userId: Long,
-        settings: QaRunSettings = QaRunSettings()
+        settings: QaRunSettings = QaRunSettings(),
+        force: Boolean = false
     ): QaRunResponse {
         val scenarios = testRunService.getScenarios(testRunId, userId)
             ?: throw NotFoundException()
         val scenarioIds = scenarios.items.map { it.testScenarioId.toLong() }
         if (scenarioIds.isEmpty()) {
-            throw ConflictException("Test run has no scenarios to execute")
+            throw EmptyTestRunException()
         }
         val instance = instanceRepository.findAccessibleByIdForMember(gameInstanceId, userId)
             ?: throw NotFoundException()
@@ -441,13 +442,18 @@ class QaTryService(
             throw NotFoundException()
         }
         if (!sessionManager.hasSession(gameInstanceId.toString())) {
-            throw ConflictException("Game instance SDK is not connected")
+            throw SdkDisconnectedException()
+        }
+        // 이어받기는 SDK 연결 확인 **뒤에** 온다. 붙어 있지도 않은 게임 때문에 남의 런을 끊는 것은
+        // 어느 쪽에도 이득이 없다 — 새 런은 어차피 시작하지 못한다.
+        if (force) {
+            takeOverActiveRun(gameInstanceId, userId)
         }
         if (
             runRepository.findActiveByGameInstanceId(gameInstanceId) != null ||
             tryRepository.findActiveByGameInstanceId(gameInstanceId) != null
         ) {
-            throw ConflictException("An active QA run already exists")
+            throw ActiveQaRunException()
         }
 
         val started = persistence.createRunStarting(testRunId, gameInstanceId, userId, scenarioIds)
@@ -627,12 +633,49 @@ class QaTryService(
         tryRepository.failByQaRunId(qaRunId, now)
         runRepository.transition(qaRunId, "STARTING", "CANCELLED", now, now)
         runRepository.transition(qaRunId, "RUNNING", "CANCELLED", now, now)
+        // 세션은 **활성 try가 있든 없든** 끊는다. 위 `failureService.cancelled`는 활성 try의
+        // agent_session_id로만 끊는데, 활성 try가 없는 창이 실제로 존재한다: 런이 아직 STARTING이라
+        // try가 전부 PENDING인 구간, 그리고 시나리오 N이 끝나고 N+1의 첫 프레임이 도착하기 전
+        // 구간(그 사이 Agent는 게임을 리셋하고 있어 창이 길다). 그 창에서 취소하면 DB만 닫히고
+        // Agent 세션은 살아남아 다음 시나리오를 계속 돌렸다 — 운영자가 보기에 "종료가 안 먹힌다".
+        // 세션 id는 런이 들고 있으므로 그것으로 끊는다. 이미 끊긴 세션이면 no-op이다.
+        failureService.releaseAgentSession(run.agentSessionId)
         // 활성 try는 위 `failureService.cancelled`가 이미 확정했다. 여기서 남는 것은 그 앞뒤로
         // 종단이 된 시나리오들이며, 두 번 도는 것이 안전하다(확정은 cited IS NULL만 건드린다).
         citationService.finalizeRun(qaRunId)
         // 런과 그 시도들이 전부 닫힌 뒤다. 활성 시도가 있었다면 `failureService.cancelled` 가
         // 이미 한 번 껐지만 `stopIfIdle` 은 멱등이고, 활성 시도가 없던 런은 여기서만 꺼진다.
         readings.stopIfIdle(run.gameInstanceId)
+    }
+
+    /**
+     * 그 게임 인스턴스에서 아직 안 끝난 QA를 끝내고 자리를 비운다(런 이어받기).
+     *
+     * 운영자가 "진행 중인 QA를 종료하고 실행"을 고른 경우에만 불린다. 스테일 런이 게임을 영구
+     * 점유하는 일이 잦은데 — Orchestration이 배포로 재시작하면 소켓만 죽고 DB의 런은 RUNNING으로
+     * 남는다 — 그때마다 운영자를 다른 화면으로 보내 종료시키고 돌아오게 하는 것은 같은 결정을 두
+     * 번 시키는 것이다.
+     *
+     * 취소는 [cancelRun]을 그대로 쓴다. 접근 검사·Agent 세션 종료·인용 확정·채점이 전부 거기 붙어
+     * 있고, 이어받기라고 해서 그중 하나라도 건너뛸 이유가 없다. 그 사이 런이 스스로 끝났으면
+     * [ConflictException]이 오는데 그것은 실패가 아니라 원하던 결과라 삼킨다.
+     */
+    private suspend fun takeOverActiveRun(gameInstanceId: Long, userId: Long) {
+        runRepository.findActiveByGameInstanceId(gameInstanceId)?.let { active ->
+            try {
+                cancelRun(requireNotNull(active.id), userId)
+            } catch (_: ConflictException) {
+                // 이미 끝났다. 자리는 비었으므로 계속 간다.
+            }
+        }
+        // 런에 딸리지 않은 단일 try(qa_run 이전 경로)는 위에서 안 닫힌다. 남아 있으면 그것이
+        // 그대로 다음 런을 막으므로 따로 끊는다.
+        tryRepository.findActiveByGameInstanceId(gameInstanceId)?.let { orphan ->
+            failureService.cancelled(
+                requireNotNull(orphan.id),
+                "QA execution was cancelled to start a new run."
+            )
+        }
     }
 
     suspend fun requireAccessible(qaTryId: Long, userId: Long): QaTryEntity? =

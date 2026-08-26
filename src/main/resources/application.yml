@@ -131,6 +131,15 @@ artel:
       default-limit: ${ARTEL_TESTCASE_SEARCH_DEFAULT_LIMIT:5}
       # 결과가 Agent 컨텍스트로 들어간다. 요청이 더 커도 여기서 잘린다.
       max-limit: ${ARTEL_TESTCASE_SEARCH_MAX_LIMIT:20}
+  sdk:
+    socket:
+      # 웹소켓 한 메시지의 최대 바이트. Spring 은 이 값을 프레임 상한이자 합계 상한으로 함께 쓴다.
+      #
+      # 정하지 않으면 Reactor Netty 기본값 65536 이 걸리고, 정상 동작이 그것을 밟는다 — stage 에서
+      # 전투 씬의 전량 판독 78,946 바이트가 소켓을 끊었다. 무엇에 맞춰 이 값을 잡았는지는
+      # SdkSocketProperties 가 적어 두었다: 벽은 서버 메모리가 아니라 에이전트의 컨텍스트다.
+      max-message-bytes: ${ARTEL_SDK_SOCKET_MAX_MESSAGE_BYTES:262144}
+
   stream:
     enabled: ${ARTEL_STREAM_ENABLED:true}
     # 갱신 유실 허용 폭이다. 브라우저는 10초마다 갱신을 보내지만, 탭이 숨겨지면 그 주기가
