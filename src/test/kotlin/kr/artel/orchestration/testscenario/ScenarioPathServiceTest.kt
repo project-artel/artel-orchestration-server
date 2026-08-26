@@ -439,6 +439,65 @@ class ScenarioPathServiceTest {
         assertThat(answer.note).contains("명세에 없다").doesNotContain("저절로")
     }
 
+    // ---- 가려진 자동 쓰기 (ARTEL-534) ------------------------------------------------
+
+    /**
+     * 지시할 수 있는 쓰기가 있어도 **그것이 그 값을 못 만들면** 저절로 도는 쪽을 말한다.
+     *
+     * 실측(적재기 지도)에서 `MapMove.StagePosition` 을 쓰는 기능 다섯 중 넷이 지시할 수 있는
+     * 것이고 넷 다 목표 값을 못 만든다. 그 넷이 있다는 이유로 "명세에 없다"로 끝내면 다섯째가
+     * 든 조건이 가려진다.
+     */
+    @Test
+    fun `지시할 수 있는 쓰기가 못 만들면 저절로 도는 쪽을 말한다`(): Unit = runBlocking {
+        // 되돌리기 버튼 — 지시할 수 있지만 0 만 쓴다.
+        val reset = capability(mapSceneId, interaction = "click", label = "처음으로")
+        effect(reset, target = "MapMove.StagePosition", detail = "0")
+        // 마지막 웨이브가 끝나면 도는 코드 — 시킬 수 없지만 올릴 수는 있다.
+        val auto = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "웨이브가 끝나면 오른다", givenText = "`wave >= totalWaves`",
+                interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(auto, target = "MapMove.StagePosition", detail = "+1")
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 2")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.blockedBy).isEqualTo("StagePosition")
+        assertThat(answer.note).contains("조작으로 지시할 수 없다").contains("wave >= totalWaves")
+    }
+
+    /**
+     * 저절로 도는 쓰기가 **반대로 미는 것**이면 없는 것과 같다.
+     *
+     * 그것을 답으로 내면 "가만히 두면 그렇게 된다"고 말해 놓고 값이 영영 반대로 간다.
+     */
+    @Test
+    fun `저절로 도는 쓰기가 반대로 밀면 그것으로 답하지 않는다`(): Unit = runBlocking {
+        val reset = capability(mapSceneId, interaction = "click", label = "처음으로")
+        effect(reset, target = "MapMove.StagePosition", detail = "0")
+        val decay = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "시간이 지나면 내려간다", givenText = "`idle > 60`",
+                interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(decay, target = "MapMove.StagePosition", detail = "-1")
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 2")
+
+        assertThat(service.findPath(projectId, userId, a, b).note)
+            .contains("명세에 없다").doesNotContain("저절로")
+    }
+
     // ---- 조건 트리 (ARTEL-533) -----------------------------------------------------
 
     /**

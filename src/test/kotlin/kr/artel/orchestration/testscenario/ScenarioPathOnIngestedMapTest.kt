@@ -185,7 +185,7 @@ class ScenarioPathOnIngestedMapTest {
     }
 
     /**
-     * 값을 쓰는 자리는 **아직 조건을 못 말한다.** 이 테스트는 그 사실을 박제한다.
+     * 값을 쓰는 자리도 조건을 말한다 — **지시할 수 있는 쓰기에 가려지지 않는다**(ARTEL-534).
      *
      * 적재된 지도에서 `MapMove.StagePosition` 을 쓰는 기능은 다섯이다:
      *
@@ -195,15 +195,14 @@ class ScenarioPathOnIngestedMapTest {
      * | 144 · 145 | `click` · `runnable` | `PlayerPrefs.GetInt("StagePosition", -1)` |
      * | 209 · 210 | `click` · `runnable` | `0` |
      *
-     * 지시할 수 있는 것이 넷 있으므로 "저절로 일어난다"는 갈래로 가지 않고, 그 넷 중 어느 것도
-     * `== 2` 를 만들지 못하므로 "방법이 명세에 없다"로 끝난다. **63번이 든 조건이 그 자리에서
-     * 가려진다** — 손으로 넣은 골든 지도에는 63번 하나뿐이라 이 상황이 나오지 않았다.
+     * 지시할 수 있는 넷 중 어느 것도 `== 2` 를 못 만든다. 그 넷이 있다는 이유로 "방법이 명세에
+     * 없다"로 끝내면 63번이 든 조건이 가려지고, 사용자는 명세가 이미 아는 것을 알려주려 하게 된다.
      *
-     * 고치는 것은 이 작업의 몫이 아니다(ARTEL-534). 여기서는 씬 전이 쪽과 달리 값 쪽은 트리를
-     * 읽어도 아직 사용자에게 닿지 않는다는 것을 남긴다.
+     * 손으로 넣은 골든 지도에는 63번 하나뿐이라 이 상황이 나오지 않았다 — 실제 적재 결과에서만
+     * 드러나는 자리다.
      */
     @Test
-    fun `값을 쓰는 자리는 아직 저절로 도는 조건이 가려진다`(): Unit = runBlocking {
+    fun `저절로 쓰는 값의 조건도 지도에서 읽어 말한다`(): Unit = runBlocking {
         val one = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 1")
         val two = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 2")
 
@@ -211,7 +210,11 @@ class ScenarioPathOnIngestedMapTest {
 
         assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
         assertThat(answer.blockedBy).isEqualTo("StagePosition")
-        assertThat(answer.note).contains("명세에 없다").doesNotContain("BattleWaveController")
+        assertThat(answer.note)
+            .contains("조작으로 지시할 수 없다")
+            .contains("BattleWaveController.wave")
+            .contains("GetBattleWaveDatas().Count")
+            .doesNotContain("명세에 없다")
     }
 
     private suspend fun case(scene: String, precondition: String): Long =
