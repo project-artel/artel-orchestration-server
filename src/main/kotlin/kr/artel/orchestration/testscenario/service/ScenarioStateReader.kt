@@ -203,6 +203,18 @@ object ScenarioStateReader {
      * 벗기지 않으면 갈래를 못 본다 — `((a) 또는 (b))` 의 `또는` 은 괄호 안(깊이 1)에 있어
      * 최상위 분리에 걸리지 않는다.
      */
+    /**
+     * 명세가 적어 둔 조건을 **사람에게 보여 줄 한 줄로** 꺼낸다(ARTEL-532).
+     *
+     * [comparisonsIn] 으로 쪼갠 뒤 다시 이어 붙이지 않는다. 비교의 오른쪽은 괄호를 못 담게 되어
+     * 있어서(`(a 또는 b)` 를 잘못 자르지 않으려고 그렇다) `battleScript.GetBattleWaveDatas().Count`
+     * 가 `battleScript.GetBattleWaveDatas` 로 잘린다. 계산에 쓸 값이라면 그 잘림이 안전한 쪽이지만,
+     * **읽으라고 내놓는 글에서는 뜻이 바뀐다** — 웨이브 수가 메서드 이름이 된다. 명세가 쓴 그대로를
+     * 보여 주는 편이 정확하고, 사용자가 무엇을 알려줘야 하는지도 그쪽이 분명하다.
+     */
+    fun conditionText(expr: String?): String? =
+        expr?.trim()?.trim('`')?.trim()?.ifBlank { null }
+
     private fun unwrap(expr: String): String {
         var s = expr.trim()
         while (s.length > 1 && s.first() == '(' && s.last() == ')' && wrapsWhole(s)) {

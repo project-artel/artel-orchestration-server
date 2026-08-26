@@ -326,6 +326,102 @@ class ScenarioPathServiceTest {
         assertThat(answer.note).contains("저절로")
     }
 
+    // ---- 저절로 일어나는 일의 조건을 되짚는다 (ARTEL-532) -----------------------------
+
+    /**
+     * 자동으로 도는 코드에도 **도는 조건**이 적혀 있다.
+     *
+     * 실제 지도의 기능 18번이 그렇다 — `interaction=none` · `not-a-step` 이고 `StagePosition` 을
+     * 올리는데, `given_text` 에 `wave >= battleScript.GetBattleWaveDatas().Count` 가 있다.
+     * "저절로 일어나서 못 시킨다"에서 끝내면 명세가 아는 것을 사용자에게 되묻는 셈이 된다.
+     */
+    @Test
+    fun `저절로 쓰는 값은 그 코드가 도는 조건을 함께 말한다`(): Unit = runBlocking {
+        val auto = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다",
+                givenText = "`wave >= battleScript.GetBattleWaveDatas().Count`",
+                interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(auto, target = "MapMove.StagePosition", detail = "+1")
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 2")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.note)
+            .contains("조작으로 지시할 수 없다")
+            .contains("wave >= battleScript.GetBattleWaveDatas().Count")
+            .doesNotContain("명세에 없다")
+    }
+
+    @Test
+    fun `저절로 넘어가는 씬 전이도 그 조건을 함께 말한다`(): Unit = runBlocking {
+        val auto = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 넘어간다",
+                givenText = "`wave >= battleScript.GetBattleWaveDatas().Count`",
+                interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = battleSceneId, toSceneName = "Map_scene",
+                toSceneId = mapSceneId, capabilityId = auto, source = "static",
+            )
+        )
+        val a = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+        val b = case("Map_scene", "Map_scene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.note)
+            .contains("저절로")
+            .contains("wave >= battleScript.GetBattleWaveDatas().Count")
+    }
+
+    @Test
+    fun `무엇으로 넘어가는지 모르는 간선도 간선 자신의 조건은 말한다`(): Unit = runBlocking {
+        // `capability_id` 가 비어 있는 간선이다. 그래도 `given_text` 는 채워져 있을 수 있다.
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = battleSceneId, toSceneName = "Map_scene",
+                toSceneId = mapSceneId, capabilityId = null, source = "static",
+                givenText = "`battleResult == 1`",
+            )
+        )
+        val a = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+        val b = case("Map_scene", "Map_scene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.note).contains("battleResult == 1")
+    }
+
+    @Test
+    fun `조건이 적혀 있지 않으면 없다고 말한다`(): Unit = runBlocking {
+        // 지어내지 않는다. 조건을 모르는 자리는 예전 문구 그대로다.
+        val auto = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "언젠가 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(auto, target = "MapMove.StagePosition", detail = "+1")
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 2")
+
+        assertThat(service.findPath(projectId, userId, a, b).note)
+            .contains("무엇을 해야 그 일이 일어나는지는 명세에 없다")
+    }
+
     @Test
     fun `쓸 수 있는 기능이 있어도 그 값으로 못 만들면 없다고 답한다`(): Unit = runBlocking {
         // 실제 지도가 이 모양이다 — `StagePosition` 을 0 으로 되돌리는 버튼은 있고 2 로 만드는

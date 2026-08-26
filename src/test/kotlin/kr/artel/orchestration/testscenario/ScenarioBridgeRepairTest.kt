@@ -217,6 +217,44 @@ class ScenarioBridgeRepairTest {
             .contains("두 검증 사이")
     }
 
+    /**
+     * 경로 계산이 적어 둔 이유를 그대로 싣는다(ARTEL-532).
+     *
+     * 계산은 오래 전부터 세 가지를 갈라 문장으로 적어 왔는데(없다 / 있는데 지금 못 한다 / 저절로
+     * 일어나고 조건은 이것이다) 알림이 `blockedBy` 만 읽어 **한 번도 화면에 닿은 적이 없었다.**
+     */
+    @Test
+    fun `계산이 적어 둔 이유가 그대로 알림에 실린다`() {
+        val repaired = ScenarioBridgeRepair.apply(
+            listOf(verify(1), verify(2)),
+            mapOf(
+                0 to ScenarioPathAnswer(
+                    ScenarioPathResult.UNKNOWN,
+                    blockedBy = "StagePosition",
+                    note = "StagePosition 를 == 2 로 만드는 것은 조작으로 지시할 수 없다" +
+                        "(저절로 일어나는 것) — 명세는 `wave >= battleScript.GetBattleWaveDatas().Count` " +
+                        "일 때 그렇게 된다고 말한다. 그 상태를 만드는 방법을 알려 주면 채운다.",
+                ),
+            ),
+        )
+
+        assertThat(repaired.notices.single())
+            .contains("wave >= battleScript.GetBattleWaveDatas().Count")
+            .contains("StagePosition")
+            // 이유를 실었다고 자리를 잃지는 않는다.
+            .contains("두 검증 사이")
+    }
+
+    @Test
+    fun `이유가 없으면 예전처럼 자리와 막는 것만 말한다`() {
+        val repaired = ScenarioBridgeRepair.apply(
+            listOf(verify(1), verify(2)),
+            mapOf(0 to ScenarioPathAnswer(ScenarioPathResult.UNKNOWN, blockedBy = "StagePosition", note = "  ")),
+        )
+
+        assertThat(repaired.notices.single()).contains("StagePosition").contains("명세에 없습니다")
+    }
+
     @Test
     fun `사람이 손으로 채운 구간은 알림으로 접지 않는다`() {
         // 명세가 모르는 것을 사용자가 알려준 자리다. 계산값으로 덮으면 답을 받고도 버리는 셈이다.
