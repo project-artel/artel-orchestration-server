@@ -80,6 +80,26 @@ object ScenarioStateReader {
     }
 
     /**
+     * [text] 가 [name] 을 **낱말로** 말하나.
+     *
+     * 그냥 포함으로 보면 `Map` 이라는 씬이 `Mapping` 안에서도 걸린다. 씬 이름은 개발자가 짓는
+     * 것이라 흔한 낱말일 수 있고, 그때 이 검사가 아무 문장에나 반응하면 알림 전체가 못 믿을 것이
+     * 된다.
+     */
+    private fun mentions(text: String, name: String): Boolean {
+        var from = text.indexOf(name)
+        while (from >= 0) {
+            val before = text.getOrNull(from - 1)
+            val after = text.getOrNull(from + name.length)
+            if (!before.isIdentifierPart() && !after.isIdentifierPart()) return true
+            from = text.indexOf(name, from + 1)
+        }
+        return false
+    }
+
+    private fun Char?.isIdentifierPart() = this != null && (isLetterOrDigit() || this == '_')
+
+    /**
      * 사전조건이 **확정하는** 값만 뽑는다.
      *
      * `==` 만 값을 특정한다. `StagePosition >= 1` 은 그 케이스가 성립하는 조건이지 값이 아니라,
@@ -98,10 +118,16 @@ object ScenarioStateReader {
      * 요구하는 케이스가 브리지 없이 이어져도 아무도 모른다(실측 런 155: 막힌 자리 10군데가 전부
      * 이것이다).
      *
-     * **문구를 찾지 않는다.** `expected_value` 에서 [scenes] 에 있는 이름을 찾을 뿐이다. 씬 이름은
-     * 그 프로젝트의 씬 명세에서 오므로 게임에도, 언어에도, 문장 틀에도 붙지 않는다. 실측에서 전이를
-     * 말하는 케이스 17건이 전부 "시작 씬이 아닌 이름 하나"로 갈렸고, 나머지 49건은 하나도 언급하지
-     * 않았다.
+     * **이것은 받침이지 답이 아니다.** 계산된 답은 지도가 준다
+     * ([ScenarioPathService.sceneMoves] — 근거로 기능을 찾아 그 기능의 씬 효과를 읽는다). 여기는
+     * 지도가 모를 때 쓰는 자리이고, **개발자가 지은 씬 이름이 명세 문장에 글자 그대로 나온다**는
+     * 데 기댄다. 씬 이름이 흔한 낱말이면 엉뚱한 문장에 걸리고, 문장이 표시 이름을 쓰면 못 잡는다.
+     * 실측(word-venture)에서 지도가 아는 것은 16건 중 2건뿐이라 지금은 이쪽이 대부분을 답한다.
+     *
+     * **문구를 찾지는 않는다.** `expected_value` 에서 [scenes] 에 있는 이름을 찾을 뿐이라 언어에도
+     * 문장 틀에도 붙지 않는다. 이름은 **낱말 단위로** 맞춘다 — 그러지 않으면 `Map` 이라는 씬이
+     * `Mapping` 안에서도 걸린다. 실측에서 전이를 말하는 17건이 전부 "시작 씬이 아닌 이름 하나"로
+     * 갈렸고, 나머지 49건은 하나도 언급하지 않았다.
      *
      * **의심스러우면 떠난다고 본다.** 두 오류의 값이 다르기 때문이다 — 안 떠나는데 떠난다고 하면
      * 쓸데없는 복귀 스텝이나 헛알림이 나오지만, 떠나는데 머문다고 하면 **실행이 막히는 시나리오가
@@ -110,7 +136,7 @@ object ScenarioStateReader {
     fun sceneAfter(case: TestCaseEntity, scenes: Set<String>): SceneMove {
         val expected = case.expectedValue
         val from = sceneOf(case)
-        val named = scenes.filter { it != from && it.isNotBlank() && expected.contains(it) }
+        val named = scenes.filter { it != from && it.isNotBlank() && mentions(expected, it) }
         // 한 이름이 다른 이름의 일부일 수 있다(`Battle` 과 `BattleScene`). 긴 쪽만 남긴다 —
         // 짧은 쪽은 긴 쪽을 읽다가 걸린 것이지 따로 언급된 것이 아니다.
         val distinct = named.filterNot { short -> named.any { it != short && it.contains(short) } }
