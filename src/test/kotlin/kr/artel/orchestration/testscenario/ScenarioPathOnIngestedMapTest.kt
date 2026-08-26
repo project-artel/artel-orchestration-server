@@ -21,6 +21,8 @@ import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.testscenario.repository.ScenarioCaseFactRepository
 import kr.artel.orchestration.testscenario.service.ScenarioPathResult
 import kr.artel.orchestration.testscenario.service.ScenarioPathService
 import org.assertj.core.api.Assertions.assertThat
@@ -80,6 +82,7 @@ class ScenarioPathOnIngestedMapTest {
     @Autowired private lateinit var oauthUserService: OAuthUserService
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var db: DatabaseClient
+    @Autowired private lateinit var factRepository: ScenarioCaseFactRepository
 
     private var projectId: Long = 0
     private var userId: Long = 0
@@ -215,6 +218,36 @@ class ScenarioPathOnIngestedMapTest {
             .contains("BattleWaveController.wave")
             .contains("GetBattleWaveDatas().Count")
             .doesNotContain("명세에 없다")
+    }
+
+    /**
+     * 케이스가 든 UI 조준 대상이 지도의 기능을 찾는다(ARTEL-537).
+     *
+     * 값은 프로젝트 20 의 실제 케이스에서 그대로 가져왔다 — 1310 번의 근거가
+     * `object:Canvas[2]/MapSceneButton[1]@?` 이고, 적재기가 앉힌 기능의 `control_selector` 가
+     * `Canvas[2]/MapSceneButton[1]` 이다. 접두와 꼬리만 떼면 같은 문자열이다.
+     */
+    @Test
+    fun `UI 조준 대상이 지도의 기능을 찾는다`(): Unit = runBlocking {
+        val found = factRepository.findByControlSelector(contentMapId, "Canvas[2]/MapSceneButton[1]").toList()
+
+        assertThat(found).isNotEmpty
+        assertThat(found).allSatisfy { assertThat(it.interaction).isEqualTo("click") }
+    }
+
+    /**
+     * 코드 근거는 한 조작을 가리키지 않는다(ARTEL-536).
+     *
+     * 이 메서드 하나가 기능 여럿을 낳고 그 안에 서로 다른 키가 섞여 있다. `performs()` 가 이것을
+     * 보고 판단을 접는다 — 여기서 조작이 하나로 모이기 시작하면 그 규칙이 필요 없어진 것이다.
+     */
+    @Test
+    fun `한 메서드가 서로 다른 조작을 낳는다`(): Unit = runBlocking {
+        val found = factRepository
+            .findByEvidenceTail(contentMapId, "%Map.MapMove|CharacterMove|System.Void()").toList()
+
+        assertThat(found).hasSizeGreaterThan(1)
+        assertThat(found.map { it.inputKey }.distinct()).hasSizeGreaterThan(1)
     }
 
     private suspend fun case(scene: String, precondition: String): Long =

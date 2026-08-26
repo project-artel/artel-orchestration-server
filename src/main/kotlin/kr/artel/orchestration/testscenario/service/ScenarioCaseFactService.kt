@@ -56,9 +56,15 @@ class ScenarioCaseFactService(
                 note = "이 프로젝트에는 씬 명세가 아직 없어 조작을 확인할 수 없다.",
             )
 
-        val byEvidence = ScenarioStateReader.evidenceTails(case, objectMapper).flatMap { tail ->
-            factRepository.findByEvidenceTail(contentMapId, tail).toList()
-        }.distinctBy { it.id }
+        // UI 근거도 함께 본다(ARTEL-537). 버튼을 누르는 케이스는 근거가 코드 주소가 아니라
+        // 오브젝트 경로라, 이 축이 없으면 조작 목록이 통째로 빈다.
+        val byEvidence = (
+            ScenarioStateReader.controlSelectors(case, objectMapper).flatMap { selector ->
+                factRepository.findByControlSelector(contentMapId, selector).toList()
+            } + ScenarioStateReader.evidenceTails(case, objectMapper).flatMap { tail ->
+                factRepository.findByEvidenceTail(contentMapId, tail).toList()
+            }
+            ).distinctBy { it.id }
         val byEffect = supportingVariable(case)?.let { variable ->
             factRepository.findByEffectTarget(contentMapId, variable).toList()
         }.orEmpty().filter { candidate -> byEvidence.none { it.id == candidate.id } }

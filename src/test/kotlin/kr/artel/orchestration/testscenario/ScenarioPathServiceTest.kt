@@ -919,6 +919,129 @@ class ScenarioPathServiceTest {
         assertThat(answer.capabilityIds).containsExactly(enter)
     }
 
+    /**
+     * 같은 메서드에서 갈라진 기능들이 **서로 다른 조작**이면 어느 것인지 모른다(ARTEL-536).
+     *
+     * 실측(적재기 지도)에서 `Map.MapMove.CharacterMove` 하나가 기능 14개이고 그 안에 `LeftArrow`
+     * 와 `RightArrow` 가 섞여 있다. 그대로 두면 한쪽을 검증하는 케이스가 반대쪽 브리지를 지운다 —
+     * 실행하는 사람은 없는 스텝 앞에서 멎고, 그 사실은 실행할 때까지 아무도 모른다.
+     */
+    @Test
+    fun `한 근거가 서로 다른 조작을 가리키면 브리지를 지우지 않는다`(): Unit = runBlocking {
+        val method = "Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()"
+        val enter = capability(mapSceneId, interaction = "press", inputKey = "Return")
+        evidence(enter, method)
+        // 같은 메서드가 낳은 다른 조작. 지도에 나란히 앉는다.
+        val left = capability(mapSceneId, interaction = "press", inputKey = "LeftArrow")
+        evidence(left, method)
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+        val press = case(
+            "Map_scene", "Map_scene 화면인 상태",
+            evidence = "Assembly-CSharp|WordVenture.Map.MapMove|CharacterMove|System.Void()@12",
+        )
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, press, inBattle)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.capabilityIds).containsExactly(enter)
+    }
+
+    /**
+     * 갈라진 기능들이 **같은 조작**이면 어느 것이든 사람이 하는 일이 같다. 예전처럼 지운다.
+     *
+     * 실측에서 `TitleSceneManager.LoadStoryScene` 이 기능 6개인데 조작은 두 가지뿐이고, 이렇게
+     * 하나로 모이는 자리가 근거 항목 78건 중 53건이다. "기능이 하나여야 한다"로 좁히면 7건만 남아
+     * 중복 억제가 사실상 꺼진다.
+     */
+    @Test
+    fun `갈라진 기능이 모두 같은 조작이면 그대로 지운다`(): Unit = runBlocking {
+        val method = "Assembly-CSharp|Map.MapMove|SelectStage|System.Void(System.Int32)"
+        val enter = capability(mapSceneId, interaction = "press", inputKey = "Return")
+        evidence(enter, method)
+        val twin = capability(mapSceneId, interaction = "press", inputKey = "Return")
+        evidence(twin, method)
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+        val press = case(
+            "Map_scene", "Map_scene 화면인 상태",
+            evidence = "Assembly-CSharp|WordVenture.Map.MapMove|SelectStage|System.Void(System.Int32)@12",
+        )
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        assertThat(service.findPath(projectId, userId, press, inBattle).result)
+            .isEqualTo(ScenarioPathResult.NOT_REQUIRED)
+    }
+
+    /**
+     * 버튼을 누르는 케이스는 근거가 코드 주소가 아니라 오브젝트 경로다(ARTEL-537).
+     *
+     * `object:` 접두와 `@` 꼬리만 떼면 지도의 `control_selector` 와 같은 문자열이다. 이 축이
+     * 없으면 그 케이스는 지도의 기능을 하나도 못 찾아, 자기가 누르는 버튼을 브리지가 또 누른다.
+     */
+    @Test
+    fun `UI 근거를 든 케이스도 자기가 누르는 버튼을 안다`(): Unit = runBlocking {
+        val button = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = mapSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "전투로 가는 버튼", interaction = "click",
+                controlSelector = "Canvas[2]/MapSceneButton[1]", controlPath = "Canvas/MapSceneButton",
+                status = "runnable",
+            )
+        ).id!!
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = button, source = "static",
+            )
+        )
+        val click = case(
+            "Map_scene", "Map_scene 화면인 상태",
+            evidence = "object:Canvas[2]/MapSceneButton[1]@?",
+        )
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        assertThat(service.findPath(projectId, userId, click, inBattle).result)
+            .isEqualTo(ScenarioPathResult.NOT_REQUIRED)
+    }
+
+    @Test
+    fun `다른 버튼을 누르는 케이스라면 그대로 브리지를 넣는다`(): Unit = runBlocking {
+        val button = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = mapSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "전투로 가는 버튼", interaction = "click",
+                controlSelector = "Canvas[2]/MapSceneButton[1]", controlPath = "Canvas/MapSceneButton",
+                status = "runnable",
+            )
+        ).id!!
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = button, source = "static",
+            )
+        )
+        val other = case(
+            "Map_scene", "Map_scene 화면인 상태",
+            evidence = "object:Canvas[2]/ExitButton[3]@?",
+        )
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, other, inBattle)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.capabilityIds).containsExactly(button)
+    }
+
     // ---- 순서 ------------------------------------------------------------------------
 
     /**

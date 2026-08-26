@@ -535,16 +535,47 @@ class ScenarioPathService(
             capability.actionability != Actionability.UNREACHABLE_PRECONDITION.wire
 
     /**
-     * 이 케이스가 **그 기능을 직접 실행하는가.**
+     * 이 케이스가 **그 기능을 직접 실행하는가.** 그렇다면 같은 것을 시키는 브리지는 중복이다.
      *
-     * 케이스의 근거 키가 가리키는 코드와 기능의 근거가 같으면, 그 케이스를 수행하는 것이 곧 그
-     * 조작이다. 근거가 없는 케이스(형식이 다른 UI 근거 등)는 판단하지 않는다 — 모르면 넣는 쪽이
-     * 안전하다. 빠뜨린 스텝은 눈에 띄지만, 없는 스텝은 실행할 때까지 모른다.
+     * 근거가 없는 케이스는 판단하지 않는다 — 모르면 넣는 쪽이 안전하다. **빠뜨린 스텝은 눈에
+     * 띄지만, 없는 스텝은 실행할 때까지 모른다.**
+     *
+     * ## 코드 근거는 조작을 하나로 좁히지 못한다(ARTEL-536)
+     *
+     * 근거 꼬리는 메서드 단위다. 한 메서드가 기능 여럿을 낳고, 그 여럿이 **서로 다른 조작**일 수
+     * 있다 — 실측(적재기 지도)에서 `Map.MapMove.CharacterMove` 하나가 기능 14개이고 그 안에
+     * `LeftArrow` · `RightArrow` · `Return` 이 섞여 있다. 그대로 두면 `RightArrow` 를 검증하는
+     * 케이스가 `LeftArrow` 브리지를 "이미 하고 있다"며 지운다.
+     *
+     * 그래서 **꼬리가 가리키는 기능들이 서로 같은 조작일 때만** 그 케이스가 한다고 본다. 어느
+     * 것이든 사람이 하는 일이 같으므로 브리지는 어차피 중복이다. 조작이 갈리면 어느 것인지 모르고,
+     * 모르는 자리에서는 지우지 않는다.
+     *
+     * 실측 근거 항목 78건 중 조작이 하나로 좁혀지는 것이 53건이다. "기능이 하나여야 한다"로 하면
+     * 7건만 남아 중복 억제가 사실상 꺼진다.
+     *
+     * **오프셋으로 좁히지 않는 이유**: `capability_evidence.branch_offset` 이 있고 케이스도 `@36`
+     * 을 달지만 실측에서 78건 중 4건만 맞는다. 케이스가 다른 빌드에서 뽑힌 탓일 수 있어 같은
+     * 빌드끼리는 맞을지 모르나, **확인 못 한 규칙으로 스텝을 지우는 것**이 여기서 가장 위험하다.
+     *
+     * ## UI 근거는 좁힐 필요가 없다(ARTEL-537)
+     *
+     * `control_selector` 는 형제 인덱스까지 붙어 한 판독 안에서 오브젝트 하나를 가리킨다.
      */
-    private suspend fun performs(contentMapId: Long, case: TestCaseEntity, capabilityId: Long): Boolean =
-        ScenarioStateReader.evidenceTails(case, objectMapper).any { tail ->
-            factRepository.findByEvidenceTail(contentMapId, tail).toList().any { it.id == capabilityId }
+    private suspend fun performs(contentMapId: Long, case: TestCaseEntity, capabilityId: Long): Boolean {
+        val byControl = ScenarioStateReader.controlSelectors(case, objectMapper).any { selector ->
+            factRepository.findByControlSelector(contentMapId, selector).toList().any { it.id == capabilityId }
         }
+        if (byControl) return true
+        return ScenarioStateReader.evidenceTails(case, objectMapper).any { tail ->
+            val found = factRepository.findByEvidenceTail(contentMapId, tail).toList()
+            found.any { it.id == capabilityId } && found.distinctBy(::actionOf).size == 1
+        }
+    }
+
+    /** 사람이 하는 일로 본 조작. 이것이 같으면 어느 기능이든 시키는 바가 같다. */
+    private fun actionOf(capability: CapabilityEntity): Triple<String, String?, String?> =
+        Triple(capability.interaction, capability.inputKey, capability.controlPath)
 
     // ---- 씬 간선 ---------------------------------------------------------------------
 

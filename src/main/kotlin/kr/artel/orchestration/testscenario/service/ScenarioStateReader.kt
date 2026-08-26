@@ -161,7 +161,11 @@ object ScenarioStateReader {
      * 케이스는 `Assembly-CSharp|WordVenture.Map.MapMove|CharacterMove|System.Void()@79` 처럼 적고
      * 여러 개를 ` / ` 로 잇는다. 지도는 같은 것을 `Assembly-CSharp|Map.MapMove|CharacterMove|...`
      * 로 부른다 — 네임스페이스 접두가 다르고 오프셋이 없다. 그래서 **타입의 마지막 두 마디부터**
-     * 뒤를 맞춘다. `object:Canvas[2]/ExitButton[3]@?` 같은 UI 근거는 이 형식이 아니라 걸러진다.
+     * 뒤를 맞춘다. `object:...` 로 시작하는 UI 근거는 이 형식이 아니므로 [controlSelectors] 가 읽는다.
+     *
+     * **한 꼬리가 기능 하나를 가리키지는 않는다.** 메서드 단위라 그 안에서 갈라진 기능을 전부
+     * 잡는다 — 실측에서 `Map.MapMove.CharacterMove` 하나가 기능 14개(서로 다른 조작 6가지)다.
+     * 그것을 어떻게 다룰지는 쓰는 쪽이 정한다(ARTEL-536).
      */
     fun evidenceTails(case: TestCaseEntity, objectMapper: ObjectMapper): List<String> = runCatching {
         val raw = objectMapper.readTree(case.metadata.asString())
@@ -171,6 +175,27 @@ object ScenarioStateReader {
             if (parts.size != 4) return@mapNotNull null
             val type = parts[1].substringBefore('/').split(".").takeLast(2).joinToString(".")
             "%$type|${parts[2]}|${parts[3]}"
+        }.distinct()
+    }.getOrElse { emptyList() }
+
+    /**
+     * 케이스가 가리키는 **UI 조준 대상**(ARTEL-537).
+     *
+     * 근거의 절반쯤은 코드 주소가 아니라 오브젝트 경로다 — `object:Canvas[2]/ExitButton[3]@?`.
+     * [evidenceTails] 는 `|` 로 넷이 되지 않아 이것을 통째로 버렸고, 그래서 버튼을 누르는 케이스가
+     * 지도의 기능을 하나도 못 찾았다(실측 66건 중 5건).
+     *
+     * 지도의 `capability.control_selector` 가 **같은 문자열**이다 — `object:` 접두와 `@` 꼬리만
+     * 떼면 그대로 맞는다. 형제 인덱스가 붙어 있어 한 판독 안에서는 하나를 가리키므로, 코드 꼬리와
+     * 달리 좁히는 문제가 없다. 대신 계층이 바뀌면 인덱스가 밀린다 — 같은 빌드 안에서만 믿는다.
+     */
+    fun controlSelectors(case: TestCaseEntity, objectMapper: ObjectMapper): List<String> = runCatching {
+        val raw = objectMapper.readTree(case.metadata.asString())
+            .path("source").path("evidence").asText(null) ?: return emptyList()
+        raw.split(" / ").mapNotNull { entry ->
+            val body = entry.trim()
+            if (!body.startsWith(OBJECT_PREFIX)) return@mapNotNull null
+            body.removePrefix(OBJECT_PREFIX).substringBeforeLast('@').trim().ifBlank { null }
         }.distinct()
     }.getOrElse { emptyList() }
 
@@ -265,6 +290,8 @@ object ScenarioStateReader {
      * 라틴 낱말은 **경계를 본다.** `Coordinate` 안에도 `or` 가 들어 있어, 경계 없이 자르면 변수
      * 이름이 두 동으로 난다.
      */
+    private const val OBJECT_PREFIX = "object:"
+
     private val AND = Regex("""그리고|\band\b""")
     private val OR = Regex("""또는|\bor\b""")
 
