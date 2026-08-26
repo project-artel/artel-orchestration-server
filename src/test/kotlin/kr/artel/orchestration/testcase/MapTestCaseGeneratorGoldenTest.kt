@@ -98,14 +98,14 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     /**
-     * 문서 한 장이 케이스 **135개**로 앉는다.
+     * 문서 한 장이 케이스 **139개**로 앉는다.
      *
      * 그 수가 어디서 오는가:
      *
      * ```
      * 기능            491     적재기가 앉힌 행 전부
      *  → 창구           51     뷰가 `not-a-step` 과 `merged_into` 를 거른다
-     *  → 케이스        135     확인할 수 있는 효과 하나마다 한 줄
+     *  → 케이스        139     확인할 수 있는 효과 하나마다 한 줄
      * ```
      *
      * 자기 효과를 든 갈래는 그것으로, 안 든 갈래는 **공통 호출자를 통해 빌려 온다**
@@ -116,8 +116,8 @@ class MapTestCaseGeneratorGoldenTest {
      * 아무 데서도 오류가 나지 않는다.
      */
     @Test
-    fun `문서 한 장이 케이스 135개가 된다`() {
-        assertThat(cases).hasSize(135)
+    fun `문서 한 장이 케이스 139개가 된다`() {
+        assertThat(cases).hasSize(139)
     }
 
     /**
@@ -178,7 +178,7 @@ class MapTestCaseGeneratorGoldenTest {
      * 몰랐다.
      *
      * ```
-     * Map_scene 28 · GameClearScene 26 · StoryScene 33 · EndingScene 33
+     * EndingScene 35 · StoryScene 35 · Map_scene 28 · GameClearScene 26
      * TitleScene 8 · TurnBattleScene 6 · GameOverScene 1
      * ```
      */
@@ -187,9 +187,70 @@ class MapTestCaseGeneratorGoldenTest {
         val byScene = cases.groupingBy { it.scene }.eachCount()
 
         assertThat(byScene).hasSize(7)
-        assertThat(byScene["StoryScene"]).isEqualTo(33)
-        assertThat(byScene["EndingScene"]).isEqualTo(33)
+        assertThat(byScene["StoryScene"]).isEqualTo(35)
+        assertThat(byScene["EndingScene"]).isEqualTo(35)
         assertThat(byScene["Map_scene"]).isEqualTo(28)
+    }
+
+    /**
+     * **같은 조작이라도 상황이 다르면 다른 케이스다.**
+     *
+     * 기능을 검증하는 것 너머의 목적은 **게임이 정상 진행되는지**를 보는 것이고, 그러려면 같은 기능이
+     * 여러 상황에서 제대로 도는지를 봐야 한다. 그래서 사전조건이 다르면 검증해야 할 개별 엔티티다.
+     *
+     * 실측에서 EndingScene 의 `press any` 하나가 이렇게 갈린다:
+     *
+     * ```
+     * MapMove.StagePosition == 5  →  `TitleScene` 화면으로 전환된다
+     * MapMove.StagePosition != 5  →  `Map_scene` 화면으로 전환된다
+     * ```
+     *
+     * 특정 게임의 `StagePosition` 을 아는 코드는 한 줄도 없다. 호출 엣지가 이은 갈래마다 조건이
+     * 다르면 줄이 갈라질 뿐이다.
+     */
+    @Test
+    fun `같은 조작이 상황에 따라 다른 화면으로 간다`() {
+        val fromEnding = cases.filter { it.scene == "EndingScene" && it.expected.contains("화면으로 전환된다") }
+
+        // 한 조작에서 나왔는데 도착 화면이 둘 이상이다 — 그것이 갈래다.
+        assertThat(fromEnding.map { it.step }.distinct()).hasSize(1)
+        assertThat(fromEnding.map { it.expected }.distinct()).hasSizeGreaterThan(1)
+        // 갈린 줄들은 사전조건이 서로 다르다. 같으면 어느 쪽을 만들지 알 수 없다.
+        assertThat(fromEnding.map { it.precondition }.distinct()).hasSameSizeAs(fromEnding)
+    }
+
+    /**
+     * **전제는 사람이 만들 수 있는 만큼만 적는다.**
+     *
+     * 갈래를 이으면 조건이 셋씩 겹쳐 붙는다. 그대로 두면 전제가 평균 189자까지 부풀었고, 그중 61건이
+     * 200자를 넘었다 — 읽고 재현할 수 있는 분량이 아니다. 세 가지를 덜어 119자로 내렸다:
+     *
+     * - 호출자 조건은 **판정에만** 쓰고 문장에는 안 싣는다(코루틴이 몇 번째 대사를 넘겼는지 같은 내부
+     *   진행 상태다). 모순 갈래를 거르는 데는 여전히 본다.
+     * - 코드가 스스로 지금 화면을 확인하는 자리는 사전조건이 이미 그 화면을 말했다.
+     * - 행동이 이미 말하는 입력 판정은 뺀다.
+     *
+     * 구버전은 69자다. 남은 차이는 **갈래를 잇기 때문**이고, 그것이 위 테스트가 지키는 기능이다.
+     * 200자를 넘는 5건은 튜토리얼 채팅창처럼 진짜로 상태 넷이 겹치는 자리다.
+     */
+    @Test
+    fun `전제가 읽을 수 있는 분량 안에 있다`() {
+        assertThat(cases.map { it.precondition.length }.average()).isLessThan(130.0)
+        assertThat(cases.count { it.precondition.length > 200 }).isLessThanOrEqualTo(5)
+    }
+
+    /**
+     * **행동이 말하는 것을 전제가 다시 말하지 않는다.**
+     *
+     * 게임이 입력을 자기 메서드로 감싸면(`IsAdvanceKeyDown()`) 그것이 조건에 `test` 로 들어와
+     * `gesture` 필터에 안 걸린다. 남기면 "`IsAdvanceKeyDown() != 0` 인 상태에서 아무 키나 누른다"가
+     * 되어 같은 말을 두 번 한다.
+     */
+    @Test
+    fun `키를 누르는 케이스의 전제에 입력 판정이 남지 않는다`() {
+        assertThat(cases.filter { it.step.contains("누른다") }).allSatisfy { case ->
+            assertThat(case.precondition).doesNotContain("IsAdvanceKeyDown")
+        }
     }
 
     /**
