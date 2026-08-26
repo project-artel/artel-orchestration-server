@@ -453,9 +453,12 @@ class ScenarioBridgeInsertionIntegrationTest {
     // ---- 같은 자리의 케이스 -----------------------------------------------------------
 
     @Test
-    fun `동시에 성립할 수 없는 두 케이스를 한 시나리오에 담으면 저장하고 되묻는다`(): Unit = runBlocking {
+    fun `동시에 성립할 수 없는 두 케이스를 한 시나리오에 담으면 나눠 저장한다`(): Unit = runBlocking {
         // 실행이 불가능한 조합이지만 **막지 않는다**(ARTEL-497). "24건 전부 담아줘"가 실제 요청이었고,
         // 거절당한 사용자에게는 다음 수가 없었다 — 무엇을 어떤 묶음으로 볼지는 요청이 정한다.
+        //
+        // **묻지도 않는다.** 되묻기로 해 봤더니 답이 무엇을 뜻하는지 모델이 몰라 같은 질문이 답할
+        // 때마다 다시 나갔다(런 152). 나누는 일은 계산이므로 코드가 한다.
         val notFive = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition != 5", step = "관찰한다")
         val five = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 5", step = "관찰한다")
 
@@ -472,17 +475,17 @@ class ScenarioBridgeInsertionIntegrationTest {
             ),
         )
 
-        assertThat(outcome.applied).isEqualTo(1)
+        // 한 벌로 왔지만 두 벌로 저장된다.
+        assertThat(outcome.applied).isEqualTo(2)
         assertThat(outcome.rejected).isFalse()
-        assertThat(outcome.findings.conflicting).containsExactly(notFive to five)
-        // 묻는다 — 그리고 물은 것은 통보로 되풀이하지 않는다.
-        assertThat(outcome.question?.id).startsWith("conflict:")
-        assertThat(outcome.question?.options?.map { it.id }).containsExactly("split", "keep")
-        assertThat(outcome.notices).noneMatch { it.contains("함께 담을 수 없는") }
+        // 나눴으므로 남은 동거 불가가 없다.
+        assertThat(outcome.findings.conflicting).isEmpty()
+        assertThat(outcome.question?.id.orEmpty()).doesNotStartWith("conflict:")
+        assertThat(outcome.notices).anyMatch { it.contains("2개로 나눴습니다") }
     }
 
     @Test
-    fun `부등식끼리 어긋난 둘도 함께 담을 수 없다고 말한다`(): Unit = runBlocking {
+    fun `부등식끼리 어긋난 둘도 나눠 담는다`(): Unit = runBlocking {
         // 확정값이 없어 예전에는 통과하던 모양이다(ARTEL-497). word-venture TurnBattleScene 에서
         // 사망(hp <= 0)과 생존(hp > 0)이 한 시나리오에 담긴 것이 이 경우다.
         val dead = case("Map_scene", "Map_scene 화면인 상태 / Player.hp <= 0", step = "쓰러진 뒤 관찰한다")
@@ -501,9 +504,9 @@ class ScenarioBridgeInsertionIntegrationTest {
             ),
         )
 
-        assertThat(outcome.findings.conflicting).containsExactly(dead to alive)
-        assertThat(outcome.applied).isEqualTo(1)
-        assertThat(outcome.question?.id).startsWith("conflict:")
+        assertThat(outcome.findings.conflicting).isEmpty()
+        assertThat(outcome.applied).isEqualTo(2)
+        assertThat(outcome.notices).anyMatch { it.contains("2개로 나눴습니다") }
     }
 
     @Test
@@ -525,6 +528,111 @@ class ScenarioBridgeInsertionIntegrationTest {
         // 물은 것은 통보로 되풀이하지 않는다.
         assertThat(outcome.question?.id).isEqualTo("arm:$notFive:${notFive + 1}")
         assertThat(outcome.question?.options?.map { it.id }).containsExactly("add", "skip")
+    }
+
+    /**
+     * 덜 담긴 것은 **런 전체로** 본다(ARTEL-516).
+     *
+     * 실측(런 155): TC 66건을 전부 담아 미커버 0/66 인 화면에서 "이 갈래도 만들까요?"가 계속
+     * 나왔다. 판정이 이번 턴에 쓴 시나리오만 보고 있었기 때문이다 — 나머지 갈래는 런의 다른
+     * 시나리오에 이미 들어 있었다.
+     */
+    @Test
+    fun `다른 시나리오가 이미 담은 갈래는 다시 묻지 않는다`(): Unit = runBlocking {
+        val notFive = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition != 5", step = "관찰한다")
+        val five = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 5", step = "관찰한다")
+
+        // 첫 턴: 한 갈래만 담는다 → 나머지 갈래를 묻는다.
+        val first = reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "한 갈래", description = "d",
+                    steps = listOf(ChatScenarioStep(action = "확인", caseId = notFive)),
+                )
+            ),
+        )
+        assertThat(first.question?.id).isEqualTo("arm:$notFive:$five")
+
+        // 둘째 턴: 나머지 갈래를 **새 시나리오로** 담는다. 이제 런에는 둘 다 있다.
+        val second = reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "다른 갈래", description = "d",
+                    steps = listOf(ChatScenarioStep(action = "확인", caseId = five)),
+                )
+            ),
+        )
+
+        assertThat(second.applied).isEqualTo(1)
+        // 이번 턴만 보면 notFive 가 "빠졌다"로 보인다. 런 전체로 보면 담겨 있다.
+        assertThat(second.question?.id.orEmpty()).doesNotStartWith("arm:")
+        assertThat(second.notices).noneMatch { it.contains("빠졌습니다") }
+    }
+
+    /**
+     * 나눠서 생긴 조각은 **원본 바로 뒤**에 놓인다(ARTEL-518).
+     *
+     * 새 시나리오는 런 끝에 붙는 것이 기본이고 대부분 그게 맞다. 그런데 나눠서 생긴 조각은 새로
+     * 만든 것이 아니라 원본의 나머지 반쪽이다 — 실측(런 155)에서 맵 구간(position 2~8)을 나눈
+     * 조각이 EndingScene 뒤인 position 21 에 놓였고, 흐름을 순서대로 읽는 화면에서 그 조각은
+     * 아무 데서도 이어지지 않았다.
+     */
+    @Test
+    fun `나눈 조각은 런 끝이 아니라 원본 바로 뒤에 놓인다`(): Unit = runBlocking {
+        val dead = case("Map_scene", "Map_scene 화면인 상태 / Player.hp <= 0", step = "쓰러진 뒤 관찰한다")
+        val alive = case("Map_scene", "Map_scene 화면인 상태 / Player.hp > 0", step = "버틴 뒤 관찰한다")
+        val other = case("Map_scene", "Map_scene 화면인 상태", step = "그냥 관찰한다")
+
+        // 먼저 나뉠 시나리오를 만들고, 그 뒤에 다른 시나리오를 붙여 런 끝을 차지하게 한다.
+        reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "생사 혼재", description = "d",
+                    steps = listOf(ChatScenarioStep(action = "확인", caseId = dead)),
+                )
+            ),
+        )
+        reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "맨 뒤", description = "d",
+                    steps = listOf(ChatScenarioStep(action = "확인", caseId = other)),
+                )
+            ),
+        )
+        val split = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        val origin = split.first().testScenarioId
+        val last = split.last().testScenarioId
+
+        // 이제 첫 시나리오를 고쳐 쓰면서 함께 담을 수 없는 케이스를 넣는다 → 나뉜다.
+        val outcome = reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    scenarioId = origin, title = "생사 혼재", description = "d",
+                    steps = listOf(
+                        ChatScenarioStep(action = "확인", caseId = dead),
+                        ChatScenarioStep(action = "확인", caseId = alive),
+                    ),
+                )
+            ),
+        )
+
+        assertThat(outcome.applied).isEqualTo(2)
+        val order = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+            .map { it.testScenarioId }
+        // 원본 · 조각 · 그다음에 원래 맨 뒤였던 것.
+        assertThat(order).hasSize(3)
+        assertThat(order[0]).isEqualTo(origin)
+        assertThat(order[2]).isEqualTo(last)
+        // 자리 번호는 빈틈 없이 다시 매겨진다.
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().map { it.position })
+            .containsExactly(0, 1, 2)
+        assertThat(outcome.notices).anyMatch { it.contains("새 시나리오 1개") }
     }
 
     // ---- 픽스처 ----------------------------------------------------------------------

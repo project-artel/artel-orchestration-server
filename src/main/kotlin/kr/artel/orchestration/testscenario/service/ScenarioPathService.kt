@@ -249,26 +249,138 @@ class ScenarioPathService(
             return Writer.Blocked(by)
         }
 
-        val exact = ready.firstOrNull { (e, _) -> e.detail != null && guard.holds(e.detail!!) }
-        val relative = ready.firstOrNull { (e, _) -> e.detail == "+1" || e.detail == "-1" }
+        // **값을 정하는 조작**이 먼저다. 증감은 한 번으로 값이 정해지지 않으므로 여기서 뺀다 —
+        // 빼지 않으면 `+1` 을 쓰는 조작이 `position >= 1` 을 "한 번 눌러 만족시킨다"로 읽힌다.
+        val exact = ready.firstOrNull { (e, _) ->
+            e.detail != null && increment(e.detail) == null && guard.holds(e.detail!!)
+        }
+        // **증감은 방향을 골라야 한다.** 먼저 걸리는 것을 집으면 값을 반대로 밀어내는 조작이
+        // 들어간다 — 실측(런 152, TS 250)에서 `position` 을 1에서 3으로 올려야 하는 자리에
+        // 내리는 조작을 "position 이 3 이 될 때까지 되풀이한다"로 적어 넣었다. 되풀이해도 영영
+        // 도달하지 않는 스텝이고, 실행하는 사람은 그 앞에서 멎는다.
+        val toward = push(guard, state[guard.variable])
+        val relative = ready.firstOrNull { (e, _) ->
+            val by = increment(e.detail) ?: return@firstOrNull false
+            // 방향을 아는데 그쪽으로 미는 조작이 없으면 **없는 것이다.** 반대로 미는 것을 넣는 것보다
+            // 모른다고 답하는 편이 낫다 — 미상은 사용자가 채울 수 있지만 거짓 스텝은 실행하다 만난다.
+            // 방향을 모르면(지금 값을 모른다) 예전처럼 있는 증감을 쓴다.
+            toward == null || toward == Push.of(by)
+        }
         // 지시할 수 있는 기능이 그 변수를 쓰기는 하는데 **이 값으로는** 못 만드는 경우다. 자동이라
         // 못 시키는 것과는 다르므로 그렇게 말하지 않는다 — 실제로 `StagePosition` 을 0 으로
         // 되돌리는 버튼은 있고, 2 로 만드는 방법만 없다.
-        val (chosen, capability) = exact ?: relative ?: return Writer.None
+        //
+        // 다만 **미는 방향의 조작이 있는데 지금 못 하는 것**은 없는 것과 다르다. 실측(런 153)에서
+        // `position` 을 2에서 3으로 올릴 자리가 그랬다 — `RightArrow` 가 +1 을 쓰지만 지도에는 그
+        // 조작의 사전조건이 `position == 0` 으로 적혀 있다. "명세에 없다"고 말하면 사용자는 없는
+        // 것을 알려주려 하게 되고, 정작 손볼 자리(지도의 사전조건)는 가려진다.
+        val (chosen, capability) = exact ?: relative
+            ?: toward?.let { direction ->
+                usable.firstOrNull { (effect, _) -> increment(effect.detail)?.let(Push::of) == direction }
+                    ?.let { (_, capability) -> ScenarioStateReader.violated(capability.givenText, state) }
+                    ?.let { return Writer.Blocked(it) }
+            }
+            ?: return Writer.None
 
         // 되풀이해야 하는지는 **지도가 말해 준다**(ARTEL-473). `repeat_until_done` 이 그 자리이고,
-        // 증감(`+1`)만 아는 값을 옮기는 경우가 그 다음이다 — 명세가 몇 번인지는 말하지 않으므로
-        // 횟수 판단은 실행하는 쪽에 남긴다.
+        // 증감만 아는 값을 옮기는 경우가 그 다음이다 — 몇 칸씩 움직이는지는 알아도 **지금 값과
+        // 목표가 정확히 몇 번 만에 만나는지**는 조작의 사전조건과 게임 규칙에 달렸다. 여기서
+        // 횟수를 지어내면 그것이 곧 거짓 명세이므로 실행하는 쪽에 남긴다.
         val repeated = capability.repeatUntilDone || exact == null
         return Writer.By(PathStep(
             capabilityId = chosen.capabilityId,
             input = operation(capability),
             action = buildString {
                 append(describe(capability.interaction, capability.inputKey, capability.controlLabel, capability.controlPath))
-                if (repeated) append(" — ${guard.variable} 가 ${guard.operator} ${guard.value} 가 될 때까지 되풀이한다")
+                if (repeated) append(" — ${until(guard)}")
                 else append(" (${guard.variable} → ${chosen.detail})")
             },
         ))
+    }
+
+    /** 값을 **올려야 하나 내려야 하나.** 크기는 여기서 묻지 않는다 — 방향만이 답이다. */
+    private enum class Push {
+        UP, DOWN;
+
+        companion object {
+            /** 증감 하나가 미는 쪽. 0 은 아무 데도 밀지 않으므로 방향이 없다. */
+            fun of(by: Double): Push? = when {
+                by > 0 -> UP
+                by < 0 -> DOWN
+                else -> null
+            }
+        }
+    }
+
+    /**
+     * 어느 쪽으로 밀어야 [guard] 를 만족하나. 알 수 없으면 null.
+     *
+     * 지금 값을 모르면 방향도 모른다 — 그때는 고르지 않고 있는 것을 쓴다(예전과 같다).
+     */
+    private fun push(guard: Guard, have: String?): Push? {
+        val current = have?.toDoubleOrNull() ?: return null
+        val target = guard.value.toDoubleOrNull() ?: return null
+        return when (guard.operator) {
+            ">", ">=" -> Push.UP
+            "<", "<=" -> Push.DOWN
+            // `==` 는 지금 값이 어느 쪽에 있는지가 방향이다.
+            "==" -> if (target > current) Push.UP else if (target < current) Push.DOWN else null
+            // `!=` 는 어느 쪽으로 밀어도 벗어난다. 고를 근거가 없다.
+            else -> null
+        }
+    }
+
+    /**
+     * 이 효과가 **값을 얼마씩 옮기나.** 옮기는 것이 아니면(대입) null.
+     *
+     * 지도의 `detail` 은 문자열 하나뿐이라 `=` 인지 `+=` 인지가 **부호 관용구에 얹혀 있다.**
+     * 추출기는 양수 리터럴 대입에 부호를 붙이지 않으므로(`"10"` 이지 `"+10"` 이 아니다) 앞에
+     * `+` 가 붙어 있다는 것 자체가 증분이라는 뜻이다 — 같은 규칙을
+     * [kr.artel.orchestration.contentmap.render.ExpressionWriter] 도 쓴다.
+     *
+     * **크기를 보지 않는다.** `+1` 만 아는 것으로 짜여 있었는데, 추출기는 `x += 10` 을 `"+10"`
+     * 으로 낸다. 특정 게임에 `+1` 밖에 없어서 드러나지 않았을 뿐이고, 그 밖의 증감은 통째로
+     * 안 보여 미상으로 떨어졌다.
+     *
+     * **`-N` 은 형식이 가르지 못한다.** 음수 리터럴 대입(`z = -10`)도 `detail` 이 `"-10"` 이라
+     * 감소(`z -= 10`)와 구분되지 않는다. 여기서 감소로 읽는 근거는 하나다 — 이 자리는 값을
+     * 정하는 조작([exact])이 이미 없을 때만 닿는다. 대입으로 읽으면 그 조작은 도착 조건을
+     * 만족시키지 못해 어차피 쓸 수 없으므로, 감소 해석만이 이 조작을 쓸모 있게 만든다.
+     * 형식이 연산자를 명시하게 하는 것이 근본 해결이고 그건 적재 쪽 일이다.
+     */
+    private fun increment(detail: String?): Double? {
+        val text = detail?.trim().orEmpty()
+        if (text.length < 2) return null
+        if (text.first() != '+' && text.first() != '-') return null
+        return text.toDoubleOrNull()
+    }
+
+    /**
+     * 되풀이 스텝의 **끝 조건 문구.**
+     *
+     * `position 가 == 1 가 될 때까지` 처럼 연산자 기호와 조사가 뒤섞이던 자리다. 사용자가 읽는
+     * 문장이고, 실행하는 사람이 언제 멈추는지 여기서만 안다.
+     */
+    private fun until(guard: Guard): String {
+        val name = guard.variable
+        val subject = if (hasFinalConsonant(name)) "$name 이" else "$name 가"
+        val value = guard.value
+        val target = if (hasFinalConsonant(value)) "$value 이" else "$value 가"
+        return when (guard.operator) {
+            "==" -> "$subject $target 될 때까지 되풀이한다"
+            "!=" -> "$subject $value 이 아니게 될 때까지 되풀이한다"
+            else -> "$subject ${guard.operator} $value 를 만족할 때까지 되풀이한다"
+        }
+    }
+
+    /** 마지막 글자에 받침이 있나. 없으면 조사가 `가`/`를` 쪽이다. */
+    private fun hasFinalConsonant(word: String): Boolean {
+        val last = word.trimEnd(')', '"', '\'', '`').lastOrNull() ?: return false
+        if (last in '0'..'9') return last in setOf('0', '1', '3', '6', '7', '8')
+        if (last.code in 0xAC00..0xD7A3) return (last.code - 0xAC00) % 28 != 0
+        // 변수 이름은 대개 라틴 문자로 끝난다(`position` · `hp` · `wave`). 끝소리로 가른다.
+        if (last.isLetter()) return last.lowercaseChar() !in "aeiouy"
+        return false
     }
 
     /**

@@ -48,8 +48,16 @@ object ScenarioSiblingCheck {
     /**
      * @param facts 이 프로젝트의 케이스 전량. 안 담긴 형제를 말하려면 담긴 것만으로는 모자란다.
      * @param split 시나리오별로 담긴 케이스 id. 순서는 보지 않는다 — 순서는 [ScenarioOrderCheck] 몫이다.
+     * @param covered **런 전체에서** 이미 담긴 케이스(ARTEL-516). 빠진 갈래를 셀 때 기준이 된다 —
+     *   [split]은 이번 턴에 쓴 것뿐이라, 그것만 보면 다른 시나리오에 이미 있는 갈래를 "빠졌다"고
+     *   센다. 실측(런 155)에서 미커버 0/66 인 화면에서 "이 갈래도 만들까요?"가 계속 나온 이유다.
+     *   비워 두면 이번 턴만 본다(순수 함수 테스트용).
      */
-    fun analyze(facts: List<CaseFact>, split: List<List<Long>>): Findings {
+    fun analyze(
+        facts: List<CaseFact>,
+        split: List<List<Long>>,
+        covered: Set<Long> = split.flatten().toSet(),
+    ): Findings {
         val byId = facts.associateBy { it.id }
         val used = split.flatten().toSet()
 
@@ -84,8 +92,11 @@ object ScenarioSiblingCheck {
 
         val untestedArms = buildList {
             for (group in siblings) {
+                // 담긴 쪽은 **이번 턴**이다 — 방금 쓴 것에 대해서만 물을 것이 있다.
                 val here = group.filter { it.id in used }
-                val missing = group.filter { it.id !in used }
+                // 빠진 쪽은 **런 전체**다. 다른 시나리오에 이미 있는 갈래를 빠졌다고 세면,
+                // 전건을 담은 뒤에도 "이 갈래도 만들까요?"가 영영 멈추지 않는다.
+                val missing = group.filter { it.id !in covered }
                 for (taken in here) {
                     for (other in missing) {
                         if (exclusive(taken, other)) add(taken.id to other.id)
@@ -145,7 +156,7 @@ object ScenarioSiblingCheck {
      *
      * 모르는 것은 충돌이라 부르지 않는다 — 비교할 수 없는 값(문자열 부등식 등)은 겹친다고 본다.
      */
-    private fun exclusive(a: CaseFact, b: CaseFact): Boolean =
+    fun exclusive(a: CaseFact, b: CaseFact): Boolean =
         violates(a.declared, b.guards) || violates(b.declared, a.guards) || disjoint(a.guards, b.guards)
 
     private fun violates(declared: Map<String, String>, guards: List<Guard>): Boolean =
@@ -177,6 +188,8 @@ object ScenarioSiblingCheck {
      * 모르고, 모르는 것은 겹친다고 본다.
      */
     private fun overlaps(x: Guard, y: Guard): Boolean {
+        // 오른쪽이 다른 변수인 비교는 값을 모르는 것이다. 모르는 것은 겹친다고 본다.
+        if (x.symbolic || y.symbolic) return true
         val xv = x.value.toDoubleOrNull()
         val yv = y.value.toDoubleOrNull()
         if (xv == null || yv == null) {

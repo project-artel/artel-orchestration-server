@@ -28,14 +28,47 @@ object ScenarioStateReader {
      *
      * **부등식까지 읽는다.** `==` 만 보던 판을 실측했더니 실제 사전조건의 비교 중 58%가
      * `>`·`!=`·`>=`·`<=`·`<` 였고, 그것을 전부 "충돌 없음"으로 통과시키고 있었다.
+     *
+     * **씬 접두가 없는 행도 읽는다**(ARTEL-519). 구분자가 없으면 빈 문자열을 읽고 있었고, 그러면
+     * 그 케이스의 사전조건이 코드에 통째로 안 보인다. word-venture 의 `1277` 이 그렇다 —
+     * `StageDataSingleton.StagePosition == 4` 뿐이고 씬은 `scene` 컬럼에만 있다. 그 케이스가
+     * 말하는 것은 "GameClearScene 은 그 값이면 입력 없이 EndingScene 으로 빠진다"인데, 가드가
+     * 안 읽히니 충돌 판정도 경로 계산도 그것을 모른다.
+     *
+     * 앞부분을 함께 읽어도 안전하다. 씬 접두(`<씬> 화면인 상태`)에는 비교 연산자가 없어 [COMPARISON]
+     * 이 아무것도 집지 않는다.
      */
     fun guardsOf(precondition: String?): List<Guard> =
-        comparisonsIn(precondition?.substringAfter(" / ", ""))
+        comparisonsIn(precondition?.let { it.substringAfter(" / ", it) })
 
-    /** 식에서 비교를 뽑는다. 백틱은 벗긴다. */
+    /**
+     * 식에서 비교를 뽑는다. 백틱은 벗긴다.
+     *
+     * **`또는` 은 `그리고` 가 아니다.** 정규식으로 식 전체를 훑어 비교를 긁어모으면 갈래가 둘인
+     * 사전조건이 자기 자신과 모순되는 목록이 된다 — `(damage > 0 그리고 hp > 0) 또는
+     * (damage <= 0 그리고 hp > 0)` 에서 `damage > 0` 과 `damage <= 0` 이 나란히 나온다. 그러면
+     * 이 케이스는 `damage > 0` 을 요구하는 **모든** 케이스와 함께 담을 수 없다고 판정된다
+     * (런 152: 19쌍 중 19쌍이 이렇게 만들어진 거짓 충돌이었다).
+     *
+     * 그래서 갈래로 나뉜 자리에서는 **모든 갈래에 함께 있는 비교만** 남긴다. 그것이 이 사전조건이
+     * 실제로 보장하는 것이고, 한 갈래에만 있는 것은 성립할 수도 있는 것이지 요구가 아니다.
+     * 좁게 답하는 쪽으로 틀린다 — 이 저장소 전체의 규칙대로, 모르는 것은 충돌이라 부르지 않는다.
+     */
     fun comparisonsIn(expr: String?): List<Guard> {
-        if (expr.isNullOrBlank()) return emptyList()
-        return COMPARISON.findAll(expr).map {
+        val body = expr?.let(::unwrap).orEmpty()
+        if (body.isBlank()) return emptyList()
+
+        val alternatives = splitTopLevel(body, OR)
+        if (alternatives.size > 1) {
+            return alternatives
+                .map { comparisonsIn(it).toSet() }
+                .reduce { common, next -> common intersect next }
+                .toList()
+        }
+        val conjuncts = splitTopLevel(body, AND)
+        if (conjuncts.size > 1) return conjuncts.flatMap { comparisonsIn(it) }.distinct()
+
+        return COMPARISON.findAll(body).map {
             val written = it.groupValues[1].trim().trim('`')
             Guard(
                 variable = normalize(written),
@@ -53,7 +86,9 @@ object ScenarioStateReader {
      * 여기서 1이라고 읽으면 다음 케이스와의 비교가 거짓말이 된다.
      */
     fun knownValuesOf(precondition: String?): Map<String, String> =
-        guardsOf(precondition).filter { it.operator == "==" }.associate { it.variable to it.value }
+        guardsOf(precondition)
+            .filter { it.operator == "==" && !it.symbolic }
+            .associate { it.variable to it.value }
 
     /** 이 케이스를 실행한 뒤 확정되는 값. `metadata.source.state_after` 가 `Var=value` 형식이다. */
     fun stateAfter(case: TestCaseEntity, objectMapper: ObjectMapper): Map<String, String> = runCatching {
@@ -105,6 +140,65 @@ object ScenarioStateReader {
      */
     fun normalize(name: String): String = name.trim().trim('`').substringAfterLast('.')
 
+    /**
+     * 괄호 하나가 식 전체를 감싸고 있으면 벗긴다.
+     *
+     * 벗기지 않으면 갈래를 못 본다 — `((a) 또는 (b))` 의 `또는` 은 괄호 안(깊이 1)에 있어
+     * 최상위 분리에 걸리지 않는다.
+     */
+    private fun unwrap(expr: String): String {
+        var s = expr.trim()
+        while (s.length > 1 && s.first() == '(' && s.last() == ')' && wrapsWhole(s)) {
+            s = s.substring(1, s.length - 1).trim()
+        }
+        return s
+    }
+
+    /** 첫 `(` 의 짝이 마지막 글자인가. 아니면 `(a) 또는 (b)` 를 잘못 벗긴다. */
+    private fun wrapsWhole(s: String): Boolean {
+        var depth = 0
+        s.forEachIndexed { index, c ->
+            if (c == '(') depth++
+            if (c == ')') {
+                depth--
+                if (depth == 0 && index != s.lastIndex) return false
+            }
+        }
+        return depth == 0
+    }
+
+    /** [separator] 로 나눈다. **괄호 안은 건너뛴다** — 안쪽 갈래는 그 자리에서 따로 읽힌다. */
+    private fun splitTopLevel(expr: String, separator: Regex): List<String> {
+        val parts = mutableListOf<String>()
+        var depth = 0
+        var start = 0
+        var i = 0
+        while (i < expr.length) {
+            if (expr[i] == '(') depth++
+            if (expr[i] == ')') depth--
+            val hit = if (depth == 0) separator.matchAt(expr, i) else null
+            if (hit != null) {
+                parts += expr.substring(start, i)
+                i += hit.value.length
+                start = i
+            } else {
+                i++
+            }
+        }
+        parts += expr.substring(start)
+        return parts.map(String::trim).filter { it.isNotBlank() }
+    }
+
+    /**
+     * 이음말은 **두 방언으로 온다.** 케이스 사전조건은 `그리고`·`또는` 를 쓰고, 기능의 사전조건
+     * (`capability.given_text`)은 `and` 를 쓴다(실측: 90건이 `and`, `그리고` 는 0건).
+     *
+     * 라틴 낱말은 **경계를 본다.** `Coordinate` 안에도 `or` 가 들어 있어, 경계 없이 자르면 변수
+     * 이름이 두 동으로 난다.
+     */
+    private val AND = Regex("""그리고|\band\b""")
+    private val OR = Regex("""또는|\bor\b""")
+
     private val COMPARISON = Regex("""([A-Za-z_][\w.]*)\s*(==|!=|>=|<=|>|<)\s*([^\s그리고또는()]+)""")
 }
 
@@ -123,7 +217,22 @@ data class Guard(
     val value: String,
     val path: String = variable,
 ) {
+    /**
+     * 오른쪽이 **리터럴이 아니라 다른 변수**인가.
+     *
+     * `collision.tag == SpellObj.target.gameObject.tag` 는 두 값이 같아야 한다는 말이지 `tag` 가
+     * 무엇이라는 말이 아니다. 그런데 문자열로 비교하면 `tag == "Me"` 와 어긋난다고 나오고, 실제로
+     * 그것 하나 때문에 케이스 두 건이 "함께 담을 수 없다"로 판정됐다(런 152). 값을 모르는 것이지
+     * 어긋나는 것이 아니다.
+     */
+    val symbolic: Boolean
+        get() = value.toDoubleOrNull() == null &&
+            !value.startsWith("\"") && !value.startsWith("'") &&
+            value.contains('.')
+
     fun holds(have: String): Boolean {
+        // 비교할 수 없는 것은 위반이라 말하지 않는다 — 이 클래스 전체를 관통하는 규칙이다.
+        if (symbolic) return true
         if (operator == "==") return have == value
         if (operator == "!=") return have != value
         val a = have.toDoubleOrNull() ?: return true

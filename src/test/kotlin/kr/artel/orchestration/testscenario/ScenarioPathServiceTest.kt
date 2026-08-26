@@ -495,6 +495,145 @@ class ScenarioPathServiceTest {
         assertThat(answer.actions.single()).contains("되풀이한다")
     }
 
+    /**
+     * **증감은 방향을 골라야 한다**(런 152, TS 250).
+     *
+     * `position` 을 1에서 3으로 올려야 하는 자리에 `LeftArrow`(-1)를 "3 이 될 때까지 되풀이한다"로
+     * 적어 넣고 있었다. 먼저 걸리는 것을 집었기 때문이다. 되풀이해도 영영 도달하지 않는 스텝이고,
+     * 실행하는 사람은 그 앞에서 멎는다.
+     */
+    @Test
+    fun `증감으로 옮길 때 값을 미는 방향으로 고른다`(): Unit = runBlocking {
+        val left = capability(mapSceneId, interaction = "press", inputKey = "LeftArrow")
+        effect(left, target = "MapMove.position", detail = "-1")
+        val right = capability(mapSceneId, interaction = "press", inputKey = "RightArrow")
+        effect(right, target = "MapMove.position", detail = "+1")
+
+        val low = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 1")
+        val high = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 3")
+
+        // 올려야 하면 올리는 조작.
+        val up = service.findPath(projectId, userId, low, high)
+        assertThat(up.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(up.capabilityIds).containsExactly(right)
+
+        // 내려야 하면 내리는 조작.
+        val down = service.findPath(projectId, userId, high, low)
+        assertThat(down.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(down.capabilityIds).containsExactly(left)
+    }
+
+    @Test
+    fun `미는 방향의 조작이 없으면 반대쪽을 넣지 않고 모른다고 한다`(): Unit = runBlocking {
+        // 미상은 사용자가 채울 수 있지만, 거짓 스텝은 실행하다 만난다.
+        val left = capability(mapSceneId, interaction = "press", inputKey = "LeftArrow")
+        effect(left, target = "MapMove.position", detail = "-1")
+
+        val low = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 1")
+        val high = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 3")
+
+        val answer = service.findPath(projectId, userId, low, high)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.blockedBy).isEqualTo("position")
+    }
+
+    @Test
+    fun `미는 방향의 조작이 지금 못 하는 것이면 없는 것과 다르게 말한다`(): Unit = runBlocking {
+        // 실측(런 153): `position` 을 2에서 3으로 올릴 자리. `RightArrow` 가 +1 을 쓰지만 지도에는
+        // 그 조작의 사전조건이 `position == 0` 으로 적혀 있다. "명세에 없다"고 말하면 사용자는
+        // 없는 것을 알려주려 하게 되고, 정작 손볼 자리(지도의 사전조건)는 가려진다.
+        val left = capability(mapSceneId, interaction = "press", inputKey = "LeftArrow")
+        effect(left, target = "MapMove.position", detail = "-1")
+        val right = capability(
+            mapSceneId, interaction = "press", inputKey = "RightArrow",
+            given = "`MapMove.position == 0`",
+        )
+        effect(right, target = "MapMove.position", detail = "+1")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 2"),
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 3"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.note).contains("그 조작 자신이").contains("position == 0")
+    }
+
+    /**
+     * 증감의 **크기를 보지 않는다.**
+     *
+     * `+1` 만 아는 것으로 짜여 있었는데, 추출기는 `x += 10` 을 `"+10"` 으로 낸다. 특정 게임에
+     * `+1` 밖에 없어서 드러나지 않았을 뿐이고, 그 밖의 증감은 통째로 안 보여 미상으로 떨어졌다.
+     */
+    @Test
+    fun `한 칸씩이 아니어도 증감으로 읽는다`(): Unit = runBlocking {
+        val up = capability(mapSceneId, interaction = "press", inputKey = "PageUp")
+        effect(up, target = "MapMove.position", detail = "+7")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 0"),
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 21"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.capabilityIds).containsExactly(up)
+        // 몇 번인지는 지어내지 않는다 — 끝 조건만 말한다.
+        assertThat(answer.actions.single()).contains("되풀이한다").doesNotContain("3번")
+    }
+
+    @Test
+    fun `크기가 달라도 방향은 부호가 정한다`(): Unit = runBlocking {
+        val down = capability(mapSceneId, interaction = "press", inputKey = "PageDown")
+        effect(down, target = "MapMove.position", detail = "-4")
+        val up = capability(mapSceneId, interaction = "press", inputKey = "PageUp")
+        effect(up, target = "MapMove.position", detail = "+7")
+
+        val high = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 21")
+        val low = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 3")
+
+        assertThat(service.findPath(projectId, userId, low, high).capabilityIds).containsExactly(up)
+        assertThat(service.findPath(projectId, userId, high, low).capabilityIds).containsExactly(down)
+    }
+
+    /**
+     * 증감을 **값을 정하는 조작으로 읽지 않는다.**
+     *
+     * `guard.holds("+2")` 는 `position >= 1` 에 대해 참이라, 거르지 않으면 "한 번 눌러 만족시킨다"
+     * 로 읽혀 되풀이 문구가 사라진다. 한 번 눌러서 `>= 1` 이 되는지는 지금 값에 달렸다.
+     */
+    @Test
+    fun `증감은 값을 정하는 조작이 아니다`(): Unit = runBlocking {
+        val up = capability(mapSceneId, interaction = "press", inputKey = "RightArrow")
+        effect(up, target = "MapMove.position", detail = "+2")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 0"),
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.position >= 1"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.actions.single()).contains("되풀이한다")
+    }
+
+    @Test
+    fun `되풀이 끝 조건은 읽을 수 있는 문장이다`(): Unit = runBlocking {
+        // `position 가 == 1 가 될 때까지` 가 실제로 저장돼 있던 문구다(TS 250).
+        val right = capability(mapSceneId, interaction = "press", inputKey = "RightArrow")
+        effect(right, target = "MapMove.position", detail = "+1")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 1"),
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 3"),
+        )
+
+        assertThat(answer.actions.single()).endsWith("position 이 3 이 될 때까지 되풀이한다")
+    }
+
     // ---- 이미 한 조작 -----------------------------------------------------------------
 
     /**

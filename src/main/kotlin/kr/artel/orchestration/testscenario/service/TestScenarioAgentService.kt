@@ -8,6 +8,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.filter
@@ -188,6 +190,17 @@ class TestScenarioAgentService(
             return
         }
 
+        // **앞선 턴이 도는 중이면 받지 않는다**(ARTEL-510). 에이전트는 이미 `busy` 로 거절하고
+        // 있었지만, 여기서 사용자의 말을 **먼저 저장한 뒤** 보내고 있었다 — 그래서 대화에 답이
+        // 오지 않는 말풍선이 남았다(런 152: 같은 요청이 세 줄, 답은 한 번). 새로고침으로 화면이
+        // 진행 상태를 잃으면 사람은 당연히 다시 보내므로, 이건 드문 경우가 아니다.
+        sessions[sessionKey]?.takeIf { it.busy }?.let {
+            val message = "앞서 보낸 요청을 아직 처리하고 있습니다. 끝나면 이어서 말씀해 주세요."
+            streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
+            logger.info("앞선 턴이 도는 중 — 이 요청은 받지 않는다 [runId={}]", runId)
+            return
+        }
+
         // 물어본 것은 한 턴만 산다. 답이든 딴 얘기든 다음 턴까지 끌고 가면, 한참 뒤의 "응"이
         // 엉뚱한 질문에 붙는다. 화면의 보기는 저장된 질문으로 계속 답할 수 있다.
         sessions[sessionKey]?.question = null
@@ -207,6 +220,42 @@ class TestScenarioAgentService(
         // 보낸 뒤에 알린다. 세션 오픈이나 턴 전송이 실패하면 "보냈다"가 거짓이 되고,
         // 그 경우 사용자는 진행 중인 것처럼 보이는 화면 앞에서 오지 않을 답을 기다리게 된다.
         progress(sessionKey, AuthoringStage.SENT)
+        watch(sessionKey, runId, appUserId)
+    }
+
+    /**
+     * 답이 오지 않는 턴을 **멎었다고 말해 준다**(ARTEL-510).
+     *
+     * 저작 턴에는 시한이 없었다. 실측(런 152)에서 요청 하나가 결과도 오류도 없이 끝나지 않았고,
+     * 사용자가 본 것은 500초가 지나도 "요청 중"인 화면이었다 — 벗어나는 방법은 새로고침뿐이었다.
+     * 로그에는 도구 프레임 뒤로 아무것도 없었다.
+     *
+     * **턴을 취소하지는 않는다.** 늦게라도 결과가 오면 그건 반영되는 것이 맞다. 여기서 하는 일은
+     * 기다림에 끝을 주는 것뿐이다 — 화면이 풀리고, 다음 말을 보낼 수 있게 된다.
+     */
+    private fun watch(sessionKey: String, runId: Long, appUserId: Long) {
+        val session = sessions[sessionKey] ?: return
+        session.watchdog?.cancel()
+        session.watchdog = scope.launch {
+            delay(TURN_DEADLINE_MILLIS)
+            val message = "요청이 ${TURN_DEADLINE_MILLIS / 60_000}분 안에 끝나지 않았습니다. " +
+                "다시 말씀해 주시면 새로 시도합니다 — 늦게라도 결과가 오면 그때 반영됩니다."
+            logger.warn("턴이 시한을 넘겼다 — 기다림을 끝낸다 [sessionKey={}, runId={}]", sessionKey, runId)
+            runCatching { saveMessage(runId, appUserId, "ASSISTANT", message) }
+                .onFailure { logger.warn("시한 초과 안내 저장 실패: ${it.message}") }
+            streamManager.emit(
+                sessionKey,
+                ScenarioStreamEvent(type = "error", code = "turn_timeout", detail = message),
+            )
+        }
+    }
+
+    /** 소식이 왔다 — 기다림이 끝났다. */
+    private fun stopWatching(sessionKey: String) {
+        sessions[sessionKey]?.let {
+            it.watchdog?.cancel()
+            it.watchdog = null
+        }
     }
 
     /**
@@ -517,6 +566,8 @@ class TestScenarioAgentService(
             "검토 결과 ${outcome.findings.summary()} — 그 부분만 다시 작성하도록 요청했습니다."
         )
         sendTurn(sessionKey, session, repairPrompt(outcome.findings), emptyList())
+        // 재작성도 턴이다 — 답이 오지 않으면 똑같이 멎는다(ARTEL-510).
+        watch(sessionKey, session.runId, session.appUserId)
     }
 
     /**
@@ -858,6 +909,9 @@ class TestScenarioAgentService(
 
             // Agent 응답을 타입화한 봉투로 파싱해 SSE로 중계한다(type=result|error).
             val event = objectMapper.readValue(payloadText, ScenarioStreamEvent::class.java)
+            // 결과든 오류든 **턴은 여기서 끝난다.** 감시를 풀지 않으면 잠시 뒤 "멎었다"고
+            // 말하게 되고, 그건 방금 답을 받은 사용자에게 거짓말이다.
+            stopWatching(sessionKey)
             streamManager.emit(sessionKey, event)
 
             if (event.type == "result" && session != null) {
@@ -1100,8 +1154,17 @@ class TestScenarioAgentService(
          * 마지막으로 사용자에게 알린 미커버 건수. 같은 수를 두 번 말하지 않기 위한 값이다 —
          * 좁은 작업을 이어가는 대화에서 매 턴 같은 줄이 붙으면 읽히지 않는다.
          */
-        @Volatile var lastReportedUncovered: Long? = null
-    )
+        @Volatile var lastReportedUncovered: Long? = null,
+        /**
+         * 답을 기다리는 턴의 감시 타이머(ARTEL-510). null 이면 **이 세션은 지금 한가하다.**
+         *
+         * 두 가지를 이것 하나로 안다: 턴이 도는 중인지(겹친 요청을 받지 않는다), 그리고 언제부터
+         * 아무 소식도 없는지(멎었다고 말해 준다).
+         */
+        @Volatile var watchdog: Job? = null,
+    ) {
+        val busy: Boolean get() = watchdog?.isActive == true
+    }
 
     /**
      * 검수에 걸린 결과를 들고 재작성을 기다리는 상태(ARTEL-403).
@@ -1133,5 +1196,14 @@ class TestScenarioAgentService(
 
         /** 남은 씬을 몇 개까지 나열할지. 나머지는 "외 N개 씬"으로 접는다. */
         private const val MAX_SCENES_IN_RECOMMENDATION = 3
+
+        /**
+         * 답을 얼마나 기다릴지(ARTEL-510).
+         *
+         * 배포마다 다를 값이 아니라 **사람이 아무 말 없이 기다릴 수 있는 시간의 상한**이다. 실측한
+         * 저작 턴은 66건 프로젝트에서 30~70초였고, 에이전트 쪽 모델 호출 자체가 180초에서 끊긴다.
+         * 5분은 그 위에 넉넉히 얹은 값이라, 여기 걸린 턴은 느린 것이 아니라 오지 않는 것이다.
+         */
+        private const val TURN_DEADLINE_MILLIS = 5L * 60 * 1000
     }
 }
