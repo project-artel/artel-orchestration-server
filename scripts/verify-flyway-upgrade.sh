@@ -62,11 +62,19 @@ flyway_seq=0
 # Every step guarded and the function forced to succeed: under `set -e` a single
 # failing removal would abandon the ones after it, and a leaked database
 # container is the failure this trap exists to prevent.
+#
+# `-v` 를 붙인 것은 postgres 이미지가 `VOLUME /var/lib/postgresql/data` 를 선언하기
+# 때문이다. `docker run` 마다 익명 볼륨이 하나 만들어지고, `-v` 없는 제거는 컨테이너만
+# 가져간 뒤 볼륨을 고아로 남긴다. PR 빌드마다 하나씩, 아무도 다시 이름 부르지 않는 채로
+# 쌓였다.
+#
+# 찾기 가장 어려운 종류의 누수다. `docker ps -a` 에도 `docker images` 에도 안 나오고
+# `docker volume ls` 의 해시로만 보이니, 작정하고 뒤지기 전에는 용의선상에 오르지 않는다.
 cleanup() {
     if [[ -n $FLYWAY_CONTAINER ]]; then
-        docker rm -f "$FLYWAY_CONTAINER" >/dev/null 2>&1 || true
+        docker rm -fv "$FLYWAY_CONTAINER" >/dev/null 2>&1 || true
     fi
-    docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
+    docker rm -fv "$PG_CONTAINER" >/dev/null 2>&1 || true
     if [[ -n $WORKDIR ]]; then
         rm -rf "$WORKDIR" || true
     fi
@@ -229,7 +237,7 @@ flyway_run() {
     local status=0
     docker start -a "$FLYWAY_CONTAINER" || status=$?
 
-    docker rm -f "$FLYWAY_CONTAINER" >/dev/null 2>&1 || true
+    docker rm -fv "$FLYWAY_CONTAINER" >/dev/null 2>&1 || true
     FLYWAY_CONTAINER=''
     return $status
 }
