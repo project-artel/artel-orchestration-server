@@ -90,6 +90,37 @@ object ScenarioStateReader {
             .filter { it.operator == "==" && !it.symbolic }
             .associate { it.variable to it.value }
 
+    /**
+     * 이 케이스를 하고 나면 **어느 화면인가**(ARTEL-528).
+     *
+     * 사전조건은 그 케이스가 **시작하는** 화면을 말한다. 끝난 뒤 어디인지는 지금 구조적 필드에
+     * 없다 — `state_after` 는 변수값만 나른다. 그래서 화면을 떠나는 케이스 뒤에 그 화면을 다시
+     * 요구하는 케이스가 브리지 없이 이어져도 아무도 모른다(실측 런 155: 막힌 자리 10군데가 전부
+     * 이것이다).
+     *
+     * **문구를 찾지 않는다.** `expected_value` 에서 [scenes] 에 있는 이름을 찾을 뿐이다. 씬 이름은
+     * 그 프로젝트의 씬 명세에서 오므로 게임에도, 언어에도, 문장 틀에도 붙지 않는다. 실측에서 전이를
+     * 말하는 케이스 17건이 전부 "시작 씬이 아닌 이름 하나"로 갈렸고, 나머지 49건은 하나도 언급하지
+     * 않았다.
+     *
+     * **의심스러우면 떠난다고 본다.** 두 오류의 값이 다르기 때문이다 — 안 떠나는데 떠난다고 하면
+     * 쓸데없는 복귀 스텝이나 헛알림이 나오지만, 떠나는데 머문다고 하면 **실행이 막히는 시나리오가
+     * 조용히 저장된다.** 뒤엣것이 이 함수가 있는 이유다.
+     */
+    fun sceneAfter(case: TestCaseEntity, scenes: Set<String>): SceneMove {
+        val expected = case.expectedValue
+        val from = sceneOf(case)
+        val named = scenes.filter { it != from && it.isNotBlank() && expected.contains(it) }
+        // 한 이름이 다른 이름의 일부일 수 있다(`Battle` 과 `BattleScene`). 긴 쪽만 남긴다 —
+        // 짧은 쪽은 긴 쪽을 읽다가 걸린 것이지 따로 언급된 것이 아니다.
+        val distinct = named.filterNot { short -> named.any { it != short && it.contains(short) } }
+        return when (distinct.size) {
+            0 -> SceneMove.Stays
+            1 -> SceneMove.To(distinct.single())
+            else -> SceneMove.Unknown
+        }
+    }
+
     /** 이 케이스를 실행한 뒤 확정되는 값. `metadata.source.state_after` 가 `Var=value` 형식이다. */
     fun stateAfter(case: TestCaseEntity, objectMapper: ObjectMapper): Map<String, String> = runCatching {
         val after = objectMapper.readTree(case.metadata.asString())
@@ -200,6 +231,23 @@ object ScenarioStateReader {
     private val OR = Regex("""또는|\bor\b""")
 
     private val COMPARISON = Regex("""([A-Za-z_][\w.]*)\s*(==|!=|>=|<=|>|<)\s*([^\s그리고또는()]+)""")
+}
+
+/**
+ * 케이스를 하고 나면 화면이 어떻게 되나(ARTEL-528).
+ *
+ * [Unknown] 을 [Stays] 와 가르는 이유는 뒤엣것이 **판정**이기 때문이다 — 머문다고 말하면 그 뒤의
+ * 스텝들을 같은 화면에서 판정하게 되는데, 모르면서 그러면 없는 확신을 만드는 것이다.
+ */
+sealed interface SceneMove {
+    /** 화면을 떠난다는 근거가 없다. */
+    data object Stays : SceneMove
+
+    /** 이 화면으로 넘어간다. */
+    data class To(val scene: String) : SceneMove
+
+    /** 여러 화면을 말해 어디로 가는지 가릴 수 없다. */
+    data object Unknown : SceneMove
 }
 
 /**
