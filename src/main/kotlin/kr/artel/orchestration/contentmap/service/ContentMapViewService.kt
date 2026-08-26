@@ -8,17 +8,20 @@ import kr.artel.orchestration.contentmap.dto.ConditionNodeResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import kr.artel.orchestration.contentmap.dto.ContentMapEdgeResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapResponse
+import kr.artel.orchestration.contentmap.dto.ContentMapSceneEdgeRow
 import kr.artel.orchestration.contentmap.dto.ContentMapSceneResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapSummaryResponse
 import kr.artel.orchestration.contentmap.dto.LastScanResponse
 import kr.artel.orchestration.contentmap.dto.PendingDocumentResponse
 import kr.artel.orchestration.contentmap.dto.SceneCapabilityCountResponse
 import kr.artel.orchestration.contentmap.dto.SceneStepResponse
+import kr.artel.orchestration.contentmap.dto.SceneThumbnailResponse
 import kr.artel.orchestration.contentmap.dto.SpecGapCountResponse
 import kr.artel.orchestration.contentmap.dto.VerificationResponse
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
+import kr.artel.orchestration.contentmap.entity.SceneEntity
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
@@ -27,6 +30,7 @@ import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.contentmap.scan.ScanStatusRegistry
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.project.storage.DocumentStorage
 import org.springframework.stereotype.Service
 
 /**
@@ -52,6 +56,7 @@ class ContentMapViewService(
     private val sceneEdges: SceneEdgeRepository,
     private val documents: ContentMapDocumentRepository,
     private val scanStatuses: ScanStatusRegistry,
+    private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
 ) {
 
@@ -98,7 +103,7 @@ class ContentMapViewService(
         return ContentMapResponse(
             contentMap = summaryOf(contentMap, allDocuments),
             scenes = scenesOf(contentMapId),
-            edges = sceneEdges.findByContentMapId(contentMapId).map(ContentMapEdgeResponse::of).toList(),
+            edges = sceneEdges.findByContentMapId(contentMapId).map(::edgeOf).toList(),
             gaps = gapsOf(contentMapId),
             verification = verificationOf(contentMapId),
             pendingDocuments = allDocuments
@@ -155,8 +160,44 @@ class ContentMapViewService(
                     ?.let(SceneCapabilityCountResponse::of)
                     ?: SceneCapabilityCountResponse.NONE,
                 steps = steps[scene.id].orEmpty(),
+                thumbnail = thumbnailOf(scene),
             )
         }
+    }
+
+    /**
+     * 씬 이미지를 서명된 단기 주소로 바꾼다.
+     *
+     * 바이트를 이 서버로 끌어와 중계하지 않는다 — 씬이 수백 개인 지도에서 그 만큼의 이미지가
+     * 응답 하나에 실린다. 대신 스토리지가 직접 주게 하고, 여기서는 주소만 만든다.
+     */
+    private fun thumbnailOf(scene: SceneEntity): SceneThumbnailResponse? {
+        scene.imageObjectKey?.let { objectKey ->
+            val signed = storage.presignDownload(objectKey, "${scene.name}.jpg")
+            return SceneThumbnailResponse(
+                state = "available",
+                url = signed.url,
+                expiresAt = signed.expiresAt,
+                width = scene.imageWidth,
+                height = scene.imageHeight,
+            )
+        }
+        return scene.imageFailureCode?.let { reason ->
+            SceneThumbnailResponse(state = "unavailable", reason = reason)
+        }
+    }
+
+    /**
+     * 간선에 정규화된 전이 조건을 붙인다.
+     *
+     * `given_text` 는 사람이 읽는 한 줄이라 화면이 갈래를 구분하는 데 쓸 수 없다. 같은 컨트롤이
+     * 조건으로 갈릴 때 무엇이 다른지는 조건 트리에만 있다. `capability_evidence` 는 기능당 한 행이
+     * (PRIMARY KEY) 라 이 조인이 간선을 늘리지 않는다.
+     */
+    private fun edgeOf(row: ContentMapSceneEdgeRow): ContentMapEdgeResponse {
+        val given = row.conditionTree
+            ?.let { ConditionNodeResponse.of(evidence.parseCondition(objectMapper.readTree(it.asString()))) }
+        return ContentMapEdgeResponse.of(row, given)
     }
 
     /**

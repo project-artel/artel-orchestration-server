@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kr.artel.orchestration.common.error.ApiException
 import kr.artel.orchestration.common.error.NotFoundException
@@ -28,6 +29,7 @@ import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
 import kr.artel.orchestration.contentmap.repository.CapabilityEvidenceRepository
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
+import kr.artel.orchestration.contentmap.repository.ContentMapSceneCaptureRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.contentmap.repository.upsert
@@ -60,6 +62,7 @@ import java.time.Instant
 @Service
 class ContentMapIngestService(
     private val documents: ContentMapDocumentRepository,
+    private val sceneCaptures: ContentMapSceneCaptureRepository,
     private val scenes: SceneRepository,
     private val capabilities: CapabilityRepository,
     private val evidences: CapabilityEvidenceRepository,
@@ -153,6 +156,7 @@ class ContentMapIngestService(
         val candidates = EvidenceJoin(model).candidates()
 
         val sceneIds = upsertScenes(document.contentMapId, model.scenes + candidates.map { it.scene })
+        applySceneCaptures(document.id!!, document.contentMapId)
 
         // 키가 같은 후보는 **같은 명세의 다른 조각**이다. 실측 529 후보 중 38건이 그렇고, 씬·진입점·
         // 메서드·갈래·조건·조작이 전부 같은 채 `effects` 만 다르다(20그룹) 또는 `recordKind` 만
@@ -291,6 +295,27 @@ class ContentMapIngestService(
                 SceneEntity(contentMapId = contentMapId, name = name, scannedAt = Instant.now(clock))
             ).id!!
         }
+
+    /** 문서와 함께 등록된 이미지 결과를 방금 만든 씬에 붙인다. */
+    /**
+     * 등록 때 받아 둔 캡처를 갓 적재된 씬 행에 옮긴다.
+     *
+     * 등록과 적재는 따로 돈다. 등록 시점에는 씬 행이 아직 없을 수 있어 그때 못 붙인 것을 여기서
+     * 붙인다. 근거에 없는 씬 이름은 조용히 버린다 — 캡처가 지도를 늘리지는 않는다.
+     */
+    private suspend fun applySceneCaptures(documentId: Long, contentMapId: Long) {
+        sceneCaptures.findByDocumentIdOrderBySceneNameAsc(documentId).collect { capture ->
+            scenes.findByContentMapIdAndName(contentMapId, capture.sceneName)?.let { scene ->
+                scenes.save(scene.copy(
+                    imageObjectKey = capture.objectKey,
+                    imageWidth = capture.width,
+                    imageHeight = capture.height,
+                    imageCapturedAt = capture.capturedAt,
+                    imageFailureCode = capture.failureCode,
+                ))
+            }
+        }
+    }
 
     /**
      * 근거 행. 기능 한 줄에 한 벌이다.
