@@ -36,6 +36,25 @@ import com.fasterxml.jackson.databind.JsonNode
  * - `gesture` — 상태가 아니라 입력이다. 값 비교로 쓰지 않고 [text] 에만 싣는다
  * - `unknown` — 문서가 못 읽은 조건이다. **있으면 단정하지 않는다**
  *
+ * ## 이름표가 없는 노드는 모양으로 읽는다
+ *
+ * 저장된 트리에는 `kind` 가 없는 노드가 섞여 있다(실측 8건의 트리). 적재기가 갈래를 쪼갤 때
+ * 타입 트리를 그대로 직렬화하는데, `ConditionNode.Test` · `Gesture` 에는 `kind` 필드가 없어
+ * 이름표 없이 나간다 — **우리가 쓴 것을 우리가 못 읽는 자리다.**
+ *
+ * ```json
+ * {"kind":"EVERY","parts":[{"input":"key:DownArrow (down)","offset":214},
+ *                          {"left":"MapMove.position","operator":"==","right":"1","context":"this"},
+ *                          {"left":"InteractionLock.IsLocked","operator":"==","right":"0","context":"static"}]}
+ * ```
+ *
+ * 이 여덟이 하필 맵 이동 조작들이다 — 저작이 가장 많이 묻는 자리다. 이름표만 보고 넘기면 그
+ * 조작들의 사전조건이 통째로 사라진다.
+ *
+ * 쓰는 쪽을 고치는 것이 근본이고 그것은 별건이다(#176 이 읽는 쪽을 파서에서 고치는 중이다).
+ * **여기서도 읽는 이유는 이미 그렇게 앉아 있는 행들 때문이다** — 파서가 고쳐져도 다시 적재하기
+ * 전까지는 저장된 트리가 그대로다.
+ *
  * ## `context` 가 없는 비교는 버린다
  *
  * `context` 가 null 인 `test` 는 주어를 못 찾은 것이고 `subjectLost` 가 그 사유를 든다(실측 47건).
@@ -84,14 +103,29 @@ object ScenarioConditionTree {
     /** 트리의 어느 가지든 `unknown` 이면 참. 이 조건으로는 무엇도 단정할 수 없다. */
     fun incomplete(tree: JsonNode?): Boolean {
         val node = tree?.takeIf { !it.isNull && !it.isMissingNode } ?: return false
-        return kindOf(node) == "unknown" || partsOf(node).any { incomplete(it) }
+        return kindOf(node) in UNREADABLE || partsOf(node).any { incomplete(it) }
     }
 
     /**
-     * 트리는 `every` 를 대문자로 담기도 한다(실측 8건). 적재된 문서가 그렇게 앉아 있으므로
-     * 읽는 쪽에서 맞춘다 — 지도를 다시 굽게 하는 것보다 싸고, 잘못 읽으면 조건이 통째로 사라진다.
+     * 이 노드가 무엇인가. **이름표가 있으면 그 말을 따르고, 없으면 모양으로 읽는다.**
+     *
+     * 이름표는 대문자로 담기기도 한다(실측 8건의 `EVERY`). 접어서 맞춘다.
+     *
+     * `parts` 를 들었는데 이름표가 없으면 `every` 인지 `either` 인지 **알 수 없다.** 둘은 정반대로
+     * 접히므로(합집합 · 교집합) 하나로 정하면 없는 사전조건을 만들거나 있는 것을 지운다. 그래서
+     * 따로 부르고, [guards] 는 아무것도 내지 않는다.
      */
-    private fun kindOf(node: JsonNode): String = node.path("kind").asText("").lowercase()
+    private fun kindOf(node: JsonNode): String {
+        val declared = node.path("kind").asText("").trim().lowercase()
+        if (declared.isNotEmpty()) return declared
+        return when {
+            node.has("parts") -> GROUP_UNKNOWN
+            node.has("left") && node.has("operator") && node.has("right") -> "test"
+            node.has("input") -> "gesture"
+            node.isObject && node.isEmpty -> "always"
+            else -> "unknown"
+        }
+    }
 
     private fun partsOf(node: JsonNode): List<JsonNode> =
         node.path("parts").takeIf { it.isArray }?.toList().orEmpty()
@@ -104,4 +138,9 @@ object ScenarioConditionTree {
     }
 
     private fun str(node: JsonNode, field: String): String = node.path(field).asText("").trim()
+
+    /** 갈래를 들었는데 어떻게 묶이는지 모르는 노드. */
+    private const val GROUP_UNKNOWN = "group-unknown"
+
+    private val UNREADABLE = setOf("unknown", GROUP_UNKNOWN)
 }
