@@ -104,6 +104,48 @@ class ScenarioConditionTreeTest {
         assertThat(ScenarioConditionTree.text(node)).isEqualTo("i < objCount")
     }
 
+    /**
+     * 저장된 트리의 실제 모양(적재된 기능 166번 그대로).
+     *
+     * 겉은 `EVERY` 인데 **자식에는 이름표가 없다** — 적재기가 타입 트리를 그대로 직렬화하면
+     * `Test` · `Gesture` 에 `kind` 필드가 없기 때문이다. 이름표만 보고 넘기면 이 조작의 사전조건
+     * 둘이 통째로 사라지고, 그 여덟이 하필 맵 이동 조작들이다.
+     */
+    @Test
+    fun `이름표 없는 자식도 모양으로 읽는다`() {
+        val node = tree(
+            """{"kind":"EVERY","parts":[
+                 {"input":"key:DownArrow (down)","offset":214},
+                 {"left":"MapMove.position","right":"1","offset":119,"context":"this",
+                  "operator":"==","subjectLost":null},
+                 {"left":"InteractionLock.IsLocked","right":"0","offset":5,"context":"static",
+                  "operator":"==","subjectLost":null}]}"""
+        )
+
+        assertThat(ScenarioConditionTree.guards(node)).containsExactly(
+            Guard("position", "==", "1"), Guard("IsLocked", "==", "0"),
+        )
+        assertThat(ScenarioConditionTree.text(node)).contains("key:DownArrow (down)")
+    }
+
+    /**
+     * 갈래를 들었는데 이름표가 없으면 `every` 인지 `either` 인지 모른다.
+     *
+     * 둘은 정반대로 접힌다. 하나로 정하면 없는 사전조건을 만들거나(`every` 로 읽었는데 `either`)
+     * 있는 것을 지운다(그 반대). 모른다고 두는 쪽이 유일하게 안전하다.
+     */
+    @Test
+    fun `묶는 방법을 모르는 갈래는 단정하지 않는다`() {
+        val node = tree(
+            """{"parts":[
+                 {"left":"Player.Hp","operator":">","right":"0","context":"this"},
+                 {"left":"MapMove.position","operator":"==","right":"1","context":"this"}]}"""
+        )
+
+        assertThat(ScenarioConditionTree.guards(node)).isEmpty()
+        assertThat(ScenarioConditionTree.incomplete(node)).isTrue()
+    }
+
     @Test
     fun `조건 없음은 빈 목록이다`() {
         assertThat(ScenarioConditionTree.guards(tree("""{"kind":"always"}"""))).isEmpty()
