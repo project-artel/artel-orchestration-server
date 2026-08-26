@@ -129,8 +129,8 @@ class MapTestCasePhrasingTest {
 
     @Test
     fun `씬 전환은 어느 화면으로 가는지 말한다`() {
-        assertThat(MapTestCasePhrasing.expected(listOf(effect("scene", "Map_scene"))))
-            .isEqualTo("`Map_scene` 화면으로 전환된다")
+        assertThat(MapTestCasePhrasing.expectedEach(listOf(effect("scene", "Map_scene"))))
+            .containsExactly("`Map_scene` 화면으로 전환된다")
     }
 
     /**
@@ -141,7 +141,7 @@ class MapTestCasePhrasingTest {
     fun `상태 쓰기만 있으면 기대결과가 없다`() {
         val onlyState = listOf(effect("write", "MapMove.StagePosition", "+1", category = "state"))
 
-        assertThat(MapTestCasePhrasing.expected(onlyState)).isNull()
+        assertThat(MapTestCasePhrasing.expectedEach(onlyState)).isEmpty()
     }
 
     @Test
@@ -151,29 +151,35 @@ class MapTestCasePhrasingTest {
             effect("scene", "GameClearScene"),
         )
 
-        assertThat(MapTestCasePhrasing.expected(mixed)).isEqualTo("`GameClearScene` 화면으로 전환된다")
+        assertThat(MapTestCasePhrasing.expectedEach(mixed)).containsExactly("`GameClearScene` 화면으로 전환된다")
     }
 
+    /**
+     * **효과 하나가 케이스 하나다.** 합쳐서 한 줄로 내면 실행하는 사람이 무엇을 볼지 모른다 —
+     * 실측(`Map.MapMove.CharacterMove`)에서 그 기능 하나가 결과 아홉 가지를 낸다.
+     */
     @Test
-    fun `효과가 여럿이면 쉼표로 잇는다`() {
+    fun `효과가 여럿이면 줄도 여럿이다`() {
         val many = listOf(
             effect("active-state", "Canvas/continue", "false"),
             effect("ui-value", "Text.text", "score"),
         )
 
-        assertThat(MapTestCasePhrasing.expected(many))
-            .isEqualTo("`Canvas/continue` 의 표시 상태가 `false`, `Text.text` 표시가 `score` 로 갱신된다")
+        assertThat(MapTestCasePhrasing.expectedEach(many)).containsExactly(
+            "`Canvas/continue` 의 표시 상태가 `false`",
+            "`Text.text` 표시가 `score` 로 갱신된다",
+        )
     }
 
     /** 새 `kind` 가 생겼을 때 그 효과가 조용히 사라지는 것보다, 어색해도 보이는 편이 낫다. */
     @Test
     fun `어휘를 모르는 효과도 버리지 않는다`() {
-        assertThat(MapTestCasePhrasing.expected(listOf(effect("haptic", "Gamepad.rumble", "0.5"))))
-            .isEqualTo("`Gamepad.rumble` 이(가) `0.5` 이 된다")
+        assertThat(MapTestCasePhrasing.expectedEach(listOf(effect("haptic", "Gamepad.rumble", "0.5"))))
+            .containsExactly("`Gamepad.rumble` 이(가) `0.5` 이 된다")
     }
 
     @Test
     fun `효과가 하나도 없으면 기대결과가 없다`() {
-        assertThat(MapTestCasePhrasing.expected(emptyList())).isNull()
+        assertThat(MapTestCasePhrasing.expectedEach(emptyList())).isEmpty()
     }
 }

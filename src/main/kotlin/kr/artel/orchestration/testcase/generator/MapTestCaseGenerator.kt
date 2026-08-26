@@ -49,24 +49,37 @@ class MapTestCaseGenerator(
 ) {
 
     suspend fun generate(contentMapId: Long): List<MapTestCase> =
-        contentMaps.findCapabilityRows(contentMapId).toList().mapNotNull { row -> caseOf(row) }
+        contentMaps.findCapabilityRows(contentMapId).toList().flatMap { row -> casesOf(row) }
 
-    private suspend fun caseOf(row: ContentMapCapabilityRow): MapTestCase? {
+    /**
+     * 기능 하나에서 케이스 **여럿**이 나온다 — 확인할 수 있는 효과 하나마다 하나다.
+     *
+     * 합쳐서 한 줄로 내면 실행하는 사람이 무엇을 볼지 모른다([MapTestCasePhrasing.expectedEach] 의
+     * 주석에 실측이 있다). 구버전도 같은 기능에서 아홉 줄을 냈다.
+     */
+    private suspend fun casesOf(row: ContentMapCapabilityRow): List<MapTestCase> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
-        val key = row.capabilityKey ?: return null
+        val key = row.capabilityKey ?: return emptyList()
         val effectRows = effects.findByCapabilityIdOrderByIdAsc(row.capabilityId).toList()
-        val expected = MapTestCasePhrasing.expected(effectRows) ?: return null
+        val outcomes = MapTestCasePhrasing.expectedEach(effectRows)
+        if (outcomes.isEmpty()) return emptyList()
+
         val condition = conditionOf(row)
-        return MapTestCase(
-            capabilityKey = key,
-            scene = row.sceneName,
-            precondition = MapTestCasePhrasing.precondition(row.sceneName, condition),
-            step = MapTestCasePhrasing.step(row.interaction, row.inputKey, row.controlLabel, row.controlPath),
-            expected = expected,
-            status = row.status,
-            gaps = gapsOf(row),
-        )
+        val precondition = MapTestCasePhrasing.precondition(row.sceneName, condition)
+        val step = MapTestCasePhrasing.step(row.interaction, row.inputKey, row.controlLabel, row.controlPath)
+        val gaps = gapsOf(row)
+        return outcomes.map { outcome ->
+            MapTestCase(
+                capabilityKey = key,
+                scene = row.sceneName,
+                precondition = precondition,
+                step = step,
+                expected = outcome,
+                status = row.status,
+                gaps = gaps,
+            )
+        }
     }
 
     /**
