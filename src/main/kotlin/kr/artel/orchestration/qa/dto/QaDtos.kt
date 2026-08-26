@@ -44,7 +44,15 @@ data class CreateQaRunRequest(
     val language: String? = null,
     val promptVersion: String? = null,
     val reasoning: QaReasoningRequest? = null,
-    val arch: JsonNode? = null
+    val arch: JsonNode? = null,
+    /**
+     * 그 게임 인스턴스에 진행 중인 QA가 있어도 그것을 끝내고 시작한다(런 이어받기).
+     *
+     * 기본값은 false — 남의 런을 끊는 것은 되돌릴 수 없으므로 요청이 명시적으로 말해야 한다.
+     * 첫 요청은 그냥 보내고, 409 `qa_run_active`가 오면 사용자에게 물은 뒤 이 값을 켜서 재요청하는
+     * 것이 의도된 흐름이다.
+     */
+    val force: Boolean = false
 )
 
 data class QaReasoningRequest(
