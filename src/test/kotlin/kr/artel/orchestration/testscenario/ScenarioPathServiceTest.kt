@@ -439,6 +439,86 @@ class ScenarioPathServiceTest {
         assertThat(answer.note).contains("명세에 없다").doesNotContain("저절로")
     }
 
+    // ---- 조건 트리 (ARTEL-533) -----------------------------------------------------
+
+    /**
+     * **적재기는 `given_text` 를 채우지 않는다.** 실측(`wv-editor-latest.json` 실적재)에서 기능
+     * 491건 중 `given_text` 가 있는 것은 0건이고 `condition_tree` 는 491건이다. 이 칸만 읽으면
+     * 실제 지도에서 사전조건 검사가 통째로 무동작이 된다.
+     */
+    @Test
+    fun `given_text 가 없어도 조건 트리에서 조작의 사전조건을 읽는다`(): Unit = runBlocking {
+        val move = capability(mapSceneId, interaction = "press", inputKey = "RightArrow", given = null)
+        effect(move, target = "MapMove.position", detail = "+1")
+        tree(move, """{"kind":"test","left":"InteractionLock.IsLocked","operator":"==",
+                       "right":"0","offset":5,"context":"static"}""")
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / (MapMove.position == 0 그리고 InteractionLock.IsLocked == 1)")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 1")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.blockedBy).isEqualTo("IsLocked")
+        assertThat(answer.note).contains("그 조작 자신이")
+    }
+
+    /** 실측 기능 63번 그대로 — 저절로 도는 코드의 조건이 트리에만 있다. */
+    @Test
+    fun `저절로 쓰는 값의 조건도 트리에서 읽는다`(): Unit = runBlocking {
+        val auto = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", givenText = null,
+                interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(auto, target = "MapMove.StagePosition", detail = "+1")
+        tree(auto, """{"kind":"test","left":"BattleWaveController.wave","operator":">=",
+                       "right":"BattleWaveController.battleScript.GetBattleWaveDatas().Count",
+                       "offset":216,"context":"this"}""")
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 2")
+
+        assertThat(service.findPath(projectId, userId, a, b).note)
+            .contains("조작으로 지시할 수 없다")
+            // 문자열을 쪼개던 경로에서는 여기가 `GetBattleWaveDatas` 로 잘렸다.
+            .contains("GetBattleWaveDatas().Count")
+    }
+
+    /**
+     * 주어를 못 찾은 비교는 **없는 사전조건을 만든다.** `i < objCount` 의 `i` 를 게임 상태로 읽으면
+     * 그 조작은 영영 못 쓰는 것이 된다.
+     */
+    @Test
+    fun `주어를 못 찾은 비교는 조작을 막지 않는다`(): Unit = runBlocking {
+        val move = capability(mapSceneId, interaction = "press", inputKey = "RightArrow", given = null)
+        effect(move, target = "MapMove.position", detail = "+1")
+        tree(move, """{"kind":"test","left":"i","operator":"<","right":"objCount",
+                       "offset":123,"context":null,"subjectLost":"left:ldloc.s"}""")
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / (MapMove.position == 0 그리고 i == 9)")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 1")
+
+        assertThat(service.findPath(projectId, userId, a, b).result).isEqualTo(ScenarioPathResult.KNOWN)
+    }
+
+    /** 트리가 없는 지도(손적재·구 문서)는 예전처럼 읽는다. 되돌아가지 않는다. */
+    @Test
+    fun `트리가 없으면 given_text 를 그대로 읽는다`(): Unit = runBlocking {
+        val move = capability(
+            mapSceneId, interaction = "press", inputKey = "RightArrow",
+            given = "`InteractionLock.IsLocked == 0`",
+        )
+        effect(move, target = "MapMove.position", detail = "+1")
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / (MapMove.position == 0 그리고 InteractionLock.IsLocked == 1)")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 1")
+
+        assertThat(service.findPath(projectId, userId, a, b).blockedBy).isEqualTo("IsLocked")
+    }
+
     // ---- 조작 자신의 사전조건 --------------------------------------------------------
 
     /**
@@ -866,6 +946,21 @@ class ScenarioPathServiceTest {
             status = "runnable",
         )
     ).id!!
+
+    /** 조건 트리를 든 근거. 적재기가 실제로 남기는 모양이다(`given_text` 는 비어 있다). */
+    private suspend fun tree(capabilityId: Long, json: String) {
+        template.insert(
+            CapabilityEvidenceEntity(
+                capabilityId = capabilityId,
+                entryId = "Assembly-CSharp|Tree|Update|System.Void()",
+                ownerType = "Tree", method = "Update", methodId = "Assembly-CSharp|Tree|Update|System.Void()",
+                recordKind = "candidate", triggerKind = "lifecycle", analysisConfidence = "derived",
+                conditionTree = Json.of(json),
+                // 스키마가 둘 중 하나를 요구한다 — 호출 경로가 비면 왜 비었는지 사유가 있어야 한다.
+                callPath = Json.of("[\"System.Void Tree::Update()\"]"),
+            )
+        ).awaitSingle()
+    }
 
     private suspend fun evidence(capabilityId: Long, methodId: String) {
         template.insert(

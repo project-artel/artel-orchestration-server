@@ -43,6 +43,7 @@ class ScenarioPathService(
     private val sceneRepository: SceneRepository,
     private val sceneEdgeRepository: SceneEdgeRepository,
     private val capabilityRepository: CapabilityRepository,
+    private val conditionReader: ScenarioConditionReader,
     private val pathRepository: ScenarioPathRepository,
     private val factRepository: ScenarioCaseFactRepository,
 ) {
@@ -288,7 +289,7 @@ class ScenarioPathService(
             .mapNotNull { effect ->
                 capabilityRepository.findById(effect.capabilityId)
                     ?.takeIf { instructable(it) }
-                    ?.let { effect to it }
+                    ?.let { Candidate(effect, it, conditionReader.of(it)) }
             }
         // 지시할 수 있는 것이 하나도 없다 — 값이 바뀌기는 하는데 저절로 바뀐다. **그 코드가 도는
         // 조건을 함께 낸다**(ARTEL-532). 지도가 그 조건을 이미 들고 있으므로 "방법이 없다"로
@@ -298,17 +299,12 @@ class ScenarioPathService(
         // **그 조작 자신이 지금 가능한가.** 같은 변수를 쓰는 기능이 여럿이고 각자 성립 조건이
         // 다르므로(맵의 방향키가 각각 다른 `position` 에서만 성립한다), 이것을 보는 것은 거르는
         // 일이자 **고르는 일**이다 — 지금 상태에서 실제로 되는 조작을 집는다.
-        val ready = usable.filter { (_, capability) -> ScenarioStateReader.violated(capability.givenText, state) == null }
-        if (ready.isEmpty()) {
-            val by = usable.firstNotNullOf { (_, capability) ->
-                ScenarioStateReader.violated(capability.givenText, state)
-            }
-            return Writer.Blocked(by)
-        }
+        val ready = usable.filter { it.condition.violatedIn(state) == null }
+        if (ready.isEmpty()) return Writer.Blocked(usable.firstNotNullOf { it.condition.violatedIn(state) })
 
         // **값을 정하는 조작**이 먼저다. 증감은 한 번으로 값이 정해지지 않으므로 여기서 뺀다 —
         // 빼지 않으면 `+1` 을 쓰는 조작이 `position >= 1` 을 "한 번 눌러 만족시킨다"로 읽힌다.
-        val exact = ready.firstOrNull { (e, _) ->
+        val exact = ready.firstOrNull { (e, _, _) ->
             e.detail != null && increment(e.detail) == null && guard.holds(e.detail!!)
         }
         // **증감은 방향을 골라야 한다.** 먼저 걸리는 것을 집으면 값을 반대로 밀어내는 조작이
@@ -316,7 +312,7 @@ class ScenarioPathService(
         // 내리는 조작을 "position 이 3 이 될 때까지 되풀이한다"로 적어 넣었다. 되풀이해도 영영
         // 도달하지 않는 스텝이고, 실행하는 사람은 그 앞에서 멎는다.
         val toward = push(guard, state[guard.variable])
-        val relative = ready.firstOrNull { (e, _) ->
+        val relative = ready.firstOrNull { (e, _, _) ->
             val by = increment(e.detail) ?: return@firstOrNull false
             // 방향을 아는데 그쪽으로 미는 조작이 없으면 **없는 것이다.** 반대로 미는 것을 넣는 것보다
             // 모른다고 답하는 편이 낫다 — 미상은 사용자가 채울 수 있지만 거짓 스텝은 실행하다 만난다.
@@ -331,10 +327,10 @@ class ScenarioPathService(
         // `position` 을 2에서 3으로 올릴 자리가 그랬다 — `RightArrow` 가 +1 을 쓰지만 지도에는 그
         // 조작의 사전조건이 `position == 0` 으로 적혀 있다. "명세에 없다"고 말하면 사용자는 없는
         // 것을 알려주려 하게 되고, 정작 손볼 자리(지도의 사전조건)는 가려진다.
-        val (chosen, capability) = exact ?: relative
+        val (chosen, capability, _) = exact ?: relative
             ?: toward?.let { direction ->
-                usable.firstOrNull { (effect, _) -> increment(effect.detail)?.let(Push::of) == direction }
-                    ?.let { (_, capability) -> ScenarioStateReader.violated(capability.givenText, state) }
+                usable.firstOrNull { increment(it.effect.detail)?.let(Push::of) == direction }
+                    ?.condition?.violatedIn(state)
                     ?.let { return Writer.Blocked(it) }
             }
             ?: return Writer.None
@@ -472,7 +468,7 @@ class ScenarioPathService(
             val by = increment(e.detail) ?: return@firstOrNull false
             toward == null || toward == Push.of(by)
         }
-        return ScenarioStateReader.conditionText(chosen?.second?.givenText)
+        return chosen?.second?.let { conditionReader.of(it).text }
     }
 
     /** 씬이 저절로 넘어가는 자리에서 남길 말. [trigger] 와 같은 규칙으로, 조건을 알면 싣는다. */
@@ -537,12 +533,11 @@ class ScenarioPathService(
         val edgeSays = ScenarioStateReader.conditionText(edge.givenText)
         val capabilityId = edge.capabilityId ?: return Hop.Automatic(edgeSays)
         val capability = capabilityRepository.findById(capabilityId) ?: return Hop.None
-        if (!instructable(capability)) {
-            return Hop.Automatic(ScenarioStateReader.conditionText(capability.givenText) ?: edgeSays)
-        }
+        val condition = conditionReader.of(capability)
+        if (!instructable(capability)) return Hop.Automatic(condition.text ?: edgeSays)
         // 간선을 타는 조작에도 자기 사전조건이 있다. `InteractionLock` 이 잠긴 상태에서 씬을
         // 넘으라고 적어 두면 실행은 첫 스텝에서 멎는다.
-        ScenarioStateReader.violated(capability.givenText, state)?.let { return Hop.Blocked(it) }
+        condition.violatedIn(state)?.let { return Hop.Blocked(it) }
         return Hop.By(PathStep(
             capabilityId = capabilityId,
             input = operation(capability),
@@ -566,6 +561,13 @@ class ScenarioPathService(
         data class Automatic(val trigger: String?) : Hop
         data object None : Hop
     }
+
+    /** 값을 쓰는 기능 하나와, 그 기능 자신의 조건. 조건을 기능마다 한 번만 읽으려고 함께 든다. */
+    private data class Candidate(
+        val effect: CapabilityEffectEntity,
+        val capability: CapabilityEntity,
+        val condition: ScenarioConditionReader.Condition,
+    )
 
     /** 값을 옮기는 네 경우. 뜻은 [Hop] 과 같다. */
     private sealed interface Writer {

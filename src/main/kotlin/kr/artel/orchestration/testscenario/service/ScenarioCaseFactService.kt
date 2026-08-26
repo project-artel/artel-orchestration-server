@@ -36,6 +36,7 @@ class ScenarioCaseFactService(
     private val contentMapRepository: ContentMapRepository,
     private val factRepository: ScenarioCaseFactRepository,
     private val effectRepository: CapabilityEffectRepository,
+    private val conditionReader: ScenarioConditionReader,
 ) {
     /** 케이스 하나를 지도에 비춰 본다. 지도가 없거나 케이스가 남의 것이면 조작 없이 사유만 낸다. */
     suspend fun explain(projectId: Long, appUserId: Long, testCaseId: Long): CaseFacts {
@@ -101,7 +102,7 @@ class ScenarioCaseFactService(
         SUPPORTING.find(raw)?.groupValues?.get(1)?.let { ScenarioStateReader.normalize(it) }
     }.getOrNull()
 
-    private fun view(capability: CapabilityEntity, matchedBy: String) = CaseOperation(
+    private suspend fun view(capability: CapabilityEntity, matchedBy: String) = CaseOperation(
         capabilityId = capability.id!!,
         // **누를 것이 없으면 빈 값이다.** 예전에는 `interaction` 을 그대로 넣어 조작 없이 일어나는
         // 기능이 `input: "none"` 으로 스텝에 박혔다 — 실행하는 쪽에서 보면 누르라는 뜻으로 읽힌다.
@@ -113,7 +114,8 @@ class ScenarioCaseFactService(
         },
         label = capability.controlLabel ?: capability.controlPath,
         summary = capability.summary,
-        given = capability.givenText,
+        // 적재기가 채우는 것은 트리 쪽이다 — 이 칸만 읽으면 실제 지도에서 항상 비어 나간다(ARTEL-533).
+        given = conditionReader.of(capability).text,
         actionability = capability.actionability,
         matchedBy = matchedBy,
     )
