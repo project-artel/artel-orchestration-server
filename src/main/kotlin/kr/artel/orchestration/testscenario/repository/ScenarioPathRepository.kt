@@ -41,4 +41,19 @@ interface ScenarioPathRepository : CoroutineCrudRepository<CapabilityEffectEntit
         """
     )
     fun findEffectsWriting(contentMapId: Long, variable: String): Flow<CapabilityEffectEntity>
+
+    /**
+     * 이 기능이 **어느 화면으로 넘기나**(ARTEL-528). `kind='scene'` 효과의 `target` 이 목적지다.
+     *
+     * 케이스가 끝난 뒤 어느 화면인지를 **계산으로** 답하는 유일한 길이다. 지도가 그 기능을 알고
+     * 있으면 산문을 읽을 필요가 없다 — 실측에서 지도가 아는 2건은 정확히 맞혔다.
+     */
+    @Query(
+        """
+        SELECT e.* FROM capability_effect e
+        WHERE e.capability_id = :capabilityId AND e.kind = 'scene'
+        ORDER BY e.id
+        """
+    )
+    fun findSceneEffects(capabilityId: Long): Flow<CapabilityEffectEntity>
 }

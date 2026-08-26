@@ -163,6 +163,42 @@ class ScenarioPathService(
             .toSet()
     }
 
+    /**
+     * **지도가 아는** 도착 화면(ARTEL-528). 모르면 그 케이스는 결과에 없다.
+     *
+     * 케이스의 근거가 가리키는 코드와 같은 근거를 문 기능을 찾고, 그 기능의 `scene` 효과가
+     * 목적지를 말한다. `performs()` 가 쓰는 것과 같은 맞춤이다.
+     *
+     * **이것이 계산된 답이다.** 산문에서 씬 이름을 찾는 쪽([ScenarioStateReader.sceneAfter])은
+     * 지도가 모를 때의 받침이고, 개발자가 지은 이름이 명세 문장에 글자 그대로 나온다는 데
+     * 기대므로 틀릴 수 있다. 지도가 채워질수록 이 함수가 답하는 몫이 늘고 받침은 줄어든다.
+     *
+     * 실측(word-venture, 씬을 떠나는 케이스 16건): 지도가 아는 것은 2건이고 그 2건은 정확했다.
+     * 나머지 14건은 **근거로 닿는 기능이 아예 0개**다 — 잇는 데 실패한 것이 아니라 지도가 그
+     * 기능을 모른다.
+     *
+     * 한 케이스가 여러 목적지를 가리키면 답하지 않는다. 어느 쪽인지 가릴 근거가 없다.
+     */
+    suspend fun sceneMoves(
+        projectId: Long,
+        appUserId: Long,
+        cases: List<TestCaseEntity>,
+    ): Map<Long, String> {
+        val contentMapId = contentMapIdOf(projectId, appUserId) ?: return emptyMap()
+        return buildMap {
+            for (case in cases) {
+                val id = case.id ?: continue
+                val destinations = ScenarioStateReader.evidenceTails(case, objectMapper)
+                    .flatMap { tail -> factRepository.findByEvidenceTail(contentMapId, tail).toList() }
+                    .distinctBy { it.id }
+                    .flatMap { capability -> pathRepository.findSceneEffects(capability.id!!).toList() }
+                    .mapNotNull { it.target?.takeIf(String::isNotBlank) }
+                    .distinct()
+                destinations.singleOrNull()?.let { put(id, it) }
+            }
+        }
+    }
+
     // ---- 가드 해소 -------------------------------------------------------------------
 
     /**

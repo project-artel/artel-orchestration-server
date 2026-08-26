@@ -486,10 +486,16 @@ class ScenarioReconcileService(
         appUserId: Long,
     ): Map<Long, ScenarioReachabilityCheck.CaseFact> = runCatching {
         val scenes = pathService.sceneNames(projectId, appUserId)
-        testCaseRepository.findByProjectIdOrderByIdAsc(projectId).toList().associate { case ->
+        val cases = testCaseRepository.findByProjectIdOrderByIdAsc(projectId).toList()
+        // **지도가 먼저다.** 근거로 기능을 찾아 그 기능의 씬 효과를 읽는 것이 계산된 답이고,
+        // 산문에서 이름을 찾는 쪽은 지도가 모를 때의 받침이다 — 개발자가 지은 이름이 명세 문장에
+        // 글자 그대로 나온다는 데 기대므로 틀릴 수 있다. 지도가 채워질수록 받침이 하는 몫이 준다.
+        val known = pathService.sceneMoves(projectId, appUserId, cases)
+        cases.associate { case ->
             case.id!! to ScenarioReachabilityCheck.CaseFact(
                 scene = ScenarioStateReader.sceneOf(case),
-                moves = ScenarioStateReader.sceneAfter(case, scenes),
+                moves = known[case.id]?.let(SceneMove::To)
+                    ?: ScenarioStateReader.sceneAfter(case, scenes),
                 requires = ScenarioStateReader.guardsOf(case.precondition),
                 declares = ScenarioStateReader.knownValuesOf(case.precondition),
                 leaves = ScenarioStateReader.stateAfter(case, objectMapper),

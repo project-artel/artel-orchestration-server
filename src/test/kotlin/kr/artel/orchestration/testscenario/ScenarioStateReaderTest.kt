@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testscenario
 
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
+import kr.artel.orchestration.testscenario.service.SceneMove
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
@@ -83,5 +84,64 @@ class ScenarioStateReaderTest {
     fun `씬 접두는 가드가 아니다`() {
         // 앞부분을 함께 읽어도 안전한 이유 — 접두에는 비교 연산자가 없다.
         assertThat(guards("Map_scene 화면인 상태")).isEmpty()
+    }
+
+    // --- 도착 화면 읽기 (ARTEL-528) --------------------------------------------------
+
+    private fun caseWith(scene: String, expected: String) = kr.artel.orchestration.testcase.entity.TestCaseEntity(
+        projectId = 1, scene = scene, step = "s", precondition = "$scene 화면인 상태", expectedValue = expected,
+    )
+
+    @Test
+    fun `시작 씬이 아닌 이름 하나면 거기로 간다`() {
+        val move = ScenarioStateReader.sceneAfter(
+            caseWith("StoryScene", "`Map_scene` 화면으로 전환된다"),
+            setOf("StoryScene", "Map_scene", "TitleScene"),
+        )
+
+        assertThat(move).isEqualTo(SceneMove.To("Map_scene"))
+    }
+
+    @Test
+    fun `아무 이름도 없으면 머문다`() {
+        val move = ScenarioStateReader.sceneAfter(
+            caseWith("Map_scene", "`wordHead` 가 `battle1` 위치로 바뀐다"),
+            setOf("StoryScene", "Map_scene"),
+        )
+
+        assertThat(move).isEqualTo(SceneMove.Stays)
+    }
+
+    @Test
+    fun `여러 이름을 말하면 가릴 수 없다`() {
+        val move = ScenarioStateReader.sceneAfter(
+            caseWith("StoryScene", "`Map_scene` 또는 `TitleScene` 으로 간다"),
+            setOf("StoryScene", "Map_scene", "TitleScene"),
+        )
+
+        assertThat(move).isEqualTo(SceneMove.Unknown)
+    }
+
+    @Test
+    fun `이름이 다른 이름의 일부면 긴 쪽만 본다`() {
+        // `Map` 과 `Map_scene` 이 둘 다 씬일 수 있다. 짧은 쪽은 긴 쪽을 읽다가 걸린 것이다.
+        val move = ScenarioStateReader.sceneAfter(
+            caseWith("StoryScene", "`Map_scene` 화면으로 전환된다"),
+            setOf("StoryScene", "Map", "Map_scene"),
+        )
+
+        assertThat(move).isEqualTo(SceneMove.To("Map_scene"))
+    }
+
+    @Test
+    fun `낱말 한가운데 걸린 것은 언급이 아니다`() {
+        // 씬 이름은 개발자가 짓는다. 흔한 낱말이면 아무 문장에나 걸리는데, 그때 이 검사가 반응하면
+        // 알림 전체가 못 믿을 것이 된다.
+        val move = ScenarioStateReader.sceneAfter(
+            caseWith("TitleScene", "Mapping 이 갱신된다"),
+            setOf("TitleScene", "Map"),
+        )
+
+        assertThat(move).isEqualTo(SceneMove.Stays)
     }
 }
