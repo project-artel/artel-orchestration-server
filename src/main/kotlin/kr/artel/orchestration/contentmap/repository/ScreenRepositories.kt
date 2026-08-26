@@ -140,11 +140,13 @@ interface SceneEdgeRepository : CoroutineCrudRepository<SceneEdgeEntity, Long> {
                e.capability_id,
                c.summary AS capability_summary,
                e.given_text,
+               ce.condition_tree,
                e.source,
                e.verified_at
         FROM scene_edge e
         JOIN scene s ON s.id = e.from_scene_id
         LEFT JOIN capability c ON c.id = e.capability_id
+        LEFT JOIN capability_evidence ce ON ce.capability_id = e.capability_id
         WHERE s.content_map_id = :contentMapId
         ORDER BY e.from_scene_id ASC, e.id ASC
         """

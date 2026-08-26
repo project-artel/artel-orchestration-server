@@ -38,9 +38,27 @@ data class SceneEntity(
     @Column("walked")
     val walked: Boolean = false,
 
-    /** 화면 구분이 없을 때만 의미 있는 대표 이미지. 보통은 [ScreenEntity] 쪽이 진짜다. */
+    /**
+     * 근거 walk 가 이 씬에서 찍은 대표 이미지. 화면이 여럿인 씬에서는 [ScreenEntity] 쪽이 더 정확하다.
+     *
+     * 값의 출처는 `content_map_scene_capture` 이고 여기 있는 것은 화면이 읽기 좋게 내린 사본이다.
+     * 조회가 씬 한 줄만 읽고도 이미지를 낼 수 있어야 씬 수백 개짜리 지도에서 조인이 늘지 않는다.
+     */
     @Column("image_object_key")
     val imageObjectKey: String? = null,
+
+    @Column("image_width")
+    val imageWidth: Int? = null,
+
+    @Column("image_height")
+    val imageHeight: Int? = null,
+
+    @Column("image_captured_at")
+    val imageCapturedAt: Instant? = null,
+
+    /** 이미지를 못 만든 이유. [imageObjectKey] 와 동시에 차지 않는다 — 둘 중 하나만 산다. */
+    @Column("image_failure_code")
+    val imageFailureCode: String? = null,
 
     /** 이 씬에 대해 근거가 "못 봤다"고 말한 것. `dont-destroy-on-load-not-walked` 등. */
     @Column("gaps")

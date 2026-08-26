@@ -1,5 +1,6 @@
 package kr.artel.orchestration.contentmap.dto
 
+import io.r2dbc.postgresql.codec.Json
 import org.springframework.data.relational.core.mapping.Column
 import java.time.Instant
 
@@ -68,6 +69,9 @@ data class ContentMapSceneEdgeRow(
 
     @Column("given_text")
     val givenText: String?,
+
+    @Column("condition_tree")
+    val conditionTree: Json?,
 
     /** [kr.artel.orchestration.contentmap.entity.EdgeSource] 중 하나. */
     @Column("source")

@@ -629,6 +629,85 @@ class ContentMapViewGoldenTest {
             .one()
             .awaitSingle()
 
+    /**
+     * **씬 대표 이미지가 서명된 단기 주소로 나온다.**
+     *
+     * 바이트를 이 서버가 중계하지 않는다는 것이 요점이다 — 씬이 수백 개인 지도에서 그만큼의 이미지가
+     * 응답 하나에 실리면 조회가 조회가 아니게 된다. 그리고 **없음과 못 찍음을 가른다**: 옛 SDK 는
+     * 캡처를 아예 신고하지 않아 `thumbnail` 자체가 null 이고, 새 SDK 가 시도했다 실패하면
+     * `unavailable` 과 이유가 온다. 화면이 "아직 안 올렸다"와 "이 씬은 못 찍는다"를 다르게 말해야 한다.
+     */
+    @Test
+    fun `씬 이미지가 서명된 주소로 나오고 못 찍은 이유가 따로 실린다`(): Unit = runBlocking {
+        // 씬 이름을 문서에서 집는다. 골든 문서의 씬 목록이 바뀌어도 이 테스트가 도는 이유다
+        val captured = scenes.findByContentMapIdAndName(contentMapId, "TitleScene")!!
+        val failed = response.scenes.first { it.name != captured.name }.name
+        val capturedAt = Instant.parse("2026-08-26T00:00:00Z")
+        scenes.save(
+            captured.copy(
+                imageObjectKey = "content-map-scene-captures/$gameBuildId/title.jpg",
+                imageWidth = 320,
+                imageHeight = 180,
+                imageCapturedAt = capturedAt,
+            )
+        )
+        scenes.save(
+            scenes.findByContentMapIdAndName(contentMapId, failed)!!
+                .copy(imageFailureCode = "unsupported-render-pipeline")
+        )
+
+        val fresh = view.read(userId, projectId, gameBuildId, capture = null)!!
+
+        with(fresh.scenes.single { it.name == "TitleScene" }.thumbnail!!) {
+            assertThat(state).isEqualTo("available")
+            // 주소는 스토리지가 서명한 것이고, 객체 키 자체는 응답에 나가지 않는다
+            assertThat(url).contains("content-map-scene-captures/$gameBuildId/title.jpg")
+            assertThat(expiresAt).isNotNull()
+            assertThat(width).isEqualTo(320)
+            assertThat(height).isEqualTo(180)
+            assertThat(reason).isNull()
+        }
+        with(fresh.scenes.single { it.name == failed }.thumbnail!!) {
+            assertThat(state).isEqualTo("unavailable")
+            assertThat(url).isNull()
+            assertThat(reason).isEqualTo("unsupported-render-pipeline")
+        }
+        // 신고 자체가 없던 씬은 두 상태 어느 쪽도 아니다
+        assertThat(fresh.scenes.filter { it.thumbnail == null }).isNotEmpty()
+    }
+
+    /**
+     * **전이가 정규화된 조건을 함께 낸다.**
+     *
+     * `givenText` 는 사람이 읽는 한 줄이라 화면이 갈래를 구분하는 데 쓸 수 없다. 같은 컨트롤이 조건으로
+     * 갈릴 때 무엇이 다른지는 조건 트리에만 있다.
+     *
+     * 조인이 간선을 늘리지 않는다는 것도 함께 본다 — `capability_evidence` 는 기능당 한 행
+     * (PRIMARY KEY) 이므로 간선 수가 표의 행 수와 같아야 한다. 이 관계가 깨지면 화면의 그래프에
+     * 같은 전이가 여러 번 그려진다.
+     */
+    @Test
+    fun `씬 전이가 정규화된 조건을 함께 낸다`(): Unit = runBlocking {
+        val fresh = view.read(userId, projectId, gameBuildId, capture = null)!!
+        val fromEvidence = fresh.edges.filter { it.source == EdgeSource.STATIC.wire }
+
+        val rows = count(
+            """
+            SELECT count(*) FROM scene_edge e
+            JOIN scene s ON s.id = e.from_scene_id
+            WHERE s.content_map_id = :id AND e.source = 'static'
+            """
+        )
+        assertThat(fromEvidence).hasSize(rows.toInt())
+
+        // 근거 출신 전이는 기능을 달고 있고, 그 기능은 조건 트리를 가진 행이다
+        assertThat(fromEvidence).allSatisfy { assertThat(it.capabilityId).isNotNull() }
+        assertThat(fromEvidence).allSatisfy { assertThat(it.given).isNotNull() }
+        // 자동 전이는 기능이 없으므로 조건도 없다. null 이 "조건 없음"을 뜻한다
+        assertThat(fresh.edges.filter { it.capabilityId == null })
+            .allSatisfy { assertThat(it.given).isNull() }
+    }
+
     private suspend fun newProject(userId: Long): Long {
         val now = Instant.now()
         val project = projects.save(

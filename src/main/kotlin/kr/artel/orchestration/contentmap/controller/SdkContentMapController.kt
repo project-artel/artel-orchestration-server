@@ -9,6 +9,8 @@ import kr.artel.orchestration.contentmap.dto.EvidenceUploadTicketRequest
 import kr.artel.orchestration.contentmap.dto.EvidenceUploadTicketResponse
 import kr.artel.orchestration.contentmap.dto.RegisterEvidenceDocumentRequest
 import kr.artel.orchestration.contentmap.dto.RegisterEvidenceDocumentResponse
+import kr.artel.orchestration.contentmap.dto.SceneCaptureTicketBatchRequest
+import kr.artel.orchestration.contentmap.dto.SceneCaptureTicketBatchResponse
 import kr.artel.orchestration.contentmap.service.EvidenceDocumentService
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -48,6 +50,16 @@ class SdkContentMapController(
         @Valid @RequestBody request: EvidenceUploadTicketRequest,
     ): EvidenceUploadTicketResponse =
         service.createUploadTicket(appUserId, gameBuildId, request)
+            ?: throw NotFoundException("등록할 수 있는 게임 빌드를 찾을 수 없습니다.")
+
+    @Operation(summary = "씬 대표 이미지 업로드 티켓")
+    @PostMapping("/scene-captures/tickets")
+    suspend fun createSceneCaptureTickets(
+        @CurrentUserId appUserId: Long,
+        @PathVariable gameBuildId: Long,
+        @Valid @RequestBody request: SceneCaptureTicketBatchRequest,
+    ): SceneCaptureTicketBatchResponse =
+        service.createSceneCaptureTickets(appUserId, gameBuildId, request)
             ?: throw NotFoundException("등록할 수 있는 게임 빌드를 찾을 수 없습니다.")
 
     @Operation(
