@@ -2,6 +2,7 @@ package kr.artel.orchestration.testscenario
 
 import kr.artel.orchestration.testscenario.service.Guard
 import kr.artel.orchestration.testscenario.service.ScenarioSiblingCheck
+import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import kr.artel.orchestration.testscenario.service.ScenarioSiblingCheck.CaseFact
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -204,5 +205,90 @@ class ScenarioSiblingCheckTest {
         val findings = ScenarioSiblingCheck.analyze(listOf(not5, over10), split = listOf(listOf(1L, 2L)))
 
         assertThat(findings.conflicting).isEmpty()
+    }
+
+    // --- 실측 회귀: 런 152 TurnBattleScene (ARTEL-497) ------------------------------
+
+    /**
+     * 사전조건 글자 그대로 읽어 만든다. [Guard] 를 손으로 적으면 읽개의 잘못이 테스트를 통과한다 —
+     * 실제로 런 152 에서 틀린 것이 읽개였다.
+     */
+    private fun real(id: Long, step: String, precondition: String) = CaseFact(
+        id = id,
+        scene = "TurnBattleScene",
+        step = step,
+        guards = ScenarioStateReader.guardsOf(precondition),
+        declared = ScenarioStateReader.knownValuesOf(precondition),
+    )
+
+    @Test
+    fun `갈래가 있는 사전조건은 함께 담을 수 있다`() {
+        // 런 152 에서 "함께 담을 수 없다"고 판정된 19쌍 중 이 여섯 건이 만든 것이 대부분이었다.
+        // 전부 `Player.hp > 0`(생존 중)이라 한 번의 실행으로 다 볼 수 있는 케이스들이다.
+        val cases = listOf(
+            real(1293, "TakeHit 이후 관찰한다", "TurnBattleScene 화면인 상태 / (damage > 0 그리고 Player.hp > 0)"),
+            real(
+                1297, "SpellObj 충돌",
+                "TurnBattleScene 화면인 상태 / (collision.tag != \"Enemy\" 그리고 " +
+                    "collision.tag == SpellObj.target.gameObject.tag 그리고 " +
+                    "((damage > 0 그리고 Player.hp > 0) 또는 (damage <= 0 그리고 Player.hp > 0)))",
+            ),
+            real(
+                1298, "EnemyProjectile 충돌",
+                "TurnBattleScene 화면인 상태 / (collision.tag == \"Me\" 그리고 " +
+                    "((damage > 0 그리고 Player.hp > 0) 또는 (damage <= 0 그리고 Player.hp > 0)))",
+            ),
+            real(
+                1299, "TakeHit 이후 hpText 관찰",
+                "TurnBattleScene 화면인 상태 / " +
+                    "((damage > 0 그리고 Player.hp > 0) 또는 (damage <= 0 그리고 Player.hp > 0))",
+            ),
+            real(1301, "SpellObj 충돌", "TurnBattleScene 화면인 상태 / (damage > 0 그리고 Player.hp > 0)"),
+            real(
+                1302, "Attack 이후 관찰한다",
+                "TurnBattleScene 화면인 상태 / (Enemy.damage > 0 그리고 Player.PlayerInt().hp > 0)",
+            ),
+        )
+
+        val findings = ScenarioSiblingCheck.analyze(cases, split = listOf(cases.map { it.id }))
+
+        assertThat(findings.conflicting).isEmpty()
+    }
+
+    @Test
+    fun `생존과 사망은 여전히 함께 담을 수 없다`() {
+        // 갈래를 읽게 했다고 진짜 충돌까지 놓치면 아무것도 얻지 못한 것이다.
+        val alive = real(1293, "TakeHit 이후 관찰한다", "TurnBattleScene 화면인 상태 / (damage > 0 그리고 Player.hp > 0)")
+        val dead = real(1284, "EnemyProjectile 충돌", "TurnBattleScene 화면인 상태 / (collision.tag == \"Me\" 그리고 Player.hp <= 0)")
+
+        val findings = ScenarioSiblingCheck.analyze(listOf(alive, dead), split = listOf(listOf(1293L, 1284L)))
+
+        assertThat(findings.conflicting).containsExactly(1284L to 1293L)
+    }
+
+    // --- 덜 담긴 것은 런 전체로 (ARTEL-516) ----------------------------------------
+
+    @Test
+    fun `다른 시나리오에 이미 있는 갈래는 빠졌다고 하지 않는다`() {
+        // 실측(런 155): 미커버 0/66 인 화면에서 "이 갈래도 만들까요?"가 계속 나왔다. 이번 턴에
+        // 쓴 것만 보고 있었기 때문이다 — 134 는 런의 다른 시나리오에 이미 들어 있었다.
+        val findings = ScenarioSiblingCheck.analyze(
+            listOf(notFive, five),
+            split = listOf(listOf(133L)),
+            covered = setOf(133L, 134L),
+        )
+
+        assertThat(findings.untestedArms).isEmpty()
+    }
+
+    @Test
+    fun `런 어디에도 없는 갈래는 여전히 말한다`() {
+        val findings = ScenarioSiblingCheck.analyze(
+            listOf(notFive, five),
+            split = listOf(listOf(133L)),
+            covered = setOf(133L),
+        )
+
+        assertThat(findings.untestedArms).containsExactly(133L to 134L)
     }
 }

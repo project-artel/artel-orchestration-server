@@ -48,6 +48,22 @@ object ScenarioCoverageAudit {
          * 계속 막는 것은 모델의 조작 오류뿐이다 — 유령 번호·근거 없는 스텝·거짓 "모름".
          */
         val conflicting: List<Pair<Long, Long>> = emptyList(),
+        /**
+         * 근거를 **적지 않은** 스텝(ARTEL-515). 근거가 어긋난 것([ungrounded])과 다르다.
+         *
+         * **막지 않는다.** 실측(project 20, 99스텝)에서 빈 것이 13개였고 전부 한 종류였다 —
+         * `case_id` 가 없는 **전제 세팅 동작**이다("스테이지 위치가 5인 상태로 EndingScene에
+         * 진입한다", "전투 화면에 진입한다").
+         *
+         * 모델이 게을러서 비운 것이 아니라 **적을 값이 계약에 없다**: 검증 대상이 아니니 `CASE`
+         * 가 아니고, 어떤 기능으로 그 상태를 만드는지 몰라 `CAPABILITY` 번호를 못 대고, 사람이
+         * 알려준 것이 아니니 `HUMAN` 도 아니다. `UNKNOWN` 으로 적으면 미상 블록이 되어 화면이
+         * "모른다"로 덮인다. 그래서 이것을 막으면 모델은 미상 블록을 쏟아내게 되고, 그건 지금보다
+         * 나쁘다.
+         *
+         * 세는 이유는 값이 늘어나면 **계약을 고칠 근거**가 되기 때문이다(초과 `excess` 와 같다).
+         */
+        val unsourced: List<StepRef> = emptyList(),
     ) {
         /**
          * 저장을 막아야 하는가.
@@ -96,7 +112,8 @@ object ScenarioCoverageAudit {
         scenarios: List<ScenarioResult>,
     ): Findings {
         val ungrounded = ungroundedSteps(scenarios)
-        if (reviewed == null) return Findings(ungrounded = ungrounded)
+        val unsourced = unsourcedSteps(scenarios)
+        if (reviewed == null) return Findings(ungrounded = ungrounded, unsourced = unsourced)
 
         val declared = reviewed.included.toSet()
         val judged = declared + reviewed.excluded.toSet()
@@ -110,7 +127,37 @@ object ScenarioCoverageAudit {
             ghost = (used - projectCaseIds).sorted(),
             excess = (used - declared).sorted(),
             ungrounded = ungrounded,
+            unsourced = unsourced,
         )
+    }
+
+    /**
+     * 근거를 **적지 않은** 스텝을 센다(ARTEL-515).
+     *
+     * 예전에는 이 자리에서 그냥 통과시켰다. 이유가 있었다 — 이 필드가 없는 구버전 Agent와 함께
+     * 배포되기 위해서이고, 되돌리는 스위치가 그 null 하나뿐이라 롤백이 Agent 재배포만으로 끝난다.
+     *
+     * 그런데 그 스위치는 **결과 단위가 아니라 스텝 단위**로 걸려 있었다. 그래서 "이 Agent 는 필드를
+     * 모른다"와 "이 Agent 는 아는데 이 스텝만 비웠다"가 구분되지 않았고, 뒤엣것이 실제로 나온다
+     * (project 20 에서 99스텝 중 13개). 필드를 비우는 것이 **가장 싼 통과 방법**이 되어 있었다.
+     *
+     * 그래서 판단을 **결과 단위로** 옮긴다. 이 턴의 결과에서 하나라도 채웠으면 그 Agent 는 필드를
+     * 아는 것이고, 같은 결과 안의 빈 스텝은 안 적은 것이다. 하나도 없으면 예전처럼 통째로
+     * 건너뛴다 — 롤백 스위치는 그대로 산다.
+     */
+    private fun unsourcedSteps(scenarios: List<ScenarioResult>): List<StepRef> {
+        // 이 결과가 그 필드를 아는 Agent 에게서 왔나.
+        if (scenarios.none { scenario -> scenario.steps.any { it.stepSource != null } }) return emptyList()
+
+        return buildList {
+            scenarios.forEachIndexed { scenarioIndex, scenario ->
+                scenario.steps.forEachIndexed { stepIndex, step ->
+                    if (step.stepSource == null) {
+                        add(StepRef(scenarioIndex, stepIndex, "이 스텝을 어디서 가져왔는지 적히지 않았다"))
+                    }
+                }
+            }
+        }
     }
 
     /**
