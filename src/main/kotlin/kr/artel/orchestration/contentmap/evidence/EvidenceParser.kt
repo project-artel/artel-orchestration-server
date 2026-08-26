@@ -44,6 +44,19 @@ class EvidenceParser(private val objectMapper: ObjectMapper) {
         )
     }
 
+    /**
+     * 조건 트리 **한 그루만** 읽는다. 문서 전체가 아니라 이미 떼어 둔 트리를 가진 쪽을 위한 창구다.
+     *
+     * `capability_evidence.condition_tree` 에 앉은 원본을 되읽어 응답에 싣는
+     * `ContentMapViewService` 가 이것을 쓴다. 정규화를 그쪽에 한 벌 더 쓰지 않는 것이 요점이다 —
+     * 두 벌이 되면 **두 곳이 서로 다르게 관대해진다.** 파서가 읽을 수 있게 되는 것은 곧바로
+     * 조회 응답이 읽을 수 있게 되는 것이어야 한다.
+     *
+     * 던지지 않는다. 모르는 `kind` 는 [ConditionNode.Unknown] 으로 남고, 빈 노드는
+     * [ConditionNode.Always] 다 — 조건을 못 읽은 것을 오류로 만들면 지도 한 장이 통째로 안 나온다.
+     */
+    fun parseCondition(node: JsonNode): ConditionNode = node.toCondition()
+
     private fun JsonNode.toBuild() = EvidenceBuild(
         unity = path("unity").asTextOrNull(),
         platform = path("platform").asTextOrNull(),

@@ -4,6 +4,7 @@ import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.reactive.awaitSingle
 import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.contentmap.dto.ConditionNodeResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapResponse
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
@@ -11,6 +12,7 @@ import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import kr.artel.orchestration.contentmap.entity.EdgeSource
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
 import kr.artel.orchestration.contentmap.entity.SpecGapReason
+import kr.artel.orchestration.contentmap.entity.SpecStatus
 import kr.artel.orchestration.contentmap.ingest.ContentMapIngestService
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
@@ -422,6 +424,162 @@ class ContentMapViewGoldenTest {
             assertThat(verifiedAt).isNull()
             assertThat(source).isEqualTo(EdgeSource.RUNTIME.wire)
         }
+    }
+
+    /**
+     * **씬마다 조작 단계의 목록이 실린다. `steps.size` 가 `total - notAStep` 과 같다.**
+     *
+     * 이 등식이 이 diff 의 핵심이다. 카운트와 목록의 출처가 다르기 때문이다 — 카운트는 `capability`
+     * 직접 집계이고(뷰가 `not-a-step` 을 걸러 그 칸을 답할 수 없다), 목록은
+     * `v_content_map_capability` 다. 두 출처가 같은 표를 본다는 것을 이 등식 말고는 확인할 방법이
+     * 없고, 어긋나면 화면은 "14개 있다"고 쓴 옆에 12줄을 그리며 아무 오류도 내지 않는다.
+     *
+     * 씬별 수를 **골든 문서에서 세어** 못 박는다. 이슈 본문의 실측 수치는 `editor-play` 캡처의 것이라
+     * 다른 문서다 — 그것을 여기 베끼면 이 파일이 자기가 적재한 적 없는 문서를 단언하게 된다.
+     */
+    @Test
+    fun `씬마다 조작 단계 목록이 실리고 개수가 카운트와 맞는다`(): Unit = runBlocking {
+        response.scenes.forEach { scene ->
+            assertThat(scene.steps.size.toLong())
+                .describedAs(scene.name)
+                .isEqualTo(scene.capabilities.total - scene.capabilities.notAStep)
+        }
+
+        assertThat(response.scenes.associate { it.name to it.steps.size }).containsExactlyInAnyOrderEntriesOf(
+            mapOf(
+                "EndingScene" to 2,
+                "GameClearScene" to 8,
+                "GameOverScene" to 1,
+                "Map_scene" to 16,
+                "StoryScene" to 2,
+                "TitleScene" to 14,
+                "TurnBattleScene" to 8,
+            )
+        )
+
+        // 31 runnable + 20 needs-probe. 적재 골든 테스트가 못 박은 창구 51 과 같은 수다.
+        assertThat(response.scenes.sumOf { it.steps.size }).isEqualTo(51)
+    }
+
+    /**
+     * **근거 조인이 행을 곱하지 않는다.**
+     *
+     * `v_content_map_capability` 는 `LEFT JOIN capability_evidence` 로 근거를 붙이고 그 조인을 접는
+     * 장치가 뷰 안에 없다. 오늘 `capability_evidence.capability_id` 는 PK 라 1:1 이지만, 서비스는 그
+     * 가정을 두지 않고 기능 하나당 한 줄로 접는다. 그 접기가 실제로 걸려 있는지를 **기능 id 의
+     * 유일성**으로 확인한다 — 곱해졌다면 같은 id 가 두 번 선다.
+     *
+     * 총수가 뷰 행 수와 같다는 것도 함께 본다. 접기가 너무 많이 접었다면 여기가 줄어든다.
+     */
+    @Test
+    fun `단계는 기능 하나에 한 줄이고 총수가 뷰 행 수와 같다`(): Unit = runBlocking {
+        val ids = response.scenes.flatMap { scene -> scene.steps.map { it.id } }
+
+        assertThat(ids).doesNotHaveDuplicates()
+        assertThat(ids).hasSize(
+            count("SELECT count(*) FROM v_content_map_capability WHERE content_map_id = :id").toInt()
+        )
+    }
+
+    /**
+     * **`not-a-step` 은 목록에 오지 않는다.** 단계가 아닌 것을 단계 목록에 넣지 않는다.
+     *
+     * 골든 문서에서 기능 491행 중 440행이 거기다. 실으면 응답이 아홉 배가 되고, 무엇보다 화면이
+     * 누를 수 없는 것을 누르라고 그린다.
+     *
+     * `status` 는 **kebab-case 값 그대로** 나간다. `capabilities: {needsProbe, notAStep}` 이
+     * camelCase 인 것과 헷갈리기 쉬운데, 저쪽은 키 이름이고 이쪽은 값이라 규칙이 다르다. 이 저장소의
+     * 값 어휘는 전부 kebab 이다(`source: static|runtime`, `capture: editor-play`).
+     */
+    @Test
+    fun `단계에 not-a-step 이 없고 status 는 kebab-case 세 값 안이다`() {
+        val statuses = response.scenes.flatMap { it.steps }.map { it.status }
+
+        assertThat(statuses).isNotEmpty()
+        assertThat(statuses).doesNotContain(SpecStatus.NOT_A_STEP.wire)
+        assertThat(statuses).isSubsetOf(
+            SpecStatus.RUNNABLE.wire,
+            SpecStatus.NEEDS_PROBE.wire,
+            SpecStatus.UNREACHABLE_PRECONDITION.wire,
+        )
+        // 이 문서에는 두 값만 나온다. 씬별 카운트의 합과 같아야 한다.
+        assertThat(statuses.count { it == SpecStatus.RUNNABLE.wire }.toLong())
+            .isEqualTo(response.scenes.sumOf { it.capabilities.runnable })
+        assertThat(statuses.count { it == SpecStatus.NEEDS_PROBE.wire }.toLong())
+            .isEqualTo(response.scenes.sumOf { it.capabilities.needsProbe })
+    }
+
+    /**
+     * **조건 트리가 한 벌 어휘로 정규화되어 나온다.**
+     *
+     * 계약 둘: `kind` 는 늘 소문자이고, 이름표 없는 노드는 나가지 않는다. 지저분한 것은 서버가
+     * 흡수하고 화면은 한 어휘만 안다.
+     *
+     * 흡수할 지저분함이 실제로 있다. 적재기는 조건을 갈랐을 때 **내부 모델을 그대로 직렬화**하므로
+     * (`ContentMapIngestService.conditionJsonOf`) `{"kind":"EVERY"}` 같은 대문자가 표에 앉아 있다.
+     * 오늘 파서는 그것을 `unknown` 으로 읽고, 그래서 **`unknown` 이 이 문서에 실제로 나온다** —
+     * 버려지지 않고 이름표를 달고 나가는 것이 요점이다.
+     *
+     * **`unknown` 의 수를 못 박지 않는다.** ARTEL-495 가 파서에 대문자 `EVERY` 를 읽는 관대함을 넣는
+     * 중이고, 그것이 들어오면 이 노드들이 `every` 로 바뀐다. 이 조회는 파서를 재사용하므로 **한 줄도
+     * 고치지 않고** 그 개선을 물려받는다 — 그것이 정규화를 두 벌로 만들지 않은 이유다. 그래서 여기서
+     * 지키는 것은 개수가 아니라 **어휘를 벗어나는 노드가 없다**는 성질이다.
+     */
+    @Test
+    fun `조건 트리가 소문자 한 벌 어휘로 나오고 이름표 없는 노드가 없다`() {
+        val steps = response.scenes.flatMap { it.steps }
+        val kinds = steps.flatMap { flatten(it.given) }.map { it.kind }
+
+        assertThat(kinds).isNotEmpty()
+        assertThat(kinds).isSubsetOf("always", "test", "gesture", "every", "either", "unknown")
+        assertThat(kinds).allSatisfy { assertThat(it).isEqualTo(it.lowercase()) }
+        assertThat(kinds).noneMatch { it.isBlank() }
+
+        // 51건 전부 조건을 든다. 이 문서는 전부 근거 출신이라 `given` 이 빌 이유가 없다 —
+        // null 은 `capability_evidence` 행이 없는 관측 출신 기능에만 나온다.
+        assertThat(steps).allSatisfy { assertThat(it.given).isNotNull() }
+
+        // `givenText` 는 51건 전부 null 이다. ARTEL-447 이 채우기 전까지 화면을 지탱하는 것은
+        // 조건 트리뿐이고, 그것이 아래 테스트가 말하는 바다.
+        assertThat(steps).allSatisfy { assertThat(it.givenText).isNull() }
+    }
+
+    /**
+     * **조건이 없으면 화면에 똑같은 줄이 여럿 선다. 이 테스트가 그 이유다.**
+     *
+     * GameClearScene 의 8단계는 `summary` · `inputKey` · `status` 세 축으로 묶으면 2 · 2 · 4 짜리
+     * 세 무리가 된다. 무리 안에서 세 축이 **전부 같고**, `givenText` 도 전부 null 이다. 조건을 싣지
+     * 않으면 화면은 구분할 근거가 하나도 없는 줄 여덟 개를 그리고, 사람은 그것을 중복 버그로 읽는다.
+     *
+     * 조건을 실으면 무리마다 전부 갈린다. 그 사실을 여기서 못 박는다.
+     *
+     * 이 성질은 ARTEL-495 뒤에도 지켜진다 — 오늘 대문자 `EVERY` 는 `parts` 를 통째로 잃은 채
+     * `unknown` 하나로 눌리므로, 파서가 관대해지면 갈래는 **더** 갈리지 덜 갈리지 않는다.
+     */
+    @Test
+    fun `세 축이 같은 단계들을 조건이 가른다`() {
+        val gameClear = response.scenes.single { it.name == "GameClearScene" }
+        val groups = gameClear.steps.groupBy { Triple(it.summary, it.inputKey, it.status) }
+
+        // 여덟 줄이 세 무리로 눌린다. 세 축만 보면 화면이 그릴 수 있는 것은 세 줄뿐이다.
+        assertThat(gameClear.steps).hasSize(8)
+        assertThat(groups.map { it.value.size }).containsExactlyInAnyOrder(2, 2, 4)
+        assertThat(groups.values.flatten()).allSatisfy { assertThat(it.givenText).isNull() }
+
+        // 조건을 실으면 무리 안에서 전부 갈린다.
+        groups.forEach { (axes, steps) ->
+            assertThat(steps.map { it.given }.distinct())
+                .describedAs("$axes")
+                .hasSize(steps.size)
+        }
+    }
+
+    /** 조건 트리를 깊이 우선으로 편다. `every` · `either` 만 자식을 든다. */
+    private fun flatten(node: ConditionNodeResponse?): List<ConditionNodeResponse> = when (node) {
+        null -> emptyList()
+        is ConditionNodeResponse.Every -> listOf(node) + node.parts.flatMap(::flatten)
+        is ConditionNodeResponse.Either -> listOf(node) + node.parts.flatMap(::flatten)
+        else -> listOf(node)
     }
 
     // ---------- 픽스처 ----------
