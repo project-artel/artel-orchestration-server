@@ -161,4 +161,25 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      * S3에 올릴 이유가 없다. 한 건이라도 그 revision이면 같은 판이 이미 반영된 것이다.
      */
     suspend fun existsByProjectIdAndSpecRevision(projectId: Long, specRevision: Int): Boolean
+
+    /**
+     * 시나리오가 스텝에 번호로 들고 있는 케이스들(ARTEL-578).
+     *
+     * 시나리오는 `test_scenario.steps` JSONB 안에 `case_id` 를 숫자로 담는다 — 외래 키가 아니라서
+     * 케이스를 지워도 DB 가 막지 않고, 시나리오에 **가리키는 것이 없는 번호**만 남는다.
+     *
+     * 지도에서 사라진 기능의 케이스를 지울 때 이것을 먼저 본다. 인용된 줄은 지우는 대신 `BROKEN` 으로
+     * 돌려, 시나리오가 상했다는 것을 사람이 보게 한다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT (step->>'case_id')::BIGINT AS id
+        FROM test_scenario
+        CROSS JOIN LATERAL jsonb_array_elements(steps) AS step
+        WHERE project_id = :projectId
+          AND jsonb_typeof(steps) = 'array'
+          AND step->>'case_id' IS NOT NULL
+        """
+    )
+    fun findCaseIdsCitedByScenarios(projectId: Long): Flow<Long>
 }

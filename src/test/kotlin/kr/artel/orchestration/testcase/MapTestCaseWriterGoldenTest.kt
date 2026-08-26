@@ -1,0 +1,217 @@
+package kr.artel.orchestration.testcase
+
+import com.fasterxml.jackson.databind.ObjectMapper
+import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.contentmap.entity.Capture
+import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
+import kr.artel.orchestration.contentmap.entity.ContentMapEntity
+import kr.artel.orchestration.contentmap.ingest.ContentMapIngestService
+import kr.artel.orchestration.contentmap.ingest.IngestResult
+import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
+import kr.artel.orchestration.contentmap.repository.ContentMapRepository
+import kr.artel.orchestration.game.entity.GameBuildEntity
+import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.project.FakeDocumentStorage
+import kr.artel.orchestration.project.entity.ProjectEntity
+import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
+import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.context.TestConfiguration
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Primary
+import org.springframework.test.context.ActiveProfiles
+import java.io.File
+import java.security.MessageDigest
+import java.time.Instant
+
+/**
+ * 적재가 케이스를 **실제로 앉히는지**를 실측 문서로 확인한다(ARTEL-578).
+ *
+ * `MapTestCaseGeneratorGoldenTest` 는 생성기가 무엇을 내는지를 본다. 여기는 그것이 `test_case` 에
+ * 앉아 저작이 읽을 수 있게 되는지를 본다 — 그 자리가 끊겨 있어서 개편 전체가 저작에 안 닿았다.
+ *
+ * **같은 문서를 두 번 적재한다.** 두 번째가 표를 부풀리면 겹침 판정이 같은 케이스를 못 알아본 것이고,
+ * 그것은 SDK 가 재등록할 때마다 케이스가 배로 늘어난다는 뜻이다.
+ */
+@ActiveProfiles("test")
+@SpringBootTest
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class MapTestCaseWriterGoldenTest {
+
+    @TestConfiguration
+    class FakeStorageConfig {
+        @Bean
+        @Primary
+        fun fakeDocumentStorage(): DocumentStorage = FakeDocumentStorage()
+    }
+
+    @Autowired private lateinit var ingest: ContentMapIngestService
+    @Autowired private lateinit var storage: DocumentStorage
+    @Autowired private lateinit var projects: ProjectRepository
+    @Autowired private lateinit var gameBuilds: GameBuildRepository
+    @Autowired private lateinit var contentMaps: ContentMapRepository
+    @Autowired private lateinit var documents: ContentMapDocumentRepository
+    @Autowired private lateinit var testCases: TestCaseRepository
+    @Autowired private lateinit var scenarios: TestScenarioRepository
+    @Autowired private lateinit var objectMapper: ObjectMapper
+
+    private var projectId: Long = 0
+    private var contentMapId: Long = 0
+    private lateinit var first: IngestResult
+    private lateinit var second: IngestResult
+    private lateinit var rows: List<TestCaseEntity>
+    private lateinit var document: ContentMapDocumentEntity
+
+    @BeforeAll
+    fun ingestTwice() = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(
+            ProjectEntity(name = "writer-golden", genre = "RPG", createdAt = now, updatedAt = now)
+        )
+        projectId = project.id!!
+        val build = gameBuilds.save(
+            GameBuildEntity(projectId = projectId, version = "gen", createdAt = now, updatedAt = now)
+        )
+        val map = contentMaps.save(
+            ContentMapEntity(
+                gameBuildId = build.id!!, schemaVersion = 6, capture = Capture.EDITOR.wire,
+                evidencePromises = Json.of(
+                    """["build-info-v1","selector-v1","visual-roles-v1","persistent-objects-v1"]"""
+                ),
+                evidenceDigest = "d4b31e4da9504b7d",
+                unity = "2022.3.62f3", backend = "mono", development = true, sdkVersion = "0.1.0",
+            )
+        )
+        contentMapId = map.id!!
+
+        // 손으로 쓴 케이스가 이미 있다. 갈아 끼울 때 이것이 살아남아야 한다.
+        testCases.save(
+            TestCaseEntity(
+                projectId = projectId, scene = "Map_scene", step = "손으로 쓴 스텝",
+                precondition = "사람이 적은 전제", expectedValue = "사람이 적은 결과",
+            )
+        )
+
+        val bytes = File(DOCUMENT).readBytes()
+        val objectKey = "content-map/$contentMapId/wv-editor-latest.json"
+        (storage as FakeDocumentStorage).put(objectKey, bytes)
+        document = documents.save(
+            ContentMapDocumentEntity(
+                contentMapId = contentMapId, objectKey = objectKey,
+                contentHash = MessageDigest.getInstance("SHA-256").digest(bytes)
+                    .joinToString("") { "%02x".format(it) },
+                byteSize = bytes.size.toLong(),
+            )
+        )
+
+        first = ingestOnce()
+        second = ingestOnce()
+        rows = testCases.findByProjectIdOrderByIdAsc(projectId).toList()
+    }
+
+    /**
+     * 같은 문서 행을 다시 적재한다. 해시가 유일 제약이라 두 번째 행을 만들 수 없고, 실제 재적재도
+     * 그 모양이다 — SDK 가 같은 빌드를 다시 올리면 문서는 하나고 적재만 다시 돈다.
+     */
+    private suspend fun ingestOnce(): IngestResult = ingest.ingest(document)
+
+    private fun mine() = rows.filter {
+        objectMapper.readTree(it.metadata.asString()).path("origin").asText() == MapTestCaseWriter.ORIGIN
+    }
+
+    /**
+     * **적재가 케이스를 앉힌다.**
+     *
+     * 이 자리가 끊겨 있었다. 생성기를 부르는 곳이 골든 테스트뿐이라, 저작은 여전히 구버전이 엑셀로
+     * 넣은 줄을 읽었다.
+     *
+     * 생성기가 낸 **139건**에서 네 칸이 똑같이 겹치는 14건이 접혀 **125건**이 앉는다 — 서로 다른
+     * 기능이 사람 눈에 같은 시험을 내면 표에 두 번 보일 이유가 없다. 접히는 자리는 씬별로
+     * `GameClearScene` 26→18 · `TitleScene` 8→4 · `TurnBattleScene` 6→4 이고, 나머지 넷은 그대로다.
+     *
+     * 접힌 줄의 `capability_key` 는 먼저 온 기능의 것이라 되짚기가 한쪽만 가리킨다. 그 대가로
+     * 사용자가 같은 시험을 두 번 보지 않는다.
+     */
+    @Test
+    fun `적재가 지도의 케이스를 앉힌다`() {
+        assertThat(mine()).isNotEmpty()
+        assertThat(mine()).hasSize(125)
+        assertThat(first.testCases.created).isEqualTo(125)
+    }
+
+    /**
+     * **두 번 적재해도 표가 부풀지 않는다.**
+     *
+     * SDK 는 재등록마다 같은 문서를 다시 올린다. 겹침 판정이 없으면 그때마다 케이스가 배로 늘고,
+     * 저작 프롬프트에 같은 시험이 여러 번 실린다.
+     */
+    @Test
+    fun `같은 문서를 다시 적재해도 케이스가 늘지 않는다`() {
+        assertThat(second.testCases.created).isZero()
+        assertThat(second.testCases.deleted).isZero()
+        assertThat(second.testCases.broken).isZero()
+    }
+
+    /**
+     * **`capability_key` 가 채워진다.**
+     *
+     * 이것이 없으면 ARTEL-553 이 만든 칸도, ARTEL-555 가 그 키로 지도를 되짚는 길도 한 번도 안 쓰인다.
+     * 되짚기가 문자열 맞춤으로 되돌아가는 자리다.
+     */
+    @Test
+    fun `앉은 케이스가 지도를 되짚을 키를 든다`() {
+        assertThat(mine()).allSatisfy { assertThat(it.capabilityKey).isNotBlank() }
+    }
+
+    /**
+     * **남의 행을 건드리지 않는다.**
+     *
+     * 손으로 쓴 케이스와 엑셀로 들어온 케이스는 출처 표시가 없다. 두 경로가 한동안 공존하는 것이
+     * 되돌아갈 길이므로(ARTEL-556 의 대조가 통과하기 전까지) 그 경계가 곧 안전장치다.
+     */
+    @Test
+    fun `손으로 쓴 케이스는 살아남는다`() {
+        assertThat(rows.map { it.step }).contains("손으로 쓴 스텝")
+        assertThat(mine().map { it.step }).doesNotContain("손으로 쓴 스텝")
+    }
+
+    /**
+     * **시나리오가 든 케이스는 지우지 않는다.**
+     *
+     * 시나리오는 스텝 안에 `case_id` 를 숫자로 든다 — 외래 키가 아니라 지워도 DB 가 막지 않고,
+     * 시나리오에 가리키는 것이 없는 번호만 남는다. 그래서 지우는 대신 `BROKEN` 으로 돌린다.
+     */
+    @Test
+    fun `시나리오가 인용한 케이스는 지우지 않고 상했다고 표시한다`(): Unit = runBlocking {
+        val cited = mine().first()
+        scenarios.save(
+            TestScenarioEntity(
+                projectId = projectId, title = "인용", description = "",
+                steps = Json.of("""[{"action":"확인","case_id":${cited.id}}]"""),
+            )
+        )
+        // 지도에서 사라진 것처럼 만든다 — 케이스의 세 칸을 바꾸면 다음 적재가 이 줄을 못 알아본다.
+        testCases.save(cited.copy(step = "지도가 더는 말하지 않는 스텝"))
+
+        val after = ingestOnce()
+
+        assertThat(after.testCases.broken).isEqualTo(1)
+        assertThat(testCases.findById(cited.id!!)?.verificationStatus).isEqualTo("BROKEN")
+    }
+
+    companion object {
+        private const val DOCUMENT = "src/test/resources/contentmap/wv-editor-latest.json"
+    }
+}

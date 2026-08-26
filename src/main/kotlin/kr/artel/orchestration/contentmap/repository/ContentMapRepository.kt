@@ -121,6 +121,22 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
     fun findCallEdges(contentMapId: Long): Flow<ContentMapCallEdge>
 
     /**
+     * 이 지도가 어느 프로젝트의 것인가(ARTEL-578).
+     *
+     * 지도는 게임 빌드에 매달려 있고 프로젝트는 그 위에 있다. 케이스를 앉히려면 `project_id` 가
+     * 있어야 하는데(`test_case` 의 소유자가 프로젝트다) 지도 행은 그것을 직접 안 든다.
+     */
+    @Query(
+        """
+        SELECT game_build.project_id
+        FROM content_map
+        JOIN game_build ON game_build.id = content_map.game_build_id
+        WHERE content_map.id = :contentMapId
+        """
+    )
+    suspend fun findProjectId(contentMapId: Long): Long?
+
+    /**
      * 명세가 못 된 이유(`v_spec_gap`). 사유가 없는(세 칸이 다 찬) 행은 뺀다.
      *
      * 이 분포가 다음 스프린트에 무엇을 고칠지 정한다.
