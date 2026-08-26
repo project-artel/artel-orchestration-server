@@ -156,15 +156,34 @@ object ScenarioSiblingCheck {
      *
      * 모르는 것은 충돌이라 부르지 않는다 — 비교할 수 없는 값(문자열 부등식 등)은 겹친다고 본다.
      */
-    fun exclusive(a: CaseFact, b: CaseFact): Boolean =
-        violates(a.declared, b.guards) || violates(b.declared, a.guards) || disjoint(a.guards, b.guards)
+    fun exclusive(a: CaseFact, b: CaseFact): Boolean = contested(a, b).isNotEmpty()
 
-    private fun violates(declared: Map<String, String>, guards: List<Guard>): Boolean =
-        guards.any { guard -> declared[guard.variable]?.let { !guard.holds(it) } ?: false }
+    /**
+     * **어느 값 때문에 함께 못 서는가**(ARTEL-581).
+     *
+     * [exclusive] 는 "그렇다/아니다"만 답한다. 그것으로는 나누는 쪽이 **되돌릴 수 있는 어긋남**을
+     * 가려낼 수 없다 — 앞 스텝이 바로 그 값을 바꿔 놓으면 뒤 스텝은 성립한다. 실측(런 159)에서
+     * `MapMove.position` 이 그랬고, 걸어가는 시나리오 하나가 네 조각이 됐다.
+     *
+     * 그래서 어긋남을 **값 이름과 함께** 낸다. 판정 자체는 그대로다 — 여전히 한 시점의 사실이고,
+     * 그 시점을 흐리는 일은 여기서 하지 않는다([ScenarioConflictSplit] 이 순서를 안다).
+     *
+     * 이름은 가드가 적은 대로 낸다. 지도의 효과 대상과 맞추는 것은 부르는 쪽 몫이다 — 여기서
+     * 정규화하면 `Player.hp` 와 `hp` 를 같게 보던 [sameVariable] 의 꼬리 규칙이 두 벌이 된다.
+     */
+    fun contested(a: CaseFact, b: CaseFact): Set<String> =
+        violated(a.declared, b.guards) + violated(b.declared, a.guards) + disjoint(a.guards, b.guards)
 
-    /** 같은 변수를 두고 겹치는 값이 없는 요구가 하나라도 있나. */
-    private fun disjoint(a: List<Guard>, b: List<Guard>): Boolean =
-        a.any { x -> b.any { y -> sameVariable(x, y) && !overlaps(x, y) } }
+    private fun violated(declared: Map<String, String>, guards: List<Guard>): Set<String> =
+        guards.filter { guard -> declared[guard.variable]?.let { !guard.holds(it) } ?: false }
+            .map { it.path }
+            .toSet()
+
+    /** 같은 변수를 두고 겹치는 값이 없는 요구들. */
+    private fun disjoint(a: List<Guard>, b: List<Guard>): Set<String> =
+        a.filter { x -> b.any { y -> sameVariable(x, y) && !overlaps(x, y) } }
+            .map { it.path }
+            .toSet()
 
     /**
      * 두 가드가 **같은 값**을 말하나.
