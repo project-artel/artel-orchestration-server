@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.entity.Actionability
 import kr.artel.orchestration.contentmap.entity.AnalysisConfidence
+import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import kr.artel.orchestration.contentmap.entity.Interaction
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
@@ -102,11 +103,10 @@ class ScenarioPathService(
                         note = "$fromScene 에서 $toScene 으로 가는 조작은 있으나 그 조작이 " +
                             "${hop.by.variable} ${hop.by.operator} ${hop.by.value} 를 요구한다. 지금은 그렇지 않다.",
                     )
-                    Hop.Automatic -> ScenarioPathAnswer(
+                    is Hop.Automatic -> ScenarioPathAnswer(
                         ScenarioPathResult.UNKNOWN,
                         blockedBy = "$fromScene→$toScene",
-                        note = "$fromScene 에서 $toScene 으로 저절로 넘어가는 전이는 있으나 조작으로 " +
-                            "지시할 수 없다. 무엇을 해야 그 전이가 일어나는지는 명세에 없다.",
+                        note = hopTrigger(fromScene, toScene, hop.trigger),
                     )
                     else -> ScenarioPathAnswer(
                         ScenarioPathResult.UNKNOWN,
@@ -242,14 +242,16 @@ class ScenarioPathService(
                 // 값을 바꾸는 것이 명세에 **있는데** 지시할 수 없는 경우다. 없는 것과 구분해서
                 // 말해 준다 — 사용자가 채워 줘야 할 것이 "어떻게 하면 그 일이 일어나는가"라서
                 // 그 문장이 곧 물어볼 질문이 된다.
-                Writer.Automatic -> return ScenarioPathAnswer(
+                is Writer.Automatic -> return ScenarioPathAnswer(
                     ScenarioPathResult.UNKNOWN,
                     capabilityIds = steps.map { it.capabilityId },
                     actions = steps.map { it.action },
                     inputs = steps.map { it.input },
                     blockedBy = guard.variable,
-                    note = "${guard.variable} 를 바꾸는 것이 명세에 있으나 조작으로 지시할 수 없다" +
-                        "(저절로 일어나는 것). ${guard.operator} ${guard.value} 로 만드는 방법은 명세에 없다.",
+                    // **무엇을 하면 그 일이 일어나는가**를 말한다(ARTEL-532). 지도는 그 조건을 이미
+                    // 들고 있다 — `wave >= 전체 웨이브 수` 처럼. 그것을 빼고 "방법은 명세에 없다"로
+                    // 끝내면 사용자는 없는 것을 알려주려 하게 된다.
+                    note = trigger(guard, writer.trigger),
                 )
                 Writer.None -> return ScenarioPathAnswer(
                     ScenarioPathResult.UNKNOWN,
@@ -288,7 +290,10 @@ class ScenarioPathService(
                     ?.takeIf { instructable(it) }
                     ?.let { effect to it }
             }
-        if (usable.isEmpty()) return Writer.Automatic
+        // 지시할 수 있는 것이 하나도 없다 — 값이 바뀌기는 하는데 저절로 바뀐다. **그 코드가 도는
+        // 조건을 함께 낸다**(ARTEL-532). 지도가 그 조건을 이미 들고 있으므로 "방법이 없다"로
+        // 끝낼 이유가 없다.
+        if (usable.isEmpty()) return Writer.Automatic(triggerOf(effects, guard, state))
 
         // **그 조작 자신이 지금 가능한가.** 같은 변수를 쓰는 기능이 여럿이고 각자 성립 조건이
         // 다르므로(맵의 방향키가 각각 다른 `position` 에서만 성립한다), 이것을 보는 것은 거르는
@@ -436,6 +441,56 @@ class ScenarioPathService(
     }
 
     /**
+     * 저절로 일어나는 쓰기가 **도는 조건**(ARTEL-532).
+     *
+     * `interaction=none` · `not-a-step` 인 기능은 시킬 수 없다. 그렇다고 아무것도 모르는 것은
+     * 아니다 — 지도는 그 코드가 언제 도는지를 `given_text` 에 들고 있다. 실측(word-venture):
+     *
+     * ```
+     * given_text = `wave >= battleScript.GetBattleWaveDatas().Count`
+     * effect     = MapMove.StagePosition +1
+     * ```
+     *
+     * 즉 "웨이브를 끝까지 올리면 스테이지 위치가 오른다"가 적혀 있다. 이것을 빼고 "만드는 방법이
+     * 명세에 없다"로 끝내면 사용자는 **없는 것을 알려주려 하게 되고**, 정작 채워야 할 자리(어떻게
+     * 그 조건을 만드나)는 가려진다.
+     *
+     * 원하는 방향으로 값을 미는 쓰기만 본다 — 지시할 수 있는 쪽을 고를 때와 같은 규칙이다.
+     */
+    private suspend fun triggerOf(
+        effects: List<CapabilityEffectEntity>,
+        guard: Guard,
+        state: Map<String, String>,
+    ): String? {
+        val toward = push(guard, state[guard.variable])
+        val candidates = effects.mapNotNull { effect ->
+            capabilityRepository.findById(effect.capabilityId)?.let { effect to it }
+        }
+        val chosen = candidates.firstOrNull { (e, _) ->
+            e.detail != null && increment(e.detail) == null && guard.holds(e.detail!!)
+        } ?: candidates.firstOrNull { (e, _) ->
+            val by = increment(e.detail) ?: return@firstOrNull false
+            toward == null || toward == Push.of(by)
+        }
+        return ScenarioStateReader.conditionText(chosen?.second?.givenText)
+    }
+
+    /** 씬이 저절로 넘어가는 자리에서 남길 말. [trigger] 와 같은 규칙으로, 조건을 알면 싣는다. */
+    private fun hopTrigger(from: String, to: String, condition: String?): String {
+        val head = "$from 에서 $to 으로 저절로 넘어가는 전이는 있으나 조작으로 지시할 수 없다"
+        if (condition == null) return "$head. 무엇을 해야 그 전이가 일어나는지는 명세에 없다."
+        return "$head — 명세는 `$condition` 일 때 넘어간다고 말한다. 그 상태를 만드는 방법을 알려 주면 채운다."
+    }
+
+    /** 저절로 일어나는 자리에서 사용자에게 남길 말. 조건을 모르면 예전처럼 말한다. */
+    private fun trigger(guard: Guard, condition: String?): String {
+        val head = "${guard.variable} 를 ${guard.operator} ${guard.value} 로 만드는 것은 " +
+            "조작으로 지시할 수 없다(저절로 일어나는 것)"
+        if (condition == null) return "$head. 무엇을 해야 그 일이 일어나는지는 명세에 없다."
+        return "$head — 명세는 `$condition` 일 때 그렇게 된다고 말한다. 그 상태를 만드는 방법을 알려 주면 채운다."
+    }
+
+    /**
      * 이 기능을 스텝으로 지시할 수 있나.
      *
      * `interaction = none` 은 조작 없이 일어나는 것(타이머·로딩 완료·코루틴)이고, `not-a-step` ·
@@ -476,9 +531,15 @@ class ScenarioPathService(
         val edge = sceneEdgeRepository.findByFromSceneIdAndToSceneName(fromScene.id!!, to).firstOrNull()
             ?: return Hop.None
         // 간선은 있는데 무엇으로 넘어가는지 모르는 경우(자동 전이)도 저절로 일어나는 쪽이다.
-        val capabilityId = edge.capabilityId ?: return Hop.Automatic
+        // **그때도 간선이 조건을 들고 있다**(ARTEL-532) — `TurnBattleScene → GameClearScene` 간선의
+        // `given_text` 가 `wave >= battleScript.GetBattleWaveDatas().Count` 다. 버리면 "무엇을 해야
+        // 넘어가는지 명세에 없다"가 되어, 명세가 아는 것을 사용자에게 되묻는 꼴이 된다.
+        val edgeSays = ScenarioStateReader.conditionText(edge.givenText)
+        val capabilityId = edge.capabilityId ?: return Hop.Automatic(edgeSays)
         val capability = capabilityRepository.findById(capabilityId) ?: return Hop.None
-        if (!instructable(capability)) return Hop.Automatic
+        if (!instructable(capability)) {
+            return Hop.Automatic(ScenarioStateReader.conditionText(capability.givenText) ?: edgeSays)
+        }
         // 간선을 타는 조작에도 자기 사전조건이 있다. `InteractionLock` 이 잠긴 상태에서 씬을
         // 넘으라고 적어 두면 실행은 첫 스텝에서 멎는다.
         ScenarioStateReader.violated(capability.givenText, state)?.let { return Hop.Blocked(it) }
@@ -495,14 +556,14 @@ class ScenarioPathService(
     /**
      * 씬을 넘는 네 경우.
      *
-     * [Automatic] 전이는 있으나 스텝으로 지시할 수 없다(저절로 일어난다).
+     * [Automatic] 전이는 있으나 스텝으로 지시할 수 없다(저절로 일어난다). 조건 원문이 있으면 함께 든다.
      * [Blocked] 조작은 있으나 그 조작 자신의 사전조건이 지금 어긋난다.
      * [None] 가는 조작이 명세에 없다.
      */
     private sealed interface Hop {
         data class By(val step: PathStep) : Hop
         data class Blocked(val by: Guard) : Hop
-        data object Automatic : Hop
+        data class Automatic(val trigger: String?) : Hop
         data object None : Hop
     }
 
@@ -510,7 +571,11 @@ class ScenarioPathService(
     private sealed interface Writer {
         data class By(val step: PathStep) : Writer
         data class Blocked(val by: Guard) : Writer
-        data object Automatic : Writer
+        /**
+         * 값을 바꾸는 것이 **저절로 일어나는** 경우. [trigger] 는 명세가 적어 둔 그 코드의 조건
+         * 원문이다 — `null` 이면 조건조차 모른다는 뜻이다.
+         */
+        data class Automatic(val trigger: String?) : Writer
         data object None : Writer
     }
 

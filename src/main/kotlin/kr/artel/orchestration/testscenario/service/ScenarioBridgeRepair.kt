@@ -218,7 +218,8 @@ object ScenarioBridgeRepair {
         val suggestion = guesses.map { it.action }.filter { it.isNotBlank() }
         return ChatScenarioStep(
             action = buildString {
-                append("이 구간의 경로를 확인할 수 없습니다 — ")
+                // 이유 자체가 `A — B` 꼴이라 여기서 또 줄표를 쓰면 한 문장에 줄표가 둘이 된다.
+                append("이 구간의 경로를 확인할 수 없습니다. ")
                 append(answer.note.ifBlank { "$reason 를 만드는 방법이 명세에 없습니다." })
                 append(" 실행 방법을 알려주시면 스텝으로 채웁니다.")
                 if (suggestion.isNotEmpty()) {
@@ -277,10 +278,29 @@ object ScenarioBridgeRepair {
 
     /** 사용자 말로 채운 구간. 그렇게 적혔다는 사실을 당사자에게 되돌려 준다. */
     private fun attributed(gap: Gap, answer: ScenarioPathAnswer, describe: (Long) -> String): String =
-        "${between(gap, describe)} 의 ${answer.blockedBy ?: "구간"} 은(는) 명세에 없어 " +
-            "알려주신 방법으로 채웠습니다. 다르면 고쳐 주세요."
+        "${between(gap, describe)} ${what(answer)}은 명세에 없어 알려주신 방법으로 채웠습니다. 다르면 고쳐 주세요."
 
-    private fun notice(gap: Gap, answer: ScenarioPathAnswer, describe: (Long) -> String): String =
-        "${between(gap, describe)} 의 ${answer.blockedBy ?: "구간"} 은(는) 명세에 없어 " +
-            "실행 방법 미상으로 두었습니다. 알려주시면 채웁니다."
+    /**
+     * 메우지 못한 구간을 알린다.
+     *
+     * **경로 계산이 적어 둔 이유를 그대로 싣는다**(ARTEL-532). 여기서는 오래 `blockedBy` 만 읽고
+     * "명세에 없어 실행 방법 미상"이라고만 말했는데, 그 한 줄로는 세 가지가 구분되지 않는다:
+     *
+     * - 그 값을 만드는 조작이 정말 없다
+     * - 조작은 있는데 **그 조작 자신이** 지금 못 한다(무엇이 막는지 이름이 있다)
+     * - 저절로 일어나는 것이고 **명세가 그 조건을 알고 있다**(`wave >= 전체 웨이브 수`)
+     *
+     * 셋을 뭉개면 사용자는 무엇을 알려줘야 하는지 알 수 없다. `ScenarioPathService` 는 이미 셋을
+     * 갈라 문장으로 적어 두었고 [gap] 스텝은 그것을 싣고 있었다 — **알림만 안 읽고 있었다.**
+     * 알림은 대화에 뜨는 것이라, 시나리오를 펼쳐 보기 전에 사용자가 먼저 만나는 자리다.
+     */
+    private fun notice(gap: Gap, answer: ScenarioPathAnswer, describe: (Long) -> String): String {
+        val why = answer.note.trim().ifBlank { null }
+            ?: "${answer.blockedBy ?: "이 구간"} 은(는) 명세에 없습니다."
+        return "${between(gap, describe)} ${what(answer)}을 미상으로 두었습니다 — $why 알려주시면 채웁니다."
+    }
+
+    /** 무엇이 막혔는지 이름이 있으면 함께 부른다. `구간(StoryScene→Map_scene)` 처럼. */
+    private fun what(answer: ScenarioPathAnswer): String =
+        answer.blockedBy?.takeIf(String::isNotBlank)?.let { "구간($it)" } ?: "구간"
 }
