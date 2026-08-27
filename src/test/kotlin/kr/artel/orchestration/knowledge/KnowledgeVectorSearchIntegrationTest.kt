@@ -8,6 +8,7 @@ import kr.artel.orchestration.common.embedding.agent.EmbeddingClient
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.config.KnowledgeSearchProperties
 import kr.artel.orchestration.knowledge.entity.KnowledgeAnchorEntity
+import kr.artel.orchestration.knowledge.entity.KnowledgeEdgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
@@ -15,6 +16,7 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
+import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.service.KnowledgeQueryEmbeddingException
 import kr.artel.orchestration.knowledge.service.KnowledgeSearchService
@@ -93,6 +95,7 @@ class KnowledgeVectorSearchIntegrationTest {
     @Autowired private lateinit var searchService: KnowledgeSearchService
     @Autowired private lateinit var knowledgeRepository: KnowledgeRepository
     @Autowired private lateinit var anchorRepository: KnowledgeAnchorRepository
+    @Autowired private lateinit var edgeRepository: KnowledgeEdgeRepository
     @Autowired private lateinit var backfillProperties: KnowledgeBackfillProperties
     @Autowired private lateinit var searchProperties: KnowledgeSearchProperties
     @Autowired private lateinit var databaseClient: DatabaseClient
@@ -120,6 +123,8 @@ class KnowledgeVectorSearchIntegrationTest {
         // knowledge_embedding은 FK ON DELETE CASCADE라 knowledge를 지우면 함께 사라진다.
         // knowledge_anchor는 FK가 없는 논리참조라(V55) 따로 비운다.
         anchorRepository.deleteAll()
+        // knowledge_edge도 FK가 없는 논리참조라(V29) 따로 비운다.
+        edgeRepository.deleteAll()
         knowledgeRepository.deleteAll()
         // 검색어는 0번 축을 가리킨다. 0번 축 벡터를 가진 항목이 거리 0으로 가장 가깝다.
         fake.vectorsByQuery[NEAR] = axis(0)
@@ -200,6 +205,22 @@ class KnowledgeVectorSearchIntegrationTest {
     private suspend fun givenAnchor(knowledgeId: Long, sceneName: String, screenId: Long? = null) {
         anchorRepository.save(
             KnowledgeAnchorEntity(knowledgeId = knowledgeId, sceneName = sceneName, screenId = screenId)
+        )
+    }
+
+    /**
+     * 쓰기 경로를 거치지 않고 심는 간선. 얼린 `LEADS_TO`(ARTEL-594)의 과거 행을 재현하는 데 쓴다 —
+     * `KnowledgeGraphService.link`가 그 값을 거절하므로 여기서만 만들 수 있다.
+     */
+    private suspend fun givenEdge(projectId: Long, from: Long, to: Long, relation: String, note: String) {
+        edgeRepository.save(
+            KnowledgeEdgeEntity(
+                projectId = projectId,
+                fromKnowledgeId = from,
+                toKnowledgeId = to,
+                relation = relation,
+                note = note
+            )
         )
     }
 
@@ -564,5 +585,26 @@ class KnowledgeVectorSearchIntegrationTest {
         val production = search(projectId).results.single()
         assertThat(production.id).isEqualTo(baseline.toString())
         assertThat(production.anchors.map { it.sceneName }).containsExactly("TownBaseline")
+    }
+
+    /**
+     * `LEADS_TO`는 쓰기만 얼렸다(ARTEL-594). 이미 저장된 경로 간선은 검색 히트의 이웃 줄로 그대로
+     * 나와야 한다 — 여기가 무너지면 과거 런이 알아낸 경로를 다음 런이 읽을 길이 사라진다.
+     */
+    @Test
+    fun `얼린 LEADS_TO 간선도 검색 히트의 이웃으로 나온다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val town = givenKnowledge(projectId, "마을 화면")
+        val shop = givenKnowledge(projectId, "상점 패널")
+        givenVector(town, axis(0))
+        givenEdge(projectId, town, shop, "LEADS_TO", "마을 상단바의 상점 버튼")
+
+        val hit = search(projectId).results.single()
+
+        assertThat(hit.id).isEqualTo(town.toString())
+        val neighbour = hit.neighbors.single()
+        assertThat(neighbour.id).isEqualTo(shop.toString())
+        assertThat(neighbour.relation).isEqualTo("LEADS_TO")
+        assertThat(neighbour.note).isEqualTo("마을 상단바의 상점 버튼")
     }
 }
