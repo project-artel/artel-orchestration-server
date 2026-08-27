@@ -51,7 +51,7 @@ import java.security.MessageDigest
 import java.time.Instant
 
 /**
- * 실측 근거 문서를 적재하고 **조회 API 가 그 표를 정직하게 옮기는가**를 본다.
+ * 실측 `evidence` 문서를 적재하고 **조회 API 가 그 표를 정직하게 옮기는가**를 본다.
  *
  * `ContentMapIngestGoldenTest` 가 "행이 DB 에 앉는가"를 보는 자리라면, 여기는 앉은 행이 **화면이
  * 읽을 수 있는 모양으로 나오는가**를 본다. 두 테스트가 같은 문서를 쓰므로 수치가 서로를 검산한다 —
@@ -67,7 +67,7 @@ import java.time.Instant
  * |---|---|---|
  * | `not-a-step` | 440 | 조작이 없는 행. 이 중 98 이 스폰 출신이다 |
  * | `runnable` | 31 | 조작이 있고 관측 가능한 효과가 있다 |
- * | `needs-probe` | 20 | 조작은 있는데 근거가 효과를 말하지 않는다 |
+ * | `needs-probe` | 20 | 조작은 있는데 `evidence` 가 효과를 말하지 않는다 |
  * | `unreachable-precondition` | 0 | 이 문서에는 없다 |
  *
  * `31 + 20 = 51` 이 `v_content_map_capability` 의 행 수이고(적재 골든 테스트가 못 박은 값),
@@ -203,7 +203,7 @@ class ContentMapViewGoldenTest {
      * 이 칸을 `true` 로 올리는 것은 QA 런인데 그 경로가 아직 없다. 적재기는 이 칸을 일부러 건드리지
      * 않는다 — 스캔이 다시 돌았다고 "가 봤다"가 취소되면 안 되기 때문이다. 언젠가 적재기가 문서의
      * `scenes` 목록만 보고 이 칸을 채우기 시작하면 여기가 깨지고, 그때 물어야 할 것은
-     * **"순회했다는 말이 근거 문서가 할 수 있는 말인가"**다.
+     * **"순회했다는 말이 `evidence` 문서가 할 수 있는 말인가"**다.
      */
     @Test
     fun `아직 아무도 씬을 밟지 않아 walked 는 전부 false 다`() {
@@ -217,8 +217,8 @@ class ContentMapViewGoldenTest {
      * (V46 이 스폰 행을 이 사유에서 빼낸다. 스폰 행은 조작이 **없어야 맞는** 행이라 그대로 두면
      * 실제 결함을 덮는다). 그 관계를 여기서 다시 계산해 확인한다.
      *
-     * `evidence-missing` 이 0 인 것도 단언한다. 그것만 성격이 다른 사유다 — 게임의 근거가 부족한
-     * 것이 아니라 **우리 적재기가 근거를 잃은 것**이라, 세어지면 고칠 곳은 SDK 가 아니라 우리 쪽이다.
+     * `evidence-missing` 이 0 인 것도 단언한다. 그것만 성격이 다른 사유다 — 게임의 `evidence` 가 부족한
+     * 것이 아니라 **우리 적재기가 `evidence` 를 잃은 것**이라, 세어지면 고칠 곳은 SDK 가 아니라 우리 쪽이다.
      */
     @Test
     fun `gap 이 사유별로 묶이고 합이 사유 있는 행 수와 같다`(): Unit = runBlocking {
@@ -252,19 +252,19 @@ class ContentMapViewGoldenTest {
         assertThat(response.gaps.map { it.count })
             .isEqualTo(response.gaps.map { it.count }.sortedDescending())
 
-        // 적재기가 근거를 잃지 않았다. 세어지면 고칠 곳은 SDK 가 아니라 우리 쪽이다.
+        // 적재기가 `evidence` 를 잃지 않았다. 세어지면 고칠 곳은 SDK 가 아니라 우리 쪽이다.
         assertThat(byReason).doesNotContainKey(SpecGapReason.EVIDENCE_MISSING.wire)
     }
 
     /**
      * 커버리지 지표의 분자와 분모. 첫 적재 직후라 **분자가 0 인 것이 정답이다.**
      *
-     * 분모 491 은 근거 출신 기능 전부이고, 이 문서에서는 기능 전체와 같다(QA 런이 없어 observed ·
+     * 분모 491 은 `evidence` 출신 기능 전부이고, 이 문서에서는 기능 전체와 같다(QA 런이 없어 observed ·
      * inferred 행이 아직 없다). 분자가 0 이 아니면 적재기가 `verification` 을 쓴 것이고, 그 칸은
-     * 적재기가 쓰면 안 되는 칸이다 — 되돌릴지는 근거가 실제로 달라졌는지가 정한다.
+     * 적재기가 쓰면 안 되는 칸이다 — 되돌릴지는 `evidence` 가 실제로 달라졌는지가 정한다.
      */
     @Test
-    fun `첫 적재 직후 확인은 0 이고 분모는 근거 출신 기능 전부다`(): Unit = runBlocking {
+    fun `첫 적재 직후 확인은 0 이고 분모는 evidence 출신 기능 전부다`(): Unit = runBlocking {
         assertThat(response.verification.verified).isZero()
         assertThat(response.verification.total).isEqualTo(491)
         assertThat(response.verification.total).isEqualTo(
@@ -382,7 +382,7 @@ class ContentMapViewGoldenTest {
     }
 
     /**
-     * 씬 전이가 **적재만으로 선다.** 골든 문서에 심은 행이 아니라 근거에서 나온 행이다.
+     * 씬 전이가 **적재만으로 선다.** 골든 문서에 심은 행이 아니라 `evidence` 에서 나온 행이다.
      *
      * ARTEL-445 가 `effects.kind='scene'` 을 간선으로 옮기기 시작했다. 그 수와 쌍은 그쪽 테스트가
      * 고정하므로 여기서는 되풀이하지 않고, **조회가 그 행을 곱하지도 빠뜨리지도 않고 싣는지**만 본다.
@@ -472,9 +472,9 @@ class ContentMapViewGoldenTest {
     }
 
     /**
-     * **근거 조인이 행을 곱하지 않는다.**
+     * **`evidence` 조인이 행을 곱하지 않는다.**
      *
-     * `v_content_map_capability` 는 `LEFT JOIN capability_evidence` 로 근거를 붙이고 그 조인을 접는
+     * `v_content_map_capability` 는 `LEFT JOIN capability_evidence` 로 `evidence` 를 붙이고 그 조인을 접는
      * 장치가 뷰 안에 없다. 오늘 `capability_evidence.capability_id` 는 PK 라 1:1 이지만, 서비스는 그
      * 가정을 두지 않고 기능 하나당 한 줄로 접는다. 그 접기가 실제로 걸려 있는지를 **기능 id 의
      * 유일성**으로 확인한다 — 곱해졌다면 같은 id 가 두 번 선다.
@@ -545,7 +545,7 @@ class ContentMapViewGoldenTest {
         assertThat(kinds).allSatisfy { assertThat(it).isEqualTo(it.lowercase()) }
         assertThat(kinds).noneMatch { it.isBlank() }
 
-        // 51건 전부 조건을 든다. 이 문서는 전부 근거 출신이라 `given` 이 빌 이유가 없다 —
+        // 51건 전부 조건을 든다. 이 문서는 전부 `evidence` 출신이라 `given` 이 빌 이유가 없다 —
         // null 은 `capability_evidence` 행이 없는 관측 출신 기능에만 나온다.
         assertThat(steps).allSatisfy { assertThat(it.given).isNotNull() }
 
@@ -564,7 +564,7 @@ class ContentMapViewGoldenTest {
      * 조건을 실으면 무리마다 전부 갈린다. 그 사실을 여기서 못 박는다.
      *
      * 이 성질은 ARTEL-495 뒤에도 지켜진다 — 오늘 대문자 `EVERY` 는 `parts` 를 통째로 잃은 채
-     * `unknown` 하나로 눌리므로, 파서가 관대해지면 갈래는 **더** 갈리지 덜 갈리지 않는다.
+     * `unknown` 하나로 눌리므로, 파서가 관대해지면 `branch` 는 **더** 갈리지 덜 갈리지 않는다.
      */
     @Test
     fun `세 축이 같은 단계들을 조건이 가른다`() {
@@ -828,7 +828,7 @@ class ContentMapViewGoldenTest {
         assertThat(notSteps).allSatisfy {
             assertThat(it.actionability).isEqualTo(Actionability.NOT_A_STEP.wire)
         }
-        // 첫 적재 직후라 전부 근거 출신이고 아직 아무것도 확인되지 않았다
+        // 첫 적재 직후라 전부 `evidence` 출신이고 아직 아무것도 확인되지 않았다
         assertThat(response.scenes.flatMap { it.capabilityList }).allSatisfy {
             assertThat(it.origin).isEqualTo(CapabilityOrigin.EVIDENCE.wire)
             assertThat(it.verification).isEqualTo(VerificationState.UNVERIFIED.wire)
@@ -932,7 +932,7 @@ class ContentMapViewGoldenTest {
     /**
      * **전이가 정규화된 조건을 함께 낸다.**
      *
-     * `givenText` 는 사람이 읽는 한 줄이라 화면이 갈래를 구분하는 데 쓸 수 없다. 같은 컨트롤이 조건으로
+     * `givenText` 는 사람이 읽는 한 줄이라 화면이 `branch` 를 구분하는 데 쓸 수 없다. 같은 컨트롤이 조건으로
      * 갈릴 때 무엇이 다른지는 조건 트리에만 있다.
      *
      * 조인이 간선을 늘리지 않는다는 것도 함께 본다 — `capability_evidence` 는 기능당 한 행
@@ -953,7 +953,7 @@ class ContentMapViewGoldenTest {
         )
         assertThat(fromEvidence).hasSize(rows.toInt())
 
-        // 근거 출신 전이는 기능을 달고 있고, 그 기능은 조건 트리를 가진 행이다
+        // `evidence` 출신 전이는 기능을 달고 있고, 그 기능은 조건 트리를 가진 행이다
         assertThat(fromEvidence).allSatisfy { assertThat(it.capabilityId).isNotNull() }
         assertThat(fromEvidence).allSatisfy { assertThat(it.given).isNotNull() }
         // 자동 전이는 기능이 없으므로 조건도 없다. null 이 "조건 없음"을 뜻한다

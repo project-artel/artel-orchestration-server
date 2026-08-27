@@ -34,7 +34,7 @@ import java.time.Instant
  */
 @Schema(description = "씬 명세(content map) 조회 결과")
 data class ContentMapResponse(
-    @Schema(description = "지도 루트. null 이면 이 빌드에 등록된 근거 문서가 없다")
+    @Schema(description = "지도 루트. null 이면 이 빌드에 등록된 `evidence` 문서가 없다")
     val contentMap: ContentMapSummaryResponse?,
     @Schema(description = "씬 목록. 이름 오름차순")
     val scenes: List<ContentMapSceneResponse>,
@@ -44,7 +44,7 @@ data class ContentMapResponse(
     val screenTransitions: List<ContentMapScreenTransitionResponse> = emptyList(),
     @Schema(description = "명세가 못 된 사유의 분포. QA 결함이 아니라 개발 우선순위 신호다")
     val gaps: List<SpecGapCountResponse>,
-    @Schema(description = "근거 출신 기능 중 실행으로 확인된 비율")
+    @Schema(description = "`evidence` 출신 기능 중 실행으로 확인된 비율")
     val verification: VerificationResponse,
     @Schema(description = "등록됐지만 아직 앉지 못한 문서")
     val pendingDocuments: List<PendingDocumentResponse>,
@@ -85,7 +85,7 @@ data class ContentMapSummaryResponse(
     @Schema(description = "editor · editor-play · player 중 하나")
     val capture: String,
     val schemaVersion: Int,
-    @Schema(description = "구워진 근거 전체의 지문. 같은 capture 인데 값이 다르면 코드가 바뀐 것이다")
+    @Schema(description = "구워진 `evidence` 전체의 지문. 같은 capture 인데 값이 다르면 코드가 바뀐 것이다")
     val evidenceDigest: String,
     val unity: String?,
     val platform: String?,
@@ -111,7 +111,7 @@ data class ContentMapSceneResponse(
     val capabilities: SceneCapabilityCountResponse,
     @Schema(description = "이 씬의 조작 단계. not-a-step 은 빠진다")
     val steps: List<SceneStepResponse> = emptyList(),
-    @Schema(description = "이 씬의 대표 이미지. null 이면 근거가 캡처를 아예 신고하지 않았다")
+    @Schema(description = "이 씬의 대표 이미지. null 이면 `evidence` 가 캡처를 아예 신고하지 않았다")
     val thumbnail: SceneThumbnailResponse? = null,
     @Schema(description = "이 씬에서 관측된 화면. QA 런 전에는 비고 그것이 정상이다")
     val screens: List<ContentMapScreenResponse> = emptyList(),
@@ -156,7 +156,7 @@ data class ContentMapScreenResponse(
 /**
  * 화면 캡처의 주소. 씬 대표 이미지와 **같은 서명 경로**를 쓴다(`DocumentStorage.presignDownload`).
  *
- * [SceneThumbnailResponse] 와 달리 `state` 판별자가 없다. `screen` 표에는 실패 코드 칸이 없어
+ * [SceneThumbnailResponse] 와 달리 `state` `discriminator` 가 없다. `screen` 표에는 실패 코드 칸이 없어
  * (`image_failure_code` 는 `scene` 에만 있다) 가를 두 상태가 없기 때문이다 — 캡처가 있으면 이
  * 객체가 있고, 없으면 [ContentMapScreenResponse.image] 가 통째로 null 이다. 없는 상태를 흉내 내는
  * 칸을 만들면 화면이 영원히 오지 않는 값을 분기한다.
@@ -322,7 +322,7 @@ data class SceneThumbnailResponse(
  * @property givenText 조건을 한 줄로 옮긴 사람용 글. **오늘은 전부 null 이다**(ARTEL-447 미완).
  *   화면은 `givenText ?? given` 으로 고른다
  * @property given 정규화된 조건 트리. **`givenText` 가 빌 때 두 줄을 가르는 유일한 값이다.**
- *   null 이면 근거 출신이 아니라 조건을 아예 모르는 것이고, `{kind:"always"}` 와 다른 말이다
+ *   null 이면 `evidence` 출신이 아니라 조건을 아예 모르는 것이고, `{kind:"always"}` 와 다른 말이다
  */
 @Schema(description = "씬 하나의 조작 단계")
 data class SceneStepResponse(
@@ -341,7 +341,7 @@ data class SceneStepResponse(
     val controlPath: String?,
     @Schema(description = "조건 한 줄. 오늘은 전부 null 이다(ARTEL-447)")
     val givenText: String?,
-    @Schema(description = "정규화된 조건 트리. null 이면 근거가 없어 조건을 모른다")
+    @Schema(description = "정규화된 조건 트리. null 이면 `evidence` 가 없어 조건을 모른다")
     val given: ConditionNodeResponse?,
 )
 
@@ -360,11 +360,11 @@ data class SceneCapabilityCountResponse(
     val total: Long,
     @Schema(description = "조작이 있고 관측 가능한 효과가 있다. 판정까지 자동")
     val runnable: Long,
-    @Schema(description = "조작은 있는데 무엇이 달라지는지 근거가 말하지 않는다")
+    @Schema(description = "조작은 있는데 무엇이 달라지는지 `evidence` 가 말하지 않는다")
     val needsProbe: Long,
     @Schema(description = "조작이 없다. 단독 명세가 아니라 given/then 의 재료다")
     val notAStep: Long,
-    @Schema(description = "조건은 아는데 그 상태를 만드는 절차가 근거에 없다")
+    @Schema(description = "조건은 아는데 그 상태를 만드는 절차가 `evidence` 에 없다")
     val unreachablePrecondition: Long,
 ) {
     companion object {
@@ -402,7 +402,7 @@ data class ContentMapEdgeResponse(
     val capabilitySummary: String?,
     @Schema(description = "같은 컨트롤이 조건으로 갈릴 때 둘을 가르는 조건. 계약 밖의 덤이다")
     val givenText: String?,
-    @Schema(description = "정규화된 전이 조건. null 이면 조건 근거가 없다")
+    @Schema(description = "정규화된 전이 조건. null 이면 조건을 말하는 `evidence` 가 없다")
     val given: ConditionNodeResponse?,
     @Schema(description = "static · runtime. runtime 은 정적 분석이 놓친 전이다")
     val source: String,
@@ -440,16 +440,16 @@ data class SpecGapCountResponse(
 )
 
 /**
- * 커버리지 지표의 분자와 분모. **근거 출신 기능만 센다.**
+ * 커버리지 지표의 분자와 분모. **`evidence` 출신 기능만 센다.**
  *
  * 분모가 우리 정적 분석 성능이고 분자가 agent 성능이라, 둘을 한 화면에 놓으면 시스템 전체가
  * 설명된다. 씬별 카운트와 총수가 다른 것이 정상이다 — 그쪽은 QA 가 관측으로 배운 기능도 센다.
  */
-@Schema(description = "근거 출신 기능의 실행 확인 비율")
+@Schema(description = "`evidence` 출신 기능의 실행 확인 비율")
 data class VerificationResponse(
     @Schema(description = "verification 이 unverified 가 아닌 기능 수")
     val verified: Long,
-    @Schema(description = "근거 출신 기능 수")
+    @Schema(description = "`evidence` 출신 기능 수")
     val total: Long,
 )
 

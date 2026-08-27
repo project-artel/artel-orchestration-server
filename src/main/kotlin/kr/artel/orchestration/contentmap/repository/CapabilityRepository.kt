@@ -111,12 +111,12 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
      * `save()` 를 못 쓰는 이유: 적재기는 id 를 모르고 키만 안다. 조회 후 분기하면 같은 문서를 두 번
      * 적재할 때 경합에서 유니크에 걸린다.
      *
-     * **`verification` 을 UPDATE 절에 두지 않는다.** 되돌릴지는 근거가 실제로 달라졌는지가 정하고, 그
+     * **`verification` 을 UPDATE 절에 두지 않는다.** 되돌릴지는 `evidence` 가 실제로 달라졌는지가 정하고, 그
      * 판정은 적재기가 따로 내린다 — 여기서 매번 덮으면 재적재가 확인을 통째로 버린다. `created_at` 도
      * 그대로 둔다. 처음 안 시점은 스캔이 다시 돌았다고 바뀌지 않는다.
      *
      * **`@Modifying` 을 붙이지 않는다.** 붙이면 Spring Data 가 반환값을 "영향받은 행 수"로 읽어
-     * `RETURNING id` 대신 늘 1 이 돌아오고, 그 1 이 id 로 쓰여 **모든 근거 행이 첫 기능에 붙는다.**
+     * `RETURNING id` 대신 늘 1 이 돌아오고, 그 1 이 id 로 쓰여 **모든 `evidence` 행이 첫 기능에 붙는다.**
      */
     @Query(
         """
@@ -172,7 +172,7 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
     suspend fun findByContentMapIdAndCapabilityKey(contentMapId: Long, capabilityKey: String): CapabilityEntity?
 
     /**
-     * 근거가 달라진 기능의 확인을 되돌린다.
+     * `evidence` 가 달라진 기능의 확인을 되돌린다.
      *
      * 재적재마다 무조건 되돌리지 않는 이유: 문서는 코드 한 줄만 바뀌어도 새로 구워지고, 그때 멀쩡한
      * 기능 수백 개의 확인을 함께 버리면 QA 가 매번 같은 것을 다시 눌러야 한다.
@@ -186,7 +186,7 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
     )
     suspend fun resetVerification(id: Long): Long
 
-    /** 이 지도의 근거 출신 기능 전부. 이번 문서에 없는 것을 가리려면 먼저 있는 것을 알아야 한다. */
+    /** 이 지도의 `evidence` 출신 기능 전부. 이번 문서에 없는 것을 가리려면 먼저 있는 것을 알아야 한다. */
     @Query(
         """
         SELECT c.* FROM capability c

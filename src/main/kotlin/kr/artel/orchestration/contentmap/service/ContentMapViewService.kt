@@ -259,7 +259,7 @@ class ContentMapViewService(
     /**
      * 간선에 정규화된 전이 조건을 붙인다.
      *
-     * `given_text` 는 사람이 읽는 한 줄이라 화면이 갈래를 구분하는 데 쓸 수 없다. 같은 컨트롤이
+     * `given_text` 는 사람이 읽는 한 줄이라 화면이 `branch` 를 구분하는 데 쓸 수 없다. 같은 컨트롤이
      * 조건으로 갈릴 때 무엇이 다른지는 조건 트리에만 있다. `capability_evidence` 는 기능당 한 행이
      * (PRIMARY KEY) 라 이 조인이 간선을 늘리지 않는다.
      */
@@ -273,14 +273,14 @@ class ContentMapViewService(
      * 조작 단계를 씬별로 묶는다. **기능 하나에 줄 하나다.**
      *
      * `v_content_map_capability` 는 `LEFT JOIN capability_evidence ce ON ce.capability_id = c.id`
-     * 로 근거를 붙이고, **그 조인을 접는 장치가 뷰 안에 없다.** 오늘은
+     * 로 `evidence` 를 붙이고, **그 조인을 접는 장치가 뷰 안에 없다.** 오늘은
      * `capability_evidence.capability_id` 가 PK 라 1:1 이고 실측 465건도 전부 정확히 1건이지만, 그
-     * 가정을 여기 두지 않는다 — 근거가 기능당 여러 행이 되는 날 같은 기능이 두 줄 서고,
+     * 가정을 여기 두지 않는다 — `evidence` 가 기능당 여러 행이 되는 날 같은 기능이 두 줄 서고,
      * `steps.size == total - notAStep` 등식이 **조용히** 깨진다. 컴파일 오류가 아니라 틀린 화면으로
      * 나타나는 종류의 고장이다.
      *
      * 접기 전에 다시 정렬하는 것이 요점이다. 뷰 질의의 `ORDER BY` 는 `(scene_name, capability_id)` 라
-     * 같은 기능을 든 행들 사이의 순서가 정의되지 않고, 그대로 [distinctBy] 하면 **어느 근거가
+     * 같은 기능을 든 행들 사이의 순서가 정의되지 않고, 그대로 [distinctBy] 하면 **어느 `evidence` 가
      * 남는지가 우연**이 된다. `(id, entryId, branchOffset)` 로 다시 세워 그 선택을 코드가 적어 둔다.
      *
      * 그 정렬은 씬 안의 줄 순서도 정한다 — `capability.id` 오름차순, 즉 적재 순서이자 문서 순서다.
@@ -303,11 +303,11 @@ class ContentMapViewService(
      * 뷰 한 줄을 단계 한 줄로.
      *
      * `condition_tree` 가 null 이면 [SceneStepResponse.given] 도 **null 이다.** `{kind:"always"}` 로
-     * 채우지 않는다 — 그 칸이 비는 것은 근거 출신이 아닌 기능(observed · inferred · human)이라
-     * `capability_evidence` 행 자체가 없다는 뜻이고, "조건이 없다"와 "근거가 없어 조건을 모른다"는
-     * 다른 말이다. 뒤쪽을 앞쪽으로 적으면 TC 가 없는 근거를 지어낸다.
+     * 채우지 않는다 — 그 칸이 비는 것은 `evidence` 출신이 아닌 기능(observed · inferred · human)이라
+     * `capability_evidence` 행 자체가 없다는 뜻이고, "조건이 없다"와 "`evidence` 가 없어 조건을 모른다"는
+     * 다른 말이다. 뒤쪽을 앞쪽으로 적으면 TC 가 없는 `evidence` 를 지어낸다.
      *
-     * `{}` 는 다르다. 근거가 "조건 없음"이라고 말한 것이라 파서가 `always` 로 읽고 그대로 나간다.
+     * `{}` 는 다르다. `evidence` 가 "조건 없음"이라고 말한 것이라 파서가 `always` 로 읽고 그대로 나간다.
      *
      * `readTree` 가 실패할 수 없다 — 입력이 `jsonb` 컬럼이라 DB 가 이미 JSON 임을 보증한다. 파서도
      * 이 경로에서는 던지지 않는다(모르는 `kind` 는 `unknown` 으로 남는다).

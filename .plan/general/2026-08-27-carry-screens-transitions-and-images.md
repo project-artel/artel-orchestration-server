@@ -41,7 +41,7 @@
   씬만 낸다. 프런트엔드가 처음 보는 상태가 바로 이것이다.
 - `screen` 에는 `image_width` · `image_height` · `image_failure_code` 가 없다(V54 는 `scene`
   에만 그 칸을 더했다). 그래서 화면 이미지 DTO 는 `SceneThumbnailResponse` 와 모양이 다르다 —
-  실패 상태가 없으므로 `state` 판별자도 없다.
+  실패 상태가 없으므로 `state` `discriminator` 도 없다.
 - 병행 작업: ARTEL-453 이 `ScreenRepositories.kt` 에 **쓰기** 질의를 더한다. 이 브랜치는
   그 파일을 재배치하지 않고 **덧붙이기만** 한다.
 
