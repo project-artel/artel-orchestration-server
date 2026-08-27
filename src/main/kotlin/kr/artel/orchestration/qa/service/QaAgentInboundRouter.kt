@@ -88,8 +88,19 @@ private const val KNOWLEDGE_WRITE_RESULT_TYPE = "KNOWLEDGE_WRITE_RESULT"
  */
 private const val ISSUE_RESULT_TYPE = "ISSUE_RESULT"
 
+/**
+ * 에이전트가 부른 tool 과 그 답(ARTEL-608).
+ *
+ * 별도 분기가 없다. 둘 다 아래 `else` 로 떨어져 payload 를 가공 없이 jsonb 로 적재하고
+ * SSE 로 발행하는 것이 전부다 — Orchestration 이 tool 인자를 읽을 일이 없기 때문이다.
+ * 다만 `payload.message` non-blank 가드는 지나야 하므로, Agent 가 거기에 tool 이름을
+ * 싣는 것이 이 타입의 계약이다.
+ */
+private val TOOL_TYPES = setOf("TOOL", "TOOL_RESULT")
+
 private val SUPPORTED_TYPES =
     setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH", "KNOWLEDGE_EXPAND") +
+        TOOL_TYPES +
         KNOWLEDGE_WRITE_TYPES
 
 /**
