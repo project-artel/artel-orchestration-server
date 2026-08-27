@@ -154,6 +154,7 @@ class ContentMapIngestService(
         val model = EvidenceParser(objectMapper).parse(bytes.decodeToString())
         val candidates = EvidenceJoin(model).candidates()
 
+
         val sceneIds = upsertScenes(document.contentMapId, model.scenes + candidates.map { it.scene })
 
         // 키가 같은 후보는 **같은 명세의 다른 조각**이다. 실측 529 후보 중 38건이 그렇고, 씬·진입점·
@@ -341,6 +342,9 @@ class ContentMapIngestService(
                 // **조작 갈래와 결과 갈래를 잇는 유일한 인과**(ARTEL-554). 코루틴에서는 입력을
                 // 받는 갈래와 결과를 내는 갈래가 다른 행이고, 공통 호출자를 통해서만 이어진다.
                 calls = Json.of(objectMapper.writeValueAsString(record.calls)),
+                // **되돌아가는 갈래**(ARTEL-613). 이 가드를 뒤집으면 "다 돌고 나온 자리"이고, 그
+                // 조건은 지울 것이 아니라 반복 스텝으로 옮길 것이다.
+                loopsBackTo = record.loopsBackTo,
                 gaps = Json.of(objectMapper.writeValueAsString(gaps)),
             )
         )

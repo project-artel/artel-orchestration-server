@@ -8,6 +8,7 @@ import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.contentmap.evidence.ConditionOverlap
 import kr.artel.orchestration.contentmap.evidence.GroupKind
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
+import kr.artel.orchestration.contentmap.evidence.LoopExits
 import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
@@ -58,8 +59,11 @@ class MapTestCaseGenerator(
         val settled = contentMaps.findSettledArguments(contentMapId).toList()
             .groupBy { it.capabilityId }
             .mapValues { (_, args) -> args.associate { it.position to it.value } }
+        // **반복하면 닿는 자리**(ARTEL-613). 되돌아가는 갈래의 가드를 뒤집으면 "다 돌고 나온
+        // 자리"이고, 그 조건은 지울 것이 아니라 스텝으로 옮길 것이다.
+        val exits = LoopExits.of(contentMaps.findLoopingConditions(contentMapId).toList().mapNotNull(::parseText))
         val drafts = contentMaps.findCapabilityRows(contentMapId).toList()
-            .flatMap { row -> draftsOf(row, edges, settled) }
+            .flatMap { row -> draftsOf(row, edges, settled, exits) }
         return merged(drafts)
     }
 
@@ -168,6 +172,19 @@ class MapTestCaseGenerator(
     }
 
     /**
+     * 효과 한 묶음이 어디서 왔나. 자기 것이거나 공통 호출자를 통해 빌려 온 것이다.
+     *
+     * @property source 결과를 든 기능. 매개변수를 되돌릴 때 볼 인자가 그쪽 것이다.
+     * @property repeats 끝까지 되풀이해야 닿는 자리인가(ARTEL-613).
+     */
+    private data class Source(
+        val condition: ConditionNode?,
+        val effects: List<CapabilityEffectEntity>,
+        val source: Long,
+        val repeats: Boolean,
+    )
+
+    /**
      * 아직 합치기 전의 케이스 한 줄. 전제를 **문장이 아니라 조건 트리로** 들고 있다 — 합칠 때
      * 갈래끼리 견줘야 하고, 글자로는 그것을 못 한다.
      */
@@ -192,24 +209,31 @@ class MapTestCaseGenerator(
         row: ContentMapCapabilityRow,
         edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
         settled: Map<Long, Map<Int, String>>,
+        exits: Set<LoopExits.Guard>,
     ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
         val key = row.capabilityKey ?: return emptyList()
         val condition = conditionOf(row)
-        val step = MapTestCasePhrasing.step(row.interaction, row.inputKey, row.controlLabel, row.controlPath)
+
         val gaps = gapsOf(row)
 
         // 자기 효과가 먼저다. 없을 때만 공통 호출자를 통해 빌려 온다 — 자기가 결과를 들고 있으면
         // 그것이 이 조작의 결과이고, 남의 것까지 끌어오면 무관한 결과가 붙는다.
         val own = effects.findByCapabilityIdOrderByIdAsc(row.capabilityId).toList()
-        val sources: List<Triple<ConditionNode?, List<CapabilityEffectEntity>, Long>> =
-            if (own.isNotEmpty()) listOf(Triple(condition, own, row.capabilityId))
-            else borrowed(row, condition, edges)
+        val sources: List<Source> =
+            if (own.isNotEmpty()) {
+                listOf(Source(condition, own, row.capabilityId, LoopExits.reachedByRepeating(condition, exits)))
+            } else {
+                borrowed(row, condition, edges, exits)
+            }
 
-        return sources.flatMap { (situation, effectRows, source) ->
+        return sources.flatMap { (situation, effectRows, source, repeats) ->
             // **실행하는 사람이 만들 수 있는 조건만 남긴다**(ARTEL-602). 매개변수 이름은 호출자가
             // 넘긴 값으로 바꾸고, 못 푸는 루프 변수는 빼되 그 사실을 사유로 남긴다.
+            val step = MapTestCasePhrasing.step(
+                row.interaction, row.inputKey, row.controlLabel, row.controlPath, repeats,
+            )
             val settledCondition = MapTestCaseLocals.settle(situation, source, settled)
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
             MapTestCasePhrasing.expectedEach(effectRows).map { outcome ->
@@ -241,7 +265,8 @@ class MapTestCaseGenerator(
         row: ContentMapCapabilityRow,
         condition: ConditionNode?,
         edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
-    ): List<Triple<ConditionNode?, List<CapabilityEffectEntity>, Long>> =
+        exits: Set<LoopExits.Guard>,
+    ): List<Source> =
         MapTestCaseSiblings.of(row.capabilityId, edges).mapNotNull { borrowed ->
             val callerCondition = parse(borrowed.callerCondition)
             val ownCondition = parse(borrowed.ownCondition)
@@ -262,8 +287,27 @@ class MapTestCaseGenerator(
             // 판정에서는 여전히 본다. 모순되는 갈래를 잇지 않으려면 필요하다.
             // 셋째 칸은 **결과를 든 쪽**이다. 조건도 그쪽 메서드의 것이라, 매개변수를 되돌릴 때
             // 봐야 하는 인자도 그쪽 것이다.
-            Triple(MapTestCasePhrasing.both(condition, ownCondition), rows, borrowed.capabilityId)
+            //
+            // 넷째 칸이 **버린 호출자 조건을 되살리는 자리**다(ARTEL-613). 그 조건은 문장에 안
+            // 싣기로 했지만(코루틴이 몇 번째 대사를 넘겼는지는 테스터가 만들 것이 아니다),
+            // 그것이 **루프를 다 돌고 나온 자리**라면 이야기가 다르다 — 끝까지 누르면 닿는다.
+            // 버릴 것이 아니라 스텝 문구로 바꿀 것이다.
+            Source(
+                MapTestCasePhrasing.both(condition, ownCondition),
+                rows,
+                borrowed.capabilityId,
+                LoopExits.reachedByRepeating(callerCondition, exits) ||
+                    LoopExits.reachedByRepeating(ownCondition, exits),
+            )
         }
+
+    private fun parseText(text: String?): ConditionNode? {
+        val node: JsonNode = text
+            ?.let { runCatching { objectMapper.readTree(it) }.getOrNull() }
+            ?.takeIf { it.isObject && !it.isEmpty }
+            ?: return null
+        return EvidenceParser(objectMapper).parseCondition(node)
+    }
 
     private fun parse(json: io.r2dbc.postgresql.codec.Json?): ConditionNode? {
         val node: JsonNode = json

@@ -139,6 +139,29 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
     fun findSettledArguments(contentMapId: Long): Flow<MethodArgument>
 
     /**
+     * **되돌아가는 갈래의 조건들**(ARTEL-613). 이 가드를 뒤집으면 "다 돌고 나온 자리"다.
+     *
+     * 루프를 도는 것은 대개 코루틴이라 조작이 없다. 그래서 이 사실은 기능이 아니라 갈래에 앉아
+     * 있고(`capability_evidence.loops_back_to`), 조작은 그 갈래를 부르는 쪽에 있다 — 둘을 잇는
+     * 것은 `calls` 다.
+     *
+     * 접힌 행도 낸다. 루프를 도는 갈래가 대표로 뽑히지 않는 일이 흔하고, 뒤집을 가드는 그래도
+     * 그 문서가 말한 사실이다.
+     */
+    @Query(
+        """
+        SELECT ce.condition_tree::text
+        FROM capability_evidence ce
+        JOIN capability c ON c.id = ce.capability_id
+        JOIN scene s ON s.id = c.scene_id
+        WHERE s.content_map_id = :contentMapId
+          AND ce.loops_back_to IS NOT NULL
+          AND ce.condition_tree IS NOT NULL
+        """
+    )
+    fun findLoopingConditions(contentMapId: Long): Flow<String>
+
+    /**
      * 이 지도가 어느 프로젝트의 것인가(ARTEL-578).
      *
      * 지도는 게임 빌드에 매달려 있고 프로젝트는 그 위에 있다. 케이스를 앉히려면 `project_id` 가

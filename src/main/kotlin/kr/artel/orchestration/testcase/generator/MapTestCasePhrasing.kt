@@ -80,12 +80,19 @@ object MapTestCasePhrasing {
         inputKey: String?,
         controlLabel: String?,
         controlPath: String?,
-    ): String = when {
-        controlLabel != null -> "`$controlLabel` 을(를) 클릭한다"
-        controlPath != null -> "`$controlPath` 을(를) 클릭한다"
-        inputKey == ANY_KEY -> "아무 키나 누른다"
-        inputKey != null -> "`$inputKey` 키를 ${verb(interaction)}"
-        else -> "조작 미상($interaction)"
+        repeatUntilDone: Boolean = false,
+    ): String {
+        val once = when {
+            controlLabel != null -> "`$controlLabel` 을(를) 클릭한다"
+            controlPath != null -> "`$controlPath` 을(를) 클릭한다"
+            inputKey == ANY_KEY -> "아무 키나 누른다"
+            inputKey != null -> "`$inputKey` 키를 ${verb(interaction)}"
+            else -> "조작 미상($interaction)"
+        }
+        // 활용을 건드리지 않는다. "누른다"의 어간은 "누르-"라 어미만 떼면 "누른되"가 되고,
+        // 조작 문구는 키·경로·클릭이 섞여 있어 규칙 하나로 활용할 수 없다. 문장을 그대로 두고
+        // 줄표로 잇는다 — 저작 모델이 같은 자리에서 스스로 쓰는 모양이기도 하다.
+        return if (repeatUntilDone) "$once — 더 진행되지 않을 때까지 되풀이한다" else once
     }
 
     /**

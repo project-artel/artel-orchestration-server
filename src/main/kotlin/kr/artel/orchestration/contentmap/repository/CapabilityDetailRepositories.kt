@@ -40,11 +40,13 @@ interface CapabilityEvidenceRepository : CoroutineCrudRepository<CapabilityEvide
         INSERT INTO capability_evidence (
             capability_id, origin, entry_id, owner_type, method, method_id, branch_offset,
             record_kind, trigger_kind, analysis_confidence,
-            condition_tree, binding_event, binding_receiver, call_path, calls, gaps
+            condition_tree, binding_event, binding_receiver, call_path, calls, gaps,
+            loops_back_to
         ) VALUES (
             :capabilityId, 'evidence', :entryId, :ownerType, :method, :methodId, :branchOffset,
             :recordKind, :triggerKind, :analysisConfidence,
-            :conditionTree, :bindingEvent, :bindingReceiver, :callPath, :calls, :gaps
+            :conditionTree, :bindingEvent, :bindingReceiver, :callPath, :calls, :gaps,
+            :loopsBackTo
         )
         ON CONFLICT (capability_id) DO UPDATE SET
             entry_id = EXCLUDED.entry_id,
@@ -60,6 +62,7 @@ interface CapabilityEvidenceRepository : CoroutineCrudRepository<CapabilityEvide
             binding_receiver = EXCLUDED.binding_receiver,
             call_path = EXCLUDED.call_path,
             calls = EXCLUDED.calls,
+            loops_back_to = EXCLUDED.loops_back_to,
             gaps = EXCLUDED.gaps
         """
     )
@@ -79,6 +82,7 @@ interface CapabilityEvidenceRepository : CoroutineCrudRepository<CapabilityEvide
         callPath: Json,
         calls: Json,
         gaps: Json,
+        loopsBackTo: Int?,
     ): Long
 }
 
@@ -98,6 +102,7 @@ suspend fun CapabilityEvidenceRepository.upsert(evidence: CapabilityEvidenceEnti
     bindingReceiver = evidence.bindingReceiver,
     callPath = evidence.callPath,
     calls = evidence.calls,
+    loopsBackTo = evidence.loopsBackTo,
     gaps = evidence.gaps,
 )
 
