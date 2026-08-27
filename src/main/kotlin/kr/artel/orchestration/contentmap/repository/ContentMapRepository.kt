@@ -3,6 +3,7 @@ package kr.artel.orchestration.contentmap.repository
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.dto.ContentMapCallEdge
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
+import kr.artel.orchestration.contentmap.dto.MethodArgument
 import kr.artel.orchestration.contentmap.dto.SpecGapRow
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import org.springframework.data.r2dbc.repository.Query
@@ -91,6 +92,51 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
         """
     )
     fun findCallEdges(contentMapId: Long): Flow<ContentMapCallEdge>
+
+    /**
+     * 메서드마다 **호출자가 넘기는 인자**(ARTEL-602). 값이 하나로 정해지는 것만 낸다.
+     *
+     * 사전조건이 매개변수 이름을 그대로 적으면 실행하는 사람이 그 값을 찾을 수 없다. 문서의
+     * `records[].calls[].args` 가 그 답을 들고 있다 — `Update → ShowBattle(MapMove.StagePosition)`.
+     *
+     * `args` 는 `"a, b, c"` 처럼 한 문자열이라 쉼표로 끊어 자리를 센다. 괄호 안의 쉼표까지 끊기는
+     * 자리가 있을 수 있어서, **끊은 조각 수가 호출마다 다르면** 그 메서드는 통째로 뺀다 — 자리를
+     * 잘못 세면 엉뚱한 값을 사전조건에 적는다.
+     *
+     * `HAVING count(DISTINCT ...) = 1` 이 계약이다. 부르는 곳마다 값이 다르면 하나를 골라 적는 것이
+     * 곧 거짓이라, 모른다고 두는 편이 낫다.
+     */
+    @Query(
+        """
+        SELECT callee.capability_id AS capability_id, parts.position, parts.value
+        FROM (
+            SELECT target_id, position, min(value) AS value
+            FROM (
+                SELECT call->>'targetId' AS target_id,
+                       arg.ordinality - 1 AS position,
+                       btrim(arg.value) AS value,
+                       count(*) OVER (PARTITION BY call->>'targetId', caller.capability_id, call) AS arity
+                FROM capability_evidence caller
+                JOIN capability caller_cap ON caller_cap.id = caller.capability_id
+                JOIN scene caller_scene ON caller_scene.id = caller_cap.scene_id
+                CROSS JOIN LATERAL jsonb_array_elements(caller.calls) AS call
+                CROSS JOIN LATERAL string_to_table(call->>'args', ',') WITH ORDINALITY AS arg(value, ordinality)
+                WHERE caller_scene.content_map_id = :contentMapId
+                  AND caller_cap.merged_into IS NULL
+                  AND call->>'targetId' IS NOT NULL
+                  AND call->>'args' IS NOT NULL
+                  AND btrim(arg.value) <> ''
+            ) raw
+            GROUP BY target_id, position
+            HAVING count(DISTINCT value) = 1 AND count(DISTINCT arity) = 1
+        ) parts
+        JOIN capability_evidence callee ON callee.method_id = parts.target_id
+        JOIN capability callee_cap ON callee_cap.id = callee.capability_id
+        JOIN scene callee_scene ON callee_scene.id = callee_cap.scene_id
+        WHERE callee_scene.content_map_id = :contentMapId AND callee_cap.merged_into IS NULL
+        """
+    )
+    fun findSettledArguments(contentMapId: Long): Flow<MethodArgument>
 
     /**
      * 이 지도가 어느 프로젝트의 것인가(ARTEL-578).

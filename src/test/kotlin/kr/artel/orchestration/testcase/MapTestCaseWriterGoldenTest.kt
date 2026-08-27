@@ -137,7 +137,7 @@ class MapTestCaseWriterGoldenTest {
      * 이 자리가 끊겨 있었다. 생성기를 부르는 곳이 골든 테스트뿐이라, 저작은 여전히 구버전이 엑셀로
      * 넣은 줄을 읽었다.
      *
-     * 생성기가 **57건**을 낸다(ARTEL-600 뒤). 여기서 더 접히는 것은 없다 — 생성기가 이미
+     * 생성기가 **51건**을 낸다(ARTEL-602 뒤). 여기서 더 접히는 것은 없다 — 생성기가 이미
      * 씬·조작·결과로 묶었고, 이 자리의 겹침 판정도 같은 잣대라 두 번 접힐 일이 없다.
      *
      * 접히는 자리가 남아 있는 것은 **서로 다른 지도에서 온 케이스**를 위해서다. 그때 접힌 줄의
@@ -146,8 +146,8 @@ class MapTestCaseWriterGoldenTest {
     @Test
     fun `적재가 지도의 케이스를 앉힌다`() {
         assertThat(mine()).isNotEmpty()
-        assertThat(mine()).hasSize(57)
-        assertThat(first.testCases.created).isEqualTo(57)
+        assertThat(mine()).hasSize(51)
+        assertThat(first.testCases.created).isEqualTo(51)
     }
 
     /**
