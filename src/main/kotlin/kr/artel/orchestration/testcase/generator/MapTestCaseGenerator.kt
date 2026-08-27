@@ -54,7 +54,12 @@ class MapTestCaseGenerator(
 
     suspend fun generate(contentMapId: Long): List<MapTestCase> {
         val edges = contentMaps.findCallEdges(contentMapId).toList()
-        val drafts = contentMaps.findStepCapabilityRows(contentMapId).toList().flatMap { row -> draftsOf(row, edges) }
+        // 매개변수 이름을 호출자가 넘긴 값으로 되돌리려면 필요하다(ARTEL-602).
+        val settled = contentMaps.findSettledArguments(contentMapId).toList()
+            .groupBy { it.capabilityId }
+            .mapValues { (_, args) -> args.associate { it.position to it.value } }
+        val drafts = contentMaps.findStepCapabilityRows(contentMapId).toList()
+            .flatMap { row -> draftsOf(row, edges, settled) }
         return merged(drafts)
     }
 
@@ -92,6 +97,29 @@ class MapTestCaseGenerator(
                     step = first.step,
                     expected = first.outcome,
                     status = first.status,
+                    gaps = group.flatMap { it.gaps }.distinct(),
+                )
+            }
+            .let(::withInterchangeableInputs)
+
+    /**
+     * **같은 자리에서 같은 일을 하는 입력은 한 줄에 담는다**(ARTEL-602).
+     *
+     * 전제도 결과도 같은데 누르는 키만 다른 줄이 나온다 — 실측에서 `RightArrow` 와 `UpArrow` 가
+     * 같은 지점으로 옮기고, 타이틀의 버튼 둘이 같은 화면으로 간다. 12건이 그 모양이었다.
+     *
+     * **지우지 않는다.** 두 키가 다 되는지는 QA 가 실제로 확인해야 하는 것이고, 한쪽만 남기면 다른
+     * 키가 고장 난 것을 아무도 못 잡는다. 그래서 한 줄에 **둘 다 적는다** — 실행하는 사람이 한
+     * 자리에서 둘을 다 눌러 보게 된다.
+     *
+     * 조작 문구만 잇는다. 앞의 것을 대표로 두고 순서는 원래 자리를 지킨다.
+     */
+    private fun withInterchangeableInputs(cases: List<MapTestCase>): List<MapTestCase> =
+        cases.groupBy { Triple(it.scene, it.precondition, it.expected) }
+            .map { (_, group) ->
+                if (group.size == 1) group.single()
+                else group.first().copy(
+                    step = MapTestCasePhrasing.eitherStep(group.map { it.step }),
                     gaps = group.flatMap { it.gaps }.distinct(),
                 )
             }
@@ -163,6 +191,7 @@ class MapTestCaseGenerator(
     private suspend fun draftsOf(
         row: ContentMapCapabilityRow,
         edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
+        settled: Map<Long, Map<Int, String>>,
     ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
@@ -174,20 +203,25 @@ class MapTestCaseGenerator(
         // 자기 효과가 먼저다. 없을 때만 공통 호출자를 통해 빌려 온다 — 자기가 결과를 들고 있으면
         // 그것이 이 조작의 결과이고, 남의 것까지 끌어오면 무관한 결과가 붙는다.
         val own = effects.findByCapabilityIdOrderByIdAsc(row.capabilityId).toList()
-        val sources: List<Pair<ConditionNode?, List<CapabilityEffectEntity>>> =
-            if (own.isNotEmpty()) listOf(condition to own) else borrowed(row, condition, edges)
+        val sources: List<Triple<ConditionNode?, List<CapabilityEffectEntity>, Long>> =
+            if (own.isNotEmpty()) listOf(Triple(condition, own, row.capabilityId))
+            else borrowed(row, condition, edges)
 
-        return sources.flatMap { (situation, effectRows) ->
+        return sources.flatMap { (situation, effectRows, source) ->
+            // **실행하는 사람이 만들 수 있는 조건만 남긴다**(ARTEL-602). 매개변수 이름은 호출자가
+            // 넘긴 값으로 바꾸고, 못 푸는 루프 변수는 빼되 그 사실을 사유로 남긴다.
+            val settledCondition = MapTestCaseLocals.settle(situation, source, settled)
+            val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
             MapTestCasePhrasing.expectedEach(effectRows).map { outcome ->
                 Draft(
                     capabilityKey = key,
                     scene = row.sceneName,
-                    condition = situation,
+                    condition = settledCondition.condition,
                     inputKey = row.inputKey,
                     step = step,
                     outcome = outcome,
                     status = row.status,
-                    gaps = gaps,
+                    gaps = reasons,
                 )
             }
         }
@@ -207,7 +241,7 @@ class MapTestCaseGenerator(
         row: ContentMapCapabilityRow,
         condition: ConditionNode?,
         edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
-    ): List<Pair<ConditionNode?, List<CapabilityEffectEntity>>> =
+    ): List<Triple<ConditionNode?, List<CapabilityEffectEntity>, Long>> =
         MapTestCaseSiblings.of(row.capabilityId, edges).mapNotNull { borrowed ->
             val callerCondition = parse(borrowed.callerCondition)
             val ownCondition = parse(borrowed.ownCondition)
@@ -226,7 +260,9 @@ class MapTestCaseGenerator(
             // 실측에서 그것 때문에 전제가 구버전의 2.5배로 부풀었다.
             //
             // 판정에서는 여전히 본다. 모순되는 갈래를 잇지 않으려면 필요하다.
-            MapTestCasePhrasing.both(condition, ownCondition) to rows
+            // 셋째 칸은 **결과를 든 쪽**이다. 조건도 그쪽 메서드의 것이라, 매개변수를 되돌릴 때
+            // 봐야 하는 인자도 그쪽 것이다.
+            Triple(MapTestCasePhrasing.both(condition, ownCondition), rows, borrowed.capabilityId)
         }
 
     private fun parse(json: io.r2dbc.postgresql.codec.Json?): ConditionNode? {
