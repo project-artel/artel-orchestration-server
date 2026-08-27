@@ -247,31 +247,6 @@ class KnowledgeGraphViewIntegrationTest {
         assertThat(nodes.getValue(fromRun.toString()).createdAt).isNotNull()
     }
 
-    /**
-     * `LEADS_TO`는 쓰기만 얼렸다(ARTEL-594). 과거 런이 남긴 경로 간선은 이 지도에 그대로 그려져야
-     * 한다 — 쓰기 경로가 그 값을 거절하므로 여기서는 행을 직접 심는다.
-     */
-    @Test
-    fun `얼린 LEADS_TO 간선도 그래프 조회에 나온다`(): Unit = runBlocking {
-        val town = givenKnowledge("마을")
-        val shop = givenKnowledge("상점")
-        edgeRepository.save(
-            KnowledgeEdgeEntity(
-                projectId = projectId,
-                fromKnowledgeId = town,
-                toKnowledgeId = shop,
-                relation = "LEADS_TO",
-                note = "마을 상단바의 상점 버튼"
-            )
-        )
-
-        val response = viewService.graph(projectId, userId, nodeLimit = 200)
-
-        val edge = response.edges.single()
-        assertThat(edge.from).isEqualTo(town.toString())
-        assertThat(edge.to).isEqualTo(shop.toString())
-        assertThat(edge.relation).isEqualTo("LEADS_TO")
-        assertThat(edge.note).isEqualTo("마을 상단바의 상점 버튼")
     // --------------------------------------------------------- 앵커 (ARTEL-605)
 
     /**
@@ -388,6 +363,33 @@ class KnowledgeGraphViewIntegrationTest {
 
         assertThat(response.nodes).isEmpty()
         assertThat(counting.calls).isZero()
+    }
+
+    /**
+     * `LEADS_TO`는 쓰기만 얼렸다(ARTEL-594). 과거 런이 남긴 경로 간선은 이 지도에 그대로 그려져야
+     * 한다 — 쓰기 경로가 그 값을 거절하므로 여기서는 행을 직접 심는다.
+     */
+    @Test
+    fun `얼린 LEADS_TO 간선도 그래프 조회에 나온다`(): Unit = runBlocking {
+        val town = givenKnowledge("마을")
+        val shop = givenKnowledge("상점")
+        edgeRepository.save(
+            KnowledgeEdgeEntity(
+                projectId = projectId,
+                fromKnowledgeId = town,
+                toKnowledgeId = shop,
+                relation = "LEADS_TO",
+                note = "마을 상단바의 상점 버튼"
+            )
+        )
+
+        val response = viewService.graph(projectId, userId, nodeLimit = 200)
+
+        val edge = response.edges.single()
+        assertThat(edge.from).isEqualTo(town.toString())
+        assertThat(edge.to).isEqualTo(shop.toString())
+        assertThat(edge.relation).isEqualTo("LEADS_TO")
+        assertThat(edge.note).isEqualTo("마을 상단바의 상점 버튼")
     }
 
     // --------------------------------------------------------------- helpers
