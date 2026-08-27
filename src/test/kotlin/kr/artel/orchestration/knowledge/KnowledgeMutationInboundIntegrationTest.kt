@@ -12,6 +12,7 @@ import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
+import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
@@ -54,6 +55,7 @@ class KnowledgeMutationInboundIntegrationTest {
 
     @Autowired private lateinit var inboundRouter: QaAgentInboundRouter
     @Autowired private lateinit var knowledgeRepository: KnowledgeRepository
+    @Autowired private lateinit var anchorRepository: KnowledgeAnchorRepository
     @Autowired private lateinit var qaLogRepository: QaLogRepository
     @Autowired private lateinit var qaTryRepository: QaTryRepository
     @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
@@ -73,6 +75,8 @@ class KnowledgeMutationInboundIntegrationTest {
     @BeforeEach
     @AfterEach
     fun clean(): Unit = runBlocking {
+        // knowledge_anchor는 FK가 없는 논리참조라(V55) 따로 비운다.
+        anchorRepository.deleteAll()
         knowledgeRepository.deleteAll()
         qaLogRepository.deleteAll()
         qaTryRepository.deleteAll()
@@ -260,6 +264,87 @@ class KnowledgeMutationInboundIntegrationTest {
         deliver(run.qaTryId, "KNOWLEDGE_CREATE", """{"tag":"RULE","summary":"저장된다","description":"d"}""")
 
         assertThat(knowledgeRepository.findVisible(run.projectId, null, null, null).toList()).hasSize(1)
+        assertThat(errorLogs(run.qaTryId)).isEmpty()
+    }
+
+    // ------------------------------------------------------------- 앵커 (ARTEL-591)
+
+    /**
+     * 프레임의 필드 이름을 못박는다. Agent 쪽(ARTEL-592)이 맞춰야 하는 계약이 이것이다 —
+     * `scene_name`과 `screen_id`이고, 둘 다 선택이며 `screen_id`는 문자열이다(`knowledge_id`와
+     * 같은 이유로 64비트 정밀도 손실을 피한다).
+     */
+    @Test
+    fun `CREATE 프레임의 앵커 필드가 저장된다`(): Unit = runBlocking {
+        val run = seedRunningQaTry()
+
+        deliver(
+            run.qaTryId,
+            "KNOWLEDGE_CREATE",
+            """{"tag":"CONTROL","summary":"ESC는 무반응","description":"전투 중","scene_name":"Combat","screen_id":"4242"}"""
+        )
+
+        val stored = knowledgeRepository.findVisible(run.projectId, null, null, null).toList().single()
+        val anchors = anchorRepository.findAll().toList().filter { it.knowledgeId == stored.id }
+        assertThat(anchors).hasSize(1)
+        assertThat(anchors.single().sceneName).isEqualTo("Combat")
+        assertThat(anchors.single().screenId).isEqualTo(4_242L)
+        assertThat(errorLogs(run.qaTryId)).isEmpty()
+    }
+
+    /**
+     * 회귀 방어. 앵커를 싣지 않은 프레임은 이 기능 이전과 완전히 같아야 한다 — 앵커 없는 지식이
+     * 게임 전체의 사실이고 그것이 기본값이다.
+     */
+    @Test
+    fun `앵커를 싣지 않은 CREATE 프레임은 지금까지와 같다`(): Unit = runBlocking {
+        val run = seedRunningQaTry()
+
+        deliver(run.qaTryId, "KNOWLEDGE_CREATE", """{"tag":"RULE","summary":"낙하 데미지","description":"5m부터"}""")
+
+        val stored = knowledgeRepository.findVisible(run.projectId, null, null, null).toList().single()
+        assertThat(stored.summary).isEqualTo("낙하 데미지")
+        assertThat(anchorRepository.findAll().toList().filter { it.knowledgeId == stored.id }).isEmpty()
+        assertThat(errorLogs(run.qaTryId)).isEmpty()
+    }
+
+    /**
+     * 화면은 씬 안에 산다. 씬 없는 화면 앵커는 저장해 봐야 되짚을 수 없으므로 거절하고, 그때
+     * **지식도 저장하지 않는다** — 앵커만 조용히 버리면 Agent는 화면 지식을 적었다고 믿는다.
+     * 그래도 throw는 아니다: 프레임 하나가 QA 런을 죽이지 못한다.
+     */
+    @Test
+    fun `씬 없이 화면만 실은 CREATE 프레임은 ERROR로 떨어진다`(): Unit = runBlocking {
+        val run = seedRunningQaTry()
+
+        deliver(
+            run.qaTryId,
+            "KNOWLEDGE_CREATE",
+            """{"tag":"RULE","summary":"s","description":"d","screen_id":"77"}"""
+        )
+
+        assertThat(knowledgeRepository.findVisible(run.projectId, null, null, null).toList()).isEmpty()
+        assertThat(anchorRepository.findAll().toList()).isEmpty()
+        assertThat(errorLogs(run.qaTryId).single().message).contains("scene_name")
+        assertThat(qaTryRepository.findById(run.qaTryId)!!.status).isEqualTo("RUNNING")
+    }
+
+    /** 앵커도 스코프를 따로 지지 않는다 — knowledge 행의 스코프가 곧 그 앵커의 스코프다(V55). */
+    @Test
+    fun `스코프 런이 만든 앵커는 그 스코프의 지식에 달린다`(): Unit = runBlocking {
+        val run = seedRunningQaTry(knowledgeScopeId = 5_003L)
+
+        deliver(
+            run.qaTryId,
+            "KNOWLEDGE_CREATE",
+            """{"tag":"RULE","summary":"실험 지식","description":"d","scene_name":"Town"}"""
+        )
+
+        val inScope = knowledgeRepository.findVisible(run.projectId, 5_003L, null, null).toList().single()
+        val visible = anchorRepository.findVisibleFor(listOf(inScope.id!!), 5_003L).toList()
+        assertThat(visible.map { it.sceneName }).containsExactly("Town")
+        // 운영 런에는 그 지식이 없으므로 그 앵커도 없다.
+        assertThat(anchorRepository.findVisibleFor(listOf(inScope.id!!), null).toList()).isEmpty()
         assertThat(errorLogs(run.qaTryId)).isEmpty()
     }
 

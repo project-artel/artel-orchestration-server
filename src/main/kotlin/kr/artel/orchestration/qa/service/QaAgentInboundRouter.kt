@@ -546,6 +546,10 @@ class QaAgentInboundRouter(
      * 그 id는 [KnowledgeMutation.Applied]가 지는 값 그대로다 — 스코프 런에서 그림자나 툼스톤이
      * 만들어졌으면 **그 행의** id다. baseline id를 돌려주면 그 런에서 다시 지목할 수 없는 id를
      * 주게 된다.
+     *
+     * `KNOWLEDGE_CREATE`의 앵커 필드(`scene_name`/`screen_id`, ARTEL-591)는 payload에 실려 그대로
+     * 서비스로 간다. 라우터가 따로 읽지 않는 것은 프로젝트·스코프와 달리 **앵커는 런에서 도출되는
+     * 값이 아니기 때문이다** — 어느 화면에서 배운 사실인지는 그 프레임을 보낸 Agent만 안다.
      */
     private suspend fun routeKnowledgeMutation(
         qaTryId: Long,
@@ -716,6 +720,9 @@ class QaAgentInboundRouter(
                 query = query,
                 tags = tags.filterNotNull(),
                 source = source,
+                // 씬 이름은 tag/source와 달리 검증하지 않는다 — 우리가 아는 씬 목록이 없고(V55),
+                // 없는 이름은 오류가 아니라 빈 결과다. 빈 문자열만 "안 실었다"로 접는다.
+                sceneName = request.sceneName?.trim()?.takeIf { it.isNotEmpty() },
                 limit = request.limit
             )
         } catch (error: CancellationException) {

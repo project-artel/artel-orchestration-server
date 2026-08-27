@@ -7,12 +7,14 @@ import kr.artel.orchestration.common.embedding.agent.EmbedResponse
 import kr.artel.orchestration.common.embedding.agent.EmbeddingClient
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.config.KnowledgeSearchProperties
+import kr.artel.orchestration.knowledge.entity.KnowledgeAnchorEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.common.embedding.EmbeddedText
+import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.service.KnowledgeQueryEmbeddingException
 import kr.artel.orchestration.knowledge.service.KnowledgeSearchService
@@ -37,7 +39,7 @@ private const val DIMENSIONS = 1024
  * knowledge 벡터 검색 통합 테스트(ARTEL-186).
  *
  * 검증: 프로젝트 격리, `knowledge_id` 접기, 결과 개수 상한, 빈 결과, tag/source 필터, 소프트삭제 제외,
- * 백필 대기 행(벡터 없음) 제외.
+ * 백필 대기 행(벡터 없음) 제외, 그리고 앵커(ARTEL-591, 파일 맨 아래 절).
  *
  * **벡터를 백필 워커로 만들지 않고 직접 넣는다.** 워커가 만드는 벡터는 해시 기반이라 어느 항목이 더
  * 가까운지 예측할 수 없고, 순위를 단정할 수 없으면 접기와 상한을 검증할 수 없다. 여기서는 좌표축
@@ -90,6 +92,7 @@ class KnowledgeVectorSearchIntegrationTest {
 
     @Autowired private lateinit var searchService: KnowledgeSearchService
     @Autowired private lateinit var knowledgeRepository: KnowledgeRepository
+    @Autowired private lateinit var anchorRepository: KnowledgeAnchorRepository
     @Autowired private lateinit var backfillProperties: KnowledgeBackfillProperties
     @Autowired private lateinit var searchProperties: KnowledgeSearchProperties
     @Autowired private lateinit var databaseClient: DatabaseClient
@@ -115,6 +118,8 @@ class KnowledgeVectorSearchIntegrationTest {
         fake.modelOverride = null
         fake.embedCalls = 0
         // knowledge_embedding은 FK ON DELETE CASCADE라 knowledge를 지우면 함께 사라진다.
+        // knowledge_anchor는 FK가 없는 논리참조라(V55) 따로 비운다.
+        anchorRepository.deleteAll()
         knowledgeRepository.deleteAll()
         // 검색어는 0번 축을 가리킨다. 0번 축 벡터를 가진 항목이 거리 0으로 가장 가깝다.
         fake.vectorsByQuery[NEAR] = axis(0)
@@ -191,6 +196,13 @@ class KnowledgeVectorSearchIntegrationTest {
             .awaitFirstOrNull()
     }
 
+    /** 지식을 씬·화면에 묶는다(ARTEL-591). 화면 id는 논리참조라 임의 값이면 된다. */
+    private suspend fun givenAnchor(knowledgeId: Long, sceneName: String, screenId: Long? = null) {
+        anchorRepository.save(
+            KnowledgeAnchorEntity(knowledgeId = knowledgeId, sceneName = sceneName, screenId = screenId)
+        )
+    }
+
     /**
      * 이 테스트가 보는 것은 Agent로 나가는 응답이다. 검색은 그 응답과 기록용 사실을
      * `KnowledgeSearchOutcome`으로 갈라 돌려주므로(ARTEL-255) 여기서는 응답 쪽만 집는다 —
@@ -205,8 +217,9 @@ class KnowledgeVectorSearchIntegrationTest {
         source: KnowledgeSource? = null,
         limit: Int? = null,
         scope: KnowledgeScope = KnowledgeScope.PRODUCTION,
+        sceneName: String? = null,
         mode: KnowledgeMode = KnowledgeMode.LEARNING
-    ) = searchService.search(projectId, scope, mode, NEAR, tags, source, limit).response
+    ) = searchService.search(projectId, scope, mode, NEAR, tags, source, sceneName, limit).response
 
     // ------------------------------------------------------------------ tests
 
@@ -460,5 +473,96 @@ class KnowledgeVectorSearchIntegrationTest {
 
         assertThat(search(projectId, mode = KnowledgeMode.FROZEN).results.map { it.id })
             .containsExactly(id.toString())
+    }
+
+    // ------------------------------------------------------------- 앵커 (ARTEL-591)
+
+    /**
+     * 앵커는 **순수 추가 필드**다(`neighbors`와 같은 이유). 앵커가 하나도 없는 지식창고에서는 빈
+     * 배열이고, 그것이 "게임 전체의 사실"이라는 뜻이지 "앵커를 못 읽었다"가 아니다.
+     */
+    @Test
+    fun `검색 결과가 묶인 씬과 화면을 함께 낸다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val anchored = givenKnowledge(projectId, "전투 화면 지식")
+        val global = givenKnowledge(projectId, "게임 전체 지식")
+        givenVector(anchored, axis(0))
+        givenVector(global, blend(0, 1, 0.5))
+        givenAnchor(anchored, "Combat", screenId = 4_242L)
+        // 같은 지식이 여러 화면에 걸린다 — 컬럼이 아니라 표인 이유가 이것이다.
+        givenAnchor(anchored, "Combat", screenId = 4_243L)
+        givenAnchor(anchored, "Boss")
+
+        val results = search(projectId).results
+
+        val hit = results.single { it.id == anchored.toString() }
+        assertThat(hit.anchors.map { it.sceneName to it.screenId })
+            .containsExactlyInAnyOrder("Combat" to "4242", "Combat" to "4243", "Boss" to null)
+        assertThat(results.single { it.id == global.toString() }.anchors)
+            .describedAs("앵커가 없으면 게임 전체의 사실이다")
+            .isEmpty()
+    }
+
+    /**
+     * `scene_name` 필터는 **앵커가 없는 지식까지 걸러낸다.** 이 필터의 뜻이 "이 화면의 것"이라,
+     * 게임 전체의 사실을 함께 내면 좁히는 것이 없다.
+     */
+    @Test
+    fun `scene_name으로 좁히면 그 씬에 묶인 지식만 나온다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val combat = givenKnowledge(projectId, "전투 지식")
+        val town = givenKnowledge(projectId, "마을 지식")
+        val global = givenKnowledge(projectId, "게임 전체 지식")
+        listOf(combat, town, global).forEach { givenVector(it, axis(0)) }
+        givenAnchor(combat, "Combat")
+        givenAnchor(town, "Town")
+
+        assertThat(search(projectId, sceneName = "Combat").results.map { it.summary })
+            .containsExactly("전투 지식")
+        // 필터를 안 걸면 셋 다 나온다 — 필터가 기본 동작을 바꾸지 않는다.
+        assertThat(search(projectId).results).hasSize(3)
+        // 없는 씬 이름은 오류가 아니라 빈 결과다. 우리가 아는 씬 목록이 없으므로 검증하지 않는다.
+        assertThat(search(projectId, sceneName = "NoSuchScene").results).isEmpty()
+    }
+
+    /**
+     * 한 지식이 여러 씬에 걸리면 어느 씬으로 좁혀도 나와야 한다. EXISTS가 아니라 조인으로 짰다면
+     * 여기서 같은 지식이 두 번 나온다.
+     */
+    @Test
+    fun `여러 씬에 걸린 지식은 어느 씬으로 좁혀도 한 번만 나온다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val id = givenKnowledge(projectId, "전투 화면 셋에 걸린 지식")
+        givenVector(id, axis(0))
+        givenAnchor(id, "Combat", screenId = 1L)
+        givenAnchor(id, "Combat", screenId = 2L)
+        givenAnchor(id, "Boss")
+
+        assertThat(search(projectId, sceneName = "Combat").results.map { it.id }).containsExactly(id.toString())
+        assertThat(search(projectId, sceneName = "Boss").results.map { it.id }).containsExactly(id.toString())
+    }
+
+    /**
+     * 스코프에 가려진 지식은 검색에 안 나오므로 그 앵커도 나오지 않는다. 앵커 조회가 자기 힘으로
+     * 스코프를 지키는지 보려고, 그림자와 baseline에 **서로 다른** 씬을 달아 둔다 — 술어가 빠지면
+     * 한 히트에 두 씬이 함께 실린다.
+     */
+    @Test
+    fun `가려진 baseline의 앵커는 그림자 히트에 섞이지 않는다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val baseline = givenKnowledge(projectId, "옛 내용")
+        val shadow = givenKnowledge(projectId, "A가 고친 내용", scope = SCOPE_A, shadowsId = baseline)
+        givenVector(baseline, axis(0))
+        givenVector(shadow, axis(0))
+        givenAnchor(baseline, "TownBaseline")
+        givenAnchor(shadow, "TownShadow")
+
+        val inScope = search(projectId, scope = SCOPE_A).results.single()
+        assertThat(inScope.id).isEqualTo(shadow.toString())
+        assertThat(inScope.anchors.map { it.sceneName }).containsExactly("TownShadow")
+        // 운영 런은 baseline과 그 앵커만 본다.
+        val production = search(projectId).results.single()
+        assertThat(production.id).isEqualTo(baseline.toString())
+        assertThat(production.anchors.map { it.sceneName }).containsExactly("TownBaseline")
     }
 }
