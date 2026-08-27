@@ -201,6 +201,46 @@ class AuthoringStateAfterGoldenTest {
         assertThat(cases.count { it.expectedValue.contains("화면으로 전환된다") }).isEqualTo(moves.size)
     }
 
+    /**
+     * **지도가 아는 길을 저작이 받는다**(ARTEL-628).
+     *
+     * 실측에서 이 간선들이 지도에 앉아 있었는데 저작에는 한 번도 안 갔다:
+     *
+     * ```
+     * Map_scene      → TurnBattleScene   Return
+     * Map_scene      → TitleScene        Canvas/Button (Legacy)
+     * TitleScene     → Map_scene         Canvas/MapSceneButton
+     * GameClearScene → Map_scene         any
+     * ```
+     *
+     * 길 찾기는 실행하는 쪽 몫이다. 그래도 **아는 것을 안 주는 것**과 안 찾아 주는 것은 다르다.
+     */
+    @Test
+    fun `이 화면에서 어디로 어떻게 가는지 말한다`() {
+        val exits = cases.associate { it.scene to it.exits }
+
+        val toBattle = exits["Map_scene"].orEmpty().firstOrNull { it.scene == "TurnBattleScene" }
+        assertThat(toBattle).isNotNull
+        assertThat(toBattle!!.by).isEqualTo("Return")
+        // 한 걸음이지 닫힘이 아니다 — 지도에서 엔딩으로 바로 가지는 않는다.
+        assertThat(exits["Map_scene"].orEmpty().map { it.scene }).doesNotContain("EndingScene")
+    }
+
+    /**
+     * **누를 것이 없는 것도 답이다.**
+     *
+     * 실측 19간선 중 12건이 `not-a-step` 이다 — 게임이 알아서 넘기는 자리라 실행하는 쪽이 버튼을
+     * 찾아 헤맬 필요가 없다. `by` 를 비워 그렇게 말한다. 이것을 "모른다"와 섞으면, 있지도 않은
+     * 조작을 찾다가 멎는다.
+     */
+    @Test
+    fun `저절로 가는 자리는 누를 것을 비운다`() {
+        val fromStory = cases.first { it.scene == "StoryScene" }.exits
+
+        assertThat(fromStory).isNotEmpty
+        assertThat(fromStory).anySatisfy { assertThat(it.by).isNull() }
+    }
+
     companion object {
         private const val DOCUMENT = "src/test/resources/contentmap/wv-editor-latest.json"
     }

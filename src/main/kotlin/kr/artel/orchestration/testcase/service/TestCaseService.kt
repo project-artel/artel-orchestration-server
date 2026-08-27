@@ -8,6 +8,7 @@ import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.dto.CaseGuard
+import kr.artel.orchestration.testcase.dto.SceneExit
 import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
@@ -87,6 +88,8 @@ class TestCaseService(
     suspend fun getAuthoringCases(projectId: Long, userId: Long): List<AuthoringTestCase> {
         if (!projectAccessService.isMember(projectId, userId)) return emptyList()
         val changed = valuesChangedByCases(projectId)
+        // **길은 우리가 찾지 않지만, 지도가 아는 것은 보낸다**(ARTEL-628).
+        val exits = sceneExits(projectId)
         return repository.findByProjectIdOrderByIdAsc(projectId).map { case ->
             AuthoringTestCase(
                 id = case.id!!,
@@ -102,6 +105,7 @@ class TestCaseService(
                 // 행은 그 칸이 없어서 비어 오고, 그때 지도가 답한다(ARTEL-606).
                 stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
                     .ifEmpty { changed[case.id].orEmpty() } + arrival(case),
+                exits = exits[ScenarioStateReader.sceneOf(case) ?: case.scene].orEmpty(),
             )
         }.toList()
     }
@@ -137,6 +141,25 @@ class TestCaseService(
             ?.takeIf { it.isNotBlank() }
             ?.let { mapOf("scene" to it) }
             .orEmpty()
+
+    /**
+     * 화면마다 **한 걸음에 갈 수 있는 곳들**(ARTEL-628).
+     *
+     * 닿을 수 있는 화면 전부로 답하지 않는다. 재 보면 어느 화면에서든 일곱 화면 전부에 닿아
+     * (강하게 이어진 그래프) 전부 같은 답이 되고, 그러면 아무것도 못 가른다.
+     *
+     * 못 읽으면 빈 map 이다. 길 안내가 없어도 저작은 돌아야 한다 — 그건 도움말이지 재료가 아니다.
+     */
+    private suspend fun sceneExits(projectId: Long): Map<String, List<SceneExit>> = runCatching {
+        repository.findSceneExits(projectId).toList()
+            .groupBy { it.fromScene }
+            .mapValues { (_, rows) ->
+                rows.groupBy { it.toScene }
+                    // 한 화면으로 가는 길이 여럿이면 **누를 것이 있는 쪽**을 먼저 든다.
+                    .map { (to, ways) -> SceneExit(to, ways.firstNotNullOfOrNull { it.byOperation }) }
+                    .sortedBy { it.scene }
+            }
+    }.getOrElse { emptyMap() }
 
     private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Map<String, String>> = runCatching {
         repository.findValuesChangedByCases(projectId).toList()

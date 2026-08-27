@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.CaseWrite
+import kr.artel.orchestration.testcase.dto.SceneExitRow
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
@@ -217,4 +218,41 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
     )
     fun findValuesChangedByCases(projectId: Long): Flow<CaseWrite>
+
+    /**
+     * **화면에서 화면으로 가는 한 걸음, 그리고 무엇을 눌러야 가는지**(ARTEL-628).
+     *
+     * 지도는 이미 답을 안다. 저작에 안 보내고 있었을 뿐이다:
+     *
+     * ```
+     * Map_scene      → TurnBattleScene   Return
+     * Map_scene      → TitleScene        Canvas/Button (Legacy)
+     * TitleScene     → Map_scene         Canvas/MapSceneButton
+     * GameClearScene → Map_scene         any
+     * StoryScene     → Map_scene         (없음 — 저절로 간다)
+     * ```
+     *
+     * **`by` 가 비는 것도 답이다.** 실측 19간선 중 12건이 `not-a-step` 이고, 그건 게임이 알아서
+     * 넘기는 자리라는 뜻이다 — 누를 것을 찾아 헤맬 필요가 없다는 정보다. 못 찾은 것과 없는 것을
+     * 섞지 않으려고, 기능이 매달려 있는데 조작이 없는 경우만 빈 값으로 답한다.
+     *
+     * 키가 먼저고 라벨·경로가 그다음이다. 실행하는 쪽이 그대로 보낼 수 있는 것이 키이기 때문이다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT s.name AS from_scene,
+               e.to_scene_name AS to_scene,
+               coalesce(c.input_key, c.control_label, c.control_path) AS by_operation
+        FROM test_case tc
+        JOIN capability c2 ON c2.capability_key = tc.capability_key
+        JOIN scene s2 ON s2.id = c2.scene_id
+        JOIN scene s ON s.content_map_id = s2.content_map_id
+        JOIN scene_edge e ON e.from_scene_id = s.id
+        LEFT JOIN capability c ON c.id = e.capability_id
+          AND c.interaction <> 'none'
+          AND c.actionability NOT IN ('not-a-step', 'unreachable-precondition')
+        WHERE tc.project_id = :projectId
+        """
+    )
+    fun findSceneExits(projectId: Long): Flow<SceneExitRow>
 }
