@@ -111,16 +111,17 @@ class AuthoringStateAfterGoldenTest {
     /**
      * **저작이 받는 목록에 "무엇이 바뀌나"가 실린다.**
      *
-     * 이 자리가 비어 있어서 모델이 브리지를 지어냈다. 실측 51건 중 **10건**이 값을 바꾼다 —
-     * 나머지는 화면을 보거나 표시만 바꾸는 것이라 뒤에 남는 상태가 없다.
+     * 이 자리가 비어 있어서 모델이 브리지를 지어냈다. 실측 51건 중 **19건**이 뒤에 무언가를
+     * 남긴다 — 값을 바꾸는 것 10건과 화면을 바꾸는 것 10건(하나는 둘 다다). 나머지는 표시만
+     * 바뀌거나 보기만 하는 것이라 남는 상태가 없다.
      *
-     * 바뀌는 값은 셋이다: `position` · `stagePosition` · `flag`.
+     * 값은 셋이고(`position` · `stagePosition` · `flag`) 거기에 도착 화면(`scene`)이 더해진다.
      */
     @Test
     fun `케이스가 무엇을 바꾸는지 말한다`() {
-        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(10)
+        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(19)
         assertThat(cases.flatMap { it.stateAfter.keys }.distinct())
-            .containsExactlyInAnyOrder("position", "stagePosition", "flag")
+            .containsExactlyInAnyOrder("position", "stagePosition", "flag", "scene")
     }
 
     /**
@@ -176,6 +177,28 @@ class AuthoringStateAfterGoldenTest {
     @Test
     fun `얼마가 되는지 모르는 증감도 버리지 않는다`() {
         assertThat(cases.flatMap { it.stateAfter.values }).contains("+1")
+    }
+
+    /**
+     * **씬 전환도 상태 변화다**(ARTEL-614).
+     *
+     * 저작이 브리지를 고르려면 "이 케이스를 실행하면 어느 화면이 되나"를 알아야 한다. 지금까지 그
+     * 답은 기대결과 **산문**에만 있었다 — 모델이 `` `Map_scene` 화면으로 전환된다`` 를 읽어 맞춰야
+     * 했고, 그것이 이 개편이 없애려는 문자열 맞춤이다.
+     *
+     * `state_after` 에 실어 계약을 안 바꾼다. 키를 `scene` 으로 두는 것은 **다음 케이스의 `scene`
+     * 칸과 같은 말**이라 맞추는 쪽이 헷갈리지 않기 때문이다.
+     */
+    @Test
+    fun `실행하면 어느 화면이 되는지 말한다`() {
+        val moves = cases.filter { it.stateAfter.containsKey("scene") }
+
+        assertThat(moves).isNotEmpty()
+        // 도착 화면은 실제로 있는 씬이어야 한다 — 지어낸 이름이면 저작이 갈 수 없는 곳을 가리킨다.
+        val known = cases.map { it.scene }.toSet()
+        assertThat(moves.mapNotNull { it.stateAfter["scene"] }.distinct()).isSubsetOf(known)
+        // 기대결과가 전환을 말하는 케이스는 빠짐없이 도착 화면을 든다.
+        assertThat(cases.count { it.expectedValue.contains("화면으로 전환된다") }).isEqualTo(moves.size)
     }
 
     companion object {

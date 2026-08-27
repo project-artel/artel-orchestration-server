@@ -17,6 +17,7 @@ import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
 import kr.artel.orchestration.testcase.dto.toTestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.toTestCaseResponse
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
@@ -95,7 +96,7 @@ class TestCaseService(
                 // 케이스 메타가 먼저다 — 구버전 엑셀 경로로 들어온 행은 거기 답이 있다. 지도가 낸
                 // 행은 그 칸이 없어서 비어 오고, 그때 지도가 답한다(ARTEL-606).
                 stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
-                    .ifEmpty { changed[case.id].orEmpty() },
+                    .ifEmpty { changed[case.id].orEmpty() } + arrival(case),
             )
         }.toList()
     }
@@ -115,6 +116,23 @@ class TestCaseService(
      *
      * 못 읽어도 저작을 세우지 않는다. 이것이 없으면 예전처럼 빈 map 이고, 모델은 지금처럼 지어낸다.
      */
+    /**
+     * 실행하면 **어느 화면이 되나**(ARTEL-614).
+     *
+     * 씬 전환도 상태 변화다. 저작이 `state_after` 와 다음 케이스의 `scene` 을 맞추면 그것이 곧
+     * 씬 브리지이고, 기대결과 산문을 읽을 필요가 없어진다.
+     *
+     * `state_after` 에 실어 **계약을 안 바꾼다**(ARTEL-606 과 같은 판단). 키를 `scene` 으로 두는
+     * 것은 다음 케이스의 `scene` 칸과 같은 말이라 맞추는 쪽이 헷갈리지 않기 때문이다 — 실측에서
+     * 그 이름의 게임 값을 요구하는 전제는 없다.
+     */
+    private fun arrival(case: TestCaseEntity): Map<String, String> =
+        runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
+            ?.path(MapTestCaseWriter.ARRIVES_AT)?.asText(null)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { mapOf("scene" to it) }
+            .orEmpty()
+
     private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Map<String, String>> = runCatching {
         repository.findValuesChangedByCases(projectId).toList()
             .groupBy { it.caseId }

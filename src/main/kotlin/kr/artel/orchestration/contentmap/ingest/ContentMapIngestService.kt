@@ -25,6 +25,7 @@ import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.entity.ScenePresence
 import kr.artel.orchestration.contentmap.entity.VerificationState
 import kr.artel.orchestration.contentmap.evidence.EvidenceEffect
+import kr.artel.orchestration.contentmap.evidence.EvidenceDocumentModel
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.join.CapabilityCandidate
 import kr.artel.orchestration.contentmap.join.EvidenceJoin
@@ -35,6 +36,8 @@ import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapSceneCaptureRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
+import kr.artel.orchestration.contentmap.repository.SceneObjectRefRepository
+import kr.artel.orchestration.contentmap.entity.SceneObjectRefEntity
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.contentmap.repository.upsert
 import kr.artel.orchestration.project.storage.DocumentStorage
@@ -74,6 +77,7 @@ class ContentMapIngestService(
     private val effects: CapabilityEffectRepository,
     private val proofs: CapabilityProofRepository,
     private val sceneEdges: SceneEdgeRepository,
+    private val objectRefs: SceneObjectRefRepository,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
     private val mapTestCases: MapTestCaseWriter,
@@ -169,6 +173,11 @@ class ContentMapIngestService(
             model.capture,
         )
         applySceneCaptures(document.id!!, document.contentMapId)
+
+        // **효과가 가리키는 것을 사람이 찾을 수 있는 이름으로**(ARTEL-615). 코드는
+        // `ChatWindowController.anyKeyPrompt` 라 부르고 하이어라키에는 `Canvas/ChatWindow/AnyKeyPrompt`
+        // 가 있다. 그 대응이 문서의 직렬화 참조에 있다.
+        writeObjectRefs(document.contentMapId, model, sceneIds)
 
         // 키가 같은 후보는 **같은 명세의 다른 조각**이다. 실측 529 후보 중 38건이 그렇고, 씬·진입점·
         // 메서드·갈래·조건·조작이 전부 같은 채 `effects` 만 다르다(20그룹) 또는 `recordKind` 만
@@ -275,6 +284,42 @@ class ContentMapIngestService(
     }
 
     /**
+     * 컴포넌트의 직렬화 참조를 앉힌다(ARTEL-615).
+     *
+     * **지우고 다시 넣는다.** 안정 키가 없고, 씬에서 사라진 참조를 남기면 없는 오브젝트 이름이
+     * 기대결과에 실린다.
+     *
+     * 타입은 **마지막 마디로** 줄여 넣는다. 문서가 같은 타입을 네임스페이스까지 적기도 하고 안
+     * 적기도 해서(`Story.StoryController` · `StoryController`), 넣을 때 한 번 맞춰 두면 읽는 쪽이
+     * 두 벌로 견주지 않아도 된다.
+     *
+     * 씬을 모르는 참조는 버린다 — 어느 화면의 것인지 모르면 그 이름을 기대결과에 실을 수 없다.
+     */
+    private suspend fun writeObjectRefs(
+        contentMapId: Long,
+        model: EvidenceDocumentModel,
+        sceneIds: Map<String, Long>,
+    ) {
+        objectRefs.deleteByContentMapId(contentMapId)
+        val rows = model.allObjects.flatMap { obj ->
+            val sceneId = sceneIds[obj.scene] ?: return@flatMap emptyList()
+            obj.components.flatMap { component ->
+                component.refs.mapNotNull { ref ->
+                    val name = ref.path ?: ref.name ?: return@mapNotNull null
+                    SceneObjectRefEntity(
+                        contentMapId = contentMapId,
+                        sceneId = sceneId,
+                        ownerType = component.type.substringAfterLast('.').take(OWNER_WIDTH),
+                        field = ref.field.take(OWNER_WIDTH),
+                        targetName = name.take(NAME_WIDTH),
+                    )
+                }
+            }
+        }
+        rows.forEach { objectRefs.save(it) }
+    }
+
+    /**
      * 이 줄의 `given` 으로 실릴 조건 JSON.
      *
      * 쪼개지지 않은 갈래는 **문서 원문 그대로** 싣는다 — 타입 트리에서 되쓰면 우리가 못 담은 키가
@@ -299,6 +344,7 @@ class ContentMapIngestService(
      * 나간다. 길이 제약에 안 걸려 조용히 틀린다.
      */
     private fun methodNameOf(methodId: String): String = methodNameFrom(methodId)
+
 
     /**
      * 근거가 실제로 달라졌나. 같은 기능이라도 조건·갈래 위치·확신도·되짚기가 바뀌면 다른 근거다.
@@ -572,6 +618,10 @@ class ContentMapIngestService(
     private data class Retired(val deleted: Int, val markedNotApplicable: Int)
 
     companion object {
+        /** `scene_object_ref` 의 칸 너비(ARTEL-615). 넘치면 INSERT 가 거절되고 문서 하나가 통째로 되돌아간다. */
+        private const val OWNER_WIDTH = 255
+        private const val NAME_WIDTH = 512
+
         /**
          * 어느 판의 적재기가 이 문서를 처리했나. 적재 규칙을 고치면 올리고, 낡은 문서부터 다시 돌린다.
          */

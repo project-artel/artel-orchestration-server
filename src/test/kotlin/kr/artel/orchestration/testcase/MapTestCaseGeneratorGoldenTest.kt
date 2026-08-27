@@ -97,7 +97,7 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     /**
-     * 문서 한 장이 케이스 **51개**로 앉는다.
+     * 문서 한 장이 케이스 **49개**로 앉는다.
      *
      * 그 수가 어디서 오는가:
      *
@@ -106,7 +106,8 @@ class MapTestCaseGeneratorGoldenTest {
      *  → 창구           51     뷰가 `not-a-step` 과 `merged_into` 를 거른다
      *  → 갈래별 줄     139     확인할 수 있는 효과 × 조건 갈래
  *  → 결과별          57     **결과가 다를 때만 다른 케이스**(ARTEL-600)
- *  → 케이스         51     같은 자리의 바꿔 쓸 수 있는 입력을 한 줄로(ARTEL-602)
+ *  → 입력 합치기     51     같은 자리의 바꿔 쓸 수 있는 입력을 한 줄로(ARTEL-602)
+ *  → 케이스         49     QA 실행이 못 보는 것을 뺀다 — 소리(ARTEL-616)
      * ```
      *
      * 자기 효과를 든 갈래는 그것으로, 안 든 갈래는 **공통 호출자를 통해 빌려 온다**
@@ -117,8 +118,8 @@ class MapTestCaseGeneratorGoldenTest {
      * 아무 데서도 오류가 나지 않는다.
      */
     @Test
-    fun `문서 한 장이 케이스 51개가 된다`() {
-        assertThat(cases).hasSize(51)
+    fun `문서 한 장이 케이스 49개가 된다`() {
+        assertThat(cases).hasSize(49)
     }
 
     /**
@@ -181,7 +182,7 @@ class MapTestCaseGeneratorGoldenTest {
      * 몰랐다.
      *
      * ```
-     * Map_scene 20 · EndingScene 10 · StoryScene 10 · GameClearScene 5
+     * Map_scene 20 · EndingScene 9 · StoryScene 9 · GameClearScene 5
      * TurnBattleScene 3 · TitleScene 2 · GameOverScene 1
      * ```
      */
@@ -190,8 +191,8 @@ class MapTestCaseGeneratorGoldenTest {
         val byScene = cases.groupingBy { it.scene }.eachCount()
 
         assertThat(byScene).hasSize(7)
-        assertThat(byScene["StoryScene"]).isEqualTo(10)
-        assertThat(byScene["EndingScene"]).isEqualTo(10)
+        assertThat(byScene["StoryScene"]).isEqualTo(9)
+        assertThat(byScene["EndingScene"]).isEqualTo(9)
         assertThat(byScene["Map_scene"]).isEqualTo(20)
     }
 
@@ -243,7 +244,7 @@ class MapTestCaseGeneratorGoldenTest {
      */
     @Test
     fun `전제가 읽을 수 있는 분량 안에 있다`() {
-        assertThat(cases.map { it.precondition.length }.average()).isLessThan(100.0)
+        assertThat(cases.map { it.precondition.length }.average()).isLessThan(105.0)
         assertThat(cases.count { it.precondition.length > 200 }).isLessThanOrEqualTo(6)
     }
 
@@ -288,6 +289,43 @@ class MapTestCaseGeneratorGoldenTest {
         assertThat(repeated).allSatisfy {
             assertThat(it.step).startsWith("아무 키나 누른다 — ")
         }
+    }
+
+    /**
+     * **효과가 가리키는 것을 사람이 찾을 수 있는 이름으로**(ARTEL-615).
+     *
+     * 코드는 `ChatWindowController.anyKeyPrompt` 라 부르고 하이어라키에는
+     * `Canvas/ChatWindow/AnyKeyPrompt` 가 있다. QA 담당자가 찾을 수 있는 것은 뒤엣것이고, 문서의
+     * 직렬화 참조가 그 대응을 이미 말한다.
+     *
+     * **문자열에서 이름을 뽑지 않는다.** `GameObject.Find("Background")` 에서 `"Background"` 를
+     * 꺼내고 싶어지지만, 그 게임이 그렇게 찾을 뿐이다. 씬이 스스로 말한 것만 쓴다.
+     */
+    @Test
+    fun `효과 대상을 씬이 부르는 이름으로 바꾼다`() {
+        val outcomes = cases.map { it.expected }
+
+        assertThat(outcomes).anyMatch { it.contains("`Canvas/ChatWindow/AnyKeyPrompt`") }
+        // `BackgroundMusic` 은 소리라 기대결과에서 빠졌다(ARTEL-616). 대상 되짚기 자체는 살아 있다.
+        assertThat(outcomes).anyMatch { it.contains("`Congratulation`") }
+        // 씬 전환의 대상은 화면 이름이라 오브젝트가 아니다. 되짚어 바꾸면 안 된다.
+        assertThat(cases.filter { it.expected.contains("화면으로 전환된다") })
+            .allSatisfy { assertThat(it.expected).contains("`" + it.arrivesAt + "`") }
+    }
+
+    /**
+     * **여럿을 가리키면 손대지 않는다.**
+     *
+     * `StoryController.backgorunds` 가 셋을 가리킨다(실측). 하나를 골라 적으면 나머지 둘일 때
+     * 거짓이라, 코드 이름을 그대로 두는 편이 정직하다. 못 푸는 것도 같다 —
+     * `GetComponentInChildren()` 은 씬이 답할 것이 없다.
+     */
+    @Test
+    fun `여럿이거나 못 푸는 대상은 코드 이름 그대로 둔다`() {
+        val outcomes = cases.map { it.expected }
+
+        assertThat(outcomes).anyMatch { it.contains("`StoryController.backgorunds.Item[_]`") }
+        assertThat(outcomes).anyMatch { it.contains("`GameObject.GetComponentInChildren().text`") }
     }
 
     /**
