@@ -98,6 +98,27 @@ data class ContentMapSceneResponse(
     val capabilities: SceneCapabilityCountResponse,
     @Schema(description = "이 씬의 조작 단계. not-a-step 은 빠진다")
     val steps: List<SceneStepResponse> = emptyList(),
+    @Schema(description = "이 씬의 대표 이미지. null 이면 근거가 캡처를 아예 신고하지 않았다")
+    val thumbnail: SceneThumbnailResponse? = null,
+)
+
+/**
+ * 씬 대표 이미지의 상태와 주소.
+ *
+ * **없음과 못 만듦을 가른다.** 옛 SDK 는 캡처를 아예 신고하지 않으므로 [ContentMapSceneResponse.thumbnail]
+ * 자체가 null 이고, 새 SDK 가 캡처를 시도했다가 실패하면 여기 `unavailable` 과 [reason] 이 온다.
+ * 화면이 "아직 안 올렸다"와 "이 씬은 못 찍는다"를 다르게 말할 수 있어야 한다.
+ */
+data class SceneThumbnailResponse(
+    @Schema(description = "available · unavailable")
+    val state: String,
+    @Schema(description = "서명된 단기 주소. state 가 available 일 때만 있다")
+    val url: String? = null,
+    val expiresAt: Instant? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    @Schema(description = "못 만든 이유. SDK 가 준 failureCode 를 그대로 옮긴다")
+    val reason: String? = null,
 )
 
 /**
@@ -203,19 +224,22 @@ data class ContentMapEdgeResponse(
     val capabilitySummary: String?,
     @Schema(description = "같은 컨트롤이 조건으로 갈릴 때 둘을 가르는 조건. 계약 밖의 덤이다")
     val givenText: String?,
+    @Schema(description = "정규화된 전이 조건. null 이면 조건 근거가 없다")
+    val given: ConditionNodeResponse?,
     @Schema(description = "static · runtime. runtime 은 정적 분석이 놓친 전이다")
     val source: String,
     @Schema(description = "null 이면 아직 못 가본 전이 — 커버리지 구멍이다")
     val verifiedAt: Instant?,
 ) {
     companion object {
-        fun of(row: ContentMapSceneEdgeRow) = ContentMapEdgeResponse(
+        fun of(row: ContentMapSceneEdgeRow, given: ConditionNodeResponse?) = ContentMapEdgeResponse(
             fromSceneId = row.fromSceneId,
             toSceneName = row.toSceneName,
             toSceneId = row.toSceneId,
             capabilityId = row.capabilityId,
             capabilitySummary = row.capabilitySummary,
             givenText = row.givenText,
+            given = given,
             source = row.source,
             verifiedAt = row.verifiedAt,
         )
