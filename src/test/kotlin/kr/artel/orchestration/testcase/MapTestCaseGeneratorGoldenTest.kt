@@ -94,18 +94,18 @@ class MapTestCaseGeneratorGoldenTest {
             )
         )
         cases = generator.generate(map.id!!)
-
     }
 
     /**
-     * 문서 한 장이 케이스 **139개**로 앉는다.
+     * 문서 한 장이 케이스 **57개**로 앉는다.
      *
      * 그 수가 어디서 오는가:
      *
      * ```
      * 기능            491     적재기가 앉힌 행 전부
      *  → 창구           51     뷰가 `not-a-step` 과 `merged_into` 를 거른다
-     *  → 케이스        139     확인할 수 있는 효과 하나마다 한 줄
+     *  → 갈래별 줄     139     확인할 수 있는 효과 × 조건 갈래
+ *  → 케이스         57     **결과가 다를 때만 다른 케이스**(ARTEL-600)
      * ```
      *
      * 자기 효과를 든 갈래는 그것으로, 안 든 갈래는 **공통 호출자를 통해 빌려 온다**
@@ -116,8 +116,8 @@ class MapTestCaseGeneratorGoldenTest {
      * 아무 데서도 오류가 나지 않는다.
      */
     @Test
-    fun `문서 한 장이 케이스 139개가 된다`() {
-        assertThat(cases).hasSize(139)
+    fun `문서 한 장이 케이스 57개가 된다`() {
+        assertThat(cases).hasSize(57)
     }
 
     /**
@@ -126,13 +126,14 @@ class MapTestCaseGeneratorGoldenTest {
      * 저작의 도달성 검사는 케이스가 끝난 뒤 어느 화면인지를 알아야 하는데, 지금은 `expected_value`
      * 산문에서 씬 이름을 찾아 추측한다(ARTEL-528). 케이스가 직접 말하면 그 추측이 사라진다.
      *
-     * 구버전은 같은 문서에서 17건이 말했다. 여기는 20건이다.
+     * 구버전은 같은 문서에서 17건이 말했다. 여기는 **12건**이고, 그 12건이 화면 그래프 전부다 —
+     * 앞서 20건이던 것은 같은 전환이 전제 조각마다 되풀이된 결과였다(ARTEL-600).
      */
     @Test
-    fun `씬 전환을 스스로 말하는 케이스가 스무 건이다`() {
+    fun `씬 전환을 스스로 말하는 케이스가 열두 건이다`() {
         val moves = cases.filter { it.expected.contains("화면으로 전환된다") }
 
-        assertThat(moves).hasSize(20)
+        assertThat(moves).hasSize(12)
         // 오늘 저작이 막히던 자리 — StoryScene · EndingScene 이 어디로 가는지 말한다.
         assertThat(moves.map { it.scene }.distinct()).contains("StoryScene", "EndingScene")
     }
@@ -178,8 +179,8 @@ class MapTestCaseGeneratorGoldenTest {
      * 몰랐다.
      *
      * ```
-     * EndingScene 35 · StoryScene 35 · Map_scene 28 · GameClearScene 26
-     * TitleScene 8 · TurnBattleScene 6 · GameOverScene 1
+     * Map_scene 24 · EndingScene 10 · StoryScene 10 · GameClearScene 5
+     * TitleScene 4 · TurnBattleScene 3 · GameOverScene 1
      * ```
      */
     @Test
@@ -187,9 +188,9 @@ class MapTestCaseGeneratorGoldenTest {
         val byScene = cases.groupingBy { it.scene }.eachCount()
 
         assertThat(byScene).hasSize(7)
-        assertThat(byScene["StoryScene"]).isEqualTo(35)
-        assertThat(byScene["EndingScene"]).isEqualTo(35)
-        assertThat(byScene["Map_scene"]).isEqualTo(28)
+        assertThat(byScene["StoryScene"]).isEqualTo(10)
+        assertThat(byScene["EndingScene"]).isEqualTo(10)
+        assertThat(byScene["Map_scene"]).isEqualTo(24)
     }
 
     /**
@@ -230,12 +231,15 @@ class MapTestCaseGeneratorGoldenTest {
      * - 코드가 스스로 지금 화면을 확인하는 자리는 사전조건이 이미 그 화면을 말했다.
      * - 행동이 이미 말하는 입력 판정은 뺀다.
      *
-     * 구버전은 69자다. 남은 차이는 **갈래를 잇기 때문**이고, 그것이 위 테스트가 지키는 기능이다.
-     * 200자를 넘는 5건은 튜토리얼 채팅창처럼 진짜로 상태 넷이 겹치는 자리다.
+     * 합치기(ARTEL-600)가 여기서 한 번 더 줄인다 — 같은 결과를 내는 갈래를 이을 때 **넓은 갈래가
+     * 좁은 갈래를 덮으므로** 여덟 갈래가 넷이 된다. 119자에서 103자가 됐다.
+     *
+     * 구버전은 69자다. 남은 차이는 **갈래를 함께 적기 때문**이고, 그것이 위 테스트가 지키는 기능이다.
+     * 200자를 넘는 5건은 스테이지 0·1·2·3 처럼 진짜로 갈래가 넷인 자리다.
      */
     @Test
     fun `전제가 읽을 수 있는 분량 안에 있다`() {
-        assertThat(cases.map { it.precondition.length }.average()).isLessThan(130.0)
+        assertThat(cases.map { it.precondition.length }.average()).isLessThan(110.0)
         assertThat(cases.count { it.precondition.length > 200 }).isLessThanOrEqualTo(5)
     }
 
