@@ -23,6 +23,7 @@ import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import kr.artel.orchestration.testscenario.service.CaseConditionReader
 
 /**
  * TestCase 도메인 서비스(코루틴). 재사용 케이스 라이브러리의 CRUD를 담당한다.
@@ -34,6 +35,9 @@ import org.springframework.stereotype.Service
  */
 @Service
 class TestCaseService(
+    // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
+    private val conditions: CaseConditionReader,
+
     private val repository: TestCaseRepository,
     private val projectAccessService: ProjectAccessService,
     private val objectMapper: ObjectMapper,
@@ -91,7 +95,8 @@ class TestCaseService(
                 precondition = case.precondition,
                 expectedValue = case.expectedValue,
                 verificationStatus = case.verificationStatus,
-                stateBefore = ScenarioStateReader.guardsOf(case.precondition)
+                // **문장이 아니라 구조에서 읽는다**(ARTEL-627).
+                stateBefore = conditions.guardsOf(case)
                     .map { CaseGuard(it.variable, it.operator, it.value) },
                 // 케이스 메타가 먼저다 — 구버전 엑셀 경로로 들어온 행은 거기 답이 있다. 지도가 낸
                 // 행은 그 칸이 없어서 비어 오고, 그때 지도가 답한다(ARTEL-606).

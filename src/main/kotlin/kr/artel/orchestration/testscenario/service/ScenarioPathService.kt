@@ -35,6 +35,9 @@ import org.springframework.stereotype.Service
  */
 @Service
 class ScenarioPathService(
+    // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
+    private val conditions: CaseConditionReader,
+
     private val objectMapper: ObjectMapper,
     private val testCaseRepository: TestCaseRepository,
     private val buildRepository: GameBuildRepository,
@@ -73,13 +76,13 @@ class ScenarioPathService(
         val toScene = ScenarioStateReader.sceneOf(to)
         // 출발은 **그 케이스를 실행한 뒤**다. 사전조건이 보장한 것에 그 케이스가 바꾼 것을 얹는다.
         val fromAfter = ScenarioStateReader.stateAfter(from, objectMapper)
-        val state = ScenarioStateReader.knownValuesOf(from.precondition) + fromAfter
-        val want = ScenarioStateReader.guardsOf(to.precondition)
+        val state = conditions.knownValuesOf(from) + fromAfter
+        val want = conditions.guardsOf(to)
         // 순서가 뒤바뀐 것인지는 **메우는 일과 다른 질문**이다. 여기서 함께 답해 두면 뒤집으면
         // 이어지는 자리를 조용히 이동 스텝으로 덮지 않을 수 있다.
         val ordering = ScenarioOrderCheck.verdict(
             fromAfter = fromAfter,
-            fromBefore = ScenarioStateReader.guardsOf(from.precondition),
+            fromBefore = conditions.guardsOf(from),
             toAfter = ScenarioStateReader.stateAfter(to, objectMapper),
             toBefore = want,
         )

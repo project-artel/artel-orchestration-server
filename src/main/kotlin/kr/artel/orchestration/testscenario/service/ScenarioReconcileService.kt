@@ -44,6 +44,9 @@ import org.springframework.transaction.reactive.executeAndAwait
  */
 @Service
 class ScenarioReconcileService(
+    // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
+    private val conditions: CaseConditionReader,
+
     private val scenarioRepository: TestScenarioRepository,
     private val runScenarioRepository: TestRunScenarioRepository,
     private val transactionalOperator: TransactionalOperator,
@@ -459,8 +462,8 @@ class ScenarioReconcileService(
                 id = case.id!!,
                 scene = ScenarioStateReader.sceneOf(case),
                 step = case.step.trim(),
-                guards = ScenarioStateReader.guardsOf(case.precondition),
-                declared = ScenarioStateReader.knownValuesOf(case.precondition),
+                guards = conditions.guardsOf(case),
+                declared = conditions.knownValuesOf(case),
             )
         }
     }.onFailure { logger.warn("케이스 전량 조회 실패 — 검사들을 넘어간다: ${it.message}") }

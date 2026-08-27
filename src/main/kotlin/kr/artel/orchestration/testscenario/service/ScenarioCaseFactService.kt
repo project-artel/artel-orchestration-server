@@ -30,6 +30,9 @@ import org.springframework.stereotype.Service
  */
 @Service
 class ScenarioCaseFactService(
+    // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
+    private val conditions: CaseConditionReader,
+
     private val objectMapper: ObjectMapper,
     private val testCaseRepository: TestCaseRepository,
     private val buildRepository: GameBuildRepository,
@@ -45,7 +48,7 @@ class ScenarioCaseFactService(
         }
 
         val scene = ScenarioStateReader.sceneOf(case)
-        val stateBefore = ScenarioStateReader.guardsOf(case.precondition)
+        val stateBefore = conditions.guardsOf(case)
             .map { CaseGuardView(it.variable, it.operator, it.value) }
         val stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
 
