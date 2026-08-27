@@ -20,6 +20,7 @@ import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
 /**
@@ -36,6 +37,8 @@ class TestCaseService(
     private val projectAccessService: ProjectAccessService,
     private val objectMapper: ObjectMapper,
 ) {
+
+    private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
     /**
      * 화면이 읽는 케이스 목록(최근 것부터). 비참여자면 빈 목록.
      *
@@ -78,6 +81,7 @@ class TestCaseService(
      */
     suspend fun getAuthoringCases(projectId: Long, userId: Long): List<AuthoringTestCase> {
         if (!projectAccessService.isMember(projectId, userId)) return emptyList()
+        val changed = valuesChangedByCases(projectId)
         return repository.findByProjectIdOrderByIdAsc(projectId).map { case ->
             AuthoringTestCase(
                 id = case.id!!,
@@ -88,10 +92,40 @@ class TestCaseService(
                 verificationStatus = case.verificationStatus,
                 stateBefore = ScenarioStateReader.guardsOf(case.precondition)
                     .map { CaseGuard(it.variable, it.operator, it.value) },
-                stateAfter = ScenarioStateReader.stateAfter(case, objectMapper),
+                // 케이스 메타가 먼저다 — 구버전 엑셀 경로로 들어온 행은 거기 답이 있다. 지도가 낸
+                // 행은 그 칸이 없어서 비어 오고, 그때 지도가 답한다(ARTEL-606).
+                stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
+                    .ifEmpty { changed[case.id].orEmpty() },
             )
         }.toList()
     }
+
+    /**
+     * 케이스마다 **실행하면 무엇이 바뀌나**(ARTEL-606).
+     *
+     * 저작이 실행할 수 없는 스텝을 지어내던 자리다 — 케이스가 `position == 1 인 상태에서` 라고만
+     * 하고 position 이 무엇을 하면 1이 되는지는 말하지 않아, 모델이 `case_id` 없는 "…상태로
+     * 준비한다"를 적었다. QA 실행이 따라갈 것이 없는 문장이다.
+     *
+     * 답은 지도의 `capability_effect` 에 있고 `capability_key` 가 그 자리로 가는 길이다. 계약은
+     * 안 바꾼다 — `state_after` 는 이미 `AuthoringTestCase` 에 있고 에이전트가 읽는 자리다.
+     *
+     * **이름은 마지막 마디로 통일한다.** `CaseGuard` 가 같은 규칙이라, 그러지 않으면 한쪽의
+     * `MapMove.StagePosition` 과 다른 쪽의 `StagePosition` 이 서로 다른 값으로 보인다.
+     *
+     * 못 읽어도 저작을 세우지 않는다. 이것이 없으면 예전처럼 빈 map 이고, 모델은 지금처럼 지어낸다.
+     */
+    private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Map<String, String>> = runCatching {
+        repository.findValuesChangedByCases(projectId).toList()
+            .groupBy { it.caseId }
+            .mapValues { (_, writes) ->
+                writes.mapNotNull { write ->
+                    write.detail?.takeIf { it.isNotBlank() }
+                        ?.let { ScenarioStateReader.normalize(write.target) to it }
+                }.toMap()
+            }
+    }.onFailure { logger.warn("케이스가 바꾸는 값 조회 실패 — 저작에 state_after 를 못 싣는다: ${it.message}") }
+        .getOrElse { emptyMap() }
 
     /**
      * 프로젝트의 커버리지(ARTEL-403). 비참여자면 전부 0 — 목록과 같은 판단이다(존재를 숨긴다).

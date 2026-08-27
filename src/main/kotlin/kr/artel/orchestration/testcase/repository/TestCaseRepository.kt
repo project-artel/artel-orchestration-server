@@ -187,6 +187,9 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     /**
      * 이 프로젝트의 케이스들이 **바꾸는 값**(ARTEL-581).
      *
+     * 두 곳이 읽는다 — 나눔이 순서를 알 때(ARTEL-581)와, 저작에 "이 케이스를 실행하면 무엇이
+     * 바뀌나"를 말할 때(ARTEL-606). 같은 사실이라 질의도 하나다.
+     *
      * 나눔이 순서를 알려면 필요하다 — 앞 스텝이 바꾼 값을 뒤 스텝이 전제로 삼는 것은 모순이 아니다.
      * 케이스 메타의 `state_after` 로는 답이 안 된다. 그것은 구버전 엑셀 경로가 넣던 칸이라 지도가
      * 낸 케이스에는 없다.
@@ -200,7 +203,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      */
     @Query(
         """
-        SELECT tc.id AS case_id, ce.target AS target
+        SELECT tc.id AS case_id, ce.target AS target, ce.detail AS detail
         FROM test_case tc
         JOIN capability c ON c.capability_key = tc.capability_key
         JOIN scene s ON s.id = c.scene_id
