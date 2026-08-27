@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController
  *
  * **브라우저 조회(`/api/projects/{id}/game-builds/{id}/content-map`, ARTEL-446)와 별개의
  * 엔드포인트다.** 겸하면 사람이 읽을 것의 요구가 프롬프트의 부피를 정하게 되고, 그 뒤로는 어느
- * 쪽도 줄일 수 없다. 이쪽은 프롬프트에 들어갈 최소한만 담는다 — 조건 트리도, 근거 주소도,
+ * 쪽도 줄일 수 없다. 이쪽은 프롬프트에 들어갈 최소한만 담는다 — 조건 트리도, `evidence` 주소도,
  * 지식 본문도 없다.
  *
  * `/internal` 아래인 것은 이것이 무인증 서버-투-서버 경로이기 때문이다(ARTEL-265). 그 접두사는
@@ -41,7 +41,7 @@ class InternalSceneContextController(
     /**
      * 이 빌드의 씬별 맥락을 한 번에 읽는다.
      *
-     * **근거를 한 번도 올리지 않은 빌드는 404 가 아니라 200 이다.** 빌드는 존재하고, 없는 것은
+     * **`evidence` 를 한 번도 올리지 않은 빌드는 404 가 아니라 200 이다.** 빌드는 존재하고, 없는 것은
      * 아직 아무도 올리지 않은 문서다. 그때 `contentMapId` 가 null 이고 `scenes` 에는 앵커가 든
      * 씬만 남거나 아무것도 남지 않는다 — 둘 다 정상 상태다. 404 는 **빌드가 없거나 경로의
      * `projectId` 가 그 빌드의 것과 다를 때**, 그리고 없는 `qaTryId` 를 줬을 때뿐이다.
@@ -50,7 +50,7 @@ class InternalSceneContextController(
         summary = "씬별 capability·앵커 지식 조회",
         description = "게임 빌드 하나에 대해 씬 이름을 키로 capability 와 앵커 지식을 함께 낸다. " +
             "`not-a-step` 은 나가지 않고, 지식은 id 와 요약까지만 낸다. " +
-            "`contentMapId` 가 null 이면 이 빌드에 아직 근거 지도가 없다.",
+            "`contentMapId` 가 null 이면 이 빌드에 아직 `evidence` 로 만든 지도가 없다.",
     )
     // 메서드 이름이 `read` 면 ProjectContentMapController.read 와 부딪혀 생성된 OpenAPI 의
     // operationId 가 `read_1` 로 밀린다. 그 번호는 어느 쪽이 먼저 스캔됐느냐에 따라 붙으므로

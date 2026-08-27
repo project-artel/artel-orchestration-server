@@ -11,7 +11,7 @@ package kr.artel.orchestration.scenecontext.dto
  *
  * id 계열은 전부 문자열이다. 다른 payload 와 같은 이유로 — 64비트 정밀도 손실을 피한다.
  *
- * @property contentMapId 고른 지도. **null 이 정상이다** — 아직 아무도 근거를 올리지 않은
+ * @property contentMapId 고른 지도. **null 이 정상이다** — 아직 아무도 `evidence` 를 올리지 않은
  *   빌드에서 이 응답은 404 가 아니라 200 이고, 그때 이 값과 [capture] 가 비어 있다.
  * @property capture `editor` · `editor-play` · `player`. 어느 관측으로 만든 지도인지에 따라 같은
  *   필드가 다른 뜻이라(V40), agent 가 무엇을 읽고 있는지 알 수 있게 함께 낸다.
@@ -56,7 +56,7 @@ data class SceneContextEntry(
 /**
  * 프롬프트 한 줄이 될 capability 하나.
  *
- * **`condition_tree` · 근거 주소(`entry_id`) · 효과는 여기 없다.** 프롬프트에 그릴 수 없는 것을
+ * **`condition_tree` · `evidence` 주소(`entry_id`) · 효과는 여기 없다.** 프롬프트에 그릴 수 없는 것을
  * 실으면 런당 payload 만 부풀고 agent 는 그것을 읽지 않는다. 필요해지면 그때 브라우저 조회가
  * 이미 내주고 있다.
  *

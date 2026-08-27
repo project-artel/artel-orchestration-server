@@ -369,7 +369,7 @@ class QaAgentInboundRouter(
         if (tryRepository.transition(qaTryId, currentStatus, resolved, completedAt, completedAt) != 1) {
             throw IllegalStateException("Illegal QA status transition")
         }
-        // 판정 승격은 **이 분기 안에서만** 일어난다 — 위 resolved == null 갈래(스텝 판정 프레임)는
+        // 판정 승격은 **이 분기 안에서만** 일어난다 — 위 resolved == null `branch`(스텝 판정 프레임)는
         // 런을 끝내지도, 판정을 싣지도 않는다. 전이 **뒤**인 것도 의도다: 앞에 두면 종단되지 않은
         // 런에 판정이 새겨질 수 있다.
         promoteVerdict(qaTryId, envelope, completedAt)
@@ -399,7 +399,7 @@ class QaAgentInboundRouter(
         // 방금 이 시나리오 try가 종단됐다. 모두 끝났으면 FAILED > CANCELLED > COMPLETED 우선순위로
         // 부모 run에 올린다 — 안 그러면 RUNNING으로 남아 다음 런을 영구 차단한다.
         runRollupService.rollUpIfAllTriesDone(qaTry.qaRunId, completedAt)
-        // 런이 정말 끝났을 때만 판독이 멈춘다 — 시나리오가 여럿이면 이 시도가 끝나도 다음이 남아
+        // 런이 정말 끝났을 때만 `pulse` 가 멈춘다 — 시나리오가 여럿이면 이 시도가 끝나도 다음이 남아
         // 있고, 그 판단은 `stopIfIdle` 안에 있다 (ARTEL-507).
         readings.stopIfIdle(qaTry.gameInstanceId)
     }
