@@ -41,7 +41,7 @@ import org.springframework.test.context.ActiveProfiles
 import java.time.Instant
 
 /**
- * 판독에서 화면을 가르고 화면 전이를 남긴다 (ARTEL-453).
+ * `pulse` 에서 화면을 가르고 화면 전이를 남긴다 (ARTEL-453).
  *
  * 이 파일이 지키는 것은 둘이다.
  *
@@ -50,7 +50,7 @@ import java.time.Instant
  *    없던 전이가 `source='runtime'` 으로 들어온다
  * 2. **임계값** — 무엇을 다른 화면으로 보고 무엇을 같은 화면으로 보는가. 이것이 나중에 손댈
  *    가능성이 가장 큰 값이라, 무엇이 의도였는지를 말하는 것이 테스트뿐이다
- *    (`화면을 가르지 않는 것들` · `한 판독만 스친 상태` 두 건)
+ *    (`화면을 가르지 않는 것들` · `한 pulse 만 스친 상태` 두 건)
  *
  * 값 자체가 아니라 **규칙**을 고정한다. 값(멤버 값·게임플레이 오브젝트)이 아니라 조작 가능한
  * 객체의 켜짐/꺼짐만 본다는 것, 그리고 연속 관측이 있어야 굳는다는 것.
@@ -99,7 +99,7 @@ class ScreenObservationTest {
     /**
      * 화면은 자기 기능 목록을 따로 갖지 않는다. 두 벌 두면 갈라진다.
      *
-     * 판독이 `offers` 로 광고한 객체는 판별자에는 들어가지만(근거가 놓친 팝업을 가르는 유일한
+     * `pulse` 가 `offers` 로 광고한 객체는 `discriminator` 에는 들어가지만(`evidence` 가 놓친 팝업을 가르는 유일한
      * 수단이다) `screen_capability` 에는 들어가지 않는다 — 그 표의 행은 **씬 기능 행**을 가리키고,
      * 없는 기능을 여기서 만들면 근거 없는 것이 근거 있는 것처럼 취급된다.
      */
@@ -110,7 +110,7 @@ class ScreenObservationTest {
         val continueId = newCapability(world, title, CONTINUE)
         newCapability(world, title, "Canvas[2]/settings[3]")
 
-        // continue 는 켜져 있고, settings 는 꺼져 있고, popup 은 근거에 없는데 판독이 광고한다.
+        // continue 는 켜져 있고, settings 는 꺼져 있고, popup 은 `evidence` 에 없는데 `pulse` 가 광고한다.
         observeTwice(
             world,
             whole(
@@ -132,7 +132,7 @@ class ScreenObservationTest {
         // ARTEL-450 이 없어 무엇을 눌렀는지 모른다. 0 이 정직한 값이다.
         assertThat(recorded.single().firedCount).isZero()
 
-        // popup 은 판별자에는 있다 — 그래야 팝업이 뜬 화면과 아닌 화면이 갈린다.
+        // popup 은 `discriminator` 에는 있다 — 그래야 팝업이 뜬 화면과 아닌 화면이 갈린다.
         assertThat(read(screen.discriminator)).contains("Canvas[2]/popup[7]" to true)
     }
 
@@ -177,7 +177,7 @@ class ScreenObservationTest {
     /**
      * 정적 후보에 없던 전이는 `source='runtime'` 으로 들어온다.
      *
-     * **오류가 아니라 발견이다** — 정적 분석이 놓친 씬 전이이고, 근거 수집을 어디서 고칠지
+     * **오류가 아니라 발견이다** — 정적 분석이 놓친 씬 전이이고, `evidence` 수집을 어디서 고칠지
      * 알려주는 신호다.
      */
     @Test
@@ -201,9 +201,9 @@ class ScreenObservationTest {
     }
 
     /**
-     * 아는 화면을 다시 밟아도 행이 늘지 않는다. `observed_count` 는 판독 수가 아니라 **방문 수**다.
+     * 아는 화면을 다시 밟아도 행이 늘지 않는다. `observed_count` 는 `pulse` 수가 아니라 **방문 수**다.
      *
-     * 한 화면에 머무는 동안 판독은 초당 여러 번 온다. 그것을 다 세면 이 값은 체류 시간이 되고,
+     * 한 화면에 머무는 동안 `pulse` 는 초당 여러 번 온다. 그것을 다 세면 이 값은 체류 시간이 되고,
      * "몇 번 지나갔나"를 묻는 소비자가 답을 얻지 못한다.
      */
     @Test
@@ -216,7 +216,7 @@ class ScreenObservationTest {
         val unlit = whole("TitleScene", deactive = listOf(CONTINUE))
 
         observeTwice(world, lit)
-        // 머무는 동안 판독이 더 와도 아무 일도 없어야 한다.
+        // 머무는 동안 `pulse` 가 더 와도 아무 일도 없어야 한다.
         observation.observe(world.gameInstanceId, lit)
         observation.observe(world.gameInstanceId, lit)
         observeTwice(world, unlit)
@@ -238,8 +238,8 @@ class ScreenObservationTest {
      * **임계값을 고정한다.** 감시 멤버 값이 바뀌어도, 게임플레이 오브젝트가 나타났다 사라져도
      * 화면은 갈리지 않는다.
      *
-     * 이 둘을 판별자에 넣으면 화면 수가 플레이 길이에 비례한다 — 다이어그램이 읽을 수 없어지고
-     * 화면 캡처가 행마다 튄다. 여기가 깨지는 것을 보게 되면 판별자 규칙이 넓어진 것이고,
+     * 이 둘을 `discriminator` 에 넣으면 화면 수가 플레이 길이에 비례한다 — 다이어그램이 읽을 수 없어지고
+     * 화면 캡처가 행마다 튄다. 여기가 깨지는 것을 보게 되면 `discriminator` 규칙이 넓어진 것이고,
      * `ScreenFold` 의 `임계값` 절이 그 판단의 근거다.
      */
     @Test
@@ -260,18 +260,18 @@ class ScreenObservationTest {
     }
 
     /**
-     * **정착(settling)을 고정한다.** 한 판독만 스친 상태는 화면이 되지 않는다.
+     * **정착(settling)을 고정한다.** 한 `pulse` 만 스친 상태는 화면이 되지 않는다.
      *
      * 전이 중간 프레임은 반쯤 지어진 UI 를 보여준다. 그 한 프레임이 화면 행과 전이 두 개를 만들면
      * 재현 경로에 아무도 본 적 없는 화면이 낀다. 사람이 한 프레임도 못 본 화면은 화면이 아니다.
      */
     @Test
-    fun `한 판독만 스친 상태는 화면이 되지 않는다`(): Unit = runBlocking {
+    fun `한 pulse 만 스친 상태는 화면이 되지 않는다`(): Unit = runBlocking {
         val world = newWorld()
         val title = newScene(world, "TitleScene")
         newCapability(world, title, CONTINUE)
 
-        // 꺼짐이 딱 한 판독 스치고 지나간다.
+        // 꺼짐이 딱 한 `pulse` 스치고 지나간다.
         observation.observe(world.gameInstanceId, whole("TitleScene", active = listOf(CONTINUE)))
         observation.observe(world.gameInstanceId, whole("TitleScene", deactive = listOf(CONTINUE)))
         observation.observe(world.gameInstanceId, whole("TitleScene", active = listOf(CONTINUE)))
@@ -283,13 +283,13 @@ class ScreenObservationTest {
     }
 
     /**
-     * 델타 판독이 전량 판독 위에 얹힌다. **말하지 않은 객체는 있던 자리를 지킨다.**
+     * 델타 `pulse` 가 전량 `pulse` 위에 얹힌다. **말하지 않은 객체는 있던 자리를 지킨다.**
      *
      * agent-server `PulseMemory.apply` 와 같은 규칙이다. 이 채널의 소비자가 둘인데 델타를 다르게
      * 읽으면 화면이 갈린 이유를 두 쪽에서 다르게 설명하게 되고, 어느 쪽이 틀렸는지 가릴 수 없다.
      */
     @Test
-    fun `델타 판독이 전량 판독 위에 얹힌다`(): Unit = runBlocking {
+    fun `델타 pulse 가 전량 pulse 위에 얹힌다`(): Unit = runBlocking {
         val world = newWorld()
         val title = newScene(world, "TitleScene")
         newCapability(world, title, CONTINUE)
@@ -332,7 +332,7 @@ class ScreenObservationTest {
     private val CONTINUE = "Canvas[2]/continue[1]"
     private val BACK = "Canvas[2]/back[1]"
 
-    /** 판별자가 굳으려면 연속 두 판독이 필요하다(`ScreenFold.SETTLE_READINGS`). */
+    /** `discriminator` 가 굳으려면 연속 두 `pulse` 가 필요하다(`ScreenFold.SETTLE_READINGS`). */
     private suspend fun observeTwice(world: World, payload: String) {
         observation.observe(world.gameInstanceId, payload)
         observation.observe(world.gameInstanceId, payload)
@@ -357,7 +357,7 @@ class ScreenObservationTest {
     private fun offering(selector: String) =
         """{"selector":"$selector","offers":{"click":{"key":"click"}}}"""
 
-    /** 값과 잡 오브젝트만 흔들리는 판독. 컨트롤은 계속 켜져 있다. */
+    /** 값과 잡 오브젝트만 흔들리는 `pulse`. 컨트롤은 계속 켜져 있다. */
     private fun battleReading(turn: Int, extras: List<String>): String {
         val extraJson = extras.joinToString("") { ",${plain(it)}" }
         return """
@@ -433,7 +433,7 @@ class ScreenObservationTest {
         ).id!!
 
     /**
-     * 판별자를 `(selector, active)` 로 읽는다.
+     * `discriminator` 를 `(selector, active)` 로 읽는다.
      *
      * 원문 문자열로 단언하지 않는 이유: jsonb 는 객체 키를 길이·바이트 순으로 다시 쓴다. 우리가
      * 쓴 순서와 읽는 순서가 다르므로, 문자열을 고정하면 적재기가 아니라 Postgres 의 표기를

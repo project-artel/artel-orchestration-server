@@ -21,17 +21,17 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
     suspend fun countBySceneId(sceneId: Long): Long
 
     /**
-     * 이 판별자의 화면을 앉히거나, 이미 있으면 방문 수를 올리고 그 행의 id 를 돌려준다 (ARTEL-453).
+     * 이 `discriminator` 의 화면을 앉히거나, 이미 있으면 방문 수를 올리고 그 행의 id 를 돌려준다 (ARTEL-453).
      *
-     * 멱등을 코드가 아니라 `uk_screen_discriminator`(V56) 가 강제한다. 접기 상태는 프로세스
+     * 멱등을 코드가 아니라 `uk_screen_discriminator`(V56) 가 강제한다. `fold` 상태는 프로세스
      * 메모리라 재시작하면 사라지고, 같은 빌드를 두 서버가 관측하면 각자 자기 메모리를 본다 —
-     * 코드가 "처음 보는 판별자인가"를 판정하면 그때마다 같은 화면이 행 둘로 갈리고
+     * 코드가 "처음 보는 `discriminator` 인가"를 판정하면 그때마다 같은 화면이 행 둘로 갈리고
      * `observed_count` 가 둘에 쪼개져 양쪽 다 틀린 값이 된다.
      *
      * `first_seen_qa_run_id` 는 `DO UPDATE` 에 없다. 어느 런에서 **처음** 봤나가 이 칸의 뜻이라,
      * 재방문이 덮으면 뜻이 사라진다.
      *
-     * `observed_count` 는 판독 수가 아니라 **방문 수**다. 부르는 쪽이 화면이 굳는 순간에만
+     * `observed_count` 는 `pulse` 수가 아니라 **방문 수**다. 부르는 쪽이 화면이 굳는 순간에만
      * 부르므로(`ScreenFold.settle`), 한 화면에 오래 머물러도 1 이다.
      *
      * `@Modifying` 을 붙이지 않는다. 붙이면 Spring Data 가 반환값을 영향받은 행 수로 읽어
@@ -49,7 +49,7 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
     suspend fun observe(sceneId: Long, discriminator: String, qaRunId: Long?): Long
 
     /**
-     * 이 판별자의 화면이 이미 있나 (ARTEL-453).
+     * 이 `discriminator` 의 화면이 이미 있나 (ARTEL-453).
      *
      * 화면 폭발 안전판이 걸린 뒤에만 쓴다. 안전판은 **새 화면**을 막자는 것이지 이미 아는 화면의
      * 재방문까지 얼릴 이유는 없어서, 상한을 넘은 씬에서는 이 조회로 기존 행만 갱신한다.
@@ -71,7 +71,7 @@ interface ScreenTransitionRepository : CoroutineCrudRepository<ScreenTransitionE
     /**
      * 관측한 전이를 앉히거나 관측 수를 올리고 그 행의 id 를 돌려준다 (ARTEL-453).
      *
-     * `capability_id` 를 받지 않는다. 무엇이 이 전이를 일으켰는지는 액션과 판독을 시간축으로
+     * `capability_id` 를 받지 않는다. 무엇이 이 전이를 일으켰는지는 액션과 `pulse` 를 시간축으로
      * 붙이는 ARTEL-450 이 알려 주고, 그 전에는 **정직하게 귀속할 방법이 없다.** 추측을 넣으면
      * "실제로 어떻게 흘렀나"가 오염되고, 그것은 이 표가 정적으로 만들어지지 않는 이유와 같은
      * 이유로 하면 안 되는 일이다.
@@ -80,7 +80,7 @@ interface ScreenTransitionRepository : CoroutineCrudRepository<ScreenTransitionE
      * 건다. 전체 유니크는 NULL 을 서로 다른 값으로 보아 걸리지 않고, 그러면 같은 전이가 관측마다
      * 새 행이 된다.
      *
-     * `kind` 와 `crosses_scene` 은 갱신하지 않는다. 두 값은 이 전이의 신원과 함께 정해지고,
+     * `kind` 와 `crosses_scene` 은 갱신하지 않는다. 두 값은 이 전이를 같은 전이로 볼지와 함께 정해지고,
      * 재관측이 다르게 말한다면 그것은 갱신이 아니라 다른 전이라는 신호다.
      *
      * `@Modifying` 을 붙이지 않는 이유는 [ScreenRepository.observe] 와 같다.
@@ -121,7 +121,7 @@ interface SceneEdgeRepository : CoroutineCrudRepository<SceneEdgeEntity, Long> {
     fun findByFromSceneIdAndToSceneName(fromSceneId: Long, toSceneName: String): Flow<SceneEdgeEntity>
 
     /**
-     * 근거가 말한 정적 전이를 넣거나 되맞추고 그 행의 id 를 돌려준다.
+     * `evidence` 가 말한 정적 전이를 넣거나 되맞추고 그 행의 id 를 돌려준다.
      *
      * **지웠다 넣지 않는다.** `capability_effect` 는 안정 키가 없어 그 길밖에 없었지만, 여기는
      * `uk_scene_edge (from_scene_id, to_scene_name, capability_id)` 가 이미 안정 키다. 그리고 이 행은
@@ -271,7 +271,7 @@ interface SceneEdgeRepository : CoroutineCrudRepository<SceneEdgeEntity, Long> {
     /**
      * 정적 후보에 없던 전이를 `source='runtime'` 으로 남긴다 (ARTEL-453).
      *
-     * **이것은 오류가 아니라 발견이다** — 정적 분석이 놓친 씬 전이이고, 근거 수집을 어디서
+     * **이것은 오류가 아니라 발견이다** — 정적 분석이 놓친 씬 전이이고, `evidence` 수집을 어디서
      * 고칠지 알려주는 신호다.
      *
      * `capability_id` 는 null 이다. 무엇으로 갔는지는 ARTEL-450 이 붙기 전에는 모르고, 갔다는
@@ -279,7 +279,7 @@ interface SceneEdgeRepository : CoroutineCrudRepository<SceneEdgeEntity, Long> {
      * 따라서 충돌도 `uk_scene_edge_auto`(부분 유니크) 로 건다.
      *
      * `to_scene_id` 를 하위 질의로 푸는 것은 [upsertStatic] 과 같은 이유다. 다만 여기서는 값이
-     * 있는 쪽이 보통이다 — 관측한 전이의 도착 씬은 방금 판독이 이름을 댄 씬이고, 이름을 댄 씬은
+     * 있는 쪽이 보통이다 — 관측한 전이의 도착 씬은 방금 `pulse` 가 이름을 댄 씬이고, 이름을 댄 씬은
      * 대개 순회된 씬이다. 순회 안 된 씬으로 갔다면 그 자체가 또 하나의 발견이라 null 로 남긴다.
      */
     @Query(

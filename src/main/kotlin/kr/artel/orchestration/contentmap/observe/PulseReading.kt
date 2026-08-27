@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 
 /**
- * 판독 문서. **화면을 가르는 데 필요한 칸만** 판다.
+ * `pulse` 문서. **화면을 가르는 데 필요한 칸만** 판다.
  *
  * 중계 경로(`QaSdkBridgeService.routePulse`)는 문서를 읽지 않고 옮기기만 하므로 raw JSON 으로
  * 남는다. 여기는 반대다 — 필드를 읽어 판단하므로 `coding-style.md` 의 `Data Shapes` 가 요구하는
@@ -13,20 +13,20 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * 한다.
  *
  * [JsonIgnoreProperties] 로 모르는 칸을 흘린다. SDK 는 칸을 더하면서 배포되고, 그때마다 이쪽이
- * 파싱 실패로 죽으면 화면 적재가 통째로 멈춘다 — 판독은 관측 채널이지 런의 전제가 아니다.
+ * 파싱 실패로 죽으면 화면 적재가 통째로 멈춘다 — `pulse` 는 관측 채널이지 런의 전제가 아니다.
  *
- * 값(`members`)은 담지 않는다. **화면을 가르는 데 쓰지 않기로 한 것**이 판별자 규칙의 핵심이고
+ * 값(`members`)은 담지 않는다. **화면을 가르는 데 쓰지 않기로 한 것**이 `discriminator` 규칙의 핵심이고
  * ([ScreenDiscriminator] 참고), 쓰지 않을 것을 파면 다음 사람이 쓸 수 있다고 읽는다.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PulseReading(
-    /** 이 판독이 본 씬. 델타에서도 실려 온다. */
+    /** 이 `pulse` 가 본 씬. 델타에서도 실려 온다. */
     val scene: String? = null,
 
     /**
-     * 전량 판독인가.
+     * 전량 `pulse` 인가.
      *
-     * `true` 면 이것이 판독이 볼 수 있는 전부라 들고 있던 것을 **교체**한다. `false` 면 델타라
+     * `true` 면 이것이 `pulse` 가 볼 수 있는 전부라 들고 있던 것을 **교체**한다. `false` 면 델타라
      * 얹는다 — 말하지 않은 객체는 있던 자리를 지킨다. agent-server `PulseMemory.apply` 와 같은
      * 규칙이다. 두 소비자가 델타를 다르게 읽으면 어느 쪽이 틀렸는지 가릴 수 없다.
      */
@@ -40,7 +40,7 @@ data class PulseReading(
 )
 
 /**
- * 판독이 말한 객체 하나.
+ * `pulse` 가 말한 객체 하나.
  *
  * 어느 목록에 실려 왔는가가 곧 켜짐/꺼짐이다. 객체의 필드가 아니라서 자기모순이 없다.
  */
@@ -54,7 +54,7 @@ data class PulseObject(
     val scene: String? = null,
 
     /**
-     * 형제 인덱스가 붙은 위치 경로(`Canvas[2]/continue[1]`). 판별자의 키다.
+     * 형제 인덱스가 붙은 위치 경로(`Canvas[2]/continue[1]`). `discriminator` 의 키다.
      *
      * `CapabilityEntity.controlSelector` 와 같은 표기라 그대로 맞대 볼 수 있다.
      */
@@ -67,13 +67,13 @@ data class PulseObject(
      * 이 객체가 **지금 무엇에 응답하는가**. 있으면 조작 가능한 객체다.
      *
      * 모양을 읽지 않고 비었는지만 본다 — 어휘는 SDK 의 것이고 배포마다 바뀐다. 옛 SDK 는 이
-     * 칸을 아예 보내지 않으므로 없는 것이 곧 "조작 불가"는 아니고, 그래서 판별자는 이것만으로
+     * 칸을 아예 보내지 않으므로 없는 것이 곧 "조작 불가"는 아니고, 그래서 `discriminator` 는 이것만으로
      * 정해지지 않는다([ScreenDiscriminator] 참고).
      */
     @JsonProperty("offers")
     val offers: Map<String, Any?>? = null,
 ) {
-    /** 판별자와 기능 대조가 쓰는 키. selector 가 없으면 path 로 내려간다. */
+    /** `discriminator` 와 기능 대조가 쓰는 키. selector 가 없으면 path 로 내려간다. */
     val key: String? get() = selector ?: path
 
     val interactive: Boolean get() = !offers.isNullOrEmpty()

@@ -22,14 +22,14 @@ import java.time.Clock
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 판독에서 화면을 가르고 화면 전이를 남긴다 (ARTEL-453).
+ * `pulse` 에서 화면을 가르고 화면 전이를 남긴다 (ARTEL-453).
  *
  * QA 런 전에는 `screen` 이 0행이다 — 정적 분석은 화면을 모른다. 이것이 그 0을 깨는 자리이고,
- * 세 갈래가 이 행들을 기다린다: 읽기 API(ARTEL-596) · 다이어그램(ARTEL-597) ·
+ * 세 가지가 이 행들을 기다린다: 읽기 API(ARTEL-596) · 다이어그램(ARTEL-597) ·
  * 화면 캡처(ARTEL-595 · ARTEL-456).
  *
  * ```
- * PULSE → ScreenFold(접기 + 판별자) → settle → screen
+ * PULSE → ScreenFold(fold + discriminator) → settle → screen
  *                                             → screen_capability (씬 목록의 부분집합)
  *                                             → screen_transition (관측만)
  *                                             → scene_edge (씬을 넘었으면 verified / runtime)
@@ -37,8 +37,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * ## ARTEL-450 이 없어서 못 채우는 것
  *
- * 액션과 판독을 시간축으로 붙이는 ARTEL-450 이 아직 없다. 그것이 "이 전이를 무엇이 일으켰나"를
- * 답하는 유일한 자리라, 지금은 **판독만으로** 화면과 전이를 유도한다. 그 결과:
+ * 액션과 `pulse` 를 시간축으로 붙이는 ARTEL-450 이 아직 없다. 그것이 "이 전이를 무엇이 일으켰나"를
+ * 답하는 유일한 자리라, 지금은 **`pulse` 만으로** 화면과 전이를 유도한다. 그 결과:
  *
  * - `screen_transition.capability_id` 는 **늘 null** 이다. 정직하게 귀속할 수 없는 자리에
  *   추측을 넣으면 "실제로 어떻게 흘렀나"가 오염된다 — 이 표를 정적으로 만들지 않는 것과 같은
@@ -52,8 +52,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * ## 실패를 삼킨다
  *
- * 판독은 관측 채널이지 런의 전제가 아니다(`QaReadingsService` 와 같은 판단). 화면 적재가
- * 실패했다고 판독 중계가 끊기면, 화면을 못 만드는 게임에서 QA 자체가 눈을 잃는다.
+ * `pulse` 는 관측 채널이지 런의 전제가 아니다(`QaReadingsService` 와 같은 판단). 화면 적재가
+ * 실패했다고 `pulse` 중계가 끊기면, 화면을 못 만드는 게임에서 QA 자체가 눈을 잃는다.
  */
 @Service
 class ScreenObservationService(
@@ -74,14 +74,14 @@ class ScreenObservationService(
     private val logger = LoggerFactory.getLogger(ScreenObservationService::class.java)
 
     /**
-     * 인스턴스별 접기 상태.
+     * 인스턴스별 `fold` 상태.
      *
      * **락이 없다.** `SdkWebSocketHandler` 가 한 세션의 프레임을 `concatMap` 으로 하나씩 처리하고,
-     * 한 게임 인스턴스의 판독은 한 세션으로만 온다. 그 보장이 깨지면 같은 판별자가 두 번 굳어
+     * 한 게임 인스턴스의 `pulse` 는 한 세션으로만 온다. 그 보장이 깨지면 같은 `discriminator` 가 두 번 굳어
      * `observed_count` 가 두 번 오르는데, 행이 갈리지는 않는다 — `uk_screen_discriminator` 가
      * 막는다.
      *
-     * 프로세스 메모리라 재시작하면 사라진다. 다음 전량 판독이 복구한다.
+     * 프로세스 메모리라 재시작하면 사라진다. 다음 전량 `pulse` 가 복구한다.
      */
     private val folds = ConcurrentHashMap<Long, ScreenFold>()
 
@@ -94,15 +94,15 @@ class ScreenObservationService(
         } catch (failure: Exception) {
             // 삼키되 조용하지는 않게. 화면이 안 생길 때 사람이 볼 유일한 자리다.
             logger.warn(
-                "판독에서 화면을 가르지 못했다 [gameInstanceId={}]: {}",
+                "pulse 에서 화면을 가르지 못했다 [gameInstanceId={}]: {}",
                 gameInstanceId, failure.message, failure,
             )
         }
     }
 
     private suspend fun record(gameInstanceId: Long, reading: PulseReading) {
-        // 화면은 **QA 런이 관측한 것**이다. 런이 없으면 접기 상태도 버린다 — 스캔 순회가 흘리는
-        // 판독이 다음 런의 첫 화면을 오염시키지 않게.
+        // 화면은 **QA 런이 관측한 것**이다. 런이 없으면 `fold` 상태도 버린다 — 스캔 순회가 흘리는
+        // `pulse` 가 다음 런의 첫 화면을 오염시키지 않게.
         val qaRun = qaRuns.findActiveByGameInstanceId(gameInstanceId)
         if (qaRun == null) {
             folds.remove(gameInstanceId)
@@ -117,17 +117,17 @@ class ScreenObservationService(
         val contentMapId = contentMap.id ?: return
 
         if (folds.size >= MAX_TRACKED_INSTANCES && !folds.containsKey(gameInstanceId)) {
-            // 통째로 비운다. 다음 전량 판독이 각자 복구하므로 자기 치유되고, 상한 없이 새는
-            // 것보다 낫다. 여기 걸린다는 것은 판독을 흘리는 인스턴스가 수백이라는 뜻이고,
+            // 통째로 비운다. 다음 전량 `pulse` 가 각자 복구하므로 자기 치유되고, 상한 없이 새는
+            // 것보다 낫다. 여기 걸린다는 것은 `pulse` 를 흘리는 인스턴스가 수백이라는 뜻이고,
             // 그때는 메모리보다 먼저 볼 것이 있다.
-            logger.warn("접기 상태가 {}개를 넘어 비운다", MAX_TRACKED_INSTANCES)
+            logger.warn("fold 상태가 {}개를 넘어 비운다", MAX_TRACKED_INSTANCES)
             folds.clear()
         }
         val fold = folds.getOrPut(gameInstanceId) { ScreenFold() }
         fold.apply(reading)
 
         val sceneName = fold.scene ?: return
-        // 근거가 모르는 씬에는 화면을 앉히지 않는다. `screen.scene_id` 가 NOT NULL 이고, 씬을
+        // `evidence` 가 모르는 씬에는 화면을 앉히지 않는다. `screen.scene_id` 가 NOT NULL 이고, 씬을
         // 여기서 만들면 정적 순회가 만든 씬과 이름만 같은 행이 둘 생긴다.
         val scene = scenes.findByContentMapIdAndName(contentMapId, sceneName) ?: return
         val sceneId = scene.id ?: return
@@ -173,7 +173,7 @@ class ScreenObservationService(
         val known = screens.findIdBySceneIdAndDiscriminator(sceneId, discriminatorJson)
         if (known == null) {
             logger.warn(
-                "씬 {}의 화면이 {}개를 넘어 새 화면을 만들지 않는다. 판별자 임계값을 의심할 자리다",
+                "씬 {}의 화면이 {}개를 넘어 새 화면을 만들지 않는다. discriminator 임계값을 의심할 자리다",
                 sceneId, MAX_SCREENS_PER_SCENE,
             )
             return null
@@ -204,7 +204,7 @@ class ScreenObservationService(
         val verified = sceneEdges.verifyByScenePair(fromSceneId, toSceneName, transitionId, observedAt)
         if (verified > 0) return
         // 정적 후보에 없던 전이다. **오류가 아니라 발견이다** — 정적 분석이 놓친 씬 전이이고,
-        // 근거 수집을 어디서 고칠지 알려주는 신호다.
+        // `evidence` 수집을 어디서 고칠지 알려주는 신호다.
         sceneEdges.observeRuntime(fromSceneId, toSceneName, contentMapId, transitionId, observedAt)
         logger.info(
             "정적 후보에 없던 씬 전이를 관측했다 [fromSceneId={}, toSceneName={}]",
@@ -215,16 +215,16 @@ class ScreenObservationService(
     /**
      * 이 전이를 무엇으로 분류하나. **ARTEL-450 이 붙기 전의 잠정 규칙이다.**
      *
-     * 이슈가 정한 세 갈래는 원인을 말한다:
+     * 이슈가 정한 세 `kind` 는 원인을 말한다:
      * ```
      * action   조작으로 일어남        capability_id 있음
      * state    씬 안 상태 변화        있거나 없음
      * auto     타이머·로딩·컷신 종료   capability_id 없음. TC 가 지시할 수 없다
      * ```
-     * 그런데 원인은 액션-판독 시간축 없이는 알 수 없다. 그래서 **관측만으로 참인 것**을 고른다.
+     * 그런데 원인은 액션-`pulse` 시간축 없이는 알 수 없다. 그래서 **관측만으로 참인 것**을 고른다.
      *
      * - 같은 씬 안의 변화 → [TransitionKind.STATE]. `state` 의 정의가 글자 그대로 "씬 안 상태
-     *   변화"이고 `capability_id` 가 없어도 되는 유일한 갈래다
+     *   변화"이고 `capability_id` 가 없어도 되는 유일한 `kind` 다
      * - 씬을 넘는 변화 → [TransitionKind.ACTION]. 정의상 딱 맞지는 않지만, 셋 중 **틀렸을 때
      *   가장 싼** 것이다. `auto` 는 "TC 가 지시할 수 없다"는 주장이라, 실은 버튼으로 가는
      *   전이에 그것을 달면 TC 생성기가 실제로 지시 가능한 경로를 **영영** 제외한다. `action`
@@ -240,16 +240,16 @@ class ScreenObservationService(
         /**
          * 한 씬이 가질 수 있는 화면 수의 상한. **임계값이 틀렸을 때 소리를 내는 안전판이다.**
          *
-         * 여기 걸린다는 것은 판별자가 너무 민감하다는 뜻이다. 상한이 없으면 그 사실이 조용히
+         * 여기 걸린다는 것은 `discriminator` 가 너무 민감하다는 뜻이다. 상한이 없으면 그 사실이 조용히
          * 수만 행과 행마다 튀는 캡처로만 드러나고, 그때는 이미 다이어그램이 읽을 수 없다.
          *
          * 32 는 "사람이 한 씬에서 구분해 부를 수 있는 화면"의 넉넉한 상한이다. 실측 근거는
          * 아직 없다 — 화면을 만드는 코드가 지금까지 없었다. 첫 런들의 씬별 화면 수를 보고
-         * 조정할 값이고, 그 조정은 상한이 아니라 판별자 규칙 쪽이어야 한다.
+         * 조정할 값이고, 그 조정은 상한이 아니라 `discriminator` 규칙 쪽이어야 한다.
          */
         const val MAX_SCREENS_PER_SCENE = 32
 
-        /** 접기 상태를 들고 있을 인스턴스 수의 상한. 넘으면 통째로 비우고 다시 쌓는다. */
+        /** `fold` 상태를 들고 있을 인스턴스 수의 상한. 넘으면 통째로 비우고 다시 쌓는다. */
         const val MAX_TRACKED_INSTANCES = 256
     }
 }
