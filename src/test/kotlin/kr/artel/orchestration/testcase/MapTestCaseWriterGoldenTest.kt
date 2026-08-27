@@ -191,6 +191,10 @@ class MapTestCaseWriterGoldenTest {
         assertThat(second.testCases.created).isZero()
         assertThat(second.testCases.deleted).isZero()
         assertThat(second.testCases.broken).isZero()
+        // **한 행도 다시 쓰지 않는다.** `metadata` 는 `jsonb` 라 키 순서가 정규화되어 저장되므로
+        // 글자로 견주면 늘 다르게 나오고, 그러면 아무것도 안 바뀐 적재가 매번 전량을 다시 쓴다.
+        // 헛도는 쓰기보다 나쁜 것은 그 수가 "49행이 달라졌다"고 거짓말하는 것이다.
+        assertThat(second.testCases.updated).isZero()
     }
 
     /**
