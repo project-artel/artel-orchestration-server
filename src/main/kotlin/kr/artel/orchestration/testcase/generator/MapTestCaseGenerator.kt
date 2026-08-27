@@ -6,6 +6,7 @@ import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import com.fasterxml.jackson.databind.JsonNode
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.contentmap.evidence.ConditionOverlap
+import kr.artel.orchestration.contentmap.evidence.GroupKind
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
@@ -53,8 +54,105 @@ class MapTestCaseGenerator(
 
     suspend fun generate(contentMapId: Long): List<MapTestCase> {
         val edges = contentMaps.findCallEdges(contentMapId).toList()
-        return contentMaps.findStepCapabilityRows(contentMapId).toList().flatMap { row -> casesOf(row, edges) }
+        val drafts = contentMaps.findStepCapabilityRows(contentMapId).toList().flatMap { row -> draftsOf(row, edges) }
+        return merged(drafts)
     }
+
+    /**
+     * **결과가 다를 때만 다른 케이스다**(ARTEL-600).
+     *
+     * 앞서 케이스의 정체는 조작이었다. 조작이 상수인 씬에서 그러면 케이스가 폭발한다 —
+     * 실측(word-venture StoryScene)에서 지시 가능한 조작이 `IsAdvanceKeyDown()` 하나뿐인데
+     * 케이스가 35건이었다. 그 하나는 `System.Boolean()` 을 돌려주는 **판정 함수**이고, 씬에서
+     * 사람이 할 수 있는 일은 "아무 키나 누른다" 뿐이다. 조작이 변수가 아닌 자리에서 조작으로
+     * 세면, 전제 29조각 × 결과 10가지가 그대로 곱해진다.
+     *
+     * 확인하는 것이 같으면 실행하는 사람에게는 같은 시험이다. `chatName.text 가 갱신된다` 를
+     * 전제만 바꿔 아홉 번 시키는 표가 그렇게 나왔다.
+     *
+     * **갈래는 여전히 살아남는다** — 갈래가 갈래인 이유는 결과가 다르기 때문이다:
+     *
+     * ```
+     * StagePosition == 5  →  `TitleScene` 화면으로 전환된다
+     * StagePosition != 5  →  `Map_scene` 화면으로 전환된다
+     * ```
+     *
+     * 순서는 첫 조각의 자리를 지킨다. 뷰의 정렬이 프롬프트 캐시 계약이라 흔들면 안 된다.
+     */
+    private fun merged(drafts: List<Draft>): List<MapTestCase> =
+        drafts.groupBy { Triple(it.scene, it.step, it.outcome) }
+            .map { (_, group) ->
+                val first = group.first()
+                MapTestCase(
+                    capabilityKey = first.capabilityKey,
+                    scene = first.scene,
+                    precondition = MapTestCasePhrasing.precondition(
+                        first.scene, weakest(group.map { it.condition }), first.inputKey,
+                    ),
+                    step = first.step,
+                    expected = first.outcome,
+                    status = first.status,
+                    gaps = group.flatMap { it.gaps }.distinct(),
+                )
+            }
+
+    /**
+     * 같은 결과를 내는 여러 전제를 **한 전제로** 만든다.
+     *
+     * **조건 없는 갈래가 하나라도 있으면 그것이 답이다.** 조건 없이도 나는 결과라면, 거기에 조건을
+     * 덧붙인 갈래들은 논리적으로 그 안에 든다 — 실측에서 26건이 그렇게 겹쳐 있었다. 좁은 쪽을
+     * 적으면 "이 조건일 때만 난다"는 거짓말이 된다.
+     *
+     * 아니면 갈래들을 `또는` 으로 잇되, **모든 갈래가 함께 요구하는 것은 앞으로 뺀다.** 그러지
+     * 않으면 같은 조건이 갈래 수만큼 되풀이되어 읽을 수 없다.
+     */
+    private fun weakest(conditions: List<ConditionNode?>): ConditionNode? {
+        val arms = conditions.distinct()
+        if (arms.size == 1) return arms.single()
+        // 조건 없는 갈래가 있으면 나머지는 그 안에 든다.
+        if (arms.any { it == null || it == ConditionNode.Always }) return null
+
+        // **넓은 갈래가 좁은 갈래를 덮는다.** 요구가 적을수록 성립하기 쉬우므로, 어떤 갈래의 요구가
+        // 다른 갈래의 요구를 통째로 품고 있으면 품긴 쪽만 남는다 — 실측(EndingScene)에서 `i < N`
+        // 단독 갈래가 있는데 `A 그리고 B 그리고 (i < N)` 을 나란히 적어 여덟 갈래가 됐다. 좁은 쪽을
+        // 함께 적는 것은 틀린 데다 읽히지도 않는다.
+        val required = arms.map { every(it!!).toSet() }
+            .let { all -> all.filter { one -> all.none { other -> other != one && one.containsAll(other) } } }
+            .distinct()
+        if (required.size == 1) return conjunction(required.single().toList())
+
+        // 모든 갈래가 함께 요구하는 것은 앞으로 뺀다. 그러지 않으면 같은 조건이 갈래 수만큼 되풀이된다.
+        val shared = required.reduce { a, b -> a intersect b }
+        val rest = required.map { it - shared }.distinct()
+        val either = ConditionNode.Group(GroupKind.EITHER, rest.map { conjunction(it.toList())!! })
+        return conjunction(shared.toList() + either)
+    }
+
+    /** `every` 를 평평하게 편다. 갈래끼리 견주려면 요구들이 한 겹이어야 한다. */
+    private fun every(node: ConditionNode): List<ConditionNode> =
+        if (node is ConditionNode.Group && node.kind == GroupKind.EVERY) node.parts.flatMap(::every)
+        else listOf(node)
+
+    private fun conjunction(parts: List<ConditionNode>): ConditionNode? = when (parts.size) {
+        0 -> null
+        1 -> parts.single()
+        else -> ConditionNode.Group(GroupKind.EVERY, parts)
+    }
+
+    /**
+     * 아직 합치기 전의 케이스 한 줄. 전제를 **문장이 아니라 조건 트리로** 들고 있다 — 합칠 때
+     * 갈래끼리 견줘야 하고, 글자로는 그것을 못 한다.
+     */
+    private data class Draft(
+        val capabilityKey: String,
+        val scene: String,
+        val condition: ConditionNode?,
+        val inputKey: String?,
+        val step: String,
+        val outcome: String,
+        val status: String,
+        val gaps: List<String>,
+    )
 
     /**
      * 기능 하나에서 케이스 **여럿**이 나온다 — 확인할 수 있는 효과 하나마다 하나다.
@@ -62,10 +160,10 @@ class MapTestCaseGenerator(
      * 합쳐서 한 줄로 내면 실행하는 사람이 무엇을 볼지 모른다([MapTestCasePhrasing.expectedEach] 의
      * 주석에 실측이 있다). 구버전도 같은 기능에서 아홉 줄을 냈다.
      */
-    private suspend fun casesOf(
+    private suspend fun draftsOf(
         row: ContentMapCapabilityRow,
         edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
-    ): List<MapTestCase> {
+    ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
         val key = row.capabilityKey ?: return emptyList()
@@ -79,22 +177,19 @@ class MapTestCaseGenerator(
         val sources: List<Pair<ConditionNode?, List<CapabilityEffectEntity>>> =
             if (own.isNotEmpty()) listOf(condition to own) else borrowed(row, condition, edges)
 
-        val seen = mutableSetOf<String>()
         return sources.flatMap { (situation, effectRows) ->
-            val precondition = MapTestCasePhrasing.precondition(row.sceneName, situation, row.inputKey)
-            MapTestCasePhrasing.expectedEach(effectRows)
-                .filter { seen.add(precondition + "\u0000" + it) }
-                .map { outcome ->
-                    MapTestCase(
-                        capabilityKey = key,
-                        scene = row.sceneName,
-                        precondition = precondition,
-                        step = step,
-                        expected = outcome,
-                        status = row.status,
-                        gaps = gaps,
-                    )
-                }
+            MapTestCasePhrasing.expectedEach(effectRows).map { outcome ->
+                Draft(
+                    capabilityKey = key,
+                    scene = row.sceneName,
+                    condition = situation,
+                    inputKey = row.inputKey,
+                    step = step,
+                    outcome = outcome,
+                    status = row.status,
+                    gaps = gaps,
+                )
+            }
         }
     }
 
