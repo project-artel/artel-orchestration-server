@@ -577,13 +577,23 @@ class ContentMapSceneEdgeIngestTest {
      * 같은 씬 안의 화면 둘과 그 사이 전이 하나를 만들고 전이 id 를 돌려준다.
      *
      * `scene_edge.first_observed_transition_id` 가 `screen_transition` 을 FK 로 가리켜, 그 칸을 채우려면
-     * 화면부터 있어야 한다. 관측 경로가 아직 없어 SQL 로 직접 넣는다.
+     * 화면부터 있어야 한다. 관측 경로(ARTEL-453)를 부르지 않고 SQL 로 직접 넣는 것은, 이 파일이
+     * 검증하는 것이 **재적재가 런타임 칸을 되돌리지 않는가**이지 관측 경로가 아니기 때문이다.
+     *
+     * 판별자를 이름마다 다르게 준다. 화면의 신원은 이름이 아니라 판별자이고
+     * (`uk_screen_discriminator`), 이름만 다른 두 행은 같은 화면이라 앉지 않는다.
      */
     private suspend fun stampObservedTransition(sceneId: Long): Long {
         suspend fun newScreen(name: String): Long = db
-            .sql("INSERT INTO screen (scene_id, name, discriminator) VALUES (:scene, :name, '[]'::jsonb) RETURNING id")
+            .sql(
+                """
+                INSERT INTO screen (scene_id, name, discriminator)
+                VALUES (:scene, :name, CAST(:discriminator AS jsonb)) RETURNING id
+                """
+            )
             .bind("scene", sceneId)
             .bind("name", name)
+            .bind("discriminator", """[{"selector":"Canvas[2]/$name[1]","active":true}]""")
             .map { row, _ -> (row.get(0) as Number).toLong() }
             .one()
             .awaitSingle()

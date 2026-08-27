@@ -8,6 +8,7 @@ import kr.artel.orchestration.contentmap.entity.ScreenTransitionEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
+import java.time.Instant
 
 /**
  * 화면. QA 런 전에는 0행이고 그게 정상이다 — 정적 분석은 화면을 모른다.
@@ -15,12 +16,94 @@ import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
 
     fun findBySceneIdOrderByIdAsc(sceneId: Long): Flow<ScreenEntity>
+
+    /** 이 씬이 이미 몇 개의 화면으로 갈렸나. 화면 폭발의 안전판이 이 값을 읽는다. */
+    suspend fun countBySceneId(sceneId: Long): Long
+
+    /**
+     * 이 판별자의 화면을 앉히거나, 이미 있으면 방문 수를 올리고 그 행의 id 를 돌려준다 (ARTEL-453).
+     *
+     * 멱등을 코드가 아니라 `uk_screen_discriminator`(V56) 가 강제한다. 접기 상태는 프로세스
+     * 메모리라 재시작하면 사라지고, 같은 빌드를 두 서버가 관측하면 각자 자기 메모리를 본다 —
+     * 코드가 "처음 보는 판별자인가"를 판정하면 그때마다 같은 화면이 행 둘로 갈리고
+     * `observed_count` 가 둘에 쪼개져 양쪽 다 틀린 값이 된다.
+     *
+     * `first_seen_qa_run_id` 는 `DO UPDATE` 에 없다. 어느 런에서 **처음** 봤나가 이 칸의 뜻이라,
+     * 재방문이 덮으면 뜻이 사라진다.
+     *
+     * `observed_count` 는 판독 수가 아니라 **방문 수**다. 부르는 쪽이 화면이 굳는 순간에만
+     * 부르므로(`ScreenFold.settle`), 한 화면에 오래 머물러도 1 이다.
+     *
+     * `@Modifying` 을 붙이지 않는다. 붙이면 Spring Data 가 반환값을 영향받은 행 수로 읽어
+     * `RETURNING id` 대신 늘 1 이 돌아온다([SceneEdgeRepository.upsertStatic] 과 같은 함정이다).
+     */
+    @Query(
+        """
+        INSERT INTO screen (scene_id, discriminator, first_seen_qa_run_id, observed_count)
+        VALUES (:sceneId, CAST(:discriminator AS jsonb), :qaRunId, 1)
+        ON CONFLICT (scene_id, discriminator) DO UPDATE SET
+            observed_count = screen.observed_count + 1
+        RETURNING id
+        """
+    )
+    suspend fun observe(sceneId: Long, discriminator: String, qaRunId: Long?): Long
+
+    /**
+     * 이 판별자의 화면이 이미 있나 (ARTEL-453).
+     *
+     * 화면 폭발 안전판이 걸린 뒤에만 쓴다. 안전판은 **새 화면**을 막자는 것이지 이미 아는 화면의
+     * 재방문까지 얼릴 이유는 없어서, 상한을 넘은 씬에서는 이 조회로 기존 행만 갱신한다.
+     */
+    @Query(
+        """
+        SELECT id FROM screen
+        WHERE scene_id = :sceneId AND discriminator = CAST(:discriminator AS jsonb)
+        """
+    )
+    suspend fun findIdBySceneIdAndDiscriminator(sceneId: Long, discriminator: String): Long?
 }
 
 /** 화면 전이. 관측으로만 생긴다. */
 interface ScreenTransitionRepository : CoroutineCrudRepository<ScreenTransitionEntity, Long> {
 
     fun findByFromScreenIdOrderByIdAsc(fromScreenId: Long): Flow<ScreenTransitionEntity>
+
+    /**
+     * 관측한 전이를 앉히거나 관측 수를 올리고 그 행의 id 를 돌려준다 (ARTEL-453).
+     *
+     * `capability_id` 를 받지 않는다. 무엇이 이 전이를 일으켰는지는 액션과 판독을 시간축으로
+     * 붙이는 ARTEL-450 이 알려 주고, 그 전에는 **정직하게 귀속할 방법이 없다.** 추측을 넣으면
+     * "실제로 어떻게 흘렀나"가 오염되고, 그것은 이 표가 정적으로 만들어지지 않는 이유와 같은
+     * 이유로 하면 안 되는 일이다.
+     *
+     * 그래서 충돌 판정도 `uk_screen_transition_auto`(부분 유니크, `capability_id IS NULL`) 쪽으로
+     * 건다. 전체 유니크는 NULL 을 서로 다른 값으로 보아 걸리지 않고, 그러면 같은 전이가 관측마다
+     * 새 행이 된다.
+     *
+     * `kind` 와 `crosses_scene` 은 갱신하지 않는다. 두 값은 이 전이의 신원과 함께 정해지고,
+     * 재관측이 다르게 말한다면 그것은 갱신이 아니라 다른 전이라는 신호다.
+     *
+     * `@Modifying` 을 붙이지 않는 이유는 [ScreenRepository.observe] 와 같다.
+     */
+    @Query(
+        """
+        INSERT INTO screen_transition (
+            from_screen_id, to_screen_id, capability_id, kind, crosses_scene,
+            observed_count, first_seen_qa_run_id
+        )
+        VALUES (:fromScreenId, :toScreenId, NULL, :kind, :crossesScene, 1, :qaRunId)
+        ON CONFLICT (from_screen_id, to_screen_id) WHERE capability_id IS NULL DO UPDATE SET
+            observed_count = screen_transition.observed_count + 1
+        RETURNING id
+        """
+    )
+    suspend fun observeUnattributed(
+        fromScreenId: Long,
+        toScreenId: Long,
+        kind: String,
+        crossesScene: Boolean,
+        qaRunId: Long?,
+    ): Long
 }
 
 /**
@@ -152,4 +235,82 @@ interface SceneEdgeRepository : CoroutineCrudRepository<SceneEdgeEntity, Long> {
         """
     )
     fun findByContentMapId(contentMapId: Long): Flow<ContentMapSceneEdgeRow>
+
+    /**
+     * 관측한 씬 전이로 정적 후보를 검증됨으로 올리고, 올린 행 수를 돌려준다 (ARTEL-453).
+     *
+     * **기능 단위가 아니라 씬 쌍 단위로 올린다.** 같은 씬 쌍으로 가는 정적 간선이 여럿이면
+     * (실측: `Player.Death` → `GameOverScene` 이 진입점 넷) 그 전부가 검증됨이 된다. 어느
+     * 기능이 실제로 눌렸는지는 ARTEL-450 이 붙기 전에는 알 수 없고, 여기서 하나를 골라 집으면
+     * "안다"와 "여럿 중 하나를 골랐다"가 구분되지 않는다.
+     *
+     * 과다 주장인 것은 맞다 — 눌린 적 없는 기능이 커버리지에서 덮인 것으로 읽힌다. 반대쪽,
+     * 즉 아무것도 안 올리는 선택은 `verified_at IS NULL` 이 곧 커버리지 구멍이라는 이 표의
+     * 존재 이유를 영영 틀리게 둔다. 관측할 수 있는 단위(씬 쌍)에서 참인 쪽을 골랐다.
+     *
+     * `verified_at` 과 `first_observed_transition_id` 는 **처음 것만 남긴다**(`COALESCE`).
+     * 언제 처음 갔나가 두 칸의 뜻이다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE scene_edge SET
+            verified_at = COALESCE(verified_at, :observedAt),
+            observed_count = observed_count + 1,
+            first_observed_transition_id = COALESCE(first_observed_transition_id, :transitionId)
+        WHERE from_scene_id = :fromSceneId AND to_scene_name = :toSceneName
+        """
+    )
+    suspend fun verifyByScenePair(
+        fromSceneId: Long,
+        toSceneName: String,
+        transitionId: Long,
+        observedAt: Instant,
+    ): Long
+
+    /**
+     * 정적 후보에 없던 전이를 `source='runtime'` 으로 남긴다 (ARTEL-453).
+     *
+     * **이것은 오류가 아니라 발견이다** — 정적 분석이 놓친 씬 전이이고, 근거 수집을 어디서
+     * 고칠지 알려주는 신호다.
+     *
+     * `capability_id` 는 null 이다. 무엇으로 갔는지는 ARTEL-450 이 붙기 전에는 모르고, 갔다는
+     * 사실은 그것과 무관하게 참이다 — `scene_edge` 의 `ON DELETE SET NULL` 이 든 것과 같은 판단이다.
+     * 따라서 충돌도 `uk_scene_edge_auto`(부분 유니크) 로 건다.
+     *
+     * `to_scene_id` 를 하위 질의로 푸는 것은 [upsertStatic] 과 같은 이유다. 다만 여기서는 값이
+     * 있는 쪽이 보통이다 — 관측한 전이의 도착 씬은 방금 판독이 이름을 댄 씬이고, 이름을 댄 씬은
+     * 대개 순회된 씬이다. 순회 안 된 씬으로 갔다면 그 자체가 또 하나의 발견이라 null 로 남긴다.
+     */
+    @Query(
+        """
+        INSERT INTO scene_edge (
+            from_scene_id, to_scene_name, to_scene_id, capability_id, source,
+            verified_at, observed_count, first_observed_transition_id
+        )
+        VALUES (
+            :fromSceneId,
+            :toSceneName,
+            (SELECT s.id FROM scene s WHERE s.content_map_id = :contentMapId AND s.name = :toSceneName),
+            NULL,
+            'runtime',
+            :observedAt,
+            1,
+            :transitionId
+        )
+        ON CONFLICT (from_scene_id, to_scene_name) WHERE capability_id IS NULL DO UPDATE SET
+            observed_count = scene_edge.observed_count + 1,
+            verified_at = COALESCE(scene_edge.verified_at, EXCLUDED.verified_at),
+            first_observed_transition_id =
+                COALESCE(scene_edge.first_observed_transition_id, EXCLUDED.first_observed_transition_id)
+        RETURNING id
+        """
+    )
+    suspend fun observeRuntime(
+        fromSceneId: Long,
+        toSceneName: String,
+        contentMapId: Long,
+        transitionId: Long,
+        observedAt: Instant,
+    ): Long
 }

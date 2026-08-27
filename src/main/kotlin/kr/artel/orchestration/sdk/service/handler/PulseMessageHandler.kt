@@ -1,5 +1,6 @@
 package kr.artel.orchestration.sdk.service.handler
 
+import kr.artel.orchestration.contentmap.observe.ScreenObservationService
 import kr.artel.orchestration.qa.service.QaSdkBridgeService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
@@ -22,7 +23,8 @@ import org.springframework.web.reactive.socket.WebSocketSession
  */
 @Component
 class PulseMessageHandler(
-    private val qaBridge: QaSdkBridgeService
+    private val qaBridge: QaSdkBridgeService,
+    private val screenObservation: ScreenObservationService,
 ) : SdkMessageHandler {
 
     private val logger = LoggerFactory.getLogger(PulseMessageHandler::class.java)
@@ -35,6 +37,13 @@ class PulseMessageHandler(
         // 되짚을 수 있는 값이 그것뿐이다.
         logger.info("판독 수신 [instanceId: $instanceId]: ${payloadText.length}자")
 
-        qaBridge.routePulse(instanceId.toLong(), payloadText)
+        val gameInstanceId = instanceId.toLong()
+        qaBridge.routePulse(gameInstanceId, payloadText)
+
+        // 중계 **뒤에** 부른다. 앞에 두면 화면 적재가 느릴 때 판독이 agent 에 늦게 닿는다.
+        //
+        // 위의 "접지 않는다"는 중계 payload 에 대한 규율이고, 이쪽은 payload 를 건드리지 않는
+        // 두 번째 소비자다 — 원문은 이미 나갔다. 실패는 [ScreenObservationService] 가 삼킨다.
+        screenObservation.observe(gameInstanceId, payloadText)
     }
 }
