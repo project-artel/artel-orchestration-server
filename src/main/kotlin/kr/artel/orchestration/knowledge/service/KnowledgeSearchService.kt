@@ -5,10 +5,12 @@ import kr.artel.orchestration.common.error.UpstreamUnavailableException
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import kr.artel.orchestration.knowledge.config.KnowledgeGraphProperties
 import kr.artel.orchestration.knowledge.config.KnowledgeSearchProperties
+import kr.artel.orchestration.knowledge.dto.KnowledgeAnchorView
 import kr.artel.orchestration.knowledge.dto.KnowledgeExpandResponse
 import kr.artel.orchestration.knowledge.dto.KnowledgeNeighbour
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchHit
 import kr.artel.orchestration.knowledge.dto.KnowledgeSearchResponse
+import kr.artel.orchestration.knowledge.entity.KnowledgeAnchorEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.knowledge.entity.KnowledgeRetrievalKind
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
@@ -16,11 +18,13 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
 import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.knowledge.entity.KnowledgeUsageEntity
+import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeSearchRow
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeUsageRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeVectorSearchRepository
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.toList
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -44,6 +48,7 @@ class KnowledgeSearchService(
     private val searchRepository: KnowledgeVectorSearchRepository,
     private val usageRepository: KnowledgeUsageRepository,
     private val knowledgeRepository: KnowledgeRepository,
+    private val anchorRepository: KnowledgeAnchorRepository,
     private val knowledgeGraphService: KnowledgeGraphService,
     private val backfillProperties: KnowledgeBackfillProperties,
     private val searchProperties: KnowledgeSearchProperties,
@@ -65,6 +70,11 @@ class KnowledgeSearchService(
      * [scope]는 기본값이 없다(ARTEL-256). 검색은 지식창고를 읽는 가장 넓은 경로라, 여기서 스코프를
      * 빠뜨리면 실험 런이 다른 arm이 쌓은 지식을 그대로 읽는다 — 그리고 그 결과는 그럴듯해서 아무도
      * 알아채지 못한다. 빠뜨린 호출이 컴파일되지 않게 둔다.
+     *
+     * @param sceneName 이 씬에 묶인 지식만 본다(선택, ARTEL-591). **앵커가 없는 지식은 걸러진다** —
+     *   이 필터의 뜻이 "이 화면의 것"이라, 게임 전체의 사실까지 함께 내면 좁히는 것이 없다. 씬
+     *   이름을 검증하지 않는 이유는 우리가 아는 씬 목록이 없기 때문이다(V55): 없는 이름은 오류가
+     *   아니라 빈 결과다.
      */
     suspend fun search(
         projectId: Long,
@@ -73,6 +83,7 @@ class KnowledgeSearchService(
         query: String,
         tags: List<KnowledgeTag>,
         source: KnowledgeSource?,
+        sceneName: String?,
         limit: Int?
     ): KnowledgeSearchOutcome {
         // 검색이 읽을 파티션은 백필이 쓴 파티션이어야 한다. 그래서 model은 검색 설정이 아니라
@@ -104,24 +115,34 @@ class KnowledgeSearchService(
             model = model,
             tags = tags.map { it.name },
             source = source?.name,
+            sceneName = sceneName,
             limit = resolvedLimit
         )
 
         // 검색어 본문과 결과 본문은 qa_log에 남기지 않는다(지식 본문이 타임라인을 오염시킨다).
         // 그래도 "검색이 돌긴 했는지"는 볼 수 있어야 하므로 여기서 길이와 개수만 남긴다.
         logger.info(
-            "knowledge 검색: project={}, scope={}, 검색어 {}자, tags={}, source={}, limit={}, 결과={}건",
-            projectId, scope, query.length, tags, source, resolvedLimit, rows.size
+            "knowledge 검색: project={}, scope={}, 검색어 {}자, tags={}, source={}, scene={}, limit={}, 결과={}건",
+            projectId, scope, query.length, tags, source, sceneName, resolvedLimit, rows.size
         )
         // 히트마다 한 홉 이웃을 붙인다(ARTEL-275). 관계가 하나도 없으면 인덱스 질의 하나가 빈
         // 결과를 내고 끝이라, 그래프가 쌓이기 전의 비용이 사실상 없다.
         val expansion = expandHits(projectId, scope, rows)
+        // 앵커는 히트가 정해진 뒤 한 번에 데려온다(ARTEL-591). 히트마다 부르면 질의가 히트 수만큼
+        // 늘고, 그 비용은 앵커가 하나도 없는 프로젝트에서도 그대로 난다.
+        val anchors = anchorsFor(scope, rows)
 
         return KnowledgeSearchOutcome(
             response = KnowledgeSearchResponse(
                 query = query,
                 model = model,
-                results = rows.map { row -> toHit(row, expansion.byHit[row.knowledgeId].orEmpty()) }
+                results = rows.map { row ->
+                    toHit(
+                        row,
+                        expansion.byHit[row.knowledgeId].orEmpty(),
+                        anchors[row.knowledgeId].orEmpty()
+                    )
+                }
             ),
             // 순위는 이 목록의 순서다. 리포지토리가 동점까지 id로 못박아 정렬하므로 같은 질의는
             // 같은 순위를 낸다 — 기록된 rank가 재현 가능해야 나중에 순위와 유용성을 견줄 수 있다.
@@ -335,15 +356,46 @@ class KnowledgeSearchService(
     /**
      * 코사인 거리를 유사도로 뒤집는다. pgvector의 `<=>`는 `1 - cosine_similarity`라 그대로 되돌린다.
      */
-    private fun toHit(row: KnowledgeSearchRow, neighbours: List<KnowledgeNeighbour>) = KnowledgeSearchHit(
+    private fun toHit(
+        row: KnowledgeSearchRow,
+        neighbours: List<KnowledgeNeighbour>,
+        anchors: List<KnowledgeAnchorView>
+    ) = KnowledgeSearchHit(
         id = row.knowledgeId.toString(),
         tag = row.tag,
         source = row.source,
         summary = row.summary,
         description = row.description,
         score = 1.0 - row.distance,
-        neighbors = neighbours
+        neighbors = neighbours,
+        anchors = anchors
     )
+
+    /**
+     * 히트마다 묶인 씬·화면을 데려온다(ARTEL-591).
+     *
+     * **스코프 술어를 리포지토리가 진다.** 히트는 이미 스코프를 통과한 것이라 여기서 한 번 더
+     * 거는 것이 군더더기로 보이지만, 앵커 조회가 자기 힘으로 스코프를 지키지 않으면 나중에 이
+     * 리포지토리를 다른 곳에서 부르는 순간 가려진 지식의 앵커가 샌다. 술어를 한 곳에만 두는
+     * [kr.artel.orchestration.knowledge.entity.KnowledgeScopeSql] 의 규칙 그대로다.
+     *
+     * 실패를 삼키지 않는 이 클래스의 규칙은 여기에도 적용된다 — 앵커를 못 읽는 것은 DB 오류이지
+     * "앵커가 없음"이 아니다.
+     */
+    private suspend fun anchorsFor(
+        scope: KnowledgeScope,
+        rows: List<KnowledgeSearchRow>
+    ): Map<Long, List<KnowledgeAnchorView>> {
+        // 빈 컬렉션을 넘기면 `IN ()` 이 되어 SQL 이 깨진다.
+        if (rows.isEmpty()) return emptyMap()
+        return anchorRepository.findVisibleFor(rows.map { it.knowledgeId }, scope.id)
+            .toList()
+            .groupBy(KnowledgeAnchorEntity::knowledgeId) { it.toView() }
+    }
+
+    /** 앵커 행을 WS 계약 모양으로. id 계열은 다른 payload와 같이 문자열로 낸다. */
+    private fun KnowledgeAnchorEntity.toView() =
+        KnowledgeAnchorView(sceneName = sceneName, screenId = screenId?.toString())
 
     /** 히트별 이웃과 이웃의 기록. 한 번의 확장 결과를 히트로 다시 나눈 것이다. */
     private data class HitExpansion(

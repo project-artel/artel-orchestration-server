@@ -720,6 +720,9 @@ class QaAgentInboundRouter(
                 query = query,
                 tags = tags.filterNotNull(),
                 source = source,
+                // 씬 이름은 tag/source와 달리 검증하지 않는다 — 우리가 아는 씬 목록이 없고(V55),
+                // 없는 이름은 오류가 아니라 빈 결과다. 빈 문자열만 "안 실었다"로 접는다.
+                sceneName = request.sceneName?.trim()?.takeIf { it.isNotEmpty() },
                 limit = request.limit
             )
         } catch (error: CancellationException) {

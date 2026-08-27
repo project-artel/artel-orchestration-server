@@ -44,6 +44,9 @@ class KnowledgeVectorSearchRepository(
      * ⚠️ 스코프 런이 baseline을 고치면 그 baseline은 즉시 가려지지만 그림자의 벡터는 비동기
      * 백필이 채운다. 그 사이 그 항목은 이 검색에서 잠시 사라진다. 새 동작이 아니다 — 지금도
      * 본문을 고치면 옛 벡터를 버리므로(`KnowledgeService.updateFromQaTry`) 같은 구간이 생긴다.
+     *
+     * @param sceneName 이 씬에 묶인 지식만 본다(선택, ARTEL-591). **앵커가 없는 지식은 걸러진다** —
+     *   이 필터의 뜻이 "이 화면의 것"이라, 게임 전체의 사실까지 함께 내면 좁히는 것이 없다.
      */
     suspend fun searchNearest(
         projectId: Long,
@@ -53,6 +56,7 @@ class KnowledgeVectorSearchRepository(
         model: String,
         tags: List<String>,
         source: String?,
+        sceneName: String?,
         limit: Int
     ): List<KnowledgeSearchRow> {
         // tag는 enum 토큰으로 검증된 뒤에 오지만 그래도 리터럴로 잇지 않고 이름 바인딩을 만든다.
@@ -60,6 +64,19 @@ class KnowledgeVectorSearchRepository(
         val tagBindings = tags.indices.map { ":tag$it" }
         val tagClause = if (tags.isEmpty()) "" else "AND k.tag IN (${tagBindings.joinToString(", ")})"
         val sourceClause = if (source == null) "" else "AND k.source = :source"
+        // 씬 필터는 EXISTS다. 조인하면 앵커가 여럿인 지식이 여러 행이 되어 MIN(거리) 그룹을
+        // 흔들지는 않지만 스캔이 앵커 수만큼 불어난다 — 필요한 답은 "하나라도 있나"뿐이다.
+        val sceneClause = if (sceneName == null) {
+            ""
+        } else {
+            """
+            AND EXISTS (
+                SELECT 1 FROM knowledge_anchor a
+                 WHERE a.knowledge_id = k.id
+                   AND a.scene_name = :sceneName
+            )
+            """.trimIndent()
+        }
 
         var spec = databaseClient.sql(
             """
@@ -82,6 +99,7 @@ class KnowledgeVectorSearchRepository(
                AND ${KnowledgeScopeSql.VISIBLE}
                $tagClause
                $sourceClause
+               $sceneClause
              GROUP BY k.id, k.tag, k.source, k.summary, k.description, k.version
              -- 동점일 때 순서가 흔들리면 같은 질의가 실행마다 다른 top-k를 준다. id로 못박는다.
              ORDER BY distance ASC, k.id DESC
@@ -101,6 +119,7 @@ class KnowledgeVectorSearchRepository(
 
         tags.forEachIndexed { index, tag -> spec = spec.bind("tag$index", tag) }
         if (source != null) spec = spec.bind("source", source)
+        if (sceneName != null) spec = spec.bind("sceneName", sceneName)
 
         return spec
             .map { row: Readable ->

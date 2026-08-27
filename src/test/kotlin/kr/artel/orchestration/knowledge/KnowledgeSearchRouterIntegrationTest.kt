@@ -14,8 +14,10 @@ import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.common.embedding.agent.EmbedResponse
 import kr.artel.orchestration.common.embedding.agent.EmbeddingClient
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
+import kr.artel.orchestration.knowledge.entity.KnowledgeAnchorEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.common.embedding.EmbeddedText
+import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeUsageRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
@@ -122,6 +124,7 @@ class KnowledgeSearchRouterIntegrationTest {
 
     @Autowired private lateinit var inboundRouter: QaAgentInboundRouter
     @Autowired private lateinit var knowledgeRepository: KnowledgeRepository
+    @Autowired private lateinit var anchorRepository: KnowledgeAnchorRepository
     @Autowired private lateinit var usageRepository: KnowledgeUsageRepository
     @Autowired private lateinit var qaTryRepository: QaTryRepository
     @Autowired private lateinit var qaLogRepository: QaLogRepository
@@ -165,6 +168,8 @@ class KnowledgeSearchRouterIntegrationTest {
         qaLogRepository.deleteAll()
         usageRepository.deleteAll()
         qaTryRepository.deleteAll()
+        // knowledge_anchor는 FK가 없는 논리참조라(V55) knowledge보다 먼저 직접 비운다.
+        anchorRepository.deleteAll()
         knowledgeRepository.deleteAll()
         gameInstanceRepository.deleteAll()
         testScenarioRepository.deleteAll()
@@ -360,6 +365,57 @@ class KnowledgeSearchRouterIntegrationTest {
         val results = port.sent.single().payload.path("results")
         assertThat(results.size()).isEqualTo(1)
         assertThat(results[0]["summary"].asText()).isEqualTo("조작 항목")
+    }
+
+    // ------------------------------------------------------------- 앵커 (ARTEL-591)
+
+    /**
+     * 프레임의 필드 이름을 못박는다. Agent 쪽(ARTEL-592)이 맞춰야 하는 계약이 이것이다 —
+     * 요청은 `scene_name`, 응답은 히트마다 `anchors[].scene_name` / `anchors[].screen_id`다.
+     *
+     * 앵커는 순수 추가 필드라, 이 필드를 모르는 구버전 Agent는 통째로 무시한다.
+     */
+    @Test
+    fun `검색 응답이 앵커를 싣고 scene_name으로 좁혀진다`(): Unit = runBlocking {
+        val combat = givenKnowledgeWithVector("전투 중 ESC는 아무것도 하지 않는다")
+        val global = givenKnowledgeWithVector("낙하 데미지는 5m부터")
+        anchorRepository.save(
+            KnowledgeAnchorEntity(knowledgeId = combat, sceneName = "Combat", screenId = 4_242L)
+        )
+
+        deliver(UUID.randomUUID().toString(), """{"query":"ESC를 누르면"}""")
+
+        val all = port.sent.single().payload.path("results")
+        assertThat(all.size()).isEqualTo(2)
+        val anchored = all.single { it["id"].asText() == combat.toString() }
+        assertThat(anchored.path("anchors").size()).isEqualTo(1)
+        assertThat(anchored.path("anchors")[0]["scene_name"].asText()).isEqualTo("Combat")
+        assertThat(anchored.path("anchors")[0]["screen_id"].asText()).isEqualTo("4242")
+        // 앵커가 없으면 게임 전체의 사실이라 빈 배열이다.
+        assertThat(all.single { it["id"].asText() == global.toString() }.path("anchors")).isEmpty()
+
+        port.sent.clear()
+        deliver(UUID.randomUUID().toString(), """{"query":"ESC를 누르면","scene_name":"Combat"}""")
+
+        val narrowed = port.sent.single().payload.path("results")
+        assertThat(narrowed.size()).describedAs("앵커 없는 지식까지 걸러야 좁히는 것이 있다").isEqualTo(1)
+        assertThat(narrowed[0]["id"].asText()).isEqualTo(combat.toString())
+    }
+
+    /**
+     * 없는 씬 이름은 오류가 아니라 빈 결과다. tag/source와 달리 우리가 아는 씬 목록이 없어(V55)
+     * 검증할 수가 없고, 오류로 답하면 기다리던 Agent 도구가 실패한다.
+     */
+    @Test
+    fun `모르는 scene_name은 오류가 아니라 빈 결과다`(): Unit = runBlocking {
+        givenKnowledgeWithVector("아무 지식")
+
+        deliver(UUID.randomUUID().toString(), """{"query":"무엇이든","scene_name":"NoSuchScene"}""")
+
+        val reply = port.sent.single()
+        assertThat(reply.type).isEqualTo("KNOWLEDGE_SEARCH_RESULT")
+        assertThat(reply.payload.path("results")).isEmpty()
+        assertThat(qaTryRepository.findById(qaTryId)!!.status).isEqualTo("RUNNING")
     }
 
     // ---------------------------------------------------------------- helpers
