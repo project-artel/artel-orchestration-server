@@ -10,24 +10,31 @@ import kr.artel.orchestration.contentmap.dto.ContentMapEdgeResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapSceneEdgeRow
 import kr.artel.orchestration.contentmap.dto.ContentMapSceneResponse
+import kr.artel.orchestration.contentmap.dto.ContentMapScreenResponse
+import kr.artel.orchestration.contentmap.dto.ContentMapScreenTransitionResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapSummaryResponse
 import kr.artel.orchestration.contentmap.dto.LastScanResponse
 import kr.artel.orchestration.contentmap.dto.PendingDocumentResponse
 import kr.artel.orchestration.contentmap.dto.SceneCapabilityCountResponse
+import kr.artel.orchestration.contentmap.dto.SceneCapabilityResponse
 import kr.artel.orchestration.contentmap.dto.SceneStepResponse
 import kr.artel.orchestration.contentmap.dto.SceneThumbnailResponse
+import kr.artel.orchestration.contentmap.dto.ScreenImageResponse
 import kr.artel.orchestration.contentmap.dto.SpecGapCountResponse
 import kr.artel.orchestration.contentmap.dto.VerificationResponse
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.ScreenEntity
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
+import kr.artel.orchestration.contentmap.repository.ScreenRepository
+import kr.artel.orchestration.contentmap.repository.ScreenTransitionRepository
 import kr.artel.orchestration.contentmap.scan.ScanStatusRegistry
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
@@ -54,6 +61,8 @@ class ContentMapViewService(
     private val scenes: SceneRepository,
     private val capabilities: CapabilityRepository,
     private val sceneEdges: SceneEdgeRepository,
+    private val screens: ScreenRepository,
+    private val screenTransitions: ScreenTransitionRepository,
     private val documents: ContentMapDocumentRepository,
     private val scanStatuses: ScanStatusRegistry,
     private val storage: DocumentStorage,
@@ -104,6 +113,11 @@ class ContentMapViewService(
             contentMap = summaryOf(contentMap, allDocuments),
             scenes = scenesOf(contentMapId),
             edges = sceneEdges.findByContentMapId(contentMapId).map(::edgeOf).toList(),
+            // 화면 전이는 씬 안에 접지 않는다. 씬 경계를 넘는 전이는 두 씬에 걸쳐 있어 어느 쪽에
+            // 넣어도 반쪽이 되고, 화면은 그 선을 씬 컨테이너 **밖에** 그려야 한다.
+            screenTransitions = screenTransitions.findByContentMapId(contentMapId)
+                .map(ContentMapScreenTransitionResponse::of)
+                .toList(),
             gaps = gapsOf(contentMapId),
             verification = verificationOf(contentMapId),
             pendingDocuments = allDocuments
@@ -147,10 +161,22 @@ class ContentMapViewService(
      * 뜻이기도 하다.
      *
      * 두 출처가 만나는 등식이 그래서 성립한다: `steps.size == total - notAStep`.
+     *
+     * **기능 목록은 세 번째 출처가 아니다.** `capabilityList` 는 카운트와 **같은 질의**에서 나온다 —
+     * `findSceneCapabilities` 가 `countByScene` 의 필터와 조인을 그대로 쓰므로
+     * `capabilityList.size == total` 이 구조적으로 참이다. 목록을 뷰에서 가져오면 그 등식이 깨지고,
+     * 인스펙터가 설명해야 할 `not-a-step` 행이 통째로 사라진다.
+     *
+     * 화면은 씬마다 도는 대신 지도 한 번으로 읽어 묶는다. 씬 수만큼 왕복을 내지 않으려는 것이고,
+     * 화면이 0 행인 지도(= QA 런 전의 모든 빌드)에서 그 왕복은 전부 헛것이다.
      */
     private suspend fun scenesOf(contentMapId: Long): List<ContentMapSceneResponse> {
         val counts = capabilities.countByScene(contentMapId).toList().associateBy { it.sceneId }
         val steps = stepsByScene(contentMapId)
+        val capabilityLists = capabilities.findSceneCapabilities(contentMapId).toList()
+            .groupBy({ it.sceneId }, SceneCapabilityResponse::of)
+        val screensByScene = screens.findByContentMapId(contentMapId).toList()
+            .groupBy({ it.sceneId }, ::screenOf)
         return scenes.findByContentMapIdOrderByNameAsc(contentMapId).toList().map { scene ->
             ContentMapSceneResponse(
                 id = scene.id!!,
@@ -161,9 +187,52 @@ class ContentMapViewService(
                     ?: SceneCapabilityCountResponse.NONE,
                 steps = steps[scene.id].orEmpty(),
                 thumbnail = thumbnailOf(scene),
+                screens = screensByScene[scene.id].orEmpty(),
+                capabilityList = capabilityLists[scene.id].orEmpty(),
             )
         }
     }
+
+    /**
+     * 화면 한 줄. **QA 런이 아직 없으면 이 함수는 한 번도 불리지 않는다.**
+     *
+     * `screen` 이 0 행인 빌드가 오류가 아니라는 것이 이 경로의 요점이다 — 정적 분석은 화면을 알
+     * 수 없고, 화면을 앉히는 것은 QA 런뿐이다. 그때도 씬은 그대로 나가야 한다.
+     *
+     * `discriminator` 를 파싱해 모양을 못 박지 않는다. 서버는 이 값을 **읽지 않고** 화면이 사람에게
+     * 그대로 보여 준다. 여기서 DTO 로 좁히면 관측 쪽이 판정 어휘를 하나 늘리는 날 조회가 먼저
+     * 깨지고, 깨지는 이유는 서버가 쓰지도 않는 필드다. `jsonb` 컬럼이라 `readTree` 는 실패할 수
+     * 없다 — DB 가 이미 JSON 임을 보증한다.
+     */
+    private fun screenOf(screen: ScreenEntity) = ContentMapScreenResponse(
+        id = screen.id!!,
+        sceneId = screen.sceneId,
+        name = screen.name,
+        discriminator = objectMapper.readTree(screen.discriminator.asString()),
+        observedCount = screen.observedCount,
+        firstSeenQaRunId = screen.firstSeenQaRunId,
+        image = imageOf(screen),
+    )
+
+    /**
+     * 화면 캡처를 서명된 단기 주소로 바꾼다. **씬 대표 이미지와 같은 경로다**([thumbnailOf]).
+     *
+     * 서명 방식을 하나로 두는 이유: 두 벌이 되면 TTL·헤더·`Content-Disposition` 이 서로 다르게
+     * 흘러가고, 화면은 어느 쪽 주소를 쥐었는지에 따라 다르게 동작한다. 바이트를 이 서버로 끌어와
+     * 중계하지 않는 것도 같다 — 화면이 수백 개인 지도에서 그만큼이 응답 하나에 실린다.
+     *
+     * 파일 이름을 이름 없는 화면에서 id 로 짓는 것은 `screen.name` 이 nullable 이기 때문이다. 이
+     * 값은 내려받을 때의 파일 이름일 뿐이고 조인 키가 아니다.
+     */
+    private fun imageOf(screen: ScreenEntity): ScreenImageResponse? =
+        screen.imageObjectKey?.let { objectKey ->
+            val signed = storage.presignDownload(objectKey, "${screen.name ?: "screen-${screen.id}"}.jpg")
+            ScreenImageResponse(
+                url = signed.url,
+                expiresAt = signed.expiresAt,
+                capturedAt = screen.imageCapturedAt,
+            )
+        }
 
     /**
      * 씬 이미지를 서명된 단기 주소로 바꾼다.

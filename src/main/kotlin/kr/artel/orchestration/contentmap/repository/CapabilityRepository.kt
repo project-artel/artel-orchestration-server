@@ -2,6 +2,7 @@ package kr.artel.orchestration.contentmap.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.dto.SceneCapabilityCountRow
+import kr.artel.orchestration.contentmap.dto.SceneCapabilityRow
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
@@ -77,6 +78,32 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
         """
     )
     fun countByScene(contentMapId: Long): Flow<SceneCapabilityCountRow>
+
+    /**
+     * 씬별 카운트 뒤의 **행 목록.** 인스펙터가 "그 440 이 무엇인가"를 물을 때 답하는 자리다.
+     *
+     * [countByScene] 과 **필터도 조인도 똑같다.** 베낀 것이 아니라 같아야 하는 것이다 — 두 질의가
+     * 다른 집합을 보면 `capabilityList.size == capabilities.total` 이 조용히 깨지고, 화면은 개수와
+     * 목록 중 어느 쪽이 거짓인지 알 수 없다. 필터를 손대면 위아래를 함께 손댄다.
+     *
+     * `v_content_map_capability` 로 답할 수 없는 것도 [countByScene] 과 같은 이유다. 그 뷰는
+     * `not-a-step` 을 걸러 내고, 이 목록이 설명해야 하는 것이 바로 그 걸러진 행들이다. 조작이 있는
+     * 행의 컨트롤 정보는 이미 `steps` 가 들고 있으므로 여기서는 다시 담지 않는다.
+     *
+     * 판정 세 축을 함께 내는 이유: `status` 는 그 셋에서 유도된 값이라, 축 없이 `status` 만 보면
+     * 화면이 "왜 runnable 이 아닌가"를 답할 수 없다.
+     */
+    @Query(
+        """
+        SELECT c.scene_id, c.id AS capability_id, c.summary, c.status, c.origin, c.verification,
+               c.actionability, c.observability, c.applicability, c.interaction
+        FROM capability c
+        JOIN scene s ON s.id = c.scene_id
+        WHERE s.content_map_id = :contentMapId AND c.merged_into IS NULL
+        ORDER BY c.scene_id ASC, c.id ASC
+        """
+    )
+    fun findSceneCapabilities(contentMapId: Long): Flow<SceneCapabilityRow>
 
     /**
      * 안정 키로 넣거나 갱신하고 id 를 돌려준다.

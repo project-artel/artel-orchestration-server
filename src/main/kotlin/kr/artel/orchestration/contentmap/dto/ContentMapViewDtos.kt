@@ -1,5 +1,6 @@
 package kr.artel.orchestration.contentmap.dto
 
+import com.fasterxml.jackson.databind.JsonNode
 import io.swagger.v3.oas.annotations.media.Schema
 import kr.artel.orchestration.contentmap.scan.ScanState
 import kr.artel.orchestration.contentmap.scan.ScanStatus
@@ -20,6 +21,16 @@ import java.time.Instant
  *
  * 효과(`capability_effect`)는 담지 않는다. 기능 하나에 여러 개라 조인하면 행이 곱해진다 —
  * `v_content_map_capability` 가 효과를 빼는 것과 같은 판단이다.
+ *
+ * **그래프가 둘이고, 답하는 질문이 다르다.**
+ *
+ * | | 무엇 | 질문 |
+ * |---|---|---|
+ * | [edges] | 씬 전이 | 이 게임의 구조가 어떻게 생겼나. 아직 안 가본 곳도 나온다 |
+ * | [screenTransitions] | 화면 전이 | 실제로 어떻게 흘렀나. 관측된 것만 나온다 |
+ *
+ * 화면 전이가 씬 안에 접히지 않고 최상위에 서는 이유: [ContentMapScreenTransitionResponse.crossesScene]
+ * 인 전이는 두 씬에 걸쳐 있어 어느 씬에 넣어도 반쪽이 된다.
  */
 @Schema(description = "씬 명세(content map) 조회 결과")
 data class ContentMapResponse(
@@ -29,6 +40,8 @@ data class ContentMapResponse(
     val scenes: List<ContentMapSceneResponse>,
     @Schema(description = "씬 전이")
     val edges: List<ContentMapEdgeResponse>,
+    @Schema(description = "화면 전이. QA 런이 관측한 것만 있다")
+    val screenTransitions: List<ContentMapScreenTransitionResponse> = emptyList(),
     @Schema(description = "명세가 못 된 사유의 분포. QA 결함이 아니라 개발 우선순위 신호다")
     val gaps: List<SpecGapCountResponse>,
     @Schema(description = "근거 출신 기능 중 실행으로 확인된 비율")
@@ -100,7 +113,172 @@ data class ContentMapSceneResponse(
     val steps: List<SceneStepResponse> = emptyList(),
     @Schema(description = "이 씬의 대표 이미지. null 이면 근거가 캡처를 아예 신고하지 않았다")
     val thumbnail: SceneThumbnailResponse? = null,
+    @Schema(description = "이 씬에서 관측된 화면. QA 런 전에는 비고 그것이 정상이다")
+    val screens: List<ContentMapScreenResponse> = emptyList(),
+    @Schema(description = "capabilities 가 센 그 행들. 개수의 합이 capabilities.total 과 같다")
+    val capabilityList: List<SceneCapabilityResponse> = emptyList(),
 )
+
+/**
+ * 이 씬에서 관측된 화면 하나.
+ *
+ * **씬 하나에 화면이 여럿일 수 있다** — 오버레이·팝업·상태 분기. 정적 분석은 화면을 모르므로 QA 런
+ * 전에는 [ContentMapSceneResponse.screens] 가 비고, **그것이 정상이다.** 화면이 이 빈 목록을 결함으로
+ * 읽으면 안 된다. 씬을 그리다 화면이 생기는 것이지 화면이 없어 씬이 덜 그려지는 것이 아니다.
+ *
+ * @property name 표시용이고 **조인 키가 아니다.** 기계는 [discriminator] 로 판정하고 이름은 LLM 이
+ *   짓는다. null 이면 아직 아무도 이름을 붙이지 않은 것이다
+ * @property discriminator 이 화면임을 판정하는 pulse 관측 조건.
+ *   `[{"selector":"Canvas[2]/continue[2]","active":true}]`. 서버는 이 값을 **읽지 않고 그대로
+ *   옮긴다** — 판정은 런타임이 하고 화면은 사람에게 보여 줄 뿐이라, 모양을 여기서 못 박으면 관측
+ *   쪽이 조건 어휘를 늘리는 날 조회가 먼저 깨진다
+ * @property observedCount 이 화면을 몇 번 지나갔나. 0 은 화면 행이 있는데 관측이 없는 것이라 정상이
+ *   아니지만, 조회는 그 판단을 하지 않고 그대로 옮긴다
+ * @property firstSeenQaRunId 이 화면을 처음 본 런. 런이 지워지면 null 이 된다(`ON DELETE SET NULL`)
+ */
+@Schema(description = "씬 안의 화면 하나")
+data class ContentMapScreenResponse(
+    val id: Long,
+    @Schema(description = "이 화면이 속한 씬. 화면 전이가 화면 id 로만 오므로 되짚을 자리가 필요하다")
+    val sceneId: Long,
+    @Schema(description = "표시용. 조인 키가 아니다")
+    val name: String?,
+    @Schema(description = "이 화면임을 판정하는 pulse 관측 조건. 서버는 읽지 않고 그대로 옮긴다")
+    val discriminator: JsonNode,
+    @Schema(description = "이 화면을 몇 번 지나갔나")
+    val observedCount: Int,
+    @Schema(description = "이 화면을 처음 본 QA 런")
+    val firstSeenQaRunId: Long?,
+    @Schema(description = "이 화면의 캡처. null 이면 아직 못 찍었다")
+    val image: ScreenImageResponse? = null,
+)
+
+/**
+ * 화면 캡처의 주소. 씬 대표 이미지와 **같은 서명 경로**를 쓴다(`DocumentStorage.presignDownload`).
+ *
+ * [SceneThumbnailResponse] 와 달리 `state` 판별자가 없다. `screen` 표에는 실패 코드 칸이 없어
+ * (`image_failure_code` 는 `scene` 에만 있다) 가를 두 상태가 없기 때문이다 — 캡처가 있으면 이
+ * 객체가 있고, 없으면 [ContentMapScreenResponse.image] 가 통째로 null 이다. 없는 상태를 흉내 내는
+ * 칸을 만들면 화면이 영원히 오지 않는 값을 분기한다.
+ *
+ * @property capturedAt 이 캡처를 찍은 시각. 화면이 지금 모양과 얼마나 떨어진 그림인지를 말한다
+ */
+@Schema(description = "화면 캡처의 서명된 주소")
+data class ScreenImageResponse(
+    @Schema(description = "서명된 단기 주소")
+    val url: String,
+    val expiresAt: Instant,
+    @Schema(description = "찍은 시각. null 이면 관측이 시각을 남기지 않았다")
+    val capturedAt: Instant?,
+)
+
+/**
+ * 화면 전이 하나. **관측만 있다.**
+ *
+ * 정적으로 만들지 않는다 — 추측을 넣으면 "실제로 어떻게 흘렀나"가 오염된다. 씬 전이
+ * ([ContentMapEdgeResponse])로 대신할 수도 없다: 팝업이 열리는 것처럼 씬 안에서만 일어나는 전이가
+ * 있고, 그런 전이는 씬 그래프에 자리가 없다.
+ *
+ * @property capabilityId null 이면 **자동 전이**다 — 타이머·로딩 완료처럼 TC 가 지시할 수 없는 것.
+ *   기능이 재적재로 지워져도 null 이 된다(`ON DELETE SET NULL`). 어느 쪽이든 "갔다는 사실"은 남는다
+ * @property kind `action` · `state` · `auto` 중 하나
+ * @property crossesScene 씬 경계를 넘었나. false 면 같은 씬 안의 상태 변화다. 이 칸이 있어야 화면이
+ *   중첩 다이어그램에서 씬 컨테이너 안의 선과 밖의 선을 가른다
+ */
+@Schema(description = "화면 전이 하나")
+data class ContentMapScreenTransitionResponse(
+    val id: Long,
+    val fromScreenId: Long,
+    val toScreenId: Long,
+    @Schema(description = "null 이면 자동 전이 — TC 가 지시할 수 없다")
+    val capabilityId: Long?,
+    @Schema(description = "무엇을 해서 넘어갔나")
+    val capabilitySummary: String?,
+    @Schema(description = "action · state · auto")
+    val kind: String,
+    @Schema(description = "씬 경계를 넘었나. false 면 같은 씬 안의 상태 변화다")
+    val crossesScene: Boolean,
+    @Schema(description = "이 전이를 몇 번 지나갔나")
+    val observedCount: Int,
+    @Schema(description = "이 전이를 처음 본 QA 런")
+    val firstSeenQaRunId: Long?,
+) {
+    companion object {
+        fun of(row: ContentMapScreenTransitionRow) = ContentMapScreenTransitionResponse(
+            id = row.id,
+            fromScreenId = row.fromScreenId,
+            toScreenId = row.toScreenId,
+            capabilityId = row.capabilityId,
+            capabilitySummary = row.capabilitySummary,
+            kind = row.kind,
+            crossesScene = row.crossesScene,
+            observedCount = row.observedCount,
+            firstSeenQaRunId = row.firstSeenQaRunId,
+        )
+    }
+}
+
+/**
+ * 이 씬의 기능 하나. **[SceneCapabilityCountResponse] 가 센 그 행이다.**
+ *
+ * [ContentMapSceneResponse.steps] 와 겹치되 같지 않다. 이쪽이 상위집합이다.
+ *
+ * | | 무엇 | 골든 문서 |
+ * |---|---|---|
+ * | `steps` | 조작이 있는 기능 | 51 행 |
+ * | `capabilityList` | 이 씬의 기능 전부 | 491 행 |
+ *
+ * 차이가 `not-a-step` 이다. 그 행들은 단독 명세가 될 수 없어 단계 목록에 들어가면 안 되지만,
+ * given/then 의 재료로 실재하는 행이라 인스펙터가 "그 440 이 무엇인가"를 물으면 답이 있어야 한다.
+ * 그래서 `capabilityList.size == capabilities.total` 이고, `steps.size == total - notAStep` 이다.
+ * 두 등식이 함께 성립하지 않으면 셋 중 하나가 거짓말을 시작한 것이다.
+ *
+ * 칸 이름을 `capabilities` 로 하지 못한 것은 그 이름을 카운트가 이미 쓰고 있어서다. 이름을 뺏으면
+ * 추가만 하는 변경이 아니게 된다.
+ *
+ * 컨트롤 정보(`controlLabel` · `controlPath` · `inputKey`)와 조건 트리는 여기 없다. 그 칸이 찬 행은
+ * 조작이 있는 행이고 그것은 [SceneStepResponse] 가 이미 든다 — 두 목록은 [id] 로 잇는다. 아홉 배
+ * 큰 목록에 같은 값을 다시 실을 이유가 없다.
+ *
+ * @property status 세 축에서 **유도된** 값이다. 축을 함께 내는 것은 화면이 "왜 runnable 이 아닌가"를
+ *   답할 수 있어야 하기 때문이다
+ * @property origin `evidence` · `observed` · `inferred` · `human`. [verification] 과 다른 축이다 —
+ *   이쪽은 출처이고 저쪽은 실행 확인이다
+ */
+@Schema(description = "씬 하나의 기능 하나")
+data class SceneCapabilityResponse(
+    @Schema(description = "capability.id. steps 의 같은 id 와 같은 행이다")
+    val id: Long,
+    val summary: String,
+    @Schema(description = "runnable · needs-probe · unreachable-precondition · not-a-step")
+    val status: String,
+    @Schema(description = "evidence · observed · inferred · human. 어디서 알아냈나")
+    val origin: String,
+    @Schema(description = "unverified · confirmed · contradicted. 실행으로 확인됐나")
+    val verification: String,
+    @Schema(description = "이 조작을 실제로 할 수 있는가")
+    val actionability: String,
+    @Schema(description = "그 결과를 볼 수 있는가")
+    val observability: String,
+    @Schema(description = "이 빌드에 이 규칙이 적용되는가")
+    val applicability: String,
+    @Schema(description = "click · press · none 등. 프로토콜 메서드가 아니라 의도다")
+    val interaction: String,
+) {
+    companion object {
+        fun of(row: SceneCapabilityRow) = SceneCapabilityResponse(
+            id = row.capabilityId,
+            summary = row.summary,
+            status = row.status,
+            origin = row.origin,
+            verification = row.verification,
+            actionability = row.actionability,
+            observability = row.observability,
+            applicability = row.applicability,
+            interaction = row.interaction,
+        )
+    }
+}
 
 /**
  * 씬 대표 이미지의 상태와 주소.
