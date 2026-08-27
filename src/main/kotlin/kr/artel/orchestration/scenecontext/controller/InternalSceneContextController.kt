@@ -52,8 +52,11 @@ class InternalSceneContextController(
             "`not-a-step` 은 나가지 않고, 지식은 id 와 요약까지만 낸다. " +
             "`contentMapId` 가 null 이면 이 빌드에 아직 근거 지도가 없다.",
     )
+    // 메서드 이름이 `read` 면 ProjectContentMapController.read 와 부딪혀 생성된 OpenAPI 의
+    // operationId 가 `read_1` 로 밀린다. 그 번호는 어느 쪽이 먼저 스캔됐느냐에 따라 붙으므로
+    // 두 컨트롤러 사이를 오가고, 스냅샷 diff 가 이유 없이 흔들린다.
     @GetMapping
-    suspend fun read(
+    suspend fun readSceneContext(
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
         @Parameter(description = "게임 빌드 id", required = true) @PathVariable gameBuildId: Long,
         @Parameter(
