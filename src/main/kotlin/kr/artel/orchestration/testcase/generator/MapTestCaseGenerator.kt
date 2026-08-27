@@ -50,6 +50,7 @@ import org.springframework.stereotype.Service
 class MapTestCaseGenerator(
     private val contentMaps: ContentMapRepository,
     private val effects: CapabilityEffectRepository,
+    private val objectRefs: kr.artel.orchestration.contentmap.repository.SceneObjectRefRepository,
     private val objectMapper: ObjectMapper,
 ) {
 
@@ -62,8 +63,13 @@ class MapTestCaseGenerator(
         // **반복하면 닿는 자리**(ARTEL-613). 되돌아가는 갈래의 가드를 뒤집으면 "다 돌고 나온
         // 자리"이고, 그 조건은 지울 것이 아니라 스텝으로 옮길 것이다.
         val exits = LoopExits.of(contentMaps.findLoopingConditions(contentMapId).toList().mapNotNull(::parseText))
+        // **효과가 가리키는 것을 사람이 찾을 수 있는 이름으로**(ARTEL-615). 씬이 스스로 말한 것만
+        // 쓴다 — 문자열에서 이름을 뽑으면 그 게임에만 맞는 규칙이 된다.
+        val refs = objectRefs.findByContentMapId(contentMapId).toList()
+            .groupBy { it.ownerType to it.field }
+            .mapValues { (_, rows) -> rows.map { it.targetName }.toSet() }
         val drafts = contentMaps.findCapabilityRows(contentMapId).toList()
-            .flatMap { row -> draftsOf(row, edges, settled, exits) }
+            .flatMap { row -> draftsOf(row, edges, settled, exits, refs) }
         return merged(drafts)
     }
 
@@ -102,6 +108,7 @@ class MapTestCaseGenerator(
                     expected = first.outcome,
                     status = first.status,
                     gaps = group.flatMap { it.gaps }.distinct(),
+                    arrivesAt = first.arrivesAt,
                 )
             }
             .let(::withInterchangeableInputs)
@@ -197,6 +204,7 @@ class MapTestCaseGenerator(
         val outcome: String,
         val status: String,
         val gaps: List<String>,
+        val arrivesAt: String? = null,
     )
 
     /**
@@ -210,6 +218,7 @@ class MapTestCaseGenerator(
         edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
         settled: Map<Long, Map<Int, String>>,
         exits: Set<LoopExits.Guard>,
+        refs: Map<Pair<String, String>, Set<String>>,
     ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
@@ -236,7 +245,7 @@ class MapTestCaseGenerator(
             )
             val settledCondition = MapTestCaseLocals.settle(situation, source, settled)
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
-            MapTestCasePhrasing.expectedEach(effectRows).map { outcome ->
+            MapTestCasePhrasing.expectedWithSource(effectRows, refs).map { (outcome, effect) ->
                 Draft(
                     capabilityKey = key,
                     scene = row.sceneName,
@@ -246,6 +255,8 @@ class MapTestCaseGenerator(
                     outcome = outcome,
                     status = row.status,
                     gaps = reasons,
+                    // 씬 효과의 대상이 곧 도착 화면이다. 산문에서 다시 뽑지 않는다.
+                    arrivesAt = effect.target?.takeIf { effect.kind == SCENE },
                 )
             }
         }
@@ -327,6 +338,11 @@ class MapTestCaseGenerator(
             ?.takeIf { it.isObject && !it.isEmpty }
             ?: return null
         return EvidenceParser(objectMapper).parseCondition(json)
+    }
+
+    /** 효과 어휘의 씬 전환. `MapTestCasePhrasing` 이 같은 값으로 문장을 만든다. */
+    private companion object {
+        const val SCENE = "scene"
     }
 
     private fun gapsOf(row: ContentMapCapabilityRow): List<String> =

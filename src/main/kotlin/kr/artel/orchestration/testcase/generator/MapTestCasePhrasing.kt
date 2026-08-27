@@ -122,11 +122,43 @@ object MapTestCasePhrasing {
      * 없는 케이스는 실행해도 통과·실패를 말할 수 없다.
      */
     fun expectedEach(effects: List<CapabilityEffectEntity>): List<String> =
-        effects.filter { EffectCategory.from(it.category)?.assertable == true }
-            .mapNotNull(::outcome)
-            .distinct()
+        expectedWithSource(effects, emptyMap()).map { it.first }
+
+    /**
+     * [expectedEach] 와 같되 **어느 효과가 그 문장을 냈는지** 함께 낸다(ARTEL-614).
+     *
+     * 씬 전환 케이스가 "어느 화면으로 가나"를 구조적으로 들려면 필요하다 — 문장에서 다시 뽑으면
+     * 그것이 곧 이 개편이 없애려는 산문 되읽기다.
+     */
+    fun expectedWithSource(
+        effects: List<CapabilityEffectEntity>,
+        refs: Map<Pair<String, String>, Set<String>> = emptyMap(),
+    ): List<Pair<String, CapabilityEffectEntity>> {
+        val seen = mutableSetOf<String>()
+        return effects.filter { EffectCategory.from(it.category)?.assertable == true }
+            .filterNot { it.kind in UNWATCHABLE }
+            .mapNotNull { effect -> outcome(effect, refs)?.let { it to effect } }
+            .filter { seen.add(it.first) }
+    }
 
     // --- 조각 ------------------------------------------------------------------------
+
+    /**
+     * **문서가 관측 가능하다고 말해도 QA 실행이 못 보는 것**(ARTEL-616).
+     *
+     * 소리가 그렇다. 문서는 `category='observable'` 로 싣고 그 말이 틀리지도 않았다 — 사람은 들을
+     * 수 있다. 그러나 이 표를 실행하는 것은 SDK 이고, **SDK 가 소리를 못 읽는다.** 기대결과에 적으면
+     * 실행이 통과·실패를 말할 수 없는 줄이 되고, 그것이 곧 지킬 수 없는 명세다. 예전에 빼기로
+     * 정한 것이 이 자리다.
+     *
+     * **`v_spec_gap` 과 일부러 갈린다.** 저쪽은 "이 기능이 명세가 될 수 있나"(개발 우선순위)를 묻고
+     * 여기는 "QA 가 검증할 수 있나"를 묻는다. 소리는 앞의 답이 예이고 뒤의 답이 아니오다 — 두 값이
+     * 같아야 한다고 맞추면 둘 중 하나가 거짓말을 하게 된다.
+     *
+     * 지도가 `capability_effect.watchable` 로 이 판정을 들 자리를 이미 만들어 두었지만 적재가 아직
+     * 안 채운다. 채워지면 이 목록 대신 그것을 본다.
+     */
+    private val UNWATCHABLE = setOf("audio")
 
     /**
      * 효과 하나를 한 마디로.
@@ -134,8 +166,14 @@ object MapTestCasePhrasing {
      * `kind` 는 문자열이다 — 어휘를 enum 으로 못 박은 자리가 아직 없고, 적재기가 문서의 값을 그대로
      * 싣는다. 실측(적재기 지도 486건)에서 나온 열 가지를 다룬다.
      */
-    private fun outcome(effect: CapabilityEffectEntity): String? {
-        val target = effect.target?.takeIf { it.isNotBlank() } ?: return null
+    private fun outcome(
+        effect: CapabilityEffectEntity,
+        refs: Map<Pair<String, String>, Set<String>> = emptyMap(),
+    ): String? {
+        val target = effect.target?.takeIf { it.isNotBlank() }
+            // 씬 전환의 대상은 화면 이름이라 오브젝트가 아니다. 되짚을 것이 없다.
+            ?.let { if (effect.kind == "scene") it else MapTestCaseTargets.resolve(it, refs) }
+            ?: return null
         // 값을 못 읽은 자리는 문서가 그렇게 적어 둔다(`(not a literal)` · `(not a simple receiver)`).
         // 그대로 내면 "표시 상태가 `(not a literal)`" 처럼 읽을 수 없는 문장이 된다 — 값을 빼고
         // "바뀐다"로 말한다. 무엇으로 바뀌는지는 모르지만 **바뀐다는 것은 안다.**

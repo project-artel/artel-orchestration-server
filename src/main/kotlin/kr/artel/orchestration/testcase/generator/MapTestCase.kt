@@ -22,4 +22,12 @@ data class MapTestCase(
     val expected: String,
     val status: String,
     val gaps: List<String> = emptyList(),
+    /**
+     * 이 케이스를 실행하면 **어느 화면이 되나**(ARTEL-614). 씬 전환이 아니면 `null` 이다.
+     *
+     * 저작이 브리지를 고를 때 필요하다 — 다음 케이스가 다른 씬에서 시작하면, 거기로 데려다주는
+     * 케이스를 찾아야 한다. 지금은 그 답이 기대결과 **산문**에만 있어서 모델이 글을 읽어 맞춰야
+     * 하고, 그것이 이 개편이 없애려는 문자열 맞춤이다.
+     */
+    val arrivesAt: String? = null,
 )
