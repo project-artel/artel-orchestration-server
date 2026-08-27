@@ -1,5 +1,6 @@
 package kr.artel.orchestration.knowledge
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
@@ -8,9 +9,11 @@ import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.knowledge.dto.KnowledgeLinkRequest
+import kr.artel.orchestration.knowledge.entity.KnowledgeAnchorEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEdgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
+import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.service.KnowledgeGraphMutation
@@ -21,6 +24,7 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.project.service.ProjectAccessService
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterEach
@@ -43,6 +47,9 @@ import java.time.Instant
  * 3. **운영 스코프만.** 실험 스코프의 지식과 간선은 그 arm 안에서만 의미가 있어, 창고 지도에
  *    섞이면 실제 창고보다 커 보인다.
  * 4. **비참여자에게는 빈 그래프.** 예외로 갈라 답하면 프로젝트의 존재 여부가 새어 나간다.
+ * 5. **노드마다 앵커가 실린다**(ARTEL-605). 앵커가 DB에만 있고 이 응답에 없으면 사람 눈에는
+ *    없는 것과 같다. 앵커가 없으면 필드가 빠지는 것이 아니라 빈 배열이고, 그 빈 배열은 "게임
+ *    전체의 사실"이라는 뜻이다. 그리고 그 앵커는 노드 수와 무관하게 **질의 한 번**으로 온다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -52,6 +59,8 @@ class KnowledgeGraphViewIntegrationTest {
     @Autowired private lateinit var graphService: KnowledgeGraphService
     @Autowired private lateinit var knowledgeRepository: KnowledgeRepository
     @Autowired private lateinit var edgeRepository: KnowledgeEdgeRepository
+    @Autowired private lateinit var anchorRepository: KnowledgeAnchorRepository
+    @Autowired private lateinit var accessService: ProjectAccessService
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var appUserRepository: AppUserRepository
@@ -88,6 +97,8 @@ class KnowledgeGraphViewIntegrationTest {
     }
 
     private suspend fun wipe() {
+        // 앵커는 knowledge를 FK 없이 논리참조하므로(V55) knowledge를 지워도 따라 사라지지 않는다.
+        anchorRepository.deleteAll()
         edgeRepository.deleteAll()
         knowledgeRepository.deleteAll()
         projectMemberRepository.deleteAll()
@@ -261,6 +272,122 @@ class KnowledgeGraphViewIntegrationTest {
         assertThat(edge.to).isEqualTo(shop.toString())
         assertThat(edge.relation).isEqualTo("LEADS_TO")
         assertThat(edge.note).isEqualTo("마을 상단바의 상점 버튼")
+    // --------------------------------------------------------- 앵커 (ARTEL-605)
+
+    /**
+     * 앵커는 노드에 실려야 사람 눈에 보인다. ARTEL-591이 앵커를 저장하고 **Agent의** 검색 히트에만
+     * 실었기 때문에, 그 앵커는 DB에 있어도 지식 콘솔에는 없는 것과 같았다.
+     *
+     * 한 지식이 여러 화면에 걸리는 것이 정상이고(V55), 그래서 이 필드는 목록이다.
+     */
+    @Test
+    fun `노드에 앵커가 실리고 하나가 여럿을 질 수 있다`(): Unit = runBlocking {
+        val single = givenKnowledge("상점에서만 골드 부족 안내가 뜬다")
+        val many = givenKnowledge("전투 중 ESC는 아무것도 하지 않는다")
+        anchor(single, "Shop", screenId = 4_242L)
+        anchor(many, "Combat", screenId = 1L)
+        anchor(many, "Boss", screenId = 2L)
+
+        val nodes = viewService.graph(projectId, userId, nodeLimit = 200).nodes.associateBy { it.id }
+
+        assertThat(nodes.getValue(single.toString()).anchors.map { it.sceneName to it.screenId })
+            .containsExactly("Shop" to "4242")
+        assertThat(nodes.getValue(many.toString()).anchors.map { it.sceneName to it.screenId })
+            .containsExactlyInAnyOrder("Combat" to "1", "Boss" to "2")
+    }
+
+    /**
+     * **앵커가 없는 지식이 기본값이다** — 게임 전체의 사실이고 창고 대부분이 그쪽이다. 그때 필드가
+     * 빠지면 화면이 `undefined`와 `[]`를 갈라 다뤄야 하고, 그 둘의 뜻이 같으므로 가를 이유가 없다.
+     */
+    @Test
+    fun `앵커가 없는 노드는 필드가 빠지는 것이 아니라 빈 배열이다`(): Unit = runBlocking {
+        val everywhere = givenKnowledge("낙하 데미지는 5m부터")
+
+        val node = viewService.graph(projectId, userId, nodeLimit = 200).nodes.single()
+
+        assertThat(node.id).isEqualTo(everywhere.toString())
+        assertThat(node.anchors)
+            .describedAs("빈 배열은 '앵커를 못 읽었다'가 아니라 '게임 전체의 사실'이다")
+            .isEmpty()
+    }
+
+    /**
+     * 화면은 pulse 관측으로 판정되는 것이라(V40) 판정이 안 되는 순간이 정상적으로 있다. 그때 앵커는
+     * 씬까지만 말하고 멈춘다 — content map이 채워지기 전까지는 **모든** 앵커가 이쪽이다.
+     */
+    @Test
+    fun `화면을 모르는 앵커는 screenId가 null이다`(): Unit = runBlocking {
+        val sceneOnly = givenKnowledge("마을에서는 자동 회복이 돈다")
+        anchor(sceneOnly, "Town")
+
+        val node = viewService.graph(projectId, userId, nodeLimit = 200).nodes.single()
+
+        assertThat(node.anchors.single().sceneName).isEqualTo("Town")
+        assertThat(node.anchors.single().screenId)
+            .describedAs("화면을 지어내는 것보다 모른다고 하는 편이 낫다")
+            .isNull()
+    }
+
+    /**
+     * **가려진 항목의 앵커가 새면 안 된다.** 앵커만 보아서는 그것이 어느 지식의 것인지 알 수 없어
+     * 새는 것을 알아채기도 어렵다 — `KnowledgeScope`가 "빠뜨린 격리는 조용하다"고 말하는 자리다.
+     *
+     * 그래프는 운영 스코프만 담으므로 실험 arm의 지식도 지워진 지식도 애초에 노드가 아니다. 그
+     * 앵커가 살아 있는 다른 노드에 붙어 나오지 않는지까지 본다 — 앵커를 지식 id로 묶는 자리에서
+     * 틀리면 정확히 그런 모양으로 샌다.
+     */
+    @Test
+    fun `가려진 지식의 앵커는 어느 노드에도 실리지 않는다`(): Unit = runBlocking {
+        val alive = givenKnowledge("살아 있는 지식")
+        val deleted = givenKnowledge("지워진 지식", deletedAt = Instant.now())
+        val experiment = givenKnowledge("실험 arm의 지식", scopeId = EXPERIMENT_SCOPE_ID)
+        anchor(alive, "Town")
+        anchor(deleted, "Graveyard")
+        anchor(experiment, "Laboratory")
+
+        val response = viewService.graph(projectId, userId, nodeLimit = 200)
+
+        assertThat(response.nodes.map { it.id }).containsExactly(alive.toString())
+        assertThat(response.nodes.flatMap { it.anchors }.map { it.sceneName })
+            .describedAs("가려진 지식의 앵커가 살아 있는 노드에 섞이면 안 된다")
+            .containsExactly("Town")
+    }
+
+    /**
+     * **이 테스트가 N+1을 못박는다.** 이 조회는 노드를 최대 500개까지 내므로 노드마다 앵커를 부르면
+     * 응답 하나가 수백 질의가 되고, 그 비용은 앵커가 하나도 없는 프로젝트에서도 그대로 난다.
+     *
+     * 세는 델리게이트로 리포지토리를 감싸 실제 호출 횟수를 본다. "노드가 여럿인데 앵커는 맞더라"
+     * 만으로는 노드마다 부르는 구현도 통과한다.
+     */
+    @Test
+    fun `앵커는 노드 수와 무관하게 질의 한 번으로 온다`(): Unit = runBlocking {
+        val ids = (1..5).map { givenKnowledge("지식 $it") }
+        ids.forEach { anchor(it, "Scene-$it") }
+        val counting = CountingAnchorRepository(anchorRepository)
+
+        val response = countingView(counting).graph(projectId, userId, nodeLimit = 200)
+
+        assertThat(response.nodes).hasSize(5)
+        assertThat(response.nodes.flatMap { it.anchors }).hasSize(5)
+        assertThat(counting.calls)
+            .describedAs("노드마다 부르면 응답 하나가 노드 수만큼의 질의가 된다")
+            .isEqualTo(1)
+    }
+
+    /**
+     * 노드가 하나도 없으면 앵커 질의 자체를 하지 않는다. 빈 컬렉션을 넘기면 `IN ()`이 되어 SQL이
+     * 깨지므로(`KnowledgeAnchorRepository` 주석) 이것은 최적화가 아니라 계약이다.
+     */
+    @Test
+    fun `노드가 없으면 앵커를 아예 조회하지 않는다`(): Unit = runBlocking {
+        val counting = CountingAnchorRepository(anchorRepository)
+
+        val response = countingView(counting).graph(projectId, userId, nodeLimit = 200)
+
+        assertThat(response.nodes).isEmpty()
+        assertThat(counting.calls).isZero()
     }
 
     // --------------------------------------------------------------- helpers
@@ -314,6 +441,16 @@ class KnowledgeGraphViewIntegrationTest {
         assertThat(result).isInstanceOf(KnowledgeGraphMutation.Applied::class.java)
     }
 
+    private suspend fun anchor(knowledgeId: Long, sceneName: String, screenId: Long? = null) {
+        anchorRepository.save(
+            KnowledgeAnchorEntity(knowledgeId = knowledgeId, sceneName = sceneName, screenId = screenId)
+        )
+    }
+
+    /** 질의 수를 세는 리포지토리를 끼운 서비스. 나머지 협력자는 컨테이너가 준 진짜 빈이다. */
+    private fun countingView(counting: CountingAnchorRepository) =
+        KnowledgeGraphViewService(knowledgeRepository, counting, graphService, accessService)
+
     private suspend fun signIn(seed: String = "graph-view"): AuthenticatedUser =
         oauthUserService.upsert(
             OAuthIdentity(
@@ -332,5 +469,26 @@ class KnowledgeGraphViewIntegrationTest {
 
         /** 간선을 주장한 런. 이 조회는 런을 조인하지 않으므로 값 자체에 의미가 없다. */
         const val LINKING_QA_TRY_ID = 1L
+    }
+}
+
+/**
+ * `findVisibleFor` 호출 횟수를 세는 껍데기. 나머지 메서드는 진짜 리포지토리에 그대로 위임한다.
+ *
+ * 질의 수를 직접 세는 이유는, 앵커 값만 보는 검증은 노드마다 부르는 구현도 통과시키기 때문이다.
+ */
+private class CountingAnchorRepository(
+    private val delegate: KnowledgeAnchorRepository
+) : KnowledgeAnchorRepository by delegate {
+
+    var calls = 0
+        private set
+
+    override fun findVisibleFor(
+        knowledgeIds: Collection<Long>,
+        scopeId: Long?
+    ): Flow<KnowledgeAnchorEntity> {
+        calls++
+        return delegate.findVisibleFor(knowledgeIds, scopeId)
     }
 }
