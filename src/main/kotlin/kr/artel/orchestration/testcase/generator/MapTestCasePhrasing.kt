@@ -4,6 +4,7 @@ import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.entity.EffectCategory
 import kr.artel.orchestration.contentmap.entity.Interaction
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
+import kr.artel.orchestration.contentmap.evidence.ConditionPrune
 import kr.artel.orchestration.contentmap.evidence.GroupKind
 
 /**
@@ -35,7 +36,8 @@ object MapTestCasePhrasing {
      */
     fun precondition(scene: String, condition: ConditionNode?, inputKey: String? = null): String {
         val state = "$scene 화면인 상태"
-        val text = stateText(condition, scene)
+        // 갈래를 묶으면 같은 검사가 갈래마다 되풀이된다. 뜻이 같은 채로 읽을 것만 줄인다(ARTEL-624).
+        val text = stateText(ConditionPrune.of(condition), scene)
             ?.let { if (inputKey == null) it else withoutInputCheck(it) }
             ?.ifBlank { null }
             ?: return state
@@ -236,7 +238,13 @@ object MapTestCasePhrasing {
         // 으로 자기 화면을 확인하는 것은 흔하고, 그것을 그대로 실으면 사전조건 첫 줄이 화면 이름을
         // 두 번 부른다. 구버전도 같은 자리를 흡수한다(`absorb_active_scene_condition`).
         is ConditionNode.Test ->
-            if (node.operator == "==" && ACTIVE_SCENE.matches(node.left) &&
+            // **코드가 자기 참조를 확인하는 자리는 전제가 아니다**(ARTEL-623). `inputBlocker != null`
+            // 은 씬이 로드됐으면 늘 참이고, 테스터가 만들 상태가 아니라 개발자가 빠뜨린 연결을 막는
+            // 방어다. 전제에 실으면 실행하는 사람이 만들 수 없는 것을 요구받는다 — 실측(QA 런)에서
+            // 그런 줄이 통째로 `SETUP-FAILED` 로 끝났다.
+            if (referenceCheck(node)) {
+                null
+            } else if (node.operator == "==" && ACTIVE_SCENE.matches(node.left) &&
                 node.right.trim('"') == scene
             ) {
                 null
@@ -293,6 +301,17 @@ object MapTestCasePhrasing {
      * 특정 이름을 넣지 않는다 — 키·버튼·입력을 낀 판정 호출이라는 구조만 본다.
      */
     private val INPUT_CHECK = Regex("""\b\w*(Key|Button|Input)\w*\s*\(\s*\)""")
+
+    /**
+     * 오브젝트가 **거기 있나**를 묻는 자리(ARTEL-623).
+     *
+     * `X != null` 하나뿐이다. 씬이 로드됐으면 늘 참이고, 아니면 개발자가 인스펙터 연결을 빠뜨린
+     * 것이라 QA 가 만들 수 있는 상태가 아니다.
+     *
+     * `== null` 은 뺴지 않는다 — 그것은 "아직 없는 상태"를 진짜로 요구하는 갈래일 수 있다.
+     */
+    private fun referenceCheck(node: ConditionNode.Test): Boolean =
+        node.operator == "!=" && node.right.trim() == "null"
 
     /** 지금 화면을 코드가 스스로 확인하는 자리. 사전조건이 이미 그 화면을 말했다. */
     private val ACTIVE_SCENE = Regex("""SceneManager\.GetActiveScene\(\)\.name""")

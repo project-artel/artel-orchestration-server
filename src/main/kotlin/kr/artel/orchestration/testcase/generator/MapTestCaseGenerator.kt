@@ -6,6 +6,7 @@ import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import com.fasterxml.jackson.databind.JsonNode
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.contentmap.evidence.ConditionOverlap
+import kr.artel.orchestration.contentmap.evidence.ConditionPrune
 import kr.artel.orchestration.contentmap.evidence.GroupKind
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.evidence.LoopExits
@@ -95,28 +96,70 @@ class MapTestCaseGenerator(
      * 순서는 첫 조각의 자리를 지킨다. 뷰의 정렬이 프롬프트 캐시 계약이라 흔들면 안 된다.
      */
     private fun merged(drafts: List<Draft>): List<MapTestCase> =
-        drafts.groupBy { Triple(it.scene, it.step, it.outcome) }
-            .map { (_, group) ->
+        drafts.groupBy { it.entryKey }
+            .flatMap { (_, ofCapability) -> branches(ofCapability) }
+            .map { group ->
                 val first = group.first()
-                val settled = weakest(group.map { it.condition })
+                // 이 무리가 함께 서려면 참이어야 하는 것. 바깥의 `settled`(정착 인자)와 다른 값이다.
+                val groupCondition = weakest(group.map { it.condition })
                 MapTestCase(
                     capabilityKey = first.capabilityKey,
                     scene = first.scene,
                     precondition = MapTestCasePhrasing.precondition(
-                        first.scene, settled, first.inputKey,
+                        first.scene, groupCondition, first.inputKey,
                     ),
                     // **구조를 버리지 않는다**(ARTEL-627). 위 문장은 이것을 사람 말로 렌더한 것이고,
                     // 소비하는 쪽은 문장이 아니라 이쪽을 읽는다.
-                    condition = settled,
+                    condition = groupCondition,
                     step = first.step,
-                    expected = first.outcome,
+                    // **한 기능이 내는 관측들을 함께 적는다.** 저작이 이것을 조작 하나 + 검증 여럿으로
+                    // 펴고, 채점은 스텝 단위라 어느 지점이 틀렸는지는 그대로 드러난다. 구버전도 같은
+                    // 자리를 ` / ` 로 잇는다.
+                    expected = group.map { it.outcome }.distinct().joinToString(OUTCOME_SEPARATOR),
                     status = first.status,
                     gaps = group.flatMap { it.gaps }.distinct(),
-                    arrivesAt = first.arrivesAt,
-                    identity = first.identity,
+                    arrivesAt = group.firstNotNullOfOrNull { it.arrivesAt },
+                    // 정체는 **기능과 그 케이스가 덮는 관측들**이다. 문구가 바뀌어도, 관측을 어떤
+                    // 문장으로 적든 같은 줄이다(ARTEL-617).
+                    identity = (listOf(first.capabilityKey) + group.map { it.identity }.sorted())
+                        .joinToString(IDENTITY_SEPARATOR),
                 )
             }
             .let(::withInterchangeableInputs)
+
+    /**
+     * 한 기능의 줄들을 **함께 볼 수 있는 무리**로 가른다(ARTEL-624).
+     *
+     * 같은 기능이라도 갈래가 배타적이면 한 번의 실행으로 다 볼 수 없다 — `StagePosition == 5` 면
+     * 타이틀로 가고 `!= 5` 면 맵으로 간다. 그 둘은 다른 케이스다.
+     *
+     * 반대로 배타적이지 않은 것은 **한 번 누르면 함께 일어나는 일**이라 한 케이스다. 실측에서
+     * StoryScene 의 아홉 줄이 전부 같은 기능 하나였고, 그중 `입력 차단막이 바뀐다` 는 별개 시험이
+     * 아니라 대사를 넘길 때 함께 보는 것이다.
+     *
+     * 담긴 순서대로 훑어 아무와도 어긋나지 않는 첫 무리에 넣는다 — [ScenarioConflictSplit] 이
+     * 시나리오를 가르는 방법과 같다.
+     */
+    private fun branches(ofCapability: List<Draft>): List<List<Draft>> {
+        // **화면이 바뀌는 것은 그 자체로 한 케이스다.** 전환은 그 조작의 결말이라, 같은 화면에서
+        // 이어 볼 관측과 한 줄에 담으면 "무엇을 확인하라는 것인지"가 흐려진다 — 전환한 뒤에는
+        // 그 화면에 있지도 않다.
+        val (moves, stays) = ofCapability.partition { it.arrivesAt != null }
+        val groups = mutableListOf<MutableList<Draft>>()
+        for (draft in stays) {
+            val home = groups.firstOrNull { group ->
+                // **조작이 다르면 다른 케이스다.** 한 번에 한 키만 누르므로 함께 볼 수가 없다.
+                // 이것을 빼면 진입점이 같은 조작들이 통째로 접힌다 — 실측에서 `MapMove.CharacterMove()`
+                // 하나에 매달린 앞·뒤 이동이 한 줄이 되어 `LeftArrow` 가 사라졌다. 대표 문구만 남고
+                // 기대결과는 양쪽이 섞여, 오른쪽을 누르고 왼쪽 결과를 기다리는 표가 된다.
+                group.first().step == draft.step &&
+                    group.all { ConditionOverlap.provablyTogether(it.condition, draft.condition) }
+            }
+            if (home != null) home += draft else groups += mutableListOf(draft)
+        }
+        // 전환끼리는 조작과 도착 화면으로 가른다. 같은 키로 같은 곳에 가는 갈래는 한 줄이면 된다.
+        return groups + moves.groupBy { it.step to it.arrivesAt }.values.map { it.toList() }
+    }
 
     /**
      * **같은 자리에서 같은 일을 하는 입력은 한 줄에 담는다**(ARTEL-602).
@@ -211,6 +254,17 @@ class MapTestCaseGenerator(
         val gaps: List<String>,
         val arrivesAt: String? = null,
         val identity: String = "",
+        /**
+         * **플레이어가 무엇을 건드렸나.** 이것이 곧 사람이 "기능 하나"로 세는 단위다.
+         *
+         * [capabilityKey] 로 세면 안 된다 — 그 키는 적재의 정체라 효과가 사는 메서드(`method_id`)까지
+         * 넣고, 넣어야만 한다([CapabilityKey] 의 표). 그래서 **한 기능이 여럿으로 갈린다**: 실측
+         * GameClearScene 에서 `GameClearController.Update()` 하나가 `Update` 와 그것이 부르는
+         * `ShowGettedCard` 로 갈려 같은 "아무 키나 누른다"가 두 벌 나왔다.
+         *
+         * 근거 출신이 아니면 null 이라, 그때는 적재의 키로 물러선다.
+         */
+        val entryKey: String,
     )
 
     /**
@@ -254,6 +308,9 @@ class MapTestCaseGenerator(
             MapTestCasePhrasing.expectedWithSource(effectRows, refs).map { (outcome, effect) ->
                 Draft(
                     capabilityKey = key,
+                    // 씬을 함께 든다. 한 타입이 두 씬에 놓이면 진입점이 같아도 다른 자리다 —
+                    // 실측에서 `GameClearController` 가 그렇다.
+                    entryKey = row.entryId?.let { "${row.sceneName}\u001F$it" } ?: key,
                     scene = row.sceneName,
                     condition = settledCondition.condition,
                     inputKey = row.inputKey,
@@ -266,7 +323,14 @@ class MapTestCaseGenerator(
                     // **문장이 아니라 지도가 정하는 값으로 정체를 잡는다**(ARTEL-617). 효과는
                     // 되짚기 전 원본을 쓴다 — 대상 이름을 씬이 부르는 것으로 바꿔도(ARTEL-615)
                     // 같은 줄이어야 한다.
-                    identity = listOf(key, effect.kind, effect.target.orEmpty(), effect.detail.orEmpty())
+                    // **갈래도 정체의 일부다.** 같은 효과가 조건만 달리해 여러 갈래에 나오는 일이
+                    // 흔하다 — 실측에서 스테이지마다 같은 카드가 나는 자리가 그렇다. 조건을 빼면 그
+                    // 갈래들이 한 정체를 두고 서로를 덮어써 **쓰는 쪽에서 조용히 사라진다**(46→42).
+                    // 문구가 아니라 구조를 쓰므로 표현을 다듬어도 같은 줄로 남는다.
+                    identity = listOf(
+                        key, effect.kind, effect.target.orEmpty(), effect.detail.orEmpty(),
+                        ConditionPrune.signature(settledCondition.condition),
+                    )
                         // NUL 은 Postgres 텍스트에 못 들어간다. 구분자는 사람이 안 쓰는 제어문자로.
                         .joinToString(IDENTITY_SEPARATOR),
                 )
@@ -358,6 +422,9 @@ class MapTestCaseGenerator(
 
         /** 정체를 이을 때 쓰는 구분자. 값에 섞일 일이 없고 Postgres 가 받는 문자여야 한다. */
         const val IDENTITY_SEPARATOR = "\u001F"
+
+        /** 한 케이스가 여러 관측을 낼 때 잇는 말. 구버전과 같은 모양이라 읽는 쪽이 안 헷갈린다. */
+        const val OUTCOME_SEPARATOR = " / "
     }
 
     private fun gapsOf(row: ContentMapCapabilityRow): List<String> =

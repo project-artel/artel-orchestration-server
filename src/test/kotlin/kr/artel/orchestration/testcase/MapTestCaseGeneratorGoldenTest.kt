@@ -97,7 +97,7 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     /**
-     * 문서 한 장이 케이스 **49개**로 앉는다.
+     * 문서 한 장이 케이스 **42개**로 앉는다.
      *
      * 그 수가 어디서 오는가:
      *
@@ -105,10 +105,15 @@ class MapTestCaseGeneratorGoldenTest {
      * 기능            491     적재기가 앉힌 행 전부
      *  → 창구           51     뷰가 `not-a-step` 과 `merged_into` 를 거른다
      *  → 갈래별 줄     139     확인할 수 있는 효과 × 조건 갈래
- *  → 결과별          57     **결과가 다를 때만 다른 케이스**(ARTEL-600)
- *  → 입력 합치기     51     같은 자리의 바꿔 쓸 수 있는 입력을 한 줄로(ARTEL-602)
- *  → 케이스         49     QA 실행이 못 보는 것을 뺀다 — 소리(ARTEL-616)
+     *  → 진입점 × 조작 × 갈래  44   **한 번 누를 때 함께 일어나는 일은 한 케이스**(ARTEL-624)
+     *  → 입력 합치기    42     같은 자리의 바꿔 쓸 수 있는 입력을 한 줄로(ARTEL-602)
      * ```
+     *
+     * 앞서 이 수는 49였다. 묶는 축이 **진입점**(플레이어가 무엇을 건드렸나)으로 바뀌면서 줄었다.
+     * 앞서는 `capability_key` 로 묶었는데 그 키는 적재의 정체라 효과가 사는 메서드까지 넣고, 넣어야만
+     * 한다([CapabilityKey] 의 표). 그래서 한 기능이 여럿으로 갈렸다 — 실측 GameClearScene 에서
+     * `GameClearController.Update()` 하나가 `Update` 와 그것이 부르는 `ShowGettedCard` 로 갈려
+     * 같은 "아무 키나 누른다"가 두 벌 나왔고, 그 씬만 10건이었다(지금 5건).
      *
      * 자기 효과를 든 갈래는 그것으로, 안 든 갈래는 **공통 호출자를 통해 빌려 온다**
      * ([MapTestCaseSiblings]). 코루틴·상태 머신에서는 입력을 받는 갈래와 결과를 내는 갈래가 다른
@@ -118,8 +123,8 @@ class MapTestCaseGeneratorGoldenTest {
      * 아무 데서도 오류가 나지 않는다.
      */
     @Test
-    fun `문서 한 장이 케이스 49개가 된다`() {
-        assertThat(cases).hasSize(49)
+    fun `문서 한 장이 케이스 42개가 된다`() {
+        assertThat(cases).hasSize(42)
     }
 
     /**
@@ -128,15 +133,17 @@ class MapTestCaseGeneratorGoldenTest {
      * 저작의 도달성 검사는 케이스가 끝난 뒤 어느 화면인지를 알아야 하는데, 지금은 `expected_value`
      * 산문에서 씬 이름을 찾아 추측한다(ARTEL-528). 케이스가 직접 말하면 그 추측이 사라진다.
      *
-     * 구버전은 같은 문서에서 17건이 말했다. 여기는 **10건**이고, 그 10건이 화면 그래프 전부다 —
-     * 앞서 20건이던 것은 같은 전환이 전제 조각마다 되풀이된 결과였고(ARTEL-600), 타이틀의 버튼 둘이
-     * 같은 화면으로 가는 자리가 한 줄로 합쳐졌다(ARTEL-602).
+     * 구버전은 같은 문서에서 17건이 말했다. 여기는 **14건**이다.
+     *
+     * **화면이 바뀌는 것은 그 자체로 한 케이스다**(ARTEL-624). 전환은 그 조작의 결말이라, 같은
+     * 화면에서 이어 볼 관측과 한 줄에 담으면 무엇을 확인하라는 것인지 흐려진다 — 전환한 뒤에는 그
+     * 화면에 있지도 않다. 그래서 기능을 묶을 때도 전환만은 도착 화면별로 따로 낸다.
      */
     @Test
     fun `씬 전환을 스스로 말하는 케이스가 열 건이다`() {
         val moves = cases.filter { it.expected.contains("화면으로 전환된다") }
 
-        assertThat(moves).hasSize(10)
+        assertThat(moves).hasSize(14)
         // 오늘 저작이 막히던 자리 — StoryScene · EndingScene 이 어디로 가는지 말한다.
         assertThat(moves.map { it.scene }.distinct()).contains("StoryScene", "EndingScene")
     }
@@ -182,8 +189,8 @@ class MapTestCaseGeneratorGoldenTest {
      * 몰랐다.
      *
      * ```
-     * Map_scene 20 · EndingScene 9 · StoryScene 9 · GameClearScene 5
-     * TurnBattleScene 3 · TitleScene 2 · GameOverScene 1
+     * Map_scene 16 · EndingScene 7 · StoryScene 7 · GameClearScene 5
+     * TurnBattleScene 4 · TitleScene 2 · GameOverScene 1
      * ```
      */
     @Test
@@ -191,9 +198,9 @@ class MapTestCaseGeneratorGoldenTest {
         val byScene = cases.groupingBy { it.scene }.eachCount()
 
         assertThat(byScene).hasSize(7)
-        assertThat(byScene["StoryScene"]).isEqualTo(9)
-        assertThat(byScene["EndingScene"]).isEqualTo(9)
-        assertThat(byScene["Map_scene"]).isEqualTo(20)
+        assertThat(byScene["StoryScene"]).isEqualTo(7)
+        assertThat(byScene["EndingScene"]).isEqualTo(7)
+        assertThat(byScene["Map_scene"]).isEqualTo(16)
     }
 
     /**
@@ -244,8 +251,11 @@ class MapTestCaseGeneratorGoldenTest {
      */
     @Test
     fun `전제가 읽을 수 있는 분량 안에 있다`() {
-        assertThat(cases.map { it.precondition.length }.average()).isLessThan(105.0)
-        assertThat(cases.count { it.precondition.length > 200 }).isLessThanOrEqualTo(6)
+        // 갈래를 한 케이스로 묶으면서 평균이 105 → 109자로 조금 늘었다. 조건이 합쳐져서다.
+        // **대신 극단이 나아졌다** — 200자를 넘는 것이 6건에서 2건으로 준다. 읽는 사람을 실제로
+        // 막는 것은 평균이 아니라 그 극단이다.
+        assertThat(cases.map { it.precondition.length }.average()).isLessThan(115.0)
+        assertThat(cases.count { it.precondition.length > 200 }).isLessThanOrEqualTo(2)
     }
 
     /**
@@ -282,7 +292,10 @@ class MapTestCaseGeneratorGoldenTest {
     fun `대사를 다 넘겨야 가는 자리는 되풀이하라고 적는다`() {
         val repeated = cases.filter { it.step.contains("되풀이") }
 
-        assertThat(repeated).hasSize(4)
+        // 씬 둘 × 그 씬에서 아무 키를 받는 기능 둘 × 도착 화면 둘. 실측 StoryScene 에서
+        // `TutorialController`(튜토리얼 대화)와 `StoryController`(본편 대사)가 **각각** 아무 키를
+        // 받는다 — 게임에 진짜로 둘 있는 것이라 합치지 않는다.
+        assertThat(repeated).hasSize(8)
         assertThat(repeated).allSatisfy { assertThat(it.expected).contains("화면으로 전환된다") }
         assertThat(repeated.map { it.scene }.distinct()).containsExactlyInAnyOrder("StoryScene", "EndingScene")
         // 활용을 건드리지 않는다. "누른되" 가 나오면 어미를 뗀 것이다.

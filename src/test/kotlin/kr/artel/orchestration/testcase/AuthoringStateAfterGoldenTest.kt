@@ -111,15 +111,17 @@ class AuthoringStateAfterGoldenTest {
     /**
      * **저작이 받는 목록에 "무엇이 바뀌나"가 실린다.**
      *
-     * 이 자리가 비어 있어서 모델이 브리지를 지어냈다. 실측 51건 중 **19건**이 뒤에 무언가를
-     * 남긴다 — 값을 바꾸는 것 10건과 화면을 바꾸는 것 10건(하나는 둘 다다). 나머지는 표시만
-     * 바뀌거나 보기만 하는 것이라 남는 상태가 없다.
+     * 이 자리가 비어 있어서 모델이 브리지를 지어냈다. 실측 42건 중 **23건**이 뒤에 무언가를
+     * 남긴다. 나머지는 표시만 바뀌거나 보기만 하는 것이라 남는 상태가 없다.
+     *
+     * 앞서 49건 중 19건이던 것이 42건 중 23건이 됐다. 케이스를 진입점으로 묶고 화면 전환을 따로
+     * 내면서(ARTEL-624) 전환마다 도착 화면이 또렷이 실린 결과다 — 저작이 이을 자리가 늘었다.
      *
      * 값은 셋이고(`position` · `stagePosition` · `flag`) 거기에 도착 화면(`scene`)이 더해진다.
      */
     @Test
     fun `케이스가 무엇을 바꾸는지 말한다`() {
-        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(19)
+        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(23)
         assertThat(cases.flatMap { it.stateAfter.keys }.distinct())
             .containsExactlyInAnyOrder("position", "stagePosition", "flag", "scene")
     }
@@ -127,7 +129,8 @@ class AuthoringStateAfterGoldenTest {
     /**
      * **얼마나 이어지나.**
      *
-     * 전제가 있는 케이스 중 **14건**이 다른 케이스가 만들어 주는 상태를 요구한다. 저작이 그 자리에
+     * 전제가 있는 케이스 중 **12건**이 다른 케이스가 만들어 주는 상태를 요구한다. 케이스 총수가
+     * 49 → 42로 줄어도 이 비율은 그대로다(29%) — 줄어든 것은 같은 기능이 여러 벌 나오던 자리다. 저작이 그 자리에
      * 지어낸 문장 대신 케이스 번호를 넣을 수 있다.
      *
      * 나머지 전제는 **케이스가 아닌 기능**이 만든다 — 웨이브가 끝날 때 저절로 오르는 값 같은 것이라
@@ -139,7 +142,7 @@ class AuthoringStateAfterGoldenTest {
     fun `전제를 다른 케이스가 만들어 주는 자리가 있다`() {
         val changed = cases.flatMap { it.stateAfter.keys }.toSet()
 
-        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(14)
+        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(12)
     }
 
     /**

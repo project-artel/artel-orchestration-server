@@ -40,10 +40,14 @@ object ScenarioConflictSplit {
      *   있다. [ScenarioSiblingCheck.contested] 의 판정을 그대로 받는다.
      * @param writes 이 케이스가 **바꾸는 값들**(ARTEL-581). 지도의 `capability_effect` 에서 온다.
      *   못 찾으면 비어 있고, 그때는 예전처럼 순서를 모른 채 나눈다.
+     * @param movable 그 값이 **게임 안에서 움직이나**(ARTEL-625). 케이스가 아니라 지도 전체에 묻는다.
+     *   모르면 언제나 false 이고, 그때는 이 칸이 생기기 전과 똑같이 동작한다.
      */
     fun apply(
         scenarios: List<ScenarioResult>,
         contested: (Long, Long) -> Set<String>,
+        movable: (String) -> Boolean = { false },
+        // 후행 람다 자리를 지킨다. 부르는 쪽 대부분이 이것만 넘긴다.
         writes: (Long) -> Set<String> = { emptySet() },
     ): Outcome {
         val out = mutableListOf<ScenarioResult>()
@@ -51,7 +55,7 @@ object ScenarioConflictSplit {
         val anchorOf = mutableMapOf<Int, Int>()
 
         for (scenario in scenarios) {
-            val groups = group(scenario.steps.mapNotNull { it.caseId }.distinct(), contested, writes)
+            val groups = group(scenario.steps.mapNotNull { it.caseId }.distinct(), contested, writes, movable)
             if (groups.size <= 1) {
                 out += scenario
                 continue
@@ -79,10 +83,13 @@ object ScenarioConflictSplit {
         caseIds: List<Long>,
         contested: (Long, Long) -> Set<String>,
         writes: (Long) -> Set<String>,
+        movable: (String) -> Boolean,
     ): List<Set<Long>> {
         val groups = mutableListOf<MutableSet<Long>>()
         for ((index, id) in caseIds.withIndex()) {
-            val home = groups.firstOrNull { group -> group.none { blocks(it, id, index, caseIds, contested, writes) } }
+            val home = groups.firstOrNull { group ->
+                group.none { blocks(it, id, index, caseIds, contested, writes, movable) }
+            }
             if (home != null) home += id else groups += mutableSetOf(id)
         }
         return groups
@@ -110,6 +117,21 @@ object ScenarioConflictSplit {
      *
      * **순서가 뒤집힌 자리는 여전히 막는다.** 뒤엣것이 앞엣것의 전제를 만드는 경우인데, 그것은
      * 나눌 일이 아니라 순서를 고칠 일이라 [ScenarioOrderCheck] 가 답한다.
+     *
+     * ## 케이스가 안 바꿔도 게임이 바꾸는 값이 있다(ARTEL-625)
+     *
+     * [writes] 는 **케이스가 된 기능**만 안다. 그래서 게임이 스스로 움직이는 값은 영영 안 바뀌는
+     * 것으로 보이고, 그 값을 두고 갈리는 갈래들이 전부 따로 잘린다.
+     *
+     * 실측(프로젝트 24)에서 맵의 `Return` 케이스가 그랬다 — `StagePosition` 이 1·2·3 일 때 배경이
+     * 달라지는 세 갈래인데, 그 값을 올리는 것은 전투를 이기는 일이라 어떤 케이스도 안 쓴다. 그래서
+     * 20스텝짜리 하나에서 1스텝짜리 셋이 떨어져 나왔다.
+     *
+     * 한 순간만 보면 `== 1` 과 `== 2` 는 함께 못 선다. **시간 위에서는 계단이다** — 이겨서 올라간다.
+     * 그 사이를 무엇으로 메울지는 [ScenarioPathService] 가 "저절로 일어난다"로 답하는 자리이고
+     * (ARTEL-534), 여기서 자르면 그 답이 나갈 기회 자체가 사라진다.
+     *
+     * 지도의 아무도 안 쓰는 값은 여전히 얼어 있는 것이라 예전처럼 나눈다.
      */
     private fun blocks(
         earlier: Long,
@@ -118,6 +140,7 @@ object ScenarioConflictSplit {
         caseIds: List<Long>,
         contested: (Long, Long) -> Set<String>,
         writes: (Long) -> Set<String>,
+        movable: (String) -> Boolean,
     ): Boolean {
         val disputed = contested(earlier, id)
         if (disputed.isEmpty()) return false
@@ -127,7 +150,9 @@ object ScenarioConflictSplit {
         if (from < 0 || from >= index) return true
 
         val changed = (from until index).flatMapTo(mutableSetOf()) { writes(caseIds[it]) }
-        return disputed.any { value -> changed.none { sameValue(it, value) } }
+        return disputed.any { value ->
+            changed.none { sameValue(it, value) } && !movable(value)
+        }
     }
 
     /**

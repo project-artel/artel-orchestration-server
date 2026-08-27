@@ -169,6 +169,41 @@ class ScenarioConflictSplitTest {
         assertThat(outcome.scenarios).hasSize(2)
     }
 
+    /**
+     * **케이스가 안 바꿔도 게임이 바꾸는 값이 있다**(ARTEL-625).
+     *
+     * 실측(프로젝트 24)에서 맵의 `Return` 케이스가 그랬다 — `StagePosition` 이 1·2·3 일 때 배경이
+     * 달라지는 세 갈래인데, 그 값을 올리는 것은 **전투를 이기는 일**이라 어떤 케이스도 안 쓴다.
+     * 그래서 나눔이 그 값을 영영 얼어 있는 것으로 읽고, 20스텝짜리 하나에서 1스텝짜리 셋이 떨어져
+     * 나왔다. 시나리오 14개 중 6개가 그렇게 생긴 1스텝짜리였다.
+     *
+     * 한 순간만 보면 함께 못 선다. **시간 위에서는 이겨서 올라가는 계단이다.** 사이를 무엇으로
+     * 메울지는 `ScenarioPathService` 가 "저절로 일어난다"로 답하는 자리이고(ARTEL-534), 여기서
+     * 자르면 그 답이 나갈 기회 자체가 사라진다.
+     */
+    @Test
+    fun `케이스가 안 바꿔도 게임이 움직이는 값이면 나누지 않는다`() {
+        val climbing = scenario(step(2), step(3), step(4), title = "이겨서 올라간다")
+
+        val outcome = ScenarioConflictSplit.apply(listOf(climbing), parity, movable = { it == "parity" })
+
+        assertThat(outcome.scenarios).isEqualTo(listOf(climbing))
+        assertThat(outcome.notes).isEmpty()
+    }
+
+    /**
+     * **지도의 아무도 안 쓰는 값은 여전히 얼어 있다.** 그 자리는 정말로 함께 못 서는 것이라 나눈다 —
+     * 안 나누면 실행하는 사람이 만들 수 없는 전제를 만들려다 멎는다.
+     */
+    @Test
+    fun `지도가 움직이지 않는 값이면 그대로 나눈다`() {
+        val outcome = ScenarioConflictSplit.apply(
+            listOf(scenario(step(2), step(3))), parity, movable = { it == "전혀 다른 값" },
+        )
+
+        assertThat(outcome.scenarios).hasSize(2)
+    }
+
     /** 바꾸는 것을 아무것도 모르면(지도를 못 되짚는 구버전 케이스) 예전처럼 나눈다. */
     @Test
     fun `바꾸는 값을 모르면 예전처럼 나눈다`() {

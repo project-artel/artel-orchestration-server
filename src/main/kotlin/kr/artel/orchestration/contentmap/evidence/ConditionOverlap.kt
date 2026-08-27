@@ -38,6 +38,31 @@ object ConditionOverlap {
         return left.none { x -> right.any { y -> x.left == y.left && !overlaps(x, y) } }
     }
 
+    /**
+     * 둘이 **함께 참일 수 있음이 증명되나**(ARTEL-624).
+     *
+     * [compatible] 과 방향이 반대다. 저쪽은 "모순을 증명했나"를 묻고, 못 읽은 것은 모순이 아니라고
+     * 본다 — 전제를 함부로 버리지 않으려는 보수성이다. 여기는 **줄을 합칠지**를 묻는다. 합치면
+     * 기대결과가 한 줄에 섞이므로, 모르면서 합치는 것이 곧 거짓 명세다.
+     *
+     * 실측에서 그 차이가 드러났다. `LeftArrow` 의 두 갈래가 `position == 1` 과
+     * `position == 4 또는 position == 5` 인데, 뒤엣것이 `either` 라 [required] 가 빈 목록을 내고
+     * [compatible] 이 양립이라 답했다. 그래서 **한 번 왼쪽을 누르면 마을과 3번 전투에 동시에
+     * 도착한다**는 케이스가 나왔다.
+     *
+     * 그래서 갈래나 못 읽은 것이 섞이면 합치지 않는다. 따로 내면 케이스가 하나 늘 뿐이지만,
+     * 합치면 실행하는 사람이 일어나지 않을 일을 기다린다.
+     */
+    fun provablyTogether(a: ConditionNode?, b: ConditionNode?): Boolean =
+        settled(a) && settled(b) && compatible(a, b)
+
+    /** 조건이 **모두 성립해야 하는 비교들**만으로 되어 있나. `either` 하나면 어느 갈래인지 모른다. */
+    private fun settled(node: ConditionNode?): Boolean = when (node) {
+        null, is ConditionNode.Always, is ConditionNode.Gesture, is ConditionNode.Test -> true
+        is ConditionNode.Unknown -> false
+        is ConditionNode.Group -> node.kind == GroupKind.EVERY && node.parts.all(::settled)
+    }
+
     /** 반드시 성립해야 하는 비교들. 갈래를 모르는 `either` 와 못 읽은 `unknown` 은 빼고 본다. */
     fun required(node: ConditionNode?): List<ConditionNode.Test> = when (node) {
         null, is ConditionNode.Always, is ConditionNode.Gesture, is ConditionNode.Unknown -> emptyList()

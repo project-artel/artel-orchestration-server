@@ -154,8 +154,8 @@ class MapTestCaseWriterGoldenTest {
     @Test
     fun `적재가 지도의 케이스를 앉힌다`() {
         assertThat(mine()).isNotEmpty()
-        assertThat(mine()).hasSize(49)
-        assertThat(first.testCases.created).isEqualTo(49)
+        assertThat(mine()).hasSize(42)
+        assertThat(first.testCases.created).isEqualTo(42)
     }
 
     /**
