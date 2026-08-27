@@ -202,7 +202,7 @@ class KnowledgeService(
     /**
      * 생성 요청이 실은 앵커를 읽는다(ARTEL-591).
      *
-     * 세 갈래다. 앵커를 안 실었거나([AnchorRequest.Absent]), 실었거나([AnchorRequest.At]),
+     * 세 가지다. 앵커를 안 실었거나([AnchorRequest.Absent]), 실었거나([AnchorRequest.At]),
      * 실었는데 말이 안 되거나([AnchorRequest.Invalid]).
      *
      * - **`scene_name`이 없으면 앵커가 아니다.** 그것이 기본값이고, 그 지식은 게임 전체의 사실이다.
