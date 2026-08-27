@@ -40,7 +40,8 @@ TOOL_RESULT  payload: message, tool, tool_call_id, content, step
 ## Approach (Checklist)
 
 - [x] **Step 0: Recon** — 세 게이트와 `QaLogTypeGateParityTest`, 라우터의 `else` 분기 확인.
-- [x] **Step 1: 마이그레이션** — `V55__add_qa_log_tool_types.sql`. 직전 번호는 V54 다.
+- [x] **Step 1: 마이그레이션** — `V57__add_qa_log_tool_types.sql`. develop 의 직전 번호는
+      V54 지만, V55 와 V56 은 아직 병합되지 않은 다른 브랜치가 이미 선점했다.
 - [x] **Step 2: 코틀린 게이트** — `QaLogService.TYPES` 와 `SUPPORTED_TYPES` 에 두 타입 추가.
 - [x] **Step 3: 테스트** — 라우터가 두 타입을 적재하고 payload 를 그대로 통과시키는지,
       `TOOL_RESULT` 가 correlation 을 들고 오는지.
