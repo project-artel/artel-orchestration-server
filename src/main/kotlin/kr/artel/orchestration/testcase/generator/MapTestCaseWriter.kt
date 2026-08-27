@@ -90,7 +90,11 @@ class MapTestCaseWriter(
                 // 상했다고 돌려놓았던 줄이 지도에 다시 나타나면 성립한다는 뜻이다.
                 verificationStatus = if (prior.verificationStatus == BROKEN) DRAFT else prior.verificationStatus,
             )
-            if (next != prior) {
+            // **`Json` 은 값으로 견줄 수 없다.** 데이터 클래스의 `!=` 에 맡기면 내용이 같아도 늘
+            // 다르다고 나와, 아무것도 안 바뀐 재적재가 매번 전량을 다시 쓴다 — 실측에서 두 번째·세
+            // 번째 적재가 계속 `updated=49` 였다. 쓰기가 헛도는 것보다 나쁜 것은 그 수가 "49행이
+            // 달라졌다"고 거짓말하는 것이다.
+            if (changed(prior, next)) {
                 testCases.save(next)
                 updated++
             }
@@ -113,6 +117,24 @@ class MapTestCaseWriter(
 
         return Result(created = created, updated = updated, deleted = deleted, broken = broken)
     }
+
+    /**
+     * 이 줄이 실제로 달라졌나.
+     *
+     * `metadata` 를 따로 견주는 이유가 둘이다. `Json` 은 값 비교가 안 되고(데이터 클래스의 `!=` 에
+     * 맡기면 내용이 같아도 늘 다르다), **글자로 견줘도 안 된다** — `jsonb` 는 키 순서를 정규화해서
+     * 저장하므로 읽어온 글자가 쓴 글자와 다르다. 그래서 트리로 견준다.
+     *
+     * 이것을 안 하면 아무것도 안 바뀐 재적재가 매번 전량을 다시 쓴다. 헛도는 쓰기보다 나쁜 것은
+     * 그 수가 "49행이 달라졌다"고 거짓말하는 것이다 — 실측에서 세 번을 이어 적재해도 계속
+     * `updated=49` 였다.
+     */
+    private fun changed(prior: TestCaseEntity, next: TestCaseEntity): Boolean =
+        prior.copy(metadata = next.metadata) != next || !sameJson(prior.metadata, next.metadata)
+
+    private fun sameJson(a: Json, b: Json): Boolean = runCatching {
+        objectMapper.readTree(a.asString()) == objectMapper.readTree(b.asString())
+    }.getOrDefault(false)
 
     /**
      * **문장이 아니라 지도가 정하는 값으로 정체를 잡는다**(ARTEL-617).
