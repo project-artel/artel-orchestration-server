@@ -262,6 +262,35 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     /**
+     * **끝까지 되풀이해야 닿는 자리는 그렇게 적는다**(ARTEL-613).
+     *
+     * 대사를 다 넘겨야 씬이 바뀌는데, 그 사실은 `i >= 총개수` 라는 **루프 카운터**로만 적혀 있다.
+     * 실행하는 사람은 `i` 를 읽을 수 없으므로 사전조건에서 뺐는데(ARTEL-602), 빼기만 하면
+     * "아무 키나 한 번 누르면 타이틀로 간다"가 되어 거짓이다.
+     *
+     * **버릴 것이 아니라 옮길 것이었다.** 사람은 `i` 를 읽을 수 없지만 끝까지 눌러 그 자리를 만들
+     * 수는 있다 — 전제가 못 되는 것이 스텝은 된다.
+     *
+     * 그 가드는 **호출자 조건**에 있다. ARTEL-554 가 "호출자 조건은 문장에 안 싣는다"고 버린 바로
+     * 그 자리이고(코루틴이 몇 번째 대사를 넘겼는지는 테스터가 만들 것이 아니다), 루프를 다 돌고
+     * 나온 자리일 때만 되살린다.
+     *
+     * 실측에서 넷이 걸린다 — 두 씬 × 두 도착지. 하필 이 넷이 저작이 막히던 전환이다.
+     */
+    @Test
+    fun `대사를 다 넘겨야 가는 자리는 되풀이하라고 적는다`() {
+        val repeated = cases.filter { it.step.contains("되풀이") }
+
+        assertThat(repeated).hasSize(4)
+        assertThat(repeated).allSatisfy { assertThat(it.expected).contains("화면으로 전환된다") }
+        assertThat(repeated.map { it.scene }.distinct()).containsExactlyInAnyOrder("StoryScene", "EndingScene")
+        // 활용을 건드리지 않는다. "누른되" 가 나오면 어미를 뗀 것이다.
+        assertThat(repeated).allSatisfy {
+            assertThat(it.step).startsWith("아무 키나 누른다 — ")
+        }
+    }
+
+    /**
      * **읽을 수 없는 값은 문장에 넣지 않는다.**
      *
      * 문서가 값을 못 읽은 자리를 `(not a literal)` · `(not a simple receiver)` 로 적어 둔다. 그대로
