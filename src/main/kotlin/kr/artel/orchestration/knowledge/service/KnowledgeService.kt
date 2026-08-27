@@ -151,7 +151,7 @@ class KnowledgeService(
      * 새로 만드는 항목은 가릴 baseline이 없으므로 그림자가 아니다 — 스코프 런에서도 `shadows_id`는
      * 비어 있고, 그 스코프 안에서만 보이는 평범한 항목이 된다.
      *
-     * **앵커(ARTEL-591)는 같은 트랜잭션에서 만든다.** 쪼개져 지식만 저장되면 그 항목은 화면 지식을
+     * **`anchor`(ARTEL-591)는 같은 트랜잭션에서 만든다.** 쪼개져 지식만 저장되면 그 항목은 화면 지식을
      * 뜻하고 있으면서 게임 전체 지식으로 보이고, 그 상태는 아무도 알려 주지 않는다.
      */
     suspend fun createFromQaTry(
@@ -200,17 +200,17 @@ class KnowledgeService(
     }
 
     /**
-     * 생성 요청이 실은 앵커를 읽는다(ARTEL-591).
+     * 생성 요청이 실은 `anchor` 를 읽는다(ARTEL-591).
      *
-     * 세 가지다. 앵커를 안 실었거나([AnchorRequest.Absent]), 실었거나([AnchorRequest.At]),
+     * 세 가지다. `anchor` 를 안 실었거나([AnchorRequest.Absent]), 실었거나([AnchorRequest.At]),
      * 실었는데 말이 안 되거나([AnchorRequest.Invalid]).
      *
-     * - **`scene_name`이 없으면 앵커가 아니다.** 그것이 기본값이고, 그 지식은 게임 전체의 사실이다.
-     * - **`screen_id`만 온 요청은 거절한다.** 화면은 씬 안에 살고(V55), 씬을 모르는 화면 앵커는
-     *   나중에 어느 씬의 화면이었는지 되짚을 수 없다. 조용히 씬만 비운 채 저장하면 그 앵커는
+     * - **`scene_name`이 없으면 `anchor` 가 아니다.** 그것이 기본값이고, 그 지식은 게임 전체의 사실이다.
+     * - **`screen_id`만 온 요청은 거절한다.** 화면은 씬 안에 살고(V55), 씬을 모르는 화면 `anchor` 는
+     *   나중에 어느 씬의 화면이었는지 되짚을 수 없다. 조용히 씬만 비운 채 저장하면 그 `anchor` 는
      *   영영 반쪽인 채로 남는다.
      * - **씬 이름을 content map과 대조하지 않는다.** content map이 없는 프로젝트도 씬 이름은 있고,
-     *   검증하면 그 프로젝트에서 오는 앵커가 전부 거절된다(V55).
+     *   검증하면 그 프로젝트에서 오는 `anchor` 가 전부 거절된다(V55).
      */
     private fun parseAnchor(request: KnowledgeMutationRequest): AnchorRequest {
         val sceneName = request.sceneName?.trim()
@@ -229,9 +229,9 @@ class KnowledgeService(
         return AnchorRequest.At(sceneName, screenId)
     }
 
-    /** [parseAnchor]가 읽어낸 앵커 요청. */
+    /** [parseAnchor]가 읽어낸 `anchor` 요청. */
     private sealed interface AnchorRequest {
-        /** 앵커를 싣지 않은 요청. 게임 전체의 사실이다. */
+        /** `anchor` 를 싣지 않은 요청. 게임 전체의 사실이다. */
         data object Absent : AnchorRequest
         data class At(val sceneName: String, val screenId: Long?) : AnchorRequest
         data class Invalid(val reason: String) : AnchorRequest

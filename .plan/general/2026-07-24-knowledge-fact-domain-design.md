@@ -56,7 +56,7 @@ Agent가 게임에 대한 판단을 내릴 때 참고하는 **프로젝트 스�
 | created_at / updated_at | TIMESTAMPTZ | R2DBC auditing |
 
 제약/인덱스:
-- `UNIQUE (project_id, source_document_id, type)` — 문서×타입 유일 → 재추출 upsert 앵커.
+- `UNIQUE (project_id, source_document_id, type)` — 문서×타입 유일 → 재추출 upsert `anchor`.
 - `INDEX (project_id, type)` — Agent의 타입별 조회.
 
 **S3 원본 추적**: `source_document_id → project_document.object_key(S3 키) → presigned URL`. **이 참조 하나로 충분** — S3 경로 문자열을 행에 복제(denorm)하지 않음(drift 방지, 불필요).

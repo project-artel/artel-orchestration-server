@@ -82,15 +82,15 @@ class KnowledgeGraphViewService(
     }
 
     /**
-     * 응답에 실릴 노드 **전체**의 앵커를 한 번에 데려와 지식 id로 묶는다(ARTEL-605).
+     * 응답에 실릴 노드 **전체**의 `anchor` 를 한 번에 데려와 지식 id로 묶는다(ARTEL-605).
      *
      * **노드마다 부르지 않는다.** 이 조회는 노드를 최대 [MAX_NODES]개까지 내므로 노드당 한 질의는
-     * 응답 하나를 수백 질의로 만든다. 그 비용은 앵커가 하나도 없는 프로젝트에서도 그대로 나서,
-     * 앵커를 쓰지 않는 팀이 앵커 기능의 값을 치른다.
+     * 응답 하나를 수백 질의로 만든다. 그 비용은 `anchor` 가 하나도 없는 프로젝트에서도 그대로 나서,
+     * `anchor` 를 쓰지 않는 팀이 `anchor` 기능의 값을 치른다.
      *
      * **스코프 술어는 리포지토리가 진다.** 노드는 이미 운영 스코프로 걸러진 뒤라 군더더기로
-     * 보이지만, 앵커 조회가 자기 힘으로 [kr.artel.orchestration.knowledge.entity.KnowledgeScopeSql]
-     * 를 지나지 않으면 이 리포지토리를 부르는 다음 자리에서 가려진 지식의 앵커가 샌다. 앵커만
+     * 보이지만, `anchor` 조회가 자기 힘으로 [kr.artel.orchestration.knowledge.entity.KnowledgeScopeSql]
+     * 를 지나지 않으면 이 리포지토리를 부르는 다음 자리에서 가려진 지식의 `anchor` 가 샌다. `anchor` 만
      * 보아서는 그것이 어느 지식의 것인지 알 수 없어 새는 것을 알아채기도 어렵다.
      */
     private suspend fun anchorsFor(ids: List<Long>): Map<Long, List<KnowledgeGraphNodeAnchor>> {
@@ -118,11 +118,11 @@ private fun KnowledgeEntity.toNode(
         version = version,
         createdByQaTryId = sourceId?.takeIf { source == "QA" }?.toString(),
         createdAt = createdAt,
-        // 앵커가 없는 지식은 게임 전체의 사실이다. 그것이 기본값이라 빈 배열이 정상이다.
+        // `anchor` 가 없는 지식은 게임 전체의 사실이다. 그것이 기본값이라 빈 배열이 정상이다.
         anchors = anchors[knowledgeId].orEmpty()
     )
 }
 
-/** 앵커 행을 브라우저 계약 모양으로. id 계열은 이 레포의 다른 응답과 같이 문자열로 낸다. */
+/** `anchor` 행을 브라우저 계약 모양으로. id 계열은 이 레포의 다른 응답과 같이 문자열로 낸다. */
 private fun KnowledgeAnchorEntity.toNodeAnchor() =
     KnowledgeGraphNodeAnchor(sceneName = sceneName, screenId = screenId?.toString())

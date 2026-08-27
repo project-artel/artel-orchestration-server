@@ -47,12 +47,12 @@ data class KnowledgeIngestItem(
  * @property summary 수정 시 null이면 그대로 둔다.
  * @property description 수정 시 null이면 그대로 둔다.
  * @property sceneName 이 지식이 어느 씬의 것인지(선택, ARTEL-591). 있으면 `KNOWLEDGE_CREATE`가
- *   앵커 한 줄을 함께 남긴다. **없으면 게임 전체의 사실**이고, 그것이 기본값이라 앵커를 싣지 않는
- *   프레임은 이 기능 이전과 완전히 같게 동작한다. 생성에만 쓰인다 — 앵커 수정은 이 이슈의
+ *   `anchor` 한 줄을 함께 남긴다. **없으면 게임 전체의 사실**이고, 그것이 기본값이라 `anchor` 를 싣지 않는
+ *   프레임은 이 기능 이전과 완전히 같게 동작한다. 생성에만 쓰인다 — `anchor` 수정은 이 이슈의
  *   non-goal이라 `KNOWLEDGE_UPDATE`는 이 값을 보지 않는다.
  * @property screenId 판정된 화면(`content_map.screen.id`, 선택). [knowledgeId]와 같은 이유로
  *   문자열이다. **[sceneName] 없이 이것만 오면 거절한다** — 화면은 씬 안에 살고, 씬을 모르는
- *   화면 앵커는 나중에 어느 씬의 화면이었는지 되짚을 수 없다.
+ *   화면 `anchor` 는 나중에 어느 씬의 화면이었는지 되짚을 수 없다.
  */
 data class KnowledgeMutationRequest(
     @JsonProperty("knowledge_id") val knowledgeId: String? = null,

@@ -31,7 +31,7 @@ import org.springframework.web.bind.annotation.RestController
  * 않으면 그 값은 장식이고, 다음 호출자는 장식을 보증으로 읽는다. 검사는
  * [SceneContextService.read] 안에 있다. 컨트롤러에 두면 다음 진입점이 빠뜨릴 수 있다.
  */
-@Tag(name = "Scene Context (internal)", description = "QA agent 가 런 시작에 받는 씬별 capability·앵커 지식")
+@Tag(name = "Scene Context (internal)", description = "QA agent 가 런 시작에 받는 씬별 capability·anchor 지식")
 @RestController
 @RequestMapping("/internal/projects/{projectId}/game-builds/{gameBuildId}/scene-context")
 class InternalSceneContextController(
@@ -42,13 +42,13 @@ class InternalSceneContextController(
      * 이 빌드의 씬별 맥락을 한 번에 읽는다.
      *
      * **`evidence` 를 한 번도 올리지 않은 빌드는 404 가 아니라 200 이다.** 빌드는 존재하고, 없는 것은
-     * 아직 아무도 올리지 않은 문서다. 그때 `contentMapId` 가 null 이고 `scenes` 에는 앵커가 든
+     * 아직 아무도 올리지 않은 문서다. 그때 `contentMapId` 가 null 이고 `scenes` 에는 `anchor` 가 든
      * 씬만 남거나 아무것도 남지 않는다 — 둘 다 정상 상태다. 404 는 **빌드가 없거나 경로의
      * `projectId` 가 그 빌드의 것과 다를 때**, 그리고 없는 `qaTryId` 를 줬을 때뿐이다.
      */
     @Operation(
-        summary = "씬별 capability·앵커 지식 조회",
-        description = "게임 빌드 하나에 대해 씬 이름을 키로 capability 와 앵커 지식을 함께 낸다. " +
+        summary = "씬별 capability·anchor 지식 조회",
+        description = "게임 빌드 하나에 대해 씬 이름을 키로 capability 와 anchor 지식을 함께 낸다. " +
             "`not-a-step` 은 나가지 않고, 지식은 id 와 요약까지만 낸다. " +
             "`contentMapId` 가 null 이면 이 빌드에 아직 `evidence` 로 만든 지도가 없다.",
     )

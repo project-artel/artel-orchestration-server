@@ -367,16 +367,16 @@ class KnowledgeSearchRouterIntegrationTest {
         assertThat(results[0]["summary"].asText()).isEqualTo("조작 항목")
     }
 
-    // ------------------------------------------------------------- 앵커 (ARTEL-591)
+    // ------------------------------------------------------------- `anchor` (ARTEL-591)
 
     /**
      * 프레임의 필드 이름을 못박는다. Agent 쪽(ARTEL-592)이 맞춰야 하는 계약이 이것이다 —
      * 요청은 `scene_name`, 응답은 히트마다 `anchors[].scene_name` / `anchors[].screen_id`다.
      *
-     * 앵커는 순수 추가 필드라, 이 필드를 모르는 구버전 Agent는 통째로 무시한다.
+     * `anchor` 는 순수 추가 필드라, 이 필드를 모르는 구버전 Agent는 통째로 무시한다.
      */
     @Test
-    fun `검색 응답이 앵커를 싣고 scene_name으로 좁혀진다`(): Unit = runBlocking {
+    fun `검색 응답이 anchor 를 싣고 scene_name으로 좁혀진다`(): Unit = runBlocking {
         val combat = givenKnowledgeWithVector("전투 중 ESC는 아무것도 하지 않는다")
         val global = givenKnowledgeWithVector("낙하 데미지는 5m부터")
         anchorRepository.save(
@@ -391,14 +391,14 @@ class KnowledgeSearchRouterIntegrationTest {
         assertThat(anchored.path("anchors").size()).isEqualTo(1)
         assertThat(anchored.path("anchors")[0]["scene_name"].asText()).isEqualTo("Combat")
         assertThat(anchored.path("anchors")[0]["screen_id"].asText()).isEqualTo("4242")
-        // 앵커가 없으면 게임 전체의 사실이라 빈 배열이다.
+        // `anchor` 가 없으면 게임 전체의 사실이라 빈 배열이다.
         assertThat(all.single { it["id"].asText() == global.toString() }.path("anchors")).isEmpty()
 
         port.sent.clear()
         deliver(UUID.randomUUID().toString(), """{"query":"ESC를 누르면","scene_name":"Combat"}""")
 
         val narrowed = port.sent.single().payload.path("results")
-        assertThat(narrowed.size()).describedAs("앵커 없는 지식까지 걸러야 좁히는 것이 있다").isEqualTo(1)
+        assertThat(narrowed.size()).describedAs("anchor 없는 지식까지 걸러야 좁히는 것이 있다").isEqualTo(1)
         assertThat(narrowed[0]["id"].asText()).isEqualTo(combat.toString())
     }
 

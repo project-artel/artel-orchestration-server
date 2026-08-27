@@ -20,7 +20,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
  *   **검색 결과를 바꾸지 않는다** — 필터가 아니라 기록용 좌표다. 구버전 Agent는 싣지 않고,
  *   그때 값은 null("모른다")이 된다. 값을 검증하지 않는 것도 의도다: 잘못된 스텝 번호 때문에
  *   멀쩡한 검색을 거절하면, 기록 하나 때문에 런의 도구가 실패한다.
- * @property sceneName 이 씬에 묶인 지식만 본다(선택, ARTEL-591). **앵커가 없는 지식은 걸러진다** —
+ * @property sceneName 이 씬에 묶인 지식만 본다(선택, ARTEL-591). **`anchor` 가 없는 지식은 걸러진다** —
  *   이 필터의 뜻이 "이 화면의 것"이고, 게임 전체의 사실까지 함께 내면 필터가 좁히는 것이 없다.
  *   [tags]와 달리 알 수 없는 값을 거절하지 않는다: 씬 이름은 게임이 부르는 대로이고 우리가 아는
  *   목록이 없다(V55). 없는 씬 이름은 빈 결과가 되며, 그것이 정답이다.
@@ -39,13 +39,13 @@ data class KnowledgeSearchRequest(
  * 지식 하나가 묶인 씬·화면 한 줄(ARTEL-591).
  *
  * [KnowledgeSearchHit.anchors]에 실려 나간다. **비어 있으면 게임 전체의 사실**이고, 그것이
- * 기본값이라 앵커가 하나도 없는 지식창고에서도 이 필드는 그냥 빈 배열이다.
+ * 기본값이라 `anchor` 가 하나도 없는 지식창고에서도 이 필드는 그냥 빈 배열이다.
  *
  * `neighbors`(ARTEL-275)와 같이 **순수 추가 필드다** — Agent의 pydantic 모델이 `extra="allow"`라
  * 이 필드를 모르는 Agent는 통째로 무시한다. 그래서 Orchestration을 먼저 내보낼 수 있다.
  *
  * @property screenId 판정된 화면 id. **null이 정상이다** — 화면은 pulse 관측으로 판정되는 것이라
- *   (V40) 판정이 안 되는 순간이 있고, 그때 앵커는 씬까지만 말한다. id 계열은 다른 payload와 같이
+ *   (V40) 판정이 안 되는 순간이 있고, 그때 `anchor` 는 씬까지만 말한다. id 계열은 다른 payload와 같이
  *   문자열로 낸다(FE 64비트 정밀도 손실 방지).
  */
 data class KnowledgeAnchorView(
@@ -67,7 +67,7 @@ data class KnowledgeAnchorView(
  *   사실이라 [kr.artel.orchestration.knowledge.service.KnowledgeSearchOutcome] 쪽에 남고,
  *   이웃은 **Agent가 읽을 것**이라 WS 계약 객체에 속한다.
  * @property anchors 이 지식이 묶인 씬·화면(ARTEL-591). [neighbors]와 같은 이유로 순수 추가
- *   필드다. 비어 있으면 게임 전체의 사실이라는 뜻이지 "앵커를 못 읽었다"가 아니다 — 이 둘을
+ *   필드다. 비어 있으면 게임 전체의 사실이라는 뜻이지 "`anchor` 를 못 읽었다"가 아니다 — 이 둘을
  *   구분할 필요가 생기면 그때 별도 신호를 둔다.
  */
 data class KnowledgeSearchHit(

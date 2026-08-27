@@ -558,8 +558,8 @@ class QaAgentInboundRouter(
      * 만들어졌으면 **그 행의** id다. baseline id를 돌려주면 그 런에서 다시 지목할 수 없는 id를
      * 주게 된다.
      *
-     * `KNOWLEDGE_CREATE`의 앵커 필드(`scene_name`/`screen_id`, ARTEL-591)는 payload에 실려 그대로
-     * 서비스로 간다. 라우터가 따로 읽지 않는 것은 프로젝트·스코프와 달리 **앵커는 런에서 도출되는
+     * `KNOWLEDGE_CREATE`의 `anchor` 필드(`scene_name`/`screen_id`, ARTEL-591)는 payload에 실려 그대로
+     * 서비스로 간다. 라우터가 따로 읽지 않는 것은 프로젝트·스코프와 달리 **`anchor` 는 런에서 도출되는
      * 값이 아니기 때문이다** — 어느 화면에서 배운 사실인지는 그 프레임을 보낸 Agent만 안다.
      */
     private suspend fun routeKnowledgeMutation(

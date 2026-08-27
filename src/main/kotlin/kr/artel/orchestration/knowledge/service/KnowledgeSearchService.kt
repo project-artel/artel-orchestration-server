@@ -71,7 +71,7 @@ class KnowledgeSearchService(
      * 빠뜨리면 실험 런이 다른 arm이 쌓은 지식을 그대로 읽는다 — 그리고 그 결과는 그럴듯해서 아무도
      * 알아채지 못한다. 빠뜨린 호출이 컴파일되지 않게 둔다.
      *
-     * @param sceneName 이 씬에 묶인 지식만 본다(선택, ARTEL-591). **앵커가 없는 지식은 걸러진다** —
+     * @param sceneName 이 씬에 묶인 지식만 본다(선택, ARTEL-591). **`anchor` 가 없는 지식은 걸러진다** —
      *   이 필터의 뜻이 "이 화면의 것"이라, 게임 전체의 사실까지 함께 내면 좁히는 것이 없다. 씬
      *   이름을 검증하지 않는 이유는 우리가 아는 씬 목록이 없기 때문이다(V55): 없는 이름은 오류가
      *   아니라 빈 결과다.
@@ -128,8 +128,8 @@ class KnowledgeSearchService(
         // 히트마다 한 홉 이웃을 붙인다(ARTEL-275). 관계가 하나도 없으면 인덱스 질의 하나가 빈
         // 결과를 내고 끝이라, 그래프가 쌓이기 전의 비용이 사실상 없다.
         val expansion = expandHits(projectId, scope, rows)
-        // 앵커는 히트가 정해진 뒤 한 번에 데려온다(ARTEL-591). 히트마다 부르면 질의가 히트 수만큼
-        // 늘고, 그 비용은 앵커가 하나도 없는 프로젝트에서도 그대로 난다.
+        // `anchor` 는 히트가 정해진 뒤 한 번에 데려온다(ARTEL-591). 히트마다 부르면 질의가 히트 수만큼
+        // 늘고, 그 비용은 `anchor` 가 하나도 없는 프로젝트에서도 그대로 난다.
         val anchors = anchorsFor(scope, rows)
 
         return KnowledgeSearchOutcome(
@@ -375,12 +375,12 @@ class KnowledgeSearchService(
      * 히트마다 묶인 씬·화면을 데려온다(ARTEL-591).
      *
      * **스코프 술어를 리포지토리가 진다.** 히트는 이미 스코프를 통과한 것이라 여기서 한 번 더
-     * 거는 것이 군더더기로 보이지만, 앵커 조회가 자기 힘으로 스코프를 지키지 않으면 나중에 이
-     * 리포지토리를 다른 곳에서 부르는 순간 가려진 지식의 앵커가 샌다. 술어를 한 곳에만 두는
+     * 거는 것이 군더더기로 보이지만, `anchor` 조회가 자기 힘으로 스코프를 지키지 않으면 나중에 이
+     * 리포지토리를 다른 곳에서 부르는 순간 가려진 지식의 `anchor` 가 샌다. 술어를 한 곳에만 두는
      * [kr.artel.orchestration.knowledge.entity.KnowledgeScopeSql] 의 규칙 그대로다.
      *
-     * 실패를 삼키지 않는 이 클래스의 규칙은 여기에도 적용된다 — 앵커를 못 읽는 것은 DB 오류이지
-     * "앵커가 없음"이 아니다.
+     * 실패를 삼키지 않는 이 클래스의 규칙은 여기에도 적용된다 — `anchor` 를 못 읽는 것은 DB 오류이지
+     * "`anchor` 가 없음"이 아니다.
      */
     private suspend fun anchorsFor(
         scope: KnowledgeScope,
@@ -393,7 +393,7 @@ class KnowledgeSearchService(
             .groupBy(KnowledgeAnchorEntity::knowledgeId) { it.toView() }
     }
 
-    /** 앵커 행을 WS 계약 모양으로. id 계열은 다른 payload와 같이 문자열로 낸다. */
+    /** `anchor` 행을 WS 계약 모양으로. id 계열은 다른 payload와 같이 문자열로 낸다. */
     private fun KnowledgeAnchorEntity.toView() =
         KnowledgeAnchorView(sceneName = sceneName, screenId = screenId?.toString())
 

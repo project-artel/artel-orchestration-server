@@ -5,7 +5,7 @@
 -- 남는 것은 **다른 어디에도 컬럼이 없는 지식**이고, 그중에 "이 화면에서만 참인 사실"이 있다.
 -- 그 사실이 자기 화면을 가리킬 자리가 이 표다.
 --
--- 앵커가 없는 지식은 게임 전체의 사실이다. 그것이 기본값이고, 기본값은 싸야 한다 — 그래서
+-- `anchor` 가 없는 지식은 게임 전체의 사실이다. 그것이 기본값이고, 기본값은 싸야 한다 — 그래서
 -- knowledge 행 자체는 이 마이그레이션으로 한 바이트도 늘지 않는다.
 --
 -- 번호: develop 은 V54 까지 있고 다른 브랜치·워크트리가 V36~V54 를 이미 잡았다. 비어 보이는
@@ -34,15 +34,15 @@ CREATE TABLE IF NOT EXISTS knowledge_anchor (
     knowledge_id BIGINT NOT NULL,
 
     -- **NOT NULL 인 쪽.** 화면은 씬 안에 살고, 씬 이름은 게임 상태 프레임이 매번 실어 주므로
-    -- 앵커를 달 수 있는 시점이면 언제나 안다. 반대(화면은 아는데 씬은 모른다)는 일어나지 않는다.
+    -- `anchor` 를 달 수 있는 시점이면 언제나 안다. 반대(화면은 아는데 씬은 모른다)는 일어나지 않는다.
     --
     -- **content map 과 대조하지 않는다.** content map 이 아직 없는 프로젝트도 씬 이름은 있다.
-    -- 검증을 걸면 그 프로젝트에서 오는 앵커가 전부 거절되고, 그 결과는 "화면 지식을 못 적는
+    -- 검증을 걸면 그 프로젝트에서 오는 `anchor` 가 전부 거절되고, 그 결과는 "화면 지식을 못 적는
     -- 프로젝트"라 기능이 없는 것과 같아진다. 이름은 게임이 부르는 대로 그대로 담는다.
     scene_name   VARCHAR(255) NOT NULL,
 
     -- **NULL 허용인 쪽.** 화면(content_map.screen)은 pulse 관측으로 판정되는 것이라(V40) 판정이
-    -- 안 되는 순간이 정상적으로 있다. 그때 앵커는 "이 씬의 어딘가"까지만 말하고 멈춘다 —
+    -- 안 되는 순간이 정상적으로 있다. 그때 `anchor` 는 "이 씬의 어딘가"까지만 말하고 멈춘다 —
     -- 화면을 지어내는 것보다 모른다고 하는 편이 낫다.
     --
     -- content_map 이 채워지기 전까지 이 값은 사실상 늘 NULL 이다. 의도된 상태이고, 그래서 아래
@@ -59,12 +59,12 @@ COMMENT ON COLUMN knowledge_anchor.knowledge_id IS
 COMMENT ON COLUMN knowledge_anchor.scene_name IS
     '게임이 부르는 씬 이름. content map 과 대조하지 않는다 — content map 이 없는 프로젝트도 씬 이름은 있다.';
 COMMENT ON COLUMN knowledge_anchor.screen_id IS
-    '판정된 화면(content_map.screen.id). NULL 이면 화면까지는 모르고 씬까지만 아는 앵커다.';
+    '판정된 화면(content_map.screen.id). NULL 이면 화면까지는 모르고 씬까지만 아는 anchor 다.';
 
 --------------------------------------------------------------------------------
 -- 2. 인덱스
 --------------------------------------------------------------------------------
--- 검색이 낸 히트마다 앵커를 붙이는 조회. 히트 id 묶음으로 IN 조회가 들어온다.
+-- 검색이 낸 히트마다 `anchor` 를 붙이는 조회. 히트 id 묶음으로 IN 조회가 들어온다.
 CREATE INDEX IF NOT EXISTS idx_knowledge_anchor_knowledge
     ON knowledge_anchor (knowledge_id);
 
@@ -73,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_anchor_knowledge
 CREATE INDEX IF NOT EXISTS idx_knowledge_anchor_scene
     ON knowledge_anchor (scene_name);
 
--- 같은 지식을 같은 화면에 두 번 걸지 않는다. 중복 앵커는 조용히 틀린다 — 검색 응답에 같은
+-- 같은 지식을 같은 화면에 두 번 걸지 않는다. 중복 `anchor` 는 조용히 틀린다 — 검색 응답에 같은
 -- 화면이 두 번 실리고, 화면별 지식을 세는 질의가 같은 사실을 두 번 센다.
 --
 -- 서비스도 먼저 검사하지만 인스턴스 두 대가 같은 프레임을 동시에 처리하면 그 검사는 경합에
@@ -84,21 +84,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_anchor_screen
 -- 위 인덱스는 screen_id 가 NULL 인 행에 걸리지 않는다 — Postgres 는 UNIQUE 에서 NULL 을 서로
 -- 다른 값으로 본다. V40 의 uk_screen_transition_auto 가 같은 이유로 짝을 이룬 인덱스를 둔다.
 --
--- 여기서는 그 구멍이 더 크다. content map 이 채워지기 전까지 **모든** 앵커가 NULL 쪽이라,
--- 이 인덱스가 없으면 같은 프레임을 재시도하는 것만으로 씬 앵커가 무한히 쌓인다.
+-- 여기서는 그 구멍이 더 크다. content map 이 채워지기 전까지 **모든** `anchor` 가 NULL 쪽이라,
+-- 이 인덱스가 없으면 같은 프레임을 재시도하는 것만으로 씬 `anchor` 가 무한히 쌓인다.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_anchor_scene_only
     ON knowledge_anchor (knowledge_id, scene_name) WHERE screen_id IS NULL;
 
 --------------------------------------------------------------------------------
 -- 3. 스코프와의 관계 — 여기 담기지 않은 것
 --------------------------------------------------------------------------------
--- 이 표에는 scope_id 가 없다. 앵커는 knowledge 행에 매달린 사실이고, 그 행이 이미 스코프를
--- 진다(V28) — 앵커에 스코프를 또 두면 같은 사실의 집이 둘이 되어 조용히 어긋난다. 읽기는
--- knowledge 를 조인해 KnowledgeScopeSql.VISIBLE 를 그대로 지나므로, 가려진 지식의 앵커는
+-- 이 표에는 scope_id 가 없다. `anchor` 는 knowledge 행에 매달린 사실이고, 그 행이 이미 스코프를
+-- 진다(V28) — `anchor` 에 스코프를 또 두면 같은 사실의 집이 둘이 되어 조용히 어긋난다. 읽기는
+-- knowledge 를 조인해 KnowledgeScopeSql.VISIBLE 를 그대로 지나므로, 가려진 지식의 `anchor` 는
 -- 애초에 조회되지 않는다.
 --
 -- ⚠️ 남는 구멍 하나: 스코프 런이 baseline 을 고치면 그림자는 **새 행**이라(V28) baseline 의
--- 앵커를 물려받지 않는다. 그 스코프에서 그 지식은 앵커가 없는 것으로 보인다. 지금은 실험
--- 엔티티가 없어 발화하지 않고, 앵커를 나중에 붙이는 API 도 아직 없다(ARTEL-591 non-goal).
+-- `anchor` 를 물려받지 않는다. 그 스코프에서 그 지식은 `anchor` 가 없는 것으로 보인다. 지금은 실험
+-- 엔티티가 없어 발화하지 않고, `anchor` 를 나중에 붙이는 API 도 아직 없다(ARTEL-591 non-goal).
 -- 실험이 실제로 돌기 시작하면 여기가 첫 번째 확인 대상이다 — 그때 정규 id(V29 의 edge 가
--- COALESCE(shadows_id, id) 로 접는 방식)로 갈지, 그림자를 만들 때 앵커를 복사할지 정한다.
+-- COALESCE(shadows_id, id) 로 접는 방식)로 갈지, 그림자를 만들 때 `anchor` 를 복사할지 정한다.

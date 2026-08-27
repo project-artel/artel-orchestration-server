@@ -41,7 +41,7 @@ private const val DIMENSIONS = 1024
  * knowledge 벡터 검색 통합 테스트(ARTEL-186).
  *
  * 검증: 프로젝트 격리, `knowledge_id` 접기, 결과 개수 상한, 빈 결과, tag/source 필터, 소프트삭제 제외,
- * 백필 대기 행(벡터 없음) 제외, 그리고 앵커(ARTEL-591, 파일 맨 아래 절).
+ * 백필 대기 행(벡터 없음) 제외, 그리고 `anchor`(ARTEL-591, 파일 맨 아래 절).
  *
  * **벡터를 백필 워커로 만들지 않고 직접 넣는다.** 워커가 만드는 벡터는 해시 기반이라 어느 항목이 더
  * 가까운지 예측할 수 없고, 순위를 단정할 수 없으면 접기와 상한을 검증할 수 없다. 여기서는 좌표축
@@ -496,11 +496,11 @@ class KnowledgeVectorSearchIntegrationTest {
             .containsExactly(id.toString())
     }
 
-    // ------------------------------------------------------------- 앵커 (ARTEL-591)
+    // ------------------------------------------------------------- `anchor` (ARTEL-591)
 
     /**
-     * 앵커는 **순수 추가 필드**다(`neighbors`와 같은 이유). 앵커가 하나도 없는 지식창고에서는 빈
-     * 배열이고, 그것이 "게임 전체의 사실"이라는 뜻이지 "앵커를 못 읽었다"가 아니다.
+     * `anchor` 는 **순수 추가 필드**다(`neighbors`와 같은 이유). `anchor` 가 하나도 없는 지식창고에서는 빈
+     * 배열이고, 그것이 "게임 전체의 사실"이라는 뜻이지 "`anchor` 를 못 읽었다"가 아니다.
      */
     @Test
     fun `검색 결과가 묶인 씬과 화면을 함께 낸다`(): Unit = runBlocking {
@@ -520,12 +520,12 @@ class KnowledgeVectorSearchIntegrationTest {
         assertThat(hit.anchors.map { it.sceneName to it.screenId })
             .containsExactlyInAnyOrder("Combat" to "4242", "Combat" to "4243", "Boss" to null)
         assertThat(results.single { it.id == global.toString() }.anchors)
-            .describedAs("앵커가 없으면 게임 전체의 사실이다")
+            .describedAs("anchor 가 없으면 게임 전체의 사실이다")
             .isEmpty()
     }
 
     /**
-     * `scene_name` 필터는 **앵커가 없는 지식까지 걸러낸다.** 이 필터의 뜻이 "이 화면의 것"이라,
+     * `scene_name` 필터는 **`anchor` 가 없는 지식까지 걸러낸다.** 이 필터의 뜻이 "이 화면의 것"이라,
      * 게임 전체의 사실을 함께 내면 좁히는 것이 없다.
      */
     @Test
@@ -564,12 +564,12 @@ class KnowledgeVectorSearchIntegrationTest {
     }
 
     /**
-     * 스코프에 가려진 지식은 검색에 안 나오므로 그 앵커도 나오지 않는다. 앵커 조회가 자기 힘으로
+     * 스코프에 가려진 지식은 검색에 안 나오므로 그 `anchor` 도 나오지 않는다. `anchor` 조회가 자기 힘으로
      * 스코프를 지키는지 보려고, 그림자와 baseline에 **서로 다른** 씬을 달아 둔다 — 술어가 빠지면
      * 한 히트에 두 씬이 함께 실린다.
      */
     @Test
-    fun `가려진 baseline의 앵커는 그림자 히트에 섞이지 않는다`(): Unit = runBlocking {
+    fun `가려진 baseline의 anchor 는 그림자 히트에 섞이지 않는다`(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
         val baseline = givenKnowledge(projectId, "옛 내용")
         val shadow = givenKnowledge(projectId, "A가 고친 내용", scope = SCOPE_A, shadowsId = baseline)
@@ -581,7 +581,7 @@ class KnowledgeVectorSearchIntegrationTest {
         val inScope = search(projectId, scope = SCOPE_A).results.single()
         assertThat(inScope.id).isEqualTo(shadow.toString())
         assertThat(inScope.anchors.map { it.sceneName }).containsExactly("TownShadow")
-        // 운영 런은 baseline과 그 앵커만 본다.
+        // 운영 런은 baseline과 그 `anchor` 만 본다.
         val production = search(projectId).results.single()
         assertThat(production.id).isEqualTo(baseline.toString())
         assertThat(production.anchors.map { it.sceneName }).containsExactly("TownBaseline")

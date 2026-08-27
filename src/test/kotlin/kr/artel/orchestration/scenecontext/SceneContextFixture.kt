@@ -21,7 +21,7 @@ import java.time.Instant
 /**
  * ARTEL-611 테스트가 공유하는 픽스처.
  *
- * 두 테스트 클래스가 같은 세계(프로젝트 → 빌드 → 지도 → 씬 → 기능, 그리고 지식 → 앵커)를 세운다.
+ * 두 테스트 클래스가 같은 세계(프로젝트 → 빌드 → 지도 → 씬 → 기능, 그리고 지식 → `anchor`)를 세운다.
  * 한쪽에만 두면 다른 쪽이 자기 사본을 만들고, 그 순간 두 사본이 서로 다른 씬 이름·다른 상태 축을
  * 쓰기 시작해 어느 쪽이 진짜 계약인지 알 수 없어진다.
  */
@@ -105,7 +105,7 @@ class SceneContextFixture(
             )
         ).id!!
 
-    /** 지식 한 항목 + 앵커. [sceneName] 이 null 이면 앵커 없는 지식(= 게임 전체의 사실)이다. */
+    /** 지식 한 항목 + `anchor`. [sceneName] 이 null 이면 `anchor` 없는 지식(= 게임 전체의 사실)이다. */
     suspend fun newKnowledge(
         projectId: Long,
         summary: String,

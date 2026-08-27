@@ -60,7 +60,7 @@ class SceneContextIntegrationTest {
     private lateinit var fixture: SceneContextFixture
 
     /**
-     * 앵커는 knowledge 를 FK 없이 논리참조하므로(V55) knowledge 를 지워도 따라 사라지지 않는다.
+     * `anchor` 는 knowledge 를 FK 없이 논리참조하므로(V55) knowledge 를 지워도 따라 사라지지 않는다.
      * 남기면 다음 테스트의 프로젝트 조회에 섞인다.
      */
     @BeforeEach
@@ -78,7 +78,7 @@ class SceneContextIntegrationTest {
      * 지금까지 agent 는 이 둘을 각각 도구 호출로 물어야 했고, 물을 생각을 해야 물을 수 있었다.
      */
     @Test
-    fun `capability 와 앵커 지식이 같은 씬 아래 붙는다`(): Unit = runBlocking {
+    fun `capability 와 anchor 지식이 같은 씬 아래 붙는다`(): Unit = runBlocking {
         val projectId = fixture.newProject()
         val buildId = fixture.newBuild(projectId)
         val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
@@ -117,14 +117,14 @@ class SceneContextIntegrationTest {
     }
 
     /**
-     * **앵커에만 있는 씬을 떨어뜨리지 않는다.**
+     * **`anchor` 에만 있는 씬을 떨어뜨리지 않는다.**
      *
-     * 앵커는 content map 과 대조하지 않고 저장되므로(ARTEL-591, V55), 지도가 들어 본 적 없는 씬
-     * 이름을 든 앵커가 정상적으로 존재한다. 씬 이름이 유일한 조인 키라 안쪽 조인으로 짜면 그런
-     * 앵커는 소리 없이 사라지고, agent 는 이미 배운 사실을 잃는다.
+     * `anchor` 는 content map 과 대조하지 않고 저장되므로(ARTEL-591, V55), 지도가 들어 본 적 없는 씬
+     * 이름을 든 `anchor` 가 정상적으로 존재한다. 씬 이름이 유일한 조인 키라 안쪽 조인으로 짜면 그런
+     * `anchor` 는 소리 없이 사라지고, agent 는 이미 배운 사실을 잃는다.
      */
     @Test
-    fun `앵커에만 있는 씬도 capability 없이 나온다`(): Unit = runBlocking {
+    fun `anchor 에만 있는 씬도 capability 없이 나온다`(): Unit = runBlocking {
         val projectId = fixture.newProject()
         val buildId = fixture.newBuild(projectId)
         val mapId = fixture.newContentMap(buildId)
@@ -213,11 +213,11 @@ class SceneContextIntegrationTest {
     }
 
     /**
-     * **앵커가 없는 지식은 이 응답에 없다.** 그것이 지식창고의 대부분이고 게임 전체의 사실이라,
+     * **`anchor` 가 없는 지식은 이 응답에 없다.** 그것이 지식창고의 대부분이고 게임 전체의 사실이라,
      * 담기 시작하면 "씬별"이라는 말이 뜻을 잃고 프롬프트가 지식창고 전체를 지고 다니게 된다.
      */
     @Test
-    fun `앵커 없는 지식은 담기지 않는다`(): Unit = runBlocking {
+    fun `anchor 없는 지식은 담기지 않는다`(): Unit = runBlocking {
         val projectId = fixture.newProject()
         val buildId = fixture.newBuild(projectId)
         fixture.newKnowledge(projectId, "낙하 데미지는 5m 부터", "본문")
@@ -230,14 +230,14 @@ class SceneContextIntegrationTest {
     }
 
     /**
-     * 스코프에 가려진 지식은 앵커째 빠진다.
+     * 스코프에 가려진 지식은 `anchor` 째 빠진다.
      *
      * 이 조회가 [kr.artel.orchestration.knowledge.entity.KnowledgeScopeSql].VISIBLE 을 지나는지를
      * 보는 자리다. 빠뜨리면 실험 런이 자기가 고친 항목의 **원본과 수정본을 둘 다** 프롬프트에
      * 싣는데, 둘 다 그럴듯해서 실험이 끝날 때까지 아무도 못 알아챈다.
      */
     @Test
-    fun `스코프에 가려진 지식은 앵커째 빠진다`(): Unit = runBlocking {
+    fun `스코프에 가려진 지식은 anchor 째 빠진다`(): Unit = runBlocking {
         val projectId = fixture.newProject()
         val buildId = fixture.newBuild(projectId)
         val scopeId = 77_611L
@@ -259,9 +259,9 @@ class SceneContextIntegrationTest {
             .containsExactly(shadow.toString())
     }
 
-    /** 소프트삭제된 지식의 앵커만 남아 나오면 agent 가 이미 지운 사실을 계속 참으로 읽는다. */
+    /** 소프트삭제된 지식의 `anchor` 만 남아 나오면 agent 가 이미 지운 사실을 계속 참으로 읽는다. */
     @Test
-    fun `지워진 지식의 앵커는 나오지 않는다`(): Unit = runBlocking {
+    fun `지워진 지식의 anchor 는 나오지 않는다`(): Unit = runBlocking {
         val projectId = fixture.newProject()
         val buildId = fixture.newBuild(projectId)
         val id = fixture.newKnowledge(projectId, "이제 틀린 사실", "본문", sceneName = "Combat")
@@ -270,9 +270,9 @@ class SceneContextIntegrationTest {
         assertThat(get(projectId, buildId).scenes).isEmpty()
     }
 
-    /** 다른 프로젝트의 앵커가 같은 씬 이름을 써도 섞이지 않는다. 씬 이름은 게임이 부르는 대로다. */
+    /** 다른 프로젝트의 `anchor` 가 같은 씬 이름을 써도 섞이지 않는다. 씬 이름은 게임이 부르는 대로다. */
     @Test
-    fun `다른 프로젝트의 앵커는 섞이지 않는다`(): Unit = runBlocking {
+    fun `다른 프로젝트의 anchor 는 섞이지 않는다`(): Unit = runBlocking {
         val mine = fixture.newProject()
         val other = fixture.newProject()
         val buildId = fixture.newBuild(mine)
@@ -287,11 +287,11 @@ class SceneContextIntegrationTest {
 
     /**
      * `evidence` 를 한 번도 올리지 않은 빌드는 **404 가 아니다.** 빌드는 존재하고, 없는 것은 아직 아무도
-     * 올리지 않은 문서다. 그때도 앵커 지식은 답한다 — 앵커는 프로젝트에 매달린 사실이라 빌드에
+     * 올리지 않은 문서다. 그때도 `anchor` 지식은 답한다 — `anchor` 는 프로젝트에 매달린 사실이라 빌드에
      * 지도가 있는지와 수명이 다르다.
      */
     @Test
-    fun `지도가 없는 빌드는 200 이고 앵커만 나온다`(): Unit = runBlocking {
+    fun `지도가 없는 빌드는 200 이고 anchor 만 나온다`(): Unit = runBlocking {
         val projectId = fixture.newProject()
         val buildId = fixture.newBuild(projectId)
         fixture.newKnowledge(projectId, "상점은 밤에 닫는다", "본문", sceneName = "Shop")
@@ -304,7 +304,7 @@ class SceneContextIntegrationTest {
         assertThat(response.scenes.single().knownToContentMap).isFalse()
     }
 
-    /** 지도도 앵커도 없으면 빈 응답이다. 그것도 200 이다. */
+    /** 지도도 `anchor` 도 없으면 빈 응답이다. 그것도 200 이다. */
     @Test
     fun `아무것도 없는 빌드는 빈 200 이다`(): Unit = runBlocking {
         val projectId = fixture.newProject()

@@ -67,10 +67,10 @@ class SceneContextQueryCountTest {
     }
 
     /**
-     * 씬 [sceneCount] 개, 씬마다 기능 하나와 앵커 지식 하나를 세우고 한 번 읽는다.
+     * 씬 [sceneCount] 개, 씬마다 기능 하나와 `anchor` 지식 하나를 세우고 한 번 읽는다.
      *
      * 그리고 씬 수와 무관해야 하는 네 조회가 **각각 정확히 한 번**만 돌았는지 본다: 지도 고르기 ·
-     * 씬 목록 · capability 전량 · 앵커.
+     * 씬 목록 · capability 전량 · `anchor`.
      */
     private suspend fun readAndVerifyQueries(sceneCount: Int) {
         val projectId = fixture.newProject()

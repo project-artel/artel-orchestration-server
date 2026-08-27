@@ -27,7 +27,7 @@ import org.springframework.stereotype.Service
  *
  * ## 씬 수와 무관하게 질의 수가 고정이다
  *
- * 씬마다 질의를 돌리면 씬 수백 개짜리 지도에서 런 시작이 그만큼 느려지고, 그 비용은 앵커가
+ * 씬마다 질의를 돌리면 씬 수백 개짜리 지도에서 런 시작이 그만큼 느려지고, 그 비용은 `anchor` 가
  * 하나도 없는 프로젝트에서도 똑같이 난다. 그래서 지도 단위·프로젝트 단위로 **한 번씩만** 읽고
  * 씬별로 접는 일은 전부 메모리에서 한다.
  *
@@ -38,7 +38,7 @@ import org.springframework.stereotype.Service
  * | 3 | `content_map` 고르기 | 항상 |
  * | 4 | `scene` 목록 | 지도가 있을 때만 |
  * | 5 | `v_content_map_capability` 전량 | 지도가 있을 때만 |
- * | 6 | 앵커 + 지식 요약 | 항상 |
+ * | 6 | `anchor` + 지식 요약 | 항상 |
  *
  * ## 접근 검사가 컨트롤러가 아니라 여기 있다
  *
@@ -58,7 +58,7 @@ class SceneContextService(
      * 이 빌드의 씬별 맥락을 읽는다. 빌드가 없거나 경로의 [projectId] 와 어긋나면 null(→ 404).
      *
      * **`evidence` 가 하나도 없는 빌드는 404 가 아니다.** 빌드는 존재하고, 없는 것은 아직 아무도 올리지
-     * 않은 문서다. 그때 `scenes` 는 앵커가 든 씬만으로 채워지거나 통째로 빈다 — 둘 다 정상이고,
+     * 않은 문서다. 그때 `scenes` 는 `anchor` 가 든 씬만으로 채워지거나 통째로 빈다 — 둘 다 정상이고,
      * agent 는 "아직 지도가 없다"를 응답의 `contentMapId == null` 로 읽는다.
      *
      * 부재와 프로젝트 불일치를 같은 null 로 답하는 것은 브라우저 조회와 같은 이유다. 구분해서
@@ -76,7 +76,7 @@ class SceneContextService(
         val build = gameBuilds.findById(gameBuildId) ?: return null
         if (build.projectId != projectId) return null
 
-        // 지도가 없어도 앵커는 답한다. 앵커는 프로젝트에 매달린 사실이라 빌드에 지도가 있는지와
+        // 지도가 없어도 `anchor` 는 답한다. `anchor` 는 프로젝트에 매달린 사실이라 빌드에 지도가 있는지와
         // 수명이 다르다 — 지도가 없다고 그 사실이 없어지지는 않는다.
         val knowledgeByScene = anchoredKnowledge.findAnchoredKnowledge(projectId, scope.id)
             .toList()
@@ -130,10 +130,10 @@ class SceneContextService(
     )
 
     /**
-     * 지도가 들어 본 적 없는 씬 이름을 든 앵커. **이것을 버리지 않는 것이 이 응답의 요점 하나다.**
+     * 지도가 들어 본 적 없는 씬 이름을 든 `anchor`. **이것을 버리지 않는 것이 이 응답의 요점 하나다.**
      *
-     * 앵커는 content map 과 대조하지 않고 저장된다(ARTEL-591, V55) — 지도가 없는 프로젝트에도 씬
-     * 이름은 있기 때문이다. 그래서 지도에 없는 씬을 가리키는 앵커는 오류가 아니라 **정상**이고,
+     * `anchor` 는 content map 과 대조하지 않고 저장된다(ARTEL-591, V55) — 지도가 없는 프로젝트에도 씬
+     * 이름은 있기 때문이다. 그래서 지도에 없는 씬을 가리키는 `anchor` 는 오류가 아니라 **정상**이고,
      * 여기서 떨어뜨리면 agent 는 자기가 이미 배운 사실을 잃는다. 그 손실은 조용하다.
      *
      * `knownToContentMap = false` 로 구분해 낸다. 지도가 아는 씬인지 아닌지를 agent 가 알아야,
