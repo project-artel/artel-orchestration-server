@@ -42,6 +42,12 @@ import java.time.Instant
  * 쓰기 규칙도 같다: 스코프 런이 만든 edge는 자기 스코프로 가고, baseline edge를 거둘 때는 원본을
  * 건드리지 않고 **툼스톤**을 만든다. 다만 knowledge와 달리 edge에는 "수정 그림자"가 없다 —
  * 고칠 수 있는 것이 `note`뿐이고 그것은 unlink 후 re-link로 되기 때문이다.
+ *
+ * ## 얼린 관계
+ *
+ * `LEADS_TO`는 이 서비스를 통과하지 못한다(ARTEL-594). link도 unlink도 거절이고, 이유는
+ * [KnowledgeRelation]의 "얼린 값" 절에 있다. 읽기 경로([expand], [edgesAmong], 검색의 이웃,
+ * 그래프 조회)는 그 값을 **아무것도 다르게 다루지 않는다** — 얼린 것은 어휘가 아니라 쓰기다.
  */
 @Service
 class KnowledgeGraphService(
@@ -64,6 +70,9 @@ class KnowledgeGraphService(
      * 이미 있는 관계는 **거절한다**(중복 저장이 아니라). 같은 주장을 두 번 파일해 봐야 이웃이 두
      * 줄로 나올 뿐이고, 에이전트에게는 "이미 있다"가 곧 소득이다 — 그래프가 맞았다는 뜻이다.
      * 스코프 런이 baseline의 관계를 다른 `note`로 바꾸고 싶으면 unlink(툼스톤) 후 link이다.
+     *
+     * `LEADS_TO`는 **어떤 끝점으로도 만들 수 없다**(ARTEL-594). 화면 지도는 `content_map`이 지므로
+     * 여기서는 읽기만 남았다 — 사유는 [KnowledgeRelation]의 "얼린 값" 절에 있다.
      */
     suspend fun link(
         projectId: Long,
@@ -73,6 +82,9 @@ class KnowledgeGraphService(
     ): KnowledgeGraphMutation {
         val relation = KnowledgeRelation.fromWire(request.relation)
             ?: return rejected("relation must be one of ${KnowledgeRelation.NAMES}")
+        // 끝점을 찾기 전에 막는다. 얼린 값에 대해서는 끝점이 맞는지가 아무 의미가 없고, 거절 사유가
+        // "그런 지식이 없다"로 바뀌면 에이전트가 id를 고쳐 다시 시도한다.
+        if (relation == KnowledgeRelation.LEADS_TO) return rejected(LEADS_TO_LINK_FROZEN)
         val note = request.note?.trim()
         if (note.isNullOrEmpty()) return rejected("note must not be blank")
 
@@ -134,6 +146,10 @@ class KnowledgeGraphService(
      * **스코프 런이 baseline edge를 거두면 원본은 그대로 두고 툼스톤을 만든다.** 직접 지우면
      * 운영 그래프가 실험 때문에 깎여나가고 실험이 끝나도 되돌아오지 않는다 —
      * [KnowledgeService.softDeleteFromQaTry]의 판단과 같다.
+     *
+     * `LEADS_TO`는 **거둘 수도 없다**(ARTEL-594). link만 막으면 서버는 언링크를 받는데 agent 도구는
+     * 보내지 못해(ARTEL-590) 두 층이 서로 다른 규칙을 말하게 된다. 남은 경로 간선은 지도가 아니라
+     * 과거 런의 기록으로 읽히므로 그대로 둔다 — [KnowledgeRelation]의 "얼린 값" 절 참조.
      */
     suspend fun unlink(
         projectId: Long,
@@ -143,6 +159,7 @@ class KnowledgeGraphService(
     ): KnowledgeGraphMutation {
         val relation = KnowledgeRelation.fromWire(request.relation)
             ?: return rejected("relation must be one of ${KnowledgeRelation.NAMES}")
+        if (relation == KnowledgeRelation.LEADS_TO) return rejected(LEADS_TO_UNLINK_FROZEN)
         val rawFrom = parseId(request.fromKnowledgeId)
             ?: return rejected("from_knowledge_id must be a numeric id")
         val rawTo = parseId(request.toKnowledgeId)
@@ -405,6 +422,27 @@ class KnowledgeGraphService(
     private fun rejected(reason: String) = KnowledgeGraphMutation.Rejected(reason)
 
     companion object {
+        /**
+         * 얼린 `LEADS_TO`에 대한 거절 사유(ARTEL-594).
+         *
+         * 조용한 무시가 아니라 **사유가 실린 거절**이어야 한다. 무시하면 에이전트는 저장됐다고
+         * 믿고 다음 런이 그 경로를 찾아 헤맨다. 대체처를 문장에 박아 두는 이유도 같다 — 거절만
+         * 받으면 도구가 이름을 바꿔 가며 재시도한다.
+         */
+        const val LEADS_TO_LINK_FROZEN =
+            "LEADS_TO is read-only: screen routes are owned by content_map " +
+                "(screen_transition, scene_edge), so no new LEADS_TO edge is accepted"
+
+        /**
+         * 언링크 쪽 사유. 링크와 문장을 나누는 것은 거절의 이유가 다르기 때문이다 — 링크는 "새로
+         * 쓰지 않는다", 언링크는 "이미 있는 것을 기록으로 남긴다"이고, 후자를 링크 문구로 답하면
+         * 왜 지울 수 없는지가 설명되지 않는다.
+         */
+        const val LEADS_TO_UNLINK_FROZEN =
+            "LEADS_TO is read-only: screen routes are owned by content_map " +
+                "(screen_transition, scene_edge), and existing LEADS_TO edges are kept " +
+                "as a record of what past runs worked out"
+
         /** 런이 이유를 적어 주장한 관계. */
         const val ORIGIN_EDGE = "EDGE"
 

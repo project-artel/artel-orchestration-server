@@ -15,6 +15,7 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeEdgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
+import kr.artel.orchestration.knowledge.service.KnowledgeGraphService
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
@@ -105,19 +106,70 @@ class KnowledgeEdgeIntegrationTest {
         assertThat(errorLogs(run.qaTryId)).isEmpty()
     }
 
+    // ----------------------------------------------------- 얼린 LEADS_TO (ARTEL-594)
+
+    /**
+     * 화면 지도의 소유는 `content_map`으로 넘어갔다. 조용히 무시하면 에이전트는 저장됐다고 믿고
+     * 다음 런이 그 경로를 다시 찾아 헤매므로, **사유가 실린 거절**이어야 한다.
+     */
     @Test
-    fun `LEADS_TO는 note에 무엇을 했는지를 싣고 왕복은 서로 다른 두 경로다`(): Unit = runBlocking {
+    fun `LEADS_TO 링크는 사유를 담아 거절되고 행을 만들지 않는다`(): Unit = runBlocking {
         val run = seedRunningQaTry()
         val town = givenKnowledge(run.projectId, "마을 화면")
         val shop = givenKnowledge(run.projectId, "상점 패널")
 
         link(run.qaTryId, town, shop, "LEADS_TO", "마을 상단바의 상점 버튼")
-        link(run.qaTryId, shop, town, "LEADS_TO", "패널 우상단 X 또는 Escape")
 
-        val edges = edgeRepository.findAll().toList()
-        assertThat(edges).describedAs("방향이 다르면 다른 경로다").hasSize(2)
-        assertThat(edges.map { it.fromKnowledgeId to it.toKnowledgeId })
-            .containsExactlyInAnyOrder(town to shop, shop to town)
+        assertThat(edgeRepository.findAll().toList()).isEmpty()
+        val message = errorLogs(run.qaTryId).single().message!!
+        assertThat(message).contains("KNOWLEDGE_LINK rejected")
+        assertThat(message).contains(KnowledgeGraphService.LEADS_TO_LINK_FROZEN)
+        assertThat(message).describedAs("대체처가 없으면 도구가 이름만 바꿔 다시 시도한다")
+            .contains("screen_transition", "scene_edge")
+        assertThat(qaTryRepository.findById(run.qaTryId)!!.status).isEqualTo("RUNNING")
+    }
+
+    /**
+     * **언링크도 막는다.** agent 도구는 ARTEL-590 이후 언링크도 못 보내므로, 서버만 계속 받아 주면
+     * 두 층이 서로 다른 규칙을 말하게 된다. 대가는 잘못 저장된 경로 간선을 이 경로로 못 뗀다는
+     * 것이고, 그것을 받아들인 결정이다.
+     */
+    @Test
+    fun `LEADS_TO 언링크는 거절되고 저장된 간선은 손대지 않는다`(): Unit = runBlocking {
+        val run = seedRunningQaTry()
+        val town = givenKnowledge(run.projectId, "마을 화면")
+        val shop = givenKnowledge(run.projectId, "상점 패널")
+        // 쓰기 경로가 막혔으므로 과거 런이 남긴 행은 직접 심는다.
+        val stored = givenStoredEdge(run.projectId, town, shop, "LEADS_TO", "마을 상단바의 상점 버튼")
+
+        unlink(run.qaTryId, town, shop, "LEADS_TO")
+
+        val edge = edgeRepository.findAll().toList().single()
+        assertThat(edge.id).isEqualTo(stored)
+        assertThat(edge.deletedAt).describedAs("기록으로 남아야 한다").isNull()
+        assertThat(edge.shadowsEdgeId).describedAs("툼스톤도 만들지 않는다").isNull()
+        val message = errorLogs(run.qaTryId).single().message!!
+        assertThat(message).contains("KNOWLEDGE_UNLINK rejected")
+        assertThat(message).contains(KnowledgeGraphService.LEADS_TO_UNLINK_FROZEN)
+        assertThat(qaTryRepository.findById(run.qaTryId)!!.status).isEqualTo("RUNNING")
+    }
+
+    /** 얼린 것은 어휘가 아니라 쓰기다. 나머지 넷은 전과 똑같이 걸리고 거둬져야 한다. */
+    @Test
+    fun `LEADS_TO 말고 네 관계는 여전히 링크되고 언링크된다`(): Unit = runBlocking {
+        val run = seedRunningQaTry()
+        listOf("CONTRADICTS", "REFINES", "DEPENDS_ON", "REPLACES").forEach { relation ->
+            val a = givenKnowledge(run.projectId, "$relation 의 from")
+            val b = givenKnowledge(run.projectId, "$relation 의 to")
+
+            link(run.qaTryId, a, b, relation, "$relation 을 주장한다")
+            assertThat(visibleEdge(run.projectId, null, a, b, relation))
+                .describedAs("$relation 링크가 막혔다").isNotNull()
+
+            unlink(run.qaTryId, a, b, relation)
+            assertThat(visibleEdge(run.projectId, null, a, b, relation))
+                .describedAs("$relation 언링크가 막혔다").isNull()
+        }
         assertThat(errorLogs(run.qaTryId)).isEmpty()
     }
 
@@ -255,9 +307,9 @@ class KnowledgeEdgeIntegrationTest {
         val run = seedRunningQaTry()
         val a = givenKnowledge(run.projectId, "a")
         val b = givenKnowledge(run.projectId, "b")
-        link(run.qaTryId, a, b, "LEADS_TO", "버튼")
+        link(run.qaTryId, a, b, "REFINES", "더 좁은 경우")
 
-        unlink(run.qaTryId, a, b, "LEADS_TO")
+        unlink(run.qaTryId, a, b, "REFINES")
 
         val edge = edgeRepository.findAll().toList().single()
         assertThat(edge.deletedAt).describedAs("행이 사라졌다면 하드 삭제다").isNotNull()
@@ -271,14 +323,14 @@ class KnowledgeEdgeIntegrationTest {
         val run = seedRunningQaTry()
         val a = givenKnowledge(run.projectId, "a")
         val b = givenKnowledge(run.projectId, "b")
-        link(run.qaTryId, a, b, "LEADS_TO", "처음 본 경로")
-        unlink(run.qaTryId, a, b, "LEADS_TO")
+        link(run.qaTryId, a, b, "DEPENDS_ON", "처음 본 선행조건")
+        unlink(run.qaTryId, a, b, "DEPENDS_ON")
 
-        link(run.qaTryId, a, b, "LEADS_TO", "다시 확인한 경로")
+        link(run.qaTryId, a, b, "DEPENDS_ON", "다시 확인한 선행조건")
 
         val live = edgeRepository.findAll().toList().filter { it.deletedAt == null }
         assertThat(live).hasSize(1)
-        assertThat(live.single().note).isEqualTo("다시 확인한 경로")
+        assertThat(live.single().note).isEqualTo("다시 확인한 선행조건")
         assertThat(errorLogs(run.qaTryId)).isEmpty()
     }
 
@@ -317,11 +369,11 @@ class KnowledgeEdgeIntegrationTest {
         val production = seedRunningQaTry()
         val a = givenKnowledge(production.projectId, "마을")
         val b = givenKnowledge(production.projectId, "상점")
-        link(production.qaTryId, a, b, "LEADS_TO", "상점 버튼")
+        link(production.qaTryId, a, b, "DEPENDS_ON", "상점은 마을에서만 열린다")
         val baselineEdge = edgeRepository.findAll().toList().single()
         val scoped = seedRunningQaTry(projectId = production.projectId, knowledgeScopeId = SCOPE)
 
-        unlink(scoped.qaTryId, a, b, "LEADS_TO")
+        unlink(scoped.qaTryId, a, b, "DEPENDS_ON")
 
         val edges = edgeRepository.findAll().toList()
         assertThat(edges).hasSize(2)
@@ -333,8 +385,8 @@ class KnowledgeEdgeIntegrationTest {
         assertThat(tombstone.deletedAt).describedAs("툼스톤은 항상 죽어 있다").isNotNull()
 
         // 그 스코프에서는 사라지고, 운영 런에는 그대로 보인다.
-        assertThat(visibleEdge(production.projectId, SCOPE, a, b, "LEADS_TO")).isNull()
-        assertThat(visibleEdge(production.projectId, null, a, b, "LEADS_TO")).isNotNull()
+        assertThat(visibleEdge(production.projectId, SCOPE, a, b, "DEPENDS_ON")).isNull()
+        assertThat(visibleEdge(production.projectId, null, a, b, "DEPENDS_ON")).isNotNull()
     }
 
     @Test
@@ -394,6 +446,23 @@ class KnowledgeEdgeIntegrationTest {
                 )
             )
         )
+
+    /** 쓰기 경로를 거치지 않고 심는 간선. 얼린 `LEADS_TO`의 과거 행을 재현하는 데 쓴다. */
+    private suspend fun givenStoredEdge(
+        projectId: Long,
+        from: Long,
+        to: Long,
+        relation: String,
+        note: String
+    ): Long = edgeRepository.save(
+        KnowledgeEdgeEntity(
+            projectId = projectId,
+            fromKnowledgeId = from,
+            toKnowledgeId = to,
+            relation = relation,
+            note = note
+        )
+    ).id!!
 
     private suspend fun visibleEdge(
         projectId: Long,

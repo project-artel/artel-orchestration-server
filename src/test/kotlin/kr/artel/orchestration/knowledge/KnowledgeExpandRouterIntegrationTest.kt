@@ -138,6 +138,11 @@ class KnowledgeExpandRouterIntegrationTest {
         appUserRepository.deleteAll()
     }
 
+    /**
+     * 이웃으로 쓰는 관계가 `LEADS_TO`인 것은 우연이 아니다. 그 값은 쓰기가 얼려 있어도(ARTEL-594)
+     * **읽기는 아무것도 달라지지 않는다** — 과거 런이 남긴 경로 간선이 확장에 그대로 나와야 한다.
+     * 그래서 여기서는 쓰기 경로를 거치지 않고 [givenEdge]로 직접 심는다.
+     */
     @Test
     fun `EXPAND는 이웃과 seed 요약을 담아 답한다`(): Unit = runBlocking {
         seedRun()
