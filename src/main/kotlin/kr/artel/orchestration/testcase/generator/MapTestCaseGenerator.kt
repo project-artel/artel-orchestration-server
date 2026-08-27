@@ -109,6 +109,7 @@ class MapTestCaseGenerator(
                     status = first.status,
                     gaps = group.flatMap { it.gaps }.distinct(),
                     arrivesAt = first.arrivesAt,
+                    identity = first.identity,
                 )
             }
             .let(::withInterchangeableInputs)
@@ -205,6 +206,7 @@ class MapTestCaseGenerator(
         val status: String,
         val gaps: List<String>,
         val arrivesAt: String? = null,
+        val identity: String = "",
     )
 
     /**
@@ -257,6 +259,12 @@ class MapTestCaseGenerator(
                     gaps = reasons,
                     // 씬 효과의 대상이 곧 도착 화면이다. 산문에서 다시 뽑지 않는다.
                     arrivesAt = effect.target?.takeIf { effect.kind == SCENE },
+                    // **문장이 아니라 지도가 정하는 값으로 정체를 잡는다**(ARTEL-617). 효과는
+                    // 되짚기 전 원본을 쓴다 — 대상 이름을 씬이 부르는 것으로 바꿔도(ARTEL-615)
+                    // 같은 줄이어야 한다.
+                    identity = listOf(key, effect.kind, effect.target.orEmpty(), effect.detail.orEmpty())
+                        // NUL 은 Postgres 텍스트에 못 들어간다. 구분자는 사람이 안 쓰는 제어문자로.
+                        .joinToString(IDENTITY_SEPARATOR),
                 )
             }
         }
@@ -343,6 +351,9 @@ class MapTestCaseGenerator(
     /** 효과 어휘의 씬 전환. `MapTestCasePhrasing` 이 같은 값으로 문장을 만든다. */
     private companion object {
         const val SCENE = "scene"
+
+        /** 정체를 이을 때 쓰는 구분자. 값에 섞일 일이 없고 Postgres 가 받는 문자여야 한다. */
+        const val IDENTITY_SEPARATOR = "\u001F"
     }
 
     private fun gapsOf(row: ContentMapCapabilityRow): List<String> =
