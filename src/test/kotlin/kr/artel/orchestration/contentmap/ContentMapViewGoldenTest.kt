@@ -693,10 +693,20 @@ class ContentMapViewGoldenTest {
         val title = scenes.findByContentMapIdAndName(contentMapId, "TitleScene")!!
         val map = scenes.findByContentMapIdAndName(contentMapId, "Map_scene")!!
         val titleScreen = screens.save(
-            ScreenEntity(sceneId = title.id!!, name = "타이틀", discriminator = Json.of("""[]"""))
+            ScreenEntity(
+                sceneId = title.id!!,
+                name = "타이틀",
+                // 한 씬 안에서 화면을 가르는 것은 `discriminator` 다(V56 의 uk_screen_discriminator).
+                // 픽스처가 빈 값을 돌려쓰면 두 화면이 같은 화면이 되어 INSERT 가 거절된다.
+                discriminator = Json.of("""[{"selector":"Canvas[2]/settings[1]","active":false}]"""),
+            )
         )
         val titlePopup = screens.save(
-            ScreenEntity(sceneId = title.id, name = "타이틀 · 설정 팝업", discriminator = Json.of("""[]"""))
+            ScreenEntity(
+                sceneId = title.id,
+                name = "타이틀 · 설정 팝업",
+                discriminator = Json.of("""[{"selector":"Canvas[2]/settings[1]","active":true}]"""),
+            )
         )
         val mapScreen = screens.save(
             ScreenEntity(sceneId = map.id!!, name = "맵", discriminator = Json.of("""[]"""))
