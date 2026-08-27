@@ -104,6 +104,11 @@ This rule covers source files only. Documentation, commit messages, and PR
 bodies keep the language their own conventions already set — `AGENTS.md`,
 `commit.md`, `pull-request.md`.
 
+Follow the `## Terminology in comments, documents, and pull requests` section of
+[`../../AGENTS.md`](../../AGENTS.md) for which of these terms to write in
+English. It forbids coining a Korean substitute for something the code already
+names, and it applies to comments, documents, and PR bodies alike.
+
 Existing English comments are not a defect. Rewrite one only when you are
 already changing that code; a comment-language sweep is unrelated churn.
 
