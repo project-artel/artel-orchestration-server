@@ -45,9 +45,24 @@ data class TestCaseEntity(
     @Column("step")
     val step: String,
 
-    /** 명세 `spec.precondition`. 없을 수 있다. */
+    /**
+     * 사전조건을 **사람 말로** 적은 한 줄. 없을 수 있다.
+     *
+     * **표시 전용이다**(ARTEL-627). 되짚을 것은 [condition] 이고, 이 문장은 그것을 렌더한 결과다.
+     * 여기서 비교를 긁어내면 안 된다 — 읽기 좋게 다듬느라 버린 것들(대상의 주인, 갈래, 식)이
+     * 문장에는 없다.
+     */
     @Column("precondition")
     val precondition: String? = null,
+
+    /**
+     * 사전조건의 **구조**(ARTEL-627). `capability_evidence.condition_tree` 가 그대로 온다.
+     *
+     * 지도를 못 되짚는 행(구버전 엑셀 경로)은 null 이다. 없는 것을 빈 트리로 적으면 "조건 없음"과
+     * "모름"이 같은 값이 되어, 저작이 아무 전제도 없는 케이스로 읽는다.
+     */
+    @Column("condition")
+    val condition: Json? = null,
 
     /** 기대 결과. 명세 `spec.expected_value`. */
     @Column("expected_value")

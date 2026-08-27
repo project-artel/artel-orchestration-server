@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
+import kr.artel.orchestration.contentmap.dto.ConditionNodeResponse
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import org.slf4j.LoggerFactory
@@ -83,6 +84,7 @@ class MapTestCaseWriter(
                 scene = case.scene,
                 step = case.step,
                 precondition = case.precondition,
+                condition = conditionJson(case),
                 expectedValue = case.expected,
                 status = case.status,
                 capabilityKey = case.capabilityKey,
@@ -129,12 +131,24 @@ class MapTestCaseWriter(
      * 그 수가 "49행이 달라졌다"고 거짓말하는 것이다 — 실측에서 세 번을 이어 적재해도 계속
      * `updated=49` 였다.
      */
+    /**
+     * **`Json` 은 값으로 견줄 수 없다.** 같은 내용이어도 다른 객체면 다르다고 나오고, 그러면 안 바뀐
+     * 재적재가 표 전체를 다시 쓴다. jsonb 는 키 순서까지 정규화하므로 문자열 비교도 안 된다 —
+     * 파싱해서 트리로 견준다.
+     *
+     * 여기 실린 JSONB 칸이 둘(`metadata` · `condition`)이라, 둘 다 빼고 나머지를 견준 뒤 각각 따로 본다.
+     */
     private fun changed(prior: TestCaseEntity, next: TestCaseEntity): Boolean =
-        prior.copy(metadata = next.metadata) != next || !sameJson(prior.metadata, next.metadata)
+        prior.copy(metadata = next.metadata, condition = next.condition) != next ||
+            !sameJson(prior.metadata, next.metadata) ||
+            !sameJson(prior.condition, next.condition)
 
-    private fun sameJson(a: Json, b: Json): Boolean = runCatching {
-        objectMapper.readTree(a.asString()) == objectMapper.readTree(b.asString())
-    }.getOrDefault(false)
+    private fun sameJson(a: Json?, b: Json?): Boolean {
+        if (a == null || b == null) return a == null && b == null
+        return runCatching {
+            objectMapper.readTree(a.asString()) == objectMapper.readTree(b.asString())
+        }.getOrDefault(false)
+    }
 
     /**
      * **문장이 아니라 지도가 정하는 값으로 정체를 잡는다**(ARTEL-617).
@@ -166,11 +180,25 @@ class MapTestCaseWriter(
         runCatching { objectMapper.readTree(row.metadata.asString()) }.getOrNull()
             ?.path(ORIGIN_FIELD)?.asText() == ORIGIN
 
+    /**
+     * 사전조건의 **구조**를 그대로 싣는다(ARTEL-627).
+     *
+     * 지도 조회 API 가 쓰는 표현([ConditionNodeResponse])을 그대로 쓴다. 표현을 두 벌 만들면 같은
+     * 트리가 두 모양으로 나가고, 읽는 쪽이 어느 쪽인지 물어야 한다.
+     *
+     * 트리가 없으면 null 이다 — 조건이 없는 것과 모르는 것은 다르고, 빈 객체로 적으면 저작이
+     * "아무 전제도 없는 케이스"로 읽는다.
+     */
+    private fun conditionJson(case: MapTestCase): Json? = case.condition
+        ?.let { objectMapper.writeValueAsString(ConditionNodeResponse.of(it)) }
+        ?.let(Json::of)
+
     private fun entityOf(projectId: Long, contentMapId: Long, case: MapTestCase) = TestCaseEntity(
         projectId = projectId,
         scene = case.scene,
         step = case.step,
         precondition = case.precondition,
+        condition = conditionJson(case),
         expectedValue = case.expected,
         status = case.status,
         capabilityKey = case.capabilityKey,

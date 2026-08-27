@@ -278,6 +278,30 @@ class MapTestCaseWriterGoldenTest {
         assertThat(testCases.findById(cited.id!!)?.verificationStatus).isEqualTo("BROKEN")
     }
 
+    /**
+     * **전제가 구조로 앉는다**(ARTEL-627).
+     *
+     * `precondition` 문자열은 사람에게 보여줄 한 줄이고, 되짚을 것은 이쪽이다. 앞서는 이 칸이 없어
+     * 소비하는 쪽이 문장을 정규식으로 되읽었고, 거기서 대상의 주인(`A.b.activeSelf` → `activeSelf`),
+     * 갈래(`또는`), 식(`(x - 1)`)이 사라졌다.
+     *
+     * **이 수가 0이 되면 새 생성기를 만든 이유가 사라진 것이다** — 문자열 맞춤을 없애려고 만들었는데
+     * 그 아래 표에서 다시 문자열이 된다.
+     */
+    @Test
+    fun `케이스가 전제를 구조로 든다`(): Unit = runBlocking {
+        val rows = mine()
+        val withTree = rows.filter { it.condition != null }
+
+        assertThat(withTree).isNotEmpty()
+        // 전제가 있는 케이스는 빠짐없이 트리를 든다. 문장만 있고 구조가 없는 줄이 남으면
+        // 그 줄에서 소비하는 쪽이 다시 문장을 파싱한다.
+        assertThat(rows.filter { it.precondition?.contains(" / ") == true })
+            .allSatisfy { assertThat(it.condition).isNotNull() }
+        // 트리는 지도 조회 API 와 같은 표현이다. 표현을 두 벌 만들면 읽는 쪽이 어느 쪽인지 물어야 한다.
+        assertThat(withTree.first().condition!!.asString()).contains("\"kind\"")
+    }
+
     companion object {
         private const val DOCUMENT = "src/test/resources/contentmap/wv-editor-latest.json"
     }

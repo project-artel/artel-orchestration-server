@@ -98,12 +98,16 @@ class MapTestCaseGenerator(
         drafts.groupBy { Triple(it.scene, it.step, it.outcome) }
             .map { (_, group) ->
                 val first = group.first()
+                val settled = weakest(group.map { it.condition })
                 MapTestCase(
                     capabilityKey = first.capabilityKey,
                     scene = first.scene,
                     precondition = MapTestCasePhrasing.precondition(
-                        first.scene, weakest(group.map { it.condition }), first.inputKey,
+                        first.scene, settled, first.inputKey,
                     ),
+                    // **구조를 버리지 않는다**(ARTEL-627). 위 문장은 이것을 사람 말로 렌더한 것이고,
+                    // 소비하는 쪽은 문장이 아니라 이쪽을 읽는다.
+                    condition = settled,
                     step = first.step,
                     expected = first.outcome,
                     status = first.status,

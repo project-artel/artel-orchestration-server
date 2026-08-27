@@ -1,5 +1,7 @@
 package kr.artel.orchestration.testcase.generator
 
+import kr.artel.orchestration.contentmap.evidence.ConditionNode
+
 /**
  * 지도가 낸 케이스 하나(ARTEL-554).
  *
@@ -17,7 +19,15 @@ package kr.artel.orchestration.testcase.generator
 data class MapTestCase(
     val capabilityKey: String,
     val scene: String,
+    /** 사람이 읽는 한 줄. **표시 전용이다** — 되짚을 것은 [condition] 이다(ARTEL-627). */
     val precondition: String,
+    /**
+     * 사전조건의 구조. 문장으로 렌더하기 **전**의 것이다.
+     *
+     * 생성기는 이 트리를 늘 손에 들고 있었는데 렌더하고 버렸다. 그래서 소비하는 쪽이 문장을
+     * 정규식으로 되읽어야 했고, 거기서 대상의 주인·갈래·식이 사라졌다.
+     */
+    val condition: ConditionNode? = null,
     val step: String,
     val expected: String,
     val status: String,
