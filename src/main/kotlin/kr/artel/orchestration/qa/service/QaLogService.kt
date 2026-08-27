@@ -40,7 +40,11 @@ internal val TYPES =
         // 판독(ARTEL-414). 전량이 실측 약 18 KB 라 다른 타입보다 무겁고, 이 행은 SSE 로도
         // 발행된다. 원문을 런 단위 스토리지로 옮기고 여기엔 도착 사실만 남기는 것이
         // ARTEL-449 의 몫이다 — 그때까지는 본문째 남는다.
-        "PULSE"
+        "PULSE",
+        // 에이전트가 부른 tool 과 그 답(ARTEL-608). `ACTION` 과 겹치지 않는다. `ACTION` 은
+        // 조작 tool 이 SDK 로 내보낸 요청이라 tool 28개 중 15개만 남기고, 지식 검색이나
+        // 스텝 판정처럼 SDK 를 거치지 않는 tool 은 흔적이 없었다.
+        "TOOL", "TOOL_RESULT"
     )
 
 data class QaLogAppendResult(val log: QaLogResponse, val inserted: Boolean)

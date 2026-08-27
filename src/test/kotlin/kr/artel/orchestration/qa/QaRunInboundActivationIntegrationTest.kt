@@ -216,6 +216,71 @@ class QaRunInboundActivationIntegrationTest {
         assertThat(qaTryRepository.transition(firstTryId, "RUNNING", "COMPLETED", now, now)).isEqualTo(1)
     }
 
+    @Test
+    fun `TOOL 과 TOOL_RESULT 프레임이 거절 없이 적재되고 payload 가 그대로 통과한다`(): Unit = runBlocking {
+        val run = runningRun()
+        val call = toolFrame(run.firstTryId)
+
+        router.handle(call)
+        router.handle(toolResultFrame(run.firstTryId, call.messageId))
+
+        val logs = qaLogRepository.findPage(run.firstTryId, null, 50).toList()
+
+        val tool = logs.single { it.type == "TOOL" }
+        assertThat(tool.direction).isEqualTo("AGENT_TO_ORCHE")
+        // 표시용 message 는 tool 이름이다. 라우터의 non-blank 가드를 지나는 것이 이 필드다.
+        assertThat(tool.message).isEqualTo("search_knowledge")
+        // payload 는 가공 없이 jsonb 로 통과한다 — 인자를 읽는 것은 화면의 몫이다.
+        assertThat(objectMapper.readTree(tool.payload.asString()).path("args").path("query").asText())
+            .isEqualTo("보스전 진입 조건")
+
+        val result = logs.single { it.type == "TOOL_RESULT" }
+        // 답은 자기 호출의 messageId 를 correlation 으로 들고 온다. 화면이 이것으로 짝짓는다.
+        assertThat(result.correlationId).isEqualTo(call.messageId)
+
+        // 모르는 타입이면 라우터가 ERROR 를 남긴다. 그 자리가 비어야 통과한 것이다.
+        assertThat(logs.none { it.type == "ERROR" }).isTrue()
+    }
+
+    private fun toolFrame(qaTryId: Long) =
+        QaAgentEnvelope(
+            messageId = UUID.randomUUID().toString(),
+            type = "TOOL",
+            qaTryId = qaTryId.toString(),
+            timestamp = Instant.now(),
+            payload = objectMapper.readTree(
+                """
+                {
+                  "message": "search_knowledge",
+                  "tool": "search_knowledge",
+                  "tool_call_id": "call_abc123",
+                  "args": {"step": 2, "query": "보스전 진입 조건"},
+                  "step": 2
+                }
+                """.trimIndent()
+            )
+        )
+
+    private fun toolResultFrame(qaTryId: Long, correlationId: String) =
+        QaAgentEnvelope(
+            messageId = UUID.randomUUID().toString(),
+            type = "TOOL_RESULT",
+            qaTryId = qaTryId.toString(),
+            correlationId = correlationId,
+            timestamp = Instant.now(),
+            payload = objectMapper.readTree(
+                """
+                {
+                  "message": "search_knowledge",
+                  "tool": "search_knowledge",
+                  "tool_call_id": "call_abc123",
+                  "content": "2 entries found.",
+                  "step": 2
+                }
+                """.trimIndent()
+            )
+        )
+
     private fun logFrame(qaTryId: Long, message: String) =
         QaAgentEnvelope(
             messageId = UUID.randomUUID().toString(),
