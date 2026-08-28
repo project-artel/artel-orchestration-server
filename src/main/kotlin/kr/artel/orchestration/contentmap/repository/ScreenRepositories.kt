@@ -2,6 +2,7 @@ package kr.artel.orchestration.contentmap.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.dto.ContentMapSceneEdgeRow
+import kr.artel.orchestration.contentmap.dto.ContentMapScreenTransitionRow
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
 import kr.artel.orchestration.contentmap.entity.ScreenEntity
 import kr.artel.orchestration.contentmap.entity.ScreenTransitionEntity
@@ -61,6 +62,27 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
         """
     )
     suspend fun findIdBySceneIdAndDiscriminator(sceneId: Long, discriminator: String): Long?
+
+    /**
+     * 지도 한 장의 화면 전부. 조회가 쓰는 유일한 화면 질의다.
+     *
+     * 씬마다 [findBySceneIdOrderByIdAsc] 를 부르지 않는 이유: 씬 수만큼 왕복이 생기고 그 수는 지도가
+     * 커질수록 는다. `content_map_id` 하나로 좁힌 질의 한 번이 같은 답을 낸다 —
+     * `ContentMapViewService` 가 섹션마다 질의 하나를 두는 것과 같은 규칙이다.
+     *
+     * `screen.id` 오름차순, 즉 **처음 관측한 순서**로 낸다. [ScreenEntity.name] 으로 정렬하지 않는
+     * 것은 그 칸이 nullable 이고 LLM 이 짓는 표시용 값이라, 이름을 다시 지으면 화면 순서가 통째로
+     * 흔들리기 때문이다.
+     */
+    @Query(
+        """
+        SELECT sc.* FROM screen sc
+        JOIN scene s ON s.id = sc.scene_id
+        WHERE s.content_map_id = :contentMapId
+        ORDER BY sc.scene_id ASC, sc.id ASC
+        """
+    )
+    fun findByContentMapId(contentMapId: Long): Flow<ScreenEntity>
 }
 
 /** 화면 전이. 관측으로만 생긴다. */
@@ -104,6 +126,33 @@ interface ScreenTransitionRepository : CoroutineCrudRepository<ScreenTransitionE
         crossesScene: Boolean,
         qaRunId: Long?,
     ): Long
+
+    /**
+     * 지도 한 장의 화면 전이 전부. 조회가 쓰는 유일한 전이 질의다.
+     *
+     * **출발 화면 기준으로 모은다.** 씬 경계를 넘는 전이는 도착 화면이 다른 씬에 있고 그 씬도 같은
+     * 지도에 속한다 — QA 런 하나가 지도 한 장 안에서 움직이기 때문이다. 도착 쪽까지 조인해 걸러내면
+     * 그 전제가 깨진 날 행이 조용히 사라지는데, 사라진 전이는 화면에서 없던 것과 구분되지 않는다.
+     * 그대로 내고, 화면이 모르는 화면 id 를 만나면 그것이 신호다.
+     *
+     * `capability` 를 `LEFT JOIN` 해도 **행이 곱해지지 않는다.** `screen_transition.capability_id`
+     * 는 단일 FK 라 전이 하나에 기능이 많아야 하나다 — 효과(`capability_effect`)를 접지 않는 것과는
+     * 사정이 다르고, [SceneEdgeRepository.findByContentMapId] 가 이미 같은 판단을 했다.
+     */
+    @Query(
+        """
+        SELECT t.id, t.from_screen_id, t.to_screen_id, t.capability_id,
+               c.summary AS capability_summary,
+               t.kind, t.crosses_scene, t.observed_count, t.first_seen_qa_run_id
+        FROM screen_transition t
+        JOIN screen fs ON fs.id = t.from_screen_id
+        JOIN scene s ON s.id = fs.scene_id
+        LEFT JOIN capability c ON c.id = t.capability_id
+        WHERE s.content_map_id = :contentMapId
+        ORDER BY t.id ASC
+        """
+    )
+    fun findByContentMapId(contentMapId: Long): Flow<ContentMapScreenTransitionRow>
 }
 
 /**
