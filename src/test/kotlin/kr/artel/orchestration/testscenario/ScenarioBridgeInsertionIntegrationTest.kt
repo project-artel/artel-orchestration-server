@@ -64,6 +64,7 @@ class ScenarioBridgeInsertionIntegrationTest {
     @Autowired private lateinit var contentMapRepository: ContentMapRepository
     @Autowired private lateinit var sceneRepository: SceneRepository
     @Autowired private lateinit var sceneEdgeRepository: SceneEdgeRepository
+    @Autowired private lateinit var effectRepository: kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
     @Autowired private lateinit var capabilityRepository: CapabilityRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
     @Autowired private lateinit var runRepository: TestRunRepository
@@ -117,6 +118,57 @@ class ScenarioBridgeInsertionIntegrationTest {
         battleSceneId = sceneRepository.save(
             SceneEntity(contentMapId = map.id!!, name = "TurnBattleScene", walked = true)
         ).id!!
+    }
+
+    /**
+     * **여기까지 와야 시작한다를 첫 줄에 적는다**(ARTEL-636).
+     *
+     * 시나리오는 하나가 끝날 때마다 게임을 초기화하는데 검증하는 순간은 게임 곳곳에 흩어져 있다 —
+     * 엔딩을 보는 시나리오는 매번 엔딩까지 다시 가야 한다. 첫 스텝이 `StagePosition >= 4` 를
+     * 요구하는데 아무 말도 없으면, 실행하는 쪽에게는 "알아서 네 번 이겨라"와 같다.
+     *
+     * 길을 찾아 주지는 않는다. 무엇이 참이어야 시작하는지와 **그 값이 어디서 오르는지**만 적는다.
+     */
+    @Test
+    fun `먼 자리에서 시작하는 시나리오는 무엇이 필요한지 첫 줄에 적는다`(): Unit = runBlocking {
+        // 전투 씬에서 `+1` 로 오르는 값. 지도가 "어디서 오르는지"를 이 한 줄로 답한다.
+        val raiser = capability(battleSceneId, interaction = "none", inputKey = null, actionability = "not-a-step")
+        effectRepository.save(
+            kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity(
+                capabilityId = raiser, kind = "write", category = "state",
+                target = "MapMove.StagePosition", detail = "+1",
+            )
+        )
+        // 케이스가 지도를 되짚어야 "어디서 오르는지"를 물을 수 있다.
+        val onMap = capabilityRepository.findById(
+            capability(mapSceneId, interaction = "press", inputKey = "RightArrow")
+        )!!
+        // 키는 테스트마다 달라야 한다 — 고정값을 쓰면 전체 실행에서 다른 테스트의 지도와 겹친다.
+        val key = "deep-key-${seq.incrementAndGet()}"
+        capabilityRepository.save(onMap.copy(capabilityKey = key))
+        val deep = case(
+            "Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 4",
+            capabilityKey = key,
+        )
+
+        val outcome = reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "보스까지", description = "d",
+                    steps = listOf(ChatScenarioStep(action = "보스 지점 확인", caseId = deep)),
+                )
+            ),
+        )
+
+        assertThat(outcome.applied).isEqualTo(1)
+        val first = storedSteps().first()
+        assertThat(first.stepKind).isEqualTo(ScenarioStepKind.OPENING)
+        assertThat(first.action).contains("StagePosition >= 4")
+        // 찾아갈 실마리가 함께 있어야 한다 — 그 값이 어디서 오르는지.
+        assertThat(first.action).contains("TurnBattleScene")
+        // 수행하지도 판정하지도 않는 줄이다. 케이스를 달면 아직 시작도 안 한 일이 실패로 기록된다.
+        assertThat(first.caseId).isNull()
     }
 
     /**
@@ -700,9 +752,12 @@ class ScenarioBridgeInsertionIntegrationTest {
         precondition: String,
         step: String = "step-${seq.incrementAndGet()}",
         evidence: String? = null,
+        // 지도를 되짚는 열쇠. 값이 어디서 오르는지 같은 질의가 이것으로 지도를 좁힌다(ARTEL-636).
+        capabilityKey: String? = null,
     ): Long = testCaseRepository.save(
         TestCaseEntity(
             projectId = projectId, scene = scene, step = step,
+            capabilityKey = capabilityKey,
             precondition = precondition, expectedValue = "expected",
             metadata = evidence?.let {
                 Json.of(objectMapper.writeValueAsString(mapOf("source" to mapOf("evidence" to it))))

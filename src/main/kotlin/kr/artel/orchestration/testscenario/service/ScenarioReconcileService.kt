@@ -12,6 +12,7 @@ import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.dto.ReviewedCases
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestion
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
+import kr.artel.orchestration.testscenario.dto.ScenarioStepKind
 import kr.artel.orchestration.testscenario.dto.ScenarioStepSource
 import kr.artel.orchestration.testscenario.dto.ScenarioStep
 import kr.artel.orchestration.testscenario.dto.toStoredStep
@@ -151,7 +152,8 @@ class ScenarioReconcileService(
 
         // 검수보다 **먼저** 메운다. 순서가 반대면 코드가 고칠 수 있는 것 때문에 저장이 막히고,
         // 그러면 에이전트에게 다시 쓰라고 시키게 된다 — 그 방법이 안 통한다는 것이 이 작업의 전제다.
-        val (bridged, notices, blocked) = repairByInsertion(routes, given, describe)
+        val (bridged, notices, blocked) =
+            repairByInsertion(routes, given, describe, openingFacts(projectId, facts))
         // 글자까지 같은 스텝이 서로 다른 케이스를 보면 무엇이 다른지 붙인다. 화면에서는 같은 줄이
         // 두 번 있는 것으로 보이고, 실행하는 사람은 중복이라 여겨 하나를 건너뛴다.
         val repaired = ScenarioSiblingLabel.apply(
@@ -349,6 +351,7 @@ class ScenarioReconcileService(
         routes: PathLookup,
         scenarios: List<ScenarioResult>,
         describe: (Long) -> String,
+        openingFacts: OpeningFacts,
     ): Triple<List<ScenarioResult>, List<String>, List<String>> {
         val notices = mutableListOf<String>()
         // 무엇이 막았는지를 따로 모은다 — 알림 문장에서 되뽑으면 문구를 다듬을 때마다 깨진다.
@@ -381,10 +384,104 @@ class ScenarioReconcileService(
                 )
             }
             notices += result.notices
-            scenario.copy(steps = result.steps)
+            scenario.copy(steps = withOpeningNote(result.steps, openingFacts))
         }
         return Triple(repaired, notices.distinct(), blocked.distinct())
     }
+
+    /**
+     * **여기까지 와야 시작한다**를 첫 스텝 앞에 적는다(ARTEL-636).
+     *
+     * 시나리오는 하나가 끝날 때마다 게임을 초기화하는데 검증하는 순간은 게임 곳곳에 흩어져 있다.
+     * 엔딩을 보는 시나리오는 매번 엔딩까지 다시 가야 한다. 첫 스텝이 `StagePosition >= 4` 를
+     * 요구하는데 아무 말도 없으면, 실행하는 쪽에게는 "알아서 네 번 이겨라"와 같다.
+     *
+     * **길을 찾아 주지는 않는다.** 무엇이 참이어야 시작하는지와 그 값이 어디서 오르는지만 적는다 —
+     * 어떻게 가는지는 실행하는 쪽과 지도가 풀 문제다.
+     *
+     * 그 시나리오가 **스스로 만드는 값은 빼고** 본다. 앞 스텝이 만들어 주는 것까지 "미리 와 있으라"
+     * 고 하면 할 수 있는 일을 못 하게 막는 셈이다.
+     */
+    private fun withOpeningNote(
+        steps: List<ChatScenarioStep>,
+        facts: OpeningFacts,
+    ): List<ChatScenarioStep> {
+        val first = steps.firstOrNull() ?: return steps
+        // 이미 붙어 있으면 다시 붙이지 않는다 — 재작성 턴이 같은 시나리오를 다시 낸다.
+        if (first.stepKind == ScenarioStepKind.OPENING) return steps
+        val note = ScenarioOpeningNote.of(openingNeeds(steps, facts)) ?: return steps
+        return listOf(
+            // 근거를 달지 않는다. 이 줄은 모델이 쓴 것이 아니라 **지도에서 계산한 것**이고,
+            // `CAPABILITY` 로 적으면 어느 기능인지를 대야 하는데 댈 것이 없다.
+            ChatScenarioStep(action = note, stepKind = ScenarioStepKind.OPENING)
+        ) + steps
+    }
+
+    /**
+     * 이 시나리오가 **스스로 만들지 못하는 요구**들(ARTEL-636).
+     *
+     * 그 값이 오르는 화면을 이 시나리오가 지나면 스스로 만드는 것이라 빼고 본다 — 앞 스텝이
+     * 만들어 주는 것까지 "미리 와 있으라"고 하면 할 수 있는 일을 못 하게 막는 셈이다.
+     *
+     * 진행을 요구하는 비교만 본다. `!= 5` 나 `== 0` 은 초기화 직후로도 성립할 수 있어 적을 것이
+     * 없고, 적으면 매 시나리오에 한 줄이 붙어 그 자체가 소음이 된다.
+     */
+    private fun openingNeeds(
+        steps: List<ChatScenarioStep>,
+        facts: OpeningFacts,
+    ): List<ScenarioOpeningNote.Requirement> {
+        val visited = steps.mapNotNull { it.caseId }.mapNotNull { facts.arrivesAt[it] }.toSet()
+        return steps.mapNotNull { it.caseId }
+            .flatMap { facts.guards[it].orEmpty() }
+            .filter { guard -> guard.operator in PROGRESS_OPERATORS }
+            .filter { guard -> (guard.value.toDoubleOrNull() ?: 0.0) > 0 }
+            .mapNotNull { guard ->
+                val raisedIn = facts.raisedIn[ScenarioStateReader.normalize(guard.path)].orEmpty()
+                // **어디서 오르는지 모르면 적지 않는다.** 찾아갈 실마리가 없는 안내는 "알아서
+                // 하라"와 같고, 그런 줄이 매 시나리오에 붙으면 그 자체가 소음이다 — 실측에서
+                // `position == 1`(방향키 한 번)에까지 붙었다.
+                if (raisedIn.isEmpty()) return@mapNotNull null
+                // 그 화면을 지나면 스스로 만든다. 적을 것이 없다.
+                if (raisedIn.any { it in visited }) return@mapNotNull null
+                ScenarioOpeningNote.Requirement(
+                    guard.variable, "${guard.operator} ${guard.value}", raisedIn,
+                )
+            }
+            // 같은 값을 여러 스텝이 요구하면 **가장 많이 요구하는 자리**만 적는다.
+            .groupBy { it.variable }
+            .map { (_, needs) -> needs.maxBy { it.comparison.filter(Char::isDigit).toIntOrNull() ?: 0 } }
+            .sortedBy { it.variable }
+    }
+
+    /** 자리를 말하면서 진행을 요구하는 비교. `!=` 는 한 점만 빼므로 어디인지 말하지 않는다. */
+    private val PROGRESS_OPERATORS = setOf("==", ">=", ">")
+
+    /**
+     * 시작 안내를 적는 데 필요한 사실들(ARTEL-636). 한 요청에 한 번 읽어 들고 다닌다 —
+     * 서비스에 두면 요청끼리 섞이고, 시나리오마다 다시 읽으면 같은 질의를 열 번 한다.
+     */
+    private data class OpeningFacts(
+        val guards: Map<Long, List<Guard>>,
+        val arrivesAt: Map<Long, String?>,
+        val raisedIn: Map<String, List<String>>,
+    )
+
+    /** 못 읽어도 저작을 세우지 않는다 — 그때는 안내가 안 붙을 뿐이다. */
+    private suspend fun openingFacts(projectId: Long, facts: List<ScenarioSiblingCheck.CaseFact>): OpeningFacts =
+        OpeningFacts(
+            guards = facts.associate { it.id to it.guards },
+            arrivesAt = runCatching {
+                testCaseRepository.findByProjectIdOrderByIdAsc(projectId).toList().associate { case ->
+                    case.id!! to runCatching { objectMapper.readTree(case.metadata.asString()) }
+                        .getOrNull()?.path("arrives_at")?.asText(null)?.takeIf { it.isNotBlank() }
+                }
+            }.getOrElse { emptyMap() },
+            raisedIn = runCatching {
+                testCaseRepository.findValueRaisers(projectId).toList()
+                    .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
+                    .mapValues { (_, scenes) -> scenes.distinct().sorted() }
+            }.getOrElse { emptyMap() },
+        )
 
     /**
      * **모른다고 적었는데 명세는 아는 길**인 자리를 찾는다(ARTEL-467).

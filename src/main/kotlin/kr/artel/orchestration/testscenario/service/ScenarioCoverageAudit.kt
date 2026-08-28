@@ -195,6 +195,10 @@ object ScenarioCoverageAudit {
                         "GAP은 UNKNOWN일 때만 쓴다(지금 $source)"
                     step.stepKind == ScenarioStepKind.GAP && step.caseId != null ->
                         "GAP은 케이스를 검증하지 않는다"
+                    // **시작 안내는 코드가 적는다**(ARTEL-636). 모델이 이 종류를 쓰면 아무 문장이나
+                    // 검사 밖으로 빠져나가므로, 케이스도 근거도 달지 못하게 막는다.
+                    step.stepKind == ScenarioStepKind.OPENING && step.caseId != null ->
+                        "OPENING은 케이스를 검증하지 않는다"
                     else -> null
                 }
                 if (reason != null) add(StepRef(scenarioIndex, stepIndex, reason))
