@@ -90,6 +90,9 @@ class TestCaseService(
         val changed = valuesChangedByCases(projectId)
         // **길은 우리가 찾지 않지만, 지도가 아는 것은 보낸다**(ARTEL-628).
         val exits = sceneExits(projectId)
+        // **어느 화면에서 움직이는 값인지 미리 말한다**(ARTEL-635). 거절하고 고치게 하는 것은
+        // 뒷수습이다 — 저작이 짤 때 알아야 스테이지를 안 깬 채로 지도를 활보하지 않는다.
+        val raisers = valueRaisers(projectId)
         return repository.findByProjectIdOrderByIdAsc(projectId).map { case ->
             AuthoringTestCase(
                 id = case.id!!,
@@ -100,7 +103,12 @@ class TestCaseService(
                 verificationStatus = case.verificationStatus,
                 // **문장이 아니라 구조에서 읽는다**(ARTEL-627).
                 stateBefore = conditions.guardsOf(case)
-                    .map { CaseGuard(it.variable, it.operator, it.value) },
+                    .map { guard ->
+                        CaseGuard(
+                            guard.variable, guard.operator, guard.value,
+                            raisedIn = raisers[ScenarioStateReader.normalize(guard.path)].orEmpty(),
+                        )
+                    },
                 // 케이스 메타가 먼저다 — 구버전 엑셀 경로로 들어온 행은 거기 답이 있다. 지도가 낸
                 // 행은 그 칸이 없어서 비어 오고, 그때 지도가 답한다(ARTEL-606).
                 stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
@@ -150,6 +158,18 @@ class TestCaseService(
      *
      * 못 읽으면 빈 map 이다. 길 안내가 없어도 저작은 돌아야 한다 — 그건 도움말이지 재료가 아니다.
      */
+    /**
+     * 값마다 **움직이는 화면들**(ARTEL-635).
+     *
+     * `+1` 같은 증감만 본다. 확정값(`0`)은 되돌리는 것이지 진행이 아니라, 그것까지 세면
+     * 타이틀 화면이 모든 값의 출처가 된다.
+     */
+    private suspend fun valueRaisers(projectId: Long): Map<String, List<String>> = runCatching {
+        repository.findValueRaisers(projectId).toList()
+            .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
+            .mapValues { (_, scenes) -> scenes.distinct().sorted() }
+    }.getOrElse { emptyMap() }
+
     private suspend fun sceneExits(projectId: Long): Map<String, List<SceneExit>> = runCatching {
         repository.findSceneExits(projectId).toList()
             .groupBy { it.fromScene }

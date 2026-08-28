@@ -3,6 +3,7 @@ package kr.artel.orchestration.testcase.repository
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.CaseWrite
 import kr.artel.orchestration.testcase.dto.SceneExitRow
+import kr.artel.orchestration.testcase.dto.ValueRaiser
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
@@ -293,4 +294,36 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
     )
     fun findWrittenValues(projectId: Long): Flow<String>
+
+    /**
+     * **그 값이 어느 화면에서 움직이나**(ARTEL-635).
+     *
+     * 저작이 받는 전제는 서로 똑같이 생겼다 — `position == 0` 과 `StagePosition >= 1` 은 한 줄로는
+     * 구별되지 않는다. 그런데 앞엣것은 방향키 한 번이고 뒤엣것은 **전투를 이겨야** 오른다.
+     *
+     * 그 차이를 지도는 안다(`TurnBattleScene` 의 `+1`). 안 보내고 있었을 뿐이고, 그래서 실측
+     * (런 184)에서 저작이 스테이지를 안 깬 채로 지도를 활보하는 시나리오를 냈다 — 첫 스텝이
+     * `>= 1` 을 요구하는데 그 값을 올리는 전투 진입은 **마지막 스텝**이었다. 순환이다.
+     *
+     * `+1` 같은 증감만 본다. 확정값(`0`)은 되돌리는 것이지 진행이 아니고, 그것까지 "여기서
+     * 오른다"고 말하면 타이틀 화면이 모든 값의 출처가 된다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT ce.target AS target, s.name AS scene
+        FROM scene s
+        JOIN capability c ON c.scene_id = s.id AND c.merged_into IS NULL
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind = 'write'
+        WHERE ce.target IS NOT NULL
+          AND ce.detail ~ '^[+-][0-9]'
+          AND s.content_map_id IN (
+              SELECT DISTINCT s2.content_map_id
+              FROM test_case tc
+              JOIN capability c2 ON c2.capability_key = tc.capability_key
+              JOIN scene s2 ON s2.id = c2.scene_id
+              WHERE tc.project_id = :projectId
+          )
+        """
+    )
+    fun findValueRaisers(projectId: Long): Flow<ValueRaiser>
 }

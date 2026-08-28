@@ -60,4 +60,14 @@ data class CaseGuard(
     val variable: String,
     val operator: String,
     val value: String,
+    /**
+     * 이 값이 **움직이는 화면들**(ARTEL-635).
+     *
+     * 전제는 서로 똑같이 생겼다 — `position == 0` 과 `StagePosition >= 1` 은 한 줄로 구별되지
+     * 않는다. 그런데 앞엣것은 방향키 한 번이고 뒤엣것은 **전투를 이겨야** 오른다.
+     *
+     * 비어 있으면 어디서 움직이는지 지도가 말하지 않는 것이다. 그때는 저작이 알아서 한다 —
+     * 없는 것을 있다고 하지 않는다.
+     */
+    @JsonProperty("raised_in") val raisedIn: List<String> = emptyList(),
 )
