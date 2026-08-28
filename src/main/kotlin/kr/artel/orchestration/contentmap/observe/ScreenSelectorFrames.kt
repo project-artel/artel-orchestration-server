@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Instant
 
 /**
- * 화면 판정 목록을 두고 orchestration 과 agent 가 주고받는 프레임 넷 (ARTEL-655).
+ * 화면 판정 목록을 두고 orchestration 과 agent 가 주고받는 프레임 다섯 (ARTEL-655 · ARTEL-668).
  *
  * **이 파일이 계약이다.** agent-server 쪽 구현(ARTEL-656 · ARTEL-657)이 읽을 산문 설명은
  * `docs/screen-selector-frames.md` 에 있고, 이 파일은 그 문서가 말하는 것의 실제 모양이다. 둘이
@@ -16,7 +16,15 @@ import java.time.Instant
  * AGENT_TO_ORCHE  SCREEN_SELECTOR_VERDICT    그 제안에 대한 답 (correlationId = 제안의 messageId)
  * AGENT_TO_ORCHE  SCREEN_SELECTOR_RULE       QA agent 의 tool 이 목록을 고친다
  * ORCHE_TO_AGENT  SCREEN_SELECTOR_RESULT     위 둘의 답 — 받아들인 항목과 거절한 항목
+ * ORCHE_TO_AGENT  SCREEN_SETTLED             관측이 확정한 화면을 알린다. 답이 없다
  * ```
+ *
+ * ## 다섯 번째가 여기 있는 이유
+ *
+ * [SETTLED] 는 목록을 묻지도 고치지도 않는데 같은 파일에 둔다. 그 프레임이 싣는
+ * `discriminator` 가 **이 목록이 만들어 낸 결과 그 자체**이기 때문이다 — 목록이 얇아 화면이
+ * 뭉쳤다는 것을 agent 가 보는 자리가 거기고, 그것을 보고 [RULE] 을 보내는 것이 ARTEL-657 이다.
+ * 계약을 두 파일로 가르면 그 왕복의 절반씩이 서로 다른 문서에 앉는다.
  *
  * ## 답은 목록 항목이지 화면 판정이 아니다
  *
@@ -54,6 +62,27 @@ object ScreenSelectorFrames {
      * 답인지는 payload 의 `type` 이 말한다.
      */
     const val RESULT = "SCREEN_SELECTOR_RESULT"
+
+    /**
+     * 관측이 화면을 확정했다는 통보. `ORCHE_TO_AGENT`. **답이 없다** (ARTEL-668).
+     *
+     * ## [PROPOSAL] 과 겸하지 않는다
+     *
+     * 겸하게 두었던 것이 이 프레임이 생긴 이유다. [PROPOSAL] 은 `(scene, selector)` 마다 평생 한
+     * 번만 나가고 `uk_screen_selector_proposal` 이 그것을 영구히 보장한다. 그래서 **이미 한 번
+     * 플레이한 빌드에서는 제안이 한 장도 안 나가고**, 거기 곁들여 실려 가던 화면 판정도 함께
+     * 사라진다. agent 는 런 내내 지도가 자기를 어느 화면이라고 부르는지 못 보고, 목록을 고치는
+     * tool 둘(ARTEL-657)은 부를 계기를 잃는다.
+     *
+     * 질문과 사실은 나가는 조건이 다르다. 질문은 물어볼 것이 새로 생겼을 때 한 번, 사실은 그
+     * 사실이 달라질 때마다다. 한 타입에 둘을 실으면 둘 중 드문 쪽의 조건이 이긴다.
+     *
+     * ## 화면이 바뀔 때만 나간다
+     *
+     * 실측 런의 `pulse` 가 14489 개이고 그 런이 남긴 화면은 3 행이다. `pulse` 마다 보내면 같은
+     * 말을 만 번 반복하면서 agent 의 컨텍스트를 채운다.
+     */
+    const val SETTLED = "SCREEN_SETTLED"
 
     val INBOUND = setOf(VERDICT, RULE)
 }
@@ -221,4 +250,24 @@ data class ScreenSelectorResultPayload(
     val accepted: List<ScreenSelectorAcceptedEntry> = emptyList(),
     val rejected: List<ScreenSelectorRejectedEntry> = emptyList(),
     @JsonProperty("folded_screens") val foldedScreens: Int = 0,
+)
+
+/**
+ * `SCREEN_SETTLED` 의 payload (ARTEL-668).
+ *
+ * 필드 철자를 [ScreenSelectorProposalPayload] 와 **일부러 같게** 두었다. agent-server 는
+ * 제안에서 이미 `scene` · `previous_screen` · `current_screen` 셋만 읽어 화면 판정을 그리고
+ * 있으므로(`app/qa/screen.py` 의 `ScreenMap.apply`), 같은 철자면 저쪽은 타입 하나를 라우터에
+ * 등록하는 것으로 끝난다. 새 이름을 지으면 같은 값을 두 번 읽는 코드가 저쪽에 한 벌 더 생긴다.
+ *
+ * @property currentScreen 방금 굳은 화면. **null 이 될 수 없다** — 굳지 않았으면 이 프레임이
+ *   나가지 않는다. 제안 쪽이 nullable 인 것은 아직 아무 화면도 안 굳은 시점에도 질문이 나가기
+ *   때문이고, 여기는 그 시점이 없다.
+ * @property previousScreen 이 화면 직전에 굳었던 화면. 런의 첫 화면이거나 서버가 재시작해
+ *   `fold` 상태를 잃었으면 null 이다.
+ */
+data class ScreenSettledPayload(
+    val scene: ScreenSelectorSceneRef,
+    @JsonProperty("previous_screen") val previousScreen: ScreenSelectorScreenRef? = null,
+    @JsonProperty("current_screen") val currentScreen: ScreenSelectorScreenRef,
 )

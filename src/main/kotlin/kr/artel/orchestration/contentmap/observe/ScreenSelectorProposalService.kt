@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
-import kr.artel.orchestration.contentmap.entity.ScreenEntity
 import kr.artel.orchestration.contentmap.entity.ScreenSelectorMatch
 import kr.artel.orchestration.contentmap.entity.ScreenSelectorProposalReason
 import kr.artel.orchestration.contentmap.entity.ScreenSelectorSource
@@ -14,8 +13,7 @@ import kr.artel.orchestration.contentmap.repository.SceneScreenSelectorRepositor
 import kr.artel.orchestration.contentmap.repository.ScreenRepository
 import kr.artel.orchestration.contentmap.repository.ScreenSelectorProposalRepository
 import kr.artel.orchestration.game.repository.GameInstanceRepository
-import kr.artel.orchestration.project.storage.DocumentStorage
-import kr.artel.orchestration.qa.service.QaScreenSelectorPort
+import kr.artel.orchestration.qa.service.QaScreenFramePort
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -85,8 +83,8 @@ class ScreenSelectorProposalService(
     private val contentMaps: ContentMapRepository,
     private val gameInstances: GameInstanceRepository,
     private val folds: ScreenFoldRegistry,
-    private val agent: QaScreenSelectorPort,
-    private val storage: DocumentStorage,
+    private val agent: QaScreenFramePort,
+    private val screenRefs: ScreenRefs,
     private val objectMapper: ObjectMapper,
     private val clock: Clock,
 ) {
@@ -150,8 +148,8 @@ class ScreenSelectorProposalService(
         val payload = ScreenSelectorProposalPayload(
             reason = context.reason.wire,
             scene = ScreenSelectorSceneRef(context.sceneId.toString(), context.sceneName),
-            previousScreen = screenRefOf(context.previousScreenId),
-            currentScreen = screenRefOf(context.currentScreenId),
+            previousScreen = screenRefs.of(context.previousScreenId),
+            currentScreen = screenRefs.of(context.currentScreenId),
             changes = context.changes.take(MAX_CHANGES_PER_PROPOSAL),
             candidates = claimed,
         )
@@ -175,29 +173,6 @@ class ScreenSelectorProposalService(
             "Unlisted selectors appeared in ${context.sceneName}: ${candidates.size} candidate(s)."
         ScreenSelectorProposalReason.SCENE_SCREEN_CAP ->
             "Scene ${context.sceneName} hit the screen cap; the selector list is too fine."
-    }
-
-    private suspend fun screenRefOf(screenId: Long?): ScreenSelectorScreenRef? {
-        val screen = screenId?.let { screens.findById(it) } ?: return null
-        val signed = screen.imageObjectKey?.let { storage.presignDownload(it, "screen-${screen.id}.jpg") }
-        return ScreenSelectorScreenRef(
-            screenId = screen.id.toString(),
-            name = screen.name,
-            discriminator = discriminatorOf(screen),
-            captureUrl = signed?.url,
-            captureExpiresAt = signed?.expiresAt,
-        )
-    }
-
-    private fun discriminatorOf(screen: ScreenEntity): List<ScreenDiscriminatorEntry> = try {
-        objectMapper.readValue(
-            screen.discriminator.asString(),
-            objectMapper.typeFactory.constructCollectionType(List::class.java, ScreenDiscriminatorEntry::class.java),
-        )
-    } catch (failure: Exception) {
-        // 화면 행 하나를 못 읽었다고 제안을 통째로 버리지 않는다. 후보와 캡처만으로도 답할 수 있다.
-        logger.warn("화면 {}의 discriminator 를 읽지 못했다: {}", screen.id, failure.message)
-        emptyList()
     }
 
     /**

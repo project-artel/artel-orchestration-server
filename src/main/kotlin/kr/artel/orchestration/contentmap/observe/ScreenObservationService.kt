@@ -37,8 +37,16 @@ import java.time.Clock
  *                                             → screen_capability (씬 목록의 부분집합)
  *                                             → screen_transition (관측만)
  *                                             → scene_edge (씬을 넘었으면 verified / runtime)
- *                                          └→ SCREEN_SELECTOR_PROPOSAL (목록 밖 selector, ARTEL-655)
+ *                                          ├→ SCREEN_SELECTOR_PROPOSAL (목록 밖 selector, ARTEL-655)
+ *                                          └→ SCREEN_SETTLED (화면이 바뀌었으면, ARTEL-668)
  * ```
+ *
+ * ## 확정한 화면은 물어보지 않아도 알린다
+ *
+ * 제안은 `(scene, selector)` 마다 평생 한 번뿐이라, 이미 한 번 플레이한 빌드에서는 한 장도 안
+ * 나간다. 그래서 화면이 굳었다는 **사실**은 제안과 별개의 프레임으로 나간다
+ * ([ScreenSettledService]) — agent 가 지도의 판정을 보고 목록을 고치는 tool 을 부르려면
+ * (ARTEL-657) 그 판정이 런마다 보여야 한다.
  *
  * ## 목록 밖은 무시하되 물어본다
  *
@@ -81,6 +89,7 @@ class ScreenObservationService(
     private val sceneEdges: SceneEdgeRepository,
     private val folds: ScreenFoldRegistry,
     private val selectorProposals: ScreenSelectorProposalService,
+    private val settledScreens: ScreenSettledService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock,
@@ -135,7 +144,7 @@ class ScreenObservationService(
         // **화면 행을 먼저 만들고 제안은 그 뒤에 보낸다** (ARTEL-655). 제안을 기다렸다가 앉히면
         // 답이 늦거나 안 오는 동안 관측이 통째로 사라진다. 행 없는 지도보다 나중에 합쳐지는 행이 낫다.
         val cappedScene = if (fold.settle(candidate)) {
-            settle(fold, candidate, sceneId, sceneName, contentMapId, sceneCapabilities, qaRun.id)
+            settle(gameInstanceId, fold, candidate, sceneId, sceneName, contentMapId, sceneCapabilities, qaRun.id)
         } else {
             false
         }
@@ -146,6 +155,7 @@ class ScreenObservationService(
      * 굳은 `discriminator` 를 화면 행으로 앉히고 전이를 남긴다. 씬이 상한에 걸렸으면 `true`.
      */
     private suspend fun settle(
+        gameInstanceId: Long,
         fold: ScreenFold,
         candidate: ScreenDiscriminator,
         sceneId: Long,
@@ -179,7 +189,16 @@ class ScreenObservationService(
             }
             screenId
         }
-        if (screenId != null) fold.confirm(candidate, screenId, sceneId)
+        if (screenId != null) {
+            fold.confirm(candidate, screenId, sceneId)
+            // **화면이 실제로 바뀐 관측에서만 알린다** (ARTEL-668). 지금 모양에서는 [ScreenFold.settle]
+            // 이 `discriminator` 가 달라졌을 때만 true 라 이 판정이 늘 참이지만, 조건으로 적어 둔다 —
+            // 굳히는 규칙이 바뀌어 같은 화면에서도 여기까지 오게 되면 실측 14489 개의 `pulse` 가
+            // 그대로 프레임 14489 개가 된다.
+            if (screenId != fromScreenId) {
+                settledScreens.announce(gameInstanceId, sceneId, sceneName, fold.previousScreenId, screenId)
+            }
+        }
         return capped
     }
 
