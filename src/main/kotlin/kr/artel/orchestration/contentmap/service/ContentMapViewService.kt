@@ -1,7 +1,6 @@
 package kr.artel.orchestration.contentmap.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.dto.ConditionNodeResponse
@@ -23,7 +22,6 @@ import kr.artel.orchestration.contentmap.dto.ScreenCapabilityResponse
 import kr.artel.orchestration.contentmap.dto.ScreenImageResponse
 import kr.artel.orchestration.contentmap.dto.SpecGapCountResponse
 import kr.artel.orchestration.contentmap.dto.VerificationResponse
-import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import kr.artel.orchestration.contentmap.entity.SceneEntity
@@ -89,14 +87,12 @@ class ContentMapViewService(
      * 것이다 — 안 보면 아무 프로젝트 id 나 넣어도 통과하고, 화면이 남의 프로젝트 빌드를 자기 것처럼
      * 보여 준다.
      *
-     * @param capture null 이면 가장 최근에 알게 된 capture 를 고른다. 값이 있는데 그 지도가 없으면
-     *   **폴백하지 않는다** — 폴백하면 화면이 editor 를 player 라고 그린다.
+     * **어느 지도를 볼지 고르지 않는다.** 빌드마다 지도가 하나라 고를 것이 없다(ARTEL-642).
      */
     suspend fun read(
         userId: Long,
         projectId: Long,
         gameBuildId: Long,
-        capture: Capture?,
     ): ContentMapResponse? {
         gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: return null
 
@@ -104,7 +100,7 @@ class ContentMapViewService(
         // "아직 스캔한 적이 없다"와 "눌렀는데 게임이 실패로 답했다"가 여기서 갈린다.
         val lastScan = scanStatuses.find(gameBuildId)?.let(LastScanResponse::of)
 
-        val contentMap = selectContentMap(gameBuildId, capture)
+        val contentMap = contentMaps.findByGameBuildId(gameBuildId)
             ?: return ContentMapResponse.EMPTY.copy(lastScan = lastScan)
         val contentMapId = contentMap.id!!
 
@@ -129,20 +125,6 @@ class ContentMapViewService(
             lastScan = lastScan,
         )
     }
-
-    /**
-     * 어느 지도를 볼 것인가.
-     *
-     * 기본값을 `updated_at` 이 아니라 id 로 고르는 이유: `content_map` 행은 같은 capture 를 다시
-     * 등록해도 갱신만 되므로, 시각으로 고르면 옛 capture 를 한 번 다시 올린 것만으로 기본값이
-     * 뒤집힌다. id 는 "언제 이 capture 를 처음 알았나"라 그렇게 흔들리지 않는다.
-     */
-    private suspend fun selectContentMap(gameBuildId: Long, capture: Capture?): ContentMapEntity? =
-        if (capture == null) {
-            contentMaps.findByGameBuildIdOrderByIdDesc(gameBuildId).firstOrNull()
-        } else {
-            contentMaps.findByGameBuildIdAndCapture(gameBuildId, capture.wire)
-        }
 
     /**
      * 씬과 그 상태 분포, 그리고 **무엇을 할 수 있는지의 목록.**

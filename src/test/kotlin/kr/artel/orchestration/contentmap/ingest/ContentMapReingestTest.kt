@@ -16,6 +16,8 @@ import kr.artel.orchestration.contentmap.entity.EdgeSource
 import kr.artel.orchestration.contentmap.entity.Interaction
 import kr.artel.orchestration.contentmap.entity.Observability
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
+import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.entity.SpecStatus
 import kr.artel.orchestration.contentmap.entity.VerificationState
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
@@ -106,6 +108,7 @@ class ContentMapReingestTest {
     private fun evidenceDocument(
         startGameConfidence: String = "verified",
         withOptions: Boolean = true,
+        capture: String = Capture.EDITOR.wire,
     ): String {
         val startGame = """
             {
@@ -194,7 +197,7 @@ class ContentMapReingestTest {
         return """
             {
               "schema": 6,
-              "capture": "editor",
+              "capture": "$capture",
               "capabilities": ["build-info-v1", "selector-v1", "visual-roles-v1"],
               "build": {
                 "unity": "2022.3.62f3", "platform": "OSXEditor", "backend": "mono",
@@ -249,6 +252,64 @@ class ContentMapReingestTest {
               "gaps": []
             }
         """
+    }
+
+    /**
+     * **capture 가 다른 두 문서가 같은 지도에 쌓이고 씬이 합쳐진다**(ARTEL-642).
+     *
+     * 지도가 빌드당 하나가 되면서 두 스캔 자리의 결과가 한 행에 모인다. 씬을 새로 만들지 않고
+     * 같은 행을 덮어쓰는 것이 요점이다 — 새로 만들면 그 씬에 매달린 화면과 관측이 갈라진 지도에
+     * 갇힌다.
+     *
+     * `capture` 는 사라지지 않고 씬으로 내려가 **마지막 walk 의 값**이 남는다. 그것이 지금 그 씬에
+     * 담긴 값의 출처이기 때문이다.
+     */
+    @Test
+    fun `capture 가 다른 두 문서가 한 지도에 쌓이고 씬이 합쳐진다`(): Unit = runBlocking {
+        val map = newContentMap()
+
+        ingestNew(map.id!!, evidenceDocument(capture = Capture.EDITOR.wire))
+        val afterEditor = scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList()
+        assertThat(afterEditor).singleElement().satisfies({
+            assertThat(it.name).isEqualTo("TitleScene")
+            assertThat(it.capture).isEqualTo(Capture.EDITOR.wire)
+            assertThat(it.origin).isEqualTo(SceneOrigin.EVIDENCE.wire)
+        })
+
+        ingestNew(map.id!!, evidenceDocument(capture = Capture.PLAYER.wire))
+        val afterPlayer = scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList()
+
+        assertThat(afterPlayer).singleElement().satisfies({
+            // 새 행이 아니라 같은 행이다. id 가 그것을 말한다.
+            assertThat(it.id).isEqualTo(afterEditor.single().id)
+            assertThat(it.capture).isEqualTo(Capture.PLAYER.wire)
+        })
+        assertThat(contentMaps.findByGameBuildId(map.gameBuildId)?.id).isEqualTo(map.id)
+    }
+
+    /**
+     * 관측이 만든 씬에 근거가 닿으면 `origin` 이 **evidence 로 올라간다.** 내려가지는 않는다.
+     *
+     * 근거가 확인해 준 씬을 계속 `observed` 로 두면, "정적 분석이 이 씬을 안다"와 "런타임에서만
+     * 봤다"가 구분되지 않는다. 반대 방향은 막을 필요가 없다 — 적재기가 origin 을 evidence 로만
+     * 쓴다.
+     */
+    @Test
+    fun `관측이 만든 씬이 근거로 확인되면 origin 이 올라간다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val observed = scenes.save(
+            SceneEntity(
+                contentMapId = map.id!!,
+                name = "TitleScene",
+                origin = SceneOrigin.OBSERVED.wire,
+            )
+        )
+
+        ingestNew(map.id!!, evidenceDocument())
+
+        val after = scenes.findById(observed.id!!)!!
+        assertThat(after.origin).isEqualTo(SceneOrigin.EVIDENCE.wire)
+        assertThat(after.capture).isEqualTo(Capture.EDITOR.wire)
     }
 
     // ---------- 픽스처 ----------
