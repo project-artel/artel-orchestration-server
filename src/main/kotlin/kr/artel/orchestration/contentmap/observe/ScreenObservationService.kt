@@ -4,11 +4,15 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.contentmap.entity.CapabilityEntity
+import kr.artel.orchestration.contentmap.entity.ScreenSelectorMatch
+import kr.artel.orchestration.contentmap.entity.ScreenSelectorSource
 import kr.artel.orchestration.contentmap.entity.TransitionKind
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
+import kr.artel.orchestration.contentmap.repository.SceneScreenSelectorRepository
 import kr.artel.orchestration.contentmap.repository.ScreenCapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ScreenRepository
 import kr.artel.orchestration.contentmap.repository.ScreenTransitionRepository
@@ -61,6 +65,7 @@ class ScreenObservationService(
     private val qaRuns: QaRunRepository,
     private val contentMaps: ContentMapRepository,
     private val scenes: SceneRepository,
+    private val screenSelectors: SceneScreenSelectorRepository,
     private val capabilities: CapabilityRepository,
     private val screens: ScreenRepository,
     private val screenCapabilities: ScreenCapabilityRepository,
@@ -133,9 +138,8 @@ class ScreenObservationService(
         val sceneId = scene.id ?: return
 
         val sceneCapabilities = capabilities.findBySceneIdOrderByIdAsc(sceneId).toList()
-        val controlSelectors = sceneCapabilities.mapNotNull { it.controlSelector }.toSet()
 
-        val candidate = fold.discriminate(controlSelectors)
+        val candidate = fold.discriminate(seededWhitelist(sceneId, sceneCapabilities))
         if (!fold.settle(candidate)) return
 
         val discriminatorJson = objectMapper.writeValueAsString(candidate.entries)
@@ -144,7 +148,9 @@ class ScreenObservationService(
         val screenId = transactionalOperator.executeAndAwait {
             val screenId = upsertScreen(sceneId, discriminatorJson, qaRun.id) ?: return@executeAndAwait null
 
-            val active = candidate.activeSelectors
+            // `discriminator` 가 아니라 `fold` 에서 읽는다 — 목록에 없는 컨트롤이라고 해서 그 화면이
+            // 그 기능을 제공하지 않은 것은 아니다([ScreenFold.activeSelectors]).
+            val active = fold.activeSelectors()
             for (capability in sceneCapabilities) {
                 if (capability.controlSelector !in active) continue
                 // firedIncrement 는 0 이다. 무엇을 눌렀는지는 ARTEL-450 이 알려 준다.
@@ -158,6 +164,56 @@ class ScreenObservationService(
         } ?: return
 
         fold.confirm(candidate, screenId, sceneId)
+    }
+
+    /**
+     * 이 씬의 목록을 낸다 — 저장된 항목에 `capability.control_selector` 씨앗을 심어서 (ARTEL-654).
+     *
+     * ## 왜 씨앗이 필요한가
+     *
+     * 목록이 비면 씬 전체가 화면 하나라서 초반 런의 지도가 쓸모없다. `control_selector` 는 정적
+     * 분석이 코드에서 뽑은 것이라 런타임에 스폰된 이름이 아니고, **정의상 조작할 수 있는 것들**
+     * 이다. 실측 빌드에서 capability 472 개 중 그 칸이 있는 것은 24 개로 얇지만 0 보다 낫다.
+     *
+     * ## 왜 마이그레이션만으로는 부족한가
+     *
+     * `V58__whitelist_screen_defining_selectors.sql` 은 **그때 있던** capability 만 심는다. 다음
+     * 빌드의 `evidence` 가 새 씬과 새 capability 를 만들면 그 씬은 목록이 비어 화면 하나가 된다.
+     * 그래서 런타임도 같은 씨앗을 심는다.
+     *
+     * ## 왜 캐시하지 않는가
+     *
+     * `screen` 의 식별 키(`uk_screen_discriminator`)가 런과 프로세스를 넘어 사는 값이므로 그 값을
+     * 만드는 규칙도 그래야 한다. 프로세스 메모리에 들면 서버 재시작·서버 두 대·사람이 목록을 고친
+     * 직후 — 셋 다에서 같은 화면이 다른 `discriminator` 로 앉아 행이 갈린다. `V56` 이 `fold` 상태를
+     * 믿지 않기로 한 것과 정확히 같은 판단이다.
+     *
+     * ## 쓰기 비용
+     *
+     * 새로 본 씨앗만 쓴다. 그 집합은 씬의 capability 수로 수렴하므로 몇 번의 `pulse` 뒤에는 늘 비고,
+     * 남는 것은 `SELECT` 하나다.
+     */
+    private suspend fun seededWhitelist(
+        sceneId: Long,
+        sceneCapabilities: List<CapabilityEntity>,
+    ): ScreenSelectorWhitelist {
+        val stored = screenSelectors.findBySceneIdOrderByIdAsc(sceneId).toList()
+        val seeded = stored.asSequence()
+            .filter { it.source == ScreenSelectorSource.STATIC_ANALYSIS.wire }
+            .filter { it.matchKind == ScreenSelectorMatch.SELECTOR.wire }
+            .map { it.pattern }
+            .toSet()
+        val fresh = sceneCapabilities.mapNotNull { it.controlSelector }
+            .filter { it.isNotBlank() && it !in seeded }
+            .toSet()
+        if (fresh.isEmpty()) return ScreenSelectorWhitelist(stored.mapNotNull { it.toRule() })
+
+        for (pattern in fresh) screenSelectors.seedFromControlSelector(sceneId, pattern)
+        // 심은 뒤 다시 읽는다. 항목의 id 가 우선순위의 마지막 못이라(`ScreenSelectorWhitelist.defines`)
+        // 메모리에서 지어낸 행으로 대신하면 그 못이 DB 와 다른 값을 갖는다.
+        return ScreenSelectorWhitelist(
+            screenSelectors.findBySceneIdOrderByIdAsc(sceneId).toList().mapNotNull { it.toRule() }
+        )
     }
 
     /**
@@ -243,9 +299,13 @@ class ScreenObservationService(
          * 여기 걸린다는 것은 `discriminator` 가 너무 민감하다는 뜻이다. 상한이 없으면 그 사실이 조용히
          * 수만 행과 행마다 튀는 캡처로만 드러나고, 그때는 이미 다이어그램이 읽을 수 없다.
          *
-         * 32 는 "사람이 한 씬에서 구분해 부를 수 있는 화면"의 넉넉한 상한이다. 실측 근거는
-         * 아직 없다 — 화면을 만드는 코드가 지금까지 없었다. 첫 런들의 씬별 화면 수를 보고
-         * 조정할 값이고, 그 조정은 상한이 아니라 `discriminator` 규칙 쪽이어야 한다.
+         * 32 는 "사람이 한 씬에서 구분해 부를 수 있는 화면"의 넉넉한 상한이다.
+         *
+         * **첫 실측이 이 주석의 예상대로 왔다.** `artel_integration` 의 `TurnBattleScene` 이 29행까지
+         * 올라 이 값에 닿기 직전이었고, 고칠 자리는 상한이 아니라 `discriminator` 규칙 쪽이었다 —
+         * 화면 판정에 쓸 selector 를 목록으로 두자 같은 관측이 2행으로 접혔다(ARTEL-654,
+         * [seededWhitelist]). 32 는 그대로 둔다. 여기 다시 걸리면 그때도 먼저 의심할 것은 목록에 든
+         * 항목이 너무 넓은가다.
          */
         const val MAX_SCREENS_PER_SCENE = 32
 

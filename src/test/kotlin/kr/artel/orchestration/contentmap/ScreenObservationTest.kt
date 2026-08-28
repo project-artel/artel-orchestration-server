@@ -13,12 +13,18 @@ import kr.artel.orchestration.contentmap.entity.EdgeSource
 import kr.artel.orchestration.contentmap.entity.Interaction
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
 import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.SceneScreenSelectorEntity
+import kr.artel.orchestration.contentmap.entity.ScreenSelectorMatch
+import kr.artel.orchestration.contentmap.entity.ScreenSelectorSource
 import kr.artel.orchestration.contentmap.entity.TransitionKind
 import kr.artel.orchestration.contentmap.observe.ScreenObservationService
+import kr.artel.orchestration.contentmap.observe.ScreenSelectorWhitelist
+import kr.artel.orchestration.contentmap.observe.toRule
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
+import kr.artel.orchestration.contentmap.repository.SceneScreenSelectorRepository
 import kr.artel.orchestration.contentmap.repository.ScreenCapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ScreenRepository
 import kr.artel.orchestration.contentmap.repository.ScreenTransitionRepository
@@ -67,6 +73,7 @@ class ScreenObservationTest {
     @Autowired private lateinit var qaRuns: QaRunRepository
     @Autowired private lateinit var contentMaps: ContentMapRepository
     @Autowired private lateinit var scenes: SceneRepository
+    @Autowired private lateinit var screenSelectors: SceneScreenSelectorRepository
     @Autowired private lateinit var capabilities: CapabilityRepository
     @Autowired private lateinit var screens: ScreenRepository
     @Autowired private lateinit var screenCapabilities: ScreenCapabilityRepository
@@ -99,9 +106,12 @@ class ScreenObservationTest {
     /**
      * 화면은 자기 기능 목록을 따로 갖지 않는다. 두 벌 두면 갈라진다.
      *
-     * `pulse` 가 `offers` 로 광고한 객체는 `discriminator` 에는 들어가지만(`evidence` 가 놓친 팝업을 가르는 유일한
-     * 수단이다) `screen_capability` 에는 들어가지 않는다 — 그 표의 행은 **씬 기능 행**을 가리키고,
-     * 없는 기능을 여기서 만들면 근거 없는 것이 근거 있는 것처럼 취급된다.
+     * `pulse` 가 `offers` 로 광고한 객체는 `screen_capability` 에 들어가지 않는다 — 그 표의 행은
+     * **씬 기능 행**을 가리키고, 없는 기능을 여기서 만들면 근거 없는 것이 근거 있는 것처럼
+     * 취급된다.
+     *
+     * `discriminator` 에도 들어가지 않는다(ARTEL-654). SDK 가 광고한다는 것은 "지금 무엇에
+     * 응답하는가" 이지 "이것이 화면을 식별한다" 가 아니다.
      */
     @Test
     fun `화면 기능이 씬 기능 목록의 부분집합이다`(): Unit = runBlocking {
@@ -110,7 +120,7 @@ class ScreenObservationTest {
         val continueId = newCapability(world, title, CONTINUE)
         newCapability(world, title, "Canvas[2]/settings[3]")
 
-        // continue 는 켜져 있고, settings 는 꺼져 있고, popup 은 `evidence` 에 없는데 `pulse` 가 광고한다.
+        // continue 는 켜져 있고, settings 는 꺼져 있고, popup 은 목록에 없는데 `pulse` 가 광고한다.
         observeTwice(
             world,
             whole(
@@ -132,8 +142,8 @@ class ScreenObservationTest {
         // ARTEL-450 이 없어 무엇을 눌렀는지 모른다. 0 이 정직한 값이다.
         assertThat(recorded.single().firedCount).isZero()
 
-        // popup 은 `discriminator` 에는 있다 — 그래야 팝업이 뜬 화면과 아닌 화면이 갈린다.
-        assertThat(read(screen.discriminator)).contains("Canvas[2]/popup[7]" to true)
+        // popup 은 목록에 없으므로 `discriminator` 에도 없다. 그것을 가르고 싶으면 목록에 넣는다.
+        assertThat(read(screen.discriminator).map { it.first }).doesNotContain("Canvas[2]/popup[7]")
     }
 
     /**
@@ -325,6 +335,212 @@ class ScreenObservationTest {
         assertThat(screens.findBySceneIdOrderByIdAsc(title).toList()).isEmpty()
     }
 
+    // ---------- 목록 (ARTEL-654) ----------
+
+    /**
+     * **기본값이 뒤집힌 자리다.** 목록에 없는 selector 는 처음 보는 것이어도 화면을 못 가른다.
+     *
+     * 여기가 깨지면 화면 수가 실제 상태 수가 아니라 **플레이 길이**에 비례한다. 실측
+     * `TurnBattleScene` 이 그래서 29행이었고 `MAX_SCREENS_PER_SCENE` 32 코앞이었다.
+     */
+    @Test
+    fun `목록에 없는 selector 는 처음 보는 것이어도 화면을 안 가른다`(): Unit = runBlocking {
+        val world = newWorld()
+        val title = newScene(world, "TitleScene")
+        newCapability(world, title, CONTINUE)
+
+        // 목록에 없는 것이 매번 다른 이름으로 들어온다. 이름에 카운터를 넣는 게임이 이 모양이다.
+        observeTwice(world, offeringPulse("TitleScene", listOf(CONTINUE to true, "agent(1)[0]" to true)))
+        observeTwice(world, offeringPulse("TitleScene", listOf(CONTINUE to true, "agent(2)[0]" to true)))
+        observeTwice(world, offeringPulse("TitleScene", listOf(CONTINUE to true, "agent(3)[0]" to false)))
+
+        val rows = screens.findBySceneIdOrderByIdAsc(title).toList()
+        assertThat(rows).hasSize(1)
+        assertThat(read(rows.single().discriminator)).containsExactly(CONTINUE to true)
+        // 세 번 왔지만 화면은 한 번 앉았고, 그 뒤로는 재방문조차 아니다 — 계속 같은 화면에 머물렀다.
+        assertThat(rows.single().observedCount).isEqualTo(1)
+    }
+
+    /**
+     * 목록이 빈 씬은 화면이 하나다. **오류가 아니다.**
+     *
+     * 가를 근거가 하나도 없는데 가르는 것보다 맞다. 씨앗(`capability.control_selector`)이 이 상태를
+     * 드물게 만들지만, 씨앗이 하나도 없는 씬은 정상적으로 화면 하나로 산다.
+     */
+    @Test
+    fun `목록이 빈 씬은 화면이 하나다`(): Unit = runBlocking {
+        val world = newWorld()
+        val title = newScene(world, "TitleScene")
+        // capability 를 하나도 만들지 않는다 — 씨앗이 없다.
+
+        observeTwice(world, offeringPulse("TitleScene", listOf(CONTINUE to true)))
+        observeTwice(world, offeringPulse("TitleScene", listOf(CONTINUE to false)))
+
+        val rows = screens.findBySceneIdOrderByIdAsc(title).toList()
+        assertThat(rows).hasSize(1)
+        assertThat(read(rows.single().discriminator)).isEmpty()
+    }
+
+    /** 씨앗은 `capability.control_selector` 다. 원문 하나를 가리키는 `selector` 항목으로 심는다. */
+    @Test
+    fun `capability 의 control_selector 가 목록의 씨앗으로 들어간다`(): Unit = runBlocking {
+        val world = newWorld()
+        val title = newScene(world, "TitleScene")
+        newCapability(world, title, CONTINUE)
+
+        observeTwice(world, offeringPulse("TitleScene", listOf(CONTINUE to true)))
+
+        val seeded = screenSelectors.findBySceneIdOrderByIdAsc(title).toList()
+        assertThat(seeded).hasSize(1)
+        assertThat(seeded.single().pattern).isEqualTo(CONTINUE)
+        assertThat(seeded.single().matchKind).isEqualTo(ScreenSelectorMatch.SELECTOR.wire)
+        assertThat(seeded.single().source).isEqualTo(ScreenSelectorSource.STATIC_ANALYSIS.wire)
+        assertThat(seeded.single().screenDefining).isTrue
+
+        // 다시 관측해도 행이 늘지 않는다. 멱등을 `uk_scene_screen_selector` 가 강제한다.
+        observeTwice(world, offeringPulse("TitleScene", listOf(CONTINUE to false)))
+        assertThat(screenSelectors.findBySceneIdOrderByIdAsc(title).toList()).hasSize(1)
+    }
+
+    /**
+     * 목록에서 뺀 컨트롤도 `screen_capability` 에는 남는다.
+     *
+     * 두 표가 다른 질문에 답한다 — `discriminator` 는 "무엇이 이 화면을 식별하나", `screen_capability`
+     * 는 "이 화면에서 무엇을 할 수 있었나" 다. 목록을 손대는 것이 두 번째 답을 조용히 지우면,
+     * 화면 판정을 고치려던 사람이 커버리지 기록을 함께 지운다.
+     */
+    @Test
+    fun `목록에서 뺀 컨트롤도 screen_capability 에는 남는다`(): Unit = runBlocking {
+        val world = newWorld()
+        val title = newScene(world, "TitleScene")
+        val spinner = "Canvas[2]/spinner[0]"
+        val continueId = newCapability(world, title, CONTINUE)
+        val spinnerId = newCapability(world, title, spinner)
+        // 사람이 spinner 를 화면 판정에서 뺀다. 늘 켜져 있어 가르는 데 쓸모가 없다는 판단이다.
+        excludeByHuman(title, spinner)
+
+        observeTwice(world, offeringPulse("TitleScene", listOf(CONTINUE to true, spinner to true)))
+
+        val screen = screens.findBySceneIdOrderByIdAsc(title).toList().single()
+        assertThat(read(screen.discriminator)).containsExactly(CONTINUE to true)
+        assertThat(screenCapabilities.findByScreenId(screen.id!!).toList().map { it.capabilityId })
+            .containsExactlyInAnyOrder(continueId, spinnerId)
+    }
+
+    /**
+     * **실측을 못으로 박는다.** `artel_integration` 의 `TurnBattleScene` 화면 29행은 같은 씬을 29번
+     * 다르게 적은 것이었다. selector 도 combine panel 의 세 상태도 그 행들에서 그대로 가져왔다.
+     *
+     * 목록을 씨앗(`control_selector` 셋)만으로 두면 화면은 **둘**이다. 씨앗이 combine 확정 버튼의
+     * 켜짐/꺼짐만 담고 있어서, combine panel 이 열렸는지는 못 가른다.
+     */
+    @Test
+    fun `씨앗만으로도 실측 TurnBattleScene 이 화면 둘로 접힌다`(): Unit = runBlocking {
+        val world = newWorld()
+        val battle = newScene(world, "TurnBattleScene")
+        for (selector in SEEDED_BATTLE_CONTROLS) newCapability(world, battle, selector)
+
+        observeBattle(world)
+
+        val rows = screens.findBySceneIdOrderByIdAsc(battle).toList()
+        assertThat(rows).hasSize(2)
+        assertThat(rows.map { read(it.discriminator) }).containsExactly(
+            listOf(
+                "CombineSystem[7]/CombineButton[0]" to true,
+                "CombineSystem[7]/CombineZone[1]/Button[2]" to false,
+                "DebugCanvas[4]/TurnEndButton[0]" to true,
+            ),
+            listOf(
+                "CombineSystem[7]/CombineButton[0]" to true,
+                "CombineSystem[7]/CombineZone[1]/Button[2]" to true,
+                "DebugCanvas[4]/TurnEndButton[0]" to true,
+            ),
+        )
+    }
+
+    /**
+     * 실제로 화면을 가르는 넷을 목록에 넣으면 화면이 **셋**이다 — combine panel 닫힘 · 열림 ·
+     * 확정 가능.
+     *
+     * 그 넷은 실측에서 화면마다 `active` 가 달랐던 selector 다. 둘이 `Zone1` 과 `Zone2` 인 것이
+     * 이름만 보고 깎으면 안 되는 이유이기도 하다 — 끝자리가 숫자지만 서로 다른 오브젝트다.
+     */
+    @Test
+    fun `화면을 가르는 넷을 목록에 넣으면 실측이 화면 셋으로 접힌다`(): Unit = runBlocking {
+        val world = newWorld()
+        val battle = newScene(world, "TurnBattleScene")
+        for (selector in SPLITTING_BATTLE_CONTROLS) newCapability(world, battle, selector)
+
+        observeBattle(world)
+
+        val rows = screens.findBySceneIdOrderByIdAsc(battle).toList()
+        assertThat(rows).hasSize(3)
+        assertThat(rows.map { row -> read(row.discriminator).map { it.second } }).containsExactly(
+            listOf(false, false, false, false),
+            listOf(true, false, true, true),
+            listOf(true, true, true, true),
+        )
+        // 손패가 통째로 갈렸어도 평시 전투로 돌아온 것은 **재방문**이다.
+        assertThat(rows.first().observedCount).isEqualTo(2)
+    }
+
+    /**
+     * **Kotlin 과 SQL 이 같은 결과를 낸다.**
+     *
+     * 목록은 `discriminator` 를 만드는 Kotlin 과 소급 처리를 하는 SQL 양쪽에서 평가된다. 한쪽에서만
+     * 맞는 항목이 하나 생기면 같은 화면이 두 `discriminator` 로 갈리고, `uk_screen_discriminator` 가
+     * 막으려던 분열이 목록 쪽에서 다시 열린다.
+     *
+     * 실측 `TurnBattleScene` 의 selector 전부를 세 대상 · 세 출처 · 제외 항목이 섞인 목록에 통과시켜
+     * 양쪽을 맞대 본다.
+     */
+    @Test
+    fun `목록 적용이 Kotlin 과 SQL 에서 같은 결과를 낸다`(): Unit = runBlocking {
+        val world = newWorld()
+        val battle = newScene(world, "TurnBattleScene")
+
+        val rules = listOf(
+            Triple(ScreenSelectorMatch.SELECTOR, "DebugCanvas[4]/TurnEndButton[0]", ScreenSelectorSource.STATIC_ANALYSIS) to true,
+            Triple(ScreenSelectorMatch.SELECTOR, "CombineSystem[7]/CombineButton[0]", ScreenSelectorSource.STATIC_ANALYSIS) to true,
+            Triple(ScreenSelectorMatch.PATH, "Card(Clone)", ScreenSelectorSource.AGENT) to true,
+            Triple(ScreenSelectorMatch.PATH, "Word", ScreenSelectorSource.HUMAN) to false,
+            Triple(ScreenSelectorMatch.SUBTREE, "CombineSystem/CombineZone", ScreenSelectorSource.AGENT) to true,
+            // 넓은 항목에 낸 구멍. 같은 출처 안에서 좁은 것이 이긴다.
+            Triple(ScreenSelectorMatch.PATH, "CombineSystem/CombineZone/Zone2", ScreenSelectorSource.AGENT) to false,
+            // 사람이 agent 를 이긴다. `Zone1` 은 다시 들어온다.
+            Triple(ScreenSelectorMatch.PATH, "CombineSystem/CombineZone/Zone1", ScreenSelectorSource.AGENT) to false,
+            Triple(ScreenSelectorMatch.PATH, "CombineSystem/CombineZone/Zone1", ScreenSelectorSource.HUMAN) to true,
+            // 어느 것에도 안 맞는 항목. 아무 일도 하지 않아야 한다.
+            Triple(ScreenSelectorMatch.SUBTREE, "CombineSystem/CombineZone/Zone", ScreenSelectorSource.HUMAN) to true,
+        )
+        for ((target, defining) in rules) {
+            val (match, pattern, source) = target
+            screenSelectors.save(
+                SceneScreenSelectorEntity(
+                    sceneId = battle,
+                    matchKind = match.wire,
+                    pattern = pattern,
+                    source = source.wire,
+                    screenDefining = defining,
+                )
+            )
+        }
+
+        val whitelist = ScreenSelectorWhitelist(
+            screenSelectors.findBySceneIdOrderByIdAsc(battle).toList().mapNotNull { it.toRule() }
+        )
+
+        val disagreed = OBSERVED_BATTLE_SELECTORS.filter { selector ->
+            whitelist.defines(selector) != screenDefiningInSql(battle, selector)
+        }
+        assertThat(disagreed).isEmpty()
+        // 양쪽이 "전부 false" 로 사이좋게 틀리는 것도 통과할 수 있으니, 실제로 갈렸는지 본다.
+        assertThat(OBSERVED_BATTLE_SELECTORS.filter { whitelist.defines(it) })
+            .isNotEmpty
+            .doesNotContain("Word[12]", "CombineSystem[7]/CombineZone[1]/Zone2[1]")
+            .contains("CombineSystem[7]/CombineZone[1]/Zone1[0]", "Card(Clone)[37]")
+    }
+
     // ---------- 픽스처 ----------
 
     private data class World(val gameInstanceId: Long, val contentMapId: Long)
@@ -356,6 +572,19 @@ class ScreenObservationTest {
 
     private fun offering(selector: String) =
         """{"selector":"$selector","offers":{"click":{"key":"click"}}}"""
+
+    /**
+     * `pulse` 한 장. 실린 객체는 켜짐/꺼짐과 무관하게 전부 `offers` 를 단다 — 실측에서 스폰된 적은
+     * 꺼진 채로도 SDK 가 조작 가능하다고 광고했다. 목록 밖이면 그래도 `discriminator` 에 안 들어간다.
+     */
+    private fun offeringPulse(scene: String, objects: List<Pair<String, Boolean>>): String {
+        val active = objects.filter { it.second }.joinToString(",") { offering(it.first) }
+        val deactive = objects.filterNot { it.second }.joinToString(",") { offering(it.first) }
+        return """
+            {"type":"PULSE","schema":2,"scene":"$scene","whole":true,
+             "active":[$active],"deactive":[$deactive]}
+        """.trimIndent()
+    }
 
     /** 값과 잡 오브젝트만 흔들리는 `pulse`. 컨트롤은 계속 켜져 있다. */
     private fun battleReading(turn: Int, extras: List<String>): String {
@@ -416,6 +645,75 @@ class ScreenObservationTest {
         return World(instance.id!!, contentMap.id!!)
     }
 
+    /** 사람이 이 selector 를 화면 판정에서 뺀다. `screen_defining=false` 가 명시적 제외다. */
+    private suspend fun excludeByHuman(sceneId: Long, selector: String) {
+        screenSelectors.save(
+            SceneScreenSelectorEntity(
+                sceneId = sceneId,
+                matchKind = ScreenSelectorMatch.SELECTOR.wire,
+                pattern = selector,
+                source = ScreenSelectorSource.HUMAN.wire,
+                screenDefining = false,
+            )
+        )
+    }
+
+    /** SQL 쪽 평가. `V58` 이 만든 함수를 그대로 부른다. */
+    private suspend fun screenDefiningInSql(sceneId: Long, selector: String): Boolean =
+        db.sql("SELECT screen_defining_selector(:sceneId, :selector) AS defining")
+            .bind("sceneId", sceneId)
+            .bind("selector", selector)
+            .map { row, _ -> row.get("defining", java.lang.Boolean::class.java)!!.booleanValue() }
+            .one()
+            .block()!!
+
+    /**
+     * 실측 `TurnBattleScene` 한 바퀴 (`artel_integration`, 2026-08-28).
+     *
+     * 평시 전투 → combine panel 열림 → combine 확정 가능 → 다시 평시 전투. 손패와 적 인스턴스는
+     * 매번 완전히 다른 index 로 갈아탄다.
+     */
+    private suspend fun observeBattle(world: World) {
+        observeTwice(world, battlePulse(combineZone = false, confirm = false, cardIndices = listOf(16, 17, 31, 32, 33, 34, 35, 36), enemyBase = 21))
+        observeTwice(world, battlePulse(combineZone = true, confirm = false, cardIndices = listOf(37, 38, 39), enemyBase = 28))
+        observeTwice(world, battlePulse(combineZone = true, confirm = true, cardIndices = listOf(40), enemyBase = 35))
+        observeTwice(world, battlePulse(combineZone = false, confirm = false, cardIndices = (41..50).toList(), enemyBase = 42))
+    }
+
+    /**
+     * 실측 `TurnBattleScene` 한 장.
+     *
+     * selector 는 실제 행에서 그대로 가져왔고, 흔드는 것은 실제로 흔들렸던 것만이다 — 손패 카드의
+     * index, 적 인스턴스의 index, 그리고 combine panel 의 세 상태. 적이 대부분 꺼진 채인 것도 실측
+     * 그대로다: 스폰되자마자 풀에 들어가고, `BossFlower(Clone)` 은 한 번도 켜진 적이 없다.
+     */
+    private fun battlePulse(
+        combineZone: Boolean,
+        confirm: Boolean,
+        cardIndices: List<Int>,
+        enemyBase: Int,
+    ): String {
+        val controls = listOf(
+            "CardSystem[6]/CardManager[3]" to true,
+            "CombineSystem[7]/CombineButton[0]" to true,
+            "CombineSystem[7]/CombineZone[1]" to combineZone,
+            "CombineSystem[7]/CombineZone[1]/Button[2]" to confirm,
+            "CombineSystem[7]/CombineZone[1]/Zone1[0]" to combineZone,
+            "CombineSystem[7]/CombineZone[1]/Zone2[1]" to combineZone,
+            "DebugCanvas[4]/TurnEndButton[0]" to true,
+            "Word[12]" to true,
+        )
+        val cards = cardIndices.map { "Card(Clone)[$it]" to true }
+        val enemies = (enemyBase until enemyBase + 7).flatMap { index ->
+            listOf(
+                "MeleeRock(Clone)[$index]" to (index == enemyBase),
+                "RangedCat(Clone)[$index]" to false,
+                "BossFlower(Clone)[$index]" to false,
+            )
+        }
+        return offeringPulse("TurnBattleScene", controls + cards + enemies)
+    }
+
     private suspend fun newScene(world: World, name: String): Long =
         scenes.save(SceneEntity(contentMapId = world.contentMapId, name = name, walked = true)).id!!
 
@@ -442,6 +740,77 @@ class ScreenObservationTest {
     private fun read(discriminator: Json): List<Pair<String, Boolean>> =
         ObjectMapper().readTree(discriminator.asString())
             .map { it.path("selector").asText() to it.path("active").asBoolean() }
+
+    /** 실측 빌드에서 `TurnBattleScene` 의 capability 가 지목한 컨트롤. 목록의 씨앗이 이 셋이다. */
+    private val SEEDED_BATTLE_CONTROLS = listOf(
+        "CombineSystem[7]/CombineButton[0]",
+        "CombineSystem[7]/CombineZone[1]/Button[2]",
+        "DebugCanvas[4]/TurnEndButton[0]",
+    )
+
+    /**
+     * 실측 화면 29행에서 **실제로 화면을 가른** selector 넷. 29행 전부에 실려 있으면서 `active` 가
+     * 행마다 달랐던 것이 이 넷뿐이다.
+     */
+    private val SPLITTING_BATTLE_CONTROLS = listOf(
+        "CombineSystem[7]/CombineZone[1]",
+        "CombineSystem[7]/CombineZone[1]/Button[2]",
+        "CombineSystem[7]/CombineZone[1]/Zone1[0]",
+        "CombineSystem[7]/CombineZone[1]/Zone2[1]",
+    )
+
+    /** 실측 `TurnBattleScene` 화면 29행의 `discriminator` 에 등장한 selector 전부. */
+    private val OBSERVED_BATTLE_SELECTORS = listOf(
+        "BossFlower(Clone)[26]",
+        "BossFlower(Clone)[27]",
+        "BossFlower(Clone)[28]",
+        "BossFlower(Clone)[29]",
+        "BossFlower(Clone)[30]",
+        "BossFlower(Clone)[31]",
+        "BossFlower(Clone)[32]",
+        "Card(Clone)[16]",
+        "Card(Clone)[17]",
+        "Card(Clone)[31]",
+        "Card(Clone)[32]",
+        "Card(Clone)[33]",
+        "Card(Clone)[34]",
+        "Card(Clone)[35]",
+        "Card(Clone)[36]",
+        "Card(Clone)[37]",
+        "Card(Clone)[38]",
+        "Card(Clone)[39]",
+        "Card(Clone)[40]",
+        "Card(Clone)[41]",
+        "Card(Clone)[42]",
+        "Card(Clone)[43]",
+        "Card(Clone)[44]",
+        "Card(Clone)[45]",
+        "Card(Clone)[46]",
+        "Card(Clone)[47]",
+        "Card(Clone)[48]",
+        "CardSystem[6]/CardManager[3]",
+        "CombineSystem[7]/CombineButton[0]",
+        "CombineSystem[7]/CombineZone[1]",
+        "CombineSystem[7]/CombineZone[1]/Button[2]",
+        "CombineSystem[7]/CombineZone[1]/Zone1[0]",
+        "CombineSystem[7]/CombineZone[1]/Zone2[1]",
+        "DebugCanvas[4]/TurnEndButton[0]",
+        "MeleeRock(Clone)[21]",
+        "MeleeRock(Clone)[22]",
+        "MeleeRock(Clone)[23]",
+        "MeleeRock(Clone)[24]",
+        "MeleeRock(Clone)[25]",
+        "MeleeRock(Clone)[26]",
+        "MeleeRock(Clone)[27]",
+        "RangedCat(Clone)[16]",
+        "RangedCat(Clone)[17]",
+        "RangedCat(Clone)[18]",
+        "RangedCat(Clone)[19]",
+        "RangedCat(Clone)[20]",
+        "RangedCat(Clone)[21]",
+        "RangedCat(Clone)[22]",
+        "Word[12]",
+    )
 
     private fun newUser(): Long =
         db.sql("INSERT INTO app_user (display_name) VALUES ('screen') RETURNING id")

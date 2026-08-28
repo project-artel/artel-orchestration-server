@@ -369,3 +369,45 @@ enum class Applicability(val wire: String) {
         fun from(wire: String?): Applicability? = entries.firstOrNull { it.wire == wire }
     }
 }
+
+/**
+ * `scene_screen_selector` 항목이 가리키는 대상 (ARTEL-654).
+ *
+ * 셋 다 **정확 문자열**로 맞댄다. 정규식을 저장하지 않는 이유는
+ * `V58__whitelist_screen_defining_selectors.sql` 의 1절에 있다.
+ *
+ * [specificity] 는 우선순위의 두 번째 축이다 — 같은 출처 안에서는 좁은 것이 넓은 것을 이긴다.
+ * 값 자체에 뜻은 없고 순서만 뜻이 있으며, SQL 쪽 `screen_defining_selector` 의 `CASE` 와 같은
+ * 순서여야 한다.
+ */
+enum class ScreenSelectorMatch(val wire: String, val specificity: Int) {
+    /** selector 원문 하나. `Card(Clone)[37]` 은 `Card(Clone)[38]` 에 맞지 않는다. */
+    SELECTOR("selector", 3),
+
+    /** 형제 index 를 지운 경로 하나(`ScreenFold` 의 `indexFreePathOf` 와 같은 정규화). */
+    PATH("path", 2),
+
+    /** 그 경로와 그 아래 전부. **마디 경계**로만 맞는다 — `contains` 로 하면 `Zone1` 이 `SomeZone1Extra` 에 걸린다. */
+    SUBTREE("subtree", 1);
+
+    companion object {
+        fun from(wire: String?): ScreenSelectorMatch? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * `scene_screen_selector` 항목을 누가 썼나 (ARTEL-654).
+ *
+ * [rank] 가 우선순위의 첫 번째 축이다 — 사람이 agent 를 이기고 agent 가 정적 분석을 이긴다.
+ * SQL 쪽 `screen_defining_selector` 의 `CASE` 와 같은 순서여야 한다.
+ */
+enum class ScreenSelectorSource(val wire: String, val rank: Int) {
+    /** `capability.control_selector` 에서 온 씨앗. */
+    STATIC_ANALYSIS("static-analysis", 1),
+    AGENT("agent", 2),
+    HUMAN("human", 3);
+
+    companion object {
+        fun from(wire: String?): ScreenSelectorSource? = entries.firstOrNull { it.wire == wire }
+    }
+}
