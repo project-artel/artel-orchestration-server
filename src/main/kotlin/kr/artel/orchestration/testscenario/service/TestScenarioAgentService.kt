@@ -508,7 +508,7 @@ class TestScenarioAgentService(
 
         val incoming = event.scenarios ?: emptyList()
         // 재작성 턴이면 앞서 막힌 결과에 새로 받은 것을 얹어 통째로 다시 본다.
-        val scenarios = if (pending != null) pending.scenarios + incoming else incoming
+        val scenarios = if (pending != null) repaired(pending.scenarios, incoming) else incoming
         val reviewed = if (pending != null) mergeVerdicts(pending.reviewed, event.reviewed) else event.reviewed
 
         progress(sessionKey, AuthoringStage.CHECKING)
@@ -571,6 +571,30 @@ class TestScenarioAgentService(
     }
 
     /**
+     * 재작성 결과를 앞서 낸 것과 합친다 — **제목이 같으면 갈아끼운다**(ARTEL-629).
+     *
+     * 앞서는 그냥 이어 붙였다. 그러면 빠진 케이스가 **자기만 담은 새 시나리오**로 떨어져 나온다 —
+     * 실측(런 177)에서 모델이 여정 7개를 냈는데 검수가 2건 누락을 지적했고, 재작성이 그 둘을 각각
+     * 새 카드로 만들어 최종 13개가 됐다. 1~2스텝짜리가 그렇게 생긴다.
+     *
+     * 여정에 스텝을 더하는 것은 **그 여정을 고치는 일**이지 새 여정을 만드는 일이 아니다. 저장이
+     * 안 된 상태라 `scenario_id` 가 없으므로 제목으로 맞춘다 — 재작성 지시문이 "제목을 그대로 두고
+     * 통째로 다시 내라"고 시키는 것과 짝이다.
+     *
+     * 제목이 안 맞으면 예전처럼 새로 붙인다. 정말 새 여정일 수도 있고, 그때 잃는 것보다 억지로
+     * 갖다 붙일 때 잃는 것이 크다.
+     */
+    private fun repaired(
+        before: List<ScenarioResult>,
+        incoming: List<ScenarioResult>,
+    ): List<ScenarioResult> {
+        val byTitle = incoming.associateBy { it.title.trim() }
+        val replaced = before.map { byTitle[it.title.trim()] ?: it }
+        val taken = before.map { it.title.trim() }.toSet()
+        return replaced + incoming.filterNot { it.title.trim() in taken }
+    }
+
+    /**
      * 재작성 응답의 판정을 처음 선언에 **더하기만** 한다.
      *
      * 처음 `in`은 줄어들지 않는다. 재작성이 판정을 통째로 갈아치우게 두면 에이전트가 빠뜨린 케이스를
@@ -597,7 +621,10 @@ class TestScenarioAgentService(
         if (findings.missing.isNotEmpty()) {
             append("이전 응답에서 관련 있다고 판단한 케이스 중 ")
             append(findings.missing.joinToString(", "))
-            append("번이 어떤 스텝에도 담기지 않았습니다. 이 케이스들만 검증하는 시나리오를 새로 작성해 주세요(scenario_id는 null). ")
+            append("번이 어떤 스텝에도 담기지 않았습니다. ")
+            append("**앞서 낸 시나리오 중 그 케이스가 속하는 흐름에 스텝을 더해, 그 시나리오를 제목 그대로 통째로 다시 내 주세요** ")
+            append("— 제목이 같으면 앞서 낸 것을 갈아끼웁니다. 어디에도 속하지 않을 때만 새 시나리오로 내 주세요(scenario_id는 null). ")
+            append("스텝 한둘짜리 카드가 따로 생기면 읽는 사람이 무엇을 검증하는 흐름인지 알 수 없습니다. ")
         }
         if (findings.unreviewed.isNotEmpty()) {
             append("그리고 ")

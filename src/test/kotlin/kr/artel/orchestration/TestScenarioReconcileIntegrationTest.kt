@@ -326,12 +326,13 @@ class TestScenarioReconcileIntegrationTest {
 
         awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().size == 2 }
 
-        // 재작성 지시가 빠진 id를 지목했는지.
+        // 재작성 지시가 빠진 id를 지목하고, **기존 흐름에 넣으라**고 시켰는지.
         val repairTurn = receivedFrames.firstOrNull { it.contains("\"type\":\"turn\"") }
         assertThat(repairTurn).isNotNull()
         assertThat(repairTurn!!).contains("$caseB")
+        assertThat(repairTurn).contains("제목 그대로 통째로 다시 내")
 
-        // 합쳐서 저장됐다: 앞 결과 + 보강분.
+        // 정말 다른 흐름이면 새 카드로 남는다 — 억지로 갖다 붙이지 않는다.
         val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
         val titles = links.map { scenarioRepository.findById(it.testScenarioId)!!.title }
         assertThat(titles).containsExactly("첫 시나리오", "보강 시나리오")
@@ -341,6 +342,49 @@ class TestScenarioReconcileIntegrationTest {
             .map { it.content }
         assertThat(messages).anyMatch { it.contains("다시 작성하도록 요청") }
         assertThat(messages).anyMatch { it.contains("반영했습니다") }
+    }
+
+    /**
+     * **재작성이 같은 여정을 다시 내면 갈아끼운다**(ARTEL-629).
+     *
+     * 앞서는 그냥 이어 붙여서, 빠진 케이스가 자기만 담은 카드로 떨어져 나왔다 — 실측(런 177)에서
+     * 모델이 여정 7개를 냈는데 검수가 2건 누락을 지적했고, 재작성이 그 둘을 각각 새 카드로 만들어
+     * 최종 13개가 됐다. 스텝 한둘짜리가 그렇게 생긴다.
+     *
+     * 여정에 스텝을 더하는 것은 그 여정을 고치는 일이다. 저장 전이라 `scenario_id` 가 없으므로
+     * 제목으로 맞춘다.
+     */
+    @Test
+    fun `재작성이 같은 제목으로 오면 새 카드를 만들지 않고 갈아끼운다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "RULE", "A")
+        val caseB = insertCase(projectId, "RULE", "B")
+
+        framesToSend.add(
+            """{"type":"result","message":"연결했습니다","reviewed":{"in":[$caseA,$caseB],"out":[]},""" +
+                """"scenarios":[{"title":"여정","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        // 재작성이 같은 여정을 통째로 다시 낸다 — A 와 B 를 함께 담아서.
+        turnReplies.add(
+            """{"type":"result","message":"B까지 담았습니다","reviewed":{"in":[$caseA,$caseB],"out":[]},""" +
+                """"scenarios":[{"title":"여정","description":"d","steps":[""" +
+                """{"action":"A확인","case_id":$caseA},{"action":"B확인","case_id":$caseB}]}]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "전부 써줘")
+
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().isNotEmpty() }
+
+        val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        // 카드가 하나다. 조각이 따로 생기지 않았다.
+        assertThat(links).hasSize(1)
+        val scenario = scenarioRepository.findById(links.single().testScenarioId)!!
+        assertThat(scenario.title).isEqualTo("여정")
+        assertThat(storedSteps(scenario.id!!).map { it.caseId }).containsExactly(caseA, caseB)
     }
 
     /**

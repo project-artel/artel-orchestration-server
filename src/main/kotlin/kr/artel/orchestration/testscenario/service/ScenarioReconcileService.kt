@@ -132,7 +132,7 @@ class ScenarioReconcileService(
         // **덜 담긴 것은 런 전체로 본다**(ARTEL-516). 이번 턴에 쓴 것만 보면, 다른 시나리오에
         // 이미 있는 갈래를 "빠졌다"고 세어 전건을 담은 뒤에도 되묻기가 멈추지 않는다.
         val covered = coveredInRun(runId, given, split)
-        val siblings = ScenarioSiblingCheck.analyze(facts, split, covered)
+        val siblings = ScenarioSiblingCheck.analyze(facts, split, covered) { value -> movable.any { written -> sameTail(written, value) } }
         if (siblings.conflicting.isNotEmpty()) {
             // 나눈 뒤에도 남았다면 나누는 쪽에 구멍이 있다는 뜻이다. 저장은 막지 않되 남긴다.
             logger.warn("나눈 뒤에도 동거 불가가 남았다 [runId={}] {}", runId, siblings.conflicting)

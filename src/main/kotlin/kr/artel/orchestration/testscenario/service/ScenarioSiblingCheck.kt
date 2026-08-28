@@ -57,6 +57,7 @@ object ScenarioSiblingCheck {
         facts: List<CaseFact>,
         split: List<List<Long>>,
         covered: Set<Long> = split.flatten().toSet(),
+        movable: (String) -> Boolean = { false },
     ): Findings {
         val byId = facts.associateBy { it.id }
         val used = split.flatten().toSet()
@@ -66,7 +67,15 @@ object ScenarioSiblingCheck {
                 val members = scenario.distinct().mapNotNull { byId[it] }
                 for (i in members.indices) {
                     for (j in i + 1 until members.size) {
-                        if (exclusive(members[i], members[j])) add(members[i].id to members[j].id)
+                        // **나눔과 같은 규칙으로 본다**(ARTEL-625). 나눔은 게임이 스스로 움직이는
+                        // 값을 두고 갈린 갈래를 모순이 아니라 순서로 보고 안 자르는데, 여기서 그걸
+                        // 모른 채 동거 불가라고 하면 **자르지도 못하고 저장도 못 하는 교착**이 된다 —
+                        // 실측(런 176)에서 `StagePosition != 5` 와 `== 5` 가 그 자리였고, 저작 12개가
+                        // 통째로 막혔다. 시간 위에서는 이겨서 올라가는 계단이다.
+                        val disputed = contested(members[i], members[j])
+                        if (disputed.isNotEmpty() && disputed.any { !movable(it) }) {
+                            add(members[i].id to members[j].id)
+                        }
                     }
                 }
             }
