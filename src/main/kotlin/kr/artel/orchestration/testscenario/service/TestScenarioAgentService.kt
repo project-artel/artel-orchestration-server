@@ -123,7 +123,10 @@ class TestScenarioAgentService(
         // 보내면 모델은 그것이 무슨 뜻인지 모른다 — 질문과 보기 문구를 여기서 다시 붙인다.
         // 세션에 없으면 **저장된 질문**에서 찾는다. 카드 저장으로 물었거나, 서버가 다시 떴거나,
         // 사용자가 새로고침한 화면에서 답할 수 있다 — 그때 답을 잃으면 물어본 보람이 없다.
-        val pending = sessions[sessionKey]?.question ?: lastQuestion(runId, appUserId)
+        // **답이 지목한 질문을 찾는다**(ARTEL-630). 한 번에 여럿을 내므로 세션이 문 첫 질문이
+        // 아닐 수 있다 — 그때 첫 것으로 답하면 엉뚱한 질문에 답한 것이 된다.
+        val pending = sessions[sessionKey]?.question?.takeIf { answer == null || it.id == answer.questionId }
+            ?: lastQuestion(runId, appUserId, answer?.questionId)
 
         // 미상 구간에 대한 답은 **코드가 그 자리에 넣는다**(ARTEL-487). 모델에게 넘겨 다시 쓰게
         // 했더니 "StoryScene→Map_scene 을 어떻게 가나요"의 답이 엉뚱한 6번 자리에 들어가고 정작
@@ -738,13 +741,18 @@ class TestScenarioAgentService(
      * 그대로 붙지 않는다 — 클래스에 맞춰 저장 모양을 바꾸면 이번엔 화면이 못 읽는다. 읽는 쪽이
      * 하나뿐인 값이므로 여기서 풀어 쓴다.
      */
-    private suspend fun lastQuestion(runId: Long, appUserId: Long): ScenarioQuestion? = runCatching {
+    private suspend fun lastQuestion(runId: Long, appUserId: Long, wanted: String? = null): ScenarioQuestion? = runCatching {
         val payload = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
             .toList()
             .lastOrNull { it.payload != null }
             ?.payload ?: return null
-        val node = objectMapper.readTree(payload.asString())
-        if (node.path("kind").asText() != "question") return null
+        val whole = objectMapper.readTree(payload.asString())
+        if (whole.path("kind").asText() != "question") return null
+        // **묶음에서 그 질문을 찾는다**(ARTEL-630). 대화에는 첫 질문만 한 줄로 남지만 payload 는
+        // 함께 낸 것을 다 들고 있다 — 그러지 않으면 둘째부터는 답할 길이 없다.
+        val node = whole.path("questions").takeIf { it.isArray && !it.isEmpty }
+            ?.firstOrNull { wanted == null || it.path("id").asText() == wanted }
+            ?: whole
         val id = node.path("id").asText("")
         val text = node.path("text").asText("")
         if (id.isBlank() || text.isBlank()) return null
@@ -1197,7 +1205,7 @@ class TestScenarioAgentService(
         val first = questions.firstOrNull() ?: return
         session.question = first
         session.asked = questions.map { it.id }
-        saveMessage(session.runId, session.appUserId, "ASSISTANT", first.text, first.payload())
+        saveMessage(session.runId, session.appUserId, "ASSISTANT", first.text, ScenarioQuestion.batchPayload(questions))
         streamManager.emit(
             sessionKey,
             ScenarioStreamEvent(type = "question", question = first, questions = questions),

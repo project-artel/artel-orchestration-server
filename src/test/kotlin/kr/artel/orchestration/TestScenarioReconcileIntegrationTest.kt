@@ -541,6 +541,10 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(payload["kind"].asText()).isEqualTo("question")
         assertThat(payload["id"].asText()).startsWith("scope:")
         assertThat(payload["options"].map { it["id"].asText() }).contains("scene:TitleScene", "keep")
+        // **함께 낸 것을 그 한 줄이 다 든다**(ARTEL-630). 대화에는 첫 질문만 남기지만, 나머지에도
+        // 답할 수 있어야 하므로 payload 가 묶음 전체를 든다 — 없으면 둘째부터는 답할 길이 없다.
+        assertThat(payload["questions"]).isNotNull
+        assertThat(payload["questions"].map { it["id"].asText() }).contains(payload["id"].asText())
 
         // 저장은 막히지 않았다 — 답하지 않아도 그 턴의 결과물은 남는다.
         assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).hasSize(1)
