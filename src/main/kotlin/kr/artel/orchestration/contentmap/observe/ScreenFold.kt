@@ -80,7 +80,7 @@ class ScreenFold {
     /** 이 씬에서 selector 하나를 몇 개의 `pulse` 에서 봤나. 씬이 바뀌면 버린다. */
     private val readingsSeen = HashMap<String, Int>()
 
-    /** 이 씬에서 같은 경로로 접히는 selector 원문들. `Card(Clone)[37]` 과 `[38]` 이 한 자리에 모인다. */
+    /** 이 씬에서 같은 경로가 되는 selector 원문들. `Card(Clone)[37]` 과 `[38]` 이 한 자리에 모인다. */
     private val valuesByPath = HashMap<String, MutableSet<String>>()
 
     private var statsScene: String? = null
@@ -274,11 +274,11 @@ class ScreenFold {
     }
 
     /**
-     * 굳은 화면을 잊는다. **접기가 그 행을 지웠을 수 있어서다** (ARTEL-655).
+     * 굳은 화면을 잊는다. **화면 합치기가 그 행을 지웠을 수 있어서다** (ARTEL-655).
      *
-     * `fold_scene_screens` 가 접은 화면은 사라지고, 그 id 를 그대로 들고 있으면 다음 전이가 없는
-     * 행을 출발점으로 삼는다. 새 id 로 갈아 끼우지 않고 잊는 것은, 접힌 행의 대표를 여기서 다시
-     * 찾는 것이 접기 규칙을 Kotlin 에 한 벌 더 두는 일이기 때문이다 — 그 두 벌이 갈리는 것이
+     * `fold_scene_screens` 가 합친 화면은 사라지고, 그 id 를 그대로 들고 있으면 다음 전이가 없는
+     * 행을 출발점으로 삼는다. 새 id 로 갈아 끼우지 않고 잊는 것은, 합쳐진 행의 대표를 여기서 다시
+     * 찾는 것이 합치기 규칙을 Kotlin 에 한 벌 더 두는 일이기 때문이다 — 그 두 벌이 갈리는 것이
      * `fold_scene_screens` 를 SQL 에 한 벌만 둔 이유다.
      *
      * 대가는 전이 하나다. 다음 `pulse` 둘이 화면을 다시 굳히고, 그때 출발점이 없어 전이가 안
@@ -322,7 +322,7 @@ private val SIBLING_INDEX = Regex("""\[\d+]""")
  *
  * ## 다 지우는 대가
  *
- * 조상 이름까지 같은 서로 다른 컨트롤이 한 경로로 접힌다. `path` 항목이 그 둘을 한꺼번에 가리키게
+ * 조상 이름까지 같은 서로 다른 컨트롤이 한 경로로 묶인다. `path` 항목이 그 둘을 한꺼번에 가리키게
  * 되므로, 하나만 목록에 넣고 싶으면 `selector` 항목을 쓴다. 씨앗이 `selector`
  * 인 이유도 이것이다(`SceneScreenSelectorRepository.seedFromControlSelector`).
  *
@@ -330,7 +330,7 @@ private val SIBLING_INDEX = Regex("""\[\d+]""")
  *
  * `V60__whitelist_screen_defining_selectors.sql` 의 `screen_defining_selector` 가 쓰는
  * `regexp_replace(selector, '\[[0-9]+\]', '', 'g')` 가 이 정규식과 같은 것이어야 한다. 어긋나면
- * 소급 처리가 접은 화면과 런타임이 앉히는 화면이 다른 규칙을 따르게 되어, 합쳐 놓은 행 옆에
+ * 소급 처리가 합친 화면과 런타임이 앉히는 화면이 다른 규칙을 따르게 되어, 합쳐 놓은 행 옆에
  * 옛 모양의 행이 다시 쌓인다.
  */
 fun indexFreePathOf(selector: String): String = SIBLING_INDEX.replace(selector, "")

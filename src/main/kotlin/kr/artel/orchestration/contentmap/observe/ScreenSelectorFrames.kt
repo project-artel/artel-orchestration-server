@@ -27,7 +27,7 @@ import java.time.Instant
  * ## 항목에 정규식을 싣지 않는다
  *
  * [ScreenSelectorEntryFrame.pattern] 은 정확 문자열이다. 이 항목은 `discriminator` 를 만드는
- * Kotlin(`ScreenSelectorWhitelist`)과 접기를 하는 SQL(`screen_defining_selector`) 양쪽에서
+ * Kotlin(`ScreenSelectorWhitelist`)과 화면을 합치는 SQL(`screen_defining_selector`) 양쪽에서
  * 평가되는데, `java.util.regex` 와 POSIX ARE 는 다르다. 한쪽에서만 맞는 항목이 하나 생기면 같은
  * 화면이 두 `discriminator` 로 갈리고, `uk_screen_discriminator` 가 막으려던 분열이 목록 쪽에서
  * 다시 열린다.
@@ -104,7 +104,7 @@ data class ScreenSelectorChange(
  * @property readingsSeenInScene 이 씬에서 이 selector 를 몇 개의 `pulse` 에서 봤나. **프로세스
  *   메모리의 값이다** — 재시작하면 0 부터 다시 센다. 통계를 위해 표를 하나 더 두지 않는 것은
  *   그 표가 플레이 길이만큼 자라기 때문이고, 그것이 ARTEL-654 가 이 방향을 버린 이유다.
- * @property distinctValuesObserved 같은 [path] 로 접히는 서로 다른 selector 원문을 몇 개 봤나.
+ * @property distinctValuesObserved 같은 [path] 가 되는 서로 다른 selector 원문을 몇 개 봤나.
  *   `Card(Clone)[37]` 과 `Card(Clone)[38]` 이 둘이다. 1 이면 index 가 흔들리지 않는 고정 UI 다.
  * @property inWhitelist 이 후보가 지금 목록에 들어 있나. `scene-screen-cap` 제안에서만 `true` 이고,
  *   그때 답은 뺄 항목이다.
@@ -148,7 +148,7 @@ data class ScreenSelectorProposalPayload(
  *   아래 전부, 마디 경계). 셋뿐이다 — 정규식은 없다(파일 머리말).
  * @property pattern 맞대 볼 **정확 문자열**.
  * @property screenDefining 이 대상이 화면을 식별하는가. `false` 는 명시적 제외이고, 이 값이 기존
- *   화면을 접는 유일한 방향이다.
+ *   화면을 합치는 유일한 방향이다.
  * @property reason 왜 그렇게 판단했나. 필수다 — 사유 없는 항목은 나중에 사람이 되짚을 수 없고,
  *   되짚을 수 없는 항목은 지울지 말지도 판단할 수 없다.
  */
@@ -213,7 +213,7 @@ data class ScreenSelectorRejectedEntry(
  * @property type 무엇의 답인가 — `SCREEN_SELECTOR_VERDICT` 또는 `SCREEN_SELECTOR_RULE`.
  * @property foldedScreens 이 답 때문에 사라진 화면 수. 0 이 보통이다 — 항목을 **넣는** 답은 과거
  *   화면을 가르지 않고(그 값이 애초에 기록에 없다) 다음 관측부터 갈린다. 0 이 아니면 빼는 방향의
- *   답이 기존 행을 접었다는 뜻이다.
+ *   답이 기존 행을 합쳤다는 뜻이다.
  */
 data class ScreenSelectorResultPayload(
     val type: String,

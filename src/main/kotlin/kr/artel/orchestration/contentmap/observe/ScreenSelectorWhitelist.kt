@@ -29,12 +29,12 @@ import kr.artel.orchestration.contentmap.entity.ScreenSelectorSource
  *
  * 이미 뭉쳐 있던 과거 화면은 안 갈린다. 빠진 selector 가 애초에 `discriminator` 에 안 들어갔으니
  * 기록이 없어서 복원할 수 없다. **다음 관측부터** 갈린다. 반대 방향(항목을 빼는 것)은 소급해서
- * 접을 수 있고 그것은 ARTEL-655 다.
+ * 합칠 수 있고 그것은 ARTEL-655 다.
  *
  * ## SQL 에 같은 규칙이 있다
  *
  * `V60__whitelist_screen_defining_selectors.sql` 의 `screen_defining_selector(scene_id, selector)`
- * 가 [defines] 와 **같은 답을 내야 한다.** 갈리면 소급 처리가 접은 화면과 런타임이 앉히는 화면이
+ * 가 [defines] 와 **같은 답을 내야 한다.** 갈리면 소급 처리가 합친 화면과 런타임이 앉히는 화면이
  * 다른 규칙을 따르게 되어, `uk_screen_discriminator`(V59) 가 막으려던 분열이 규칙 쪽에서 다시
  * 열린다. 항목에 정규식을 저장하지 않는 것이 그 위험을 줄이는 첫 번째 장치다 — `java.util.regex`
  * 와 POSIX ARE 는 다르고, 한쪽에서만 맞는 항목이 하나 생기면 그것으로 충분하다.

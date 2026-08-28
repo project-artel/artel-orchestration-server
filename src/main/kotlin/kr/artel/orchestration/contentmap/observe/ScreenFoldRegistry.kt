@@ -7,8 +7,8 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 게임 인스턴스별 [ScreenFold] 상태를 든다 (ARTEL-453 에서 옮겨 옴, ARTEL-655).
  *
- * `ScreenObservationService` 안의 맵이었다. 소비자가 둘이 되어 밖으로 냈다 — `pulse` 를 접는 쪽과,
- * 목록을 고치는 프레임이 "그 씬에서 실제로 본 selector 인가" 를 검증하는 쪽
+ * `ScreenObservationService` 안의 맵이었다. 소비자가 둘이 되어 밖으로 냈다 — `pulse` 를 모아 화면을
+ * 굳히는 쪽과, 목록을 고치는 프레임이 "그 씬에서 실제로 본 selector 인가" 를 검증하는 쪽
  * ([ScreenSelectorProposalService]). 두 서비스가 서로를 주입하면 빈 순환이 되므로 상태를 셋째
  * 자리에 둔다.
  *
@@ -53,9 +53,9 @@ class ScreenFoldRegistry {
     }
 
     /**
-     * 이 씬에서 굳어 있던 화면을 전부 잊는다. **접기가 그 행을 지웠을 수 있어서다** (ARTEL-655).
+     * 이 씬에서 굳어 있던 화면을 전부 잊는다. **화면 합치기가 그 행을 지웠을 수 있어서다** (ARTEL-655).
      *
-     * 인스턴스가 아니라 씬으로 도는 이유는 접기의 단위가 씬이기 때문이다. 같은 씬을 여러
+     * 인스턴스가 아니라 씬으로 도는 이유는 합치기의 단위가 씬이기 때문이다. 같은 씬을 여러
      * 인스턴스가 동시에 보고 있으면 그 전부가 지워진 id 를 들고 있을 수 있다.
      */
     fun forgetSettledIn(sceneId: Long) {

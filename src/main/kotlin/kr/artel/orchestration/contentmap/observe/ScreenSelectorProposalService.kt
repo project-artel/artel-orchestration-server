@@ -46,7 +46,7 @@ data class ScreenSelectorApplyOutcome(
 )
 
 /**
- * 목록에 없는 selector 를 물어보고, 답이 오면 목록에 넣고 같아지는 화면을 접는다 (ARTEL-655).
+ * 목록에 없는 selector 를 물어보고, 답이 오면 목록에 넣고 같아지는 화면을 합친다 (ARTEL-655).
  *
  * ```
  * pulse → 목록 밖 selector → SCREEN_SELECTOR_PROPOSAL ─┐
@@ -54,7 +54,7 @@ data class ScreenSelectorApplyOutcome(
  *                                                      ▼
  *          scene_screen_selector ← SCREEN_SELECTOR_VERDICT / SCREEN_SELECTOR_RULE
  *                     │
- *                     └→ fold_scene_screens(scene_id) → 같아진 화면을 접는다
+ *                     └→ fold_scene_screens(scene_id) → 같아진 화면을 합친다
  * ```
  *
  * ## 런을 세우지 않는다
@@ -62,7 +62,7 @@ data class ScreenSelectorApplyOutcome(
  * 제안은 보내고 끝이다. 답을 기다리는 자리가 없고, 답이 끝내 안 와도 화면 기록은 지금과 똑같이
  * 돌아간다 — 목록에 없는 것은 무시한다는 ARTEL-654 의 기본값이 그대로 남기 때문이다. 제안을
  * 기다렸다가 화면을 앉히면 답이 늦거나 안 오는 동안 관측이 통째로 사라진다. **행 없는 지도보다
- * 나중에 접히는 행이 낫다.**
+ * 나중에 합쳐지는 행이 낫다.**
  *
  * ## 한 번만 묻는다
  *
@@ -73,7 +73,7 @@ data class ScreenSelectorApplyOutcome(
  *
  * 넣는 답(`screen_defining=true`)은 과거 화면을 **가르지 않는다.** 그 selector 의 값이 애초에
  * `discriminator` 에 안 들어갔으니 기록이 없어 복원할 수 없고, 다음 관측부터 갈린다. 빼는
- * 답(`false`)은 소급해서 접을 수 있다 — 지워야 할 값은 기록에 있기 때문이다. 그 비대칭이 버그가
+ * 답(`false`)은 소급해서 합칠 수 있다 — 지워야 할 값은 기록에 있기 때문이다. 그 비대칭이 버그가
  * 아니라 이 설계의 값이다.
  */
 @Service
@@ -254,13 +254,13 @@ class ScreenSelectorProposalService(
     }
 
     /**
-     * 항목을 저장하고 접는다. **접기는 저장한 뒤 한 번만 돈다.**
+     * 항목을 저장하고 합친다. **합치기는 저장한 뒤 한 번만 돈다.**
      *
-     * 항목마다 접으면 중간 상태의 목록으로 접힌 결과가 남아, 같은 답을 항목 순서만 바꿔 보내면 다른
-     * 최종 상태가 나온다. 마지막에 한 번 도는 접기는 지금의 목록 전체를 보므로 그 순서를 지운다.
+     * 항목마다 합치면 중간 상태의 목록으로 합쳐진 결과가 남아, 같은 답을 항목 순서만 바꿔 보내면 다른
+     * 최종 상태가 나온다. 마지막에 한 번 도는 합치기는 지금의 목록 전체를 보므로 그 순서를 지운다.
      *
-     * 접기를 조건 없이 부르는 것도 같은 이유다. "빼는 방향의 답일 때만" 이라고 조건을 달면 그
-     * 판정이 접기 규칙의 두 번째 벌이 된다 — `fold_scene_screens` 는 접을 것이 없으면 0 을 돌려주고
+     * 합치기를 조건 없이 부르는 것도 같은 이유다. "빼는 방향의 답일 때만" 이라고 조건을 달면 그
+     * 판정이 합치기 규칙의 두 번째 벌이 된다 — `fold_scene_screens` 는 합칠 것이 없으면 0 을 돌려주고
      * 값이 그대로인 행은 건드리지 않는다.
      */
     private suspend fun apply(
@@ -294,9 +294,9 @@ class ScreenSelectorProposalService(
 
         val folded = screens.foldScene(sceneId)
         if (folded > 0) {
-            // 접힌 화면 행은 사라졌다. 그 id 를 들고 있는 `fold` 는 다음 전이를 없는 행에서 출발시킨다.
+            // 합쳐진 화면 행은 사라졌다. 그 id 를 들고 있는 `fold` 는 다음 전이를 없는 행에서 출발시킨다.
             folds.forgetSettledIn(sceneId)
-            logger.info("씬 {}의 화면 {}개가 목록 변경으로 접혔다", sceneId, folded)
+            logger.info("씬 {}의 화면 {}개가 목록 변경으로 합쳐졌다", sceneId, folded)
         }
         return ScreenSelectorApplyOutcome(sceneId, accepted, rejected, folded)
     }

@@ -64,17 +64,17 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
     suspend fun findIdBySceneIdAndDiscriminator(sceneId: Long, discriminator: String): Long?
 
     /**
-     * 지금의 목록으로 이 씬의 화면을 다시 계산하고 같아지는 것끼리 접는다. 사라진 화면 수를 돌려준다 (ARTEL-655).
+     * 지금의 목록으로 이 씬의 화면을 다시 계산하고 같아지는 것끼리 합친다. 사라진 화면 수를 돌려준다 (ARTEL-655).
      *
-     * **접기를 Kotlin 으로 옮겨 쓰지 않는다.** 정의는 `fold_scene_screens`(V61) 한 벌뿐이고 그것은
-     * V60 의 소급 접기를 씬 하나로 좁힌 것이다. 두 벌이 되면 갈리고, 갈리면 접은 화면과 런타임이
+     * **합치기를 Kotlin 으로 옮겨 쓰지 않는다.** 정의는 `fold_scene_screens`(V61) 한 벌뿐이고 그것은
+     * V60 의 소급 합치기를 씬 하나로 좁힌 것이다. 두 벌이 되면 갈리고, 갈리면 합친 화면과 런타임이
      * 앉히는 화면이 다른 규칙을 따라 합쳐 놓은 행 옆에 옛 모양의 행이 다시 쌓인다.
      *
      * **도착 순서에 의존하지 않는다.** 그 함수가 "목록을 적용하고 → 같아지는 것끼리 묶고 → 묶음마다
-     * 접는다" 는 집합 연산이라, 답이 어떤 순서로 와도 마지막 호출이 같은 목록을 보면 같은 상태로
+     * 합친다" 는 집합 연산이라, 답이 어떤 순서로 와도 마지막 호출이 같은 목록을 보면 같은 상태로
      * 끝난다.
      *
-     * **접은 것은 다시 갈리지 않는다.** 빠진 selector 의 값은 `discriminator` 에서 지워지고 그것이
+     * **합친 것은 다시 갈리지 않는다.** 빠진 selector 의 값은 `discriminator` 에서 지워지고 그것이
      * 유일한 기록이라, 나중에 그 selector 를 목록에 넣어도 복원할 재료가 없다 — 다음 관측부터
      * 갈린다.
      *

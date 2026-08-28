@@ -58,16 +58,16 @@ import java.util.concurrent.CopyOnWriteArrayList
 private const val SESSION_ID = "screen-selector-session"
 
 /**
- * 목록에 없는 selector 를 물어보고, 답이 오면 같아지는 화면을 접는다 (ARTEL-655).
+ * 목록에 없는 selector 를 물어보고, 답이 오면 같아지는 화면을 합친다 (ARTEL-655).
  *
  * 이 파일이 지키는 것은 넷이다.
  *
  * 1. **제안이 나가되 화면을 가르지 않는다** — 목록 밖 selector 는 물어볼 거리이지 판정 근거가
  *    아니다. 여기가 깨지면 ARTEL-654 가 멈춘 화면 폭발이 다시 열린다
  * 2. **한 번만 묻는다** — 없으면 카드를 뽑을 때마다 제안이 하나씩 나간다
- * 3. **접기가 도착 순서에 의존하지 않는다** — 같은 답을 순서만 바꿔 적용한 결과가 같아야 한다.
+ * 3. **합치기가 도착 순서에 의존하지 않는다** — 같은 답을 순서만 바꿔 적용한 결과가 같아야 한다.
  *    같은 런을 두 번 돌린 결과가 달라지는 것을 막는 것이 `uk_screen_discriminator` 설계 전체의
- *    이유이고, 그 재현성이 여기서 깨지면 접기가 그것을 되돌린다
+ *    이유이고, 그 재현성이 여기서 깨지면 합치기가 그것을 되돌린다
  * 4. **답이 안 와도 오늘과 똑같이 돈다** — 제안은 관측의 곁가지다
  */
 @ActiveProfiles("test")
@@ -202,7 +202,7 @@ class ScreenSelectorProposalTest {
      * 답이 끝내 안 와도 화면 기록은 지금과 똑같이 돈다.
      *
      * 제안을 기다렸다가 화면을 앉히면 답이 늦거나 안 오는 동안 관측이 통째로 사라진다 — 행 없는
-     * 지도보다 나중에 접히는 행이 낫다.
+     * 지도보다 나중에 합쳐지는 행이 낫다.
      */
     @Test
     fun `답이 안 와도 화면 기록이 계속 된다`(): Unit = runBlocking {
@@ -253,13 +253,13 @@ class ScreenSelectorProposalTest {
     }
 
     /**
-     * 빼는 답은 소급해서 접는다. 지워야 할 값이 기록에 있기 때문이다.
+     * 빼는 답은 소급해서 합친다. 지워야 할 값이 기록에 있기 때문이다.
      *
-     * 접을 때 `observed_count` 를 합치고, 두 화면이 한 화면이 되어 **전이가 아니게 된** 전이를
+     * 합칠 때 `observed_count` 를 더하고, 두 화면이 한 화면이 되어 **전이가 아니게 된** 전이를
      * 지운다 — 런타임도 자기 자신으로 가는 전이는 남기지 않는다.
      */
     @Test
-    fun `빼는 답이 같아지는 화면을 접고 observed_count 를 합친다`(): Unit = runBlocking {
+    fun `빼는 답이 같아지는 화면을 합치고 observed_count 를 더한다`(): Unit = runBlocking {
         val world = newWorld()
         val title = newScene(world, "TitleScene")
         newCapability(world, title, CONTINUE)
@@ -277,7 +277,7 @@ class ScreenSelectorProposalTest {
         val rows = screens.findBySceneIdOrderByIdAsc(title).toList()
         assertThat(rows).hasSize(1)
         assertThat(read(rows.single().discriminator)).containsExactly(CONTINUE to true)
-        // 세 번 앉은 관측이 한 행에 모인다. 접히는 행은 같은 화면을 다르게 적은 것이지 다른 관측이 아니다.
+        // 세 번 앉은 관측이 한 행에 모인다. 합쳐지는 행은 같은 화면을 다르게 적은 것이지 다른 관측이 아니다.
         assertThat(rows.single().observedCount).isEqualTo(3)
         // 두 화면이 한 화면이 되면 그 사이의 전이는 전이가 아니다.
         assertThat(transitionsOf(title)).isEmpty()
@@ -286,8 +286,8 @@ class ScreenSelectorProposalTest {
     /**
      * **재현성을 못으로 박는다.**
      *
-     * 도착한 순서대로 두 행씩 합치는 식으로 접으면 답이 오는 순서가 최종 상태를 바꾸고, 같은 런을
-     * 두 번 돌린 결과가 달라진다. 그것을 막으려고 접기를 "목록을 적용한 뒤 같아지는 것끼리 묶는"
+     * 도착한 순서대로 두 행씩 짝지어 합치면 답이 오는 순서가 최종 상태를 바꾸고, 같은 런을
+     * 두 번 돌린 결과가 달라진다. 그것을 막으려고 합치기를 "목록을 적용한 뒤 같아지는 것끼리 묶는"
      * 집합 연산으로 두었고, 이 테스트가 그 성질을 확인한다.
      *
      * 같은 답 셋을 여섯 가지 순서로 적용해 최종 상태를 통째로 맞대 본다.
@@ -317,7 +317,7 @@ class ScreenSelectorProposalTest {
         assertThat(outcomes.distinct())
             .describedAs("답의 도착 순서가 최종 상태를 바꾸면 같은 런을 두 번 돌린 결과가 달라진다")
             .hasSize(1)
-        // 세 화면이 하나로 접혔는지도 함께 본다 — 전부 빈 결과로 사이좋게 같아지는 것을 막는다.
+        // 세 화면이 하나로 합쳐졌는지도 함께 본다 — 전부 빈 결과로 사이좋게 같아지는 것을 막는다.
         assertThat(outcomes.first()).hasSize(1)
     }
 

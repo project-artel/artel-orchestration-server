@@ -1,4 +1,4 @@
--- ARTEL-655: 목록에 없는 selector 를 물어보고, 답이 오면 같아지는 화면을 접는다.
+-- ARTEL-655: 목록에 없는 selector 를 물어보고, 답이 오면 같아지는 화면을 합친다.
 --
 -- ## 왜 물어보나
 --
@@ -120,12 +120,12 @@ COMMENT ON COLUMN screen_selector_proposal.selector IS
     '물어본 selector 원문. scene-screen-cap 은 대상이 씬 자체라 빈 문자열이다.';
 
 --------------------------------------------------------------------------------
--- 3. fold_scene_screens — 목록을 적용하고 같아지는 화면을 접는다
+-- 3. fold_scene_screens — 목록을 적용하고 같아지는 화면을 합친다
 --------------------------------------------------------------------------------
 -- **V60 의 4~8 절을 씬 하나로 좁혀 함수로 옮긴 것이다.** 같은 일을 하는 정의를 두 벌 두면 갈리고,
--- 갈리면 소급 처리가 접은 화면과 런타임이 앉히는 화면이 다른 규칙을 따르게 되어 합쳐 놓은 행 옆에
+-- 갈리면 소급 처리가 합친 화면과 런타임이 앉히는 화면이 다른 규칙을 따르게 되어 합쳐 놓은 행 옆에
 -- 옛 모양의 행이 다시 쌓인다. V60 은 이미 적용된 마이그레이션이라 고칠 수 없으므로, **앞으로
--- 접기가 필요한 자리는 전부 이 함수를 부른다.**
+-- 합치기가 필요한 자리는 전부 이 함수를 부른다.**
 --
 -- ## 도착 순서에 의존하지 않는다
 --
@@ -133,13 +133,13 @@ COMMENT ON COLUMN screen_selector_proposal.selector IS
 --
 --   1. 목록을 적용해 모든 화면의 `discriminator` 를 다시 계산하고
 --   2. 같아지는 것끼리 묶고
---   3. 묶음마다 하나로 접는다
+--   3. 묶음마다 하나로 합친다
 --
 -- 는 집합 연산이다. 입력은 (그 씬의 화면 전부, 지금의 목록) 둘뿐이고 호출 이력이 아니므로, 답이
 -- 어떤 순서로 와도 마지막 호출이 같은 목록을 보면 같은 상태로 끝난다. 대표를 고르는 것도
 -- `min(id)` 라 순서와 무관하다.
 --
--- ## 접은 것은 다시 갈리지 않는다
+-- ## 합친 것은 다시 갈리지 않는다
 --
 -- 되돌릴 수 없다. 목록에서 빠진 selector 의 값은 `discriminator` 에서 지워지고, 그것이 이 함수가
 -- 남기는 유일한 기록이라 나중에 그 selector 를 목록에 넣어도 복원할 재료가 없다. **다음 관측부터**
@@ -189,7 +189,7 @@ BEGIN
     WHERE screen_id <> keeper_id;
 
     IF v_folded = 0 THEN
-        -- 접힐 것이 없어도 `discriminator` 는 다시 써야 한다. 목록에서 빠진 selector 가 하나뿐인
+        -- 합칠 것이 없어도 `discriminator` 는 다시 써야 한다. 목록에서 빠진 selector 가 하나뿐인
         -- 화면에도 남아 있으면, 다음 관측이 만드는 값과 달라 같은 화면이 행 둘로 앉는다.
         UPDATE screen s
         SET discriminator = r.discriminator
@@ -214,12 +214,12 @@ BEGIN
         observed_count = screen_capability.observed_count + EXCLUDED.observed_count,
         fired_count = screen_capability.fired_count + EXCLUDED.fired_count;
 
-    -- 4) screen_transition — 끝점을 옮기고, 자기 자신으로 접힌 전이는 지운다.
+    -- 4) screen_transition — 끝점을 옮기고, 자기 자신으로 합쳐진 전이는 지운다.
     --
     --    두 화면이 한 화면이 되면 그 둘 사이의 전이는 **전이가 아니다.** 런타임도 그것을 남기지
     --    않는다(`ScreenObservationService.record` 의 `fromScreenId != screenId`).
     --
-    --    V60 과 달리 한 씬만 접으므로 씬을 넘는 전이는 한쪽 끝만 이 묶음에 든다. 그래서 양쪽을
+    --    V60 과 달리 한 씬만 합치므로 씬을 넘는 전이는 한쪽 끝만 이 묶음에 든다. 그래서 양쪽을
     --    `LEFT JOIN` 하고 `COALESCE` 로 메운다 — 안쪽만 조인하면 그 전이들이 후보에서 빠져 끝점이
     --    지워진 화면을 계속 가리킨다.
     CREATE TEMP TABLE fold_transition AS
@@ -256,8 +256,8 @@ BEGIN
     -- `scene_edge` 가 가리키던 전이가 대표가 아니면 대표로 옮긴다. FK 가 `ON DELETE SET NULL` 이라
     -- 옮기지 않고 지우면 "어느 관측이 이 간선을 처음 검증했나" 가 소리 없이 null 이 된다.
     --
-    -- 자기 자신으로 접힌 전이에는 `scene_edge` 가 매달릴 수 없다. 묶음이 씬 하나 안이라 두 끝이
-    -- 같은 keeper 로 접혔다는 것은 그 전이가 씬 안이었다는 뜻이고, `scene_edge` 는 씬을 넘는
+    -- 자기 자신으로 합쳐진 전이에는 `scene_edge` 가 매달릴 수 없다. 묶음이 씬 하나 안이라 두 끝이
+    -- 같은 keeper 로 합쳐졌다는 것은 그 전이가 씬 안이었다는 뜻이고, `scene_edge` 는 씬을 넘는
     -- 전이에만 붙는다.
     UPDATE scene_edge e
     SET first_observed_transition_id = k.keeper_id
@@ -323,7 +323,7 @@ BEGIN
     JOIN fold_screen_merge m ON m.screen_id = s.id
     GROUP BY m.keeper_id;
 
-    -- 접히는 행을 먼저 지운다. `uk_screen_discriminator`(V59) 가 걸려 있어 새 값을 먼저 쓰면
+    -- 합쳐지는 행을 먼저 지운다. `uk_screen_discriminator`(V59) 가 걸려 있어 새 값을 먼저 쓰면
     -- 합치기 전에 제약 위반이 난다.
     DELETE FROM screen s
     USING fold_screen_merge m
@@ -350,4 +350,4 @@ END;
 $$;
 
 COMMENT ON FUNCTION fold_scene_screens(BIGINT) IS
-    '목록을 적용해 이 씬의 화면을 다시 계산하고 같아지는 것끼리 접는다. 사라진 화면 수를 돌려준다.';
+    '목록을 적용해 이 씬의 화면을 다시 계산하고 같아지는 것끼리 합친다. 사라진 화면 수를 돌려준다.';

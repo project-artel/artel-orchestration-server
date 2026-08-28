@@ -133,7 +133,7 @@ class ScreenObservationService(
         val whitelist = seededWhitelist(sceneId, sceneCapabilities)
         val candidate = fold.discriminate(whitelist)
         // **화면 행을 먼저 만들고 제안은 그 뒤에 보낸다** (ARTEL-655). 제안을 기다렸다가 앉히면
-        // 답이 늦거나 안 오는 동안 관측이 통째로 사라진다. 행 없는 지도보다 나중에 접히는 행이 낫다.
+        // 답이 늦거나 안 오는 동안 관측이 통째로 사라진다. 행 없는 지도보다 나중에 합쳐지는 행이 낫다.
         val cappedScene = if (fold.settle(candidate)) {
             settle(fold, candidate, sceneId, sceneName, contentMapId, sceneCapabilities, qaRun.id)
         } else {
@@ -372,7 +372,7 @@ class ScreenObservationService(
          *
          * **첫 실측이 이 주석의 예상대로 왔다.** `artel_integration` 의 `TurnBattleScene` 이 29행까지
          * 올라 이 값에 닿기 직전이었고, 고칠 자리는 상한이 아니라 `discriminator` 규칙 쪽이었다 —
-         * 화면 판정에 쓸 selector 를 목록으로 두자 같은 관측이 2행으로 접혔다(ARTEL-654,
+         * 화면 판정에 쓸 selector 를 목록으로 두자 같은 관측이 2행으로 합쳐졌다(ARTEL-654,
          * [seededWhitelist]). 32 는 그대로 둔다. 여기 다시 걸리면 그때도 먼저 의심할 것은 목록에 든
          * 항목이 너무 넓은가다.
          */
