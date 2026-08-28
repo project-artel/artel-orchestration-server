@@ -66,6 +66,19 @@ class ScreenSelectorWhitelist(private val rules: List<ScreenSelectorRule>) {
             ?: false
     }
 
+    /**
+     * 이 selector 에 대해 이미 답이 있나 (ARTEL-655).
+     *
+     * [defines] 와 다르다. `defines` 는 "화면을 가르나" 이고 이것은 "**물어볼 필요가 있나**" 다.
+     * 명시적 제외 항목(`screen_defining=false`)은 `defines` 가 `false` 를 내지만 이미 답이 있는
+     * 것이므로 다시 묻지 않는다. 이 둘을 같은 함수로 하면 "안 가른다" 는 답을 받은 selector 가
+     * 나타날 때마다 제안이 다시 나가고, 그것이 이 기능이 막으려던 바로 그 반복이다.
+     */
+    fun covers(selector: String): Boolean {
+        val path = indexFreePathOf(selector)
+        return rules.any { it.matches(selector, path) }
+    }
+
     companion object {
         /** 항목이 하나도 없는 목록. 그 씬은 화면이 하나다 — 오류가 아니다(클래스 주석). */
         val EMPTY = ScreenSelectorWhitelist(emptyList())
