@@ -241,5 +241,13 @@ data class ScenarioStreamEvent(
      * 사용자에게 되묻는 질문(ARTEL-487). Agent 결과에 실려 오거나, 오케가 계산된 사실로 만들어
      * `question` 이벤트로 내보낸다. **저장을 막지 않는다** — 답하지 않아도 그 턴의 결과물은 남는다.
      */
-    val question: ScenarioQuestion? = null
+    val question: ScenarioQuestion? = null,
+    /**
+     * 모르는 자리 **전부**(ARTEL-630). [question] 은 그중 첫 것이고, 옛 화면을 위해 남긴다.
+     *
+     * 하나만 보내던 때는 막힌 자리가 여럿이어도 나머지가 아무 말 없이 미상으로 남았다 —
+     * 실측(런 178)에서 일곱 중 하나만 물었고, 사용자는 시나리오가 완성된 줄 안다. 한 번에
+     * 보여 줘야 아는 것만 답하고 나머지는 그대로 둘 수 있다.
+     */
+    val questions: List<ScenarioQuestion> = emptyList()
 )

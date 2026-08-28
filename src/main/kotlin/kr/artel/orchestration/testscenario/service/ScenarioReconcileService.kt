@@ -73,6 +73,13 @@ class ScenarioReconcileService(
         val findings: ScenarioCoverageAudit.Findings = ScenarioCoverageAudit.Findings(),
         val notices: List<String> = emptyList(),
         val question: ScenarioQuestion? = null,
+        /**
+         * 모르는 자리 **전부**(ARTEL-630). [question] 은 그중 첫 것이고, 옛 화면을 위해 남긴다.
+         *
+         * 하나만 내던 것은 같은 질문이 매 턴 다시 나가는 것을 막으려던 것이었는데(런 152), 그건
+         * 답한 질문을 다시 안 묻는 것으로 풀 일이지 모르는 것을 감춰서 풀 일이 아니다.
+         */
+        val questions: List<ScenarioQuestion> = emptyList(),
     ) {
         val rejected: Boolean get() = findings.rejected
     }
@@ -191,9 +198,14 @@ class ScenarioReconcileService(
         // 질문이 다시 만들어지는데, 그것을 그대로 내보내면 "그대로 두기"를 누른 사용자에게 같은
         // 것을 계속 묻는 셈이 된다. 답한 기록은 대화에 `answered` 로 남아 있다.
         val answered = answeredQuestionIds(runId, appUserId)
-        val question = ScenarioQuestionBuilder.from(
+        // **모르는 자리를 전부 낸다**(ARTEL-630). 하나만 내면 나머지는 아무 말 없이 미상으로 남고,
+        // 사용자는 시나리오가 완성된 줄 안다 — 실측(런 178)에서 못 간다고 적은 자리가 일곱인데
+        // 물은 것은 하나였다.
+        val questions = ScenarioQuestionBuilder.all(
             blocked, siblings.untestedArms, scope, describe,
-        )?.takeIf { it.id !in answered }
+        ).filterNot { it.id in answered }
+        // 옛 화면은 아직 한 개짜리 칸을 읽는다. 첫 질문을 거기 그대로 둬서 옮겨 올 시간을 준다.
+        val question = questions.firstOrNull()
         val asked = question?.id?.substringBefore(":")
         val allNotices = buildList {
             // 나눈 것은 **먼저** 말한다. 시나리오 수가 달라진 이유이므로, 아래 알림들보다 먼저
@@ -269,7 +281,7 @@ class ScenarioReconcileService(
             }
         }
         logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${repaired.size}]")
-        return ReconcileOutcome(applied, findings, allNotices, question)
+        return ReconcileOutcome(applied, findings, allNotices, question, questions)
     }
 
     /**

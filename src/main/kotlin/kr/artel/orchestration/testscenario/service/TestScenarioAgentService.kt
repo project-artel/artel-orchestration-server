@@ -162,7 +162,7 @@ class TestScenarioAgentService(
         if (declined(pending, answer, userInput)) {
             sessions[sessionKey]?.question = null
             saveMessage(runId, appUserId, "USER", answerSummary(pending, answer))
-            notifyDeclined(sessionKey, runId, appUserId, pending!!)
+            notifyDeclined(sessionKey, runId, appUserId, pending!!, askedBatch(sessionKey, pending!!))
             return
         }
 
@@ -534,7 +534,7 @@ class TestScenarioAgentService(
             }
             // 되묻는다(ARTEL-487). **저장은 이미 끝났다** — 답하지 않아도 결과물은 남고, 답하면
             // 다음 턴이 그 답을 받아 고친다. 코드가 아는 것이라 보기까지 계산돼 있다.
-            outcome.question?.let { ask(sessionKey, session, it) }
+            ask(sessionKey, session, outcome.questions.ifEmpty { listOfNotNull(outcome.question) })
             // 저장이 있었던 턴에만 잔량을 알린다. 질문·거절 턴에서는 남은 수가 그대로일 뿐 아니라,
             // 방금 에이전트가 같은 값을 더 자세히 답했을 수 있다 — 그 뒤에 한 줄을 더 붙이면 같은
             // 말을 두 번 하는 셈이 된다.
@@ -565,7 +565,7 @@ class TestScenarioAgentService(
             sessionKey, session,
             "검토 결과 ${outcome.findings.summary()} — 그 부분만 다시 작성하도록 요청했습니다."
         )
-        sendTurn(sessionKey, session, repairPrompt(outcome.findings), emptyList())
+        sendTurn(sessionKey, session, repairPrompt(outcome.findings, scenarios), emptyList())
         // 재작성도 턴이다 — 답이 오지 않으면 똑같이 멎는다(ARTEL-510).
         watch(sessionKey, session.runId, session.appUserId)
     }
@@ -617,7 +617,25 @@ class TestScenarioAgentService(
      * 재작성 지시문. 지적된 것만 다루게 하고 앞서 쓴 것은 다시 쓰지 말라고 못 박는다 — 전체를 다시
      * 만들면 출력 예산을 통째로 한 번 더 쓰고, 이미 통과한 부분까지 흔들린다.
      */
-    private fun repairPrompt(findings: ScenarioCoverageAudit.Findings): String = buildString {
+    private fun repairPrompt(
+        findings: ScenarioCoverageAudit.Findings,
+        authored: List<ScenarioResult>,
+    ): String = buildString {
+        // **앞서 낸 것을 보여 준다**(ARTEL-629). 저장 전이라 `current_scenarios` 에 실을 수 없고
+        // (`scenario_id` 가 없다), 안 보여 주면 모델은 자기가 무엇을 냈는지 모르는 채로 "그 흐름에
+        // 넣어 제목 그대로 다시 내라"를 받는다 — 실측(런 178)에서 모델이 정확히 그렇게 답했다:
+        // *"앞서 작성된 시나리오의 구조화된 목록이 없어서 제목 그대로 교체할 수 없습니다."*
+        if (authored.isNotEmpty()) {
+            append("앞서 낸 시나리오입니다. 고칠 것은 **제목을 그대로 두고 통째로** 다시 내 주세요.\n")
+            authored.forEach { scenario ->
+                append("- \"").append(scenario.title).append("\" — ")
+                append(scenario.steps.size).append("스텝")
+                val cases = scenario.steps.mapNotNull { it.caseId }.distinct()
+                if (cases.isNotEmpty()) append(" (케이스 ").append(cases.joinToString(", ")).append(")")
+                append("\n")
+            }
+            append("\n")
+        }
         if (findings.missing.isNotEmpty()) {
             append("이전 응답에서 관련 있다고 판단한 케이스 중 ")
             append(findings.missing.joinToString(", "))
@@ -775,14 +793,24 @@ class TestScenarioAgentService(
      *
      * `answered` 로 남겨 **같은 질문이 다시 나가지 않게 한다**(ScenarioReconcileService 가 읽는다).
      */
+    /** 이번에 함께 낸 질문들. 세션이 없으면(재접속 뒤) 거절한 그 하나만 덮는다. */
+    private fun askedBatch(sessionKey: String, question: ScenarioQuestion): List<String> =
+        sessions[sessionKey]?.asked?.takeIf { question.id in it } ?: listOf(question.id)
+
     private suspend fun notifyDeclined(
         sessionKey: String,
         runId: Long,
         appUserId: Long,
         question: ScenarioQuestion,
+        batch: List<String> = listOf(question.id),
     ) {
         val message = ScenarioDeclineReply.advice(question)
-        saveMessage(runId, appUserId, "ASSISTANT", message, mapOf("kind" to "answered", "id" to question.id))
+        // **거절은 함께 낸 묶음 전체를 덮는다**(ARTEL-630). 한 번에 다 보여 준 뒤 "그대로 두기"를
+        // 누른 것이므로, 다음 턴에 그 묶음의 다른 질문을 다시 내면 같은 것을 또 묻는 셈이다 —
+        // 하나만 묻던 때 지키던 약속이 목록이 되면서 깨지는 자리다(ARTEL-487).
+        batch.forEach { id ->
+            saveMessage(runId, appUserId, "ASSISTANT", message, mapOf("kind" to "answered", "id" to id))
+        }
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
         progress(sessionKey, AuthoringStage.SAVED)
         logger.info("되묻기 거절 — 모델을 부르지 않는다 [runId={}, id={}]", runId, question.id)
@@ -948,7 +976,7 @@ class TestScenarioAgentService(
                         saveMessage(session.runId, session.appUserId, "ASSISTANT", event.message ?: "")
                         // 모델이 스스로 물은 것도 같은 모양으로 나간다 — 화면이 두 벌을 그릴
                         // 이유가 없고, 답이 돌아오는 길도 하나여야 한다.
-                        fromAgent(event.question)?.let { ask(sessionKey, session, it) }
+                        fromAgent(event.question)?.let { ask(sessionKey, session, listOf(it)) }
                     } catch (err: CancellationException) {
                         throw err
                     } catch (err: Exception) {
@@ -1136,13 +1164,31 @@ class TestScenarioAgentService(
      *
      * 세션에 하나만 매단다. 여러 개를 쌓으면 사용자는 어느 것에 답한 것인지 말해 줄 방법이 없다.
      */
-    private suspend fun ask(sessionKey: String, session: AgentSession, question: ScenarioQuestion) {
-        session.question = question
-        saveMessage(session.runId, session.appUserId, "ASSISTANT", question.text, question.payload())
-        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "question", question = question))
+    /**
+     * **모르는 자리를 한 번에 낸다**(ARTEL-630).
+     *
+     * 앞서는 하나만 물었다. 막힌 자리가 여럿이면 나머지는 아무 말 없이 미상으로 남고, 사용자는
+     * 시나리오가 완성된 줄 안다 — 실측(런 178)에서 못 간다고 적은 자리가 일곱인데 물은 것은
+     * 하나였다. 한 번에 보여 주면 아는 것만 답하고 나머지는 그대로 둘 수 있다.
+     *
+     * 대화에는 **첫 질문만** 한 줄로 남긴다. 일곱 줄이 붙으면 대화가 질문지에 묻히고, 목록은
+     * 화면이 한 자리에서 그릴 것이라 대화에 되풀이할 이유가 없다.
+     *
+     * [AgentSession.question] 도 첫 것을 문다 — 답을 받아 다음 턴에 넘기는 경로가 하나짜리다.
+     * 나머지에 답하는 길은 화면이 그 id 로 보내는 것이고, 그 자리는 아직 없다.
+     */
+    private suspend fun ask(sessionKey: String, session: AgentSession, questions: List<ScenarioQuestion>) {
+        val first = questions.firstOrNull() ?: return
+        session.question = first
+        session.asked = questions.map { it.id }
+        saveMessage(session.runId, session.appUserId, "ASSISTANT", first.text, first.payload())
+        streamManager.emit(
+            sessionKey,
+            ScenarioStreamEvent(type = "question", question = first, questions = questions),
+        )
         logger.info(
-            "되물음 [sessionKey={}, id={}, 보기={}건, 출처={}]",
-            sessionKey, question.id, question.options.size, question.source,
+            "되물음 [sessionKey={}, {}건, 첫 id={}, 출처={}]",
+            sessionKey, questions.size, first.id, first.source,
         )
     }
 
@@ -1177,6 +1223,13 @@ class TestScenarioAgentService(
          * 하나만 둔다. 여러 개를 쌓으면 사용자는 어느 것에 답한 것인지 말해 줄 방법이 없다.
          */
         @Volatile var question: ScenarioQuestion? = null,
+        /**
+         * 이번에 **함께 낸 질문들의 id**(ARTEL-630).
+         *
+         * 거절은 묶음 전체를 덮는다 — 한 번에 다 보여 준 뒤 "그대로 두기"를 누른 것이므로, 다음
+         * 턴에 같은 묶음의 다른 질문을 내면 같은 것을 또 묻는 셈이다.
+         */
+        @Volatile var asked: List<String> = emptyList(),
         /**
          * 마지막으로 사용자에게 알린 미커버 건수. 같은 수를 두 번 말하지 않기 위한 값이다 —
          * 좁은 작업을 이어가는 대화에서 매 턴 같은 줄이 붙으면 읽히지 않는다.

@@ -702,6 +702,11 @@ class ScenarioBridgeInsertionIntegrationTest {
 
         val asked = reconcileService.reconcile(runId, projectId, userId, listOf(one))
         assertThat(asked.question?.id).startsWith("arm:")
+        // **모르는 자리를 한 번에 낸다**(ARTEL-630). 갈래와 범위가 함께 나가고, 화면은 그것을
+        // 한 자리에 그린다 — 하나만 내면 나머지는 아무 말 없이 미상으로 남는다.
+assertThat(asked.questions).hasSize(2)
+        assertThat(asked.questions.first().id).startsWith("arm:")
+        assertThat(asked.questions.last().id).isEqualTo("scope:Map_scene")
 
         // 사용자가 "이번엔 그대로 두기"를 눌렀다 — 대화에 답한 기록이 남는다.
         runMessageRepository.save(
@@ -716,7 +721,11 @@ class ScenarioBridgeInsertionIntegrationTest {
 
         val again = reconcileService.reconcile(runId, projectId, userId, listOf(one))
 
-        assertThat(again.question).isNull()
+        // **답한 것은 다시 묻지 않는다.** 남은 것은 아직 답하지 않은 다른 질문이고, 실제 경로에서는
+        // 그것도 처음에 함께 나갔으므로 거절이 묶음 전체를 덮는다
+        // (`TestScenarioAgentService.notifyDeclined`). 여기는 `reconcile` 을 직접 부르는 자리라
+        // 그 묶음 기록이 없다.
+        assertThat(again.questions).noneMatch { it.id.startsWith("arm:") }
         // 묻지 않는 대신 통보는 남는다 — 조건이 사라진 것이 아니라 답을 들은 것뿐이다.
         assertThat(again.notices).anyMatch { it.contains("다른 갈래") }
     }
