@@ -119,6 +119,52 @@ class ScenarioBridgeInsertionIntegrationTest {
         ).id!!
     }
 
+    /**
+     * **같은 곳으로 가는 길이 여럿이면 시킬 수 있는 쪽을 고른다**(ARTEL-634).
+     *
+     * 앞서는 첫 간선을 집었다. 실측(지도 26)에서 `Map_scene → TurnBattleScene` 이 둘인데 하나는
+     * `not-a-step` 이고 다른 하나가 `Return` 키다 — 앞엣것이 먼저 나오면 "저절로 일어난다"로
+     * 답하고, 그 위에서 저작이 **지도가 아는 길을 두고** 사용자에게 "어떻게 넘어가나요"를 묻는다
+     * (런 183: `gap:Map_scene→TurnBattleScene`).
+     */
+    @Test
+    fun `시킬 수 없는 간선이 먼저 있어도 시킬 수 있는 쪽으로 넘어간다`(): Unit = runBlocking {
+        // 못 시키는 간선을 **먼저** 앉힌다 — 이것이 앞서 답을 가로채던 자리다.
+        val automatic = capability(mapSceneId, interaction = "none", inputKey = null, actionability = "not-a-step")
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = automatic, source = "static",
+            )
+        )
+        val enter = capability(mapSceneId, interaction = "press", inputKey = "Return")
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+        val onMap = case("Map_scene", "Map_scene 화면인 상태")
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        val outcome = reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "전투 진입", description = "맵에서 전투로",
+                    steps = listOf(
+                        ChatScenarioStep(action = "맵 확인", caseId = onMap),
+                        ChatScenarioStep(action = "전투 확인", caseId = inBattle),
+                    ),
+                )
+            ),
+        )
+
+        assertThat(outcome.applied).isEqualTo(1)
+        // 길을 모른다고 묻지 않는다 — 지도가 `Return` 을 알고 있다.
+        assertThat(outcome.questions.map { it.id }).noneMatch { it.startsWith("gap:") }
+    }
+
     @Test
     fun `씬을 건너뛴 결과에 이동 스텝이 끼워져 저장된다`(): Unit = runBlocking {
         val enter = capability(mapSceneId, interaction = "press", inputKey = "Return")
@@ -677,14 +723,19 @@ class ScenarioBridgeInsertionIntegrationTest {
         ).awaitSingle()
     }
 
-    private suspend fun capability(sceneId: Long, interaction: String, inputKey: String): Long =
+    private suspend fun capability(
+        sceneId: Long,
+        interaction: String,
+        inputKey: String?,
+        actionability: String = "runnable",
+    ): Long =
         capabilityRepository.save(
             CapabilityEntity(
                 sceneId = sceneId, contentMapId = contentMapId, origin = "evidence",
                 summary = "test capability",
                 interaction = interaction, inputKey = inputKey,
                 inputPhase = if (interaction == "press") "down" else null,
-                status = "runnable",
+                status = "runnable", actionability = actionability,
             )
         ).id!!
 

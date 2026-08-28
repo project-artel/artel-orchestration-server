@@ -447,12 +447,20 @@ class ScenarioPathService(
         state: Map<String, String>,
     ): Hop {
         val fromScene = sceneRepository.findByContentMapIdAndName(contentMapId, from) ?: return Hop.None
-        val edge = sceneEdgeRepository.findByFromSceneIdAndToSceneName(fromScene.id!!, to).firstOrNull()
-            ?: return Hop.None
-        // 간선은 있는데 무엇으로 넘어가는지 모르는 경우(자동 전이)도 저절로 일어나는 쪽이다.
-        val capabilityId = edge.capabilityId ?: return Hop.Automatic
-        val capability = capabilityRepository.findById(capabilityId) ?: return Hop.None
-        if (!instructable(capability)) return Hop.Automatic
+        val edges = sceneEdgeRepository.findByFromSceneIdAndToSceneName(fromScene.id!!, to).toList()
+        if (edges.isEmpty()) return Hop.None
+
+        // **한 화면에서 같은 곳으로 가는 길이 여럿이면 시킬 수 있는 쪽을 고른다**(ARTEL-634).
+        // 앞서는 첫 간선을 집었다. 실측(지도 26)에서 `Map_scene → TurnBattleScene` 이 둘인데
+        // 하나는 `not-a-step` 이고 다른 하나가 `Return` 키다 — 앞엣것이 먼저 나오면 "저절로
+        // 일어난다"로 답하고, 그 위에서 저작이 "길을 모른다"고 사용자에게 묻는다. 지도가 아는
+        // 길을 두고 물은 셈이다(런 183: `gap:Map_scene→TurnBattleScene`).
+        val usable = edges.firstNotNullOfOrNull { edge ->
+            val capability = edge.capabilityId?.let { capabilityRepository.findById(it) }
+            if (capability != null && instructable(capability)) edge.capabilityId!! to capability else null
+        }
+        // 시킬 수 있는 간선이 하나도 없으면 그때는 정말 저절로 일어나는 자리다.
+        val (capabilityId, capability) = usable ?: return Hop.Automatic
         // 간선을 타는 조작에도 자기 사전조건이 있다. `InteractionLock` 이 잠긴 상태에서 씬을
         // 넘으라고 적어 두면 실행은 첫 스텝에서 멎는다.
         ScenarioStateReader.violated(capability.givenText, state)?.let { return Hop.Blocked(it) }
