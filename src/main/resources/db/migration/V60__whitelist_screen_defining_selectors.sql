@@ -37,8 +37,15 @@
 -- 에 안 들어갔으니 기록이 없어서 복원할 수 없다. **다음 관측부터** 갈린다. 반대 방향(목록에서
 -- 빼는 것)은 소급해서 접을 수 있고 그것은 ARTEL-655 다.
 --
--- ⚠️ 번호: develop 은 V57 이 가장 높고, V58 을 들고 있던 유일한 브랜치(ARTEL-649)는 이 작업이
--- 흡수하면서 닫힌다. 비어 보이는 번호(V47 · V50 · V52 · V53)는 쓰지 않는다 — 더 높은 번호를 이미
+-- ⚠️ 번호: 이 브랜치가 열려 있는 동안 develop 이 V57 을 받았다. 그래서 처음 잡았던 V56 · V58 은
+-- 둘 다 develop 최고 번호 위가 아니거나(V56) 그 자리를 다른 브랜치와 다투었고(V58 은 ARTEL-649
+-- 가 들고 있었다 — 그 PR 은 닫혔지만 번호는 다시 쓰지 않는다), 지금의 V59 · V60 으로 함께 올렸다.
+--
+-- **둘의 순서가 붙어 있어서 함께 올렸다.** 4절의 소급 접기는 `uk_screen_discriminator` 가 이미
+-- 걸려 있다는 전제로 쓰였다(그 절의 주석). V59 만 올리면 그 유니크가 이 파일 **뒤로** 가서 전제가
+-- 뒤집힌다.
+--
+-- 비어 보이는 번호(V47 · V50 · V52 · V53 · V56 · V58)는 쓰지 않는다 — 더 높은 번호를 이미
 -- 적용한 DB 에서 out-of-order 로 걸린다(`docs/flyway-migrations.md` 의 "Tangle").
 
 --------------------------------------------------------------------------------
@@ -50,14 +57,14 @@
 --
 -- **프로세스 메모리에 두지 않는다.** `ScreenObservationService.folds` 는 재시작하면 사라지고 서버가
 -- 두 대면 각자 자기 것을 본다. 그러면 같은 화면이 런마다·재시작마다 다른 `discriminator` 로 앉아,
--- V56 이 막으려던 바로 그 분열이 규칙 쪽에서 다시 열린다.
+-- V59 가 막으려던 바로 그 분열이 규칙 쪽에서 다시 열린다.
 --
 -- ## 정규표현식을 저장하지 않는다
 --
 -- 이 표는 `discriminator` 를 만드는 Kotlin(`ScreenSelectorWhitelist`)과 소급 처리를 하는 SQL
 -- (2절의 `screen_defining_selector`, 그리고 ARTEL-655) 양쪽에서 평가된다. `java.util.regex` 와
 -- POSIX ARE 는 다르고, 한쪽에서만 맞는 항목이 하나 생기면 같은 화면이 두 `discriminator` 로
--- 갈린다 — `uk_screen_discriminator`(V56) 가 막으려던 분열이 목록 쪽에서 다시 열린다.
+-- 갈린다 — `uk_screen_discriminator`(V59) 가 막으려던 분열이 목록 쪽에서 다시 열린다.
 --
 -- 두 번째 이유는 항목을 LLM 이 쓴다는 것이다. 잘못된 정확 문자열은 아무것에도 안 맞고 끝나지만,
 -- 잘못된 정규식은 **전부** 맞고 그것이 조용하다.
@@ -224,8 +231,8 @@ ON CONFLICT (scene_id, match_kind, pattern, source) DO NOTHING;
 --
 -- 목록을 전부 적용한 결과가 `[]` 가 되는 화면이 있을 수 있다. 그 씬에 씨앗이 하나도 없었다는
 -- 뜻이고, 그때 그 씬의 화면은 하나다 — 오류가 아니다(1절).
-DROP TABLE IF EXISTS v58_screen_rewrite;
-CREATE TEMP TABLE v58_screen_rewrite AS
+DROP TABLE IF EXISTS v60_screen_rewrite;
+CREATE TEMP TABLE v60_screen_rewrite AS
 SELECT s.id AS screen_id,
        s.scene_id,
        COALESCE(
@@ -238,13 +245,13 @@ SELECT s.id AS screen_id,
        ) AS discriminator
 FROM screen s;
 
-DROP TABLE IF EXISTS v58_screen_merge;
-CREATE TEMP TABLE v58_screen_merge AS
+DROP TABLE IF EXISTS v60_screen_merge;
+CREATE TEMP TABLE v60_screen_merge AS
 SELECT r.screen_id,
        min(r.screen_id) OVER (PARTITION BY r.scene_id, r.discriminator) AS keeper_id
-FROM v58_screen_rewrite r;
+FROM v60_screen_rewrite r;
 
-CREATE INDEX ON v58_screen_merge (screen_id);
+CREATE INDEX ON v60_screen_merge (screen_id);
 
 --------------------------------------------------------------------------------
 -- 5. screen_capability — 참조를 남길 행으로 옮기고 관측 수를 합친다
@@ -253,7 +260,7 @@ CREATE INDEX ON v58_screen_merge (screen_id);
 INSERT INTO screen_capability (screen_id, capability_id, observed_count, fired_count)
 SELECT m.keeper_id, sc.capability_id, sum(sc.observed_count), sum(sc.fired_count)
 FROM screen_capability sc
-JOIN v58_screen_merge m ON m.screen_id = sc.screen_id
+JOIN v60_screen_merge m ON m.screen_id = sc.screen_id
 WHERE m.screen_id <> m.keeper_id
 GROUP BY 1, 2
 ON CONFLICT (screen_id, capability_id) DO UPDATE SET
@@ -270,8 +277,8 @@ ON CONFLICT (screen_id, capability_id) DO UPDATE SET
 -- 접힌 전이는 늘 씬 안이다. 묶음이 씬 단위(`PARTITION BY r.scene_id`)라 씬을 넘는 전이는 두 끝이
 -- 서로 다른 씬에 있어 절대 같은 keeper 로 접히지 않는다. 그래서 `scene_edge` 가 매달린 전이가
 -- 이 절에서 사라지는 일은 없다.
-DROP TABLE IF EXISTS v58_transition_merge;
-CREATE TEMP TABLE v58_transition_merge AS
+DROP TABLE IF EXISTS v60_transition_merge;
+CREATE TEMP TABLE v60_transition_merge AS
 SELECT t.id,
        t.capability_id,
        mf.keeper_id AS from_keeper,
@@ -280,8 +287,8 @@ SELECT t.id,
            PARTITION BY mf.keeper_id, mt.keeper_id, coalesce(t.capability_id, -1)
        ) AS keeper_id
 FROM screen_transition t
-JOIN v58_screen_merge mf ON mf.screen_id = t.from_screen_id
-JOIN v58_screen_merge mt ON mt.screen_id = t.to_screen_id
+JOIN v60_screen_merge mf ON mf.screen_id = t.from_screen_id
+JOIN v60_screen_merge mt ON mt.screen_id = t.to_screen_id
 WHERE mf.keeper_id <> mt.keeper_id;
 
 -- 합쳐질 전이의 관측 수를 대표 전이에 얹는다.
@@ -289,7 +296,7 @@ UPDATE screen_transition t
 SET observed_count = t.observed_count + folded.extra
 FROM (
     SELECT tm.keeper_id, sum(st.observed_count) AS extra
-    FROM v58_transition_merge tm
+    FROM v60_transition_merge tm
     JOIN screen_transition st ON st.id = tm.id
     WHERE tm.id <> tm.keeper_id
     GROUP BY 1
@@ -300,20 +307,20 @@ WHERE t.id = folded.keeper_id;
 -- 옮기지 않고 지우면 "어느 관측이 이 간선을 처음 검증했나" 가 소리 없이 null 이 된다.
 UPDATE scene_edge e
 SET first_observed_transition_id = tm.keeper_id
-FROM v58_transition_merge tm
+FROM v60_transition_merge tm
 WHERE e.first_observed_transition_id = tm.id
   AND tm.id <> tm.keeper_id;
 
 -- 대표가 아닌 전이와 자기 자신으로 접힌 전이를 지운다.
 DELETE FROM screen_transition t
-WHERE t.id NOT IN (SELECT keeper_id FROM v58_transition_merge);
+WHERE t.id NOT IN (SELECT keeper_id FROM v60_transition_merge);
 
 -- 남은 대표의 끝점을 남길 화면으로 옮긴다. 지우기를 먼저 한 뒤라야
 -- `uk_screen_transition_auto` 가 중간 상태에서 걸리지 않는다.
 UPDATE screen_transition t
 SET from_screen_id = tm.from_keeper,
     to_screen_id = tm.to_keeper
-FROM v58_transition_merge tm
+FROM v60_transition_merge tm
 WHERE t.id = tm.keeper_id
   AND (t.from_screen_id <> tm.from_keeper OR t.to_screen_id <> tm.to_keeper);
 
@@ -322,7 +329,7 @@ WHERE t.id = tm.keeper_id
 --------------------------------------------------------------------------------
 UPDATE capability_observation o
 SET screen_id = m.keeper_id
-FROM v58_screen_merge m
+FROM v60_screen_merge m
 WHERE o.screen_id = m.screen_id
   AND m.screen_id <> m.keeper_id;
 
@@ -334,7 +341,7 @@ WITH remapped AS (
                PARTITION BY a.knowledge_id, a.scene_name, m.keeper_id ORDER BY a.id
            ) AS rank_in_group
     FROM knowledge_anchor a
-    JOIN v58_screen_merge m ON m.screen_id = a.screen_id
+    JOIN v60_screen_merge m ON m.screen_id = a.screen_id
 )
 DELETE FROM knowledge_anchor a
 USING remapped r
@@ -342,7 +349,7 @@ WHERE a.id = r.id AND r.rank_in_group > 1;
 
 UPDATE knowledge_anchor a
 SET screen_id = m.keeper_id
-FROM v58_screen_merge m
+FROM v60_screen_merge m
 WHERE a.screen_id = m.screen_id
   AND m.screen_id <> m.keeper_id;
 
@@ -356,19 +363,19 @@ WHERE a.screen_id = m.screen_id
 -- 값으로 채운다" 이다 — 남길 행이 id 가 가장 작으므로 그 값이 비어 있지 않으면 그것이 첫 원소다.
 -- `image_captured_at` 은 `image_object_key` 를 준 행에서 함께 가져온다. 둘은 한 캡처의 두 칸이라
 -- 따로 고르면 이미지와 시각이 어긋난다.
-DROP TABLE IF EXISTS v58_screen_group;
-CREATE TEMP TABLE v58_screen_group AS
+DROP TABLE IF EXISTS v60_screen_group;
+CREATE TEMP TABLE v60_screen_group AS
 SELECT m.keeper_id,
        sum(s.observed_count) AS observed_count,
        (array_agg(s.name ORDER BY s.id) FILTER (WHERE s.name IS NOT NULL))[1] AS name,
        (array_agg(s.image_object_key ORDER BY s.id) FILTER (WHERE s.image_object_key IS NOT NULL))[1] AS image_object_key,
        (array_agg(s.image_captured_at ORDER BY s.id) FILTER (WHERE s.image_object_key IS NOT NULL))[1] AS image_captured_at
 FROM screen s
-JOIN v58_screen_merge m ON m.screen_id = s.id
+JOIN v60_screen_merge m ON m.screen_id = s.id
 GROUP BY m.keeper_id;
 
 DELETE FROM screen s
-USING v58_screen_merge m
+USING v60_screen_merge m
 WHERE s.id = m.screen_id
   AND m.screen_id <> m.keeper_id;
 
@@ -378,11 +385,11 @@ SET observed_count = g.observed_count,
     image_object_key = g.image_object_key,
     image_captured_at = g.image_captured_at,
     discriminator = r.discriminator
-FROM v58_screen_group g
-JOIN v58_screen_rewrite r ON r.screen_id = g.keeper_id
+FROM v60_screen_group g
+JOIN v60_screen_rewrite r ON r.screen_id = g.keeper_id
 WHERE s.id = g.keeper_id;
 
-DROP TABLE v58_screen_group;
-DROP TABLE v58_transition_merge;
-DROP TABLE v58_screen_merge;
-DROP TABLE v58_screen_rewrite;
+DROP TABLE v60_screen_group;
+DROP TABLE v60_transition_merge;
+DROP TABLE v60_screen_merge;
+DROP TABLE v60_screen_rewrite;

@@ -15,7 +15,7 @@ import kr.artel.orchestration.contentmap.entity.ScreenSelectorSource
  * 올라 [ScreenObservationService.MAX_SCREENS_PER_SCENE] 32 코앞이었다.
  *
  * 무엇을 뺄지를 기계가 알아내는 방향은 후보 셋을 다 재봤고 셋 다 반례가 있었다 — 마이그레이션
- * `V58__whitelist_screen_defining_selectors.sql` 의 머리말에 표로 적었다. 새 기계 추정을 더 만드는
+ * `V60__whitelist_screen_defining_selectors.sql` 의 머리말에 표로 적었다. 새 기계 추정을 더 만드는
  * 것이 이 규칙이 멈추려는 일이므로, 여기에 휴리스틱을 더하지 않는다.
  *
  * ## 목록이 비면 화면이 하나다
@@ -33,9 +33,9 @@ import kr.artel.orchestration.contentmap.entity.ScreenSelectorSource
  *
  * ## SQL 에 같은 규칙이 있다
  *
- * `V58__whitelist_screen_defining_selectors.sql` 의 `screen_defining_selector(scene_id, selector)`
+ * `V60__whitelist_screen_defining_selectors.sql` 의 `screen_defining_selector(scene_id, selector)`
  * 가 [defines] 와 **같은 답을 내야 한다.** 갈리면 소급 처리가 접은 화면과 런타임이 앉히는 화면이
- * 다른 규칙을 따르게 되어, `uk_screen_discriminator`(V56) 가 막으려던 분열이 규칙 쪽에서 다시
+ * 다른 규칙을 따르게 되어, `uk_screen_discriminator`(V59) 가 막으려던 분열이 규칙 쪽에서 다시
  * 열린다. 항목에 정규식을 저장하지 않는 것이 그 위험을 줄이는 첫 번째 장치다 — `java.util.regex`
  * 와 POSIX ARE 는 다르고, 한쪽에서만 맞는 항목이 하나 생기면 그것으로 충분하다.
  */

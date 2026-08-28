@@ -374,7 +374,7 @@ enum class Applicability(val wire: String) {
  * `scene_screen_selector` 항목이 가리키는 대상 (ARTEL-654).
  *
  * 셋 다 **정확 문자열**로 맞댄다. 정규식을 저장하지 않는 이유는
- * `V58__whitelist_screen_defining_selectors.sql` 의 1절에 있다.
+ * `V60__whitelist_screen_defining_selectors.sql` 의 1절에 있다.
  *
  * [specificity] 는 우선순위의 두 번째 축이다 — 같은 출처 안에서는 좁은 것이 넓은 것을 이긴다.
  * 값 자체에 뜻은 없고 순서만 뜻이 있으며, SQL 쪽 `screen_defining_selector` 의 `CASE` 와 같은

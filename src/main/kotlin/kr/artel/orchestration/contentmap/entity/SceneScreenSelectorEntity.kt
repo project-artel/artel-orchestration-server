@@ -9,7 +9,7 @@ import java.time.Instant
  * 이 씬에서 화면을 식별하는 selector 목록의 항목 하나 (ARTEL-654).
  *
  * `discriminator` 는 이 목록에 맞는 selector 만 담는다. **목록에 없는 것은 처음 보는 것이어도
- * 무시한다** — 그 기본값을 뒤집은 근거는 `V58__whitelist_screen_defining_selectors.sql` 에 있다.
+ * 무시한다** — 그 기본값을 뒤집은 근거는 `V60__whitelist_screen_defining_selectors.sql` 에 있다.
  *
  * [pattern] 은 정확 문자열이고 정규식이 아니다. 평가가 Kotlin(`ScreenSelectorWhitelist`)과
  * SQL(`screen_defining_selector`) 양쪽에서 일어나는데, 두 정규식 엔진이 다르면 같은 화면이 두

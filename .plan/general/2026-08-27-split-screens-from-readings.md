@@ -63,7 +63,7 @@ QA 런이 흘리는 `PULSE` 만으로 `screen` · `screen_capability` ·
       - `PulseMessageHandler` 에서 중계 **뒤에** 부른다. 중계는 그대로 원문이다.
       - `ScreenRepositories.kt` 에 upsert 질의를 **덧붙인다**(재구성 금지 — ARTEL-596 이 같은
         파일에 읽기 질의를 붙인다).
-      - `V56__unique_screen_discriminator.sql` — `(scene_id, discriminator)` 유니크.
+      - `V59__unique_screen_discriminator.sql` — `(scene_id, discriminator)` 유니크.
         멱등을 코드의 희망이 아니라 DB 가 강제하게 한다.
 
 - [x] **Step 3: 테스트** — `ScreenObservationTest`
@@ -101,7 +101,7 @@ QA 런이 흘리는 `PULSE` 만으로 `screen` · `screen_capability` ·
     전부 검증됨이 된다. ARTEL-450 이 그것을 하나로 좁힌다.
   - `fold` 상태가 프로세스 메모리다. 재시작하면 다음 전량 `pulse` 가 복구한다.
 - **Rollback steps:** `PulseMessageHandler` 의 관측 호출 한 줄을 되돌리면 적재가 멈춘다.
-  V56 은 유니크 인덱스 하나라 남아도 무해하다.
+  V59 는 유니크 인덱스 하나라 남아도 무해하다.
 
 ## Open Questions
 

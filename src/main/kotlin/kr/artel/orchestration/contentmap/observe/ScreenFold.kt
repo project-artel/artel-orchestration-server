@@ -199,7 +199,7 @@ private val SIBLING_INDEX = Regex("""\[\d+]""")
  *
  * ## 같은 규칙이 SQL 에도 있다
  *
- * `V58__whitelist_screen_defining_selectors.sql` 의 `screen_defining_selector` 가 쓰는
+ * `V60__whitelist_screen_defining_selectors.sql` 의 `screen_defining_selector` 가 쓰는
  * `regexp_replace(selector, '\[[0-9]+\]', '', 'g')` 가 이 정규식과 같은 것이어야 한다. 어긋나면
  * 소급 처리가 접은 화면과 런타임이 앉히는 화면이 다른 규칙을 따르게 되어, 합쳐 놓은 행 옆에
  * 옛 모양의 행이 다시 쌓인다.

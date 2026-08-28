@@ -177,7 +177,7 @@ class ScreenObservationService(
      *
      * ## 왜 마이그레이션만으로는 부족한가
      *
-     * `V58__whitelist_screen_defining_selectors.sql` 은 **그때 있던** capability 만 심는다. 다음
+     * `V60__whitelist_screen_defining_selectors.sql` 은 **그때 있던** capability 만 심는다. 다음
      * 빌드의 `evidence` 가 새 씬과 새 capability 를 만들면 그 씬은 목록이 비어 화면 하나가 된다.
      * 그래서 런타임도 같은 씨앗을 심는다.
      *
@@ -185,7 +185,7 @@ class ScreenObservationService(
      *
      * `screen` 의 식별 키(`uk_screen_discriminator`)가 런과 프로세스를 넘어 사는 값이므로 그 값을
      * 만드는 규칙도 그래야 한다. 프로세스 메모리에 들면 서버 재시작·서버 두 대·사람이 목록을 고친
-     * 직후 — 셋 다에서 같은 화면이 다른 `discriminator` 로 앉아 행이 갈린다. `V56` 이 `fold` 상태를
+     * 직후 — 셋 다에서 같은 화면이 다른 `discriminator` 로 앉아 행이 갈린다. `V59` 가 `fold` 상태를
      * 믿지 않기로 한 것과 정확히 같은 판단이다.
      *
      * ## 쓰기 비용

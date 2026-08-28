@@ -71,7 +71,7 @@ capability 472개 중 control_selector 가 있는 것 24개
 - [x] **Step 4: 씨앗** — `capability.control_selector` 를 `selector` 항목으로 심는다.
       마이그레이션이 그때 있던 것을, `ScreenObservationService.seededWhitelist` 가 이후 빌드의 것을.
 
-- [x] **Step 5: 소급 접기** — V58 이 이미 쌓인 `screen` 을 새 규칙으로 다시 계산하고, 같아지는 행을
+- [x] **Step 5: 소급 접기** — V60 이 이미 쌓인 `screen` 을 새 규칙으로 다시 계산하고, 같아지는 행을
       묶어 `observed_count` · `screen_transition` · `scene_edge` · `knowledge_anchor` 를 옮긴다.
       ARTEL-649 의 절차를 그대로 가져왔다.
 
@@ -84,7 +84,7 @@ capability 472개 중 control_selector 가 있는 것 24개
 전역 `DELETE FROM project` · `DELETE FROM game_instance` 가 `qa_run_*_fkey` 에 걸리는 테스트
 정리 문제이고 이 변경과 무관하다.
 
-`artel_integration` 의 `pg_dump` 사본에 V58 실적용:
+`artel_integration` 의 `pg_dump` 사본에 V60 실적용:
 
 ```
 screen           30행 → 3행   (TurnBattleScene 29행 → 2행)

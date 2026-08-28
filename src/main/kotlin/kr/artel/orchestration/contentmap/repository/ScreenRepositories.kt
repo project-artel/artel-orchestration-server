@@ -23,7 +23,7 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
     /**
      * 이 `discriminator` 의 화면을 앉히거나, 이미 있으면 방문 수를 올리고 그 행의 id 를 돌려준다 (ARTEL-453).
      *
-     * 멱등을 코드가 아니라 `uk_screen_discriminator`(V56) 가 강제한다. `fold` 상태는 프로세스
+     * 멱등을 코드가 아니라 `uk_screen_discriminator`(V59) 가 강제한다. `fold` 상태는 프로세스
      * 메모리라 재시작하면 사라지고, 같은 빌드를 두 서버가 관측하면 각자 자기 메모리를 본다 —
      * 코드가 "처음 보는 `discriminator` 인가"를 판정하면 그때마다 같은 화면이 행 둘로 갈리고
      * `observed_count` 가 둘에 쪼개져 양쪽 다 틀린 값이 된다.

@@ -658,7 +658,7 @@ class ScreenObservationTest {
         )
     }
 
-    /** SQL 쪽 평가. `V58` 이 만든 함수를 그대로 부른다. */
+    /** SQL 쪽 평가. `V60` 이 만든 함수를 그대로 부른다. */
     private suspend fun screenDefiningInSql(sceneId: Long, selector: String): Boolean =
         db.sql("SELECT screen_defining_selector(:sceneId, :selector) AS defining")
             .bind("sceneId", sceneId)
