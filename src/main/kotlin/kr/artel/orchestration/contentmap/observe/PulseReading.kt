@@ -37,6 +37,27 @@ data class PulseReading(
 
     /** 꺼져 있는 객체. 빼지 않고 따로 싣는 것이 이 채널의 규율이다. */
     val deactive: List<PulseObject> = emptyList(),
+
+    /**
+     * SDK 가 이 `pulse` 에 매긴 순번 (ARTEL-450).
+     *
+     * **우리 도착 시각과 다른 축이다.** 실측 한 런에서 이 값이 30,290 까지 오르는 동안 우리가 받은
+     * `pulse` 는 14,036 개였다 — 절반은 전달 과정에서 사라진다. `capability_observation` 이 창의
+     * 경계를 이 번호로 적는 것이 그래서다([ActionTimeline] 의 규칙 4).
+     */
+    val reading: Long? = null,
+
+    /**
+     * 이 `pulse` 에서 달라진 것들의 키 (ARTEL-450).
+     *
+     * 세 모양으로 온다 — `"scene"` · `"TitleScene/Canvas[2]/continue[2]|active"` ·
+     * `"Battle.Turns.TurnBattleSystem::EnemyTurn"`. 읽는 규칙은 [observedEffectOf] 에 있다.
+     *
+     * **비어 오는 일이 사실상 없다.** 실측 14,489 개 전부가 무언가를 실어 왔고, 적 애니메이터
+     * selector 다섯 개가 그 중 2 만 건을 차지한다. 그래서 "달라진 것이 있나" 는 판정이 될 수 없고,
+     * [ActionTimeline] 이 액션 직전 구간을 대조군으로 빼는 이유가 이 사실이다.
+     */
+    val changed: List<String> = emptyList(),
 )
 
 /**
@@ -46,6 +67,17 @@ data class PulseReading(
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PulseObject(
+    /**
+     * 런타임 instance id (ARTEL-450).
+     *
+     * 액션 프로토콜이 조준에 받는 값이 이것이다 — `button_click` 의 인자가 `[32562]` 인 것이 곧
+     * 이 번호다. `capability.control_selector` 는 위치 경로라 그대로는 조준에 못 쓰이고, 이 칸이
+     * **그 둘을 잇는 유일한 다리**다. 프로세스를 넘어 살지 못하므로 저장하지 않고
+     * [ActionTimeline] 이 런 동안만 들고 있는다.
+     */
+    @JsonProperty("id")
+    val instanceId: Long? = null,
+
     /**
      * 이 객체가 사는 씬. **문서 최상위와 같은 씬이면 객체가 제 이름을 대지 않는다** — 다른 씬의
      * 객체만 댄다. 읽는 쪽이 최상위 씬으로 메워야 하고, 그 메우기를 빠뜨리면 씬을 넘는 순간

@@ -26,6 +26,7 @@ class QaActionDispatchService(
     private val logService: QaLogService,
     private val databaseClient: DatabaseClient,
     private val sessionManager: SessionManager,
+    private val actionObservations: QaActionObservationPort,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator
 ) {
@@ -69,6 +70,9 @@ class QaActionDispatchService(
                     qaTry.gameInstanceId.toString(),
                     ActionResponseDto(id = outerId, actions = actions)
                 )
+                // 나간 **뒤에** 알린다 (ARTEL-450). 앞에 두면 전송이 실패해 롤백된 액션이 관측
+                // 타임라인에는 남아, 나가지도 않은 조작이 앞선 창의 배타성을 깬다.
+                actionObservations.dispatched(qaTry.gameInstanceId, outerId, actions)
                 logService.publish(inbound)
                 logService.publish(QaLogAppendResult(outboundResponse, true))
                 true

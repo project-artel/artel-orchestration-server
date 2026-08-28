@@ -22,6 +22,7 @@ class QaSdkBridgeService(
     private val logRepository: QaLogRepository,
     private val logService: QaLogService,
     private val agentPort: QaAgentPort,
+    private val actionObservations: QaActionObservationPort,
     private val objectMapper: ObjectMapper
 ) : QaScreenFramePort {
     suspend fun routeGameState(gameInstanceId: Long, sdkMessageId: String, state: AgentGameState): Boolean {
@@ -122,6 +123,10 @@ class QaSdkBridgeService(
         if (action.type != "ACTION") {
             return appendUnknownResult(qaTryId, outerIdString, payload)
         }
+        // 관측 타임라인은 **성공한 액션만** 받는다 (ARTEL-450). 여기가 그 성공/거절을 아는 유일한
+        // 자리다 — 아래 중계는 결과를 읽지 않고 옮기기만 한다. 답을 못 읽으면 아무 말도 하지
+        // 않는다: 못 읽은 것을 거절로 세면 그 컨트롤의 `attempts` 가 근거 없이 오른다.
+        succeededIn(payload)?.let { actionObservations.settled(gameInstanceId, outerId, it) }
         val correlationId = action.correlationId
         val inbound = logService.append(
             qaTryId = qaTryId,
@@ -147,6 +152,21 @@ class QaSdkBridgeService(
         logService.publish(outbound)
         sendAgent(qaTryId, sessionId, "ACTION_RESULT", correlationId, payload)
         return true
+    }
+
+    /**
+     * 이 `ACTION_RESULT` 가 액션이 **전부** 성공했다고 말하나 (ARTEL-450). 모르면 null 이다.
+     *
+     * SDK 는 결과를 배열로 싣는다 — `{"requestId":10,"results":[{"id":1,"success":true,"error":""}]}`.
+     * 하나라도 거절당했으면 그 조작은 게임에 닿지 못한 것이므로 묶음 전체를 실패로 읽는다.
+     *
+     * 배열이 아니거나 비어 있으면 **판단하지 않는다.** 답의 모양을 모르는 채로 성공이라고 읽으면
+     * 닿지도 못한 조작의 관측이 생기고, 실패라고 읽으면 멀쩡한 조작의 `attempts` 가 오른다.
+     */
+    private fun succeededIn(payload: JsonNode): Boolean? {
+        val results = payload.path("results")
+        if (!results.isArray || results.isEmpty) return null
+        return results.all { it.path("success").asBoolean(false) }
     }
 
     private suspend fun appendUnknownResult(

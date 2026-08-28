@@ -156,7 +156,8 @@ interface ScreenTransitionRepository : CoroutineCrudRepository<ScreenTransitionE
      * 관측한 전이를 앉히거나 관측 수를 올리고 그 행의 id 를 돌려준다 (ARTEL-453).
      *
      * `capability_id` 를 받지 않는다. 무엇이 이 전이를 일으켰는지는 액션과 `pulse` 를 시간축으로
-     * 붙이는 ARTEL-450 이 알려 주고, 그 전에는 **정직하게 귀속할 방법이 없다.** 추측을 넣으면
+     * 붙이는 ARTEL-450 이 컨트롤까지 알려 주지만, 한 컨트롤 뒤에 기능이 여럿이라 **그 중 하나를
+     * 정직하게 지목할 방법이 아직 없다.** 추측을 넣으면
      * "실제로 어떻게 흘렀나"가 오염되고, 그것은 이 표가 정적으로 만들어지지 않는 이유와 같은
      * 이유로 하면 안 되는 일이다.
      *
@@ -325,7 +326,7 @@ interface SceneEdgeRepository : CoroutineCrudRepository<SceneEdgeEntity, Long> {
      *
      * **기능 단위가 아니라 씬 쌍 단위로 올린다.** 같은 씬 쌍으로 가는 정적 간선이 여럿이면
      * (실측: `Player.Death` → `GameOverScene` 이 진입점 넷) 그 전부가 검증됨이 된다. 어느
-     * 기능이 실제로 눌렸는지는 ARTEL-450 이 붙기 전에는 알 수 없고, 여기서 하나를 골라 집으면
+     * 기능이 실제로 눌렸는지는 ARTEL-450 의 컨트롤 단위 귀속으로도 알 수 없고, 여기서 하나를 골라 집으면
      * "안다"와 "여럿 중 하나를 골랐다"가 구분되지 않는다.
      *
      * 과다 주장인 것은 맞다 — 눌린 적 없는 기능이 커버리지에서 덮인 것으로 읽힌다. 반대쪽,
@@ -358,7 +359,7 @@ interface SceneEdgeRepository : CoroutineCrudRepository<SceneEdgeEntity, Long> {
      * **이것은 오류가 아니라 발견이다** — 정적 분석이 놓친 씬 전이이고, `evidence` 수집을 어디서
      * 고칠지 알려주는 신호다.
      *
-     * `capability_id` 는 null 이다. 무엇으로 갔는지는 ARTEL-450 이 붙기 전에는 모르고, 갔다는
+     * `capability_id` 는 null 이다. 무엇으로 갔는지는 ARTEL-450 의 컨트롤 단위 귀속으로도 모르고, 갔다는
      * 사실은 그것과 무관하게 참이다 — `scene_edge` 의 `ON DELETE SET NULL` 이 든 것과 같은 판단이다.
      * 따라서 충돌도 `uk_scene_edge_auto`(부분 유니크) 로 건다.
      *

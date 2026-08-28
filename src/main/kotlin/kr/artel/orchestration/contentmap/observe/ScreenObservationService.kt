@@ -55,20 +55,21 @@ import java.time.Clock
  * 없는 selector 를 만나면 제안을 보낸다([propose]). 화면 행은 그대로 앉고 런은 답을 기다리지
  * 않는다 — 답이 끝내 안 와도 이 서비스는 지금과 똑같이 돈다.
  *
- * ## ARTEL-450 이 없어서 못 채우는 것
+ * ## 액션 귀속이 붙었는데도 여기서 안 쓰는 것
  *
- * 액션과 `pulse` 를 시간축으로 붙이는 ARTEL-450 이 아직 없다. 그것이 "이 전이를 무엇이 일으켰나"를
- * 답하는 유일한 자리라, 지금은 **`pulse` 만으로** 화면과 전이를 유도한다. 그 결과:
+ * ARTEL-450 이 액션과 `pulse` 를 붙여 `capability_observation` 을 남긴다
+ * ([CapabilityObservationService]). 그런데 그 귀속의 단위는 **컨트롤**이지 기능이 아니다 — 실측
+ * `Canvas[2]/continue[2]` 뒤에 기능 다섯 행이 있고, 클릭 한 번이 그 중 어느 갈래를 탔는지는
+ * `pulse` 가 말하지 않는다. 아래 셋은 기능 **하나**를 지목해야 채워지는 칸이라 그대로 비어 있다:
  *
- * - `screen_transition.capability_id` 는 **늘 null** 이다. 정직하게 귀속할 수 없는 자리에
- *   추측을 넣으면 "실제로 어떻게 흘렀나"가 오염된다 — 이 표를 정적으로 만들지 않는 것과 같은
- *   이유다
- * - `screen_capability.fired_count` 는 **늘 0** 이다. "눌렀는데 아무것도 안 변했다"를 세려면
- *   무엇을 눌렀는지 알아야 한다. `observed_count` 만 참이고, 둘의 차이를 결함 신호로 읽는
- *   소비자는 ARTEL-450 뒤에 와야 한다
- * - `scene_edge` 검증이 **씬 쌍 단위**다. 기능 단위로는 과다 주장한다
- *   ([SceneEdgeRepository.verifyByScenePair] 참고)
+ * - `screen_transition.capability_id` 는 **늘 null** 이다. 컨트롤 뒤 다섯 중 하나를 골라 적으면
+ *   "안다"와 "여럿 중 하나를 골랐다"가 구분되지 않는다. `kind` 도 첫 관측에서 굳고 갱신되지 않아
+ *   (`ScreenTransitionRepository.observeUnattributed`), 한 번 잘못 적으면 되돌릴 자리가 없다
+ * - `screen_capability.fired_count` 는 **늘 0** 이다. 같은 이유다. `observed_count` 만 참이다
+ * - `scene_edge` 검증이 **씬 쌍 단위**다 ([SceneEdgeRepository.verifyByScenePair] 참고)
  * - `TransitionKind.AUTO` 를 **한 번도 내지 않는다**. 아래 [kindOf] 참고
+ *
+ * 갈래를 가르는 것은 관측된 효과를 기대와 맞대는 ARTEL-451 이고, 그 뒤에 이 넷을 다시 본다.
  *
  * ## 실패를 삼킨다
  *
@@ -88,6 +89,7 @@ class ScreenObservationService(
     private val transitions: ScreenTransitionRepository,
     private val sceneEdges: SceneEdgeRepository,
     private val folds: ScreenFoldRegistry,
+    private val actionObservations: CapabilityObservationService,
     private val selectorProposals: ScreenSelectorProposalService,
     private val settledScreens: ScreenSettledService,
     private val objectMapper: ObjectMapper,
@@ -118,6 +120,7 @@ class ScreenObservationService(
         val qaRun = qaRuns.findActiveByGameInstanceId(gameInstanceId)
         if (qaRun == null) {
             folds.forget(gameInstanceId)
+            actionObservations.forget(gameInstanceId)
             return
         }
 
@@ -130,6 +133,15 @@ class ScreenObservationService(
 
         val fold = folds.of(gameInstanceId)
         fold.apply(reading)
+
+        // 액션 귀속은 씬 행이 없어도 돌아야 한다 (ARTEL-450). 씬을 못 찾는 `pulse` 에서 아래로 못
+        // 내려가면 그동안 열린 창이 안 닫히고, 그 액션의 관측은 영영 안 나간다.
+        qaRun.id?.let { qaRunId ->
+            actionObservations.observe(
+                ActionObservationContext(gameInstanceId, qaRunId, contentMapId, fold.settledScreenId),
+                reading,
+            )
+        }
 
         val sceneName = fold.scene ?: return
         // `evidence` 가 모르는 씬에는 화면을 앉히지 않는다. `screen.scene_id` 가 NOT NULL 이고, 씬을
@@ -180,7 +192,8 @@ class ScreenObservationService(
             val active = fold.activeSelectors()
             for (capability in sceneCapabilities) {
                 if (capability.controlSelector !in active) continue
-                // firedIncrement 는 0 이다. 무엇을 눌렀는지는 ARTEL-450 이 알려 준다.
+                // firedIncrement 는 0 이다. ARTEL-450 이 무엇을 눌렀는지는 알려 주지만 컨트롤
+                // 단위라, 기능 하나를 지목해야 하는 이 칸은 못 채운다(클래스 KDoc 참고).
                 screenCapabilities.observe(screenId, capability.id ?: continue, firedIncrement = 0)
             }
 
@@ -357,7 +370,7 @@ class ScreenObservationService(
     }
 
     /**
-     * 이 전이를 무엇으로 분류하나. **ARTEL-450 이 붙기 전의 잠정 규칙이다.**
+     * 이 전이를 무엇으로 분류하나. **관측만으로 참인 것을 고른 잠정 규칙이다.**
      *
      * 이슈가 정한 세 `kind` 는 원인을 말한다:
      * ```
@@ -374,8 +387,12 @@ class ScreenObservationService(
      *   전이에 그것을 달면 TC 생성기가 실제로 지시 가능한 경로를 **영영** 제외한다. `action`
      *   이 틀리면 지시할 기능이 없어 아무 일도 안 일어날 뿐이다
      *
-     * 그래서 이 유도는 `auto` 를 **한 번도 내지 않는다.** ARTEL-450 이 붙으면 여기서 다시 판정한다 —
-     * 전이 직전 귀속 창에 액션이 없었으면 그것이 `auto` 이고, 있었으면 그 기능이 `capability_id` 다.
+     * 그래서 이 유도는 `auto` 를 **한 번도 내지 않는다.**
+     *
+     * ARTEL-450 이 액션-`pulse` 시간축을 놓았지만 여기서 아직 다시 판정하지 않는다. 그 귀속의 단위가
+     * 컨트롤이라 `capability_id` 를 못 채우고, `kind` 는 첫 관측에서 굳어 갱신되지 않으므로
+     * (`ScreenTransitionRepository.observeUnattributed`) 반쯤 아는 상태로 적으면 되돌릴 자리가 없다.
+     * 갈래를 가르는 ARTEL-451 뒤에 다시 본다.
      */
     private fun kindOf(crossesScene: Boolean): TransitionKind =
         if (crossesScene) TransitionKind.ACTION else TransitionKind.STATE
