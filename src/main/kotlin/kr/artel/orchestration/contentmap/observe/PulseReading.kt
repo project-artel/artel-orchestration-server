@@ -67,8 +67,13 @@ data class PulseObject(
      * 이 객체가 **지금 무엇에 응답하는가**. 있으면 조작 가능한 객체다.
      *
      * 모양을 읽지 않고 비었는지만 본다 — 어휘는 SDK 의 것이고 배포마다 바뀐다. 옛 SDK 는 이
-     * 칸을 아예 보내지 않으므로 없는 것이 곧 "조작 불가"는 아니고, 그래서 `discriminator` 는 이것만으로
-     * 정해지지 않는다([ScreenDiscriminator] 참고).
+     * 칸을 아예 보내지 않으므로 없는 것이 곧 "조작 불가"는 아니다.
+     *
+     * **`discriminator` 를 정하는 데 쓰지 않는다** (ARTEL-654). 광고한다는 것은 "지금 무엇에
+     * 응답하는가" 이지 "이것이 화면을 식별한다" 가 아니고, 그 둘을 같게 놓았을 때 화면 수가
+     * 실제 상태 수가 아니라 플레이 길이에 비례했다. 무엇이 화면을 식별하는지는
+     * [ScreenSelectorWhitelist] 가 정한다. 이 칸이 남아 있는 것은 처음 보는 selector 를 목록
+     * 후보로 제안하는 데 쓰기 위해서이고, 그 소비자는 ARTEL-655 다.
      */
     @JsonProperty("offers")
     val offers: Map<String, Any?>? = null,
@@ -76,5 +81,6 @@ data class PulseObject(
     /** `discriminator` 와 기능 대조가 쓰는 키. selector 가 없으면 path 로 내려간다. */
     val key: String? get() = selector ?: path
 
+    /** SDK 가 이 객체를 조작 가능하다고 광고했나. 소비자는 아직 없다 — 위 [offers] 주석 참고. */
     val interactive: Boolean get() = !offers.isNullOrEmpty()
 }
