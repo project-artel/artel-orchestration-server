@@ -4,9 +4,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.toSet
 import kr.artel.orchestration.contentmap.entity.TransitionKind
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
+import kr.artel.orchestration.contentmap.repository.SceneCollectionFamilyRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.contentmap.repository.ScreenCapabilityRepository
@@ -61,6 +63,7 @@ class ScreenObservationService(
     private val qaRuns: QaRunRepository,
     private val contentMaps: ContentMapRepository,
     private val scenes: SceneRepository,
+    private val collectionFamilies: SceneCollectionFamilyRepository,
     private val capabilities: CapabilityRepository,
     private val screens: ScreenRepository,
     private val screenCapabilities: ScreenCapabilityRepository,
@@ -135,7 +138,7 @@ class ScreenObservationService(
         val sceneCapabilities = capabilities.findBySceneIdOrderByIdAsc(sceneId).toList()
         val controlSelectors = sceneCapabilities.mapNotNull { it.controlSelector }.toSet()
 
-        val candidate = fold.discriminate(controlSelectors)
+        val candidate = fold.discriminate(controlSelectors, rememberedCollectionFamilies(sceneId, fold))
         if (!fold.settle(candidate)) return
 
         val discriminatorJson = objectMapper.writeValueAsString(candidate.entries)
@@ -158,6 +161,54 @@ class ScreenObservationService(
         } ?: return
 
         fold.confirm(candidate, screenId, sceneId)
+    }
+
+    /**
+     * 이 씬의 collection family 를 낸다 — 이미 기억하고 있던 것에 이번 `fold` 가 새로 본 것을 더해서
+     * (ARTEL-649).
+     *
+     * ## 왜 관측 하나로 정하지 않는가
+     *
+     * `fold` 하나만 보면 그 순간 인스턴스가 하나뿐인 family 는 singleton 으로 보인다. 손패에 카드가
+     * 한 장 남은 순간의 `Card(Clone)` 이 그렇다. 그 순간의 `discriminator` 는 `Card(Clone)[37]` 을 담고,
+     * [ScreenFold.SETTLE_READINGS] 를 채우면 **그 카드 한 장이 화면 행 하나로 앉는다.** 다음 장을
+     * 뽑으면 그 행은 다시 밟히지 않는 유령이 되고, 그런 행이 씬마다 쌓여
+     * [MAX_SCREENS_PER_SCENE] 을 먹는다.
+     *
+     * ## 왜 프로세스 메모리가 아니라 DB 인가
+     *
+     * `fold` 옆에 두면 세 자리에서 무너진다. 셋 다 같은 결과를 낳는다 — **같은 화면이 다른
+     * `discriminator` 로 앉아 행이 갈린다.**
+     *
+     * - **런의 첫 pulse.** `fold` 는 런마다 새로 시작한다. 아직 아무것도 모르는 동안 나온
+     *   `discriminator` 는 collection 인스턴스를 담고, 그것이 그대로 `screen` 행이 된다. 런마다 하나씩
+     * - **서버 재시작.** `folds` 는 프로세스 메모리다(그 필드 주석 참고). 재시작 뒤 같은 화면이
+     *   재학습 전까지 다른 `discriminator` 를 낸다
+     * - **서버 두 대.** 같은 빌드를 둘이 관측하면 각자 자기 메모리를 본다
+     *
+     * `screen` 의 식별 키(`uk_screen_discriminator`)가 런과 프로세스를 넘어 사는 값이므로, 그 값을
+     * 만드는 규칙도 런과 프로세스를 넘어 살아야 한다. `V56` 이 `fold` 상태를 믿지 않기로 한 것과
+     * 정확히 같은 판단이다.
+     *
+     * ## 남는 구멍
+     *
+     * 한 번도 관측된 적 없는 씬의 **첫 화면**은 여전히 아무 지식 없이 앉는다. 그때 collection 이
+     * 인스턴스 하나만 들고 있었다면 그 행 하나는 옛 모양으로 남는다. 학습으로 푸는 규칙에서
+     * 이것은 피할 수 없고, `V58` 이 이미 쌓인 행에 대해 그 자리를 미리 메운다 — 그 마이그레이션이
+     * 기존 `discriminator` 에서 family 를 뽑아 이 표를 **채운 채로** 출발시키므로, 이미 본 씬에서는
+     * 다음 런의 첫 `pulse` 부터 규칙이 이미 서 있다.
+     *
+     * ## 쓰기 비용
+     *
+     * 새로 본 family 만 쓴다. 그 집합은 씬의 프리팹 종류 수로 수렴하므로 몇 번의 `pulse` 뒤에는
+     * 늘 비고, 남는 것은 `SELECT` 하나다. `record` 는 이미 `pulse` 마다 다섯 번 조회하므로 여섯 번째가
+     * 되는 셈이고, 그 값으로 캐시의 무효화 문제(서버 두 대가 서로의 학습을 못 본다)를 사지 않는다.
+     */
+    private suspend fun rememberedCollectionFamilies(sceneId: Long, fold: ScreenFold): Set<String> {
+        val remembered = collectionFamilies.findFamiliesBySceneId(sceneId).toSet()
+        val fresh = fold.collectionFamilies() - remembered
+        for (family in fresh) collectionFamilies.remember(sceneId, family)
+        return remembered + fresh
     }
 
     /**
@@ -243,9 +294,12 @@ class ScreenObservationService(
          * 여기 걸린다는 것은 `discriminator` 가 너무 민감하다는 뜻이다. 상한이 없으면 그 사실이 조용히
          * 수만 행과 행마다 튀는 캡처로만 드러나고, 그때는 이미 다이어그램이 읽을 수 없다.
          *
-         * 32 는 "사람이 한 씬에서 구분해 부를 수 있는 화면"의 넉넉한 상한이다. 실측 근거는
-         * 아직 없다 — 화면을 만드는 코드가 지금까지 없었다. 첫 런들의 씬별 화면 수를 보고
-         * 조정할 값이고, 그 조정은 상한이 아니라 `discriminator` 규칙 쪽이어야 한다.
+         * 32 는 "사람이 한 씬에서 구분해 부를 수 있는 화면"의 넉넉한 상한이다.
+         *
+         * **첫 실측이 이 주석의 예상대로 왔다.** `TurnBattleScene` 이 29행까지 올라 이 값에 닿기
+         * 직전이었고, 고칠 자리는 상한이 아니라 `discriminator` 규칙 쪽이었다 — collection family 를
+         * 빼자 같은 관측이 3행으로 접혔다(ARTEL-649, [rememberedCollectionFamilies]). 32 는 그대로
+         * 둔다. 여기 다시 걸리면 그때도 먼저 의심할 것은 `discriminator` 규칙이다.
          */
         const val MAX_SCREENS_PER_SCENE = 32
 

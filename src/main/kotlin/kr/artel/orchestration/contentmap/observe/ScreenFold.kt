@@ -32,6 +32,10 @@ package kr.artel.orchestration.contentmap.observe
  * 둘 다 필요하다. `offers` 만 쓰면 옛 SDK(그 칸을 안 보낸다)에서 `discriminator` 가 통째로 비고,
  * `control_selector` 만 쓰면 `evidence` 가 놓친 팝업이 안 갈린다.
  *
+ * 그 합집합에서 **collection family 를 다시 뺀다** (ARTEL-649). 조작 가능한 객체 중에도 런타임에
+ * 스폰되는 것이 있고 — 카드·적·투사체 — 그것들은 인스턴스마다 제 형제 인덱스를 달고 들어와 화면을
+ * 폭발시킨다. 무엇이 collection 인지 정하는 규칙과 그 실측 근거는 [ScreenFold.collectionFamilies] 에 있다.
+ *
  * ### 임계값이 틀렸을 때 나오는 증상
  *
  * - **너무 민감** — 한 씬의 화면 수가 수십을 넘고
@@ -98,19 +102,74 @@ class ScreenFold {
     }
 
     /**
-     * 지금 상태의 `discriminator`. [controlSelectors] 는 이 씬 기능들이 지목한 컨트롤이다.
+     * 지금 이 `fold` 가 들고 있는 객체를 collection family 별로 세어, 인스턴스가 둘 이상인 family 를
+     * 낸다. **이것이 "이 family 는 collection 이다" 의 관측 근거다** (ARTEL-649).
+     *
+     * ## 왜 이 판정이 필요한가
+     *
+     * Unity 게임은 오브젝트를 런타임에 스폰하고, 스폰된 인스턴스마다 제 형제 인덱스를 단다.
+     * 카드 한 장을 뽑으면 `Card(Clone)[37]` 이 `discriminator` 에 새로 끼어 화면이 통째로 새 행이 된다.
+     * 실측(`artel_integration`, `TurnBattleScene`): 화면 29행 중 29행이 그 씬의 것이었고,
+     * [ScreenObservationService.MAX_SCREENS_PER_SCENE] 32 에 닿기 직전이었다. collection family 넷을
+     * 빼면 같은 29행이 **의미 있는 3개**로 접힌다 — combine panel 열림·확정 가능·평시 전투.
+     *
+     * ## 켜진 것만 세지 않는다
+     *
+     * 이 함수는 `held` 의 **모든** 인스턴스를 센다. 켜진 것만 세면 안 된다는 근거가 실측에 있다.
+     * 같은 데이터에서 family 별 최대 동시 활성 수는 이랬다:
+     *
+     * ```
+     * Card(Clone)         최대 20 활성   → 활성만 세도 잡힌다
+     * MeleeRock(Clone)    최대  1 활성   → 활성만 세면 못 잡는다. 인스턴스는 7개다
+     * RangedCat(Clone)    최대  1 활성
+     * BossFlower(Clone)   최대  0 활성   → 한 번도 켜진 적이 없다
+     * ```
+     *
+     * 적은 스폰되자마자 풀에 들어가 꺼진 채로 남는다. 그래도 `discriminator` 에는 `active:false` 로
+     * **들어간다** — 화면을 폭발시키는 것은 켜짐이 아니라 **인덱스가 든 자리**다. 활성만 세는 규칙으로
+     * 재보면 29행이 3이 아니라 **12** 로만 접힌다.
+     *
+     * ## 틀렸을 때 나오는 증상
+     *
+     * - **과다 판정**(collection 이 아닌 것을 collection 으로 봄) — 이름이 같은 형제 컨트롤 둘
+     *   (`Canvas[0]/Button[1]` 확인, `Canvas[0]/Button[2]` 취소)이 한 family 로 묶여 **둘 다** 빠진다.
+     *   증상은 `ScreenFold` 의 "너무 둔함" 과 같다: 켜짐/꺼짐이 다른데 한 화면으로 뭉쳐 TC 가
+     *   절반씩 실패한다. 이 규칙으로 피할 수 없는 대가다 — 구조만 보면 "같은 자리에 인스턴스가
+     *   여럿" 인 두 경우는 구분되지 않는다
+     * - **과소 판정**(collection 을 놓침) — 화면 수가 다시 플레이 길이에 비례해 늘고
+     *   [ScreenObservationService.MAX_SCREENS_PER_SCENE] 경고가 로그를 채운다
+     */
+    fun collectionFamilies(): Set<String> {
+        val prefix = "${scene ?: ""}/"
+        val instances = HashMap<String, Int>()
+        for (key in held.keys) {
+            if (!key.startsWith(prefix)) continue
+            val family = collectionFamilyOf(key.removePrefix(prefix))
+            instances[family] = (instances[family] ?: 0) + 1
+        }
+        return instances.filterValues { it > 1 }.keys
+    }
+
+    /**
+     * 지금 상태의 `discriminator`. [controlSelectors] 는 이 씬 기능들이 지목한 컨트롤이고,
+     * [collectionFamilies] 는 이 씬에서 collection 으로 판정된 family 다([ScreenFold.collectionFamilies]).
+     *
+     * collection family 의 인스턴스는 통째로 뺀다. 그 멤버 구성은 화면이 그대로인 동안에도 계속
+     * 바뀌므로 화면을 **식별하지 못한다** — 카드 한 장 뽑는 것이 새 화면이 되면 안 된다.
      *
      * selector 로 정렬한다. jsonb 배열은 순서가 있어, 정렬하지 않으면 같은 화면이 `pulse` 마다 다른
      * `discriminator` 가 되고 `uk_screen_discriminator` 가 매번 새 행을 앉힌다.
      */
-    fun discriminate(controlSelectors: Set<String>): ScreenDiscriminator {
+    fun discriminate(controlSelectors: Set<String>, collectionFamilies: Set<String>): ScreenDiscriminator {
         val prefix = "${scene ?: ""}/"
         val entries = held.asSequence()
             .filter { (key, _) -> key.startsWith(prefix) }
             .mapNotNull { (key, live) ->
                 val selector = key.removePrefix(prefix)
                 val interactive = key in advertised || selector in controlSelectors
-                if (interactive) ScreenDiscriminatorEntry(selector, live) else null
+                if (!interactive) return@mapNotNull null
+                if (collectionFamilyOf(selector) in collectionFamilies) return@mapNotNull null
+                ScreenDiscriminatorEntry(selector, live)
             }
             .sortedBy { it.selector }
             .toList()
@@ -160,6 +219,37 @@ class ScreenFold {
         const val SETTLE_READINGS = 2
     }
 }
+
+/** selector 의 형제 인덱스. `Card(Clone)[37]` 의 `[37]`, `CombineSystem[7]/CombineZone[1]` 의 둘 다. */
+private val SIBLING_INDEX = Regex("""\[\d+]""")
+
+/**
+ * selector 가 속한 collection family — **경로 모든 마디**의 형제 인덱스를 지운 것 (ARTEL-649).
+ *
+ * `CombineSystem[7]/CombineZone[1]/Zone1[0]` → `CombineSystem/CombineZone/Zone1`
+ *
+ * ## 왜 마지막 마디만 지우지 않는가
+ *
+ * 스폰되는 것이 잎이라는 보장이 없다. 스폰된 부모 아래의 자식은 **부모 쪽 인덱스**가 흔들린다 —
+ * `Card(Clone)[37]/Cost[0]` 과 `Card(Clone)[38]/Cost[0]` 이 그렇다. 마지막 마디만 지우면 이 둘은
+ * `Card(Clone)[37]/Cost` 와 `Card(Clone)[38]/Cost` 라는 **서로 다른** family 가 되고, 각자 인스턴스가
+ * 하나뿐이라 어느 쪽도 collection 으로 판정되지 않는다. 그러면 규칙이 있으나 마나다.
+ *
+ * ## 다 지우는 대가
+ *
+ * 조상 이름까지 같은 서로 다른 컨트롤이 한 family 로 접힌다. 실측에서는 발화하지 않았다 —
+ * `TurnBattleScene` 의 singleton family 여덟은 각각 화면당 정확히 1 인스턴스였다(29 family × 29 화면
+ * = 29 elements). 발화했다면 그 여덟 중 하나가 화면당 2 이상으로 잡혀 collection 으로 빠졌을 것이고,
+ * 29행이 3으로 접히는 대신 통째로 뭉개졌을 것이다.
+ *
+ * ## 같은 규칙이 SQL 에도 있다
+ *
+ * `V58__drop_collection_families_from_discriminator.sql` 이 이미 쌓인 행을 접을 때 쓰는
+ * `regexp_replace(selector, '\[[0-9]+\]', '', 'g')` 가 이 정규식과 같은 것이어야 한다. 어긋나면
+ * 마이그레이션이 접은 화면과 런타임이 앉히는 화면이 다른 규칙을 따르게 되어, 합쳐 놓은 행 옆에
+ * 옛 모양의 행이 다시 쌓인다.
+ */
+fun collectionFamilyOf(selector: String): String = SIBLING_INDEX.replace(selector, "")
 
 /**
  * 이 화면임을 판정하는 `pulse` 관측 조건. `screen.discriminator` 에 그대로 앉는다.
