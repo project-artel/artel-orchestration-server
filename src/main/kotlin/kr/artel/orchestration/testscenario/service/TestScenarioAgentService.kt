@@ -232,13 +232,30 @@ class TestScenarioAgentService(
      *
      * **턴을 취소하지는 않는다.** 늦게라도 결과가 오면 그건 반영되는 것이 맞다. 여기서 하는 일은
      * 기다림에 끝을 주는 것뿐이다 — 화면이 풀리고, 다음 말을 보낼 수 있게 된다.
+     *
+     * ## 재는 것은 "죽었나"이지 "느린가"가 아니다(ARTEL-632)
+     *
+     * 시한을 턴 시작부터 고정으로 세면, **살아서 일하는 턴**도 끊긴다. 실측(런 179)에서 저작이
+     * 도구를 47번 부르며 일하는 동안 정각 5분에 시한이 났다 — 사용자가 본 것은 "끝나지 않았습니다"
+     * 였고, 결과는 그 뒤에 도착해 조용히 저장됐다. 물어야 할 것 셋도 그 턴과 함께 사라졌다.
+     *
+     * 그래서 **에이전트가 무언가 할 때마다 시한을 미룬다**([touch]). 아무 소식도 없는 5분만
+     * 멎은 것으로 본다. 조회가 많은 턴은 오래 걸릴 뿐 멎은 것이 아니다.
      */
     private fun watch(sessionKey: String, runId: Long, appUserId: Long) {
         val session = sessions[sessionKey] ?: return
         session.watchdog?.cancel()
+        session.lastHeard = System.currentTimeMillis()
         session.watchdog = scope.launch {
-            delay(TURN_DEADLINE_MILLIS)
-            val message = "요청이 ${TURN_DEADLINE_MILLIS / 60_000}분 안에 끝나지 않았습니다. " +
+            // **소식이 있으면 다시 기다린다.** 아무것도 안 오는 시간만 센다 — 마지막으로 들은 때에서
+            // 시한이 차는 자리까지 자고, 그 사이 무언가 들렸으면 그만큼 더 잔다.
+            while (true) {
+                val wait = TurnDeadline.remainingWait(
+                    session.lastHeard, System.currentTimeMillis(), TURN_DEADLINE_MILLIS,
+                ) ?: break
+                delay(wait)
+            }
+            val message = "${TURN_DEADLINE_MILLIS / 60_000}분간 아무 소식이 없어 기다림을 끝냅니다. " +
                 "다시 말씀해 주시면 새로 시도합니다 — 늦게라도 결과가 오면 그때 반영됩니다."
             logger.warn("턴이 시한을 넘겼다 — 기다림을 끝낸다 [sessionKey={}, runId={}]", sessionKey, runId)
             runCatching { saveMessage(runId, appUserId, "ASSISTANT", message) }
@@ -913,6 +930,9 @@ class TestScenarioAgentService(
         try {
             val node = objectMapper.readTree(payloadText)
             val session = sessions[sessionKey]
+            // **무엇을 듣든 살아 있다는 뜻이다**(ARTEL-632). 시한은 이 시각을 기준으로 잰다 —
+            // 도구를 마흔 번 부르며 일하는 턴을 "멎었다"고 말하면 안 된다.
+            session?.lastHeard = System.currentTimeMillis()
             if (node.path("type").asText() == "uncovered_cases") {
                 if (session == null) {
                     logger.warn("uncovered_cases를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
@@ -1223,6 +1243,11 @@ class TestScenarioAgentService(
          * 하나만 둔다. 여러 개를 쌓으면 사용자는 어느 것에 답한 것인지 말해 줄 방법이 없다.
          */
         @Volatile var question: ScenarioQuestion? = null,
+        /**
+         * 에이전트에게서 **마지막으로 무언가 들은 때**(ARTEL-632). 시한은 이것을 기준으로 잰다 —
+         * 재는 것은 "죽었나"이지 "느린가"가 아니다.
+         */
+        @Volatile var lastHeard: Long = System.currentTimeMillis(),
         /**
          * 이번에 **함께 낸 질문들의 id**(ARTEL-630).
          *
