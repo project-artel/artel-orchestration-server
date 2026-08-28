@@ -2,7 +2,7 @@
 
 - Date: 2026-08-28
 - Jira: ARTEL-456
-- Status: Draft
+- Status: Implemented
 
 ## Goal
 
@@ -80,36 +80,36 @@ dispatch 자체는 왕복이 아니고 pulse 처리를 잡아 두지 않는다. 
 
 ## Approach (Checklist)
 
-- [ ] **Step 0: Recon** — `ScreenObservationService`, `ScreenRepositories.kt`,
+- [x] **Step 0: Recon** — `ScreenObservationService`, `ScreenRepositories.kt`,
       `QaCaptureService`, `QaSdkBridgeService.routeActionResult`, `ScanResultRouter`,
       `ContentMapScanService`, `SessionManager`, agent-server `app/agents/qa/tools.py`
       의 `capture_screen`.
 
-- [ ] **Step 1: insert 를 가른다**
+- [x] **Step 1: insert 를 가른다**
       - `ScreenRepository.observe` 가 `ScreenObservationRow(id, inserted)` 를 돌려준다.
       - `ScreenObservationService.upsertScreen` 이 그 값을 트랜잭션 밖으로 들고 나온다.
 
-- [ ] **Step 2: capture 를 청구한다**
+- [x] **Step 2: capture 를 청구한다**
       - `contentmap/capture/ScreenCaptureService` — 활성 `qa_try` 를 확인하고 id 를 뽑아
         대기표를 남기고 `capture_screen` 을 보낸다. 실패는 전부 삼킨다.
       - `PendingScreenCaptureRegistry` — id → (screenId, qaTryId, gameInstanceId, 시각).
         상한과 TTL 을 둔다.
 
-- [ ] **Step 3: 결과를 화면에 묶는다**
+- [x] **Step 3: 결과를 화면에 묶는다**
       - `ScreenCaptureResultRouter.handle` — 대기표에 있는 id 의 frame 만 claim 한다.
       - `captureId` → `SCREENSHOT` qa_log 행 → `payload.objectKey`.
       - `ScreenRepository.attachImageIfAbsent` — `WHERE image_object_key IS NULL`.
         **처음 것만 남긴다를 SQL 이 강제한다.**
       - `ActionResultMessageHandler` 에 `scanResults` 다음, `qaBridge` 앞으로 끼운다.
 
-- [ ] **Step 4: 테스트**
+- [x] **Step 4: 테스트**
       - 같은 화면을 여러 번 observe 해도 dispatch 가 **정확히 한 번**.
       - 결과가 `image_object_key` · `image_captured_at` 을 채운다.
       - 두 번째 결과가 기존 이미지를 덮지 않는다.
       - dispatch 가 실패해도(붙은 socket 이 없어도) `screen` 행이 남는다.
       - agent 가 보낸 `capture_screen` 결과를 가로채지 않는다.
 
-- [ ] **Step 5: 마이그레이션** — 없다. `image_object_key` · `image_captured_at` 은 V40 부터
+- [x] **Step 5: 마이그레이션** — 없다. `image_object_key` · `image_captured_at` 은 V40 부터
       있고, 이 branch 의 최고 번호는 V60 이다.
 
 ## Validation
