@@ -343,6 +343,94 @@ class ScenarioPathServiceTest {
         assertThat(answer.note).contains("명세에 없다").doesNotContain("저절로")
     }
 
+    // ---- 저절로 바뀌는 값 (ARTEL-637) ------------------------------------------------
+
+    /**
+     * **값을 모른다고 넘기면 전투가 한 번도 안 끼워진다**(런 187, TS 528).
+     *
+     * 저절로 바뀌는 값은 어떤 케이스의 `state_after` 에도 적히지 않는다 — 조작이 쓰는 값이 아니라서다.
+     * 그래서 늘 "모르는 값"이었고 늘 넘어갔다. 실측에서 나온 시나리오가 이 모양이다:
+     *
+     * ```
+     * 스텝 2   StagePosition >= 1 요구
+     * 스텝 4   StagePosition >= 2 요구      ← 사이에 전투가 없다
+     * ```
+     *
+     * 사이를 메우는 일 자체는 제대로 돌고 있었다(`position` 브리지는 다섯 개나 들어갔다). 이 자리가
+     * **메울 곳으로 세어지지 않았을** 뿐이다.
+     */
+    @Test
+    fun `값을 몰라도 저절로 바뀌는 값이면 메울 자리로 센다`(): Unit = runBlocking {
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+
+        // `>=` 는 값을 정해 주지 않는다 — 그래서 이 자리가 늘 "모르는 값"이었다.
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 2")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.blockedBy).isEqualTo("StagePosition")
+        // 어디서 일어나는지를 댄다. 그 이름이 곧 실행하는 쪽이 찾아갈 자리다.
+        assertThat(answer.note).contains("TurnBattleScene").contains("저절로")
+    }
+
+    /**
+     * **아는 절반은 스텝으로 낸다.** 값을 올리는 일 자체는 못 시켜도 **그 화면까지 가는 길**은
+     * 지도에 있다. 전부 미상으로 답하면 아는 것까지 버리는 셈이고, 실행하는 쪽은 맵에서 무엇을
+     * 눌러야 전투에 들어가는지조차 스스로 찾아야 한다.
+     */
+    @Test
+    fun `저절로 바뀌는 화면까지 가는 길은 스텝으로 낸다`(): Unit = runBlocking {
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+        val enter = capability(mapSceneId, interaction = "press", inputKey = "Return")
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 2")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.capabilityIds).containsExactly(enter)
+        assertThat(answer.inputs).containsExactly("key:Return")
+        assertThat(answer.note).contains("길은 스텝으로 넣었다")
+    }
+
+    /**
+     * **모르는 값을 전부 자리로 세지는 않는다.** 지도가 그 값을 쓰는 곳을 하나도 모르면 앞 스텝이
+     * 만들었을 수 있고, 그것까지 막으면 될 것을 못 하게 한다.
+     *
+     * 실측(지도 26)에서 `InteractionLock.IsLocked` 가 전제에 22번 나오는데 그 값을 쓰는 기능은
+     * 지도에 하나도 없다. 이런 것까지 세면 저작이 온통 미상으로 덮인다.
+     */
+    @Test
+    fun `쓰는 곳을 모르는 값은 그대로 넘긴다`(): Unit = runBlocking {
+        val a = case("Map_scene", "Map_scene 화면인 상태")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / InteractionLock.IsLocked == 0")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.NOT_REQUIRED)
+    }
+
     // ---- 조작 자신의 사전조건 --------------------------------------------------------
 
     /**
