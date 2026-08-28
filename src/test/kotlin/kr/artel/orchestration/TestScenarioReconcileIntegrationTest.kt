@@ -331,10 +331,11 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(repairTurn).isNotNull()
         assertThat(repairTurn!!).contains("$caseB")
         assertThat(repairTurn).contains("제목 그대로 통째로 다시 내")
-        // **앞서 낸 것을 함께 보여 준다**(ARTEL-629). 안 보여 주면 모델은 자기가 무엇을 냈는지
-        // 모르는 채로 "그 흐름에 넣어 제목 그대로 다시 내라"를 받는다 — 실측(런 178)에서 모델이
-        // 정확히 그렇게 답했다: "앞서 작성된 시나리오의 구조화된 목록이 없어서 교체할 수 없습니다."
+        // **앞서 낸 것을 구조로 보여 준다**(ARTEL-633). 산문으로 적었더니 모델이 `current_scenarios`
+        // 를 먼저 보고 "기존 시나리오 목록이 비어 있어 교체할 수 없습니다"라며 손을 놓았다(런 181).
+        // 저장 전이라 번호가 없으므로 `scenario_id` 는 null 이고 제목이 짝을 맞추는 열쇠다.
         assertThat(repairTurn).contains("첫 시나리오")
+        assertThat(repairTurn).contains("\"scenario_id\":null")
 
         // 정말 다른 흐름이면 새 카드로 남는다 — 억지로 갖다 붙이지 않는다.
         val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()

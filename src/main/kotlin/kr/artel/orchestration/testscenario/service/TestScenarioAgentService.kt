@@ -582,7 +582,9 @@ class TestScenarioAgentService(
             sessionKey, session,
             "검토 결과 ${outcome.findings.summary()} — 그 부분만 다시 작성하도록 요청했습니다."
         )
-        sendTurn(sessionKey, session, repairPrompt(outcome.findings, scenarios), emptyList())
+        // **앞서 낸 것을 구조로 보여 준다**(ARTEL-633). 산문으로 적었더니 모델이 구조 필드를
+        // 먼저 보고 "목록이 비어 있다"며 손을 놓았다(런 181).
+        sendTurn(sessionKey, session, repairPrompt(outcome.findings), asCurrent(scenarios))
         // 재작성도 턴이다 — 답이 오지 않으면 똑같이 멎는다(ARTEL-510).
         watch(sessionKey, session.runId, session.appUserId)
     }
@@ -634,25 +636,17 @@ class TestScenarioAgentService(
      * 재작성 지시문. 지적된 것만 다루게 하고 앞서 쓴 것은 다시 쓰지 말라고 못 박는다 — 전체를 다시
      * 만들면 출력 예산을 통째로 한 번 더 쓰고, 이미 통과한 부분까지 흔들린다.
      */
-    private fun repairPrompt(
-        findings: ScenarioCoverageAudit.Findings,
-        authored: List<ScenarioResult>,
-    ): String = buildString {
-        // **앞서 낸 것을 보여 준다**(ARTEL-629). 저장 전이라 `current_scenarios` 에 실을 수 없고
-        // (`scenario_id` 가 없다), 안 보여 주면 모델은 자기가 무엇을 냈는지 모르는 채로 "그 흐름에
-        // 넣어 제목 그대로 다시 내라"를 받는다 — 실측(런 178)에서 모델이 정확히 그렇게 답했다:
-        // *"앞서 작성된 시나리오의 구조화된 목록이 없어서 제목 그대로 교체할 수 없습니다."*
-        if (authored.isNotEmpty()) {
-            append("앞서 낸 시나리오입니다. 고칠 것은 **제목을 그대로 두고 통째로** 다시 내 주세요.\n")
-            authored.forEach { scenario ->
-                append("- \"").append(scenario.title).append("\" — ")
-                append(scenario.steps.size).append("스텝")
-                val cases = scenario.steps.mapNotNull { it.caseId }.distinct()
-                if (cases.isNotEmpty()) append(" (케이스 ").append(cases.joinToString(", ")).append(")")
-                append("\n")
-            }
-            append("\n")
-        }
+    /**
+     * 앞서 낸 것을 **`current_scenarios` 로** 보여 준다(ARTEL-633).
+     *
+     * 저장 전이라 번호가 없다 — `scenario_id` 는 null 이고, 제목이 짝을 맞추는 열쇠다.
+     */
+    private fun asCurrent(authored: List<ScenarioResult>): List<CurrentScenario> =
+        authored.map { CurrentScenario(null, it.title, it.description, it.steps) }
+
+    private fun repairPrompt(findings: ScenarioCoverageAudit.Findings): String = buildString {
+        append("앞서 낸 시나리오는 `current_scenarios` 에 있습니다 — 아직 저장 전이라 ")
+        append("`scenario_id` 가 없고, **제목이 짝을 맞추는 열쇠**입니다.\n\n")
         if (findings.missing.isNotEmpty()) {
             append("이전 응답에서 관련 있다고 판단한 케이스 중 ")
             append(findings.missing.joinToString(", "))
