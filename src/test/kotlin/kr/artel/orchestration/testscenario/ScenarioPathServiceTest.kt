@@ -431,6 +431,39 @@ class ScenarioPathServiceTest {
         assertThat(answer.result).isEqualTo(ScenarioPathResult.NOT_REQUIRED)
     }
 
+    /**
+     * **기호 값은 아무 요구나 만족시키지 않는다**(런 188).
+     *
+     * 지도에 `saved StagePosition = MapMove.StagePosition` 이 있다. `detail` 이 숫자가 아니라
+     * 무엇이 될지 모르는 값인데, 위반 판정 규칙(`읽을 수 없으면 위반이 아니다`)을 그대로 쓰면
+     * `>= 2` 를 **만족시킨다**고 읽힌다. 그러면 전투가 필요한 자리가 "지도의 어떤 클릭이 이미
+     * 만들어 준다"로 답해지고, 저작은 전투를 한 번도 안 끼운 시나리오를 낸다.
+     *
+     * 위반은 모르면 아니라고 하는 것이 맞고, **만든다는 것은 모르면 아니라고 해야 한다.** 방향이
+     * 반대다.
+     */
+    @Test
+    fun `무엇이 될지 모르는 값을 쓰는 조작은 길로 치지 않는다`(): Unit = runBlocking {
+        val save = capability(mapSceneId, interaction = "click", label = "저장")
+        effect(save, target = "StagePosition", detail = "MapMove.StagePosition")
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 2")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.capabilityIds).doesNotContain(save)
+        assertThat(answer.note).contains("TurnBattleScene")
+    }
+
     // ---- 조작 자신의 사전조건 --------------------------------------------------------
 
     /**

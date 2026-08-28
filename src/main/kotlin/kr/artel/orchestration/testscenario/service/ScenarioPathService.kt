@@ -309,7 +309,7 @@ class ScenarioPathService(
         // **값을 정하는 조작**이 먼저다. 증감은 한 번으로 값이 정해지지 않으므로 여기서 뺀다 —
         // 빼지 않으면 `+1` 을 쓰는 조작이 `position >= 1` 을 "한 번 눌러 만족시킨다"로 읽힌다.
         val exact = ready.firstOrNull { (e, _) ->
-            e.detail != null && increment(e.detail) == null && guard.holds(e.detail!!)
+            increment(e.detail) == null && makes(guard, e.detail)
         }
         // **증감은 방향을 골라야 한다.** 먼저 걸리는 것을 집으면 값을 반대로 밀어내는 조작이
         // 들어간다 — 실측(런 152, TS 250)에서 `position` 을 1에서 3으로 올려야 하는 자리에
@@ -360,6 +360,34 @@ class ScenarioPathService(
                 else append(" (${guard.variable} → ${chosen.detail})")
             },
         ))
+    }
+
+    /**
+     * 이 효과가 [guard] 를 **증명할 수 있게** 만드나(ARTEL-637).
+     *
+     * [Guard.holds] 를 쓰면 안 되는 자리다. 그쪽은 *"이것이 위반인가"* 에 답하고 **읽을 수 없으면
+     * 참**이라고 말한다 — 모르는 것을 위반이라 하지 않는 것이 이 저장소 전체의 규칙이라 그게 맞다.
+     * 그런데 여기서 묻는 것은 정반대다: *"이 조작이 이 값을 만드나."* 만든다는 것은 **주장**이라,
+     * 못 읽으면 참이 아니라 거짓이어야 한다.
+     *
+     * 뒤섞은 대가가 실측(런 188)에 그대로 나왔다. 지도에 `saved StagePosition = MapMove.StagePosition`
+     * 이 있는데 그 `detail` 이 숫자가 아니라, `StagePosition >= 2` 를 **만족시킨다고** 읽혔다.
+     * 그래서 전투가 필요한 자리가 "지도 화면의 어떤 클릭이 이미 만들어 준다"로 답해졌고, 저작은
+     * 전투를 한 번도 안 끼운 시나리오를 냈다.
+     *
+     * 기호 값(`PlayerPrefs.GetInt(…)` · `stagePosition`)은 무엇이 될지 모르는 것이다. 모르는 것을
+     * 근거로 스텝을 끼우면 그 스텝은 실행할 때 어긋난다.
+     */
+    private fun makes(guard: Guard, detail: String?): Boolean {
+        val made = detail?.trim().orEmpty()
+        if (made.isEmpty() || guard.symbolic) return false
+        return when (guard.operator) {
+            // 글자까지 같으면 증명된다 — 숫자가 아니어도 된다(`"GameClearScene"` 같은 이름).
+            "==" -> made == guard.value
+            // "그 값이 아니다"는 **무엇이 되는지 알아야** 증명된다. 기호는 그 값일 수도 있다.
+            "!=" -> made.toDoubleOrNull() != null && made != guard.value
+            else -> made.toDoubleOrNull() != null && guard.holds(made)
+        }
     }
 
     /**
