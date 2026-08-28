@@ -135,6 +135,11 @@ data class ContentMapSceneResponse(
  * @property observedCount 이 화면을 몇 번 지나갔나. 0 은 화면 행이 있는데 관측이 없는 것이라 정상이
  *   아니지만, 조회는 그 판단을 하지 않고 그대로 옮긴다
  * @property firstSeenQaRunId 이 화면을 처음 본 런. 런이 지워지면 null 이 된다(`ON DELETE SET NULL`)
+ * @property capabilities 이 `screen` 에 실제로 묶인 `capability`.
+ *   **[ContentMapSceneResponse.capabilityList] 의 부분집합이고, 비어 있으면 비어 있는 채로 나간다** —
+ *   `scene` 의 목록으로 대신 채우지 않는다. 빈 목록은 "이 `screen` 에서 아직 아무것도 확인 안 됐다"
+ *   이고 `scene` 의 목록은 "이 `scene` 어딘가에서 할 수 있다"라, 둘을 합치면 인스펙터가 그 `screen`
+ *   의 것이 아닌 목록을 보여 준다(ARTEL-658)
  */
 @Schema(description = "씬 안의 화면 하나")
 data class ContentMapScreenResponse(
@@ -151,7 +156,57 @@ data class ContentMapScreenResponse(
     val firstSeenQaRunId: Long?,
     @Schema(description = "이 화면의 캡처. null 이면 아직 못 찍었다")
     val image: ScreenImageResponse? = null,
+    @Schema(description = "이 screen 에 묶인 capability. scene 의 capabilityList 로 대신 채우지 않는다")
+    val capabilities: List<ScreenCapabilityResponse> = emptyList(),
 )
+
+/**
+ * `screen` 하나에 묶인 `capability` 한 줄 (ARTEL-658).
+ *
+ * **`scene` 의 [SceneCapabilityResponse] 와 답하는 질문이 다르다.** 저쪽은 "이 `scene` 어딘가에서
+ * 무엇을 할 수 있나"이고 이쪽은 "이 `screen` 에서 실제로 무엇이 되더라"이다. 정적 `evidence` 가 아는
+ * 것은 "이 타입이 이 `scene` 에 놓였다"까지고, 어느 `screen` 상태에서 눌리는지는 런타임만 안다.
+ *
+ * `screen_transition` 으로 유도할 수도 없다. 그 표의 `capability_id` 는 무엇이 전이를 일으켰는지를
+ * 정직하게 귀속할 방법이 생기기 전까지 비어 있어(ARTEL-450), 전이에서 뽑으면 모든 `screen` 이 빈
+ * 목록이 된다.
+ *
+ * 판정 세 축은 담지 않는다. `scene` 의 [SceneCapabilityResponse] 에 같은 [id] 로 이미 나가 있고,
+ * `screen` 이 수십 개인 `scene` 에서 같은 값을 다시 실으면 그 비용이 `screen` 수만큼 곱해진다. 두
+ * 목록은 `capability.id` 로 이어진다.
+ *
+ * @property observedCount 이 `screen` 에서 이 `capability` 를 몇 번 봤나
+ * @property firedCount 그중 실제로 무언가 변한 횟수. [observedCount] 와의 차이가 결함 신호다 —
+ *   눌렀는데 아무것도 안 변한 횟수
+ */
+@Schema(description = "screen 에 묶인 capability 하나")
+data class ScreenCapabilityResponse(
+    @Schema(description = "capability.id. scene 의 capabilityList 와 steps 의 같은 id 가 같은 행이다")
+    val id: Long,
+    val summary: String,
+    @Schema(description = "runnable · needs-probe · unreachable-precondition · not-a-step")
+    val status: String,
+    @Schema(description = "evidence · observed · inferred · human. 어디서 알아냈나")
+    val origin: String,
+    @Schema(description = "unverified · confirmed · contradicted. 실행으로 확인됐나")
+    val verification: String,
+    @Schema(description = "이 screen 에서 이 capability 를 몇 번 봤나")
+    val observedCount: Int,
+    @Schema(description = "그중 실제로 무언가 변한 횟수. observedCount 와의 차이가 결함 신호다")
+    val firedCount: Int,
+) {
+    companion object {
+        fun of(row: ScreenCapabilityRow) = ScreenCapabilityResponse(
+            id = row.capabilityId,
+            summary = row.summary,
+            status = row.status,
+            origin = row.origin,
+            verification = row.verification,
+            observedCount = row.observedCount,
+            firedCount = row.firedCount,
+        )
+    }
+}
 
 /**
  * 화면 캡처의 주소. 씬 대표 이미지와 **같은 서명 경로**를 쓴다(`DocumentStorage.presignDownload`).

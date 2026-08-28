@@ -7,11 +7,15 @@ import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.contentmap.dto.ConditionNodeResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapResponse
 import kr.artel.orchestration.contentmap.entity.Actionability
+import kr.artel.orchestration.contentmap.entity.Applicability
+import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityOrigin
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import kr.artel.orchestration.contentmap.entity.EdgeSource
+import kr.artel.orchestration.contentmap.entity.Interaction
+import kr.artel.orchestration.contentmap.entity.Observability
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
 import kr.artel.orchestration.contentmap.entity.ScreenEntity
 import kr.artel.orchestration.contentmap.entity.ScreenTransitionEntity
@@ -20,10 +24,12 @@ import kr.artel.orchestration.contentmap.entity.SpecStatus
 import kr.artel.orchestration.contentmap.entity.TransitionKind
 import kr.artel.orchestration.contentmap.entity.VerificationState
 import kr.artel.orchestration.contentmap.ingest.ContentMapIngestService
+import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
+import kr.artel.orchestration.contentmap.repository.ScreenCapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ScreenRepository
 import kr.artel.orchestration.contentmap.repository.ScreenTransitionRepository
 import kr.artel.orchestration.contentmap.service.ContentMapViewService
@@ -94,8 +100,10 @@ class ContentMapViewGoldenTest {
     @Autowired private lateinit var contentMaps: ContentMapRepository
     @Autowired private lateinit var documents: ContentMapDocumentRepository
     @Autowired private lateinit var scenes: SceneRepository
+    @Autowired private lateinit var capabilities: CapabilityRepository
     @Autowired private lateinit var sceneEdges: SceneEdgeRepository
     @Autowired private lateinit var screens: ScreenRepository
+    @Autowired private lateinit var screenCapabilities: ScreenCapabilityRepository
     @Autowired private lateinit var screenTransitions: ScreenTransitionRepository
     @Autowired private lateinit var db: DatabaseClient
 
@@ -785,6 +793,121 @@ class ContentMapViewGoldenTest {
         val screensById = fresh.scenes.flatMap { it.screens }.associateBy { it.id }
         assertThat(screensById[across.fromScreenId]!!.sceneId)
             .isNotEqualTo(screensById[across.toScreenId]!!.sceneId)
+    }
+
+    /**
+     * **`screen` 에 묶인 `capability` 만 그 `screen` 아래 서고, 묶인 것이 없으면 빈 채로 나간다**
+     * (ARTEL-658).
+     *
+     * 빈 배열을 `scene` 의 목록으로 채우지 않는 것이 이 테스트의 요점이다. 두 값은 다른 사실이다 —
+     * 빈 목록은 "이 `screen` 에서 아직 아무것도 확인 안 됐다"이고 `scene` 의 목록은 "이 `scene`
+     * 어딘가에서 할 수 있다"이다. 합치면 `screen` 을 고른 사람이 그 `screen` 의 것이 아닌 목록을
+     * 본다. 그래서 아래에서 `scene` 의 목록이 비어 있지 않다는 것을 함께 못 박는다 — 그것이 없으면
+     * "채우지 않았다"와 "채울 것이 없었다"가 구분되지 않는다.
+     *
+     * `origin` 과 `verification` 을 함께 내는 이유: QA 가 밟아 확인한 것과 정적 분석이 말만 한 것을
+     * 가르는 것이 이 목록의 쓸모다. 두 값이 실제로 갈리는 행을 하나 세워 두고 본다 — 첫 적재 직후의
+     * 지도는 전부 `evidence` · `unverified` 라 그대로 두면 두 칸이 하드코딩된 상수와 구분되지 않는다.
+     *
+     * 그 행을 마지막에 지우는 이유: `capabilityList.size == capabilities.total` 을 보는 테스트가
+     * `@BeforeAll` 이 얼려 둔 응답과 **지금의** DB 행 수를 비교한다. 행을 남기면 실행 순서에 따라
+     * 그쪽이 깨지고, 깨진 이유가 이 테스트에 적혀 있지 않다.
+     *
+     * 조인이 행을 곱하지 않는다는 것도 본다. `screen_capability` 의 PK 가
+     * `(screen_id, capability_id)` 이므로 응답의 합이 표의 행 수와 같아야 한다.
+     */
+    @Test
+    fun `screen 에 묶인 capability 만 서고 없으면 빈 배열이다`(): Unit = runBlocking {
+        val title = scenes.findByContentMapIdAndName(contentMapId, "TitleScene")!!
+        val linked = screens.save(
+            ScreenEntity(
+                sceneId = title.id!!,
+                name = "타이틀 · capability 묶임",
+                discriminator = Json.of("""[{"selector":"Canvas[2]/start[3]","active":true}]"""),
+            )
+        )
+        // 같은 `scene` 의 다른 `screen`. 여기에는 아무것도 묶지 않는다
+        val unlinked = screens.save(
+            ScreenEntity(
+                sceneId = title.id,
+                name = "타이틀 · capability 안 묶임",
+                discriminator = Json.of("""[{"selector":"Canvas[2]/start[3]","active":false}]"""),
+            )
+        )
+
+        // `evidence` 쪽은 이 지도의 진짜 행을 쓴다. 지어낸 id 로는 요약이 그대로 실리는지 볼 수 없다
+        val sceneList = response.scenes.single { it.name == "TitleScene" }.capabilityList
+        val fromEvidence = sceneList.first()
+        // QA 가 밟아 확인한 쪽. `origin` 을 나중에 바꿀 수는 없다 — `fk_capability_evidence_origin`
+        // 이 `evidence` 출신 행의 `origin` 을 붙들고 있어, 처음부터 관측 출신으로 세워야 한다
+        val fromObservation = capabilities.save(
+            CapabilityEntity(
+                sceneId = title.id,
+                contentMapId = contentMapId,
+                capabilityKey = "screen-capability-view-${System.nanoTime()}",
+                origin = CapabilityOrigin.OBSERVED.wire,
+                verification = VerificationState.CONFIRMED.wire,
+                summary = "QA 가 눌러 본 조작",
+                interaction = Interaction.CLICK.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
+                applicability = Applicability.APPLIES.wire,
+            )
+        )
+
+        screenCapabilities.observe(linked.id!!, fromEvidence.id, firedIncrement = 1)
+        screenCapabilities.observe(linked.id, fromEvidence.id, firedIncrement = 0)
+        screenCapabilities.observe(linked.id, fromObservation.id!!, firedIncrement = 1)
+
+        try {
+            val fresh = view.read(userId, projectId, gameBuildId, capture = null)!!
+            val scene = fresh.scenes.single { it.name == "TitleScene" }
+
+            val listed = scene.screens.single { it.id == linked.id }.capabilities
+            assertThat(listed.map { it.id }).containsExactly(fromEvidence.id, fromObservation.id)
+            with(listed.single { it.id == fromEvidence.id }) {
+                assertThat(summary).isEqualTo(fromEvidence.summary)
+                assertThat(status).isEqualTo(fromEvidence.status)
+                assertThat(origin).isEqualTo(CapabilityOrigin.EVIDENCE.wire)
+                assertThat(verification).isEqualTo(VerificationState.UNVERIFIED.wire)
+                // 두 번 관측했고 그중 한 번만 무언가 변했다. 이 차이가 결함 신호다
+                assertThat(observedCount).isEqualTo(2)
+                assertThat(firedCount).isEqualTo(1)
+            }
+            // 같은 목록 안에서 출처와 확인 여부가 갈린다. 그것이 이 목록의 쓸모다
+            with(listed.single { it.id == fromObservation.id }) {
+                assertThat(summary).isEqualTo("QA 가 눌러 본 조작")
+                assertThat(origin).isEqualTo(CapabilityOrigin.OBSERVED.wire)
+                assertThat(verification).isEqualTo(VerificationState.CONFIRMED.wire)
+                assertThat(observedCount).isEqualTo(1)
+                assertThat(firedCount).isEqualTo(1)
+            }
+
+            // 묶인 것이 없는 `screen` 은 빈 채로 나간다. `scene` 의 목록으로 채우지 않는다
+            assertThat(sceneList).isNotEmpty()
+            assertThat(scene.screens.single { it.id == unlinked.id }.capabilities).isEmpty()
+
+            // `screen` 목록은 `scene` 목록의 부분집합이다. 두 목록이 `capability.id` 로 이어져야
+            // 인스펙터가 나머지 칸(판정 세 축)을 `scene` 쪽에서 찾을 수 있다
+            val sceneIds = fresh.scenes.flatMap { s -> s.capabilityList.map { it.id } }.toSet()
+            assertThat(fresh.scenes.flatMap { s -> s.screens.flatMap { it.capabilities } }.map { it.id })
+                .isSubsetOf(sceneIds)
+
+            // 조인이 행을 곱하지 않는다
+            val rows = count(
+                """
+                SELECT count(*) FROM screen_capability sc
+                JOIN screen sr ON sr.id = sc.screen_id
+                JOIN scene s ON s.id = sr.scene_id
+                WHERE s.content_map_id = :id
+                """
+            )
+            assertThat(fresh.scenes.sumOf { s -> s.screens.sumOf { it.capabilities.size } }.toLong())
+                .isEqualTo(rows)
+        } finally {
+            // `screen_capability` 는 CASCADE 라 연결 행도 함께 사라진다
+            capabilities.deleteById(fromObservation.id)
+        }
     }
 
     /**

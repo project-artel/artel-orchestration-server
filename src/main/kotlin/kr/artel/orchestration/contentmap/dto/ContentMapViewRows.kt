@@ -173,3 +173,51 @@ data class SceneCapabilityRow(
     @Column("interaction")
     val interaction: String,
 )
+
+/**
+ * `screen` 하나에 묶인 `capability` 한 줄. `screen_capability` 에 `capability` 를 곁들인 것.
+ *
+ * **[SceneCapabilityRow] 와 답하는 질문이 다르다.** 저쪽은 "이 `scene` 어딘가에서 무엇을 할 수 있나"
+ * 이고 이쪽은 "이 `screen` 에서 실제로 무엇이 되더라"이다. 정적 `evidence` 가 아는 것은 "이 타입이
+ * 이 `scene` 에 놓였다"까지고, 어느 `screen` 상태에서 실제로 눌리는지는 런타임만 안다 — 그래서
+ * `scene` 의 목록으로 이 목록을 대신 채울 수 없다. 빈 목록은 "이 `screen` 에서 아직 아무것도 확인
+ * 안 됐다"는 사실이지 결함이 아니다.
+ *
+ * [observedCount] 와 [firedCount] 는 `capability` 가 아니라 **연결 행 자체가 든 값**이라 여기 말고
+ * 나갈 자리가 없다. 둘의 차이가 결함 신호다 — 눌렀는데 아무것도 안 변한 횟수.
+ *
+ * 판정 세 축(`actionability` · `observability` · `applicability`)은 담지 않는다. 같은
+ * `capability.id` 로 `scene` 의 [SceneCapabilityRow] 에 이미 나가 있고, `screen` 이 수십 개인 `scene`
+ * 에서 같은 값을 다시 실으면 그 비용이 `screen` 수만큼 곱해진다. 두 목록은 `capability.id` 로
+ * 이어진다 — [SceneCapabilityRow] 가 컨트롤 정보를 빼는 것과 같은 판단이다.
+ */
+data class ScreenCapabilityRow(
+    @Column("screen_id")
+    val screenId: Long,
+
+    @Column("capability_id")
+    val capabilityId: Long,
+
+    @Column("summary")
+    val summary: String,
+
+    /** 세 축에서 유도된 값이다. 축 자체는 `scene` 의 `capabilityList` 에서 같은 id 로 찾는다. */
+    @Column("status")
+    val status: String,
+
+    /** [kr.artel.orchestration.contentmap.entity.CapabilityOrigin] 중 하나. */
+    @Column("origin")
+    val origin: String,
+
+    /** [kr.artel.orchestration.contentmap.entity.VerificationState] 중 하나. */
+    @Column("verification")
+    val verification: String,
+
+    /** 이 `screen` 에서 이 `capability` 를 몇 번 봤나. */
+    @Column("observed_count")
+    val observedCount: Int,
+
+    /** 그중 실제로 무언가 변한 횟수. [observedCount] 와의 차이가 결함 신호다. */
+    @Column("fired_count")
+    val firedCount: Int,
+)

@@ -19,6 +19,7 @@ import kr.artel.orchestration.contentmap.dto.SceneCapabilityCountResponse
 import kr.artel.orchestration.contentmap.dto.SceneCapabilityResponse
 import kr.artel.orchestration.contentmap.dto.SceneStepResponse
 import kr.artel.orchestration.contentmap.dto.SceneThumbnailResponse
+import kr.artel.orchestration.contentmap.dto.ScreenCapabilityResponse
 import kr.artel.orchestration.contentmap.dto.ScreenImageResponse
 import kr.artel.orchestration.contentmap.dto.SpecGapCountResponse
 import kr.artel.orchestration.contentmap.dto.VerificationResponse
@@ -33,6 +34,7 @@ import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
+import kr.artel.orchestration.contentmap.repository.ScreenCapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ScreenRepository
 import kr.artel.orchestration.contentmap.repository.ScreenTransitionRepository
 import kr.artel.orchestration.contentmap.scan.ScanStatusRegistry
@@ -62,6 +64,7 @@ class ContentMapViewService(
     private val capabilities: CapabilityRepository,
     private val sceneEdges: SceneEdgeRepository,
     private val screens: ScreenRepository,
+    private val screenCapabilities: ScreenCapabilityRepository,
     private val screenTransitions: ScreenTransitionRepository,
     private val documents: ContentMapDocumentRepository,
     private val scanStatuses: ScanStatusRegistry,
@@ -175,8 +178,13 @@ class ContentMapViewService(
         val steps = stepsByScene(contentMapId)
         val capabilityLists = capabilities.findSceneCapabilities(contentMapId).toList()
             .groupBy({ it.sceneId }, SceneCapabilityResponse::of)
+        // `screen` 별 `capability` 도 지도 한 번으로 읽는다. `screen` 마다 도는 조회는 한 `scene` 이
+        // `screen` 수십 개를 담는 자리에서(실측 `TurnBattleScene` 이 29 개) 조회 한 번을 왕복 수십
+        // 번으로 만든다.
+        val capabilitiesByScreen = screenCapabilities.findByContentMapId(contentMapId).toList()
+            .groupBy({ it.screenId }, ScreenCapabilityResponse::of)
         val screensByScene = screens.findByContentMapId(contentMapId).toList()
-            .groupBy({ it.sceneId }, ::screenOf)
+            .groupBy({ it.sceneId }) { screenOf(it, capabilitiesByScreen[it.id].orEmpty()) }
         return scenes.findByContentMapIdOrderByNameAsc(contentMapId).toList().map { scene ->
             ContentMapSceneResponse(
                 id = scene.id!!,
@@ -203,8 +211,16 @@ class ContentMapViewService(
      * 그대로 보여 준다. 여기서 DTO 로 좁히면 관측 쪽이 판정 어휘를 하나 늘리는 날 조회가 먼저
      * 깨지고, 깨지는 이유는 서버가 쓰지도 않는 필드다. `jsonb` 컬럼이라 `readTree` 는 실패할 수
      * 없다 — DB 가 이미 JSON 임을 보증한다.
+     *
+     * [capabilities] 가 비면 **빈 채로 나간다.** 이 `screen` 이 든 `scene` 의 목록으로 채우지 않는다 —
+     * `scene` 의 목록은 "이 `scene` 어딘가에서 할 수 있다"이고 빈 목록은 "이 `screen` 에서 아직
+     * 아무것도 확인 안 됐다"라, 서로 다른 사실이다. 합치면 `screen` 을 고른 사람이 그 `screen` 의
+     * 것이 아닌 목록을 본다(ARTEL-658).
      */
-    private fun screenOf(screen: ScreenEntity) = ContentMapScreenResponse(
+    private fun screenOf(
+        screen: ScreenEntity,
+        capabilities: List<ScreenCapabilityResponse>,
+    ) = ContentMapScreenResponse(
         id = screen.id!!,
         sceneId = screen.sceneId,
         name = screen.name,
@@ -212,6 +228,7 @@ class ContentMapViewService(
         observedCount = screen.observedCount,
         firstSeenQaRunId = screen.firstSeenQaRunId,
         image = imageOf(screen),
+        capabilities = capabilities,
     )
 
     /**
