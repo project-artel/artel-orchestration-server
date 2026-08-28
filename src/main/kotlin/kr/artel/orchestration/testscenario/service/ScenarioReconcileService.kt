@@ -430,9 +430,30 @@ class ScenarioReconcileService(
         steps: List<ChatScenarioStep>,
         facts: OpeningFacts,
     ): List<ScenarioOpeningNote.Requirement> {
-        val visited = steps.mapNotNull { it.caseId }.mapNotNull { facts.arrivesAt[it] }.toSet()
-        return steps.mapNotNull { it.caseId }
-            .flatMap { facts.guards[it].orEmpty() }
+        // **그 자리에 닿기 전에 지난 화면만 센다**(ARTEL-636). 뒤에서 지나는 것은 이 요구를
+        // 만들어 주지 못한다 — 실측(런 186)에서 3번이 `>= 1` 을 요구하는데 전투 진입이 18번이라,
+        // 순서를 안 보면 "스스로 만든다"고 읽고 안내가 빠진다. 실행하는 쪽은 그 자리에서 멎는다.
+        val visitedBefore = mutableSetOf<String>()
+        val needed = mutableListOf<ScenarioOpeningNote.Requirement>()
+        for (step in steps) {
+            val caseId = step.caseId
+            if (caseId != null) needed += unmet(facts, caseId, visitedBefore)
+            caseId?.let { facts.arrivesAt[it] }?.let(visitedBefore::add)
+        }
+        return needed
+            // 같은 값을 여러 스텝이 요구하면 **가장 많이 요구하는 자리**만 적는다.
+            .groupBy { it.variable }
+            .map { (_, needs) -> needs.maxBy { it.comparison.filter(Char::isDigit).toIntOrNull() ?: 0 } }
+            .sortedBy { it.variable }
+    }
+
+    /** 이 케이스가 요구하는 것 중 **아직 지나지 않은 화면에서만 오르는** 것들. */
+    private fun unmet(
+        facts: OpeningFacts,
+        caseId: Long,
+        visitedBefore: Set<String>,
+    ): List<ScenarioOpeningNote.Requirement> =
+        facts.guards[caseId].orEmpty()
             .filter { guard -> guard.operator in PROGRESS_OPERATORS }
             .filter { guard -> (guard.value.toDoubleOrNull() ?: 0.0) > 0 }
             .mapNotNull { guard ->
@@ -442,16 +463,11 @@ class ScenarioReconcileService(
                 // `position == 1`(방향키 한 번)에까지 붙었다.
                 if (raisedIn.isEmpty()) return@mapNotNull null
                 // 그 화면을 지나면 스스로 만든다. 적을 것이 없다.
-                if (raisedIn.any { it in visited }) return@mapNotNull null
+                if (raisedIn.any { it in visitedBefore }) return@mapNotNull null
                 ScenarioOpeningNote.Requirement(
                     guard.variable, "${guard.operator} ${guard.value}", raisedIn,
                 )
             }
-            // 같은 값을 여러 스텝이 요구하면 **가장 많이 요구하는 자리**만 적는다.
-            .groupBy { it.variable }
-            .map { (_, needs) -> needs.maxBy { it.comparison.filter(Char::isDigit).toIntOrNull() ?: 0 } }
-            .sortedBy { it.variable }
-    }
 
     /** 자리를 말하면서 진행을 요구하는 비교. `!=` 는 한 점만 빼므로 어디인지 말하지 않는다. */
     private val PROGRESS_OPERATORS = setOf("==", ">=", ">")

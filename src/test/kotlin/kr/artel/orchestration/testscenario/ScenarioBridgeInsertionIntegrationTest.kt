@@ -172,6 +172,51 @@ class ScenarioBridgeInsertionIntegrationTest {
     }
 
     /**
+     * **뒤에서 지나는 것은 그 요구를 만들어 주지 못한다**(ARTEL-636).
+     *
+     * 실측(런 186)에서 3번 스텝이 `StagePosition >= 1` 을 요구하는데 전투 진입은 **18번**이었다.
+     * "이 시나리오가 그 화면을 지나나"만 보면 지나므로 "스스로 만든다"고 읽히고 안내가 빠진다 —
+     * 그런데 실행하는 쪽은 3번에서 멎는다. 순서를 봐야 한다.
+     */
+    @Test
+    fun `값을 올리는 화면을 뒤에서 지나면 그래도 안내를 붙인다`(): Unit = runBlocking {
+        val raiser = capability(battleSceneId, interaction = "none", inputKey = null, actionability = "not-a-step")
+        effectRepository.save(
+            kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity(
+                capabilityId = raiser, kind = "write", category = "state",
+                target = "MapMove.StagePosition", detail = "+1",
+            )
+        )
+        val onMap = capabilityRepository.findById(
+            capability(mapSceneId, interaction = "press", inputKey = "RightArrow")
+        )!!
+        val key = "late-key-${seq.incrementAndGet()}"
+        capabilityRepository.save(onMap.copy(capabilityKey = key))
+        val needsStage = case(
+            "Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 1", capabilityKey = key,
+        )
+        // 전투에 들어가는 케이스는 **뒤에** 있다. 앞의 요구를 만들어 주지 못한다.
+        val entersBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        reconcileService.reconcile(
+            runId, projectId, userId,
+            listOf(
+                ScenarioResult(
+                    title = "먼저 요구하고 나중에 간다", description = "d",
+                    steps = listOf(
+                        ChatScenarioStep(action = "스테이지 1 이상에서 이동", caseId = needsStage),
+                        ChatScenarioStep(action = "전투 진입", caseId = entersBattle),
+                    ),
+                )
+            ),
+        )
+
+        val first = storedSteps().first()
+        assertThat(first.stepKind).isEqualTo(ScenarioStepKind.OPENING)
+        assertThat(first.action).contains("StagePosition >= 1")
+    }
+
+    /**
      * **같은 곳으로 가는 길이 여럿이면 시킬 수 있는 쪽을 고른다**(ARTEL-634).
      *
      * 앞서는 첫 간선을 집었다. 실측(지도 26)에서 `Map_scene → TurnBattleScene` 이 둘인데 하나는
