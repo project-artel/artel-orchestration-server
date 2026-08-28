@@ -39,7 +39,7 @@ import java.time.Instant
  * `scene_edge` 를 적재기가 채우는가. **이 표는 이 이슈 전까지 늘 0행이었다** — V40 이 만들고
  * `SceneEdgeRepository` 가 읽을 준비까지 끝났는데 쓰는 코드가 없었다.
  *
- * 새 추출이 아니라 **한 걸음의 매핑**이다. `SceneManager.LoadScene("X")` 는 이미 근거 문서에
+ * 새 추출이 아니라 **한 걸음의 매핑**이다. `SceneManager.LoadScene("X")` 는 이미 `evidence` 문서에
  * `kind='scene'` 효과로 들어와 있고, 적재기는 그것을 `capability_effect` 로 옮기고 있었다. 남은 것은
  * "그 효과를 든 기능이 앉은 씬 → 효과가 가리키는 씬 이름" 한 줄을 더 쓰는 일이다.
  *
@@ -51,7 +51,7 @@ import java.time.Instant
  * | 앉은 `scene_edge` 행 | **19** | 아래 |
  * | 서로 다른 (출발 씬 → 도착 씬) 쌍 | 13 | 같은 쌍을 서로 다른 기능이 낸다 |
  *
- * **15 와 19 가 다른 것이 정상이다.** 조인은 컨트롤 배선마다 · 스폰마다 후보를 내므로 한 레코드의
+ * **15 와 19 가 다른 것이 정상이다.** 조인은 컨트롤 `wiring` 마다 · 스폰마다 후보를 내므로 한 레코드의
  * 효과가 여러 기능 행에 실린다 — 문서 효과 395건이 `capability_effect` 486행이 되는 것과 같은
  * 이유다. 실제로 `Combat.Enemies.Player::Death` 의 `GameOverScene` 효과 하나가 진입점 넷(적 근접
  * 공격 · 피격 · 적 투사체 · 주문)에서 각각 기능 행이 되어 간선 넷이 된다. 그 넷을 접으면 "무엇을 해서
@@ -187,7 +187,7 @@ class ContentMapSceneEdgeIngestTest {
     }
 
     /**
-     * 근거가 말한 전이가 **그 기능에 매달린 채로** 나온다.
+     * `evidence` 가 말한 전이가 **그 기능에 매달린 채로** 나온다.
      *
      * 두 자리를 짚는다. 하나는 `Canvas/continue` 클릭 — `ContentMapIngestGoldenTest` 가 같은 자리의
      * `kind='scene'` · `target='Map_scene'` · `@47` 효과를 이미 못 박아 두었으므로, 여기서 그 효과가
@@ -198,7 +198,7 @@ class ContentMapSceneEdgeIngestTest {
      * 1 이 되면 `capability_id` 가 접힌 것이고, "무엇을 해서 죽었나"가 표에서 사라진다.
      */
     @Test
-    fun `근거의 씬 효과가 그 기능에 매달린 전이가 된다`(): Unit = runBlocking {
+    fun `evidence 의 씬 효과가 그 기능에 매달린 전이가 된다`(): Unit = runBlocking {
         val fromContinue = db
             .sql(
                 """
@@ -334,7 +334,7 @@ class ContentMapSceneEdgeIngestTest {
     /**
      * 문서가 더 이상 말하지 않는 정적 간선은 내려가고, **`runtime` 과 이미 밟아 본 간선은 남는다.**
      *
-     * 세 갈래가 한 재적재에서 갈린다:
+     * 세 가지가 한 재적재에서 갈린다:
      *
      * | 간선 | 재적재 뒤 | 왜 |
      * |---|---|---|
@@ -342,7 +342,7 @@ class ContentMapSceneEdgeIngestTest {
      * | `static`, `verified_at` 찍힘, 문서가 안 말함 | 남긴다 | QA 런이 실제로 밟았다. 문서가 놓친 것이지 없는 전이가 아니다 |
      * | `runtime` | 남긴다 | 정적 분석이 놓친 전이가 그것이고, 이 경로는 그것에 대해 아무 말도 하지 않는다 |
      *
-     * 지우는 갈래가 `retireVanished` **앞에서** 도는 것이 중요하다. `hasRuntimeReferences` 가
+     * 지우는 `branch` 가 `retireVanished` **앞에서** 도는 것이 중요하다. `hasRuntimeReferences` 가
      * `scene_edge` 를 참조로 세기 때문에, 지식 없는 정적 간선이 남아 있으면 사라진 기능이 영영 지워지지
      * 않고 매 재적재마다 `not-applicable` 로만 내려간다.
      */
@@ -577,13 +577,23 @@ class ContentMapSceneEdgeIngestTest {
      * 같은 씬 안의 화면 둘과 그 사이 전이 하나를 만들고 전이 id 를 돌려준다.
      *
      * `scene_edge.first_observed_transition_id` 가 `screen_transition` 을 FK 로 가리켜, 그 칸을 채우려면
-     * 화면부터 있어야 한다. 관측 경로가 아직 없어 SQL 로 직접 넣는다.
+     * 화면부터 있어야 한다. 관측 경로(ARTEL-453)를 부르지 않고 SQL 로 직접 넣는 것은, 이 파일이
+     * 검증하는 것이 **재적재가 런타임 칸을 되돌리지 않는가**이지 관측 경로가 아니기 때문이다.
+     *
+     * `discriminator` 를 이름마다 다르게 준다. 두 행을 같은 화면으로 볼지는 이름이 아니라
+     * `discriminator` 가 정하고(`uk_screen_discriminator`), 이름만 다른 두 행은 같은 화면이라 앉지 않는다.
      */
     private suspend fun stampObservedTransition(sceneId: Long): Long {
         suspend fun newScreen(name: String): Long = db
-            .sql("INSERT INTO screen (scene_id, name, discriminator) VALUES (:scene, :name, '[]'::jsonb) RETURNING id")
+            .sql(
+                """
+                INSERT INTO screen (scene_id, name, discriminator)
+                VALUES (:scene, :name, CAST(:discriminator AS jsonb)) RETURNING id
+                """
+            )
             .bind("scene", sceneId)
             .bind("name", name)
+            .bind("discriminator", """[{"selector":"Canvas[2]/$name[1]","active":true}]""")
             .map { row, _ -> (row.get(0) as Number).toLong() }
             .one()
             .awaitSingle()
