@@ -12,11 +12,13 @@ import kr.artel.orchestration.contentmap.entity.CapabilityProofEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityOrigin
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
+import kr.artel.orchestration.contentmap.entity.ContentMapRoot
 import kr.artel.orchestration.contentmap.entity.EffectCategory
 import kr.artel.orchestration.contentmap.entity.Interaction
 import kr.artel.orchestration.contentmap.entity.RecordKind
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
 import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.entity.ScreenEntity
 import kr.artel.orchestration.contentmap.entity.ScreenTransitionEntity
 import kr.artel.orchestration.contentmap.entity.TransitionKind
@@ -135,16 +137,17 @@ class ContentMapSchemaTest {
         scenes.save(SceneEntity(contentMapId = contentMapId, name = name, walked = true))
 
     /**
-     * 같은 빌드라도 `editor` 스캔과 `player` 스캔은 별개 행이다.
+     * **한 빌드에 지도는 하나다**(`uk_content_map_build`).
      *
-     * 두 capture 에서 같은 필드가 다른 뜻이기 때문이다 — 적의 `label` 이 authored `20` 인가 남은
-     * 체력 `20` 인가가 갈린다. 한 행에 섞으면 그 구분이 사라진다.
+     * capture 가 달라도 새 행이 되지 않는다. 갈라 둔 값을 아무도 쌍으로 안 읽는데 지도만 갈려,
+     * 소비자가 언제나 세상의 절반만 보고 있었다(ARTEL-642). capture 는 사라지지 않고 씬으로
+     * 내려가 "이 값을 어느 상태에서 읽었나"로 남는다.
      */
     @Test
-    fun `capture 가 다르면 같은 빌드라도 별개 지도다`(): Unit = runBlocking {
+    fun `한 빌드에 지도는 하나다`(): Unit = runBlocking {
         val build = newGameBuild()
 
-        val editor = contentMaps.save(
+        contentMaps.save(
             ContentMapEntity(
                 gameBuildId = build.id!!,
                 schemaVersion = 6,
@@ -152,19 +155,72 @@ class ContentMapSchemaTest {
                 evidenceDigest = "aaaa",
             )
         )
-        val player = contentMaps.save(
-            ContentMapEntity(
-                gameBuildId = build.id!!,
-                schemaVersion = 6,
+
+        assertThatThrownBy {
+            runBlocking {
+                contentMaps.save(
+                    ContentMapEntity(
+                        gameBuildId = build.id!!,
+                        schemaVersion = 6,
+                        capture = Capture.PLAYER.wire,
+                        evidenceDigest = "aaaa",
+                    )
+                )
+            }
+        }.hasMessageContaining("uk_content_map_build")
+    }
+
+    /**
+     * **근거 문서 없이도 지도가 선다.**
+     *
+     * QA 런이 근거 스캔보다 먼저 도는 빌드가 있고, 그때 지도를 못 세우면 관측한 것을 적을 자리가
+     * 없다. `schema_version` · `evidence_digest` · `capture` 는 전부 문서가 말해 주는 것이라 그
+     * 빌드에서는 아무도 말한 적이 없다 — 더미값을 넣으면 진짜 헤더와 같은 칸에 앉는다.
+     */
+    @Test
+    fun `근거 문서 없이 관측만으로 지도가 선다`(): Unit = runBlocking {
+        val build = newGameBuild()
+
+        val observed = contentMaps.save(
+            ContentMapEntity(gameBuildId = build.id!!, rootedBy = ContentMapRoot.OBSERVATION.wire)
+        )
+
+        val found = contentMaps.findByGameBuildId(build.id!!)
+        assertThat(found?.id).isEqualTo(observed.id)
+        assertThat(found?.schemaVersion).isNull()
+        assertThat(found?.evidenceDigest).isNull()
+        assertThat(found?.capture).isNull()
+        assertThat(found?.rootedBy).isEqualTo(ContentMapRoot.OBSERVATION.wire)
+    }
+
+    /**
+     * 씬이 자기 값을 **어느 상태에서 읽었는지**와 **어디서 왔는지**를 스스로 말한다.
+     *
+     * 둘 다 어휘 밖의 값을 CHECK 이 막는다. 막지 않으면 오타 하나가 표에 앉아, 그 씬을 읽는 쪽이
+     * 조용히 분기를 놓친다.
+     */
+    @Test
+    fun `씬이 capture 와 origin 을 든다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val scene = scenes.save(
+            SceneEntity(
+                contentMapId = map.id!!,
+                name = "TitleScene",
                 capture = Capture.PLAYER.wire,
-                evidenceDigest = "aaaa",
+                origin = SceneOrigin.OBSERVED.wire,
             )
         )
 
-        assertThat(editor.id).isNotEqualTo(player.id)
-        assertThat(contentMaps.findByGameBuildIdAndCapture(build.id!!, Capture.EDITOR.wire)?.id)
-            .isEqualTo(editor.id)
-        assertThat(contentMaps.findByGameBuildIdOrderByIdDesc(build.id!!).toList()).hasSize(2)
+        val found = scenes.findById(scene.id!!)!!
+        assertThat(found.capture).isEqualTo(Capture.PLAYER.wire)
+        assertThat(found.origin).isEqualTo(SceneOrigin.OBSERVED.wire)
+
+        assertThatThrownBy {
+            runBlocking { exec("INSERT INTO scene (content_map_id, name, capture) VALUES (${map.id}, 'Bad', 'editer')") }
+        }.hasMessageContaining("ck_scene_capture")
+        assertThatThrownBy {
+            runBlocking { exec("INSERT INTO scene (content_map_id, name, origin) VALUES (${map.id}, 'Bad', 'inferred')") }
+        }.hasMessageContaining("ck_scene_origin")
     }
 
     /**

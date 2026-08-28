@@ -466,7 +466,7 @@ class ScenarioPathService(
 
     private suspend fun contentMapIdOf(projectId: Long, appUserId: Long): Long? {
         val build = buildRepository.findAllForMember(projectId, appUserId).firstOrNull() ?: return null
-        return contentMapRepository.findByGameBuildIdOrderByIdDesc(build.id!!).firstOrNull()?.id
+        return contentMapRepository.findByGameBuildId(build.id!!)?.id
     }
 
     private fun withOrdering(ordering: ScenarioOrdering, answer: ScenarioPathAnswer) =

@@ -15,6 +15,7 @@ import kr.artel.orchestration.contentmap.dto.SceneCaptureUploadTicket
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapSceneCaptureEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
+import kr.artel.orchestration.contentmap.entity.ContentMapRoot
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapSceneCaptureRepository
@@ -162,7 +163,7 @@ class EvidenceDocumentService(
         // 중복 판정이 헤더 갱신보다 **먼저**다. 순서를 뒤집으면 옛 문서의 재전송이 지문을
         // 되돌린다 — A(aaaa) → B(bbbb) → A 재전송이면 저장은 건너뛰면서 지도의 지문만 aaaa 로
         // 돌아가고, "지문이 다르면 코드가 바뀐 것"이 거짓 발화해 검증이 되돌려진다.
-        val existingMap = contentMaps.findByGameBuildIdAndCapture(gameBuildId, header.capture)
+        val existingMap = contentMaps.findByGameBuildId(gameBuildId)
         if (existingMap != null) {
             documents.findByContentMapIdAndContentHash(existingMap.id!!, contentHash)?.let { existing ->
                 replaceSceneCaptures(gameBuildId, existingMap.id, existing.id!!, request.sceneCaptures)
@@ -277,23 +278,24 @@ class EvidenceDocumentService(
     }
 
     /**
-     * (게임 빌드, capture) 당 한 행. 같은 조합으로 다시 오면 헤더를 갱신한다.
+     * **게임 빌드당 한 행.** 같은 빌드로 다시 오면 capture 가 달라도 그 행의 헤더를 갱신한다.
      *
-     * capture 를 키에 넣는 이유: `editor` 는 저장된 값이고 `player` 는 플레이가 지나간 뒤의 값이라
-     * 같은 필드가 다른 뜻이다. 한 행에 섞으면 그 구분이 사라진다.
+     * capture 가 키에서 빠졌다(ARTEL-642). 두 capture 의 값 쌍을 아무도 읽지 않는데 지도만 갈라져,
+     * 소비자가 언제나 세상의 절반만 보고 있었다. 대신 규칙이 "같은 씬을 다시 읽으면 마지막 walk 가
+     * 이긴다"로 바뀌고, capture 는 `scene.capture` 로 내려가 씬마다 남는다.
+     *
+     * [ContentMapEntity.rootedBy] 는 여기서만 `evidence` 로 **올라간다.** 관측이 먼저 세운 지도에
+     * 근거 문서가 들어오는 경로가 이것뿐이고, 반대로 내려가지는 않는다 — 한 번 근거를 가진 지도는
+     * 계속 근거를 가진 지도다.
      */
     private suspend fun upsertContentMap(
         gameBuildId: Long,
         header: EvidenceDocumentHeader,
         existing: ContentMapEntity?,
     ): ContentMapEntity {
-        val next = (existing ?: ContentMapEntity(
-            gameBuildId = gameBuildId,
+        val next = (existing ?: ContentMapEntity(gameBuildId = gameBuildId)).copy(
             schemaVersion = header.schemaVersion,
             capture = header.capture,
-            evidenceDigest = header.evidenceDigest,
-        )).copy(
-            schemaVersion = header.schemaVersion,
             evidencePromises = header.promises,
             evidenceDigest = header.evidenceDigest,
             unity = header.unity,
@@ -301,13 +303,14 @@ class EvidenceDocumentService(
             backend = header.backend,
             development = header.development,
             sdkVersion = header.sdkVersion,
+            rootedBy = ContentMapRoot.EVIDENCE.wire,
         )
         return try {
             contentMaps.save(next)
         } catch (e: DataIntegrityViolationException) {
-            // 새 (빌드, capture) 를 동시에 만들면 uk_content_map_build_capture 에 걸린다.
+            // 한 빌드의 첫 지도를 동시에 만들면 uk_content_map_build 에 걸린다.
             // 먼저 만든 쪽이 이긴 것이므로 그 행을 읽어 이어간다.
-            contentMaps.findByGameBuildIdAndCapture(gameBuildId, header.capture) ?: throw e
+            contentMaps.findByGameBuildId(gameBuildId) ?: throw e
         }
     }
 

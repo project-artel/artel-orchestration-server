@@ -2,6 +2,7 @@ package kr.artel.orchestration.contentmap
 
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.awaitSingle
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.contentmap.dto.ConditionNodeResponse
@@ -11,6 +12,7 @@ import kr.artel.orchestration.contentmap.entity.Applicability
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityOrigin
 import kr.artel.orchestration.contentmap.entity.Capture
+import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import kr.artel.orchestration.contentmap.entity.EdgeSource
@@ -131,7 +133,7 @@ class ContentMapViewGoldenTest {
         putGoldenDocument(contentMapId)
         ingest.ingest(documents.findByContentMapIdOrderByReceivedAtDesc(contentMapId).first())
 
-        response = view.read(userId, projectId, gameBuildId, capture = null)!!
+        response = view.read(userId, projectId, gameBuildId)!!
     }
 
     /**
@@ -311,7 +313,7 @@ class ContentMapViewGoldenTest {
      */
     @Test
     fun `문서가 없는 빌드는 404 가 아니라 빈 응답이다`(): Unit = runBlocking {
-        val empty = view.read(userId, projectId, newBuild(projectId), capture = null)!!
+        val empty = view.read(userId, projectId, newBuild(projectId))!!
 
         assertThat(empty.contentMap).isNull()
         assertThat(empty.scenes).isEmpty()
@@ -352,7 +354,7 @@ class ContentMapViewGoldenTest {
             .bind("id", document.id!!)
             .fetch().rowsUpdated().block()
 
-        val registered = view.read(userId, projectId, build, capture = null)!!
+        val registered = view.read(userId, projectId, build)!!
 
         assertThat(registered.contentMap).isNotNull()
         assertThat(registered.contentMap!!.ingestedAt).isNull()
@@ -367,26 +369,31 @@ class ContentMapViewGoldenTest {
     }
 
     /**
-     * **`capture` 를 지정하면 폴백하지 않는다.**
+     * 씬이 **자기 capture 를 든다.** 지도가 아니라 씬이 답한다(ARTEL-642).
      *
-     * 이 빌드에는 editor 지도만 있다. `?capture=player` 에 editor 를 내주면 화면이 authoring 값을
-     * 플레이 이후 값이라고 그린다 — 적의 `label` 이 authored `20` 인가 남은 체력 `20` 인가가 갈리는
-     * 자리라, 조용히 틀리고 아무도 못 알아본다.
+     * 갱신 단위가 씬이라 한 지도 안에서도 씬마다 다른 상태에서 읽혔을 수 있다. 그것을 지도 한 칸에
+     * 눌러 두면 마지막 문서의 capture 가 전체를 덮어써, 다른 상태에서 읽은 씬까지 그 값으로 보인다.
      *
-     * 생략했을 때 editor 가 나오는 것도 함께 지킨다. 기본값이 흔들리면 화면은 매번 다른 지도를 본다.
+     * `v_content_map_capability.capture` 도 같은 자리에서 나온다 — TC 생성기와 화면이 서로 다른
+     * capture 를 볼 수 없다.
      */
     @Test
-    fun `capture 를 지정하면 다른 capture 로 폴백하지 않는다`(): Unit = runBlocking {
-        val player = view.read(userId, projectId, gameBuildId, capture = Capture.PLAYER)!!
-        assertThat(player.contentMap).isNull()
-        assertThat(player.scenes).isEmpty()
+    fun `씬이 자기 capture 를 들고 뷰도 그것을 낸다`(): Unit = runBlocking {
+        val stored = scenes.findByContentMapIdOrderByNameAsc(contentMapId).toList()
+        assertThat(stored).isNotEmpty()
+        assertThat(stored).allSatisfy {
+            assertThat(it.capture).isEqualTo(Capture.EDITOR.wire)
+            assertThat(it.origin).isEqualTo(SceneOrigin.EVIDENCE.wire)
+        }
 
-        val editor = view.read(userId, projectId, gameBuildId, capture = Capture.EDITOR)!!
-        assertThat(editor.contentMap?.id).isEqualTo(contentMapId)
-
-        // 생략하면 가장 최근에 알게 된 지도. 이 빌드에는 editor 하나뿐이다.
-        assertThat(view.read(userId, projectId, gameBuildId, capture = null)!!.contentMap?.id)
-            .isEqualTo(contentMapId)
+        val fromView = db
+            .sql("SELECT DISTINCT capture FROM v_content_map_capability WHERE content_map_id = :id")
+            .bind("id", contentMapId)
+            .map { row, _ -> row.get("capture", String::class.java) }
+            .all()
+            .collectList()
+            .awaitSingle()
+        assertThat(fromView).containsExactly(Capture.EDITOR.wire)
     }
 
     /**
@@ -431,7 +438,7 @@ class ContentMapViewGoldenTest {
             )
         )
 
-        val edges = view.read(userId, projectId, gameBuildId, capture = null)!!.edges
+        val edges = view.read(userId, projectId, gameBuildId)!!.edges
 
         assertThat(edges).hasSize(fromEvidence.size + 1)
         with(edges.single { it.toSceneName == "Scene_that_was_never_walked" }) {
@@ -655,7 +662,7 @@ class ContentMapViewGoldenTest {
             )
         )
 
-        val fresh = view.read(userId, projectId, gameBuildId, capture = null)!!
+        val fresh = view.read(userId, projectId, gameBuildId)!!
         val scene = fresh.scenes.single { it.name == "TitleScene" }
 
         // 처음 관측한 순서, 즉 screen.id 오름차순이다. 이름으로 정렬하면 nullable 이라 흔들린다
@@ -755,7 +762,7 @@ class ContentMapViewGoldenTest {
             )
         )
 
-        val fresh = view.read(userId, projectId, gameBuildId, capture = null)!!
+        val fresh = view.read(userId, projectId, gameBuildId)!!
 
         // 조인이 행을 곱하지 않는다
         val rows = count(
@@ -860,7 +867,7 @@ class ContentMapViewGoldenTest {
         screenCapabilities.observe(linked.id, fromObservation.id!!, firedIncrement = 1)
 
         try {
-            val fresh = view.read(userId, projectId, gameBuildId, capture = null)!!
+            val fresh = view.read(userId, projectId, gameBuildId)!!
             val scene = fresh.scenes.single { it.name == "TitleScene" }
 
             val listed = scene.screens.single { it.id == linked.id }.capabilities
@@ -1042,7 +1049,7 @@ class ContentMapViewGoldenTest {
                 .copy(imageFailureCode = "unsupported-render-pipeline")
         )
 
-        val fresh = view.read(userId, projectId, gameBuildId, capture = null)!!
+        val fresh = view.read(userId, projectId, gameBuildId)!!
 
         with(fresh.scenes.single { it.name == "TitleScene" }.thumbnail!!) {
             assertThat(state).isEqualTo("available")
@@ -1074,7 +1081,7 @@ class ContentMapViewGoldenTest {
      */
     @Test
     fun `씬 전이가 정규화된 조건을 함께 낸다`(): Unit = runBlocking {
-        val fresh = view.read(userId, projectId, gameBuildId, capture = null)!!
+        val fresh = view.read(userId, projectId, gameBuildId)!!
         val fromEvidence = fresh.edges.filter { it.source == EdgeSource.STATIC.wire }
 
         val rows = count(

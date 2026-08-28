@@ -162,7 +162,7 @@ class ScanResultRoutingTest {
         assertThat(reloaded.ingestedAt).isNull()
 
         // 화면이 읽는 창구가 그 사유를 싣는다.
-        val response = view.read(world.userId, world.projectId, world.gameBuildId, capture = null)!!
+        val response = view.read(world.userId, world.projectId, world.gameBuildId)!!
         val pending = response.pendingDocuments.single { it.documentId == document.id }
         assertThat(pending.ingestFailedAt).isNotNull()
         assertThat(pending.ingestError).isEqualTo(reloaded.ingestError)
@@ -214,7 +214,7 @@ class ScanResultRoutingTest {
         assertThat(status.error).isEqualTo("릴리스 빌드에서는 스캔할 수 없습니다.")
 
         // 화면이 읽는 창구도 같은 말을 한다.
-        val response = view.read(world.userId, world.projectId, world.gameBuildId, capture = null)!!
+        val response = view.read(world.userId, world.projectId, world.gameBuildId)!!
         assertThat(response.lastScan!!.state).isEqualTo(ScanState.FAILED)
         assertThat(response.lastScan!!.error).isEqualTo("릴리스 빌드에서는 스캔할 수 없습니다.")
     }

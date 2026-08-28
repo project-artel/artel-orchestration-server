@@ -10,14 +10,13 @@ import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 /**
  * content_map 루트 조회.
  *
- * 키가 (게임 빌드, capture) 인 것이 이 도메인의 전제다 — `editor` 스캔과 `player` 스캔은 같은
- * 필드가 다른 뜻이라 한 행에 섞을 수 없다.
+ * **키가 게임 빌드 하나**인 것이 이 도메인의 전제다(ARTEL-642, `uk_content_map_build`). 근거가
+ * 먼저 오든 QA 런이 먼저 돌든 같은 행에 쌓이므로, "어느 지도를 볼까" 를 고르는 자리가 없다.
  */
 interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long> {
 
-    suspend fun findByGameBuildIdAndCapture(gameBuildId: Long, capture: String): ContentMapEntity?
-
-    fun findByGameBuildIdOrderByIdDesc(gameBuildId: Long): Flow<ContentMapEntity>
+    /** 유일 제약이 하나를 보장한다. 없으면 아직 이 빌드에 대해 알아낸 것이 없다는 뜻이다. */
+    suspend fun findByGameBuildId(gameBuildId: Long): ContentMapEntity?
 
     /**
      * TC 생성기가 읽는 유일한 창구(`v_content_map_capability`).

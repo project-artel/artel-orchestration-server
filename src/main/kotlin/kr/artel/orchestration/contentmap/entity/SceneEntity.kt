@@ -23,6 +23,22 @@ data class SceneEntity(
     val name: String,
 
     /**
+     * 이 씬의 값을 **어느 상태에서 읽었나**([Capture]). 근거 walk 를 지나지 않은 씬은 null.
+     *
+     * `content_map` 에 있던 것이 여기로 내려왔다(ARTEL-642). 갱신 단위가 원래 씬이라 이 자리가
+     * 맞고, 같은 씬을 다른 상태에서 다시 읽으면 마지막 walk 의 값이 이긴다.
+     *
+     * `editor` 는 저장된 값이고 `player` 는 플레이가 지나간 뒤의 값이라 **같은 필드가 다른
+     * 뜻이다** — 적의 `label` 이 authored `20` 인가 남은 체력 `20` 인가가 갈린다.
+     */
+    @Column("capture")
+    val capture: String? = null,
+
+    /** 이 씬을 어디서 알아냈나([SceneOrigin]). */
+    @Column("origin")
+    val origin: String = SceneOrigin.EVIDENCE.wire,
+
+    /**
      * 식별자를 남긴 설명. 무엇이 무엇을 판정하고 어디로 이어지는지.
      *
      * 순수 자연어로 옮기지 않는다 — 그러면 조인 키가 문장 밖으로 사라져 TC 가 그 문장을 읽고도
