@@ -696,15 +696,17 @@ class TestScenarioAgentService(
         if (total == session.lastReportedUncovered) return
         session.lastReportedUncovered = total
 
-        // 씬이 여섯 개인 프로젝트에서 여섯 줄이 매번 붙으면 읽히지 않는다. 많은 순 셋까지만.
-        val shown = uncovered.take(MAX_SCENES_IN_RECOMMENDATION)
-        val rest = uncovered.size - shown.size
-        val breakdown = shown.joinToString(", ") { "${it.scene} ${it.count}" } +
-            if (rest > 0) " 외 ${rest}개 씬" else ""
+        // **어디로 가면 되는지로 말한다**(ARTEL-631). 씬별 개수를 늘어놓으면 읽는 사람이 그것을
+        // 다시 "그럼 무엇을 하지"로 옮겨야 한다 — 카테고리 나열이 연결을 끊는 그 자리다. 코드가
+        // 여정 이름을 지어낼 수는 없으므로, **가장 많이 남은 화면 하나를 시작점으로** 가리키고
+        // 흐름을 짜는 일은 저작에 맡긴다.
+        val biggest = uncovered.first()
 
         saveAndNotify(
             sessionKey, session,
-            "아직 어떤 시나리오에도 담기지 않은 케이스가 ${total}건 남았습니다 — $breakdown. 이어서 만들까요?"
+            "아직 어떤 시나리오에도 담기지 않은 케이스가 ${total}건 남았습니다 — " +
+                "${biggest.scene} 에 ${biggest.count}건이 몰려 있습니다. " +
+                "거기서 이어지는 흐름부터 만들까요?"
         )
     }
 
@@ -1300,7 +1302,6 @@ class TestScenarioAgentService(
         private const val MAX_REPAIR_ATTEMPTS = 1
 
         /** 남은 씬을 몇 개까지 나열할지. 나머지는 "외 N개 씬"으로 접는다. */
-        private const val MAX_SCENES_IN_RECOMMENDATION = 3
 
         /**
          * 답을 얼마나 기다릴지(ARTEL-510).

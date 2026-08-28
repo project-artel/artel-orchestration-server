@@ -496,6 +496,9 @@ class TestScenarioReconcileIntegrationTest {
         // 건수와 씬을 함께 말한다 — id로 말하면 사람이 못 알아듣고, 번호는 화면에 내보내지도 않는다.
         assertThat(recommendation).contains("2건")
         assertThat(recommendation).contains("EndingScene")
+        // **어디로 가면 되는지로 말한다**(ARTEL-631). 씬별 개수를 늘어놓으면 읽는 사람이 그것을
+        // 다시 "그럼 무엇을 하지"로 옮겨야 한다 — 카테고리 나열이 연결을 끊는 그 자리다.
+        assertThat(recommendation).contains("이어지는 흐름")
         // 한 줄로 끝난다. 좁은 작업을 이어가는 사람에게 여러 줄은 소음이다.
         assertThat(recommendation.lines()).hasSize(1)
     }
