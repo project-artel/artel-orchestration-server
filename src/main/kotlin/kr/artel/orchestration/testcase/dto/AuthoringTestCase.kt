@@ -70,4 +70,34 @@ data class CaseGuard(
      * 없는 것을 있다고 하지 않는다.
      */
     @JsonProperty("raised_in") val raisedIn: List<String> = emptyList(),
+
+    /**
+     * 그 값이 **어떻게** 움직이나(ARTEL-646).
+     *
+     * [raisedIn] 은 화면 이름만 답한다. 그것만으로 저작은 "그 화면에 들렀다 오면 되나 보다"로
+     * 읽는다 — 실측(런 203)에서 전투 화면에 들어가기만 하고 **이기는 스텝이 없는** 시나리오가
+     * 나왔다. 지도는 이길 것을 요구한다는 사실을 알고 있었다:
+     *
+     * ```
+     * StagePosition  TurnBattleScene  +1  못 시킴  wave >= 전체 웨이브 수
+     * ```
+     *
+     * 실측(A/B, 같은 모델)에서 이 넷을 함께 보내자 여정이 26조각에서 10개로 줄었다.
+     */
+    val moves: List<ValueMove> = emptyList(),
+)
+
+/**
+ * 값 하나를 바꾸는 자리 하나(ARTEL-646).
+ *
+ * @property scene 그 일이 일어나는 화면.
+ * @property by 얼마씩 바뀌나. `+1` · `0` · 기호 값.
+ * @property how 누를 것. **null 이면 시킬 수 없다** — 사람이 [whenTrue] 를 만들어야 한다.
+ * @property whenTrue 그 일이 일어나는 조건. 없으면 조건 없이 일어난다.
+ */
+data class ValueMove(
+    val scene: String,
+    val by: String? = null,
+    val how: String? = null,
+    @JsonProperty("when") val whenTrue: String? = null,
 )

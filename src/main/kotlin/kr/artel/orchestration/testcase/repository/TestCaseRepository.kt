@@ -3,6 +3,7 @@ package kr.artel.orchestration.testcase.repository
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.CaseWrite
 import kr.artel.orchestration.testcase.dto.SceneExitRow
+import kr.artel.orchestration.testcase.dto.ValueMoveRow
 import kr.artel.orchestration.testcase.dto.ValueRaiser
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.UncoveredScene
@@ -326,4 +327,56 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
     )
     fun findValueRaisers(projectId: Long): Flow<ValueRaiser>
+
+    /**
+     * **이 값을 무엇이 어떤 조건에서 바꾸나**(ARTEL-646).
+     *
+     * [findValueRaisers] 는 화면 이름 하나만 답한다. 그것만으로는 `position == 0`(방향키 한 번)과
+     * `StagePosition >= 1`(전투를 이겨야 함)이 저작에게 똑같이 보인다 — 실측(런 203)에서 저작이
+     * 전투를 한 번도 안 끼운 채 스테이지를 훑는 시나리오를 냈다.
+     *
+     * 지도는 그 답을 통째로 안다. 같은 자리에 네 가지가 함께 적혀 있다:
+     *
+     * ```
+     * StagePosition  TurnBattleScene  +1  못 시킴(not-a-step)  wave >= 전체 웨이브 수
+     * position       Map_scene        +1  RightArrow           StagePosition >= 2 · position == 1
+     * ```
+     *
+     * 두 번째 줄이 사용자가 말한 "천장과 커서"의 관계다 — **커서를 앞으로 미는 조작 자체가 천장을
+     * 요구한다.** 그 관계는 지어낸 것이 아니라 조작의 조건에 적혀 있다.
+     *
+     * `kind = 'write'` 만 본다. `saved` 는 값을 어딘가에 적어 두는 것이지 바꾸는 것이 아니고,
+     * 표시(`ui-value`)나 좌표(`transform`)는 이 질문의 답이 아니다.
+     *
+     * 증감만 보지 않는다 — [findValueRaisers] 와 다른 점이다. `0` 으로 되돌리는 것도 "무엇이 이 값을
+     * 만드나"의 답이고, 되돌린다는 사실 자체가 저작이 알아야 할 것이다.
+     *
+     * 지도를 먼저 하나로 고르고 나서 훑는다. `test_case` 를 바깥에 두면 케이스 한 줄마다 효과
+     * 전체가 딸려 와 행이 곱으로 분다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT ce.target AS target,
+               s.name AS scene,
+               ce.detail AS detail,
+               c.actionability AS actionability,
+               coalesce(c.input_key, c.control_path, c.control_label) AS operation,
+               c.interaction AS interaction,
+               e.condition_tree AS condition_tree
+        FROM scene s
+        JOIN capability c ON c.scene_id = s.id AND c.merged_into IS NULL
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind = 'write'
+        LEFT JOIN capability_evidence e ON e.capability_id = c.id
+        WHERE ce.target IS NOT NULL
+          AND s.content_map_id IN (
+              SELECT DISTINCT s2.content_map_id
+              FROM test_case tc
+              JOIN capability c2 ON c2.capability_key = tc.capability_key
+              JOIN scene s2 ON s2.id = c2.scene_id
+              WHERE tc.project_id = :projectId
+          )
+        ORDER BY 1, 2
+        """
+    )
+    fun findValueMoves(projectId: Long): Flow<ValueMoveRow>
 }
