@@ -1,6 +1,7 @@
 package kr.artel.orchestration.issue.dto
 
 import com.fasterxml.jackson.databind.JsonNode
+import kr.artel.orchestration.tracker.dto.IssueTrackerResponse
 import java.time.Instant
 
 /**
@@ -13,6 +14,10 @@ import java.time.Instant
  *
  * [reportedAt]과 [createdAt]이 갈리는 이유는 `V12__create_issue.sql`에 적힌 그대로다. 타임라인에
  * 쓸 시각은 [reportedAt]이다.
+ *
+ * [tracker]는 이 결함이 외부 이슈 tracker 로 나갔는지다(ARTEL-671). 프로젝트에 `link` 가 없거나
+ * 아직 내보내지 않았으면 null 이다 — 이 목록과 실행 단위 목록이 같은 조립 경로를 지나므로 양쪽에
+ * 함께 실린다.
  */
 data class IssueResponse(
     val id: String,
@@ -24,7 +29,8 @@ data class IssueResponse(
     val reportedAt: Instant,
     val createdAt: Instant?,
     val resolvedAt: Instant?,
-    val resolvedBy: String?
+    val resolvedBy: String?,
+    val tracker: IssueTrackerResponse? = null
 )
 
 /**

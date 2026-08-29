@@ -25,6 +25,7 @@ import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -88,6 +89,22 @@ class TestScenarioPipelineIntegrationTest {
 
     @Autowired
     private lateinit var qaTryRepository: QaTryRepository
+
+    /**
+     * 이 스위트가 남긴 행을 치운다.
+     *
+     * 없으면 만들어진 `qa_try` 가 스위트 끝까지 살아남아, **뒤에 도는 다른 클래스의**
+     * `DELETE FROM app_user` · `DELETE FROM project` 가 `qa_try_started_by_fkey` ·
+     * `qa_try_game_instance_id_fkey` 로 막힌다. 실패가 이 파일이 아니라 남의 파일에서 나므로
+     * 원인을 찾기 어렵고, 클래스 실행 순서가 바뀔 때마다 피해자가 달라진다.
+     *
+     * 리액티브 트랜잭션은 롤백되지 않고 DB 를 공유하므로 FK 순서대로 직접 비운다.
+     */
+    @AfterEach
+    fun cleanRuntimeRows(): Unit = runBlocking {
+        qaTryRepository.deleteAll()
+        gameInstanceRepository.deleteAll()
+    }
 
     private fun webClient() = WebClient.create("http://localhost:$port")
 
