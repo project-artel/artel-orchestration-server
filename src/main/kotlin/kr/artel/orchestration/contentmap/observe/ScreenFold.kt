@@ -68,12 +68,38 @@ class ScreenFold {
     private var pending: ScreenDiscriminator? = null
     private var pendingRuns = 0
 
+    /**
+     * 마지막 [apply] 가 만든 변화. 제안의 `changes` 가 이것이다 (ARTEL-655).
+     *
+     * 현재 씬의 객체만 담는다. 씬을 넘는 순간 이전 씬의 객체가 통째로 변화로 실려 나가면, 답하는
+     * 쪽은 이 씬에서 무엇이 달라졌는지가 아니라 씬이 바뀌었다는 사실만 읽게 된다.
+     */
+    var lastChanges: List<ScreenSelectorChange> = emptyList()
+        private set
+
+    /** 이 씬에서 selector 하나를 몇 개의 `pulse` 에서 봤나. 씬이 바뀌면 버린다. */
+    private val readingsSeen = HashMap<String, Int>()
+
+    /** 이 씬에서 같은 경로가 되는 selector 원문들. `Card(Clone)[37]` 과 `[38]` 이 한 자리에 모인다. */
+    private val valuesByPath = HashMap<String, MutableSet<String>>()
+
+    private var statsScene: String? = null
+
     /** 마지막으로 굳은 `discriminator`. 같은 것이 다시 굳어도 그것은 재방문이 아니라 체류다. */
     var settled: ScreenDiscriminator? = null
         private set
 
     /** 마지막으로 굳은 `discriminator` 가 앉은 화면 행. 전이의 출발점이다. */
     var settledScreenId: Long? = null
+        private set
+
+    /**
+     * 그 직전에 굳었던 화면 행. 제안이 "이전 화면" 으로 싣는 값이다 (ARTEL-655).
+     *
+     * 답하는 쪽은 게임을 모르므로 지금 화면만 보여 주면 무엇이 달라졌는지 판단할 근거가 없다.
+     * 어디서 왔는가가 그 근거의 절반이다.
+     */
+    var previousScreenId: Long? = null
         private set
 
     /** 마지막으로 굳은 화면이 속한 씬 행. 전이가 씬을 넘었는지 여기서 판정한다. */
@@ -83,14 +109,93 @@ class ScreenFold {
     fun apply(reading: PulseReading) {
         if (reading.whole) held.clear()
         reading.scene?.let { scene = it }
+        if (statsScene != scene) {
+            // 통계는 씬 안에서만 뜻이 있다. 씬을 넘으면 "이 씬에서 몇 번 봤나" 가 다른 씬의 수를
+            // 물려받아 답하는 쪽이 처음 보는 것을 오래된 것으로 읽는다.
+            statsScene = scene
+            readingsSeen.clear()
+            valuesByPath.clear()
+        }
 
+        val changes = ArrayList<ScreenSelectorChange>()
+        val currentScene = scene ?: ""
         for ((live, arrived) in listOf(true to reading.active, false to reading.deactive)) {
             for (obj in arrived) {
                 val selector = obj.key ?: continue
-                held["${obj.scene ?: reading.scene ?: ""}/$selector"] = live
+                val objectScene = obj.scene ?: reading.scene ?: ""
+                val key = "$objectScene/$selector"
+                val was = held.put(key, live)
+                if (objectScene != currentScene || was == live) continue
+                changes.add(ScreenSelectorChange(selector, was, live))
+                valuesByPath.getOrPut(indexFreePathOf(selector)) { HashSet() }.add(selector)
             }
         }
+        lastChanges = changes
+
+        val prefix = "$currentScene/"
+        for (key in held.keys) {
+            if (!key.startsWith(prefix)) continue
+            val selector = key.removePrefix(prefix)
+            readingsSeen[selector] = (readingsSeen[selector] ?: 0) + 1
+        }
+        if (readingsSeen.size > MAX_TRACKED_SELECTORS) {
+            // 이름이 매번 바뀌는 게임에서 이 두 맵이 플레이 길이만큼 자란다. 그것이 ARTEL-654 가
+            // "여러 관측에 걸친 등장 횟수" 를 판정 규칙으로 쓰지 않기로 한 이유이고, 통계로 쓸
+            // 때도 같은 값을 치른다. 통째로 버리고 다시 센다 — 통계가 0 부터 다시 세는 것은
+            // 제안이 조금 덜 친절해지는 것뿐이고, 새는 것보다 낫다.
+            readingsSeen.clear()
+            valuesByPath.clear()
+        }
     }
+
+    /**
+     * 목록에도 제외에도 없는 selector 를 방금 봤나 (ARTEL-655).
+     *
+     * 후보는 **이 `pulse` 에서 상태가 달라진 것**뿐이다. 지금 씬에 있는 것 전부로 하면 첫 전량
+     * `pulse` 뒤로도 같은 후보가 계속 나오고, 실측 `TurnBattleScene` 은 그 집합이 59 개다. 달라진
+     * 것으로 좁히면 combine 패널이 열리는 순간 그 셋만 후보가 된다 — 그리고 그 순간이 답하는
+     * 쪽이 캡처에서 차이를 볼 수 있는 유일한 자리다.
+     *
+     * [ScreenSelectorWhitelist.covers] 로 거른다. [ScreenSelectorWhitelist.defines] 로 거르면
+     * **명시적 제외 항목이 매번 다시 후보가 된다** — 이미 "안 가른다" 는 답을 받은 것을 계속 다시
+     * 묻게 되고, 그것이 이 기능이 막으려던 바로 그 반복이다.
+     */
+    fun unknownCandidates(whitelist: ScreenSelectorWhitelist): List<ScreenSelectorCandidate> =
+        lastChanges.asSequence()
+            .map { it.selector }
+            .distinct()
+            .filterNot { whitelist.covers(it) }
+            .map { candidateOf(it, inWhitelist = false) }
+            .toList()
+
+    /**
+     * 지금 이 씬에서 화면을 가르고 있는 selector (ARTEL-655).
+     *
+     * 화면 상한에 닿았을 때 **무엇을 뺄지** 묻는 제안의 후보다. 상한에 닿았다는 것은 목록이 너무
+     * 잘다는 뜻이므로, 물어볼 대상은 목록 밖이 아니라 목록 안이다.
+     */
+    fun whitelistedCandidates(whitelist: ScreenSelectorWhitelist): List<ScreenSelectorCandidate> =
+        selectorsInScene()
+            .filter { (selector, _) -> whitelist.defines(selector) }
+            .map { (selector, _) -> candidateOf(selector, inWhitelist = true) }
+            .toList()
+
+    private fun candidateOf(selector: String, inWhitelist: Boolean): ScreenSelectorCandidate {
+        val path = indexFreePathOf(selector)
+        return ScreenSelectorCandidate(
+            selector = selector,
+            path = path,
+            active = held["${scene ?: ""}/$selector"] ?: false,
+            instancesInReading = selectorsInScene().count { (other, _) -> indexFreePathOf(other) == path },
+            readingsSeenInScene = readingsSeen[selector] ?: 0,
+            distinctValuesObserved = valuesByPath[path]?.size ?: 0,
+            inWhitelist = inWhitelist,
+        )
+    }
+
+    /** 이 씬에서 지금까지 본 selector 원문 전부. 목록을 고치는 프레임이 대상을 검증하는 데 쓴다. */
+    fun observedSelectors(): Set<String> =
+        selectorsInScene().map { (selector, _) -> selector }.toSet()
 
     /**
      * 지금 상태의 `discriminator`. [whitelist] 는 이 씬에서 화면을 식별하는 selector 목록이다.
@@ -162,14 +267,38 @@ class ScreenFold {
 
     /** 적재가 끝났다. 이 `discriminator` 를 굳히고 다음 전이의 출발점으로 삼는다. */
     fun confirm(candidate: ScreenDiscriminator, screenId: Long, sceneId: Long) {
+        if (settledScreenId != null && settledScreenId != screenId) previousScreenId = settledScreenId
         settled = candidate
         settledScreenId = screenId
         settledSceneId = sceneId
     }
 
+    /**
+     * 굳은 화면을 잊는다. **화면 합치기가 그 행을 지웠을 수 있어서다** (ARTEL-655).
+     *
+     * `fold_scene_screens` 가 합친 화면은 사라지고, 그 id 를 그대로 들고 있으면 다음 전이가 없는
+     * 행을 출발점으로 삼는다. 새 id 로 갈아 끼우지 않고 잊는 것은, 합쳐진 행의 대표를 여기서 다시
+     * 찾는 것이 합치기 규칙을 Kotlin 에 한 벌 더 두는 일이기 때문이다 — 그 두 벌이 갈리는 것이
+     * `fold_scene_screens` 를 SQL 에 한 벌만 둔 이유다.
+     *
+     * 대가는 전이 하나다. 다음 `pulse` 둘이 화면을 다시 굳히고, 그때 출발점이 없어 전이가 안
+     * 남는다. `held` 는 그대로 두므로 상태를 다시 쌓을 필요는 없다.
+     */
+    fun forgetSettled() {
+        settled = null
+        settledScreenId = null
+        settledSceneId = null
+        previousScreenId = null
+        pending = null
+        pendingRuns = 0
+    }
+
     companion object {
         /** `discriminator` 가 화면으로 굳기까지 필요한 연속 관측 수. 근거는 클래스 주석의 `정착` 절. */
         const val SETTLE_READINGS = 2
+
+        /** 통계를 들고 있을 selector 수의 상한. 넘으면 통계만 비운다 — 근거는 [apply] 안의 주석. */
+        const val MAX_TRACKED_SELECTORS = 2048
     }
 }
 
@@ -193,7 +322,7 @@ private val SIBLING_INDEX = Regex("""\[\d+]""")
  *
  * ## 다 지우는 대가
  *
- * 조상 이름까지 같은 서로 다른 컨트롤이 한 경로로 접힌다. `path` 항목이 그 둘을 한꺼번에 가리키게
+ * 조상 이름까지 같은 서로 다른 컨트롤이 한 경로로 묶인다. `path` 항목이 그 둘을 한꺼번에 가리키게
  * 되므로, 하나만 목록에 넣고 싶으면 `selector` 항목을 쓴다. 씨앗이 `selector`
  * 인 이유도 이것이다(`SceneScreenSelectorRepository.seedFromControlSelector`).
  *
@@ -201,7 +330,7 @@ private val SIBLING_INDEX = Regex("""\[\d+]""")
  *
  * `V60__whitelist_screen_defining_selectors.sql` 의 `screen_defining_selector` 가 쓰는
  * `regexp_replace(selector, '\[[0-9]+\]', '', 'g')` 가 이 정규식과 같은 것이어야 한다. 어긋나면
- * 소급 처리가 접은 화면과 런타임이 앉히는 화면이 다른 규칙을 따르게 되어, 합쳐 놓은 행 옆에
+ * 소급 처리가 합친 화면과 런타임이 앉히는 화면이 다른 규칙을 따르게 되어, 합쳐 놓은 행 옆에
  * 옛 모양의 행이 다시 쌓인다.
  */
 fun indexFreePathOf(selector: String): String = SIBLING_INDEX.replace(selector, "")

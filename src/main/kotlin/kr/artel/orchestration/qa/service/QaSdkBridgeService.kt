@@ -3,6 +3,7 @@ package kr.artel.orchestration.qa.service
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
+import kr.artel.orchestration.contentmap.observe.ScreenSelectorFrames
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.dto.AgentGameState
@@ -22,7 +23,7 @@ class QaSdkBridgeService(
     private val logService: QaLogService,
     private val agentPort: QaAgentPort,
     private val objectMapper: ObjectMapper
-) {
+) : QaScreenSelectorPort {
     suspend fun routeGameState(gameInstanceId: Long, sdkMessageId: String, state: AgentGameState): Boolean {
         val qaTry = tryRepository.findActiveByGameInstanceId(gameInstanceId) ?: return false
         val qaTryId = requireNotNull(qaTry.id)
@@ -166,18 +167,52 @@ class QaSdkBridgeService(
         return true
     }
 
+    /**
+     * 화면 판정 목록 제안을 agent 로 보낸다 (ARTEL-655).
+     *
+     * SDK 가 보낸 프레임을 옮기는 위 셋과 달리 **이쪽은 orchestration 이 만든 프레임**이다. 그래도
+     * 같은 자리에 두는 것은 계기가 같기 때문이다 — 이 제안은 방금 도착한 `pulse` 를 보고 나가고,
+     * 로그 방향(`ORCHE_TO_AGENT`)도 봉투 모양도 위 셋과 같다. 배관을 따로 내면 그 셋만 아는
+     * 규칙(세션이 아직 없을 때 건너뛰기, 전달 실패를 ERROR 로그로 남기기)이 두 벌이 된다.
+     *
+     * [sendAgent] 와 달리 전달 실패를 **다시 던지지 않는다.** 저쪽은 `pulse` 중계 경로라 실패가
+     * 곧 중계 실패이지만, 제안은 관측의 곁가지라 실패해도 런은 그대로 흘러야 한다.
+     */
+    override suspend fun sendScreenSelectorProposal(
+        gameInstanceId: Long,
+        messageId: String,
+        summary: String,
+        payload: JsonNode
+    ): Boolean {
+        val qaTry = tryRepository.findActiveByGameInstanceId(gameInstanceId) ?: return false
+        val sessionId = qaTry.agentSessionId ?: return false
+        val qaTryId = requireNotNull(qaTry.id)
+        val outbound = logService.append(
+            qaTryId = qaTryId,
+            direction = "ORCHE_TO_AGENT",
+            type = ScreenSelectorFrames.PROPOSAL,
+            messageId = messageId,
+            message = summary,
+            payload = payload
+        )
+        logService.publish(outbound)
+        sendAgent(qaTryId, sessionId, ScreenSelectorFrames.PROPOSAL, messageId, payload, messageId)
+        return true
+    }
+
     private suspend fun sendAgent(
         qaTryId: Long,
         sessionId: String,
         type: String,
         correlationId: String?,
-        payload: JsonNode
+        payload: JsonNode,
+        messageId: String = UUID.randomUUID().toString()
     ) {
         try {
             agentPort.send(
                 sessionId,
                 QaAgentEnvelope(
-                    messageId = UUID.randomUUID().toString(),
+                    messageId = messageId,
                     type = type,
                     qaTryId = qaTryId.toString(),
                     correlationId = correlationId,
@@ -197,6 +232,7 @@ class QaSdkBridgeService(
                 payload = objectMapper.createObjectNode().put("error", error.message)
             )
             logService.publish(log)
+            if (type == ScreenSelectorFrames.PROPOSAL) return
             throw error
         }
     }
