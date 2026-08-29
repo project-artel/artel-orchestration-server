@@ -40,9 +40,10 @@ scene 에서나 된다는 사실이 그렇게 지도에서 빠졌다.
 
 ## Context / Constraints
 
-base 는 `develop` 이 아니라 ARTEL-642 브랜치(PR #215)다. 그 PR 이 content map 을 빌드당 하나로
-모으고 `capture` 를 scene 으로 내렸으며 `scene.origin` 을 넣었다. 이 작업이 고치는 join 과 적재는
-그 PR 이 방금 만진 경로다.
+base 는 ARTEL-642(PR #215)였고 그것이 `develop` 에 merge 되면서 이 PR 의 base 도 `develop` 으로
+바뀌었다. 그 PR 이 content map 을 빌드당 하나로 모으고 `capture` 를 scene 으로 내렸으며
+`scene.origin` 을 넣었다. 이 작업이 고치는 join 과 적재는 그 PR 이 방금 만진 경로다. 아래 "실측
+결과" 의 base 열은 그 상태(`31e6973`, `develop` 의 `bd2e260` 과 같은 내용)에서 잰 것이다.
 
 제약:
 
@@ -84,8 +85,12 @@ base 는 `develop` 이 아니라 ARTEL-642 브랜치(PR #215)다. 그 PR 이 con
 
 ## Validation
 
-- **Commands to run:**
-  - `./mvnw test`
+- **Commands run:**
+  - `./mvnw test` — 이 브랜치 **1124 tests, 0 failures, 64 errors**, base **1110 tests, 0 failures,
+    28 errors.** 양쪽 모두 오류 전부가 정리 단계의 전역 삭제(`DELETE FROM app_user|game_instance|
+    project`)가 `qa_run` FK 에 막힌 것이고 그 밖의 모양은 하나도 없다(ARTEL-661). 이 수는 실행
+    순서에 따라 달라져 baseline 이 아니며, 비교의 근거는 실패의 **모양**이 같다는 것이다.
+  - `./scripts/check-flyway-migrations.sh develop` — `OK: no version collisions`
   - 실측 문서 재적재 — S3 의 `content-map-evidence/2/0bf60f1e-6484-4273-a811-ff1e63b56b6a.json` 을
     Testcontainers 위에서 base 와 이 브랜치에 각각 적재하고 비교
 
