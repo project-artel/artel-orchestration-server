@@ -23,7 +23,7 @@ class SceneWiringIndexTest {
         private val document: EvidenceDocumentModel = EvidenceParser(ObjectMapper())
             .parse(File("src/test/resources/contentmap/wv-editor-latest.json").readText())
 
-        private val index = SceneWiringIndex.build(document)
+        private val index = SceneWiringIndex.build(document, PersistentSceneAttribution(document))
 
         private val MAP_SCENE_BUTTON = ScenePlacement(
             scene = "TitleScene",

@@ -46,7 +46,9 @@ class SpawnAttributionTest {
         return { type -> byType[type].orEmpty() }
     }
 
-    private fun attribution() = SpawnAttribution(document, placementLookup())
+    private val persistent = PersistentSceneAttribution(document)
+
+    private fun attribution() = SpawnAttribution(document, placementLookup(), persistent::placementsOf)
 
     /**
      * 귀속의 총량. 프리팹 위에만 사는 타입은 구조적으로 `wiring` 0건이라, 이 10개를 놓치면 근거 111건이
@@ -133,7 +135,7 @@ class SpawnAttributionTest {
      */
     @Test
     fun `배치 조회가 비면 유도된 길로는 아무것도 귀속되지 않는다`() {
-        val attributed = SpawnAttribution(document) { emptyList() }.attribute()
+        val attributed = SpawnAttribution(document, { emptyList() }, persistent::placementsOf).attribute()
 
         // carries 로 잡히는 세 타입만 살아남는다 — 그 길은 배치 조회를 쓰지 않는다.
         assertThat(attributed.keys).containsExactlyInAnyOrder("Cards.Card", "Cards.Order", "Combat.UI.DraggableCard")

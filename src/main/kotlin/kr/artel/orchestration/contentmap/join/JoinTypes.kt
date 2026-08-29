@@ -19,6 +19,14 @@ data class ScenePlacement(
     val selector: String?,
     /** 그 오브젝트에 쓰인 글자. 없으면 null. */
     val label: String?,
+    /**
+     * `DontDestroyOnLoad` 에 있는 오브젝트를 이 [scene] 으로 옮긴 근거([PersistentSceneAttribution]).
+     *
+     * 씬에 실제로 놓인 오브젝트에서는 비어 있다 — 그때 [scene] 은 문서가 그대로 적어 준 값이라
+     * 옮긴 사람이 없다. 비어 있지 않으면 **판정이 있었다는 뜻**이고, 적재기가 그것을
+     * `capability_proof` 로 옮겨 되짚을 수 있게 남긴다.
+     */
+    val anchors: List<SceneAnchor> = emptyList(),
 )
 
 /** `wiring`을 찾은 길. 어느 길로 걸렸는지가 곧 신뢰도라 값에 남긴다. */
@@ -52,6 +60,13 @@ data class SpawnOrigin(
     /** `refs[].carries` 가 씬 경로까지 줬을 때만. 대개 null 이다. */
     val scenePath: String?,
     val ambiguousCandidates: List<String> = emptyList(),
+    /**
+     * 만드는 쪽이 `DontDestroyOnLoad` 에 있는 오브젝트였을 때, 그것을 이 [scene] 으로 옮긴 근거.
+     *
+     * 프리팹의 주소는 만드는 쪽의 자리에서 나온다. 만드는 쪽이 귀속된 것이라면 만들어지는 쪽의
+     * 자리도 그 판정에 딸린 것이고, 그 사실이 안 적히면 되짚기가 한 홉 앞에서 끊긴다.
+     */
+    val anchors: List<SceneAnchor> = emptyList(),
 ) {
     // `field` 만 쓰면 접근자 안에서는 뒷받침 필드 키워드로 읽혀 컴파일되지 않는다.
     val ambiguous: Boolean get() = this.field == null
@@ -94,4 +109,11 @@ data class CapabilityCandidate(
     val confidence: AnalysisConfidence,
     /** 근거가 말한 공백 + 조인이 판정한 공백. `subject-null` · `spawn-origin-ambiguous` 등. */
     val gaps: List<String>,
+    /**
+     * 이 후보의 [scene] 이 `DontDestroyOnLoad` 에서 옮겨진 것이라면 그 근거(ARTEL-460).
+     *
+     * 비어 있으면 문서가 적어 준 자리 그대로다. 차 있으면 적재기가 `capability_proof` 사슬로 옮긴다 —
+     * 조용한 재귀속은 안 하느니만 못하기 때문이다.
+     */
+    val sceneAnchors: List<SceneAnchor> = emptyList(),
 )

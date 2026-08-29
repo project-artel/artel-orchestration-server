@@ -348,7 +348,17 @@ enum class EvidenceGap(val wire: String) {
      * 실측에서 `Cards.Card` · `Cards.Order` · `Combat.UI.DraggableCard` 가 각 3건이다. 첫 항목을
      * 조용히 집으면 "누가 만드는지 안다"와 "여럿 중 하나를 골랐다"가 구분되지 않는다.
      */
-    SPAWN_ORIGIN_AMBIGUOUS("spawn-origin-ambiguous");
+    SPAWN_ORIGIN_AMBIGUOUS("spawn-origin-ambiguous"),
+
+    /**
+     * `DontDestroyOnLoad` 에 있는 오브젝트의 실행 씬을 **하나로 좁히지 못해** 여러 씬에 실었다
+     * (ARTEL-460).
+     *
+     * 근거가 가리킨 씬이 둘 이상일 때다. 하나를 고르면 고른 쪽이 근거가 없고, 조용히 여러 줄을 내면
+     * "여기서도 되고 저기서도 된다"와 "어디인지 모른다"가 표에서 같은 모양이 된다. 어느 근거로 어느
+     * 씬에 실었는지는 `capability_proof` 사슬이 답한다.
+     */
+    PERSISTENT_SCENE_AMBIGUOUS("persistent-scene-ambiguous");
 
     companion object {
         fun from(wire: String?): EvidenceGap? = entries.firstOrNull { it.wire == wire }
