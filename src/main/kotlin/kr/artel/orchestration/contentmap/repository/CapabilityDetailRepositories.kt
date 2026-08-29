@@ -183,4 +183,34 @@ interface CapabilityObservationRepository :
     fun findByCapabilityIdOrderByActedAtDesc(capabilityId: Long): Flow<CapabilityObservationEntity>
 
     fun findByQaRunIdOrderByActedAtAsc(qaRunId: Long): Flow<CapabilityObservationEntity>
+
+    /**
+     * agent 문장의 멱등 조회(ARTEL-644). `uk_capability_observation_agent_statement` 와 같은 키다.
+     *
+     * "이 capability 가 되는 것을 봤다" 는 한 런 안에서 한 번 참이다. 같은 문장이 다시 오면 이
+     * 조회가 원래 행으로 되돌린다.
+     */
+    @Query(
+        """
+        SELECT * FROM capability_observation
+        WHERE source = 'agent'
+          AND qa_run_id = :qaRunId
+          AND capability_id = :capabilityId
+          AND verdict = :verdict
+        """
+    )
+    suspend fun findAgentStatement(
+        qaRunId: Long,
+        capabilityId: Long,
+        verdict: String,
+    ): CapabilityObservationEntity?
+
+    /** 이 런이 남긴 agent 문장의 id 인가. `inferred` 가 딛고 선 observation 을 검증할 때 쓴다. */
+    @Query(
+        """
+        SELECT count(*) FROM capability_observation
+        WHERE qa_run_id = :qaRunId AND id IN (:ids)
+        """
+    )
+    suspend fun countOfRun(qaRunId: Long, ids: Collection<Long>): Long
 }

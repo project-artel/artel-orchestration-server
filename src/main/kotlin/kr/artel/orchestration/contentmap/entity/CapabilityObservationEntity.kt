@@ -35,12 +35,27 @@ data class CapabilityObservationEntity(
     @Column("screen_id")
     val screenId: Long? = null,
 
+    /**
+     * 이 행을 누가 만들었나. `pulse-diff` 또는 `agent`(ARTEL-644).
+     *
+     * `pulse` diff 행은 "값이 달라졌다" 는 측정이고 agent 행은 "됐다 / 안 됐다" 는 [verdict] 다.
+     * 가르는 칸이 없으면 둘이 같은 사실로 읽힌다. `ck_capability_observation_shape` 가 source
+     * 별로 어느 칸이 차야 하는지를 강제한다.
+     */
+    @Column("source")
+    val source: String = ObservationSource.PULSE_DIFF.wire,
+
     @Column("acted_at")
     val actedAt: Instant,
 
-    /** agent 가 실제로 보낸 프로토콜 메서드. `button_click` 등. */
+    /**
+     * agent 가 실제로 보낸 프로토콜 메서드. `button_click` 등.
+     *
+     * agent 행에서는 null 일 수 있다. 실측 capability 472 개 중 418 개가 `interaction = none`
+     * 이라 보낼 메서드가 애초에 없다.
+     */
     @Column("action_method")
-    val actionMethod: String,
+    val actionMethod: String? = null,
 
     @Column("action_params")
     val actionParams: Json = Json.of("{}"),
@@ -65,9 +80,34 @@ data class CapabilityObservationEntity(
      * [CapabilityEffectEntity.watchable] 을 함께 봐야 갈린다.
      */
     @Column("fired")
-    val fired: Boolean,
+    val fired: Boolean? = null,
 
-    /** 실제로 달라진 것. 기대와 대조해 검증 상태를 정한다. */
+    /** 실제로 달라진 것. 기대와 대조해 verification 을 정한다. */
     @Column("observed_effects")
     val observedEffects: Json = Json.of("[]"),
+
+    /** agent 의 verdict(ARTEL-644). `CapabilityVerdict` 중 하나이고 `pulse` diff 행에서는 null 이다. */
+    @Column("verdict")
+    val verdict: String? = null,
+
+    /**
+     * 무엇을 보고 그렇게 말했나(ARTEL-644).
+     *
+     * **verdict 만 받으면 나중에 그것이 맞았는지 확인할 길이 없다.** agent 행에서는 비어 있을 수
+     * 없다 — CHECK 가 강제한다.
+     */
+    @Column("rationale")
+    val rationale: String? = null,
+
+    /** 캡처가 있으면 그것도 근거가 된다. `qa_log` 의 SCREENSHOT 행 message_id 다. */
+    @Column("capture_id")
+    val captureId: String? = null,
+
+    /** 런 안의 어느 try 가 적었나. [qaRunId] 만으로는 시나리오 여럿을 도는 런에서 갈리지 않는다. */
+    @Column("qa_try_id")
+    val qaTryId: Long? = null,
+
+    /** 이 행을 만든 frame 의 messageId. 멱등 키가 아니라 되짚기용이다. */
+    @Column("agent_message_id")
+    val agentMessageId: String? = null,
 )

@@ -52,6 +52,15 @@ data class ContentMapCapabilityRow(
     @Column("verification")
     val verification: String,
 
+    /**
+     * 지금의 [verification] 을 만든 `capability_observation` 행(ARTEL-644). agent 가 무엇을 보고
+     * 그렇게 말했는지가 이 id 끝에 있다.
+     *
+     * `unverified` 행에서는 null 이고, `qa_run` 이 지워진 뒤에도 null 이 된다.
+     */
+    @Column("verification_observation_id")
+    val verificationObservationId: Long? = null,
+
     /** 세 축에서 유도된 값. 아래 축들이 그 값을 낳은 이유다. */
     @Column("status")
     val status: String,

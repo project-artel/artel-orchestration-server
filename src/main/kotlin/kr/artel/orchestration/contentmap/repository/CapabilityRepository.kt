@@ -176,15 +176,74 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
      *
      * 재적재마다 무조건 되돌리지 않는 이유: 문서는 코드 한 줄만 바뀌어도 새로 구워지고, 그때 멀쩡한
      * 기능 수백 개의 확인을 함께 버리면 QA 가 매번 같은 것을 다시 눌러야 한다.
+     *
+     * `verification_observation_id` 도 함께 비운다(ARTEL-644). 그 포인터는 **지금의** verification 을
+     * 만든 문장이라, `unverified` 로 되돌린 행에 남아 있으면 아무것도 만들지 않은 문장을 가리킨다.
      */
     @Modifying
     @Query(
         """
-        UPDATE capability SET verification = 'unverified', updated_at = CURRENT_TIMESTAMP
+        UPDATE capability
+        SET verification = 'unverified',
+            verification_observation_id = NULL,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = :id AND verification <> 'unverified'
         """
     )
     suspend fun resetVerification(id: Long): Long
+
+    /**
+     * agent 가 적은 행의 멱등 조회(ARTEL-644). `uk_capability_agent_statement` 와 **같은 식**이다.
+     *
+     * `capability_key` 로는 못 찾는다 — observed · inferred 출신은 산식의 입력인 `entry_id` 가
+     * 없어 그 칸이 NULL 이고, `uk_capability_map_key` 가 아예 걸리지 않는다.
+     *
+     * 인덱스와 이 질의의 식이 어긋나면 조회는 못 찾고 INSERT 는 유니크에 걸려, 같은 frame 이 두 번
+     * 올 때마다 오류가 난다. 한쪽을 고치면 반드시 다른 쪽도 고친다.
+     *
+     * `origin` 이 조건에 없는 것도 인덱스와 같다. `inferred` 로 적힌 것을 나중에 실제로 보면 같은
+     * 행이 `verification` 만 올라가야 한다 — 축이 둘인 설계가 그 경우를 위한 것이다.
+     */
+    @Query(
+        """
+        SELECT * FROM capability
+        WHERE scene_id = :sceneId
+          AND interaction = :interaction
+          AND coalesce(control_path, '') = coalesce(:controlPath, '')
+          AND md5(lower(btrim(summary))) = md5(lower(btrim(:summary)))
+          AND origin IN ('observed', 'inferred')
+          AND merged_into IS NULL
+        """
+    )
+    suspend fun findAgentStatement(
+        sceneId: Long,
+        interaction: String,
+        controlPath: String?,
+        summary: String,
+    ): CapabilityEntity?
+
+    /**
+     * agent 의 verdict 를 `verification` 에 적는다(ARTEL-644).
+     *
+     * **이 경로에서 `capability` 를 고치는 UPDATE 는 이 문장 하나뿐이다.** `evidence` 출신 행을
+     * agent 가 지우거나 고칠 수 없다는 제약이 여기서 구조로 선다 — SET 절에 두 칸과 시각밖에
+     * 없으므로, 라우터가 무엇을 실어 보내도 `summary` · `interaction` · `control_*` 은 닿지 않는다.
+     * 넓은 `save()` 를 쓰면 그 보장이 호출부의 조심성으로 내려간다.
+     *
+     * `origin` 으로 좁히지 않는다. `evidence` 출신이든 agent 가 만든 행이든 verification 은 실행이
+     * 확인해 주는 축이고, 그 축을 움직이는 것은 두 경우 모두 허용된 일이다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE capability
+        SET verification = :verification,
+            verification_observation_id = :observationId,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = :id
+        """
+    )
+    suspend fun recordVerification(id: Long, verification: String, observationId: Long): Long
 
     /** 이 지도의 `evidence` 출신 기능 전부. 이번 문서에 없는 것을 가리려면 먼저 있는 것을 알아야 한다. */
     @Query(

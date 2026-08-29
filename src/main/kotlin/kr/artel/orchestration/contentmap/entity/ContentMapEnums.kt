@@ -204,6 +204,24 @@ enum class EffectCategory(val wire: String) {
     }
 }
 
+/**
+ * [CapabilityObservationEntity.source] 의 값.
+ *
+ * `pulse` diff 를 쓰는 코드는 지금 없다(ARTEL-450 이 백로그). 기본값을 그쪽으로 둔 것은 그 작업이
+ * 되살아났을 때 아무것도 안 고쳐도 맞는 값이 들어가게 하려는 것이다.
+ */
+enum class ObservationSource(val wire: String) {
+    /** action 전후의 `pulse` 를 비교해 서버가 세운 행. */
+    PULSE_DIFF("pulse-diff"),
+
+    /** QA agent 가 `screen` 을 보고 적은 행. */
+    AGENT("agent");
+
+    companion object {
+        fun from(wire: String?): ObservationSource? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
 /** 효과를 근거가 말했나, 관측이 말했나. 관측에만 있는 것이 근거의 구멍이다. */
 enum class EffectOrigin(val wire: String) {
     EVIDENCE("evidence"),
