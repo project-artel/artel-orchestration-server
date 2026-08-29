@@ -2,22 +2,38 @@ package kr.artel.orchestration.contentmap
 
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.awaitSingle
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.contentmap.dto.ConditionNodeResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapResponse
+import kr.artel.orchestration.contentmap.entity.Actionability
+import kr.artel.orchestration.contentmap.entity.Applicability
+import kr.artel.orchestration.contentmap.entity.CapabilityEntity
+import kr.artel.orchestration.contentmap.entity.CapabilityOrigin
 import kr.artel.orchestration.contentmap.entity.Capture
+import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import kr.artel.orchestration.contentmap.entity.EdgeSource
+import kr.artel.orchestration.contentmap.entity.Interaction
+import kr.artel.orchestration.contentmap.entity.Observability
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
+import kr.artel.orchestration.contentmap.entity.ScreenEntity
+import kr.artel.orchestration.contentmap.entity.ScreenTransitionEntity
 import kr.artel.orchestration.contentmap.entity.SpecGapReason
 import kr.artel.orchestration.contentmap.entity.SpecStatus
+import kr.artel.orchestration.contentmap.entity.TransitionKind
+import kr.artel.orchestration.contentmap.entity.VerificationState
 import kr.artel.orchestration.contentmap.ingest.ContentMapIngestService
+import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
+import kr.artel.orchestration.contentmap.repository.ScreenCapabilityRepository
+import kr.artel.orchestration.contentmap.repository.ScreenRepository
+import kr.artel.orchestration.contentmap.repository.ScreenTransitionRepository
 import kr.artel.orchestration.contentmap.service.ContentMapViewService
 import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
@@ -43,7 +59,7 @@ import java.security.MessageDigest
 import java.time.Instant
 
 /**
- * 실측 근거 문서를 적재하고 **조회 API 가 그 표를 정직하게 옮기는가**를 본다.
+ * 실측 `evidence` 문서를 적재하고 **조회 API 가 그 표를 정직하게 옮기는가**를 본다.
  *
  * `ContentMapIngestGoldenTest` 가 "행이 DB 에 앉는가"를 보는 자리라면, 여기는 앉은 행이 **화면이
  * 읽을 수 있는 모양으로 나오는가**를 본다. 두 테스트가 같은 문서를 쓰므로 수치가 서로를 검산한다 —
@@ -59,7 +75,7 @@ import java.time.Instant
  * |---|---|---|
  * | `not-a-step` | 440 | 조작이 없는 행. 이 중 98 이 스폰 출신이다 |
  * | `runnable` | 31 | 조작이 있고 관측 가능한 효과가 있다 |
- * | `needs-probe` | 20 | 조작은 있는데 근거가 효과를 말하지 않는다 |
+ * | `needs-probe` | 20 | 조작은 있는데 `evidence` 가 효과를 말하지 않는다 |
  * | `unreachable-precondition` | 0 | 이 문서에는 없다 |
  *
  * `31 + 20 = 51` 이 `v_content_map_capability` 의 행 수이고(적재 골든 테스트가 못 박은 값),
@@ -86,7 +102,11 @@ class ContentMapViewGoldenTest {
     @Autowired private lateinit var contentMaps: ContentMapRepository
     @Autowired private lateinit var documents: ContentMapDocumentRepository
     @Autowired private lateinit var scenes: SceneRepository
+    @Autowired private lateinit var capabilities: CapabilityRepository
     @Autowired private lateinit var sceneEdges: SceneEdgeRepository
+    @Autowired private lateinit var screens: ScreenRepository
+    @Autowired private lateinit var screenCapabilities: ScreenCapabilityRepository
+    @Autowired private lateinit var screenTransitions: ScreenTransitionRepository
     @Autowired private lateinit var db: DatabaseClient
 
     private var userId = 0L
@@ -113,7 +133,7 @@ class ContentMapViewGoldenTest {
         putGoldenDocument(contentMapId)
         ingest.ingest(documents.findByContentMapIdOrderByReceivedAtDesc(contentMapId).first())
 
-        response = view.read(userId, projectId, gameBuildId, capture = null)!!
+        response = view.read(userId, projectId, gameBuildId)!!
     }
 
     /**
@@ -193,7 +213,7 @@ class ContentMapViewGoldenTest {
      * 이 칸을 `true` 로 올리는 것은 QA 런인데 그 경로가 아직 없다. 적재기는 이 칸을 일부러 건드리지
      * 않는다 — 스캔이 다시 돌았다고 "가 봤다"가 취소되면 안 되기 때문이다. 언젠가 적재기가 문서의
      * `scenes` 목록만 보고 이 칸을 채우기 시작하면 여기가 깨지고, 그때 물어야 할 것은
-     * **"순회했다는 말이 근거 문서가 할 수 있는 말인가"**다.
+     * **"순회했다는 말이 `evidence` 문서가 할 수 있는 말인가"**다.
      */
     @Test
     fun `아직 아무도 씬을 밟지 않아 walked 는 전부 false 다`() {
@@ -207,8 +227,8 @@ class ContentMapViewGoldenTest {
      * (V46 이 스폰 행을 이 사유에서 빼낸다. 스폰 행은 조작이 **없어야 맞는** 행이라 그대로 두면
      * 실제 결함을 덮는다). 그 관계를 여기서 다시 계산해 확인한다.
      *
-     * `evidence-missing` 이 0 인 것도 단언한다. 그것만 성격이 다른 사유다 — 게임의 근거가 부족한
-     * 것이 아니라 **우리 적재기가 근거를 잃은 것**이라, 세어지면 고칠 곳은 SDK 가 아니라 우리 쪽이다.
+     * `evidence-missing` 이 0 인 것도 단언한다. 그것만 성격이 다른 사유다 — 게임의 `evidence` 가 부족한
+     * 것이 아니라 **우리 적재기가 `evidence` 를 잃은 것**이라, 세어지면 고칠 곳은 SDK 가 아니라 우리 쪽이다.
      */
     @Test
     fun `gap 이 사유별로 묶이고 합이 사유 있는 행 수와 같다`(): Unit = runBlocking {
@@ -242,19 +262,19 @@ class ContentMapViewGoldenTest {
         assertThat(response.gaps.map { it.count })
             .isEqualTo(response.gaps.map { it.count }.sortedDescending())
 
-        // 적재기가 근거를 잃지 않았다. 세어지면 고칠 곳은 SDK 가 아니라 우리 쪽이다.
+        // 적재기가 `evidence` 를 잃지 않았다. 세어지면 고칠 곳은 SDK 가 아니라 우리 쪽이다.
         assertThat(byReason).doesNotContainKey(SpecGapReason.EVIDENCE_MISSING.wire)
     }
 
     /**
      * 커버리지 지표의 분자와 분모. 첫 적재 직후라 **분자가 0 인 것이 정답이다.**
      *
-     * 분모 491 은 근거 출신 기능 전부이고, 이 문서에서는 기능 전체와 같다(QA 런이 없어 observed ·
+     * 분모 491 은 `evidence` 출신 기능 전부이고, 이 문서에서는 기능 전체와 같다(QA 런이 없어 observed ·
      * inferred 행이 아직 없다). 분자가 0 이 아니면 적재기가 `verification` 을 쓴 것이고, 그 칸은
-     * 적재기가 쓰면 안 되는 칸이다 — 되돌릴지는 근거가 실제로 달라졌는지가 정한다.
+     * 적재기가 쓰면 안 되는 칸이다 — 되돌릴지는 `evidence` 가 실제로 달라졌는지가 정한다.
      */
     @Test
-    fun `첫 적재 직후 확인은 0 이고 분모는 근거 출신 기능 전부다`(): Unit = runBlocking {
+    fun `첫 적재 직후 확인은 0 이고 분모는 evidence 출신 기능 전부다`(): Unit = runBlocking {
         assertThat(response.verification.verified).isZero()
         assertThat(response.verification.total).isEqualTo(491)
         assertThat(response.verification.total).isEqualTo(
@@ -293,7 +313,7 @@ class ContentMapViewGoldenTest {
      */
     @Test
     fun `문서가 없는 빌드는 404 가 아니라 빈 응답이다`(): Unit = runBlocking {
-        val empty = view.read(userId, projectId, newBuild(projectId), capture = null)!!
+        val empty = view.read(userId, projectId, newBuild(projectId))!!
 
         assertThat(empty.contentMap).isNull()
         assertThat(empty.scenes).isEmpty()
@@ -334,7 +354,7 @@ class ContentMapViewGoldenTest {
             .bind("id", document.id!!)
             .fetch().rowsUpdated().block()
 
-        val registered = view.read(userId, projectId, build, capture = null)!!
+        val registered = view.read(userId, projectId, build)!!
 
         assertThat(registered.contentMap).isNotNull()
         assertThat(registered.contentMap!!.ingestedAt).isNull()
@@ -349,30 +369,35 @@ class ContentMapViewGoldenTest {
     }
 
     /**
-     * **`capture` 를 지정하면 폴백하지 않는다.**
+     * 씬이 **자기 capture 를 든다.** 지도가 아니라 씬이 답한다(ARTEL-642).
      *
-     * 이 빌드에는 editor 지도만 있다. `?capture=player` 에 editor 를 내주면 화면이 authoring 값을
-     * 플레이 이후 값이라고 그린다 — 적의 `label` 이 authored `20` 인가 남은 체력 `20` 인가가 갈리는
-     * 자리라, 조용히 틀리고 아무도 못 알아본다.
+     * 갱신 단위가 씬이라 한 지도 안에서도 씬마다 다른 상태에서 읽혔을 수 있다. 그것을 지도 한 칸에
+     * 눌러 두면 마지막 문서의 capture 가 전체를 덮어써, 다른 상태에서 읽은 씬까지 그 값으로 보인다.
      *
-     * 생략했을 때 editor 가 나오는 것도 함께 지킨다. 기본값이 흔들리면 화면은 매번 다른 지도를 본다.
+     * `v_content_map_capability.capture` 도 같은 자리에서 나온다 — TC 생성기와 화면이 서로 다른
+     * capture 를 볼 수 없다.
      */
     @Test
-    fun `capture 를 지정하면 다른 capture 로 폴백하지 않는다`(): Unit = runBlocking {
-        val player = view.read(userId, projectId, gameBuildId, capture = Capture.PLAYER)!!
-        assertThat(player.contentMap).isNull()
-        assertThat(player.scenes).isEmpty()
+    fun `씬이 자기 capture 를 들고 뷰도 그것을 낸다`(): Unit = runBlocking {
+        val stored = scenes.findByContentMapIdOrderByNameAsc(contentMapId).toList()
+        assertThat(stored).isNotEmpty()
+        assertThat(stored).allSatisfy {
+            assertThat(it.capture).isEqualTo(Capture.EDITOR.wire)
+            assertThat(it.origin).isEqualTo(SceneOrigin.EVIDENCE.wire)
+        }
 
-        val editor = view.read(userId, projectId, gameBuildId, capture = Capture.EDITOR)!!
-        assertThat(editor.contentMap?.id).isEqualTo(contentMapId)
-
-        // 생략하면 가장 최근에 알게 된 지도. 이 빌드에는 editor 하나뿐이다.
-        assertThat(view.read(userId, projectId, gameBuildId, capture = null)!!.contentMap?.id)
-            .isEqualTo(contentMapId)
+        val fromView = db
+            .sql("SELECT DISTINCT capture FROM v_content_map_capability WHERE content_map_id = :id")
+            .bind("id", contentMapId)
+            .map { row, _ -> row.get("capture", String::class.java) }
+            .all()
+            .collectList()
+            .awaitSingle()
+        assertThat(fromView).containsExactly(Capture.EDITOR.wire)
     }
 
     /**
-     * 씬 전이가 **적재만으로 선다.** 골든 문서에 심은 행이 아니라 근거에서 나온 행이다.
+     * 씬 전이가 **적재만으로 선다.** 골든 문서에 심은 행이 아니라 `evidence` 에서 나온 행이다.
      *
      * ARTEL-445 가 `effects.kind='scene'` 을 간선으로 옮기기 시작했다. 그 수와 쌍은 그쪽 테스트가
      * 고정하므로 여기서는 되풀이하지 않고, **조회가 그 행을 곱하지도 빠뜨리지도 않고 싣는지**만 본다.
@@ -413,7 +438,7 @@ class ContentMapViewGoldenTest {
             )
         )
 
-        val edges = view.read(userId, projectId, gameBuildId, capture = null)!!.edges
+        val edges = view.read(userId, projectId, gameBuildId)!!.edges
 
         assertThat(edges).hasSize(fromEvidence.size + 1)
         with(edges.single { it.toSceneName == "Scene_that_was_never_walked" }) {
@@ -462,9 +487,9 @@ class ContentMapViewGoldenTest {
     }
 
     /**
-     * **근거 조인이 행을 곱하지 않는다.**
+     * **`evidence` 조인이 행을 곱하지 않는다.**
      *
-     * `v_content_map_capability` 는 `LEFT JOIN capability_evidence` 로 근거를 붙이고 그 조인을 접는
+     * `v_content_map_capability` 는 `LEFT JOIN capability_evidence` 로 `evidence` 를 붙이고 그 조인을 접는
      * 장치가 뷰 안에 없다. 오늘 `capability_evidence.capability_id` 는 PK 라 1:1 이지만, 서비스는 그
      * 가정을 두지 않고 기능 하나당 한 줄로 접는다. 그 접기가 실제로 걸려 있는지를 **기능 id 의
      * 유일성**으로 확인한다 — 곱해졌다면 같은 id 가 두 번 선다.
@@ -535,7 +560,7 @@ class ContentMapViewGoldenTest {
         assertThat(kinds).allSatisfy { assertThat(it).isEqualTo(it.lowercase()) }
         assertThat(kinds).noneMatch { it.isBlank() }
 
-        // 51건 전부 조건을 든다. 이 문서는 전부 근거 출신이라 `given` 이 빌 이유가 없다 —
+        // 51건 전부 조건을 든다. 이 문서는 전부 `evidence` 출신이라 `given` 이 빌 이유가 없다 —
         // null 은 `capability_evidence` 행이 없는 관측 출신 기능에만 나온다.
         assertThat(steps).allSatisfy { assertThat(it.given).isNotNull() }
 
@@ -554,7 +579,7 @@ class ContentMapViewGoldenTest {
      * 조건을 실으면 무리마다 전부 갈린다. 그 사실을 여기서 못 박는다.
      *
      * 이 성질은 ARTEL-495 뒤에도 지켜진다 — 오늘 대문자 `EVERY` 는 `parts` 를 통째로 잃은 채
-     * `unknown` 하나로 눌리므로, 파서가 관대해지면 갈래는 **더** 갈리지 덜 갈리지 않는다.
+     * `unknown` 하나로 눌리므로, 파서가 관대해지면 `branch` 는 **더** 갈리지 덜 갈리지 않는다.
      */
     @Test
     fun `세 축이 같은 단계들을 조건이 가른다`() {
@@ -580,6 +605,374 @@ class ContentMapViewGoldenTest {
         is ConditionNodeResponse.Every -> listOf(node) + node.parts.flatMap(::flatten)
         is ConditionNodeResponse.Either -> listOf(node) + node.parts.flatMap(::flatten)
         else -> listOf(node)
+    }
+
+    /**
+     * **화면이 0 행인 빌드가 정상이다.** 씬만 그대로 나오고 200 이다.
+     *
+     * 화면을 앉히는 것은 QA 런뿐이고 정적 분석은 화면을 알 수 없다. 그래서 문서를 막 적재한 이
+     * 빌드에는 화면이 한 줄도 없고, **프런트엔드가 처음 보는 상태가 바로 이것이다.** 빈 목록을
+     * 오류로 다루면 아직 한 번도 플레이하지 않은 모든 프로젝트에서 지도가 열리지 않는다.
+     *
+     * `@BeforeAll` 이 얼려 둔 응답을 본다. 뒤의 테스트들이 화면을 앉히므로 여기서 다시 읽으면
+     * 실행 순서에 따라 답이 달라진다.
+     */
+    @Test
+    fun `화면이 0 행인 빌드도 200 으로 씬만 낸다`(): Unit = runBlocking {
+        assertThat(response.scenes).isNotEmpty()
+        assertThat(response.scenes).allSatisfy { assertThat(it.screens).isEmpty() }
+        assertThat(response.screenTransitions).isEmpty()
+
+        // 씬 쪽은 화면 유무와 무관하게 그대로다 — 추가만 하는 변경이라는 것의 뜻이다
+        assertThat(response.scenes).allSatisfy { assertThat(it.capabilities.total).isNotNegative() }
+        assertThat(response.edges).isNotEmpty()
+    }
+
+    /**
+     * **씬 안에 화면이 중첩되고, 캡처가 서명된 단기 주소로 나온다.**
+     *
+     * 씬 하나에 화면이 여럿일 수 있다는 것이 이 표의 존재 이유다 — 이어하기 버튼이 켜진 화면과
+     * 꺼진 화면은 같은 씬이고, 씬으로 뭉개면 "그 버튼을 눌러라"는 TC 가 절반의 경우에 실패한다.
+     *
+     * 이미지는 **씬 대표 이미지와 같은 서명 경로**를 쓴다. 두 벌을 두면 TTL 과 헤더가 서로 다르게
+     * 흘러가고, 화면은 어느 쪽 주소를 쥐었는지에 따라 다르게 동작한다. 그리고 바이트는 이 서버를
+     * 지나지 않는다 — 객체 키만 스토리지에 넘기고 응답에는 서명된 주소만 실린다.
+     */
+    @Test
+    fun `씬 안에 화면이 중첩되고 캡처가 서명된 주소로 나온다`(): Unit = runBlocking {
+        val title = scenes.findByContentMapIdAndName(contentMapId, "TitleScene")!!
+        val capturedAt = Instant.parse("2026-08-27T00:00:00Z")
+        val objectKey = "content-map-screen-captures/$gameBuildId/title-continue.jpg"
+        val withImage = screens.save(
+            ScreenEntity(
+                sceneId = title.id!!,
+                name = "타이틀 · 이어하기 켜짐",
+                discriminator = Json.of("""[{"selector":"Canvas[2]/continue[2]","active":true}]"""),
+                imageObjectKey = objectKey,
+                imageCapturedAt = capturedAt,
+                observedCount = 3,
+            )
+        )
+        // 이름도 캡처도 없는 화면. 아직 아무도 이름을 붙이지 않은 상태가 정상이다
+        val bare = screens.save(
+            ScreenEntity(
+                sceneId = title.id,
+                discriminator = Json.of("""[{"selector":"Canvas[2]/continue[2]","active":false}]"""),
+                observedCount = 1,
+            )
+        )
+
+        val fresh = view.read(userId, projectId, gameBuildId)!!
+        val scene = fresh.scenes.single { it.name == "TitleScene" }
+
+        // 처음 관측한 순서, 즉 screen.id 오름차순이다. 이름으로 정렬하면 nullable 이라 흔들린다
+        assertThat(scene.screens.map { it.id }).containsSubsequence(withImage.id!!, bare.id!!)
+        // 다른 씬으로 새지 않는다
+        assertThat(fresh.scenes.filter { it.name != "TitleScene" })
+            .allSatisfy { assertThat(it.screens).isEmpty() }
+
+        with(scene.screens.single { it.id == withImage.id }) {
+            assertThat(sceneId).isEqualTo(title.id)
+            assertThat(name).isEqualTo("타이틀 · 이어하기 켜짐")
+            assertThat(observedCount).isEqualTo(3)
+            assertThat(firstSeenQaRunId).isNull()
+            // 판정 조건은 서버가 읽지 않고 그대로 옮긴다
+            assertThat(discriminator[0]["selector"].asText()).isEqualTo("Canvas[2]/continue[2]")
+            assertThat(discriminator[0]["active"].asBoolean()).isTrue()
+            // 객체 키 자체는 나가지 않는다. 나가는 것은 스토리지가 서명한 주소다
+            assertThat(image!!.url).contains(objectKey)
+            assertThat(image!!.expiresAt).isNotNull()
+            assertThat(image!!.capturedAt).isEqualTo(capturedAt)
+        }
+        // 캡처가 없으면 칸이 통째로 없다. `screen` 에는 실패 코드 칸이 없어 가를 두 상태가 아니다
+        with(scene.screens.single { it.id == bare.id }) {
+            assertThat(name).isNull()
+            assertThat(image).isNull()
+            assertThat(discriminator[0]["active"].asBoolean()).isFalse()
+        }
+    }
+
+    /**
+     * **화면 전이가 씬 경계를 넘는지를 함께 낸다.**
+     *
+     * 중첩 다이어그램이 이 칸으로 선을 가른다 — 씬 컨테이너 **안**의 선(팝업이 열리는 것)과
+     * **밖**의 선(씬이 바뀌는 것)은 같은 표에서 나오지만 다르게 그려야 한다. 그래서 화면 전이는
+     * 씬 안에 접히지 않고 최상위에 선다: 경계를 넘는 전이는 두 씬에 걸쳐 있어 어느 쪽에 넣어도
+     * 반쪽이 된다.
+     *
+     * 조인이 전이를 늘리지 않는다는 것도 함께 본다. `capability_id` 는 단일 FK 이므로 응답의 전이
+     * 수가 표의 행 수와 같아야 한다 — 어긋나면 다이어그램에 같은 선이 여러 번 그려진다.
+     */
+    @Test
+    fun `화면 전이가 씬 경계를 넘는지와 기능을 함께 낸다`(): Unit = runBlocking {
+        val title = scenes.findByContentMapIdAndName(contentMapId, "TitleScene")!!
+        val map = scenes.findByContentMapIdAndName(contentMapId, "Map_scene")!!
+        val titleScreen = screens.save(
+            ScreenEntity(
+                sceneId = title.id!!,
+                name = "타이틀",
+                // 한 씬 안에서 화면을 가르는 것은 `discriminator` 다(V56 의 uk_screen_discriminator).
+                // 픽스처가 빈 값을 돌려쓰면 두 화면이 같은 화면이 되어 INSERT 가 거절된다.
+                discriminator = Json.of("""[{"selector":"Canvas[2]/settings[1]","active":false}]"""),
+            )
+        )
+        val titlePopup = screens.save(
+            ScreenEntity(
+                sceneId = title.id,
+                name = "타이틀 · 설정 팝업",
+                discriminator = Json.of("""[{"selector":"Canvas[2]/settings[1]","active":true}]"""),
+            )
+        )
+        val mapScreen = screens.save(
+            ScreenEntity(sceneId = map.id!!, name = "맵", discriminator = Json.of("""[]"""))
+        )
+        // 기능은 이 지도의 진짜 행을 쓴다. 요약이 응답에 그대로 실리는지 보려면 지어낸 id 로는 안 된다
+        val step = response.scenes.single { it.name == "TitleScene" }.steps.first()
+
+        // 씬 안의 상태 변화 — 팝업이 열린다
+        val inside = screenTransitions.save(
+            ScreenTransitionEntity(
+                fromScreenId = titleScreen.id!!,
+                toScreenId = titlePopup.id!!,
+                capabilityId = step.id,
+                kind = TransitionKind.STATE.wire,
+                crossesScene = false,
+                observedCount = 2,
+            )
+        )
+        // 씬 경계를 넘는 전이
+        val across = screenTransitions.save(
+            ScreenTransitionEntity(
+                fromScreenId = titleScreen.id,
+                toScreenId = mapScreen.id!!,
+                capabilityId = step.id,
+                kind = TransitionKind.ACTION.wire,
+                crossesScene = true,
+                observedCount = 5,
+            )
+        )
+        // 자동 전이 — TC 가 지시할 수 없는 것이라 기능이 없다
+        val auto = screenTransitions.save(
+            ScreenTransitionEntity(
+                fromScreenId = titlePopup.id,
+                toScreenId = titleScreen.id,
+                kind = TransitionKind.AUTO.wire,
+                crossesScene = false,
+                observedCount = 1,
+            )
+        )
+
+        val fresh = view.read(userId, projectId, gameBuildId)!!
+
+        // 조인이 행을 곱하지 않는다
+        val rows = count(
+            """
+            SELECT count(*) FROM screen_transition t
+            JOIN screen sc ON sc.id = t.from_screen_id
+            JOIN scene s ON s.id = sc.scene_id
+            WHERE s.content_map_id = :id
+            """
+        )
+        assertThat(fresh.screenTransitions).hasSize(rows.toInt())
+        assertThat(fresh.screenTransitions.map { it.id }).doesNotHaveDuplicates()
+
+        with(fresh.screenTransitions.single { it.id == across.id }) {
+            assertThat(fromScreenId).isEqualTo(titleScreen.id)
+            assertThat(toScreenId).isEqualTo(mapScreen.id)
+            assertThat(crossesScene).isTrue()
+            assertThat(kind).isEqualTo(TransitionKind.ACTION.wire)
+            assertThat(capabilityId).isEqualTo(step.id)
+            assertThat(capabilitySummary).isEqualTo(step.summary)
+            assertThat(observedCount).isEqualTo(5)
+        }
+        with(fresh.screenTransitions.single { it.id == inside.id }) {
+            assertThat(crossesScene).isFalse()
+            assertThat(kind).isEqualTo(TransitionKind.STATE.wire)
+        }
+        // 기능이 없으면 요약도 없다. 그래도 "갔다는 사실"은 남는다
+        with(fresh.screenTransitions.single { it.id == auto.id }) {
+            assertThat(capabilityId).isNull()
+            assertThat(capabilitySummary).isNull()
+            assertThat(kind).isEqualTo(TransitionKind.AUTO.wire)
+        }
+
+        // 경계를 넘는 전이의 두 끝은 서로 다른 씬의 화면이다. 그 되짚기를 sceneId 가 가능하게 한다
+        val screensById = fresh.scenes.flatMap { it.screens }.associateBy { it.id }
+        assertThat(screensById[across.fromScreenId]!!.sceneId)
+            .isNotEqualTo(screensById[across.toScreenId]!!.sceneId)
+    }
+
+    /**
+     * **`screen` 에 묶인 `capability` 만 그 `screen` 아래 서고, 묶인 것이 없으면 빈 채로 나간다**
+     * (ARTEL-658).
+     *
+     * 빈 배열을 `scene` 의 목록으로 채우지 않는 것이 이 테스트의 요점이다. 두 값은 다른 사실이다 —
+     * 빈 목록은 "이 `screen` 에서 아직 아무것도 확인 안 됐다"이고 `scene` 의 목록은 "이 `scene`
+     * 어딘가에서 할 수 있다"이다. 합치면 `screen` 을 고른 사람이 그 `screen` 의 것이 아닌 목록을
+     * 본다. 그래서 아래에서 `scene` 의 목록이 비어 있지 않다는 것을 함께 못 박는다 — 그것이 없으면
+     * "채우지 않았다"와 "채울 것이 없었다"가 구분되지 않는다.
+     *
+     * `origin` 과 `verification` 을 함께 내는 이유: QA 가 밟아 확인한 것과 정적 분석이 말만 한 것을
+     * 가르는 것이 이 목록의 쓸모다. 두 값이 실제로 갈리는 행을 하나 세워 두고 본다 — 첫 적재 직후의
+     * 지도는 전부 `evidence` · `unverified` 라 그대로 두면 두 칸이 하드코딩된 상수와 구분되지 않는다.
+     *
+     * 그 행을 마지막에 지우는 이유: `capabilityList.size == capabilities.total` 을 보는 테스트가
+     * `@BeforeAll` 이 얼려 둔 응답과 **지금의** DB 행 수를 비교한다. 행을 남기면 실행 순서에 따라
+     * 그쪽이 깨지고, 깨진 이유가 이 테스트에 적혀 있지 않다.
+     *
+     * 조인이 행을 곱하지 않는다는 것도 본다. `screen_capability` 의 PK 가
+     * `(screen_id, capability_id)` 이므로 응답의 합이 표의 행 수와 같아야 한다.
+     */
+    @Test
+    fun `screen 에 묶인 capability 만 서고 없으면 빈 배열이다`(): Unit = runBlocking {
+        val title = scenes.findByContentMapIdAndName(contentMapId, "TitleScene")!!
+        val linked = screens.save(
+            ScreenEntity(
+                sceneId = title.id!!,
+                name = "타이틀 · capability 묶임",
+                discriminator = Json.of("""[{"selector":"Canvas[2]/start[3]","active":true}]"""),
+            )
+        )
+        // 같은 `scene` 의 다른 `screen`. 여기에는 아무것도 묶지 않는다
+        val unlinked = screens.save(
+            ScreenEntity(
+                sceneId = title.id,
+                name = "타이틀 · capability 안 묶임",
+                discriminator = Json.of("""[{"selector":"Canvas[2]/start[3]","active":false}]"""),
+            )
+        )
+
+        // `evidence` 쪽은 이 지도의 진짜 행을 쓴다. 지어낸 id 로는 요약이 그대로 실리는지 볼 수 없다
+        val sceneList = response.scenes.single { it.name == "TitleScene" }.capabilityList
+        val fromEvidence = sceneList.first()
+        // QA 가 밟아 확인한 쪽. `origin` 을 나중에 바꿀 수는 없다 — `fk_capability_evidence_origin`
+        // 이 `evidence` 출신 행의 `origin` 을 붙들고 있어, 처음부터 관측 출신으로 세워야 한다
+        val fromObservation = capabilities.save(
+            CapabilityEntity(
+                sceneId = title.id,
+                contentMapId = contentMapId,
+                capabilityKey = "screen-capability-view-${System.nanoTime()}",
+                origin = CapabilityOrigin.OBSERVED.wire,
+                verification = VerificationState.CONFIRMED.wire,
+                summary = "QA 가 눌러 본 조작",
+                interaction = Interaction.CLICK.wire,
+                actionability = Actionability.RUNNABLE.wire,
+                observability = Observability.OBSERVABLE.wire,
+                applicability = Applicability.APPLIES.wire,
+            )
+        )
+
+        screenCapabilities.observe(linked.id!!, fromEvidence.id, firedIncrement = 1)
+        screenCapabilities.observe(linked.id, fromEvidence.id, firedIncrement = 0)
+        screenCapabilities.observe(linked.id, fromObservation.id!!, firedIncrement = 1)
+
+        try {
+            val fresh = view.read(userId, projectId, gameBuildId)!!
+            val scene = fresh.scenes.single { it.name == "TitleScene" }
+
+            val listed = scene.screens.single { it.id == linked.id }.capabilities
+            assertThat(listed.map { it.id }).containsExactly(fromEvidence.id, fromObservation.id)
+            with(listed.single { it.id == fromEvidence.id }) {
+                assertThat(summary).isEqualTo(fromEvidence.summary)
+                assertThat(status).isEqualTo(fromEvidence.status)
+                assertThat(origin).isEqualTo(CapabilityOrigin.EVIDENCE.wire)
+                assertThat(verification).isEqualTo(VerificationState.UNVERIFIED.wire)
+                // 두 번 관측했고 그중 한 번만 무언가 변했다. 이 차이가 결함 신호다
+                assertThat(observedCount).isEqualTo(2)
+                assertThat(firedCount).isEqualTo(1)
+            }
+            // 같은 목록 안에서 출처와 확인 여부가 갈린다. 그것이 이 목록의 쓸모다
+            with(listed.single { it.id == fromObservation.id }) {
+                assertThat(summary).isEqualTo("QA 가 눌러 본 조작")
+                assertThat(origin).isEqualTo(CapabilityOrigin.OBSERVED.wire)
+                assertThat(verification).isEqualTo(VerificationState.CONFIRMED.wire)
+                assertThat(observedCount).isEqualTo(1)
+                assertThat(firedCount).isEqualTo(1)
+            }
+
+            // 묶인 것이 없는 `screen` 은 빈 채로 나간다. `scene` 의 목록으로 채우지 않는다
+            assertThat(sceneList).isNotEmpty()
+            assertThat(scene.screens.single { it.id == unlinked.id }.capabilities).isEmpty()
+
+            // `screen` 목록은 `scene` 목록의 부분집합이다. 두 목록이 `capability.id` 로 이어져야
+            // 인스펙터가 나머지 칸(판정 세 축)을 `scene` 쪽에서 찾을 수 있다
+            val sceneIds = fresh.scenes.flatMap { s -> s.capabilityList.map { it.id } }.toSet()
+            assertThat(fresh.scenes.flatMap { s -> s.screens.flatMap { it.capabilities } }.map { it.id })
+                .isSubsetOf(sceneIds)
+
+            // 조인이 행을 곱하지 않는다
+            val rows = count(
+                """
+                SELECT count(*) FROM screen_capability sc
+                JOIN screen sr ON sr.id = sc.screen_id
+                JOIN scene s ON s.id = sr.scene_id
+                WHERE s.content_map_id = :id
+                """
+            )
+            assertThat(fresh.scenes.sumOf { s -> s.screens.sumOf { it.capabilities.size } }.toLong())
+                .isEqualTo(rows)
+        } finally {
+            // `screen_capability` 는 CASCADE 라 연결 행도 함께 사라진다
+            capabilities.deleteById(fromObservation.id)
+        }
+    }
+
+    /**
+     * **씬별 기능 목록이 제 씬 아래 서고, 그 수가 카운트와 같다.**
+     *
+     * 지금까지 나간 것은 개수뿐이라 인스펙터가 "그 440 이 무엇인가"에 답할 수 없었다. 목록이
+     * 카운트와 **같은 질의**에서 나오므로 `capabilityList.size == capabilities.total` 이 구조적으로
+     * 참이고, 이 등식이 깨지면 개수와 목록 중 한쪽이 거짓말을 시작한 것이다.
+     *
+     * `steps` 와의 관계도 함께 못 박는다. `steps` 는 조작이 있는 기능만이라 이 목록의 **부분집합**
+     * 이고, 차이가 정확히 `not-a-step` 이다. 두 등식이 함께 성립해야 화면이 어느 쪽을 그려도 같은
+     * 표를 본다.
+     */
+    @Test
+    fun `씬별 기능 목록이 제 씬 아래 서고 카운트와 맞는다`(): Unit = runBlocking {
+        // 목록의 크기가 그 씬의 카운트다. 씬마다 성립해야 한다
+        response.scenes.forEach { scene ->
+            assertThat(scene.capabilityList.size.toLong())
+                .describedAs(scene.name)
+                .isEqualTo(scene.capabilities.total)
+        }
+
+        // 합은 이 지도의 기능 총수다. 하드코딩하지 않고 DB 를 다시 센다
+        val total = count("SELECT count(*) FROM capability WHERE content_map_id = :id")
+        assertThat(response.scenes.sumOf { it.capabilityList.size }.toLong()).isEqualTo(total)
+
+        // 기능은 한 씬에만 선다. id 가 지도 전체에서 중복되면 조인이 행을 곱한 것이다
+        val ids = response.scenes.flatMap { scene -> scene.capabilityList.map { it.id } }
+        assertThat(ids).doesNotHaveDuplicates()
+
+        // 단계는 이 목록의 부분집합이고, 차이가 not-a-step 이다
+        response.scenes.forEach { scene ->
+            val listed = scene.capabilityList.associateBy { it.id }
+            assertThat(listed.keys).describedAs(scene.name).containsAll(scene.steps.map { it.id })
+            assertThat(scene.capabilityList.count { it.status == SpecStatus.NOT_A_STEP.wire }.toLong())
+                .describedAs(scene.name)
+                .isEqualTo(scene.capabilities.notAStep)
+            // 같은 기능을 두 목록이 같은 값으로 말한다
+            scene.steps.forEach { step ->
+                assertThat(listed.getValue(step.id).summary).isEqualTo(step.summary)
+                assertThat(listed.getValue(step.id).status).isEqualTo(step.status)
+                assertThat(listed.getValue(step.id).interaction).isEqualTo(step.interaction)
+            }
+        }
+
+        // 판정 세 축이 함께 나온다. status 는 그 셋에서 유도된 값이라 축 없이는 "왜"를 못 답한다
+        val notSteps = response.scenes
+            .flatMap { it.capabilityList }
+            .filter { it.status == SpecStatus.NOT_A_STEP.wire }
+        assertThat(notSteps).isNotEmpty()
+        assertThat(notSteps).allSatisfy {
+            assertThat(it.actionability).isEqualTo(Actionability.NOT_A_STEP.wire)
+        }
+        // 첫 적재 직후라 전부 `evidence` 출신이고 아직 아무것도 확인되지 않았다
+        assertThat(response.scenes.flatMap { it.capabilityList }).allSatisfy {
+            assertThat(it.origin).isEqualTo(CapabilityOrigin.EVIDENCE.wire)
+            assertThat(it.verification).isEqualTo(VerificationState.UNVERIFIED.wire)
+        }
     }
 
     // ---------- 픽스처 ----------
@@ -656,7 +1049,7 @@ class ContentMapViewGoldenTest {
                 .copy(imageFailureCode = "unsupported-render-pipeline")
         )
 
-        val fresh = view.read(userId, projectId, gameBuildId, capture = null)!!
+        val fresh = view.read(userId, projectId, gameBuildId)!!
 
         with(fresh.scenes.single { it.name == "TitleScene" }.thumbnail!!) {
             assertThat(state).isEqualTo("available")
@@ -679,7 +1072,7 @@ class ContentMapViewGoldenTest {
     /**
      * **전이가 정규화된 조건을 함께 낸다.**
      *
-     * `givenText` 는 사람이 읽는 한 줄이라 화면이 갈래를 구분하는 데 쓸 수 없다. 같은 컨트롤이 조건으로
+     * `givenText` 는 사람이 읽는 한 줄이라 화면이 `branch` 를 구분하는 데 쓸 수 없다. 같은 컨트롤이 조건으로
      * 갈릴 때 무엇이 다른지는 조건 트리에만 있다.
      *
      * 조인이 간선을 늘리지 않는다는 것도 함께 본다 — `capability_evidence` 는 기능당 한 행
@@ -688,7 +1081,7 @@ class ContentMapViewGoldenTest {
      */
     @Test
     fun `씬 전이가 정규화된 조건을 함께 낸다`(): Unit = runBlocking {
-        val fresh = view.read(userId, projectId, gameBuildId, capture = null)!!
+        val fresh = view.read(userId, projectId, gameBuildId)!!
         val fromEvidence = fresh.edges.filter { it.source == EdgeSource.STATIC.wire }
 
         val rows = count(
@@ -700,7 +1093,7 @@ class ContentMapViewGoldenTest {
         )
         assertThat(fromEvidence).hasSize(rows.toInt())
 
-        // 근거 출신 전이는 기능을 달고 있고, 그 기능은 조건 트리를 가진 행이다
+        // `evidence` 출신 전이는 기능을 달고 있고, 그 기능은 조건 트리를 가진 행이다
         assertThat(fromEvidence).allSatisfy { assertThat(it.capabilityId).isNotNull() }
         assertThat(fromEvidence).allSatisfy { assertThat(it.given).isNotNull() }
         // 자동 전이는 기능이 없으므로 조건도 없다. null 이 "조건 없음"을 뜻한다

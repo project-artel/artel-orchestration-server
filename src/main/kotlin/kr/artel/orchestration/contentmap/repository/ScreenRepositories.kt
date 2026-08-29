@@ -2,9 +2,11 @@ package kr.artel.orchestration.contentmap.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.dto.ContentMapSceneEdgeRow
+import kr.artel.orchestration.contentmap.dto.ContentMapScreenTransitionRow
 import kr.artel.orchestration.contentmap.dto.ScreenObservationRow
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
 import kr.artel.orchestration.contentmap.entity.ScreenEntity
+import kr.artel.orchestration.contentmap.entity.ScreenSelectorProposalEntity
 import kr.artel.orchestration.contentmap.entity.ScreenTransitionEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
@@ -98,6 +100,110 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
         """
     )
     suspend fun findIdBySceneIdAndDiscriminator(sceneId: Long, discriminator: String): Long?
+
+    /**
+     * 지도 한 장의 화면 전부. 조회가 쓰는 유일한 화면 질의다.
+     *
+     * 씬마다 [findBySceneIdOrderByIdAsc] 를 부르지 않는 이유: 씬 수만큼 왕복이 생기고 그 수는 지도가
+     * 커질수록 는다. `content_map_id` 하나로 좁힌 질의 한 번이 같은 답을 낸다 —
+     * `ContentMapViewService` 가 섹션마다 질의 하나를 두는 것과 같은 규칙이다.
+     *
+     * `screen.id` 오름차순, 즉 **처음 관측한 순서**로 낸다. [ScreenEntity.name] 으로 정렬하지 않는
+     * 것은 그 칸이 nullable 이고 LLM 이 짓는 표시용 값이라, 이름을 다시 지으면 화면 순서가 통째로
+     * 흔들리기 때문이다.
+     */
+    @Query(
+        """
+        SELECT sc.* FROM screen sc
+        JOIN scene s ON s.id = sc.scene_id
+        WHERE s.content_map_id = :contentMapId
+        ORDER BY sc.scene_id ASC, sc.id ASC
+        """
+    )
+    fun findByContentMapId(contentMapId: Long): Flow<ScreenEntity>
+
+    /**
+     * 지금의 목록으로 이 씬의 화면을 다시 계산하고 같아지는 것끼리 합친다. 사라진 화면 수를 돌려준다 (ARTEL-655).
+     *
+     * **합치기를 Kotlin 으로 옮겨 쓰지 않는다.** 정의는 `fold_scene_screens`(V67) 한 벌뿐이고 그것은
+     * V60 의 소급 합치기를 씬 하나로 좁힌 것이다. 두 벌이 되면 갈리고, 갈리면 합친 화면과 런타임이
+     * 앉히는 화면이 다른 규칙을 따라 합쳐 놓은 행 옆에 옛 모양의 행이 다시 쌓인다.
+     *
+     * **도착 순서에 의존하지 않는다.** 그 함수가 "목록을 적용하고 → 같아지는 것끼리 묶고 → 묶음마다
+     * 합친다" 는 집합 연산이라, 답이 어떤 순서로 와도 마지막 호출이 같은 목록을 보면 같은 상태로
+     * 끝난다.
+     *
+     * **합친 것은 다시 갈리지 않는다.** 빠진 selector 의 값은 `discriminator` 에서 지워지고 그것이
+     * 유일한 기록이라, 나중에 그 selector 를 목록에 넣어도 복원할 재료가 없다 — 다음 관측부터
+     * 갈린다.
+     *
+     * `@Modifying` 을 붙이지 않는다. 붙이면 Spring Data 가 반환값을 영향받은 행 수로 읽어 함수가
+     * 돌려준 값 대신 늘 1 이 돌아온다([observe] 와 같은 함정이다).
+     */
+    @Query("SELECT fold_scene_screens(:sceneId)")
+    suspend fun foldScene(sceneId: Long): Int
+}
+
+/**
+ * 목록에 없는 selector 를 물어본 기록 (ARTEL-655).
+ *
+ * 이 표가 "한 번 물어본 것은 다시 안 묻는다" 를 지킨다. 판정은 코드가 아니라
+ * `uk_screen_selector_proposal` 이 한다 — 같은 `pulse` 를 두 서버가 보면 둘 다 아직 없다고 읽는다.
+ */
+interface ScreenSelectorProposalRepository : CoroutineCrudRepository<ScreenSelectorProposalEntity, Long> {
+
+    fun findBySceneIdOrderByIdAsc(sceneId: Long): Flow<ScreenSelectorProposalEntity>
+
+    /**
+     * 이 (씬, selector) 를 물어볼 권리를 집는다. 이미 물어본 적이 있으면 **null 이 돌아오고 그때는
+     * 보내지 않는다.**
+     *
+     * 보내기 전에 집는 이유는 경합이다. 집기와 보내기 사이에 같은 selector 가 다시 오면 두 번째
+     * 호출이 null 을 받아 조용히 멈춘다. 보내기가 실패하면 부르는 쪽이 [release] 로 되돌린다 —
+     * 그러지 않으면 나가지 못한 질문이 물어본 것으로 남아 영영 안 나간다.
+     *
+     * `@Modifying` 을 붙이지 않는 이유는 [ScreenRepository.observe] 와 같다.
+     */
+    @Query(
+        """
+        INSERT INTO screen_selector_proposal (scene_id, reason, selector, status, message_id, asked_qa_run_id, asked_at)
+        VALUES (:sceneId, :reason, :selector, 'outstanding', :messageId, :qaRunId, :askedAt)
+        ON CONFLICT (scene_id, selector) DO NOTHING
+        RETURNING id
+        """
+    )
+    suspend fun claim(
+        sceneId: Long,
+        reason: String,
+        selector: String,
+        messageId: String,
+        qaRunId: Long?,
+        askedAt: Instant,
+    ): Long?
+
+    /** 보내지 못한 질문을 되돌린다. 답이 온 행은 건드리지 않는다 — 이 자리에 그런 행은 없지만 못을 박는다. */
+    @Modifying
+    @Query("DELETE FROM screen_selector_proposal WHERE message_id = :messageId AND status = 'outstanding'")
+    suspend fun release(messageId: String): Long
+
+    /** 이 프레임으로 나간 질문 전부. 답 하나가 후보 여럿을 한꺼번에 닫는다. */
+    fun findByMessageIdOrderByIdAsc(messageId: String): Flow<ScreenSelectorProposalEntity>
+
+    /**
+     * 답이 왔다. **그 답이 이 selector 를 다루지 않았어도 닫는다.**
+     *
+     * 답이 항목 배열이라 물어본 후보 하나하나에 대응하지 않는다. "화면을 가르는 것이 없다" 도
+     * 답이고, 그 답을 받고도 열어 두면 같은 후보를 계속 다시 묻게 된다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE screen_selector_proposal
+        SET status = 'answered', answered_at = :answeredAt
+        WHERE message_id = :messageId AND status = 'outstanding'
+        """
+    )
+    suspend fun markAnswered(messageId: String, answeredAt: Instant): Long
 }
 
 /** 화면 전이. 관측으로만 생긴다. */
@@ -141,6 +247,33 @@ interface ScreenTransitionRepository : CoroutineCrudRepository<ScreenTransitionE
         crossesScene: Boolean,
         qaRunId: Long?,
     ): Long
+
+    /**
+     * 지도 한 장의 화면 전이 전부. 조회가 쓰는 유일한 전이 질의다.
+     *
+     * **출발 화면 기준으로 모은다.** 씬 경계를 넘는 전이는 도착 화면이 다른 씬에 있고 그 씬도 같은
+     * 지도에 속한다 — QA 런 하나가 지도 한 장 안에서 움직이기 때문이다. 도착 쪽까지 조인해 걸러내면
+     * 그 전제가 깨진 날 행이 조용히 사라지는데, 사라진 전이는 화면에서 없던 것과 구분되지 않는다.
+     * 그대로 내고, 화면이 모르는 화면 id 를 만나면 그것이 신호다.
+     *
+     * `capability` 를 `LEFT JOIN` 해도 **행이 곱해지지 않는다.** `screen_transition.capability_id`
+     * 는 단일 FK 라 전이 하나에 기능이 많아야 하나다 — 효과(`capability_effect`)를 접지 않는 것과는
+     * 사정이 다르고, [SceneEdgeRepository.findByContentMapId] 가 이미 같은 판단을 했다.
+     */
+    @Query(
+        """
+        SELECT t.id, t.from_screen_id, t.to_screen_id, t.capability_id,
+               c.summary AS capability_summary,
+               t.kind, t.crosses_scene, t.observed_count, t.first_seen_qa_run_id
+        FROM screen_transition t
+        JOIN screen fs ON fs.id = t.from_screen_id
+        JOIN scene s ON s.id = fs.scene_id
+        LEFT JOIN capability c ON c.id = t.capability_id
+        WHERE s.content_map_id = :contentMapId
+        ORDER BY t.id ASC
+        """
+    )
+    fun findByContentMapId(contentMapId: Long): Flow<ContentMapScreenTransitionRow>
 }
 
 /**

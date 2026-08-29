@@ -1,6 +1,5 @@
 package kr.artel.orchestration.scenecontext.service
 
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
@@ -82,14 +81,9 @@ class SceneContextService(
             .toList()
             .groupBy(AnchoredKnowledgeRow::sceneName)
 
-        // 어느 지도를 볼 것인가 — **브라우저 조회와 같은 규칙이어야 한다.** `capture` 를 인자로
-        // 받지 않고 가장 최근에 알게 된 것(id 내림차순)을 고르며, `ContentMapViewService` 의 기본
-        // 분기와 **같은 리포지토리 메서드**를 부르므로 두 규칙이 갈릴 수 없다. 갈리면 사람이 보는
-        // 지도와 agent 가 쓰는 지도가 달라지고, 그 어긋남은 QA 결과를 읽을 때 드러나지 않는다.
-        //
-        // `updated_at` 이 아니라 id 인 이유도 그쪽과 같다. 같은 capture 를 다시 등록해도 행은
-        // 갱신만 되므로, 시각으로 고르면 옛 capture 를 한 번 다시 올린 것만으로 기본값이 뒤집힌다.
-        val contentMap = contentMaps.findByGameBuildIdOrderByIdDesc(gameBuildId).firstOrNull()
+        // 빌드마다 지도가 하나라 고를 것이 없다(ARTEL-642). `ContentMapViewService` 와 **같은
+        // 리포지토리 메서드**를 부르므로, 사람이 보는 지도와 agent 가 쓰는 지도가 갈릴 수 없다.
+        val contentMap = contentMaps.findByGameBuildId(gameBuildId)
             ?: return SceneContextResponse(
                 gameBuildId = gameBuildId.toString(),
                 scenes = anchorOnlyScenes(knowledgeByScene, emptySet()),

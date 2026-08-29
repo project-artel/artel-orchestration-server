@@ -20,6 +20,7 @@ import kr.artel.orchestration.contentmap.entity.Observability
 import kr.artel.orchestration.contentmap.entity.RecordKind
 import kr.artel.orchestration.contentmap.entity.TriggerKind
 import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.entity.VerificationState
 import kr.artel.orchestration.contentmap.evidence.EvidenceEffect
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
@@ -155,7 +156,11 @@ class ContentMapIngestService(
         val model = EvidenceParser(objectMapper).parse(bytes.decodeToString())
         val candidates = EvidenceJoin(model).candidates()
 
-        val sceneIds = upsertScenes(document.contentMapId, model.scenes + candidates.map { it.scene })
+        val sceneIds = upsertScenes(
+            document.contentMapId,
+            model.scenes + candidates.map { it.scene },
+            model.capture,
+        )
         applySceneCaptures(document.id!!, document.contentMapId)
 
         // 키가 같은 후보는 **같은 명세의 다른 조각**이다. 실측 529 후보 중 38건이 그렇고, 씬·진입점·
@@ -282,18 +287,41 @@ class ContentMapIngestService(
     /**
      * 씬 행을 이름으로 맞춘다.
      *
-     * 이미 있으면 **그대로 둔다.** `walked` · `image_object_key` 는 QA 런이 쓴 값이라, 스캔이 다시
-     * 돌았다고 "아직 안 걸어 본 씬"으로 되돌리면 커버리지가 매 스캔마다 0 이 된다.
+     * 이미 있으면 [capture] 와 `origin` **둘만 덮어쓴다.** `walked` · `image_object_key` 는 QA 런이
+     * 쓴 값이라, 스캔이 다시 돌았다고 "아직 안 걸어 본 씬"으로 되돌리면 커버리지가 매 스캔마다
+     * 0 이 된다.
      *
      * 후보의 씬도 함께 넣는다 — 문서의 `scenes` 목록에 없는 이름이 배치에서 나올 수 있고, 그때
      * 기능만 있고 씬이 없으면 FK 가 적재를 통째로 거절한다.
+     *
+     * [capture] 는 **문서가 신고한 것**이고, 그 문서가 만진 씬에만 적힌다. 지도가 아니라 씬에 적는
+     * 이유는 갱신 단위가 씬이라 같은 지도 안에서도 씬마다 다른 상태에서 읽혔을 수 있기 때문이다
+     * (ARTEL-642). 다시 읽었으면 **마지막 walk 가 이긴다** — 그 값이 지금 이 씬에 담긴 값의
+     * 출처다.
+     *
+     * `origin` 은 `observed` 였던 씬이 근거로 확인되면 `evidence` 로 올라가는 자리다. 반대로
+     * 내려가지는 않는다 — 적재기는 `evidence` 만 쓴다.
      */
-    private suspend fun upsertScenes(contentMapId: Long, names: List<String>): Map<String, Long> =
+    private suspend fun upsertScenes(
+        contentMapId: Long,
+        names: List<String>,
+        capture: String,
+    ): Map<String, Long> =
         names.distinct().associateWith { name ->
             val existing = scenes.findByContentMapIdAndName(contentMapId, name)
-            existing?.id ?: scenes.save(
-                SceneEntity(contentMapId = contentMapId, name = name, scannedAt = Instant.now(clock))
-            ).id!!
+            if (existing != null) {
+                scenes.save(existing.copy(capture = capture, origin = SceneOrigin.EVIDENCE.wire)).id!!
+            } else {
+                scenes.save(
+                    SceneEntity(
+                        contentMapId = contentMapId,
+                        name = name,
+                        capture = capture,
+                        origin = SceneOrigin.EVIDENCE.wire,
+                        scannedAt = Instant.now(clock),
+                    )
+                ).id!!
+            }
         }
 
     /** 문서와 함께 등록된 이미지 결과를 방금 만든 씬에 붙인다. */

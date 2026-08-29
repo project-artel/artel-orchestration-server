@@ -21,6 +21,46 @@ enum class Capture(val wire: String) {
 }
 
 /**
+ * 이 지도를 세운 경로.
+ *
+ * [SceneOrigin] 과 **묻는 것이 다르다.** 저쪽은 씬 한 줄을 어디서 알아냈는지이고, 이쪽은 지도
+ * 행이 근거 등록으로 태어났는지 관측으로 태어났는지다. 어휘가 갈린 것도 그래서다.
+ *
+ * `schema_version` · `evidence_digest` · `capture` 가 비었다는 사실에서 추론하지 않는다 — 근거가
+ * 아직 안 온 지도와 근거가 왔는데 헤더가 빈 지도를 그 방법으로는 가릴 수 없다.
+ */
+enum class ContentMapRoot(val wire: String) {
+    /** 근거 문서 등록이 세웠다. */
+    EVIDENCE("evidence"),
+
+    /** QA 런의 관측이 세웠다. 근거 문서가 아직 없다. */
+    OBSERVATION("observation");
+
+    companion object {
+        fun from(wire: String?): ContentMapRoot? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * 이 씬을 어디서 알아냈나.
+ *
+ * 어휘를 [CapabilityOrigin] 에서 그대로 가져온다. 같은 뜻을 두 표에서 다른 말로 적으면 "이 씬은
+ * observed 인데 그 위의 기능은 observation 이다" 같은 문장이 생긴다. `inferred` 와 `human` 을
+ * 받지 않는 것은 씬이 추론이나 사람 입력으로 태어나는 경로가 없어서다.
+ */
+enum class SceneOrigin(val wire: String) {
+    /** 근거 walk 가 만났다. */
+    EVIDENCE("evidence"),
+
+    /** QA 런이 서 봤다. 근거에 이름조차 없던 씬이 여기로 들어온다. */
+    OBSERVED("observed");
+
+    companion object {
+        fun from(wire: String?): SceneOrigin? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
  * 이 기능을 어디서 알아냈나.
  *
  * [VerificationState] 와 **다른 축이다.** 이쪽은 출처이고 저쪽은 실행 확인이다. 하나로 뭉치면
@@ -409,5 +449,31 @@ enum class ScreenSelectorSource(val wire: String, val rank: Int) {
 
     companion object {
         fun from(wire: String?): ScreenSelectorSource? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * 제안이 나가는 이유.
+ *
+ * 둘 다 "목록이 지금 틀렸다" 는 신호이고 답의 모양이 같아 한 프레임에 든다. 다른 것은 후보를
+ * 어디서 뽑는가뿐이다 — [UNKNOWN_SELECTOR] 는 목록 **밖**에서, [SCENE_SCREEN_CAP] 은 목록
+ * **안**에서 뽑는다.
+ */
+enum class ScreenSelectorProposalReason(val wire: String) {
+    /** 목록에도 제외에도 없는 selector 를 `pulse` 에서 봤다. 넣을지 물어본다. */
+    UNKNOWN_SELECTOR("unknown-selector"),
+
+    /**
+     * 이 씬의 화면이 `ScreenObservationService.MAX_SCREENS_PER_SCENE` 에 닿았다. **목록이 너무
+     * 잘다는 뜻이므로 뺄 것을 물어본다.**
+     *
+     * 상한에 닿았을 때 할 일이 기록 중단이 아닌 이유가 이것이다. 상한은 임계값이 틀렸을 때 소리를
+     * 내라고 둔 것이고, 그 틀림은 "목록이 너무 잘다" 한 방향뿐이다 — 목록이 너무 성기면 화면이
+     * 늘지 않고 뭉친다. 그러므로 상한은 포기의 신호가 아니라 좁히라는 신호다.
+     */
+    SCENE_SCREEN_CAP("scene-screen-cap");
+
+    companion object {
+        fun from(wire: String?): ScreenSelectorProposalReason? = entries.firstOrNull { it.wire == wire }
     }
 }

@@ -89,7 +89,7 @@ class SceneContextQueryCountTest {
         assertThat(response.scenes).hasSize(sceneCount)
 
         // 각각 정확히 한 번. "한 번 이하"로 느슨하게 잡으면 씬마다 도는 구현이 그대로 통과한다.
-        verify(contentMaps, times(1)).findByGameBuildIdOrderByIdDesc(buildId)
+        verify(contentMaps, times(1)).findByGameBuildId(buildId)
         verify(contentMaps, times(1)).findCapabilityRows(mapId)
         verify(scenes, times(1)).findByContentMapIdOrderByNameAsc(mapId)
         verify(anchoredKnowledge, times(1)).findAnchoredKnowledge(projectId, null)
