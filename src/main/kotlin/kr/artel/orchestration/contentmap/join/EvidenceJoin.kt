@@ -16,14 +16,14 @@ import kr.artel.orchestration.contentmap.evidence.EvidenceRecord
  * | 타입이 놓인 자리 | [PlacementIndex] |
  * | 컨트롤에서 코드로 가는 길 셋(`alsoReachedBy` 펴기 포함) | [SceneWiringIndex] |
  * | 프리팹 위에만 사는 타입의 주소 | [SpawnAttribution] |
- * | `DontDestroyOnLoad` 에 있는 오브젝트의 실제 실행 씬 | [PersistentSceneAttribution] |
+ * | `DontDestroyOnLoad` 에 있는 오브젝트의 실제 실행 `scene` | [PersistentSceneAttribution] |
  * | 조건 `branch` 쪼개기와 DB 어휘 번역 | [ConditionBranches] · [RecordTranslation] |
  *
  * DB 도 Spring 도 없다. 적재(ARTEL-442)는 이 목록을 받아 행으로 바꾼다.
  */
 class EvidenceJoin(private val document: EvidenceDocumentModel) {
 
-    // 다른 셋보다 먼저 선다. 씬이 아닌 이름(`DontDestroyOnLoad`)을 실제 실행 씬으로 바꾸는 것이
+    // 다른 셋보다 먼저 선다. `scene` 이 아닌 이름(`DontDestroyOnLoad`)을 실제 실행 `scene` 으로 바꾸는 것이
     // 이것이고, 색인 셋은 전부 그 결과 위에서 자리를 만든다.
     private val persistent = PersistentSceneAttribution(document)
     private val placements = PlacementIndex.build(document, persistent)
@@ -61,7 +61,7 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
             if (bindings.isNotEmpty()) {
                 bindings.flatMap { binding -> candidatesFor(record, binding.placement.scene, binding = binding) }
             } else {
-                // `scenesOf` 가 아니라 자리 목록을 씬으로 접는다. 씬 이름만으로는 그 자리가 옮겨진
+                // `scenesOf` 가 아니라 자리 목록을 `scene` 으로 접는다. `scene` 이름만으로는 그 자리가 옮겨진
                 // 것인지 문서가 적어 준 것인지 알 수 없어, 옮긴 근거를 후보까지 들고 갈 수 없다.
                 placements.placementsOf(record.owner).distinctBy { it.scene }.flatMap { placement ->
                     candidatesFor(record, placement.scene, binding = null, anchors = placement.anchors)
@@ -122,7 +122,7 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
     /**
      * 사슬 전체의 확실성은 **가장 흐린 단계**가 정한다(`capability_evidence.analysis_confidence` 의 정의).
      *
-     * 씬 귀속도 그 사슬의 한 단계다. 근거가 스스로 `verified` 라고 말했어도 그 기능이 앉을 자리를
+     * `scene` 귀속도 그 사슬의 한 단계다. 근거가 스스로 `verified` 라고 말했어도 그 기능이 앉을 자리를
      * 유도로 정했다면 결론은 유도이고, 자리를 하나로 좁히지 못했다면 결론은 `ambiguous` 다. 여기서
      * 내려 두지 않으면 "확정된 사실"과 "우리가 옮겨 놓은 사실"이 같은 등급으로 보인다.
      */
@@ -132,7 +132,7 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
         val fromAnchors = if (anchors.map { it.scene }.distinct().size > 1) {
             AnalysisConfidence.AMBIGUOUS
         } else {
-            // 한 씬을 받치는 anchor 가 여럿이면 **가장 확실한 것**이 그 씬을 정한 것이다. 확실한
+            // 한 `scene` 을 받치는 anchor 가 여럿이면 **가장 확실한 것**이 그 `scene` 을 정한 것이다. 확실한
             // 근거가 하나 있으면 흐린 근거가 그것을 흐리게 만들지 않는다.
             anchors.minOf { it.rule.resolution }
         }
@@ -143,10 +143,10 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
      * 근거가 말한 공백에 조인이 판정한 공백을 더한다. 조인이 더하는 것은 둘이고, 둘 다 "여럿이라
      * 하나로 못 정했다"는 사실이다.
      *
-     * - [EvidenceGap.SPAWN_ORIGIN_AMBIGUOUS] — 한 씬에서 이 타입을 만드는 후보가 둘 이상이다.
+     * - [EvidenceGap.SPAWN_ORIGIN_AMBIGUOUS] — 한 `scene` 에서 이 타입을 만드는 후보가 둘 이상이다.
      *   `spawned_by_field` 는 단일 컬럼이라 하나를 고르면 고른 쪽이 근거가 없다.
-     * - [EvidenceGap.PERSISTENT_SCENE_AMBIGUOUS] — `DontDestroyOnLoad` 오브젝트의 실행 씬이 둘
-     *   이상이다. 여러 씬에 싣되 그 사실을 함께 적는다.
+     * - [EvidenceGap.PERSISTENT_SCENE_AMBIGUOUS] — `DontDestroyOnLoad` 오브젝트의 실행 `scene` 이 둘
+     *   이상이다. 여러 `scene` 에 싣되 그 사실을 함께 적는다.
      *
      * 조용히 비면 "여럿이라 못 정했다"와 "원래 없다"가 구분되지 않는다.
      */
@@ -158,7 +158,7 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
     ): List<String> = buildList {
         addAll(RecordTranslation.gapsOf(record, branch))
         if (spawn?.ambiguous == true) add(EvidenceGap.SPAWN_ORIGIN_AMBIGUOUS.wire)
-        // 씬을 하나로 좁히지 못한 채 여러 씬에 실은 경우. 조용히 여러 줄을 내면 "여기서도 되고
+        // `scene` 을 하나로 좁히지 못한 채 여러 `scene` 에 실은 경우. 조용히 여러 줄을 내면 "여기서도 되고
         // 저기서도 된다"와 "어디인지 모른다"가 표에서 같은 모양이 된다.
         if (anchors.map { it.scene }.distinct().size > 1) add(EvidenceGap.PERSISTENT_SCENE_AMBIGUOUS.wire)
     }.distinct()
@@ -170,7 +170,7 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
      * 줄어드는 것이 가장 알아채기 어려운 고장이다.
      *
      * `DontDestroyOnLoad` 위에만 사는 타입은 여기서 빠진다. 그쪽이 자리를 못 얻는 것은 조인이 깨진
-     * 것이 아니라 씬을 정할 근거가 없는 것이고, 고칠 곳이 달라서 [unattributedPersistentRecords] 가
+     * 것이 아니라 `scene` 을 정할 근거가 없는 것이고, 고칠 곳이 달라서 [unattributedPersistentRecords] 가
      * 따로 센다. 한 통에 넣으면 이 수가 0 이 아닌 것이 정상인 날이 생겨 고장 신호가 죽는다.
      */
     fun unaddressedRecords(): Int =
@@ -199,9 +199,9 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
     fun deadCodeCandidates(): List<String> = spawns.deadCodeCandidates()
 
     /**
-     * `DontDestroyOnLoad` 에 있는 오브젝트 중 **실제 실행 씬을 정하지 못한** root 경로들(ARTEL-460).
+     * `DontDestroyOnLoad` 에 있는 오브젝트 중 **실제 실행 `scene` 을 정하지 못한** root 경로들(ARTEL-460).
      *
-     * 그 root 아래 타입의 근거는 후보가 되지 않는다 — 씬을 모르는 채 아무 씬에나 붙이면 QA agent 가
+     * 그 root 아래 타입의 근거는 후보가 되지 않는다 — `scene` 을 모르는 채 아무 `scene` 에나 붙이면 QA agent 가
      * 없는 컨트롤을 찾으러 가고, 그 실패는 지도가 아니라 게임이 깨진 것처럼 읽힌다. 비어 있는 것이
      * 정상이고, 차 있으면 그만큼이 지도의 공백이다.
      */

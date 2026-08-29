@@ -351,12 +351,12 @@ enum class EvidenceGap(val wire: String) {
     SPAWN_ORIGIN_AMBIGUOUS("spawn-origin-ambiguous"),
 
     /**
-     * `DontDestroyOnLoad` 에 있는 오브젝트의 실행 씬을 **하나로 좁히지 못해** 여러 씬에 실었다
+     * `DontDestroyOnLoad` 에 있는 오브젝트의 실행 `scene` 을 **하나로 좁히지 못해** 여러 `scene` 에 실었다
      * (ARTEL-460).
      *
-     * 근거가 가리킨 씬이 둘 이상일 때다. 하나를 고르면 고른 쪽이 근거가 없고, 조용히 여러 줄을 내면
+     * 근거가 가리킨 `scene` 이 둘 이상일 때다. 하나를 고르면 고른 쪽이 근거가 없고, 조용히 여러 줄을 내면
      * "여기서도 되고 저기서도 된다"와 "어디인지 모른다"가 표에서 같은 모양이 된다. 어느 근거로 어느
-     * 씬에 실었는지는 `capability_proof` 사슬이 답한다.
+     * `scene` 에 실었는지는 `capability_proof` 사슬이 답한다.
      */
     PERSISTENT_SCENE_AMBIGUOUS("persistent-scene-ambiguous");
 

@@ -134,8 +134,8 @@ class SceneWiringIndex private constructor(
 
         fun build(document: EvidenceDocumentModel, persistent: PersistentSceneAttribution): SceneWiringIndex {
             var order = 0
-            // 자리 하나가 씬 여럿으로 갈릴 수 있다 — `DontDestroyOnLoad` 의 컨트롤이 여러 씬으로
-            // 귀속된 경우다. 자리마다 컨트롤을 따로 세워야 각 씬의 후보가 자기 씬의 자리를 든다.
+            // 자리 하나가 `scene` 여럿으로 갈릴 수 있다 — `DontDestroyOnLoad` 의 컨트롤이 여러 `scene` 으로
+            // 귀속된 경우다. 자리마다 컨트롤을 따로 세워야 각 `scene` 의 후보가 자기 `scene` 의 자리를 든다.
             val controls = document.allObjects.flatMap { obj ->
                 persistent.placementsOf(obj).flatMap { placement ->
                     obj.components.flatMap { it.calls }.map { call ->

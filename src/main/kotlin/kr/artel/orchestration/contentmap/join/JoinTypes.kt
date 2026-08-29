@@ -22,7 +22,7 @@ data class ScenePlacement(
     /**
      * `DontDestroyOnLoad` 에 있는 오브젝트를 이 [scene] 으로 옮긴 근거([PersistentSceneAttribution]).
      *
-     * 씬에 실제로 놓인 오브젝트에서는 비어 있다 — 그때 [scene] 은 문서가 그대로 적어 준 값이라
+     * `scene` 에 실제로 놓인 오브젝트에서는 비어 있다 — 그때 [scene] 은 문서가 그대로 적어 준 값이라
      * 옮긴 사람이 없다. 비어 있지 않으면 **판정이 있었다는 뜻**이고, 적재기가 그것을
      * `capability_proof` 로 옮겨 되짚을 수 있게 남긴다.
      */

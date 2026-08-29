@@ -21,7 +21,7 @@ import kr.artel.orchestration.contentmap.evidence.SceneObject
 class SpawnAttribution(
     private val document: EvidenceDocumentModel,
     private val placementsOf: (String) -> List<ScenePlacement>,
-    /** 씬 오브젝트 하나가 실제로 서 있는 자리들. `DontDestroyOnLoad` 오브젝트의 씬을 여기서 정한다(ARTEL-460). */
+    /** `scene` 오브젝트 하나가 실제로 서 있는 자리들. `DontDestroyOnLoad` 오브젝트의 `scene` 을 여기서 정한다(ARTEL-460). */
     private val placementsOfObject: (SceneObject) -> List<ScenePlacement>,
 ) {
 

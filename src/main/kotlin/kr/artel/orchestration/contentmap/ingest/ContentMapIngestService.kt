@@ -233,11 +233,11 @@ class ContentMapIngestService(
 
         val retired = retireVanished(document.contentMapId, keptKeys)
 
-        // 기능을 내린 **뒤에** 씬을 내린다. 순서가 반대면 이번 문서가 더는 말하지 않는 씬에 옛 기능이
-        // 아직 매달려 있어, "아무도 아무것도 모르는 씬"이라는 조건에 걸리지 않는다.
+        // 기능을 내린 **뒤에** `scene` 을 내린다. 순서가 반대면 이번 문서가 더는 말하지 않는 `scene` 에 옛 기능이
+        // 아직 매달려 있어, "아무도 아무것도 모르는 `scene`"이라는 조건에 걸리지 않는다.
         val retiredScenes = scenes.retireVanishedScenes(document.contentMapId, sceneIds.keys.toTypedArray())
 
-        // 씬을 정하지 못해 통째로 빠진 근거. 아무 씬에나 붙이는 것보다 낫지만 공백인 것은 맞다.
+        // `scene` 을 정하지 못해 통째로 빠진 근거. 아무 `scene` 에나 붙이는 것보다 낫지만 공백인 것은 맞다.
         val unresolvedRoots = join.unresolvedPersistentRoots()
         if (unresolvedRoots.isNotEmpty()) {
             logger.warn(
@@ -411,7 +411,7 @@ class ContentMapIngestService(
     }
 
     /**
-     * 씬 귀속의 사슬. `DontDestroyOnLoad` 에서 옮겨진 기능에만 붙는다(ARTEL-460).
+     * `scene` 귀속의 사슬. `DontDestroyOnLoad` 에서 옮겨진 기능에만 붙는다(ARTEL-460).
      *
      * **조용한 재귀속은 안 하느니만 못하다.** 언젠가 누군가 "이 튜토리얼이 정말 `Map_scene` 에서
      * 도는가"를 확인해야 하고, 그때 무엇을 읽고 그렇게 판정했는지가 없으면 지도 전체를 의심하게
@@ -425,8 +425,8 @@ class ContentMapIngestService(
      */
     private suspend fun writeSceneAttribution(capabilityId: Long, candidate: CapabilityCandidate) {
         proofs.deleteCapabilityChain(capabilityId)
-        // 근거가 가리킨 씬이 둘 이상이면 규칙이 스스로 말하는 확실성보다 결론이 흐리다. 규칙은
-        // `exact` 인데 그것이 두 씬을 가리켰다면 이 기능이 어디 있는지는 여전히 모른다.
+        // 근거가 가리킨 `scene` 이 둘 이상이면 규칙이 스스로 말하는 확실성보다 결론이 흐리다. 규칙은
+        // `exact` 인데 그것이 두 `scene` 을 가리켰다면 이 기능이 어디 있는지는 여전히 모른다.
         val ambiguous = candidate.sceneAnchors.map { it.scene }.distinct().size > 1
         var seq = 0
         for (anchor in candidate.sceneAnchors) {
@@ -639,15 +639,15 @@ data class IngestResult(
     val collapsed: Int,
 
     /**
-     * 이번 문서가 더는 말하지 않아 내린 빈 씬 수(ARTEL-460).
+     * 이번 문서가 더는 말하지 않아 내린 빈 `scene` 수(ARTEL-460).
      *
      * 대개 0 이다. 0 이 아닌 것은 적재 규칙이 바뀌어 어떤 이름이 더는 나오지 않게 됐다는 뜻이고,
-     * `DontDestroyOnLoad` 가 씬 항목으로 앉아 있던 지도를 다시 적재할 때 그렇다.
+     * `DontDestroyOnLoad` 가 `scene` 항목으로 앉아 있던 지도를 다시 적재할 때 그렇다.
      */
     val retiredScenes: Int = 0,
 
     /**
-     * `DontDestroyOnLoad` 에서 실제 실행 씬으로 옮겨 앉은 기능 행 수(ARTEL-460).
+     * `DontDestroyOnLoad` 에서 실제 실행 `scene` 으로 옮겨 앉은 기능 행 수(ARTEL-460).
      *
      * 이 수만큼의 행이 `capability_proof` 사슬을 갖는다. 0 이면 문서에 persistent object 가 없거나
      * 하나도 귀속하지 못한 것이고, 뒤쪽이면 [unresolvedPersistentRoots] 가 차 있다.
@@ -655,10 +655,10 @@ data class IngestResult(
     val attributedPersistentCapabilities: Int = 0,
 
     /**
-     * 실행 씬을 정하지 못한 persistent object 의 root 경로들. **이것이 이 이슈의 gap 이다.**
+     * 실행 `scene` 을 정하지 못한 persistent object 의 root 경로들. **이것이 이 이슈의 gap 이다.**
      *
      * 비어 있는 것이 정상이다. 차 있으면 그 root 아래 근거가 [unattributedPersistentRecords] 건만큼
-     * 표에 앉지 못한 것이고, 그것은 아무 씬에나 붙여 QA agent 를 없는 컨트롤로 보내는 것보다 낫지만
+     * 표에 앉지 못한 것이고, 그것은 아무 `scene` 에나 붙여 QA agent 를 없는 컨트롤로 보내는 것보다 낫지만
      * 지도가 그만큼 빈 것도 맞다.
      */
     val unresolvedPersistentRoots: List<String> = emptyList(),

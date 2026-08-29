@@ -17,22 +17,22 @@ interface SceneRepository : CoroutineCrudRepository<SceneEntity, Long> {
     fun findByContentMapIdOrderByNameAsc(contentMapId: Long): Flow<SceneEntity>
 
     /**
-     * 이번 문서가 더 이상 말하지 않는 **근거 출신 빈 씬**을 내린다. 지운 행 수를 돌려준다.
+     * 이번 문서가 더 이상 말하지 않는 **근거 출신 빈 `scene`**을 내린다. 지운 행 수를 돌려준다.
      *
      * 이것이 필요한 이유는 [SceneEntity] 행이 이름으로 upsert 되기 때문이다 — 적재 규칙이 바뀌어
-     * 어떤 이름이 더는 나오지 않게 돼도 옛 행은 그 자리에 남는다. `DontDestroyOnLoad` 처럼 씬이
+     * 어떤 이름이 더는 나오지 않게 돼도 옛 행은 그 자리에 남는다. `DontDestroyOnLoad` 처럼 `scene` 이
      * 아닌 이름이 한 번 앉으면(ARTEL-460 이전) 그 뒤 어떤 재적재도 그것을 치우지 못한다.
      *
-     * **아무도 아무것도 모르는 씬만 지운다.** 조건 하나하나가 "이 씬에 대해 누군가 무언가를 안다"는
+     * **아무도 아무것도 모르는 `scene` 만 지운다.** 조건 하나하나가 "이 `scene` 에 대해 누군가 무언가를 안다"는
      * 뜻이라, 하나라도 걸리면 남긴다:
      *
-     * - `origin = 'evidence'` — 관측이 만난 씬은 근거가 말한 적 없어도 실재한다
+     * - `origin = 'evidence'` — 관측이 만난 `scene` 은 근거가 말한 적 없어도 실재한다
      * - `NOT walked` · 이미지 없음 — QA 런이 서 봤거나 찍었으면 그 기록이 사실이다
      * - `capability` · `screen` · `scene_edge` · `scene_screen_selector` 없음 — 참조가 있으면
      *   CASCADE 로 그 지식까지 함께 사라진다
      *
-     * 이름 목록으로 거르는 이유: id 로 거르면 이번 문서가 만지지 않은 다른 문서의 씬까지 후보가
-     * 된다. 한 지도에 문서가 여럿 들어올 수 있고, 각 문서는 자기가 걸은 씬만 안다.
+     * 이름 목록으로 거르는 이유: id 로 거르면 이번 문서가 만지지 않은 다른 문서의 `scene` 까지 후보가
+     * 된다. 한 지도에 문서가 여럿 들어올 수 있고, 각 문서는 자기가 걸은 `scene` 만 안다.
      */
     @Modifying
     @Query(
