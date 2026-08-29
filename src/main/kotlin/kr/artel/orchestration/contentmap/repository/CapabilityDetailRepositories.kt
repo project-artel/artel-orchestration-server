@@ -174,6 +174,17 @@ interface CapabilityProofRepository : CoroutineCrudRepository<CapabilityProofEnt
      * 규칙별로 흐린 단계를 센다. 같은 이름이 뭉쳐 나오는 자리가 고칠 규칙이다.
      */
     fun countByRuleAndResolution(rule: String, resolution: String): Long
+
+    /**
+     * 기능 자체에 붙은 사슬(`effect_id IS NULL`)을 지운다. 효과에 붙은 사슬은 건드리지 않는다.
+     *
+     * 재적재는 같은 기능의 사슬을 새 판으로 갈아 끼운다. 지우지 않고 다시 넣으면
+     * `uk_capability_proof_capability_seq` 가 같은 `seq` 를 두 번 거절해 문서 하나가 통째로
+     * 되돌아간다. `capability_effect` 를 근거 출신만 지우고 다시 넣는 것과 같은 모양이다.
+     */
+    @Modifying
+    @Query("DELETE FROM capability_proof WHERE capability_id = :capabilityId AND effect_id IS NULL")
+    suspend fun deleteCapabilityChain(capabilityId: Long): Long
 }
 
 /** 관측. 조작 한 번이 한 행. */

@@ -9,9 +9,11 @@ import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kr.artel.orchestration.common.error.ApiException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.entity.Actionability
+import kr.artel.orchestration.contentmap.entity.AnalysisConfidence
 import kr.artel.orchestration.contentmap.entity.Applicability
 import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityEvidenceEntity
+import kr.artel.orchestration.contentmap.entity.CapabilityProofEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.EffectCategory
 import kr.artel.orchestration.contentmap.entity.EvidenceGap
@@ -28,6 +30,7 @@ import kr.artel.orchestration.contentmap.join.CapabilityCandidate
 import kr.artel.orchestration.contentmap.join.EvidenceJoin
 import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
 import kr.artel.orchestration.contentmap.repository.CapabilityEvidenceRepository
+import kr.artel.orchestration.contentmap.repository.CapabilityProofRepository
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapSceneCaptureRepository
@@ -68,6 +71,7 @@ class ContentMapIngestService(
     private val capabilities: CapabilityRepository,
     private val evidences: CapabilityEvidenceRepository,
     private val effects: CapabilityEffectRepository,
+    private val proofs: CapabilityProofRepository,
     private val sceneEdges: SceneEdgeRepository,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
@@ -154,7 +158,8 @@ class ContentMapIngestService(
             ?: throw NotFoundException("적재할 근거 문서를 스토리지에서 찾을 수 없습니다.")
 
         val model = EvidenceParser(objectMapper).parse(bytes.decodeToString())
-        val candidates = EvidenceJoin(model).candidates()
+        val join = EvidenceJoin(model)
+        val candidates = join.candidates()
 
         val sceneIds = upsertScenes(
             document.contentMapId,
@@ -210,6 +215,7 @@ class ContentMapIngestService(
             )
 
             writeEvidence(capabilityId, candidate, group)
+            writeSceneAttribution(capabilityId, candidate)
             writeEffects(capabilityId, mergedEffects)
             keptEdgeIds += writeSceneEdges(document.contentMapId, sceneId, capabilityId, mergedEffects)
 
@@ -227,6 +233,19 @@ class ContentMapIngestService(
 
         val retired = retireVanished(document.contentMapId, keptKeys)
 
+        // 기능을 내린 **뒤에** 씬을 내린다. 순서가 반대면 이번 문서가 더는 말하지 않는 씬에 옛 기능이
+        // 아직 매달려 있어, "아무도 아무것도 모르는 씬"이라는 조건에 걸리지 않는다.
+        val retiredScenes = scenes.retireVanishedScenes(document.contentMapId, sceneIds.keys.toTypedArray())
+
+        // 씬을 정하지 못해 통째로 빠진 근거. 아무 씬에나 붙이는 것보다 낫지만 공백인 것은 맞다.
+        val unresolvedRoots = join.unresolvedPersistentRoots()
+        if (unresolvedRoots.isNotEmpty()) {
+            logger.warn(
+                "persistent object 의 실행 scene 을 정하지 못했습니다 (documentId={}, roots={}, records={})",
+                document.id, unresolvedRoots, join.unattributedPersistentRecords(),
+            )
+        }
+
         documents.stampIngested(document.id!!, INGESTER_VERSION, Instant.now(clock))
 
         return IngestResult(
@@ -238,6 +257,10 @@ class ContentMapIngestService(
             deleted = retired.deleted,
             markedNotApplicable = retired.markedNotApplicable,
             collapsed = collapsed,
+            retiredScenes = retiredScenes.toInt(),
+            attributedPersistentCapabilities = grouped.count { (_, group) -> group.any { it.sceneAnchors.isNotEmpty() } },
+            unresolvedPersistentRoots = unresolvedRoots,
+            unattributedPersistentRecords = join.unattributedPersistentRecords(),
         )
     }
 
@@ -388,6 +411,47 @@ class ContentMapIngestService(
     }
 
     /**
+     * 씬 귀속의 사슬. `DontDestroyOnLoad` 에서 옮겨진 기능에만 붙는다(ARTEL-460).
+     *
+     * **조용한 재귀속은 안 하느니만 못하다.** 언젠가 누군가 "이 튜토리얼이 정말 `Map_scene` 에서
+     * 도는가"를 확인해야 하고, 그때 무엇을 읽고 그렇게 판정했는지가 없으면 지도 전체를 의심하게
+     * 된다. `capability_proof` 가 그 질문에 답하려고 있는 표이고(한 단계 = 한 행), 사슬 전체의
+     * 확실성은 `v_capability_proof.chain_rank` 가 낸다.
+     *
+     * `effect_id` 는 null 이다 — 이 사슬이 세운 것은 효과가 아니라 **그 기능이 앉을 자리**다.
+     *
+     * 옮기지 않은 기능에는 행을 만들지 않는다. 문서가 적어 준 자리에는 옮긴 사람이 없어 사슬이
+     * 없고, 빈 사슬을 만들면 "판정이 있었다"와 "그대로 앉았다"가 구분되지 않는다.
+     */
+    private suspend fun writeSceneAttribution(capabilityId: Long, candidate: CapabilityCandidate) {
+        proofs.deleteCapabilityChain(capabilityId)
+        // 근거가 가리킨 씬이 둘 이상이면 규칙이 스스로 말하는 확실성보다 결론이 흐리다. 규칙은
+        // `exact` 인데 그것이 두 씬을 가리켰다면 이 기능이 어디 있는지는 여전히 모른다.
+        val ambiguous = candidate.sceneAnchors.map { it.scene }.distinct().size > 1
+        var seq = 0
+        for (anchor in candidate.sceneAnchors) {
+            for (step in anchor.steps) {
+                proofs.save(
+                    CapabilityProofEntity(
+                        capabilityId = capabilityId,
+                        effectId = null,
+                        seq = seq++,
+                        source = step.source.take(PROOF_TERM_WIDTH),
+                        relation = step.relation,
+                        target = step.target.take(PROOF_TERM_WIDTH),
+                        resolution = if (ambiguous) {
+                            AnalysisConfidence.AMBIGUOUS.wire
+                        } else {
+                            anchor.rule.resolution.wire
+                        },
+                        rule = anchor.rule.wire,
+                    )
+                )
+            }
+        }
+    }
+
+    /**
      * 효과 행. 안정 키가 없어 **근거 출신만 지우고 다시 넣는다.**
      *
      * 관측이 남긴 효과(`origin='observed'`)는 건드리지 않는다. `watchable` 은 기본값 그대로 둔다 —
@@ -526,6 +590,9 @@ class ContentMapIngestService(
 
         /** `scene_edge.to_scene_name` 의 폭. `capability_effect.target` 의 1024 보다 좁다. */
         private const val TO_SCENE_NAME_WIDTH = 255
+
+        /** `capability_proof.source` · `target` 의 폭(V44). */
+        private const val PROOF_TERM_WIDTH = 1024
     }
 }
 
@@ -570,6 +637,34 @@ data class IngestResult(
      * 키 산식이 무언가를 잃기 시작한 것이다.
      */
     val collapsed: Int,
+
+    /**
+     * 이번 문서가 더는 말하지 않아 내린 빈 씬 수(ARTEL-460).
+     *
+     * 대개 0 이다. 0 이 아닌 것은 적재 규칙이 바뀌어 어떤 이름이 더는 나오지 않게 됐다는 뜻이고,
+     * `DontDestroyOnLoad` 가 씬 항목으로 앉아 있던 지도를 다시 적재할 때 그렇다.
+     */
+    val retiredScenes: Int = 0,
+
+    /**
+     * `DontDestroyOnLoad` 에서 실제 실행 씬으로 옮겨 앉은 기능 행 수(ARTEL-460).
+     *
+     * 이 수만큼의 행이 `capability_proof` 사슬을 갖는다. 0 이면 문서에 persistent object 가 없거나
+     * 하나도 귀속하지 못한 것이고, 뒤쪽이면 [unresolvedPersistentRoots] 가 차 있다.
+     */
+    val attributedPersistentCapabilities: Int = 0,
+
+    /**
+     * 실행 씬을 정하지 못한 persistent object 의 root 경로들. **이것이 이 이슈의 gap 이다.**
+     *
+     * 비어 있는 것이 정상이다. 차 있으면 그 root 아래 근거가 [unattributedPersistentRecords] 건만큼
+     * 표에 앉지 못한 것이고, 그것은 아무 씬에나 붙여 QA agent 를 없는 컨트롤로 보내는 것보다 낫지만
+     * 지도가 그만큼 빈 것도 맞다.
+     */
+    val unresolvedPersistentRoots: List<String> = emptyList(),
+
+    /** [unresolvedPersistentRoots] 때문에 후보가 되지 못한 근거의 수. */
+    val unattributedPersistentRecords: Int = 0,
 )
 
 /**

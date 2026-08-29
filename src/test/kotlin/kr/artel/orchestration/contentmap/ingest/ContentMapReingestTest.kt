@@ -312,6 +312,152 @@ class ContentMapReingestTest {
         assertThat(after.capture).isEqualTo(Capture.EDITOR.wire)
     }
 
+    /**
+     * `DontDestroyOnLoad` 오브젝트가 실제 실행 scene 에 앉고, 무엇을 읽고 그렇게 정했는지가
+     * `capability_proof` 에 남는다(ARTEL-460).
+     *
+     * `Demo.HudController` 는 `DontDestroyOnLoad` 에만 있어 어느 scene 에도 놓이지 않았다. 그 조건이
+     * `MapMover.stage` 를 읽고 `Demo.MapMover` 는 `MapScene` 에만 놓였으므로 `MapScene` 에 앉는다.
+     * scene 이름이 아닌 `DontDestroyOnLoad` 는 `scene` 표에 앉지 않는다.
+     */
+    @Test
+    fun `DontDestroyOnLoad 오브젝트가 실제 scene 에 앉고 근거가 남는다`(): Unit = runBlocking {
+        val map = newContentMap()
+
+        val result = ingestNew(map.id!!, persistentEvidenceDocument())
+
+        assertThat(scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList().map { it.name })
+            .containsExactly("MapScene", "TitleScene")
+        assertThat(result.attributedPersistentCapabilities).isEqualTo(1)
+        assertThat(result.unresolvedPersistentRoots).isEmpty()
+
+        val hudId = capabilityIdOf(map.id!!, hudEntry)!!
+        val hudSceneName = db.sql("SELECT s.name FROM capability c JOIN scene s ON s.id = c.scene_id WHERE c.id = :id")
+            .bind("id", hudId)
+            .map { row, _ -> row.get("name", String::class.java) }
+            .one()
+            .awaitSingle()
+        assertThat(hudSceneName).isEqualTo("MapScene")
+
+        val chain = db.sql(
+            """
+            SELECT source, relation, target, rule, resolution
+            FROM capability_proof WHERE capability_id = :id AND effect_id IS NULL ORDER BY seq
+            """
+        ).bind("id", hudId).map { row, _ ->
+            listOf("source", "relation", "target", "rule", "resolution").map { row.get(it, String::class.java) }
+        }.all().collectList().awaitSingle()
+
+        assertThat(chain).containsExactly(
+            listOf("DontDestroyOnLoad/Hud", "condition-reads", "MapMover.stage",
+                "persistent-condition-subject-placed", "derived"),
+            listOf("MapMover.stage", "owned-by", "Demo.MapMover",
+                "persistent-condition-subject-placed", "derived"),
+            listOf("Demo.MapMover", "placed-in", "MapScene",
+                "persistent-condition-subject-placed", "derived"),
+        )
+    }
+
+    /**
+     * 옛 적재가 앉혀 둔 `DontDestroyOnLoad` scene 행이 재적재로 사라진다(ARTEL-460).
+     *
+     * scene 행은 이름으로 upsert 되므로 규칙이 바뀌어 그 이름이 더는 나오지 않아도 옛 행은 남는다.
+     * **아무도 아무것도 모르는 행만** 지운다 — capability · screen · scene_edge 가 없고, QA 런이 서
+     * 보지도 캡처를 찍지도 않은 행이다. 아래 `TitleScene` 이 그대로 남는 것이 그 경계를 지킨다는
+     * 증거다.
+     */
+    @Test
+    fun `근거가 더는 말하지 않는 빈 scene 행이 재적재로 사라진다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val stale = scenes.save(
+            SceneEntity(contentMapId = map.id!!, name = "DontDestroyOnLoad", origin = SceneOrigin.EVIDENCE.wire)
+        )
+
+        val result = ingestNew(map.id!!, evidenceDocument())
+
+        assertThat(result.retiredScenes).isEqualTo(1)
+        assertThat(scenes.findById(stale.id!!)).isNull()
+        assertThat(scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList().map { it.name })
+            .containsExactly("TitleScene")
+    }
+
+    private val hudEntry = "Assembly-CSharp|Demo.HudController|Start|System.Void()"
+    private val moverEntry = "Assembly-CSharp|Demo.MapMover|Update|System.Void()"
+
+    /**
+     * `DontDestroyOnLoad` 오브젝트 하나를 든 가장 작은 문서.
+     *
+     * `Demo.MapMover` 는 `MapScene` 에만 놓였고, `Demo.HudController` 는 어느 scene 에도 놓이지
+     * 않은 채 `MapMover.stage` 를 읽는다.
+     */
+    private fun persistentEvidenceDocument(): String = """
+        {
+          "schema": 7,
+          "capture": "editor-play",
+          "capabilities": ["build-info-v1", "selector-v1", "persistent-objects-v1"],
+          "build": {"unity": "2022.3.62f3", "platform": "OSXEditor", "backend": "mono",
+                    "development": true, "sdk": "0.1.0", "evidence": "5a1c0de5a1c0de5a"},
+          "scenes": ["TitleScene", "MapScene"],
+          "types": {
+            "Demo.MapMover": [
+              {
+                "owner": "Demo.MapMover",
+                "entry": "System.Void Demo.MapMover::Update()",
+                "entryId": "$moverEntry",
+                "source": "System.Void Demo.MapMover::Update()",
+                "methodId": "$moverEntry",
+                "recordKind": "candidate", "triggerKind": "lifecycle", "confidence": "verified",
+                "calledBy": [], "callPath": ["System.Void Demo.MapMover::Update()"],
+                "condition": {"kind": "gesture", "input": "key:RightArrow (down)", "offset": 3},
+                "inputs": [
+                  {"kind": "key", "control": "RightArrow", "phase": "down", "absent": false, "offset": 3}
+                ],
+                "effects": [
+                  {"kind": "write", "category": "state", "target": "MapMover.stage", "detail": "1",
+                   "source": "System.Void Demo.MapMover::Update()", "offset": 5}
+                ],
+                "calls": [], "handles": [], "alsoReachedBy": [], "gaps": []
+              }
+            ],
+            "Demo.HudController": [
+              {
+                "owner": "Demo.HudController",
+                "entry": "System.Void Demo.HudController::Start()",
+                "entryId": "$hudEntry",
+                "source": "System.Void Demo.HudController::Start()",
+                "methodId": "$hudEntry",
+                "recordKind": "candidate", "triggerKind": "lifecycle", "confidence": "verified",
+                "calledBy": [], "callPath": ["System.Void Demo.HudController::Start()"],
+                "condition": {
+                  "kind": "test", "left": "MapMover.stage", "operator": "<=", "right": "0",
+                  "context": "static", "offset": 9
+                },
+                "inputs": [],
+                "effects": [
+                  {"kind": "active-state", "category": "availability", "target": "Hud/Window",
+                   "detail": "true", "source": "System.Void Demo.HudController::Start()", "offset": 11}
+                ],
+                "calls": [], "handles": [], "alsoReachedBy": [], "gaps": []
+              }
+            ]
+          },
+          "unplaced": {},
+          "objects": [
+            {
+              "path": "Mover", "selector": "Mover[1]", "scene": "MapScene", "active": true,
+              "visuals": [], "components": [{"type": "Demo.MapMover", "calls": [], "refs": []}]
+            }
+          ],
+          "persistentObjects": [
+            {
+              "path": "Hud", "selector": "Hud[1]", "scene": "DontDestroyOnLoad", "active": true,
+              "visuals": [], "components": [{"type": "Demo.HudController", "calls": [], "refs": []}]
+            }
+          ],
+          "gaps": []
+        }
+    """
+
     // ---------- 픽스처 ----------
 
     /** 게임 빌드는 프로젝트에 FK 로 매달려 있어 프로젝트부터 만든다. */
