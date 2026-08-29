@@ -111,17 +111,18 @@ class AuthoringStateAfterGoldenTest {
     /**
      * **저작이 받는 목록에 "무엇이 바뀌나"가 실린다.**
      *
-     * 이 자리가 비어 있어서 모델이 브리지를 지어냈다. 실측 42건 중 **23건**이 뒤에 무언가를
+     * 이 자리가 비어 있어서 모델이 브리지를 지어냈다. 실측 36건 중 **19건**이 뒤에 무언가를
      * 남긴다. 나머지는 표시만 바뀌거나 보기만 하는 것이라 남는 상태가 없다.
      *
-     * 앞서 49건 중 19건이던 것이 42건 중 23건이 됐다. 케이스를 진입점으로 묶고 화면 전환을 따로
-     * 내면서(ARTEL-624) 전환마다 도착 화면이 또렷이 실린 결과다 — 저작이 이을 자리가 늘었다.
+     * 49건 중 19건 → 42건 중 23건 → 36건 중 19건으로 왔다. 마지막 걸음은 같은 코드가 두 경로로
+     * 닿아 두 벌이던 케이스를 접은 것이다(ARTEL-645). 접힌 넷은 전부 짝이 남아 있으므로 이을
+     * 자리가 준 것이 아니라 **같은 자리를 두 번 세던 것을 한 번 센다.**
      *
      * 값은 셋이고(`position` · `stagePosition` · `flag`) 거기에 도착 화면(`scene`)이 더해진다.
      */
     @Test
     fun `케이스가 무엇을 바꾸는지 말한다`() {
-        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(23)
+        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(19)
         assertThat(cases.flatMap { it.stateAfter.keys }.distinct())
             .containsExactlyInAnyOrder("position", "stagePosition", "flag", "scene")
     }

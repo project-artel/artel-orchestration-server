@@ -97,7 +97,11 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     /**
-     * 문서 한 장이 케이스 **42개**로 앉는다.
+     * 문서 한 장이 케이스 **36개**로 앉는다.
+     *
+     * 42 → 36 은 [MapTestCaseGenerator.withoutSpecialCases] 다(ARTEL-645). 같은 코드가 두 경로로
+     * 닿아 케이스가 두 벌 나던 자리를 접는다 — `TutorialController : StoryController` 라 상속으로
+     * 같은 메서드이고, 기대결과 문장까지 글자가 같았다.
      *
      * 그 수가 어디서 오는가:
      *
@@ -124,7 +128,7 @@ class MapTestCaseGeneratorGoldenTest {
      */
     @Test
     fun `문서 한 장이 케이스 42개가 된다`() {
-        assertThat(cases).hasSize(42)
+        assertThat(cases).hasSize(36)
     }
 
     /**
@@ -143,7 +147,7 @@ class MapTestCaseGeneratorGoldenTest {
     fun `씬 전환을 스스로 말하는 케이스가 열 건이다`() {
         val moves = cases.filter { it.expected.contains("화면으로 전환된다") }
 
-        assertThat(moves).hasSize(14)
+        assertThat(moves).hasSize(10)
         // 오늘 저작이 막히던 자리 — StoryScene · EndingScene 이 어디로 가는지 말한다.
         assertThat(moves.map { it.scene }.distinct()).contains("StoryScene", "EndingScene")
     }
@@ -189,7 +193,10 @@ class MapTestCaseGeneratorGoldenTest {
      * 몰랐다.
      *
      * ```
-     * Map_scene 16 · EndingScene 7 · StoryScene 7 · GameClearScene 5
+     * Map_scene 16 · EndingScene 4 · StoryScene 4 · GameClearScene 5
+     *
+     * StoryScene · EndingScene 이 7에서 4로 준 것은 튜토리얼 경로가 낸 두 벌을 접었기 때문이다
+     * (ARTEL-645). 씬이 사라진 것이 아니라 같은 줄이 하나가 됐다.
      * TurnBattleScene 4 · TitleScene 2 · GameOverScene 1
      * ```
      */
@@ -198,8 +205,8 @@ class MapTestCaseGeneratorGoldenTest {
         val byScene = cases.groupingBy { it.scene }.eachCount()
 
         assertThat(byScene).hasSize(7)
-        assertThat(byScene["StoryScene"]).isEqualTo(7)
-        assertThat(byScene["EndingScene"]).isEqualTo(7)
+        assertThat(byScene["StoryScene"]).isEqualTo(4)
+        assertThat(byScene["EndingScene"]).isEqualTo(4)
         assertThat(byScene["Map_scene"]).isEqualTo(16)
     }
 
@@ -295,7 +302,7 @@ class MapTestCaseGeneratorGoldenTest {
         // 씬 둘 × 그 씬에서 아무 키를 받는 기능 둘 × 도착 화면 둘. 실측 StoryScene 에서
         // `TutorialController`(튜토리얼 대화)와 `StoryController`(본편 대사)가 **각각** 아무 키를
         // 받는다 — 게임에 진짜로 둘 있는 것이라 합치지 않는다.
-        assertThat(repeated).hasSize(8)
+        assertThat(repeated).hasSize(4)
         assertThat(repeated).allSatisfy { assertThat(it.expected).contains("화면으로 전환된다") }
         assertThat(repeated.map { it.scene }.distinct()).containsExactlyInAnyOrder("StoryScene", "EndingScene")
         // 활용을 건드리지 않는다. "누른되" 가 나오면 어미를 뗀 것이다.

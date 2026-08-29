@@ -126,6 +126,75 @@ class MapTestCaseGenerator(
                 )
             }
             .let(::withInterchangeableInputs)
+            .let(::withoutSpecialCases)
+
+    /**
+     * **같은 시험을 두 번 시키지 않는다**(ARTEL-645).
+     *
+     * 위의 [merged] 는 **진입점 안에서만** 묶는다. 그래서 같은 코드가 두 경로로 닿으면 케이스가
+     * 둘이 된다 — 근거 문서에서 `methodId` 138개 중 **32개가 진입점을 둘 이상** 가진다.
+     *
+     * 실측(지도 26)에서 그 대표가 이것이다:
+     *
+     * ```
+     * Story.StoryController.IsAdvanceKeyDown
+     *   ← Story.StoryController|Start          조건: 아무 키
+     *   ← Tutorial.TutorialController|Update   조건: 아무 키 + 튜토리얼 플래그 둘
+     * ```
+     *
+     * 두 상황이 아니다. 게임 코드에서 `TutorialController : StoryController` — **상속이라 같은
+     * 메서드**이고, 튜토리얼 경로가 그 위에 자기 가드를 얹었을 뿐이다. 그래서 나온 두 케이스는
+     * 하는 일도, 볼 것도, **기대결과 문장도 글자까지 같다.** 다른 것은 화면에 보이지도 않는
+     * 내부 플래그뿐이라 실행하는 사람은 두 줄을 구분할 수 없다.
+     *
+     * ## 포함될 때만 접는다
+     *
+     * 조건이 **더 붙은 쪽**은 덜 붙은 쪽의 특수 사례다 — 약한 쪽을 실행하면 그 안에 든다.
+     * 어느 쪽도 상대를 포함하지 않으면 **서로 다른 갈래이므로 둘 다 남긴다**:
+     *
+     * ```
+     * stagePosition == 1  ↮  stagePosition == 2     둘 다 남는다
+     * ```
+     *
+     * 그래서 [branches] 의 "결과가 다르면 다른 케이스"와 싸우지 않는다. 저기는 **결과**로 가르고
+     * 여기는 **결과가 같을 때** 조건의 포함관계로만 접는다.
+     *
+     * **지도에서 잃는 것은 없다.** 접히는 것은 케이스 줄이고, 어느 기능들이 그 줄을 덮는지는
+     * 기능 쪽에 그대로 남는다.
+     */
+    private fun withoutSpecialCases(cases: List<MapTestCase>): List<MapTestCase> {
+        // **자리로 센다.** [MapTestCase] 는 data class 라 값이 같으면 같은 것으로 취급된다 —
+        // 집합에 담아 지우면 다른 자리의 같은 값까지 함께 날아간다.
+        val conjuncts = cases.map { asserted(it.condition) }
+        val dropped = cases.indices
+            .groupBy { Triple(cases[it].scene, cases[it].step, cases[it].expected) }
+            .values
+            .filter { it.size > 1 }
+            .flatMapTo(mutableSetOf()) { sameTrial ->
+                sameTrial.filter { mine ->
+                    sameTrial.any { other ->
+                        other != mine &&
+                            conjuncts[other].size < conjuncts[mine].size &&
+                            conjuncts[mine].containsAll(conjuncts[other])
+                    }
+                }
+            }
+        return cases.filterIndexed { index, _ -> index !in dropped }
+    }
+
+    /**
+     * 이 조건이 **함께 참이라고 말하는 것들**.
+     *
+     * 최상위 `그리고` 만 편다. `또는` 은 어느 쪽인지 모르는 것이라 통째로 한 조각으로 둔다 —
+     * 펴 버리면 갈래 하나가 다른 갈래를 포함하는 것처럼 보인다.
+     */
+    private fun asserted(node: ConditionNode?): Set<String> = when (node) {
+        null, ConditionNode.Always -> emptySet()
+        is ConditionNode.Group ->
+            if (node.kind == GroupKind.EVERY) node.parts.flatMapTo(mutableSetOf(), ::asserted)
+            else setOf(ConditionPrune.signature(node))
+        else -> setOf(ConditionPrune.signature(node))
+    }
 
     /**
      * 한 기능의 줄들을 **함께 볼 수 있는 무리**로 가른다(ARTEL-624).
