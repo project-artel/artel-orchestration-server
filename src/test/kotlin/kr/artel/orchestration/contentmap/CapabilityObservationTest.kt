@@ -80,10 +80,10 @@ class CapabilityObservationTest {
      *
      * 실측에서 `pulse` 14,489 개 전부가 `changed` 를 비우지 않은 채 왔고, 적 애니메이터 selector
      * 다섯 개가 그 변화의 2 만 건을 차지한다. "뭔가 달라졌다"를 `fired` 로 읽으면 눌러 본 모든
-     * 기능이 발화한 것이 되고, ARTEL-451 이 그것으로 전부를 `confirmed` 로 올린다.
+     * 기능이 동작한 것이 되고, ARTEL-451 이 그것으로 전부를 `confirmed` 로 올린다.
      */
     @Test
-    fun `액션 전후로 계속 흔들리던 것은 발화로 세지 않는다`(): Unit = runBlocking {
+    fun `액션 전후로 계속 흔들리던 것은 fired 로 세지 않는다`(): Unit = runBlocking {
         val world = newWorld()
         val battle = newScene(world, BATTLE)
         newClickCapability(world, battle, TURN_END)
@@ -101,7 +101,7 @@ class CapabilityObservationTest {
 
     /** 액션 뒤에만 나타난 변화는 남는다. 그것이 `observed_effects` 이고 ARTEL-451 의 재료다. */
     @Test
-    fun `액션 뒤에만 나타난 변화가 발화로 남는다`(): Unit = runBlocking {
+    fun `액션 뒤에만 나타난 변화가 fired 로 남는다`(): Unit = runBlocking {
         val world = newWorld()
         val battle = newScene(world, BATTLE)
         newClickCapability(world, battle, TURN_END)
@@ -255,7 +255,7 @@ class CapabilityObservationTest {
      * 액션 B 가 A 의 창 안에서 나가면 그 구간의 변화는 원인이 둘이라 가릴 수 없다. **A 는 관측을
      * 못 남긴다.**
      *
-     * 남기면 B 가 일으킨 변화가 A 의 발화로 적히고, 그것이 그대로 A 의 승격 근거가 된다.
+     * 남기면 B 가 일으킨 변화가 A 의 fired 로 적히고, 그것이 그대로 A 의 승격 근거가 된다.
      */
     @Test
     fun `창이 닫히기 전에 다음 액션이 나가면 앞선 액션은 관측을 못 남긴다`(): Unit = runBlocking {
