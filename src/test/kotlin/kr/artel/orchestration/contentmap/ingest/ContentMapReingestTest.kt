@@ -316,28 +316,51 @@ class ContentMapReingestTest {
      * `DontDestroyOnLoad` 오브젝트가 실제 실행 scene 에 앉고, 무엇을 읽고 그렇게 정했는지가
      * `capability_proof` 에 남는다(ARTEL-460).
      *
-     * `Demo.HudController` 는 `DontDestroyOnLoad` 에만 있어 어느 scene 에도 놓이지 않았다. 그 조건이
-     * `MapMover.stage` 를 읽고 `Demo.MapMover` 는 `MapScene` 에만 놓였으므로 `MapScene` 에 앉는다.
+     * `Demo.HudController` 는 `DontDestroyOnLoad` 에만 있어 어느 scene 에도 놓이지 않았다. `scene` 을
+     * 넘어 살아남으므로 `TitleScene` 과 `MapScene` 에 **둘 다** 앉는다. 그 조건이 `MapMover.stage` 를
+     * 읽고 `Demo.MapMover` 는 `MapScene` 에만 놓였으므로, 근거가 지목한 것은 `MapScene` 하나다.
      * scene 이름이 아닌 `DontDestroyOnLoad` 는 `scene` 표에 앉지 않는다.
      */
     @Test
-    fun `DontDestroyOnLoad 오브젝트가 실제 scene 에 앉고 근거가 남는다`(): Unit = runBlocking {
+    fun `DontDestroyOnLoad 오브젝트가 모든 scene 에 앉고 지목한 scene 에 근거가 남는다`(): Unit = runBlocking {
         val map = newContentMap()
 
         val result = ingestNew(map.id!!, persistentEvidenceDocument())
 
         assertThat(scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList().map { it.name })
             .containsExactly("MapScene", "TitleScene")
-        assertThat(result.attributedPersistentCapabilities).isEqualTo(1)
-        assertThat(result.unresolvedPersistentRoots).isEmpty()
+        // `Demo.HudController` 는 `scene` 둘에 다 앉는다. 지목받은 것은 `MapScene` 하나다.
+        assertThat(result.persistentCapabilities).isEqualTo(2)
+        assertThat(result.evidencedPersistentCapabilities).isEqualTo(1)
 
-        val hudId = capabilityIdOf(map.id!!, hudEntry)!!
-        val hudSceneName = db.sql("SELECT s.name FROM capability c JOIN scene s ON s.id = c.scene_id WHERE c.id = :id")
-            .bind("id", hudId)
-            .map { row, _ -> row.get("name", String::class.java) }
+        val hudRows = db.sql(
+            """
+            SELECT s.name, c.scene_presence FROM capability c
+            JOIN scene s ON s.id = c.scene_id
+            JOIN capability_evidence ce ON ce.capability_id = c.id
+            WHERE ce.entry_id = :entryId ORDER BY s.name
+            """
+        ).bind("entryId", hudEntry).map { row, _ ->
+            row.get("name", String::class.java) to row.get("scene_presence", String::class.java)
+        }.all().collectList().awaitSingle()
+
+        assertThat(hudRows).containsExactly(
+            "MapScene" to "persistent-evidenced",
+            "TitleScene" to "persistent-unconfirmed",
+        )
+
+        // 사슬은 지목받은 행의 것이다. 같은 근거의 `TitleScene` 행에는 사슬이 없다.
+        val hudId = db.sql(
+            """
+            SELECT c.id FROM capability c
+            JOIN scene s ON s.id = c.scene_id
+            JOIN capability_evidence ce ON ce.capability_id = c.id
+            WHERE ce.entry_id = :entryId AND s.name = 'MapScene'
+            """
+        ).bind("entryId", hudEntry)
+            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
             .one()
             .awaitSingle()
-        assertThat(hudSceneName).isEqualTo("MapScene")
 
         val chain = db.sql(
             """

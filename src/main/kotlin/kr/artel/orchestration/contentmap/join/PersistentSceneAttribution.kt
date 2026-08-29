@@ -1,6 +1,7 @@
 package kr.artel.orchestration.contentmap.join
 
 import kr.artel.orchestration.contentmap.entity.AnalysisConfidence
+import kr.artel.orchestration.contentmap.entity.ScenePresence
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.contentmap.evidence.EvidenceDocumentModel
 import kr.artel.orchestration.contentmap.evidence.EvidenceRecord
@@ -8,12 +9,30 @@ import kr.artel.orchestration.contentmap.evidence.GroupKind
 import kr.artel.orchestration.contentmap.evidence.SceneObject
 
 /**
- * `DontDestroyOnLoad` 에 있는 오브젝트가 실제로 동작하는 `scene` 을 정한다.
+ * `DontDestroyOnLoad` 에 있는 오브젝트를 **모든 real `scene`** 에 두고, 근거가 지목한 `scene` 만 따로
+ * 표시한다(ARTEL-460).
  *
  * 근거는 그런 오브젝트를 `persistentObjects` 에 따로 담고 그 `scene` 칸에 `DontDestroyOnLoad` 라고
  * 적는다. 배치 색인이 그 값을 그대로 받으면 지도에 `DontDestroyOnLoad` 라는 항목이 생긴다. 실측
  * 문서에서 capability 469 개 중 64 개가 그 항목에 앉았다. 거기서 만든 테스트케이스는 사전조건이
  * "`DontDestroyOnLoad` `scene` 이 실행 중이다" 가 되어 실행할 수 없다.
+ *
+ * ## 어디에 있나는 질문이 아니다
+ *
+ * `DontDestroyOnLoad` 는 `scene` load 를 넘어 살아남으라는 뜻이다. 만들어진 뒤로 그 오브젝트는 **모든
+ * `scene` 에 실제로 존재한다.** 자리는 추론할 것이 아니라 이미 나와 있다. 그래서 이 클래스는 자리를
+ * 고르지 않고 real `scene` 전부에 자리를 낸다.
+ *
+ * 가르는 것은 둘이다.
+ *
+ * | | 무엇인가 | 값 |
+ * |---|---|---|
+ * | 존재 | 모든 `scene`. 확실하고 추론이 아니다 | 자리를 낸다 |
+ * | 여기서 의미가 있나 | 모른다. 확인해야 한다 | [ScenePresence] |
+ *
+ * 한쪽을 고르는 설계였다면 틀리는 방향이 조용하다 — 잘못 앉힌 `scene` 은 아무도 못 보고, 안 앉힌
+ * `scene` 은 그 기능이 원래 없는 것처럼 보인다. 모든 `scene` 에 두면 틀리는 방향이 시끄러워지고,
+ * QA agent 가 해 보고 안 되면 그 행만 내린다(ARTEL-644).
  *
  * **타입 이름으로 판정하지 않는다.** `TutorialController` · `SaveLoadController` 는 이 게임 한 벌의
  * 클래스 이름이고, SDK 는 임의의 Unity 게임에 붙는다. 판단 재료는 근거의 **구조와 조건**뿐이다.
@@ -28,34 +47,36 @@ import kr.artel.orchestration.contentmap.evidence.SceneObject
  * ## 판단 단위는 record 가 아니라 **오브젝트 root**
  *
  * `DontDestroyOnLoad` 는 루트 오브젝트를 자식째 옮긴다. record 마다 따로 판정하면 같은 오브젝트의
- * `Start` 와 `Update` 가 서로 다른 `scene` 에 실린다 — 한 오브젝트가 두 화면에 나뉘어 앉는 것은 그
- * 오브젝트가 하나라는 사실과 어긋난다. 그래서 root 경로(`TutorialController/ChatWindow` 의 root 는
+ * `Start` 와 `Update` 가 서로 다른 `scene` 에서 표시를 받는다 — 한 오브젝트가 두 화면으로 갈리는 것은
+ * 그 오브젝트가 하나라는 사실과 어긋난다. 그래서 root 경로(`TutorialController/ChatWindow` 의 root 는
  * `TutorialController`)로 모아 한 번 판정하고, 그 답을 그 root 아래 전부에 적용한다.
  *
- * ## anchor 세 단계, 위가 이긴다
+ * ## 여기서는 확실히 의미가 있다 — anchor 두 규칙
  *
- * | 단계 | 무엇을 읽나 | resolution |
+ * | 규칙 | 무엇을 읽나 | resolution |
  * |---|---|---|
- * | [PersistentSceneRule.ALSO_PLACED] | 같은 컴포넌트 타입이 진짜 `scene` 오브젝트에도 놓여 있다 | `exact` |
  * | [PersistentSceneRule.ACTIVE_SCENE_TEST] | 조건이 활성 `scene` 이름을 `==` 로 맞댄다 | `exact` |
  * | [PersistentSceneRule.CONDITION_SUBJECT_PLACED] | 조건이 읽는 타입이 딱 한 `scene` 에 있다 | `derived` |
  *
- * 위 단계가 하나라도 `scene` 을 내면 아래는 보지 않는다. 아래 단계가 더 넓은 답을 내기 때문이고,
- * 넓은 답을 좁은 답에 섞으면 확실한 자리에 불확실한 자리가 딸려 온다.
+ * 둘 사이에 우선순위가 없다. 자리를 **고를 때**는 좁은 답이 넓은 답을 이겨야 했지만, 이제 아무 `scene`
+ * 도 배제되지 않으므로 넓은 답은 표시를 더 붙일 뿐이다. 한 `scene` 을 여러 anchor 가 받치면 그중 가장
+ * 확실한 것이 그 자리의 resolution 이다.
  *
- * 3단계는 `scene` 이 하나로 정해진 타입만 anchor 로 쓴다. 실측 `Tutorial.TutorialController` 는
- * 조건에서 `MapMove.StagePosition` 과 `StoryController.IsAdvanceKeyDown()` 을 둘 다 읽는데,
- * `Map.MapMove` 는 `Map_scene` 에만 놓였고 `Story.StoryController` 는 `StoryScene` 과 `EndingScene`
- * 두 곳에 놓였다. 자기 자리가 하나로 정해지지 않은 타입은 남의 자리도 정해 줄 수 없으므로
- * `MapMove` 만 anchor 가 되고 `TutorialController` 는 `Map_scene` 하나로 앉는다. 이 조건이 없으면
- * 같은 capability 가 `Map_scene` · `StoryScene` · `EndingScene` 세 곳에 복제된다.
+ * 2번 규칙이 `scene` 이 하나로 정해진 타입만 anchor 로 쓰는 것은 그대로다. 실측
+ * `Tutorial.TutorialController` 는 조건에서 `MapMove.StagePosition` 과
+ * `StoryController.IsAdvanceKeyDown()` 을 둘 다 읽는데, `Map.MapMove` 는 `Map_scene` 에만 놓였고
+ * `Story.StoryController` 는 `StoryScene` 과 `EndingScene` 두 곳에 놓였다. 자기 자리가 하나로 정해지지
+ * 않은 타입은 남의 자리도 지목해 줄 수 없다.
  *
- * ## 정하지 못하면 비운다
+ * ## 옛 규칙 하나를 버렸다
  *
- * anchor 가 하나도 없으면 `scene` 목록이 빈 채로 나가고, 그 root 의 capability 는 행이 되지 않는다.
- * 아무 `scene` 에나 붙이는 것이 여기서 할 수 있는 가장 나쁜 선택이라는 판단은 [EvidenceJoin] 이
- * `scene` 없는 record 에 대해 이미 내려 둔 것과 같다. 몇 건이 그렇게 빠졌는지는
- * [EvidenceJoin.unattributedPersistentRecords] 가 센다.
+ * "같은 컴포넌트 타입이 진짜 `scene` 오브젝트에도 놓여 있다"(`persistent-also-placed`)가 그것이다.
+ * 그 규칙은 persistent 사본을 그 `scene` 하나로 앉혔고, 같은 키를 내는 real 배치와 접혀 **행이 통째로
+ * 사라졌다** — 실측에서 `Core.SaveLoadController` 3 건과 `Combat.Stage.StageDataSingleton` 4 건이
+ * 그렇게 없어졌고, 저장이 어느 `scene` 에서나 된다는 사실이 지도에서 빠졌다.
+ *
+ * 규칙을 지워도 잃는 것이 없다. 그 `scene` 에 실제로 놓인 오브젝트가 이미 [ScenePresence.PLACED] 행을
+ * 내고, 접힐 때 강한 값이 이기므로 그 자리는 그대로 `placed` 로 남는다.
  *
  * DB 도 Spring 도 없는 순수 계산이다. 입력은 파싱된 [EvidenceDocumentModel] 하나뿐이다.
  */
@@ -71,30 +92,36 @@ class PersistentSceneAttribution(private val document: EvidenceDocumentModel) {
     private val placedTypesBySimpleName: Map<String, List<String>> =
         realScenesByType.keys.groupBy { it.substringAfterLast('.') }
 
-    private val attributionsByRoot: Map<String, PersistentAttribution> = attributeRoots()
+    /** persistent root 경로 → 근거가 지목한 자리들. 지목이 하나도 없는 root 도 키로 남는다. */
+    private val anchorsByRoot: Map<String, List<SceneAnchor>> = anchorRoots()
 
     /**
-     * 이 오브젝트가 실제로 동작하는 자리들. 진짜 `scene` 에 놓인 오브젝트는 자기 자신 하나를 그대로 낸다.
+     * 이 오브젝트가 실제로 서 있는 자리들.
      *
-     * 귀속하지 못한 persistent 오브젝트는 **빈 목록**이다 — 부르는 쪽이 그 오브젝트를 통째로 빼야
-     * 한다는 뜻이고, 가짜 `scene` 이름이 색인에 들어가는 유일한 길이 여기서 막힌다.
+     * 진짜 `scene` 에 놓인 오브젝트는 자기 자신 하나를 [ScenePresence.PLACED] 로 낸다. `scene` 을 넘어
+     * 살아남는 오브젝트는 **real `scene` 하나마다 한 자리씩** 내고, 근거가 그 `scene` 을 지목했으면
+     * [ScenePresence.PERSISTENT_EVIDENCED], 아니면 [ScenePresence.PERSISTENT_UNCONFIRMED] 다.
+     *
+     * 순서는 문서의 `scenes` 순서다 — 같은 문서를 두 번 읽으면 같은 순서가 나와야 재적재가 결정론적이다.
      */
     fun placementsOf(obj: SceneObject): List<ScenePlacement> {
-        if (isRealScene(obj.scene)) return listOf(obj.toPlacement(anchors = emptyList()))
-        val attribution = attributionsByRoot[rootOf(obj.path)] ?: return emptyList()
-        return attribution.scenes.map { scene ->
-            obj.toPlacement(anchors = attribution.anchorsAt(scene)).copy(scene = scene)
+        if (isRealScene(obj.scene)) return listOf(obj.toPlacement(ScenePresence.PLACED, anchors = emptyList()))
+        val anchors = anchorsByRoot[rootOf(obj.path)].orEmpty()
+        return document.scenes.map { scene ->
+            val here = anchors.filter { it.scene == scene }
+            val presence = if (here.isEmpty()) {
+                ScenePresence.PERSISTENT_UNCONFIRMED
+            } else {
+                ScenePresence.PERSISTENT_EVIDENCED
+            }
+            obj.toPlacement(presence, anchors = here).copy(scene = scene)
         }
     }
 
-    /** 귀속하지 못한 root 경로들. 문서 순서. 비어 있는 것이 정상이고, 차 있으면 그만큼이 gap 이다. */
-    fun unresolvedRoots(): List<String> =
-        attributionsByRoot.values.filter { it.scenes.isEmpty() }.map { it.rootPath }
-
-    /** 이 타입이 귀속 대상 persistent 오브젝트 위에만 사는가. 진짜 `scene` 에도 놓였으면 false. */
-    fun isPersistentOnly(type: String): Boolean =
-        type !in realScenesByType && document.persistentObjects.any { obj -> obj.carries(type) }
-
+    /**
+     * `scenes` 가 빈 문서에서는 판정하지 않는다. `scene` 목록이 "무엇이 `scene` 인가"의 유일한 근거라,
+     * 그것이 비었는데 규칙을 돌리면 모든 오브젝트가 가짜 `scene` 에 있다고 읽혀 지도가 통째로 빈다.
+     */
     private fun isRealScene(name: String): Boolean =
         realSceneNames.isEmpty() || name in realSceneNames
 
@@ -114,66 +141,32 @@ class PersistentSceneAttribution(private val document: EvidenceDocumentModel) {
      * root 마다 한 번 판정한다. 키 순서는 문서 순서다 — 같은 문서를 두 번 읽으면 같은 순서가 나와야
      * 재적재가 결정론적이다.
      */
-    private fun attributeRoots(): Map<String, PersistentAttribution> {
+    private fun anchorRoots(): Map<String, List<SceneAnchor>> {
         val objectsByRoot = LinkedHashMap<String, MutableList<SceneObject>>()
         for (obj in document.allObjects) {
             if (isRealScene(obj.scene)) continue
             objectsByRoot.getOrPut(rootOf(obj.path)) { mutableListOf() }.add(obj)
         }
-        return objectsByRoot.mapValues { (rootPath, objects) -> attribute(rootPath, objects) }
+        return objectsByRoot.mapValues { (rootPath, objects) -> anchorsOf(rootPath, objects) }
     }
 
-    private fun attribute(rootPath: String, objects: List<SceneObject>): PersistentAttribution {
+    private fun anchorsOf(rootPath: String, objects: List<SceneObject>): List<SceneAnchor> {
         val types = objects.flatMap { obj -> obj.components.map { it.type } }.distinct()
         val objectAddress = objects.first().let { "${it.scene}/$rootPath" }
         // 같은 anchor 가 record 마다 다시 나온다 — 실측 `Tutorial.TutorialController` 는 `Start` 에서
         // 갈라진 record 열 개가 전부 같은 `MapMove.StagePosition` 조건을 이고 있다. 접지 않으면 그
         // 사슬이 `capability_proof` 에 열 벌로 앉아, 읽는 사람이 근거가 열 개라고 오해한다.
-        val anchors = PersistentSceneRule.entries
-            .firstNotNullOfOrNull { rule ->
-                anchorsBy(rule, objectAddress, types).distinct().takeIf { it.isNotEmpty() }
-            }
-            .orEmpty()
-        return PersistentAttribution(rootPath, anchors)
+        return (activeSceneAnchors(objectAddress, types) + conditionSubjectAnchors(objectAddress, types))
+            .distinct()
     }
 
-    private fun anchorsBy(
-        rule: PersistentSceneRule,
-        objectAddress: String,
-        types: List<String>,
-    ): List<SceneAnchor> =
-        when (rule) {
-            PersistentSceneRule.ALSO_PLACED -> alsoPlacedAnchors(objectAddress, types)
-            PersistentSceneRule.ACTIVE_SCENE_TEST -> activeSceneAnchors(objectAddress, types)
-            PersistentSceneRule.CONDITION_SUBJECT_PLACED -> conditionSubjectAnchors(objectAddress, types)
-        }
-
     /**
-     * 같은 컴포넌트 타입이 진짜 `scene` 오브젝트에도 놓여 있다.
+     * 조건이 활성 `scene` 이름을 `scene` 이름 리터럴과 맞댄다. **게임이 직접 말한 것이라 추론이 아니다.**
      *
-     * 실측 `Core.SaveLoadController` 와 `Combat.Stage.StageDataSingleton` 이 그렇다. 싱글턴이 `scene`마다
-     * 자기 사본을 두고 첫 하나만 살아남는 흔한 모양이고, 문서가 "이 타입은 이 `scene` 에 놓인다"고 직접
-     * 말한 것이라 유도가 필요 없다.
-     */
-    private fun alsoPlacedAnchors(objectAddress: String, types: List<String>): List<SceneAnchor> =
-        types.flatMap { type ->
-            realScenesByType[type].orEmpty().map { scene ->
-                SceneAnchor(
-                    scene = scene,
-                    rule = PersistentSceneRule.ALSO_PLACED,
-                    steps = listOf(
-                        AnchorStep(objectAddress, "component-type", type),
-                        AnchorStep(type, "placed-in", scene),
-                    ),
-                )
-            }
-        }
-
-    /**
-     * 조건이 활성 `scene` 이름을 `scene` 이름 리터럴과 맞댄다.
-     *
-     * `!=` 는 anchor 가 되지 않는다. "저 `scene` 이 아니다"는 남은 `scene` 이 여럿이라 자리를 하나로 좁히지
-     * 못하고, 좁히지 못한 것을 anchor 라 부르면 나머지 `scene` 전부에 기능이 복제된다.
+     * `!=` 는 anchor 가 되지 않는다. "저 `scene` 이 아니다"는 남은 `scene` 이 여럿이라 어느 하나를
+     * 지목하지 못하고, 지목하지 못한 것을 anchor 라 부르면 나머지 `scene` 전부가 근거 있는 자리로
+     * 보인다. 그 `scene` 에서 조건이 성립할 수 없다는 사실은 `ConditionBranches` 가 이미 쓴다 —
+     * 그쪽이 후보를 아예 만들지 않는다.
      */
     private fun activeSceneAnchors(objectAddress: String, types: List<String>): List<SceneAnchor> =
         recordsOf(types).flatMap { record ->
@@ -194,14 +187,14 @@ class PersistentSceneAttribution(private val document: EvidenceDocumentModel) {
         }
 
     /**
-     * 조건이 읽는 상태의 주인 타입이 딱 한 `scene` 에 놓여 있다.
+     * 조건이 읽는 상태의 주인 타입이 딱 한 `scene` 에 놓여 있다. **유도지만 사슬이 남는다.**
      *
      * `MapMove.StagePosition <= 0` 의 주어는 `MapMove` 이고, `Map.MapMove` 는 `Map_scene` 에만 놓였다.
-     * 그 조건이 성립할 수 있는 자리는 그 `scene` 뿐이므로 오브젝트도 거기서 동작한다.
+     * 그 조건이 성립할 수 있는 자리는 그 `scene` 뿐이므로 그 기능이 의미를 갖는 자리도 거기다.
      *
      * 조건의 **양쪽**을 다 본다 — `null == SaveLoadController._instance` 처럼 주어가 오른쪽에 오는
      * 비교가 실제로 있다. 짧은 이름이 두 타입에 걸리거나 그 타입이 여러 `scene` 에 놓였으면 버린다.
-     * 반쪽짜리 단서로 자리를 정하면 QA agent 가 없는 컨트롤을 찾으러 간다.
+     * 반쪽짜리 단서로 자리를 지목하면 그 표시가 근거 없는 확신이 된다.
      */
     private fun conditionSubjectAnchors(objectAddress: String, types: List<String>): List<SceneAnchor> =
         recordsOf(types).flatMap { record ->
@@ -229,8 +222,6 @@ class PersistentSceneAttribution(private val document: EvidenceDocumentModel) {
     private fun recordsOf(types: List<String>): List<EvidenceRecord> =
         types.flatMap { type -> document.types[type].orEmpty() + document.unplaced[type]?.evidence.orEmpty() }
 
-    private fun SceneObject.carries(type: String): Boolean = components.any { it.type == type }
-
     private companion object {
 
         /** `TutorialController/ChatWindow` 의 root 는 `TutorialController`. */
@@ -251,32 +242,9 @@ class PersistentSceneAttribution(private val document: EvidenceDocumentModel) {
 }
 
 /**
- * persistent 오브젝트 root 하나의 판정 결과.
+ * 근거가 이 `scene` 을 지목했다는 사실과 **무엇을 읽고 그렇게 판정했나.**
  *
- * [scenes] 가 비면 정하지 못한 것이다. 비지 않았는데 둘 이상이면 하나로 좁히지 못한 것이고, 그때
- * 부르는 쪽이 [kr.artel.orchestration.contentmap.entity.EvidenceGap.PERSISTENT_SCENE_AMBIGUOUS] 를 남긴다.
- */
-private data class PersistentAttribution(val rootPath: String, val anchors: List<SceneAnchor>) {
-
-    /** anchor 가 가리킨 `scene`들. 문서 순서로 한 번씩만. */
-    val scenes: List<String> = anchors.map { it.scene }.distinct()
-
-    /**
-     * 이 `scene` 에 붙일 anchor 들.
-     *
-     * [scenes] 가 하나면 그 `scene` 의 anchor 만 낸다. 둘 이상이면 **모든 `scene` 의 anchor 를 다 낸다** — `scene` 을
-     * 하나로 좁히지 못했다는 사실 자체가 그 기능에 대해 알아야 할 것이고, `Map_scene` 줄만 보는
-     * 사람이 `TitleScene` 후보가 있었다는 것을 모르면 그 줄을 확정으로 읽는다. 부르는 쪽은 이
-     * 목록의 `scene` 이 둘 이상인 것을 보고 `persistent-scene-ambiguous` 를 남긴다.
-     */
-    fun anchorsAt(scene: String): List<SceneAnchor> =
-        if (scenes.size > 1) anchors else anchors.filter { it.scene == scene }
-}
-
-/**
- * persistent 오브젝트를 어떤 `scene` 으로 옮겼고 **무엇을 읽고 그렇게 판정했나.**
- *
- * 조용한 재귀속은 안 하느니만 못하다 — 언젠가 누군가 그 판정이 옳았는지 확인해야 하고, 그때 근거가
+ * 조용한 표시는 안 하느니만 못하다 — 언젠가 누군가 그 판정이 옳았는지 확인해야 하고, 그때 근거가
  * 없으면 지도 전체를 의심하게 된다. [steps] 가 그 근거이고, 적재기가 그것을 `capability_proof` 행으로
  * 옮긴다(한 단계 = 한 행).
  */
@@ -291,16 +259,16 @@ data class SceneAnchor(
 data class AnchorStep(val source: String, val relation: String, val target: String)
 
 /**
- * persistent 오브젝트를 `scene` 에 앉힌 규칙. **선언 순서가 곧 우선순위**이고, [resolution] 이 그 단계의
- * 확실성이다.
+ * 근거가 persistent 오브젝트의 `scene` 을 지목한 방법. [resolution] 이 그 지목의 확실성이다.
+ *
+ * **선언 순서에 우선순위가 없다.** 두 규칙 모두 자기가 지목한 `scene` 을
+ * [kr.artel.orchestration.contentmap.entity.ScenePresence.PERSISTENT_EVIDENCED] 로 올리고, 한 `scene` 을
+ * 둘이 함께 받치면 더 확실한 쪽이 그 자리의 resolution 이 된다.
  *
  * 규칙 이름을 `capability_proof.rule` 에 그대로 싣는다. 같은 규칙이 계속 흐린 결론을 내면 그 이름이
  * 뭉쳐 나오고, 그것이 고칠 규칙이다.
  */
 enum class PersistentSceneRule(val wire: String, val resolution: AnalysisConfidence) {
-    /** 같은 컴포넌트 타입이 진짜 `scene` 오브젝트에도 놓여 있다. 문서가 직접 말한 자리다. */
-    ALSO_PLACED("persistent-also-placed", AnalysisConfidence.EXACT),
-
     /** 조건이 활성 `scene` 이름을 그 `scene` 과 맞댄다. 코드가 직접 말한 자리다. */
     ACTIVE_SCENE_TEST("persistent-active-scene-test", AnalysisConfidence.EXACT),
 

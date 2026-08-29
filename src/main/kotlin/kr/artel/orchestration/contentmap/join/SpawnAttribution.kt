@@ -1,5 +1,6 @@
 package kr.artel.orchestration.contentmap.join
 
+import kr.artel.orchestration.contentmap.entity.ScenePresence
 import kr.artel.orchestration.contentmap.evidence.CreatedBy
 import kr.artel.orchestration.contentmap.evidence.EvidenceDocumentModel
 import kr.artel.orchestration.contentmap.evidence.SceneObject
@@ -21,7 +22,7 @@ import kr.artel.orchestration.contentmap.evidence.SceneObject
 class SpawnAttribution(
     private val document: EvidenceDocumentModel,
     private val placementsOf: (String) -> List<ScenePlacement>,
-    /** `scene` 오브젝트 하나가 실제로 서 있는 자리들. `DontDestroyOnLoad` 오브젝트의 `scene` 을 여기서 정한다(ARTEL-460). */
+    /** 오브젝트 하나가 실제로 서 있는 자리들. `scene` 을 넘어 살아남는 오브젝트가 여기서 펼쳐진다(ARTEL-460). */
     private val placementsOfObject: (SceneObject) -> List<ScenePlacement>,
 ) {
 
@@ -70,12 +71,16 @@ class SpawnAttribution(
     private fun toOrigin(scene: String, sceneSites: List<SpawnSite>): SpawnOrigin {
         val candidates = sceneSites.map { it.createdBy }.distinct()
         val anchors = sceneSites.flatMap { it.anchors }.distinct()
+        // 만드는 자리가 여럿이면 **가장 강한 것**이 이 `scene` 에서의 성격이다. 하나라도 문서가 직접
+        // 놓은 자리이면 그 프리팹도 그 `scene` 에 확실히 있다.
+        val presence = sceneSites.minOf { it.presence }
         if (candidates.size > 1) {
             return SpawnOrigin(
                 scene = scene,
                 field = null,
                 scenePath = null,
                 ambiguousCandidates = candidates,
+                presence = presence,
                 anchors = anchors,
             )
         }
@@ -87,6 +92,7 @@ class SpawnAttribution(
             scene = scene,
             field = candidates.single(),
             scenePath = sceneSites.mapNotNull { it.scenePath }.distinct().singleOrNull(),
+            presence = presence,
             anchors = anchors,
         )
     }
@@ -102,8 +108,9 @@ class SpawnAttribution(
     private fun sitesOf(type: String, ref: CreatedByRef): List<SpawnSite> {
         val carried = carriedSitesOf(type, ref)
         if (carried.isNotEmpty()) return carried
-        return placementsOf(ref.ownerType)
-            .map { SpawnSite(it.scene, scenePath = null, createdBy = ref.raw, anchors = it.anchors) }
+        return placementsOf(ref.ownerType).map {
+            SpawnSite(it.scene, scenePath = null, createdBy = ref.raw, presence = it.presence, anchors = it.anchors)
+        }
     }
 
     /** 정밀한 길 — 소유 타입의 그 필드가 `carries` 로 이 타입을 실었다고 문서가 말한 자리. */
@@ -123,6 +130,7 @@ class SpawnAttribution(
                         scene = placement.scene,
                         scenePath = placement.path,
                         createdBy = ref.raw,
+                        presence = placement.presence,
                         anchors = placement.anchors,
                     )
                 }
@@ -138,7 +146,9 @@ class SpawnAttribution(
         val scene: String,
         val scenePath: String?,
         val createdBy: String,
-        /** 만드는 쪽이 `DontDestroyOnLoad` 에서 옮겨진 것이라면 그 근거. 대개 비어 있다. */
+        /** 만드는 쪽 자리의 성격. 대개 [ScenePresence.PLACED] 다. */
+        val presence: ScenePresence = ScenePresence.PLACED,
+        /** 근거가 만드는 쪽의 이 `scene` 을 지목한 사슬. 대개 비어 있다. */
         val anchors: List<SceneAnchor> = emptyList(),
     )
 

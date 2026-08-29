@@ -1,5 +1,6 @@
 package kr.artel.orchestration.contentmap.join
 
+import kr.artel.orchestration.contentmap.entity.ScenePresence
 import kr.artel.orchestration.contentmap.evidence.EvidenceDocumentModel
 import kr.artel.orchestration.contentmap.evidence.SceneObject
 
@@ -16,9 +17,9 @@ import kr.artel.orchestration.contentmap.evidence.SceneObject
  * 같은 답으로 나온다.
  *
  * **`scene` 이 아닌 이름은 색인에 들어오지 않는다.** `DontDestroyOnLoad` 에 있는 오브젝트는
- * [PersistentSceneAttribution] 이 실제 실행 `scene` 으로 옮긴 뒤에야 자리가 되고, 옮기지 못한 것은 자리를
- * 하나도 내지 않는다(ARTEL-460). 색인이 가짜 `scene` 이름을 담으면 그 이름이 그대로 지도의 항목이 되고,
- * 거기 앉은 기능은 아무도 갈 수 없는 사전조건을 갖는다.
+ * [PersistentSceneAttribution] 이 real `scene` 마다 자리 하나씩으로 펼친다(ARTEL-460). 색인이 가짜
+ * `scene` 이름을 담으면 그 이름이 그대로 지도의 항목이 되고, 거기 앉은 기능은 아무도 갈 수 없는
+ * 사전조건을 갖는다.
  */
 class PlacementIndex private constructor(
     private val placementsByType: Map<String, List<ScenePlacement>>,
@@ -66,8 +67,15 @@ class PlacementIndex private constructor(
  * 약속하지 않은 문서에서 한쪽만 조준 경로를 잃는 식으로 조용히 갈린다.
  *
  * `scene` 을 바꾸는 것은 [PersistentSceneAttribution.placementsOf] 뿐이다. 이 변환은 문서가 적어 준 값을
- * 그대로 옮기기만 한다 — 자리를 만드는 곳과 자리를 옮기는 곳이 갈려 있어야 옮긴 근거가 한 군데에
- * 모인다.
+ * 그대로 옮기고, [ScenePresence] 와 사슬은 부르는 쪽이 정해 준 것을 받기만 한다 — 자리를 만드는 곳과
+ * 자리를 정하는 곳이 갈려 있어야 판정이 한 군데에 모인다.
  */
-internal fun SceneObject.toPlacement(anchors: List<SceneAnchor>): ScenePlacement =
-    ScenePlacement(scene = scene, path = path, selector = selector, label = label, anchors = anchors)
+internal fun SceneObject.toPlacement(presence: ScenePresence, anchors: List<SceneAnchor>): ScenePlacement =
+    ScenePlacement(
+        scene = scene,
+        path = path,
+        selector = selector,
+        label = label,
+        presence = presence,
+        anchors = anchors,
+    )
