@@ -15,6 +15,7 @@ import kr.artel.orchestration.scenecontext.dto.SceneContextResponse
 import kr.artel.orchestration.scenecontext.service.SceneContextService
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -68,6 +69,22 @@ class SceneContextIntegrationTest {
         anchors.deleteAll()
         knowledge.deleteAll()
         fixture = SceneContextFixture(projects, gameBuilds, contentMaps, scenes, capabilities, knowledge, anchors)
+    }
+
+    /**
+     * `newQaTry` 가 SQL 로 세운 행을 치운다.
+     *
+     * 없으면 그 `qa_try` 가 스위트 끝까지 살아남아, **뒤에 도는 다른 클래스의**
+     * `DELETE FROM app_user` · `DELETE FROM project` 가 `qa_try_started_by_fkey` ·
+     * `qa_try_game_instance_id_fkey` 로 막힌다. 실패가 이 파일이 아니라 남의 파일에서 나므로
+     * 원인을 찾기 어렵고, 클래스 실행 순서가 바뀔 때마다 피해자가 달라진다.
+     */
+    @AfterEach
+    fun cleanQaRows(): Unit = runBlocking {
+        db.sql("DELETE FROM qa_try").then().block()
+        db.sql("DELETE FROM game_instance").then().block()
+        db.sql("DELETE FROM test_scenario").then().block()
+        db.sql("DELETE FROM app_user WHERE display_name = 'agent'").then().block()
     }
 
     // ------------------------------------------------------------------ 두 반쪽

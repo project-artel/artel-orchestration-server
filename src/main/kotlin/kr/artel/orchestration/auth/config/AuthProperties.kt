@@ -26,6 +26,12 @@ data class AuthProperties(
     val sdkTokenTtl: Duration = Duration.ofDays(30),
     // 브라우저가 받아 SDK에 넘기는 일회용 코드의 수명. 사람이 창을 옮기는 시간이면 충분하다.
     val sdkLoginCodeTtl: Duration = Duration.ofMinutes(5),
+    // GitHub App 설치 화면으로 보냈다가 돌아오는 `state` 의 audience. 세션 토큰과 갈라 두지 않으면
+    // 브라우저 쿠키를 그대로 state 로 내밀 수 있고, 그러면 남의 프로젝트에 설치를 붙이는 길이 열린다.
+    val trackerSetupAudience: String = "artel-tracker-setup",
+    // 사람이 GitHub 설치 화면에서 저장소를 고르는 시간이면 충분하다. 길게 두면 유출된 state 하나가
+    // 그만큼 오래 살아 있는다.
+    val trackerSetupStateTtl: Duration = Duration.ofMinutes(15),
     // CORS 허용 origin(패턴). OAuth 리다이렉트 대상인 frontendUrl(단일)과 달리, API를 호출할 수 있는
     // 브라우저 출처는 여러 개일 수 있다(stage/prod, Vercel 프리뷰 등). https://*.artel.kr 같은 와일드카드도
     // 허용되도록 CORS는 allowedOriginPatterns로 적용한다.
