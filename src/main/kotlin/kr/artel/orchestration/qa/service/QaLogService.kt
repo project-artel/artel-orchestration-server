@@ -49,7 +49,11 @@ internal val TYPES =
         // "왜 저 selector 를 안 물어봤나" 가 사람이 가장 먼저 묻는 질문이기 때문이다 —
         // 제안이 나갔는지, 답이 무엇이었는지, 무엇이 거절됐는지가 여기 말고는 없다.
         "SCREEN_SELECTOR_PROPOSAL", "SCREEN_SELECTOR_VERDICT",
-        "SCREEN_SELECTOR_RULE", "SCREEN_SELECTOR_RESULT"
+        "SCREEN_SELECTOR_RULE", "SCREEN_SELECTOR_RESULT",
+        // 관측이 확정한 화면(ARTEL-668). 위 넷과 달리 아무도 답하지 않는 통보라서, 타임라인이
+        // "그때 지도가 뭐라고 했나" 를 되짚을 수 있는 유일한 기록이다 — agent 가 목록을 왜
+        // 고쳤는지, 혹은 왜 안 고쳤는지가 이 행들과 나란히 놓고 봐야 읽힌다.
+        "SCREEN_SETTLED"
     )
 
 data class QaLogAppendResult(val log: QaLogResponse, val inserted: Boolean)

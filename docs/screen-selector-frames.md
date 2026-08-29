@@ -1,10 +1,11 @@
 # Screen Selector Frames
 
-The QA WebSocket contract for deciding **which selectors identify a screen**.
+The QA WebSocket contract for deciding **which selectors identify a screen**,
+and for telling the agent which screen it ended up on.
 Orchestration owns the list and the frames; agent-server answers.
 
-Implemented by ARTEL-655 (orchestration). Consumed by ARTEL-656 (the judging
-agent) and ARTEL-657 (the QA agent's two tools).
+Implemented by ARTEL-655 and ARTEL-668 (orchestration). Consumed by ARTEL-656
+(the judging agent) and ARTEL-657 (the QA agent's two tools).
 
 Kotlin definitions: `contentmap/observe/ScreenSelectorFrames.kt`. When this
 document and that file disagree, the file is right.
@@ -33,17 +34,22 @@ infer:
 | how many readings a selector appeared in | only knowable in hindsight, and the table grows with play length when names change every time |
 | "changed with no action, so it does not identify" | a loading screen becoming the game screen refutes it |
 
-## The four frames
+## The five frames
 
 ```
 ORCHE_TO_AGENT  SCREEN_SELECTOR_PROPOSAL   orchestration asks about candidates in one scene
 AGENT_TO_ORCHE  SCREEN_SELECTOR_VERDICT    the answer to one proposal
 AGENT_TO_ORCHE  SCREEN_SELECTOR_RULE       the QA agent's tools edit the list directly
 ORCHE_TO_AGENT  SCREEN_SELECTOR_RESULT     the answer to both writes
+ORCHE_TO_AGENT  SCREEN_SETTLED             the screen an observation just settled on
 ```
 
-All four ride the existing QA envelope (`messageId`, `type`, `qaTryId`,
-`correlationId`, `timestamp`, `payload`) and all four are recorded in `qa_log`.
+The first four are one conversation about the list. The fifth reports what that
+list produced and nobody answers it — see its own section for why the two cannot
+share a type.
+
+All five ride the existing QA envelope (`messageId`, `type`, `qaTryId`,
+`correlationId`, `timestamp`, `payload`) and all five are recorded in `qa_log`.
 
 ### Two rules the answer format enforces
 
@@ -228,6 +234,85 @@ Rejection reasons you can get back:
   everything there would leave no way to fix the list
 - `SCREEN_SELECTOR_RULE references an unknown scene: …`
 - `SCREEN_SELECTOR_VERDICT references an unknown proposal: …`
+
+## `SCREEN_SETTLED` (orchestration → agent)
+
+Sent when an observation settles a screen and that screen is not the one settled
+before. Nobody answers it, and it carries no `correlationId`.
+
+```json
+{
+  "scene": { "scene_id": "12", "name": "TurnBattleScene" },
+  "previous_screen": {
+    "screen_id": "227",
+    "name": null,
+    "discriminator": [
+      { "selector": "CombineSystem[7]/CombineButton[0]", "active": true },
+      { "selector": "CombineSystem[7]/CombineZone[1]/Button[2]", "active": false },
+      { "selector": "DebugCanvas[4]/TurnEndButton[0]", "active": true }
+    ],
+    "capture_url": null,
+    "capture_expires_at": null
+  },
+  "current_screen": {
+    "screen_id": "237",
+    "name": null,
+    "discriminator": [
+      { "selector": "CombineSystem[7]/CombineButton[0]", "active": true },
+      { "selector": "CombineSystem[7]/CombineZone[1]/Button[2]", "active": true },
+      { "selector": "DebugCanvas[4]/TurnEndButton[0]", "active": true }
+    ],
+    "capture_url": "https://…",
+    "capture_expires_at": "2026-08-28T09:00:00Z"
+  }
+}
+```
+
+`scene`, `previous_screen`, and `current_screen` are spelled exactly as they are
+in `SCREEN_SELECTOR_PROPOSAL`, and mean the same thing. That is deliberate:
+agent-server already reads those three out of the proposal to render its screen
+verdict, so consuming this frame is one enum member and one router entry rather
+than a second model of the same values.
+
+`current_screen` is never null here — nothing is sent until a screen settles.
+`previous_screen` is null on a run's first screen, and after a fold or a restart
+dropped the settled state.
+
+### Why this is not the proposal
+
+The proposal asks a question; this reports a fact, and the two fire on different
+conditions. A question goes out when there is something new to ask —
+**exactly once ever per `(scene, selector)`**, enforced durably by
+`uk_screen_selector_proposal`. A fact goes out whenever the fact changes.
+
+Carrying the screen verdict on the proposal meant the rarer condition won. On a
+build that has already been played every `(scene, selector)` is answered, no
+proposal fires, and the agent sees nothing about screens for the whole run — so
+the two tools above have no observation to act on. That is the bug this frame
+exists to close.
+
+### When it is sent
+
+When the settled screen row changes, not per pulse. The measured run holds 14,489
+pulses and produced 3 screen rows; a per-pulse frame would repeat the same
+sentence about ten thousand times into the agent's context. A screen only settles
+after `ScreenFold.SETTLE_READINGS` consecutive readings agree, and the frame rides
+the same place a `screen_transition` row is written.
+
+### An empty `discriminator` is the message
+
+When a scene's whitelist is empty or thin, every observation in that scene lands
+on one screen row and `discriminator` comes back `[]`. ARTEL-654 decided that is
+correct behaviour rather than an error, and it is precisely the state the two
+tools exist to fix — so it is reported plainly rather than suppressed. It is the
+only signal that the list needs entries.
+
+### If the agent never receives or never handles it
+
+Delivery failures are swallowed, exactly as the proposal's are. No active QA try
+or no attached agent session means the frame is not sent and not logged, and
+screen recording continues untouched. An agent that never handles the type loses
+the verdict and nothing else.
 
 ## What happens after an answer
 
