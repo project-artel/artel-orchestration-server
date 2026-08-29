@@ -71,6 +71,20 @@ data class CapabilityEntity(
     val verification: String = VerificationState.UNVERIFIED.wire,
 
     /**
+     * [ScenePresence] 중 하나 — 이 행이 **왜 이 `scene` 에 있나**(ARTEL-460).
+     *
+     * [verification] 과 다른 축이다. 저쪽은 "실행해 봤나"이고 이쪽은 "근거가 이 `scene` 을 말했나"다.
+     * `DontDestroyOnLoad` 오브젝트의 capability 는 real `scene` 전부에 행을 갖는데, 그 행이
+     * `placed` 행과 똑같이 보이면 `TurnBattleScene` 을 읽는 agent 가 tutorial capability 를 그
+     * `scene` 의 사실로 읽는다.
+     *
+     * observed · inferred · human 출신에서도 `placed` 다. 그 행들은 agent 나 사람이 그 `scene` 을
+     * 보고 적은 것이라, 그 `scene` 에 있다는 말이 곧 근거다.
+     */
+    @Column("scene_presence")
+    val scenePresence: String = ScenePresence.PLACED.wire,
+
+    /**
      * 식별자를 남긴 설명. 모든 [origin] 공통.
      *
      * 경로·타입·메서드·필드는 원문 그대로 쓰고 사이만 말로 잇는다. `MapMove.position` 을

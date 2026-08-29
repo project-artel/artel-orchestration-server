@@ -84,6 +84,51 @@ enum class CapabilityOrigin(val wire: String) {
 }
 
 /**
+ * 이 `capability` 행이 **왜 이 `scene` 에 있나** (ARTEL-460).
+ *
+ * [VerificationState] 와 다른 축이다. 저쪽은 "실행해 봤나"이고 이쪽은 "근거가 이 `scene` 을 말했나"다.
+ * 둘을 한 값에 담으면 아직 아무도 안 눌러 본 `evidence` 행과, 살아남아 여기 있을 뿐인 행이 같은
+ * `unverified` 한 칸에 들어가 갈라지지 않는다.
+ *
+ * `DontDestroyOnLoad` 오브젝트는 만들어진 뒤로 **모든 `scene` 에 실제로 존재한다.** 그것은 추론이
+ * 아니라 사실이고, 그래서 그 오브젝트의 capability 는 real `scene` 전부에 행을 갖는다. 모르는 것은
+ * 어디에 있나가 아니라 **여기서 그 기능이 의미가 있나**이고, 이 열거가 그 둘을 가른다.
+ *
+ * 선언 순서가 곧 강함의 순서다 — 앞이 확실하고 뒤가 흐리다. 같은 키의 후보가 여러 벌 접힐 때
+ * (`DontDestroyOnLoad` 사본과 그 `scene` 에 실제로 놓인 오브젝트가 같은 record 를 낼 때) **가장 강한
+ * 값**이 그 행의 값이 된다. 문서가 그 `scene` 에 직접 놓았다고 말한 것이 가장 강하다.
+ */
+enum class ScenePresence(val wire: String) {
+    /** 문서가 이 오브젝트를 이 `scene` 에 놓았다. `evidence` 출신 행의 절대다수이자 기본값이다. */
+    PLACED("placed"),
+
+    /**
+     * `scene` 을 넘어 살아남은 오브젝트이고, **근거가 이 `scene` 을 지목했다.**
+     *
+     * 조건이 활성 `scene` 이름을 `==` 로 맞대거나(게임이 직접 말한 것), 조건이 읽는 상태의 주인
+     * 타입이 딱 한 `scene` 에 놓였을 때(유도)다. 어느 쪽이었는지와 무엇을 읽고 그렇게 판정했는지는
+     * `capability_proof` 사슬이 답한다.
+     */
+    PERSISTENT_EVIDENCED("persistent-evidenced"),
+
+    /**
+     * `scene` 을 넘어 살아남은 오브젝트이고, **여기서 무언가 한다는 말은 근거에 없다.**
+     *
+     * 오브젝트가 여기 있다는 것은 확실하다. 그 기능이 여기서 실제로 되는지는 아무도 모르고, 그것을
+     * 아는 쪽은 플레이해 본 QA agent 다(ARTEL-644 가 그 쓰기를 받는다). 이 값이 눈에 보이지 않으면
+     * `TurnBattleScene` 을 읽는 agent 가 tutorial capability 를 그 `scene` 의 사실로 읽는다.
+     */
+    PERSISTENT_UNCONFIRMED("persistent-unconfirmed");
+
+    /** 이 행이 `DontDestroyOnLoad` 를 넘어온 오브젝트에서 왔나. */
+    val persistent: Boolean get() = this != PLACED
+
+    companion object {
+        fun from(wire: String?): ScenePresence? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
  * 실행으로 확인됐나.
  *
  * [CONTRADICTED] 를 지우지 않는 이유: 지우면 "우리가 틀렸다"와 "게임이 고장났다"를 구분할 기록이

@@ -160,6 +160,13 @@ data class SceneCapabilityRow(
     @Column("verification")
     val verification: String,
 
+    /**
+     * [kr.artel.orchestration.contentmap.entity.ScenePresence] 중 하나. 이 행이 왜 이 `scene` 에
+     * 있나(ARTEL-460).
+     */
+    @Column("scene_presence")
+    val scenePresence: String,
+
     @Column("actionability")
     val actionability: String,
 

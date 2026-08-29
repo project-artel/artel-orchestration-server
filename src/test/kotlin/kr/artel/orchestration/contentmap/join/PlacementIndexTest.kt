@@ -22,7 +22,7 @@ class PlacementIndexTest {
         private val document: EvidenceDocumentModel = EvidenceParser(ObjectMapper())
             .parse(File("src/test/resources/contentmap/wv-editor-latest.json").readText())
 
-        private val index = PlacementIndex.build(document)
+        private val index = PlacementIndex.build(document, PersistentSceneAttribution(document))
     }
 
     /**
