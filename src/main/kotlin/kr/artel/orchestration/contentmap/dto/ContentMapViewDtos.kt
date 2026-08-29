@@ -304,6 +304,10 @@ data class ContentMapScreenTransitionResponse(
  *   답할 수 있어야 하기 때문이다
  * @property origin `evidence` · `observed` · `inferred` · `human`. [verification] 과 다른 축이다 —
  *   이쪽은 출처이고 저쪽은 실행 확인이다
+ * @property scenePresence 이 행이 왜 이 `scene` 에 있나(ARTEL-460). `persistent-unconfirmed` 는
+ *   `scene` 을 넘어 살아남는 오브젝트가 여기 있다는 사실뿐이라, 여기서 그 기능이 되는지는 아직
+ *   아무도 안 봤다. 화면이 이 값을 안 그리면 `TurnBattleScene` 의 목록에서 그 줄이 근거가 이
+ *   `scene` 에 놓은 줄과 똑같이 보인다
  */
 @Schema(description = "씬 하나의 기능 하나")
 data class SceneCapabilityResponse(
@@ -316,6 +320,11 @@ data class SceneCapabilityResponse(
     val origin: String,
     @Schema(description = "unverified · confirmed · contradicted. 실행으로 확인됐나")
     val verification: String,
+    @Schema(
+        description = "placed · persistent-evidenced · persistent-unconfirmed. " +
+            "이 행이 왜 이 scene 에 있나. persistent-unconfirmed 는 여기서 되는지 아직 아무도 안 봤다"
+    )
+    val scenePresence: String,
     @Schema(description = "이 조작을 실제로 할 수 있는가")
     val actionability: String,
     @Schema(description = "그 결과를 볼 수 있는가")
@@ -332,6 +341,7 @@ data class SceneCapabilityResponse(
             status = row.status,
             origin = row.origin,
             verification = row.verification,
+            scenePresence = row.scenePresence,
             actionability = row.actionability,
             observability = row.observability,
             applicability = row.applicability,

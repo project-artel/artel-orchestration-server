@@ -162,6 +162,7 @@ class SceneContextService(
         observability = row.observability,
         applicability = row.applicability,
         verification = row.verification,
+        scenePresence = row.scenePresence,
         repeatUntilDone = row.repeatUntilDone,
         controlSelectorHint = row.controlSelector,
     )

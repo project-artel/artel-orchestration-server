@@ -32,15 +32,6 @@ object ConditionBranches {
             .map { it.toBranch() }
 
     /**
-     * `SceneManager.GetActiveScene().name` — 씬 이름 조건의 왼쪽 항. 실측 12건이 전부 이 문자열이다.
-     *
-     * 값 비교가 아니라 문자열 비교인 이유: 근거는 IL 을 렌더한 표현식을 주고, 우리에게는 그 표현식이
-     * 유일한 식별자다. 부분 일치(`contains("GetActiveScene")`)로 넓히면 `GetActiveScene().buildIndex`
-     * 같은 다른 조건까지 씬 이름으로 오인한다.
-     */
-    private const val ACTIVE_SCENE_NAME = "SceneManager.GetActiveScene().name"
-
-    /**
      * `either` 중 **입력을 가르는 것만** 펼친다.
      *
      * 실측 `either` 68건 중 `branch`마다 다른 gesture 를 든 것은 4건뿐이고(전부
@@ -88,12 +79,6 @@ object ConditionBranches {
     private fun ConditionNode.possibleIn(scene: String): Boolean =
         conjunctiveTests().none { it.contradictsScene(scene) }
 
-    private fun ConditionNode.conjunctiveTests(): List<ConditionNode.Test> = when {
-        this is ConditionNode.Test -> listOf(this)
-        this is ConditionNode.Group && kind == GroupKind.EVERY -> parts.flatMap { it.conjunctiveTests() }
-        else -> emptyList()
-    }
-
     /**
      * 이 test 가 [scene] 에서 **절대 성립하지 않는가.**
      *
@@ -103,22 +88,13 @@ object ConditionBranches {
      */
     private fun ConditionNode.Test.contradictsScene(scene: String): Boolean {
         if (left != ACTIVE_SCENE_NAME) return false
-        val named = right.unquoted() ?: return false
+        val named = right.unquotedOrNull() ?: return false
         return when (operator) {
             "==" -> named != scene
             "!=" -> named == scene
             else -> false
         }
     }
-
-    /**
-     * `"\"GameClearScene\""` 처럼 **따옴표까지 값에 든** 오른쪽 항에서 씬 이름을 꺼낸다.
-     *
-     * 근거는 IL 의 문자열 리터럴을 소스 표기 그대로 렌더해 넣는다. 따옴표를 벗기지 않고 비교하면
-     * 실측 12건이 전부 어긋나 어떤 씬에서도 남지 않는다.
-     */
-    private fun String.unquoted(): String? =
-        if (length >= 2 && startsWith('"') && endsWith('"')) substring(1, length - 1) else null
 
     private fun ConditionNode.gestures(): List<ConditionNode.Gesture> =
         flatten().filterIsInstance<ConditionNode.Gesture>()

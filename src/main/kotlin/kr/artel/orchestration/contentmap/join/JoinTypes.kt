@@ -1,6 +1,7 @@
 package kr.artel.orchestration.contentmap.join
 
 import kr.artel.orchestration.contentmap.entity.AnalysisConfidence
+import kr.artel.orchestration.contentmap.entity.ScenePresence
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.contentmap.evidence.EvidenceRecord
 
@@ -19,6 +20,20 @@ data class ScenePlacement(
     val selector: String?,
     /** 그 오브젝트에 쓰인 글자. 없으면 null. */
     val label: String?,
+    /**
+     * 이 자리가 왜 이 [scene] 에 있나(ARTEL-460). 문서가 놓은 자리는 [ScenePresence.PLACED] 다.
+     *
+     * `scene` 을 넘어 살아남는 오브젝트는 real `scene` 마다 자리를 하나씩 갖고, 근거가 그 `scene` 을
+     * 지목했는지에 따라 값이 갈린다. 그 값이 곧 `capability.scene_presence` 가 된다.
+     */
+    val presence: ScenePresence = ScenePresence.PLACED,
+    /**
+     * 근거가 이 [scene] 을 지목한 사슬([PersistentSceneAttribution]).
+     *
+     * [presence] 가 [ScenePresence.PERSISTENT_EVIDENCED] 일 때만 차 있다. 적재기가 그것을
+     * `capability_proof` 로 옮겨 되짚을 수 있게 남긴다.
+     */
+    val anchors: List<SceneAnchor> = emptyList(),
 )
 
 /** `wiring`을 찾은 길. 어느 길로 걸렸는지가 곧 신뢰도라 값에 남긴다. */
@@ -52,6 +67,17 @@ data class SpawnOrigin(
     /** `refs[].carries` 가 씬 경로까지 줬을 때만. 대개 null 이다. */
     val scenePath: String?,
     val ambiguousCandidates: List<String> = emptyList(),
+    /**
+     * 만드는 쪽 자리의 [ScenePlacement.presence]. 프리팹의 주소는 만드는 쪽의 자리에서 나오므로,
+     * 만드는 쪽이 `scene` 을 넘어 살아남는 오브젝트면 만들어지는 쪽도 같은 성격의 자리에 앉는다.
+     */
+    val presence: ScenePresence = ScenePresence.PLACED,
+    /**
+     * 만드는 쪽이 `DontDestroyOnLoad` 에 있는 오브젝트였을 때, 근거가 이 [scene] 을 지목한 사슬.
+     *
+     * 그 사실이 안 적히면 되짚기가 한 홉 앞에서 끊긴다.
+     */
+    val anchors: List<SceneAnchor> = emptyList(),
 ) {
     // `field` 만 쓰면 접근자 안에서는 뒷받침 필드 키워드로 읽혀 컴파일되지 않는다.
     val ambiguous: Boolean get() = this.field == null
@@ -94,4 +120,17 @@ data class CapabilityCandidate(
     val confidence: AnalysisConfidence,
     /** 근거가 말한 공백 + 조인이 판정한 공백. `subject-null` · `spawn-origin-ambiguous` 등. */
     val gaps: List<String>,
+    /**
+     * 이 후보가 왜 이 [scene] 에 있나(ARTEL-460). 적재기가 `capability.scene_presence` 에 그대로 싣는다.
+     *
+     * [ScenePresence.PERSISTENT_UNCONFIRMED] 는 실패가 아니다 — 오브젝트가 거기 있다는 것은 확실하고,
+     * 거기서 그 기능이 되는지만 아직 모른다.
+     */
+    val scenePresence: ScenePresence = ScenePresence.PLACED,
+    /**
+     * 근거가 이 [scene] 을 지목한 사슬. [scenePresence] 가
+     * [ScenePresence.PERSISTENT_EVIDENCED] 일 때만 차 있고, 적재기가 `capability_proof` 로 옮긴다 —
+     * 조용한 표시는 안 하느니만 못하기 때문이다.
+     */
+    val sceneAnchors: List<SceneAnchor> = emptyList(),
 )

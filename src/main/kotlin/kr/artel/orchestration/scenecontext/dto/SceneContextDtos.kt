@@ -69,6 +69,11 @@ data class SceneContextEntry(
  * @property applicability 적용 가능성. `not-applicable` 은 이 빌드에 아예 없다.
  * @property verification 실행으로 확인됐나. [status] 와 다른 축이다 — 이쪽은 우리가 눌러 봤는지고
  *   저쪽은 누를 수 있는지다. agent 가 무엇을 먼저 시도할지 고르는 재료다.
+ * @property scenePresence 이 줄이 왜 이 `scene` 에 있나(ARTEL-460). `placed` 는 근거가 이 `scene` 에
+ *   놓은 것이고, `persistent-unconfirmed` 는 `scene` 을 넘어 살아남는 오브젝트가 여기 있다는 사실뿐
+ *   이라 **여기서 되는지는 아무도 안 봤다.** 그 둘을 같은 줄로 읽으면 agent 는 `TurnBattleScene` 의
+ *   목록에 딸려 온 tutorial capability 를 그 `scene` 의 사실로 읽는다. `persistent-evidenced` 는
+ *   근거가 이 `scene` 을 지목한 것이고, 무엇을 읽고 그랬는지는 `capability_proof` 가 든다
  * @property repeatUntilDone 한 번인지 끝날 때까지인지. `false` 가 기본이라 이 칸을 모르는
  *   소비자도 기존과 같이 읽는다.
  * @property controlSelectorHint **조준 키가 아니다.** 형제 인덱스가 박힌 경로라 런마다 흔들리고,
@@ -90,6 +95,7 @@ data class SceneCapabilityView(
     val observability: String,
     val applicability: String,
     val verification: String,
+    val scenePresence: String,
     val repeatUntilDone: Boolean,
     val controlSelectorHint: String? = null,
 )

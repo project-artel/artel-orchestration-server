@@ -12,6 +12,7 @@ import kr.artel.orchestration.contentmap.entity.Actionability
 import kr.artel.orchestration.contentmap.entity.Applicability
 import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityEvidenceEntity
+import kr.artel.orchestration.contentmap.entity.CapabilityProofEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.EffectCategory
 import kr.artel.orchestration.contentmap.entity.EvidenceGap
@@ -21,6 +22,7 @@ import kr.artel.orchestration.contentmap.entity.RecordKind
 import kr.artel.orchestration.contentmap.entity.TriggerKind
 import kr.artel.orchestration.contentmap.entity.SceneEntity
 import kr.artel.orchestration.contentmap.entity.SceneOrigin
+import kr.artel.orchestration.contentmap.entity.ScenePresence
 import kr.artel.orchestration.contentmap.entity.VerificationState
 import kr.artel.orchestration.contentmap.evidence.EvidenceEffect
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
@@ -28,6 +30,7 @@ import kr.artel.orchestration.contentmap.join.CapabilityCandidate
 import kr.artel.orchestration.contentmap.join.EvidenceJoin
 import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
 import kr.artel.orchestration.contentmap.repository.CapabilityEvidenceRepository
+import kr.artel.orchestration.contentmap.repository.CapabilityProofRepository
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapSceneCaptureRepository
@@ -68,6 +71,7 @@ class ContentMapIngestService(
     private val capabilities: CapabilityRepository,
     private val evidences: CapabilityEvidenceRepository,
     private val effects: CapabilityEffectRepository,
+    private val proofs: CapabilityProofRepository,
     private val sceneEdges: SceneEdgeRepository,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
@@ -154,7 +158,8 @@ class ContentMapIngestService(
             ?: throw NotFoundException("적재할 근거 문서를 스토리지에서 찾을 수 없습니다.")
 
         val model = EvidenceParser(objectMapper).parse(bytes.decodeToString())
-        val candidates = EvidenceJoin(model).candidates()
+        val join = EvidenceJoin(model)
+        val candidates = join.candidates()
 
         val sceneIds = upsertScenes(
             document.contentMapId,
@@ -174,11 +179,21 @@ class ContentMapIngestService(
         // 이번 문서가 다시 말한 정적 전이의 id. 여기 없는 정적 간선이 곧 사라진 전이다.
         val keptEdgeIds = mutableListOf<Long>()
 
+        // 행마다의 `scene_presence`. 적재 결과가 "몇 행이 살아남아 있을 뿐이고 몇 행을 근거가 지목했나"를
+        // 답하려면 그룹을 다시 돌지 않고 여기서 모아 두는 편이 정직하다.
+        val presences = mutableListOf<ScenePresence>()
+
         for ((key, group) in grouped) {
             // 조작 후보가 흐름보다 먼저다. 같은 자리에서 `candidate` 와 `flow` 가 함께 나오면
             // 실행할 수 있는 쪽이 그 줄의 대표다.
             val candidate = group.firstOrNull { it.record.recordKind == RECORD_KIND_CANDIDATE } ?: group.first()
             val sceneId = sceneIds.getValue(candidate.scene)
+            // 대표 후보의 것이 아니라 **그룹에서 가장 강한 것**이다. `scene` 을 넘어 살아남는 사본과 그
+            // `scene` 에 실제로 놓인 오브젝트가 같은 키를 내면 여기서 만나고(실측
+            // `Core.SaveLoadController`), 그때 문서가 직접 놓았다는 사실이 이기지 않으면 아는 것을
+            // 모른다고 적게 된다.
+            val presence = group.minOf { it.scenePresence }
+            presences += presence
 
             // 효과를 먼저 합친다. 관측 축이 대표 레코드의 효과만 보면, 효과만 다른 조각이 접힌 그룹에서
             // "행에는 관측 가능한 효과가 달려 있는데 축은 unknown" 인 줄이 나온다.
@@ -194,6 +209,7 @@ class ContentMapIngestService(
                 contentMapId = document.contentMapId,
                 capabilityKey = key,
                 verification = VerificationState.UNVERIFIED.wire,
+                scenePresence = presence.wire,
                 summary = row.summary,
                 givenText = row.givenText,
                 controlSelector = row.controlSelector,
@@ -210,6 +226,7 @@ class ContentMapIngestService(
             )
 
             writeEvidence(capabilityId, candidate, group)
+            writeSceneAnchors(capabilityId, presence, group)
             writeEffects(capabilityId, mergedEffects)
             keptEdgeIds += writeSceneEdges(document.contentMapId, sceneId, capabilityId, mergedEffects)
 
@@ -227,6 +244,10 @@ class ContentMapIngestService(
 
         val retired = retireVanished(document.contentMapId, keptKeys)
 
+        // 기능을 내린 **뒤에** `scene` 을 내린다. 순서가 반대면 이번 문서가 더는 말하지 않는 `scene` 에 옛 기능이
+        // 아직 매달려 있어, "아무도 아무것도 모르는 `scene`"이라는 조건에 걸리지 않는다.
+        val retiredScenes = scenes.retireVanishedScenes(document.contentMapId, sceneIds.keys.toTypedArray())
+
         documents.stampIngested(document.id!!, INGESTER_VERSION, Instant.now(clock))
 
         return IngestResult(
@@ -238,6 +259,9 @@ class ContentMapIngestService(
             deleted = retired.deleted,
             markedNotApplicable = retired.markedNotApplicable,
             collapsed = collapsed,
+            retiredScenes = retiredScenes.toInt(),
+            persistentCapabilities = presences.count { it.persistent },
+            evidencedPersistentCapabilities = presences.count { it == ScenePresence.PERSISTENT_EVIDENCED },
         )
     }
 
@@ -388,6 +412,54 @@ class ContentMapIngestService(
     }
 
     /**
+     * 근거가 이 `scene` 을 지목한 사슬. [ScenePresence.PERSISTENT_EVIDENCED] 행에만 붙는다(ARTEL-460).
+     *
+     * **조용한 표시는 안 하느니만 못하다.** 언젠가 누군가 "이 튜토리얼이 정말 `Map_scene` 에서
+     * 도는가"를 확인해야 하고, 그때 무엇을 읽고 그렇게 판정했는지가 없으면 지도 전체를 의심하게
+     * 된다. `capability_proof` 가 그 질문에 답하려고 있는 표이고(한 단계 = 한 행), 사슬 전체의
+     * 확실성은 `v_capability_proof.chain_rank` 가 낸다.
+     *
+     * `effect_id` 는 null 이다 — 이 사슬이 세운 것은 효과가 아니라 **그 기능이 여기서 의미가 있다는
+     * 사실**이다.
+     *
+     * `placed` · `persistent-unconfirmed` 행에는 행을 만들지 않는다. 앞쪽은 문서가 직접 놓은 자리라
+     * 지목이랄 것이 없고, 뒤쪽은 지목이 없다는 것이 바로 그 행의 내용이다. 빈 사슬을 만들면
+     * "근거가 말했다"와 "말한 적 없다"가 표에서 같은 모양이 된다.
+     *
+     * 앞쪽에는 anchor 가 붙어 오는 그룹이 실제로 있다 — 실측 7 행이 그렇다. `scene` 을 넘어 살아남는
+     * 사본과 그 `scene` 에 실제로 놓인 오브젝트가 같은 키를 내면 그 그룹은 `placed` 가 되고, 그때
+     * 사슬은 이미 문서가 직접 말한 것을 유도로 다시 말하는 것이라 남길 값이 없다.
+     *
+     * 그룹 전체의 anchor 를 모은다 — 접힌 조각마다 서로 다른 record 의 조건을 읽었을 수 있고, 대표
+     * 하나만 보면 나머지가 읽은 근거가 사라진다.
+     */
+    private suspend fun writeSceneAnchors(
+        capabilityId: Long,
+        presence: ScenePresence,
+        group: List<CapabilityCandidate>,
+    ) {
+        proofs.deleteCapabilityChain(capabilityId)
+        if (presence != ScenePresence.PERSISTENT_EVIDENCED) return
+        var seq = 0
+        for (anchor in group.flatMap { it.sceneAnchors }.distinct()) {
+            for (step in anchor.steps) {
+                proofs.save(
+                    CapabilityProofEntity(
+                        capabilityId = capabilityId,
+                        effectId = null,
+                        seq = seq++,
+                        source = step.source.take(PROOF_TERM_WIDTH),
+                        relation = step.relation,
+                        target = step.target.take(PROOF_TERM_WIDTH),
+                        resolution = anchor.rule.resolution.wire,
+                        rule = anchor.rule.wire,
+                    )
+                )
+            }
+        }
+    }
+
+    /**
      * 효과 행. 안정 키가 없어 **근거 출신만 지우고 다시 넣는다.**
      *
      * 관측이 남긴 효과(`origin='observed'`)는 건드리지 않는다. `watchable` 은 기본값 그대로 둔다 —
@@ -526,6 +598,9 @@ class ContentMapIngestService(
 
         /** `scene_edge.to_scene_name` 의 폭. `capability_effect.target` 의 1024 보다 좁다. */
         private const val TO_SCENE_NAME_WIDTH = 255
+
+        /** `capability_proof.source` · `target` 의 폭(V44). */
+        private const val PROOF_TERM_WIDTH = 1024
     }
 }
 
@@ -570,6 +645,30 @@ data class IngestResult(
      * 키 산식이 무언가를 잃기 시작한 것이다.
      */
     val collapsed: Int,
+
+    /**
+     * 이번 문서가 더는 말하지 않아 내린 빈 `scene` 수(ARTEL-460).
+     *
+     * 대개 0 이다. 0 이 아닌 것은 적재 규칙이 바뀌어 어떤 이름이 더는 나오지 않게 됐다는 뜻이고,
+     * `DontDestroyOnLoad` 가 `scene` 항목으로 앉아 있던 지도를 다시 적재할 때 그렇다.
+     */
+    val retiredScenes: Int = 0,
+
+    /**
+     * `scene` 을 넘어 살아남는 오브젝트에서 온 기능 행 수(ARTEL-460).
+     *
+     * 근거의 capability 하나가 real `scene` 수만큼 행이 되므로 이 수는 원래 개수의 배수로 는다.
+     * 그 부피가 이 설계의 비용이고, 값이 보이지 않으면 비용이 얼마인지 아무도 모른다.
+     */
+    val persistentCapabilities: Int = 0,
+
+    /**
+     * 그중 **근거가 그 `scene` 을 지목한** 행 수. 나머지는 살아남아 거기 있을 뿐이다.
+     *
+     * 이 수만큼의 행이 `capability_proof` 사슬을 갖는다. 두 수의 비가 곧 "지도가 실제로 아는 만큼"
+     * 이고, 나머지를 지우는 것은 QA agent 다(ARTEL-644).
+     */
+    val evidencedPersistentCapabilities: Int = 0,
 )
 
 /**
