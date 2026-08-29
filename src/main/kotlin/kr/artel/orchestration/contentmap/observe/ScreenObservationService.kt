@@ -2,7 +2,6 @@ package kr.artel.orchestration.contentmap.observe
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.capture.ScreenCaptureService
 import kr.artel.orchestration.contentmap.dto.ScreenObservationRow
@@ -118,10 +117,9 @@ class ScreenObservationService(
         }
 
         val buildId = gameInstances.findById(gameInstanceId)?.lastGameBuildId ?: return
-        // 지도 고르기는 `ScenarioPathService` · `ScenarioCaseFactService` 와 같은 규칙이다 —
-        // 그 빌드의 가장 최근 지도. 여기서만 다른 규칙을 쓰면 화면이 TC 가 읽는 지도와 다른
-        // 지도에 붙는다.
-        val contentMap = contentMaps.findByGameBuildIdOrderByIdDesc(buildId).firstOrNull() ?: return
+        // 빌드마다 지도가 하나다(ARTEL-642). 고를 것이 없으므로 화면이 TC 가 읽는 지도와
+        // 다른 지도에 붙는 일도 없다.
+        val contentMap = contentMaps.findByGameBuildId(buildId) ?: return
         val contentMapId = contentMap.id ?: return
 
         if (folds.size >= MAX_TRACKED_INSTANCES && !folds.containsKey(gameInstanceId)) {

@@ -21,6 +21,46 @@ enum class Capture(val wire: String) {
 }
 
 /**
+ * 이 지도를 세운 경로.
+ *
+ * [SceneOrigin] 과 **묻는 것이 다르다.** 저쪽은 씬 한 줄을 어디서 알아냈는지이고, 이쪽은 지도
+ * 행이 근거 등록으로 태어났는지 관측으로 태어났는지다. 어휘가 갈린 것도 그래서다.
+ *
+ * `schema_version` · `evidence_digest` · `capture` 가 비었다는 사실에서 추론하지 않는다 — 근거가
+ * 아직 안 온 지도와 근거가 왔는데 헤더가 빈 지도를 그 방법으로는 가릴 수 없다.
+ */
+enum class ContentMapRoot(val wire: String) {
+    /** 근거 문서 등록이 세웠다. */
+    EVIDENCE("evidence"),
+
+    /** QA 런의 관측이 세웠다. 근거 문서가 아직 없다. */
+    OBSERVATION("observation");
+
+    companion object {
+        fun from(wire: String?): ContentMapRoot? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * 이 씬을 어디서 알아냈나.
+ *
+ * 어휘를 [CapabilityOrigin] 에서 그대로 가져온다. 같은 뜻을 두 표에서 다른 말로 적으면 "이 씬은
+ * observed 인데 그 위의 기능은 observation 이다" 같은 문장이 생긴다. `inferred` 와 `human` 을
+ * 받지 않는 것은 씬이 추론이나 사람 입력으로 태어나는 경로가 없어서다.
+ */
+enum class SceneOrigin(val wire: String) {
+    /** 근거 walk 가 만났다. */
+    EVIDENCE("evidence"),
+
+    /** QA 런이 서 봤다. 근거에 이름조차 없던 씬이 여기로 들어온다. */
+    OBSERVED("observed");
+
+    companion object {
+        fun from(wire: String?): SceneOrigin? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
  * 이 기능을 어디서 알아냈나.
  *
  * [VerificationState] 와 **다른 축이다.** 이쪽은 출처이고 저쪽은 실행 확인이다. 하나로 뭉치면

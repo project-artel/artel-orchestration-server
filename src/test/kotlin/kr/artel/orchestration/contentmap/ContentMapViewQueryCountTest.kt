@@ -105,7 +105,7 @@ class ContentMapViewQueryCountTest {
 
         clearInvocations(screens, screenCapabilities)
 
-        val response = view.read(userId, projectId, gameBuildId, capture = null)!!
+        val response = view.read(userId, projectId, gameBuildId)!!
         assertThat(response.scenes.single().screens).hasSize(screenCount)
         assertThat(response.scenes.single().screens).allSatisfy {
             assertThat(it.capabilities).hasSize(1)

@@ -7,8 +7,13 @@ import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.contentmap.dto.EvidenceUploadTicketRequest
 import kr.artel.orchestration.contentmap.dto.RegisterEvidenceDocumentRequest
 import kr.artel.orchestration.contentmap.entity.Capture
+import kr.artel.orchestration.contentmap.entity.ContentMapEntity
+import kr.artel.orchestration.contentmap.entity.ContentMapRoot
+import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
+import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.contentmap.service.EvidenceDocumentHeaderReader
 import kr.artel.orchestration.contentmap.service.EvidenceDocumentService
 import kr.artel.orchestration.game.entity.GameBuildEntity
@@ -40,7 +45,7 @@ import java.time.Instant
  * 1. 헤더를 SDK 의 신고가 아니라 **문서에서** 읽는가
  * 2. 모르는 세대를 거절하는가 — schema 5 로 읽으면 적 체력을 컨트롤 이름으로 읽는다
  * 3. 같은 문서 재전송을 건너뛰는가 — SDK 는 게임 실행마다 등록한다
- * 4. capture 가 다르면 별개 지도인가
+ * 4. capture 가 달라도 한 빌드에 지도가 하나인가, 그리고 관측이 세운 지도에 근거가 접히는가
  * 5. 남의 빌드가 404 인가 — 부재와 권한 없음이 구분되면 id 를 훑을 수 있다
  */
 @ActiveProfiles("test")
@@ -61,6 +66,7 @@ class EvidenceDocumentServiceTest {
     @Autowired private lateinit var gameBuilds: GameBuildRepository
     @Autowired private lateinit var contentMaps: ContentMapRepository
     @Autowired private lateinit var documents: ContentMapDocumentRepository
+    @Autowired private lateinit var scenes: SceneRepository
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var db: DatabaseClient
 
@@ -173,7 +179,7 @@ class EvidenceDocumentServiceTest {
             .hasMessageContaining("schema 5")
 
         // 쓸 수 없는 지도를 남기지 않는다
-        assertThat(contentMaps.findByGameBuildIdOrderByIdDesc(buildId).toList()).isEmpty()
+        assertThat(contentMaps.findByGameBuildId(buildId)).isNull()
     }
 
     /** 헤더가 없는 문서도 조용히 넘어가지 않는다. */
@@ -222,9 +228,15 @@ class EvidenceDocumentServiceTest {
         assertThat(contentMaps.findById(first.contentMapId)!!.evidenceDigest).isEqualTo("bbbb")
     }
 
-    /** editor 와 player 는 같은 필드가 다른 뜻이라 별개 지도다. */
+    /**
+     * **capture 가 달라도 지도는 하나다**(ARTEL-642).
+     *
+     * 두 문서는 각자 남고 지도 행만 하나다 — 문서 이력이 "이 빌드의 근거가 언제 어떻게 달라졌나"를
+     * 들고, 지도는 그 위에 쌓인 결과를 든다. 지도의 `capture` 는 마지막 문서가 신고한 값이고, 씬이
+     * 실제로 어느 상태에서 읽혔는지는 `scene.capture` 가 답한다.
+     */
     @Test
-    fun `capture 가 다르면 별개 지도다`(): Unit = runBlocking {
+    fun `capture 가 달라도 한 빌드에 지도는 하나다`(): Unit = runBlocking {
         val (userId, _, buildId) = seed()
         val editor = service.register(
             userId, buildId,
@@ -235,8 +247,48 @@ class EvidenceDocumentServiceTest {
             RegisterEvidenceDocumentRequest(upload(userId, buildId, evidenceDocument(capture = Capture.PLAYER.wire))),
         )!!
 
-        assertThat(player.contentMapId).isNotEqualTo(editor.contentMapId)
-        assertThat(contentMaps.findByGameBuildIdOrderByIdDesc(buildId).toList()).hasSize(2)
+        assertThat(player.contentMapId).isEqualTo(editor.contentMapId)
+        assertThat(documents.findByContentMapIdOrderByReceivedAtDesc(editor.contentMapId).toList()).hasSize(2)
+
+        val map = contentMaps.findByGameBuildId(buildId)!!
+        assertThat(map.id).isEqualTo(editor.contentMapId)
+        assertThat(map.capture).isEqualTo(Capture.PLAYER.wire)
+    }
+
+    /**
+     * **관측이 먼저 세운 지도에 근거가 들어오면 `rooted_by` 가 올라가고 씬은 살아남는다.**
+     *
+     * 순서가 결과를 바꾸지 않는 것이 이 story 의 요점이다. QA 런이 먼저 돌아 지도와 씬을 세운
+     * 빌드에서 나중에 근거 문서가 오면, 새 지도를 만드는 대신 그 행에 접힌다. 새로 만들면 관측이
+     * 벌어 온 씬과 그 아래 화면·관측이 통째로 다른 지도에 갇힌다.
+     *
+     * 씬을 지우지 않는 것도 함께 지킨다 — 등록은 헤더만 갱신하고 씬은 적재가 소유한다.
+     */
+    @Test
+    fun `관측이 세운 지도에 근거가 들어오면 rooted_by 가 올라간다`(): Unit = runBlocking {
+        val (userId, _, buildId) = seed()
+        val observed = contentMaps.save(
+            ContentMapEntity(gameBuildId = buildId, rootedBy = ContentMapRoot.OBSERVATION.wire)
+        )
+        val scene = scenes.save(
+            SceneEntity(
+                contentMapId = observed.id!!,
+                name = "ObservedOnlyScene",
+                origin = SceneOrigin.OBSERVED.wire,
+            )
+        )
+
+        val registered = service.register(
+            userId, buildId,
+            RegisterEvidenceDocumentRequest(upload(userId, buildId, evidenceDocument())),
+        )!!
+
+        assertThat(registered.contentMapId).isEqualTo(observed.id)
+        val map = contentMaps.findByGameBuildId(buildId)!!
+        assertThat(map.rootedBy).isEqualTo(ContentMapRoot.EVIDENCE.wire)
+        assertThat(map.capture).isEqualTo(Capture.EDITOR.wire)
+        assertThat(map.evidenceDigest).isEqualTo("d4b31e4da9504b7d")
+        assertThat(scenes.findById(scene.id!!)?.origin).isEqualTo(SceneOrigin.OBSERVED.wire)
     }
 
     /**

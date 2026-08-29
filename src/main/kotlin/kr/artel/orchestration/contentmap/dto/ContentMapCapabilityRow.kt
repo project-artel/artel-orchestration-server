@@ -18,8 +18,13 @@ data class ContentMapCapabilityRow(
     @Column("content_map_id")
     val contentMapId: Long,
 
+    /**
+     * 이 기능이 붙은 **씬의** capture. 근거 walk 를 지나지 않은 씬에서는 null 이다(ARTEL-642).
+     *
+     * 뷰의 열 이름은 그대로지만 값이 나오는 자리가 `content_map` 에서 `scene` 으로 내려갔다.
+     */
     @Column("capture")
-    val capture: String,
+    val capture: String?,
 
     @Column("scene_id")
     val sceneId: Long,

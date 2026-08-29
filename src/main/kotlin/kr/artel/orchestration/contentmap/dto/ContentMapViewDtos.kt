@@ -75,6 +75,10 @@ data class ContentMapResponse(
  * `backend` 와 `development` 는 싣지 않는다. 화면이 쓰지 않고, 계약에도 없다. 필요해지면 더한다 —
  * 빼는 것이 더하는 것보다 비싸다.
  *
+ * [capture] · [schemaVersion] · [evidenceDigest] 는 근거 문서가 말해 주는 것이라, 문서 없이 관측만으로
+ * 선 지도에서는 null 이다(ARTEL-642). **필드를 지우지는 않는다** — artel-home 의 `contentMapApi.ts` 가
+ * [capture] 를 읽고, null 은 "알 수 없음"으로 그려지지만 필드가 없으면 요약 패널이 빈칸이 된다.
+ *
  * @property ingestedAt 이 지도의 문서 중 **가장 나중에 앉은 시각**. null 이면 등록만 되고 아직
  *   아무 문서도 앉지 않았다는 뜻이다. `content_map` 행이 아니라 문서에서 유도하는 것은 적재기가
  *   `content_map` 을 건드리지 않기 때문이다 — 지문·유니티 버전·약속은 등록 경로가 소유한다.
@@ -82,11 +86,12 @@ data class ContentMapResponse(
 @Schema(description = "지도 루트")
 data class ContentMapSummaryResponse(
     val id: Long,
-    @Schema(description = "editor · editor-play · player 중 하나")
-    val capture: String,
-    val schemaVersion: Int,
-    @Schema(description = "구워진 `evidence` 전체의 지문. 같은 capture 인데 값이 다르면 코드가 바뀐 것이다")
-    val evidenceDigest: String,
+    @Schema(description = "editor · editor-play · player 중 하나. 근거 문서가 아직 없으면 null")
+    val capture: String?,
+    @Schema(description = "근거 문서의 세대. 근거 문서가 아직 없으면 null")
+    val schemaVersion: Int?,
+    @Schema(description = "구워진 `evidence` 전체의 지문. 값이 달라지면 코드가 바뀐 것이다. 근거 문서가 아직 없으면 null")
+    val evidenceDigest: String?,
     val unity: String?,
     val platform: String?,
     val sdkVersion: String?,

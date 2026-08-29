@@ -54,9 +54,9 @@ class ProjectContentMapAccessTest {
         val other = newProject(userId)
         val build = newBuild(mine)
 
-        assertThat(view.read(userId, other, build, capture = null)).isNull()
+        assertThat(view.read(userId, other, build)).isNull()
 
-        val allowed = view.read(userId, mine, build, capture = null)
+        val allowed = view.read(userId, mine, build)
         assertThat(allowed).isNotNull()
         // 접근은 되는데 올린 문서가 없다. 404 가 아니라 빈 지도다.
         assertThat(allowed!!.contentMap).isNull()

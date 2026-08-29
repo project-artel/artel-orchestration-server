@@ -4,11 +4,9 @@ import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
 import kr.artel.orchestration.auth.web.CurrentUserId
-import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.dto.ContentMapResponse
 import kr.artel.orchestration.contentmap.dto.StartContentMapScanResponse
-import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.scan.ContentMapScanService
 import kr.artel.orchestration.contentmap.service.ContentMapViewService
 import org.springframework.http.HttpStatus
@@ -16,7 +14,6 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
-import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 
@@ -88,6 +85,9 @@ class ProjectContentMapController(
      * 존재하고 접근도 된다. 없는 것은 아직 아무도 올리지 않은 문서이고, 그것은 오류가 아니라 화면이
      * "아직 스캔한 적이 없다"를 그려야 하는 정상 상태다. 404 는 **빌드가 없거나 경로의 projectId 가
      * 그 빌드의 것과 다를 때**뿐이다.
+     *
+     * `capture` 질의 인자가 없다. 빌드마다 지도가 하나라 고를 것이 없다(ARTEL-642). 값이 사라진
+     * 것은 아니고 씬마다의 `capture` 로 내려갔다.
      */
     @Operation(
         summary = "씬 명세 조회",
@@ -100,25 +100,7 @@ class ProjectContentMapController(
         @CurrentUserId appUserId: Long,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
         @Parameter(description = "게임 빌드 id", required = true) @PathVariable gameBuildId: Long,
-        @Parameter(description = "editor · editor-play · player. 생략하면 가장 최근에 알게 된 capture")
-        @RequestParam(required = false) capture: String?,
     ): ContentMapResponse =
-        view.read(appUserId, projectId, gameBuildId, parseCapture(capture))
+        view.read(appUserId, projectId, gameBuildId)
             ?: throw NotFoundException("게임 빌드를 찾을 수 없습니다.")
-
-    /**
-     * 어휘에 없는 값은 400 이다.
-     *
-     * 조용히 null 로 두면 오타(`?capture=editer`)가 "지도가 없다"로 보이고, 화면은 빈 상태를 그리며
-     * 아무도 오타를 못 찾는다. 400 의 message 는 우리가 쓴 도메인 안내라 그대로 나가도 된다 —
-     * 사용자가 보낸 값을 되쓰지 않는다.
-     */
-    private fun parseCapture(raw: String?): Capture? {
-        if (raw == null) return null
-        return Capture.from(raw)
-            ?: throw BadRequestException(
-                "capture 는 editor · editor-play · player 중 하나여야 합니다.",
-                "invalid_capture",
-            )
-    }
 }
