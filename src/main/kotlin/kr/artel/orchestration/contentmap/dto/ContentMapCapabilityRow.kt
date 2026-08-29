@@ -61,6 +61,17 @@ data class ContentMapCapabilityRow(
     @Column("verification_observation_id")
     val verificationObservationId: Long? = null,
 
+    /**
+     * 이 행이 왜 이 `scene` 에 있나(ARTEL-460). `placed` · `persistent-evidenced` ·
+     * `persistent-unconfirmed`.
+     *
+     * `persistent-unconfirmed` 는 `scene` 을 넘어 살아남는 오브젝트가 여기 있다는 사실만 말한다 —
+     * 그 기능이 여기서 되는지는 아직 아무도 안 봤다. `placed` 와 같은 줄로 읽으면 TC 생성기가
+     * 확인된 적 없는 것을 그 `scene` 의 사실로 쓴다.
+     */
+    @Column("scene_presence")
+    val scenePresence: String,
+
     /** 세 축에서 유도된 값. 아래 축들이 그 값을 낳은 이유다. */
     @Column("status")
     val status: String,

@@ -132,12 +132,16 @@ class SceneWiringIndex private constructor(
 
     companion object {
 
-        fun build(document: EvidenceDocumentModel): SceneWiringIndex {
+        fun build(document: EvidenceDocumentModel, persistent: PersistentSceneAttribution): SceneWiringIndex {
             var order = 0
+            // 오브젝트 하나가 자리 여럿으로 갈린다 — `scene` 을 넘어 살아남는 오브젝트의 컨트롤은 real
+            // `scene` 마다 한 자리씩이다. 자리마다 컨트롤을 따로 세워야 각 `scene` 의 후보가 자기 `scene` 의
+            // 자리를 든다.
             val controls = document.allObjects.flatMap { obj ->
-                val placement = obj.toPlacement()
-                obj.components.flatMap { it.calls }.map { call ->
-                    WiredControl(placement, call.event, call.targetType to call.method, order++)
+                persistent.placementsOf(obj).flatMap { placement ->
+                    obj.components.flatMap { it.calls }.map { call ->
+                        WiredControl(placement, call.event, call.targetType to call.method, order++)
+                    }
                 }
             }
             return SceneWiringIndex(

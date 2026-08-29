@@ -15,6 +15,43 @@ interface SceneRepository : CoroutineCrudRepository<SceneEntity, Long> {
     suspend fun findByContentMapIdAndName(contentMapId: Long, name: String): SceneEntity?
 
     fun findByContentMapIdOrderByNameAsc(contentMapId: Long): Flow<SceneEntity>
+
+    /**
+     * 이번 문서가 더 이상 말하지 않는 **근거 출신 빈 `scene`**을 내린다. 지운 행 수를 돌려준다.
+     *
+     * 이것이 필요한 이유는 [SceneEntity] 행이 이름으로 upsert 되기 때문이다 — 적재 규칙이 바뀌어
+     * 어떤 이름이 더는 나오지 않게 돼도 옛 행은 그 자리에 남는다. `DontDestroyOnLoad` 처럼 `scene` 이
+     * 아닌 이름이 한 번 앉으면(ARTEL-460 이전) 그 뒤 어떤 재적재도 그것을 치우지 못한다.
+     *
+     * **아무도 아무것도 모르는 `scene` 만 지운다.** 조건 하나하나가 "이 `scene` 에 대해 누군가 무언가를 안다"는
+     * 뜻이라, 하나라도 걸리면 남긴다:
+     *
+     * - `origin = 'evidence'` — 관측이 만난 `scene` 은 근거가 말한 적 없어도 실재한다
+     * - `NOT walked` · 이미지 없음 — QA 런이 서 봤거나 찍었으면 그 기록이 사실이다
+     * - `capability` · `screen` · `scene_edge` · `scene_screen_selector` 없음 — 참조가 있으면
+     *   CASCADE 로 그 지식까지 함께 사라진다
+     *
+     * 이름 목록으로 거르는 이유: id 로 거르면 이번 문서가 만지지 않은 다른 문서의 `scene` 까지 후보가
+     * 된다. 한 지도에 문서가 여럿 들어올 수 있고, 각 문서는 자기가 걸은 `scene` 만 안다.
+     */
+    @Modifying
+    @Query(
+        """
+        DELETE FROM scene s
+        WHERE s.content_map_id = :contentMapId
+          AND s.name <> ALL (:keptNames)
+          AND s.origin = 'evidence'
+          AND s.walked = FALSE
+          AND s.image_object_key IS NULL
+          AND NOT EXISTS (SELECT 1 FROM capability c WHERE c.scene_id = s.id)
+          AND NOT EXISTS (SELECT 1 FROM screen sc WHERE sc.scene_id = s.id)
+          AND NOT EXISTS (
+              SELECT 1 FROM scene_edge e WHERE e.from_scene_id = s.id OR e.to_scene_id = s.id
+          )
+          AND NOT EXISTS (SELECT 1 FROM scene_screen_selector sel WHERE sel.scene_id = s.id)
+        """
+    )
+    suspend fun retireVanishedScenes(contentMapId: Long, keptNames: Array<String>): Long
 }
 
 /**
@@ -54,4 +91,32 @@ interface SceneScreenSelectorRepository : CoroutineCrudRepository<SceneScreenSel
         """
     )
     suspend fun seedFromControlSelector(sceneId: Long, pattern: String): Long
+
+    /**
+     * agent 나 사람이 판단한 항목을 넣거나 덮는다 (ARTEL-655).
+     *
+     * 키가 (scene, match_kind, pattern, source) 라, 같은 출처가 같은 대상에 대해 말을 바꾸면
+     * **덮는다.** 다른 출처의 행은 그대로 남는다 — 사람이 agent 를 덮는 것이 아니라 이기는 것이라,
+     * 사람 항목을 지웠을 때 agent 의 판단이 되살아나야 한다(V60 1절).
+     *
+     * `reason` 을 저장하지 않는다. `scene_screen_selector` 에 그 칸이 없고 이 이슈가 칸을 더하지
+     * 않는 것은, 사유가 답이 오간 자리(`qa_log` 의 프레임)에 이미 원문으로 남아 있기 때문이다.
+     * 같은 글을 두 곳에 두면 한쪽만 지워졌을 때 어느 쪽이 참인지 가릴 수 없다.
+     */
+    @Modifying
+    @Query(
+        """
+        INSERT INTO scene_screen_selector (scene_id, match_kind, pattern, source, screen_defining)
+        VALUES (:sceneId, :matchKind, :pattern, :source, :screenDefining)
+        ON CONFLICT (scene_id, match_kind, pattern, source) DO UPDATE SET
+            screen_defining = EXCLUDED.screen_defining
+        """
+    )
+    suspend fun upsertRule(
+        sceneId: Long,
+        matchKind: String,
+        pattern: String,
+        source: String,
+        screenDefining: Boolean,
+    ): Long
 }

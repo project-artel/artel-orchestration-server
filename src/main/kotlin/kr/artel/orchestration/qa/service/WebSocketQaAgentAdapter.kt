@@ -45,6 +45,10 @@ internal data class QaSessionOpenScenario(
 @JsonInclude(JsonInclude.Include.NON_NULL)
 internal data class QaSessionOpenContext(
     @JsonProperty("game_instance_id") val gameInstanceId: String,
+    // Agent 가 이 빌드의 scene context 를 조회하는 데 쓴다 (ARTEL-676). NON_NULL 이라
+    // 값이 없으면 필드가 아예 나가지 않고, Agent 는 조회를 건너뛴 채 런을 시작한다.
+    @JsonProperty("project_id") val projectId: String? = null,
+    @JsonProperty("game_build_id") val gameBuildId: String? = null,
     @JsonProperty("qa_run_id") val qaRunId: String? = null,
     val scenarios: List<QaSessionOpenScenario>? = null,
     @JsonProperty("qa_try_id") val qaTryId: String? = null,
@@ -90,6 +94,8 @@ class WebSocketQaAgentAdapter(
             arch = context.arch,
             context = QaSessionOpenContext(
                 gameInstanceId = context.gameInstanceId,
+                projectId = context.projectId,
+                gameBuildId = context.gameBuildId,
                 qaRunId = context.qaRunId,
                 scenarios = context.scenarios?.map {
                     QaSessionOpenScenario(it.qaTryId, it.testScenarioId, it.scenario)

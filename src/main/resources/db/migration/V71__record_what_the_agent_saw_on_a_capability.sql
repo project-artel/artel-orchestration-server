@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
--- V65. agent 가 본 것을 capability 에 적는 자리
+-- V71. agent 가 본 것을 capability 에 적는 자리
 --------------------------------------------------------------------------------
 -- capability 472 행 중 `verification = 'confirmed'` 이 2 행이다. 지도는 정적 분석이 믿는 것만
 -- 적고 그것이 참인지는 거의 모른다.
@@ -181,6 +181,8 @@ SELECT
     c.verification,
     -- 그 verification 을 만든 문장. agent 가 무엇을 보고 그렇게 말했는지가 이 id 끝에 있다.
     c.verification_observation_id,
+    -- 이 행이 왜 이 scene에 있나. V70에서 더해진 존재 축이다.
+    c.scene_presence,
     c.status,
     -- status 를 낳은 세 축. status 만 보면 "관측이 안 됨"과 "적용이 안 됨"이 같은 칸에 보인다.
     c.actionability,

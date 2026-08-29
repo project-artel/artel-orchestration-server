@@ -60,6 +60,23 @@ interface IssueRepository : CoroutineCrudRepository<IssueEntity, Long> {
     ): Flow<IssueEntity>
 
     /**
+     * 이 이슈가 속한 프로젝트.
+     *
+     * 이슈에는 프로젝트가 없다 — 실행과 시나리오를 거쳐야 닿는다. 내보내기 경로가 프로젝트의 tracker
+     * `link` 를 찾으려면 이 한 걸음이 필요하고, 그 경로에는 사용자가 없으므로(agent 가 부른다)
+     * 멤버십 조인을 하지 않는다. 인가는 부르는 쪽이 이미 판정했거나(수동) 판정할 대상이 없다(자동).
+     */
+    @Query(
+        """
+        SELECT ts.project_id FROM issue i
+        JOIN qa_try qt ON qt.id = i.qa_try_id
+        JOIN test_scenario ts ON ts.id = qt.test_scenario_id
+        WHERE i.id = :issueId
+        """
+    )
+    suspend fun findProjectIdByIssueId(issueId: Long): Long?
+
+    /**
      * 해결 표시. `@Modifying`이 있어야 영향 행 수가 돌아온다(`QaTryRepository.transition`과 동일).
      *
      * `WHERE status = 'OPEN'`이라 이미 해결된 이슈에는 0행이 걸리고, 서비스는 그것을 멱등 성공으로

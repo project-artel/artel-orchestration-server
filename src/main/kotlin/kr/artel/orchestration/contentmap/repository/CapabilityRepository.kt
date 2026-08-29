@@ -96,7 +96,7 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
     @Query(
         """
         SELECT c.scene_id, c.id AS capability_id, c.summary, c.status, c.origin, c.verification,
-               c.actionability, c.observability, c.applicability, c.interaction
+               c.scene_presence, c.actionability, c.observability, c.applicability, c.interaction
         FROM capability c
         JOIN scene s ON s.id = c.scene_id
         WHERE s.content_map_id = :contentMapId AND c.merged_into IS NULL
@@ -121,16 +121,19 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
     @Query(
         """
         INSERT INTO capability (
-            scene_id, content_map_id, capability_key, origin, verification, summary, given_text,
-            control_selector, control_path, control_label, spawned_by_field, spawned_by_scene_path,
-            interaction, input_key, input_phase, actionability, observability, applicability
+            scene_id, content_map_id, capability_key, origin, verification, scene_presence, summary,
+            given_text, control_selector, control_path, control_label, spawned_by_field,
+            spawned_by_scene_path, interaction, input_key, input_phase, actionability, observability,
+            applicability
         ) VALUES (
-            :sceneId, :contentMapId, :capabilityKey, 'evidence', :verification, :summary, :givenText,
-            :controlSelector, :controlPath, :controlLabel, :spawnedByField, :spawnedByScenePath,
-            :interaction, :inputKey, :inputPhase, :actionability, :observability, :applicability
+            :sceneId, :contentMapId, :capabilityKey, 'evidence', :verification, :scenePresence, :summary,
+            :givenText, :controlSelector, :controlPath, :controlLabel, :spawnedByField,
+            :spawnedByScenePath, :interaction, :inputKey, :inputPhase, :actionability, :observability,
+            :applicability
         )
         ON CONFLICT (content_map_id, capability_key) DO UPDATE SET
             scene_id = EXCLUDED.scene_id,
+            scene_presence = EXCLUDED.scene_presence,
             summary = EXCLUDED.summary,
             given_text = EXCLUDED.given_text,
             control_selector = EXCLUDED.control_selector,
@@ -153,6 +156,7 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
         contentMapId: Long,
         capabilityKey: String,
         verification: String,
+        scenePresence: String,
         summary: String,
         givenText: String?,
         controlSelector: String?,

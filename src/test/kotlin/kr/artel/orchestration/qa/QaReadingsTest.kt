@@ -17,6 +17,8 @@ import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
@@ -51,6 +53,28 @@ class QaReadingsTest {
     @Autowired private lateinit var scenarios: TestScenarioRepository
     @Autowired private lateinit var testRuns: TestRunRepository
     @Autowired private lateinit var db: DatabaseClient
+
+    /**
+     * 이 스위트가 남긴 행을 치운다.
+     *
+     * 없으면 `newTry` · `newRun` 이 만든 `qa_try` · `qa_run` 이 스위트 끝까지 살아남아, **뒤에 도는
+     * 다른 클래스의** `DELETE FROM app_user` · `DELETE FROM game_instance` 가
+     * `qa_try_started_by_fkey` 같은 제약으로 막힌다. 실패가 이 파일이 아니라 남의 파일에서 나므로
+     * 원인을 찾기 어렵고, 클래스 실행 순서가 바뀔 때마다 피해자가 달라진다.
+     *
+     * 리액티브 트랜잭션은 롤백되지 않고 DB 를 공유하므로 FK 순서대로 직접 비운다.
+     */
+    @BeforeEach
+    @AfterEach
+    fun clean(): Unit = runBlocking {
+        tries.deleteAll()
+        runs.deleteAll()
+        testRuns.deleteAll()
+        gameInstances.deleteAll()
+        scenarios.deleteAll()
+        projects.deleteAll()
+        db.sql("DELETE FROM app_user WHERE display_name = 'readings'").then().block()
+    }
 
     private val objectMapper = ObjectMapper()
 

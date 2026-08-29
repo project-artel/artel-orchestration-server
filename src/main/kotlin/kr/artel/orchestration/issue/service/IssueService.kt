@@ -14,6 +14,8 @@ import kr.artel.orchestration.issue.entity.IssueStatus
 import kr.artel.orchestration.issue.repository.IssueRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.tracker.dto.IssueTrackerResponse
+import kr.artel.orchestration.tracker.service.IssueTrackerSyncService
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import java.nio.charset.StandardCharsets
@@ -46,6 +48,7 @@ class IssueService(
     private val issueRepository: IssueRepository,
     private val qaTryRepository: QaTryRepository,
     private val projectAccess: ProjectAccessService,
+    private val trackerSync: IssueTrackerSyncService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -90,16 +93,25 @@ class IssueService(
             createdAt = now,
             updatedAt = now
         )
+        var created = true
         val saved = try {
             issueRepository.save(entity)
         } catch (error: DataIntegrityViolationException) {
             // messageId로 멱등 흡수: 재전송된 프레임이면 유니크 제약 위반을 기존 행으로 되돌린다.
             if (messageId == null) throw error
+            created = false
             issueRepository.findByQaTryIdAndMessageId(qaTryId, messageId) ?: throw error
         }
+        val id = requireNotNull(saved.id)
+        // 새 행일 때만 외부 tracker 로 내보낸다. 재전송으로 흡수된 프레임을 다시 태우면 같은 일을
+        // 두 번 하게 되고, 그것이 무해한 것은 `claim` 덕분이지 여기가 옳아서가 아니다.
+        //
+        // ⚠️ **결과를 기다리지 않는다.** 내보내기는 별도 scope 에서 돌고 실패는 로그로만 남는다 —
+        // GitHub 이 죽어 있어도 QA 런과 agent 응답은 그대로 간다.
+        if (created) trackerSync.launchAutoSync(id)
         // 저장된 행의 id를 돌려준다(ARTEL-366). 재전송이면 **첫 번째 보고의 id**다 — 그래야 같은
         // 프레임을 두 번 보낸 Agent가 두 번 다 같은 답을 받는다.
-        return requireNotNull(saved.id)
+        return id
     }
 
     /**
@@ -147,13 +159,19 @@ class IssueService(
     suspend fun resolve(issueId: Long, userId: Long) {
         requireAccessible(issueId, userId)
         val now = Instant.now(clock)
-        issueRepository.resolve(issueId, resolvedAt = now, resolvedBy = userId, updatedAt = now)
+        val changed =
+            issueRepository.resolve(issueId, resolvedAt = now, resolvedBy = userId, updatedAt = now)
+        // 실제로 상태가 바뀐 경우에만 외부 이슈를 건드린다. 이미 해결된 이슈에 재요청이 오면 저쪽에도
+        // 아무 일이 없어야 한다. 실패해도 이 응답은 성공이다 — 사람이 누른 전이가 GitHub 때문에
+        // 실패하면 안 된다.
+        if (changed == 1) trackerSync.launchResolved(issueId)
     }
 
     /** 해결 표시를 되돌린다. 이미 미해결이면 그대로 성공한다([resolve]와 같은 이유). */
     suspend fun reopen(issueId: Long, userId: Long) {
         requireAccessible(issueId, userId)
-        issueRepository.reopen(issueId, updatedAt = Instant.now(clock))
+        val changed = issueRepository.reopen(issueId, updatedAt = Instant.now(clock))
+        if (changed == 1) trackerSync.launchReopened(issueId)
     }
 
     /**
@@ -198,17 +216,19 @@ class IssueService(
      * `size + 1`을 요청해두고 넘치면 잘라내는 방식이라, "다음이 있나"를 세는 별도 count 질의가
      * 필요 없다.
      */
-    private fun page(rows: List<IssueEntity>, size: Int): IssuePageResponse {
+    private suspend fun page(rows: List<IssueEntity>, size: Int): IssuePageResponse {
         val hasMore = rows.size > size
         val items = if (hasMore) rows.take(size) else rows
+        // 한 페이지의 tracker 상태를 한 번에 읽는다. 줄마다 조회하면 N+1 이 된다.
+        val trackers = trackerSync.trackersOf(items.mapNotNull { it.id })
         return IssuePageResponse(
-            items = items.map { it.toResponse() },
+            items = items.map { it.toResponse(trackers[it.id]) },
             nextBeforeId = if (hasMore) items.lastOrNull()?.id?.toString() else null,
             hasMore = hasMore
         )
     }
 
-    private fun IssueEntity.toResponse() = IssueResponse(
+    private fun IssueEntity.toResponse(tracker: IssueTrackerResponse? = null) = IssueResponse(
         id = requireNotNull(id).toString(),
         qaTryId = qaTryId.toString(),
         severity = severity,
@@ -218,6 +238,7 @@ class IssueService(
         reportedAt = reportedAt,
         createdAt = createdAt,
         resolvedAt = resolvedAt,
-        resolvedBy = resolvedBy?.toString()
+        resolvedBy = resolvedBy?.toString(),
+        tracker = tracker
     )
 }

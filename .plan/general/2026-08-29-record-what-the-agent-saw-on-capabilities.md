@@ -45,7 +45,7 @@ frame 이다(ARTEL-331 이 정한 계약).
 - [ ] **Step 0: Recon** — `QaAgentInboundRouter` 의 쓰기 경로(`routeKnowledgeMutation` ·
       `answerWrite` · `rejectWrite`), `docs/screen-selector-frames.md` 의 문서 모양,
       `capability` · `capability_observation` · `capability_inference` 의 제약
-- [ ] **Step 1: 마이그레이션 V65**
+- [ ] **Step 1: 마이그레이션 V71**
   - `capability_observation` 에 agent 의 문장이 앉을 자리 — `source` · `verdict` · `rationale` ·
     `capture_id` · `qa_try_id` · `agent_message_id`
   - `action_method` · `fired` 의 NOT NULL 해제 + `source = 'pulse-diff'` 행에는 그대로 요구하는 CHECK
