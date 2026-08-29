@@ -287,7 +287,7 @@ class ContentMapViewService(
      * 판단이고, 같은 문서를 다시 적재해도 흔들리지 않는다.
      */
     private suspend fun stepsByScene(contentMapId: Long): Map<Long, List<SceneStepResponse>> =
-        contentMaps.findCapabilityRows(contentMapId).toList()
+        contentMaps.findStepCapabilityRows(contentMapId).toList()
             .sortedWith(
                 compareBy(
                     { it.capabilityId },

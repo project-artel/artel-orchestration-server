@@ -90,7 +90,7 @@ class SceneContextQueryCountTest {
 
         // 각각 정확히 한 번. "한 번 이하"로 느슨하게 잡으면 씬마다 도는 구현이 그대로 통과한다.
         verify(contentMaps, times(1)).findByGameBuildId(buildId)
-        verify(contentMaps, times(1)).findCapabilityRows(mapId)
+        verify(contentMaps, times(1)).findAllCapabilityRows(mapId)
         verify(scenes, times(1)).findByContentMapIdOrderByNameAsc(mapId)
         verify(anchoredKnowledge, times(1)).findAnchoredKnowledge(projectId, null)
         verifyNoMoreQueries()
@@ -98,7 +98,7 @@ class SceneContextQueryCountTest {
 
     /**
      * 위에서 센 넷 말고는 아무것도 부르지 않았음을 못박는다. 이것이 없으면 씬마다 도는 새 질의가
-     * 다른 메서드로 들어올 때 통과한다 — 예컨대 `findCapabilityRowsByScene` 은 씬 이름을 받으므로
+     * 다른 메서드로 들어올 때 통과한다 — 예컨대 `findStepCapabilityRowsByScene` 은 씬 이름을 받으므로
      * 정확히 그 회귀의 모양이다.
      */
     private fun verifyNoMoreQueries() {

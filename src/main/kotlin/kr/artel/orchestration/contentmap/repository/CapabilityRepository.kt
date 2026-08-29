@@ -51,10 +51,13 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
     /**
      * 씬별 상태 분포. **뷰가 아니라 `capability` 를 직접 센다.**
      *
-     * `v_content_map_capability` 로는 답할 수 없는 질문이다 — 그 뷰는 `status <> 'not-a-step'` 으로
-     * 이미 걸러 내므로 `not_a_step` 이 구조적으로 0 이고, 씬별 합이 지도의 기능 총수와 어긋난다.
-     * 뷰가 쓰는 나머지 필터(`merged_into IS NULL`)만 같이 두어, `total - not_a_step` 이 뷰의 행
-     * 수와 같아지게 한다.
+     * `v_content_map_capability` 로도 셀 수 있지만 그러지 않는다 — 뷰는 `capability_evidence` 를
+     * LEFT JOIN 하고 그 조인을 접는 장치가 없어, `evidence` 가 기능당 여러 행이 되는 날 카운트가
+     * 조용히 부풀어 오른다. 뷰가 쓰는 필터(`merged_into IS NULL`)는 같이 둔다.
+     *
+     * V72 로 뷰에서 `status <> 'not-a-step'` 이 빠져 `total` 은 이제 뷰의 행 수와 같다. 그 필터는
+     * [ContentMapRepository.findStepCapabilityRows] 로 내려갔고, `total - not_a_step` 이 그 질의의
+     * 행 수와 같다.
      *
      * Kotlin 에서 [findEvidenceCapabilitiesOfMap] 을 훑어 세지 않는 이유: 정수 다섯 개를 얻으려고
      * 스키마에서 가장 넓은 표의 수백 행을 조건 트리·힌트 파라미터까지 통째로 실어 나른다. `GROUP BY`
@@ -86,9 +89,9 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
      * 다른 집합을 보면 `capabilityList.size == capabilities.total` 이 조용히 깨지고, 화면은 개수와
      * 목록 중 어느 쪽이 거짓인지 알 수 없다. 필터를 손대면 위아래를 함께 손댄다.
      *
-     * `v_content_map_capability` 로 답할 수 없는 것도 [countByScene] 과 같은 이유다. 그 뷰는
-     * `not-a-step` 을 걸러 내고, 이 목록이 설명해야 하는 것이 바로 그 걸러진 행들이다. 조작이 있는
-     * 행의 컨트롤 정보는 이미 `steps` 가 들고 있으므로 여기서는 다시 담지 않는다.
+     * 뷰를 쓰지 않는 것도 [countByScene] 과 같은 이유다 — LEFT JOIN 이 접히지 않아 행이 늘 수
+     * 있고, 그러면 목록 길이가 카운트와 어긋난다. 조작이 있는 행의 컨트롤 정보는 이미 `steps` 가
+     * 들고 있으므로 여기서는 다시 담지 않는다.
      *
      * 판정 세 축을 함께 내는 이유: `status` 는 그 셋에서 유도된 값이라, 축 없이 `status` 만 보면
      * 화면이 "왜 runnable 이 아닌가"를 답할 수 없다.

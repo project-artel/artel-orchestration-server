@@ -179,15 +179,17 @@ class SceneContextIntegrationTest {
         assertThat(scene.knowledge).isEmpty()
     }
 
-    // ------------------------------------------------------------------ 거르기
+    // ------------------------------------------------------------------ 가르기
 
     /**
-     * `not-a-step` 은 나가지 않는다. `v_content_map_capability` 가 이미 걸러 낸 것을 여기서 되살리지
-     * 않는다는 뜻이다 — 그 뷰가 TC 생성기가 읽는 유일한 창구이고, agent 도 같은 기준을 봐야
-     * "TC 에는 없는데 agent 는 하려 드는" 스텝이 생기지 않는다.
+     * `not-a-step` 도 나가되 **다른 목록으로** 나간다(ARTEL-680).
+     *
+     * 실측 472 행 중 418 행이 `not-a-step` 이라, 안 내보내면 agent 는 이 빌드의 89 퍼센트를 못 보고
+     * ARTEL-644 가 연 쓰기 경로에 닿을 대상이 51 행뿐이다. 그렇다고 한 목록에 쏟으면 누를 수 있는
+     * 51 개가 418 개 사이에 묻힌다. 그래서 `status` 로 갈라 두 칸으로 낸다.
      */
     @Test
-    fun `not-a-step 은 나가지 않는다`(): Unit = runBlocking {
+    fun `not-a-step 은 다른 목록으로 나간다`(): Unit = runBlocking {
         val projectId = fixture.newProject()
         val buildId = fixture.newBuild(projectId)
         val mapId = fixture.newContentMap(buildId)
@@ -200,9 +202,13 @@ class SceneContextIntegrationTest {
             actionability = "not-a-step",
         )
 
-        val capabilities = get(projectId, buildId).scenes.single().capabilities
+        val entry = get(projectId, buildId).scenes.single()
 
-        assertThat(capabilities.map { it.summary }).containsExactly("누를 수 있다")
+        assertThat(entry.capabilities.map { it.summary }).containsExactly("누를 수 있다")
+        assertThat(entry.notAStepCapabilities.map { it.summary }).containsExactly("조작이 아니다")
+        // 갈린 축이 `status` 라는 것을 줄 자체가 말한다. 목록 이름만 믿게 두지 않는다.
+        assertThat(entry.notAStepCapabilities.single().status).isEqualTo("not-a-step")
+        assertThat(entry.capabilities.single().status).isNotEqualTo("not-a-step")
     }
 
     /**

@@ -7,12 +7,14 @@ import java.time.Instant
 /**
  * 씬 하나의 기능 상태 분포. `capability` 를 씬으로 묶어 센 결과다.
  *
- * **`v_content_map_capability` 로는 셀 수 없다.** 그 뷰는 `status <> 'not-a-step'` 으로 이미 걸러
- * 내므로 [notAStep] 이 구조적으로 0 이 되고, 씬별 합이 이 지도의 기능 총수와 어긋난다. 실측 문서는
- * 기능 491행 중 뷰가 내주는 것이 51행뿐이라, 뷰로 세면 표가 아홉 배 작아 보인다.
+ * **`v_content_map_capability` 로 세지 않는다.** 그 뷰는 `capability_evidence` 를 LEFT JOIN 하고
+ * 그 조인을 접는 장치가 없어, `evidence` 가 기능당 여러 행이 되는 날 이 수가 조용히 부풀어 오른다.
+ * 뷰가 쓰는 필터(`merged_into IS NULL`)는 그대로 가져간다.
  *
- * 그래서 뷰가 쓰는 나머지 필터(`merged_into IS NULL`)만 그대로 가져가고 `not-a-step` 은 세어서 낸다.
- * 그러면 `total - notAStep` 이 뷰의 행 수와 같다는 관계가 성립한다.
+ * V72 전에는 뷰가 `status <> 'not-a-step'` 도 들고 있어 [notAStep] 이 구조적으로 0 이 됐다. 그
+ * 필터는 이제 [kr.artel.orchestration.contentmap.repository.ContentMapRepository.findStepCapabilityRows]
+ * 에 있고, `total - notAStep` 이 그 질의의 행 수와 같다. 실측 문서는 기능 491행 중 그 질의가
+ * 내주는 것이 51행이다.
  *
  * `origin` 을 가리지 않는다. [kr.artel.orchestration.contentmap.repository.CapabilityRepository.countEvidenceVerification]
  * 은 `origin='evidence'` 로 좁히지만(그 지표의 분모는 정적 분석 성능이다), 이쪽은 화면이 "이 씬에

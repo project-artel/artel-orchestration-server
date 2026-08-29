@@ -208,21 +208,34 @@ class ContentMapIngestGoldenTest {
             )
         ).isZero()
 
-        // 스폰 행은 status 가 'not-a-step' 으로 유도돼 뷰가 거른다. 새면 실행기가 누를 자리 없이
-        // 누르라는 스텝을 받는다.
+        // 스폰 행은 status 가 'not-a-step' 으로 유도돼 TC 창구에서 빠진다. 새면 실행기가 누를 자리
+        // 없이 누르라는 스텝을 받는다.
         assertThat(
             countOfMap(
                 """
                 SELECT count(*) FROM v_content_map_capability v
                 JOIN capability c ON c.id = v.capability_id
                 WHERE v.content_map_id = :id AND c.spawned_by_field IS NOT NULL
+                  AND v.status <> 'not-a-step'
                 """
             )
         ).isZero()
 
-        // 창구에 남는 것은 조작을 든 51 뿐이다(click 24 + press 27). 529 - 478.
+        // TC 창구에 남는 것은 조작을 든 51 뿐이다(click 24 + press 27). 529 - 478.
+        assertThat(
+            countOfMap(
+                """
+                SELECT count(*) FROM v_content_map_capability
+                WHERE content_map_id = :id AND status <> 'not-a-step'
+                """
+            )
+        ).isEqualTo(51)
+
+        // agent 창구는 491 을 다 낸다(ARTEL-680, V72). 529 행에서 접힌 38 행만 빠진 수이고, 그
+        // 안에 `not-a-step` 440 이 들어 있다. 이 수가 51 로 돌아가면 뷰에 필터가 다시 생긴
+        // 것이고, agent 는 440 행을 지목할 수 없게 된다.
         assertThat(countOfMap("SELECT count(*) FROM v_content_map_capability WHERE content_map_id = :id"))
-            .isEqualTo(51)
+            .isEqualTo(491)
     }
 
     /**
