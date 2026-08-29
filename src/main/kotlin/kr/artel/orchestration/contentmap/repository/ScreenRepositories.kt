@@ -3,6 +3,7 @@ package kr.artel.orchestration.contentmap.repository
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.dto.ContentMapSceneEdgeRow
 import kr.artel.orchestration.contentmap.dto.ContentMapScreenTransitionRow
+import kr.artel.orchestration.contentmap.dto.ScreenObservationRow
 import kr.artel.orchestration.contentmap.entity.SceneEdgeEntity
 import kr.artel.orchestration.contentmap.entity.ScreenEntity
 import kr.artel.orchestration.contentmap.entity.ScreenTransitionEntity
@@ -37,6 +38,20 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
      *
      * `@Modifying` 을 붙이지 않는다. 붙이면 Spring Data 가 반환값을 영향받은 행 수로 읽어
      * `RETURNING id` 대신 늘 1 이 돌아온다([SceneEdgeRepository.upsertStatic] 과 같은 함정이다).
+     *
+     * ## `xmax = 0` 이 무엇을 말하나 (ARTEL-456)
+     *
+     * upsert 는 새로 앉힌 것과 다시 본 것을 구분하지 못한다. 그런데 화면 `screen capture` 는 **처음 앉히는
+     * 그 순간에만** 요청해야 한다 — 관측마다 요청하면 같은 화면을 볼 때마다 다시 찍혀서
+     * "처음 것만 남긴다" 가 그 자리에서 무너진다.
+     *
+     * Postgres 는 그 둘을 구분할 수 있다. `RETURNING` 이 내주는 행의 `xmax` 는 INSERT 로 앉은
+     * 튜플에서는 0 이고, `DO UPDATE` 로 간 튜플에서는 그 행을 잠근 트랜잭션 id 라 0 이 아니다.
+     * Postgres 16 에서 같은 문장을 반복해 돌려 확인했다 — 첫 번째만 `t`, 이후는 `f` 이며 한
+     * 트랜잭션 안에서 두 번 돌려도 같다.
+     *
+     * `observed_count = 1` 로 대신 판정하지 않는 이유: 그 값은 `V60` 같은 병합 마이그레이션이
+     * 합산해 다시 쓰는 칸이라, 행이 언제 생겼는가를 그 칸으로 되짚으면 마이그레이션이 답을 바꾼다.
      */
     @Query(
         """
@@ -44,10 +59,32 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
         VALUES (:sceneId, CAST(:discriminator AS jsonb), :qaRunId, 1)
         ON CONFLICT (scene_id, discriminator) DO UPDATE SET
             observed_count = screen.observed_count + 1
-        RETURNING id
+        RETURNING id, (xmax = 0) AS inserted
         """
     )
-    suspend fun observe(sceneId: Long, discriminator: String, qaRunId: Long?): Long
+    suspend fun observe(sceneId: Long, discriminator: String, qaRunId: Long?): ScreenObservationRow
+
+    /**
+     * 이 화면에 `screen capture` 이미지를 묶는다. **이미 그림이 있으면 아무것도 안 한다** (ARTEL-456).
+     *
+     * `WHERE image_object_key IS NULL` 이 "처음 것만 남긴다" 를 SQL 로 강제한다. 코드가 먼저 읽고
+     * 판단하는 형태로 두면, 늦게 도착한 두 번째 결과가 그 사이에 끼어 첫 그림을 덮는다.
+     *
+     * `image_captured_at` 은 `image_object_key` 와 같은 문장에서만 움직인다. 둘은 한 `screen capture` 의
+     * 두 칸이라 따로 쓰면 이미지와 시각이 어긋난다(`V60` 이 병합할 때 든 것과 같은 규율이다).
+     *
+     * @return 실제로 묶은 행 수. 0 이면 이미 그림이 있었거나 그 화면이 사라진 것이다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE screen SET
+            image_object_key = :objectKey,
+            image_captured_at = :capturedAt
+        WHERE id = :screenId AND image_object_key IS NULL
+        """
+    )
+    suspend fun attachImageIfAbsent(screenId: Long, objectKey: String, capturedAt: Instant): Long
 
     /**
      * 이 `discriminator` 의 화면이 이미 있나 (ARTEL-453).

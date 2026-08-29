@@ -221,3 +221,21 @@ data class ScreenCapabilityRow(
     @Column("fired_count")
     val firedCount: Int,
 )
+
+/**
+ * `screen` upsert 한 번의 결과 (ARTEL-456).
+ *
+ * upsert 는 새로 앉힌 것과 다시 본 것을 같은 모양으로 돌려준다. [inserted] 가 그 둘을 가르고,
+ * 화면 `screen capture` 는 **`true` 일 때만** 요청된다 — 관측마다 요청하면 같은 화면이 볼 때마다 다시
+ * 찍혀 "처음 것만 남긴다" 가 무너진다.
+ *
+ * 판정의 근거는 `xmax` 다. 어떻게 읽는지는
+ * [kr.artel.orchestration.contentmap.repository.ScreenRepository.observe] 의 KDoc 에 있다.
+ */
+data class ScreenObservationRow(
+    @Column("id")
+    val id: Long,
+
+    @Column("inserted")
+    val inserted: Boolean,
+)
