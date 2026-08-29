@@ -32,6 +32,12 @@ data class QaAgentSessionContext(
     val promptVersion: String? = null,
     val reasoning: JsonNode? = null,
     val arch: JsonNode? = null,
+    // Agent 가 런 시작에 이 빌드의 scene context 를 한 번 조회하는 데 쓰는 두 값 (ARTEL-676).
+    // 둘 다 있어야 조회가 성립한다 — 경로가 `/internal/projects/{id}/game-builds/{id}/scene-context`
+    // 라서 한쪽만으로는 부를 수 없다. `gameBuildId` 는 인스턴스가 마지막 등록에서 보고한 빌드라
+    // 아직 SDK 가 붙은 적 없는 인스턴스에서는 비고, 그때는 조회 없이 런이 그대로 돈다.
+    val projectId: String? = null,
+    val gameBuildId: String? = null,
     // 런 단위
     val qaRunId: String? = null,
     val scenarios: List<QaAgentScenario>? = null,
