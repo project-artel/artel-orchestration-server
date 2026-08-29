@@ -176,6 +176,23 @@ artel:
     refresh-token-ttl: ${ARTEL_JWT_REFRESH_TTL:P14D}
     refresh-cookie-name: ${ARTEL_REFRESH_COOKIE:artel_refresh_token}
     sdk-refresh-token-ttl: ${ARTEL_SDK_REFRESH_TTL:P90D}
+  # 결함을 외부 이슈 tracker 로 내보내는 연동(ARTEL-671).
+  tracker:
+    # 굳은 PENDING 을 다시 claim 할 수 있게 되기까지의 유예. ⚠️ github.request-timeout 보다 훨씬
+    # 커야 한다 — 정상 호출이 이 유예 안에 끝나지 않으면 같은 결함이 두 번 나간다.
+    claim-stale-after: ${ARTEL_TRACKER_CLAIM_STALE_AFTER:PT5M}
+    github:
+      # 비어 있으면 연동 endpoint 만 503 이고, 기존 QA 경로는 그대로 돈다. 그래서 기동을 막지 않는다.
+      # client-id/secret 은 이슈를 쓰는 데가 아니라 installation_id 의 소유를 확인하는 데 쓴다.
+      app-id: ${ARTEL_GITHUB_APP_ID:}
+      app-slug: ${ARTEL_GITHUB_APP_SLUG:}
+      private-key: ${ARTEL_GITHUB_APP_PRIVATE_KEY:}
+      client-id: ${ARTEL_GITHUB_APP_CLIENT_ID:}
+      client-secret: ${ARTEL_GITHUB_APP_CLIENT_SECRET:}
+      api-base-url: ${ARTEL_GITHUB_API_BASE_URL:https://api.github.com}
+      web-base-url: ${ARTEL_GITHUB_WEB_BASE_URL:https://github.com}
+      token-refresh-skew: ${ARTEL_GITHUB_TOKEN_REFRESH_SKEW:PT5M}
+      request-timeout: ${ARTEL_GITHUB_REQUEST_TIMEOUT:PT15S}
   storage:
     # 기획서 원본을 담을 S3.
     bucket: ${ARTEL_S3_BUCKET:artel-local}

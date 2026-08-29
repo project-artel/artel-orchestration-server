@@ -87,6 +87,45 @@ class SecurityConfig {
         }
         .build()
 
+    /**
+     * GitHub App 설치 복귀 경로 전용 체인.
+     *
+     * 경로는 여전히 **인증 대상**이다(`project.md` 규칙 2 — 무인증 라우트를 `/api/` 아래 두지 않는다).
+     * 이 체인이 따로 있는 이유는 인증 **실패의 모양** 때문이다: 이 요청을 여는 것은 GitHub 에서 돌아온
+     * 브라우저인데, 기본 체인의 jsonAuthenticationEntryPoint 는 `{"code":"unauthorized"}` 라는 JSON을
+     * 화면에 그대로 뱉는다. access 쿠키 수명이 15분이고 App 설치는 조직 승인까지 그보다 오래 걸릴 수
+     * 있어, 실제로 밟게 되는 경로다. 그래서 여기서는 home 으로 302 를 준다.
+     */
+    @Bean
+    @Order(0)
+    fun trackerSetupSecurityWebFilterChain(
+        http: ServerHttpSecurity,
+        properties: AuthProperties
+    ): SecurityWebFilterChain = http
+        .securityMatcher(PathPatternParserServerWebExchangeMatcher("/api/tracker/github/setup"))
+        .csrf { it.disable() }
+        .cors { }
+        .httpBasic { it.disable() }
+        .formLogin { it.disable() }
+        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+        .authorizeExchange { it.anyExchange().authenticated() }
+        .oauth2ResourceServer {
+            it.bearerTokenConverter(cookieTokenConverter(properties))
+            it.jwt { }
+            it.authenticationEntryPoint(trackerSetupEntryPoint(properties))
+        }
+        .exceptionHandling { it.authenticationEntryPoint(trackerSetupEntryPoint(properties)) }
+        .build()
+
+    /** 세션이 없거나 만료됐을 때 JSON 대신 home 으로 되돌린다. 어느 프로젝트인지는 아직 모른다. */
+    private fun trackerSetupEntryPoint(properties: AuthProperties) =
+        ServerAuthenticationEntryPoint { exchange, _ ->
+            exchange.response.statusCode = HttpStatus.FOUND
+            exchange.response.headers.location =
+                URI.create("${properties.frontendOrigin}/projects?tracker=failed")
+            exchange.response.setComplete()
+        }
+
     @Bean
     fun securityWebFilterChain(
         http: ServerHttpSecurity,
@@ -191,6 +230,16 @@ class SecurityConfig {
     @Bean
     fun refreshJwtDecoder(properties: AuthProperties): NimbusReactiveJwtDecoder =
         decoderFor(properties, properties.refreshAudience)
+
+    /**
+     * tracker 설치 `state` 전용 디코더. 세션 토큰을 state 자리에 내밀면 audience가 달라 떨어진다.
+     *
+     * 이 디코더는 필터 체인에 붙지 않는다 — state는 Authorization 자격증명이 아니라 쿼리 파라미터로
+     * 실려 오는 값이라, 검증은 TrackerSetupStateService가 직접 한다.
+     */
+    @Bean
+    fun trackerSetupJwtDecoder(properties: AuthProperties): NimbusReactiveJwtDecoder =
+        decoderFor(properties, properties.trackerSetupAudience)
 
     private fun decoderFor(properties: AuthProperties, audience: String): NimbusReactiveJwtDecoder {
         val key = SecretKeySpec(properties.jwtSecret.toByteArray(Charsets.UTF_8), "HmacSHA256")
