@@ -40,8 +40,8 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
      *
      * ## `xmax = 0` 이 무엇을 말하나 (ARTEL-456)
      *
-     * upsert 는 새로 앉힌 것과 다시 본 것을 구분하지 못한다. 그런데 화면 `capture` 는 **처음 앉히는
-     * 그 순간에만** 청구해야 한다 — 관측마다 청구하면 같은 화면을 볼 때마다 다시 찍혀서
+     * upsert 는 새로 앉힌 것과 다시 본 것을 구분하지 못한다. 그런데 화면 `screen capture` 는 **처음 앉히는
+     * 그 순간에만** 요청해야 한다 — 관측마다 요청하면 같은 화면을 볼 때마다 다시 찍혀서
      * "처음 것만 남긴다" 가 그 자리에서 무너진다.
      *
      * Postgres 는 그 둘을 구분할 수 있다. `RETURNING` 이 내주는 행의 `xmax` 는 INSERT 로 앉은
@@ -64,12 +64,12 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
     suspend fun observe(sceneId: Long, discriminator: String, qaRunId: Long?): ScreenObservationRow
 
     /**
-     * 이 화면에 `capture` 이미지를 묶는다. **이미 그림이 있으면 아무것도 안 한다** (ARTEL-456).
+     * 이 화면에 `screen capture` 이미지를 묶는다. **이미 그림이 있으면 아무것도 안 한다** (ARTEL-456).
      *
      * `WHERE image_object_key IS NULL` 이 "처음 것만 남긴다" 를 SQL 로 강제한다. 코드가 먼저 읽고
      * 판단하는 형태로 두면, 늦게 도착한 두 번째 결과가 그 사이에 끼어 첫 그림을 덮는다.
      *
-     * `image_captured_at` 은 `image_object_key` 와 같은 문장에서만 움직인다. 둘은 한 `capture` 의
+     * `image_captured_at` 은 `image_object_key` 와 같은 문장에서만 움직인다. 둘은 한 `screen capture` 의
      * 두 칸이라 따로 쓰면 이미지와 시각이 어긋난다(`V60` 이 병합할 때 든 것과 같은 규율이다).
      *
      * @return 실제로 묶은 행 수. 0 이면 이미 그림이 있었거나 그 화면이 사라진 것이다.

@@ -52,7 +52,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  *
  * 이 파일이 지키는 것은 셋이다.
  *
- * 1. **처음 앉힐 때만 청구한다.** `ScreenRepository.observe` 는 upsert 라 새로 만든 것과 다시 본
+ * 1. **처음 앉힐 때만 요청한다.** `ScreenRepository.observe` 는 upsert 라 새로 만든 것과 다시 본
  *    것을 구분하지 못한다. 그 구분이 무너지면 화면을 볼 때마다 다시 찍혀서 "처음 것만 남긴다"
  *    가 그 자리에서 무너진다 — 이 이슈에서 틀리기 가장 쉬운 자리라 첫 테스트가 그것이다
  * 2. **결과가 그 화면 행에 남는다.** `image_object_key` 와 `image_captured_at` 이 채워지고,
@@ -89,10 +89,10 @@ class ScreenCaptureTest {
      * **이 이슈가 조용히 틀릴 수 있는 유일한 자리다.**
      *
      * 두 화면을 번갈아 보면 두 화면 모두 upsert 를 세 번씩 지난다. 그 중 새로 앉히는 것은 각각 한
-     * 번뿐이므로 청구도 둘이어야 한다. `observe` 가 insert 와 update 를 가르지 못하면 여섯이 된다.
+     * 번뿐이므로 요청도 둘이어야 한다. `observe` 가 insert 와 update 를 가르지 못하면 여섯이 된다.
      */
     @Test
-    fun `같은 화면을 다시 봐도 capture 를 다시 청구하지 않는다`(): Unit = runBlocking {
+    fun `같은 화면을 다시 봐도 capture 를 다시 요청하지 않는다`(): Unit = runBlocking {
         val world = newWorld()
         val title = newScene(world, "TitleScene")
         newCapability(world, title, CONTINUE)
@@ -104,7 +104,7 @@ class ScreenCaptureTest {
         }
 
         assertThat(screens.findBySceneIdOrderByIdAsc(title).toList()).hasSize(2)
-        // 화면 둘에 청구 둘. 관측 수가 아니라 화면 수를 따라간다.
+        // 화면 둘에 요청 둘. 관측 수가 아니라 화면 수를 따라간다.
         assertThat(sent.captureRequests()).hasSize(2)
         assertThat(sent.captureRequests().map { it.path("id").longValue() }).doesNotHaveDuplicates()
     }
@@ -137,7 +137,7 @@ class ScreenCaptureTest {
      * **처음 것만 남긴다.** 화면이 무엇인지 말하는 그림은 그 화면을 처음 만나 화면이라고 판정한
      * 순간의 것이다.
      *
-     * 청구는 화면당 한 번뿐이지만 서버가 둘이면 각자 한 번씩 청구할 수 있다. 그때 나중 것이 앞
+     * 요청은 화면당 한 번뿐이지만 서버가 둘이면 각자 한 번씩 요청할 수 있다. 그때 나중 것이 앞
      * 그림을 덮지 않는다는 것을 SQL 이 강제한다.
      */
     @Test
@@ -209,7 +209,7 @@ class ScreenCaptureTest {
     /**
      * **agent 도 `capture_screen` 을 보낸다.** 그래서 가르는 축이 action 이름일 수 없다.
      *
-     * 우리가 청구한 적 없는 번호의 프레임은 건드리지 않고 `false` 로 돌려준다 — 그것이 QA 브리지로
+     * 우리가 요청한 적 없는 번호의 프레임은 건드리지 않고 `false` 로 돌려준다 — 그것이 QA 브리지로
      * 가야 agent 의 vision 이 멎지 않는다.
      */
     @Test
@@ -371,7 +371,7 @@ class ScreenCaptureTest {
                 startedAt = now,
             )
         )
-        // 화면 관측은 활성 `qa_run` 을 보고, capture 청구는 활성 `qa_try` 를 본다 — ticket 을 발급하는
+        // 화면 관측은 활성 `qa_run` 을 보고, capture 요청은 활성 `qa_try` 를 본다 — ticket 을 발급하는
         // `QaCaptureService` 가 그것을 보기 때문이다. 둘 다 있어야 실제 런과 같은 모양이 된다.
         val scenario = testScenarios.save(TestScenarioEntity(projectId = project.id!!))
         val qaTry = qaTries.save(

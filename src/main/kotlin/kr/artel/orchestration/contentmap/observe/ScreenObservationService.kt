@@ -169,11 +169,11 @@ class ScreenObservationService(
 
         fold.confirm(candidate, observed.id, sceneId)
 
-        // 화면을 **처음 앉혔을 때만** 그림을 청구한다 (ARTEL-456). 다시 본 화면은 다시 찍지 않고,
+        // 화면을 **처음 앉혔을 때만** 그림을 요청한다 (ARTEL-456). 다시 본 화면은 다시 찍지 않고,
         // 이미 붙은 그림도 바꾸지 않는다 — 화면이 무엇인지 말하는 그림은 그 화면을 처음 만나
         // 화면이라고 판정한 순간의 것이다.
         //
-        // 커밋 **뒤에** 부른다. 트랜잭션 안에 두면 롤백된 화면의 그림을 청구하게 되고, 그 그림은
+        // 커밋 **뒤에** 부른다. 트랜잭션 안에 두면 롤백된 화면의 그림을 요청하게 되고, 그 그림은
         // 존재하지 않는 행을 기다리다 버려진다.
         if (observed.inserted) screenCaptures.request(gameInstanceId, observed.id)
     }

@@ -10,19 +10,19 @@ import java.time.Clock
 import java.time.Instant
 
 /**
- * `ACTION_RESULT` 중 **우리가 청구한 화면 `capture` 의 결과만** 집어 `screen` 행에 묶는다 (ARTEL-456).
+ * `ACTION_RESULT` 중 **우리가 요청한 화면 `screen capture` 의 결과만** 집어 `screen` 행에 묶는다 (ARTEL-456).
  *
  * ## 가르는 축이 번호인 이유
  *
  * `ScanResultRouter` 는 `action` 이름으로 가른다. 여기서는 그럴 수 없다 — **agent 도
- * `capture_screen` 을 보내기 때문에**, 이름으로 가르면 agent 가 시킨 `capture` 의 결과를 가로채
+ * `capture_screen` 을 보내기 때문에**, 이름으로 가르면 agent 가 시킨 `screen capture` 의 결과를 가로채
  * agent 의 vision 이 조용히 멎는다.
  *
  * 그래서 [PendingScreenCaptureRegistry] 에 우리가 넣어 둔 번호의 프레임만 claim 한다. 그 번호는
  * `qa_log` 시퀀스에서 뽑아 어떤 `qa_log.id` 와도 겹치지 않으므로
  * ([ScreenCaptureService.nextActionId]), agent 의 결과가 여기 걸릴 수 없다.
  *
- * [handle] 은 **우리 청구가 아닌 모든 프레임에 대해 `false` 이고 아무것도 하지 않는다.** 파싱
+ * [handle] 은 **우리 요청이 아닌 모든 프레임에 대해 `false` 이고 아무것도 하지 않는다.** 파싱
  * 실패조차 `false` 다 — 이 분기가 QA 쪽 동작을 한 글자도 바꾸지 않게 하려는 것이다.
  *
  * ## objectKey 를 다시 만들지 않는다
@@ -43,7 +43,7 @@ class ScreenCaptureResultRouter(
     private val logger = LoggerFactory.getLogger(ScreenCaptureResultRouter::class.java)
 
     /**
-     * @return 이 프레임이 우리가 청구한 `capture` 의 결과여서 여기서 처리했으면 true. 그 밖에는
+     * @return 이 프레임이 우리가 요청한 `screen capture` 의 결과여서 여기서 처리했으면 true. 그 밖에는
      *   전부 false 이고, 호출자가 지금까지처럼 QA 브리지로 넘긴다.
      */
     suspend fun handle(gameInstanceId: Long, payloadText: String): Boolean {
@@ -59,7 +59,7 @@ class ScreenCaptureResultRouter(
     /**
      * 결과 한 건을 화면에 묶는다. 어느 갈래로 끝나든 `screen` 행은 그대로 남는다.
      *
-     * **`capture` 실패가 화면을 지우지 않는다.** 그림 없는 화면이 화면 없는 지도보다 낫고, 그림이
+     * **`screen capture` 실패가 화면을 지우지 않는다.** 그림 없는 화면이 화면 없는 지도보다 낫고, 그림이
      * 왜 없는지는 이 로그가 답한다.
      */
     private suspend fun attach(capture: PendingScreenCapture, result: JsonNode?) {
@@ -94,8 +94,8 @@ class ScreenCaptureResultRouter(
 
         val attached = screens.attachImageIfAbsent(capture.screenId, objectKey.key, objectKey.capturedAt)
         if (attached == 0L) {
-            // 이미 그림이 있다. 청구는 화면을 앉힐 때 한 번뿐이지만, 서버가 둘이면 각자 한 번씩
-            // 청구할 수 있다. **처음 것을 지킨다** — 화면이 무엇인지 말하는 그림은 처음 것이다.
+            // 이미 그림이 있다. 요청은 화면을 앉힐 때 한 번뿐이지만, 서버가 둘이면 각자 한 번씩
+            // 요청할 수 있다. **처음 것을 지킨다** — 화면이 무엇인지 말하는 그림은 처음 것이다.
             logger.info("이미 그림이 있는 화면이라 두지 않는다 [screenId={}]", capture.screenId)
             return
         }

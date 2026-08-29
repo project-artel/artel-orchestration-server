@@ -89,7 +89,7 @@ dispatch 자체는 왕복이 아니고 pulse 처리를 잡아 두지 않는다. 
       - `ScreenRepository.observe` 가 `ScreenObservationRow(id, inserted)` 를 돌려준다.
       - `ScreenObservationService.upsertScreen` 이 그 값을 트랜잭션 밖으로 들고 나온다.
 
-- [x] **Step 2: capture 를 청구한다**
+- [x] **Step 2: capture 를 요청한다**
       - `contentmap/capture/ScreenCaptureService` — 활성 `qa_try` 를 확인하고 id 를 뽑아
         대기표를 남기고 `capture_screen` 을 보낸다. 실패는 전부 삼킨다.
       - `PendingScreenCaptureRegistry` — id → (screenId, qaTryId, gameInstanceId, 시각).
@@ -129,7 +129,7 @@ dispatch 자체는 왕복이 아니고 pulse 처리를 잡아 두지 않는다. 
   - SDK 가 `capture_screen` 을 지원하지 않는 빌드면 결과가 `success:false` 로 오고 화면에
     그림이 없다. 그것이 정상 동작이다.
 - **Rollback steps:** `ActionResultMessageHandler` 의 한 줄과
-  `ScreenObservationService` 의 청구 한 줄을 되돌리면 관측은 그대로 돌고 그림만 없어진다.
+  `ScreenObservationService` 의 요청 한 줄을 되돌리면 관측은 그대로 돌고 그림만 없어진다.
 
 ## Open Questions
 
