@@ -382,6 +382,10 @@ class QaTryService(
         val context = QaAgentSessionContext(
             qaTryId = qaTryId.toString(),
             gameInstanceId = gameInstanceId.toString(),
+            // 인스턴스에서 그대로 온다 (ARTEL-676). `lastGameBuildId` 는 SDK 가 붙은 적 없는
+            // 인스턴스에서 비고, 그때는 Agent 가 조회 없이 런을 시작한다 — 런을 막지 않는다.
+            projectId = instance.projectId.toString(),
+            gameBuildId = instance.lastGameBuildId?.toString(),
             testScenarioId = testScenarioId.toString(),
             scenario = objectMapper.valueToTree(scenario.toDraft(objectMapper)),
             model = settings.model,
@@ -468,6 +472,9 @@ class QaTryService(
         }
         val context = QaAgentSessionContext(
             gameInstanceId = gameInstanceId.toString(),
+            // 단일 시나리오 경로와 같다 (ARTEL-676).
+            projectId = instance.projectId.toString(),
+            gameBuildId = instance.lastGameBuildId?.toString(),
             qaRunId = requireNotNull(started.qaRun.id).toString(),
             scenarios = agentScenarios,
             model = settings.model,

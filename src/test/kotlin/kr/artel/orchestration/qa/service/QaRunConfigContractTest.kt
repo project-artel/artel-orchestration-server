@@ -21,7 +21,9 @@ class QaRunConfigContractTest {
         model: String? = null,
         language: String? = null,
         promptVersion: String? = null,
-        arch: String? = null
+        arch: String? = null,
+        projectId: String? = null,
+        gameBuildId: String? = null
     ) = QaSessionOpenRequest(
         model = model,
         reasoning = null,
@@ -31,6 +33,8 @@ class QaRunConfigContractTest {
         context = QaSessionOpenContext(
             qaTryId = "7",
             gameInstanceId = "1",
+            projectId = projectId,
+            gameBuildId = gameBuildId,
             testScenarioId = "1",
             scenario = objectMapper.createObjectNode()
         )
@@ -63,6 +67,26 @@ class QaRunConfigContractTest {
         // An explicit null would be Orchestration overriding the Agent's default
         // with nothing; absence lets the Agent apply its own.
         assertThat(json).doesNotContain("prompt_version", "language", "arch", "\"model\"")
+    }
+
+    @Test
+    fun `sends the ids the agent looks the scene context up with`() {
+        val json = objectMapper.writeValueAsString(
+            openRequest(projectId = "3", gameBuildId = "42")
+        )
+
+        assertThat(json).contains("\"project_id\":\"3\"", "\"game_build_id\":\"42\"")
+        assertThat(json).doesNotContain("gameBuildId")
+    }
+
+    @Test
+    fun `omits the build id an instance never reported`() {
+        val json = objectMapper.writeValueAsString(openRequest(projectId = "3"))
+
+        // 조회는 두 값을 모두 요구한다. 빌드를 모르는 인스턴스에서는 필드가 빠지고,
+        // Agent 는 조회를 건너뛴 채 런을 시작한다 — 세션을 여는 것 자체는 막지 않는다.
+        assertThat(json).contains("\"project_id\":\"3\"")
+        assertThat(json).doesNotContain("game_build_id")
     }
 
     @Test
