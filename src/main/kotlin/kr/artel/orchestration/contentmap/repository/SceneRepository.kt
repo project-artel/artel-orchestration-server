@@ -54,4 +54,32 @@ interface SceneScreenSelectorRepository : CoroutineCrudRepository<SceneScreenSel
         """
     )
     suspend fun seedFromControlSelector(sceneId: Long, pattern: String): Long
+
+    /**
+     * agent 나 사람이 판단한 항목을 넣거나 덮는다 (ARTEL-655).
+     *
+     * 키가 (scene, match_kind, pattern, source) 라, 같은 출처가 같은 대상에 대해 말을 바꾸면
+     * **덮는다.** 다른 출처의 행은 그대로 남는다 — 사람이 agent 를 덮는 것이 아니라 이기는 것이라,
+     * 사람 항목을 지웠을 때 agent 의 판단이 되살아나야 한다(V60 1절).
+     *
+     * `reason` 을 저장하지 않는다. `scene_screen_selector` 에 그 칸이 없고 이 이슈가 칸을 더하지
+     * 않는 것은, 사유가 답이 오간 자리(`qa_log` 의 프레임)에 이미 원문으로 남아 있기 때문이다.
+     * 같은 글을 두 곳에 두면 한쪽만 지워졌을 때 어느 쪽이 참인지 가릴 수 없다.
+     */
+    @Modifying
+    @Query(
+        """
+        INSERT INTO scene_screen_selector (scene_id, match_kind, pattern, source, screen_defining)
+        VALUES (:sceneId, :matchKind, :pattern, :source, :screenDefining)
+        ON CONFLICT (scene_id, match_kind, pattern, source) DO UPDATE SET
+            screen_defining = EXCLUDED.screen_defining
+        """
+    )
+    suspend fun upsertRule(
+        sceneId: Long,
+        matchKind: String,
+        pattern: String,
+        source: String,
+        screenDefining: Boolean,
+    ): Long
 }

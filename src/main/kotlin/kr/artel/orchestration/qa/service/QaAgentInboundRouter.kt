@@ -5,6 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.contentmap.observe.ScreenSelectorFrames
+import kr.artel.orchestration.contentmap.observe.ScreenSelectorProposalService
+import kr.artel.orchestration.contentmap.observe.ScreenSelectorResultPayload
+import kr.artel.orchestration.contentmap.observe.ScreenSelectorRulePayload
+import kr.artel.orchestration.contentmap.observe.ScreenSelectorVerdictPayload
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.service.IssueService
@@ -101,7 +106,8 @@ private val TOOL_TYPES = setOf("TOOL", "TOOL_RESULT")
 private val SUPPORTED_TYPES =
     setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH", "KNOWLEDGE_EXPAND") +
         TOOL_TYPES +
-        KNOWLEDGE_WRITE_TYPES
+        KNOWLEDGE_WRITE_TYPES +
+        ScreenSelectorFrames.INBOUND
 
 /**
  * 스텝 판정 STATUS가 인용을 싣는 필드(ARTEL-293). Agent의 `report_step`이 채운다.
@@ -127,6 +133,7 @@ class QaAgentInboundRouter(
     private val knowledgeSearchService: KnowledgeSearchService,
     private val knowledgeCitationService: KnowledgeCitationService,
     private val agentPort: QaAgentPort,
+    private val screenSelectorProposals: ScreenSelectorProposalService,
     private val gameInstanceRepository: GameInstanceRepository,
     private val grader: ExpectedStepsGrader,
     private val objectMapper: ObjectMapper,
@@ -175,6 +182,13 @@ class QaAgentInboundRouter(
         if (envelope.type == "KNOWLEDGE_EXPAND") {
             val qaTry = activeTry(qaTryId) ?: return
             routeKnowledgeExpand(qaTryId, qaTry, envelope)
+            return
+        }
+        // 화면 판정 목록을 고치는 둘도 표시용 message 대신 구조화된 payload를 싣는다(ARTEL-655).
+        // 아래 message 필수 가드보다 앞서야 하는 이유가 KNOWLEDGE_SEARCH와 같다.
+        if (envelope.type in ScreenSelectorFrames.INBOUND) {
+            val qaTry = activeTry(qaTryId) ?: return
+            routeScreenSelector(qaTryId, qaTry, envelope)
             return
         }
         // 이슈는 표시용 `message` 대신 `title`을 담는다. 나머지 타입은 모두 타임라인에 뜨는
@@ -927,6 +941,80 @@ class QaAgentInboundRouter(
      * 전송 실패는 여기서 멈춘다. 위로 던지면 receive 체인이 끊겨 WS가 닫히는데, 그것은 "응답 하나를
      * 못 보냈다"에 대한 대가로 지나치다.
      */
+    /**
+     * 화면 판정 목록을 고치는 프레임 둘을 적용하고 결과를 돌려준다 (ARTEL-655).
+     *
+     * `SCREEN_SELECTOR_VERDICT` 는 제안에 대한 답이고 `SCREEN_SELECTOR_RULE` 은 QA agent 의 tool 이
+     * 스스로 보내는 것이다. **한 자리에서 받는 이유**는 저장되는 것이 같은 표의 같은 행 모양이기
+     * 때문이다 — 무엇을 저장할 수 있고 무엇을 거절하는지가 두 곳에 갈리면, 한쪽으로 온 잘못된
+     * 항목만 조용히 통과한다.
+     *
+     * 답을 기다리는 쪽이 tool 이므로 실패도 반드시 프레임으로 답한다. 로그만 남기면 그 tool 이
+     * 매달린다([routeKnowledgeSearch] 와 같은 규율).
+     */
+    private suspend fun routeScreenSelector(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope
+    ) {
+        val inbound = logService.append(
+            qaTryId = qaTryId,
+            direction = "AGENT_TO_ORCHE",
+            type = envelope.type,
+            messageId = envelope.messageId,
+            correlationId = envelope.correlationId,
+            message = "Screen selector list update received.",
+            payload = envelope.payload
+        )
+        logService.publish(inbound)
+
+        val outcome = try {
+            if (envelope.type == ScreenSelectorFrames.VERDICT) {
+                val payload = objectMapper.treeToValue(envelope.payload, ScreenSelectorVerdictPayload::class.java)
+                screenSelectorProposals.applyVerdict(envelope.correlationId, payload)
+            } else {
+                val payload = objectMapper.treeToValue(envelope.payload, ScreenSelectorRulePayload::class.java)
+                screenSelectorProposals.applyRule(qaTry.gameInstanceId, payload)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // payload 파싱 실패와 DB 오류가 여기로 온다. 런 전체를 죽이지 않는다 — 목록은 관측을
+            // 더 잘 가르자는 것이지 런의 전제가 아니다.
+            val sessionId = qaTry.agentSessionId
+            val reason = "${envelope.type} failed: ${error.message}"
+            if (sessionId == null) appendError(qaTryId, envelope, reason)
+            else answerWithError(qaTryId, sessionId, envelope, reason)
+            return
+        }
+
+        val result = objectMapper.valueToTree<JsonNode>(
+            ScreenSelectorResultPayload(
+                type = envelope.type,
+                sceneId = outcome.sceneId?.toString(),
+                accepted = outcome.accepted,
+                rejected = outcome.rejected,
+                foldedScreens = outcome.foldedScreens,
+            )
+        )
+        // 결과를 타임라인에도 남긴다. 무엇이 거절됐는지가 "고쳤는데 왜 안 바뀌나" 의 답이고,
+        // 그 답이 봉투에만 있으면 런이 끝난 뒤에는 아무 데도 없다.
+        val outbound = logService.append(
+            qaTryId = qaTryId,
+            direction = "ORCHE_TO_AGENT",
+            type = ScreenSelectorFrames.RESULT,
+            correlationId = envelope.messageId,
+            message = "Screen selector list updated: " +
+                "${outcome.accepted.size} accepted, ${outcome.rejected.size} rejected, " +
+                "${outcome.foldedScreens} screen(s) folded.",
+            payload = result
+        )
+        logService.publish(outbound)
+
+        val sessionId = qaTry.agentSessionId ?: return
+        sendToAgent(qaTryId, sessionId, ScreenSelectorFrames.RESULT, envelope.messageId, result)
+    }
+
     private suspend fun sendToAgent(
         qaTryId: Long,
         sessionId: String,
