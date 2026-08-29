@@ -403,9 +403,31 @@ class ScenarioPathService(
     private suspend fun automatic(owners: List<Pair<CapabilityEffectEntity, CapabilityEntity>>): Writer {
         val scenes = owners
             .filterNot { (_, capability) -> instructable(capability) }
+            .filter { (effect, _) -> tells(effect.detail) }
             .mapNotNull { (_, capability) -> sceneRepository.findById(capability.sceneId)?.name }
             .distinct()
         return if (scenes.isEmpty()) Writer.None else Writer.Automatic(scenes)
+    }
+
+    /**
+     * 이 효과가 값이 **무엇이 되는지** 말하나(ARTEL-649).
+     *
+     * [makes] 와 같은 뿌리다 — 다른 이름을 옮겨 적은 `detail` 은 그 값이 무엇이 될지 말하지 않는다.
+     * 여기서 그것까지 세면 **엉뚱한 화면을 짚는다.** 실측(런 214)에서 `StagePosition` 의 오름을
+     * `TurnBattleScene · Map_scene 에서 저절로 바뀐다`고 답했다. 맵 쪽은 `SelectStage()` 가
+     * `stagePosition` 이라는 **지역 이름을 옮겨 적은 것**이라 값을 올리지 않는다. 그런데 지금 서
+     * 있는 화면이 그 목록에 들어가는 바람에 "지금 그 화면에 있다"로 끝났고, 전투까지 가는 길을
+     * 스텝으로 내지 못했다 — 아는 절반을 그렇게 잃는다.
+     *
+     * 리터럴(숫자 · 따옴표 · 참거짓)과 증감만이 값이 무엇이 되는지 말한다.
+     */
+    private fun tells(detail: String?): Boolean {
+        val made = detail?.trim().orEmpty()
+        if (made.isEmpty()) return false
+        return increment(made) != null ||
+            made.toDoubleOrNull() != null ||
+            made.startsWith("\"") || made.startsWith("'") ||
+            made == "true" || made == "false"
     }
 
     /** 값을 **올려야 하나 내려야 하나.** 크기는 여기서 묻지 않는다 — 방향만이 답이다. */
@@ -425,16 +447,25 @@ class ScenarioPathService(
     /**
      * 어느 쪽으로 밀어야 [guard] 를 만족하나. 알 수 없으면 null.
      *
-     * 지금 값을 모르면 방향도 모른다 — 그때는 고르지 않고 있는 것을 쓴다(예전과 같다).
+     * **부등호는 지금 값을 몰라도 방향을 안다**(ARTEL-649). `>= 2` 를 만족시키는 길은 올리는 것
+     * 하나뿐이고, 지금이 0이든 1이든 그 답은 달라지지 않는다. 지금 값이 있어야 하는 것은 `==`
+     * 하나다 — 목표가 위에 있는지 아래에 있는지가 거기서만 갈린다.
+     *
+     * 앞서 이 함수는 지금 값을 못 읽으면 무조건 방향을 모른다고 답했다. 대가가 실측(런 213)에
+     * 그대로 나왔다. `StagePosition >= 2` 는 전제가 `>=` 라 확정값이 없어 늘 "모름"이었고,
+     * 방향을 모르면 있는 증감을 쓴다는 규칙에 걸려 **타이틀의 `-1` 을 쓰는 버튼**이 그 값을
+     * 만드는 조작으로 뽑혔다. 그래서 전투가 필요한 자리가 `KNOWN` 으로 답해졌고, 저작은 전투를
+     * 한 번도 안 끼운 시나리오를 냈다 — 되살린 ARTEL-637 이 이 한 줄에 가려 작동하지 못했다.
      */
     private fun push(guard: Guard, have: String?): Push? {
-        val current = have?.toDoubleOrNull() ?: return null
         val target = guard.value.toDoubleOrNull() ?: return null
         return when (guard.operator) {
             ">", ">=" -> Push.UP
             "<", "<=" -> Push.DOWN
-            // `==` 는 지금 값이 어느 쪽에 있는지가 방향이다.
-            "==" -> if (target > current) Push.UP else if (target < current) Push.DOWN else null
+            // `==` 는 지금 값이 어느 쪽에 있는지가 방향이다. 그것만 지금 값을 요구한다.
+            "==" -> have?.toDoubleOrNull()?.let {
+                if (target > it) Push.UP else if (target < it) Push.DOWN else null
+            }
             // `!=` 는 어느 쪽으로 밀어도 벗어난다. 고를 근거가 없다.
             else -> null
         }

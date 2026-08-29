@@ -464,6 +464,71 @@ class ScenarioPathServiceTest {
         assertThat(answer.note).contains("TurnBattleScene")
     }
 
+    /**
+     * **올리라는 요구에 내리는 조작을 집지 않는다**(ARTEL-649).
+     *
+     * 실측(런 213)에서 `StagePosition >= 1 → >= 2` 가 `KNOWN` 으로 답해졌다. 전제가 `>=` 라
+     * 지금 값이 확정되지 않는데, 방향을 지금 값에서만 읽던 탓에 "방향을 모르니 있는 증감을
+     * 쓴다"로 떨어졌고 타이틀의 `-1` 을 쓰는 버튼이 뽑혔다. 부등호는 지금 값을 몰라도 방향을
+     * 안다 — 그것을 안 보면 전투가 필요한 자리가 클릭 한 번으로 답해진다.
+     */
+    @Test
+    fun `부등호는 지금 값을 몰라도 올리는 쪽을 고른다`(): Unit = runBlocking {
+        val reset = capability(mapSceneId, interaction = "click", label = "새 게임")
+        effect(reset, target = "MapMove.StagePosition", detail = "-1")
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 1"),
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 2"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.capabilityIds).doesNotContain(reset)
+        assertThat(answer.blockedBy).isEqualTo("StagePosition")
+    }
+
+    /**
+     * **다른 이름을 옮겨 적은 쓰기는 화면을 짚을 근거가 못 된다**(ARTEL-649).
+     *
+     * 실측(런 214)에서 `StagePosition` 의 오름을 `TurnBattleScene · Map_scene 에서 저절로
+     * 바뀐다`고 답했다. 맵 쪽은 `SelectStage()` 가 지역 이름을 옮겨 적은 것이라 값을 올리지
+     * 않는데, 지금 서 있는 화면이 목록에 들어가는 바람에 전투까지 가는 길을 스텝으로 내지 못했다.
+     */
+    @Test
+    fun `값이 무엇이 되는지 말하지 않는 쓰기는 그 화면을 짚지 않는다`(): Unit = runBlocking {
+        val here = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = mapSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "지역 이름을 옮겨 적는다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(here, target = "MapMove.StagePosition", detail = "stagePosition")
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 1"),
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 2"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.note).contains("TurnBattleScene").doesNotContain("Map_scene")
+    }
+
     // ---- 조작 자신의 사전조건 --------------------------------------------------------
 
     /**
