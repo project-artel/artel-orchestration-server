@@ -3,6 +3,8 @@ package kr.artel.orchestration.contentmap.observe
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.contentmap.capture.ScreenCaptureService
+import kr.artel.orchestration.contentmap.dto.ScreenObservationRow
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import kr.artel.orchestration.contentmap.entity.ScreenSelectorMatch
 import kr.artel.orchestration.contentmap.entity.ScreenSelectorSource
@@ -28,14 +30,14 @@ import java.util.concurrent.ConcurrentHashMap
  * `pulse` 에서 화면을 가르고 화면 전이를 남긴다 (ARTEL-453).
  *
  * QA 런 전에는 `screen` 이 0행이다 — 정적 분석은 화면을 모른다. 이것이 그 0을 깨는 자리이고,
- * 세 가지가 이 행들을 기다린다: 읽기 API(ARTEL-596) · 다이어그램(ARTEL-597) ·
- * 화면 캡처(ARTEL-595 · ARTEL-456).
+ * 둘이 이 행들을 기다린다: 읽기 API(ARTEL-596) · 다이어그램(ARTEL-597).
  *
  * ```
  * PULSE → ScreenFold(fold + discriminator) → settle → screen
  *                                             → screen_capability (씬 목록의 부분집합)
  *                                             → screen_transition (관측만)
  *                                             → scene_edge (씬을 넘었으면 verified / runtime)
+ *                                             → capture_screen (처음 앉힐 때만, ARTEL-456)
  * ```
  *
  * ## ARTEL-450 이 없어서 못 채우는 것
@@ -70,6 +72,7 @@ class ScreenObservationService(
     private val screenCapabilities: ScreenCapabilityRepository,
     private val transitions: ScreenTransitionRepository,
     private val sceneEdges: SceneEdgeRepository,
+    private val screenCaptures: ScreenCaptureService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock,
@@ -143,8 +146,9 @@ class ScreenObservationService(
         val discriminatorJson = objectMapper.writeValueAsString(candidate.entries)
         val fromScreenId = fold.settledScreenId
         val fromSceneId = fold.settledSceneId
-        val screenId = transactionalOperator.executeAndAwait {
-            val screenId = upsertScreen(sceneId, discriminatorJson, qaRun.id) ?: return@executeAndAwait null
+        val observed = transactionalOperator.executeAndAwait {
+            val observed = upsertScreen(sceneId, discriminatorJson, qaRun.id) ?: return@executeAndAwait null
+            val screenId = observed.id
 
             // `discriminator` 가 아니라 `fold` 에서 읽는다 — 목록에 없는 컨트롤이라고 해서 그 화면이
             // 그 기능을 제공하지 않은 것은 아니다([ScreenFold.activeSelectors]).
@@ -158,10 +162,18 @@ class ScreenObservationService(
             if (fromScreenId != null && fromSceneId != null && fromScreenId != screenId) {
                 recordTransition(fromScreenId, fromSceneId, screenId, sceneId, sceneName, contentMapId, qaRun.id)
             }
-            screenId
+            observed
         } ?: return
 
-        fold.confirm(candidate, screenId, sceneId)
+        fold.confirm(candidate, observed.id, sceneId)
+
+        // 화면을 **처음 앉혔을 때만** 그림을 요청한다 (ARTEL-456). 다시 본 화면은 다시 찍지 않고,
+        // 이미 붙은 그림도 바꾸지 않는다 — 화면이 무엇인지 말하는 그림은 그 화면을 처음 만나
+        // 화면이라고 판정한 순간의 것이다.
+        //
+        // 커밋 **뒤에** 부른다. 트랜잭션 안에 두면 롤백된 화면의 그림을 요청하게 되고, 그 그림은
+        // 존재하지 않는 행을 기다리다 버려진다.
+        if (observed.inserted) screenCaptures.request(gameInstanceId, observed.id)
     }
 
     /**
@@ -220,7 +232,11 @@ class ScreenObservationService(
      * 상한은 임계값이 너무 민감할 때 소리를 내라고 둔 것이지, 그 씬의 관측을 얼리라고 둔 것이
      * 아니다. 새 화면을 만들지 않는 것으로 폭발을 멈추고, 기존 화면의 방문 수는 계속 센다.
      */
-    private suspend fun upsertScreen(sceneId: Long, discriminatorJson: String, qaRunId: Long?): Long? {
+    private suspend fun upsertScreen(
+        sceneId: Long,
+        discriminatorJson: String,
+        qaRunId: Long?,
+    ): ScreenObservationRow? {
         if (screens.countBySceneId(sceneId) < MAX_SCREENS_PER_SCENE) {
             return screens.observe(sceneId, discriminatorJson, qaRunId)
         }
