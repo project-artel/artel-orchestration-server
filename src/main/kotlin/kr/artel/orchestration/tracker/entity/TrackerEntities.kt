@@ -9,7 +9,7 @@ import java.time.Instant
 /**
  * 한 프로젝트가 어느 tracker 의 어느 저장소를 쓰는지.
  *
- * 컬럼 이름이 전부 `provider` 중립인 이유는 `V64__link_projects_and_issues_to_trackers.sql` 에 적혀
+ * 컬럼 이름이 전부 `provider` 중립인 이유는 `V69__link_projects_and_issues_to_trackers.sql` 에 적혀
  * 있다. GitHub 에서 [externalWorkspace] 는 owner 이고 [installationRef] 는 App 의 installation id 다.
  *
  * [installationRef] 가 null 일 수 있는 이유가 둘이다: `installation` callback 이 저장소 선택보다 먼저 오고,

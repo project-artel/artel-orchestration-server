@@ -12,7 +12,7 @@ Jira 가 다음 트래커로 붙을 수 있도록 provider 를 **값**으로 갖
 
 전달물:
 
-1. 마이그레이션 `V64` — `project_tracker_link`, `issue_tracker_link` 두 테이블.
+1. 마이그레이션 `V69` — `project_tracker_link`, `issue_tracker_link` 두 테이블.
 2. 프로젝트 트래커 연결 API (조회·설정·해제) + GitHub 설치 흐름 (install-url, setup 콜백, 저장소 목록).
 3. `recordAgentIssue` 뒤에 붙는 자동 내보내기, 수동 내보내기 endpoint, `resolve`/`reopen` 반영.
 4. `IssueResponse.tracker` 필드.
@@ -68,10 +68,12 @@ ARTEL-672 가 지금 그 이름으로 짜고 있으므로, 여기서 스토리 �
 
 ### Flyway 번호
 
-`origin/develop` 최신은 `V60`. 미머지 peer 브랜치가 `V61`, `V62`, `V63` 을 이미 claim 했다
-(`V63` 은 ARTEL-642, 2026-08-29 확인). 그래서 이 작업은 **`V64`** 를 쓴다.
-`scripts/check-flyway-migrations.sh` 가 `OK` 를 줄 때까지 올린다 — `V61`~`V63` 의 빈칸은 그 peer
-브랜치들의 것이므로 "번호를 당겨 메우는" 정리를 하면 안 된다.
+작성 시점 `origin/develop` 최신은 `V60` 이었고, 미머지 peer 브랜치가 `V61`, `V62`, `V63` 을 이미
+claim 하고 있어 이 작업은 `V64` 로 잡았다. 그 뒤 ARTEL-655 와 ARTEL-668 이 `V67`, `V68` 로 먼저
+develop 에 들어갔다. develop 이 이미 적용한 번호 아래에 새 마이그레이션을 두면 이미 마이그레이션된
+DB 는 그것을 영영 적용하지 않으므로, 이 작업의 마이그레이션은 **`V69`** 로 다시 매겼다.
+`scripts/check-flyway-migrations.sh` 가 `OK` 를 줄 때까지 올린다 — `V61`~`V66` 의 빈칸은 아직
+머지되지 않은 peer 브랜치들의 것이므로 "번호를 당겨 메우는" 정리를 하면 안 된다.
 
 ### 기존 코드에서 붙잡을 지점
 
@@ -92,11 +94,11 @@ ARTEL-672 가 지금 그 이름으로 짜고 있으므로, 여기서 스토리 �
 - `issue/`, `project/`, `qa/service/QaAgentInboundRouter.routeIssue`, `auth/config/AuthProperties.kt`,
   `auth/service/JwtService.kt`/`RefreshTokenService.kt`, `auth/config/SecurityConfig.kt`,
   `src/main/resources/db/migration/` 최신 번호, `application.yml`, `.env.example` 를 읽었다.
-- 마이그레이션 번호: develop `V60`, peer claim `V61`/`V62`/`V63` → **`V64`**.
+- 마이그레이션 번호: 작성 시점 develop `V60`, peer claim `V61`~`V63` → `V64` 로 잡았다가, develop 이 `V68` 까지 올라가 **`V69`** 로 다시 매겼다.
 
 ### Step 1: 마이그레이션
 
-`src/main/resources/db/migration/V64__link_projects_and_issues_to_trackers.sql`
+`src/main/resources/db/migration/V69__link_projects_and_issues_to_trackers.sql`
 
 ```sql
 CREATE TABLE IF NOT EXISTS project_tracker_link (
@@ -537,7 +539,7 @@ fun launchAutoSync(issueId: Long): Job                // fire-and-forget wrapper
 ## Validation
 
 - **Commands to run:**
-  - `./scripts/check-flyway-migrations.sh` — `V64` 이 충돌하지 않는지.
+  - `./scripts/check-flyway-migrations.sh` — `V69` 이 충돌하지 않는지.
   - `./mvnw test` — 전체 스위트(Testcontainers 가 Postgres 를 띄우므로 docker 필요).
 - **Expected output:** 마이그레이션 체크 `OK` 또는 peer 경고만(exit 2), 테스트 스위트 초록.
 - **수동 확인(사람이 해야 함, PR 에 적는다):**
