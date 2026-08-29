@@ -7,6 +7,7 @@ import kr.artel.orchestration.contentmap.capture.ScreenCaptureService
 import kr.artel.orchestration.contentmap.dto.ScreenObservationRow
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import kr.artel.orchestration.contentmap.entity.ScreenSelectorMatch
+import kr.artel.orchestration.contentmap.entity.ScreenSelectorProposalReason
 import kr.artel.orchestration.contentmap.entity.ScreenSelectorSource
 import kr.artel.orchestration.contentmap.entity.TransitionKind
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
@@ -24,7 +25,6 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Clock
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * `pulse` 에서 화면을 가르고 화면 전이를 남긴다 (ARTEL-453).
@@ -38,7 +38,15 @@ import java.util.concurrent.ConcurrentHashMap
  *                                             → screen_transition (관측만)
  *                                             → scene_edge (씬을 넘었으면 verified / runtime)
  *                                             → capture_screen (처음 앉힐 때만, ARTEL-456)
+ *                                          └→ SCREEN_SELECTOR_PROPOSAL (목록 밖 selector, ARTEL-655)
  * ```
+ *
+ * ## 목록 밖은 무시하되 물어본다
+ *
+ * `discriminator` 는 목록에 있는 selector 만 담는다(ARTEL-654). 그 기본값이 화면 폭발을 멈췄지만,
+ * 목록이 얇으면 서로 다른 두 화면이 한 행에 앉고 **그 실패는 조용하다.** 그래서 목록에도 제외에도
+ * 없는 selector 를 만나면 제안을 보낸다([propose]). 화면 행은 그대로 앉고 런은 답을 기다리지
+ * 않는다 — 답이 끝내 안 와도 이 서비스는 지금과 똑같이 돈다.
  *
  * ## ARTEL-450 이 없어서 못 채우는 것
  *
@@ -72,6 +80,8 @@ class ScreenObservationService(
     private val screenCapabilities: ScreenCapabilityRepository,
     private val transitions: ScreenTransitionRepository,
     private val sceneEdges: SceneEdgeRepository,
+    private val folds: ScreenFoldRegistry,
+    private val selectorProposals: ScreenSelectorProposalService,
     private val screenCaptures: ScreenCaptureService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
@@ -79,18 +89,6 @@ class ScreenObservationService(
 ) {
 
     private val logger = LoggerFactory.getLogger(ScreenObservationService::class.java)
-
-    /**
-     * 인스턴스별 `fold` 상태.
-     *
-     * **락이 없다.** `SdkWebSocketHandler` 가 한 세션의 프레임을 `concatMap` 으로 하나씩 처리하고,
-     * 한 게임 인스턴스의 `pulse` 는 한 세션으로만 온다. 그 보장이 깨지면 같은 `discriminator` 가 두 번 굳어
-     * `observed_count` 가 두 번 오르는데, 행이 갈리지는 않는다 — `uk_screen_discriminator` 가
-     * 막는다.
-     *
-     * 프로세스 메모리라 재시작하면 사라진다. 다음 전량 `pulse` 가 복구한다.
-     */
-    private val folds = ConcurrentHashMap<Long, ScreenFold>()
 
     suspend fun observe(gameInstanceId: Long, payloadText: String) {
         try {
@@ -112,7 +110,7 @@ class ScreenObservationService(
         // `pulse` 가 다음 런의 첫 화면을 오염시키지 않게.
         val qaRun = qaRuns.findActiveByGameInstanceId(gameInstanceId)
         if (qaRun == null) {
-            folds.remove(gameInstanceId)
+            folds.forget(gameInstanceId)
             return
         }
 
@@ -122,14 +120,7 @@ class ScreenObservationService(
         val contentMap = contentMaps.findByGameBuildId(buildId) ?: return
         val contentMapId = contentMap.id ?: return
 
-        if (folds.size >= MAX_TRACKED_INSTANCES && !folds.containsKey(gameInstanceId)) {
-            // 통째로 비운다. 다음 전량 `pulse` 가 각자 복구하므로 자기 치유되고, 상한 없이 새는
-            // 것보다 낫다. 여기 걸린다는 것은 `pulse` 를 흘리는 인스턴스가 수백이라는 뜻이고,
-            // 그때는 메모리보다 먼저 볼 것이 있다.
-            logger.warn("fold 상태가 {}개를 넘어 비운다", MAX_TRACKED_INSTANCES)
-            folds.clear()
-        }
-        val fold = folds.getOrPut(gameInstanceId) { ScreenFold() }
+        val fold = folds.of(gameInstanceId)
         fold.apply(reading)
 
         val sceneName = fold.scene ?: return
@@ -140,14 +131,41 @@ class ScreenObservationService(
 
         val sceneCapabilities = capabilities.findBySceneIdOrderByIdAsc(sceneId).toList()
 
-        val candidate = fold.discriminate(seededWhitelist(sceneId, sceneCapabilities))
-        if (!fold.settle(candidate)) return
+        val whitelist = seededWhitelist(sceneId, sceneCapabilities)
+        val candidate = fold.discriminate(whitelist)
+        // **화면 행을 먼저 만들고 제안은 그 뒤에 보낸다** (ARTEL-655). 제안을 기다렸다가 앉히면
+        // 답이 늦거나 안 오는 동안 관측이 통째로 사라진다. 행 없는 지도보다 나중에 합쳐지는 행이 낫다.
+        val cappedScene = if (fold.settle(candidate)) {
+            settle(gameInstanceId, fold, candidate, sceneId, sceneName, contentMapId, sceneCapabilities, qaRun.id)
+        } else {
+            false
+        }
+        propose(gameInstanceId, qaRun.id, fold, whitelist, sceneId, sceneName, cappedScene)
+    }
 
+    /**
+     * 굳은 `discriminator` 를 화면 행으로 앉히고 전이를 남긴다. 씬이 상한에 걸렸으면 `true`.
+     */
+    private suspend fun settle(
+        gameInstanceId: Long,
+        fold: ScreenFold,
+        candidate: ScreenDiscriminator,
+        sceneId: Long,
+        sceneName: String,
+        contentMapId: Long,
+        sceneCapabilities: List<CapabilityEntity>,
+        qaRunId: Long?,
+    ): Boolean {
         val discriminatorJson = objectMapper.writeValueAsString(candidate.entries)
         val fromScreenId = fold.settledScreenId
         val fromSceneId = fold.settledSceneId
+        var capped = false
         val observed = transactionalOperator.executeAndAwait {
-            val observed = upsertScreen(sceneId, discriminatorJson, qaRun.id) ?: return@executeAndAwait null
+            val observed = upsertScreen(sceneId, discriminatorJson, qaRunId)
+            if (observed == null) {
+                capped = true
+                return@executeAndAwait null
+            }
             val screenId = observed.id
 
             // `discriminator` 가 아니라 `fold` 에서 읽는다 — 목록에 없는 컨트롤이라고 해서 그 화면이
@@ -160,10 +178,10 @@ class ScreenObservationService(
             }
 
             if (fromScreenId != null && fromSceneId != null && fromScreenId != screenId) {
-                recordTransition(fromScreenId, fromSceneId, screenId, sceneId, sceneName, contentMapId, qaRun.id)
+                recordTransition(fromScreenId, fromSceneId, screenId, sceneId, sceneName, contentMapId, qaRunId)
             }
             observed
-        } ?: return
+        } ?: return capped
 
         fold.confirm(candidate, observed.id, sceneId)
 
@@ -174,6 +192,54 @@ class ScreenObservationService(
         // 커밋 **뒤에** 부른다. 트랜잭션 안에 두면 롤백된 화면의 그림을 요청하게 되고, 그 그림은
         // 존재하지 않는 행을 기다리다 버려진다.
         if (observed.inserted) screenCaptures.request(gameInstanceId, observed.id)
+        return capped
+    }
+
+    /**
+     * 목록에 없는 selector 를 물어본다 (ARTEL-655).
+     *
+     * 두 계기가 한 프레임으로 나간다.
+     *
+     * - **목록 밖 selector** — 이 `pulse` 에서 상태가 달라졌는데 목록에도 제외에도 없는 것. 그것이
+     *   화면을 가르는 것이면 지금 지도는 서로 다른 두 화면을 한 행에 앉히고 있고, 그 실패는 조용하다
+     * - **씬의 화면 상한** — 목록이 너무 잘다는 신호다. 그때 할 일은 기록을 멈추는 것이 아니라
+     *   목록을 좁히는 것이므로, 지금 화면을 가르고 있는 것들을 후보로 내어 무엇을 뺄지 묻는다
+     *
+     * 상한 쪽이 먼저다. 상한에 걸린 씬에서 목록 밖을 더 물어봐야 답이 와도 화면을 더 못 만든다.
+     */
+    private suspend fun propose(
+        gameInstanceId: Long,
+        qaRunId: Long?,
+        fold: ScreenFold,
+        whitelist: ScreenSelectorWhitelist,
+        sceneId: Long,
+        sceneName: String,
+        cappedScene: Boolean,
+    ) {
+        val reason = if (cappedScene) {
+            ScreenSelectorProposalReason.SCENE_SCREEN_CAP
+        } else {
+            ScreenSelectorProposalReason.UNKNOWN_SELECTOR
+        }
+        val candidates = if (cappedScene) {
+            fold.whitelistedCandidates(whitelist)
+        } else {
+            fold.unknownCandidates(whitelist)
+        }
+        if (candidates.isEmpty()) return
+        selectorProposals.propose(
+            gameInstanceId,
+            qaRunId,
+            ScreenSelectorProposalContext(
+                reason = reason,
+                sceneId = sceneId,
+                sceneName = sceneName,
+                previousScreenId = fold.previousScreenId,
+                currentScreenId = fold.settledScreenId,
+                changes = fold.lastChanges,
+                candidates = candidates,
+            ),
+        )
     }
 
     /**
@@ -231,6 +297,11 @@ class ScreenObservationService(
      *
      * 상한은 임계값이 너무 민감할 때 소리를 내라고 둔 것이지, 그 씬의 관측을 얼리라고 둔 것이
      * 아니다. 새 화면을 만들지 않는 것으로 폭발을 멈추고, 기존 화면의 방문 수는 계속 센다.
+     *
+     * null 을 돌려주는 것이 곧 "이 씬은 지금 상한에 걸려 있다" 이고, 부르는 쪽은 그것으로
+     * 목록을 좁힐 제안을 낸다(ARTEL-655). **경고만 찍고 끝내지 않는 이유**는 상한에 닿았다는 것이
+     * 목록이 너무 잘다는 뜻이라서다 — 그때 할 일은 포기가 아니라 좁히는 것이고, 좁히는 유일한
+     * 방법은 묻는 것이다.
      */
     private suspend fun upsertScreen(
         sceneId: Long,
@@ -243,7 +314,7 @@ class ScreenObservationService(
         val known = screens.findIdBySceneIdAndDiscriminator(sceneId, discriminatorJson)
         if (known == null) {
             logger.warn(
-                "씬 {}의 화면이 {}개를 넘어 새 화면을 만들지 않는다. discriminator 임계값을 의심할 자리다",
+                "씬 {}의 화면이 {}개를 넘었다. 목록이 너무 잘다는 뜻이라 무엇을 뺄지 제안을 낸다",
                 sceneId, MAX_SCREENS_PER_SCENE,
             )
             return null
@@ -317,13 +388,10 @@ class ScreenObservationService(
          *
          * **첫 실측이 이 주석의 예상대로 왔다.** `artel_integration` 의 `TurnBattleScene` 이 29행까지
          * 올라 이 값에 닿기 직전이었고, 고칠 자리는 상한이 아니라 `discriminator` 규칙 쪽이었다 —
-         * 화면 판정에 쓸 selector 를 목록으로 두자 같은 관측이 2행으로 접혔다(ARTEL-654,
+         * 화면 판정에 쓸 selector 를 목록으로 두자 같은 관측이 2행으로 합쳐졌다(ARTEL-654,
          * [seededWhitelist]). 32 는 그대로 둔다. 여기 다시 걸리면 그때도 먼저 의심할 것은 목록에 든
          * 항목이 너무 넓은가다.
          */
         const val MAX_SCREENS_PER_SCENE = 32
-
-        /** `fold` 상태를 들고 있을 인스턴스 수의 상한. 넘으면 통째로 비우고 다시 쌓는다. */
-        const val MAX_TRACKED_INSTANCES = 256
     }
 }

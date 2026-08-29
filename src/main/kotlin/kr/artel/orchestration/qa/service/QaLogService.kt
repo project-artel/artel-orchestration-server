@@ -44,7 +44,12 @@ internal val TYPES =
         // 에이전트가 부른 tool 과 그 답(ARTEL-608). `ACTION` 과 겹치지 않는다. `ACTION` 은
         // 조작 tool 이 SDK 로 내보낸 요청이라 tool 28개 중 15개만 남기고, 지식 검색이나
         // 스텝 판정처럼 SDK 를 거치지 않는 tool 은 흔적이 없었다.
-        "TOOL", "TOOL_RESULT"
+        "TOOL", "TOOL_RESULT",
+        // 화면 판정 목록을 주고받는 프레임 넷(ARTEL-655). 타임라인에 남겨야 하는 이유는
+        // "왜 저 selector 를 안 물어봤나" 가 사람이 가장 먼저 묻는 질문이기 때문이다 —
+        // 제안이 나갔는지, 답이 무엇이었는지, 무엇이 거절됐는지가 여기 말고는 없다.
+        "SCREEN_SELECTOR_PROPOSAL", "SCREEN_SELECTOR_VERDICT",
+        "SCREEN_SELECTOR_RULE", "SCREEN_SELECTOR_RESULT"
     )
 
 data class QaLogAppendResult(val log: QaLogResponse, val inserted: Boolean)

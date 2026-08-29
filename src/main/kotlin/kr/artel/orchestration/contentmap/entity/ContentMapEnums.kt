@@ -451,3 +451,29 @@ enum class ScreenSelectorSource(val wire: String, val rank: Int) {
         fun from(wire: String?): ScreenSelectorSource? = entries.firstOrNull { it.wire == wire }
     }
 }
+
+/**
+ * 제안이 나가는 이유.
+ *
+ * 둘 다 "목록이 지금 틀렸다" 는 신호이고 답의 모양이 같아 한 프레임에 든다. 다른 것은 후보를
+ * 어디서 뽑는가뿐이다 — [UNKNOWN_SELECTOR] 는 목록 **밖**에서, [SCENE_SCREEN_CAP] 은 목록
+ * **안**에서 뽑는다.
+ */
+enum class ScreenSelectorProposalReason(val wire: String) {
+    /** 목록에도 제외에도 없는 selector 를 `pulse` 에서 봤다. 넣을지 물어본다. */
+    UNKNOWN_SELECTOR("unknown-selector"),
+
+    /**
+     * 이 씬의 화면이 `ScreenObservationService.MAX_SCREENS_PER_SCENE` 에 닿았다. **목록이 너무
+     * 잘다는 뜻이므로 뺄 것을 물어본다.**
+     *
+     * 상한에 닿았을 때 할 일이 기록 중단이 아닌 이유가 이것이다. 상한은 임계값이 틀렸을 때 소리를
+     * 내라고 둔 것이고, 그 틀림은 "목록이 너무 잘다" 한 방향뿐이다 — 목록이 너무 성기면 화면이
+     * 늘지 않고 뭉친다. 그러므로 상한은 포기의 신호가 아니라 좁히라는 신호다.
+     */
+    SCENE_SCREEN_CAP("scene-screen-cap");
+
+    companion object {
+        fun from(wire: String?): ScreenSelectorProposalReason? = entries.firstOrNull { it.wire == wire }
+    }
+}
