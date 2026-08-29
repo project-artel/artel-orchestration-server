@@ -71,6 +71,21 @@ data class CapabilityEntity(
     val verification: String = VerificationState.UNVERIFIED.wire,
 
     /**
+     * 지금의 [verification] 을 만든 `capability_observation` 행(ARTEL-644).
+     *
+     * TC 생성기가 `confirmed` 를 사실로 읽으므로, 잘못 올린 한 행은 근거 없는 테스트 케이스가
+     * 되고 그 테스트가 실패하면 사람은 게임을 의심한다 — 지도를 의심하지 않는다. 그래서
+     * verification 은 조용할 수 없고, 이 포인터 끝에 agent 가 무엇을 보고 그렇게 말했는지가 있다.
+     *
+     * rationale 을 여기 복사하지 않는다. observation 행이 이미 rationale · qa_run_id · 시각을 들고
+     * 있어, 복사하면 두 벌이 갈라진다. 대가는 `qa_run` 삭제가 CASCADE 로 observation 을 지우면
+     * 이 칸이 NULL 이 되어 verification 이 설명을 잃는다는 것이고, 지금 `qa_run` 을 지우는 경로가
+     * 없어 열어 둔다.
+     */
+    @Column("verification_observation_id")
+    val verificationObservationId: Long? = null,
+
+    /**
      * [ScenePresence] 중 하나 — 이 행이 **왜 이 `scene` 에 있나**(ARTEL-460).
      *
      * [verification] 과 다른 축이다. 저쪽은 "실행해 봤나"이고 이쪽은 "근거가 이 `scene` 을 말했나"다.

@@ -5,6 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.contentmap.observe.AgentCapabilityWriteService
+import kr.artel.orchestration.contentmap.observe.CapabilityDiscoveredRequest
+import kr.artel.orchestration.contentmap.observe.CapabilityVerdictRequest
+import kr.artel.orchestration.contentmap.observe.CapabilityWrite
+import kr.artel.orchestration.contentmap.observe.CapabilityWriteFrames
 import kr.artel.orchestration.contentmap.observe.ScreenSelectorFrames
 import kr.artel.orchestration.contentmap.observe.ScreenSelectorProposalService
 import kr.artel.orchestration.contentmap.observe.ScreenSelectorResultPayload
@@ -105,6 +110,7 @@ private val TOOL_TYPES = setOf("TOOL", "TOOL_RESULT")
 
 private val SUPPORTED_TYPES =
     setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH", "KNOWLEDGE_EXPAND") +
+        CapabilityWriteFrames.INBOUND_TYPES +
         TOOL_TYPES +
         KNOWLEDGE_WRITE_TYPES +
         ScreenSelectorFrames.INBOUND
@@ -135,6 +141,7 @@ class QaAgentInboundRouter(
     private val agentPort: QaAgentPort,
     private val screenSelectorProposals: ScreenSelectorProposalService,
     private val gameInstanceRepository: GameInstanceRepository,
+    private val capabilityWrites: AgentCapabilityWriteService,
     private val grader: ExpectedStepsGrader,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
@@ -176,6 +183,14 @@ class QaAgentInboundRouter(
         if (envelope.type == "KNOWLEDGE_SEARCH") {
             val qaTry = activeTry(qaTryId) ?: return
             routeKnowledgeSearch(qaTryId, qaTry, envelope)
+            return
+        }
+        // 지도 쓰기도 표시용 message 없이 payload 만 싣고 응답을 기다린다(ARTEL-644). 지식 쓰기와
+        // 달리 `knowledge_mode` 게이트를 지나지 않는다 — 여기가 쓰는 것은 지식창고가 아니라
+        // content_map 이고, 그 둘은 스코프도 수명도 다르다.
+        if (envelope.type in CapabilityWriteFrames.INBOUND_TYPES) {
+            val qaTry = activeTry(qaTryId) ?: return
+            routeCapabilityWrite(qaTryId, qaTry, envelope)
             return
         }
         // 확장도 payload에 표시용 message가 없고 응답을 기다린다 — 검색과 같은 자리에 둔다.
@@ -855,6 +870,100 @@ class QaAgentInboundRouter(
         } catch (error: Exception) {
             appendError(qaTryId, envelope, "KNOWLEDGE_SEARCH usage logging failed: ${error.message}")
         }
+    }
+
+    /**
+     * QA agent 가 본 것을 content_map 에 적는다(ARTEL-644).
+     *
+     * 계약은 `docs/capability-write-frames.md` 이고 payload 타입은
+     * [kr.artel.orchestration.contentmap.observe.CapabilityWriteFrames] 옆에 산다. **여기서 지어내지
+     * 않는다** — PR 135 는 없는 frame 을 agent-server 가 정의했다가 통째로 닫혔다.
+     *
+     * 성공은 [CapabilityWriteFrames.WRITE_RESULT], 거절은 요청의 correlation 을 문 ERROR 다. 지식
+     * 쓰기(ARTEL-331)와 이슈 보고(ARTEL-366)가 이미 그 계약이라 agent 쪽 분기가 늘지 않는다.
+     *
+     * 거절을 예외로 받지 않는다. 서비스가 사유를 값으로 돌려주므로 frame 하나가 receive 체인을
+     * 끊어 런 전체를 실패시키는 일이 없고, 그래도 새는 예외는 여기서 삼켜 ERROR 로 바꾼다.
+     */
+    private suspend fun routeCapabilityWrite(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope
+    ) {
+        val result = try {
+            if (envelope.type == CapabilityWriteFrames.VERDICT) {
+                capabilityWrites.recordVerdict(
+                    qaTry,
+                    envelope.messageId,
+                    objectMapper.treeToValue(envelope.payload, CapabilityVerdictRequest::class.java)
+                )
+            } else {
+                capabilityWrites.recordDiscovery(
+                    qaTry,
+                    envelope.messageId,
+                    objectMapper.treeToValue(envelope.payload, CapabilityDiscoveredRequest::class.java)
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            rejectCapabilityWrite(qaTryId, qaTry, envelope, "${envelope.type} failed: ${error.message}")
+            return
+        }
+        when (result) {
+            is CapabilityWrite.Rejected -> rejectCapabilityWrite(qaTryId, qaTry, envelope, result.reason)
+            is CapabilityWrite.Accepted -> answerCapabilityWrite(qaTryId, qaTry, envelope, result)
+        }
+    }
+
+    /**
+     * 지도 쓰기가 성공했음을 Agent 에 알린다.
+     *
+     * id 를 문자열로 싣는다. 64비트 id 가 JSON 숫자로 나가면 자바스크립트 소비자에서 정밀도가
+     * 깎인다 — 지식 쓰기 응답이 같은 이유로 그렇게 한다.
+     *
+     * `created` 가 실려 나가는 이유: 재전송이 흡수되면 행이 새로 생기지 않는데, 그것을 알려주지
+     * 않으면 agent 는 자기가 방금 무엇을 만들었다고 믿는다.
+     *
+     * 성공 응답은 qa_log 에 남기지 않는다. 사실은 이미 `capability` 와 `capability_observation` 에
+     * 남고 이 frame 은 id 만 진 파생물이다(지식 쓰기와 같은 판단).
+     */
+    private suspend fun answerCapabilityWrite(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope,
+        result: CapabilityWrite.Accepted
+    ) {
+        val sessionId = qaTry.agentSessionId ?: return
+        val payload = objectMapper.createObjectNode()
+            .put("type", result.type)
+            .put("capability_id", result.capabilityId.toString())
+            .put("scene_id", result.sceneId.toString())
+            .put("verification", result.verification)
+            .put("created", result.created)
+        payload.put("capability_key", result.capabilityKey)
+        payload.put("observation_id", result.observationId?.toString())
+        sendToAgent(qaTryId, sessionId, CapabilityWriteFrames.WRITE_RESULT, envelope.messageId, payload)
+    }
+
+    /**
+     * 지도 쓰기의 거절을 타임라인에 남기고 Agent 에도 알린다.
+     *
+     * **거절도 답이 온다.** 조용히 버리면 agent 는 적었다고 믿고 지나가고, 그 런이 본 것은 그
+     * 런에서만 볼 수 있었다. 세션이 없으면 답만 못 하고 감사 로그는 남는다.
+     */
+    private suspend fun rejectCapabilityWrite(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope,
+        reason: String
+    ) {
+        val sessionId = qaTry.agentSessionId
+        if (sessionId == null) {
+            appendError(qaTryId, envelope, reason)
+            return
+        }
+        answerWithError(qaTryId, sessionId, envelope, reason)
     }
 
     /**
