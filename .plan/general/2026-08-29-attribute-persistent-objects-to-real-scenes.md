@@ -72,7 +72,7 @@ base 는 ARTEL-642(PR #215)였고 그것이 `develop` 에 merge 되면서 이 PR
       자리를 내고, 같은 scene 의 자리를 합칠 때 강한 값이 이기므로 규칙 없이 같은 답이 나온다.
 - [x] **Step 3: join 배선** — `ScenePlacement.presence` → `CapabilityCandidate.scenePresence`.
       `EvidenceJoin.foldByScene` 이 같은 scene 의 자리 여럿을 합치고 가장 강한 값을 남긴다.
-- [x] **Step 4: `V66`** — `capability.scene_presence` 와 `v_content_map_capability` 재생성.
+- [x] **Step 4: `V70`** — `capability.scene_presence` 와 `v_content_map_capability` 재생성.
 - [x] **Step 5: 읽는 창구** — `ContentMapCapabilityRow` · `SceneCapabilityView`(agent 의 scene
       맥락) · `SceneCapabilityResponse`(인스펙터). 저장만 가르고 읽는 쪽이 못 가르면 이 변경은
       지도를 나쁘게 만든 것이다.
@@ -145,7 +145,7 @@ anchor 규칙별 사슬: `persistent-condition-subject-placed` 180 행(60 capabi
   - 2 번 규칙은 유도다. 조건이 읽는 타입이 한 scene 에만 있다는 것이 그 오브젝트가 그 scene 에서
     돈다는 증명은 아니다 — static 필드는 scene 을 넘어 살아 있을 수 있다. 그래서 결론을 `derived`
     로 내리고 근거를 `capability_proof` 에 남긴다. 틀린 지목은 되짚어 고칠 수 있다.
-  - `V66` 이 `v_content_map_capability` 를 통째로 다시 낸다. ARTEL-644 의 `V65` 도 같은 뷰를 다시
+  - `V70` 이 `v_content_map_capability` 를 통째로 다시 낸다. ARTEL-644 의 `V65` 도 같은 뷰를 다시
     내므로, 둘 중 나중에 merge 되는 쪽이 상대의 칸을 접어 넣어야 한다.
 - **Rollback steps:** `scene_presence` 컬럼을 떨구고 뷰를 V63 정의로 되돌린다. `capability_proof`
   행은 재적재가 `deleteCapabilityChain` 으로 지운다.

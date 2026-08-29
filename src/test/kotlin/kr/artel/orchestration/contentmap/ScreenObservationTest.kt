@@ -39,6 +39,8 @@ import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -80,6 +82,25 @@ class ScreenObservationTest {
     @Autowired private lateinit var transitions: ScreenTransitionRepository
     @Autowired private lateinit var sceneEdges: SceneEdgeRepository
     @Autowired private lateinit var db: DatabaseClient
+
+    /**
+     * 이 스위트가 남긴 행을 치운다.
+     *
+     * 없으면 `newWorld` 가 만든 `qa_run` 이 스위트 끝까지 살아남아, **뒤에 도는 다른 클래스의**
+     * `DELETE FROM app_user` · `DELETE FROM game_instance` 가 `qa_run_started_by_fkey` ·
+     * `qa_run_game_instance_id_fkey` 로 막힌다. 실패가 이 파일이 아니라 남의 파일에서 나므로
+     * 원인을 찾기 어렵고, 클래스 실행 순서가 바뀔 때마다 피해자가 달라진다.
+     *
+     * 리액티브 트랜잭션은 롤백되지 않고 DB 를 공유하므로 FK 순서대로 직접 비운다.
+     */
+    @BeforeEach
+    @AfterEach
+    fun clean(): Unit = runBlocking {
+        qaRuns.deleteAll()
+        testRuns.deleteAll()
+        gameInstances.deleteAll()
+        db.sql("DELETE FROM app_user WHERE display_name = 'screen'").then().block()
+    }
 
     // ---------- 인수 조건 ----------
 

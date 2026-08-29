@@ -3,6 +3,7 @@ package kr.artel.orchestration.qa.service
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
+import kr.artel.orchestration.contentmap.observe.ScreenSelectorFrames
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.dto.AgentGameState
@@ -22,7 +23,7 @@ class QaSdkBridgeService(
     private val logService: QaLogService,
     private val agentPort: QaAgentPort,
     private val objectMapper: ObjectMapper
-) {
+) : QaScreenFramePort {
     suspend fun routeGameState(gameInstanceId: Long, sdkMessageId: String, state: AgentGameState): Boolean {
         val qaTry = tryRepository.findActiveByGameInstanceId(gameInstanceId) ?: return false
         val qaTryId = requireNotNull(qaTry.id)
@@ -166,18 +167,82 @@ class QaSdkBridgeService(
         return true
     }
 
+    /**
+     * 화면 판정 목록 제안을 agent 로 보낸다 (ARTEL-655).
+     *
+     * SDK 가 보낸 프레임을 옮기는 위 셋과 달리 **이쪽은 orchestration 이 만든 프레임**이다. 그래도
+     * 같은 자리에 두는 것은 계기가 같기 때문이다 — 이 제안은 방금 도착한 `pulse` 를 보고 나가고,
+     * 로그 방향(`ORCHE_TO_AGENT`)도 봉투 모양도 위 셋과 같다. 배관을 따로 내면 그 셋만 아는
+     * 규칙(세션이 아직 없을 때 건너뛰기, 전달 실패를 ERROR 로그로 남기기)이 두 벌이 된다.
+     *
+     * [sendAgent] 와 달리 전달 실패를 **다시 던지지 않는다.** 저쪽은 `pulse` 중계 경로라 실패가
+     * 곧 중계 실패이지만, 제안은 관측의 곁가지라 실패해도 런은 그대로 흘러야 한다.
+     */
+    override suspend fun sendScreenSelectorProposal(
+        gameInstanceId: Long,
+        messageId: String,
+        summary: String,
+        payload: JsonNode
+    ): Boolean = sendScreenFrame(gameInstanceId, ScreenSelectorFrames.PROPOSAL, messageId, summary, payload)
+
+    /**
+     * 관측이 확정한 화면을 agent 로 알린다 (ARTEL-668).
+     *
+     * 제안과 같은 배관을 타지만 **`correlationId` 를 안 싣는다.** 저쪽에서 답을 기다리는 tool 이
+     * 없는데 correlation 을 달면, 마침 같은 값을 기다리던 요청이 이 통보로 풀린다.
+     */
+    override suspend fun sendScreenSettled(
+        gameInstanceId: Long,
+        messageId: String,
+        summary: String,
+        payload: JsonNode
+    ): Boolean = sendScreenFrame(
+        gameInstanceId, ScreenSelectorFrames.SETTLED, messageId, summary, payload, correlate = false
+    )
+
+    /**
+     * 화면 프레임 하나를 로그에 남기고 agent 로 보낸다.
+     *
+     * 활성 try 가 없거나 세션이 아직 안 붙었으면 **로그도 남기지 않고** `false` 다. 보낼 곳이
+     * 없는 프레임의 타임라인 행은 "나갔다" 로 읽히고, 그것이 안 나간 이유를 찾는 사람을 속인다.
+     */
+    private suspend fun sendScreenFrame(
+        gameInstanceId: Long,
+        type: String,
+        messageId: String,
+        summary: String,
+        payload: JsonNode,
+        correlate: Boolean = true
+    ): Boolean {
+        val qaTry = tryRepository.findActiveByGameInstanceId(gameInstanceId) ?: return false
+        val sessionId = qaTry.agentSessionId ?: return false
+        val qaTryId = requireNotNull(qaTry.id)
+        val outbound = logService.append(
+            qaTryId = qaTryId,
+            direction = "ORCHE_TO_AGENT",
+            type = type,
+            messageId = messageId,
+            message = summary,
+            payload = payload
+        )
+        logService.publish(outbound)
+        sendAgent(qaTryId, sessionId, type, if (correlate) messageId else null, payload, messageId)
+        return true
+    }
+
     private suspend fun sendAgent(
         qaTryId: Long,
         sessionId: String,
         type: String,
         correlationId: String?,
-        payload: JsonNode
+        payload: JsonNode,
+        messageId: String = UUID.randomUUID().toString()
     ) {
         try {
             agentPort.send(
                 sessionId,
                 QaAgentEnvelope(
-                    messageId = UUID.randomUUID().toString(),
+                    messageId = messageId,
                     type = type,
                     qaTryId = qaTryId.toString(),
                     correlationId = correlationId,
@@ -197,7 +262,19 @@ class QaSdkBridgeService(
                 payload = objectMapper.createObjectNode().put("error", error.message)
             )
             logService.publish(log)
+            if (type in OBSERVATION_FRAMES) return
             throw error
         }
+    }
+
+    private companion object {
+        /**
+         * 전달 실패를 삼키는 타입.
+         *
+         * SDK 를 중계하는 프레임(`GAME_STATE` · `PULSE` · `ACTION_RESULT`)은 전달 실패가 곧 중계
+         * 실패라 던져야 하지만, 이 둘은 관측의 곁가지다. 목록을 물어보거나 확정한 화면을 알리다
+         * 실패했다고 `pulse` 중계까지 끊기면, 화면을 못 만드는 게임에서 QA 가 통째로 눈을 잃는다.
+         */
+        val OBSERVATION_FRAMES = setOf(ScreenSelectorFrames.PROPOSAL, ScreenSelectorFrames.SETTLED)
     }
 }

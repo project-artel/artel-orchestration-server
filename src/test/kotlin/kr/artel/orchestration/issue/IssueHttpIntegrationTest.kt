@@ -21,6 +21,8 @@ import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+import kr.artel.orchestration.tracker.entity.IssueTrackerLinkEntity
+import kr.artel.orchestration.tracker.repository.IssueTrackerLinkRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -54,6 +56,7 @@ class IssueHttpIntegrationTest {
     @Autowired private lateinit var oauthUserService: OAuthUserService
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var issueRepository: IssueRepository
+    @Autowired private lateinit var trackerLinkRepository: IssueTrackerLinkRepository
     @Autowired private lateinit var qaTryRepository: QaTryRepository
     @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
     @Autowired private lateinit var testScenarioRepository: TestScenarioRepository
@@ -66,6 +69,7 @@ class IssueHttpIntegrationTest {
     @BeforeEach
     @AfterEach
     fun clean(): Unit = runBlocking {
+        trackerLinkRepository.deleteAll()
         issueRepository.deleteAll()
         qaTryRepository.deleteAll()
         gameInstanceRepository.deleteAll()
@@ -93,6 +97,9 @@ class IssueHttpIntegrationTest {
         assertThat(item["severity"].asText()).isEqualTo("MAJOR")
         assertThat(item["status"].asText()).isEqualTo("OPEN")
         assertThat(item["resolvedAt"].isNull).isTrue()
+        // 내보내지 않은 결함의 tracker 는 null 이다(ARTEL-671). 빈 객체가 아니어야 화면이
+        // "아직 안 나갔다"를 그린다.
+        assertThat(item["tracker"].isNull).isTrue()
         assertThat(page["hasMore"].asBoolean()).isFalse()
     }
 
@@ -106,6 +113,39 @@ class IssueHttpIntegrationTest {
 
         assertThat(page["items"]).hasSize(1)
         assertThat(page["items"][0]["severity"].asText()).isEqualTo("BLOCKER")
+    }
+
+    @Test
+    fun `carries the tracker state on both the project list and the run list`(): Unit = runBlocking {
+        val owner = signIn("42", "octocat")
+        val seed = seed(owner.userId)
+        val issueId = seedIssue(seed.qaTryId, "BLOCKER", "레벨 진입에서 튕긴다")
+        trackerLinkRepository.save(
+            IssueTrackerLinkEntity(
+                issueId = issueId,
+                provider = "GITHUB",
+                externalKey = "1234",
+                externalUrl = "https://github.test/issues/1234",
+                syncState = "SYNCED",
+                syncedAt = Instant.parse("2026-08-28T02:03:04Z"),
+                createdAt = Instant.now(),
+                updatedAt = Instant.now()
+            )
+        )
+
+        // 두 목록이 같은 조립 경로를 지나므로 한 곳에 붙인 것이 양쪽에 함께 나가야 한다.
+        for (uri in listOf(
+            "/api/projects/${seed.projectId}/issues",
+            "/api/qa-tries/${seed.qaTryId}/issues"
+        )) {
+            val tracker = get(owner.token, uri)["items"][0]["tracker"]
+            assertThat(tracker["provider"].asText()).isEqualTo("GITHUB")
+            assertThat(tracker["externalKey"].asText()).isEqualTo("1234")
+            assertThat(tracker["url"].asText()).isEqualTo("https://github.test/issues/1234")
+            assertThat(tracker["syncState"].asText()).isEqualTo("SYNCED")
+            assertThat(tracker["syncError"].isNull).isTrue()
+            assertThat(tracker["syncedAt"].isNull).isFalse()
+        }
     }
 
     @Test
