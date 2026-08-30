@@ -131,6 +131,13 @@ artel:
       default-limit: ${ARTEL_TESTCASE_SEARCH_DEFAULT_LIMIT:5}
       # 결과가 Agent 컨텍스트로 들어간다. 요청이 더 커도 여기서 잘린다.
       max-limit: ${ARTEL_TESTCASE_SEARCH_MAX_LIMIT:20}
+  scenario:
+    # 저작 한 판을 처음부터 끝까지 파일로 받아 적는다(ARTEL-650). 답 하나가 여러 손을 거치며
+    # 모양을 바뀌는데 어느 손에서 뒤집혔는지가 곧 원인이라, 그것을 되짚으려고 둔다.
+    # 케이스 전량 목록과 모델 답 원문이 통째로 들어가 판마다 수십 KB 다 — 로컬에서만 켠다.
+    trace:
+      enabled: ${ARTEL_SCENARIO_TRACE_ENABLED:false}
+      dir: ${ARTEL_SCENARIO_TRACE_DIR:.trace}
   sdk:
     socket:
       # 웹소켓 한 메시지의 최대 바이트. Spring 은 이 값을 프레임 상한이자 합계 상한으로 함께 쓴다.

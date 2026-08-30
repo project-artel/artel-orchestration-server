@@ -95,6 +95,7 @@ class TestScenarioAgentService(
     private val caseFactService: ScenarioCaseFactService,
     private val gapFiller: ScenarioGapFiller,
     private val phrasingClient: ScenarioStepPhrasingClient,
+    private val trace: AuthoringTrace,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -309,10 +310,18 @@ class TestScenarioAgentService(
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
         val locale = localeOf(appUserId)
+        val cases = testCaseList(projectId, appUserId)
+        trace.record(
+            runId, "판을 연다",
+            "말: $userInput\n" +
+                "케이스 ${cases.size}건 ${trace.blob(runId, "cases.json", objectMapper.writeValueAsString(cases))}\n" +
+                "모델: ${configuredModel.ifBlank { "에이전트 기본값" }} · 말투: $locale · " +
+                "이미 있는 시나리오 ${currentScenarios.size}개",
+        )
         val body = AgentSessionOpenRequest(
             userInput = userInput,
             gameContext = gameContext(),
-            testCaseList = testCaseList(projectId, appUserId),
+            testCaseList = cases,
             // 모델 선택의 기본값은 모델 카탈로그를 소유한 Agent가 결정한다. Orchestration은
             // 명시적 override가 있을 때만 model을 보내 모델 교체 때 구 slug를 강제하지 않는다.
             model = configuredModel.takeIf { it.isNotBlank() },
@@ -512,6 +521,7 @@ class TestScenarioAgentService(
      */
     private suspend fun sendFrame(sessionKey: String, session: AgentSession, frame: Any) {
         val json = objectMapper.writeValueAsString(frame)
+        trace.record(session.runId, "  ◀ 답한다", json)
         val result = session.sendLock.withLock { session.outbound.tryEmitNext(json) }
         if (result.isFailure) {
             logger.warn("프레임 전송 실패 [sessionKey=$sessionKey, result=$result]")
@@ -714,6 +724,35 @@ class TestScenarioAgentService(
      * **보는 사람이 없다는 이유로 저작이 멈춰서는 안 된다.** [TestScenarioStreamManager.emit]이 이미
      * 경고를 남기므로 여기서 더 할 말도 없다.
      */
+    /**
+     * 에이전트에서 들어온 프레임을 기록에 남긴다(ARTEL-650).
+     *
+     * **단계 알림은 적지 않는다.** 한 판에 수십 번 오고, 무엇이 일어났는지는 그 앞뒤의 물음과
+     * 답이 이미 말한다 — 적으면 읽을 것이 그것으로 덮인다.
+     *
+     * 턴 결과는 옆 파일로 뺀다. 모델이 낸 원문이 **이 서버가 손대기 전의 모양**이라, 나중에
+     * 저장된 것과 나란히 놓고 무엇이 바뀌었는지 보는 자리가 바로 여기다.
+     */
+    private fun traceInbound(session: AgentSession, node: JsonNode, payloadText: String) {
+        when (val type = node.path("type").asText()) {
+            "progress" -> return
+            "result" -> {
+                val scenarios = node.path("scenarios")
+                val titles = scenarios.joinToString("\n") { s ->
+                    "  · ${s.path("title").asText()} — 스텝 ${s.path("steps").size()}"
+                }
+                trace.record(
+                    session.runId, "◀ 답을 냈다",
+                    "시나리오 ${scenarios.size()}개 " +
+                        trace.blob(session.runId, "answer-${session.answers++}.json", payloadText) +
+                        (if (titles.isBlank()) "" else "\n$titles") +
+                        "\n말: ${node.path("message").asText("")}",
+                )
+            }
+            else -> trace.record(session.runId, "  ▶ 묻는다 ($type)", payloadText)
+        }
+    }
+
     private fun progress(sessionKey: String, stage: AuthoringStage) {
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "progress", stage = stage))
     }
@@ -883,6 +922,10 @@ class TestScenarioAgentService(
         val json = objectMapper.writeValueAsString(
             AgentTurnMessage(userInput = userInput, currentScenarios = currentScenarios)
         )
+        trace.record(
+            session.runId, "▶ 턴을 보낸다",
+            "$userInput\n지금 시나리오 ${currentScenarios.size}개를 함께 보여 준다",
+        )
         val result = session.outbound.tryEmitNext(json)
         if (result.isFailure) {
             throw IllegalStateException("Agent WS 턴 전송 실패 [sessionKey=$sessionKey, result=$result]")
@@ -937,6 +980,7 @@ class TestScenarioAgentService(
             // **무엇을 듣든 살아 있다는 뜻이다**(ARTEL-632). 시한은 이 시각을 기준으로 잰다 —
             // 도구를 마흔 번 부르며 일하는 턴을 "멎었다"고 말하면 안 된다.
             session?.lastHeard = System.currentTimeMillis()
+            session?.let { traceInbound(it, node, payloadText) }
             if (node.path("type").asText() == "uncovered_cases") {
                 if (session == null) {
                     logger.warn("uncovered_cases를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
@@ -1271,6 +1315,11 @@ class TestScenarioAgentService(
          * 아무 소식도 없는지(멎었다고 말해 준다).
          */
         @Volatile var watchdog: Job? = null,
+        /**
+         * 이 판에서 에이전트가 답을 낸 횟수(ARTEL-650). 기록의 첨부 파일 이름을 가른다 — 한 판에
+         * 답이 여럿 나오고(재작성), 그 둘을 나란히 놓고 보는 것이 이 기록의 쓸모다.
+         */
+        @Volatile var answers: Int = 0,
     ) {
         val busy: Boolean get() = watchdog?.isActive == true
     }

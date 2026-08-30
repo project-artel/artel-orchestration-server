@@ -56,6 +56,7 @@ class ScenarioReconcileService(
     private val pathService: ScenarioPathService,
     private val caseFactService: ScenarioCaseFactService,
     private val runMessageRepository: TestRunMessageRepository,
+    private val trace: AuthoringTrace,
 ) {
     private val logger = LoggerFactory.getLogger(ScenarioReconcileService::class.java)
 
@@ -135,6 +136,11 @@ class ScenarioReconcileService(
         divided.notes.forEach { (title, parts) ->
             logger.info("함께 담을 수 없어 나눴다 [runId={}] {} → {}조각", runId, title, parts)
         }
+        if (divided.notes.isEmpty()) trace.record(runId, "1. 나눈다", "나눌 것 없음")
+        else trace.record(
+            runId, "1. 나눈다",
+            divided.notes.joinToString("\n") { (title, parts) -> "$title → ${parts}조각" },
+        )
 
         val split = repairedSplit(given)
         // **덜 담긴 것은 런 전체로 본다**(ARTEL-516). 이번 턴에 쓴 것만 보면, 다른 시나리오에
@@ -154,6 +160,15 @@ class ScenarioReconcileService(
         // 그러면 에이전트에게 다시 쓰라고 시키게 된다 — 그 방법이 안 통한다는 것이 이 작업의 전제다.
         val (bridged, notices, blocked) =
             repairByInsertion(routes, given, describe, openingFacts(projectId, facts))
+        trace.record(
+            runId, "2. 메운다",
+            bridged.mapIndexed { index, after ->
+                val before = given.getOrNull(index)?.steps?.size ?: 0
+                "${after.title}: 스텝 $before → ${after.steps.size}"
+            }.joinToString("\n") +
+                (if (notices.isEmpty()) "" else "\n못 메운 구간:\n" + notices.joinToString("\n")) +
+                (if (blocked.isEmpty()) "" else "\n막힌 것: $blocked"),
+        )
         // 글자까지 같은 스텝이 서로 다른 케이스를 보면 무엇이 다른지 붙인다. 화면에서는 같은 줄이
         // 두 번 있는 것으로 보이고, 실행하는 사람은 중복이라 여겨 하나를 건너뛴다.
         val repaired = ScenarioSiblingLabel.apply(
@@ -173,6 +188,14 @@ class ScenarioReconcileService(
                 conflicting = siblings.conflicting,
             )
         }
+        trace.record(
+            runId, "3. 검수한다",
+            "판정: ${if (findings.rejected) "막음 — 한 줄도 저장하지 않는다" else "통과"}\n" +
+                "안 담은 것 ${findings.missing} · 판정 안 한 것 ${findings.unreviewed} · " +
+                "없는 번호 ${findings.ghost} · 없는 근거 ${findings.ungrounded.size}건 · " +
+                "모른다고 했으나 아는 자리 ${findings.falseUnknowns.size}건 · " +
+                "함께 못 서는 것 ${findings.conflicting.size}건",
+        )
         if (findings.rejected) {
             logger.warn(
                 "저작 검수 실패 — 저장하지 않음 [runId={}] {} · unreviewed={} missing={} ghost={} " +
@@ -283,6 +306,12 @@ class ScenarioReconcileService(
             }
         }
         logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${repaired.size}]")
+        trace.record(
+            runId, "4. 저장한다",
+            "시나리오 $applied/${repaired.size}개\n" +
+                repaired.joinToString("\n") { "  · ${it.title} — 스텝 ${it.steps.size}" } +
+                (if (questions.isEmpty()) "" else "\n되묻는다: " + questions.joinToString(" · ") { it.id }),
+        )
         return ReconcileOutcome(applied, findings, allNotices, question, questions)
     }
 
