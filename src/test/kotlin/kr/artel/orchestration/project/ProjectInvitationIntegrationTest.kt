@@ -171,6 +171,50 @@ class ProjectInvitationIntegrationTest {
             .isEqualTo("OWNER")
     }
 
+    /**
+     * 초대 생성의 "이미 멤버" 확인은 `app_user.email` 이 unique 가 아니라 최선을 다하는 것일 뿐이다.
+     * 그것을 지나온 초대가 실제 방어선을 때린다 — 여기서 멤버 행을 한 번 더 넣으면
+     * `uk_project_member_project_user` 에 걸려 500 이 난다.
+     *
+     * 그 상태를 만들려고 `PENDING` 행을 직접 넣는다. API 로는 409 에 막혀 도달할 수 없다.
+     */
+    @Test
+    fun `accepts idempotently when the account is already a member`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        val memberToken = signIn("99", "hubot")
+        acceptInvitationFor(ownerToken, projectId, "hubot@example.com", memberToken)
+
+        val second = pendingInvitationRow(projectId, "hubot@example.com", ProjectRole.MEMBER)
+        val accepted = trigger(memberToken, "/api/invitations/$second/accept")
+
+        assertThat(accepted["status"].asText()).isEqualTo("ACCEPTED")
+        val inviteeId = userIdOf("99")
+        assertThat(memberRepository.findByProjectId(projectId).toList())
+            .filteredOn { it.appUserId == inviteeId }
+            .hasSize(1)
+    }
+
+    /**
+     * 역할 변경은 이 스토리의 범위 밖이다. 이미 MEMBER 인 사람을 OWNER 로 초대해 수락하게 해도
+     * 역할이 오르지 않아야 하고, 응답도 실제로 갖게 된 역할을 말해야 한다. 초대에 적힌 역할을
+     * 그대로 실으면 응답이 멤버십과 다른 말을 한다.
+     */
+    @Test
+    fun `does not promote an existing member, and says so in the response`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        val memberToken = signIn("99", "hubot")
+        acceptInvitationFor(ownerToken, projectId, "hubot@example.com", memberToken)
+
+        val promotion = pendingInvitationRow(projectId, "hubot@example.com", ProjectRole.OWNER)
+        val accepted = trigger(memberToken, "/api/invitations/$promotion/accept")
+
+        assertThat(accepted["role"].asText()).isEqualTo("MEMBER")
+        assertThat(memberRepository.findByProjectIdAndAppUserId(projectId, userIdOf("99"))?.role)
+            .isEqualTo("MEMBER")
+    }
+
     @Test
     fun `refuses acceptance by an account whose email does not match`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
@@ -390,20 +434,44 @@ class ProjectInvitationIntegrationTest {
     /** 시계를 흔들지 않고 만료 상태를 만든다. expires_at 이 과거인 행을 직접 넣는다. */
     private suspend fun expiredInvitation(projectId: Long, email: String): Long {
         val now = Instant.now(clock)
-        return requireNotNull(
-            invitationRepository.save(
-                ProjectInvitationEntity(
-                    projectId = projectId,
-                    email = email,
-                    role = ProjectRole.MEMBER.name,
-                    status = ProjectInvitationStatus.PENDING.name,
-                    invitedBy = userIdOf("42"),
-                    createdAt = now.minus(Duration.ofDays(30)),
-                    expiresAt = now.minus(Duration.ofDays(16))
-                )
-            ).id
+        return invitationRow(
+            projectId,
+            email,
+            ProjectRole.MEMBER,
+            createdAt = now.minus(Duration.ofDays(30)),
+            expiresAt = now.minus(Duration.ofDays(16))
         )
     }
+
+    /** API 로는 409 에 막혀 못 만드는 `PENDING` 행을 직접 넣는다. */
+    private suspend fun pendingInvitationRow(
+        projectId: Long,
+        email: String,
+        role: ProjectRole
+    ): Long {
+        val now = Instant.now(clock)
+        return invitationRow(projectId, email, role, now, now.plus(Duration.ofDays(14)))
+    }
+
+    private suspend fun invitationRow(
+        projectId: Long,
+        email: String,
+        role: ProjectRole,
+        createdAt: Instant,
+        expiresAt: Instant
+    ): Long = requireNotNull(
+        invitationRepository.save(
+            ProjectInvitationEntity(
+                projectId = projectId,
+                email = email,
+                role = role.name,
+                status = ProjectInvitationStatus.PENDING.name,
+                invitedBy = userIdOf("42"),
+                createdAt = createdAt,
+                expiresAt = expiresAt
+            )
+        ).id
+    )
 
     private suspend fun userIdOf(providerUserId: String): Long =
         requireNotNull(identityRepository.findByProviderAndProviderUserId("github", providerUserId))

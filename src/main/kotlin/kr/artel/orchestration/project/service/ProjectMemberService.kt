@@ -63,17 +63,13 @@ class ProjectMemberService(
             val target = memberRepository.findByProjectIdAndAppUserId(projectId, targetUserId)
                 ?: throw NotFoundException("프로젝트 멤버를 찾을 수 없습니다.")
 
-            if (target.role == ProjectRole.OWNER.name && countOwners(projectId) <= 1) {
+            val owners = memberRepository.countByProjectIdAndRole(projectId, ProjectRole.OWNER.name)
+            if (target.role == ProjectRole.OWNER.name && owners <= 1) {
                 throw LastOwnerException()
             }
 
             memberRepository.delete(target)
         }
-
-    private suspend fun countOwners(projectId: Long): Int =
-        memberRepository.findByProjectId(projectId)
-            .toList()
-            .count { it.role == ProjectRole.OWNER.name }
 
     private fun toResponse(member: ProjectMemberEntity, user: AppUserEntity) =
         ProjectMemberResponse(

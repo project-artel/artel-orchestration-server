@@ -57,16 +57,33 @@ class ProjectMemberIntegrationTest {
     fun `lists the owner first, then members in join order`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
         val projectId = createProject(ownerToken)
-        val memberId = joinAs("99", "hubot", projectId, ProjectRole.MEMBER)
+        // 나중에 들어온 사람을 먼저 만들어 둔다. 목록이 참여 순서를 따르는지, 만든 순서를 따르는지
+        // 가르려면 둘이 어긋나 있어야 한다.
+        val laterMemberId = joinAs("11", "zebra", projectId, ProjectRole.MEMBER, joinedAt = 20)
+        val earlierMemberId = joinAs("99", "hubot", projectId, ProjectRole.MEMBER, joinedAt = 10)
+
+        val members = get(ownerToken, "/api/projects/$projectId/members")
+
+        assertThat(members).hasSize(3)
+        assertThat(members[0]["role"].asText()).isEqualTo("OWNER")
+        assertThat(members[0]["displayName"].asText()).isEqualTo("octocat")
+        assertThat(members[0]["email"].asText()).isEqualTo("octocat@example.com")
+        assertThat(members[1]["userId"].asText()).isEqualTo(earlierMemberId.toString())
+        assertThat(members[2]["userId"].asText()).isEqualTo(laterMemberId.toString())
+    }
+
+    @Test
+    fun `shows a null email rather than hiding the member`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        signInWithoutEmail("55", "ghost")
+        joinAs("55", "ghost", projectId, ProjectRole.MEMBER)
 
         val members = get(ownerToken, "/api/projects/$projectId/members")
 
         assertThat(members).hasSize(2)
-        assertThat(members[0]["role"].asText()).isEqualTo("OWNER")
-        assertThat(members[0]["displayName"].asText()).isEqualTo("octocat")
-        assertThat(members[0]["email"].asText()).isEqualTo("octocat@example.com")
-        assertThat(members[1]["role"].asText()).isEqualTo("MEMBER")
-        assertThat(members[1]["userId"].asText()).isEqualTo(memberId.toString())
+        assertThat(members[1]["displayName"].asText()).isEqualTo("ghost")
+        assertThat(members[1]["email"].isNull).isTrue()
     }
 
     @Test
@@ -161,12 +178,22 @@ class ProjectMemberIntegrationTest {
         signIn("77", "stranger")
         val outsiderId = userIdOf("77")
 
-        val status = statusOf { delete(ownerToken, "/api/projects/$projectId/members/$outsiderId") }
+        val error = errorOf { delete(ownerToken, "/api/projects/$projectId/members/$outsiderId") }
 
-        assertThat(status).isEqualTo(HttpStatus.NOT_FOUND)
+        assertThat(error.statusCode).isEqualTo(HttpStatus.NOT_FOUND)
+        // 프로젝트가 아니라 멤버가 없다는 답이어야 한다. 상태만 보면 두 갈래를 가르지 못한다.
+        assertThat(objectMapper.readTree(error.responseBodyAsString)["message"].asText())
+            .isEqualTo("프로젝트 멤버를 찾을 수 없습니다.")
     }
 
-    private suspend fun signIn(providerUserId: String, login: String): String {
+    private suspend fun signIn(providerUserId: String, login: String): String =
+        signInWith(providerUserId, login, "$login@example.com")
+
+    /** GitHub에서 공개 이메일을 받지 못한 계정. */
+    private suspend fun signInWithoutEmail(providerUserId: String, login: String): String =
+        signInWith(providerUserId, login, email = null)
+
+    private suspend fun signInWith(providerUserId: String, login: String, email: String?): String {
         val user = oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github",
@@ -174,7 +201,7 @@ class ProjectMemberIntegrationTest {
                 login = login,
                 displayName = login,
                 avatarUrl = null,
-                email = "$login@example.com"
+                email = email
             )
         )
         return jwtService.issue(user)
@@ -185,16 +212,22 @@ class ProjectMemberIntegrationTest {
         providerUserId: String,
         login: String,
         projectId: Long,
-        role: ProjectRole
+        role: ProjectRole,
+        joinedAt: Long = 0
     ): Long {
-        signIn(providerUserId, login)
-        val appUserId = userIdOf(providerUserId)
+        val appUserId = identityRepository
+            .findByProviderAndProviderUserId("github", providerUserId)
+            ?.appUserId
+            ?: run {
+                signIn(providerUserId, login)
+                userIdOf(providerUserId)
+            }
         memberRepository.save(
             ProjectMemberEntity(
                 projectId = projectId,
                 appUserId = appUserId,
                 role = role.name,
-                createdAt = Instant.now(clock)
+                createdAt = Instant.now(clock).plusSeconds(joinedAt)
             )
         )
         return appUserId

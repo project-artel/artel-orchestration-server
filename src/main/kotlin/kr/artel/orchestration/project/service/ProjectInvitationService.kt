@@ -86,7 +86,11 @@ class ProjectInvitationService(
                     )
                 )
             } catch (conflict: DataIntegrityViolationException) {
-                // unique index가 잡아낸 중복. R2DBC의 예외 변환은 unique 위반을 이 타입으로 올린다.
+                // 이 save에서 깨질 수 있는 제약은 `uk_project_invitation_pending` 하나뿐이라 중복으로
+                // 단정한다. `role`은 ProjectRole이 CHECK와 같은 값만 허용하고, `project_id`는 위
+                // requireOwner가, `invited_by`는 인증이 이미 실재를 보장한다.
+                //
+                // 테이블에 제약을 더하면 이 단정이 거짓이 된다. 그때는 제약 이름을 보고 갈라야 한다.
                 throw DuplicateInvitationException()
             }
 
@@ -161,7 +165,12 @@ class ProjectInvitationService(
      * 409를 받고도 그 전에 넣은 멤버 행이 남는다.
      *
      * 이미 멤버인 경우에는 행을 새로 넣지 않고 초대만 닫는다. `uk_project_member_project_user`를
-     * 때려 500이 나는 것을 막는 것이면서, 요청한 사람이 원한 상태가 이미 참이라 그것이 옳은 답이다.
+     * 때려 500이 나는 것을 막기 위해서다.
+     *
+     * 그때 기존 행의 역할을 초대의 역할로 올리지 **않는다**. 역할 변경은 이 스토리의 범위 밖이고,
+     * 올려 주면 초대가 역할 변경의 뒷문이 된다 — MEMBER를 OWNER로 초대해 수락하게 하면 역할 변경
+     * API 없이 역할이 바뀐다. 대신 응답에는 실제로 갖게 된 역할을 싣는다. 초대에 적힌 역할을 그대로
+     * 실으면 응답이 멤버십과 다른 말을 한다.
      */
     suspend fun accept(userId: Long, invitationId: Long): ProjectInvitationResponse =
         transactionalOperator.executeAndAwait {
@@ -171,7 +180,8 @@ class ProjectInvitationService(
 
             settle(invitationId, ProjectInvitationStatus.ACCEPTED)
 
-            if (memberRepository.findByProjectIdAndAppUserId(invitation.projectId, userId) == null) {
+            val existing = memberRepository.findByProjectIdAndAppUserId(invitation.projectId, userId)
+            val role = existing?.role ?: run {
                 memberRepository.save(
                     ProjectMemberEntity(
                         projectId = invitation.projectId,
@@ -180,10 +190,12 @@ class ProjectInvitationService(
                         createdAt = Instant.now(clock)
                     )
                 )
+                invitation.role
             }
 
             toResponse(
                 invitation.copy(
+                    role = role,
                     status = ProjectInvitationStatus.ACCEPTED.name,
                     respondedAt = Instant.now(clock)
                 ),
