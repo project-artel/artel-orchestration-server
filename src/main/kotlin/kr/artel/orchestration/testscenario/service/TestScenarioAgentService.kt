@@ -96,6 +96,7 @@ class TestScenarioAgentService(
     private val gapFiller: ScenarioGapFiller,
     private val phrasingClient: ScenarioStepPhrasingClient,
     private val trace: AuthoringTrace,
+    private val flowMatrix: ScenarioFlowMatrix,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -318,6 +319,7 @@ class TestScenarioAgentService(
                 "모델: ${configuredModel.ifBlank { "에이전트 기본값" }} · 말투: $locale · " +
                 "이미 있는 시나리오 ${currentScenarios.size}개",
         )
+        traceMatrix(runId, projectId, appUserId, cases.map { it.id })
         val body = AgentSessionOpenRequest(
             userInput = userInput,
             gameContext = gameContext(),
@@ -724,6 +726,36 @@ class TestScenarioAgentService(
      * **보는 사람이 없다는 이유로 저작이 멈춰서는 안 된다.** [TestScenarioStreamManager.emit]이 이미
      * 경고를 남기므로 여기서 더 할 말도 없다.
      */
+    /**
+     * 짝 행렬을 기록에 남긴다(ARTEL-652). **아직 저작을 바꾸지 않는다** — 보이게만 한다.
+     *
+     * 지금은 저작이 고른 짝만 물어보므로 경로 답이 틀려도 세 단계 뒤에 이상한 시나리오로만
+     * 드러난다. 전건을 미리 풀어 옆에 두면 그 답이 읽을 수 있는 물건이 되고, 골든과 나란히
+     * 놓으면 무엇이 언제 바뀌었는지가 한 줄로 보인다.
+     *
+     * **기록이 꺼져 있으면 풀지 않는다.** 순서쌍이 n×(n−1) 이라 42건이면 1,722칸이고, 아직
+     * 아무도 안 읽는 값을 매 세션 계산할 이유가 없다. 실을 자리가 생기면(흐름 계산) 그때
+     * 이 조건이 없어진다.
+     */
+    private fun traceMatrix(runId: Long, projectId: Long, appUserId: Long, caseIds: List<Long>) {
+        if (!trace.enabled || caseIds.size < 2) return
+        scope.launch {
+            runCatching { flowMatrix.of(projectId, appUserId, caseIds) }
+                .onSuccess { found ->
+                    trace.record(
+                        runId, "짝 행렬",
+                        "케이스 ${caseIds.size}건 · 칸 ${caseIds.size * (caseIds.size - 1)}개 " +
+                            trace.blob(runId, "matrix.txt", found.render()) + "\n" +
+                            "바로 ${found.count(ScenarioFlowMatrix.Link.BESIDE)} · " +
+                            "조작 ${found.count(ScenarioFlowMatrix.Link.BY_OPERATION)} · " +
+                            "막힘 ${found.count(ScenarioFlowMatrix.Link.BLOCKED)} · " +
+                            "확인못함 ${found.count(ScenarioFlowMatrix.Link.UNCHECKED)}",
+                    )
+                }
+                .onFailure { logger.warn("짝 행렬 계산 실패 [runId=$runId] ${it.message}") }
+        }
+    }
+
     /**
      * 에이전트에서 들어온 프레임을 기록에 남긴다(ARTEL-650).
      *

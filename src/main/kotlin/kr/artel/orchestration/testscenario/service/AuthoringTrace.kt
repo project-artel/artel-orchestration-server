@@ -44,6 +44,12 @@ class AuthoringTrace(private val properties: AuthoringTraceProperties) {
     private val clock = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     private val lock = Any()
 
+    /**
+     * 기록을 켜 뒀나. **적는 쪽은 물을 일이 없다** — [record] 와 [blob] 이 알아서 조용해진다.
+     * 물어야 하는 것은 기록을 위해서만 하는 **계산**이 있는 자리다(ARTEL-652의 짝 행렬).
+     */
+    val enabled: Boolean get() = properties.enabled
+
     /** 한 사건. [detail] 은 여러 줄이어도 되고, 들여써서 붙는다. */
     fun record(runId: Long, event: String, detail: String? = null) {
         if (!properties.enabled) return
