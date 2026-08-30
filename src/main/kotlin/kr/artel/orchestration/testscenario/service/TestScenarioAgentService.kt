@@ -97,6 +97,7 @@ class TestScenarioAgentService(
     private val phrasingClient: ScenarioStepPhrasingClient,
     private val trace: AuthoringTrace,
     private val flowMatrix: ScenarioFlowMatrix,
+    private val flowPlanner: ScenarioFlowPlanner,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -742,6 +743,7 @@ class TestScenarioAgentService(
         scope.launch {
             runCatching { flowMatrix.of(projectId, appUserId, caseIds) }
                 .onSuccess { found ->
+                    traceFlows(runId, projectId, appUserId, found)
                     trace.record(
                         runId, "짝 행렬",
                         "케이스 ${caseIds.size}건 · 칸 ${caseIds.size * (caseIds.size - 1)}개 " +
@@ -755,6 +757,32 @@ class TestScenarioAgentService(
                 }
                 .onFailure { logger.warn("짝 행렬 계산 실패 [runId=$runId] ${it.message}") }
         }
+    }
+
+    /**
+     * 계산이 낸 흐름을 기록에 남긴다(ARTEL-657). **아직 저작에 안 쓴다** — 짝 행렬 때와 같이
+     * 보이게만 해서, 모델이 낸 것과 나란히 놓고 어느 쪽이 나은지 먼저 잰다.
+     */
+    private suspend fun traceFlows(
+        runId: Long,
+        projectId: Long,
+        appUserId: Long,
+        matrix: ScenarioFlowMatrix.Matrix,
+    ) {
+        runCatching { flowPlanner.of(projectId, appUserId, matrix) }
+            .onSuccess { flows ->
+                trace.record(
+                    runId, "흐름 계산",
+                    "흐름 ${flows.size}개 · 지나갈 자리 ${flows.sumOf { it.gaps }}군데\n" +
+                        flows.joinToString("\n") { flow ->
+                            "  스텝 ${flow.caseIds.size} · GAP ${flow.gaps} · " +
+                                "시작 ${flow.opening.joinToString(", ") { "${it.variable} ${it.operator} ${it.value}" }
+                                    .ifBlank { "아무 조건 없음" }}\n" +
+                                "    ${flow.caseIds.joinToString(" → ")}"
+                        },
+                )
+            }
+            .onFailure { logger.warn("흐름 계산 실패 [runId=$runId] ${it.message}") }
     }
 
     /**

@@ -88,11 +88,13 @@ object ScenarioContradictionCheck {
                     have = have, madeAt = madeAt[key(guard.variable)] ?: 0,
                 )
             }
-            step.clears.forEach { known.remove(key(it)); madeAt.remove(key(it)) }
+            // **정하는 것이 먼저고 모르게 되는 것이 나중이다.** 한 걸음이 값을 정하면서 동시에
+            // 그 값이 저절로 바뀌는 화면을 지나면, 남는 것은 "모른다"다 — 덜 아는 쪽이 안전하다.
             step.sets.forEach { (variable, value) ->
                 known[key(variable)] = value
                 madeAt[key(variable)] = step.at
             }
+            step.clears.forEach { known.remove(key(it)); madeAt.remove(key(it)) }
         }
         return found
     }
