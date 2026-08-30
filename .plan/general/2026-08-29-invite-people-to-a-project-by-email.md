@@ -2,7 +2,7 @@
 
 - Date: 2026-08-29
 - Jira: ARTEL-685 (Story ARTEL-684, Epic ARTEL-683)
-- Status: Reviewed (fast · medium 1차 반영 완료)
+- Status: Implemented (plan review 통과, pair review 통과)
 
 ## Goal
 
@@ -24,13 +24,15 @@
 | 메서드 | 경로 | 누가 | 응답 |
 | --- | --- | --- | --- |
 | GET | `/api/projects/:projectId/members` | 멤버 누구나 | `ProjectMemberResponse` 목록 |
-| DELETE | `/api/projects/:projectId/members/:appUserId` | `OWNER` | 204 |
+| DELETE | `/api/projects/:projectId/members/:userId` | `OWNER` | 204 |
 | POST | `/api/projects/:projectId/invitations` | `OWNER` | 201 `ProjectInvitationResponse` |
 | GET | `/api/projects/:projectId/invitations` | `OWNER` | `PENDING` 초대 목록 |
 | DELETE | `/api/projects/:projectId/invitations/:invitationId` | `OWNER` | 204 |
 | GET | `/api/invitations` | 로그인한 사람 | 자기 이메일로 온 유효한 `PENDING` 목록 |
 | POST | `/api/invitations/:invitationId/accept` | 이메일이 맞는 사람 | 200 `ProjectInvitationResponse` |
 | POST | `/api/invitations/:invitationId/decline` | 이메일이 맞는 사람 | 200 `ProjectInvitationResponse` |
+
+멤버 응답의 사용자 식별자와 위 path 변수는 `appUserId` 가 아니라 `userId` 다. `OpenApiDocumentationIntegrationTest` 가 `@CurrentUserId appUserId` 의 계약 유출을 막으려고 문서에 `appUserId` 라는 문자열이 나오면 실패하게 돼 있다. 가드를 느슨하게 만드는 대신 이름을 바꿨고, `AuthUserResponse` 와 `DocumentUploader` 가 사용자 식별자를 `id` 로 내는 관례에도 이쪽이 맞다.
 
 수락과 거절은 프로젝트 경로가 아니라 `/api/invitations` 아래다. 수락하는 사람은 아직 그 프로젝트의 멤버가 아니라서, 프로젝트 경로에 두면 "멤버가 아니면 404" 규칙과 정면으로 부딪힌다. `projectId` 는 초대 행에서 읽는다.
 
@@ -100,6 +102,8 @@ partial unique index 의 조건이 `status = 'PENDING'` 이라 `ACCEPTED` 행은
 - **초대 생성**: 그 이메일을 가진 `app_user` 중 이미 이 프로젝트의 멤버가 있으면 409. `app_user.email` 이 unique 가 아니라 이 확인은 최선을 다하는 것일 뿐 보장이 아니다. 확실한 방어선은 아래다.
 - **수락**: `project_member` 행이 이미 있으면 새로 넣지 않고 초대만 `ACCEPTED` 로 바꿔 200 을 준다. 멱등하게 끝나는 쪽이 맞다 — 요청한 사람이 원한 상태("나는 이 프로젝트의 멤버다")가 이미 참이다.
 
+그때 기존 행의 역할은 건드리지 않고, 응답에는 그 행의 실제 역할을 싣는다. 참여는 들어올 때 한 번 정해지고 그 뒤로 초대는 역할을 바꾸지 않는다. 위험이 양쪽으로 대칭이라 그렇다 — 올려 주면 초대가 역할 변경의 뒷문이 되고, 내려 주면 `OWNER` 를 `MEMBER` 로 초대해 수락시키는 것이 소유권을 뺏는 길이 된다. 뒤쪽이 더 나쁘다. 내보내기에는 마지막 `OWNER` 를 막는 방어가 있지만 이 경로에는 없어, 프로젝트가 주인 없이 남을 수 있다.
+
 이메일로 `app_user` 를 찾는 것은 여기 한 곳뿐이고, 수락 자격 판정에는 쓰지 않는다. 수락은 여전히 로그인한 사용자의 `email` 을 초대의 `email` 과 맞춰 보는 방향이다.
 
 **수락은 한 트랜잭션이고 순서가 정해져 있다.** `transactionalOperator.executeAndAwait` 로 감싸고, 조건부 UPDATE 를 먼저 한 다음 멤버 행을 확인하고 넣는다. 조건부 UPDATE 가 직렬화 지점이라 동시 요청 중 하나만 1 행을 받는다. 트랜잭션이 없으면 진 쪽이 409 를 받고도 넣어 둔 `project_member` 행이 남는다.
@@ -112,7 +116,11 @@ partial unique index 의 조건이 `status = 'PENDING'` 이라 `ACCEPTED` 행은
 
 ### 마이그레이션 번호
 
-`origin/develop` 이 `V71__record_what_the_agent_saw_on_a_capability.sql` 까지 와 있어 다음은 `V72` 다. 열린 PR 중 `db/migration/` 을 건드리는 셋(#193, #186, #184)은 전부 `V52`–`V55` 라 지금은 부딪히지 않는다. 다만 이 브랜치가 열려 있는 동안 다른 사람이 `V72` 를 먼저 머지할 수 있으므로, push 전마다 base 를 확인하고 필요하면 번호를 올린다.
+`V73__create_project_invitation.sql` 이다.
+
+처음에는 `V72` 로 잡았다. `origin/develop` 이 `V71` 까지였고, 그때 확인한 열린 PR 중 `db/migration/` 을 건드리는 셋(#193, #186, #184)은 전부 `V52`–`V55` 라 부딪히지 않았기 때문이다. 그 뒤 `scripts/check-flyway-migrations.sh` 가 PR #225(ARTEL-680)도 `V72` 를 쓴다고 경고했다.
+
+`workflow.md` 가 정한 대로 처리했다 — 그 PR 의 브랜치를 이 브랜치에 merge 하고 이쪽을 `V73` 으로 올렸다. 그쪽 마이그레이션이 여기에 이미 있으므로 어느 쪽이 먼저 머지되든 순서가 깨지지 않는다. PR base 도 그 브랜치로 잡는다. #225 가 머지되면 GitHub 이 이 PR 을 `develop` 으로 다시 겨누고 그쪽 브랜치를 지우므로, 그때 `develop` 을 따라잡는다.
 
 ### 테스트 DB
 
@@ -126,44 +134,44 @@ partial unique index 의 조건이 `status = 'PENDING'` 이라 `ACCEPTED` 행은
   - `DataIntegrityViolationException` 을 서비스에서 잡는 것이 이 저장소의 방식임을 확인했다
   - 서버에 메일 의존성이 없음을 `pom.xml` 에서 확인했다
 
-- [ ] **Step 1: 스키마** — `db/migration/V72__create_project_invitation.sql`
+- [x] **Step 1: 스키마** — `db/migration/V73__create_project_invitation.sql`
   - `project_invitation`: `id`, `project_id`, `email`, `role`, `status`, `invited_by`, `created_at`, `expires_at`, `responded_at`
   - partial unique index 와 `(project_id)`, `(lower(email))` 조회 index
 
-- [ ] **Step 2: entity 와 repository**
+- [x] **Step 2: entity 와 repository**
   - `project/entity/ProjectInvitationEntity.kt` — `ProjectInvitationStatus` enum 을 같은 파일에
   - `project/repository/ProjectInvitationRepository.kt` — 조건부 UPDATE 를 `@Modifying @Query` 로
 
-- [ ] **Step 3: 인가를 `ProjectAccessService` 로 모은다**
+- [x] **Step 3: 인가를 `ProjectAccessService` 로 모은다**
   - `requireMember` 와 `requireOwner` 추가. 둘 다 `findAccessibleById` 를 거쳐 `ProjectEntity` 를 돌려준다
   - `ProjectAccessDeniedException` 을 `ProjectService.kt` 에서 `ProjectAccessService.kt` 로 옮긴다
   - `ProjectService.delete` 를 `requireOwner` 로 바꾸고 `ProjectController.delete` 의 null 분기를 걷어낸다
   - `.agents/docs/error-handling.md:73` 의 파일 경로 주석 수정
 
-- [ ] **Step 4: DTO 와 이메일 조회**
+- [x] **Step 4: DTO 와 이메일 조회**
   - `project/dto/MemberDtos.kt` — `ProjectMemberResponse`
   - `project/dto/InvitationDtos.kt` — `CreateInvitationRequest`, `ProjectInvitationResponse`
   - `AppUserRepository.findByEmailIgnoreCase` 추가. 이메일이 unique 가 아니라 여러 행을 돌려준다
 
-- [ ] **Step 5: service**
+- [x] **Step 5: service**
   - `project/service/ProjectMemberService.kt` — 목록, 내보내기. 마지막 `OWNER` 를 막는다
   - `project/service/ProjectInvitationService.kt` — 생성, 취소, 프로젝트별 목록, 받은 목록, 수락, 거절
 
-- [ ] **Step 6: controller** — 전부 `@Tag` 와 `@Operation` 을 단다
+- [x] **Step 6: controller** — 전부 `@Tag` 와 `@Operation` 을 단다
   - `project/controller/ProjectMemberController.kt`
   - `project/controller/ProjectInvitationController.kt`
   - `project/controller/InvitationController.kt`
 
-- [ ] **Step 7: 테스트**
+- [x] **Step 7: 테스트**
   - `ProjectMemberIntegrationTest` — 목록 인가, 내보내기, 마지막 `OWNER`, 비멤버 404, 삭제된 프로젝트 404
   - `ProjectInvitationIntegrationTest` — 생성, 중복 409, 대소문자 다른 중복 409, 이미 멤버인 이메일 409, 수락, 수락이 멱등한지, 거절, 취소, 만료 409, 이메일 불일치 403, 이메일 없는 계정, 삭제된 프로젝트의 초대는 수락되지 않음
   - `ProjectCrudIntegrationTest` 의 삭제 관련 테스트가 그대로 통과하는지 — `requireOwner` 전환이 동작을 바꾸지 않았다는 증거다
 
-- [ ] **Step 8: OpenAPI 스냅샷**
+- [x] **Step 8: OpenAPI 스냅샷**
   - `OpenApiSnapshotTest` 는 검증이 아니라 `docs/api/openapi.json` 을 다시 쓴다. CI 가 그 파일의 diff 를 보고 어긋나면 PR 을 떨어뜨린다
   - 새 컨트롤러 셋이 경로 여덟 개를 더하므로 다시 생성한 스냅샷을 이 PR 에 함께 커밋한다
 
-- [ ] **Step 9: Rollout**
+- [x] **Step 9: Rollout**
   - 마이그레이션은 테이블 추가뿐이라 기존 경로에 영향이 없다
   - `/api/projects` 응답 필드를 바꾸지 않으므로 `home` 이 옛 계약을 읽는 동안에도 배포된다
 
@@ -192,7 +200,7 @@ partial unique index 의 조건이 `status = 'PENDING'` 이라 `ACCEPTED` 행은
 
 ## Rejected feedback
 
-- **fast 8 — 마이그레이션 번호 충돌 위험을 별도 항목으로**: 이미 `## 마이그레이션 번호` 가 담고 있어 항목을 더하지 않았다. 대신 "이 브랜치가 열려 있는 동안 남이 V72 를 먼저 머지할 수 있다"는 문장을 그 절에 넣었다.
+- **fast 8 — 마이그레이션 번호 충돌 위험을 별도 항목으로**: 이미 `## 마이그레이션 번호` 가 담고 있어 항목을 더하지 않았다. 대신 그 절에 경고 상황을 적어 두었고, 실제로 PR #225 와 부딪혀 `V73` 으로 올렸다.
 - **medium 3 — `InvitationProperties` 를 `StorageConfig` 의 등록 목록에 넣기**: 초대 유효기간을 설정으로 두지 않기로 해 properties 클래스 자체가 없어졌다. `StorageConfig` 에 저장소와 무관한 클래스를 등록하면 그 파일 이름이 거짓말을 하게 되는 문제도 함께 사라진다.
 - ~~**medium 1 의 일부 — `ProjectService.delete` 도 `requireOwner` 로 바꾸기**~~: **철회한다.** 1차에서 "`requireOwner` 는 멤버십만 보므로 삭제된 프로젝트에 403 이 나간다"는 이유로 거절했는데, 그것은 `requireOwner` 를 예외로 두어야 할 이유가 아니라 `requireOwner` 정의가 틀렸다는 증거였다. `findAccessibleById` 를 거치게 고치니 `delete` 와 완전히 같아졌고, 이제 바꾼다.
 - **heavy — `ProjectTrackerLinkService` 의 helper 도 `requireOwner` 로 바꾸기**: 이번에는 안 바꾼다. 동작은 같아지지만 이 변경이 열 이유가 없는 파일을 여는 것이고, `coding-style.md` 가 그런 확장을 별도 커밋과 별도 이슈로 미루라고 적었다. 별도 정리로 남긴다.

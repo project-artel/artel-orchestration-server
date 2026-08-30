@@ -63,8 +63,11 @@ class ProjectMemberService(
             val target = memberRepository.findByProjectIdAndAppUserId(projectId, targetUserId)
                 ?: throw NotFoundException("프로젝트 멤버를 찾을 수 없습니다.")
 
-            val owners = memberRepository.countByProjectIdAndRole(projectId, ProjectRole.OWNER.name)
-            if (target.role == ProjectRole.OWNER.name && owners <= 1) {
+            // 세는 것은 OWNER를 내보낼 때뿐이다. 앞 조건이 먼저 걸려 평범한 멤버를 내보낼 때는
+            // COUNT가 나가지 않는다.
+            if (target.role == ProjectRole.OWNER.name &&
+                memberRepository.countByProjectIdAndRole(projectId, ProjectRole.OWNER.name) <= 1
+            ) {
                 throw LastOwnerException()
             }
 

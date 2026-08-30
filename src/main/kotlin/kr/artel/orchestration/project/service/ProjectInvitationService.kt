@@ -167,10 +167,16 @@ class ProjectInvitationService(
      * 이미 멤버인 경우에는 행을 새로 넣지 않고 초대만 닫는다. `uk_project_member_project_user`를
      * 때려 500이 나는 것을 막기 위해서다.
      *
-     * 그때 기존 행의 역할을 초대의 역할로 올리지 **않는다**. 역할 변경은 이 스토리의 범위 밖이고,
-     * 올려 주면 초대가 역할 변경의 뒷문이 된다 — MEMBER를 OWNER로 초대해 수락하게 하면 역할 변경
-     * API 없이 역할이 바뀐다. 대신 응답에는 실제로 갖게 된 역할을 싣는다. 초대에 적힌 역할을 그대로
-     * 실으면 응답이 멤버십과 다른 말을 한다.
+     * 그때 기존 행의 역할을 초대의 역할로 맞추지 **않는다**. 참여는 들어올 때 한 번 정해지고, 그
+     * 뒤로 초대는 역할을 건드리지 않는다.
+     *
+     * 위험이 양쪽으로 대칭이라 그렇다. 올려 주면 MEMBER를 OWNER로 초대해 수락시키는 것이 역할 변경
+     * API 없는 역할 변경이 되고, 내려 주면 OWNER를 MEMBER로 초대해 수락시키는 것이 소유권을 뺏는
+     * 길이 된다. 뒤쪽이 더 나쁘다 — 내보내기에는 마지막 OWNER를 막는 [LastOwnerException]이 있지만
+     * 이 경로에는 그런 방어가 없어, 프로젝트가 주인 없이 남을 수 있다.
+     *
+     * 대신 응답에는 실제로 갖게 된 역할을 싣는다. 초대에 적힌 역할을 그대로 실으면 응답이 멤버십과
+     * 다른 말을 한다.
      */
     suspend fun accept(userId: Long, invitationId: Long): ProjectInvitationResponse =
         transactionalOperator.executeAndAwait {
