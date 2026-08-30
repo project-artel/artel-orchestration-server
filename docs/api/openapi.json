@@ -13,6 +13,10 @@
   ],
   "tags": [
     {
+      "name": "Issue tracker",
+      "description": "GitHub App 설치 복귀"
+    },
+    {
       "name": "Scene Context (internal)",
       "description": "QA agent 가 런 시작에 받는 씬별 capability·앵커 지식"
     },
@@ -21,28 +25,28 @@
       "description": "QA 화면 캡처 업로드 서명"
     },
     {
-      "name": "Game Instance",
-      "description": "프로젝트에 연결된 SDK 설치본 관리"
-    },
-    {
-      "name": "Project Document",
-      "description": "프로젝트 기획서 업로드·조회"
-    },
-    {
       "name": "SDK project",
       "description": "SDK가 등록 대상으로 고를 프로젝트 목록"
+    },
+    {
+      "name": "Issue tracker",
+      "description": "GitHub App 설치 흐름"
     },
     {
       "name": "Project",
       "description": "프로젝트 생성·조회·수정·삭제"
     },
     {
-      "name": "Game Build",
-      "description": "SDK가 보고한 게임 버전 조회·수정"
+      "name": "Invitation",
+      "description": "내가 받은 초대 조회·수락·거절"
     },
     {
       "name": "Content Map",
       "description": "빌드에 앉은 씬 명세를 읽는다"
+    },
+    {
+      "name": "Issue tracker",
+      "description": "프로젝트와 외부 이슈 트래커의 연결"
     },
     {
       "name": "SDK orchestration",
@@ -53,12 +57,32 @@
       "description": "SDK 브라우저 로그인"
     },
     {
-      "name": "SDK Registration",
-      "description": "SDK 인스턴스 등록 및 게임 버전 보고"
-    },
-    {
       "name": "SDK Content Map",
       "description": "SDK 가 보고하는 근거 문서 수용"
+    },
+    {
+      "name": "Game Instance",
+      "description": "프로젝트에 연결된 SDK 설치본 관리"
+    },
+    {
+      "name": "Project Document",
+      "description": "프로젝트 기획서 업로드·조회"
+    },
+    {
+      "name": "Game Build",
+      "description": "SDK가 보고한 게임 버전 조회·수정"
+    },
+    {
+      "name": "Project Member",
+      "description": "프로젝트 멤버 조회·내보내기"
+    },
+    {
+      "name": "Project Invitation",
+      "description": "프로젝트 초대 발송·조회·취소"
+    },
+    {
+      "name": "SDK Registration",
+      "description": "SDK 인스턴스 등록 및 게임 버전 보고"
     }
   ],
   "paths": {
@@ -204,6 +228,122 @@
         }
       }
     },
+    "/api/projects/{projectId}/tracker-link": {
+      "get": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "트래커 연결 조회",
+        "description": "연결이 없으면 link가 null이다. 참여자가 아니면 404.",
+        "operationId": "read",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "GITHUB"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerLinkEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "트래커 연결 설정",
+        "description": "소유자만. 저장 전에 저장소 접근을 확인한다.",
+        "operationId": "upsert",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackerLinkUpsertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerLinkEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "트래커 연결 해제",
+        "description": "소유자만. 이미 나간 외부 이슈와 그 링크는 그대로 둔다.",
+        "operationId": "delete_2",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "GITHUB"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-runs/{runId}": {
       "get": {
         "tags": [
@@ -295,7 +435,7 @@
         "tags": [
           "test-run-controller"
         ],
-        "operationId": "delete_2",
+        "operationId": "delete_3",
         "parameters": [
           {
             "name": "projectId",
@@ -1481,6 +1621,85 @@
         }
       }
     },
+    "/api/projects/{projectId}/invitations": {
+      "get": {
+        "tags": [
+          "Project Invitation"
+        ],
+        "summary": "보낸 초대 목록",
+        "description": "소유자만 볼 수 있다. 아직 답을 기다리는 초대만 나온다.",
+        "operationId": "list_8",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectInvitationResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Project Invitation"
+        ],
+        "summary": "초대 보내기",
+        "description": "소유자만 가능하다. ARTEL 계정이 없는 이메일도 초대할 수 있다. 이미 멤버이거나 이미 기다리는 초대가 있으면 409.",
+        "operationId": "create_4",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateInvitationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectInvitationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-builds/{gameBuildId}/content-map/scan": {
       "post": {
         "tags": [
@@ -1532,7 +1751,7 @@
         ],
         "summary": "기획서 이력",
         "description": "최신 버전이 앞에 온다.",
-        "operationId": "list_9",
+        "operationId": "list_11",
         "parameters": [
           {
             "name": "projectId",
@@ -1648,6 +1867,37 @@
         }
       }
     },
+    "/api/issues/{issueId}/tracker-sync": {
+      "post": {
+        "tags": [
+          "issue-controller"
+        ],
+        "operationId": "trackerSync",
+        "parameters": [
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueTrackerEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/issues/{issueId}/resolve": {
       "post": {
         "tags": [
@@ -1692,6 +1942,74 @@
         "responses": {
           "200": {
             "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/invitations/{invitationId}/decline": {
+      "post": {
+        "tags": [
+          "Invitation"
+        ],
+        "summary": "초대 거절",
+        "description": "멤버가 되지 않고 초대만 닫는다.",
+        "operationId": "decline",
+        "parameters": [
+          {
+            "name": "invitationId",
+            "in": "path",
+            "description": "초대 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectInvitationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/invitations/{invitationId}/accept": {
+      "post": {
+        "tags": [
+          "Invitation"
+        ],
+        "summary": "초대 수락",
+        "description": "프로젝트 멤버가 된다. 대상이 아니면 403, 만료됐거나 이미 처리됐으면 409.",
+        "operationId": "accept",
+        "parameters": [
+          {
+            "name": "invitationId",
+            "in": "path",
+            "description": "초대 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectInvitationResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1920,7 +2238,7 @@
         ],
         "summary": "게임 인스턴스 삭제",
         "description": "삭제한 순간부터 그 instanceKey로는 등록도 연결도 되지 않는다.",
-        "operationId": "delete_3",
+        "operationId": "delete_4",
         "parameters": [
           {
             "name": "projectId",
@@ -2153,6 +2471,47 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/tracker/github/setup": {
+      "get": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "GitHub App 설치 복귀",
+        "description": "서명된 state로 프로젝트를 찾아 installation_id를 저장하고 home으로 되돌린다.",
+        "operationId": "setup",
+        "parameters": [
+          {
+            "name": "installation_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       }
@@ -2494,6 +2853,72 @@
         }
       }
     },
+    "/api/projects/{projectId}/tracker/github/repositories": {
+      "get": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "설치된 저장소 목록",
+        "description": "소유자만. App이 설치된 저장소만 보인다.",
+        "operationId": "repositories",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerRepositoryPageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/tracker/github/install-url": {
+      "get": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "GitHub App 설치 주소",
+        "description": "소유자만. state가 서명되어 있어 남의 프로젝트에 설치를 붙일 수 없다.",
+        "operationId": "installUrl",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerInstallUrlResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-scenario": {
       "get": {
         "tags": [
@@ -2784,6 +3209,43 @@
         }
       }
     },
+    "/api/projects/{projectId}/members": {
+      "get": {
+        "tags": [
+          "Project Member"
+        ],
+        "summary": "멤버 목록",
+        "description": "참여자면 누구나 볼 수 있다. 소유자가 먼저, 그 안에서는 참여한 순서다. 참여자가 아니면 404.",
+        "operationId": "list_6",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectMemberResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/knowledge-graph": {
       "get": {
         "tags": [
@@ -2830,7 +3292,7 @@
         "tags": [
           "project-issue-controller"
         ],
-        "operationId": "list_6",
+        "operationId": "list_7",
         "parameters": [
           {
             "name": "projectId",
@@ -2898,7 +3360,7 @@
         ],
         "summary": "게임 인스턴스 목록",
         "description": "최근에 만든 것이 앞에 온다.",
-        "operationId": "list_7",
+        "operationId": "list_9",
         "parameters": [
           {
             "name": "projectId",
@@ -2932,7 +3394,7 @@
         ],
         "summary": "게임 빌드 목록",
         "description": "최근에 보고된 것이 앞에 온다.",
-        "operationId": "list_8",
+        "operationId": "list_10",
         "parameters": [
           {
             "name": "projectId",
@@ -3006,7 +3468,7 @@
         ],
         "summary": "씬 명세 조회",
         "description": "이 빌드에 앉은 씬·기능·전이·gap 을 한 번에 읽는다. `contentMap` 이 null 이면 등록된 문서가 없고, `contentMap.ingestedAt` 이 null 이면 등록만 되고 아직 앉지 않았다.",
-        "operationId": "read",
+        "operationId": "read_1",
         "parameters": [
           {
             "name": "projectId",
@@ -3143,6 +3605,31 @@
         }
       }
     },
+    "/api/invitations": {
+      "get": {
+        "tags": [
+          "Invitation"
+        ],
+        "summary": "받은 초대 목록",
+        "description": "로그인한 계정의 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없으면 빈 목록이다.",
+        "operationId": "list_12",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectInvitationResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/me": {
       "get": {
         "tags": [
@@ -3159,6 +3646,80 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/members/{userId}": {
+      "delete": {
+        "tags": [
+          "Project Member"
+        ],
+        "summary": "멤버 내보내기",
+        "description": "소유자만 가능하다. 마지막 소유자는 내보낼 수 없다(409).",
+        "operationId": "remove",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "description": "내보낼 사용자 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/invitations/{invitationId}": {
+      "delete": {
+        "tags": [
+          "Project Invitation"
+        ],
+        "summary": "초대 취소",
+        "description": "소유자만 가능하다. 이미 처리된 초대면 409.",
+        "operationId": "revoke",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "invitationId",
+            "in": "path",
+            "description": "초대 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
           }
         }
       }
@@ -3293,6 +3854,74 @@
             "items": {
               "$ref": "#/components/schemas/ExpectedLabelEntry"
             }
+          }
+        }
+      },
+      "TrackerLinkUpsertRequest": {
+        "required": [
+          "provider",
+          "repository",
+          "workspace"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "workspace": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "autoSyncSeverities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TrackerLinkEnvelope": {
+        "type": "object",
+        "properties": {
+          "link": {
+            "$ref": "#/components/schemas/TrackerLinkResponse"
+          }
+        }
+      },
+      "TrackerLinkResponse": {
+        "required": [
+          "autoSyncSeverities",
+          "installed",
+          "provider"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "installed": {
+            "type": "boolean"
+          },
+          "workspace": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "htmlUrl": {
+            "type": "string"
+          },
+          "autoSyncSeverities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -4475,6 +5104,81 @@
           }
         }
       },
+      "CreateInvitationRequest": {
+        "required": [
+          "email",
+          "role"
+        ],
+        "type": "object",
+        "properties": {
+          "email": {
+            "maxLength": 320,
+            "minLength": 0,
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "OWNER",
+              "MEMBER"
+            ]
+          }
+        }
+      },
+      "ProjectInvitationResponse": {
+        "required": [
+          "createdAt",
+          "email",
+          "expiresAt",
+          "id",
+          "projectId",
+          "projectName",
+          "role",
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "OWNER",
+              "MEMBER"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "ACCEPTED",
+              "DECLINED",
+              "REVOKED"
+            ]
+          },
+          "invitedBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "StartContentMapScanResponse": {
         "required": [
           "gameInstanceId",
@@ -4561,6 +5265,45 @@
             }
           },
           "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "IssueTrackerEnvelope": {
+        "required": [
+          "tracker"
+        ],
+        "type": "object",
+        "properties": {
+          "tracker": {
+            "$ref": "#/components/schemas/IssueTrackerResponse"
+          }
+        }
+      },
+      "IssueTrackerResponse": {
+        "required": [
+          "provider",
+          "syncState"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "externalKey": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "syncState": {
+            "type": "string"
+          },
+          "syncError": {
+            "type": "string"
+          },
+          "syncedAt": {
             "type": "string",
             "format": "date-time"
           }
@@ -4812,6 +5555,7 @@
           "interaction",
           "observability",
           "repeatUntilDone",
+          "scenePresence",
           "status",
           "summary",
           "verification"
@@ -4855,6 +5599,9 @@
             "type": "string"
           },
           "verification": {
+            "type": "string"
+          },
+          "scenePresence": {
             "type": "string"
           },
           "repeatUntilDone": {
@@ -5155,6 +5902,9 @@
           },
           "resolvedBy": {
             "type": "string"
+          },
+          "tracker": {
+            "$ref": "#/components/schemas/IssueTrackerResponse"
           }
         }
       },
@@ -5906,6 +6656,54 @@
           }
         }
       },
+      "TrackerRepositoryPageResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerRepositoryResponse"
+            }
+          }
+        }
+      },
+      "TrackerRepositoryResponse": {
+        "required": [
+          "htmlUrl",
+          "private",
+          "repository",
+          "workspace"
+        ],
+        "type": "object",
+        "properties": {
+          "workspace": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "htmlUrl": {
+            "type": "string"
+          },
+          "private": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TrackerInstallUrlResponse": {
+        "required": [
+          "url"
+        ],
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        }
+      },
       "ScenarioListResponse": {
         "required": [
           "items"
@@ -6199,6 +6997,37 @@
             "type": "string"
           },
           "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProjectMemberResponse": {
+        "required": [
+          "displayName",
+          "joinedAt",
+          "role",
+          "userId"
+        ],
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "OWNER",
+              "MEMBER"
+            ]
+          },
+          "joinedAt": {
             "type": "string",
             "format": "date-time"
           }
@@ -6996,6 +7825,7 @@
           "interaction",
           "observability",
           "origin",
+          "scenePresence",
           "status",
           "summary",
           "verification"
@@ -7021,6 +7851,10 @@
           "verification": {
             "type": "string",
             "description": "unverified · confirmed · contradicted. 실행으로 확인됐나"
+          },
+          "scenePresence": {
+            "type": "string",
+            "description": "placed · persistent-evidenced · persistent-unconfirmed. 이 행이 왜 이 scene 에 있나. persistent-unconfirmed 는 여기서 되는지 아직 아무도 안 봤다"
           },
           "actionability": {
             "type": "string",
