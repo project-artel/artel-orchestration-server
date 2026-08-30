@@ -529,6 +529,37 @@ class ScenarioPathServiceTest {
         assertThat(answer.note).contains("TurnBattleScene").doesNotContain("Map_scene")
     }
 
+    /**
+     * **갈래 양쪽은 한 흐름에 못 선다**(ARTEL-651).
+     *
+     * 실측(런 216)에서 `StagePosition != 5` 다음에 `== 5` 를 묻자 `NOT_REQUIRED` 가 나왔다 —
+     * 어디서 출발하는지 모르는데 타이틀의 `-1` 버튼이 그 값을 만든다고 읽혔다. 저작은 그 답을
+     * 믿고 갈래 양쪽을 나란히 담았고, 그 조합은 어떤 스텝으로도 성립하지 않는다.
+     */
+    @Test
+    fun `어디서 출발하는지 모르면 증감으로 값을 맞췄다고 하지 않는다`(): Unit = runBlocking {
+        val reset = capability(mapSceneId, interaction = "click", label = "새 게임")
+        effect(reset, target = "MapMove.StagePosition", detail = "-1")
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+
+        val answer = service.findPath(
+            projectId, userId,
+            // `!=` 는 값을 확정하지 않는다 — 그래서 다음 자리의 출발점을 모른다.
+            case("EndingScene", "EndingScene 화면인 상태 / MapMove.StagePosition != 5"),
+            case("EndingScene", "EndingScene 화면인 상태 / MapMove.StagePosition == 5"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.capabilityIds).doesNotContain(reset)
+        assertThat(answer.blockedBy).isEqualTo("StagePosition")
+    }
+
     // ---- 조작 자신의 사전조건 --------------------------------------------------------
 
     /**
