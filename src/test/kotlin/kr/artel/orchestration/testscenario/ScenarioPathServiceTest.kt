@@ -560,6 +560,71 @@ class ScenarioPathServiceTest {
         assertThat(answer.blockedBy).isEqualTo("StagePosition")
     }
 
+    // ---- 화면을 거쳐 간다 -------------------------------------------------------------
+
+    /**
+     * **한 걸음으로 안 닿아도 거쳐 가면 닿는다**(ARTEL-653).
+     *
+     * 실측(지도 27)에서 `Map_scene → StoryScene` 은 직접 간선이 없고 타이틀을 거쳐 두 걸음이면
+     * 간다. 앞서는 "가는 조작이 명세에 없다"고 답했고, 짝 행렬에서 그것만 112칸이었다.
+     */
+    @Test
+    fun `직접 간선이 없어도 거쳐 갈 수 있으면 그 길을 낸다`(): Unit = runBlocking {
+        val storySceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "StoryScene", walked = true)
+        ).id!!
+        val titleSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "TitleScene", walked = true)
+        ).id!!
+        val toTitle = capability(mapSceneId, interaction = "click", label = "타이틀로")
+        edge(mapSceneId, titleSceneId, "TitleScene", toTitle)
+        val toStory = capability(titleSceneId, interaction = "click", label = "새 게임")
+        edge(titleSceneId, storySceneId, "StoryScene", toStory)
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태"),
+            case("StoryScene", "StoryScene 화면인 상태"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.capabilityIds).containsExactly(toTitle, toStory)
+        assertThat(answer.actions).hasSize(2)
+        assertThat(answer.actions[0]).contains("Map_scene → TitleScene")
+        assertThat(answer.actions[1]).contains("TitleScene → StoryScene")
+    }
+
+    /**
+     * **저절로 넘어가는 걸음은 안 섞는다.** 지시할 수 없는 걸음이 끼면 그 길은 스텝으로 낼 수
+     * 없다 — `TurnBattleScene → GameClearScene`(이겨야 한다)이 그렇다.
+     */
+    @Test
+    fun `가운데가 저절로 일어나는 길은 스텝으로 내지 않는다`(): Unit = runBlocking {
+        val clearSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "GameClearScene", walked = true)
+        ).id!!
+        // 전투 → 결과 화면은 이겨야 넘어간다(조작 아님).
+        val won = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 넘어간다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        edge(battleSceneId, clearSceneId, "GameClearScene", won)
+        // 결과 화면에서 지도로는 누르면 간다.
+        val backToMap = capability(clearSceneId, interaction = "press", inputKey = "Return")
+        edge(clearSceneId, mapSceneId, "Map_scene", backToMap)
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("TurnBattleScene", "TurnBattleScene 화면인 상태"),
+            case("Map_scene", "Map_scene 화면인 상태"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.capabilityIds).doesNotContain(backToMap)
+    }
+
     // ---- 조작 자신의 사전조건 --------------------------------------------------------
 
     /**
@@ -1063,6 +1128,15 @@ class ScenarioPathServiceTest {
                 capabilityKey = capabilityKey,
             )
         ).id!!
+    }
+
+    private suspend fun edge(fromSceneId: Long, toSceneId: Long, toSceneName: String, capabilityId: Long) {
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = fromSceneId, toSceneName = toSceneName,
+                toSceneId = toSceneId, capabilityId = capabilityId, source = "static",
+            )
+        )
     }
 
     private suspend fun capability(

@@ -95,7 +95,10 @@ class ScenarioPathService(
             // **출발 케이스가 이미 그 조작이면 또 넣지 않는다.** 실측(런 32)에서 "맵에서 Return 을
             // 누른다"를 검증하는 케이스 바로 뒤에 같은 Return 을 누르는 브리지가 붙었다 — 실행하는
             // 사람은 같은 것을 두 번 하게 되고, 화면에는 스텝이 중복돼 보인다.
-            if (hop is Hop.By && performs(contentMapId, from, hop.step.capabilityId)) {
+            // 여러 걸음일 수 있으므로 **첫 걸음만** 본다 — 뒤엣것은 그 케이스가 한 일이 아니다.
+            val walked = (hop as? Hop.By)?.steps.orEmpty()
+                .let { if (it.isNotEmpty() && performs(contentMapId, from, it.first().capabilityId)) it.drop(1) else it }
+            if (hop is Hop.By && walked.isEmpty()) {
                 return withOrdering(ordering, resolveGuards(contentMapId, emptyMap(), want, steps, toScene))
             }
             if (hop !is Hop.By) {
@@ -119,7 +122,7 @@ class ScenarioPathService(
                     )
                 })
             }
-            steps += hop.step
+            steps += walked
             // **씬을 넘으면 알던 변수 값을 버린다.** 화면이 바뀐 뒤 무엇이 유지되는지 명세가
             // 말해 주지 않으므로, 유지된다고 치는 것은 지어내는 것이다.
             return withOrdering(ordering, resolveGuards(contentMapId, emptyMap(), want, steps, toScene))
@@ -250,9 +253,9 @@ class ScenarioPathService(
     ): ScenarioPathAnswer {
         val here = at != null && at in writer.scenes
         val travelled = if (here || at == null) null else writer.scenes.firstNotNullOfOrNull { target ->
-            (sceneHop(contentMapId, at, target, state) as? Hop.By)?.let { target to it.step }
+            (sceneHop(contentMapId, at, target, state) as? Hop.By)?.let { target to it.steps }
         }
-        travelled?.let { (_, step) -> steps += step }
+        travelled?.let { (_, walked) -> steps += walked }
 
         val where = writer.scenes.joinToString(" · ")
         return ScenarioPathAnswer(
@@ -584,38 +587,99 @@ class ScenarioPathService(
 
     // ---- 씬 간선 ---------------------------------------------------------------------
 
+    /**
+     * **화면은 거쳐 갈 수 있다**(ARTEL-653).
+     *
+     * 앞서는 `from → to` 간선을 직접 찾고 없으면 끝냈다. 그런데 지도의 씬 간선은 한 걸음으로 다
+     * 안 닿는다 — 실측(지도 27, 간선 19개)에서 `Map_scene → StoryScene` 은 타이틀을 거쳐 두
+     * 걸음이면 가는데 "가는 조작이 명세에 없다"고 답했다. 짝 행렬 1,722칸 중 **막힘 1,273칸이고
+     * 그 88%가 씬 이동**이었으며, 두 걸음으로 풀리는 것만 178칸이다.
+     *
+     * 그래서 시킬 수 있는 간선만 밟아 가장 짧은 길을 찾는다. 못 찾으면 예전 그대로 답한다 —
+     * 직접 간선이 있는데 그 조작이 지금 막혔으면 [Hop.Blocked], 저절로 넘어가는 것뿐이면
+     * [Hop.Automatic], 아무것도 없으면 [Hop.None].
+     *
+     * **사전조건은 첫 걸음만 본다.** 화면을 넘으면 알던 값을 버리는 것이 이 서비스의 규칙이고,
+     * 그러면 둘째 걸음부터는 읽을 값이 없다. 모르는 것을 위반이라 하지 않는다.
+     *
+     * **저절로 넘어가는 걸음은 안 섞는다.** `TurnBattleScene → GameClearScene`(이겨야 한다)처럼
+     * 지시할 수 없는 걸음이 끼면 그 길은 스텝으로 낼 수 없다. 그런 자리는 아직 통째로 막힘이고,
+     * 아는 절반을 내는 것은 다음 일이다.
+     */
+    private suspend fun sceneRoute(
+        contentMapId: Long,
+        from: String,
+        to: String,
+        state: Map<String, String>,
+    ): List<PathStep>? {
+        val scenes = sceneRepository.findByContentMapIdOrderByNameAsc(contentMapId).toList()
+        val nameOf = scenes.associate { it.id!! to it.name }
+        val edges = sceneEdgeRepository.findByContentMapId(contentMapId).toList()
+            .groupBy { nameOf[it.fromSceneId] }
+        if (edges.isEmpty()) return null
+
+        // 가장 짧은 길 하나. 여러 걸음짜리 우회로는 실행하는 사람에게 부담이라 깊이를 묶는다 —
+        // 지도의 씬은 한 자릿수이고, 네 걸음을 넘겨야 닿는 곳은 길이 있다기보다 없는 쪽에 가깝다.
+        val seen = mutableSetOf(from)
+        var frontier = listOf(from to emptyList<PathStep>())
+        repeat(MAX_SCENE_HOPS) {
+            val next = mutableListOf<Pair<String, List<PathStep>>>()
+            for ((here, walked) in frontier) {
+                for (edge in edges[here].orEmpty()) {
+                    val there = edge.toSceneName
+                    if (there in seen) continue
+                    val capability = edge.capabilityId?.let { capabilityRepository.findById(it) } ?: continue
+                    if (!instructable(capability)) continue
+                    // 첫 걸음만 지금 상태로 잰다. 그 뒤는 화면이 바뀌어 아는 값이 없다.
+                    if (walked.isEmpty() &&
+                        ScenarioStateReader.violated(capability.givenText, state) != null
+                    ) continue
+                    val step = walked + PathStep(
+                        capabilityId = capability.id!!,
+                        input = operation(capability),
+                        action = describe(
+                            capability.interaction, capability.inputKey,
+                            capability.controlLabel, capability.controlPath,
+                        ) + " ($here → $there)",
+                    )
+                    if (there == to) return step
+                    seen += there
+                    next += there to step
+                }
+            }
+            if (next.isEmpty()) return null
+            frontier = next
+        }
+        return null
+    }
+
     private suspend fun sceneHop(
         contentMapId: Long,
         from: String,
         to: String,
         state: Map<String, String>,
     ): Hop {
+        sceneRoute(contentMapId, from, to, state)?.let { return Hop.By(it) }
+
         val fromScene = sceneRepository.findByContentMapIdAndName(contentMapId, from) ?: return Hop.None
         val edges = sceneEdgeRepository.findByFromSceneIdAndToSceneName(fromScene.id!!, to).toList()
         if (edges.isEmpty()) return Hop.None
 
-        // **한 화면에서 같은 곳으로 가는 길이 여럿이면 시킬 수 있는 쪽을 고른다**(ARTEL-634).
-        // 앞서는 첫 간선을 집었다. 실측(지도 26)에서 `Map_scene → TurnBattleScene` 이 둘인데
-        // 하나는 `not-a-step` 이고 다른 하나가 `Return` 키다 — 앞엣것이 먼저 나오면 "저절로
-        // 일어난다"로 답하고, 그 위에서 저작이 "길을 모른다"고 사용자에게 묻는다. 지도가 아는
-        // 길을 두고 물은 셈이다(런 183: `gap:Map_scene→TurnBattleScene`).
-        val usable = edges.firstNotNullOfOrNull { edge ->
-            val capability = edge.capabilityId?.let { capabilityRepository.findById(it) }
-            if (capability != null && instructable(capability)) edge.capabilityId!! to capability else null
-        }
-        // 시킬 수 있는 간선이 하나도 없으면 그때는 정말 저절로 일어나는 자리다.
-        val (capabilityId, capability) = usable ?: return Hop.Automatic
-        // 간선을 타는 조작에도 자기 사전조건이 있다. `InteractionLock` 이 잠긴 상태에서 씬을
+        // 여기까지 왔다는 것은 **시킬 수 있는 길이 하나도 없다**는 뜻이다([sceneRoute] 가 직접
+        // 간선도 함께 보므로). 남은 것은 왜 없는지를 가르는 일이다.
+        //
+        // 시킬 수 있는 간선이 있는데 여기 왔다면 그 조작 자신의 사전조건이 지금 어긋난 것이다.
+        // 간선을 타는 조작에도 자기 사전조건이 있다 — `InteractionLock` 이 잠긴 상태에서 씬을
         // 넘으라고 적어 두면 실행은 첫 스텝에서 멎는다.
-        ScenarioStateReader.violated(capability.givenText, state)?.let { return Hop.Blocked(it) }
-        return Hop.By(PathStep(
-            capabilityId = capabilityId,
-            input = operation(capability),
-            action = describe(
-                capability.interaction, capability.inputKey,
-                capability.controlLabel, capability.controlPath,
-            ) + " ($from → $to)",
-        ))
+        val blocked = edges.firstNotNullOfOrNull { edge ->
+            val capability = edge.capabilityId?.let { capabilityRepository.findById(it) }
+            if (capability != null && instructable(capability)) {
+                ScenarioStateReader.violated(capability.givenText, state)
+            } else null
+        }
+        blocked?.let { return Hop.Blocked(it) }
+        // 시킬 수 있는 간선이 하나도 없으면 그때는 정말 저절로 일어나는 자리다.
+        return Hop.Automatic
     }
 
     /**
@@ -626,7 +690,8 @@ class ScenarioPathService(
      * [None] 가는 조작이 명세에 없다.
      */
     private sealed interface Hop {
-        data class By(val step: PathStep) : Hop
+        /** 걸음이 여럿일 수 있다 — 화면은 거쳐 갈 수 있다(ARTEL-653). */
+        data class By(val steps: List<PathStep>) : Hop
         data class Blocked(val by: Guard) : Hop
         data object Automatic : Hop
         data object None : Hop
@@ -690,6 +755,12 @@ class ScenarioPathService(
     }
 
     private companion object {
+        /**
+         * 화면을 몇 걸음까지 거쳐 갈 것인가(ARTEL-653). 지도의 씬은 한 자릿수이고, 이보다 멀리
+         * 돌아야 닿는 곳은 길이 있다기보다 없는 쪽에 가깝다 — 실행하는 사람에게도 그렇다.
+         */
+        const val MAX_SCENE_HOPS = 4
+
         /** 단정 근거로 쓸 수 있는 확실성. 나머지(`ambiguous`·`unresolved`)는 경로로 옮기지 않는다. */
         val CERTAIN = setOf(AnalysisConfidence.EXACT.wire, AnalysisConfidence.DERIVED.wire)
     }
