@@ -748,6 +748,7 @@ class TestScenarioAgentService(
                             trace.blob(runId, "matrix.txt", found.render()) + "\n" +
                             "바로 ${found.count(ScenarioFlowMatrix.Link.BESIDE)} · " +
                             "조작 ${found.count(ScenarioFlowMatrix.Link.BY_OPERATION)} · " +
+                            "거쳐서 ${found.count(ScenarioFlowMatrix.Link.BY_PLAY)} · " +
                             "막힘 ${found.count(ScenarioFlowMatrix.Link.BLOCKED)} · " +
                             "확인못함 ${found.count(ScenarioFlowMatrix.Link.UNCHECKED)}",
                     )

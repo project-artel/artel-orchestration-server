@@ -64,11 +64,13 @@ class ScenarioFlowMatrixTest {
     private var mapSceneId: Long = 0
     private var battleSceneId: Long = 0
 
-    /** 지도 위 네 자리와, 진행도로 갈리는 갈래 한 쌍. */
+    /** 지도 위 두 자리, 진행도로 갈리는 갈래 한 쌍, 그리고 아무도 안 쓰는 값 한 쌍. */
     private var atZero: Long = 0
     private var atOne: Long = 0
     private var notCleared: Long = 0
     private var cleared: Long = 0
+    private var quiet: Long = 0
+    private var quieter: Long = 0
 
     @BeforeEach
     fun fixture(): Unit = runBlocking {
@@ -127,29 +129,36 @@ class ScenarioFlowMatrixTest {
         atOne = case("Map_scene 화면인 상태 / MapMove.position == 1")
         notCleared = case("Map_scene 화면인 상태 / MapMove.StagePosition != 5")
         cleared = case("Map_scene 화면인 상태 / MapMove.StagePosition == 5")
+        // 지도의 어떤 기능도 이 값을 쓰지 않는다 — 거쳐 갈 수도 없는 자리다.
+        quiet = case("Map_scene 화면인 상태 / MapMove.knock == 1")
+        quieter = case("Map_scene 화면인 상태 / MapMove.knock == 2")
     }
 
     @Test
-    fun `시킬 수 있는 값은 조작으로 이어지고 아닌 값은 막힌다`(): Unit = runBlocking {
-        val found = matrix.of(projectId, userId, listOf(atZero, atOne, notCleared, cleared))
+    fun `값은 조작으로 · 거쳐서 · 아예 못 감 셋으로 갈린다`(): Unit = runBlocking {
+        val found = matrix.of(projectId, userId, listOf(atZero, atOne, notCleared, cleared, quiet, quieter))
 
         // 위치는 방향키가 옮긴다.
         assertThat(found.between(atZero, atOne)?.link).isEqualTo(Link.BY_OPERATION)
         assertThat(found.between(atOne, atZero)?.link).isEqualTo(Link.BY_OPERATION)
 
-        // 진행도를 5 로 만드는 조작은 없다 — 전투로만 오른다. 런 216 이 여기서 틀렸다.
+        // 진행도를 5 로 만드는 조작은 없다 — 전투로만 오른다(런 216 이 여기서 틀렸다).
+        // 그래도 게임을 하는 사람은 지나간다(ARTEL-655).
         val climb = found.between(notCleared, cleared)
-        assertThat(climb?.link).isEqualTo(Link.BLOCKED)
+        assertThat(climb?.link).isEqualTo(Link.BY_PLAY)
         assertThat(climb?.blockedBy).isEqualTo("StagePosition")
 
         // 반대 방향은 되돌리는 버튼이 있다.
         assertThat(found.between(cleared, notCleared)?.link).isEqualTo(Link.BY_OPERATION)
+
+        // 아무 데서도 안 바뀌는 값은 거쳐 갈 수도 없다.
+        assertThat(found.between(quiet, quieter)?.link).isEqualTo(Link.BLOCKED)
     }
 
     /** 방향이 다르면 답도 다르다 — 그래서 순서쌍을 다 푼다. */
     @Test
     fun `양쪽 방향을 모두 푼다`(): Unit = runBlocking {
-        val ids = listOf(atZero, atOne, notCleared, cleared)
+        val ids = listOf(atZero, atOne, notCleared, cleared, quiet, quieter)
 
         val found = matrix.of(projectId, userId, ids)
 
@@ -162,12 +171,18 @@ class ScenarioFlowMatrixTest {
         ).isEqualTo(ids.size * (ids.size - 1))
     }
 
-    /** 흐름을 짤 때 묻는 것은 "이 자리 뒤에 무엇이 올 수 있나" 하나다. */
+    /**
+     * 흐름을 짤 때 묻는 것은 "이 자리 뒤에 무엇이 올 수 있나" 하나다.
+     *
+     * **거쳐 가는 자리는 뺄 것이 아니다**(ARTEL-655) — 사이가 GAP 이 될 뿐 흐름은 이어진다.
+     * 정말 뺄 것은 아무 길도 없는 자리다.
+     */
     @Test
-    fun `막힌 자리는 다음에 올 수 있는 자리에서 빠진다`(): Unit = runBlocking {
-        val found = matrix.of(projectId, userId, listOf(atZero, atOne, notCleared, cleared))
+    fun `아예 못 가는 자리만 다음에 올 수 있는 자리에서 빠진다`(): Unit = runBlocking {
+        val found = matrix.of(projectId, userId, listOf(atZero, atOne, notCleared, cleared, quiet, quieter))
 
-        assertThat(found.after(notCleared)).doesNotContain(cleared)
+        assertThat(found.after(quiet)).doesNotContain(quieter)
+        assertThat(found.after(notCleared)).contains(cleared)
         assertThat(found.after(cleared)).contains(notCleared)
     }
 

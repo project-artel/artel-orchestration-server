@@ -33,8 +33,9 @@ import org.springframework.stereotype.Component
  *
  * ## 값
  *
- * 세 가지다. *"이겨서 갈 수 있는 막힘"* 과 *"아예 길이 없는 막힘"* 은 아직 안 가른다 — 지금
- * 경로 답이 둘을 같은 [ScenarioPathResult.UNKNOWN] 으로 내고, 가르려면 답의 모양을 바꿔야 한다.
+ * 네 가지다. **"거쳐 갈 수는 있는 막힘"과 "아예 길이 없는 막힘"을 가른다**(ARTEL-655) — 앞엣것은
+ * 게임을 하는 사람이 지나가므로 흐름을 이을 수 있고 그 사이가 GAP 이 되지만, 뒤엣것은 못 잇는다.
+ * 둘을 같게 세면 흐름 계산이 이을 수 있는 자리를 끊는다.
  */
 @Component
 class ScenarioFlowMatrix(private val pathService: ScenarioPathService) {
@@ -46,11 +47,13 @@ class ScenarioFlowMatrix(private val pathService: ScenarioPathService) {
      *
      * @property BESIDE 아무것도 필요 없다. 바로 이어진다.
      * @property BY_OPERATION 시킬 수 있는 조작이 사이에 있다.
+     * @property BY_PLAY 거쳐 갈 수는 있으나 시킬 수는 없다 — 가운데 저절로 일어나는 걸음이 낀다.
+     *   흐름은 이을 수 있고 그 사이가 GAP 이 된다. [Link.BLOCKED] 와 갈라 두는 이유가 그것이다.
      * @property BLOCKED 지도가 방법을 말하지 않는다. 무엇이 막는지는 [Cell.blockedBy] 에 있다.
      * @property UNCHECKED 확인 자체를 못했다 — 지도가 없거나 조회가 실패했다. **막혔다는 뜻이
      *   아니다.** 둘을 같게 다루면 지도 없는 프로젝트의 저작이 통째로 미상으로 덮인다.
      */
-    enum class Link { BESIDE, BY_OPERATION, BLOCKED, UNCHECKED }
+    enum class Link { BESIDE, BY_OPERATION, BY_PLAY, BLOCKED, UNCHECKED }
 
     /** 한 칸. [answer] 는 스텝을 만들 때 그대로 쓰려고 들고 있는다. */
     data class Cell(
@@ -75,7 +78,7 @@ class ScenarioFlowMatrix(private val pathService: ScenarioPathService) {
         fun after(fromTestCaseId: Long): List<Long> = testCaseIds.filter { to ->
             to != fromTestCaseId &&
                 cells[fromTestCaseId to to]?.link.let {
-                    it == Link.BESIDE || it == Link.BY_OPERATION
+                    it == Link.BESIDE || it == Link.BY_OPERATION || it == Link.BY_PLAY
                 }
         }
 
@@ -90,7 +93,8 @@ class ScenarioFlowMatrix(private val pathService: ScenarioPathService) {
             appendLine("케이스 ${testCaseIds.size}건 · 칸 ${cells.size}개")
             appendLine(
                 "  바로 ${count(Link.BESIDE)} · 조작 ${count(Link.BY_OPERATION)} · " +
-                    "막힘 ${count(Link.BLOCKED)} · 확인못함 ${count(Link.UNCHECKED)}"
+                    "거쳐서 ${count(Link.BY_PLAY)} · 막힘 ${count(Link.BLOCKED)} · " +
+                    "확인못함 ${count(Link.UNCHECKED)}"
             )
             appendLine()
             for (from in testCaseIds) {
@@ -100,6 +104,7 @@ class ScenarioFlowMatrix(private val pathService: ScenarioPathService) {
                     when (cell.link) {
                         Link.BESIDE -> "$to 바로"
                         Link.BY_OPERATION -> "$to ← ${cell.actions.joinToString(" · ")}"
+                        Link.BY_PLAY -> "$to ← 거쳐서 (${cell.blockedBy})"
                         else -> null
                     }
                 }
@@ -142,9 +147,9 @@ class ScenarioFlowMatrix(private val pathService: ScenarioPathService) {
 
         val matrix = Matrix(ordered, cells)
         logger.info(
-            "짝 행렬 [projectId={}] 케이스 {}건 · 칸 {}개 · {}ms — 바로 {} · 조작 {} · 막힘 {} · 확인못함 {}",
+            "짝 행렬 [projectId={}] 케이스 {}건 · 칸 {}개 · {}ms — 바로 {} · 조작 {} · 거쳐서 {} · 막힘 {} · 확인못함 {}",
             projectId, ordered.size, cells.size, System.currentTimeMillis() - started,
-            matrix.count(Link.BESIDE), matrix.count(Link.BY_OPERATION),
+            matrix.count(Link.BESIDE), matrix.count(Link.BY_OPERATION), matrix.count(Link.BY_PLAY),
             matrix.count(Link.BLOCKED), matrix.count(Link.UNCHECKED),
         )
         return matrix
@@ -165,7 +170,9 @@ class ScenarioFlowMatrix(private val pathService: ScenarioPathService) {
                 actions = answer.actions,
             )
             ScenarioPathResult.UNKNOWN -> Cell(
-                Link.BLOCKED,
+                if (answer.playable) Link.BY_PLAY else Link.BLOCKED,
+                capabilityIds = answer.capabilityIds,
+                actions = answer.actions,
                 blockedBy = answer.blockedBy,
                 note = answer.note,
             )

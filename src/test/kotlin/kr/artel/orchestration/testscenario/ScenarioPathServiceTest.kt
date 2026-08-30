@@ -493,6 +493,22 @@ class ScenarioPathServiceTest {
         assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
         assertThat(answer.capabilityIds).doesNotContain(reset)
         assertThat(answer.blockedBy).isEqualTo("StagePosition")
+        // 지도가 어디서 오르는지 대고 있으므로 **게임을 하는 사람은 지나간다**(ARTEL-655).
+        assertThat(answer.playable).isTrue()
+    }
+
+    /** 아무 데서도 안 바뀌는 값은 거쳐 갈 수도 없다 — 그건 정말 못 가는 자리다. */
+    @Test
+    fun `아무 데서도 안 바뀌는 값은 거쳐 갈 수 있다고 하지 않는다`(): Unit = runBlocking {
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.knock == 1"),
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.knock == 2"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.playable).isFalse()
+        assertThat(answer.note).contains("명세에 없다")
     }
 
     /**
@@ -599,7 +615,7 @@ class ScenarioPathServiceTest {
      * 없다 — `TurnBattleScene → GameClearScene`(이겨야 한다)이 그렇다.
      */
     @Test
-    fun `가운데가 저절로 일어나는 길은 스텝으로 내지 않는다`(): Unit = runBlocking {
+    fun `가운데가 저절로 일어나는 길은 거쳐 갈 수 있다고 답한다`(): Unit = runBlocking {
         val clearSceneId = sceneRepository.save(
             SceneEntity(contentMapId = contentMapId, name = "GameClearScene", walked = true)
         ).id!!
@@ -621,8 +637,28 @@ class ScenarioPathServiceTest {
             case("Map_scene", "Map_scene 화면인 상태"),
         )
 
+        // 스텝으로는 못 낸다 — 이겨야 넘어간다.
         assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
         assertThat(answer.capabilityIds).doesNotContain(backToMap)
+        // 그래도 **아예 길이 없는 것과는 다르다**(ARTEL-655). 게임을 하는 사람은 지나간다.
+        assertThat(answer.playable).isTrue()
+        assertThat(answer.blockedBy).isEqualTo("TurnBattleScene→GameClearScene")
+        assertThat(answer.note).contains("Return").contains("GameClearScene")
+    }
+
+    /** 간선 자체가 없으면 거쳐 갈 수도 없다 — 그건 여전히 아예 없는 것이다. */
+    @Test
+    fun `간선이 없으면 거쳐 갈 수 있다고 하지 않는다`(): Unit = runBlocking {
+        sceneRepository.save(SceneEntity(contentMapId = contentMapId, name = "GameOverScene", walked = true))
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태"),
+            case("GameOverScene", "GameOverScene 화면인 상태"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.playable).isFalse()
     }
 
     /**
