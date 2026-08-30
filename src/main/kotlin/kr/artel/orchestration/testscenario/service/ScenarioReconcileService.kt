@@ -57,6 +57,7 @@ class ScenarioReconcileService(
     private val caseFactService: ScenarioCaseFactService,
     private val runMessageRepository: TestRunMessageRepository,
     private val trace: AuthoringTrace,
+    private val effectRepository: kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository,
 ) {
     private val logger = LoggerFactory.getLogger(ScenarioReconcileService::class.java)
 
@@ -188,13 +189,30 @@ class ScenarioReconcileService(
                 conflicting = siblings.conflicting,
             )
         }
+        // **이 흐름이 자기가 말한 것과 어긋나나**(ARTEL-656). 게임을 돌리지 않는다 — 지도가
+        // 적어 둔 것끼리 부딪히는지만 본다. 지금은 **막지 않고 남긴다**: 저작이 검수에 막혀
+        // 결과가 통째로 버려지는 것이 사용자가 가장 싫어한 일이고, 흐름 계산이 들어와 이런
+        // 자리가 애초에 안 생기게 된 뒤에 관문으로 올리는 것이 순서다.
+        val raised = raisedIn(projectId)
+        // **코드가 끼운 브리지도 값을 바꾼다.** 그것을 안 읽으면 멀쩡한 걸음을 어긋났다고 한다 —
+        // 실측(런 225)에서 `position` 을 한 칸씩 옮기는 브리지 여섯을 못 읽고 여섯 건을 잘못 짚었다.
+        val bridgeEffects = effectsOfBridges(repaired)
+        val contradictions = repaired.flatMap { scenario ->
+            ScenarioContradictionCheck.find(walkOf(scenario, byId, raised, bridgeEffects))
+                .map { scenario.title to it }
+        }
+        contradictions.forEach { (title, found) ->
+            logger.warn("흐름이 스스로 어긋난다 [runId={}] {} — {}", runId, title, found.describe())
+        }
         trace.record(
             runId, "3. 검수한다",
             "판정: ${if (findings.rejected) "막음 — 한 줄도 저장하지 않는다" else "통과"}\n" +
                 "안 담은 것 ${findings.missing} · 판정 안 한 것 ${findings.unreviewed} · " +
                 "없는 번호 ${findings.ghost} · 없는 근거 ${findings.ungrounded.size}건 · " +
                 "모른다고 했으나 아는 자리 ${findings.falseUnknowns.size}건 · " +
-                "함께 못 서는 것 ${findings.conflicting.size}건",
+                "함께 못 서는 것 ${findings.conflicting.size}건 · " +
+                "스스로 어긋남 ${contradictions.size}건(막지 않음)" +
+                contradictions.joinToString("") { (title, found) -> "\n  $title: ${found.describe()}" },
         )
         if (findings.rejected) {
             logger.warn(
@@ -639,6 +657,91 @@ class ScenarioReconcileService(
      *
      * 못 읽으면 빈 목록이고, 그때는 이 칸이 생기기 전과 똑같이 나눈다.
      */
+    /**
+     * **그 값이 어느 화면에서 저절로 움직이나.** 흐름이 그 화면을 지나면 그 값은 모르는 것이 된다.
+     *
+     * 이것을 안 읽으면 멀쩡한 흐름을 틀렸다고 한다 — 전투에 들어갔다 나오면 진행도가 올라 있는데,
+     * 그것을 안 놓으면 다음 자리가 전부 어긋나 보인다.
+     */
+    /**
+     * 코드가 끼운 브리지가 **무엇을 바꾸나**. 값 → (대상, 어떻게) 로 돌려준다.
+     *
+     * 스텝의 글이 아니라 그 스텝이 든 기능 번호로 읽는다 — 문구를 다듬을 때마다 검사가 조용히
+     * 깨지는 길은 이 저장소가 이미 걷어냈다.
+     */
+    private suspend fun effectsOfBridges(
+        scenarios: List<ScenarioResult>,
+    ): Map<Long, List<Pair<String, String?>>> {
+        val ids = scenarios.flatMap { it.steps }
+            .filter { it.caseId == null }
+            .mapNotNull { it.stepSourceCapabilityId }
+            .distinct()
+        if (ids.isEmpty()) return emptyMap()
+        return ids.associateWith { id ->
+            runCatching {
+                effectRepository.findByCapabilityIdOrderByIdAsc(id).toList()
+                    .filter { it.kind == "write" || it.kind == "saved" }
+                    .mapNotNull { effect -> effect.target?.let { it to effect.detail } }
+            }.getOrDefault(emptyList())
+        }
+    }
+
+    private suspend fun raisedIn(projectId: Long): Map<String, Set<String>> = runCatching {
+        testCaseRepository.findValueRaisers(projectId).toList()
+            .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
+            .mapValues { (_, scenes) -> scenes.toSet() }
+    }.onFailure { logger.warn("저절로 바뀌는 자리 조회 실패 — 어긋남을 덜 잡는다: ${it.message}") }
+        .getOrDefault(emptyMap())
+
+    /**
+     * 흐름 하나를 [ScenarioContradictionCheck] 가 읽을 사실로 옮긴다(ARTEL-656).
+     *
+     * **스텝의 글을 되읽지 않는다.** 값은 케이스의 전제 구조와 스텝의 칸(`step_unknown_reason`)에서
+     * 온다 — 문구를 다듬을 때마다 검사가 조용히 깨지는 길은 이 저장소가 이미 걷어냈다.
+     */
+    private fun walkOf(
+        scenario: ScenarioResult,
+        byId: Map<Long, ScenarioSiblingCheck.CaseFact>,
+        raisedIn: Map<String, Set<String>>,
+        bridgeEffects: Map<Long, List<Pair<String, String?>>>,
+    ): List<ScenarioContradictionCheck.Step> = scenario.steps.mapIndexed { index, step ->
+        val fact = step.caseId?.let { byId[it] }
+        // 메우지 못한 구간을 지나면 그 자리가 무엇으로 바뀌는지 모른다. 막은 것이 화면 쌍이면
+        // (`A→B`) 그 화면들을 지나는 것이므로 거기서 오르는 값도 함께 놓아 준다.
+        val gap = step.stepUnknownReason?.takeIf { step.stepKind == ScenarioStepKind.GAP }
+        val passed = buildSet {
+            fact?.scene?.let(::add)
+            gap?.split("→")?.map { it.trim() }?.takeIf { it.size == 2 }?.let(::addAll)
+        }
+        // 브리지가 값을 **정하면** 그 값이고, 몇 칸씩 미는 것이거나 무엇이 될지 모르면 놓아 준다.
+        //
+        // **부호가 붙은 것은 정하는 것이 아니다.** `+1` 은 물론이고 `-1` 도 그렇다 — 적재기가
+        // 음수 대입과 감소를 같은 글자로 내기 때문에 형식이 둘을 못 가른다(경로 서비스도 같은
+        // 자리에서 감소로 읽는다). 실측(런 226)에서 `-1` 을 대입으로 읽어 멀쩡한 걸음을 어긋났다고
+        // 짚었다. 되풀이 브리지도 여기서 놓아 주는 쪽이 맞다 — 몇 번 눌러 어디에 멈추는지는
+        // 그 다음 케이스의 전제가 말한다.
+        val written = step.stepSourceCapabilityId?.let { bridgeEffects[it] }.orEmpty()
+        val bridgeSets = written.mapNotNull { (target, detail) ->
+            detail?.trim()
+                ?.takeIf { it.toDoubleOrNull() != null && it.first() != '+' && it.first() != '-' }
+                ?.let { ScenarioStateReader.normalize(target) to it }
+        }.toMap()
+        ScenarioContradictionCheck.Step(
+            at = index + 1,
+            caseId = step.caseId,
+            requires = fact?.guards.orEmpty(),
+            sets = fact?.guards.orEmpty()
+                .filter { it.operator == "==" && !it.symbolic }
+                .associate { it.variable to it.value } + fact?.declared.orEmpty() + bridgeSets,
+            clears = buildSet {
+                gap?.takeIf { !it.contains("→") }?.let(::add)
+                raisedIn.forEach { (value, scenes) -> if (scenes.any { it in passed }) add(value) }
+                written.map { ScenarioStateReader.normalize(it.first) }
+                    .filterNotTo(this) { it in bridgeSets }
+            },
+        )
+    }
+
     private suspend fun movableValues(projectId: Long): Set<String> = runCatching {
         testCaseRepository.findWrittenValues(projectId).toList().toSet()
     }.onFailure { logger.warn("지도가 움직이는 값 조회 실패 — 예전처럼 나눈다: ${it.message}") }
