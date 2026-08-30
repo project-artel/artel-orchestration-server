@@ -625,6 +625,147 @@ class ScenarioPathServiceTest {
         assertThat(answer.capabilityIds).doesNotContain(backToMap)
     }
 
+    /**
+     * **화면을 넘기는 케이스 뒤에는 이미 그 화면에 서 있다**(ARTEL-654).
+     *
+     * 실측(지도 27)에서 엔딩·스토리는 씬 간선이 전부 "저절로 넘어간다"라 나가는 조작이 없는
+     * 것으로 읽히고, 그 화면에서 출발하는 칸이 짝 행렬에서 통째로 막혔다(642칸). 그런데 그
+     * 화면을 나가는 케이스가 있고, 그것을 실행한 뒤에는 나갈 길을 찾을 일이 아니다.
+     */
+    @Test
+    fun `케이스가 도착한 화면에서 출발한다`(): Unit = runBlocking {
+        val endingSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "EndingScene", walked = true)
+        ).id!!
+        // 엔딩에서 지도로는 저절로 넘어간다 — 시킬 수 있는 간선이 없다.
+        val auto = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = endingSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "대화가 끝나면 넘어간다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        edge(endingSceneId, mapSceneId, "Map_scene", auto)
+
+        val leaves = case("EndingScene", "EndingScene 화면인 상태", arrivesAt = "Map_scene")
+        val onMap = case("Map_scene", "Map_scene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, leaves, onMap)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.NOT_REQUIRED)
+    }
+
+    /**
+     * **화면을 넘겨도 그 케이스가 보장한 값은 들고 간다**(ARTEL-654).
+     *
+     * 버려 보고 되돌린 자리다(런 220). 버리면 "모른다"가 되고, 모르는 값은 그 값을 쓰는 조작이
+     * 하나라도 있으면 만들 수 있다고 읽힌다 — 진행도가 5인 채로 나온 뒤에 "5가 아니어야 한다"를
+     * 놓았는데 "아무것도 필요 없다"가 나왔고, 저작이 서로 부정하는 두 자리를 나란히 담았다.
+     */
+    @Test
+    fun `도착 화면으로 넘어가도 그 케이스가 보장한 값은 남는다`(): Unit = runBlocking {
+        val titleSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "TitleScene", walked = true)
+        ).id!!
+        val storySceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "StoryScene", walked = true)
+        ).id!!
+        val toStory = capability(titleSceneId, interaction = "click", label = "새 게임")
+        edge(titleSceneId, storySceneId, "StoryScene", toStory)
+        // 진행도를 0 으로 되돌리는 버튼은 있다 — 5 가 아니게 만들 수는 있다.
+        val reset = capability(titleSceneId, interaction = "click", label = "처음부터")
+        effect(reset, target = "MapMove.StagePosition", detail = "0")
+
+        val answer = service.findPath(
+            projectId, userId,
+            // 진행도 5 인 채로 타이틀에 나와 있다.
+            case("StoryScene", "StoryScene 화면인 상태 / MapMove.StagePosition == 5", arrivesAt = "TitleScene"),
+            case("StoryScene", "StoryScene 화면인 상태 / MapMove.StagePosition != 5"),
+        )
+
+        // 5 인 것을 알고 있으므로 그냥 이어진다고 답하지 않는다.
+        assertThat(answer.result).isNotEqualTo(ScenarioPathResult.NOT_REQUIRED)
+    }
+
+    /**
+     * **화면을 넘어도 저장되는 값은 남는다**(ARTEL-654).
+     *
+     * 앞서는 화면이 바뀌면 알던 값을 전부 버렸다. 지도가 `saved` 로 적어 둔 값이 있는데도 그랬고,
+     * 그래서 진행도가 5인 채로 화면을 나온 뒤 "5가 아니어야 한다"를 놓으면 "아무것도 필요 없다"가
+     * 나왔다 — 모르는 값은 그 값을 쓰는 조작이 하나라도 있으면 만들 수 있다고 읽히기 때문이다.
+     */
+    @Test
+    fun `화면을 넘어도 저장되는 값은 들고 간다`(): Unit = runBlocking {
+        val titleSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "TitleScene", walked = true)
+        ).id!!
+        val toTitle = capability(mapSceneId, interaction = "click", label = "타이틀로")
+        edge(mapSceneId, titleSceneId, "TitleScene", toTitle)
+        // 지도가 이 값은 저장된다고 말한다.
+        val save = capability(titleSceneId, interaction = "click", label = "저장")
+        effectRepository.save(
+            CapabilityEffectEntity(
+                capabilityId = save, category = "state", kind = "saved",
+                target = "StagePosition", detail = "MapMove.StagePosition", watchable = true,
+            )
+        )
+        // 진행도를 0 으로 되돌리는 버튼도 있다 — 5 가 아니게 만들 수는 있다.
+        val reset = capability(titleSceneId, interaction = "click", label = "처음부터")
+        effect(reset, target = "MapMove.StagePosition", detail = "0")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 5"),
+            case("TitleScene", "TitleScene 화면인 상태 / MapMove.StagePosition != 5"),
+        )
+
+        // 화면을 넘었지만 5 인 것은 안다. 되돌리는 조작이 필요하다.
+        assertThat(answer.capabilityIds).contains(reset)
+    }
+
+    /** 저장된다고 적히지 않은 값은 예전 그대로 — 화면을 넘으면 버린다. */
+    @Test
+    fun `저장된다고 적히지 않은 값은 화면을 넘으며 버린다`(): Unit = runBlocking {
+        val titleSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "TitleScene", walked = true)
+        ).id!!
+        val toTitle = capability(mapSceneId, interaction = "click", label = "타이틀로")
+        edge(mapSceneId, titleSceneId, "TitleScene", toTitle)
+        val reset = capability(titleSceneId, interaction = "click", label = "처음부터")
+        effect(reset, target = "MapMove.position", detail = "0")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 5"),
+            case("TitleScene", "TitleScene 화면인 상태 / MapMove.position != 5"),
+        )
+
+        assertThat(answer.capabilityIds).containsExactly(toTitle)
+    }
+
+    /** 도착 화면을 안 적은 케이스는 예전 그대로 — 시작 화면에서 출발한다. */
+    @Test
+    fun `도착 화면이 없으면 시작 화면에서 출발한다`(): Unit = runBlocking {
+        val endingSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "EndingScene", walked = true)
+        ).id!!
+        val auto = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = endingSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "대화가 끝나면 넘어간다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        edge(endingSceneId, mapSceneId, "Map_scene", auto)
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("EndingScene", "EndingScene 화면인 상태"),
+            case("Map_scene", "Map_scene 화면인 상태"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.blockedBy).isEqualTo("EndingScene→Map_scene")
+    }
+
     // ---- 조작 자신의 사전조건 --------------------------------------------------------
 
     /**
@@ -1113,14 +1254,19 @@ class ScenarioPathServiceTest {
         stateAfter: String? = null,
         evidence: String? = null,
         capabilityKey: String? = null,
+        arrivesAt: String? = null,
     ): Long {
         val source = buildMap {
             stateAfter?.let { put("state_after", it) }
             evidence?.let { put("evidence", it) }
         }
+        val body = buildMap<String, Any> {
+            if (source.isNotEmpty()) put("source", source)
+            arrivesAt?.let { put("arrives_at", it) }
+        }
         val metadata =
-            if (source.isEmpty()) Json.of("{}")
-            else Json.of(objectMapper.writeValueAsString(mapOf("source" to source)))
+            if (body.isEmpty()) Json.of("{}")
+            else Json.of(objectMapper.writeValueAsString(body))
         return testCaseRepository.save(
             TestCaseEntity(
                 projectId = projectId, scene = scene, step = "step-${seq.incrementAndGet()}",

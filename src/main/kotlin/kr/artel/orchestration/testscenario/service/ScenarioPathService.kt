@@ -73,10 +73,24 @@ class ScenarioPathService(
                 note = "이 프로젝트에는 씬 명세가 아직 없다.",
             )
 
-        val fromScene = ScenarioStateReader.sceneOf(from)
+        // **출발 화면은 그 케이스를 실행한 뒤에 서 있는 곳이다**(ARTEL-654). 화면을 넘기는
+        // 케이스는 자기가 어디에 도착하는지 적어 둔다. 그것을 안 보면 이미 나와 있는 화면에서
+        // 나갈 길을 찾게 되고, 엔딩·스토리처럼 나가는 조작이 없는 화면에서는 통째로 막힌다.
+        val fromScene = ScenarioStateReader.arrivesAt(from, objectMapper)
+            ?: ScenarioStateReader.sceneOf(from)
         val toScene = ScenarioStateReader.sceneOf(to)
         // 출발은 **그 케이스를 실행한 뒤**다. 사전조건이 보장한 것에 그 케이스가 바꾼 것을 얹는다.
         val fromAfter = ScenarioStateReader.stateAfter(from, objectMapper)
+        // **케이스가 화면을 넘겨도 그 케이스가 보장하던 값은 들고 간다.** 브리지가 넘길 때는
+        // 버리는데(아래) 여기서는 안 버린다 — 실측(런 220)에서 버려 보고 되돌린 자리다.
+        //
+        // 버리면 "모른다"가 되고, 모르는 값은 그 값을 쓰는 조작이 하나라도 있으면 만들 수 있다고
+        // 읽힌다. `1661`(진행도 5, 타이틀로 나감) 다음에 `1733`(진행도 5가 아님)을 놓았을 때
+        // 그래서 "아무것도 필요 없다"가 나왔고, 저작이 서로 부정하는 두 자리를 나란히 담았다.
+        //
+        // 브리지 쪽과 다른 이유는 아는 것이 다르기 때문이다. 브리지는 지도의 간선을 타는 것이라
+        // 그 너머에서 무엇이 유지되는지 아무 말이 없지만, 여기서는 **그 케이스가 자기 사전조건을
+        // 적어 두었다.** 그것을 버리는 것은 적힌 것을 안 읽는 것이지 신중한 것이 아니다.
         val state = conditions.knownValuesOf(from) + fromAfter
         val want = conditions.guardsOf(to)
         // 순서가 뒤바뀐 것인지는 **메우는 일과 다른 질문**이다. 여기서 함께 답해 두면 뒤집으면
@@ -99,7 +113,10 @@ class ScenarioPathService(
             val walked = (hop as? Hop.By)?.steps.orEmpty()
                 .let { if (it.isNotEmpty() && performs(contentMapId, from, it.first().capabilityId)) it.drop(1) else it }
             if (hop is Hop.By && walked.isEmpty()) {
-                return withOrdering(ordering, resolveGuards(contentMapId, emptyMap(), want, steps, toScene))
+                return withOrdering(
+                    ordering,
+                    resolveGuards(contentMapId, surviving(contentMapId, state), want, steps, toScene),
+                )
             }
             if (hop !is Hop.By) {
                 return withOrdering(ordering, when (hop) {
@@ -123,12 +140,31 @@ class ScenarioPathService(
                 })
             }
             steps += walked
-            // **씬을 넘으면 알던 변수 값을 버린다.** 화면이 바뀐 뒤 무엇이 유지되는지 명세가
-            // 말해 주지 않으므로, 유지된다고 치는 것은 지어내는 것이다.
-            return withOrdering(ordering, resolveGuards(contentMapId, emptyMap(), want, steps, toScene))
+            // **씬을 넘으면 저장되는 값만 남는다**(ARTEL-654). 앞서는 전부 버렸다 — 화면이 바뀐
+            // 뒤 무엇이 유지되는지 명세가 말해 주지 않는다고 보았기 때문인데, 말해 주는 것이
+            // 있었다. 지도가 `saved` 로 적어 둔 값이 그것이다.
+            return withOrdering(
+                ordering,
+                resolveGuards(contentMapId, surviving(contentMapId, state), want, steps, toScene),
+            )
         }
 
         return withOrdering(ordering, resolveGuards(contentMapId, state, want, steps, toScene ?: fromScene))
+    }
+
+    /**
+     * 화면이 바뀌어도 남는 값만 고른다(ARTEL-654). 지도가 `saved` 로 적어 둔 것이 그것이다.
+     *
+     * 읽지 못하면 **예전처럼 전부 버린다.** 남는다고 말하려면 근거가 있어야 하고, 조회가 실패한
+     * 것은 근거가 아니다.
+     */
+    private suspend fun surviving(contentMapId: Long, state: Map<String, String>): Map<String, String> {
+        if (state.isEmpty()) return state
+        val persists = runCatching { pathRepository.findValuesThatSurviveScenes(contentMapId).toList() }
+            .onFailure { logger.warn("저장되는 값 조회 실패 — 화면을 넘으며 전부 버린다: ${it.message}") }
+            .getOrDefault(emptyList())
+            .mapTo(mutableSetOf()) { ScenarioStateReader.normalize(it) }
+        return state.filterKeys { it in persists }
     }
 
     /**
