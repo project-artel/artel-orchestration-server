@@ -31,6 +31,7 @@ import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
+import kr.artel.orchestration.testscenario.dto.AuthoringFlow
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
@@ -320,7 +321,7 @@ class TestScenarioAgentService(
                 "모델: ${configuredModel.ifBlank { "에이전트 기본값" }} · 말투: $locale · " +
                 "이미 있는 시나리오 ${currentScenarios.size}개",
         )
-        traceMatrix(runId, projectId, appUserId, cases.map { it.id })
+        val flows = computedFlows(runId, projectId, appUserId, cases.map { it.id })
         val body = AgentSessionOpenRequest(
             userInput = userInput,
             gameContext = gameContext(),
@@ -331,7 +332,8 @@ class TestScenarioAgentService(
             locale = locale,
             projectId = projectId,
             runId = runId,
-            currentScenarios = currentScenarios
+            currentScenarios = currentScenarios,
+            flows = flows,
         )
         val resp = webClient.post()
             .uri("$agentBaseUrl/sessions")
@@ -728,61 +730,55 @@ class TestScenarioAgentService(
      * 경고를 남기므로 여기서 더 할 말도 없다.
      */
     /**
-     * 짝 행렬을 기록에 남긴다(ARTEL-652). **아직 저작을 바꾸지 않는다** — 보이게만 한다.
+     * **계산이 낸 흐름을 구해 에이전트에 실어 보낸다**(ARTEL-658).
      *
-     * 지금은 저작이 고른 짝만 물어보므로 경로 답이 틀려도 세 단계 뒤에 이상한 시나리오로만
-     * 드러난다. 전건을 미리 풀어 옆에 두면 그 답이 읽을 수 있는 물건이 되고, 골든과 나란히
-     * 놓으면 무엇이 언제 바뀌었는지가 한 줄로 보인다.
+     * 무엇을 묶고 어떤 순서로 놓을지는 실행 가능성을 정하는 판단이고, 모델이 42건을 한 번에 들고
+     * 하기에 가장 약한 자리가 그 둘이다. 계산으로 옮긴다.
      *
-     * **기록이 꺼져 있으면 풀지 않는다.** 순서쌍이 n×(n−1) 이라 42건이면 1,722칸이고, 아직
-     * 아무도 안 읽는 값을 매 세션 계산할 이유가 없다. 실을 자리가 생기면(흐름 계산) 그때
-     * 이 조건이 없어진다.
+     * **못 구해도 저작을 막지 않는다.** 빈 목록이면 에이전트는 예전처럼 스스로 묶고 순서를 정한다 —
+     * 이 계산이 실패해서 저작이 통째로 안 나오는 것이 가장 나쁜 결과다.
+     *
+     * 짝 행렬과 흐름은 기록에도 함께 남긴다. 모델이 낸 것과 나란히 놓고 무엇이 달라졌는지 보는
+     * 자리가 거기다.
      */
-    private fun traceMatrix(runId: Long, projectId: Long, appUserId: Long, caseIds: List<Long>) {
-        if (!trace.enabled || caseIds.size < 2) return
-        scope.launch {
-            runCatching { flowMatrix.of(projectId, appUserId, caseIds) }
-                .onSuccess { found ->
-                    traceFlows(runId, projectId, appUserId, found)
-                    trace.record(
-                        runId, "짝 행렬",
-                        "케이스 ${caseIds.size}건 · 칸 ${caseIds.size * (caseIds.size - 1)}개 " +
-                            trace.blob(runId, "matrix.txt", found.render()) + "\n" +
-                            "바로 ${found.count(ScenarioFlowMatrix.Link.BESIDE)} · " +
-                            "조작 ${found.count(ScenarioFlowMatrix.Link.BY_OPERATION)} · " +
-                            "거쳐서 ${found.count(ScenarioFlowMatrix.Link.BY_PLAY)} · " +
-                            "막힘 ${found.count(ScenarioFlowMatrix.Link.BLOCKED)} · " +
-                            "확인못함 ${found.count(ScenarioFlowMatrix.Link.UNCHECKED)}",
-                    )
-                }
-                .onFailure { logger.warn("짝 행렬 계산 실패 [runId=$runId] ${it.message}") }
-        }
-    }
-
-    /**
-     * 계산이 낸 흐름을 기록에 남긴다(ARTEL-657). **아직 저작에 안 쓴다** — 짝 행렬 때와 같이
-     * 보이게만 해서, 모델이 낸 것과 나란히 놓고 어느 쪽이 나은지 먼저 잰다.
-     */
-    private suspend fun traceFlows(
+    private suspend fun computedFlows(
         runId: Long,
         projectId: Long,
         appUserId: Long,
-        matrix: ScenarioFlowMatrix.Matrix,
-    ) {
-        runCatching { flowPlanner.of(projectId, appUserId, matrix) }
-            .onSuccess { flows ->
-                trace.record(
-                    runId, "흐름 계산",
-                    "흐름 ${flows.size}개 · 지나갈 자리 ${flows.sumOf { it.gaps }}군데\n" +
-                        flows.joinToString("\n") { flow ->
-                            "  스텝 ${flow.caseIds.size} · GAP ${flow.gaps} · " +
-                                "시작 ${flow.opening.joinToString(", ") { "${it.variable} ${it.operator} ${it.value}" }
-                                    .ifBlank { "아무 조건 없음" }}\n" +
-                                "    ${flow.caseIds.joinToString(" → ")}"
-                        },
+        caseIds: List<Long>,
+    ): List<AuthoringFlow> {
+        if (caseIds.size < 2) return emptyList()
+        return runCatching {
+            val matrix = flowMatrix.of(projectId, appUserId, caseIds)
+            trace.record(
+                runId, "짝 행렬",
+                "케이스 ${caseIds.size}건 · 칸 ${caseIds.size * (caseIds.size - 1)}개 " +
+                    trace.blob(runId, "matrix.txt", matrix.render()) + "\n" +
+                    "바로 ${matrix.count(ScenarioFlowMatrix.Link.BESIDE)} · " +
+                    "조작 ${matrix.count(ScenarioFlowMatrix.Link.BY_OPERATION)} · " +
+                    "거쳐서 ${matrix.count(ScenarioFlowMatrix.Link.BY_PLAY)} · " +
+                    "막힘 ${matrix.count(ScenarioFlowMatrix.Link.BLOCKED)} · " +
+                    "확인못함 ${matrix.count(ScenarioFlowMatrix.Link.UNCHECKED)}",
+            )
+            val flows = flowPlanner.of(projectId, appUserId, matrix).map { flow ->
+                AuthoringFlow(
+                    caseIds = flow.caseIds,
+                    opening = flow.opening.map { "${it.variable} ${it.operator} ${it.value}" },
+                    gaps = flow.gaps,
                 )
             }
-            .onFailure { logger.warn("흐름 계산 실패 [runId=$runId] ${it.message}") }
+            trace.record(
+                runId, "흐름 계산",
+                "흐름 ${flows.size}개 · 지나갈 자리 ${flows.sumOf { it.gaps }}군데\n" +
+                    flows.joinToString("\n") { flow ->
+                        "  스텝 ${flow.caseIds.size} · GAP ${flow.gaps} · " +
+                            "시작 ${flow.opening.joinToString(", ").ifBlank { "아무 조건 없음" }}\n" +
+                            "    ${flow.caseIds.joinToString(" → ")}"
+                    },
+            )
+            flows
+        }.onFailure { logger.warn("흐름 계산 실패 — 예전처럼 모델이 묶는다 [runId=$runId] ${it.message}") }
+            .getOrDefault(emptyList())
     }
 
     /**

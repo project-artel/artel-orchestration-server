@@ -115,6 +115,27 @@ class ScenarioFlowPlanTest {
         assertThat(flows.single().opening.map { it.value }).containsExactly("1")
     }
 
+    /**
+     * **사이에 끼는 조작이 무엇을 바꾸는지 본다**(런 232).
+     *
+     * 조작이 있다는 것까지만 알고 그것이 무엇을 바꾸는지 모르면, 진행도를 0 으로 되돌리는 조작을
+     * 사이에 끼워 놓고 두 칸 뒤에 5 를 요구하는 흐름이 나온다 — 코드가 만든 실행 불가다.
+     */
+    @Test
+    fun `사이의 조작이 뒤를 깨면 그 자리에 안 놓는다`() {
+        val cases = listOf(
+            Case(id = 1, sets = mapOf("StagePosition" to "5")),
+            Case(id = 2, requires = listOf(needs("StagePosition", "==", "5"))),
+        )
+
+        val flows = ScenarioFlowPlan.of(cases) { _, _ ->
+            // 이어 주는 조작이 진행도를 0 으로 되돌린다.
+            Link(BY_OPERATION, sets = mapOf("StagePosition" to "0"))
+        }
+
+        assertThat(flows).hasSize(2)
+    }
+
     /** 싼 것부터 놓는다 — 아무것도 안 넣는 자리가 지나가야 하는 자리보다 먼저다. */
     @Test
     fun `사이에 아무것도 안 드는 자리를 먼저 놓는다`() {

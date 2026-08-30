@@ -41,9 +41,17 @@ object ScenarioFlowPlan {
         val clears: Set<String> = emptySet(),
     )
 
-    /** 두 자리 사이. [clears] 는 그 사이를 지나며 모르게 되는 값이다(GAP 이 그렇다). */
+    /**
+     * 두 자리 사이.
+     *
+     * @property sets 사이에 끼는 **조작이 정하는 값**. 이것을 안 보면 계산이 "조작이 있다"까지만
+     *   알고 그 조작이 무엇을 바꾸는지는 모른 채 흐름을 낸다 — 실측(런 232)에서 진행도를 0 으로
+     *   되돌리는 조작이 사이에 끼고 두 칸 뒤가 5 를 요구하는 흐름이 셋 나왔다.
+     * @property clears 그 사이를 지나며 **모르게 되는** 값(GAP 이 그렇다).
+     */
     data class Link(
         val kind: ScenarioFlowMatrix.Link,
+        val sets: Map<String, String> = emptyMap(),
         val clears: Set<String> = emptySet(),
     )
 
@@ -142,6 +150,7 @@ object ScenarioFlowPlan {
 
             val (id, edge) = next
             if (edge.kind == ScenarioFlowMatrix.Link.BY_PLAY) gaps++
+            edge.sets.forEach { (variable, value) -> known[variable.lowercase()] = value }
             edge.clears.forEach { known.remove(it.lowercase()); forgotten += it.lowercase() }
             here = id
         }
@@ -153,13 +162,16 @@ object ScenarioFlowPlan {
      *
      * 사이를 지나며 모르게 되는 값은 어긋남으로 세지 않는다(전투를 지나면 진행도가 오른다).
      */
-    private fun fits(case: Case, known: Map<String, String>, edge: Link): Boolean =
-        case.requires.none { guard ->
+    private fun fits(case: Case, known: Map<String, String>, edge: Link): Boolean {
+        // 사이의 조작이 값을 바꾸고 지나간다 — 그 뒤의 상태로 재야 한다.
+        val after = known + edge.sets.mapKeys { it.key.lowercase() }
+        return case.requires.none { guard ->
             val key = guard.variable.lowercase()
             if (edge.clears.any { it.lowercase() == key }) return@none false
-            val have = known[key] ?: return@none false
+            val have = after[key] ?: return@none false
             !guard.holds(have)
         }
+    }
 
     /**
      * 한 흐름에 놓을 자리 수와 지나갈 자리 수의 기본값.

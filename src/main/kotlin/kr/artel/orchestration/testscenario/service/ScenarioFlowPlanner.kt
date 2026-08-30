@@ -17,6 +17,7 @@ class ScenarioFlowPlanner(
     private val conditions: CaseConditionReader,
     private val testCaseRepository: TestCaseRepository,
     private val objectMapper: ObjectMapper,
+    private val effectRepository: kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository,
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
 
@@ -59,6 +60,17 @@ class ScenarioFlowPlanner(
             .getOrDefault(emptyList())
             .mapTo(mutableSetOf()) { ScenarioStateReader.normalize(it).lowercase() }
 
+        // 흐름을 잇는 조작들이 무엇을 바꾸는지 미리 읽어 둔다.
+        val effects = matrix.testCaseIds.flatMap { from ->
+            matrix.testCaseIds.mapNotNull { to -> matrix.between(from, to)?.capabilityIds }
+        }.flatten().distinct().associateWith { id ->
+            runCatching {
+                effectRepository.findByCapabilityIdOrderByIdAsc(id).toList()
+                    .filter { it.kind == "write" || it.kind == "saved" }
+                    .mapNotNull { effect -> effect.target?.let { it to effect.detail } }
+            }.getOrDefault(emptyList())
+        }
+
         return ScenarioFlowPlan.of(
             cases,
             opening = { guard -> guard.variable.lowercase() in produced && !guard.symbolic },
@@ -66,6 +78,15 @@ class ScenarioFlowPlanner(
             val cell = matrix.between(from, to)
             ScenarioFlowPlan.Link(
                 kind = cell?.link ?: ScenarioFlowMatrix.Link.UNCHECKED,
+                // **사이에 끼는 조작이 무엇을 정하나.** 부호가 붙은 것은 정하는 것이 아니다 —
+                // 적재기가 음수 대입과 감소를 같은 글자로 낸다(경로 서비스도 같은 자리에서
+                // 감소로 읽는다).
+                sets = cell?.capabilityIds.orEmpty().flatMap { effects[it].orEmpty() }
+                    .mapNotNull { (target, detail) ->
+                        detail?.trim()
+                            ?.takeIf { it.toDoubleOrNull() != null && it.first() != '+' && it.first() != '-' }
+                            ?.let { ScenarioStateReader.normalize(target) to it }
+                    }.toMap(),
                 // 지나갈 자리는 그 값이 어떻게 되는지 모르게 만든다 — 막은 것이 화면 쌍이면
                 // 그 화면에서 오르는 값들이고, 값 이름이면 그 값이다.
                 clears = cell?.blockedBy?.let { blocked ->
