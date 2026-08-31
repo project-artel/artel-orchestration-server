@@ -164,7 +164,10 @@ class ScenarioReconcileService(
         // 코드가 채우는 대신 검사가 짚는다.
         val (bridged, notices, blocked) =
             if (repair.bridges)
-                repairByInsertion(routes, given, describe, openingFacts(projectId, facts), caseOfCapability(projectId))
+                repairByInsertion(
+                    routes, given, describe, openingFacts(projectId, facts), caseOfCapability(projectId),
+                    { id -> byId[id]?.guards.orEmpty() }, ::writesOfCapabilities,
+                )
             else Triple(given, emptyList(), emptyList())
         trace.record(
             runId, "2. 메운다",
@@ -209,7 +212,7 @@ class ScenarioReconcileService(
         ).let {
             it.copy(
                 ungrounded = it.ungrounded + ghostCapabilities(projectId, appUserId, opened),
-                falseUnknowns = falseUnknowns(routes, opened),
+                falseUnknowns = falseUnknowns(routes, opened, blocked.toSet()),
                 conflicting = siblings.conflicting,
             )
         }
@@ -416,6 +419,8 @@ class ScenarioReconcileService(
         describe: (Long) -> String,
         openingFacts: OpeningFacts,
         caseOf: (Long) -> Long?,
+        guardsOf: (Long) -> List<Guard>,
+        writesOf: suspend (List<Long>) -> Map<String, String?>,
     ): Triple<List<ScenarioResult>, List<String>, List<String>> {
         val notices = mutableListOf<String>()
         // 무엇이 막았는지를 따로 모은다 — 알림 문장에서 되뽑으면 문구를 다듬을 때마다 깨진다.
@@ -428,10 +433,16 @@ class ScenarioReconcileService(
             val gaps = ScenarioBridgeRepair.gaps(scenario.steps)
             val answers = buildMap {
                 gaps.forEachIndexed { index, gap ->
-                    val answer = routes.between(gap.fromCaseId, gap.toCaseId)
+                    val found = routes.between(gap.fromCaseId, gap.toCaseId)
                     // 확인 자체를 못한 답은 답으로 치지 않는다 — 지도가 없는 프로젝트에까지
                     // 미상 스텝을 뿌리면 저작이 온통 "모른다"로 덮인다.
-                    if (answer != null && !answer.unchecked) {
+                    if (found != null && !found.unchecked) {
+                        // **뒤를 깨는 길은 조용히 끼우지 않고 묻는다**(ARTEL-675).
+                        val answer = askInsteadIfItBreaksLater(
+                            found,
+                            scenario.steps.drop(gap.at.last + 1).mapNotNull { it.caseId }.flatMap(guardsOf),
+                            writesOf,
+                        )
                         put(index, answer)
                         if (answer.result == ScenarioPathResult.UNKNOWN) {
                             answer.blockedBy?.let(blocked::add)
@@ -558,10 +569,19 @@ class ScenarioReconcileService(
     private suspend fun falseUnknowns(
         routes: PathLookup,
         scenarios: List<ScenarioResult>,
+        /**
+         * **코드가 일부러 남긴 미상**(ARTEL-675). 이 검사에서 뺀다.
+         *
+         * 이 검사는 *모델이* 길을 모른다고 해 놓고 실은 명세에 있는 자리를 잡는 것이다. 그런데
+         * 뒤를 깨는 길을 안 끼우고 묻기로 한 자리는 **명세가 아는 길이면서 일부러 남긴 미상**이라,
+         * 빼 두지 않으면 그 결정이 그대로 저작을 막는다(실측 런 260, 4곳).
+         */
+        deliberate: Set<String> = emptySet(),
     ): List<ScenarioCoverageAudit.StepRef> = buildList {
         scenarios.forEachIndexed { scenarioIndex, scenario ->
             scenario.steps.forEachIndexed { stepIndex, step ->
                 if (step.stepSource != ScenarioStepSource.UNKNOWN) return@forEachIndexed
+                if (step.stepUnknownReason in deliberate) return@forEachIndexed
                 val before = scenario.steps.take(stepIndex).lastOrNull { it.caseId != null }?.caseId
                 val after = scenario.steps.drop(stepIndex + 1).firstOrNull { it.caseId != null }?.caseId
                 if (before == null || after == null) return@forEachIndexed
@@ -773,6 +793,61 @@ class ScenarioReconcileService(
      *
      * 못 읽으면 아무것도 못 찾는 함수를 돌려준다 — 예전처럼 이름 없는 걸음으로 메운다.
      */
+    /**
+     * **뒤를 깨는 길이면 끼우는 대신 묻는다**(ARTEL-675).
+     *
+     * 메우는 조작이 값을 다시 정하는 경우가 있다 — 실측(런 254)에서 타이틀의 `MapSceneButton`
+     * 클릭이 그랬다. 진행도를 저장소에서 다시 불러오게 만들고, 그러면 그 뒤 스텝이 기대던 값이
+     * 사라진다. 코드가 조용히 끼우면 실행하는 사람은 왜 안 되는지 모르고, 어긋남 검사도 그
+     * 자리에서 눈을 감는다(그 값이 "이제 모른다"가 되므로).
+     *
+     * 그래서 그 자리는 미상으로 남긴다. 미상은 곧 **질문**이 되고(`gap:<값>`), 사용자가 답하면
+     * 코드가 그 자리를 찾아 끼운다([ScenarioGapFiller]) — 지어내는 것보다 묻는 쪽이 낫다.
+     *
+     * 깨지 않는 길은 그대로 끼운다. 화면을 넘기거나 지도 위를 걷는 조작이 대부분 그렇다.
+     */
+    private suspend fun askInsteadIfItBreaksLater(
+        answer: ScenarioPathAnswer,
+        later: List<Guard>,
+        writesOf: suspend (List<Long>) -> Map<String, String?>,
+    ): ScenarioPathAnswer {
+        if (answer.result != ScenarioPathResult.KNOWN || later.isEmpty()) return answer
+        val writes = writesOf(answer.capabilityIds)
+        if (writes.isEmpty()) return answer
+        val broken = later.firstOrNull { guard ->
+            val key = ScenarioStateReader.normalize(guard.variable).lowercase()
+            if (key !in writes) false
+            // **무엇이 될지 모르는 쓰기가 가장 나쁘다.** `PlayerPrefs.GetInt("StagePosition", -1)`
+            // 은 그 값을 저장소에서 다시 불러온다 — 얼마가 될지 모르고, 그래서 뒤 스텝이 기대던
+            // 것을 지운다. 값을 알 수 있는 쓰기는 정말로 어긋날 때만 짚는다.
+            else writes[key]?.let { !guard.holds(it) } ?: true
+        } ?: return answer
+        logger.info("메우지 않고 묻는다 — {} 를 다시 정해 뒤를 깬다", broken.variable)
+        return answer.copy(
+            result = ScenarioPathResult.UNKNOWN,
+            capabilityIds = emptyList(),
+            actions = emptyList(),
+            inputs = emptyList(),
+            blockedBy = ScenarioStateReader.normalize(broken.variable),
+            playable = true,
+        )
+    }
+
+    /** 그 기능들이 **정하는** 값. 부호가 붙은 것은 정하는 것이 아니다(적재기가 둘을 같은 글자로 낸다). */
+    private suspend fun writesOfCapabilities(ids: List<Long>): Map<String, String?> = runCatching {
+        ids.flatMap { id -> effectRepository.findByCapabilityIdOrderByIdAsc(id).toList() }
+            .filter { it.kind == "write" || it.kind == "saved" }
+            .mapNotNull { effect ->
+                val target = effect.target ?: return@mapNotNull null
+                val detail = effect.detail?.trim()
+                // 오르기만 하는 쓰기는 지우는 것이 아니다 — 걸어 오르는 자리라 물을 것이 없다.
+                if (detail != null && detail.startsWith("+")) return@mapNotNull null
+                ScenarioStateReader.normalize(target).lowercase() to
+                    detail?.takeIf { it.toDoubleOrNull() != null }
+            }.toMap()
+    }.onFailure { logger.warn("메울 길의 효과 조회 실패 — 그대로 끼운다: ${it.message}") }
+        .getOrDefault(emptyMap())
+
     private suspend fun caseOfCapability(projectId: Long): (Long) -> Long? = runCatching {
         testCaseRepository.findCaseIdByCapability(projectId).toList()
             .associate { it.capabilityId to it.testCaseId }
