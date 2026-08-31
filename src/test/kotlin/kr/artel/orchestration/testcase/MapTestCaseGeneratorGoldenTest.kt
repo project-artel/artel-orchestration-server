@@ -132,6 +132,24 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     /**
+     * **케이스 하나하나가 글자로 구별된다**(ARTEL-662).
+     *
+     * 앞서는 같은 화면에서 같은 조작을 하는 케이스가 여럿이고 갈리는 것이 전제뿐이었다 —
+     * 실측(프로젝트 24)에서 42건 중 40건이 그랬고 유일한 것은 2건뿐이었다. 대가가 저작에 나왔다
+     * (런 236): 모델이 `저장 데이터가 있는` 케이스에 *"저장 데이터가 없는 상태로"* 라고 썼고
+     * 바로 아래 진짜 없는 경우와 같은 문장이 됐다. 읽는 사람은 스토리 화면을 기대하는데 다음
+     * 스텝은 지도다.
+     *
+     * **이 수가 케이스 수보다 작아지면 다시 구별이 안 되는 것이다.**
+     */
+    @Test
+    fun `같은 화면에서 같은 문장을 가진 케이스가 없다`() {
+        val sameLine = cases.groupBy { it.scene to it.step }.filterValues { it.size > 1 }
+
+        assertThat(sameLine).isEmpty()
+    }
+
+    /**
      * **씬 전환을 케이스가 스스로 말한다.**
      *
      * 저작의 도달성 검사는 케이스가 끝난 뒤 어느 화면인지를 알아야 하는데, 지금은 `expected_value`
@@ -231,8 +249,13 @@ class MapTestCaseGeneratorGoldenTest {
         val fromEnding = cases.filter { it.scene == "EndingScene" && it.expected.contains("화면으로 전환된다") }
 
         // 한 조작에서 나왔는데 도착 화면이 둘 이상이다 — 그것이 갈래다.
-        assertThat(fromEnding.map { it.step }.distinct()).hasSize(1)
         assertThat(fromEnding.map { it.expected }.distinct()).hasSizeGreaterThan(1)
+        // **조작 문장이 갈래를 말한다**(ARTEL-662). 같은 조작이지만 무엇이 다른지가 문장에 있다 —
+        // 앞서는 글자까지 같아서, 읽는 사람도 저작 모델도 둘을 구별하지 못했다.
+        assertThat(fromEnding.map { it.step }.distinct()).hasSameSizeAs(fromEnding)
+        assertThat(fromEnding.map { it.step }).allSatisfy {
+            assertThat(it).contains("아무 키나 누른다").contains("StagePosition")
+        }
         // 갈린 줄들은 사전조건이 서로 다르다. 같으면 어느 쪽을 만들지 알 수 없다.
         assertThat(fromEnding.map { it.precondition }.distinct()).hasSameSizeAs(fromEnding)
     }

@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import com.fasterxml.jackson.databind.JsonNode
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
+import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import kr.artel.orchestration.contentmap.evidence.ConditionOverlap
 import kr.artel.orchestration.contentmap.evidence.ConditionPrune
 import kr.artel.orchestration.contentmap.evidence.GroupKind
@@ -127,6 +128,54 @@ class MapTestCaseGenerator(
             }
             .let(::withInterchangeableInputs)
             .let(::withoutSpecialCases)
+            .let(::withTellingSteps)
+
+    /**
+     * **형제끼리 무엇이 다른지를 조작 문장에 적는다**(ARTEL-662).
+     *
+     * 같은 화면에서 같은 조작을 하는 케이스가 여럿이고, 갈리는 것은 전제뿐이다. 그런데 전제는
+     * 조작 문장에 안 드러나서 **글자로는 구별이 안 된다.** 실측(프로젝트 24)에서 42건 중 40건이
+     * 그렇고, 유일한 것은 2건뿐이다:
+     *
+     * ```
+     * Map_scene | `Return` 키를 누른다                      7건
+     * GameClearScene | 아무 키나 누른다                      5건
+     * StoryScene | 아무 키나 누른다 — 더 진행되지 않을 때까지  4건
+     * ```
+     *
+     * 대가가 저작에 그대로 나왔다(런 236). 모델이 `저장 데이터가 있는` 케이스에 *"저장 데이터가
+     * 없는 상태로"* 라고 썼고, 바로 아래 진짜 없는 경우와 **같은 문장**이 됐다. 프롬프트에는 전제도
+     * 기대결과도 다 있었으니 **몰라서가 아니라 구별이 안 돼서다.**
+     *
+     * **형제 사이에서만 붙인다.** 유일한 케이스에까지 붙이면 문장이 길어지기만 한다. 그리고 형제가
+     * **공통으로** 가진 전제도 빼고 **갈리는 것만** 적는다 — 다 적으면 전제를 통째로 두 번 쓰는 셈이다.
+     */
+    private fun withTellingSteps(cases: List<MapTestCase>): List<MapTestCase> {
+        val siblings = cases.groupBy { it.scene to it.step }
+        return cases.map { case ->
+            val group = siblings.getValue(case.scene to case.step)
+            if (group.size < 2) return@map case
+            val shared = group.map { comparisonsIn(it.condition) }.reduce { a, b -> a intersect b }
+            val telling = (comparisonsIn(case.condition) - shared).sorted().take(MAX_TELLING)
+            if (telling.isEmpty()) case
+            else case.copy(step = "${case.step} (${telling.joinToString(", ")} 일 때)")
+        }
+    }
+
+    /**
+     * 전제에 나오는 **모든 비교.** `또는` 갈래 안까지 센다.
+     *
+     * [ScenarioStateReader.guardsIn] 과 일부러 다르다. 그쪽은 *"무엇이 참이어야 하나"* 에 답하므로
+     * 갈래에서는 교집합만 요구로 세는 것이 맞다. 여기서 묻는 것은 *"이것이 형제와 무엇이 다른가"* 라,
+     * **갈래 안의 차이도 차이다** — 실측(지도 27)에서 `Map_scene` 의 `Return` 일곱 건이 교집합으로는
+     * 전부 `IsLocked == 0` 하나로 같아져 구별이 안 됐다.
+     */
+    private fun comparisonsIn(node: ConditionNode?): Set<String> = when (node) {
+        null, is ConditionNode.Always, is ConditionNode.Gesture, is ConditionNode.Unknown -> emptySet()
+        is ConditionNode.Test ->
+            setOf("${ScenarioStateReader.normalize(node.left)} ${node.operator} ${node.right.trim().trim('`')}")
+        is ConditionNode.Group -> node.parts.flatMapTo(mutableSetOf()) { comparisonsIn(it) }
+    }
 
     /**
      * **같은 시험을 두 번 시키지 않는다**(ARTEL-645).
@@ -487,6 +536,12 @@ class MapTestCaseGenerator(
 
     /** 효과 어휘의 씬 전환. `MapTestCasePhrasing` 이 같은 값으로 문장을 만든다. */
     private companion object {
+        /**
+         * 조작 문장에 붙이는 **가르는 조건의 최대 개수**. 다 붙이면 전제를 통째로 두 번 쓰는 셈이고,
+         * 목록에서 눈으로 훑을 수 있는 길이를 넘긴다. 구별에 필요한 것은 대개 하나둘이다.
+         */
+        private const val MAX_TELLING = 3
+
         const val SCENE = "scene"
 
         /** 정체를 이을 때 쓰는 구분자. 값에 섞일 일이 없고 Postgres 가 받는 문자여야 한다. */

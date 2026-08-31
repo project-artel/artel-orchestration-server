@@ -123,7 +123,7 @@ step: StoryScene에서 `CompleteStream` 이벤트 이후 관찰한다  ← 관�
 
 ## Approach (Checklist)
 
-### Step 1: 케이스 이름을 "무엇을 하면 무엇이 된다"로
+### Step 1: 케이스 이름을 "무엇을 하면 무엇이 된다"로 — 끝남 (ARTEL-662)
 
 **규칙**: 스텝 문장은 *조작*만이 아니라 **그 케이스를 다른 형제와 가르는 조건**을 담는다.
 형제란 같은 화면·같은 조작을 가진 케이스들이고, 지금 42건 중 40건이 그렇다.
@@ -147,7 +147,34 @@ step: StoryScene에서 `CompleteStream` 이벤트 이후 관찰한다  ← 관�
 - **형제 사이에서만 조건을 붙인다.** 유일한 케이스에까지 붙이면 문장이 길어지기만 한다.
 - 골든이 있다: `MapTestCaseGeneratorGoldenTest` · `MapTestCaseWriterGoldenTest`. **바뀌는 것이
   이 작업의 산출물이므로** 골든 차이를 눈으로 확인하고 옮긴다.
-- 검증: 같은 (scene, step) 묶음이 13 → 0 이어야 한다. 위 SQL 그대로 재면 된다.
+- 검증: 같은 (scene, step) 묶음이 13 → 0. **골든이 그것을 못 박는다**
+  (`같은 화면에서 같은 문장을 가진 케이스가 없다`).
+
+**한 일**: `MapTestCaseGenerator.withTellingSteps` — 형제(같은 화면·같은 조작)끼리 공통 전제를 빼고
+**갈리는 비교만** 조작 문장에 붙인다. 최대 셋까지.
+
+**갈래 안까지 세야 했다.** 처음에는 `ScenarioStateReader.guardsIn` 을 썼는데 그쪽은 *"무엇이 참이어야
+하나"* 에 답하느라 `또는` 갈래에서 교집합만 센다. 그러면 `Map_scene` 의 `Return` 일곱 건이 전부
+`IsLocked == 0` 하나로 같아져 구별이 안 됐다. 여기서 묻는 것은 *"형제와 무엇이 다른가"* 라
+**갈래 안의 차이도 차이다**(`comparisonsIn`).
+
+실측(실제 지도 문서, 골든):
+
+```
+전   [TitleScene] `Canvas/MapSceneButton` 또는 `Canvas/continue` 을(를) 클릭한다     ×2 (같다)
+후   [TitleScene] … 클릭한다 (LoadPlayData() == -1 일 때)  →  `StoryScene` 으로 전환
+     [TitleScene] … 클릭한다 (LoadPlayData() != -1 일 때)  →  `Map_scene` 으로 전환
+
+전   [StoryScene] 아무 키나 누른다 — 더 진행되지 않을 때까지 되풀이한다              ×4 (같다)
+후   … (StagePosition == 5 일 때)  →  `TitleScene` 으로 전환
+     … (StagePosition != 5 일 때)  →  `Map_scene` 으로 전환
+```
+
+36건 전부가 글자로 구별된다.
+
+**남은 것**: 문구가 아직 코드의 말이다(`LoadPlayData() == -1`). *"저장 데이터가 없을 때"* 로 바꾸려면
+그 값이 무엇을 뜻하는지 알아야 하는데 지도에 없다. **지금 형태로도 구별은 되므로** 이것은 별도 작업이고,
+필요하면 그때 정한다.
 
 ### Step 2: 전제에서 코드 경로 조건을 걷어낸다
 
