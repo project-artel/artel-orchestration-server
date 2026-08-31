@@ -128,7 +128,9 @@ class MapTestCaseGeneratorGoldenTest {
      */
     @Test
     fun `문서 한 장이 케이스 42개가 된다`() {
-        assertThat(cases).hasSize(36)
+        // 42 → 36 은 같은 코드에 두 경로로 닿는 것을 접은 결과(ARTEL-645)이고,
+        // 36 → 46 은 `또는` 로 뭉쳐 있던 전제를 갈래대로 편 것이다(ARTEL-667).
+        assertThat(cases).hasSize(46)
     }
 
     /**
@@ -153,8 +155,10 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     @Test
-    fun `같은 화면에서 같은 문장을 가진 케이스가 없다`() {
-        val sameLine = cases.groupBy { it.scene to it.step }.filterValues { it.size > 1 }
+    fun `읽는 사람이 케이스를 구별할 수 있다`() {
+        // **문장과 기대를 함께 본다.** 조작 문장이 같아도 확인할 것이 다르면 읽는 사람은 가른다 —
+        // 지도의 맨 `Return` 둘이 그렇다(배경이 바뀐다 · 전투 화면으로 간다).
+        val sameLine = cases.groupBy { Triple(it.scene, it.step, it.expected) }.filterValues { it.size > 1 }
 
         assertThat(sameLine).isEmpty()
     }
@@ -235,7 +239,8 @@ class MapTestCaseGeneratorGoldenTest {
         assertThat(byScene).hasSize(7)
         assertThat(byScene["StoryScene"]).isEqualTo(4)
         assertThat(byScene["EndingScene"]).isEqualTo(4)
-        assertThat(byScene["Map_scene"]).isEqualTo(16)
+        // 갈래를 갈래대로 내면서 늘었다(ARTEL-667) — 지도의 `Return` 이 스테이지마다 한 줄이다.
+        assertThat(byScene["Map_scene"]).isEqualTo(26)
     }
 
     /**

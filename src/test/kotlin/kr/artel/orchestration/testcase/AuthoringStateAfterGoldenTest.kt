@@ -122,7 +122,7 @@ class AuthoringStateAfterGoldenTest {
      */
     @Test
     fun `케이스가 무엇을 바꾸는지 말한다`() {
-        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(19)
+        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(20)
         assertThat(cases.flatMap { it.stateAfter.keys }.distinct())
             .containsExactlyInAnyOrder("position", "stagePosition", "flag", "scene")
     }
@@ -143,7 +143,7 @@ class AuthoringStateAfterGoldenTest {
     fun `전제를 다른 케이스가 만들어 주는 자리가 있다`() {
         val changed = cases.flatMap { it.stateAfter.keys }.toSet()
 
-        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(12)
+        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(21)
     }
 
     /**
