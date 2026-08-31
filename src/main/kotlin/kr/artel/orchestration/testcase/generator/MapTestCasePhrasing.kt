@@ -77,6 +77,26 @@ object MapTestCasePhrasing {
      * `any` 키는 특별히 다룬다 — 그대로 쓰면 "`any` 키를 누른다"가 되어 무엇을 누르라는 것인지
      * 읽는 사람이 알 수 없다. 명세가 아무 키나 된다고 말한 것이므로 그렇게 적는다.
      */
+    /**
+     * **누를 것이 없는 자리의 기능 문구**(ARTEL-681).
+     *
+     * 게임이 스스로 하는 일을 무엇이 일으켰는가로 부른다. 재료는 `call_path` 첫 마디의 메서드
+     * 이름인데, **유니티가 정한 것만** 쓴다 — `Start`·`Update` 는 엔진이 부르는 자리라 개발자가
+     * 무엇을 어떻게 짓든 흔들리지 않는다. 개발자가 지은 메서드 이름으로 기능을 부르는 것과는
+     * 다른 이야기다: 저것은 의도를 주장하고 이것은 호출 자리를 가리킨다.
+     *
+     * 구버전(specs_v2 `render.py::trigger_text`)이 같은 방식이었다. 거기서는 `scene_entry` ·
+     * `continuous` 처럼 갈라 두었고, 그 분류가 지금 지도에는 `call_path` 뿌리로 남아 있다.
+     *
+     * 모르는 뿌리는 이름을 그대로 적는다. 지어내지 않는다.
+     */
+    fun observation(scene: String, triggerRoot: String?): String = when (triggerRoot) {
+        "Start", "Awake", "OnEnable" -> "$scene 에 진입해 관찰한다"
+        "Update", "FixedUpdate", "LateUpdate" -> "$scene 에 머무르며 관찰한다"
+        null -> "$scene 에서 관찰한다"
+        else -> "$scene 에서 `$triggerRoot` 이후 관찰한다"
+    }
+
     fun step(
         interaction: String,
         inputKey: String?,
