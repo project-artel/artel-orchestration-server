@@ -176,7 +176,7 @@ step: StoryScene에서 `CompleteStream` 이벤트 이후 관찰한다  ← 관�
 그 값이 무엇을 뜻하는지 알아야 하는데 지도에 없다. **지금 형태로도 구별은 되므로** 이것은 별도 작업이고,
 필요하면 그때 정한다.
 
-### Step 2: 전제에서 코드 경로 조건을 걷어낸다
+### Step 2: 전제에서 코드 경로 조건을 걷어낸다 — 닫음 (할 일이 거의 없었다)
 
 **문제**: 같은 기대를 말하는 케이스가 8묶음이고, 한쪽 전제가 튜토리얼 컨트롤러의 조건이다.
 
@@ -189,6 +189,31 @@ step: StoryScene에서 `CompleteStream` 이벤트 이후 관찰한다  ← 관�
   "표시한다"로 시작하는 것이 안전하다** — 같은 기대를 말하는 짝을 형제로 묶어 두고, 합치는 것은
   실행이 확인한 뒤.
 - 손댈 곳: `MapTestCaseGenerator.kt` 의 묶는 자리 · `ScenarioSiblingCheck`(이미 형제 개념이 있다).
+
+**재보니 8묶음이 아니라 실질 1건이었다.**
+
+애초에 8묶음으로 보인 것은 **DB 의 42건이 낡은 데이터**였기 때문이다 — 프로젝트 24 의 케이스는
+지도 26 에서 나왔고 그 뒤로 `withoutSpecialCases`(42 → 36)가 들어왔다. 튜토리얼 전제 짝
+(`1660`/`1733`)은 그것이 이미 접었다.
+
+Step 1 뒤 현재 생성기에서 같은 (화면, 기대)를 말하는 묶음은 5개이고 넷은 정당하다:
+
+```
+Map_scene | wordHead → battle1·2·3      RightArrow 로 오는 것과 LeftArrow 로 오는 것.
+                                        반대쪽에서 오는 길이라 둘 다 봐야 한다
+GameClearScene | TypeCard 생성          stagePosition 1·2·3 에서 각각. 다른 검증이다
+```
+
+**진짜 중복은 하나다** — `TurnBattleScene` 의 `Combine`:
+
+```
+A  CombineZone.magicTypeCards.Count == 1 그리고 CombineZone.spellCards.Count == 1
+B  DraggableCard.combineZone.CompareTag(…) != 0 그리고 (같은 두 조건)
+```
+
+같은 조합존을 `CombineZone` 과 `DraggableCard.combineZone` 두 이름으로 부르고, B 는 카드를
+드래그해 들어온 경로라 `CompareTag` 검사가 하나 더 붙었다. **지도만으로는 그 검사가 진짜 요구
+조건인지 경로의 흔적인지 못 가른다.** 한 건이므로 QA 런이 확인할 때까지 둔다.
 
 ### Step 3: 관측 케이스를 담되 **고른다**
 
