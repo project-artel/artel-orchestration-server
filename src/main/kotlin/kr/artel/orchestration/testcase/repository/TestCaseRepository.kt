@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testcase.repository
 
 import kotlinx.coroutines.flow.Flow
+import kr.artel.orchestration.testcase.dto.CapabilityCase
 import kr.artel.orchestration.testcase.dto.CaseWrite
 import kr.artel.orchestration.testcase.dto.SceneExitRow
 import kr.artel.orchestration.testcase.dto.ValueMoveRow
@@ -441,4 +442,24 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
     )
     fun findValueMoves(projectId: Long): Flow<ValueMoveRow>
+
+    /**
+     * **이 기능이 이미 케이스로 있나**(ARTEL-674).
+     *
+     * 빈 구간을 메울 때 쓴다. 메우는 조작은 대개 이 프로젝트가 이미 케이스로 들고 있는 것이라
+     * (실측: 끼운 31개 중 24개), 이름 없는 걸음으로 다시 쓰면 커버리지는 안 오르고 스텝만 늘며
+     * 그 걸음의 전제와 효과도 잃는다.
+     *
+     * 케이스 쪽을 프로젝트로 좁히므로, 같은 게임을 여러 번 적재한 지도의 기능이 함께 걸려도
+     * 답은 이 프로젝트의 케이스다.
+     */
+    @Query(
+        """
+        SELECT c.id AS capability_id, tc.id AS test_case_id
+        FROM test_case tc
+        JOIN capability c ON c.capability_key = tc.capability_key AND c.merged_into IS NULL
+        WHERE tc.project_id = :projectId AND tc.capability_key IS NOT NULL
+        """
+    )
+    fun findCaseIdByCapability(projectId: Long): Flow<CapabilityCase>
 }

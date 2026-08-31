@@ -56,6 +56,17 @@ object ScenarioBridgeRepair {
         steps: List<ChatScenarioStep>,
         answers: Map<Int, ScenarioPathAnswer>,
         describe: (Long) -> String = { "" },
+        /**
+         * 그 기능이 **이미 케이스로 있나**(ARTEL-674).
+         *
+         * 메우는 조작은 대개 이 프로젝트가 이미 케이스로 들고 있는 것이다 — 실측(런 254)에서
+         * 끼운 31개 중 24개가 그랬고, `지도에서 Return 을 누른다`(케이스 1921) 하나가 이름
+         * 없는 걸음으로 **열 번** 다시 적혔다. 그렇게 적으면 커버리지는 안 오르고 스텝만 늘며,
+         * 그 걸음이 무엇을 요구하고 무엇을 바꾸는지도 잃는다 — 케이스라면 아는 것들이다.
+         *
+         * 그래서 있으면 그 케이스로 적는다. 없으면 예전처럼 이름 없는 걸음이다.
+         */
+        caseOf: (Long) -> Long? = { null },
     ): Repaired {
         val gaps = gaps(steps)
         // 메울 자리가 없어도 접기는 한다 — 중복은 사이가 비어서 생기는 것이 아니다.
@@ -72,7 +83,7 @@ object ScenarioBridgeRepair {
             if (answer == null) {
                 out += existing
             } else {
-                val filled = bridge(existing, dropRepeatOf(steps.getOrNull(gap.at.first - 1), answer))
+                val filled = bridge(existing, dropRepeatOf(steps.getOrNull(gap.at.first - 1), answer), caseOf)
                 out += filled
                 // 알림은 **알림 블록이 실제로 들어갔을 때만** 낸다. 사람이 이미 손으로 채운 구간까지
                 // 말하면, 답을 준 사용자에게 같은 것을 다시 묻는 꼴이 된다.
@@ -170,7 +181,11 @@ object ScenarioBridgeRepair {
         )
     }
 
-    private fun bridge(existing: List<ChatScenarioStep>, answer: ScenarioPathAnswer): List<ChatScenarioStep> {
+    private fun bridge(
+        existing: List<ChatScenarioStep>,
+        answer: ScenarioPathAnswer,
+        caseOf: (Long) -> Long? = { null },
+    ): List<ChatScenarioStep> {
         if (answer.result == ScenarioPathResult.NOT_REQUIRED) return existing
         // 사람이 손으로 채운 구간은 그대로 둔다. 명세가 모르는 것을 사용자가 알려준 자리라,
         // 계산값으로 덮으면 답을 받고도 버리는 셈이 된다.
@@ -182,16 +197,26 @@ object ScenarioBridgeRepair {
             // 문장은 의도를 적은 것이고 이쪽은 실행하는 쪽이 그대로 쓰는 값이라, 둘이 다르면
             // 맞는 쪽은 명세에서 온 이것이다.
             val input = answer.inputs.getOrNull(i)
+            // 이미 케이스로 있는 조작이면 그 케이스로 적는다 — 이름 없이 다시 쓰지 않는다.
+            //
+            // **근거도 함께 바꾼다.** `case_id` 가 있으면 근거는 `CASE` 여야 한다는 것이 실행
+            // 계약이고(그래야 검증인지 이동인지가 갈린다), 어기면 근거 없는 스텝으로 걸려 저작이
+            // 통째로 막힌다 — 실측(런 257)에서 39건이 그렇게 걸렸다. 어느 기능에서 왔는지는
+            // 그대로 들고 간다.
+            val asCase = capabilityId?.let(caseOf)
+            val source = if (asCase != null) ScenarioStepSource.CASE else ScenarioStepSource.CAPABILITY
             existing.getOrNull(i)?.copy(
+                caseId = existing[i].caseId ?: asCase,
                 input = input ?: existing[i].input,
-                stepSource = ScenarioStepSource.CAPABILITY,
+                stepSource = if (existing[i].caseId != null) existing[i].stepSource else source,
                 stepKind = ScenarioStepKind.ACTION,
                 stepSourceCapabilityId = capabilityId,
                 stepUnknownReason = null,
             ) ?: ChatScenarioStep(
+                caseId = asCase,
                 action = answer.actions[i],
                 input = input,
-                stepSource = ScenarioStepSource.CAPABILITY,
+                stepSource = source,
                 stepKind = ScenarioStepKind.ACTION,
                 stepSourceCapabilityId = capabilityId,
             )

@@ -163,7 +163,8 @@ class ScenarioReconcileService(
         // **메우기는 끌 수 있다**(ARTEL-673). 끄면 모델이 쓴 스텝만 남는다 — 못 이어지는 자리를
         // 코드가 채우는 대신 검사가 짚는다.
         val (bridged, notices, blocked) =
-            if (repair.bridges) repairByInsertion(routes, given, describe, openingFacts(projectId, facts))
+            if (repair.bridges)
+                repairByInsertion(routes, given, describe, openingFacts(projectId, facts), caseOfCapability(projectId))
             else Triple(given, emptyList(), emptyList())
         trace.record(
             runId, "2. 메운다",
@@ -414,6 +415,7 @@ class ScenarioReconcileService(
         scenarios: List<ScenarioResult>,
         describe: (Long) -> String,
         openingFacts: OpeningFacts,
+        caseOf: (Long) -> Long?,
     ): Triple<List<ScenarioResult>, List<String>, List<String>> {
         val notices = mutableListOf<String>()
         // 무엇이 막았는지를 따로 모은다 — 알림 문장에서 되뽑으면 문구를 다듬을 때마다 깨진다.
@@ -437,7 +439,7 @@ class ScenarioReconcileService(
                     }
                 }
             }
-            val result = ScenarioBridgeRepair.apply(scenario.steps, answers, describe)
+            val result = ScenarioBridgeRepair.apply(scenario.steps, answers, describe, caseOf)
             if (result.steps.size != scenario.steps.size) {
                 logger.info(
                     "교정 · 브리지 {}건 삽입 [scenarioId={}] {} → {} 스텝",
@@ -765,6 +767,18 @@ class ScenarioReconcileService(
             .keys
     }.onFailure { logger.warn("오르기만 하는 값 조회 실패 — 없이 간다: ${it.message}") }
         .getOrDefault(emptySet())
+
+    /**
+     * 기능 번호로 **그 기능을 검증하는 케이스**를 찾는 함수(ARTEL-674).
+     *
+     * 못 읽으면 아무것도 못 찾는 함수를 돌려준다 — 예전처럼 이름 없는 걸음으로 메운다.
+     */
+    private suspend fun caseOfCapability(projectId: Long): (Long) -> Long? = runCatching {
+        testCaseRepository.findCaseIdByCapability(projectId).toList()
+            .associate { it.capabilityId to it.testCaseId }
+    }.onFailure { logger.warn("기능의 케이스 조회 실패 — 이름 없이 메운다: ${it.message}") }
+        .getOrDefault(emptyMap())
+        .let { found -> { capabilityId: Long -> found[capabilityId] } }
 
     private suspend fun movableValues(projectId: Long): Set<String> = runCatching {
         testCaseRepository.findWrittenValues(projectId).toList().toSet()
