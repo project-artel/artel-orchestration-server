@@ -143,6 +143,16 @@ class MapTestCaseGeneratorGoldenTest {
      * **이 수가 케이스 수보다 작아지면 다시 구별이 안 되는 것이다.**
      */
     @Test
+    fun `보여주기2`() {
+        cases.groupBy { it.scene to it.expected }.filterValues { it.size > 1 }
+            .forEach { (k, v) ->
+                println("== ${k.first} | ${k.second.take(55)}")
+                v.forEach { println("   ${it.step.take(95)}") }
+            }
+        println("겹치는 (화면,기대) 묶음 " + cases.groupBy { it.scene to it.expected }.count { it.value.size > 1 })
+    }
+
+    @Test
     fun `같은 화면에서 같은 문장을 가진 케이스가 없다`() {
         val sameLine = cases.groupBy { it.scene to it.step }.filterValues { it.size > 1 }
 

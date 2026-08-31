@@ -334,20 +334,20 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      * 씬 그래프는 순환이라 입구를 구조로는 알 수 없다 — 모든 씬이 서로 닿는다. 적재기가 빌드에서
      * 읽어 적어 두고(`scene.is_entry`), 저작은 그것만 읽는다.
      *
-     * 지도 범위를 케이스에서 되짚는 것은 [findValueRaisers] 와 같은 방식이다 — 저작이 보는 지도가
-     * 곧 그 케이스들이 나온 지도여야 한다.
+     * **지도 범위는 빌드 소속으로 좁힌다.** 케이스의 `capability_key` 로 되짚으면 안 된다 — 그 키는
+     * 내용 해시라 같은 게임을 여러 번 적재한 지도가 전부 걸린다. 실측(로컬)에서 프로젝트 24 로
+     * 되짚으니 지도 일곱 개가 나왔고, 같은 게임이라 내용이 같아 **틀린 줄 몰랐다.** 두 프로젝트가
+     * 같은 게임을 등록하면 서로의 지도를 읽게 된다.
+     *
+     * 가장 최근 지도를 본다 — 경로 조회(`ScenarioPathService.contentMapIdOf`)와 같은 규칙이다.
      */
     @Query(
         """
         SELECT s.name FROM scene s
-        WHERE s.is_entry
-          AND s.content_map_id IN (
-              SELECT DISTINCT s2.content_map_id
-              FROM test_case tc
-              JOIN capability c2 ON c2.capability_key = tc.capability_key
-              JOIN scene s2 ON s2.id = c2.scene_id
-              WHERE tc.project_id = :projectId
-          )
+        JOIN content_map cm ON cm.id = s.content_map_id
+        JOIN game_build b ON b.id = cm.game_build_id
+        WHERE s.is_entry AND b.project_id = :projectId
+        ORDER BY cm.id DESC
         LIMIT 1
         """
     )
