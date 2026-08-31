@@ -37,6 +37,24 @@ object ScenarioFlowPlan {
     data class Case(
         val id: Long,
         val requires: List<Guard> = emptyList(),
+        /**
+         * **가장 싼 갈래가 요구하는 진행도**(ARTEL-666).
+         *
+         * [requires] 는 *"무엇이 반드시 참이어야 하나"* 라 `또는` 갈래에서는 교집합만 남는다. 그
+         * 규칙은 맞다 — 갈래 하나만 만족해도 되니까. 그런데 **먼저 오는 자리를 고르는 데는 그것이
+         * 아무 말도 안 해 준다**: 실측(런 242)에서 지도의 `Return` 넷이 전부 요구 하나(`IsLocked`)
+         * 진행 0 으로 점수가 같아져 순서가 임의로 잡혔다.
+         *
+         * ```
+         * 1876   (진행도 >= 1 그리고 위치 == 0) 또는 진행도 == 2      가장 싼 갈래 → 1
+         * 1873   위치 == 3 또는 (진행도 >= 4 …) 또는 진행도 == 5      가장 싼 갈래 → 3
+         * ```
+         *
+         * 갈래 중 가장 적게 요구하는 것으로 재 봤는데(런 243) **더 나빠졌다** — 점수는 갈렸지만
+         * 지도의 걸음이 흐름 셋으로 흩어지고 지나갈 자리가 8 에서 11 로 늘었다. 순서를 가르는 데는
+         * 이것 말고 다른 신호가 필요하다. 지금은 **아무도 안 채운다.**
+         */
+        val reach: Int = 0,
         val sets: Map<String, String> = emptyMap(),
         val clears: Set<String> = emptySet(),
         /**
@@ -94,6 +112,13 @@ object ScenarioFlowPlan {
          */
         starting: Map<String, String> = emptyMap(),
         opening: (Guard) -> Boolean = { true },
+        /**
+         * **고른 이유를 남길 자리**(ARTEL-666). 순수 계산이 기록에 매이지 않도록 함수로 받는다.
+         *
+         * 없으면 아무것도 안 한다. 실측(런 241)에서 순서가 왜 그렇게 잡혔는지 못 짚었고, 비용·요구
+         * 개수·진행도 셋 중 무엇이 이기는지 볼 방법이 없었다 — 추측으로 고치지 않으려면 이게 먼저다.
+         */
+        log: (String) -> Unit = {},
         link: (Long, Long) -> Link,
     ): List<Flow> {
         val byId = cases.associateBy { it.id }
@@ -114,7 +139,8 @@ object ScenarioFlowPlan {
                 (if (fitsStart) 0 else 1_000_000) + case.requires.size * 100 + progress(case)
             } ?: break
             val seed = if (byId.getValue(start).atEntry) from else emptyMap()
-            flows += walk(start, left, byId, link, maxCases, maxGaps, opening, seed)
+            log("흐름 ${flows.size + 1} 시작 ← $start (입구=${byId.getValue(start).atEntry})")
+            flows += walk(start, left, byId, link, maxCases, maxGaps, opening, seed, log)
         }
         return flows
     }
@@ -129,6 +155,7 @@ object ScenarioFlowPlan {
         maxGaps: Int,
         keepOpening: (Guard) -> Boolean,
         starting: Map<String, String>,
+        log: (String) -> Unit,
     ): Flow {
         val known = starting.toMutableMap()
         // **값을 확정하지 않는 요구도 기억한다.** `!= 5` 는 값을 못 정하지만 *"5는 아니다"* 를
@@ -172,21 +199,29 @@ object ScenarioFlowPlan {
             // 몇 군데까지 참을 만한지는 **제품 판단**이라 부르는 쪽이 정할 수 있게 열어 둔다.
             if (walked.size >= maxCases || gaps >= maxGaps) return Flow(walked, opening.distinctBy { Triple(it.variable, it.operator, it.value) }, gaps)
 
-            val next = left
-                .map { it to link(here, it) }
-                .filter { (id, edge) ->
-                    edge.kind != ScenarioFlowMatrix.Link.BLOCKED &&
-                        edge.kind != ScenarioFlowMatrix.Link.UNCHECKED &&
-                        fits(byId.getValue(id), known, edge) &&
-                        agrees(byId.getValue(id), asserted, edge)
-                }
+            val weighed = left.map { it to link(here, it) }
+            val open = weighed.filter { (id, edge) ->
+                edge.kind != ScenarioFlowMatrix.Link.BLOCKED &&
+                    edge.kind != ScenarioFlowMatrix.Link.UNCHECKED &&
+                    fits(byId.getValue(id), known, edge) &&
+                    agrees(byId.getValue(id), asserted, edge)
+            }
+            // **왜 그것을 골랐는지 남긴다.** 점수와 그 재료를 함께 적어야 셋 중 무엇이 이겼는지 안다.
+            log(
+                "  $here 다음 — 후보 ${open.size}/${weighed.size}: " +
+                    open.sortedBy { (id, edge) -> score(byId.getValue(id), edge) }
+                        .take(4)
+                        .joinToString(", ") { (id, edge) ->
+                            val case = byId.getValue(id)
+                            "$id(${edge.kind}·요구${case.requires.size}·진행${progress(case)}" +
+                                "=${score(case, edge)})"
+                        }
+            )
+            val next = open
                 // **같은 값이면 덜 요구하는 것부터.** 비용도 요구 개수도 같은 자리가 흔한데, 그때
                 // 순서가 임의가 되어 실측(런 239·240)에서 진행도 5 → 4 → 3 → 2 로 거꾸로 놓였다.
                 // 진행을 요구하는 값이 낮은 쪽이 게임에서 먼저 오는 자리다.
-                .minByOrNull { (id, edge) ->
-                    val case = byId.getValue(id)
-                    cost(edge) * 10_000 + case.requires.size * 100 + progress(case)
-                }
+                .minByOrNull { (id, edge) -> score(byId.getValue(id), edge) }
                 ?: return Flow(walked, opening.distinctBy { Triple(it.variable, it.operator, it.value) }, gaps)
 
             val (id, edge) = next
@@ -263,6 +298,21 @@ object ScenarioFlowPlan {
         return probes.any { a.holds(it) && b.holds(it) }
     }
 
+    /**
+     * 다음에 놓을 자리를 고르는 **점수.** 작을수록 먼저다.
+     *
+     * 세 가지를 자릿수로 갈라 둔다 — 앞의 것이 뒤의 것을 항상 이긴다. 그래야 "무엇 때문에 골랐나"를
+     * 점수만 보고도 안다.
+     *
+     * ```
+     * 비용        사이에 아무것도 안 드는 것 < 조작 < 사람이 지나가야 하는 것
+     * 요구 개수    적게 요구하는 자리가 먼저 온다
+     * 진행도      같은 값이면 덜 나아간 상태를 요구하는 쪽
+     * ```
+     */
+    private fun score(case: Case, edge: Link): Int =
+        cost(edge) * 10_000 + case.requires.size * 100 + progress(case)
+
     /** 정수면 소수점을 안 붙인다. `==` 가 글자로 견주기 때문이다. */
     private fun plain(value: Double): String =
         if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
@@ -274,10 +324,11 @@ object ScenarioFlowPlan {
      * 0 이다 — 모르는 것을 뒤로 미룰 근거가 없다. 100 을 넘으면 잘라 앞의 두 자리(비용·요구 개수)를
      * 침범하지 않게 한다.
      */
-    private fun progress(case: Case): Int = case.requires
-        .filter { it.operator == "==" || it.operator == ">=" || it.operator == ">" }
-        .sumOf { it.value.toDoubleOrNull()?.toInt()?.coerceAtLeast(0) ?: 0 }
-        .coerceAtMost(99)
+    private fun progress(case: Case): Int = (
+        case.requires
+            .filter { it.operator == "==" || it.operator == ">=" || it.operator == ">" }
+            .sumOf { it.value.toDoubleOrNull()?.toInt()?.coerceAtLeast(0) ?: 0 } + case.reach
+        ).coerceAtMost(99)
 
     /** 싼 것부터 놓는다 — 아무것도 안 넣는 것이 가장 싸고, 사람이 지나가야 하는 것이 가장 비싸다. */
     private fun cost(edge: Link): Int = when (edge.kind) {

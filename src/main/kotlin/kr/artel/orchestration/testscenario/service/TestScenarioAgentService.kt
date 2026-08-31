@@ -760,7 +760,10 @@ class TestScenarioAgentService(
                     "막힘 ${matrix.count(ScenarioFlowMatrix.Link.BLOCKED)} · " +
                     "확인못함 ${matrix.count(ScenarioFlowMatrix.Link.UNCHECKED)}",
             )
-            val flows = flowPlanner.of(projectId, appUserId, matrix).map { flow ->
+            // 흐름을 고른 이유를 함께 받아 적는다(ARTEL-666). 순서가 왜 그렇게 잡혔는지는
+            // 결과만 보고는 못 짚는다 — 실측(런 241)에서 한 번 막혔던 자리다.
+            val why = StringBuilder()
+            val flows = flowPlanner.of(projectId, appUserId, matrix) { why.appendLine(it) }.map { flow ->
                 AuthoringFlow(
                     caseIds = flow.caseIds,
                     opening = flow.opening.map { "${it.variable} ${it.operator} ${it.value}" },
@@ -769,7 +772,8 @@ class TestScenarioAgentService(
             }
             trace.record(
                 runId, "흐름 계산",
-                "흐름 ${flows.size}개 · 지나갈 자리 ${flows.sumOf { it.gaps }}군데\n" +
+                "흐름 ${flows.size}개 · 지나갈 자리 ${flows.sumOf { it.gaps }}군데 " +
+                    trace.blob(runId, "flow-choices.txt", why.toString()) + "\n" +
                     flows.joinToString("\n") { flow ->
                         "  스텝 ${flow.caseIds.size} · GAP ${flow.gaps} · " +
                             "시작 ${flow.opening.joinToString(", ").ifBlank { "아무 조건 없음" }}\n" +

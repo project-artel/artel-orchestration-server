@@ -1,5 +1,7 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.contentmap.evidence.GroupKind
+import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -25,6 +27,8 @@ class ScenarioFlowPlanner(
         projectId: Long,
         appUserId: Long,
         matrix: ScenarioFlowMatrix.Matrix,
+        /** 고른 이유를 받아 적을 자리(ARTEL-666). 기록이 꺼져 있으면 아무 데도 안 간다. */
+        log: (String) -> Unit = {},
     ): List<ScenarioFlowPlan.Flow> {
         val raisedIn = runCatching {
             testCaseRepository.findValueRaisers(projectId).toList()
@@ -91,6 +95,7 @@ class ScenarioFlowPlanner(
             cases,
             starting = starting,
             opening = { guard -> guard.variable.lowercase() in produced && !guard.symbolic },
+            log = log,
         ) { from, to ->
             val cell = matrix.between(from, to)
             ScenarioFlowPlan.Link(
@@ -114,6 +119,23 @@ class ScenarioFlowPlanner(
                 }.orEmpty(),
             )
         }
+    }
+
+    /**
+     * **가장 싼 갈래가 요구하는 진행도**(ARTEL-666).
+     *
+     * `또는` 로 갈린 전제는 하나만 만족하면 된다. 그래서 "얼마나 나아간 상태여야 하나"는 갈래 중
+     * **가장 적게 요구하는 것**이다 — 실행하는 사람이 고를 수 있는 가장 쉬운 길이 그것이다.
+     */
+    private fun cheapestReach(node: ConditionNode?): Int = when (node) {
+        null, is ConditionNode.Always, is ConditionNode.Gesture, is ConditionNode.Unknown -> 0
+        is ConditionNode.Test ->
+            if (node.operator == "==" || node.operator == ">=" || node.operator == ">") {
+                node.right.trim().trim('`').toDoubleOrNull()?.toInt()?.coerceAtLeast(0) ?: 0
+            } else 0
+        is ConditionNode.Group ->
+            if (node.kind == GroupKind.EVERY) node.parts.sumOf(::cheapestReach)
+            else node.parts.minOfOrNull(::cheapestReach) ?: 0
     }
 
     /**
