@@ -136,6 +136,39 @@ class ScenarioFlowPlanTest {
         assertThat(flows).hasSize(2)
     }
 
+    /**
+     * **입구에서 시작한다**(ARTEL-659).
+     *
+     * 앞서는 "요구가 가장 적은 케이스"에서 출발했다 — 계산의 편의이지 게임의 진실이 아니다.
+     * 실측(런 233)에서 `진행도 == 5, 위치 == 0` 에서 시작하라는 흐름이 나왔고, 아무도 그렇게
+     * 게임을 시작하지 않는다.
+     */
+    @Test
+    fun `게임을 켜면 열리는 화면의 자리에서 출발한다`() {
+        val cases = listOf(
+            // 요구가 더 적지만 입구가 아니다.
+            Case(id = 99),
+            Case(id = 1, requires = listOf(needs("saveData", "==", "-1")), atEntry = true),
+        )
+
+        val flows = ScenarioFlowPlan.of(cases) { _, _ -> Link(BESIDE) }
+
+        assertThat(flows.single().caseIds).containsExactly(1L, 99L)
+    }
+
+    /** 입구를 모르면 예전처럼 요구가 적은 자리에서 출발한다. */
+    @Test
+    fun `입구를 모르면 요구가 적은 자리에서 출발한다`() {
+        val cases = listOf(
+            Case(id = 99, requires = listOf(needs("a", "==", "1"), needs("b", "==", "1"))),
+            Case(id = 1),
+        )
+
+        val flows = ScenarioFlowPlan.of(cases) { _, _ -> Link(BESIDE) }
+
+        assertThat(flows.single().caseIds).containsExactly(1L, 99L)
+    }
+
     /** 싼 것부터 놓는다 — 아무것도 안 넣는 자리가 지나가야 하는 자리보다 먼저다. */
     @Test
     fun `사이에 아무것도 안 드는 자리를 먼저 놓는다`() {

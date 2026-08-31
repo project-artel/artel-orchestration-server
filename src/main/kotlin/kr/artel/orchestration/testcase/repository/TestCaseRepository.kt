@@ -329,6 +329,31 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     fun findValueRaisers(projectId: Long): Flow<ValueRaiser>
 
     /**
+     * **게임을 켜면 열리는 화면**(ARTEL-659). 이 프로젝트의 지도가 그렇게 적어 둔 씬이다.
+     *
+     * 씬 그래프는 순환이라 입구를 구조로는 알 수 없다 — 모든 씬이 서로 닿는다. 적재기가 빌드에서
+     * 읽어 적어 두고(`scene.is_entry`), 저작은 그것만 읽는다.
+     *
+     * 지도 범위를 케이스에서 되짚는 것은 [findValueRaisers] 와 같은 방식이다 — 저작이 보는 지도가
+     * 곧 그 케이스들이 나온 지도여야 한다.
+     */
+    @Query(
+        """
+        SELECT s.name FROM scene s
+        WHERE s.is_entry
+          AND s.content_map_id IN (
+              SELECT DISTINCT s2.content_map_id
+              FROM test_case tc
+              JOIN capability c2 ON c2.capability_key = tc.capability_key
+              JOIN scene s2 ON s2.id = c2.scene_id
+              WHERE tc.project_id = :projectId
+          )
+        LIMIT 1
+        """
+    )
+    suspend fun findEntrySceneName(projectId: Long): String?
+
+    /**
      * **이 값을 무엇이 어떤 조건에서 바꾸나**(ARTEL-646).
      *
      * [findValueRaisers] 는 화면 이름 하나만 답한다. 그것만으로는 `position == 0`(방향키 한 번)과

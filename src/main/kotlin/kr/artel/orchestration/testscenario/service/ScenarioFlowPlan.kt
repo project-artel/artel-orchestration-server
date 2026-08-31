@@ -39,6 +39,14 @@ object ScenarioFlowPlan {
         val requires: List<Guard> = emptyList(),
         val sets: Map<String, String> = emptyMap(),
         val clears: Set<String> = emptySet(),
+        /**
+         * **게임을 켜면 열리는 화면에 있는 자리인가**(ARTEL-659).
+         *
+         * 씬 그래프는 순환이라 입구를 구조로는 알 수 없고, 그래서 앞서는 "요구가 가장 적은
+         * 케이스"에서 출발했다 — 계산의 편의이지 게임의 진실이 아니다. 실측(런 233)에서
+         * `진행도 == 5, 위치 == 0` 에서 시작하라는 흐름이 나왔다. 아무도 그렇게 시작하지 않는다.
+         */
+        val atEntry: Boolean = false,
     )
 
     /**
@@ -88,7 +96,12 @@ object ScenarioFlowPlan {
         val flows = mutableListOf<Flow>()
 
         while (left.isNotEmpty()) {
-            val start = left.minByOrNull { id -> byId.getValue(id).requires.size } ?: break
+            // **입구에서 시작한다.** 게임을 켜면 열리는 화면의 자리를 먼저 잡고, 그 다음은 요구가
+            // 적은 것부터 — 요구가 적다는 것은 앞에 와 있어야 할 것이 적다는 뜻이다.
+            val start = left.minByOrNull { id ->
+                val case = byId.getValue(id)
+                (if (case.atEntry) 0 else 1_000) + case.requires.size
+            } ?: break
             flows += walk(start, left, byId, link, maxCases, maxGaps, opening)
         }
         return flows

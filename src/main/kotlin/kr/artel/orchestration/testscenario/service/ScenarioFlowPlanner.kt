@@ -33,6 +33,12 @@ class ScenarioFlowPlanner(
         }.onFailure { logger.warn("저절로 바뀌는 자리 조회 실패: ${it.message}") }
             .getOrDefault(emptyMap())
 
+        // **게임을 켜면 열리는 화면**(ARTEL-659). 없으면 null 이고, 그때는 예전처럼 계산이 스스로
+        // 출발점을 고른다 — 못 읽는 것이 저작을 막을 이유는 아니다.
+        val entry = runCatching { testCaseRepository.findEntrySceneName(projectId) }
+            .onFailure { logger.warn("입구 씬 조회 실패 — 없이 간다: ${it.message}") }
+            .getOrNull()
+
         val cases = matrix.testCaseIds.mapNotNull { id ->
             val case = testCaseRepository.findById(id) ?: return@mapNotNull null
             if (case.projectId != projectId) return@mapNotNull null
@@ -50,6 +56,7 @@ class ScenarioFlowPlanner(
                     .associate { it.variable to it.value } +
                     ScenarioStateReader.stateAfter(case, objectMapper),
                 clears = raisedIn.filterValues { where -> where.any { it in scenes } }.keys,
+                atEntry = ScenarioStateReader.sceneOf(case) == entry,
             )
         }
 
