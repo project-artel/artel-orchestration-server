@@ -259,7 +259,11 @@ class ScenarioReconcileService(
         // **한 번 거절한 질문은 다시 묻지 않는다**(ARTEL-487). 조건은 그대로이므로 매 턴 같은
         // 질문이 다시 만들어지는데, 그것을 그대로 내보내면 "그대로 두기"를 누른 사용자에게 같은
         // 것을 계속 묻는 셈이 된다. 답한 기록은 대화에 `answered` 로 남아 있다.
-        val answered = answeredQuestionIds(runId, appUserId)
+        //
+        // **판이 아니라 프로젝트에서 읽는다**(ARTEL-676). 판 단위로 읽던 동안에는 새 판마다
+        // `Map_scene→TurnBattleScene 을 어떻게 가나요` 가 다시 나갔다 — 지도가 그대로면 답도
+        // 그대로인데도. 첫 판에 많이 묻고 그 뒤로 줄어드는 것이 이 되묻기의 전제다.
+        val answered = answeredQuestionIds(projectId)
         // **모르는 자리를 전부 낸다**(ARTEL-630). 하나만 내면 나머지는 아무 말 없이 미상으로 남고,
         // 사용자는 시나리오가 완성된 줄 안다 — 실측(런 178)에서 못 간다고 적은 자리가 일곱인데
         // 물은 것은 하나였다.
@@ -960,8 +964,8 @@ class ScenarioReconcileService(
      * 읽지 못하면 빈 집합이다. 그때는 예전처럼 한 번 더 묻게 되는데, 못 읽었다고 질문을 통째로
      * 삼키는 것보다는 낫다.
      */
-    private suspend fun answeredQuestionIds(runId: Long, appUserId: Long): Set<String> = runCatching {
-        runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+    private suspend fun answeredQuestionIds(projectId: Long): Set<String> = runCatching {
+        runMessageRepository.findAnsweredInProject(projectId)
             .toList()
             .mapNotNull { row -> row.payload?.let { objectMapper.readTree(it.asString()) } }
             .filter { it.path("kind").asText() == "answered" }
