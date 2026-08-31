@@ -126,6 +126,24 @@ class MapTestCaseGeneratorGoldenTest {
      * **이 수가 줄면 케이스가 조용히 사라진 것이다.** 확인할 것이 있는데 못 내는 자리가 생겨도
      * 아무 데서도 오류가 나지 않는다.
      */
+    /**
+     * **구버전과 맞대 보려고 내려 적는다**(ARTEL-681).
+     *
+     * 구버전(specs_v2)이 앉힌 66건이 프로젝트 3에 남아 있고, 그것과 케이스 단위로 견주지 않으면
+     * 무엇이 빠졌는지 알 수 없다 — 이 저장소가 여러 번 겪은 일이다("이 수가 줄면 케이스가 조용히
+     * 사라진 것이다"). 켤 때만 쓴다.
+     */
+    @Test
+    fun `견줄 수 있게 내려 적는다`() {
+        val where = System.getenv("ARTEL_DUMP_CASES") ?: return
+        java.io.File(where).writeText(
+            cases.joinToString("\n") { case ->
+                listOf(case.scene, case.step, case.precondition, case.expected, case.status)
+                    .joinToString("\t") { it.replace("\n", " ").replace("\t", " ") }
+            }
+        )
+    }
+
     @Test
     fun `문서 한 장이 케이스 42개가 된다`() {
         // 42 → 36 은 같은 코드에 두 경로로 닿는 것을 접은 결과(ARTEL-645)이고,

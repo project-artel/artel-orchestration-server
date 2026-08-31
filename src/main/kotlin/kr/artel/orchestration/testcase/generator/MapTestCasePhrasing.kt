@@ -199,7 +199,10 @@ object MapTestCasePhrasing {
         // 값을 못 읽은 자리는 문서가 그렇게 적어 둔다(`(not a literal)` · `(not a simple receiver)`).
         // 그대로 내면 "표시 상태가 `(not a literal)`" 처럼 읽을 수 없는 문장이 된다 — 값을 빼고
         // "바뀐다"로 말한다. 무엇으로 바뀌는지는 모르지만 **바뀐다는 것은 안다.**
-        val detail = readable(effect.detail)
+        // **값 쪽도 씬이 부르는 이름으로**(ARTEL-682). 대상만 풀고 값을 안 풀면 한 줄 안에서
+        // 두 말이 섞인다 — 실측에서 `wordHead 의 위치가 MapMove.battle1.transform.position 로
+        // 바뀐다` 가 나왔다. 실행하는 쪽이 찾아야 하는 것은 양쪽 다 씬의 이름이다.
+        val detail = readable(effect.detail)?.let { MapTestCaseTargets.resolve(it, refs) }
         return when (effect.kind) {
             "scene" -> "`$target` 화면으로 전환된다"
             "active-state" -> "`$target` 의 표시 상태가 ${detail?.let { "`$it`" } ?: "바뀐다"}"
