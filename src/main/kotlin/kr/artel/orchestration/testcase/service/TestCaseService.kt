@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.BadRequestException
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.service.ProjectAccessService
@@ -101,7 +102,13 @@ class TestCaseService(
         // 조건에서까지 함께 보낸다 — 그 넷이 지도에 나란히 적혀 있고, 실측(A/B)에서 같은 모델이
         // 여정을 26조각에서 10개로 줄였다.
         val moves = valueMoves(projectId)
-        return repository.findByProjectIdOrderByIdAsc(projectId).map { case ->
+        return repository.findByProjectIdOrderByIdAsc(projectId)
+            // **깨진 것은 저작 재료가 아니다**(ARTEL-685). 지도를 다시 적재하면 더 이상 뒷받침되지
+            // 않는 케이스가 `BROKEN` 으로 남는다. 보내면 모델이 그것을 담고, 커버리지 기준에는
+            // 없으므로 "없는 케이스 번호"로 걸려 저작이 통째로 막힌다 — 실측(런 268)에서 14건.
+            // 보내는 것과 세는 것이 같은 집합이어야 한다.
+            .filter { it.verificationStatus != "BROKEN" }
+            .map { case ->
             AuthoringTestCase(
                 id = case.id!!,
                 scene = ScenarioStateReader.sceneOf(case) ?: case.scene,

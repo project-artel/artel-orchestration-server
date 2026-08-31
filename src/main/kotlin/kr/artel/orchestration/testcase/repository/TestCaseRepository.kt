@@ -55,8 +55,13 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      *
      * 저작 결과를 검사하는 두 기준이 이 집합이다: 판정이 전량을 덮었는지, 스텝이 지목한 번호가
      * 실재하는지. 본문은 필요 없어서 id만 읽는다 — 1000건이라도 한 컬럼이다.
+     *
+     * **깨진 것은 뺀다**(ARTEL-685). 지도를 다시 적재하면 더 이상 뒷받침되지 않는 케이스가
+     * `BROKEN` 으로 남는다 — 지우지 않는 것은 무엇이 사라졌는지 보이게 하려는 것이다. 그런데 그것을
+     * 덮으라고 요구하면 **저작이 영영 통과하지 못한다**: 실측(런 266)에서 지도가 더 이상 내지 않는
+     * `Return` 케이스를 안 담았다고 저장이 막혔다. 담을 수도 없다 — 그 조작은 지도에 없다.
      */
-    @Query("SELECT id FROM test_case WHERE project_id = :projectId")
+    @Query("SELECT id FROM test_case WHERE project_id = :projectId AND verification_status <> 'BROKEN'")
     fun findIdsByProjectId(projectId: Long): Flow<Long>
 
     /**
