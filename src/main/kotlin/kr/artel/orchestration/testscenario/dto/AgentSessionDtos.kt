@@ -73,6 +73,16 @@ data class AgentSessionOpenRequest(
      * 묶고 순서를 정하므로, 되돌릴 때 양쪽을 다시 배포하지 않아도 된다.
      */
     val flows: List<AuthoringFlow> = emptyList(),
+    /**
+     * **게임을 켜면 열리는 화면**(ARTEL-670).
+     *
+     * 씬 그래프는 순환이라 구조로는 알 수 없고, 적재기가 빌드에서 읽어 적어 둔다. 여기가 지금까지
+     * 계산 안에서만 쓰이고 **모델에게는 한 번도 안 갔다** — 실측(런 247)에서 프롬프트 121,712자
+     * 안에 입구를 말하는 자리가 0회였다. 사람이 순서를 정할 때 가장 먼저 보는 것이 그것이다.
+     *
+     * 모르면 `null`. 지어내지 않고, 받는 쪽이 "안 왔다"라고 적는다.
+     */
+    @JsonProperty("entry_scene") val entryScene: String? = null,
 )
 
 /**

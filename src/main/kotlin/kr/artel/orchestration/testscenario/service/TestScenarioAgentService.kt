@@ -334,6 +334,9 @@ class TestScenarioAgentService(
             runId = runId,
             currentScenarios = currentScenarios,
             flows = flows,
+            entryScene = runCatching { testCaseRepository.findEntrySceneName(projectId) }
+                .onFailure { logger.warn("입구 씬 조회 실패 — 없이 보낸다: ${it.message}") }
+                .getOrNull(),
         )
         val resp = webClient.post()
             .uri("$agentBaseUrl/sessions")
