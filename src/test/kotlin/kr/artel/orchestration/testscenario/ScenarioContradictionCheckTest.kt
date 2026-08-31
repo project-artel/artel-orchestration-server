@@ -115,6 +115,71 @@ class ScenarioContradictionCheckTest {
         assertThat(ScenarioContradictionCheck.walk(walk).opening).isEmpty()
     }
 
+    /**
+     * **오르기만 하는 자리를 지나면 바닥을 들고 간다**(ARTEL-672).
+     *
+     * 전투를 지나면 진행도가 얼마인지는 모른다. 그런데 **줄지 않았다는 것은 안다** — 지도가
+     * 그 값을 올리는 법을 `+1` 하나로만 말했기 때문이다. 통째로 놓아 주면 그 뒤로 무엇을
+     * 요구해도 할 말이 없어지고, 실측(런 247)에서 검사가 0건을 답하는 사이 거꾸로 놓인 자리가
+     * 네 군데 있었다 — 넷 다 사이에 전투가 끼어 있었다.
+     */
+    @Test
+    fun `오르기만 하는 자리를 지난 뒤 더 낮은 값을 요구하면 짚는다`() {
+        val walk = listOf(
+            Step(at = 1, caseId = 1917, requires = listOf(needs("StagePosition", "==", "3")),
+                 sets = mapOf("StagePosition" to "3")),
+            Step(at = 2, caseId = null, climbs = setOf("StagePosition")),
+            Step(at = 3, caseId = 1896, requires = listOf(needs("StagePosition", "==", "0"))),
+        )
+
+        val found = ScenarioContradictionCheck.find(walk)
+
+        assertThat(found).hasSize(1)
+        assertThat(found.single().caseId).isEqualTo(1896L)
+        assertThat(found.single().have).isEqualTo("적어도 3")
+    }
+
+    /** 더 높이 요구하는 것은 걸어 오르면 되는 자리다 — 어긋남이 아니다. */
+    @Test
+    fun `오른 자리를 지난 뒤 더 높은 값을 요구하는 것은 짚지 않는다`() {
+        val walk = listOf(
+            Step(at = 1, caseId = 1, requires = listOf(needs("StagePosition", ">=", "1")),
+                 sets = mapOf("StagePosition" to "1")),
+            Step(at = 2, caseId = null, climbs = setOf("StagePosition")),
+            Step(at = 3, caseId = 2, requires = listOf(needs("StagePosition", ">=", "4"))),
+        )
+
+        val found = ScenarioContradictionCheck.walk(walk)
+
+        assertThat(found.contradictions).isEmpty()
+        // 걸어서 오를 수 있는 자리라 **시작 조건도 아니다** — 미리 와 있으라고 하면 안 된다.
+        assertThat(found.opening.map { it.value }).containsExactly("1")
+    }
+
+    /** 바닥을 모르면 예전 그대로다 — 모르는 것을 위반이라 하지 않는다. */
+    @Test
+    fun `한 번도 정해진 적 없는 값이면 올라도 짚지 않는다`() {
+        val walk = listOf(
+            Step(at = 1, caseId = null, climbs = setOf("StagePosition")),
+            Step(at = 2, caseId = 1, requires = listOf(needs("StagePosition", "==", "0"))),
+        )
+
+        assertThat(ScenarioContradictionCheck.find(walk)).isEmpty()
+    }
+
+    /** 사이에서 값을 **다시 정하면** 바닥은 사라진다 — 타이틀에서 불러오면 그것이 새 값이다. */
+    @Test
+    fun `다시 정해진 값은 바닥을 지운다`() {
+        val walk = listOf(
+            Step(at = 1, caseId = 1, sets = mapOf("StagePosition" to "5")),
+            Step(at = 2, caseId = null, climbs = setOf("StagePosition")),
+            Step(at = 3, caseId = null, sets = mapOf("StagePosition" to "0")),
+            Step(at = 4, caseId = 2, requires = listOf(needs("StagePosition", "==", "0"))),
+        )
+
+        assertThat(ScenarioContradictionCheck.find(walk)).isEmpty()
+    }
+
     /** 무엇이 될지 모르는 값은 비교할 수 없다 — 위반이라 말하지 않는 것이 이 저장소의 규칙이다. */
     @Test
     fun `기호 값은 어긋난다고 하지 않는다`() {

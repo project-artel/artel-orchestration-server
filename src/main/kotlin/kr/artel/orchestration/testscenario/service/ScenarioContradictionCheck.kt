@@ -43,6 +43,18 @@ object ScenarioContradictionCheck {
         val requires: List<Guard> = emptyList(),
         val sets: Map<String, String> = emptyMap(),
         val clears: Set<String> = emptySet(),
+        /**
+         * 이 걸음을 지나면 **줄지는 않는** 값(ARTEL-672).
+         *
+         * [clears] 와 갈라 두는 이유가 전부다. 전투를 지나면 진행도가 얼마인지는 모르지만
+         * *줄지 않았다는 것은 안다* — 지도가 그 값을 올리는 법을 `+1` 하나로만 말하고 내리는
+         * 법을 그 자리에 두지 않았기 때문이다.
+         *
+         * 통째로 놓아 주면 그 뒤로는 무엇을 요구해도 할 말이 없어진다. 실측(런 247)에서 검사가
+         * 0건을 답하는데 같은 결과물에 거꾸로 놓인 자리가 네 군데 있었고, 넷 다 사이에 전투가
+         * 끼어 있었다. 순서를 만드는 유일한 값에서 눈을 감은 셈이다.
+         */
+        val climbs: Set<String> = emptySet(),
     )
 
     /**
@@ -97,6 +109,8 @@ object ScenarioContradictionCheck {
      */
     fun walk(walk: List<Step>): Walked {
         val known = mutableMapOf<String, String>()
+        // **줄지 않는다는 것만 아는 값**(ARTEL-672). 정확히 얼마인지는 모르고 바닥만 안다.
+        val atLeast = mutableMapOf<String, Double>()
         val madeAt = mutableMapOf<String, Int>()
         val forgotten = mutableSetOf<String>()
         val found = mutableListOf<Contradiction>()
@@ -105,25 +119,66 @@ object ScenarioContradictionCheck {
         for (step in walk) {
             for (guard in step.requires) {
                 val have = known[key(guard.variable)]
-                if (have == null) {
-                    // 한 번도 정해진 적 없고 모르게 된 적도 없다면 **흐름이 스스로 못 만드는 것**이다.
-                    if (key(guard.variable) !in forgotten) opening += guard
+                if (have != null) {
+                    if (guard.holds(have)) continue
+                    found += Contradiction(
+                        at = step.at, caseId = step.caseId, guard = guard,
+                        have = have, madeAt = madeAt[key(guard.variable)] ?: 0,
+                    )
                     continue
                 }
-                if (guard.holds(have)) continue
-                found += Contradiction(
-                    at = step.at, caseId = step.caseId, guard = guard,
-                    have = have, madeAt = madeAt[key(guard.variable)] ?: 0,
-                )
+                val floor = atLeast[key(guard.variable)]
+                if (floor != null) {
+                    // 바닥보다 **낮게** 요구하는 것만 짚는다. 더 높게 요구하는 것은 흐름이 걸어
+                    // 오르면 되는 자리라 어긋남이 아니고, 시작 조건도 아니다.
+                    if (asksBelow(guard, floor)) {
+                        found += Contradiction(
+                            at = step.at, caseId = step.caseId, guard = guard,
+                            have = "적어도 ${plain(floor)}", madeAt = madeAt[key(guard.variable)] ?: 0,
+                        )
+                    }
+                    continue
+                }
+                // 한 번도 정해진 적 없고 모르게 된 적도 없다면 **흐름이 스스로 못 만드는 것**이다.
+                if (key(guard.variable) !in forgotten) opening += guard
             }
             // **정하는 것이 먼저고 모르게 되는 것이 나중이다.** 한 걸음이 값을 정하면서 동시에
             // 그 값이 저절로 바뀌는 화면을 지나면, 남는 것은 "모른다"다 — 덜 아는 쪽이 안전하다.
             step.sets.forEach { (variable, value) ->
                 known[key(variable)] = value
+                atLeast.remove(key(variable))
                 madeAt[key(variable)] = step.at
             }
-            step.clears.forEach { known.remove(key(it)); madeAt.remove(key(it)); forgotten += key(it) }
+            // 오르기만 하는 자리를 지난다 — 얼마인지는 놓고 **바닥은 들고 간다**.
+            step.climbs.forEach {
+                val floor = known[key(it)]?.toDoubleOrNull() ?: atLeast[key(it)]
+                known.remove(key(it))
+                if (floor != null) atLeast[key(it)] = floor else forgotten += key(it)
+            }
+            step.clears.forEach {
+                known.remove(key(it)); atLeast.remove(key(it)); madeAt.remove(key(it)); forgotten += key(it)
+            }
         }
         return Walked(found, opening.distinctBy { Triple(it.variable, it.operator, it.value) })
     }
+
+    /**
+     * 이 요구가 **바닥보다 낮은 값을 달라고 하나.**
+     *
+     * 여기서만 짚는다. `>= 4` 는 바닥이 2여도 걸어 오르면 되고, `!= 5` 는 5가 아닌 어떤 값도
+     * 되니 바닥과 싸우지 않는다 — 무엇이 될지 모르는 값을 위반이라 부르지 않는 규칙 그대로다.
+     */
+    private fun asksBelow(guard: Guard, floor: Double): Boolean {
+        val want = guard.value.toDoubleOrNull() ?: return false
+        return when (guard.operator) {
+            "==" -> want < floor
+            "<" -> want <= floor
+            "<=" -> want < floor
+            else -> false
+        }
+    }
+
+    /** 정수면 소수점을 안 붙인다 — 사람이 읽을 문장에 들어가는 값이다. */
+    private fun plain(value: Double): String =
+        if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
 }

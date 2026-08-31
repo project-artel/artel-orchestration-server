@@ -58,6 +58,7 @@ class ScenarioReconcileService(
     private val runMessageRepository: TestRunMessageRepository,
     private val trace: AuthoringTrace,
     private val effectRepository: kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository,
+    private val repair: kr.artel.orchestration.testscenario.config.ScenarioRepairProperties,
 ) {
     private val logger = LoggerFactory.getLogger(ScenarioReconcileService::class.java)
 
@@ -159,8 +160,11 @@ class ScenarioReconcileService(
 
         // 검수보다 **먼저** 메운다. 순서가 반대면 코드가 고칠 수 있는 것 때문에 저장이 막히고,
         // 그러면 에이전트에게 다시 쓰라고 시키게 된다 — 그 방법이 안 통한다는 것이 이 작업의 전제다.
+        // **메우기는 끌 수 있다**(ARTEL-673). 끄면 모델이 쓴 스텝만 남는다 — 못 이어지는 자리를
+        // 코드가 채우는 대신 검사가 짚는다.
         val (bridged, notices, blocked) =
-            repairByInsertion(routes, given, describe, openingFacts(projectId, facts))
+            if (repair.bridges) repairByInsertion(routes, given, describe, openingFacts(projectId, facts))
+            else Triple(given, emptyList(), emptyList())
         trace.record(
             runId, "2. 메운다",
             bridged.mapIndexed { index, after ->
@@ -182,7 +186,11 @@ class ScenarioReconcileService(
         val bridgeEffects = effectsOfBridges(repaired)
         // **한 번 걷고 둘을 함께 받는다**(ARTEL-660). 어긋남과 시작 조건을 따로 계산하면 규칙이
         // 둘이 되고, 그러면 갈라진다 — 실측(런 233)에서 저장된 안내가 계산과 정반대를 적었다.
-        val walked = repaired.map { ScenarioContradictionCheck.walk(walkOf(it, byId, raised, bridgeEffects)) }
+        // **줄지 않는 값과 아예 모르게 되는 값을 가른다**(ARTEL-672).
+        val climbing = onlyClimbing(projectId)
+        val walked = repaired.map {
+            ScenarioContradictionCheck.walk(walkOf(it, byId, raised, bridgeEffects, climbing))
+        }
         val contradictions = repaired.zip(walked).flatMap { (scenario, found) ->
             found.contradictions.map { scenario.title to it }
         }
@@ -692,6 +700,7 @@ class ScenarioReconcileService(
         byId: Map<Long, ScenarioSiblingCheck.CaseFact>,
         raisedIn: Map<String, Set<String>>,
         bridgeEffects: Map<Long, List<Pair<String, String?>>>,
+        onlyClimbs: Set<String>,
     ): List<ScenarioContradictionCheck.Step> = scenario.steps.mapIndexed { index, step ->
         val fact = step.caseId?.let { byId[it] }
         // 메우지 못한 구간을 지나면 그 자리가 무엇으로 바뀌는지 모른다. 막은 것이 화면 쌍이면
@@ -723,12 +732,39 @@ class ScenarioReconcileService(
                 .associate { it.variable to it.value } + fact?.declared.orEmpty() + bridgeSets,
             clears = buildSet {
                 gap?.takeIf { !it.contains("→") }?.let(::add)
-                raisedIn.forEach { (value, scenes) -> if (scenes.any { it in passed }) add(value) }
+                raisedIn.forEach { (value, scenes) ->
+                    // 오르기만 하는 값은 놓아 주지 않고 바닥을 들고 간다 — 아래 `climbs` 로 간다.
+                    if (scenes.any { it in passed } && value.lowercase() !in onlyClimbs) add(value)
+                }
                 written.map { ScenarioStateReader.normalize(it.first) }
                     .filterNotTo(this) { it in bridgeSets }
             },
+            climbs = raisedIn.keys.filterTo(mutableSetOf()) { value ->
+                value.lowercase() in onlyClimbs && raisedIn.getValue(value).any { it in passed }
+            },
         )
     }
+
+    /**
+     * **올리는 법만 있고 내리는 법이 없는 값**(ARTEL-672).
+     *
+     * 지도가 그 값을 어떻게 바꾸는지로 갈린다 — `StagePosition` 은 부호 붙은 쓰기가 `+1` 뿐이고
+     * `position` 은 `+1` 도 `-1` 도 있다. 앞엣것은 지나가면 *줄지 않았다*는 것을 알고, 뒤엣것은
+     * 어디로 갔는지 모른다.
+     *
+     * **게임을 보고 고르는 것이 아니라 지도가 갈라 준다.** 방향키로 오갈 수 있는 값은 여기 안 든다.
+     *
+     * 못 읽으면 빈 집합이고, 그러면 예전처럼 전부 놓아 준다 — 조회 실패가 저작을 막을 이유는 아니다.
+     */
+    private suspend fun onlyClimbing(projectId: Long): Set<String> = runCatching {
+        testCaseRepository.findValueMoves(projectId).toList()
+            .mapNotNull { row -> row.detail?.trim()?.takeIf { it.length > 1 && (it[0] == '+' || it[0] == '-') }
+                ?.let { ScenarioStateReader.normalize(row.target).lowercase() to it[0] } }
+            .groupBy({ it.first }, { it.second })
+            .filterValues { signs -> signs.contains('+') && !signs.contains('-') }
+            .keys
+    }.onFailure { logger.warn("오르기만 하는 값 조회 실패 — 없이 간다: ${it.message}") }
+        .getOrDefault(emptySet())
 
     private suspend fun movableValues(projectId: Long): Set<String> = runCatching {
         testCaseRepository.findWrittenValues(projectId).toList().toSet()
