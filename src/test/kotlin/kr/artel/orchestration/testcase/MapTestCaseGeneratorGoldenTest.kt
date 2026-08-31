@@ -153,7 +153,7 @@ class MapTestCaseGeneratorGoldenTest {
         // 그 결과들의 원래 주인은 관측 기능이고, 이어서 그쪽을 케이스로 낸다.
         // 31 → 80(ARTEL-681). 게임이 스스로 하는 일도 케이스가 된다 — 화면을 열면 무엇이
         // 보이나, 값이 이러하면 무엇이 보이나. 지금까지 137개 중 0건이었다.
-        assertThat(cases).hasSize(77)
+        assertThat(cases).hasSize(89)
     }
 
     /**
@@ -280,11 +280,11 @@ class MapTestCaseGeneratorGoldenTest {
 
         assertThat(byScene).hasSize(7)
         // 관측이 붙어 늘었다(ARTEL-681).
-        assertThat(byScene["StoryScene"]).isEqualTo(10)
-        assertThat(byScene["EndingScene"]).isEqualTo(10)
+        assertThat(byScene["StoryScene"]).isEqualTo(12)
+        assertThat(byScene["EndingScene"]).isEqualTo(12)
         // 갈래를 갈래대로 내면서 늘었다(ARTEL-667) — 지도의 `Return` 이 스테이지마다 한 줄이다.
         // 26 → 11. 빠진 열다섯은 `Update()` 아래 형제에게서 빌려 온 줄이다(ARTEL-680).
-        assertThat(byScene["Map_scene"]).isEqualTo(28)
+        assertThat(byScene["Map_scene"]).isEqualTo(30)
     }
 
     /**

@@ -79,7 +79,7 @@ class MapTestCaseGenerator(
         val watched = contentMaps.findObservationRows(contentMapId).toList()
             .filter { keptAsObservation(it) }
             .flatMap { row -> draftsOf(row.asCapabilityRow(), edges, settled, exits, refs, watching = row.triggerRoot) }
-        return merged(drafts + watched)
+        return merged(drafts + watched) + screenElements(contentMapId)
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
             // 못 적으면 케이스가 아니다. 조작은 눌러 보면 되지만 관측은 볼 시점이 전부다.
@@ -550,6 +550,32 @@ class MapTestCaseGenerator(
      * 빌려 온 케이스의 사전조건은 **세 조건을 함께** 든다 — 자기 조건, 그 호출이 일어나는 조건,
      * 결과 갈래 자신의 조건. 셋이 다 참일 때만 그 결과가 난다.
      */
+    /**
+     * **화면에 무엇이 붙어 있나**(ARTEL-683).
+     *
+     * 효과에서만 케이스를 만들면 *"그 버튼이 보이는가"* 가 빠진다 — 그냥 있는 것은 바뀌는 것이
+     * 아니기 때문이다. 구버전(specs_v2)이 `control_check` 로 내던 자리다.
+     *
+     * 무엇이 보이는지까지는 말하지 않는다. 지도가 아는 것은 **그 자리에 그것이 있다**는 것뿐이고,
+     * 켜져 있는지 꺼져 있는지는 조건에 따라 달라져 관측 케이스가 따로 말한다.
+     *
+     * 갈래도 전제도 없다. 그래서 [merged] 를 거치지 않고 그대로 낸다 — 접을 것이 없다.
+     */
+    private suspend fun screenElements(contentMapId: Long): List<MapTestCase> =
+        contentMaps.findScreenElements(contentMapId).toList().map { element ->
+            MapTestCase(
+                // 지도의 기능에서 나온 것이 아니라 씬의 오브젝트에서 나왔다. 되짚을 열쇠는 그 경로다.
+                capabilityKey = "screen\u001F${element.sceneName}\u001F${element.path}",
+                scene = element.sceneName,
+                precondition = "${element.sceneName} 화면인 상태",
+                condition = null,
+                step = "`${element.path}` 이(가) 화면에 있는지 확인한다",
+                expected = "`${element.path}` 이(가) 화면에 있다",
+                status = "runnable",
+                identity = "screen\u001F${element.sceneName}\u001F${element.path}",
+            )
+        }
+
     /**
      * 이 관측을 케이스로 낼까(ARTEL-681).
      *

@@ -156,8 +156,8 @@ class MapTestCaseWriterGoldenTest {
         assertThat(mine()).isNotEmpty()
         // 46 → 31(ARTEL-680) 생명주기 아래 형제에게서 결과를 빌려 오지 않는다.
         // 31 → 80(ARTEL-681) 게임이 스스로 하는 일도 케이스가 된다.
-        assertThat(mine()).hasSize(77)
-        assertThat(first.testCases.created).isEqualTo(77)
+        assertThat(mine()).hasSize(89)
+        assertThat(first.testCases.created).isEqualTo(89)
     }
 
     /**

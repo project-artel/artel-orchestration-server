@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.dto.ContentMapCallEdge
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import kr.artel.orchestration.contentmap.dto.ContentMapObservationRow
+import kr.artel.orchestration.contentmap.dto.ContentMapScreenElement
 import kr.artel.orchestration.contentmap.dto.MethodArgument
 import kr.artel.orchestration.contentmap.dto.SpecGapRow
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
@@ -111,6 +112,37 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
         """
     )
     fun findObservationRows(contentMapId: Long): Flow<ContentMapObservationRow>
+
+    /**
+     * **화면에 붙어 있는 UI 요소**(ARTEL-683). 있는지 확인하는 케이스가 여기서 나온다.
+     *
+     * 효과에서만 케이스를 만들면 *"그 버튼이 보이는가"* 가 통째로 빠진다 — 그냥 있는 것은 바뀌는
+     * 것이 아니라 효과가 없기 때문이다. 구버전(specs_v2)은 이것을 `control_check` 로 따로 냈고,
+     * 신버전에는 없었다.
+     *
+     * 두 곳을 합친다. 코드가 필드로 들고 있는 것(`scene_object_ref`)과 클릭 핸들러만 붙은
+     * 것(`capability.control_path`)이 서로를 못 덮는다 — 실측(지도 31)에서 앞은 `Canvas/Stage` 를,
+     * 뒤는 `Canvas/MapSceneButton` 을 갖고 있다.
+     *
+     * `Canvas/` 로 좁힌다. 좁히지 않으면 코드가 참조하는 오브젝트 전부가 걸려 `TurnBattleScene`
+     * 하나가 167건이 된다 — 카드·적·프리팹처럼 화면에 붙은 UI 가 아닌 것들이다.
+     */
+    @Query(
+        """
+        SELECT scene_name, path FROM (
+            SELECT s.name AS scene_name, r.target_name AS path
+            FROM scene_object_ref r JOIN scene s ON s.id = r.scene_id
+            WHERE s.content_map_id = :contentMapId AND r.target_name LIKE 'Canvas/%'
+            UNION
+            SELECT s.name AS scene_name, c.control_path AS path
+            FROM capability c JOIN scene s ON s.id = c.scene_id
+            WHERE c.content_map_id = :contentMapId AND c.merged_into IS NULL
+              AND c.control_path LIKE 'Canvas/%'
+        ) ui
+        ORDER BY scene_name ASC, path ASC
+        """
+    )
+    fun findScreenElements(contentMapId: Long): Flow<ContentMapScreenElement>
 
     /**
      * **호출로 이어진 결과 갈래**(ARTEL-554).
