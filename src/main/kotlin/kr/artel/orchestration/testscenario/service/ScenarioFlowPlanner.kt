@@ -78,8 +78,18 @@ class ScenarioFlowPlanner(
             }.getOrDefault(emptyList())
         }
 
+        // **게임을 켜면 값이 무엇으로 시작하나**(ARTEL-665). 입구 화면이 저장소에서 읽을 때 적어
+        // 두는 기본값이다 — `PlayerPrefs.GetInt("StagePosition", -1)` 의 `-1`.
+        val starting = runCatching {
+            testCaseRepository.findStartingValues(projectId).toList()
+                .mapNotNull { row -> defaultOf(row.detail)?.let { ScenarioStateReader.normalize(row.name) to it } }
+                .toMap()
+        }.onFailure { logger.warn("처음 값 조회 실패 — 없이 간다: ${it.message}") }
+            .getOrDefault(emptyMap())
+
         return ScenarioFlowPlan.of(
             cases,
+            starting = starting,
             opening = { guard -> guard.variable.lowercase() in produced && !guard.symbolic },
         ) { from, to ->
             val cell = matrix.between(from, to)
@@ -104,5 +114,18 @@ class ScenarioFlowPlanner(
                 }.orEmpty(),
             )
         }
+    }
+
+    /**
+     * `PlayerPrefs.GetInt("StagePosition", -1)` 에서 **없을 때 쓸 값**을 뽑는다.
+     *
+     * 마지막 인자다. 인자가 하나뿐이면 기본값을 안 적은 것이고, 그때는 무엇으로 시작하는지 모른다 —
+     * 지어내지 않고 비운다.
+     */
+    private fun defaultOf(detail: String): String? {
+        val args = detail.substringAfterLast('(').substringBeforeLast(')')
+        if (!detail.contains('(')) return null
+        val last = args.split(',').map { it.trim() }.takeIf { it.size >= 2 }?.last() ?: return null
+        return last.trim('"').takeIf { it.toDoubleOrNull() != null || it == "true" || it == "false" }
     }
 }

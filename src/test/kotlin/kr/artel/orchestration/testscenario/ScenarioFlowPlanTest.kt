@@ -169,6 +169,70 @@ class ScenarioFlowPlanTest {
         assertThat(flows.single().caseIds).containsExactly(1L, 99L)
     }
 
+    /**
+     * **게임을 켜면 값이 무엇으로 시작하는지 안다**(ARTEL-665).
+     *
+     * 첫 상태를 모르면 어느 쪽이 진행인지도 모른다 — 실측(런 239)에서 지도 흐름이 진행도
+     * 5 → 4 → 3 → 2 로 거꾸로 놓였다. `>= 4` 는 5에서도 참이라 어긋나지는 않지만, 실행하는
+     * 사람은 보스 앞에서 시작해 뒤로 걸어 나온다.
+     */
+    @Test
+    fun `처음 값을 알면 오르는 순서로 놓는다`() {
+        val cases = listOf(
+            Case(id = 1, requires = listOf(needs("StagePosition", ">=", "1")), atEntry = true),
+            Case(id = 3, requires = listOf(needs("StagePosition", ">=", "3"))),
+            Case(id = 2, requires = listOf(needs("StagePosition", ">=", "2"))),
+        )
+
+        // 사이를 지날 때마다 그 값이 오른다 — 전투가 그렇다.
+        val flows = ScenarioFlowPlan.of(
+            cases,
+            starting = mapOf("StagePosition" to "1"),
+        ) { _, _ -> Link(BY_PLAY, clears = setOf("StagePosition")) }
+
+        assertThat(flows.first().caseIds.first()).isEqualTo(1L)
+    }
+
+    /**
+     * **처음 상태와 어긋나는 자리에서는 시작하지 않는다.** 게임을 막 켠 사람에게 "진행도 5 로 와
+     * 있어라"라고 하는 자리가 그것이다.
+     */
+    @Test
+    fun `처음 상태와 어긋나는 자리는 입구여도 출발점이 아니다`() {
+        val cases = listOf(
+            Case(id = 9, requires = listOf(needs("StagePosition", "==", "5")), atEntry = true),
+            Case(id = 1, requires = listOf(needs("StagePosition", "==", "-1")), atEntry = true),
+        )
+
+        val flows = ScenarioFlowPlan.of(
+            cases,
+            starting = mapOf("StagePosition" to "-1"),
+        ) { _, _ -> Link(BESIDE) }
+
+        assertThat(flows.first().caseIds.first()).isEqualTo(1L)
+    }
+
+    /**
+     * **같은 값이면 덜 요구하는 것부터**(ARTEL-665).
+     *
+     * 비용도 요구 개수도 같은 자리가 흔하고, 그때 순서가 임의가 되어 실측(런 239·240)에서 지도
+     * 흐름이 진행도 5 → 4 → 3 → 2 로 거꾸로 놓였다. 실행하는 사람은 보스 앞에서 시작해 뒤로
+     * 걸어 나온다.
+     */
+    @Test
+    fun `요구가 낮은 자리부터 놓는다`() {
+        val cases = listOf(
+            Case(id = 5, requires = listOf(needs("StagePosition", "==", "5"))),
+            Case(id = 2, requires = listOf(needs("StagePosition", ">=", "2"))),
+            Case(id = 4, requires = listOf(needs("StagePosition", ">=", "4"))),
+            Case(id = 3, requires = listOf(needs("StagePosition", ">=", "3"))),
+        )
+
+        val flows = ScenarioFlowPlan.of(cases) { _, _ -> Link(BESIDE) }
+
+        assertThat(flows.single().caseIds).containsExactly(2L, 3L, 4L, 5L)
+    }
+
     /** 싼 것부터 놓는다 — 아무것도 안 넣는 자리가 지나가야 하는 자리보다 먼저다. */
     @Test
     fun `사이에 아무것도 안 드는 자리를 먼저 놓는다`() {

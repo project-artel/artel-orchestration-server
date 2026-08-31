@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.CaseWrite
 import kr.artel.orchestration.testcase.dto.SceneExitRow
 import kr.artel.orchestration.testcase.dto.ValueMoveRow
+import kr.artel.orchestration.testcase.dto.StartingValue
 import kr.artel.orchestration.testcase.dto.ValueRaiser
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.UncoveredScene
@@ -352,6 +353,42 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
     )
     suspend fun findEntrySceneName(projectId: Long): String?
+
+    /**
+     * **게임을 켜면 값이 무엇으로 시작하나**(ARTEL-665).
+     *
+     * 입구 화면이 저장소에서 값을 읽을 때 **없으면 쓸 기본값**을 함께 적어 둔다:
+     *
+     * ```
+     * PlayerPrefs.GetInt("StagePosition", -1)
+     *                                     ↑ 저장 데이터가 없을 때의 값
+     * ```
+     *
+     * 이것을 안 읽으면 흐름 계산이 **첫 상태를 모른 채** 출발한다. 그러면 어느 쪽이 진행인지도
+     * 모르고, 실측(런 239)에서 지도 흐름이 진행도 5 → 4 → 3 → 2 로 **거꾸로** 놓였다 —
+     * `>= 4` 는 5에서도 참이라 논리적으로 어긋나지 않지만, 실행하는 사람은 보스 앞에서 시작해
+     * 뒤로 걸어 나온다.
+     *
+     * 기본값을 깔면 `fits` 가 알아서 막는다 — `-1` 에서 `>= 4` 는 안 맞으니 그 값을 올리는 자리를
+     * 지나기 전에는 못 놓는다.
+     *
+     * 입구 화면의 것만 본다. 다른 화면에서 읽는 것은 그때까지 게임이 해 온 것이 반영된 값이라
+     * "처음"이 아니다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT regexp_replace(e.target, '^.*\.', '') AS name, e.detail AS detail
+        FROM capability_effect e
+        JOIN capability c ON c.id = e.capability_id AND c.merged_into IS NULL
+        JOIN scene s ON s.id = c.scene_id AND s.is_entry
+        JOIN content_map cm ON cm.id = s.content_map_id
+        JOIN game_build b ON b.id = cm.game_build_id
+        WHERE b.project_id = :projectId
+          AND e.target IS NOT NULL
+          AND e.detail ~ 'Get(Int|Float|String|Bool)\('
+        """
+    )
+    fun findStartingValues(projectId: Long): Flow<StartingValue>
 
     /**
      * **이 값을 무엇이 어떤 조건에서 바꾸나**(ARTEL-646).
