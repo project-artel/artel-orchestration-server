@@ -22,6 +22,9 @@ object ScenarioBridgeRepair {
     /** 되풀이하라고 적힌 홉의 표시([ScenarioPathService] 가 붙인다). 그런 홉은 빼지 않는다. */
     private const val REPEATS = "되풀이한다"
 
+    /** 막은 것이 **화면 쌍**임을 알아보는 글자. 값 이름과 가르는 유일한 표식이다(ARTEL-686). */
+    private const val SCENE_PAIR = "\u2192"
+
     /**
      * 메울 자리 하나. [at]은 두 검증 구간 사이에 있는 브리지 스텝들의 범위이고 **비어 있을 수 있다** —
      * 씬을 통째로 건너뛴 결과가 바로 그 모양(빈 자리)이라, 길이 0인 구간이 오히려 주된 대상이다.
@@ -67,6 +70,8 @@ object ScenarioBridgeRepair {
          * 그래서 있으면 그 케이스로 적는다. 없으면 예전처럼 이름 없는 걸음이다.
          */
         caseOf: (Long) -> Long? = { null },
+        /** 그 케이스가 서 있는 화면. 모르면 `null` 이고, 그때는 예전처럼 조작을 적는다. */
+        sceneOf: (Long) -> String? = { null },
     ): Repaired {
         val gaps = gaps(steps)
         // 메울 자리가 없어도 접기는 한다 — 중복은 사이가 비어서 생기는 것이 아니다.
@@ -83,7 +88,11 @@ object ScenarioBridgeRepair {
             if (answer == null) {
                 out += existing
             } else {
-                val filled = bridge(existing, dropRepeatOf(steps.getOrNull(gap.at.first - 1), answer), caseOf)
+                val filled = bridge(
+                    existing, dropRepeatOf(steps.getOrNull(gap.at.first - 1), answer), caseOf,
+                    sameScene = sceneOf(gap.fromCaseId) != null &&
+                        sceneOf(gap.fromCaseId) == sceneOf(gap.toCaseId),
+                )
                 out += filled
                 // 알림은 **알림 블록이 실제로 들어갔을 때만** 낸다. 사람이 이미 손으로 채운 구간까지
                 // 말하면, 답을 준 사용자에게 같은 것을 다시 묻는 꼴이 된다.
@@ -185,6 +194,8 @@ object ScenarioBridgeRepair {
         existing: List<ChatScenarioStep>,
         answer: ScenarioPathAnswer,
         caseOf: (Long) -> Long? = { null },
+        /** 이 구간의 두 끝이 같은 화면인가(ARTEL-686). 같으면 나갔다 오는 길은 이동이 아니다. */
+        sameScene: Boolean = false,
     ): List<ChatScenarioStep> {
         if (answer.result == ScenarioPathResult.NOT_REQUIRED) return existing
         // 사람이 손으로 채운 구간은 그대로 둔다. 명세가 모르는 것을 사용자가 알려준 자리라,
@@ -223,6 +234,26 @@ object ScenarioBridgeRepair {
         }
         val leftover = existing.drop(answer.actions.size)
         if (answer.result == ScenarioPathResult.KNOWN) return known + leftover
+
+        // **제자리로 돌아오는 고리는 시키지 않는다**(ARTEL-686).
+        //
+        // 막은 것이 값이면(`StagePosition`) 그 값은 지도가 "저절로 바뀐다"고 말한 것이고, 시켜서
+        // 오르지 않는다. 그런데 여기까지 온 답에는 그 값을 올리러 가는 길의 **앞부분**이 조작으로
+        // 담겨 있다. 그것을 스텝으로 박으면 화면을 떠났다 돌아오는 걸음이 생긴다.
+        //
+        // 실측(런 270): 클리어 화면의 두 케이스 사이에 `클리어 화면 → 지도`, `지도 → 전투` 가
+        // 끼워졌고, 그 뒤에 "확인할 수 없습니다"가 그대로 남았다. 읽는 사람에게는 **4스테이지를
+        // 두 번 클리어하라**는 지시가 된다. 끼우고도 모른다고 적은 셈이다.
+        //
+        // **화면이 다르면 그 조작은 진짜 이동이라 그대로 적는다.** `전투 → 지도` 는 값이 막았어도
+        // 가야 하는 길이고, 반복해서 지나는 자리도 매번 적어야 한다.
+        //
+        // 두 끝이 같은 화면일 때만 뺀다. 그때 그 조작들은 어디로 데려가는 것이 아니라 **나갔다가
+        // 돌아오는 고리**다. 조작을 빼고 물음만 남긴다 — 답은 프로젝트에 쌓여 다음 판부터 줄어든다
+        // (ARTEL-676). 지어내는 것보다 묻는 쪽이 낫다.
+        if (sameScene && answer.blockedBy?.contains(SCENE_PAIR) == false) {
+            return listOf(gap(answer, existing))
+        }
 
         // 모르는 구간은 **빈 자리로 두지 않는다.** 아무 표시도 없으면 실행하는 쪽에서 그냥 이어지는
         // 줄로 읽히고, 그때는 막힌 이유를 아무도 모른다.

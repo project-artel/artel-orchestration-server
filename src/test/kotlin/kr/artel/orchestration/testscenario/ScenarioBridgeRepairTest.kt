@@ -186,6 +186,36 @@ class ScenarioBridgeRepairTest {
             .contains("스텝으로 채웁니다")
     }
 
+    /**
+     * **제자리로 돌아오는 고리는 시키지 않는다**(ARTEL-686).
+     *
+     * 실측(런 270): 클리어 화면의 두 케이스 사이에 `클리어 화면 → 지도`, `지도 → 전투` 가
+     * 끼워지고 그 뒤에 "확인할 수 없습니다"가 그대로 남았다. 읽는 사람에게는 **4스테이지를 두 번
+     * 클리어하라**는 지시가 된다 — 끼우고도 모른다고 적은 셈이다.
+     *
+     * 두 끝이 같은 화면이면 그 조작들은 어디로 데려가는 것이 아니라 나갔다가 돌아오는 고리다.
+     * 값은 시켜서 오르지 않으므로, 반쯤 시키는 대신 통째로 묻는다.
+     */
+    @Test
+    fun `같은 화면으로 돌아오는 고리는 조작을 안 적고 묻는다`() {
+        val repaired = ScenarioBridgeRepair.apply(
+            listOf(verify(1), verify(2)),
+            mapOf(
+                0 to ScenarioPathAnswer(
+                    ScenarioPathResult.UNKNOWN,
+                    capabilityIds = listOf(11L, 12L),
+                    actions = listOf("any 키를 누른다 (Clear → Map)", "Return 키를 누른다 (Map → Battle)"),
+                    blockedBy = "stagePosition",
+                )
+            ),
+            sceneOf = { "GameClearScene" },
+        )
+
+        assertThat(repaired.steps.map { it.stepKind }).containsExactly(
+            ScenarioStepKind.ACTION, ScenarioStepKind.GAP, ScenarioStepKind.ACTION,
+        )
+    }
+
     @Test
     fun `아는 데까지 넣고 나머지를 미상으로 남긴다`() {
         // 씬 이동은 알고 그 뒤 변수만 모르는 경우다. 아는 것까지 버릴 이유가 없다.
