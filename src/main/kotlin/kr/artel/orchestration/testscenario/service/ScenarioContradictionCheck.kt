@@ -73,15 +73,43 @@ object ScenarioContradictionCheck {
      */
     private fun key(name: String): String = name.lowercase()
 
-    /** 위에서 아래로 한 번 걷는다. 되짚지 않는다 — 흐름은 순서이지 집합이 아니다. */
-    fun find(walk: List<Step>): List<Contradiction> {
+    /**
+     * 한 번 걷고 나온 것 둘.
+     *
+     * @property opening 걷는 동안 **한 번도 정해진 적 없고 모르게 된 적도 없이** 요구된 것.
+     *   흐름이 스스로 만들지 못하는 것이라 시작할 때 이미 참이어야 한다. 사이에서 모르게 된 값을
+     *   다시 요구하는 것은 여기 안 든다 — 그건 흐름이 지나온 자리에서 일어날 일이고 GAP 이 말한다.
+     */
+    data class Walked(
+        val contradictions: List<Contradiction> = emptyList(),
+        val opening: List<Guard> = emptyList(),
+    )
+
+    /** 어긋난 자리만. 시작 조건까지 필요하면 [walk] 를 쓴다. */
+    fun find(walk: List<Step>): List<Contradiction> = walk(walk).contradictions
+
+    /**
+     * 위에서 아래로 한 번 걷는다. 되짚지 않는다 — 흐름은 순서이지 집합이 아니다.
+     *
+     * **어긋남과 시작 조건은 같은 걸음에서 나온다**(ARTEL-660). 따로 계산하면 규칙이 둘이 되고,
+     * 그러면 갈라진다 — 실측(런 233)에서 저장된 안내가 계산과 **정반대**를 적었다(계산은
+     * `진행도 != 5` 인데 안내는 `== 5` 로 시작하라고 했다).
+     */
+    fun walk(walk: List<Step>): Walked {
         val known = mutableMapOf<String, String>()
         val madeAt = mutableMapOf<String, Int>()
+        val forgotten = mutableSetOf<String>()
         val found = mutableListOf<Contradiction>()
+        val opening = mutableListOf<Guard>()
 
         for (step in walk) {
             for (guard in step.requires) {
-                val have = known[key(guard.variable)] ?: continue
+                val have = known[key(guard.variable)]
+                if (have == null) {
+                    // 한 번도 정해진 적 없고 모르게 된 적도 없다면 **흐름이 스스로 못 만드는 것**이다.
+                    if (key(guard.variable) !in forgotten) opening += guard
+                    continue
+                }
                 if (guard.holds(have)) continue
                 found += Contradiction(
                     at = step.at, caseId = step.caseId, guard = guard,
@@ -94,8 +122,8 @@ object ScenarioContradictionCheck {
                 known[key(variable)] = value
                 madeAt[key(variable)] = step.at
             }
-            step.clears.forEach { known.remove(key(it)); madeAt.remove(key(it)) }
+            step.clears.forEach { known.remove(key(it)); madeAt.remove(key(it)); forgotten += key(it) }
         }
-        return found
+        return Walked(found, opening.distinctBy { Triple(it.variable, it.operator, it.value) })
     }
 }

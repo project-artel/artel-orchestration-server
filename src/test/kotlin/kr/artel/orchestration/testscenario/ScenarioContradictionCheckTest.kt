@@ -79,6 +79,42 @@ class ScenarioContradictionCheckTest {
         assertThat(ScenarioContradictionCheck.find(walk)).isEmpty()
     }
 
+    /**
+     * **시작 조건은 같은 걸음에서 나온다**(ARTEL-660).
+     *
+     * 흐름이 스스로 만들지 못하는 것만 시작 조건이다. 따로 계산하면 규칙이 둘이 되고 갈라진다 —
+     * 실측(런 233)에서 저장된 안내가 계산과 정반대를 적었다.
+     */
+    @Test
+    fun `스스로 만들지 못하는 요구가 시작 조건으로 나온다`() {
+        val walk = listOf(
+            Step(at = 1, caseId = 1, requires = listOf(needs("saveData", "!=", "-1")),
+                 sets = mapOf("saveData" to "0")),
+            Step(at = 2, caseId = 2, requires = listOf(needs("saveData", "!=", "-1"))),
+        )
+
+        val found = ScenarioContradictionCheck.walk(walk)
+
+        assertThat(found.contradictions).isEmpty()
+        // 둘째는 첫째가 만들어 놓았다 — 한 번만 적는다.
+        assertThat(found.opening.map { it.variable }).containsExactly("saveData")
+    }
+
+    /**
+     * **흐름이 사이에서 만드는 값은 시작 조건이 아니다.** 그것까지 미리 와 있으라고 하면
+     * "보스 앞까지 이겨 놓고 와서 전투를 세 번 더 해라"가 된다(런 233, 시나리오 784).
+     */
+    @Test
+    fun `사이에서 모르게 되는 값은 시작 조건이 아니다`() {
+        val walk = listOf(
+            Step(at = 1, caseId = 1, sets = mapOf("flag" to "1")),
+            Step(at = 2, caseId = null, clears = setOf("StagePosition")),
+            Step(at = 3, caseId = 2, requires = listOf(needs("StagePosition", ">=", "4"))),
+        )
+
+        assertThat(ScenarioContradictionCheck.walk(walk).opening).isEmpty()
+    }
+
     /** 무엇이 될지 모르는 값은 비교할 수 없다 — 위반이라 말하지 않는 것이 이 저장소의 규칙이다. */
     @Test
     fun `기호 값은 어긋난다고 하지 않는다`() {
