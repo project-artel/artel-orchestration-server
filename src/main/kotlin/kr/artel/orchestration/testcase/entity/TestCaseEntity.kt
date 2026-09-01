@@ -71,6 +71,23 @@ data class TestCaseEntity(
     @Column("metadata")
     val metadata: Json = Json.of("{}"),
 
+    /**
+     * 이 케이스를 만든 **지도 기능의 안정 참조 키**(ARTEL-553).
+     *
+     * `capability.id` 가 아니라 `capability_key` 다. `id` 는 재적재하면 바뀌어 지도를 다시 구울
+     * 때마다 참조가 끊긴다 — `v_content_map_capability` 뷰가 그 자리에 "재적재를 넘어 살아남는
+     * 참조 키. `c.id` 는 표시·조인용이고 이쪽이 기억해 둘 값이다"라고 적어 두었다.
+     *
+     * **`null` 이 정상인 경우가 많다.** 사람이 손으로 만든 케이스, 엑셀로 적재된 케이스,
+     * evidence 출신이 아닌 기능(키의 입력인 `entry_id` 가 없다). 저작은 키가 있으면 키를,
+     * 없으면 근거 문자열을 맞추던 예전 길을 쓴다.
+     *
+     * 찾을 때는 `(content_map_id, capability_key)` 로 간다 — 키만으로는 어느 지도의 것인지 모르고,
+     * 한 프로젝트에 capture 가 다른 지도가 여럿 앉는다.
+     */
+    @Column("capability_key")
+    val capabilityKey: String? = null,
+
     /** 명세 쪽 안정 식별자(`metadata.source.spec_id`). 적재 멱등 키. */
     @Column("spec_id")
     val specId: String? = null,

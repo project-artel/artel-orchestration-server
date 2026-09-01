@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testcase.repository
 
 import kotlinx.coroutines.flow.Flow
+import kr.artel.orchestration.testcase.dto.CaseWrite
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
@@ -161,4 +162,56 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      * S3에 올릴 이유가 없다. 한 건이라도 그 revision이면 같은 판이 이미 반영된 것이다.
      */
     suspend fun existsByProjectIdAndSpecRevision(projectId: Long, specRevision: Int): Boolean
+
+    /**
+     * 시나리오가 스텝에 번호로 들고 있는 케이스들(ARTEL-578).
+     *
+     * 시나리오는 `test_scenario.steps` JSONB 안에 `case_id` 를 숫자로 담는다 — 외래 키가 아니라서
+     * 케이스를 지워도 DB 가 막지 않고, 시나리오에 **가리키는 것이 없는 번호**만 남는다.
+     *
+     * 지도에서 사라진 기능의 케이스를 지울 때 이것을 먼저 본다. 인용된 줄은 지우는 대신 `BROKEN` 으로
+     * 돌려, 시나리오가 상했다는 것을 사람이 보게 한다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT (step->>'case_id')::BIGINT AS id
+        FROM test_scenario
+        CROSS JOIN LATERAL jsonb_array_elements(steps) AS step
+        WHERE project_id = :projectId
+          AND jsonb_typeof(steps) = 'array'
+          AND step->>'case_id' IS NOT NULL
+        """
+    )
+    fun findCaseIdsCitedByScenarios(projectId: Long): Flow<Long>
+
+    /**
+     * 이 프로젝트의 케이스들이 **바꾸는 값**(ARTEL-581).
+     *
+     * 나눔이 순서를 알려면 필요하다 — 앞 스텝이 바꾼 값을 뒤 스텝이 전제로 삼는 것은 모순이 아니다.
+     * 케이스 메타의 `state_after` 로는 답이 안 된다. 그것은 구버전 엑셀 경로가 넣던 칸이라 지도가
+     * 낸 케이스에는 없다.
+     *
+     * **`kind = 'write'` 만 본다.** `transform` 은 화면 위의 좌표(`character.transform.position`)라
+     * 논리 값(`MapMove.position`)이 아닌데, 꼬리로 견주면 둘이 `position` 에서 만나 서로 다른 값을
+     * 하나로 뭉갠다. 실제로 그 둘이 한 기능에 나란히 달려 있다.
+     *
+     * 지도를 못 되짚는 케이스(`capability_key` 가 `NULL` 인 구버전 행)는 여기 안 나온다. 그때는
+     * 바꾸는 것을 모르는 것이고, 모르면 예전처럼 나눈다.
+     */
+    @Query(
+        """
+        SELECT tc.id AS case_id, ce.target AS target
+        FROM test_case tc
+        JOIN capability c ON c.capability_key = tc.capability_key
+        JOIN scene s ON s.id = c.scene_id
+        JOIN content_map cm ON cm.id = s.content_map_id
+        JOIN game_build gb ON gb.id = cm.game_build_id AND gb.project_id = tc.project_id
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind = 'write'
+        WHERE tc.project_id = :projectId
+          AND tc.capability_key IS NOT NULL
+          AND ce.target IS NOT NULL
+          AND c.merged_into IS NULL
+        """
+    )
+    fun findValuesChangedByCases(projectId: Long): Flow<CaseWrite>
 }

@@ -20,8 +20,9 @@ class ScenarioConflictSplitTest {
     private fun scenario(vararg steps: ChatScenarioStep, id: Long? = null, title: String = "전투 전량") =
         ScenarioResult(scenarioId = id, title = title, description = "d", steps = steps.toList())
 
-    /** 짝수끼리·홀수끼리는 되고, 짝수와 홀수는 안 된다. */
-    private val parity: (Long, Long) -> Boolean = { a, b -> (a % 2) != (b % 2) }
+    /** 짝수끼리·홀수끼리는 되고, 짝수와 홀수는 `parity` 라는 값을 두고 어긋난다. */
+    private val parity: (Long, Long) -> Set<String> =
+        { a, b -> if ((a % 2) != (b % 2)) setOf("parity") else emptySet() }
 
     @Test
     fun `어긋나는 것이 없으면 그대로 둔다`() {
@@ -91,7 +92,7 @@ class ScenarioConflictSplitTest {
     @Test
     fun `한 무리 안에는 어긋나는 쌍이 남지 않는다`() {
         // 셋 이상이 서로 어긋나면 무리도 셋이 된다 — 무리 안의 **모든** 원소와 견주기 때문이다.
-        val exclusive: (Long, Long) -> Boolean = { a, b -> a != b }
+        val exclusive: (Long, Long) -> Set<String> = { a, b -> if (a != b) setOf("모두") else emptySet() }
         val outcome = ScenarioConflictSplit.apply(
             listOf(scenario(step(1), step(2), step(3))), exclusive,
         )
@@ -129,5 +130,77 @@ class ScenarioConflictSplitTest {
         val outcome = ScenarioConflictSplit.apply(listOf(scenario(step(2), step(4))), parity)
 
         assertThat(outcome.anchorOf).isEmpty()
+    }
+
+    // --- 순서를 안다 (ARTEL-581) -------------------------------------------------------
+
+    /**
+     * **앞이 바꿔 놓은 값을 뒤가 전제로 삼는 것은 모순이 아니다.**
+     *
+     * 실측(런 159)에서 이것이 없어 걸어가는 시나리오가 네 조각이 났다:
+     *
+     * ```
+     * position == 0 인 자리에서 오른쪽 → position 이 1이 된다
+     * position == 1 인 자리에서 오른쪽 → position 이 2가 된다
+     * ```
+     *
+     * 두 전제는 한 순간에는 함께 설 수 없다. 그런데 앞엣것이 뒤엣것의 자리를 만든다.
+     */
+    @Test
+    fun `앞 스텝이 바꾸는 값이면 나누지 않는다`() {
+        val walking = scenario(step(2), step(3), step(4), title = "걸어간다")
+
+        val outcome = ScenarioConflictSplit.apply(listOf(walking), parity) { setOf("parity") }
+
+        assertThat(outcome.scenarios).isEqualTo(listOf(walking))
+        assertThat(outcome.notes).isEmpty()
+    }
+
+    /**
+     * **다른 값을 바꾸는 것은 도움이 안 된다.** 어긋난 값 그 자체가 바뀌어야 이어서 설 수 있다.
+     * 그러지 않으면 아무 효과나 하나 있으면 무엇이든 합쳐지고, 나누는 일 자체가 무의미해진다.
+     */
+    @Test
+    fun `어긋난 값이 아닌 다른 값을 바꾸면 그대로 나눈다`() {
+        val outcome = ScenarioConflictSplit.apply(
+            listOf(scenario(step(2), step(3))), parity,
+        ) { setOf("전혀 다른 값") }
+
+        assertThat(outcome.scenarios).hasSize(2)
+    }
+
+    /** 바꾸는 것을 아무것도 모르면(지도를 못 되짚는 구버전 케이스) 예전처럼 나눈다. */
+    @Test
+    fun `바꾸는 값을 모르면 예전처럼 나눈다`() {
+        val outcome = ScenarioConflictSplit.apply(listOf(scenario(step(2), step(3))), parity)
+
+        assertThat(outcome.scenarios).hasSize(2)
+    }
+
+    /**
+     * **순서가 뒤집힌 자리는 여전히 막는다.**
+     *
+     * 뒤엣것이 앞엣것의 전제를 만드는 경우다. 그것은 나눌 일이 아니라 순서를 고칠 일이고,
+     * `ScenarioOrderCheck` 가 그 자리를 따로 답한다. 여기서 합쳐 버리면 실행할 수 없는 순서가
+     * 아무 말 없이 저장된다.
+     */
+    @Test
+    fun `뒤엣것만 값을 바꾸면 나눈다`() {
+        val outcome = ScenarioConflictSplit.apply(
+            listOf(scenario(step(2), step(3))), parity,
+        ) { id -> if (id == 3L) setOf("parity") else emptySet() }
+
+        assertThat(outcome.scenarios).hasSize(2)
+    }
+
+    /** 지도가 부르는 이름과 사전조건이 적은 이름이 꼬리로 만나면 같은 값이다. */
+    @Test
+    fun `값 이름은 꼬리로 견준다`() {
+        val outcome = ScenarioConflictSplit.apply(
+            listOf(scenario(step(2), step(3))),
+            { _, _ -> setOf("position") },
+        ) { setOf("MapMove.position") }
+
+        assertThat(outcome.scenarios).hasSize(1)
     }
 }

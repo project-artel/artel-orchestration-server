@@ -107,6 +107,19 @@ data class CapabilityEvidenceEntity(
      *
      * 비어 있으면 [gaps] 에 [EvidenceGap.CALL_PATH_MISSING] 이 있어야 한다. DB CHECK 가 강제한다.
      */
+    /**
+     * 이 근거가 **부르는** 메서드들(ARTEL-554). 문서의 `records[].calls` 를 그대로 싣는다.
+     *
+     * 조작 갈래와 결과 갈래를 잇는 **유일한 인과**다. 코루틴·상태 머신에서는 입력을 받는 갈래와
+     * 결과를 내는 갈래가 다른 행이라, 공통 호출자를 통해서만 이어진다 — 실측에서
+     * `StoryController.StoryTelling()` 이 `IsAdvanceKeyDown` 과 `LoadMapScene` 을 둘 다 부른다.
+     *
+     * [callPath] 와 다르다. 저쪽은 **이 근거가 지나온 길**이고 여기는 **이 근거가 부르는 것**이다.
+     * 실측에서 `call_path` 로 이으면 161 중 6밖에 안 닿았다.
+     */
+    @Column("calls")
+    val calls: Json = Json.of("[]"),
+
     @Column("call_path")
     val callPath: Json = Json.of("[]"),
 

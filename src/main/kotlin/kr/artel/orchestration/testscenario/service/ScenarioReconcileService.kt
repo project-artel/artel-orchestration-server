@@ -103,12 +103,16 @@ class ScenarioReconcileService(
 
         // **함께 담을 수 없는 것은 묻지 않고 나눈다**(ARTEL-497). 되묻기로는 끝나지 않았다 —
         // 이유는 [ScenarioConflictSplit] 에 적었다(런 152: 같은 질문이 답할 때마다 다시 나갔다).
-        val exclusive: (Long, Long) -> Boolean = { a, b ->
+        val contested: (Long, Long) -> Set<String> = { a, b ->
             val left = byId[a]
             val right = byId[b]
-            left != null && right != null && ScenarioSiblingCheck.exclusive(left, right)
+            if (left == null || right == null) emptySet() else ScenarioSiblingCheck.contested(left, right)
         }
-        val divided = ScenarioConflictSplit.apply(scenarios, exclusive)
+        // **걸어가는 것을 모순이라 하지 않는다**(ARTEL-581). 앞 스텝이 바꿔 놓은 값을 뒤 스텝이
+        // 전제로 삼는 것은 함께 못 서는 것이 아니라 순서다 — 실측(런 159)에서 `MapMove.position` 이
+        // 그랬고, 걸어가는 시나리오 하나가 네 조각이 났다.
+        val changedBy = valuesChangedByCases(projectId)
+        val divided = ScenarioConflictSplit.apply(scenarios, contested) { changedBy[it].orEmpty() }
         val given = divided.scenarios
         divided.notes.forEach { (title, parts) ->
             logger.info("함께 담을 수 없어 나눴다 [runId={}] {} → {}조각", runId, title, parts)
@@ -461,6 +465,17 @@ class ScenarioReconcileService(
         }
     }.onFailure { logger.warn("케이스 전량 조회 실패 — 검사들을 넘어간다: ${it.message}") }
         .getOrElse { emptyList() }
+
+    /**
+     * 케이스마다 **바꾸는 값들**(ARTEL-581). 지도를 못 되짚는 케이스는 여기 없고, 그때는 바꾸는
+     * 것을 모르는 것이라 예전처럼 나눈다 — 모르면 나누는 쪽이 안전하다.
+     */
+    private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Set<String>> = runCatching {
+        testCaseRepository.findValuesChangedByCases(projectId).toList()
+            .groupBy({ it.caseId }, { it.target })
+            .mapValues { (_, targets) -> targets.toSet() }
+    }.onFailure { logger.warn("케이스가 바꾸는 값 조회 실패 — 순서를 모른 채 나눈다: ${it.message}") }
+        .getOrElse { emptyMap() }
 
     /**
      * **이번에 무엇을 고른 것인지 한 줄로 드러낸다**(ARTEL-466).
