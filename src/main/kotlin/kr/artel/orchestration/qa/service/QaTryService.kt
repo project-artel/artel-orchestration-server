@@ -717,6 +717,7 @@ class QaTryService(
         agentArch = agentArch,
         agentFingerprint = agentFingerprint,
         runConfig = objectMapper.readTree(runConfig.asString()),
-        knowledgeScopeId = knowledgeScopeId?.toString()
+        knowledgeScopeId = knowledgeScopeId?.toString(),
+        qaRunId = qaRunId?.toString()
     )
 }
