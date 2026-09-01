@@ -79,6 +79,8 @@ class ProjectMemberService(
             userId = requireNotNull(user.id).toString(),
             displayName = user.displayName,
             email = user.email,
+            nickname = user.nickname,
+            battleTag = user.battleTag,
             role = member.role.toRole(),
             joinedAt = member.createdAt
         )
