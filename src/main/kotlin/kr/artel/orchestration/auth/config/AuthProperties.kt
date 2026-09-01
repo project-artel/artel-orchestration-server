@@ -32,22 +32,49 @@ data class AuthProperties(
     // 사람이 GitHub 설치 화면에서 저장소를 고르는 시간이면 충분하다. 길게 두면 유출된 state 하나가
     // 그만큼 오래 살아 있는다.
     val trackerSetupStateTtl: Duration = Duration.ofMinutes(15),
-    // CORS 허용 origin(패턴). OAuth 리다이렉트 대상인 frontendUrl(단일)과 달리, API를 호출할 수 있는
-    // 브라우저 출처는 여러 개일 수 있다(stage/prod, Vercel 프리뷰 등). https://*.artel.kr 같은 와일드카드도
-    // 허용되도록 CORS는 allowedOriginPatterns로 적용한다.
+    // CORS 로 더 열어 줄 origin(패턴). 아래 FIRST_PARTY_ORIGINS 에 더해지며 그것을 대체하지 않는다.
+    // 배포마다 달라지는 출처(프리뷰 배포, 임시 호스트)를 여기에 싣는다. 값이 패턴일 수 있어 CORS 는
+    // allowedOrigins 가 아니라 allowedOriginPatterns 로 적용한다.
     val allowedOrigins: List<String> = emptyList()
 ) {
     /** Frontend origin without a trailing slash, safe to concatenate redirect paths onto. */
     val frontendOrigin: String
         get() = frontendUrl.trimEnd('/')
 
-    /** CORS 허용 목록. 설정된 origin에 리다이렉트 대상(frontendOrigin)을 항상 포함한다. */
+    /**
+     * CORS 허용 목록. FIRST_PARTY_ORIGINS 와 리다이렉트 대상(frontendOrigin)은 설정이 무엇이든 항상 들어간다.
+     */
     val corsAllowedOrigins: List<String>
-        get() = (allowedOrigins.map { it.trimEnd('/') } + frontendOrigin).distinct()
+        get() = (FIRST_PARTY_ORIGINS + allowedOrigins.map { it.trimEnd('/') } + frontendOrigin)
+            .filter { it.isNotBlank() }
+            .distinct()
 
     init {
         require(jwtSecret.toByteArray(Charsets.UTF_8).size >= 32) {
             "ARTEL_JWT_SECRET must contain at least 32 bytes"
         }
+    }
+
+    companion object {
+        /**
+         * 어느 배포에서든 브라우저로 이 서버를 부르는 ARTEL 소유 호스트. 설정이 아니라 코드가 들고
+         * 있어서, 배포의 ARTEL_ALLOWED_ORIGINS 가 무엇이든 이 셋은 CORS 허용 목록에서 빠지지 않는다.
+         *
+         * 설정으로만 두었을 때 실제로 빠졌다. ARTEL-295 가 admin.artel.kr 을 application.yml 기본값에
+         * 넣었지만, 환경변수는 그 기본값에 더해지는 것이 아니라 통째로 대체한다. stage 의 .env 가
+         * 좁은 값을 들고 있어 그 수정은 배포에서 무효였고, admin-page 는 다시 CORS 로 막혔다(ARTEL-702).
+         *
+         * 배포마다 다른 프런트엔드(stage 의 home.stage.artel.kr)는 여기 없다. 그것은 그 배포의
+         * frontendUrl 로 이미 항상 허용되고, 여기 적으면 다른 배포에서까지 열린다.
+         *
+         * 하위 도메인 전체를 한 패턴(`*.artel.kr`)으로 묶지 않고 호스트를 하나씩 적는다. 묶으면
+         * 하위 도메인을 하나 잃었을 때 그것이 곧 자격증명 실린 CORS origin 이 된다. 호스트가 늘면
+         * 여기에 줄을 더한다.
+         */
+        val FIRST_PARTY_ORIGINS = listOf(
+            "https://artel.kr",
+            "https://www.artel.kr",
+            "https://admin.artel.kr"
+        )
     }
 }

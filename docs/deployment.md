@@ -95,6 +95,38 @@ healthy while usage reporting dies: `usage.py` buffers without retrying, so what
 sends during the gap is lost. Nothing else in agent-server calls this server, which is
 why one variable plus one deploy covers it.
 
+## CORS allowed origins
+
+The browser origins allowed to call this server come from two places, and they are added
+together rather than one overriding the other:
+
+- `AuthProperties.FIRST_PARTY_ORIGINS` — `https://artel.kr`, `https://www.artel.kr`, and
+  `https://admin.artel.kr`, held in code
+- `ARTEL_ALLOWED_ORIGINS` in the `.env`, plus `ARTEL_HOME_URL`
+
+**`ARTEL_ALLOWED_ORIGINS` adds; it never replaces.** Leave it unset unless a deployment
+needs an origin the code does not know, such as a preview host. Wildcard patterns are
+accepted there (`https://*.example.com`), because the value is applied as
+`allowedOriginPatterns` — `allowedOrigins` cannot hold a wildcard while
+`allowCredentials` is true.
+
+The split exists because the earlier arrangement broke admin-page twice. The list was once
+the `.env` value alone, so a Secret file naming one origin dropped every host the code knew
+about. ARTEL-295 answered the first outage by adding `https://admin.artel.kr` to the
+`application.yml` default; the stage `.env` overrode that default, and admin-page broke the
+same way again (ARTEL-702). A missing origin shows up only in a browser, as a bodyless 403
+with no `Access-Control-Allow-Origin` header, and the frontend reads that 403 as a login
+boundary — so the report that reaches you is "I log in and it asks me to log in again", not
+a CORS error.
+
+A frontend that differs per deployment does not belong in `FIRST_PARTY_ORIGINS`. Stage's
+`https://home.stage.artel.kr` is allowed because it is that deployment's `ARTEL_HOME_URL`;
+listing it in code would open it on operation as well.
+
+Adding a new artel.kr host means adding a line to `FIRST_PARTY_ORIGINS`, not to a Secret
+file. Retiring one means deleting that line — an origin left in the list after its host is
+gone lets whoever registers that name next call this server with credentials.
+
 ## Credential IDs
 
 The pipeline derives the credential ID as `${APP_NAME}-env-${TARGET_ENV}`.

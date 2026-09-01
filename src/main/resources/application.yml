@@ -162,8 +162,10 @@ artel:
     max-framerate: ${ARTEL_STREAM_MAX_FRAMERATE:30}
   auth:
     frontend-url: ${ARTEL_HOME_URL:http://localhost:5173}
-    # CORS 허용 origin(콤마 구분). frontend-url은 항상 자동 포함된다. 와일드카드(https://*.artel.kr) 허용.
-    allowed-origins: ${ARTEL_ALLOWED_ORIGINS:https://home.stage.artel.kr,https://artel.kr,https://www.artel.kr,https://admin.artel.kr}
+    # CORS 로 더 열어 줄 origin(콤마 구분). AuthProperties.FIRST_PARTY_ORIGINS 의 artel.kr 호스트 셋과
+    # frontend-url 은 이 값과 무관하게 항상 허용되므로, 여기에는 그 밖의 출처만 적는다. 이 값은 그 목록에
+    # 더해질 뿐 대체하지 않는다. 배포마다 달라지는 프리뷰 호스트처럼 와일드카드 패턴도 쓸 수 있다.
+    allowed-origins: ${ARTEL_ALLOWED_ORIGINS:}
     issuer: ${ARTEL_JWT_ISSUER:artel-orchestration-server}
     audience: ${ARTEL_JWT_AUDIENCE:artel-home}
     jwt-secret: ${ARTEL_JWT_SECRET}
