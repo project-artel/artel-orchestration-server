@@ -77,6 +77,26 @@ object MapTestCasePhrasing {
      * `any` 키는 특별히 다룬다 — 그대로 쓰면 "`any` 키를 누른다"가 되어 무엇을 누르라는 것인지
      * 읽는 사람이 알 수 없다. 명세가 아무 키나 된다고 말한 것이므로 그렇게 적는다.
      */
+    /**
+     * **누를 것이 없는 자리의 기능 문구**(ARTEL-681).
+     *
+     * 게임이 스스로 하는 일을 무엇이 일으켰는가로 부른다. 재료는 `call_path` 첫 마디의 메서드
+     * 이름인데, **유니티가 정한 것만** 쓴다 — `Start`·`Update` 는 엔진이 부르는 자리라 개발자가
+     * 무엇을 어떻게 짓든 흔들리지 않는다. 개발자가 지은 메서드 이름으로 기능을 부르는 것과는
+     * 다른 이야기다: 저것은 의도를 주장하고 이것은 호출 자리를 가리킨다.
+     *
+     * 구버전(specs_v2 `render.py::trigger_text`)이 같은 방식이었다. 거기서는 `scene_entry` ·
+     * `continuous` 처럼 갈라 두었고, 그 분류가 지금 지도에는 `call_path` 뿌리로 남아 있다.
+     *
+     * 모르는 뿌리는 이름을 그대로 적는다. 지어내지 않는다.
+     */
+    fun observation(scene: String, triggerRoot: String?): String = when (triggerRoot) {
+        "Start", "Awake", "OnEnable" -> "$scene 에 진입해 관찰한다"
+        "Update", "FixedUpdate", "LateUpdate" -> "$scene 에 머무르며 관찰한다"
+        null -> "$scene 에서 관찰한다"
+        else -> "$scene 에서 `$triggerRoot` 이후 관찰한다"
+    }
+
     fun step(
         interaction: String,
         inputKey: String?,
@@ -175,11 +195,15 @@ object MapTestCasePhrasing {
         val target = effect.target?.takeIf { it.isNotBlank() }
             // 씬 전환의 대상은 화면 이름이라 오브젝트가 아니다. 되짚을 것이 없다.
             ?.let { if (effect.kind == "scene") it else MapTestCaseTargets.resolve(it, refs) }
+            ?.takeIf(::named)
             ?: return null
         // 값을 못 읽은 자리는 문서가 그렇게 적어 둔다(`(not a literal)` · `(not a simple receiver)`).
         // 그대로 내면 "표시 상태가 `(not a literal)`" 처럼 읽을 수 없는 문장이 된다 — 값을 빼고
         // "바뀐다"로 말한다. 무엇으로 바뀌는지는 모르지만 **바뀐다는 것은 안다.**
-        val detail = readable(effect.detail)
+        // **값 쪽도 씬이 부르는 이름으로**(ARTEL-682). 대상만 풀고 값을 안 풀면 한 줄 안에서
+        // 두 말이 섞인다 — 실측에서 `wordHead 의 위치가 MapMove.battle1.transform.position 로
+        // 바뀐다` 가 나왔다. 실행하는 쪽이 찾아야 하는 것은 양쪽 다 씬의 이름이다.
+        val detail = readable(effect.detail)?.let { MapTestCaseTargets.resolve(it, refs) }
         return when (effect.kind) {
             "scene" -> "`$target` 화면으로 전환된다"
             "active-state" -> "`$target` 의 표시 상태가 ${detail?.let { "`$it`" } ?: "바뀐다"}"
@@ -195,6 +219,22 @@ object MapTestCasePhrasing {
             else -> detail?.let { "`$target` 이(가) `$it` 이 된다" } ?: "`$target` 이(가) 바뀐다"
         }
     }
+
+    /**
+     * **가리키는 것에 이름이 있나.**
+     *
+     * 문서는 수신자를 못 읽은 자리도 값과 같은 모양으로 적어 둔다 — `(not a simple receiver)`.
+     * 값이 그러면 [readable] 이 값을 빼고 "바뀐다"로 말하면 되지만, **대상이 그러면 말할 것이
+     * 없다**: `(not a simple receiver) 의 표시 상태가 false` 는 실행하는 사람에게 무엇을 보라는
+     * 것인지 하나도 말하지 않는다. 값을 모르는 것과 대상을 모르는 것은 다르다.
+     *
+     * 그래서 그 효과는 낸다 대신 뺀다. 한 기능의 효과가 전부 이러면 케이스 자체가 안 나가고,
+     * 그것이 맞다 — 확인할 것이 있어야 케이스다.
+     *
+     * 뒤가 붙어 있어도 마찬가지다(`(not a simple receiver).sprite`). 앞이 이름이 아니면 뒤를
+     * 붙여도 찾을 수 없다.
+     */
+    private fun named(target: String): Boolean = !target.startsWith("(")
 
     /**
      * 값으로 적을 수 있는 것만 남긴다.

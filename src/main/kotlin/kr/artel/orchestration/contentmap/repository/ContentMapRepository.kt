@@ -3,6 +3,8 @@ package kr.artel.orchestration.contentmap.repository
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.dto.ContentMapCallEdge
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
+import kr.artel.orchestration.contentmap.dto.ContentMapObservationRow
+import kr.artel.orchestration.contentmap.dto.ContentMapScreenElement
 import kr.artel.orchestration.contentmap.dto.MethodArgument
 import kr.artel.orchestration.contentmap.dto.SpecGapRow
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
@@ -75,6 +77,73 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
         """
     )
     fun findAllCapabilityRows(contentMapId: Long): Flow<ContentMapCapabilityRow>
+
+    /**
+     * **누를 것은 없고 볼 것은 있는 기능**(ARTEL-681). 위 창구가 `not-a-step` 을 거르므로 따로 낸다.
+     *
+     * 게임이 스스로 하는 일이다 — 화면을 열면 무엇이 보이나, 값이 이러하면 무엇이 보이나. 지금까지
+     * 케이스가 하나도 없었고(지도 31에서 137개 중 0건), 대신 그 결과가 엉뚱하게 조작 케이스의
+     * 기대결과로 흘러들어갔다(ARTEL-680).
+     *
+     * `call_path` 의 뿌리를 함께 낸다. **유니티가 정한 이름이라** 개발자가 무엇을 어떻게 부르든
+     * 흔들리지 않는다 — `Start` 면 화면을 열 때, `Update` 면 머무르는 동안이다.
+     */
+    @Query(
+        """
+        SELECT cm.id AS content_map_id, cm.capture,
+               s.id AS scene_id, s.name AS scene_name, s.summary AS scene_summary,
+               c.id AS capability_id, c.capability_key, c.origin, c.verification,
+               c.scene_presence, c.status,
+               c.actionability, c.observability, c.applicability, c.summary, c.given_text,
+               c.control_selector, c.control_path, c.control_label, c.interaction,
+               c.input_key, c.input_phase, c.repeat_until_done,
+               c.hint_action_method, c.hint_action_params,
+               ce.entry_id, ce.branch_offset, ce.record_kind, ce.trigger_kind,
+               ce.analysis_confidence, ce.condition_tree, ce.gaps,
+               substring(ce.call_path->>0 from '::([A-Za-z0-9_]+)') AS trigger_root
+        FROM capability c
+        JOIN scene s ON s.id = c.scene_id
+        JOIN content_map cm ON cm.id = s.content_map_id
+        JOIN capability_evidence ce ON ce.capability_id = c.id
+        WHERE cm.id = :contentMapId
+          AND c.merged_into IS NULL
+          AND c.actionability = 'not-a-step'
+          AND c.observability = 'observable'
+        ORDER BY s.name ASC, c.id ASC
+        """
+    )
+    fun findObservationRows(contentMapId: Long): Flow<ContentMapObservationRow>
+
+    /**
+     * **화면에 붙어 있는 UI 요소**(ARTEL-683). 있는지 확인하는 케이스가 여기서 나온다.
+     *
+     * 효과에서만 케이스를 만들면 *"그 버튼이 보이는가"* 가 통째로 빠진다 — 그냥 있는 것은 바뀌는
+     * 것이 아니라 효과가 없기 때문이다. 구버전(specs_v2)은 이것을 `control_check` 로 따로 냈고,
+     * 신버전에는 없었다.
+     *
+     * 두 곳을 합친다. 코드가 필드로 들고 있는 것(`scene_object_ref`)과 클릭 핸들러만 붙은
+     * 것(`capability.control_path`)이 서로를 못 덮는다 — 실측(지도 31)에서 앞은 `Canvas/Stage` 를,
+     * 뒤는 `Canvas/MapSceneButton` 을 갖고 있다.
+     *
+     * `Canvas/` 로 좁힌다. 좁히지 않으면 코드가 참조하는 오브젝트 전부가 걸려 `TurnBattleScene`
+     * 하나가 167건이 된다 — 카드·적·프리팹처럼 화면에 붙은 UI 가 아닌 것들이다.
+     */
+    @Query(
+        """
+        SELECT scene_name, path FROM (
+            SELECT s.name AS scene_name, r.target_name AS path
+            FROM scene_object_ref r JOIN scene s ON s.id = r.scene_id
+            WHERE s.content_map_id = :contentMapId AND r.target_name LIKE 'Canvas/%'
+            UNION
+            SELECT s.name AS scene_name, c.control_path AS path
+            FROM capability c JOIN scene s ON s.id = c.scene_id
+            WHERE c.content_map_id = :contentMapId AND c.merged_into IS NULL
+              AND c.control_path LIKE 'Canvas/%'
+        ) ui
+        ORDER BY scene_name ASC, path ASC
+        """
+    )
+    fun findScreenElements(contentMapId: Long): Flow<ContentMapScreenElement>
 
     /**
      * **호출로 이어진 결과 갈래**(ARTEL-554).

@@ -126,11 +126,55 @@ class MapTestCaseGeneratorGoldenTest {
      * **이 수가 줄면 케이스가 조용히 사라진 것이다.** 확인할 것이 있는데 못 내는 자리가 생겨도
      * 아무 데서도 오류가 나지 않는다.
      */
+    /**
+     * **구버전과 맞대 보려고 내려 적는다**(ARTEL-681).
+     *
+     * 구버전(specs_v2)이 앉힌 66건이 프로젝트 3에 남아 있고, 그것과 케이스 단위로 견주지 않으면
+     * 무엇이 빠졌는지 알 수 없다 — 이 저장소가 여러 번 겪은 일이다("이 수가 줄면 케이스가 조용히
+     * 사라진 것이다"). 켤 때만 쓴다.
+     */
+    @Test
+    fun `견줄 수 있게 내려 적는다`() {
+        val where = System.getenv("ARTEL_DUMP_CASES") ?: return
+        java.io.File(where).writeText(
+            cases.joinToString("\n") { case ->
+                listOf(case.scene, case.step, case.precondition, case.expected, case.status)
+                    .joinToString("\t") { it.replace("\n", " ").replace("\t", " ") }
+            }
+        )
+    }
+
     @Test
     fun `문서 한 장이 케이스 42개가 된다`() {
         // 42 → 36 은 같은 코드에 두 경로로 닿는 것을 접은 결과(ARTEL-645)이고,
         // 36 → 46 은 `또는` 로 뭉쳐 있던 전제를 갈래대로 편 것이다(ARTEL-667).
-        assertThat(cases).hasSize(46)
+        // 46 → 31 은 **생명주기 아래 형제에게서 결과를 빌려 오지 않게** 한 것이다(ARTEL-680).
+        // 줄어든 15건은 확인할 것이 사라진 것이 아니라 **남의 결과를 자기 것으로 달고 있던** 줄이다 —
+        // 그 결과들의 원래 주인은 관측 기능이고, 이어서 그쪽을 케이스로 낸다.
+        // 31 → 80(ARTEL-681). 게임이 스스로 하는 일도 케이스가 된다 — 화면을 열면 무엇이
+        // 보이나, 값이 이러하면 무엇이 보이나. 지금까지 137개 중 0건이었다.
+        // 89 → 88. **가리키는 것에 이름이 없으면 그 효과를 안 낸다** — 문서가 수신자를 못 읽은
+        // 자리를 `(not a simple receiver)` 로 적어 두는데, 값이 그런 것과 달리 대상이 그러면
+        // 무엇을 보라는 것인지 한 마디도 말할 수 없다. 빠진 하나는 효과가 전부 그랬던 줄이다.
+        assertThat(cases).hasSize(88)
+    }
+
+    /**
+     * **입력 하나에 케이스가 매달리지 않는다**(ARTEL-680).
+     *
+     * `Map_scene` 의 `Return` 은 `CharacterMove()` 를 부르고 그 기능에는 효과가 없다. 그런데 같은
+     * `Update()` 아래 있는 `ShowBattle()`(배경 갱신)에게서 결과를 빌려 와, 조건 갈래마다 갈려
+     * **케이스 열둘이 같은 이름으로** 나왔다. 실측(런 265)에서 저작이 "첫 스테이지를 클리어해"라는
+     * 요청에 5스테이지 케이스를 골랐고, 열둘이 글자로 구별되지 않으니 고를 방법이 없었다.
+     *
+     * 같은 프레임 루프에서 도는 것은 형제일 뿐 인과가 아니다.
+     */
+    @Test
+    fun `지도의 Return 은 케이스 하나다`() {
+        val returns = cases.filter { it.scene == "Map_scene" && it.step.contains("Return") }
+
+        assertThat(returns).hasSize(1)
+        assertThat(returns.single().expected).contains("TurnBattleScene")
     }
 
     /**
@@ -179,7 +223,8 @@ class MapTestCaseGeneratorGoldenTest {
     fun `씬 전환을 스스로 말하는 케이스가 열 건이다`() {
         val moves = cases.filter { it.expected.contains("화면으로 전환된다") }
 
-        assertThat(moves).hasSize(10)
+        // 10 → 15. 관측이 말하는 씬 전환이 다섯 늘었다(ARTEL-681).
+        assertThat(moves).hasSize(15)
         // 오늘 저작이 막히던 자리 — StoryScene · EndingScene 이 어디로 가는지 말한다.
         assertThat(moves.map { it.scene }.distinct()).contains("StoryScene", "EndingScene")
     }
@@ -237,10 +282,12 @@ class MapTestCaseGeneratorGoldenTest {
         val byScene = cases.groupingBy { it.scene }.eachCount()
 
         assertThat(byScene).hasSize(7)
-        assertThat(byScene["StoryScene"]).isEqualTo(4)
-        assertThat(byScene["EndingScene"]).isEqualTo(4)
+        // 관측이 붙어 늘었다(ARTEL-681).
+        assertThat(byScene["StoryScene"]).isEqualTo(12)
+        assertThat(byScene["EndingScene"]).isEqualTo(12)
         // 갈래를 갈래대로 내면서 늘었다(ARTEL-667) — 지도의 `Return` 이 스테이지마다 한 줄이다.
-        assertThat(byScene["Map_scene"]).isEqualTo(26)
+        // 26 → 11. 빠진 열다섯은 `Update()` 아래 형제에게서 빌려 온 줄이다(ARTEL-680).
+        assertThat(byScene["Map_scene"]).isEqualTo(30)
     }
 
     /**
@@ -261,7 +308,11 @@ class MapTestCaseGeneratorGoldenTest {
      */
     @Test
     fun `같은 조작이 상황에 따라 다른 화면으로 간다`() {
-        val fromEnding = cases.filter { it.scene == "EndingScene" && it.expected.contains("화면으로 전환된다") }
+        // 관측은 빼고 본다 — 이 시험이 말하는 것은 **한 조작**이 상황에 따라 갈리는 자리다(ARTEL-681).
+        val fromEnding = cases.filter {
+            it.scene == "EndingScene" && it.expected.contains("화면으로 전환된다") &&
+                !it.step.contains("관찰한다")
+        }
 
         // 한 조작에서 나왔는데 도착 화면이 둘 이상이다 — 그것이 갈래다.
         assertThat(fromEnding.map { it.expected }.distinct()).hasSizeGreaterThan(1)
@@ -300,7 +351,9 @@ class MapTestCaseGeneratorGoldenTest {
         // **대신 극단이 나아졌다** — 200자를 넘는 것이 6건에서 2건으로 준다. 읽는 사람을 실제로
         // 막는 것은 평균이 아니라 그 극단이다.
         assertThat(cases.map { it.precondition.length }.average()).isLessThan(115.0)
-        assertThat(cases.count { it.precondition.length > 200 }).isLessThanOrEqualTo(2)
+        // 2 → 4(ARTEL-681). 늘어난 둘은 전투 화면의 관측이고, 그 조건이 원래 길다. 관측을 안
+        // 내던 때에는 없던 줄이라 나빠진 것이 아니라 **없던 것이 보이는** 것이다.
+        assertThat(cases.count { it.precondition.length > 200 }).isLessThanOrEqualTo(4)
     }
 
     /**

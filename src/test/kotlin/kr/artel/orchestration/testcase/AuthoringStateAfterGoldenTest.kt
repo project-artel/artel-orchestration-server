@@ -122,9 +122,15 @@ class AuthoringStateAfterGoldenTest {
      */
     @Test
     fun `케이스가 무엇을 바꾸는지 말한다`() {
-        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(20)
+        // 20 → 33(ARTEL-681). 관측이 남기는 상태도 뒤 스텝의 전제를 만들어 준다.
+        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(33)
+        // 관측이 들어오며 셋이 늘었다(ARTEL-681) — 대화 스트리밍과 체력 표시다. 게임이 스스로
+        // 바꾸는 값이라, 조작만 볼 때는 아무도 말하지 않던 자리다.
         assertThat(cases.flatMap { it.stateAfter.keys }.distinct())
-            .containsExactlyInAnyOrder("position", "stagePosition", "flag", "scene")
+            .containsExactlyInAnyOrder(
+                "position", "stagePosition", "flag", "scene",
+                "streamingText", "streamingCoroutine", "HpText",
+            )
     }
 
     /**
@@ -143,10 +149,9 @@ class AuthoringStateAfterGoldenTest {
     fun `전제를 다른 케이스가 만들어 주는 자리가 있다`() {
         val changed = cases.flatMap { it.stateAfter.keys }.toSet()
 
-        // 21 → 23. develop 의 적재기가 씬을 넘어 살아남는 오브젝트를 씬마다 한 줄로 앉히면서
-        // (`scene_presence`) 케이스가 늘었고, 그중 둘이 이 자리에 걸린다. 이어지는 비율이 달라진
-        // 것이 아니라 세는 모수가 커진 것이다.
-        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(23)
+        // 21 → 14(ARTEL-680) 남의 결과를 달고 있던 줄이 빠졌다.
+        // 14 → 21(ARTEL-681) 관측이 들어오며 다시 늘었다 — 이번에는 제 주인이 든 것이다.
+        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(21)
     }
 
     /**

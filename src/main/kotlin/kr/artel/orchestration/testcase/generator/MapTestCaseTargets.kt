@@ -42,8 +42,27 @@ object MapTestCaseTargets {
         if (field.isEmpty()) return target
 
         val name = refs[owner to field]?.singleOrNull() ?: return target
-        return name + cleaned.removePrefix("$owner.$field")
+        return name + plain(cleaned.removePrefix("$owner.$field"))
     }
+
+    /**
+     * **씬이 이름을 답했으면 코드의 꼬리는 뗀다**(ARTEL-682).
+     *
+     * `wordHead.transform.position` 에서 실행하는 쪽이 찾을 것은 `wordHead` 다. `.transform.position`
+     * 은 코드가 그 자리를 가리키는 방법이지 씬에 있는 것이 아니다 — 이름을 풀어 놓고 꼬리를 남기면
+     * 반은 씬 말이고 반은 코드 말인 줄이 된다.
+     *
+     * **자리를 가리키는 꼬리만 뗀다.** `.text` · `.sprite` 처럼 무엇을 보는지 말하는 것은 남긴다 —
+     * 그것까지 떼면 "그 글자가 바뀐다"와 "그 그림이 바뀐다"가 같은 문장이 된다.
+     */
+    private fun plain(tail: String): String =
+        if (tail in POSITIONAL) "" else tail
+
+    /** 자리를 가리키는 꼬리. 씬에서 찾을 것은 오브젝트이지 그 성분이 아니다. */
+    private val POSITIONAL = setOf(
+        ".transform.position", ".transform.localPosition",
+        ".transform.localScale", ".transform.scale", ".transform",
+    )
 
     private val LIST_ITEM = Regex("""\.Item\[[^\]]*\]""")
 }

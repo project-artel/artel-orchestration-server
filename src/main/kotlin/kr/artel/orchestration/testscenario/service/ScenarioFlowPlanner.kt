@@ -20,6 +20,7 @@ class ScenarioFlowPlanner(
     private val testCaseRepository: TestCaseRepository,
     private val objectMapper: ObjectMapper,
     private val effectRepository: kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository,
+    private val repair: kr.artel.orchestration.testscenario.config.ScenarioRepairProperties,
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
 
@@ -93,6 +94,8 @@ class ScenarioFlowPlanner(
 
         return ScenarioFlowPlan.of(
             cases,
+            maxCases = repair.maxCasesPerFlow,
+            maxGaps = repair.maxGapsPerFlow,
             starting = starting,
             opening = { guard -> guard.variable.lowercase() in produced && !guard.symbolic },
             log = log,

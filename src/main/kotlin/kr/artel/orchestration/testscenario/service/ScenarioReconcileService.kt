@@ -166,6 +166,7 @@ class ScenarioReconcileService(
             if (repair.bridges)
                 repairByInsertion(
                     routes, given, describe, openingFacts(projectId, facts), caseOfCapability(projectId),
+                    { id -> byId[id]?.scene },
                     { id -> byId[id]?.guards.orEmpty() }, ::writesOfCapabilities,
                 )
             else Triple(given, emptyList(), emptyList())
@@ -423,6 +424,7 @@ class ScenarioReconcileService(
         describe: (Long) -> String,
         openingFacts: OpeningFacts,
         caseOf: (Long) -> Long?,
+        sceneOf: (Long) -> String?,
         guardsOf: (Long) -> List<Guard>,
         writesOf: suspend (List<Long>) -> Map<String, String?>,
     ): Triple<List<ScenarioResult>, List<String>, List<String>> {
@@ -454,7 +456,9 @@ class ScenarioReconcileService(
                     }
                 }
             }
-            val result = ScenarioBridgeRepair.apply(scenario.steps, answers, describe, caseOf)
+            val result = ScenarioBridgeRepair.apply(
+                scenario.steps, answers, describe, caseOf, sceneOf,
+            )
             if (result.steps.size != scenario.steps.size) {
                 logger.info(
                     "교정 · 브리지 {}건 삽입 [scenarioId={}] {} → {} 스텝",

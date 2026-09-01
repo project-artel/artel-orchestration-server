@@ -3,6 +3,8 @@ package kr.artel.orchestration.testcase.generator
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
+import kr.artel.orchestration.contentmap.dto.ContentMapObservationRow
+import kr.artel.orchestration.contentmap.dto.asCapabilityRow
 import com.fasterxml.jackson.databind.JsonNode
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
@@ -72,7 +74,19 @@ class MapTestCaseGenerator(
             .mapValues { (_, rows) -> rows.map { it.targetName }.toSet() }
         val drafts = contentMaps.findStepCapabilityRows(contentMapId).toList()
             .flatMap { row -> draftsOf(row, edges, settled, exits, refs) }
-        return merged(drafts)
+        // **게임이 스스로 하는 일도 케이스다**(ARTEL-681). 조작 행과 같은 길로 흘려 아래(효과
+        // 읽기·갈래 펴기·합치기)가 두 벌이 되지 않게 한다.
+        val watched = contentMaps.findObservationRows(contentMapId).toList()
+            .filter { keptAsObservation(it) }
+            .flatMap { row -> draftsOf(row.asCapabilityRow(), edges, settled, exits, refs, watching = row.triggerRoot) }
+        return merged(drafts + watched) + screenElements(contentMapId)
+            // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
+            // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
+            // 못 적으면 케이스가 아니다. 조작은 눌러 보면 되지만 관측은 볼 시점이 전부다.
+            .filterNot {
+                it.step.contains(WATCHING) &&
+                    (it.precondition.contains(UNREADABLE) || it.expected.contains(UNREADABLE))
+            }
     }
 
     /**
@@ -351,7 +365,10 @@ class MapTestCaseGenerator(
      * 조작 문구만 잇는다. 앞의 것을 대표로 두고 순서는 원래 자리를 지킨다.
      */
     private fun withInterchangeableInputs(cases: List<MapTestCase>): List<MapTestCase> =
-        cases.groupBy { Triple(it.scene, it.precondition, it.expected) }
+        // **누르는 것과 보는 것은 바꿔 쓸 수 없다**(ARTEL-681). 같은 화면에서 같은 결과를 낸다고
+        // 해서 "아무 키나 누른다 또는 진입해 관찰한다"로 이으면 무엇을 하라는 것인지 알 수 없다.
+        // 조작끼리·관측끼리만 바꿔 쓸 수 있다.
+        cases.groupBy { listOf(it.scene, it.precondition, it.expected, it.step.contains(WATCHING)) }
             .map { (_, group) ->
                 if (group.size == 1) group.single()
                 else group.first().copy(
@@ -456,6 +473,10 @@ class MapTestCaseGenerator(
         settled: Map<Long, Map<Int, String>>,
         exits: Set<LoopExits.Guard>,
         refs: Map<Pair<String, String>, Set<String>>,
+        /**
+         * 누를 것이 없는 자리면 **무엇이 그 일을 일으켰나**(ARTEL-681). 조작 행이면 `null` 이다.
+         */
+        watching: String? = null,
     ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
@@ -477,9 +498,13 @@ class MapTestCaseGenerator(
         return sources.flatMap { (situation, effectRows, source, repeats) ->
             // **실행하는 사람이 만들 수 있는 조건만 남긴다**(ARTEL-602). 매개변수 이름은 호출자가
             // 넘긴 값으로 바꾸고, 못 푸는 루프 변수는 빼되 그 사실을 사유로 남긴다.
-            val step = MapTestCasePhrasing.step(
-                row.interaction, row.inputKey, row.controlLabel, row.controlPath, repeats,
-            )
+            val step = if (watching != null || row.actionability == NOT_A_STEP) {
+                MapTestCasePhrasing.observation(row.sceneName, watching)
+            } else {
+                MapTestCasePhrasing.step(
+                    row.interaction, row.inputKey, row.controlLabel, row.controlPath, repeats,
+                )
+            }
             val settledCondition = MapTestCaseLocals.settle(situation, source, settled)
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
             MapTestCasePhrasing.expectedWithSource(effectRows, refs).map { (outcome, effect) ->
@@ -525,6 +550,44 @@ class MapTestCaseGenerator(
      * 빌려 온 케이스의 사전조건은 **세 조건을 함께** 든다 — 자기 조건, 그 호출이 일어나는 조건,
      * 결과 갈래 자신의 조건. 셋이 다 참일 때만 그 결과가 난다.
      */
+    /**
+     * **화면에 무엇이 붙어 있나**(ARTEL-683).
+     *
+     * 효과에서만 케이스를 만들면 *"그 버튼이 보이는가"* 가 빠진다 — 그냥 있는 것은 바뀌는 것이
+     * 아니기 때문이다. 구버전(specs_v2)이 `control_check` 로 내던 자리다.
+     *
+     * 무엇이 보이는지까지는 말하지 않는다. 지도가 아는 것은 **그 자리에 그것이 있다**는 것뿐이고,
+     * 켜져 있는지 꺼져 있는지는 조건에 따라 달라져 관측 케이스가 따로 말한다.
+     *
+     * 갈래도 전제도 없다. 그래서 [merged] 를 거치지 않고 그대로 낸다 — 접을 것이 없다.
+     */
+    private suspend fun screenElements(contentMapId: Long): List<MapTestCase> =
+        contentMaps.findScreenElements(contentMapId).toList().map { element ->
+            MapTestCase(
+                // 지도의 기능에서 나온 것이 아니라 씬의 오브젝트에서 나왔다. 되짚을 열쇠는 그 경로다.
+                capabilityKey = "screen\u001F${element.sceneName}\u001F${element.path}",
+                scene = element.sceneName,
+                precondition = "${element.sceneName} 화면인 상태",
+                condition = null,
+                step = "`${element.path}` 이(가) 화면에 있는지 확인한다",
+                expected = "`${element.path}` 이(가) 화면에 있다",
+                status = "runnable",
+                identity = "screen\u001F${element.sceneName}\u001F${element.path}",
+            )
+        }
+
+    /**
+     * 이 관측을 케이스로 낼까(ARTEL-681).
+     *
+     * 뿌리로 한 번, 효과로 한 번 거른다. 지도 31 기준 137건 중 대략 마흔이 남는다 — 화면을 열면
+     * 무엇이 보이나, 값이 이러하면 무엇이 보이나.
+     */
+    private suspend fun keptAsObservation(row: ContentMapObservationRow): Boolean {
+        if (row.triggerRoot !in WATCHED_ROOTS) return false
+        return effects.findByCapabilityIdOrderByIdAsc(row.capabilityId).toList()
+            .any { it.kind in VISIBLE }
+    }
+
     private suspend fun borrowed(
         row: ContentMapCapabilityRow,
         condition: ConditionNode?,
@@ -608,6 +671,32 @@ class MapTestCaseGenerator(
         private const val MAX_BRANCHES = 4
 
         const val SCENE = "scene"
+
+        /** 누를 것이 없는 자리(ARTEL-681). */
+        const val NOT_A_STEP = "not-a-step"
+
+        /**
+         * **화면에 보이는 효과만 케이스가 된다**(ARTEL-681).
+         *
+         * 값만 바뀌는 것(`write`)은 실행하는 사람이 눈으로 확인할 수 없고, 소리·애니메이션은 지금
+         * 판정할 수단이 없다. 수단이 생기면 그때 넣는다.
+         */
+        val VISIBLE = setOf(SCENE, "ui-value", "active-state", "transform", "instantiate", "destroy")
+
+        /**
+         * **관측으로 낼 자리의 뿌리**(ARTEL-681).
+         *
+         * 화면을 열 때와 머무르는 동안만 낸다. `OnMouseEnter`·`OnDrag` 같은 것은 조작의 부수
+         * 효과라 따로 확인할 물건이 아니고, 전투 중 사건(`TakeHit`·`Attack`·`OnTriggerEnter2D`)은
+         * 사람이 시점을 잡을 수 없어 아직 스텝으로 적을 방법이 없다.
+         */
+        val WATCHED_ROOTS = setOf("Start", "Awake", "OnEnable", "Update", "FixedUpdate", "LateUpdate")
+
+        /** 관측 문구의 표식. 조작 문구와 섞지 않으려고 본다([MapTestCasePhrasing.observation]). */
+        const val WATCHING = "관찰한다"
+
+        /** 문서가 값을 못 읽은 자리에 적어 두는 글자. */
+        const val UNREADABLE = "(not a"
 
         /** 정체를 이을 때 쓰는 구분자. 값에 섞일 일이 없고 Postgres 가 받는 문자여야 한다. */
         const val IDENTITY_SEPARATOR = "\u001F"
