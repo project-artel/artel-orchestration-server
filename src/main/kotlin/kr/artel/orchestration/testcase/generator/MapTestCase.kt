@@ -52,4 +52,12 @@ data class MapTestCase(
      * 일(ARTEL-615)도 여기에 안 걸린다 — 그때 바뀌는 것은 문장이고 효과 원본은 그대로다.
      */
     val identity: String = "",
+    /**
+     * 이 조작이 **무엇을 겨누나** — `capability.control_path`. 겨눌 것이 없으면 `null` 이다
+     * (키 입력이거나 관측이다).
+     *
+     * 표시에 쓰는 값이 아니다. [MapTestCaseGenerator] 가 *"바꿔 쓸 수 있는 입력"* 을 한 줄로
+     * 담을 때 이것으로 가른다 — 같은 것을 여는 다른 키는 한 줄이고, 다른 버튼은 다른 줄이다.
+     */
+    val aimedAt: String? = null,
 )

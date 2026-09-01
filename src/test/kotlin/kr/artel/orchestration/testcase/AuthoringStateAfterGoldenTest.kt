@@ -151,7 +151,9 @@ class AuthoringStateAfterGoldenTest {
 
         // 21 → 14(ARTEL-680) 남의 결과를 달고 있던 줄이 빠졌다.
         // 14 → 21(ARTEL-681) 관측이 들어오며 다시 늘었다 — 이번에는 제 주인이 든 것이다.
-        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(21)
+        // 21 → 19 읽는 곳을 하나로 합치며 `unity-event` 가 빠졌다. 게임이 인스펙터로 연결한 자기
+        //         메서드라 사람이 그 순간을 만들 수 없다 — 빠진 둘이 이 자리에 걸려 있었다.
+        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(19)
     }
 
     /**

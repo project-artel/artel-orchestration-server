@@ -156,7 +156,13 @@ class MapTestCaseGeneratorGoldenTest {
         // 89 → 88. **가리키는 것에 이름이 없으면 그 효과를 안 낸다** — 문서가 수신자를 못 읽은
         // 자리를 `(not a simple receiver)` 로 적어 두는데, 값이 그런 것과 달리 대상이 그러면
         // 무엇을 보라는 것인지 한 마디도 말할 수 없다. 빠진 하나는 효과가 전부 그랬던 줄이다.
-        assertThat(cases).hasSize(88)
+        //
+        // 88 → 92. **읽는 곳을 하나로 합쳤다.** 앞서 창구가 셋이었고 관측 창구가 뽑는 자리를
+        // 손으로 적은 메서드 이름 목록(`WATCHED_ROOTS`)으로 좁혔다. 이제 질의가 지도의 축으로
+        // 정한다 — `trigger_kind` 가 `lifecycle` 인 것 전부. 목록에 없던 Unity 콜백이 들어왔고
+        // (`OnTriggerEnter2D` · `OnMouseEnter` · `OnEndDrag`), 컴파일러가 이름을 바꾼 코루틴도
+        // 더는 놓치지 않는다. 대신 `unity-event` 와 `persistent-unconfirmed` 가 빠졌다.
+        assertThat(cases).hasSize(92)
     }
 
     /**
@@ -282,12 +288,14 @@ class MapTestCaseGeneratorGoldenTest {
         val byScene = cases.groupingBy { it.scene }.eachCount()
 
         assertThat(byScene).hasSize(7)
-        // 관측이 붙어 늘었다(ARTEL-681).
-        assertThat(byScene["StoryScene"]).isEqualTo(12)
-        assertThat(byScene["EndingScene"]).isEqualTo(12)
+        // 관측이 붙어 늘었다(ARTEL-681). 12 → 10 은 창구를 하나로 합치면서 `unity-event` 를
+        // 뺀 결과다 — 게임이 인스펙터로 연결한 자기 메서드는 사람이 그 순간을 만들 수 없다.
+        assertThat(byScene["StoryScene"]).isEqualTo(10)
+        assertThat(byScene["EndingScene"]).isEqualTo(10)
         // 갈래를 갈래대로 내면서 늘었다(ARTEL-667) — 지도의 `Return` 이 스테이지마다 한 줄이다.
         // 26 → 11. 빠진 열다섯은 `Update()` 아래 형제에게서 빌려 온 줄이다(ARTEL-680).
-        assertThat(byScene["Map_scene"]).isEqualTo(30)
+        // 30 → 27 도 같은 이유다(`unity-event` 를 뺐다).
+        assertThat(byScene["Map_scene"]).isEqualTo(27)
     }
 
     /**

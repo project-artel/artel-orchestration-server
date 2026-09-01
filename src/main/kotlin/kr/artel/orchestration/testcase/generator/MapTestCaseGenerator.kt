@@ -72,14 +72,15 @@ class MapTestCaseGenerator(
         val refs = objectRefs.findByContentMapId(contentMapId).toList()
             .groupBy { it.ownerType to it.field }
             .mapValues { (_, rows) -> rows.map { it.targetName }.toSet() }
-        val drafts = contentMaps.findStepCapabilityRows(contentMapId).toList()
+        // **읽는 곳은 하나다.** 앞서 창구가 셋이었고(조작 · 관측 · 존재 확인) 각자 다른 잣대를
+        // 손으로 들고 있었다. 무엇을 남길지는 이제 질의가 정한다([ContentMapRepository.findTestCaseRows]).
+        //
+        // **게임이 스스로 하는 일도 케이스다**(ARTEL-681). 누를 것이 없으면 관측으로 적는데, 그
+        // 갈림은 행이 스스로 말한다 — `actionability` 가 `not-a-step` 이면 볼 것이고 아니면
+        // 누를 것이다. 아래(효과 읽기 · 갈래 펴기 · 합치기)는 두 벌이 되지 않는다.
+        val drafts = contentMaps.findTestCaseRows(contentMapId).toList()
             .flatMap { row -> draftsOf(row, edges, settled, exits, refs) }
-        // **게임이 스스로 하는 일도 케이스다**(ARTEL-681). 조작 행과 같은 길로 흘려 아래(효과
-        // 읽기·갈래 펴기·합치기)가 두 벌이 되지 않게 한다.
-        val watched = contentMaps.findObservationRows(contentMapId).toList()
-            .filter { keptAsObservation(it) }
-            .flatMap { row -> draftsOf(row.asCapabilityRow(), edges, settled, exits, refs, watching = row.triggerRoot) }
-        return merged(drafts + watched) + screenElements(contentMapId)
+        return merged(drafts) + screenElements(contentMapId)
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
             // 못 적으면 케이스가 아니다. 조작은 눌러 보면 되지만 관측은 볼 시점이 전부다.
@@ -126,6 +127,7 @@ class MapTestCaseGenerator(
                     // **구조를 버리지 않는다**(ARTEL-627). 위 문장은 이것을 사람 말로 렌더한 것이고,
                     // 소비하는 쪽은 문장이 아니라 이쪽을 읽는다.
                     condition = groupCondition,
+                    aimedAt = first.aimedAt,
                     step = first.step,
                     // **한 기능이 내는 관측들을 함께 적는다.** 저작이 이것을 조작 하나 + 검증 여럿으로
                     // 펴고, 채점은 스텝 단위라 어느 지점이 틀렸는지는 그대로 드러난다. 구버전도 같은
@@ -368,7 +370,19 @@ class MapTestCaseGenerator(
         // **누르는 것과 보는 것은 바꿔 쓸 수 없다**(ARTEL-681). 같은 화면에서 같은 결과를 낸다고
         // 해서 "아무 키나 누른다 또는 진입해 관찰한다"로 이으면 무엇을 하라는 것인지 알 수 없다.
         // 조작끼리·관측끼리만 바꿔 쓸 수 있다.
-        cases.groupBy { listOf(it.scene, it.precondition, it.expected, it.step.contains(WATCHING)) }
+        //
+        // **조준 대상이 다르면 다른 조작이다.** 이 함수는 같은 것을 여는 다른 키를 한 줄로 담으려고
+        // 만들었는데(`RightArrow` 와 `UpArrow`), 대상까지 안 보니 서로 다른 버튼도 합쳤다.
+        // 실측(word-venture, 2026-09-01)에서 `Canvas/MapSceneButton`(새로 시작)과
+        // `Canvas/continue`(이어하기)가 한 줄이 됐고, 같은 표의 다른 줄이
+        // *"저장 데이터가 없으면 `Canvas/continue` 는 표시 상태가 false"* 라고 말한다 —
+        // **화면에 없는 것을 누르라고 적은 것이다.** 지도는 둘을 구별한다:
+        // `MapSceneButton` 만 `InitPlayData()` 를 부른다.
+        //
+        // 합쳐진 줄은 `capabilityKey` 를 하나만 들어서, 나머지 조작의 효과가 저작에 닿지도 않았다.
+        cases.groupBy {
+            listOf(it.scene, it.precondition, it.expected, it.step.contains(WATCHING), it.aimedAt)
+        }
             .map { (_, group) ->
                 if (group.size == 1) group.single()
                 else group.first().copy(
@@ -442,6 +456,8 @@ class MapTestCaseGenerator(
         val scene: String,
         val condition: ConditionNode?,
         val inputKey: String?,
+        /** 무엇을 겨누나(`control_path`). 없으면 키 입력이거나 관측이다. */
+        val aimedAt: String?,
         val step: String,
         val outcome: String,
         val status: String,
@@ -473,10 +489,6 @@ class MapTestCaseGenerator(
         settled: Map<Long, Map<Int, String>>,
         exits: Set<LoopExits.Guard>,
         refs: Map<Pair<String, String>, Set<String>>,
-        /**
-         * 누를 것이 없는 자리면 **무엇이 그 일을 일으켰나**(ARTEL-681). 조작 행이면 `null` 이다.
-         */
-        watching: String? = null,
     ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
@@ -498,8 +510,10 @@ class MapTestCaseGenerator(
         return sources.flatMap { (situation, effectRows, source, repeats) ->
             // **실행하는 사람이 만들 수 있는 조건만 남긴다**(ARTEL-602). 매개변수 이름은 호출자가
             // 넘긴 값으로 바꾸고, 못 푸는 루프 변수는 빼되 그 사실을 사유로 남긴다.
-            val step = if (watching != null || row.actionability == NOT_A_STEP) {
-                MapTestCasePhrasing.observation(row.sceneName, watching)
+            // **누를 것이 있으면 조작, 없으면 관측이다.** 행이 스스로 말하는 것이라 부르는 쪽이
+            // 따로 알려 줄 것이 없다(ARTEL-681).
+            val step = if (row.actionability == NOT_A_STEP) {
+                MapTestCasePhrasing.observation(row.sceneName, row.triggerRoot)
             } else {
                 MapTestCasePhrasing.step(
                     row.interaction, row.inputKey, row.controlLabel, row.controlPath, repeats,
@@ -516,9 +530,10 @@ class MapTestCaseGenerator(
                     scene = row.sceneName,
                     condition = settledCondition.condition,
                     inputKey = row.inputKey,
+                    aimedAt = row.controlPath,
                     step = step,
                     outcome = outcome,
-                    status = row.status,
+                    status = caseGrade(row),
                     gaps = reasons,
                     // 씬 효과의 대상이 곧 도착 화면이다. 산문에서 다시 뽑지 않는다.
                     arrivesAt = effect.target?.takeIf { effect.kind == SCENE },
@@ -579,11 +594,50 @@ class MapTestCaseGenerator(
     /**
      * 이 관측을 케이스로 낼까(ARTEL-681).
      *
-     * 뿌리로 한 번, 효과로 한 번 거른다. 지도 31 기준 137건 중 대략 마흔이 남는다 — 화면을 열면
-     * 무엇이 보이나, 값이 이러하면 무엇이 보이나.
+     * 셋으로 거른다 — 무엇이 일으키나, 볼 것이 있나, 여기 있다는 것이 확인됐나.
+     *
+     * ## 무엇이 일으키나는 `trigger_kind` 가 답한다
+     *
+     * 앞서는 메서드 이름 목록(`WATCHED_ROOTS`)으로 걸렀다. 손으로 적은 목록이라 두 가지를
+     * 놓쳤다. 컴파일러가 코루틴 이름을 바꾸면 목록에 없고(`Start1`), 목록에 안 적어 둔 Unity
+     * 콜백도 통째로 빠진다. 실측(word-venture, 2026-09-01)에서 `OnTriggerEnter2D` 12 ·
+     * `OnMouseEnter` 2 · `OnMouseExit` 2 · `OnDrag` 1 · `OnEndDrag` 1 이 그렇게 빠져 있었다.
+     *
+     * 빠진 것들이 사소하지 않다. `OnTriggerEnter2D` 는 `Player.HpText.text` 가 줄고 죽으면
+     * `GameOverScene` 으로 가는 것이고, `OnMouseEnter` 는 마우스를 올리면 1.2배가 되는 것이다.
+     * 구버전(specs_v2)도 이 자리를 12건 냈다.
+     *
+     * `trigger_kind` 는 적재기가 근거에서 읽는 값이라 목록을 손으로 늘릴 일이 없다.
+     * `lifecycle` 은 **Unity 가 부르는 콜백**이고 `unity-event` 는 **게임이 인스펙터로 연결한
+     * 자기 메서드**다. 뒤엣것은 내지 않는다 — 사람이 부를 수 있는 자리가 아니고, 실측에서
+     * `CardMouseUp` 과 `CardAlignment` 이 `this.transform` 세 줄을 똑같이 냈다.
+     *
+     * ## 확인 안 된 자리는 그 `scene` 의 사실이 아니다
+     *
+     * `persistent-unconfirmed` 는 `scene` 을 넘어 살아남는 오브젝트가 거기 있다는 사실만 말한다
+     * ([ContentMapCapabilityRow.scenePresence] 가 TC 생성기를 지목해 적어 두었다). 실측에서
+     * `SaveLoadController` 하나가 여섯 `scene` 에 앉아 *"`this.gameObject` 이(가) 사라진다"* 를
+     * 여섯 벌 냈다 — 아무도 확인한 적 없고, 실행하는 사람이 찾을 이름도 아니다.
      */
+    /**
+     * **케이스로서의 등급**(ARTEL-681).
+     *
+     * 지도의 `status` 를 그대로 쓰면 안 된다. 그것은 *"이 기능이 단독 명세가 되나"* 에 답하는
+     * 값이고, `SpecStatus.derive` 가 `actionability` 를 맨 앞에 두어 `not-a-step` 이 다른 축을
+     * 이긴다. 그래서 누를 것이 없는 행은 눈에 보이는 효과를 들고 있어도 `not-a-step` 이다.
+     *
+     * 케이스가 묻는 것은 다르다 — **실행하는 사람이 이 줄을 돌릴 수 있나.** 누를 것이 없어도
+     * 볼 것이 있으면 돌릴 수 있다. 보면 된다.
+     *
+     * 그대로 실었더니 실측(2026-09-01)에서 `test_case.status` 가 `not-a-step` 인 줄이 70 건
+     * 나갔다. 화면은 이 값을 등급으로 보여 주므로 *"단계가 아님"* 이라고 적힌 케이스가 표에 선다.
+     */
+    private fun caseGrade(row: ContentMapCapabilityRow): String =
+        if (row.actionability == NOT_A_STEP) "runnable" else row.status
+
     private suspend fun keptAsObservation(row: ContentMapObservationRow): Boolean {
-        if (row.triggerRoot !in WATCHED_ROOTS) return false
+        if (row.triggerKind != ENGINE_CALLBACK) return false
+        if (row.scenePresence == UNCONFIRMED_HERE) return false
         return effects.findByCapabilityIdOrderByIdAsc(row.capabilityId).toList()
             .any { it.kind in VISIBLE }
     }
@@ -684,13 +738,13 @@ class MapTestCaseGenerator(
         val VISIBLE = setOf(SCENE, "ui-value", "active-state", "transform", "instantiate", "destroy")
 
         /**
-         * **관측으로 낼 자리의 뿌리**(ARTEL-681).
-         *
-         * 화면을 열 때와 머무르는 동안만 낸다. `OnMouseEnter`·`OnDrag` 같은 것은 조작의 부수
-         * 효과라 따로 확인할 물건이 아니고, 전투 중 사건(`TakeHit`·`Attack`·`OnTriggerEnter2D`)은
-         * 사람이 시점을 잡을 수 없어 아직 스텝으로 적을 방법이 없다.
+         * Unity 가 부르는 콜백(`capability_evidence.trigger_kind`). 다른 값은 `unity-event` 로,
+         * 게임이 인스펙터로 연결한 자기 메서드다([keptAsObservation] 에 이유가 있다).
          */
-        val WATCHED_ROOTS = setOf("Start", "Awake", "OnEnable", "Update", "FixedUpdate", "LateUpdate")
+        const val ENGINE_CALLBACK = "lifecycle"
+
+        /** 살아남아 거기 있을 뿐, 여기서 되는지는 아직 아무도 안 본 자리. */
+        const val UNCONFIRMED_HERE = "persistent-unconfirmed"
 
         /** 관측 문구의 표식. 조작 문구와 섞지 않으려고 본다([MapTestCasePhrasing.observation]). */
         const val WATCHING = "관찰한다"
