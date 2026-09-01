@@ -84,7 +84,7 @@ class AuthoringStateAfterGoldenTest {
         )
         val map = contentMaps.save(
             ContentMapEntity(
-                gameBuildId = build.id!!, schemaVersion = 6, capture = Capture.EDITOR.wire,
+                gameBuildId = build.id!!, schemaVersion = 7, capture = Capture.EDITOR_PLAY.wire,
                 evidencePromises = Json.of(
                     """["build-info-v1","selector-v1","visual-roles-v1","persistent-objects-v1"]"""
                 ),
@@ -93,7 +93,7 @@ class AuthoringStateAfterGoldenTest {
             )
         )
         val bytes = File(DOCUMENT).readBytes()
-        val objectKey = "content-map/${map.id}/wv-editor-latest.json"
+        val objectKey = "content-map/${map.id}/wv-play-2026-09-01.json"
         (storage as FakeDocumentStorage).put(objectKey, bytes)
         ingest.ingest(
             documents.save(
@@ -283,6 +283,6 @@ class AuthoringStateAfterGoldenTest {
     }
 
     companion object {
-        private const val DOCUMENT = "src/test/resources/contentmap/wv-editor-latest.json"
+        private const val DOCUMENT = "src/test/resources/contentmap/wv-play-2026-09-01.json"
     }
 }

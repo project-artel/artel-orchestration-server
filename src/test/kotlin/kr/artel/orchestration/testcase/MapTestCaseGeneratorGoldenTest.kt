@@ -72,7 +72,7 @@ class MapTestCaseGeneratorGoldenTest {
         )
         val map = contentMaps.save(
             ContentMapEntity(
-                gameBuildId = build.id!!, schemaVersion = 6, capture = Capture.EDITOR.wire,
+                gameBuildId = build.id!!, schemaVersion = 7, capture = Capture.EDITOR_PLAY.wire,
                 evidencePromises = Json.of(
                     """["build-info-v1","selector-v1","visual-roles-v1","persistent-objects-v1"]"""
                 ),
@@ -81,7 +81,7 @@ class MapTestCaseGeneratorGoldenTest {
             )
         )
         val bytes = File(DOCUMENT).readBytes()
-        val objectKey = "content-map/${map.id}/wv-editor-latest.json"
+        val objectKey = "content-map/${map.id}/wv-play-2026-09-01.json"
         (storage as FakeDocumentStorage).put(objectKey, bytes)
         ingest.ingest(
             documents.save(
@@ -162,7 +162,12 @@ class MapTestCaseGeneratorGoldenTest {
         // 정한다 — `trigger_kind` 가 `lifecycle` 인 것 전부. 목록에 없던 Unity 콜백이 들어왔고
         // (`OnTriggerEnter2D` · `OnMouseEnter` · `OnEndDrag`), 컴파일러가 이름을 바꾼 코루틴도
         // 더는 놓치지 않는다. 대신 `unity-event` 와 `persistent-unconfirmed` 가 빠졌다.
-        assertThat(cases).hasSize(92)
+        //
+        // 92 → 85. **문서가 바뀌었다.** 여기까지의 수치는 `wv-editor-latest.json`(schema 6,
+        // 2026-08-18) 것이고, 그 사이 SDK 가 조건을 다르게 낸다(ARTEL-700) — `IsStreaming != 0`
+        // 처럼 호출 이름으로 적던 자리를 그 getter 가 실제로 하는 비교(`streamingCoroutine != 0`)
+        // 로 바꿨다. 규칙이 달라진 것이 아니라 지도가 달라졌다.
+        assertThat(cases).hasSize(85)
     }
 
     /**
@@ -294,8 +299,8 @@ class MapTestCaseGeneratorGoldenTest {
         assertThat(byScene["EndingScene"]).isEqualTo(10)
         // 갈래를 갈래대로 내면서 늘었다(ARTEL-667) — 지도의 `Return` 이 스테이지마다 한 줄이다.
         // 26 → 11. 빠진 열다섯은 `Update()` 아래 형제에게서 빌려 온 줄이다(ARTEL-680).
-        // 30 → 27 도 같은 이유다(`unity-event` 를 뺐다).
-        assertThat(byScene["Map_scene"]).isEqualTo(27)
+        // 30 → 27 도 같은 이유다(`unity-event` 를 뺐다). 27 → 23 은 문서가 바뀐 것이다.
+        assertThat(byScene["Map_scene"]).isEqualTo(23)
     }
 
     /**
@@ -514,6 +519,6 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     private companion object {
-        const val DOCUMENT = "src/test/resources/contentmap/wv-editor-latest.json"
+        const val DOCUMENT = "src/test/resources/contentmap/wv-play-2026-09-01.json"
     }
 }
