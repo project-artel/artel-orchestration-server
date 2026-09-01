@@ -31,6 +31,7 @@ import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
+import kr.artel.orchestration.testscenario.dto.AuthoringFlow
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
@@ -96,6 +97,8 @@ class TestScenarioAgentService(
     private val gapFiller: ScenarioGapFiller,
     private val phrasingClient: ScenarioStepPhrasingClient,
     private val trace: AuthoringTrace,
+    private val flowMatrix: ScenarioFlowMatrix,
+    private val flowPlanner: ScenarioFlowPlanner,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -318,6 +321,7 @@ class TestScenarioAgentService(
                 "모델: ${configuredModel.ifBlank { "에이전트 기본값" }} · 말투: $locale · " +
                 "이미 있는 시나리오 ${currentScenarios.size}개",
         )
+        val flows = computedFlows(runId, projectId, appUserId, cases.map { it.id })
         val body = AgentSessionOpenRequest(
             userInput = userInput,
             gameContext = gameContext(),
@@ -328,7 +332,11 @@ class TestScenarioAgentService(
             locale = locale,
             projectId = projectId,
             runId = runId,
-            currentScenarios = currentScenarios
+            currentScenarios = currentScenarios,
+            flows = flows,
+            entryScene = runCatching { testCaseRepository.findEntrySceneName(projectId) }
+                .onFailure { logger.warn("입구 씬 조회 실패 — 없이 보낸다: ${it.message}") }
+                .getOrNull(),
         )
         val resp = webClient.post()
             .uri("$agentBaseUrl/sessions")
@@ -724,6 +732,62 @@ class TestScenarioAgentService(
      * **보는 사람이 없다는 이유로 저작이 멈춰서는 안 된다.** [TestScenarioStreamManager.emit]이 이미
      * 경고를 남기므로 여기서 더 할 말도 없다.
      */
+    /**
+     * **계산이 낸 흐름을 구해 에이전트에 실어 보낸다**(ARTEL-658).
+     *
+     * 무엇을 묶고 어떤 순서로 놓을지는 실행 가능성을 정하는 판단이고, 모델이 42건을 한 번에 들고
+     * 하기에 가장 약한 자리가 그 둘이다. 계산으로 옮긴다.
+     *
+     * **못 구해도 저작을 막지 않는다.** 빈 목록이면 에이전트는 예전처럼 스스로 묶고 순서를 정한다 —
+     * 이 계산이 실패해서 저작이 통째로 안 나오는 것이 가장 나쁜 결과다.
+     *
+     * 짝 행렬과 흐름은 기록에도 함께 남긴다. 모델이 낸 것과 나란히 놓고 무엇이 달라졌는지 보는
+     * 자리가 거기다.
+     */
+    private suspend fun computedFlows(
+        runId: Long,
+        projectId: Long,
+        appUserId: Long,
+        caseIds: List<Long>,
+    ): List<AuthoringFlow> {
+        if (caseIds.size < 2) return emptyList()
+        return runCatching {
+            val matrix = flowMatrix.of(projectId, appUserId, caseIds)
+            trace.record(
+                runId, "짝 행렬",
+                "케이스 ${caseIds.size}건 · 칸 ${caseIds.size * (caseIds.size - 1)}개 " +
+                    trace.blob(runId, "matrix.txt", matrix.render()) + "\n" +
+                    "바로 ${matrix.count(ScenarioFlowMatrix.Link.BESIDE)} · " +
+                    "조작 ${matrix.count(ScenarioFlowMatrix.Link.BY_OPERATION)} · " +
+                    "거쳐서 ${matrix.count(ScenarioFlowMatrix.Link.BY_PLAY)} · " +
+                    "막힘 ${matrix.count(ScenarioFlowMatrix.Link.BLOCKED)} · " +
+                    "확인못함 ${matrix.count(ScenarioFlowMatrix.Link.UNCHECKED)}",
+            )
+            // 흐름을 고른 이유를 함께 받아 적는다(ARTEL-666). 순서가 왜 그렇게 잡혔는지는
+            // 결과만 보고는 못 짚는다 — 실측(런 241)에서 한 번 막혔던 자리다.
+            val why = StringBuilder()
+            val flows = flowPlanner.of(projectId, appUserId, matrix) { why.appendLine(it) }.map { flow ->
+                AuthoringFlow(
+                    caseIds = flow.caseIds,
+                    opening = flow.opening.map { "${it.variable} ${it.operator} ${it.value}" },
+                    gaps = flow.gaps,
+                )
+            }
+            trace.record(
+                runId, "흐름 계산",
+                "흐름 ${flows.size}개 · 지나갈 자리 ${flows.sumOf { it.gaps }}군데 " +
+                    trace.blob(runId, "flow-choices.txt", why.toString()) + "\n" +
+                    flows.joinToString("\n") { flow ->
+                        "  스텝 ${flow.caseIds.size} · GAP ${flow.gaps} · " +
+                            "시작 ${flow.opening.joinToString(", ").ifBlank { "아무 조건 없음" }}\n" +
+                            "    ${flow.caseIds.joinToString(" → ")}"
+                    },
+            )
+            flows
+        }.onFailure { logger.warn("흐름 계산 실패 — 예전처럼 모델이 묶는다 [runId=$runId] ${it.message}") }
+            .getOrDefault(emptyList())
+    }
+
     /**
      * 에이전트에서 들어온 프레임을 기록에 남긴다(ARTEL-650).
      *

@@ -1,0 +1,50 @@
+-- 볼 수는 있는데 시킬 수 없는 것도 뷰가 낸다 (ARTEL-664).
+--
+-- 뷰가 `status <> 'not-a-step'` 으로 걸렀다. `status` 는 세 축(actionability · observability ·
+-- applicability)에서 **유도된** 값이라, 그 한 줄이 "볼 수는 있는데 시킬 수 없는" 것까지 함께
+-- 잘랐다 — 실측(지도 26)에서 137건이다. 검증할 것의 대부분이 TC 생성기에 아예 안 들어갔다.
+--
+-- 세 축으로 다시 쓴다. 시킬 수 있거나 볼 수 있으면 낸다. **고르는 일은 생성기가 한다** —
+-- 뷰는 있는 것을 감추지 않는 것까지가 제 일이다.
+--
+-- `ScenarioPathService` 는 이미 이 함정을 알고 `actionability` 를 따로 봤다. 뷰만 옛 축에 남아
+-- 있었다. 고른 것은 **컬럼 목록이 아니라 WHERE 한 줄뿐이다** — 목록을 손으로 다시 쓰면 조용히
+-- 칸이 빠진다.
+CREATE OR REPLACE VIEW v_content_map_capability AS
+SELECT cm.id AS content_map_id,
+    cm.capture,
+    s.id AS scene_id,
+    s.name AS scene_name,
+    s.summary AS scene_summary,
+    c.id AS capability_id,
+    c.capability_key,
+    c.origin,
+    c.verification,
+    c.status,
+    c.actionability,
+    c.observability,
+    c.applicability,
+    c.summary,
+    c.given_text,
+    c.control_selector,
+    c.control_path,
+    c.control_label,
+    c.interaction,
+    c.input_key,
+    c.input_phase,
+    c.repeat_until_done,
+    c.hint_action_method,
+    c.hint_action_params,
+    ce.entry_id,
+    ce.branch_offset,
+    ce.record_kind,
+    ce.trigger_kind,
+    ce.analysis_confidence,
+    ce.condition_tree,
+    ce.gaps
+   FROM capability c
+     JOIN scene s ON s.id = c.scene_id
+     JOIN content_map cm ON cm.id = s.content_map_id
+     LEFT JOIN capability_evidence ce ON ce.capability_id = c.id
+  WHERE c.merged_into IS NULL
+    AND (c.actionability <> 'not-a-step' OR c.observability = 'observable');

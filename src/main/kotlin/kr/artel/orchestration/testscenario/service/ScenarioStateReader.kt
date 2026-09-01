@@ -149,6 +149,24 @@ object ScenarioStateReader {
     }.getOrElse { emptyMap() }
 
     /**
+     * 이 케이스를 실행하면 **어느 화면에 서 있게 되나**(ARTEL-654).
+     *
+     * 화면을 넘기는 케이스는 자기가 어디에 도착하는지 적어 둔다(`arrives_at`). 그런데 경로 계산이
+     * 그것을 안 읽고 [sceneOf] 만 보아, 출발 화면을 **케이스를 실행하기 전**으로 잡았다.
+     *
+     * 대가가 짝 행렬에 그대로 나왔다. 엔딩·스토리 화면은 지도의 씬 간선이 전부 "저절로 넘어간다"
+     * 라서 나가는 조작이 없는 것으로 읽히고, 그 화면에서 출발하는 칸이 통째로 막혔다 — 642칸이다.
+     * 그런데 그 화면을 나가는 케이스가 여덟 건 있고, 그 케이스를 실행한 뒤에는 **이미 지도에 서
+     * 있다.** 나갈 길을 찾을 일이 아니라 이미 나와 있는 것이다.
+     *
+     * 없으면 null 이다 — 대부분의 케이스는 화면을 안 넘긴다.
+     */
+    fun arrivesAt(case: TestCaseEntity, objectMapper: ObjectMapper): String? = runCatching {
+        objectMapper.readTree(case.metadata.asString())
+            .path("arrives_at").asText(null)?.trim()?.ifBlank { null }
+    }.getOrNull()
+
+    /**
      * 케이스가 가리키는 코드를 **지도가 쓰는 꼬리 패턴**으로 바꾼다.
      *
      * 케이스는 `Assembly-CSharp|WordVenture.Map.MapMove|CharacterMove|System.Void()@79` 처럼 적고

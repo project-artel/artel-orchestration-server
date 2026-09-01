@@ -78,6 +78,8 @@ class ContentMapIngestService(
     private val proofs: CapabilityProofRepository,
     private val sceneEdges: SceneEdgeRepository,
     private val objectRefs: SceneObjectRefRepository,
+    private val contentMaps: kr.artel.orchestration.contentmap.repository.ContentMapRepository,
+    private val builds: kr.artel.orchestration.game.repository.GameBuildRepository,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
     private val mapTestCases: MapTestCaseWriter,
@@ -173,6 +175,7 @@ class ContentMapIngestService(
             model.capture,
         )
         applySceneCaptures(document.id!!, document.contentMapId)
+        markEntryScene(document.contentMapId)
 
         // **효과가 가리키는 것을 사람이 찾을 수 있는 이름으로**(ARTEL-615). 코드는
         // `ChatWindowController.anyKeyPrompt` 라 부르고 하이어라키에는 `Canvas/ChatWindow/AnyKeyPrompt`
@@ -381,6 +384,46 @@ class ContentMapIngestService(
      * `origin` 은 `observed` 였던 씬이 근거로 확인되면 `evidence` 로 올라가는 자리다. 반대로
      * 내려가지는 않는다 — 적재기는 `evidence` 만 쓴다.
      */
+    /**
+     * **게임을 켜면 열리는 씬을 적어 둔다**(ARTEL-659).
+     *
+     * 씬 그래프는 순환이라 입구를 구조로는 알 수 없다 — 모든 씬이 서로 닿는다. 그래서 저작이
+     * 흐름을 계산할 때 아무 자리에서나 출발했고, 실측(런 233)에서 `진행도 == 5, 위치 == 0` 에서
+     * 시작하라는 시나리오가 나왔다.
+     *
+     * SDK 는 이미 보내고 있다 — `scene_scan.scenesInBuild` 가 유니티 빌드 설정 순서 그대로이고
+     * **0번이 부팅 씬**이다. 그것을 지도에 옮겨 적을 뿐이라, 저작이 지도에게만 묻는다는
+     * 규칙(ARTEL-466)은 그대로 산다.
+     *
+     * **유니티의 규약이지 명세가 그렇다고 적어 준 것이 아니다.** 그래서 "어떻게 알았는지"는 여기
+     * 하나에만 두고, 표에는 [SceneEntity.isEntry] 라는 사실만 남긴다 — 다른 엔진이 붙으면 이
+     * 함수만 손보면 된다.
+     *
+     * 없으면 아무것도 안 한다. 못 적는 것이 저작을 막을 이유는 아니고, 그때는 예전처럼 계산이
+     * 스스로 출발점을 고른다.
+     */
+    private suspend fun markEntryScene(contentMapId: Long) {
+        val entry = runCatching {
+            val map = contentMaps.findById(contentMapId) ?: return
+            val scan = builds.findById(map.gameBuildId)?.sceneScan ?: return
+            objectMapper.readTree(scan.asString()).path("scenesInBuild")
+                .firstOrNull()?.asText(null)
+                ?.substringAfterLast('/')?.removeSuffix(".unity")
+                ?.takeIf { it.isNotBlank() }
+        }.onFailure { logger.warn("입구 씬을 못 읽었다 — 없이 간다 [contentMapId=$contentMapId] ${it.message}") }
+            .getOrNull() ?: return
+
+        val scene = scenes.findByContentMapIdAndName(contentMapId, entry)
+        if (scene == null) {
+            // 빌드에는 있는데 근거 문서에는 없는 씬이다. 지도가 모르는 씬을 입구라 적을 수는 없다.
+            logger.info("입구 씬이 지도에 없다 [contentMapId={}] {}", contentMapId, entry)
+            return
+        }
+        if (scene.isEntry) return
+        scenes.save(scene.copy(isEntry = true))
+        logger.info("입구 씬 [contentMapId={}] {}", contentMapId, entry)
+    }
+
     private suspend fun upsertScenes(
         contentMapId: Long,
         names: List<String>,

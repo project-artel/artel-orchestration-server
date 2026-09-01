@@ -1,0 +1,27 @@
+package kr.artel.orchestration.testscenario.config
+
+import org.springframework.boot.context.properties.ConfigurationProperties
+
+/**
+ * 저작 결과를 코드가 얼마나 손보나(`artel.scenario.repair`).
+ *
+ * 지금 있는 것은 하나다 — **빈 구간을 코드가 메우나**.
+ */
+@ConfigurationProperties(prefix = "artel.scenario.repair")
+data class ScenarioRepairProperties(
+
+    /**
+     * 두 케이스 사이가 안 이어지면 그 사이를 지도가 아는 조작으로 채운다.
+     *
+     * **끄고 재 볼 수 있어야 해서 설정으로 뺐다**(ARTEL-673). 이 메우기는 두 번 사고를 냈다.
+     * 한 번은 한 칸을 살리려고 끼운 걸음이 두 칸 뒤를 죽였고(런 216, 시나리오 703), 또 한 번은
+     * 어긋남 검사의 눈을 가렸다 — 실측(런 254)에서 `진행도 == 2` 케이스와 `진행도 == 1` 케이스
+     * 사이에 타이틀 버튼을 누르는 걸음이 끼어 그 값을 다시 불러오게 만들었고, 검사는 그 자리에서
+     * "이제 모른다"가 되어 바로 뒤의 어긋남을 못 짚었다. 같은 판에서 케이스 43스텝에 브리지가
+     * 39스텝 붙었다.
+     *
+     * 켜 두면 예전 그대로다. 끄면 모델이 쓴 스텝만 남고, 못 이어지는 자리는 메우는 대신
+     * 검사가 짚는다.
+     */
+    val bridges: Boolean = true,
+)

@@ -73,10 +73,24 @@ class ScenarioPathService(
                 note = "이 프로젝트에는 씬 명세가 아직 없다.",
             )
 
-        val fromScene = ScenarioStateReader.sceneOf(from)
+        // **출발 화면은 그 케이스를 실행한 뒤에 서 있는 곳이다**(ARTEL-654). 화면을 넘기는
+        // 케이스는 자기가 어디에 도착하는지 적어 둔다. 그것을 안 보면 이미 나와 있는 화면에서
+        // 나갈 길을 찾게 되고, 엔딩·스토리처럼 나가는 조작이 없는 화면에서는 통째로 막힌다.
+        val fromScene = ScenarioStateReader.arrivesAt(from, objectMapper)
+            ?: ScenarioStateReader.sceneOf(from)
         val toScene = ScenarioStateReader.sceneOf(to)
         // 출발은 **그 케이스를 실행한 뒤**다. 사전조건이 보장한 것에 그 케이스가 바꾼 것을 얹는다.
         val fromAfter = ScenarioStateReader.stateAfter(from, objectMapper)
+        // **케이스가 화면을 넘겨도 그 케이스가 보장하던 값은 들고 간다.** 브리지가 넘길 때는
+        // 버리는데(아래) 여기서는 안 버린다 — 실측(런 220)에서 버려 보고 되돌린 자리다.
+        //
+        // 버리면 "모른다"가 되고, 모르는 값은 그 값을 쓰는 조작이 하나라도 있으면 만들 수 있다고
+        // 읽힌다. `1661`(진행도 5, 타이틀로 나감) 다음에 `1733`(진행도 5가 아님)을 놓았을 때
+        // 그래서 "아무것도 필요 없다"가 나왔고, 저작이 서로 부정하는 두 자리를 나란히 담았다.
+        //
+        // 브리지 쪽과 다른 이유는 아는 것이 다르기 때문이다. 브리지는 지도의 간선을 타는 것이라
+        // 그 너머에서 무엇이 유지되는지 아무 말이 없지만, 여기서는 **그 케이스가 자기 사전조건을
+        // 적어 두었다.** 그것을 버리는 것은 적힌 것을 안 읽는 것이지 신중한 것이 아니다.
         val state = conditions.knownValuesOf(from) + fromAfter
         val want = conditions.guardsOf(to)
         // 순서가 뒤바뀐 것인지는 **메우는 일과 다른 질문**이다. 여기서 함께 답해 두면 뒤집으면
@@ -95,11 +109,44 @@ class ScenarioPathService(
             // **출발 케이스가 이미 그 조작이면 또 넣지 않는다.** 실측(런 32)에서 "맵에서 Return 을
             // 누른다"를 검증하는 케이스 바로 뒤에 같은 Return 을 누르는 브리지가 붙었다 — 실행하는
             // 사람은 같은 것을 두 번 하게 되고, 화면에는 스텝이 중복돼 보인다.
-            if (hop is Hop.By && performs(contentMapId, from, hop.step.capabilityId)) {
-                return withOrdering(ordering, resolveGuards(contentMapId, emptyMap(), want, steps, toScene))
+            // 여러 걸음일 수 있으므로 **첫 걸음만** 본다 — 뒤엣것은 그 케이스가 한 일이 아니다.
+            val walked = (hop as? Hop.By)?.steps.orEmpty()
+                .let { if (it.isNotEmpty() && performs(contentMapId, from, it.first().capabilityId)) it.drop(1) else it }
+            if (hop is Hop.By && walked.isEmpty()) {
+                return withOrdering(
+                    ordering,
+                    resolveGuards(contentMapId, surviving(contentMapId, state), want, steps, toScene),
+                )
             }
             if (hop !is Hop.By) {
                 return withOrdering(ordering, when (hop) {
+                    // **아는 절반은 스텝으로 낸다**(ARTEL-655). 저절로 일어나는 걸음 앞까지는
+                    // 지시할 수 있고, 그 뒤로 무엇이 일어나야 하는지는 말로 남긴다.
+                    is Hop.ByPlay -> {
+                        val doable = hop.legs.takeWhile { it is Leg.Do }
+                            .filterIsInstance<Leg.Do>().map { it.step }
+                        val wait = hop.legs.filterIsInstance<Leg.Happens>().first()
+                        ScenarioPathAnswer(
+                            ScenarioPathResult.UNKNOWN,
+                            capabilityIds = doable.map { it.capabilityId },
+                            actions = doable.map { it.action },
+                            inputs = doable.mapNotNull { it.input },
+                            blockedBy = "${wait.from}→${wait.to}",
+                            playable = true,
+                            note = buildString {
+                                append("$fromScene 에서 $toScene 까지 가는 길은 있으나 ")
+                                append("${wait.from} 에서 ${wait.to} 로 넘어가는 것은 저절로 일어난다")
+                                wait.why?.takeIf { it.isNotBlank() }?.let { append("($it)") }
+                                append(". ")
+                                append(hop.legs.joinToString(" → ") { leg ->
+                                    when (leg) {
+                                        is Leg.Do -> leg.step.action
+                                        is Leg.Happens -> "${leg.from}에서 ${leg.to}로 저절로 넘어간다"
+                                    }
+                                })
+                            },
+                        )
+                    }
                     is Hop.Blocked -> ScenarioPathAnswer(
                         ScenarioPathResult.UNKNOWN,
                         blockedBy = hop.by.variable,
@@ -119,13 +166,32 @@ class ScenarioPathService(
                     )
                 })
             }
-            steps += hop.step
-            // **씬을 넘으면 알던 변수 값을 버린다.** 화면이 바뀐 뒤 무엇이 유지되는지 명세가
-            // 말해 주지 않으므로, 유지된다고 치는 것은 지어내는 것이다.
-            return withOrdering(ordering, resolveGuards(contentMapId, emptyMap(), want, steps, toScene))
+            steps += walked
+            // **씬을 넘으면 저장되는 값만 남는다**(ARTEL-654). 앞서는 전부 버렸다 — 화면이 바뀐
+            // 뒤 무엇이 유지되는지 명세가 말해 주지 않는다고 보았기 때문인데, 말해 주는 것이
+            // 있었다. 지도가 `saved` 로 적어 둔 값이 그것이다.
+            return withOrdering(
+                ordering,
+                resolveGuards(contentMapId, surviving(contentMapId, state), want, steps, toScene),
+            )
         }
 
         return withOrdering(ordering, resolveGuards(contentMapId, state, want, steps, toScene ?: fromScene))
+    }
+
+    /**
+     * 화면이 바뀌어도 남는 값만 고른다(ARTEL-654). 지도가 `saved` 로 적어 둔 것이 그것이다.
+     *
+     * 읽지 못하면 **예전처럼 전부 버린다.** 남는다고 말하려면 근거가 있어야 하고, 조회가 실패한
+     * 것은 근거가 아니다.
+     */
+    private suspend fun surviving(contentMapId: Long, state: Map<String, String>): Map<String, String> {
+        if (state.isEmpty()) return state
+        val persists = runCatching { pathRepository.findValuesThatSurviveScenes(contentMapId).toList() }
+            .onFailure { logger.warn("저장되는 값 조회 실패 — 화면을 넘으며 전부 버린다: ${it.message}") }
+            .getOrDefault(emptyList())
+            .mapTo(mutableSetOf()) { ScenarioStateReader.normalize(it) }
+        return state.filterKeys { it in persists }
     }
 
     /**
@@ -250,9 +316,9 @@ class ScenarioPathService(
     ): ScenarioPathAnswer {
         val here = at != null && at in writer.scenes
         val travelled = if (here || at == null) null else writer.scenes.firstNotNullOfOrNull { target ->
-            (sceneHop(contentMapId, at, target, state) as? Hop.By)?.let { target to it.step }
+            (sceneHop(contentMapId, at, target, state) as? Hop.By)?.let { target to it.steps }
         }
-        travelled?.let { (_, step) -> steps += step }
+        travelled?.let { (_, walked) -> steps += walked }
 
         val where = writer.scenes.joinToString(" · ")
         return ScenarioPathAnswer(
@@ -261,6 +327,10 @@ class ScenarioPathService(
             actions = steps.map { it.action },
             inputs = steps.map { it.input },
             blockedBy = guard.variable,
+            // **이것도 거쳐 갈 수 있는 자리다**(ARTEL-655). 지도가 그 값이 어디서 오르는지 대고
+            // 있으므로 게임을 하는 사람은 지나간다 — 씬 이동의 저절로 넘어가는 걸음과 같은 성질이다.
+            // 아무 데서도 안 바뀌는 값([Writer.None])만이 정말 못 가는 자리다.
+            playable = true,
             note = buildString {
                 append("${guard.variable} 는 $where 에서 저절로 바뀐다(조작으로 지시할 수 없다). ")
                 append("${guard.operator} ${guard.value} 로 만들려면 거기서 그 일이 일어나야 한다.")
@@ -320,8 +390,14 @@ class ScenarioPathService(
             val by = increment(e.detail) ?: return@firstOrNull false
             // 방향을 아는데 그쪽으로 미는 조작이 없으면 **없는 것이다.** 반대로 미는 것을 넣는 것보다
             // 모른다고 답하는 편이 낫다 — 미상은 사용자가 채울 수 있지만 거짓 스텝은 실행하다 만난다.
-            // 방향을 모르면(지금 값을 모른다) 예전처럼 있는 증감을 쓴다.
-            toward == null || toward == Push.of(by)
+            //
+            // **방향을 모르면 증감은 답이 아니다**(ARTEL-651). 앞서는 그때 있는 증감을 그냥 썼다.
+            // 부등호가 지금 값 없이도 방향을 말하게 된 뒤로, 방향을 모르는 자리는 `==` 를 지금 값
+            // 없이 묻는 경우뿐이다 — 어디서 출발하는지 모르는데 몇 칸씩 미는 조작이 그 값에 정확히
+            // 멈춘다는 것은 근거 없는 주장이다. 대가가 실측(런 216)에 나왔다: `StagePosition != 5`
+            // 에서 `== 5` 로 가는 자리를 타이틀의 `-1` 버튼이 답으로 뽑혀 `NOT_REQUIRED` 가 됐고,
+            // 저작은 갈래 양쪽을 한 흐름에 나란히 담았다. 그 조합은 어떤 스텝으로도 성립하지 않는다.
+            toward != null && toward == Push.of(by)
         }
         // 지시할 수 있는 기능이 그 변수를 쓰기는 하는데 **이 값으로는** 못 만드는 경우다. 자동이라
         // 못 시키는 것과는 다르므로 그렇게 말하지 않는다 — 실제로 `StagePosition` 을 0 으로
@@ -578,38 +654,120 @@ class ScenarioPathService(
 
     // ---- 씬 간선 ---------------------------------------------------------------------
 
+    /**
+     * **화면은 거쳐 갈 수 있다**(ARTEL-653).
+     *
+     * 앞서는 `from → to` 간선을 직접 찾고 없으면 끝냈다. 그런데 지도의 씬 간선은 한 걸음으로 다
+     * 안 닿는다 — 실측(지도 27, 간선 19개)에서 `Map_scene → StoryScene` 은 타이틀을 거쳐 두
+     * 걸음이면 가는데 "가는 조작이 명세에 없다"고 답했다. 짝 행렬 1,722칸 중 **막힘 1,273칸이고
+     * 그 88%가 씬 이동**이었으며, 두 걸음으로 풀리는 것만 178칸이다.
+     *
+     * 그래서 시킬 수 있는 간선만 밟아 가장 짧은 길을 찾는다. 못 찾으면 예전 그대로 답한다 —
+     * 직접 간선이 있는데 그 조작이 지금 막혔으면 [Hop.Blocked], 저절로 넘어가는 것뿐이면
+     * [Hop.Automatic], 아무것도 없으면 [Hop.None].
+     *
+     * **사전조건은 첫 걸음만 본다.** 화면을 넘으면 알던 값을 버리는 것이 이 서비스의 규칙이고,
+     * 그러면 둘째 걸음부터는 읽을 값이 없다. 모르는 것을 위반이라 하지 않는다.
+     *
+     * **저절로 넘어가는 걸음은 안 섞는다.** `TurnBattleScene → GameClearScene`(이겨야 한다)처럼
+     * 지시할 수 없는 걸음이 끼면 그 길은 스텝으로 낼 수 없다. 그런 자리는 아직 통째로 막힘이고,
+     * 아는 절반을 내는 것은 다음 일이다.
+     */
+    private suspend fun sceneRoute(
+        contentMapId: Long,
+        from: String,
+        to: String,
+        state: Map<String, String>,
+        allowAutomatic: Boolean = false,
+    ): List<Leg>? {
+        val scenes = sceneRepository.findByContentMapIdOrderByNameAsc(contentMapId).toList()
+        val nameOf = scenes.associate { it.id!! to it.name }
+        val edges = sceneEdgeRepository.findByContentMapId(contentMapId).toList()
+            .groupBy { nameOf[it.fromSceneId] }
+        if (edges.isEmpty()) return null
+
+        // 가장 짧은 길 하나. 여러 걸음짜리 우회로는 실행하는 사람에게 부담이라 깊이를 묶는다 —
+        // 지도의 씬은 한 자릿수이고, 네 걸음을 넘겨야 닿는 곳은 길이 있다기보다 없는 쪽에 가깝다.
+        val seen = mutableSetOf(from)
+        var frontier = listOf(from to emptyList<Leg>())
+        repeat(MAX_SCENE_HOPS) {
+            val next = mutableListOf<Pair<String, List<Leg>>>()
+            for ((here, walked) in frontier) {
+                for (edge in edges[here].orEmpty()) {
+                    val there = edge.toSceneName
+                    if (there in seen) continue
+                    val capability = edge.capabilityId?.let { capabilityRepository.findById(it) } ?: continue
+                    val leg = if (instructable(capability)) {
+                        // 첫 걸음만 지금 상태로 잰다. 그 뒤는 화면이 바뀌어 아는 값이 없다.
+                        if (walked.isEmpty() &&
+                            ScenarioStateReader.violated(capability.givenText, state) != null
+                        ) continue
+                        Leg.Do(
+                            PathStep(
+                                capabilityId = capability.id!!,
+                                input = operation(capability),
+                                action = describe(
+                                    capability.interaction, capability.inputKey,
+                                    capability.controlLabel, capability.controlPath,
+                                ) + " ($here → $there)",
+                            )
+                        )
+                    } else {
+                        if (!allowAutomatic) continue
+                        Leg.Happens(here, there, capability.summary)
+                    }
+                    val route = walked + leg
+                    if (there == to) return route
+                    seen += there
+                    next += there to route
+                }
+            }
+            if (next.isEmpty()) return null
+            frontier = next
+        }
+        return null
+    }
+
+    /**
+     * 화면을 넘는 걸음 하나. 시킬 수 있는 것과 저절로 일어나는 것은 **다른 종류의 걸음**이라
+     * 한 줄로 뭉뚱그리지 않는다 — 앞엣것은 스텝이고 뒤엣것은 사람에게 남길 말이다.
+     */
+    private sealed interface Leg {
+        data class Do(val step: PathStep) : Leg
+        data class Happens(val from: String, val to: String, val why: String?) : Leg
+    }
+
     private suspend fun sceneHop(
         contentMapId: Long,
         from: String,
         to: String,
         state: Map<String, String>,
     ): Hop {
+        sceneRoute(contentMapId, from, to, state)?.let { legs ->
+            return Hop.By(legs.filterIsInstance<Leg.Do>().map { it.step })
+        }
+
         val fromScene = sceneRepository.findByContentMapIdAndName(contentMapId, from) ?: return Hop.None
         val edges = sceneEdgeRepository.findByFromSceneIdAndToSceneName(fromScene.id!!, to).toList()
+
+        // **조작이 있는데 그 조작이 지금 못 하는 것**은 없는 것과 다르다. 손볼 자리(지도의
+        // 사전조건)를 가리키므로 거쳐 가는 길보다 먼저 말한다.
+        edges.firstNotNullOfOrNull { edge ->
+            val capability = edge.capabilityId?.let { capabilityRepository.findById(it) }
+            if (capability != null && instructable(capability)) {
+                ScenarioStateReader.violated(capability.givenText, state)
+            } else null
+        }?.let { return Hop.Blocked(it) }
+
+        // **거쳐 갈 수는 있으나 시킬 수는 없는 길**(ARTEL-655). 가운데 저절로 일어나는 걸음이
+        // 끼면 스텝으로 낼 수 없지만, 아무 길도 없는 것과는 다르다 — 게임을 하는 사람은 지나간다.
+        sceneRoute(contentMapId, from, to, state, allowAutomatic = true)
+            ?.let { return Hop.ByPlay(it) }
+
         if (edges.isEmpty()) return Hop.None
 
-        // **한 화면에서 같은 곳으로 가는 길이 여럿이면 시킬 수 있는 쪽을 고른다**(ARTEL-634).
-        // 앞서는 첫 간선을 집었다. 실측(지도 26)에서 `Map_scene → TurnBattleScene` 이 둘인데
-        // 하나는 `not-a-step` 이고 다른 하나가 `Return` 키다 — 앞엣것이 먼저 나오면 "저절로
-        // 일어난다"로 답하고, 그 위에서 저작이 "길을 모른다"고 사용자에게 묻는다. 지도가 아는
-        // 길을 두고 물은 셈이다(런 183: `gap:Map_scene→TurnBattleScene`).
-        val usable = edges.firstNotNullOfOrNull { edge ->
-            val capability = edge.capabilityId?.let { capabilityRepository.findById(it) }
-            if (capability != null && instructable(capability)) edge.capabilityId!! to capability else null
-        }
-        // 시킬 수 있는 간선이 하나도 없으면 그때는 정말 저절로 일어나는 자리다.
-        val (capabilityId, capability) = usable ?: return Hop.Automatic
-        // 간선을 타는 조작에도 자기 사전조건이 있다. `InteractionLock` 이 잠긴 상태에서 씬을
-        // 넘으라고 적어 두면 실행은 첫 스텝에서 멎는다.
-        ScenarioStateReader.violated(capability.givenText, state)?.let { return Hop.Blocked(it) }
-        return Hop.By(PathStep(
-            capabilityId = capabilityId,
-            input = operation(capability),
-            action = describe(
-                capability.interaction, capability.inputKey,
-                capability.controlLabel, capability.controlPath,
-            ) + " ($from → $to)",
-        ))
+        // 간선은 있는데 거쳐 가는 길도 못 찾았다 — 깊이를 넘겼거나 돌아 나올 수 없는 자리다.
+        return Hop.Automatic
     }
 
     /**
@@ -620,7 +778,14 @@ class ScenarioPathService(
      * [None] 가는 조작이 명세에 없다.
      */
     private sealed interface Hop {
-        data class By(val step: PathStep) : Hop
+        /** 걸음이 여럿일 수 있다 — 화면은 거쳐 갈 수 있다(ARTEL-653). */
+        data class By(val steps: List<PathStep>) : Hop
+
+        /**
+         * **거쳐 갈 수는 있으나 시킬 수는 없다**(ARTEL-655). 가운데 저절로 일어나는 걸음이 낀다.
+         * 아무 길도 없는 것과 다르다 — 게임을 하는 사람은 지나가고, 아는 절반은 스텝이 된다.
+         */
+        data class ByPlay(val legs: List<Leg>) : Hop
         data class Blocked(val by: Guard) : Hop
         data object Automatic : Hop
         data object None : Hop
@@ -684,6 +849,12 @@ class ScenarioPathService(
     }
 
     private companion object {
+        /**
+         * 화면을 몇 걸음까지 거쳐 갈 것인가(ARTEL-653). 지도의 씬은 한 자릿수이고, 이보다 멀리
+         * 돌아야 닿는 곳은 길이 있다기보다 없는 쪽에 가깝다 — 실행하는 사람에게도 그렇다.
+         */
+        const val MAX_SCENE_HOPS = 4
+
         /** 단정 근거로 쓸 수 있는 확실성. 나머지(`ambiguous`·`unresolved`)는 경로로 옮기지 않는다. */
         val CERTAIN = setOf(AnalysisConfidence.EXACT.wire, AnalysisConfidence.DERIVED.wire)
     }
@@ -727,6 +898,14 @@ data class ScenarioPathAnswer(
     val inputs: List<String> = emptyList(),
     val ordering: ScenarioOrdering = ScenarioOrdering.NO_OPINION,
     val blockedBy: String? = null,
+    /**
+     * **거쳐 갈 수는 있으나 시킬 수는 없나**(ARTEL-655). `UNKNOWN` 일 때만 뜻이 있다.
+     *
+     * 같은 "모른다"라도 둘은 다르다 — 게임을 하는 사람이 지나갈 수 있는 자리와, 지도에 길이
+     * 아예 없는 자리다. 앞엣것은 흐름을 이을 수 있고(사이가 GAP 이 된다) 뒤엣것은 못 잇는다.
+     * 글로만 갈라 두면 읽는 쪽이 문장을 파싱하게 되므로 칸으로 둔다.
+     */
+    val playable: Boolean = false,
     val note: String = "",
 ) {
     /**

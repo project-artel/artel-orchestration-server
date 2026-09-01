@@ -128,7 +128,39 @@ class MapTestCaseGeneratorGoldenTest {
      */
     @Test
     fun `문서 한 장이 케이스 42개가 된다`() {
-        assertThat(cases).hasSize(36)
+        // 42 → 36 은 같은 코드에 두 경로로 닿는 것을 접은 결과(ARTEL-645)이고,
+        // 36 → 46 은 `또는` 로 뭉쳐 있던 전제를 갈래대로 편 것이다(ARTEL-667).
+        assertThat(cases).hasSize(46)
+    }
+
+    /**
+     * **케이스 하나하나가 글자로 구별된다**(ARTEL-662).
+     *
+     * 앞서는 같은 화면에서 같은 조작을 하는 케이스가 여럿이고 갈리는 것이 전제뿐이었다 —
+     * 실측(프로젝트 24)에서 42건 중 40건이 그랬고 유일한 것은 2건뿐이었다. 대가가 저작에 나왔다
+     * (런 236): 모델이 `저장 데이터가 있는` 케이스에 *"저장 데이터가 없는 상태로"* 라고 썼고
+     * 바로 아래 진짜 없는 경우와 같은 문장이 됐다. 읽는 사람은 스토리 화면을 기대하는데 다음
+     * 스텝은 지도다.
+     *
+     * **이 수가 케이스 수보다 작아지면 다시 구별이 안 되는 것이다.**
+     */
+    @Test
+    fun `보여주기2`() {
+        cases.groupBy { it.scene to it.expected }.filterValues { it.size > 1 }
+            .forEach { (k, v) ->
+                println("== ${k.first} | ${k.second.take(55)}")
+                v.forEach { println("   ${it.step.take(95)}") }
+            }
+        println("겹치는 (화면,기대) 묶음 " + cases.groupBy { it.scene to it.expected }.count { it.value.size > 1 })
+    }
+
+    @Test
+    fun `읽는 사람이 케이스를 구별할 수 있다`() {
+        // **문장과 기대를 함께 본다.** 조작 문장이 같아도 확인할 것이 다르면 읽는 사람은 가른다 —
+        // 지도의 맨 `Return` 둘이 그렇다(배경이 바뀐다 · 전투 화면으로 간다).
+        val sameLine = cases.groupBy { Triple(it.scene, it.step, it.expected) }.filterValues { it.size > 1 }
+
+        assertThat(sameLine).isEmpty()
     }
 
     /**
@@ -207,7 +239,8 @@ class MapTestCaseGeneratorGoldenTest {
         assertThat(byScene).hasSize(7)
         assertThat(byScene["StoryScene"]).isEqualTo(4)
         assertThat(byScene["EndingScene"]).isEqualTo(4)
-        assertThat(byScene["Map_scene"]).isEqualTo(16)
+        // 갈래를 갈래대로 내면서 늘었다(ARTEL-667) — 지도의 `Return` 이 스테이지마다 한 줄이다.
+        assertThat(byScene["Map_scene"]).isEqualTo(26)
     }
 
     /**
@@ -231,8 +264,13 @@ class MapTestCaseGeneratorGoldenTest {
         val fromEnding = cases.filter { it.scene == "EndingScene" && it.expected.contains("화면으로 전환된다") }
 
         // 한 조작에서 나왔는데 도착 화면이 둘 이상이다 — 그것이 갈래다.
-        assertThat(fromEnding.map { it.step }.distinct()).hasSize(1)
         assertThat(fromEnding.map { it.expected }.distinct()).hasSizeGreaterThan(1)
+        // **조작 문장이 갈래를 말한다**(ARTEL-662). 같은 조작이지만 무엇이 다른지가 문장에 있다 —
+        // 앞서는 글자까지 같아서, 읽는 사람도 저작 모델도 둘을 구별하지 못했다.
+        assertThat(fromEnding.map { it.step }.distinct()).hasSameSizeAs(fromEnding)
+        assertThat(fromEnding.map { it.step }).allSatisfy {
+            assertThat(it).contains("아무 키나 누른다").contains("StagePosition")
+        }
         // 갈린 줄들은 사전조건이 서로 다르다. 같으면 어느 쪽을 만들지 알 수 없다.
         assertThat(fromEnding.map { it.precondition }.distinct()).hasSameSizeAs(fromEnding)
     }

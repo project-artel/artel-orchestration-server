@@ -1,9 +1,11 @@
 package kr.artel.orchestration.testcase.repository
 
 import kotlinx.coroutines.flow.Flow
+import kr.artel.orchestration.testcase.dto.CapabilityCase
 import kr.artel.orchestration.testcase.dto.CaseWrite
 import kr.artel.orchestration.testcase.dto.SceneExitRow
 import kr.artel.orchestration.testcase.dto.ValueMoveRow
+import kr.artel.orchestration.testcase.dto.StartingValue
 import kr.artel.orchestration.testcase.dto.ValueRaiser
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.UncoveredScene
@@ -329,6 +331,67 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     fun findValueRaisers(projectId: Long): Flow<ValueRaiser>
 
     /**
+     * **게임을 켜면 열리는 화면**(ARTEL-659). 이 프로젝트의 지도가 그렇게 적어 둔 씬이다.
+     *
+     * 씬 그래프는 순환이라 입구를 구조로는 알 수 없다 — 모든 씬이 서로 닿는다. 적재기가 빌드에서
+     * 읽어 적어 두고(`scene.is_entry`), 저작은 그것만 읽는다.
+     *
+     * **지도 범위는 빌드 소속으로 좁힌다.** 케이스의 `capability_key` 로 되짚으면 안 된다 — 그 키는
+     * 내용 해시라 같은 게임을 여러 번 적재한 지도가 전부 걸린다. 실측(로컬)에서 프로젝트 24 로
+     * 되짚으니 지도 일곱 개가 나왔고, 같은 게임이라 내용이 같아 **틀린 줄 몰랐다.** 두 프로젝트가
+     * 같은 게임을 등록하면 서로의 지도를 읽게 된다.
+     *
+     * 가장 최근 지도를 본다 — 경로 조회(`ScenarioPathService.contentMapIdOf`)와 같은 규칙이다.
+     */
+    @Query(
+        """
+        SELECT s.name FROM scene s
+        JOIN content_map cm ON cm.id = s.content_map_id
+        JOIN game_build b ON b.id = cm.game_build_id
+        WHERE s.is_entry AND b.project_id = :projectId
+        ORDER BY cm.id DESC
+        LIMIT 1
+        """
+    )
+    suspend fun findEntrySceneName(projectId: Long): String?
+
+    /**
+     * **게임을 켜면 값이 무엇으로 시작하나**(ARTEL-665).
+     *
+     * 입구 화면이 저장소에서 값을 읽을 때 **없으면 쓸 기본값**을 함께 적어 둔다:
+     *
+     * ```
+     * PlayerPrefs.GetInt("StagePosition", -1)
+     *                                     ↑ 저장 데이터가 없을 때의 값
+     * ```
+     *
+     * 이것을 안 읽으면 흐름 계산이 **첫 상태를 모른 채** 출발한다. 그러면 어느 쪽이 진행인지도
+     * 모르고, 실측(런 239)에서 지도 흐름이 진행도 5 → 4 → 3 → 2 로 **거꾸로** 놓였다 —
+     * `>= 4` 는 5에서도 참이라 논리적으로 어긋나지 않지만, 실행하는 사람은 보스 앞에서 시작해
+     * 뒤로 걸어 나온다.
+     *
+     * 기본값을 깔면 `fits` 가 알아서 막는다 — `-1` 에서 `>= 4` 는 안 맞으니 그 값을 올리는 자리를
+     * 지나기 전에는 못 놓는다.
+     *
+     * 입구 화면의 것만 본다. 다른 화면에서 읽는 것은 그때까지 게임이 해 온 것이 반영된 값이라
+     * "처음"이 아니다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT regexp_replace(e.target, '^.*\.', '') AS name, e.detail AS detail
+        FROM capability_effect e
+        JOIN capability c ON c.id = e.capability_id AND c.merged_into IS NULL
+        JOIN scene s ON s.id = c.scene_id AND s.is_entry
+        JOIN content_map cm ON cm.id = s.content_map_id
+        JOIN game_build b ON b.id = cm.game_build_id
+        WHERE b.project_id = :projectId
+          AND e.target IS NOT NULL
+          AND e.detail ~ 'Get(Int|Float|String|Bool)\('
+        """
+    )
+    fun findStartingValues(projectId: Long): Flow<StartingValue>
+
+    /**
      * **이 값을 무엇이 어떤 조건에서 바꾸나**(ARTEL-646).
      *
      * [findValueRaisers] 는 화면 이름 하나만 답한다. 그것만으로는 `position == 0`(방향키 한 번)과
@@ -379,4 +442,24 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
     )
     fun findValueMoves(projectId: Long): Flow<ValueMoveRow>
+
+    /**
+     * **이 기능이 이미 케이스로 있나**(ARTEL-674).
+     *
+     * 빈 구간을 메울 때 쓴다. 메우는 조작은 대개 이 프로젝트가 이미 케이스로 들고 있는 것이라
+     * (실측: 끼운 31개 중 24개), 이름 없는 걸음으로 다시 쓰면 커버리지는 안 오르고 스텝만 늘며
+     * 그 걸음의 전제와 효과도 잃는다.
+     *
+     * 케이스 쪽을 프로젝트로 좁히므로, 같은 게임을 여러 번 적재한 지도의 기능이 함께 걸려도
+     * 답은 이 프로젝트의 케이스다.
+     */
+    @Query(
+        """
+        SELECT c.id AS capability_id, tc.id AS test_case_id
+        FROM test_case tc
+        JOIN capability c ON c.capability_key = tc.capability_key AND c.merged_into IS NULL
+        WHERE tc.project_id = :projectId AND tc.capability_key IS NOT NULL
+        """
+    )
+    fun findCaseIdByCapability(projectId: Long): Flow<CapabilityCase>
 }

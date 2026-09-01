@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import com.fasterxml.jackson.databind.JsonNode
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
+import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import kr.artel.orchestration.contentmap.evidence.ConditionOverlap
 import kr.artel.orchestration.contentmap.evidence.ConditionPrune
 import kr.artel.orchestration.contentmap.evidence.GroupKind
@@ -127,6 +128,113 @@ class MapTestCaseGenerator(
             }
             .let(::withInterchangeableInputs)
             .let(::withoutSpecialCases)
+            .let(::withBranchesApart)
+            // **갈래를 펴다 보면 서로 다른 케이스의 갈래가 같아진다.** 같은 기능이 같은 전제에서
+            // 같은 것을 확인하라고 두 줄로 나오면 실행하는 사람은 같은 일을 두 번 한다.
+            .distinctBy { listOf(it.capabilityKey, it.precondition, it.step, it.expected) }
+            .let(::withTellingSteps)
+
+    /**
+     * **갈래는 갈래대로 낸다**(ARTEL-667).
+     *
+     * 전제가 `또는` 로 뭉쳐 있으면 그 케이스는 **"언제" 되는지를 말하지 않는다.** 요구로 세어지는
+     * 것은 모든 갈래에 함께 있는 것뿐이라(그 규칙은 맞다 — 하나만 만족해도 되니까) 대개
+     * `IsLocked == 0` 하나만 남는다. 실측(프로젝트 30):
+     *
+     * ```
+     * 1873   IsLocked == 0 그리고 (위치 == 3 또는 (진행도 >= 4 그리고 위치 == 3) 또는 진행도 == 5)
+     * ```
+     *
+     * 세 갈래가 **사람이 고르는 갈래가 아니라 같은 코드에 닿는 세 경로**다. 그래서 실행하는 사람은
+     * 무엇을 준비할지 알 수 없고, 흐름 계산은 이 자리들을 서로 구별하지 못해 순서를 임의로 놓는다 —
+     * 지도의 `Return` 넷이 점수가 전부 같았고(런 242) 진행도가 5 → 4 → 3 → 2 로 거꾸로 잡혔다.
+     *
+     * 갈래마다 한 줄을 낸다. `A 그리고 (B 또는 C)` 는 `A 그리고 B` · `A 그리고 C` 두 줄이다.
+     * 결과가 같아도 **준비할 것이 다르면 다른 시험**이다.
+     *
+     * **너무 많이 갈리면 그대로 둔다.** 갈래가 곱해지는 자리에서 케이스가 폭발하는 것이
+     * 이 저장소가 [merged] 로 이미 한 번 겪은 일이다.
+     */
+    private fun withBranchesApart(cases: List<MapTestCase>): List<MapTestCase> =
+        cases.flatMap { case ->
+            val branches = spread(case.condition)
+            if (branches.size <= 1 || branches.size > MAX_BRANCHES) return@flatMap listOf(case)
+            branches.distinctBy(ConditionPrune::signature).map { branch ->
+                case.copy(
+                    condition = branch,
+                    precondition = MapTestCasePhrasing.precondition(case.scene, branch),
+                    // **정체가 갈라져야 저장이 두 줄로 앉는다.** 같은 정체면 뒤엣것이 앞엣것으로
+                    // 덮여 한 줄만 남는다.
+                    identity = case.identity + IDENTITY_SEPARATOR + ConditionPrune.signature(branch),
+                )
+            }
+        }
+
+    /**
+     * 전제를 **갈래마다 하나씩** 편다. `A 그리고 (B 또는 C)` → `A 그리고 B`, `A 그리고 C`.
+     *
+     * 갈래가 없으면 하나다. 그때는 부르는 쪽이 원래 케이스를 그대로 쓴다.
+     */
+    private fun spread(node: ConditionNode?): List<ConditionNode> = when (node) {
+        null -> emptyList()
+        is ConditionNode.Group -> when (node.kind) {
+            GroupKind.EITHER -> node.parts.flatMap { spread(it) }
+            GroupKind.EVERY -> node.parts
+                .fold(listOf(emptyList<ConditionNode>())) { grown, part ->
+                    val options = spread(part).ifEmpty { listOf(part) }
+                    grown.flatMap { so -> options.map { so + it } }
+                }
+                .map { parts -> if (parts.size == 1) parts.single() else ConditionNode.Group(GroupKind.EVERY, parts) }
+        }
+        else -> listOf(node)
+    }
+
+    /**
+     * **형제끼리 무엇이 다른지를 조작 문장에 적는다**(ARTEL-662).
+     *
+     * 같은 화면에서 같은 조작을 하는 케이스가 여럿이고, 갈리는 것은 전제뿐이다. 그런데 전제는
+     * 조작 문장에 안 드러나서 **글자로는 구별이 안 된다.** 실측(프로젝트 24)에서 42건 중 40건이
+     * 그렇고, 유일한 것은 2건뿐이다:
+     *
+     * ```
+     * Map_scene | `Return` 키를 누른다                      7건
+     * GameClearScene | 아무 키나 누른다                      5건
+     * StoryScene | 아무 키나 누른다 — 더 진행되지 않을 때까지  4건
+     * ```
+     *
+     * 대가가 저작에 그대로 나왔다(런 236). 모델이 `저장 데이터가 있는` 케이스에 *"저장 데이터가
+     * 없는 상태로"* 라고 썼고, 바로 아래 진짜 없는 경우와 **같은 문장**이 됐다. 프롬프트에는 전제도
+     * 기대결과도 다 있었으니 **몰라서가 아니라 구별이 안 돼서다.**
+     *
+     * **형제 사이에서만 붙인다.** 유일한 케이스에까지 붙이면 문장이 길어지기만 한다. 그리고 형제가
+     * **공통으로** 가진 전제도 빼고 **갈리는 것만** 적는다 — 다 적으면 전제를 통째로 두 번 쓰는 셈이다.
+     */
+    private fun withTellingSteps(cases: List<MapTestCase>): List<MapTestCase> {
+        val siblings = cases.groupBy { it.scene to it.step }
+        return cases.map { case ->
+            val group = siblings.getValue(case.scene to case.step)
+            if (group.size < 2) return@map case
+            val shared = group.map { comparisonsIn(it.condition) }.reduce { a, b -> a intersect b }
+            val telling = (comparisonsIn(case.condition) - shared).sorted().take(MAX_TELLING)
+            if (telling.isEmpty()) case
+            else case.copy(step = "${case.step} (${telling.joinToString(", ")} 일 때)")
+        }
+    }
+
+    /**
+     * 전제에 나오는 **모든 비교.** `또는` 갈래 안까지 센다.
+     *
+     * [ScenarioStateReader.guardsIn] 과 일부러 다르다. 그쪽은 *"무엇이 참이어야 하나"* 에 답하므로
+     * 갈래에서는 교집합만 요구로 세는 것이 맞다. 여기서 묻는 것은 *"이것이 형제와 무엇이 다른가"* 라,
+     * **갈래 안의 차이도 차이다** — 실측(지도 27)에서 `Map_scene` 의 `Return` 일곱 건이 교집합으로는
+     * 전부 `IsLocked == 0` 하나로 같아져 구별이 안 됐다.
+     */
+    private fun comparisonsIn(node: ConditionNode?): Set<String> = when (node) {
+        null, is ConditionNode.Always, is ConditionNode.Gesture, is ConditionNode.Unknown -> emptySet()
+        is ConditionNode.Test ->
+            setOf("${ScenarioStateReader.normalize(node.left)} ${node.operator} ${node.right.trim().trim('`')}")
+        is ConditionNode.Group -> node.parts.flatMapTo(mutableSetOf()) { comparisonsIn(it) }
+    }
 
     /**
      * **같은 시험을 두 번 시키지 않는다**(ARTEL-645).
@@ -487,6 +595,18 @@ class MapTestCaseGenerator(
 
     /** 효과 어휘의 씬 전환. `MapTestCasePhrasing` 이 같은 값으로 문장을 만든다. */
     private companion object {
+        /**
+         * 조작 문장에 붙이는 **가르는 조건의 최대 개수**. 다 붙이면 전제를 통째로 두 번 쓰는 셈이고,
+         * 목록에서 눈으로 훑을 수 있는 길이를 넘긴다. 구별에 필요한 것은 대개 하나둘이다.
+         */
+        private const val MAX_TELLING = 3
+
+        /**
+         * 한 케이스를 몇 갈래까지 펼 것인가(ARTEL-667). 갈래가 곱해지는 자리에서 케이스가
+         * 폭발하는 것은 이 저장소가 이미 한 번 겪은 일이라, 넘으면 뭉친 채로 둔다.
+         */
+        private const val MAX_BRANCHES = 4
+
         const val SCENE = "scene"
 
         /** 정체를 이을 때 쓰는 구분자. 값에 섞일 일이 없고 Postgres 가 받는 문자여야 한다. */
