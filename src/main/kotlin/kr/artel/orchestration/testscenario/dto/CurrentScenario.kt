@@ -18,7 +18,14 @@ import com.fasterxml.jackson.annotation.JsonProperty
  *   스텝을 고치면 정답지와 시나리오가 서로를 오염시킨다.
  */
 data class CurrentScenario(
-    @JsonProperty("scenario_id") val scenarioId: Long,
+    /**
+     * 저장된 시나리오면 그 번호. **아직 저장 안 된 것은 null 이다**(ARTEL-633).
+     *
+     * 재작성 턴에서 "앞서 낸 것"을 보여 줘야 하는데, 검수가 막은 결과는 저장 전이라 번호가 없다.
+     * 산문으로 적어 보냈더니 모델이 이 구조 필드를 먼저 보고 *"기존 시나리오 목록이 비어 있어
+     * 교체할 수 없습니다"* 라고 답했다(런 181) — 그러고는 아무것도 저장되지 않았다.
+     */
+    @JsonProperty("scenario_id") val scenarioId: Long?,
     val title: String,
     val description: String,
     val steps: List<ChatScenarioStep>

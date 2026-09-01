@@ -31,6 +31,7 @@ import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
+import kr.artel.orchestration.testscenario.dto.AuthoringFlow
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
@@ -95,6 +96,9 @@ class TestScenarioAgentService(
     private val caseFactService: ScenarioCaseFactService,
     private val gapFiller: ScenarioGapFiller,
     private val phrasingClient: ScenarioStepPhrasingClient,
+    private val trace: AuthoringTrace,
+    private val flowMatrix: ScenarioFlowMatrix,
+    private val flowPlanner: ScenarioFlowPlanner,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -123,7 +127,10 @@ class TestScenarioAgentService(
         // 보내면 모델은 그것이 무슨 뜻인지 모른다 — 질문과 보기 문구를 여기서 다시 붙인다.
         // 세션에 없으면 **저장된 질문**에서 찾는다. 카드 저장으로 물었거나, 서버가 다시 떴거나,
         // 사용자가 새로고침한 화면에서 답할 수 있다 — 그때 답을 잃으면 물어본 보람이 없다.
-        val pending = sessions[sessionKey]?.question ?: lastQuestion(runId, appUserId)
+        // **답이 지목한 질문을 찾는다**(ARTEL-630). 한 번에 여럿을 내므로 세션이 문 첫 질문이
+        // 아닐 수 있다 — 그때 첫 것으로 답하면 엉뚱한 질문에 답한 것이 된다.
+        val pending = sessions[sessionKey]?.question?.takeIf { answer == null || it.id == answer.questionId }
+            ?: lastQuestion(runId, appUserId, answer?.questionId)
 
         // 미상 구간에 대한 답은 **코드가 그 자리에 넣는다**(ARTEL-487). 모델에게 넘겨 다시 쓰게
         // 했더니 "StoryScene→Map_scene 을 어떻게 가나요"의 답이 엉뚱한 6번 자리에 들어가고 정작
@@ -162,7 +169,7 @@ class TestScenarioAgentService(
         if (declined(pending, answer, userInput)) {
             sessions[sessionKey]?.question = null
             saveMessage(runId, appUserId, "USER", answerSummary(pending, answer))
-            notifyDeclined(sessionKey, runId, appUserId, pending!!)
+            notifyDeclined(sessionKey, runId, appUserId, pending!!, askedBatch(sessionKey, pending!!))
             return
         }
 
@@ -232,13 +239,30 @@ class TestScenarioAgentService(
      *
      * **턴을 취소하지는 않는다.** 늦게라도 결과가 오면 그건 반영되는 것이 맞다. 여기서 하는 일은
      * 기다림에 끝을 주는 것뿐이다 — 화면이 풀리고, 다음 말을 보낼 수 있게 된다.
+     *
+     * ## 재는 것은 "죽었나"이지 "느린가"가 아니다(ARTEL-632)
+     *
+     * 시한을 턴 시작부터 고정으로 세면, **살아서 일하는 턴**도 끊긴다. 실측(런 179)에서 저작이
+     * 도구를 47번 부르며 일하는 동안 정각 5분에 시한이 났다 — 사용자가 본 것은 "끝나지 않았습니다"
+     * 였고, 결과는 그 뒤에 도착해 조용히 저장됐다. 물어야 할 것 셋도 그 턴과 함께 사라졌다.
+     *
+     * 그래서 **에이전트가 무언가 할 때마다 시한을 미룬다**([touch]). 아무 소식도 없는 5분만
+     * 멎은 것으로 본다. 조회가 많은 턴은 오래 걸릴 뿐 멎은 것이 아니다.
      */
     private fun watch(sessionKey: String, runId: Long, appUserId: Long) {
         val session = sessions[sessionKey] ?: return
         session.watchdog?.cancel()
+        session.lastHeard = System.currentTimeMillis()
         session.watchdog = scope.launch {
-            delay(TURN_DEADLINE_MILLIS)
-            val message = "요청이 ${TURN_DEADLINE_MILLIS / 60_000}분 안에 끝나지 않았습니다. " +
+            // **소식이 있으면 다시 기다린다.** 아무것도 안 오는 시간만 센다 — 마지막으로 들은 때에서
+            // 시한이 차는 자리까지 자고, 그 사이 무언가 들렸으면 그만큼 더 잔다.
+            while (true) {
+                val wait = TurnDeadline.remainingWait(
+                    session.lastHeard, System.currentTimeMillis(), TURN_DEADLINE_MILLIS,
+                ) ?: break
+                delay(wait)
+            }
+            val message = "${TURN_DEADLINE_MILLIS / 60_000}분간 아무 소식이 없어 기다림을 끝냅니다. " +
                 "다시 말씀해 주시면 새로 시도합니다 — 늦게라도 결과가 오면 그때 반영됩니다."
             logger.warn("턴이 시한을 넘겼다 — 기다림을 끝낸다 [sessionKey={}, runId={}]", sessionKey, runId)
             runCatching { saveMessage(runId, appUserId, "ASSISTANT", message) }
@@ -289,17 +313,30 @@ class TestScenarioAgentService(
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
         val locale = localeOf(appUserId)
+        val cases = testCaseList(projectId, appUserId)
+        trace.record(
+            runId, "판을 연다",
+            "말: $userInput\n" +
+                "케이스 ${cases.size}건 ${trace.blob(runId, "cases.json", objectMapper.writeValueAsString(cases))}\n" +
+                "모델: ${configuredModel.ifBlank { "에이전트 기본값" }} · 말투: $locale · " +
+                "이미 있는 시나리오 ${currentScenarios.size}개",
+        )
+        val flows = computedFlows(runId, projectId, appUserId, cases.map { it.id })
         val body = AgentSessionOpenRequest(
             userInput = userInput,
             gameContext = gameContext(),
-            testCaseList = testCaseList(projectId, appUserId),
+            testCaseList = cases,
             // 모델 선택의 기본값은 모델 카탈로그를 소유한 Agent가 결정한다. Orchestration은
             // 명시적 override가 있을 때만 model을 보내 모델 교체 때 구 slug를 강제하지 않는다.
             model = configuredModel.takeIf { it.isNotBlank() },
             locale = locale,
             projectId = projectId,
             runId = runId,
-            currentScenarios = currentScenarios
+            currentScenarios = currentScenarios,
+            flows = flows,
+            entryScene = runCatching { testCaseRepository.findEntrySceneName(projectId) }
+                .onFailure { logger.warn("입구 씬 조회 실패 — 없이 보낸다: ${it.message}") }
+                .getOrNull(),
         )
         val resp = webClient.post()
             .uri("$agentBaseUrl/sessions")
@@ -492,6 +529,7 @@ class TestScenarioAgentService(
      */
     private suspend fun sendFrame(sessionKey: String, session: AgentSession, frame: Any) {
         val json = objectMapper.writeValueAsString(frame)
+        trace.record(session.runId, "  ◀ 답한다", json)
         val result = session.sendLock.withLock { session.outbound.tryEmitNext(json) }
         if (result.isFailure) {
             logger.warn("프레임 전송 실패 [sessionKey=$sessionKey, result=$result]")
@@ -508,7 +546,7 @@ class TestScenarioAgentService(
 
         val incoming = event.scenarios ?: emptyList()
         // 재작성 턴이면 앞서 막힌 결과에 새로 받은 것을 얹어 통째로 다시 본다.
-        val scenarios = if (pending != null) pending.scenarios + incoming else incoming
+        val scenarios = if (pending != null) repaired(pending.scenarios, incoming) else incoming
         val reviewed = if (pending != null) mergeVerdicts(pending.reviewed, event.reviewed) else event.reviewed
 
         progress(sessionKey, AuthoringStage.CHECKING)
@@ -534,7 +572,7 @@ class TestScenarioAgentService(
             }
             // 되묻는다(ARTEL-487). **저장은 이미 끝났다** — 답하지 않아도 결과물은 남고, 답하면
             // 다음 턴이 그 답을 받아 고친다. 코드가 아는 것이라 보기까지 계산돼 있다.
-            outcome.question?.let { ask(sessionKey, session, it) }
+            ask(sessionKey, session, outcome.questions.ifEmpty { listOfNotNull(outcome.question) })
             // 저장이 있었던 턴에만 잔량을 알린다. 질문·거절 턴에서는 남은 수가 그대로일 뿐 아니라,
             // 방금 에이전트가 같은 값을 더 자세히 답했을 수 있다 — 그 뒤에 한 줄을 더 붙이면 같은
             // 말을 두 번 하는 셈이 된다.
@@ -565,9 +603,35 @@ class TestScenarioAgentService(
             sessionKey, session,
             "검토 결과 ${outcome.findings.summary()} — 그 부분만 다시 작성하도록 요청했습니다."
         )
-        sendTurn(sessionKey, session, repairPrompt(outcome.findings), emptyList())
+        // **앞서 낸 것을 구조로 보여 준다**(ARTEL-633). 산문으로 적었더니 모델이 구조 필드를
+        // 먼저 보고 "목록이 비어 있다"며 손을 놓았다(런 181).
+        sendTurn(sessionKey, session, repairPrompt(outcome.findings), asCurrent(scenarios))
         // 재작성도 턴이다 — 답이 오지 않으면 똑같이 멎는다(ARTEL-510).
         watch(sessionKey, session.runId, session.appUserId)
+    }
+
+    /**
+     * 재작성 결과를 앞서 낸 것과 합친다 — **제목이 같으면 갈아끼운다**(ARTEL-629).
+     *
+     * 앞서는 그냥 이어 붙였다. 그러면 빠진 케이스가 **자기만 담은 새 시나리오**로 떨어져 나온다 —
+     * 실측(런 177)에서 모델이 여정 7개를 냈는데 검수가 2건 누락을 지적했고, 재작성이 그 둘을 각각
+     * 새 카드로 만들어 최종 13개가 됐다. 1~2스텝짜리가 그렇게 생긴다.
+     *
+     * 여정에 스텝을 더하는 것은 **그 여정을 고치는 일**이지 새 여정을 만드는 일이 아니다. 저장이
+     * 안 된 상태라 `scenario_id` 가 없으므로 제목으로 맞춘다 — 재작성 지시문이 "제목을 그대로 두고
+     * 통째로 다시 내라"고 시키는 것과 짝이다.
+     *
+     * 제목이 안 맞으면 예전처럼 새로 붙인다. 정말 새 여정일 수도 있고, 그때 잃는 것보다 억지로
+     * 갖다 붙일 때 잃는 것이 크다.
+     */
+    private fun repaired(
+        before: List<ScenarioResult>,
+        incoming: List<ScenarioResult>,
+    ): List<ScenarioResult> {
+        val byTitle = incoming.associateBy { it.title.trim() }
+        val replaced = before.map { byTitle[it.title.trim()] ?: it }
+        val taken = before.map { it.title.trim() }.toSet()
+        return replaced + incoming.filterNot { it.title.trim() in taken }
     }
 
     /**
@@ -593,11 +657,24 @@ class TestScenarioAgentService(
      * 재작성 지시문. 지적된 것만 다루게 하고 앞서 쓴 것은 다시 쓰지 말라고 못 박는다 — 전체를 다시
      * 만들면 출력 예산을 통째로 한 번 더 쓰고, 이미 통과한 부분까지 흔들린다.
      */
+    /**
+     * 앞서 낸 것을 **`current_scenarios` 로** 보여 준다(ARTEL-633).
+     *
+     * 저장 전이라 번호가 없다 — `scenario_id` 는 null 이고, 제목이 짝을 맞추는 열쇠다.
+     */
+    private fun asCurrent(authored: List<ScenarioResult>): List<CurrentScenario> =
+        authored.map { CurrentScenario(null, it.title, it.description, it.steps) }
+
     private fun repairPrompt(findings: ScenarioCoverageAudit.Findings): String = buildString {
+        append("앞서 낸 시나리오는 `current_scenarios` 에 있습니다 — 아직 저장 전이라 ")
+        append("`scenario_id` 가 없고, **제목이 짝을 맞추는 열쇠**입니다.\n\n")
         if (findings.missing.isNotEmpty()) {
             append("이전 응답에서 관련 있다고 판단한 케이스 중 ")
             append(findings.missing.joinToString(", "))
-            append("번이 어떤 스텝에도 담기지 않았습니다. 이 케이스들만 검증하는 시나리오를 새로 작성해 주세요(scenario_id는 null). ")
+            append("번이 어떤 스텝에도 담기지 않았습니다. ")
+            append("**앞서 낸 시나리오 중 그 케이스가 속하는 흐름에 스텝을 더해, 그 시나리오를 제목 그대로 통째로 다시 내 주세요** ")
+            append("— 제목이 같으면 앞서 낸 것을 갈아끼웁니다. 어디에도 속하지 않을 때만 새 시나리오로 내 주세요(scenario_id는 null). ")
+            append("스텝 한둘짜리 카드가 따로 생기면 읽는 사람이 무엇을 검증하는 흐름인지 알 수 없습니다. ")
         }
         if (findings.unreviewed.isNotEmpty()) {
             append("그리고 ")
@@ -634,15 +711,17 @@ class TestScenarioAgentService(
         if (total == session.lastReportedUncovered) return
         session.lastReportedUncovered = total
 
-        // 씬이 여섯 개인 프로젝트에서 여섯 줄이 매번 붙으면 읽히지 않는다. 많은 순 셋까지만.
-        val shown = uncovered.take(MAX_SCENES_IN_RECOMMENDATION)
-        val rest = uncovered.size - shown.size
-        val breakdown = shown.joinToString(", ") { "${it.scene} ${it.count}" } +
-            if (rest > 0) " 외 ${rest}개 씬" else ""
+        // **어디로 가면 되는지로 말한다**(ARTEL-631). 씬별 개수를 늘어놓으면 읽는 사람이 그것을
+        // 다시 "그럼 무엇을 하지"로 옮겨야 한다 — 카테고리 나열이 연결을 끊는 그 자리다. 코드가
+        // 여정 이름을 지어낼 수는 없으므로, **가장 많이 남은 화면 하나를 시작점으로** 가리키고
+        // 흐름을 짜는 일은 저작에 맡긴다.
+        val biggest = uncovered.first()
 
         saveAndNotify(
             sessionKey, session,
-            "아직 어떤 시나리오에도 담기지 않은 케이스가 ${total}건 남았습니다 — $breakdown. 이어서 만들까요?"
+            "아직 어떤 시나리오에도 담기지 않은 케이스가 ${total}건 남았습니다 — " +
+                "${biggest.scene} 에 ${biggest.count}건이 몰려 있습니다. " +
+                "거기서 이어지는 흐름부터 만들까요?"
         )
     }
 
@@ -653,6 +732,91 @@ class TestScenarioAgentService(
      * **보는 사람이 없다는 이유로 저작이 멈춰서는 안 된다.** [TestScenarioStreamManager.emit]이 이미
      * 경고를 남기므로 여기서 더 할 말도 없다.
      */
+    /**
+     * **계산이 낸 흐름을 구해 에이전트에 실어 보낸다**(ARTEL-658).
+     *
+     * 무엇을 묶고 어떤 순서로 놓을지는 실행 가능성을 정하는 판단이고, 모델이 42건을 한 번에 들고
+     * 하기에 가장 약한 자리가 그 둘이다. 계산으로 옮긴다.
+     *
+     * **못 구해도 저작을 막지 않는다.** 빈 목록이면 에이전트는 예전처럼 스스로 묶고 순서를 정한다 —
+     * 이 계산이 실패해서 저작이 통째로 안 나오는 것이 가장 나쁜 결과다.
+     *
+     * 짝 행렬과 흐름은 기록에도 함께 남긴다. 모델이 낸 것과 나란히 놓고 무엇이 달라졌는지 보는
+     * 자리가 거기다.
+     */
+    private suspend fun computedFlows(
+        runId: Long,
+        projectId: Long,
+        appUserId: Long,
+        caseIds: List<Long>,
+    ): List<AuthoringFlow> {
+        if (caseIds.size < 2) return emptyList()
+        return runCatching {
+            val matrix = flowMatrix.of(projectId, appUserId, caseIds)
+            trace.record(
+                runId, "짝 행렬",
+                "케이스 ${caseIds.size}건 · 칸 ${caseIds.size * (caseIds.size - 1)}개 " +
+                    trace.blob(runId, "matrix.txt", matrix.render()) + "\n" +
+                    "바로 ${matrix.count(ScenarioFlowMatrix.Link.BESIDE)} · " +
+                    "조작 ${matrix.count(ScenarioFlowMatrix.Link.BY_OPERATION)} · " +
+                    "거쳐서 ${matrix.count(ScenarioFlowMatrix.Link.BY_PLAY)} · " +
+                    "막힘 ${matrix.count(ScenarioFlowMatrix.Link.BLOCKED)} · " +
+                    "확인못함 ${matrix.count(ScenarioFlowMatrix.Link.UNCHECKED)}",
+            )
+            // 흐름을 고른 이유를 함께 받아 적는다(ARTEL-666). 순서가 왜 그렇게 잡혔는지는
+            // 결과만 보고는 못 짚는다 — 실측(런 241)에서 한 번 막혔던 자리다.
+            val why = StringBuilder()
+            val flows = flowPlanner.of(projectId, appUserId, matrix) { why.appendLine(it) }.map { flow ->
+                AuthoringFlow(
+                    caseIds = flow.caseIds,
+                    opening = flow.opening.map { "${it.variable} ${it.operator} ${it.value}" },
+                    gaps = flow.gaps,
+                )
+            }
+            trace.record(
+                runId, "흐름 계산",
+                "흐름 ${flows.size}개 · 지나갈 자리 ${flows.sumOf { it.gaps }}군데 " +
+                    trace.blob(runId, "flow-choices.txt", why.toString()) + "\n" +
+                    flows.joinToString("\n") { flow ->
+                        "  스텝 ${flow.caseIds.size} · GAP ${flow.gaps} · " +
+                            "시작 ${flow.opening.joinToString(", ").ifBlank { "아무 조건 없음" }}\n" +
+                            "    ${flow.caseIds.joinToString(" → ")}"
+                    },
+            )
+            flows
+        }.onFailure { logger.warn("흐름 계산 실패 — 예전처럼 모델이 묶는다 [runId=$runId] ${it.message}") }
+            .getOrDefault(emptyList())
+    }
+
+    /**
+     * 에이전트에서 들어온 프레임을 기록에 남긴다(ARTEL-650).
+     *
+     * **단계 알림은 적지 않는다.** 한 판에 수십 번 오고, 무엇이 일어났는지는 그 앞뒤의 물음과
+     * 답이 이미 말한다 — 적으면 읽을 것이 그것으로 덮인다.
+     *
+     * 턴 결과는 옆 파일로 뺀다. 모델이 낸 원문이 **이 서버가 손대기 전의 모양**이라, 나중에
+     * 저장된 것과 나란히 놓고 무엇이 바뀌었는지 보는 자리가 바로 여기다.
+     */
+    private fun traceInbound(session: AgentSession, node: JsonNode, payloadText: String) {
+        when (val type = node.path("type").asText()) {
+            "progress" -> return
+            "result" -> {
+                val scenarios = node.path("scenarios")
+                val titles = scenarios.joinToString("\n") { s ->
+                    "  · ${s.path("title").asText()} — 스텝 ${s.path("steps").size()}"
+                }
+                trace.record(
+                    session.runId, "◀ 답을 냈다",
+                    "시나리오 ${scenarios.size()}개 " +
+                        trace.blob(session.runId, "answer-${session.answers++}.json", payloadText) +
+                        (if (titles.isBlank()) "" else "\n$titles") +
+                        "\n말: ${node.path("message").asText("")}",
+                )
+            }
+            else -> trace.record(session.runId, "  ▶ 묻는다 ($type)", payloadText)
+        }
+    }
+
     private fun progress(sessionKey: String, stage: AuthoringStage) {
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "progress", stage = stage))
     }
@@ -680,13 +844,18 @@ class TestScenarioAgentService(
      * 그대로 붙지 않는다 — 클래스에 맞춰 저장 모양을 바꾸면 이번엔 화면이 못 읽는다. 읽는 쪽이
      * 하나뿐인 값이므로 여기서 풀어 쓴다.
      */
-    private suspend fun lastQuestion(runId: Long, appUserId: Long): ScenarioQuestion? = runCatching {
+    private suspend fun lastQuestion(runId: Long, appUserId: Long, wanted: String? = null): ScenarioQuestion? = runCatching {
         val payload = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
             .toList()
             .lastOrNull { it.payload != null }
             ?.payload ?: return null
-        val node = objectMapper.readTree(payload.asString())
-        if (node.path("kind").asText() != "question") return null
+        val whole = objectMapper.readTree(payload.asString())
+        if (whole.path("kind").asText() != "question") return null
+        // **묶음에서 그 질문을 찾는다**(ARTEL-630). 대화에는 첫 질문만 한 줄로 남지만 payload 는
+        // 함께 낸 것을 다 들고 있다 — 그러지 않으면 둘째부터는 답할 길이 없다.
+        val node = whole.path("questions").takeIf { it.isArray && !it.isEmpty }
+            ?.firstOrNull { wanted == null || it.path("id").asText() == wanted }
+            ?: whole
         val id = node.path("id").asText("")
         val text = node.path("text").asText("")
         if (id.isBlank() || text.isBlank()) return null
@@ -748,14 +917,24 @@ class TestScenarioAgentService(
      *
      * `answered` 로 남겨 **같은 질문이 다시 나가지 않게 한다**(ScenarioReconcileService 가 읽는다).
      */
+    /** 이번에 함께 낸 질문들. 세션이 없으면(재접속 뒤) 거절한 그 하나만 덮는다. */
+    private fun askedBatch(sessionKey: String, question: ScenarioQuestion): List<String> =
+        sessions[sessionKey]?.asked?.takeIf { question.id in it } ?: listOf(question.id)
+
     private suspend fun notifyDeclined(
         sessionKey: String,
         runId: Long,
         appUserId: Long,
         question: ScenarioQuestion,
+        batch: List<String> = listOf(question.id),
     ) {
         val message = ScenarioDeclineReply.advice(question)
-        saveMessage(runId, appUserId, "ASSISTANT", message, mapOf("kind" to "answered", "id" to question.id))
+        // **거절은 함께 낸 묶음 전체를 덮는다**(ARTEL-630). 한 번에 다 보여 준 뒤 "그대로 두기"를
+        // 누른 것이므로, 다음 턴에 그 묶음의 다른 질문을 다시 내면 같은 것을 또 묻는 셈이다 —
+        // 하나만 묻던 때 지키던 약속이 목록이 되면서 깨지는 자리다(ARTEL-487).
+        batch.forEach { id ->
+            saveMessage(runId, appUserId, "ASSISTANT", message, mapOf("kind" to "answered", "id" to id))
+        }
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
         progress(sessionKey, AuthoringStage.SAVED)
         logger.info("되묻기 거절 — 모델을 부르지 않는다 [runId={}, id={}]", runId, question.id)
@@ -806,6 +985,10 @@ class TestScenarioAgentService(
     ) {
         val json = objectMapper.writeValueAsString(
             AgentTurnMessage(userInput = userInput, currentScenarios = currentScenarios)
+        )
+        trace.record(
+            session.runId, "▶ 턴을 보낸다",
+            "$userInput\n지금 시나리오 ${currentScenarios.size}개를 함께 보여 준다",
         )
         val result = session.outbound.tryEmitNext(json)
         if (result.isFailure) {
@@ -858,6 +1041,10 @@ class TestScenarioAgentService(
         try {
             val node = objectMapper.readTree(payloadText)
             val session = sessions[sessionKey]
+            // **무엇을 듣든 살아 있다는 뜻이다**(ARTEL-632). 시한은 이 시각을 기준으로 잰다 —
+            // 도구를 마흔 번 부르며 일하는 턴을 "멎었다"고 말하면 안 된다.
+            session?.lastHeard = System.currentTimeMillis()
+            session?.let { traceInbound(it, node, payloadText) }
             if (node.path("type").asText() == "uncovered_cases") {
                 if (session == null) {
                     logger.warn("uncovered_cases를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
@@ -921,7 +1108,7 @@ class TestScenarioAgentService(
                         saveMessage(session.runId, session.appUserId, "ASSISTANT", event.message ?: "")
                         // 모델이 스스로 물은 것도 같은 모양으로 나간다 — 화면이 두 벌을 그릴
                         // 이유가 없고, 답이 돌아오는 길도 하나여야 한다.
-                        fromAgent(event.question)?.let { ask(sessionKey, session, it) }
+                        fromAgent(event.question)?.let { ask(sessionKey, session, listOf(it)) }
                     } catch (err: CancellationException) {
                         throw err
                     } catch (err: Exception) {
@@ -1109,13 +1296,31 @@ class TestScenarioAgentService(
      *
      * 세션에 하나만 매단다. 여러 개를 쌓으면 사용자는 어느 것에 답한 것인지 말해 줄 방법이 없다.
      */
-    private suspend fun ask(sessionKey: String, session: AgentSession, question: ScenarioQuestion) {
-        session.question = question
-        saveMessage(session.runId, session.appUserId, "ASSISTANT", question.text, question.payload())
-        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "question", question = question))
+    /**
+     * **모르는 자리를 한 번에 낸다**(ARTEL-630).
+     *
+     * 앞서는 하나만 물었다. 막힌 자리가 여럿이면 나머지는 아무 말 없이 미상으로 남고, 사용자는
+     * 시나리오가 완성된 줄 안다 — 실측(런 178)에서 못 간다고 적은 자리가 일곱인데 물은 것은
+     * 하나였다. 한 번에 보여 주면 아는 것만 답하고 나머지는 그대로 둘 수 있다.
+     *
+     * 대화에는 **첫 질문만** 한 줄로 남긴다. 일곱 줄이 붙으면 대화가 질문지에 묻히고, 목록은
+     * 화면이 한 자리에서 그릴 것이라 대화에 되풀이할 이유가 없다.
+     *
+     * [AgentSession.question] 도 첫 것을 문다 — 답을 받아 다음 턴에 넘기는 경로가 하나짜리다.
+     * 나머지에 답하는 길은 화면이 그 id 로 보내는 것이고, 그 자리는 아직 없다.
+     */
+    private suspend fun ask(sessionKey: String, session: AgentSession, questions: List<ScenarioQuestion>) {
+        val first = questions.firstOrNull() ?: return
+        session.question = first
+        session.asked = questions.map { it.id }
+        saveMessage(session.runId, session.appUserId, "ASSISTANT", first.text, ScenarioQuestion.batchPayload(questions))
+        streamManager.emit(
+            sessionKey,
+            ScenarioStreamEvent(type = "question", question = first, questions = questions),
+        )
         logger.info(
-            "되물음 [sessionKey={}, id={}, 보기={}건, 출처={}]",
-            sessionKey, question.id, question.options.size, question.source,
+            "되물음 [sessionKey={}, {}건, 첫 id={}, 출처={}]",
+            sessionKey, questions.size, first.id, first.source,
         )
     }
 
@@ -1151,6 +1356,18 @@ class TestScenarioAgentService(
          */
         @Volatile var question: ScenarioQuestion? = null,
         /**
+         * 에이전트에게서 **마지막으로 무언가 들은 때**(ARTEL-632). 시한은 이것을 기준으로 잰다 —
+         * 재는 것은 "죽었나"이지 "느린가"가 아니다.
+         */
+        @Volatile var lastHeard: Long = System.currentTimeMillis(),
+        /**
+         * 이번에 **함께 낸 질문들의 id**(ARTEL-630).
+         *
+         * 거절은 묶음 전체를 덮는다 — 한 번에 다 보여 준 뒤 "그대로 두기"를 누른 것이므로, 다음
+         * 턴에 같은 묶음의 다른 질문을 내면 같은 것을 또 묻는 셈이다.
+         */
+        @Volatile var asked: List<String> = emptyList(),
+        /**
          * 마지막으로 사용자에게 알린 미커버 건수. 같은 수를 두 번 말하지 않기 위한 값이다 —
          * 좁은 작업을 이어가는 대화에서 매 턴 같은 줄이 붙으면 읽히지 않는다.
          */
@@ -1162,6 +1379,11 @@ class TestScenarioAgentService(
          * 아무 소식도 없는지(멎었다고 말해 준다).
          */
         @Volatile var watchdog: Job? = null,
+        /**
+         * 이 판에서 에이전트가 답을 낸 횟수(ARTEL-650). 기록의 첨부 파일 이름을 가른다 — 한 판에
+         * 답이 여럿 나오고(재작성), 그 둘을 나란히 놓고 보는 것이 이 기록의 쓸모다.
+         */
+        @Volatile var answers: Int = 0,
     ) {
         val busy: Boolean get() = watchdog?.isActive == true
     }
@@ -1195,7 +1417,6 @@ class TestScenarioAgentService(
         private const val MAX_REPAIR_ATTEMPTS = 1
 
         /** 남은 씬을 몇 개까지 나열할지. 나머지는 "외 N개 씬"으로 접는다. */
-        private const val MAX_SCENES_IN_RECOMMENDATION = 3
 
         /**
          * 답을 얼마나 기다릴지(ARTEL-510).

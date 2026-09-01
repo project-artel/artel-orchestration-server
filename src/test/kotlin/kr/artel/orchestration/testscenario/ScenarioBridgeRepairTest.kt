@@ -69,6 +69,39 @@ class ScenarioBridgeRepairTest {
         assertThat(repaired.notices).isEmpty()
     }
 
+    /**
+     * **이미 케이스로 있는 조작은 그 케이스로 적는다**(ARTEL-674).
+     *
+     * 실측(런 254)에서 끼운 31개 중 24개가 이미 이 프로젝트의 케이스였다. `지도에서 Return 을
+     * 누른다`(케이스 1921) 하나가 이름 없는 걸음으로 **열 번** 다시 적혔다. 그렇게 적으면
+     * 커버리지는 안 오르고 스텝만 늘며, 그 걸음이 무엇을 요구하고 무엇을 바꾸는지도 잃는다.
+     */
+    @Test
+    fun `이미 케이스로 있는 조작은 그 케이스로 적는다`() {
+        val repaired = ScenarioBridgeRepair.apply(
+            listOf(verify(1), verify(2)),
+            mapOf(0 to known(11L to "Return 키를 누른다")),
+            caseOf = { capabilityId -> if (capabilityId == 11L) 1921L else null },
+        )
+
+        assertThat(repaired.steps.map { it.caseId }).containsExactly(1L, 1921L, 2L)
+        assertThat(repaired.steps[1].stepSourceCapabilityId).isEqualTo(11L)
+        // `case_id` 가 있으면 근거는 CASE 여야 한다 — 어기면 근거 없는 스텝으로 걸린다(런 257).
+        assertThat(repaired.steps[1].stepSource).isEqualTo(ScenarioStepSource.CASE)
+    }
+
+    /** 케이스가 없는 조작은 예전 그대로 이름 없는 걸음이다. */
+    @Test
+    fun `케이스가 없는 조작은 이름 없이 남는다`() {
+        val repaired = ScenarioBridgeRepair.apply(
+            listOf(verify(1), verify(2)),
+            mapOf(0 to known(11L to "Return 키를 누른다")),
+            caseOf = { null },
+        )
+
+        assertThat(repaired.steps.map { it.caseId }).containsExactly(1L, null, 2L)
+    }
+
     @Test
     fun `사람이 쓴 문장은 살리고 근거만 얹는다`() {
         // 문장을 계산값으로 갈아치우면 무엇을 하려는 스텝인지 읽을 수 없게 된다.
@@ -151,6 +184,36 @@ class ScenarioBridgeRepairTest {
         assertThat(repaired.steps[1].action)
             .contains("경로를 확인할 수 없습니다")
             .contains("스텝으로 채웁니다")
+    }
+
+    /**
+     * **제자리로 돌아오는 고리는 시키지 않는다**(ARTEL-686).
+     *
+     * 실측(런 270): 클리어 화면의 두 케이스 사이에 `클리어 화면 → 지도`, `지도 → 전투` 가
+     * 끼워지고 그 뒤에 "확인할 수 없습니다"가 그대로 남았다. 읽는 사람에게는 **4스테이지를 두 번
+     * 클리어하라**는 지시가 된다 — 끼우고도 모른다고 적은 셈이다.
+     *
+     * 두 끝이 같은 화면이면 그 조작들은 어디로 데려가는 것이 아니라 나갔다가 돌아오는 고리다.
+     * 값은 시켜서 오르지 않으므로, 반쯤 시키는 대신 통째로 묻는다.
+     */
+    @Test
+    fun `같은 화면으로 돌아오는 고리는 조작을 안 적고 묻는다`() {
+        val repaired = ScenarioBridgeRepair.apply(
+            listOf(verify(1), verify(2)),
+            mapOf(
+                0 to ScenarioPathAnswer(
+                    ScenarioPathResult.UNKNOWN,
+                    capabilityIds = listOf(11L, 12L),
+                    actions = listOf("any 키를 누른다 (Clear → Map)", "Return 키를 누른다 (Map → Battle)"),
+                    blockedBy = "stagePosition",
+                )
+            ),
+            sceneOf = { "GameClearScene" },
+        )
+
+        assertThat(repaired.steps.map { it.stepKind }).containsExactly(
+            ScenarioStepKind.ACTION, ScenarioStepKind.GAP, ScenarioStepKind.ACTION,
+        )
     }
 
     @Test

@@ -1,6 +1,12 @@
 package kr.artel.orchestration.testcase.repository
 
 import kotlinx.coroutines.flow.Flow
+import kr.artel.orchestration.testcase.dto.CapabilityCase
+import kr.artel.orchestration.testcase.dto.CaseWrite
+import kr.artel.orchestration.testcase.dto.SceneExitRow
+import kr.artel.orchestration.testcase.dto.ValueMoveRow
+import kr.artel.orchestration.testcase.dto.StartingValue
+import kr.artel.orchestration.testcase.dto.ValueRaiser
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
@@ -49,8 +55,13 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      *
      * 저작 결과를 검사하는 두 기준이 이 집합이다: 판정이 전량을 덮었는지, 스텝이 지목한 번호가
      * 실재하는지. 본문은 필요 없어서 id만 읽는다 — 1000건이라도 한 컬럼이다.
+     *
+     * **깨진 것은 뺀다**(ARTEL-685). 지도를 다시 적재하면 더 이상 뒷받침되지 않는 케이스가
+     * `BROKEN` 으로 남는다 — 지우지 않는 것은 무엇이 사라졌는지 보이게 하려는 것이다. 그런데 그것을
+     * 덮으라고 요구하면 **저작이 영영 통과하지 못한다**: 실측(런 266)에서 지도가 더 이상 내지 않는
+     * `Return` 케이스를 안 담았다고 저장이 막혔다. 담을 수도 없다 — 그 조작은 지도에 없다.
      */
-    @Query("SELECT id FROM test_case WHERE project_id = :projectId")
+    @Query("SELECT id FROM test_case WHERE project_id = :projectId AND verification_status <> 'BROKEN'")
     fun findIdsByProjectId(projectId: Long): Flow<Long>
 
     /**
@@ -161,4 +172,299 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      * S3에 올릴 이유가 없다. 한 건이라도 그 revision이면 같은 판이 이미 반영된 것이다.
      */
     suspend fun existsByProjectIdAndSpecRevision(projectId: Long, specRevision: Int): Boolean
+
+    /**
+     * 시나리오가 스텝에 번호로 들고 있는 케이스들(ARTEL-578).
+     *
+     * 시나리오는 `test_scenario.steps` JSONB 안에 `case_id` 를 숫자로 담는다 — 외래 키가 아니라서
+     * 케이스를 지워도 DB 가 막지 않고, 시나리오에 **가리키는 것이 없는 번호**만 남는다.
+     *
+     * 지도에서 사라진 기능의 케이스를 지울 때 이것을 먼저 본다. 인용된 줄은 지우는 대신 `BROKEN` 으로
+     * 돌려, 시나리오가 상했다는 것을 사람이 보게 한다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT (step->>'case_id')::BIGINT AS id
+        FROM test_scenario
+        CROSS JOIN LATERAL jsonb_array_elements(steps) AS step
+        WHERE project_id = :projectId
+          AND jsonb_typeof(steps) = 'array'
+          AND step->>'case_id' IS NOT NULL
+        """
+    )
+    fun findCaseIdsCitedByScenarios(projectId: Long): Flow<Long>
+
+    /**
+     * 이 프로젝트의 케이스들이 **바꾸는 값**(ARTEL-581).
+     *
+     * 두 곳이 읽는다 — 나눔이 순서를 알 때(ARTEL-581)와, 저작에 "이 케이스를 실행하면 무엇이
+     * 바뀌나"를 말할 때(ARTEL-606). 같은 사실이라 질의도 하나다.
+     *
+     * 나눔이 순서를 알려면 필요하다 — 앞 스텝이 바꾼 값을 뒤 스텝이 전제로 삼는 것은 모순이 아니다.
+     * 케이스 메타의 `state_after` 로는 답이 안 된다. 그것은 구버전 엑셀 경로가 넣던 칸이라 지도가
+     * 낸 케이스에는 없다.
+     *
+     * **`kind = 'write'` 만 본다.** `transform` 은 화면 위의 좌표(`character.transform.position`)라
+     * 논리 값(`MapMove.position`)이 아닌데, 꼬리로 견주면 둘이 `position` 에서 만나 서로 다른 값을
+     * 하나로 뭉갠다. 실제로 그 둘이 한 기능에 나란히 달려 있다.
+     *
+     * 지도를 못 되짚는 케이스(`capability_key` 가 `NULL` 인 구버전 행)는 여기 안 나온다. 그때는
+     * 바꾸는 것을 모르는 것이고, 모르면 예전처럼 나눈다.
+     */
+    @Query(
+        """
+        SELECT tc.id AS case_id, ce.target AS target, ce.detail AS detail
+        FROM test_case tc
+        JOIN capability c ON c.capability_key = tc.capability_key
+        JOIN scene s ON s.id = c.scene_id
+        JOIN content_map cm ON cm.id = s.content_map_id
+        JOIN game_build gb ON gb.id = cm.game_build_id AND gb.project_id = tc.project_id
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind = 'write'
+        WHERE tc.project_id = :projectId
+          AND tc.capability_key IS NOT NULL
+          AND ce.target IS NOT NULL
+          AND c.merged_into IS NULL
+        """
+    )
+    fun findValuesChangedByCases(projectId: Long): Flow<CaseWrite>
+
+    /**
+     * **화면에서 화면으로 가는 한 걸음, 그리고 무엇을 눌러야 가는지**(ARTEL-628).
+     *
+     * 지도는 이미 답을 안다. 저작에 안 보내고 있었을 뿐이다:
+     *
+     * ```
+     * Map_scene      → TurnBattleScene   Return
+     * Map_scene      → TitleScene        Canvas/Button (Legacy)
+     * TitleScene     → Map_scene         Canvas/MapSceneButton
+     * GameClearScene → Map_scene         any
+     * StoryScene     → Map_scene         (없음 — 저절로 간다)
+     * ```
+     *
+     * **`by` 가 비는 것도 답이다.** 실측 19간선 중 12건이 `not-a-step` 이고, 그건 게임이 알아서
+     * 넘기는 자리라는 뜻이다 — 누를 것을 찾아 헤맬 필요가 없다는 정보다. 못 찾은 것과 없는 것을
+     * 섞지 않으려고, 기능이 매달려 있는데 조작이 없는 경우만 빈 값으로 답한다.
+     *
+     * 키가 먼저고 라벨·경로가 그다음이다. 실행하는 쪽이 그대로 보낼 수 있는 것이 키이기 때문이다.
+     *
+     * 지도를 먼저 하나로 고르고 나서 간선을 훑는다 — `test_case` 를 바깥에 두면 케이스 한 줄마다
+     * 간선 전체가 딸려 와 행이 곱으로 분다([findWrittenValues] 에 실측이 있다).
+     */
+    @Query(
+        """
+        SELECT DISTINCT s.name AS from_scene,
+               e.to_scene_name AS to_scene,
+               coalesce(c.input_key, c.control_label, c.control_path) AS by_operation
+        FROM scene s
+        JOIN scene_edge e ON e.from_scene_id = s.id
+        LEFT JOIN capability c ON c.id = e.capability_id
+          AND c.interaction <> 'none'
+          AND c.actionability NOT IN ('not-a-step', 'unreachable-precondition')
+        WHERE s.content_map_id IN (
+            SELECT DISTINCT s2.content_map_id
+            FROM test_case tc
+            JOIN capability c2 ON c2.capability_key = tc.capability_key
+            JOIN scene s2 ON s2.id = c2.scene_id
+            WHERE tc.project_id = :projectId
+        )
+        """
+    )
+    fun findSceneExits(projectId: Long): Flow<SceneExitRow>
+
+    /**
+     * **지도 안에서 움직이는 값들**(ARTEL-625).
+     *
+     * [findValuesChangedByCases] 는 **케이스가 된 기능**만 본다. 그래서 게임이 스스로 움직이는 값이
+     * 영영 안 바뀌는 것으로 보이고, 그 값을 두고 갈리는 갈래들이 전부 따로 잘린다 — 실측(프로젝트
+     * 24)에서 맵의 `Return` 케이스가 그랬다. `MapMove.StagePosition` 을 올리는 것은 전투를 이기는
+     * 일이라 어떤 케이스도 안 쓰고, 그래서 20스텝짜리 하나에서 1스텝짜리 셋이 떨어져 나왔다.
+     *
+     * 한 순간만 보면 `== 1` 과 `== 2` 는 함께 못 선다. 시간 위에서는 이겨서 올라가는 계단이다.
+     *
+     * **`active-state` 도 본다.** 무엇이 켜지고 꺼지는 것도 시간 위에서 움직이는 값이고 사전조건이
+     * 실제로 그것을 건다. 보기만 하는 종류(`ui-value` · `transform` · `scene` · `audio`)는 안 본다 —
+     * 그것들은 무엇이 보이나이지 걸어 둘 수 있는 값이 아니라, 꼬리만 맞으면 아무 관측이나 걸린다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT ce.target
+        FROM scene s
+        JOIN capability c ON c.scene_id = s.id AND c.merged_into IS NULL
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind IN ('write', 'active-state')
+        WHERE ce.target IS NOT NULL
+          AND s.content_map_id IN (
+              SELECT DISTINCT s2.content_map_id
+              FROM test_case tc
+              JOIN capability c2 ON c2.capability_key = tc.capability_key
+              JOIN scene s2 ON s2.id = c2.scene_id
+              WHERE tc.project_id = :projectId
+          )
+        """
+    )
+    fun findWrittenValues(projectId: Long): Flow<String>
+
+    /**
+     * **그 값이 어느 화면에서 움직이나**(ARTEL-635).
+     *
+     * 저작이 받는 전제는 서로 똑같이 생겼다 — `position == 0` 과 `StagePosition >= 1` 은 한 줄로는
+     * 구별되지 않는다. 그런데 앞엣것은 방향키 한 번이고 뒤엣것은 **전투를 이겨야** 오른다.
+     *
+     * 그 차이를 지도는 안다(`TurnBattleScene` 의 `+1`). 안 보내고 있었을 뿐이고, 그래서 실측
+     * (런 184)에서 저작이 스테이지를 안 깬 채로 지도를 활보하는 시나리오를 냈다 — 첫 스텝이
+     * `>= 1` 을 요구하는데 그 값을 올리는 전투 진입은 **마지막 스텝**이었다. 순환이다.
+     *
+     * `+1` 같은 증감만 본다. 확정값(`0`)은 되돌리는 것이지 진행이 아니고, 그것까지 "여기서
+     * 오른다"고 말하면 타이틀 화면이 모든 값의 출처가 된다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT ce.target AS target, s.name AS scene
+        FROM scene s
+        JOIN capability c ON c.scene_id = s.id AND c.merged_into IS NULL
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind = 'write'
+        WHERE ce.target IS NOT NULL
+          AND ce.detail ~ '^[+-][0-9]'
+          AND s.content_map_id IN (
+              SELECT DISTINCT s2.content_map_id
+              FROM test_case tc
+              JOIN capability c2 ON c2.capability_key = tc.capability_key
+              JOIN scene s2 ON s2.id = c2.scene_id
+              WHERE tc.project_id = :projectId
+          )
+        """
+    )
+    fun findValueRaisers(projectId: Long): Flow<ValueRaiser>
+
+    /**
+     * **게임을 켜면 열리는 화면**(ARTEL-659). 이 프로젝트의 지도가 그렇게 적어 둔 씬이다.
+     *
+     * 씬 그래프는 순환이라 입구를 구조로는 알 수 없다 — 모든 씬이 서로 닿는다. 적재기가 빌드에서
+     * 읽어 적어 두고(`scene.is_entry`), 저작은 그것만 읽는다.
+     *
+     * **지도 범위는 빌드 소속으로 좁힌다.** 케이스의 `capability_key` 로 되짚으면 안 된다 — 그 키는
+     * 내용 해시라 같은 게임을 여러 번 적재한 지도가 전부 걸린다. 실측(로컬)에서 프로젝트 24 로
+     * 되짚으니 지도 일곱 개가 나왔고, 같은 게임이라 내용이 같아 **틀린 줄 몰랐다.** 두 프로젝트가
+     * 같은 게임을 등록하면 서로의 지도를 읽게 된다.
+     *
+     * 가장 최근 지도를 본다 — 경로 조회(`ScenarioPathService.contentMapIdOf`)와 같은 규칙이다.
+     */
+    @Query(
+        """
+        SELECT s.name FROM scene s
+        JOIN content_map cm ON cm.id = s.content_map_id
+        JOIN game_build b ON b.id = cm.game_build_id
+        WHERE s.is_entry AND b.project_id = :projectId
+        ORDER BY cm.id DESC
+        LIMIT 1
+        """
+    )
+    suspend fun findEntrySceneName(projectId: Long): String?
+
+    /**
+     * **게임을 켜면 값이 무엇으로 시작하나**(ARTEL-665).
+     *
+     * 입구 화면이 저장소에서 값을 읽을 때 **없으면 쓸 기본값**을 함께 적어 둔다:
+     *
+     * ```
+     * PlayerPrefs.GetInt("StagePosition", -1)
+     *                                     ↑ 저장 데이터가 없을 때의 값
+     * ```
+     *
+     * 이것을 안 읽으면 흐름 계산이 **첫 상태를 모른 채** 출발한다. 그러면 어느 쪽이 진행인지도
+     * 모르고, 실측(런 239)에서 지도 흐름이 진행도 5 → 4 → 3 → 2 로 **거꾸로** 놓였다 —
+     * `>= 4` 는 5에서도 참이라 논리적으로 어긋나지 않지만, 실행하는 사람은 보스 앞에서 시작해
+     * 뒤로 걸어 나온다.
+     *
+     * 기본값을 깔면 `fits` 가 알아서 막는다 — `-1` 에서 `>= 4` 는 안 맞으니 그 값을 올리는 자리를
+     * 지나기 전에는 못 놓는다.
+     *
+     * 입구 화면의 것만 본다. 다른 화면에서 읽는 것은 그때까지 게임이 해 온 것이 반영된 값이라
+     * "처음"이 아니다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT regexp_replace(e.target, '^.*\.', '') AS name, e.detail AS detail
+        FROM capability_effect e
+        JOIN capability c ON c.id = e.capability_id AND c.merged_into IS NULL
+        JOIN scene s ON s.id = c.scene_id AND s.is_entry
+        JOIN content_map cm ON cm.id = s.content_map_id
+        JOIN game_build b ON b.id = cm.game_build_id
+        WHERE b.project_id = :projectId
+          AND e.target IS NOT NULL
+          AND e.detail ~ 'Get(Int|Float|String|Bool)\('
+        """
+    )
+    fun findStartingValues(projectId: Long): Flow<StartingValue>
+
+    /**
+     * **이 값을 무엇이 어떤 조건에서 바꾸나**(ARTEL-646).
+     *
+     * [findValueRaisers] 는 화면 이름 하나만 답한다. 그것만으로는 `position == 0`(방향키 한 번)과
+     * `StagePosition >= 1`(전투를 이겨야 함)이 저작에게 똑같이 보인다 — 실측(런 203)에서 저작이
+     * 전투를 한 번도 안 끼운 채 스테이지를 훑는 시나리오를 냈다.
+     *
+     * 지도는 그 답을 통째로 안다. 같은 자리에 네 가지가 함께 적혀 있다:
+     *
+     * ```
+     * StagePosition  TurnBattleScene  +1  못 시킴(not-a-step)  wave >= 전체 웨이브 수
+     * position       Map_scene        +1  RightArrow           StagePosition >= 2 · position == 1
+     * ```
+     *
+     * 두 번째 줄이 사용자가 말한 "천장과 커서"의 관계다 — **커서를 앞으로 미는 조작 자체가 천장을
+     * 요구한다.** 그 관계는 지어낸 것이 아니라 조작의 조건에 적혀 있다.
+     *
+     * `kind = 'write'` 만 본다. `saved` 는 값을 어딘가에 적어 두는 것이지 바꾸는 것이 아니고,
+     * 표시(`ui-value`)나 좌표(`transform`)는 이 질문의 답이 아니다.
+     *
+     * 증감만 보지 않는다 — [findValueRaisers] 와 다른 점이다. `0` 으로 되돌리는 것도 "무엇이 이 값을
+     * 만드나"의 답이고, 되돌린다는 사실 자체가 저작이 알아야 할 것이다.
+     *
+     * 지도를 먼저 하나로 고르고 나서 훑는다. `test_case` 를 바깥에 두면 케이스 한 줄마다 효과
+     * 전체가 딸려 와 행이 곱으로 분다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT ce.target AS target,
+               s.name AS scene,
+               ce.detail AS detail,
+               c.actionability AS actionability,
+               coalesce(c.input_key, c.control_path, c.control_label) AS operation,
+               c.interaction AS interaction,
+               e.condition_tree AS condition_tree
+        FROM scene s
+        JOIN capability c ON c.scene_id = s.id AND c.merged_into IS NULL
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind = 'write'
+        LEFT JOIN capability_evidence e ON e.capability_id = c.id
+        WHERE ce.target IS NOT NULL
+          AND s.content_map_id IN (
+              SELECT DISTINCT s2.content_map_id
+              FROM test_case tc
+              JOIN capability c2 ON c2.capability_key = tc.capability_key
+              JOIN scene s2 ON s2.id = c2.scene_id
+              WHERE tc.project_id = :projectId
+          )
+        ORDER BY 1, 2
+        """
+    )
+    fun findValueMoves(projectId: Long): Flow<ValueMoveRow>
+
+    /**
+     * **이 기능이 이미 케이스로 있나**(ARTEL-674).
+     *
+     * 빈 구간을 메울 때 쓴다. 메우는 조작은 대개 이 프로젝트가 이미 케이스로 들고 있는 것이라
+     * (실측: 끼운 31개 중 24개), 이름 없는 걸음으로 다시 쓰면 커버리지는 안 오르고 스텝만 늘며
+     * 그 걸음의 전제와 효과도 잃는다.
+     *
+     * 케이스 쪽을 프로젝트로 좁히므로, 같은 게임을 여러 번 적재한 지도의 기능이 함께 걸려도
+     * 답은 이 프로젝트의 케이스다.
+     */
+    @Query(
+        """
+        SELECT c.id AS capability_id, tc.id AS test_case_id
+        FROM test_case tc
+        JOIN capability c ON c.capability_key = tc.capability_key AND c.merged_into IS NULL
+        WHERE tc.project_id = :projectId AND tc.capability_key IS NOT NULL
+        """
+    )
+    fun findCaseIdByCapability(projectId: Long): Flow<CapabilityCase>
 }

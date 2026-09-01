@@ -343,6 +343,465 @@ class ScenarioPathServiceTest {
         assertThat(answer.note).contains("명세에 없다").doesNotContain("저절로")
     }
 
+    // ---- 저절로 바뀌는 값 (ARTEL-637) ------------------------------------------------
+
+    /**
+     * **값을 모른다고 넘기면 전투가 한 번도 안 끼워진다**(런 187, TS 528).
+     *
+     * 저절로 바뀌는 값은 어떤 케이스의 `state_after` 에도 적히지 않는다 — 조작이 쓰는 값이 아니라서다.
+     * 그래서 늘 "모르는 값"이었고 늘 넘어갔다. 실측에서 나온 시나리오가 이 모양이다:
+     *
+     * ```
+     * 스텝 2   StagePosition >= 1 요구
+     * 스텝 4   StagePosition >= 2 요구      ← 사이에 전투가 없다
+     * ```
+     *
+     * 사이를 메우는 일 자체는 제대로 돌고 있었다(`position` 브리지는 다섯 개나 들어갔다). 이 자리가
+     * **메울 곳으로 세어지지 않았을** 뿐이다.
+     */
+    @Test
+    fun `값을 몰라도 저절로 바뀌는 값이면 메울 자리로 센다`(): Unit = runBlocking {
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+
+        // `>=` 는 값을 정해 주지 않는다 — 그래서 이 자리가 늘 "모르는 값"이었다.
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 2")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.blockedBy).isEqualTo("StagePosition")
+        // 어디서 일어나는지를 댄다. 그 이름이 곧 실행하는 쪽이 찾아갈 자리다.
+        assertThat(answer.note).contains("TurnBattleScene").contains("저절로")
+    }
+
+    /**
+     * **아는 절반은 스텝으로 낸다.** 값을 올리는 일 자체는 못 시켜도 **그 화면까지 가는 길**은
+     * 지도에 있다. 전부 미상으로 답하면 아는 것까지 버리는 셈이고, 실행하는 쪽은 맵에서 무엇을
+     * 눌러야 전투에 들어가는지조차 스스로 찾아야 한다.
+     */
+    @Test
+    fun `저절로 바뀌는 화면까지 가는 길은 스텝으로 낸다`(): Unit = runBlocking {
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+        val enter = capability(mapSceneId, interaction = "press", inputKey = "Return")
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 2")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.capabilityIds).containsExactly(enter)
+        assertThat(answer.inputs).containsExactly("key:Return")
+        assertThat(answer.note).contains("길은 스텝으로 넣었다")
+    }
+
+    /**
+     * **모르는 값을 전부 자리로 세지는 않는다.** 지도가 그 값을 쓰는 곳을 하나도 모르면 앞 스텝이
+     * 만들었을 수 있고, 그것까지 막으면 될 것을 못 하게 한다.
+     *
+     * 실측(지도 26)에서 `InteractionLock.IsLocked` 가 전제에 22번 나오는데 그 값을 쓰는 기능은
+     * 지도에 하나도 없다. 이런 것까지 세면 저작이 온통 미상으로 덮인다.
+     */
+    @Test
+    fun `쓰는 곳을 모르는 값은 그대로 넘긴다`(): Unit = runBlocking {
+        val a = case("Map_scene", "Map_scene 화면인 상태")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / InteractionLock.IsLocked == 0")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.NOT_REQUIRED)
+    }
+
+    /**
+     * **기호 값은 아무 요구나 만족시키지 않는다**(런 188).
+     *
+     * 지도에 `saved StagePosition = MapMove.StagePosition` 이 있다. `detail` 이 숫자가 아니라
+     * 무엇이 될지 모르는 값인데, 위반 판정 규칙(`읽을 수 없으면 위반이 아니다`)을 그대로 쓰면
+     * `>= 2` 를 **만족시킨다**고 읽힌다. 그러면 전투가 필요한 자리가 "지도의 어떤 클릭이 이미
+     * 만들어 준다"로 답해지고, 저작은 전투를 한 번도 안 끼운 시나리오를 낸다.
+     *
+     * 위반은 모르면 아니라고 하는 것이 맞고, **만든다는 것은 모르면 아니라고 해야 한다.** 방향이
+     * 반대다.
+     */
+    @Test
+    fun `무엇이 될지 모르는 값을 쓰는 조작은 길로 치지 않는다`(): Unit = runBlocking {
+        val save = capability(mapSceneId, interaction = "click", label = "저장")
+        effect(save, target = "StagePosition", detail = "MapMove.StagePosition")
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+
+        val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 1")
+        val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 2")
+
+        val answer = service.findPath(projectId, userId, a, b)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.capabilityIds).doesNotContain(save)
+        assertThat(answer.note).contains("TurnBattleScene")
+    }
+
+    /**
+     * **올리라는 요구에 내리는 조작을 집지 않는다**(ARTEL-649).
+     *
+     * 실측(런 213)에서 `StagePosition >= 1 → >= 2` 가 `KNOWN` 으로 답해졌다. 전제가 `>=` 라
+     * 지금 값이 확정되지 않는데, 방향을 지금 값에서만 읽던 탓에 "방향을 모르니 있는 증감을
+     * 쓴다"로 떨어졌고 타이틀의 `-1` 을 쓰는 버튼이 뽑혔다. 부등호는 지금 값을 몰라도 방향을
+     * 안다 — 그것을 안 보면 전투가 필요한 자리가 클릭 한 번으로 답해진다.
+     */
+    @Test
+    fun `부등호는 지금 값을 몰라도 올리는 쪽을 고른다`(): Unit = runBlocking {
+        val reset = capability(mapSceneId, interaction = "click", label = "새 게임")
+        effect(reset, target = "MapMove.StagePosition", detail = "-1")
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 1"),
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 2"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.capabilityIds).doesNotContain(reset)
+        assertThat(answer.blockedBy).isEqualTo("StagePosition")
+        // 지도가 어디서 오르는지 대고 있으므로 **게임을 하는 사람은 지나간다**(ARTEL-655).
+        assertThat(answer.playable).isTrue()
+    }
+
+    /** 아무 데서도 안 바뀌는 값은 거쳐 갈 수도 없다 — 그건 정말 못 가는 자리다. */
+    @Test
+    fun `아무 데서도 안 바뀌는 값은 거쳐 갈 수 있다고 하지 않는다`(): Unit = runBlocking {
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.knock == 1"),
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.knock == 2"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.playable).isFalse()
+        assertThat(answer.note).contains("명세에 없다")
+    }
+
+    /**
+     * **다른 이름을 옮겨 적은 쓰기는 화면을 짚을 근거가 못 된다**(ARTEL-649).
+     *
+     * 실측(런 214)에서 `StagePosition` 의 오름을 `TurnBattleScene · Map_scene 에서 저절로
+     * 바뀐다`고 답했다. 맵 쪽은 `SelectStage()` 가 지역 이름을 옮겨 적은 것이라 값을 올리지
+     * 않는데, 지금 서 있는 화면이 목록에 들어가는 바람에 전투까지 가는 길을 스텝으로 내지 못했다.
+     */
+    @Test
+    fun `값이 무엇이 되는지 말하지 않는 쓰기는 그 화면을 짚지 않는다`(): Unit = runBlocking {
+        val here = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = mapSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "지역 이름을 옮겨 적는다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(here, target = "MapMove.StagePosition", detail = "stagePosition")
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 1"),
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition >= 2"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.note).contains("TurnBattleScene").doesNotContain("Map_scene")
+    }
+
+    /**
+     * **갈래 양쪽은 한 흐름에 못 선다**(ARTEL-651).
+     *
+     * 실측(런 216)에서 `StagePosition != 5` 다음에 `== 5` 를 묻자 `NOT_REQUIRED` 가 나왔다 —
+     * 어디서 출발하는지 모르는데 타이틀의 `-1` 버튼이 그 값을 만든다고 읽혔다. 저작은 그 답을
+     * 믿고 갈래 양쪽을 나란히 담았고, 그 조합은 어떤 스텝으로도 성립하지 않는다.
+     */
+    @Test
+    fun `어디서 출발하는지 모르면 증감으로 값을 맞췄다고 하지 않는다`(): Unit = runBlocking {
+        val reset = capability(mapSceneId, interaction = "click", label = "새 게임")
+        effect(reset, target = "MapMove.StagePosition", detail = "-1")
+        val wave = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 오른다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        effect(wave, target = "MapMove.StagePosition", detail = "+1")
+
+        val answer = service.findPath(
+            projectId, userId,
+            // `!=` 는 값을 확정하지 않는다 — 그래서 다음 자리의 출발점을 모른다.
+            case("EndingScene", "EndingScene 화면인 상태 / MapMove.StagePosition != 5"),
+            case("EndingScene", "EndingScene 화면인 상태 / MapMove.StagePosition == 5"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.capabilityIds).doesNotContain(reset)
+        assertThat(answer.blockedBy).isEqualTo("StagePosition")
+    }
+
+    // ---- 화면을 거쳐 간다 -------------------------------------------------------------
+
+    /**
+     * **한 걸음으로 안 닿아도 거쳐 가면 닿는다**(ARTEL-653).
+     *
+     * 실측(지도 27)에서 `Map_scene → StoryScene` 은 직접 간선이 없고 타이틀을 거쳐 두 걸음이면
+     * 간다. 앞서는 "가는 조작이 명세에 없다"고 답했고, 짝 행렬에서 그것만 112칸이었다.
+     */
+    @Test
+    fun `직접 간선이 없어도 거쳐 갈 수 있으면 그 길을 낸다`(): Unit = runBlocking {
+        val storySceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "StoryScene", walked = true)
+        ).id!!
+        val titleSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "TitleScene", walked = true)
+        ).id!!
+        val toTitle = capability(mapSceneId, interaction = "click", label = "타이틀로")
+        edge(mapSceneId, titleSceneId, "TitleScene", toTitle)
+        val toStory = capability(titleSceneId, interaction = "click", label = "새 게임")
+        edge(titleSceneId, storySceneId, "StoryScene", toStory)
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태"),
+            case("StoryScene", "StoryScene 화면인 상태"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.capabilityIds).containsExactly(toTitle, toStory)
+        assertThat(answer.actions).hasSize(2)
+        assertThat(answer.actions[0]).contains("Map_scene → TitleScene")
+        assertThat(answer.actions[1]).contains("TitleScene → StoryScene")
+    }
+
+    /**
+     * **저절로 넘어가는 걸음은 안 섞는다.** 지시할 수 없는 걸음이 끼면 그 길은 스텝으로 낼 수
+     * 없다 — `TurnBattleScene → GameClearScene`(이겨야 한다)이 그렇다.
+     */
+    @Test
+    fun `가운데가 저절로 일어나는 길은 거쳐 갈 수 있다고 답한다`(): Unit = runBlocking {
+        val clearSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "GameClearScene", walked = true)
+        ).id!!
+        // 전투 → 결과 화면은 이겨야 넘어간다(조작 아님).
+        val won = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = battleSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "마지막 웨이브가 끝나면 넘어간다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        edge(battleSceneId, clearSceneId, "GameClearScene", won)
+        // 결과 화면에서 지도로는 누르면 간다.
+        val backToMap = capability(clearSceneId, interaction = "press", inputKey = "Return")
+        edge(clearSceneId, mapSceneId, "Map_scene", backToMap)
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("TurnBattleScene", "TurnBattleScene 화면인 상태"),
+            case("Map_scene", "Map_scene 화면인 상태"),
+        )
+
+        // 스텝으로는 못 낸다 — 이겨야 넘어간다.
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.capabilityIds).doesNotContain(backToMap)
+        // 그래도 **아예 길이 없는 것과는 다르다**(ARTEL-655). 게임을 하는 사람은 지나간다.
+        assertThat(answer.playable).isTrue()
+        assertThat(answer.blockedBy).isEqualTo("TurnBattleScene→GameClearScene")
+        assertThat(answer.note).contains("Return").contains("GameClearScene")
+    }
+
+    /** 간선 자체가 없으면 거쳐 갈 수도 없다 — 그건 여전히 아예 없는 것이다. */
+    @Test
+    fun `간선이 없으면 거쳐 갈 수 있다고 하지 않는다`(): Unit = runBlocking {
+        sceneRepository.save(SceneEntity(contentMapId = contentMapId, name = "GameOverScene", walked = true))
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태"),
+            case("GameOverScene", "GameOverScene 화면인 상태"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.playable).isFalse()
+    }
+
+    /**
+     * **화면을 넘기는 케이스 뒤에는 이미 그 화면에 서 있다**(ARTEL-654).
+     *
+     * 실측(지도 27)에서 엔딩·스토리는 씬 간선이 전부 "저절로 넘어간다"라 나가는 조작이 없는
+     * 것으로 읽히고, 그 화면에서 출발하는 칸이 짝 행렬에서 통째로 막혔다(642칸). 그런데 그
+     * 화면을 나가는 케이스가 있고, 그것을 실행한 뒤에는 나갈 길을 찾을 일이 아니다.
+     */
+    @Test
+    fun `케이스가 도착한 화면에서 출발한다`(): Unit = runBlocking {
+        val endingSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "EndingScene", walked = true)
+        ).id!!
+        // 엔딩에서 지도로는 저절로 넘어간다 — 시킬 수 있는 간선이 없다.
+        val auto = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = endingSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "대화가 끝나면 넘어간다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        edge(endingSceneId, mapSceneId, "Map_scene", auto)
+
+        val leaves = case("EndingScene", "EndingScene 화면인 상태", arrivesAt = "Map_scene")
+        val onMap = case("Map_scene", "Map_scene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, leaves, onMap)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.NOT_REQUIRED)
+    }
+
+    /**
+     * **화면을 넘겨도 그 케이스가 보장한 값은 들고 간다**(ARTEL-654).
+     *
+     * 버려 보고 되돌린 자리다(런 220). 버리면 "모른다"가 되고, 모르는 값은 그 값을 쓰는 조작이
+     * 하나라도 있으면 만들 수 있다고 읽힌다 — 진행도가 5인 채로 나온 뒤에 "5가 아니어야 한다"를
+     * 놓았는데 "아무것도 필요 없다"가 나왔고, 저작이 서로 부정하는 두 자리를 나란히 담았다.
+     */
+    @Test
+    fun `도착 화면으로 넘어가도 그 케이스가 보장한 값은 남는다`(): Unit = runBlocking {
+        val titleSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "TitleScene", walked = true)
+        ).id!!
+        val storySceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "StoryScene", walked = true)
+        ).id!!
+        val toStory = capability(titleSceneId, interaction = "click", label = "새 게임")
+        edge(titleSceneId, storySceneId, "StoryScene", toStory)
+        // 진행도를 0 으로 되돌리는 버튼은 있다 — 5 가 아니게 만들 수는 있다.
+        val reset = capability(titleSceneId, interaction = "click", label = "처음부터")
+        effect(reset, target = "MapMove.StagePosition", detail = "0")
+
+        val answer = service.findPath(
+            projectId, userId,
+            // 진행도 5 인 채로 타이틀에 나와 있다.
+            case("StoryScene", "StoryScene 화면인 상태 / MapMove.StagePosition == 5", arrivesAt = "TitleScene"),
+            case("StoryScene", "StoryScene 화면인 상태 / MapMove.StagePosition != 5"),
+        )
+
+        // 5 인 것을 알고 있으므로 그냥 이어진다고 답하지 않는다.
+        assertThat(answer.result).isNotEqualTo(ScenarioPathResult.NOT_REQUIRED)
+    }
+
+    /**
+     * **화면을 넘어도 저장되는 값은 남는다**(ARTEL-654).
+     *
+     * 앞서는 화면이 바뀌면 알던 값을 전부 버렸다. 지도가 `saved` 로 적어 둔 값이 있는데도 그랬고,
+     * 그래서 진행도가 5인 채로 화면을 나온 뒤 "5가 아니어야 한다"를 놓으면 "아무것도 필요 없다"가
+     * 나왔다 — 모르는 값은 그 값을 쓰는 조작이 하나라도 있으면 만들 수 있다고 읽히기 때문이다.
+     */
+    @Test
+    fun `화면을 넘어도 저장되는 값은 들고 간다`(): Unit = runBlocking {
+        val titleSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "TitleScene", walked = true)
+        ).id!!
+        val toTitle = capability(mapSceneId, interaction = "click", label = "타이틀로")
+        edge(mapSceneId, titleSceneId, "TitleScene", toTitle)
+        // 지도가 이 값은 저장된다고 말한다.
+        val save = capability(titleSceneId, interaction = "click", label = "저장")
+        effectRepository.save(
+            CapabilityEffectEntity(
+                capabilityId = save, category = "state", kind = "saved",
+                target = "StagePosition", detail = "MapMove.StagePosition", watchable = true,
+            )
+        )
+        // 진행도를 0 으로 되돌리는 버튼도 있다 — 5 가 아니게 만들 수는 있다.
+        val reset = capability(titleSceneId, interaction = "click", label = "처음부터")
+        effect(reset, target = "MapMove.StagePosition", detail = "0")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 5"),
+            case("TitleScene", "TitleScene 화면인 상태 / MapMove.StagePosition != 5"),
+        )
+
+        // 화면을 넘었지만 5 인 것은 안다. 되돌리는 조작이 필요하다.
+        assertThat(answer.capabilityIds).contains(reset)
+    }
+
+    /** 저장된다고 적히지 않은 값은 예전 그대로 — 화면을 넘으면 버린다. */
+    @Test
+    fun `저장된다고 적히지 않은 값은 화면을 넘으며 버린다`(): Unit = runBlocking {
+        val titleSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "TitleScene", walked = true)
+        ).id!!
+        val toTitle = capability(mapSceneId, interaction = "click", label = "타이틀로")
+        edge(mapSceneId, titleSceneId, "TitleScene", toTitle)
+        val reset = capability(titleSceneId, interaction = "click", label = "처음부터")
+        effect(reset, target = "MapMove.position", detail = "0")
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 5"),
+            case("TitleScene", "TitleScene 화면인 상태 / MapMove.position != 5"),
+        )
+
+        assertThat(answer.capabilityIds).containsExactly(toTitle)
+    }
+
+    /** 도착 화면을 안 적은 케이스는 예전 그대로 — 시작 화면에서 출발한다. */
+    @Test
+    fun `도착 화면이 없으면 시작 화면에서 출발한다`(): Unit = runBlocking {
+        val endingSceneId = sceneRepository.save(
+            SceneEntity(contentMapId = contentMapId, name = "EndingScene", walked = true)
+        ).id!!
+        val auto = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = endingSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "대화가 끝나면 넘어간다", interaction = "none", status = "not-a-step",
+            )
+        ).id!!
+        edge(endingSceneId, mapSceneId, "Map_scene", auto)
+
+        val answer = service.findPath(
+            projectId, userId,
+            case("EndingScene", "EndingScene 화면인 상태"),
+            case("Map_scene", "Map_scene 화면인 상태"),
+        )
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(answer.blockedBy).isEqualTo("EndingScene→Map_scene")
+    }
+
     // ---- 조작 자신의 사전조건 --------------------------------------------------------
 
     /**
@@ -684,6 +1143,97 @@ class ScenarioPathServiceTest {
         assertThat(answer.capabilityIds).containsExactly(enter)
     }
 
+    // ---- 케이스가 키로 지도를 되짚는다 (ARTEL-555) -------------------------------------
+
+    /**
+     * 지도에서 나온 케이스는 자기를 만든 기능의 키를 든다. **같은 키면 같은 기능이다.**
+     *
+     * 문자열 맞춤이 통째로 사라지는 자리다 — 꼬리를 만들고 LIKE 로 맞추고 조작이 하나로 모이는지
+     * 세던 것이 비교 한 번이 된다.
+     */
+    @Test
+    fun `키를 든 케이스는 그 기능의 브리지를 지운다`(): Unit = runBlocking {
+        val enter = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = mapSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "전투 진입", interaction = "press", inputKey = "Return",
+                capabilityKey = "cap-enter", status = "runnable",
+            )
+        ).id!!
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+        val press = case("Map_scene", "Map_scene 화면인 상태", capabilityKey = "cap-enter")
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, press, inBattle)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.NOT_REQUIRED)
+        assertThat(answer.capabilityIds).isEmpty()
+    }
+
+    /**
+     * **다른 키면 다른 기능이다.** 근거 문자열이 겹쳐도 상관없다 — 키가 답을 정한다.
+     */
+    @Test
+    fun `다른 키를 든 케이스라면 브리지를 넣는다`(): Unit = runBlocking {
+        val enter = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = mapSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "전투 진입", interaction = "press", inputKey = "Return",
+                capabilityKey = "cap-enter", status = "runnable",
+            )
+        ).id!!
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+        val other = case("Map_scene", "Map_scene 화면인 상태", capabilityKey = "cap-something-else")
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, other, inBattle)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.capabilityIds).containsExactly(enter)
+    }
+
+    /**
+     * 키가 없는 케이스는 **예전 길**로 간다. 손으로 만든 것과 엑셀로 들어온 것이 계속 있다.
+     *
+     * 그 길에서는 조작이 하나로 모일 때만 지운다 — 꼬리가 메서드 단위라 한 꼬리가 기능 여럿을
+     * 가리키고, 실측에서 `Map.MapMove.CharacterMove` 하나가 `LeftArrow` 와 `RightArrow` 를 함께
+     * 낸다. 한쪽을 검증하는 케이스가 반대쪽 브리지를 지우면 실행이 그 앞에서 멎는다.
+     */
+    @Test
+    fun `키가 없고 근거가 여러 조작을 가리키면 브리지를 지우지 않는다`(): Unit = runBlocking {
+        val method = "Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()"
+        val enter = capability(mapSceneId, interaction = "press", inputKey = "Return")
+        evidence(enter, method)
+        val left = capability(mapSceneId, interaction = "press", inputKey = "LeftArrow")
+        evidence(left, method)
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+        val press = case(
+            "Map_scene", "Map_scene 화면인 상태",
+            evidence = "Assembly-CSharp|WordVenture.Map.MapMove|CharacterMove|System.Void()@12",
+        )
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, press, inBattle)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.capabilityIds).containsExactly(enter)
+    }
+
     // ---- 순서 ------------------------------------------------------------------------
 
     /**
@@ -739,20 +1289,36 @@ class ScenarioPathServiceTest {
         precondition: String,
         stateAfter: String? = null,
         evidence: String? = null,
+        capabilityKey: String? = null,
+        arrivesAt: String? = null,
     ): Long {
         val source = buildMap {
             stateAfter?.let { put("state_after", it) }
             evidence?.let { put("evidence", it) }
         }
+        val body = buildMap<String, Any> {
+            if (source.isNotEmpty()) put("source", source)
+            arrivesAt?.let { put("arrives_at", it) }
+        }
         val metadata =
-            if (source.isEmpty()) Json.of("{}")
-            else Json.of(objectMapper.writeValueAsString(mapOf("source" to source)))
+            if (body.isEmpty()) Json.of("{}")
+            else Json.of(objectMapper.writeValueAsString(body))
         return testCaseRepository.save(
             TestCaseEntity(
                 projectId = projectId, scene = scene, step = "step-${seq.incrementAndGet()}",
                 precondition = precondition, expectedValue = "expected", metadata = metadata,
+                capabilityKey = capabilityKey,
             )
         ).id!!
+    }
+
+    private suspend fun edge(fromSceneId: Long, toSceneId: Long, toSceneName: String, capabilityId: Long) {
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = fromSceneId, toSceneName = toSceneName,
+                toSceneId = toSceneId, capabilityId = capabilityId, source = "static",
+            )
+        )
     }
 
     private suspend fun capability(

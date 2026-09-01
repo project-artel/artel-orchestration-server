@@ -45,9 +45,24 @@ data class TestCaseEntity(
     @Column("step")
     val step: String,
 
-    /** 명세 `spec.precondition`. 없을 수 있다. */
+    /**
+     * 사전조건을 **사람 말로** 적은 한 줄. 없을 수 있다.
+     *
+     * **표시 전용이다**(ARTEL-627). 되짚을 것은 [condition] 이고, 이 문장은 그것을 렌더한 결과다.
+     * 여기서 비교를 긁어내면 안 된다 — 읽기 좋게 다듬느라 버린 것들(대상의 주인, 갈래, 식)이
+     * 문장에는 없다.
+     */
     @Column("precondition")
     val precondition: String? = null,
+
+    /**
+     * 사전조건의 **구조**(ARTEL-627). `capability_evidence.condition_tree` 가 그대로 온다.
+     *
+     * 지도를 못 되짚는 행(구버전 엑셀 경로)은 null 이다. 없는 것을 빈 트리로 적으면 "조건 없음"과
+     * "모름"이 같은 값이 되어, 저작이 아무 전제도 없는 케이스로 읽는다.
+     */
+    @Column("condition")
+    val condition: Json? = null,
 
     /** 기대 결과. 명세 `spec.expected_value`. */
     @Column("expected_value")
@@ -70,6 +85,23 @@ data class TestCaseEntity(
      */
     @Column("metadata")
     val metadata: Json = Json.of("{}"),
+
+    /**
+     * 이 케이스를 만든 **지도 기능의 안정 참조 키**(ARTEL-553).
+     *
+     * `capability.id` 가 아니라 `capability_key` 다. `id` 는 재적재하면 바뀌어 지도를 다시 구울
+     * 때마다 참조가 끊긴다 — `v_content_map_capability` 뷰가 그 자리에 "재적재를 넘어 살아남는
+     * 참조 키. `c.id` 는 표시·조인용이고 이쪽이 기억해 둘 값이다"라고 적어 두었다.
+     *
+     * **`null` 이 정상인 경우가 많다.** 사람이 손으로 만든 케이스, 엑셀로 적재된 케이스,
+     * evidence 출신이 아닌 기능(키의 입력인 `entry_id` 가 없다). 저작은 키가 있으면 키를,
+     * 없으면 근거 문자열을 맞추던 예전 길을 쓴다.
+     *
+     * 찾을 때는 `(content_map_id, capability_key)` 로 간다 — 키만으로는 어느 지도의 것인지 모르고,
+     * 한 프로젝트에 capture 가 다른 지도가 여럿 앉는다.
+     */
+    @Column("capability_key")
+    val capabilityKey: String? = null,
 
     /** 명세 쪽 안정 식별자(`metadata.source.spec_id`). 적재 멱등 키. */
     @Column("spec_id")

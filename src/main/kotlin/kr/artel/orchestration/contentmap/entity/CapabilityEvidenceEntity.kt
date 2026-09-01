@@ -107,6 +107,19 @@ data class CapabilityEvidenceEntity(
      *
      * 비어 있으면 [gaps] 에 [EvidenceGap.CALL_PATH_MISSING] 이 있어야 한다. DB CHECK 가 강제한다.
      */
+    /**
+     * 이 근거가 **부르는** 메서드들(ARTEL-554). 문서의 `records[].calls` 를 그대로 싣는다.
+     *
+     * 조작 갈래와 결과 갈래를 잇는 **유일한 인과**다. 코루틴·상태 머신에서는 입력을 받는 갈래와
+     * 결과를 내는 갈래가 다른 행이라, 공통 호출자를 통해서만 이어진다 — 실측에서
+     * `StoryController.StoryTelling()` 이 `IsAdvanceKeyDown` 과 `LoadMapScene` 을 둘 다 부른다.
+     *
+     * [callPath] 와 다르다. 저쪽은 **이 근거가 지나온 길**이고 여기는 **이 근거가 부르는 것**이다.
+     * 실측에서 `call_path` 로 이으면 161 중 6밖에 안 닿았다.
+     */
+    @Column("calls")
+    val calls: Json = Json.of("[]"),
+
     @Column("call_path")
     val callPath: Json = Json.of("[]"),
 
@@ -118,4 +131,17 @@ data class CapabilityEvidenceEntity(
      */
     @Column("gaps")
     val gaps: Json = Json.of("[]"),
+
+    /**
+     * 되돌아가는 지점의 IL 위치(ARTEL-613). 문서의 `records[].loopsBackTo` 다.
+     *
+     * 이 갈래의 가드를 **뒤집으면** "다 돌고 나온 자리"가 된다 — `i < 총개수` 로 되돌아가는
+     * 루프의 바깥은 `i >= 총개수` 다. 실행하는 사람은 `i` 를 읽을 수 없지만 **끝까지 눌러 그
+     * 자리를 만들 수는 있으므로**, 그 조건은 사전조건에서 지울 것이 아니라 스텝으로 옮길 것이다.
+     *
+     * 기능이 아니라 근거에 두는 이유는 마이그레이션 주석에 적었다 — 루프를 도는 것은 코루틴이라
+     * 조작이 없고, 조작은 그것을 부르는 입력 갈래에 있다.
+     */
+    @Column("loops_back_to")
+    val loopsBackTo: Int? = null,
 )

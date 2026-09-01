@@ -15,8 +15,17 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * 원문(`precondition`)도 함께 둔다 — 정규화가 놓치는 서술(“대화가 진행 중인 상태”)이 있고, 그건
  * 사람 말로만 있다.
  *
+ * ## 길은 우리가 찾지 않는다. 다만 알려는 준다(ARTEL-628)
+ *
+ * 어디로 어떻게 가는지는 실행하는 쪽과 지도가 풀 문제다. 그런데 **지도는 이미 답을 알고 있고
+ * 우리가 안 보내고 있었다.** `scene_edge` 에 `Map_scene → TurnBattleScene` 이 `Return` 키와 함께
+ * 앉아 있는데, 저작은 그런 간선이 있는 줄도 몰랐다.
+ *
  * @property stateBefore 이 케이스가 성립하려면 참이어야 하는 비교들. `>=`·`!=` 도 그대로 온다.
  * @property stateAfter 이 케이스를 실행한 뒤 **확정되는** 값. 다음 케이스의 출발 상태가 이것이다.
+ * @property exits 이 화면에서 **한 걸음에** 갈 수 있는 곳들. 닿을 수 있는 화면 전부가 아니다 —
+ *   실측에서 어느 화면에서든 일곱 화면 전부에 닿아, 전부 같은 답이라 아무것도 못 가른다.
+ *   한 걸음씩 주면 저작이 길을 잇고, 그 길이 곧 시나리오 순서다.
  */
 data class AuthoringTestCase(
     val id: Long,
@@ -27,6 +36,20 @@ data class AuthoringTestCase(
     @JsonProperty("verification_status") val verificationStatus: String,
     @JsonProperty("state_before") val stateBefore: List<CaseGuard> = emptyList(),
     @JsonProperty("state_after") val stateAfter: Map<String, String> = emptyMap(),
+    val exits: List<SceneExit> = emptyList(),
+)
+
+/**
+ * 이 화면에서 다른 화면으로 가는 **한 걸음**(ARTEL-628).
+ *
+ * @property scene 도착 화면.
+ * @property by 무엇을 해야 가나 — `Return` 키, `Canvas/MapSceneButton` 클릭. **null 이면 저절로
+ *   간다**: 게임이 알아서 넘기는 자리라 누를 것을 찾을 필요가 없다. 실측에서 스토리 → 지도,
+ *   전투 → 클리어가 그렇다. "누를 것이 없다"와 "모른다"는 다르므로 그 둘을 섞지 않는다.
+ */
+data class SceneExit(
+    val scene: String,
+    val by: String? = null,
 )
 
 /**
@@ -37,4 +60,44 @@ data class CaseGuard(
     val variable: String,
     val operator: String,
     val value: String,
+    /**
+     * 이 값이 **움직이는 화면들**(ARTEL-635).
+     *
+     * 전제는 서로 똑같이 생겼다 — `position == 0` 과 `StagePosition >= 1` 은 한 줄로 구별되지
+     * 않는다. 그런데 앞엣것은 방향키 한 번이고 뒤엣것은 **전투를 이겨야** 오른다.
+     *
+     * 비어 있으면 어디서 움직이는지 지도가 말하지 않는 것이다. 그때는 저작이 알아서 한다 —
+     * 없는 것을 있다고 하지 않는다.
+     */
+    @JsonProperty("raised_in") val raisedIn: List<String> = emptyList(),
+
+    /**
+     * 그 값이 **어떻게** 움직이나(ARTEL-646).
+     *
+     * [raisedIn] 은 화면 이름만 답한다. 그것만으로 저작은 "그 화면에 들렀다 오면 되나 보다"로
+     * 읽는다 — 실측(런 203)에서 전투 화면에 들어가기만 하고 **이기는 스텝이 없는** 시나리오가
+     * 나왔다. 지도는 이길 것을 요구한다는 사실을 알고 있었다:
+     *
+     * ```
+     * StagePosition  TurnBattleScene  +1  못 시킴  wave >= 전체 웨이브 수
+     * ```
+     *
+     * 실측(A/B, 같은 모델)에서 이 넷을 함께 보내자 여정이 26조각에서 10개로 줄었다.
+     */
+    val moves: List<ValueMove> = emptyList(),
+)
+
+/**
+ * 값 하나를 바꾸는 자리 하나(ARTEL-646).
+ *
+ * @property scene 그 일이 일어나는 화면.
+ * @property by 얼마씩 바뀌나. `+1` · `0` · 기호 값.
+ * @property how 누를 것. **null 이면 시킬 수 없다** — 사람이 [whenTrue] 를 만들어야 한다.
+ * @property whenTrue 그 일이 일어나는 조건. 없으면 조건 없이 일어난다.
+ */
+data class ValueMove(
+    val scene: String,
+    val by: String? = null,
+    val how: String? = null,
+    @JsonProperty("when") val whenTrue: String? = null,
 )

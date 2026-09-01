@@ -25,6 +25,7 @@ import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.entity.ScenePresence
 import kr.artel.orchestration.contentmap.entity.VerificationState
 import kr.artel.orchestration.contentmap.evidence.EvidenceEffect
+import kr.artel.orchestration.contentmap.evidence.EvidenceDocumentModel
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.join.CapabilityCandidate
 import kr.artel.orchestration.contentmap.join.EvidenceJoin
@@ -35,10 +36,13 @@ import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapSceneCaptureRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
+import kr.artel.orchestration.contentmap.repository.SceneObjectRefRepository
+import kr.artel.orchestration.contentmap.entity.SceneObjectRefEntity
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.contentmap.repository.upsert
 import kr.artel.orchestration.project.storage.DocumentStorage
 import org.slf4j.LoggerFactory
+import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
@@ -73,8 +77,12 @@ class ContentMapIngestService(
     private val effects: CapabilityEffectRepository,
     private val proofs: CapabilityProofRepository,
     private val sceneEdges: SceneEdgeRepository,
+    private val objectRefs: SceneObjectRefRepository,
+    private val contentMaps: kr.artel.orchestration.contentmap.repository.ContentMapRepository,
+    private val builds: kr.artel.orchestration.game.repository.GameBuildRepository,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
+    private val mapTestCases: MapTestCaseWriter,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock,
 ) {
@@ -167,6 +175,12 @@ class ContentMapIngestService(
             model.capture,
         )
         applySceneCaptures(document.id!!, document.contentMapId)
+        markEntryScene(document.contentMapId)
+
+        // **효과가 가리키는 것을 사람이 찾을 수 있는 이름으로**(ARTEL-615). 코드는
+        // `ChatWindowController.anyKeyPrompt` 라 부르고 하이어라키에는 `Canvas/ChatWindow/AnyKeyPrompt`
+        // 가 있다. 그 대응이 문서의 직렬화 참조에 있다.
+        writeObjectRefs(document.contentMapId, model, sceneIds)
 
         // 키가 같은 후보는 **같은 명세의 다른 조각**이다. 실측 529 후보 중 38건이 그렇고, 씬·진입점·
         // 메서드·갈래·조건·조작이 전부 같은 채 `effects` 만 다르다(20그룹) 또는 `recordKind` 만
@@ -248,6 +262,12 @@ class ContentMapIngestService(
         // 아직 매달려 있어, "아무도 아무것도 모르는 `scene`"이라는 조건에 걸리지 않는다.
         val retiredScenes = scenes.retireVanishedScenes(document.contentMapId, sceneIds.keys.toTypedArray())
 
+        // **지도가 바뀌면 케이스도 함께 바뀐다**(ARTEL-578). 여기서 앉히는 이유는 한쪽만 커밋되면
+        // 두 표가 서로 다른 시점을 가리키기 때문이다 — 케이스는 사라진 기능을 시험하라고 하고,
+        // 지도는 그런 기능이 없다고 한다. **지도를 다 내린 맨 뒤**인 것도 같은 이유다: 사라진 기능이나
+        // 빈 `scene` 이 아직 표에 있으면 그 케이스를 다시 앉힌다.
+        val cases = mapTestCases.rewrite(document.contentMapId)
+
         documents.stampIngested(document.id!!, INGESTER_VERSION, Instant.now(clock))
 
         return IngestResult(
@@ -262,7 +282,44 @@ class ContentMapIngestService(
             retiredScenes = retiredScenes.toInt(),
             persistentCapabilities = presences.count { it.persistent },
             evidencedPersistentCapabilities = presences.count { it == ScenePresence.PERSISTENT_EVIDENCED },
+            testCases = cases,
         )
+    }
+
+    /**
+     * 컴포넌트의 직렬화 참조를 앉힌다(ARTEL-615).
+     *
+     * **지우고 다시 넣는다.** 안정 키가 없고, 씬에서 사라진 참조를 남기면 없는 오브젝트 이름이
+     * 기대결과에 실린다.
+     *
+     * 타입은 **마지막 마디로** 줄여 넣는다. 문서가 같은 타입을 네임스페이스까지 적기도 하고 안
+     * 적기도 해서(`Story.StoryController` · `StoryController`), 넣을 때 한 번 맞춰 두면 읽는 쪽이
+     * 두 벌로 견주지 않아도 된다.
+     *
+     * 씬을 모르는 참조는 버린다 — 어느 화면의 것인지 모르면 그 이름을 기대결과에 실을 수 없다.
+     */
+    private suspend fun writeObjectRefs(
+        contentMapId: Long,
+        model: EvidenceDocumentModel,
+        sceneIds: Map<String, Long>,
+    ) {
+        objectRefs.deleteByContentMapId(contentMapId)
+        val rows = model.allObjects.flatMap { obj ->
+            val sceneId = sceneIds[obj.scene] ?: return@flatMap emptyList()
+            obj.components.flatMap { component ->
+                component.refs.mapNotNull { ref ->
+                    val name = ref.path ?: ref.name ?: return@mapNotNull null
+                    SceneObjectRefEntity(
+                        contentMapId = contentMapId,
+                        sceneId = sceneId,
+                        ownerType = component.type.substringAfterLast('.').take(OWNER_WIDTH),
+                        field = ref.field.take(OWNER_WIDTH),
+                        targetName = name.take(NAME_WIDTH),
+                    )
+                }
+            }
+        }
+        rows.forEach { objectRefs.save(it) }
     }
 
     /**
@@ -290,6 +347,7 @@ class ContentMapIngestService(
      * 나간다. 길이 제약에 안 걸려 조용히 틀린다.
      */
     private fun methodNameOf(methodId: String): String = methodNameFrom(methodId)
+
 
     /**
      * 근거가 실제로 달라졌나. 같은 기능이라도 조건·갈래 위치·확신도·되짚기가 바뀌면 다른 근거다.
@@ -326,6 +384,46 @@ class ContentMapIngestService(
      * `origin` 은 `observed` 였던 씬이 근거로 확인되면 `evidence` 로 올라가는 자리다. 반대로
      * 내려가지는 않는다 — 적재기는 `evidence` 만 쓴다.
      */
+    /**
+     * **게임을 켜면 열리는 씬을 적어 둔다**(ARTEL-659).
+     *
+     * 씬 그래프는 순환이라 입구를 구조로는 알 수 없다 — 모든 씬이 서로 닿는다. 그래서 저작이
+     * 흐름을 계산할 때 아무 자리에서나 출발했고, 실측(런 233)에서 `진행도 == 5, 위치 == 0` 에서
+     * 시작하라는 시나리오가 나왔다.
+     *
+     * SDK 는 이미 보내고 있다 — `scene_scan.scenesInBuild` 가 유니티 빌드 설정 순서 그대로이고
+     * **0번이 부팅 씬**이다. 그것을 지도에 옮겨 적을 뿐이라, 저작이 지도에게만 묻는다는
+     * 규칙(ARTEL-466)은 그대로 산다.
+     *
+     * **유니티의 규약이지 명세가 그렇다고 적어 준 것이 아니다.** 그래서 "어떻게 알았는지"는 여기
+     * 하나에만 두고, 표에는 [SceneEntity.isEntry] 라는 사실만 남긴다 — 다른 엔진이 붙으면 이
+     * 함수만 손보면 된다.
+     *
+     * 없으면 아무것도 안 한다. 못 적는 것이 저작을 막을 이유는 아니고, 그때는 예전처럼 계산이
+     * 스스로 출발점을 고른다.
+     */
+    private suspend fun markEntryScene(contentMapId: Long) {
+        val entry = runCatching {
+            val map = contentMaps.findById(contentMapId) ?: return
+            val scan = builds.findById(map.gameBuildId)?.sceneScan ?: return
+            objectMapper.readTree(scan.asString()).path("scenesInBuild")
+                .firstOrNull()?.asText(null)
+                ?.substringAfterLast('/')?.removeSuffix(".unity")
+                ?.takeIf { it.isNotBlank() }
+        }.onFailure { logger.warn("입구 씬을 못 읽었다 — 없이 간다 [contentMapId=$contentMapId] ${it.message}") }
+            .getOrNull() ?: return
+
+        val scene = scenes.findByContentMapIdAndName(contentMapId, entry)
+        if (scene == null) {
+            // 빌드에는 있는데 근거 문서에는 없는 씬이다. 지도가 모르는 씬을 입구라 적을 수는 없다.
+            logger.info("입구 씬이 지도에 없다 [contentMapId={}] {}", contentMapId, entry)
+            return
+        }
+        if (scene.isEntry) return
+        scenes.save(scene.copy(isEntry = true))
+        logger.info("입구 씬 [contentMapId={}] {}", contentMapId, entry)
+    }
+
     private suspend fun upsertScenes(
         contentMapId: Long,
         names: List<String>,
@@ -406,6 +504,12 @@ class ContentMapIngestService(
                 bindingEvent = candidate.binding?.event,
                 bindingReceiver = candidate.binding?.placement?.path,
                 callPath = Json.of(objectMapper.writeValueAsString(record.callPath)),
+                // **조작 갈래와 결과 갈래를 잇는 유일한 인과**(ARTEL-554). 코루틴에서는 입력을
+                // 받는 갈래와 결과를 내는 갈래가 다른 행이고, 공통 호출자를 통해서만 이어진다.
+                calls = Json.of(objectMapper.writeValueAsString(record.calls)),
+                // **되돌아가는 갈래**(ARTEL-613). 이 가드를 뒤집으면 "다 돌고 나온 자리"이고, 그
+                // 조건은 지울 것이 아니라 반복 스텝으로 옮길 것이다.
+                loopsBackTo = record.loopsBackTo,
                 gaps = Json.of(objectMapper.writeValueAsString(gaps)),
             )
         )
@@ -557,6 +661,10 @@ class ContentMapIngestService(
     private data class Retired(val deleted: Int, val markedNotApplicable: Int)
 
     companion object {
+        /** `scene_object_ref` 의 칸 너비(ARTEL-615). 넘치면 INSERT 가 거절되고 문서 하나가 통째로 되돌아간다. */
+        private const val OWNER_WIDTH = 255
+        private const val NAME_WIDTH = 512
+
         /**
          * 어느 판의 적재기가 이 문서를 처리했나. 적재 규칙을 고치면 올리고, 낡은 문서부터 다시 돌린다.
          */
@@ -669,6 +777,14 @@ data class IngestResult(
      * 이고, 나머지를 지우는 것은 QA agent 다(ARTEL-644).
      */
     val evidencedPersistentCapabilities: Int = 0,
+
+    /**
+     * 이 지도가 앉힌 TC 의 변화(ARTEL-578). 지도가 바뀌면 케이스도 함께 바뀐다.
+     *
+     * 두 번째 적재부터 `created` 가 0 이어야 한다 — 아니면 겹침 판정이 같은 케이스를 못 알아본
+     * 것이고, 표가 적재할 때마다 부푼다.
+     */
+    val testCases: MapTestCaseWriter.Result = MapTestCaseWriter.Result(),
 )
 
 /**

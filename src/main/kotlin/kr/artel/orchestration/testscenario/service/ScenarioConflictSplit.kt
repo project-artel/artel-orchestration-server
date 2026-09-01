@@ -36,15 +36,26 @@ object ScenarioConflictSplit {
     )
 
     /**
-     * @param exclusive 두 케이스가 동시에 성립할 수 없나. [ScenarioSiblingCheck]의 판정을 그대로 받는다.
+     * @param contested 두 케이스가 **어느 값 때문에** 동시에 성립할 수 없나. 비어 있으면 함께 설 수
+     *   있다. [ScenarioSiblingCheck.contested] 의 판정을 그대로 받는다.
+     * @param writes 이 케이스가 **바꾸는 값들**(ARTEL-581). 지도의 `capability_effect` 에서 온다.
+     *   못 찾으면 비어 있고, 그때는 예전처럼 순서를 모른 채 나눈다.
+     * @param movable 그 값이 **게임 안에서 움직이나**(ARTEL-625). 케이스가 아니라 지도 전체에 묻는다.
+     *   모르면 언제나 false 이고, 그때는 이 칸이 생기기 전과 똑같이 동작한다.
      */
-    fun apply(scenarios: List<ScenarioResult>, exclusive: (Long, Long) -> Boolean): Outcome {
+    fun apply(
+        scenarios: List<ScenarioResult>,
+        contested: (Long, Long) -> Set<String>,
+        movable: (String) -> Boolean = { false },
+        // 후행 람다 자리를 지킨다. 부르는 쪽 대부분이 이것만 넘긴다.
+        writes: (Long) -> Set<String> = { emptySet() },
+    ): Outcome {
         val out = mutableListOf<ScenarioResult>()
         val notes = mutableListOf<Pair<String, Int>>()
         val anchorOf = mutableMapOf<Int, Int>()
 
         for (scenario in scenarios) {
-            val groups = group(scenario.steps.mapNotNull { it.caseId }.distinct(), exclusive)
+            val groups = group(scenario.steps.mapNotNull { it.caseId }.distinct(), contested, writes, movable)
             if (groups.size <= 1) {
                 out += scenario
                 continue
@@ -60,22 +71,99 @@ object ScenarioConflictSplit {
     }
 
     /**
-     * 케이스를 **서로 함께 볼 수 있는 무리**로 모은다.
+     * 케이스를 **이어서 실행할 수 있는 무리**로 모은다.
      *
      * 담긴 순서대로 훑어 이미 있는 무리 중 아무와도 어긋나지 않는 첫 자리에 넣는다. 무리 안의
-     * **모든** 원소와 견주므로 한 무리 안에 배타적인 둘이 남는 일은 없다.
+     * **모든** 원소와 견준다.
      *
      * 가장 적은 수로 나누는 것을 목표로 하지 않는다 — 그건 어려운 문제이고, 여기서 필요한 것은
      * "실행할 수 있는 묶음"이지 "가장 적은 묶음"이 아니다.
      */
-    private fun group(caseIds: List<Long>, exclusive: (Long, Long) -> Boolean): List<Set<Long>> {
+    private fun group(
+        caseIds: List<Long>,
+        contested: (Long, Long) -> Set<String>,
+        writes: (Long) -> Set<String>,
+        movable: (String) -> Boolean,
+    ): List<Set<Long>> {
         val groups = mutableListOf<MutableSet<Long>>()
-        for (id in caseIds) {
-            val home = groups.firstOrNull { group -> group.none { exclusive(it, id) } }
+        for ((index, id) in caseIds.withIndex()) {
+            val home = groups.firstOrNull { group ->
+                group.none { blocks(it, id, index, caseIds, contested, writes, movable) }
+            }
             if (home != null) home += id else groups += mutableSetOf(id)
         }
         return groups
     }
+
+    /**
+     * [earlier] 다음에 [id] 를 **이어서 실행할 수 없나**(ARTEL-581).
+     *
+     * 앞의 것이 [id] 를 못 서게 하려면 두 가지가 함께여야 한다 — 사전조건이 어긋나고, **그 사이에
+     * 그 값을 바꾸는 것이 아무것도 없어야** 한다.
+     *
+     * 시나리오는 한 시점이 아니라 시간 위의 순서다. 실측(런 159)에서 이 구분이 없어 걸어가는
+     * 시나리오가 네 조각이 났다:
+     *
+     * ```
+     * position == 0 인 자리에서 오른쪽 → position 이 1이 된다
+     * position == 1 인 자리에서 오른쪽 → position 이 2가 된다
+     * ```
+     *
+     * 두 전제는 **한 순간에는** 함께 설 수 없다. 그런데 앞엣것이 뒤엣것의 자리를 만든다. 그것을
+     * 모순이라 부르면, 캐릭터가 밟고 지나가는 계단이 서로를 부정하게 된다.
+     *
+     * 앞의 것 자신이 바꾸는 것도 센다. 사이에 낀 것들도 함께 본다 — 시나리오가 다른 조작을 거쳐
+     * 그 값에 닿는 길도 실제로 있다.
+     *
+     * **순서가 뒤집힌 자리는 여전히 막는다.** 뒤엣것이 앞엣것의 전제를 만드는 경우인데, 그것은
+     * 나눌 일이 아니라 순서를 고칠 일이라 [ScenarioOrderCheck] 가 답한다.
+     *
+     * ## 케이스가 안 바꿔도 게임이 바꾸는 값이 있다(ARTEL-625)
+     *
+     * [writes] 는 **케이스가 된 기능**만 안다. 그래서 게임이 스스로 움직이는 값은 영영 안 바뀌는
+     * 것으로 보이고, 그 값을 두고 갈리는 갈래들이 전부 따로 잘린다.
+     *
+     * 실측(프로젝트 24)에서 맵의 `Return` 케이스가 그랬다 — `StagePosition` 이 1·2·3 일 때 배경이
+     * 달라지는 세 갈래인데, 그 값을 올리는 것은 전투를 이기는 일이라 어떤 케이스도 안 쓴다. 그래서
+     * 20스텝짜리 하나에서 1스텝짜리 셋이 떨어져 나왔다.
+     *
+     * 한 순간만 보면 `== 1` 과 `== 2` 는 함께 못 선다. **시간 위에서는 계단이다** — 이겨서 올라간다.
+     * 그 사이를 무엇으로 메울지는 [ScenarioPathService] 가 "저절로 일어난다"로 답하는 자리이고
+     * (ARTEL-534), 여기서 자르면 그 답이 나갈 기회 자체가 사라진다.
+     *
+     * 지도의 아무도 안 쓰는 값은 여전히 얼어 있는 것이라 예전처럼 나눈다.
+     */
+    private fun blocks(
+        earlier: Long,
+        id: Long,
+        index: Int,
+        caseIds: List<Long>,
+        contested: (Long, Long) -> Set<String>,
+        writes: (Long) -> Set<String>,
+        movable: (String) -> Boolean,
+    ): Boolean {
+        val disputed = contested(earlier, id)
+        if (disputed.isEmpty()) return false
+
+        val from = caseIds.indexOf(earlier)
+        // 앞에 있지 않으면 순서로 풀 수 있는 어긋남이 아니다. 예전처럼 나눈다.
+        if (from < 0 || from >= index) return true
+
+        val changed = (from until index).flatMapTo(mutableSetOf()) { writes(caseIds[it]) }
+        return disputed.any { value ->
+            changed.none { sameValue(it, value) } && !movable(value)
+        }
+    }
+
+    /**
+     * 지도가 부르는 이름과 사전조건이 적은 이름이 **같은 값**인가.
+     *
+     * 지도는 `MapMove.position`, 사전조건은 `MapMove.position` 또는 그냥 `position` 으로 적는다.
+     * 서로의 꼬리일 때만 같은 것으로 본다 — [ScenarioSiblingCheck] 가 가드끼리 견줄 때 쓰는 규칙과
+     * 같다. 마지막 마디만 맞추면 `magicTypeCards.Count` 와 `spellCards.Count` 가 한 값이 된다.
+     */
+    private fun sameValue(written: String, guarded: String): Boolean =
+        written == guarded || written.endsWith(".$guarded") || guarded.endsWith(".$written")
 
     /**
      * 시나리오를 무리 수만큼 자른다.

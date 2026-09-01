@@ -1,5 +1,8 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.contentmap.evidence.ConditionNode
+import kr.artel.orchestration.contentmap.evidence.GroupKind
+
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 
@@ -40,6 +43,53 @@ object ScenarioStateReader {
      */
     fun guardsOf(precondition: String?): List<Guard> =
         comparisonsIn(precondition?.let { it.substringAfter(" / ", it) })
+
+    /**
+     * **구조에서 곧바로 읽는다**(ARTEL-627).
+     *
+     * [guardsOf] 와 같은 답을 내되 문장을 거치지 않는다. 문장은 사람에게 보여주려고 다듬은 것이라
+     * 되읽을 때 잃는 것이 있다 — 실측에서 셋이 사라졌다:
+     *
+     * ```
+     * CombineButton.combineZone.activeSelf  →  activeSelf      주인을 잃는다
+     * (x == 5 또는 x == 4)                  →  (아무것도 없음)  갈래를 못 말한다
+     * (MapMove.StagePosition - 1)           →  (식으로만 남음)  되읽을 수 없다
+     * ```
+     *
+     * **갈래 규칙은 같다.** `either` 아래에서는 모든 갈래에 함께 있는 비교만 남긴다 — 그것이 이
+     * 사전조건이 실제로 보장하는 것이고, 한 갈래에만 있는 것은 성립할 수도 있는 것이지 요구가
+     * 아니다. 문장 쪽 [comparisonsIn] 이 같은 이유로 같은 일을 한다.
+     */
+    fun guardsIn(node: ConditionNode?): List<Guard> = when (node) {
+        null, is ConditionNode.Always, is ConditionNode.Gesture, is ConditionNode.Unknown -> emptyList()
+        is ConditionNode.Test -> listOf(
+            Guard(
+                variable = normalize(node.left),
+                operator = node.operator,
+                value = node.right.trim().trim('`'),
+                // **전체 이름을 남긴다.** 이것이 문장에서 잃던 바로 그것이다.
+                path = node.left.trim().trim('`'),
+            )
+        )
+        is ConditionNode.Group -> when (node.kind) {
+            GroupKind.EVERY -> node.parts.flatMap { guardsIn(it) }.distinct()
+            GroupKind.EITHER -> node.parts
+                .map { guardsIn(it).toSet() }
+                .reduceOrNull { common, next -> common intersect next }
+                .orEmpty()
+                .toList()
+        }
+    }
+
+    /**
+     * 구조가 **확정하는** 값(`==` 만). [knownValuesOf] 의 트리 판이다.
+     *
+     * `>=` 는 성립 조건이지 값이 아니다 — 여기서 1이라고 읽으면 다음 케이스와의 비교가 거짓말이 된다.
+     */
+    fun knownValuesIn(node: ConditionNode?): Map<String, String> =
+        guardsIn(node)
+            .filter { it.operator == "==" && !it.symbolic }
+            .associate { it.variable to it.value }
 
     /**
      * 식에서 비교를 뽑는다. 백틱은 벗긴다.
@@ -97,6 +147,24 @@ object ScenarioStateReader {
         val (name, value) = after.split("=", limit = 2).let { it[0] to it.getOrNull(1) }
         if (value.isNullOrBlank()) emptyMap() else mapOf(normalize(name) to value.trim())
     }.getOrElse { emptyMap() }
+
+    /**
+     * 이 케이스를 실행하면 **어느 화면에 서 있게 되나**(ARTEL-654).
+     *
+     * 화면을 넘기는 케이스는 자기가 어디에 도착하는지 적어 둔다(`arrives_at`). 그런데 경로 계산이
+     * 그것을 안 읽고 [sceneOf] 만 보아, 출발 화면을 **케이스를 실행하기 전**으로 잡았다.
+     *
+     * 대가가 짝 행렬에 그대로 나왔다. 엔딩·스토리 화면은 지도의 씬 간선이 전부 "저절로 넘어간다"
+     * 라서 나가는 조작이 없는 것으로 읽히고, 그 화면에서 출발하는 칸이 통째로 막혔다 — 642칸이다.
+     * 그런데 그 화면을 나가는 케이스가 여덟 건 있고, 그 케이스를 실행한 뒤에는 **이미 지도에 서
+     * 있다.** 나갈 길을 찾을 일이 아니라 이미 나와 있는 것이다.
+     *
+     * 없으면 null 이다 — 대부분의 케이스는 화면을 안 넘긴다.
+     */
+    fun arrivesAt(case: TestCaseEntity, objectMapper: ObjectMapper): String? = runCatching {
+        objectMapper.readTree(case.metadata.asString())
+            .path("arrives_at").asText(null)?.trim()?.ifBlank { null }
+    }.getOrNull()
 
     /**
      * 케이스가 가리키는 코드를 **지도가 쓰는 꼬리 패턴**으로 바꾼다.

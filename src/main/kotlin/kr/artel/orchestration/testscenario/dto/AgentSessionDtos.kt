@@ -24,6 +24,19 @@ import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
  * test_case_list는 프로젝트 TestCase 전량의 압축 목록이다(ARTEL-318). game_context와 같은 성격 —
  * 세션 오픈 때 한 번 실어 보내고 Agent가 대화 내내 들고 있는 배경 지식이며, 툴 호출이 아니다.
  */
+/**
+ * 걸을 수 있는 흐름 하나(ARTEL-658).
+ *
+ * @property caseIds 놓인 순서 그대로. 이것이 곧 실행 순서다.
+ * @property opening 시작할 때 이미 참이어야 하는 것. 흐름이 스스로 만들지 못하는 요구다.
+ * @property gaps 사이에 **지시할 수 없는 자리**가 몇 군데인가. 사람이 게임을 해서 지나가야 한다.
+ */
+data class AuthoringFlow(
+    @JsonProperty("case_ids") val caseIds: List<Long>,
+    val opening: List<String> = emptyList(),
+    val gaps: Int = 0,
+)
+
 data class AgentSessionOpenRequest(
     @JsonProperty("user_input") val userInput: String,
     @JsonProperty("unity_context") val unityContext: Map<String, Any> = emptyMap(),
@@ -46,7 +59,30 @@ data class AgentSessionOpenRequest(
     val locale: String,
     @JsonProperty("project_id") val projectId: Long,
     @JsonProperty("run_id") val runId: Long,
-    @JsonProperty("current_scenarios") val currentScenarios: List<CurrentScenario> = emptyList()
+    @JsonProperty("current_scenarios") val currentScenarios: List<CurrentScenario> = emptyList(),
+    /**
+     * **계산이 낸, 걸을 수 있는 흐름들**(ARTEL-658).
+     *
+     * 무엇을 한 흐름에 묶고 어떤 순서로 놓을지는 실행 가능성을 정하는 판단인데, 모델이 42건을
+     * 한 번에 들고 하기에 가장 약한 자리가 그 둘이다. 계산으로 옮기고 여기 실어 보낸다.
+     *
+     * **대본이 아니라 제약이다.** 순서를 바꾸거나 다른 케이스를 끼워 넣으면 걸을 수 있다는 보장이
+     * 깨진다. 자르는 것은 안전하다 — 앞에서부터 자른 조각은 여전히 걸을 수 있다.
+     *
+     * 기본값이 빈 목록인 것은 [testCaseList] 와 같은 이유다. 비면 에이전트는 예전처럼 스스로
+     * 묶고 순서를 정하므로, 되돌릴 때 양쪽을 다시 배포하지 않아도 된다.
+     */
+    val flows: List<AuthoringFlow> = emptyList(),
+    /**
+     * **게임을 켜면 열리는 화면**(ARTEL-670).
+     *
+     * 씬 그래프는 순환이라 구조로는 알 수 없고, 적재기가 빌드에서 읽어 적어 둔다. 여기가 지금까지
+     * 계산 안에서만 쓰이고 **모델에게는 한 번도 안 갔다** — 실측(런 247)에서 프롬프트 121,712자
+     * 안에 입구를 말하는 자리가 0회였다. 사람이 순서를 정할 때 가장 먼저 보는 것이 그것이다.
+     *
+     * 모르면 `null`. 지어내지 않고, 받는 쪽이 "안 왔다"라고 적는다.
+     */
+    @JsonProperty("entry_scene") val entryScene: String? = null,
 )
 
 /**

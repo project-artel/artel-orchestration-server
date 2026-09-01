@@ -29,3 +29,5 @@ out/
 .notion.env
 
 .vscode
+# 저작 한 판의 기록(로컬에서만 켠다) — artel.scenario.trace
+.trace/
