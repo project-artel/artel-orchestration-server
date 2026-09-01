@@ -49,7 +49,8 @@ class InternalSceneContextController(
     @Operation(
         summary = "씬별 capability·앵커 지식 조회",
         description = "게임 빌드 하나에 대해 씬 이름을 키로 capability 와 앵커 지식을 함께 낸다. " +
-            "`not-a-step` 은 나가지 않고, 지식은 id 와 요약까지만 낸다. " +
+            "`status` 가 `not-a-step` 인 것은 `notAStepCapabilities` 로 갈라 낸다. " +
+            "지식은 id 와 요약까지만 낸다. " +
             "`contentMapId` 가 null 이면 이 빌드에 아직 `evidence` 로 만든 지도가 없다.",
     )
     // 메서드 이름이 `read` 면 ProjectContentMapController.read 와 부딪혀 생성된 OpenAPI 의

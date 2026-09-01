@@ -40,8 +40,16 @@ data class SceneContextResponse(
  *
  * @property knownToContentMap 이 씬이 지도에 있는가. false 면 앵커 지식만으로 들어온 씬이다.
  * @property sceneSummary 지도가 아는 씬 설명. 앵커로만 들어온 씬에서는 null 이다.
- * @property capabilities `v_content_map_capability` 가 내주는 것과 같은 기준으로 걸러진 목록.
- *   `not-a-step` 과 접힌(`merged_into`) 행은 뷰에서 이미 빠진다.
+ * @property capabilities **agent 가 직접 할 수 있는 것.** `status` 가 `not-a-step` 이 아닌 행이고,
+ *   TC 생성기가 받는 것과 같은 집합이다. 접힌(`merged_into`) 행은 뷰에서 이미 빠진다.
+ * @property notAStepCapabilities **누를 수 없고 일어나는 것.** `status = 'not-a-step'` 인 행이다.
+ *   [capabilities] 와 같은 표에서 오고 모양도 같지만, 목록을 가르지 않으면 실측 51 개의
+ *   조작이 418 개 사이에 묻혀 agent 가 무엇을 시도해야 할지 흐려진다(ARTEL-680). 이쪽은
+ *   시도할 목록이 아니라 **일어난 것을 알아볼 목록**이다 — "적을 처치하면 보상을 받는다" 처럼
+ *   화면을 보고 확인해 `capability` 에 적는 대상(ARTEL-644, ARTEL-645).
+ *
+ *   칸 이름에 `status` 값을 그대로 박은 것은, 이 목록이 무슨 축으로 갈렸는지를 payload 만 보는
+ *   쪽도 알 수 있게 하기 위해서다. 각 줄의 `status` 를 읽으면 같은 값이 나온다.
  * @property knowledge 이 씬에 묶인 지식. **본문은 없다** — 이 블록은 매 모델 호출마다 다시
  *   그려지므로 본문을 실으면 그 비용을 런 내내 매 턴 다시 낸다.
  */
@@ -50,6 +58,7 @@ data class SceneContextEntry(
     val knownToContentMap: Boolean,
     val sceneSummary: String? = null,
     val capabilities: List<SceneCapabilityView> = emptyList(),
+    val notAStepCapabilities: List<SceneCapabilityView> = emptyList(),
     val knowledge: List<SceneKnowledgeView> = emptyList(),
 )
 
@@ -64,6 +73,8 @@ data class SceneContextEntry(
  * @property capabilityKey 재적재를 넘어 살아남는 참조 키. **기억해 둘 값은 이쪽이다.** evidence
  *   출신이 아니면 null 이다.
  * @property status 세 축에서 유도된 값. "TC 로 만들 수 있나"에 대한 답이다.
+ *   [SceneContextEntry.notAStepCapabilities] 의 줄에서는 항상 `not-a-step` 이고, 나머지 줄에서는
+ *   결코 그 값이 아니다 — 목록이 갈린 축이 이 칸이다.
  * @property actionability 실행 가능성. 이 조작을 실제로 할 수 있는가.
  * @property observability 관측 가능성. `unobservable` 이어도 조작 스텝으로는 쓸 수 있다.
  * @property applicability 적용 가능성. `not-applicable` 은 이 빌드에 아예 없다.

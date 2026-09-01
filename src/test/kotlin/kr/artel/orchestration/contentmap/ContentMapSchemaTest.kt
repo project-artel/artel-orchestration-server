@@ -66,8 +66,8 @@ import java.time.Instant
  * 1. `origin` 과 `verification` 이 서로 다른 축이라는 것 — evidence 출신과 관측 출신이 한 씬에
  *    나란히 살고, 스캔 재적재가 후자를 지우지 않는다
  * 2. `interaction='press'` 와 `input_key` 의 쌍 — DB CHECK 가 강제한다
- * 3. `v_content_map_capability` 가 `not-a-step` 과 접힌 행을 거른다는 것 — TC 생성기가 실행할 수
- *    없는 것을 받으면 안 된다
+ * 3. `not-a-step` 과 접힌 행이 소비자마다 다르게 걸린다는 것 — TC 생성기는 실행할 수 없는 것을
+ *    받으면 안 되고, agent 는 `not-a-step` 을 받아야 한다(ARTEL-680)
  * 4. `v_spec_gap` 이 사유를 분류한다는 것 — 이 분포가 다음에 무엇을 고칠지 정한다
  */
 @ActiveProfiles("test")
@@ -349,13 +349,17 @@ class ContentMapSchemaTest {
     }
 
     /**
-     * TC 생성기가 읽는 뷰는 실행할 수 없는 것을 내주지 않는다.
+     * 두 소비자가 같은 뷰에서 서로 다른 집합을 받는다.
      *
-     * `not-a-step` 은 조작이 없어 단독 명세가 될 수 없고(코루틴·타이머), 접힌 행은 다른 기능으로
-     * 대체된 것이다. 둘 다 TC 로 만들면 agent 가 수행할 수 없는 스텝을 받는다.
+     * TC 생성기(`findStepCapabilityRows`)는 실행할 수 없는 것을 받으면 안 된다 — `not-a-step` 은
+     * 조작이 없어 단독 명세가 될 수 없고(코루틴·타이머), 접힌 행은 다른 기능으로 대체된 것이다.
+     *
+     * agent(`findAllCapabilityRows`)는 `not-a-step` 을 받아야 한다(ARTEL-680). 못 보면 그 행을
+     * 지목할 수 없고, 지목할 수 없으면 ARTEL-644 가 연 쓰기 경로에 닿지 못한다. 접힌 행은 여전히
+     * 안 나간다 — 그것은 소비자가 갈리는 필터가 아니라 중복이라 뷰가 계속 거른다.
      */
     @Test
-    fun `뷰가 실행 불가능한 기능을 거른다`(): Unit = runBlocking {
+    fun `TC 생성기는 not-a-step 을 못 받고 agent 는 받는다`(): Unit = runBlocking {
         val map = newContentMap()
         val scene = newScene(map.id!!, "TurnBattleScene")
 
@@ -372,7 +376,7 @@ class ContentMapSchemaTest {
                 observability = Observability.OBSERVABLE.wire,
             )
         )
-        capabilities.save(
+        val notAStep = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
                 contentMapId = scene.contentMapId,
@@ -395,12 +399,18 @@ class ContentMapSchemaTest {
         )
         capabilities.save(merged.copy(mergedInto = runnable.id))
 
-        val rows = contentMaps.findCapabilityRows(map.id!!).toList()
+        val stepRows = contentMaps.findStepCapabilityRows(map.id!!).toList()
 
-        assertThat(rows.map { it.capabilityId }).containsExactly(runnable.id)
-        assertThat(rows[0].sceneName).isEqualTo("TurnBattleScene")
+        assertThat(stepRows.map { it.capabilityId }).containsExactly(runnable.id)
+        assertThat(stepRows[0].sceneName).isEqualTo("TurnBattleScene")
         // 관측 출신이라 IL 근거가 없고, 그래서 근거 컬럼이 null 이다. 그것이 정직한 상태다.
-        assertThat(rows[0].entryId).isNull()
+        assertThat(stepRows[0].entryId).isNull()
+
+        val allRows = contentMaps.findAllCapabilityRows(map.id!!).toList()
+
+        assertThat(allRows.map { it.capabilityId }).containsExactly(runnable.id, notAStep.id)
+        assertThat(allRows.single { it.capabilityId == notAStep.id }.status)
+            .isEqualTo(SpecStatus.NOT_A_STEP.wire)
     }
 
     /**

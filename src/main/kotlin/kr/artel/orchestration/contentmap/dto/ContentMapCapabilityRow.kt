@@ -4,7 +4,7 @@ import io.r2dbc.postgresql.codec.Json
 import org.springframework.data.relational.core.mapping.Column
 
 /**
- * `v_content_map_capability` 한 줄. **TC 생성기가 읽는 유일한 창구.**
+ * `v_content_map_capability` 한 줄. **TC 생성기와 QA agent 가 읽는 유일한 창구.**
  *
  * 읽는 곳을 한 군데로 못 박지 않으면 TC 생성기가 근거 문서를 직접 보게 되고, 그 순간 "TC 입력은
  * content_map 단독"이라는 계약이 무너진다.
@@ -12,7 +12,12 @@ import org.springframework.data.relational.core.mapping.Column
  * 효과(`then`)는 여기 없다. 기능 하나에 여러 개라 조인하면 행이 곱해지므로
  * [kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository] 로 따로 읽는다.
  *
- * 뷰가 이미 거른 것: `not-a-step`(조작이 없어 단독 명세가 될 수 없다), `merged_into` 가 찍힌 행.
+ * **두 소비자가 서로 다른 집합을 원한다.** 뷰가 거르는 것은 `merged_into` 가 찍힌 행뿐이고,
+ * `not-a-step` 을 거르는 것은 TC 생성기가 부르는
+ * [kr.artel.orchestration.contentmap.repository.ContentMapRepository.findStepCapabilityRows] 다.
+ * agent 는 그 필터가 없는
+ * [kr.artel.orchestration.contentmap.repository.ContentMapRepository.findAllCapabilityRows] 를
+ * 읽는다(ARTEL-680, V72).
  */
 data class ContentMapCapabilityRow(
     @Column("content_map_id")

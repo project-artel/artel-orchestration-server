@@ -74,15 +74,14 @@ class ProjectController(
             ?.let { ResponseEntity.ok(it) }
             ?: throw projectNotFound()
 
+    /** 없거나 소유자가 아닌 경우는 [ProjectService.delete]가 404·403으로 갈라 던진다. */
     @Operation(summary = "프로젝트 삭제", description = "소유자만 가능하다. 실제로 지우지 않고 삭제 표시만 한다.")
     @DeleteMapping("/{projectId}")
     suspend fun delete(
         @CurrentUserId appUserId: Long,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long
-    ): ResponseEntity<DeleteProjectResponse> =
+    ): DeleteProjectResponse =
         projectService.delete(appUserId, projectId)
-            ?.let { ResponseEntity.ok(it) }
-            ?: throw projectNotFound()
 
     /** 참여자가 아닌 프로젝트는 존재 여부조차 알리지 않는다. */
     private fun projectNotFound() =

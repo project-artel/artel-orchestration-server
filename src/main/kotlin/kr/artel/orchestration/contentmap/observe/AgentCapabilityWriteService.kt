@@ -603,8 +603,13 @@ class AgentCapabilityWriteService(
      * `SpecStatus.derive` 가 세 축에서 `status` 를 뽑는 것과 같은 규칙의 첫 칸이다.
      *
      * `interaction = none` 은 조작이 없다는 뜻이라 단독 명세가 될 수 없고, 그 행은 `status` 가
-     * `not-a-step` 이 되어 `v_content_map_capability` 에서 빠진다. 실측 472 행 중 418 행이 그
-     * 상태이므로 이것은 agent 가 적은 행에만 있는 사정이 아니라 이 표의 기본값에 가깝다.
+     * `not-a-step` 이 되어 TC 생성기가 읽는
+     * [kr.artel.orchestration.contentmap.repository.ContentMapRepository.findStepCapabilityRows]
+     * 에서 빠진다. 실측 472 행 중 418 행이 그 상태이므로 이것은 agent 가 적은 행에만 있는 사정이
+     * 아니라 이 표의 기본값에 가깝다.
+     *
+     * agent 는 그 418 행을 그대로 받는다(ARTEL-680, V72). 못 보면 적을 대상을 지목할 수 없고,
+     * 그러면 이 서비스가 여는 쓰기 경로에 닿을 것이 54 행뿐이다.
      */
     private fun actionabilityOf(interaction: Interaction) =
         if (interaction == Interaction.NONE) Actionability.NOT_A_STEP else Actionability.RUNNABLE

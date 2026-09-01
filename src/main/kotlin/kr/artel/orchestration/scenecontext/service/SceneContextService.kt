@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.SpecStatus
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
@@ -91,7 +92,9 @@ class SceneContextService(
         val contentMapId = contentMap.id!!
 
         val mapScenes = scenes.findByContentMapIdOrderByNameAsc(contentMapId).toList()
-        val capabilitiesByScene = contentMaps.findCapabilityRows(contentMapId)
+        // 이 빌드의 capability 전부를 읽는다(ARTEL-680). `not-a-step` 을 거르는 것은 TC 생성기의
+        // 사정이고 agent 의 사정이 아니다 — 걸러진 목록으로는 agent 가 그 행들을 지목할 수 없다.
+        val capabilitiesByScene = contentMaps.findAllCapabilityRows(contentMapId)
             .toList()
             .groupBy(ContentMapCapabilityRow::sceneName)
 
@@ -110,18 +113,27 @@ class SceneContextService(
      * `walked=false` 인 씬은 비어 있는 것이 정상이고(V40), 그 씬이 목록에서 사라지면 agent 는
      * "지도에 있지만 아직 안 걸어 본 씬"과 "지도가 모르는 씬"을 구분할 수 없다. 빈 줄의 값은
      * 프롬프트에서 거의 0 이고, 없는 줄의 대가는 agent 의 오판이다.
+     *
+     * 한 씬의 행을 `status` 로 두 목록으로 가른다. 질의를 하나 더 돌리지 않는다 — 씬 수와 무관하게
+     * 질의 수를 고정한 것이 이 서비스의 설계이고, 나누는 일은 이미 읽어 온 목록에서 한다.
+     * [partition] 이 원래 순서를 지키므로 뷰 질의의 `ORDER BY` 가 두 목록에 그대로 남는다.
      */
     private fun entryOf(
         scene: SceneEntity,
         capabilitiesByScene: Map<String, List<ContentMapCapabilityRow>>,
         knowledgeByScene: Map<String, List<AnchoredKnowledgeRow>>,
-    ) = SceneContextEntry(
-        sceneName = scene.name,
-        knownToContentMap = true,
-        sceneSummary = scene.summary,
-        capabilities = capabilitiesByScene[scene.name].orEmpty().map(::capabilityOf),
-        knowledge = knowledgeByScene[scene.name].orEmpty().map(::knowledgeOf),
-    )
+    ): SceneContextEntry {
+        val (notASteps, steps) = capabilitiesByScene[scene.name].orEmpty()
+            .partition { it.status == SpecStatus.NOT_A_STEP.wire }
+        return SceneContextEntry(
+            sceneName = scene.name,
+            knownToContentMap = true,
+            sceneSummary = scene.summary,
+            capabilities = steps.map(::capabilityOf),
+            notAStepCapabilities = notASteps.map(::capabilityOf),
+            knowledge = knowledgeByScene[scene.name].orEmpty().map(::knowledgeOf),
+        )
+    }
 
     /**
      * 지도가 들어 본 적 없는 씬 이름을 든 앵커. **이것을 버리지 않는 것이 이 응답의 요점 하나다.**

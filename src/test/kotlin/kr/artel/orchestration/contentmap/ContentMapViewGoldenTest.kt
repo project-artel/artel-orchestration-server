@@ -78,8 +78,9 @@ import java.time.Instant
  * | `needs-probe` | 20 | 조작은 있는데 `evidence` 가 효과를 말하지 않는다 |
  * | `unreachable-precondition` | 0 | 이 문서에는 없다 |
  *
- * `31 + 20 = 51` 이 `v_content_map_capability` 의 행 수이고(적재 골든 테스트가 못 박은 값),
- * `440 + 51 = 491` 이 기능 총수다.
+ * `31 + 20 = 51` 이 TC 창구(`ContentMapRepository.findStepCapabilityRows`)의 행 수이고(적재 골든
+ * 테스트가 못 박은 값), `440 + 51 = 491` 이 기능 총수이자 agent 창구의 행 수다. V72 로
+ * `v_content_map_capability` 자체는 491 을 다 낸다(ARTEL-680).
  */
 @ActiveProfiles("test")
 @SpringBootTest
@@ -175,23 +176,32 @@ class ContentMapViewGoldenTest {
     }
 
     /**
-     * **`notAStep` 은 뷰가 답할 수 없는 칸이고, 그것이 이 엔드포인트가 뷰를 안 쓰는 이유다.**
+     * **`notAStep` 은 TC 창구가 답할 수 없는 칸이고, 그것이 이 엔드포인트가 그 창구를 안 쓰는 이유다.**
      *
-     * `v_content_map_capability` 는 `status <> 'not-a-step'` 으로 걸러 내므로, 뷰로 셌다면 여기가
-     * 전부 0 이고 씬별 합이 491 이 아니라 51 이 된다. 표가 아홉 배 작아 보이는데 아무 오류도 나지
-     * 않는다.
+     * TC 창구는 `status <> 'not-a-step'` 으로 걸러 내므로, 그것으로 셌다면 여기가 전부 0 이고
+     * 씬별 합이 491 이 아니라 51 이 된다. 표가 아홉 배 작아 보이는데 아무 오류도 나지 않는다.
      *
-     * 관계로 확인한다: `total - notAStep` 의 합이 뷰의 행 수와 같아야 한다. 이 등식이 성립하면
-     * 응답이 뷰가 무엇을 거르는지 정확히 알고 있다는 뜻이다.
+     * 관계로 확인한다: `total - notAStep` 의 합이 TC 창구의 행 수와 같고, `total` 의 합은 agent
+     * 창구(뷰 전량)의 행 수와 같다. 두 등식이 함께 성립하면 응답이 어느 창구가 무엇을 거르는지
+     * 정확히 알고 있다는 뜻이다.
      */
     @Test
-    fun `notAStep 은 뷰가 거르는 행이고 합이 뷰 행 수를 채운다`(): Unit = runBlocking {
-        val viewRows = count("SELECT count(*) FROM v_content_map_capability WHERE content_map_id = :id")
+    fun `notAStep 은 TC 창구가 거르는 행이고 합이 두 창구의 행 수를 채운다`(): Unit = runBlocking {
+        val stepRows = count(
+            """
+            SELECT count(*) FROM v_content_map_capability
+            WHERE content_map_id = :id AND status <> 'not-a-step'
+            """
+        )
+        val allRows = count("SELECT count(*) FROM v_content_map_capability WHERE content_map_id = :id")
 
         assertThat(response.scenes.sumOf { it.capabilities.total - it.capabilities.notAStep })
-            .isEqualTo(viewRows)
-        // 적재 골든 테스트가 못 박은 값. 창구에 남는 것은 조작을 든 51 뿐이다(click 24 + press 27).
-        assertThat(viewRows).isEqualTo(51)
+            .isEqualTo(stepRows)
+        // 적재 골든 테스트가 못 박은 값. TC 창구에 남는 것은 조작을 든 51 뿐이다(click 24 + press 27).
+        assertThat(stepRows).isEqualTo(51)
+        // agent 창구는 491 을 다 낸다(ARTEL-680, V72).
+        assertThat(response.scenes.sumOf { it.capabilities.total }).isEqualTo(allRows)
+        assertThat(allRows).isEqualTo(491)
 
         assertThat(response.scenes.sumOf { it.capabilities.notAStep }).isEqualTo(440)
         assertThat(response.scenes.sumOf { it.capabilities.runnable }).isEqualTo(31)
@@ -455,8 +465,8 @@ class ContentMapViewGoldenTest {
      * **씬마다 조작 단계의 목록이 실린다. `steps.size` 가 `total - notAStep` 과 같다.**
      *
      * 이 등식이 이 diff 의 핵심이다. 카운트와 목록의 출처가 다르기 때문이다 — 카운트는 `capability`
-     * 직접 집계이고(뷰가 `not-a-step` 을 걸러 그 칸을 답할 수 없다), 목록은
-     * `v_content_map_capability` 다. 두 출처가 같은 표를 본다는 것을 이 등식 말고는 확인할 방법이
+     * 직접 집계이고(TC 창구가 `not-a-step` 을 걸러 그 칸을 답할 수 없다), 목록은
+     * `findStepCapabilityRows` 다. 두 출처가 같은 표를 본다는 것을 이 등식 말고는 확인할 방법이
      * 없고, 어긋나면 화면은 "14개 있다"고 쓴 옆에 12줄을 그리며 아무 오류도 내지 않는다.
      *
      * 씬별 수를 **골든 문서에서 세어** 못 박는다. 이슈 본문의 실측 수치는 `editor-play` 캡처의 것이라
@@ -482,7 +492,7 @@ class ContentMapViewGoldenTest {
             )
         )
 
-        // 31 runnable + 20 needs-probe. 적재 골든 테스트가 못 박은 창구 51 과 같은 수다.
+        // 31 runnable + 20 needs-probe. 적재 골든 테스트가 못 박은 TC 창구 51 과 같은 수다.
         assertThat(response.scenes.sumOf { it.steps.size }).isEqualTo(51)
     }
 
@@ -494,15 +504,20 @@ class ContentMapViewGoldenTest {
      * 가정을 두지 않고 기능 하나당 한 줄로 접는다. 그 접기가 실제로 걸려 있는지를 **기능 id 의
      * 유일성**으로 확인한다 — 곱해졌다면 같은 id 가 두 번 선다.
      *
-     * 총수가 뷰 행 수와 같다는 것도 함께 본다. 접기가 너무 많이 접었다면 여기가 줄어든다.
+     * 총수가 TC 창구의 행 수와 같다는 것도 함께 본다. 접기가 너무 많이 접었다면 여기가 줄어든다.
      */
     @Test
-    fun `단계는 기능 하나에 한 줄이고 총수가 뷰 행 수와 같다`(): Unit = runBlocking {
+    fun `단계는 기능 하나에 한 줄이고 총수가 TC 창구 행 수와 같다`(): Unit = runBlocking {
         val ids = response.scenes.flatMap { scene -> scene.steps.map { it.id } }
 
         assertThat(ids).doesNotHaveDuplicates()
         assertThat(ids).hasSize(
-            count("SELECT count(*) FROM v_content_map_capability WHERE content_map_id = :id").toInt()
+            count(
+                """
+                SELECT count(*) FROM v_content_map_capability
+                WHERE content_map_id = :id AND status <> 'not-a-step'
+                """
+            ).toInt()
         )
     }
 

@@ -69,7 +69,7 @@ throw BadRequestException("기획서는 PDF 파일만 올릴 수 있습니다.")
 class DuplicateDocumentException(message: String) :
     ConflictException(message, code = "duplicate_document")
 
-// project/service/ProjectService.kt
+// project/service/ProjectAccessService.kt — 던지는 주체 옆에 둔다
 class ProjectAccessDeniedException(message: String) : ForbiddenException(message)
 
 // project/storage/DocumentStorage.kt — 외부 의존 실패는 cause를 넘겨 원인을 로그에 남긴다

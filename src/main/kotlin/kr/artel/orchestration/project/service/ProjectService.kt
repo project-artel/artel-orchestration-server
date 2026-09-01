@@ -114,24 +114,21 @@ class ProjectService(
         }
 
     /**
-     * OWNER만 삭제할 수 있다.
-     *
-     * 참여자가 아니면 null(→ 404)로, 참여자지만 OWNER가 아니면 [ProjectAccessDeniedException]
-     * (→ 403)으로 갈린다. 이미 프로젝트를 볼 수 있는 사람에게 404를 주는 것은 숨기는 시늉일 뿐이다.
+     * OWNER만 삭제할 수 있다. 참여자가 아니면 404, 참여자지만 OWNER가 아니면 403으로 갈리며,
+     * 그 판정은 [ProjectAccessService.requireOwner]가 한다.
      *
      * 실제 행은 지우지 않고 deleted_at만 채운다. S3의 기획서 원본도 그대로 둔다.
      */
-    suspend fun delete(userId: Long, projectId: Long): DeleteProjectResponse? =
+    suspend fun delete(userId: Long, projectId: Long): DeleteProjectResponse =
         transactionalOperator.executeAndAwait {
-            val project = projectRepository.findAccessibleById(projectId, userId)
-                ?: return@executeAndAwait null
-            val member = projectAccessService.member(projectId, userId)
-            if (member?.role != ProjectRole.OWNER.name) {
-                throw ProjectAccessDeniedException("프로젝트 삭제는 소유자만 할 수 있습니다.")
-            }
+            val project = projectAccessService.requireOwner(
+                projectId,
+                userId,
+                "프로젝트 삭제는 소유자만 할 수 있습니다."
+            )
             projectRepository.save(project.copy(deletedAt = Instant.now(clock)))
             DeleteProjectResponse(deleted = true, projectId = projectId.toString())
-        }
+        }!!
 
     private suspend fun summaries(
         userId: Long,
@@ -216,7 +213,3 @@ class ProjectService(
     private fun String?.toRole(): ProjectRole =
         ProjectRole.entries.firstOrNull { it.name == this } ?: ProjectRole.MEMBER
 }
-
-/** 접근은 가능하지만 그 동작에 필요한 역할이 아닐 때. 컨트롤러가 403으로 옮긴다. */
-class ProjectAccessDeniedException(message: String) :
-    kr.artel.orchestration.common.error.ForbiddenException(message)
