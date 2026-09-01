@@ -143,7 +143,10 @@ class AuthoringStateAfterGoldenTest {
     fun `전제를 다른 케이스가 만들어 주는 자리가 있다`() {
         val changed = cases.flatMap { it.stateAfter.keys }.toSet()
 
-        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(21)
+        // 21 → 23. develop 의 적재기가 씬을 넘어 살아남는 오브젝트를 씬마다 한 줄로 앉히면서
+        // (`scene_presence`) 케이스가 늘었고, 그중 둘이 이 자리에 걸린다. 이어지는 비율이 달라진
+        // 것이 아니라 세는 모수가 커진 것이다.
+        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(23)
     }
 
     /**
