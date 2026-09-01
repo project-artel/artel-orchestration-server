@@ -657,7 +657,6 @@ data class IngestResult(
      * 키 산식이 무언가를 잃기 시작한 것이다.
      */
     val collapsed: Int,
-<<<<<<< HEAD
 
     /**
      * 이번 문서가 더는 말하지 않아 내린 빈 `scene` 수(ARTEL-460).

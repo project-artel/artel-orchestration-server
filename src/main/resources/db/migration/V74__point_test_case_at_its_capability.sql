@@ -1,4 +1,4 @@
--- V52__point_test_case_at_its_capability.sql
+-- V74__point_test_case_at_its_capability.sql
 --
 -- 케이스가 **자기를 만든 기능**을 가리킨다(ARTEL-553).
 --

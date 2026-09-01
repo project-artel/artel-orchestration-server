@@ -42,7 +42,7 @@ import org.springframework.stereotype.Service
  * ## 순서
  *
  * 뷰의 `ORDER BY scene_name, capability_id` 를 그대로 물려받는다. 그 정렬은 취향이 아니라
- * 프롬프트 캐시 계약이다([ContentMapRepository.findCapabilityRows] 의 주석).
+ * 프롬프트 캐시 계약이다([ContentMapRepository.findStepCapabilityRows] 의 주석).
  */
 @Service
 class MapTestCaseGenerator(
@@ -53,7 +53,7 @@ class MapTestCaseGenerator(
 
     suspend fun generate(contentMapId: Long): List<MapTestCase> {
         val edges = contentMaps.findCallEdges(contentMapId).toList()
-        return contentMaps.findCapabilityRows(contentMapId).toList().flatMap { row -> casesOf(row, edges) }
+        return contentMaps.findStepCapabilityRows(contentMapId).toList().flatMap { row -> casesOf(row, edges) }
     }
 
     /**
