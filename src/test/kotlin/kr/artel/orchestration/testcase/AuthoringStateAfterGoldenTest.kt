@@ -111,17 +111,18 @@ class AuthoringStateAfterGoldenTest {
     /**
      * **저작이 받는 목록에 "무엇이 바뀌나"가 실린다.**
      *
-     * 이 자리가 비어 있어서 모델이 브리지를 지어냈다. 실측 42건 중 **23건**이 뒤에 무언가를
+     * 이 자리가 비어 있어서 모델이 브리지를 지어냈다. 실측 36건 중 **19건**이 뒤에 무언가를
      * 남긴다. 나머지는 표시만 바뀌거나 보기만 하는 것이라 남는 상태가 없다.
      *
-     * 앞서 49건 중 19건이던 것이 42건 중 23건이 됐다. 케이스를 진입점으로 묶고 화면 전환을 따로
-     * 내면서(ARTEL-624) 전환마다 도착 화면이 또렷이 실린 결과다 — 저작이 이을 자리가 늘었다.
+     * 49건 중 19건 → 42건 중 23건 → 36건 중 19건으로 왔다. 마지막 걸음은 같은 코드가 두 경로로
+     * 닿아 두 벌이던 케이스를 접은 것이다(ARTEL-645). 접힌 넷은 전부 짝이 남아 있으므로 이을
+     * 자리가 준 것이 아니라 **같은 자리를 두 번 세던 것을 한 번 센다.**
      *
      * 값은 셋이고(`position` · `stagePosition` · `flag`) 거기에 도착 화면(`scene`)이 더해진다.
      */
     @Test
     fun `케이스가 무엇을 바꾸는지 말한다`() {
-        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(23)
+        assertThat(cases.count { it.stateAfter.isNotEmpty() }).isEqualTo(19)
         assertThat(cases.flatMap { it.stateAfter.keys }.distinct())
             .containsExactlyInAnyOrder("position", "stagePosition", "flag", "scene")
     }
@@ -242,6 +243,33 @@ class AuthoringStateAfterGoldenTest {
 
         assertThat(fromStory).isNotEmpty
         assertThat(fromStory).anySatisfy { assertThat(it.by).isNull() }
+    }
+
+    /**
+     * **어느 화면에서 움직이는 값인지 미리 말한다**(ARTEL-635).
+     *
+     * 전제는 서로 똑같이 생겼다. 한 줄로는 이 둘이 구별되지 않는다:
+     *
+     * ```
+     * position == 0        방향키 한 번
+     * StagePosition >= 1   전투를 이겨야 오른다
+     * ```
+     *
+     * 그래서 실측(런 184)에서 저작이 스테이지를 안 깬 채로 지도를 활보하는 시나리오를 냈다 —
+     * 첫 스텝이 `>= 1` 을 요구하는데 그 값을 올리는 전투 진입은 **마지막 스텝**이었다. 순환이고
+     * 절대 실행되지 않는다. 거절하고 다시 쓰게 하는 것은 뒷수습이라, 짤 때 알려 준다.
+     */
+    @Test
+    fun `그 값이 어느 화면에서 움직이는지 말한다`() {
+        val raisedIn = cases.flatMap { it.stateBefore }
+            .filter { it.raisedIn.isNotEmpty() }
+            .associate { it.variable to it.raisedIn }
+
+        // 전투를 이겨야 오르는 값과, 그 화면에서 방향키로 움직이는 값이 갈린다.
+        assertThat(raisedIn["StagePosition"]).containsExactly("TurnBattleScene")
+        assertThat(raisedIn["position"]).containsExactly("Map_scene")
+        // 확정값(`0`)은 되돌리는 것이지 진행이 아니다. 타이틀이 모든 값의 출처가 되면 안 된다.
+        assertThat(raisedIn.values.flatten()).doesNotContain("TitleScene")
     }
 
     companion object {

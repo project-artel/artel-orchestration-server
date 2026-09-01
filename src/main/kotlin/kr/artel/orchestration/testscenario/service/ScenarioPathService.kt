@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.entity.Actionability
 import kr.artel.orchestration.contentmap.entity.AnalysisConfidence
+import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import kr.artel.orchestration.contentmap.entity.Interaction
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
@@ -95,7 +96,7 @@ class ScenarioPathService(
             // 누른다"를 검증하는 케이스 바로 뒤에 같은 Return 을 누르는 브리지가 붙었다 — 실행하는
             // 사람은 같은 것을 두 번 하게 되고, 화면에는 스텝이 중복돼 보인다.
             if (hop is Hop.By && performs(contentMapId, from, hop.step.capabilityId)) {
-                return withOrdering(ordering, resolveGuards(contentMapId, emptyMap(), want, steps))
+                return withOrdering(ordering, resolveGuards(contentMapId, emptyMap(), want, steps, toScene))
             }
             if (hop !is Hop.By) {
                 return withOrdering(ordering, when (hop) {
@@ -121,10 +122,10 @@ class ScenarioPathService(
             steps += hop.step
             // **씬을 넘으면 알던 변수 값을 버린다.** 화면이 바뀐 뒤 무엇이 유지되는지 명세가
             // 말해 주지 않으므로, 유지된다고 치는 것은 지어내는 것이다.
-            return withOrdering(ordering, resolveGuards(contentMapId, emptyMap(), want, steps))
+            return withOrdering(ordering, resolveGuards(contentMapId, emptyMap(), want, steps, toScene))
         }
 
-        return withOrdering(ordering, resolveGuards(contentMapId, state, want, steps))
+        return withOrdering(ordering, resolveGuards(contentMapId, state, want, steps, toScene ?: fromScene))
     }
 
     /**
@@ -157,20 +158,32 @@ class ScenarioPathService(
      *
      * 값을 모르는 변수는 어긋난다고 보지 않는다. 모르는 것을 위반으로 세면 거의 모든 전이가
      * [ScenarioPathResult.UNKNOWN]이 되어 답이 쓸모없어진다.
+     *
+     * ## 다만 모른다고 다 넘기지는 않는다(ARTEL-637)
+     *
+     * 이 규칙에는 구멍이 하나 있었다. **저절로 바뀌는 값은 어떤 케이스의 `state_after` 에도 적히지
+     * 않는다** — 조작이 쓰는 값이 아니라서다. 그래서 늘 "모르는 값"이었고, 늘 넘어갔다. 실측(런 187,
+     * TS 528)에서 `StagePosition >= 1 → >= 2 → >= 3 → >= 4` 로 올라가는 시나리오에 전투가 한 번도
+     * 안 끼워졌다. 사이를 메우는 일이 제대로 돌았는데도 그랬다 — 메울 자리로 세어지지 않았다.
+     *
+     * 그래서 값을 모르는 요구도 한 번 더 본다. 다만 **지도가 "이건 조작으로 못 만든다"고 말할
+     * 때만** 자리로 센다([Writer.Automatic]). 나머지는 앞 스텝이 만들었을 수 있고, 그것까지 막으면
+     * 될 것을 못 하게 한다 — 실측(지도 26)에서 `InteractionLock.IsLocked` 가 전제에 22번 나오는데
+     * 그 값을 쓰는 기능은 지도에 하나도 없다. 그런 것까지 세면 저작이 온통 미상으로 덮인다.
+     *
+     * @param at 지금 서 있는 화면. 저절로 바뀌는 값을 만나면 **그 일이 일어나는 화면까지 가는 길**을
+     *   여기서부터 찾는다. 모르면 길을 붙이지 않고 이유만 낸다.
      */
     private suspend fun resolveGuards(
         contentMapId: Long,
         state: Map<String, String>,
         want: List<Guard>,
         steps: MutableList<PathStep>,
+        at: String?,
     ): ScenarioPathAnswer {
         val unmet = want.filter { g ->
             val have = state[g.variable]
             have != null && !g.holds(have)
-        }
-        if (unmet.isEmpty()) {
-            return if (steps.isEmpty()) ScenarioPathAnswer(ScenarioPathResult.NOT_REQUIRED)
-            else answer(steps)
         }
 
         for (guard in unmet) {
@@ -193,15 +206,7 @@ class ScenarioPathService(
                 // 값을 바꾸는 것이 명세에 **있는데** 지시할 수 없는 경우다. 없는 것과 구분해서
                 // 말해 준다 — 사용자가 채워 줘야 할 것이 "어떻게 하면 그 일이 일어나는가"라서
                 // 그 문장이 곧 물어볼 질문이 된다.
-                Writer.Automatic -> return ScenarioPathAnswer(
-                    ScenarioPathResult.UNKNOWN,
-                    capabilityIds = steps.map { it.capabilityId },
-                    actions = steps.map { it.action },
-                    inputs = steps.map { it.input },
-                    blockedBy = guard.variable,
-                    note = "${guard.variable} 를 바꾸는 것이 명세에 있으나 조작으로 지시할 수 없다" +
-                        "(저절로 일어나는 것). ${guard.operator} ${guard.value} 로 만드는 방법은 명세에 없다.",
-                )
+                is Writer.Automatic -> return automaticAnswer(contentMapId, guard, writer, state, steps, at)
                 Writer.None -> return ScenarioPathAnswer(
                     ScenarioPathResult.UNKNOWN,
                     capabilityIds = steps.map { it.capabilityId },
@@ -212,7 +217,57 @@ class ScenarioPathService(
                 )
             }
         }
+
+        // 값을 모르는 요구를 한 번 더 본다. 위 KDoc 에 적은 구멍이 이 자리다.
+        for (guard in want) {
+            if (state.containsKey(guard.variable)) continue
+            val writer = writerFor(contentMapId, guard, state)
+            if (writer !is Writer.Automatic) continue
+            return automaticAnswer(contentMapId, guard, writer, state, steps, at)
+        }
+
+        if (steps.isEmpty()) return ScenarioPathAnswer(ScenarioPathResult.NOT_REQUIRED)
         return answer(steps)
+    }
+
+    /**
+     * 저절로 바뀌는 값을 요구하는 자리의 답(ARTEL-637).
+     *
+     * **아는 만큼은 스텝으로 낸다.** 그 값이 바뀌는 화면까지 가는 길은 대개 지도에 있으므로 그것을
+     * 붙이고, 거기서 무엇이 일어나야 하는지는 [ScenarioPathResult.UNKNOWN] 으로 남긴다 —
+     * 실행하는 쪽이 "맵에서 Return 을 눌러 전투에 들어간다"까지는 그대로 할 수 있고, 남은 것은
+     * "이겨야 한다" 하나다. 전부 미상으로 답하면 아는 절반까지 버리는 셈이다.
+     *
+     * 이미 그 화면에 서 있으면 갈 곳이 없다 — 길을 붙이지 않고 이유만 낸다.
+     */
+    private suspend fun automaticAnswer(
+        contentMapId: Long,
+        guard: Guard,
+        writer: Writer.Automatic,
+        state: Map<String, String>,
+        steps: MutableList<PathStep>,
+        at: String?,
+    ): ScenarioPathAnswer {
+        val here = at != null && at in writer.scenes
+        val travelled = if (here || at == null) null else writer.scenes.firstNotNullOfOrNull { target ->
+            (sceneHop(contentMapId, at, target, state) as? Hop.By)?.let { target to it.step }
+        }
+        travelled?.let { (_, step) -> steps += step }
+
+        val where = writer.scenes.joinToString(" · ")
+        return ScenarioPathAnswer(
+            ScenarioPathResult.UNKNOWN,
+            capabilityIds = steps.map { it.capabilityId },
+            actions = steps.map { it.action },
+            inputs = steps.map { it.input },
+            blockedBy = guard.variable,
+            note = buildString {
+                append("${guard.variable} 는 $where 에서 저절로 바뀐다(조작으로 지시할 수 없다). ")
+                append("${guard.operator} ${guard.value} 로 만들려면 거기서 그 일이 일어나야 한다.")
+                if (travelled != null) append(" 그 화면까지 가는 길은 스텝으로 넣었다.")
+                else if (here) append(" 지금 그 화면에 있다.")
+            },
+        )
     }
 
     /**
@@ -229,17 +284,16 @@ class ScenarioPathService(
         // **지시할 수 없는 기능이 쓴 값은 길이 아니다.** 실제로 `MapMove.StagePosition` 을 올리는
         // 것은 마지막 웨이브가 끝날 때 저절로 도는 코드(`not-a-step` · `interaction=none`)뿐이고,
         // 그것을 답으로 내면 "조작 미상(none)" 같은 실행할 수 없는 스텝이 시나리오에 들어간다.
-        val usable = effects
+        val owners = effects
             // **흐린 효과는 단정 근거가 못 된다**(ARTEL-478). `ambiguous` 는 후보를 하나로 못 좁힌
             // 것이고 `unresolved` 는 못 푼 것이라, 그 값을 "이 조작이 이 값을 만든다"로 옮겨 적으면
             // 명세가 모른다고 적어 둔 것을 우리가 안다고 말하는 셈이 된다.
             .filter { it.resolution == null || it.resolution in CERTAIN }
             .mapNotNull { effect ->
-                capabilityRepository.findById(effect.capabilityId)
-                    ?.takeIf { instructable(it) }
-                    ?.let { effect to it }
+                capabilityRepository.findById(effect.capabilityId)?.let { effect to it }
             }
-        if (usable.isEmpty()) return Writer.Automatic
+        val usable = owners.filter { (_, capability) -> instructable(capability) }
+        if (usable.isEmpty()) return automatic(owners)
 
         // **그 조작 자신이 지금 가능한가.** 같은 변수를 쓰는 기능이 여럿이고 각자 성립 조건이
         // 다르므로(맵의 방향키가 각각 다른 `position` 에서만 성립한다), 이것을 보는 것은 거르는
@@ -255,7 +309,7 @@ class ScenarioPathService(
         // **값을 정하는 조작**이 먼저다. 증감은 한 번으로 값이 정해지지 않으므로 여기서 뺀다 —
         // 빼지 않으면 `+1` 을 쓰는 조작이 `position >= 1` 을 "한 번 눌러 만족시킨다"로 읽힌다.
         val exact = ready.firstOrNull { (e, _) ->
-            e.detail != null && increment(e.detail) == null && guard.holds(e.detail!!)
+            increment(e.detail) == null && makes(guard, e.detail)
         }
         // **증감은 방향을 골라야 한다.** 먼저 걸리는 것을 집으면 값을 반대로 밀어내는 조작이
         // 들어간다 — 실측(런 152, TS 250)에서 `position` 을 1에서 3으로 올려야 하는 자리에
@@ -277,13 +331,20 @@ class ScenarioPathService(
         // `position` 을 2에서 3으로 올릴 자리가 그랬다 — `RightArrow` 가 +1 을 쓰지만 지도에는 그
         // 조작의 사전조건이 `position == 0` 으로 적혀 있다. "명세에 없다"고 말하면 사용자는 없는
         // 것을 알려주려 하게 되고, 정작 손볼 자리(지도의 사전조건)는 가려진다.
+        //
+        // **여기까지 왔다고 아무것도 모르는 것은 아니다**(ARTEL-637). 지시할 수 있는 조작이 이
+        // 값을 쓰기는 하는데 이 값으로는 못 만드는 자리인데, 그때도 **저절로 바뀌는 쪽**은 남아
+        // 있을 수 있다. 실측(지도 26)에서 `MapMove.StagePosition` 이 그렇다 — 타이틀의 새 게임
+        // 버튼이 `0` 을 쓰므로 지시 가능한 쓰기가 있지만 `>= 2` 로 만들지는 못하고, 그 값을 올리는
+        // 것은 `TurnBattleScene` 의 `+1`(`interaction=none`)뿐이다. 예전에는 이 자리에서 "명세에
+        // 없다"고 답했고, 그래서 저작이 전투를 한 번도 끼우지 않은 시나리오를 냈다(런 187, TS 528).
         val (chosen, capability) = exact ?: relative
             ?: toward?.let { direction ->
                 usable.firstOrNull { (effect, _) -> increment(effect.detail)?.let(Push::of) == direction }
                     ?.let { (_, capability) -> ScenarioStateReader.violated(capability.givenText, state) }
                     ?.let { return Writer.Blocked(it) }
             }
-            ?: return Writer.None
+            ?: return automatic(owners)
 
         // 되풀이해야 하는지는 **지도가 말해 준다**(ARTEL-473). `repeat_until_done` 이 그 자리이고,
         // 증감만 아는 값을 옮기는 경우가 그 다음이다 — 몇 칸씩 움직이는지는 알아도 **지금 값과
@@ -299,6 +360,74 @@ class ScenarioPathService(
                 else append(" (${guard.variable} → ${chosen.detail})")
             },
         ))
+    }
+
+    /**
+     * 이 효과가 [guard] 를 **증명할 수 있게** 만드나(ARTEL-637).
+     *
+     * [Guard.holds] 를 쓰면 안 되는 자리다. 그쪽은 *"이것이 위반인가"* 에 답하고 **읽을 수 없으면
+     * 참**이라고 말한다 — 모르는 것을 위반이라 하지 않는 것이 이 저장소 전체의 규칙이라 그게 맞다.
+     * 그런데 여기서 묻는 것은 정반대다: *"이 조작이 이 값을 만드나."* 만든다는 것은 **주장**이라,
+     * 못 읽으면 참이 아니라 거짓이어야 한다.
+     *
+     * 뒤섞은 대가가 실측(런 188)에 그대로 나왔다. 지도에 `saved StagePosition = MapMove.StagePosition`
+     * 이 있는데 그 `detail` 이 숫자가 아니라, `StagePosition >= 2` 를 **만족시킨다고** 읽혔다.
+     * 그래서 전투가 필요한 자리가 "지도 화면의 어떤 클릭이 이미 만들어 준다"로 답해졌고, 저작은
+     * 전투를 한 번도 안 끼운 시나리오를 냈다.
+     *
+     * 기호 값(`PlayerPrefs.GetInt(…)` · `stagePosition`)은 무엇이 될지 모르는 것이다. 모르는 것을
+     * 근거로 스텝을 끼우면 그 스텝은 실행할 때 어긋난다.
+     */
+    private fun makes(guard: Guard, detail: String?): Boolean {
+        val made = detail?.trim().orEmpty()
+        if (made.isEmpty() || guard.symbolic) return false
+        return when (guard.operator) {
+            // 글자까지 같으면 증명된다 — 숫자가 아니어도 된다(`"GameClearScene"` 같은 이름).
+            "==" -> made == guard.value
+            // "그 값이 아니다"는 **무엇이 되는지 알아야** 증명된다. 기호는 그 값일 수도 있다.
+            "!=" -> made.toDoubleOrNull() != null && made != guard.value
+            else -> made.toDoubleOrNull() != null && guard.holds(made)
+        }
+    }
+
+    /**
+     * 지시할 수 없는 쓰기만 남았을 때의 답. **어디서 일어나는지를 함께 낸다**(ARTEL-637).
+     *
+     * 화면 이름이 답의 절반이다 — 거기까지 가는 길은 대개 지시할 수 있고, 그러면 시나리오는
+     * "그 화면까지 가서 그 일이 일어나기를 기다린다"까지 적을 수 있다. 이름을 버리면 실행하는
+     * 쪽에도 사용자에게도 "방법이 없다"로만 보인다.
+     *
+     * 지시할 수 없는 쓰기조차 없으면 [Writer.None] 이다 — 예전 그대로다. 화면을 못 대면서
+     * `Automatic` 이라 답하면 없는 자리를 가리키는 셈이라 [Writer.None] 과 구분할 값이 없다.
+     */
+    private suspend fun automatic(owners: List<Pair<CapabilityEffectEntity, CapabilityEntity>>): Writer {
+        val scenes = owners
+            .filterNot { (_, capability) -> instructable(capability) }
+            .filter { (effect, _) -> tells(effect.detail) }
+            .mapNotNull { (_, capability) -> sceneRepository.findById(capability.sceneId)?.name }
+            .distinct()
+        return if (scenes.isEmpty()) Writer.None else Writer.Automatic(scenes)
+    }
+
+    /**
+     * 이 효과가 값이 **무엇이 되는지** 말하나(ARTEL-649).
+     *
+     * [makes] 와 같은 뿌리다 — 다른 이름을 옮겨 적은 `detail` 은 그 값이 무엇이 될지 말하지 않는다.
+     * 여기서 그것까지 세면 **엉뚱한 화면을 짚는다.** 실측(런 214)에서 `StagePosition` 의 오름을
+     * `TurnBattleScene · Map_scene 에서 저절로 바뀐다`고 답했다. 맵 쪽은 `SelectStage()` 가
+     * `stagePosition` 이라는 **지역 이름을 옮겨 적은 것**이라 값을 올리지 않는다. 그런데 지금 서
+     * 있는 화면이 그 목록에 들어가는 바람에 "지금 그 화면에 있다"로 끝났고, 전투까지 가는 길을
+     * 스텝으로 내지 못했다 — 아는 절반을 그렇게 잃는다.
+     *
+     * 리터럴(숫자 · 따옴표 · 참거짓)과 증감만이 값이 무엇이 되는지 말한다.
+     */
+    private fun tells(detail: String?): Boolean {
+        val made = detail?.trim().orEmpty()
+        if (made.isEmpty()) return false
+        return increment(made) != null ||
+            made.toDoubleOrNull() != null ||
+            made.startsWith("\"") || made.startsWith("'") ||
+            made == "true" || made == "false"
     }
 
     /** 값을 **올려야 하나 내려야 하나.** 크기는 여기서 묻지 않는다 — 방향만이 답이다. */
@@ -318,16 +447,25 @@ class ScenarioPathService(
     /**
      * 어느 쪽으로 밀어야 [guard] 를 만족하나. 알 수 없으면 null.
      *
-     * 지금 값을 모르면 방향도 모른다 — 그때는 고르지 않고 있는 것을 쓴다(예전과 같다).
+     * **부등호는 지금 값을 몰라도 방향을 안다**(ARTEL-649). `>= 2` 를 만족시키는 길은 올리는 것
+     * 하나뿐이고, 지금이 0이든 1이든 그 답은 달라지지 않는다. 지금 값이 있어야 하는 것은 `==`
+     * 하나다 — 목표가 위에 있는지 아래에 있는지가 거기서만 갈린다.
+     *
+     * 앞서 이 함수는 지금 값을 못 읽으면 무조건 방향을 모른다고 답했다. 대가가 실측(런 213)에
+     * 그대로 나왔다. `StagePosition >= 2` 는 전제가 `>=` 라 확정값이 없어 늘 "모름"이었고,
+     * 방향을 모르면 있는 증감을 쓴다는 규칙에 걸려 **타이틀의 `-1` 을 쓰는 버튼**이 그 값을
+     * 만드는 조작으로 뽑혔다. 그래서 전투가 필요한 자리가 `KNOWN` 으로 답해졌고, 저작은 전투를
+     * 한 번도 안 끼운 시나리오를 냈다 — 되살린 ARTEL-637 이 이 한 줄에 가려 작동하지 못했다.
      */
     private fun push(guard: Guard, have: String?): Push? {
-        val current = have?.toDoubleOrNull() ?: return null
         val target = guard.value.toDoubleOrNull() ?: return null
         return when (guard.operator) {
             ">", ">=" -> Push.UP
             "<", "<=" -> Push.DOWN
-            // `==` 는 지금 값이 어느 쪽에 있는지가 방향이다.
-            "==" -> if (target > current) Push.UP else if (target < current) Push.DOWN else null
+            // `==` 는 지금 값이 어느 쪽에 있는지가 방향이다. 그것만 지금 값을 요구한다.
+            "==" -> have?.toDoubleOrNull()?.let {
+                if (target > it) Push.UP else if (target < it) Push.DOWN else null
+            }
             // `!=` 는 어느 쪽으로 밀어도 벗어난다. 고를 근거가 없다.
             else -> null
         }
@@ -447,12 +585,20 @@ class ScenarioPathService(
         state: Map<String, String>,
     ): Hop {
         val fromScene = sceneRepository.findByContentMapIdAndName(contentMapId, from) ?: return Hop.None
-        val edge = sceneEdgeRepository.findByFromSceneIdAndToSceneName(fromScene.id!!, to).firstOrNull()
-            ?: return Hop.None
-        // 간선은 있는데 무엇으로 넘어가는지 모르는 경우(자동 전이)도 저절로 일어나는 쪽이다.
-        val capabilityId = edge.capabilityId ?: return Hop.Automatic
-        val capability = capabilityRepository.findById(capabilityId) ?: return Hop.None
-        if (!instructable(capability)) return Hop.Automatic
+        val edges = sceneEdgeRepository.findByFromSceneIdAndToSceneName(fromScene.id!!, to).toList()
+        if (edges.isEmpty()) return Hop.None
+
+        // **한 화면에서 같은 곳으로 가는 길이 여럿이면 시킬 수 있는 쪽을 고른다**(ARTEL-634).
+        // 앞서는 첫 간선을 집었다. 실측(지도 26)에서 `Map_scene → TurnBattleScene` 이 둘인데
+        // 하나는 `not-a-step` 이고 다른 하나가 `Return` 키다 — 앞엣것이 먼저 나오면 "저절로
+        // 일어난다"로 답하고, 그 위에서 저작이 "길을 모른다"고 사용자에게 묻는다. 지도가 아는
+        // 길을 두고 물은 셈이다(런 183: `gap:Map_scene→TurnBattleScene`).
+        val usable = edges.firstNotNullOfOrNull { edge ->
+            val capability = edge.capabilityId?.let { capabilityRepository.findById(it) }
+            if (capability != null && instructable(capability)) edge.capabilityId!! to capability else null
+        }
+        // 시킬 수 있는 간선이 하나도 없으면 그때는 정말 저절로 일어나는 자리다.
+        val (capabilityId, capability) = usable ?: return Hop.Automatic
         // 간선을 타는 조작에도 자기 사전조건이 있다. `InteractionLock` 이 잠긴 상태에서 씬을
         // 넘으라고 적어 두면 실행은 첫 스텝에서 멎는다.
         ScenarioStateReader.violated(capability.givenText, state)?.let { return Hop.Blocked(it) }
@@ -483,8 +629,19 @@ class ScenarioPathService(
     /** 값을 옮기는 네 경우. 뜻은 [Hop] 과 같다. */
     private sealed interface Writer {
         data class By(val step: PathStep) : Writer
+
         data class Blocked(val by: Guard) : Writer
-        data object Automatic : Writer
+
+        /**
+         * 지도는 이 값이 **바뀐다고 말하는데** 그 일을 조작으로 시킬 수 없다.
+         *
+         * [scenes] 는 그 일이 일어나는 화면들이다. 이것을 들고 다니는 이유는 **거기까지 가는 길은
+         * 대개 지시할 수 있기 때문**이다(ARTEL-637) — `MapMove.StagePosition` 은 `TurnBattleScene`
+         * 에서 저절로 `+1` 오르고, 그 화면에 들어가는 것은 지도에 `Return` 으로 적혀 있다. 화면
+         * 이름을 버리고 "방법이 명세에 없다"로만 답하면 절반을 알면서 전부 모른다고 말하는 셈이다.
+         */
+        data class Automatic(val scenes: List<String>) : Writer
+
         data object None : Writer
     }
 

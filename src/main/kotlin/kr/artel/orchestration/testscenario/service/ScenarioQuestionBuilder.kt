@@ -49,11 +49,30 @@ object ScenarioQuestionBuilder {
         untestedArms: List<Pair<Long, Long>>,
         scope: List<Triple<String, Int, Int>>,
         describe: (Long) -> String = { "" },
-    ): ScenarioQuestion? {
-        blockedGaps.distinct().firstOrNull()?.let { return gapQuestion(it) }
-        untestedArms.firstOrNull()?.let { return armQuestion(it.first, it.second, describe) }
-        if (scope.isNotEmpty()) return scopeQuestion(scope)
-        return null
+    ): ScenarioQuestion? = all(blockedGaps, untestedArms, scope, describe).firstOrNull()
+
+    /**
+     * **모르는 자리를 전부 낸다**(ARTEL-630).
+     *
+     * 앞서는 [from] 이 하나만 골라 냈다. 막힌 자리가 여럿이면 나머지는 **아무 말 없이 미상으로**
+     * 남고, 사용자는 시나리오가 완성된 줄 안다 — 실측(런 178)에서 못 간다고 적은 자리가 일곱인데
+     * 물은 것은 하나였다.
+     *
+     * 하나만 묻던 것은 "같은 질문이 매 턴 다시 나가는" 것을 막으려던 것이었는데(런 152), 그건
+     * **답한 질문을 다시 안 묻는 것**으로 풀 일이지 모르는 것을 감춰서 풀 일이 아니다. 한 번에
+     * 다 보여 주면 아는 것만 답하고 나머지는 그대로 둘 수 있다.
+     *
+     * 순서는 급한 것부터다 — 길이 막힌 자리, 못 본 갈래, 덜 담긴 씬.
+     */
+    fun all(
+        blockedGaps: List<String>,
+        untestedArms: List<Pair<Long, Long>>,
+        scope: List<Triple<String, Int, Int>>,
+        describe: (Long) -> String = { "" },
+    ): List<ScenarioQuestion> = buildList {
+        blockedGaps.distinct().forEach { add(gapQuestion(it)) }
+        untestedArms.forEach { add(armQuestion(it.first, it.second, describe)) }
+        if (scope.isNotEmpty()) add(scopeQuestion(scope))
     }
 
     /**

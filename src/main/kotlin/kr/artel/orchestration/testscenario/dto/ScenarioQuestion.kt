@@ -34,8 +34,10 @@ data class ScenarioQuestion(
     val source: ScenarioQuestionSource = ScenarioQuestionSource.CODE,
 ) {
     /** 저장 본문. 사람이 읽는 문장은 메시지 `content` 에 그대로 두고 여기에는 누를 것만 담는다. */
-    fun payload(): Map<String, Any?> = mapOf(
-        "kind" to "question",
+    fun payload(): Map<String, Any?> = one() + mapOf("kind" to "question")
+
+    /** 이 질문 하나를 적은 것. 묶음에 담길 때는 `kind` 없이 이 모양으로 들어간다. */
+    fun one(): Map<String, Any?> = mapOf(
         "id" to id,
         "text" to text,
         "why" to why,
@@ -43,6 +45,20 @@ data class ScenarioQuestion(
         "allow_free_text" to allowFreeText,
         "source" to source.name.lowercase(),
     )
+
+    companion object {
+        /**
+         * 함께 낸 질문들을 **한 줄에** 담는다(ARTEL-630).
+         *
+         * 대화에는 첫 질문만 한 줄로 남긴다 — 다섯 줄이 붙으면 대화가 질문지에 묻힌다. 그런데
+         * 나머지에도 답할 수 있어야 하므로, 그 줄의 payload 가 묶음 전체를 든다. 답이 돌아오면
+         * 이 목록에서 그 id 를 찾는다.
+         */
+        fun batchPayload(questions: List<ScenarioQuestion>): Map<String, Any?> {
+            val first = questions.first()
+            return first.payload() + mapOf("questions" to questions.map { it.one() })
+        }
+    }
 }
 
 /**

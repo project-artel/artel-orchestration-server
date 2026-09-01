@@ -7,7 +7,11 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
+import kr.artel.orchestration.contentmap.entity.Actionability
+import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.testcase.dto.CaseGuard
+import kr.artel.orchestration.testcase.dto.ValueMove
+import kr.artel.orchestration.testscenario.service.Guard
 import kr.artel.orchestration.testcase.dto.SceneExit
 import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
@@ -90,6 +94,13 @@ class TestCaseService(
         val changed = valuesChangedByCases(projectId)
         // **길은 우리가 찾지 않지만, 지도가 아는 것은 보낸다**(ARTEL-628).
         val exits = sceneExits(projectId)
+        // **어느 화면에서 움직이는 값인지 미리 말한다**(ARTEL-635). 거절하고 고치게 하는 것은
+        // 뒷수습이다 — 저작이 짤 때 알아야 스테이지를 안 깬 채로 지도를 활보하지 않는다.
+        val raisers = valueRaisers(projectId)
+        // **화면 이름만으로는 "들렀다 오면 되나"로 읽힌다**(ARTEL-646). 얼마씩·시킬 수 있나·어떤
+        // 조건에서까지 함께 보낸다 — 그 넷이 지도에 나란히 적혀 있고, 실측(A/B)에서 같은 모델이
+        // 여정을 26조각에서 10개로 줄였다.
+        val moves = valueMoves(projectId)
         return repository.findByProjectIdOrderByIdAsc(projectId).map { case ->
             AuthoringTestCase(
                 id = case.id!!,
@@ -100,7 +111,13 @@ class TestCaseService(
                 verificationStatus = case.verificationStatus,
                 // **문장이 아니라 구조에서 읽는다**(ARTEL-627).
                 stateBefore = conditions.guardsOf(case)
-                    .map { CaseGuard(it.variable, it.operator, it.value) },
+                    .map { guard ->
+                        CaseGuard(
+                            guard.variable, guard.operator, guard.value,
+                            raisedIn = raisers[ScenarioStateReader.normalize(guard.path)].orEmpty(),
+                            moves = movesFor(moves, guard),
+                        )
+                    },
                 // 케이스 메타가 먼저다 — 구버전 엑셀 경로로 들어온 행은 거기 답이 있다. 지도가 낸
                 // 행은 그 칸이 없어서 비어 오고, 그때 지도가 답한다(ARTEL-606).
                 stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
@@ -150,6 +167,68 @@ class TestCaseService(
      *
      * 못 읽으면 빈 map 이다. 길 안내가 없어도 저작은 돌아야 한다 — 그건 도움말이지 재료가 아니다.
      */
+    /**
+     * 값마다 **움직이는 화면들**(ARTEL-635).
+     *
+     * `+1` 같은 증감만 본다. 확정값(`0`)은 되돌리는 것이지 진행이 아니라, 그것까지 세면
+     * 타이틀 화면이 모든 값의 출처가 된다.
+     */
+    /**
+     * 그 가드가 말하는 값을 **바꾸는 자리들**(ARTEL-646).
+     *
+     * **전체 이름으로 먼저 맞춘다.** 마지막 마디로만 맞추면 `StageDataSingleton.stagePosition` 이
+     * `MapMove.StagePosition` 자리에 딸려 온다 — 실측에서 일곱 줄 중 여섯이 남의 것이었고, 답
+     * 한 줄이 그 속에 묻혔다. 꼬리가 서로를 포함할 때만 같은 값으로 본다(`Player.hp` 와 `hp`).
+     *
+     * 전체 이름으로 하나도 못 찾으면 마지막 마디로 물러선다 — 못 찾는 것보다는 낫고, 그때는
+     * 이름이 흐린 것이라 저작도 흐린 채로 받는 편이 정직하다.
+     */
+    private fun movesFor(all: Map<String, List<OwnedMove>>, guard: Guard): List<ValueMove> {
+        val leaf = ScenarioStateReader.normalize(guard.path)
+        val candidates = all[leaf].orEmpty()
+        if (candidates.isEmpty()) return emptyList()
+        val exact = candidates.filter { (owner, _) ->
+            owner == guard.path || owner.endsWith(".${guard.path}") || guard.path.endsWith(".$owner")
+        }
+        return (if (exact.isNotEmpty()) exact else candidates).map { it.move }.distinct()
+    }
+
+    private suspend fun valueMoves(projectId: Long): Map<String, List<OwnedMove>> = runCatching {
+        repository.findValueMoves(projectId).toList()
+            .map { row ->
+                OwnedMove(
+                    owner = row.target,
+                    move = ValueMove(
+                        scene = row.scene,
+                        by = row.detail,
+                        // **시킬 수 없으면 비운다.** 그것이 "사람이 조건을 만들어야 한다"는 뜻이고,
+                        // 화면 이름만 있던 자리에서 가장 크게 빠져 있던 사실이다.
+                        how = row.operation?.takeIf { row.actionability != Actionability.NOT_A_STEP.wire },
+                        whenTrue = conditionText(row.conditionTree),
+                    ),
+                )
+            }
+            .groupBy { ScenarioStateReader.normalize(it.owner) }
+    }.onFailure { logger.warn("값이 어떻게 움직이는지 조회 실패 — 화면 이름만 보낸다: ${it.message}") }
+        .getOrElse { emptyMap() }
+
+    /** 조건을 사람이 읽는 한 줄로. 구조에서 읽으므로 문장을 되파싱하지 않는다. */
+    private fun conditionText(tree: io.r2dbc.postgresql.codec.Json?): String? = runCatching {
+        val node = EvidenceParser(objectMapper).parseCondition(objectMapper.readTree(tree?.asString() ?: return null))
+        ScenarioStateReader.guardsIn(node)
+            .joinToString(" 그리고 ") { "${it.variable} ${it.operator} ${it.value}" }
+            .ifBlank { null }
+    }.getOrNull()
+
+    /** 값 이름을 함께 든 이동. 가드와 맞출 때 전체 이름이 필요하다. */
+    private data class OwnedMove(val owner: String, val move: ValueMove)
+
+    private suspend fun valueRaisers(projectId: Long): Map<String, List<String>> = runCatching {
+        repository.findValueRaisers(projectId).toList()
+            .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
+            .mapValues { (_, scenes) -> scenes.distinct().sorted() }
+    }.getOrElse { emptyMap() }
+
     private suspend fun sceneExits(projectId: Long): Map<String, List<SceneExit>> = runCatching {
         repository.findSceneExits(projectId).toList()
             .groupBy { it.fromScene }

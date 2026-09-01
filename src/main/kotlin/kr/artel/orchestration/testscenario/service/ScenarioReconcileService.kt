@@ -12,6 +12,7 @@ import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.dto.ReviewedCases
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestion
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
+import kr.artel.orchestration.testscenario.dto.ScenarioStepKind
 import kr.artel.orchestration.testscenario.dto.ScenarioStepSource
 import kr.artel.orchestration.testscenario.dto.ScenarioStep
 import kr.artel.orchestration.testscenario.dto.toStoredStep
@@ -55,6 +56,7 @@ class ScenarioReconcileService(
     private val pathService: ScenarioPathService,
     private val caseFactService: ScenarioCaseFactService,
     private val runMessageRepository: TestRunMessageRepository,
+    private val trace: AuthoringTrace,
 ) {
     private val logger = LoggerFactory.getLogger(ScenarioReconcileService::class.java)
 
@@ -73,6 +75,13 @@ class ScenarioReconcileService(
         val findings: ScenarioCoverageAudit.Findings = ScenarioCoverageAudit.Findings(),
         val notices: List<String> = emptyList(),
         val question: ScenarioQuestion? = null,
+        /**
+         * 모르는 자리 **전부**(ARTEL-630). [question] 은 그중 첫 것이고, 옛 화면을 위해 남긴다.
+         *
+         * 하나만 내던 것은 같은 질문이 매 턴 다시 나가는 것을 막으려던 것이었는데(런 152), 그건
+         * 답한 질문을 다시 안 묻는 것으로 풀 일이지 모르는 것을 감춰서 풀 일이 아니다.
+         */
+        val questions: List<ScenarioQuestion> = emptyList(),
     ) {
         val rejected: Boolean get() = findings.rejected
     }
@@ -127,12 +136,17 @@ class ScenarioReconcileService(
         divided.notes.forEach { (title, parts) ->
             logger.info("함께 담을 수 없어 나눴다 [runId={}] {} → {}조각", runId, title, parts)
         }
+        if (divided.notes.isEmpty()) trace.record(runId, "1. 나눈다", "나눌 것 없음")
+        else trace.record(
+            runId, "1. 나눈다",
+            divided.notes.joinToString("\n") { (title, parts) -> "$title → ${parts}조각" },
+        )
 
         val split = repairedSplit(given)
         // **덜 담긴 것은 런 전체로 본다**(ARTEL-516). 이번 턴에 쓴 것만 보면, 다른 시나리오에
         // 이미 있는 갈래를 "빠졌다"고 세어 전건을 담은 뒤에도 되묻기가 멈추지 않는다.
         val covered = coveredInRun(runId, given, split)
-        val siblings = ScenarioSiblingCheck.analyze(facts, split, covered)
+        val siblings = ScenarioSiblingCheck.analyze(facts, split, covered) { value -> movable.any { written -> sameTail(written, value) } }
         if (siblings.conflicting.isNotEmpty()) {
             // 나눈 뒤에도 남았다면 나누는 쪽에 구멍이 있다는 뜻이다. 저장은 막지 않되 남긴다.
             logger.warn("나눈 뒤에도 동거 불가가 남았다 [runId={}] {}", runId, siblings.conflicting)
@@ -144,7 +158,17 @@ class ScenarioReconcileService(
 
         // 검수보다 **먼저** 메운다. 순서가 반대면 코드가 고칠 수 있는 것 때문에 저장이 막히고,
         // 그러면 에이전트에게 다시 쓰라고 시키게 된다 — 그 방법이 안 통한다는 것이 이 작업의 전제다.
-        val (bridged, notices, blocked) = repairByInsertion(routes, given, describe)
+        val (bridged, notices, blocked) =
+            repairByInsertion(routes, given, describe, openingFacts(projectId, facts))
+        trace.record(
+            runId, "2. 메운다",
+            bridged.mapIndexed { index, after ->
+                val before = given.getOrNull(index)?.steps?.size ?: 0
+                "${after.title}: 스텝 $before → ${after.steps.size}"
+            }.joinToString("\n") +
+                (if (notices.isEmpty()) "" else "\n못 메운 구간:\n" + notices.joinToString("\n")) +
+                (if (blocked.isEmpty()) "" else "\n막힌 것: $blocked"),
+        )
         // 글자까지 같은 스텝이 서로 다른 케이스를 보면 무엇이 다른지 붙인다. 화면에서는 같은 줄이
         // 두 번 있는 것으로 보이고, 실행하는 사람은 중복이라 여겨 하나를 건너뛴다.
         val repaired = ScenarioSiblingLabel.apply(
@@ -164,6 +188,14 @@ class ScenarioReconcileService(
                 conflicting = siblings.conflicting,
             )
         }
+        trace.record(
+            runId, "3. 검수한다",
+            "판정: ${if (findings.rejected) "막음 — 한 줄도 저장하지 않는다" else "통과"}\n" +
+                "안 담은 것 ${findings.missing} · 판정 안 한 것 ${findings.unreviewed} · " +
+                "없는 번호 ${findings.ghost} · 없는 근거 ${findings.ungrounded.size}건 · " +
+                "모른다고 했으나 아는 자리 ${findings.falseUnknowns.size}건 · " +
+                "함께 못 서는 것 ${findings.conflicting.size}건",
+        )
         if (findings.rejected) {
             logger.warn(
                 "저작 검수 실패 — 저장하지 않음 [runId={}] {} · unreviewed={} missing={} ghost={} " +
@@ -191,9 +223,14 @@ class ScenarioReconcileService(
         // 질문이 다시 만들어지는데, 그것을 그대로 내보내면 "그대로 두기"를 누른 사용자에게 같은
         // 것을 계속 묻는 셈이 된다. 답한 기록은 대화에 `answered` 로 남아 있다.
         val answered = answeredQuestionIds(runId, appUserId)
-        val question = ScenarioQuestionBuilder.from(
+        // **모르는 자리를 전부 낸다**(ARTEL-630). 하나만 내면 나머지는 아무 말 없이 미상으로 남고,
+        // 사용자는 시나리오가 완성된 줄 안다 — 실측(런 178)에서 못 간다고 적은 자리가 일곱인데
+        // 물은 것은 하나였다.
+        val questions = ScenarioQuestionBuilder.all(
             blocked, siblings.untestedArms, scope, describe,
-        )?.takeIf { it.id !in answered }
+        ).filterNot { it.id in answered }
+        // 옛 화면은 아직 한 개짜리 칸을 읽는다. 첫 질문을 거기 그대로 둬서 옮겨 올 시간을 준다.
+        val question = questions.firstOrNull()
         val asked = question?.id?.substringBefore(":")
         val allNotices = buildList {
             // 나눈 것은 **먼저** 말한다. 시나리오 수가 달라진 이유이므로, 아래 알림들보다 먼저
@@ -269,7 +306,13 @@ class ScenarioReconcileService(
             }
         }
         logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${repaired.size}]")
-        return ReconcileOutcome(applied, findings, allNotices, question)
+        trace.record(
+            runId, "4. 저장한다",
+            "시나리오 $applied/${repaired.size}개\n" +
+                repaired.joinToString("\n") { "  · ${it.title} — 스텝 ${it.steps.size}" } +
+                (if (questions.isEmpty()) "" else "\n되묻는다: " + questions.joinToString(" · ") { it.id }),
+        )
+        return ReconcileOutcome(applied, findings, allNotices, question, questions)
     }
 
     /**
@@ -337,6 +380,7 @@ class ScenarioReconcileService(
         routes: PathLookup,
         scenarios: List<ScenarioResult>,
         describe: (Long) -> String,
+        openingFacts: OpeningFacts,
     ): Triple<List<ScenarioResult>, List<String>, List<String>> {
         val notices = mutableListOf<String>()
         // 무엇이 막았는지를 따로 모은다 — 알림 문장에서 되뽑으면 문구를 다듬을 때마다 깨진다.
@@ -369,10 +413,120 @@ class ScenarioReconcileService(
                 )
             }
             notices += result.notices
-            scenario.copy(steps = result.steps)
+            scenario.copy(steps = withOpeningNote(result.steps, openingFacts))
         }
         return Triple(repaired, notices.distinct(), blocked.distinct())
     }
+
+    /**
+     * **여기까지 와야 시작한다**를 첫 스텝 앞에 적는다(ARTEL-636).
+     *
+     * 시나리오는 하나가 끝날 때마다 게임을 초기화하는데 검증하는 순간은 게임 곳곳에 흩어져 있다.
+     * 엔딩을 보는 시나리오는 매번 엔딩까지 다시 가야 한다. 첫 스텝이 `StagePosition >= 4` 를
+     * 요구하는데 아무 말도 없으면, 실행하는 쪽에게는 "알아서 네 번 이겨라"와 같다.
+     *
+     * **길을 찾아 주지는 않는다.** 무엇이 참이어야 시작하는지와 그 값이 어디서 오르는지만 적는다 —
+     * 어떻게 가는지는 실행하는 쪽과 지도가 풀 문제다.
+     *
+     * 그 시나리오가 **스스로 만드는 값은 빼고** 본다. 앞 스텝이 만들어 주는 것까지 "미리 와 있으라"
+     * 고 하면 할 수 있는 일을 못 하게 막는 셈이다.
+     */
+    private fun withOpeningNote(
+        steps: List<ChatScenarioStep>,
+        facts: OpeningFacts,
+    ): List<ChatScenarioStep> {
+        val first = steps.firstOrNull() ?: return steps
+        // 이미 붙어 있으면 다시 붙이지 않는다 — 재작성 턴이 같은 시나리오를 다시 낸다.
+        if (first.stepKind == ScenarioStepKind.OPENING) return steps
+        val note = ScenarioOpeningNote.of(openingNeeds(steps, facts)) ?: return steps
+        return listOf(
+            // 근거를 달지 않는다. 이 줄은 모델이 쓴 것이 아니라 **지도에서 계산한 것**이고,
+            // `CAPABILITY` 로 적으면 어느 기능인지를 대야 하는데 댈 것이 없다.
+            ChatScenarioStep(action = note, stepKind = ScenarioStepKind.OPENING)
+        ) + steps
+    }
+
+    /**
+     * 이 시나리오가 **스스로 만들지 못하는 요구**들(ARTEL-636).
+     *
+     * 그 값이 오르는 화면을 이 시나리오가 지나면 스스로 만드는 것이라 빼고 본다 — 앞 스텝이
+     * 만들어 주는 것까지 "미리 와 있으라"고 하면 할 수 있는 일을 못 하게 막는 셈이다.
+     *
+     * 진행을 요구하는 비교만 본다. `!= 5` 나 `== 0` 은 초기화 직후로도 성립할 수 있어 적을 것이
+     * 없고, 적으면 매 시나리오에 한 줄이 붙어 그 자체가 소음이 된다.
+     */
+    private fun openingNeeds(
+        steps: List<ChatScenarioStep>,
+        facts: OpeningFacts,
+    ): List<ScenarioOpeningNote.Requirement> {
+        // **그 자리에 닿기 전에 지난 화면만 센다**(ARTEL-636). 뒤에서 지나는 것은 이 요구를
+        // 만들어 주지 못한다 — 실측(런 186)에서 3번이 `>= 1` 을 요구하는데 전투 진입이 18번이라,
+        // 순서를 안 보면 "스스로 만든다"고 읽고 안내가 빠진다. 실행하는 쪽은 그 자리에서 멎는다.
+        val visitedBefore = mutableSetOf<String>()
+        val needed = mutableListOf<ScenarioOpeningNote.Requirement>()
+        for (step in steps) {
+            val caseId = step.caseId
+            if (caseId != null) needed += unmet(facts, caseId, visitedBefore)
+            caseId?.let { facts.arrivesAt[it] }?.let(visitedBefore::add)
+        }
+        return needed
+            // 같은 값을 여러 스텝이 요구하면 **가장 많이 요구하는 자리**만 적는다.
+            .groupBy { it.variable }
+            .map { (_, needs) -> needs.maxBy { it.comparison.filter(Char::isDigit).toIntOrNull() ?: 0 } }
+            .sortedBy { it.variable }
+    }
+
+    /** 이 케이스가 요구하는 것 중 **아직 지나지 않은 화면에서만 오르는** 것들. */
+    private fun unmet(
+        facts: OpeningFacts,
+        caseId: Long,
+        visitedBefore: Set<String>,
+    ): List<ScenarioOpeningNote.Requirement> =
+        facts.guards[caseId].orEmpty()
+            .filter { guard -> guard.operator in PROGRESS_OPERATORS }
+            .filter { guard -> (guard.value.toDoubleOrNull() ?: 0.0) > 0 }
+            .mapNotNull { guard ->
+                val raisedIn = facts.raisedIn[ScenarioStateReader.normalize(guard.path)].orEmpty()
+                // **어디서 오르는지 모르면 적지 않는다.** 찾아갈 실마리가 없는 안내는 "알아서
+                // 하라"와 같고, 그런 줄이 매 시나리오에 붙으면 그 자체가 소음이다 — 실측에서
+                // `position == 1`(방향키 한 번)에까지 붙었다.
+                if (raisedIn.isEmpty()) return@mapNotNull null
+                // 그 화면을 지나면 스스로 만든다. 적을 것이 없다.
+                if (raisedIn.any { it in visitedBefore }) return@mapNotNull null
+                ScenarioOpeningNote.Requirement(
+                    guard.variable, "${guard.operator} ${guard.value}", raisedIn,
+                )
+            }
+
+    /** 자리를 말하면서 진행을 요구하는 비교. `!=` 는 한 점만 빼므로 어디인지 말하지 않는다. */
+    private val PROGRESS_OPERATORS = setOf("==", ">=", ">")
+
+    /**
+     * 시작 안내를 적는 데 필요한 사실들(ARTEL-636). 한 요청에 한 번 읽어 들고 다닌다 —
+     * 서비스에 두면 요청끼리 섞이고, 시나리오마다 다시 읽으면 같은 질의를 열 번 한다.
+     */
+    private data class OpeningFacts(
+        val guards: Map<Long, List<Guard>>,
+        val arrivesAt: Map<Long, String?>,
+        val raisedIn: Map<String, List<String>>,
+    )
+
+    /** 못 읽어도 저작을 세우지 않는다 — 그때는 안내가 안 붙을 뿐이다. */
+    private suspend fun openingFacts(projectId: Long, facts: List<ScenarioSiblingCheck.CaseFact>): OpeningFacts =
+        OpeningFacts(
+            guards = facts.associate { it.id to it.guards },
+            arrivesAt = runCatching {
+                testCaseRepository.findByProjectIdOrderByIdAsc(projectId).toList().associate { case ->
+                    case.id!! to runCatching { objectMapper.readTree(case.metadata.asString()) }
+                        .getOrNull()?.path("arrives_at")?.asText(null)?.takeIf { it.isNotBlank() }
+                }
+            }.getOrElse { emptyMap() },
+            raisedIn = runCatching {
+                testCaseRepository.findValueRaisers(projectId).toList()
+                    .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
+                    .mapValues { (_, scenes) -> scenes.distinct().sorted() }
+            }.getOrElse { emptyMap() },
+        )
 
     /**
      * **모른다고 적었는데 명세는 아는 길**인 자리를 찾는다(ARTEL-467).

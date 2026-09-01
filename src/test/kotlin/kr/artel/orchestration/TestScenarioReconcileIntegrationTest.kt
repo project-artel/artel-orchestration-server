@@ -326,12 +326,18 @@ class TestScenarioReconcileIntegrationTest {
 
         awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().size == 2 }
 
-        // 재작성 지시가 빠진 id를 지목했는지.
+        // 재작성 지시가 빠진 id를 지목하고, **기존 흐름에 넣으라**고 시켰는지.
         val repairTurn = receivedFrames.firstOrNull { it.contains("\"type\":\"turn\"") }
         assertThat(repairTurn).isNotNull()
         assertThat(repairTurn!!).contains("$caseB")
+        assertThat(repairTurn).contains("제목 그대로 통째로 다시 내")
+        // **앞서 낸 것을 구조로 보여 준다**(ARTEL-633). 산문으로 적었더니 모델이 `current_scenarios`
+        // 를 먼저 보고 "기존 시나리오 목록이 비어 있어 교체할 수 없습니다"라며 손을 놓았다(런 181).
+        // 저장 전이라 번호가 없으므로 `scenario_id` 는 null 이고 제목이 짝을 맞추는 열쇠다.
+        assertThat(repairTurn).contains("첫 시나리오")
+        assertThat(repairTurn).contains("\"scenario_id\":null")
 
-        // 합쳐서 저장됐다: 앞 결과 + 보강분.
+        // 정말 다른 흐름이면 새 카드로 남는다 — 억지로 갖다 붙이지 않는다.
         val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
         val titles = links.map { scenarioRepository.findById(it.testScenarioId)!!.title }
         assertThat(titles).containsExactly("첫 시나리오", "보강 시나리오")
@@ -341,6 +347,49 @@ class TestScenarioReconcileIntegrationTest {
             .map { it.content }
         assertThat(messages).anyMatch { it.contains("다시 작성하도록 요청") }
         assertThat(messages).anyMatch { it.contains("반영했습니다") }
+    }
+
+    /**
+     * **재작성이 같은 여정을 다시 내면 갈아끼운다**(ARTEL-629).
+     *
+     * 앞서는 그냥 이어 붙여서, 빠진 케이스가 자기만 담은 카드로 떨어져 나왔다 — 실측(런 177)에서
+     * 모델이 여정 7개를 냈는데 검수가 2건 누락을 지적했고, 재작성이 그 둘을 각각 새 카드로 만들어
+     * 최종 13개가 됐다. 스텝 한둘짜리가 그렇게 생긴다.
+     *
+     * 여정에 스텝을 더하는 것은 그 여정을 고치는 일이다. 저장 전이라 `scenario_id` 가 없으므로
+     * 제목으로 맞춘다.
+     */
+    @Test
+    fun `재작성이 같은 제목으로 오면 새 카드를 만들지 않고 갈아끼운다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        val caseA = insertCase(projectId, "RULE", "A")
+        val caseB = insertCase(projectId, "RULE", "B")
+
+        framesToSend.add(
+            """{"type":"result","message":"연결했습니다","reviewed":{"in":[$caseA,$caseB],"out":[]},""" +
+                """"scenarios":[{"title":"여정","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+        )
+        // 재작성이 같은 여정을 통째로 다시 낸다 — A 와 B 를 함께 담아서.
+        turnReplies.add(
+            """{"type":"result","message":"B까지 담았습니다","reviewed":{"in":[$caseA,$caseB],"out":[]},""" +
+                """"scenarios":[{"title":"여정","description":"d","steps":[""" +
+                """{"action":"A확인","case_id":$caseA},{"action":"B확인","case_id":$caseB}]}]}"""
+        )
+
+        postMessage(client, projectId, runId, token, "전부 써줘")
+
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().isNotEmpty() }
+
+        val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        // 카드가 하나다. 조각이 따로 생기지 않았다.
+        assertThat(links).hasSize(1)
+        val scenario = scenarioRepository.findById(links.single().testScenarioId)!!
+        assertThat(scenario.title).isEqualTo("여정")
+        assertThat(storedSteps(scenario.id!!).map { it.caseId }).containsExactly(caseA, caseB)
     }
 
     /**
@@ -448,6 +497,9 @@ class TestScenarioReconcileIntegrationTest {
         // 건수와 씬을 함께 말한다 — id로 말하면 사람이 못 알아듣고, 번호는 화면에 내보내지도 않는다.
         assertThat(recommendation).contains("2건")
         assertThat(recommendation).contains("EndingScene")
+        // **어디로 가면 되는지로 말한다**(ARTEL-631). 씬별 개수를 늘어놓으면 읽는 사람이 그것을
+        // 다시 "그럼 무엇을 하지"로 옮겨야 한다 — 카테고리 나열이 연결을 끊는 그 자리다.
+        assertThat(recommendation).contains("이어지는 흐름")
         // 한 줄로 끝난다. 좁은 작업을 이어가는 사람에게 여러 줄은 소음이다.
         assertThat(recommendation.lines()).hasSize(1)
     }
@@ -489,6 +541,10 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(payload["kind"].asText()).isEqualTo("question")
         assertThat(payload["id"].asText()).startsWith("scope:")
         assertThat(payload["options"].map { it["id"].asText() }).contains("scene:TitleScene", "keep")
+        // **함께 낸 것을 그 한 줄이 다 든다**(ARTEL-630). 대화에는 첫 질문만 남기지만, 나머지에도
+        // 답할 수 있어야 하므로 payload 가 묶음 전체를 든다 — 없으면 둘째부터는 답할 길이 없다.
+        assertThat(payload["questions"]).isNotNull
+        assertThat(payload["questions"].map { it["id"].asText() }).contains(payload["id"].asText())
 
         // 저장은 막히지 않았다 — 답하지 않아도 그 턴의 결과물은 남는다.
         assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).hasSize(1)

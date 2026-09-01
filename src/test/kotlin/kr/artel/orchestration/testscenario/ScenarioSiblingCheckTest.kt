@@ -291,4 +291,35 @@ class ScenarioSiblingCheckTest {
 
         assertThat(findings.untestedArms).containsExactly(133L to 134L)
     }
+
+    /**
+     * **나눔과 같은 규칙으로 본다**(ARTEL-625).
+     *
+     * 나눔은 게임이 스스로 움직이는 값을 두고 갈린 갈래를 모순이 아니라 순서로 보고 자르지 않는다.
+     * 여기서 그걸 모른 채 동거 불가라고 하면 **자르지도 못하고 저장도 못 하는 교착**이 된다.
+     *
+     * 실측(런 176)에서 그 자리가 이랬다 — `StagePosition != 5` 와 `== 5` 는 한 순간엔 함께 못 서지만
+     * 전투를 이기면 오르는 값이라 시간 위에서는 계단이다. 저작이 낸 시나리오 12개가 통째로 막혔고,
+     * 다시 쓰게 해도 같은 자리에서 또 막혀 결국 케이스 42건 중 2건만 남았다.
+     */
+    @Test
+    fun `게임이 움직이는 값을 두고 갈린 것은 동거 불가라 하지 않는다`() {
+        val before = case(
+            1, "아무 키나 누른다", "EndingScene",
+            guards = listOf(Guard("StagePosition", "!=", "5")),
+        )
+        val after = case(
+            2, "아무 키나 누른다", "EndingScene",
+            guards = listOf(Guard("StagePosition", "==", "5")),
+            declared = mapOf("StagePosition" to "5"),
+        )
+
+        val frozen = ScenarioSiblingCheck.analyze(listOf(before, after), listOf(listOf(1L, 2L)))
+        val moving = ScenarioSiblingCheck.analyze(listOf(before, after), listOf(listOf(1L, 2L))) { it == "StagePosition" }
+
+        // 지도의 아무도 안 바꾸는 값이면 정말로 함께 못 선다.
+        assertThat(frozen.conflicting).containsExactly(1L to 2L)
+        // 게임이 움직이는 값이면 순서 문제이지 동거 문제가 아니다.
+        assertThat(moving.conflicting).isEmpty()
+    }
 }

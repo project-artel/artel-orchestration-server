@@ -92,4 +92,42 @@ class ScenarioQuestionBuilderTest {
         assertThat(question?.options?.first()?.label).isEqualTo("네, 만들어 주세요")
         assertThat(question?.options?.first()?.detail).contains("StagePosition == 5")
     }
+
+    /**
+     * **모르는 자리를 전부 낸다**(ARTEL-630).
+     *
+     * 하나만 내면 나머지는 아무 말 없이 미상으로 남고, 사용자는 시나리오가 완성된 줄 안다 —
+     * 실측(런 178)에서 못 간다고 적은 자리가 일곱인데 물은 것은 하나였다.
+     *
+     * 하나만 묻던 것은 같은 질문이 매 턴 다시 나가는 것을 막으려던 것이었는데(런 152), 그건
+     * **답한 질문을 다시 안 묻는 것**으로 풀 일이지 모르는 것을 감춰서 풀 일이 아니다.
+     */
+    @Test
+    fun `막힌 자리가 여럿이면 여럿을 낸다`() {
+        val questions = ScenarioQuestionBuilder.all(
+            blockedGaps = listOf("stagePosition", "activeSelf", "Map_scene→TurnBattleScene"),
+            untestedArms = emptyList(),
+            scope = emptyList(),
+        )
+
+        assertThat(questions).hasSize(3)
+        assertThat(questions.map { it.id })
+            .containsExactly("gap:stagePosition", "gap:activeSelf", "gap:Map_scene→TurnBattleScene")
+        // 옛 화면이 읽는 한 개짜리 칸은 그중 첫 것이다.
+        assertThat(ScenarioQuestionBuilder.from(
+            listOf("stagePosition", "activeSelf"), emptyList(), emptyList(),
+        )?.id).isEqualTo("gap:stagePosition")
+    }
+
+    /** 같은 자리를 두 번 묻지 않는다 — 질문지가 길어질수록 중복이 눈에 띈다. */
+    @Test
+    fun `같은 자리는 한 번만 묻는다`() {
+        val questions = ScenarioQuestionBuilder.all(
+            blockedGaps = listOf("stagePosition", "stagePosition"),
+            untestedArms = emptyList(),
+            scope = emptyList(),
+        )
+
+        assertThat(questions).hasSize(1)
+    }
 }
