@@ -43,3 +43,17 @@ data class UpdateProjectRequest(
 
     val genre: Genre? = null
 )
+
+/**
+ * `GET /api/projects`가 무엇을 세는지.
+ *
+ * 별도 `/api/admin/projects`를 내지 않고 파라미터로 가른 것은, 경로를 나누면 페이지네이션과 응답
+ * DTO 가 두 벌이 되어 시간이 지나면 서로 어긋나기 때문이다. 두 값이 같은 응답 모양을 쓴다.
+ */
+enum class ProjectScope {
+    /** 참여 중인 프로젝트. 값을 안 주면 이것이다. */
+    MINE,
+
+    /** 삭제되지 않은 전 프로젝트. `DEVELOPER` 등급만 쓸 수 있다. */
+    ALL
+}

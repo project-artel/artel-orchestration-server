@@ -1,6 +1,7 @@
 package kr.artel.orchestration.llmusage
 
 import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.auth.entity.PlatformRole
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.AuthenticatedUser
@@ -48,7 +49,8 @@ import java.util.UUID
  *
  * - [네 축의 합계가 서로 같다] — 축은 같은 호출 집합을 다르게 접은 것이라 합이 어긋나면 어느
  *   축이 틀렸는지 화면에서 알 수 없다.
- * - [남의 프로젝트 지출이 새지 않는다] — 관리자 role이 없어 멤버십 조인이 유일한 경계다.
+ * - [남의 프로젝트 지출이 새지 않는다] — 멤버십이 유일한 경계이고, `DEVELOPER` 등급만 그것을
+ *   통과한다(ARTEL-742). 두 방향을 나란히 두지 않으면 조건을 통째로 지워도 한쪽은 녹색이다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -172,6 +174,26 @@ class LlmUsageStatsIntegrationTest {
         assertThat(mine.total.inputTokens).isEqualTo(100)
         assertThat(mine.byProject.map { it.projectId }).containsExactly(projectId.toString())
         assertThat(mine.total.costUsd).isEqualByComparingTo(BigDecimal("0.001000"))
+    }
+
+    /**
+     * `DEVELOPER` 등급은 참여하지 않은 프로젝트의 지출까지 본다(ARTEL-742).
+     *
+     * 바로 위와 짝이다. 개발자는 두 프로젝트 어느 쪽의 멤버도 아니므로, 여기서 둘이 다 나온다는
+     * 것이 등급이 실제로 조건을 끄고 있다는 뜻이다.
+     */
+    @Test
+    fun `a developer sees every project's spend`(): Unit = runBlocking {
+        seedUsage("KNOWLEDGE_QUERY", projectId, input = 100, output = 10, cost = "0.001000")
+        seedUsage("KNOWLEDGE_QUERY", otherProjectId, input = 900, output = 90, cost = "0.009000")
+        val developerId = promotedDeveloper()
+
+        val all = statsService.stats(developerId, null, windowStart, windowEnd, "UTC")
+
+        assertThat(all.total.inputTokens).isEqualTo(1_000)
+        assertThat(all.byProject.map { it.projectId })
+            .containsExactlyInAnyOrder(projectId.toString(), otherProjectId.toString())
+        assertThat(all.total.costUsd).isEqualByComparingTo(BigDecimal("0.010000"))
     }
 
     @Test
@@ -314,6 +336,24 @@ class LlmUsageStatsIntegrationTest {
         assertThat(statsService.qaRun(strangerId, qaTryId)).isNull()
     }
 
+    /**
+     * `DEVELOPER` 등급은 목록과 단건을 같이 본다.
+     *
+     * 둘을 한 테스트에 두는 것은 두 경로가 같은 질의를 부르기 때문이다. 한쪽만 넓히면 목록에 뜬 런을
+     * 열었을 때 없다고 답하게 되고, 화면은 그 차이를 설명할 방법이 없다.
+     */
+    @Test
+    fun `a developer reads runs in a project they never joined`(): Unit = runBlocking {
+        val qaTryId = seedRun()
+        seedUsage("QA_RUN", qaTryId, input = 100, output = 10, cost = "0.001000")
+        val developerId = promotedDeveloper()
+
+        val listed = statsService.qaRuns(developerId, null, windowStart, windowEnd, size = 20)
+
+        assertThat(listed.map { it.qaTryId }).containsExactly(qaTryId.toString())
+        assertThat(statsService.qaRun(developerId, qaTryId)!!.totals.inputTokens).isEqualTo(100)
+    }
+
     @Test
     fun `a single run is found outside the default window`(): Unit = runBlocking {
         // 기본 창(30일)을 훨씬 넘긴 런. 창을 걸면 0으로 보이고 그것이 "안 썼다"로 읽힌다.
@@ -345,6 +385,16 @@ class LlmUsageStatsIntegrationTest {
 
     private suspend fun stats(zone: String = "UTC") =
         statsService.stats(ownerId, null, windowStart, windowEnd, zone)
+
+    /** 아무 프로젝트에도 참여하지 않은 `DEVELOPER`. 등급을 주는 화면이 없어 행을 직접 고친다. */
+    private suspend fun promotedDeveloper(): Long {
+        val developerId = signIn("usage-developer", "5503").userId.toLong()
+        val developer = appUserRepository.findById(developerId)!!
+        appUserRepository.save(
+            developer.copy(platformRole = PlatformRole.DEVELOPER.name, updatedAt = now)
+        )
+        return developerId
+    }
 
     private suspend fun newProject(name: String, memberId: Long): Long {
         val project = projectRepository.save(

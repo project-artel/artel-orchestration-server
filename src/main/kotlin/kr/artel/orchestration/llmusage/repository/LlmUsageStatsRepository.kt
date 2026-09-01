@@ -45,11 +45,13 @@ class LlmUsageStatsRepository(
      * 셀 하나만 주면 됐지만, 여기서는 축이 서로 직교하지 않는다 — 한 호출이 service·model·project·
      * 일자를 동시에 갖는다. 분할이 아니라 네 개의 다른 접기라 서버가 넷 다 내야 한다.
      *
-     * **왜 멤버십을 조인으로 거르나.** 프로젝트를 못 푼 행(`project_id IS NULL`)은 여기서 통째로
+     * **왜 멤버십을 질의 안에서 거르나.** 프로젝트를 못 푼 행(`project_id IS NULL`)은 여기서 통째로
      * 빠진다. 그 행이 실제로 존재한다는 사실은 [countUnattributedCalls]가 건수로만 알린다 —
-     * 관리자 role이 없어 "내 프로젝트가 아닌 지출"을 금액으로 보여줄 근거가 없기 때문이다.
+     * 어느 프로젝트의 지출인지 모르는 행이라 등급으로도 열 수 없기 때문이다.
      *
-     * @param projectId null이면 사용자가 속한 전 프로젝트 합산.
+     * @param projectId null이면 사용자가 볼 수 있는 전 프로젝트 합산.
+     * @param seesAllProjects true면 멤버십을 따지지 않는다. 판단은 `PlatformAccessService`가 하고
+     *   여기는 그 결과만 받는다.
      * @param from 포함, [to] 배타. 둘 다 `called_at` 기준이다.
      * @param zone 일별 버킷을 자를 시간대(IANA 이름). 호출부가 [java.time.ZoneId]로 이미 검증했다 —
      *   Postgres는 모르는 이름에 예외를 던지므로 여기 닿기 전에 걸러야 한다.
@@ -57,6 +59,7 @@ class LlmUsageStatsRepository(
     suspend fun aggregate(
         userId: Long,
         projectId: Long?,
+        seesAllProjects: Boolean,
         from: Instant,
         to: Instant,
         zone: String
@@ -94,11 +97,14 @@ class LlmUsageStatsRepository(
             visible AS (
                 SELECT s.*, p.name AS project_name
                   FROM scoped s
-                  JOIN project_member pm
-                    ON pm.project_id = s.project_id AND pm.app_user_id = :userId
                   JOIN project p
                     ON p.id = s.project_id AND p.deleted_at IS NULL
-                 WHERE TRUE $projectFilter
+                 -- DEVELOPER 등급은 이 조건을 통과한다(PlatformAccessService). EXISTS 로 쓰는 것은
+                 -- 넓힐 때 멤버 행의 존재 자체를 요구하지 않기 위해서다.
+                 WHERE (:seesAllProjects OR EXISTS (
+                           SELECT 1 FROM project_member pm
+                            WHERE pm.project_id = s.project_id AND pm.app_user_id = :userId
+                       )) $projectFilter
             )
             SELECT GROUPING(v.service, v.provider, v.model, v.project_id, v.called_on) AS grouping_mask,
                    v.service                                    AS service,
@@ -141,6 +147,7 @@ class LlmUsageStatsRepository(
 
         var spec = databaseClient.sql(sql)
             .bind("userId", userId)
+            .bind("seesAllProjects", seesAllProjects)
             .bind("from", from)
             .bind("to", to)
             .bind("zone", zone)
@@ -157,8 +164,10 @@ class LlmUsageStatsRepository(
      * 실제보다 작아진다.
      *
      * **왜 건수만인가.** 이 행들은 멤버십으로 거를 수 없어(어느 프로젝트인지 모른다) 토큰이나
-     * 금액을 실으면 배포 전체의 지출이 아무 로그인 사용자에게나 나간다. 관리자 role이 생기면
-     * 그때 이 자리에 금액을 붙인다.
+     * 금액을 실으면 배포 전체의 지출이 아무 로그인 사용자에게나 나간다. `DEVELOPER` 등급이
+     * 생긴 뒤에도 그대로다(ARTEL-742) — 등급은 어느 프로젝트를 보느냐를 정하는데 이 행들은
+     * 프로젝트가 없어서, 여기에 금액을 실으려면 등급별로 이 질의를 갈라야 한다. 그 요구가 실제로
+     * 생기면 그때 가른다.
      */
     suspend fun countUnattributedCalls(from: Instant, to: Instant): Long =
         databaseClient.sql(
@@ -203,6 +212,7 @@ class LlmUsageStatsRepository(
         userId: Long,
         projectId: Long?,
         qaTryId: Long?,
+        seesAllProjects: Boolean,
         from: Instant,
         to: Instant,
         limit: Int
@@ -230,12 +240,15 @@ class LlmUsageStatsRepository(
                    COUNT(u.cost_usd)                           AS priced_calls
               FROM qa_try qt
               JOIN test_scenario ts ON ts.id = qt.test_scenario_id
-              JOIN project_member pm
-                ON pm.project_id = ts.project_id AND pm.app_user_id = :userId
               LEFT JOIN llm_usage u
                      ON u.service = 'QA_RUN' AND u.reference_id = qt.id
              WHERE qt.started_at >= :from
-               AND qt.started_at < :to$filters
+               AND qt.started_at < :to
+               -- DEVELOPER 등급은 이 조건을 통과한다(PlatformAccessService).
+               AND (:seesAllProjects OR EXISTS (
+                       SELECT 1 FROM project_member pm
+                        WHERE pm.project_id = ts.project_id AND pm.app_user_id = :userId
+                   ))$filters
              GROUP BY qt.id, ts.project_id
              ORDER BY qt.started_at DESC
              LIMIT :limit
@@ -243,6 +256,7 @@ class LlmUsageStatsRepository(
 
         var spec = databaseClient.sql(sql)
             .bind("userId", userId)
+            .bind("seesAllProjects", seesAllProjects)
             .bind("from", from)
             .bind("to", to)
             .bind("limit", limit)

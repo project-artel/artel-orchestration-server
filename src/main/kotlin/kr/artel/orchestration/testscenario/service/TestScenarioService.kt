@@ -43,9 +43,9 @@ class TestScenarioService(
         return saved.id!!
     }
 
-    /** 시나리오 단건 조회. 없거나 비참여자면 null(→404). */
+    /** 시나리오 단건 조회. 없거나 읽을 수 없으면 null(→404). */
     suspend fun getScenario(testScenarioId: Long, appUserId: Long): ScenarioResponse? {
-        val entity = accessService.accessibleScenario(testScenarioId, appUserId) ?: return null
+        val entity = accessService.readableScenario(testScenarioId, appUserId) ?: return null
         return ScenarioResponse(
             testScenarioId = entity.id!!,
             projectId = entity.projectId,
@@ -58,7 +58,7 @@ class TestScenarioService(
      * 비참여자면 404(존재하지 않는 것처럼 감춤).
      */
     suspend fun listScenarios(projectId: Long, appUserId: Long): ScenarioListResponse {
-        if (!accessService.isMember(projectId, appUserId)) {
+        if (!accessService.isReadable(projectId, appUserId)) {
             throw NotFoundException()
         }
         val items = scenarioRepository.findByProjectId(projectId)
@@ -67,9 +67,9 @@ class TestScenarioService(
         return ScenarioListResponse(items)
     }
 
-    /** 프로젝트 스코프 시나리오 단건 조회. projectId 불일치·비참여자·미존재면 null(→404). */
+    /** 프로젝트 스코프 시나리오 단건 조회. projectId 불일치·읽을 수 없음·미존재면 null(→404). */
     suspend fun getScenarioInProject(projectId: Long, testScenarioId: Long, appUserId: Long): ScenarioResponse? {
-        val entity = accessService.accessibleScenario(testScenarioId, appUserId) ?: return null
+        val entity = accessService.readableScenario(testScenarioId, appUserId) ?: return null
         if (entity.projectId != projectId) return null
         return ScenarioResponse(
             testScenarioId = entity.id!!,
@@ -138,9 +138,11 @@ class TestScenarioService(
      * @param labels 스텝 번호(1부터) → 라벨. 값이 `null`이면 **미지정으로 되돌린다**(키를 빼는 것과
      *   다르다 — 키가 없는 스텝은 손대지 않는다). 범위 밖 번호는 조용히 버린다.
      *
-     * ⚠️ 접근 제어는 프로젝트 멤버십까지다. 이 리포에는 프로젝트 밖의 관리자 개념이 없어
-     *   "내부 도구만 만진다"를 역할로 강제하지는 못한다 — 경로를 가른 것과 라벨링 화면을
-     *   admin-page에만 두는 것이 현재의 경계다.
+     * ⚠️ 접근 제어는 프로젝트 멤버십까지다. `DEVELOPER` 등급이 생긴 뒤에도 그렇다 — 없어서 못
+     *   하는 것이 아니라 열지 않기로 한 것이다. 기대 판정 라벨은 QA 화면의 미탐·오탐 숫자가
+     *   대조하는 정답지라, 그 프로젝트에 참여하지 않은 사람이 남의 벤치마크 기준을 고칠 수 있게
+     *   만들지 않는다. 그래서 이 경로는 [TestScenarioAccessService.readableScenario]가 아니라
+     *   [TestScenarioAccessService.accessibleScenario]를 부른다.
      */
     suspend fun updateExpectedLabels(
         appUserId: Long,

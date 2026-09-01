@@ -44,10 +44,13 @@ class QaStatsRepository(
      *   시작된 구간에 계산된다(`llm_usage.called_at`이 아니다).
      * @param to 배타.
      * @param limit 셀 최대 개수. 한 줄 더 읽어 잘림 여부를 판정한다.
+     * @param seesAllProjects true면 멤버십을 따지지 않는다. 판단은 `PlatformAccessService`가 하고
+     *   여기는 그 결과만 받는다.
      */
     suspend fun aggregateByRunConfig(
         projectId: Long,
         userId: Long,
+        seesAllProjects: Boolean,
         from: Instant,
         to: Instant,
         limit: Int
@@ -69,11 +72,15 @@ class QaStatsRepository(
                        qt.completed_at
                   FROM qa_try qt
                   JOIN test_scenario ts ON ts.id = qt.test_scenario_id
-                  JOIN project_member pm
-                    ON pm.project_id = ts.project_id AND pm.app_user_id = :userId
                  WHERE ts.project_id = :projectId
                    AND qt.started_at >= :from
                    AND qt.started_at < :to
+                   -- 참여자가 아니면 빈 집계가 된다. 예외로 갈라 답하면 프로젝트의 존재 여부가
+                   -- 새어 나간다. DEVELOPER 등급은 이 조건을 통과한다(PlatformAccessService).
+                   AND (:seesAllProjects OR EXISTS (
+                       SELECT 1 FROM project_member pm
+                        WHERE pm.project_id = ts.project_id AND pm.app_user_id = :userId
+                   ))
             ),
             run_usage AS (
                 SELECT u.reference_id                AS qa_try_id,
@@ -181,6 +188,7 @@ class QaStatsRepository(
         )
             .bind("projectId", projectId)
             .bind("userId", userId)
+            .bind("seesAllProjects", seesAllProjects)
             .bind("from", from)
             .bind("to", to)
             // 셀 한 줄과 총계 한 줄을 더 읽는다. 셀이 limit + 1개 나오면 잘린 것이다.

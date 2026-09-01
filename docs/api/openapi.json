@@ -709,6 +709,40 @@
         }
       }
     },
+    "/internal/test-cases/content-maps/{contentMapId}/regenerate": {
+      "post": {
+        "tags": [
+          "map-test-case-regenerate-controller"
+        ],
+        "operationId": "regenerate",
+        "parameters": [
+          {
+            "name": "contentMapId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/test-case-spec/{projectId}": {
       "post": {
         "tags": [
@@ -1271,7 +1305,7 @@
           "Project"
         ],
         "summary": "프로젝트 목록",
-        "description": "참여 중인 프로젝트를 최근 수정순으로 조회한다.",
+        "description": "참여 중인 프로젝트를 최근 수정순으로 조회한다. `scope=ALL`은 개발자 등급 전용이다.",
         "operationId": "list_3",
         "parameters": [
           {
@@ -1294,6 +1328,20 @@
               "type": "integer",
               "format": "int32",
               "default": 20
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "MINE이면 참여 중인 프로젝트, ALL이면 전 프로젝트. ALL은 개발자 등급만 쓸 수 있다",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "MINE",
+              "enum": [
+                "MINE",
+                "ALL"
+              ]
             }
           }
         ],
@@ -3549,12 +3597,155 @@
         }
       }
     },
+    "/api/llm-usage/stats": {
+      "get": {
+        "tags": [
+          "llm-usage-stats-controller"
+        ],
+        "operationId": "stats_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "zone",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmUsageStatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/llm-usage/qa-runs": {
+      "get": {
+        "tags": [
+          "llm-usage-stats-controller"
+        ],
+        "operationId": "qaRuns",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/QaRunUsageResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/llm-usage/qa-runs/{qaTryId}": {
+      "get": {
+        "tags": [
+          "llm-usage-stats-controller"
+        ],
+        "operationId": "qaRun",
+        "parameters": [
+          {
+            "name": "qaTryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunUsageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/knowledge-stats": {
       "get": {
         "tags": [
           "knowledge-stats-controller"
         ],
-        "operationId": "stats_1",
+        "operationId": "stats_2",
         "parameters": [
           {
             "name": "projectId",
@@ -3784,7 +3975,8 @@
             "type": "string",
             "enum": [
               "ACTION",
-              "GAP"
+              "GAP",
+              "OPENING"
             ]
           },
           "step_source_capability_id": {
@@ -4996,7 +5188,8 @@
             "type": "string",
             "enum": [
               "ACTION",
-              "GAP"
+              "GAP",
+              "OPENING"
             ]
           },
           "step_source_capability_id": {
@@ -8162,6 +8355,220 @@
           }
         }
       },
+      "LlmUsageDailyCell": {
+        "required": [
+          "date",
+          "totals"
+        ],
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/LlmUsageTotals"
+          }
+        }
+      },
+      "LlmUsageModelCell": {
+        "required": [
+          "model",
+          "provider",
+          "totals"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/LlmUsageTotals"
+          }
+        }
+      },
+      "LlmUsageProjectCell": {
+        "required": [
+          "projectId",
+          "projectName",
+          "totals"
+        ],
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string"
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/LlmUsageTotals"
+          }
+        }
+      },
+      "LlmUsageServiceCell": {
+        "required": [
+          "service",
+          "totals"
+        ],
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/LlmUsageTotals"
+          }
+        }
+      },
+      "LlmUsageStatsResponse": {
+        "required": [
+          "byModel",
+          "byProject",
+          "byService",
+          "daily",
+          "from",
+          "to",
+          "total",
+          "unattributedCalls",
+          "zone"
+        ],
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "zone": {
+            "type": "string"
+          },
+          "total": {
+            "$ref": "#/components/schemas/LlmUsageTotals"
+          },
+          "byService": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LlmUsageServiceCell"
+            }
+          },
+          "byModel": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LlmUsageModelCell"
+            }
+          },
+          "byProject": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LlmUsageProjectCell"
+            }
+          },
+          "daily": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LlmUsageDailyCell"
+            }
+          },
+          "unattributedCalls": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "LlmUsageTotals": {
+        "required": [
+          "cachedInputTokens",
+          "calls",
+          "inputTokens",
+          "outputTokens",
+          "pricedCalls",
+          "reasoningTokens"
+        ],
+        "type": "object",
+        "properties": {
+          "inputTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outputTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cachedInputTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reasoningTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pricedCalls": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "QaRunUsageResponse": {
+        "required": [
+          "projectId",
+          "qaTryId",
+          "startedAt",
+          "status",
+          "totals"
+        ],
+        "type": "object",
+        "properties": {
+          "qaTryId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "type": "string"
+          },
+          "promptVersion": {
+            "type": "string"
+          },
+          "agentArch": {
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/LlmUsageTotals"
+          }
+        }
+      },
       "KnowledgeRunConfigStatsCell": {
         "required": [
           "citationKnownTotal",
@@ -8303,7 +8710,8 @@
         "required": [
           "displayName",
           "id",
-          "identities"
+          "identities",
+          "platformRole"
         ],
         "type": "object",
         "properties": {
@@ -8317,6 +8725,9 @@
             "type": "string"
           },
           "locale": {
+            "type": "string"
+          },
+          "platformRole": {
             "type": "string"
           },
           "identities": {

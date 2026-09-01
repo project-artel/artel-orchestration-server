@@ -4,6 +4,7 @@ import io.r2dbc.spi.Readable
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.auth.entity.PlatformRole
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.AuthenticatedUser
@@ -261,6 +262,7 @@ class KnowledgeStatsIntegrationTest {
         val aggregate = statsRepository.aggregateByRunConfig(
             projectId = projectId,
             userId = userId,
+            seesAllProjects = false,
             from = Instant.now().minus(1, ChronoUnit.HOURS),
             to = Instant.now().plus(1, ChronoUnit.HOURS),
             limit = 1
@@ -279,12 +281,40 @@ class KnowledgeStatsIntegrationTest {
         val aggregate = statsRepository.aggregateByRunConfig(
             projectId = projectId,
             userId = outsider,
+            seesAllProjects = false,
             from = Instant.now().minus(1, ChronoUnit.HOURS),
             to = Instant.now().plus(1, ChronoUnit.HOURS),
             limit = 100
         )
         assertThat(aggregate.cells).isEmpty()
         assertThat(aggregate.total!!.entryVersions).isZero()
+    }
+
+    /**
+     * `DEVELOPER` 등급은 참여하지 않아도 집계를 받는다(ARTEL-742).
+     *
+     * 위의 `참여자가 아니면 빈 집계를 돌려준다`가 리포지토리에 `false`를 직접 넘기는 것과 달리 이쪽은
+     * 서비스를 부른다. 등급을 읽어 그 값을 질의에 넘기는 것이 서비스의 일이라, 리포지토리만 확인하면
+     * `KnowledgeStatsService`가 `PlatformAccessService`에 묻기를 그만둬도 아무 테스트가 빨개지지 않는다.
+     */
+    @Test
+    fun `개발자 등급은 참여하지 않아도 집계를 받는다`(): Unit = runBlocking {
+        createEntry(runA, "지식")
+
+        val developerId = signIn(seed = "stats-developer").userId.toLong()
+        val developer = appUserRepository.findById(developerId)!!
+        appUserRepository.save(
+            developer.copy(platformRole = PlatformRole.DEVELOPER.name, updatedAt = Instant.now())
+        )
+
+        val response = statsService.stats(
+            projectId = projectId,
+            userId = developerId,
+            from = Instant.now().minus(1, ChronoUnit.HOURS),
+            to = Instant.now().plus(1, ChronoUnit.HOURS),
+            cellLimit = 100
+        )
+        assertThat(response.total.entryVersions).isEqualTo(1)
     }
 
     // ------------------------------------------------ 실험 스코프 격리 (ARTEL-256)
@@ -410,6 +440,7 @@ class KnowledgeStatsIntegrationTest {
     private suspend fun aggregate() = statsRepository.aggregateByRunConfig(
         projectId = projectId,
         userId = userId,
+        seesAllProjects = false,
         from = Instant.now().minus(1, ChronoUnit.HOURS),
         to = Instant.now().plus(1, ChronoUnit.HOURS),
         limit = 100

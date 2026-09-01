@@ -2,6 +2,7 @@ package kr.artel.orchestration.qa
 
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.auth.entity.PlatformRole
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.OAuthIdentity
@@ -404,6 +405,25 @@ class QaStatsIntegrationTest {
         assertThat(stats.total.costUsd).isNull()
     }
 
+    /**
+     * `DEVELOPER` 등급은 참여하지 않아도 집계를 받는다(ARTEL-742).
+     *
+     * 바로 위의 `a non-member sees nothing`과 짝이다. 이 질의는 멤버십 판정을 `JOIN project_member`
+     * 대신 `EXISTS`와 `:seesAllProjects`로 옮겼는데, 그 둘 중 하나만 확인하면 조건을 통째로 지워도
+     * 테스트가 녹색이거나(윗쪽만 볼 때) 아무도 못 보게 만들어도 녹색이다(이쪽만 볼 때).
+     */
+    @Test
+    fun `a developer sees another project's stats`(): Unit = runBlocking {
+        seedRun(model = "sonnet-5", status = "COMPLETED")
+        val developerId = signIn("stats-developer", "2393").userId.toLong()
+        promote(developerId)
+
+        val stats = statsService.stats(projectId, developerId, windowStart, windowEnd, 200)
+
+        assertThat(stats.cellFor(model = "sonnet-5").runs).isEqualTo(1)
+        assertThat(stats.total.runs).isEqualTo(1)
+    }
+
     @Test
     fun `truncation is reported and the totals stay whole`(): Unit = runBlocking {
         repeat(4) { seedRun(model = "model-$it", status = "COMPLETED") }
@@ -498,6 +518,14 @@ class QaStatsIntegrationTest {
                  "matrix":{"correct_pass":$correctPass,"false_alarm":$falseAlarm,
                            "miss":$miss,"correct_fail":$correctFail}}
             """.trimIndent()
+        )
+    }
+
+    /** `app_user.platform_role`을 올린다. 주는 화면도 API도 없어 테스트도 행을 직접 고친다. */
+    private suspend fun promote(userId: Long) {
+        val user = appUserRepository.findById(userId)!!
+        appUserRepository.save(
+            user.copy(platformRole = PlatformRole.DEVELOPER.name, updatedAt = Instant.now())
         )
     }
 

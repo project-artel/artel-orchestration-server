@@ -1,5 +1,6 @@
 package kr.artel.orchestration.qa.service
 
+import kr.artel.orchestration.auth.service.PlatformAccessService
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
@@ -341,6 +342,7 @@ class QaTryService(
     private val tryRepository: QaTryRepository,
     private val runRepository: QaRunRepository,
     private val scenarioAccessService: TestScenarioAccessService,
+    private val platformAccessService: PlatformAccessService,
     private val compositionService: ScenarioCompositionService,
     private val testRunService: TestRunService,
     private val instanceRepository: GameInstanceRepository,
@@ -554,7 +556,15 @@ class QaTryService(
         tryRepository.findAccessibleById(qaTryId, userId)?.toResponse()
 
     suspend fun listByProject(projectId: Long, userId: Long, size: Int): List<QaTryResponse> =
-        tryRepository.findByProject(projectId, userId, size).map { it.toResponse() }.toList()
+        tryRepository
+            .findByProject(
+                projectId = projectId,
+                userId = userId,
+                seesAllProjects = platformAccessService.seesAllProjects(userId),
+                limit = size
+            )
+            .map { it.toResponse() }
+            .toList()
 
     /**
      * Relays one operator message to the Agent mid-run.

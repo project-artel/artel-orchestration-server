@@ -1,5 +1,6 @@
 package kr.artel.orchestration.qa.service
 
+import kr.artel.orchestration.auth.service.PlatformAccessService
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.qa.dto.QaRunConfigStatsCell
 import kr.artel.orchestration.qa.dto.QaStatsResponse
@@ -20,6 +21,7 @@ private const val MAX_CELLS = 500
 @Service
 class QaStatsService(
     private val statsRepository: QaStatsRepository,
+    private val platformAccessService: PlatformAccessService,
     private val clock: Clock
 ) {
 
@@ -29,6 +31,10 @@ class QaStatsService(
      * 참여자가 아니면 예외가 아니라 빈 집계다 — 멤버십 판정을 쿼리 안에서 하는
      * `QaTryRepository.findByProject`와 같은 동작이고, 여기만 403을 주면 프로젝트의 존재
      * 여부가 새어 나간다.
+     *
+     * `DEVELOPER` 등급은 그 판정을 통과한다. 이 서비스가 등급을 직접 읽지 않고
+     * [PlatformAccessService]에 묻는 이유는, 등급을 여는 자리가 늘어날 때 그 판단이 한 곳에만
+     * 남아 있어야 무엇이 열렸는지 셀 수 있기 때문이다.
      */
     suspend fun stats(
         projectId: Long,
@@ -49,6 +55,7 @@ class QaStatsService(
         val aggregate = statsRepository.aggregateByRunConfig(
             projectId = projectId,
             userId = userId,
+            seesAllProjects = platformAccessService.seesAllProjects(userId),
             from = start,
             to = end,
             limit = cellLimit

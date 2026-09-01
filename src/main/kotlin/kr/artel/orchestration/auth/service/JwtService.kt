@@ -40,6 +40,8 @@ data class UserProfile(
     val email: String?,
     /** 홈 UI 표시 언어. null이면 아직 고르지 않은 것이다. */
     val locale: String?,
+    /** 프로젝트 밖의 등급. [kr.artel.orchestration.auth.entity.PlatformRole] 이름이다. */
+    val platformRole: String,
     val identities: List<LinkedIdentity>
 )
 

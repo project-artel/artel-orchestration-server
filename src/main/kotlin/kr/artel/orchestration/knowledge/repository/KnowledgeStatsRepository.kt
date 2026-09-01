@@ -53,10 +53,13 @@ class KnowledgeStatsRepository(
      *   구간에 들어간다.
      * @param to 배타.
      * @param limit 셀 최대 개수. 한 줄 더 읽어 잘림 여부를 판정한다.
+     * @param seesAllProjects true면 멤버십을 따지지 않는다. 판단은 `PlatformAccessService`가 하고
+     *   여기는 그 결과만 받는다.
      */
     suspend fun aggregateByRunConfig(
         projectId: Long,
         userId: Long,
+        seesAllProjects: Boolean,
         from: Instant,
         to: Instant,
         limit: Int
@@ -78,13 +81,16 @@ class KnowledgeStatsRepository(
                   FROM knowledge_entry_facts f
                   -- 만든 런을 모르는 버전은 여기서 떨어진다(위 주석 참조).
                   JOIN qa_try qt ON qt.id = f.created_by_qa_try_id
-                  -- 참여자가 아니면 빈 집계가 된다. 예외로 갈라 답하면 프로젝트의 존재 여부가
-                  -- 새어 나간다(QaStatsRepository와 같은 판단).
-                  JOIN project_member pm
-                    ON pm.project_id = f.project_id AND pm.app_user_id = :userId
                  WHERE f.project_id = :projectId
                    AND f.created_at >= :from
                    AND f.created_at < :to
+                   -- 참여자가 아니면 빈 집계가 된다. 예외로 갈라 답하면 프로젝트의 존재 여부가
+                   -- 새어 나간다(QaStatsRepository와 같은 판단). DEVELOPER 등급은 이 조건을
+                   -- 통과한다(PlatformAccessService).
+                   AND (:seesAllProjects OR EXISTS (
+                       SELECT 1 FROM project_member pm
+                        WHERE pm.project_id = f.project_id AND pm.app_user_id = :userId
+                   ))
             )
             SELECT GROUPING(s.model, s.reasoning_effort, s.prompt_version, s.agent_arch) AS grouping_mask,
                    s.model                                        AS model,
@@ -122,6 +128,7 @@ class KnowledgeStatsRepository(
         )
             .bind("projectId", projectId)
             .bind("userId", userId)
+            .bind("seesAllProjects", seesAllProjects)
             .bind("from", from)
             .bind("to", to)
             // 셀 한 줄과 총계 한 줄을 더 읽는다. 셀이 limit + 1개 나오면 잘린 것이다.

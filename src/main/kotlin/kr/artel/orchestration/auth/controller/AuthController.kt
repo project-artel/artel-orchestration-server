@@ -104,6 +104,7 @@ class AuthController(
         displayName = displayName,
         email = email,
         locale = locale,
+        platformRole = platformRole,
         identities = identities.map {
             LinkedIdentityResponse(
                 provider = it.provider,
