@@ -193,7 +193,23 @@ object ScenarioStateReader {
      * 위반으로 세면 거의 모든 길이 막힌다.
      */
     fun violated(givenText: String?, state: Map<String, String>): Guard? =
-        comparisonsIn(givenText).firstOrNull { guard ->
+        violated(comparisonsIn(givenText), state)
+
+    /**
+     * 같은 물음을 **구조로** 묻는다.
+     *
+     * `capability.given_text` 는 오늘 419 행 전부 `null` 이다(ARTEL-447 미착수). 그 칸을 읽는
+     * 위 판은 비교를 하나도 못 찾고, 그래서 **늘 "위반 없음" 을 돌려준다** — 길찾기가
+     * *"이 조작은 지금 상태에서 못 한다"* 를 한 번도 못 짚었다.
+     *
+     * 조건은 `capability_evidence.condition_tree` 에 419 / 419 있다. 규칙은 문자열 판과 같다 —
+     * 값을 모르는 변수는 위반이라고 말하지 않는다.
+     */
+    fun violated(condition: ConditionNode?, state: Map<String, String>): Guard? =
+        violated(guardsIn(condition), state)
+
+    private fun violated(guards: List<Guard>, state: Map<String, String>): Guard? =
+        guards.firstOrNull { guard ->
             val have = state[guard.variable]
             have != null && !guard.holds(have)
         }

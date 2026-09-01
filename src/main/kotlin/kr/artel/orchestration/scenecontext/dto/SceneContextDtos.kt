@@ -103,6 +103,17 @@ data class SceneCapabilityView(
     val capabilityKey: String? = null,
     val summary: String,
     val givenText: String? = null,
+    /**
+     * **전제의 구조.** `given_text` 는 사람 말로 옮긴 한 줄인데 오늘 419 행 전부 `null` 이라
+     * (ARTEL-447 미착수) agent 가 조건을 아예 못 받고 있었다. 이쪽은 `condition_tree` 를 그대로
+     * 실은 것이고 419 / 419 있다.
+     *
+     * 조회 API 가 쓰는 것과 같은 모양이다([ConditionNodeResponse]) — 같은 트리를 두 벌로
+     * 직렬화하면 읽는 쪽이 어느 것이 맞는지 물어야 한다.
+     *
+     * `null` 은 근거 출신이 아니라 조건을 아예 모르는 것이고, `{kind:"always"}` 와 다른 말이다.
+     */
+    val given: kr.artel.orchestration.contentmap.dto.ConditionNodeResponse? = null,
     val interaction: String,
     val inputKey: String? = null,
     val controlPath: String? = null,
