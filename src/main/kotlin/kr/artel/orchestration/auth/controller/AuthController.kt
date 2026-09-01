@@ -5,6 +5,7 @@ import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.auth.dto.AuthUserResponse
 import kr.artel.orchestration.auth.dto.LinkedIdentityResponse
 import kr.artel.orchestration.auth.dto.UpdateLocaleRequest
+import kr.artel.orchestration.auth.dto.UpdateProfileRequest
 import kr.artel.orchestration.auth.config.AuthCookies
 import kr.artel.orchestration.auth.config.AuthProperties
 import kr.artel.orchestration.auth.service.AuthenticatedUser
@@ -27,6 +28,11 @@ import org.springframework.web.server.ServerWebExchange
 
 /** 홈 UI가 번역을 제공하는 언어. 새 번역이 추가될 때 함께 넓힌다. */
 private val SUPPORTED_LOCALES = setOf("en", "ko")
+
+/** BattleTag 형식. `#` 앞은 1~24자, 뒤는 숫자 1~8자다. `#`을 이름 쪽에 허용하면 구분이 모호해진다. */
+private val BATTLE_TAG_PATTERN = Regex("^[^#]{1,24}#\\d{1,8}$")
+
+private const val MAX_NICKNAME_LENGTH = 64
 
 @RestController
 @RequestMapping("/api/auth")
@@ -99,11 +105,54 @@ class AuthController(
             ?: throw UnauthorizedException()
     }
 
+    /**
+     * nickname과 battleTag를 통째로 덮어쓴다. 각 필드에 null을 보내면(또는 아예 안 보내면) 그
+     * 값을 지운다 — updateLocale과 달리 부분 수정이 아니라 프로필 전체를 다시 쓰는 PUT이다.
+     */
+    @PutMapping("/me/profile")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    suspend fun updateProfile(
+        @AuthenticationPrincipal jwt: Jwt,
+        @RequestBody request: UpdateProfileRequest
+    ) {
+        val nickname = normalizeNickname(request.nickname)
+        val battleTag = normalizeBattleTag(request.battleTag)
+        val session = sessionUserResolver.resolve(jwt)
+            ?: throw UnauthorizedException()
+        // me()와 같은 이유: 가리키는 사용자가 없는 토큰은 유효한 세션이 아니다.
+        oauthUserService.updateProfile(session.userId, nickname, battleTag)
+            ?: throw UnauthorizedException()
+    }
+
+    /** 앞뒤 공백을 지운다. 공백만 있거나 비어 있으면 지우려는 의도로 보고 null을 돌려준다. */
+    private fun normalizeNickname(nickname: String?): String? {
+        val trimmed = nickname?.trim()
+        if (trimmed.isNullOrEmpty()) return null
+        if (trimmed.length > MAX_NICKNAME_LENGTH) {
+            throw BadRequestException("닉네임은 $MAX_NICKNAME_LENGTH 자를 넘을 수 없습니다.", code = "invalid_nickname")
+        }
+        return trimmed
+    }
+
+    /** null은 지우는 것으로 통과시키고, null이 아닌데 형식이 안 맞으면 거절한다. */
+    private fun normalizeBattleTag(battleTag: String?): String? {
+        if (battleTag == null) return null
+        if (!BATTLE_TAG_PATTERN.matches(battleTag)) {
+            throw BadRequestException(
+                "BattleTag 형식이 올바르지 않습니다. 예) Name#1234",
+                code = "invalid_battle_tag"
+            )
+        }
+        return battleTag
+    }
+
     private fun UserProfile.toResponse() = AuthUserResponse(
         id = userId,
         displayName = displayName,
         email = email,
         locale = locale,
+        nickname = nickname,
+        battleTag = battleTag,
         identities = identities.map {
             LinkedIdentityResponse(
                 provider = it.provider,

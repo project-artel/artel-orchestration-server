@@ -73,6 +73,23 @@ class ProjectMemberIntegrationTest {
     }
 
     @Test
+    fun `carries nickname and battleTag from app_user onto each member row`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        joinAs("99", "hubot", projectId, ProjectRole.MEMBER)
+        setProfile(ownerToken, """{"nickname":"Yuni","battleTag":"Yuni#1234"}""")
+
+        val members = get(ownerToken, "/api/projects/$projectId/members")
+
+        val owner = members.first { it["userId"].asText() == userIdOf("42").toString() }
+        assertThat(owner["nickname"].asText()).isEqualTo("Yuni")
+        assertThat(owner["battleTag"].asText()).isEqualTo("Yuni#1234")
+        val member = members.first { it["userId"].asText() == userIdOf("99").toString() }
+        assertThat(member["nickname"].isNull).isTrue()
+        assertThat(member["battleTag"].isNull).isTrue()
+    }
+
+    @Test
     fun `shows a null email rather than hiding the member`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
         val projectId = createProject(ownerToken)
@@ -244,6 +261,12 @@ class ProjectMemberIntegrationTest {
                 .bodyValue("""{"name":"Demo Day","genre":"ACTION"}""")
                 .retrieve().bodyToMono(String::class.java).block()
         )["id"].asText().toLong()
+
+    private fun setProfile(token: String, body: String) {
+        client().put().uri("/api/auth/me/profile").cookie("artel_access_token", token)
+            .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+            .retrieve().toBodilessEntity().block()
+    }
 
     private fun deleteProject(token: String, projectId: Long) {
         client().delete().uri("/api/projects/$projectId").cookie("artel_access_token", token)

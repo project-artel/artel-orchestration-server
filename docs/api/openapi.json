@@ -686,6 +686,29 @@
         }
       }
     },
+    "/api/auth/me/profile": {
+      "put": {
+        "tags": [
+          "auth-controller"
+        ],
+        "operationId": "updateProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/auth/me/locale": {
       "put": {
         "tags": [
@@ -705,6 +728,40 @@
         "responses": {
           "204": {
             "description": "No Content"
+          }
+        }
+      }
+    },
+    "/internal/test-cases/content-maps/{contentMapId}/regenerate": {
+      "post": {
+        "tags": [
+          "map-test-case-regenerate-controller"
+        ],
+        "operationId": "regenerate",
+        "parameters": [
+          {
+            "name": "contentMapId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -3784,7 +3841,8 @@
             "type": "string",
             "enum": [
               "ACTION",
-              "GAP"
+              "GAP",
+              "OPENING"
             ]
           },
           "step_source_capability_id": {
@@ -4073,6 +4131,17 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "properties": {
+          "nickname": {
+            "type": "string"
+          },
+          "battleTag": {
+            "type": "string"
           }
         }
       },
@@ -4996,7 +5065,8 @@
             "type": "string",
             "enum": [
               "ACTION",
-              "GAP"
+              "GAP",
+              "OPENING"
             ]
           },
           "step_source_capability_id": {
@@ -7020,6 +7090,12 @@
           "email": {
             "type": "string"
           },
+          "nickname": {
+            "type": "string"
+          },
+          "battleTag": {
+            "type": "string"
+          },
           "role": {
             "type": "string",
             "enum": [
@@ -8317,6 +8393,12 @@
             "type": "string"
           },
           "locale": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "battleTag": {
             "type": "string"
           },
           "identities": {

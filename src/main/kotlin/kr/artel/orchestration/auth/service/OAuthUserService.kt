@@ -102,6 +102,8 @@ class OAuthUserService(
             displayName = appUser.displayName,
             email = appUser.email,
             locale = appUser.locale,
+            nickname = appUser.nickname,
+            battleTag = appUser.battleTag,
             identities = identities
         )
     }
@@ -113,5 +115,18 @@ class OAuthUserService(
     suspend fun updateLocale(userId: Long, locale: String): AppUserEntity? {
         val appUser = appUserRepository.findById(userId) ?: return null
         return appUserRepository.save(appUser.copy(locale = locale, updatedAt = Instant.now(clock)))
+    }
+
+    /**
+     * nickname과 battleTag를 갱신한다. 세션이 가리키는 사용자가 더 이상 없으면 null이다.
+     *
+     * 두 값 모두 통째로 덮어쓴다 — null을 넘기면 그 필드를 지운다. 트리밍과 형식 검증은 API
+     * 경계에서 끝난 뒤이므로 여기서는 저장만 한다.
+     */
+    suspend fun updateProfile(userId: Long, nickname: String?, battleTag: String?): AppUserEntity? {
+        val appUser = appUserRepository.findById(userId) ?: return null
+        return appUserRepository.save(
+            appUser.copy(nickname = nickname, battleTag = battleTag, updatedAt = Instant.now(clock))
+        )
     }
 }
