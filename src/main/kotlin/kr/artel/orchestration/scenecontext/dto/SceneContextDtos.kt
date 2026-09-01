@@ -39,6 +39,11 @@ data class SceneContextResponse(
  * "이 씬을 모른다"는 다른 답이고, 뭉개면 agent 가 지도에 있는 씬을 미지의 씬으로 읽는다.
  *
  * @property knownToContentMap 이 씬이 지도에 있는가. false 면 앵커 지식만으로 들어온 씬이다.
+ * @property origin 지도가 이 씬을 어디서 알아냈나. `evidence` 는 정적 분석이 설명한 씬이고
+ *   `observed` 는 **QA 런이 서 봤다는 사실뿐인 씬**이다(ARTEL-689). [knownToContentMap] 과 묻는
+ *   것이 다르다 — 저쪽은 지도가 이 씬을 아느냐이고 이쪽은 그 앎이 무엇에 근거하느냐다. 뭉개면
+ *   agent 는 `observed` 씬의 빈 [capabilities] 를 "근거가 훑었는데 할 게 없더라" 로 읽고, 실제로는
+ *   아무도 그 씬을 훑은 적이 없다. 앵커로만 들어온 씬에서는 null 이다.
  * @property sceneSummary 지도가 아는 씬 설명. 앵커로만 들어온 씬에서는 null 이다.
  * @property capabilities **agent 가 직접 할 수 있는 것.** `status` 가 `not-a-step` 이 아닌 행이고,
  *   TC 생성기가 받는 것과 같은 집합이다. 접힌(`merged_into`) 행은 뷰에서 이미 빠진다.
@@ -56,6 +61,7 @@ data class SceneContextResponse(
 data class SceneContextEntry(
     val sceneName: String,
     val knownToContentMap: Boolean,
+    val origin: String? = null,
     val sceneSummary: String? = null,
     val capabilities: List<SceneCapabilityView> = emptyList(),
     val notAStepCapabilities: List<SceneCapabilityView> = emptyList(),
