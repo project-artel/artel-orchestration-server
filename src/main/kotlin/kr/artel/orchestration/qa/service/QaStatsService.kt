@@ -1,9 +1,13 @@
 package kr.artel.orchestration.qa.service
 
 import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.qa.dto.QaCitationStats
+import kr.artel.orchestration.qa.dto.QaIssueStatsCell
 import kr.artel.orchestration.qa.dto.QaRunConfigStatsCell
 import kr.artel.orchestration.qa.dto.QaStatsResponse
 import kr.artel.orchestration.qa.dto.QaStatsTotals
+import kr.artel.orchestration.qa.dto.QaToolStatsCell
+import kr.artel.orchestration.qa.dto.QaToolStatsResponse
 import kr.artel.orchestration.qa.repository.QaStatsRepository
 import kr.artel.orchestration.qa.repository.QaStatsRow
 import org.springframework.stereotype.Service
@@ -61,6 +65,52 @@ class QaStatsService(
             cells = aggregate.cells.map { it.toCell() },
             truncated = aggregate.truncated,
             cellLimit = cellLimit
+        )
+    }
+
+    /**
+     * 에이전트가 무엇을 했나 (ARTEL-681).
+     *
+     * [stats] 와 창을 맞춘다 — 기본 30 일, 같은 기준(`qa_try.started_at`). 두 응답을 한 화면에
+     * 나란히 놓는 것이 이 값의 쓸모라, 창이 어긋나면 나란히 놓을 수가 없다.
+     *
+     * 참여자가 아니면 빈 집계다. [stats] 와 같은 이유로 403 을 주지 않는다 — 여기만 막으면
+     * 프로젝트의 존재 여부가 새어 나간다.
+     */
+    suspend fun toolStats(
+        projectId: Long,
+        userId: Long,
+        from: Instant?,
+        to: Instant?
+    ): QaToolStatsResponse {
+        val end = to ?: Instant.now(clock)
+        val start = from ?: end.minus(DEFAULT_WINDOW)
+        if (!start.isBefore(end)) {
+            throw BadRequestException("from must be earlier than to")
+        }
+
+        val rows = statsRepository.aggregateTools(projectId, userId, start, end)
+        val issues = statsRepository.aggregateIssues(projectId, userId, start, end)
+
+        return QaToolStatsResponse(
+            projectId = projectId.toString(),
+            from = start,
+            to = end,
+            tools = rows.map {
+                QaToolStatsCell(
+                    tool = it.tool,
+                    calls = it.calls,
+                    runsHeld = it.runsHeld,
+                    runsCalled = it.runsCalled
+                )
+            },
+            // 행마다 같은 값이 실려 오므로 첫 행에서 읽는다. 도구가 아니라 창 전체의 성질이라
+            // 셀에 두면 같은 수가 도구 수만큼 되풀이된다. 런이 없으면 행도 없어 0 이다.
+            citations = QaCitationStats(
+                verdicts = rows.firstOrNull()?.verdicts ?: 0,
+                withCitation = rows.firstOrNull()?.verdictsWithCitation ?: 0
+            ),
+            issues = issues.map { QaIssueStatsCell(severity = it.severity, issues = it.issues) }
         )
     }
 }

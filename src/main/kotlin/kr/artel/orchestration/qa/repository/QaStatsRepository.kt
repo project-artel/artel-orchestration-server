@@ -231,7 +231,175 @@ class QaStatsRepository(
 
     private fun Readable.longAt(name: String): Long =
         get(name, java.lang.Long::class.java)!!.toLong()
+
+    /**
+     * 에이전트가 무엇을 했는지. 도구 이름으로 접는다 (ARTEL-681).
+     *
+     * [aggregateByRunConfig] 는 런이 **어떻게 끝났나**를 낸다. 이쪽은 **무엇을 했나**다. 그
+     * 차이가 지금까지 집계에 없었고, 그래서 `record_knowledge` 가 모든 런에서 0 회라는 것을
+     * 사람이 `docker logs | grep` 으로 세서 알아냈다.
+     *
+     * **한 번도 안 불린 도구가 이 결과의 요점이다.** `qa_log` 만 `GROUP BY` 하면 0 인 도구는
+     * 행이 아예 안 생겨 목록에서 사라지고, 읽는 쪽은 "그런 도구가 없다" 와 "있는데 안 썼다" 를
+     * 가릴 수 없다. 그 둘은 완전히 다른 답이다.
+     *
+     * 그래서 런이 **쥐고 있던** 목록에서 시작한다. `qa_try.run_config` 의 `tools` 가 그것이고,
+     * Agent 가 세션을 열 때 자기가 무엇을 들었는지 실어 보낸다(`run_config.py` 의 `tools`).
+     * 추측이 아니라 그 런의 사실이라, 도구가 늘거나 줄어도 이 질의는 그대로다.
+     *
+     * `PULSE` 는 건드리지 않는다. 전량이 최대 74,368 자이고 여기서 세는 것은 `TOOL` 행뿐이다.
+     *
+     * @param from 포함, [to] 배타. [aggregateByRunConfig] 와 같은 기준(`qa_try.started_at`)을
+     *   쓴다 — 두 집계가 다른 창을 보면 한 화면에서 나란히 읽을 수 없다.
+     */
+    suspend fun aggregateTools(
+        projectId: Long,
+        userId: Long,
+        from: Instant,
+        to: Instant
+    ): List<QaToolStatsRow> =
+        databaseClient.sql(
+            """
+            WITH scoped AS (
+                SELECT qt.id, qt.run_config
+                  FROM qa_try qt
+                  JOIN test_scenario ts ON ts.id = qt.test_scenario_id
+                  JOIN project_member pm
+                    ON pm.project_id = ts.project_id AND pm.app_user_id = :userId
+                 WHERE ts.project_id = :projectId
+                   AND qt.started_at >= :from
+                   AND qt.started_at < :to
+            ),
+            -- 각 런이 쥐고 있던 도구. 0 회를 말할 수 있게 하는 자리다.
+            held AS (
+                SELECT s.id AS qa_try_id, t.tool
+                  FROM scoped s
+                 CROSS JOIN LATERAL jsonb_array_elements_text(
+                     COALESCE(s.run_config -> 'tools', '[]'::jsonb)
+                 ) AS t(tool)
+            ),
+            -- 실제로 부른 것. `TOOL` 은 조작 도구만이 아니라 28 개 전부를 남긴다(ARTEL-608).
+            called AS (
+                SELECT l.qa_try_id,
+                       l.payload ->> 'tool' AS tool,
+                       COUNT(*)             AS calls
+                  FROM qa_log l
+                 WHERE l.type = 'TOOL'
+                   AND l.qa_try_id IN (SELECT id FROM scoped)
+                   AND l.payload ->> 'tool' IS NOT NULL
+                 GROUP BY l.qa_try_id, l.payload ->> 'tool'
+            ),
+            -- `report_step` 이 근거를 댔는가. 지식을 읽으라고 준 자리가 실제로 쓰이는지는
+            -- 호출 수로는 안 보인다 — 부르기는 매번 부르고 그 칸만 비어 있었다.
+            cited AS (
+                SELECT COUNT(*) FILTER (
+                           WHERE jsonb_array_length(
+                               COALESCE(l.payload -> 'args' -> 'used_knowledge_ids', '[]'::jsonb)
+                           ) > 0
+                       ) AS with_citation,
+                       COUNT(*) AS verdicts
+                  FROM qa_log l
+                 WHERE l.type = 'TOOL'
+                   AND l.payload ->> 'tool' = 'report_step'
+                   AND l.qa_try_id IN (SELECT id FROM scoped)
+            )
+            SELECT h.tool                                        AS tool,
+                   COALESCE(SUM(c.calls), 0)                     AS calls,
+                   COUNT(DISTINCT h.qa_try_id)                   AS runs_held,
+                   COUNT(DISTINCT c.qa_try_id)                   AS runs_called,
+                   (SELECT with_citation FROM cited)             AS with_citation,
+                   (SELECT verdicts FROM cited)                  AS verdicts
+              FROM held h
+              LEFT JOIN called c
+                     ON c.qa_try_id = h.qa_try_id AND c.tool = h.tool
+             GROUP BY h.tool
+             ORDER BY calls ASC, h.tool ASC
+            """.trimIndent()
+        )
+            .bind("projectId", projectId)
+            .bind("userId", userId)
+            .bind("from", from)
+            .bind("to", to)
+            .map { row, _ ->
+                QaToolStatsRow(
+                    tool = row.get("tool", String::class.java)!!,
+                    calls = row.longAt("calls"),
+                    runsHeld = row.longAt("runs_held"),
+                    runsCalled = row.longAt("runs_called"),
+                    verdictsWithCitation = row.longAt("with_citation"),
+                    verdicts = row.longAt("verdicts")
+                )
+            }
+            .flow()
+            .toList()
+
+    /**
+     * 보고된 결함을 severity 로 접는다 (ARTEL-681).
+     *
+     * 도구 집계와 가르는 것은 묻는 것이 다르기 때문이다 — 저쪽은 `report_issue` 를 **불렀나**를
+     * 세고 이쪽은 그래서 **무엇이 남았나**를 센다. 오늘 BLOCKER 두 건이 가짜였는데, 호출 수만
+     * 봐서는 그것이 두 건인지도 몰랐다.
+     */
+    suspend fun aggregateIssues(
+        projectId: Long,
+        userId: Long,
+        from: Instant,
+        to: Instant
+    ): List<QaIssueStatsRow> =
+        databaseClient.sql(
+            """
+            SELECT i.severity AS severity, COUNT(*) AS issues
+              FROM issue i
+              JOIN qa_try qt ON qt.id = i.qa_try_id
+              JOIN test_scenario ts ON ts.id = qt.test_scenario_id
+              JOIN project_member pm
+                ON pm.project_id = ts.project_id AND pm.app_user_id = :userId
+             WHERE ts.project_id = :projectId
+               AND qt.started_at >= :from
+               AND qt.started_at < :to
+             GROUP BY i.severity
+             ORDER BY COUNT(*) DESC, i.severity ASC
+            """.trimIndent()
+        )
+            .bind("projectId", projectId)
+            .bind("userId", userId)
+            .bind("from", from)
+            .bind("to", to)
+            .map { row, _ ->
+                QaIssueStatsRow(
+                    severity = row.get("severity", String::class.java)!!,
+                    issues = row.longAt("issues")
+                )
+            }
+            .flow()
+            .toList()
 }
+
+/**
+ * 도구 하나가 이 창에서 어떻게 쓰였나.
+ *
+ * @property calls 부른 횟수. **0 이 유효한 답이고 이 집계의 요점이다** — 런이 쥐고 있었는데 한
+ *   번도 안 부른 도구가 그렇게 나온다.
+ * @property runsHeld 그 도구를 쥐고 있던 런 수. 도구가 새로 생기거나 빠지면 런마다 다르다.
+ * @property runsCalled 실제로 부른 런 수. [runsHeld] 와의 차이가 "줬는데 안 쓴" 런이다.
+ * @property verdictsWithCitation `used_knowledge_ids` 가 채워진 `report_step` 수. 행마다 같은
+ *   값이 실린다 — 도구가 아니라 창 전체의 성질이라, 읽는 쪽이 어느 행에서 읽어도 같다.
+ * @property verdicts `report_step` 총 호출 수. 위 값의 분모다.
+ */
+data class QaToolStatsRow(
+    val tool: String,
+    val calls: Long,
+    val runsHeld: Long,
+    val runsCalled: Long,
+    val verdictsWithCitation: Long,
+    val verdicts: Long
+)
+
+/** severity 하나에 몇 건이 보고됐나. */
+data class QaIssueStatsRow(
+    val severity: String,
+    val issues: Long
+)
 
 /**
  * 접힌 결과 한 묶음.

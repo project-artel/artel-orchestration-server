@@ -1,5 +1,6 @@
 package kr.artel.orchestration.qa
 
+import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
@@ -17,6 +18,7 @@ import kr.artel.orchestration.project.entity.ProjectRole
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.qa.dto.QaRunConfigStatsCell
+import kr.artel.orchestration.qa.entity.QaLogEntity
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
@@ -425,6 +427,94 @@ class QaStatsIntegrationTest {
 
     // ----------------------------------------------------------------- helpers
 
+    // --- 에이전트가 무엇을 했나 (ARTEL-681) ---------------------------------------
+
+    @Test
+    fun `한 번도 안 부른 도구가 0으로 나온다`(): Unit = runBlocking {
+        // 이 집계 전체가 이 한 줄을 위해 있다. `qa_log` 만 GROUP BY 하면 0 인 도구는 행이
+        // 아예 안 생겨 목록에서 사라지고, 읽는 쪽은 "그런 도구가 없다" 와 "있는데 안 썼다" 를
+        // 가릴 수 없다. 실제로 `record_knowledge` 가 모든 런에서 0 이었고, 그것을 사람이
+        // `docker logs | grep` 으로 세서 알아냈다.
+        val run = seedRun(status = "COMPLETED", tools = listOf("report_step", "record_knowledge"))
+        seedToolCall(run, "report_step")
+
+        val tools = toolStats().tools
+
+        assertThat(tools.map { it.tool }).containsExactlyInAnyOrder("report_step", "record_knowledge")
+        assertThat(tools.first { it.tool == "record_knowledge" }.calls).isZero()
+        assertThat(tools.first { it.tool == "report_step" }.calls).isEqualTo(1)
+    }
+
+    @Test
+    fun `안 쓰인 도구가 목록 맨 위에 온다`(): Unit = runBlocking {
+        // 찾는 것이 안 쓰인 도구이므로 눈이 먼저 닿는 자리에 둔다.
+        val run = seedRun(status = "COMPLETED", tools = listOf("click_button", "record_knowledge"))
+        repeat(3) { seedToolCall(run, "click_button") }
+
+        assertThat(toolStats().tools.first().tool).isEqualTo("record_knowledge")
+    }
+
+    @Test
+    fun `쥔 런과 부른 런을 따로 센다`(): Unit = runBlocking {
+        // 도구가 새로 생기거나 빠지면 런마다 쥔 목록이 다르다. 둘의 차이가 "줬는데 안 쓴" 런이다.
+        val used = seedRun(status = "COMPLETED", tools = listOf("record_knowledge"))
+        seedRun(status = "COMPLETED", tools = listOf("record_knowledge"))
+        seedToolCall(used, "record_knowledge")
+
+        val row = toolStats().tools.first { it.tool == "record_knowledge" }
+
+        assertThat(row.runsHeld).isEqualTo(2)
+        assertThat(row.runsCalled).isEqualTo(1)
+    }
+
+    @Test
+    fun `쥐지 않은 도구는 세지 않는다`(): Unit = runBlocking {
+        // 창 밖의 런이나 다른 프로젝트의 호출이 새어 들어오면 안 된다. 시작점이 `run_config`
+        // 이므로 쥐지 않은 것은 호출이 있어도 목록에 없다.
+        val run = seedRun(status = "COMPLETED", tools = listOf("report_step"))
+        seedToolCall(run, "record_knowledge")
+
+        assertThat(toolStats().tools.map { it.tool }).containsExactly("report_step")
+    }
+
+    @Test
+    fun `스텝 판정이 근거를 댔는지 센다`(): Unit = runBlocking {
+        // 부르기는 매번 부르고 그 칸만 비어 있었다 — 호출 수로는 안 보인다.
+        val run = seedRun(status = "COMPLETED", tools = listOf("report_step"))
+        seedToolCall(run, "report_step", args = """{"used_knowledge_ids":[41]}""")
+        seedToolCall(run, "report_step", args = """{"used_knowledge_ids":[]}""")
+        seedToolCall(run, "report_step")
+
+        val citations = toolStats().citations
+
+        assertThat(citations.verdicts).isEqualTo(3)
+        assertThat(citations.withCitation).isEqualTo(1)
+    }
+
+    @Test
+    fun `창에 런이 없으면 빈 집계다`(): Unit = runBlocking {
+        val empty = toolStats()
+
+        assertThat(empty.tools).isEmpty()
+        assertThat(empty.citations.verdicts).isZero()
+        assertThat(empty.issues).isEmpty()
+    }
+
+    @Test
+    fun `참여자가 아니면 빈 집계다`(): Unit = runBlocking {
+        // 403 을 주면 프로젝트의 존재 여부가 새어 나간다. 실행 설정 집계와 같은 동작이다.
+        val stranger = signIn("stranger", "77")
+        val run = seedRun(status = "COMPLETED", tools = listOf("report_step"))
+        seedToolCall(run, "report_step")
+
+        val seen = statsService.toolStats(projectId, stranger.userId.toLong(), windowStart, windowEnd)
+
+        assertThat(seen.tools).isEmpty()
+    }
+
+    private suspend fun toolStats() =
+        statsService.toolStats(projectId, ownerId, windowStart, windowEnd)
+
     private suspend fun stats() = statsService.stats(projectId, ownerId, windowStart, windowEnd, 200)
 
     private fun kr.artel.orchestration.qa.dto.QaStatsResponse.cellFor(model: String): QaRunConfigStatsCell =
@@ -446,7 +536,10 @@ class QaStatsIntegrationTest {
         stepsTotal: Int? = null,
         stepsPassed: Int? = null,
         casesTotal: Int? = null,
-        casesPassed: Int? = null
+        casesPassed: Int? = null,
+        // 그 런이 쥐고 있던 도구. Agent 가 세션을 열 때 `run_config.tools` 로 싣는 것과 같은
+        // 자리다 — 0 회를 말하려면 무엇을 쥐고 있었는지가 있어야 한다(ARTEL-681).
+        tools: List<String> = emptyList()
     ): Long {
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
@@ -474,9 +567,29 @@ class QaStatsIntegrationTest {
                 casesTotal = casesTotal,
                 casesPassed = casesPassed,
                 startedAt = startedAt,
-                completedAt = if (terminal) startedAt.plusMillis(durationMs) else null
+                completedAt = if (terminal) startedAt.plusMillis(durationMs) else null,
+                runConfig = Json.of(
+                    """{"tools":[${tools.joinToString(",") { "\"$it\"" }}]}"""
+                )
             )
         )!!.id!!
+    }
+
+    /** `TOOL` 프레임 한 줄. 모양은 Agent 의 `channel.tool_call` 이 내는 것과 같다. */
+    private suspend fun seedToolCall(
+        qaTryId: Long,
+        tool: String,
+        args: String = "{}"
+    ) {
+        qaLogRepository.save(
+            QaLogEntity(
+                qaTryId = qaTryId,
+                direction = "AGENT_TO_ORCHE",
+                type = "TOOL",
+                message = tool,
+                payload = Json.of("""{"tool":"$tool","args":$args}""")
+            )
+        )
     }
 
     /** `grader='expected-steps'` 채점 한 줄. detail 모양은 ExpectedStepsGrader가 쓰는 것과 같다. */

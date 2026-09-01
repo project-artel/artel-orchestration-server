@@ -3,6 +3,7 @@ package kr.artel.orchestration.qa.controller
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.qa.dto.QaStatsResponse
+import kr.artel.orchestration.qa.dto.QaToolStatsResponse
 import kr.artel.orchestration.qa.service.QaStatsService
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
@@ -42,6 +43,31 @@ class QaStatsController(
                 from = parseInstant(from, "from"),
                 to = parseInstant(to, "to"),
                 cellLimit = cellLimit
+            )
+        )
+
+    /**
+     * 에이전트가 무엇을 했나 (ARTEL-681).
+     *
+     * 위 집계와 가른 것은 접는 축이 다르기 때문이다 — 저쪽은 런을 실행 설정으로 분할하고
+     * 이쪽은 도구로 접는다. 한 응답에 섞으면 곱집합이 되고, 이 집계가 답해야 할 질문
+     * — 한 번도 안 불린 도구가 있나 — 이 그 안에서 더 안 보인다.
+     *
+     * @param from,to 위와 같은 형식이고 생략하면 최근 30일. 같은 창이라 한 화면에 나란히 둔다.
+     */
+    @GetMapping("/tools")
+    suspend fun toolStats(
+        @RequestParam projectId: String,
+        @RequestParam(required = false) from: String?,
+        @RequestParam(required = false) to: String?,
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<QaToolStatsResponse> =
+        ResponseEntity.ok(
+            service.toolStats(
+                projectId = parseId(projectId),
+                userId = appUserId,
+                from = parseInstant(from, "from"),
+                to = parseInstant(to, "to")
             )
         )
 
