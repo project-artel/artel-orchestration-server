@@ -7,6 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.socket.server.support.HandshakeWebSocketService
 import org.springframework.web.reactive.socket.server.WebSocketService
+import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter
 import org.springframework.web.reactive.socket.server.upgrade.ReactorNettyRequestUpgradeStrategy
 
 /**
@@ -25,7 +26,10 @@ import org.springframework.web.reactive.socket.server.upgrade.ReactorNettyReques
 class SdkSocketPropertiesTest {
 
     @Autowired private lateinit var properties: SdkSocketProperties
-    @Autowired private lateinit var service: WebSocketService
+    // 빈이 아니라 **어댑터가 실제로 든 것**을 본다. 이 줄이 이 파일에서 제일 중요하다 —
+    // 전에는 `WebSocketService` 빈을 그대로 주입받았고, 그래서 빈이 옳게 만들어졌다는 것만
+    // 확인하고 그 빈이 쓰이는지는 못 봤다. Spring 은 어댑터를 만들 때 그 빈을 조회하지 않는다.
+    @Autowired private lateinit var adapter: WebSocketHandlerAdapter
 
     /**
      * 상한이 실제로 끊겼던 크기보다 크다.
@@ -59,13 +63,21 @@ class SdkSocketPropertiesTest {
     }
 
     /**
-     * 그 값이 업그레이드 전략까지 닿는다.
+     * 그 값이 **Spring 이 실제로 쓰는** 업그레이드 전략까지 닿는다.
      *
      * 프로퍼티만 있고 연결이 빠지면 설정은 읽히는데 동작은 기본값이다. 그 상태는 코드를 읽어서는
      * 옳아 보이고, 큰 판독이 오는 날에만 드러난다.
+     *
+     * 이 테스트는 그 말을 적어 두고도 한 번 놓쳤다(ARTEL-682). `WebSocketService` 빈을 주입받아
+     * 검사했는데, Spring 은 어댑터를 만들 때 그 빈을 조회하지 않는다 —
+     * `WebFluxConfigurer.getWebSocketService()` 로만 받고 없으면 자기 것을 기본값으로 만든다.
+     * 그래서 빈은 옳았고, 소켓은 3주 동안 65536이었고, 둘 다 참이었다.
+     *
+     * 그래서 묻는 대상을 바꿨다. 빈이 어떻게 생겼는지가 아니라 **어댑터가 무엇을 들고 있는지**다.
      */
     @Test
     fun `상한이 업그레이드 전략에 닿는다`() {
+        val service = adapter.webSocketService
         assertThat(service).isInstanceOf(HandshakeWebSocketService::class.java)
 
         val strategy = (service as HandshakeWebSocketService).upgradeStrategy
