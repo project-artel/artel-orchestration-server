@@ -44,6 +44,9 @@ import org.springframework.transaction.reactive.executeAndAwait
  */
 @Service
 class ScenarioReconcileService(
+    // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
+    private val conditions: CaseConditionReader,
+
     private val scenarioRepository: TestScenarioRepository,
     private val runScenarioRepository: TestRunScenarioRepository,
     private val transactionalOperator: TransactionalOperator,
@@ -112,7 +115,14 @@ class ScenarioReconcileService(
         // 전제로 삼는 것은 함께 못 서는 것이 아니라 순서다 — 실측(런 159)에서 `MapMove.position` 이
         // 그랬고, 걸어가는 시나리오 하나가 네 조각이 났다.
         val changedBy = valuesChangedByCases(projectId)
-        val divided = ScenarioConflictSplit.apply(scenarios, contested) { changedBy[it].orEmpty() }
+        // **게임이 스스로 움직이는 값도 움직이는 값이다**(ARTEL-625). 위의 [changedBy] 는 케이스가
+        // 된 기능만 알아서, 전투를 이겨야 오르는 값이 영영 얼어 있는 것으로 보인다.
+        val movable = movableValues(projectId)
+        val divided = ScenarioConflictSplit.apply(
+            scenarios,
+            contested,
+            movable = { value -> movable.any { written -> sameTail(written, value) } },
+        ) { changedBy[it].orEmpty() }
         val given = divided.scenarios
         divided.notes.forEach { (title, parts) ->
             logger.info("함께 담을 수 없어 나눴다 [runId={}] {} → {}조각", runId, title, parts)
@@ -459,8 +469,8 @@ class ScenarioReconcileService(
                 id = case.id!!,
                 scene = ScenarioStateReader.sceneOf(case),
                 step = case.step.trim(),
-                guards = ScenarioStateReader.guardsOf(case.precondition),
-                declared = ScenarioStateReader.knownValuesOf(case.precondition),
+                guards = conditions.guardsOf(case),
+                declared = conditions.knownValuesOf(case),
             )
         }
     }.onFailure { logger.warn("케이스 전량 조회 실패 — 검사들을 넘어간다: ${it.message}") }
@@ -470,6 +480,26 @@ class ScenarioReconcileService(
      * 케이스마다 **바꾸는 값들**(ARTEL-581). 지도를 못 되짚는 케이스는 여기 없고, 그때는 바꾸는
      * 것을 모르는 것이라 예전처럼 나눈다 — 모르면 나누는 쪽이 안전하다.
      */
+    /**
+     * **지도 안에서 움직이는 값들**(ARTEL-625). 케이스가 아니라 지도 전체에 묻는다.
+     *
+     * 못 읽으면 빈 목록이고, 그때는 이 칸이 생기기 전과 똑같이 나눈다.
+     */
+    private suspend fun movableValues(projectId: Long): Set<String> = runCatching {
+        testCaseRepository.findWrittenValues(projectId).toList().toSet()
+    }.onFailure { logger.warn("지도가 움직이는 값 조회 실패 — 예전처럼 나눈다: ${it.message}") }
+        .getOrElse { emptySet() }
+
+    /**
+     * 지도가 부르는 이름과 사전조건이 적는 이름이 **같은 값**인가.
+     *
+     * 효과는 물건을 가리키고(`CombineButton.combineZone`) 전제는 그 물건의 속성을 읽는다
+     * (`...combineZone.activeSelf`). 마디 하나 차이라 꼬리로는 안 만난다.
+     */
+    private fun sameTail(written: String, guarded: String): Boolean =
+        written == guarded || written.endsWith(".$guarded") || guarded.endsWith(".$written") ||
+            guarded.substringBeforeLast('.', "") == written
+
     private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Set<String>> = runCatching {
         testCaseRepository.findValuesChangedByCases(projectId).toList()
             .groupBy({ it.caseId }, { it.target })

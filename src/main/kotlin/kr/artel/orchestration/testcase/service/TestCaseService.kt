@@ -8,6 +8,7 @@ import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.dto.CaseGuard
+import kr.artel.orchestration.testcase.dto.SceneExit
 import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
@@ -17,10 +18,13 @@ import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
 import kr.artel.orchestration.testcase.dto.toTestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.toTestCaseResponse
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import kr.artel.orchestration.testscenario.service.CaseConditionReader
 
 /**
  * TestCase 도메인 서비스(코루틴). 재사용 케이스 라이브러리의 CRUD를 담당한다.
@@ -32,10 +36,15 @@ import org.springframework.stereotype.Service
  */
 @Service
 class TestCaseService(
+    // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
+    private val conditions: CaseConditionReader,
+
     private val repository: TestCaseRepository,
     private val projectAccessService: ProjectAccessService,
     private val objectMapper: ObjectMapper,
 ) {
+
+    private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
     /**
      * 화면이 읽는 케이스 목록(최근 것부터). 비참여자면 빈 목록.
      *
@@ -78,6 +87,9 @@ class TestCaseService(
      */
     suspend fun getAuthoringCases(projectId: Long, userId: Long): List<AuthoringTestCase> {
         if (!projectAccessService.isMember(projectId, userId)) return emptyList()
+        val changed = valuesChangedByCases(projectId)
+        // **길은 우리가 찾지 않지만, 지도가 아는 것은 보낸다**(ARTEL-628).
+        val exits = sceneExits(projectId)
         return repository.findByProjectIdOrderByIdAsc(projectId).map { case ->
             AuthoringTestCase(
                 id = case.id!!,
@@ -86,12 +98,80 @@ class TestCaseService(
                 precondition = case.precondition,
                 expectedValue = case.expectedValue,
                 verificationStatus = case.verificationStatus,
-                stateBefore = ScenarioStateReader.guardsOf(case.precondition)
+                // **문장이 아니라 구조에서 읽는다**(ARTEL-627).
+                stateBefore = conditions.guardsOf(case)
                     .map { CaseGuard(it.variable, it.operator, it.value) },
-                stateAfter = ScenarioStateReader.stateAfter(case, objectMapper),
+                // 케이스 메타가 먼저다 — 구버전 엑셀 경로로 들어온 행은 거기 답이 있다. 지도가 낸
+                // 행은 그 칸이 없어서 비어 오고, 그때 지도가 답한다(ARTEL-606).
+                stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
+                    .ifEmpty { changed[case.id].orEmpty() } + arrival(case),
+                exits = exits[ScenarioStateReader.sceneOf(case) ?: case.scene].orEmpty(),
             )
         }.toList()
     }
+
+    /**
+     * 케이스마다 **실행하면 무엇이 바뀌나**(ARTEL-606).
+     *
+     * 저작이 실행할 수 없는 스텝을 지어내던 자리다 — 케이스가 `position == 1 인 상태에서` 라고만
+     * 하고 position 이 무엇을 하면 1이 되는지는 말하지 않아, 모델이 `case_id` 없는 "…상태로
+     * 준비한다"를 적었다. QA 실행이 따라갈 것이 없는 문장이다.
+     *
+     * 답은 지도의 `capability_effect` 에 있고 `capability_key` 가 그 자리로 가는 길이다. 계약은
+     * 안 바꾼다 — `state_after` 는 이미 `AuthoringTestCase` 에 있고 에이전트가 읽는 자리다.
+     *
+     * **이름은 마지막 마디로 통일한다.** `CaseGuard` 가 같은 규칙이라, 그러지 않으면 한쪽의
+     * `MapMove.StagePosition` 과 다른 쪽의 `StagePosition` 이 서로 다른 값으로 보인다.
+     *
+     * 못 읽어도 저작을 세우지 않는다. 이것이 없으면 예전처럼 빈 map 이고, 모델은 지금처럼 지어낸다.
+     */
+    /**
+     * 실행하면 **어느 화면이 되나**(ARTEL-614).
+     *
+     * 씬 전환도 상태 변화다. 저작이 `state_after` 와 다음 케이스의 `scene` 을 맞추면 그것이 곧
+     * 씬 브리지이고, 기대결과 산문을 읽을 필요가 없어진다.
+     *
+     * `state_after` 에 실어 **계약을 안 바꾼다**(ARTEL-606 과 같은 판단). 키를 `scene` 으로 두는
+     * 것은 다음 케이스의 `scene` 칸과 같은 말이라 맞추는 쪽이 헷갈리지 않기 때문이다 — 실측에서
+     * 그 이름의 게임 값을 요구하는 전제는 없다.
+     */
+    private fun arrival(case: TestCaseEntity): Map<String, String> =
+        runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
+            ?.path(MapTestCaseWriter.ARRIVES_AT)?.asText(null)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { mapOf("scene" to it) }
+            .orEmpty()
+
+    /**
+     * 화면마다 **한 걸음에 갈 수 있는 곳들**(ARTEL-628).
+     *
+     * 닿을 수 있는 화면 전부로 답하지 않는다. 재 보면 어느 화면에서든 일곱 화면 전부에 닿아
+     * (강하게 이어진 그래프) 전부 같은 답이 되고, 그러면 아무것도 못 가른다.
+     *
+     * 못 읽으면 빈 map 이다. 길 안내가 없어도 저작은 돌아야 한다 — 그건 도움말이지 재료가 아니다.
+     */
+    private suspend fun sceneExits(projectId: Long): Map<String, List<SceneExit>> = runCatching {
+        repository.findSceneExits(projectId).toList()
+            .groupBy { it.fromScene }
+            .mapValues { (_, rows) ->
+                rows.groupBy { it.toScene }
+                    // 한 화면으로 가는 길이 여럿이면 **누를 것이 있는 쪽**을 먼저 든다.
+                    .map { (to, ways) -> SceneExit(to, ways.firstNotNullOfOrNull { it.byOperation }) }
+                    .sortedBy { it.scene }
+            }
+    }.getOrElse { emptyMap() }
+
+    private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Map<String, String>> = runCatching {
+        repository.findValuesChangedByCases(projectId).toList()
+            .groupBy { it.caseId }
+            .mapValues { (_, writes) ->
+                writes.mapNotNull { write ->
+                    write.detail?.takeIf { it.isNotBlank() }
+                        ?.let { ScenarioStateReader.normalize(write.target) to it }
+                }.toMap()
+            }
+    }.onFailure { logger.warn("케이스가 바꾸는 값 조회 실패 — 저작에 state_after 를 못 싣는다: ${it.message}") }
+        .getOrElse { emptyMap() }
 
     /**
      * 프로젝트의 커버리지(ARTEL-403). 비참여자면 전부 0 — 목록과 같은 판단이다(존재를 숨긴다).

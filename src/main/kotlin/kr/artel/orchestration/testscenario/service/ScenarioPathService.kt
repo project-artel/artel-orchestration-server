@@ -35,6 +35,9 @@ import org.springframework.stereotype.Service
  */
 @Service
 class ScenarioPathService(
+    // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
+    private val conditions: CaseConditionReader,
+
     private val objectMapper: ObjectMapper,
     private val testCaseRepository: TestCaseRepository,
     private val buildRepository: GameBuildRepository,
@@ -73,13 +76,13 @@ class ScenarioPathService(
         val toScene = ScenarioStateReader.sceneOf(to)
         // 출발은 **그 케이스를 실행한 뒤**다. 사전조건이 보장한 것에 그 케이스가 바꾼 것을 얹는다.
         val fromAfter = ScenarioStateReader.stateAfter(from, objectMapper)
-        val state = ScenarioStateReader.knownValuesOf(from.precondition) + fromAfter
-        val want = ScenarioStateReader.guardsOf(to.precondition)
+        val state = conditions.knownValuesOf(from) + fromAfter
+        val want = conditions.guardsOf(to)
         // 순서가 뒤바뀐 것인지는 **메우는 일과 다른 질문**이다. 여기서 함께 답해 두면 뒤집으면
         // 이어지는 자리를 조용히 이동 스텝으로 덮지 않을 수 있다.
         val ordering = ScenarioOrderCheck.verdict(
             fromAfter = fromAfter,
-            fromBefore = ScenarioStateReader.guardsOf(from.precondition),
+            fromBefore = conditions.guardsOf(from),
             toAfter = ScenarioStateReader.stateAfter(to, objectMapper),
             toBefore = want,
         )
@@ -401,16 +404,39 @@ class ScenarioPathService(
             capability.actionability != Actionability.UNREACHABLE_PRECONDITION.wire
 
     /**
-     * 이 케이스가 **그 기능을 직접 실행하는가.**
+     * 이 케이스가 **그 기능을 직접 실행하는가.** 그렇다면 같은 것을 시키는 브리지는 중복이다.
      *
-     * 케이스의 근거 키가 가리키는 코드와 기능의 근거가 같으면, 그 케이스를 수행하는 것이 곧 그
-     * 조작이다. 근거가 없는 케이스(형식이 다른 UI 근거 등)는 판단하지 않는다 — 모르면 넣는 쪽이
-     * 안전하다. 빠뜨린 스텝은 눈에 띄지만, 없는 스텝은 실행할 때까지 모른다.
+     * ## 케이스가 키를 들면 한 줄이다(ARTEL-555)
+     *
+     * 지도에서 나온 케이스는 자기를 만든 기능의 [CapabilityEntity.capabilityKey] 를 들고 있다.
+     * 같은 키면 같은 기능이고, 그것으로 끝이다.
+     *
+     * ## 키가 없으면 예전처럼 근거 문자열을 맞춘다
+     *
+     * 손으로 만든 케이스, 엑셀로 적재된 케이스, 구버전 생성기가 낸 케이스는 키가 없다. 그 길은
+     * **한 꼬리가 기능 하나를 가리키지 못한다** — 꼬리가 메서드 단위라, 실측(적재기 지도)에서
+     * `Map.MapMove|CharacterMove|System.Void()` 하나가 기능 14개를 내고 그 안에 `LeftArrow` 와
+     * `RightArrow` 가 섞여 있다. 한쪽을 검증하는 케이스가 반대쪽 브리지를 지울 수 있다.
+     *
+     * 그래서 **그 길에서는 조작이 하나로 모일 때만** 지운다. 어느 것을 하든 사람이 하는 일이 같으면
+     * 브리지는 어차피 중복이고, 갈리면 어느 것인지 모른다.
+     *
+     * 근거가 없는 케이스는 판단하지 않는다 — 모르면 넣는 쪽이 안전하다. **빠뜨린 스텝은 눈에
+     * 띄지만, 없는 스텝은 실행할 때까지 모른다.**
      */
-    private suspend fun performs(contentMapId: Long, case: TestCaseEntity, capabilityId: Long): Boolean =
-        ScenarioStateReader.evidenceTails(case, objectMapper).any { tail ->
-            factRepository.findByEvidenceTail(contentMapId, tail).toList().any { it.id == capabilityId }
+    private suspend fun performs(contentMapId: Long, case: TestCaseEntity, capabilityId: Long): Boolean {
+        case.capabilityKey?.takeIf { it.isNotBlank() }?.let { key ->
+            return capabilityRepository.findById(capabilityId)?.capabilityKey == key
         }
+        return ScenarioStateReader.evidenceTails(case, objectMapper).any { tail ->
+            val found = factRepository.findByEvidenceTail(contentMapId, tail).toList()
+            found.any { it.id == capabilityId } && found.distinctBy(::actionOf).size == 1
+        }
+    }
+
+    /** 사람이 하는 일로 본 조작. 이것이 같으면 어느 기능이든 시키는 바가 같다. */
+    private fun actionOf(capability: CapabilityEntity): Triple<String, String?, String?> =
+        Triple(capability.interaction, capability.inputKey, capability.controlPath)
 
     // ---- 씬 간선 ---------------------------------------------------------------------
 

@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.CaseWrite
+import kr.artel.orchestration.testcase.dto.SceneExitRow
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
@@ -187,6 +188,9 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     /**
      * 이 프로젝트의 케이스들이 **바꾸는 값**(ARTEL-581).
      *
+     * 두 곳이 읽는다 — 나눔이 순서를 알 때(ARTEL-581)와, 저작에 "이 케이스를 실행하면 무엇이
+     * 바뀌나"를 말할 때(ARTEL-606). 같은 사실이라 질의도 하나다.
+     *
      * 나눔이 순서를 알려면 필요하다 — 앞 스텝이 바꾼 값을 뒤 스텝이 전제로 삼는 것은 모순이 아니다.
      * 케이스 메타의 `state_after` 로는 답이 안 된다. 그것은 구버전 엑셀 경로가 넣던 칸이라 지도가
      * 낸 케이스에는 없다.
@@ -200,7 +204,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      */
     @Query(
         """
-        SELECT tc.id AS case_id, ce.target AS target
+        SELECT tc.id AS case_id, ce.target AS target, ce.detail AS detail
         FROM test_case tc
         JOIN capability c ON c.capability_key = tc.capability_key
         JOIN scene s ON s.id = c.scene_id
@@ -214,4 +218,79 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
     )
     fun findValuesChangedByCases(projectId: Long): Flow<CaseWrite>
+
+    /**
+     * **화면에서 화면으로 가는 한 걸음, 그리고 무엇을 눌러야 가는지**(ARTEL-628).
+     *
+     * 지도는 이미 답을 안다. 저작에 안 보내고 있었을 뿐이다:
+     *
+     * ```
+     * Map_scene      → TurnBattleScene   Return
+     * Map_scene      → TitleScene        Canvas/Button (Legacy)
+     * TitleScene     → Map_scene         Canvas/MapSceneButton
+     * GameClearScene → Map_scene         any
+     * StoryScene     → Map_scene         (없음 — 저절로 간다)
+     * ```
+     *
+     * **`by` 가 비는 것도 답이다.** 실측 19간선 중 12건이 `not-a-step` 이고, 그건 게임이 알아서
+     * 넘기는 자리라는 뜻이다 — 누를 것을 찾아 헤맬 필요가 없다는 정보다. 못 찾은 것과 없는 것을
+     * 섞지 않으려고, 기능이 매달려 있는데 조작이 없는 경우만 빈 값으로 답한다.
+     *
+     * 키가 먼저고 라벨·경로가 그다음이다. 실행하는 쪽이 그대로 보낼 수 있는 것이 키이기 때문이다.
+     *
+     * 지도를 먼저 하나로 고르고 나서 간선을 훑는다 — `test_case` 를 바깥에 두면 케이스 한 줄마다
+     * 간선 전체가 딸려 와 행이 곱으로 분다([findWrittenValues] 에 실측이 있다).
+     */
+    @Query(
+        """
+        SELECT DISTINCT s.name AS from_scene,
+               e.to_scene_name AS to_scene,
+               coalesce(c.input_key, c.control_label, c.control_path) AS by_operation
+        FROM scene s
+        JOIN scene_edge e ON e.from_scene_id = s.id
+        LEFT JOIN capability c ON c.id = e.capability_id
+          AND c.interaction <> 'none'
+          AND c.actionability NOT IN ('not-a-step', 'unreachable-precondition')
+        WHERE s.content_map_id IN (
+            SELECT DISTINCT s2.content_map_id
+            FROM test_case tc
+            JOIN capability c2 ON c2.capability_key = tc.capability_key
+            JOIN scene s2 ON s2.id = c2.scene_id
+            WHERE tc.project_id = :projectId
+        )
+        """
+    )
+    fun findSceneExits(projectId: Long): Flow<SceneExitRow>
+
+    /**
+     * **지도 안에서 움직이는 값들**(ARTEL-625).
+     *
+     * [findValuesChangedByCases] 는 **케이스가 된 기능**만 본다. 그래서 게임이 스스로 움직이는 값이
+     * 영영 안 바뀌는 것으로 보이고, 그 값을 두고 갈리는 갈래들이 전부 따로 잘린다 — 실측(프로젝트
+     * 24)에서 맵의 `Return` 케이스가 그랬다. `MapMove.StagePosition` 을 올리는 것은 전투를 이기는
+     * 일이라 어떤 케이스도 안 쓰고, 그래서 20스텝짜리 하나에서 1스텝짜리 셋이 떨어져 나왔다.
+     *
+     * 한 순간만 보면 `== 1` 과 `== 2` 는 함께 못 선다. 시간 위에서는 이겨서 올라가는 계단이다.
+     *
+     * **`active-state` 도 본다.** 무엇이 켜지고 꺼지는 것도 시간 위에서 움직이는 값이고 사전조건이
+     * 실제로 그것을 건다. 보기만 하는 종류(`ui-value` · `transform` · `scene` · `audio`)는 안 본다 —
+     * 그것들은 무엇이 보이나이지 걸어 둘 수 있는 값이 아니라, 꼬리만 맞으면 아무 관측이나 걸린다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT ce.target
+        FROM scene s
+        JOIN capability c ON c.scene_id = s.id AND c.merged_into IS NULL
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind IN ('write', 'active-state')
+        WHERE ce.target IS NOT NULL
+          AND s.content_map_id IN (
+              SELECT DISTINCT s2.content_map_id
+              FROM test_case tc
+              JOIN capability c2 ON c2.capability_key = tc.capability_key
+              JOIN scene s2 ON s2.id = c2.scene_id
+              WHERE tc.project_id = :projectId
+          )
+        """
+    )
+    fun findWrittenValues(projectId: Long): Flow<String>
 }

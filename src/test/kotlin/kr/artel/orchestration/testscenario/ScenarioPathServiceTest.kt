@@ -684,6 +684,97 @@ class ScenarioPathServiceTest {
         assertThat(answer.capabilityIds).containsExactly(enter)
     }
 
+    // ---- 케이스가 키로 지도를 되짚는다 (ARTEL-555) -------------------------------------
+
+    /**
+     * 지도에서 나온 케이스는 자기를 만든 기능의 키를 든다. **같은 키면 같은 기능이다.**
+     *
+     * 문자열 맞춤이 통째로 사라지는 자리다 — 꼬리를 만들고 LIKE 로 맞추고 조작이 하나로 모이는지
+     * 세던 것이 비교 한 번이 된다.
+     */
+    @Test
+    fun `키를 든 케이스는 그 기능의 브리지를 지운다`(): Unit = runBlocking {
+        val enter = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = mapSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "전투 진입", interaction = "press", inputKey = "Return",
+                capabilityKey = "cap-enter", status = "runnable",
+            )
+        ).id!!
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+        val press = case("Map_scene", "Map_scene 화면인 상태", capabilityKey = "cap-enter")
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, press, inBattle)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.NOT_REQUIRED)
+        assertThat(answer.capabilityIds).isEmpty()
+    }
+
+    /**
+     * **다른 키면 다른 기능이다.** 근거 문자열이 겹쳐도 상관없다 — 키가 답을 정한다.
+     */
+    @Test
+    fun `다른 키를 든 케이스라면 브리지를 넣는다`(): Unit = runBlocking {
+        val enter = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = mapSceneId, contentMapId = contentMapId, origin = "evidence",
+                summary = "전투 진입", interaction = "press", inputKey = "Return",
+                capabilityKey = "cap-enter", status = "runnable",
+            )
+        ).id!!
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+        val other = case("Map_scene", "Map_scene 화면인 상태", capabilityKey = "cap-something-else")
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, other, inBattle)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.capabilityIds).containsExactly(enter)
+    }
+
+    /**
+     * 키가 없는 케이스는 **예전 길**로 간다. 손으로 만든 것과 엑셀로 들어온 것이 계속 있다.
+     *
+     * 그 길에서는 조작이 하나로 모일 때만 지운다 — 꼬리가 메서드 단위라 한 꼬리가 기능 여럿을
+     * 가리키고, 실측에서 `Map.MapMove.CharacterMove` 하나가 `LeftArrow` 와 `RightArrow` 를 함께
+     * 낸다. 한쪽을 검증하는 케이스가 반대쪽 브리지를 지우면 실행이 그 앞에서 멎는다.
+     */
+    @Test
+    fun `키가 없고 근거가 여러 조작을 가리키면 브리지를 지우지 않는다`(): Unit = runBlocking {
+        val method = "Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()"
+        val enter = capability(mapSceneId, interaction = "press", inputKey = "Return")
+        evidence(enter, method)
+        val left = capability(mapSceneId, interaction = "press", inputKey = "LeftArrow")
+        evidence(left, method)
+        sceneEdgeRepository.save(
+            SceneEdgeEntity(
+                fromSceneId = mapSceneId, toSceneName = "TurnBattleScene",
+                toSceneId = battleSceneId, capabilityId = enter, source = "static",
+            )
+        )
+        val press = case(
+            "Map_scene", "Map_scene 화면인 상태",
+            evidence = "Assembly-CSharp|WordVenture.Map.MapMove|CharacterMove|System.Void()@12",
+        )
+        val inBattle = case("TurnBattleScene", "TurnBattleScene 화면인 상태")
+
+        val answer = service.findPath(projectId, userId, press, inBattle)
+
+        assertThat(answer.result).isEqualTo(ScenarioPathResult.KNOWN)
+        assertThat(answer.capabilityIds).containsExactly(enter)
+    }
+
     // ---- 순서 ------------------------------------------------------------------------
 
     /**
@@ -739,6 +830,7 @@ class ScenarioPathServiceTest {
         precondition: String,
         stateAfter: String? = null,
         evidence: String? = null,
+        capabilityKey: String? = null,
     ): Long {
         val source = buildMap {
             stateAfter?.let { put("state_after", it) }
@@ -751,6 +843,7 @@ class ScenarioPathServiceTest {
             TestCaseEntity(
                 projectId = projectId, scene = scene, step = "step-${seq.incrementAndGet()}",
                 precondition = precondition, expectedValue = "expected", metadata = metadata,
+                capabilityKey = capabilityKey,
             )
         ).id!!
     }
