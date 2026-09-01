@@ -44,6 +44,8 @@ data class UserProfile(
     val nickname: String?,
     /** BattleTag. 선택 값이라 null일 수 있다. */
     val battleTag: String?,
+    /** [email]이 이 계정의 것으로 확정된 시각. null이면 아직 확인되지 않았다. */
+    val emailVerifiedAt: Instant?,
     val identities: List<LinkedIdentity>
 )
 

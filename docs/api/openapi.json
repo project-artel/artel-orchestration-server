@@ -2180,6 +2180,52 @@
         }
       }
     },
+    "/api/auth/me/email": {
+      "post": {
+        "tags": [
+          "auth-controller"
+        ],
+        "operationId": "registerEmail",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterEmailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          }
+        }
+      }
+    },
+    "/api/auth/me/email/verify": {
+      "post": {
+        "tags": [
+          "auth-controller"
+        ],
+        "operationId": "verifyEmail",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}": {
       "get": {
         "tags": [
@@ -5484,6 +5530,28 @@
           }
         }
       },
+      "RegisterEmailRequest": {
+        "required": [
+          "email"
+        ],
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          }
+        }
+      },
+      "VerifyEmailRequest": {
+        "required": [
+          "token"
+        ],
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        }
+      },
       "UpdateProjectRequest": {
         "type": "object",
         "properties": {
@@ -8378,6 +8446,7 @@
       "AuthUserResponse": {
         "required": [
           "displayName",
+          "emailVerified",
           "id",
           "identities"
         ],
@@ -8399,6 +8468,12 @@
             "type": "string"
           },
           "battleTag": {
+            "type": "string"
+          },
+          "emailVerified": {
+            "type": "boolean"
+          },
+          "pendingEmail": {
             "type": "string"
           },
           "identities": {

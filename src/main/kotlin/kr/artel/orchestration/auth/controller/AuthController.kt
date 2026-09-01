@@ -5,11 +5,14 @@ import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.auth.dto.AuthUserResponse
 import kr.artel.orchestration.auth.dto.LinkedIdentityResponse
 import kr.artel.orchestration.auth.dto.UpdateLocaleRequest
+import kr.artel.orchestration.auth.dto.RegisterEmailRequest
 import kr.artel.orchestration.auth.dto.UpdateProfileRequest
+import kr.artel.orchestration.auth.dto.VerifyEmailRequest
 import kr.artel.orchestration.auth.config.AuthCookies
 import kr.artel.orchestration.auth.config.AuthProperties
 import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.JwtService
+import kr.artel.orchestration.auth.service.EmailVerificationService
 import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.auth.service.RefreshTokenService
 import kr.artel.orchestration.auth.service.SessionUserResolver
@@ -38,6 +41,7 @@ private const val MAX_NICKNAME_LENGTH = 64
 @RequestMapping("/api/auth")
 class AuthController(
     private val oauthUserService: OAuthUserService,
+    private val emailVerificationService: EmailVerificationService,
     private val sessionUserResolver: SessionUserResolver,
     private val refreshTokenService: RefreshTokenService,
     private val jwtService: JwtService,
@@ -86,7 +90,7 @@ class AuthController(
         // 서명은 유효하지만 가리키는 사용자가 없는 토큰은 유효한 세션이 아니다.
         val profile = oauthUserService.findProfile(session.userId)
             ?: throw UnauthorizedException()
-        return profile.toResponse()
+        return profile.toResponse(emailVerificationService.pendingEmail(session.userId))
     }
 
     @PutMapping("/me/locale")
@@ -124,6 +128,37 @@ class AuthController(
             ?: throw UnauthorizedException()
     }
 
+    /**
+     * 확인할 이메일 주소를 받는다. `app_user.email`은 아직 바뀌지 않는다 — 사용자가 적은 주소를
+     * 그대로 믿으면 남의 주소로 간 초대를 가져갈 수 있다.
+     *
+     * 202다. 요청은 받아들여졌지만 주소가 계정의 것이 되는 일은 아직 끝나지 않았다.
+     *
+     * 응답에 토큰을 싣지 않는다. 토큰이 응답으로 돌아오면 주소를 받는 것이 소유 확인이 아니게
+     * 된다 — 아무 주소나 적고 그 응답으로 바로 확인해 버릴 수 있다. 지금은 발송 provider가 없어
+     * `LoggingMailSender`가 서버 로그에만 남긴다.
+     */
+    @PostMapping("/me/email")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    suspend fun registerEmail(
+        @AuthenticationPrincipal jwt: Jwt,
+        @RequestBody request: RegisterEmailRequest
+    ) {
+        val session = sessionUserResolver.resolve(jwt) ?: throw UnauthorizedException()
+        emailVerificationService.issue(session.userId, request.email)
+    }
+
+    /** 확인 코드를 받아 주소를 계정의 것으로 확정한다. */
+    @PostMapping("/me/email/verify")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    suspend fun verifyEmail(
+        @AuthenticationPrincipal jwt: Jwt,
+        @RequestBody request: VerifyEmailRequest
+    ) {
+        val session = sessionUserResolver.resolve(jwt) ?: throw UnauthorizedException()
+        emailVerificationService.verify(session.userId, request.token)
+    }
+
     /** 앞뒤 공백을 지운다. 공백만 있거나 비어 있으면 지우려는 의도로 보고 null을 돌려준다. */
     private fun normalizeNickname(nickname: String?): String? {
         val trimmed = nickname?.trim()
@@ -146,13 +181,15 @@ class AuthController(
         return battleTag
     }
 
-    private fun UserProfile.toResponse() = AuthUserResponse(
+    private fun UserProfile.toResponse(pendingEmail: String?) = AuthUserResponse(
         id = userId,
         displayName = displayName,
         email = email,
         locale = locale,
         nickname = nickname,
         battleTag = battleTag,
+        emailVerified = emailVerifiedAt != null,
+        pendingEmail = pendingEmail,
         identities = identities.map {
             LinkedIdentityResponse(
                 provider = it.provider,

@@ -242,6 +242,21 @@ class ProjectInvitationIntegrationTest {
     }
 
     @Test
+    fun `keeps an unverified address out of the inbox`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        val invitationId = invite(ownerToken, projectId, "hubot@example.com", ProjectRole.MEMBER)
+        // 주소는 있지만 확인을 마치지 않은 계정. 남의 주소를 적어 넣는 것만으로 그 사람에게 간
+        // 초대를 가져갈 수 있으면 안 된다(ARTEL-732).
+        val unverifiedToken = signInWithoutEmail("56", "pretender")
+        claimWithoutVerifying("56", "hubot@example.com")
+
+        assertThat(get(unverifiedToken, "/api/invitations")).isEmpty()
+        assertThat(statusOf { trigger(unverifiedToken, "/api/invitations/$invitationId/accept") })
+            .isEqualTo(HttpStatus.FORBIDDEN)
+    }
+
+    @Test
     fun `declines without creating a membership`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
         val projectId = createProject(ownerToken)
@@ -387,6 +402,18 @@ class ProjectInvitationIntegrationTest {
         signInWith(providerUserId, login, "$login@example.com")
 
     /** GitHub에서 공개 이메일을 받지 못한 계정. 어떤 초대의 수신자도 될 수 없다. */
+    /**
+     * 확인을 거치지 않고 `app_user.email` 에만 주소를 넣는다. API 로는 만들 수 없는 상태다 —
+     * `POST /api/auth/me/email` 은 주소를 대기로만 두고, 확정은 토큰이 한다. 확인 전 주소가
+     * 초대 판정에 쓰이지 않는다는 것을 보이려면 그 상태를 직접 만들어야 한다.
+     */
+    private suspend fun claimWithoutVerifying(providerUserId: String, email: String) {
+        val identity = identityRepository
+            .findByProviderAndProviderUserId("github", providerUserId)!!
+        val user = appUserRepository.findById(identity.appUserId)!!
+        appUserRepository.save(user.copy(email = email, emailVerifiedAt = null))
+    }
+
     private suspend fun signInWithoutEmail(providerUserId: String, login: String): String =
         signInWith(providerUserId, login, email = null)
 

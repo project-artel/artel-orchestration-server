@@ -14,6 +14,16 @@ data class AuthUserResponse(
     val nickname: String?,
     /** BattleTag. 선택 값이라 null일 수 있다. */
     val battleTag: String?,
+    /**
+     * [email]이 이 계정의 것으로 확정됐는지. false면 그 주소로는 초대를 받을 수 없다 —
+     * `ProjectInvitationService`가 확인을 마친 주소로만 초대함을 낸다.
+     */
+    val emailVerified: Boolean,
+    /**
+     * 확인을 기다리는 주소. 사용자가 새 주소를 넣었지만 아직 코드를 넣지 않은 동안 채워진다.
+     * [email]과 다를 수 있고, 둘 다 있으면 [email]이 지금 통하는 주소다.
+     */
+    val pendingEmail: String?,
     /** 최근 로그인한 제공자가 앞에 오도록 정렬된다. */
     val identities: List<LinkedIdentityResponse>
 )
@@ -30,6 +40,16 @@ data class UpdateLocaleRequest(
 data class UpdateProfileRequest(
     val nickname: String? = null,
     val battleTag: String? = null
+)
+
+/** `POST /api/auth/me/email` 요청 본문. 이 주소는 아직 계정의 것이 아니다. */
+data class RegisterEmailRequest(
+    val email: String
+)
+
+/** `POST /api/auth/me/email/verify` 요청 본문. */
+data class VerifyEmailRequest(
+    val token: String
 )
 
 data class LinkedIdentityResponse(
