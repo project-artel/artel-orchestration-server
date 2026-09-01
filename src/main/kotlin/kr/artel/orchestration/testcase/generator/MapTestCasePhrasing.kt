@@ -195,6 +195,7 @@ object MapTestCasePhrasing {
         val target = effect.target?.takeIf { it.isNotBlank() }
             // 씬 전환의 대상은 화면 이름이라 오브젝트가 아니다. 되짚을 것이 없다.
             ?.let { if (effect.kind == "scene") it else MapTestCaseTargets.resolve(it, refs) }
+            ?.takeIf(::named)
             ?: return null
         // 값을 못 읽은 자리는 문서가 그렇게 적어 둔다(`(not a literal)` · `(not a simple receiver)`).
         // 그대로 내면 "표시 상태가 `(not a literal)`" 처럼 읽을 수 없는 문장이 된다 — 값을 빼고
@@ -218,6 +219,22 @@ object MapTestCasePhrasing {
             else -> detail?.let { "`$target` 이(가) `$it` 이 된다" } ?: "`$target` 이(가) 바뀐다"
         }
     }
+
+    /**
+     * **가리키는 것에 이름이 있나.**
+     *
+     * 문서는 수신자를 못 읽은 자리도 값과 같은 모양으로 적어 둔다 — `(not a simple receiver)`.
+     * 값이 그러면 [readable] 이 값을 빼고 "바뀐다"로 말하면 되지만, **대상이 그러면 말할 것이
+     * 없다**: `(not a simple receiver) 의 표시 상태가 false` 는 실행하는 사람에게 무엇을 보라는
+     * 것인지 하나도 말하지 않는다. 값을 모르는 것과 대상을 모르는 것은 다르다.
+     *
+     * 그래서 그 효과는 낸다 대신 뺀다. 한 기능의 효과가 전부 이러면 케이스 자체가 안 나가고,
+     * 그것이 맞다 — 확인할 것이 있어야 케이스다.
+     *
+     * 뒤가 붙어 있어도 마찬가지다(`(not a simple receiver).sprite`). 앞이 이름이 아니면 뒤를
+     * 붙여도 찾을 수 없다.
+     */
+    private fun named(target: String): Boolean = !target.startsWith("(")
 
     /**
      * 값으로 적을 수 있는 것만 남긴다.

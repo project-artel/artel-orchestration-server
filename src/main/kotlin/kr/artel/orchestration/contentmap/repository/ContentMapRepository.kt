@@ -92,7 +92,8 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
         """
         SELECT cm.id AS content_map_id, cm.capture,
                s.id AS scene_id, s.name AS scene_name, s.summary AS scene_summary,
-               c.id AS capability_id, c.capability_key, c.origin, c.verification, c.status,
+               c.id AS capability_id, c.capability_key, c.origin, c.verification,
+               c.scene_presence, c.status,
                c.actionability, c.observability, c.applicability, c.summary, c.given_text,
                c.control_selector, c.control_path, c.control_label, c.interaction,
                c.input_key, c.input_phase, c.repeat_until_done,

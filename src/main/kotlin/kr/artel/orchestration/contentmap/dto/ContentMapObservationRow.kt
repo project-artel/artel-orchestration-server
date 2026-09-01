@@ -49,6 +49,15 @@ data class ContentMapObservationRow(
     @Column("verification")
     val verification: String,
 
+    /**
+     * 이 행이 왜 이 `scene` 에 있나(ARTEL-460). 조작 행과 같은 칸을 그대로 나른다.
+     *
+     * 관측이라고 해서 다르게 볼 이유가 없다 — `persistent-unconfirmed` 는 여기서 보이는지를 아직
+     * 아무도 안 봤다는 뜻이고, 그것은 누르는 것이든 보는 것이든 마찬가지다.
+     */
+    @Column("scene_presence")
+    val scenePresence: String,
+
     /** 세 축에서 유도된 값. 아래 축들이 그 값을 낳은 이유다. */
     @Column("status")
     val status: String,
@@ -153,6 +162,7 @@ fun ContentMapObservationRow.asCapabilityRow(): ContentMapCapabilityRow = Conten
     capabilityKey = capabilityKey,
     origin = origin,
     verification = verification,
+    scenePresence = scenePresence,
     // **등급은 케이스로서의 등급이다**(ARTEL-681). 지도는 이 행을 `not-a-step` 으로 적는데 그것은
     // *"누를 것이 없다"* 는 말이지 *"검증할 수 없다"* 가 아니다. 눈에 보이는 효과가 있는 것만
     // 여기까지 오므로(`keptAsObservation`), 케이스로서는 돌릴 수 있다 — 보면 된다.
