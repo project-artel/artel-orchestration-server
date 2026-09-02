@@ -69,6 +69,13 @@ artel:
   agent:
     base-url: ${ARTEL_AGENT_BASE_URL:http://localhost:8000}
     ws-base-url: ${ARTEL_AGENT_WS_BASE_URL:ws://localhost:8000}
+    # 비우면 모델 필드를 생략하고 Agent 가 자기 카탈로그의 기본 모델을 고른다. 모델을 갈아 끼울
+    # 때 여기 적힌 옛 slug 를 강제하지 않으려는 것이다(`extract.model` 과 같은 규칙).
+    #
+    # **이 줄이 없어서 `.env` 의 `ARTEL_AGENT_MODEL` 이 닿지 않았다.** `TestScenarioAgentService`
+    # 가 `${artel.agent.model:}` 을 읽는데 여기에 매핑이 없으면 늘 빈 값이고, 그러면 지정한 모델이
+    # 조용히 무시된다 — 로그에는 Agent 의 기본 모델이 찍혀서 설정이 먹은 것처럼 보인다.
+    model: ${ARTEL_AGENT_MODEL:}
     model-catalog-ttl: ${ARTEL_AGENT_MODEL_CATALOG_TTL:PT5M}
     # 업로드 문서 → /extract → reference_context 적재(pull 파이프라인).
     extract:
