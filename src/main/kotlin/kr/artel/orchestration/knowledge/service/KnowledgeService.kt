@@ -424,6 +424,53 @@ class KnowledgeService(
     }
 
     /**
+     * 문서 한 건이 만든 baseline knowledge를 전부 소프트삭제한다(ARTEL-728).
+     *
+     * [KnowledgeRepository.findBaselineByDocumentId]가 이미 `source = 'DOCS'`,
+     * `scope_id IS NULL`, `deleted_at IS NULL`을 걸어 대상만 돌려주므로, 여기서는 그 각 행에
+     * [softDeleteFromQaTry]의 스코프 없는(운영) 갈래와 같은 모양으로 `deleted_at`을 찍고 DELETE
+     * 이벤트를 남긴다. 스코프 런의 그림자 처리는 이 경로에 없다 — 문서가 지운 것은 baseline
+     * 뿐이고, 스코프가 만든 그림자는 그 스코프 자신의 상태라 함께 지우지 않는다(리포지토리
+     * KDoc 참조).
+     *
+     * `deletedByQaTryId`는 채우지 않는다. 이 삭제를 일으킨 것은 QA 런이 아니라 문서 삭제
+     * 요청이다. [KnowledgeEventEntity.qaTryId]도 같은 이유로 null이다 — 그 컬럼의 KDoc이 이미
+     * "사람/문서 경로는 null"이라고 정해 두었다. DELETE 이벤트의 `version`은 현재 값을 그대로
+     * 싣는다 — 삭제는 본문을 바꾸지 않으므로 새 content 버전을 만들지 않는다.
+     *
+     * 행마다 [embeddingRepository]에서 임베딩도 버린다 — 벡터가 남아 있으면 검색이 조인 조건을
+     * 빠뜨려도 지운 항목이 되살아난다.
+     *
+     * @return 소프트삭제한 행 수.
+     */
+    suspend fun softDeleteForDocument(projectId: Long, documentId: Long): Int {
+        val deletedAt = Instant.now(clock)
+        val rows = knowledgeRepository.findBaselineByDocumentId(projectId, documentId).toList()
+        transactionalOperator.executeAndAwait {
+            rows.forEach { current ->
+                knowledgeRepository.save(current.copy(deletedAt = deletedAt))
+                eventRepository.save(
+                    KnowledgeEventEntity(
+                        knowledgeId = requireNotNull(current.id),
+                        projectId = current.projectId,
+                        qaTryId = null,
+                        event = KnowledgeEventType.DELETE.name,
+                        version = current.version,
+                        after = null,
+                        createdAt = deletedAt
+                    )
+                )
+                embeddingRepository.discardFor(requireNotNull(current.id))
+            }
+        }
+        logger.info(
+            "문서 삭제로 knowledge 소프트삭제: project={}, document={}, 지운수={}",
+            projectId, documentId, rows.size
+        )
+        return rows.size
+    }
+
+    /**
      * 이 쓰기가 원본 대신 그림자로 가야 하는가.
      *
      * 스코프 런이 baseline(`scope_id IS NULL`)을 건드릴 때만 참이다. 운영 런은 스코프가 없으니

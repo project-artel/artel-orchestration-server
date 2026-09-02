@@ -3,6 +3,7 @@ package kr.artel.orchestration.knowledge.repository
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeScopeSql
+import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 
@@ -102,4 +103,26 @@ interface KnowledgeRepository : CoroutineCrudRepository<KnowledgeEntity, Long> {
         """
     )
     suspend fun findVisibleByIdIncludingDeleted(id: Long, projectId: Long, scopeId: Long?): KnowledgeEntity?
+
+    /**
+     * 한 문서가 만든 baseline knowledge 행(ARTEL-728). 문서를 지울 때 함께 소프트삭제할 대상이다.
+     *
+     * `scope_id IS NULL`을 고정으로 건다 — 문서 추출은 언제나 [KnowledgeSource]가 `DOCS`고 스코프는
+     * `KnowledgeScope.PRODUCTION`으로 고정이다([kr.artel.orchestration.knowledge.service.DocumentKnowledgeExtractionService]
+     * 참조). 그러니 이 조회는 다른 조회처럼 `scopeId` 파라미터로 스코프를 고르지 않는다 — 스코프 런이
+     * 이 baseline을 가리려고 만든 그림자 행은 그 스코프 자신의 상태이지 문서의 상태가 아니다. 문서를
+     * 지운다고 그림자까지 지우면 그 스코프의 실험 결과가 문서 삭제라는 무관한 사건에 휘둘린다
+     * (그림자 정리는 ARTEL-728의 범위 밖이다).
+     */
+    @Query(
+        """
+        SELECT * FROM knowledge
+         WHERE project_id = :projectId
+           AND source = 'DOCS'
+           AND source_id = :documentId
+           AND scope_id IS NULL
+           AND deleted_at IS NULL
+        """
+    )
+    fun findBaselineByDocumentId(projectId: Long, documentId: Long): Flow<KnowledgeEntity>
 }
