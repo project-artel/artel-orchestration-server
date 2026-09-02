@@ -79,6 +79,10 @@ data class ContentMapResponse(
  * 선 지도에서는 null 이다(ARTEL-642). **필드를 지우지는 않는다** — artel-home 의 `contentMapApi.ts` 가
  * [capture] 를 읽고, null 은 "알 수 없음"으로 그려지지만 필드가 없으면 요약 패널이 빈칸이 된다.
  *
+ * 셋이 비었다는 사실로 [rootedBy] 를 유도하지 않는다. 근거가 아직 안 온 지도와 근거가 왔는데
+ * 헤더가 빈 지도를 그 방법으로는 가릴 수 없어서 V63 5절이 컬럼을 따로 둔 것이고, 같은 이유로
+ * 응답에서도 따로 낸다.
+ *
  * @property ingestedAt 이 지도의 문서 중 **가장 나중에 앉은 시각**. null 이면 등록만 되고 아직
  *   아무 문서도 앉지 않았다는 뜻이다. `content_map` 행이 아니라 문서에서 유도하는 것은 적재기가
  *   `content_map` 을 건드리지 않기 때문이다 — 지문·유니티 버전·약속은 등록 경로가 소유한다.
@@ -86,6 +90,8 @@ data class ContentMapResponse(
 @Schema(description = "지도 루트")
 data class ContentMapSummaryResponse(
     val id: Long,
+    @Schema(description = "이 지도를 세운 경로. evidence 는 근거 문서 등록이, observation 은 QA 런의 관측이 세웠다")
+    val rootedBy: String,
     @Schema(description = "editor · editor-play · player 중 하나. 근거 문서가 아직 없으면 null")
     val capture: String?,
     @Schema(description = "근거 문서의 세대. 근거 문서가 아직 없으면 null")
@@ -106,6 +112,10 @@ data class ContentMapSummaryResponse(
  *   올리는 것은 QA 런이고 그 경로가 아직 없다(적재기는 이 칸을 일부러 건드리지 않는다. 스캔이 다시
  *   돌았다고 "가 봤다"가 취소되면 안 된다). `false` 인 씬은 [capabilities] 가 전부 0 인 것이
  *   **정상**이므로, 화면이 이 칸 없이 빈 씬을 보면 결함으로 읽는다.
+ * @property origin 이 씬을 어디서 알아냈나. `evidence` 는 정적 분석이 설명한 씬이고 `observed` 는
+ *   **QA 런이 서 보기만 한 씬**이다(ARTEL-689). 문서가 없는 씬은 더 약한 주장이라, 둘을 같아
+ *   보이게 그리면 지도의 어느 부분이 어디서 왔는지가 화면에서 사라진다. `observed` 씬은
+ *   [thumbnail] 과 [capabilities] 가 비어 있는 것이 정상이다 — 그 값들은 근거 walk 가 만든다
  */
 @Schema(description = "씬 하나")
 data class ContentMapSceneResponse(
@@ -113,6 +123,8 @@ data class ContentMapSceneResponse(
     val name: String,
     @Schema(description = "순회했나. false 면 기능이 비어 있는 것이 정상이다")
     val walked: Boolean,
+    @Schema(description = "evidence · observed. observed 는 QA 런이 서 보기만 한 씬이라 기능이 비는 것이 정상이다")
+    val origin: String,
     val capabilities: SceneCapabilityCountResponse,
     @Schema(description = "이 씬의 조작 단계. not-a-step 은 빠진다")
     val steps: List<SceneStepResponse> = emptyList(),

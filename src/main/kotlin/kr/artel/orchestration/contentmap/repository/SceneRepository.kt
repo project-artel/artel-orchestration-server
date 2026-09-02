@@ -17,6 +17,30 @@ interface SceneRepository : CoroutineCrudRepository<SceneEntity, Long> {
     fun findByContentMapIdOrderByNameAsc(contentMapId: Long): Flow<SceneEntity>
 
     /**
+     * `pulse` 가 댄 `scene` 을 `origin='observed'` 로 앉힌다 (ARTEL-689). 이미 있으면 null 이다.
+     *
+     * `walked` 는 건드리지 않는다. 그 칸이 뜻하는 것은 `evidence` walk 가 이 `scene` 을 순회했나이고
+     * ([SceneEntity.walked]), 관측이 서 봤다는 사실은 이 행의 `origin` 과 그 아래 `screen` 행이
+     * 이미 말한다. 런타임이 그 칸을 올리는 것은 따로 정할 일이라 여기서 미리 올리지 않는다.
+     *
+     * `capture` 도 null 로 둔다. 그 값은 `evidence` 문서가 신고하는 것이고 관측은 그것을 말할 수
+     * 없다 — V63 1절이 이 칸을 nullable 로 만든 이유가 그것이다.
+     *
+     * 멱등을 코드가 아니라 `uk_scene_map_name` 이 강제한다. 같은 빌드를 두 서버가 관측하면 둘 다
+     * 같은 이름을 동시에 처음 앉히려 하므로, "이미 있나" 를 코드가 판정하면 그 검사는 경합에
+     * 진다. 진 쪽은 null 을 받고 이긴 쪽이 쓴 행을 다시 읽어 이어간다.
+     */
+    @Query(
+        """
+        INSERT INTO scene (content_map_id, name, origin)
+        VALUES (:contentMapId, :name, 'observed')
+        ON CONFLICT (content_map_id, name) DO NOTHING
+        RETURNING id
+        """
+    )
+    suspend fun insertObserved(contentMapId: Long, name: String): Long?
+
+    /**
      * 이번 문서가 더 이상 말하지 않는 **근거 출신 빈 `scene`**을 내린다. 지운 행 수를 돌려준다.
      *
      * 이것이 필요한 이유는 [SceneEntity] 행이 이름으로 upsert 되기 때문이다 — 적재 규칙이 바뀌어

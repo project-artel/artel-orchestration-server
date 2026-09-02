@@ -231,6 +231,19 @@ class ContentMapViewGoldenTest {
     }
 
     /**
+     * 문서 하나에서 나온 지도라 `rootedBy` 가 `evidence` 이고 씬 전부가 `origin='evidence'` 다
+     * (ARTEL-689).
+     *
+     * `observed` 가 여기 섞이면 그 씬은 QA 런이 서 보기만 한 씬이라 근거가 설명한 씬보다 약한
+     * 주장이고, 화면이 그 둘을 같아 보이게 그리면 지도의 어느 부분이 어디서 왔는지가 사라진다.
+     */
+    @Test
+    fun `근거 문서가 세운 지도는 씬도 뿌리도 evidence 다`() {
+        assertThat(response.contentMap!!.rootedBy).isEqualTo("evidence")
+        assertThat(response.scenes.map { it.origin }).containsOnly("evidence")
+    }
+
+    /**
      * gap 이 사유별로 묶여 나오고, **그 합이 사유 있는 행 수와 같다.**
      *
      * `when-missing` 342 는 우연한 수가 아니다 — `not-a-step` 440 에서 스폰 출신 98 을 뺀 값이다

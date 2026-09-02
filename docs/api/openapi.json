@@ -5840,6 +5840,9 @@
           "knownToContentMap": {
             "type": "boolean"
           },
+          "origin": {
+            "type": "string"
+          },
           "sceneSummary": {
             "type": "string"
           },
@@ -7687,6 +7690,7 @@
           "capabilityList",
           "id",
           "name",
+          "origin",
           "screens",
           "steps",
           "walked"
@@ -7703,6 +7707,10 @@
           "walked": {
             "type": "boolean",
             "description": "순회했나. false 면 기능이 비어 있는 것이 정상이다"
+          },
+          "origin": {
+            "type": "string",
+            "description": "evidence · observed. observed 는 QA 런이 서 보기만 한 씬이라 기능이 비는 것이 정상이다"
           },
           "capabilities": {
             "$ref": "#/components/schemas/SceneCapabilityCountResponse"
@@ -7838,13 +7846,18 @@
       },
       "ContentMapSummaryResponse": {
         "required": [
-          "id"
+          "id",
+          "rootedBy"
         ],
         "type": "object",
         "properties": {
           "id": {
             "type": "integer",
             "format": "int64"
+          },
+          "rootedBy": {
+            "type": "string",
+            "description": "이 지도를 세운 경로. evidence 는 근거 문서 등록이, observation 은 QA 런의 관측이 세웠다"
           },
           "capture": {
             "type": "string",

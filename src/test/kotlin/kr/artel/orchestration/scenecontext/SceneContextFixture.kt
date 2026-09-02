@@ -5,6 +5,7 @@ import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
@@ -60,9 +61,20 @@ class SceneContextFixture(
             )
         ).id!!
 
-    suspend fun newScene(contentMapId: Long, name: String, summary: String? = null): Long =
+    suspend fun newScene(
+        contentMapId: Long,
+        name: String,
+        summary: String? = null,
+        origin: SceneOrigin = SceneOrigin.EVIDENCE,
+    ): Long =
         scenes.save(
-            SceneEntity(contentMapId = contentMapId, name = name, summary = summary, walked = true)
+            SceneEntity(
+                contentMapId = contentMapId,
+                name = name,
+                summary = summary,
+                walked = true,
+                origin = origin.wire,
+            )
         ).id!!
 
     /**

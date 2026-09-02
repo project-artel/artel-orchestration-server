@@ -128,6 +128,7 @@ class SceneContextService(
         return SceneContextEntry(
             sceneName = scene.name,
             knownToContentMap = true,
+            origin = scene.origin,
             sceneSummary = scene.summary,
             capabilities = steps.map(::capabilityOf),
             notAStepCapabilities = notASteps.map(::capabilityOf),
