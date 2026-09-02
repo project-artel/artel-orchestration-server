@@ -17,8 +17,10 @@ import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.repository.ProjectDocumentRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.project.storage.DocumentStorageException
 import kr.artel.orchestration.project.storage.StoredObject
 import kr.artel.orchestration.knowledge.service.DocumentKnowledgeExtractionService
+import kr.artel.orchestration.knowledge.service.KnowledgeService
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.dao.DataIntegrityViolationException
@@ -53,6 +55,7 @@ class ProjectDocumentService(
     private val properties: StorageProperties,
     private val clock: Clock,
     private val extractionService: DocumentKnowledgeExtractionService,
+    private val knowledgeService: KnowledgeService,
     @Value("\${artel.agent.extract.enabled:true}") private val extractionEnabled: Boolean
 ) {
     private val logger = LoggerFactory.getLogger(ProjectDocumentService::class.java)
@@ -167,6 +170,34 @@ class ProjectDocumentService(
         return DownloadTicketResponse(presigned.url, presigned.expiresAt)
     }
 
+    /**
+     * 기획서 한 버전을 지운다. `project_document`는 하드 삭제하고, 그 문서에서 나온 knowledge는
+     * 소프트삭제한다.
+     *
+     * `project_document`를 하드 삭제하는 이유는 두 가지다. `llm_usage.reference_id`가
+     * `GAME_CONTEXT`일 때 이 행의 id를 가리키지만 FK가 없고, V24 주석이 "지출 기록은 회계 사실이라
+     * 원본 행이 지워져도 남아야 한다"를 이미 정해 두었다 — 소프트삭제할 이유가 없다. 그리고
+     * 하드 삭제라야 `uk_project_document_project_hash` 부분 유니크 인덱스가 풀려 같은 파일을 다시
+     * 올릴 수 있다. 소프트삭제로는 이 인덱스가 여전히 옛 행을 걸어 재업로드가 막힌다.
+     *
+     * 순서는 knowledge 소프트삭제 → `project_document` 삭제 → S3 객체 삭제(best-effort)다. S3
+     * 삭제는 [deleteStoredObjectQuietly]라 실패해도 이 호출은 성공으로 끝난다 — 등록되지 않은
+     * S3 객체는 어떤 읽기 경로에도 잡히지 않는 garbage일 뿐이다.
+     *
+     * 접근할 수 없는 프로젝트거나 문서가 없으면 false(→ 404). 두 삭제 사이가 한 트랜잭션이 아니라,
+     * knowledge만 지워지고 `project_document`는 남는 상태에서 죽을 수 있다 — 그 상태에서 다시
+     * 호출하면 knowledge가 이미 없으므로 0건 삭제로 지나가고 나머지가 정상 진행된다(수렴한다).
+     */
+    suspend fun delete(userId: Long, projectId: Long, documentId: Long): Boolean {
+        requireAccessible(projectId, userId) ?: return false
+        val document = documentRepository.findByIdAndProjectId(documentId, projectId)
+            ?: return false
+        knowledgeService.softDeleteForDocument(projectId, documentId)
+        documentRepository.delete(document)
+        deleteStoredObjectQuietly(document.objectKey)
+        return true
+    }
+
     /** 접근할 수 없거나 삭제된 프로젝트는 null이다. 호출부가 null→404로 옮긴다. */
     private suspend fun requireAccessible(projectId: Long, userId: Long): ProjectEntity? =
         projectRepository.findAccessibleById(projectId, userId)
@@ -227,10 +258,28 @@ class ProjectDocumentService(
     ): ProjectDocumentEntity {
         val exists = documentRepository.existsByProjectIdAndContentHash(projectId, contentHash)
         if (exists) {
-            storage.delete(objectKey).awaitSingleOrNull()
+            deleteStoredObjectQuietly(objectKey)
             throw DuplicateDocumentException("이미 업로드된 파일입니다.")
         }
         return saveNextVersion(projectId, userId, objectKey, fileNameFrom(objectKey), sizeBytes, contentHash)
+    }
+
+    /**
+     * S3 객체 삭제를 정리용 부수 작업으로 다룬다. 실패해도 warn 로그만 남기고 삼킨다.
+     *
+     * 이 delete가 실패하는 것과 호출자가 하려던 일(중복 등록 거부, 문서 삭제)이 실패하는 것은
+     * 별개다. 호출자가 알아야 할 사실은 "이 파일은 이미 있다" 또는 "이 문서는 지웠다"뿐이고,
+     * 정리가 안 된 S3 객체는 등록되지 않았거나 등록이 지워진 garbage라 어떤 읽기 경로도 거기에
+     * 닿지 않는다. 실 배포에서 `s3:DeleteObject`가 IAM 정책에서 빠져 이 delete가 403으로 실패한
+     * 사례가 있었다 — 그때 예외를 그대로 전파하면 [DocumentStorageException]이 응답을 500
+     * `storage_unavailable`로 덮어써, 사용자에게 필요한 409 `duplicate_document`가 가려진다.
+     */
+    private suspend fun deleteStoredObjectQuietly(objectKey: String) {
+        try {
+            storage.delete(objectKey).awaitSingleOrNull()
+        } catch (e: DocumentStorageException) {
+            logger.warn("S3 객체 정리 delete 실패, garbage로 남긴다 objectKey={}", objectKey, e)
+        }
     }
 
     /**

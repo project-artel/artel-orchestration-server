@@ -14,6 +14,7 @@ import kr.artel.orchestration.project.dto.UploadTicketResponse
 import kr.artel.orchestration.project.service.ProjectDocumentService
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -87,6 +88,20 @@ class ProjectDocumentController(
         documentService.createDownloadTicket(appUserId, projectId, documentId)
             ?.let { ResponseEntity.ok(it) }
             ?: throw documentNotFound()
+
+    @Operation(
+        summary = "기획서 삭제",
+        description = "이 버전을 지우고, 여기서 나온 knowledge도 함께 소프트삭제한다. 되돌릴 수 없다."
+    )
+    @DeleteMapping("/{documentId}")
+    suspend fun delete(
+        @CurrentUserId appUserId: Long,
+        @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
+        @Parameter(description = "기획서 id", required = true) @PathVariable documentId: Long
+    ): ResponseEntity<Void> {
+        if (!documentService.delete(appUserId, projectId, documentId)) throw documentNotFound()
+        return ResponseEntity.noContent().build()
+    }
 
     private fun projectNotFound() =
         NotFoundException("프로젝트를 찾을 수 없습니다.")

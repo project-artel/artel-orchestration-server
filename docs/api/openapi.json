@@ -3723,6 +3723,43 @@
           }
         }
       }
+    },
+    "/api/projects/{projectId}/documents/{documentId}": {
+      "delete": {
+        "tags": [
+          "Project Document"
+        ],
+        "summary": "기획서 삭제",
+        "description": "이 버전을 지우고, 여기서 나온 knowledge도 함께 소프트삭제한다. 되돌릴 수 없다.",
+        "operationId": "delete_5",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "documentId",
+            "in": "path",
+            "description": "기획서 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
     }
   },
   "components": {
