@@ -2,77 +2,145 @@
 
 ## Why
 
-빠뜨린 의존성은 기동 실패로 나타나지 않는다. 서버는 멀쩡히 뜨고 **특정 기능만 500**을 낸다.
-그래서 원인이 자기 코드인지 환경인지 구분하는 데 시간이 든다. 실제로 Redis를 빼고 띄웠다가
-`POST /api/auth/sdk/codes`가 다섯 번 연속 500을 냈고, 서버 로그를 열기 전까지는 SDK 온보딩이
-왜 안 되는지 알 수 없었다(ARTEL-435 확인 중).
+A missing dependency does not show up as a startup failure. The server comes up fine and
+**only certain features return 500**. That costs time, because you cannot tell whether the cause is
+your own code or the environment. This actually happened: with Redis left out,
+`POST /api/auth/sdk/codes` returned 500 five times in a row, and there was no way to know why SDK
+onboarding was broken until someone opened the server log (found while working on ARTEL-435).
 
-## 필수
+## Required
 
-이 둘이 없으면 각각 기동 실패와 기능 실패가 난다.
+Without these two you get a startup failure and a feature failure, respectively.
 
-| | 컨테이너 이름 | 이미지 | 포트 |
+| | Container name | Image | Port |
 |---|---|---|---|
 | PostgreSQL | `artel-local-postgres` | `pgvector/pgvector:pg16` | 5432 |
 | Redis | `artel-local-redis` | `redis:7-alpine` | 6379 |
 
-**Postgres는 pgvector 이미지여야 한다.** `V18`이 `CREATE EXTENSION vector`를 실행하므로 stock
-`postgres` 이미지에서는 마이그레이션이 그 지점부터 통째로 실패한다. `PostgresTestContainer`와
-`scripts/verify-flyway-upgrade.sh`가 같은 이미지를 쓰는 이유도 이것이다.
+**Postgres must be the pgvector image.** `V18` runs `CREATE EXTENSION vector`, so on the stock
+`postgres` image the migration fails wholesale from that point on. This is also why
+`PostgresTestContainer` and `scripts/verify-flyway-upgrade.sh` use the same image.
 
-**Redis는 SDK 로그인 코드 저장소**(`auth/sdk/SdkLoginCodeStore.kt`)가 쓴다. 없으면 서버는
-정상 기동하고 대부분의 API도 정상인데, `POST /api/auth/sdk/codes`만
-`RedisConnectionFailureException`으로 500이 된다. **SDK 온보딩이 이 경로를 지나므로, Unity를
-붙여 확인할 계획이면 반드시 켠다.**
+**Redis backs the SDK login code store** (`auth/sdk/SdkLoginCodeStore.kt`). Without it the server
+starts normally and most APIs work, but `POST /api/auth/sdk/codes` alone returns 500 with
+`RedisConnectionFailureException`. **SDK onboarding goes through that path, so turn Redis on
+whenever you plan to check something with Unity attached.**
 
-이름이 정해진 이유는 하나다 — 이미 만들어 둔 컨테이너를 다시 만들지 않기 위해서다. 먼저
-`docker ps -a | grep artel-local`로 확인하고, 있으면 `docker start`로 되살린다.
+The names are fixed for one reason — so that a container you already created is not created again.
+Check with `docker ps -a | grep artel-local` first, and bring back what is there with `docker start`.
 
 ```bash
 docker start artel-local-postgres artel-local-redis
 ```
 
-없을 때만 만든다. 값은 `.env`의 `DB_NAME`·`DB_USERNAME`·`DB_PASSWORD`와 같아야 한다.
+Create them only when they are missing. The values must match `DB_NAME`, `DB_USERNAME` and
+`DB_PASSWORD` in `.env`.
 
 ```bash
 docker run -d --name artel-local-postgres -p 5432:5432 \
-  -e POSTGRES_DB=artel -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=<.env의 DB_PASSWORD> \
+  -e POSTGRES_DB=artel -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=<DB_PASSWORD from .env> \
   pgvector/pgvector:pg16
 docker run -d --name artel-local-redis -p 6379:6379 redis:7-alpine
 ```
 
-## 서버 기동
+## Starting the server
 
-`.env`가 있어야 한다(`.env.example` 참고). Flyway가 기동 시 스키마를 최신까지 올린다.
+You need a `.env` (see `.env.example`). Flyway brings the schema up to the latest version at startup.
 
 ```bash
 ./mvnw spring-boot:run
 ```
 
-- 공개 API·WebSocket — `http://localhost:8080`
-- 내부 API(`/internal/**`) — `http://localhost:8081`. 공개 포트에는 없다(`API 표면과 신뢰 경계` 참고)
+- Public API and WebSocket — `http://localhost:8080`
+- Internal API (`/internal/**`) — `http://localhost:8081`. It is not on the public port (see
+  `API 표면과 신뢰 경계`)
 
-기동 완료는 로그의 `Started ArtelOrchestrationApplicationKt`로 확인한다. 그 앞에
-`Successfully applied N migrations`가 함께 나온다.
+Startup is complete when the log prints `Started ArtelOrchestrationApplicationKt`. Just before it,
+`Successfully applied N migrations` shows up as well.
 
-## 선택 — 무엇을 확인하느냐에 달렸다
+## Attaching a frontend — CORS origin
 
-없어도 서버는 뜬다. 해당 기능을 건드리지 않으면 켤 필요가 없다.
+**Without `ARTEL_ALLOWED_ORIGINS` the frontend cannot call the server at all.** The server comes up
+fine and `curl` works for everything; only the browser is blocked, like this:
 
-| | 필요한 때 | 기본 주소 |
+```
+Access to fetch at 'http://localhost:8080/api/auth/me' from origin 'http://localhost:5174'
+has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present
+```
+
+The reason is that the `artel.auth.allowed-origins` default in `application.yml` holds only the four
+deployment domains (`home.stage.artel.kr`, `artel.kr`, `www.artel.kr`, `admin.artel.kr`) and no
+`localhost`. That default is used as is in deployments, so do not mix `localhost` into it — override
+it locally through `.env`.
+
+```bash
+ARTEL_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:5174
+```
+
+5173 is artel-home and 5174 is admin-page. If you are only running one of them, listing that one is
+enough. `allowCredentials=true` means `*` cannot be used
+(`SecurityConfig.corsConfigurationSource`).
+
+## Running on a different port
+
+If 8080 is already taken by a server from another branch, move the port. The internal API port has
+to move with it, or `/internal/**` will not come up.
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.jvmArguments="-Dserver.port=8090 -Dartel.internal-api.port=8091"
+```
+
+Two more things have to change along with it.
+
+- **`VITE_ORCHESTRATION_URL` on the frontend side.** Both artel-home and admin-page look at
+  `http://localhost:8080` by default. Start them with
+  `VITE_ORCHESTRATION_URL=http://localhost:8090 npm run dev`
+- **The database.** Migration numbers differ per branch, so if a server from another branch is
+  looking at the same database, this side's Flyway will migrate the schema out from under that
+  server. Create a separate one with `CREATE DATABASE artel_<branch>` and point `DB_NAME` in `.env`
+  at it
+
+## `.env` is loaded by the test run too
+
+**A `.env` filled in for running the server locally is read by `./mvnw test` as well.**
+`DotenvPropertySource` injects it into the test context, so a value added to start the server makes
+tests fail for reasons that have nothing to do with the code. Two that actually bit:
+
+| The value | The test it breaks | How |
 |---|---|---|
-| artel-home | 화면을 눈으로 확인할 때 | `http://localhost:5173` (`npm run dev`) |
-| artel-agent-server | QA 실행·지식 추출·임베딩 경로 | `http://localhost:8000` (`artel.agent.base-url`) |
-| S3 / MinIO | 기획서 업로드, 캡처 저장 | `.env`의 `ARTEL_S3_ENDPOINT` |
-| TURN | WebRTC 스트리밍 | `ARTEL_TURN_URL`. 비어 있으면 끈 것이다 |
+| `ARTEL_ALLOWED_ORIGINS` | `CorsAllowedOriginIntegrationTest` | Overrides the default list, so the `admin.artel.kr` preflight answers 403 |
+| `GITHUB_APP_*` | `ProjectTrackerLinkHttpIntegrationTest` | The test asserting "the app is not configured" meets a configured app and gets 200 instead of 503 |
 
-artel-home은 기본으로 `http://localhost:8080`을 본다(`src/auth/authApi.ts`의
-`VITE_ORCHESTRATION_URL`). 각 레포의 실행법은 그쪽 문서를 따른다 — 여기 복제하지 않는다.
+Neither failure message points at `.env`. **Move it aside before reading a test result.**
 
-## 정리
+```bash
+mv .env .env.local-run && ./mvnw clean test
+```
+
+When judging whether a failure belongs to your branch, measure the base the same way and compare.
+The full suite in this repository already has roughly a hundred failures from test cleanup order
+(the `qa_run` foreign key), and that count moves with class execution order.
+
+## Optional — depends on what you are checking
+
+The server starts without these. If you are not touching the corresponding feature, there is no need
+to turn them on.
+
+| | When it is needed | Default address |
+|---|---|---|
+| artel-home | Checking the frontend visually | `http://localhost:5173` (`npm run dev`) |
+| artel-agent-server | QA runs, knowledge extraction, embedding paths | `http://localhost:8000` (`artel.agent.base-url`) |
+| S3 / MinIO | Design document uploads, screen capture storage | `ARTEL_S3_ENDPOINT` in `.env` |
+| TURN | WebRTC streaming | `ARTEL_TURN_URL`. Empty means it is off |
+
+artel-home looks at `http://localhost:8080` by default (`VITE_ORCHESTRATION_URL` in
+`src/auth/authApi.ts`). For how to run each repository, follow that repository's own documentation —
+it is not duplicated here.
+
+## Shutting down
 
 ```bash
 docker stop artel-local-postgres artel-local-redis
 ```
 
-`stop`이지 `rm`이 아니다. 지우면 다음에 스키마를 처음부터 다시 올려야 한다.
+`stop`, not `rm`. If you delete them, the schema has to be built again from scratch next time.
