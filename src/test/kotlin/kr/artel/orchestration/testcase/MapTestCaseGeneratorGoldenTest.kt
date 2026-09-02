@@ -219,6 +219,48 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     /**
+     * **케이스 이름의 괄호가 맞는다**(ARTEL-662 의 꼬리).
+     *
+     * 형제를 가르는 꼬리는 전제의 비교를 그대로 적는데, 소유자 접두를 떼는 규칙이 `이름.속성` 만
+     * 가정해서 식을 만나면 부서졌다. 실측 85건 중 **10건**이 짝 없는 닫는 괄호를 달고 나왔다:
+     *
+     * ```
+     * 아무 키나 누른다 (StagePosition - 1) == stagePosition, flag == 0, stagePosition == 1 일 때)
+     * ```
+     *
+     * 앞의 `(` 는 꼬리가 연 것이고 `- 1)` 이 그것을 닫아 버려, 읽는 사람은 `일 때)` 앞에서 문장이
+     * 어디서 끝나는지 알 수 없다. 같은 규칙이 `collision.gameObject.CompareTag(enemy.tag)` 를
+     * `tag)` 로 만들었다 — 무엇을 견주는지가 사라진다.
+     */
+    @Test
+    fun `케이스 이름의 괄호가 맞는다`() {
+        val broken = cases.map { it.step }
+            .filter { step -> step.count { it == '(' } != step.count { it == ')' } }
+
+        assertThat(broken).isEmpty()
+    }
+
+    /**
+     * **형제와 갈리는 것을 먼저 적는다**(ARTEL-662 의 꼬리).
+     *
+     * 꼬리에 담는 수가 [MAX_TELLING] 로 잘리는데, 가나다순으로 자르면 **정작 옆줄과 갈라 주는
+     * 비교가 뒤로 밀려 잘려 나간다.** 실측에서 `GameClearScene` 의 세 줄이 그랬다 — 셋을 가르는
+     * 것은 `stagePosition` 하나인데 그것이 꼬리 맨 끝에 있어, 목록에서 줄을 훑는 사람은 같은
+     * 글자 40자를 지나야 다른 데에 닿았다.
+     *
+     * 형제가 적게 가진 비교일수록 잘 가른다. 그 순서로 담는다.
+     */
+    @Test
+    fun `형제와 갈리는 비교가 이름 앞에 온다`() {
+        val group = cases.filter { it.scene == "GameClearScene" && it.step.startsWith("아무 키나 누른다 (") }
+        assertThat(group).hasSizeGreaterThan(1)
+
+        // 꼬리의 첫 항목만으로 이미 서로 다르다. 끝까지 읽지 않아도 갈린다.
+        val heads = group.map { it.step.substringAfter("누른다 (").substringBefore(",") }
+        assertThat(heads).doesNotHaveDuplicates()
+    }
+
+    /**
      * **씬 전환을 케이스가 스스로 말한다.**
      *
      * 저작의 도달성 검사는 케이스가 끝난 뒤 어느 화면인지를 알아야 하는데, 지금은 `expected_value`

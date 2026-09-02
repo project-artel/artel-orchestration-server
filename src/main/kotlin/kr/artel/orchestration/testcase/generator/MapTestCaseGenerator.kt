@@ -231,7 +231,14 @@ class MapTestCaseGenerator(
             val group = siblings.getValue(case.scene to case.step)
             if (group.size < 2) return@map case
             val shared = group.map { comparisonsIn(it.condition) }.reduce { a, b -> a intersect b }
-            val telling = (comparisonsIn(case.condition) - shared).sorted().take(MAX_TELLING)
+            val others = group.filterNot { it === case }.map { comparisonsIn(it.condition) }
+            // **덜 가진 것부터 적는다.** 형제가 셋 이상이면 공통이 아니어도 대부분이 가진 비교가
+            // 있고, 그것은 이 케이스를 옆줄과 갈라 주지 못한다. 가나다순으로 자르던 판에서
+            // 실측 85건 중 6건이 **이름이 같은 채로** 남았다 — 갈라 주는 비교가 [MAX_TELLING]
+            // 밖으로 밀려난 것이다. 같은 수면 가나다순으로 갈라 이름이 실행마다 흔들리지 않게 한다.
+            val telling = (comparisonsIn(case.condition) - shared)
+                .sortedWith(compareBy({ c -> others.count { c in it } }, { it }))
+                .take(MAX_TELLING)
             if (telling.isEmpty()) case
             else case.copy(step = "${case.step} (${telling.joinToString(", ")} 일 때)")
         }
@@ -248,9 +255,46 @@ class MapTestCaseGenerator(
     private fun comparisonsIn(node: ConditionNode?): Set<String> = when (node) {
         null, is ConditionNode.Always, is ConditionNode.Gesture, is ConditionNode.Unknown -> emptySet()
         is ConditionNode.Test ->
-            setOf("${ScenarioStateReader.normalize(node.left)} ${node.operator} ${node.right.trim().trim('`')}")
+            setOf("${shortName(node.left)} ${node.operator} ${shortName(node.right)}")
         is ConditionNode.Group -> node.parts.flatMapTo(mutableSetOf()) { comparisonsIn(it) }
     }
+
+    /**
+     * 소유자 접두를 떼어 읽을 만하게 만든다. `MapMove.position` 은 `position` 이 된다.
+     *
+     * [ScenarioStateReader.normalize] 를 쓰지 않는다. 그쪽은 마지막 점 뒤만 남기는데, 그 규칙은
+     * `이름.속성` 에만 맞고 식에 쓰면 부서진다. 실측 85건에서:
+     *
+     * ```
+     * (MapMove.StagePosition - 1)                    →  StagePosition - 1)     괄호가 안 맞는다
+     * collision.gameObject.CompareTag(enemy.tag)     →  tag)                   뜻이 없다
+     * ```
+     *
+     * 앞엣것이 10건이었고, 케이스 이름 한가운데에 짝 없는 닫는 괄호가 섰다. 저쪽 함수를 고쳐서
+     * 될 일이 아니다 — 그것은 상태 판정이 쓰는 변수 키라 스무 곳이 물려 있고, 표시가 보기 싫다고
+     * 판정의 키를 바꾸면 길찾기가 조용히 달라진다.
+     *
+     * **괄호 밖의 마지막 점에서만 자른다.** 괄호 안의 점은 남의 것이라 세지 않는다. 그래서 위의
+     * 둘은 각각 통째로, `CompareTag(enemy.tag)` 로 남는다.
+     *
+     * 소수는 건드리지 않는다 — `1.5` 의 점은 소유자를 가르는 점이 아니다.
+     */
+    private fun shortName(expr: String): String {
+        val text = expr.trim().trim('`')
+        if (NUMBER.matches(text)) return text
+        var depth = 0
+        var lastDot = -1
+        text.forEachIndexed { i, ch ->
+            when (ch) {
+                '(', '[' -> depth++
+                ')', ']' -> depth--
+                '.' -> if (depth == 0) lastDot = i
+            }
+        }
+        return if (lastDot >= 0) text.substring(lastDot + 1) else text
+    }
+
+    private val NUMBER = Regex("""-?\d+(\.\d+)?""")
 
     /**
      * **같은 시험을 두 번 시키지 않는다**(ARTEL-645).
