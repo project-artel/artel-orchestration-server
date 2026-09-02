@@ -210,13 +210,17 @@ data class CaseGuardFrame(val variable: String, val operator: String, val value:
  * @property input 스텝의 `input`에 그대로 넣는 값(`key:Return`·`click:경로`).
  * @property matchedBy `evidence`는 그 케이스가 가리키는 코드 자체, `effect`는 같은 값을 건드리는
  *   기능이라 여럿일 수 있다. 뭉뚱그리면 "정확히 이것"과 "아마 이 중 하나"가 구분되지 않는다.
+ *
+ * 전제를 싣는 칸은 없다. 예전에 `capability.given_text` 를 넣던 자리가 있었는데, 그 칸은 조건을
+ * 사람이 읽는 한 줄로 옮긴 것이라 값의 소속과 `either` / `every` 구분이 옮기는 과정에서 사라진다
+ * (ARTEL-447). 이 프레임을 받는 쪽이 조건을 알아야 하면 [CaseFactsResultFrame.stateBefore] 를
+ * 읽는다 — 그쪽은 트리에서 나온다.
  */
 data class CaseOperationFrame(
     val capabilityId: Long,
     val input: String,
     val label: String?,
     val summary: String,
-    val given: String?,
     /** 실행 축(ARTEL-479). 관측 불가까지 섞인 `status` 대신 이것을 낸다. */
     val actionability: String,
     val matchedBy: String,

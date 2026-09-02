@@ -102,11 +102,13 @@ data class SceneCapabilityView(
     val capabilityId: String,
     val capabilityKey: String? = null,
     val summary: String,
-    val givenText: String? = null,
     /**
-     * **전제의 구조.** `given_text` 는 사람 말로 옮긴 한 줄인데 오늘 419 행 전부 `null` 이라
-     * (ARTEL-447 미착수) agent 가 조건을 아예 못 받고 있었다. 이쪽은 `condition_tree` 를 그대로
-     * 실은 것이고 419 / 419 있다.
+     * **전제의 구조.** 조건을 실어 보내는 칸은 이것 하나다 — `condition_tree` 를 그대로 실은
+     * 것이고 419 / 419 있다.
+     *
+     * `capability.given_text` 는 여기 없다. 그 칸은 조건을 사람이 읽는 한 줄로 옮긴 것이라
+     * 옮기는 과정에서 값의 소속과 `either` / `every` 구분이 사라진다. 스키마가 두 칸을 나눈
+     * 뜻이 그것이다 — 문장은 화면이 읽고 기계는 트리를 읽는다(ARTEL-447).
      *
      * 조회 API 가 쓰는 것과 같은 모양이다([ConditionNodeResponse]) — 같은 트리를 두 벌로
      * 직렬화하면 읽는 쪽이 어느 것이 맞는지 물어야 한다.

@@ -504,7 +504,7 @@ class TestScenarioAgentService(
                     operations = facts.operations.map {
                         CaseOperationFrame(
                             capabilityId = it.capabilityId, input = it.input, label = it.label,
-                            summary = it.summary, given = it.given, actionability = it.actionability,
+                            summary = it.summary, actionability = it.actionability,
                             matchedBy = it.matchedBy,
                         )
                     },

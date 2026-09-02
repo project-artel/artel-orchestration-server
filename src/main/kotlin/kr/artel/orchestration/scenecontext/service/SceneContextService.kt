@@ -228,7 +228,6 @@ class SceneContextService(
         capabilityId = row.capabilityId.toString(),
         capabilityKey = row.capabilityKey,
         summary = row.summary,
-        givenText = row.givenText,
         given = row.conditionTree
             ?.let { runCatching { objectMapper.readTree(it.asString()) }.getOrNull() }
             ?.takeIf { it.isObject && !it.isEmpty }
