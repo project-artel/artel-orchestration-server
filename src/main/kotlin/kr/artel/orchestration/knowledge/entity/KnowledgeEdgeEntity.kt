@@ -116,3 +116,32 @@ object KnowledgeEdgeScopeSql {
         )
     """
 }
+
+/**
+ * "이 knowledge 행이 문서 node인가"의 술어(ARTEL-748).
+ *
+ * 문서 node와 그 배치의 항목들은 `source`/`source_id`가 완전히 같다(`DOCS`, `project_document.id`) —
+ * 그 값만으로는 재적재 때 "이미 문서 node가 있는가"를 구분할 수 없다. 대신 그래프 구조로
+ * 정의한다: **문서 node는 살아있는 `PART_OF` edge의 도착점인 knowledge 행이다.** 이 정의를
+ * [kr.artel.orchestration.knowledge.repository.KnowledgeRepository.findDocumentNode]와
+ * [kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository]의 `aliveClause`
+ * 양쪽이 쓴다 — 손으로 두 번 적으면 [KnowledgeEdgeScopeSql.VISIBLE]이 막아 둔 것과 같은 실패
+ * 모드가 재현된다(복사본 하나가 뒤처지면 조용히 틀린다).
+ *
+ * **별칭 없는 `id`로 쓴다.** `IS_DOCUMENT_NODE`는 `id IN (SELECT ...)` 모양이라, 쓰는 자리의
+ * SQL에서 `FROM` 절에 knowledge 하나만 있으면(둘 다 그렇다 — `findDocumentNode`의 `knowledge k`,
+ * `EmbeddingQueueRepository`의 `knowledge o`) 그 단일 테이블의 `id`로 명확히 풀린다. 이 조각을
+ * **상관 서브쿼리(`NOT EXISTS ... WHERE pe.to_knowledge_id = id`) 모양으로 바꾸지 않는다** —
+ * 그러면 그 `id`가 서브쿼리 자신의 `FROM knowledge_edge pe` 범위 안에 들어가 `pe.id`로 잘못
+ * 묶인다(그 테이블에도 `id` 컬럼이 있다). `IN` 목록 형태는 그 `id`를 서브쿼리 **밖**에 남겨 두어
+ * 이 위험을 애초에 피한다.
+ */
+object KnowledgeDocumentNodeSql {
+    const val IS_DOCUMENT_NODE = """
+        id IN (
+            SELECT pe.to_knowledge_id FROM knowledge_edge pe
+             WHERE pe.relation = '$PART_OF_RELATION'
+               AND pe.deleted_at IS NULL
+        )
+    """
+}

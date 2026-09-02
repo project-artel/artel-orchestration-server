@@ -12,6 +12,7 @@ import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.knowledge.dto.KnowledgeIngestItem
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
+import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeEventRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.service.KnowledgeService
@@ -63,11 +64,14 @@ class ProjectDocumentIntegrationTest {
     @Autowired private lateinit var knowledgeService: KnowledgeService
     @Autowired private lateinit var knowledgeRepository: KnowledgeRepository
     @Autowired private lateinit var knowledgeEventRepository: KnowledgeEventRepository
+    @Autowired private lateinit var knowledgeEdgeRepository: KnowledgeEdgeRepository
 
     private val fakeStorage: FakeDocumentStorage get() = storage as FakeDocumentStorage
 
     @BeforeEach
     fun clean(): Unit = runBlocking {
+        // knowledge_edge에는 하드 FK가 없어(V29) knowledge를 지워도 함께 사라지지 않는다.
+        knowledgeEdgeRepository.deleteAll()
         knowledgeEventRepository.deleteAll()
         knowledgeRepository.deleteAll()
         documentRepository.deleteAll()
@@ -377,9 +381,16 @@ class ProjectDocumentIntegrationTest {
             source = KnowledgeSource.DOCS,
             sourceId = documentId,
             contentHash = "hash",
-            items = listOf(KnowledgeIngestItem(tag = "RULE", summary = "체력", description = "최대 100"))
+            items = listOf(KnowledgeIngestItem(tag = "RULE", summary = "체력", description = "최대 100")),
+            documentFileName = "기획서.pdf"
         )
-        val knowledgeId = knowledgeRepository.findVisible(projectId, null, null, null).toList().single().id!!
+        val knowledgeId = knowledgeRepository.findVisible(projectId, null, null, null).toList()
+            .single { it.tag == "RULE" }.id!!
+        // 문서 node도 이 배치가 만든다(ARTEL-748) — 삭제가 그것까지 함께 지우는지 아래서 본다.
+        val documentNodeId = requireNotNull(knowledgeRepository.findDocumentNode(projectId, documentId)?.id)
+        val partOfEdgeId = requireNotNull(
+            knowledgeEdgeRepository.findBaselinePartOfEdgesTo(projectId, documentNodeId).toList().single().id
+        )
 
         delete(token, "/api/projects/$projectId/documents/$documentId")
 
@@ -389,6 +400,10 @@ class ProjectDocumentIntegrationTest {
         val deleteEvent = knowledgeEventRepository.findByKnowledgeIdOrderByIdAsc(knowledgeId).toList()
             .single { it.event == "DELETE" }
         assertThat(deleteEvent.qaTryId).isNull()
+
+        // 문서 node 자신도 지워지고, 그 node를 향한 PART_OF edge도 함께 지워진다.
+        assertThat(knowledgeRepository.findById(documentNodeId)!!.deletedAt).isNotNull()
+        assertThat(knowledgeEdgeRepository.findById(partOfEdgeId)!!.deletedAt).isNotNull()
     }
 
     /** 티켓 발급 → 저장소에 올림 → 등록까지, 클라이언트가 하는 세 단계를 그대로 지난다. */
