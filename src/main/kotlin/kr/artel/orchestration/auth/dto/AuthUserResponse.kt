@@ -10,10 +10,10 @@ data class AuthUserResponse(
     val email: String?,
     /** 홈 UI 표시 언어. null이면 사용자가 아직 고르지 않은 것이다. */
     val locale: String?,
-    /** 사용자가 고른 이름. null이면 아직 고르지 않은 것이다. */
-    val nickname: String?,
-    /** BattleTag. 선택 값이라 null일 수 있다. */
-    val battleTag: String?,
+    /** 사용자가 고른 이름. 처음 로그인할 때 제공자 이름으로 정해지므로 비어 있지 않다. */
+    val nickname: String,
+    /** 같은 [nickname]을 쓰는 사람들을 가르는 번호. 화면에 나가는 `nickname#userTag`는 클라이언트가 붙인다. */
+    val userTag: String,
     /** 최근 로그인한 제공자가 앞에 오도록 정렬된다. */
     val identities: List<LinkedIdentityResponse>
 )
@@ -24,12 +24,13 @@ data class UpdateLocaleRequest(
 )
 
 /**
- * `PUT /api/auth/me/profile` 요청 본문. 두 필드 모두 nullable이고, null을 보내면 그 값을 지운다.
- * 필드를 아예 안 보내도 기본값이 null이라 같은 결과다 — 이 엔드포인트는 있는 값을 통째로 덮어쓴다.
+ * `PUT /api/auth/me/profile` 요청 본문.
+ *
+ * user_tag는 서버가 배정하므로 여기 담을 수 없다. nickname 타입이 nullable인 것은 지울 수 있어서가
+ * 아니라, 빠뜨렸거나 null을 보낸 요청을 파싱 오류가 아니라 400 `invalid_nickname`으로 답하기 위해서다.
  */
 data class UpdateProfileRequest(
-    val nickname: String? = null,
-    val battleTag: String? = null
+    val nickname: String? = null
 )
 
 data class LinkedIdentityResponse(

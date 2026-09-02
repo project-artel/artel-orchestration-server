@@ -80,7 +80,7 @@ class ProjectMemberService(
             displayName = user.displayName,
             email = user.email,
             nickname = user.nickname,
-            battleTag = user.battleTag,
+            userTag = user.userTag,
             role = member.role.toRole(),
             joinedAt = member.createdAt
         )

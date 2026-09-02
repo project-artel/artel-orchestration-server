@@ -65,7 +65,7 @@ class ProjectContentMapAccessTest {
     // ---------- 픽스처 ----------
 
     private suspend fun newUser(): Long =
-        db.sql("INSERT INTO app_user (display_name) VALUES ('console') RETURNING id")
+        db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('console', 'console-' || gen_random_uuid(), '0000') RETURNING id")
             .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
             .one().block()!!
 
