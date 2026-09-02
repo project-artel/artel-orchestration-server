@@ -26,7 +26,11 @@ class QaStatsService(
 ) {
 
     /**
-     * 프로젝트의 QA 런을 실행 설정 축으로 접는다.
+     * QA 런을 실행 설정 축으로 접는다.
+     *
+     * [projectId]를 생략하면 호출한 사람이 볼 수 있는 전 프로젝트를 합산한다. 프로젝트 하나의
+     * 표본으로는 model·prompt version·agent 구조가 갈리지 않는 일이 잦고, 그때 축을 비교하려면
+     * 프로젝트를 하나씩 골라 눈으로 더해야 한다. `GET /api/llm-usage/stats`가 이미 그 모양이다.
      *
      * 참여자가 아니면 예외가 아니라 빈 집계다 — 멤버십 판정을 쿼리 안에서 하는
      * `QaTryRepository.findByProject`와 같은 동작이고, 여기만 403을 주면 프로젝트의 존재
@@ -37,7 +41,7 @@ class QaStatsService(
      * 남아 있어야 무엇이 열렸는지 셀 수 있기 때문이다.
      */
     suspend fun stats(
-        projectId: Long,
+        projectId: Long?,
         userId: Long,
         from: Instant?,
         to: Instant?,
@@ -61,7 +65,7 @@ class QaStatsService(
             limit = cellLimit
         )
         return QaStatsResponse(
-            projectId = projectId.toString(),
+            projectId = projectId?.toString(),
             from = start,
             to = end,
             total = aggregate.total.toTotals(),

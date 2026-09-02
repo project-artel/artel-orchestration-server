@@ -33,13 +33,15 @@ class KnowledgeStatsController(
     private val userResolver: SessionUserResolver
 ) {
     /**
+     * @param projectId 생략하면 볼 수 있는 전 프로젝트를 합산한다. `DEVELOPER` 등급에게는 그것이
+     *   배포 전체이고, 그 밖에는 참여 중인 프로젝트다.
      * @param from,to ISO-8601 instant(`2026-08-01T00:00:00Z`). 기준은 **버전이 만들어진 시각**이지
      *   런의 시작 시각이 아니다. 생략하면 최근 90일.
      * @param cellLimit 돌려줄 조합 최대 개수. 넘치면 응답의 `truncated`가 선다.
      */
     @GetMapping
     suspend fun stats(
-        @RequestParam projectId: String,
+        @RequestParam(required = false) projectId: String?,
         @RequestParam(required = false) from: String?,
         @RequestParam(required = false) to: String?,
         @RequestParam(defaultValue = "200") cellLimit: Int,
@@ -47,7 +49,7 @@ class KnowledgeStatsController(
     ): ResponseEntity<KnowledgeStatsResponse> =
         ResponseEntity.ok(
             service.stats(
-                projectId = parseId(projectId),
+                projectId = projectId?.let(::parseId),
                 userId = requireUser(jwt),
                 from = parseInstant(from, "from"),
                 to = parseInstant(to, "to"),

@@ -18,7 +18,8 @@ import java.time.Instant
  * @property truncated 조합 수가 [cellLimit]을 넘어 [cells]가 잘렸는지.
  */
 data class KnowledgeStatsResponse(
-    val projectId: String,
+    /** 물어본 프로젝트. 생략하고 부르면 null이고, 그때 집계는 볼 수 있는 전 프로젝트의 합이다. */
+    val projectId: String?,
     val from: Instant,
     val to: Instant,
     val total: KnowledgeStatsTotals,

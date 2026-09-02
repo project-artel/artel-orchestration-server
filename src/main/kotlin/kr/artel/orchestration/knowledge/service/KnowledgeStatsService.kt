@@ -32,13 +32,17 @@ class KnowledgeStatsService(
 ) {
 
     /**
-     * 프로젝트의 지식 버전을 그것을 만든 런의 실행 설정 축으로 접는다.
+     * 지식 버전을 그것을 만든 런의 실행 설정 축으로 접는다.
+     *
+     * [projectId]를 생략하면 호출한 사람이 볼 수 있는 전 프로젝트를 합산한다. 이유는
+     * [kr.artel.orchestration.qa.service.QaStatsService.stats]와 같다 — 프로젝트 하나의 표본으로는
+     * 축이 갈리지 않는 일이 잦다.
      *
      * 참여자가 아니면 예외가 아니라 빈 집계다 — 멤버십 판정을 질의 안에서 하는 QA 집계와 같은
      * 동작이고, 여기만 403을 주면 프로젝트의 존재 여부가 새어 나간다.
      */
     suspend fun stats(
-        projectId: Long,
+        projectId: Long?,
         userId: Long,
         from: Instant?,
         to: Instant?,
@@ -62,7 +66,7 @@ class KnowledgeStatsService(
             limit = cellLimit
         )
         return KnowledgeStatsResponse(
-            projectId = projectId.toString(),
+            projectId = projectId?.toString(),
             from = start,
             to = end,
             total = aggregate.total.toTotals(),
