@@ -163,11 +163,17 @@ class MapTestCaseGeneratorGoldenTest {
         // (`OnTriggerEnter2D` · `OnMouseEnter` · `OnEndDrag`), 컴파일러가 이름을 바꾼 코루틴도
         // 더는 놓치지 않는다. 대신 `unity-event` 와 `persistent-unconfirmed` 가 빠졌다.
         //
+        // 85 → 88. **못 푼 매개변수 조건을 버리지 않는다**(ARTEL-602 의 꼬리). 호출자가 넘긴 값을
+        // 문서가 못 읽으면(`_`) 그 비교를 통째로 버렸는데, 그러면 서로 반대인 갈래가 한 줄로 접힌다 —
+        // 실측에서 `SelectableObject.ChangeSize(bool bigSide)` 의 **키우기와 되돌리기가 한 케이스**로
+        // 붙어 있었고, `damage > 0` / `damage <= 0` 도 그랬다. 값을 못 밝힌 것은 사유로 남기고
+        // (`unsettable-precondition`) 조건은 코드가 부른 이름 그대로 보여 준다.
+        //
         // 92 → 85. **문서가 바뀌었다.** 여기까지의 수치는 `wv-editor-latest.json`(schema 6,
         // 2026-08-18) 것이고, 그 사이 SDK 가 조건을 다르게 낸다(ARTEL-700) — `IsStreaming != 0`
         // 처럼 호출 이름으로 적던 자리를 그 getter 가 실제로 하는 비교(`streamingCoroutine != 0`)
         // 로 바꿨다. 규칙이 달라진 것이 아니라 지도가 달라졌다.
-        assertThat(cases).hasSize(85)
+        assertThat(cases).hasSize(88)
     }
 
     /**
@@ -249,7 +255,7 @@ class MapTestCaseGeneratorGoldenTest {
      * 문장은 목록을 ` / ` 로 이어 보여준 것이다. 쓰는 쪽이 그 구분자로 다시 쪼개지 않아도 되게
      * 목록을 함께 싣는데, 둘이 어긋나면 표에 보이는 것과 실행이 판정하는 것이 달라진다.
      *
-     * 실측 85건 중 19건이 항목을 2~5개 든다. 이름의 `외 N건` 도 이 수를 센 것이다.
+     * 실측 88건 중 18건이 항목을 2~5개 든다. 이름의 `외 N건` 도 이 수를 센 것이다.
      */
     @Test
     fun `기대결과 목록이 문장과 같은 것을 말한다`() {
@@ -259,8 +265,8 @@ class MapTestCaseGeneratorGoldenTest {
         }
 
         val many = cases.filter { it.expectedItems.size > 1 }
-        assertThat(many).hasSize(19)
-        assertThat(many.sumOf { it.expectedItems.size }).isEqualTo(53)
+        assertThat(many).hasSize(18)
+        assertThat(many.sumOf { it.expectedItems.size }).isEqualTo(51)
     }
 
     /**

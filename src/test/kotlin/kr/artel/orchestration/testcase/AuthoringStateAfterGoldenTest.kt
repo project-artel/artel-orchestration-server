@@ -153,7 +153,10 @@ class AuthoringStateAfterGoldenTest {
         // 14 → 21(ARTEL-681) 관측이 들어오며 다시 늘었다 — 이번에는 제 주인이 든 것이다.
         // 21 → 19 읽는 곳을 하나로 합치며 `unity-event` 가 빠졌다. 게임이 인스펙터로 연결한 자기
         //         메서드라 사람이 그 순간을 만들 수 없다 — 빠진 둘이 이 자리에 걸려 있었다.
-        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(19)
+        // 19 → 21 못 푼 매개변수 조건을 버리지 않으면서 서로 반대인 갈래가 갈렸다(`bigSide` ·
+        //         `damage`). 앞서 한 줄로 접혀 있던 자리라 이을 데가 새로 생긴 것이 아니라
+        //         **한 번 세던 것을 두 번 센다.**
+        assertThat(cases.count { case -> case.stateBefore.any { it.variable in changed } }).isEqualTo(21)
     }
 
     /**
