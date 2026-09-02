@@ -2,19 +2,24 @@ package kr.artel.orchestration.project.service
 
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.auth.service.UserHandle
+import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.ForbiddenException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.project.dto.CreateInvitationRequest
+import kr.artel.orchestration.project.dto.InvitationSuggestionResponse
 import kr.artel.orchestration.project.dto.ProjectInvitationResponse
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectInvitationEntity
 import kr.artel.orchestration.project.entity.ProjectInvitationStatus
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
+import kr.artel.orchestration.project.repository.InvitationSuggestionRepository
 import kr.artel.orchestration.project.repository.ProjectInvitationRepository
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.project.repository.SuggestionMatch
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
@@ -31,6 +36,15 @@ import java.time.Instant
 private val INVITATION_LIFETIME: Duration = Duration.ofDays(14)
 
 /**
+ * 제안을 시작하는 최소 글자 수. 한 글자로는 이 프로젝트 밖의 사람 대부분이 걸려, 검색이 아니라
+ * 사용자 명단을 훑는 일이 된다.
+ */
+private const val MIN_SUGGESTION_QUERY_LENGTH = 2
+
+/** 한 번에 내는 후보 수. 화면이 목록으로 그리는 개수이지 검색의 정확도가 아니다. */
+private const val MAX_SUGGESTIONS = 10
+
+/**
  * 프로젝트에 사람을 부르고, 부름을 받은 사람이 답하는 경로(코루틴).
  *
  * 자격이 두 갈래다. 보내는 쪽(`/api/projects/:projectId/invitations`)은 프로젝트 OWNER여야 하고,
@@ -43,6 +57,7 @@ class ProjectInvitationService(
     private val memberRepository: ProjectMemberRepository,
     private val projectRepository: ProjectRepository,
     private val appUserRepository: AppUserRepository,
+    private val suggestionRepository: InvitationSuggestionRepository,
     private val projectAccessService: ProjectAccessService,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock
@@ -59,7 +74,7 @@ class ProjectInvitationService(
         userId: Long,
         request: CreateInvitationRequest
     ): ProjectInvitationResponse {
-        val email = request.email.trim().lowercase()
+        val email = resolveTarget(request)
         val now = Instant.now(clock)
 
         return transactionalOperator.executeAndAwait {
@@ -97,6 +112,101 @@ class ProjectInvitationService(
             toResponse(saved, project)
         }!!
     }
+
+    /**
+     * 초대가 나갈 주소를 정한다. [CreateInvitationRequest.email] 과
+     * [CreateInvitationRequest.appUserId] 중 정확히 하나여야 한다.
+     *
+     * 둘 다 오면 어느 쪽을 따를지 서버가 정할 근거가 없다. 부르는 쪽이 서로 다른 사람을 가리키는
+     * 두 값을 보냈을 수 있고, 그때 조용히 하나를 고르면 화면이 보여 준 사람과 초대가 간 사람이
+     * 달라진다. 둘 다 없으면 부를 사람이 없다.
+     *
+     * `appUserId` 로 가리킨 계정은 확인을 마친 주소를 가지고 있어야 한다. 후보 목록이 그런 사람만
+     * 내지만, 목록을 본 뒤 초대를 보내기 전에 사정이 바뀔 수 있다.
+     */
+    private suspend fun resolveTarget(request: CreateInvitationRequest): String {
+        val email = request.email?.trim()?.takeIf { it.isNotEmpty() }
+        val appUserId = request.appUserId?.trim()?.takeIf { it.isNotEmpty() }
+
+        if ((email == null) == (appUserId == null)) {
+            throw InvitationTargetAmbiguousException()
+        }
+        if (email != null) return email.lowercase()
+
+        val id = appUserId!!.toLongOrNull() ?: throw InvitationTargetUnreachableException()
+        return suggestionRepository.reachableEmailOf(id)
+            ?: throw InvitationTargetUnreachableException()
+    }
+
+    /**
+     * 이 프로젝트에 부를 수 있는 사람 중 [query] 에 걸리는 사람. OWNER만 볼 수 있다.
+     *
+     * 자격이 초대 발송과 같다. 이름으로 사람을 찾는 것은 초대를 보내기 위한 준비 단계이므로, 초대를
+     * 보낼 수 없는 사람이 목록만 볼 수 있어야 할 이유가 없다.
+     *
+     * 두 글자 미만이면 조회조차 하지 않고 빈 목록이다. 한 글자로는 이 프로젝트 밖의 사람 대부분이
+     * 걸려, 검색이 아니라 사용자 명단을 훑는 일이 된다.
+     *
+     * 무엇을 맞추는지는 [matchFor] 가 정하고, 이메일 전체 일치는 어느 쪽이든 함께 걸린다.
+     */
+    suspend fun suggest(projectId: Long, userId: Long, query: String): List<InvitationSuggestionResponse> {
+        projectAccessService.requireOwner(
+            projectId,
+            userId,
+            "초대 대상 제안은 소유자만 볼 수 있습니다."
+        )
+
+        val trimmed = query.trim()
+        if (trimmed.length < MIN_SUGGESTION_QUERY_LENGTH) return emptyList()
+
+        return suggestionRepository
+            .search(
+                projectId = projectId,
+                query = trimmed.lowercase(),
+                match = matchFor(trimmed),
+                now = Instant.now(clock),
+                limit = MAX_SUGGESTIONS
+            )
+            .map {
+                InvitationSuggestionResponse(
+                    appUserId = it.appUserId.toString(),
+                    nickname = it.nickname,
+                    userTag = it.userTag,
+                    displayName = it.displayName,
+                    login = it.login,
+                    avatarUrl = it.avatarUrl
+                )
+            }
+    }
+
+    /**
+     * 검색어를 보고 이름을 맞추는 방식을 고른다.
+     *
+     * `#` 이 있으면 [UserHandle] 이 **마지막 `#`** 에서 갈라 `nickname` 과 `user_tag` 를 함께,
+     * 정확히 맞춘다. `Yuni#0042` 를 붙여넣어 한 사람을 찾는 길이다. 이때 접두사 검색은 함께 돌지
+     * 않는다 — `Yuni#00` 처럼 반쯤 적은 것이 `Yuni` 로 시작하는 사람 전부를 끌고 오면, 한 사람을
+     * 가리키려고 붙여넣은 글자가 명단 조회가 된다.
+     *
+     * `#` 이 있는데 `user_tag` 자리가 숫자가 아니면 가리키는 사람이 없다. 그때는 이름으로 아무것도
+     * 맞추지 않고 이메일 전체 일치만 남긴다 — `#` 이 들어간 주소를 통째로 적었을 수 있어서다.
+     */
+    private fun matchFor(trimmed: String): SuggestionMatch {
+        if (!trimmed.contains(UserHandle.SEPARATOR)) {
+            return SuggestionMatch.Prefix(escapeLike(trimmed.lowercase()) + "%")
+        }
+        val handle = UserHandle.parse(trimmed) ?: return SuggestionMatch.EmailOnly
+        return SuggestionMatch.Handle(handle.nickname, handle.userTag)
+    }
+
+    /**
+     * `LIKE` 가 뜻을 갖는 글자를 막는다. 막지 않으면 `%` 하나만 넣어 조건을 참으로 만들 수 있고,
+     * 그러면 접두사 검색이 사용자 명단 조회가 된다. `\` 를 먼저 바꿔야 뒤의 치환이 만든 escape 를
+     * 다시 escape 하지 않는다.
+     */
+    private fun escapeLike(value: String): String = value
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
 
     /** 보낸 초대 목록. OWNER만 볼 수 있다. 답을 기다리는 것만 낸다. */
     suspend fun listForProject(projectId: Long, userId: Long): List<ProjectInvitationResponse> {
@@ -356,6 +466,26 @@ class InvitationAlreadySettledException :
 /** 유효 기간이 지난 초대. */
 class InvitationExpiredException :
     ConflictException("만료된 초대입니다.", code = "invitation_expired")
+
+/** 부를 사람을 `email` 과 `appUserId` 둘 다로 가리켰거나, 둘 다 안 준 경우. */
+class InvitationTargetAmbiguousException :
+    BadRequestException(
+        "초대할 사람은 이메일이나 계정 중 하나로만 가리킬 수 있습니다.",
+        code = "invitation_target_ambiguous"
+    )
+
+/**
+ * `appUserId` 가 가리키는 계정이 없거나, 그 계정에 확인을 마친 이메일이 없을 때.
+ *
+ * 두 경우에 **일부러 같은 code** 를 준다. 가르면 응답이 "그 id 의 계정은 있다"를 알려 주고,
+ * 그러면 번호를 하나씩 올려 가며 어느 id 가 실재하는지 훑을 수 있다. 부르는 쪽이 할 일은 둘
+ * 어느 쪽이든 같다 — 그 사람은 지금 초대를 받을 수 없으니 이메일로 부르는 것뿐이다.
+ */
+class InvitationTargetUnreachableException :
+    ConflictException(
+        "그 사람에게는 초대를 보낼 수 없습니다. 확인된 이메일이 없습니다.",
+        code = "invitation_target_unreachable"
+    )
 
 /** 다른 사람에게 간 초대이거나, 로그인한 계정에 이메일이 없을 때. */
 class InvitationNotYoursException :
