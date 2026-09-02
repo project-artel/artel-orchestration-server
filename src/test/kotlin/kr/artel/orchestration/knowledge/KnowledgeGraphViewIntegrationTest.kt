@@ -432,6 +432,36 @@ class KnowledgeGraphViewIntegrationTest {
         assertThat(edge.note).isEqualTo("마을 상단바의 상점 버튼")
     }
 
+    /**
+     * 문서 node와 `PART_OF` edge(ARTEL-748)도 이 조회에 코드 변경 없이 실린다 — `edgesAmong`이
+     * relation을 가리지 않고 두 endpoint가 응답 node 집합 안에 있는 edge를 전부 내기 때문이다.
+     *
+     * `PART_OF`는 `KnowledgeRelation`에 없어 `graphService.link`로는 만들 수 없다(그 값을 만드는
+     * 코드는 `KnowledgeService.store` 하나뿐이다) — `LEADS_TO`와 같은 이유로 행을 직접 넣는다.
+     */
+    @Test
+    fun `문서 node와 PART_OF edge도 그래프 조회에 나온다`(): Unit = runBlocking {
+        val documentNode = givenKnowledge("기획서.pdf", source = "DOCS", sourceId = 42L)
+        val item = givenKnowledge("이동 방법", source = "DOCS", sourceId = 42L)
+        edgeRepository.save(
+            KnowledgeEdgeEntity(
+                projectId = projectId,
+                fromKnowledgeId = item,
+                toKnowledgeId = documentNode,
+                relation = "PART_OF",
+                note = "문서 추출 파이프라인이 이 항목을 문서 node 아래에 자동으로 배치했다."
+            )
+        )
+
+        val response = viewService.graph(projectId, userId, nodeLimit = 200)
+
+        assertThat(response.nodes.map { it.id }).contains(documentNode.toString(), item.toString())
+        val edge = response.edges.single()
+        assertThat(edge.from).isEqualTo(item.toString())
+        assertThat(edge.to).isEqualTo(documentNode.toString())
+        assertThat(edge.relation).isEqualTo("PART_OF")
+    }
+
     // --------------------------------------------------------------- helpers
 
     /** run 하나 + 그 run 에 속한 qa_try 하나(ARTEL-722). run id를 함께 돌려준다. */

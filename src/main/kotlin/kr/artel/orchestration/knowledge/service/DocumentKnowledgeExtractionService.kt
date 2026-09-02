@@ -48,7 +48,10 @@ class DocumentKnowledgeExtractionService(
                 // Orche가 업로드 확정 때 계산해 보존한 파일 hash를 재사용한다(Agent metadata 대신
                 // authoritative 값). document.contentHash는 register 이후 항상 채워져 있다.
                 contentHash = document.contentHash,
-                items = response.gameContext
+                items = response.gameContext,
+                // 문서 node의 summary가 되는 값이다(ARTEL-748). DOCS 배치는 이 값이 없으면
+                // KnowledgeService.store가 죽는다.
+                documentFileName = document.fileName
             )
             markStatus(documentId, ParseStatus.EXTRACTED)
         } catch (error: Exception) {

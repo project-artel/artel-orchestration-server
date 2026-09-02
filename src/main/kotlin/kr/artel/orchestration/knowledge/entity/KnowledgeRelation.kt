@@ -46,7 +46,14 @@ package kr.artel.orchestration.knowledge.entity
  *   하나와 어려운 넷이 있으면 쉬운 것이 골라지고, 그래프는 무타입으로 퇴화한다. 도구 설명이
  *   대신 "다섯 중 맞는 것이 없으면 링크하지 말라"고 말한다.
  * - `PART_OF` / `SUBSUMES` — [REFINES]와 거의 겹친다. 두 런이 같은 쌍을 둘로 쪼개고, 읽는 쪽은
- *   어차피 똑같이 다룬다.
+ *   어차피 똑같이 다룬다. **이 거부는 QA agent가 `KNOWLEDGE_LINK`로 손수 주장하는 관계 어휘에
+ *   대한 것이다.** ARTEL-748에서 `PART_OF`가 실제로 저장되기 시작했지만, 그것은 이 어휘가 아니라
+ *   문서 적재 파이프라인([kr.artel.orchestration.knowledge.service.KnowledgeService.store])만
+ *   쓰는 구조적 관계다("항목이 어느 문서에서 왔는가") — REFINES가 지는 의미 관계와 다른 축이라
+ *   위 거부 사유와 충돌하지 않는다. 그래서 이 enum에는 여전히 없고 [fromWire]도 이 값을 모른다:
+ *   넣으면 `KnowledgeGraphService`의 link/unlink가 이 값을 파싱하게 되어 agent가 그 경로로
+ *   `PART_OF`를 만들거나 거둘 길이 열리고, 그러면 [LEADS_TO]처럼 서비스 층에서 다시 얼려야 한다.
+ *   그 문자열은 [PART_OF_RELATION] 상수 하나에서만 온다.
  * - `CAUSES` — 게임 메커니즘에 대한 주장이라 항목의 `description`에 속한다.
  * - `SAME_AS` / `DUPLICATE_OF` — 중복은 병합할 것이지 영구화할 것이 아니다.
  * - `SUPERSEDED_BY` — [REPLACES]를 거꾸로 읽은 것. 방향 하나로 한 번만 저장한다.
@@ -100,3 +107,13 @@ enum class KnowledgeRelation {
             value?.trim()?.uppercase()?.let { normalized -> entries.firstOrNull { it.name == normalized } }
     }
 }
+
+/**
+ * `knowledge_edge.relation`의 구조적 값(ARTEL-748). [KnowledgeRelation]의 agent 어휘에 없는 이유는
+ * 그 enum의 "거부한 후보와 이유" 절에 있다 — 이 값을 만드는 코드는
+ * [kr.artel.orchestration.knowledge.service.KnowledgeService.store] 하나뿐이고, agent가 손으로
+ * 주장할 수 없어야 한다.
+ *
+ * top-level에 둔 이유는 이 값을 찾는 사람이 보는 자리가 관계 이름들이 모인 이 파일이기 때문이다.
+ */
+const val PART_OF_RELATION = "PART_OF"
