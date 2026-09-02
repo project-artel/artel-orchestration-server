@@ -29,7 +29,7 @@ data class KnowledgeGraphViewResponse(
  *
  * 본문(`description`)은 싣지 않는다. 노드 수백 개의 본문을 한 번에 내리면 응답이 화면이 쓰는 양의
  * 몇 배가 되고, 화면은 어차피 요약만 그린다. 본문이 필요한 순간은 사용자가 노드 하나를 고른
- * 뒤이고 그때는 단건 조회가 있다.
+ * 뒤이고 그때는 단건 조회가 있다([KnowledgeDetailResponse], ARTEL-753).
  *
  * @property createdByQaTryId 이 항목을 만든 QA 런. 사람/문서 경로면 null이다. 화면이 "어느 런이
  *   만든 지식인가"로 색을 나누는 근거이며, 축별 지표(`knowledge_entry_facts`)와 같은 귀속이다.
@@ -74,12 +74,13 @@ data class KnowledgeGraphNodeAnchor(
 /**
  * 간선 하나.
  *
- * `relation`은 `LEADS_TO | REFINES | CONTRADICTS | DEPENDS_ON | REPLACES`이지만 문자열로 둔다 —
+ * `relation`은 `LEADS_TO | REFINES | CONTRADICTS | DEPENDS_ON | REPLACES | PART_OF`이지만 문자열로 둔다 —
  * 값이 늘 때 이 DTO를 갈지 않아도 되고, 모르는 값을 만난 화면은 그리기만 하면 된다. 열거형으로
  * 좁히면 서버가 먼저 깨진다.
  *
  * @property note 이 간선이 왜 있는지, 주장한 런의 말로. `LEADS_TO`만은 "왜"가 아니라 **무엇을
- *   했는지**를 진다(V29 주석). 화면에서 간선을 고르면 이 문장이 근거로 읽힌다.
+ *   했는지**를 진다(V29 주석). `PART_OF`는 런이 주장한 것이 아니라 문서 적재 파이프라인이 만든
+ *   구조적 간선이라 고정 문장이다(ARTEL-748). 화면에서 간선을 고르면 이 문장이 근거로 읽힌다.
  */
 data class KnowledgeGraphEdge(
     val from: String,

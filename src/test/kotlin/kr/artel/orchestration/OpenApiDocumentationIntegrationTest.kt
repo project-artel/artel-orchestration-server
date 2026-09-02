@@ -63,8 +63,11 @@ class OpenApiDocumentationIntegrationTest {
         assertThat(response).contains("/api/projects/{projectId}/documents")
         assertThat(response).contains("/api/projects/{projectId}/documents/upload-url")
         assertThat(response).contains("/api/projects/{projectId}/documents/{documentId}/download-url")
+        // 이 키가 "/download-url" 접미사가 붙은 경로와 헷갈리지 않도록 따옴표까지 확인한다.
+        assertThat(response).contains("\"/api/projects/{projectId}/documents/{documentId}\"")
         assertThat(response).contains("프로젝트 생성")
         assertThat(response).contains("업로드 URL 발급")
+        assertThat(response).contains("기획서 삭제")
     }
 
     /**

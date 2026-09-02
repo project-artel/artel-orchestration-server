@@ -9,10 +9,13 @@ import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.knowledge.agent.KnowledgeEmbeddingAgent
 import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
+import kr.artel.orchestration.knowledge.dto.KnowledgeIngestItem
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
+import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.common.embedding.EmbeddedText
+import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.service.KnowledgeEmbeddingBackfillWorker
@@ -68,6 +71,9 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
     private lateinit var embeddingRepository: KnowledgeEmbeddingRepository
 
     @Autowired
+    private lateinit var edgeRepository: KnowledgeEdgeRepository
+
+    @Autowired
     private lateinit var properties: KnowledgeBackfillProperties
 
     @Autowired
@@ -91,6 +97,8 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
     fun reset() = runBlocking {
         fake.failFor.clear()
         fake.embedFails = false
+        // knowledge_edge에는 하드 FK가 없어(V29) knowledge를 지워도 함께 사라지지 않는다.
+        edgeRepository.deleteAll()
         // knowledge_embedding은 FK ON DELETE CASCADE라 knowledge를 지우면 함께 사라진다.
         knowledgeRepository.deleteAll()
     }
@@ -143,7 +151,43 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
             .one()
             .awaitFirstOrNull()
 
+    /** 대기 행이든 완성 행이든, 이 knowledge에 대한 knowledge_embedding 행이 하나라도 있는가. */
+    private suspend fun anyEmbeddingRow(knowledgeId: Long): Boolean =
+        countRows("SELECT COUNT(*) FROM knowledge_embedding WHERE knowledge_id = :id", "id" to knowledgeId) > 0
+
     // ------------------------------------------------------------------ tests
+
+    /**
+     * 문서 node는 게임에 대한 사실이 아니라 구조적 표지라 search_knowledge에 섞이면 잡음이다
+     * (ARTEL-748). 매 검색에 필터를 거는 대신 백필 시딩 자체에서 뺀다 — 이 tick이 문서 node에
+     * 대기 행조차 만들지 않는지가 그 결정이 실제로 동작하는지의 증거다.
+     */
+    @Test
+    fun `문서 node는 백필 대상에서 빠진다`(): Unit = runBlocking {
+        val projectId = projectSeq.incrementAndGet()
+        val documentId = projectId + 1_000_000L
+
+        knowledgeService.store(
+            projectId = projectId,
+            scope = KnowledgeScope.PRODUCTION,
+            source = KnowledgeSource.DOCS,
+            sourceId = documentId,
+            contentHash = null,
+            items = listOf(KnowledgeIngestItem(tag = "RULE", summary = "체력", description = "최대 100")),
+            documentFileName = "기획서.pdf"
+        )
+        val documentNodeId = requireNotNull(knowledgeRepository.findDocumentNode(projectId, documentId)?.id)
+        val itemId = knowledgeRepository.findVisible(projectId, null, null, null).toList()
+            .single { it.summary == "체력" }.id!!
+
+        val result = worker.runOnce()
+
+        // 항목은 정상적으로 시딩·임베딩된다.
+        assertThat(result.succeeded).isGreaterThanOrEqualTo(1)
+        assertThat(vectorCount(itemId)).isGreaterThan(0)
+        // 문서 node는 대기 행조차 생기지 않는다 — knowledge_embedding에 그 행에 대한 어떤 줄도 없다.
+        assertThat(anyEmbeddingRow(documentNodeId)).isFalse()
+    }
 
     @Test
     fun `벡터가 없는 항목을 채우고 이미 채운 항목은 다시 집지 않는다`(): Unit = runBlocking {

@@ -1,6 +1,7 @@
 package kr.artel.orchestration.project
 
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.project.storage.DocumentStorageException
 import kr.artel.orchestration.project.storage.PresignedDownload
 import kr.artel.orchestration.project.storage.PresignedUpload
 import kr.artel.orchestration.project.storage.StoredObject
@@ -24,9 +25,20 @@ class FakeDocumentStorage : DocumentStorage {
     private val objects = ConcurrentHashMap<String, ByteArray>()
     private val contentTypes = ConcurrentHashMap<String, String>()
 
+    /**
+     * 켜면 [delete]가 [DocumentStorageException]으로 실패한다. 실 배포에서 IAM 정책에
+     * `s3:DeleteObject`가 빠져 정리 delete가 403으로 실패했던 상황을 재현한다.
+     */
+    private var deleteFails = false
+
     /** 클라이언트가 presigned URL로 올린 것과 같은 상태를 만든다. */
     fun put(objectKey: String, content: ByteArray) {
         objects[objectKey] = content
+    }
+
+    /** 이후의 [delete] 호출을 전부 실패시킨다. 기본은 정상 동작(성공)이다. */
+    fun failDeletes() {
+        deleteFails = true
     }
 
     /** 서버가 [DocumentStorage.put]으로 올려 둔 바이트. 테스트가 결과를 확인할 때 쓴다. */
@@ -39,6 +51,7 @@ class FakeDocumentStorage : DocumentStorage {
     fun contentTypeOf(objectKey: String): String? = contentTypes[objectKey]
 
     fun clear() {
+        deleteFails = false
         objects.clear()
         contentTypes.clear()
     }
@@ -88,6 +101,9 @@ class FakeDocumentStorage : DocumentStorage {
         }
 
     override fun delete(objectKey: String): Mono<Void> {
+        if (deleteFails) {
+            return Mono.error(DocumentStorageException("기획서 저장소에 접근하지 못했습니다.", RuntimeException("403")))
+        }
         objects.remove(objectKey)
         return Mono.empty()
     }

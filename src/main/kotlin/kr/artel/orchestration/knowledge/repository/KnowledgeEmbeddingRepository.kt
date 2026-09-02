@@ -5,6 +5,7 @@ import kr.artel.orchestration.common.embedding.EmbeddedText
 import kr.artel.orchestration.common.embedding.EmbeddingQueue
 import kr.artel.orchestration.common.embedding.EmbeddingQueueRepository
 import kr.artel.orchestration.common.embedding.EmbeddingTableSpec
+import kr.artel.orchestration.knowledge.entity.KnowledgeDocumentNodeSql
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 
@@ -26,7 +27,17 @@ class KnowledgeEmbeddingRepository(databaseClient: DatabaseClient) : EmbeddingQu
             ownerIdColumn = "knowledge_id",
             ownerTable = "knowledge",
             // knowledge는 소프트삭제가 있어, 삭제된 항목에는 임베딩 비용을 쓰지 않는다.
-            aliveClause = "deleted_at IS NULL",
+            //
+            // **문서 node는 애초에 백필 대상에서 뺀다(ARTEL-748).** 문서 node는 게임에 대한 사실이
+            // 아니라 그 문서에서 나온 항목들을 묶는 구조적 표지라, search_knowledge(KNOWLEDGE_SEARCH)
+            // 결과에 섞이면 잡음이다. 매 검색 질의에 필터를 추가하는 대신(검색은 QA 스텝마다 발화하는
+            // 잦은 경로다) 여기서 임베딩 자체를 만들지 않는다 — `KnowledgeVectorSearchRepository`의
+            // `searchNearest`는 `knowledge_embedding`을 INNER JOIN하므로, 벡터가 없으면 그 조인이
+            // 자동으로 이 행을 거른다. 백필 tick은 검색보다 훨씬 드물게 돌아서 이 조건을 매 tick
+            // 스캔에 더하는 비용이 싸고, 애초에 만들지 않으므로 Agent 임베딩 호출 비용도 아낀다.
+            // 술어는 [KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE] 하나에서 온다 — 그 KDoc이 이유를
+            // 적어 뒀다.
+            aliveClause = "deleted_at IS NULL AND NOT (${KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE})",
         )
     )
 

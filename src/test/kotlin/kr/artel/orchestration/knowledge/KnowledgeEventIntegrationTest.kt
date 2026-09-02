@@ -64,11 +64,14 @@ class KnowledgeEventIntegrationTest {
             source = KnowledgeSource.DOCS,
             sourceId = 77,
             contentHash = "hash",
-            items = listOf(item("CONTROL", "이동", "WASD"), item("RULE", "체력", "최대 100"))
+            items = listOf(item("CONTROL", "이동", "WASD"), item("RULE", "체력", "최대 100")),
+            documentFileName = "기획서.pdf"
         )
 
+        // 항목 2개 + 문서 node 1개(ARTEL-748). 문서 node도 qa_try_id 없는 CREATE 하나를 남기므로
+        // 아래 루프의 단언은 셋 모두에 그대로 성립한다.
         val ids = knowledgeRepository.findVisible(projectId, null, null, null).toList()
-        assertThat(ids).hasSize(2)
+        assertThat(ids).hasSize(3)
         ids.forEach { row ->
             val events = eventsOf(row.id!!)
             assertThat(events).hasSize(1)
