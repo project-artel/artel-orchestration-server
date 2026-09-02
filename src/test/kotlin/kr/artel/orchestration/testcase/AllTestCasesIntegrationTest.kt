@@ -2,12 +2,12 @@ package kr.artel.orchestration.testcase
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
-import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.support.testAppUser
 import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.testcase.dto.CaseGuard
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
@@ -44,7 +44,7 @@ class AllTestCasesIntegrationTest {
 
     private suspend fun newUser(): Long {
         val now = Instant.now()
-        return appUserRepository.save(AppUserEntity(displayName = "catalog-user", createdAt = now, updatedAt = now))
+        return appUserRepository.save(testAppUser("catalog-user", now))
             .id!!
     }
 

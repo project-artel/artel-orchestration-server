@@ -1,5 +1,6 @@
 package kr.artel.orchestration.auth
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
@@ -40,92 +41,111 @@ class AuthProfileIntegrationTest {
     }
 
     @Test
-    fun `me has no nickname or battleTag until the user sets them`(): Unit = runBlocking {
+    fun `seeds the nickname from the provider name at first login`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
 
         val me = get(token, "/api/auth/me")
 
-        assertThat(me["nickname"].isNull).isTrue()
-        assertThat(me["battleTag"].isNull).isTrue()
+        assertThat(me["nickname"].asText()).isEqualTo("The Octocat")
+        assertThat(me["userTag"].asText()).isEqualTo("0000")
     }
 
     @Test
-    fun `sets nickname and battleTag and exposes them through me`(): Unit = runBlocking {
+    fun `answers the profile update with the stored nickname and its userTag`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
 
-        val status = putProfile(token, """{"nickname":"Yuni","battleTag":"Yuni#1234"}""")
+        val updated = setNickname(token, "Yuni")
 
-        assertThat(status).isEqualTo(HttpStatus.NO_CONTENT)
+        assertThat(updated["nickname"].asText()).isEqualTo("Yuni")
+        assertThat(updated["userTag"].asText()).isEqualTo("0000")
         val me = get(token, "/api/auth/me")
         assertThat(me["nickname"].asText()).isEqualTo("Yuni")
-        assertThat(me["battleTag"].asText()).isEqualTo("Yuni#1234")
+        assertThat(me["userTag"].asText()).isEqualTo(updated["userTag"].asText())
+    }
+
+    @Test
+    fun `keeps the userTag when the same nickname is saved again`(): Unit = runBlocking {
+        val token = signIn("42", "octocat")
+        val first = setNickname(token, "Yuni")
+
+        val second = setNickname(token, "Yuni")
+
+        assertThat(second["userTag"].asText()).isEqualTo(first["userTag"].asText())
+    }
+
+    @Test
+    fun `gives two users who pick the same nickname different userTags`(): Unit = runBlocking {
+        val first = setNickname(signIn("42", "octocat"), "Yuni")
+
+        val second = setNickname(signIn("99", "hubot"), "Yuni")
+
+        assertThat(second["nickname"].asText()).isEqualTo(first["nickname"].asText())
+        assertThat(second["userTag"].asText()).isNotEqualTo(first["userTag"].asText())
+    }
+
+    @Test
+    fun `carries the number over when only the nickname changes`(): Unit = runBlocking {
+        setNickname(signIn("42", "octocat"), "Yuni")
+        val token = signIn("99", "hubot")
+        val taken = setNickname(token, "Yuni")
+
+        val renamed = setNickname(token, "Zed")
+
+        // "Yuni" 아래에서 쓰던 번호가 "Zed" 아래에서도 비어 있으므로 그대로 따라간다.
+        assertThat(taken["userTag"].asText()).isEqualTo("0001")
+        assertThat(renamed["userTag"].asText()).isEqualTo("0001")
     }
 
     @Test
     fun `trims the nickname before storing it`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
 
-        putProfile(token, """{"nickname":"  Yuni  ","battleTag":null}""")
+        assertThat(setNickname(token, "  Yuni  ")["nickname"].asText()).isEqualTo("Yuni")
+    }
 
+    @Test
+    fun `resolves a user by the nickname and userTag pair`(): Unit = runBlocking {
+        val token = signIn("42", "octocat")
+        val updated = setNickname(token, "Yuni")
+
+        val found = appUserRepository.findByNicknameAndUserTag("Yuni", updated["userTag"].asText())
+
+        assertThat(found?.id.toString()).isEqualTo(updated["id"].asText())
+    }
+
+    @Test
+    fun `refuses to clear the nickname`(): Unit = runBlocking {
+        val token = signIn("42", "octocat")
+        setNickname(token, "Yuni")
+
+        val status = putProfile(token, """{"nickname":null}""")
+
+        assertThat(status).isEqualTo(HttpStatus.BAD_REQUEST)
         assertThat(get(token, "/api/auth/me")["nickname"].asText()).isEqualTo("Yuni")
     }
 
     @Test
-    fun `clears both fields when null is sent for a value that was set`(): Unit = runBlocking {
+    fun `refuses a blank nickname`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
-        putProfile(token, """{"nickname":"Yuni","battleTag":"Yuni#1234"}""")
 
-        val status = putProfile(token, """{"nickname":null,"battleTag":null}""")
+        val status = putProfile(token, """{"nickname":"   "}""")
 
-        assertThat(status).isEqualTo(HttpStatus.NO_CONTENT)
-        val me = get(token, "/api/auth/me")
-        assertThat(me["nickname"].isNull).isTrue()
-        assertThat(me["battleTag"].isNull).isTrue()
-    }
-
-    @Test
-    fun `treats a blank nickname as clearing it`(): Unit = runBlocking {
-        val token = signIn("42", "octocat")
-        putProfile(token, """{"nickname":"Yuni","battleTag":null}""")
-
-        val status = putProfile(token, """{"nickname":"   ","battleTag":null}""")
-
-        assertThat(status).isEqualTo(HttpStatus.NO_CONTENT)
-        assertThat(get(token, "/api/auth/me")["nickname"].isNull).isTrue()
+        assertThat(status).isEqualTo(HttpStatus.BAD_REQUEST)
     }
 
     @Test
     fun `rejects a nickname longer than 64 characters`(): Unit = runBlocking {
         val token = signIn("42", "octocat")
 
-        val status = putProfile(token, """{"nickname":"${"a".repeat(65)}","battleTag":null}""")
+        val status = putProfile(token, """{"nickname":"${"a".repeat(65)}"}""")
 
         assertThat(status).isEqualTo(HttpStatus.BAD_REQUEST)
-        assertThat(get(token, "/api/auth/me")["nickname"].isNull).isTrue()
-    }
-
-    @Test
-    fun `rejects a malformed battleTag`(): Unit = runBlocking {
-        val token = signIn("42", "octocat")
-
-        val status = putProfile(token, """{"nickname":null,"battleTag":"NoHashHere"}""")
-
-        assertThat(status).isEqualTo(HttpStatus.BAD_REQUEST)
-        assertThat(get(token, "/api/auth/me")["battleTag"].isNull).isTrue()
-    }
-
-    @Test
-    fun `rejects a battleTag whose digits exceed 8`(): Unit = runBlocking {
-        val token = signIn("42", "octocat")
-
-        val status = putProfile(token, """{"nickname":null,"battleTag":"Yuni#123456789"}""")
-
-        assertThat(status).isEqualTo(HttpStatus.BAD_REQUEST)
+        assertThat(get(token, "/api/auth/me")["nickname"].asText()).isEqualTo("The Octocat")
     }
 
     @Test
     fun `rejects the update without a session`(): Unit = runBlocking {
-        val status = putProfile(token = null, body = """{"nickname":"Yuni","battleTag":null}""")
+        val status = putProfile(token = null, body = """{"nickname":"Yuni"}""")
 
         assertThat(status).isEqualTo(HttpStatus.UNAUTHORIZED)
     }
@@ -136,7 +156,7 @@ class AuthProfileIntegrationTest {
                 provider = "github",
                 providerUserId = providerUserId,
                 login = login,
-                displayName = login,
+                displayName = "The Octocat",
                 avatarUrl = null,
                 email = "$login@example.com"
             )
@@ -146,6 +166,14 @@ class AuthProfileIntegrationTest {
 
     private fun get(token: String, uri: String) = objectMapper.readTree(
         client().get().uri(uri).cookie("artel_access_token", token)
+            .retrieve().bodyToMono(String::class.java).block()
+    )
+
+    /** 성공한 프로필 갱신의 응답 본문. 200이 아니면 여기서 예외가 난다. */
+    private fun setNickname(token: String, nickname: String): JsonNode = objectMapper.readTree(
+        client().put().uri("/api/auth/me/profile").cookie("artel_access_token", token)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(objectMapper.writeValueAsString(mapOf("nickname" to nickname)))
             .retrieve().bodyToMono(String::class.java).block()
     )
 

@@ -703,8 +703,15 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": "No Content"
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUserResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -4139,8 +4146,63 @@
         "properties": {
           "nickname": {
             "type": "string"
+          }
+        }
+      },
+      "AuthUserResponse": {
+        "required": [
+          "displayName",
+          "id",
+          "identities",
+          "nickname",
+          "userTag"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
           },
-          "battleTag": {
+          "displayName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "userTag": {
+            "type": "string"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkedIdentityResponse"
+            }
+          }
+        }
+      },
+      "LinkedIdentityResponse": {
+        "required": [
+          "displayName",
+          "login",
+          "provider"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "login": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "avatarUrl": {
             "type": "string"
           }
         }
@@ -7076,8 +7138,10 @@
         "required": [
           "displayName",
           "joinedAt",
+          "nickname",
           "role",
-          "userId"
+          "userId",
+          "userTag"
         ],
         "type": "object",
         "properties": {
@@ -7093,7 +7157,7 @@
           "nickname": {
             "type": "string"
           },
-          "battleTag": {
+          "userTag": {
             "type": "string"
           },
           "role": {
@@ -8372,62 +8436,6 @@
           "citationKnownTotal": {
             "type": "integer",
             "format": "int64"
-          }
-        }
-      },
-      "AuthUserResponse": {
-        "required": [
-          "displayName",
-          "id",
-          "identities"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "email": {
-            "type": "string"
-          },
-          "locale": {
-            "type": "string"
-          },
-          "nickname": {
-            "type": "string"
-          },
-          "battleTag": {
-            "type": "string"
-          },
-          "identities": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LinkedIdentityResponse"
-            }
-          }
-        }
-      },
-      "LinkedIdentityResponse": {
-        "required": [
-          "displayName",
-          "login",
-          "provider"
-        ],
-        "type": "object",
-        "properties": {
-          "provider": {
-            "type": "string"
-          },
-          "login": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "avatarUrl": {
-            "type": "string"
           }
         }
       },

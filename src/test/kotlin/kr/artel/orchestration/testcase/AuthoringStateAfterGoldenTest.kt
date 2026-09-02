@@ -2,7 +2,6 @@ package kr.artel.orchestration.testcase
 
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.runBlocking
-import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
@@ -18,6 +17,7 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.support.testAppUser
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.service.TestCaseService
 import org.assertj.core.api.Assertions.assertThat
@@ -75,7 +75,7 @@ class AuthoringStateAfterGoldenTest {
             ProjectEntity(name = "state-after", genre = "RPG", createdAt = now, updatedAt = now)
         )
         // 프로젝트 참여자만 목록을 받는다. 실재하는 사용자여야 외래 키가 선다.
-        val userId = users.save(AppUserEntity(displayName = "state-after tester", createdAt = now, updatedAt = now)).id!!
+        val userId = users.save(testAppUser("state-after tester", now)).id!!
         members.save(
             ProjectMemberEntity(projectId = project.id!!, appUserId = userId, role = "OWNER", createdAt = now)
         )

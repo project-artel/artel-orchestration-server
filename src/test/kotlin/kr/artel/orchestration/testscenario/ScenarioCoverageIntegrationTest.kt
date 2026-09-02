@@ -2,12 +2,12 @@ package kr.artel.orchestration.testscenario
 
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
-import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.support.testAppUser
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testrun.entity.TestRunEntity
@@ -167,7 +167,7 @@ class ScenarioCoverageIntegrationTest {
     fun `비참여자에게는 전부 0으로 답한다`(): Unit = runBlocking {
         val (projectId, _, _) = fixture(3)
         val outsider = appUserRepository.save(
-            AppUserEntity(displayName = "outsider", createdAt = Instant.now(), updatedAt = Instant.now())
+            testAppUser("outsider")
         ).id!!
 
         val coverage = testCaseService.coverage(projectId, outsider)
@@ -185,7 +185,7 @@ class ScenarioCoverageIntegrationTest {
     private suspend fun fixture(count: Int): Triple<Long, Long, List<Long>> {
         val now = Instant.now()
         val userId = appUserRepository.save(
-            AppUserEntity(displayName = "coverage-user", createdAt = now, updatedAt = now)
+            testAppUser("coverage-user", now)
         ).id!!
         val projectId = projectRepository.save(
             ProjectEntity(name = "coverage-project", genre = "ACTION", createdAt = now, updatedAt = now)

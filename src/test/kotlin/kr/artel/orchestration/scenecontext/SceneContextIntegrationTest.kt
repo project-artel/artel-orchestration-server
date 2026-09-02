@@ -402,7 +402,7 @@ class SceneContextIntegrationTest {
      * `knowledge_scope_id` 하나뿐이라 SQL 로 최소한만 세운다.
      */
     private suspend fun newQaTry(projectId: Long, scopeId: Long): Long {
-        val userId = insertId("INSERT INTO app_user (display_name) VALUES ('agent') RETURNING id")
+        val userId = insertId("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('agent', 'agent-' || gen_random_uuid(), '0000') RETURNING id")
         val scenarioId = insertId(
             """
             INSERT INTO test_scenario (project_id, title)
