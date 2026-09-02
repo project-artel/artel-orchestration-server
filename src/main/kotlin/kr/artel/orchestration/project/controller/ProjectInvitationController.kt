@@ -33,8 +33,11 @@ class ProjectInvitationController(
 ) {
     @Operation(
         summary = "초대 보내기",
-        description = "소유자만 가능하다. ARTEL 계정이 없는 이메일도 초대할 수 있다. " +
-            "이미 멤버이거나 이미 기다리는 초대가 있으면 409."
+        description = "소유자만 가능하다. 부를 사람은 `email` 이나 `appUserId` 중 정확히 하나로 " +
+            "가리킨다. `email` 은 ARTEL 계정이 없는 주소도 된다. 둘 다 오거나 둘 다 없으면 400 " +
+            "(`invitation_target_ambiguous`), `appUserId` 가 가리키는 계정이 없거나 확인된 이메일이 " +
+            "없으면 409 (`invitation_target_unreachable`). 이미 멤버이거나 이미 기다리는 초대가 " +
+            "있어도 409."
     )
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

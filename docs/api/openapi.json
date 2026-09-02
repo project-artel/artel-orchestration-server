@@ -1740,7 +1740,7 @@
           "Project Invitation"
         ],
         "summary": "초대 보내기",
-        "description": "소유자만 가능하다. ARTEL 계정이 없는 이메일도 초대할 수 있다. 이미 멤버이거나 이미 기다리는 초대가 있으면 409.",
+        "description": "소유자만 가능하다. 부를 사람은 `email` 이나 `appUserId` 중 정확히 하나로 가리킨다. `email` 은 ARTEL 계정이 없는 주소도 된다. 둘 다 오거나 둘 다 없으면 400 (`invitation_target_ambiguous`), `appUserId` 가 가리키는 계정이 없거나 확인된 이메일이 없으면 409 (`invitation_target_unreachable`). 이미 멤버이거나 이미 기다리는 초대가 있어도 409.",
         "operationId": "create_4",
         "parameters": [
           {
@@ -3510,6 +3510,53 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/IssuePageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/invitation-suggestions": {
+      "get": {
+        "tags": [
+          "Project Invitation"
+        ],
+        "summary": "초대 대상 후보",
+        "description": "소유자만 볼 수 있고, 아니면 404. 다듬은 검색어가 두 글자 미만이면 빈 배열이다. `#` 이 있으면 마지막 `#` 에서 갈라 nickname 과 userTag 를 함께 정확히 맞추고, 없으면 nickname·login·displayName 을 대소문자 무시 접두사로 찾는다. 이메일은 통째로 적었을 때만 맞춘다. 응답에는 이메일이 실리지 않고 최대 10건이다.",
+        "operationId": "suggest",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "description": "찾을 글자. nickname#userTag 나 이메일 전체도 된다",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": ""
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InvitationSuggestionResponse"
+                  }
                 }
               }
             }
@@ -5528,7 +5575,6 @@
       },
       "CreateInvitationRequest": {
         "required": [
-          "email",
           "role"
         ],
         "type": "object",
@@ -5536,6 +5582,9 @@
           "email": {
             "maxLength": 320,
             "minLength": 0,
+            "type": "string"
+          },
+          "appUserId": {
             "type": "string"
           },
           "role": {
@@ -7630,6 +7679,35 @@
           "nodeLimit": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "InvitationSuggestionResponse": {
+        "required": [
+          "appUserId",
+          "displayName",
+          "nickname",
+          "userTag"
+        ],
+        "type": "object",
+        "properties": {
+          "appUserId": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "userTag": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "login": {
+            "type": "string"
+          },
+          "avatarUrl": {
+            "type": "string"
           }
         }
       },

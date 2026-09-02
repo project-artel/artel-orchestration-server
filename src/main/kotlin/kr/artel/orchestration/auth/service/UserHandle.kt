@@ -12,7 +12,12 @@ data class UserHandle(val nickname: String, val userTag: String) {
     override fun toString(): String = format(nickname, userTag)
 
     companion object {
-        private const val SEPARATOR = '#'
+        /**
+         * `nickname` 과 `userTag` 를 가르는 글자. 공개해 둔 것은 검색어에 이 글자가 들어 있는지
+         * 부르는 쪽이 봐야 하기 때문이다 — `ProjectInvitationService.suggest` 가 그 글자를 보고
+         * 접두사 검색 대신 [parse] 로 간다.
+         */
+        const val SEPARATOR = '#'
 
         fun format(nickname: String, userTag: String): String = "$nickname$SEPARATOR$userTag"
 
