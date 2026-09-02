@@ -25,6 +25,7 @@ import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
+import kr.artel.orchestration.contentmap.repository.ScreenRepository
 import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.FakeDocumentStorage
@@ -81,6 +82,7 @@ class ContentMapReingestTest {
     @Autowired private lateinit var scenes: SceneRepository
     @Autowired private lateinit var capabilities: CapabilityRepository
     @Autowired private lateinit var edges: SceneEdgeRepository
+    @Autowired private lateinit var screens: ScreenRepository
     @Autowired private lateinit var db: DatabaseClient
 
     private val fakeStorage: FakeDocumentStorage get() = storage as FakeDocumentStorage
@@ -402,6 +404,32 @@ class ContentMapReingestTest {
         assertThat(scenes.findById(stale.id!!)).isNull()
         assertThat(scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList().map { it.name })
             .containsExactly("TitleScene")
+    }
+
+    /**
+     * 관측이 먼저 앉힌 scene 을 문서가 나중에 말하면 **그 행이 `evidence` 로 올라간다** (ARTEL-689).
+     *
+     * 한 지도에 같은 이름 두 행은 `uk_scene_map_name` 이 막으므로, 적재가 새 행을 만들면 그 자리에서
+     * 죽는다. `upsertScenes` 가 이름으로 찾아 같은 id 를 이어 쓰는 것이 그것을 막고, 동시에 그 scene
+     * 에 매달린 QA 런의 지식을 지킨다 — 지우고 다시 만들면 `screen` 이 CASCADE 로 함께 사라진다.
+     */
+    @Test
+    fun `관측이 만든 scene 을 문서가 말하면 같은 행이 evidence 로 올라간다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val observed = scenes.save(
+            SceneEntity(contentMapId = map.id!!, name = "TitleScene", origin = SceneOrigin.OBSERVED.wire)
+        )
+        val screen = screens.observe(observed.id!!, """[{"selector":"Canvas[2]/continue[1]","active":true}]""", null)
+
+        ingestNew(map.id!!, evidenceDocument())
+
+        val rows = scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList().filter { it.name == "TitleScene" }
+        assertThat(rows).hasSize(1)
+        assertThat(rows.single().id).isEqualTo(observed.id)
+        assertThat(rows.single().origin).isEqualTo(SceneOrigin.EVIDENCE.wire)
+        // 관측이 벌어 온 것이 살아남는다. 이것이 행을 이어 쓰는 이유다.
+        assertThat(screens.findBySceneIdOrderByIdAsc(observed.id!!).toList().map { it.id })
+            .containsExactly(screen.id)
     }
 
     private val hudEntry = "Assembly-CSharp|Demo.HudController|Start|System.Void()"

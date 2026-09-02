@@ -8,6 +8,8 @@ import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.game.entity.GameInstanceEntity
+import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.knowledge.dto.KnowledgeLinkRequest
 import kr.artel.orchestration.knowledge.entity.KnowledgeAnchorEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEdgeEntity
@@ -25,6 +27,14 @@ import kr.artel.orchestration.project.entity.ProjectRole
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
+import kr.artel.orchestration.qa.entity.QaRunEntity
+import kr.artel.orchestration.qa.entity.QaTryEntity
+import kr.artel.orchestration.qa.repository.QaRunRepository
+import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.testrun.entity.TestRunEntity
+import kr.artel.orchestration.testrun.repository.TestRunRepository
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
+import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterEach
@@ -34,6 +44,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.ActiveProfiles
 import java.time.Instant
+import java.util.UUID
 
 /**
  * 지식창고를 그래프 한 장으로 읽는 조회의 검증.
@@ -66,6 +77,11 @@ class KnowledgeGraphViewIntegrationTest {
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
     @Autowired private lateinit var oauthUserService: OAuthUserService
+    @Autowired private lateinit var qaTryRepository: QaTryRepository
+    @Autowired private lateinit var qaRunRepository: QaRunRepository
+    @Autowired private lateinit var testRunRepository: TestRunRepository
+    @Autowired private lateinit var testScenarioRepository: TestScenarioRepository
+    @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
 
     private var projectId: Long = 0
     private var userId: Long = 0
@@ -101,6 +117,12 @@ class KnowledgeGraphViewIntegrationTest {
         anchorRepository.deleteAll()
         edgeRepository.deleteAll()
         knowledgeRepository.deleteAll()
+        // qa_try → qa_run → test_run 순서로 FK를 거슬러 지운다(ARTEL-722 run id 테스트가 심는다).
+        qaTryRepository.deleteAll()
+        qaRunRepository.deleteAll()
+        testRunRepository.deleteAll()
+        gameInstanceRepository.deleteAll()
+        testScenarioRepository.deleteAll()
         projectMemberRepository.deleteAll()
         projectRepository.deleteAll()
         identityRepository.deleteAll()
@@ -245,6 +267,24 @@ class KnowledgeGraphViewIntegrationTest {
             .isNull()
         assertThat(nodes.getValue(fromRun.toString()).version).isEqualTo(1)
         assertThat(nodes.getValue(fromRun.toString()).createdAt).isNotNull()
+    }
+
+    /**
+     * `createdByQaRunId`는 `createdByQaTryId`가 가리키는 try 를 배치로 조회해 얻는다(ARTEL-722).
+     * try 가 부모 `qa_run`에 속하면 그 id를 문자열로 내고, `qa_run`이 생기기 전의 단독 실행
+     * try라면 null이다 — 두 경우가 화면에 같은 필드로 섞여 있으면 링크를 잘못 만든다.
+     */
+    @Test
+    fun `만든 run의 id가 QA 노드에 실리고 단독 실행은 null이다`(): Unit = runBlocking {
+        val (runTryId, qaRunId) = seedQaTryInRun()
+        val standaloneTryId = seedStandaloneQaTry()
+        val fromRun = givenKnowledge("run이 만든 지식", source = "QA", sourceId = runTryId)
+        val fromStandalone = givenKnowledge("단독 실행이 만든 지식", source = "QA", sourceId = standaloneTryId)
+
+        val nodes = viewService.graph(projectId, userId, nodeLimit = 200).nodes.associateBy { it.id }
+
+        assertThat(nodes.getValue(fromRun.toString()).createdByQaRunId).isEqualTo(qaRunId.toString())
+        assertThat(nodes.getValue(fromStandalone.toString()).createdByQaRunId).isNull()
     }
 
     // --------------------------------------------------------- 앵커 (ARTEL-605)
@@ -392,7 +432,102 @@ class KnowledgeGraphViewIntegrationTest {
         assertThat(edge.note).isEqualTo("마을 상단바의 상점 버튼")
     }
 
+    /**
+     * 문서 node와 `PART_OF` edge(ARTEL-748)도 이 조회에 코드 변경 없이 실린다 — `edgesAmong`이
+     * relation을 가리지 않고 두 endpoint가 응답 node 집합 안에 있는 edge를 전부 내기 때문이다.
+     *
+     * `PART_OF`는 `KnowledgeRelation`에 없어 `graphService.link`로는 만들 수 없다(그 값을 만드는
+     * 코드는 `KnowledgeService.store` 하나뿐이다) — `LEADS_TO`와 같은 이유로 행을 직접 넣는다.
+     */
+    @Test
+    fun `문서 node와 PART_OF edge도 그래프 조회에 나온다`(): Unit = runBlocking {
+        val documentNode = givenKnowledge("기획서.pdf", source = "DOCS", sourceId = 42L)
+        val item = givenKnowledge("이동 방법", source = "DOCS", sourceId = 42L)
+        edgeRepository.save(
+            KnowledgeEdgeEntity(
+                projectId = projectId,
+                fromKnowledgeId = item,
+                toKnowledgeId = documentNode,
+                relation = "PART_OF",
+                note = "문서 추출 파이프라인이 이 항목을 문서 node 아래에 자동으로 배치했다."
+            )
+        )
+
+        val response = viewService.graph(projectId, userId, nodeLimit = 200)
+
+        assertThat(response.nodes.map { it.id }).contains(documentNode.toString(), item.toString())
+        val edge = response.edges.single()
+        assertThat(edge.from).isEqualTo(item.toString())
+        assertThat(edge.to).isEqualTo(documentNode.toString())
+        assertThat(edge.relation).isEqualTo("PART_OF")
+    }
+
     // --------------------------------------------------------------- helpers
+
+    /** run 하나 + 그 run 에 속한 qa_try 하나(ARTEL-722). run id를 함께 돌려준다. */
+    private suspend fun seedQaTryInRun(): Pair<Long, Long> {
+        val now = Instant.now()
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))!!
+        val instance = gameInstanceRepository.save(
+            GameInstanceEntity(
+                projectId = projectId,
+                name = "instance",
+                platform = "UNITY",
+                sdkUuid = UUID.randomUUID().toString(),
+                createdAt = now,
+                updatedAt = now
+            )
+        )!!
+        val testRun = testRunRepository.save(TestRunEntity(projectId = projectId, name = "런"))!!
+        val qaRun = qaRunRepository.save(
+            QaRunEntity(
+                testRunId = testRun.id!!,
+                gameInstanceId = instance.id!!,
+                startedBy = userId,
+                status = "COMPLETED",
+                startedAt = now,
+                completedAt = now
+            )
+        )!!
+        val qaTry = qaTryRepository.save(
+            QaTryEntity(
+                testScenarioId = scenario.id!!,
+                gameInstanceId = instance.id!!,
+                qaRunId = qaRun.id,
+                startedBy = userId,
+                status = "COMPLETED",
+                startedAt = now,
+                completedAt = now
+            )
+        )!!
+        return qaTry.id!! to qaRun.id!!
+    }
+
+    /** `qa_run`이 생기기 전의 단독 실행(하위호환) qa_try 하나. */
+    private suspend fun seedStandaloneQaTry(): Long {
+        val now = Instant.now()
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))!!
+        val instance = gameInstanceRepository.save(
+            GameInstanceEntity(
+                projectId = projectId,
+                name = "instance",
+                platform = "UNITY",
+                sdkUuid = UUID.randomUUID().toString(),
+                createdAt = now,
+                updatedAt = now
+            )
+        )!!
+        return qaTryRepository.save(
+            QaTryEntity(
+                testScenarioId = scenario.id!!,
+                gameInstanceId = instance.id!!,
+                startedBy = userId,
+                status = "COMPLETED",
+                startedAt = now,
+                completedAt = now
+            )
+        )!!.id!!
+    }
 
     private suspend fun givenKnowledge(
         summary: String,
@@ -451,7 +586,7 @@ class KnowledgeGraphViewIntegrationTest {
 
     /** 질의 수를 세는 리포지토리를 끼운 서비스. 나머지 협력자는 컨테이너가 준 진짜 빈이다. */
     private fun countingView(counting: CountingAnchorRepository) =
-        KnowledgeGraphViewService(knowledgeRepository, counting, graphService, accessService)
+        KnowledgeGraphViewService(knowledgeRepository, counting, graphService, accessService, qaTryRepository)
 
     private suspend fun signIn(seed: String = "graph-view"): AuthenticatedUser =
         oauthUserService.upsert(

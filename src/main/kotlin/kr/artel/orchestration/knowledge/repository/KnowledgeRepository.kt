@@ -1,8 +1,10 @@
 package kr.artel.orchestration.knowledge.repository
 
 import kotlinx.coroutines.flow.Flow
+import kr.artel.orchestration.knowledge.entity.KnowledgeDocumentNodeSql
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeScopeSql
+import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 
@@ -102,4 +104,78 @@ interface KnowledgeRepository : CoroutineCrudRepository<KnowledgeEntity, Long> {
         """
     )
     suspend fun findVisibleByIdIncludingDeleted(id: Long, projectId: Long, scopeId: Long?): KnowledgeEntity?
+
+    /**
+     * 한 문서가 만든 baseline knowledge 행(ARTEL-728). 문서를 지울 때 함께 소프트삭제할 대상이다.
+     *
+     * `scope_id IS NULL`을 고정으로 건다 — 문서 추출은 언제나 [KnowledgeSource]가 `DOCS`고 스코프는
+     * `KnowledgeScope.PRODUCTION`으로 고정이다([kr.artel.orchestration.knowledge.service.DocumentKnowledgeExtractionService]
+     * 참조). 그러니 이 조회는 다른 조회처럼 `scopeId` 파라미터로 스코프를 고르지 않는다 — 스코프 런이
+     * 이 baseline을 가리려고 만든 그림자 행은 그 스코프 자신의 상태이지 문서의 상태가 아니다. 문서를
+     * 지운다고 그림자까지 지우면 그 스코프의 실험 결과가 문서 삭제라는 무관한 사건에 휘둘린다
+     * (그림자 정리는 ARTEL-728의 범위 밖이다).
+     */
+    @Query(
+        """
+        SELECT * FROM knowledge
+         WHERE project_id = :projectId
+           AND source = 'DOCS'
+           AND source_id = :documentId
+           AND scope_id IS NULL
+           AND deleted_at IS NULL
+        """
+    )
+    fun findBaselineByDocumentId(projectId: Long, documentId: Long): Flow<KnowledgeEntity>
+
+    /**
+     * 이 문서의 baseline 문서 node(ARTEL-748). 있으면 재사용하고 없으면
+     * [kr.artel.orchestration.knowledge.service.KnowledgeService]가 새로 만든다 — 재적재해도
+     * 문서 node가 하나여야 하기 때문이다.
+     *
+     * 문서 node와 그 배치의 항목은 `source`/`source_id`가 완전히 같아 그 값만으로는 구분할 수
+     * 없다. 술어는 [KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE] 하나에서 온다 — 그 KDoc이 이유를
+     * 적어 뒀다.
+     *
+     * `scope_id IS NULL`을 고정으로 건다. 문서 적재는 언제나 baseline이다
+     * ([findBaselineByDocumentId]와 같은 이유).
+     *
+     * **`LIMIT 1`을 반드시 건다.** 이 질의는 단건 반환 타입([KnowledgeEntity]?)이라 행이 둘이면
+     * R2DBC가 예외를 던지고, 그 예외는 적재 경로뿐 아니라 문서 삭제 경로까지 깨뜨린다. 동시에
+     * 같은 문서를 두 번 재적재하면 문서 node가 실제로 둘 생길 수 있는데(유일 제약을 두지 않기로
+     * 했다 — `KnowledgeService.store` KDoc 참조), 그런 상태에서도 읽기·삭제는 죽지 않아야 한다.
+     * `ORDER BY id`로 항상 같은 행(가장 먼저 만들어진 것)을 골라 결과가 호출마다 흔들리지 않게 한다.
+     */
+    @Query(
+        """
+        SELECT * FROM knowledge
+         WHERE project_id = :projectId
+           AND source = 'DOCS'
+           AND source_id = :documentId
+           AND scope_id IS NULL
+           AND deleted_at IS NULL
+           AND ${KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE}
+         ORDER BY id
+         LIMIT 1
+        """
+    )
+    suspend fun findDocumentNode(projectId: Long, documentId: Long): KnowledgeEntity?
+
+    /**
+     * 이 id 의 행이 문서 node 인가(ARTEL-748, ARTEL-753). [KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE]
+     * 판정 하나만 쓴다 — 항목 단건 조회 API 가 이 값으로 "게임 지식"과 "문서 자체를 가리키는
+     * 구조적 표지"를 갈라, 문서 node 를 단건으로 읽는 사람이 게임 지식으로 착각하지 않게 한다.
+     *
+     * `FROM knowledge` 하나뿐이라 술어의 별칭 없는 `id`는 이 테이블의 `id`로 풀린다 —
+     * [KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE]의 KDoc이 정확히 이 모양을 전제로 쓰라고 적어 뒀다.
+     */
+    @Query(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM knowledge
+             WHERE id = :id
+               AND ${KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE}
+        )
+        """
+    )
+    suspend fun isDocumentNode(id: Long): Boolean
 }

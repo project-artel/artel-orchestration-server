@@ -90,7 +90,7 @@ class OAuthUserService(
      * 쓰는 다른 제공자로 가입하는 것은 막을 일이 아니고([upsert]가 자동 연결을 거부하는 것과 같은
      * 이유로 두 계정이다), 그 사람은 계정 설정에서 다시 확인하면 된다 — 그때 409로 답한다.
      *
-     * 마이그레이션 `V81`이 기존 행을 옮길 때 쓴 규칙과 같다. 먼저 온 계정이 주소를 갖는다.
+     * 마이그레이션 `V85`가 기존 행을 옮길 때 쓴 규칙과 같다. 먼저 온 계정이 주소를 갖는다.
      */
     private suspend fun newIdentityFor(
         identity: OAuthIdentity,

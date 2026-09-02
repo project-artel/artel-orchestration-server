@@ -18,6 +18,10 @@ import java.time.Instant
  * [tracker]는 이 결함이 외부 이슈 tracker 로 나갔는지다(ARTEL-671). 프로젝트에 `link` 가 없거나
  * 아직 내보내지 않았으면 null 이다 — 이 목록과 실행 단위 목록이 같은 조립 경로를 지나므로 양쪽에
  * 함께 실린다.
+ *
+ * [qaRunId]는 이 이슈를 남긴 try 가 속한 부모 `qa_run`(ARTEL-722). `IssueEntity` 는 [qaTryId] 만
+ * 들고 있어 매 페이지 배치 조회로 얻는다 — [tracker] 와 같은 자리, 같은 이유다. `qa_run` 이 생기기
+ * 전의 단독 실행(하위호환) try 가 남긴 이슈는 null 이다.
  */
 data class IssueResponse(
     val id: String,
@@ -30,7 +34,8 @@ data class IssueResponse(
     val createdAt: Instant?,
     val resolvedAt: Instant?,
     val resolvedBy: String?,
-    val tracker: IssueTrackerResponse? = null
+    val tracker: IssueTrackerResponse? = null,
+    val qaRunId: String? = null
 )
 
 /**

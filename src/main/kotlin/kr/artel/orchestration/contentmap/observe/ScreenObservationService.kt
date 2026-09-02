@@ -71,10 +71,21 @@ import java.time.Clock
  *   ([SceneEdgeRepository.verifyByScenePair] 참고)
  * - `TransitionKind.AUTO` 를 **한 번도 내지 않는다**. 아래 [kindOf] 참고
  *
+ * ## 근거가 모르는 씬도 받는다
+ *
+ * `pulse` 가 지도에 없는 씬을 대면 그 씬을 `origin='observed'` 로 만들고 나머지는 `evidence` 씬과
+ * 똑같이 돈다([sceneIdOf]). 지도 자체가 없으면 그것부터 `rooted_by='observation'` 으로 세운다
+ * ([rootedMapId]) — 그러지 않으면 근거 문서가 아예 없는 빌드에서 씬을 만들 기회조차 없다
+ * (ARTEL-689).
+ *
  * ## 실패를 삼킨다
  *
  * `pulse` 는 관측 채널이지 런의 전제가 아니다(`QaReadingsService` 와 같은 판단). 화면 적재가
  * 실패했다고 `pulse` 중계가 끊기면, 화면을 못 만드는 게임에서 QA 자체가 눈을 잃는다.
+ *
+ * 씬을 만들다 실패해도 같다. [observe] 의 catch 가 그것까지 삼키므로 런은 계속된다. 기대되는
+ * 실패 둘은 애초에 던지지 않는다 — 거절된 이름은 그냥 돌아서고, `INSERT` 경합에 지면 이긴 쪽이
+ * 쓴 행을 다시 읽는다.
  */
 @Service
 class ScreenObservationService(
@@ -124,19 +135,15 @@ class ScreenObservationService(
         }
 
         val buildId = gameInstances.findById(gameInstanceId)?.lastGameBuildId ?: return
-        // 빌드마다 지도가 하나다(ARTEL-642). 고를 것이 없으므로 화면이 TC 가 읽는 지도와
-        // 다른 지도에 붙는 일도 없다.
-        val contentMap = contentMaps.findByGameBuildId(buildId) ?: return
-        val contentMapId = contentMap.id ?: return
 
         val fold = folds.of(gameInstanceId)
         fold.apply(reading)
 
         val sceneName = fold.scene ?: return
-        // `evidence` 가 모르는 씬에는 화면을 앉히지 않는다. `screen.scene_id` 가 NOT NULL 이고, 씬을
-        // 여기서 만들면 정적 순회가 만든 씬과 이름만 같은 행이 둘 생긴다.
-        val scene = scenes.findByContentMapIdAndName(contentMapId, sceneName) ?: return
-        val sceneId = scene.id ?: return
+        // 빌드마다 지도가 하나다(ARTEL-642). 고를 것이 없으므로 화면이 TC 가 읽는 지도와
+        // 다른 지도에 붙는 일도 없다.
+        val contentMapId = rootedMapId(buildId) ?: return
+        val sceneId = sceneIdOf(contentMapId, sceneName, fold.sceneChanged) ?: return
 
         val sceneCapabilities = capabilities.findBySceneIdOrderByIdAsc(sceneId).toList()
 
@@ -150,6 +157,74 @@ class ScreenObservationService(
             false
         }
         propose(gameInstanceId, qaRun.id, fold, whitelist, sceneId, sceneName, cappedScene)
+    }
+
+    /**
+     * 이 빌드의 지도 id. 없으면 **관측이 세운다** (ARTEL-689).
+     *
+     * ## 왜 씬만 만들어서는 부족한가
+     *
+     * `content_map` 행이 생기는 자리는 근거 문서 등록(`EvidenceDocumentService.upsertContentMap`)
+     * 하나뿐이다. 그래서 문서가 한 번도 안 올라온 빌드에는 지도가 없고, 그 빌드의 `pulse` 는 씬을
+     * 만들 기회조차 없이 여기서 돌아섰다. ARTEL-642 가 연 "QA 런만으로 지도를 만든다" 가 실제로
+     * 안 돌던 이유가 이것이라, 한 단계 위지만 같은 구멍이라 여기서 함께 막는다.
+     *
+     * ## 나중에 문서가 오면
+     *
+     * `upsertContentMap` 이 같은 행의 `rooted_by` 를 `evidence` 로 **올린다.** 내려가지는 않는다 —
+     * 한 번 근거를 가진 지도는 계속 근거를 가진 지도다. 두 경로가 이미 그렇게 맞물려 있어 여기서
+     * 더 할 것이 없다.
+     */
+    private suspend fun rootedMapId(buildId: Long): Long? {
+        contentMaps.findByGameBuildId(buildId)?.id?.let { return it }
+        contentMaps.rootByObservation(buildId)?.let { rootedId ->
+            logger.info("근거 문서 없이 관측이 지도를 세웠다 [gameBuildId={}, contentMapId={}]", buildId, rootedId)
+            return rootedId
+        }
+        // 경합에 졌다. 이긴 쪽이 쓴 행을 읽어 이어간다.
+        return contentMaps.findByGameBuildId(buildId)?.id
+    }
+
+    /**
+     * 이 `pulse` 가 댄 씬의 행 id. 지도에 없으면 `origin='observed'` 로 만든다 (ARTEL-689).
+     *
+     * ## 전에는 여기서 조용히 돌아섰다
+     *
+     * "`evidence` 가 모르는 씬에는 화면을 앉히지 않는다" 가 옛 규칙이었고, 이름만 같은 행이 둘
+     * 생기는 것을 막자는 뜻이었다. 막는 것은 `uk_scene_map_name` 이 이미 하고 있고, 적재기는 같은
+     * 이름을 만나면 그 행의 `origin` 을 `evidence` 로 올려 **같은 id 를 이어 쓴다**
+     * (`ContentMapIngestService.upsertScenes`). 그래서 행이 갈릴 자리가 없고, 돌아서서 잃던 것만
+     * 남았다 — 그 씬의 `screen` · `screen_transition` · `screen_capability` 와
+     * `SCREEN_SELECTOR_PROPOSAL` · `SCREEN_SETTLED` 프레임 전부다.
+     *
+     * ## 만들지 않는 것
+     *
+     * [ObservedSceneName] 이 정한다. 거절은 셋뿐이고 나머지 이름은 전부 통과한다 — 아는 이름만
+     * 통과시키면 문서 없는 빌드의 지도가 다시 빈다.
+     *
+     * 거절 로그를 씬이 바뀐 `pulse` 에서만 찍는다. 실측 런의 `pulse` 가 14489 개라 매번 찍으면
+     * 조용한 손실이 읽을 수 없는 소음으로 바뀔 뿐이다.
+     */
+    private suspend fun sceneIdOf(contentMapId: Long, sceneName: String, sceneChanged: Boolean): Long? {
+        scenes.findByContentMapIdAndName(contentMapId, sceneName)?.id?.let { return it }
+
+        val refusal = ObservedSceneName.refusalReason(sceneName)
+        if (refusal != null) {
+            if (sceneChanged) {
+                logger.warn("pulse 가 댄 이름을 scene 으로 만들지 않았다 [name={}]: {}", sceneName, refusal)
+            }
+            return null
+        }
+
+        scenes.insertObserved(contentMapId, sceneName)?.let { observedId ->
+            logger.info(
+                "근거에 없던 scene 을 관측으로 만들었다 [contentMapId={}, name={}, sceneId={}]",
+                contentMapId, sceneName, observedId,
+            )
+            return observedId
+        }
+        // 경합에 졌다. 이긴 쪽이 쓴 행을 읽어 이어간다.
+        return scenes.findByContentMapIdAndName(contentMapId, sceneName)?.id
     }
 
     /**

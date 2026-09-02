@@ -172,6 +172,7 @@ class ContentMapViewService(
                 id = scene.id!!,
                 name = scene.name,
                 walked = scene.walked,
+                origin = scene.origin,
                 capabilities = counts[scene.id]
                     ?.let(SceneCapabilityCountResponse::of)
                     ?: SceneCapabilityCountResponse.NONE,
@@ -360,6 +361,7 @@ class ContentMapViewService(
         allDocuments: List<ContentMapDocumentEntity>,
     ) = ContentMapSummaryResponse(
         id = contentMap.id!!,
+        rootedBy = contentMap.rootedBy,
         capture = contentMap.capture,
         schemaVersion = contentMap.schemaVersion,
         evidenceDigest = contentMap.evidenceDigest,

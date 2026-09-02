@@ -85,6 +85,15 @@ class ScreenFold {
 
     private var statsScene: String? = null
 
+    /**
+     * 마지막 [apply] 에서 씬이 바뀌었나. 런의 첫 `pulse` 도 `true` 다.
+     *
+     * 씬마다 한 번만 하고 싶은 일이 부르는 자리다. 실측 런의 `pulse` 가 14489 개라, `pulse` 마다
+     * 같은 말을 하는 로그는 사람이 읽을 수 없다.
+     */
+    var sceneChanged: Boolean = false
+        private set
+
     /** 마지막으로 굳은 `discriminator`. 같은 것이 다시 굳어도 그것은 재방문이 아니라 체류다. */
     var settled: ScreenDiscriminator? = null
         private set
@@ -109,7 +118,8 @@ class ScreenFold {
     fun apply(reading: PulseReading) {
         if (reading.whole) held.clear()
         reading.scene?.let { scene = it }
-        if (statsScene != scene) {
+        sceneChanged = statsScene != scene
+        if (sceneChanged) {
             // 통계는 씬 안에서만 뜻이 있다. 씬을 넘으면 "이 씬에서 몇 번 봤나" 가 다른 씬의 수를
             // 물려받아 답하는 쪽이 처음 보는 것을 오래된 것으로 읽는다.
             statsScene = scene

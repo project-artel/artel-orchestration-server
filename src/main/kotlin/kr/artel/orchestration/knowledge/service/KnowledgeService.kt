@@ -7,13 +7,16 @@ import kr.artel.orchestration.knowledge.dto.KnowledgeListResponse
 import kr.artel.orchestration.knowledge.dto.KnowledgeMutationRequest
 import kr.artel.orchestration.knowledge.dto.KnowledgeResponse
 import kr.artel.orchestration.knowledge.entity.KnowledgeAnchorEntity
+import kr.artel.orchestration.knowledge.entity.KnowledgeEdgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEventEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEventType
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.entity.KnowledgeSource
 import kr.artel.orchestration.knowledge.entity.KnowledgeTag
+import kr.artel.orchestration.knowledge.entity.PART_OF_RELATION
 import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
+import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeEventRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
@@ -66,6 +69,7 @@ class KnowledgeService(
     private val anchorRepository: KnowledgeAnchorRepository,
     private val embeddingRepository: KnowledgeEmbeddingRepository,
     private val eventRepository: KnowledgeEventRepository,
+    private val edgeRepository: KnowledgeEdgeRepository,
     private val transactionalOperator: TransactionalOperator,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
@@ -79,8 +83,16 @@ class KnowledgeService(
      * 저장과 CREATE 이벤트 기록은 한 트랜잭션이다. 배치가 부분 저장되는 실패 모드는 원래도
      * 없었고(`saveAll` 한 번), 실패는 호출자가 이미 삼켜 `parse_status=FAILED`로 남긴다.
      *
+     * **`source`가 [KnowledgeSource.DOCS]면 항목마다 문서 node로 향하는 `PART_OF` edge를 함께
+     * 만든다(ARTEL-748).** 자세한 내용은 [linkItemsToDocumentNode]에 있다. 유효 항목이 하나도
+     * 없어 위 early return을 타면 문서 node도 edge도 만들지 않는다 — 항목이 하나도 안 매달린
+     * 문서 node는 그래프에 남은 외톨이 점이라 만들 이유가 없다.
+     *
      * @param scope 이 배치가 들어갈 스코프. 문서 추출 경로는 언제나 [KnowledgeScope.PRODUCTION]이고
      *   (사람이 올린 문서는 실험의 산물이 아니다), QA 경로는 그 런의 스코프다.
+     * @param documentFileName `source`가 [KnowledgeSource.DOCS]일 때만 쓰는 문서 node의 `summary`.
+     *   그 경우 필수다 — 없이 문서 node를 만들면 `summary`를 지어내야 하고, 그것은 호출자의
+     *   버그이지 사용자 입력 문제가 아니다. QA 경로는 문서 node가 없으므로 그냥 null이다.
      */
     suspend fun store(
         projectId: Long,
@@ -88,7 +100,8 @@ class KnowledgeService(
         source: KnowledgeSource,
         sourceId: Long?,
         contentHash: String?,
-        items: List<KnowledgeIngestItem>
+        items: List<KnowledgeIngestItem>,
+        documentFileName: String? = null
     ) {
         val rows = items.mapNotNull { toEntity(projectId, scope, source, sourceId, contentHash, it) }
         if (rows.isEmpty()) {
@@ -105,7 +118,95 @@ class KnowledgeService(
             // saveAll은 콜드 Flow라 반드시 소비해야 실제 저장이 일어난다.
             val saved = knowledgeRepository.saveAll(rows).toList()
             eventRepository.saveAll(saved.map { contentEvent(it, KnowledgeEventType.CREATE, qaTryId) }).toList()
+            if (source == KnowledgeSource.DOCS) {
+                val documentId = requireNotNull(sourceId) { "DOCS 배치는 sourceId(documentId)가 필요합니다." }
+                val fileName = requireNotNull(documentFileName) { "DOCS 배치는 documentFileName이 필요합니다." }
+                linkItemsToDocumentNode(projectId, scope, documentId, fileName, contentHash, saved)
+            }
         }
+    }
+
+    /**
+     * DOCS 배치가 저장된 뒤, 문서 node를 찾거나 만들고 방금 저장한 항목마다 `PART_OF` edge를
+     * 잇는다(ARTEL-748). 호출자([store])의 트랜잭션 안에서 돈다.
+     *
+     * edge는 **이번 배치에서 방금 저장된 항목에만** 건다. 앞선 적재의 항목은 이미 자기 edge를
+     * 갖고 있고, 다시 걸면 `uq_knowledge_edge_live`에 걸린다(이미 적재된 기존 항목의 소급 연결은
+     * 이 이슈의 non-goal이다).
+     */
+    private suspend fun linkItemsToDocumentNode(
+        projectId: Long,
+        scope: KnowledgeScope,
+        documentId: Long,
+        fileName: String,
+        contentHash: String?,
+        items: List<KnowledgeEntity>
+    ) {
+        val documentNode = knowledgeRepository.findDocumentNode(projectId, documentId)
+            ?: createDocumentNode(projectId, scope, documentId, fileName, contentHash)
+        val documentNodeId = requireNotNull(documentNode.id)
+        val edges = items.map { item ->
+            KnowledgeEdgeEntity(
+                projectId = projectId,
+                scopeId = scope.id,
+                fromKnowledgeId = requireNotNull(item.id),
+                toKnowledgeId = documentNodeId,
+                relation = PART_OF_RELATION,
+                note = DOCUMENT_PART_OF_NOTE,
+                createdByQaTryId = null
+            )
+        }
+        // saveAll은 콜드 Flow라 반드시 소비해야 실제 저장이 일어난다(knowledgeRepository.saveAll과 같다).
+        edgeRepository.saveAll(edges).toList()
+    }
+
+    /**
+     * 문서 node를 새로 만든다. `findDocumentNode`가 이미 없다고 확인한 뒤에만 불린다.
+     *
+     * - `source`/`source_id`는 그 배치의 항목들과 완전히 같다(`DOCS`, `project_document.id`) —
+     *   문서 node도 그 문서에서 온 knowledge 행이라는 것이 이 값의 뜻이다.
+     * - `summary`는 파일 이름이다(이슈가 정한 값).
+     * - `tag`는 기존 다섯 값 중 [KnowledgeTag.MISC]를 쓴다. 이 node는 topic 분류 대상인 게임
+     *   지식이 아니라 구조적 표지라 그나마 제일 안 틀린 값이다. [KnowledgeTag]의 KDoc은 "MISC는
+     *   검색 대상에 남긴다"고 적어 뒀지만, 이 node의 검색 배제는 tag가 아니라
+     *   [kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository]의 백필 시딩
+     *   배제로 걸리므로 그 문서와 충돌하지 않는다.
+     * - `description`(이슈가 구현에 맡긴 값)에는 파일 이름·documentId를 반복하지 않는다 — 이미
+     *   `summary`/`source_id` 컬럼에 있다. 대신 **이 node의 역할**을 적는다: 문서에서 뽑아낸
+     *   사실이 아니라 그 문서의 항목들이 매달리는 구조적 표지라는 것. 그래야 이 node를 단건으로
+     *   읽는 사람(항목 단건 조회 API, ARTEL-753)이 게임 지식으로 착각하지 않는다.
+     * - `content_hash`는 배치와 같은 값을 쓴다 — 항목들과 같은 취급이다.
+     *
+     * **문서 node를 새로 만들 때 `knowledge_event` CREATE 이벤트를 같은 트랜잭션에서 함께
+     * 남긴다.** 이 클래스의 불변식이 "행 갱신과 이벤트 삽입은 반드시 같은 트랜잭션"이고, 빠뜨리면
+     * 이 행만 `knowledge.version = max(event.version)`이 깨진 채 굳는다. `qaTryId`는 null이다 —
+     * 문서 경로에는 런이 없다.
+     */
+    private suspend fun createDocumentNode(
+        projectId: Long,
+        scope: KnowledgeScope,
+        documentId: Long,
+        fileName: String,
+        contentHash: String?
+    ): KnowledgeEntity {
+        val saved = knowledgeRepository.save(
+            KnowledgeEntity(
+                projectId = projectId,
+                scopeId = scope.id,
+                source = KnowledgeSource.DOCS.name,
+                sourceId = documentId,
+                contentHash = contentHash,
+                tag = KnowledgeTag.MISC.name,
+                summary = fileName,
+                description = DOCUMENT_NODE_DESCRIPTION
+            )
+        )
+        eventRepository.save(contentEvent(saved, KnowledgeEventType.CREATE, qaTryId = null))
+        logger.info(
+            "문서 node 생성: id={}, project={}, document={}, fileName={}",
+            saved.id, projectId, documentId, fileName
+        )
+        return saved
     }
 
     /** 유효하지 않은 항목은 null을 돌려 배치에서 제외한다. */
@@ -424,6 +525,68 @@ class KnowledgeService(
     }
 
     /**
+     * 문서 한 건이 만든 baseline knowledge를 전부 소프트삭제한다(ARTEL-728, ARTEL-748).
+     *
+     * [KnowledgeRepository.findBaselineByDocumentId]가 이미 `source = 'DOCS'`,
+     * `scope_id IS NULL`, `deleted_at IS NULL`을 걸어 대상만 돌려주므로, 여기서는 그 각 행에
+     * [softDeleteFromQaTry]의 스코프 없는(운영) 갈래와 같은 모양으로 `deleted_at`을 찍고 DELETE
+     * 이벤트를 남긴다. 스코프 런의 그림자 처리는 이 경로에 없다 — 문서가 지운 것은 baseline
+     * 뿐이고, 스코프가 만든 그림자는 그 스코프 자신의 상태라 함께 지우지 않는다(리포지토리
+     * KDoc 참조).
+     *
+     * **문서 node 자신도 이 [rows]에 이미 들어 있다** — 문서 node도 `source`/`source_id`/`scope_id`/
+     * `deleted_at` 조건을 항목과 똑같이 만족하는 knowledge 행이라, 위 루프가 별도 분기 없이
+     * 함께 지운다. 이 함수가 따로 처리해야 하는 것은 **그 node를 향한 `PART_OF` edge**뿐이다 —
+     * knowledge 소프트삭제는 `knowledge_edge` 행을 건드리지 않으므로, 문서 node가 사라진 뒤에도
+     * edge는 살아있는 채로 남아 지워진 node를 계속 가리키게 된다.
+     *
+     * `deletedByQaTryId`는 채우지 않는다. 이 삭제를 일으킨 것은 QA 런이 아니라 문서 삭제
+     * 요청이다. [KnowledgeEventEntity.qaTryId]도 같은 이유로 null이다 — 그 컬럼의 KDoc이 이미
+     * "사람/문서 경로는 null"이라고 정해 두었다. DELETE 이벤트의 `version`은 현재 값을 그대로
+     * 싣는다 — 삭제는 본문을 바꾸지 않으므로 새 content 버전을 만들지 않는다. edge에는 `version`도
+     * `knowledge_event`도 없으므로(ARTEL-274) 그 부분은 knowledge와 똑같이 따라 하지 않는다 —
+     * `deletedAt`만 채운다([KnowledgeGraphService.unlink]의 운영 갈래와 같은 모양이다).
+     *
+     * 행마다 [embeddingRepository]에서 임베딩도 버린다 — 벡터가 남아 있으면 검색이 조인 조건을
+     * 빠뜨려도 지운 항목이 되살아난다.
+     *
+     * @return 소프트삭제한 knowledge 행 수(문서 node 포함, edge 수는 포함하지 않는다).
+     */
+    suspend fun softDeleteForDocument(projectId: Long, documentId: Long): Int {
+        val deletedAt = Instant.now(clock)
+        val rows = knowledgeRepository.findBaselineByDocumentId(projectId, documentId).toList()
+        // findDocumentNode는 findBaselineByDocumentId와 별개의 질의라 이 문서에 문서 node가 없으면
+        // (예: 아직 이 브랜치 이전에 적재된 문서, 또는 항목이 하나도 없어 문서 node를 만든 적 없는
+        // 문서) null이다 — 그때는 지울 PART_OF edge도 없다.
+        val documentNodeId = knowledgeRepository.findDocumentNode(projectId, documentId)?.id
+        val edges = documentNodeId?.let { edgeRepository.findBaselinePartOfEdgesTo(projectId, it).toList() }
+            .orEmpty()
+        transactionalOperator.executeAndAwait {
+            rows.forEach { current ->
+                knowledgeRepository.save(current.copy(deletedAt = deletedAt))
+                eventRepository.save(
+                    KnowledgeEventEntity(
+                        knowledgeId = requireNotNull(current.id),
+                        projectId = current.projectId,
+                        qaTryId = null,
+                        event = KnowledgeEventType.DELETE.name,
+                        version = current.version,
+                        after = null,
+                        createdAt = deletedAt
+                    )
+                )
+                embeddingRepository.discardFor(requireNotNull(current.id))
+            }
+            edges.forEach { edge -> edgeRepository.save(edge.copy(deletedAt = deletedAt)) }
+        }
+        logger.info(
+            "문서 삭제로 knowledge 소프트삭제: project={}, document={}, 지운수={}, PART_OF edge 지운수={}",
+            projectId, documentId, rows.size, edges.size
+        )
+        return rows.size
+    }
+
+    /**
      * 이 쓰기가 원본 대신 그림자로 가야 하는가.
      *
      * 스코프 런이 baseline(`scope_id IS NULL`)을 건드릴 때만 참이다. 운영 런은 스코프가 없으니
@@ -520,6 +683,31 @@ class KnowledgeService(
             description = entity.description,
             createdAt = entity.createdAt ?: Instant.EPOCH
         )
+
+    private companion object {
+        /**
+         * 문서 node의 `description`(ARTEL-748, 이슈가 구현에 맡긴 값).
+         *
+         * 파일 이름과 documentId는 이미 `summary`/`source_id` 컬럼에 있으므로 여기서 반복하지
+         * 않는다. 대신 이 node를 단건으로 읽는 사람(항목 단건 조회 API, ARTEL-753)이 게임 지식으로
+         * 착각하지 않도록 **역할**을 적는다 — 문서에서 뽑아낸 사실이 아니라 그 항목들이 매달리는
+         * 구조적 표지라는 것.
+         */
+        const val DOCUMENT_NODE_DESCRIPTION =
+            "이 node는 문서에서 뽑아낸 사실이 아니라, 그 문서에서 추출된 knowledge 항목들이 매달리는" +
+                " 구조적 표지다. 항목마다 이 node를 향해 `PART_OF` edge를 건다."
+
+        /**
+         * 문서 적재가 만드는 `PART_OF` edge의 `note`(ARTEL-748, 이슈가 구현에 맡긴 값). `note`는
+         * NOT NULL이라 적재 경로도 값을 채워야 한다.
+         *
+         * QA 런의 note와 의도적으로 다르게 쓴다 — [kr.artel.orchestration.knowledge.entity.KnowledgeEdgeEntity.note]의
+         * KDoc대로 QA 런의 note는 **런이 주장한 이유**("왜 이 관계인가")를 진다. 문서 적재에는
+         * 주장하는 런도 이유도 없다 — 추출 파이프라인이 결정적으로 한 일이다. 그래서 이 문장은
+         * 이유가 아니라 **무엇을 했는지**를 진다.
+         */
+        const val DOCUMENT_PART_OF_NOTE = "문서 추출 파이프라인이 이 항목을 문서 node 아래에 자동으로 배치했다."
+    }
 }
 
 /**

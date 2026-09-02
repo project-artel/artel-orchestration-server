@@ -221,14 +221,20 @@ class IssueService(
         val items = if (hasMore) rows.take(size) else rows
         // 한 페이지의 tracker 상태를 한 번에 읽는다. 줄마다 조회하면 N+1 이 된다.
         val trackers = trackerSync.trackersOf(items.mapNotNull { it.id })
+        // 이슈는 qa_run_id 를 직접 들지 않는다 — 남긴 try 를 거쳐야 알 수 있다(ARTEL-722).
+        // 같은 이유로 페이지 단위 한 번만 조회한다. 빈 id 목록이면 findAllById 가 DB 를 부르지
+        // 않고 곧장 빈 결과를 준다.
+        val qaRunIds = qaTryRepository.findAllById(items.map { it.qaTryId }.distinct())
+            .toList()
+            .associate { requireNotNull(it.id) to it.qaRunId }
         return IssuePageResponse(
-            items = items.map { it.toResponse(trackers[it.id]) },
+            items = items.map { it.toResponse(trackers[it.id], qaRunIds[it.qaTryId]) },
             nextBeforeId = if (hasMore) items.lastOrNull()?.id?.toString() else null,
             hasMore = hasMore
         )
     }
 
-    private fun IssueEntity.toResponse(tracker: IssueTrackerResponse? = null) = IssueResponse(
+    private fun IssueEntity.toResponse(tracker: IssueTrackerResponse? = null, qaRunId: Long? = null) = IssueResponse(
         id = requireNotNull(id).toString(),
         qaTryId = qaTryId.toString(),
         severity = severity,
@@ -239,6 +245,7 @@ class IssueService(
         createdAt = createdAt,
         resolvedAt = resolvedAt,
         resolvedBy = resolvedBy?.toString(),
-        tracker = tracker
+        tracker = tracker,
+        qaRunId = qaRunId?.toString()
     )
 }
