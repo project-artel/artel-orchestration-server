@@ -232,6 +232,24 @@ class MapTestCaseGeneratorGoldenTest {
      * 어디서 끝나는지 알 수 없다. 같은 규칙이 `collision.gameObject.CompareTag(enemy.tag)` 를
      * `tag)` 로 만들었다 — 무엇을 견주는지가 사라진다.
      */
+    /**
+     * **한 화면 안에서 같은 이름이 두 번 나오지 않는다.**
+     *
+     * 목록에서 줄을 고르는 사람에게 이름이 전부다. 실측에서 `TurnBattleScene 에 진입해 관찰한다`
+     * 가 네 줄이었고, 보는 것은 각각 `Player.HpText` · `CombineZone/Button` ·
+     * `ProjectileAnimator...sprite` · `Enemy.HpText` 로 전부 달랐다 — 이름이 조작(또는 "그
+     * 화면에 있기")만 말하고 무엇이 되는지를 말하지 않아서다.
+     *
+     * 꼬리(`… 일 때`)가 마지막 방패다. 그것까지 붙이고도 같은 줄이 남으면 사람이 구별할 방법이
+     * 없다.
+     */
+    @Test
+    fun `한 화면 안에서 이름이 겹치지 않는다`() {
+        val twice = cases.groupBy { it.scene to it.step }.filterValues { it.size > 1 }
+
+        assertThat(twice).isEmpty()
+    }
+
     @Test
     fun `케이스 이름의 괄호가 맞는다`() {
         val broken = cases.map { it.step }

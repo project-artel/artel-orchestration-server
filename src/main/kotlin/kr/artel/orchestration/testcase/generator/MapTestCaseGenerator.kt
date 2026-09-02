@@ -85,7 +85,7 @@ class MapTestCaseGenerator(
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
             // 못 적으면 케이스가 아니다. 조작은 눌러 보면 되지만 관측은 볼 시점이 전부다.
             .filterNot {
-                it.step.contains(WATCHING) &&
+                it.watching &&
                     (it.precondition.contains(UNREADABLE) || it.expected.contains(UNREADABLE))
             }
     }
@@ -134,9 +134,10 @@ class MapTestCaseGenerator(
                     // **이름은 조작이 아니라 시험이다**([MapTestCasePhrasing.trial]). 무엇이
                     // 일어나는지는 무리가 다 모여야 알 수 있어서 여기서 짓는다. 관측은 부를 조작이
                     // 없으니 제 문장을 그대로 쓴다.
-                    step = first.act
-                        ?.let { MapTestCasePhrasing.trial(it, first.repeats, shown.mapNotNull { d -> d.does }) }
-                        ?: first.step,
+                    step = MapTestCasePhrasing.trial(
+                        first.act, first.repeats, shown.mapNotNull { d -> d.does },
+                    ),
+                    watching = first.watching,
                     // **한 기능이 내는 관측들을 함께 적는다.** 저작이 이것을 조작 하나 + 검증 여럿으로
                     // 펴고, 채점은 스텝 단위라 어느 지점이 틀렸는지는 그대로 드러난다. 구버전도 같은
                     // 자리를 ` / ` 로 잇는다.
@@ -433,7 +434,7 @@ class MapTestCaseGenerator(
         //
         // 합쳐진 줄은 `capabilityKey` 를 하나만 들어서, 나머지 조작의 효과가 저작에 닿지도 않았다.
         cases.groupBy {
-            listOf(it.scene, it.precondition, it.expected, it.step.contains(WATCHING), it.aimedAt)
+            listOf(it.scene, it.precondition, it.expected, it.watching, it.aimedAt)
         }
             .map { (_, group) ->
                 if (group.size == 1) group.single()
@@ -511,8 +512,10 @@ class MapTestCaseGenerator(
         /** 무엇을 겨누나(`control_path`). 없으면 키 입력이거나 관측이다. */
         val aimedAt: String?,
         val step: String,
-        /** 조작을 종결형·연결형 두 벌로. 관측이면 null 이고 [step] 이 이미 완성된 문장이다. */
-        val act: MapTestCasePhrasing.Act? = null,
+        /** 조작(또는 관측의 "그 화면에 있기")을 종결형·연결형 두 벌로. */
+        val act: MapTestCasePhrasing.Act,
+        /** 누를 것이 없어 보기만 하는 줄인가. */
+        val watching: Boolean = false,
         /** 끝까지 되풀이해야 닿는 자리인가(ARTEL-613). 이름을 지을 때 다시 쓴다. */
         val repeats: Boolean = false,
         /** 이 효과를 이름에 붙일 능동꼴 — `` `Map_scene` 화면으로 넘어간다 ``. */
@@ -570,8 +573,12 @@ class MapTestCaseGenerator(
             // 넘긴 값으로 바꾸고, 못 푸는 루프 변수는 빼되 그 사실을 사유로 남긴다.
             // **누를 것이 있으면 조작, 없으면 관측이다.** 행이 스스로 말하는 것이라 부르는 쪽이
             // 따로 알려 줄 것이 없다(ARTEL-681).
-            val act = if (row.actionability == NOT_A_STEP) {
-                null
+            // **누를 것이 있으면 조작, 없으면 관측이다.** 행이 스스로 말하는 것이라 부르는 쪽이
+            // 따로 알려 줄 것이 없다(ARTEL-681). 이름의 모양은 양쪽이 같다 — 관측에서는 사람이
+            // 하는 일이 "그 화면에 있는 것"뿐이라 그것이 조작 자리에 온다.
+            val watching = row.actionability == NOT_A_STEP
+            val act = if (watching) {
+                MapTestCasePhrasing.watching(row.sceneName, row.triggerRoot)
             } else {
                 MapTestCasePhrasing.act(
                     row.interaction, row.inputKey, row.controlLabel, row.controlPath,
@@ -580,14 +587,14 @@ class MapTestCaseGenerator(
             // 결과를 뺀 조작만의 문장. 이름은 [merged] 가 무리를 지은 뒤에 짓는다 — 무엇이
             // 일어나는지는 그 무리가 다 모여야 알 수 있다. 여기 것은 **갈래를 가르는 열쇠**로
             // 쓴다([branches] 가 "조작이 다르면 다른 케이스"를 이것으로 본다).
-            val step = act?.let { MapTestCasePhrasing.trial(it, repeats) }
-                ?: MapTestCasePhrasing.observation(row.sceneName, row.triggerRoot)
+            val step = MapTestCasePhrasing.trial(act, repeats)
             val settledCondition = MapTestCaseLocals.settle(situation, source, settled)
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
             MapTestCasePhrasing.expectedWithSource(effectRows, refs).map { (outcome, does, effect) ->
                 Draft(
                     capabilityKey = key,
                     act = act,
+                    watching = watching,
                     repeats = repeats,
                     does = does,
                     // 씬을 함께 든다. 한 타입이 두 씬에 놓이면 진입점이 같아도 다른 자리다 —
@@ -812,9 +819,6 @@ class MapTestCaseGenerator(
 
         /** 살아남아 거기 있을 뿐, 여기서 되는지는 아직 아무도 안 본 자리. */
         const val UNCONFIRMED_HERE = "persistent-unconfirmed"
-
-        /** 관측 문구의 표식. 조작 문구와 섞지 않으려고 본다([MapTestCasePhrasing.observation]). */
-        const val WATCHING = "관찰한다"
 
         /** 문서가 값을 못 읽은 자리에 적어 두는 글자. */
         const val UNREADABLE = "(not a"

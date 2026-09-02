@@ -90,11 +90,11 @@ object MapTestCasePhrasing {
      *
      * 모르는 뿌리는 이름을 그대로 적는다. 지어내지 않는다.
      */
-    fun observation(scene: String, triggerRoot: String?): String = when (triggerRoot) {
-        "Start", "Awake", "OnEnable" -> "$scene 에 진입해 관찰한다"
-        "Update", "FixedUpdate", "LateUpdate" -> "$scene 에 머무르며 관찰한다"
-        null -> "$scene 에서 관찰한다"
-        else -> "$scene 에서 `$triggerRoot` 이후 관찰한다"
+    fun watching(scene: String, triggerRoot: String?): Act = when (triggerRoot) {
+        "Start", "Awake", "OnEnable" -> Act(scene, "에 진입해 관찰한다", "에 진입하면")
+        "Update", "FixedUpdate", "LateUpdate" -> Act(scene, "에 머무르며 관찰한다", "에 머무르면")
+        null -> Act(scene, "에서 관찰한다", "에서는")
+        else -> Act(scene, "에서 `$triggerRoot` 이후 관찰한다", "에서 `$triggerRoot` 이후")
     }
 
     /**
@@ -103,7 +103,10 @@ object MapTestCasePhrasing {
      * 활용을 규칙으로 만들지 않는다. "누른다"의 어간은 "누르-"라 어미만 떼면 "누른되"가 되고,
      * 조작 문구는 키·경로·클릭이 섞여 있어 규칙 하나로 활용할 수 없다. 자리마다 두 벌을 적는다.
      *
-     * @property what 무엇을 건드리나. 없는 자리가 있다(조작 미상).
+     * 관측도 같은 것을 쓴다([watching]). 거기서는 사람이 하는 일이 "그 화면에 있는 것"뿐이라
+     * [what] 이 씬이고 [joins] 가 `에 진입하면` 이다 — 이름의 모양은 조작과 하나로 둔다.
+     *
+     * @property what 무엇을 건드리나(관측이면 어느 화면인가). 없는 자리가 있다(조작 미상).
      * @property ends 문장을 끝내는 꼴 — `누른다`
      * @property joins 뒤에 결과를 잇는 꼴 — `눌러`. 없으면 결과를 줄표로 잇는다.
      */
