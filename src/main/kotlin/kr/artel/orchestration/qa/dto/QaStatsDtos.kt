@@ -16,7 +16,8 @@ import java.time.Instant
  *   기준 하위다.
  */
 data class QaStatsResponse(
-    val projectId: String,
+    /** 물어본 프로젝트. 생략하고 부르면 null이고, 그때 집계는 볼 수 있는 전 프로젝트의 합이다. */
+    val projectId: String?,
     val from: Instant,
     val to: Instant,
     val total: QaStatsTotals,

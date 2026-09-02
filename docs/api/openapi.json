@@ -2801,7 +2801,7 @@
           {
             "name": "projectId",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -3820,7 +3820,7 @@
           {
             "name": "projectId",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -6422,7 +6422,6 @@
           "cellLimit",
           "cells",
           "from",
-          "projectId",
           "to",
           "total",
           "truncated"
@@ -8858,7 +8857,6 @@
           "cellLimit",
           "cells",
           "from",
-          "projectId",
           "to",
           "total",
           "truncated"

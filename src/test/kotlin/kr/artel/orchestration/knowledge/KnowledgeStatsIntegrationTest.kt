@@ -435,7 +435,91 @@ class KnowledgeStatsIntegrationTest {
         }.isInstanceOf(BadRequestException::class.java)
     }
 
+
+    // ------------------------------------------------ 프로젝트를 생략한 합산 (ARTEL-750)
+
+    /**
+     * 프로젝트를 안 주면 볼 수 있는 것을 다 더한다.
+     *
+     * 오너와 개발자를 한 테스트에 둔다. "합산이 된다" 와 "합산이 경계를 지킨다" 는 같은 질의의
+     * 앞뒤라, 나누면 조건을 통째로 지워도 한쪽은 녹색이다.
+     */
+    @Test
+    fun `프로젝트를 생략하면 볼 수 있는 것을 다 더한다`(): Unit = runBlocking {
+        createEntry(runA, "내 프로젝트의 지식")
+        seedForeignEntry()
+        val developerId = signIn(seed = "fold-developer").userId.toLong()
+        promote(developerId)
+
+        val window = Instant.now().minus(1, ChronoUnit.HOURS) to Instant.now().plus(1, ChronoUnit.HOURS)
+        val mine = statsService.stats(null, userId, window.first, window.second, 200)
+        val all = statsService.stats(null, developerId, window.first, window.second, 200)
+
+        assertThat(mine.total.entryVersions).isEqualTo(1)
+        assertThat(all.total.entryVersions).isEqualTo(2)
+    }
+
+    /** 생략한 응답의 `projectId` 는 null 이다. 아무 id 나 채우면 전체 합계가 그 하나로 읽힌다. */
+    @Test
+    fun `생략한 응답은 프로젝트 id 를 싣지 않는다`(): Unit = runBlocking {
+        createEntry(runA, "지식")
+        val window = Instant.now().minus(1, ChronoUnit.HOURS) to Instant.now().plus(1, ChronoUnit.HOURS)
+
+        assertThat(statsService.stats(null, userId, window.first, window.second, 200).projectId).isNull()
+        assertThat(statsService.stats(projectId, userId, window.first, window.second, 200).projectId)
+            .isEqualTo(projectId.toString())
+    }
+
     // --------------------------------------------------------------- helpers
+
+    /**
+     * 아무도 참여하지 않은 다른 프로젝트의 지식 한 줄. 합산이 프로젝트 경계를 어떻게 넘는지 보려면
+     * 남의 것이 하나 있어야 한다.
+     */
+    private suspend fun seedForeignEntry() {
+        val now = Instant.now()
+        val project = projectRepository.save(
+            ProjectEntity(name = "foreign-stats", genre = "ACTION", createdAt = now, updatedAt = now)
+        )!!
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        val instance = gameInstanceRepository.save(
+            GameInstanceEntity(
+                projectId = project.id!!,
+                name = "foreign-instance-${UUID.randomUUID().toString().take(8)}",
+                platform = "UNITY",
+                sdkUuid = UUID.randomUUID().toString(),
+                createdAt = now,
+                updatedAt = now
+            )
+        )!!
+        val foreignRun = qaTryRepository.save(
+            QaTryEntity(
+                testScenarioId = scenario.id!!,
+                gameInstanceId = instance.id!!,
+                startedBy = userId,
+                status = "COMPLETED",
+                model = "openai/gpt-foreign",
+                reasoningEffort = "high",
+                promptVersion = "v1",
+                agentArch = "single",
+                startedAt = now,
+                completedAt = now
+            )
+        )!!.id!!
+        knowledgeService.createFromQaTry(
+            project.id!!, KnowledgeScope.PRODUCTION, foreignRun,
+            KnowledgeMutationRequest(tag = "RULE", summary = "남의 지식", description = "d")
+        )
+    }
+
+    /** `app_user.platform_role`을 올린다. 주는 화면도 API도 없어 테스트도 행을 직접 고친다. */
+    private suspend fun promote(id: Long) {
+        val user = appUserRepository.findById(id)!!
+        appUserRepository.save(
+            user.copy(platformRole = PlatformRole.DEVELOPER.name, updatedAt = Instant.now())
+        )
+    }
+
 
     private suspend fun aggregate() = statsRepository.aggregateByRunConfig(
         projectId = projectId,
