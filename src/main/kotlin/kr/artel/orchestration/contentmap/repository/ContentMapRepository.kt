@@ -201,6 +201,15 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
     fun findSceneObjectNames(contentMapId: Long): Flow<ContentMapScreenElement>
 
     /**
+     * 이 지도가 **마지막으로 다시 앉은 때**. 적재기가 지도를 갈아 끼우면 값이 움직인다.
+     *
+     * 읽어 둔 조건 트리를 다시 써도 되는지 묻는 데 쓴다([CapabilityConditionReader]). 419행을
+     * 다시 읽어 견주는 대신 이 한 칸만 본다.
+     */
+    @Query("SELECT updated_at::text FROM content_map WHERE id = :contentMapId")
+    suspend fun findUpdatedAt(contentMapId: Long): String?
+
+    /**
      * **누를 것은 없고 볼 것은 있는 기능**(ARTEL-681). 위 창구가 `not-a-step` 을 거르므로 따로 낸다.
      *
      * 게임이 스스로 하는 일이다 — 화면을 열면 무엇이 보이나, 값이 이러하면 무엇이 보이나. 지금까지
