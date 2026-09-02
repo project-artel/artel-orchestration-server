@@ -29,7 +29,7 @@ data class KnowledgeGraphViewResponse(
  *
  * 본문(`description`)은 싣지 않는다. 노드 수백 개의 본문을 한 번에 내리면 응답이 화면이 쓰는 양의
  * 몇 배가 되고, 화면은 어차피 요약만 그린다. 본문이 필요한 순간은 사용자가 노드 하나를 고른
- * 뒤이고 그때는 단건 조회가 있다.
+ * 뒤이고 그때는 단건 조회가 있다([KnowledgeDetailResponse], ARTEL-753).
  *
  * @property createdByQaTryId 이 항목을 만든 QA 런. 사람/문서 경로면 null이다. 화면이 "어느 런이
  *   만든 지식인가"로 색을 나누는 근거이며, 축별 지표(`knowledge_entry_facts`)와 같은 귀속이다.

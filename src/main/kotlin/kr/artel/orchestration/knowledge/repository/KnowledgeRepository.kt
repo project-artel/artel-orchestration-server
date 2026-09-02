@@ -159,4 +159,23 @@ interface KnowledgeRepository : CoroutineCrudRepository<KnowledgeEntity, Long> {
         """
     )
     suspend fun findDocumentNode(projectId: Long, documentId: Long): KnowledgeEntity?
+
+    /**
+     * 이 id 의 행이 문서 node 인가(ARTEL-748, ARTEL-753). [KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE]
+     * 판정 하나만 쓴다 — 항목 단건 조회 API 가 이 값으로 "게임 지식"과 "문서 자체를 가리키는
+     * 구조적 표지"를 갈라, 문서 node 를 단건으로 읽는 사람이 게임 지식으로 착각하지 않게 한다.
+     *
+     * `FROM knowledge` 하나뿐이라 술어의 별칭 없는 `id`는 이 테이블의 `id`로 풀린다 —
+     * [KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE]의 KDoc이 정확히 이 모양을 전제로 쓰라고 적어 뒀다.
+     */
+    @Query(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM knowledge
+             WHERE id = :id
+               AND ${KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE}
+        )
+        """
+    )
+    suspend fun isDocumentNode(id: Long): Boolean
 }
