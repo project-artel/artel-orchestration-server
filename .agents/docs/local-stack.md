@@ -55,6 +55,44 @@ docker run -d --name artel-local-redis -p 6379:6379 redis:7-alpine
 기동 완료는 로그의 `Started ArtelOrchestrationApplicationKt`로 확인한다. 그 앞에
 `Successfully applied N migrations`가 함께 나온다.
 
+## 화면을 붙일 때 — CORS origin
+
+**`ARTEL_ALLOWED_ORIGINS` 를 안 주면 화면이 서버를 하나도 못 부른다.** 서버는 멀쩡히 뜨고
+`curl` 도 다 되는데 브라우저만 이렇게 막는다.
+
+```
+Access to fetch at 'http://localhost:8080/api/auth/me' from origin 'http://localhost:5174'
+has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present
+```
+
+`application.yml` 의 `artel.auth.allowed-origins` 기본값이 배포 도메인 넷(`home.stage.artel.kr`,
+`artel.kr`, `www.artel.kr`, `admin.artel.kr`)뿐이고 `localhost` 가 없기 때문이다. 그 기본값은
+배포에서 그대로 쓰이므로 거기에 `localhost` 를 섞지 않는다 — 로컬은 `.env` 로 덮는다.
+
+```bash
+ARTEL_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:5174
+```
+
+5173 은 artel-home, 5174 는 admin-page 다. 둘 중 하나만 띄울 것이면 그것만 적어도 된다.
+`allowCredentials=true` 라 `*` 는 쓸 수 없다(`SecurityConfig.corsConfigurationSource`).
+
+## 포트를 옮겨 띄울 때
+
+8080 이 이미 다른 브랜치의 서버에 잡혀 있으면 포트를 옮긴다. 내부 API 포트도 함께 옮겨야
+`/internal/**` 이 뜬다.
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.jvmArguments="-Dserver.port=8090 -Dartel.internal-api.port=8091"
+```
+
+이때 함께 바꿀 것이 둘 있다.
+
+- **화면 쪽 `VITE_ORCHESTRATION_URL`.** artel-home 과 admin-page 둘 다 `http://localhost:8080` 을
+  기본으로 본다. `VITE_ORCHESTRATION_URL=http://localhost:8090 npm run dev` 로 띄운다
+- **DB.** 브랜치마다 마이그레이션 번호가 다르므로, 다른 브랜치의 서버가 같은 DB 를 보고 있으면
+  이쪽 Flyway 가 그 서버 밑에서 스키마를 올려 버린다. `CREATE DATABASE artel_<브랜치>` 로 따로
+  만들고 `.env` 의 `DB_NAME` 을 그것으로 둔다
+
 ## 선택 — 무엇을 확인하느냐에 달렸다
 
 없어도 서버는 뜬다. 해당 기능을 건드리지 않으면 켤 필요가 없다.
