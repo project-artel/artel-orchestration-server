@@ -5,8 +5,10 @@ import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.auth.dto.AuthUserResponse
 import kr.artel.orchestration.auth.dto.LinkedIdentityResponse
 import kr.artel.orchestration.auth.dto.UpdateLocaleRequest
+import kr.artel.orchestration.auth.dto.UpdateProfileRequest
 import kr.artel.orchestration.auth.config.AuthCookies
 import kr.artel.orchestration.auth.config.AuthProperties
+import kr.artel.orchestration.auth.entity.MAX_NICKNAME_LENGTH
 import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthUserService
@@ -99,11 +101,48 @@ class AuthController(
             ?: throw UnauthorizedException()
     }
 
+    /**
+     * nickname을 바꾸고 바뀐 프로필을 돌려준다.
+     *
+     * user_tag는 서버가 배정한다 — 요청에 담을 수 없다. 배정된 번호를 클라이언트가 알아야 하므로
+     * updateLocale과 달리 204가 아니라 200으로 프로필 전체를 싣는다. `GET /api/auth/me`를 한 번 더
+     * 부르지 않아도 된다.
+     */
+    @PutMapping("/me/profile")
+    suspend fun updateProfile(
+        @AuthenticationPrincipal jwt: Jwt,
+        @RequestBody request: UpdateProfileRequest
+    ): AuthUserResponse {
+        val nickname = normalizeNickname(request.nickname)
+        val session = sessionUserResolver.resolve(jwt)
+            ?: throw UnauthorizedException()
+        // me()와 같은 이유: 가리키는 사용자가 없는 토큰은 유효한 세션이 아니다.
+        return oauthUserService.updateProfile(session.userId, nickname)?.toResponse()
+            ?: throw UnauthorizedException()
+    }
+
+    /**
+     * 앞뒤 공백을 지운다. 이름은 비울 수 없으므로 비어 있거나 공백뿐이면 거절한다 — 사용자는
+     * 언제나 이름을 하나 가지고 있고, 지우는 것은 이 API가 할 수 있는 일이 아니다.
+     */
+    private fun normalizeNickname(nickname: String?): String {
+        val trimmed = nickname?.trim()
+        if (trimmed.isNullOrEmpty()) {
+            throw BadRequestException("닉네임은 비울 수 없습니다.", code = "invalid_nickname")
+        }
+        if (trimmed.length > MAX_NICKNAME_LENGTH) {
+            throw BadRequestException("닉네임은 $MAX_NICKNAME_LENGTH 자를 넘을 수 없습니다.", code = "invalid_nickname")
+        }
+        return trimmed
+    }
+
     private fun UserProfile.toResponse() = AuthUserResponse(
         id = userId,
         displayName = displayName,
         email = email,
         locale = locale,
+        nickname = nickname,
+        userTag = userTag,
         identities = identities.map {
             LinkedIdentityResponse(
                 provider = it.provider,

@@ -686,6 +686,36 @@
         }
       }
     },
+    "/api/auth/me/profile": {
+      "put": {
+        "tags": [
+          "auth-controller"
+        ],
+        "operationId": "updateProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/me/locale": {
       "put": {
         "tags": [
@@ -705,6 +735,40 @@
         "responses": {
           "204": {
             "description": "No Content"
+          }
+        }
+      }
+    },
+    "/internal/test-cases/content-maps/{contentMapId}/regenerate": {
+      "post": {
+        "tags": [
+          "map-test-case-regenerate-controller"
+        ],
+        "operationId": "regenerate",
+        "parameters": [
+          {
+            "name": "contentMapId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -3784,7 +3848,8 @@
             "type": "string",
             "enum": [
               "ACTION",
-              "GAP"
+              "GAP",
+              "OPENING"
             ]
           },
           "step_source_capability_id": {
@@ -4073,6 +4138,72 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "properties": {
+          "nickname": {
+            "type": "string"
+          }
+        }
+      },
+      "AuthUserResponse": {
+        "required": [
+          "displayName",
+          "id",
+          "identities",
+          "nickname",
+          "userTag"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "userTag": {
+            "type": "string"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkedIdentityResponse"
+            }
+          }
+        }
+      },
+      "LinkedIdentityResponse": {
+        "required": [
+          "displayName",
+          "login",
+          "provider"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "login": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "avatarUrl": {
+            "type": "string"
           }
         }
       },
@@ -4999,7 +5130,8 @@
             "type": "string",
             "enum": [
               "ACTION",
-              "GAP"
+              "GAP",
+              "OPENING"
             ]
           },
           "step_source_capability_id": {
@@ -7012,8 +7144,10 @@
         "required": [
           "displayName",
           "joinedAt",
+          "nickname",
           "role",
-          "userId"
+          "userId",
+          "userTag"
         ],
         "type": "object",
         "properties": {
@@ -7024,6 +7158,12 @@
             "type": "string"
           },
           "email": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "userTag": {
             "type": "string"
           },
           "role": {
@@ -8305,56 +8445,6 @@
           "citationKnownTotal": {
             "type": "integer",
             "format": "int64"
-          }
-        }
-      },
-      "AuthUserResponse": {
-        "required": [
-          "displayName",
-          "id",
-          "identities"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "email": {
-            "type": "string"
-          },
-          "locale": {
-            "type": "string"
-          },
-          "identities": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LinkedIdentityResponse"
-            }
-          }
-        }
-      },
-      "LinkedIdentityResponse": {
-        "required": [
-          "displayName",
-          "login",
-          "provider"
-        ],
-        "type": "object",
-        "properties": {
-          "provider": {
-            "type": "string"
-          },
-          "login": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "avatarUrl": {
-            "type": "string"
           }
         }
       },

@@ -264,7 +264,7 @@ class SdkPerformanceIntegrationTest {
         val world = seed()
         val instance = world.instance("private")
         val run = world.startRun(instance, startedSecondsAgo = 1)
-        val stranger = id("INSERT INTO app_user(display_name) VALUES('stranger') RETURNING id")
+        val stranger = id("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('stranger', 'stranger-' || gen_random_uuid(), '0000') RETURNING id")
 
         assertThat(query.runDetail(run, stranger)).isNull()
         assertThat(query.buildTrend(world.project, world.build, stranger)).isNull()
@@ -423,7 +423,7 @@ class SdkPerformanceIntegrationTest {
 
     private suspend fun seed(): World {
         val suffix = UUID.randomUUID().toString()
-        val user = id("INSERT INTO app_user(display_name) VALUES('perf') RETURNING id")
+        val user = id("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('perf', 'perf-' || gen_random_uuid(), '0000') RETURNING id")
         val project = id("INSERT INTO project(name,genre) VALUES('perf-$suffix','OTHER') RETURNING id")
         exec("INSERT INTO project_member(project_id,app_user_id,role) VALUES($project,$user,'OWNER')")
         val build = id("INSERT INTO game_build(project_id,version) VALUES($project,'$suffix') RETURNING id")
