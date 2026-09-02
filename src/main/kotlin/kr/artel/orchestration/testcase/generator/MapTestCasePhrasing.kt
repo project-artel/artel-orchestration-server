@@ -540,7 +540,7 @@ object MapTestCasePhrasing {
         return distinct.joinToString(OR) { it.substringBefore("` ") + "`" } + " " + tail
     }
 
-    /** 되돌아가는 갈래를 다 돌고 나온 자리(ARTEL-613). 몇 번인지는 지도가 말하지 않는다. */
+    /** 되돌아가는 `branch` 를 다 돌고 나온 자리(ARTEL-613). 몇 번인지는 지도가 말하지 않는다. */
     private const val REPEATEDLY = "더 진행되지 않을 때까지"
 
     private const val AND = " 그리고 "

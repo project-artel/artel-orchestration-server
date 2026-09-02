@@ -128,7 +128,7 @@ class MapTestCaseGenerator(
                 // 이 무리가 함께 서려면 참이어야 하는 것. 바깥의 `settled`(정착 인자)와 다른 값이다.
                 val groupCondition = weakest(group.map { it.condition })
                 // **이름과 기대결과가 같은 목록을 센다.** 이름의 `외 N건` 이 기대결과의 ` / ` 수와
-                // 어긋나면 읽는 사람이 하나를 못 찾는다. 같은 자리에서 한 번만 접는다.
+                // 어긋나면 읽는 사람이 하나를 못 찾는다. 같은 자리에서 한 번만 줄인다.
                 val shown = group.distinctBy { it.outcome }
                 MapTestCase(
                     capabilityKey = first.capabilityKey,
@@ -141,7 +141,7 @@ class MapTestCaseGenerator(
                     condition = groupCondition,
                     aimedAt = first.aimedAt,
                     // **이름은 조작이 아니라 시험이다**([MapTestCasePhrasing.trial]). 무엇이
-                    // 일어나는지는 무리가 다 모여야 알 수 있어서 여기서 짓는다. 관측은 부를 조작이
+                    // 일어나는지는 그 `group` 이 다 모여야 알 수 있어서 여기서 짓는다. 관측은 부를 조작이
                     // 없으니 제 문장을 그대로 쓴다.
                     step = MapTestCasePhrasing.trial(
                         first.act, first.repeats, shown.mapNotNull { d -> d.does },
@@ -528,7 +528,7 @@ class MapTestCaseGenerator(
         val watching: Boolean = false,
         /** 끝까지 되풀이해야 닿는 자리인가(ARTEL-613). 이름을 지을 때 다시 쓴다. */
         val repeats: Boolean = false,
-        /** 이 효과를 이름에 붙일 능동꼴. 무리를 지어 세려면 종류까지 들어야 한다. */
+        /** 이 효과를 이름에 붙일 능동꼴. 종류끼리 모아 세려면 그 종류까지 들어야 한다. */
         val does: MapTestCasePhrasing.Doing? = null,
         val outcome: String,
         val status: String,
@@ -596,8 +596,8 @@ class MapTestCaseGenerator(
                     row.interaction, row.inputKey, row.controlLabel, row.controlPath,
                 )
             }
-            // 결과를 뺀 조작만의 문장. 이름은 [merged] 가 무리를 지은 뒤에 짓는다 — 무엇이
-            // 일어나는지는 그 무리가 다 모여야 알 수 있다. 여기 것은 **갈래를 가르는 열쇠**로
+            // 결과를 뺀 조작만의 문장. 이름은 [merged] 가 `group` 을 지은 뒤에 짓는다 — 무엇이
+            // 일어나는지는 그것이 다 모여야 알 수 있다. 여기 것은 **`branch` 를 가르는 열쇠**로
             // 쓴다([branches] 가 "조작이 다르면 다른 케이스"를 이것으로 본다).
             val step = MapTestCasePhrasing.trial(act, repeats)
             val settledCondition = MapTestCaseLocals.settle(situation, source, settled)

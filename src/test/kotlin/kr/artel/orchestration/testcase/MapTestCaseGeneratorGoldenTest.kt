@@ -164,7 +164,7 @@ class MapTestCaseGeneratorGoldenTest {
         // 더는 놓치지 않는다. 대신 `unity-event` 와 `persistent-unconfirmed` 가 빠졌다.
         //
         // 85 → 88. **못 푼 매개변수 조건을 버리지 않는다**(ARTEL-602 의 꼬리). 호출자가 넘긴 값을
-        // 문서가 못 읽으면(`_`) 그 비교를 통째로 버렸는데, 그러면 서로 반대인 갈래가 한 줄로 접힌다 —
+        // 문서가 못 읽으면(`_`) 그 비교를 통째로 버렸는데, 그러면 서로 반대인 `branch` 가 한 줄로 합쳐진다 —
         // 실측에서 `SelectableObject.ChangeSize(bool bigSide)` 의 **키우기와 되돌리기가 한 케이스**로
         // 붙어 있었고, `damage > 0` / `damage <= 0` 도 그랬다. 값을 못 밝힌 것은 사유로 남기고
         // (`unsettable-precondition`) 조건은 코드가 부른 이름 그대로 보여 준다.
@@ -449,7 +449,7 @@ class MapTestCaseGeneratorGoldenTest {
         assertThat(fromEnding.map { it.step }.distinct()).hasSameSizeAs(fromEnding)
         // **무엇이 다른지를 도착 화면이 말한다.** 앞서는 이름이 조작뿐이라 전제에서 갈리는 비교를
         // 꼬리로 빌려 와야 했다(`StagePosition == 5 일 때`). 이름이 결과를 들고 나서는 그 꼬리가
-        // 필요 없다 — 어디로 가는지가 곧 갈래다. 전제는 사전조건 칸에 그대로 있다.
+        // 필요 없다 — 어디로 가는지가 곧 그 `branch` 다. 전제는 사전조건 칸에 그대로 있다.
         assertThat(fromEnding).allSatisfy { case ->
             assertThat(case.step).startsWith("아무 키나").contains(case.arrivesAt!!)
         }

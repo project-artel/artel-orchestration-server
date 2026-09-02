@@ -162,8 +162,9 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
     /**
      * 기능마다 **그 코드가 붙어 있는 타입**([CapabilityOwner]).
      *
-     * 효과의 대상이 `Component.` 로 시작하는 자리를 되돌리는 데 쓴다. 접힌 행도 낸다 — 효과를
-     * 빌려 오는 자리(`borrowed`)의 주인이 접힌 행일 수 있고, 그때도 이름은 그 문서가 말한 사실이다.
+     * 효과의 대상이 `Component.` 로 시작하는 자리를 되돌리는 데 쓴다. `merged_into` 로 합쳐진
+     * 행도 낸다 — 효과를 빌려 오는 자리(`borrowed`)의 주인이 그런 행일 수 있고, 그때도 이름은
+     * 그 문서가 말한 사실이다.
      */
     @Query(
         """
