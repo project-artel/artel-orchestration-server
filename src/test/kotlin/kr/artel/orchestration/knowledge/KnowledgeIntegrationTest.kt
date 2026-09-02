@@ -75,8 +75,9 @@ class KnowledgeIntegrationTest {
         sourceId: Long?,
         items: List<KnowledgeIngestItem>,
         scope: KnowledgeScope = KnowledgeScope.PRODUCTION,
-        contentHash: String? = null
-    ) = knowledgeService.store(projectId, scope, source, sourceId, contentHash, items)
+        contentHash: String? = null,
+        documentFileName: String? = null
+    ) = knowledgeService.store(projectId, scope, source, sourceId, contentHash, items, documentFileName)
 
     private suspend fun create(
         projectId: Long,
@@ -121,15 +122,19 @@ class KnowledgeIntegrationTest {
         store(
             projectId, KnowledgeSource.DOCS, 10,
             listOf(item("CONTROL", "이동", "WASD로 이동"), item("RULE", "체력", "최대 100")),
-            contentHash = "abc123"
+            contentHash = "abc123",
+            documentFileName = "기획서.pdf"
         )
 
         val all = listByFilters(projectId)
-        assertThat(all.items).hasSize(2)
-        assertThat(all.items.map { it.tag }).containsExactlyInAnyOrder("CONTROL", "RULE")
+        // DOCS 배치는 항목 2개 + 문서 node 1개(ARTEL-748)를 만든다. 문서 node의 tag는 MISC다.
+        assertThat(all.items).hasSize(3)
+        assertThat(all.items.map { it.tag }).containsExactlyInAnyOrder("CONTROL", "RULE", "MISC")
         assertThat(all.items.first { it.tag == "CONTROL" }.source).isEqualTo("DOCS")
         assertThat(all.items.first { it.tag == "CONTROL" }.sourceId).isEqualTo("10")
         assertThat(all.items.first { it.tag == "CONTROL" }.contentHash).isEqualTo("abc123")
+        // 문서 node는 파일 이름을 summary로 낸다.
+        assertThat(all.items.first { it.tag == "MISC" }.summary).isEqualTo("기획서.pdf")
     }
 
     @Test
@@ -154,20 +159,25 @@ class KnowledgeIntegrationTest {
     @Test
     fun testFiltersBySourceAndTag(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
-        store(projectId, KnowledgeSource.DOCS, 10, listOf(item("CONTROL")))
+        store(projectId, KnowledgeSource.DOCS, 10, listOf(item("CONTROL")), documentFileName = "기획서.pdf")
         store(projectId, KnowledgeSource.QA, 20, listOf(item("RULE"), item("CONTROL")))
 
         assertThat(listByFilters(projectId, source = "qa").items).hasSize(2)
-        assertThat(listByFilters(projectId, source = "docs").items).hasSize(1)
+        // DOCS 배치는 항목 1개 + 문서 node 1개(ARTEL-748)라 source 필터는 둘 다 낸다.
+        assertThat(listByFilters(projectId, source = "docs").items).hasSize(2)
         assertThat(listByFilters(projectId, tag = "control").items).hasSize(2)
         assertThat(listByFilters(projectId, source = "qa", tag = "rule").items).hasSize(1)
     }
 
+    /**
+     * 프로젝트 격리는 source와 무관하므로 QA로 심는다 — DOCS로 심으면 문서 node(ARTEL-748)까지
+     * 함께 생겨 이 테스트가 검증하려는 것과 무관한 개수 하나가 더 딸려 온다.
+     */
     @Test
     fun testProjectIsolation(): Unit = runBlocking {
         val projectA = projectSeq.incrementAndGet()
         val projectB = projectSeq.incrementAndGet()
-        store(projectA, KnowledgeSource.DOCS, 10, listOf(item("CONTROL")))
+        store(projectA, KnowledgeSource.QA, 10, listOf(item("CONTROL")))
 
         assertThat(listByFilters(projectA).items).hasSize(1)
         assertThat(listByFilters(projectB).items).isEmpty()
@@ -195,9 +205,11 @@ class KnowledgeIntegrationTest {
         val projectId = projectSeq.incrementAndGet()
         store(
             projectId, KnowledgeSource.DOCS, 10,
-            listOf(item("CONTROL", "살아있음"), item("RULE", "지워질 것"))
+            listOf(item("CONTROL", "살아있음"), item("RULE", "지워질 것")),
+            documentFileName = "기획서.pdf"
         )
-        assertThat(listByFilters(projectId).items).hasSize(2)
+        // 항목 2개 + 문서 node 1개(ARTEL-748).
+        assertThat(listByFilters(projectId).items).hasSize(3)
 
         val doomed = knowledgeRepository.findVisible(projectId, null, null, null)
             .toList()
@@ -205,11 +217,13 @@ class KnowledgeIntegrationTest {
         knowledgeRepository.save(doomed.copy(deletedAt = Instant.now()))
 
         val remaining = listByFilters(projectId).items
-        assertThat(remaining).hasSize(1)
-        assertThat(remaining.single().summary).isEqualTo("살아있음")
+        // "지워질 것"만 사라지고 "살아있음"과 문서 node는 남는다.
+        assertThat(remaining).hasSize(2)
+        assertThat(remaining.map { it.summary }).containsExactlyInAnyOrder("살아있음", "기획서.pdf")
         // 필터를 건 조회도 마찬가지여야 한다. 한 곳이라도 빠지면 삭제가 삭제가 아니게 된다.
         assertThat(listByFilters(projectId, tag = "rule").items).isEmpty()
-        assertThat(listByFilters(projectId, source = "docs").items).hasSize(1)
+        // 문서 node는 살아있으므로 source=docs는 그 node + "살아있음" 항목 2개다.
+        assertThat(listByFilters(projectId, source = "docs").items).hasSize(2)
     }
 
     // ------------------------------------------------------ 개별 생성·수정·삭제 (ARTEL-188)
@@ -337,7 +351,9 @@ class KnowledgeIntegrationTest {
     @Test
     fun `스코프 런은 baseline을 읽는다`(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
-        store(projectId, KnowledgeSource.DOCS, 10, listOf(item("CONTROL", "운영 지식")))
+        // source는 QA로 심는다 — 이 테스트는 baseline 가시성만 본다. DOCS로 심으면 문서
+        // node(ARTEL-748)까지 함께 생겨 아래 containsExactly가 그 node의 summary까지 걸린다.
+        store(projectId, KnowledgeSource.QA, 10, listOf(item("CONTROL", "운영 지식")))
 
         assertThat(visible(projectId, SCOPE_A).map { it.summary }).containsExactly("운영 지식")
     }
@@ -389,7 +405,8 @@ class KnowledgeIntegrationTest {
     @Test
     fun `스코프 런이 baseline을 지우면 그 런에서만 사라진다`(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
-        store(projectId, KnowledgeSource.DOCS, 10, listOf(item("CONTROL", "운영 지식")))
+        // source는 QA로 심는다 — `스코프 런은 baseline을 읽는다`와 같은 이유(문서 node를 피한다).
+        store(projectId, KnowledgeSource.QA, 10, listOf(item("CONTROL", "운영 지식")))
         val baseline = knowledgeRepository.findVisible(projectId, null, null, null).toList().single()
         val baselineId = requireNotNull(baseline.id)
 
@@ -415,7 +432,8 @@ class KnowledgeIntegrationTest {
     @Test
     fun `스코프 런이 baseline을 고치면 그 런에는 수정본 하나만 보인다`(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
-        store(projectId, KnowledgeSource.DOCS, 10, listOf(item("CONTROL", "옛 요약", "옛 설명")))
+        // source는 QA로 심는다 — `스코프 런은 baseline을 읽는다`와 같은 이유(문서 node를 피한다).
+        store(projectId, KnowledgeSource.QA, 10, listOf(item("CONTROL", "옛 요약", "옛 설명")))
         val baselineId = requireNotNull(
             knowledgeRepository.findVisible(projectId, null, null, null).toList().single().id
         )
@@ -446,7 +464,8 @@ class KnowledgeIntegrationTest {
     @Test
     fun `그림자를 다시 고치면 새 그림자를 만들지 않는다`(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
-        store(projectId, KnowledgeSource.DOCS, 10, listOf(item("CONTROL", "옛 요약")))
+        // source는 QA로 심는다 — `스코프 런은 baseline을 읽는다`와 같은 이유(문서 node를 피한다).
+        store(projectId, KnowledgeSource.QA, 10, listOf(item("CONTROL", "옛 요약")))
         val baselineId = requireNotNull(
             knowledgeRepository.findVisible(projectId, null, null, null).toList().single().id
         )
@@ -477,7 +496,7 @@ class KnowledgeIntegrationTest {
     @Test
     fun `가려진 baseline을 다시 건드리면 새 id를 알려 주며 거절한다`(): Unit = runBlocking {
         val projectId = projectSeq.incrementAndGet()
-        store(projectId, KnowledgeSource.DOCS, 10, listOf(item("CONTROL", "원본"), item("RULE", "지울 것")))
+        store(projectId, KnowledgeSource.DOCS, 10, listOf(item("CONTROL", "원본"), item("RULE", "지울 것")), documentFileName = "기획서.pdf")
         val rows = knowledgeRepository.findVisible(projectId, null, null, null).toList()
         val edited = requireNotNull(rows.first { it.summary == "원본" }.id)
         val doomed = requireNotNull(rows.first { it.summary == "지울 것" }.id)

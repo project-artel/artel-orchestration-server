@@ -3,7 +3,6 @@ package kr.artel.orchestration.testcase
 import com.fasterxml.jackson.databind.JsonNode
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
-import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.config.InternalApiServer
 import kr.artel.orchestration.project.FakeDocumentStorage
@@ -12,6 +11,7 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.support.testAppUser
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -172,7 +172,7 @@ class TestCaseSpecHttpIntegrationTest {
     private suspend fun newProject(): Long {
         val now = Instant.now()
         val userId = appUserRepository.save(
-            AppUserEntity(displayName = "http-spec-user", createdAt = now, updatedAt = now)
+            testAppUser("http-spec-user", now)
         ).id!!
         val projectId = projectRepository.save(
             ProjectEntity(name = "http-spec-project", genre = "ACTION", createdAt = now, updatedAt = now)

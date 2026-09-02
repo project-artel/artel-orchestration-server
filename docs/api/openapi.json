@@ -686,6 +686,36 @@
         }
       }
     },
+    "/api/auth/me/profile": {
+      "put": {
+        "tags": [
+          "auth-controller"
+        ],
+        "operationId": "updateProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/me/locale": {
       "put": {
         "tags": [
@@ -705,6 +735,40 @@
         "responses": {
           "204": {
             "description": "No Content"
+          }
+        }
+      }
+    },
+    "/internal/test-cases/content-maps/{contentMapId}/regenerate": {
+      "post": {
+        "tags": [
+          "map-test-case-regenerate-controller"
+        ],
+        "operationId": "regenerate",
+        "parameters": [
+          {
+            "name": "contentMapId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -3246,6 +3310,46 @@
         }
       }
     },
+    "/api/projects/{projectId}/knowledge/{knowledgeId}": {
+      "get": {
+        "tags": [
+          "knowledge-detail-controller"
+        ],
+        "operationId": "detail",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "knowledgeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/knowledge-graph": {
       "get": {
         "tags": [
@@ -3723,6 +3827,43 @@
           }
         }
       }
+    },
+    "/api/projects/{projectId}/documents/{documentId}": {
+      "delete": {
+        "tags": [
+          "Project Document"
+        ],
+        "summary": "기획서 삭제",
+        "description": "이 버전을 지우고, 여기서 나온 knowledge도 함께 소프트삭제한다. 되돌릴 수 없다.",
+        "operationId": "delete_5",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "documentId",
+            "in": "path",
+            "description": "기획서 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3784,7 +3925,8 @@
             "type": "string",
             "enum": [
               "ACTION",
-              "GAP"
+              "GAP",
+              "OPENING"
             ]
           },
           "step_source_capability_id": {
@@ -4073,6 +4215,72 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "properties": {
+          "nickname": {
+            "type": "string"
+          }
+        }
+      },
+      "AuthUserResponse": {
+        "required": [
+          "displayName",
+          "id",
+          "identities",
+          "nickname",
+          "userTag"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "userTag": {
+            "type": "string"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkedIdentityResponse"
+            }
+          }
+        }
+      },
+      "LinkedIdentityResponse": {
+        "required": [
+          "displayName",
+          "login",
+          "provider"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "login": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "avatarUrl": {
+            "type": "string"
           }
         }
       },
@@ -4999,7 +5207,8 @@
             "type": "string",
             "enum": [
               "ACTION",
-              "GAP"
+              "GAP",
+              "OPENING"
             ]
           },
           "step_source_capability_id": {
@@ -7012,8 +7221,10 @@
         "required": [
           "displayName",
           "joinedAt",
+          "nickname",
           "role",
-          "userId"
+          "userId",
+          "userTag"
         ],
         "type": "object",
         "properties": {
@@ -7026,6 +7237,12 @@
           "email": {
             "type": "string"
           },
+          "nickname": {
+            "type": "string"
+          },
+          "userTag": {
+            "type": "string"
+          },
           "role": {
             "type": "string",
             "enum": [
@@ -7036,6 +7253,33 @@
           "joinedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "KnowledgeDetailResponse": {
+        "required": [
+          "description",
+          "id",
+          "isDocumentNode",
+          "summary"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "isDocumentNode": {
+            "type": "boolean"
           }
         }
       },
@@ -8305,56 +8549,6 @@
           "citationKnownTotal": {
             "type": "integer",
             "format": "int64"
-          }
-        }
-      },
-      "AuthUserResponse": {
-        "required": [
-          "displayName",
-          "id",
-          "identities"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "email": {
-            "type": "string"
-          },
-          "locale": {
-            "type": "string"
-          },
-          "identities": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LinkedIdentityResponse"
-            }
-          }
-        }
-      },
-      "LinkedIdentityResponse": {
-        "required": [
-          "displayName",
-          "login",
-          "provider"
-        ],
-        "type": "object",
-        "properties": {
-          "provider": {
-            "type": "string"
-          },
-          "login": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "avatarUrl": {
-            "type": "string"
           }
         }
       },
