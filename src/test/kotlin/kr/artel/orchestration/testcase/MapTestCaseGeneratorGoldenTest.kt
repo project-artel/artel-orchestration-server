@@ -252,11 +252,14 @@ class MapTestCaseGeneratorGoldenTest {
      */
     @Test
     fun `형제와 갈리는 비교가 이름 앞에 온다`() {
-        val group = cases.filter { it.scene == "GameClearScene" && it.step.startsWith("아무 키나 누른다 (") }
+        // 이름에 결과가 붙은 뒤로도 이 셋은 글자까지 같다 — 같은 조작으로 같은 것을 만든다.
+        // 갈리는 것이 전제뿐이라, 꼬리가 없으면 목록에서 셋을 구별할 수 없다.
+        val same = "아무 키나 눌러 `TypeCard` 을(를) 만든다 외 1건 ("
+        val group = cases.filter { it.scene == "GameClearScene" && it.step.startsWith(same) }
         assertThat(group).hasSizeGreaterThan(1)
 
         // 꼬리의 첫 항목만으로 이미 서로 다르다. 끝까지 읽지 않아도 갈린다.
-        val heads = group.map { it.step.substringAfter("누른다 (").substringBefore(",") }
+        val heads = group.map { it.step.removePrefix(same).substringBefore(",") }
         assertThat(heads).doesNotHaveDuplicates()
     }
 
@@ -374,8 +377,11 @@ class MapTestCaseGeneratorGoldenTest {
         // **조작 문장이 갈래를 말한다**(ARTEL-662). 같은 조작이지만 무엇이 다른지가 문장에 있다 —
         // 앞서는 글자까지 같아서, 읽는 사람도 저작 모델도 둘을 구별하지 못했다.
         assertThat(fromEnding.map { it.step }.distinct()).hasSameSizeAs(fromEnding)
-        assertThat(fromEnding.map { it.step }).allSatisfy {
-            assertThat(it).contains("아무 키나 누른다").contains("StagePosition")
+        // **무엇이 다른지를 도착 화면이 말한다.** 앞서는 이름이 조작뿐이라 전제에서 갈리는 비교를
+        // 꼬리로 빌려 와야 했다(`StagePosition == 5 일 때`). 이름이 결과를 들고 나서는 그 꼬리가
+        // 필요 없다 — 어디로 가는지가 곧 갈래다. 전제는 사전조건 칸에 그대로 있다.
+        assertThat(fromEnding).allSatisfy { case ->
+            assertThat(case.step).startsWith("아무 키나").contains(case.arrivesAt!!)
         }
         // 갈린 줄들은 사전조건이 서로 다르다. 같으면 어느 쪽을 만들지 알 수 없다.
         assertThat(fromEnding.map { it.precondition }.distinct()).hasSameSizeAs(fromEnding)
@@ -443,7 +449,7 @@ class MapTestCaseGeneratorGoldenTest {
      */
     @Test
     fun `대사를 다 넘겨야 가는 자리는 되풀이하라고 적는다`() {
-        val repeated = cases.filter { it.step.contains("되풀이") }
+        val repeated = cases.filter { it.step.contains("더 진행되지 않을 때까지") }
 
         // 씬 둘 × 그 씬에서 아무 키를 받는 기능 둘 × 도착 화면 둘. 실측 StoryScene 에서
         // `TutorialController`(튜토리얼 대화)와 `StoryController`(본편 대사)가 **각각** 아무 키를
@@ -451,9 +457,10 @@ class MapTestCaseGeneratorGoldenTest {
         assertThat(repeated).hasSize(4)
         assertThat(repeated).allSatisfy { assertThat(it.expected).contains("화면으로 전환된다") }
         assertThat(repeated.map { it.scene }.distinct()).containsExactlyInAnyOrder("StoryScene", "EndingScene")
-        // 활용을 건드리지 않는다. "누른되" 가 나오면 어미를 뗀 것이다.
+        // 활용을 건드리지 않는다. "누른되" 가 나오면 어미를 뗀 것이다. 되풀이는 **조작 쪽에**
+        // 붙는다 — 되풀이하는 것은 결과가 아니라 누르는 일이다.
         assertThat(repeated).allSatisfy {
-            assertThat(it.step).startsWith("아무 키나 누른다 — ")
+            assertThat(it.step).startsWith("아무 키나 더 진행되지 않을 때까지 눌러 ")
         }
     }
 

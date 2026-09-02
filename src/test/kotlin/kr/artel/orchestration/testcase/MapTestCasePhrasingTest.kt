@@ -96,23 +96,33 @@ class MapTestCasePhrasingTest {
 
     // --- 행동 -------------------------------------------------------------------------
 
+    private fun step(
+        interaction: String,
+        inputKey: String?,
+        controlLabel: String?,
+        controlPath: String?,
+        repeats: Boolean = false,
+        does: List<String> = emptyList(),
+    ): String = MapTestCasePhrasing.trial(
+        MapTestCasePhrasing.act(interaction, inputKey, controlLabel, controlPath), repeats, does,
+    )
+
     @Test
     fun `버튼은 조준 대상을 부른다`() {
-        assertThat(MapTestCasePhrasing.step("click", null, null, "Canvas/MapSceneButton"))
+        assertThat(step("click", null, null, "Canvas/MapSceneButton"))
             .isEqualTo("`Canvas/MapSceneButton` 을(를) 클릭한다")
     }
 
     /** 이름표가 있으면 경로보다 그쪽이 사람에게 가깝다. */
     @Test
     fun `이름표가 있으면 이름표를 부른다`() {
-        assertThat(MapTestCasePhrasing.step("click", null, "Combine", "CombineSystem/CombineZone/Button"))
+        assertThat(step("click", null, "Combine", "CombineSystem/CombineZone/Button"))
             .isEqualTo("`Combine` 을(를) 클릭한다")
     }
 
     @Test
     fun `키 입력은 키 이름을 부른다`() {
-        assertThat(MapTestCasePhrasing.step("press", "RightArrow", null, null))
-            .isEqualTo("`RightArrow` 키를 누른다")
+        assertThat(step("press", "RightArrow", null, null)).isEqualTo("`RightArrow` 키를 누른다")
     }
 
     /**
@@ -121,8 +131,47 @@ class MapTestCasePhrasingTest {
      */
     @Test
     fun `아무 키나 되는 자리는 그렇게 적는다`() {
-        assertThat(MapTestCasePhrasing.step("press", "any", null, null))
-            .isEqualTo("아무 키나 누른다")
+        assertThat(step("press", "any", null, null)).isEqualTo("아무 키나 누른다")
+    }
+
+    // --- 이름 -------------------------------------------------------------------------
+
+    /**
+     * **조작만으로는 이름이 안 된다.** `아무 키나 누른다` 는 실측 33건 중 여덟 줄이었고, 표만
+     * 보고는 무엇을 검증하라는 것인지 알 수 없다. 동사는 `capability_effect.kind` 가 준다.
+     */
+    @Test
+    fun `이름은 조작에 이어 무엇이 되는지를 말한다`() {
+        assertThat(step("press", "any", null, null, does = listOf("`Map_scene` 화면으로 넘어간다")))
+            .isEqualTo("아무 키나 눌러 `Map_scene` 화면으로 넘어간다")
+        assertThat(step("click", null, "Combine", null, does = listOf("`CombineZone` 을(를) 켠다")))
+            .isEqualTo("`Combine` 을(를) 클릭해 `CombineZone` 을(를) 켠다")
+    }
+
+    /**
+     * 대표를 고르면 그 판단이 게임마다 다르다. 앞의 하나는 **지도가 실은 순서**이지 우리 순위가
+     * 아니고, 나머지는 기대결과 칸에 그대로 있다.
+     */
+    @Test
+    fun `결과가 여럿이면 앞의 하나만 부르고 몇 건인지 적는다`() {
+        val does = listOf("`Congratulation` 을(를) 켠다", "`MagicCard` 을(를) 만든다", "`text` 표시를 갱신한다")
+
+        assertThat(step("press", "any", null, null, does = does))
+            .isEqualTo("아무 키나 눌러 `Congratulation` 을(를) 켠다 외 2건")
+    }
+
+    /** 되풀이는 조작 쪽에 붙는다 — 되풀이하는 것은 결과가 아니라 누르는 일이다. */
+    @Test
+    fun `되풀이해야 닿는 자리는 조작에 그것을 적는다`() {
+        assertThat(step("press", "any", null, null, repeats = true, does = listOf("`Map_scene` 화면으로 넘어간다")))
+            .isEqualTo("아무 키나 더 진행되지 않을 때까지 눌러 `Map_scene` 화면으로 넘어간다")
+    }
+
+    /** 조작을 못 부르는 자리는 활용할 꼴이 없다. 억지로 잇지 않고 줄표로 붙인다. */
+    @Test
+    fun `부를 조작이 없으면 결과를 줄표로 잇는다`() {
+        assertThat(step("swipe", null, null, null, does = listOf("`Map_scene` 화면으로 넘어간다")))
+            .isEqualTo("조작 미상(swipe) — `Map_scene` 화면으로 넘어간다")
     }
 
     // --- 기대결과 ---------------------------------------------------------------------

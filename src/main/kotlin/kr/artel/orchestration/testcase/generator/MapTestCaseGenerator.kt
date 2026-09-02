@@ -118,6 +118,9 @@ class MapTestCaseGenerator(
                 val first = group.first()
                 // 이 무리가 함께 서려면 참이어야 하는 것. 바깥의 `settled`(정착 인자)와 다른 값이다.
                 val groupCondition = weakest(group.map { it.condition })
+                // **이름과 기대결과가 같은 목록을 센다.** 이름의 `외 N건` 이 기대결과의 ` / ` 수와
+                // 어긋나면 읽는 사람이 하나를 못 찾는다. 같은 자리에서 한 번만 접는다.
+                val shown = group.distinctBy { it.outcome }
                 MapTestCase(
                     capabilityKey = first.capabilityKey,
                     scene = first.scene,
@@ -128,11 +131,16 @@ class MapTestCaseGenerator(
                     // 소비하는 쪽은 문장이 아니라 이쪽을 읽는다.
                     condition = groupCondition,
                     aimedAt = first.aimedAt,
-                    step = first.step,
+                    // **이름은 조작이 아니라 시험이다**([MapTestCasePhrasing.trial]). 무엇이
+                    // 일어나는지는 무리가 다 모여야 알 수 있어서 여기서 짓는다. 관측은 부를 조작이
+                    // 없으니 제 문장을 그대로 쓴다.
+                    step = first.act
+                        ?.let { MapTestCasePhrasing.trial(it, first.repeats, shown.mapNotNull { d -> d.does }) }
+                        ?: first.step,
                     // **한 기능이 내는 관측들을 함께 적는다.** 저작이 이것을 조작 하나 + 검증 여럿으로
                     // 펴고, 채점은 스텝 단위라 어느 지점이 틀렸는지는 그대로 드러난다. 구버전도 같은
                     // 자리를 ` / ` 로 잇는다.
-                    expected = group.map { it.outcome }.distinct().joinToString(OUTCOME_SEPARATOR),
+                    expected = shown.joinToString(OUTCOME_SEPARATOR) { it.outcome },
                     status = first.status,
                     gaps = group.flatMap { it.gaps }.distinct(),
                     arrivesAt = group.firstNotNullOfOrNull { it.arrivesAt },
@@ -503,6 +511,12 @@ class MapTestCaseGenerator(
         /** 무엇을 겨누나(`control_path`). 없으면 키 입력이거나 관측이다. */
         val aimedAt: String?,
         val step: String,
+        /** 조작을 종결형·연결형 두 벌로. 관측이면 null 이고 [step] 이 이미 완성된 문장이다. */
+        val act: MapTestCasePhrasing.Act? = null,
+        /** 끝까지 되풀이해야 닿는 자리인가(ARTEL-613). 이름을 지을 때 다시 쓴다. */
+        val repeats: Boolean = false,
+        /** 이 효과를 이름에 붙일 능동꼴 — `` `Map_scene` 화면으로 넘어간다 ``. */
+        val does: String? = null,
         val outcome: String,
         val status: String,
         val gaps: List<String>,
@@ -556,18 +570,26 @@ class MapTestCaseGenerator(
             // 넘긴 값으로 바꾸고, 못 푸는 루프 변수는 빼되 그 사실을 사유로 남긴다.
             // **누를 것이 있으면 조작, 없으면 관측이다.** 행이 스스로 말하는 것이라 부르는 쪽이
             // 따로 알려 줄 것이 없다(ARTEL-681).
-            val step = if (row.actionability == NOT_A_STEP) {
-                MapTestCasePhrasing.observation(row.sceneName, row.triggerRoot)
+            val act = if (row.actionability == NOT_A_STEP) {
+                null
             } else {
-                MapTestCasePhrasing.step(
-                    row.interaction, row.inputKey, row.controlLabel, row.controlPath, repeats,
+                MapTestCasePhrasing.act(
+                    row.interaction, row.inputKey, row.controlLabel, row.controlPath,
                 )
             }
+            // 결과를 뺀 조작만의 문장. 이름은 [merged] 가 무리를 지은 뒤에 짓는다 — 무엇이
+            // 일어나는지는 그 무리가 다 모여야 알 수 있다. 여기 것은 **갈래를 가르는 열쇠**로
+            // 쓴다([branches] 가 "조작이 다르면 다른 케이스"를 이것으로 본다).
+            val step = act?.let { MapTestCasePhrasing.trial(it, repeats) }
+                ?: MapTestCasePhrasing.observation(row.sceneName, row.triggerRoot)
             val settledCondition = MapTestCaseLocals.settle(situation, source, settled)
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
-            MapTestCasePhrasing.expectedWithSource(effectRows, refs).map { (outcome, effect) ->
+            MapTestCasePhrasing.expectedWithSource(effectRows, refs).map { (outcome, does, effect) ->
                 Draft(
                     capabilityKey = key,
+                    act = act,
+                    repeats = repeats,
+                    does = does,
                     // 씬을 함께 든다. 한 타입이 두 씬에 놓이면 진입점이 같아도 다른 자리다 —
                     // 실측에서 `GameClearController` 가 그렇다.
                     entryKey = row.entryId?.let { "${row.sceneName}\u001F$it" } ?: key,
@@ -783,7 +805,8 @@ class MapTestCaseGenerator(
 
         /**
          * Unity 가 부르는 콜백(`capability_evidence.trigger_kind`). 다른 값은 `unity-event` 로,
-         * 게임이 인스펙터로 연결한 자기 메서드다([keptAsObservation] 에 이유가 있다).
+         * 게임이 인스펙터로 연결한 자기 메서드다 — 그것은 사람이 그 순간을 만들 수 없어서
+         * 관측 케이스로 내지 않는다([ContentMapRepository.findTestCaseRows] 가 거른다).
          */
         const val ENGINE_CALLBACK = "lifecycle"
 

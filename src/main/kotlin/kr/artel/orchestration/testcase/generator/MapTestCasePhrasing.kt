@@ -97,24 +97,62 @@ object MapTestCasePhrasing {
         else -> "$scene 에서 `$triggerRoot` 이후 관찰한다"
     }
 
-    fun step(
+    /**
+     * 조작 한 마디를 **종결형과 연결형 두 벌로** 든다.
+     *
+     * 활용을 규칙으로 만들지 않는다. "누른다"의 어간은 "누르-"라 어미만 떼면 "누른되"가 되고,
+     * 조작 문구는 키·경로·클릭이 섞여 있어 규칙 하나로 활용할 수 없다. 자리마다 두 벌을 적는다.
+     *
+     * @property what 무엇을 건드리나. 없는 자리가 있다(조작 미상).
+     * @property ends 문장을 끝내는 꼴 — `누른다`
+     * @property joins 뒤에 결과를 잇는 꼴 — `눌러`. 없으면 결과를 줄표로 잇는다.
+     */
+    data class Act(val what: String?, val ends: String, val joins: String?)
+
+    fun act(
         interaction: String,
         inputKey: String?,
         controlLabel: String?,
         controlPath: String?,
-        repeatUntilDone: Boolean = false,
-    ): String {
-        val once = when {
-            controlLabel != null -> "`$controlLabel` 을(를) 클릭한다"
-            controlPath != null -> "`$controlPath` 을(를) 클릭한다"
-            inputKey == ANY_KEY -> "아무 키나 누른다"
-            inputKey != null -> "`$inputKey` 키를 ${verb(interaction)}"
-            else -> "조작 미상($interaction)"
+    ): Act = when {
+        controlLabel != null -> Act("`$controlLabel` 을(를)", "클릭한다", "클릭해")
+        controlPath != null -> Act("`$controlPath` 을(를)", "클릭한다", "클릭해")
+        inputKey == ANY_KEY -> Act("아무 키나", "누른다", "눌러")
+        inputKey != null && interaction == Interaction.PRESS.wire ->
+            Act("`$inputKey` 키를", "누른다", "눌러")
+        inputKey != null -> Act("`$inputKey` 키를", "입력한다", "입력해")
+        else -> Act(null, "조작 미상($interaction)", null)
+    }
+
+    /**
+     * **케이스 이름은 조작이 아니라 시험이다**(ARTEL-662 뒤).
+     *
+     * 앞서 이름은 조작뿐이었다 — `아무 키나 누른다`. 그것은 **무엇이 되는지를 말하지 않아서**,
+     * 읽는 사람이 표만 보고는 무엇을 검증하라는 것인지 알 수 없다. 실측 33건 중
+     * `아무 키나 누른다` 가 여덟 줄, `` `Combine` 을(를) 클릭한다 `` 가 두 줄이었다.
+     *
+     * 결과를 지어내지 않는다. 동사는 `capability_effect.kind` 가 그대로 준다([doing]) —
+     * `scene` 이면 넘어가고 `instantiate` 면 만든다. 우리가 뜻을 붙이는 자리가 없다.
+     *
+     * ```
+     * 아무 키나 누른다              →  아무 키나 눌러 `Map_scene` 화면으로 넘어간다
+     * `Combine` 을(를) 클릭한다     →  `Combine` 을(를) 클릭해 `CombineZone/Button` 을(를) 켠다
+     * ```
+     *
+     * **결과가 여럿이면 앞의 하나만 부르고 `외 N건` 을 붙인다.** 어느 것이 대표인지 고르면
+     * 그 판단은 게임마다 다르고, 우리가 정하면 한 게임에 맞추는 것이 된다. 앞의 하나는 지도가
+     * 실은 순서(`capability_effect.id`)이지 우리 순위가 아니다. 전부는 기대결과 칸에 그대로 있다.
+     */
+    fun trial(act: Act, repeatUntilDone: Boolean, does: List<String> = emptyList()): String {
+        val lead = listOfNotNull(act.what, REPEATEDLY.takeIf { repeatUntilDone })
+        val head = does.firstOrNull()
+        val more = if (does.size > 1) " 외 ${does.size - 1}건" else ""
+        return when {
+            head == null -> (lead + act.ends).joinToString(" ")
+            // 이을 꼴이 없으면 문장을 끝내고 줄표로 잇는다. 억지로 활용하지 않는다.
+            act.joins == null -> (lead + act.ends).joinToString(" ") + " — $head$more"
+            else -> (lead + act.joins + head).joinToString(" ") + more
         }
-        // 활용을 건드리지 않는다. "누른다"의 어간은 "누르-"라 어미만 떼면 "누른되"가 되고,
-        // 조작 문구는 키·경로·클릭이 섞여 있어 규칙 하나로 활용할 수 없다. 문장을 그대로 두고
-        // 줄표로 잇는다 — 저작 모델이 같은 자리에서 스스로 쓰는 모양이기도 하다.
-        return if (repeatUntilDone) "$once — 더 진행되지 않을 때까지 되풀이한다" else once
     }
 
     /**
@@ -144,23 +182,43 @@ object MapTestCasePhrasing {
      * 없는 케이스는 실행해도 통과·실패를 말할 수 없다.
      */
     fun expectedEach(effects: List<CapabilityEffectEntity>): List<String> =
-        expectedWithSource(effects, emptyMap()).map { it.first }
+        expectedWithSource(effects, emptyMap()).map { it.expected }
+
+    /**
+     * 효과 하나가 낸 **세 가지 모양**.
+     *
+     * @property expected 기대결과 칸에 앉는 문장 — `\`Map_scene\` 화면으로 전환된다`
+     * @property doing 케이스 이름에 붙는 문장 — `\`Map_scene\` 화면으로 넘어간다`
+     * @property effect 그것을 낸 효과. 도착 화면처럼 구조로 읽을 것이 있다.
+     */
+    data class Told(val expected: String, val doing: String, val effect: CapabilityEffectEntity)
 
     /**
      * [expectedEach] 와 같되 **어느 효과가 그 문장을 냈는지** 함께 낸다(ARTEL-614).
      *
      * 씬 전환 케이스가 "어느 화면으로 가나"를 구조적으로 들려면 필요하다 — 문장에서 다시 뽑으면
-     * 그것이 곧 이 개편이 없애려는 산문 되읽기다.
+     * 그것이 곧 이 개편이 없애려는 산문 되읽기다. 이름에 쓰는 [Told.doing] 도 같은 이유로 여기서
+     * 함께 낸다 — 기대결과 문장을 되읽어 능동으로 바꾸면 그 되읽기를 한 번 더 하는 것이다.
      */
     fun expectedWithSource(
         effects: List<CapabilityEffectEntity>,
         refs: Map<Pair<String, String>, Set<String>> = emptyMap(),
-    ): List<Pair<String, CapabilityEffectEntity>> {
+    ): List<Told> {
         val seen = mutableSetOf<String>()
         return effects.filter { EffectCategory.from(it.category)?.assertable == true }
             .filterNot { it.kind in UNWATCHABLE }
-            .mapNotNull { effect -> outcome(effect, refs)?.let { it to effect } }
-            .filter { seen.add(it.first) }
+            .mapNotNull { effect ->
+                val target = watchableTarget(effect, refs) ?: return@mapNotNull null
+                // 값을 못 읽은 자리는 문서가 그렇게 적어 둔다(`(not a literal)` · `(not a simple
+                // receiver)`). 그대로 내면 "표시 상태가 `(not a literal)`" 처럼 읽을 수 없는 문장이
+                // 된다 — 값을 빼고 "바뀐다"로 말한다. 무엇으로 바뀌는지는 모르지만 **바뀐다는 것은
+                // 안다.** **값 쪽도 씬이 부르는 이름으로**(ARTEL-682): 대상만 풀고 값을 안 풀면 한 줄
+                // 안에서 두 말이 섞인다 — 실측에서 `wordHead 의 위치가
+                // MapMove.battle1.transform.position 로 바뀐다` 가 나왔다.
+                val detail = readable(effect.detail)?.let { MapTestCaseTargets.resolve(it, refs) }
+                Told(outcome(effect.kind, target, detail), doing(effect.kind, target, detail), effect)
+            }
+            .filter { seen.add(it.expected) }
     }
 
     // --- 조각 ------------------------------------------------------------------------
@@ -188,37 +246,55 @@ object MapTestCasePhrasing {
      * `kind` 는 문자열이다 — 어휘를 enum 으로 못 박은 자리가 아직 없고, 적재기가 문서의 값을 그대로
      * 싣는다. 실측(적재기 지도 486건)에서 나온 열 가지를 다룬다.
      */
-    private fun outcome(
-        effect: CapabilityEffectEntity,
-        refs: Map<Pair<String, String>, Set<String>> = emptyMap(),
-    ): String? {
-        val target = effect.target?.takeIf { it.isNotBlank() }
-            // 씬 전환의 대상은 화면 이름이라 오브젝트가 아니다. 되짚을 것이 없다.
-            ?.let { if (effect.kind == "scene") it else MapTestCaseTargets.resolve(it, refs) }
-            ?.takeIf(::named)
-            ?: return null
-        // 값을 못 읽은 자리는 문서가 그렇게 적어 둔다(`(not a literal)` · `(not a simple receiver)`).
-        // 그대로 내면 "표시 상태가 `(not a literal)`" 처럼 읽을 수 없는 문장이 된다 — 값을 빼고
-        // "바뀐다"로 말한다. 무엇으로 바뀌는지는 모르지만 **바뀐다는 것은 안다.**
-        // **값 쪽도 씬이 부르는 이름으로**(ARTEL-682). 대상만 풀고 값을 안 풀면 한 줄 안에서
-        // 두 말이 섞인다 — 실측에서 `wordHead 의 위치가 MapMove.battle1.transform.position 로
-        // 바뀐다` 가 나왔다. 실행하는 쪽이 찾아야 하는 것은 양쪽 다 씬의 이름이다.
-        val detail = readable(effect.detail)?.let { MapTestCaseTargets.resolve(it, refs) }
-        return when (effect.kind) {
-            "scene" -> "`$target` 화면으로 전환된다"
-            "active-state" -> "`$target` 의 표시 상태가 ${detail?.let { "`$it`" } ?: "바뀐다"}"
-            "ui-value" -> "`$target` 표시가 ${detail?.let { "`$it` 로 " } ?: ""}갱신된다"
-            "instantiate" -> "`$target` 이(가) 생성된다"
-            "destroy" -> "`$target` 이(가) 사라진다"
-            "animation" -> "`$target` 애니메이션이 실행된다"
-            "audio" -> "`$target` 소리가 난다"
-            "transform" -> "`$target` 의 위치/형태가 ${detail?.let { "`$it` 로 " } ?: ""}바뀐다"
-            "saved" -> "`$target` 이(가) 저장된다"
-            // 어휘를 모르면 원문을 그대로 붙여 낸다. 새 `kind` 가 생겼을 때 그 효과가 조용히
-            // 사라지는 것보다, 어색해도 보이는 편이 낫다.
-            else -> detail?.let { "`$target` 이(가) `$it` 이 된다" } ?: "`$target` 이(가) 바뀐다"
-        }
+    private fun outcome(kind: String, target: String, detail: String?): String = when (kind) {
+        "scene" -> "`$target` 화면으로 전환된다"
+        "active-state" -> "`$target` 의 표시 상태가 ${detail?.let { "`$it`" } ?: "바뀐다"}"
+        "ui-value" -> "`$target` 표시가 ${detail?.let { "`$it` 로 " } ?: ""}갱신된다"
+        "instantiate" -> "`$target` 이(가) 생성된다"
+        "destroy" -> "`$target` 이(가) 사라진다"
+        "animation" -> "`$target` 애니메이션이 실행된다"
+        "audio" -> "`$target` 소리가 난다"
+        "transform" -> "`$target` 의 위치/형태가 ${detail?.let { "`$it` 로 " } ?: ""}바뀐다"
+        "saved" -> "`$target` 이(가) 저장된다"
+        // 어휘를 모르면 원문을 그대로 붙여 낸다. 새 `kind` 가 생겼을 때 그 효과가 조용히
+        // 사라지는 것보다, 어색해도 보이는 편이 낫다.
+        else -> detail?.let { "`$target` 이(가) `$it` 이 된다" } ?: "`$target` 이(가) 바뀐다"
     }
+
+    /**
+     * 같은 효과를 **이름에 쓸 능동꼴로.** [outcome] 과 한 쌍이고 같은 `kind` 를 본다.
+     *
+     * 뜻을 더하지 않는다 — `active-state` 의 `true`/`false` 를 켠다/끈다로 부르는 것까지가
+     * `kind` 와 값이 말한 것이고, 그 너머(무엇을 위해 켜는가)는 적지 않는다.
+     */
+    private fun doing(kind: String, target: String, detail: String?): String = when (kind) {
+        "scene" -> "`$target` 화면으로 넘어간다"
+        "active-state" -> when (detail) {
+            "true" -> "`$target` 을(를) 켠다"
+            "false" -> "`$target` 을(를) 끈다"
+            else -> "`$target` 의 표시 상태를 바꾼다"
+        }
+        "ui-value" -> "`$target` 표시를 ${detail?.let { "`$it` 로 " } ?: ""}갱신한다"
+        "instantiate" -> "`$target` 을(를) 만든다"
+        "destroy" -> "`$target` 을(를) 없앤다"
+        "animation" -> "`$target` 애니메이션을 재생한다"
+        "audio" -> "`$target` 소리를 낸다"
+        "transform" -> "`$target` 을(를) ${detail?.let { "`$it` 로 " } ?: ""}옮긴다"
+        "saved" -> "`$target` 을(를) 저장한다"
+        else -> detail?.let { "`$target` 을(를) `$it` 로 바꾼다" } ?: "`$target` 을(를) 바꾼다"
+    }
+
+    /**
+     * 효과가 가리키는 것을 **실행하는 사람이 찾을 수 있는 이름으로.** 못 찾을 이름이면 null 이고,
+     * 그 효과는 케이스에 안 실린다([named] 에 이유가 있다).
+     */
+    private fun watchableTarget(
+        effect: CapabilityEffectEntity,
+        refs: Map<Pair<String, String>, Set<String>>,
+    ): String? = effect.target?.takeIf { it.isNotBlank() }
+        // 씬 전환의 대상은 화면 이름이라 오브젝트가 아니다. 되짚을 것이 없다.
+        ?.let { if (effect.kind == "scene") it else MapTestCaseTargets.resolve(it, refs) }
+        ?.takeIf(::named)
 
     /**
      * **가리키는 것에 이름이 있나.**
@@ -329,8 +405,8 @@ object MapTestCasePhrasing {
         return distinct.joinToString(OR) { it.substringBefore("` ") + "`" } + " " + tail
     }
 
-    private fun verb(interaction: String): String =
-        if (interaction == Interaction.PRESS.wire) "누른다" else "입력한다"
+    /** 되돌아가는 갈래를 다 돌고 나온 자리(ARTEL-613). 몇 번인지는 지도가 말하지 않는다. */
+    private const val REPEATEDLY = "더 진행되지 않을 때까지"
 
     private const val AND = " 그리고 "
 
