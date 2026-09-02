@@ -263,6 +263,31 @@ class MapTestCaseGeneratorGoldenTest {
         assertThat(many.sumOf { it.expectedItems.size }).isEqualTo(53)
     }
 
+    /**
+     * **씬에 없는 이름을 부르지 않는다.**
+     *
+     * `Component` 는 유니티가 모든 컴포넌트에 물려주는 타입이고 `this` 는 코드가 자기를 부르는
+     * 말이다. 실측 18행의 효과가 대상을 그렇게 적었고, 그대로 내면 `` `Component.transform.
+     * localPosition` 의 위치/형태가 바뀐다 `` 가 되어 실행하는 사람이 찾을 것이 없다.
+     *
+     * 답은 문서 안에 있다 — 그 코드가 어느 타입에 붙어 있는지를 `method_id` 가 말한다. 지어내는
+     * 것이 아니라 옆 칸을 읽는 것이므로, 하나도 남지 않아야 한다.
+     */
+    @Test
+    fun `자기 자신을 가리키는 이름이 문장에 남지 않는다`() {
+        val leaked = cases.filter { case ->
+            SELF_NAME.containsMatchIn(case.step) || SELF_NAME.containsMatchIn(case.expected)
+        }
+
+        assertThat(leaked).isEmpty()
+    }
+
+    /**
+     * 컴파일러가 지은 이름도 함께 본다. 코루틴은 중첩 클래스로 풀려 타입이
+     * `Combat.Enemies.Enemy/<DeathCounter>d__25` 로 적히는데, 게임이 지은 이름은 `/` 앞까지다.
+     */
+    private val SELF_NAME = Regex("""`(Component|this)[.`]|/<\w+>d__""")
+
     @Test
     fun `한 화면 안에서 이름이 겹치지 않는다`() {
         val twice = cases.groupBy { it.scene to it.step }.filterValues { it.size > 1 }

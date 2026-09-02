@@ -31,6 +31,53 @@ object MapTestCaseTargets {
     /**
      * @param refs `타입.필드 → 가리키는 이름들`. 이름이 하나로 정해질 때만 바꾼다.
      */
+    /**
+     * **`Component` 는 게임에 없는 이름이다**(실측 18행).
+     *
+     * ```
+     * `Component.transform.localPosition` 의 위치/형태가 `Vector3.zero` 로 바뀐다
+     * ```
+     *
+     * `UnityEngine.Component` 는 모든 컴포넌트의 밑바탕 타입이다. 코드가 자기 자신을 건드릴 때
+     * 수신자의 **선언 타입**이 그렇게 적히는 것이고, 게임에 `Component` 라는 오브젝트는 없다 —
+     * 실행하는 사람이 찾으면 없는 이름이라는 점에서 `(not a simple receiver)` 와 같은 처지다.
+     *
+     * 다만 이쪽은 **답이 문서 안에 있다.** 그 코드가 어느 타입에 붙어 있는지를 `method_id` 가
+     * 말한다(`Assembly-CSharp|Combat.UI.DraggableCard|OnDrag|…`). 지어내는 것이 아니라 옆 칸을
+     * 읽는 것이다.
+     *
+     * 주인을 모르면 손대지 않는다. 이름을 못 바꾼 채로 두면 [named] 가 걸러 주지 않으므로 문장에
+     * 그대로 나가는데, 그것이 조용히 사라지는 것보다 낫다는 것이 이 파일의 규칙이다.
+     */
+    fun ofOwner(target: String, methodId: String?): String {
+        val tail = SELF.firstNotNullOfOrNull { self ->
+            when {
+                target == self -> ""
+                target.startsWith("$self.") -> target.removePrefix(self)
+                else -> null
+            }
+        } ?: return target
+        val owner = methodId?.split('|')?.getOrNull(1)
+            // **컴파일러가 지은 이름은 뗀다.** 코루틴은 중첩 클래스로 풀려 타입이
+            // `Combat.Enemies.Enemy/<DeathCounter>d__25` 로 적힌다. 게임이 지은 이름은 `/` 앞까지고,
+            // 뒤는 C# 컴파일러가 `yield` 를 상태 머신으로 바꾸며 붙인 것이다.
+            ?.substringBefore('/')
+            ?.substringAfterLast('.')
+            ?.takeIf { it.isNotBlank() } ?: return target
+        // 자리를 가리키는 꼬리는 여기서도 뗀다. `DraggableCard.transform.localPosition` 에서
+        // 실행하는 쪽이 찾을 것은 `DraggableCard` 다([plain]).
+        return owner + plain(tail)
+    }
+
+    /**
+     * **자기 자신을 가리키는 이름들.** 씬에 이런 이름의 오브젝트는 없다.
+     *
+     * `Component` 는 유니티가 모든 컴포넌트에 물려주는 타입이고, `this` 는 코드가 자기를 부르는
+     * 말이다. 둘 다 실행하는 사람이 찾을 이름이 아니고, 가리키는 것은 같다 — 그 코드가 붙어
+     * 있는 컴포넌트다.
+     */
+    private val SELF = listOf("Component", "this")
+
     fun resolve(target: String, refs: Map<Pair<String, String>, Set<String>>): String {
         // 목록 색인은 지운다 — `backgorunds.Item[_]` 이 가리키는 필드는 `backgorunds` 다.
         val cleaned = LIST_ITEM.replace(target, "")
@@ -62,6 +109,9 @@ object MapTestCaseTargets {
     private val POSITIONAL = setOf(
         ".transform.position", ".transform.localPosition",
         ".transform.localScale", ".transform.scale", ".transform",
+        ".transform.rotation",
+        // 컴포넌트가 붙어 있는 오브젝트 자신. 씬에서 찾을 것은 그 오브젝트이지 이 마디가 아니다.
+        ".gameObject",
     )
 
     private val LIST_ITEM = Regex("""\.Item\[[^\]]*\]""")

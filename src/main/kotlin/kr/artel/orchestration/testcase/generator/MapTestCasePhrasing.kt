@@ -206,12 +206,13 @@ object MapTestCasePhrasing {
     fun expectedWithSource(
         effects: List<CapabilityEffectEntity>,
         refs: Map<Pair<String, String>, Set<String>> = emptyMap(),
+        methodId: String? = null,
     ): List<Told> {
         val seen = mutableSetOf<String>()
         return effects.filter { EffectCategory.from(it.category)?.assertable == true }
             .filterNot { it.kind in UNWATCHABLE }
             .mapNotNull { effect ->
-                val target = watchableTarget(effect, refs) ?: return@mapNotNull null
+                val target = watchableTarget(effect, refs, methodId) ?: return@mapNotNull null
                 // 값을 못 읽은 자리는 문서가 그렇게 적어 둔다(`(not a literal)` · `(not a simple
                 // receiver)`). 그대로 내면 "표시 상태가 `(not a literal)`" 처럼 읽을 수 없는 문장이
                 // 된다 — 값을 빼고 "바뀐다"로 말한다. 무엇으로 바뀌는지는 모르지만 **바뀐다는 것은
@@ -294,9 +295,14 @@ object MapTestCasePhrasing {
     private fun watchableTarget(
         effect: CapabilityEffectEntity,
         refs: Map<Pair<String, String>, Set<String>>,
+        methodId: String?,
     ): String? = effect.target?.takeIf { it.isNotBlank() }
         // 씬 전환의 대상은 화면 이름이라 오브젝트가 아니다. 되짚을 것이 없다.
-        ?.let { if (effect.kind == "scene") it else MapTestCaseTargets.resolve(it, refs) }
+        ?.let {
+            if (effect.kind == "scene") it
+            // 자기 자신을 가리키는 자리를 먼저 되돌린다 — 그래야 씬이 답할 이름이 된다.
+            else MapTestCaseTargets.resolve(MapTestCaseTargets.ofOwner(it, methodId), refs)
+        }
         ?.takeIf(::named)
 
     /**
@@ -330,9 +336,49 @@ object MapTestCasePhrasing {
     private fun readable(detail: String?): String? {
         val head = detail?.replace(FLAG_TAIL, "")?.trim()?.takeIf { it.isNotBlank() } ?: return null
         if (head.startsWith("(")) return null
+        if (saysNothing(head)) return null
         // `_` 하나이거나 `_` 만 든 자리는 값이 아니다.
         return head.takeIf { it != PLACEHOLDER && !PLACEHOLDER_ONLY.matches(it) }
     }
+
+    /**
+     * **호출은 방법이지 값이 아니다**(실측 7건).
+     *
+     * ```
+     * `Player.HpText.text` 표시가 `Int32.ToString()` 로 갱신된다
+     * ```
+     *
+     * `Int32.ToString()` 은 "그 수를 글자로" 라는 **방법**을 말한다. 화면에 뜨는 글자가 아니라서
+     * 실행하는 사람이 그것을 찾으면 없다. 값을 못 읽은 자리(`(not a literal)`)와 같은 처지이므로
+     * 같이 다룬다 — 값을 빼고 "갱신된다"로 말한다. **무엇으로 바뀌는지는 몰라도 바뀐다는 것은
+     * 안다**(ARTEL-602).
+     *
+     * **인자에 진짜 값이 하나라도 있으면 남긴다.** `SetTrigger("Death")` 와
+     * `String.Concat("Stage : ", …)` 는 화면에서 찾을 것을 말한다.
+     *
+     * `op_` 로 시작하는 이름은 **.NET 이 연산자에 붙이는 이름**이다(`*` 가 `op_Multiply`). 게임이
+     * 지은 이름이 아니고 사람이 쓰는 이름도 아니라, 인자에 수가 있어도 읽을 수 없다.
+     */
+    private fun saysNothing(value: String): Boolean = when {
+        OPERATOR_NAME.containsMatchIn(value) -> true
+        // 호출이 아니면 값이다 — `Vector3.zero` 는 게임이 그 이름으로 아는 자리다.
+        !value.contains("(") -> false
+        QUOTED.containsMatchIn(value) -> false
+        NUMBER_ARG.containsMatchIn(value) -> false
+        else -> true
+    }
+
+    /** .NET 이 연산자에 붙이는 메서드 이름. `a * b` 가 `op_Multiply(a, b)` 로 적힌다. */
+    private val OPERATOR_NAME = Regex("""\bop_[A-Z]\w*\s*\(""")
+
+    /** 따옴표로 묶인 글자. 화면에서 찾을 수 있는 값이다. */
+    private val QUOTED = Regex(""""[^"]*"""")
+
+    /**
+     * 괄호 안에 든 수. 이름의 일부인 수는 세지 않는다 — `Item[0]` 의 색인은 대괄호 안이라 안 걸리고,
+     * `Vector3` 의 `3` 은 앞에 글자가 붙어 있어 안 걸린다.
+     */
+    private val NUMBER_ARG = Regex("""\([^)]*(?<![\w.])-?\d+(?:\.\d+)?[^)]*\)""")
 
     /** `SetText(값, true)` 처럼 뒤에 붙는 불린 플래그. 화면에서 볼 수 있는 것이 아니다. */
     private val FLAG_TAIL = Regex(""",\s*(true|false)\s*$""")

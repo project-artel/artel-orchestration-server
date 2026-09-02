@@ -5,6 +5,7 @@ import kr.artel.orchestration.contentmap.dto.ContentMapCallEdge
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import kr.artel.orchestration.contentmap.dto.ContentMapObservationRow
 import kr.artel.orchestration.contentmap.dto.ContentMapScreenElement
+import kr.artel.orchestration.contentmap.dto.CapabilityOwner
 import kr.artel.orchestration.contentmap.dto.MethodArgument
 import kr.artel.orchestration.contentmap.dto.SpecGapRow
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
@@ -157,6 +158,23 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
         """
     )
     fun findAllCapabilityRows(contentMapId: Long): Flow<ContentMapCapabilityRow>
+
+    /**
+     * 기능마다 **그 코드가 붙어 있는 타입**([CapabilityOwner]).
+     *
+     * 효과의 대상이 `Component.` 로 시작하는 자리를 되돌리는 데 쓴다. 접힌 행도 낸다 — 효과를
+     * 빌려 오는 자리(`borrowed`)의 주인이 접힌 행일 수 있고, 그때도 이름은 그 문서가 말한 사실이다.
+     */
+    @Query(
+        """
+        SELECT ce.capability_id, ce.method_id
+        FROM capability_evidence ce
+        JOIN capability c ON c.id = ce.capability_id
+        JOIN scene s ON s.id = c.scene_id
+        WHERE s.content_map_id = :contentMapId AND ce.method_id IS NOT NULL
+        """
+    )
+    fun findCapabilityOwners(contentMapId: Long): Flow<CapabilityOwner>
 
     /**
      * **누를 것은 없고 볼 것은 있는 기능**(ARTEL-681). 위 창구가 `not-a-step` 을 거르므로 따로 낸다.

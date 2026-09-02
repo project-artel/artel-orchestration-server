@@ -69,6 +69,10 @@ class MapTestCaseGenerator(
         val exits = LoopExits.of(contentMaps.findLoopingConditions(contentMapId).toList().mapNotNull(::parseText))
         // **효과가 가리키는 것을 사람이 찾을 수 있는 이름으로**(ARTEL-615). 씬이 스스로 말한 것만
         // 쓴다 — 문자열에서 이름을 뽑으면 그 게임에만 맞는 규칙이 된다.
+        // **`Component` 가 가리키는 것을 되돌리려면 그 코드가 어느 타입에 붙어 있는지 알아야 한다**
+        // (`MapTestCaseTargets.ofOwner`). 지도 하나치를 한 번에 들고 돈다.
+        val owners = contentMaps.findCapabilityOwners(contentMapId).toList()
+            .associate { it.capabilityId to it.methodId }
         val refs = objectRefs.findByContentMapId(contentMapId).toList()
             .groupBy { it.ownerType to it.field }
             .mapValues { (_, rows) -> rows.map { it.targetName }.toSet() }
@@ -79,7 +83,7 @@ class MapTestCaseGenerator(
         // 갈림은 행이 스스로 말한다 — `actionability` 가 `not-a-step` 이면 볼 것이고 아니면
         // 누를 것이다. 아래(효과 읽기 · 갈래 펴기 · 합치기)는 두 벌이 되지 않는다.
         val drafts = contentMaps.findTestCaseRows(contentMapId).toList()
-            .flatMap { row -> draftsOf(row, edges, settled, exits, refs) }
+            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, owners) }
         return merged(drafts) + screenElements(contentMapId)
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
@@ -551,6 +555,7 @@ class MapTestCaseGenerator(
         settled: Map<Long, Map<Int, String>>,
         exits: Set<LoopExits.Guard>,
         refs: Map<Pair<String, String>, Set<String>>,
+        owners: Map<Long, String>,
     ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
@@ -591,7 +596,8 @@ class MapTestCaseGenerator(
             val step = MapTestCasePhrasing.trial(act, repeats)
             val settledCondition = MapTestCaseLocals.settle(situation, source, settled)
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
-            MapTestCasePhrasing.expectedWithSource(effectRows, refs).map { (outcome, does, effect) ->
+            // 효과의 주인은 **그 효과를 든 기능**이다. 빌려 온 자리(`borrowed`)에서는 이 행이 아니다.
+            MapTestCasePhrasing.expectedWithSource(effectRows, refs, owners[source]).map { (outcome, does, effect) ->
                 Draft(
                     capabilityKey = key,
                     act = act,
