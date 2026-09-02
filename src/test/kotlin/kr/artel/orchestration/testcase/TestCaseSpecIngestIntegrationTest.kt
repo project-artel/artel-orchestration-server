@@ -4,7 +4,6 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.xlsx.SpecXlsxWriter
-import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.project.FakeDocumentStorage
 import kr.artel.orchestration.project.entity.ProjectEntity
@@ -12,6 +11,7 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.support.testAppUser
 import kr.artel.orchestration.testcase.dto.TestCaseSpecEntry
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -478,7 +478,7 @@ class TestCaseSpecIngestIntegrationTest {
 
     private suspend fun newUser(): Long {
         val now = Instant.now()
-        return appUserRepository.save(AppUserEntity(displayName = "spec-user", createdAt = now, updatedAt = now)).id!!
+        return appUserRepository.save(testAppUser("spec-user", now)).id!!
     }
 
     /** 새 프로젝트 + 그 프로젝트에 참여하는 사용자 하나(실 행, 자동 id라 테스트끼리 격리된다). */
