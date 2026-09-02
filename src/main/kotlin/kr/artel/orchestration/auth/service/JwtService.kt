@@ -46,6 +46,8 @@ data class UserProfile(
     val nickname: String,
     /** 같은 [nickname]을 쓰는 사람들을 가르는 번호. */
     val userTag: String,
+    /** [email]이 이 계정의 것으로 확정된 시각. null이면 아직 확인되지 않았다. */
+    val emailVerifiedAt: Instant?,
     val identities: List<LinkedIdentity>
 )
 

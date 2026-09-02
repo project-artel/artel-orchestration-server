@@ -135,10 +135,12 @@ class ProjectInvitationService(
     /**
      * 받은 초대함. 로그인한 계정의 이메일로 온 것 중 아직 유효한 것만 낸다.
      *
-     * 계정에 이메일이 없으면 빈 목록이다. 그 사람은 어떤 초대의 수신자도 될 수 없다.
+     * 계정에 확인을 마친 이메일이 없으면 빈 목록이다. 그 사람은 어떤 초대의 수신자도 될 수 없다.
+     * 주소가 적혀 있어도 확인 전이면 없는 것과 같이 본다(ARTEL-732) — 확인하지 않은 주소로 초대를
+     * 받을 수 있으면, 남의 주소를 적어 넣는 것만으로 그 사람에게 간 초대를 가져갈 수 있다.
      */
     suspend fun listForUser(userId: Long): List<ProjectInvitationResponse> {
-        val email = appUserRepository.findById(userId)?.email ?: return emptyList()
+        val email = verifiedEmailOf(userId) ?: return emptyList()
 
         val invitations = invitationRepository
             .findPendingForEmail(email, Instant.now(clock))
@@ -237,10 +239,13 @@ class ProjectInvitationService(
      * 초대가 없으면 404, 남의 것이면 403이다. 존재를 숨기지 않는 이유는 id를 찍어 맞히는 것으로
      * 알아낼 수 있는 것이 "그 번호의 초대가 있다"뿐이고, 그것이 누구에게 갔는지는 여전히 안 나오기
      * 때문이다.
+     *
+     * 읽는 이메일은 확인을 마친 것뿐이다(ARTEL-732). 확인 전 주소로 수락이 되면, 남의 주소를 적어
+     * 넣는 것이 그 사람의 초대를 가져가는 길이 된다.
      */
     private suspend fun requireAddressedTo(userId: Long, invitationId: Long): ProjectInvitationEntity {
         val invitation = invitationRepository.findById(invitationId) ?: throw invitationNotFound()
-        val email = appUserRepository.findById(userId)?.email
+        val email = verifiedEmailOf(userId)
             ?: throw InvitationNotYoursException()
 
         if (!email.equals(invitation.email, ignoreCase = true)) {
@@ -266,11 +271,23 @@ class ProjectInvitationService(
     /**
      * 이 이메일을 가진 계정 중 이미 이 프로젝트의 멤버가 있는지.
      *
-     * `app_user.email`이 unique가 아니라 이 확인은 최선을 다하는 것일 뿐 보장이 아니다. 확실한
-     * 방어선은 [accept]가 멤버 행을 두 번 넣지 않는 것이다.
+     * 확인을 마친 계정만 센다. 확인 전 주소는 어차피 초대를 받을 수 없으므로, 그 주소를 적어 둔
+     * 계정이 있다는 것이 초대를 막을 근거가 못 된다.
+     *
+     * `uk_app_user_verified_email`이 확인된 주소를 하나로 묶어 주지만, 이 확인은 여전히 최선을
+     * 다하는 것일 뿐 보장이 아니다. 확실한 방어선은 [accept]가 멤버 행을 두 번 넣지 않는 것이다.
      */
+    /**
+     * 이 계정이 초대를 받을 수 있는 주소. 확인을 마치지 않았으면 null 이다.
+     *
+     * 방향이 중요하다. 이메일로 사용자를 찾는 것이 아니라, 로그인한 사용자의 행에서 주소를 읽는다.
+     * 반대 방향은 같은 주소를 가진 행이 여럿일 때 남의 초대를 가져가는 길이 된다.
+     */
+    private suspend fun verifiedEmailOf(userId: Long): String? =
+        appUserRepository.findById(userId)?.takeIf { it.emailVerifiedAt != null }?.email
+
     private suspend fun alreadyMember(projectId: Long, email: String): Boolean =
-        appUserRepository.findByEmailIgnoreCase(email)
+        appUserRepository.findVerifiedByEmail(email)
             .toList()
             .any { user ->
                 user.id != null &&

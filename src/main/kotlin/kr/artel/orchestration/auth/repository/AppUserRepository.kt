@@ -2,6 +2,7 @@ package kr.artel.orchestration.auth.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.auth.entity.AppUserEntity
+import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 
 interface AppUserRepository : CoroutineCrudRepository<AppUserEntity, Long> {
@@ -17,6 +18,22 @@ interface AppUserRepository : CoroutineCrudRepository<AppUserEntity, Long> {
      * 한 자리뿐이고, 그 확인은 최선을 다하는 것일 뿐 보장이 아니다.
      */
     fun findByEmailIgnoreCase(email: String): Flow<AppUserEntity>
+
+    /**
+     * 이 주소를 확인까지 마친 계정. `uk_app_user_verified_email` 덕분에 최대 한 건이지만, 그
+     * index 는 이 branch 가 만든 것이라 Flow 로 둔다 — 개수를 타입으로 주장하면 나중에 index 를
+     * 손댔을 때 조용히 틀린다.
+     *
+     * [findByEmailIgnoreCase] 와 달리 확인되지 않은 행을 세지 않는다. 확인되지 않은 주소는 아직
+     * 아무것도 주장하지 않으므로, 다른 사람이 그 주소를 확인하는 것을 막을 근거가 못 된다.
+     */
+    @Query(
+        """
+        SELECT * FROM app_user
+        WHERE lower(email) = lower(:email) AND email_verified_at IS NOT NULL
+        """
+    )
+    fun findVerifiedByEmail(email: String): Flow<AppUserEntity>
 
     /**
      * 같은 nickname을 쓰는 사용자를 모두 찾는다. 새 user_tag를 배정할 때 이미 나간 번호를 읽는

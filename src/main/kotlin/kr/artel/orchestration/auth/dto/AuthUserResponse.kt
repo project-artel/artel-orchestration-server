@@ -21,6 +21,16 @@ data class AuthUserResponse(
     val nickname: String,
     /** 같은 [nickname]을 쓰는 사람들을 가르는 번호. 화면에 나가는 `nickname#userTag`는 클라이언트가 붙인다. */
     val userTag: String,
+    /**
+     * [email]이 이 계정의 것으로 확정됐는지. false면 그 주소로는 초대를 받을 수 없다 —
+     * `ProjectInvitationService`가 확인을 마친 주소로만 초대함을 낸다.
+     */
+    val emailVerified: Boolean,
+    /**
+     * 확인을 기다리는 주소. 사용자가 새 주소를 넣었지만 아직 코드를 넣지 않은 동안 채워진다.
+     * [email]과 다를 수 있고, 둘 다 있으면 [email]이 지금 통하는 주소다.
+     */
+    val pendingEmail: String?,
     /** 최근 로그인한 제공자가 앞에 오도록 정렬된다. */
     val identities: List<LinkedIdentityResponse>
 )
@@ -38,6 +48,16 @@ data class UpdateLocaleRequest(
  */
 data class UpdateProfileRequest(
     val nickname: String? = null
+)
+
+/** `POST /api/auth/me/email` 요청 본문. 이 주소는 아직 계정의 것이 아니다. */
+data class RegisterEmailRequest(
+    val email: String
+)
+
+/** `POST /api/auth/me/email/verify` 요청 본문. */
+data class VerifyEmailRequest(
+    val token: String
 )
 
 data class LinkedIdentityResponse(
