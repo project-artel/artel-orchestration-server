@@ -142,20 +142,60 @@ object MapTestCasePhrasing {
      * `Combine` 을(를) 클릭한다     →  `Combine` 을(를) 클릭해 `CombineZone/Button` 을(를) 켠다
      * ```
      *
-     * **결과가 여럿이면 앞의 하나만 부르고 `외 N건` 을 붙인다.** 어느 것이 대표인지 고르면
-     * 그 판단은 게임마다 다르고, 우리가 정하면 한 게임에 맞추는 것이 된다. 앞의 하나는 지도가
-     * 실은 순서(`capability_effect.id`)이지 우리 순위가 아니다. 전부는 기대결과 칸에 그대로 있다.
+     * ## 결과가 여럿이면
+     *
+     * 앞의 하나만 부르고 `외 N건` 을 붙이던 자리다. 그것이 **무엇을 검증하라는 것인지 말하지
+     * 않는다** — 실측에서 `` 아무 키나 눌러 `AnyKeyPrompt` 의 표시 상태를 바꾼다 외 4건 `` 이
+     * 나왔고, 읽는 사람은 나머지 넷이 무엇인지 이름만 보고는 모른다.
+     *
+     * 대표를 고르지 않는다. **몇 가지를 보는지 센다:**
+     *
+     * ```
+     * 둘   `TypeCard` 을(를) 만들고 `…text` 표시를 `Word.name` 로 갱신한다
+     * 셋+  표시 상태 3곳을 바꾸고 글자 2곳을 갱신한다
+     * ```
+     *
+     * 세는 말도 지어내지 않는다 — `capability_effect.kind` 가 그대로 준다([Doing]). 셋 이상은
+     * 실측 6건뿐이고 종류가 최대 셋이라 문장이 길어지지 않는다. 전부는 기대결과 칸에 있다.
      */
-    fun trial(act: Act, repeatUntilDone: Boolean, does: List<String> = emptyList()): String {
+    fun trial(act: Act, repeatUntilDone: Boolean, does: List<Doing> = emptyList()): String {
         val lead = listOfNotNull(act.what, REPEATEDLY.takeIf { repeatUntilDone })
-        val head = does.firstOrNull()
-        val more = if (does.size > 1) " 외 ${does.size - 1}건" else ""
+        val tail = tailOf(does)
         return when {
-            head == null -> (lead + act.ends).joinToString(" ")
+            tail == null -> (lead + act.ends).joinToString(" ")
             // 이을 꼴이 없으면 문장을 끝내고 줄표로 잇는다. 억지로 활용하지 않는다.
-            act.joins == null -> (lead + act.ends).joinToString(" ") + " — $head$more"
-            else -> (lead + act.joins + head).joinToString(" ") + more
+            act.joins == null -> (lead + act.ends).joinToString(" ") + " — $tail"
+            else -> (lead + act.joins).joinToString(" ") + " " + tail
         }
+    }
+
+    /**
+     * 무엇이 일어나는지를 한 마디로.
+     *
+     * **종류가 같은 것끼리 센다.** 같은 종류를 둘 이름으로 부르면 문장이 두 배가 되면서
+     * 말하는 것은 늘지 않는다 — 실측에서
+     * `` `chatName.text` 표시를 갱신하고 `chatText.text` 표시를 `streamingText.Substring(0, i)` 로
+     * 갱신한다 `` 가 나왔고, `글자 2곳을 갱신한다` 가 같은 말이면서 읽힌다.
+     *
+     * **둘뿐이고 종류가 다르면 둘 다 이름으로 부른다.** 그때 세면 `오브젝트 1개를 만들고 글자
+     * 1곳을 갱신한다` 가 되어 무엇을 보라는 것인지 오히려 흐려진다.
+     *
+     * 순서는 지도가 실은 순서를 지킨다 — 우리가 매기면 그것이 곧 순위가 된다.
+     */
+    private fun tailOf(does: List<Doing>): String? {
+        if (does.isEmpty()) return null
+        if (does.size == 1) return does.single().let { "${it.what} ${it.ends}" }
+        val groups = does.groupBy { it.kind }.values.toList()
+        val byName = does.size == 2 && groups.size == 2
+        return groups.mapIndexed { at, group ->
+            val last = at == groups.lastIndex
+            if (byName) {
+                group.single().let { "${it.what} ${if (last) it.ends else it.joins}" }
+            } else {
+                val counted = group.first().counted
+                "${counted.noun} ${group.size}${counted.unit} ${if (last) counted.ends else counted.joins}"
+            }
+        }.joinToString(" ")
     }
 
     /**
@@ -194,7 +234,7 @@ object MapTestCasePhrasing {
      * @property doing 케이스 이름에 붙는 문장 — `\`Map_scene\` 화면으로 넘어간다`
      * @property effect 그것을 낸 효과. 도착 화면처럼 구조로 읽을 것이 있다.
      */
-    data class Told(val expected: String, val doing: String, val effect: CapabilityEffectEntity)
+    data class Told(val expected: String, val doing: Doing, val effect: CapabilityEffectEntity)
 
     /**
      * [expectedEach] 와 같되 **어느 효과가 그 문장을 냈는지** 함께 낸다(ARTEL-614).
@@ -266,26 +306,60 @@ object MapTestCasePhrasing {
     }
 
     /**
-     * 같은 효과를 **이름에 쓸 능동꼴로.** [outcome] 과 한 쌍이고 같은 `kind` 를 본다.
+     * 효과 하나를 **이름에 쓸 능동꼴로.** [outcome] 과 한 쌍이고 같은 `kind` 를 본다.
      *
      * 뜻을 더하지 않는다 — `active-state` 의 `true`/`false` 를 켠다/끈다로 부르는 것까지가
      * `kind` 와 값이 말한 것이고, 그 너머(무엇을 위해 켜는가)는 적지 않는다.
+     *
+     * @property what 무엇을 — `` `Congratulation` 을(를) ``
+     * @property ends 문장을 끝내는 꼴 — `켠다`
+     * @property joins 뒤에 하나 더 잇는 꼴 — `켜고`
+     * @property counted 여럿일 때 세어 부르는 말
      */
-    private fun doing(kind: String, target: String, detail: String?): String = when (kind) {
-        "scene" -> "`$target` 화면으로 넘어간다"
-        "active-state" -> when (detail) {
-            "true" -> "`$target` 을(를) 켠다"
-            "false" -> "`$target` 을(를) 끈다"
-            else -> "`$target` 의 표시 상태를 바꾼다"
+    data class Doing(
+        val kind: String,
+        val what: String,
+        val ends: String,
+        val joins: String,
+        val counted: Counted,
+    )
+
+    /**
+     * 같은 종류를 여럿 셀 때 쓰는 말.
+     *
+     * 동사가 [Doing.ends] 와 **다를 수 있다.** `active-state` 셋이 켜기 둘 · 끄기 하나일 수 있으니
+     * "표시 상태 3곳을 켠다"는 거짓이다. 종류가 말하는 데까지만 — "바꾼다"다.
+     */
+    data class Counted(val noun: String, val unit: String, val ends: String, val joins: String)
+
+    /** 세는 단위는 조사까지 함께 든다 — `곳` 뒤는 `을` 이고 `개` 뒤는 `를` 이라 규칙 하나로 못 붙인다. */
+    private const val PLACES = "곳을"
+
+    private const val THINGS = "개를"
+
+    private fun doing(kind: String, target: String, detail: String?): Doing {
+        val value = detail?.let { "`$it` 로 " } ?: ""
+        fun of(what: String, ends: String, joins: String, counted: Counted) =
+            Doing(kind, what.trim(), ends, joins, counted)
+        return when (kind) {
+            "scene" -> of("`$target` 화면으로", "넘어간다", "넘어가고", Counted("화면", PLACES, "넘어간다", "넘어가고"))
+            "active-state" -> {
+                val counted = Counted("표시 상태", PLACES, "바꾼다", "바꾸고")
+                when (detail) {
+                    "true" -> of("`$target` 을(를)", "켠다", "켜고", counted)
+                    "false" -> of("`$target` 을(를)", "끈다", "끄고", counted)
+                    else -> of("`$target` 의 표시 상태를", "바꾼다", "바꾸고", counted)
+                }
+            }
+            "ui-value" -> of("`$target` 표시를 $value", "갱신한다", "갱신하고", Counted("글자", PLACES, "갱신한다", "갱신하고"))
+            "instantiate" -> of("`$target` 을(를)", "만든다", "만들고", Counted("오브젝트", THINGS, "만든다", "만들고"))
+            "destroy" -> of("`$target` 을(를)", "없앤다", "없애고", Counted("오브젝트", THINGS, "없앤다", "없애고"))
+            "animation" -> of("`$target` 애니메이션을", "재생한다", "재생하고", Counted("애니메이션", THINGS, "재생한다", "재생하고"))
+            "audio" -> of("`$target` 소리를", "낸다", "내고", Counted("소리", "가지를", "낸다", "내고"))
+            "transform" -> of("`$target` 을(를) $value", "옮긴다", "옮기고", Counted("위치", PLACES, "옮긴다", "옮기고"))
+            "saved" -> of("`$target` 을(를)", "저장한다", "저장하고", Counted("값", THINGS, "저장한다", "저장하고"))
+            else -> of("`$target` 을(를) $value", "바꾼다", "바꾸고", Counted("자리", PLACES, "바꾼다", "바꾸고"))
         }
-        "ui-value" -> "`$target` 표시를 ${detail?.let { "`$it` 로 " } ?: ""}갱신한다"
-        "instantiate" -> "`$target` 을(를) 만든다"
-        "destroy" -> "`$target` 을(를) 없앤다"
-        "animation" -> "`$target` 애니메이션을 재생한다"
-        "audio" -> "`$target` 소리를 낸다"
-        "transform" -> "`$target` 을(를) ${detail?.let { "`$it` 로 " } ?: ""}옮긴다"
-        "saved" -> "`$target` 을(를) 저장한다"
-        else -> detail?.let { "`$target` 을(를) `$it` 로 바꾼다" } ?: "`$target` 을(를) 바꾼다"
     }
 
     /**

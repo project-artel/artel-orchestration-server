@@ -317,7 +317,8 @@ class MapTestCaseGeneratorGoldenTest {
     fun `형제와 갈리는 비교가 이름 앞에 온다`() {
         // 이름에 결과가 붙은 뒤로도 이 셋은 글자까지 같다 — 같은 조작으로 같은 것을 만든다.
         // 갈리는 것이 전제뿐이라, 꼬리가 없으면 목록에서 셋을 구별할 수 없다.
-        val same = "아무 키나 눌러 `TypeCard` 을(를) 만든다 외 1건 ("
+        val same = "아무 키나 눌러 `TypeCard` 을(를) 만들고 " +
+            "`GameObject.GetComponentInChildren().text` 표시를 `Word.name` 로 갱신한다 ("
         val group = cases.filter { it.scene == "GameClearScene" && it.step.startsWith(same) }
         assertThat(group).hasSizeGreaterThan(1)
 

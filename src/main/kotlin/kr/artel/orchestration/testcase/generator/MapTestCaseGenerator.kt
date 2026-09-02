@@ -523,8 +523,8 @@ class MapTestCaseGenerator(
         val watching: Boolean = false,
         /** 끝까지 되풀이해야 닿는 자리인가(ARTEL-613). 이름을 지을 때 다시 쓴다. */
         val repeats: Boolean = false,
-        /** 이 효과를 이름에 붙일 능동꼴 — `` `Map_scene` 화면으로 넘어간다 ``. */
-        val does: String? = null,
+        /** 이 효과를 이름에 붙일 능동꼴. 무리를 지어 세려면 종류까지 들어야 한다. */
+        val does: MapTestCasePhrasing.Doing? = null,
         val outcome: String,
         val status: String,
         val gaps: List<String>,
