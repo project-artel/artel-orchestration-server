@@ -2,6 +2,8 @@ package kr.artel.orchestration.knowledge.service
 
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.knowledge.dto.KnowledgeDetailResponse
 import kr.artel.orchestration.knowledge.dto.KnowledgeGraphEdge
 import kr.artel.orchestration.knowledge.dto.KnowledgeGraphNode
 import kr.artel.orchestration.knowledge.dto.KnowledgeGraphNodeAnchor
@@ -83,6 +85,35 @@ class KnowledgeGraphViewService(
             nodeLimit = nodeLimit
         )
     }
+
+    /**
+     * knowledge 항목 하나를 본문까지 읽는다(ARTEL-753).
+     *
+     * **비참여자·다른 프로젝트 항목·소프트삭제 항목 모두 404다.** [graph]가 비참여자에게 빈
+     * 그래프를 주는 것과 다른 판단이다 — 목록은 "있는 척"할 빈 목록이 있지만, 단건 조회는 있는
+     * 척할 대상이 없다. 그래서 여기서는 [ProjectAccessService.requireMember]로 예외를 던져 확인한다.
+     *
+     * 운영 스코프(`scope_id IS NULL`)만 읽는다. [KnowledgeRepository.findVisibleById]가 그 술어를
+     * 이미 지고 있어([KnowledgeScope.PRODUCTION] 전달) 서비스가 따로 걸 것이 없다 — [graph]와
+     * 같은 조회를 재사용한다.
+     *
+     * 문서 node 조회는 별도 분기 없이 같은 경로를 탄다 — [KnowledgeDetailResponse.isDocumentNode]
+     * 하나가 화면에 그 구분을 넘기고, 나머지 필드와 404 규칙은 문서 node 도 다른 항목과 같다.
+     */
+    suspend fun detail(projectId: Long, userId: Long, knowledgeId: Long): KnowledgeDetailResponse {
+        accessService.requireMember(projectId, userId)
+        val entity = knowledgeRepository.findVisibleById(knowledgeId, projectId, KnowledgeScope.PRODUCTION.id)
+            ?: throw knowledgeNotFound()
+        return KnowledgeDetailResponse(
+            id = requireNotNull(entity.id).toString(),
+            summary = entity.summary,
+            description = entity.description,
+            updatedAt = entity.updatedAt,
+            isDocumentNode = knowledgeRepository.isDocumentNode(knowledgeId)
+        )
+    }
+
+    private fun knowledgeNotFound() = NotFoundException("지식 항목을 찾을 수 없습니다.")
 
     /**
      * 응답에 실릴 노드 **전체**의 앵커를 한 번에 데려와 지식 id로 묶는다(ARTEL-605).

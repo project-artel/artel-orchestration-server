@@ -3310,6 +3310,46 @@
         }
       }
     },
+    "/api/projects/{projectId}/knowledge/{knowledgeId}": {
+      "get": {
+        "tags": [
+          "knowledge-detail-controller"
+        ],
+        "operationId": "detail",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "knowledgeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/knowledge-graph": {
       "get": {
         "tags": [
@@ -7213,6 +7253,33 @@
           "joinedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "KnowledgeDetailResponse": {
+        "required": [
+          "description",
+          "id",
+          "isDocumentNode",
+          "summary"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "isDocumentNode": {
+            "type": "boolean"
           }
         }
       },
