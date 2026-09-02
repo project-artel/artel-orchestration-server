@@ -21,10 +21,14 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.qa.entity.QaRunEntity
 import kr.artel.orchestration.qa.entity.QaTryEntity
+import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.qa.service.QaAgentEnvelope
 import kr.artel.orchestration.qa.service.QaAgentInboundRouter
+import kr.artel.orchestration.testrun.entity.TestRunEntity
+import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -58,6 +62,8 @@ class IssueIntegrationTest {
     @Autowired private lateinit var issueRepository: IssueRepository
     @Autowired private lateinit var issueService: IssueService
     @Autowired private lateinit var qaTryRepository: QaTryRepository
+    @Autowired private lateinit var qaRunRepository: QaRunRepository
+    @Autowired private lateinit var testRunRepository: TestRunRepository
     @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
     @Autowired private lateinit var testScenarioRepository: TestScenarioRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
@@ -77,6 +83,8 @@ class IssueIntegrationTest {
     fun clean(): Unit = runBlocking {
         issueRepository.deleteAll()
         qaTryRepository.deleteAll()
+        qaRunRepository.deleteAll()
+        testRunRepository.deleteAll()
         gameInstanceRepository.deleteAll()
         testScenarioRepository.deleteAll()
         projectMemberRepository.deleteAll()
@@ -172,6 +180,26 @@ class IssueIntegrationTest {
         issueService.resolve(blocker, seed.ownerId)
         val open = issueService.listByProject(seed.projectId, seed.ownerId, "OPEN", null, null, 50)
         assertThat(open.items.map { it.title }).containsExactly("from the first run")
+    }
+
+    /**
+     * `qa_run_id` 는 `IssueEntity` 에 없다 — 남긴 try 를 거쳐야 안다(ARTEL-722). run 에 속한 try 와
+     * `qa_run` 이 생기기 전의 단독 실행 try 를 나란히 세워, 배치 조회가 각자에게 맞는 값을 준다.
+     */
+    @Test
+    fun `qaRunId는 이슈를 남긴 try 를 거쳐 문자열로 실리고 단독 실행은 null이다`(): Unit = runBlocking {
+        val owner = signIn("42", "octocat")
+        val seed = seedProject(owner)
+        val qaRunId = seedQaRun(seed)
+        val runTryId = seedQaTry(seed, status = "COMPLETED", qaRunId = qaRunId)
+        val runIssueId = seedIssue(runTryId, "MAJOR", "run 소속 실행이 남긴 이슈")
+        val standaloneIssueId = seedIssue(seed.qaTryId, "MAJOR", "단독 실행이 남긴 이슈")
+
+        val page = issueService.listByProject(seed.projectId, seed.ownerId, null, null, null, 50)
+        val byId = page.items.associateBy { it.id }
+
+        assertThat(byId.getValue(runIssueId.toString()).qaRunId).isEqualTo(qaRunId.toString())
+        assertThat(byId.getValue(standaloneIssueId.toString()).qaRunId).isNull()
     }
 
     @Test
@@ -313,16 +341,33 @@ class IssueIntegrationTest {
      * 기본이 COMPLETED인 것은 `uk_qa_try_active_instance` 때문이다 — 한 인스턴스에 진행 중인
      * 실행은 하나뿐이다. 프로젝트에 쌓인 이슈는 대부분 끝난 실행의 것이므로 실제와도 맞는다.
      */
-    private suspend fun seedQaTry(seed: Seed, status: String = "COMPLETED"): Long {
+    private suspend fun seedQaTry(seed: Seed, status: String = "COMPLETED", qaRunId: Long? = null): Long {
         val now = Instant.now()
         return qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = seed.testScenarioId,
                 gameInstanceId = seed.gameInstanceId,
+                qaRunId = qaRunId,
                 startedBy = seed.ownerId,
                 status = status,
                 startedAt = now,
                 completedAt = if (status == "RUNNING") null else now
+            )
+        )!!.id!!
+    }
+
+    /** run 하나(ARTEL-259 최소형). qa_try 를 여기 붙여야 `IssueResponse.qaRunId` 가 문자열을 낸다. */
+    private suspend fun seedQaRun(seed: Seed): Long {
+        val now = Instant.now()
+        val testRun = testRunRepository.save(TestRunEntity(projectId = seed.projectId, name = "런"))!!
+        return qaRunRepository.save(
+            QaRunEntity(
+                testRunId = testRun.id!!,
+                gameInstanceId = seed.gameInstanceId,
+                startedBy = seed.ownerId,
+                status = "COMPLETED",
+                startedAt = now,
+                completedAt = now
             )
         )!!.id!!
     }

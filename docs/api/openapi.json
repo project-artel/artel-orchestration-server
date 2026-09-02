@@ -4755,6 +4755,9 @@
           },
           "knowledgeScopeId": {
             "type": "string"
+          },
+          "qaRunId": {
+            "type": "string"
           }
         }
       },
@@ -5942,6 +5945,9 @@
           },
           "tracker": {
             "$ref": "#/components/schemas/IssueTrackerResponse"
+          },
+          "qaRunId": {
+            "type": "string"
           }
         }
       },
@@ -7121,6 +7127,9 @@
             "format": "int32"
           },
           "createdByQaTryId": {
+            "type": "string"
+          },
+          "createdByQaRunId": {
             "type": "string"
           },
           "createdAt": {

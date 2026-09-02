@@ -102,7 +102,13 @@ data class QaTryResponse(
      * 이 런이 쓴 지식 스코프(ARTEL-256). null이면 운영 런이다. `knowledge_mode`는 별도 필드가
      * 아니라 [runConfig] 안에 있다 — 비교 축은 전부 그 스냅샷에 모여야 집계가 한 곳만 읽는다.
      */
-    val knowledgeScopeId: String? = null
+    val knowledgeScopeId: String? = null,
+    /**
+     * 이 try 가 속한 부모 `qa_run`(ARTEL-259, ARTEL-722). null이면 `qa_run` 이 생기기 전의
+     * 단독 실행(하위호환) try다 — `qa_try.qa_run_id` 가 nullable 인 것과 같은 이유다. 화면이
+     * try 화면에서 run 콘솔로 올라가는 링크를 만드는 재료다.
+     */
+    val qaRunId: String? = null
 )
 
 /**
