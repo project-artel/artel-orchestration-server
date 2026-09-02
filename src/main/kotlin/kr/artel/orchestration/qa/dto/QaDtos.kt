@@ -74,6 +74,14 @@ data class QaModelResponse(
     val provider: String,
     @JsonAlias("supports_strict_json") val supportsStrictJson: Boolean,
     @JsonAlias("supports_vision") val supportsVision: Boolean,
+    /**
+     * 이 모델로 런을 돌리면 지식창고 검색이 꺼지나.
+     *
+     * 모델의 능력이 아니라 그 모델이 사는 경로의 사실이다 — Bedrock 에는 우리가 쓰는
+     * 임베딩 모델이 없고, 다른 것으로 바꾸면 벡터 공간이 달라 검색이 조용히 틀린 답을
+     * 낸다. 화면이 고르기 전에 말해 줄 수 있도록 그대로 내려보낸다.
+     */
+    @JsonAlias("knowledge_search") val knowledgeSearch: Boolean = true,
     @JsonAlias("input_modalities") val inputModalities: List<String>,
     val multimodal: Boolean,
     val reasoning: QaReasoningCapability?
