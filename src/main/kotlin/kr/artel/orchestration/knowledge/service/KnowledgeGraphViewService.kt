@@ -12,6 +12,7 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
+import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.stereotype.Service
 
 /** 한 화면에 담을 노드 상한. 이보다 크면 그림이 읽히지 않으므로 응답보다 화면이 먼저 무너진다. */
@@ -22,7 +23,8 @@ class KnowledgeGraphViewService(
     private val knowledgeRepository: KnowledgeRepository,
     private val anchorRepository: KnowledgeAnchorRepository,
     private val graphService: KnowledgeGraphService,
-    private val accessService: ProjectAccessService
+    private val accessService: ProjectAccessService,
+    private val qaTryRepository: QaTryRepository
 ) {
 
     /**
@@ -71,10 +73,11 @@ class KnowledgeGraphViewService(
             }
 
         val anchors = anchorsFor(ids)
+        val qaRunIds = qaRunIdsFor(nodes)
 
         return KnowledgeGraphViewResponse(
             projectId = projectId.toString(),
-            nodes = nodes.map { it.toNode(anchors) },
+            nodes = nodes.map { it.toNode(anchors, qaRunIds) },
             edges = edges,
             truncated = all.size > nodes.size,
             nodeLimit = nodeLimit
@@ -100,6 +103,20 @@ class KnowledgeGraphViewService(
             .toList()
             .groupBy(KnowledgeAnchorEntity::knowledgeId) { it.toNodeAnchor() }
     }
+
+    /**
+     * 응답에 실릴 QA 소스 노드가 만든 run id 를 한 번에 읽는다(ARTEL-722).
+     *
+     * `createdByQaTryId` 와 같은 이유로 노드마다 조회하지 않는다 — 노드 상한이 [MAX_NODES] 라
+     * 노드당 한 질의는 응답 하나를 최대 500 질의로 만든다. `source != "QA"` 인 노드의 `sourceId`
+     * 는 qa_try 를 가리키지 않으므로 애초에 모으지 않는다.
+     */
+    private suspend fun qaRunIdsFor(nodes: List<KnowledgeEntity>): Map<Long, Long?> {
+        val qaTryIds = nodes.filter { it.source == "QA" }.mapNotNull { it.sourceId }.distinct()
+        if (qaTryIds.isEmpty()) return emptyMap()
+        return qaTryRepository.findAllById(qaTryIds).toList()
+            .associate { requireNotNull(it.id) to it.qaRunId }
+    }
 }
 
 /**
@@ -107,16 +124,21 @@ class KnowledgeGraphViewService(
  * 읽으면 안 되고, 그래서 source를 함께 보고 가른다.
  */
 private fun KnowledgeEntity.toNode(
-    anchors: Map<Long, List<KnowledgeGraphNodeAnchor>>
+    anchors: Map<Long, List<KnowledgeGraphNodeAnchor>>,
+    qaRunIds: Map<Long, Long?>
 ): KnowledgeGraphNode {
     val knowledgeId = requireNotNull(id)
+    val qaTryId = sourceId?.takeIf { source == "QA" }
     return KnowledgeGraphNode(
         id = knowledgeId.toString(),
         tag = tag,
         source = source,
         summary = summary,
         version = version,
-        createdByQaTryId = sourceId?.takeIf { source == "QA" }?.toString(),
+        createdByQaTryId = qaTryId?.toString(),
+        // qaTryId 가 가리키는 qa_try 가 지워졌거나 qa_run 이 생기기 전의 단독 실행이면 맵에
+        // 값이 없거나 null 이고, 둘 다 결과는 null 이다.
+        createdByQaRunId = qaTryId?.let { qaRunIds[it] }?.toString(),
         createdAt = createdAt,
         // 앵커가 없는 지식은 게임 전체의 사실이다. 그것이 기본값이라 빈 배열이 정상이다.
         anchors = anchors[knowledgeId].orEmpty()

@@ -45,6 +45,12 @@ data class KnowledgeGraphNode(
     val summary: String,
     val version: Int,
     val createdByQaTryId: String?,
+    /**
+     * [createdByQaTryId] 가 속한 부모 `qa_run`(ARTEL-722). 노드에 직접 저장된 값이 아니라
+     * 그 try 를 배치로 조회해 얻는다 — `qa_run` 이 생기기 전의 단독 실행 try 가 만든 지식이거나
+     * [createdByQaTryId] 가 가리키는 try 가 이미 지워졌으면 null 이다.
+     */
+    val createdByQaRunId: String?,
     val createdAt: Instant?,
     val anchors: List<KnowledgeGraphNodeAnchor>
 )
