@@ -86,6 +86,7 @@ class MapTestCaseWriter(
                 precondition = case.precondition,
                 condition = conditionJson(case),
                 expectedValue = case.expected,
+                expectedItems = expectedItemsJson(case),
                 status = case.status,
                 capabilityKey = case.capabilityKey,
                 metadata = metadataOf(contentMapId, case),
@@ -123,25 +124,26 @@ class MapTestCaseWriter(
     /**
      * 이 줄이 실제로 달라졌나.
      *
-     * `metadata` 를 따로 견주는 이유가 둘이다. `Json` 은 값 비교가 안 되고(데이터 클래스의 `!=` 에
-     * 맡기면 내용이 같아도 늘 다르다), **글자로 견줘도 안 된다** — `jsonb` 는 키 순서를 정규화해서
-     * 저장하므로 읽어온 글자가 쓴 글자와 다르다. 그래서 트리로 견준다.
+     * **`Json` 은 값으로 견줄 수 없다.** 같은 내용이어도 다른 객체면 다르다고 나오고, **글자로
+     * 견줘도 안 된다** — `jsonb` 는 키 순서를 정규화해서 저장하므로 읽어온 글자가 쓴 글자와
+     * 다르다. 파싱해서 트리로 견준다.
      *
      * 이것을 안 하면 아무것도 안 바뀐 재적재가 매번 전량을 다시 쓴다. 헛도는 쓰기보다 나쁜 것은
      * 그 수가 "49행이 달라졌다"고 거짓말하는 것이다 — 실측에서 세 번을 이어 적재해도 계속
      * `updated=49` 였다.
-     */
-    /**
-     * **`Json` 은 값으로 견줄 수 없다.** 같은 내용이어도 다른 객체면 다르다고 나오고, 그러면 안 바뀐
-     * 재적재가 표 전체를 다시 쓴다. jsonb 는 키 순서까지 정규화하므로 문자열 비교도 안 된다 —
-     * 파싱해서 트리로 견준다.
      *
-     * 여기 실린 JSONB 칸이 둘(`metadata` · `condition`)이라, 둘 다 빼고 나머지를 견준 뒤 각각 따로 본다.
+     * 여기 실린 JSONB 칸이 셋(`metadata` · `condition` · `expected_items`)이라, 셋 다 빼고
+     * 나머지를 견준 뒤 각각 따로 본다.
      */
     private fun changed(prior: TestCaseEntity, next: TestCaseEntity): Boolean =
-        prior.copy(metadata = next.metadata, condition = next.condition) != next ||
+        prior.copy(
+            metadata = next.metadata,
+            condition = next.condition,
+            expectedItems = next.expectedItems,
+        ) != next ||
             !sameJson(prior.metadata, next.metadata) ||
-            !sameJson(prior.condition, next.condition)
+            !sameJson(prior.condition, next.condition) ||
+            !sameJson(prior.expectedItems, next.expectedItems)
 
     private fun sameJson(a: Json?, b: Json?): Boolean {
         if (a == null || b == null) return a == null && b == null
@@ -200,10 +202,20 @@ class MapTestCaseWriter(
         precondition = case.precondition,
         condition = conditionJson(case),
         expectedValue = case.expected,
+        expectedItems = expectedItemsJson(case),
         status = case.status,
         capabilityKey = case.capabilityKey,
         metadata = metadataOf(contentMapId, case),
     )
+
+    /**
+     * 기대결과 항목들을 그대로 싣는다(V81). 목록이 비면 null 이다 — 지도를 못 되짚는 행과 같은
+     * 값이어야 하고, 빈 배열은 "기대결과가 없다"는 다른 말이다.
+     */
+    private fun expectedItemsJson(case: MapTestCase): Json? = case.expectedItems
+        .takeIf { it.isNotEmpty() }
+        ?.let { objectMapper.writeValueAsString(it) }
+        ?.let(Json::of)
 
     /**
      * 출처와, 이 줄이 어느 지도에서 왔는지와, 등급이 그렇게 나온 이유를 싣는다.

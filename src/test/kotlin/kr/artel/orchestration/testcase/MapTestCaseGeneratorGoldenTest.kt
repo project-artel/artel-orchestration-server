@@ -243,6 +243,26 @@ class MapTestCaseGeneratorGoldenTest {
      * 꼬리(`… 일 때`)가 마지막 방패다. 그것까지 붙이고도 같은 줄이 남으면 사람이 구별할 방법이
      * 없다.
      */
+    /**
+     * **기대결과 문장과 목록이 같은 것을 말한다**(V81).
+     *
+     * 문장은 목록을 ` / ` 로 이어 보여준 것이다. 쓰는 쪽이 그 구분자로 다시 쪼개지 않아도 되게
+     * 목록을 함께 싣는데, 둘이 어긋나면 표에 보이는 것과 실행이 판정하는 것이 달라진다.
+     *
+     * 실측 85건 중 19건이 항목을 2~5개 든다. 이름의 `외 N건` 도 이 수를 센 것이다.
+     */
+    @Test
+    fun `기대결과 목록이 문장과 같은 것을 말한다`() {
+        assertThat(cases).allSatisfy { case ->
+            assertThat(case.expectedItems).isNotEmpty()
+            assertThat(case.expectedItems.joinToString(" / ")).isEqualTo(case.expected)
+        }
+
+        val many = cases.filter { it.expectedItems.size > 1 }
+        assertThat(many).hasSize(19)
+        assertThat(many.sumOf { it.expectedItems.size }).isEqualTo(53)
+    }
+
     @Test
     fun `한 화면 안에서 이름이 겹치지 않는다`() {
         val twice = cases.groupBy { it.scene to it.step }.filterValues { it.size > 1 }

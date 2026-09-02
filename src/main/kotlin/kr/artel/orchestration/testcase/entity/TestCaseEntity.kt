@@ -64,9 +64,27 @@ data class TestCaseEntity(
     @Column("condition")
     val condition: Json? = null,
 
-    /** 기대 결과. 명세 `spec.expected_value`. */
+    /**
+     * 기대 결과를 사람 말로 적은 한 줄. 명세 `spec.expected_value`.
+     *
+     * **표시 전용이다**(V81). 항목이 여럿이면 ` / ` 로 이어 놓은 것이고, 되짚을 것은
+     * [expectedItems] 다 — 여기서 그 구분자로 다시 쪼개면 안 된다. 기대결과 문장 안에 같은
+     * 구분자가 섞이는 날 조용히 어긋난다.
+     */
     @Column("expected_value")
     val expectedValue: String,
+
+    /**
+     * 기대결과의 **항목들**(V81). 실측 85건 중 19건이 2~5개를 든다.
+     *
+     * 실행이 항목마다 통과·실패를 답하려면 목록이어야 한다. 지금은 스텝마다 불리언 하나라
+     * 다섯 중 넷만 나도 통과로 적힌다.
+     *
+     * 지도를 못 되짚는 행(구버전 엑셀 경로)은 null 이다 — 없는 것을 빈 배열로 적으면
+     * "기대결과 없음"과 "모름"이 같은 값이 된다([condition] 과 같은 이유).
+     */
+    @Column("expected_items")
+    val expectedItems: Json? = null,
 
     /**
      * 명세를 만든 쪽이 매긴 상태("ready" 등). **[verificationStatus]와 다른 축이다** —

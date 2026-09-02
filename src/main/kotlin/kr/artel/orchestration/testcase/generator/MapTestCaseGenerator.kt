@@ -142,6 +142,7 @@ class MapTestCaseGenerator(
                     // 펴고, 채점은 스텝 단위라 어느 지점이 틀렸는지는 그대로 드러난다. 구버전도 같은
                     // 자리를 ` / ` 로 잇는다.
                     expected = shown.joinToString(OUTCOME_SEPARATOR) { it.outcome },
+                    expectedItems = shown.map { it.outcome },
                     status = first.status,
                     gaps = group.flatMap { it.gaps }.distinct(),
                     arrivesAt = group.firstNotNullOfOrNull { it.arrivesAt },
@@ -659,6 +660,7 @@ class MapTestCaseGenerator(
                 condition = null,
                 step = "`${element.path}` 이(가) 화면에 있는지 확인한다",
                 expected = "`${element.path}` 이(가) 화면에 있다",
+                expectedItems = listOf("`${element.path}` 이(가) 화면에 있다"),
                 status = "runnable",
                 identity = "screen\u001F${element.sceneName}\u001F${element.path}",
             )

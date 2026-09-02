@@ -29,7 +29,16 @@ data class MapTestCase(
      */
     val condition: ConditionNode? = null,
     val step: String,
+    /** 사람이 읽는 한 줄. **표시 전용이다** — 되짚을 것은 [expectedItems] 다. */
     val expected: String,
+    /**
+     * 기대결과의 **항목들**. [expected] 는 이것을 ` / ` 로 이어 보여준 것이다.
+     *
+     * 실측 85건 중 19건이 2~5개를 든다. 이어 붙인 문장만 실으면 쓰는 쪽이 그 구분자로 다시
+     * 쪼개야 하고, 구분자가 기대결과 문장 안에 섞이는 날 조용히 어긋난다 — [condition] 이 생긴
+     * 것과 같은 이유다(ARTEL-627). 실행이 항목마다 통과·실패를 답하려면 목록이어야 한다.
+     */
+    val expectedItems: List<String> = emptyList(),
     val status: String,
     val gaps: List<String> = emptyList(),
     /**
