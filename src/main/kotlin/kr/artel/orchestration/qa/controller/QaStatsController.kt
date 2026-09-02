@@ -24,12 +24,14 @@ class QaStatsController(
     private val service: QaStatsService
 ) {
     /**
+     * @param projectId 생략하면 볼 수 있는 전 프로젝트를 합산한다. `DEVELOPER` 등급에게는 그것이
+     *   배포 전체이고, 그 밖에는 참여 중인 프로젝트다.
      * @param from,to ISO-8601 instant(`2026-08-01T00:00:00Z`). 생략하면 최근 30일.
      * @param cellLimit 돌려줄 조합 최대 개수. 넘치면 응답의 `truncated`가 선다.
      */
     @GetMapping
     suspend fun stats(
-        @RequestParam projectId: String,
+        @RequestParam(required = false) projectId: String?,
         @RequestParam(required = false) from: String?,
         @RequestParam(required = false) to: String?,
         @RequestParam(defaultValue = "200") cellLimit: Int,
@@ -37,7 +39,7 @@ class QaStatsController(
     ): ResponseEntity<QaStatsResponse> =
         ResponseEntity.ok(
             service.stats(
-                projectId = parseId(projectId),
+                projectId = projectId?.let(::parseId),
                 userId = appUserId,
                 from = parseInstant(from, "from"),
                 to = parseInstant(to, "to"),

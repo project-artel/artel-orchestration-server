@@ -1,5 +1,6 @@
 package kr.artel.orchestration.llmusage.service
 
+import kr.artel.orchestration.auth.service.PlatformAccessService
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.llmusage.dto.LlmUsageDailyCell
 import kr.artel.orchestration.llmusage.dto.LlmUsageModelCell
@@ -37,6 +38,7 @@ private const val MAX_QA_RUNS = 200
 @Service
 class LlmUsageStatsService(
     private val statsRepository: LlmUsageStatsRepository,
+    private val platformAccessService: PlatformAccessService,
     private val clock: Clock
 ) {
 
@@ -45,6 +47,10 @@ class LlmUsageStatsService(
      *
      * 참여자가 아닌 프로젝트를 지정하면 예외가 아니라 빈 집계다 — 여기만 403을 주면 프로젝트의
      * 존재 여부가 새어 나간다([kr.artel.orchestration.qa.service.QaStatsService]와 같은 규율).
+     *
+     * `DEVELOPER` 등급은 그 판정을 통과한다(ARTEL-742). 등급을 이 서비스가 직접 읽지 않고
+     * [PlatformAccessService]에 묻는 것은, 등급을 여는 자리가 늘어날 때 그 판단이 한 곳에만 남아
+     * 있어야 무엇이 열렸는지 셀 수 있기 때문이다.
      */
     suspend fun stats(
         userId: Long,
@@ -59,6 +65,7 @@ class LlmUsageStatsService(
         val rows = statsRepository.aggregate(
             userId = userId,
             projectId = projectId,
+            seesAllProjects = platformAccessService.seesAllProjects(userId),
             from = window.first,
             to = window.second,
             zone = zoneId.id
@@ -118,6 +125,7 @@ class LlmUsageStatsService(
             userId = userId,
             projectId = projectId,
             qaTryId = null,
+            seesAllProjects = platformAccessService.seesAllProjects(userId),
             from = window.first,
             to = window.second,
             limit = size
@@ -129,12 +137,16 @@ class LlmUsageStatsService(
      *
      * 창을 주지 않는다 — 특정 런을 이름으로 찾는 것이라 기간이 의미가 없고, 오래된 런을 열었을 때
      * 기본 창 밖이라 0으로 보이면 그것이 "안 썼다"로 읽힌다.
+     *
+     * `DEVELOPER` 등급은 [qaRuns]와 같이 통과한다. 목록에 낸 런을 단건으로 열면 없다고 답하는 것은
+     * 같은 행을 두고 두 가지로 대답하는 것이라, 화면이 그 차이를 설명할 방법이 없다.
      */
     suspend fun qaRun(userId: Long, qaTryId: Long): QaRunUsageResponse? =
         statsRepository.listQaRunUsage(
             userId = userId,
             projectId = null,
             qaTryId = qaTryId,
+            seesAllProjects = platformAccessService.seesAllProjects(userId),
             from = Instant.EPOCH,
             to = Instant.now(clock).plus(Duration.ofDays(1)),
             limit = 1

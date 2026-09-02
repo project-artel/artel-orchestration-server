@@ -4,6 +4,7 @@ import io.r2dbc.spi.Readable
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.auth.entity.PlatformRole
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.AuthenticatedUser
@@ -261,6 +262,7 @@ class KnowledgeStatsIntegrationTest {
         val aggregate = statsRepository.aggregateByRunConfig(
             projectId = projectId,
             userId = userId,
+            seesAllProjects = false,
             from = Instant.now().minus(1, ChronoUnit.HOURS),
             to = Instant.now().plus(1, ChronoUnit.HOURS),
             limit = 1
@@ -279,12 +281,40 @@ class KnowledgeStatsIntegrationTest {
         val aggregate = statsRepository.aggregateByRunConfig(
             projectId = projectId,
             userId = outsider,
+            seesAllProjects = false,
             from = Instant.now().minus(1, ChronoUnit.HOURS),
             to = Instant.now().plus(1, ChronoUnit.HOURS),
             limit = 100
         )
         assertThat(aggregate.cells).isEmpty()
         assertThat(aggregate.total!!.entryVersions).isZero()
+    }
+
+    /**
+     * `DEVELOPER` 등급은 참여하지 않아도 집계를 받는다(ARTEL-742).
+     *
+     * 위의 `참여자가 아니면 빈 집계를 돌려준다`가 리포지토리에 `false`를 직접 넘기는 것과 달리 이쪽은
+     * 서비스를 부른다. 등급을 읽어 그 값을 질의에 넘기는 것이 서비스의 일이라, 리포지토리만 확인하면
+     * `KnowledgeStatsService`가 `PlatformAccessService`에 묻기를 그만둬도 아무 테스트가 빨개지지 않는다.
+     */
+    @Test
+    fun `개발자 등급은 참여하지 않아도 집계를 받는다`(): Unit = runBlocking {
+        createEntry(runA, "지식")
+
+        val developerId = signIn(seed = "stats-developer").userId.toLong()
+        val developer = appUserRepository.findById(developerId)!!
+        appUserRepository.save(
+            developer.copy(platformRole = PlatformRole.DEVELOPER.name, updatedAt = Instant.now())
+        )
+
+        val response = statsService.stats(
+            projectId = projectId,
+            userId = developerId,
+            from = Instant.now().minus(1, ChronoUnit.HOURS),
+            to = Instant.now().plus(1, ChronoUnit.HOURS),
+            cellLimit = 100
+        )
+        assertThat(response.total.entryVersions).isEqualTo(1)
     }
 
     // ------------------------------------------------ 실험 스코프 격리 (ARTEL-256)
@@ -405,11 +435,96 @@ class KnowledgeStatsIntegrationTest {
         }.isInstanceOf(BadRequestException::class.java)
     }
 
+
+    // ------------------------------------------------ 프로젝트를 생략한 합산 (ARTEL-750)
+
+    /**
+     * 프로젝트를 안 주면 볼 수 있는 것을 다 더한다.
+     *
+     * 오너와 개발자를 한 테스트에 둔다. "합산이 된다" 와 "합산이 경계를 지킨다" 는 같은 질의의
+     * 앞뒤라, 나누면 조건을 통째로 지워도 한쪽은 녹색이다.
+     */
+    @Test
+    fun `프로젝트를 생략하면 볼 수 있는 것을 다 더한다`(): Unit = runBlocking {
+        createEntry(runA, "내 프로젝트의 지식")
+        seedForeignEntry()
+        val developerId = signIn(seed = "fold-developer").userId.toLong()
+        promote(developerId)
+
+        val window = Instant.now().minus(1, ChronoUnit.HOURS) to Instant.now().plus(1, ChronoUnit.HOURS)
+        val mine = statsService.stats(null, userId, window.first, window.second, 200)
+        val all = statsService.stats(null, developerId, window.first, window.second, 200)
+
+        assertThat(mine.total.entryVersions).isEqualTo(1)
+        assertThat(all.total.entryVersions).isEqualTo(2)
+    }
+
+    /** 생략한 응답의 `projectId` 는 null 이다. 아무 id 나 채우면 전체 합계가 그 하나로 읽힌다. */
+    @Test
+    fun `생략한 응답은 프로젝트 id 를 싣지 않는다`(): Unit = runBlocking {
+        createEntry(runA, "지식")
+        val window = Instant.now().minus(1, ChronoUnit.HOURS) to Instant.now().plus(1, ChronoUnit.HOURS)
+
+        assertThat(statsService.stats(null, userId, window.first, window.second, 200).projectId).isNull()
+        assertThat(statsService.stats(projectId, userId, window.first, window.second, 200).projectId)
+            .isEqualTo(projectId.toString())
+    }
+
     // --------------------------------------------------------------- helpers
+
+    /**
+     * 아무도 참여하지 않은 다른 프로젝트의 지식 한 줄. 합산이 프로젝트 경계를 어떻게 넘는지 보려면
+     * 남의 것이 하나 있어야 한다.
+     */
+    private suspend fun seedForeignEntry() {
+        val now = Instant.now()
+        val project = projectRepository.save(
+            ProjectEntity(name = "foreign-stats", genre = "ACTION", createdAt = now, updatedAt = now)
+        )!!
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        val instance = gameInstanceRepository.save(
+            GameInstanceEntity(
+                projectId = project.id!!,
+                name = "foreign-instance-${UUID.randomUUID().toString().take(8)}",
+                platform = "UNITY",
+                sdkUuid = UUID.randomUUID().toString(),
+                createdAt = now,
+                updatedAt = now
+            )
+        )!!
+        val foreignRun = qaTryRepository.save(
+            QaTryEntity(
+                testScenarioId = scenario.id!!,
+                gameInstanceId = instance.id!!,
+                startedBy = userId,
+                status = "COMPLETED",
+                model = "openai/gpt-foreign",
+                reasoningEffort = "high",
+                promptVersion = "v1",
+                agentArch = "single",
+                startedAt = now,
+                completedAt = now
+            )
+        )!!.id!!
+        knowledgeService.createFromQaTry(
+            project.id!!, KnowledgeScope.PRODUCTION, foreignRun,
+            KnowledgeMutationRequest(tag = "RULE", summary = "남의 지식", description = "d")
+        )
+    }
+
+    /** `app_user.platform_role`을 올린다. 주는 화면도 API도 없어 테스트도 행을 직접 고친다. */
+    private suspend fun promote(id: Long) {
+        val user = appUserRepository.findById(id)!!
+        appUserRepository.save(
+            user.copy(platformRole = PlatformRole.DEVELOPER.name, updatedAt = Instant.now())
+        )
+    }
+
 
     private suspend fun aggregate() = statsRepository.aggregateByRunConfig(
         projectId = projectId,
         userId = userId,
+        seesAllProjects = false,
         from = Instant.now().minus(1, ChronoUnit.HOURS),
         to = Instant.now().plus(1, ChronoUnit.HOURS),
         limit = 100

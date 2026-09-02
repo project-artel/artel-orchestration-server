@@ -2,6 +2,8 @@ package kr.artel.orchestration.knowledge
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.auth.service.PlatformAccessService
+import kr.artel.orchestration.auth.entity.PlatformRole
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.AuthenticatedUser
@@ -72,6 +74,7 @@ class KnowledgeGraphViewIntegrationTest {
     @Autowired private lateinit var edgeRepository: KnowledgeEdgeRepository
     @Autowired private lateinit var anchorRepository: KnowledgeAnchorRepository
     @Autowired private lateinit var accessService: ProjectAccessService
+    @Autowired private lateinit var platformAccessService: PlatformAccessService
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var appUserRepository: AppUserRepository
@@ -220,6 +223,29 @@ class KnowledgeGraphViewIntegrationTest {
         assertThat(response.edges).isEmpty()
         assertThat(response.truncated).describedAs("빈 그래프는 잘린 그래프가 아니다").isFalse()
         assertThat(response.nodeLimit).isEqualTo(200)
+    }
+
+    /**
+     * `DEVELOPER` 등급은 참여하지 않아도 그래프를 받는다(ARTEL-742).
+     *
+     * 바로 위와 짝이다. 이 서비스의 확인은 `isMember`에 `||`로 등급을 붙인 한 줄이라, 두 방향을 함께
+     * 두지 않으면 그 줄을 통째로 지우거나 항상 참으로 바꿔도 한쪽 테스트는 녹색으로 남는다.
+     */
+    @Test
+    fun `개발자 등급은 참여하지 않아도 그래프를 받는다`(): Unit = runBlocking {
+        val a = givenKnowledge("a")
+        val b = givenKnowledge("b")
+        link(a, b, "REFINES", "이유")
+        val developerId = signIn(seed = "graph-developer").userId.toLong()
+        val developer = appUserRepository.findById(developerId)!!
+        appUserRepository.save(
+            developer.copy(platformRole = PlatformRole.DEVELOPER.name, updatedAt = Instant.now())
+        )
+
+        val response = viewService.graph(projectId, developerId, nodeLimit = 200)
+
+        assertThat(response.nodes.map { it.id }).containsExactlyInAnyOrder(a.toString(), b.toString())
+        assertThat(response.edges).hasSize(1)
     }
 
     /**
@@ -586,7 +612,14 @@ class KnowledgeGraphViewIntegrationTest {
 
     /** 질의 수를 세는 리포지토리를 끼운 서비스. 나머지 협력자는 컨테이너가 준 진짜 빈이다. */
     private fun countingView(counting: CountingAnchorRepository) =
-        KnowledgeGraphViewService(knowledgeRepository, counting, graphService, accessService, qaTryRepository)
+        KnowledgeGraphViewService(
+            knowledgeRepository,
+            counting,
+            graphService,
+            accessService,
+            platformAccessService,
+            qaTryRepository
+        )
 
     private suspend fun signIn(seed: String = "graph-view"): AuthenticatedUser =
         oauthUserService.upsert(

@@ -1,11 +1,14 @@
 package kr.artel.orchestration.project.service
 
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.auth.service.PlatformAccessService
+import kr.artel.orchestration.common.error.ForbiddenException
 import kr.artel.orchestration.project.dto.CreateProjectRequest
 import kr.artel.orchestration.project.dto.DeleteProjectResponse
 import kr.artel.orchestration.project.dto.Genre
 import kr.artel.orchestration.project.dto.ProjectDetailResponse
 import kr.artel.orchestration.project.dto.ProjectPageResponse
+import kr.artel.orchestration.project.dto.ProjectScope
 import kr.artel.orchestration.project.dto.ProjectSummaryResponse
 import kr.artel.orchestration.project.dto.UpdateProjectRequest
 import kr.artel.orchestration.project.entity.ProjectEntity
@@ -40,6 +43,7 @@ class ProjectService(
     private val documentRepository: ProjectDocumentRepository,
     private val documentAssembler: ProjectDocumentAssembler,
     private val projectAccessService: ProjectAccessService,
+    private val platformAccessService: PlatformAccessService,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock
 ) {
@@ -76,18 +80,44 @@ class ProjectService(
         }
     }
 
-    suspend fun list(userId: Long, page: Int, size: Int): ProjectPageResponse {
+    /**
+     * 프로젝트 목록.
+     *
+     * [scope]가 [ProjectScope.ALL]이면 참여를 따지지 않고 삭제되지 않은 전 프로젝트를 준다.
+     * `DEVELOPER` 등급만 그 값을 쓸 수 있고, 아니면 [ForbiddenException]이다. 여기서 404가 아니라
+     * 403인 것은 [ProjectAccessService.requireOwner]가 편 논증과 같다 — 이미 목록을 볼 수 있는
+     * 사람에게 "없다"라고 답하는 것은 숨기는 시늉일 뿐이다.
+     *
+     * ⚠️ [ProjectScope.ALL]로 받은 항목의 `myRole`은 참여하지 않은 프로젝트에서 뜻이 없다.
+     * `MEMBER`로 떨어지는데(`toRole`의 기본값) 그것은 실제 역할이 아니라 값이 없다는 뜻이다.
+     * 이 등급이 여는 것은 조회뿐이라 그 값으로 무엇을 할 수 있게 되지는 않지만, 이 응답을 읽고
+     * 쓰기 버튼을 그리는 화면을 만들면 서버가 막을 것을 화면이 권하게 된다.
+     */
+    suspend fun list(
+        userId: Long,
+        page: Int,
+        size: Int,
+        scope: ProjectScope = ProjectScope.MINE
+    ): ProjectPageResponse {
         val safePage = page.coerceAtLeast(0)
         val safeSize = size.coerceIn(1, MAX_PAGE_SIZE)
+        val offset = safePage.toLong() * safeSize
 
-        val projects = projectRepository
-            .findPageForMember(userId, safeSize, safePage.toLong() * safeSize)
-            .toList()
-        val items = summaries(userId, projects)
-        val total = projectRepository.countForMember(userId)
+        if (scope == ProjectScope.ALL && !platformAccessService.seesAllProjects(userId)) {
+            throw ForbiddenException("전체 프로젝트 목록은 개발자 등급만 볼 수 있습니다.")
+        }
+
+        val projects = when (scope) {
+            ProjectScope.MINE -> projectRepository.findPageForMember(userId, safeSize, offset)
+            ProjectScope.ALL -> projectRepository.findActivePage(safeSize, offset)
+        }.toList()
+        val total = when (scope) {
+            ProjectScope.MINE -> projectRepository.countForMember(userId)
+            ProjectScope.ALL -> projectRepository.countActive()
+        }
 
         return ProjectPageResponse(
-            items = items,
+            items = summaries(userId, projects),
             page = safePage,
             size = safeSize,
             total = total

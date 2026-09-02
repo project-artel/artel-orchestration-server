@@ -177,6 +177,7 @@ class AuthController(
         displayName = displayName,
         email = email,
         locale = locale,
+        platformRole = platformRole,
         nickname = nickname,
         userTag = userTag,
         emailVerified = emailVerifiedAt != null,

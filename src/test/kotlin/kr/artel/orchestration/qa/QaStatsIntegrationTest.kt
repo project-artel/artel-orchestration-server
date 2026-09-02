@@ -2,6 +2,7 @@ package kr.artel.orchestration.qa
 
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.auth.entity.PlatformRole
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.OAuthIdentity
@@ -404,6 +405,25 @@ class QaStatsIntegrationTest {
         assertThat(stats.total.costUsd).isNull()
     }
 
+    /**
+     * `DEVELOPER` 등급은 참여하지 않아도 집계를 받는다(ARTEL-742).
+     *
+     * 바로 위의 `a non-member sees nothing`과 짝이다. 이 질의는 멤버십 판정을 `JOIN project_member`
+     * 대신 `EXISTS`와 `:seesAllProjects`로 옮겼는데, 그 둘 중 하나만 확인하면 조건을 통째로 지워도
+     * 테스트가 녹색이거나(윗쪽만 볼 때) 아무도 못 보게 만들어도 녹색이다(이쪽만 볼 때).
+     */
+    @Test
+    fun `a developer sees another project's stats`(): Unit = runBlocking {
+        seedRun(model = "sonnet-5", status = "COMPLETED")
+        val developerId = signIn("stats-developer", "2393").userId.toLong()
+        promote(developerId)
+
+        val stats = statsService.stats(projectId, developerId, windowStart, windowEnd, 200)
+
+        assertThat(stats.cellFor(model = "sonnet-5").runs).isEqualTo(1)
+        assertThat(stats.total.runs).isEqualTo(1)
+    }
+
     @Test
     fun `truncation is reported and the totals stay whole`(): Unit = runBlocking {
         repeat(4) { seedRun(model = "model-$it", status = "COMPLETED") }
@@ -421,6 +441,73 @@ class QaStatsIntegrationTest {
         assertThatThrownBy {
             runBlocking { statsService.stats(projectId, ownerId, windowEnd, windowStart, 200) }
         }.isInstanceOf(BadRequestException::class.java)
+    }
+
+
+    // ------------------------------------------------ 프로젝트를 생략한 합산 (ARTEL-750)
+
+    /**
+     * 프로젝트를 안 주면 볼 수 있는 것을 다 더한다.
+     *
+     * 오너는 자기 프로젝트 하나의 멤버라 남의 런은 섞이지 않고, 개발자는 어느 쪽의 멤버도 아니지만
+     * 둘을 다 받는다. 두 사람을 한 테스트에 두는 것은 "합산이 된다" 와 "합산이 경계를 지킨다" 가
+     * 같은 질의의 앞뒤라서다 — 나누면 조건을 통째로 지워도 한쪽은 녹색이다.
+     */
+    @Test
+    fun `omitting the project folds every project the caller can see`(): Unit = runBlocking {
+        seedRun(model = "sonnet-5", status = "COMPLETED")
+        seedForeignRun(model = "gpt-4o")
+        val developerId = signIn("stats-fold-developer", "2394").userId.toLong()
+        promote(developerId)
+
+        val mine = statsService.stats(null, ownerId, windowStart, windowEnd, 200)
+        val all = statsService.stats(null, developerId, windowStart, windowEnd, 200)
+
+        assertThat(mine.total.runs).isEqualTo(1)
+        assertThat(mine.cells.map { it.model }).containsExactly("sonnet-5")
+        assertThat(all.total.runs).isEqualTo(2)
+        assertThat(all.cells.map { it.model }).containsExactlyInAnyOrder("sonnet-5", "gpt-4o")
+    }
+
+    /** 아무 프로젝트에도 참여하지 않은 `USER` 는 생략해도 빈 집계다. */
+    @Test
+    fun `omitting the project gives a non-member nothing`(): Unit = runBlocking {
+        seedRun(model = "sonnet-5", status = "COMPLETED")
+        val outsider = signIn("stats-fold-outsider", "2395").userId.toLong()
+
+        val stats = statsService.stats(null, outsider, windowStart, windowEnd, 200)
+
+        assertThat(stats.cells).isEmpty()
+        assertThat(stats.total.runs).isZero()
+    }
+
+    /**
+     * 생략한 응답의 `projectId` 는 null 이다.
+     *
+     * 화면이 이 값으로 "무엇의 집계인가" 를 적으므로, 아무 프로젝트 id 나 채워 넣으면 전체 합계가
+     * 그 프로젝트 하나의 것으로 읽힌다.
+     */
+    @Test
+    fun `the folded response carries no project id`(): Unit = runBlocking {
+        seedRun(model = "sonnet-5", status = "COMPLETED")
+
+        assertThat(statsService.stats(null, ownerId, windowStart, windowEnd, 200).projectId).isNull()
+        assertThat(statsService.stats(projectId, ownerId, windowStart, windowEnd, 200).projectId)
+            .isEqualTo(projectId.toString())
+    }
+
+    /** 삭제된 프로젝트는 합산에서 빠진다. 목록에도 없는 것이 총계에만 남으면 설명할 수 없다. */
+    @Test
+    fun `a deleted project is left out of the fold`(): Unit = runBlocking {
+        seedRun(model = "sonnet-5", status = "COMPLETED")
+        val developerId = signIn("stats-deleted-developer", "2396").userId.toLong()
+        promote(developerId)
+        seedForeignRun(model = "gpt-4o", deletedAt = now)
+
+        val all = statsService.stats(null, developerId, windowStart, windowEnd, 200)
+
+        assertThat(all.cells.map { it.model }).containsExactly("sonnet-5")
+        assertThat(all.total.runs).isEqualTo(1)
     }
 
     // ----------------------------------------------------------------- helpers
@@ -498,6 +585,57 @@ class QaStatsIntegrationTest {
                  "matrix":{"correct_pass":$correctPass,"false_alarm":$falseAlarm,
                            "miss":$miss,"correct_fail":$correctFail}}
             """.trimIndent()
+        )
+    }
+
+    /**
+     * 아무도 참여하지 않은 다른 프로젝트의 런 하나. 합산이 프로젝트 경계를 어떻게 넘는지 보려면
+     * 남의 것이 하나 있어야 한다. `startedBy` 가 오너인 것은 그 컬럼이 NOT NULL 이라서일 뿐,
+     * 가시성은 `project_member` 만 정한다.
+     */
+    private suspend fun seedForeignRun(model: String, deletedAt: Instant? = null): Long {
+        val project = projectRepository.save(
+            ProjectEntity(
+                name = "foreign-project-${instanceSeq}",
+                genre = "ACTION",
+                createdAt = now,
+                updatedAt = now,
+                deletedAt = deletedAt
+            )
+        )!!
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        val instance = gameInstanceRepository.save(
+            GameInstanceEntity(
+                projectId = project.id!!,
+                name = "foreign-instance-${instanceSeq++}",
+                platform = "UNITY",
+                sdkUuid = UUID.randomUUID().toString(),
+                createdAt = now,
+                updatedAt = now
+            )
+        )!!
+        val startedAt = now.minus(Duration.ofDays(1))
+        return qaTryRepository.save(
+            QaTryEntity(
+                testScenarioId = scenario.id!!,
+                gameInstanceId = instance.id!!,
+                startedBy = ownerId,
+                status = "COMPLETED",
+                model = model,
+                reasoningEffort = "high",
+                promptVersion = "v3",
+                agentArch = "v2-tool-loop",
+                startedAt = startedAt,
+                completedAt = startedAt.plusMillis(30_000)
+            )
+        )!!.id!!
+    }
+
+    /** `app_user.platform_role`을 올린다. 주는 화면도 API도 없어 테스트도 행을 직접 고친다. */
+    private suspend fun promote(userId: Long) {
+        val user = appUserRepository.findById(userId)!!
+        appUserRepository.save(
+            user.copy(platformRole = PlatformRole.DEVELOPER.name, updatedAt = Instant.now())
         )
     }
 

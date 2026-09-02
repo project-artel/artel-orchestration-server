@@ -159,6 +159,7 @@ class OAuthUserService(
             displayName = appUser.displayName,
             email = appUser.email,
             locale = appUser.locale,
+            platformRole = appUser.platformRole,
             nickname = appUser.nickname,
             userTag = appUser.userTag,
             emailVerifiedAt = appUser.emailVerifiedAt,
