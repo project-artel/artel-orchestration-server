@@ -73,6 +73,11 @@ class MapTestCaseGenerator(
         // (`MapTestCaseTargets.ofOwner`). 지도 하나치를 한 번에 들고 돈다.
         val owners = contentMaps.findCapabilityOwners(contentMapId).toList()
             .associate { it.capabilityId to it.methodId }
+        // **씬이 이름으로 아는 것들**. `GameObject.Find("이름")` 을 맞춰 보는 데 쓴다
+        // ([MapTestCaseTargets.ofScene]) — 뽑는 것이 아니라 맞추는 것이라 안 맞으면 그대로 둔다.
+        val namesByScene = contentMaps.findSceneObjectNames(contentMapId).toList()
+            .groupBy({ it.sceneName }, { it.path })
+            .mapValues { (_, paths) -> paths.toSet() }
         val refs = objectRefs.findByContentMapId(contentMapId).toList()
             .groupBy { it.ownerType to it.field }
             .mapValues { (_, rows) -> rows.map { it.targetName }.toSet() }
@@ -83,7 +88,7 @@ class MapTestCaseGenerator(
         // 갈림은 행이 스스로 말한다 — `actionability` 가 `not-a-step` 이면 볼 것이고 아니면
         // 누를 것이다. 아래(효과 읽기 · 갈래 펴기 · 합치기)는 두 벌이 되지 않는다.
         val drafts = contentMaps.findTestCaseRows(contentMapId).toList()
-            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, owners) }
+            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, owners, namesByScene) }
         return merged(drafts) + screenElements(contentMapId)
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
@@ -556,6 +561,7 @@ class MapTestCaseGenerator(
         exits: Set<LoopExits.Guard>,
         refs: Map<Pair<String, String>, Set<String>>,
         owners: Map<Long, String>,
+        namesByScene: Map<String, Set<String>>,
     ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
@@ -597,7 +603,9 @@ class MapTestCaseGenerator(
             val settledCondition = MapTestCaseLocals.settle(situation, source, settled)
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
             // 효과의 주인은 **그 효과를 든 기능**이다. 빌려 온 자리(`borrowed`)에서는 이 행이 아니다.
-            MapTestCasePhrasing.expectedWithSource(effectRows, refs, owners[source]).map { (outcome, does, effect) ->
+            MapTestCasePhrasing.expectedWithSource(
+                effectRows, refs, owners[source], namesByScene[row.sceneName].orEmpty(),
+            ).map { (outcome, does, effect) ->
                 Draft(
                     capabilityKey = key,
                     act = act,

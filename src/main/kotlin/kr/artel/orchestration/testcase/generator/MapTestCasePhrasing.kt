@@ -247,12 +247,13 @@ object MapTestCasePhrasing {
         effects: List<CapabilityEffectEntity>,
         refs: Map<Pair<String, String>, Set<String>> = emptyMap(),
         methodId: String? = null,
+        sceneNames: Set<String> = emptySet(),
     ): List<Told> {
         val seen = mutableSetOf<String>()
         return effects.filter { EffectCategory.from(it.category)?.assertable == true }
             .filterNot { it.kind in UNWATCHABLE }
             .mapNotNull { effect ->
-                val target = watchableTarget(effect, refs, methodId) ?: return@mapNotNull null
+                val target = watchableTarget(effect, refs, methodId, sceneNames) ?: return@mapNotNull null
                 // 값을 못 읽은 자리는 문서가 그렇게 적어 둔다(`(not a literal)` · `(not a simple
                 // receiver)`). 그대로 내면 "표시 상태가 `(not a literal)`" 처럼 읽을 수 없는 문장이
                 // 된다 — 값을 빼고 "바뀐다"로 말한다. 무엇으로 바뀌는지는 모르지만 **바뀐다는 것은
@@ -290,19 +291,26 @@ object MapTestCasePhrasing {
      * `kind` 는 문자열이다 — 어휘를 enum 으로 못 박은 자리가 아직 없고, 적재기가 문서의 값을 그대로
      * 싣는다. 실측(적재기 지도 486건)에서 나온 열 가지를 다룬다.
      */
+    /**
+     * 이름을 코드 원문으로 감싼다. **이미 감싸 온 것은 다시 감싸지 않는다** — 목록이 가리키는
+     * 것을 여럿 적은 자리가 그렇다(`` `Background1` · `Background2` ``). 한 겹 더 두르면
+     * 어디까지가 한 이름인지 읽는 사람이 알 수 없다.
+     */
+    private fun code(target: String): String = if (target.startsWith("`")) target else "`$target`"
+
     private fun outcome(kind: String, target: String, detail: String?): String = when (kind) {
-        "scene" -> "`$target` 화면으로 전환된다"
-        "active-state" -> "`$target` 의 표시 상태가 ${detail?.let { "`$it`" } ?: "바뀐다"}"
-        "ui-value" -> "`$target` 표시가 ${detail?.let { "`$it` 로 " } ?: ""}갱신된다"
-        "instantiate" -> "`$target` 이(가) 생성된다"
-        "destroy" -> "`$target` 이(가) 사라진다"
-        "animation" -> "`$target` 애니메이션이 실행된다"
-        "audio" -> "`$target` 소리가 난다"
-        "transform" -> "`$target` 의 위치/형태가 ${detail?.let { "`$it` 로 " } ?: ""}바뀐다"
-        "saved" -> "`$target` 이(가) 저장된다"
+        "scene" -> "${code(target)} 화면으로 전환된다"
+        "active-state" -> "${code(target)} 의 표시 상태가 ${detail?.let { "`$it`" } ?: "바뀐다"}"
+        "ui-value" -> "${code(target)} 표시가 ${detail?.let { "`$it` 로 " } ?: ""}갱신된다"
+        "instantiate" -> "${code(target)} 이(가) 생성된다"
+        "destroy" -> "${code(target)} 이(가) 사라진다"
+        "animation" -> "${code(target)} 애니메이션이 실행된다"
+        "audio" -> "${code(target)} 소리가 난다"
+        "transform" -> "${code(target)} 의 위치/형태가 ${detail?.let { "`$it` 로 " } ?: ""}바뀐다"
+        "saved" -> "${code(target)} 이(가) 저장된다"
         // 어휘를 모르면 원문을 그대로 붙여 낸다. 새 `kind` 가 생겼을 때 그 효과가 조용히
         // 사라지는 것보다, 어색해도 보이는 편이 낫다.
-        else -> detail?.let { "`$target` 이(가) `$it` 이 된다" } ?: "`$target` 이(가) 바뀐다"
+        else -> detail?.let { "${code(target)} 이(가) `$it` 이 된다" } ?: "${code(target)} 이(가) 바뀐다"
     }
 
     /**
@@ -342,23 +350,23 @@ object MapTestCasePhrasing {
         fun of(what: String, ends: String, joins: String, counted: Counted) =
             Doing(kind, what.trim(), ends, joins, counted)
         return when (kind) {
-            "scene" -> of("`$target` 화면으로", "넘어간다", "넘어가고", Counted("화면", PLACES, "넘어간다", "넘어가고"))
+            "scene" -> of("${code(target)} 화면으로", "넘어간다", "넘어가고", Counted("화면", PLACES, "넘어간다", "넘어가고"))
             "active-state" -> {
                 val counted = Counted("표시 상태", PLACES, "바꾼다", "바꾸고")
                 when (detail) {
-                    "true" -> of("`$target` 을(를)", "켠다", "켜고", counted)
-                    "false" -> of("`$target` 을(를)", "끈다", "끄고", counted)
-                    else -> of("`$target` 의 표시 상태를", "바꾼다", "바꾸고", counted)
+                    "true" -> of("${code(target)} 을(를)", "켠다", "켜고", counted)
+                    "false" -> of("${code(target)} 을(를)", "끈다", "끄고", counted)
+                    else -> of("${code(target)} 의 표시 상태를", "바꾼다", "바꾸고", counted)
                 }
             }
-            "ui-value" -> of("`$target` 표시를 $value", "갱신한다", "갱신하고", Counted("글자", PLACES, "갱신한다", "갱신하고"))
-            "instantiate" -> of("`$target` 을(를)", "만든다", "만들고", Counted("오브젝트", THINGS, "만든다", "만들고"))
-            "destroy" -> of("`$target` 을(를)", "없앤다", "없애고", Counted("오브젝트", THINGS, "없앤다", "없애고"))
-            "animation" -> of("`$target` 애니메이션을", "재생한다", "재생하고", Counted("애니메이션", THINGS, "재생한다", "재생하고"))
-            "audio" -> of("`$target` 소리를", "낸다", "내고", Counted("소리", "가지를", "낸다", "내고"))
-            "transform" -> of("`$target` 을(를) $value", "옮긴다", "옮기고", Counted("위치", PLACES, "옮긴다", "옮기고"))
-            "saved" -> of("`$target` 을(를)", "저장한다", "저장하고", Counted("값", THINGS, "저장한다", "저장하고"))
-            else -> of("`$target` 을(를) $value", "바꾼다", "바꾸고", Counted("자리", PLACES, "바꾼다", "바꾸고"))
+            "ui-value" -> of("${code(target)} 표시를 $value", "갱신한다", "갱신하고", Counted("글자", PLACES, "갱신한다", "갱신하고"))
+            "instantiate" -> of("${code(target)} 을(를)", "만든다", "만들고", Counted("오브젝트", THINGS, "만든다", "만들고"))
+            "destroy" -> of("${code(target)} 을(를)", "없앤다", "없애고", Counted("오브젝트", THINGS, "없앤다", "없애고"))
+            "animation" -> of("${code(target)} 애니메이션을", "재생한다", "재생하고", Counted("애니메이션", THINGS, "재생한다", "재생하고"))
+            "audio" -> of("${code(target)} 소리를", "낸다", "내고", Counted("소리", "가지를", "낸다", "내고"))
+            "transform" -> of("${code(target)} 을(를) $value", "옮긴다", "옮기고", Counted("위치", PLACES, "옮긴다", "옮기고"))
+            "saved" -> of("${code(target)} 을(를)", "저장한다", "저장하고", Counted("값", THINGS, "저장한다", "저장하고"))
+            else -> of("${code(target)} 을(를) $value", "바꾼다", "바꾸고", Counted("자리", PLACES, "바꾼다", "바꾸고"))
         }
     }
 
@@ -370,12 +378,16 @@ object MapTestCasePhrasing {
         effect: CapabilityEffectEntity,
         refs: Map<Pair<String, String>, Set<String>>,
         methodId: String?,
+        sceneNames: Set<String>,
     ): String? = effect.target?.takeIf { it.isNotBlank() }
         // 씬 전환의 대상은 화면 이름이라 오브젝트가 아니다. 되짚을 것이 없다.
         ?.let {
             if (effect.kind == "scene") it
             // 자기 자신을 가리키는 자리를 먼저 되돌린다 — 그래야 씬이 답할 이름이 된다.
-            else MapTestCaseTargets.resolve(MapTestCaseTargets.ofOwner(it, methodId), refs)
+            // 씬이 이름으로 찾는 자리도 여기서 맞춰 본다.
+            else MapTestCaseTargets.resolve(
+                MapTestCaseTargets.ofScene(MapTestCaseTargets.ofOwner(it, methodId), sceneNames), refs,
+            )
         }
         ?.takeIf(::named)
 

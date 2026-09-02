@@ -177,6 +177,29 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
     fun findCapabilityOwners(contentMapId: Long): Flow<CapabilityOwner>
 
     /**
+     * 씬마다 **그 씬이 이름으로 아는 오브젝트들**.
+     *
+     * `GameObject.Find("이름")` 을 맞춰 보는 데 쓴다([MapTestCaseTargets.ofScene]). 인스펙터가
+     * 물어 둔 참조와 조작이 겨누는 자리, 둘 다 씬이 스스로 말한 이름이다.
+     */
+    @Query(
+        """
+        SELECT scene_name, path FROM (
+            SELECT s.name AS scene_name, r.target_name AS path
+            FROM scene_object_ref r JOIN scene s ON s.id = r.scene_id
+            WHERE s.content_map_id = :contentMapId
+            UNION
+            SELECT s.name AS scene_name, c.control_path AS path
+            FROM capability c JOIN scene s ON s.id = c.scene_id
+            WHERE c.content_map_id = :contentMapId AND c.merged_into IS NULL
+              AND c.control_path IS NOT NULL
+        ) named
+        ORDER BY scene_name ASC, path ASC
+        """
+    )
+    fun findSceneObjectNames(contentMapId: Long): Flow<ContentMapScreenElement>
+
+    /**
      * **누를 것은 없고 볼 것은 있는 기능**(ARTEL-681). 위 창구가 `not-a-step` 을 거르므로 따로 낸다.
      *
      * 게임이 스스로 하는 일이다 — 화면을 열면 무엇이 보이나, 값이 이러하면 무엇이 보이나. 지금까지

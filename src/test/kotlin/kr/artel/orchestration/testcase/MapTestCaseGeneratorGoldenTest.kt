@@ -557,18 +557,28 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     /**
-     * **여럿을 가리키면 손대지 않는다.**
+     * **여럿을 가리키면 하나를 고르지 않는다 — 다 적는다.**
      *
      * `StoryController.backgorunds` 가 셋을 가리킨다(실측). 하나를 골라 적으면 나머지 둘일 때
-     * 거짓이라, 코드 이름을 그대로 두는 편이 정직하다. 못 푸는 것도 같다 —
-     * `GetComponentInChildren()` 은 씬이 답할 것이 없다.
+     * 거짓이지만, **몇 번째인지를 문서가 못 읽은 자리**(`Item[_]`)에서는 코드가 그 목록을 돌며
+     * 전부 건드리므로 셋을 다 적는 것이 참이다. 번호가 있는 자리는 펴지 않는다 — 그때는 어느
+     * 것인지 정해져 있는데 우리가 번호와 참조를 못 맞추는 것이라, 다 적으면 없는 말을 한다.
+     *
+     * 못 푸는 것은 그대로 둔다 — `GetComponentInChildren()` 은 씬이 답할 것이 없다. 다만 `Item`
+     * 만은 사람이 쓰는 모양으로 바꾼다. .NET 이 인덱서에 붙이는 이름이라 읽는 사람에게 아무
+     * 뜻도 아니다.
      */
     @Test
-    fun `여럿이거나 못 푸는 대상은 코드 이름 그대로 둔다`() {
+    fun `여럿을 가리키면 다 적고 못 푸는 것은 코드 이름 그대로 둔다`() {
         val outcomes = cases.map { it.expected }
 
-        assertThat(outcomes).anyMatch { it.contains("`StoryController.backgorunds.Item[_]`") }
+        assertThat(outcomes).anyMatch {
+            it.contains("`Background 6 (Bonus)` · `Background1` · `Background2`")
+        }
         assertThat(outcomes).anyMatch { it.contains("`GameObject.GetComponentInChildren().text`") }
+        // `Item` 은 한 줄도 남지 않는다. `Item[4]` 는 `[4]` 로 남아 번호를 잃지 않는다.
+        assertThat(outcomes).noneMatch { it.contains(".Item[") }
+        assertThat(outcomes).anyMatch { it.contains("[4]") }
     }
 
     /**

@@ -78,18 +78,42 @@ object MapTestCaseTargets {
      */
     private val SELF = listOf("Component", "this")
 
+    /**
+     * **`Item` 은 사람에게 아무 뜻도 아니다.**
+     *
+     * `Item[4]` 는 .NET 이 인덱서에 붙이는 이름이다 — C# 에서 `sprites[4]` 라고 쓴 것이
+     * 컴파일된 코드에는 `get_Item(4)` 로 남는다. 개발자가 지은 이름도, 이 게임의 사정도 아니지만,
+     * **읽는 사람은 그것을 모른다.** 사람이 쓰는 모양으로 되돌린다.
+     *
+     * 번호를 못 읽은 자리는 `[_]` 를 그대로 둔다. 없는 번호를 지어내지 않는다.
+     */
+    private fun readableIndex(text: String): String = LIST_ITEM_KEPT.replace(text, "[$1]")
+
     fun resolve(target: String, refs: Map<Pair<String, String>, Set<String>>): String {
         // 목록 색인은 지운다 — `backgorunds.Item[_]` 이 가리키는 필드는 `backgorunds` 다.
         val cleaned = LIST_ITEM.replace(target, "")
         val owner = cleaned.substringBefore('.', "")
         // 첫 마디가 대문자로 시작해야 타입이다. `i` 나 `collision` 처럼 소문자로 시작하면 그 메서드
         // 안에서만 사는 것이라 씬이 답할 것이 없다.
-        if (owner.isEmpty() || !owner.first().isUpperCase()) return target
+        if (owner.isEmpty() || !owner.first().isUpperCase()) return readableIndex(target)
         val field = cleaned.substringAfter('.', "").substringBefore('.')
-        if (field.isEmpty()) return target
+        if (field.isEmpty()) return readableIndex(target)
 
-        val name = refs[owner to field]?.singleOrNull() ?: return target
-        return name + plain(cleaned.removePrefix("$owner.$field"))
+        val tail = plain(cleaned.removePrefix("$owner.$field"))
+        val pointsAt = refs[owner to field].orEmpty()
+        pointsAt.singleOrNull()?.let { return it + tail }
+        // 못 풀면 원문으로 돌아가되, `Item` 만은 사람이 쓰는 모양으로 바꾼다.
+
+        // **몇 번째인지를 못 읽었으면 그 목록이 곧 답이다.** 실측에서 `StoryController.backgorunds`
+        // 가 셋을 가리키고(`Background1` · `Background2` · `Background 6 (Bonus)`) 코드가 그 목록을
+        // 돌며 전부 끈다. 하나를 고르면 거짓이지만 **다 적으면 참**이다.
+        //
+        // 번호가 있는 자리(`Item[4]`)는 펴지 않는다. 그때는 지도가 어느 것인지 아는데 우리가 번호와
+        // 참조를 못 맞추는 것이라, 다 적으면 없는 말을 하는 것이 된다.
+        if (pointsAt.size > 1 && UNREAD_ITEM.containsMatchIn(target)) {
+            return pointsAt.sorted().joinToString(NAMES) { "`$it`" } + tail
+        }
+        return readableIndex(target)
     }
 
     /**
@@ -115,4 +139,39 @@ object MapTestCaseTargets {
     )
 
     private val LIST_ITEM = Regex("""\.Item\[[^\]]*\]""")
+
+    /** `.Item[4]` → `[4]`. 번호는 그대로 두고 .NET 의 인덱서 이름만 뗀다. */
+    private val LIST_ITEM_KEPT = Regex("""\.Item\[([^\]]*)\]""")
+
+    /** 목록의 몇 번째인지를 문서가 못 읽은 자리. `Item[4]` 와 달리 어느 것인지 정해지지 않았다. */
+    private val UNREAD_ITEM = Regex("""\.Item\[_?\]""")
+
+    /** 여럿을 나란히 적을 때 잇는 말. 이름마다 백틱을 두르므로 가운뎃점이 읽힌다. */
+    private const val NAMES = " · "
+
+    /**
+     * **씬이 이름으로 찾는 자리**(ARTEL-615 의 예외).
+     *
+     * ```
+     * `GameObject.Find("Background").GetComponent().sprite` 표시가 `Stage2BG` 로 갱신된다
+     * ```
+     *
+     * 이 파일은 *"문자열에서 이름을 뽑지 않는다"* 를 규칙으로 둔다 — 그 게임이 그렇게 찾을 뿐이고
+     * 다음 게임은 태그로 찾거나 이름을 조합해 만든다. 그 걱정은 여전히 옳다.
+     *
+     * 그래서 **뽑지 않고 맞춘다.** 인자로 적힌 글자가 그 씬이 아는 오브젝트 이름과 **정확히 하나**
+     * 맞을 때만 그것으로 부른다. 유니티가 런타임에 하는 조회와 같은 것이라 지어내는 것이 아니고,
+     * 안 맞으면 아무 일도 일어나지 않는다 — 이름을 조합해 만드는 게임에서는 하나도 안 맞는다.
+     *
+     * 뒤에 붙는 `.GetComponent().sprite` 는 코드가 그 그림에 닿는 방법이지 씬에 있는 것이 아니다.
+     * 무엇을 보는지는 문장이 이미 말한다(`표시가 … 갱신된다`).
+     */
+    fun ofScene(target: String, names: Set<String>): String {
+        val found = FIND_BY_NAME.find(target) ?: return target
+        val wanted = found.groupValues[1]
+        return if (names.count { it == wanted || it.endsWith("/$wanted") } == 1) wanted else target
+    }
+
+    /** `GameObject.Find("이름")` — 유니티가 이름으로 씬을 훑는 자리. */
+    private val FIND_BY_NAME = Regex("""\bGameObject\.Find\("([^"]+)"\)""")
 }
