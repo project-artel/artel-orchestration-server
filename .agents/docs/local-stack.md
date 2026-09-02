@@ -100,6 +100,27 @@ Two more things have to change along with it.
   server. Create a separate one with `CREATE DATABASE artel_<branch>` and point `DB_NAME` in `.env`
   at it
 
+## `.env` is loaded by the test run too
+
+**A `.env` filled in for running the server locally is read by `./mvnw test` as well.**
+`DotenvPropertySource` injects it into the test context, so a value added to start the server makes
+tests fail for reasons that have nothing to do with the code. Two that actually bit:
+
+| The value | The test it breaks | How |
+|---|---|---|
+| `ARTEL_ALLOWED_ORIGINS` | `CorsAllowedOriginIntegrationTest` | Overrides the default list, so the `admin.artel.kr` preflight answers 403 |
+| `GITHUB_APP_*` | `ProjectTrackerLinkHttpIntegrationTest` | The test asserting "the app is not configured" meets a configured app and gets 200 instead of 503 |
+
+Neither failure message points at `.env`. **Move it aside before reading a test result.**
+
+```bash
+mv .env .env.local-run && ./mvnw clean test
+```
+
+When judging whether a failure belongs to your branch, measure the base the same way and compare.
+The full suite in this repository already has roughly a hundred failures from test cleanup order
+(the `qa_run` foreign key), and that count moves with class execution order.
+
 ## Optional — depends on what you are checking
 
 The server starts without these. If you are not touching the corresponding feature, there is no need
