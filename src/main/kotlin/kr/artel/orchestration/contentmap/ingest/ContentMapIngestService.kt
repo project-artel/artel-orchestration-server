@@ -383,6 +383,13 @@ class ContentMapIngestService(
      *
      * `origin` 은 `observed` 였던 씬이 근거로 확인되면 `evidence` 로 올라가는 자리다. 반대로
      * 내려가지는 않는다 — 적재기는 `evidence` 만 쓴다.
+     *
+     * **이제 그 경로에 실제로 행이 온다** (ARTEL-689). `pulse` 가 지도에 없는 씬을 대면 관측이
+     * `origin='observed'` 로 앉히므로, 그 뒤에 문서가 들어오면 여기서 같은 이름을 만난다. 그때
+     * 새 행을 만들지 않고 **찾은 행의 id 를 그대로 이어 쓰는 것**이 요점이다 — 그래야
+     * `uk_scene_map_name` 이 걸릴 자리가 없고, 그 씬에 매달린 `screen` · `screen_transition` ·
+     * `screen_capability` · `scene_edge` 가 살아남는다. 지우고 다시 만들면 QA 런이 벌어 온 것이
+     * CASCADE 로 함께 사라진다.
      */
     /**
      * **게임을 켜면 열리는 씬을 적어 둔다**(ARTEL-659).

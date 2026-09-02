@@ -8,8 +8,10 @@ import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityOrigin
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
+import kr.artel.orchestration.contentmap.entity.ContentMapRoot
 import kr.artel.orchestration.contentmap.entity.Interaction
 import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.observe.ScreenObservationService
 import kr.artel.orchestration.contentmap.observe.ScreenSelectorFrames
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
@@ -263,9 +265,121 @@ class ScreenSettledFrameTest {
         assertThat(settledSent()).isEmpty()
     }
 
+    // ---------- 근거가 모르는 씬 ----------
+
+    /**
+     * **ARTEL-689 가 존재하는 이유다.**
+     *
+     * 지도가 `TitleScene` 하나만 아는데 `pulse` 가 `BonusScene` 을 대는 상황이다. 전에는
+     * `ScreenObservationService.record` 가 씬 조회에서 조용히 돌아서서 씬도 화면도 프레임도 0 이었다.
+     * 이제 씬이 `origin='observed'` 로 앉고 나머지 경로가 `evidence` 씬과 똑같이 돈다.
+     *
+     * 프레임 둘을 함께 보는 것은 이 씬에서 잃던 것이 행만이 아니었기 때문이다 — agent 는
+     * `SCREEN_SETTLED` 로 자기가 어디 서 있는지 알고 `SCREEN_SELECTOR_PROPOSAL` 로 목록을 고친다.
+     */
+    @Test
+    fun `지도에 없던 씬을 댄 pulse 가 씬과 화면과 프레임을 만든다`(): Unit = runBlocking {
+        val world = newWorld()
+        val title = newScene(world, "TitleScene")
+
+        observeTwice(world, whole("BonusScene", active = listOf(CONTINUE)))
+
+        val observed = scenes.findByContentMapIdAndName(world.contentMapId, "BonusScene")!!
+        assertThat(observed.origin).isEqualTo(SceneOrigin.OBSERVED.wire)
+        // 근거가 말한 적 없는 씬이라 이 셋은 비어 있는 것이 정상이다.
+        assertThat(observed.capture).isNull()
+        assertThat(observed.summary).isNull()
+        assertThat(observed.walked).isFalse()
+        // 원래 있던 씬은 그대로 `evidence` 다. 관측이 남의 출처를 덮지 않는다.
+        assertThat(scenes.findById(title)!!.origin).isEqualTo(SceneOrigin.EVIDENCE.wire)
+
+        val screen = screens.findBySceneIdOrderByIdAsc(observed.id!!).toList().single()
+
+        val settled = settledSent().single()
+        assertThat(settled.payload.path("scene").path("name").asText()).isEqualTo("BonusScene")
+        assertThat(settled.payload.path("scene").path("scene_id").asText())
+            .isEqualTo(observed.id.toString())
+        assertThat(settled.payload.path("current_screen").path("screen_id").asText())
+            .isEqualTo(screen.id.toString())
+
+        // 목록이 빈 씬이라 `CONTINUE` 가 목록 밖이고, 그것을 넣을지 물어본다.
+        assertThat(proposalsSent()).isNotEmpty
+    }
+
+    /**
+     * 근거 문서가 한 번도 안 올라온 빌드다. **씬만 만들어서는 이 경우가 안 고쳐진다** — `content_map`
+     * 행이 생기는 자리가 문서 등록 하나뿐이라, 지도가 없으면 씬을 만들 기회조차 없다(ARTEL-642 가
+     * 연 길이 실제로 안 돌던 이유가 이것이다).
+     *
+     * 헤더 셋이 null 로 남는 것을 함께 본다. 관측은 그것을 말할 자격이 없고, 더미값을 넣으면 진짜
+     * 헤더와 같은 칸에 앉는다(V63 4절).
+     */
+    @Test
+    fun `지도가 없는 빌드에서 관측이 지도부터 세운다`(): Unit = runBlocking {
+        val world = newWorld()
+        contentMaps.deleteById(world.contentMapId)
+        assertThat(contentMaps.findByGameBuildId(world.gameBuildId)).isNull()
+
+        observeTwice(world, whole("TitleScene", active = listOf(CONTINUE)))
+
+        val rooted = contentMaps.findByGameBuildId(world.gameBuildId)!!
+        assertThat(rooted.rootedBy).isEqualTo(ContentMapRoot.OBSERVATION.wire)
+        assertThat(rooted.schemaVersion).isNull()
+        assertThat(rooted.evidenceDigest).isNull()
+        assertThat(rooted.capture).isNull()
+
+        val scene = scenes.findByContentMapIdAndName(rooted.id!!, "TitleScene")!!
+        assertThat(scene.origin).isEqualTo(SceneOrigin.OBSERVED.wire)
+        assertThat(screens.findBySceneIdOrderByIdAsc(scene.id!!).toList()).hasSize(1)
+        assertThat(settledSent()).hasSize(1)
+    }
+
+    /**
+     * `DontDestroyOnLoad` 는 Unity 가 씬 load 를 넘어 살아남는 오브젝트를 모아 두는 자리이고 아무도
+     * 그리로 갈 수 없다. ARTEL-460 이 지도에서 그 행을 없앤 이유라, 관측이 도로 앉히면 안 된다.
+     */
+    @Test
+    fun `DontDestroyOnLoad 는 씬으로 만들지 않는다`(): Unit = runBlocking {
+        val world = newWorld()
+
+        observeTwice(world, whole("DontDestroyOnLoad", active = listOf(CONTINUE)))
+
+        assertThat(scenes.findByContentMapIdOrderByNameAsc(world.contentMapId).toList()).isEmpty()
+        assertThat(settledSent()).isEmpty()
+    }
+
+    /**
+     * 만들 수 없는 이름 셋이 와도 런이 그대로 이어진다. 옛 동작이 조용한 손실이었으니 새 동작이
+     * 시끄러운 실패가 되면 안 된다.
+     *
+     * 255 자는 `scene.name VARCHAR(255)`(V40) 의 폭이다. 여기서 걸러 내지 않으면 `INSERT` 가
+     * 던지고, 그 예외는 이유 없이 삼켜진다.
+     */
+    @Test
+    fun `만들 수 없는 이름이 와도 다음 pulse 가 그대로 돈다`(): Unit = runBlocking {
+        val world = newWorld()
+
+        observeTwice(world, whole("", active = listOf(CONTINUE)))
+        observeTwice(world, whole("x".repeat(256), active = listOf(CONTINUE)))
+        observeTwice(world, whole("DontDestroyOnLoad", active = listOf(CONTINUE)))
+
+        observeTwice(world, whole("TitleScene", active = listOf(CONTINUE)))
+
+        assertThat(scenes.findByContentMapIdOrderByNameAsc(world.contentMapId).toList().map { it.name })
+            .containsExactly("TitleScene")
+        val title = scenes.findByContentMapIdAndName(world.contentMapId, "TitleScene")!!
+        assertThat(screens.findBySceneIdOrderByIdAsc(title.id!!).toList()).hasSize(1)
+        assertThat(settledSent()).hasSize(1)
+    }
+
     // ---------- 픽스처 ----------
 
-    private data class World(val gameInstanceId: Long, val contentMapId: Long, val qaTryId: Long)
+    private data class World(
+        val gameInstanceId: Long,
+        val gameBuildId: Long,
+        val contentMapId: Long,
+        val qaTryId: Long,
+    )
 
     private val CONTINUE = "Canvas[2]/continue[1]"
     private val UNKNOWN = "CombineSystem[7]/CombineZone[1]/Zone1[0]"
@@ -353,7 +467,7 @@ class ScreenSettledFrameTest {
                 startedAt = now,
             )
         )!!
-        return World(instance.id!!, contentMap.id!!, qaTry.id!!)
+        return World(instance.id!!, build.id!!, contentMap.id!!, qaTry.id!!)
     }
 
     private suspend fun newScene(world: World, name: String): Long =
@@ -373,7 +487,7 @@ class ScreenSettledFrameTest {
         ).id!!
 
     private fun newUser(): Long =
-        db.sql("INSERT INTO app_user (display_name) VALUES ('settled') RETURNING id")
+        db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('settled', 'settled-' || gen_random_uuid(), '0000') RETURNING id")
             .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
             .one().block()!!
 }

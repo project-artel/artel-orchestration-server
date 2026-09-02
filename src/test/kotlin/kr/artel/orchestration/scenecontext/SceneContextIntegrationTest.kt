@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.config.InternalApiServer
 import kr.artel.orchestration.contentmap.entity.Capture
+import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
@@ -117,6 +118,7 @@ class SceneContextIntegrationTest {
         val scene = response.scenes.single()
         assertThat(scene.sceneName).isEqualTo("Combat")
         assertThat(scene.knownToContentMap).isTrue()
+        assertThat(scene.origin).isEqualTo("evidence")
         assertThat(scene.sceneSummary).isEqualTo("전투 화면")
 
         val capability = scene.capabilities.single()
@@ -155,7 +157,32 @@ class SceneContextIntegrationTest {
         assertThat(shop.knownToContentMap).isFalse()
         assertThat(shop.capabilities).isEmpty()
         assertThat(shop.sceneSummary).isNull()
+        // 지도에 행이 없으니 출처도 없다. `observed` 로 채우면 아무도 기록한 적 없는 씬이
+        // QA 런이 서 봤던 씬으로 읽힌다.
+        assertThat(shop.origin).isNull()
         assertThat(shop.knowledge.single().summary).isEqualTo("상점은 밤에 닫는다")
+    }
+
+    /**
+     * 관측이 만든 씬과 근거가 만든 씬을 agent 가 가릴 수 있어야 한다 (ARTEL-689).
+     *
+     * `knownToContentMap` 은 둘 다 `true` 라 그것만으로는 안 갈린다. 뭉개면 agent 는 `observed` 씬의
+     * 빈 목록을 "근거가 훑었는데 할 게 없더라"로 읽고, 실은 아무도 그 씬을 훑은 적이 없다.
+     */
+    @Test
+    fun `관측이 만든 씬과 근거가 만든 씬이 origin 으로 갈린다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        fixture.newScene(mapId, "Combat", summary = "전투 화면")
+        fixture.newScene(mapId, "Bonus", origin = SceneOrigin.OBSERVED)
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.scenes.associate { it.sceneName to it.origin })
+            .containsEntry("Combat", "evidence")
+            .containsEntry("Bonus", "observed")
+        assertThat(response.scenes.single { it.sceneName == "Bonus" }.knownToContentMap).isTrue()
     }
 
     /**
@@ -402,7 +429,7 @@ class SceneContextIntegrationTest {
      * `knowledge_scope_id` 하나뿐이라 SQL 로 최소한만 세운다.
      */
     private suspend fun newQaTry(projectId: Long, scopeId: Long): Long {
-        val userId = insertId("INSERT INTO app_user (display_name) VALUES ('agent') RETURNING id")
+        val userId = insertId("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('agent', 'agent-' || gen_random_uuid(), '0000') RETURNING id")
         val scenarioId = insertId(
             """
             INSERT INTO test_scenario (project_id, title)

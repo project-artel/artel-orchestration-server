@@ -686,6 +686,36 @@
         }
       }
     },
+    "/api/auth/me/profile": {
+      "put": {
+        "tags": [
+          "auth-controller"
+        ],
+        "operationId": "updateProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/me/locale": {
       "put": {
         "tags": [
@@ -3294,6 +3324,46 @@
         }
       }
     },
+    "/api/projects/{projectId}/knowledge/{knowledgeId}": {
+      "get": {
+        "tags": [
+          "knowledge-detail-controller"
+        ],
+        "operationId": "detail",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "knowledgeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/knowledge-graph": {
       "get": {
         "tags": [
@@ -3914,6 +3984,43 @@
           }
         }
       }
+    },
+    "/api/projects/{projectId}/documents/{documentId}": {
+      "delete": {
+        "tags": [
+          "Project Document"
+        ],
+        "summary": "기획서 삭제",
+        "description": "이 버전을 지우고, 여기서 나온 knowledge도 함께 소프트삭제한다. 되돌릴 수 없다.",
+        "operationId": "delete_5",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "documentId",
+            "in": "path",
+            "description": "기획서 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4265,6 +4372,72 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "properties": {
+          "nickname": {
+            "type": "string"
+          }
+        }
+      },
+      "AuthUserResponse": {
+        "required": [
+          "displayName",
+          "id",
+          "identities",
+          "nickname",
+          "userTag"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "userTag": {
+            "type": "string"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkedIdentityResponse"
+            }
+          }
+        }
+      },
+      "LinkedIdentityResponse": {
+        "required": [
+          "displayName",
+          "login",
+          "provider"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "login": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "avatarUrl": {
+            "type": "string"
           }
         }
       },
@@ -4909,6 +5082,9 @@
             "$ref": "#/components/schemas/JsonNode"
           },
           "knowledgeScopeId": {
+            "type": "string"
+          },
+          "qaRunId": {
             "type": "string"
           }
         }
@@ -5821,6 +5997,9 @@
           "knownToContentMap": {
             "type": "boolean"
           },
+          "origin": {
+            "type": "string"
+          },
           "sceneSummary": {
             "type": "string"
           },
@@ -6098,6 +6277,9 @@
           },
           "tracker": {
             "$ref": "#/components/schemas/IssueTrackerResponse"
+          },
+          "qaRunId": {
+            "type": "string"
           }
         }
       },
@@ -7199,8 +7381,10 @@
         "required": [
           "displayName",
           "joinedAt",
+          "nickname",
           "role",
-          "userId"
+          "userId",
+          "userTag"
         ],
         "type": "object",
         "properties": {
@@ -7213,6 +7397,12 @@
           "email": {
             "type": "string"
           },
+          "nickname": {
+            "type": "string"
+          },
+          "userTag": {
+            "type": "string"
+          },
           "role": {
             "type": "string",
             "enum": [
@@ -7223,6 +7413,33 @@
           "joinedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "KnowledgeDetailResponse": {
+        "required": [
+          "description",
+          "id",
+          "isDocumentNode",
+          "summary"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "isDocumentNode": {
+            "type": "boolean"
           }
         }
       },
@@ -7277,6 +7494,9 @@
             "format": "int32"
           },
           "createdByQaTryId": {
+            "type": "string"
+          },
+          "createdByQaRunId": {
             "type": "string"
           },
           "createdAt": {
@@ -7627,6 +7847,7 @@
           "capabilityList",
           "id",
           "name",
+          "origin",
           "screens",
           "steps",
           "walked"
@@ -7643,6 +7864,10 @@
           "walked": {
             "type": "boolean",
             "description": "순회했나. false 면 기능이 비어 있는 것이 정상이다"
+          },
+          "origin": {
+            "type": "string",
+            "description": "evidence · observed. observed 는 QA 런이 서 보기만 한 씬이라 기능이 비는 것이 정상이다"
           },
           "capabilities": {
             "$ref": "#/components/schemas/SceneCapabilityCountResponse"
@@ -7778,13 +8003,18 @@
       },
       "ContentMapSummaryResponse": {
         "required": [
-          "id"
+          "id",
+          "rootedBy"
         ],
         "type": "object",
         "properties": {
           "id": {
             "type": "integer",
             "format": "int64"
+          },
+          "rootedBy": {
+            "type": "string",
+            "description": "이 지도를 세운 경로. evidence 는 근거 문서 등록이, observation 은 QA 런의 관측이 세웠다"
           },
           "capture": {
             "type": "string",

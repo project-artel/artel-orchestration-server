@@ -42,6 +42,10 @@ data class UserProfile(
     val locale: String?,
     /** 프로젝트 밖의 등급. [kr.artel.orchestration.auth.entity.PlatformRole] 이름이다. */
     val platformRole: String,
+    /** 사용자가 고른 이름. 처음 로그인할 때 제공자 이름으로 정해지므로 비어 있지 않다. */
+    val nickname: String,
+    /** 같은 [nickname]을 쓰는 사람들을 가르는 번호. */
+    val userTag: String,
     val identities: List<LinkedIdentity>
 )
 

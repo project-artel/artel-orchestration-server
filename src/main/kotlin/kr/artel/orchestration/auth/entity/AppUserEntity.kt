@@ -6,6 +6,12 @@ import org.springframework.data.relational.core.mapping.Table
 import java.time.Instant
 
 /**
+ * `app_user.nickname` 컬럼 폭. 요청 검증과 제공자 display name truncation 이 같은 값을 봐야 해서
+ * 여기 한 곳에 둔다.
+ */
+const val MAX_NICKNAME_LENGTH = 64
+
+/**
  * Artel 사용자 본체. 연결된 OAuth 제공자와 무관하게 안정적으로 유지되며,
  * 이 id가 JWT의 sub 클레임이 된다.
  */
@@ -27,6 +33,19 @@ data class AppUserEntity(
     /** 프로젝트 밖의 등급. 값은 [PlatformRole]이고, 읽지 못하는 값은 [USER]로 다룬다. */
     @Column("platform_role")
     val platformRole: String = PlatformRole.USER.name,
+    /**
+     * 사용자가 고른 이름. [displayName]과 달리 로그인해도 덮어써지지 않는다.
+     * 이름이 없는 사용자는 없다 — 처음 로그인할 때 제공자 display name 에서 만들어 넣는다.
+     */
+    @Column("nickname")
+    val nickname: String,
+
+    /**
+     * 같은 [nickname]을 쓰는 사람들을 가르는 번호. 0으로 채운 숫자 문자열이고 기본 네 자리다.
+     * 서버가 배정하며 클라이언트는 보낼 수 없다.
+     */
+    @Column("user_tag")
+    val userTag: String,
 
     @Column("created_at")
     val createdAt: Instant,

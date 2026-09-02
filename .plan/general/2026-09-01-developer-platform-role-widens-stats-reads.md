@@ -103,7 +103,7 @@ JWT claim 이 아니라 요청마다 DB 에서 읽는다. claim 에 실으면 �
       마이그레이션 여부를 확인했다
 
 - [x] **Step 1: 등급 컬럼과 읽는 경로**
-  - `src/main/resources/db/migration/V82__add_platform_role_to_app_user.sql` — `app_user` 에
+  - `src/main/resources/db/migration/V84__add_platform_role_to_app_user.sql` — `app_user` 에
     `platform_role VARCHAR(32) NOT NULL DEFAULT 'USER'`. 사람 이름은 넣지 않는다
   - `auth/entity/AppUserEntity.kt` — `platformRole` 컬럼 추가
   - `auth/entity/AppUserEntity.kt` 안에 `PlatformRole` enum(`USER`, `DEVELOPER`)을 함께 둔다.

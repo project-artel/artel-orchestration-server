@@ -1,7 +1,9 @@
 package kr.artel.orchestration.knowledge.repository
 
+import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.knowledge.entity.KnowledgeEdgeEntity
 import kr.artel.orchestration.knowledge.entity.KnowledgeEdgeScopeSql
+import kr.artel.orchestration.knowledge.entity.PART_OF_RELATION
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 
@@ -57,4 +59,27 @@ interface KnowledgeEdgeRepository : CoroutineCrudRepository<KnowledgeEdgeEntity,
      */
     @Query("SELECT * FROM knowledge_edge WHERE scope_id = :scopeId AND shadows_edge_id = :shadowsEdgeId")
     suspend fun findTombstone(scopeId: Long, shadowsEdgeId: Long): KnowledgeEdgeEntity?
+
+    /**
+     * [documentNodeId]를 향한 살아있는 `PART_OF` edge 전부(ARTEL-748). 문서를 지울 때 문서 node와
+     * 함께 소프트삭제할 대상이다([kr.artel.orchestration.knowledge.service.KnowledgeService.softDeleteForDocument]).
+     *
+     * `project_id`를 조건에 함께 건다 — 이 파일의 다른 질의가 전부 그렇게 한다. 프로젝트 격리는
+     * 서비스의 비교가 아니라 질의가 진다.
+     *
+     * `scope_id IS NULL`을 고정으로 건다 — 문서 적재는 언제나 baseline이다
+     * ([KnowledgeRepository.findDocumentNode]와 같은 이유). 스코프 런이 이 edge를 가리려고 만든
+     * 툼스톤은 그 스코프 자신의 상태이지 문서의 상태가 아니라, 함께 지우지 않는다.
+     */
+    @Query(
+        """
+        SELECT * FROM knowledge_edge
+         WHERE project_id = :projectId
+           AND to_knowledge_id = :documentNodeId
+           AND relation = '$PART_OF_RELATION'
+           AND scope_id IS NULL
+           AND deleted_at IS NULL
+        """
+    )
+    fun findBaselinePartOfEdgesTo(projectId: Long, documentNodeId: Long): Flow<KnowledgeEdgeEntity>
 }

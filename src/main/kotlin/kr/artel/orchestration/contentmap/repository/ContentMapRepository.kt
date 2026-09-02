@@ -23,6 +23,31 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
     suspend fun findByGameBuildId(gameBuildId: Long): ContentMapEntity?
 
     /**
+     * 이 빌드의 지도를 관측으로 세운다 (ARTEL-689). 이미 있으면 null 이다.
+     *
+     * ARTEL-642 가 `content_map` 의 NOT NULL 셋을 풀고 `rooted_by` 에 `observation` 을 넣어 "근거
+     * 문서 없이도 지도가 선다" 를 열었는데, 그 값을 쓰는 코드가 없었다. `content_map` 행이 생기는
+     * 자리가 `EvidenceDocumentService.upsertContentMap` 하나뿐이라, 문서가 한 번도 안 올라온
+     * 빌드에는 지도가 없다.
+     *
+     * 헤더 넷(`schema_version` · `capture` · `evidence_digest` · `evidence_promises`)을 채우지
+     * 않는다. 넷 다 문서가 말해 주는 것이라 관측은 말할 자격이 없고, 더미값을 넣으면 진짜 헤더와
+     * 같은 칸에 앉는다(V63 4절).
+     *
+     * `uk_content_map_build` 가 빌드당 한 행을 강제한다. 경합에 진 쪽은 null 을 받고 이긴 쪽이
+     * 쓴 행을 다시 읽어 이어간다.
+     */
+    @Query(
+        """
+        INSERT INTO content_map (game_build_id, rooted_by)
+        VALUES (:gameBuildId, 'observation')
+        ON CONFLICT (game_build_id) DO NOTHING
+        RETURNING id
+        """
+    )
+    suspend fun rootByObservation(gameBuildId: Long): Long?
+
+    /**
      * TC 생성기가 읽는 유일한 창구(`v_content_map_capability`).
      *
      * **`status <> 'not-a-step'` 이 여기 있다.** V72 전에는 뷰가 들고 있었는데, 그 필터가 뷰에
