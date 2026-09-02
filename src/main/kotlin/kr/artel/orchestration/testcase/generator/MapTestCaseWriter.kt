@@ -209,7 +209,7 @@ class MapTestCaseWriter(
     )
 
     /**
-     * 기대결과 항목들을 그대로 싣는다(V85). 목록이 비면 null 이다 — 지도를 못 되짚는 행과 같은
+     * 기대결과 항목들을 그대로 싣는다(V87). 목록이 비면 null 이다 — 지도를 못 되짚는 행과 같은
      * 값이어야 하고, 빈 배열은 "기대결과가 없다"는 다른 말이다.
      */
     private fun expectedItemsJson(case: MapTestCase): Json? = case.expectedItems
