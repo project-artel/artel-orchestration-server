@@ -10,6 +10,7 @@ import kr.artel.orchestration.project.dto.CreateProjectRequest
 import kr.artel.orchestration.project.dto.DeleteProjectResponse
 import kr.artel.orchestration.project.dto.ProjectDetailResponse
 import kr.artel.orchestration.project.dto.ProjectPageResponse
+import kr.artel.orchestration.project.dto.ProjectScope
 import kr.artel.orchestration.project.dto.UpdateProjectRequest
 import kr.artel.orchestration.project.service.ProjectService
 import org.springframework.http.HttpStatus
@@ -35,14 +36,19 @@ import org.springframework.web.bind.annotation.RestController
 class ProjectController(
     private val projectService: ProjectService
 ) {
-    @Operation(summary = "프로젝트 목록", description = "참여 중인 프로젝트를 최근 수정순으로 조회한다.")
+    @Operation(
+        summary = "프로젝트 목록",
+        description = "참여 중인 프로젝트를 최근 수정순으로 조회한다. `scope=ALL`은 개발자 등급 전용이다."
+    )
     @GetMapping
     suspend fun list(
         @CurrentUserId appUserId: Long,
         @Parameter(description = "0부터 시작하는 페이지 번호") @RequestParam(defaultValue = "0") page: Int,
-        @Parameter(description = "페이지 크기. 최대 100") @RequestParam(defaultValue = "20") size: Int
+        @Parameter(description = "페이지 크기. 최대 100") @RequestParam(defaultValue = "20") size: Int,
+        @Parameter(description = "MINE이면 참여 중인 프로젝트, ALL이면 전 프로젝트. ALL은 개발자 등급만 쓸 수 있다")
+        @RequestParam(defaultValue = "MINE") scope: ProjectScope
     ): ProjectPageResponse =
-        projectService.list(appUserId, page, size)
+        projectService.list(appUserId, page, size, scope)
 
     @Operation(summary = "프로젝트 생성", description = "만든 사람이 소유자로 등록된다.")
     @PostMapping

@@ -1,6 +1,7 @@
 package kr.artel.orchestration.knowledge.service
 
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.auth.service.PlatformAccessService
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.knowledge.dto.KnowledgeDetailResponse
@@ -26,6 +27,7 @@ class KnowledgeGraphViewService(
     private val anchorRepository: KnowledgeAnchorRepository,
     private val graphService: KnowledgeGraphService,
     private val accessService: ProjectAccessService,
+    private val platformAccessService: PlatformAccessService,
     private val qaTryRepository: QaTryRepository
 ) {
 
@@ -33,7 +35,8 @@ class KnowledgeGraphViewService(
      * 프로젝트의 운영 지식과 그 사이의 간선을 한 번에 읽는다.
      *
      * **비참여자에게는 빈 그래프를 준다.** 예외로 갈라 답하면 프로젝트의 존재 여부가 새어 나가고,
-     * 그 판단은 QA·지식 집계와 같다.
+     * 그 판단은 QA·지식 집계와 같다. `DEVELOPER` 등급은 참여하지 않아도 통과한다
+     * ([PlatformAccessService]).
      *
      * 간선은 **살아남은 노드 사이만** 담는다. 잘려 나간 노드나 삭제된 항목에 걸린 간선을 함께
      * 내려보내면 화면이 존재하지 않는 노드를 가리키는 선을 그리게 되고, 그때 화면은 없는 노드를
@@ -43,7 +46,9 @@ class KnowledgeGraphViewService(
         if (nodeLimit !in 1..MAX_NODES) {
             throw BadRequestException("nodeLimit must be between 1 and $MAX_NODES")
         }
-        if (!accessService.isMember(projectId, userId)) {
+        if (!accessService.isMember(projectId, userId) &&
+            !platformAccessService.seesAllProjects(userId)
+        ) {
             return KnowledgeGraphViewResponse(
                 projectId = projectId.toString(),
                 nodes = emptyList(),

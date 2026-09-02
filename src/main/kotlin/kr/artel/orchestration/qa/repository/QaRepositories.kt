@@ -100,18 +100,25 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
     @Query("SELECT * FROM qa_try WHERE qa_run_id = :qaRunId ORDER BY id ASC")
     fun findByQaRunId(qaRunId: Long): Flow<QaTryEntity>
 
-    /** One project's runs, newest first. Membership is what makes them visible. */
+    /**
+     * One project's runs, newest first. Membership is what makes them visible — unless
+     * [seesAllProjects], which the `DEVELOPER` platform role sets. 판단은
+     * `PlatformAccessService`가 하고 여기는 그 결과만 받는다.
+     */
     @Query(
         """
         SELECT qt.* FROM qa_try qt
         JOIN test_scenario ts ON ts.id = qt.test_scenario_id
-        JOIN project_member pm ON pm.project_id = ts.project_id
-        WHERE ts.project_id = :projectId AND pm.app_user_id = :userId
+        WHERE ts.project_id = :projectId
+          AND (:seesAllProjects OR EXISTS (
+              SELECT 1 FROM project_member pm
+               WHERE pm.project_id = ts.project_id AND pm.app_user_id = :userId
+          ))
         ORDER BY qt.id DESC
         LIMIT :limit
         """
     )
-    fun findByProject(projectId: Long, userId: Long, limit: Int): Flow<QaTryEntity>
+    fun findByProject(projectId: Long, userId: Long, seesAllProjects: Boolean, limit: Int): Flow<QaTryEntity>
 
     /** 시나리오에 딸린 QA 실행 이력 수. 시나리오 삭제 가드(실행 이력 있으면 차단)가 쓴다(ARTEL-207). */
     suspend fun countByTestScenarioId(testScenarioId: Long): Long

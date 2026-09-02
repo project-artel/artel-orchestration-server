@@ -22,8 +22,12 @@ import java.time.format.DateTimeParseException
  * 애너테이션에만 남아, `/internal`을 통째로 permitAll로 여는 `SecurityConfig` 아래에서 조회가
  * 조용히 무인증이 된다.
  *
- * 응답은 항상 사용자가 참여한 프로젝트로 좁혀진다. 관리자 role이 없으므로 "배포 전체 지출"을
- * 내주는 경로는 여기 없다.
+ * 응답은 사용자가 참여한 프로젝트로 좁혀진다. `app_user.platform_role`이 `DEVELOPER`면 참여를
+ * 따지지 않고 전 프로젝트를 본다(ARTEL-742) — 판단은
+ * [kr.artel.orchestration.auth.service.PlatformAccessService]가 하고 컨트롤러는 등급을 모른다.
+ *
+ * 프로젝트를 못 푼 호출은 등급과 무관하게 여전히 건수로만 나간다
+ * ([kr.artel.orchestration.llmusage.repository.LlmUsageStatsRepository.countUnattributedCalls]).
  */
 @RestController
 @RequestMapping("/api/llm-usage")
@@ -33,7 +37,7 @@ class LlmUsageStatsController(
     /**
      * 기간 지출을 service·model·project·일자 네 축으로 접어 돌려준다.
      *
-     * @param projectId 생략하면 참여 중인 전 프로젝트 합산.
+     * @param projectId 생략하면 볼 수 있는 전 프로젝트 합산.
      * @param from,to ISO-8601 instant(`2026-08-01T00:00:00Z`). 생략하면 최근 30일. 기준 컬럼은
      *   `called_at`이다.
      * @param zone 일별 버킷을 자를 IANA 시간대(`Asia/Seoul`). 생략하면 UTC — 이 값에 따라 월 경계의

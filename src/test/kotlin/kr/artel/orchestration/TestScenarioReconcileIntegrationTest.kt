@@ -658,9 +658,12 @@ class TestScenarioReconcileIntegrationTest {
 
         postMessage(client, projectId, runId, token, "전투 시나리오")
 
+        // 질문 저장과 시나리오 반영은 별개의 비동기 단계이고 질문이 먼저 온다. 질문만 기다리면
+        // 아래 마지막 줄이 반영 전에 읽어 비어 있는 목록을 보게 된다.
         awaitUntil {
             runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
-                .any { it.payload != null }
+                .any { it.payload != null } &&
+                runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().isNotEmpty()
         }
 
         val asked = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)

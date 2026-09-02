@@ -141,6 +141,7 @@ class AuthController(
         displayName = displayName,
         email = email,
         locale = locale,
+        platformRole = platformRole,
         nickname = nickname,
         userTag = userTag,
         identities = identities.map {

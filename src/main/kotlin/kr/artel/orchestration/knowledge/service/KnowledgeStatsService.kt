@@ -1,5 +1,6 @@
 package kr.artel.orchestration.knowledge.service
 
+import kr.artel.orchestration.auth.service.PlatformAccessService
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.knowledge.dto.KnowledgeRunConfigStatsCell
 import kr.artel.orchestration.knowledge.dto.KnowledgeStatsResponse
@@ -26,6 +27,7 @@ private const val MAX_CELLS = 500
 @Service
 class KnowledgeStatsService(
     private val statsRepository: KnowledgeStatsRepository,
+    private val platformAccessService: PlatformAccessService,
     private val clock: Clock
 ) {
 
@@ -52,6 +54,7 @@ class KnowledgeStatsService(
         }
 
         val aggregate = statsRepository.aggregateByRunConfig(
+            seesAllProjects = platformAccessService.seesAllProjects(userId),
             projectId = projectId,
             userId = userId,
             from = start,

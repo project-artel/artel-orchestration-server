@@ -30,6 +30,9 @@ data class AppUserEntity(
     @Column("locale")
     val locale: String? = null,
 
+    /** 프로젝트 밖의 등급. 값은 [PlatformRole]이고, 읽지 못하는 값은 [USER]로 다룬다. */
+    @Column("platform_role")
+    val platformRole: String = PlatformRole.USER.name,
     /**
      * 사용자가 고른 이름. [displayName]과 달리 로그인해도 덮어써지지 않는다.
      * 이름이 없는 사용자는 없다 — 처음 로그인할 때 제공자 display name 에서 만들어 넣는다.
@@ -50,3 +53,18 @@ data class AppUserEntity(
     @Column("updated_at")
     val updatedAt: Instant
 )
+
+/**
+ * 프로젝트 밖의 등급.
+ *
+ * [kr.artel.orchestration.project.entity.ProjectRole]과 층이 다르다. 저쪽은 한 프로젝트 안에서
+ * 무엇을 할 수 있는지를 정하고, 이쪽은 어느 프로젝트를 볼 수 있는지를 정한다. 그래서 프로젝트
+ * 역할로는 "모든 프로젝트를 본다"를 쓸 수 없고, 이 등급이 그 자리다.
+ *
+ * [DEVELOPER]가 여는 것은 조회뿐이다. 쓰기는 이 등급과 무관하게 `project_member`를 그대로
+ * 요구한다 — 근거는 [kr.artel.orchestration.auth.service.PlatformAccessService]에 있다.
+ */
+enum class PlatformRole {
+    USER,
+    DEVELOPER
+}

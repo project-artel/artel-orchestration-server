@@ -10,6 +10,13 @@ data class AuthUserResponse(
     val email: String?,
     /** 홈 UI 표시 언어. null이면 사용자가 아직 고르지 않은 것이다. */
     val locale: String?,
+    /**
+     * 프로젝트 밖의 등급. `USER` 또는 `DEVELOPER`.
+     *
+     * 화면은 이 값으로 인가를 판단하지 않는다. 무엇을 요청할지 고르는 데만 쓴다 — 판단은 서버가
+     * 하고, `DEVELOPER`라고 적힌 응답을 받아도 서버가 열지 않은 것은 열리지 않는다.
+     */
+    val platformRole: String,
     /** 사용자가 고른 이름. 처음 로그인할 때 제공자 이름으로 정해지므로 비어 있지 않다. */
     val nickname: String,
     /** 같은 [nickname]을 쓰는 사람들을 가르는 번호. 화면에 나가는 `nickname#userTag`는 클라이언트가 붙인다. */
