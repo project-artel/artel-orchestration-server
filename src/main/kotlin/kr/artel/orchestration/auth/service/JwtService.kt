@@ -40,10 +40,10 @@ data class UserProfile(
     val email: String?,
     /** 홈 UI 표시 언어. null이면 아직 고르지 않은 것이다. */
     val locale: String?,
-    /** 사용자가 고른 이름. null이면 아직 고르지 않은 것이다. */
-    val nickname: String?,
-    /** BattleTag. 선택 값이라 null일 수 있다. */
-    val battleTag: String?,
+    /** 사용자가 고른 이름. 처음 로그인할 때 제공자 이름으로 정해지므로 비어 있지 않다. */
+    val nickname: String,
+    /** 같은 [nickname]을 쓰는 사람들을 가르는 번호. */
+    val userTag: String,
     /** [email]이 이 계정의 것으로 확정된 시각. null이면 아직 확인되지 않았다. */
     val emailVerifiedAt: Instant?,
     val identities: List<LinkedIdentity>

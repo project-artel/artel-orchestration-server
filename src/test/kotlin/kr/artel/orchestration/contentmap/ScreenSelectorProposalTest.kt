@@ -585,7 +585,7 @@ class ScreenSelectorProposalTest {
             .map { it.path("selector").asText() to it.path("active").asBoolean() }
 
     private fun newUser(): Long =
-        db.sql("INSERT INTO app_user (display_name) VALUES ('selector') RETURNING id")
+        db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('selector', 'selector-' || gen_random_uuid(), '0000') RETURNING id")
             .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
             .one().block()!!
 }

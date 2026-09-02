@@ -73,20 +73,21 @@ class ProjectMemberIntegrationTest {
     }
 
     @Test
-    fun `carries nickname and battleTag from app_user onto each member row`(): Unit = runBlocking {
+    fun `carries nickname and userTag from app_user onto each member row`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
         val projectId = createProject(ownerToken)
         joinAs("99", "hubot", projectId, ProjectRole.MEMBER)
-        setProfile(ownerToken, """{"nickname":"Yuni","battleTag":"Yuni#1234"}""")
+        setProfile(ownerToken, """{"nickname":"Yuni"}""")
 
         val members = get(ownerToken, "/api/projects/$projectId/members")
 
         val owner = members.first { it["userId"].asText() == userIdOf("42").toString() }
         assertThat(owner["nickname"].asText()).isEqualTo("Yuni")
-        assertThat(owner["battleTag"].asText()).isEqualTo("Yuni#1234")
+        assertThat(owner["userTag"].asText()).isEqualTo("0000")
+        // 이름을 한 번도 고치지 않은 멤버도 이름이 있다 — 첫 로그인 때 제공자 이름으로 정해진다.
         val member = members.first { it["userId"].asText() == userIdOf("99").toString() }
-        assertThat(member["nickname"].isNull).isTrue()
-        assertThat(member["battleTag"].isNull).isTrue()
+        assertThat(member["nickname"].asText()).isEqualTo("hubot")
+        assertThat(member["userTag"].asText()).isEqualTo("0000")
     }
 
     @Test

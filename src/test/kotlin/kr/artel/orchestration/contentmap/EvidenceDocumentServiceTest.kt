@@ -112,7 +112,7 @@ class EvidenceDocumentServiceTest {
 
     private suspend fun seed(): Triple<Long, Long, Long> {
         val now = Instant.now()
-        val userId = db.sql("INSERT INTO app_user (display_name) VALUES ('sdk') RETURNING id")
+        val userId = db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('sdk', 'sdk-' || gen_random_uuid(), '0000') RETURNING id")
             .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
             .one().block()!!
         val project = projects.save(
@@ -299,7 +299,7 @@ class EvidenceDocumentServiceTest {
     @Test
     fun `남의 빌드는 보이지 않는다`(): Unit = runBlocking {
         val (_, _, buildId) = seed()
-        val stranger = db.sql("INSERT INTO app_user (display_name) VALUES ('stranger') RETURNING id")
+        val stranger = db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('stranger', 'stranger-' || gen_random_uuid(), '0000') RETURNING id")
             .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
             .one().block()!!
 

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
 
 @ActiveProfiles("test")
@@ -22,6 +23,9 @@ class OAuthUserServiceIntegrationTest {
 
     @Autowired
     private lateinit var appUserRepository: AppUserRepository
+
+    @Autowired
+    private lateinit var db: DatabaseClient
 
     /**
      * 리액티브 트랜잭션은 스레드가 아니라 구독 컨텍스트에 묶여 있어 @Transactional 테스트 롤백이
@@ -126,5 +130,55 @@ class OAuthUserServiceIntegrationTest {
     @Test
     fun `returns empty for a user that does not exist`(): Unit = runBlocking {
         assertThat(service.findProfile(99999999L)).isNull()
+    }
+
+    @Test
+    fun `seeds the nickname from the provider display name`(): Unit = runBlocking {
+        val user = service.upsert(identity())
+
+        val profile = service.findProfile(user.userId.toLong())!!
+        assertThat(profile.nickname).isEqualTo("The Octocat")
+        assertThat(profile.userTag).isEqualTo("0000")
+    }
+
+    @Test
+    fun `falls back to the provider login when the display name is blank`(): Unit = runBlocking {
+        val user = service.upsert(identity(login = "octocat", displayName = "   "))
+
+        assertThat(service.findProfile(user.userId.toLong())!!.nickname).isEqualTo("octocat")
+    }
+
+    @Test
+    fun `gives two accounts with the same provider display name different userTags`(): Unit = runBlocking {
+        val first = service.upsert(identity(providerUserId = "42", login = "octocat"))
+        val second = service.upsert(identity(providerUserId = "43", login = "hubot"))
+
+        val firstProfile = service.findProfile(first.userId.toLong())!!
+        val secondProfile = service.findProfile(second.userId.toLong())!!
+        assertThat(secondProfile.nickname).isEqualTo(firstProfile.nickname)
+        assertThat(firstProfile.userTag).isEqualTo("0000")
+        assertThat(secondProfile.userTag).isEqualTo("0001")
+    }
+
+    @Test
+    fun `grows the userTag to five digits once every four digit one is taken`(): Unit = runBlocking {
+        val user = service.upsert(identity())
+        // 0000~9999 를 API 로 만들면 만 번 로그인해야 한다. 검증 대상은 배정 규칙이므로 행을 직접 넣는다.
+        fillFourDigitSpace()
+
+        val profile = service.updateProfile(user.userId.toLong(), "Crowded")!!
+
+        assertThat(profile.userTag).isEqualTo("00000")
+    }
+
+    /** nickname "Crowded" 아래 네 자리 번호 10000개를 모두 채운다. */
+    private fun fillFourDigitSpace() {
+        db.sql(
+            """
+            INSERT INTO app_user (display_name, nickname, user_tag)
+            SELECT 'Crowded', 'Crowded', LPAD(tag_number::text, 4, '0')
+            FROM generate_series(0, 9999) AS tag_number
+            """
+        ).fetch().rowsUpdated().block()
     }
 }

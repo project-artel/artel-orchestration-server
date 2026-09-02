@@ -1,12 +1,12 @@
 package kr.artel.orchestration.testcase
 
 import kotlinx.coroutines.runBlocking
-import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.support.testAppUser
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
 import kr.artel.orchestration.testcase.service.TestCaseService
@@ -41,7 +41,7 @@ class TestCaseHierarchyIntegrationTest {
 
     private suspend fun newUser(): Long {
         val now = Instant.now()
-        return appUserRepository.save(AppUserEntity(displayName = "tc-user", createdAt = now, updatedAt = now))
+        return appUserRepository.save(testAppUser("tc-user", now))
             .id!!
     }
 

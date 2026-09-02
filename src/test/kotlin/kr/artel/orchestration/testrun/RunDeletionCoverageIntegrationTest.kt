@@ -3,12 +3,12 @@ package kr.artel.orchestration.testrun
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.runBlocking
-import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.support.testAppUser
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.dto.TestRunCreateRequest
@@ -134,7 +134,7 @@ class RunDeletionCoverageIntegrationTest {
 
     private suspend fun user(): Long {
         val now = Instant.now()
-        return appUserRepository.save(AppUserEntity(displayName = "run-del", createdAt = now, updatedAt = now)).id!!
+        return appUserRepository.save(testAppUser("run-del", now)).id!!
     }
 
     private suspend fun project(): Pair<Long, Long> {
