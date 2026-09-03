@@ -6,11 +6,14 @@ import org.springframework.data.relational.core.mapping.Table
 import java.time.Instant
 
 /**
- * 프로젝트에 사람을 이메일로 부른 기록.
+ * 프로젝트에 사람을 부른 기록.
  *
- * 가리키는 것이 [appUserId][ProjectMemberEntity.appUserId] 가 아니라 [email] 인 이유는, 아직
- * 가입하지 않은 사람을 초대할 수 있어야 하기 때문이다. 그 사람이 나중에 같은 이메일로 로그인하면
- * 기다리던 초대가 받은 초대함에 보인다.
+ * 대상을 가리키는 방법이 둘이고, [email] 과 [appUserId] 중 정확히 하나만 차 있다.
+ * `ck_project_invitation_target` 이 그것을 강제한다.
+ *
+ * [email] 은 아직 가입하지 않은 사람을 부르는 자리다. 그 사람이 나중에 같은 주소로 로그인하면
+ * 기다리던 초대가 받은 초대함에 보인다. [appUserId] 는 이미 계정이 있는 사람을 부르는 자리이고,
+ * 그 사람에게 확인을 마친 주소가 없어도 초대가 간다 — 배달은 웹 초대함이 한다.
  *
  * 수락하면 [ProjectMemberEntity] 행이 생긴다. 그 전까지 이 행은 접근 권한이 아니다 — 권한의 답은
  * 여전히 `project_member` 한 곳에서만 나온다.
@@ -23,9 +26,20 @@ data class ProjectInvitationEntity(
     @Column("project_id")
     val projectId: Long,
 
-    /** 소문자로 정규화해 저장한다. 비교도 대소문자를 무시한다. */
+    /**
+     * 아직 계정이 없는 사람을 부를 때의 주소. 소문자로 정규화해 저장하고 비교도 대소문자를
+     * 무시한다. [appUserId] 로 부른 초대에서는 null 이다.
+     */
     @Column("email")
-    val email: String,
+    val email: String? = null,
+
+    /**
+     * 이미 계정이 있는 사람을 부를 때의 그 계정. [email] 로 부른 초대에서는 null 이다.
+     *
+     * 그 계정이 지워지면 이 행도 함께 지워진다. 가리키는 사람이 없는 초대는 남길 뜻이 없다.
+     */
+    @Column("app_user_id")
+    val appUserId: Long? = null,
 
     /** 수락했을 때 갖게 될 [ProjectRole]. */
     @Column("role")
