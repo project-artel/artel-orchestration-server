@@ -490,3 +490,87 @@ CLI 토큰이 CLI 토큰을 찍어낼 수 있으면 폐기가 의미를 잃는�
 이 브랜치에서 실패하지만 원인이 이 작업에 없다. `docs/api/openapi.json` 은 `develop`(`a44c5a1`,
 #255)이 머지된 시점에 이미 `appUserId` 를 네 곳에 담고 있고, 이 브랜치의 diff 는 그 단어를 한 번도
 더하지 않는다.
+
+## Addendum — `POST /api/auth/cli-tokens/exchange` (2026-09-03)
+
+같은 브랜치에 endpoint 하나를 더 얹었다. 위 `## Open Questions` 의 "ARTEL-780 의 범위 변경"
+(artel-cli 계획 `2026-09-03-read-artel-token-and-add-auth-login.md`)에 답한 것이다 — 발급·목록·폐기
+셋만으로는 브라우저 왕복이 `artel_` 토큰으로 끝나지 않아 `artel auth login` 이 출시될 수 없다.
+
+### 무엇이 생겼나
+
+- **`POST /api/auth/cli-tokens/exchange`** — 세션도 토큰도 없는 공개 경로다. 자격증명은 일회용
+  코드와 `code_verifier` 이고, 응답은 `POST /api/auth/cli-tokens` 와 **같은** 201 body
+  (`{"id","name","token","createdAt","expiresAt"}`)다. 두 경로가 `IssuedCliToken.toCreatedResponse()`
+  하나를 쓰므로 한쪽만 필드가 늘어날 수 없다
+- 토큰 만들기는 `CliTokenService.issue` 그대로다. 해시·만료·`1..365` 검증·응답 모양이 발급
+  endpoint 와 같은 코드에서 나온다
+- `SecurityConfig` 의 permitAll 목록에 `/api/auth/sdk/token` 바로 아래 줄로 들어갔다. 그 줄이
+  `"/api/auth/**"` 규칙보다 **위**에 있어야 한다 — 먼저 맞는 규칙이 이긴다
+- CLI 토큰 필터는 손대지 않았다. 이 경로는 자격증명을 아예 읽지 않으므로 CLI 토큰으로 부른다고
+  해서 무엇이 열리지 않는다
+
+### 로그인 코드에 `kind` 를 묶는다
+
+지금까지 `SdkLoginCodeStore` 는 `"$userId:$codeChallenge"` 를 저장했고, 그 값에는 코드가 어느
+흐름을 위해 발급됐는지가 없었다. 그대로 두면 CLI 용으로 낸 코드를 `/api/auth/sdk/token` 에서
+30일짜리 SDK JWT 로 바꿀 수 있고, 반대로 SDK 용 코드가 여기서 CLI 토큰이 된다.
+
+- `SdkLoginCodeKind` 는 `sdk` 와 `cli` 둘이다. `POST /api/auth/sdk/codes` 가 선택 필드로 받고,
+  키를 빠뜨리면 `sdk` 다 — 이미 배포된 SDK 와 중계 페이지의 요청이 그대로 통해야 한다
+- 두 교환 endpoint 는 자기 kind 만 받는다. kind 가 어긋난 코드는 없는 코드·만료된 코드·틀린
+  verifier 와 **같은** 400 이다. 어느 조건에서 걸렸는지 알려주면 코드만 훔친 쪽에 단서가 된다
+- 어긋난 시도도 코드를 소진시킨다. 남겨두면 SDK 쪽에서 거절당한 코드를 그대로 CLI 쪽에 다시
+  내밀 수 있다
+
+### 저장 값의 모양 — `"<kind>:<userId>:<codeChallenge>"`
+
+JSON 으로 바꾸지 않고 `:` 결합을 그대로 쓰되 필드를 셋으로 늘렸다. 근거는 **순서**에 있다.
+
+앞의 두 필드는 서버가 정한다 — `kind` 는 `wireValue` 라는 닫힌 집합이고 `userId` 는 `Long` 이라
+둘 다 `:` 를 담을 수 없다. 클라이언트가 준 값인 `codeChallenge` 는 형식 검증이 없어 `:` 가 들어올
+수 있지만 마지막 자리라, 앞에서부터 `:` 두 개로 자르고 남은 전부를 통째로 가져오면 무엇이 오든
+원문 그대로다. 필드를 더 붙일 일이 생기면 challenge **앞**에 붙인다. 뒤에 붙이는 순간 이 성질이
+깨진다.
+
+JSON 은 얻는 것이 없어 접었다. 필드 셋이 전부 문자열이고 구조가 없어, 직렬화 실패와 파싱 실패라는
+경로를 새로 만들 뿐 경계 문제를 위 규칙보다 잘 풀지 않는다. artel-cli 계획은 이 자리에 JSON 을
+적어 두었는데, 그것은 "`:` 결합으로는 세 번째 필드를 안전하게 담을 수 없다"를 전제한 것이고 그
+전제가 challenge 를 마지막에 두면 성립하지 않는다.
+
+**배포 창.** 배포 직전에 발급돼 Redis 에 남은 코드는 필드가 둘이라 전부 400 이 된다. TTL 이
+5분이라 배포 중에 로그인을 시작한 사람만 한 번 다시 로그인하면 된다. "kind 가 없으면 sdk 로
+본다"는 분기는 두지 않았다 — 배포 직후부터 죽은 코드이고, 그 분기가 kind 를 가른 이유 자체를
+되돌린다.
+
+### 마이그레이션
+
+없다. `cli_token` 테이블은 그대로고, `kind` 는 Redis 값에만 산다.
+
+### 테스트
+
+`CliTokenExchangeApiIntegrationTest` 를 새로 두었다(8개). 성공 교환, 틀린 verifier, 이미 쓴 코드,
+여기서 거절되는 SDK 코드, `/api/auth/sdk/token` 에서 거절되는 CLI 코드, `kind` 를 빠뜨린 요청이
+여전히 SDK 로 도는 회귀, `expiresInDays` 규칙 두 가지다. `SdkLoginCodeStoreIntegrationTest` 에는
+kind 가 어긋난 교환과 CLI 코드 교환 둘을 더했다.
+
+```
+MAVEN_OPTS="-Xmx2g -XX:MaxMetaspaceSize=768m" ./mvnw -o test \
+  -Dkotlin.compiler.execution.strategy=in-process \
+  -Dtest=CliTokenExchangeApiIntegrationTest,CliTokenApiIntegrationTest,CliTokenPrincipalTest,\
+SdkLoginCodeStoreIntegrationTest,AuthRefreshIntegrationTest,SdkRegistrationIntegrationTest,\
+InternalPathSecurityIntegrationTest,OpenApiDocumentationIntegrationTest,OpenApiSnapshotTest \
+  -DfailIfNoSpecifiedTests=false
+```
+
+64개 중 63개 통과. 남은 하나는 위 `## Outcome` 이 적어 둔
+`OpenApiDocumentationIntegrationTest.keeps the session-derived user id out of the contract` 이고,
+`appUserId` 는 이번 diff 에도 한 번도 나오지 않는다.
+
+### 남는 것
+
+- **`expiresInDays` 가 범위를 벗어나면 코드가 소진된 뒤에 400 이 난다.** 순서가 consume 먼저,
+  검증 나중이기 때문이다. 범위 규칙을 `CliTokenService` 밖에 한 벌 더 두지 않으려고 그대로 뒀다.
+  artel-cli 는 90 을 고정으로 보내므로 실제로 밟히지 않는다
+- **`kind=cli` 를 실제로 보내는 것은 artel-home 의 중계 페이지다(ARTEL-781).** 그 화면이 파라미터를
+  넘겨주기 전까지 CLI 로그인은 끝까지 돌지 않는다. 서버 쪽은 이 커밋으로 준비됐다

@@ -28,6 +28,33 @@ data class CreateCliTokenRequest(
 )
 
 /**
+ * `POST /api/auth/cli-tokens/exchange` 요청 본문. 이 요청에는 세션도 토큰도 없다. 일회용 코드와
+ * verifier 가 자격증명이다.
+ *
+ * [name] 과 [expiresInDays] 는 [CreateCliTokenRequest] 와 같은 규칙을 따른다. 값 검증도 같은
+ * `CliTokenService.issue` 가 하므로 두 경로가 어긋날 자리가 없다.
+ *
+ * [code] 와 [codeVerifier] 의 길이 제약은 `SdkTokenRequest` 와 같다. 같은 저장소가 낸 같은 코드를
+ * 같은 PKCE 규칙으로 검증하므로 두 값의 모양이 다를 이유가 없다.
+ */
+data class ExchangeCliTokenRequest(
+    @field:NotBlank
+    @field:Size(max = 128)
+    val code: String,
+
+    @field:NotBlank
+    @field:Size(min = 43, max = 128)
+    val codeVerifier: String,
+
+    @field:NotBlank
+    @field:Size(max = MAX_CLI_TOKEN_NAME_LENGTH)
+    val name: String,
+
+    @JsonProperty(required = true)
+    val expiresInDays: Int?
+)
+
+/**
  * 발급 응답. 토큰 원문이 나가는 유일한 응답이고, 그 사실이 타입으로 강제된다 —
  * [CliTokenResponse] 에는 `token` 필드가 없다.
  */
@@ -38,6 +65,21 @@ data class CreatedCliTokenResponse(
     val token: String,
     val createdAt: Instant,
     val expiresAt: Instant?
+)
+
+/**
+ * 발급 직후의 행과 원문을 201 응답으로 바꾼다.
+ *
+ * 세션으로 부르는 `POST /api/auth/cli-tokens` 와 코드로 부르는
+ * `POST /api/auth/cli-tokens/exchange` 가 같은 함수를 쓴다. 두 응답이 같은 모양이라는 것이 CLI 의
+ * 계약이라, 한쪽만 필드가 늘어나는 일이 없어야 한다.
+ */
+fun IssuedCliToken.toCreatedResponse() = CreatedCliTokenResponse(
+    id = requireNotNull(row.id).toString(),
+    name = row.name,
+    token = token,
+    createdAt = row.createdAt,
+    expiresAt = row.expiresAt
 )
 
 /** 목록의 한 줄. 원문이 없으므로 이 응답이 새어도 아무 계정도 열리지 않는다. */

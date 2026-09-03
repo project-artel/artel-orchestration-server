@@ -43,23 +43,23 @@ class SdkLoginCodeStoreIntegrationTest {
 
     @Test
     fun `발급한 코드를 올바른 verifier로 교환하면 발급 대상이 나온다`(): Unit = runBlocking {
-        val code = store.issue(7L, challengeOf(VERIFIER))
+        val code = store.issue(7L, challengeOf(VERIFIER), SdkLoginCodeKind.SDK)
 
-        assertThat(store.consume(code, VERIFIER)).isEqualTo(7L)
+        assertThat(store.consume(code, VERIFIER, SdkLoginCodeKind.SDK)).isEqualTo(7L)
     }
 
     @Test
     fun `없는 코드는 교환되지 않는다`(): Unit = runBlocking {
-        assertThat(store.consume("never-issued", VERIFIER)).isNull()
+        assertThat(store.consume("never-issued", VERIFIER, SdkLoginCodeKind.SDK)).isNull()
     }
 
     @Test
     fun `verifier가 맞지 않으면 교환되지 않고, 코드는 그 시도로 소진된다`(): Unit = runBlocking {
-        val code = store.issue(7L, challengeOf(VERIFIER))
+        val code = store.issue(7L, challengeOf(VERIFIER), SdkLoginCodeKind.SDK)
 
-        assertThat(store.consume(code, OTHER_VERIFIER)).isNull()
+        assertThat(store.consume(code, OTHER_VERIFIER, SdkLoginCodeKind.SDK)).isNull()
         // 틀린 시도가 코드를 남겨두면 verifier를 바꿔가며 좁혀갈 수 있다.
-        assertThat(store.consume(code, VERIFIER)).isNull()
+        assertThat(store.consume(code, VERIFIER, SdkLoginCodeKind.SDK)).isNull()
     }
 
     /**
@@ -69,17 +69,34 @@ class SdkLoginCodeStoreIntegrationTest {
     @Test
     fun `같은 코드를 동시에 두 번 교환하면 한 번만 성공한다`(): Unit = runBlocking {
         repeat(20) {
-            val code = store.issue(9L, challengeOf(VERIFIER))
+            val code = store.issue(9L, challengeOf(VERIFIER), SdkLoginCodeKind.SDK)
 
             val results = withContext(Dispatchers.Default) {
                 listOf(
-                    async { store.consume(code, VERIFIER) },
-                    async { store.consume(code, VERIFIER) }
+                    async { store.consume(code, VERIFIER, SdkLoginCodeKind.SDK) },
+                    async { store.consume(code, VERIFIER, SdkLoginCodeKind.SDK) }
                 ).awaitAll()
             }
 
             assertThat(results.filterNotNull()).containsExactly(9L)
         }
+    }
+
+    @Test
+    fun `다른 kind로 발급된 코드는 교환되지 않고, 그 시도로 소진된다`(): Unit = runBlocking {
+        val code = store.issue(7L, challengeOf(VERIFIER), SdkLoginCodeKind.CLI)
+
+        // verifier는 맞다. 걸리는 것은 kind 하나다.
+        assertThat(store.consume(code, VERIFIER, SdkLoginCodeKind.SDK)).isNull()
+        // 남겨두면 SDK 쪽에서 거절당한 코드를 그대로 CLI 쪽에 다시 내밀 수 있다.
+        assertThat(store.consume(code, VERIFIER, SdkLoginCodeKind.CLI)).isNull()
+    }
+
+    @Test
+    fun `cli로 발급한 코드는 cli로 교환된다`(): Unit = runBlocking {
+        val code = store.issue(7L, challengeOf(VERIFIER), SdkLoginCodeKind.CLI)
+
+        assertThat(store.consume(code, VERIFIER, SdkLoginCodeKind.CLI)).isEqualTo(7L)
     }
 
     /** 이 이슈의 본래 목적. 발급과 교환이 다른 프로세스로 갈라져도 성립해야 한다. */
@@ -88,14 +105,14 @@ class SdkLoginCodeStoreIntegrationTest {
         val issuer = SdkLoginCodeStore(redis, properties)
         val exchanger = SdkLoginCodeStore(redis, properties)
 
-        val code = issuer.issue(42L, challengeOf(VERIFIER))
+        val code = issuer.issue(42L, challengeOf(VERIFIER), SdkLoginCodeKind.SDK)
 
-        assertThat(exchanger.consume(code, VERIFIER)).isEqualTo(42L)
+        assertThat(exchanger.consume(code, VERIFIER, SdkLoginCodeKind.SDK)).isEqualTo(42L)
     }
 
     @Test
     fun `발급한 코드 키에 TTL이 걸려 있다`(): Unit = runBlocking {
-        store.issue(1L, challengeOf(VERIFIER))
+        store.issue(1L, challengeOf(VERIFIER), SdkLoginCodeKind.SDK)
 
         val key = issuedKeys().single()
         val ttl = redis.getExpire(key).awaitSingle()
@@ -109,7 +126,7 @@ class SdkLoginCodeStoreIntegrationTest {
 
     @Test
     fun `코드 원문은 키에 남지 않는다`(): Unit = runBlocking {
-        val code = store.issue(1L, challengeOf(VERIFIER))
+        val code = store.issue(1L, challengeOf(VERIFIER), SdkLoginCodeKind.SDK)
 
         assertThat(issuedKeys().single()).doesNotContain(code)
     }

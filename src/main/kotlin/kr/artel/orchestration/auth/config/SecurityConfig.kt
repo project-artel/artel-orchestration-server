@@ -162,6 +162,10 @@ class SecurityConfig {
                 "/ws/sdk",
                 // SDK가 코드를 토큰으로 바꾸는 경로. 이 요청에는 아직 세션도 토큰도 없다.
                 "/api/auth/sdk/token",
+                // CLI가 코드를 CLI 토큰으로 바꾸는 경로. 같은 이유로 열려 있다 — 자격증명은
+                // 일회용 코드와 code_verifier이며 CliTokenController.exchangeLoginCode가 직접 검증한다.
+                // 이 줄이 아래 "/api/auth/**" 규칙보다 먼저 있어야 한다. 먼저 맞는 규칙이 이긴다.
+                "/api/auth/cli-tokens/exchange",
                 // 재발급 경로. access 토큰이 만료된 뒤에 부르는 것이 목적이라 인증을 걸면 쓸 수 없다.
                 // 자격증명은 refresh 토큰이며 컨트롤러가 직접 검증한다.
                 "/api/auth/refresh",

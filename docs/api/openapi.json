@@ -2162,7 +2162,7 @@
           "SDK auth"
         ],
         "summary": "SDK 로그인 코드 발급",
-        "description": "로그인된 브라우저 세션을 일회용 코드로 바꾼다.",
+        "description": "로그인된 브라우저 세션을 일회용 코드로 바꾼다. kind 를 빠뜨리면 sdk 다.",
         "operationId": "issueCode",
         "requestBody": {
           "content": {
@@ -2279,6 +2279,36 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateCliTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedCliTokenResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/cli-tokens/exchange": {
+      "post": {
+        "tags": [
+          "cli-token-controller"
+        ],
+        "operationId": "exchangeLoginCode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExchangeCliTokenRequest"
               }
             }
           },
@@ -6042,6 +6072,14 @@
             "maxLength": 128,
             "minLength": 0,
             "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "default": "sdk",
+            "enum": [
+              "sdk",
+              "cli"
+            ]
           }
         }
       },
@@ -6121,6 +6159,36 @@
           "expiresAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ExchangeCliTokenRequest": {
+        "required": [
+          "code",
+          "codeVerifier",
+          "expiresInDays",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "maxLength": 128,
+            "minLength": 0,
+            "type": "string"
+          },
+          "codeVerifier": {
+            "maxLength": 128,
+            "minLength": 43,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 0,
+            "type": "string"
+          },
+          "expiresInDays": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
