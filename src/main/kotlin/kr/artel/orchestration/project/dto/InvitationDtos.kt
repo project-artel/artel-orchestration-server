@@ -19,7 +19,8 @@ import java.time.Instant
  * 떨어진 곳에 놓인다.
  *
  * @property email 부를 사람의 이메일. 저장할 때 소문자로 정규화한다
- * @property appUserId 부를 사람의 계정 id. 그 계정이 확인을 마친 주소로 초대가 나간다
+ * @property appUserId 부를 사람의 계정 id. 그 계정에 확인을 마친 주소가 없어도 초대가 간다 —
+ *   배달은 웹 초대함이 하므로 주소는 더 이상 필요하지 않다
  * @property role 수락했을 때 갖게 될 역할
  */
 data class CreateInvitationRequest(
@@ -64,6 +65,14 @@ data class InvitationSuggestionResponse(
  * 보낸 쪽(`/api/projects/:projectId/invitations`)과 받는 쪽(`/api/invitations`)이 같은 모양을 쓴다.
  * 받는 쪽에 [projectName]이 필요한데, 보낸 쪽에서 그 필드가 남는 것이 모양을 둘로 가르는 것보다 싸다.
  *
+ * 대상을 가리키는 방법이 둘이라 [email] 과 [nickname]·[userTag]·[displayName] 이 서로 짝을
+ * 이룬다 — 이메일 대상 초대는 앞쪽만 차 있고, 계정 대상 초대는 뒤쪽만 차 있다. 계정을 가리키는
+ * 초대라도 그 계정의 주소는 싣지 않는다. 초대 화면이 남의 주소를 알아내는 통로가 되면 안 된다.
+ *
+ * @property email 아직 계정이 없는 사람을 부른 초대의 주소. 계정을 부른 초대에서는 null
+ * @property nickname 계정을 부른 초대에서 그 계정이 고른 이름. 이메일 대상 초대에서는 null
+ * @property userTag 계정을 부른 초대에서 [nickname] 을 가르는 번호. 이메일 대상 초대에서는 null
+ * @property displayName 계정을 부른 초대에서 그 계정의 제공자 이름. 이메일 대상 초대에서는 null
  * @property invitedBy 초대한 사람의 표시 이름. 그 사람이 지워졌으면 null
  * @property expiresAt 이 시각이 지나면 목록에 나오지 않고 수락도 되지 않는다
  */
@@ -71,7 +80,10 @@ data class ProjectInvitationResponse(
     val id: String,
     val projectId: String,
     val projectName: String,
-    val email: String,
+    val email: String?,
+    val nickname: String?,
+    val userTag: String?,
+    val displayName: String?,
     val role: ProjectRole,
     val status: ProjectInvitationStatus,
     val invitedBy: String?,

@@ -37,6 +37,24 @@ interface ProjectInvitationRepository : CoroutineCrudRepository<ProjectInvitatio
     fun findPendingForEmail(email: String, now: Instant): Flow<ProjectInvitationEntity>
 
     /**
+     * 받은 초대함의 계정 쪽 절반. [findPendingForEmail] 과 같은 조건 — 삭제된 프로젝트 제외,
+     * `PENDING`, 만료 전 — 을 `app_user_id` 로 맞춘다. `ProjectInvitationService.listForUser` 가
+     * 둘을 합쳐 낸다.
+     */
+    @Query(
+        """
+        SELECT i.* FROM project_invitation i
+        JOIN project p ON p.id = i.project_id
+        WHERE i.app_user_id = :appUserId
+          AND i.status = 'PENDING'
+          AND i.expires_at > :now
+          AND p.deleted_at IS NULL
+        ORDER BY i.created_at DESC, i.id DESC
+        """
+    )
+    fun findPendingForAppUserId(appUserId: Long, now: Instant): Flow<ProjectInvitationEntity>
+
+    /**
      * `PENDING` 을 벗어나는 유일한 경로. `@Modifying` 이 있어야 영향 행 수가 돌아온다
      * (`IssueRepository.resolve` 와 같은 모양).
      *

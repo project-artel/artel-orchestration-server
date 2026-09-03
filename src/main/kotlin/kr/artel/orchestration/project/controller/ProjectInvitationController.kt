@@ -21,8 +21,8 @@ import org.springframework.web.bind.annotation.RestController
 /**
  * 보내는 쪽의 초대 REST(코루틴). 받는 쪽은 [InvitationController]에 있다.
  *
- * 둘을 가른 것은 자격이 다르기 때문이다. 여기는 프로젝트 OWNER여야 하고, 받는 쪽은 로그인한 계정의
- * 이메일이 초대의 이메일과 같아야 한다. 받는 사람은 아직 멤버가 아니라서 이 경로 아래에 두면
+ * 둘을 가른 것은 자격이 다르기 때문이다. 여기는 프로젝트 OWNER여야 하고, 받는 쪽은 로그인한 계정이
+ * 초대가 가리키는 대상과 같아야 한다. 받는 사람은 아직 멤버가 아니라서 이 경로 아래에 두면
  * "멤버가 아니면 404" 규칙에 먼저 걸린다.
  */
 @Tag(name = "Project Invitation", description = "프로젝트 초대 발송·조회·취소")
@@ -34,10 +34,10 @@ class ProjectInvitationController(
     @Operation(
         summary = "초대 보내기",
         description = "소유자만 가능하다. 부를 사람은 `email` 이나 `appUserId` 중 정확히 하나로 " +
-            "가리킨다. `email` 은 ARTEL 계정이 없는 주소도 된다. 둘 다 오거나 둘 다 없으면 400 " +
-            "(`invitation_target_ambiguous`), `appUserId` 가 가리키는 계정이 없거나 확인된 이메일이 " +
-            "없으면 409 (`invitation_target_unreachable`). 이미 멤버이거나 이미 기다리는 초대가 " +
-            "있어도 409."
+            "가리킨다. `email` 은 ARTEL 계정이 없는 주소도 된다. `appUserId` 가 가리키는 계정은 " +
+            "확인된 이메일이 없어도 된다 — 그 초대는 웹 초대함으로 배달된다. 둘 다 오거나 둘 다 " +
+            "없으면 400 (`invitation_target_ambiguous`), `appUserId` 가 가리키는 계정이 없으면 " +
+            "404 (`invitation_target_not_found`). 이미 멤버이거나 이미 기다리는 초대가 있으면 409."
     )
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

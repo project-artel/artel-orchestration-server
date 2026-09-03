@@ -398,6 +398,91 @@ class ProjectInvitationIntegrationTest {
         assertThat(body["fields"].has("email")).isTrue()
     }
 
+    /**
+     * ARTEL-774. `appUserId` 로 가리킨 계정은 GitHub 이 공개 이메일을 주지 않아 `app_user.email` 이
+     * NULL 인 상태를 그대로 흉내 낸다(`signInWithoutEmail`). 그런 계정도 초대를 받고, 확인된 주소
+     * 없이 초대함에 나타나고, 수락해 멤버가 될 수 있어야 한다 — 배달은 웹 초대함이 하지 주소가
+     * 하지 않는다.
+     */
+    @Test
+    fun `invites an account without an email, shows it in that account's inbox, and lets it accept`(): Unit =
+        runBlocking {
+            val ownerToken = signIn("42", "octocat")
+            val projectId = createProject(ownerToken)
+            val inviteeToken = signInWithoutEmail("60", "ghost")
+            val inviteeId = userIdOf("60")
+            val account = requireNotNull(appUserRepository.findById(inviteeId))
+
+            val invitation = post(
+                ownerToken,
+                "/api/projects/$projectId/invitations",
+                """{"appUserId":"$inviteeId","role":"MEMBER"}"""
+            )
+
+            assertThat(invitation["email"].isNull).isTrue()
+            assertThat(invitation["nickname"].asText()).isEqualTo(account.nickname)
+            assertThat(invitation["userTag"].asText()).isEqualTo(account.userTag)
+            assertThat(invitation["displayName"].asText()).isEqualTo(account.displayName)
+            assertThat(invitation["role"].asText()).isEqualTo("MEMBER")
+            assertThat(invitation["status"].asText()).isEqualTo("PENDING")
+
+            // 확인된 주소가 없는데도 그 계정의 초대함에 보인다.
+            val inbox = get(inviteeToken, "/api/invitations")
+            assertThat(inbox).hasSize(1)
+            assertThat(inbox[0]["id"].asText()).isEqualTo(invitation["id"].asText())
+
+            val accepted = trigger(inviteeToken, "/api/invitations/${invitation["id"].asText()}/accept")
+            assertThat(accepted["status"].asText()).isEqualTo("ACCEPTED")
+            assertThat(memberRepository.findByProjectIdAndAppUserId(projectId, inviteeId)?.role)
+                .isEqualTo("MEMBER")
+        }
+
+    @Test
+    fun `refuses a second invitation to the same account`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        signInWithoutEmail("60", "ghost")
+        val inviteeId = userIdOf("60")
+        post(
+            ownerToken,
+            "/api/projects/$projectId/invitations",
+            """{"appUserId":"$inviteeId","role":"MEMBER"}"""
+        )
+
+        val error = errorOf {
+            post(
+                ownerToken,
+                "/api/projects/$projectId/invitations",
+                """{"appUserId":"$inviteeId","role":"MEMBER"}"""
+            )
+        }
+
+        assertThat(error.statusCode).isEqualTo(HttpStatus.CONFLICT)
+        assertThat(codeOf(error)).isEqualTo("duplicate_invitation")
+    }
+
+    @Test
+    fun `refuses acceptance of an account-targeted invitation by someone else`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        signInWithoutEmail("60", "ghost")
+        val inviteeId = userIdOf("60")
+        val invitation = post(
+            ownerToken,
+            "/api/projects/$projectId/invitations",
+            """{"appUserId":"$inviteeId","role":"MEMBER"}"""
+        )
+        val strangerToken = signIn("77", "stranger")
+
+        val error = errorOf {
+            trigger(strangerToken, "/api/invitations/${invitation["id"].asText()}/accept")
+        }
+
+        assertThat(error.statusCode).isEqualTo(HttpStatus.FORBIDDEN)
+        assertThat(codeOf(error)).isEqualTo("invitation_not_yours")
+        assertThat(memberRepository.findByProjectIdAndAppUserId(projectId, userIdOf("77"))).isNull()
+    }
+
     private suspend fun signIn(providerUserId: String, login: String): String =
         signInWith(providerUserId, login, "$login@example.com")
 

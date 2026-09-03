@@ -19,7 +19,9 @@ import org.springframework.web.bind.annotation.RestController
  * `/api/projects/:projectId/...` 아래에 두면 "참여자가 아니면 404"가 먼저 걸려, 수락하려는
  * 바로 그 사람이 프로젝트를 찾을 수 없게 된다.
  *
- * 자격은 이메일 일치다 — 로그인한 계정의 `app_user.email`이 초대의 이메일과 같아야 한다.
+ * 자격은 초대가 가리키는 대상과 로그인한 계정이 같은지다. 계정 대상 초대는
+ * `project_invitation.app_user_id`가 로그인한 계정 id와 같은지 보고, 이메일 대상 초대는 로그인한
+ * 계정의 확인된 `app_user.email`이 초대의 이메일과 같은지 본다.
  */
 @Tag(name = "Invitation", description = "내가 받은 초대 조회·수락·거절")
 @RestController
@@ -29,8 +31,8 @@ class InvitationController(
 ) {
     @Operation(
         summary = "받은 초대 목록",
-        description = "로그인한 계정의 이메일로 온 초대 중 아직 유효한 것만 나온다. " +
-            "계정에 이메일이 없으면 빈 목록이다."
+        description = "로그인한 계정으로 온 초대와 그 계정의 확인된 이메일로 온 초대 중 아직 " +
+            "유효한 것만 나온다. 계정에 이메일이 없어도 계정으로 온 초대는 나온다."
     )
     @GetMapping
     suspend fun list(
