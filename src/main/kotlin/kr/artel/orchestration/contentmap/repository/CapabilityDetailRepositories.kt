@@ -164,6 +164,40 @@ interface CapabilityEffectRepository : CoroutineCrudRepository<CapabilityEffectE
     @Modifying
     @Query("DELETE FROM capability_effect WHERE capability_id = :capabilityId AND origin = 'evidence'")
     suspend fun deleteEvidenceEffects(capabilityId: Long): Long
+
+    /**
+     * 판독이 실제로 보여 준 이름을 `watchable` 로 굳힌다(ARTEL-785).
+     *
+     * **한 방향으로만 간다.** 나타난 적 있는 것을 참으로 올리고, 안 나타난 것을 거짓으로
+     * 내리지는 않는다 — 아직 그 화면에 안 가 본 것과 못 읽는 것이 구분되지 않기 때문이다.
+     * 한 런은 게임의 일부만 지나므로 이 값은 여러 런에 걸쳐 쌓인다.
+     *
+     * `NOT watchable` 을 조건에 두어 이미 참인 행은 건드리지 않는다. 판독이 초당 한 번
+     * 오므로, 매번 같은 행을 다시 쓰면 그 자체가 부하다.
+     *
+     * 이름은 마지막 마디로 맞춘다. 지도는 `Player.HpText.text` 같은 점 표기이고 판독은
+     * 선언 타입과 멤버로 나뉘어 오므로 그 규칙으로만 맞는다 —
+     * `ScenarioStateReader.normalize()` 와 같은 규칙이고, 두 곳이 갈라지면 시나리오와
+     * QA 가 다른 답을 낸다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE capability_effect e
+           SET watchable = TRUE
+          FROM capability c, scene s
+         WHERE e.capability_id = c.id
+           AND c.scene_id = s.id
+           AND s.content_map_id = :contentMapId
+           AND s.name = :scene
+           AND c.merged_into IS NULL
+           AND NOT e.watchable
+           AND e.target IS NOT NULL
+           AND lower(split_part(e.target, '.', array_length(string_to_array(e.target, '.'), 1)))
+               = ANY(:names)
+        """
+    )
+    suspend fun markWatchable(contentMapId: Long, scene: String, names: Array<String>): Long
 }
 
 /**

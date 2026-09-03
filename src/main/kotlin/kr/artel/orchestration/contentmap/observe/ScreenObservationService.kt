@@ -10,6 +10,7 @@ import kr.artel.orchestration.contentmap.entity.ScreenSelectorMatch
 import kr.artel.orchestration.contentmap.entity.ScreenSelectorProposalReason
 import kr.artel.orchestration.contentmap.entity.ScreenSelectorSource
 import kr.artel.orchestration.contentmap.entity.TransitionKind
+import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneEdgeRepository
@@ -95,6 +96,7 @@ class ScreenObservationService(
     private val scenes: SceneRepository,
     private val screenSelectors: SceneScreenSelectorRepository,
     private val capabilities: CapabilityRepository,
+    private val effects: CapabilityEffectRepository,
     private val screens: ScreenRepository,
     private val screenCapabilities: ScreenCapabilityRepository,
     private val transitions: ScreenTransitionRepository,
@@ -125,6 +127,42 @@ class ScreenObservationService(
         }
     }
 
+    /**
+     * 지도가 "이 값이 바뀐다"고 말한 것 중 **판독이 실제로 보여 준 것**을 굳힌다(ARTEL-785).
+     *
+     * `capability_effect.watchable` 은 "판정 가능 여부의 상한"이다. 그 상한을 근거가 짐작하게
+     * 두면 틀린다 — 근거 문서에는 그 정보를 담을 필드가 애초에 없어 1,300 행 전부 `false` 로
+     * 남아 있었다. 상한은 관측이 정할 것이다.
+     *
+     * **조작이 필요 없다.** 그 이름이 판독에 나타나느냐만 보면 되므로, `interaction = none` 인
+     * capability(전체의 88%)도 함께 검증된다.
+     *
+     * 두 곳을 본다. `statics` 는 GameObject 에 안 걸린 값이고, 객체의 멤버는 인스턴스 위의
+     * 값이다. **statics 만 보면 `observable` 범주가 통째로 0 으로 보인다** — 그 범주는
+     * `Player.HpText.text` 처럼 인스턴스 위를 가리키기 때문이다.
+     */
+    private suspend fun markWhatTheReadingShowed(
+        contentMapId: Long,
+        scene: String,
+        reading: PulseReading,
+    ) {
+        val names = buildSet {
+            reading.statics.forEach { entry -> entry.memberName?.let { add(it.lowercase()) } }
+            (reading.active + reading.deactive).forEach { obj ->
+                obj.memberNames.forEach { add(it.lowercase()) }
+            }
+        }
+        if (names.isEmpty()) {
+            return
+        }
+        val marked = effects.markWatchable(contentMapId, scene, names.toTypedArray())
+        if (marked > 0) {
+            logger.info(
+                "판독이 보여 준 것으로 watchable 을 올렸다 [scene={}] {}건", scene, marked,
+            )
+        }
+    }
+
     private suspend fun record(gameInstanceId: Long, reading: PulseReading) {
         // 화면은 **QA 런이 관측한 것**이다. 런이 없으면 `fold` 상태도 버린다 — 스캔 순회가 흘리는
         // `pulse` 가 다음 런의 첫 화면을 오염시키지 않게.
@@ -144,6 +182,8 @@ class ScreenObservationService(
         // 다른 지도에 붙는 일도 없다.
         val contentMapId = rootedMapId(buildId) ?: return
         val sceneId = sceneIdOf(contentMapId, sceneName, fold.sceneChanged) ?: return
+
+        markWhatTheReadingShowed(contentMapId, sceneName, reading)
 
         val sceneCapabilities = capabilities.findBySceneIdOrderByIdAsc(sceneId).toList()
 
