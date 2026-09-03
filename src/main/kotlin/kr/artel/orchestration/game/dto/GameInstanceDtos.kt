@@ -43,3 +43,22 @@ data class GameInstanceResponse(
 data class GameInstanceListResponse(
     val items: List<GameInstanceResponse>
 )
+
+/**
+ * 게임 인스턴스 초기화 요청. 본문이 아예 없어도 된다 — 그때는 [clearPlayerPrefs]가 기본값 false다.
+ *
+ * @property clearPlayerPrefs 씬 리로드에 더해 SDK 의 PlayerPrefs(저장소)도 비울지
+ */
+data class ResetGameInstanceRequest(
+    val clearPlayerPrefs: Boolean = false
+)
+
+/**
+ * 게임 인스턴스 초기화 응답. 202 다 — 게임이 리셋을 끝냈다는 뜻이 아니라 명령을 전송 줄에
+ * 세웠다는 뜻이다([kr.artel.orchestration.sdk.service.SessionManager.send]의 계약과 같다).
+ */
+data class GameInstanceResetResponse(
+    val gameInstanceId: String,
+    val clearPlayerPrefs: Boolean,
+    val requestedAt: Instant
+)
