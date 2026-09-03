@@ -44,6 +44,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import kr.artel.orchestration.support.deleteQaRuns
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
 import java.time.Instant
@@ -96,7 +97,9 @@ class ScreenObservationTest {
     @BeforeEach
     @AfterEach
     fun clean(): Unit = runBlocking {
-        qaRuns.deleteAll()
+        // `qaRuns.deleteAll()` 을 직접 부르지 않는다. `qa_try.qa_run_id` 가 CASCADE 가 아니라,
+        // 앞선 클래스가 남긴 `qa_try` 행이 하나라도 있으면 그 삭제가 거절당한다(ARTEL-795).
+        db.deleteQaRuns()
         testRuns.deleteAll()
         gameInstances.deleteAll()
         db.sql("DELETE FROM app_user WHERE display_name = 'screen'").then().block()
