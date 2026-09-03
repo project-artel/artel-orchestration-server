@@ -3,6 +3,8 @@ package kr.artel.orchestration.contentmap.scan
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.firstOrNull
 import kr.artel.orchestration.common.error.ConflictException
+import kr.artel.orchestration.contentmap.dto.ContentMapStreamEvent
+import kr.artel.orchestration.contentmap.dto.LastScanResponse
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.sdk.dto.ActionItemDto
@@ -42,6 +44,7 @@ class ContentMapScanService(
     private val gameInstances: GameInstanceRepository,
     private val sessionManager: SessionManager,
     private val statuses: ScanStatusRegistry,
+    private val streamManager: ContentMapEventStreamManager,
     private val clock: Clock,
 ) {
 
@@ -99,6 +102,9 @@ class ContentMapScanService(
             requestedAt = Instant.now(clock),
         )
         statuses.put(status)
+        // 이미 이 빌드의 events 스트림을 구독 중인 다른 사람이 있을 수 있다 — 그 화면은 이 버튼을
+        // 누른 적이 없으므로, REQUESTED 로 넘어간 사실을 스스로 알 방법이 SSE 뿐이다.
+        streamManager.emit(gameBuildId, ContentMapStreamEvent(type = "scan", scan = LastScanResponse.of(status)))
         return status
     }
 

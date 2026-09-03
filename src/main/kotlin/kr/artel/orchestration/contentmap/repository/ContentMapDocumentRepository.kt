@@ -97,4 +97,36 @@ interface ContentMapDocumentRepository : CoroutineCrudRepository<ContentMapDocum
         """
     )
     suspend fun recordIngestFailure(id: Long, failedAt: Instant, error: String): Long
+
+    /**
+     * 이 빌드의 적재 진행 세 수. SSE `ingest` 이벤트가 문서 하나가 앉거나 실패할 때마다 되풀이해
+     * 묻는 값이라 가벼운 집계 하나로 둔다.
+     *
+     * [findByContentMapIdOrderByReceivedAtDesc] 로 전체 문서를 끌어와 Kotlin 에서 세지 않는 이유:
+     * 그러면 문서 하나가 앉을 때마다 지도 전체의 문서 행을 다시 읽는 꼴이 된다.
+     * `CapabilityRepository.countByScene` 이 `capability` 전체를 훑지 않는 것과 같은 판단이다.
+     *
+     * `content_map` 을 조인하는 이유는 [findPendingByGameBuild] 와 같다 — 문서가 빌드를 직접 들고
+     * 있지 않다. `GROUP BY` 가 없는 순수 집계라 이 빌드에 지도조차 없어도 행 하나(전부 0)가
+     * 돌아온다.
+     */
+    @Query(
+        """
+        SELECT
+            count(*)                                                                   AS received,
+            count(*) FILTER (WHERE d.ingested_at IS NOT NULL)                          AS ingested,
+            count(*) FILTER (WHERE d.ingest_failed_at IS NOT NULL AND d.ingested_at IS NULL) AS failed
+        FROM content_map_document d
+        JOIN content_map m ON m.id = d.content_map_id
+        WHERE m.game_build_id = :gameBuildId
+        """
+    )
+    suspend fun countIngestProgressByGameBuild(gameBuildId: Long): IngestProgressCount?
 }
+
+/** [ContentMapDocumentRepository.countIngestProgressByGameBuild] 결과. */
+data class IngestProgressCount(
+    val received: Long,
+    val ingested: Long,
+    val failed: Long,
+)

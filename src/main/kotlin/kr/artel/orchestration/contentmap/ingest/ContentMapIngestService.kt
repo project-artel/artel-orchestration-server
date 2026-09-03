@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kr.artel.orchestration.common.error.ApiException
 import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.contentmap.dto.ContentMapDocumentEventResponse
+import kr.artel.orchestration.contentmap.dto.ContentMapStreamEvent
+import kr.artel.orchestration.contentmap.dto.IngestProgressResponse
 import kr.artel.orchestration.contentmap.entity.Actionability
 import kr.artel.orchestration.contentmap.entity.Applicability
 import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
@@ -40,6 +43,7 @@ import kr.artel.orchestration.contentmap.repository.SceneObjectRefRepository
 import kr.artel.orchestration.contentmap.entity.SceneObjectRefEntity
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.contentmap.repository.upsert
+import kr.artel.orchestration.contentmap.scan.ContentMapEventStreamManager
 import kr.artel.orchestration.project.storage.DocumentStorage
 import org.slf4j.LoggerFactory
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
@@ -84,6 +88,7 @@ class ContentMapIngestService(
     private val objectMapper: ObjectMapper,
     private val mapTestCases: MapTestCaseWriter,
     private val transactionalOperator: TransactionalOperator,
+    private val streamManager: ContentMapEventStreamManager,
     private val clock: Clock,
 ) {
 
@@ -118,7 +123,7 @@ class ContentMapIngestService(
     suspend fun ingestBuild(gameBuildId: Long, limit: Int = DEFAULT_BATCH): List<IngestOutcome> =
         documents.findPendingByGameBuild(gameBuildId, limit).toList().map { document ->
             val documentId = document.id!!
-            try {
+            val outcome = try {
                 IngestOutcome.Ingested(ingest(document))
             } catch (cancelled: CancellationException) {
                 // 취소는 오류가 아니다. 넓은 catch 앞에서 먼저 전파해야 요청 취소가 정상 동작한다.
@@ -133,7 +138,51 @@ class ContentMapIngestService(
                     .onFailure { logger.error("적재 실패 기록 실패 (documentId={})", documentId, it) }
                 IngestOutcome.Failed(documentId, shown)
             }
+            publishIngestEvent(gameBuildId, documentId)
+            outcome
         }
+
+    /**
+     * 문서 하나를 처리한 직후 SSE 로 흘린다. `ingest` 는 이 빌드의 진행 두 수(+ 실패 수), `document` 는
+     * 방금 처리한 그 문서 한 행이다 — **같은 사건에서 함께 나간다.** home 이 진행률 표시와 문서
+     * 목록을 따로 갱신하기 때문에 한 프레임으로 합치지 않는다(ARTEL-762 계약).
+     *
+     * `documents.findById` 로 방금 커밋(또는 [recordIngestFailure] 로 기록)된 행을 다시 읽는다.
+     * [IngestOutcome] 은 성공/실패 사유는 담지만 저장된 [ContentMapDocumentEventResponse.ingestedAt] ·
+     * [ContentMapDocumentEventResponse.ingestFailedAt] 을 돌려주지 않으므로, DB 를 다시 읽는 것이
+     * 화면에 나가는 값을 저장된 값과 항상 같게 유지하는 유일한 길이다.
+     *
+     * 행을 못 찾아도(경합으로 그 사이 지워졌다면) 조용히 건너뛴다 — 이 이벤트가 유실돼도 다음 문서
+     * 처리가 다시 최신 진행을 흘린다.
+     */
+    private suspend fun publishIngestEvent(gameBuildId: Long, documentId: Long) {
+        val updated = documents.findById(documentId) ?: return
+        val counts = documents.countIngestProgressByGameBuild(gameBuildId)
+        streamManager.emit(
+            gameBuildId,
+            ContentMapStreamEvent(
+                type = "ingest",
+                ingest = IngestProgressResponse(
+                    receivedDocuments = (counts?.received ?: 0).toInt(),
+                    ingestedDocuments = (counts?.ingested ?: 0).toInt(),
+                    failedDocuments = (counts?.failed ?: 0).toInt(),
+                ),
+            ),
+        )
+        streamManager.emit(
+            gameBuildId,
+            ContentMapStreamEvent(
+                type = "document",
+                document = ContentMapDocumentEventResponse(
+                    documentId = updated.id!!,
+                    receivedAt = updated.receivedAt!!,
+                    ingestedAt = updated.ingestedAt,
+                    ingestFailedAt = updated.ingestFailedAt,
+                    ingestError = updated.ingestError,
+                ),
+            ),
+        )
+    }
 
     /**
      * 사람에게 그대로 보여도 되는 문구. **`ingest_error` 칸에 들어가는 것이 이 값이다.**
