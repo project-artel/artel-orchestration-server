@@ -3760,6 +3760,43 @@
         }
       }
     },
+    "/api/projects/{projectId}/documents/events": {
+      "get": {
+        "tags": [
+          "Project Document"
+        ],
+        "summary": "문서 추출 상태 스트림",
+        "description": "프로젝트 문서 전부의 parse_status 변화를 SSE로 흘린다. 구독 직후 snapshot 프레임을 한 번 보내고, 그 뒤로는 parse_status가 바뀔 때마다 document 프레임을 보낸다. 접근할 수 없는 프로젝트는 stream이 열리지 않고 404로 끝난다.",
+        "operationId": "events_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerSentEventDocumentStreamEvent"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/llm-usage/stats": {
       "get": {
         "tags": [
@@ -4483,6 +4520,7 @@
           "id",
           "identities",
           "nickname",
+          "platformRole",
           "userTag"
         ],
         "type": "object",
@@ -4497,6 +4535,9 @@
             "type": "string"
           },
           "locale": {
+            "type": "string"
+          },
+          "platformRole": {
             "type": "string"
           },
           "nickname": {
@@ -8737,6 +8778,9 @@
           }
         }
       },
+      "ServerSentEventDocumentStreamEvent": {
+        "type": "object"
+      },
       "LlmUsageDailyCell": {
         "required": [
           "date",
@@ -9084,60 +9128,6 @@
           "citationKnownTotal": {
             "type": "integer",
             "format": "int64"
-          }
-        }
-      },
-      "AuthUserResponse": {
-        "required": [
-          "displayName",
-          "id",
-          "identities",
-          "platformRole"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "email": {
-            "type": "string"
-          },
-          "locale": {
-            "type": "string"
-          },
-          "platformRole": {
-            "type": "string"
-          },
-          "identities": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LinkedIdentityResponse"
-            }
-          }
-        }
-      },
-      "LinkedIdentityResponse": {
-        "required": [
-          "displayName",
-          "login",
-          "provider"
-        ],
-        "type": "object",
-        "properties": {
-          "provider": {
-            "type": "string"
-          },
-          "login": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "avatarUrl": {
-            "type": "string"
           }
         }
       },
