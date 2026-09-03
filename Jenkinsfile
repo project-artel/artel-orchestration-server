@@ -77,10 +77,28 @@ pipeline {
             }
         }
 
+        // **Kotlin 컴파일을 별도 데몬에 맡기지 않는다.** 기본값은 컴파일러를 자기 JVM 으로
+        // 띄우는데, `agent any` 라 세 레포의 잡이 같은 에이전트를 나눠 쓰고 그 JVM 이 먼저
+        // 죽는다. 죽는 모양이 컴파일 오류가 아니라 RMI 연결 끊김이라 원인이 안 보인다.
+        //
+        //     [ERROR] Internal Kotlin compilation error
+        //     java.rmi.UnmarshalException: ... nested exception is: java.io.EOFException
+        //
+        // 진단이 한 줄도 없이 저것만 나오고, main 컴파일은 통과한 뒤 `test-compile` 에서
+        // 터진다 — 같은 데몬을 두 번째로 쓸 때다. 2026-09-03 에 열려 있던 PR 이 전부 이걸로
+        // 막혔다(ARTEL-795).
+        //
+        // `in-process` 는 JVM 을 하나만 쓴다. 붐비는 에이전트에서 총 사용량이 줄고, 컴파일러가
+        // 죽으면 그것이 Maven 의 실패로 그대로 보인다. 대신 그 JVM 이 힙을 감당해야 하므로
+        // `MAVEN_OPTS` 로 명시한다 — 안 주면 컨테이너가 주는 기본값에 맡기게 되고, 그 값이
+        // 바뀌는 날 같은 실패가 다시 난다.
         stage('Build') {
+            environment {
+                MAVEN_OPTS = '-Xmx2g'
+            }
             steps {
                 sh 'chmod +x mvnw'
-                sh './mvnw clean package -DskipTests'
+                sh './mvnw clean package -DskipTests -Dkotlin.compiler.execution.strategy=in-process'
             }
         }
 
