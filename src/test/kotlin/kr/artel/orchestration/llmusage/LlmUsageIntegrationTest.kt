@@ -104,9 +104,51 @@ class LlmUsageIntegrationTest {
         assertThat(row.costUsd).isNull()
         // 생략 가능한 토큰 컬럼은 기본 0으로 떨어진다(nullable이면 집계마다 COALESCE가 붙는다).
         assertThat(row.cachedInputTokens).isZero()
+        assertThat(row.cacheWriteTokens).isZero()
         assertThat(row.reasoningTokens).isZero()
+        // 금액이 없으면 출처도 없다(`ck_llm_usage_cost_origin`). false 로 떨어지면 그 행이
+        // "provider 가 청구한 값" 으로 읽힌다.
+        assertThat(row.costEstimated).isNull()
         // 임베딩 계열은 출력 토큰이 항상 0이다 — 이상 데이터가 아니다.
         assertThat(row.outputTokens).isZero()
+    }
+
+    @Test
+    fun `keeps cache write tokens apart from cached input tokens`(): Unit = runBlocking {
+        post(
+            """{"records":[{
+                "service":"QA_RUN",
+                "referenceId":7,
+                "provider":"bedrock",
+                "model":"bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                "inputTokens":22819,
+                "outputTokens":230,
+                "cachedInputTokens":20643,
+                "cacheWriteTokens":2170,
+                "costUsd":0.004812,
+                "costEstimated":true,
+                "latencyMs":3100,
+                "calledAt":"$CALLED_AT"
+            }]}"""
+        ).expectStatus().isNoContent
+
+        val row = llmUsageRepository.findAll().toList().single()
+        // 둘은 inputTokens 와의 관계가 다르다. 앞은 그 안에 든 값이고 뒤는 별개로 청구된다.
+        assertThat(row.cachedInputTokens).isEqualTo(20643)
+        assertThat(row.cacheWriteTokens).isEqualTo(2170)
+        assertThat(row.costEstimated).isTrue()
+    }
+
+    @Test
+    fun `marks cost as billed when the sender does not say`(): Unit = runBlocking {
+        // 이 칸이 생기기 전의 agent 다. 금액만 싣고 출처를 안 싣는데, 제약에 걸려 배치가 통째로
+        // 죽으면 안 된다 — 사용량 기록은 유실돼도 서비스가 안 멈추는 부가 데이터다(V24).
+        post("""{"records":[${record("QA_RUN", 11)}]}""").expectStatus().isNoContent
+
+        val row = llmUsageRepository.findAll().toList().single()
+        assertThat(row.costUsd).isEqualByComparingTo(BigDecimal("0.021374"))
+        // 그 agent 는 provider 가 준 값만 실을 수 있다. 계산해 넣는 쪽은 칸을 알고 함께 보낸다.
+        assertThat(row.costEstimated).isFalse()
     }
 
     private fun post(body: String): WebTestClient.ResponseSpec =

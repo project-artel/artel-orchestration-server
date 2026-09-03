@@ -3,6 +3,7 @@ package kr.artel.orchestration.llmusage.service
 import kotlinx.coroutines.flow.collect
 import kr.artel.orchestration.llmusage.dto.LlmUsageRecord
 import kr.artel.orchestration.llmusage.entity.LlmUsageEntity
+import kr.artel.orchestration.llmusage.entity.costOriginOf
 import kr.artel.orchestration.llmusage.repository.LlmUsageRepository
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -43,8 +44,10 @@ class LlmUsageService(
         inputTokens = inputTokens,
         outputTokens = outputTokens,
         cachedInputTokens = cachedInputTokens,
+        cacheWriteTokens = cacheWriteTokens,
         reasoningTokens = reasoningTokens,
         costUsd = costUsd,
+        costEstimated = costOriginOf(costUsd, costEstimated),
         latencyMs = latencyMs,
         calledAt = requireNotNull(calledAt),
         createdAt = receivedAt
