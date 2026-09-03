@@ -4,6 +4,8 @@ import com.nimbusds.jose.jwk.source.ImmutableSecret
 import com.nimbusds.jose.proc.SecurityContext
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.reactor.mono
+import kr.artel.orchestration.auth.cli.CliTokenAuthenticationManager
+import kr.artel.orchestration.auth.cli.cliTokenOrNull
 import kr.artel.orchestration.auth.oauth.OAuthIdentityResolver
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthUserService
@@ -31,10 +33,13 @@ import org.springframework.security.oauth2.jwt.NimbusJwtEncoder
 import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder
 import org.springframework.security.oauth2.server.resource.authentication.BearerTokenAuthenticationToken
 import org.springframework.security.oauth2.server.resource.web.server.authentication.ServerBearerTokenAuthenticationConverter
+import org.springframework.security.config.web.server.SecurityWebFiltersOrder
 import org.springframework.security.web.server.SecurityWebFilterChain
 import org.springframework.security.web.server.ServerAuthenticationEntryPoint
 import org.springframework.security.web.server.context.NoOpServerSecurityContextRepository
+import org.springframework.security.web.server.authentication.AuthenticationWebFilter
 import org.springframework.security.web.server.authentication.ServerAuthenticationConverter
+import org.springframework.security.web.server.authentication.ServerAuthenticationEntryPointFailureHandler
 import org.springframework.security.web.server.authentication.ServerAuthenticationSuccessHandler
 import org.springframework.security.web.server.authentication.logout.ServerLogoutSuccessHandler
 import org.springframework.security.web.server.util.matcher.PathPatternParserServerWebExchangeMatcher
@@ -134,7 +139,8 @@ class SecurityConfig {
         refreshTokenService: RefreshTokenService,
         authCookies: AuthCookies,
         identityResolver: OAuthIdentityResolver,
-        oauthUserService: OAuthUserService
+        oauthUserService: OAuthUserService,
+        cliTokenAuthenticationManager: CliTokenAuthenticationManager
     ): SecurityWebFilterChain = http
         .csrf { it.disable() }
         .cors { }
@@ -194,6 +200,14 @@ class SecurityConfig {
                 webFilterExchange.exchange.response.setComplete()
             }
         }
+        // CLI 토큰은 브라우저 세션과 같은 경로 집합을 연다. 그래서 별도 체인이 아니라 같은 체인에
+        // 필터 하나를 더한다. 별도 체인을 두려면 authorizeExchange 규칙을 두 벌로 복사해야 하고,
+        // 그 둘은 반드시 어긋난다. SDK 체인이 따로인 것은 반대 이유다 — 그쪽은 audience 로 경로를
+        // 좁히는 것이 목적이라 체인이 맞다.
+        .addFilterBefore(
+            cliTokenAuthenticationFilter(cliTokenAuthenticationManager),
+            SecurityWebFiltersOrder.AUTHENTICATION
+        )
         .oauth2ResourceServer {
             it.bearerTokenConverter(cookieTokenConverter(properties))
             it.jwt { }
@@ -313,16 +327,58 @@ class SecurityConfig {
             }
     }
 
+    /**
+     * 브라우저 세션의 자격증명을 집어낸다. `Authorization: Bearer` 가 먼저이고, 없으면 access 쿠키다.
+     *
+     * 브라우저 체인과 tracker 체인이 둘 다 이 함수를 쓴다. 즉 이 분기를 잘못 쓰면 세션 로그인
+     * 전체가 401 이 된다.
+     *
+     * `artel_` bearer 는 여기서 명시적으로 거절한다. 앞에 끼운 CLI 토큰 필터가 이미 그 요청을
+     * 인증해 두었지만 `AuthenticationWebFilter` 는 SecurityContext 가 찼는지 보지 않으므로,
+     * 거르지 않으면 리소스 서버 필터가 같은 헤더를 JWT 로 한 번 더 해석해 401 을 낸다.
+     *
+     * 쿠키로 떨어뜨리지 않고 곧장 `Mono.empty()` 인 것이 중요하다. `artel_` bearer 와 세션 쿠키를
+     * 함께 실은 요청에서 쿠키로 넘어가면, 앞 필터가 CLI 토큰 주인으로 인증해 둔 것을 뒤 필터가
+     * 쿠키 주인으로 덮어쓴다. 헤더에 `artel_` 이 있으면 그 요청은 CLI 토큰 요청이고 그것으로 끝이다.
+     */
     private fun cookieTokenConverter(properties: AuthProperties): ServerAuthenticationConverter {
         val headerConverter = ServerBearerTokenAuthenticationConverter()
         return ServerAuthenticationConverter { exchange ->
-            headerConverter.convert(exchange).switchIfEmpty(Mono.defer {
-                val token = exchange.request.cookies.getFirst(properties.cookieName)?.value
-                if (token.isNullOrBlank()) Mono.empty<Authentication>()
-                else Mono.just<Authentication>(BearerTokenAuthenticationToken(token))
-            })
+            if (exchange.request.cliTokenOrNull() != null) {
+                Mono.empty()
+            } else {
+                headerConverter.convert(exchange).switchIfEmpty(Mono.defer {
+                    val token = exchange.request.cookies.getFirst(properties.cookieName)?.value
+                    if (token.isNullOrBlank()) Mono.empty<Authentication>()
+                    else Mono.just<Authentication>(BearerTokenAuthenticationToken(token))
+                })
+            }
         }
     }
+
+    /**
+     * `artel_` bearer 를 `cli_token` 조회로 해석하는 필터.
+     *
+     * **`@Bean` 으로 내지 않는다.** `AuthenticationWebFilter` 는 `WebFilter` 라, 빈으로 두면 Spring
+     * WebFlux 가 security 체인 밖의 전역 `WebFilter` 목록에도 집어넣어 두 번 돈다. 여기서 만들어
+     * 그 자리에서 `addFilterBefore` 로 넘긴다.
+     *
+     * `NoOpServerSecurityContextRepository` 를 명시하는 이유는 체인이 같은 것을 고른 이유와 같다 —
+     * 세션에 남은 principal 로 요청이 통과하는 것을 막는다.
+     */
+    private fun cliTokenAuthenticationFilter(
+        cliTokenAuthenticationManager: CliTokenAuthenticationManager
+    ): AuthenticationWebFilter =
+        AuthenticationWebFilter(cliTokenAuthenticationManager).apply {
+            setServerAuthenticationConverter { exchange ->
+                Mono.justOrEmpty(exchange.request.cliTokenOrNull())
+                    .map<Authentication> { BearerTokenAuthenticationToken(it) }
+            }
+            setSecurityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+            setAuthenticationFailureHandler(
+                ServerAuthenticationEntryPointFailureHandler(jsonAuthenticationEntryPoint())
+            )
+        }
 
     private fun jsonAuthenticationEntryPoint() = ServerAuthenticationEntryPoint { exchange, _ ->
         exchange.response.statusCode = HttpStatus.UNAUTHORIZED
