@@ -165,6 +165,16 @@ class SdkPerfQueryService(
      *
      * 점을 빼면 화면이 앞뒤를 직선으로 이어 그려, 아무도 재지 않은 구간을 정상 구간처럼
      * 보여준다. `isFocused: false`가 왜 비었는지를 알려주는 자리다.
+     *
+     * **버킷 번호로 돈다. 시작으로부터의 오프셋으로 돌지 않는다.** 셀의 번호는 절대 epoch
+     * 기준인데([bucketIndex]) `startedAt` 은 버킷 경계에 안 맞으므로, `startedAt + k*bucketMs`
+     * 를 걸어 가면 마지막 버킷 하나가 범위 밖으로 떨어진다 — `startedAt` 의 버킷 내 위치와
+     * 런 길이를 더한 것이 버킷 하나를 더 넘길 때다. 그 버킷에 든 표본은 어느 점에도 안 붙어
+     * **측정된 구간이 화면에서 빈 구간으로 보인다.** 값이 틀린 것이 아니라 없는 것처럼 보이므로
+     * 아무도 의심하지 않는다.
+     *
+     * `atMs` 는 여전히 시작으로부터의 오프셋이다. 버킷이 정렬돼 있던 경우의 결과는 그대로고,
+     * 안 맞던 경우에만 마지막 점 하나가 더 선다.
      */
     private suspend fun gapFilledPoints(
         runId: Long,
@@ -176,24 +186,24 @@ class SdkPerfQueryService(
             .associateBy { bucketIndex(it.at, bucketMs) }
         val groupCells = repository.findSeriesGroups(runId, bucketMs / BASE_BUCKET_MS)
             .groupBy { bucketIndex(it.at, bucketMs) }
-        return generateSequence(0L) { it + bucketMs }
-            .takeWhile { it <= durationMs }
-            .map { atMs ->
-                val cell = cells[bucketIndex(startedAt.plusMillis(atMs), bucketMs)]
-                    ?: return@map PerformancePointResponse(atMs, null, null, null, null, null, null, false, emptyMap())
-                PerformancePointResponse(
-                    atMs = atMs,
-                    frameMeanMs = ratio(cell.frameTimeSum, cell.frames.toDouble()),
-                    frameP95Ms = ratio(cell.p95Sum, cell.frames.toDouble()),
-                    frameMaxMs = cell.frameMax,
-                    hitchCount = cell.hitches,
-                    cpuPercent = ratio(cell.cpuSum, cell.cpuMs),
-                    workingSetBytes = cell.workingSet,
-                    isFocused = cell.focused > 0,
-                    groups = pointGroups(groupCells[bucketIndex(startedAt.plusMillis(atMs), bucketMs)])
-                )
-            }
-            .toList()
+        val firstBucket = bucketIndex(startedAt, bucketMs)
+        val lastBucket = bucketIndex(startedAt.plusMillis(durationMs), bucketMs)
+        return (firstBucket..lastBucket).map { bucket ->
+            val atMs = (bucket - firstBucket) * bucketMs
+            val cell = cells[bucket]
+                ?: return@map PerformancePointResponse(atMs, null, null, null, null, null, null, false, emptyMap())
+            PerformancePointResponse(
+                atMs = atMs,
+                frameMeanMs = ratio(cell.frameTimeSum, cell.frames.toDouble()),
+                frameP95Ms = ratio(cell.p95Sum, cell.frames.toDouble()),
+                frameMaxMs = cell.frameMax,
+                hitchCount = cell.hitches,
+                cpuPercent = ratio(cell.cpuSum, cell.cpuMs),
+                workingSetBytes = cell.workingSet,
+                isFocused = cell.focused > 0,
+                groups = pointGroups(groupCells[bucket])
+            )
+        }
     }
 
     /**
