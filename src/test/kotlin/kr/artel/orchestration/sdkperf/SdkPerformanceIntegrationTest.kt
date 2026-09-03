@@ -16,6 +16,7 @@ import kr.artel.orchestration.sdkperf.service.SdkPerfIngestService
 import kr.artel.orchestration.sdkperf.service.SdkPerfQueryService
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.within
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -67,8 +68,6 @@ class SdkPerformanceIntegrationTest {
         // 런 밖 표본은 요약에 들어가지 않지만 원본으로는 남아 있다.
         assertThat(count("SELECT COUNT(*) FROM sdk_performance_sample WHERE game_instance_id=$instance"))
             .isEqualTo(3)
-
-        world.cleanUp()
     }
 
     /**
@@ -114,8 +113,6 @@ class SdkPerformanceIntegrationTest {
         assertThat(unmeasured.processSampleRatio).isEqualTo(0.0)
         assertThat(unmeasured.gcCollections.gen0).isNull()
         assertThat(unmeasured.workingSetBytesMax).isNull()
-
-        world.cleanUp()
     }
 
     /** 평균이 0으로 끌려가지 않아야 한다 — `process`가 중간부터 빠진 런. */
@@ -135,8 +132,6 @@ class SdkPerformanceIntegrationTest {
         // 40%가 한 번, 미측정이 한 번. 미측정을 0으로 세면 20%가 된다.
         assertThat(summary.cpuPercentMean).isEqualTo(40.0)
         assertThat(summary.processSampleRatio).isEqualTo(0.5)
-
-        world.cleanUp()
     }
 
     /**
@@ -172,8 +167,6 @@ class SdkPerformanceIntegrationTest {
         assertThat(trend.runs.map { it.runId })
             .containsExactlyInAnyOrder(standaloneRun, unknownRun)
             .doesNotContain(editorRun)
-
-        world.cleanUp()
     }
 
     /** 런 길이가 달라도 분당 hitch로는 비교가 성립해야 한다. */
@@ -198,8 +191,6 @@ class SdkPerformanceIntegrationTest {
         // 반대로 커버리지는 런 길이에 따라 갈린다 — 긴 런은 거의 재지 못한 런이다.
         assertThat(longSummary.coverageRatio).isLessThan(shortSummary.coverageRatio)
         assertThat(longSummary.coverageRatio).isLessThan(0.8)
-
-        world.cleanUp()
     }
 
     /** 측정되지 않은 구간은 점이 사라지는 것이 아니라 값이 null인 점으로 남는다. */
@@ -240,8 +231,6 @@ class SdkPerformanceIntegrationTest {
         assertThat(measured.single().frameMeanMs).isEqualTo(1000.0 / 60, within(0.001))
         assertThat(measured.single().hitchCount).isEqualTo(2)
         assertThat(measured.single().isFocused).isTrue()
-
-        world.cleanUp()
     }
 
     /** 표본이 하나도 없는 런은 404가 아니라 summary null + 빈 시계열이다. */
@@ -254,8 +243,6 @@ class SdkPerformanceIntegrationTest {
         val detail = query.runDetail(run, world.user)!!
         assertThat(detail.summary).isNull()
         assertThat(detail.series.points).isEmpty()
-
-        world.cleanUp()
     }
 
     /** 남의 프로젝트 런은 존재 자체가 보이지 않아야 한다. */
@@ -268,8 +255,6 @@ class SdkPerformanceIntegrationTest {
 
         assertThat(query.runDetail(run, stranger)).isNull()
         assertThat(query.buildTrend(world.project, world.build, stranger)).isNull()
-
-        world.cleanUp()
         exec("DELETE FROM app_user WHERE id=$stranger")
     }
 
@@ -297,8 +282,6 @@ class SdkPerformanceIntegrationTest {
         val groups = query.runDetail(run, world.user)!!.summary!!.groups
         assertThat(groups.getValue("renderCounters").availability).isEqualTo(MetricGroupAvailability.UNSUPPORTED)
         assertThat(groups.getValue("gc").availability).isEqualTo(MetricGroupAvailability.NOT_REPORTED)
-
-        world.cleanUp()
     }
 
     /**
@@ -320,8 +303,6 @@ class SdkPerformanceIntegrationTest {
         assertThat(group.availability).isEqualTo(MetricGroupAvailability.UNSUPPORTED)
         assertThat(group.metrics).isNull()
         assertThat(group.source).isEqualTo("PROFILER_RECORDER")
-
-        world.cleanUp()
     }
 
     /**
@@ -346,8 +327,6 @@ class SdkPerformanceIntegrationTest {
             .isEqualTo(MetricGroupReader.MAX_GROUPS_PER_SAMPLE.toLong())
         assertThat(count("SELECT COUNT(*) FROM sdk_performance_run_group_metric WHERE group_name='gc'"))
             .isLessThanOrEqualTo(MetricGroupReader.MAX_LEAVES_PER_GROUP.toLong())
-
-        world.cleanUp()
     }
 
     /**
@@ -366,8 +345,6 @@ class SdkPerformanceIntegrationTest {
         assertThat(query.runDetail(run, world.user)!!.summary!!.sampleCount).isEqualTo(1)
         assertThat(count("SELECT COUNT(*) FROM sdk_performance_run_group_metric WHERE group_name='gc' AND leaf_path='a.b'"))
             .isEqualTo(1)
-
-        world.cleanUp()
     }
 
     /** `source`가 컬럼 폭을 넘겨도 표본이 사라지면 안 된다. 잘라서 담는다. */
@@ -383,8 +360,6 @@ class SdkPerformanceIntegrationTest {
         val group = query.runDetail(run, world.user)!!.summary!!.groups.getValue("renderCounters")
         assertThat(group.availability).isEqualTo(MetricGroupAvailability.MEASURED)
         assertThat(group.source).hasSize(MetricGroupReader.MAX_SOURCE_LENGTH)
-
-        world.cleanUp()
     }
 
     // ---- 시드 ----
@@ -421,6 +396,22 @@ class SdkPerformanceIntegrationTest {
         }
     }
 
+    /**
+     * 이 클래스가 씨 뿌린 것들. [cleanSeeded] 가 테스트마다 이걸 비운다.
+     *
+     * 종전에는 각 테스트가 본문 끝에서 `world.cleanUp()` 을 불렀는데, **실패한 테스트는 거기까지
+     * 못 간다.** 그러면 행이 남고, 이 스위트의 단정 여럿이 `SELECT COUNT(*) FROM ...` 처럼 범위를
+     * 안 거는 전역 집계라 뒤따르는 테스트가 남의 행을 함께 세어 무너진다. 실패 하나가 셋이 되던
+     * 이유다(ARTEL-795).
+     */
+    private val seeded = mutableListOf<World>()
+
+    @AfterEach
+    fun cleanSeeded(): Unit = runBlocking {
+        seeded.forEach { it.cleanUp() }
+        seeded.clear()
+    }
+
     private suspend fun seed(): World {
         val suffix = UUID.randomUUID().toString()
         val user = id("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('perf', 'perf-' || gen_random_uuid(), '0000') RETURNING id")
@@ -428,7 +419,7 @@ class SdkPerformanceIntegrationTest {
         exec("INSERT INTO project_member(project_id,app_user_id,role) VALUES($project,$user,'OWNER')")
         val build = id("INSERT INTO game_build(project_id,version) VALUES($project,'$suffix') RETURNING id")
         val testRun = id("INSERT INTO test_run(project_id,name) VALUES($project,'perf') RETURNING id")
-        return World(user, project, build, testRun)
+        return World(user, project, build, testRun).also { seeded += it }
     }
 
     /** 프레임 60개를 정확히 1초에 담은 표본. hitch 2회는 분당 120회로 환산된다. */
@@ -471,8 +462,6 @@ class SdkPerformanceIntegrationTest {
         assertThat(group.sampleRatio).isEqualTo(1.0)
         // 모르는 잎의 기본 롤업은 평균과 최대다.
         assertThat(group.metrics).containsEntry("weirdMean", 12.5).containsEntry("weirdMax", 12.5)
-
-        world.cleanUp()
     }
 
     /**
@@ -503,8 +492,6 @@ class SdkPerformanceIntegrationTest {
         assertThat(groups.getValue("renderCounters").metrics).isNull()
         // 선언조차 되지 않은 군.
         assertThat(groups.getValue("sdkOverhead").availability).isEqualTo(MetricGroupAvailability.NOT_REPORTED)
-
-        world.cleanUp()
     }
 
     /** `collectedGroups` 이전 SDK. 새 군을 안 보내는 것이지 못 재는 것이 아니다. */
@@ -522,8 +509,6 @@ class SdkPerformanceIntegrationTest {
         val groups = query.runDetail(run, world.user)!!.summary!!.groups
         assertThat(groups.getValue("gc").availability).isEqualTo(MetricGroupAvailability.NOT_REPORTED)
         assertThat(groups.getValue("renderCounters").availability).isEqualTo(MetricGroupAvailability.NOT_REPORTED)
-
-        world.cleanUp()
     }
 
     /**
@@ -550,8 +535,6 @@ class SdkPerformanceIntegrationTest {
         assertThat(collections).containsEntry("gen2", 0L)
         assertThat(metrics).containsEntry("allocatedInFrameBytesMean", 2000.0)
         assertThat(metrics).containsEntry("allocatedInFrameBytesMax", 3000.0)
-
-        world.cleanUp()
     }
 
     /**
@@ -576,8 +559,6 @@ class SdkPerformanceIntegrationTest {
         val group = trend.runs.single().groups.getValue("renderCounters")
         assertThat(group.source).isEqualTo("PROFILER_RECORDER")
         assertThat(group.metrics).containsEntry("drawCallsMean", 812.0)
-
-        world.cleanUp()
     }
 
     /** 표본이 없던 버킷에는 군 키 자체가 없다. 빈 군을 채우면 응답이 버킷 수 × 군 수로 부푼다. */
@@ -594,8 +575,6 @@ class SdkPerformanceIntegrationTest {
             .containsEntry("gcUsedBytesMax", 2048.0)
         // 나머지 점은 미측정 구간이라 군이 비어 있다.
         assertThat(points.any { it.groups.isEmpty() }).isTrue()
-
-        world.cleanUp()
     }
 
     /**
@@ -623,8 +602,6 @@ class SdkPerformanceIntegrationTest {
         assertThat(detail.summary!!.sampleCount).isEqualTo(1)
         assertThat(detail.summary!!.groups.getValue("gc").availability).isEqualTo(MetricGroupAvailability.MEASURED)
         assertThat(detail.series.points.any { it.groups.containsKey("gc") }).isTrue()
-
-        world.cleanUp()
     }
 
     /** 최상위 스칼라는 군이 아니다. `type`/`id`가 군으로 잡히면 롤업 테이블이 오염된다. */
@@ -638,8 +615,6 @@ class SdkPerformanceIntegrationTest {
         val measured = query.runDetail(run, world.user)!!.summary!!.groups
             .filterValues { it.availability == MetricGroupAvailability.MEASURED }
         assertThat(measured.keys).containsExactly("gc")
-
-        world.cleanUp()
     }
 
     /**

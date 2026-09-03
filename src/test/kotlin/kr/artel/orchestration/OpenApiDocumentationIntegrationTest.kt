@@ -76,6 +76,14 @@ class OpenApiDocumentationIntegrationTest {
      * springdoc은 모르는 파라미터 어노테이션을 쿼리 파라미터로 문서화한다. 무시 목록에서 빠지면
      * 인증 엔드포인트마다 `appUserId`가 **필수 쿼리 파라미터**로 계약에 실리고, 이 문서에서
      * 파생되는 Insomnia 컬렉션이 그 값을 요구하게 된다.
+     *
+     * **파라미터 자리만 본다.** 종전에는 문서 어디에도 그 문자열이 없어야 한다고 걸었는데, 그것은
+     * 지키려는 것의 대용품이었지 그것 자체가 아니었다. 초대를 `appUserId`로 보내는 길이 생기면서
+     * (ARTEL-756) 같은 이름이 `CreateInvitationRequest`·`InvitationSuggestionResponse`의 정당한
+     * 필드로 계약에 들어왔고, 넓은 단정이 그것을 결함으로 읽어 develop을 빨갛게 만들었다.
+     *
+     * 호출자가 **보내는** 값인 스키마 필드는 괜찮다. 안 되는 것은 세션에서 오는 값이 호출자에게
+     * 요구되는 것이고, 그것은 `parameters` 배열에만 나타난다 — `in`이 `query`든 `path`든 마찬가지다.
      */
     @Test
     fun `keeps the session-derived user id out of the contract`() {
@@ -86,6 +94,6 @@ class OpenApiDocumentationIntegrationTest {
             .bodyToMono(String::class.java)
             .block(Duration.ofSeconds(5))
 
-        assertThat(response).doesNotContain("appUserId")
+        assertThat(response).doesNotContain(""""name":"appUserId"""")
     }
 }

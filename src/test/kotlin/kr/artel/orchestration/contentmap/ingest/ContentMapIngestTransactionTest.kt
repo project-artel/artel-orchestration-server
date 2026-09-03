@@ -18,6 +18,7 @@ import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -59,6 +60,22 @@ class ContentMapIngestTransactionTest {
     @Autowired private lateinit var scenes: SceneRepository
     @Autowired private lateinit var capabilities: CapabilityRepository
     @Autowired private lateinit var db: DatabaseClient
+
+    /**
+     * 앞선 클래스가 남긴 **대기 문서**를 치운다.
+     *
+     * `ingestPending` 은 빌드를 안 가리고 `limit` 개를 집어 간다(`findPending`). 그래서 남의
+     * 클래스가 적재 안 한 문서를 남겨 두면 이 스위트의 문서가 창 밖으로 밀리고, `ingestPending`
+     * 이 이 테스트의 문서를 아예 안 본다 — 실패는 여기서 나지만 원인은 다른 파일이고, 클래스
+     * 실행 순서가 바뀔 때마다 나타났다 사라진다(ARTEL-795).
+     *
+     * 지우는 대상을 대기 문서로 좁힌다. 이미 적재된 문서는 이 질의가 안 보므로 남의 검증을
+     * 깨뜨릴 이유가 없다. 테스트는 순차 실행이라 여기서 지우는 것은 이미 끝난 클래스의 것이다.
+     */
+    @BeforeEach
+    fun clearPendingDocuments() {
+        db.sql("DELETE FROM content_map_document WHERE ingested_at IS NULL").then().block()
+    }
 
     private val fakeStorage: FakeDocumentStorage get() = storage as FakeDocumentStorage
 
