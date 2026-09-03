@@ -1740,7 +1740,7 @@
           "Project Invitation"
         ],
         "summary": "초대 보내기",
-        "description": "소유자만 가능하다. 부를 사람은 `email` 이나 `appUserId` 중 정확히 하나로 가리킨다. `email` 은 ARTEL 계정이 없는 주소도 된다. 둘 다 오거나 둘 다 없으면 400 (`invitation_target_ambiguous`), `appUserId` 가 가리키는 계정이 없거나 확인된 이메일이 없으면 409 (`invitation_target_unreachable`). 이미 멤버이거나 이미 기다리는 초대가 있어도 409.",
+        "description": "소유자만 가능하다. 부를 사람은 `email` 이나 `appUserId` 중 정확히 하나로 가리킨다. `email` 은 ARTEL 계정이 없는 주소도 된다. `appUserId` 가 가리키는 계정은 확인된 이메일이 없어도 된다 — 그 초대는 웹 초대함으로 배달된다. 둘 다 오거나 둘 다 없으면 400 (`invitation_target_ambiguous`), `appUserId` 가 가리키는 계정이 없으면 404 (`invitation_target_not_found`). 이미 멤버이거나 이미 기다리는 초대가 있으면 409.",
         "operationId": "create_4",
         "parameters": [
           {
@@ -4049,7 +4049,7 @@
           "Invitation"
         ],
         "summary": "받은 초대 목록",
-        "description": "로그인한 계정의 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없으면 빈 목록이다.",
+        "description": "로그인한 계정으로 온 초대와 그 계정의 확인된 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없어도 계정으로 온 초대는 나온다.",
         "operationId": "list_12",
         "responses": {
           "200": {
@@ -5687,7 +5687,6 @@
       "ProjectInvitationResponse": {
         "required": [
           "createdAt",
-          "email",
           "expiresAt",
           "id",
           "projectId",
@@ -5707,6 +5706,15 @@
             "type": "string"
           },
           "email": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "userTag": {
+            "type": "string"
+          },
+          "displayName": {
             "type": "string"
           },
           "role": {

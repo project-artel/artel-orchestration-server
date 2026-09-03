@@ -8,6 +8,8 @@ import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
+import kr.artel.orchestration.project.entity.ProjectInvitationEntity
+import kr.artel.orchestration.project.entity.ProjectInvitationStatus
 import kr.artel.orchestration.project.repository.ProjectInvitationRepository
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
@@ -22,6 +24,8 @@ import org.springframework.http.MediaType
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientResponseException
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /**
  * `GET /api/projects/{projectId}/invitation-suggestions` 와, 그 결과를 그대로 초대로 잇는
@@ -177,7 +181,7 @@ class InvitationSuggestionIntegrationTest {
     }
 
     @Test
-    fun `leaves out members, people already invited, and people with no verified address`(): Unit = runBlocking {
+    fun `leaves out members and people already invited`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
         val projectId = createProject(ownerToken)
 
@@ -189,15 +193,74 @@ class InvitationSuggestionIntegrationTest {
         renameTo("61", nickname = "CandInvited", userTag = "0001")
         invite(ownerToken, projectId, "cand-invited@example.com")
 
-        signInWithoutEmail("62", "cand-unverified")
-        renameTo("62", nickname = "CandUnverified", userTag = "0001")
-
         signIn("63", "cand-open")
         val openId = renameTo("63", nickname = "CandOpen", userTag = "0001")
 
         val suggestions = suggest(ownerToken, projectId, "cand")
 
         assertThat(suggestions.map { it["appUserId"].asText() }).containsExactly(openId.toString())
+    }
+
+    // ARTEL-774: 이메일이 없거나 확인 전이라는 이유만으로는 더 이상 후보에서 빠지지 않는다.
+    // WHERE 에서 u.email IS NOT NULL AND u.email_verified_at IS NOT NULL 을 뺀 것을 검증한다.
+
+    @Test
+    fun `finds a candidate who has no email address at all`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        signInWithoutEmail("60", "hubot")
+        val hubotId = renameTo("60", nickname = "Zephyr", userTag = "0001")
+
+        val suggestions = suggest(ownerToken, projectId, "zeph")
+
+        assertThat(suggestions.map { it["appUserId"].asText() }).containsExactly(hubotId.toString())
+    }
+
+    @Test
+    fun `finds a candidate whose address is not verified yet`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        signIn("60", "hubot")
+        val hubotId = renameTo("60", nickname = "Zephyr", userTag = "0001")
+        claimWithoutVerifying("60", "zephyr@example.com")
+
+        val suggestions = suggest(ownerToken, projectId, "zeph")
+
+        assertThat(suggestions.map { it["appUserId"].asText() }).containsExactly(hubotId.toString())
+    }
+
+    @Test
+    fun `never matches an unverified address by its full text`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        signIn("60", "hubot")
+        renameTo("60", nickname = "Zephyr", userTag = "0001")
+        claimWithoutVerifying("60", "zephyr@example.com")
+
+        assertThat(suggest(ownerToken, projectId, "zephyr@example.com")).isEmpty()
+    }
+
+    @Test
+    fun `excludes a candidate who already has a pending invitation addressed to their account`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        signInWithoutEmail("60", "hubot")
+        val hubotId = renameTo("60", nickname = "Zephyr", userTag = "0001")
+        // 이메일이 없어 email 경로로는 부를 수 없는 계정이다. 대기 중 초대를 app_user_id 로 직접
+        // 넣어, 이름 대신 계정을 가리키는 초대도 후보에서 빼는지를 본다 — 검색 단만 확인하는
+        // 것이라 `ProjectInvitationRepository` 를 그대로 써서 행을 만든다.
+        invitationRepository.save(
+            ProjectInvitationEntity(
+                projectId = projectId,
+                appUserId = hubotId,
+                role = "MEMBER",
+                status = ProjectInvitationStatus.PENDING.name,
+                createdAt = Instant.now(),
+                expiresAt = Instant.now().plus(1, ChronoUnit.DAYS)
+            )
+        )
+
+        assertThat(suggest(ownerToken, projectId, "zeph")).isEmpty()
     }
 
     @Test
@@ -213,7 +276,7 @@ class InvitationSuggestionIntegrationTest {
     }
 
     @Test
-    fun `invites the account behind an appUserId at its verified address`(): Unit = runBlocking {
+    fun `invites the account an appUserId names and carries its handle, not its address`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
         val projectId = createProject(ownerToken)
         signIn("60", "hubot")
@@ -225,7 +288,12 @@ class InvitationSuggestionIntegrationTest {
             """{"appUserId":"$hubotId","role":"MEMBER"}"""
         )
 
-        assertThat(invitation["email"].asText()).isEqualTo("hubot@example.com")
+        // 계정을 가리키는 초대라 주소가 실리지 않는다. 그 계정에 확인을 마친 주소가 있어도
+        // 그렇다 — 이름으로 사람을 고른 화면이 남의 주소를 알아내는 통로가 되면 안 된다.
+        assertThat(invitation["email"].isNull).isTrue()
+        assertThat(invitation["nickname"].asText()).isEqualTo("Zephyr")
+        assertThat(invitation["userTag"].asText()).isEqualTo("0001")
+        assertThat(invitation["displayName"].asText()).isEqualTo("hubot")
         assertThat(invitation["role"].asText()).isEqualTo("MEMBER")
         assertThat(invitation["status"].asText()).isEqualTo("PENDING")
         // 그 사람은 이제 답을 기다리는 초대가 있으므로 후보에서 빠진다.
@@ -257,31 +325,48 @@ class InvitationSuggestionIntegrationTest {
     }
 
     @Test
-    fun `gives one code whether the account is missing or simply unreachable`(): Unit = runBlocking {
+    fun `refuses an appUserId that names no account`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
         val projectId = createProject(ownerToken)
         signInWithoutEmail("60", "hubot")
-        val unverifiedId = renameTo("60", nickname = "Zephyr", userTag = "0001")
+        val hubotId = renameTo("60", nickname = "Zephyr", userTag = "0001")
 
         val missing = errorOf {
             post(
                 ownerToken,
                 "/api/projects/$projectId/invitations",
-                """{"appUserId":"${unverifiedId + 100_000}","role":"MEMBER"}"""
+                """{"appUserId":"${hubotId + 100_000}","role":"MEMBER"}"""
             )
         }
-        assertThat(missing.statusCode).isEqualTo(HttpStatus.CONFLICT)
-        assertThat(codeOf(missing)).isEqualTo("invitation_target_unreachable")
+        assertThat(missing.statusCode).isEqualTo(HttpStatus.NOT_FOUND)
+        assertThat(codeOf(missing)).isEqualTo("invitation_target_not_found")
+    }
 
-        val unreachable = errorOf {
-            post(
-                ownerToken,
-                "/api/projects/$projectId/invitations",
-                """{"appUserId":"$unverifiedId","role":"MEMBER"}"""
-            )
-        }
-        assertThat(unreachable.statusCode).isEqualTo(HttpStatus.CONFLICT)
-        assertThat(codeOf(unreachable)).isEqualTo("invitation_target_unreachable")
+    /**
+     * 후보로 나오는 것과 실제로 부를 수 있는 것이 어긋나면, 화면이 고를 수 없는 사람을 목록에
+     * 낸다. 주소가 아예 없는 계정에서 그 둘이 같은지를 여기서 본다 — 이 초대가 막히던 것이
+     * ARTEL-774 가 고친 것이다.
+     */
+    @Test
+    fun `invites an account that has no address at all`(): Unit = runBlocking {
+        val ownerToken = signIn("42", "octocat")
+        val projectId = createProject(ownerToken)
+        signInWithoutEmail("60", "hubot")
+        val hubotId = renameTo("60", nickname = "Zephyr", userTag = "0001")
+
+        assertThat(suggest(ownerToken, projectId, "zeph").map { it["appUserId"].asText() })
+            .containsExactly(hubotId.toString())
+
+        val invitation = post(
+            ownerToken,
+            "/api/projects/$projectId/invitations",
+            """{"appUserId":"$hubotId","role":"MEMBER"}"""
+        )
+
+        assertThat(invitation["email"].isNull).isTrue()
+        assertThat(invitation["nickname"].asText()).isEqualTo("Zephyr")
+        assertThat(invitation["status"].asText()).isEqualTo("PENDING")
+        assertThat(suggest(ownerToken, projectId, "zeph")).isEmpty()
     }
 
     /**
@@ -318,9 +403,22 @@ class InvitationSuggestionIntegrationTest {
         avatarUrl: String? = null
     ): String = signInWith(providerUserId, login, displayName, "$login@example.com", avatarUrl)
 
-    /** GitHub에서 공개 이메일을 받지 못한 계정. 어떤 초대의 수신자도 될 수 없다. */
+    /** GitHub에서 공개 이메일을 받지 못한 계정. */
     private suspend fun signInWithoutEmail(providerUserId: String, login: String): String =
         signInWith(providerUserId, login, login, email = null, avatarUrl = null)
+
+    /**
+     * 확인을 거치지 않고 `app_user.email` 에만 주소를 넣는다. API 로는 만들 수 없는 상태다 —
+     * `POST /api/auth/me/email` 은 주소를 대기로만 두고, 확정은 토큰이 한다. 확인 전 주소가 후보
+     * 검색에 어떻게 걸리는지를 보이려면 그 상태를 직접 만들어야 한다.
+     */
+    private suspend fun claimWithoutVerifying(providerUserId: String, email: String) {
+        val identity = requireNotNull(
+            identityRepository.findByProviderAndProviderUserId("github", providerUserId)
+        )
+        val user = requireNotNull(appUserRepository.findById(identity.appUserId))
+        appUserRepository.save(user.copy(email = email, emailVerifiedAt = null))
+    }
 
     private suspend fun signInWith(
         providerUserId: String,
