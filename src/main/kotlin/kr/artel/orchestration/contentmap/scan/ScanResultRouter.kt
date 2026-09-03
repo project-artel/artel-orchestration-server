@@ -3,6 +3,8 @@ package kr.artel.orchestration.contentmap.scan
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
+import kr.artel.orchestration.contentmap.dto.ContentMapStreamEvent
+import kr.artel.orchestration.contentmap.dto.LastScanResponse
 import kr.artel.orchestration.contentmap.ingest.ContentMapIngestService
 import kr.artel.orchestration.contentmap.ingest.IngestOutcome
 import kr.artel.orchestration.game.repository.GameInstanceRepository
@@ -29,6 +31,7 @@ class ScanResultRouter(
     private val gameInstances: GameInstanceRepository,
     private val ingest: ContentMapIngestService,
     private val statuses: ScanStatusRegistry,
+    private val streamManager: ContentMapEventStreamManager,
     private val objectMapper: ObjectMapper,
     private val clock: Clock,
 ) {
@@ -58,9 +61,7 @@ class ScanResultRouter(
             // 이 자리가 그 사실을 남길 유일한 곳이다.
             val reason = sdkErrorOf(result)
             logger.warn("근거 스캔 실패 [gameBuildId={}]: {}", gameBuildId, reason)
-            statuses.complete(gameBuildId) {
-                it.copy(state = ScanState.FAILED, finishedAt = Instant.now(clock), error = reason)
-            }
+            fail(gameBuildId, reason)
             return true
         }
 
@@ -137,14 +138,23 @@ class ScanResultRouter(
                     error = failed.first().reason,
                 )
             }
-        }
+        }?.let { publishScan(gameBuildId, it) }
         logger.info("근거 스캔 적재 완료 [gameBuildId={}, 앉힘={}, 깨짐={}]", gameBuildId, ingested, failed.size)
     }
 
     private fun fail(gameBuildId: Long, reason: String) {
         statuses.complete(gameBuildId) {
             it.copy(state = ScanState.FAILED, finishedAt = Instant.now(clock), error = reason)
-        }
+        }?.let { publishScan(gameBuildId, it) }
+    }
+
+    /**
+     * `scan` 이벤트를 흘린다. [statuses] 가 [ScanStatus.state] 를 끝으로 옮긴 **결과가 있을 때만**
+     * 부른다 — [ScanStatusRegistry.complete] 가 null 을 돌려주는 것은 REQUESTED 인 행이 없었다는
+     * 뜻이고(서버 재시작 · 게임이 스스로 돈 스캔), 그때는 흘릴 상태 자체가 없다.
+     */
+    private fun publishScan(gameBuildId: Long, status: ScanStatus) {
+        streamManager.emit(gameBuildId, ContentMapStreamEvent(type = "scan", scan = LastScanResponse.of(status)))
     }
 
     /**

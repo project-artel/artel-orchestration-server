@@ -3716,6 +3716,53 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/content-map/events": {
+      "get": {
+        "tags": [
+          "Content Map"
+        ],
+        "summary": "스캔·적재 진행 SSE",
+        "description": "이 빌드의 스캔 상태와 문서 적재 진행을 push 로 흘린다. 구독 직후 `snapshot` 프레임이 한 번 오고, 그 뒤로 상태가 바뀔 때마다 `scan` · `ingest` · `document` 가 온다. 서버가 먼저 끊지 않는다.",
+        "operationId": "events_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "description": "게임 빌드 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerSentEventContentMapStreamEvent"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/documents/{documentId}/download-url": {
       "get": {
         "tags": [
@@ -3753,6 +3800,43 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/DownloadTicketResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/documents/events": {
+      "get": {
+        "tags": [
+          "Project Document"
+        ],
+        "summary": "문서 추출 상태 스트림",
+        "description": "프로젝트 문서 전부의 parse_status 변화를 SSE로 흘린다. 구독 직후 snapshot 프레임을 한 번 보내고, 그 뒤로는 parse_status가 바뀔 때마다 document 프레임을 보낸다. 접근할 수 없는 프로젝트는 stream이 열리지 않고 404로 끝난다.",
+        "operationId": "events_2",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerSentEventDocumentStreamEvent"
+                  }
                 }
               }
             }
@@ -8733,6 +8817,9 @@
         },
         "description": "`evidence` 출신 기능의 실행 확인 비율"
       },
+      "ServerSentEventContentMapStreamEvent": {
+        "type": "object"
+      },
       "DownloadTicketResponse": {
         "required": [
           "downloadUrl",
@@ -8748,6 +8835,9 @@
             "format": "date-time"
           }
         }
+      },
+      "ServerSentEventDocumentStreamEvent": {
+        "type": "object"
       },
       "LlmUsageDailyCell": {
         "required": [

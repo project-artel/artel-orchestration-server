@@ -609,3 +609,70 @@ data class StartContentMapScanResponse(
     val state: ScanState,
     val requestedAt: Instant,
 )
+
+/**
+ * `GET .../content-map/events` 가 흘리는 SSE 이벤트 한 장. **`event:` 이름이 [type] 과 같다** —
+ * `TestScenarioStreamManager` 의 규칙과 같다.
+ *
+ * 넉 장뿐이다.
+ *
+ * | [type] | 언제 | 싣는 것 |
+ * |---|---|---|
+ * | `snapshot` | 구독 직후 정확히 한 번 | [scan], [ingest], [documents] |
+ * | `scan` | [ScanState] 가 바뀔 때마다 | [scan] |
+ * | `ingest` | 문서 하나가 앉거나 실패할 때마다 | [ingest] |
+ * | `document` | 문서 하나가 앉거나 실패할 때마다(`ingest` 와 같은 사건) | [document] |
+ *
+ * `ingest` 와 `document` 를 한 프레임으로 합치지 않는 이유: 앞의 것은 진행률을 위한 두 수이고
+ * 뒤의 것은 그 문서 한 행이다. home 이 진행률 표시와 문서 목록을 따로 갱신한다(ARTEL-762 계약).
+ */
+@Schema(description = "content map SSE 이벤트")
+data class ContentMapStreamEvent(
+    @Schema(description = "snapshot · scan · ingest · document")
+    val type: String,
+    @Schema(description = "type = snapshot · scan 일 때만 싣는다")
+    val scan: LastScanResponse? = null,
+    @Schema(description = "type = snapshot · ingest 일 때만 싣는다")
+    val ingest: IngestProgressResponse? = null,
+    @Schema(description = "type = document 일 때만 싣는다")
+    val document: ContentMapDocumentEventResponse? = null,
+    @Schema(description = "type = snapshot 일 때만 싣는다")
+    val documents: List<ContentMapDocumentEventResponse>? = null,
+)
+
+/**
+ * 문서 적재 진행. **퍼센트를 만들지 않는다.**
+ *
+ * 분모([receivedDocuments])가 스캔이 도는 동안 계속 늘어나므로, 서버가 계산해 보내는 퍼센트는
+ * 보내는 순간 이미 낡는다. 두 수를 그대로 주면 화면이 자기가 그리는 시점의 값으로 비율을 만들 수
+ * 있다. 스캔 자체에는 퍼센트가 없다 — [ScanState] 는 [ScanState.REQUESTED],
+ * [ScanState.SUCCEEDED], [ScanState.FAILED] 셋뿐이고 서버가 중간 진행을 모른다.
+ */
+@Schema(description = "문서 적재 진행")
+data class IngestProgressResponse(
+    @Schema(description = "이 빌드에 올라온 content_map_document 행 전부")
+    val receivedDocuments: Int,
+    @Schema(description = "ingested_at 이 찍힌 문서 수")
+    val ingestedDocuments: Int,
+    @Schema(description = "ingest_failed_at 이 찍혔고 아직 ingested_at 이 없는 문서 수")
+    val failedDocuments: Int,
+)
+
+/**
+ * 문서 하나의 적재 상태. [PendingDocumentResponse] 와 [documentId] 타입을 맞춘다 — 같은 응답에서
+ * 두 DTO 가 같은 문서를 가리킬 수 있어야 한다.
+ *
+ * [PendingDocumentResponse] 와 달리 [ingestedAt] 을 함께 싣는다 — SSE 의 `document` 이벤트는
+ * 이미 앉은 문서도 함께 알려야 화면이 진행 중 목록에서 방금 앉은 행을 지울 수 있다.
+ */
+@Schema(description = "문서 적재 사건")
+data class ContentMapDocumentEventResponse(
+    val documentId: Long,
+    val receivedAt: Instant,
+    @Schema(description = "앉은 시각. null 이면 아직 앉지 않았다")
+    val ingestedAt: Instant?,
+    @Schema(description = "마지막 적재 실패 시각. null 이면 아직 시도하지 않았다")
+    val ingestFailedAt: Instant?,
+    @Schema(description = "마지막 실패 사유 한 줄")
+    val ingestError: String?,
+)

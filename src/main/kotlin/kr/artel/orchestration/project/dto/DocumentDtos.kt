@@ -74,3 +74,34 @@ data class DownloadTicketResponse(
     val downloadUrl: String,
     val expiresAt: Instant
 )
+
+/**
+ * 프로젝트 문서 추출 상태 SSE의 한 프레임(ARTEL-760, `/api/projects/{projectId}/documents/events`).
+ *
+ * [type]이 그대로 SSE `event:` 이름이 된다. `snapshot`은 구독 직후 정확히 한 번, 이 프로젝트
+ * 문서 전부의 현재 상태를 [documents]에 담아 보낸다 — 추출이 fire-and-forget이라 화면이 붙기
+ * 전에 이미 끝났을 수 있어서다. `document`는 그 뒤로 `parse_status`가 바뀔 때마다, 바뀐 문서
+ * 하나만 [document]에 담아 보낸다.
+ */
+data class DocumentStreamEvent(
+    val type: String,
+    val document: DocumentParseStatusResponse? = null,
+    val documents: List<DocumentParseStatusResponse>? = null
+)
+
+/**
+ * 문서 한 건의 추출 상태.
+ *
+ * @property documentId [ProjectDocumentResponse.id]와 같은 타입(문자열)으로 맞춘다.
+ * @property parseStatus [kr.artel.orchestration.project.entity.ParseStatus] 값 그대로.
+ * @property stale `parseStatus == EXTRACTING`인데 이 서버가 그 문서의 추출을 들고 있지 않을 때만
+ *   `true`다. 추출은 `backgroundScope` 위의 fire-and-forget이라, 서버가 재시작되면 진행 중이던
+ *   작업이 사라지고 행은 `EXTRACTING`인 채로 굳는다 — 새 `parse_status` 값을 만들지 않으면서
+ *   그 상태를 알리는 자리가 이 필드다(계산 근거는
+ *   [kr.artel.orchestration.knowledge.service.DocumentKnowledgeExtractionService.isStale]).
+ */
+data class DocumentParseStatusResponse(
+    val documentId: String,
+    val parseStatus: String,
+    val stale: Boolean
+)

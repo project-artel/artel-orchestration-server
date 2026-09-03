@@ -5,7 +5,9 @@ import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
+import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.auth.web.CurrentUserId
+import kr.artel.orchestration.project.dto.DocumentStreamEvent
 import kr.artel.orchestration.project.dto.DownloadTicketResponse
 import kr.artel.orchestration.project.dto.ProjectDocumentResponse
 import kr.artel.orchestration.project.dto.RegisterDocumentRequest
@@ -13,7 +15,9 @@ import kr.artel.orchestration.project.dto.UploadTicketRequest
 import kr.artel.orchestration.project.dto.UploadTicketResponse
 import kr.artel.orchestration.project.service.ProjectDocumentService
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
+import org.springframework.http.codec.ServerSentEvent
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -74,6 +78,19 @@ class ProjectDocumentController(
         documentService.list(appUserId, projectId)
             ?.let { ResponseEntity.ok(it) }
             ?: throw projectNotFound()
+
+    @Operation(
+        summary = "문서 추출 상태 스트림",
+        description = "프로젝트 문서 전부의 parse_status 변화를 SSE로 흘린다. 구독 직후 snapshot 프레임을 " +
+            "한 번 보내고, 그 뒤로는 parse_status가 바뀔 때마다 document 프레임을 보낸다. 접근할 수 없는 " +
+            "프로젝트는 stream이 열리지 않고 404로 끝난다."
+    )
+    @GetMapping("/events", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
+    suspend fun events(
+        @CurrentUserId appUserId: Long,
+        @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long
+    ): Flow<ServerSentEvent<DocumentStreamEvent>> =
+        documentService.events(appUserId, projectId)
 
     @Operation(
         summary = "다운로드 URL 발급",

@@ -3,13 +3,17 @@ package kr.artel.orchestration.contentmap.controller
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
+import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.dto.ContentMapResponse
+import kr.artel.orchestration.contentmap.dto.ContentMapStreamEvent
 import kr.artel.orchestration.contentmap.dto.StartContentMapScanResponse
 import kr.artel.orchestration.contentmap.scan.ContentMapScanService
 import kr.artel.orchestration.contentmap.service.ContentMapViewService
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
+import org.springframework.http.codec.ServerSentEvent
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -103,4 +107,35 @@ class ProjectContentMapController(
     ): ContentMapResponse =
         view.read(appUserId, projectId, gameBuildId)
             ?: throw NotFoundException("게임 빌드를 찾을 수 없습니다.")
+
+    /**
+     * 스캔 상태와 문서 적재 진행을 흘리는 SSE. **push 다** — 화면이 [read] 를 되풀이해 부르지 않아도
+     * 된다.
+     *
+     * `event:` 이름은 페이로드의 `type` 과 같다: `snapshot`(구독 직후 정확히 한 번), `scan`
+     * ([kr.artel.orchestration.contentmap.scan.ScanState] 가 바뀔 때), `ingest`(문서 하나가 앉거나
+     * 실패할 때의 진행 두 수), `document`(같은 순간 그 문서 한 행).
+     *
+     * **cookie 인증이다.** 브라우저의 `EventSource` 는 header 를 실을 수 없어 `Authorization` 이
+     * 오지 않는다 — `artel_access_token` 쿠키만 온다(ARTEL-762 계약).
+     *
+     * **`suspend fun` 인 것이 요점이다.** [ContentMapViewService.events] 안의 접근 검사가 이 함수의
+     * 반환보다 먼저 끝나므로, 접근할 수 없는 프로젝트·빌드는 스트림이 열리기 전에 404 로 끝난다.
+     *
+     * **서버가 먼저 끊지 않는다.** 스캔이 끝나도 스트림은 살아 있다 — 화면 단위 구독이지 작업 단위가
+     * 아니다. 끝은 client 가 `EventSource.close()` 하는 것뿐이다. cursor 도 replay 도 없다.
+     */
+    @Operation(
+        summary = "스캔·적재 진행 SSE",
+        description = "이 빌드의 스캔 상태와 문서 적재 진행을 push 로 흘린다. 구독 직후 `snapshot` " +
+            "프레임이 한 번 오고, 그 뒤로 상태가 바뀔 때마다 `scan` · `ingest` · `document` 가 온다. " +
+            "서버가 먼저 끊지 않는다.",
+    )
+    @GetMapping("/events", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
+    suspend fun events(
+        @CurrentUserId appUserId: Long,
+        @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
+        @Parameter(description = "게임 빌드 id", required = true) @PathVariable gameBuildId: Long,
+    ): Flow<ServerSentEvent<ContentMapStreamEvent>> =
+        view.events(appUserId, projectId, gameBuildId)
 }

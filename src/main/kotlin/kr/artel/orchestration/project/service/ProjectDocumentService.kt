@@ -3,10 +3,16 @@ package kr.artel.orchestration.project.service
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kr.artel.orchestration.project.config.StorageProperties
+import kr.artel.orchestration.project.dto.DocumentParseStatusResponse
+import kr.artel.orchestration.project.dto.DocumentStreamEvent
 import kr.artel.orchestration.project.dto.DownloadTicketResponse
 import kr.artel.orchestration.project.dto.ProjectDocumentResponse
 import kr.artel.orchestration.project.dto.RegisterDocumentRequest
@@ -24,6 +30,7 @@ import kr.artel.orchestration.knowledge.service.KnowledgeService
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.http.codec.ServerSentEvent
 import org.springframework.stereotype.Service
 import java.time.Clock
 import java.time.Instant
@@ -56,6 +63,8 @@ class ProjectDocumentService(
     private val clock: Clock,
     private val extractionService: DocumentKnowledgeExtractionService,
     private val knowledgeService: KnowledgeService,
+    private val projectAccessService: ProjectAccessService,
+    private val streamManager: DocumentEventStreamManager,
     @Value("\${artel.agent.extract.enabled:true}") private val extractionEnabled: Boolean
 ) {
     private val logger = LoggerFactory.getLogger(ProjectDocumentService::class.java)
@@ -156,6 +165,42 @@ class ProjectDocumentService(
             .toList()
         return documentAssembler.toResponses(documents)
     }
+
+    /**
+     * 프로젝트 문서 추출 상태를 흘리는 SSE 스트림(ARTEL-760, `GET /documents/events`).
+     *
+     * [ProjectAccessService.requireMember]를 **Flow를 만들기 전에** suspend로 호출한다 —
+     * 접근할 수 없는 프로젝트는 여기서 [kr.artel.orchestration.common.error.NotFoundException]으로
+     * 끝나고 stream 자체가 열리지 않는다(`ProjectDocumentService.requireAccessible`을 다시
+     * 쓰지 않는다. 그건 null을 돌려주는 모양이라 컨트롤러가 매번 404로 옮겨야 하는데, 이 endpoint는
+     * 그 매핑조차 필요 없이 예외가 그대로 advice에 잡히면 된다).
+     *
+     * 반환하는 [Flow]는 cold다 — 구독자마다 `flow { }` 블록이 처음부터 다시 실행되어, 각자 자기
+     * 구독 시점의 [snapshotEvent]를 받은 뒤 [DocumentEventStreamManager]가 들고 있는 hot
+     * `SharedFlow`로 이어붙는다. 한 프로젝트에 여러 명이 붙어도 각자 자기 snapshot을 받는다.
+     */
+    suspend fun events(userId: Long, projectId: Long): Flow<ServerSentEvent<DocumentStreamEvent>> {
+        projectAccessService.requireMember(projectId, userId)
+        return flow {
+            emit(snapshotEvent(projectId))
+            emitAll(streamManager.stream(projectId))
+        }
+    }
+
+    /** 구독 시점 DB를 그대로 읽어 이 프로젝트 문서 전부의 현재 상태로 만든다. */
+    private suspend fun snapshotEvent(projectId: Long): ServerSentEvent<DocumentStreamEvent> {
+        val documents = documentRepository.findByProjectIdOrderByVersionDesc(projectId)
+            .map { it.toParseStatusResponse() }
+            .toList()
+        val event = DocumentStreamEvent(type = "snapshot", documents = documents)
+        return ServerSentEvent.builder(event).event(event.type).build()
+    }
+
+    private fun ProjectDocumentEntity.toParseStatusResponse() = DocumentParseStatusResponse(
+        documentId = requireNotNull(id).toString(),
+        parseStatus = parseStatus,
+        stale = extractionService.isStale(requireNotNull(id), parseStatus)
+    )
 
     /** 다운로드 URL은 요청할 때마다 새로 만든다. 오래 사는 링크를 DOM에 박아두지 않기 위해서다. */
     suspend fun createDownloadTicket(
