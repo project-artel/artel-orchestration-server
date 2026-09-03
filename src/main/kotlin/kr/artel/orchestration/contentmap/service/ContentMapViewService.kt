@@ -1,17 +1,24 @@
 package kr.artel.orchestration.contentmap.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.dto.ConditionNodeResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
+import kr.artel.orchestration.contentmap.dto.ContentMapDocumentEventResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapEdgeResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapSceneEdgeRow
 import kr.artel.orchestration.contentmap.dto.ContentMapSceneResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapScreenResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapScreenTransitionResponse
+import kr.artel.orchestration.contentmap.dto.ContentMapStreamEvent
 import kr.artel.orchestration.contentmap.dto.ContentMapSummaryResponse
+import kr.artel.orchestration.contentmap.dto.IngestProgressResponse
 import kr.artel.orchestration.contentmap.dto.LastScanResponse
 import kr.artel.orchestration.contentmap.dto.PendingDocumentResponse
 import kr.artel.orchestration.contentmap.dto.SceneCapabilityCountResponse
@@ -35,9 +42,11 @@ import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.contentmap.repository.ScreenCapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ScreenRepository
 import kr.artel.orchestration.contentmap.repository.ScreenTransitionRepository
+import kr.artel.orchestration.contentmap.scan.ContentMapEventStreamManager
 import kr.artel.orchestration.contentmap.scan.ScanStatusRegistry
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import org.springframework.http.codec.ServerSentEvent
 import org.springframework.stereotype.Service
 
 /**
@@ -66,6 +75,7 @@ class ContentMapViewService(
     private val screenTransitions: ScreenTransitionRepository,
     private val documents: ContentMapDocumentRepository,
     private val scanStatuses: ScanStatusRegistry,
+    private val streamManager: ContentMapEventStreamManager,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
 ) {
@@ -125,6 +135,71 @@ class ContentMapViewService(
             lastScan = lastScan,
         )
     }
+
+    /**
+     * 스캔 상태와 문서 적재 진행을 흘리는 SSE. 접근할 수 없는 빌드면 [NotFoundException]을 던진다(→ 404).
+     *
+     * 접근 검사가 [read] 와 같은 [GameBuildRepository.findAccessibleById] 인 이유: ARTEL-762 계약
+     * 4절이 "404 접근할 수 없는 project 또는 game build"라 못 박았다. 프로젝트 참여만 보면 경로의
+     * `gameBuildId` 가 남의 프로젝트 것이어도 통과하고, 그 화면이 남의 빌드의 스캔·적재 진행을
+     * 그대로 받는다 — `read` 의 KDoc 이 같은 이유로 짚은 문제다.
+     *
+     * **`snapshot` 프레임을 먼저 만들고, 그 뒤에 실시간 스트림을 잇는다.** [ContentMapEventStreamManager.stream]
+     * 은 replay 가 없어 구독 시점 이전 이벤트를 새 구독자에게 주지 않는다 — "구독 직후 현재 상태를
+     * 한 번 보낸다"는 계약을 이 함수가 직접 채워야 하는 이유다.
+     *
+     * suspend 함수라 접근 검사와 snapshot 조회가 **Flow 를 만들기 전에** 끝난다 — 컨트롤러가 이
+     * 함수의 결과를 그대로 돌려주면, 접근할 수 없는 프로젝트는 스트림이 열리기 전에 404 로 끝난다.
+     */
+    suspend fun events(
+        userId: Long,
+        projectId: Long,
+        gameBuildId: Long,
+    ): Flow<ServerSentEvent<ContentMapStreamEvent>> {
+        gameBuilds.findAccessibleById(gameBuildId, projectId, userId)
+            ?: throw NotFoundException("게임 빌드를 찾을 수 없습니다.")
+
+        val snapshot = snapshotEventOf(gameBuildId)
+        val snapshotSse = ServerSentEvent.builder(snapshot).event(snapshot.type).build()
+        return flow {
+            emit(snapshotSse)
+            emitAll(streamManager.stream(gameBuildId))
+        }
+    }
+
+    /**
+     * `snapshot` 이벤트 한 장. [read] 와 같은 출처(문서 목록 하나)에서 적재 진행과 [documents]
+     * 목록을 함께 뽑는다 — 두 칸이 서로 다른 스냅샷을 보면 "적재됐는데 대기 중" 인 스냅샷이 나간다.
+     *
+     * [ContentMapDocumentRepository.countIngestProgressByGameBuild] 를 다시 쓰지 않는다. 그 질의는
+     * `ingest` 이벤트가 문서 하나마다 되풀이해 묻는 가벼운 집계이고, 여기서는 [documents] 목록을
+     * 어차피 통째로 읽으므로 Kotlin 에서 세는 것이 왕복을 하나 줄인다.
+     */
+    private suspend fun snapshotEventOf(gameBuildId: Long): ContentMapStreamEvent {
+        val lastScan = scanStatuses.find(gameBuildId)?.let(LastScanResponse::of)
+        val contentMap = contentMaps.findByGameBuildId(gameBuildId)
+        val allDocuments = contentMap?.let { documents.findByContentMapIdOrderByReceivedAtDesc(it.id!!).toList() }
+            ?: emptyList()
+
+        return ContentMapStreamEvent(
+            type = "snapshot",
+            scan = lastScan,
+            ingest = IngestProgressResponse(
+                receivedDocuments = allDocuments.size,
+                ingestedDocuments = allDocuments.count { it.ingestedAt != null },
+                failedDocuments = allDocuments.count { it.ingestFailedAt != null && it.ingestedAt == null },
+            ),
+            documents = allDocuments.map(::documentEventOf),
+        )
+    }
+
+    private fun documentEventOf(document: ContentMapDocumentEntity) = ContentMapDocumentEventResponse(
+        documentId = document.id!!,
+        receivedAt = document.receivedAt!!,
+        ingestedAt = document.ingestedAt,
+        ingestFailedAt = document.ingestFailedAt,
+        ingestError = document.ingestError,
+    )
 
     /**
      * 씬과 그 상태 분포, 그리고 **무엇을 할 수 있는지의 목록.**
