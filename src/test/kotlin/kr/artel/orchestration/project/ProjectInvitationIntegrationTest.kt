@@ -461,6 +461,55 @@ class ProjectInvitationIntegrationTest {
         assertThat(codeOf(error)).isEqualTo("duplicate_invitation")
     }
 
+    /**
+     * 만료된 초대는 `status` 가 `PENDING` 인 채로 남아 unique index 를 차지한다. 그 행은 보낸
+     * 목록에도 나오지 않아 revoke 로 치울 id 를 얻을 수 없으므로, 다시 부르는 쪽이 치우지 않으면
+     * 그 사람은 이 프로젝트에 영영 다시 못 들어온다. 주소가 없는 계정에는 우회로도 없다.
+     */
+    @Test
+    fun `lets the owner invite the same account again after the first invitation expired`(): Unit =
+        runBlocking {
+            val ownerToken = signIn("42", "octocat")
+            val projectId = createProject(ownerToken)
+            val inviteeToken = signInWithoutEmail("60", "ghost")
+            val inviteeId = userIdOf("60")
+            val staleId = expiredAccountInvitation(projectId, inviteeId)
+
+            val invitation = post(
+                ownerToken,
+                "/api/projects/$projectId/invitations",
+                """{"appUserId":"$inviteeId","role":"MEMBER"}"""
+            )
+
+            assertThat(invitation["status"].asText()).isEqualTo("PENDING")
+            // 앞의 행은 보낸 쪽이 끝낸 것으로 닫힌다. 지우지 않는 것은 초대가 프로젝트의 기록이기
+            // 때문이다.
+            assertThat(requireNotNull(invitationRepository.findById(staleId)).status)
+                .isEqualTo(ProjectInvitationStatus.REVOKED.name)
+            // 새 초대만 초대함에 보인다.
+            val inbox = get(inviteeToken, "/api/invitations")
+            assertThat(inbox.map { it["id"].asText() })
+                .containsExactly(invitation["id"].asText())
+        }
+
+    @Test
+    fun `lets the owner invite the same address again after the first invitation expired`(): Unit =
+        runBlocking {
+            val ownerToken = signIn("42", "octocat")
+            val projectId = createProject(ownerToken)
+            val staleId = expiredInvitation(projectId, "ghost@example.com")
+
+            val invitation = post(
+                ownerToken,
+                "/api/projects/$projectId/invitations",
+                """{"email":"ghost@example.com","role":"MEMBER"}"""
+            )
+
+            assertThat(invitation["status"].asText()).isEqualTo("PENDING")
+            assertThat(requireNotNull(invitationRepository.findById(staleId)).status)
+                .isEqualTo(ProjectInvitationStatus.REVOKED.name)
+        }
+
     @Test
     fun `refuses acceptance of an account-targeted invitation by someone else`(): Unit = runBlocking {
         val ownerToken = signIn("42", "octocat")
@@ -552,6 +601,24 @@ class ProjectInvitationIntegrationTest {
             ProjectRole.MEMBER,
             createdAt = now.minus(Duration.ofDays(30)),
             expiresAt = now.minus(Duration.ofDays(16))
+        )
+    }
+
+    /** [expiredInvitation] 의 계정 쪽 짝. `app_user_id` 로 가리킨 초대를 만료 상태로 넣는다. */
+    private suspend fun expiredAccountInvitation(projectId: Long, appUserId: Long): Long {
+        val now = Instant.now(clock)
+        return requireNotNull(
+            invitationRepository.save(
+                ProjectInvitationEntity(
+                    projectId = projectId,
+                    appUserId = appUserId,
+                    role = ProjectRole.MEMBER.name,
+                    status = ProjectInvitationStatus.PENDING.name,
+                    invitedBy = userIdOf("42"),
+                    createdAt = now.minus(Duration.ofDays(30)),
+                    expiresAt = now.minus(Duration.ofDays(16))
+                )
+            ).id
         )
     }
 

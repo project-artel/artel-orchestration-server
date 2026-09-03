@@ -92,7 +92,6 @@ class ProjectInvitationService(
         userId: Long,
         request: CreateInvitationRequest
     ): ProjectInvitationResponse {
-        val target = resolveTarget(request)
         val now = Instant.now(clock)
 
         return transactionalOperator.executeAndAwait {
@@ -102,9 +101,27 @@ class ProjectInvitationService(
                 "초대는 소유자만 보낼 수 있습니다."
             )
 
+            // 대상을 가리는 것이 requireOwner 뒤인 것은 순서가 중요해서다. 앞에 두면
+            // `appUserId` 가 없는 계정을 가리킬 때 나는 404 `invitation_target_not_found` 를
+            // 아무 로그인 사용자나 받을 수 있고, 있는 계정일 때는 requireOwner 가 내는 404
+            // `not_found` 로 넘어간다. 두 code 가 갈리므로 남의 프로젝트 id 하나만 알면 번호를
+            // 올려 가며 어느 app_user id 가 실재하는지 훑을 수 있다. 소유자를 먼저 확인하면
+            // 그 두 답이 모두 소유자에게만 보인다.
+            val target = resolveTarget(request)
+
             if (alreadyMember(projectId, target)) {
                 throw AlreadyMemberException()
             }
+
+            // 만료된 채 PENDING 으로 남은 초대를 먼저 거둔다. 그러지 않으면 그 행이 아래 unique
+            // index 에 걸려 같은 사람을 다시 부를 수 없다. 만료된 초대는 목록에도 안 나오므로
+            // (`findPendingByProjectId` 가 `expires_at > :now` 로 거른다) revoke 로 치울 id 를
+            // 얻을 길도 없어, 그대로 두면 그 사람은 이 프로젝트에 영영 못 들어온다.
+            //
+            // REVOKED 인 것은 보낸 쪽이 끝냈기 때문이다. 만료를 status 로 저장하지 않는다는
+            // V73 의 판단은 그대로다 — 여기서 쓰는 것은 때가 되어 뒤집는 배치가 아니라, 다시
+            // 부르는 순간 길을 막고 있는 그 행 하나를 치우는 일이다.
+            settleExpired(projectId, target, now)
 
             val saved = try {
                 invitationRepository.save(
@@ -120,13 +137,18 @@ class ProjectInvitationService(
                     )
                 )
             } catch (conflict: DataIntegrityViolationException) {
-                // 이 save에서 깨질 수 있는 제약은 이제 둘이다 — 이메일 대상이면
-                // `uk_project_invitation_pending`, 계정 대상이면 `uk_project_invitation_pending_app_user`.
-                // 어느 쪽이 걸렸든 뜻은 같다: 같은 대상에게 이미 기다리는 초대가 있다. `role`은
-                // ProjectRole이 CHECK와 같은 값만 허용하고, `project_id`는 위 requireOwner가,
-                // `invited_by`는 인증이 이미 실재를 보장하므로 이 예외로 갈 다른 길이 없다.
+                // 거의 언제나 중복이다 — 이메일 대상이면 `uk_project_invitation_pending`, 계정
+                // 대상이면 `uk_project_invitation_pending_app_user`. `role`은 ProjectRole이 CHECK와
+                // 같은 값만 허용하고, `project_id`는 위 requireOwner가, `invited_by`는 인증이 이미
+                // 실재를 보장한다. `ck_project_invitation_target`도 못 깬다 — 위 두 인자가
+                // InvitationTarget 하나에서 나오므로 언제나 정확히 하나만 찬다.
                 //
-                // 테이블에 제약을 더하면 이 단정이 거짓이 된다. 그때는 제약 이름을 보고 갈라야 한다.
+                // 하나 남는 것이 `app_user_id`의 foreign key다. resolveTarget이 그 계정을 이 같은
+                // 트랜잭션 안에서 읽지만 그 읽기는 잠그지 않으므로, READ COMMITTED에서는 읽은 뒤
+                // 넣기 전에 다른 트랜잭션이 그 계정을 지울 수 있다. 그때 이 catch는 "이미 초대를
+                // 보낸 대상입니다"라고 답한다 — 틀린 말이지만, 계정이 방금 사라진 상황에서 소유자가
+                // 할 일은 어느 쪽이든 같고(다시 부를 수 없다) 그 창은 밀리초 단위다. 제약 이름으로
+                // 가르는 것은 이 catch가 답을 갈라야 할 만큼 그 경우가 잦아질 때 한다.
                 throw DuplicateInvitationException()
             }
 
@@ -416,6 +438,37 @@ class ProjectInvitationService(
      * 재요청을 멱등 성공으로 보지 않는다. 거절된 초대가 수락으로 뒤집히거나 그 반대가 조용히
      * 성공하면 안 된다.
      */
+    /**
+     * 이 대상에게 나갔다가 만료된 채 `PENDING` 으로 남은 초대를 거둔다. 없으면 아무 일도 없다.
+     *
+     * 다시 부르기 직전에 부른다. 그 행은 만료됐어도 `status` 가 `PENDING` 이라 unique index 를
+     * 그대로 차지하고 있고, 목록에는 나오지 않아 revoke 로 치울 수도 없다. 치우지 않으면 같은
+     * 사람을 이 프로젝트에 영영 다시 부를 수 없다.
+     *
+     * 이메일 대상은 주소가 없는 사람에게 초대를 다시 보내는 다른 길이라도 있지만, 계정 대상은
+     * 그렇지 않다 — 확인된 주소가 없는 계정은 이 경로가 유일하다.
+     */
+    private suspend fun settleExpired(projectId: Long, target: InvitationTarget, now: Instant) {
+        val status = ProjectInvitationStatus.REVOKED.name
+        when (target) {
+            is InvitationTarget.Account -> invitationRepository.settleExpiredForAppUser(
+                projectId = projectId,
+                appUserId = target.appUserId,
+                status = status,
+                respondedAt = now,
+                now = now
+            )
+
+            is InvitationTarget.Email -> invitationRepository.settleExpiredForEmail(
+                projectId = projectId,
+                email = target.address,
+                status = status,
+                respondedAt = now,
+                now = now
+            )
+        }
+    }
+
     private suspend fun settle(invitationId: Long, status: ProjectInvitationStatus) {
         val settled = invitationRepository.settle(invitationId, status.name, Instant.now(clock))
         if (settled == 0) throw InvitationAlreadySettledException()

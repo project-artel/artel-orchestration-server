@@ -55,8 +55,61 @@ interface ProjectInvitationRepository : CoroutineCrudRepository<ProjectInvitatio
     fun findPendingForAppUserId(appUserId: Long, now: Instant): Flow<ProjectInvitationEntity>
 
     /**
-     * `PENDING` 을 벗어나는 유일한 경로. `@Modifying` 이 있어야 영향 행 수가 돌아온다
+     * 이 프로젝트에서 이 주소로 나갔다가 만료된 채 `PENDING` 으로 남은 초대를 거둔다.
+     *
+     * `uk_project_invitation_pending` 은 `status = 'PENDING'` 만 보고 만료는 보지 않으므로, 답을
+     * 받지 못한 채 기간이 지난 행이 같은 사람을 다시 부르는 길을 막는다. 그 행은 목록에도 나오지
+     * 않아([findPendingByProjectId] 가 `expires_at > :now` 로 거른다) revoke 로 치울 id 를 얻을
+     * 수도 없다. `ProjectInvitationService.create` 가 다시 부르기 직전에 이것으로 치운다.
+     *
+     * 여러 행이 걸릴 일은 없지만 — 그 unique index 가 하나로 묶는다 — 행 수를 세지 않는 것은
+     * 부르는 쪽이 그 숫자로 할 일이 없어서다. 치울 것이 없으면 0 이고 그것도 정상이다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE project_invitation
+        SET status = :status, responded_at = :respondedAt
+        WHERE project_id = :projectId
+          AND status = 'PENDING'
+          AND expires_at <= :now
+          AND lower(email) = lower(:email)
+        """
+    )
+    suspend fun settleExpiredForEmail(
+        projectId: Long,
+        email: String,
+        status: String,
+        respondedAt: Instant,
+        now: Instant
+    ): Int
+
+    /** [settleExpiredForEmail] 의 계정 쪽 짝. 같은 이유로 같은 일을 한다. */
+    @Modifying
+    @Query(
+        """
+        UPDATE project_invitation
+        SET status = :status, responded_at = :respondedAt
+        WHERE project_id = :projectId
+          AND status = 'PENDING'
+          AND expires_at <= :now
+          AND app_user_id = :appUserId
+        """
+    )
+    suspend fun settleExpiredForAppUser(
+        projectId: Long,
+        appUserId: Long,
+        status: String,
+        respondedAt: Instant,
+        now: Instant
+    ): Int
+
+    /**
+     * 사람의 답으로 `PENDING` 을 벗어나는 경로. `@Modifying` 이 있어야 영향 행 수가 돌아온다
      * (`IssueRepository.resolve` 와 같은 모양).
+     *
+     * 위 두 `settleExpired...` 도 `PENDING` 을 벗어나게 하지만 그쪽은 이미 만료된 행만 건드린다.
+     * 아직 살아 있는 초대의 상태를 바꾸는 것은 여기뿐이다.
      *
      * 읽고 나서 쓰면 그 사이에 다른 요청이 같은 초대를 처리한다. `WHERE status = 'PENDING'` 이
      * 직렬화 지점이라, 동시에 들어온 수락 중 하나만 1 을 받고 나머지는 0 을 받는다. 서비스는 0 을

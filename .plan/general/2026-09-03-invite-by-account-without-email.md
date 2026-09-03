@@ -2,7 +2,7 @@
 
 - Date: 2026-09-03
 - GitHub Issue: None (Jira: ARTEL-774, Story ARTEL-773)
-- Status: Draft
+- Status: Implemented
 
 ## Goal
 
@@ -136,3 +136,30 @@ Track A 가 지우고 Track B 가 호출을 걷어낸다. 순서는 상관없고
 
 - 없음. 이메일로 부른 미가입자가 나중에 그 주소로 가입해도 초대는 이메일 경로로 그대로
   보인다 — 이 부분은 바뀌지 않는다
+
+## 리뷰 반영 (2026-09-03)
+
+`/code-review high` 가 낸 네 건을 모두 고쳤다.
+
+1. **`resolveTarget` 이 `requireOwner` 앞에 있었다.** 프로젝트와 무관한 아무 로그인 사용자가
+   `appUserId` 를 넣어, 계정이 없으면 404 `invitation_target_not_found` 를, 있으면 requireOwner
+   의 404 `not_found` 를 받았다. 두 code 가 갈리므로 번호를 올려 가며 어느 `app_user` id 가
+   실재하는지 흔적 없이 훑을 수 있었다. `resolveTarget` 을 트랜잭션 안, `requireOwner` 뒤로
+   옮겼다.
+2. **OpenAPI snapshot 을 재생성하지 않았다.** `docs/api/openapi.json` 이 여전히 `email` 을
+   required 로, 그리고 사라진 409 `invitation_target_unreachable` 을 적고 있었다.
+   `OpenApiSnapshotTest` 로 재생성했다.
+3. **만료된 채 `PENDING` 인 초대가 재초대를 영영 막았다.** partial unique index 가 만료를 보지
+   않으므로 그 행이 자리를 차지하는데, 만료된 초대는 보낸 목록에 안 나와 revoke 로 치울 id 를
+   얻을 수도 없었다. `create` 가 다시 부르기 직전에 그 행을 REVOKED 로 거둔다. 이메일 경로에도
+   같은 결함이 있었고 같은 수정으로 함께 풀린다.
+4. **`DataIntegrityViolationException` catch 의 주석이 사실과 달랐다.** `app_user_id` foreign
+   key 가 새 실패 경로로 늘었다. 주석을 실제와 맞추고, 그 창이 왜 좁은지와 언제 제약 이름으로
+   갈라야 하는지를 적었다.
+
+### snapshot 재생성이 부른 무관한 delta
+
+`develop` 의 `docs/api/openapi.json` 에 `AuthUserResponse` 가 두 번 정의돼 있었다(ARTEL-742 가
+재생성 없이 merge 된 결과다). 재생성이 그것을 하나로 합치므로 이 PR 의 snapshot diff 에 그
+변경이 함께 들어간다. 떼어낼 수 없다 — snapshot 은 생성기의 산출물이고, 손으로 일부만 남기면
+다음 재생성에서 다시 어긋난다.
