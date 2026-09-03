@@ -36,7 +36,8 @@ class SdkAuthController(
     private val refreshTokenService: RefreshTokenService,
     private val properties: AuthProperties,
     private val oauthUserService: OAuthUserService,
-    private val sessionUserResolver: SessionUserResolver
+    private val sessionUserResolver: SessionUserResolver,
+    private val sdkTokenIssuer: SdkTokenIssuer
 ) {
     /**
      * 브라우저가 부른다. 쿠키 세션이 유일한 인증 수단이다.
@@ -70,28 +71,19 @@ class SdkAuthController(
      * 하나로 묶는다. 어느 쪽인지 알려주면 코드만 훔친 쪽이 verifier를 좁혀갈 단서가 된다.
      *
      * [SdkLoginCodeKind.SDK]만 받으므로, CLI 로그인이 낸 코드로 30일짜리 SDK 토큰을 받아낼 수 없다.
+     *
+     * 토큰은 [SdkTokenIssuer]가 만든다. 로그인한 사용자가 왕복 없이 받아 가는
+     * `POST /api/auth/sdk-tokens`와 같은 코드다 — 두 경로가 낸 토큰이 서로 달라질 자리를 두지 않는다.
      */
     @Operation(summary = "SDK 토큰 교환", description = "일회용 코드와 code_verifier를 SDK 토큰으로 바꾼다.")
     @PostMapping("/token")
     suspend fun exchange(@Valid @RequestBody request: SdkTokenRequest): SdkTokenResponse {
         val userId = codeStore.consume(request.code, request.codeVerifier, SdkLoginCodeKind.SDK)
             ?: throw BadRequestException("유효하지 않은 로그인 코드입니다.")
-        val profile = oauthUserService.findProfile(userId)
+        // 코드는 맞지만 가리키는 사용자가 지워진 경우도 같은 400이다. 둘을 가르면 어느 코드가
+        // 실재했는지가 단서로 새어 나간다.
+        return sdkTokenIssuer.issueFor(userId)
             ?: throw BadRequestException("유효하지 않은 로그인 코드입니다.")
-        val issued = jwtService.issueSdkToken(userId.toString())
-        val refresh = refreshTokenService.issue(
-            userId.toString(),
-            properties.sdkAudience,
-            properties.sdkRefreshTokenTtl
-        )
-        return SdkTokenResponse(
-            token = issued.token,
-            expiresAt = issued.expiresAt,
-            refreshToken = refresh.token,
-            refreshExpiresAt = refresh.expiresAt,
-            userId = profile.userId,
-            displayName = profile.displayName
-        )
     }
 
     /**
