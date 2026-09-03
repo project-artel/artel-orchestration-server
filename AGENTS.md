@@ -43,6 +43,25 @@ For non-trivial work, follow:
 
 - `.agents/docs/local-stack.md` — Postgres(pgvector)와 Redis가 필수다. 빠뜨리면 서버는 뜨고 특정 기능만 500이 난다.
 
+To call an authenticated path on a local server, use the `artel-jwt` skill. This
+server signs its own sessions with `artel.auth.jwt-secret`, so a token minted
+with the same secret is what a login would have produced — no registered GitHub
+OAuth app needed.
+
+```bash
+eval "$(.claude/skills/artel-jwt/mint-jwt.py --sub <app_user.id> --format curl)"
+```
+
+`--audience` picks between the four: `home` (browser session), `sdk`
+(`/api/sdk/**`), `refresh` (the reissue paths, needs the `for` claim), and
+`tracker-setup` (the GitHub App install `state`). `--sub` must be an existing
+`app_user.id` — the token is authoritative about identity only, and the profile
+is read from the database. It mints for a local server only.
+
+Do not use it inside this server's own tests. `JwtService` is a bean, so an
+integration test injects it and calls `jwtService.issue(user)` directly
+(`ProjectCrudIntegrationTest`).
+
 Coding conventions:
 
 - `.agents/docs/coding-style.md`
