@@ -3,6 +3,7 @@ package kr.artel.orchestration.testcase.repository
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.CapabilityCase
 import kr.artel.orchestration.testcase.dto.CaseWrite
+import kr.artel.orchestration.testcase.dto.CaseInputRow
 import kr.artel.orchestration.testcase.dto.SceneExitRow
 import kr.artel.orchestration.testcase.dto.ValueMoveRow
 import kr.artel.orchestration.testcase.dto.StartingValue
@@ -270,6 +271,36 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
     )
     fun findSceneExits(projectId: Long): Flow<SceneExitRow>
+
+    /**
+     * 케이스마다 **그것이 가리키는 조작의 기계값**.
+     *
+     * 저작이 스텝의 `input` 칸에 그대로 넣는 값이다(`key:Return` · `click:Canvas/continue`).
+     * 케이스 이름은 사람이 읽는 문장이라 거기서 되뽑을 수 없고, 되뽑는 것이 이 개편이 없애려는
+     * 문자열 맞춤이다.
+     *
+     * 앞서 이 값은 `explain_case` 도구로만 얻을 수 있었다. 실측(저작 한 판)에서 그 도구가 준 것
+     * 중 케이스 목록에 없던 것이 이 한 칸뿐이었고, 나머지(씬 · 요구 · 남기는 것)는 전부 이미
+     * 실려 있었다. 한 칸을 옮기면 왕복이 사라진다.
+     *
+     * **누를 것이 없으면 빈 값이다.** `interaction` 을 그대로 넣으면 조작 없이 일어나는 기능이
+     * `input: "none"` 으로 스텝에 박히고, 실행하는 쪽은 그것을 누르라는 뜻으로 읽는다.
+     */
+    @Query(
+        """
+        SELECT tc.id AS test_case_id,
+               CASE
+                   WHEN c.input_key IS NOT NULL THEN 'key:' || c.input_key
+                   WHEN c.control_path IS NOT NULL THEN 'click:' || c.control_path
+                   WHEN c.control_label IS NOT NULL THEN 'click:' || c.control_label
+                   ELSE ''
+               END AS input
+        FROM test_case tc
+        JOIN capability c ON c.capability_key = tc.capability_key AND c.merged_into IS NULL
+        WHERE tc.project_id = :projectId AND tc.capability_key IS NOT NULL
+        """
+    )
+    fun findCaseInputs(projectId: Long): Flow<CaseInputRow>
 
     /**
      * **지도 안에서 움직이는 값들**(ARTEL-625).
