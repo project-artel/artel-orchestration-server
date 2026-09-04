@@ -20,8 +20,12 @@ import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.qa.dto.QaRunConfigStatsCell
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
+import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.qa.service.QaStatsService
+import kr.artel.orchestration.qa.entity.QaRunEntity
+import kr.artel.orchestration.testrun.entity.TestRunEntity
+import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -53,6 +57,8 @@ class QaStatsIntegrationTest {
 
     @Autowired private lateinit var statsService: QaStatsService
     @Autowired private lateinit var qaTryRepository: QaTryRepository
+    @Autowired private lateinit var qaRunRepository: QaRunRepository
+    @Autowired private lateinit var testRunRepository: TestRunRepository
     @Autowired private lateinit var qaLogRepository: QaLogRepository
     @Autowired private lateinit var scoreRepository: kr.artel.orchestration.qa.repository.QaTryScoreRepository
     @Autowired private lateinit var llmUsageRepository: LlmUsageRepository
@@ -103,6 +109,8 @@ class QaStatsIntegrationTest {
         llmUsageRepository.deleteAll()
         qaLogRepository.deleteAll()
         qaTryRepository.deleteAll()
+        qaRunRepository.deleteAll()
+        testRunRepository.deleteAll()
         gameInstanceRepository.deleteAll()
         testScenarioRepository.deleteAll()
         projectMemberRepository.deleteAll()
@@ -510,9 +518,275 @@ class QaStatsIntegrationTest {
         assertThat(all.total.runs).isEqualTo(1)
     }
 
+    // --------------------------------------------------------------- test run
+
+    /**
+     * **`testRunId` 를 안 주면 단독 실행 런이 그대로 나온다.**
+     *
+     * `qa_try.qa_run_id` 는 nullable 이다 — 단독 실행이 null 이라고 엔티티 주석이 적어 뒀다.
+     * `qa_run` 을 무조건 INNER JOIN 하면 필터를 안 걸어도 그 런들이 통째로 사라지는데, 그 회귀는
+     * 숫자가 그냥 작아지는 모양이라 화면만 봐서는 잡히지 않는다.
+     */
+    @Test
+    fun `testRunId 를 안 주면 단독 실행 런도 그대로 나온다`(): Unit = runBlocking {
+        val (_, qaRunId) = seedQaRun("L1 상세")
+        seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = qaRunId)
+        seedRun(model = "gpt-4o", status = "COMPLETED")
+
+        val stats = stats()
+
+        assertThat(stats.total.runs).isEqualTo(2)
+        assertThat(stats.cells.map { it.model }).containsExactlyInAnyOrder("sonnet-5", "gpt-4o")
+    }
+
+    /**
+     * 벤치마크 런은 난이도별로 test run 이 쪼개져 있다. 층별로 비교하려고 쪼갠 것이므로 집계도
+     * 그 축으로 갈려야 한다 — 갈리지 않으면 넷이 한 덩어리로 접힌다.
+     */
+    @Test
+    fun `testRunId 로 층을 갈라 센다`(): Unit = runBlocking {
+        val (probeRunId, probeQaRunId) = seedQaRun("프로브")
+        val (detailRunId, detailQaRunId) = seedQaRun("L1 상세")
+        seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = probeQaRunId)
+        seedRun(model = "gpt-4o", status = "COMPLETED", qaRunId = detailQaRunId)
+        seedRun(model = "haiku", status = "COMPLETED", qaRunId = detailQaRunId)
+        // 단독 실행 런은 어느 층에도 속하지 않으므로 층을 물으면 빠진다.
+        seedRun(model = "standalone", status = "COMPLETED")
+
+        val probe = statsService.stats(projectId, ownerId, windowStart, windowEnd, 200, probeRunId)
+        val detail = statsService.stats(projectId, ownerId, windowStart, windowEnd, 200, detailRunId)
+
+        assertThat(probe.total.runs).isEqualTo(1)
+        assertThat(probe.cells.map { it.model }).containsExactly("sonnet-5")
+        assertThat(detail.total.runs).isEqualTo(2)
+        assertThat(detail.cells.map { it.model }).containsExactlyInAnyOrder("gpt-4o", "haiku")
+    }
+
+    /**
+     * **프로젝트 권한 술어를 우회하지 않는다.** `testRunId` 는 그 술어에 더해지는 것이지 대신하는
+     * 것이 아니다 — 여기가 빠지면 아무 로그인 사용자가 남의 test run 집계를 본다.
+     *
+     * 없는 것과 못 보는 것을 예외로 갈라 답하지도 않는다. 갈라 답하면 그 test run 의 존재 여부가
+     * 새어 나간다(기존 멤버십 조건과 같은 태도).
+     */
+    @Test
+    fun `남의 프로젝트 test run id 는 빈 집계다`(): Unit = runBlocking {
+        val (testRunId, qaRunId) = seedQaRun("L1 상세")
+        seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = qaRunId)
+        val outsider = signIn("stats-testrun-outsider", "2397").userId.toLong()
+
+        val stats = statsService.stats(projectId, outsider, windowStart, windowEnd, 200, testRunId)
+
+        assertThat(stats.cells).isEmpty()
+        assertThat(stats.total.runs).isZero()
+    }
+
+    /** 없는 test run id 도 예외가 아니라 빈 집계다. 존재 여부를 응답 모양으로 알려주지 않는다. */
+    @Test
+    fun `없는 test run id 는 예외가 아니라 빈 집계다`(): Unit = runBlocking {
+        seedRun(model = "sonnet-5", status = "COMPLETED")
+
+        val stats = statsService.stats(projectId, ownerId, windowStart, windowEnd, 200, 987_654_321L)
+
+        assertThat(stats.cells).isEmpty()
+        assertThat(stats.total.runs).isZero()
+    }
+
+    /**
+     * 응답이 물어본 test run 을 되돌려 준다. `projectId` 와 같은 이유다 — 여러 층을 나란히 놓고
+     * 비교할 때 어느 응답이 어느 층의 것인지가 응답 자체에 없으면 짝을 손으로 들고 있어야 한다.
+     */
+    @Test
+    fun `응답이 물어본 test run 을 되돌려 준다`(): Unit = runBlocking {
+        val (testRunId, qaRunId) = seedQaRun("L2 중간")
+        seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = qaRunId)
+
+        assertThat(statsService.stats(projectId, ownerId, windowStart, windowEnd, 200, testRunId).testRunId)
+            .isEqualTo(testRunId.toString())
+        assertThat(stats().testRunId).isNull()
+    }
+
+    // ------------------------------------------------------------------ label
+
+    /**
+     * **`label` 을 안 주면 실험에 안 묶인 런이 그대로 나온다.**
+     *
+     * `qa_run.label` 이 nullable 이고 `qa_try.qa_run_id` 도 nullable 이라, 이 필터를 조인으로
+     * 표현하면 필터를 안 걸어도 두 종류의 런이 통째로 사라진다. `testRunId` 와 같은 회귀이고,
+     * 숫자가 그냥 작아지는 모양이라 화면만 봐서는 잡히지 않는 것도 같다.
+     */
+    @Test
+    fun `label 을 안 주면 실험에 안 묶인 런도 그대로 나온다`(): Unit = runBlocking {
+        val (_, labelled) = seedQaRun("L1 상세", label = "content-map-2x2-파일럿")
+        val (_, unlabelled) = seedQaRun("L2 중간")
+        seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = labelled)
+        seedRun(model = "gpt-4o", status = "COMPLETED", qaRunId = unlabelled)
+        seedRun(model = "haiku", status = "COMPLETED")
+
+        val stats = stats()
+
+        assertThat(stats.total.runs).isEqualTo(3)
+        assertThat(stats.cells.map { it.model }).containsExactlyInAnyOrder("sonnet-5", "gpt-4o", "haiku")
+    }
+
+    /**
+     * 같은 설정으로 다음 달에 다시 돌리면 `run_config` 는 같은데 다른 실험이다. `label` 이 그 둘을
+     * 가르는 유일한 값이므로, 이 필터가 없으면 두 실험이 한 덩어리로 접힌다.
+     */
+    @Test
+    fun `label 로 실험 묶음을 갈라 센다`(): Unit = runBlocking {
+        val (_, first) = seedQaRun("L2 중간", label = "content-map-2x2-파일럿")
+        val (_, second) = seedQaRun("L2 중간 재실행", label = "content-map-2x2-반복")
+        seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = first)
+        seedRun(model = "gpt-4o", status = "COMPLETED", qaRunId = second)
+        seedRun(model = "haiku", status = "COMPLETED", qaRunId = second)
+        // 실험에 안 묶인 런은 어느 묶음에도 없으므로 묶음을 물으면 빠진다.
+        seedRun(model = "standalone", status = "COMPLETED")
+
+        val pilot = statsWithLabel("content-map-2x2-파일럿")
+        val repeat = statsWithLabel("content-map-2x2-반복")
+
+        assertThat(pilot.total.runs).isEqualTo(1)
+        assertThat(pilot.cells.map { it.model }).containsExactly("sonnet-5")
+        assertThat(repeat.total.runs).isEqualTo(2)
+        assertThat(repeat.cells.map { it.model }).containsExactlyInAnyOrder("gpt-4o", "haiku")
+    }
+
+    /**
+     * **`label` 과 `testRunId` 는 독립이고 함께 걸린다.** "1차 실험의 9013 런" 이 실제 질문이라,
+     * 둘 중 하나가 다른 하나를 덮으면 그 질문을 물을 수 없다. 한쪽만 확인하면 다른 쪽이 무시돼도
+     * 녹색이라 셋을 한 테스트에서 본다.
+     */
+    @Test
+    fun `label 과 testRunId 를 함께 걸면 둘 다 좁힌다`(): Unit = runBlocking {
+        val (middle, pilotMiddle) = seedQaRun("L2 중간", label = "content-map-2x2-파일럿")
+        val (detail, pilotDetail) = seedQaRun("L1 상세", label = "content-map-2x2-파일럿")
+        // 같은 test run 을 다른 실험에서 한 번 더 돌린 경우. 이 행이 있어야 label 이 실제로
+        // 좁히는지 알 수 있다.
+        val repeatMiddle = qaRunRepository.save(
+            QaRunEntity(
+                testRunId = middle,
+                gameInstanceId = gameInstanceRepository.save(
+                    GameInstanceEntity(
+                        projectId = projectId,
+                        name = "run-instance-${instanceSeq++}",
+                        platform = "UNITY",
+                        sdkUuid = UUID.randomUUID().toString(),
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                )!!.id!!,
+                startedBy = ownerId,
+                status = "COMPLETED",
+                label = "content-map-2x2-반복",
+                startedAt = now.minus(Duration.ofDays(1)),
+                completedAt = now
+            )
+        )!!.id!!
+        seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = pilotMiddle)
+        seedRun(model = "gpt-4o", status = "COMPLETED", qaRunId = pilotDetail)
+        seedRun(model = "haiku", status = "COMPLETED", qaRunId = repeatMiddle)
+
+        val both = statsService.stats(
+            projectId, ownerId, windowStart, windowEnd, 200,
+            testRunId = middle, label = "content-map-2x2-파일럿"
+        )
+
+        assertThat(both.total.runs).isEqualTo(1)
+        assertThat(both.cells.map { it.model }).containsExactly("sonnet-5")
+        // 축 하나씩 걸면 각각 둘이다. 교집합이 하나인 것이 두 술어가 AND 로 걸렸다는 증거다.
+        assertThat(statsWithLabel("content-map-2x2-파일럿").total.runs).isEqualTo(2)
+        assertThat(
+            statsService.stats(projectId, ownerId, windowStart, windowEnd, 200, testRunId = middle).total.runs
+        ).isEqualTo(2)
+        assertThat(both.testRunId).isEqualTo(middle.toString())
+        assertThat(both.label).isEqualTo("content-map-2x2-파일럿")
+    }
+
+    /** 없는 이름도 예외가 아니라 빈 집계다. 존재 여부를 응답 모양으로 알려주지 않는다. */
+    @Test
+    fun `없는 label 은 예외가 아니라 빈 집계다`(): Unit = runBlocking {
+        val (_, qaRunId) = seedQaRun("L2 중간", label = "content-map-2x2-파일럿")
+        seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = qaRunId)
+
+        val stats = statsWithLabel("없는 실험")
+
+        assertThat(stats.cells).isEmpty()
+        assertThat(stats.total.runs).isZero()
+    }
+
+    /** 응답이 물어본 실험 묶음을 되돌려 준다. `projectId` · `testRunId` 와 같은 이유다. */
+    @Test
+    fun `응답이 물어본 label 을 되돌려 준다`(): Unit = runBlocking {
+        val (_, qaRunId) = seedQaRun("L2 중간", label = "content-map-2x2-파일럿")
+        seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = qaRunId)
+
+        assertThat(statsWithLabel("content-map-2x2-파일럿").label).isEqualTo("content-map-2x2-파일럿")
+        assertThat(stats().label).isNull()
+    }
+
+    /**
+     * **목록은 이미 쓰인 이름만, 최근에 쓴 것부터 준다.** 화면이 자유 입력이 아니라 고르는 자리여야
+     * `content map 1차` 와 `content map 1차 실험` 이 두 칸으로 갈리지 않는다.
+     */
+    @Test
+    fun `label 목록은 이미 쓰인 것만 최근 순으로 준다`(): Unit = runBlocking {
+        val (_, older) = seedQaRun(
+            "L1 상세", label = "content-map-2x2-파일럿", startedAt = now.minus(Duration.ofDays(3))
+        )
+        val (_, newer) = seedQaRun(
+            "L2 중간", label = "content-map-2x2-반복", startedAt = now.minus(Duration.ofDays(1))
+        )
+        val (_, unlabelled) = seedQaRun("L3 추상")
+        seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = older)
+        seedRun(model = "gpt-4o", status = "COMPLETED", qaRunId = newer)
+        seedRun(model = "haiku", status = "COMPLETED", qaRunId = unlabelled)
+        seedRun(model = "standalone", status = "COMPLETED")
+
+        val labels = statsService.labels(projectId, ownerId)
+
+        assertThat(labels.projectId).isEqualTo(projectId.toString())
+        assertThat(labels.labels).containsExactly("content-map-2x2-반복", "content-map-2x2-파일럿")
+    }
+
+    /**
+     * **남의 프로젝트 `label` 이 목록에 새면 안 된다.** 실험 이름은 그 자체로 무엇을 재고 있는지를
+     * 말하므로, 집계 숫자를 못 보게 하고 이름만 흘리는 것은 가림이 아니다.
+     *
+     * 프로젝트를 안 주고 부를 때도 같다 — 그때 목록은 참여 중인 프로젝트의 것뿐이다.
+     */
+    @Test
+    fun `남의 프로젝트 label 은 목록에 안 나온다`(): Unit = runBlocking {
+        val (_, mine) = seedQaRun("L2 중간", label = "content-map-2x2-파일럿")
+        seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = mine)
+        seedForeignLabelledRun("남의-실험")
+
+        assertThat(statsService.labels(projectId, ownerId).labels)
+            .containsExactly("content-map-2x2-파일럿")
+        assertThat(statsService.labels(null, ownerId).labels)
+            .containsExactly("content-map-2x2-파일럿")
+    }
+
+    /**
+     * 남의 프로젝트 실험 이름을 그대로 집어넣어도 빈 집계다. `label` 술어는 멤버십 판정을 **대신하지
+     * 않고 더해진다** — 여기가 빠지면 이름을 아는 사람이 남의 실험 성적을 그대로 읽는다.
+     */
+    @Test
+    fun `남의 프로젝트 label 을 넣어도 빈 집계다`(): Unit = runBlocking {
+        seedForeignLabelledRun("남의-실험")
+
+        val stats = statsService.stats(null, ownerId, windowStart, windowEnd, 200, label = "남의-실험")
+
+        assertThat(stats.cells).isEmpty()
+        assertThat(stats.total.runs).isZero()
+    }
+
     // ----------------------------------------------------------------- helpers
 
     private suspend fun stats() = statsService.stats(projectId, ownerId, windowStart, windowEnd, 200)
+
+    private suspend fun statsWithLabel(label: String) =
+        statsService.stats(projectId, ownerId, windowStart, windowEnd, 200, label = label)
 
     private fun kr.artel.orchestration.qa.dto.QaStatsResponse.cellFor(model: String): QaRunConfigStatsCell =
         cells.single { it.model == model }
@@ -533,7 +807,10 @@ class QaStatsIntegrationTest {
         stepsTotal: Int? = null,
         stepsPassed: Int? = null,
         casesTotal: Int? = null,
-        casesPassed: Int? = null
+        casesPassed: Int? = null,
+        // null 이면 단독 실행 런이다(하위호환). `qa_run_id` 가 nullable 인 것이 그 뜻이고,
+        // testRunId 필터가 없을 때 이 런들이 사라지지 않는지가 아래 테스트의 핵심이다.
+        qaRunId: Long? = null
     ): Long {
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
@@ -550,6 +827,7 @@ class QaStatsIntegrationTest {
             QaTryEntity(
                 testScenarioId = scenarioId,
                 gameInstanceId = instance.id!!,
+                qaRunId = qaRunId,
                 startedBy = ownerId,
                 status = status,
                 model = model,
@@ -585,6 +863,102 @@ class QaStatsIntegrationTest {
                  "matrix":{"correct_pass":$correctPass,"false_alarm":$falseAlarm,
                            "miss":$miss,"correct_fail":$correctFail}}
             """.trimIndent()
+        )
+    }
+
+    /**
+     * test run 하나와 그 밑의 qa_run 하나. 돌려주는 것은 `qa_try.qa_run_id` 에 넣을 값이다.
+     *
+     * @param label 이 run 이 속한 실험 묶음. null 이면 어느 실험에도 안 묶인 run 이다.
+     * @param startedAt `label` 목록의 정렬 기준이라 테스트가 직접 정할 수 있어야 한다.
+     */
+    private suspend fun seedQaRun(
+        testRunName: String,
+        projectId: Long = this.projectId,
+        label: String? = null,
+        startedAt: Instant = now.minus(Duration.ofDays(1))
+    ): Pair<Long, Long> {
+        val testRunId = testRunRepository.save(
+            TestRunEntity(projectId = projectId, name = testRunName)
+        )!!.id!!
+        val instance = gameInstanceRepository.save(
+            GameInstanceEntity(
+                projectId = projectId,
+                name = "run-instance-${instanceSeq++}",
+                platform = "UNITY",
+                sdkUuid = UUID.randomUUID().toString(),
+                createdAt = now,
+                updatedAt = now
+            )
+        )!!
+        val qaRunId = qaRunRepository.save(
+            QaRunEntity(
+                testRunId = testRunId,
+                gameInstanceId = instance.id!!,
+                startedBy = ownerId,
+                // `ck_qa_run_completed_at` 이 종단 상태에 completed_at 을 요구한다.
+                status = "COMPLETED",
+                label = label,
+                startedAt = startedAt,
+                completedAt = now
+            )
+        )!!.id!!
+        return testRunId to qaRunId
+    }
+
+    /**
+     * 아무도 참여하지 않은 다른 프로젝트의 실험 하나 — `test_run` · `qa_run`(`label` 있음) ·
+     * `qa_try` 가 전부 그 프로젝트에 있다.
+     *
+     * `label` 가시성은 집계와 같은 길로 판정된다(`qa_try` → `test_scenario` → `project_id`). 그
+     * 길을 실제로 태우려면 남의 `qa_run` 밑에 남의 시나리오를 가리키는 `qa_try` 가 있어야 한다.
+     */
+    private suspend fun seedForeignLabelledRun(label: String) {
+        val project = projectRepository.save(
+            ProjectEntity(
+                name = "foreign-label-project-${instanceSeq}",
+                genre = "ACTION",
+                createdAt = now,
+                updatedAt = now
+            )
+        )!!
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        val instance = gameInstanceRepository.save(
+            GameInstanceEntity(
+                projectId = project.id!!,
+                name = "foreign-label-instance-${instanceSeq++}",
+                platform = "UNITY",
+                sdkUuid = UUID.randomUUID().toString(),
+                createdAt = now,
+                updatedAt = now
+            )
+        )!!
+        val testRunId = testRunRepository.save(
+            TestRunEntity(projectId = project.id!!, name = "남의 런")
+        )!!.id!!
+        val startedAt = now.minus(Duration.ofDays(1))
+        val qaRunId = qaRunRepository.save(
+            QaRunEntity(
+                testRunId = testRunId,
+                gameInstanceId = instance.id!!,
+                startedBy = ownerId,
+                status = "COMPLETED",
+                label = label,
+                startedAt = startedAt,
+                completedAt = now
+            )
+        )!!.id!!
+        qaTryRepository.save(
+            QaTryEntity(
+                testScenarioId = scenario.id!!,
+                gameInstanceId = instance.id!!,
+                qaRunId = qaRunId,
+                startedBy = ownerId,
+                status = "COMPLETED",
+                model = "sonnet-5",
+                startedAt = startedAt,
+                completedAt = startedAt.plusMillis(30_000)
+            )
         )
     }
 

@@ -78,7 +78,18 @@ data class CreateQaRunRequest(
      * **두 축을 함께 여는 것이 요점이다.** 벤치마크는 run(TR) 단위로 조직돼 있어, 한 축만 열리면
      * 네 arm 중 둘을 만들 방법이 없고 2×2 가 2×1 이 된다.
      */
-    val contentMapMode: String? = null
+    val contentMapMode: String? = null,
+    /**
+     * 이 run 이 속한 실험 묶음의 이름. 생략하면 `qa_run.label` 이 null 이고 지금과 동작이 같다.
+     *
+     * **arm 을 적는 자리가 아니다.** [knowledgeMode] 와 [contentMapMode] 가 이미 arm 을 말하므로,
+     * 여기 다시 적으면 같은 사실이 두 군데 남는다. 자세한 논거는 `QaRunEntity.label` 의 KDoc 에
+     * 있다.
+     *
+     * 앞뒤 공백은 지우고, 그러고도 빈 문자열이면 null 로 읽는다 — 빈 이름은 묶음이 아니다.
+     * 255자를 넘으면 400 이다.
+     */
+    val label: String? = null
 )
 
 data class QaReasoningRequest(
@@ -149,6 +160,8 @@ data class QaRunResponse(
     val status: String,
     val startedAt: Instant,
     val completedAt: Instant?,
+    /** 이 run 이 속한 실험 묶음. 요청이 안 줬으면 null 이다. */
+    val label: String? = null,
     val tries: List<QaTryResponse> = emptyList()
 )
 

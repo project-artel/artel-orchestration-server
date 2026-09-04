@@ -3043,6 +3043,22 @@
             }
           },
           {
+            "name": "testRunId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "label",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "from",
             "in": "query",
             "required": false,
@@ -3076,6 +3092,36 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/QaStatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qa-stats/labels": {
+      "get": {
+        "tags": [
+          "qa-stats-controller"
+        ],
+        "operationId": "labels",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaStatsLabelsResponse"
                 }
               }
             }
@@ -5550,6 +5596,9 @@
           },
           "contentMapMode": {
             "type": "string"
+          },
+          "label": {
+            "type": "string"
           }
         }
       },
@@ -5587,6 +5636,9 @@
           "completedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "label": {
+            "type": "string"
           },
           "tries": {
             "type": "array",
@@ -7128,6 +7180,12 @@
           "projectId": {
             "type": "string"
           },
+          "testRunId": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
           "from": {
             "type": "string",
             "format": "date-time"
@@ -7270,6 +7328,23 @@
           "unreported": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "QaStatsLabelsResponse": {
+        "required": [
+          "labels"
+        ],
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

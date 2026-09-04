@@ -28,7 +28,9 @@ import kr.artel.orchestration.qa.service.QaKnowledgeSettings
 import kr.artel.orchestration.qa.service.QaRunGates
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
 import kr.artel.orchestration.qa.service.toContentMapMode
+import kr.artel.orchestration.qa.service.QA_RUN_LABEL_MAX_LENGTH
 import kr.artel.orchestration.qa.service.toRunGates
+import kr.artel.orchestration.qa.service.toRunLabel
 import kr.artel.orchestration.qa.service.toKnowledgeSettings
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
@@ -506,6 +508,72 @@ class QaRunConfigPersistenceIntegrationTest {
         assertThat(stored.path("content_map_mode").asText()).isEqualTo("frozen")
         // Agent 스냅샷도 그대로 있다 — 얹는 것이지 갈아치우는 것이 아니다.
         assertThat(stored.path("agent_fingerprint").asText()).isEqualTo("a3f1c9d2e8b0")
+    }
+
+    // ------------------------------------------------------- 실험 묶음 이름(label)
+
+    /**
+     * **실험 묶음 이름은 `qa_run` 행에 남고 `run_config` 에는 안 남는다.**
+     *
+     * 묶음은 run 단위이고 gate 는 try 단위다. 같은 자리에 두면 `qa_try` 를 세는 집계가 묶음까지
+     * 세게 되고, run 하나가 시나리오 N 개를 돌 때 그 이름이 N 번 적힌다.
+     */
+    @Test
+    fun `run 경로가 label 을 qa_run 에 남긴다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val second = testScenarioRepository.save(TestScenarioEntity(projectId = ids.projectId))!!.id!!
+
+        val started = persistence.createRunStarting(
+            ids.testRunId,
+            ids.instanceId,
+            ids.ownerId,
+            listOf(ids.scenarioId, second),
+            QaRunGates(contentMapMode = ContentMapMode.FROZEN),
+            "content-map-2x2-파일럿"
+        )
+
+        assertThat(started.qaRun.label).isEqualTo("content-map-2x2-파일럿")
+        assertThat(qaRunRepository.findById(started.qaRun.id!!)!!.label)
+            .isEqualTo("content-map-2x2-파일럿")
+        // gate 는 여전히 try 마다 실린다. 두 값이 서로의 자리를 밀어내지 않는다.
+        assertThat(started.tries.map { objectMapper.readTree(it.runConfig.asString()) })
+            .allSatisfy { assertThat(it.path("content_map_mode").asText()).isEqualTo("frozen") }
+    }
+
+    /** 안 주면 null 이고, 이 컬럼이 생기기 전 호출자의 행과 같다. */
+    @Test
+    fun `run 경로에 label 을 안 주면 qa_run label 이 null 이다`(): Unit = runBlocking {
+        val ids = seedIds()
+
+        val started = persistence.createRunStarting(
+            ids.testRunId, ids.instanceId, ids.ownerId, listOf(ids.scenarioId)
+        )
+
+        assertThat(started.qaRun.label).isNull()
+        assertThat(qaRunRepository.findById(started.qaRun.id!!)!!.label).isNull()
+    }
+
+    /**
+     * **값을 검사하지 않는 것이 요점이다.** 자유 문자열이라야 다음 실험이 이름 형식을 물려받지
+     * 않는다. 다듬는 것은 둘뿐이고 — 앞뒤 공백을 지우고, 그러고도 비면 null 로 읽는다 — 길이만
+     * 거절한다. 넘기면 저장 시점에 DB 제약이 500 으로 터져 어느 필드가 문제인지가 응답에 안 남는다.
+     */
+    @Test
+    fun `label 은 다듬기만 하고 길이만 거절한다`() {
+        val run = CreateQaRunRequest(testRunId = "1", gameInstanceId = "2")
+
+        assertThat(run.toRunLabel()).isNull()
+        assertThat(run.copy(label = "   ").toRunLabel()).isNull()
+        assertThat(run.copy(label = "  content-map-2x2-파일럿  ").toRunLabel())
+            .isEqualTo("content-map-2x2-파일럿")
+        // arm 을 적는 것을 코드가 막지는 않는다. 그 규칙은 KDoc 이 지고 있고, 형식을 못박으면
+        // 다음 실험이 그 형식을 따라가야 하는 순서가 된다.
+        assertThat(run.copy(label = "arm:map-only").toRunLabel()).isEqualTo("arm:map-only")
+
+        assertThat(run.copy(label = "가".repeat(QA_RUN_LABEL_MAX_LENGTH)).toRunLabel())
+            .hasSize(QA_RUN_LABEL_MAX_LENGTH)
+        assertThat(catchThrowable { run.copy(label = "가".repeat(QA_RUN_LABEL_MAX_LENGTH + 1)).toRunLabel() })
+            .isInstanceOf(BadRequestException::class.java)
     }
 
     // ----------------------------------------------------------------- seeding
