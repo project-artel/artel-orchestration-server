@@ -41,6 +41,7 @@ import kr.artel.orchestration.testscenario.dto.CaseFactsResultFrame
 import kr.artel.orchestration.testscenario.dto.CaseGuardFrame
 import kr.artel.orchestration.testscenario.dto.CaseOperationFrame
 import kr.artel.orchestration.testscenario.dto.ScenarioPathResultFrame
+import kr.artel.orchestration.testscenario.dto.SubmitScenarioResultFrame
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestion
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestionAnswer
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestionOption
@@ -217,10 +218,15 @@ class TestScenarioAgentService(
         // 전달을 위한 것이지 사용자가 쓴 문장이 아니다 — 말풍선에 그대로 뜨면 자기가 하지 않은
         // 말을 한 것처럼 보인다.
         saveMessage(runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) })
+        // 들고 있던 프로젝트 사실을 버린다 — 새 요청 사이에 케이스가 늘거나 질문에 답했을 수 있다.
+        reconcileService.forget(projectId)
         val existing = sessions[sessionKey]
         if (existing != null) {
             // 토글을 매 턴 반영해 대화 중 변경도 다음 결과부터 적용되게 한다.
             existing.autoApply = autoApply
+            // **새 요청이면 지난 턴에 받아 둔 것을 비운다.** 재작성 턴은 이 길로 오지 않으므로(그쪽은
+            // [sendTurn] 을 직접 부른다) 앞서 받아 둔 것이 그대로 살아 있다.
+            existing.submitted.clear()
             sendTurn(sessionKey, existing, turnInput, currentScenarios)
         } else {
             openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios)
@@ -347,6 +353,8 @@ class TestScenarioAgentService(
             .bodyToMono(AgentSessionOpenResponse::class.java)
             .awaitSingle()
         openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply)
+        // 진행률의 분모. 흐름 하나가 시나리오 하나가 되는 것이 계산의 뜻이므로 그 수를 쓴다.
+        sessions[sessionKey]?.expected = flows.size.takeIf { it > 0 }
     }
 
     /**
@@ -465,6 +473,7 @@ class TestScenarioAgentService(
                     inputs = answer.inputs,
                     ordering = answer.ordering.name,
                     blockedBy = answer.blockedBy,
+                    playable = answer.playable,
                     note = answer.note,
                 )
             )
@@ -475,6 +484,102 @@ class TestScenarioAgentService(
             sendFrame(
                 sessionKey, session,
                 TestCaseSearchErrorFrame(correlationId = correlationId, detail = "경로 조회에 실패했습니다.")
+            )
+        }
+    }
+
+    /**
+     * 시나리오 **하나**를 받아 검수하고, 통과한 것만 이번 턴 것으로 쌓는다.
+     *
+     * 받는 단위를 하나로 줄인 이유는 두 가지다. 하나는 출력 — 한 번에 전부를 쓰면 답 하나가
+     * 커져서 다 나오기 전에 기다림이 끝난다. 다른 하나는 **틀린 것 하나가 나머지를 죽이던 일**
+     * 이다: 예전에는 스텝 하나의 `step_source` 가 어긋나면 일흔 개가 함께 버려졌고, 다시 쓰라고 시킨
+     * 것도 시나리오 전체였다.
+     *
+     * `autoApply` 가 켜져 있으면 통과하는 대로 저장한다. 꺼져 있으면 저장하지 않고 쌓아만 둔다 —
+     * 그 경로는 원래도 카드로 제안만 하고 사용자가 커밋하던 길이다. 어느 쪽이든 **카드로 나가기
+     * 전에 검수를 지난다.** 사용자 검수는 그다음이고, 같은 것이 아니다.
+     *
+     * 경로 조회와 같은 규칙이다 — **실패해도 절대 throw하지 않는다.** 시나리오 하나를 못 받은
+     * 것이 WS나 세션을 죽일 이유가 없다.
+     */
+    private suspend fun handleSubmitScenario(sessionKey: String, session: AgentSession, node: JsonNode) {
+        val correlationId = node.path("messageId").asText(null)
+        // 하나씩 받는다. 이유는 [AgentSession.submitLock] 에 적었다.
+        session.submitLock.withLock {
+            submitOne(sessionKey, session, node, correlationId)
+        }
+    }
+
+    private suspend fun submitOne(
+        sessionKey: String,
+        session: AgentSession,
+        node: JsonNode,
+        correlationId: String?,
+    ) {
+        try {
+            val scenario = objectMapper.treeToValue(node.path("scenario"), ScenarioResult::class.java)
+            val outcome = reconcileService.reconcile(
+                session.runId, session.projectId, session.appUserId,
+                listOf(scenario),
+                // 전 건 판정은 시나리오 하나로 물을 것이 아니다 — 무엇을 담고 무엇을 뺐는지는
+                // 턴이 끝나야 답이 나온다. 여기서 보는 것은 이 시나리오 안에서 닫히는 것뿐이다.
+                reviewed = null,
+                save = session.autoApply,
+            )
+            if (outcome.rejected) {
+                logger.info(
+                    "시나리오 하나 되돌림 [sessionKey={}, runId={}] {} — {}",
+                    sessionKey, session.runId, scenario.title, outcome.findings.summary(),
+                )
+                sendFrame(
+                    sessionKey, session,
+                    SubmitScenarioResultFrame(
+                        correlationId = correlationId,
+                        accepted = false,
+                        written = session.submitted.size,
+                        detail = outcome.findings.rejectionMessage(),
+                    ),
+                )
+                return
+            }
+            // 쌓는 것은 **검수를 지난 최종본**이다. 모델이 낸 것을 쌓으면 코드가 끼운 `bridge` 가 빠진
+            // 채로 화면에 뜨고, 저장된 것과 보이는 것이 갈린다.
+            session.submitted += outcome.checked.ifEmpty { listOf(scenario) }
+            logger.info(
+                "시나리오 하나 받음 [sessionKey={}, runId={}] {} — 지금까지 {}개{}",
+                sessionKey, session.runId, scenario.title, session.submitted.size,
+                if (session.autoApply) " (저장함)" else " (카드로 낼 것)",
+            )
+            streamManager.emit(
+                sessionKey,
+                ScenarioStreamEvent(
+                    type = "progress",
+                    stage = AuthoringStage.WROTE_ONE,
+                    written = session.submitted.size,
+                    expected = session.expected,
+                ),
+            )
+            sendFrame(
+                sessionKey, session,
+                SubmitScenarioResultFrame(
+                    correlationId = correlationId,
+                    accepted = true,
+                    written = session.submitted.size,
+                ),
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.error("시나리오 받기 실패 [sessionKey=$sessionKey]: ${e.message}")
+            sendFrame(
+                sessionKey, session,
+                SubmitScenarioResultFrame(
+                    correlationId = correlationId,
+                    accepted = false,
+                    written = session.submitted.size,
+                    detail = "시나리오를 받지 못했습니다. 잠시 뒤 다시 내 주세요.",
+                ),
             )
         }
     }
@@ -545,7 +650,15 @@ class TestScenarioAgentService(
         val pending = session.repair
         session.repair = null
 
-        val incoming = event.scenarios ?: emptyList()
+        // **시나리오는 결과가 아니라 turn 중에 하나씩 온다.** 결과 봉투에 실려 오면 그것도
+        // 받는다 — 옛 에이전트, 그리고 도중에 계약을 끄는 되돌림 경로가 그 길이다.
+        val streamed = (event.scenarios ?: emptyList()).isEmpty() && session.submitted.isNotEmpty()
+        val incoming = (event.scenarios ?: emptyList()).ifEmpty { session.submitted.toList() }
+        // **하나씩 받으며 이미 저장한 것은 다시 저장하지 않는다.** 받을 때 저장하고 끝에 또 하면
+        // 같은 시나리오가 두 벌이 된다 — 실측(런 12)에서 13개를 낸 판이 26건으로 남았다.
+        // 여기서 하는 일은 턴 전체를 봐야 알 수 있는 것뿐이다: 담겠다 해놓고 안 담은 것, 판정하지
+        // 않은 것. 그것은 이미 저장된 뒤이므로 막을 것이 아니라 알릴 것이다.
+        val saveHere = !(streamed && session.autoApply)
         // 재작성 턴이면 앞서 막힌 결과에 새로 받은 것을 얹어 통째로 다시 본다.
         val scenarios = if (pending != null) repaired(pending.scenarios, incoming) else incoming
         val reviewed = if (pending != null) mergeVerdicts(pending.reviewed, event.reviewed) else event.reviewed
@@ -553,6 +666,7 @@ class TestScenarioAgentService(
         progress(sessionKey, AuthoringStage.CHECKING)
         val outcome = reconcileService.reconcile(
             session.runId, session.projectId, session.appUserId, scenarios, reviewed,
+            save = saveHere,
         )
         if (!outcome.rejected) {
             progress(sessionKey, AuthoringStage.SAVED)
@@ -1098,6 +1212,14 @@ class TestScenarioAgentService(
                 else progress(sessionKey, stage)
                 return
             }
+            if (node.path("type").asText() == "submit_scenario") {
+                if (session == null) {
+                    logger.warn("submit_scenario를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
+                    return
+                }
+                scope.launch { handleSubmitScenario(sessionKey, session, node) }
+                return
+            }
             if (node.path("type").asText() == "test_case_search") {
                 if (session == null) {
                     logger.warn("test_case_search를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
@@ -1382,6 +1504,34 @@ class TestScenarioAgentService(
          * 턴에 같은 묶음의 다른 질문을 내면 같은 것을 또 묻는 셈이다.
          */
         @Volatile var asked: List<String> = emptyList(),
+        /**
+         * 이번 턴에 **하나씩 받아 검수를 지난** 시나리오들.
+         *
+         * 모아 두는 것은 화면 때문이다. 저작 한 번에 카드 하나가 톡톡 떨어지는 것보다 요청 하나에
+         * 결과 한 벌이 보이는 편이 읽힌다. 그래서 받기는 하나씩 하고 내보내기는 턴 끝에 한다.
+         *
+         * 모아 두는 동안 무엇이 사라질 수 있냐는 물음이 남는데, `autoApply` 가 켜진 세션은 이미
+         * 저장까지 마친 것들이라 여기 있는 것은 화면에 보낼 사본이다. 꺼진 세션은 원래도 저장하지
+         * 않고 카드로만 내보내던 경로다 — 잃을 것이 이 turn 하나로 같다.
+         */
+        val submitted: MutableList<ScenarioResult> = mutableListOf(),
+        /**
+         * 시나리오를 **한 번에 하나씩** 받게 하는 잠금.
+         *
+         * 프레임마다 코루틴을 띄우므로 앞엣것을 검수하는 동안 뒤엣것이 들어온다. 그러면 [submitted]
+         * 를 둘이 함께 고치고, 저장하는 경로에서는 런 안의 자리(`position`)를 같은 번호로 잡는다.
+         *
+         * 쌓아 둘 곳을 따로 만들지 않는 이유는 도구 호출이 답을 기다리기 때문이다 — 여기서 막으면
+         * 뒤엣것은 저쪽에서 기다리고, 순서도 보낸 순서 그대로 남는다.
+         */
+        val submitLock: Mutex = Mutex(),
+        /**
+         * 이번 턴에 몇 개가 나올지 어림한 수. 흐름 계산이 낸 흐름 수다.
+         *
+         * 어림인 이유는 모델이 흐름을 합치거나 나눠 쓸 수 있어서다. 화면은 이것을 진행률의
+         * 분모로만 쓰고, 실제가 넘어서면 분모가 아니라 실제를 믿는다.
+         */
+        @Volatile var expected: Int? = null,
         /**
          * 마지막으로 사용자에게 알린 미커버 건수. 같은 수를 두 번 말하지 않기 위한 값이다 —
          * 좁은 작업을 이어가는 대화에서 매 턴 같은 줄이 붙으면 읽히지 않는다.

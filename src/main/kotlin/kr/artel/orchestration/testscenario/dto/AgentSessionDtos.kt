@@ -35,9 +35,9 @@ import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
  * 흐름 안에서 **케이스 하나에서 다음 케이스로 넘어갈 때 무엇이 필요한가**(ARTEL-772).
  *
  * 흐름은 순서만 주고 사이를 말하지 않았다. 그래서 모델이 이웃마다 `find_path` 를 불렀고, 실측
- * 저작 한 판에서 그 왕복이 280번이었다 — 같은 짝을 17번 물어 17번 같은 답을 받은 자리도 있다.
+ * 저작 한 판에서 그 왕복이 280번이었다 — 같은 두 케이스를 17번 물어 17번 같은 답을 받은 자리도 있다.
  *
- * **답은 처음부터 있었다.** 흐름을 고르려면 짝 행렬을 이미 다 계산해야 하고([ScenarioFlowMatrix]),
+ * **답은 처음부터 있었다.** 흐름을 고르려면 케이스 두 개씩의 행렬을 이미 다 계산해야 하고([ScenarioFlowMatrix]),
  * 그 행렬의 칸이 곧 이 값이다. 계산해 놓고 안 보내던 것을 함께 보낸다.
  *
  * @property link `beside`(바로 이어진다) · `by_operation`(조작이 필요하다) ·
@@ -159,6 +159,25 @@ data class TestCaseSearchResultFrame(
  * `test_case_search` 처리 실패를 Agent에 알리는 프레임(ARTEL-206 Step 5). 검색 실패가 WS/세션을 죽이지
  * 않도록, receive 콜백은 throw 대신 이 프레임으로 답한다. [correlationId]로 대기 중인 Agent 도구를 푼다.
  */
+/**
+ * Agent의 `submit_scenario` 프레임에 대한 답.
+ *
+ * 시나리오를 하나씩 받는 것은 출력 때문이다. 한 턴에 전부를 쓰면 답 하나가 8,000 token 이 되고
+ * 실측에서 그것을 쓰는 데 42초가 들어, 답이 다 나오기 전에 기다림이 먼저 끝났다. 하나씩 받으면
+ * 한 번에 쓰는 양이 그만큼 줄고, 무엇보다 **틀린 것 하나가 나머지를 죽이지 않는다.**
+ *
+ * [detail] 은 받지 못했을 때 무엇이 틀렸는지다. 이 문장이 곧 모델이 고칠 근거다 — 막기만 하고
+ * 이유를 안 주면 고칠 방법이 없고, 실측(런 10)에서 그렇게 두 번 막힌 뒤 답 없이 끝났다.
+ */
+data class SubmitScenarioResultFrame(
+    val type: String = "submit_scenario_result",
+    val correlationId: String?,
+    val accepted: Boolean,
+    /** 지금까지 받아들인 수. 모델이 몇 개를 냈는지 스스로 세지 않아도 되게 한다. */
+    val written: Int,
+    val detail: String? = null,
+)
+
 data class TestCaseSearchErrorFrame(
     val type: String = "error",
     val correlationId: String?,
@@ -207,6 +226,18 @@ data class ScenarioPathResultFrame(
     /** `REVERSED` 면 **메우기 전에 순서를 보라는 뜻**이다. `CHAINED`·`NO_OPINION` 은 그대로 진행. */
     val ordering: String = "NO_OPINION",
     val blockedBy: String? = null,
+    /**
+     * **못 가는 것과 지나갈 수 있는 것을 가른다**(ARTEL-772).
+     *
+     * `result` 가 `UNKNOWN` 인 자리가 두 가지다. 값이 저절로 바뀌어서 사람이 거기 가 있으면
+     * 지나가는 자리(`Writer.Automatic`)와, 아무 데서도 안 바뀌어 정말 못 가는 자리
+     * (`Writer.None`)다. 이 칸이 없어서 둘이 같은 값으로 나갔고, agent 는 앞엣것까지 "모른다"로
+     * 받아 사용자에게 되물었다 — 실측 저작 한 판에서 그렇게 막힌 것이 16건이다.
+     *
+     * [note] 가 무엇이 어디서 바뀌는지 문장으로 적어 두므로, 이 칸이 참이면 그 문장을 그대로
+     * 스텝 옆에 적으면 된다.
+     */
+    val playable: Boolean = false,
     val note: String = ""
 )
 
