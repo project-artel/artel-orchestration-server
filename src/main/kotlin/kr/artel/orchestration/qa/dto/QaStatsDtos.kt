@@ -15,6 +15,62 @@ import java.time.Instant
  * @property truncated 조합 수가 [cellLimit]을 넘어 [cells]가 잘렸는지. 잘린 셀은 런 수 내림차순
  *   기준 하위다.
  */
+/**
+ * 에이전트가 무엇을 했나 (ARTEL-681).
+ *
+ * [QaStatsResponse] 와 가른 것은 접는 축이 다르기 때문이다. 저쪽은 런을 실행 설정 4-튜플로
+ * **분할**하고 이쪽은 도구로 접는다. 한 응답에 섞으면 셀마다 도구 목록이 붙어 곱집합이 되고,
+ * 정작 이 집계가 답해야 할 질문 — "한 번도 안 불린 도구가 있나" — 은 그 안에서 더 안 보인다.
+ *
+ * 같은 창을 본다. 두 응답을 한 화면에 나란히 놓는 것이 이 값의 쓸모라, 창이 어긋나면 안 된다.
+ *
+ * @property tools 부른 횟수 오름차순. **0 이 맨 위에 온다** — 안 쓰인 도구를 찾는 것이 이
+ *   목록의 목적이므로 눈이 먼저 닿는 자리에 둔다.
+ */
+data class QaToolStatsResponse(
+    val projectId: String,
+    val from: Instant,
+    val to: Instant,
+    val tools: List<QaToolStatsCell>,
+    val citations: QaCitationStats,
+    val issues: List<QaIssueStatsCell>
+)
+
+/**
+ * 도구 하나.
+ *
+ * @property calls **0 이 유효한 답이다.** 런이 쥐고 있었는데 한 번도 안 부른 도구가 그렇게
+ *   나온다 — `record_knowledge` 가 모든 런에서 그랬고, 그것을 사람이 로그를 세서 알아냈다.
+ * @property runsHeld 그 도구를 쥔 런 수.
+ * @property runsCalled 실제로 부른 런 수. [runsHeld] 와의 차이가 "줬는데 안 쓴" 런이다.
+ */
+data class QaToolStatsCell(
+    val tool: String,
+    val calls: Long,
+    val runsHeld: Long,
+    val runsCalled: Long
+)
+
+/**
+ * 스텝 판정이 근거를 댔는가.
+ *
+ * 비율을 서버가 내지 않는 것은 [QaRunConfigStatsCell.stepsPassed] 와 같은 이유다 — 비율만 주면
+ * 그것이 몇 건에 얹힌 값인지가 응답에서 사라진다.
+ *
+ * @property verdicts `report_step` 총 호출 수.
+ * @property withCitation 그중 `used_knowledge_ids` 가 채워진 것.
+ */
+data class QaCitationStats(
+    val verdicts: Long,
+    val withCitation: Long
+)
+
+/** severity 하나에 몇 건. */
+data class QaIssueStatsCell(
+    val severity: String,
+    val issues: Long
+)
+
 data class QaStatsResponse(
     /** 물어본 프로젝트. 생략하고 부르면 null이고, 그때 집계는 볼 수 있는 전 프로젝트의 합이다. */
     val projectId: String?,
