@@ -40,6 +40,10 @@ artel:
   agent:
     base-url: http://localhost:8000
     ws-base-url: ws://localhost:8000
+    # **비운 채로 못 둔다.** `spring-dotenv` 가 테스트에서도 `.env` 를 읽어, 사람마다 다른 로컬
+    # 모델 설정이 여기로 새어 든다 — 그러면 "설정하지 않은 모델은 보내지 않는다"를 보는 검사가
+    # 그 기계에서만 깨진다. 계약을 보는 검사는 사람의 `.env` 를 타면 안 된다.
+    model: ""
     # 문서 업로드 테스트가 실제 Agent /extract를 부르지 않도록 기본은 끔.
     # 추출 파이프라인 테스트는 mock Agent를 띄우고 코디네이터를 직접 호출해 검증한다.
     extract:
