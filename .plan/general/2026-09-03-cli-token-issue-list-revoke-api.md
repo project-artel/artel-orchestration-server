@@ -29,7 +29,7 @@
 
 ## Context / Constraints
 
-### 마이그레이션 번호는 V74 가 아니라 V89 이다
+### 마이그레이션 번호는 V74 가 아니라 V91 이다
 
 이슈가 못박은 파일명 `V74__create_cli_token.sql` 은 쓸 수 없다. `V74` 는 이미
 `src/main/resources/db/migration/V74__point_test_case_at_its_capability.sql` 이 가져갔고 `develop`
@@ -37,7 +37,7 @@
 
 `develop` 의 최고 번호는 `V88__invite_by_app_user.sql` 이며 `a44c5a1`(#255)로 들어왔다. 열린 PR 은
 `#237`(ARTEL-681) 하나뿐이고 마이그레이션을 더하지 않으므로, 이 브랜치는 `develop` 에서 그대로
-자르고 번호는 **`V89`** 를 쓴다. 파일명은 `V89__create_cli_token.sql` 이다.
+자르고 번호는 **`V91`** 를 쓴다. 파일명은 `V91__create_cli_token.sql` 이다.
 
 `V86` 과 `V87` 은 비어 있지만 그 자리를 쓰지 않는다. `V88` 이 이미 적용된 DB 에 더 낮은 번호를
 넣으면 순서가 어긋나고, 아래에 적은 그대로 `check-flyway-migrations.sh` 가 걸러낸다.
@@ -205,7 +205,7 @@ CLI 토큰이 CLI 토큰을 찍어낼 수 있으면 폐기가 의미를 잃는�
       PR(#237, 마이그레이션 없음)을 확인했다
 
 - [x] **Step 1: 테이블**
-  - `src/main/resources/db/migration/V89__create_cli_token.sql`
+  - `src/main/resources/db/migration/V91__create_cli_token.sql`
 
     ```sql
     CREATE TABLE IF NOT EXISTS cli_token (
@@ -401,7 +401,7 @@ CLI 토큰이 CLI 토큰을 찍어낼 수 있으면 폐기가 의미를 잃는�
 ## Validation
 
 - **Commands to run:**
-  - `./scripts/check-flyway-migrations.sh` — `V89` 를 다른 브랜치가 먼저 가져갔는지
+  - `./scripts/check-flyway-migrations.sh` — `V91` 를 다른 브랜치가 먼저 가져갔는지
   - `./scripts/verify-flyway-upgrade.sh` — `develop` 의 마이그레이션 위에 얹어 `validate`
   - `./mvnw test -Dtest='CliTokenPrincipalTest,CliTokenApiIntegrationTest,CurrentUserIdArgumentResolverIntegrationTest,AuthRefreshIntegrationTest,InternalPathSecurityIntegrationTest,SdkRegistrationIntegrationTest,OpenApiDocumentationIntegrationTest,OpenApiSnapshotTest'`
     (Testcontainers 가 PostgreSQL 을 띄우므로 docker 필요)
@@ -424,7 +424,7 @@ CLI 토큰이 CLI 토큰을 찍어낼 수 있으면 폐기가 의미를 잃는�
   - `artel_` bearer 요청마다 DB 조회가 하나 붙는다. 쿠키 세션에는 붙지 않는다. `uk_cli_token_token_hash`
     로 한 건을 찾는 조회라 비용은 낮지만, CLI 가 폴링을 돌리면 그만큼 늘어난다. 캐시는 이번에 두지
     않는다(아래)
-  - 마이그레이션 번호가 `V89` 라는 것이 이슈 본문과 다르다. 리뷰에서 반드시 지적되므로 PR 본문에
+  - 마이그레이션 번호가 `V91` 라는 것이 이슈 본문과 다르다. 리뷰에서 반드시 지적되므로 PR 본문에
     이유를 적는다
 - **Rollback steps:** `git revert` 하나다. 마이그레이션은 새 테이블 하나와 index 둘이라 남아 있어도
   아무 코드가 읽지 않는다. 급하면 `UPDATE cli_token SET revoked_at = now() WHERE revoked_at IS NULL`
@@ -458,7 +458,7 @@ CLI 토큰이 CLI 토큰을 찍어낼 수 있으면 폐기가 의미를 잃는�
 
 - **마이그레이션 번호.** 못박힌 계약이 `V74__create_cli_token.sql` 이라고 적었지만 `V74` 는
   `V74__point_test_case_at_its_capability.sql` 이 이미 쓰고 있고 `develop` 의 최고 번호는 `V85`
-  다. 이 계획은 `V89__create_cli_token.sql` 로 간다. 파일명은 다른 레포가 참조하는 값이 아니므로
+  다. 이 계획은 `V91__create_cli_token.sql` 로 간다. 파일명은 다른 레포가 참조하는 값이 아니므로
   home 과 artel-cli 에는 영향이 없다. 계약 문서를 고쳐 두는 편이 좋다
 - **`POST` 를 CLI 토큰으로 막는 것이 계약에 없다.** ARTEL-782(artel-cli)가 `artel token create` 를
   CLI 토큰만으로 되게 하려 했다면 그쪽이 깨진다. CLI 는 브라우저 로그인 흐름
@@ -477,8 +477,8 @@ CLI 토큰이 CLI 토큰을 찍어낼 수 있으면 폐기가 의미를 잃는�
 
 2026-09-03 에 구현했다. 계획과 다르게 간 곳은 둘이다.
 
-- **마이그레이션 번호는 계획대로 `V89` 다.** 브랜치를 자른 뒤 `check-flyway-migrations.sh` 를 다시
-  돌려 `V89` 가 비어 있는 것을 확인했고, `verify-flyway-upgrade.sh` 가 `develop` 의 마이그레이션
+- **마이그레이션 번호는 계획대로 `V91` 다.** 브랜치를 자른 뒤 `check-flyway-migrations.sh` 를 다시
+  돌려 `V91` 가 비어 있는 것을 확인했고, `verify-flyway-upgrade.sh` 가 `develop` 의 마이그레이션
   71 개를 적용한 위에 이 브랜치의 한 개를 얹어 `validate` 까지 통과했다
 - **`CreateCliTokenRequest.expiresInDays` 의 어노테이션은 `@field:JsonProperty` 가 아니라
   `@JsonProperty` 다.** use-site target 이 `field` 면 creator 파라미터가 아니라 필드에 붙어
