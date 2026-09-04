@@ -1,6 +1,7 @@
 package kr.artel.orchestration.contentmap
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
@@ -13,6 +14,7 @@ import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityOrigin
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
+import kr.artel.orchestration.contentmap.entity.ContentMapMode
 import kr.artel.orchestration.contentmap.entity.Interaction
 import kr.artel.orchestration.contentmap.entity.ObservationSource
 import kr.artel.orchestration.contentmap.entity.SceneEntity
@@ -632,6 +634,67 @@ class AgentCapabilityWriteTest {
 
     // --- helpers ---
 
+    // ------------------------------------------------------- content_map_mode
+
+    /**
+     * `content_map_mode = frozen` 인 런은 지도를 **읽기만** 한다.
+     *
+     * 반복 측정이 성립하려면 arm 이 자기가 읽는 것을 바꾸면 안 된다. `verdict` 하나가 다음 런의
+     * 출발점을 옮기면 두 런은 같은 설정이 아니고, 반복이 반복이 아니게 된다. `capability` 에는
+     * `knowledge.scope_id` 같은 격리 축이 없어 이 게이트가 그것을 막는 유일한 수단이다.
+     */
+    @Test
+    fun `frozen 런의 verdict 는 지도를 바꾸지 않고 거절된다`(): Unit = runBlocking {
+        val world = newWorld(contentMapMode = ContentMapMode.FROZEN)
+        val id = newEvidenceCapability(world, world.battle, "EndTurn 을 누르면 턴이 넘어간다", key = "k1")
+
+        verdict(world, key = "k1", verdict = "works", rationale = "턴 카운터가 3 에서 4 로 올랐다")
+
+        // 거절도 답이 온다. 조용히 버리면 agent 의 tool 이 타임아웃까지 매달려, 측정용 arm 이
+        // 가장 느려지는 — 지표에는 실패로 남지 않는 — 회귀가 된다.
+        val answer = recorder.sent.single()
+        assertThat(answer.type).isEqualTo("ERROR")
+        assertThat(answer.payload.path("message").asText()).contains("content_map_mode=frozen")
+        assertThat(capabilities.findById(id)!!.verification).isEqualTo(VerificationState.UNVERIFIED.wire)
+        assertThat(observations.findAll().toList()).isEmpty()
+    }
+
+    /** `off` 런은 지도를 보지도 못하므로 새 `capability` 를 적을 수도 없다. */
+    @Test
+    fun `off 런은 새 capability 를 적지 못한다`(): Unit = runBlocking {
+        val world = newWorld(contentMapMode = ContentMapMode.OFF)
+
+        discover(
+            world,
+            """
+            {"scene":"$BATTLE","origin":"observed","interaction":"none",
+             "summary":"마지막 적을 처치하면 보상 줄이 뜬다",
+             "rationale":"두 번 처치했고 두 번 다 보상 패널이 열렸다",
+             "verdict":"works"}
+            """.trimIndent()
+        )
+
+        val answer = recorder.sent.single()
+        assertThat(answer.type).isEqualTo("ERROR")
+        assertThat(answer.payload.path("message").asText()).contains("content_map_mode=off")
+        assertThat(capabilities.findAll().toList()).isEmpty()
+        assertThat(observations.findAll().toList()).isEmpty()
+    }
+
+    /**
+     * `run_config` 에 값이 없는 런은 지금까지처럼 쓴다. 이 게이트 이전에 만들어진 런이 전부 그
+     * 모양이고, 모드를 모르는 런이 실패하면 그것은 실험의 공백이 아니라 장애다.
+     */
+    @Test
+    fun `content_map_mode 가 없는 런은 지금까지처럼 쓴다`(): Unit = runBlocking {
+        val world = newWorld()
+        val id = newEvidenceCapability(world, world.battle, "EndTurn 을 누르면 턴이 넘어간다", key = "k1")
+
+        verdict(world, key = "k1", verdict = "works", rationale = "턴 카운터가 3 에서 4 로 올랐다")
+
+        assertThat(capabilities.findById(id)!!.verification).isEqualTo(VerificationState.CONFIRMED.wire)
+    }
+
     private suspend fun verdict(
         world: World,
         key: String,
@@ -685,7 +748,10 @@ class AgentCapabilityWriteTest {
         )
     ).id!!
 
-    private suspend fun newWorld(agentSessionId: String? = SESSION_ID): World {
+    private suspend fun newWorld(
+        agentSessionId: String? = SESSION_ID,
+        contentMapMode: ContentMapMode? = null,
+    ): World {
         val now = Instant.now()
         val userId = signIn().userId.toLong()
         val project = projects.save(
@@ -745,6 +811,11 @@ class AgentCapabilityWriteTest {
                 status = "RUNNING",
                 model = "claude-sonnet-4",
                 promptVersion = "v3",
+                // null 이면 `{}` 다 — 이 게이트가 생기기 전 런과 같은 모양이고, 나머지 테스트가
+                // 전부 그 상태로 돈다.
+                runConfig = contentMapMode
+                    ?.let { Json.of("""{"content_map_mode":"${it.wire}"}""") }
+                    ?: Json.of("{}"),
                 startedAt = now,
             )
         )!!

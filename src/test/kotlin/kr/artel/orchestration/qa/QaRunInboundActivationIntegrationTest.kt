@@ -14,6 +14,8 @@ import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
+import kr.artel.orchestration.contentmap.entity.ContentMapMode
+import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaRunRepository
@@ -21,6 +23,7 @@ import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.qa.service.QaAgentEnvelope
 import kr.artel.orchestration.qa.service.QaAgentInboundRouter
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
+import kr.artel.orchestration.qa.service.QaRunGates
 import kr.artel.orchestration.qa.service.QaTryService
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
@@ -119,6 +122,30 @@ class QaRunInboundActivationIntegrationTest {
         val logs = qaLogRepository.findPage(secondTryId, null, 50).toList()
         assertThat(logs.any { it.type == "STATUS" && it.message == RUNNING_LOG }).isTrue()
         assertThat(logs.any { it.type == "LOG" && it.message == "scenario 2 turn" }).isTrue()
+    }
+
+    /**
+     * **두 번째 시나리오가 활성될 때도 run 의 두 gate 가 살아남는다.**
+     *
+     * 활성은 런의 세션 공통 `run_config` 를 그 try 에 새기는데, 그 스냅샷은 Agent 가 확정한 설정이라
+     * gate 가 없다. 다시 얹지 않으면 run 경로로 시작한 arm 의 gate 가 **두 번째 시나리오부터**
+     * 사라진다 — 런 하나 안에서 arm 이 바뀌는 셈이고, 시나리오 1 만 보면 녹색이라 조용하다.
+     */
+    @Test
+    fun `두 번째 시나리오가 활성돼도 run 의 gate 가 살아남는다`(): Unit = runBlocking {
+        val run = runningRun(QaRunGates(knowledgeMode = KnowledgeMode.FROZEN, contentMapMode = ContentMapMode.OFF))
+        completeFirstScenario(run.firstTryId)
+
+        router.handle(logFrame(run.pendingTryId, "scenario 2 turn"))
+
+        val activated = qaTryRepository.findById(run.pendingTryId)!!
+        val stored = objectMapper.readTree(activated.runConfig.asString())
+        assertThat(activated.status).isEqualTo("RUNNING")
+        assertThat(stored.path("knowledge_mode").asText()).isEqualTo("frozen")
+        assertThat(stored.path("content_map_mode").asText()).isEqualTo("off")
+        // 런의 세션 공통 설정도 그대로 새겨진다 — gate 는 얹는 것이지 갈아치우는 것이 아니다.
+        assertThat(stored.path("agent_fingerprint").asText()).isEqualTo("a3f1c9d2e8b0")
+        assertThat(activated.model).isEqualTo("anthropic/claude-sonnet-5")
     }
 
     @Test
@@ -299,7 +326,7 @@ class QaRunInboundActivationIntegrationTest {
     )
 
     /** qa_run RUNNING + 첫 시나리오 RUNNING(활성) + 두 번째 시나리오 PENDING(대기)인 런을 만든다. */
-    private suspend fun runningRun(): RunningRun {
+    private suspend fun runningRun(gates: QaRunGates = QaRunGates()): RunningRun {
         val owner = signIn()
         val ownerId = owner.userId.toLong()
         val now = Instant.now()
@@ -321,7 +348,8 @@ class QaRunInboundActivationIntegrationTest {
         val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
         val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
 
-        val started = persistence.createRunStarting(testRun.id!!, instance.id!!, ownerId, listOf(s1.id!!, s2.id!!))
+        val started =
+            persistence.createRunStarting(testRun.id!!, instance.id!!, ownerId, listOf(s1.id!!, s2.id!!), gates)
         val firstTryId = started.tries.first().id!!
         val pendingTryId = started.tries[1].id!!
         persistence.attachRunAndMarkRunning(

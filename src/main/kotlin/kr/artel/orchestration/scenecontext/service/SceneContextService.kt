@@ -1,8 +1,10 @@
 package kr.artel.orchestration.scenecontext.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
+import kr.artel.orchestration.contentmap.entity.ContentMapMode
 import kr.artel.orchestration.contentmap.entity.SceneEntity
 import kr.artel.orchestration.contentmap.entity.Observability
 import kr.artel.orchestration.contentmap.entity.SpecStatus
@@ -11,6 +13,7 @@ import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.qa.service.contentMapModeOf
 import kr.artel.orchestration.scenecontext.dto.SceneCapabilityView
 import kr.artel.orchestration.scenecontext.dto.SceneContextEntry
 import kr.artel.orchestration.scenecontext.dto.SceneContextResponse
@@ -34,9 +37,9 @@ import org.springframework.stereotype.Service
  *
  * | # | 무엇 | 언제 |
  * |---|---|---|
- * | 1 | `qa_try` (스코프 해석) | `qaTryId` 가 왔을 때만 |
+ * | 1 | `qa_try` (스코프 · content map 모드 해석) | `qaTryId` 가 왔을 때만 |
  * | 2 | `game_build` (존재 + 프로젝트 대조) | 항상 |
- * | 3 | `content_map` 고르기 | 항상 |
+ * | 3 | `content_map` 고르기 | `content_map_mode` 가 `off` 가 아닐 때만 |
  * | 4 | `scene` 목록 | 지도가 있을 때만 |
  * | 5 | `v_content_map_capability` 전량 | 지도가 있을 때만 |
  * | 6 | 앵커 + 지식 요약 | 항상 |
@@ -53,6 +56,7 @@ class SceneContextService(
     private val scenes: SceneRepository,
     private val anchoredKnowledge: AnchoredKnowledgeRepository,
     private val qaTries: QaTryRepository,
+    private val objectMapper: ObjectMapper,
 ) {
 
     /**
@@ -67,21 +71,39 @@ class SceneContextService(
      * 내부망 전용이라 해도, 그 사실을 이유로 검사를 느슨하게 두면 경로의 `projectId` 는 장식이
      * 되고 다음 호출자가 그것을 믿는다.
      *
-     * @param qaTryId 이 조회를 부른 QA 런. 지식 스코프를 여기서 읽는다(ARTEL-256). null 이면 운영
-     *   스코프다. 없는 런 id 면 404 — 조용히 운영 스코프로 떨어지면 실험 런이 운영 지식을 읽고도
-     *   아무도 못 알아챈다.
+     * **`content_map_mode = off` 인 런도 같은 답이다.** 지도가 없는 빌드와 글자까지 같은 응답을 내는
+     * 것이 그 대조군의 요점이다 — 없는 상태를 흉내 내는 것이 아니라, 이미 정상으로 취급되고 있는
+     * 그 답을 그대로 낸다. 앵커 지식은 그때도 나온다.
+     *
+     * @param qaTryId 이 조회를 부른 QA 런. 지식 스코프와 content map 모드를 여기서 읽는다
+     *   (ARTEL-256). null 이면 운영 스코프에 `content_map_mode = on` 이다. 없는 런 id 면 404 —
+     *   조용히 운영 스코프로 떨어지면 실험 런이 운영 지식을 읽고도 아무도 못 알아챈다.
      */
     suspend fun read(projectId: Long, gameBuildId: Long, qaTryId: Long?): SceneContextResponse? {
-        val scope = resolveScope(qaTryId)
+        val gate = resolveGate(qaTryId)
 
         val build = gameBuilds.findById(gameBuildId) ?: return null
         if (build.projectId != projectId) return null
 
         // 지도가 없어도 앵커는 답한다. 앵커는 프로젝트에 매달린 사실이라 빌드에 지도가 있는지와
         // 수명이 다르다 — 지도가 없다고 그 사실이 없어지지는 않는다.
-        val knowledgeByScene = anchoredKnowledge.findAnchoredKnowledge(projectId, scope.id)
+        val knowledgeByScene = anchoredKnowledge.findAnchoredKnowledge(projectId, gate.knowledgeScope.id)
             .toList()
             .groupBy(AnchoredKnowledgeRow::sceneName)
+
+        // `content_map_mode = off` 면 지도를 조회조차 하지 않는다. 읽고 나서 비우는 것보다 이쪽이
+        // 정직하다 — 이 branch 가 내는 답이 아래 "지도가 없는 빌드" 의 답과 **같은 식**이라,
+        // 대조군이 흉내가 아니라 이미 정상으로 취급되는 상태 그대로다.
+        //
+        // **앵커 지식은 그대로 낸다.** 앵커는 지식창고에서 오는 것이지 지도에서 오는 것이 아니고,
+        // 여기서 함께 지우면 두 축이 섞여 2×2 가 성립하지 않는다. 지식 축은 `knowledge_mode` 가
+        // 따로 끈다.
+        if (!gate.contentMapMode.readable) {
+            return SceneContextResponse(
+                gameBuildId = gameBuildId.toString(),
+                scenes = anchorOnlyScenes(knowledgeByScene, emptySet()),
+            )
+        }
 
         // 빌드마다 지도가 하나라 고를 것이 없다(ARTEL-642). `ContentMapViewService` 와 **같은
         // 리포지토리 메서드**를 부르므로, 사람이 보는 지도와 agent 가 쓰는 지도가 갈릴 수 없다.
@@ -227,18 +249,35 @@ class SceneContextService(
     )
 
     /**
-     * 스코프를 런에서 읽는다. **`knowledgeScopeId` 를 파라미터로 열지 않는 이유**는
-     * `KnowledgeController` 가 같은 이유로 그것을 거절한 것과 같다 — 스코프 id 가 API 표면에 먼저
-     * 생기면 실험 엔티티가 그 형식을 따라가는 순서가 된다.
+     * 이 조회에 걸리는 두 게이트를 런에서 읽는다. **`knowledgeScopeId` 나 모드를 파라미터로 열지
+     * 않는 이유**는 `KnowledgeController` 가 같은 이유로 스코프 id 를 거절한 것과 같다 — 그 형식이
+     * API 표면에 먼저 생기면 실험 엔티티가 그것을 따라가는 순서가 된다.
      *
      * agent 는 세션 개설 payload 로 `qa_try_id` 를 이미 받는다(`QaAgentScenario.qaTryId`). 그
-     * 값에서 스코프를 읽으면 호출자가 스코프를 지어낼 수 없고, 런과 그 런이 읽은 지식이 같은
-     * 행에서 나온다.
+     * 값에서 둘 다 읽으면 호출자가 게이트를 지어낼 수 없고, 런과 그 런이 읽은 것이 같은 행에서
+     * 나온다.
+     *
+     * 한 번의 `findById` 로 둘을 함께 읽는다. 따로 읽으면 질의가 하나 더 늘고, 그 사이에 런의
+     * `run_config` 가 바뀌면 한 응답 안에서 두 게이트가 서로 다른 시점을 본다.
      */
-    private suspend fun resolveScope(qaTryId: Long?): KnowledgeScope {
-        if (qaTryId == null) return KnowledgeScope.PRODUCTION
+    private suspend fun resolveGate(qaTryId: Long?): SceneContextGate {
+        if (qaTryId == null) return SceneContextGate(KnowledgeScope.PRODUCTION, ContentMapMode.DEFAULT)
         val qaTry = qaTries.findById(qaTryId)
             ?: throw NotFoundException("QA 런을 찾을 수 없습니다.")
-        return KnowledgeScope.of(qaTry.knowledgeScopeId)
+        return SceneContextGate(
+            knowledgeScope = KnowledgeScope.of(qaTry.knowledgeScopeId),
+            contentMapMode = contentMapModeOf(qaTry, objectMapper),
+        )
     }
 }
+
+/**
+ * 한 조회에 걸리는 두 게이트. 축이 둘이라 묶어 든다.
+ *
+ * `qaTryId` 가 없는 조회(운영 조회)는 운영 스코프에 [ContentMapMode.DEFAULT] 다 — 게이트는 런에
+ * 매달린 것이고, 런이 없으면 끌 것도 없다.
+ */
+private data class SceneContextGate(
+    val knowledgeScope: KnowledgeScope,
+    val contentMapMode: ContentMapMode,
+)

@@ -185,11 +185,17 @@ class QaAgentInboundRouter(
             routeKnowledgeSearch(qaTryId, qaTry, envelope)
             return
         }
-        // 지도 쓰기도 표시용 message 없이 payload 만 싣고 응답을 기다린다(ARTEL-644). 지식 쓰기와
-        // 달리 `knowledge_mode` 게이트를 지나지 않는다 — 여기가 쓰는 것은 지식창고가 아니라
-        // content_map 이고, 그 둘은 스코프도 수명도 다르다.
+        // 지도 쓰기도 표시용 message 없이 payload 만 싣고 응답을 기다린다(ARTEL-644). 게이트는
+        // `knowledge_mode` 가 아니라 `content_map_mode` 다 — 여기가 쓰는 것은 지식창고가 아니라
+        // content_map 이고, 그 둘은 스코프도 수명도 다르다. 두 축을 한 스위치로 묶으면 지식이
+        // 도왔는지 지도가 도왔는지를 가르는 2×2 가 성립하지 않는다.
+        //
+        // 지식 쪽과 같이 분기 **전에** 한 번만 건다. 타입마다 따로 걸면 새 쓰기 타입이 생겼을 때
+        // 빠뜨리기 쉽고, 빠뜨린 타입만 조용히 지도를 바꿔 `frozen` 으로 돌린 arm 이 사실은 다음
+        // arm 의 출발점을 옮긴 셈이 된다.
         if (envelope.type in CapabilityWriteFrames.INBOUND_TYPES) {
             val qaTry = activeTry(qaTryId) ?: return
+            if (!allowContentMapWrite(qaTryId, qaTry, envelope)) return
             routeCapabilityWrite(qaTryId, qaTry, envelope)
             return
         }
@@ -264,6 +270,12 @@ class QaAgentInboundRouter(
         val id = requireNotNull(qaTry.id)
         val configJson = run.runConfig.asString()
         val config = objectMapper.readTree(configJson)
+        // 이 try 가 PENDING 때 받아 둔 gate 를 세션 공통 설정 위에 다시 얹는다. run 의 스냅샷에는
+        // gate 가 없으므로(그쪽은 Agent 가 확정한 설정이다) 그대로 쓰면 run 경로로 시작한 arm 의
+        // gate 가 이 시나리오부터 사라진다 — 런 중간에 arm 이 바뀌는 셈이고, 그 회귀는 조용하다.
+        val storedConfig = objectMapper.writeValueAsString(
+            mergeCarriedGates(qaTry.runConfig.asString(), config, objectMapper)
+        )
         val activated = tryRepository.activatePending(
             id = id,
             agentSessionId = sessionId,
@@ -272,7 +284,7 @@ class QaAgentInboundRouter(
             promptVersion = config.textAt("prompt_version"),
             agentArch = config.textAt("agent_arch"),
             agentFingerprint = config.textAt("agent_fingerprint"),
-            runConfig = configJson,
+            runConfig = storedConfig,
             updatedAt = Instant.now(clock)
         )
         if (activated != 1) return tryRepository.findById(id)?.takeIf { it.status == "RUNNING" }
@@ -355,6 +367,34 @@ class QaAgentInboundRouter(
             qaTry,
             envelope,
             "${envelope.type} rejected: knowledge_mode=${mode.wire} does not allow writing to the knowledge base"
+        )
+        return false
+    }
+
+    /**
+     * 이 런이 content map 에 써도 되는가.
+     *
+     * `on` 이 아니면 거부한다. **throw 하지 않는 것이 이 함수의 요점이다** — 거부는 정상 동작이고,
+     * 여기서 예외가 WS 수신 체인 밖으로 나가면 소켓이 닫혀 런 전체가 실패한다
+     * ([allowKnowledgeWrite] 와 같은 판단).
+     *
+     * 거부도 요청의 correlation 을 문 ERROR 로 답한다. 여기서 답하지 않으면 `frozen`/`off` 런의
+     * **모든** 지도 쓰기가 agent 쪽 tool 타임아웃을 통째로 태운다 — 측정용 arm 이 가장 느려지는,
+     * 지표에는 실패로 남지 않는 종류의 회귀다. 지도 쓰기는 두 타입 다 답을 기다리므로
+     * [ANSWERED_WRITE_TYPES] 같은 목록으로 가를 것이 없고, [rejectCapabilityWrite] 가 그대로 쓰인다.
+     */
+    private suspend fun allowContentMapWrite(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope
+    ): Boolean {
+        val mode = contentMapModeOf(qaTry, objectMapper)
+        if (mode.writable) return true
+        rejectCapabilityWrite(
+            qaTryId,
+            qaTry,
+            envelope,
+            "${envelope.type} rejected: content_map_mode=${mode.wire} does not allow writing to the content map"
         )
         return false
     }

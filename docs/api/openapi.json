@@ -5427,6 +5427,9 @@
           },
           "knowledgeMode": {
             "type": "string"
+          },
+          "contentMapMode": {
+            "type": "string"
           }
         }
       },
@@ -5541,6 +5544,12 @@
           },
           "force": {
             "type": "boolean"
+          },
+          "knowledgeMode": {
+            "type": "string"
+          },
+          "contentMapMode": {
+            "type": "string"
           }
         }
       },

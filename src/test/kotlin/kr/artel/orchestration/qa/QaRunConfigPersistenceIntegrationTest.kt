@@ -9,6 +9,7 @@ import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.contentmap.entity.ContentMapMode
 import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
@@ -22,8 +23,12 @@ import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.qa.dto.CreateQaRunRequest
 import kr.artel.orchestration.qa.service.QaKnowledgeSettings
+import kr.artel.orchestration.qa.service.QaRunGates
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
+import kr.artel.orchestration.qa.service.toContentMapMode
+import kr.artel.orchestration.qa.service.toRunGates
 import kr.artel.orchestration.qa.service.toKnowledgeSettings
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
@@ -31,6 +36,7 @@ import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -155,11 +161,13 @@ class QaRunConfigPersistenceIntegrationTest {
         assertThat(running.agentSessionId).isEqualTo("session-1")
         assertThat(running.model).isNull()
         assertThat(running.agentFingerprint).isNull()
-        // Agent 가 아무것도 말하지 않아도 knowledge_mode 는 남는다 — Orchestration 이 집행하는
-        // 값이라 Agent 의 침묵과 무관하고, 빠지면 그 런이 어느 arm 이었는지 알 수 없다(ARTEL-256).
+        // Agent 가 아무것도 말하지 않아도 두 게이트는 남는다 — Orchestration 이 집행하는 값이라
+        // Agent 의 침묵과 무관하고, 빠지면 그 런이 어느 arm 이었는지 알 수 없다(ARTEL-256).
         val stored = objectMapper.readTree(running.runConfig.asString())
-        assertThat(stored.fieldNames().asSequence().toList()).containsExactly("knowledge_mode")
+        assertThat(stored.fieldNames().asSequence().toList())
+            .containsExactlyInAnyOrder("knowledge_mode", "content_map_mode")
         assertThat(stored.path("knowledge_mode").asText()).isEqualTo("learning")
+        assertThat(stored.path("content_map_mode").asText()).isEqualTo("on")
     }
 
     // ---------------------------------------------------- 지식 스코프·모드 (ARTEL-256)
@@ -311,9 +319,204 @@ class QaRunConfigPersistenceIntegrationTest {
         assertThat(qaTryRepository.findById(started.tries[0].id!!)!!.status).isEqualTo("PENDING")
     }
 
+    // ------------------------------------------------------- content_map_mode
+
+    /**
+     * content map 게이트도 **런이 만들어지는 순간** 기록된다. 지식 게이트와 같은 이유다 — 세션 부착을
+     * 기다리면 그 창에서 게이트가 비어 있고, `frozen` 으로 돌린 arm 이 그 사이에 지도에 쓸 수 있다.
+     */
+    @Test
+    fun `content map 모드는 세션 부착 전에 이미 기록된다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val (starting, _) = persistence.createStarting(
+            ids.scenarioId,
+            ids.instanceId,
+            ids.ownerId,
+            QaKnowledgeSettings(),
+            ContentMapMode.FROZEN
+        )
+
+        assertThat(starting.status).isEqualTo("STARTING")
+        assertThat(objectMapper.readTree(starting.runConfig.asString()).path("content_map_mode").asText())
+            .isEqualTo("frozen")
+    }
+
+    /**
+     * Agent 스냅샷이 run_config 를 통째로 덮어써도 **두 게이트가 함께** 살아남아야 한다.
+     *
+     * 하나만 옮겨 오는 회귀가 이 자리에서 가장 나기 쉽다. 그렇게 되면 빠진 쪽은 STARTING 창에서만
+     * 살아 있다가 런이 RUNNING 이 되는 순간 조용히 기본값으로 돌아간다.
+     */
+    @Test
+    fun `Agent 스냅샷을 덮어써도 두 게이트가 함께 남는다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val (starting, _) = persistence.createStarting(
+            ids.scenarioId,
+            ids.instanceId,
+            ids.ownerId,
+            QaKnowledgeSettings(mode = KnowledgeMode.OFF),
+            ContentMapMode.OFF
+        )
+
+        val (running, _) = persistence.attachAndMarkRunning(
+            starting,
+            "session-1",
+            objectMapper.readTree(resolvedConfig)
+        )
+
+        val stored = objectMapper.readTree(running.runConfig.asString())
+        assertThat(stored.path("knowledge_mode").asText()).isEqualTo("off")
+        assertThat(stored.path("content_map_mode").asText()).isEqualTo("off")
+        assertThat(stored.path("agent_fingerprint").asText()).isEqualTo("a3f1c9d2e8b0")
+    }
+
+    /** 요청이 content map 설정을 주지 않으면 지금까지의 동작(`on`)이다. */
+    @Test
+    fun `잘못된 content map 설정은 요청 단계에서 거절된다`() {
+        val base = CreateQaTryRequest(testScenarioId = "1", gameInstanceId = "2")
+
+        assertThat(base.toContentMapMode()).isEqualTo(ContentMapMode.ON)
+        assertThat(base.copy(contentMapMode = "FROZEN").toContentMapMode()).isEqualTo(ContentMapMode.FROZEN)
+        assertThat(base.copy(contentMapMode = "off").toContentMapMode()).isEqualTo(ContentMapMode.OFF)
+
+        // 조용히 기본값으로 떨어지면 지도 없이 돌린다고 믿은 arm 이 사실은 지도를 읽고, 그 결과는
+        // 그럴듯해서 실험이 끝날 때까지 아무도 못 알아챈다.
+        assertThatThrownBy { base.copy(contentMapMode = "of").toContentMapMode() }
+            .isInstanceOf(BadRequestException::class.java)
+    }
+
+    /** 두 축은 서로를 건드리지 않는다. 한 스위치로 묶이면 2×2 가 성립하지 않는다. */
+    @Test
+    fun `지식 축과 content map 축이 서로를 건드리지 않는다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val (starting, _) = persistence.createStarting(
+            ids.scenarioId,
+            ids.instanceId,
+            ids.ownerId,
+            QaKnowledgeSettings(mode = KnowledgeMode.LEARNING),
+            ContentMapMode.OFF
+        )
+
+        val stored = objectMapper.readTree(starting.runConfig.asString())
+        assertThat(stored.path("knowledge_mode").asText()).isEqualTo("learning")
+        assertThat(stored.path("content_map_mode").asText()).isEqualTo("off")
+    }
+
+    // ------------------------------------------------- run(TR) 경로의 두 gate
+
+    /**
+     * **run 경로로 준 두 gate 가 그 run 의 모든 try 에 실린다.**
+     *
+     * 벤치마크가 test run 단위로 조직돼 있어, 이 경로가 gate 를 안 실으면 2×2 를 요청할 방법이
+     * 아예 없다. try 전부를 보는 이유는 run 하나가 한 arm 이기 때문이다 — 한 try 만 확인하면
+     * 나머지가 기본값으로 돌아도 녹색이다.
+     */
+    @Test
+    fun `run 경로의 두 gate 가 모든 try 에 실린다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val second = testScenarioRepository.save(TestScenarioEntity(projectId = ids.projectId))!!.id!!
+
+        val started = persistence.createRunStarting(
+            ids.testRunId,
+            ids.instanceId,
+            ids.ownerId,
+            listOf(ids.scenarioId, second),
+            QaRunGates(knowledgeMode = KnowledgeMode.FROZEN, contentMapMode = ContentMapMode.OFF)
+        )
+
+        assertThat(started.tries).hasSize(2)
+        assertThat(started.tries.map { objectMapper.readTree(it.runConfig.asString()) })
+            .allSatisfy {
+                assertThat(it.path("knowledge_mode").asText()).isEqualTo("frozen")
+                assertThat(it.path("content_map_mode").asText()).isEqualTo("off")
+            }
+    }
+
+    /**
+     * **아무것도 안 주면 두 키가 아예 없다.** 이 경로로 시작하던 기존 호출자의 행이 글자까지
+     * 그대로여야 한다 — 기본값을 써 넣으면 행은 달라지고, "말하지 않았다" 와 "기본값을 골랐다" 가
+     * 사후에 구분되지 않는다.
+     */
+    @Test
+    fun `run 경로에 gate 를 안 주면 두 키가 실리지 않는다`(): Unit = runBlocking {
+        val ids = seedIds()
+
+        val started = persistence.createRunStarting(
+            ids.testRunId, ids.instanceId, ids.ownerId, listOf(ids.scenarioId)
+        )
+
+        val stored = objectMapper.readTree(started.tries.single().runConfig.asString())
+        assertThat(stored.fieldNames().asSequence().toList()).isEmpty()
+    }
+
+    /**
+     * 잘못된 토큰은 400 이고, **메시지가 단일 시나리오 경로와 같다.** 두 진입점이 각자 파싱하면
+     * 언젠가 한쪽만 새 값을 받고, 그때 두 경로의 400 도 갈린다.
+     */
+    @Test
+    fun `run 경로의 잘못된 gate 는 단일 시나리오 경로와 같은 400 이다`() {
+        val run = CreateQaRunRequest(testRunId = "1", gameInstanceId = "2")
+        val single = CreateQaTryRequest(testScenarioId = "1", gameInstanceId = "2")
+
+        assertThat(run.toRunGates()).isEqualTo(QaRunGates())
+        assertThat(run.copy(knowledgeMode = "frozen", contentMapMode = "OFF").toRunGates())
+            .isEqualTo(QaRunGates(KnowledgeMode.FROZEN, ContentMapMode.OFF))
+
+        assertThat(catchThrowable { run.copy(knowledgeMode = "learnign").toRunGates() })
+            .isInstanceOf(BadRequestException::class.java)
+            .hasMessage(
+                catchThrowable { single.copy(knowledgeMode = "learnign").toKnowledgeSettings() }.message
+            )
+        assertThat(catchThrowable { run.copy(contentMapMode = "of").toRunGates() })
+            .isInstanceOf(BadRequestException::class.java)
+            .hasMessage(
+                catchThrowable { single.copy(contentMapMode = "of").toContentMapMode() }.message
+            )
+    }
+
+    /**
+     * run 경로에서도 gate 는 Agent 스냅샷의 덮어쓰기를 넘어 살아남는다.
+     *
+     * 첫 try 는 `attachRunAndMarkRunning` 이 활성하는데, 그 UPDATE 가 run_config 를 통째로
+     * 갈아치운다. 빠뜨리면 run 경로로 시작한 arm 의 gate 가 RUNNING 이 되는 순간 사라진다 —
+     * 단일 시나리오 경로가 `attachAndMarkRunning` 에서 지키는 규칙과 같은 것이다.
+     */
+    @Test
+    fun `run 경로의 첫 try 도 세션 부착 뒤에 gate 를 지킨다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val started = persistence.createRunStarting(
+            ids.testRunId,
+            ids.instanceId,
+            ids.ownerId,
+            listOf(ids.scenarioId),
+            QaRunGates(knowledgeMode = KnowledgeMode.OFF, contentMapMode = ContentMapMode.FROZEN)
+        )
+
+        persistence.attachRunAndMarkRunning(
+            started.qaRun,
+            requireNotNull(started.tries.first().id),
+            "session-1",
+            objectMapper.readTree(resolvedConfig)
+        )
+
+        val activated = requireNotNull(qaTryRepository.findById(started.tries.first().id!!))
+        val stored = objectMapper.readTree(activated.runConfig.asString())
+        assertThat(activated.status).isEqualTo("RUNNING")
+        assertThat(stored.path("knowledge_mode").asText()).isEqualTo("off")
+        assertThat(stored.path("content_map_mode").asText()).isEqualTo("frozen")
+        // Agent 스냅샷도 그대로 있다 — 얹는 것이지 갈아치우는 것이 아니다.
+        assertThat(stored.path("agent_fingerprint").asText()).isEqualTo("a3f1c9d2e8b0")
+    }
+
     // ----------------------------------------------------------------- seeding
 
-    private data class SeedIds(val ownerId: Long, val scenarioId: Long, val instanceId: Long)
+    private data class SeedIds(
+        val ownerId: Long,
+        val projectId: Long,
+        val scenarioId: Long,
+        val instanceId: Long,
+        val testRunId: Long
+    )
 
     /** 런 하나를 만들 수 있는 최소 배경(사용자·프로젝트·시나리오·인스턴스). */
     private suspend fun seedIds(): SeedIds {
@@ -343,7 +546,14 @@ class QaRunConfigPersistenceIntegrationTest {
                 updatedAt = now
             )
         )!!
-        return SeedIds(ownerId = ownerId, scenarioId = scenario.id!!, instanceId = instance.id!!)
+        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))!!
+        return SeedIds(
+            ownerId = ownerId,
+            projectId = project.id!!,
+            scenarioId = scenario.id!!,
+            instanceId = instance.id!!,
+            testRunId = testRun.id!!
+        )
     }
 
     /**
