@@ -80,10 +80,22 @@ object ScenarioCoverageAudit {
         fun rejectionMessage(): String = buildList {
             if (unreviewed.isNotEmpty()) add("${unreviewed.size}건을 검토하지 않았습니다")
             if (missing.isNotEmpty()) add("관련 있다고 판단한 ${missing.size}건이 시나리오에 빠졌습니다")
-            if (ghost.isNotEmpty()) add("존재하지 않는 케이스 ${ghost.size}건을 가리켰습니다")
-            if (ungrounded.isNotEmpty()) add("근거 없는 스텝이 ${ungrounded.size}개 있습니다")
+            if (ghost.isNotEmpty())
+                add("존재하지 않는 케이스를 가리켰습니다: ${ghost.joinToString(", ")}")
+            // **어느 스텝이 왜 어긋났는지까지 말한다.** 개수만 말하던 동안 모델은 짐작으로 고쳤고,
+            // 실측(런 14)에서 둘을 하나까지 줄인 뒤 마지막 하나를 못 찾아 그 시나리오를 포기했다.
+            // 이유는 이미 [StepRef.reason] 에 계산돼 있었다 — 세는 자리에서 버리고 있었을 뿐이다.
+            if (ungrounded.isNotEmpty()) {
+                add(
+                    ungrounded.joinToString(", ") { "${it.stepIndex + 1}번째 스텝: ${it.reason}" }
+                )
+            }
             if (falseUnknowns.isNotEmpty())
-                add("길을 모른다고 한 ${falseUnknowns.size}곳이 사실은 명세에 있습니다")
+                add(
+                    falseUnknowns.joinToString(", ") {
+                        "${it.stepIndex + 1}번째 스텝: ${it.reason}"
+                    }
+                )
             // 동거 불가는 여기 없다 — 저장을 막지 않으므로 거절 사유가 아니다(ARTEL-497).
             // 그것은 알림과 되묻기로 나간다.
         }.joinToString(", ") + ". 저장하지 않았습니다."
