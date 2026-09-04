@@ -215,6 +215,9 @@ enum class AuthoringStage(@get:JsonValue val wire: String) {
     /** 결과가 도착해 전 건 판정과 대조하는 중(ARTEL-403). */
     CHECKING("checking"),
 
+    /** 시나리오 하나를 받아 검수를 지났다. 턴은 계속된다 — 나머지가 더 온다. */
+    WROTE_ONE("wrote_one"),
+
     /** 검사를 통과해 시나리오를 저장했다. */
     SAVED("saved"),
 
@@ -261,5 +264,17 @@ data class ScenarioStreamEvent(
      * 실측(런 178)에서 일곱 중 하나만 물었고, 사용자는 시나리오가 완성된 줄 안다. 한 번에
      * 보여 줘야 아는 것만 답하고 나머지는 그대로 둘 수 있다.
      */
-    val questions: List<ScenarioQuestion> = emptyList()
+    val questions: List<ScenarioQuestion> = emptyList(),
+    /**
+     * 이번 턴에 지금까지 받아 검수를 지난 시나리오 수. `progress` 에만 실린다.
+     *
+     * 시나리오를 하나씩 받게 되면서 생겼다. 그전에는 결과가 통째로 한 번에 왔으므로 화면이
+     * 셀 것이 없었고, 기다리는 동안 무엇이 되고 있는지는 단계 이름 하나가 전부였다.
+     *
+     * 전체 수는 [expected] 다. 모델이 몇 개를 쓸지는 쓰기 전에는 아무도 모르므로 계산이 낸
+     * 흐름 수로 어림한다 — 맞지 않을 수 있고, 그때는 실제 수가 어림을 넘어선다.
+     */
+    val written: Int? = null,
+    /** 어림잡은 전체 시나리오 수. 모르면 null 이고, 그때 화면은 진행률 대신 세는 수만 보인다. */
+    val expected: Int? = null,
 )

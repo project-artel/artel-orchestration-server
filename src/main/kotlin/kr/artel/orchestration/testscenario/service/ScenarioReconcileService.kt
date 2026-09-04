@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
+import java.util.concurrent.ConcurrentHashMap
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.toSet
@@ -84,6 +85,13 @@ class ScenarioReconcileService(
          * 답한 질문을 다시 안 묻는 것으로 풀 일이지 모르는 것을 감춰서 풀 일이 아니다.
          */
         val questions: List<ScenarioQuestion> = emptyList(),
+        /**
+         * 검수를 지난 최종본. 모델이 낸 것과 다르다 — 나누기와 메우기가 지난 뒤의 모습이다.
+         *
+         * 카드로 내보내는 쪽이 이것을 쓴다. 모델이 낸 것을 그대로 보내면 사용자는 코드가 끼운
+         * `bridge` 가 빠진 시나리오를 보고 커밋하게 되고, 저장된 것과 화면에 뜬 것이 갈린다.
+         */
+        val checked: List<ScenarioResult> = emptyList(),
     ) {
         val rejected: Boolean get() = findings.rejected
     }
@@ -101,6 +109,7 @@ class ScenarioReconcileService(
         appUserId: Long,
         scenarios: List<ScenarioResult>,
         reviewed: ReviewedCases? = null,
+        save: Boolean = true,
     ): ReconcileOutcome {
         // SAFETY: 빈 배열은 정상 턴 — DB 무변경(삽입도 삭제도 없음).
         if (scenarios.isEmpty()) {
@@ -110,7 +119,8 @@ class ScenarioReconcileService(
 
         // 같은 자리의 케이스들을 본다(ARTEL-466). 나누고 합치는 문제는 말만 한다 — 그건 요청이
         // 정하는 것이지 코드가 정할 일이 아니다.
-        val facts = caseFacts(projectId)
+        val known = projectFacts(projectId)
+        val facts = known.cases
         // 케이스를 사람 말로 부르는 함수. 내부 번호는 사용자가 읽는 글에 넣지 않는다.
         val byId = facts.associateBy { it.id }
         val describe: (Long) -> String = { id -> byId[id]?.let(ScenarioSiblingCheck::describe).orEmpty() }
@@ -125,10 +135,10 @@ class ScenarioReconcileService(
         // **걸어가는 것을 모순이라 하지 않는다**(ARTEL-581). 앞 스텝이 바꿔 놓은 값을 뒤 스텝이
         // 전제로 삼는 것은 함께 못 서는 것이 아니라 순서다 — 실측(런 159)에서 `MapMove.position` 이
         // 그랬고, 걸어가는 시나리오 하나가 네 조각이 났다.
-        val changedBy = valuesChangedByCases(projectId)
+        val changedBy = known.changedBy
         // **게임이 스스로 움직이는 값도 움직이는 값이다**(ARTEL-625). 위의 [changedBy] 는 케이스가
         // 된 기능만 알아서, 전투를 이겨야 오르는 값이 영영 얼어 있는 것으로 보인다.
-        val movable = movableValues(projectId)
+        val movable = known.movable
         val divided = ScenarioConflictSplit.apply(
             scenarios,
             contested,
@@ -165,7 +175,7 @@ class ScenarioReconcileService(
         val (bridged, notices, blocked) =
             if (repair.bridges)
                 repairByInsertion(
-                    routes, given, describe, openingFacts(projectId, facts), caseOfCapability(projectId),
+                    routes, given, describe, openingFacts(projectId, facts), known.caseOfCapability,
                     { id -> byId[id]?.scene },
                     { id -> byId[id]?.guards.orEmpty() }, ::writesOfCapabilities,
                 )
@@ -185,14 +195,14 @@ class ScenarioReconcileService(
             withCaseOperations(projectId, appUserId, bridged),
         ) { id -> byId[id]?.guards.orEmpty() }
 
-        val raised = raisedIn(projectId)
+        val raised = known.raisedIn
         // **코드가 끼운 브리지도 값을 바꾼다.** 그것을 안 읽으면 멀쩡한 걸음을 어긋났다고 한다 —
         // 실측(런 225)에서 `position` 을 한 칸씩 옮기는 브리지 여섯을 못 읽고 여섯 건을 잘못 짚었다.
         val bridgeEffects = effectsOfBridges(repaired)
         // **한 번 걷고 둘을 함께 받는다**(ARTEL-660). 어긋남과 시작 조건을 따로 계산하면 규칙이
         // 둘이 되고, 그러면 갈라진다 — 실측(런 233)에서 저장된 안내가 계산과 정반대를 적었다.
         // **줄지 않는 값과 아예 모르게 되는 값을 가른다**(ARTEL-672).
-        val climbing = onlyClimbing(projectId)
+        val climbing = known.climbing
         val walked = repaired.map {
             ScenarioContradictionCheck.walk(walkOf(it, byId, raised, bridgeEffects, climbing))
         }
@@ -264,6 +274,8 @@ class ScenarioReconcileService(
         // **판이 아니라 프로젝트에서 읽는다**(ARTEL-676). 판 단위로 읽던 동안에는 새 판마다
         // `Map_scene→TurnBattleScene 을 어떻게 가나요` 가 다시 나갔다 — 지도가 그대로면 답도
         // 그대로인데도. 첫 판에 많이 묻고 그 뒤로 줄어드는 것이 이 되묻기의 전제다.
+        // **이것만은 들고 있지 않는다.** 사용자가 질문을 거절하면 그 자리에서 바뀌는 값이라,
+        // 낡은 것을 읽으면 방금 "그대로 두기"를 누른 질문을 다시 묻는다.
         val answered = answeredQuestionIds(projectId)
         // **모르는 자리를 전부 낸다**(ARTEL-630). 하나만 내면 나머지는 아무 말 없이 미상으로 남고,
         // 사용자는 시나리오가 완성된 줄 안다 — 실측(런 178)에서 못 간다고 적은 자리가 일곱인데
@@ -298,6 +310,14 @@ class ScenarioReconcileService(
                         ". 같은 씬의 나머지도 담으려면 말씀해 주세요."
                 )
             }
+        }
+
+        // **검수만 하고 돌려주는 자리**(시나리오 하나씩 받기). 저장은 카드가 나간 뒤에 한다는
+        // 경로가 따로 있고, 그 경로도 카드를 내보내기 전에 같은 검수를 지나야 한다. 통과한 결과를
+        // 함께 돌려주는 것은 코드가 메운 `bridge` 까지 담긴 것이 최종본이기 때문이다.
+        if (!save) {
+            trace.record(runId, "4. 저장한다", "저장하지 않는다(검수만) — 시나리오 ${opened.size}개")
+            return ReconcileOutcome(0, findings, allNotices, question, questions, opened)
         }
 
         var applied = 0
@@ -354,7 +374,7 @@ class ScenarioReconcileService(
                 opened.joinToString("\n") { "  · ${it.title} — 스텝 ${it.steps.size}" } +
                 (if (questions.isEmpty()) "" else "\n되묻는다: " + questions.joinToString(" · ") { it.id }),
         )
-        return ReconcileOutcome(applied, findings, allNotices, question, questions)
+        return ReconcileOutcome(applied, findings, allNotices, question, questions, opened)
     }
 
     /**
@@ -661,6 +681,42 @@ class ScenarioReconcileService(
      * 전량인 이유는 **안 담긴 것**을 말하려면 담긴 것만으로 모자라기 때문이다. 조회가 터지면 빈
      * 목록이고, 그러면 아래 검사들이 전부 조용해진다 — 이것들이 저작을 막을 이유는 없다.
      */
+    /**
+     * 한 턴 동안 변하지 않는 프로젝트의 사실들.
+     *
+     * 검수를 시나리오마다 부르게 되면서 생겼다. 여기 담긴 여덟 가지는 전부 `projectId` 하나로
+     * 정해지고 턴 중에 바뀌지 않는데, 부를 때마다 케이스 전량과 지도를 다시 읽었다 — 시나리오
+     * 일곱이면 일곱 번이다.
+     *
+     * 오래 들고 있지 않는다. 새 요청이 시작될 때 [forget] 으로 버린다 — 그 사이에 케이스가
+     * 늘거나 사용자가 질문에 답했을 수 있고, 낡은 값으로 검수하면 있지도 않은 것을 짚는다.
+     */
+    private data class ProjectFacts(
+        val cases: List<ScenarioSiblingCheck.CaseFact>,
+        val raisedIn: Map<String, Set<String>>,
+        val climbing: Set<String>,
+        val caseOfCapability: (Long) -> Long?,
+        val movable: Set<String>,
+        val changedBy: Map<Long, Set<String>>,
+    )
+
+    private val held = ConcurrentHashMap<Long, ProjectFacts>()
+
+    /** 이 프로젝트에 대해 들고 있던 것을 버린다. 새 요청이 시작될 때 부른다. */
+    fun forget(projectId: Long) {
+        held.remove(projectId)
+    }
+
+    private suspend fun projectFacts(projectId: Long): ProjectFacts =
+        held[projectId] ?: ProjectFacts(
+            cases = caseFacts(projectId),
+            raisedIn = raisedIn(projectId),
+            climbing = onlyClimbing(projectId),
+            caseOfCapability = caseOfCapability(projectId),
+            movable = movableValues(projectId),
+            changedBy = valuesChangedByCases(projectId),
+        ).also { held[projectId] = it }
+
     private suspend fun caseFacts(projectId: Long): List<ScenarioSiblingCheck.CaseFact> = runCatching {
         testCaseRepository.findByProjectIdOrderByIdAsc(projectId).toList().map { case ->
             ScenarioSiblingCheck.CaseFact(
