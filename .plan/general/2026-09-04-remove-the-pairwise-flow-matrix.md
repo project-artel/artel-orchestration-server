@@ -141,15 +141,20 @@
     도구를 따로 만들 필요도 서버가 주기적으로 물어볼 필요도 없다. `CapabilityConditionReader`
     에 넣은 `forget` 과 같은 모양이다.
 
-  - **지문 조회는 보루로도 못 쓴다(지금은).** `select count(*), max(updated_at)` 을 재 보니
-    새로 들거나 지우는 것은 잡지만 **고치는 것은 못 잡는다.**
+  - **지문 조회는 보루로 쓸 수 있다.** `select count(*), max(updated_at)` 이면 된다.
 
-        UPDATE 전  1 | 2026-09-02 06:44:06.873798
-        UPDATE 후  1 | 2026-09-02 06:44:06.873798   ← 안 움직인다
+        하나 고침    → max 가 밀린다
+        하나 지움    → count 가 준다
+        지우고 넣음  → count 는 같고 max 가 밀린다
 
-    `MapTestCaseWriter` 가 `prior.copy(...)` 로 고쳐 쓰는데 `updatedAt` 이 옛 값 그대로
-    실리고, 표에 트리거도 없다. 지문을 보루로 쓰려면 **갱신할 때 시각을 미는 일이 먼저**다.
-    그 전에는 있으나 마나이므로 이 플랜에서는 쓰지 않는다.
+    시각은 손으로 안 넣는다. `@EnableR2dbcAuditing` 이 켜져 있고 `TestCaseEntity.updatedAt`
+    에 `@LastModifiedDate` 가 붙어 있어 **저장할 때 Spring 이 채운다.** 실측으로 확인했다 —
+    88건 중 80건이 `updated_at > created_at` 이고, 마지막 재적재의 `created=8 · updated=80`
+    과 맞는다.
+
+    다만 **SQL 로 직접 고치면 안 밀린다.** 표에 트리거가 없어 애플리케이션을 안 지나는 변경은
+    auditing 이 못 본다. 데이터 이관이나 손질을 SQL 로 하는 일이 생기면 그때는 흐름을 손으로
+    버려야 한다.
 
   - 케이스마다 판을 다는 **버저닝은 넣지 않는다.** 안 바뀐 케이스까지 흔들린다.
 
