@@ -18,6 +18,23 @@ data class QaRunEntity(
     @Column("started_by") val startedBy: Long,
     @Column("agent_session_id") val agentSessionId: String? = null,
     val status: String,
+    /**
+     * 이 run 이 속한 실험 묶음의 이름. 자유 문자열이고 null 이면 어느 실험에도 안 묶인 run 이다.
+     *
+     * **arm 을 여기 적지 않는다.** 어떤 arm 인지는 `run_config` 가 이미 말한다
+     * (`content_map_mode` · `knowledge_mode`). 같은 사실을 두 곳에 적으면 언젠가 어긋나고, 그때
+     * 어느 쪽이 진실인지가 질문이 된다. 그래서 `arm:map-only` 나 `지도만` 같은 값이 여기 들어오기
+     * 시작하면 이 설계가 무너진다 — 집계 화면은 `label` 로 묶고 `run_config` 축으로 쪼개는 것을
+     * 전제로 만들어져 있고, arm 이 이름에도 실리면 같은 arm 이 두 칸으로 갈린다.
+     *
+     * 빠져 있던 것은 arm 이 아니라 묶음이다. 같은 설정으로 다음 달에 다시 돌리면 `run_config` 는
+     * 같은데 다른 실험이고, 그 둘을 가를 것이 이 컬럼 말고는 없다. 그러니 여기 적는 것은 실험
+     * 이름 하나뿐이다 — `content-map-2x2-파일럿`.
+     *
+     * 서버가 그 규칙을 강제하지는 않는다. 형식을 못박으면 다음 실험이 그 형식을 따라가야 하는
+     * 순서가 되고, 그 비용이 규칙을 지키는 비용보다 크다.
+     */
+    val label: String? = null,
     @Column("run_config") val runConfig: Json = Json.of("{}"),
     @Column("started_at") val startedAt: Instant,
     @Column("completed_at") val completedAt: Instant? = null,

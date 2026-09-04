@@ -257,6 +257,28 @@ fun CreateQaRunRequest.toRunGates() = QaRunGates(
     contentMapMode = parseContentMapMode(contentMapMode)
 )
 
+/** `qa_run.label` 의 상한. `test_run.name` 과 같은 값이고, 이유는 V92 마이그레이션의 주석에 있다. */
+internal const val QA_RUN_LABEL_MAX_LENGTH = 255
+
+/**
+ * run 요청의 실험 묶음 이름을 읽는다.
+ *
+ * 값을 검사하지 않는 것이 요점이다 — 자유 문자열이라야 다음 실험이 이름 형식을 물려받지 않는다.
+ * 다듬는 것은 둘뿐이다: 앞뒤 공백을 지우고, 그러고도 비면 null 로 읽는다. 빈 이름은 묶음이 아닌데,
+ * 그것을 값으로 남기면 목록 선택기에 이름 없는 줄이 하나 서고 그 줄을 고른 사람이 무엇을 고른
+ * 것인지 말할 수 없다.
+ *
+ * 길이만 거절한다. 넘기면 저장 시점에 DB 제약이 500 으로 터지는데, 그때는 요청의 어느 필드가
+ * 문제인지가 응답에 남지 않는다.
+ */
+fun CreateQaRunRequest.toRunLabel(): String? {
+    val trimmed = label?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    if (trimmed.length > QA_RUN_LABEL_MAX_LENGTH) {
+        throw BadRequestException("label must be at most $QA_RUN_LABEL_MAX_LENGTH characters")
+    }
+    return trimmed
+}
+
 /**
  * The comparison axes, lifted out of the Agent's resolved config.
  *
@@ -340,13 +362,17 @@ class QaTryPersistenceService(
      *
      *   단일 시나리오 경로와 달리 기본값을 써 넣지 않는다. 아무것도 안 주면 `run_config` 가 `{}` 로
      *   남아 이 경로로 시작하던 기존 호출자의 행이 글자까지 그대로다.
+     * @param label 이 run 이 속한 실험 묶음의 이름. [gates] 와 같은 자리에서 받되 `run_config` 가
+     *   아니라 `qa_run` 컬럼에 남는다 — 묶음은 run 단위이고 arm 은 try 단위라, 둘을 한 곳에 두면
+     *   `qa_try` 를 세는 집계가 묶음까지 세게 된다. null 이면 어느 실험에도 안 묶인 run 이다.
      */
     suspend fun createRunStarting(
         testRunId: Long,
         gameInstanceId: Long,
         startedBy: Long,
         scenarioIds: List<Long>,
-        gates: QaRunGates = QaRunGates()
+        gates: QaRunGates = QaRunGates(),
+        label: String? = null
     ): QaRunStarting =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -365,6 +391,7 @@ class QaTryPersistenceService(
                     gameInstanceId = gameInstanceId,
                     startedBy = startedBy,
                     status = "STARTING",
+                    label = label,
                     startedAt = now
                 )
             )
@@ -601,7 +628,8 @@ class QaTryService(
         userId: Long,
         settings: QaRunSettings = QaRunSettings(),
         force: Boolean = false,
-        gates: QaRunGates = QaRunGates()
+        gates: QaRunGates = QaRunGates(),
+        label: String? = null
     ): QaRunResponse {
         val scenarios = testRunService.getScenarios(testRunId, userId)
             ?: throw NotFoundException()
@@ -631,7 +659,7 @@ class QaTryService(
             throw ActiveQaRunException()
         }
 
-        val started = persistence.createRunStarting(testRunId, gameInstanceId, userId, scenarioIds, gates)
+        val started = persistence.createRunStarting(testRunId, gameInstanceId, userId, scenarioIds, gates, label)
         val agentScenarios = started.tries.zip(scenarioIds).map { (qaTry, scenarioId) ->
             val entity = scenarioAccessService.accessibleScenario(scenarioId, userId)
                 ?: throw NotFoundException()
@@ -708,6 +736,7 @@ class QaTryService(
         status = status,
         startedAt = startedAt,
         completedAt = completedAt,
+        label = label,
         tries = tries.map { it.toResponse() }
     )
 

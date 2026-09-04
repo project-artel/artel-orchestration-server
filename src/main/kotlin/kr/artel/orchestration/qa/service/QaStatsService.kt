@@ -3,6 +3,7 @@ package kr.artel.orchestration.qa.service
 import kr.artel.orchestration.auth.service.PlatformAccessService
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.qa.dto.QaRunConfigStatsCell
+import kr.artel.orchestration.qa.dto.QaStatsLabelsResponse
 import kr.artel.orchestration.qa.dto.QaStatsResponse
 import kr.artel.orchestration.qa.dto.QaStatsTotals
 import kr.artel.orchestration.qa.repository.QaStatsRepository
@@ -17,6 +18,12 @@ private val DEFAULT_WINDOW: Duration = Duration.ofDays(30)
 
 /** 조합 상한. 실험 공간은 이보다 훨씬 작고, 이 값은 잘못된 축이 들어왔을 때의 폭주 방지선이다. */
 private const val MAX_CELLS = 500
+
+/**
+ * `label` 목록 상한. 선택기 `<select>` 하나에 들어가는 수라 상한이 필요하고, 이 값을 넘길 만큼
+ * 실험이 쌓이면 고르는 자리 자체를 다시 설계해야 한다(검색·최근 목록). 그때까지의 방지선이다.
+ */
+private const val MAX_LABELS = 200
 
 @Service
 class QaStatsService(
@@ -39,13 +46,22 @@ class QaStatsService(
      * `DEVELOPER` 등급은 그 판정을 통과한다. 이 서비스가 등급을 직접 읽지 않고
      * [PlatformAccessService]에 묻는 이유는, 등급을 여는 자리가 늘어날 때 그 판단이 한 곳에만
      * 남아 있어야 무엇이 열렸는지 셀 수 있기 때문이다.
+     *
+     * [testRunId]는 그 멤버십 판정에 **더해지는** 술어다. 남의 프로젝트 test run id 를 넣어도 빈
+     * 집계가 나오고, 없는 id 라고 갈라 답하지 않는다 — 갈라 답하면 그 test run 의 존재 여부가
+     * 새어 나간다. 생략하면 단독 실행 런(`qa_run_id IS NULL`)까지 포함해 지금까지처럼 전부 센다.
+     *
+     * [label]도 같은 자리에 더해지고 [testRunId]와 **독립이다.** 둘을 함께 걸 수 있어야 "1차 실험의
+     * 9013 런" 을 물을 수 있다.
      */
     suspend fun stats(
         projectId: Long?,
         userId: Long,
         from: Instant?,
         to: Instant?,
-        cellLimit: Int
+        cellLimit: Int,
+        testRunId: Long? = null,
+        label: String? = null
     ): QaStatsResponse {
         if (cellLimit !in 1..MAX_CELLS) {
             throw BadRequestException("cellLimit must be between 1 and $MAX_CELLS")
@@ -62,10 +78,14 @@ class QaStatsService(
             seesAllProjects = platformAccessService.seesAllProjects(userId),
             from = start,
             to = end,
-            limit = cellLimit
+            limit = cellLimit,
+            testRunId = testRunId,
+            label = label
         )
         return QaStatsResponse(
             projectId = projectId?.toString(),
+            testRunId = testRunId?.toString(),
+            label = label,
             from = start,
             to = end,
             total = aggregate.total.toTotals(),
@@ -74,6 +94,26 @@ class QaStatsService(
             cellLimit = cellLimit
         )
     }
+
+    /**
+     * 이미 쓰인 실험 묶음 이름의 목록.
+     *
+     * 화면이 `label` 을 자유 입력이 아니라 고르는 자리로 만들 수 있게 하려고 있다. 새 이름을 여기서
+     * 만들지 않는다 — 이름은 run 을 걸 때 정하고, 이 목록은 그렇게 이미 쓰인 것만 돌려준다.
+     *
+     * 가시성은 [stats]와 **같은 술어**다. 남의 프로젝트 `label` 이 새면 안 되고, 목록이 집계보다
+     * 넓으면 고른 순간 0건이 나오는 이름이 선택기에 선다.
+     */
+    suspend fun labels(projectId: Long?, userId: Long): QaStatsLabelsResponse =
+        QaStatsLabelsResponse(
+            projectId = projectId?.toString(),
+            labels = statsRepository.listLabels(
+                projectId = projectId,
+                userId = userId,
+                seesAllProjects = platformAccessService.seesAllProjects(userId),
+                limit = MAX_LABELS
+            )
+        )
 }
 
 /** 합계 행이 없는 경우는 빈 스코프뿐이라 0으로 채운다. 화면이 null 총계를 다루지 않아도 되게 한다. */

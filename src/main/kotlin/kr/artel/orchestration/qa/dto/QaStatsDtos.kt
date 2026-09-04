@@ -18,12 +18,41 @@ import java.time.Instant
 data class QaStatsResponse(
     /** 물어본 프로젝트. 생략하고 부르면 null이고, 그때 집계는 볼 수 있는 전 프로젝트의 합이다. */
     val projectId: String?,
+    /**
+     * 물어본 test run. 생략하고 부르면 null이고, 그때 집계는 단독 실행 런까지 포함한 전부다.
+     *
+     * [projectId] 와 같은 이유로 되돌려 준다 — 화면이 여러 층을 나란히 놓고 비교할 때 어느 응답이
+     * 어느 층의 것인지가 응답 자체에 없으면 요청과 응답을 짝지어 들고 있어야 한다.
+     */
+    val testRunId: String?,
+    /**
+     * 물어본 실험 묶음. 생략하고 부르면 null이고, 그때 집계는 어느 실험에도 안 묶인 런까지 전부다.
+     *
+     * [testRunId] 와 **독립이다.** 둘을 함께 걸면 "1차 실험의 9013 런" 이 되고, 응답이 둘을 다
+     * 되돌려 주므로 화면은 자기가 무엇을 보고 있는지를 응답만 보고 말할 수 있다.
+     */
+    val label: String?,
     val from: Instant,
     val to: Instant,
     val total: QaStatsTotals,
     val cells: List<QaRunConfigStatsCell>,
     val truncated: Boolean,
     val cellLimit: Int
+)
+
+/**
+ * 이미 쓰인 실험 묶음 이름의 목록.
+ *
+ * 화면의 `label` 자리를 자유 입력이 아니라 **고르는 자리**로 만들려고 있다. 자유 문자열의 실질
+ * 위험은 값의 형식이 아니라 `content map 1차` 와 `content map 1차 실험` 이 두 칸으로 갈리는
+ * 것이고, 고르게 만들면 tag 체계를 세우지 않고도 그것이 막힌다.
+ *
+ * @property labels 최근에 쓴 것부터. 새 이름을 여기서 만들지 않는다 — 이름은 run 을 걸 때 정한다.
+ */
+data class QaStatsLabelsResponse(
+    /** 물어본 프로젝트. 생략하고 부르면 null이고, 그때 목록은 볼 수 있는 전 프로젝트의 것이다. */
+    val projectId: String?,
+    val labels: List<String>
 )
 
 /**
