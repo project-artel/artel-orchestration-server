@@ -7,6 +7,7 @@ import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.qa.dto.CreateQaRunRequest
 import kr.artel.orchestration.qa.dto.QaRunResponse
 import kr.artel.orchestration.qa.service.QaTryService
+import kr.artel.orchestration.qa.service.toRunGates
 import kr.artel.orchestration.qa.service.toRunSettings
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -38,7 +39,8 @@ class QaRunController(
                 parseId(request.gameInstanceId),
                 appUserId,
                 request.toRunSettings(objectMapper),
-                request.force
+                request.force,
+                request.toRunGates()
             )
         )
 

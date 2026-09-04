@@ -34,7 +34,16 @@ data class CreateQaTryRequest(
      * 조용히 기본값으로 떨어지면 대조군으로 돌린 arm이 사실은 학습을 하고, 그 결과는 그럴듯해서
      * 실험이 끝날 때까지 아무도 못 알아챈다.
      */
-    val knowledgeMode: String? = null
+    val knowledgeMode: String? = null,
+    /**
+     * 이 런에 content map 을 얼마나 열어 줄지: `on`(기본) / `frozen` / `off`. 잘못된 값은 400이다 —
+     * [knowledgeMode] 와 같은 이유로, 조용히 기본값으로 떨어지면 지도 없이 돌린다고 믿은 arm 이
+     * 사실은 지도를 읽고, 그 결과는 그럴듯해서 실험이 끝날 때까지 아무도 못 알아챈다.
+     *
+     * [knowledgeMode] 와 **따로** 여는 것이 요점이다. 한 스위치로 묶으면 지식이 도왔는지 지도가
+     * 도왔는지를 가르는 2×2 가 성립하지 않는다.
+     */
+    val contentMapMode: String? = null
 )
 
 /** 런(TR) 단위 QA 시작 요청(ARTEL-259). [testRunId]의 시나리오들을 순차 실행한다. 설정은 QaTry와 동일. */
@@ -53,7 +62,23 @@ data class CreateQaRunRequest(
      * 첫 요청은 그냥 보내고, 409 `qa_run_active`가 오면 사용자에게 물은 뒤 이 값을 켜서 재요청하는
      * 것이 의도된 흐름이다.
      */
-    val force: Boolean = false
+    val force: Boolean = false,
+    /**
+     * 이 run 에 지식창고를 얼마나 열어 줄지: `learning` / `frozen` / `off`. 잘못된 값은 400 이고,
+     * 검증은 [CreateQaTryRequest.knowledgeMode] 와 **같은 함수**가 한다.
+     *
+     * 생략하면 `run_config` 에 이 키가 실리지 않고, 읽는 쪽이 `learning` 으로 읽는다 — 이 필드가
+     * 생기기 전 호출자와 동작이 같다.
+     */
+    val knowledgeMode: String? = null,
+    /**
+     * 이 run 에 content map 을 얼마나 열어 줄지: `on` / `frozen` / `off`. [knowledgeMode] 와 같이
+     * 생략하면 키가 실리지 않는다.
+     *
+     * **두 축을 함께 여는 것이 요점이다.** 벤치마크는 run(TR) 단위로 조직돼 있어, 한 축만 열리면
+     * 네 arm 중 둘을 만들 방법이 없고 2×2 가 2×1 이 된다.
+     */
+    val contentMapMode: String? = null
 )
 
 data class QaReasoningRequest(

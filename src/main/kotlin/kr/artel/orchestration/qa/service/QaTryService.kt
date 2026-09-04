@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.contentmap.entity.ContentMapMode
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.knowledge.service.KnowledgeCitationService
@@ -35,6 +36,8 @@ import kr.artel.orchestration.testrun.service.TestRunService
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
@@ -50,6 +53,81 @@ import java.util.UUID
  * 읽게 하려고 같은 객체에 둔다.
  */
 internal const val KNOWLEDGE_MODE_FIELD = "knowledge_mode"
+
+/**
+ * `qa_try.run_config` 안에서 content map 게이트가 사는 키.
+ *
+ * [KNOWLEDGE_MODE_FIELD] 와 같은 자리에 같은 모양으로 둔다. 여기서 쓰고
+ * [kr.artel.orchestration.qa.service.QaAgentInboundRouter] 와
+ * [kr.artel.orchestration.scenecontext.service.SceneContextService] 가 읽는다.
+ */
+internal const val CONTENT_MAP_MODE_FIELD = "content_map_mode"
+
+/**
+ * Orchestration 이 넣고 Agent 스냅샷이 덮어써서는 안 되는 `run_config` 키들.
+ *
+ * 목록으로 두는 이유는 세 번째 게이트가 생겼을 때 `attachAndMarkRunning` 의 carry-over 를 빠뜨리기
+ * 쉽기 때문이다. 빠뜨리면 그 게이트는 STARTING 창에서만 살아 있다가 런이 RUNNING 이 되는 순간
+ * 조용히 기본값으로 돌아간다.
+ */
+private val CARRIED_GATE_FIELDS = listOf(KNOWLEDGE_MODE_FIELD, CONTENT_MAP_MODE_FIELD)
+
+/**
+ * Agent 스냅샷 위에 그 행이 이미 들고 있던 gate 를 다시 얹는다.
+ *
+ * 세션이 붙을 때 `run_config` 는 Agent 가 확정한 설정으로 **통째로 갈아치워진다.** gate 는
+ * Orchestration 이 집행하는 값이라 그 덮어쓰기에서 살아남아야 하고, 살아남지 못하면 런이 RUNNING 이
+ * 되는 순간 조용히 기본값으로 돌아간다 — `frozen` 으로 돌린 arm 이 그때부터 쓰기 시작한다.
+ *
+ * 단일 시나리오 경로와 run 경로가 이 함수 하나를 공유한다. 두 경로가 각자 병합하면 한쪽만 새
+ * gate 를 빠뜨리는 것이 가능해지고, 그 회귀는 조용하다.
+ *
+ * @param carrier gate 를 이미 들고 있는 행의 `run_config`(STARTING 또는 PENDING).
+ * @param agentConfig Agent 가 확정한 설정. 객체가 아니면(없거나 스칼라) 빈 객체에서 시작한다.
+ */
+internal fun mergeCarriedGates(carrier: String, agentConfig: JsonNode?, objectMapper: ObjectMapper): ObjectNode {
+    val carried = try {
+        objectMapper.readTree(carrier)
+    } catch (error: Exception) {
+        objectMapper.createObjectNode()
+    }
+    return ((agentConfig as? ObjectNode)?.deepCopy() ?: objectMapper.createObjectNode()).apply {
+        for (field in CARRIED_GATE_FIELDS) {
+            val value = carried.path(field)
+            if (value.isTextual) put(field, value.asText())
+        }
+    }
+}
+
+/**
+ * `run_config` 에서 이 런의 content map 모드를 읽는다. 없거나 해석할 수 없으면
+ * [ContentMapMode.DEFAULT] 다.
+ *
+ * 값이 없는 런은 이 기능 이전의 런이다. 그런 런은 지금까지처럼 읽고 써야 한다 — 모드를 모르는 런이
+ * 실패하면 그것은 실험의 공백이 아니라 장애다. 파싱 실패도 같은 이유로 기본값이다. 다만 **알 수 없는
+ * 값은 로그로 남긴다** — 오타 하나로 `off` 가 조용히 `on` 이 되면 그 arm 의 결과가 통째로 잘못
+ * 해석된다. (API 가 이미 값을 검증하므로 여기 걸리는 것은 DB 를 손으로 고친 경우다.)
+ */
+internal fun contentMapModeOf(qaTry: QaTryEntity, objectMapper: ObjectMapper): ContentMapMode {
+    val raw = try {
+        objectMapper.readTree(qaTry.runConfig.asString()).path(CONTENT_MAP_MODE_FIELD)
+    } catch (error: Exception) {
+        contentMapModeLogger.warn(
+            "qa_try {} run_config 파싱 실패 — content_map_mode 기본값 사용: {}", qaTry.id, error.message
+        )
+        return ContentMapMode.DEFAULT
+    }
+    if (raw.isMissingNode || raw.isNull) return ContentMapMode.DEFAULT
+    return ContentMapMode.fromWire(raw.asText())
+        ?: ContentMapMode.DEFAULT.also {
+            contentMapModeLogger.warn(
+                "qa_try {} run_config.content_map_mode={} 를 해석할 수 없어 {} 로 처리한다",
+                qaTry.id, raw.asText(), it.wire
+            )
+        }
+}
+
+private val contentMapModeLogger: Logger = LoggerFactory.getLogger("kr.artel.orchestration.qa.ContentMapMode")
 
 internal fun QaReasoningRequest.toAgentPayload(objectMapper: ObjectMapper) =
     objectMapper.createObjectNode().apply {
@@ -108,6 +186,26 @@ data class QaKnowledgeSettings(
 )
 
 /**
+ * wire 토큰 하나를 [KnowledgeMode]로 읽는다. 값이 없으면 null 이라 호출부가 "안 준 것"과 "기본값을
+ * 준 것"을 가를 수 있다 — run 경로가 그 차이에 기댄다.
+ *
+ * **단일 시나리오 경로와 run 경로가 이 함수 하나를 공유한다.** 진입점마다 따로 파싱하면 언젠가
+ * 한쪽만 새 값을 받고, 그때 두 경로의 400 메시지도 갈린다.
+ */
+private fun parseKnowledgeMode(raw: String?): KnowledgeMode? =
+    raw?.let {
+        KnowledgeMode.fromWire(it)
+            ?: throw BadRequestException("knowledgeMode must be one of ${KnowledgeMode.WIRE_NAMES}")
+    }
+
+/** [parseKnowledgeMode]의 content map 짝. 두 진입점이 같은 함수를 쓰는 이유가 같다. */
+private fun parseContentMapMode(raw: String?): ContentMapMode? =
+    raw?.let {
+        ContentMapMode.fromWire(it)
+            ?: throw BadRequestException("contentMapMode must be one of ${ContentMapMode.WIRE_NAMES}")
+    }
+
+/**
  * 요청의 지식 설정을 파싱한다. 잘못된 값은 [BadRequestException]으로 거절한다 — 조용히 기본값으로
  * 떨어지면 대조군으로 돌린 arm이 사실은 학습을 하고, 그 오염은 결과가 그럴듯해서 드러나지 않는다.
  */
@@ -115,12 +213,49 @@ fun CreateQaTryRequest.toKnowledgeSettings(): QaKnowledgeSettings {
     val scopeId = knowledgeScopeId?.trim()?.takeIf { it.isNotEmpty() }?.let {
         it.toLongOrNull() ?: throw BadRequestException("knowledgeScopeId must be a decimal string")
     }
-    val mode = knowledgeMode?.let {
-        KnowledgeMode.fromWire(it)
-            ?: throw BadRequestException("knowledgeMode must be one of ${KnowledgeMode.WIRE_NAMES}")
-    } ?: KnowledgeMode.DEFAULT
-    return QaKnowledgeSettings(scopeId = scopeId, mode = mode)
+    return QaKnowledgeSettings(scopeId = scopeId, mode = parseKnowledgeMode(knowledgeMode) ?: KnowledgeMode.DEFAULT)
 }
+
+/**
+ * 요청의 content map 설정을 파싱한다. 잘못된 값은 [BadRequestException]으로 거절한다 —
+ * [toKnowledgeSettings] 와 같은 이유다.
+ *
+ * 스코프가 딸리지 않아 [QaKnowledgeSettings] 같은 묶음 타입이 없다. `capability` 행에는
+ * `knowledge.scope_id` 에 해당하는 격리 축이 없고, 그것이 [ContentMapMode.FROZEN] 이 필요한
+ * 이유이기도 하다 — 그 논거는 [ContentMapMode] 의 KDoc 에 있다.
+ */
+fun CreateQaTryRequest.toContentMapMode(): ContentMapMode =
+    parseContentMapMode(contentMapMode) ?: ContentMapMode.DEFAULT
+
+/**
+ * run(TR) 단위 실행에 걸 두 gate.
+ *
+ * **run 하나가 한 arm 이다.** 그래서 이 값은 run 에 하나뿐이고, 그 run 이 만드는 모든 `qa_try` 가
+ * 같은 값을 받는다. try 마다 다르게 줄 수 있으면 "이 arm 을 돌렸다" 가 런 하나를 두고 하는 말이
+ * 아니게 되고, 집계는 그 차이를 볼 방법이 없다.
+ *
+ * 두 필드가 **nullable 인 것이 요점이다.** null 은 "호출자가 말하지 않았다" 이고, 그때
+ * `run_config` 에는 그 키가 아예 실리지 않아 이 경로로 시작하던 기존 호출자의 행이 글자까지
+ * 그대로다. 읽는 쪽([contentMapModeOf]와 라우터의 `knowledgeModeOf`)이 키 부재를 기본값으로
+ * 읽으므로 동작도 같다.
+ *
+ * 지식 축과 content map 축을 **둘 다** 여는 이유는 축 하나만 열린 2×2 는 2×1 이기 때문이다.
+ */
+data class QaRunGates(
+    val knowledgeMode: KnowledgeMode? = null,
+    val contentMapMode: ContentMapMode? = null
+) {
+    /** 실을 것이 하나도 없으면 `run_config` 를 건드리지 않는다. */
+    val isEmpty: Boolean get() = knowledgeMode == null && contentMapMode == null
+}
+
+/**
+ * run 요청의 두 gate 를 파싱한다. 검증과 400 메시지는 단일 시나리오 경로와 **같은 함수**에서 온다.
+ */
+fun CreateQaRunRequest.toRunGates() = QaRunGates(
+    knowledgeMode = parseKnowledgeMode(knowledgeMode),
+    contentMapMode = parseContentMapMode(contentMapMode)
+)
 
 /**
  * The comparison axes, lifted out of the Agent's resolved config.
@@ -155,12 +290,15 @@ class QaTryPersistenceService(
      *   Agent 세션이 붙기를 기다리지 않는 것이 중요하다: 세션 개설 중에도 try는 이미 STARTING이라
      *   라우터가 프레임을 받고, 그 사이 모드가 비어 있으면 `frozen`으로 돌린 arm이 그 창에서
      *   지식창고에 쓸 수 있다. `attachAndMarkRunning`이 Agent 설정을 덮어쓸 때 같은 값을 다시 얹는다.
+     * @param contentMapMode 이 런에 content map 을 얼마나 열어 줄지. [knowledge] 와 같은 순간에 같은
+     *   이유로 기록된다 — 그 창에서 게이트가 비어 있으면 `frozen` 으로 돌린 arm 이 지도에 쓸 수 있다.
      */
     suspend fun createStarting(
         testScenarioId: Long,
         gameInstanceId: Long,
         startedBy: Long,
-        knowledge: QaKnowledgeSettings
+        knowledge: QaKnowledgeSettings,
+        contentMapMode: ContentMapMode = ContentMapMode.DEFAULT
     ): Pair<QaTryEntity, QaLogAppendResult> =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -173,7 +311,9 @@ class QaTryPersistenceService(
                     knowledgeScopeId = knowledge.scopeId,
                     runConfig = Json.of(
                         objectMapper.writeValueAsString(
-                            objectMapper.createObjectNode().put(KNOWLEDGE_MODE_FIELD, knowledge.mode.wire)
+                            objectMapper.createObjectNode()
+                                .put(KNOWLEDGE_MODE_FIELD, knowledge.mode.wire)
+                                .put(CONTENT_MAP_MODE_FIELD, contentMapMode.wire)
                         )
                     ),
                     startedAt = now
@@ -194,14 +334,31 @@ class QaTryPersistenceService(
      * 한 트랜잭션으로 만든다. [scenarioIds]는 런의 시나리오 순서(position). 각 qa_try는 qa_run_id로
      * 부모를 가리키고, 자기 차례가 오면 PENDING→RUNNING으로 활성된다(활성은 항상 하나).
      */
+    /**
+     * @param gates 이 run 의 두 gate. **run 하나가 한 arm 이므로 값은 여기서 한 번 만들어 모든 try 에
+     *   같은 것이 실린다** — 루프 안에서 만들면 try 마다 다른 값이 들어갈 문이 열린다.
+     *
+     *   단일 시나리오 경로와 달리 기본값을 써 넣지 않는다. 아무것도 안 주면 `run_config` 가 `{}` 로
+     *   남아 이 경로로 시작하던 기존 호출자의 행이 글자까지 그대로다.
+     */
     suspend fun createRunStarting(
         testRunId: Long,
         gameInstanceId: Long,
         startedBy: Long,
-        scenarioIds: List<Long>
+        scenarioIds: List<Long>,
+        gates: QaRunGates = QaRunGates()
     ): QaRunStarting =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
+            // run 하나에 한 번. 모든 try 가 이 같은 객체를 받는 것이 "run = 한 arm" 의 집행이다.
+            val gateConfig = Json.of(
+                objectMapper.writeValueAsString(
+                    objectMapper.createObjectNode().apply {
+                        gates.knowledgeMode?.let { put(KNOWLEDGE_MODE_FIELD, it.wire) }
+                        gates.contentMapMode?.let { put(CONTENT_MAP_MODE_FIELD, it.wire) }
+                    }
+                )
+            )
             val qaRun = runRepository.save(
                 QaRunEntity(
                     testRunId = testRunId,
@@ -220,6 +377,7 @@ class QaTryPersistenceService(
                         qaRunId = runId,
                         startedBy = startedBy,
                         status = "PENDING",
+                        runConfig = gateConfig,
                         startedAt = now
                     )
                 )
@@ -250,6 +408,16 @@ class QaTryPersistenceService(
             val now = Instant.now(clock)
             val runId = requireNotNull(qaRun.id)
             val configJson = objectMapper.writeValueAsString(runConfig ?: objectMapper.createObjectNode())
+            // qa_run 의 스냅샷에는 gate 를 얹지 않는다. gate 는 try 마다 집행되고 읽는 쪽도 전부
+            // qa_try.run_config 를 본다 — 두 곳에 두면 어느 쪽이 진실인지가 질문이 된다.
+            //
+            // try 쪽은 다르다. 이 UPDATE 가 run_config 를 통째로 갈아치우므로, 그 행이 PENDING 때
+            // 받아 둔 gate 를 다시 얹어야 한다(`attachAndMarkRunning` 과 같은 규칙). 빠뜨리면 run
+            // 경로로 시작한 arm 의 gate 가 RUNNING 이 되는 순간 사라진다.
+            val firstTry = requireNotNull(tryRepository.findById(firstTryId))
+            val firstTryConfig = objectMapper.writeValueAsString(
+                mergeCarriedGates(firstTry.runConfig.asString(), runConfig, objectMapper)
+            )
             if (runRepository.attachAgentSession(runId, agentSessionId, configJson, now) != 1) {
                 throw IllegalStateException("QA run cannot attach an Agent session")
             }
@@ -265,7 +433,7 @@ class QaTryPersistenceService(
                     promptVersion = runConfig.textAt("prompt_version"),
                     agentArch = runConfig.textAt("agent_arch"),
                     agentFingerprint = runConfig.textAt("agent_fingerprint"),
-                    runConfig = configJson,
+                    runConfig = firstTryConfig,
                     updatedAt = now
                 ) != 1
             ) {
@@ -297,13 +465,11 @@ class QaTryPersistenceService(
             val id = requireNotNull(qaTry.id)
             // Agent 스냅샷이 객체가 아니면(없거나 스칼라) 빈 객체에서 시작한다.
             //
-            // knowledge_mode는 **호출자가 다시 주는 것이 아니라 STARTING 행에서 옮겨 온다**
-            // (ARTEL-256). 이 UPDATE가 run_config를 통째로 갈아치우므로 어디선가는 다시 얹어야
-            // 하는데, 파라미터로 받으면 호출자가 createStarting 때와 다른 값을 넘길 수 있고 그러면
-            // 게이트가 이미 집행된 뒤에 기록만 바뀐다. 여기서 읽어 오면 그 어긋남이 불가능하다.
-            val carriedMode = objectMapper.readTree(qaTry.runConfig.asString()).path(KNOWLEDGE_MODE_FIELD)
-            val storedConfig = ((runConfig as? ObjectNode)?.deepCopy() ?: objectMapper.createObjectNode())
-                .apply { if (carriedMode.isTextual) put(KNOWLEDGE_MODE_FIELD, carriedMode.asText()) }
+            // knowledge_mode와 content_map_mode는 **호출자가 다시 주는 것이 아니라 STARTING 행에서
+            // 옮겨 온다**(ARTEL-256). 이 UPDATE가 run_config를 통째로 갈아치우므로 어디선가는 다시
+            // 얹어야 하는데, 파라미터로 받으면 호출자가 createStarting 때와 다른 값을 넘길 수 있고
+            // 그러면 게이트가 이미 집행된 뒤에 기록만 바뀐다. 여기서 읽어 오면 그 어긋남이 불가능하다.
+            val storedConfig = mergeCarriedGates(qaTry.runConfig.asString(), runConfig, objectMapper)
             // The settings ride along with the session id rather than following in
             // a second update: two statements would leave a window where the try
             // reads as started and is not attributable, and nothing goes back for it.
@@ -362,7 +528,8 @@ class QaTryService(
         gameInstanceId: Long,
         userId: Long,
         settings: QaRunSettings = QaRunSettings(),
-        knowledge: QaKnowledgeSettings = QaKnowledgeSettings()
+        knowledge: QaKnowledgeSettings = QaKnowledgeSettings(),
+        contentMapMode: ContentMapMode = ContentMapMode.DEFAULT
     ): QaTryResponse {
         val scenario = scenarioAccessService.accessibleScenario(testScenarioId, userId)
             ?: throw NotFoundException()
@@ -378,7 +545,8 @@ class QaTryService(
             throw ActiveQaRunException("An active QA try already exists")
         }
 
-        val (starting, startLog) = persistence.createStarting(testScenarioId, gameInstanceId, userId, knowledge)
+        val (starting, startLog) =
+            persistence.createStarting(testScenarioId, gameInstanceId, userId, knowledge, contentMapMode)
         logService.publish(startLog)
         val qaTryId = requireNotNull(starting.id)
         val context = QaAgentSessionContext(
@@ -432,7 +600,8 @@ class QaTryService(
         gameInstanceId: Long,
         userId: Long,
         settings: QaRunSettings = QaRunSettings(),
-        force: Boolean = false
+        force: Boolean = false,
+        gates: QaRunGates = QaRunGates()
     ): QaRunResponse {
         val scenarios = testRunService.getScenarios(testRunId, userId)
             ?: throw NotFoundException()
@@ -462,7 +631,7 @@ class QaTryService(
             throw ActiveQaRunException()
         }
 
-        val started = persistence.createRunStarting(testRunId, gameInstanceId, userId, scenarioIds)
+        val started = persistence.createRunStarting(testRunId, gameInstanceId, userId, scenarioIds, gates)
         val agentScenarios = started.tries.zip(scenarioIds).map { (qaTry, scenarioId) ->
             val entity = scenarioAccessService.accessibleScenario(scenarioId, userId)
                 ?: throw NotFoundException()

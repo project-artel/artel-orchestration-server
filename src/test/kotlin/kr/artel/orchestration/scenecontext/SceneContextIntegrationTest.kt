@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.config.InternalApiServer
 import kr.artel.orchestration.contentmap.entity.Capture
+import kr.artel.orchestration.contentmap.entity.ContentMapMode
 import kr.artel.orchestration.contentmap.entity.SceneOrigin
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
@@ -389,6 +390,101 @@ class SceneContextIntegrationTest {
             .containsExactly("내 사실")
     }
 
+    // ---------------------------------------------------------- content_map_mode
+
+    /**
+     * **`content_map_mode = off` 는 `capability` 만 지우고 앵커 지식은 남긴다.**
+     *
+     * 여기서 앵커까지 지우면 두 축이 섞여 2×2 가 성립하지 않는다 — 앵커 지식은 지식창고에서 오는
+     * 것이지 지도에서 오는 것이 아니고, 지식 축은 `knowledge_mode` 가 따로 끈다.
+     *
+     * 그 결과 지도만 아는 씬은 목록에서 빠지고 앵커가 이름을 든 씬만 남는다. 그것이 `evidence` 를
+     * 한 번도 올리지 않은 빌드의 응답과 같은 모양이고, 그 상태는 이미 정상으로 취급된다.
+     */
+    @Test
+    fun `off 런은 지도 없는 빌드와 같은 답을 내고 앵커 지식은 남긴다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        val combat = fixture.newScene(mapId, "Combat", summary = "전투 화면")
+        fixture.newCapability(mapId, combat, summary = "적을 공격한다")
+        // 지도만 아는 씬. 앵커가 없으므로 off 에서는 목록에서 빠져야 한다.
+        val shop = fixture.newScene(mapId, "Shop")
+        fixture.newCapability(mapId, shop, summary = "물건을 산다")
+        fixture.newKnowledge(projectId, "전투 중 ESC 는 아무것도 하지 않는다", "본문", sceneName = "Combat")
+
+        val off = sceneContext.read(projectId, buildId, newQaTry(projectId, contentMapMode = ContentMapMode.OFF))!!
+
+        assertThat(off.contentMapId).isNull()
+        assertThat(off.capture).isNull()
+        val scene = off.scenes.single()
+        assertThat(scene.sceneName).isEqualTo("Combat")
+        assertThat(scene.knownToContentMap).isFalse()
+        assertThat(scene.capabilities).isEmpty()
+        assertThat(scene.notAStepCapabilities).isEmpty()
+        // 지도에서 오던 것은 전부 빠진다. 그 씬을 지도가 안다는 사실 자체가 지도에서 오기 때문이다.
+        assertThat(scene.origin).isNull()
+        assertThat(scene.sceneSummary).isNull()
+        // 앵커 지식은 그대로다. 이 한 줄이 두 축을 가른다.
+        assertThat(scene.knowledge.map { it.summary })
+            .containsExactly("전투 중 ESC 는 아무것도 하지 않는다")
+    }
+
+    /**
+     * `off` 의 응답이 `evidence` 없는 빌드의 응답과 **같은 식**인지 본다. 흉내가 아니라 이미
+     * 정상으로 취급되고 있는 그 답을 그대로 내는 것이 이 대조군의 요점이다.
+     */
+    @Test
+    fun `off 응답은 지도가 아예 없는 빌드의 응답과 같다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val mapped = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(mapped, Capture.PLAYER)
+        fixture.newCapability(mapId, fixture.newScene(mapId, "Combat"), summary = "적을 공격한다")
+        val bare = fixture.newBuild(projectId)
+        fixture.newKnowledge(projectId, "상점은 밤에 닫는다", "본문", sceneName = "Shop")
+
+        val offQaTry = newQaTry(projectId, contentMapMode = ContentMapMode.OFF)
+        val off = sceneContext.read(projectId, mapped, offQaTry)!!
+        val noMap = sceneContext.read(projectId, bare, qaTryId = null)!!
+
+        assertThat(off.copy(gameBuildId = "")).isEqualTo(noMap.copy(gameBuildId = ""))
+    }
+
+    /** `on`(기본) 과 값이 없는 런은 둘 다 지도를 그대로 본다 — 이 게이트 이전과 동작이 같다. */
+    @Test
+    fun `on 과 값이 없는 런은 지도를 그대로 본다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        fixture.newCapability(mapId, fixture.newScene(mapId, "Combat"), summary = "적을 공격한다")
+
+        for (qaTryId in listOf(newQaTry(projectId), newQaTry(projectId, contentMapMode = ContentMapMode.ON))) {
+            val response = sceneContext.read(projectId, buildId, qaTryId)!!
+            assertThat(response.contentMapId).isEqualTo(mapId.toString())
+            assertThat(response.scenes.single().capabilities.map { it.summary })
+                .containsExactly("적을 공격한다")
+        }
+    }
+
+    /**
+     * `frozen` 은 읽기만 막지 않는다 — 읽기는 `on` 과 같다. 쓰기 거절은
+     * `AgentCapabilityWriteTest` 가 본다.
+     */
+    @Test
+    fun `frozen 런은 지도를 그대로 읽는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        fixture.newCapability(mapId, fixture.newScene(mapId, "Combat"), summary = "적을 공격한다")
+
+        val response = sceneContext.read(
+            projectId, buildId, newQaTry(projectId, contentMapMode = ContentMapMode.FROZEN)
+        )!!
+
+        assertThat(response.contentMapId).isEqualTo(mapId.toString())
+        assertThat(response.scenes.single().capabilities).hasSize(1)
+    }
+
     // ------------------------------------------------------------------ 경계
 
     /**
@@ -484,7 +580,11 @@ class SceneContextIntegrationTest {
      * 세우면 이 테스트가 QA 도메인 전체를 끌고 온다 — 이 조회가 읽는 칸은
      * `knowledge_scope_id` 하나뿐이라 SQL 로 최소한만 세운다.
      */
-    private suspend fun newQaTry(projectId: Long, scopeId: Long): Long {
+    private suspend fun newQaTry(
+        projectId: Long,
+        scopeId: Long? = null,
+        contentMapMode: ContentMapMode? = null,
+    ): Long {
         val userId = insertId("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('agent', 'agent-' || gen_random_uuid(), '0000') RETURNING id")
         val scenarioId = insertId(
             """
@@ -498,11 +598,16 @@ class SceneContextIntegrationTest {
             VALUES ($projectId, 'scene-context', 'Editor') RETURNING id
             """
         )
+        // run_config 는 값이 없으면 `{}` 다 — 이 게이트가 생기기 전 런과 같은 모양이다.
+        val runConfig = contentMapMode
+            ?.let { """'{"content_map_mode": "${it.wire}"}'::jsonb""" }
+            ?: "'{}'::jsonb"
         return insertId(
             """
             INSERT INTO qa_try (test_scenario_id, game_instance_id, started_by, status,
-                                knowledge_scope_id, started_at)
-            VALUES ($scenarioId, $instanceId, $userId, 'RUNNING', $scopeId, CURRENT_TIMESTAMP)
+                                knowledge_scope_id, run_config, started_at)
+            VALUES ($scenarioId, $instanceId, $userId, 'RUNNING', ${scopeId ?: "NULL"}, $runConfig,
+                    CURRENT_TIMESTAMP)
             RETURNING id
             """
         )
