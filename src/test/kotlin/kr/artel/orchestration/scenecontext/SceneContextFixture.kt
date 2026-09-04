@@ -1,6 +1,7 @@
 package kr.artel.orchestration.scenecontext
 
 import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.CapabilityEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
@@ -17,6 +18,7 @@ import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.repository.ProjectRepository
+import org.springframework.r2dbc.core.DatabaseClient
 import java.time.Instant
 
 /**
@@ -34,6 +36,7 @@ class SceneContextFixture(
     private val capabilities: CapabilityRepository,
     private val knowledge: KnowledgeRepository,
     private val anchors: KnowledgeAnchorRepository,
+    private val db: DatabaseClient,
 ) {
 
     suspend fun newProject(): Long {
@@ -96,6 +99,13 @@ class SceneContextFixture(
         controlLabel: String? = null,
         givenText: String? = null,
         inputKey: String? = null,
+        /**
+         * 근거의 진입점. 같은 값을 준 기능들이 **사람이 세는 한 기능**이다(ARTEL-805).
+         *
+         * null 이면 `capability_evidence` 행을 안 만든다 — 근거 출신이 아닌 기능이 그 모양이고,
+         * 그때는 접히지 않는 것이 맞다.
+         */
+        entryId: String? = null,
     ): Long =
         capabilities.save(
             CapabilityEntity(
@@ -115,7 +125,28 @@ class SceneContextFixture(
                 observability = observability,
                 applicability = applicability,
             )
-        ).id!!
+        ).id!!.also { capabilityId -> entryId?.let { writeEvidence(capabilityId, it) } }
+
+    /**
+     * `capability_evidence` 한 행. 접기가 읽는 것은 `entry_id` 하나다.
+     *
+     * 나머지는 이 표가 요구하는 최소치다. `NOT NULL` 여덟 칸에 더해 CHECK 둘이 **값이 없으면
+     * 그 사실을 `gaps` 에 적으라**고 요구한다(`ck_capability_evidence_method_id_or_gap`,
+     * `..._call_path_or_gap`). 그 규율을 픽스처에서도 지킨다 — 빈 값을 몰래 넣는 대신 없다고
+     * 적는 편이 이 표가 하려는 말과 같다.
+     */
+    private suspend fun writeEvidence(capabilityId: Long, entryId: String) {
+        db.sql(
+            """
+            INSERT INTO capability_evidence
+                (capability_id, entry_id, owner_type, method, record_kind,
+                 trigger_kind, analysis_confidence, condition_tree, method_id, gaps)
+            VALUES (:id, :entryId, 'Fixture.Owner', 'Method', 'candidate', 'unity-event',
+                    'exact', '{}'::jsonb, :entryId,
+                    '["call-path-missing"]'::jsonb)
+            """
+        ).bind("id", capabilityId).bind("entryId", entryId).then().awaitFirstOrNull()
+    }
 
     /** 지식 한 항목 + 앵커. [sceneName] 이 null 이면 앵커 없는 지식(= 게임 전체의 사실)이다. */
     suspend fun newKnowledge(

@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.Observability
 import kr.artel.orchestration.contentmap.entity.SpecStatus
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
@@ -130,11 +131,50 @@ class SceneContextService(
             knownToContentMap = true,
             origin = scene.origin,
             sceneSummary = scene.summary,
-            capabilities = steps.map(::capabilityOf),
-            notAStepCapabilities = notASteps.map(::capabilityOf),
+            capabilities = foldByEntry(steps),
+            notAStepCapabilities = foldByEntry(notASteps),
             knowledge = knowledgeByScene[scene.name].orEmpty().map(::knowledgeOf),
         )
     }
+
+    /**
+     * 사람이 "기능 하나" 로 세는 단위로 접는다.
+     *
+     * **적재의 정체로 세면 안 된다.** `CapabilityKey` 는 효과가 사는 메서드(`method_id`)까지
+     * 넣고, 넣어야만 한다 — 그 KDoc 의 표가 왜인지를 적어 두었고, `scene_edge.capability_id` 와
+     * `screen_transition.capability_id` 가 그 번호를 참조한다. 그래서 **적재는 그대로 두고 읽는
+     * 쪽에서 접는다.**
+     *
+     * 접는 열쇠는 `entry_id` 다. `MapTestCaseGenerator` 가 같은 문제를 이미 이 값으로 풀었다 —
+     * "플레이어가 무엇을 건드렸나. 이것이 곧 사람이 기능 하나로 세는 단위다".
+     *
+     * **왜 접나.** 실측 `Canvas/MapSceneButton` 이 한 `scene` 에서 7 줄이고, 일곱 줄의
+     * `control_selector` 도 `interaction` 도 같고 `given_text` 는 비어 있다. 가르는 축이
+     * `summary` 에 박힌 메서드 이름 하나뿐이다. agent 는 그 버튼을 눌러 화면이 바뀐 것만
+     * 보므로 일곱 중 어디에 판정을 찍을지 고를 수가 없고, 실제로 한 번도 안 찍었다
+     * (`capability_observation` 이 0 행이었다, ARTEL-790).
+     *
+     * 접으면 목록도 함께 줄어든다. 블록은 자리가 좁아 잘리는데(`showing 8 of 14`) 그 자리를
+     * 중복이 먹고 있었다 — 실측으로 1,300 행이 319 로 접힌다.
+     *
+     * `entry_id` 가 없는 행은 근거 출신이 아니다. 그때는 적재의 키로 물러서므로 접히지 않는다.
+     */
+    private fun foldByEntry(rows: List<ContentMapCapabilityRow>): List<SceneCapabilityView> =
+        rows.groupBy { it.entryId ?: "\u0000${it.capabilityId}" }
+            .map { (_, group) -> capabilityOf(representativeOf(group), covers = group.size) }
+
+    /**
+     * 접힌 무리를 대표할 행.
+     *
+     * **관측 가능한 쪽을 고른다.** 무리의 `summary` 는 전부 같은 컨트롤을 가리키지만 이름은
+     * 각자 다른 메서드다. 그중 `observable` 인 줄이 agent 가 화면에서 볼 수 있는 것에 가장
+     * 가깝고, 그 이름이 줄의 제목이 되어야 자기가 본 것과 맞댈 수 있다. 실측
+     * `MapSceneButton` 의 일곱 중 둘이 `observable` 이다.
+     *
+     * 없으면 첫 줄이다. 뷰 질의의 `ORDER BY` 가 그 순서를 정하므로 같은 지도에서 같은 답이 난다.
+     */
+    private fun representativeOf(group: List<ContentMapCapabilityRow>): ContentMapCapabilityRow =
+        group.firstOrNull { it.observability == Observability.OBSERVABLE.wire } ?: group.first()
 
     /**
      * 지도가 들어 본 적 없는 씬 이름을 든 앵커. **이것을 버리지 않는 것이 이 응답의 요점 하나다.**
@@ -161,7 +201,7 @@ class SceneContextService(
                 )
             }
 
-    private fun capabilityOf(row: ContentMapCapabilityRow) = SceneCapabilityView(
+    private fun capabilityOf(row: ContentMapCapabilityRow, covers: Int = 1) = SceneCapabilityView(
         capabilityId = row.capabilityId.toString(),
         capabilityKey = row.capabilityKey,
         summary = row.summary,
@@ -178,6 +218,7 @@ class SceneContextService(
         scenePresence = row.scenePresence,
         repeatUntilDone = row.repeatUntilDone,
         controlSelectorHint = row.controlSelector,
+        covers = covers,
     )
 
     private fun knowledgeOf(row: AnchoredKnowledgeRow) = SceneKnowledgeView(

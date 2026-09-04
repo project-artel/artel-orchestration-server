@@ -115,6 +115,17 @@ data class SceneCapabilityView(
     val scenePresence: String,
     val repeatUntilDone: Boolean,
     val controlSelectorHint: String? = null,
+    /**
+     * 이 줄이 대표하는 `capability` 행 수. 1 이면 접힌 것이 없다.
+     *
+     * 적재는 **효과가 사는 메서드까지** 정체에 넣는다([CapabilityKey] 의 표). 그것이 필요해서
+     * 그렇게 하지만, 그 결과 사람이 "기능 하나" 로 세는 것이 여러 줄로 갈린다 — 실측
+     * `Canvas/MapSceneButton` 이 한 `scene` 에서 7 줄이다. agent 는 그 버튼을 한 번 누르고
+     * 화면이 바뀐 것만 보므로, 7 줄 중 어디에 판정을 찍어야 하는지 고를 수가 없다(ARTEL-805).
+     *
+     * 그래서 읽는 쪽에서 접는다. 이 수는 접혔다는 사실 자체를 숨기지 않기 위한 것이다.
+     */
+    val covers: Int = 1,
 )
 
 /**

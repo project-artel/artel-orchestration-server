@@ -18,6 +18,7 @@ import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoMoreInteractions
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.mock.mockito.SpyBean
 import org.springframework.test.context.ActiveProfiles
@@ -46,6 +47,7 @@ class SceneContextQueryCountTest {
     @Autowired private lateinit var capabilities: CapabilityRepository
     @Autowired private lateinit var knowledge: KnowledgeRepository
     @Autowired private lateinit var anchors: KnowledgeAnchorRepository
+    @Autowired private lateinit var db: DatabaseClient
 
     @SpyBean private lateinit var contentMaps: ContentMapRepository
     @SpyBean private lateinit var scenes: SceneRepository
@@ -57,7 +59,7 @@ class SceneContextQueryCountTest {
     fun setUp(): Unit = runBlocking {
         anchors.deleteAll()
         knowledge.deleteAll()
-        fixture = SceneContextFixture(projects, gameBuilds, contentMaps, scenes, capabilities, knowledge, anchors)
+        fixture = SceneContextFixture(projects, gameBuilds, contentMaps, scenes, capabilities, knowledge, anchors, db)
     }
 
     @Test
