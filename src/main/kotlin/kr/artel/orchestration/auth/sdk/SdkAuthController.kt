@@ -44,7 +44,10 @@ class SdkAuthController(
      * principal을 non-null로 두면 인증 실패가 401이 아니라 NPE로 새어 나간다. `/api/auth/me`와
      * 같은 이유로 nullable로 받고 직접 401을 던진다.
      */
-    @Operation(summary = "SDK 로그인 코드 발급", description = "로그인된 브라우저 세션을 일회용 코드로 바꾼다.")
+    @Operation(
+        summary = "SDK 로그인 코드 발급",
+        description = "로그인된 브라우저 세션을 일회용 코드로 바꾼다. kind 를 빠뜨리면 sdk 다."
+    )
     @PostMapping("/codes")
     suspend fun issueCode(
         @AuthenticationPrincipal jwt: Jwt?,
@@ -55,19 +58,23 @@ class SdkAuthController(
         // 서명은 유효하지만 가리키는 사용자가 없는 토큰으로는 SDK 토큰을 만들 수 없다.
         oauthUserService.findProfile(session.userId)
             ?: throw UnauthorizedException()
-        return SdkLoginCodeResponse(codeStore.issue(session.userId, request.codeChallenge))
+        return SdkLoginCodeResponse(
+            codeStore.issue(session.userId, request.codeChallenge, request.kind)
+        )
     }
 
     /**
      * SDK가 부른다. 세션이 없는 공개 경로다.
      *
-     * 코드가 없거나, 만료됐거나, verifier가 맞지 않는 경우를 400 하나로 묶는다. 어느 쪽인지
-     * 알려주면 코드만 훔친 쪽이 verifier를 좁혀갈 단서가 된다.
+     * 코드가 없거나, 만료됐거나, verifier가 맞지 않거나, CLI용으로 발급된 코드인 경우를 400
+     * 하나로 묶는다. 어느 쪽인지 알려주면 코드만 훔친 쪽이 verifier를 좁혀갈 단서가 된다.
+     *
+     * [SdkLoginCodeKind.SDK]만 받으므로, CLI 로그인이 낸 코드로 30일짜리 SDK 토큰을 받아낼 수 없다.
      */
     @Operation(summary = "SDK 토큰 교환", description = "일회용 코드와 code_verifier를 SDK 토큰으로 바꾼다.")
     @PostMapping("/token")
     suspend fun exchange(@Valid @RequestBody request: SdkTokenRequest): SdkTokenResponse {
-        val userId = codeStore.consume(request.code, request.codeVerifier)
+        val userId = codeStore.consume(request.code, request.codeVerifier, SdkLoginCodeKind.SDK)
             ?: throw BadRequestException("유효하지 않은 로그인 코드입니다.")
         val profile = oauthUserService.findProfile(userId)
             ?: throw BadRequestException("유효하지 않은 로그인 코드입니다.")

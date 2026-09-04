@@ -2162,7 +2162,7 @@
           "SDK auth"
         ],
         "summary": "SDK 로그인 코드 발급",
-        "description": "로그인된 브라우저 세션을 일회용 코드로 바꾼다.",
+        "description": "로그인된 브라우저 세션을 일회용 코드로 바꾼다. kind 를 빠뜨리면 sdk 다.",
         "operationId": "issueCode",
         "requestBody": {
           "content": {
@@ -2243,6 +2243,87 @@
         "responses": {
           "204": {
             "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/auth/cli-tokens": {
+      "get": {
+        "tags": [
+          "cli-token-controller"
+        ],
+        "operationId": "list_13",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CliTokenResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "cli-token-controller"
+        ],
+        "operationId": "create_5",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCliTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedCliTokenResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/cli-tokens/exchange": {
+      "post": {
+        "tags": [
+          "cli-token-controller"
+        ],
+        "operationId": "exchangeLoginCode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExchangeCliTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedCliTokenResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -4198,6 +4279,30 @@
           }
         }
       }
+    },
+    "/api/auth/cli-tokens/{tokenId}": {
+      "delete": {
+        "tags": [
+          "cli-token-controller"
+        ],
+        "operationId": "revoke_1",
+        "parameters": [
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5967,6 +6072,14 @@
             "maxLength": 128,
             "minLength": 0,
             "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "default": "sdk",
+            "enum": [
+              "sdk",
+              "cli"
+            ]
           }
         }
       },
@@ -6000,6 +6113,82 @@
         "properties": {
           "token": {
             "type": "string"
+          }
+        }
+      },
+      "CreateCliTokenRequest": {
+        "required": [
+          "expiresInDays",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "maxLength": 100,
+            "minLength": 0,
+            "type": "string"
+          },
+          "expiresInDays": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "CreatedCliTokenResponse": {
+        "required": [
+          "createdAt",
+          "id",
+          "name",
+          "token"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ExchangeCliTokenRequest": {
+        "required": [
+          "code",
+          "codeVerifier",
+          "expiresInDays",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "maxLength": 128,
+            "minLength": 0,
+            "type": "string"
+          },
+          "codeVerifier": {
+            "maxLength": 128,
+            "minLength": 43,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 0,
+            "type": "string"
+          },
+          "expiresInDays": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -9186,6 +9375,38 @@
           "citationKnownTotal": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "CliTokenResponse": {
+        "required": [
+          "createdAt",
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastUsedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revokedAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
