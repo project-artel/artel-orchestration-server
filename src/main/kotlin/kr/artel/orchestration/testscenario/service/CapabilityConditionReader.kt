@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * ## 지도 하나치를 한 번에 읽고, 읽어 둔 것을 다시 쓴다
  *
- * `capability` 마다 조회하면 안 된다. 전건 짝 행렬이 케이스 수의 제곱만큼 이 판단을 부른다
+ * `capability` 마다 조회하면 안 된다. 케이스 두 개씩의 행렬이 케이스 수의 제곱만큼 이 판단을 부른다
  * (케이스 83 건이면 6,806 칸). 지도 하나치는 419 행이라 한 번에 들고 도는 편이 싸다.
  *
  * **한 번에 읽는 것만으로는 모자랐다.** [ScenarioPathService] 가 요구마다 `writerFor` 를 부르고
