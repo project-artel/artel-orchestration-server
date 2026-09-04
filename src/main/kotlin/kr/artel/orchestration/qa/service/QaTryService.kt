@@ -547,6 +547,7 @@ class QaTryService(
     private val persistence: QaTryPersistenceService,
     private val readings: QaReadingsService,
     private val logService: QaLogService,
+    private val runStatusNotifier: QaRunStatusNotifier,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -576,6 +577,8 @@ class QaTryService(
             persistence.createStarting(testScenarioId, gameInstanceId, userId, knowledge, contentMapMode)
         logService.publish(startLog)
         val qaTryId = requireNotNull(starting.id)
+        // agent 세션은 아직 없다 — SDK 화면에 "agent 를 기다리는 중" 을 보인다(ARTEL-836).
+        runStatusNotifier.waitingAgent(qaTryId, gameInstanceId, starting.qaRunId)
         val context = QaAgentSessionContext(
             qaTryId = qaTryId.toString(),
             gameInstanceId = gameInstanceId.toString(),
@@ -601,6 +604,8 @@ class QaTryService(
             val (running, runningLog) =
                 persistence.attachAndMarkRunning(starting, agent.sessionId, agent.runConfig)
             logService.publish(runningLog)
+            // agentSessionId 가 채워졌다 — SDK 화면에 RUNNING 을 보인다(ARTEL-836).
+            runStatusNotifier.running(qaTryId, gameInstanceId, running.qaRunId)
             // 런이 정말 시작한 뒤에 켠다 (ARTEL-507). 연결이 아니라 세션이 켜는 이유는
             // `QaReadingsService` 주석에 있다 — 연결 시점은 전체 씬 순회와 겹친다.
             readings.start(gameInstanceId)
@@ -660,6 +665,10 @@ class QaTryService(
         }
 
         val started = persistence.createRunStarting(testRunId, gameInstanceId, userId, scenarioIds, gates, label)
+        // 첫 시나리오 try 가 이 run 의 자리를 대표한다 — agent 세션은 아직 없다(ARTEL-836).
+        runStatusNotifier.waitingAgent(
+            requireNotNull(started.tries.first().id), gameInstanceId, requireNotNull(started.qaRun.id)
+        )
         val agentScenarios = started.tries.zip(scenarioIds).map { (qaTry, scenarioId) ->
             val entity = scenarioAccessService.accessibleScenario(scenarioId, userId)
                 ?: throw NotFoundException()
@@ -692,6 +701,10 @@ class QaTryService(
             val running = persistence.attachRunAndMarkRunning(
                 started.qaRun, requireNotNull(started.tries.first().id), agent.sessionId, agent.runConfig
             )
+            // agentSessionId 가 채워졌다 — 첫 시나리오 try 를 RUNNING 으로 알린다(ARTEL-836).
+            runStatusNotifier.running(
+                requireNotNull(started.tries.first().id), gameInstanceId, requireNotNull(running.id)
+            )
             // 시나리오가 여럿이어도 여기서 한 번이다. 판독은 인스턴스에 붙는 것이지 시나리오에
             // 붙는 것이 아니라, 시나리오마다 켜면 같은 말을 N 번 하는 것이 된다.
             readings.start(gameInstanceId)
@@ -710,6 +723,10 @@ class QaTryService(
     private suspend fun failRun(started: QaRunStarting) {
         val now = Instant.now(clock)
         val runId = requireNotNull(started.qaRun.id)
+        // SDK 화면에 마지막으로 떴던 try(ARTEL-836). 세션 개설이 아예 실패했으면 아직 STARTING/
+        // RUNNING인 try가 없다 — 그때는 WAITING_AGENT로 알렸던 첫 시나리오 try로 대신한다.
+        val activeTryId = tryRepository.findActiveByGameInstanceId(started.qaRun.gameInstanceId)?.id
+            ?: requireNotNull(started.tries.first().id)
         runCatching {
             // 세션이 붙기 전(STARTING)이든 실행 중(RUNNING)이든 모두 FAILED로 닫는다. 둘 중
             // 실제 상태에 맞는 한 문장만 1행을 바꾸고 나머지는 no-op이다. RUNNING을 빠뜨리면
@@ -718,6 +735,7 @@ class QaTryService(
             runRepository.transition(runId, "RUNNING", "FAILED", now, now)
             tryRepository.failByQaRunId(runId, now)
         }
+        runStatusNotifier.finished(activeTryId, started.qaRun.gameInstanceId, runId, outcome = "ERROR")
         // try들이 방금 종단으로 갔으므로 미인용 행을 확정한다(ARTEL-293). 세션 개설 실패는
         // 검색이 한 번도 안 돌았을 가능성이 높지만 "높다"는 근거가 아니다 — 시나리오 하나를
         // 돌린 뒤 소켓이 죽은 런도 이 경로로 온다.
@@ -837,11 +855,19 @@ class QaTryService(
         if (run.status != "STARTING" && run.status != "RUNNING") {
             throw ConflictException("QA run has already ended")
         }
-        val active = tryRepository.findByQaRunId(qaRunId).toList()
-            .firstOrNull { it.status == "STARTING" || it.status == "RUNNING" }
+        val tries = tryRepository.findByQaRunId(qaRunId).toList()
+        val active = tries.firstOrNull { it.status == "STARTING" || it.status == "RUNNING" }
         if (active != null) {
-            // 활성 try는 Agent에 CANCEL 통보 + 세션 종료까지 포함해 취소.
+            // 활성 try는 Agent에 CANCEL 통보 + 세션 종료까지 포함해 취소. FINISHED/CANCELLED
+            // 알림은 [QaExecutionFailureService.cancelled]가 보낸다(ARTEL-836).
             failureService.cancelled(requireNotNull(active.id), "QA run was cancelled by the user.")
+        } else if (run.status == "STARTING") {
+            // run 이 아직 STARTING이라 agent 세션이 안 붙었다 — 활성 try가 없어 위 경로를 타지
+            // 않는다. WAITING_AGENT로 알렸던 첫 시나리오 try에 CANCELLED를 마저 알린다(ARTEL-836) —
+            // 안 그러면 그 창에서 취소된 런은 SDK 화면에 영원히 "agent 를 기다리는 중"으로 남는다.
+            tries.firstOrNull()?.id?.let {
+                runStatusNotifier.finished(it, run.gameInstanceId, qaRunId, outcome = "CANCELLED")
+            }
         }
         val now = Instant.now(clock)
         // 아직 안 돈 미종단(PENDING 등) try를 정리하고, 런을 CANCELLED로 닫는다.
