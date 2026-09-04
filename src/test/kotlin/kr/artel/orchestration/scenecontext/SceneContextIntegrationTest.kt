@@ -69,7 +69,7 @@ class SceneContextIntegrationTest {
     fun setUp(): Unit = runBlocking {
         anchors.deleteAll()
         knowledge.deleteAll()
-        fixture = SceneContextFixture(projects, gameBuilds, contentMaps, scenes, capabilities, knowledge, anchors)
+        fixture = SceneContextFixture(projects, gameBuilds, contentMaps, scenes, capabilities, knowledge, anchors, db)
     }
 
     /**
@@ -95,6 +95,62 @@ class SceneContextIntegrationTest {
      *
      * 지금까지 agent 는 이 둘을 각각 도구 호출로 물어야 했고, 물을 생각을 해야 물을 수 있었다.
      */
+    @Test
+    fun `한 컨트롤이 한 줄이다 — 메서드로 갈린 것을 접는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        val title = fixture.newScene(mapId, "TitleScene")
+
+        // 실측 `Canvas/MapSceneButton` 의 모양이다. 컨트롤도 조작도 같고 조건도 없는데,
+        // 적재가 효과가 사는 메서드까지 정체에 넣어 셋으로 갈렸다.
+        val entry = "Assembly-CSharp|Scenes.TitleSceneManager|OnClick|System.Void()"
+        listOf(
+            "SavePlayData() 를 부른다" to "unknown",
+            "LoadPlayData() 를 부른다" to "unknown",
+            "맵 화면으로 넘어간다" to "observable",
+        ).forEach { (summary, observability) ->
+            fixture.newCapability(
+                mapId, title,
+                summary = summary,
+                observability = observability,
+                controlPath = "Canvas/MapSceneButton",
+                controlSelector = "Canvas[4]/MapSceneButton[1]",
+                entryId = entry,
+            )
+        }
+
+        val scene = get(projectId, buildId).scenes.single()
+
+        // 셋이 한 줄이 된다. 이것이 없으면 agent 가 그 버튼을 한 번 누르고도 셋 중 어디에
+        // 판정을 찍어야 하는지 고를 수 없다(ARTEL-805).
+        val capability = scene.capabilities.single()
+        assertThat(capability.covers).isEqualTo(3)
+
+        // 대표는 관측 가능한 쪽이다. 그 이름이 줄의 제목이 되어야 agent 가 화면에서 본 것과
+        // 맞댈 수 있다 — 메서드 이름은 화면에 나타나지 않는다.
+        assertThat(capability.summary).isEqualTo("맵 화면으로 넘어간다")
+        assertThat(capability.observability).isEqualTo("observable")
+    }
+
+    @Test
+    fun `근거 출신이 아닌 기능은 접히지 않는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        val scene = fixture.newScene(mapId, "TitleScene")
+
+        // `entry_id` 가 없으면 접을 열쇠가 없다. 같은 컨트롤이어도 각자 남는 것이 정직하다 —
+        // 근거가 이 둘을 한 진입점이라고 말한 적이 없다.
+        fixture.newCapability(mapId, scene, summary = "하나", controlPath = "Canvas/Button")
+        fixture.newCapability(mapId, scene, summary = "둘", controlPath = "Canvas/Button")
+
+        val entry = get(projectId, buildId).scenes.single()
+
+        assertThat(entry.capabilities).hasSize(2)
+        assertThat(entry.capabilities.map { it.covers }).containsOnly(1)
+    }
+
     @Test
     fun `capability 와 앵커 지식이 같은 씬 아래 붙는다`(): Unit = runBlocking {
         val projectId = fixture.newProject()

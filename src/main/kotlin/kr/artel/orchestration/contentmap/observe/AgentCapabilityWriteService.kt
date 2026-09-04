@@ -434,6 +434,13 @@ class AgentCapabilityWriteService(
                     qaRunId = qaRunId,
                 )
                 capabilities.recordVerification(capabilityId, accepted.verification, observationId)
+                // 한 번의 조작은 그 컨트롤의 형제 행 전부에 대한 관측이다. 지목된 행만 움직이면
+                // 같은 조작을 겪은 나머지가 `unverified` 로 남는다(ARTEL-805).
+                capabilities.recordVerificationOfSiblings(
+                    capabilityId,
+                    accepted.verification,
+                    observationId,
+                )
                 accepted.copy(observationId = observationId)
             }
         } catch (conflict: DataIntegrityViolationException) {

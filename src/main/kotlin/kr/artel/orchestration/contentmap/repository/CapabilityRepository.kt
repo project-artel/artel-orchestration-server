@@ -252,6 +252,51 @@ interface CapabilityRepository : CoroutineCrudRepository<CapabilityEntity, Long>
     )
     suspend fun recordVerification(id: Long, verification: String, observationId: Long): Long
 
+    /**
+     * 같은 `entry_id` 를 가진 형제 행에도 같은 판정을 적는다.
+     *
+     * **한 번의 조작이 여러 행의 근거다.** 적재는 효과가 사는 메서드까지 정체에 넣으므로
+     * (`CapabilityKey` 의 표) 버튼 하나가 여러 줄로 갈린다 — 실측 `Canvas/MapSceneButton` 이
+     * 한 `scene` 에서 7 줄이다. agent 는 그 버튼을 한 번 누르고 화면이 바뀐 것을 보는데, 그
+     * 관측은 7 줄 **전부**에 대한 관측이지 그중 하나에 대한 것이 아니다. 어느 하나만 움직이면
+     * 나머지 여섯은 같은 조작을 겪고도 `unverified` 로 남는다.
+     *
+     * **그래서 이 판정은 "저 메서드가 실제로 돌았다" 가 아니라 "저 컨트롤이 살아 있다" 다.**
+     * 메서드가 정말 불렸는지는 화면에서 볼 수 없고 앞으로도 못 본다 — 그 배선은 `evidence` 가
+     * 말한 것이고, 이 축이 답하는 질문이 아니다. 1,300 행이 전부 `unverified` 로 남아 있는
+     * 것보다, "눌러 봤고 반응했다" 가 그 행들에 붙는 편이 낫다(ARTEL-805).
+     *
+     * `capability_observation` 에는 agent 가 실제로 지목한 행 하나만 남는다. 그래서 나중에
+     * "직접 지목된 것" 과 "형제로 함께 움직인 것" 을 갈라 볼 수 있다.
+     *
+     * `entry_id` 가 없는 행은 근거 출신이 아니라 형제를 찾을 수 없다. 그때 이 질의는 0 행을
+     * 건드리고, 지목된 행은 [recordVerification] 이 이미 움직인 뒤다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE capability
+        SET verification = :verification,
+            verification_observation_id = :observationId,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id <> :id
+          AND merged_into IS NULL
+          AND scene_id = (SELECT scene_id FROM capability WHERE id = :id)
+          AND id IN (
+              SELECT sibling.capability_id FROM capability_evidence sibling
+              WHERE sibling.entry_id IS NOT NULL
+                AND sibling.entry_id = (
+                    SELECT entry_id FROM capability_evidence WHERE capability_id = :id
+                )
+          )
+        """
+    )
+    suspend fun recordVerificationOfSiblings(
+        id: Long,
+        verification: String,
+        observationId: Long,
+    ): Long
+
     /** 이 지도의 `evidence` 출신 기능 전부. 이번 문서에 없는 것을 가리려면 먼저 있는 것을 알아야 한다. */
     @Query(
         """
