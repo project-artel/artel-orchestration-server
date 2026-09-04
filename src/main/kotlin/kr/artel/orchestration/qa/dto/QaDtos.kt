@@ -188,6 +188,25 @@ data class QaStatusPayload(
     val completedAt: Instant?
 )
 
+/**
+ * SDK socket 으로 나가는 QA try 진행 상태 알림(ARTEL-836).
+ *
+ * SDK([ARTEL-835](https://artel-asm.atlassian.net/browse/ARTEL-835))가 이 모양 그대로 읽는다 —
+ * 필드를 rename 하거나 더하지 않는다. [qaRunId] 와 [testRunName] 은 이 try 가 run(TR) 단위로
+ * 시작되지 않았으면(단일 시나리오 경로) null 이다. [outcome] 은 [state] 가 `FINISHED` 일 때만 싣는다.
+ */
+data class RunStatusMessage(
+    val type: String = "RUN_STATUS",
+    val state: String,
+    val projectName: String,
+    val testRunName: String?,
+    val qaRunId: Long?,
+    val qaTryId: Long,
+    val label: String?,
+    val outcome: String? = null,
+    val at: Instant
+)
+
 data class SendQaMessageRequest(val message: String)
 
 /**

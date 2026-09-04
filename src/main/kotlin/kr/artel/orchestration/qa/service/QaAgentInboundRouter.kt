@@ -143,6 +143,7 @@ class QaAgentInboundRouter(
     private val gameInstanceRepository: GameInstanceRepository,
     private val capabilityWrites: AgentCapabilityWriteService,
     private val grader: ExpectedStepsGrader,
+    private val runStatusNotifier: QaRunStatusNotifier,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -296,6 +297,8 @@ class QaAgentInboundRouter(
             payload = objectMapper.valueToTree(QaStatusPayload("RUNNING", null))
         )
         logService.publish(log)
+        // 이 시나리오의 agent 세션이 (이미 있던 런 세션을 물려받아) 붙었다(ARTEL-836).
+        runStatusNotifier.running(id, qaTry.gameInstanceId, runId)
         return tryRepository.findById(id)
     }
 
@@ -438,6 +441,18 @@ class QaAgentInboundRouter(
         if (tryRepository.transition(qaTryId, currentStatus, resolved, completedAt, completedAt) != 1) {
             throw IllegalStateException("Illegal QA status transition")
         }
+        // try 가 방금 종단됐다 — SDK 화면에 FINISHED 와 결과를 알린다(ARTEL-836). qa_try.status
+        // 값(COMPLETED/FAILED/CANCELLED)이 아니라 이 message 계약의 outcome 이름으로 옮긴다.
+        runStatusNotifier.finished(
+            qaTryId,
+            qaTry.gameInstanceId,
+            qaTry.qaRunId,
+            outcome = when (resolved) {
+                "COMPLETED" -> "PASSED"
+                "CANCELLED" -> "CANCELLED"
+                else -> "FAILED"
+            }
+        )
         // 판정 승격은 **이 분기 안에서만** 일어난다 — 위 resolved == null `branch`(스텝 판정 프레임)는
         // 런을 끝내지도, 판정을 싣지도 않는다. 전이 **뒤**인 것도 의도다: 앞에 두면 종단되지 않은
         // 런에 판정이 새겨질 수 있다.
