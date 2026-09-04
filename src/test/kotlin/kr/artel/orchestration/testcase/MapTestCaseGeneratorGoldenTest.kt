@@ -72,7 +72,7 @@ class MapTestCaseGeneratorGoldenTest {
         )
         val map = contentMaps.save(
             ContentMapEntity(
-                gameBuildId = build.id!!, schemaVersion = 6, capture = Capture.EDITOR.wire,
+                gameBuildId = build.id!!, schemaVersion = 7, capture = Capture.EDITOR_PLAY.wire,
                 evidencePromises = Json.of(
                     """["build-info-v1","selector-v1","visual-roles-v1","persistent-objects-v1"]"""
                 ),
@@ -81,7 +81,7 @@ class MapTestCaseGeneratorGoldenTest {
             )
         )
         val bytes = File(DOCUMENT).readBytes()
-        val objectKey = "content-map/${map.id}/wv-editor-latest.json"
+        val objectKey = "content-map/${map.id}/wv-play-2026-09-01.json"
         (storage as FakeDocumentStorage).put(objectKey, bytes)
         ingest.ingest(
             documents.save(
@@ -156,6 +156,23 @@ class MapTestCaseGeneratorGoldenTest {
         // 89 → 88. **가리키는 것에 이름이 없으면 그 효과를 안 낸다** — 문서가 수신자를 못 읽은
         // 자리를 `(not a simple receiver)` 로 적어 두는데, 값이 그런 것과 달리 대상이 그러면
         // 무엇을 보라는 것인지 한 마디도 말할 수 없다. 빠진 하나는 효과가 전부 그랬던 줄이다.
+        //
+        // 88 → 92. **읽는 곳을 하나로 합쳤다.** 앞서 창구가 셋이었고 관측 창구가 뽑는 자리를
+        // 손으로 적은 메서드 이름 목록(`WATCHED_ROOTS`)으로 좁혔다. 이제 질의가 지도의 축으로
+        // 정한다 — `trigger_kind` 가 `lifecycle` 인 것 전부. 목록에 없던 Unity 콜백이 들어왔고
+        // (`OnTriggerEnter2D` · `OnMouseEnter` · `OnEndDrag`), 컴파일러가 이름을 바꾼 코루틴도
+        // 더는 놓치지 않는다. 대신 `unity-event` 와 `persistent-unconfirmed` 가 빠졌다.
+        //
+        // 85 → 88. **못 푼 매개변수 조건을 버리지 않는다**(ARTEL-602 의 꼬리). 호출자가 넘긴 값을
+        // 문서가 못 읽으면(`_`) 그 비교를 통째로 버렸는데, 그러면 서로 반대인 `branch` 가 한 줄로 합쳐진다 —
+        // 실측에서 `SelectableObject.ChangeSize(bool bigSide)` 의 **키우기와 되돌리기가 한 케이스**로
+        // 붙어 있었고, `damage > 0` / `damage <= 0` 도 그랬다. 값을 못 밝힌 것은 사유로 남기고
+        // (`unsettable-precondition`) 조건은 코드가 부른 이름 그대로 보여 준다.
+        //
+        // 92 → 85. **문서가 바뀌었다.** 여기까지의 수치는 `wv-editor-latest.json`(schema 6,
+        // 2026-08-18) 것이고, 그 사이 SDK 가 조건을 다르게 낸다(ARTEL-700) — `IsStreaming != 0`
+        // 처럼 호출 이름으로 적던 자리를 그 getter 가 실제로 하는 비교(`streamingCoroutine != 0`)
+        // 로 바꿨다. 규칙이 달라진 것이 아니라 지도가 달라졌다.
         assertThat(cases).hasSize(88)
     }
 
@@ -205,6 +222,115 @@ class MapTestCaseGeneratorGoldenTest {
         val sameLine = cases.groupBy { Triple(it.scene, it.step, it.expected) }.filterValues { it.size > 1 }
 
         assertThat(sameLine).isEmpty()
+    }
+
+    /**
+     * **케이스 이름의 괄호가 맞는다**(ARTEL-662 의 꼬리).
+     *
+     * 형제를 가르는 꼬리는 전제의 비교를 그대로 적는데, 소유자 접두를 떼는 규칙이 `이름.속성` 만
+     * 가정해서 식을 만나면 부서졌다. 실측 85건 중 **10건**이 짝 없는 닫는 괄호를 달고 나왔다:
+     *
+     * ```
+     * 아무 키나 누른다 (StagePosition - 1) == stagePosition, flag == 0, stagePosition == 1 일 때)
+     * ```
+     *
+     * 앞의 `(` 는 꼬리가 연 것이고 `- 1)` 이 그것을 닫아 버려, 읽는 사람은 `일 때)` 앞에서 문장이
+     * 어디서 끝나는지 알 수 없다. 같은 규칙이 `collision.gameObject.CompareTag(enemy.tag)` 를
+     * `tag)` 로 만들었다 — 무엇을 견주는지가 사라진다.
+     */
+    /**
+     * **한 화면 안에서 같은 이름이 두 번 나오지 않는다.**
+     *
+     * 목록에서 줄을 고르는 사람에게 이름이 전부다. 실측에서 `TurnBattleScene 에 진입해 관찰한다`
+     * 가 네 줄이었고, 보는 것은 각각 `Player.HpText` · `CombineZone/Button` ·
+     * `ProjectileAnimator...sprite` · `Enemy.HpText` 로 전부 달랐다 — 이름이 조작(또는 "그
+     * 화면에 있기")만 말하고 무엇이 되는지를 말하지 않아서다.
+     *
+     * 꼬리(`… 일 때`)가 마지막 방패다. 그것까지 붙이고도 같은 줄이 남으면 사람이 구별할 방법이
+     * 없다.
+     */
+    /**
+     * **기대결과 문장과 목록이 같은 것을 말한다**(V93).
+     *
+     * 문장은 목록을 ` / ` 로 이어 보여준 것이다. 쓰는 쪽이 그 구분자로 다시 쪼개지 않아도 되게
+     * 목록을 함께 싣는데, 둘이 어긋나면 표에 보이는 것과 실행이 판정하는 것이 달라진다.
+     *
+     * 실측 88건 중 18건이 항목을 2~5개 든다. 이름의 `외 N건` 도 이 수를 센 것이다.
+     */
+    @Test
+    fun `기대결과 목록이 문장과 같은 것을 말한다`() {
+        assertThat(cases).allSatisfy { case ->
+            assertThat(case.expectedItems).isNotEmpty()
+            assertThat(case.expectedItems.joinToString(" / ")).isEqualTo(case.expected)
+        }
+
+        val many = cases.filter { it.expectedItems.size > 1 }
+        assertThat(many).hasSize(18)
+        assertThat(many.sumOf { it.expectedItems.size }).isEqualTo(51)
+    }
+
+    /**
+     * **씬에 없는 이름을 부르지 않는다.**
+     *
+     * `Component` 는 유니티가 모든 컴포넌트에 물려주는 타입이고 `this` 는 코드가 자기를 부르는
+     * 말이다. 실측 18행의 효과가 대상을 그렇게 적었고, 그대로 내면 `` `Component.transform.
+     * localPosition` 의 위치/형태가 바뀐다 `` 가 되어 실행하는 사람이 찾을 것이 없다.
+     *
+     * 답은 문서 안에 있다 — 그 코드가 어느 타입에 붙어 있는지를 `method_id` 가 말한다. 지어내는
+     * 것이 아니라 옆 칸을 읽는 것이므로, 하나도 남지 않아야 한다.
+     */
+    @Test
+    fun `자기 자신을 가리키는 이름이 문장에 남지 않는다`() {
+        val leaked = cases.filter { case ->
+            SELF_NAME.containsMatchIn(case.step) || SELF_NAME.containsMatchIn(case.expected)
+        }
+
+        assertThat(leaked).isEmpty()
+    }
+
+    /**
+     * 컴파일러가 지은 이름도 함께 본다. 코루틴은 중첩 클래스로 풀려 타입이
+     * `Combat.Enemies.Enemy/<DeathCounter>d__25` 로 적히는데, 게임이 지은 이름은 `/` 앞까지다.
+     */
+    private val SELF_NAME = Regex("""`(Component|this)[.`]|/<\w+>d__""")
+
+    @Test
+    fun `한 화면 안에서 이름이 겹치지 않는다`() {
+        val twice = cases.groupBy { it.scene to it.step }.filterValues { it.size > 1 }
+
+        assertThat(twice).isEmpty()
+    }
+
+    @Test
+    fun `케이스 이름의 괄호가 맞는다`() {
+        val broken = cases.map { it.step }
+            .filter { step -> step.count { it == '(' } != step.count { it == ')' } }
+
+        assertThat(broken).isEmpty()
+    }
+
+    /**
+     * **형제와 갈리는 것을 먼저 적는다**(ARTEL-662 의 꼬리).
+     *
+     * 꼬리에 담는 수가 [MAX_TELLING] 로 잘리는데, 가나다순으로 자르면 **정작 옆줄과 갈라 주는
+     * 비교가 뒤로 밀려 잘려 나간다.** 실측에서 `GameClearScene` 의 세 줄이 그랬다 — 셋을 가르는
+     * 것은 `stagePosition` 하나인데 그것이 꼬리 맨 끝에 있어, 목록에서 줄을 훑는 사람은 같은
+     * 글자 40자를 지나야 다른 데에 닿았다.
+     *
+     * 형제가 적게 가진 비교일수록 잘 가른다. 그 순서로 담는다.
+     */
+    @Test
+    fun `형제와 갈리는 비교가 이름 앞에 온다`() {
+        // 이름에 결과가 붙은 뒤로도 이 셋은 글자까지 같다 — 같은 조작으로 같은 것을 만든다.
+        // 갈리는 것이 전제뿐이라, 꼬리가 없으면 목록에서 셋을 구별할 수 없다.
+        val same = "아무 키나 눌러 `TypeCard` 을(를) 만들고 " +
+            "`GameObject.GetComponentInChildren().text` 표시를 `Word.name` 로 갱신한다 ("
+        val group = cases.filter { it.scene == "GameClearScene" && it.step.startsWith(same) }
+        assertThat(group).hasSizeGreaterThan(1)
+
+        // 꼬리의 첫 항목만으로 이미 서로 다르다. 끝까지 읽지 않아도 갈린다.
+        val heads = group.map { it.step.removePrefix(same).substringBefore(",") }
+        assertThat(heads).doesNotHaveDuplicates()
     }
 
     /**
@@ -282,12 +408,14 @@ class MapTestCaseGeneratorGoldenTest {
         val byScene = cases.groupingBy { it.scene }.eachCount()
 
         assertThat(byScene).hasSize(7)
-        // 관측이 붙어 늘었다(ARTEL-681).
-        assertThat(byScene["StoryScene"]).isEqualTo(12)
-        assertThat(byScene["EndingScene"]).isEqualTo(12)
+        // 관측이 붙어 늘었다(ARTEL-681). 12 → 10 은 창구를 하나로 합치면서 `unity-event` 를
+        // 뺀 결과다 — 게임이 인스펙터로 연결한 자기 메서드는 사람이 그 순간을 만들 수 없다.
+        assertThat(byScene["StoryScene"]).isEqualTo(10)
+        assertThat(byScene["EndingScene"]).isEqualTo(10)
         // 갈래를 갈래대로 내면서 늘었다(ARTEL-667) — 지도의 `Return` 이 스테이지마다 한 줄이다.
         // 26 → 11. 빠진 열다섯은 `Update()` 아래 형제에게서 빌려 온 줄이다(ARTEL-680).
-        assertThat(byScene["Map_scene"]).isEqualTo(30)
+        // 30 → 27 도 같은 이유다(`unity-event` 를 뺐다). 27 → 23 은 문서가 바뀐 것이다.
+        assertThat(byScene["Map_scene"]).isEqualTo(23)
     }
 
     /**
@@ -319,8 +447,11 @@ class MapTestCaseGeneratorGoldenTest {
         // **조작 문장이 갈래를 말한다**(ARTEL-662). 같은 조작이지만 무엇이 다른지가 문장에 있다 —
         // 앞서는 글자까지 같아서, 읽는 사람도 저작 모델도 둘을 구별하지 못했다.
         assertThat(fromEnding.map { it.step }.distinct()).hasSameSizeAs(fromEnding)
-        assertThat(fromEnding.map { it.step }).allSatisfy {
-            assertThat(it).contains("아무 키나 누른다").contains("StagePosition")
+        // **무엇이 다른지를 도착 화면이 말한다.** 앞서는 이름이 조작뿐이라 전제에서 갈리는 비교를
+        // 꼬리로 빌려 와야 했다(`StagePosition == 5 일 때`). 이름이 결과를 들고 나서는 그 꼬리가
+        // 필요 없다 — 어디로 가는지가 곧 그 `branch` 다. 전제는 사전조건 칸에 그대로 있다.
+        assertThat(fromEnding).allSatisfy { case ->
+            assertThat(case.step).startsWith("아무 키나").contains(case.arrivesAt!!)
         }
         // 갈린 줄들은 사전조건이 서로 다르다. 같으면 어느 쪽을 만들지 알 수 없다.
         assertThat(fromEnding.map { it.precondition }.distinct()).hasSameSizeAs(fromEnding)
@@ -388,7 +519,7 @@ class MapTestCaseGeneratorGoldenTest {
      */
     @Test
     fun `대사를 다 넘겨야 가는 자리는 되풀이하라고 적는다`() {
-        val repeated = cases.filter { it.step.contains("되풀이") }
+        val repeated = cases.filter { it.step.contains("더 진행되지 않을 때까지") }
 
         // 씬 둘 × 그 씬에서 아무 키를 받는 기능 둘 × 도착 화면 둘. 실측 StoryScene 에서
         // `TutorialController`(튜토리얼 대화)와 `StoryController`(본편 대사)가 **각각** 아무 키를
@@ -396,9 +527,10 @@ class MapTestCaseGeneratorGoldenTest {
         assertThat(repeated).hasSize(4)
         assertThat(repeated).allSatisfy { assertThat(it.expected).contains("화면으로 전환된다") }
         assertThat(repeated.map { it.scene }.distinct()).containsExactlyInAnyOrder("StoryScene", "EndingScene")
-        // 활용을 건드리지 않는다. "누른되" 가 나오면 어미를 뗀 것이다.
+        // 활용을 건드리지 않는다. "누른되" 가 나오면 어미를 뗀 것이다. 되풀이는 **조작 쪽에**
+        // 붙는다 — 되풀이하는 것은 결과가 아니라 누르는 일이다.
         assertThat(repeated).allSatisfy {
-            assertThat(it.step).startsWith("아무 키나 누른다 — ")
+            assertThat(it.step).startsWith("아무 키나 더 진행되지 않을 때까지 눌러 ")
         }
     }
 
@@ -425,18 +557,28 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     /**
-     * **여럿을 가리키면 손대지 않는다.**
+     * **여럿을 가리키면 하나를 고르지 않는다 — 다 적는다.**
      *
      * `StoryController.backgorunds` 가 셋을 가리킨다(실측). 하나를 골라 적으면 나머지 둘일 때
-     * 거짓이라, 코드 이름을 그대로 두는 편이 정직하다. 못 푸는 것도 같다 —
-     * `GetComponentInChildren()` 은 씬이 답할 것이 없다.
+     * 거짓이지만, **몇 번째인지를 문서가 못 읽은 자리**(`Item[_]`)에서는 코드가 그 목록을 돌며
+     * 전부 건드리므로 셋을 다 적는 것이 참이다. 번호가 있는 자리는 펴지 않는다 — 그때는 어느
+     * 것인지 정해져 있는데 우리가 번호와 참조를 못 맞추는 것이라, 다 적으면 없는 말을 한다.
+     *
+     * 못 푸는 것은 그대로 둔다 — `GetComponentInChildren()` 은 씬이 답할 것이 없다. 다만 `Item`
+     * 만은 사람이 쓰는 모양으로 바꾼다. .NET 이 인덱서에 붙이는 이름이라 읽는 사람에게 아무
+     * 뜻도 아니다.
      */
     @Test
-    fun `여럿이거나 못 푸는 대상은 코드 이름 그대로 둔다`() {
+    fun `여럿을 가리키면 다 적고 못 푸는 것은 코드 이름 그대로 둔다`() {
         val outcomes = cases.map { it.expected }
 
-        assertThat(outcomes).anyMatch { it.contains("`StoryController.backgorunds.Item[_]`") }
+        assertThat(outcomes).anyMatch {
+            it.contains("`Background 6 (Bonus)` · `Background1` · `Background2`")
+        }
         assertThat(outcomes).anyMatch { it.contains("`GameObject.GetComponentInChildren().text`") }
+        // `Item` 은 한 줄도 남지 않는다. `Item[4]` 는 `[4]` 로 남아 번호를 잃지 않는다.
+        assertThat(outcomes).noneMatch { it.contains(".Item[") }
+        assertThat(outcomes).anyMatch { it.contains("[4]") }
     }
 
     /**
@@ -506,6 +648,6 @@ class MapTestCaseGeneratorGoldenTest {
     }
 
     private companion object {
-        const val DOCUMENT = "src/test/resources/contentmap/wv-editor-latest.json"
+        const val DOCUMENT = "src/test/resources/contentmap/wv-play-2026-09-01.json"
     }
 }

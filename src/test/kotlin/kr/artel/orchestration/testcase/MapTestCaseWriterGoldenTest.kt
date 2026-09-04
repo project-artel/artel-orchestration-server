@@ -94,7 +94,7 @@ class MapTestCaseWriterGoldenTest {
         )
         val map = contentMaps.save(
             ContentMapEntity(
-                gameBuildId = build.id!!, schemaVersion = 6, capture = Capture.EDITOR.wire,
+                gameBuildId = build.id!!, schemaVersion = 7, capture = Capture.EDITOR_PLAY.wire,
                 evidencePromises = Json.of(
                     """["build-info-v1","selector-v1","visual-roles-v1","persistent-objects-v1"]"""
                 ),
@@ -113,7 +113,7 @@ class MapTestCaseWriterGoldenTest {
         )
 
         val bytes = File(DOCUMENT).readBytes()
-        val objectKey = "content-map/$contentMapId/wv-editor-latest.json"
+        val objectKey = "content-map/$contentMapId/wv-play-2026-09-01.json"
         (storage as FakeDocumentStorage).put(objectKey, bytes)
         document = documents.save(
             ContentMapDocumentEntity(
@@ -157,6 +157,9 @@ class MapTestCaseWriterGoldenTest {
         // 46 → 31(ARTEL-680) 생명주기 아래 형제에게서 결과를 빌려 오지 않는다.
         // 31 → 80(ARTEL-681) 게임이 스스로 하는 일도 케이스가 된다.
         // 89 → 88 가리키는 것에 이름이 없으면 그 효과를 안 낸다([MapTestCaseGeneratorGoldenTest] 에 이유).
+        // 88 → 92 읽는 곳을 하나로 합치고 남길 자리를 질의가 정한다(같은 곳에 이유).
+        // 92 → 85 문서를 2026-09-01 것으로 바꿨다(같은 곳에 이유).
+        // 85 → 88 못 푼 매개변수 조건을 버리지 않는다(같은 곳에 이유).
         assertThat(mine()).hasSize(88)
         assertThat(first.testCases.created).isEqualTo(88)
     }
@@ -306,6 +309,6 @@ class MapTestCaseWriterGoldenTest {
     }
 
     companion object {
-        private const val DOCUMENT = "src/test/resources/contentmap/wv-editor-latest.json"
+        private const val DOCUMENT = "src/test/resources/contentmap/wv-play-2026-09-01.json"
     }
 }

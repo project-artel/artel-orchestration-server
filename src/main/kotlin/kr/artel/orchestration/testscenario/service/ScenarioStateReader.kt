@@ -186,14 +186,22 @@ object ScenarioStateReader {
     }.getOrElse { emptyList() }
 
     /**
-     * 이 사전조건이 [state]와 어긋나는가. 어긋나는 **첫 가드**를 돌려주고, 없으면 null 이다.
+     * 이 조건이 [state] 와 어긋나는지 판단한다. 어긋나는 첫 `Guard` 를 돌려주고, 없으면 `null`.
      *
      * 값을 모르는 변수는 어긋난다고 보지 않는다 — 경로 계산 전체를 관통하는 규칙이다. 대부분의
-     * 기능이 `InteractionLock.IsLocked == 0` 을 요구하는데 그 값을 아는 경우는 드물고, 모르는 것을
-     * 위반으로 세면 거의 모든 길이 막힌다.
+     * `capability` 가 `InteractionLock.IsLocked == 0` 을 요구하는데 그 값을 아는 경우는 드물고,
+     * 모르는 것을 위반으로 세면 거의 모든 길이 막힌다.
+     *
+     * `capability.given_text` 를 받던 문자열 판이 여기 있었는데 지웠다(ARTEL-447). 그 칸은 419 행
+     * 전부 `null` 이라 비교를 하나도 못 찾았고, 그래서 **늘 "위반 없음" 을 돌려줬다** — 길찾기가
+     * *"이 조작은 지금 상태에서 못 한다"* 를 한 번도 못 짚었다. 채우기만 하고 그 판을 남겨 두면
+     * 이번에는 사람이 읽으라고 다듬은 문장을 되읽게 되므로, 부르는 곳이 사라진 김에 함께 지운다.
      */
-    fun violated(givenText: String?, state: Map<String, String>): Guard? =
-        comparisonsIn(givenText).firstOrNull { guard ->
+    fun violated(condition: ConditionNode?, state: Map<String, String>): Guard? =
+        violated(guardsIn(condition), state)
+
+    private fun violated(guards: List<Guard>, state: Map<String, String>): Guard? =
+        guards.firstOrNull { guard ->
             val have = state[guard.variable]
             have != null && !guard.holds(have)
         }
