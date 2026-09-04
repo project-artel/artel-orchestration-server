@@ -77,6 +77,10 @@
       "description": "프로젝트 멤버 조회·내보내기"
     },
     {
+      "name": "SDK token",
+      "description": "로그인한 사용자의 SDK 토큰 발급"
+    },
+    {
       "name": "Project Invitation",
       "description": "프로젝트 초대 발송·조회·취소"
     },
@@ -1367,11 +1371,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -1771,6 +1775,59 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/ProjectInvitationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-instances/{instanceId}/reset": {
+      "post": {
+        "tags": [
+          "Game Instance"
+        ],
+        "summary": "게임 인스턴스 초기화",
+        "description": "붙어 있는 게임에 reset_game 을 보낸다. clearPlayerPrefs 를 true 로 주면 PlayerPrefs(저장소)도 함께 비운다. 붙어 있지 않으면 409, 그 인스턴스에서 QA 런이나 시도가 진행 중이면 409.",
+        "operationId": "reset",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "instanceId",
+            "in": "path",
+            "description": "게임 인스턴스 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetGameInstanceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameInstanceResetResponse"
                 }
               }
             }
@@ -2181,6 +2238,28 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/SdkLoginCodeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/sdk-tokens": {
+      "post": {
+        "tags": [
+          "SDK token"
+        ],
+        "summary": "SDK 토큰 발급",
+        "description": "로그인한 사용자에게 자기 SDK 토큰을 낸다. 쿠키 세션과 CLI 토큰으로 부를 수 있다.",
+        "operationId": "mint",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/SdkTokenResponse"
                 }
               }
             }
@@ -2918,6 +2997,36 @@
         }
       }
     },
+    "/api/qa-tries/{qaTryId}/detail": {
+      "get": {
+        "tags": [
+          "qa-try-controller"
+        ],
+        "operationId": "detail",
+        "parameters": [
+          {
+            "name": "qaTryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaTryDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/qa-stats": {
       "get": {
         "tags": [
@@ -3456,7 +3565,7 @@
         "tags": [
           "knowledge-detail-controller"
         ],
-        "operationId": "detail",
+        "operationId": "detail_1",
         "parameters": [
           {
             "name": "projectId",
@@ -4794,6 +4903,7 @@
       },
       "LlmUsageRecord": {
         "required": [
+          "cacheWriteTokens",
           "cachedInputTokens",
           "calledAt",
           "inputTokens",
@@ -4842,12 +4952,19 @@
             "type": "integer",
             "format": "int32"
           },
+          "cacheWriteTokens": {
+            "type": "integer",
+            "format": "int32"
+          },
           "reasoningTokens": {
             "type": "integer",
             "format": "int32"
           },
           "costUsd": {
             "type": "number"
+          },
+          "costEstimated": {
+            "type": "boolean"
           },
           "latencyMs": {
             "type": "integer",
@@ -5851,6 +5968,37 @@
           }
         }
       },
+      "ResetGameInstanceRequest": {
+        "required": [
+          "clearPlayerPrefs"
+        ],
+        "type": "object",
+        "properties": {
+          "clearPlayerPrefs": {
+            "type": "boolean"
+          }
+        }
+      },
+      "GameInstanceResetResponse": {
+        "required": [
+          "clearPlayerPrefs",
+          "gameInstanceId",
+          "requestedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "gameInstanceId": {
+            "type": "string"
+          },
+          "clearPlayerPrefs": {
+            "type": "boolean"
+          },
+          "requestedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "StartContentMapScanResponse": {
         "required": [
           "gameInstanceId",
@@ -6075,11 +6223,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
@@ -6330,6 +6478,7 @@
           "actionability",
           "applicability",
           "capabilityId",
+          "covers",
           "interaction",
           "observability",
           "repeatUntilDone",
@@ -6387,6 +6536,10 @@
           },
           "controlSelectorHint": {
             "type": "string"
+          },
+          "covers": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -6694,6 +6847,132 @@
       },
       "ServerSentEventQaLogResponse": {
         "type": "object"
+      },
+      "QaTryDetailResponse": {
+        "required": [
+          "feedback",
+          "issues",
+          "qaTryId",
+          "scenarioTitle",
+          "startedAt",
+          "status",
+          "toolCalls",
+          "usage"
+        ],
+        "type": "object",
+        "properties": {
+          "qaTryId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "scenarioTitle": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "promptVersion": {
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stepsPassed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "stepsTotal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "issues": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "feedback": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/QaTryDetailUsage"
+          },
+          "toolCalls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaTryToolCall"
+            }
+          }
+        }
+      },
+      "QaTryDetailUsage": {
+        "required": [
+          "cacheWriteTokens",
+          "cachedInputTokens",
+          "calls",
+          "costEstimated",
+          "inputTokens",
+          "outputTokens",
+          "pricedCalls"
+        ],
+        "type": "object",
+        "properties": {
+          "calls": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pricedCalls": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "costEstimated": {
+            "type": "boolean"
+          },
+          "inputTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cachedInputTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cacheWriteTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outputTokens": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "QaTryToolCall": {
+        "required": [
+          "calls",
+          "tool"
+        ],
+        "type": "object",
+        "properties": {
+          "tool": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "QaRunConfigStatsCell": {
         "required": [

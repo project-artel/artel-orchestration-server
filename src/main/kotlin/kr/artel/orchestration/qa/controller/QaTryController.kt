@@ -9,9 +9,11 @@ import kr.artel.orchestration.issue.service.IssueService
 import kr.artel.orchestration.qa.dto.CreateQaTryRequest
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
+import kr.artel.orchestration.qa.dto.QaTryDetailResponse
 import kr.artel.orchestration.qa.dto.QaTryResponse
 import kr.artel.orchestration.qa.dto.SendQaMessageRequest
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.qa.service.QaTryDetailService
 import kr.artel.orchestration.qa.service.QaTryService
 import kr.artel.orchestration.qa.service.toKnowledgeSettings
 import kr.artel.orchestration.qa.service.toRunSettings
@@ -36,6 +38,7 @@ private const val MAX_QA_MESSAGE_LENGTH = 4000
 class QaTryController(
     private val service: QaTryService,
     private val issueService: IssueService,
+    private val detailService: QaTryDetailService,
     private val objectMapper: ObjectMapper
 ) {
     @PostMapping
@@ -118,6 +121,18 @@ class QaTryController(
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
     }
+
+    /**
+     * QA 히스토리에서 이 실행을 펼쳤을 때의 상세(ARTEL-819).
+     *
+     * 목록 응답([QaTryResponse])에 안 실은 값들이다 — 네 표를 접어야 나오는 수라, 수십 행을
+     * 그리는 목록마다 지고 가면 안 펼친 행의 값까지 매번 계산하게 된다.
+     */
+    @GetMapping("/{qaTryId}/detail")
+    suspend fun detail(
+        @PathVariable qaTryId: String,
+        @CurrentUserId appUserId: Long
+    ): QaTryDetailResponse = detailService.detail(parseId(qaTryId), appUserId)
 
     /**
      * 이 실행이 남긴 이슈, 최신순 한 페이지(ARTEL-245).
