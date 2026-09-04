@@ -2,6 +2,7 @@ package kr.artel.orchestration.qa.dto
 
 import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.databind.JsonNode
+import java.math.BigDecimal
 import java.time.Instant
 
 data class CreateQaTryRequest(
@@ -150,3 +151,59 @@ data class QaStatusPayload(
 )
 
 data class SendQaMessageRequest(val message: String)
+
+/**
+ * QA 히스토리에서 런 하나를 펼쳤을 때 그 자리에 서는 것(ARTEL-819).
+ *
+ * **[QaTryResponse]에 안 싣는다.** 저 응답은 목록이 수십 행을 그릴 때마다 나가는데, 여기 실린
+ * 값들은 `llm_usage`·`qa_log`·`issue`·`capability_observation` 네 표를 접어야 나온다. 안 펼친
+ * 행의 값은 아무도 안 보므로 펼칠 때 그 행만 따로 부른다.
+ *
+ * [stepsPassed]와 [stepsTotal]은 완주하지 않은 런에서 **함께 null이다**. 0이 아니라 없는 것이고,
+ * 임의의 분모를 붙이면 "10 / 17 실패"처럼 읽힌다. 취소된 런은 판정 자체가 없다.
+ */
+data class QaTryDetailResponse(
+    val qaTryId: String,
+    val status: String,
+    val scenarioTitle: String,
+    val model: String?,
+    val promptVersion: String?,
+    val reasoningEffort: String?,
+    val startedAt: Instant,
+    val completedAt: Instant?,
+    val stepsPassed: Int?,
+    val stepsTotal: Int?,
+    /** 이 런이 게임에서 찾아 보고한 결함 수. `qa_log`의 `ERROR`가 아니다. */
+    val issues: Long,
+    /** 이 런이 `capability`에 남긴 판정 수. */
+    val feedback: Long,
+    val usage: QaTryDetailUsage,
+    /** 많이 부른 것이 앞이다. 한 번도 안 불렀으면 빈 목록. */
+    val toolCalls: List<QaTryToolCall>
+)
+
+/**
+ * 이 런이 쓴 것과 든 돈.
+ *
+ * [cachedInputTokens]는 [inputTokens]에 **포함된** 값이고 [cacheWriteTokens]는 아니다. 셋을
+ * 나란히 더하면 같은 토큰을 두 번 센다.
+ *
+ * [costUsd]가 null이면 "공짜"가 아니라 "아무도 단가를 말한 적 없다"이다. [pricedCalls]가
+ * [calls]보다 작으면 그 금액은 하한이다. [costEstimated]는 우리가 토큰으로 계산한 값이 섞였다는
+ * 뜻이다 — provider가 호출별 청구액을 안 줘서 그렇다.
+ */
+data class QaTryDetailUsage(
+    val calls: Long,
+    val pricedCalls: Long,
+    val costUsd: BigDecimal?,
+    val costEstimated: Boolean,
+    val inputTokens: Long,
+    val cachedInputTokens: Long,
+    val cacheWriteTokens: Long,
+    val outputTokens: Long
+)
+
+data class QaTryToolCall(
+    val tool: String,
+    val calls: Long
+)
