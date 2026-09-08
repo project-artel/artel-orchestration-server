@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import kr.artel.orchestration.contentmap.entity.ContentMapMode
+import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.entity.SceneEntity
 import kr.artel.orchestration.contentmap.entity.Observability
 import kr.artel.orchestration.contentmap.entity.SpecStatus
@@ -227,7 +228,11 @@ class SceneContextService(
         capabilityId = row.capabilityId.toString(),
         capabilityKey = row.capabilityKey,
         summary = row.summary,
-        givenText = row.givenText,
+        given = row.conditionTree
+            ?.let { runCatching { objectMapper.readTree(it.asString()) }.getOrNull() }
+            ?.takeIf { it.isObject && !it.isEmpty }
+            ?.let { runCatching { EvidenceParser(objectMapper).parseCondition(it) }.getOrNull() }
+            ?.let(kr.artel.orchestration.contentmap.dto.ConditionNodeResponse::of),
         interaction = row.interaction,
         inputKey = row.inputKey,
         controlPath = row.controlPath,

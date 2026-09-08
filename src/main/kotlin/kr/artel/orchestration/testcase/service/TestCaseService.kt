@@ -102,6 +102,10 @@ class TestCaseService(
         // 조건에서까지 함께 보낸다 — 그 넷이 지도에 나란히 적혀 있고, 실측(A/B)에서 같은 모델이
         // 여정을 26조각에서 10개로 줄였다.
         val moves = valueMoves(projectId)
+        // **조작의 기계값도 함께 보낸다**(ARTEL-772). 앞서 이것만 `explain_case` 도구로 물어야
+        // 했는데, 그 도구가 준 나머지(씬 · 요구 · 남기는 것)는 이 목록에 이미 실려 있었다.
+        // 한 칸을 옮기면 왕복이 사라진다 — 늘 참인 사실은 목록이 한 번 말한다.
+        val inputs = caseInputs(projectId)
         return repository.findByProjectIdOrderByIdAsc(projectId)
             // **깨진 것은 저작 재료가 아니다**(ARTEL-685). 지도를 다시 적재하면 더 이상 뒷받침되지
             // 않는 케이스가 `BROKEN` 으로 남는다. 보내면 모델이 그것을 담고, 커버리지 기준에는
@@ -130,6 +134,7 @@ class TestCaseService(
                 stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
                     .ifEmpty { changed[case.id].orEmpty() } + arrival(case),
                 exits = exits[ScenarioStateReader.sceneOf(case) ?: case.scene].orEmpty(),
+                input = inputs[case.id].orEmpty(),
             )
         }.toList()
     }
@@ -234,6 +239,16 @@ class TestCaseService(
         repository.findValueRaisers(projectId).toList()
             .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
             .mapValues { (_, scenes) -> scenes.distinct().sorted() }
+    }.getOrElse { emptyMap() }
+
+    /**
+     * 케이스마다 조작의 기계값. 지도를 못 되짚는 행(구버전 엑셀 경로)은 담기지 않는다 —
+     * `capability_key` 가 없어서 가리킬 조작이 없다.
+     */
+    private suspend fun caseInputs(projectId: Long): Map<Long, String> = runCatching {
+        repository.findCaseInputs(projectId).toList()
+            .filter { it.input.isNotBlank() }
+            .associate { it.testCaseId to it.input }
     }.getOrElse { emptyMap() }
 
     private suspend fun sceneExits(projectId: Long): Map<String, List<SceneExit>> = runCatching {

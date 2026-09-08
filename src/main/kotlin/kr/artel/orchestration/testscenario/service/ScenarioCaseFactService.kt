@@ -116,7 +116,6 @@ class ScenarioCaseFactService(
         },
         label = capability.controlLabel ?: capability.controlPath,
         summary = capability.summary,
-        given = capability.givenText,
         actionability = capability.actionability,
         matchedBy = matchedBy,
     )
@@ -162,7 +161,6 @@ data class CaseOperation(
     val input: String,
     val label: String?,
     val summary: String,
-    val given: String?,
     val actionability: String,
     val matchedBy: String,
 )

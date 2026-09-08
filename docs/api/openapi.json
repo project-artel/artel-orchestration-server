@@ -6534,6 +6534,136 @@
           }
         }
       },
+      "Always": {
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "description": "조건 없음",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConditionNodeResponse"
+          }
+        ]
+      },
+      "ConditionNodeResponse": {
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "always · test · gesture · every · either · unknown"
+          }
+        },
+        "description": "조건 트리 노드. kind 가 갈래를 정한다"
+      },
+      "Either": {
+        "required": [
+          "kind",
+          "parts"
+        ],
+        "type": "object",
+        "description": "parts 중 하나만 성립하면 된다",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConditionNodeResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "parts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConditionNodeResponse"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Every": {
+        "required": [
+          "kind",
+          "parts"
+        ],
+        "type": "object",
+        "description": "parts 가 모두 성립해야 한다",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConditionNodeResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "parts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConditionNodeResponse"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "parts": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Always"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Either"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Every"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Gesture"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Test"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Unknown"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Gesture": {
+        "required": [
+          "input",
+          "kind",
+          "offset"
+        ],
+        "type": "object",
+        "description": "입력 조건",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConditionNodeResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "string",
+                "description": "`key:RightArrow (down)` 꼴. 근거가 렌더한 문자열 그대로다"
+              },
+              "offset": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          }
+        ]
+      },
       "SceneCapabilityView": {
         "required": [
           "actionability",
@@ -6559,8 +6689,27 @@
           "summary": {
             "type": "string"
           },
-          "givenText": {
-            "type": "string"
+          "given": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Always"
+              },
+              {
+                "$ref": "#/components/schemas/Either"
+              },
+              {
+                "$ref": "#/components/schemas/Every"
+              },
+              {
+                "$ref": "#/components/schemas/Gesture"
+              },
+              {
+                "$ref": "#/components/schemas/Test"
+              },
+              {
+                "$ref": "#/components/schemas/Unknown"
+              }
+            ]
           },
           "interaction": {
             "type": "string"
@@ -6684,6 +6833,73 @@
             "type": "string"
           }
         }
+      },
+      "Test": {
+        "required": [
+          "kind",
+          "left",
+          "offset",
+          "operator",
+          "right"
+        ],
+        "type": "object",
+        "description": "비교 하나",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConditionNodeResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "left": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string"
+              },
+              "right": {
+                "type": "string"
+              },
+              "context": {
+                "type": "string",
+                "description": "null 이면 주어를 못 찾았다. subjectLost 가 사유를 든다"
+              },
+              "subjectLost": {
+                "type": "string",
+                "description": "주어를 잃은 사유. context 가 null 일 때만 찬다"
+              },
+              "offset": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          }
+        ]
+      },
+      "Unknown": {
+        "required": [
+          "kind",
+          "reason"
+        ],
+        "type": "object",
+        "description": "근거가 읽지 못한 조건. 있으면 조건을 단정하면 안 된다",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConditionNodeResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "unread": {
+                "type": "string",
+                "description": "무엇에서 막혔는지. `operand:ldlen` 꼴"
+              }
+            }
+          }
+        ]
       },
       "KnowledgeListResponse": {
         "required": [
@@ -8491,31 +8707,6 @@
           }
         }
       },
-      "Always": {
-        "required": [
-          "kind"
-        ],
-        "type": "object",
-        "description": "조건 없음",
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ConditionNodeResponse"
-          }
-        ]
-      },
-      "ConditionNodeResponse": {
-        "required": [
-          "kind"
-        ],
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string",
-            "description": "always · test · gesture · every · either · unknown"
-          }
-        },
-        "description": "조건 트리 노드. kind 가 갈래를 정한다"
-      },
       "ContentMapEdgeResponse": {
         "required": [
           "fromSceneId",
@@ -8845,88 +9036,6 @@
           }
         },
         "description": "지도 루트"
-      },
-      "Either": {
-        "required": [
-          "kind"
-        ],
-        "type": "object",
-        "description": "parts 중 하나만 성립하면 된다",
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ConditionNodeResponse"
-          }
-        ]
-      },
-      "Every": {
-        "required": [
-          "kind",
-          "parts"
-        ],
-        "type": "object",
-        "description": "parts 가 모두 성립해야 한다",
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ConditionNodeResponse"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "parts": {
-                "type": "array",
-                "items": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Always"
-                    },
-                    {
-                      "$ref": "#/components/schemas/Either"
-                    },
-                    {
-                      "$ref": "#/components/schemas/Every"
-                    },
-                    {
-                      "$ref": "#/components/schemas/Gesture"
-                    },
-                    {
-                      "$ref": "#/components/schemas/Test"
-                    },
-                    {
-                      "$ref": "#/components/schemas/Unknown"
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        ]
-      },
-      "Gesture": {
-        "required": [
-          "input",
-          "kind",
-          "offset"
-        ],
-        "type": "object",
-        "description": "입력 조건",
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ConditionNodeResponse"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "input": {
-                "type": "string",
-                "description": "`key:RightArrow (down)` 꼴. 근거가 렌더한 문자열 그대로다"
-              },
-              "offset": {
-                "type": "integer",
-                "format": "int32"
-              }
-            }
-          }
-        ]
       },
       "LastScanResponse": {
         "required": [
@@ -9281,73 +9390,6 @@
           }
         },
         "description": "명세가 못 된 사유별 집계"
-      },
-      "Test": {
-        "required": [
-          "kind",
-          "left",
-          "offset",
-          "operator",
-          "right"
-        ],
-        "type": "object",
-        "description": "비교 하나",
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ConditionNodeResponse"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "left": {
-                "type": "string"
-              },
-              "operator": {
-                "type": "string"
-              },
-              "right": {
-                "type": "string"
-              },
-              "context": {
-                "type": "string",
-                "description": "null 이면 주어를 못 찾았다. subjectLost 가 사유를 든다"
-              },
-              "subjectLost": {
-                "type": "string",
-                "description": "주어를 잃은 사유. context 가 null 일 때만 찬다"
-              },
-              "offset": {
-                "type": "integer",
-                "format": "int32"
-              }
-            }
-          }
-        ]
-      },
-      "Unknown": {
-        "required": [
-          "kind",
-          "reason"
-        ],
-        "type": "object",
-        "description": "근거가 읽지 못한 조건. 있으면 조건을 단정하면 안 된다",
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ConditionNodeResponse"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "reason": {
-                "type": "string"
-              },
-              "unread": {
-                "type": "string",
-                "description": "무엇에서 막혔는지. `operand:ldlen` 꼴"
-              }
-            }
-          }
-        ]
       },
       "VerificationResponse": {
         "required": [

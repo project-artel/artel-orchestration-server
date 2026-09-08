@@ -37,6 +37,15 @@ data class AuthoringTestCase(
     @JsonProperty("state_before") val stateBefore: List<CaseGuard> = emptyList(),
     @JsonProperty("state_after") val stateAfter: Map<String, String> = emptyMap(),
     val exits: List<SceneExit> = emptyList(),
+    /**
+     * 이 케이스가 가리키는 **조작의 기계값**. 스텝의 `input` 칸에 그대로 넣는 값이다
+     * (`key:Return` · `click:Canvas/continue`). 누를 것이 없으면 빈 문자열이다.
+     *
+     * 앞서 이 값은 `explain_case` 도구로만 얻을 수 있었다. 그 도구가 준 것 중 이 목록에 없던
+     * 것이 이 한 칸뿐이라, 옮기고 나면 도구가 필요 없다 — **늘 참인 사실은 목록이 한 번 말하고
+     * 도구는 예외에서만 돈다**(ARTEL-772).
+     */
+    val input: String = "",
 )
 
 /**

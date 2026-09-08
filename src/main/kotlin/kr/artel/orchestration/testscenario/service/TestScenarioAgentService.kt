@@ -32,6 +32,7 @@ import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AuthoringFlow
+import kr.artel.orchestration.testscenario.dto.AuthoringHop
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
@@ -504,7 +505,7 @@ class TestScenarioAgentService(
                     operations = facts.operations.map {
                         CaseOperationFrame(
                             capabilityId = it.capabilityId, input = it.input, label = it.label,
-                            summary = it.summary, given = it.given, actionability = it.actionability,
+                            summary = it.summary, actionability = it.actionability,
                             matchedBy = it.matchedBy,
                         )
                     },
@@ -771,6 +772,20 @@ class TestScenarioAgentService(
                     caseIds = flow.caseIds,
                     opening = flow.opening.map { "${it.variable} ${it.operator} ${it.value}" },
                     gaps = flow.gaps,
+                    // **행렬을 계산해 놓고 안 보내던 것을 함께 보낸다**(ARTEL-772). 흐름이 순서만
+                    // 주니 모델이 이웃마다 `find_path` 를 불렀고, 실측 한 판에서 그 왕복이 280번
+                    // 이었다. 그 답이 전부 이 행렬 안에 있었다.
+                    hops = flow.caseIds.zipWithNext { from, to ->
+                        val cell = matrix.between(from, to)
+                        AuthoringHop(
+                            fromCaseId = from,
+                            toCaseId = to,
+                            link = (cell?.link ?: ScenarioFlowMatrix.Link.UNCHECKED)
+                                .name.lowercase(),
+                            actions = cell?.actions.orEmpty(),
+                            blockedBy = cell?.blockedBy,
+                        )
+                    },
                 )
             }
             trace.record(

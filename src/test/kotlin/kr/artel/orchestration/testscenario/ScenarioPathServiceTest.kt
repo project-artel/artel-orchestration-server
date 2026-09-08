@@ -28,6 +28,7 @@ import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.service.ScenarioOrdering
 import kr.artel.orchestration.testscenario.service.ScenarioPathResult
 import kr.artel.orchestration.testscenario.service.ScenarioPathService
+import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -1321,32 +1322,80 @@ class ScenarioPathServiceTest {
         )
     }
 
+    /**
+     * **조건은 `condition_tree` 로 앉힌다.**
+     *
+     * 앞서 이 도우미는 `given_text` 만 채웠다. 실제 지도는 정반대다 — `capability.given_text` 는
+     * 419 행 전부 `null` 이고(ARTEL-447 미착수) 조건은 `capability_evidence.condition_tree` 에
+     * 419 / 419 있다. 그래서 길찾기가 조건을 통째로 못 보는 동안에도 이 테스트는 통과했다.
+     *
+     * [given] 은 계속 받는다. 문장도 함께 앉혀 두면 문자열 판을 보는 곳이 남아 있어도 같은 답을 낸다.
+     */
     private suspend fun capability(
         sceneId: Long,
         interaction: String,
         inputKey: String? = null,
         label: String? = null,
         given: String? = null,
-    ): Long = capabilityRepository.save(
-        CapabilityEntity(
-            sceneId = sceneId, contentMapId = contentMapId, origin = "evidence", summary = "test capability",
-            givenText = given,
-            interaction = interaction, inputKey = inputKey, controlLabel = label,
-            inputPhase = if (interaction == "press") "down" else null,
-            status = "runnable",
-        )
-    ).id!!
-
-    private suspend fun evidence(capabilityId: Long, methodId: String) {
+    ): Long {
+        val id = capabilityRepository.save(
+            CapabilityEntity(
+                sceneId = sceneId, contentMapId = contentMapId, origin = "evidence", summary = "test capability",
+                givenText = given,
+                interaction = interaction, inputKey = inputKey, controlLabel = label,
+                inputPhase = if (interaction == "press") "down" else null,
+                status = "runnable",
+            )
+        ).id!!
         template.insert(
             CapabilityEvidenceEntity(
-                capabilityId = capabilityId,
-                entryId = "Assembly-CSharp|Map.MapMove|Update|System.Void()",
-                ownerType = "Map.MapMove", method = methodId.split("|")[2], methodId = methodId,
+                capabilityId = id,
+                entryId = "Assembly-CSharp|Test|Update|System.Void()",
+                ownerType = "Test", method = "Update",
+                methodId = "Assembly-CSharp|Test|Update|System.Void()",
                 recordKind = "candidate", triggerKind = "lifecycle", analysisConfidence = "derived",
-                conditionTree = Json.of("{}"),
-                callPath = Json.of("[\"System.Void Map.MapMove::Update()\"]"),
+                conditionTree = Json.of(conditionTreeOf(given)),
+                callPath = Json.of("[\"System.Void Test::Update()\"]"),
             )
+        ).awaitSingle()
+        return id
+    }
+
+    /**
+     * `` `A == 0` `` 같은 한 줄을 `condition_tree` JSON 으로. 여러 항은 `그리고` 로 온다.
+     *
+     * 문장을 비교로 가르는 일은 [ScenarioStateReader] 가 이미 한다 — 여기서 또 파싱하면 두 곳이
+     * 서로 다르게 관대해진다. 트리 모양으로 감싸는 일만 한다.
+     */
+    private fun conditionTreeOf(given: String?): String {
+        val guards = ScenarioStateReader.guardsOf(given)
+        if (guards.isEmpty()) return "{\"kind\":\"always\"}"
+        val tests = guards.joinToString(",") { guard ->
+            """{"kind":"test","left":"${guard.path}","operator":"${guard.operator}",""" +
+                """"right":"${guard.value}","context":"static","offset":0}"""
+        }
+        return if (guards.size == 1) tests else """{"kind":"every","parts":[$tests]}"""
+    }
+
+    /**
+     * 이 기능의 근거를 **실제 메서드로 바꿔 앉힌다.**
+     *
+     * `capability_evidence.capability_id` 가 PK 라 한 기능에 한 줄이다. [capability] 가 이미
+     * 조건과 함께 한 줄을 앉히므로 여기서는 갱신한다 — 조건은 그대로 두고 어느 메서드에서
+     * 왔는지만 바꾼다.
+     */
+    private suspend fun evidence(capabilityId: Long, methodId: String) {
+        template.update(
+            org.springframework.data.relational.core.query.Query.query(
+                org.springframework.data.relational.core.query.Criteria.where("capability_id").`is`(capabilityId)
+            ),
+            org.springframework.data.relational.core.query.Update
+                .update("entry_id", "Assembly-CSharp|Map.MapMove|Update|System.Void()")
+                .set("owner_type", "Map.MapMove")
+                .set("method", methodId.split("|")[2])
+                .set("method_id", methodId)
+                .set("call_path", Json.of("[\"System.Void Map.MapMove::Update()\"]")),
+            CapabilityEvidenceEntity::class.java,
         ).awaitSingle()
     }
 

@@ -5,6 +5,7 @@ import kr.artel.orchestration.contentmap.dto.ContentMapCallEdge
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import kr.artel.orchestration.contentmap.dto.ContentMapObservationRow
 import kr.artel.orchestration.contentmap.dto.ContentMapScreenElement
+import kr.artel.orchestration.contentmap.dto.CapabilityOwner
 import kr.artel.orchestration.contentmap.dto.MethodArgument
 import kr.artel.orchestration.contentmap.dto.SpecGapRow
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
@@ -48,21 +49,76 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
     suspend fun rootByObservation(gameBuildId: Long): Long?
 
     /**
-     * TC 생성기가 읽는 유일한 창구(`v_content_map_capability`).
+     * **TC 생성기가 읽는 유일한 창구**(`v_content_map_capability`).
      *
-     * **`status <> 'not-a-step'` 이 여기 있다.** V72 전에는 뷰가 들고 있었는데, 그 필터가 뷰에
-     * 있는 동안은 agent 도 같은 것만 받았다 — 실측 472 행 중 54 행이다(ARTEL-680). 뷰를 넓히고
-     * 필터를 이 질의로 내려, 두 소비자가 서로 다른 것을 원한다는 사실을 이름으로 남긴다.
-     * agent 쪽은 [findAllCapabilityRows] 다.
+     * 남기는 잣대가 둘이고 둘 다 뷰가 내주는 칸이다.
      *
-     * TC 생성기에서 이 필터를 빼면 안 된다. `not-a-step` 은 조작이 없어 단독 명세가 될 수 없고,
-     * 누를 수 없는 것으로 실행 가능한 테스트 케이스를 만들 수 없다.
+     * **① 시킬 수 있거나 볼 수 있어야 한다.** 둘 다 아니면 실행하는 사람에게 시킬 말이 없다.
+     * 앞서는 `status <> 'not-a-step'` 하나만 봤는데, `status` 는 세 축을 하나로 뭉갠 요약이라
+     * `not-a-step` 이 맨 앞에서 이긴다 — *"누를 수는 없지만 볼 수는 있는"* 행이 통째로 잘렸다.
+     * 실측(word-venture, 2026-09-01)에서 그 자리가 142 행이고, `Player.HpText` 가 줄고
+     * `GameOverScene` 으로 가는 것이 거기 있었다.
+     *
+     * **② 누를 것이 없는 행만 `record_kind = 'candidate'` 를 요구한다.**
+     *
+     * SDK 는 셋을 다 만족할 때만 `candidate` 를 준다 — 결과가 있고(`outcomes > 0`), 조건을 끝까지
+     * 읽었고(`composable`), 싱글턴 배관이 아니다(`!plumbing`). 하나라도 아니면 `flow` 다.
+     *
+     * **조작에는 이 잣대를 걸면 안 된다.** `flow` 의 첫 조건이 *"제 효과가 있나"* 인데, 조작이
+     * 효과를 안 들고 있는 것은 결함이 아니라 이 게임 구조의 정상이다 — 코루틴·상태 머신에서
+     * 입력을 받는 갈래와 결과를 내는 갈래가 다른 행으로 갈리고, 그 둘을 잇는 것이
+     * `MapTestCaseSiblings` 다. 걸어 봤더니(2026-09-01) 진짜 조작 13 행이 잘렸다:
+     * `Return` 키로 전투에 들어가는 것, `any` 키로 대사를 넘기는 것, 게임을 끝내는 버튼.
+     * SDK 주석도 *"제 효과가 없는 호출이 곧 효과로 가는 경로를 따라가는 방법이므로 남겨 둔다"*
+     * 고 적었다 — 버리라는 말이 아니다.
+     *
+     * 누를 것이 없는 행은 다르다. 거기서는 `flow` 가 곧 *"조건을 못 읽었거나 배관"* 이고,
+     * 볼 시점을 못 적으면 관측 케이스가 성립하지 않는다.
+     *
+     * **③ 누를 것이 없는 행은 `trigger_kind = 'lifecycle'` 이어야 한다.**
+     *
+     * `lifecycle` 은 Unity 가 부르는 콜백이고(`Start`·`Update`·`OnTriggerEnter2D`·`OnMouseEnter`),
+     * `unity-event` 는 게임이 인스펙터로 연결한 자기 메서드다(`TakeHit`·`Attack`·`CardAlignment`).
+     * 앞엣것은 사람이 그 순간을 만들 수 있다 — 화면을 열고, 머무르고, 부딪히고, 마우스를 올린다.
+     * 뒤엣것은 게임이 알아서 부르는 자리라 실행하는 사람이 시킬 방법이 없다.
+     *
+     * 실측(2026-09-01): 열어 봤더니 `CardMouseUp` 과 `CardAlignment` 이 `this.transform` 세 줄을
+     * 똑같이 냈다 — 볼 대상 이름도 없고 중복이다.
+     *
+     * 실측: 419 행 → **153 행**. 버려지는 것은 시킬 수도 볼 수도 없는 226 행과, 누를 것이
+     * 없으면서 `flow` 인 40 행이다.
+     *
+     * agent 쪽은 [findAllCapabilityRows] 다 — 그쪽은 전부를 원한다(ARTEL-680).
      *
      * 접힌(`merged_into`) 행은 뷰가 계속 거른다. 효과는 여기 없다 — 행이 곱해지므로
      * [CapabilityEffectRepository] 로 따로 읽는다.
      *
      * `ORDER BY` 를 씬 이름과 기능 id 로 고정하는 것은 취향이 아니다. 이 목록은 agent 프롬프트에
      * 실려 프롬프트 캐시를 타므로, 줄 순서가 조회마다 흔들리면 캐시가 통째로 깨진다.
+     */
+    @Query(
+        """
+        SELECT * FROM v_content_map_capability
+        WHERE content_map_id = :contentMapId
+          AND (
+                actionability <> 'not-a-step'
+             OR (
+                    observability = 'observable'
+                AND record_kind = 'candidate'
+                AND trigger_kind = 'lifecycle'
+                )
+          )
+        ORDER BY scene_name ASC, capability_id ASC
+        """
+    )
+    fun findTestCaseRows(contentMapId: Long): Flow<ContentMapCapabilityRow>
+
+    /**
+     * **조회 화면의 "조작 단계" 목록**(`ContentMapViewService.stepsByScene`).
+     *
+     * 이름 그대로 *누를 수 있는 것*만 낸다. [findTestCaseRows] 와 일부러 갈린다 — 저쪽은
+     * "무엇이 TC 가 되나"를 묻고 여기는 "이 씬에서 무엇을 할 수 있나"를 묻는다. 화면은
+     * `steps.size == total - notAStep` 등식을 세워 두었으므로 이 필터가 흔들리면 수치가 어긋난다.
      */
     @Query(
         """
@@ -102,6 +158,56 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
         """
     )
     fun findAllCapabilityRows(contentMapId: Long): Flow<ContentMapCapabilityRow>
+
+    /**
+     * 기능마다 **그 코드가 붙어 있는 타입**([CapabilityOwner]).
+     *
+     * 효과의 대상이 `Component.` 로 시작하는 자리를 되돌리는 데 쓴다. `merged_into` 로 합쳐진
+     * 행도 낸다 — 효과를 빌려 오는 자리(`borrowed`)의 주인이 그런 행일 수 있고, 그때도 이름은
+     * 그 문서가 말한 사실이다.
+     */
+    @Query(
+        """
+        SELECT ce.capability_id, ce.method_id
+        FROM capability_evidence ce
+        JOIN capability c ON c.id = ce.capability_id
+        JOIN scene s ON s.id = c.scene_id
+        WHERE s.content_map_id = :contentMapId AND ce.method_id IS NOT NULL
+        """
+    )
+    fun findCapabilityOwners(contentMapId: Long): Flow<CapabilityOwner>
+
+    /**
+     * 씬마다 **그 씬이 이름으로 아는 오브젝트들**.
+     *
+     * `GameObject.Find("이름")` 을 맞춰 보는 데 쓴다([MapTestCaseTargets.ofScene]). 인스펙터가
+     * 물어 둔 참조와 조작이 겨누는 자리, 둘 다 씬이 스스로 말한 이름이다.
+     */
+    @Query(
+        """
+        SELECT scene_name, path FROM (
+            SELECT s.name AS scene_name, r.target_name AS path
+            FROM scene_object_ref r JOIN scene s ON s.id = r.scene_id
+            WHERE s.content_map_id = :contentMapId
+            UNION
+            SELECT s.name AS scene_name, c.control_path AS path
+            FROM capability c JOIN scene s ON s.id = c.scene_id
+            WHERE c.content_map_id = :contentMapId AND c.merged_into IS NULL
+              AND c.control_path IS NOT NULL
+        ) named
+        ORDER BY scene_name ASC, path ASC
+        """
+    )
+    fun findSceneObjectNames(contentMapId: Long): Flow<ContentMapScreenElement>
+
+    /**
+     * 이 지도가 **마지막으로 다시 앉은 때**. 적재기가 지도를 갈아 끼우면 값이 움직인다.
+     *
+     * 읽어 둔 조건 트리를 다시 써도 되는지 묻는 데 쓴다([CapabilityConditionReader]). 419행을
+     * 다시 읽어 견주는 대신 이 한 칸만 본다.
+     */
+    @Query("SELECT updated_at::text FROM content_map WHERE id = :contentMapId")
+    suspend fun findUpdatedAt(contentMapId: Long): String?
 
     /**
      * **누를 것은 없고 볼 것은 있는 기능**(ARTEL-681). 위 창구가 `not-a-step` 을 거르므로 따로 낸다.

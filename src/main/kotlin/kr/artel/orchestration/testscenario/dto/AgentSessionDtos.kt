@@ -31,10 +31,39 @@ import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
  * @property opening 시작할 때 이미 참이어야 하는 것. 흐름이 스스로 만들지 못하는 요구다.
  * @property gaps 사이에 **지시할 수 없는 자리**가 몇 군데인가. 사람이 게임을 해서 지나가야 한다.
  */
+/**
+ * 흐름 안에서 **케이스 하나에서 다음 케이스로 넘어갈 때 무엇이 필요한가**(ARTEL-772).
+ *
+ * 흐름은 순서만 주고 사이를 말하지 않았다. 그래서 모델이 이웃마다 `find_path` 를 불렀고, 실측
+ * 저작 한 판에서 그 왕복이 280번이었다 — 같은 짝을 17번 물어 17번 같은 답을 받은 자리도 있다.
+ *
+ * **답은 처음부터 있었다.** 흐름을 고르려면 짝 행렬을 이미 다 계산해야 하고([ScenarioFlowMatrix]),
+ * 그 행렬의 칸이 곧 이 값이다. 계산해 놓고 안 보내던 것을 함께 보낸다.
+ *
+ * @property link `beside`(바로 이어진다) · `by_operation`(조작이 필요하다) ·
+ *   `by_play`(사람이 지나가야 한다) · `blocked`(못 간다)
+ * @property actions 사이에 넣을 스텝의 문장들. `beside` 면 비어 있다.
+ * @property blockedBy 무엇 때문에 막혔나. `blocked` 일 때만 찬다.
+ */
+data class AuthoringHop(
+    @JsonProperty("from_case_id") val fromCaseId: Long,
+    @JsonProperty("to_case_id") val toCaseId: Long,
+    val link: String,
+    val actions: List<String> = emptyList(),
+    @JsonProperty("blocked_by") val blockedBy: String? = null,
+)
+
 data class AuthoringFlow(
     @JsonProperty("case_ids") val caseIds: List<Long>,
     val opening: List<String> = emptyList(),
     val gaps: Int = 0,
+    /**
+     * 이웃 사이에 무엇이 필요한지. `caseIds` 가 n개면 n-1개다.
+     *
+     * 비어 있으면 하위 호환이다 — 이 칸이 생기기 전 오케스트레이션이 보낸 흐름이고, 그때는
+     * 모델이 `find_path` 로 물어야 한다.
+     */
+    val hops: List<AuthoringHop> = emptyList(),
 )
 
 data class AgentSessionOpenRequest(
@@ -210,13 +239,17 @@ data class CaseGuardFrame(val variable: String, val operator: String, val value:
  * @property input 스텝의 `input`에 그대로 넣는 값(`key:Return`·`click:경로`).
  * @property matchedBy `evidence`는 그 케이스가 가리키는 코드 자체, `effect`는 같은 값을 건드리는
  *   기능이라 여럿일 수 있다. 뭉뚱그리면 "정확히 이것"과 "아마 이 중 하나"가 구분되지 않는다.
+ *
+ * 전제를 싣는 칸은 없다. 예전에 `capability.given_text` 를 넣던 자리가 있었는데, 그 칸은 조건을
+ * 사람이 읽는 한 줄로 옮긴 것이라 값의 소속과 `either` / `every` 구분이 옮기는 과정에서 사라진다
+ * (ARTEL-447). 이 프레임을 받는 쪽이 조건을 알아야 하면 [CaseFactsResultFrame.stateBefore] 를
+ * 읽는다 — 그쪽은 트리에서 나온다.
  */
 data class CaseOperationFrame(
     val capabilityId: Long,
     val input: String,
     val label: String?,
     val summary: String,
-    val given: String?,
     /** 실행 축(ARTEL-479). 관측 불가까지 섞인 `status` 대신 이것을 낸다. */
     val actionability: String,
     val matchedBy: String,
