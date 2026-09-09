@@ -393,9 +393,11 @@ class ScenarioBridgeInsertionIntegrationTest {
     }
 
     @Test
-    fun `없는 기능을 인용한 스텝이 있으면 저장하지 않는다`(): Unit = runBlocking {
-        // 없는 케이스 번호를 지어낸 것과 같은 종류다. 실재를 안 보면 아무 숫자나 적는 것이 가장 싼
-        // 통과 방법이 된다.
+    fun `없는 기능을 인용한 다리는 UNKNOWN 으로 강등되어 저장된다`(): Unit = runBlocking {
+        // 예전에는 저장을 통째로 막았다. 그런데 모델은 capability id 를 알 길이 없어(재료에
+        // 없다) 지어낼 수밖에 없었고, 이유 없는 반려가 같은 자리에서 9~10연속 헛돌았다
+        // (계측 2026-09-08, 반려 41건 전원 이 사유). 이제 되찾기가 흡수한다 — 채울 수 있으면
+        // 진짜 id 로, 없으면 UNKNOWN 으로 정직하게 남겨 사용자에게 묻는다.
         val a = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 1")
         val b = case("Map_scene", "Map_scene 화면인 상태 / MapMove.position == 1")
 
@@ -417,9 +419,12 @@ class ScenarioBridgeInsertionIntegrationTest {
             ),
         )
 
-        assertThat(outcome.applied).isZero()
-        assertThat(outcome.rejected).isTrue()
-        assertThat(outcome.findings.ungrounded.single().reason).contains("999999999")
+        assertThat(outcome.rejected).isFalse()
+        assertThat(outcome.applied).isEqualTo(1)
+        val bridge = outcome.checked.single().steps[1]
+        assertThat(bridge.stepSource).isEqualTo(ScenarioStepSource.UNKNOWN)
+        assertThat(bridge.stepSourceCapabilityId).isNull()
+        assertThat(bridge.stepUnknownReason).isNotBlank()
     }
 
     @Test
