@@ -39,6 +39,8 @@ object ScenarioConflictSplit {
          * 뺀 것은 사용자에게 알리고, 전 건 판정에서도 "뺐다"로 재분류해야 한다.
          */
         val droppedCases: List<Pair<String, List<Long>>> = emptyList(),
+        /** 케이스가 첫 무리에 못 든 이유 — `케이스 id → 막은 값들`. 파편 안내가 원인을 말하게 한다. */
+        val causeOf: Map<Long, Set<String>> = emptyMap(),
     )
 
     /**
@@ -59,9 +61,10 @@ object ScenarioConflictSplit {
         val out = mutableListOf<ScenarioResult>()
         val notes = mutableListOf<Pair<String, Int>>()
         val anchorOf = mutableMapOf<Int, Int>()
+        val causeOf = mutableMapOf<Long, Set<String>>()
 
         for (scenario in scenarios) {
-            val groups = group(scenario.steps.mapNotNull { it.caseId }.distinct(), contested, writes, movable)
+            val groups = group(scenario.steps.mapNotNull { it.caseId }.distinct(), contested, writes, movable, causeOf)
             if (groups.size <= 1) {
                 out += scenario
                 continue
@@ -73,7 +76,7 @@ object ScenarioConflictSplit {
             for (offset in 1 until parts.size) anchorOf[first + offset] = first
             notes += scenario.title to parts.size
         }
-        return Outcome(out, notes, anchorOf)
+        return Outcome(out, notes, anchorOf, causeOf = causeOf)
     }
 
     /**
@@ -121,6 +124,7 @@ object ScenarioConflictSplit {
             notes = outcome.notes,
             anchorOf = anchors,
             droppedCases = dropped,
+            causeOf = outcome.causeOf,
         )
     }
 
@@ -138,13 +142,25 @@ object ScenarioConflictSplit {
         contested: (Long, Long) -> Set<String>,
         writes: (Long) -> Set<String>,
         movable: (String) -> Boolean,
+        causeOf: MutableMap<Long, Set<String>> = mutableMapOf(),
     ): List<Set<Long>> {
         val groups = mutableListOf<MutableSet<Long>>()
         for ((index, id) in caseIds.withIndex()) {
             val home = groups.firstOrNull { group ->
                 group.none { blocks(it, id, index, caseIds, contested, writes, movable) }
             }
-            if (home != null) home += id else groups += mutableSetOf(id)
+            if (home != null) home += id
+            else {
+                // 첫 무리의 무엇과 어떤 값으로 어긋났는지를 남긴다 — 파편이 스스로 원인을
+                // 말하게 하는 유일한 자리다(계산은 여기서만 그 답을 안다).
+                if (groups.isNotEmpty()) {
+                    causeOf[id] = groups.first()
+                        .flatMap { contested(it, id) }
+                        .toSet()
+                        .ifEmpty { setOf("(순서상 함께 못 섬)") }
+                }
+                groups += mutableSetOf(id)
+            }
         }
         return groups
     }

@@ -340,10 +340,13 @@ class ScenarioReconcileService(
             // 거짓말을 한 것이 아니라 그 뒤에 코드가 나눴기 때문이다. 몇 개가 새로 생겼는지까지
             // 말해 주면 둘이 이어진다.
             divided.droppedCases.forEach { (title, ids) ->
+                val causes = ids.flatMap { divided.causeOf[it].orEmpty() }.toSet()
                 add(
                     "‘$title’ 에서 함께 설 자리가 없어 홀로 남은 케이스(" +
                         ids.joinToString(", ") { describe(it) } +
-                        ")는 저장하지 않았습니다 — 케이스 하나짜리 시나리오는 흐름이 아니어서," +
+                        ")는 저장하지 않았습니다" +
+                        (if (causes.isEmpty()) "" else " — 막은 값: ${causes.joinToString(", ")}") +
+                        ". 케이스 하나짜리 시나리오는 흐름이 아니어서," +
                         " 함께 설 흐름이 생길 때 다시 담는 쪽이 낫습니다."
                 )
             }

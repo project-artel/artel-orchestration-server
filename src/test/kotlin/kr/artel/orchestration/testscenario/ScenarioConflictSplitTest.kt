@@ -252,6 +252,8 @@ class ScenarioConflictSplitTest {
         assertThat(outcome.scenarios).hasSize(1)
         assertThat(outcome.scenarios[0].steps.mapNotNull { it.caseId }).containsExactly(2, 4)
         assertThat(outcome.droppedCases).containsExactly("전투 전량" to listOf(3L))
+        // 파편이 스스로 원인을 말한다 — run 57 에서 원인 없는 파편을 사람이 되짚어야 했다.
+        assertThat(outcome.causeOf[3L]).containsExactly("parity")
     }
 
     @Test
