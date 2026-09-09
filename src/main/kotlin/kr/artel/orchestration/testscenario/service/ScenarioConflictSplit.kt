@@ -33,6 +33,12 @@ object ScenarioConflictSplit {
         val scenarios: List<ScenarioResult>,
         val notes: List<Pair<String, Int>> = emptyList(),
         val anchorOf: Map<Int, Int> = emptyMap(),
+        /**
+         * 나누다 홀로 남아 **저장하지 않은** 케이스들 — `제목 → 케이스 id`. 케이스 하나짜리
+         * 조각은 흐름이 아니라서, 저장하면 없느니만 못하다(run 57 실측 — 사용자 판정).
+         * 뺀 것은 사용자에게 알리고, 전 건 판정에서도 "뺐다"로 재분류해야 한다.
+         */
+        val droppedCases: List<Pair<String, List<Long>>> = emptyList(),
     )
 
     /**
@@ -68,6 +74,54 @@ object ScenarioConflictSplit {
             notes += scenario.title to parts.size
         }
         return Outcome(out, notes, anchorOf)
+    }
+
+    /**
+     * 나뉜 결과에서 **홀로 남은 조각을 채택하지 않는다**(run 57 — 사용자 판정).
+     *
+     * 케이스 하나짜리 시나리오는 흐름이 아니라서, 저장하면 없느니만 못하다. 나누는 일은
+     * 계산이고([apply]) 무엇을 저장할지는 정책이라, 두 결정을 한 함수에 섞지 않는다 —
+     * 나누기 계산의 검사가 정책에 가려지면 안 된다.
+     *
+     * 조각이 전부 홀로면 가장 큰 것 하나는 남긴다 — 통째로 사라지면 "나눴다"는 안내가
+     * 가리킬 것이 없다. 뺀 케이스는 [Outcome.droppedCases] 로 알리고, 부른 쪽이 전 건
+     * 판정에서 "뺐다"로 재분류할 책임을 진다.
+     */
+    fun adoptSplitPieces(outcome: Outcome): Outcome {
+        if (outcome.notes.isEmpty()) return outcome
+        val caseCount = { part: ScenarioResult -> part.steps.mapNotNull { it.caseId }.distinct().size }
+        // 조각들을 원본별 무리로 되묶는다: anchorOf 가 "새 조각 → 첫 조각" 을 안다.
+        val families = mutableMapOf<Int, MutableList<Int>>()
+        outcome.scenarios.indices.forEach { index ->
+            val root = outcome.anchorOf[index] ?: index
+            families.getOrPut(root) { mutableListOf() } += index
+        }
+        val keptIndex = mutableListOf<Int>()
+        val dropped = mutableListOf<Pair<String, List<Long>>>()
+        for ((root, members) in families.toSortedMap()) {
+            if (members.size == 1) { keptIndex += members; continue }
+            var kept = members.filter { caseCount(outcome.scenarios[it]) >= 2 }
+            if (kept.isEmpty()) kept = listOf(members.maxBy { caseCount(outcome.scenarios[it]) })
+            keptIndex += kept
+            val solo = members - kept.toSet()
+            if (solo.isNotEmpty()) {
+                dropped += outcome.scenarios[root].title to
+                    solo.flatMap { outcome.scenarios[it].steps.mapNotNull { step -> step.caseId } }.distinct()
+            }
+        }
+        keptIndex.sort()
+        val newIndexOf = keptIndex.withIndex().associate { (new, old) -> old to new }
+        val anchors = outcome.anchorOf
+            .filterKeys { it in newIndexOf }
+            .mapNotNull { (piece, root) ->
+                newIndexOf[root]?.let { newRoot -> newIndexOf.getValue(piece) to newRoot }
+            }.toMap()
+        return Outcome(
+            scenarios = keptIndex.map { outcome.scenarios[it] },
+            notes = outcome.notes,
+            anchorOf = anchors,
+            droppedCases = dropped,
+        )
     }
 
     /**

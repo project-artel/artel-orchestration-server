@@ -238,4 +238,58 @@ class ScenarioConflictSplitTest {
 
         assertThat(outcome.scenarios).hasSize(1)
     }
+
+
+    /* ── 홀로 남은 조각의 채택 정책 (run 57) ─────────────────────────────── */
+
+    @Test
+    fun `홀로 남은 조각은 채택하지 않고 뺐다고 남긴다`() {
+        // [2,4] 와 [3] 으로 갈리는 묶음 — 3 은 홀로 남는다.
+        val outcome = ScenarioConflictSplit.adoptSplitPieces(
+            ScenarioConflictSplit.apply(listOf(scenario(step(2), step(3), step(4))), parity)
+        )
+
+        assertThat(outcome.scenarios).hasSize(1)
+        assertThat(outcome.scenarios[0].steps.mapNotNull { it.caseId }).containsExactly(2, 4)
+        assertThat(outcome.droppedCases).containsExactly("전투 전량" to listOf(3L))
+    }
+
+    @Test
+    fun `전부 홀로면 가장 큰 것 하나는 남긴다`() {
+        val outcome = ScenarioConflictSplit.adoptSplitPieces(
+            ScenarioConflictSplit.apply(listOf(scenario(step(2), step(3))), parity)
+        )
+
+        assertThat(outcome.scenarios).hasSize(1)
+        assertThat(outcome.droppedCases.single().second).hasSize(1)
+    }
+
+    @Test
+    fun `나눌 것이 없었으면 채택 정책도 손대지 않는다`() {
+        val one = scenario(step(2), step(4))
+
+        val outcome = ScenarioConflictSplit.adoptSplitPieces(
+            ScenarioConflictSplit.apply(listOf(one), parity)
+        )
+
+        assertThat(outcome.scenarios).isEqualTo(listOf(one))
+        assertThat(outcome.droppedCases).isEmpty()
+    }
+
+    @Test
+    fun `채택 뒤에도 갈라진 자리는 새 번호로 맞는다`() {
+        // 두 시나리오: 첫째는 [2,4]+[3,5] 로 갈리고(둘 다 채택), 둘째는 안 갈린다.
+        val outcome = ScenarioConflictSplit.adoptSplitPieces(
+            ScenarioConflictSplit.apply(
+                listOf(
+                    scenario(step(2), step(3), step(4), step(5)),
+                    scenario(step(6), step(8), title = "다음 여정"),
+                ),
+                parity,
+            )
+        )
+
+        assertThat(outcome.scenarios).hasSize(3)
+        assertThat(outcome.anchorOf).isEqualTo(mapOf(1 to 0))
+    }
 }

@@ -623,13 +623,14 @@ class ScenarioBridgeInsertionIntegrationTest {
             ),
         )
 
-        // 한 벌로 왔지만 두 벌로 저장된다.
-        assertThat(outcome.applied).isEqualTo(2)
+        // 나뉘지만 케이스 하나짜리 조각은 채택하지 않는다(run 57) — 큰 것 하나만 저장되고,
+        // 홀로 남은 케이스는 뺐다고 알린다.
+        assertThat(outcome.applied).isEqualTo(1)
         assertThat(outcome.rejected).isFalse()
         // 나눴으므로 남은 동거 불가가 없다.
         assertThat(outcome.findings.conflicting).isEmpty()
         assertThat(outcome.question?.id.orEmpty()).doesNotStartWith("conflict:")
-        assertThat(outcome.notices).anyMatch { it.contains("2개로 나눴습니다") }
+        assertThat(outcome.notices).anyMatch { it.contains("저장하지 않았습니다") }
     }
 
     @Test
@@ -653,8 +654,9 @@ class ScenarioBridgeInsertionIntegrationTest {
         )
 
         assertThat(outcome.findings.conflicting).isEmpty()
-        assertThat(outcome.applied).isEqualTo(2)
-        assertThat(outcome.notices).anyMatch { it.contains("2개로 나눴습니다") }
+        // 두 조각 다 케이스 하나라 큰 것(같으면 첫 것) 하나만 남는다.
+        assertThat(outcome.applied).isEqualTo(1)
+        assertThat(outcome.notices).anyMatch { it.contains("저장하지 않았습니다") }
     }
 
     @Test
@@ -770,17 +772,17 @@ class ScenarioBridgeInsertionIntegrationTest {
             ),
         )
 
-        assertThat(outcome.applied).isEqualTo(2)
+        // 홀로 조각은 채택되지 않으므로 저장은 원본 교체 1건뿐이고, 원래 맨 뒤였던 것이
+        // 그대로 맨 뒤다. 자리 번호는 빈틈 없이 다시 매겨진다.
+        assertThat(outcome.applied).isEqualTo(1)
         val order = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
             .map { it.testScenarioId }
-        // 원본 · 조각 · 그다음에 원래 맨 뒤였던 것.
-        assertThat(order).hasSize(3)
+        assertThat(order).hasSize(2)
         assertThat(order[0]).isEqualTo(origin)
-        assertThat(order[2]).isEqualTo(last)
-        // 자리 번호는 빈틈 없이 다시 매겨진다.
+        assertThat(order[1]).isEqualTo(last)
         assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().map { it.position })
-            .containsExactly(0, 1, 2)
-        assertThat(outcome.notices).anyMatch { it.contains("새 시나리오 1개") }
+            .containsExactly(0, 1)
+        assertThat(outcome.notices).anyMatch { it.contains("저장하지 않았습니다") }
     }
 
     // ---- 픽스처 ----------------------------------------------------------------------

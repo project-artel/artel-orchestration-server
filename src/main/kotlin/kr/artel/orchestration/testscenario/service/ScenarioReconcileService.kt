@@ -172,11 +172,11 @@ class ScenarioReconcileService(
             trace.record(runId, "근거를 되찾는다", groundedBridges.notes.joinToString("\n"))
         }
 
-        val divided = ScenarioConflictSplit.apply(
+        val divided = ScenarioConflictSplit.adoptSplitPieces(ScenarioConflictSplit.apply(
             groundedBridges.scenarios,
             contested,
             movable = { value -> movable.any { written -> sameTail(written, value) } },
-        ) { changedBy[it].orEmpty() }
+        ) { changedBy[it].orEmpty() })
         val given = divided.scenarios
         divided.notes.forEach { (title, parts) ->
             logger.info("함께 담을 수 없어 나눴다 [runId={}] {} → {}조각", runId, title, parts)
@@ -184,8 +184,14 @@ class ScenarioReconcileService(
         if (divided.notes.isEmpty()) trace.record(runId, "1. 나눈다", "나눌 것 없음")
         else trace.record(
             runId, "1. 나눈다",
-            divided.notes.joinToString("\n") { (title, parts) -> "$title → ${parts}조각" },
+            divided.notes.joinToString("\n") { (title, parts) -> "$title → ${parts}조각" } +
+                (if (divided.droppedCases.isEmpty()) ""
+                 else "\n홀로 남아 뺌: " + divided.droppedCases.joinToString(" · ") { (_, ids) -> ids.toString() }),
         )
+        // 나누다 홀로 남아 뺀 케이스. 전 건 판정에서는 "뺐다"(out)로 재분류한다 — 모델은 담았다고
+        // 선언했지만 실물에서 코드가 뺐으니, in 으로 두면 검수가 "안 담음"으로 막고 비싼 재작성이
+        // 불려 나온다. 사용자에게는 아래 안내문이 사유와 함께 나간다.
+        val droppedSolo = divided.droppedCases.flatMap { it.second }.toSet()
 
         val split = repairedSplit(given)
         // **덜 담긴 것은 런 전체로 본다**(ARTEL-516). 이번 턴에 쓴 것만 보면, 다른 시나리오에
@@ -253,7 +259,12 @@ class ScenarioReconcileService(
         // "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어 보인다).
         val findings = ScenarioCoverageAudit.audit(
             projectCaseIds = testCaseRepository.findIdsByProjectId(projectId).toSet(),
-            reviewed = reviewed,
+            reviewed = if (droppedSolo.isEmpty()) reviewed else reviewed?.let {
+                ReviewedCases(
+                    included = it.included.filterNot(droppedSolo::contains),
+                    excluded = (it.excluded + it.included.filter(droppedSolo::contains)).distinct(),
+                )
+            },
             scenarios = opened,
         ).let {
             it.copy(
@@ -328,6 +339,14 @@ class ScenarioReconcileService(
             // 답했는데 화면에는 새 시나리오가 늘어나 있는 일이 실제로 나왔다(런 155) — 모델이
             // 거짓말을 한 것이 아니라 그 뒤에 코드가 나눴기 때문이다. 몇 개가 새로 생겼는지까지
             // 말해 주면 둘이 이어진다.
+            divided.droppedCases.forEach { (title, ids) ->
+                add(
+                    "‘$title’ 에서 함께 설 자리가 없어 홀로 남은 케이스(" +
+                        ids.joinToString(", ") { describe(it) } +
+                        ")는 저장하지 않았습니다 — 케이스 하나짜리 시나리오는 흐름이 아니어서," +
+                        " 함께 설 흐름이 생길 때 다시 담는 쪽이 낫습니다."
+                )
+            }
             divided.notes.forEach { (title, parts) ->
                 add(
                     "‘$title’ 은 함께 담을 수 없는 케이스가 있어 코드가 ${parts}개로 나눴습니다" +
