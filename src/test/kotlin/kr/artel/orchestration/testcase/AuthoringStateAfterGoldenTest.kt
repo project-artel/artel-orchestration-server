@@ -20,6 +20,7 @@ import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.support.testAppUser
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.service.TestCaseService
+import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -67,6 +68,7 @@ class AuthoringStateAfterGoldenTest {
     @Autowired private lateinit var testCases: TestCaseService
 
     private lateinit var cases: List<AuthoringTestCase>
+    private var projectId: Long = 0
 
     @BeforeAll
     fun ingestAndRead() = runBlocking {
@@ -80,7 +82,12 @@ class AuthoringStateAfterGoldenTest {
             ProjectMemberEntity(projectId = project.id!!, appUserId = userId, role = "OWNER", createdAt = now)
         )
         val build = gameBuilds.save(
-            GameBuildEntity(projectId = project.id!!, version = "gen", createdAt = now, updatedAt = now)
+            GameBuildEntity(
+                projectId = project.id!!, version = "gen", createdAt = now, updatedAt = now,
+                // 실제 SDK 가 보내는 씬 스캔의 최소형 — 0번이 부팅 씬이다. 이것이 있어야
+                // 적재가 `scene.is_entry` 를 찍고, 입구 씬의 시작값이 저작에 실린다.
+                sceneScan = Json.of("""{"scenesInBuild":["TitleScene"]}"""),
+            )
         )
         val map = contentMaps.save(
             ContentMapEntity(
@@ -106,6 +113,41 @@ class AuthoringStateAfterGoldenTest {
             )
         )
         cases = testCases.getAuthoringCases(project.id!!, userId)
+        projectId = project.id!!
+    }
+
+    /**
+     * **지도 전체의 화면 간선을 세션 수준으로 낸다**(흐름 없는 저작 실험).
+     *
+     * 케이스에 붙는 `exits` 는 케이스가 서 있는 화면 것만 나간다. 케이스 없는 화면의 간선은
+     * 그 길로는 안 보이고, 빈 자리를 모델은 "못 간다"로 읽는다. 이 목록이 그 구멍을 막고,
+     * 받는 쪽(agent)이 접어서 화면 사이 도달표로 싣는다.
+     */
+    @Test
+    fun `지도 전체의 화면 간선을 낸다`() = runBlocking {
+        val edges = testCases.sceneEdges(projectId)
+
+        assertThat(edges).isNotEmpty
+        // 같은 지도면 같은 바이트가 나가야 캐시가 선다 — 정렬이 계약이다.
+        assertThat(edges).isSortedAccordingTo(compareBy({ it.fromScene }, { it.toScene }))
+        // 케이스가 서 있지 않은 화면의 간선도 나간다 — 이 목록의 존재 이유다.
+        val standing = cases.map { it.scene }.toSet()
+        assertThat(edges.map { it.fromScene }.toSet() - standing).isNotEmpty
+    }
+
+    /**
+     * **게임을 켜면 값이 무엇으로 시작하는지 낸다**(흐름 없는 저작 실험).
+     *
+     * 흐름 계산만 알던 사실이다. 흐름을 끄면 아무 데도 안 나가서, 모델은 첫 케이스를 놓을 수
+     * 있는지조차 판단할 근거가 없다. 규칙은 계산과 같은 곳([ScenarioStateReader.defaultOf])을
+     * 쓴다 — 두 곳이 따로 뽑으면 언젠가 갈린다.
+     */
+    @Test
+    fun `게임을 켜면 값이 무엇으로 시작하는지 낸다`() = runBlocking {
+        val starting = testCases.startingValues(projectId)
+
+        // 입구 화면(TitleScene)이 저장소에서 읽는 기본값 — `PlayerPrefs.GetInt("StagePosition", -1)`.
+        assertThat(starting["StagePosition"]).isEqualTo("-1")
     }
 
     /**

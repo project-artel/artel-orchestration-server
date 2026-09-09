@@ -46,7 +46,7 @@
     TitleScene · `Canvas/MapSceneButton` 을(를) 클릭해 `Map_scene` 화  ← BY_PLAY
     Map_scene · `LeftArrow` 키를 눌러 `wordHead` 을(를) `battle1` 로   ← BESIDE
 
-흐름 3 — 스텝 20 · 지나갈 자리 5
+흐름 3 — 스텝 20 · 지나갈 자리 4
   시작 조건: flag == 0, streamingCoroutine != null, streamingCoroutine != 0, combineZone != null, damage > 0, Hp > 0
     GameClearScene · GameClearScene 에 진입하면 `Congratulation` 을(를) 끈다
     GameClearScene · 아무 키나 눌러 표시 상태 1곳을 바꾸고 오브젝트 1개를 만들고 글자 1곳을 갱신한  ← BESIDE
@@ -55,7 +55,7 @@
     TitleScene · `Canvas/continue` 을(를) 클릭해 `StoryScene` 화면으로 넘  ← BY_OPERATION
     StoryScene · 아무 키나 눌러 `ChatWindowController.chatText.text`   ← BESIDE
     TitleScene · TitleScene 에 진입하면 `Canvas/continue` 을(를) 끈다  ← BY_PLAY
-    TurnBattleScene · TurnBattleScene 에서 `OnMouseExit` 이후 `Selectabl  ← BY_PLAY
+    TurnBattleScene · TurnBattleScene 에서 `OnMouseExit` 이후 `Selectabl  ← BY_OPERATION
     TurnBattleScene · `CombineSystem/CombineButton` 을(를) 클릭해 `Combin  ← BESIDE
     TurnBattleScene · TurnBattleScene 에 머무르면 `EnemyProjectile` 을(를)   ← BESIDE
     TurnBattleScene · TurnBattleScene 에서 `OnEndDrag` 이후 `DraggableCa  ← BESIDE
