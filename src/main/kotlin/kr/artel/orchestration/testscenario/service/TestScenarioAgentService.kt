@@ -28,7 +28,9 @@ import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
 import kr.artel.orchestration.testscenario.agent.PhrasedStep
 import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
+import kr.artel.orchestration.testscenario.config.AuthoringExperimentProperties
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
+import kr.artel.orchestration.testscenario.dto.AgentReasoning
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AuthoringFlow
@@ -101,6 +103,7 @@ class TestScenarioAgentService(
     private val trace: AuthoringTrace,
     private val flowMatrix: ScenarioFlowMatrix,
     private val flowPlanner: ScenarioFlowPlanner,
+    private val experiment: AuthoringExperimentProperties,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -227,6 +230,7 @@ class TestScenarioAgentService(
             // **새 요청이면 지난 턴에 받아 둔 것을 비운다.** 재작성 턴은 이 길로 오지 않으므로(그쪽은
             // [sendTurn] 을 직접 부른다) 앞서 받아 둔 것이 그대로 살아 있다.
             existing.submitted.clear()
+            existing.declined = 0
             sendTurn(sessionKey, existing, turnInput, currentScenarios)
         } else {
             openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios)
@@ -328,7 +332,15 @@ class TestScenarioAgentService(
                 "모델: ${configuredModel.ifBlank { "에이전트 기본값" }} · 말투: $locale · " +
                 "이미 있는 시나리오 ${currentScenarios.size}개",
         )
-        val flows = computedFlows(runId, projectId, appUserId, cases.map { it.id })
+        // **흐름을 끄면 짝 행렬도 안 푼다**(실험). 안 보낼 값을 계산할 이유가 없다 —
+        // 케이스 88건이면 7,656칸과 11.2초가 통째로 빠진다. agent 는 흐름이 비면 스스로
+        // 묶고 센다.
+        val flows =
+            if (experiment.flows) computedFlows(runId, projectId, appUserId, cases.map { it.id })
+            else emptyList<AuthoringFlow>().also {
+                logger.info("흐름을 안 세운다 — 모델이 스스로 묶는다 [projectId={}]", projectId)
+                trace.record(runId, "흐름 계산", "실험: 흐름을 안 세운다. 모델이 스스로 묶고 센다")
+            }
         val body = AgentSessionOpenRequest(
             userInput = userInput,
             gameContext = gameContext(),
@@ -336,14 +348,23 @@ class TestScenarioAgentService(
             // 모델 선택의 기본값은 모델 카탈로그를 소유한 Agent가 결정한다. Orchestration은
             // 명시적 override가 있을 때만 model을 보내 모델 교체 때 구 slug를 강제하지 않는다.
             model = configuredModel.takeIf { it.isNotBlank() },
+            reasoning = experiment.reasoningMaxTokens
+                .takeIf { it > 0 }
+                ?.let { AgentReasoning(maxTokens = it) },
             locale = locale,
             projectId = projectId,
             runId = runId,
+            appUserId = appUserId,
             currentScenarios = currentScenarios,
             flows = flows,
             entryScene = runCatching { testCaseRepository.findEntrySceneName(projectId) }
                 .onFailure { logger.warn("입구 씬 조회 실패 — 없이 보낸다: ${it.message}") }
                 .getOrNull(),
+            // **흐름을 끄면 이 둘이 그 자리를 잇는다**(실험). 화면 간선은 받는 쪽이 접어 도달표로
+            // 싣고, 시작값은 흐름 계산만 알던 사실이다. 흐름을 켠 판에도 보낸다 — 정보가 같아야
+            // 스위치 하나만 비교된다.
+            sceneEdges = testCaseService.sceneEdges(projectId),
+            startingValues = testCaseService.startingValues(projectId),
         )
         val resp = webClient.post()
             .uri("$agentBaseUrl/sessions")
@@ -528,6 +549,7 @@ class TestScenarioAgentService(
                 save = session.autoApply,
             )
             if (outcome.rejected) {
+                session.declined += 1
                 logger.info(
                     "시나리오 하나 되돌림 [sessionKey={}, runId={}] {} — {}",
                     sessionKey, session.runId, scenario.title, outcome.findings.summary(),
@@ -670,6 +692,18 @@ class TestScenarioAgentService(
         )
         if (!outcome.rejected) {
             progress(sessionKey, AuthoringStage.SAVED)
+            // **판 하나가 답을 남긴다**(실험). 다섯 판을 돌리고 이 줄들만 모으면 판정 표가 된다 —
+            // 트레이스 산문을 손으로 다시 캐지 않는다.
+            // 하나씩 받은 턴은 저장이 제출 시점에 이미 끝났다 — 그때는 받아 둔 수가 반영이고,
+            // 턴끝 검수(save=false)의 applied 0 은 "안 반영"이 아니다.
+            val applied = if (saveHere) outcome.applied else session.submitted.size
+            trace.record(
+                session.runId, "판 요약",
+                "저장 — 시나리오 ${scenarios.size}개 · 반영 $applied · " +
+                    "어긋난 스텝 ${outcome.contradicted.size}건 · 제출 반려 ${session.declined}회 · " +
+                    "재작성 ${pending?.attempts ?: 0}회 · 질문 ${outcome.questions.size}개" +
+                    outcome.contradicted.joinToString("") { "\n  어긋남: $it" },
+            )
             if (pending != null) {
                 saveAndNotify(
                     sessionKey, session,
@@ -706,11 +740,29 @@ class TestScenarioAgentService(
             // 더 못 고친다. 저장하지 않고 사람에게 넘긴다 — 사용자는 시나리오가 나왔다고 믿고
             // 있으므로, 여기서 말하지 않으면 저장되지 않았다는 사실을 알 길이 없다.
             progress(sessionKey, AuthoringStage.BLOCKED)
-            saveAndNotify(sessionKey, session, outcome.findings.rejectionMessage())
+            trace.record(
+                session.runId, "판 요약",
+                "막힘 — 시나리오 ${scenarios.size}개 저장 안 함 · 제출 반려 ${session.declined}회 · " +
+                    "재작성 ${attempts - 1}회 뒤 포기 · ${outcome.findings.summary()} · " +
+                    "어긋난 스텝 ${outcome.contradicted.size}건",
+            )
+            // **하나씩 받은 턴은 "저장하지 않았습니다"가 거짓말이다** — 제출 시점 저장은 이미
+            // 끝났다(계측: 막힌 런 19 에 24행이 남아 있었다). 무엇이 남아 있는지까지 말해야
+            // 사용자가 화면과 말 사이에서 길을 잃지 않는다.
+            val standing =
+                if (session.autoApply && session.submitted.isNotEmpty())
+                    "\n(제출 때 저장된 ${session.submitted.size}개는 남아 있습니다 — 위 지적은 턴 전체 기준입니다.)"
+                else ""
+            saveAndNotify(sessionKey, session, outcome.findings.rejectionMessage() + standing)
             return
         }
 
         session.repair = PendingRepair(scenarios, reviewed, attempts)
+        // 되돌림 하나하나가 기록에 남아야 "몇 번 만에 고쳐졌나"가 판에서 바로 읽힌다.
+        trace.record(
+            session.runId, "되돌린다 (시도 $attempts/$MAX_REPAIR_ATTEMPTS)",
+            outcome.findings.summary(),
+        )
         // 재작성을 시켰다는 사실을 사용자에게 알린다. 이 시간 동안 화면은 답을 기다리는 것처럼
         // 보이는데, 무슨 일이 일어나는지 말하지 않으면 그냥 느린 것과 구분되지 않는다.
         progress(sessionKey, AuthoringStage.REPAIRING)
@@ -1515,6 +1567,11 @@ class TestScenarioAgentService(
          * 않고 카드로만 내보내던 경로다 — 잃을 것이 이 turn 하나로 같다.
          */
         val submitted: MutableList<ScenarioResult> = mutableListOf(),
+        /**
+         * 이 판에서 제출이 검수에 막혀 되돌아간 횟수. 실험의 주 잣대(되돌림 횟수)라 판 요약이
+         * 센다. [submitLock] 아래에서만 는다.
+         */
+        @Volatile var declined: Int = 0,
         /**
          * 시나리오를 **한 번에 하나씩** 받게 하는 잠금.
          *

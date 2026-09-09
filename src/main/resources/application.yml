@@ -145,6 +145,12 @@ artel:
     trace:
       enabled: ${ARTEL_SCENARIO_TRACE_ENABLED:false}
       dir: ${ARTEL_SCENARIO_TRACE_DIR:.trace}
+    # 저작을 모델에게 되돌려 보는 실험. 기본은 지금 그대로다 — 끄고 켜며 나란히 잰다.
+    experiment:
+      # false 면 흐름을 안 세우고 안 보낸다. 짝 행렬도 안 푼다.
+      flows: ${ARTEL_SCENARIO_FLOWS:true}
+      # 0 이면 추론을 안 켠다. Haiku 4.5 는 1,024~32,000 이고 사양 기본값이 4,096 이다.
+      reasoning-max-tokens: ${ARTEL_SCENARIO_REASONING_TOKENS:0}
   sdk:
     socket:
       # 웹소켓 한 메시지의 최대 바이트. Spring 은 이 값을 프레임 상한이자 합계 상한으로 함께 쓴다.
