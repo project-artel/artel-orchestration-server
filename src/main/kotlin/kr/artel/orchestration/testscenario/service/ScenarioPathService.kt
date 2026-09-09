@@ -38,6 +38,7 @@ import org.springframework.stereotype.Service
 class ScenarioPathService(
     // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
     private val conditions: CaseConditionReader,
+    private val capabilityConditions: CapabilityConditionReader,
 
     private val objectMapper: ObjectMapper,
     private val testCaseRepository: TestCaseRepository,
@@ -348,6 +349,9 @@ class ScenarioPathService(
      * 그 판단은 실행하는 쪽에 남긴다 — 여기서 횟수를 지어내면 그것이 곧 거짓 명세다.
      */
     private suspend fun writerFor(contentMapId: Long, guard: Guard, state: Map<String, String>): Writer {
+        // 조건은 `capability_evidence.condition_tree` 에 있다. `given_text` 는 전부 null 이라
+        // 그것을 읽으면 아래 판정이 늘 "위반 없음" 이 된다([CapabilityConditionReader]).
+        val conditionOf = capabilityConditions.of(contentMapId)
         val effects = pathRepository.findEffectsWriting(contentMapId, guard.variable).toList()
         if (effects.isEmpty()) return Writer.None
 
@@ -368,10 +372,10 @@ class ScenarioPathService(
         // **그 조작 자신이 지금 가능한가.** 같은 변수를 쓰는 기능이 여럿이고 각자 성립 조건이
         // 다르므로(맵의 방향키가 각각 다른 `position` 에서만 성립한다), 이것을 보는 것은 거르는
         // 일이자 **고르는 일**이다 — 지금 상태에서 실제로 되는 조작을 집는다.
-        val ready = usable.filter { (_, capability) -> ScenarioStateReader.violated(capability.givenText, state) == null }
+        val ready = usable.filter { (_, capability) -> ScenarioStateReader.violated(conditionOf[capability.id], state) == null }
         if (ready.isEmpty()) {
             val by = usable.firstNotNullOf { (_, capability) ->
-                ScenarioStateReader.violated(capability.givenText, state)
+                ScenarioStateReader.violated(conditionOf[capability.id], state)
             }
             return Writer.Blocked(by)
         }
@@ -417,7 +421,7 @@ class ScenarioPathService(
         val (chosen, capability) = exact ?: relative
             ?: toward?.let { direction ->
                 usable.firstOrNull { (effect, _) -> increment(effect.detail)?.let(Push::of) == direction }
-                    ?.let { (_, capability) -> ScenarioStateReader.violated(capability.givenText, state) }
+                    ?.let { (_, capability) -> ScenarioStateReader.violated(conditionOf[capability.id], state) }
                     ?.let { return Writer.Blocked(it) }
             }
             ?: return automatic(owners)
@@ -680,6 +684,8 @@ class ScenarioPathService(
         state: Map<String, String>,
         allowAutomatic: Boolean = false,
     ): List<Leg>? {
+        // 조건은 트리에서 읽는다 — `given_text` 는 전부 null 이다([CapabilityConditionReader]).
+        val conditionOf = capabilityConditions.of(contentMapId)
         val scenes = sceneRepository.findByContentMapIdOrderByNameAsc(contentMapId).toList()
         val nameOf = scenes.associate { it.id!! to it.name }
         val edges = sceneEdgeRepository.findByContentMapId(contentMapId).toList()
@@ -700,7 +706,7 @@ class ScenarioPathService(
                     val leg = if (instructable(capability)) {
                         // 첫 걸음만 지금 상태로 잰다. 그 뒤는 화면이 바뀌어 아는 값이 없다.
                         if (walked.isEmpty() &&
-                            ScenarioStateReader.violated(capability.givenText, state) != null
+                            ScenarioStateReader.violated(conditionOf[capability.id], state) != null
                         ) continue
                         Leg.Do(
                             PathStep(
@@ -747,6 +753,8 @@ class ScenarioPathService(
             return Hop.By(legs.filterIsInstance<Leg.Do>().map { it.step })
         }
 
+        // 조건은 트리에서 읽는다 — `given_text` 는 전부 null 이다([CapabilityConditionReader]).
+        val conditionOf = capabilityConditions.of(contentMapId)
         val fromScene = sceneRepository.findByContentMapIdAndName(contentMapId, from) ?: return Hop.None
         val edges = sceneEdgeRepository.findByFromSceneIdAndToSceneName(fromScene.id!!, to).toList()
 
@@ -755,7 +763,7 @@ class ScenarioPathService(
         edges.firstNotNullOfOrNull { edge ->
             val capability = edge.capabilityId?.let { capabilityRepository.findById(it) }
             if (capability != null && instructable(capability)) {
-                ScenarioStateReader.violated(capability.givenText, state)
+                ScenarioStateReader.violated(conditionOf[capability.id], state)
             } else null
         }?.let { return Hop.Blocked(it) }
 

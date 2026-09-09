@@ -180,7 +180,6 @@ class SceneContextIntegrationTest {
 
         val capability = scene.capabilities.single()
         assertThat(capability.summary).isEqualTo("적을 공격한다")
-        assertThat(capability.givenText).isEqualTo("적이 살아 있을 때")
         assertThat(capability.interaction).isEqualTo("click")
         assertThat(capability.controlPath).isEqualTo("Canvas/AttackButton")
         assertThat(capability.controlLabel).isEqualTo("공격")
@@ -317,6 +316,40 @@ class SceneContextIntegrationTest {
         assertThat(body).contains("상점은 밤에 닫는다")
         assertThat(body).doesNotContain("이 문장이 응답에 나오면 안 된다")
         assertThat(body).doesNotContain("description")
+    }
+
+    /**
+     * **전제 문장은 payload 에 실리지 않는다**(ARTEL-447).
+     *
+     * `capability.given_text` 는 조건을 사람이 읽는 한 줄로 옮긴 칸이다. 옮기는 과정에서 값의
+     * 소속과 `either` / `every` 구분이 사라져, 그것을 되읽는 쪽은 명세가 말하지 않은 것을 읽게
+     * 된다. 스키마가 문장과 트리를 나눠 둔 뜻이 그것이고 `capability_evidence.condition_tree` 를
+     * "원본"이라 부르는 이유도 같다.
+     *
+     * 그런데 이 응답이 그 칸을 실어 보내고 있었다. 419 행 전부 `null` 이라 증상이 없었을 뿐이고,
+     * 문장을 만들기 시작하는 순간 agent 가 그것을 받는다. 그래서 **채우기 전에** 끊었다.
+     *
+     * 직렬화된 문자열을 보는 이유는 위와 같다 — DTO 에서 칸을 지운 것은 다음 사람이 다시 더하는
+     * 것을 막지 못한다. 조건은 [SceneCapabilityView.given] 이 트리로 싣는다.
+     */
+    @Test
+    fun `전제 문장은 payload 에 실리지 않는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        val combat = fixture.newScene(mapId, "Combat", summary = "전투 화면")
+        fixture.newCapability(
+            mapId, combat,
+            summary = "적을 공격한다",
+            givenText = "이 전제가 응답에 나오면 안 된다",
+        )
+
+        val body = rawBody(projectId, buildId)
+
+        assertThat(body).contains("적을 공격한다")
+        assertThat(body).doesNotContain("이 전제가 응답에 나오면 안 된다")
+        assertThat(body).doesNotContain("givenText")
+        assertThat(body).doesNotContain("given_text")
     }
 
     /**

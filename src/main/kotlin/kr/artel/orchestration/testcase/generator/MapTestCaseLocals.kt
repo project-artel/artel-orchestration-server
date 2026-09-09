@@ -76,13 +76,20 @@ object MapTestCaseLocals {
      * 왼쪽이 안 풀리면 그 비교는 여전히 만들 수 없다.
      */
     private fun test(node: ConditionNode.Test, args: Map<Int, String>, dropped: Dropped): ConditionNode? {
-        val left = resolve(node.left, node.context, args)
-        val right = resolve(node.right, node.context, args)
+        val kept = Kept()
+        val left = resolve(node.left, node.context, args, kept)
+        val right = resolve(node.right, node.context, args, kept)
         if (left == null || right == null) {
             dropped.any = true
             return null
         }
+        if (kept.unsettled) dropped.any = true
         return node.copy(left = left, right = right)
+    }
+
+    /** 이 비교를 남기긴 하는데 값이 무엇인지 못 밝혔다. 사유로 남을 뿐 비교는 살아 있다. */
+    private class Kept {
+        var unsettled = false
     }
 
     /**
@@ -96,7 +103,7 @@ object MapTestCaseLocals {
      *
      * **오른쪽이 리터럴이면 손대지 않는다.** `stagePosition == 1` 의 `1` 은 매개변수가 아니라 값이다.
      */
-    private fun resolve(text: String, context: String?, args: Map<Int, String>): String? {
+    private fun resolve(text: String, context: String?, args: Map<Int, String>, kept: Kept): String? {
         val name = text.trim()
         if (name.isEmpty() || LITERAL.matches(name)) return name
         // **오브젝트를 거치는 이름은 그대로 둔다.** `MapMove.position` · `Player.PlayerInt().Hp` 는
@@ -109,9 +116,34 @@ object MapTestCaseLocals {
         // 않는다 — 실측에서 `i < StoryController.scriptContainer.GetScriptNum()` 의 `context` 가
         // `this` 다(오른쪽이 `this` 를 거치기 때문). 그래서 이름의 모양도 함께 본다.
         val position = context?.takeIf { it.startsWith(ARG) }?.removePrefix(ARG)?.toIntOrNull()
-        // 매개변수면 호출자가 넘긴 값으로 되돌린다. 못 찾으면 바깥에 대응이 없는 것이다.
-        return position?.let { args[it] }
+            // 매개변수가 아니면 그 메서드 안에서만 사는 것이다 — 루프 변수가 그렇고, 호출자를
+            // 찾아도 안 풀린다. 실행하는 사람에게 `i == id` 를 요구하는 것은 만들 수 없는 것을
+            // 요구하는 것이다.
+            ?: return null
+
+        // 매개변수면 호출자가 넘긴 값으로 되돌린다.
+        val settled = args[position]
+
+        // **못 밝힌 것과 없는 것은 다르다.** 호출자가 넘긴 값을 문서가 못 읽으면 `_` 로 적혀 오는데
+        // (실측 `SetupBattle` 이 `StageData.background, _` 를 넘긴다), 그것을 그대로 쓰면
+        // `_ == 3` 이 되어 **이름 없는 것을 3으로 만들라**는 요구가 된다.
+        //
+        // 그렇다고 조건을 통째로 버리면 "아무 때나 난다"가 되어 그것도 거짓이다. 루프 변수를 빼는
+        // 규칙은 그 이름이 **밖에 대응이 없어서**였는데, 매개변수는 밖에서 들어온 값이라 대응이
+        // 있고 그것이 무엇인지만 못 밝힌 것이다. 그래서 코드가 부른 이름을 그대로 두고, 못 밝혔다는
+        // 사실은 사유로 남긴다 — 이 파일의 기본 규칙("원문 그대로 쓰고 사이만 말로 잇는다")대로다.
+        if (settled == null || !readable(settled)) {
+            kept.unsettled = true
+            return name
+        }
+        return settled
     }
+
+    /** 문서가 값을 읽어 적은 것인가. `_` 와 괄호로 시작하는 것은 못 읽었다는 표시다. */
+    private fun readable(value: String): Boolean =
+        value != PLACEHOLDER && !value.startsWith("(")
+
+    private const val PLACEHOLDER = "_"
 
     private const val ARG = "arg:"
 

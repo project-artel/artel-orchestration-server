@@ -74,6 +74,16 @@ data class ContentMapCapabilityRow(
      * 그 기능이 여기서 되는지는 아직 아무도 안 봤다. `placed` 와 같은 줄로 읽으면 TC 생성기가
      * 확인된 적 없는 것을 그 `scene` 의 사실로 쓴다.
      */
+    /**
+     * **무엇이 이 코드를 불렀나**(`call_path` 첫 마디의 메서드 이름).
+     *
+     * `Start`·`Update` 처럼 Unity 가 정한 이름이라 개발자가 무엇을 어떻게 짓든 흔들리지 않는다.
+     * 누를 것이 없는 행의 문구를 고를 때 쓴다 — `Start` 면 화면을 열 때, `Update` 면 머무르는
+     * 동안이다. 근거가 없는 행에서는 `null` 이다.
+     */
+    @Column("trigger_root")
+    val triggerRoot: String? = null,
+
     @Column("scene_presence")
     val scenePresence: String,
 

@@ -29,7 +29,16 @@ data class MapTestCase(
      */
     val condition: ConditionNode? = null,
     val step: String,
+    /** 사람이 읽는 한 줄. **표시 전용이다** — 되짚을 것은 [expectedItems] 다. */
     val expected: String,
+    /**
+     * 기대결과의 **항목들**. [expected] 는 이것을 ` / ` 로 이어 보여준 것이다.
+     *
+     * 실측 85건 중 19건이 2~5개를 든다. 이어 붙인 문장만 실으면 쓰는 쪽이 그 구분자로 다시
+     * 쪼개야 하고, 구분자가 기대결과 문장 안에 섞이는 날 조용히 어긋난다 — [condition] 이 생긴
+     * 것과 같은 이유다(ARTEL-627). 실행이 항목마다 통과·실패를 답하려면 목록이어야 한다.
+     */
+    val expectedItems: List<String> = emptyList(),
     val status: String,
     val gaps: List<String> = emptyList(),
     /**
@@ -52,4 +61,21 @@ data class MapTestCase(
      * 일(ARTEL-615)도 여기에 안 걸린다 — 그때 바뀌는 것은 문장이고 효과 원본은 그대로다.
      */
     val identity: String = "",
+    /**
+     * 이 조작이 **무엇을 겨누나** — `capability.control_path`. 겨눌 것이 없으면 `null` 이다
+     * (키 입력이거나 관측이다).
+     *
+     * 표시에 쓰는 값이 아니다. [MapTestCaseGenerator] 가 *"바꿔 쓸 수 있는 입력"* 을 한 줄로
+     * 담을 때 이것으로 가른다 — 같은 것을 여는 다른 키는 한 줄이고, 다른 버튼은 다른 줄이다.
+     */
+    val aimedAt: String? = null,
+    /**
+     * 누를 것이 없어 **보기만 하는 케이스인가**(ARTEL-681).
+     *
+     * 앞서 이 답을 스텝 문장에서 `관찰한다` 를 찾아 얻었다. 문장이 무엇이 일어나는지까지 말하게
+     * 되면서 그 글자가 사라졌고, 사라진 줄 모르고 지나갈 뻔했다 — 문장을 되읽어 얻은 답이 늘
+     * 그렇게 끝난다([condition] 이 같은 이유로 생겼다). 지도가 말한 것(`actionability`)을 그대로
+     * 들고 다닌다.
+     */
+    val watching: Boolean = false,
 )
