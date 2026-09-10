@@ -45,8 +45,10 @@ class ScenarioCoverageIntegrationTest {
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
 
+    // 제목을 케이스로 가른다 — 같은 런에서 같은 제목은 **갈아끼우는 것**이 저장 계약이라
+    // (재작성 턴의 중복 저장을 막는 규칙, 계측 2026-09-08), 픽스처끼리 제목이 겹치면 안 된다.
     private fun scenario(vararg caseIds: Long?) = ScenarioResult(
-        title = "저작된 시나리오",
+        title = "저작된 시나리오 ${caseIds.filterNotNull().joinToString("-")}",
         steps = caseIds.map { ChatScenarioStep(action = "행위", caseId = it) },
     )
 

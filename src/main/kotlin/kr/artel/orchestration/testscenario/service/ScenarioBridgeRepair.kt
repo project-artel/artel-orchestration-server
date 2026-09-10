@@ -336,7 +336,15 @@ object ScenarioBridgeRepair {
         "${between(gap, describe)} 의 ${answer.blockedBy ?: "구간"} 은(는) 명세에 없어 " +
             "알려주신 방법으로 채웠습니다. 다르면 고쳐 주세요."
 
+    /**
+     * 지도가 **아는 것과 모르는 것을 다르게 말한다.** 저절로 바뀌는 값은 명세가 알고 있는데
+     * "명세에 없다"고 적으면 거짓이 된다 — run 57 에서 전투로 오르는 값이 그렇게 적혔고,
+     * 사용자는 지도의 구멍으로 읽었다. 경로 계산이 이유를 문장으로 들려주면 그대로 전한다.
+     */
     private fun notice(gap: Gap, answer: ScenarioPathAnswer, describe: (Long) -> String): String =
-        "${between(gap, describe)} 의 ${answer.blockedBy ?: "구간"} 은(는) 명세에 없어 " +
-            "실행 방법 미상으로 두었습니다. 알려주시면 채웁니다."
+        if (answer.note.isNotBlank())
+            "${between(gap, describe)} 구간 — ${answer.note} 알려주시면 채웁니다."
+        else
+            "${between(gap, describe)} 의 ${answer.blockedBy ?: "구간"} 은(는) 명세에 없어 " +
+                "실행 방법 미상으로 두었습니다. 알려주시면 채웁니다."
 }

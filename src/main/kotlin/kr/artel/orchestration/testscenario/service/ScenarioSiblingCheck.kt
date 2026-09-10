@@ -32,6 +32,8 @@ object ScenarioSiblingCheck {
         val step: String,
         val guards: List<Guard>,
         val declared: Map<String, String>,
+        /** 실행한 뒤 서 있는 화면(화면을 넘기는 케이스). 다리 근거 되찾기의 앞 닻이다. */
+        val arrivesAt: String? = null,
     )
 
     /**
@@ -180,8 +182,13 @@ object ScenarioSiblingCheck {
      * 이름은 가드가 적은 대로 낸다. 지도의 효과 대상과 맞추는 것은 부르는 쪽 몫이다 — 여기서
      * 정규화하면 `Player.hp` 와 `hp` 를 같게 보던 [sameVariable] 의 꼬리 규칙이 두 벌이 된다.
      */
-    fun contested(a: CaseFact, b: CaseFact): Set<String> =
-        violated(a.declared, b.guards) + violated(b.declared, a.guards) + disjoint(a.guards, b.guards)
+    fun contested(a: CaseFact, b: CaseFact): Set<String> {
+        // 호출식 가드(momentary)는 상태가 아니라 배타의 재료가 못 된다 — 프레임마다 다시
+        // 평가되는 값끼리 "함께 못 선다"는 말 자체가 성립하지 않는다.
+        val aGuards = a.guards.filterNot { it.momentary }
+        val bGuards = b.guards.filterNot { it.momentary }
+        return violated(a.declared, bGuards) + violated(b.declared, aGuards) + disjoint(aGuards, bGuards)
+    }
 
     private fun violated(declared: Map<String, String>, guards: List<Guard>): Set<String> =
         guards.filter { guard -> declared[guard.variable]?.let { !guard.holds(it) } ?: false }

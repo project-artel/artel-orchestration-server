@@ -92,6 +92,11 @@ class ScenarioReconcileService(
          * `bridge` 가 빠진 시나리오를 보고 커밋하게 되고, 저장된 것과 화면에 뜬 것이 갈린다.
          */
         val checked: List<ScenarioResult> = emptyList(),
+        /**
+         * 걷기가 짚은 **스스로 어긋난 자리**(제목: 어긋남). 막지 않지만(ARTEL-656) 실험의 주
+         * 잣대라, 판 요약이 세도록 밖으로 낸다 — 트레이스 산문을 되파싱하게 두지 않는다.
+         */
+        val contradicted: List<String> = emptyList(),
     ) {
         val rejected: Boolean get() = findings.rejected
     }
@@ -139,11 +144,39 @@ class ScenarioReconcileService(
         // **게임이 스스로 움직이는 값도 움직이는 값이다**(ARTEL-625). 위의 [changedBy] 는 케이스가
         // 된 기능만 알아서, 전투를 이겨야 오르는 값이 영영 얼어 있는 것으로 보인다.
         val movable = known.movable
-        val divided = ScenarioConflictSplit.apply(
+        // **다리의 근거를 먼저 되찾는다.** 계측 30판의 반려 41건 전원이 "근거 없는 스텝"
+        // 이었고, 원인은 모델이 알 수 없는 capability id 를 계약이 요구한 것이다. 되돌려서
+        // 다시 쓰게 하는 대신 코드가 그 자리에서 채우거나(위치+조작 표기로 결정적 매칭),
+        // 못 채우면 UNKNOWN 으로 정직하게 남긴다 — 반려 헛바퀴(같은 자리 9~10연속)가
+        // 원천에서 사라진다. 규칙은 [ScenarioBridgeGrounding] 에 있다.
+        val citedIds = scenarios.flatMap { it.steps }.mapNotNull { it.stepSourceCapabilityId }.toSet()
+        val liveCited =
+            if (citedIds.isEmpty()) emptySet()
+            else runCatching { pathService.liveCapabilities(projectId, appUserId, citedIds) }
+                .onFailure { logger.warn("기능 실재 확인 실패 — 되찾기를 건너뛴다: ${it.message}") }
+                .getOrDefault(citedIds)
+        val groundingEdges = runCatching {
+            testCaseRepository.findGroundedSceneEdges(projectId).toList().map {
+                ScenarioBridgeGrounding.Edge(it.fromScene, it.toScene, it.byOperation, it.capabilityId)
+            }
+        }.onFailure { logger.warn("간선 조회 실패 — 되찾기를 건너뛴다: ${it.message}") }
+            .getOrDefault(emptyList())
+        val groundedBridges = ScenarioBridgeGrounding.apply(
             scenarios,
+            sceneOf = { id -> byId[id]?.scene },
+            arrivesAt = { id -> byId[id]?.arrivesAt ?: byId[id]?.scene },
+            edges = groundingEdges,
+            live = liveCited,
+        )
+        if (groundedBridges.notes.isNotEmpty()) {
+            trace.record(runId, "근거를 되찾는다", groundedBridges.notes.joinToString("\n"))
+        }
+
+        val divided = ScenarioConflictSplit.adoptSplitPieces(ScenarioConflictSplit.apply(
+            groundedBridges.scenarios,
             contested,
             movable = { value -> movable.any { written -> sameTail(written, value) } },
-        ) { changedBy[it].orEmpty() }
+        ) { changedBy[it].orEmpty() })
         val given = divided.scenarios
         divided.notes.forEach { (title, parts) ->
             logger.info("함께 담을 수 없어 나눴다 [runId={}] {} → {}조각", runId, title, parts)
@@ -151,8 +184,14 @@ class ScenarioReconcileService(
         if (divided.notes.isEmpty()) trace.record(runId, "1. 나눈다", "나눌 것 없음")
         else trace.record(
             runId, "1. 나눈다",
-            divided.notes.joinToString("\n") { (title, parts) -> "$title → ${parts}조각" },
+            divided.notes.joinToString("\n") { (title, parts) -> "$title → ${parts}조각" } +
+                (if (divided.droppedCases.isEmpty()) ""
+                 else "\n홀로 남아 뺌: " + divided.droppedCases.joinToString(" · ") { (_, ids) -> ids.toString() }),
         )
+        // 나누다 홀로 남아 뺀 케이스. 전 건 판정에서는 "뺐다"(out)로 재분류한다 — 모델은 담았다고
+        // 선언했지만 실물에서 코드가 뺐으니, in 으로 두면 검수가 "안 담음"으로 막고 비싼 재작성이
+        // 불려 나온다. 사용자에게는 아래 안내문이 사유와 함께 나간다.
+        val droppedSolo = divided.droppedCases.flatMap { it.second }.toSet()
 
         val split = repairedSplit(given)
         // **덜 담긴 것은 런 전체로 본다**(ARTEL-516). 이번 턴에 쓴 것만 보면, 다른 시나리오에
@@ -204,7 +243,9 @@ class ScenarioReconcileService(
         // **줄지 않는 값과 아예 모르게 되는 값을 가른다**(ARTEL-672).
         val climbing = known.climbing
         val walked = repaired.map {
-            ScenarioContradictionCheck.walk(walkOf(it, byId, raised, bridgeEffects, climbing))
+            ScenarioContradictionCheck.walk(
+                walkOf(it, byId, loosens(raised, known.changedIn), bridgeEffects, climbing)
+            )
         }
         val contradictions = repaired.zip(walked).flatMap { (scenario, found) ->
             found.contradictions.map { scenario.title to it }
@@ -218,7 +259,12 @@ class ScenarioReconcileService(
         // "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어 보인다).
         val findings = ScenarioCoverageAudit.audit(
             projectCaseIds = testCaseRepository.findIdsByProjectId(projectId).toSet(),
-            reviewed = reviewed,
+            reviewed = if (droppedSolo.isEmpty()) reviewed else reviewed?.let {
+                ReviewedCases(
+                    included = it.included.filterNot(droppedSolo::contains),
+                    excluded = (it.excluded + it.included.filter(droppedSolo::contains)).distinct(),
+                )
+            },
             scenarios = opened,
         ).let {
             it.copy(
@@ -251,7 +297,7 @@ class ScenarioReconcileService(
                 runId, findings.summary(), findings.unreviewed, findings.missing, findings.ghost,
                 findings.ungrounded.size, findings.falseUnknowns.size
             )
-            return ReconcileOutcome(0, findings)
+            return ReconcileOutcome(0, findings, contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" })
         }
         if (findings.excess.isNotEmpty()) {
             // 거부하지 않는 이유는 ScenarioCoverageAudit.Findings에 적었다. 남기는 이유는, 이 값이
@@ -293,6 +339,17 @@ class ScenarioReconcileService(
             // 답했는데 화면에는 새 시나리오가 늘어나 있는 일이 실제로 나왔다(런 155) — 모델이
             // 거짓말을 한 것이 아니라 그 뒤에 코드가 나눴기 때문이다. 몇 개가 새로 생겼는지까지
             // 말해 주면 둘이 이어진다.
+            divided.droppedCases.forEach { (title, ids) ->
+                val causes = ids.flatMap { divided.causeOf[it].orEmpty() }.toSet()
+                add(
+                    "‘$title’ 에서 함께 설 자리가 없어 홀로 남은 케이스(" +
+                        ids.joinToString(", ") { describe(it) } +
+                        ")는 저장하지 않았습니다" +
+                        (if (causes.isEmpty()) "" else " — 막은 값: ${causes.joinToString(", ")}") +
+                        ". 케이스 하나짜리 시나리오는 흐름이 아니어서," +
+                        " 함께 설 흐름이 생길 때 다시 담는 쪽이 낫습니다."
+                )
+            }
             divided.notes.forEach { (title, parts) ->
                 add(
                     "‘$title’ 은 함께 담을 수 없는 케이스가 있어 코드가 ${parts}개로 나눴습니다" +
@@ -317,19 +374,32 @@ class ScenarioReconcileService(
         // 함께 돌려주는 것은 코드가 메운 `bridge` 까지 담긴 것이 최종본이기 때문이다.
         if (!save) {
             trace.record(runId, "4. 저장한다", "저장하지 않는다(검수만) — 시나리오 ${opened.size}개")
-            return ReconcileOutcome(0, findings, allNotices, question, questions, opened)
+            // 이 출구도 어긋남을 실어야 한다 — 하나씩 받는 턴의 끝(검수만)이 이 길로 오고,
+            // 판 요약이 세는 것이 바로 이 값이다. 실측(런 16): 검수는 1건을 짚었는데 요약은
+            // 0건이라 적었다.
+            return ReconcileOutcome(
+                0, findings, allNotices, question, questions, opened,
+                contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" },
+            )
         }
 
         var applied = 0
         transactionalOperator.executeAndAwait {
             val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+            // **이 런에 이미 있는 제목은 갈아끼운다.** 하나씩 받으며 저장하는 턴에서 재작성이
+            // 전체를 다시 제출하면 같은 제목이 새 행으로 또 들어갔다 — 계측(런 28: 33행/17종,
+            // 런 31: 82행/40종). 턴끝 병합(repaired)이 제목으로 갈아끼우는 것과 같은 규칙을
+            // 저장에도 둔다. 런 스코프다 — 다른 런의 같은 제목은 남의 것이다.
+            val idByTitle = links.mapNotNull { link ->
+                scenarioRepository.findById(link.testScenarioId)?.let { it.title.trim() to it.id!! }
+            }.toMap(mutableMapOf())
             // 새 시나리오는 런의 현재 마지막 position 다음부터 붙인다. 비어 있으면 0부터.
             var runPosition = (links.maxOfOrNull { it.position } ?: -1) + 1
             // 나눠서 생긴 조각을 원본 옆으로 옮기려면 저장된 id 를 자리별로 들고 있어야 한다.
             val savedId = arrayOfNulls<Long>(opened.size)
             val fromSplit = mutableListOf<Pair<Long, Int>>()
             for ((index, scenario) in opened.withIndex()) {
-                val scenarioId = scenario.scenarioId
+                val scenarioId = scenario.scenarioId ?: idByTitle[scenario.title.trim()]
                 if (scenarioId != null) {
                     // 수정: 기존 시나리오 본문을 통째로 교체한다.
                     val existing = scenarioRepository.findById(scenarioId)
@@ -359,6 +429,7 @@ class ScenarioReconcileService(
                     )
                     runPosition++
                     savedId[index] = saved.id
+                    idByTitle[scenario.title.trim()] = saved.id!!
                     divided.anchorOf[index]?.let { anchor -> fromSplit += saved.id!! to anchor }
                     applied++
                 }
@@ -374,7 +445,10 @@ class ScenarioReconcileService(
                 opened.joinToString("\n") { "  · ${it.title} — 스텝 ${it.steps.size}" } +
                 (if (questions.isEmpty()) "" else "\n되묻는다: " + questions.joinToString(" · ") { it.id }),
         )
-        return ReconcileOutcome(applied, findings, allNotices, question, questions, opened)
+        return ReconcileOutcome(
+            applied, findings, allNotices, question, questions, opened,
+            contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" },
+        )
     }
 
     /**
@@ -694,6 +768,13 @@ class ScenarioReconcileService(
     private data class ProjectFacts(
         val cases: List<ScenarioSiblingCheck.CaseFact>,
         val raisedIn: Map<String, Set<String>>,
+        /**
+         * 값이 **어떤 방식으로든** 바뀌는 화면들 — 확정 대입 포함. [raisedIn] 은 증감만 세지만,
+         * 걷기가 "그 화면을 지나면 이 값을 더는 모른다"로 놓아 줄 때는 대입도 바뀜이다 —
+         * 실측: `flag` 는 GameClearScene 에서 `=1` 로 적히는데 증감이 아니라 안 놓아 줘서
+         * 하네스 어긋남 40건 중 23건이 그 하나였다.
+         */
+        val changedIn: Map<String, Set<String>>,
         val climbing: Set<String>,
         val caseOfCapability: (Long) -> Long?,
         val movable: Set<String>,
@@ -711,6 +792,7 @@ class ScenarioReconcileService(
         held[projectId] ?: ProjectFacts(
             cases = caseFacts(projectId),
             raisedIn = raisedIn(projectId),
+            changedIn = changedIn(projectId),
             climbing = onlyClimbing(projectId),
             caseOfCapability = caseOfCapability(projectId),
             movable = movableValues(projectId),
@@ -725,6 +807,7 @@ class ScenarioReconcileService(
                 step = case.step.trim(),
                 guards = conditions.guardsOf(case),
                 declared = conditions.knownValuesOf(case),
+                arrivesAt = ScenarioStateReader.arrivesAt(case, objectMapper),
             )
         }
     }.onFailure { logger.warn("케이스 전량 조회 실패 — 검사들을 넘어간다: ${it.message}") }
@@ -767,6 +850,21 @@ class ScenarioReconcileService(
             }.getOrDefault(emptyList())
         }
     }
+
+    /** 값이 어떤 방식으로든 적히는 화면들 — 걷기의 놓아주기(clears) 전용. */
+    private suspend fun changedIn(projectId: Long): Map<String, Set<String>> = runCatching {
+        testCaseRepository.findValueMoves(projectId).toList()
+            .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
+            .mapValues { (_, scenes) -> scenes.toSet() }
+    }.onFailure { logger.warn("값이 바뀌는 화면 조회 실패 — 어긋남을 더 잡는다: ${it.message}") }
+        .getOrDefault(emptyMap())
+
+    /** 놓아주기용 병합 — 증감([raisedIn])과 대입([ProjectFacts.changedIn])을 합친다. */
+    private fun loosens(
+        raised: Map<String, Set<String>>,
+        changed: Map<String, Set<String>>,
+    ): Map<String, Set<String>> =
+        (raised.keys + changed.keys).associateWith { raised[it].orEmpty() + changed[it].orEmpty() }
 
     private suspend fun raisedIn(projectId: Long): Map<String, Set<String>> = runCatching {
         testCaseRepository.findValueRaisers(projectId).toList()
@@ -812,9 +910,10 @@ class ScenarioReconcileService(
         ScenarioContradictionCheck.Step(
             at = index + 1,
             caseId = step.caseId,
-            requires = fact?.guards.orEmpty(),
+            // 호출식 가드는 상태가 아니다 — 요구로도 확정으로도 세지 않는다(momentary).
+            requires = fact?.guards.orEmpty().filterNot { it.momentary },
             sets = fact?.guards.orEmpty()
-                .filter { it.operator == "==" && !it.symbolic }
+                .filter { it.operator == "==" && !it.symbolic && !it.momentary }
                 .associate { it.variable to it.value } + fact?.declared.orEmpty() + bridgeSets,
             clears = buildSet {
                 gap?.takeIf { !it.contains("→") }?.let(::add)
