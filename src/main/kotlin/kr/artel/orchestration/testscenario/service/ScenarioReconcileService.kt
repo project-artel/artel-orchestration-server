@@ -256,7 +256,7 @@ class ScenarioReconcileService(
         val climbing = known.climbing
         val walked = repaired.map {
             ScenarioContradictionCheck.walk(
-                walkOf(it, byId, loosens(raised, known.changedIn), bridgeEffects, climbing)
+                walkOf(it, byId, loosens(raised, known.changedIn), bridgeEffects, climbing, known.strayMovers)
             )
         }
         val contradictions = repaired.zip(walked).flatMap { (scenario, found) ->
@@ -790,6 +790,7 @@ class ScenarioReconcileService(
         val climbing: Set<String>,
         val caseOfCapability: (Long) -> Long?,
         val movable: Set<String>,
+        val strayMovers: Set<String> = emptySet(),
         val changedBy: Map<Long, Set<String>>,
     )
 
@@ -808,6 +809,7 @@ class ScenarioReconcileService(
             climbing = onlyClimbing(projectId),
             caseOfCapability = caseOfCapability(projectId),
             movable = movableValues(projectId),
+            strayMovers = strayMoverNames(projectId),
             changedBy = valuesChangedByCases(projectId),
         ).also { held[projectId] = it }
 
@@ -897,6 +899,9 @@ class ScenarioReconcileService(
         raisedIn: Map<String, Set<String>>,
         bridgeEffects: Map<Long, List<Pair<String, String?>>>,
         onlyClimbs: Set<String>,
+        // 씬 귀속 없이 움직이는 값(V95). 어디서 바뀌는지 모르므로 걸음마다 놓아 준다 —
+        // 안 놓으면 토글이 "앞이 0 으로 만들어 두었다"는 순서 오판을 만든다(run 60).
+        strayMovers: Set<String> = emptySet(),
     ): List<ScenarioContradictionCheck.Step> = scenario.steps.mapIndexed { index, step ->
         val fact = step.caseId?.let { byId[it] }
         // 메우지 못한 구간을 지나면 그 자리가 무엇으로 바뀌는지 모른다. 막은 것이 화면 쌍이면
@@ -935,6 +940,7 @@ class ScenarioReconcileService(
                 }
                 written.map { ScenarioStateReader.normalize(it.first) }
                     .filterNotTo(this) { it in bridgeSets }
+                addAll(strayMovers)
             },
             climbs = raisedIn.keys.filterTo(mutableSetOf()) { value ->
                 value.lowercase() in onlyClimbs && raisedIn.getValue(value).any { it in passed }
@@ -1029,6 +1035,19 @@ class ScenarioReconcileService(
     }.onFailure { logger.warn("기능의 케이스 조회 실패 — 이름 없이 메운다: ${it.message}") }
         .getOrDefault(emptyMap())
         .let { found -> { capabilityId: Long -> found[capabilityId] } }
+
+    /**
+     * 씬 없이 움직이는 값의 이름들 — 걷기의 놓아주기 키. 가드는 꼬리 이름
+     * (`waitingForAcknowledge`)으로 적히므로 전체 경로와 꼬리를 둘 다 담는다.
+     */
+    private suspend fun strayMoverNames(projectId: Long): Set<String> = runCatching {
+        testCaseRepository.findStrayWrittenValues(projectId).toList()
+            .flatMap { target ->
+                val normalized = ScenarioStateReader.normalize(target)
+                listOf(normalized, normalized.substringAfterLast('.'))
+            }.toSet()
+    }.onFailure { logger.warn("씬 없는 무버 조회 실패 — 없이 걷는다: ${it.message}") }
+        .getOrElse { emptySet() }
 
     private suspend fun movableValues(projectId: Long): Set<String> = runCatching {
         testCaseRepository.findWrittenValues(projectId).toList().toSet()

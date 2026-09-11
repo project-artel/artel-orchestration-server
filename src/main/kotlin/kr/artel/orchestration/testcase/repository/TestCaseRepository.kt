@@ -381,6 +381,27 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     fun findWrittenValues(projectId: Long): Flow<String>
 
     /**
+     * 씬 귀속 없이 남은 상태 변경(V95)의 대상들. 걷기의 놓아주기 전용 —
+     * 어느 씬에서 움직이는지 모르는 값은 걸음마다 모르게 된 것으로 놓아야,
+     * 토글이 "앞이 0 으로 만들어 두었다"는 순서 오판을 만들지 않는다(run 60).
+     */
+    @Query(
+        """
+        SELECT DISTINCT se.target
+        FROM content_map_stray_effect se
+        WHERE se.kind IN ('write', 'active-state')
+          AND se.content_map_id IN (
+              SELECT DISTINCT s2.content_map_id
+              FROM test_case tc
+              JOIN capability c2 ON c2.capability_key = tc.capability_key
+              JOIN scene s2 ON s2.id = c2.scene_id
+              WHERE tc.project_id = :projectId
+          )
+        """
+    )
+    fun findStrayWrittenValues(projectId: Long): Flow<String>
+
+    /**
      * **그 값이 어느 화면에서 움직이나**(ARTEL-635).
      *
      * 저작이 받는 전제는 서로 똑같이 생겼다 — `position == 0` 과 `StagePosition >= 1` 은 한 줄로는
