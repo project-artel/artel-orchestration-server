@@ -172,11 +172,23 @@ class ScenarioReconcileService(
             trace.record(runId, "근거를 되찾는다", groundedBridges.notes.joinToString("\n"))
         }
 
-        val divided = ScenarioConflictSplit.adoptSplitPieces(ScenarioConflictSplit.apply(
+        val startingValues = runCatching {
+            testCaseRepository.findStartingValues(projectId).toList()
+                .mapNotNull { row ->
+                    ScenarioStateReader.defaultOf(row.detail)
+                        ?.let { ScenarioStateReader.normalize(row.name) to it }
+                }.toMap()
+        }.onFailure { logger.warn("처음 값 조회 실패 — 조각 도달성 검사 없이 간다: ${it.message}") }
+            .getOrElse { emptyMap() }
+        val divided = ScenarioConflictSplit.adoptSplitPieces(
+            guardsOf = { id -> byId[id]?.guards.orEmpty() },
+            startingValues = startingValues,
+            outcome = ScenarioConflictSplit.apply(
             groundedBridges.scenarios,
             contested,
             movable = { value -> movable.any { written -> sameTail(written, value) } },
-        ) { changedBy[it].orEmpty() })
+        ) { changedBy[it].orEmpty() },
+        )
         val given = divided.scenarios
         divided.notes.forEach { (title, parts) ->
             logger.info("함께 담을 수 없어 나눴다 [runId={}] {} → {}조각", runId, title, parts)

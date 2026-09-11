@@ -362,6 +362,20 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
               JOIN scene s2 ON s2.id = c2.scene_id
               WHERE tc.project_id = :projectId
           )
+        UNION
+        -- 씬 귀속에 실패한 unplaced 타입의 write(V95). 토글로 움직이는 값이 여기만 남는
+        -- 경우가 실측에 있고(TutorialController.waitingForAcknowledge), 안 합치면 그 값이
+        -- 얼어붙은 것으로 읽혀 한 흐름이 모순으로 나뉜다.
+        SELECT DISTINCT se.target
+        FROM content_map_stray_effect se
+        WHERE se.kind IN ('write', 'active-state')
+          AND se.content_map_id IN (
+              SELECT DISTINCT s2.content_map_id
+              FROM test_case tc
+              JOIN capability c2 ON c2.capability_key = tc.capability_key
+              JOIN scene s2 ON s2.id = c2.scene_id
+              WHERE tc.project_id = :projectId
+          )
         """
     )
     fun findWrittenValues(projectId: Long): Flow<String>

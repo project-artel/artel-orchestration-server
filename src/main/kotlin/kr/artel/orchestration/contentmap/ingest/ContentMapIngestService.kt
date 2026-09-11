@@ -82,6 +82,7 @@ class ContentMapIngestService(
     private val proofs: CapabilityProofRepository,
     private val sceneEdges: SceneEdgeRepository,
     private val objectRefs: SceneObjectRefRepository,
+    private val strayEffects: kr.artel.orchestration.contentmap.repository.ContentMapStrayEffectRepository,
     private val contentMaps: kr.artel.orchestration.contentmap.repository.ContentMapRepository,
     private val builds: kr.artel.orchestration.game.repository.GameBuildRepository,
     private val storage: DocumentStorage,
@@ -225,6 +226,22 @@ class ContentMapIngestService(
         )
         applySceneCaptures(document.id!!, document.contentMapId)
         markEntryScene(document.contentMapId)
+
+        // 씬 귀속에 실패한 unplaced 타입의 상태 변경을 지도 수준으로 남긴다(V95).
+        // capability 가 못 담는 지식이고, 없으면 토글로 움직이는 값이 얼어붙은 값으로 읽혀
+        // 걷기가 한 흐름을 모순으로 나눈다. 재적재마다 갈아끼운다.
+        strayEffects.deleteByContentMapId(document.contentMapId)
+        join.strayWrites().forEach { stray ->
+            strayEffects.save(
+                kr.artel.orchestration.contentmap.entity.ContentMapStrayEffectEntity(
+                    contentMapId = document.contentMapId,
+                    kind = stray.kind,
+                    target = stray.target,
+                    detail = stray.detail,
+                    sourceType = stray.type,
+                )
+            )
+        }
 
         // **효과가 가리키는 것을 사람이 찾을 수 있는 이름으로**(ARTEL-615). 코드는
         // `ChatWindowController.anyKeyPrompt` 라 부르고 하이어라키에는 `Canvas/ChatWindow/AnyKeyPrompt`

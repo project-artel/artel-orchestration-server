@@ -90,9 +90,29 @@ object ScenarioConflictSplit {
      * 가리킬 것이 없다. 뺀 케이스는 [Outcome.droppedCases] 로 알리고, 부른 쪽이 전 건
      * 판정에서 "뺐다"로 재분류할 책임을 진다.
      */
-    fun adoptSplitPieces(outcome: Outcome): Outcome {
+    fun adoptSplitPieces(
+        outcome: Outcome,
+        // 조각이 **시작값에서 성립하는가**(run 60 실측). 나뉜 조각은 원인 값의 요구를 스스로
+        // 못 만드니(그래서 나뉘었다), 시작값이 그 요구를 충족해 주지 않으면 개별 시나리오로
+        // 돌 수 없다 — 2스텝짜리 "(2)" 가 부팅부터의 도달 경로 없이 저장되던 자리다.
+        guardsOf: (Long) -> List<Guard> = { emptyList() },
+        startingValues: Map<String, String> = emptyMap(),
+    ): Outcome {
         if (outcome.notes.isEmpty()) return outcome
         val caseCount = { part: ScenarioResult -> part.steps.mapNotNull { it.caseId }.distinct().size }
+        val tailMatch = { a: String, b: String ->
+            a == b || a.endsWith(".$b") || b.endsWith(".$a")
+        }
+        // 원인 값에 걸린 요구 중 하나라도 시작값으로 성립하면 도달 가능으로 본다. 원인 값이
+        // 없거나(첫 무리) 그 값의 요구가 없으면 이 검사는 관여하지 않는다 — 여기서 재는 것은
+        // "나뉜 이유가 시작에서 풀리는가"뿐이고, 그 밖의 도달성은 걷기·메움의 몫이다.
+        val standsAtStart = { part: ScenarioResult ->
+            val ids = part.steps.mapNotNull { it.caseId }.distinct()
+            val causes = ids.flatMap { outcome.causeOf[it].orEmpty() }.toSet()
+            val relevant = ids.flatMap(guardsOf)
+                .filter { g -> !g.momentary && !g.symbolic && causes.any { tailMatch(g.variable, it) } }
+            causes.isEmpty() || relevant.isEmpty() || relevant.any { satisfiedBy(it, startingValues) }
+        }
         // 조각들을 원본별 무리로 되묶는다: anchorOf 가 "새 조각 → 첫 조각" 을 안다.
         val families = mutableMapOf<Int, MutableList<Int>>()
         outcome.scenarios.indices.forEach { index ->
@@ -103,7 +123,9 @@ object ScenarioConflictSplit {
         val dropped = mutableListOf<Pair<String, List<Long>>>()
         for ((root, members) in families.toSortedMap()) {
             if (members.size == 1) { keptIndex += members; continue }
-            var kept = members.filter { caseCount(outcome.scenarios[it]) >= 2 }
+            var kept = members.filter {
+                caseCount(outcome.scenarios[it]) >= 2 && standsAtStart(outcome.scenarios[it])
+            }
             if (kept.isEmpty()) kept = listOf(members.maxBy { caseCount(outcome.scenarios[it]) })
             keptIndex += kept
             val solo = members - kept.toSet()
@@ -137,6 +159,22 @@ object ScenarioConflictSplit {
      * 가장 적은 수로 나누는 것을 목표로 하지 않는다 — 그건 어려운 문제이고, 여기서 필요한 것은
      * "실행할 수 있는 묶음"이지 "가장 적은 묶음"이 아니다.
      */
+    /** 시작값 하나로 요구 하나가 성립하는가. 숫자면 수로, 아니면 글자로 비교한다. */
+    private fun satisfiedBy(guard: Guard, starting: Map<String, String>): Boolean {
+        val start = starting.entries.firstOrNull { (name, _) ->
+            name == guard.variable || name.endsWith(".${guard.variable}") || guard.variable.endsWith(".$name")
+        }?.value ?: return false
+        val left = start.toDoubleOrNull()
+        val right = guard.value.toDoubleOrNull()
+        if (left != null && right != null) return when (guard.operator) {
+            "==" -> left == right; "!=" -> left != right
+            "<=" -> left <= right; ">=" -> left >= right
+            "<" -> left < right; ">" -> left > right
+            else -> false
+        }
+        return when (guard.operator) { "==" -> start == guard.value; "!=" -> start != guard.value; else -> false }
+    }
+
     private fun group(
         caseIds: List<Long>,
         contested: (Long, Long) -> Set<String>,
