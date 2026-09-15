@@ -7,7 +7,7 @@ signalling only. **Media never passes through the orchestration server.**
 Three parties, two WebSocket connections, one peer connection:
 
 ```
-Unity SDK  ──/ws/sdk?instanceKey=──▶  orchestration server  ◀──/ws/viewer?instanceId=──  browser
+Unity SDK  ──/ws/sdk?token=&instanceId=──▶  orchestration server  ◀──/ws/viewer?instanceId=──  browser
      │                                (signalling relay)                                    │
      └──────────────────────────── WebRTC media (P2P) ────────────────────────────────────▶─┘
 ```
@@ -16,7 +16,7 @@ Unity SDK  ──/ws/sdk?instanceKey=──▶  orchestration server  ◀──/
 
 | Name | Meaning |
 |---|---|
-| `instanceKey` | The SDK's durable credential. Used at the `/ws/sdk` handshake and nowhere else. Never appears in a message body, a log line, or a URL the browser sees. |
+| `token` | The SDK's JWT (`aud=artel-sdk`). Used at the `/ws/sdk` handshake and nowhere else. `SdkWebSocketHandler` decodes it itself, because a query string is not something the security filter chain can read. Never appears in a message body, a log line, or a URL the browser sees. |
 | `instanceId` | The game instance's opaque id. What the browser addresses and what every server-side map is keyed by. |
 | `streamId` | One watching session, minted by this server when a viewer is admitted. |
 
@@ -173,7 +173,7 @@ a network limitation as a broken stream.
 
 | Code | Side | Meaning |
 |---|---|---|
-| `4001` | SDK | Missing or invalid instance key (pre-existing) |
+| `4001` | SDK | Missing or invalid credentials, or an instance the caller cannot reach (pre-existing) |
 | `4002` | SDK | Instance already connected (pre-existing) |
 | `4003` | Viewer | Missing or malformed `instanceId` |
 | `4009` | Viewer | Taken over by a newer viewer |
