@@ -19,12 +19,12 @@
 - `config/` 를 아무도 import 하지 않는 것이 정상임. 전부 `@Configuration` 이라 component scan 이 엮음
 - **`auth` 는 의도하지 않은 세 번째 공유 자리임.** 바깥 48 개 파일이 `CurrentUserId`,
   `SessionUserResolver`, `AuthProperties` 를 가져다 씀 — `common` 의 70 에 가까운 수임
-  - `auth` 는 `app_user` 와 `cli_token` 을 소유한 도메인이면서 동시에 전 도메인의 인증 기본기임
+  - `auth` 는 `app_user` 와 `cli_token` 을 소유한 도메인이면서 동시에 전 도메인이 함께 쓰는 인증 기본 코드임
   - 그 둘이 한 패키지에 있다는 사실이 이 구조에서 유일하게 어긋난 자리임
 - 한 도메인을 읽으려면 디렉터리 하나만 열면 되고, 지우려면 디렉터리 하나만 지우면 됨
 - 대신 도메인 사이의 호출이 service 를 직접 부르는 모양으로 나타남. 그 경계를 얇게 두는 것이
   `.agents/docs/coding-style.md` 의 일임
-- 크기가 고름과는 거리가 멀음 — `contentmap` 87 개, `knowledge` 49, `testscenario` 48, `scenecontext` 4
+- 크기는 전혀 고르지 않음 — `contentmap` 87 개, `knowledge` 49, `testscenario` 48, `scenecontext` 4
 
 ## 포트 둘
 
@@ -45,7 +45,7 @@
 | 인바운드 | `/ws/sdk` | action 과 그 결과, `pulse`, `GAME_STATE`, WebRTC signalling |
 | 인바운드 | `/ws/viewer` | 스트리밍 lease 갱신과 signalling |
 | 아웃바운드 | agent-server `/sessions/{id}` | 시나리오 생성 대화 |
-| 아웃바운드 | agent-server `/qa-sessions/{id}` | QA 런 봉투 |
+| 아웃바운드 | agent-server `/qa-sessions/{id}` | QA 런 `envelope` |
 
 - 인바운드 둘은 `HandlerMapping` 하나에 함께 들어 있음. 매핑 빈을 나누면 같은 순위의 `HandlerMapping` 이
   둘이 되어 조회 순서가 등록 순서에 달림
@@ -78,7 +78,7 @@ flowchart TB
     t1["qa_try · 시나리오 1"]
     t2["qa_try · 시나리오 2"]
     tn["qa_try · 시나리오 N"]
-    roll["자식이 전부 종단인가"]
+    roll["자식이 전부 끝났나"]
     term["qa_run terminal<br>FAILED > CANCELLED > COMPLETED"]
 
     run --> t1 --> roll
@@ -88,9 +88,9 @@ flowchart TB
 ```
 
 - 시나리오 하나가 `qa_try` 하나임. 아직 차례가 오지 않은 것은 `PENDING` 이고 그 상태는 부모에 없음
-- 자식이 종단될 때마다 형제를 전부 다시 읽고, 전부 끝났을 때만 부모를 닫음
+- 자식 하나가 끝날 때마다 형제를 전부 다시 읽고, 전부 끝났을 때만 부모를 닫음
 - 부모를 닫지 않으면 재실행 가드가 그 게임 인스턴스를 영구히 잠금 — [ADR 0007](adr/0007-qa-run-rollup.md)
-- 런 중에 오가는 봉투의 계약은 [`capability-write-frames.md`](capability-write-frames.md) 와
+- 런 중에 오가는 `envelope` 의 계약은 [`capability-write-frames.md`](capability-write-frames.md) 와
   [`screen-selector-frames.md`](screen-selector-frames.md)
 
 ## content_map 은 게임 빌드의 지도
@@ -100,14 +100,15 @@ flowchart TB
 - 게임 빌드 하나에 지도 하나임 — [ADR 0002](adr/0002-content-map-per-build.md)
 - `capability` 의 준비도는 축 셋이고 `status` 는 거기서 유도되는 생성 컬럼임 —
   [ADR 0003](adr/0003-capability-readiness-axes.md)
-- QA 런이 지도에 되먹임함. 정적 분석이 믿는 것과 실제로 참인 것이 다르다는 사실이 그 frame 들의 출발점임
+- QA 런이 배운 것을 지도에 다시 적음. 정적 분석이 믿는 것과 실제로 참인 것이 다르다는 사실이 그 frame 들의
+  출발점임
 
 ## knowledge 와 pgvector
 
 - knowledge 항목은 본문과 벡터, 그리고 항목 사이의 관계 edge 로 이루어짐
 - 관계 어휘는 닫혀 있고 `LEADS_TO` 는 쓰기가 얼어 있음 —
   [ADR 0005](adr/0005-knowledge-relations.md)
-- graph 깊이는 1 또는 2 만 허용함. 3 이상은 노드 수가 컨텍스트 예산을 넘음
+- graph traversal 깊이는 1 또는 2 만 허용함. 3 이상은 노드 수가 컨텍스트 예산을 넘음
 - 검색 벡터는 저장 경로가 아니라 **백그라운드 worker** 가 채움
 
 ```text

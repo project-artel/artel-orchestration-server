@@ -27,8 +27,9 @@ override fun getWebSocketService(): WebSocketService {
 
 ## 왜
 
-- 이 값이 없던 동안 Reactor Netty 기본값 **65536** 이 그대로 걸렸고, 정상 동작이 그것을 밟았습니다.
-- stage 에서 게임이 전투 씬에 들어가는 순간 `whole` pulse 78,946 바이트가 나갔고 서버가 소켓을 끊었습니다.
+- 이 값이 없던 동안 Reactor Netty 기본값 **65536** 이 그대로 걸렸고, 정상 동작이 그 값을 넘겼습니다.
+- stage 에서 게임이 전투 씬에 들어가는 순간 `whole` 이 `true` 인 `pulse` 78,946 바이트가 나갔고 서버가
+  소켓을 끊었습니다.
 
 ```text
 io.netty.handler.codec.TooLongFrameException: content length exceeded 65536 bytes.
@@ -70,7 +71,7 @@ WebFluxConfigurationSupport
   아무도 그것을 구현하지 않으면 기본 `HandshakeWebSocketService` 를 스스로 만듭니다 — 우리
   `WebsocketServerSpec` 이 없는 것으로.
 - 빈은 만들어지고, 주입되지 않고, 조용합니다. **상한은 3 주 내내 65536 이었습니다.** ARTEL-678 이
-  `pulse` 에 화면의 글자를 실어 전투 씬의 `whole` pulse 가 그 값을 넘긴 날에야 드러났습니다.
+  `pulse` 에 화면의 글자를 실어 전투 씬의 `whole` `pulse` 가 그 값을 넘긴 날에야 드러났습니다.
 - 그래서 회귀를 잡는 테스트는 빈이 아니라 어댑터를 봅니다 — 실제 `WebSocketService` 가
   `HandshakeWebSocketService` 인지, 그 `upgradeStrategy` 의 `maxFramePayloadLength` 가 설정값과 같은지.
 - **어댑터를 직접 만드는 것은 여전히 하지 않습니다.** 같은 이름의 빈이 둘이 되어 기동이 거절되거나, 다른
@@ -97,7 +98,7 @@ WebFluxConfigurationSupport
 | --- | --- |
 | 설정을 한 자리에만 둘 수 있음 | `WebFluxConfigurer` 빈이 이 앱에 둘인데 이 메서드는 **하나만** 값을 내야 함. 둘이 내면 기동 거절 |
 | 두 경로가 상한 하나를 나눠 씀 | 뷰어에게는 과한 값이지만 값이 둘이 되는 것보다 나음 |
-| 256 KB 도 언젠가 작아짐 | 상한은 pulse 크기 자체를 줄이지 않음. SDK 쪽 절감이 그 일을 함 |
+| 256 KB 도 언젠가 작아짐 | 상한은 `pulse` 크기 자체를 줄이지 않음. SDK 쪽 절감이 그 일을 함 |
 | 프레임이 아니라 합계에 걸림 | websocket-sharp 이 1016 바이트마다 조각내므로 프레임 상한만 보면 원인이 안 보임 |
 
 - `WebFluxConfigurerComposite` 가 합성을 맡고, `WebFluxArgumentResolverConfig` 가 또 하나의

@@ -21,7 +21,7 @@
 
 | 문서 | 그 안에 있는 결정 |
 | --- | --- |
-| [`../streaming-protocol.md`](../streaming-protocol.md) | `streamId` 를 모든 signalling 에 싣는 이유, 뷰어를 newest-wins 로 받는 이유, `4009` 가 종단인 이유, lease 를 90 초로 잡은 계산 |
+| [`../streaming-protocol.md`](../streaming-protocol.md) | `streamId` 를 모든 signalling 에 싣는 이유, 뷰어를 newest-wins 로 받는 이유, `4009` 가 terminal 인 이유, lease 를 90 초로 잡은 계산 |
 | [`../capability-write-frames.md`](../capability-write-frames.md) | frame 셋의 모양이 강제하는 규칙 넷, 거절 사유 목록, agent 가 지금 고칠 수 있는 것과 없는 것 |
 | [`../screen-selector-frames.md`](../screen-selector-frames.md) | screen 을 `discriminator` 로 식별하는 이유, whitelist 를 두는 이유, 빈 `discriminator` 가 메시지인 이유 |
 
@@ -63,7 +63,7 @@
 | [`2026-08-27-split-screens-from-readings.md`](../../.plan/general/2026-08-27-split-screens-from-readings.md) | screen 을 `pulse` 에서 떼어 낸 이유 |
 | [`2026-08-28-carry-screen-capabilities.md`](../../.plan/general/2026-08-28-carry-screen-capabilities.md) | screen 마다 무엇을 할 수 있는지 싣는 법 |
 | [`2026-08-29-let-the-agent-see-every-capability.md`](../../.plan/general/2026-08-29-let-the-agent-see-every-capability.md) | 전부 보여 줄지 걸러 줄지 |
-| [`2026-08-29-record-what-the-agent-saw-on-capabilities.md`](../../.plan/general/2026-08-29-record-what-the-agent-saw-on-capabilities.md) | 런이 배운 것을 지도에 되먹이는 경로 |
+| [`2026-08-29-record-what-the-agent-saw-on-capabilities.md`](../../.plan/general/2026-08-29-record-what-the-agent-saw-on-capabilities.md) | 런이 배운 것을 지도에 다시 적는 경로 |
 | [`2026-08-21-derive-scene-edges-from-scene-effects.md`](../../.plan/general/2026-08-21-derive-scene-edges-from-scene-effects.md) | 씬 사이 edge 를 효과에서 끌어내는 법 |
 
 ### knowledge

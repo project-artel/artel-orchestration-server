@@ -8,7 +8,7 @@ ARTEL 은 QA agent 가 게임을 직접 플레이해 테스트하는 제품이�
 - Kotlin · Spring WebFlux · 코루틴 서버. 포트 둘, 인바운드 WebSocket 둘, 아웃바운드 WebSocket 둘
 - 도메인 패키지 18 개의 vertical slice. 각 패키지가 자기 controller·service·repository 를 소유함
 - 공유하라고 만든 자리는 `common/` 과 `config/` 둘. 다만 `auth` 도 사실상 그 자리임 —
-  세션과 JWT 기본기를 바깥 48 개 파일이 가져다 씀
+  세션과 JWT 를 다루는 기본 코드를 바깥 48 개 파일이 가져다 씀
 
 ```mermaid
 flowchart LR
@@ -164,7 +164,7 @@ mv .env .env.local-run && ./mvnw clean test
 
 - 앞의 다섯은 `init { require(...) }` 임. `GITHUB_CLIENT_ID` 는 require 가 아니라 해석되지 않는
   placeholder 이고, Postgres 는 Flyway 가 그 자리에서 멈춤
-- `capture-download-url-ttl` 의 바닥값 600 초는 agent-server 의 `RUN_DEADLINE_SECONDS` 를 손으로 베낀
+- `capture-download-url-ttl` 의 최솟값 600 초는 agent-server 의 `RUN_DEADLINE_SECONDS` 를 손으로 베낀
   상수임. **지금 agent-server 의 값은 86,400 초라 둘이 어긋나 있음** (`StorageProperties.MIN_CAPTURE_DOWNLOAD_URL_TTL`
   대 `app/agents/qa/arch.py`)
 - **`GITHUB_APP_*` 는 일부러 기동을 막지 않음.** 비어 있어도 서버는 뜨고, tracker 연동 endpoint 를 부를 때만
