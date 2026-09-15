@@ -55,7 +55,7 @@ internal fun prefixGate(blockWhenInternal: Boolean): WebFilter = WebFilter { exc
 }
 ```
 
-- 따로 쓰면 한쪽만 고쳐지는 어긋남이 납니다.
+- 따로 쓰면 한쪽만 고쳐져 둘이 어긋납니다.
 - **이 필터를 `@Bean` 이나 `@Component` 로 만들면 안 됩니다.** 빈이 되는 순간
   `WebHttpHandlerBuilder.applicationContext` 가 두 체인 모두에 넣어 서로를 무력화합니다 — 공개 게이트가
   내부 체인에 들어가면 내부 포트가 자기 경로를 404 로 막습니다.
@@ -85,7 +85,7 @@ internal fun prefixGate(blockWhenInternal: Boolean): WebFilter = WebFilter { exc
 | --- | --- |
 | 게이트 필터 둘은 여전히 코드임 | 지우면 경계가 무너짐 |
 | 공개 게이트를 지우면 8080 이 `/internal/**` 을 다시 엶 | 유일한 실질 회귀 경로. 실제 소켓을 쓰는 통합 테스트가 이 한 가지를 고정함 |
-| 내부 게이트를 지우면 내부 포트가 `/api/**` 까지 엶 | 외부에 뜨지 않으므로 실피해는 없음 |
+| 내부 게이트를 지우면 내부 포트가 `/api/**` 까지 엶 | 외부에 뜨지 않으므로 실제 피해는 없음 |
 | `WebHttpHandlerBuilderCustomizer` 가 널리 쓰이는 API 가 아님 | Boot 3.3.1 의 `HttpHandlerAutoConfiguration` 이 `build()` 직전에 적용한다는 근거를 주석으로 남김 |
 | 두 번째 서버의 수명을 손으로 맞춰야 함 | Boot 의 웹 서버와 같은 phase 에 두고, `destroy()` 로도 닫음 |
 

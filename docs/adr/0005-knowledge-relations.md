@@ -83,7 +83,7 @@ val relation = KnowledgeRelation.fromWire(request.relation)
 
 | 대안 | 왜 거절했나 |
 | --- | --- |
-| `RELATED_TO` 나 `SEE_ALSO` 를 둔다 | catch-all 이 기본값이 되어 그래프가 무타입으로 퇴화함 |
+| `RELATED_TO` 나 `SEE_ALSO` 를 둔다 | catch-all 이 기본값이 되어 그래프가 타입 없는 그래프로 퇴화함 |
 | `LEADS_TO` 를 어휘에서 아예 뺀다 | 이미 쌓인 행의 읽기까지 막힘. 얼릴 것은 쓰기뿐임 |
 | `LEADS_TO` 쓰기를 예외로 거절한다 | receive 파이프라인이 끊겨 프레임 하나가 QA 런 전체를 실패시킴 |
 | `PART_OF` 를 enum 에 넣는다 | agent 의 link·unlink 가 열리고 다시 얼려야 함 |
@@ -100,5 +100,5 @@ val relation = KnowledgeRelation.fromWire(request.relation)
 
 - 읽기가 계속 도는지는 회귀 테스트 셋이 지킵니다 — 저장된 `LEADS_TO` 가 확장에, 검색 히트의 이웃에,
   그래프 조회에 각각 나오는지.
-- graph 깊이는 1 또는 2 만 허용합니다. 3 이상은 노드 수가 컨텍스트 예산을 넘습니다
+- graph traversal 깊이는 1 또는 2 만 허용합니다. 3 이상은 노드 수가 컨텍스트 예산을 넘습니다
   (`knowledge/config/KnowledgeGraphProperties.kt`).
