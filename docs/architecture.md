@@ -9,13 +9,18 @@
 
 - 도메인 패키지 18 개가 각각 자기 `controller`·`service`·`repository`·`entity`·`dto` 를 소유함
 - 계층으로 자르지 않음 — `controller/` 아래 전 도메인의 컨트롤러가 모이는 배치가 아님
-- 공유되는 것은 둘뿐임
+- 공유하라고 만든 자리는 둘임
 
-| 패키지 | 무엇이 들어 있나 |
-| --- | --- |
-| `common/` | 오류 타입, embedding 큐와 backfill worker, xlsx 쓰기 |
-| `config/` | 두 번째 포트, R2DBC, OpenAPI, 전역 예외 핸들러 |
+| 패키지 | 무엇이 들어 있나 | 바깥에서 import 하는 파일 |
+| --- | --- | --- |
+| `common/` | 오류 타입, embedding 큐와 backfill worker, xlsx 쓰기 | 70 |
+| `config/` | 두 번째 포트, R2DBC, OpenAPI, 전역 예외 핸들러 | 0 |
 
+- `config/` 를 아무도 import 하지 않는 것이 정상임. 전부 `@Configuration` 이라 component scan 이 엮음
+- **`auth` 는 의도하지 않은 세 번째 공유 자리임.** 바깥 48 개 파일이 `CurrentUserId`,
+  `SessionUserResolver`, `AuthProperties` 를 가져다 씀 — `common` 의 70 에 가까운 수임
+  - `auth` 는 `app_user` 와 `cli_token` 을 소유한 도메인이면서 동시에 전 도메인의 인증 기본기임
+  - 그 둘이 한 패키지에 있다는 사실이 이 구조에서 유일하게 어긋난 자리임
 - 한 도메인을 읽으려면 디렉터리 하나만 열면 되고, 지우려면 디렉터리 하나만 지우면 됨
 - 대신 도메인 사이의 호출이 service 를 직접 부르는 모양으로 나타남. 그 경계를 얇게 두는 것이
   `.agents/docs/coding-style.md` 의 일임

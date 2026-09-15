@@ -7,7 +7,8 @@ ARTEL 은 QA agent 가 게임을 직접 플레이해 테스트하는 제품이�
 
 - Kotlin · Spring WebFlux · 코루틴 서버. 포트 둘, 인바운드 WebSocket 둘, 아웃바운드 WebSocket 둘
 - 도메인 패키지 18 개의 vertical slice. 각 패키지가 자기 controller·service·repository 를 소유함
-- 공유되는 것은 `common/` 과 `config/` 둘뿐임
+- 공유하라고 만든 자리는 `common/` 과 `config/` 둘. 다만 `auth` 도 사실상 그 자리임 —
+  세션과 JWT 기본기를 바깥 48 개 파일이 가져다 씀
 
 ```mermaid
 flowchart LR
@@ -116,6 +117,10 @@ cp .env.example .env   # 값을 채운 뒤
 mv .env .env.local-run && ./mvnw clean test
 ```
 
+- **CI 는 테스트를 돌리지 않음.** `Jenkinsfile` 의 빌드가 `./mvnw clean package -DskipTests` 라
+  suite 를 돌리는 곳은 로컬뿐임
+- `./mvnw test` 는 `docs/api/openapi.json` 을 다시 씀. `OpenApiSnapshotTest` 가 `/v3/api-docs` 를 읽어
+  덮으므로 그 파일의 diff 가 곧 계약이 움직였다는 뜻임
 - 전체 suite 는 `qa_run` 외래키 정리 순서 때문에 원래 백 건쯤 깨져 있고 그 수는 클래스 실행 순서를 따라 움직임.
   내 branch 의 실패인지 보려면 base 를 같은 방법으로 재서 비교해야 함
 - 마이그레이션은 검사 둘이 지킴 — [`docs/flyway-migrations.md`](docs/flyway-migrations.md)
