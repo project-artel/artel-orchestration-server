@@ -24,9 +24,12 @@ application, not one port. See `docs/deployment.md` § Ports.
 
 ## Documented API surface
 
-The route list is not repeated here. It lives in [`api/openapi.json`](api/openapi.json),
-a committed snapshot of the springdoc contract — 98 paths and 117 operations at the time
-of writing.
+The route list is not repeated here. It lives in [`api/openapi.json`](api/openapi.json) —
+98 paths and 117 operations at the time of writing.
+
+That file is generated, not written. `OpenApiSnapshotTest` boots the application, reads
+`/v3/api-docs`, and overwrites the snapshot, so `./mvnw test` refreshes it and a diff in
+that file means the contract moved.
 
 This section used to enumerate about 25 of them by hand, and a hand-copied list goes stale
 without anything failing. By the time it was cut it described two routes that no longer
