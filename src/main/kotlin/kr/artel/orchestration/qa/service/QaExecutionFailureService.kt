@@ -45,7 +45,7 @@ class QaExecutionFailurePersistence(
                 message = "QA execution failed because its connection closed.",
                 payload = objectMapper.valueToTree(QaStatusPayload("FAILED", completedAt))
             )
-            FailureLogs(qaTryId, active.gameInstanceId, active.agentSessionId, errorLog, statusLog)
+            FailureLogs(qaTryId, active.gameInstanceId, active.qaRunId, active.agentSessionId, errorLog, statusLog)
         }
 
     suspend fun failActiveById(qaTryId: Long, reason: String): FailureLogs? =
@@ -72,7 +72,7 @@ class QaExecutionFailurePersistence(
                 message = "QA execution failed.",
                 payload = objectMapper.valueToTree(QaStatusPayload("FAILED", completedAt))
             )
-            FailureLogs(qaTryId, active.gameInstanceId, active.agentSessionId, errorLog, statusLog)
+            FailureLogs(qaTryId, active.gameInstanceId, active.qaRunId, active.agentSessionId, errorLog, statusLog)
         }
 
     /**
@@ -107,7 +107,7 @@ class QaExecutionFailurePersistence(
                 message = "QA execution was cancelled.",
                 payload = objectMapper.valueToTree(QaStatusPayload("CANCELLED", completedAt))
             )
-            FailureLogs(qaTryId, active.gameInstanceId, active.agentSessionId, requestLog, statusLog)
+            FailureLogs(qaTryId, active.gameInstanceId, active.qaRunId, active.agentSessionId, requestLog, statusLog)
         }
 
 }
@@ -116,6 +116,8 @@ data class FailureLogs(
     val qaTryId: Long,
     /** 판독을 끌 대상. 트랜잭션이 커밋된 뒤에 쓰이므로 여기 실어 내보낸다 (ARTEL-507). */
     val gameInstanceId: Long,
+    /** RUN_STATUS 알림의 `qaRunId` (ARTEL-836). 단일 시나리오 경로면 null. */
+    val qaRunId: Long?,
     val agentSessionId: String?,
     val error: QaLogAppendResult,
     val status: QaLogAppendResult
@@ -139,6 +141,7 @@ class QaExecutionFailureService(
     private val agentPort: QaAgentPort,
     private val citationService: KnowledgeCitationService,
     private val grader: ExpectedStepsGrader,
+    private val runStatusNotifier: QaRunStatusNotifier,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -146,6 +149,9 @@ class QaExecutionFailureService(
         val failed = persistence.failActiveByInstance(gameInstanceId, "SDK connection closed.") ?: return
         logService.publish(failed.error)
         logService.publish(failed.status)
+        // 이 socket 이 방금 끊겼으므로 보낼 곳이 없다 — no-op 이 된다. 그래도 부르는 것은
+        // "try 가 끝나면 FINISHED 를 보낸다"를 종단 경로 전부에서 지키기 위해서다(ARTEL-836).
+        runStatusNotifier.finished(failed.qaTryId, failed.gameInstanceId, failed.qaRunId, outcome = "ERROR")
         // 기록이 먼저고 파생이 나중이다: 인용 확정은 이 런이 무엇을 썼는지를 못박고,
         // 채점은 그 뒤에 판정을 기대 라벨과 대조한다. 둘 다 스스로 실패를 삼킨다.
         citationService.finalizeTry(failed.qaTryId)
@@ -173,6 +179,7 @@ class QaExecutionFailureService(
         val cancelled = persistence.cancelActiveById(qaTryId, reason) ?: return false
         logService.publish(cancelled.error)
         logService.publish(cancelled.status)
+        runStatusNotifier.finished(qaTryId, cancelled.gameInstanceId, cancelled.qaRunId, outcome = "CANCELLED")
         citationService.finalizeTry(qaTryId)
         grader.grade(qaTryId)
         // 상태 전이가 커밋된 뒤라야 `stopIfIdle` 이 방금 끝낸 시도를 끝난 것으로 읽는다 (ARTEL-507).
@@ -230,6 +237,7 @@ class QaExecutionFailureService(
         val failed = persistence.failActiveById(qaTryId, reason) ?: return
         logService.publish(failed.error)
         logService.publish(failed.status)
+        runStatusNotifier.finished(qaTryId, failed.gameInstanceId, failed.qaRunId, outcome = "ERROR")
         citationService.finalizeTry(qaTryId)
         grader.grade(qaTryId)
         readings.stopIfIdle(failed.gameInstanceId)
