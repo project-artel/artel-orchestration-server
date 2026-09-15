@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
+import kr.artel.orchestration.qa.service.QaRunStatusNotifier
 import kr.artel.orchestration.sdk.dto.BaseMessage
 import kr.artel.orchestration.sdk.service.handler.SdkMessageHandler
 import org.slf4j.LoggerFactory
@@ -40,6 +41,7 @@ class SdkWebSocketHandler(
     private val instanceRepository: GameInstanceRepository,
     private val sessionManager: SessionManager,
     private val qaExecutionFailureService: QaExecutionFailureService,
+    private val runStatusNotifier: QaRunStatusNotifier,
     // 디코더가 두 개다. 브라우저 쪽이 @Primary라 이름만으로는 그쪽이 주입된다.
     @Qualifier("sdkJwtDecoder") private val sdkJwtDecoder: ReactiveJwtDecoder,
     private val sessionUserResolver: SessionUserResolver,
@@ -100,6 +102,15 @@ class SdkWebSocketHandler(
         }
 
         logger.info("웹소켓 연결 성공 - instanceId: $instanceId")
+
+        // 이 인스턴스에 활성 QA try 가 있으면 지금 상태를 다시 보낸다(ARTEL-836) — 끊겼다 붙은
+        // 창이 옛 문구를 들고 있지 않게 한다. suspend 라 mono{}로 감싸 fire-and-forget으로 흘린다
+        // (아래 doFinally의 sdkDisconnected 처리와 같은 이유).
+        mono { runStatusNotifier.onReconnect(instanceId.toLong()) }
+            .subscribe(
+                {},
+                { error -> logger.warn("RUN_STATUS 재연결 알림 실패 [instanceId=$instanceId]: ${error.message}") }
+            )
 
         // concatMap: 한 세션의 프레임을 순서대로 하나씩 처리한다. flatMap이면 프레임이 동시에
         // 처리되어, Agent로 나가는 unicast sink에 동시 tryEmitNext가 걸려 FAIL_NON_SERIALIZED로

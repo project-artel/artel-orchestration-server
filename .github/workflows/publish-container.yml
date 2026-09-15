@@ -1,0 +1,77 @@
+name: Publish container
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+
+# 같은 branch 에 연달아 push 하면 앞의 run 을 취소한다. 태그 하나가 branch 이름이라,
+# 두 run 이 겹치면 나중에 시작한 쪽이 먼저 끝나 오래된 commit 이 그 태그를 차지할 수 있다.
+concurrency:
+  group: publish-container-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: project-artel/orchestration
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Dockerfile 은 target/*.jar 를 COPY 만 하고 스스로 만들지 않는다. in-process 인
+      # 이유는 Jenkinsfile 의 Build stage 주석 참고(ARTEL-795) — 별도 daemon 이 같은
+      # 에이전트를 나눠 쓰다 죽는 문제였다.
+      - name: Build the jar
+        run: ./mvnw --batch-mode clean package -DskipTests -Dkotlin.compiler.execution.strategy=in-process
+        env:
+          MAVEN_OPTS: -Xmx2g
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 태그 둘을 만든다. branch 이름은 그 branch 의 최신 것을 가리키며 움직이고,
+      # 40자리 commit sha 는 한 빌드에 고정된다. type=sha 의 기본값은 짧은 sha 에
+      # `sha-` 를 붙이므로, prefix 를 비우고 format 을 long 으로 바꾼다.
+      - name: Resolve tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,format=long,prefix=
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

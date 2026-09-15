@@ -6,6 +6,7 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
+import kr.artel.orchestration.qa.service.QaRunStatusNotifier
 import kr.artel.orchestration.sdk.service.handler.SdkMessageHandler
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -46,6 +47,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
         mock(GameInstanceRepository::class.java),
         mock(SessionManager::class.java),
         mock(QaExecutionFailureService::class.java),
+        mock(QaRunStatusNotifier::class.java),
         mock(ReactiveJwtDecoder::class.java),
         mock(SessionUserResolver::class.java),
         listOf(knownHandler)
@@ -108,6 +110,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
             mock(GameInstanceRepository::class.java),
             mock(SessionManager::class.java),
             mock(QaExecutionFailureService::class.java),
+            mock(QaRunStatusNotifier::class.java),
             mock(ReactiveJwtDecoder::class.java),
             mock(SessionUserResolver::class.java),
             listOf(knownHandler, exploding)
