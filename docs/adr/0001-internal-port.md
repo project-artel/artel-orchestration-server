@@ -46,7 +46,7 @@ flowchart TB
   규칙입니다.
 - 8080 에 그 경로가 아예 없으면 공개 호스트 설정을 잘못 만져도 노출될 수 없습니다.
 
-`prefixGate` 는 구현 하나를 두 체인이 **극성만 바꿔** 씁니다.
+`prefixGate` 는 구현 하나를 두 체인이 **통과와 차단을 뒤집어** 씁니다.
 
 ```kotlin
 internal fun prefixGate(blockWhenInternal: Boolean): WebFilter = WebFilter { exchange, chain ->

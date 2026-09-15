@@ -25,7 +25,7 @@ flowchart LR
 ```
 
 - **media 는 이 서버를 지나지 않음** — screen 스트리밍은 SDK 와 브라우저 사이 P2P 이고 이 서버는 signalling 만 중계함
-- agent-server 와의 방향이 반대임 — agent-server 는 `/internal/**` 을 부르러 오고, QA 런과 시나리오 저작은
+- agent-server 와의 방향이 반대임 — agent-server 는 `/internal/**` 을 부르러 오고, QA 런과 시나리오 생성은
   이 서버가 agent-server 에 먼저 걺
 - 더 자세한 것은 [`docs/architecture.md`](docs/architecture.md)
 
@@ -42,7 +42,7 @@ flowchart LR
 | `contentmap` | 게임 빌드의 지도 — `scene`, `capability`, `capability_evidence` |
 | `scenecontext` | agent 가 지금 화면에 대해 읽는 문맥. `/internal` 전용 |
 | `testcase` | test case 와 명세, pgvector 검색 |
-| `testscenario` | 시나리오 저작 대화와 reconcile |
+| `testscenario` | 시나리오 생성 대화와 reconcile |
 | `testrun` | test run 과 그 안의 시나리오 배치 |
 | `qa` | QA 런 실행 — `qa_run`, `qa_try`, screen capture, 집계 |
 | `knowledge` | knowledge 항목과 graph, pgvector 검색 |
@@ -52,7 +52,7 @@ flowchart LR
 | `common` | **공유.** 오류 타입, embedding 큐와 backfill worker, xlsx 쓰기 |
 | `config` | **공유.** 두 번째 포트, R2DBC, OpenAPI, 예외 핸들러 |
 
-- 세 단계 계층은 TestRun → TestScenario → TestCase 임. `qa` 는 그것을 실행하는 쪽이고 저작하는 쪽이 아님
+- 세 단계 계층은 TestRun → TestScenario → TestCase 임. `qa` 는 그것을 실행하는 쪽이고 생성하는 쪽이 아님
 - `contentmap` 이 87 개로 가장 크고 `knowledge` 49, `testscenario` 48, `auth` 38 이 뒤를 따름
 
 ## 기술 스택
