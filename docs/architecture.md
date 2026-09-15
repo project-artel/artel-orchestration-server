@@ -44,7 +44,7 @@
 | --- | --- | --- |
 | 인바운드 | `/ws/sdk` | action 과 그 결과, `pulse`, `GAME_STATE`, WebRTC signalling |
 | 인바운드 | `/ws/viewer` | 스트리밍 lease 갱신과 signalling |
-| 아웃바운드 | agent-server `/sessions/{id}` | 시나리오 저작 대화 |
+| 아웃바운드 | agent-server `/sessions/{id}` | 시나리오 생성 대화 |
 | 아웃바운드 | agent-server `/qa-sessions/{id}` | QA 런 봉투 |
 
 - 인바운드 둘은 `HandlerMapping` 하나에 함께 들어 있음. 매핑 빈을 나누면 같은 순위의 `HandlerMapping` 이
@@ -68,7 +68,7 @@
 
 - 아래쪽도 처음에는 junction(`test_scenario_case`)이었고 V31 이 지웠음. 무엇을 잃었는지는
   [ADR 0004](adr/0004-scenario-cases-as-json.md)
-- 실행은 `qa` 가 맡고 저작은 `testscenario` 가 맡음. 같은 시나리오를 두 패키지가 다른 이유로 읽음
+- 실행은 `qa` 가 맡고 생성은 `testscenario` 가 맡음. 같은 시나리오를 두 패키지가 다른 이유로 읽음
 
 ## QA 런의 수명
 
@@ -107,7 +107,7 @@ flowchart TB
 - knowledge 항목은 본문과 벡터, 그리고 항목 사이의 관계 edge 로 이루어짐
 - 관계 어휘는 닫혀 있고 `LEADS_TO` 는 쓰기가 얼어 있음 —
   [ADR 0005](adr/0005-knowledge-relations.md)
-- graph 순회 깊이는 1 또는 2 만 허용함. 3 이상은 노드 수가 컨텍스트 예산을 넘음
+- graph 깊이는 1 또는 2 만 허용함. 3 이상은 노드 수가 컨텍스트 예산을 넘음
 - 검색 벡터는 저장 경로가 아니라 **백그라운드 worker** 가 채움
 
 ```text

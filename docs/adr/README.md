@@ -96,7 +96,7 @@
 | [`2026-08-27-accept-tool-log-types.md`](../../.plan/general/2026-08-27-accept-tool-log-types.md) | tool 로그 종류를 받는 범위 |
 | [`2026-09-01-qa-run-id-on-try-issue-knowledge-responses.md`](../../.plan/general/2026-09-01-qa-run-id-on-try-issue-knowledge-responses.md) | 응답마다 런 id 를 싣는 이유 |
 
-### 시나리오·케이스 저작
+### 시나리오·케이스 생성
 
 | 문서 | 무엇에 답하나 |
 | --- | --- |
@@ -104,13 +104,13 @@
 | [`2026-07-28-run-scenario-case-hierarchy-and-schema.md`](../../.plan/general/2026-07-28-run-scenario-case-hierarchy-and-schema.md) | ADR 0004 의 열린 질문이 적힌 곳 |
 | [`2026-08-07-qa-step-model-redesign-followups.md`](../../.plan/general/2026-08-07-qa-step-model-redesign-followups.md) | step 모델의 현재 계약 |
 | [`2026-08-11-promote-scenario-payload-to-columns.md`](../../.plan/general/2026-08-11-promote-scenario-payload-to-columns.md) | `payload` 를 컬럼 셋으로 나눈 이유 |
-| [`2026-07-21-testscenario-chatbot-pipeline.md`](../../.plan/general/2026-07-21-testscenario-chatbot-pipeline.md) | 저작 챗봇의 첫 파이프라인 |
+| [`2026-07-21-testscenario-chatbot-pipeline.md`](../../.plan/general/2026-07-21-testscenario-chatbot-pipeline.md) | 시나리오를 만드는 챗봇의 첫 파이프라인 |
 | [`2026-08-04-run-scoped-authoring-chatbot-add-edit-card-commit.md`](../../.plan/general/2026-08-04-run-scoped-authoring-chatbot-add-edit-card-commit.md) | 대화의 주체가 시나리오가 아니라 런인 이유 |
 | [`2026-08-13-authoring-coverage-trust-and-recommendation.md`](../../.plan/general/2026-08-13-authoring-coverage-trust-and-recommendation.md) | 커버리지와 추천 |
 | [`2026-08-29-first-pass-authoring-accuracy.md`](../../.plan/general/2026-08-29-first-pass-authoring-accuracy.md) | 첫 응답의 정확도를 올리는 방법 |
 | [`2026-08-31-split-action-and-observation-test-cases.md`](../../.plan/general/2026-08-31-split-action-and-observation-test-cases.md) | 조작 케이스와 관측 케이스를 가르는 이유 |
 | [`2026-09-04-remove-the-pairwise-flow-matrix.md`](../../.plan/general/2026-09-04-remove-the-pairwise-flow-matrix.md) | 쌍별 matrix 를 걷어낸 이유 |
-| [`2026-07-31-testcase-vector-and-multi-scenario-authoring.md`](../../.plan/general/2026-07-31-testcase-vector-and-multi-scenario-authoring.md) | 케이스 벡터 검색과 여러 시나리오 저작 |
+| [`2026-07-31-testcase-vector-and-multi-scenario-authoring.md`](../../.plan/general/2026-07-31-testcase-vector-and-multi-scenario-authoring.md) | 케이스 벡터 검색과 여러 시나리오 생성 |
 
 ### 인증과 접근
 
