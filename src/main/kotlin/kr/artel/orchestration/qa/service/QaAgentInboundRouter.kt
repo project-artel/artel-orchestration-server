@@ -10,6 +10,10 @@ import kr.artel.orchestration.contentmap.observe.CapabilityDiscoveredRequest
 import kr.artel.orchestration.contentmap.observe.CapabilityVerdictRequest
 import kr.artel.orchestration.contentmap.observe.CapabilityWrite
 import kr.artel.orchestration.contentmap.observe.CapabilityWriteFrames
+import kr.artel.orchestration.contentmap.observe.ScreenNameFrames
+import kr.artel.orchestration.contentmap.observe.ScreenNameOutcome
+import kr.artel.orchestration.contentmap.observe.ScreenNamePayload
+import kr.artel.orchestration.contentmap.observe.ScreenNameService
 import kr.artel.orchestration.contentmap.observe.ScreenSelectorFrames
 import kr.artel.orchestration.contentmap.observe.ScreenSelectorProposalService
 import kr.artel.orchestration.contentmap.observe.ScreenSelectorResultPayload
@@ -113,7 +117,8 @@ private val SUPPORTED_TYPES =
         CapabilityWriteFrames.INBOUND_TYPES +
         TOOL_TYPES +
         KNOWLEDGE_WRITE_TYPES +
-        ScreenSelectorFrames.INBOUND
+        ScreenSelectorFrames.INBOUND +
+        ScreenNameFrames.INBOUND
 
 /**
  * 스텝 판정 STATUS가 인용을 싣는 필드(ARTEL-293). Agent의 `report_step`이 채운다.
@@ -140,6 +145,7 @@ class QaAgentInboundRouter(
     private val knowledgeCitationService: KnowledgeCitationService,
     private val agentPort: QaAgentPort,
     private val screenSelectorProposals: ScreenSelectorProposalService,
+    private val screenNames: ScreenNameService,
     private val gameInstanceRepository: GameInstanceRepository,
     private val capabilityWrites: AgentCapabilityWriteService,
     private val grader: ExpectedStepsGrader,
@@ -211,6 +217,14 @@ class QaAgentInboundRouter(
         if (envelope.type in ScreenSelectorFrames.INBOUND) {
             val qaTry = activeTry(qaTryId) ?: return
             routeScreenSelector(qaTryId, qaTry, envelope)
+            return
+        }
+        // 화면 이름도 표시용 message 없이 `name` 과 `note` 만 싣는다(ARTEL-910). 같은 자리에 둔다.
+        if (envelope.type in ScreenNameFrames.INBOUND) {
+            // try 는 살아 있는지만 본다. 답을 어느 화면에 쓸지는 봉투가 아니라 물어본 기록이 정해
+            // 두었으므로 `ScreenNameService` 가 그것만 보면 된다.
+            if (activeTry(qaTryId) == null) return
+            routeScreenName(qaTryId, envelope)
             return
         }
         // 이슈는 표시용 `message` 대신 `title`을 담는다. 나머지 타입은 모두 타임라인에 뜨는
@@ -1177,6 +1191,45 @@ class QaAgentInboundRouter(
 
         val sessionId = qaTry.agentSessionId ?: return
         sendToAgent(qaTryId, sessionId, ScreenSelectorFrames.RESULT, envelope.messageId, result)
+    }
+
+    /**
+     * 지은 이름을 `screen.name` 에 쓴다 (`SCREEN_NAME`, ARTEL-910).
+     *
+     * **답 프레임을 보내지 않는다.** 저쪽에서 기다리는 tool 이 없어서다 — 이름 짓기는 대화 없는
+     * 단발 호출이고 orchestration 이 물어본 것에 agent 가 한 번 답하면 끝이다(ARTEL-909). 결과가
+     * 필요한 사람은 아래 타임라인 줄을 읽는다.
+     *
+     * 실패도 프레임이 아니라 로그로 답하는 이유가 같다. 거절 사유는 그 줄에 적히고, 그것이
+     * "이름을 보냈는데 왜 안 보이나" 의 답이다.
+     */
+    private suspend fun routeScreenName(qaTryId: Long, envelope: QaAgentEnvelope) {
+        val outcome = try {
+            val payload = objectMapper.treeToValue(envelope.payload, ScreenNamePayload::class.java)
+            screenNames.apply(envelope.correlationId, payload)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // payload 파싱 실패와 DB 오류가 여기로 온다. 런 전체를 죽이지 않는다 — 이름은 표시값이지
+            // 런의 전제가 아니다.
+            ScreenNameOutcome(rejected = "${envelope.type} failed: ${error.message}")
+        }
+        val log = logService.append(
+            qaTryId = qaTryId,
+            direction = "AGENT_TO_ORCHE",
+            type = envelope.type,
+            messageId = envelope.messageId,
+            correlationId = envelope.correlationId,
+            message = screenNameSummaryOf(outcome),
+            payload = envelope.payload
+        )
+        logService.publish(log)
+    }
+
+    private fun screenNameSummaryOf(outcome: ScreenNameOutcome): String = when {
+        outcome.rejected != null -> "Screen name rejected: ${outcome.rejected}"
+        outcome.name != null -> "Screen ${outcome.screenId} is now named \"${outcome.name}\"."
+        else -> "Screen ${outcome.screenId} was left unnamed."
     }
 
     private suspend fun sendToAgent(

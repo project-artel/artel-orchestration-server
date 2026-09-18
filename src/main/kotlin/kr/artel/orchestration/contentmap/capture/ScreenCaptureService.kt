@@ -64,9 +64,13 @@ class ScreenCaptureService(
      * 다시 본 화면에는 부르지 않는다 — 처음 만나 화면이라고 판정한 순간의 그림이 그 화면이
      * 무엇인지 말하는 그림이고, 재방문마다 찍으면 그 뜻이 사라진다. 그 판정은
      * `ScreenRepository.observe` 의 `inserted` 가 한다.
+     *
+     * @return `capture_screen` 이 실제로 SDK 로 나갔으면 true. false 면 이 화면에는 결과 프레임이
+     *   영영 오지 않는다 — 붙은 SDK 가 없거나 활성 try 가 없어 요청 자체를 못 보낸 것이다. 이름을
+     *   묻는 쪽(`ScreenNameService`)이 그림을 기다릴지 지금 물을지를 이 값으로 정한다(ARTEL-910).
      */
-    suspend fun request(gameInstanceId: Long, screenId: Long) {
-        try {
+    suspend fun request(gameInstanceId: Long, screenId: Long): Boolean {
+        return try {
             dispatch(gameInstanceId, screenId)
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -76,18 +80,19 @@ class ScreenCaptureService(
                 "화면 capture 를 요청하지 못했다 [gameInstanceId={}, screenId={}]: {}",
                 gameInstanceId, screenId, failure.message, failure,
             )
+            false
         }
     }
 
-    private suspend fun dispatch(gameInstanceId: Long, screenId: Long) {
+    private suspend fun dispatch(gameInstanceId: Long, screenId: Long): Boolean {
         // 붙어 있지 않으면 보낼 곳이 없다. `SessionManager.sendRaw` 가 던지는 것을 잡아 로그로
         // 남기는 것보다, 붙었는지를 먼저 묻는 편이 그 상황을 오류로 부르지 않는다.
-        if (!sessionManager.hasSession(gameInstanceId.toString())) return
+        if (!sessionManager.hasSession(gameInstanceId.toString())) return false
 
         // 활성 try 가 없으면 SDK 가 ticket 을 못 받는다(`QaCaptureService.issueTicket` 이 409).
         // 같은 조회를 먼저 해 두면 답이 정해진 왕복을 만들지 않고, 결과를 묶을 때 쓸 try 도
         // 이 시점에 못 박힌다.
-        val qaTryId = qaTries.findActiveByGameInstanceId(gameInstanceId)?.id ?: return
+        val qaTryId = qaTries.findActiveByGameInstanceId(gameInstanceId)?.id ?: return false
 
         val requestId = nextActionId()
         // 보내기 **전에** 넣는다. 뒤에 두면 답이 먼저 도착한 프레임을 우리 것으로 알아보지 못한다.
@@ -111,6 +116,7 @@ class ScreenCaptureService(
             "화면 capture 요청 [gameInstanceId={}, screenId={}, requestId={}]",
             gameInstanceId, screenId, requestId,
         )
+        return true
     }
 
     /**

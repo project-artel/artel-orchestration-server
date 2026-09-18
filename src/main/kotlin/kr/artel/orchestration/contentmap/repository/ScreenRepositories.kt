@@ -88,6 +88,24 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
     suspend fun attachImageIfAbsent(screenId: Long, objectKey: String, capturedAt: Instant): Long
 
     /**
+     * 이 화면에 표시용 이름을 쓴다. **이미 이름이 있으면 아무것도 안 한다** (ARTEL-910).
+     *
+     * `WHERE name IS NULL` 이 "처음 지은 이름을 지킨다" 를 SQL 로 강제한다. 코드가 먼저 읽고
+     * 판단하는 형태로 두면, 화면을 합치면서 이름을 이어 나른 `fold_scene_screens`(V67) 와
+     * 늦게 도착한 답이 그 사이에서 엇갈린다 — [attachImageIfAbsent] 가 그림에 대해 하는 것과
+     * 같은 판단이다.
+     *
+     * 길이 검사는 여기서 하지 않는다. 컬럼은 `VARCHAR(255)` 지만 쓸 수 있는 이름은 그보다 훨씬
+     * 좁은 표시 규약이고(`ScreenNameService.MAX_NAME_LENGTH`), 그 규약은 agent-server 와 맞춘
+     * 값이라 SQL 이 아니라 그 서비스가 적을 자리다.
+     *
+     * @return 실제로 쓴 행 수. 0 이면 이미 이름이 있었거나 그 화면이 사라진 것이다.
+     */
+    @Modifying
+    @Query("UPDATE screen SET name = :name WHERE id = :screenId AND name IS NULL")
+    suspend fun nameIfAbsent(screenId: Long, name: String): Long
+
+    /**
      * 이 `discriminator` 의 화면이 이미 있나 (ARTEL-453).
      *
      * 화면 폭발 안전판이 걸린 뒤에만 쓴다. 안전판은 **새 화면**을 막자는 것이지 이미 아는 화면의

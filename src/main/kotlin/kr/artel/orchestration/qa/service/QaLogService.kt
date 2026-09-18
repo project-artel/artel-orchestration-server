@@ -53,7 +53,11 @@ internal val TYPES =
         // 관측이 확정한 화면(ARTEL-668). 위 넷과 달리 아무도 답하지 않는 통보라서, 타임라인이
         // "그때 지도가 뭐라고 했나" 를 되짚을 수 있는 유일한 기록이다 — agent 가 목록을 왜
         // 고쳤는지, 혹은 왜 안 고쳤는지가 이 행들과 나란히 놓고 봐야 읽힌다.
-        "SCREEN_SETTLED"
+        "SCREEN_SETTLED",
+        // 새로 생긴 화면의 이름을 묻고 받는 둘(ARTEL-910). "이름이 왜 저 모양인가" 와 "왜 이름이
+        // 없나" 를 되짚을 자리가 이 두 행 말고 없다 — 질문 행의 message 가 그림이 붙은 채로
+        // 물었는지를 적고, 답 행의 message 가 답을 왜 안 썼는지를 적는다.
+        "SCREEN_NAME_REQUEST", "SCREEN_NAME"
     )
 
 data class QaLogAppendResult(val log: QaLogResponse, val inserted: Boolean)
