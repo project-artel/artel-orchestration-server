@@ -1,7 +1,7 @@
 흐름 8개 · 케이스 88건
 
 흐름 1 — 스텝 20 · 지나갈 자리 0
-  시작 조건: StagePosition != 5
+  시작 조건: StagePosition != 5, IsLocked == 0
     EndingScene · EndingScene 에 진입하면 표시 상태 3곳을 바꾸고 글자 2곳을 갱신한다
     EndingScene · 아무 키나 눌러 표시 상태 3곳을 바꾸고 글자 2곳을 갱신한다  ← BESIDE
     EndingScene · `Canvas/ChatWindow` 이(가) 화면에 있는지 확인한다  ← BESIDE
@@ -24,7 +24,7 @@
     TurnBattleScene · TurnBattleScene 에 진입하면 `Player.HpText.text` 표시  ← BESIDE
 
 흐름 2 — 스텝 20 · 지나갈 자리 2
-  시작 조건: combineZone == null, Hp <= 0
+  시작 조건: combineZone == null, Hp <= 0, IsLocked == 0, waitingForAcknowledge == 0
     TurnBattleScene · TurnBattleScene 에 진입하면 표시 상태 2곳을 바꾼다
     TurnBattleScene · TurnBattleScene 에서 `OnDrag` 이후 `DraggableCard`  ← BESIDE
     TurnBattleScene · TurnBattleScene 에 진입하면 글자 2곳을 갱신한다  ← BESIDE
@@ -46,8 +46,8 @@
     TitleScene · `Canvas/MapSceneButton` 을(를) 클릭해 `Map_scene` 화  ← BY_PLAY
     Map_scene · `LeftArrow` 키를 눌러 `wordHead` 을(를) `battle1` 로   ← BESIDE
 
-흐름 3 — 스텝 20 · 지나갈 자리 5
-  시작 조건: flag == 0, streamingCoroutine != null, streamingCoroutine != 0, combineZone != null, damage > 0, Hp > 0
+흐름 3 — 스텝 20 · 지나갈 자리 4
+  시작 조건: flag == 0, IsLocked == 0, streamingCoroutine != null, waitingForAcknowledge != 0, streamingCoroutine != 0, combineZone != null, damage > 0, Hp > 0
     GameClearScene · GameClearScene 에 진입하면 `Congratulation` 을(를) 끈다
     GameClearScene · 아무 키나 눌러 표시 상태 1곳을 바꾸고 오브젝트 1개를 만들고 글자 1곳을 갱신한  ← BESIDE
     GameClearScene · 아무 키나 눌러 `Map_scene` 화면으로 넘어간다  ← BY_OPERATION
@@ -55,7 +55,7 @@
     TitleScene · `Canvas/continue` 을(를) 클릭해 `StoryScene` 화면으로 넘  ← BY_OPERATION
     StoryScene · 아무 키나 눌러 `ChatWindowController.chatText.text`   ← BESIDE
     TitleScene · TitleScene 에 진입하면 `Canvas/continue` 을(를) 끈다  ← BY_PLAY
-    TurnBattleScene · TurnBattleScene 에서 `OnMouseExit` 이후 `Selectabl  ← BY_PLAY
+    TurnBattleScene · TurnBattleScene 에서 `OnMouseExit` 이후 `Selectabl  ← BY_OPERATION
     TurnBattleScene · `CombineSystem/CombineButton` 을(를) 클릭해 `Combin  ← BESIDE
     TurnBattleScene · TurnBattleScene 에 머무르면 `EnemyProjectile` 을(를)   ← BESIDE
     TurnBattleScene · TurnBattleScene 에서 `OnEndDrag` 이후 `DraggableCa  ← BESIDE
@@ -70,7 +70,7 @@
     Map_scene · Map_scene 에 진입하면 `wordHead` 을(를) `battle3` 로 옮  ← BESIDE
 
 흐름 4 — 스텝 18 · 지나갈 자리 6
-  시작 조건: damage <= 0, Hp > 0, combineZone != null, streamingCoroutine != null, streamingCoroutine != 0
+  시작 조건: damage <= 0, Hp > 0, combineZone != null, IsLocked == 0, streamingCoroutine != null, waitingForAcknowledge != 0, streamingCoroutine != 0
     TitleScene · `Canvas/continue` 을(를) 클릭해 `Map_scene` 화면으로 넘어
     TurnBattleScene · `Combine` 을(를) 클릭해 `CombineSystem/CombineZone/  ← BY_OPERATION
     TurnBattleScene · TurnBattleScene 에서 `OnTriggerEnter2D` 이후 `Play  ← BESIDE
@@ -91,7 +91,7 @@
     Map_scene · `RightArrow` 키를 눌러 `wordHead` 을(를) `boss` 로 옮긴  ← BY_PLAY
 
 흐름 5 — 스텝 6 · 지나갈 자리 4
-  시작 조건: Hp <= 0, streamingCoroutine != null, streamingCoroutine != 0, flag == 0
+  시작 조건: Hp <= 0, streamingCoroutine != null, waitingForAcknowledge != 0, streamingCoroutine != 0, flag == 0, IsLocked == 0
     TurnBattleScene · TurnBattleScene 에서 `OnTriggerEnter2D` 이후 `Play
     TurnBattleScene · TurnBattleScene 에서 `OnTriggerEnter2D` 이후 `Game  ← BESIDE
     EndingScene · 아무 키나 눌러 `ChatWindowController.chatText.text`   ← BY_PLAY
@@ -100,7 +100,7 @@
     GameClearScene · 아무 키나 눌러 `TypeCard` 을(를) 만들고 `GameObject.GetCo  ← BY_PLAY
 
 흐름 6 — 스텝 2 · 지나갈 자리 1
-  시작 조건: Hp <= 0, streamingCoroutine != null, streamingCoroutine != 0
+  시작 조건: Hp <= 0, streamingCoroutine != null, waitingForAcknowledge != 0, streamingCoroutine != 0
     TurnBattleScene · TurnBattleScene 에서 `OnTriggerEnter2D` 이후 `Slim
     EndingScene · EndingScene 에 머무르면 `ChatWindowController.chatT  ← BY_PLAY
 

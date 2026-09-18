@@ -191,3 +191,52 @@ class ScenarioContradictionCheckTest {
         assertThat(ScenarioContradictionCheck.find(walk)).isEmpty()
     }
 }
+
+class MomentaryGuardTest {
+    /**
+     * 호출식 가드는 상태가 아니다(2026-09-08 B 하네스 실측 — 어긋남 40건 중 37건이
+     * `LoadPlayData()`·`flag` 무늬의 거짓 경보였다). momentary 는 요구로도 확정으로도
+     * 세지 않으므로, 앞 스텝의 `== -1` 이 뒤 스텝의 `!= -1` 을 어긋남으로 만들지 않는다.
+     */
+    @org.junit.jupiter.api.Test
+    fun `호출식 가드는 어긋남의 재료가 아니다`() {
+        val calls = kr.artel.orchestration.testscenario.service.Guard(
+            variable = "LoadPlayData()", operator = "==", value = "-1", path = "TitleController.LoadPlayData()",
+        )
+        val wants = calls.copy(operator = "!=")
+        org.assertj.core.api.Assertions.assertThat(calls.momentary).isTrue()
+
+        val walk = listOf(
+            kr.artel.orchestration.testscenario.service.ScenarioContradictionCheck.Step(
+                at = 1, caseId = 1L,
+                sets = emptyMap(), // momentary 는 sets 로 못 들어간다 — walkOf 가 거른다
+                requires = emptyList(),
+            ),
+            kr.artel.orchestration.testscenario.service.ScenarioContradictionCheck.Step(
+                at = 2, caseId = 2L,
+                requires = emptyList(), // momentary 는 requires 에서도 걸러진다
+            ),
+        )
+        org.assertj.core.api.Assertions.assertThat(
+            kr.artel.orchestration.testscenario.service.ScenarioContradictionCheck.find(walk)
+        ).isEmpty()
+    }
+
+    /** 저장 상태 가드는 여전히 잡힌다 — 검사를 넓힌 것이 아니라 거짓만 뺀 것이다. */
+    @org.junit.jupiter.api.Test
+    fun `저장 상태 가드의 어긋남은 그대로 잡는다`() {
+        val g = kr.artel.orchestration.testscenario.service.Guard("flag", "!=", "0")
+        org.assertj.core.api.Assertions.assertThat(g.momentary).isFalse()
+        val walk = listOf(
+            kr.artel.orchestration.testscenario.service.ScenarioContradictionCheck.Step(
+                at = 1, caseId = 1L, sets = mapOf("flag" to "0"),
+            ),
+            kr.artel.orchestration.testscenario.service.ScenarioContradictionCheck.Step(
+                at = 2, caseId = 2L, requires = listOf(g),
+            ),
+        )
+        org.assertj.core.api.Assertions.assertThat(
+            kr.artel.orchestration.testscenario.service.ScenarioContradictionCheck.find(walk)
+        ).hasSize(1)
+    }
+}

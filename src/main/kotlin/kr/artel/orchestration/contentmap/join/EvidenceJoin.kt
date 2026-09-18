@@ -86,6 +86,36 @@ class EvidenceJoin(private val document: EvidenceDocumentModel) {
      * 그래도 담는 이유는 `then` 쪽이다. 적이 공격할 때 무엇이 달라지는지를 판독으로 확인할 근거가
      * 이 111건 말고는 아예 없다.
      */
+    /**
+     * 씬 귀속에 실패한 unplaced 타입의 상태 변경들.
+     *
+     * 스폰 출처가 잡힌 타입은 [spawnedCandidates] 로 capability 가 되지만, 어느 씬에서 만들어지는지
+     * 못 알아낸 타입(실측: Tutorial.TutorialController)은 여기 말고는 남을 자리가 없다. 걷기의
+     * "이 값이 움직이나" 판정이 이것을 못 보면, 토글로 오르내리는 값이 얼어붙은 값으로 읽혀
+     * 한 흐름의 케이스들이 모순으로 나뉜다(run 60 실측 — `waitingForAcknowledge`).
+     *
+     * 조작 근거가 아니라 **값이 움직인다는 사실**만 남기는 것이라, 씬 없이도 안전하다.
+     */
+    fun strayWrites(): List<StrayWrite> {
+        val attributed = spawns.attribute().keys
+        return document.unplaced.entries
+            .filterNot { (type, _) -> type in attributed }
+            .flatMap { (type, unplaced) ->
+                unplaced.evidence.flatMap { record ->
+                    record.effects
+                        .filter { it.kind == "write" || it.kind == "active-state" }
+                        .mapNotNull { effect ->
+                            effect.target?.let {
+                                StrayWrite(type = type, kind = effect.kind, target = it, detail = effect.detail)
+                            }
+                        }
+                }
+            }
+            .distinct()
+    }
+
+    data class StrayWrite(val type: String, val kind: String, val target: String, val detail: String?)
+
     private fun spawnedCandidates(): List<CapabilityCandidate> {
         val origins = spawns.attribute()
         return document.unplaced.entries.flatMap { (type, unplaced) ->

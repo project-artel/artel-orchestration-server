@@ -238,4 +238,98 @@ class ScenarioConflictSplitTest {
 
         assertThat(outcome.scenarios).hasSize(1)
     }
+
+
+    /* ── 홀로 남은 조각의 채택 정책 (run 57) ─────────────────────────────── */
+
+    @Test
+    fun `홀로 남은 조각은 채택하지 않고 뺐다고 남긴다`() {
+        // [2,4] 와 [3] 으로 갈리는 묶음 — 3 은 홀로 남는다.
+        val outcome = ScenarioConflictSplit.adoptSplitPieces(
+            ScenarioConflictSplit.apply(listOf(scenario(step(2), step(3), step(4))), parity)
+        )
+
+        assertThat(outcome.scenarios).hasSize(1)
+        assertThat(outcome.scenarios[0].steps.mapNotNull { it.caseId }).containsExactly(2, 4)
+        assertThat(outcome.droppedCases).containsExactly("전투 전량" to listOf(3L))
+        // 파편이 스스로 원인을 말한다 — run 57 에서 원인 없는 파편을 사람이 되짚어야 했다.
+        assertThat(outcome.causeOf[3L]).containsExactly("parity")
+    }
+
+    @Test
+    fun `전부 홀로면 가장 큰 것 하나는 남긴다`() {
+        val outcome = ScenarioConflictSplit.adoptSplitPieces(
+            ScenarioConflictSplit.apply(listOf(scenario(step(2), step(3))), parity)
+        )
+
+        assertThat(outcome.scenarios).hasSize(1)
+        assertThat(outcome.droppedCases.single().second).hasSize(1)
+    }
+
+    @Test
+    fun `나눌 것이 없었으면 채택 정책도 손대지 않는다`() {
+        val one = scenario(step(2), step(4))
+
+        val outcome = ScenarioConflictSplit.adoptSplitPieces(
+            ScenarioConflictSplit.apply(listOf(one), parity)
+        )
+
+        assertThat(outcome.scenarios).isEqualTo(listOf(one))
+        assertThat(outcome.droppedCases).isEmpty()
+    }
+
+    @Test
+    fun `원인 값의 요구가 시작값에서 성립하지 않는 조각은 케이스가 여럿이어도 뺀다`() {
+        // run 60 실측: waitingForAcknowledge != 0 을 요구하는 2케이스 조각이, 부팅부터의
+        // 도달 경로 없이 개별 시나리오로 저장됐다 — 시작값은 그 요구를 못 채운다.
+        val outcome = ScenarioConflictSplit.adoptSplitPieces(
+            ScenarioConflictSplit.apply(
+                listOf(scenario(step(2), step(4), step(3), step(5))), parity,
+            ),
+            guardsOf = { id ->
+                if (id % 2 == 1L) listOf(kr.artel.orchestration.testscenario.service.Guard("parity", "!=", "0")) else listOf(kr.artel.orchestration.testscenario.service.Guard("parity", "==", "0"))
+            },
+            startingValues = mapOf("parity" to "0"),
+        )
+
+        // 짝수 조각(== 0)은 시작값 0 이 채워 주고, 홀수 조각(!= 0)은 못 채운다.
+        assertThat(outcome.scenarios).hasSize(1)
+        assertThat(outcome.scenarios[0].steps.mapNotNull { it.caseId }).containsExactly(2, 4)
+        assertThat(outcome.droppedCases.single().second).containsExactlyInAnyOrder(3L, 5L)
+    }
+
+    @Test
+    fun `원인 값의 요구를 시작값이 채우면 여러 케이스 조각은 그대로 채택한다`() {
+        val outcome = ScenarioConflictSplit.adoptSplitPieces(
+            ScenarioConflictSplit.apply(
+                listOf(scenario(step(2), step(4), step(3), step(5))), parity,
+            ),
+            guardsOf = { id ->
+                if (id % 2 == 1L) listOf(kr.artel.orchestration.testscenario.service.Guard("parity", "!=", "0"))
+                else listOf(kr.artel.orchestration.testscenario.service.Guard("parity", "==", "0"))
+            },
+            startingValues = mapOf("parity" to "1"),
+        )
+
+        // 이번엔 홀수 조각(!= 0)이 시작값 1 로 성립한다 — 둘 다 남는다.
+        assertThat(outcome.scenarios).hasSize(2)
+        assertThat(outcome.droppedCases).isEmpty()
+    }
+
+    @Test
+    fun `채택 뒤에도 갈라진 자리는 새 번호로 맞는다`() {
+        // 두 시나리오: 첫째는 [2,4]+[3,5] 로 갈리고(둘 다 채택), 둘째는 안 갈린다.
+        val outcome = ScenarioConflictSplit.adoptSplitPieces(
+            ScenarioConflictSplit.apply(
+                listOf(
+                    scenario(step(2), step(3), step(4), step(5)),
+                    scenario(step(6), step(8), title = "다음 여정"),
+                ),
+                parity,
+            )
+        )
+
+        assertThat(outcome.scenarios).hasSize(3)
+        assertThat(outcome.anchorOf).isEqualTo(mapOf(1 to 0))
+    }
 }
