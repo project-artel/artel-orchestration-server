@@ -479,10 +479,16 @@ class ScenarioBridgeInsertionIntegrationTest {
 
     // ---- 고른 범위 ---------------------------------------------------------------------
 
+    /**
+     * **씬별 비율은 대화로 나가지 않는다**(ARTEL-903).
+     *
+     * 앞서는 이 자리에서 `Map_scene 1/3` 을 알리고 "더 담을까요?" 를 물었다. 씬이 저작의 단위였던
+     * 시절의 값인데, 시나리오는 여러 씬을 지나는 흐름이라 그 비율로는 다음에 무엇을 할지 정할 수
+     * 없다. 이 런이 무엇을 담았는지는 조회로 본다
+     * (`GET /api/projects/{projectId}/test-runs/{runId}/coverage`).
+     */
     @Test
-    fun `씬의 일부만 담았으면 그 비율을 알린다`(): Unit = runBlocking {
-        // 요청이 애매하면 경계는 누군가 정해야 하고 지금은 모델이 조용히 정한다. 고른 결과가
-        // 보이지 않는 것이 문제이지, 애매하게 물은 것이 문제가 아니다.
+    fun `씬의 일부만 담아도 비율을 묻거나 알리지 않는다`(): Unit = runBlocking {
         val taken = case("Map_scene", "Map_scene 화면인 상태", step = "하나")
         case("Map_scene", "Map_scene 화면인 상태", step = "둘")
         case("Map_scene", "Map_scene 화면인 상태", step = "셋")
@@ -497,9 +503,10 @@ class ScenarioBridgeInsertionIntegrationTest {
             ),
         )
 
+        // 저장은 그대로 된다 — 걷어낸 것은 안내뿐이다.
         assertThat(outcome.applied).isEqualTo(1)
-        assertThat(outcome.question?.id).startsWith("scope:")
-        assertThat(outcome.question?.why).contains("Map_scene 1/3")
+        assertThat(outcome.questions.map { it.id }).noneMatch { it.startsWith("scope:") }
+        assertThat(outcome.notices).noneMatch { it.contains("담긴 범위") || it.contains("1/3") }
     }
 
     @Test
@@ -659,8 +666,16 @@ class ScenarioBridgeInsertionIntegrationTest {
         assertThat(outcome.notices).anyMatch { it.contains("저장하지 않았습니다") }
     }
 
+    /**
+     * **빠진 갈래는 알리고 묻지 않는다**(ARTEL-903).
+     *
+     * 사실 자체는 계산으로만 알 수 있어 말해 주어야 한다 — 같은 자리의 다른 갈래는 동시에 성립할
+     * 수 없어 이 시나리오에 함께 담을 수 없고, 조용히 두면 사용자는 덮은 줄 안다. 그러나 "더
+     * 만들까요?" 는 답해도 **이 시나리오가 달라지지 않는** 물음이라 카드를 차지할 값이 없다.
+     * 묻는 것은 답이 곧 스텝이 되는 것(메우지 못한 구간)뿐이다.
+     */
     @Test
-    fun `갈래가 시나리오로 갈려 있으면 저장하고 나머지 갈래만 알린다`(): Unit = runBlocking {
+    fun `빠진 갈래는 알리고 묻지는 않는다`(): Unit = runBlocking {
         val notFive = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition != 5", step = "관찰한다")
         case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 5", step = "관찰한다")
 
@@ -675,9 +690,8 @@ class ScenarioBridgeInsertionIntegrationTest {
         )
 
         assertThat(outcome.applied).isEqualTo(1)
-        // 물은 것은 통보로 되풀이하지 않는다.
-        assertThat(outcome.question?.id).isEqualTo("arm:$notFive:${notFive + 1}")
-        assertThat(outcome.question?.options?.map { it.id }).containsExactly("add", "skip")
+        assertThat(outcome.questions.map { it.id }).noneMatch { it.startsWith("arm:") }
+        assertThat(outcome.notices).anyMatch { it.contains("빠졌습니다") && it.contains("다른 갈래") }
     }
 
     /**
@@ -685,10 +699,11 @@ class ScenarioBridgeInsertionIntegrationTest {
      *
      * 실측(런 155): TC 66건을 전부 담아 미커버 0/66 인 화면에서 "이 갈래도 만들까요?"가 계속
      * 나왔다. 판정이 이번 턴에 쓴 시나리오만 보고 있었기 때문이다 — 나머지 갈래는 런의 다른
-     * 시나리오에 이미 들어 있었다.
+     * 시나리오에 이미 들어 있었다. 지금은 질문이 아니라 알림이지만(ARTEL-903) 매 턴 되풀이되면
+     * 소음인 것은 같아서, 판정 축은 그대로 런 전체다.
      */
     @Test
-    fun `다른 시나리오가 이미 담은 갈래는 다시 묻지 않는다`(): Unit = runBlocking {
+    fun `다른 시나리오가 이미 담은 갈래는 다시 알리지 않는다`(): Unit = runBlocking {
         val notFive = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition != 5", step = "관찰한다")
         val five = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 5", step = "관찰한다")
 
@@ -702,7 +717,7 @@ class ScenarioBridgeInsertionIntegrationTest {
                 )
             ),
         )
-        assertThat(first.question?.id).isEqualTo("arm:$notFive:$five")
+        assertThat(first.notices).anyMatch { it.contains("빠졌습니다") }
 
         // 둘째 턴: 나머지 갈래를 **새 시나리오로** 담는다. 이제 런에는 둘 다 있다.
         val second = reconcileService.reconcile(
@@ -717,7 +732,6 @@ class ScenarioBridgeInsertionIntegrationTest {
 
         assertThat(second.applied).isEqualTo(1)
         // 이번 턴만 보면 notFive 가 "빠졌다"로 보인다. 런 전체로 보면 담겨 있다.
-        assertThat(second.question?.id.orEmpty()).doesNotStartWith("arm:")
         assertThat(second.notices).noneMatch { it.contains("빠졌습니다") }
     }
 
@@ -851,22 +865,23 @@ class ScenarioBridgeInsertionIntegrationTest {
     fun `한 번 거절한 질문은 다시 묻지 않는다`(): Unit = runBlocking {
         // 조건은 그대로라 같은 질문이 매 턴 다시 만들어진다. 그것을 그대로 내보내면 "그대로 두기"를
         // 누른 사용자에게 같은 것을 계속 묻는 셈이 된다(ARTEL-487).
-        val notFive = case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition != 5", step = "관찰한다")
-        case("Map_scene", "Map_scene 화면인 상태 / MapMove.StagePosition == 5", step = "관찰한다")
+        //
+        // 태우는 것은 **메우지 못한 구간**이다 — 걷어낸 갈래·범위가 아니라, 지금 남은 유일한
+        // 질문 갈래로 같은 규칙을 본다(ARTEL-903).
+        val start = case("Map_scene", "Map_scene 화면인 상태", step = "맵을 본다")
+        val far = case("TurnBattleScene", "TurnBattleScene 화면인 상태", step = "전투를 본다")
         val one = ScenarioResult(
-            title = "한 갈래", description = "d",
-            steps = listOf(ChatScenarioStep(action = "확인", caseId = notFive)),
+            title = "맵에서 전투로", description = "d",
+            steps = listOf(
+                ChatScenarioStep(action = "확인", caseId = start),
+                ChatScenarioStep(action = "확인", caseId = far),
+            ),
         )
 
         val asked = reconcileService.reconcile(runId, projectId, userId, listOf(one))
-        assertThat(asked.question?.id).startsWith("arm:")
-        // **모르는 자리를 한 번에 낸다**(ARTEL-630). 갈래와 범위가 함께 나가고, 화면은 그것을
-        // 한 자리에 그린다 — 하나만 내면 나머지는 아무 말 없이 미상으로 남는다.
-assertThat(asked.questions).hasSize(2)
-        assertThat(asked.questions.first().id).startsWith("arm:")
-        assertThat(asked.questions.last().id).isEqualTo("scope:Map_scene")
+        assertThat(asked.question?.id).startsWith("gap:")
 
-        // 사용자가 "이번엔 그대로 두기"를 눌렀다 — 대화에 답한 기록이 남는다.
+        // 사용자가 "그대로 두기"를 눌렀다 — 대화에 답한 기록이 남는다.
         runMessageRepository.save(
             TestRunMessageEntity(
                 testRunId = runId, appUserId = userId, role = "ASSISTANT",
@@ -879,12 +894,13 @@ assertThat(asked.questions).hasSize(2)
 
         val again = reconcileService.reconcile(runId, projectId, userId, listOf(one))
 
-        // **답한 것은 다시 묻지 않는다.** 남은 것은 아직 답하지 않은 다른 질문이고, 실제 경로에서는
-        // 그것도 처음에 함께 나갔으므로 거절이 묶음 전체를 덮는다
-        // (`TestScenarioAgentService.notifyDeclined`). 여기는 `reconcile` 을 직접 부르는 자리라
-        // 그 묶음 기록이 없다.
-        assertThat(again.questions).noneMatch { it.id.startsWith("arm:") }
-        // 묻지 않는 대신 통보는 남는다 — 조건이 사라진 것이 아니라 답을 들은 것뿐이다.
-        assertThat(again.notices).anyMatch { it.contains("다른 갈래") }
+        // **답한 것은 다시 묻지 않는다.** 조건이 사라진 것이 아니라 답을 들은 것뿐이다.
+        assertThat(again.questions).noneMatch { it.id == asked.question!!.id }
+        // 묻지 않는 대신 통보는 남는다 — 그 구간이 여전히 미상이라는 사실은 말해야 한다.
+        //
+        // 문구가 아니라 **사유**를 본다. ARTEL-876 이 이 알림을 "스스로 원인을 말하게" 고치며
+        // 어미가 바뀌었고("명세에 없어" → "명세에 없다"), 어미를 박아 두면 그런 손질마다 검사가
+        // 깨진다. 남아야 하는 것은 "왜 미상인지가 적혀 있다" 는 사실이다.
+        assertThat(again.notices).anyMatch { it.contains("명세에 없") }
     }
 }

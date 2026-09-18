@@ -848,6 +848,36 @@
         }
       }
     },
+    "/internal/experiment/authoring/score": {
+      "post": {
+        "tags": [
+          "internal-grouping-score-controller"
+        ],
+        "operationId": "score",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/action/{instanceId}": {
       "post": {
         "tags": [
@@ -3390,6 +3420,46 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/coverage": {
+      "get": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "coverage",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunCoverageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-runs/{runId}/chat/stream": {
       "get": {
         "tags": [
@@ -5019,6 +5089,88 @@
           "calledAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "Group": {
+        "required": [
+          "caseIds",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        }
+      },
+      "ScoreRequest": {
+        "required": [
+          "appUserId",
+          "groups",
+          "projectId",
+          "runId"
+        ],
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "projectId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "appUserId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Group"
+            }
+          }
+        }
+      },
+      "ScoreResponse": {
+        "required": [
+          "checkedCount",
+          "contradicted",
+          "noticeCount",
+          "pieces"
+        ],
+        "type": "object",
+        "properties": {
+          "contradicted": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "checkedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "noticeCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pieces": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         }
       },
@@ -8144,6 +8296,69 @@
             "format": "int32"
           },
           "keptForQaHistoryCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "RunCoverageResponse": {
+        "required": [
+          "covered",
+          "scenarios",
+          "testRunId",
+          "total",
+          "uncovered"
+        ],
+        "type": "object",
+        "properties": {
+          "testRunId": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "covered": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "uncovered": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "scenarios": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunCoverageScenario"
+            }
+          }
+        }
+      },
+      "RunCoverageScenario": {
+        "required": [
+          "cases",
+          "position",
+          "steps",
+          "testScenarioId",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "testScenarioId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cases": {
             "type": "integer",
             "format": "int32"
           }
