@@ -216,6 +216,16 @@ data class SubmitScenarioResultFrame(
     val accepted: Boolean,
     /** 지금까지 받아들인 수. 모델이 몇 개를 냈는지 스스로 세지 않아도 되게 한다. */
     val written: Int,
+    /**
+     * **저장된 최종본의 스텝 수.** 모델이 낸 수가 아니다 — 나누기·메우기가 지나고 코드가 `bridge`
+     * 를 끼운 뒤의 수라 둘은 자주 다르다. 모델이 자기가 낸 수를 사용자에게 말하면 화면에 뜬 것과
+     * 어긋난다(실측: 37개라 말했는데 화면은 다른 수). 셀 수 있는 쪽이 세서 알려 준다.
+     */
+    val steps: Int = 0,
+    /** 합치면서 실제로 이 런에서 걷어낸 시나리오 제목들. 모델은 이것만 사용자에게 말할 수 있다. */
+    val absorbed: List<String> = emptyList(),
+    /** 걷어내라 했지만 남긴 것 — 제목과 이유 한 문장씩. 사실대로 전하라고 따로 싣는다. */
+    val kept: List<String> = emptyList(),
     val detail: String? = null,
 )
 

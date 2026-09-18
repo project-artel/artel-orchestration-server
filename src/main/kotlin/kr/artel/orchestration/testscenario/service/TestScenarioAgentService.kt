@@ -96,6 +96,7 @@ class TestScenarioAgentService(
     private val testCaseRepository: TestCaseRepository,
     private val projectAccessService: ProjectAccessService,
     private val reconcileService: ScenarioReconcileService,
+    private val absorbService: ScenarioAbsorbService,
     private val pathService: ScenarioPathService,
     private val caseFactService: ScenarioCaseFactService,
     private val gapFiller: ScenarioGapFiller,
@@ -567,7 +568,22 @@ class TestScenarioAgentService(
             }
             // 쌓는 것은 **검수를 지난 최종본**이다. 모델이 낸 것을 쌓으면 코드가 끼운 `bridge` 가 빠진
             // 채로 화면에 뜨고, 저장된 것과 보이는 것이 갈린다.
-            session.submitted += outcome.checked.ifEmpty { listOf(scenario) }
+            val checked = outcome.checked.ifEmpty { listOf(scenario) }
+            session.submitted += checked
+            // 합치기의 나머지 절반 — 흡수된 쪽 걷어내기. **저장한 턴에서만** 한다: 카드로 낼 뿐인
+            // 턴에서 원본을 지우면 사용자가 커밋하기도 전에 원본이 사라진다. 실제로 걷어냈는지는
+            // 코드가 세어 프레임에 싣는다(모델이 "합쳤습니다" 라고 지어내지 못하게).
+            val absorb =
+                if (session.autoApply)
+                    absorbService.absorb(
+                        session.runId,
+                        scenario.scenarioId,
+                        checked.first(),
+                        node.path("absorbedScenarioIds").mapNotNull {
+                            it.takeIf { n -> n.isNumber }?.asLong()
+                        },
+                    )
+                else ScenarioAbsorbService.Outcome()
             logger.info(
                 "시나리오 하나 받음 [sessionKey={}, runId={}] {} — 지금까지 {}개{}",
                 sessionKey, session.runId, scenario.title, session.submitted.size,
@@ -588,6 +604,9 @@ class TestScenarioAgentService(
                     correlationId = correlationId,
                     accepted = true,
                     written = session.submitted.size,
+                    steps = checked.first().steps.size,
+                    absorbed = absorb.absorbed,
+                    kept = absorb.kept,
                 ),
             )
         } catch (e: CancellationException) {
