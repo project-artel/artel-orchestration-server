@@ -24,43 +24,24 @@ application, not one port. See `docs/deployment.md` § Ports.
 
 ## Documented API surface
 
-- `POST /api/sdk/registrations` — register a running SDK with the instance key issued by the dashboard, and report the game version it was built from. Unauthenticated: the key is the only credential.
-- `POST /internal/action/{instanceId}` — deliver an Agent action list to a connected game instance. `/internal/**` is the unauthenticated server-to-server prefix; nothing under it takes an end-user JWT, and it is served only on the internal port.
-- `GET /api/test-scenario/{clientId}/stream` — subscribe to test-scenario events over SSE.
-- `POST /api/test-scenario/{clientId}/message` — relay a user message to the Agent server.
-- `GET /api/auth/me` — read the signed-in user.
-- `POST /api/auth/logout` — clear the session cookie.
-- `GET /api/projects` — list projects the caller belongs to, paged.
-- `POST /api/projects` — create a project; the creator becomes its owner.
-- `GET /api/projects/{projectId}` — read one project.
-- `PATCH /api/projects/{projectId}` — partially update a project.
-- `DELETE /api/projects/{projectId}` — soft-delete a project. Owner only.
-- `POST /api/projects/{projectId}/documents/upload-url` — mint a presigned URL for a planning-document PDF.
-- `POST /api/projects/{projectId}/documents` — register an uploaded object as the next document version.
-- `GET /api/projects/{projectId}/documents` — list document versions, newest first.
-- `GET /api/projects/{projectId}/documents/{documentId}/download-url` — mint a short-lived download URL.
-- `GET /api/projects/{projectId}/game-instances` — list the project's SDK installations.
-- `POST /api/projects/{projectId}/game-instances` — create one and issue its permanent instance key.
-- `PATCH /api/projects/{projectId}/game-instances/{instanceId}` — rename it. The key never changes.
-- `DELETE /api/projects/{projectId}/game-instances/{instanceId}` — soft-delete it; its key stops working immediately.
-- `GET /api/projects/{projectId}/game-builds` — list the versions SDKs have reported, newest first.
-- `PATCH /api/projects/{projectId}/game-builds/{buildId}` — edit `label` and `notes`. `version` is observed, not authored, and cannot be changed.
+The route list is not repeated here. It lives in [`api/openapi.json`](api/openapi.json) —
+98 paths and 117 operations at the time of writing.
 
-Planning-document bytes never pass through this server. The client uploads
-directly to S3 with the presigned URL and then calls the register endpoint; a
-document does not exist until that registration succeeds.
+That file is generated, not written. `OpenApiSnapshotTest` boots the application, reads
+`/v3/api-docs`, and overwrites the snapshot, so `./mvnw test` refreshes it and a diff in
+that file means the contract moved.
 
-Game builds are never created through the API. They appear when an SDK reports a
-version it has not reported before, which is why there is no create or delete
-endpoint for them.
+This section used to enumerate about 25 of them by hand, and a hand-copied list goes stale
+without anything failing. By the time it was cut it described two routes that no longer
+exist (`/api/test-scenario/{clientId}/stream` and `/api/test-scenario/{clientId}/message`,
+both replaced by the `/api/projects/{projectId}/test-runs/{runId}/chat/**` paths) and
+called `POST /api/sdk/registrations` unauthenticated, when it requires an `aud=artel-sdk`
+Bearer token like everything else under `/api/sdk/**`.
 
-WebSocket communication at `/ws/sdk` is not an HTTP request/response contract. Keep its message format documented separately; OpenAPI only covers the REST endpoints.
-
-The socket authenticates with the same instance key, passed as the `instanceKey`
-query parameter. The server closes with `4001` when the key matches no live
-instance and with `4002` when that instance already has a connection — one
-instance holds one socket, and the newcomer is refused rather than displacing
-the incumbent.
+WebSocket communication at `/ws/sdk` and `/ws/viewer` is not an HTTP request/response
+contract. Keep its message format documented separately; OpenAPI only covers the REST
+endpoints. Those contracts are `docs/streaming-protocol.md`,
+`docs/capability-write-frames.md`, and `docs/screen-selector-frames.md`.
 
 ## Verification
 
