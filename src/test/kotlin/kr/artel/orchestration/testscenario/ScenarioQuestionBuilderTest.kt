@@ -5,92 +5,31 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
 /**
- * 되묻는 한 가지를 고른다(ARTEL-487).
+ * 되묻는 것을 고른다(ARTEL-487).
  *
- * **하나만 묻는다**는 것과 **그 하나를 무엇으로 고르는가**가 이 테스트의 전부다. 여러 개를 쌓으면
- * 사용자는 어느 것에 답한 것인지 말해 줄 방법이 없다.
+ * **묻는 것은 Gap 하나뿐이다**(ARTEL-903). 앞서는 셋을 물었고(구간·갈래·담은 범위) 그중 하나를
+ * 고르는 것이 이 테스트의 절반이었는데, 뒤의 둘을 걷어냈다. 기준은 **답이 시나리오를 바꾸는가** —
+ * Gap 은 답이 곧 스텝이 되고, 나머지 둘은 답해도 이 시나리오가 달라지지 않는다. 씬별 범위는
+ * 씬이 저작의 단위가 아니게 된 뒤로 쓸 수 없는 수였고, 빠진 갈래는 알림으로 남는다
+ * ([kr.artel.orchestration.testscenario.service.ScenarioReconcileService] 의 `siblingNotices`).
  */
 class ScenarioQuestionBuilderTest {
 
     @Test
     fun `물을 것이 없으면 묻지 않는다`() {
-        assertThat(ScenarioQuestionBuilder.from(emptyList(), emptyList(), emptyList())).isNull()
+        assertThat(ScenarioQuestionBuilder.from(emptyList())).isNull()
     }
 
     @Test
-    fun `메우지 못한 구간을 가장 먼저 묻는다`() {
-        // 실행하면 거기서 멎는다. 나머지 둘은 결과가 좁을 뿐 돌아는 간다.
-        val question = ScenarioQuestionBuilder.from(
-            blockedGaps = listOf("StoryScene→Map_scene"),
-            untestedArms = listOf(133L to 134L),
-            scope = listOf(Triple("TitleScene", 2, 5)),
-        )
+    fun `메우지 못한 구간을 묻는다`() {
+        // 답이 곧 스텝이 되는 물음이다. 답하지 않으면 실행하는 사람이 거기서 멎는다.
+        val question = ScenarioQuestionBuilder.from(listOf("StoryScene→Map_scene"))
 
         assertThat(question?.id).isEqualTo("gap:StoryScene→Map_scene")
         assertThat(question?.text).contains("StoryScene→Map_scene")
         // 어떻게 가는지는 보기로 다 담기지 않는다 — 자유 서술이 본체다.
         assertThat(question?.allowFreeText).isTrue()
-    }
-
-    @Test
-    fun `구간이 여럿이면 하나만 묻는다`() {
-        val question = ScenarioQuestionBuilder.from(
-            blockedGaps = listOf("A→B", "StagePosition"),
-            untestedArms = emptyList(),
-            scope = emptyList(),
-        )
-
-        assertThat(question?.id).isEqualTo("gap:A→B")
-    }
-
-    @Test
-    fun `구간이 없으면 빠진 갈래를 묻는다`() {
-        val question = ScenarioQuestionBuilder.from(
-            blockedGaps = emptyList(),
-            untestedArms = listOf(133L to 134L),
-            scope = listOf(Triple("TitleScene", 2, 5)),
-            describe = { id -> "StoryScene · 진입해 관찰한다 (StagePosition ${if (id == 134L) "==" else "!="} 5)" },
-        )
-
-        // **번호로 부르지 않는다.** 내부 case_id 는 사용자가 읽는 글에 넣지 않는다 — 화면은
-        // 등장 순번만 쓰고 에이전트 프롬프트에도 같은 금지가 있다. id 는 `id` 필드로만 오간다.
-        assertThat(question?.id).isEqualTo("arm:133:134")
-        assertThat(question?.text).contains("StagePosition == 5").doesNotContain("134번")
-        assertThat(question?.why).contains("동시에 성립할 수 없어")
-        assertThat(question?.options?.map { it.id }).containsExactly("add", "skip")
-    }
-
-    @Test
-    fun `마지막으로 담은 범위를 묻는다`() {
-        val question = ScenarioQuestionBuilder.from(
-            blockedGaps = emptyList(),
-            untestedArms = emptyList(),
-            scope = listOf(Triple("TitleScene", 2, 5), Triple("Map_scene", 4, 21)),
-        )
-
-        assertThat(question?.id).isEqualTo("scope:TitleScene,Map_scene")
-        assertThat(question?.why).contains("TitleScene 2/5").contains("Map_scene 4/21")
-        // 씬마다 보기를 준다 — "나머지 전부"만 주면 스물몇 건짜리 씬까지 딸려 온다.
-        assertThat(question?.options?.map { it.id })
-            .containsExactly("scene:TitleScene", "scene:Map_scene", "keep")
-        assertThat(question?.options?.first()?.label).isEqualTo("TitleScene 마저 담기")
-    }
-
-    @Test
-    fun `보기 문구는 사용자가 할 말 그대로다`() {
-        // 고른 답은 이 문장으로 모델에게 되돌아간다. 모델이 따로 해석할 것이 없어야 오케에
-        // 새 실행 경로를 만들지 않아도 된다.
-        val question = ScenarioQuestionBuilder.from(
-            blockedGaps = emptyList(),
-            untestedArms = listOf(133L to 134L),
-            scope = emptyList(),
-            describe = { "Map_scene · 관찰한다 (StagePosition == 5)" },
-        )
-
-        // 보기는 짧게. 무엇에 대한 답인지는 오케가 질문 문장을 붙여 보낸다 — 버튼에 질문을
-        // 통째로 옮겨 적으면 화면에서 세 줄로 접힌다.
-        assertThat(question?.options?.first()?.label).isEqualTo("네, 만들어 주세요")
-        assertThat(question?.options?.first()?.detail).contains("StagePosition == 5")
+        assertThat(question?.options?.map { it.id }).containsExactly("auto", "leave")
     }
 
     /**
@@ -105,29 +44,38 @@ class ScenarioQuestionBuilderTest {
     @Test
     fun `막힌 자리가 여럿이면 여럿을 낸다`() {
         val questions = ScenarioQuestionBuilder.all(
-            blockedGaps = listOf("stagePosition", "activeSelf", "Map_scene→TurnBattleScene"),
-            untestedArms = emptyList(),
-            scope = emptyList(),
+            listOf("stagePosition", "activeSelf", "Map_scene→TurnBattleScene"),
         )
 
         assertThat(questions).hasSize(3)
         assertThat(questions.map { it.id })
             .containsExactly("gap:stagePosition", "gap:activeSelf", "gap:Map_scene→TurnBattleScene")
         // 옛 화면이 읽는 한 개짜리 칸은 그중 첫 것이다.
-        assertThat(ScenarioQuestionBuilder.from(
-            listOf("stagePosition", "activeSelf"), emptyList(), emptyList(),
-        )?.id).isEqualTo("gap:stagePosition")
+        assertThat(ScenarioQuestionBuilder.from(listOf("stagePosition", "activeSelf"))?.id)
+            .isEqualTo("gap:stagePosition")
     }
 
     /** 같은 자리를 두 번 묻지 않는다 — 질문지가 길어질수록 중복이 눈에 띈다. */
     @Test
     fun `같은 자리는 한 번만 묻는다`() {
-        val questions = ScenarioQuestionBuilder.all(
-            blockedGaps = listOf("stagePosition", "stagePosition"),
-            untestedArms = emptyList(),
-            scope = emptyList(),
-        )
+        assertThat(ScenarioQuestionBuilder.all(listOf("stagePosition", "stagePosition"))).hasSize(1)
+    }
 
-        assertThat(questions).hasSize(1)
+    /**
+     * 씬별 범위와 빠진 갈래는 **어떤 입력으로도 질문이 되지 않는다.**
+     *
+     * 걷어낸 것을 "안 부르면 안 나온다" 로 두면 부르는 자리가 하나 생기는 날 조용히 돌아온다.
+     * 만드는 함수 자체가 없다는 것을 계약으로 적어 둔다 — 이 검사가 깨지는 방법은 그 함수를
+     * 다시 만드는 것뿐이다.
+     */
+    @Test
+    fun `묻는 갈래는 Gap 하나뿐이다`() {
+        val kinds = ScenarioQuestionBuilder.all(listOf("stagePosition", "A→B"))
+            .map { it.id.substringBefore(":") }
+            .distinct()
+
+        assertThat(kinds).containsExactly("gap")
+        assertThat(ScenarioQuestionBuilder::class.java.declaredMethods.map { it.name })
+            .noneMatch { it.contains("scope", ignoreCase = true) || it.contains("arm", ignoreCase = true) }
     }
 }

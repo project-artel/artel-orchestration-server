@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testrun.dto.CommitScenariosRequest
 import kr.artel.orchestration.testrun.dto.RunChatMessage
+import kr.artel.orchestration.testrun.dto.RunCoverageResponse
 import kr.artel.orchestration.testrun.dto.RunDeletionPreview
 import kr.artel.orchestration.testrun.dto.RunDeletionResult
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
@@ -114,6 +115,24 @@ class TestRunController(
         @CurrentUserId appUserId: Long
     ): ResponseEntity<RunScenariosResponse> =
         service.getScenarios(runId, appUserId)
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
+
+    /**
+     * **이 런의 시나리오들이 무엇을 담았는가**(ARTEL-903).
+     *
+     * 프로젝트 전량을 재는 `/api/projects/{projectId}/test-cases/coverage` 와 다른 축이다 —
+     * 저작 중에 알고 싶은 것은 지금 만들고 있는 것들이 덮은 범위다. 앞서는 이 정보가 대화로
+     * 씬별 집계(`TurnBattleScene 8/29`)로 나갔는데, 시나리오는 여러 씬을 지나는 흐름이라 그
+     * 수로는 다음에 무엇을 할지 정할 수 없었다.
+     */
+    @GetMapping("/{runId}/coverage")
+    suspend fun coverage(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<RunCoverageResponse> =
+        service.coverage(runId, appUserId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 

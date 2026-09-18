@@ -509,24 +509,32 @@ class TestScenarioReconcileIntegrationTest {
      *
      * 지금까지 없던 것은 묻는 능력이 아니라 **질문을 담을 자리**였다. 산문 속 질문은 설명으로
      * 읽히고, 답해도 그 맥락이 다음 턴까지 살아남지 않았다.
+     *
+     * 앞서 이 검사는 **씬별 범위 질문**을 태워 배선을 봤다. 그 갈래를 걷어냈으므로(ARTEL-903)
+     * 여기서는 모델이 낸 질문을 태운다 — 저장·답·중계는 코드가 낸 질문과 **같은 한 자리**를
+     * 지나고(`ask` → `payload` → `앞서 물어본 것`), 그 하나를 보는 것이 이 검사의 목적이다.
+     * 코드가 내는 유일한 갈래(메우지 못한 구간)는 지도가 있어야 생기므로
+     * [kr.artel.orchestration.testscenario.ScenarioBridgeInsertionIntegrationTest] 가 본다.
      */
     @Test
-    fun `덜 담긴 씬이 있으면 되묻고 답을 다음 턴에 잇는다`(): Unit = runBlocking {
+    fun `되묻고 답을 다음 턴에 잇는다`(): Unit = runBlocking {
         val client = webClient()
         val (appUserId, token) = issueUser()
         val projectId = createMemberProject(appUserId)
         val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
 
         val caseA = insertCase(projectId, "TitleScene", "A")
-        val caseB = insertCase(projectId, "TitleScene", "B")
 
         framesToSend.add(
-            """{"type":"result","message":"A만 담았습니다","reviewed":{"in":[$caseA],"out":[$caseB]},""" +
-                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+            """{"type":"result","message":"A를 담았습니다","reviewed":{"in":[$caseA],"out":[]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}],""" +
+                """"question":{"id":"agent:scope","text":"전투는 어느 쪽을 뜻하나요?",""" +
+                """"why":"요청이 두 가지로 읽힙니다",""" +
+                """"options":[{"id":"turn","label":"턴 전투만 담아 줘"},{"id":"all","label":"전투 전부"}]}}"""
         )
         turnReplies.add("""{"type":"result","message":"넣었습니다","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
 
-        postMessage(client, projectId, runId, token, "타이틀 시나리오")
+        postMessage(client, projectId, runId, token, "전투 시나리오")
 
         awaitUntil {
             runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
@@ -539,8 +547,8 @@ class TestScenarioReconcileIntegrationTest {
             .toList().first { it.payload != null }
         val payload = objectMapper.readTree(asked.payload!!.asString())
         assertThat(payload["kind"].asText()).isEqualTo("question")
-        assertThat(payload["id"].asText()).startsWith("scope:")
-        assertThat(payload["options"].map { it["id"].asText() }).contains("scene:TitleScene", "keep")
+        assertThat(payload["id"].asText()).isEqualTo("agent:scope")
+        assertThat(payload["options"].map { it["id"].asText() }).contains("turn", "all")
         // **함께 낸 것을 그 한 줄이 다 든다**(ARTEL-630). 대화에는 첫 질문만 남기지만, 나머지에도
         // 답할 수 있어야 하므로 payload 가 묶음 전체를 든다 — 없으면 둘째부터는 답할 길이 없다.
         assertThat(payload["questions"]).isNotNull
@@ -556,13 +564,13 @@ class TestScenarioReconcileIntegrationTest {
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
             .bodyValue(
-                """{"message":"","answer":{"question_id":"$questionId","option_ids":["scene:TitleScene"]}}"""
+                """{"message":"","answer":{"question_id":"$questionId","option_ids":["turn"]}}"""
             )
             .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(5))
 
         awaitUntil { receivedFrames.any { it.contains("앞서 물어본 것") } }
         val relayed = receivedFrames.first { it.contains("앞서 물어본 것") }
-        assertThat(relayed).contains("TitleScene 마저 담기")
+        assertThat(relayed).contains("턴 전투만 담아 줘")
     }
 
     /**
@@ -579,15 +587,16 @@ class TestScenarioReconcileIntegrationTest {
         val projectId = createMemberProject(appUserId)
         val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
         val caseA = insertCase(projectId, "TitleScene", "A")
-        val caseB = insertCase(projectId, "TitleScene", "B")
 
         // 전 건을 판정해야 저장까지 간다(검수에서 막히면 질문이 아니라 재작성 루프로 빠진다).
         framesToSend.add(
-            """{"type":"result","message":"A만 담았습니다","reviewed":{"in":[$caseA],"out":[$caseB]},""" +
-                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+            """{"type":"result","message":"A를 담았습니다","reviewed":{"in":[$caseA],"out":[]},""" +
+                """"scenarios":[{"title":"타이틀","description":"d","steps":[{"action":"A확인","case_id":$caseA}]}],""" +
+                """"question":{"id":"agent:scope","text":"전투는 어느 쪽을 뜻하나요?",""" +
+                """"why":"요청이 두 가지로 읽힙니다","options":[{"id":"turn","label":"턴 전투만 담아 줘"}]}}"""
         )
 
-        postMessage(client, projectId, runId, token, "타이틀 시나리오")
+        postMessage(client, projectId, runId, token, "전투 시나리오")
         awaitUntil {
             runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
                 .any { it.payload != null }
@@ -601,43 +610,47 @@ class TestScenarioReconcileIntegrationTest {
     }
 
     /**
-     * 카드로 저장해도 알림과 질문이 나간다(ARTEL-487).
+     * 카드로 저장해도 검수가 계산해 둔 것이 대화로 나간다(ARTEL-487).
      *
      * 카드 검토 모드는 챗봇이 아니라 REST 로 저장한다. 그 경로가 반영 건수만 돌려주는 바람에
      * 검수가 계산해 둔 것이 조용히 버려졌고, 사용자에게는 미상 스텝만 남았다(런 32).
+     *
+     * 앞서 이 검사는 씬별 범위 **질문**을 봤다. 그 갈래를 걷어냈으므로(ARTEL-903) 같은 경로를
+     * **알림**으로 본다 — 함께 담을 수 없는 케이스 둘을 한 카드로 커밋하면 코드가 나누고,
+     * 나눴다는 사실이 이 길로 나가야 사용자는 카드가 늘어난 이유를 안다.
      */
     @Test
-    fun `카드로 커밋해도 되묻는다`(): Unit = runBlocking {
+    fun `카드로 커밋해도 검수 결과가 대화로 나간다`(): Unit = runBlocking {
         val client = webClient()
         val (appUserId, token) = issueUser()
         val projectId = createMemberProject(appUserId)
         val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
-        val caseA = insertCase(projectId, "TitleScene", "A")
-        insertCase(projectId, "TitleScene", "B")
+        // 사전조건이 어긋나 한 번의 실행으로 둘 다 볼 수 없는 짝이다.
+        val dead = insertCase(projectId, "Map_scene", "쓰러진 뒤 관찰한다", "Map_scene 화면인 상태 / Player.hp <= 0")
+        val alive = insertCase(projectId, "Map_scene", "버틴 뒤 관찰한다", "Map_scene 화면인 상태 / Player.hp > 0")
 
         client.post()
             .uri("/api/projects/$projectId/test-runs/$runId/scenarios/commit")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
             .bodyValue(
-                """{"scenarios":[{"title":"타이틀","description":"d",""" +
-                    """"steps":[{"action":"A확인","case_id":$caseA}]}]}"""
+                """{"scenarios":[{"title":"생사 혼재","description":"d",""" +
+                    """"steps":[{"action":"확인","case_id":$dead},{"action":"확인","case_id":$alive}]}]}"""
             )
             .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(10))
 
         awaitUntil {
             runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
-                .any { it.payload != null }
+                .any { it.content.contains("나눴습니다") }
         }
-        val asked = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
-            .toList().first { it.payload != null }
-        assertThat(objectMapper.readTree(asked.payload!!.asString())["id"].asText()).startsWith("scope:")
+        // 나눈 결과가 실제로 저장까지 갔다 — 말만 하고 한 개가 남으면 화면과 어긋난다.
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).hasSize(2)
     }
 
     /**
      * 모델이 스스로 물은 것도 같은 자리로 나간다(ARTEL-487).
      *
-     * 코드가 아는 것은 코드가 묻고(구간·갈래·범위), 요청의 뜻이 갈리는 것은 모델이 묻는다.
+     * 코드가 아는 것은 코드가 묻고(메우지 못한 구간), 요청의 뜻이 갈리는 것은 모델이 묻는다.
      * 화면이 두 벌을 그릴 이유가 없고 답이 돌아오는 길도 하나여야 한다.
      */
     @Test
@@ -1103,13 +1116,18 @@ class TestScenarioReconcileIntegrationTest {
             .toEntity(String::class.java)
             .block(Duration.ofSeconds(5))
 
-    private suspend fun insertCase(projectId: Long, category: String, title: String): Long =
+    private suspend fun insertCase(
+        projectId: Long,
+        category: String,
+        title: String,
+        precondition: String? = null,
+    ): Long =
         testCaseRepository.save(
             TestCaseEntity(
                 projectId = projectId,
                 scene = category,
                 step = title,
-                precondition = null,
+                precondition = precondition,
                 expectedValue = "$title 기대결과",
             )
         ).id!!

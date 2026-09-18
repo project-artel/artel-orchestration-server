@@ -264,7 +264,6 @@ class ScenarioReconcileService(
             logger.info("근거를 적지 않은 스텝(허용) [runId={}] {}개", runId, findings.unsourced.size)
         }
 
-        val scope = partialScenes(facts, split, covered)
         // **물은 것은 통보로 되풀이하지 않는다.** 같은 말이 두 줄로 붙으면 어느 쪽에 답해야 하는지
         // 알 수 없고, 질문은 답할 자리가 있는 쪽이다.
         // **한 번 거절한 질문은 다시 묻지 않는다**(ARTEL-487). 조건은 그대로이므로 매 턴 같은
@@ -280,12 +279,11 @@ class ScenarioReconcileService(
         // **모르는 자리를 전부 낸다**(ARTEL-630). 하나만 내면 나머지는 아무 말 없이 미상으로 남고,
         // 사용자는 시나리오가 완성된 줄 안다 — 실측(런 178)에서 못 간다고 적은 자리가 일곱인데
         // 물은 것은 하나였다.
-        val questions = ScenarioQuestionBuilder.all(
-            blocked, siblings.untestedArms, scope, describe,
-        ).filterNot { it.id in answered }
+        // **묻는 것은 Gap 하나로 좁혔다**(ARTEL-903). 씬별 범위와 빠진 갈래를 걷어낸 기준은
+        // [ScenarioQuestionBuilder] 에 적었다 — 답이 시나리오를 바꾸는 물음만 카드가 된다.
+        val questions = ScenarioQuestionBuilder.all(blocked).filterNot { it.id in answered }
         // 옛 화면은 아직 한 개짜리 칸을 읽는다. 첫 질문을 거기 그대로 둬서 옮겨 올 시간을 준다.
         val question = questions.firstOrNull()
-        val asked = question?.id?.substringBefore(":")
         val allNotices = buildList {
             // 나눈 것은 **먼저** 말한다. 시나리오 수가 달라진 이유이므로, 아래 알림들보다 먼저
             // 읽혀야 화면에 늘어난 카드가 무엇인지 알 수 있다.
@@ -300,16 +298,10 @@ class ScenarioReconcileService(
                         "사전조건이 어긋나 한 번의 실행으로 다 볼 수 없습니다."
                 )
             }
-            if (asked != "gap") addAll(notices)
-            addAll(siblingNotices(siblings, describe, skipArms = asked == "arm"))
+            if (question == null) addAll(notices)
+            // 갈래는 **알림으로만** 남는다(ARTEL-903) — 질문에서 빠졌으니 건너뛸 이유도 없다.
+            addAll(siblingNotices(siblings, describe))
             unsourcedNotice(findings, opened)?.let(::add)
-            if (asked != "scope" && scope.isNotEmpty()) {
-                add(
-                    "이 런에 담긴 범위 — " +
-                        scope.joinToString(" · ") { (scene, taken, all) -> "$scene $taken/$all" } +
-                        ". 같은 씬의 나머지도 담으려면 말씀해 주세요."
-                )
-            }
         }
 
         // **검수만 하고 돌려주는 자리**(시나리오 하나씩 받기). 저장은 카드가 나간 뒤에 한다는
@@ -942,43 +934,6 @@ class ScenarioReconcileService(
         .getOrElse { emptyMap() }
 
     /**
-     * **이번에 무엇을 고른 것인지 한 줄로 드러낸다**(ARTEL-466).
-     *
-     * 요청이 애매하면 경계는 누군가 정해야 하고, 지금은 모델이 조용히 정한다. 실측(같은 요청
-     * 5회)에서 흔들린 것이 정확히 그 경계였다 — 타이틀 화면의 버튼 표시 확인을 넣은 회차와 뺀
-     * 회차가 갈렸다. 애매한 요청은 예외가 아니라 기본값이므로(도구에 익숙하지 않은 1인 개발자가
-     * 이 서비스의 대상이다), 고칠 것은 질문이 아니라 **고른 결과가 보이지 않는 것**이다.
-     *
-     * 씬별 비율만 낸다. id 를 늘어놓으면 스물몇 건짜리 씬에서 읽히지 않고, 사용자가 다음에 할
-     * 말("타이틀 것도 다 넣어줘")에 필요한 것은 비율까지다.
-     *
-     * **어느 씬을 말할지는 이번 턴이 정하고, 몇 건인지는 런 전체가 정한다**(ARTEL-516). 둘을
-     * 갈라야 하는 이유가 실측에 있다(런 155): 비율을 이번 턴으로 세면 미커버 0/66 인 화면에서
-     * "덜 담긴 씬이 있습니다 — StoryScene 2/6"이 뜬다. 화면의 배지와 정면으로 어긋나고, 사용자는
-     * 둘 중 무엇을 믿어야 하는지 알 수 없다. 반대로 씬 목록까지 런 전체로 하면 이번 요청과
-     * 상관없는 씬이 매 턴 딸려 온다.
-     */
-    private fun partialScenes(
-        facts: List<ScenarioSiblingCheck.CaseFact>,
-        split: List<List<Long>>,
-        covered: Set<Long>,
-    ): List<Triple<String, Int, Int>> {
-        val used = split.flatten().toSet()
-        if (used.isEmpty() || facts.isEmpty()) return emptyList()
-
-        val touched = facts.filter { it.id in used }.mapNotNull { it.scene }.toSet()
-        return touched.sorted()
-            .map { scene ->
-                Triple(
-                    scene,
-                    facts.count { it.scene == scene && it.id in covered },
-                    facts.count { it.scene == scene },
-                )
-            }
-            .filter { (_, taken, all) -> taken < all }
-    }
-
-    /**
      * **이 런에 지금 담겨 있는 케이스 전량**(ARTEL-516).
      *
      * 이번 턴에 쓴 것과, 런의 다른 시나리오에 이미 들어 있는 것을 합친 값이다. 이번 턴이 기존
@@ -1058,7 +1013,6 @@ class ScenarioReconcileService(
     private fun siblingNotices(
         findings: ScenarioSiblingCheck.Findings,
         describe: (Long) -> String,
-        skipArms: Boolean = false,
     ): List<String> = buildList {
         // 함께 담을 수 없는 것은 [ScenarioConflictSplit] 이 이미 나눴다. 여기까지 남았다면 나누는
         // 쪽이 못 푼 것이므로 **말은 해 준다** — 조용히 두면 실행하다 멎는 이유를 알 수 없다.
@@ -1076,7 +1030,7 @@ class ScenarioReconcileService(
                     "한 시나리오로 합쳐도 됩니다. 일부러 나눈 것이면 그대로 두세요."
             )
         }
-        if (!skipArms) findings.untestedArms.forEach { (taken, missing) ->
+        findings.untestedArms.forEach { (taken, missing) ->
             add(
                 "${describe(taken)} 를 담았는데 ${describe(missing)} 가 빠졌습니다 — 같은 자리의 " +
                     "다른 갈래라 함께 볼 수는 없고, 따로 시나리오가 필요합니다."

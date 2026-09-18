@@ -7,6 +7,10 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testrun.dto.RunCoverageResponse
+import kr.artel.orchestration.testrun.dto.RunCoverageScenario
 import kr.artel.orchestration.testrun.dto.RunDeletionPreview
 import kr.artel.orchestration.testrun.dto.RunDeletionResult
 import kr.artel.orchestration.testrun.dto.RunScenarioItem
@@ -19,6 +23,7 @@ import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
@@ -37,6 +42,8 @@ class TestRunService(
     private val projectAccessService: ProjectAccessService,
     private val qaRunRepository: QaRunRepository,
     private val qaTryRepository: QaTryRepository,
+    private val testCaseRepository: TestCaseRepository,
+    private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
 ) {
     suspend fun list(projectId: Long, userId: Long): TestRunListResponse {
@@ -153,6 +160,45 @@ class TestRunService(
             scenarios.any { it.projectId != projectId } ->
                 throw BadRequestException("a scenario belongs to another project")
         }
+    }
+
+    /**
+     * **이 런의 시나리오들이 무엇을 담았는가**(ARTEL-903).
+     *
+     * 저작 중에 대화로 내보내던 씬별 집계(`TurnBattleScene 8/29`)를 대신한다. 그 축을 걷어낸
+     * 이유는 [kr.artel.orchestration.testrun.dto.RunCoverageResponse] 에 적었다 — 씬은 저작의
+     * 단위가 아니고, 사용자가 만든 단위는 시나리오다.
+     *
+     * 케이스 수는 저장된 스텝의 `case_id` 에서 매번 센다. 커버 집합을 따로 저장하지 않는 것은
+     * 커버리지 조회 전체의 규칙과 같다(`TestCaseRepository.findUncoveredIdsByProjectId`) — 두
+     * 벌을 두면 갈라지는 날이 오고, 그때 어느 쪽이 맞는지 알 방법이 없다.
+     */
+    suspend fun coverage(runId: Long, userId: Long): RunCoverageResponse? {
+        val run = accessible(runId, userId) ?: return null
+        val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        val rows = links.mapNotNull { link ->
+            val scenario = scenarioRepository.findById(link.testScenarioId) ?: return@mapNotNull null
+            val draft = scenario.toDraft(objectMapper)
+            val cases = draft.steps.mapNotNull { it.caseId }.toSet()
+            RunCoverageScenario(
+                position = link.position,
+                testScenarioId = link.testScenarioId.toString(),
+                title = draft.title,
+                steps = draft.steps.size,
+                cases = cases.size,
+            ) to cases
+        }
+        // 런 합계는 시나리오별 수의 덧셈이 아니다 — 같은 케이스가 두 시나리오에 들어가는 것은
+        // 정상이고(맥락이 다르면 다른 검증이다), 그것을 2로 세면 덮은 범위보다 커진다.
+        val covered = rows.flatMap { it.second }.toSet().size
+        val total = testCaseRepository.countByProjectId(run.projectId).toInt()
+        return RunCoverageResponse(
+            testRunId = runId.toString(),
+            total = total,
+            covered = covered,
+            uncovered = (total - covered).coerceAtLeast(0),
+            scenarios = rows.map { it.first },
+        )
     }
 
     private suspend fun resolveScenarios(runId: Long): RunScenariosResponse {
