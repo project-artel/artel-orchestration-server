@@ -11,3 +11,14 @@ data class SceneExitRow(
     val toScene: String,
     val byOperation: String?,
 )
+
+/**
+ * [SceneExitRow] 에 그 간선이 **어느 기능인지**를 더한 것 — 다리 근거 되찾기가 쓴다.
+ * `scene_edge.capability_id` 가 처음부터 들고 있던 값이라 새 판단이 없다.
+ */
+data class GroundedSceneEdgeRow(
+    val fromScene: String,
+    val toScene: String,
+    val byOperation: String?,
+    val capabilityId: Long,
+)

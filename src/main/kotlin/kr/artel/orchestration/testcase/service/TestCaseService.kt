@@ -13,6 +13,7 @@ import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.testcase.dto.CaseGuard
 import kr.artel.orchestration.testcase.dto.ValueMove
 import kr.artel.orchestration.testscenario.service.Guard
+import kr.artel.orchestration.testcase.dto.SceneEdge
 import kr.artel.orchestration.testcase.dto.SceneExit
 import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
@@ -251,16 +252,43 @@ class TestCaseService(
             .associate { it.testCaseId to it.input }
     }.getOrElse { emptyMap() }
 
-    private suspend fun sceneExits(projectId: Long): Map<String, List<SceneExit>> = runCatching {
-        repository.findSceneExits(projectId).toList()
+    private suspend fun sceneExits(projectId: Long): Map<String, List<SceneExit>> =
+        sceneEdges(projectId)
             .groupBy { it.fromScene }
-            .mapValues { (_, rows) ->
-                rows.groupBy { it.toScene }
-                    // 한 화면으로 가는 길이 여럿이면 **누를 것이 있는 쪽**을 먼저 든다.
-                    .map { (to, ways) -> SceneExit(to, ways.firstNotNullOfOrNull { it.byOperation }) }
-                    .sortedBy { it.scene }
-            }
-    }.getOrElse { emptyMap() }
+            .mapValues { (_, edges) -> edges.map { SceneExit(it.toScene, it.by) } }
+
+    /**
+     * 지도 전체의 화면 간선(흐름 없는 저작 실험).
+     *
+     * [sceneExits] 는 케이스가 서 있는 화면 것만 케이스에 딸려 나간다. 케이스 없는 화면의
+     * 간선은 그 길로는 모델에게 안 보이고, 빈 자리를 모델은 "못 간다"로 읽는다. 세션을 열 때
+     * 이 목록을 한 번 더 실어 그 구멍을 막는다.
+     *
+     * 정렬은 프롬프트 캐시 때문이다 — 같은 지도면 바이트까지 같아야 앞부분이 재활용된다.
+     */
+    suspend fun sceneEdges(projectId: Long): List<SceneEdge> = runCatching {
+        repository.findSceneExits(projectId).toList()
+            .groupBy { it.fromScene to it.toScene }
+            // 한 화면으로 가는 길이 여럿이면 **누를 것이 있는 쪽**을 먼저 든다.
+            .map { (pair, ways) -> SceneEdge(pair.first, pair.second, ways.firstNotNullOfOrNull { it.byOperation }) }
+            .sortedWith(compareBy({ it.fromScene }, { it.toScene }))
+    }.onFailure { logger.warn("화면 간선 조회 실패 — 없이 보낸다: ${it.message}") }
+        .getOrElse { emptyList() }
+
+    /**
+     * 게임을 켜면 값이 무엇으로 시작하나(흐름 없는 저작 실험).
+     *
+     * [kr.artel.orchestration.testscenario.service.ScenarioFlowPlanner] 가 흐름을 세울 때 쓰던
+     * 것과 같은 규칙([ScenarioStateReader.defaultOf] · [ScenarioStateReader.normalize])이다.
+     * 흐름을 끄면 이 값이 아무 데도 안 나가므로, 세션을 열 때 직접 싣는다.
+     */
+    suspend fun startingValues(projectId: Long): Map<String, String> = runCatching {
+        repository.findStartingValues(projectId).toList()
+            .mapNotNull { row -> ScenarioStateReader.defaultOf(row.detail)?.let { ScenarioStateReader.normalize(row.name) to it } }
+            .sortedBy { it.first }
+            .toMap()
+    }.onFailure { logger.warn("처음 값 조회 실패 — 없이 보낸다: ${it.message}") }
+        .getOrElse { emptyMap() }
 
     private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Map<String, String>> = runCatching {
         repository.findValuesChangedByCases(projectId).toList()

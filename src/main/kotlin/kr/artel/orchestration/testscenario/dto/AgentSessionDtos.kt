@@ -3,6 +3,7 @@ package kr.artel.orchestration.testscenario.dto
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
+import kr.artel.orchestration.testcase.dto.SceneEdge
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
 
@@ -66,6 +67,13 @@ data class AuthoringFlow(
     val hops: List<AuthoringHop> = emptyList(),
 )
 
+/**
+ * 추론 예산. Anthropic 은 `effort` 를 안 받고 token 예산으로만 켜므로 이 칸 하나다.
+ */
+data class AgentReasoning(
+    @JsonProperty("max_tokens") val maxTokens: Int,
+)
+
 data class AgentSessionOpenRequest(
     @JsonProperty("user_input") val userInput: String,
     @JsonProperty("unity_context") val unityContext: Map<String, Any> = emptyMap(),
@@ -82,12 +90,26 @@ data class AgentSessionOpenRequest(
     @JsonInclude(JsonInclude.Include.NON_NULL)
     val model: String? = null,
     /**
+     * 모델에게 줄 추론 예산. 안 보내면 agent 가 안 켠다 — 지금까지의 저작이 그랬다.
+     *
+     * 모델이 그 설정을 못 받으면 agent 가 세션을 열 때 거절한다. 조용히 낮추지 않는 것이
+     * 양쪽의 규칙이다 — 낮춘 채로 돈 판은 무엇으로 잰 것인지 모르게 된다.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    val reasoning: AgentReasoning? = null,
+    /**
      * 생성 결과의 출력 언어. Agent 계약의 `locale`(ko|en)에 대응한다.
      * 사용자의 계정 locale에서 정하며, 미설정 사용자는 en으로 보낸다.
      */
     val locale: String,
     @JsonProperty("project_id") val projectId: Long,
     @JsonProperty("run_id") val runId: Long,
+    /**
+     * 세션을 연 사용자. Agent 가 내부 채점 창구(`/internal/experiment/authoring/score`)로
+     * 묶기·순서를 검증할 때 지도 읽기 스코프로 쓴다 — `content_map` 조회가 프로젝트와
+     * 사용자로 좁혀지기 때문에, 이 값이 없으면 채점이 남의 지도를 보거나 빈 지도를 본다.
+     */
+    @JsonProperty("app_user_id") val appUserId: Long? = null,
     @JsonProperty("current_scenarios") val currentScenarios: List<CurrentScenario> = emptyList(),
     /**
      * **계산이 낸, 걸을 수 있는 흐름들**(ARTEL-658).
@@ -112,6 +134,25 @@ data class AgentSessionOpenRequest(
      * 모르면 `null`. 지어내지 않고, 받는 쪽이 "안 왔다"라고 적는다.
      */
     @JsonProperty("entry_scene") val entryScene: String? = null,
+    /**
+     * **지도 전체의 화면 간선**(흐름 없는 저작 실험).
+     *
+     * 케이스마다 붙는 `exits` 는 한 걸음짜리라, 두 걸음 너머(`Map_scene → StoryScene`)를 모델은
+     * "못 간다"로 읽는다 — 짝 행렬이 찾던 헛막힘 1,126칸이 그 종류다. 간선 전체를 주면 받는
+     * 쪽이 접어서(BFS) 화면 사이 도달표를 프롬프트에 싣는다. 새 판단이 아니라 `scene_edge`
+     * 그대로다.
+     *
+     * 기본값이 빈 목록인 것은 [flows] 와 같은 이유다 — 비면 받는 쪽이 표를 안 만들 뿐이다.
+     */
+    @JsonProperty("scene_edges") val sceneEdges: List<SceneEdge> = emptyList(),
+    /**
+     * **게임을 켜면 값이 무엇으로 시작하나**(흐름 없는 저작 실험).
+     *
+     * 흐름 계산이 시작 조건을 들고 있던 자리다. 흐름을 끄면 이 사실이 아무 데도 안 가고, 모델은
+     * 첫 케이스를 놓을 수 있는지조차 판단할 근거가 없다. 이름은 마지막 마디, 값은 지도가 적은
+     * 기본값 리터럴이다.
+     */
+    @JsonProperty("starting_values") val startingValues: Map<String, String> = emptyMap(),
 )
 
 /**

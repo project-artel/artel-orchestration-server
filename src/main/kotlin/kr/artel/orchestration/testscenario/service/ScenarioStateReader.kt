@@ -88,7 +88,7 @@ object ScenarioStateReader {
      */
     fun knownValuesIn(node: ConditionNode?): Map<String, String> =
         guardsIn(node)
-            .filter { it.operator == "==" && !it.symbolic }
+            .filter { it.operator == "==" && !it.symbolic && !it.momentary }
             .associate { it.variable to it.value }
 
     /**
@@ -137,7 +137,7 @@ object ScenarioStateReader {
      */
     fun knownValuesOf(precondition: String?): Map<String, String> =
         guardsOf(precondition)
-            .filter { it.operator == "==" && !it.symbolic }
+            .filter { it.operator == "==" && !it.symbolic && !it.momentary }
             .associate { it.variable to it.value }
 
     /** 이 케이스를 실행한 뒤 확정되는 값. `metadata.source.state_after` 가 `Var=value` 형식이다. */
@@ -215,6 +215,21 @@ object ScenarioStateReader {
      * declare 하는 것이다.
      */
     fun normalize(name: String): String = name.trim().trim('`').substringAfterLast('.')
+
+    /**
+     * 엔진 읽기 식에서 **기본값 리터럴**을 뽑는다 — `PlayerPrefs.GetInt("StagePosition", -1)` 의
+     * `-1`. 마지막 인자다. 인자가 하나뿐이면 기본값을 안 적은 것이고, 그때는 무엇으로
+     * 시작하는지 모른다 — 지어내지 않고 비운다.
+     *
+     * 흐름 계산([ScenarioFlowPlanner])과 세션 열기가 같은 규칙으로 읽어야 하므로 여기 둔다 —
+     * 두 곳이 따로 뽑으면 언젠가 두 값이 갈리고, 그때 어느 쪽이 맞는지 알 수 없다.
+     */
+    fun defaultOf(detail: String): String? {
+        val args = detail.substringAfterLast('(').substringBeforeLast(')')
+        if (!detail.contains('(')) return null
+        val last = args.split(',').map { it.trim() }.takeIf { it.size >= 2 }?.last() ?: return null
+        return last.trim('"').takeIf { it.toDoubleOrNull() != null || it == "true" || it == "false" }
+    }
 
     /**
      * 괄호 하나가 식 전체를 감싸고 있으면 벗긴다.
@@ -305,6 +320,17 @@ data class Guard(
         get() = value.toDoubleOrNull() == null &&
             !value.startsWith("\"") && !value.startsWith("'") &&
             value.contains('.')
+
+    /**
+     * 왼쪽이 **저장된 상태가 아니라 호출식**인가 — `IsAdvanceKeyDown()`, `Object.Equals(FLAG…)`.
+     *
+     * 프레임마다 다시 평가되는 값이라 "앞 스텝이 만들어 둔 상태"가 될 수 없고, 지도의 write
+     * 목록에 있을 수도 없다. 이것을 상태로 세면 배타·모순 판정이 전부 거짓 경보가 된다 —
+     * 계측(2026-09-08, B 하네스 30판)에서 어긋남 40건 중 14건이 `LoadPlayData()` 하나였다.
+     * [symbolic] 과 같은 규율: 모르는 것을 어긋남이라 부르지 않는다.
+     */
+    val momentary: Boolean
+        get() = path.contains('(')
 
     fun holds(have: String): Boolean {
         // 비교할 수 없는 것은 위반이라 말하지 않는다 — 이 클래스 전체를 관통하는 규칙이다.
