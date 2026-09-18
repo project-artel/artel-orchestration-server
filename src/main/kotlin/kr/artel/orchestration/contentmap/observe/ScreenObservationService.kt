@@ -38,6 +38,7 @@ import java.time.Clock
  *                                             → screen_transition (관측만)
  *                                             → scene_edge (씬을 넘었으면 verified / runtime)
  *                                             → capture_screen (처음 앉힐 때만, ARTEL-456)
+ *                                             → SCREEN_NAME_REQUEST (처음 앉힐 때만, ARTEL-910)
  *                                          ├→ SCREEN_SELECTOR_PROPOSAL (목록 밖 selector, ARTEL-655)
  *                                          └→ SCREEN_SETTLED (화면이 바뀌었으면, ARTEL-668)
  * ```
@@ -103,6 +104,7 @@ class ScreenObservationService(
     private val selectorProposals: ScreenSelectorProposalService,
     private val settledScreens: ScreenSettledService,
     private val screenCaptures: ScreenCaptureService,
+    private val screenNames: ScreenNameService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock,
@@ -133,6 +135,12 @@ class ScreenObservationService(
             folds.forget(gameInstanceId)
             return
         }
+
+        // 그림을 기다리다 마감이 지난 화면을 여기서 집어 묻는다 (ARTEL-910). `pulse` 에 얹는 것은
+        // 이것이 런이 도는 동안 가장 자주 지나는 자리라서다 — 화면이 굳는 자리에 얹으면 실측 런의
+        // 화면이 3 개뿐이라 마감이 지나도 집을 기회가 안 온다. 기다리는 것이 없으면 맵 하나를
+        // 들여다보고 끝난다.
+        screenNames.askOverdue()
 
         val buildId = gameInstances.findById(gameInstanceId)?.lastGameBuildId ?: return
 
@@ -275,7 +283,14 @@ class ScreenObservationService(
         //
         // 커밋 **뒤에** 부른다. 트랜잭션 안에 두면 롤백된 화면의 그림을 요청하게 되고, 그 그림은
         // 존재하지 않는 행을 기다리다 버려진다.
-        if (observed.inserted) screenCaptures.request(gameInstanceId, observed.id)
+        if (observed.inserted) {
+            val captureRequested = screenCaptures.request(gameInstanceId, observed.id)
+            // 이름도 **처음 앉힌 화면에만** 묻는다 (ARTEL-910). 그 한 번이 곧 "화면 하나에 질문
+            // 하나" 를 지키는 장부다 — `screen` 행은 `uk_screen_discriminator` 때문에 평생 한 번만
+            // `INSERT` 되기 때문이다. 그림이 붙은 뒤에 물어야 답이 훨씬 나으므로, 요청이 실제로
+            // 나갔으면 그 결과를 기다렸다 묻는다.
+            screenNames.onScreenInserted(gameInstanceId, sceneId, sceneName, observed.id, captureRequested)
+        }
 
         // **화면이 실제로 바뀐 관측에서만 알린다** (ARTEL-668). 지금 모양에서는 [ScreenFold.settle]
         // 이 `discriminator` 가 달라졌을 때만 true 라 이 판정이 늘 참이지만, 조건으로 적어 둔다 —
