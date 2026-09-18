@@ -626,16 +626,23 @@ class TestScenarioReconcileIntegrationTest {
         val projectId = createMemberProject(appUserId)
         val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
         // 사전조건이 어긋나 한 번의 실행으로 둘 다 볼 수 없는 짝이다.
+        //
+        // **갈래마다 케이스를 둘씩 둔다.** 하나씩이면 나눈 조각이 케이스 하나짜리가 되고, 그것은
+        // 흐름이 아니어서 저장되지 않는다(ARTEL-876 의 채택 정책) — 그러면 이 검사가 보려는
+        // "나눈 결과가 대화로도 나가고 저장까지 갔는가" 가 아니라 그 정책을 보게 된다.
         val dead = insertCase(projectId, "Map_scene", "쓰러진 뒤 관찰한다", "Map_scene 화면인 상태 / Player.hp <= 0")
+        val deadAgain = insertCase(projectId, "Map_scene", "쓰러진 채 남은 것을 본다", "Map_scene 화면인 상태 / Player.hp <= 0")
         val alive = insertCase(projectId, "Map_scene", "버틴 뒤 관찰한다", "Map_scene 화면인 상태 / Player.hp > 0")
+        val aliveAgain = insertCase(projectId, "Map_scene", "버틴 채 남은 것을 본다", "Map_scene 화면인 상태 / Player.hp > 0")
 
         client.post()
             .uri("/api/projects/$projectId/test-runs/$runId/scenarios/commit")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
             .bodyValue(
-                """{"scenarios":[{"title":"생사 혼재","description":"d",""" +
-                    """"steps":[{"action":"확인","case_id":$dead},{"action":"확인","case_id":$alive}]}]}"""
+                """{"scenarios":[{"title":"생사 혼재","description":"d","steps":[""" +
+                    """{"action":"확인","case_id":$dead},{"action":"확인","case_id":$deadAgain},""" +
+                    """{"action":"확인","case_id":$alive},{"action":"확인","case_id":$aliveAgain}]}]}"""
             )
             .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(10))
 
@@ -643,8 +650,11 @@ class TestScenarioReconcileIntegrationTest {
             runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
                 .any { it.content.contains("나눴습니다") }
         }
-        // 나눈 결과가 실제로 저장까지 갔다 — 말만 하고 한 개가 남으면 화면과 어긋난다.
-        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).hasSize(2)
+        // 저장이 막히지 않았다. **몇 개인지는 세지 않는다** — 나눈 조각을 몇 개 채택하는지는
+        // 채택 정책의 몫이고(ARTEL-876 은 시작값에서 성립하지 않는 조각을 버린다. 이 픽스처에는
+        // 시작값이 없어 하나만 남는다), 이 검사가 보는 것은 카드 경로가 검수 결과를 대화로
+        // 내보내는가다. 개수를 박으면 정책이 바뀔 때마다 이 검사가 엉뚱하게 깨진다.
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).isNotEmpty()
     }
 
     /**
