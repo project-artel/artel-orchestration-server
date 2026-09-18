@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.CapabilityCase
 import kr.artel.orchestration.testcase.dto.CaseWrite
 import kr.artel.orchestration.testcase.dto.CaseInputRow
+import kr.artel.orchestration.testcase.dto.GroundedSceneEdgeRow
 import kr.artel.orchestration.testcase.dto.SceneExitRow
 import kr.artel.orchestration.testcase.dto.ValueMoveRow
 import kr.artel.orchestration.testcase.dto.StartingValue
@@ -273,6 +274,37 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     fun findSceneExits(projectId: Long): Flow<SceneExitRow>
 
     /**
+     * 화면 간선을 **capability id 째로** 낸다(다리 근거 되찾기).
+     *
+     * [findSceneExits] 와 같은 간선인데, 저쪽은 사람이 읽는 조작만 낸다. 모델이 쓴 다리
+     * 스텝에 근거를 달아 주려면 그 간선이 **어느 기능인지**가 필요하고, `scene_edge` 가
+     * 처음부터 들고 있던 값이다. 시킬 수 없는 간선(저절로)은 by_operation 이 null 로 온다 —
+     * "누를 것이 없다"와 "모른다"를 섞지 않는 그 규칙 그대로.
+     */
+    @Query(
+        """
+        SELECT DISTINCT s.name AS from_scene,
+               e.to_scene_name AS to_scene,
+               coalesce(c.input_key, c.control_label, c.control_path) AS by_operation,
+               e.capability_id AS capability_id
+        FROM scene s
+        JOIN scene_edge e ON e.from_scene_id = s.id
+        LEFT JOIN capability c ON c.id = e.capability_id
+          AND c.interaction <> 'none'
+          AND c.actionability NOT IN ('not-a-step', 'unreachable-precondition')
+        WHERE e.capability_id IS NOT NULL
+          AND s.content_map_id IN (
+            SELECT DISTINCT s2.content_map_id
+            FROM test_case tc
+            JOIN capability c2 ON c2.capability_key = tc.capability_key
+            JOIN scene s2 ON s2.id = c2.scene_id
+            WHERE tc.project_id = :projectId
+        )
+        """
+    )
+    fun findGroundedSceneEdges(projectId: Long): Flow<GroundedSceneEdgeRow>
+
+    /**
      * 케이스마다 **그것이 가리키는 조작의 기계값**.
      *
      * 저작이 스텝의 `input` 칸에 그대로 넣는 값이다(`key:Return` · `click:Canvas/continue`).
@@ -330,9 +362,44 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
               JOIN scene s2 ON s2.id = c2.scene_id
               WHERE tc.project_id = :projectId
           )
+        UNION
+        -- 씬 귀속에 실패한 unplaced 타입의 write(V95). 토글로 움직이는 값이 여기만 남는
+        -- 경우가 실측에 있고(TutorialController.waitingForAcknowledge), 안 합치면 그 값이
+        -- 얼어붙은 것으로 읽혀 한 흐름이 모순으로 나뉜다.
+        SELECT DISTINCT se.target
+        FROM content_map_stray_effect se
+        WHERE se.kind IN ('write', 'active-state')
+          AND se.content_map_id IN (
+              SELECT DISTINCT s2.content_map_id
+              FROM test_case tc
+              JOIN capability c2 ON c2.capability_key = tc.capability_key
+              JOIN scene s2 ON s2.id = c2.scene_id
+              WHERE tc.project_id = :projectId
+          )
         """
     )
     fun findWrittenValues(projectId: Long): Flow<String>
+
+    /**
+     * 씬 귀속 없이 남은 상태 변경(V95)의 대상들. 걷기의 놓아주기 전용 —
+     * 어느 씬에서 움직이는지 모르는 값은 걸음마다 모르게 된 것으로 놓아야,
+     * 토글이 "앞이 0 으로 만들어 두었다"는 순서 오판을 만들지 않는다(run 60).
+     */
+    @Query(
+        """
+        SELECT DISTINCT se.target
+        FROM content_map_stray_effect se
+        WHERE se.kind IN ('write', 'active-state')
+          AND se.content_map_id IN (
+              SELECT DISTINCT s2.content_map_id
+              FROM test_case tc
+              JOIN capability c2 ON c2.capability_key = tc.capability_key
+              JOIN scene s2 ON s2.id = c2.scene_id
+              WHERE tc.project_id = :projectId
+          )
+        """
+    )
+    fun findStrayWrittenValues(projectId: Long): Flow<String>
 
     /**
      * **그 값이 어느 화면에서 움직이나**(ARTEL-635).
