@@ -282,7 +282,33 @@ data class ScenarioStreamEvent(
      * 답에는 없다. 세 번째 칸인 질문은 [questions] 로 따로 온다.
      */
     val reply: AgentReply? = null,
+    /**
+     * 답과 질문 속 `[[tc:N]]`·`[[ts:N]]` 표식이 가리키는 것(ARTEL-932). 화면은 이것으로 이름
+     * 칩을 그린다. Agent 가 검사해서 보내므로 여기 없는 표식은 이미 지워져 있다.
+     */
+    val refs: List<AgentRef> = emptyList(),
 )
+
+/**
+ * 답 속 표식 하나가 가리키는 TC·TS(ARTEL-932).
+ *
+ * 번호는 표식 안에서 기계만 읽고, 사람에게는 [label] 이 보인다. TC 는 따로 볼 화면이 없어서
+ * 칩을 누르면 [detail](사전조건·기대값)을 띄운다.
+ */
+data class AgentRef(
+    val kind: String,
+    val id: Long,
+    val label: String,
+    val detail: String? = null,
+) {
+    fun one(): Map<String, Any?> = mapOf("kind" to kind, "id" to id, "label" to label, "detail" to detail)
+
+    companion object {
+        /** payload 에 덧붙일 칸. 없으면 아무것도 붙이지 않는다 — 옛 화면이 보던 모양 그대로다. */
+        fun field(refs: List<AgentRef>): Map<String, Any?> =
+            if (refs.isEmpty()) emptyMap() else mapOf("refs" to refs.map { it.one() })
+    }
+}
 
 /**
  * Agent 답을 사람이 읽는 두 칸으로 나눈 것(ARTEL-927).
@@ -296,7 +322,8 @@ data class AgentReply(
     val detail: String = "",
 ) {
     /** 답 말풍선에 붙일 `payload`. 화면은 `kind` 로 질문(`question`)·답한 질문(`answered`)과 가른다. */
-    fun payload(): Map<String, Any?> = mapOf("kind" to KIND, "result" to result, "detail" to detail)
+    fun payload(refs: List<AgentRef> = emptyList()): Map<String, Any?> =
+        mapOf("kind" to KIND, "result" to result, "detail" to detail) + AgentRef.field(refs)
 
     companion object {
         const val KIND = "reply"
