@@ -27,10 +27,17 @@
 
 ## Context / Constraints
 
-### migration 번호는 V96 이다
+### migration 번호는 V98 이다
 
-이슈 본문은 `V93` 이라 적었지만 `develop` 에 `V93` · `V94` · `V95` 가 이미 있다. 실제 최신 다음
-번호는 **V96** 이고, `check-flyway-migrations.sh` 와 `verify-flyway-upgrade.sh` 가 둘 다 통과했다.
+이슈 본문은 `V93` 이라 적었지만 `develop` 에 `V93` · `V94` · `V95` 가 이미 있다. 그 다음인
+`V96` 과 `V97` 도 **다른 branch 가 이미 집었다**:
+
+- `V96__ask_what_to_call_a_new_screen.sql` — ARTEL-910, PR 280 (draft 아님, `develop` 를 향함)
+- `V97__create_local_credential_and_platform_setting.sql` — PR 285 (draft)
+
+working tree 만 보면 둘 다 안 보인다. `check-flyway-migrations.sh` 가 remote branch 를 함께 보고
+잡아 준 것이고, 그래서 이 작업의 번호는 **V98** 이다. 앞의 둘 중 하나가 먼저 merge 되면 그쪽이
+이기므로 번호를 비켜 주는 쪽이 맞다.
 
 ### 표를 둘로 나누고 statement 를 행으로 나누지 않는다
 
@@ -175,8 +182,8 @@ screen selector 분기가 모두 그 위에 있는 이유다.
       `:155` guard 둘, `:197` capability 분기, `:1033` `answerWithError`), `V40` `screen_capability`,
       `V63` content_map
 
-- [x] **Step 1: ARTEL-919 — migration V96** (작성 완료, probe DB 에서 12 경로 확인)
-  - `V96__store_registered_macros_on_the_content_map.sql`
+- [x] **Step 1: ARTEL-919 — migration V98** (작성 완료, probe DB 에서 12 경로 확인)
+  - `V98__store_registered_macros_on_the_content_map.sql`
     - `macro` — `id` · `content_map_id`(FK CASCADE) · `name` · `source` · `definition_json` ·
       `parameter_names` · `created_at` · `updated_at`
     - `uk_macro_name (content_map_id, name)` — 유일 범위이자 갱신의 충돌 대상. 선두 컬럼이
@@ -229,7 +236,7 @@ screen selector 분기가 모두 그 위에 있는 이유다.
 
 - **Commands to run:**
   - `./scripts/check-flyway-migrations.sh` — 번호 충돌
-  - `./scripts/verify-flyway-upgrade.sh` — `develop` 위에 V96 을 얹고 `validate`
+  - `./scripts/verify-flyway-upgrade.sh` — `develop` 위에 V98 을 얹고 `validate`
   - `./mvnw test -Dtest=MacroDefinitionWriteTest`
   - `./mvnw test -Dtest=AgentCapabilityWriteTest` — router 를 건드렸으므로 회귀 확인
 - **Expected output:** 앞 둘 exit 0, 테스트 둘 통과
