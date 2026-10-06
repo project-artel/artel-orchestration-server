@@ -37,6 +37,10 @@
       "description": "프로젝트 생성·조회·수정·삭제"
     },
     {
+      "name": "Macro",
+      "description": "빌드에 등록된 macro 를 읽는다"
+    },
+    {
       "name": "Invitation",
       "description": "내가 받은 초대 조회·수락·거절"
     },
@@ -1401,11 +1405,11 @@
             "required": false,
             "schema": {
               "type": "string",
+              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ],
-              "default": "MINE"
+              ]
             }
           }
         ],
@@ -1916,7 +1920,7 @@
         ],
         "summary": "기획서 이력",
         "description": "최신 버전이 앞에 온다.",
-        "operationId": "list_11",
+        "operationId": "list_12",
         "parameters": [
           {
             "name": "projectId",
@@ -2361,7 +2365,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "list_13",
+        "operationId": "list_14",
         "responses": {
           "200": {
             "description": "OK",
@@ -3978,6 +3982,104 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/macros": {
+      "get": {
+        "tags": [
+          "Macro"
+        ],
+        "summary": "등록된 macro 목록",
+        "description": "이 빌드에 등록된 macro 를 이름 오름차순으로 읽는다. `source` 는 싣지 않는다 — 원문은 상세 조회에 있다. 등록된 것이 없으면 빈 `items` 다.",
+        "operationId": "list_11",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "description": "게임 빌드 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/MacroListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/macros/{macroId}": {
+      "get": {
+        "tags": [
+          "Macro"
+        ],
+        "summary": "등록된 macro 상세",
+        "description": "macro 하나를 원문까지 읽는다. 목록 항목에 `source` 를 더한 모양이고, 실행용 JSON tree 는 싣지 않는다.",
+        "operationId": "read_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "description": "게임 빌드 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "macroId",
+            "in": "path",
+            "description": "macro id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/MacroDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-builds/{gameBuildId}/content-map": {
       "get": {
         "tags": [
@@ -3985,7 +4087,7 @@
         ],
         "summary": "씬 명세 조회",
         "description": "이 빌드에 앉은 씬·기능·전이·gap 을 한 번에 읽는다. `contentMap` 이 null 이면 등록된 문서가 없고, `contentMap.ingestedAt` 이 null 이면 등록만 되고 아직 앉지 않았다.",
-        "operationId": "read_1",
+        "operationId": "read_2",
         "parameters": [
           {
             "name": "projectId",
@@ -4356,7 +4458,7 @@
         ],
         "summary": "받은 초대 목록",
         "description": "로그인한 계정으로 온 초대와 그 계정의 확인된 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없어도 계정으로 온 초대는 나온다.",
-        "operationId": "list_12",
+        "operationId": "list_13",
         "responses": {
           "200": {
             "description": "OK",
@@ -6436,11 +6538,11 @@
           },
           "kind": {
             "type": "string",
+            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ],
-            "default": "sdk"
+            ]
           }
         }
       },
@@ -8921,6 +9023,141 @@
             }
           }
         }
+      },
+      "MacroListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "macro 목록. 이름 오름차순",
+            "items": {
+              "$ref": "#/components/schemas/MacroSummaryResponse"
+            }
+          }
+        },
+        "description": "빌드에 등록된 macro 목록"
+      },
+      "MacroParameterResponse": {
+        "required": [
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "선언 타입. 저장된 tree 가 말하지 않으면 null"
+          }
+        },
+        "description": "macro 의 parameter 하나"
+      },
+      "MacroScreenResponse": {
+        "required": [
+          "id",
+          "sceneName"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string",
+            "description": "표시용. 아직 아무도 이름을 안 붙였으면 null"
+          },
+          "sceneName": {
+            "type": "string",
+            "description": "이 화면이 속한 씬의 이름"
+          }
+        },
+        "description": "macro 가 이어진 screen 하나"
+      },
+      "MacroSummaryResponse": {
+        "required": [
+          "id",
+          "name",
+          "parameters",
+          "screens",
+          "updatedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string",
+            "description": "진입점 `def` 의 이름. 같은 빌드 안에서 유일하다"
+          },
+          "parameters": {
+            "type": "array",
+            "description": "진입점 `def` 줄의 parameter. 순서가 뜻을 가진다",
+            "items": {
+              "$ref": "#/components/schemas/MacroParameterResponse"
+            }
+          },
+          "screens": {
+            "type": "array",
+            "description": "이 macro 를 쓸 수 있다고 이어 둔 screen. 빈 배열은 '아직 어디서 쓸지 모른다' 다",
+            "items": {
+              "$ref": "#/components/schemas/MacroScreenResponse"
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "정의를 마지막으로 고친 시각",
+            "format": "date-time"
+          }
+        },
+        "description": "등록된 macro 한 줄. source 는 싣지 않는다"
+      },
+      "MacroDetailResponse": {
+        "required": [
+          "id",
+          "name",
+          "parameters",
+          "screens",
+          "source",
+          "updatedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MacroParameterResponse"
+            }
+          },
+          "screens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MacroScreenResponse"
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "type": "string",
+            "description": "저장된 원문 그대로. 공백을 깎지 않는다"
+          }
+        },
+        "description": "등록된 macro 하나의 상세. 목록 항목에 source 를 더한 것"
       },
       "ContentMapEdgeResponse": {
         "required": [
