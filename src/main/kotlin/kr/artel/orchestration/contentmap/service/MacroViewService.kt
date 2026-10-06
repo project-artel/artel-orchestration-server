@@ -12,6 +12,7 @@ import kr.artel.orchestration.contentmap.dto.MacroScreenResponse
 import kr.artel.orchestration.contentmap.dto.MacroScreenRow
 import kr.artel.orchestration.contentmap.dto.MacroSummaryResponse
 import kr.artel.orchestration.contentmap.dto.MacroSummaryRow
+import kr.artel.orchestration.contentmap.macro.MacroWriteFrames
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.repository.MacroRepository
 import kr.artel.orchestration.contentmap.repository.ScreenMacroRepository
@@ -65,6 +66,19 @@ class MacroViewService(
      * 행이 곱해져 `source` 를 안 싣는 이득이 사라지고, macro 마다 관계를 따로 물으면 macro 수만큼
      * 왕복이 생긴다.
      *
+     * ## macro 를 **먼저** 읽는다. 순서가 정확성이다
+     *
+     * 둘이 한 트랜잭션이 아니라서 그 사이에 `MacroDefinitionService.register` 가 commit 될 수 있다.
+     * 어느 쪽을 먼저 읽느냐가 그때 무엇이 틀리는지를 정한다.
+     *
+     * 관계를 먼저 읽으면 새 macro 가 둘째 질의에만 잡혀 **`screens` 가 빈 채로 나간다.** 이 응답에서
+     * 빈 배열은 "아직 어디서 쓸지 모른다" 라는 **뜻을 가진 값**이므로(ARTEL-925), 화면이 사실이
+     * 아닌 것을 그린다. 다른 칸은 틀리면 비어 보이지만 이 칸은 없음이 곧 주장이라 조용히 틀린다.
+     *
+     * macro 를 먼저 읽으면 그 창에 들어온 macro 가 목록에 아예 안 서고 다음 새로고침에 제대로 선다.
+     * 짝 없는 관계 행은 [MacroScreenRow] 묶음에 남아도 아무도 안 쓴다. **거짓 주장이 지연으로
+     * 바뀐다.** macro 를 지우는 경로가 없으므로(ARTEL-925) 반대 방향 손해도 없다.
+     *
      * 지도가 없는 빌드도 404 가 아니라 **빈 목록**이다. 빌드는 존재하고 접근도 되며, 없는 것은
      * 아직 아무도 등록하지 않은 macro 다 — `ContentMapResponse.EMPTY` 와 같은 판단이다.
      */
@@ -75,16 +89,17 @@ class MacroViewService(
         val contentMapId = contentMaps.findByGameBuildId(gameBuildId)?.id
             ?: return MacroListResponse.EMPTY
 
+        // **이 두 줄의 순서를 바꾸지 마라.** 관계를 먼저 읽으면 그 사이에 등록된 macro 가 빈
+        // `screens` 로 나가고, 그 빈 배열은 "아직 어디서 쓸지 모른다" 라는 주장이다. 위 KDoc 참고.
+        val summaries = macros.findSummariesByContentMapId(contentMapId).toList()
         val screensByMacroId = screenMacros.findScreenRowsByContentMapId(contentMapId)
             .toList()
             .groupBy(MacroScreenRow::macroId)
 
         return MacroListResponse(
-            items = macros.findSummariesByContentMapId(contentMapId)
-                .toList()
-                // 관계가 없는 macro 는 위 질의에 행이 없다. 그것을 목록에서 빼면 "아직 어디서 쓸지
-                // 모른다" 가 "없다" 로 바뀐다 — 빈 배열로 **싣는** 것이 이 줄의 요점이다.
-                .map { summaryOf(it, screensByMacroId[it.id].orEmpty()) },
+            // 관계가 없는 macro 는 관계 질의에 행이 없다. 그것을 목록에서 빼면 "아직 어디서 쓸지
+            // 모른다" 가 "없다" 로 바뀐다 — 빈 배열로 **싣는** 것이 이 줄의 요점이다.
+            items = summaries.map { summaryOf(it, screensByMacroId[it.id].orEmpty()) },
         )
     }
 
@@ -159,14 +174,21 @@ class MacroViewService(
      * 여기서 모양을 못 박으면 ARTEL-918 이 tree 를 확정하는 날 조회가 먼저 깨진다 — 타입은 있으면
      * 좋은 값이고 이 응답이 서는 근거가 아니다.
      *
-     * 같은 이름이 둘이면 먼저 적힌 것을 쓴다. `def f(a, a)` 는 애초에 파싱이 안 되므로 그 입력은
-     * 여기까지 오지 않는다.
+     * key 이름을 글자로 적지 않고 [MacroWriteFrames] 에서 가져오는 이유: 이 조각을 잘라 오는
+     * `MACRO_SUMMARY_COLUMNS` 의 SQL 도 같은 object 를 본다. tree 를 아는 코드가 두 벌인데 한쪽만
+     * 고쳐지면 질의는 배열을 잘라 오고 이 함수는 그 안에서 아무것도 못 읽는다.
+     *
+     * 같은 이름이 둘이면 먼저 적힌 것을 쓴다. `toMap()` 은 **나중 것**을 남기므로 [distinctBy] 가
+     * 그 순서를 뒤집는 자리다. `def f(a, a)` 는 애초에 파싱이 안 되므로 그 입력이 여기까지 오지는
+     * 않고, 두 줄 중 어느 쪽이든 답이 같다 — 그래도 둘 중 하나로 정해 둔다.
      */
     private fun declaredTypes(declared: Json?): Map<String, String> {
         val node = declared?.let { readArray(it) } ?: return emptyMap()
         return node.mapNotNull { parameter ->
-            val name = parameter.path("name").takeIf(JsonNode::isTextual)?.asText() ?: return@mapNotNull null
-            val type = parameter.path("type").takeIf(JsonNode::isTextual)?.asText() ?: return@mapNotNull null
+            val name = parameter.path(MacroWriteFrames.PARAMETER_NAME_FIELD)
+                .takeIf(JsonNode::isTextual)?.asText() ?: return@mapNotNull null
+            val type = parameter.path(MacroWriteFrames.TYPE_FIELD)
+                .takeIf(JsonNode::isTextual)?.asText() ?: return@mapNotNull null
             name to type
         }.distinctBy { it.first }.toMap()
     }

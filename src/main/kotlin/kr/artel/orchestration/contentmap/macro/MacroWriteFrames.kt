@@ -90,6 +90,34 @@ object MacroWriteFrames {
 
     /** statement 의 종류를 말하는 칸. */
     const val KIND_FIELD: String = "kind"
+
+    /**
+     * 진입점 `def` 의 선언 타입을 읽는 데 쓰는 tree key 넷(ARTEL-943).
+     *
+     * 위 셋과 같은 자리에 두는 이유는 같다. **이 tree 를 아는 코드가 두 벌이고 둘 다 여기를 봐야
+     * 한다** — `MacroRepositories.MACRO_SUMMARY_COLUMNS` 의 jsonb 식이 [DEFS_FIELD] ·
+     * [DEF_NAME_FIELD] · [PARAMETERS_FIELD] 로 진입점 `def` 의 parameter 배열을 자르고,
+     * `MacroViewService.declaredTypes` 가 그 조각에서 [PARAMETER_NAME_FIELD] 와 [TYPE_FIELD] 를
+     * 읽는다. 양쪽에 글자로 박아 두면 ARTEL-918 이 tree 를 확정할 때 한쪽만 고쳐진다.
+     *
+     * `const val` 이라 `@Query` 문자열 보간에 그대로 들어간다.
+     *
+     * **못 찾는 것이 정상일 수 있다.** 이 key 들이 안 맞으면 선언 타입만 `null` 로 떨어지고 이름과
+     * 순서는 `macro.parameter_names` 가 그대로 낸다. tree 의 모양은 아직 계약이 아니다.
+     */
+    const val DEFS_FIELD: String = "defs"
+
+    /** `defs[]` 안에서 진입점을 가리는 칸. `macro.name` 과 같은 값인 `def` 가 진입점이다. */
+    const val DEF_NAME_FIELD: String = "name"
+
+    /** 진입점 `def` 가 드는 parameter 배열. `[{"name": …, "type": …}, …]` 를 기대한다. */
+    const val PARAMETERS_FIELD: String = "parameters"
+
+    /** parameter 하나의 이름. `macro.parameter_names` 의 항목과 이것으로 맞춘다. */
+    const val PARAMETER_NAME_FIELD: String = "name"
+
+    /** parameter 하나의 선언 타입. 없으면 응답의 `type` 이 `null` 이다. */
+    const val TYPE_FIELD: String = "type"
 }
 
 /**

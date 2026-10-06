@@ -8,6 +8,7 @@ import kr.artel.orchestration.contentmap.dto.MacroSummaryRow
 import kr.artel.orchestration.contentmap.dto.MacroUpsertRow
 import kr.artel.orchestration.contentmap.entity.MacroEntity
 import kr.artel.orchestration.contentmap.entity.ScreenMacroEntity
+import kr.artel.orchestration.contentmap.macro.MacroWriteFrames
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
@@ -26,6 +27,12 @@ import org.springframework.data.repository.kotlin.CoroutineCrudRepository
  * 선언 타입이 `macro.parameter_names` 에 없는 것은 `V98` 의 결정이다 — 그 칸은 `run_macro` 가
  * 인자를 위치로 대응시킬 때 보는 이름과 순서만 담고, 타입은 tree 쪽이 원본이다.
  *
+ * **tree key 이름을 여기 적지 않는다.** `MacroWriteFrames` 가 그 셋을 들고 있고 이 식이 보간해
+ * 쓴다 — `MacroViewService.declaredTypes` 가 같은 object 에서 나머지 둘을 읽으므로, SQL 과 Kotlin
+ * 이 tree 에 대해 아는 것이 한 자리에 모인다. `ck_macro_require_carries_remedy` 와
+ * `MacroDefinitionService.hasRequireWithoutRemedy` 가 `KIND_FIELD` · `REMEDY_FIELD` 를 공유하는
+ * 것과 같은 모양이다.
+ *
  * **tree 의 모양이 다르면 null 로 떨어진다.** `defs` 가 배열이 아니거나 진입점 이름과 맞는 `def`
  * 가 없으면 `CASE` 가 NULL 을 낸다. ARTEL-918 이 tree 를 확정할 때 key 이름을 바꾸면 타입만 비고
  * 이름과 순서는 `parameter_names` 가 그대로 낸다 — 조회가 통째로 깨지는 것보다 이쪽이 낫다.
@@ -33,10 +40,10 @@ import org.springframework.data.repository.kotlin.CoroutineCrudRepository
  */
 private const val MACRO_SUMMARY_COLUMNS = """
     m.id, m.name, m.parameter_names, m.updated_at,
-    CASE WHEN jsonb_typeof(m.definition_json -> 'defs') = 'array' THEN (
-        SELECT d.value -> 'parameters'
-        FROM jsonb_array_elements(m.definition_json -> 'defs') AS d
-        WHERE d.value ->> 'name' = m.name
+    CASE WHEN jsonb_typeof(m.definition_json -> '${MacroWriteFrames.DEFS_FIELD}') = 'array' THEN (
+        SELECT d.value -> '${MacroWriteFrames.PARAMETERS_FIELD}'
+        FROM jsonb_array_elements(m.definition_json -> '${MacroWriteFrames.DEFS_FIELD}') AS d
+        WHERE d.value ->> '${MacroWriteFrames.DEF_NAME_FIELD}' = m.name
         LIMIT 1
     ) END AS declared_parameters
 """

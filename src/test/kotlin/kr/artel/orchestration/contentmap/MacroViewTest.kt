@@ -86,6 +86,35 @@ class MacroViewTest {
     }
 
     /**
+     * `screen` 둘에 달린 macro. **관계 하나짜리 테스트로는 셋이 한 번도 안 돈다** — `groupBy` 가
+     * 한 macro 에 행 여럿을 모으는 경로, `MACRO_SCREEN_JOIN` 의 `ORDER BY sc.id ASC`,
+     * 상세의 `findScreenRowsByMacroId` 가 행 둘 이상을 내는 경로.
+     *
+     * **거꾸로 단다.** `dialog` 를 먼저 `link` 하고 `hand` 를 나중에 하므로, 관계를 적은 순서와
+     * `screen.id` 순서가 어긋난다. 응답이 `hand` 를 앞에 내야 `ORDER BY` 가 실제로 걸린 것이다 —
+     * 그냥 순서대로 달면 `ORDER BY` 를 지워도 테스트가 통과한다.
+     *
+     * 그 정렬은 KDoc 이 "같은 관계를 다시 받아도 흔들리지 않는다" 고 계약으로 적어 둔 것이다.
+     * 테스트가 보지 않으면 계약이 아니다.
+     */
+    @Test
+    fun `screen 둘에 달린 macro 가 screen id 순으로 나온다`(): Unit = runBlocking {
+        val world = newWorld()
+        val macroId = world.register(ATTACK, screenIds = listOf(world.dialog, world.hand))
+
+        val expected = listOf(
+            MacroScreenResponse(id = world.hand, name = "손패", sceneName = BATTLE),
+            MacroScreenResponse(id = world.dialog, name = null, sceneName = BATTLE),
+        )
+        assertThat(world.hand).describedAs("픽스처가 id 순서를 보장한다").isLessThan(world.dialog)
+        assertThat(view.list(world.userId, world.projectId, world.buildId)!!.items.single().screens)
+            .containsExactlyElementsOf(expected)
+        assertThat(view.read(world.userId, world.projectId, world.buildId, macroId)!!.screens)
+            .describedAs("상세도 같은 순서다")
+            .containsExactlyElementsOf(expected)
+    }
+
+    /**
      * 목록은 이름 오름차순이다. 등록 순서로 내면 agent 가 무엇을 먼저 떠올렸나가 되고, 그것은
      * 사람이 목록에서 찾는 축이 아니다.
      */
@@ -243,6 +272,27 @@ class MacroViewTest {
 
         assertThat(view.read(world.userId, world.projectId, world.buildId, theirs)).isNull()
         assertThat(view.read(world.userId, world.projectId, other.buildId, theirs)).isNotNull()
+    }
+
+    /**
+     * 아무 관계 없는 사용자에게는 **없는 것과 같다.**
+     *
+     * 이 기능의 권한 판정은 `gameBuilds.findAccessibleById` 하나뿐이라, 그것이 빠지거나 뒤집히면
+     * 남의 빌드의 macro 이름과 원문이 그대로 나간다 — 게임의 내용 자체다. 위 테스트들은 전부
+     * 멤버로 돌므로 그 줄이 없어져도 하나도 안 깨진다.
+     *
+     * 부재와 권한 없음을 같은 null(→ 404)로 묶는 것도 함께 본다. 구분해 주면 id 를 훑어 남의
+     * 빌드가 존재한다는 사실을 알아낼 수 있다 —
+     * `EvidenceDocumentServiceTest.남의 빌드는 보이지 않는다` 가 같은 모양이다.
+     */
+    @Test
+    fun `남의 빌드의 macro 는 보이지 않는다`(): Unit = runBlocking {
+        val world = newWorld()
+        val macroId = world.register(ATTACK, screenIds = listOf(world.hand))
+        val stranger = newUser()
+
+        assertThat(view.list(stranger, world.projectId, world.buildId)).isNull()
+        assertThat(view.read(stranger, world.projectId, world.buildId, macroId)).isNull()
     }
 
     // ---------- 픽스처 ----------
