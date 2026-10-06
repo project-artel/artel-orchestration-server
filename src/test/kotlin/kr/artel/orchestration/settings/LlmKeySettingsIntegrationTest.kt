@@ -10,7 +10,6 @@ import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.config.InternalApiServer
-import kr.artel.orchestration.settings.service.REQUIRED_OPENROUTER_MODELS
 import kr.artel.orchestration.support.testAppUser
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
@@ -32,12 +31,14 @@ import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.publisher.Mono
 import reactor.netty.DisposableServer
 import reactor.netty.http.server.HttpServer
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 관리 화면의 OpenRouter API key: 저장, 출처 순서, 내부 포트로 건네기, OpenRouter 확인, 그리고 key 원문이
  * 어느 공개 응답에도, 어느 로그에도 나가지 않는다는 것.
  *
- * OpenRouter 는 이 클래스가 띄운 가짜 서버다. [VALID_KEY] 만 받아 주고, 필요한 model 중 둘을 뺀 목록을 낸다.
+ * OpenRouter 와 `artel-agent-server` 는 이 클래스가 띄운 가짜 서버다. OpenRouter 는 [VALID_KEY] 만 받아 주고,
+ * 필요한 model 중 둘을 뺀 목록을 낸다. agent 는 `GET /internal/models/required` 에 [REQUIRED_MODELS] 를 낸다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -52,8 +53,28 @@ class LlmKeySettingsIntegrationTest {
         /** 가짜 OpenRouter 가 내지 않는 둘. 확인 결과의 missingModels 가 이 둘이어야 한다. */
         private val UNLISTED_MODELS = setOf("x-ai/grok-4.6", "openai/text-embedding-3-large")
 
+        private val REQUIRED_MODELS = listOf(
+            "openai/gpt-test-one",
+            "anthropic/claude-test-two",
+            "x-ai/grok-4.6",
+            "google/gemini-test-three",
+            "openai/text-embedding-3-large"
+        )
+
+        /** 가짜 agent 의 `/models/required` 응답. 테스트가 바꿔 끼운다. status 와 본문이다. */
+        private val agentAnswer = AtomicReference(200 to """{"slugs":[${REQUIRED_MODELS.joinToString(",") { "\"$it\"" }}]}""")
+
+        private val fakeAgent: DisposableServer by lazy {
+            HttpServer.create().port(0).route { routes ->
+                routes.get("/internal/models/required") { _, response ->
+                    val (status, body) = agentAnswer.get()
+                    response.status(status).header("Content-Type", "application/json").sendString(Mono.just(body))
+                }
+            }.bindNow()
+        }
+
         private val fakeOpenRouter: DisposableServer by lazy {
-            val listedModels = REQUIRED_OPENROUTER_MODELS.filterNot { it in UNLISTED_MODELS } + "some/other-model"
+            val listedModels = REQUIRED_MODELS.filterNot { it in UNLISTED_MODELS } + "some/other-model"
             val modelsJson = listedModels.joinToString(",", prefix = """{"data":[""", postfix = "]}") { """{"id":"$it","name":"x"}""" }
             HttpServer.create().port(0).route { routes ->
                 routes.get("/api/v1/key") { request, response ->
@@ -76,6 +97,9 @@ class LlmKeySettingsIntegrationTest {
         @DynamicPropertySource
         fun settings(registry: DynamicPropertyRegistry) {
             registry.add("artel.llm.openrouter-base-url") { "http://localhost:${fakeOpenRouter.port()}/api/v1" }
+            registry.add("artel.agent.base-url") { "http://localhost:${fakeAgent.port()}/internal" }
+            // 캐시가 켜져 있으면 테스트끼리 agent 응답이 새므로 끈다. 캐시는 RequiredModelsClientTest 가 본다.
+            registry.add("artel.agent.required-models-ttl") { "PT0S" }
             registry.add("artel.llm.openrouter-api-key") { ENVIRONMENT_KEY }
             registry.add("artel.secrets.key") { "test-only-secrets-key-that-is-at-least-32-bytes" }
         }
@@ -96,6 +120,7 @@ class LlmKeySettingsIntegrationTest {
 
     @BeforeEach
     fun seedAdmin(): Unit = runBlocking {
+        agentAnswer.set(200 to """{"slugs":[${REQUIRED_MODELS.joinToString(",") { "\"$it\"" }}]}""")
         databaseClient.sql("DELETE FROM platform_setting").fetch().rowsUpdated().awaitSingle()
         val admin = appUserRepository.save(testAppUser("llm-admin").copy(platformRole = PlatformRole.ADMIN.name))
         adminId = admin.id!!
@@ -144,8 +169,9 @@ class LlmKeySettingsIntegrationTest {
 
         assertThat(result["keyValid"].asBoolean()).isTrue()
         assertThat(result["error"].isNull).isTrue()
+        assertThat(result["requiredModels"].map { it.asText() }).containsExactlyElementsOf(REQUIRED_MODELS)
         assertThat(result["missingModels"].map { it.asText() }).containsExactlyInAnyOrderElementsOf(UNLISTED_MODELS)
-        assertThat(result["reachableModels"].size()).isEqualTo(REQUIRED_OPENROUTER_MODELS.size - UNLISTED_MODELS.size)
+        assertThat(result["reachableModels"].size()).isEqualTo(REQUIRED_MODELS.size - UNLISTED_MODELS.size)
         assertThat(call(HttpMethod.GET, "/api/admin/settings/llm")["lastCheck"]["keyValid"].asBoolean()).isTrue()
     }
 
@@ -157,7 +183,26 @@ class LlmKeySettingsIntegrationTest {
 
         assertThat(result["keyValid"].asBoolean()).isFalse()
         assertThat(result["error"].asText()).isEqualTo("invalid_key")
-        assertThat(result["missingModels"].size()).isEqualTo(REQUIRED_OPENROUTER_MODELS.size)
+        assertThat(result["missingModels"].size()).isEqualTo(REQUIRED_MODELS.size)
+    }
+
+    @Test
+    fun `check answers upstream_unavailable when the agent server fails or answers something that is not a slug list`(
+        output: CapturedOutput
+    ) {
+        call(HttpMethod.PUT, "/api/admin/settings/llm", """{"apiKey":"$VALID_KEY"}""")
+
+        for (answer in listOf(503 to "{}", 200 to """{"slugs":[]}""", 200 to """{"models":["a/b"]}""", 200 to "[1,2]")) {
+            agentAnswer.set(answer)
+
+            val result = call(HttpMethod.POST, "/api/admin/settings/llm/check")
+
+            assertThat(result["error"].asText()).isEqualTo("upstream_unavailable")
+            assertThat(result["keyValid"].asBoolean()).isFalse()
+            assertThat(result["requiredModels"].size()).isZero()
+            assertThat(result["missingModels"].size()).isZero()
+        }
+        assertThat(output.all).contains("/models/required").doesNotContain(VALID_KEY)
     }
 
     @Test

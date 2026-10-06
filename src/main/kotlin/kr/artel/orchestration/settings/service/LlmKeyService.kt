@@ -53,7 +53,7 @@ data class LlmKeyCheckResult(
     /** 확인에 쓴 key 의 끝 네 글자를 가린 모양. key 가 없었으면 null 이다. */
     val maskedKey: String?,
     val keyValid: Boolean,
-    /** 닿아야 하는 model 전부. [REQUIRED_OPENROUTER_MODELS] 다. */
+    /** 닿아야 하는 model 전부. `artel-agent-server` 의 `GET /internal/models/required` 가 준 목록이다. 그 목록을 받지 못했으면 비어 있다. */
     val requiredModels: List<String>,
     val reachableModels: List<String>,
     val missingModels: List<String>,
@@ -92,6 +92,7 @@ class LlmKeyService(
     private val platformSettingRepository: PlatformSettingRepository,
     private val secretCipher: SecretCipher,
     private val openRouterModelClient: OpenRouterModelClient,
+    private val requiredModelsClient: RequiredModelsClient,
     private val properties: LlmKeyProperties,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
@@ -159,15 +160,20 @@ class LlmKeyService(
         val effective = effectiveKey()
         val apiKey = effective.apiKey
         val result = if (apiKey == null) {
-            checkResult(effective, keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.NO_KEY)
+            checkResult(effective, emptyList(), keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.NO_KEY)
         } else {
-            when (val listing = openRouterModelClient.list(apiKey)) {
-                is OpenRouterListing.Reachable ->
-                    checkResult(effective, keyValid = true, reachable = listing.modelIds, error = null)
-                OpenRouterListing.InvalidKey ->
-                    checkResult(effective, keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.INVALID_KEY)
-                OpenRouterListing.Unavailable ->
-                    checkResult(effective, keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.UPSTREAM_UNAVAILABLE)
+            val required = requiredModelsClient.slugs()
+            if (required == null) {
+                checkResult(effective, emptyList(), keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.UPSTREAM_UNAVAILABLE)
+            } else {
+                when (val listing = openRouterModelClient.list(apiKey)) {
+                    is OpenRouterListing.Reachable ->
+                        checkResult(effective, required, keyValid = true, reachable = listing.modelIds, error = null)
+                    OpenRouterListing.InvalidKey ->
+                        checkResult(effective, required, keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.INVALID_KEY)
+                    OpenRouterListing.Unavailable ->
+                        checkResult(effective, required, keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.UPSTREAM_UNAVAILABLE)
+                }
             }
         }
         platformSettingRepository.upsert(
@@ -182,6 +188,7 @@ class LlmKeyService(
 
     private fun checkResult(
         effective: EffectiveLlmKey,
+        required: List<String>,
         keyValid: Boolean,
         reachable: Set<String>,
         error: LlmKeyCheckError?
@@ -190,9 +197,9 @@ class LlmKeyService(
         source = effective.source,
         maskedKey = effective.apiKey?.let(::mask),
         keyValid = keyValid,
-        requiredModels = REQUIRED_OPENROUTER_MODELS,
-        reachableModels = REQUIRED_OPENROUTER_MODELS.filter { it in reachable },
-        missingModels = REQUIRED_OPENROUTER_MODELS.filterNot { it in reachable },
+        requiredModels = required,
+        reachableModels = required.filter { it in reachable },
+        missingModels = required.filterNot { it in reachable },
         error = error
     )
 
