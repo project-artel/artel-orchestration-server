@@ -15,11 +15,13 @@ class S3DocumentStorageTest {
     private fun properties(
         accessKey: String? = "local-access-key",
         secretKey: String? = "local-secret-key",
-        endpoint: String? = null
+        endpoint: String? = null,
+        presignEndpoint: String? = null
     ) = StorageProperties(
         bucket = "artel-test",
         region = "ap-northeast-2",
         endpoint = endpoint,
+        presignEndpoint = presignEndpoint,
         accessKey = accessKey,
         secretKey = secretKey
     )
@@ -215,5 +217,32 @@ class S3DocumentStorageTest {
         val presigned = storage.presignUpload("projects/1/documents/abc/기획서 v2.pdf", "application/pdf", 10)
 
         assertThat(presigned.url).endsWith("/projects/1/documents/abc/%EA%B8%B0%ED%9A%8D%EC%84%9C%20v2.pdf")
+    }
+
+    /** presign 주소를 비우면 서버가 붙는 [StorageProperties.endpoint] 로 서명한다. */
+    @Test
+    fun `signs against the endpoint when no presign endpoint is set`() {
+        val storage = S3DocumentStorage(properties(endpoint = "http://minio:9000"), Clock.systemUTC())
+
+        val presigned = storage.presignUpload("projects/1/plan.pdf", "application/pdf", 10)
+
+        assertThat(presigned.url).startsWith("http://minio:9000/artel-test/projects/1/plan.pdf?")
+    }
+
+    /**
+     * presign 주소가 있으면 브라우저에 주는 URL 만 그 주소로 서명한다. 서버 자신의 S3 호출 주소는
+     * 그대로 `endpoint` 다.
+     */
+    @Test
+    fun `signs browser urls against the presign endpoint and keeps the server endpoint`() {
+        val configuration = properties(endpoint = "http://minio:9000", presignEndpoint = " http://localhost:9000 ")
+        val storage = S3DocumentStorage(configuration, Clock.systemUTC())
+
+        val upload = storage.presignUpload("projects/1/plan.pdf", "application/pdf", 10)
+        val download = storage.presignDownload("projects/1/plan.pdf", "plan.pdf")
+
+        assertThat(upload.url).startsWith("http://localhost:9000/artel-test/projects/1/plan.pdf?").contains("X-Amz-Signature")
+        assertThat(download.url).startsWith("http://localhost:9000/artel-test/projects/1/plan.pdf?")
+        assertThat(configuration.endpoint).isEqualTo("http://minio:9000")
     }
 }

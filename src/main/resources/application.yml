@@ -240,6 +240,9 @@ artel:
     # 로컬 MinIO 등으로 돌릴 때만 지정한다. 빈 값은 "지정하지 않음"으로 읽힌다.
     # (@ConfigurationProperties 바인딩은 SpEL을 처리하지 않아 #{null}을 쓸 수 없다.)
     endpoint: ${ARTEL_S3_ENDPOINT:}
+    # 브라우저에 내주는 presigned URL 의 주소. 서버가 붙는 주소(위 endpoint)를 브라우저가 풀지 못할 때만
+    # 지정한다(compose 의 http://minio:9000 대 http://localhost:9000). 비우면 endpoint 를 쓴다.
+    presign-endpoint: ${ARTEL_S3_PRESIGN_ENDPOINT:}
     # 선택. 비워 두면 AWS 기본 제공자 체인을 쓰고, 그마저 없으면 서명 없이 보낸다
     # (버킷이 익명 접근을 허용할 때만 통한다).
     # spring-dotenv는 .env를 Spring Environment에만 넣고 프로세스 환경변수로 만들지 못해,
