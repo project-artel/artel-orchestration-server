@@ -27,6 +27,8 @@ application, not one port. See `docs/deployment.md` § Ports.
 The route list is not repeated here. It lives in [`api/openapi.json`](api/openapi.json) —
 110 paths and 131 operations at the time of writing.
 
+`ARTEL_SECRETS_KEY` encrypts the key saved by `PUT /api/admin/settings/llm`. Blank is allowed: the server starts and that `PUT` answers 409 `secrets_key_missing`. A non-blank value must be at least 32 characters and must not contain a placeholder (`change_me`, `change-me`, `changeme`, `replace-with`, `replace_with`, `your-secret`, `secret`, case-insensitive), otherwise the server refuses to start. Generate one with `openssl rand -hex 32`; keep it separate from `ARTEL_JWT_SECRET`. The value is never printed in the error.
+
 That file is generated, not written. `OpenApiSnapshotTest` boots the application, reads
 `/v3/api-docs`, and overwrites the snapshot, so `./mvnw test` refreshes it and a diff in
 that file means the contract moved.

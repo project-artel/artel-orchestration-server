@@ -101,7 +101,7 @@ class LlmKeySettingsIntegrationTest {
             // 캐시가 켜져 있으면 테스트끼리 agent 응답이 새므로 끈다. 캐시는 RequiredModelsClientTest 가 본다.
             registry.add("artel.agent.required-models-ttl") { "PT0S" }
             registry.add("artel.llm.openrouter-api-key") { ENVIRONMENT_KEY }
-            registry.add("artel.secrets.key") { "test-only-secrets-key-that-is-at-least-32-bytes" }
+            registry.add("artel.secrets.key") { "test-only-aes-key-that-is-at-least-32-characters" }
         }
     }
 
