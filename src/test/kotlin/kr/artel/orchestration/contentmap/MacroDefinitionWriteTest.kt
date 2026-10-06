@@ -1,5 +1,6 @@
 package kr.artel.orchestration.contentmap
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
@@ -326,7 +327,7 @@ class MacroDefinitionWriteTest {
         val world = newWorld()
 
         // 양성 대조 — `remedy` 를 든 `require` 는 들어간다.
-        val macroId = macros.upsertByName(
+        val upserted = macros.upsertByName(
             contentMapId = world.contentMapId,
             name = "with_remedy",
             source = "def with_remedy(): pass",
@@ -335,7 +336,22 @@ class MacroDefinitionWriteTest {
             ),
             parameterNames = Json.of("[]"),
         )
-        assertThat(macros.findById(macroId)).isNotNull()
+        assertThat(macros.findById(upserted.id)).isNotNull()
+        assertThat(upserted.inserted).describedAs("처음 넣은 것이므로 xmax 가 0 이다").isTrue()
+
+        // 같은 이름을 다시 넣으면 `DO UPDATE` 로 가고 `xmax` 가 0 이 아니다. `created` 가 이 값에
+        // 걸려 있으므로 R2DBC 를 지나서도 맞는지 여기서 본다.
+        val again = macros.upsertByName(
+            contentMapId = world.contentMapId,
+            name = "with_remedy",
+            source = "def with_remedy(): pass  # 고쳤다",
+            definitionJson = Json.of(
+                """{"defs":[{"statements":[{"kind":"require","remedy":"대화창을 닫는다"}]}]}"""
+            ),
+            parameterNames = Json.of("[]"),
+        )
+        assertThat(again.id).isEqualTo(upserted.id)
+        assertThat(again.inserted).describedAs("갱신이므로 xmax 가 0 이 아니다").isFalse()
 
         // 음성 대조 — `remedy` 가 공백뿐이면 DB 가 막는다.
         assertThatThrownBy {
@@ -364,6 +380,134 @@ class MacroDefinitionWriteTest {
         }.isInstanceOf(DataIntegrityViolationException::class.java)
 
         assertThat(macros.findAll().toList().map { it.name }).containsExactly("with_remedy")
+    }
+
+    /**
+     * 관계 표 설계 전체가 이 동작에 걸려 있다. `register_macro` 가 지우고 새로 넣는 대신 갱신하는
+     * 이유가 `ON DELETE CASCADE` 이고, 그 CASCADE 가 **관계 행만** 지우고 반대편을 남긴다는 것이
+     * 다대다를 둔 전제다. SQL 주석으로만 적혀 있으면 다음 migration 이 그것을 바꿔도 안 걸린다.
+     */
+    @Test
+    fun `screen 을 지우면 관계 행만 사라지고 macro 는 남는다`(): Unit = runBlocking {
+        val world = newWorld()
+        register(world, name = MACRO, screens = listOf(world.screenA, world.screenB))
+        val macroId = macros.findAll().toList().single().id!!
+
+        screens.deleteById(world.screenB)
+
+        assertThat(screenMacros.findScreenIdsByMacroId(macroId).toList()).containsExactly(world.screenA)
+        assertThat(macros.findById(macroId)).describedAs("반대편 행은 남는다").isNotNull()
+    }
+
+    @Test
+    fun `macro 를 지우면 관계 행만 사라지고 screen 은 남는다`(): Unit = runBlocking {
+        val world = newWorld()
+        register(world, name = MACRO, screens = listOf(world.screenA, world.screenB))
+        val macroId = macros.findAll().toList().single().id!!
+
+        macros.deleteById(macroId)
+
+        assertThat(screenMacros.findAll().toList()).isEmpty()
+        assertThat(screens.findById(world.screenA)).describedAs("반대편 행은 남는다").isNotNull()
+        assertThat(screens.findById(world.screenB)).isNotNull()
+    }
+
+    /** macro 는 build 당이다. 지도가 사라지면 그 build 의 macro 도 같이 죽는다. */
+    @Test
+    fun `content_map 을 지우면 그 지도의 macro 가 따라 사라진다`(): Unit = runBlocking {
+        val world = newWorld()
+        register(world, name = MACRO, screens = emptyList())
+
+        // `scene` → `screen` 이 지도를 물고 있어 먼저 비운다. 이 테스트가 보려는 것은
+        // `macro.content_map_id` 의 CASCADE 하나다.
+        screens.deleteAll()
+        scenes.deleteAll()
+        contentMaps.deleteById(world.contentMapId)
+
+        assertThat(macros.findAll().toList()).isEmpty()
+    }
+
+    /** 이름의 유일 범위가 `content_map_id` 안이라는 것은 같은 이름 둘이 **공존한다**는 뜻이다. */
+    @Test
+    fun `다른 build 에는 같은 이름의 macro 가 나란히 선다`(): Unit = runBlocking {
+        val first = newWorld()
+        val second = newWorld()
+
+        register(first, name = MACRO, screens = emptyList())
+        register(second, name = MACRO, screens = emptyList())
+
+        val rows = macros.findAll().toList()
+        assertThat(rows).hasSize(2)
+        assertThat(rows.map { it.name }).containsExactly(MACRO, MACRO)
+        assertThat(rows.map { it.contentMapId })
+            .containsExactlyInAnyOrder(first.contentMapId, second.contentMapId)
+    }
+
+    /**
+     * 세션이 없으면 **쓰기는 수행하고 답만 못 한다.** 거꾸로 하면 이 런이 등록한 macro 가 사라지고,
+     * 그것은 왕복 하나보다 비싸다. 읽기는 반대로 조회 자체를 시작하지 않는다.
+     */
+    @Test
+    fun `세션이 없어도 등록은 수행되고 답만 못 한다`(): Unit = runBlocking {
+        val world = newWorld(agentSessionId = null)
+
+        register(world, name = MACRO, screens = listOf(world.screenA))
+
+        assertThat(macros.findAll().toList()).describedAs("쓰기는 남는다").hasSize(1)
+        assertThat(recorder.sent).describedAs("답할 세션이 없다").isEmpty()
+    }
+
+    @Test
+    fun `세션이 없으면 읽기는 조회를 시작하지 않는다`(): Unit = runBlocking {
+        val world = newWorld(agentSessionId = null)
+
+        read(world, MACRO)
+
+        assertThat(recorder.sent).isEmpty()
+        assertThat(qaLogs.findAll().toList().map { it.message })
+            .anyMatch { it != null && it.contains("has no Agent session to answer") }
+    }
+
+    @Test
+    fun `상한을 넘는 name 과 source 는 거절된다`(): Unit = runBlocking {
+        val world = newWorld()
+
+        register(world, name = "n".repeat(MacroWriteFrames.MAX_NAME_LENGTH + 1))
+        assertThat(recorder.sent.single().payload.path("message").asText())
+            .isEqualTo(
+                "${MacroWriteFrames.REGISTER} payload.name is longer than " +
+                    "${MacroWriteFrames.MAX_NAME_LENGTH} characters"
+            )
+        recorder.sent.clear()
+
+        register(world, name = MACRO, source = "x".repeat(MacroWriteFrames.MAX_SOURCE_LENGTH + 1))
+        assertThat(recorder.sent.single().payload.path("message").asText())
+            .isEqualTo(
+                "${MacroWriteFrames.REGISTER} payload.source is longer than " +
+                    "${MacroWriteFrames.MAX_SOURCE_LENGTH} characters"
+            )
+
+        assertThat(macros.findAll().toList()).isEmpty()
+    }
+
+    /** `ck_macro_parameter_names_array` — 객체가 들어오면 "순서 있게" 가 뜻을 잃는다. */
+    @Test
+    fun `DB CHECK 가 배열이 아닌 parameter_names 를 막는다`(): Unit = runBlocking {
+        val world = newWorld()
+
+        assertThatThrownBy {
+            runBlocking {
+                macros.upsertByName(
+                    contentMapId = world.contentMapId,
+                    name = "object_parameters",
+                    source = "def object_parameters(): pass",
+                    definitionJson = Json.of("""{"defs":[]}"""),
+                    parameterNames = Json.of("""{"card_a":"string"}"""),
+                )
+            }
+        }.isInstanceOf(DataIntegrityViolationException::class.java)
+
+        assertThat(macros.findAll().toList()).isEmpty()
     }
 
     @Test
@@ -507,7 +651,7 @@ class MacroDefinitionWriteTest {
         val node = objectMapper.createObjectNode()
             .put("name", name)
             .put("source", source)
-        node.set<com.fasterxml.jackson.databind.JsonNode>("definition", objectMapper.readTree(definition))
+        node.set<JsonNode>("definition", objectMapper.readTree(definition))
         node.putArray("parameters").apply { parameters.forEach { add(it) } }
         node.putArray("screens").apply { screens.forEach { add(it.toString()) } }
         return objectMapper.writeValueAsString(node)

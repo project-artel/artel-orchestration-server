@@ -1,13 +1,14 @@
 package kr.artel.orchestration.contentmap.macro
 
-import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.JsonNode
 
 /**
  * QA agent 가 등록한 macro 를 지도에 적고 다시 읽는 프레임(ARTEL-921).
  *
- * **이 파일이 계약이다.** 모양은 `docs/capability-write-frames.md` 가 세운 것을 그대로 쓴다 —
- * 같은 봉투, 같은 거절 방식, 같은 라우터 가드. 그쪽 문서와 이 파일이 어긋나면 이 파일이 맞다.
+ * **이 파일이 macro 프레임의 계약이다.** `docs/capability-write-frames.md` 는 macro 를 다루지
+ * 않는다 — 거기서 가져온 것은 모양뿐이고(같은 봉투, 같은 거절 방식, 같은 라우터 가드), 이 두
+ * 타입이 무엇을 받고 무엇을 거절하는지는 이 파일에만 적혀 있다. payload 필드 표는 PR 본문에 있다
+ * (ARTEL-921 의 Validation Notes 가 요구한 형태다).
  *
  * ```
  * AGENT_TO_ORCHE  MACRO_REGISTER      등록된 macro 정의를 적는다
@@ -60,10 +61,25 @@ object MacroWriteFrames {
      */
     const val MAX_NAME_LENGTH: Int = 200
 
-    /** `source` 상한. macro 하나는 짧은 script 다 — 프레임 하나가 타임라인을 밀어내지 못하게 한다. */
+    /**
+     * `source` 상한. `macro.source` 는 `TEXT` 라 DB 가 막아 주지 않는다.
+     *
+     * 상한을 두는 이유는 `rationale` · `summary` 에 둔 것과 같다 — agent 가 보낸 텍스트가 상한
+     * 없이 들어오면 프레임 하나가 타임라인과 이 표를 밀어낸다.
+     *
+     * 20,000자의 근거: macro 하나는 `def` 몇 개짜리 script 다. 실측 예시
+     * `attack_with_combined_card` 가 300자 미만이라 두 자리 넉넉한 값이고, 이 값에 걸리는 정의는
+     * macro 가 아니라 다른 것이다.
+     */
     const val MAX_SOURCE_LENGTH: Int = 20_000
 
-    /** `definition` 의 직렬화 상한. [MAX_SOURCE_LENGTH] 와 같은 이유로 둔다. */
+    /**
+     * `definition` 의 직렬화 상한. [MAX_SOURCE_LENGTH] 와 같은 이유로 둔다.
+     *
+     * [MAX_SOURCE_LENGTH] 의 10배다. tree 는 같은 내용을 key 와 괄호로 부풀려 담으므로 텍스트보다
+     * 크고, 그 비율은 statement 종류에 따라 흔들린다. 파생물이 원본보다 10배를 넘으면 그것은
+     * 부풀기가 아니라 다른 문제다.
+     */
     const val MAX_DEFINITION_LENGTH: Int = 200_000
 
     /** `require` statement 의 `kind` 값. [REMEDY_FIELD] 와 함께 DB CHECK 가 보는 두 key 다. */

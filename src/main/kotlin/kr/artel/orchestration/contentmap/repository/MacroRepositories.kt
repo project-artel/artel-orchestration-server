@@ -2,6 +2,7 @@ package kr.artel.orchestration.contentmap.repository
 
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.Flow
+import kr.artel.orchestration.contentmap.dto.MacroUpsertRow
 import kr.artel.orchestration.contentmap.entity.MacroEntity
 import kr.artel.orchestration.contentmap.entity.ScreenMacroEntity
 import org.springframework.data.r2dbc.repository.Modifying
@@ -30,6 +31,10 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
      *
      * 충돌했을 때도 unique violation 이 아니라 UPDATE 로 가므로 늘 한 행이 돌아온다 —
      * `DO NOTHING` 과 달리 0 행이 되지 않는다.
+     *
+     * `(xmax = 0) AS inserted` 가 새로 등록한 것과 갱신한 것을 가른다. 그 값을 upsert **전에**
+     * 따로 조회해 비교하면 같은 이름이 동시에 둘 올 때 둘 다 "없었다" 를 읽어 둘 다 새로
+     * 만들었다고 답한다. 읽는 법은 [ScreenRepository.observe] 의 KDoc 에 있다.
      */
     @Query(
         """
@@ -40,7 +45,7 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
             definition_json = EXCLUDED.definition_json,
             parameter_names = EXCLUDED.parameter_names,
             updated_at = CURRENT_TIMESTAMP
-        RETURNING id
+        RETURNING id, (xmax = 0) AS inserted
         """
     )
     suspend fun upsertByName(
@@ -49,7 +54,7 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
         source: String,
         definitionJson: Json,
         parameterNames: Json,
-    ): Long
+    ): MacroUpsertRow
 
     /**
      * 이 build 의 지도에서 이름으로 찾는다.

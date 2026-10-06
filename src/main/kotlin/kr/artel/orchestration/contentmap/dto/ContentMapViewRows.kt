@@ -248,3 +248,26 @@ data class ScreenObservationRow(
     @Column("inserted")
     val inserted: Boolean,
 )
+
+/**
+ * `macro` upsert 한 번의 결과 (ARTEL-919).
+ *
+ * [inserted] 가 새로 등록한 것과 제자리에서 갱신한 것을 가른다. agent 에게 그것을 알려주지 않으면
+ * 같은 이름을 다시 등록한 agent 가 자기가 방금 무엇을 만들었다고 믿는다.
+ *
+ * **조회 후 비교로 대신하지 않는다.** upsert 전에 행이 있었나를 따로 읽으면 같은 이름이 동시에 둘
+ * 올 때 둘 다 "없었다" 를 읽어 둘 다 새로 만들었다고 답한다. [inserted] 는 upsert 문장 자신이
+ * 내주는 값이라 그 틈이 없다.
+ *
+ * 판정의 근거는 `xmax` 다. 어떻게 읽는지는
+ * [kr.artel.orchestration.contentmap.repository.ScreenRepository.observe] 의 KDoc 에 있다.
+ * [ScreenObservationRow] 와 같은 모양이지만 따로 두는 이유는 이름이 쓰이는 자리를 말해야 하기
+ * 때문이다 — `screen` 관측의 결과 타입이 macro 등록의 답으로 돌아오면 읽는 사람이 멈춘다.
+ */
+data class MacroUpsertRow(
+    @Column("id")
+    val id: Long,
+
+    @Column("inserted")
+    val inserted: Boolean,
+)

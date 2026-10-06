@@ -101,7 +101,7 @@ data class MacroEntity(
  * 읽으면 안 된다.
  *
  * 복합 PK 라 `@Id` 가 없다 — R2DBC 는 복합키 엔티티의 자동 저장을 지원하지 않으므로 적재는
- * 명시 INSERT 로 한다([ScreenMacroEntity] 가 [ScreenCapabilityEntity] 와 같은 사정이다).
+ * 명시 INSERT 로 한다([ScreenCapabilityEntity] 와 같은 사정이다).
  */
 @Table("screen_macro")
 data class ScreenMacroEntity(

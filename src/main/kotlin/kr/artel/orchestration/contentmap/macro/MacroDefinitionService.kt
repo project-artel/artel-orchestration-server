@@ -103,24 +103,26 @@ class MacroDefinitionService(
             is Step.Ok -> step.value
         }
 
-        val existing = macros.findByContentMapIdAndName(contentMapId, name)
         return transactionalOperator.executeAndAwait {
-            // `ON CONFLICT DO UPDATE ... RETURNING id` 라 충돌해도 유니크 위반이 아니라 UPDATE 로
+            // `ON CONFLICT DO UPDATE ... RETURNING` 이라 충돌해도 유니크 위반이 아니라 UPDATE 로
             // 가고 늘 한 행이 돌아온다. 그래서 `AgentCapabilityWriteService` 가 쓰는 "트랜잭션 밖에서
             // 다시 조회해 복구" 가 여기에는 필요 없다.
-            val macroId = macros.upsertByName(
+            //
+            // 새로 등록한 것인지도 이 문장이 직접 말한다(`inserted`). 앞서 따로 조회해 비교하면
+            // 같은 이름이 동시에 둘 올 때 둘 다 "없었다" 를 읽어 둘 다 만들었다고 답한다.
+            val upserted = macros.upsertByName(
                 contentMapId = contentMapId,
                 name = name,
                 source = source,
                 definitionJson = Json.of(definitionText),
                 parameterNames = Json.of(objectMapper.writeValueAsString(parameters)),
             )
-            screenIds.forEach { screenMacros.link(it, macroId) }
+            screenIds.forEach { screenMacros.link(it, upserted.id) }
             MacroWrite.Registered(
-                macroId = macroId,
+                macroId = upserted.id,
                 name = name,
-                created = existing == null,
-                screenIds = screenMacros.findScreenIdsByMacroId(macroId).toList(),
+                created = upserted.inserted,
+                screenIds = screenMacros.findScreenIdsByMacroId(upserted.id).toList(),
             )
         }
     }
@@ -140,7 +142,8 @@ class MacroDefinitionService(
             is Step.No -> return MacroWrite.Rejected(step.reason)
             is Step.Ok -> step.value
         }
-        // 존재하지 않는 `scene` 을 묻는 거부 문장과 같은 모양이다.
+        // `AgentCapabilityWriteService.resolve` 가 모르는 `scene` 을 거절하는 문장과 같은 모양이다 —
+        // `references an unknown <무엇>: <이름>`.
         val macro = macros.findByContentMapIdAndName(contentMapId, name)
             ?: return refuse(type, "references an unknown macro: $name")
         val macroId = requireNotNull(macro.id) { "macro 가 저장되지 않았다" }
@@ -164,6 +167,10 @@ class MacroDefinitionService(
      *
      * `ck_macro_require_carries_remedy` 가 같은 판정을 SQL 로 한 번 더 한다. 두 벌인 것은
      * 의도다: 이쪽은 agent 가 읽을 문장을 만들고, 저쪽은 이 서비스를 지나지 않는 쓰기를 막는다.
+     *
+     * 두 판정이 공백에서 정확히 같지는 않다. Kotlin `isBlank` 는 NBSP 같은 Unicode 공백까지
+     * 공백으로 보지만 jsonpath `like_regex` 의 `\s` 는 ASCII 다. **엄한 쪽이 앱이라** 이 경로로
+     * 들어오는 것은 다 걸리고, 느슨한 쪽은 이 서비스를 지나지 않는 쓰기에만 남는다.
      */
     private fun hasRequireWithoutRemedy(node: JsonNode): Boolean {
         if (node.isObject) {
