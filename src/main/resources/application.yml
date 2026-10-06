@@ -206,6 +206,16 @@ artel:
       max-failures: ${ARTEL_LOGIN_MAX_FAILURES:10}
       address-max-failures: ${ARTEL_LOGIN_ADDRESS_MAX_FAILURES:100}
       window: ${ARTEL_LOGIN_FAILURE_WINDOW:PT15M}
+  # agent-server 가 내부 포트(GET /internal/settings/llm)로 받아 가는 OpenRouter API key.
+  # 관리 화면에서 넣은 값이 먼저이고, 없으면 OPENROUTER_API_KEY 다.
+  llm:
+    openrouter-api-key: ${OPENROUTER_API_KEY:}
+    openrouter-base-url: ${ARTEL_OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
+    check-timeout: ${ARTEL_OPENROUTER_CHECK_TIMEOUT:PT15S}
+  # 관리 화면에서 넣은 비밀(OpenRouter API key)을 AES-GCM 으로 잠그는 키의 원천. 32 바이트 이상.
+  # 비우면 관리 화면에서 key 를 저장할 수 없고 OPENROUTER_API_KEY 만 쓰인다. 바꾸면 저장된 값을 열 수 없다.
+  secrets:
+    key: ${ARTEL_SECRETS_KEY:}
   # 결함을 외부 이슈 tracker 로 내보내는 연동(ARTEL-671).
   tracker:
     # 굳은 PENDING 을 다시 claim 할 수 있게 되기까지의 유예. ⚠️ github.request-timeout 보다 훨씬
