@@ -32,6 +32,7 @@ import kr.artel.orchestration.testscenario.config.AuthoringExperimentProperties
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentReasoning
 import kr.artel.orchestration.testscenario.dto.AgentRef
+import kr.artel.orchestration.testscenario.dto.SavedScenarioFrame
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AuthoringFlow
@@ -608,6 +609,7 @@ class TestScenarioAgentService(
                     steps = checked.first().steps.size,
                     absorbed = absorb.absorbed,
                     kept = absorb.kept,
+                    saved = outcome.saved.map { SavedScenarioFrame(it.scenarioId, it.title, it.created) },
                 ),
             )
         } catch (e: CancellationException) {

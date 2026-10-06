@@ -97,9 +97,17 @@ class ScenarioReconcileService(
          * 잣대라, 판 요약이 세도록 밖으로 낸다 — 트레이스 산문을 되파싱하게 두지 않는다.
          */
         val contradicted: List<String> = emptyList(),
+        /**
+         * 이번에 저장한 시나리오(ARTEL-937). 무엇을 새로 만들고 무엇을 고쳤는지는 여기서만 정확하다 —
+         * 나누기가 하나를 둘로 만들고, 같은 제목이면 새로 만들지 않고 기존 것을 고친다.
+         */
+        val saved: List<SavedScenario> = emptyList(),
     ) {
         val rejected: Boolean get() = findings.rejected
     }
+
+    /** 저장한 시나리오 하나. [created] 가 거짓이면 기존 시나리오 본문을 바꾼 것이다. */
+    data class SavedScenario(val scenarioId: Long, val title: String, val created: Boolean)
 
     /**
      * [scenarios]를 [runId]/[projectId]에 upsert한다. 빈 배열이면 아무것도 하지 않는다.
@@ -388,6 +396,7 @@ class ScenarioReconcileService(
         }
 
         var applied = 0
+        val savedScenarios = mutableListOf<SavedScenario>()
         transactionalOperator.executeAndAwait {
             val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
             // **이 런에 이미 있는 제목은 갈아끼운다.** 하나씩 받으며 저장하는 턴에서 재작성이
@@ -421,6 +430,7 @@ class ScenarioReconcileService(
                     )
                     // 런 링크는 그대로 둔다(수정은 위치를 바꾸지 않는다).
                     savedId[index] = scenarioId
+                    savedScenarios += SavedScenario(scenarioId, scenario.title, created = false)
                     applied++
                 } else {
                     // 추가: 새 시나리오 INSERT + 런 끝에 append. 새 시나리오에는 살릴 라벨이 없다.
@@ -433,6 +443,7 @@ class ScenarioReconcileService(
                     )
                     runPosition++
                     savedId[index] = saved.id
+                    savedScenarios += SavedScenario(saved.id!!, scenario.title, created = true)
                     idByTitle[scenario.title.trim()] = saved.id!!
                     divided.anchorOf[index]?.let { anchor -> fromSplit += saved.id!! to anchor }
                     applied++
@@ -452,6 +463,7 @@ class ScenarioReconcileService(
         return ReconcileOutcome(
             applied, findings, allNotices, question, questions, opened,
             contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" },
+            saved = savedScenarios,
         )
     }
 
