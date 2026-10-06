@@ -48,7 +48,9 @@ data class UserProfile(
     val userTag: String,
     /** [email]이 이 계정의 것으로 확정된 시각. null이면 아직 확인되지 않았다. */
     val emailVerifiedAt: Instant?,
-    val identities: List<LinkedIdentity>
+    val identities: List<LinkedIdentity>,
+    /** ADMIN 이 막은 계정이면 true 다. */
+    val disabled: Boolean = false
 )
 
 data class LinkedIdentity(

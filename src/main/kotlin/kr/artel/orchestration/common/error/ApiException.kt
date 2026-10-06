@@ -33,7 +33,14 @@ abstract class ApiException(
     message: String,
     val severity: ErrorSeverity = ErrorSeverity.FATAL,
     cause: Throwable? = null,
-) : RuntimeException(message, cause)
+) : RuntimeException(message, cause) {
+    /**
+     * 응답에 함께 실을 헤더. 대부분 비어 있고, 429 의 `Retry-After` 처럼 상태 코드만으로는 클라이언트가
+     * 다음 행동을 정할 수 없을 때만 채운다. 4xx message 와 같은 규약으로 도메인 값만 담는다.
+     */
+    open val responseHeaders: Map<String, String>
+        get() = emptyMap()
+}
 
 /** 400 — 요청 값이 잘못됨. */
 open class BadRequestException(message: String, code: String = "invalid_request") :
@@ -54,6 +61,18 @@ open class NotFoundException(message: String = "찾을 수 없습니다.", code:
 /** 409 — 현재 상태와 충돌(중복 등). */
 open class ConflictException(message: String, code: String = "conflict") :
     ApiException(HttpStatus.CONFLICT, code, message)
+
+/**
+ * 429 — 같은 일을 너무 자주 했음. [retryAfterSeconds] 가 `Retry-After` 헤더로 나간다.
+ */
+open class TooManyRequestsException(
+    message: String,
+    val retryAfterSeconds: Long,
+    code: String = "too_many_requests",
+) : ApiException(HttpStatus.TOO_MANY_REQUESTS, code, message, ErrorSeverity.TRANSIENT) {
+    override val responseHeaders: Map<String, String>
+        get() = mapOf("Retry-After" to retryAfterSeconds.toString())
+}
 
 /** 503 — 외부 의존(스토리지·Agent 등) 일시 장애. 서버 잘못이 아니라 재시도 가능한 오류(TRANSIENT). */
 open class UpstreamUnavailableException(

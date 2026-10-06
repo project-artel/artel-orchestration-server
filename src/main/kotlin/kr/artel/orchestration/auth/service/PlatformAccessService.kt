@@ -2,6 +2,7 @@ package kr.artel.orchestration.auth.service
 
 import kr.artel.orchestration.auth.entity.PlatformRole
 import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.common.error.ForbiddenException
 import org.springframework.stereotype.Service
 
 /**
@@ -30,5 +31,23 @@ class PlatformAccessService(
      * 예외를 던지면 삭제된 사용자의 토큰이 401이 아니라 500을 받는다.
      */
     suspend fun seesAllProjects(userId: Long): Boolean =
-        appUserRepository.findById(userId)?.platformRole == PlatformRole.DEVELOPER.name
+        appUserRepository.findById(userId)?.platformRole in ROLES_THAT_SEE_ALL_PROJECTS
+
+    /**
+     * `/api/admin` 아래 경로 를 부를 수 있는 사람인지. 아니면 403 이다.
+     *
+     * 등급은 [seesAllProjects] 와 같은 이유로 매번 DB 에서 읽는다. ADMIN 을 내리면 다음 요청부터 막힌다.
+     */
+    suspend fun requireAdmin(userId: Long) {
+        if (appUserRepository.findById(userId)?.platformRole != PlatformRole.ADMIN.name) {
+            throw AdminRequiredException()
+        }
+    }
 }
+
+/** ADMIN 은 DEVELOPER 가 여는 조회를 모두 연다. */
+private val ROLES_THAT_SEE_ALL_PROJECTS = setOf(PlatformRole.DEVELOPER.name, PlatformRole.ADMIN.name)
+
+/** ADMIN 이 아닌 사람이 `/api/admin` 아래 경로 를 부를 때. */
+class AdminRequiredException :
+    ForbiddenException("관리자만 할 수 있습니다.", code = "admin_required")

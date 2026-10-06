@@ -19,6 +19,7 @@ RuntimeException
        ├─ ForbiddenException           → 403  code="forbidden"
        ├─ NotFoundException            → 404  code="not_found"
        ├─ ConflictException            → 409  code="conflict"
+       ├─ TooManyRequestsException     → 429  code="too_many_requests" (TRANSIENT, `Retry-After` 헤더)
        └─ UpstreamUnavailableException → 503  code="upstream_unavailable" (TRANSIENT)
 ```
 
