@@ -25,7 +25,7 @@ application, not one port. See `docs/deployment.md` § Ports.
 ## Documented API surface
 
 The route list is not repeated here. It lives in [`api/openapi.json`](api/openapi.json) —
-98 paths and 117 operations at the time of writing.
+110 paths and 131 operations at the time of writing.
 
 That file is generated, not written. `OpenApiSnapshotTest` boots the application, reads
 `/v3/api-docs`, and overwrites the snapshot, so `./mvnw test` refreshes it and a diff in
@@ -42,6 +42,14 @@ WebSocket communication at `/ws/sdk` and `/ws/viewer` is not an HTTP request/res
 contract. Keep its message format documented separately; OpenAPI only covers the REST
 endpoints. Those contracts are `docs/streaming-protocol.md`,
 `docs/capability-write-frames.md`, and `docs/screen-selector-frames.md`.
+
+The socket authenticates with the same instance key, passed as the `instanceKey`
+query parameter. The server closes with `4001` when the key matches no live
+instance and with `4002` when that instance already has a connection — one
+instance holds one socket, and the newcomer is refused rather than displacing
+the incumbent. It closes with `4003` when the token's account is blocked, with
+the same code the HTTP API would answer 403 with as the close reason:
+`account_disabled` or `password_change_required`.
 
 ## Verification
 
