@@ -4,6 +4,7 @@ import kr.artel.orchestration.common.error.BadRequestException
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testrun.dto.CommitScenariosRequest
+import kr.artel.orchestration.testrun.dto.RunChatCancellation
 import kr.artel.orchestration.testrun.dto.RunChatMessage
 import kr.artel.orchestration.testrun.dto.RunCoverageResponse
 import kr.artel.orchestration.testrun.dto.RunDeletionPreview
@@ -210,6 +211,22 @@ class TestRunController(
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
     }
+
+    /**
+     * 도는 저작 요청을 취소한다(ARTEL-955). 화면에서 ESC 를 두 번 누른 길이다.
+     *
+     * **세션을 닫는 아래 `close` 와 다른 창구다.** 사용자가 멈추려는 것은 기다림이지 대화가
+     * 아니어서, 대화·세션·이미 저장한 시나리오는 그대로 남는다. 끊을 턴이 없으면 `cancelled=false`
+     * 로 답한다 — 404 가 아니다. 답이 방금 도착했는데 ESC 를 누른 경우가 그 길이고, 그것은
+     * 오류가 아니다.
+     */
+    @PostMapping("/{runId}/chat/cancel")
+    suspend fun chatCancel(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<RunChatCancellation> =
+        ResponseEntity.ok(chatService.cancel(appUserId, runId))
 
     /** 작성 세션을 종료한다(런 편집 종료 시): Agent WS/SSE를 닫는다(채팅·시나리오는 남김). */
     @PostMapping("/{runId}/chat/close")
