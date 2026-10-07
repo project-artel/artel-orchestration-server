@@ -1453,11 +1453,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -1708,6 +1708,46 @@
               "*/*": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/cancel": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "chatCancel",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunChatCancellation"
                 }
               }
             }
@@ -6614,6 +6654,22 @@
           }
         }
       },
+      "RunChatCancellation": {
+        "required": [
+          "cancelled",
+          "saved"
+        ],
+        "type": "object",
+        "properties": {
+          "cancelled": {
+            "type": "boolean"
+          },
+          "saved": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "TestCaseCreateRequest": {
         "type": "object",
         "properties": {
@@ -6990,11 +7046,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
