@@ -221,6 +221,55 @@ class RunChatCancelIntegrationTest {
     }
 
     @Test
+    fun `연타해도 한 번만 끊는다`(): Unit = runBlocking {
+        // ESC 를 두 번 누르랬다고 사람이 정확히 두 번만 누르지는 않는다. 급하면 네댓 번
+        // 누르고, 그러면 창구도 그만큼 두드려진다. 실측(로컬, 2026-10-07)에서 대화에
+        // "요청을 취소했습니다" 가 세 줄 남았다.
+        //
+        // **이 검사가 증명하는 것은 여기까지다** — 요청이 여럿 와도 끊은 것은 하나이고 대화에
+        // 한 줄만 남는다. 진짜 동시 도착은 재현하지 못했다(`compareAndSet` 을 평범한
+        // get/set 으로 되돌려도 이 검사는 통과한다). 저 세 줄을 만든 것은 화면 쪽의 묵은 state
+        // 였고 그쪽은 ref 로 막았다. 여기 `AtomicBoolean` 은 창을 좁히는 두 번째 자물쇠다.
+        val client = webClient()
+        val (appUserId, token) = issueUser("burst-${seq.incrementAndGet()}")
+        val projectId = memberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        client.post()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue("""{"message":"전투 시나리오 만들어줘 run$runId"}""")
+            .retrieve()
+            .toEntity(String::class.java)
+            .block(Duration.ofSeconds(5))
+        Thread.sleep(800)
+
+        // 넷을 한꺼번에 던진다. 순서대로 부르면 경쟁이 일어나지 않아 이 검사가 아무것도 못 본다.
+        val answers = reactor.core.publisher.Flux
+            .range(0, 4)
+            .flatMap {
+                client.post()
+                    .uri("/api/projects/$projectId/test-runs/$runId/chat/cancel")
+                    .cookie("artel_access_token", token)
+                    .retrieve()
+                    .bodyToMono(RunChatCancellation::class.java)
+            }
+            .collectList()
+            .block(Duration.ofSeconds(10))!!
+
+        assertThat(answers.count { it.cancelled }).isEqualTo(1)
+
+        // 대화에도 한 줄만 남는다. 사용자가 보는 것은 누른 횟수가 아니라 일어난 일이다.
+        Thread.sleep(600)
+        val notices = runMessageRepository
+            .findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList()
+            .filter { it.content.contains("요청을 취소했습니다") }
+        assertThat(notices).hasSize(1)
+    }
+
+    @Test
     fun `세션이 없으면 끊을 것도 없다`(): Unit = runBlocking {
         val client = webClient()
         val (appUserId, token) = issueUser("idle-${seq.incrementAndGet()}")

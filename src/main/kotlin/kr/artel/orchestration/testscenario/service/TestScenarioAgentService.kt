@@ -67,6 +67,7 @@ import reactor.core.Disposable
 import reactor.core.publisher.Sinks
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 작성 챗봇의 Agent 서버 연동 서비스(코루틴). 실제 Agent 서버 계약(FastAPI)에 맞춘다:
@@ -237,7 +238,7 @@ class TestScenarioAgentService(
             existing.submitted.clear()
             existing.declined = 0
             // 취소는 **그 턴에만** 걸린다(ARTEL-955). 안 내리면 다음 요청의 결과까지 버린다.
-            existing.cancelled = false
+            existing.cancelled.set(false)
             sendTurn(sessionKey, existing, turnInput, currentScenarios)
         } else {
             openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios)
@@ -323,7 +324,12 @@ class TestScenarioAgentService(
         // 그때 "취소했습니다"를 덧붙이면 방금 받은 답을 의심하게 된다.
         if (!session.busy) return RunChatCancellation(cancelled = false)
 
-        session.cancelled = true
+        // **두 번 끊지 않는다.** ESC 를 네 번 누르면 창구도 네 번 두드려지고, 넷이 거의 같은
+        // 순간에 도착하면 넷 다 `busy` 를 보고 지나간다 — 실측에서 대화에 "요청을 취소했습니다"
+        // 가 세 줄 남았다. 깃발을 세운 쪽만 끊고 나머지는 끊을 턴이 없었던 것으로 답한다.
+        if (!session.cancelled.compareAndSet(false, true)) {
+            return RunChatCancellation(cancelled = false)
+        }
         // 카드 검토 모드는 저장하지 않고 제안으로만 두는 길이라 셀 것이 없다.
         val saved = if (session.autoApply) session.submitted.size else 0
         // 기다림을 끝낸다. 이것이 사용자가 실제로 얻는 것이다 — 화면이 풀리고 다음 말을 보낼 수
@@ -1362,7 +1368,7 @@ class TestScenarioAgentService(
                 )
                 return
             }
-            if (session != null && session.cancelled) {
+            if (session != null && session.cancelled.get()) {
                 discardAfterCancel(sessionKey, session, node)
                 return
             }
@@ -1774,12 +1780,16 @@ class TestScenarioAgentService(
         /**
          * 이 턴을 사용자가 **취소했나**(ARTEL-955). 다음 요청이 받아들여질 때 내려간다.
          *
+         * `AtomicBoolean` 인 것은 세우는 쪽을 **하나로 정하기 위해서**다. 취소 요청은 사용자가
+         * 누른 횟수만큼 오고 거의 같은 순간에 도착하므로, 평범한 플래그로는 둘 다 "내가 끊었다"
+         * 로 답해 대화에 같은 줄이 여러 개 남는다.
+         *
          * 턴 단위의 값인데 세션에 두는 이유는 턴을 담은 객체가 없어서다. 그래서 창이 하나
          * 남는다 — 취소한 뒤 새 요청을 보내고 **그 다음에** 앞 턴의 프레임이 오면, 깃발이
          * 이미 내려가 있어 새 턴의 것으로 처리된다. 지금 Agent 는 `cancel` 을 받은 자리에서
          * 턴 task 를 죽이므로 그 창은 왕복 한 번이고, 넓히지 않으려면 턴에 번호를 붙여야 한다.
          */
-        @Volatile var cancelled: Boolean = false,
+        val cancelled: AtomicBoolean = AtomicBoolean(false),
     ) {
         val busy: Boolean get() = watchdog?.isActive == true
     }
