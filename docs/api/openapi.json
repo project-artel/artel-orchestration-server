@@ -743,6 +743,54 @@
         }
       }
     },
+    "/api/admin/settings/llm": {
+      "get": {
+        "tags": [
+          "admin-llm-settings-controller"
+        ],
+        "operationId": "llmKeyStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin-llm-settings-controller"
+        ],
+        "operationId": "updateLlmKey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLlmKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/test-cases/content-maps/{contentMapId}/regenerate": {
       "post": {
         "tags": [
@@ -1401,11 +1449,11 @@
             "required": false,
             "schema": {
               "type": "string",
+              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ],
-              "default": "MINE"
+              ]
             }
           }
         ],
@@ -2179,6 +2227,36 @@
         }
       }
     },
+    "/api/auth/signup": {
+      "post": {
+        "tags": [
+          "password-auth-controller"
+        ],
+        "operationId": "signup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/sdk/token": {
       "post": {
         "tags": [
@@ -2310,6 +2388,29 @@
         }
       }
     },
+    "/api/auth/password": {
+      "post": {
+        "tags": [
+          "password-auth-controller"
+        ],
+        "operationId": "changePassword",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/auth/me/email": {
       "post": {
         "tags": [
@@ -2352,6 +2453,36 @@
         "responses": {
           "204": {
             "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "password-auth-controller"
+        ],
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUserResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -2430,6 +2561,108 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/CreatedCliTokenResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users": {
+      "get": {
+        "tags": [
+          "admin-user-controller"
+        ],
+        "operationId": "listUsers",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminUserResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "admin-user-controller"
+        ],
+        "operationId": "createUser",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserWithTemporaryPasswordResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users/{targetUserId}/reset-password": {
+      "post": {
+        "tags": [
+          "admin-user-controller"
+        ],
+        "operationId": "resetUserPassword",
+        "parameters": [
+          {
+            "name": "targetUserId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserWithTemporaryPasswordResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings/llm/check": {
+      "post": {
+        "tags": [
+          "admin-llm-settings-controller"
+        ],
+        "operationId": "checkLlmKey",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmKeyCheckResult"
                 }
               }
             }
@@ -2681,6 +2914,67 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/GameBuildResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users/{targetUserId}": {
+      "patch": {
+        "tags": [
+          "admin-user-controller"
+        ],
+        "operationId": "updateUser",
+        "parameters": [
+          {
+            "name": "targetUserId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/settings/llm": {
+      "get": {
+        "tags": [
+          "internal-llm-settings-controller"
+        ],
+        "operationId": "llmSettings",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalLlmSettingsResponse"
                 }
               }
             }
@@ -4374,6 +4668,26 @@
         }
       }
     },
+    "/api/auth/providers": {
+      "get": {
+        "tags": [
+          "password-auth-controller"
+        ],
+        "operationId": "providers",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthProvidersResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/me": {
       "get": {
         "tags": [
@@ -4894,8 +5208,10 @@
         "required": [
           "displayName",
           "emailVerified",
+          "hasPassword",
           "id",
           "identities",
+          "mustChangePassword",
           "nickname",
           "platformRole",
           "userTag"
@@ -4934,6 +5250,12 @@
             "items": {
               "$ref": "#/components/schemas/LinkedIdentityResponse"
             }
+          },
+          "hasPassword": {
+            "type": "boolean"
+          },
+          "mustChangePassword": {
+            "type": "boolean"
           }
         }
       },
@@ -4967,6 +5289,117 @@
         "properties": {
           "locale": {
             "type": "string"
+          }
+        }
+      },
+      "UpdateLlmKeyRequest": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          }
+        }
+      },
+      "LlmKeyCheckResult": {
+        "required": [
+          "checkedAt",
+          "keyValid",
+          "missingModels",
+          "reachableModels",
+          "requiredModels",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "environment",
+              "none"
+            ]
+          },
+          "maskedKey": {
+            "type": "string"
+          },
+          "keyValid": {
+            "type": "boolean"
+          },
+          "requiredModels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reachableModels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missingModels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string",
+            "enum": [
+              "no_key",
+              "invalid_key",
+              "upstream_unavailable"
+            ]
+          }
+        }
+      },
+      "LlmKeyStatus": {
+        "required": [
+          "adminKeyStored",
+          "adminKeyUnreadable",
+          "configured",
+          "environmentKeyPresent",
+          "secretsKeyConfigured",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "environment",
+              "none"
+            ]
+          },
+          "maskedKey": {
+            "type": "string"
+          },
+          "adminKeyStored": {
+            "type": "boolean"
+          },
+          "adminKeyUnreadable": {
+            "type": "boolean"
+          },
+          "adminKeyUpdatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "environmentKeyPresent": {
+            "type": "boolean"
+          },
+          "secretsKeyConfigured": {
+            "type": "boolean"
+          },
+          "lastCheck": {
+            "$ref": "#/components/schemas/LlmKeyCheckResult"
           }
         }
       },
@@ -6342,6 +6775,25 @@
           }
         }
       },
+      "SignupRequest": {
+        "required": [
+          "email",
+          "name",
+          "password"
+        ],
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "SdkTokenRequest": {
         "required": [
           "code",
@@ -6436,11 +6888,11 @@
           },
           "kind": {
             "type": "string",
+            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ],
-            "default": "sdk"
+            ]
           }
         }
       },
@@ -6451,6 +6903,21 @@
         "type": "object",
         "properties": {
           "code": {
+            "type": "string"
+          }
+        }
+      },
+      "ChangePasswordRequest": {
+        "required": [
+          "currentPassword",
+          "newPassword"
+        ],
+        "type": "object",
+        "properties": {
+          "currentPassword": {
+            "type": "string"
+          },
+          "newPassword": {
             "type": "string"
           }
         }
@@ -6473,6 +6940,21 @@
         "type": "object",
         "properties": {
           "token": {
+            "type": "string"
+          }
+        }
+      },
+      "LoginRequest": {
+        "required": [
+          "email",
+          "password"
+        ],
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "password": {
             "type": "string"
           }
         }
@@ -6550,6 +7032,96 @@
           "expiresInDays": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "CreateUserRequest": {
+        "required": [
+          "email",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "platformRole": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminUserResponse": {
+        "required": [
+          "createdAt",
+          "disabled",
+          "displayName",
+          "hasPassword",
+          "id",
+          "mustChangePassword",
+          "nickname",
+          "oauthProviders",
+          "platformRole",
+          "userTag"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "userTag": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "loginEmail": {
+            "type": "string"
+          },
+          "platformRole": {
+            "type": "string"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "hasPassword": {
+            "type": "boolean"
+          },
+          "mustChangePassword": {
+            "type": "boolean"
+          },
+          "oauthProviders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UserWithTemporaryPasswordResponse": {
+        "required": [
+          "temporaryPassword",
+          "user"
+        ],
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/AdminUserResponse"
+          },
+          "temporaryPassword": {
+            "type": "string"
           }
         }
       },
@@ -6683,6 +7255,36 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "UpdateUserRequest": {
+        "type": "object",
+        "properties": {
+          "platformRole": {
+            "type": "string"
+          },
+          "disabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "InternalLlmSettingsResponse": {
+        "required": [
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "environment",
+              "none"
+            ]
           }
         }
       },
@@ -9995,6 +10597,25 @@
           "citationKnownTotal": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "AuthProvidersResponse": {
+        "required": [
+          "github",
+          "password",
+          "signupOpen"
+        ],
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "boolean"
+          },
+          "github": {
+            "type": "boolean"
+          },
+          "signupOpen": {
+            "type": "boolean"
           }
         }
       },

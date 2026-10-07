@@ -8,7 +8,9 @@ import kr.artel.orchestration.auth.entity.AppUserEntity
 import kr.artel.orchestration.auth.entity.MAX_NICKNAME_LENGTH
 import kr.artel.orchestration.auth.entity.OAuthIdentityEntity
 import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.auth.repository.LocalCredentialRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
+import kr.artel.orchestration.common.error.ForbiddenException
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
@@ -22,6 +24,22 @@ private const val FALLBACK_NICKNAME = "user"
 /** user_tag의 기본 자릿수. 이 길이가 다 나가면 한 자리씩 늘어난다. */
 private const val MIN_USER_TAG_LENGTH = 4
 
+/** 처음 보는 제공자 계정을 어떻게 받는지. */
+enum class NewAccountPolicy {
+    /** 새 사용자를 만든다. 지금까지의 동작이고 기본값이다. */
+    CREATE,
+
+    /**
+     * 새 사용자를 만들지 않는다. 제공자 이메일이 ADMIN 이 만든 계정의 로그인 이메일
+     * (`local_credential.email`)과 같을 때만 그 계정에 신원을 붙이고, 아니면 [OAuthSignupClosedException] 이다.
+     */
+    ADMIN_REGISTERED_EMAIL_ONLY
+}
+
+/** GitHub 가입이 닫혀 있는데 처음 보는 GitHub 계정이 들어왔을 때. */
+class OAuthSignupClosedException :
+    ForbiddenException("가입이 닫혀 있습니다. 관리자에게 계정을 요청하세요.", code = "signup_closed")
+
 /** user_tag 배정 저장을 몇 번까지 다시 해 보는지. 이유는 [OAuthUserService.retryingOnConflict]에 있다. */
 private const val USER_TAG_ATTEMPTS = 3
 
@@ -29,6 +47,7 @@ private const val USER_TAG_ATTEMPTS = 3
 class OAuthUserService(
     private val identityRepository: OAuthIdentityRepository,
     private val appUserRepository: AppUserRepository,
+    private val localCredentialRepository: LocalCredentialRepository,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock
 ) {
@@ -40,33 +59,45 @@ class OAuthUserService(
      * 않는 경우 계정 탈취로 이어지기 때문이다. 여러 제공자를 한 사용자에 묶는 것은 로그인된
      * 상태에서의 명시적 연결로만 허용한다(별도 작업).
      *
+     * 예외는 [NewAccountPolicy.ADMIN_REGISTERED_EMAIL_ONLY] 하나다. 가입을 닫은 설치에서 ADMIN 이 이메일로
+     * 계정을 만들어 둔 사람은 GitHub 으로도 들어올 수 있어야 하고, 그 이메일은 사용자가 아니라 ADMIN 이
+     * 적은 것이라 "남의 주소를 적어 계정을 가져간다" 가 성립하지 않는다. GitHub 은 확인을 마친 주소만
+     * 공개 이메일로 내준다.
+     *
      * 재시도가 트랜잭션 **바깥**에 있는 것은 Postgres 때문이다. 제약 위반이 나면 그 트랜잭션은
      * 실패 상태가 되어 안에서 다음 문장을 실행할 수 없다. 그래서 트랜잭션을 다시 연다.
      */
-    suspend fun upsert(identity: OAuthIdentity): AuthenticatedUser {
+    suspend fun upsert(
+        identity: OAuthIdentity,
+        newAccountPolicy: NewAccountPolicy = NewAccountPolicy.CREATE
+    ): AuthenticatedUser {
         val now = Instant.now(clock)
 
         return try {
-            retryingOnConflict { link(identity, now, claimEmail = true) }
+            retryingOnConflict { link(identity, now, claimEmail = true, newAccountPolicy) }
         } catch (conflict: DataIntegrityViolationException) {
             // `uk_app_user_verified_email` 이다. 같은 주소를 확인된 것으로 가진 계정이 이미 있고,
             // 위 재시도로도 못 걸렀다. 트랜잭션이 롤백됐으므로 주소를 주장하지 않고 한 번 더
             // 시도한다 — 가입이 실패할 이유는 아니다. user_tag 경합이 남아 있을 수 있으므로 이
             // 재시도에도 [retryingOnConflict]를 그대로 씌운다.
-            retryingOnConflict { link(identity, now, claimEmail = false) }
+            retryingOnConflict { link(identity, now, claimEmail = false, newAccountPolicy) }
         }
     }
 
     private suspend fun link(
         identity: OAuthIdentity,
         now: Instant,
-        claimEmail: Boolean
+        claimEmail: Boolean,
+        newAccountPolicy: NewAccountPolicy
     ): AuthenticatedUser =
         transactionalOperator.executeAndAwait {
             val existing = identityRepository
                 .findByProviderAndProviderUserId(identity.provider, identity.providerUserId)
             val toSave = existing?.refreshedWith(identity, now)
-                ?: newIdentityFor(identity, now, claimEmail)
+                ?: when (newAccountPolicy) {
+                    NewAccountPolicy.CREATE -> newIdentityFor(identity, now, claimEmail)
+                    NewAccountPolicy.ADMIN_REGISTERED_EMAIL_ONLY -> identityForAdminRegisteredAccount(identity, now)
+                }
             val saved = identityRepository.save(toSave)
             AuthenticatedUser(
                 userId = saved.appUserId.toString(),
@@ -126,6 +157,33 @@ class OAuthUserService(
         )
     }
 
+    /**
+     * 가입이 닫혀 있을 때 처음 보는 제공자 계정을 ADMIN 이 만든 계정에 붙인다.
+     *
+     * 그 계정에 같은 제공자의 다른 신원이 이미 붙어 있으면 붙이지 않는다. 같은 이메일을 공개한 두 번째
+     * GitHub 계정이 남의 자리에 끼어드는 길을 막는다.
+     */
+    private suspend fun identityForAdminRegisteredAccount(identity: OAuthIdentity, now: Instant): OAuthIdentityEntity {
+        val credential = identity.email?.let { localCredentialRepository.findByEmailIgnoringCase(it) }
+            ?: throw OAuthSignupClosedException()
+        val alreadyLinked = identityRepository.findByAppUserIdOrderByLastLoginAtDesc(credential.appUserId)
+            .toList()
+            .any { it.provider == identity.provider }
+        if (alreadyLinked) throw OAuthSignupClosedException()
+        return OAuthIdentityEntity(
+            appUserId = credential.appUserId,
+            provider = identity.provider,
+            providerUserId = identity.providerUserId,
+            login = identity.login,
+            displayName = identity.displayName,
+            avatarUrl = identity.avatarUrl,
+            email = identity.email,
+            createdAt = now,
+            updatedAt = now,
+            lastLoginAt = now
+        )
+    }
+
     /** 로그인할 때마다 제공자 쪽 프로필 변경을 반영한다. */
     private fun OAuthIdentityEntity.refreshedWith(identity: OAuthIdentity, now: Instant) = copy(
         login = identity.login,
@@ -163,7 +221,8 @@ class OAuthUserService(
             nickname = appUser.nickname,
             userTag = appUser.userTag,
             emailVerifiedAt = appUser.emailVerifiedAt,
-            identities = identities
+            identities = identities,
+            disabled = appUser.disabled
         )
     }
 
@@ -205,8 +264,10 @@ class OAuthUserService(
      *
      * 쓰던 번호가 새 이름 아래에서도 비어 있으면 그대로 쓴다 — 이름만 바꿨는데 번호까지 바뀌면
      * 그 사람에게 알려 둔 `nickname#user_tag`가 두 곳에서 어긋난다.
+     *
+     * 비밀번호 계정을 만드는 `PasswordAccountService` 도 이 함수로 번호를 고른다.
      */
-    private suspend fun assignUserTag(
+    internal suspend fun assignUserTag(
         nickname: String,
         forUserId: Long?,
         currentUserTag: String?

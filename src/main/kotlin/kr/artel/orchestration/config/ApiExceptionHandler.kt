@@ -65,9 +65,9 @@ class ApiExceptionHandler {
         val clientMessage =
             if (serverError) genericMessageFor(error.status.value())
             else error.message ?: genericMessageFor(error.status.value())
-        return ResponseEntity.status(error.status).body(
-            ApiErrorResponse(code = error.code, message = clientMessage)
-        )
+        return ResponseEntity.status(error.status)
+            .headers { headers -> error.responseHeaders.forEach(headers::set) }
+            .body(ApiErrorResponse(code = error.code, message = clientMessage))
     }
 
     /**

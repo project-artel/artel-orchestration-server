@@ -23,13 +23,6 @@ spring:
     password: ${DB_PASSWORD:postgres}
     locations: classpath:db/migration
     clean-disabled: false
-  security:
-    oauth2:
-      client:
-        registration:
-          github:
-            client-id: test-github-client
-            client-secret: test-github-secret
 
 artel:
   # 스위트에는 서로 다른 Spring 컨텍스트가 여럿 뜨고 각자 내부 API 서버를 하나씩 띄운다.
@@ -59,6 +52,10 @@ artel:
     refresh-audience: artel-refresh-test
     refresh-token-ttl: P14D
     refresh-cookie-name: artel_refresh_token
+    # GitHub 로그인이 켜진 상태가 기본이다. 꺼진 기동은 GitHubOAuthOptionalIntegrationTest 가 덮어써 확인한다.
+    github:
+      client-id: test-github-client
+      client-secret: test-github-secret
   storage:
     # 테스트는 가짜 DocumentStorage를 등록하므로 실제 S3에 닿지 않는다.
     # 다만 StorageProperties는 그대로 만들어지므로 버킷 값은 있어야 한다.

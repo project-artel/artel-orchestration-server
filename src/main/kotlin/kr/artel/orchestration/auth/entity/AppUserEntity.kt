@@ -57,6 +57,13 @@ data class AppUserEntity(
     @Column("user_tag")
     val userTag: String,
 
+    /**
+     * 막힌 계정. true 면 로그인과 재발급이 거절되고, 아직 살아 있는 access 토큰도
+     * `AccountStateWebFilter` 가 403 으로 막는다. 행을 지우지 않고 이것으로 막는 이유는 V97 에 있다.
+     */
+    @Column("disabled")
+    val disabled: Boolean = false,
+
     @Column("created_at")
     val createdAt: Instant,
 
@@ -73,8 +80,17 @@ data class AppUserEntity(
  *
  * [DEVELOPER]가 여는 것은 조회뿐이다. 쓰기는 이 등급과 무관하게 `project_member`를 그대로
  * 요구한다 — 근거는 [kr.artel.orchestration.auth.service.PlatformAccessService]에 있다.
+ *
+ * [ADMIN]은 [DEVELOPER]가 여는 조회를 모두 열고, 거기에 더해 `/api/admin` 아래 경로(사용자 관리와 설치
+ * 단위 설정)을 연다. 첫 가입자가 ADMIN 이 된다(`FirstUserGate`).
  */
 enum class PlatformRole {
     USER,
-    DEVELOPER
+    DEVELOPER,
+    ADMIN;
+
+    companion object {
+        /** 읽지 못하는 값은 null 이다. 요청 본문을 검증할 때 쓴다. */
+        fun parseOrNull(value: String?): PlatformRole? = entries.firstOrNull { it.name == value }
+    }
 }

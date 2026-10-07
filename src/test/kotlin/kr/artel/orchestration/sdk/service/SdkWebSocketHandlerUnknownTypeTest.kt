@@ -3,6 +3,7 @@ package kr.artel.orchestration.sdk.service
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kr.artel.orchestration.auth.service.AccountStateService
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
@@ -50,6 +51,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
         mock(QaRunStatusNotifier::class.java),
         mock(ReactiveJwtDecoder::class.java),
         mock(SessionUserResolver::class.java),
+        mock(AccountStateService::class.java),
         listOf(knownHandler)
     )
 
@@ -113,6 +115,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
             mock(QaRunStatusNotifier::class.java),
             mock(ReactiveJwtDecoder::class.java),
             mock(SessionUserResolver::class.java),
+            mock(AccountStateService::class.java),
             listOf(knownHandler, exploding)
         )
         val session = mock(WebSocketSession::class.java)
