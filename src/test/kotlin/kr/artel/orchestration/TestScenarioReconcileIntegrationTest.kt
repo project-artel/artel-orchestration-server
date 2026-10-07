@@ -765,6 +765,46 @@ class TestScenarioReconcileIntegrationTest {
     }
 
     /**
+     * TC·TS 참조는 답과 질문 양쪽에 함께 저장된다(ARTEL-932).
+     *
+     * 표식(`[[tc:N]]`)은 답의 설명에도, 질문 문장에도 들어간다. 화면은 각 줄의 payload 만 보고
+     * 칩을 그리므로 refs 가 한쪽에만 있으면 다른 쪽 표식은 이름 없는 칩이 된다.
+     */
+    @Test
+    fun `참조 표식의 이름은 답과 질문 payload 에 함께 실린다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        insertCase(projectId, "TitleScene", "A")
+
+        framesToSend.add(
+            """{"type":"result","message":"저장했어요\n@TC Shop — 상점을 연다 하나만 넣었어요.",""" +
+                """"reply":{"result":"저장했어요","detail":"[[tc:5]] 하나만 넣었어요."},""" +
+                """"scenarios":[],"questions":[{"id":"agent:a","text":"[[tc:5]] 도 따로 볼까요?",""" +
+                """"options":[{"id":"o1","label":"따로 봐 줘"}]}],""" +
+                """"refs":[{"kind":"tc","id":5,"label":"Shop — 상점을 연다","detail":"기대값: 상점이 열린다"}]}"""
+        )
+        postMessage(client, projectId, runId, token, "상점")
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .count { it.payload != null } == 2
+        }
+        val payloads = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().mapNotNull { row -> row.payload?.let { objectMapper.readTree(it.asString()) } }
+        val reply = payloads.single { it["kind"].asText() == "reply" }
+        val asked = payloads.single { it["kind"].asText() == "question" }
+        for (payload in listOf(reply, asked)) {
+            val ref = payload["refs"].single()
+            assertThat(ref["kind"].asText()).isEqualTo("tc")
+            assertThat(ref["id"].asLong()).isEqualTo(5)
+            assertThat(ref["label"].asText()).isEqualTo("Shop — 상점을 연다")
+            assertThat(ref["detail"].asText()).isEqualTo("기대값: 상점이 열린다")
+        }
+    }
+
+    /**
      * 질문 뒤에 다른 답이 와도 그 질문에는 계속 답할 수 있다(ARTEL-927).
      *
      * 저장된 질문은 "payload 가 붙은 마지막 메시지"로 찾았다. 답 말풍선에도 payload(`reply`)가

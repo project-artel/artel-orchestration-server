@@ -31,6 +31,7 @@ import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
 import kr.artel.orchestration.testscenario.config.AuthoringExperimentProperties
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentReasoning
+import kr.artel.orchestration.testscenario.dto.AgentRef
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AuthoringFlow
@@ -1321,7 +1322,7 @@ class TestScenarioAgentService(
                         // 글 그대로라 옛 화면과 대화 기록은 바뀌지 않는다.
                         saveMessage(
                             session.runId, session.appUserId, "ASSISTANT", event.message ?: "",
-                            event.reply?.payload(),
+                            event.reply?.payload(event.refs),
                         )
                         // 모델이 스스로 물은 것도 같은 모양으로 나간다 — 화면이 두 벌을 그릴
                         // 이유가 없고, 답이 돌아오는 길도 하나여야 한다. 여럿이면 한 묶음으로
@@ -1329,7 +1330,7 @@ class TestScenarioAgentService(
                         event.questions.ifEmpty { listOfNotNull(event.question) }
                             .mapNotNull { fromAgent(it) }
                             .takeIf { it.isNotEmpty() }
-                            ?.let { ask(sessionKey, session, it) }
+                            ?.let { ask(sessionKey, session, it, event.refs) }
                     } catch (err: CancellationException) {
                         throw err
                     } catch (err: Exception) {
@@ -1530,14 +1531,23 @@ class TestScenarioAgentService(
      * [AgentSession.question] 도 첫 것을 문다 — 답을 받아 다음 턴에 넘기는 경로가 하나짜리다.
      * 나머지에 답하는 길은 화면이 그 id 로 보내는 것이고, 그 자리는 아직 없다.
      */
-    private suspend fun ask(sessionKey: String, session: AgentSession, questions: List<ScenarioQuestion>) {
+    private suspend fun ask(
+        sessionKey: String,
+        session: AgentSession,
+        questions: List<ScenarioQuestion>,
+        // 질문 문장 속 표식의 이름(ARTEL-932). 화면은 이 줄의 payload 만 보고 칩을 그린다.
+        refs: List<AgentRef> = emptyList(),
+    ) {
         val first = questions.firstOrNull() ?: return
         session.question = first
         session.asked = questions.map { it.id }
-        saveMessage(session.runId, session.appUserId, "ASSISTANT", first.text, ScenarioQuestion.batchPayload(questions))
+        saveMessage(
+            session.runId, session.appUserId, "ASSISTANT", first.text,
+            ScenarioQuestion.batchPayload(questions) + AgentRef.field(refs),
+        )
         streamManager.emit(
             sessionKey,
-            ScenarioStreamEvent(type = "question", question = first, questions = questions),
+            ScenarioStreamEvent(type = "question", question = first, questions = questions, refs = refs),
         )
         logger.info(
             "되물음 [sessionKey={}, {}건, 첫 id={}, 출처={}]",
