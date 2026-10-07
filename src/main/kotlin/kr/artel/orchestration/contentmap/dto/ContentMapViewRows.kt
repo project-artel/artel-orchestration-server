@@ -248,3 +248,106 @@ data class ScreenObservationRow(
     @Column("inserted")
     val inserted: Boolean,
 )
+
+/**
+ * `macro` upsert 한 번의 결과 (ARTEL-919).
+ *
+ * [inserted] 가 새로 등록한 것과 제자리에서 갱신한 것을 가른다. agent 에게 그것을 알려주지 않으면
+ * 같은 이름을 다시 등록한 agent 가 자기가 방금 무엇을 만들었다고 믿는다.
+ *
+ * **조회 후 비교로 대신하지 않는다.** upsert 전에 행이 있었나를 따로 읽으면 같은 이름이 동시에 둘
+ * 올 때 둘 다 "없었다" 를 읽어 둘 다 새로 만들었다고 답한다. [inserted] 는 upsert 문장 자신이
+ * 내주는 값이라 그 틈이 없다.
+ *
+ * 판정의 근거는 `xmax` 다. 어떻게 읽는지는
+ * [kr.artel.orchestration.contentmap.repository.ScreenRepository.observe] 의 KDoc 에 있다.
+ * [ScreenObservationRow] 와 같은 모양이지만 따로 두는 이유는 이름이 쓰이는 자리를 말해야 하기
+ * 때문이다 — `screen` 관측의 결과 타입이 macro 등록의 답으로 돌아오면 읽는 사람이 멈춘다.
+ */
+data class MacroUpsertRow(
+    @Column("id")
+    val id: Long,
+
+    @Column("inserted")
+    val inserted: Boolean,
+)
+
+/**
+ * 조회가 읽는 macro 한 줄(ARTEL-943). **`source` 도 `definition_json` 도 통째로 싣지 않는다.**
+ *
+ * `source` 는 한 건이 최대 20,000자, `definition_json` 은 200,000자다. 빌드 하나에 macro 가 수십
+ * 개면 목록 질의 하나가 메가바이트 단위로 커지므로, 목록이 실제로 쓰는 칸만 고른다.
+ *
+ * @property declaredParameters 진입점 `def` 의 `parameters` 배열 **하나만** 떼어 온 것. tree 전체를
+ *   끌고 오지 않으려고 질의가 SQL 에서 잘라낸다. 선언 타입이 이 조각에만 있어서다 —
+ *   `macro.parameter_names` 는 이름만 담는다(`V98` 이 일부러 그렇게 뒀다). tree 가 이 모양이 아니면
+ *   null 이고, 그때 타입만 비고 이름과 순서는 [parameterNames] 가 그대로 낸다
+ */
+data class MacroSummaryRow(
+    @Column("id")
+    val id: Long,
+
+    @Column("name")
+    val name: String,
+
+    /** 이름과 **순서**의 원본. `run_macro` 가 인자를 위치로 대응시킬 때 보는 칸이다. */
+    @Column("parameter_names")
+    val parameterNames: Json,
+
+    /** `[{"name":"card_a","type":"string"}, …]`. tree 가 말하지 않으면 null. */
+    @Column("declared_parameters")
+    val declaredParameters: Json?,
+
+    @Column("updated_at")
+    val updatedAt: Instant,
+)
+
+/**
+ * 상세 조회가 읽는 macro 한 줄. [MacroSummaryRow] 에 원문을 더한 것이다(ARTEL-943).
+ *
+ * 한 건만 읽는 자리라 `source` 를 실어도 20,000자가 상한이다. `definition_json` 은 여기서도 싣지
+ * 않는다 — 실행용 캐시이고 사람이 읽을 것은 원문이다.
+ */
+data class MacroDetailRow(
+    @Column("id")
+    val id: Long,
+
+    @Column("name")
+    val name: String,
+
+    @Column("source")
+    val source: String,
+
+    @Column("parameter_names")
+    val parameterNames: Json,
+
+    @Column("declared_parameters")
+    val declaredParameters: Json?,
+
+    @Column("updated_at")
+    val updatedAt: Instant,
+)
+
+/**
+ * macro 와 그것이 이어진 `screen` 한 쌍(ARTEL-943).
+ *
+ * `screen_macro` 만 읽으면 id 뿐이라 화면이 그 숫자를 사람에게 보여 줄 수 없다. `screen` 과
+ * `scene` 까지 조인해 사람이 알아볼 이름을 함께 싣는다. 관계 표가 좁아 조인이 행을 곱하지
+ * 않는다 — 한 쌍이 한 행이다.
+ *
+ * @property screenName nullable 이다. 표시용이고 LLM 이 짓는 값이라 아직 안 붙었을 수 있다
+ * @property sceneName NOT NULL 이라 이름이 없는 `screen` 도 최소한 이 한 조각은 든다
+ */
+data class MacroScreenRow(
+    @Column("macro_id")
+    val macroId: Long,
+
+    @Column("screen_id")
+    val screenId: Long,
+
+    @Column("screen_name")
+    val screenName: String?,
+
+    @Column("scene_name")
+    val sceneName: String,
+)

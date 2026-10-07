@@ -141,6 +141,26 @@ interface ScreenRepository : CoroutineCrudRepository<ScreenEntity, Long> {
     fun findByContentMapId(contentMapId: Long): Flow<ScreenEntity>
 
     /**
+     * 준 `screen` id 중 이 지도에 **실제로 있는 것만** 돌려준다 (ARTEL-919).
+     *
+     * `screen` 에는 `content_map_id` 칸이 없으므로(V40) `scene` 을 지나 간다. 돌아온 것과 준 것의
+     * 차집합이 곧 거절할 id 다 — macro 를 등록할 때 agent 가 지목한 `screen` 이 이 build 의 것인지
+     * 보는 데 쓴다. 남의 build 의 `screen` 에 관계를 달 수 있으면 그 macro 는 자기 게임에 없는
+     * 화면에서 쓸 수 있다고 적힌다.
+     *
+     * `scene` 으로 좁히지 않는 것이 의도다. macro 하나가 `scene` 경계를 넘을 수 있어, 같은 build
+     * 안이면 어느 `scene` 의 `screen` 이든 정당하다.
+     */
+    @Query(
+        """
+        SELECT sc.id FROM screen sc
+        JOIN scene s ON s.id = sc.scene_id
+        WHERE s.content_map_id = :contentMapId AND sc.id IN (:screenIds)
+        """
+    )
+    fun findIdsInContentMap(contentMapId: Long, screenIds: Collection<Long>): Flow<Long>
+
+    /**
      * 지금의 목록으로 이 씬의 화면을 다시 계산하고 같아지는 것끼리 합친다. 사라진 화면 수를 돌려준다 (ARTEL-655).
      *
      * **합치기를 Kotlin 으로 옮겨 쓰지 않는다.** 정의는 `fold_scene_screens`(V67) 한 벌뿐이고 그것은

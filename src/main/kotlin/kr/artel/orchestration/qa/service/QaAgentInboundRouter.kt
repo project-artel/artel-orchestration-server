@@ -5,6 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.contentmap.macro.MacroDefinitionService
+import kr.artel.orchestration.contentmap.macro.MacroReadRequest
+import kr.artel.orchestration.contentmap.macro.MacroRegisterRequest
+import kr.artel.orchestration.contentmap.macro.MacroWrite
+import kr.artel.orchestration.contentmap.macro.MacroWriteFrames
 import kr.artel.orchestration.contentmap.observe.AgentCapabilityWriteService
 import kr.artel.orchestration.contentmap.observe.CapabilityDiscoveredRequest
 import kr.artel.orchestration.contentmap.observe.CapabilityVerdictRequest
@@ -115,6 +120,7 @@ private val TOOL_TYPES = setOf("TOOL", "TOOL_RESULT")
 private val SUPPORTED_TYPES =
     setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH", "KNOWLEDGE_EXPAND") +
         CapabilityWriteFrames.INBOUND_TYPES +
+        MacroWriteFrames.INBOUND +
         TOOL_TYPES +
         KNOWLEDGE_WRITE_TYPES +
         ScreenSelectorFrames.INBOUND +
@@ -148,6 +154,7 @@ class QaAgentInboundRouter(
     private val screenNames: ScreenNameService,
     private val gameInstanceRepository: GameInstanceRepository,
     private val capabilityWrites: AgentCapabilityWriteService,
+    private val macroDefinitions: MacroDefinitionService,
     private val grader: ExpectedStepsGrader,
     private val runStatusNotifier: QaRunStatusNotifier,
     private val objectMapper: ObjectMapper,
@@ -204,6 +211,18 @@ class QaAgentInboundRouter(
             val qaTry = activeTry(qaTryId) ?: return
             if (!allowContentMapWrite(qaTryId, qaTry, envelope)) return
             routeCapabilityWrite(qaTryId, qaTry, envelope)
+            return
+        }
+        // macro 쓰기와 읽기도 표시용 message 없이 payload 만 싣고 응답을 기다린다(ARTEL-921).
+        // 아래 message 필수 가드보다 앞서야 하는 이유가 capability 쪽과 같다.
+        //
+        // **`allowContentMapWrite` 가 일부러 없다.** `MACRO_REGISTER` 도 지도에 쓰므로 `frozen` 런에서
+        // 막혀야 하지만, 그 게이트를 잇는 것은 ARTEL-922 다. 위의 capability 분기가 게이트를 분기
+        // 전에 한 번만 두는 규율을 세워 두었으니, 여기 없는 것은 빠뜨린 것이 아니라 그 이슈가
+        // 가져간 것이다 — 붙을 자리는 바로 이 줄이다.
+        if (envelope.type in MacroWriteFrames.INBOUND) {
+            val qaTry = activeTry(qaTryId) ?: return
+            routeMacro(qaTryId, qaTry, envelope)
             return
         }
         // 확장도 payload에 표시용 message가 없고 응답을 기다린다 — 검색과 같은 자리에 둔다.
@@ -1013,6 +1032,124 @@ class QaAgentInboundRouter(
         payload.put("capability_key", result.capabilityKey)
         payload.put("observation_id", result.observationId?.toString())
         sendToAgent(qaTryId, sessionId, CapabilityWriteFrames.WRITE_RESULT, envelope.messageId, payload)
+    }
+
+    /**
+     * macro 정의를 적거나 읽고 결과를 돌려준다 (ARTEL-921).
+     *
+     * 거절을 예외로 받지 않는다. 서비스가 사유를 값으로 돌려주므로 프레임 하나가 receive 체인을
+     * 끊어 런 전체를 실패시키는 일이 없고, 그래도 새는 예외는 여기서 삼켜 `ERROR` 로 바꾼다
+     * ([routeCapabilityWrite] 와 같은 규율이다).
+     *
+     * **읽기는 세션을 가장 먼저 본다.** 답할 곳이 없으면 조회해 봐야 결과를 버리게 된다
+     * ([routeKnowledgeSearch] 와 같은 판단). 쓰기는 반대다 — 세션이 없어도 쓰기는 수행하고 답만
+     * 못 한다. 그러지 않으면 이 런이 등록한 macro 가 사라지고, 그것은 왕복 하나보다 비싸다.
+     */
+    private suspend fun routeMacro(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope
+    ) {
+        val isRead = envelope.type == MacroWriteFrames.READ
+        if (isRead && qaTry.agentSessionId == null) {
+            appendError(qaTryId, envelope, "${MacroWriteFrames.READ} has no Agent session to answer")
+            return
+        }
+        val result = try {
+            if (isRead) {
+                macroDefinitions.read(
+                    qaTry,
+                    objectMapper.treeToValue(envelope.payload, MacroReadRequest::class.java)
+                )
+            } else {
+                macroDefinitions.register(
+                    qaTry,
+                    objectMapper.treeToValue(envelope.payload, MacroRegisterRequest::class.java)
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            rejectMacro(qaTryId, qaTry, envelope, "${envelope.type} failed: ${error.message}")
+            return
+        }
+        when (result) {
+            is MacroWrite.Rejected -> rejectMacro(qaTryId, qaTry, envelope, result.reason)
+            is MacroWrite.Registered -> answerMacroWrite(qaTryId, qaTry, envelope, result)
+            is MacroWrite.Loaded -> answerMacroRead(qaTryId, qaTry, envelope, result)
+        }
+    }
+
+    /**
+     * macro 등록이 성공했음을 Agent 에 알린다.
+     *
+     * id 를 문자열로 싣는다. 64비트 id 가 JSON 숫자로 나가면 자바스크립트 소비자에서 정밀도가
+     * 깎인다 — 지도 쓰기와 지식 쓰기 응답이 같은 이유로 그렇게 한다.
+     *
+     * `created` 가 실려 나가는 이유: 갱신이면 행이 새로 생기지 않는데, 그것을 알려주지 않으면
+     * agent 는 자기가 방금 무엇을 만들었다고 믿는다.
+     *
+     * 성공 응답은 `qa_log` 에 남기지 않는다. 사실은 이미 `macro` 와 `screen_macro` 에 남고 이
+     * 프레임은 id 만 진 파생물이다(지도 쓰기와 같은 판단).
+     */
+    private suspend fun answerMacroWrite(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope,
+        result: MacroWrite.Registered
+    ) {
+        val sessionId = qaTry.agentSessionId ?: return
+        val payload = objectMapper.createObjectNode()
+            .put("type", MacroWriteFrames.REGISTER)
+            .put("macro_id", result.macroId.toString())
+            .put("name", result.name)
+            .put("created", result.created)
+        putIdStrings(payload, result.screenIds)
+        sendToAgent(qaTryId, sessionId, MacroWriteFrames.WRITE_RESULT, envelope.messageId, payload)
+    }
+
+    /** 저장된 macro 정의를 Agent 에 돌려준다. `definition` 은 저장된 tree 그대로다. */
+    private suspend fun answerMacroRead(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope,
+        result: MacroWrite.Loaded
+    ) {
+        val sessionId = qaTry.agentSessionId ?: return
+        val payload = objectMapper.createObjectNode()
+            .put("type", MacroWriteFrames.READ)
+            .put("macro_id", result.macroId.toString())
+            .put("name", result.name)
+            .put("source", result.source)
+        payload.set<JsonNode>("definition", result.definition)
+        payload.putArray("parameters").apply { result.parameters.forEach { add(it) } }
+        putIdStrings(payload, result.screenIds)
+        sendToAgent(qaTryId, sessionId, MacroWriteFrames.READ_RESULT, envelope.messageId, payload)
+    }
+
+    /** `screen_ids` 를 문자열 배열로 싣는다. 다른 모든 id 와 같은 규약이다. */
+    private fun putIdStrings(payload: ObjectNode, screenIds: List<Long>) {
+        payload.putArray("screen_ids").apply { screenIds.forEach { add(it.toString()) } }
+    }
+
+    /**
+     * macro 프레임의 거절을 타임라인에 남기고 Agent 에도 알린다.
+     *
+     * **거절도 답이 온다.** 조용히 버리면 agent 의 tool 이 타임아웃까지 매달린다. 세션이 없으면
+     * 답만 못 하고 감사 로그는 남는다([rejectCapabilityWrite] 와 같은 모양이다).
+     */
+    private suspend fun rejectMacro(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope,
+        reason: String
+    ) {
+        val sessionId = qaTry.agentSessionId
+        if (sessionId == null) {
+            appendError(qaTryId, envelope, reason)
+            return
+        }
+        answerWithError(qaTryId, sessionId, envelope, reason)
     }
 
     /**
