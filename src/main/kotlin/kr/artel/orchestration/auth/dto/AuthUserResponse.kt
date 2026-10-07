@@ -11,7 +11,7 @@ data class AuthUserResponse(
     /** 홈 UI 표시 언어. null이면 사용자가 아직 고르지 않은 것이다. */
     val locale: String?,
     /**
-     * 프로젝트 밖의 등급. `USER` 또는 `DEVELOPER`.
+     * 프로젝트 밖의 등급. `USER`, `DEVELOPER`, `ADMIN` 중 하나.
      *
      * 화면은 이 값으로 인가를 판단하지 않는다. 무엇을 요청할지 고르는 데만 쓴다 — 판단은 서버가
      * 하고, `DEVELOPER`라고 적힌 응답을 받아도 서버가 열지 않은 것은 열리지 않는다.
@@ -31,8 +31,15 @@ data class AuthUserResponse(
      * [email]과 다를 수 있고, 둘 다 있으면 [email]이 지금 통하는 주소다.
      */
     val pendingEmail: String?,
-    /** 최근 로그인한 제공자가 앞에 오도록 정렬된다. */
-    val identities: List<LinkedIdentityResponse>
+    /** 최근 로그인한 제공자가 앞에 오도록 정렬된다. 이메일로만 가입한 계정이면 비어 있다. */
+    val identities: List<LinkedIdentityResponse>,
+    /** 이메일과 비밀번호로 로그인할 수 있는 계정인지. 비밀번호 변경 화면을 보일지 고르는 데 쓴다. */
+    val hasPassword: Boolean = false,
+    /**
+     * 임시 비밀번호로 들어온 계정이면 true 다. 이 동안 서버는 이 경로와 `POST /api/auth/password` 말고는
+     * 전부 403 `password_change_required` 로 답한다. 화면은 이 값을 보고 비밀번호 변경 화면으로 보낸다.
+     */
+    val mustChangePassword: Boolean = false
 )
 
 /** `PUT /api/auth/me/locale` 요청 본문. */

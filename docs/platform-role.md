@@ -1,7 +1,7 @@
 # Platform role
 
-`app_user.platform_role` 은 프로젝트 밖의 등급이다. 값은 `USER` 와 `DEVELOPER` 두 개이고 기본값은
-`USER` 다.
+`app_user.platform_role` 은 프로젝트 밖의 등급이다. 값은 `USER`, `DEVELOPER`, `ADMIN` 세 개이고
+기본값은 `USER` 다.
 
 `project_member` 의 `OWNER` 와 `MEMBER` 는 한 프로젝트 안에서 무엇을 할 수 있는지를 정한다. 그
 층으로는 "모든 프로젝트를 본다" 를 쓸 수 없다 — 그 문장은 프로젝트 하나에 관한 말이 아니기
@@ -47,9 +47,45 @@
 `reference_id` 가 비었거나 가리키던 행이 지워져 어느 프로젝트의 지출인지 모르는 것들이라, 등급이
 정하는 "어느 프로젝트를 보느냐" 로는 열 수도 닫을 수도 없다.
 
+## ADMIN 이 여는 것
+
+`ADMIN` 은 위 표의 조회를 `DEVELOPER` 와 똑같이 연다(`PlatformAccessService.seesAllProjects`). 거기에
+더해 `/api/admin` 아래 경로를 연다. `USER` 와 `DEVELOPER` 는 그 경로에서 403 `admin_required` 를 받는다.
+
+| 경로 | 무엇 |
+|---|---|
+| `GET /api/admin/users` | 사용자 전부 |
+| `POST /api/admin/users` | 계정을 만들고 임시 비밀번호를 한 번 돌려준다 |
+| `POST /api/admin/users/:userId/reset-password` | 비밀번호를 새 임시 비밀번호로 바꾼다 |
+| `PATCH /api/admin/users/:userId` | `platformRole` 과 `disabled` 를 바꾼다 |
+| `GET /api/admin/settings/llm` | OpenRouter API key 의 출처와 끝 네 글자, 마지막 확인 결과 |
+| `PUT /api/admin/settings/llm` | 관리 화면의 key 를 넣거나 지운다 |
+| `POST /api/admin/settings/llm/check` | 그 key 로 필요한 model 에 닿는지 OpenRouter 에 묻는다 |
+
+프로젝트 쓰기는 `DEVELOPER` 와 같이 열지 않는다. `ADMIN` 도 참여하지 않은 프로젝트를 지우거나 기획서를
+올리지 못한다.
+
 ## 등급을 주는 방법
 
-주는 화면도 API 도 없다. 운영 DB 에 직접 친다.
+**첫 이메일 가입자가 `ADMIN` 이다.** `POST /api/auth/signup` 이 `app_user` 가 비어 있는 것을 보면 그
+계정을 `ADMIN` 으로 만든다. 판정과 행 삽입은 한 트랜잭션 안에서 `pg_advisory_xact_lock` 뒤에 있어,
+두 가입이 동시에 와도 `ADMIN` 은 하나다(`FirstUserGate`). 그 뒤로 공개 가입은 `ARTEL_SIGNUP_OPEN=true`
+일 때만 열리고, 들어오는 계정은 `USER` 다.
+
+GitHub 로 처음 들어온 사람은 `app_user` 가 비어 있어도 `ADMIN` 이 되지 않는다. 테스트 스위트의
+여러 클래스가 `app_user` 를 비우고 GitHub 신원으로 사용자를 만들기 때문이다.
+
+그 뒤의 등급은 `ADMIN` 이 `PATCH /api/admin/users/:userId` 로 바꾼다.
+
+```json
+{ "platformRole": "DEVELOPER" }
+```
+
+남은 하나뿐인 `ADMIN` 을 내리거나 막는 요청은 409 `last_admin` 이다. 허락하면 설치에 관리자가 없어지고,
+되돌리는 길이 DB 를 직접 고치는 것뿐이다.
+
+`ADMIN` 이 하나도 없는 설치(이 기능 전에 사람이 들어온 stage 와 운영, GitHub 로만 들어온 설치)는
+여전히 DB 에서 직접 준다.
 
 ```sql
 -- 누가 어떤 등급인지 먼저 본다. GitHub 로그인으로 사람을 찾는다.
@@ -59,7 +95,7 @@ SELECT u.id, u.display_name, u.platform_role, i.provider, i.login
  WHERE i.provider = 'github' AND i.login = '<github-login>';
 
 -- 올린다.
-UPDATE app_user SET platform_role = 'DEVELOPER', updated_at = NOW() WHERE id = <app_user_id>;
+UPDATE app_user SET platform_role = 'ADMIN', updated_at = NOW() WHERE id = <app_user_id>;
 
 -- 내린다.
 UPDATE app_user SET platform_role = 'USER', updated_at = NOW() WHERE id = <app_user_id>;
@@ -67,10 +103,16 @@ UPDATE app_user SET platform_role = 'USER', updated_at = NOW() WHERE id = <app_u
 
 내리면 즉시 반영된다. 등급은 JWT claim 이 아니라 요청마다 DB 에서 읽기 때문이다
 (`PlatformAccessService`). claim 에 실었다면 access 토큰이 만료될 때까지(15분) 그 사람이 계속 전체를
-봤을 것이다.
+봤을 것이다. `disabled` 와 `must_change_password` 도 같은 이유로 요청마다 DB 에서 읽는다
+(`AccountStateWebFilter`).
 
-화면을 만들지 않은 이유는 등급을 주는 일이 드물고, 그 화면 자체가 지켜야 할 또 하나의 쓰기
-경로이기 때문이다. 등급을 주는 일이 잦아지면 그때 만든다.
+## 막힌 계정과 임시 비밀번호
+
+- `disabled` 가 true 인 계정은 로그인과 재발급이 거절되고, 아직 살아 있는 access 토큰도 403
+  `account_disabled` 를 받는다. GitHub 로그인은 `/login?error=disabled` 로 돌아간다.
+- `ADMIN` 이 만든 계정과 초기화한 비밀번호는 `must_change_password` 로 시작한다. 그동안
+  `GET /api/auth/me` 와 `POST /api/auth/password` 말고는 전부 403 `password_change_required` 다.
+  로그아웃, 재발급, 로그인, 가입, `GET /api/auth/providers` 는 세션을 끝내거나 여는 길이라 막지 않는다.
 
 ## admin-page 와 artel-home 은 같은 세션을 쓴다
 
@@ -82,3 +124,8 @@ admin-page 에는 자체 로그인이 없다. `VITE_HOME_URL` 로 보내 artel-h
 필요해지면 그때는 범위가 아니라 audience 를 갈라야 한다 — admin-page 전용 로그인을 만들어
 `aud=artel-admin` 토큰에서만 그 권한이 서게 한다. 지금 그것을 하지 않은 것은 로그인 흐름을 한 벌 더
 만드는 값에 비해 얻는 것이 작기 때문이다.
+
+`ADMIN` 의 `/api/admin` 쓰기는 이 결정을 그대로 두고 같은 세션에 실었다. 그 경로는 등급을 요청마다
+DB 에서 읽고, 마지막 `ADMIN` 을 지키며, key 원문을 어느 응답에도 싣지 않는다. 세션 하나가 새어 나가면
+그 사람의 `ADMIN` 권한이 함께 나간다는 위험은 남아 있고, admin-page 전용 audience 가 그것을 줄이는 다음
+걸음이다.

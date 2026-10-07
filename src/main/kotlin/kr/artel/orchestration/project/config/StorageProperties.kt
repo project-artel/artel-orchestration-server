@@ -19,6 +19,7 @@ import java.time.Duration
  *
  * @property bucket 원본을 담을 버킷. 비어 있으면 기동을 멈춘다
  * @property endpoint 로컬 MinIO 등으로 돌릴 때만 지정한다
+ * @property presignEndpoint 브라우저에 내주는 presigned URL 의 주소. 비우면 [endpoint] 를 쓴다
  * @property accessKey 선택. [secretKey]와 함께 있어야 한다
  * @property secretKey 선택. [accessKey]와 함께 있어야 한다
  * @property uploadUrlTtl 업로드 URL 유효 기간
@@ -34,6 +35,7 @@ class StorageProperties(
     val bucket: String,
     val region: String = "ap-northeast-2",
     endpoint: String? = null,
+    presignEndpoint: String? = null,
     accessKey: String? = null,
     secretKey: String? = null,
     val uploadUrlTtl: Duration = Duration.ofMinutes(10),
@@ -51,6 +53,14 @@ class StorageProperties(
      * `#{null}` 같은 기본값도 쓸 수 없다.
      */
     val endpoint: String? = endpoint?.trim()?.ifBlank { null }
+
+    /**
+     * presigned URL 을 만들 때 쓰는 주소. 서버가 S3 에 닿는 주소와 브라우저가 닿는 주소가 다를 때
+     * 쓴다 — compose 안에서 서버는 `http://minio:9000` 으로 붙지만 브라우저는 그 이름을 풀지 못한다.
+     * 서명은 host 를 포함하므로, 서명한 뒤 URL 의 host 만 바꾸면 서명이 깨진다. 그래서 presigner 를
+     * 처음부터 이 주소로 만든다. 비우면 [endpoint] 와 같다.
+     */
+    val presignEndpoint: String? = presignEndpoint?.trim()?.ifBlank { null } ?: this.endpoint
     val accessKey: String? = accessKey?.trim()?.ifBlank { null }
     val secretKey: String? = secretKey?.trim()?.ifBlank { null }
 

@@ -227,7 +227,14 @@ data class SubmitScenarioResultFrame(
     /** 걷어내라 했지만 남긴 것 — 제목과 이유 한 문장씩. 사실대로 전하라고 따로 싣는다. */
     val kept: List<String> = emptyList(),
     val detail: String? = null,
+    /**
+     * 이번 제출로 저장한 시나리오 — 새로 만든 것인지, 기존 것을 고친 것인지(ARTEL-937).
+     * 에이전트가 결과를 "생성 N건·수정 N건" 목록으로 보여 줄 때 이것만 믿는다.
+     */
+    val saved: List<SavedScenarioFrame> = emptyList(),
 )
+
+data class SavedScenarioFrame(val scenarioId: Long, val title: String, val created: Boolean)
 
 data class TestCaseSearchErrorFrame(
     val type: String = "error",

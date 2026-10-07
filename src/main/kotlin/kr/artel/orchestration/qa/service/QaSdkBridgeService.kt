@@ -3,6 +3,7 @@ package kr.artel.orchestration.qa.service
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
+import kr.artel.orchestration.contentmap.observe.ScreenNameFrames
 import kr.artel.orchestration.contentmap.observe.ScreenSelectorFrames
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
@@ -201,6 +202,19 @@ class QaSdkBridgeService(
     )
 
     /**
+     * 방금 생긴 화면의 이름을 agent 에게 묻는다 (ARTEL-910).
+     *
+     * 제안과 같은 배관에 `correlationId` 까지 같다. 답이 오는 질문이므로 통보 쪽이 그것을 떼어 둔
+     * 이유가 여기에는 해당하지 않는다.
+     */
+    override suspend fun sendScreenName(
+        gameInstanceId: Long,
+        messageId: String,
+        summary: String,
+        payload: JsonNode
+    ): Boolean = sendScreenFrame(gameInstanceId, ScreenNameFrames.REQUEST, messageId, summary, payload)
+
+    /**
      * 화면 프레임 하나를 로그에 남기고 agent 로 보낸다.
      *
      * 활성 try 가 없거나 세션이 아직 안 붙었으면 **로그도 남기지 않고** `false` 다. 보낼 곳이
@@ -272,9 +286,14 @@ class QaSdkBridgeService(
          * 전달 실패를 삼키는 타입.
          *
          * SDK 를 중계하는 프레임(`GAME_STATE` · `PULSE` · `ACTION_RESULT`)은 전달 실패가 곧 중계
-         * 실패라 던져야 하지만, 이 둘은 관측의 곁가지다. 목록을 물어보거나 확정한 화면을 알리다
-         * 실패했다고 `pulse` 중계까지 끊기면, 화면을 못 만드는 게임에서 QA 가 통째로 눈을 잃는다.
+         * 실패라 던져야 하지만, 이 셋은 관측의 곁가지다. 목록을 물어보거나 확정한 화면을 알리거나
+         * 이름을 묻다 실패했다고 `pulse` 중계까지 끊기면, 화면을 못 만드는 게임에서 QA 가 통째로
+         * 눈을 잃는다.
          */
-        val OBSERVATION_FRAMES = setOf(ScreenSelectorFrames.PROPOSAL, ScreenSelectorFrames.SETTLED)
+        val OBSERVATION_FRAMES = setOf(
+            ScreenSelectorFrames.PROPOSAL,
+            ScreenSelectorFrames.SETTLED,
+            ScreenNameFrames.REQUEST,
+        )
     }
 }

@@ -3,7 +3,6 @@ package kr.artel.orchestration.auth.controller
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.UnauthorizedException
 import kr.artel.orchestration.auth.dto.AuthUserResponse
-import kr.artel.orchestration.auth.dto.LinkedIdentityResponse
 import kr.artel.orchestration.auth.dto.UpdateLocaleRequest
 import kr.artel.orchestration.auth.dto.RegisterEmailRequest
 import kr.artel.orchestration.auth.dto.UpdateProfileRequest
@@ -15,9 +14,10 @@ import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.EmailVerificationService
 import kr.artel.orchestration.auth.service.OAuthUserService
+import kr.artel.orchestration.auth.service.AuthUserResponseReader
+import kr.artel.orchestration.auth.service.PasswordAccountService
 import kr.artel.orchestration.auth.service.RefreshTokenService
 import kr.artel.orchestration.auth.service.SessionUserResolver
-import kr.artel.orchestration.auth.service.UserProfile
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
@@ -42,7 +42,9 @@ class AuthController(
     private val refreshTokenService: RefreshTokenService,
     private val jwtService: JwtService,
     private val authCookies: AuthCookies,
-    private val properties: AuthProperties
+    private val properties: AuthProperties,
+    private val passwordAccountService: PasswordAccountService,
+    private val authUserResponseReader: AuthUserResponseReader
 ) {
     /**
      * refresh 쿠키로 access 쿠키를 다시 발급한다. 세션이 없는 공개 경로다. access 토큰이 만료된
@@ -62,10 +64,11 @@ class AuthController(
         val userId = refreshTokenService.verify(token, properties.audience)
             ?: throw UnauthorizedException()
         val profile = oauthUserService.findProfile(userId) ?: throw UnauthorizedException()
+        // 막힌 계정은 refresh 토큰이 살아 있어도 새 access 토큰을 받지 못한다.
+        if (profile.disabled) throw UnauthorizedException()
         // 표시용 클레임은 가장 최근에 로그인한 제공자 신원에서 가져온다(OAuth 성공 시점과 같은 값).
-        val identity = profile.identities.firstOrNull() ?: throw UnauthorizedException()
-
-        val access = jwtService.issue(
+        // 이메일로만 가입한 계정은 OAuth 신원이 없어 비밀번호 자격증명에서 가져온다.
+        val sessionUser = profile.identities.firstOrNull()?.let { identity ->
             AuthenticatedUser(
                 userId = profile.userId,
                 provider = identity.provider,
@@ -73,8 +76,9 @@ class AuthController(
                 displayName = identity.displayName,
                 avatarUrl = identity.avatarUrl
             )
-        )
-        exchange.response.addCookie(authCookies.access(access))
+        } ?: passwordAccountService.passwordSessionUser(userId) ?: throw UnauthorizedException()
+
+        exchange.response.addCookie(authCookies.access(jwtService.issue(sessionUser)))
     }
 
     @GetMapping("/me")
@@ -84,9 +88,7 @@ class AuthController(
         val session = jwt?.let(sessionUserResolver::resolve)
             ?: throw UnauthorizedException()
         // 서명은 유효하지만 가리키는 사용자가 없는 토큰은 유효한 세션이 아니다.
-        val profile = oauthUserService.findProfile(session.userId)
-            ?: throw UnauthorizedException()
-        return profile.toResponse(emailVerificationService.pendingEmail(session.userId))
+        return authUserResponseReader.read(session.userId) ?: throw UnauthorizedException()
     }
 
     @PutMapping("/me/locale")
@@ -121,9 +123,8 @@ class AuthController(
         val session = sessionUserResolver.resolve(jwt)
             ?: throw UnauthorizedException()
         // me()와 같은 이유: 가리키는 사용자가 없는 토큰은 유효한 세션이 아니다.
-        val profile = oauthUserService.updateProfile(session.userId, nickname)
-            ?: throw UnauthorizedException()
-        return profile.toResponse(emailVerificationService.pendingEmail(session.userId))
+        oauthUserService.updateProfile(session.userId, nickname) ?: throw UnauthorizedException()
+        return authUserResponseReader.read(session.userId) ?: throw UnauthorizedException()
     }
 
     /**
@@ -171,24 +172,4 @@ class AuthController(
         }
         return trimmed
     }
-
-    private fun UserProfile.toResponse(pendingEmail: String?) = AuthUserResponse(
-        id = userId,
-        displayName = displayName,
-        email = email,
-        locale = locale,
-        platformRole = platformRole,
-        nickname = nickname,
-        userTag = userTag,
-        emailVerified = emailVerifiedAt != null,
-        pendingEmail = pendingEmail,
-        identities = identities.map {
-            LinkedIdentityResponse(
-                provider = it.provider,
-                login = it.login,
-                displayName = it.displayName,
-                avatarUrl = it.avatarUrl
-            )
-        }
-    )
 }

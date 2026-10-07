@@ -189,6 +189,23 @@ enum class AuthoringStage(@get:JsonValue val wire: String) {
     SENT("sent"),
 
     /**
+     * 케이스를 묶고 순서를 잡는 중이다(ARTEL-952). 워크플로 B 노드의 시작.
+     *
+     * 실측(런 87 trace, 2026-10-06)에서 이 구간이 **25.7초·50.3초**였고 그 사이 프레임이
+     * 하나도 없었다. [THINKING]만으로는 어느 노드에서 멈춰 있는지 말할 수 없다.
+     */
+    GROUPING("grouping"),
+
+    /**
+     * 묶기가 끝났다. [ScenarioStreamEvent.total]에 **묶음 수**가 실려 온다 —
+     * 뒤따르는 [WRITING]의 분모다.
+     */
+    GROUPED("grouped"),
+
+    /** 걷기 검증에서 순서가 어긋나 다시 묶는 중이다. 워크플로 B 미니 루프. */
+    BRIDGING("bridging"),
+
+    /**
      * 모델이 한 턴을 시작했다(ARTEL-487). **Agent가 알려 주는 유일한 단계다** — 도구 호출은
      * 프레임으로 보이지만 그 사이의 시간은 오케에서 보이지 않아, 길어질수록 침묵과 구분되지 않았다.
      * 도구와 번갈아 나타나므로 몇 번을 돌고 있는지도 이 줄로 읽힌다.
@@ -210,6 +227,13 @@ enum class AuthoringStage(@get:JsonValue val wire: String) {
      * **이것만은 관측이 아니라 추론이다.** 넘겨준 자료로 쓰고 있는지, 도구를 한 번 더 부를지
      * 오케스트레이션은 알지 못한다. 아는 것은 자료가 건너갔다는 사실뿐이라 문구도 거기까지만 말한다.
      */
+    /**
+     * 문장을 쓰는 중이다. 워크플로 C — 묶음마다 모델 한 번, 병렬.
+     *
+     * [ScenarioStreamEvent.done]/[ScenarioStreamEvent.total]이 n/N으로 실려 온다. 실측에서
+     * 한 묶음이 **29.4초·54.2초**였으므로, 수가 없으면 여러 묶음을 쓰는 동안 화면이 한 줄로
+     * 멈춰 있는다.
+     */
     WRITING("writing"),
 
     /** 결과가 도착해 전 건 판정과 대조하는 중(ARTEL-403). */
@@ -219,6 +243,12 @@ enum class AuthoringStage(@get:JsonValue val wire: String) {
     WROTE_ONE("wrote_one"),
 
     /** 검사를 통과해 시나리오를 저장했다. */
+    /** 제출·검수·저장을 시작한다. 워크플로 D. [ScenarioStreamEvent.total]에 저장할 개수. */
+    SAVING("saving"),
+
+    /** 기존 시나리오를 고치는 중이다. 워크플로 E. */
+    MODIFYING("modifying"),
+
     SAVED("saved"),
 
     /** 빠진 부분을 다시 쓰라고 되돌려 보냈다. 종착이 아니다 — 결과가 한 번 더 온다. */
@@ -253,6 +283,15 @@ data class ScenarioStreamEvent(
     val detail: String? = null,
     val stage: AuthoringStage? = null,
     /**
+     * 셀 수 있는 단계의 진행(ARTEL-952). 둘 다 null이면 셀 것이 없는 단계다.
+     *
+     * 수가 필요한 이유는 [AuthoringStage.WRITING]이 묶음마다 반복되기 때문이다. 수가 없으면
+     * 같은 단계가 잇달아 온 것으로만 보이고, 몇 개 중 몇 번째인지 말할 수 없다 —
+     * 화면은 그것을 "되풀이 횟수"로 접어 버린다.
+     */
+    val done: Int? = null,
+    val total: Int? = null,
+    /**
      * 사용자에게 되묻는 질문(ARTEL-487). Agent 결과에 실려 오거나, 오케가 계산된 사실로 만들어
      * `question` 이벤트로 내보낸다. **저장을 막지 않는다** — 답하지 않아도 그 턴의 결과물은 남는다.
      */
@@ -277,4 +316,71 @@ data class ScenarioStreamEvent(
     val written: Int? = null,
     /** 어림잡은 전체 시나리오 수. 모르면 null 이고, 그때 화면은 진행률 대신 세는 수만 보인다. */
     val expected: Int? = null,
+    /**
+     * Agent 답의 결과·설명 칸(ARTEL-927). `result` 에만 실리고, 인사·실패 문구처럼 글만 있는
+     * 답에는 없다. 세 번째 칸인 질문은 [questions] 로 따로 온다.
+     */
+    val reply: AgentReply? = null,
+    /**
+     * 답과 질문 속 `[[tc:N]]`·`[[ts:N]]` 표식이 가리키는 것(ARTEL-932). 화면은 이것으로 이름
+     * 칩을 그린다. Agent 가 검사해서 보내므로 여기 없는 표식은 이미 지워져 있다.
+     */
+    val refs: List<AgentRef> = emptyList(),
 )
+
+/**
+ * 이번 턴에 바뀐 시나리오 하나(ARTEL-937). `action` 은 `created`·`updated`·`removed`.
+ * 지운 것은 이제 없으므로 [scenarioId] 가 없을 수 있다.
+ */
+data class AgentChange(
+    val action: String,
+    val title: String,
+    @com.fasterxml.jackson.annotation.JsonProperty("scenario_id") val scenarioId: Long? = null,
+) {
+    fun one(): Map<String, Any?> = mapOf("action" to action, "title" to title, "scenario_id" to scenarioId)
+}
+
+/**
+ * 답 속 표식 하나가 가리키는 TC·TS(ARTEL-932).
+ *
+ * 번호는 표식 안에서 기계만 읽고, 사람에게는 [label] 이 보인다. TC 는 따로 볼 화면이 없어서
+ * 칩을 누르면 [detail](사전조건·기대값)을 띄운다.
+ */
+data class AgentRef(
+    val kind: String,
+    val id: Long,
+    val label: String,
+    val detail: String? = null,
+) {
+    fun one(): Map<String, Any?> = mapOf("kind" to kind, "id" to id, "label" to label, "detail" to detail)
+
+    companion object {
+        /** payload 에 덧붙일 칸. 없으면 아무것도 붙이지 않는다 — 옛 화면이 보던 모양 그대로다. */
+        fun field(refs: List<AgentRef>): Map<String, Any?> =
+            if (refs.isEmpty()) emptyMap() else mapOf("refs" to refs.map { it.one() })
+    }
+}
+
+/**
+ * Agent 답을 사람이 읽는 두 칸으로 나눈 것(ARTEL-927).
+ *
+ * 한 덩어리 글이던 답에서는 무엇을 했는지와 왜 그랬는지가 섞여, 사용자가 반박하거나 결정할
+ * 자리가 보이지 않았다. [result] 는 Agent 코드가 센 사실(무엇을 몇 스텝으로 저장), [detail] 은
+ * 판단한 모델의 설명(마크다운 — 문단·목록·표)이다.
+ */
+data class AgentReply(
+    val result: String,
+    val detail: String = "",
+    /** 바뀐 시나리오(ARTEL-937). 화면이 결과 박스에 추가·수정·삭제 색으로 나눠 그린다. */
+    val changes: List<AgentChange> = emptyList(),
+) {
+    /** 답 말풍선에 붙일 `payload`. 화면은 `kind` 로 질문(`question`)·답한 질문(`answered`)과 가른다. */
+    fun payload(refs: List<AgentRef> = emptyList()): Map<String, Any?> =
+        mapOf("kind" to KIND, "result" to result, "detail" to detail) +
+            (if (changes.isEmpty()) emptyMap() else mapOf("changes" to changes.map { it.one() })) +
+            AgentRef.field(refs)
+
+    companion object {
+        const val KIND = "reply"
+    }
+}

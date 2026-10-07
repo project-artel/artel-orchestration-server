@@ -2,6 +2,7 @@ package kr.artel.orchestration.contentmap.capture
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.contentmap.observe.ScreenNameService
 import kr.artel.orchestration.contentmap.repository.ScreenRepository
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import org.slf4j.LoggerFactory
@@ -35,6 +36,7 @@ import java.time.Instant
 class ScreenCaptureResultRouter(
     private val pending: PendingScreenCaptureRegistry,
     private val screens: ScreenRepository,
+    private val screenNames: ScreenNameService,
     private val qaLogs: QaLogRepository,
     private val objectMapper: ObjectMapper,
     private val clock: Clock,
@@ -61,8 +63,21 @@ class ScreenCaptureResultRouter(
      *
      * **`screen capture` 실패가 화면을 지우지 않는다.** 그림 없는 화면이 화면 없는 지도보다 낫고, 그림이
      * 왜 없는지는 이 로그가 답한다.
+     *
+     * 어느 갈래로 끝나든 [ScreenNameService.onCaptureSettled] 를 부른다 (ARTEL-910). 그림이 붙었으면
+     * 그것을 실어 묻고, 못 붙였으면 더 기다릴 것이 없으니 글만 보고 짓게 한다 — 성공에만 부르면
+     * `capture_screen` 을 모르는 빌드의 화면이 마감이 지날 때까지 질문 없이 앉아 있는다.
+     *
+     * 이 호출을 `finally` 에 두지 않는다. [attachImage] 가 던지면 그 화면은 아직 안 물어본 채로
+     * 남고, `ScreenNameService` 의 마감이 다음 `pulse` 에서 그것을 집는다 — 안전판이 이미 있는
+     * 자리에 취소까지 삼키는 `finally` 를 얹을 이유가 없다.
      */
     private suspend fun attach(capture: PendingScreenCapture, result: JsonNode?) {
+        attachImage(capture, result)
+        screenNames.onCaptureSettled(capture.screenId)
+    }
+
+    private suspend fun attachImage(capture: PendingScreenCapture, result: JsonNode?) {
         if (result == null || !result.path(SUCCESS_FIELD).asBoolean(false)) {
             // 게임이 못 찍었다고 답했다. `capture_screen` 을 모르는 빌드면 여기로 온다
             // ("Unsupported method"). 화면 행은 그대로 두고 사실만 남긴다.

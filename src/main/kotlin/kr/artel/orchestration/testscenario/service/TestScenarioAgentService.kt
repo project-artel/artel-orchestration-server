@@ -31,6 +31,8 @@ import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
 import kr.artel.orchestration.testscenario.config.AuthoringExperimentProperties
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentReasoning
+import kr.artel.orchestration.testscenario.dto.AgentRef
+import kr.artel.orchestration.testscenario.dto.SavedScenarioFrame
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
 import kr.artel.orchestration.testscenario.dto.AuthoringFlow
@@ -607,6 +609,7 @@ class TestScenarioAgentService(
                     steps = checked.first().steps.size,
                     absorbed = absorb.absorbed,
                     kept = absorb.kept,
+                    saved = outcome.saved.map { SavedScenarioFrame(it.scenarioId, it.title, it.created) },
                 ),
             )
         } catch (e: CancellationException) {
@@ -1017,8 +1020,16 @@ class TestScenarioAgentService(
         }
     }
 
-    private fun progress(sessionKey: String, stage: AuthoringStage) {
-        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "progress", stage = stage))
+    private fun progress(
+        sessionKey: String,
+        stage: AuthoringStage,
+        done: Int? = null,
+        total: Int? = null,
+    ) {
+        streamManager.emit(
+            sessionKey,
+            ScenarioStreamEvent(type = "progress", stage = stage, done = done, total = total),
+        )
     }
 
     /**
@@ -1045,11 +1056,15 @@ class TestScenarioAgentService(
      * 하나뿐인 값이므로 여기서 풀어 쓴다.
      */
     private suspend fun lastQuestion(runId: Long, appUserId: Long, wanted: String? = null): ScenarioQuestion? = runCatching {
-        val payload = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+        // **질문의 생애에 속한 payload 만 본다**(ARTEL-927). 물은 것(`question`)과 답해서 닫힌 것
+        // (`answered`)이다 — 마지막이 `answered` 면 기다리는 질문이 없는 것이다. 답 말풍선의
+        // `reply` 까지 세면 질문 뒤에 한 턴만 지나도 그 질문을 못 찾아, 모달에서 보기를 눌러도
+        // 아무 일이 일어나지 않는다.
+        val whole = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
             .toList()
-            .lastOrNull { it.payload != null }
-            ?.payload ?: return null
-        val whole = objectMapper.readTree(payload.asString())
+            .mapNotNull { row -> row.payload?.let { objectMapper.readTree(it.asString()) } }
+            .lastOrNull { it.path("kind").asText() in QUESTION_LIFECYCLE }
+            ?: return null
         if (whole.path("kind").asText() != "question") return null
         // **묶음에서 그 질문을 찾는다**(ARTEL-630). 대화에는 첫 질문만 한 줄로 남지만 payload 는
         // 함께 낸 것을 다 들고 있다 — 그러지 않으면 둘째부터는 답할 길이 없다.
@@ -1280,7 +1295,14 @@ class TestScenarioAgentService(
                 val wire = node.path("stage").asText("")
                 val stage = AuthoringStage.entries.firstOrNull { it.wire == wire }
                 if (stage == null) logger.debug("모르는 단계라 흘려보낸다 [{}] {}", sessionKey, wire)
-                else progress(sessionKey, stage)
+                // 수는 **있으면 넘기고 없으면 안 넘긴다**(ARTEL-952). `has`로 보는 이유는
+                // `asInt()`가 없는 칸을 0으로 읽어, 셀 것이 없는 단계가 "0개 중 0번째"로
+                // 보이기 때문이다.
+                else progress(
+                    sessionKey, stage,
+                    done = if (node.has("done")) node.path("done").asInt() else null,
+                    total = if (node.has("total")) node.path("total").asInt() else null,
+                )
                 return
             }
             if (node.path("type").asText() == "submit_scenario") {
@@ -1313,10 +1335,19 @@ class TestScenarioAgentService(
                 scope.launch {
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
                     try {
-                        saveMessage(session.runId, session.appUserId, "ASSISTANT", event.message ?: "")
+                        // 결과·설명 칸은 payload 로 함께 든다(ARTEL-927). `content` 는 세 칸을 이은
+                        // 글 그대로라 옛 화면과 대화 기록은 바뀌지 않는다.
+                        saveMessage(
+                            session.runId, session.appUserId, "ASSISTANT", event.message ?: "",
+                            event.reply?.payload(event.refs),
+                        )
                         // 모델이 스스로 물은 것도 같은 모양으로 나간다 — 화면이 두 벌을 그릴
-                        // 이유가 없고, 답이 돌아오는 길도 하나여야 한다.
-                        fromAgent(event.question)?.let { ask(sessionKey, session, listOf(it)) }
+                        // 이유가 없고, 답이 돌아오는 길도 하나여야 한다. 여럿이면 한 묶음으로
+                        // 묻는다(ARTEL-927) — 첫 것만 저장하면 나머지에 답할 길이 없다.
+                        event.questions.ifEmpty { listOfNotNull(event.question) }
+                            .mapNotNull { fromAgent(it) }
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { ask(sessionKey, session, it, event.refs) }
                     } catch (err: CancellationException) {
                         throw err
                     } catch (err: Exception) {
@@ -1517,14 +1548,23 @@ class TestScenarioAgentService(
      * [AgentSession.question] 도 첫 것을 문다 — 답을 받아 다음 턴에 넘기는 경로가 하나짜리다.
      * 나머지에 답하는 길은 화면이 그 id 로 보내는 것이고, 그 자리는 아직 없다.
      */
-    private suspend fun ask(sessionKey: String, session: AgentSession, questions: List<ScenarioQuestion>) {
+    private suspend fun ask(
+        sessionKey: String,
+        session: AgentSession,
+        questions: List<ScenarioQuestion>,
+        // 질문 문장 속 표식의 이름(ARTEL-932). 화면은 이 줄의 payload 만 보고 칩을 그린다.
+        refs: List<AgentRef> = emptyList(),
+    ) {
         val first = questions.firstOrNull() ?: return
         session.question = first
         session.asked = questions.map { it.id }
-        saveMessage(session.runId, session.appUserId, "ASSISTANT", first.text, ScenarioQuestion.batchPayload(questions))
+        saveMessage(
+            session.runId, session.appUserId, "ASSISTANT", first.text,
+            ScenarioQuestion.batchPayload(questions) + AgentRef.field(refs),
+        )
         streamManager.emit(
             sessionKey,
-            ScenarioStreamEvent(type = "question", question = first, questions = questions),
+            ScenarioStreamEvent(type = "question", question = first, questions = questions, refs = refs),
         )
         logger.info(
             "되물음 [sessionKey={}, {}건, 첫 id={}, 출처={}]",
@@ -1656,6 +1696,9 @@ class TestScenarioAgentService(
          * 답을 기다린다. 상한에 걸리면 저장하지 않고 무엇이 빠졌는지 사람에게 넘긴다.
          */
         private const val MAX_REPAIR_ATTEMPTS = 1
+
+        /** 저장된 질문을 찾을 때 보는 payload 종류. 답 말풍선의 `reply` 는 질문과 무관하다. */
+        private val QUESTION_LIFECYCLE = setOf("question", "answered")
 
         /** 남은 씬을 몇 개까지 나열할지. 나머지는 "외 N개 씬"으로 접는다. */
 

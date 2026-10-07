@@ -115,6 +115,33 @@ class ScenarioAbsorbIntegrationTest {
         assertThat(scenarioRepository.findById(keeperId)).isNotNull()
     }
 
+    /**
+     * 저장한 것을 **무엇을 새로 만들고 무엇을 고쳤는지**와 함께 돌려준다(ARTEL-937).
+     *
+     * 에이전트는 결과를 "생성 N건·수정 N건" 목록으로 보여 준다. 그런데 같은 제목이면 새로 만들지
+     * 않고 기존 것을 고치므로, 에이전트가 낸 `scenario_id` 만 보고는 어느 쪽인지 알 수 없다.
+     */
+    @Test
+    fun `저장한 시나리오를 새로 만든 것과 고친 것으로 나눠 돌려준다`(): Unit = runBlocking {
+        val (projectId, runId, cases) = fixture(2)
+        val userId = memberOf(projectId)
+
+        val first = reconcileService.reconcile(runId, projectId, userId, listOf(scenario("앞 흐름", cases[0])))
+        assertThat(first.saved).singleElement().satisfies({
+            assertThat(it.title).isEqualTo("앞 흐름")
+            assertThat(it.created).isTrue()
+        })
+        val createdId = first.saved.single().scenarioId
+        assertThat(idsOf(runId, "앞 흐름")).containsExactly(createdId)
+
+        // 번호 없이 같은 제목으로 다시 오면 새로 만들지 않고 그것을 고친다 — 고친 것으로 센다.
+        val again = reconcileService.reconcile(runId, projectId, userId, listOf(scenario("앞 흐름", cases[1])))
+        assertThat(again.saved).singleElement().satisfies({
+            assertThat(it.scenarioId).isEqualTo(createdId)
+            assertThat(it.created).isFalse()
+        })
+    }
+
     /** 런에 담긴 시나리오 제목들, 조합 순서대로. */
     private suspend fun titlesIn(runId: Long): List<String> =
         runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()

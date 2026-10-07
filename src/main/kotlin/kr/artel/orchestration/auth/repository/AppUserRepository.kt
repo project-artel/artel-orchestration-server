@@ -46,4 +46,8 @@ interface AppUserRepository : CoroutineCrudRepository<AppUserEntity, Long> {
      * 한 행으로 만들어 주므로 결과는 한 명이거나 없다.
      */
     suspend fun findByNicknameAndUserTag(nickname: String, userTag: String): AppUserEntity?
+
+    /** 막히지 않은 ADMIN 수. 마지막 ADMIN 을 내리거나 막는 것을 거절하는 데 쓴다. */
+    @Query("SELECT COUNT(*) FROM app_user WHERE platform_role = 'ADMIN' AND disabled = FALSE")
+    suspend fun countActiveAdmins(): Long
 }

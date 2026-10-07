@@ -1,6 +1,7 @@
 package kr.artel.orchestration.sdk.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.auth.service.AccountStateService
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
@@ -45,6 +46,7 @@ class SdkWebSocketHandler(
     // 디코더가 두 개다. 브라우저 쪽이 @Primary라 이름만으로는 그쪽이 주입된다.
     @Qualifier("sdkJwtDecoder") private val sdkJwtDecoder: ReactiveJwtDecoder,
     private val sessionUserResolver: SessionUserResolver,
+    private val accountStateService: AccountStateService,
     handlers: List<SdkMessageHandler>
 ) : WebSocketHandler {
 
@@ -70,6 +72,15 @@ class SdkWebSocketHandler(
             .getOrNull()
             ?.let(sessionUserResolver::resolve)
             ?.userId
+
+        // 이 경로는 security 체인을 지나지 않아 `AccountStateWebFilter` 가 보지 못한다. 그래서 같은
+        // 판정을 여기서 한 번 더 한다. 막힌 계정은 4003 이고, 닫는 이유에 HTTP 의 403 과 같은 code 를 싣는다.
+        val block = userId?.let { accountStateService.blockOf(it) }
+        if (block != null) {
+            logger.warn("웹소켓 연결 거부: 막힌 계정입니다 ({}).", block.code)
+            session.close(CloseStatus(4003, block.code)).awaitFirstOrNull()
+            return@mono
+        }
 
         // 토큰이 유효해도 남의 인스턴스면 붙을 수 없다. 인스턴스에서 프로젝트를 거슬러 올라가
         // 참여자인지 확인하므로, 클라이언트가 보낸 두 값이 서로 맞는지 따로 볼 필요가 없다.

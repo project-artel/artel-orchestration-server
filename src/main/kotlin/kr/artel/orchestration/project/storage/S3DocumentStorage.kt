@@ -58,6 +58,9 @@ class S3DocumentStorage internal constructor(
     private val region: Region get() = Region.of(properties.region)
     private val endpoint: URI? get() = properties.endpoint?.let(URI::create)
 
+    /** presigner 만 쓴다. 서버가 직접 부르는 [lazyClient] 는 [endpoint] 그대로다. */
+    private val presignEndpoint: URI? get() = properties.presignEndpoint?.let(URI::create)
+
     private val lazyClient = lazy {
         S3AsyncClient.builder()
             .region(region)
@@ -80,7 +83,7 @@ class S3DocumentStorage internal constructor(
                 requireNotNull(credentials) { "서명할 자격증명이 없으면 presigner를 쓰지 않는다" }
             )
             .apply {
-                endpoint?.let {
+                presignEndpoint?.let {
                     endpointOverride(it)
                     // 서명 대상 URL 모양이 실제 PUT 대상과 같아야 서명이 맞는다.
                     serviceConfiguration(

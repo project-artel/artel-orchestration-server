@@ -41,16 +41,9 @@ spring:
       # userInfo만 읽고, database는 아래 spring.data.redis.database에서만 온다.
       # /1을 적으면 0번에 조용히 붙으므로 아예 쓰지 않는다.
       url: ${REDIS_URL:redis://localhost:6379}
-  security:
-    oauth2:
-      client:
-        registration:
-          github:
-            client-id: ${GITHUB_CLIENT_ID}
-            client-secret: ${GITHUB_CLIENT_SECRET}
-            scope:
-              - read:user
-              - user:email
+  # GitHub OAuth registration 은 여기 두지 않는다. Boot 의 `spring.security.oauth2.client.registration` 은
+  # client id 가 비면 기동을 멈춘다. GitHub 로그인은 선택이라 artel.auth.github 로 받고, 두 값이 다 있을
+  # 때만 GitHubOAuthClientConfig 가 registration 을 만든다.
 
 logging:
   level:
@@ -196,6 +189,33 @@ artel:
     refresh-token-ttl: ${ARTEL_JWT_REFRESH_TTL:P14D}
     refresh-cookie-name: ${ARTEL_REFRESH_COOKIE:artel_refresh_token}
     sdk-refresh-token-ttl: ${ARTEL_SDK_REFRESH_TTL:P90D}
+    # GitHub OAuth 로그인 앱. 둘 다 있어야 켜진다. 비우면 이메일 로그인만 쓰고,
+    # /oauth2/authorization/github 는 404 다. Callback: <server>/login/oauth2/code/github
+    github:
+      client-id: ${GITHUB_CLIENT_ID:}
+      client-secret: ${GITHUB_CLIENT_SECRET:}
+      # 처음 보는 GitHub 계정에 새 사용자를 만드는지. false 면 이미 있는 사용자와 ADMIN 이 이메일로 만들어
+      # 둔 계정만 들어오고, 나머지는 /login?error=signup_closed 로 돌아간다. 기본값 true 는 지금 동작이다.
+      signup-open: ${ARTEL_GITHUB_SIGNUP_OPEN:true}
+    # 첫 이메일 가입자는 ADMIN 이 된다. 그 뒤 공개 가입은 이 값이 true 일 때만 열린다.
+    signup:
+      open: ${ARTEL_SIGNUP_OPEN:false}
+    # POST /api/auth/login 실패 제한. 한 이메일이 window 안에 max-failures 번 틀리면 맞는 비밀번호도 429 다.
+    # 한 주소가 address-max-failures 번 틀리면 틀린 비밀번호는 429, 맞는 비밀번호는 그대로 통과한다.
+    login-rate-limit:
+      max-failures: ${ARTEL_LOGIN_MAX_FAILURES:10}
+      address-max-failures: ${ARTEL_LOGIN_ADDRESS_MAX_FAILURES:100}
+      window: ${ARTEL_LOGIN_FAILURE_WINDOW:PT15M}
+  # agent-server 가 내부 포트(GET /internal/settings/llm)로 받아 가는 OpenRouter API key.
+  # 관리 화면에서 넣은 값이 먼저이고, 없으면 OPENROUTER_API_KEY 다.
+  llm:
+    openrouter-api-key: ${OPENROUTER_API_KEY:}
+    openrouter-base-url: ${ARTEL_OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
+    check-timeout: ${ARTEL_OPENROUTER_CHECK_TIMEOUT:PT15S}
+  # 관리 화면에서 넣은 비밀(OpenRouter API key)을 AES-GCM 으로 잠그는 키의 원천. 32 바이트 이상.
+  # 비우면 관리 화면에서 key 를 저장할 수 없고 OPENROUTER_API_KEY 만 쓰인다. 바꾸면 저장된 값을 열 수 없다.
+  secrets:
+    key: ${ARTEL_SECRETS_KEY:}
   # 결함을 외부 이슈 tracker 로 내보내는 연동(ARTEL-671).
   tracker:
     # 굳은 PENDING 을 다시 claim 할 수 있게 되기까지의 유예. ⚠️ github.request-timeout 보다 훨씬
@@ -220,6 +240,9 @@ artel:
     # 로컬 MinIO 등으로 돌릴 때만 지정한다. 빈 값은 "지정하지 않음"으로 읽힌다.
     # (@ConfigurationProperties 바인딩은 SpEL을 처리하지 않아 #{null}을 쓸 수 없다.)
     endpoint: ${ARTEL_S3_ENDPOINT:}
+    # 브라우저에 내주는 presigned URL 의 주소. 서버가 붙는 주소(위 endpoint)를 브라우저가 풀지 못할 때만
+    # 지정한다(compose 의 http://minio:9000 대 http://localhost:9000). 비우면 endpoint 를 쓴다.
+    presign-endpoint: ${ARTEL_S3_PRESIGN_ENDPOINT:}
     # 선택. 비워 두면 AWS 기본 제공자 체인을 쓰고, 그마저 없으면 서명 없이 보낸다
     # (버킷이 익명 접근을 허용할 때만 통한다).
     # spring-dotenv는 .env를 Spring Environment에만 넣고 프로세스 환경변수로 만들지 못해,

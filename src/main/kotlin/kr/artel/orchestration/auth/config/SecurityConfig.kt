@@ -7,10 +7,15 @@ import kotlinx.coroutines.reactor.mono
 import kr.artel.orchestration.auth.cli.CliTokenAuthenticationManager
 import kr.artel.orchestration.auth.cli.cliTokenOrNull
 import kr.artel.orchestration.auth.oauth.OAuthIdentityResolver
+import kr.artel.orchestration.auth.service.AccountDisabledException
+import kr.artel.orchestration.auth.service.AccountStateService
+import kr.artel.orchestration.auth.service.OAuthLoginService
+import kr.artel.orchestration.auth.service.OAuthSignupClosedException
 import kr.artel.orchestration.auth.service.JwtService
-import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.auth.service.RefreshTokenService
+import kr.artel.orchestration.auth.web.AccountStateWebFilter
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
@@ -22,6 +27,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity
 import org.springframework.security.config.web.server.ServerHttpSecurity
 import org.springframework.security.core.Authentication
+import org.springframework.security.oauth2.client.registration.ReactiveClientRegistrationRepository
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator
 import org.springframework.security.oauth2.core.OAuth2TokenValidator
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm
@@ -53,7 +59,12 @@ import javax.crypto.spec.SecretKeySpec
 
 @Configuration
 @EnableWebFluxSecurity
-@EnableConfigurationProperties(AuthProperties::class)
+@EnableConfigurationProperties(
+    AuthProperties::class,
+    SignupProperties::class,
+    GitHubOAuthProperties::class,
+    LoginRateLimitProperties::class
+)
 class SecurityConfig {
 
     private val logger = LoggerFactory.getLogger(SecurityConfig::class.java)
@@ -74,9 +85,11 @@ class SecurityConfig {
     fun sdkSecurityWebFilterChain(
         http: ServerHttpSecurity,
         // 이름만으로는 @Primary인 브라우저 디코더가 주입된다. 그러면 SDK 토큰이 전부 401이 된다.
-        @Qualifier("sdkJwtDecoder") sdkJwtDecoder: NimbusReactiveJwtDecoder
+        @Qualifier("sdkJwtDecoder") sdkJwtDecoder: NimbusReactiveJwtDecoder,
+        accountStateService: AccountStateService
     ): SecurityWebFilterChain = http
         .securityMatcher(PathPatternParserServerWebExchangeMatcher("/api/sdk/**"))
+        .addFilterBefore(AccountStateWebFilter(accountStateService), SecurityWebFiltersOrder.EXCEPTION_TRANSLATION)
         .csrf { it.disable() }
         .cors { }
         .httpBasic { it.disable() }
@@ -105,9 +118,11 @@ class SecurityConfig {
     @Order(0)
     fun trackerSetupSecurityWebFilterChain(
         http: ServerHttpSecurity,
-        properties: AuthProperties
+        properties: AuthProperties,
+        accountStateService: AccountStateService
     ): SecurityWebFilterChain = http
         .securityMatcher(PathPatternParserServerWebExchangeMatcher("/api/tracker/github/setup"))
+        .addFilterBefore(AccountStateWebFilter(accountStateService), SecurityWebFiltersOrder.EXCEPTION_TRANSLATION)
         .csrf { it.disable() }
         .cors { }
         .httpBasic { it.disable() }
@@ -139,8 +154,11 @@ class SecurityConfig {
         refreshTokenService: RefreshTokenService,
         authCookies: AuthCookies,
         identityResolver: OAuthIdentityResolver,
-        oauthUserService: OAuthUserService,
-        cliTokenAuthenticationManager: CliTokenAuthenticationManager
+        oauthLoginService: OAuthLoginService,
+        cliTokenAuthenticationManager: CliTokenAuthenticationManager,
+        accountStateService: AccountStateService,
+        // GitHub 두 변수가 다 있을 때만 있다(GitHubOAuthClientConfig).
+        clientRegistrationRepository: ObjectProvider<ReactiveClientRegistrationRepository>
     ): SecurityWebFilterChain = http
         .csrf { it.disable() }
         .cors { }
@@ -170,6 +188,10 @@ class SecurityConfig {
                 // 자격증명은 refresh 토큰이며 컨트롤러가 직접 검증한다.
                 "/api/auth/refresh",
                 "/api/auth/sdk/token/refresh",
+                // 이메일 로그인 화면이 세션 없이 부르는 셋. 로그인 수단 안내, 가입, 로그인이다.
+                "/api/auth/providers",
+                "/api/auth/signup",
+                "/api/auth/login",
                 // 내부 서버-투-서버 경로 전부. 보내는 주체가 사람이 아니라 Agent 서버라
                 // 엔드유저 JWT가 없다. 이 접두사가 곧 신뢰 경계이므로, 새 내부 엔드포인트는
                 // 여기에 줄을 더하는 것이 아니라 `/internal/` 아래에 두어야 한다.
@@ -186,22 +208,28 @@ class SecurityConfig {
             it.pathMatchers("/api/qa-runs/**").authenticated()
             it.anyExchange().authenticated()
         }
-        .oauth2Login {
-            it.authenticationSuccessHandler(
-                oauthSuccessHandler(
-                    properties,
-                    jwtService,
-                    refreshTokenService,
-                    authCookies,
-                    identityResolver,
-                    oauthUserService
-                )
-            )
-            it.authenticationFailureHandler { webFilterExchange, _ ->
-                webFilterExchange.exchange.response.statusCode = HttpStatus.FOUND
-                webFilterExchange.exchange.response.headers.location =
-                    URI.create("${properties.frontendOrigin}/login?error=oauth")
-                webFilterExchange.exchange.response.setComplete()
+        // GitHub OAuth 는 선택이다. registration 이 없으면 oauth2Login 을 붙이지 않는다 — 붙이면 빈을
+        // 찾지 못해 기동이 멈춘다. 그때 `/oauth2/authorization/github` 는 처리할 곳이 없어 404 다.
+        .apply {
+            if (clientRegistrationRepository.ifAvailable != null) {
+                oauth2Login {
+                    it.authenticationSuccessHandler(
+                        oauthSuccessHandler(
+                            properties,
+                            jwtService,
+                            refreshTokenService,
+                            authCookies,
+                            identityResolver,
+                            oauthLoginService
+                        )
+                    )
+                    it.authenticationFailureHandler { webFilterExchange, _ ->
+                        webFilterExchange.exchange.response.statusCode = HttpStatus.FOUND
+                        webFilterExchange.exchange.response.headers.location =
+                            URI.create("${properties.frontendOrigin}/login?error=oauth")
+                        webFilterExchange.exchange.response.setComplete()
+                    }
+                }
             }
         }
         // CLI 토큰은 브라우저 세션과 같은 경로 집합을 연다. 그래서 별도 체인이 아니라 같은 체인에
@@ -212,6 +240,9 @@ class SecurityConfig {
             cliTokenAuthenticationFilter(cliTokenAuthenticationManager),
             SecurityWebFiltersOrder.AUTHENTICATION
         )
+        // 인증이 끝난 뒤, 인가보다 먼저 계정이 막혔는지 본다. 세 체인 모두에 붙여 SDK 와 tracker 경로도
+        // 막힌 계정을 받지 않는다.
+        .addFilterBefore(AccountStateWebFilter(accountStateService), SecurityWebFiltersOrder.EXCEPTION_TRANSLATION)
         .oauth2ResourceServer {
             it.bearerTokenConverter(cookieTokenConverter(properties))
             it.jwt { }
@@ -300,12 +331,19 @@ class SecurityConfig {
         refreshTokenService: RefreshTokenService,
         authCookies: AuthCookies,
         identityResolver: OAuthIdentityResolver,
-        oauthUserService: OAuthUserService
+        oauthLoginService: OAuthLoginService
     ) = ServerAuthenticationSuccessHandler { webFilterExchange, authentication ->
         // Spring Security의 리액티브 콜백은 Mono<Void>를 요구한다. upsert가 suspend라 mono {}로 브리지한다.
         mono {
             val identity = identityResolver.resolve(authentication as org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken)
-            val persistedIdentity = oauthUserService.upsert(identity)
+            // 닫힌 가입과 막힌 계정에는 쿠키를 주지 않고, 무엇 때문인지 로그인 화면에 알린다.
+            val persistedIdentity = try {
+                oauthLoginService.signIn(identity)
+            } catch (closed: OAuthSignupClosedException) {
+                return@mono redirectToLogin(webFilterExchange.exchange, properties, "signup_closed")
+            } catch (disabled: AccountDisabledException) {
+                return@mono redirectToLogin(webFilterExchange.exchange, properties, "disabled")
+            }
             val token = jwtService.issue(persistedIdentity)
             val refresh = refreshTokenService.issue(
                 persistedIdentity.userId,
@@ -329,6 +367,16 @@ class SecurityConfig {
                     URI.create("${properties.frontendOrigin}/login?error=server")
                 response.setComplete()
             }
+    }
+
+    private suspend fun redirectToLogin(
+        exchange: org.springframework.web.server.ServerWebExchange,
+        properties: AuthProperties,
+        error: String
+    ): Void? {
+        exchange.response.statusCode = HttpStatus.FOUND
+        exchange.response.headers.location = URI.create("${properties.frontendOrigin}/login?error=$error")
+        return exchange.response.setComplete().awaitSingleOrNull()
     }
 
     /**

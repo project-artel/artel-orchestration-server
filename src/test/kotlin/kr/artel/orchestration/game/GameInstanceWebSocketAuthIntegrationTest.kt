@@ -2,6 +2,7 @@ package kr.artel.orchestration.game
 
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.auth.repository.LocalCredentialRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
@@ -51,6 +52,7 @@ class GameInstanceWebSocketAuthIntegrationTest {
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
     @Autowired private lateinit var sessionManager: SessionManager
+    @Autowired private lateinit var localCredentialRepository: LocalCredentialRepository
 
     @Test
     fun `closes with 4001 when the instance does not exist`(): Unit = runBlocking {
@@ -99,6 +101,45 @@ class GameInstanceWebSocketAuthIntegrationTest {
         val closeStatus = connectAndAwaitClose(member.sdkToken, requireNotNull(instance.id).toString())
 
         assertThat(closeStatus?.code).isEqualTo(4001)
+    }
+
+    /** 막힌 계정은 SDK 토큰이 살아 있어도 붙지 못한다. HTTP 의 `AccountStateWebFilter` 와 같은 판정이다. */
+    @Test
+    fun `closes with 4003 for a disabled account`(): Unit = runBlocking {
+        val member = signIn("4301", "disabled-member")
+        val instance = createGameInstance(member.userId)
+        val user = appUserRepository.findById(member.userId)!!
+        appUserRepository.save(user.copy(disabled = true))
+
+        try {
+            val closeStatus = connectAndAwaitClose(member.sdkToken, requireNotNull(instance.id).toString())
+            assertThat(closeStatus?.code).isEqualTo(4003)
+            assertThat(closeStatus?.reason).isEqualTo("account_disabled")
+        } finally {
+            appUserRepository.save(appUserRepository.findById(member.userId)!!.copy(disabled = false))
+        }
+    }
+
+    @Test
+    fun `closes with 4003 for an account that must change its password`(): Unit = runBlocking {
+        val member = signIn("4302", "temporary-member")
+        val instance = createGameInstance(member.userId)
+        localCredentialRepository.deleteById(member.userId)
+        localCredentialRepository.insert(
+            appUserId = member.userId,
+            email = "temporary-member-${member.userId}@example.com",
+            passwordHash = "not-a-real-hash",
+            mustChangePassword = true,
+            now = Instant.now()
+        )
+
+        try {
+            val closeStatus = connectAndAwaitClose(member.sdkToken, requireNotNull(instance.id).toString())
+            assertThat(closeStatus?.code).isEqualTo(4003)
+            assertThat(closeStatus?.reason).isEqualTo("password_change_required")
+        } finally {
+            localCredentialRepository.deleteById(member.userId)
+        }
     }
 
     /**
