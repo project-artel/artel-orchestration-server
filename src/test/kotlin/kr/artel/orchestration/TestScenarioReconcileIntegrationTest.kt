@@ -702,6 +702,117 @@ class TestScenarioReconcileIntegrationTest {
     }
 
     /**
+     * 답은 세 칸으로 저장된다(ARTEL-927).
+     *
+     * 결과·설명은 그 답 말풍선의 `payload`(`kind=reply`)에 따로 들고, `content` 는 세 칸을 이은
+     * 글 그대로 둔다 — 옛 화면과 대화 기록은 `content` 만 읽는다.
+     */
+    @Test
+    fun `세 칸 답은 reply payload 로 저장되고 글은 그대로 남는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        insertCase(projectId, "TitleScene", "A")
+
+        framesToSend.add(
+            """{"type":"result","message":"시나리오를 저장했어요: **타이틀**\n타이틀 하나만 썼어요.",""" +
+                """"reply":{"result":"시나리오를 저장했어요: **타이틀**","detail":"타이틀 하나만 썼어요."},""" +
+                """"scenarios":[]}"""
+        )
+        postMessage(client, projectId, runId, token, "타이틀")
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.role == "ASSISTANT" }
+        }
+        val said = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().first { it.role == "ASSISTANT" }
+        assertThat(said.content).isEqualTo("시나리오를 저장했어요: **타이틀**\n타이틀 하나만 썼어요.")
+        val payload = objectMapper.readTree(said.payload!!.asString())
+        assertThat(payload["kind"].asText()).isEqualTo("reply")
+        assertThat(payload["result"].asText()).isEqualTo("시나리오를 저장했어요: **타이틀**")
+        assertThat(payload["detail"].asText()).isEqualTo("타이틀 하나만 썼어요.")
+    }
+
+    /** 모델이 여럿을 물으면 한 묶음으로 묻는다(ARTEL-927). 첫 것만 저장하면 나머지에 답할 길이 없다. */
+    @Test
+    fun `모델이 낸 질문 목록을 한 묶음으로 묻는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        insertCase(projectId, "TitleScene", "A")
+
+        framesToSend.add(
+            """{"type":"result","message":"저장했어요","reply":{"result":"저장했어요","detail":""},""" +
+                """"scenarios":[],"questions":[""" +
+                """{"id":"agent:a","text":"구매 실패도 넣을까요?","options":[{"id":"o1","label":"넣어 줘"}]},""" +
+                """{"id":"agent:b","text":"상점 닫기도 볼까요?","options":[{"id":"o1","label":"봐 줘"}]}]}"""
+        )
+        postMessage(client, projectId, runId, token, "상점")
+
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.payload?.asString()?.contains("\"question\"") == true }
+        }
+        val asked = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId)
+            .toList().map { objectMapper.readTree(it.payload?.asString() ?: "{}") }
+            .filter { it.path("kind").asText() == "question" }
+        assertThat(asked).hasSize(1)
+        assertThat(asked.single()["questions"].map { it["id"].asText() }).containsExactly("agent:a", "agent:b")
+        assertThat(asked.single()["source"].asText()).isEqualTo("agent")
+    }
+
+    /**
+     * 질문 뒤에 다른 답이 와도 그 질문에는 계속 답할 수 있다(ARTEL-927).
+     *
+     * 저장된 질문은 "payload 가 붙은 마지막 메시지"로 찾았다. 답 말풍선에도 payload(`reply`)가
+     * 붙게 되자 그 뒤로는 앞선 질문을 못 찾아, 모달에서 보기를 눌러도 아무 일이 일어나지 않았다.
+     */
+    @Test
+    fun `reply 가 뒤에 저장돼도 앞선 질문의 보기로 답할 수 있다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        insertCase(projectId, "TitleScene", "A")
+
+        framesToSend.add(
+            """{"type":"result","message":"물어볼 게 있어요","reply":{"result":"물어볼 게 있어요","detail":""},""" +
+                """"scenarios":[],"questions":[{"id":"agent:scope","text":"전투는 어느 쪽을 뜻하나요?",""" +
+                """"options":[{"id":"turn","label":"턴 전투만 담아 줘"}]}]}"""
+        )
+        turnReplies.add(
+            """{"type":"result","message":"알겠어요","reply":{"result":"알겠어요","detail":""},"scenarios":[]}"""
+        )
+        turnReplies.add("""{"type":"result","message":"넣었습니다","scenarios":[]}""")
+
+        postMessage(client, projectId, runId, token, "전투 시나리오")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.payload?.asString()?.contains("agent:scope") == true }
+        }
+        // 질문에 답하지 않고 다른 말을 한다 — 그 답 말풍선에 reply payload 가 붙는다.
+        postMessage(client, projectId, runId, token, "잠깐 다른 얘기")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .count { it.payload?.asString()?.contains("\"reply\"") == true } == 2
+        }
+
+        // 이제 앞선 질문의 보기를 누른다.
+        client.post()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue("""{"message":"","answer":{"question_id":"agent:scope","option_ids":["turn"]}}""")
+            .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(5))
+
+        awaitUntil { receivedFrames.any { it.contains("앞서 물어본 것") } }
+        assertThat(receivedFrames.first { it.contains("앞서 물어본 것") }).contains("턴 전투만 담아 줘")
+    }
+
+    /**
      * 숫자가 그대로면 다시 말하지 않는다.
      *
      * 좁은 범위를 여러 턴에 걸쳐 다듬는 대화가 정상적인 사용법인데, 매 턴 같은 잔량 줄이 붙으면

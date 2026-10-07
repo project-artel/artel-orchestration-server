@@ -277,4 +277,28 @@ data class ScenarioStreamEvent(
     val written: Int? = null,
     /** 어림잡은 전체 시나리오 수. 모르면 null 이고, 그때 화면은 진행률 대신 세는 수만 보인다. */
     val expected: Int? = null,
+    /**
+     * Agent 답의 결과·설명 칸(ARTEL-927). `result` 에만 실리고, 인사·실패 문구처럼 글만 있는
+     * 답에는 없다. 세 번째 칸인 질문은 [questions] 로 따로 온다.
+     */
+    val reply: AgentReply? = null,
 )
+
+/**
+ * Agent 답을 사람이 읽는 두 칸으로 나눈 것(ARTEL-927).
+ *
+ * 한 덩어리 글이던 답에서는 무엇을 했는지와 왜 그랬는지가 섞여, 사용자가 반박하거나 결정할
+ * 자리가 보이지 않았다. [result] 는 Agent 코드가 센 사실(무엇을 몇 스텝으로 저장), [detail] 은
+ * 판단한 모델의 설명(마크다운 — 문단·목록·표)이다.
+ */
+data class AgentReply(
+    val result: String,
+    val detail: String = "",
+) {
+    /** 답 말풍선에 붙일 `payload`. 화면은 `kind` 로 질문(`question`)·답한 질문(`answered`)과 가른다. */
+    fun payload(): Map<String, Any?> = mapOf("kind" to KIND, "result" to result, "detail" to detail)
+
+    companion object {
+        const val KIND = "reply"
+    }
+}
