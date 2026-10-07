@@ -1020,8 +1020,16 @@ class TestScenarioAgentService(
         }
     }
 
-    private fun progress(sessionKey: String, stage: AuthoringStage) {
-        streamManager.emit(sessionKey, ScenarioStreamEvent(type = "progress", stage = stage))
+    private fun progress(
+        sessionKey: String,
+        stage: AuthoringStage,
+        done: Int? = null,
+        total: Int? = null,
+    ) {
+        streamManager.emit(
+            sessionKey,
+            ScenarioStreamEvent(type = "progress", stage = stage, done = done, total = total),
+        )
     }
 
     /**
@@ -1287,7 +1295,14 @@ class TestScenarioAgentService(
                 val wire = node.path("stage").asText("")
                 val stage = AuthoringStage.entries.firstOrNull { it.wire == wire }
                 if (stage == null) logger.debug("모르는 단계라 흘려보낸다 [{}] {}", sessionKey, wire)
-                else progress(sessionKey, stage)
+                // 수는 **있으면 넘기고 없으면 안 넘긴다**(ARTEL-952). `has`로 보는 이유는
+                // `asInt()`가 없는 칸을 0으로 읽어, 셀 것이 없는 단계가 "0개 중 0번째"로
+                // 보이기 때문이다.
+                else progress(
+                    sessionKey, stage,
+                    done = if (node.has("done")) node.path("done").asInt() else null,
+                    total = if (node.has("total")) node.path("total").asInt() else null,
+                )
                 return
             }
             if (node.path("type").asText() == "submit_scenario") {
