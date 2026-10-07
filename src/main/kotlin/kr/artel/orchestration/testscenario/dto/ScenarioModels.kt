@@ -290,6 +290,18 @@ data class ScenarioStreamEvent(
 )
 
 /**
+ * 이번 턴에 바뀐 시나리오 하나(ARTEL-937). `action` 은 `created`·`updated`·`removed`.
+ * 지운 것은 이제 없으므로 [scenarioId] 가 없을 수 있다.
+ */
+data class AgentChange(
+    val action: String,
+    val title: String,
+    @com.fasterxml.jackson.annotation.JsonProperty("scenario_id") val scenarioId: Long? = null,
+) {
+    fun one(): Map<String, Any?> = mapOf("action" to action, "title" to title, "scenario_id" to scenarioId)
+}
+
+/**
  * 답 속 표식 하나가 가리키는 TC·TS(ARTEL-932).
  *
  * 번호는 표식 안에서 기계만 읽고, 사람에게는 [label] 이 보인다. TC 는 따로 볼 화면이 없어서
@@ -320,10 +332,14 @@ data class AgentRef(
 data class AgentReply(
     val result: String,
     val detail: String = "",
+    /** 바뀐 시나리오(ARTEL-937). 화면이 결과 박스에 추가·수정·삭제 색으로 나눠 그린다. */
+    val changes: List<AgentChange> = emptyList(),
 ) {
     /** 답 말풍선에 붙일 `payload`. 화면은 `kind` 로 질문(`question`)·답한 질문(`answered`)과 가른다. */
     fun payload(refs: List<AgentRef> = emptyList()): Map<String, Any?> =
-        mapOf("kind" to KIND, "result" to result, "detail" to detail) + AgentRef.field(refs)
+        mapOf("kind" to KIND, "result" to result, "detail" to detail) +
+            (if (changes.isEmpty()) emptyMap() else mapOf("changes" to changes.map { it.one() })) +
+            AgentRef.field(refs)
 
     companion object {
         const val KIND = "reply"

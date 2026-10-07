@@ -717,7 +717,8 @@ class TestScenarioReconcileIntegrationTest {
 
         framesToSend.add(
             """{"type":"result","message":"시나리오를 저장했어요: **타이틀**\n타이틀 하나만 썼어요.",""" +
-                """"reply":{"result":"시나리오를 저장했어요: **타이틀**","detail":"타이틀 하나만 썼어요."},""" +
+                """"reply":{"result":"시나리오를 저장했어요: **타이틀**","detail":"타이틀 하나만 썼어요.",""" +
+                """"changes":[{"action":"created","title":"타이틀","scenario_id":31}]},""" +
                 """"scenarios":[]}"""
         )
         postMessage(client, projectId, runId, token, "타이틀")
@@ -733,6 +734,11 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(payload["kind"].asText()).isEqualTo("reply")
         assertThat(payload["result"].asText()).isEqualTo("시나리오를 저장했어요: **타이틀**")
         assertThat(payload["detail"].asText()).isEqualTo("타이틀 하나만 썼어요.")
+        // 바뀐 시나리오 목록(ARTEL-937) — 화면이 결과 박스에 색으로 나눠 그린다.
+        val change = payload["changes"].single()
+        assertThat(change["action"].asText()).isEqualTo("created")
+        assertThat(change["title"].asText()).isEqualTo("타이틀")
+        assertThat(change["scenario_id"].asLong()).isEqualTo(31)
     }
 
     /** 모델이 여럿을 물으면 한 묶음으로 묻는다(ARTEL-927). 첫 것만 저장하면 나머지에 답할 길이 없다. */
