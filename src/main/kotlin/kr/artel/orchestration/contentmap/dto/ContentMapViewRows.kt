@@ -303,6 +303,32 @@ data class MacroSummaryRow(
 )
 
 /**
+ * scene context 가 읽는 macro 한 줄(ARTEL-934). `source` 는 요약 한 줄을 뽑는 데만 쓰고 응답에는
+ * 싣지 않는다. `definition_json` 은 parameter 배열 조각만 잘라 온다.
+ *
+ * @property declaredParameters `definition_json -> entry -> parameters`. `[{"name": …,
+ *   "declared_type": …}, …]` 를 기대하고, 그 자리가 없으면 null 이다
+ * @property total 자르기 전 이 지도의 macro 수. 같은 질의의 `COUNT(*) OVER ()` 라 `LIMIT` 에
+ *   잘린 뒤에도 전체 수가 나오고, 목록과 어긋날 두 번째 질의가 없다
+ */
+data class MacroSceneContextRow(
+    @Column("id")
+    val id: Long,
+
+    @Column("name")
+    val name: String,
+
+    @Column("source")
+    val source: String,
+
+    @Column("declared_parameters")
+    val declaredParameters: Json?,
+
+    @Column("total")
+    val total: Long,
+)
+
+/**
  * 상세 조회가 읽는 macro 한 줄. [MacroSummaryRow] 에 원문을 더한 것이다(ARTEL-943).
  *
  * 한 건만 읽는 자리라 `source` 를 실어도 20,000자가 상한이다. `definition_json` 은 여기서도 싣지

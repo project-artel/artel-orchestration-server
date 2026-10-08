@@ -1,15 +1,22 @@
 package kr.artel.orchestration.scenecontext.service
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
+import kr.artel.orchestration.contentmap.dto.MacroSceneContextRow
+import kr.artel.orchestration.contentmap.dto.MacroScreenRow
 import kr.artel.orchestration.contentmap.entity.ContentMapMode
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
+import kr.artel.orchestration.contentmap.macro.MacroWriteFrames
 import kr.artel.orchestration.contentmap.entity.SceneEntity
 import kr.artel.orchestration.contentmap.entity.Observability
 import kr.artel.orchestration.contentmap.entity.SpecStatus
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
+import kr.artel.orchestration.contentmap.repository.MacroRepository
+import kr.artel.orchestration.contentmap.repository.ScreenMacroRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
@@ -17,11 +24,24 @@ import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.qa.service.contentMapModeOf
 import kr.artel.orchestration.scenecontext.dto.SceneCapabilityView
 import kr.artel.orchestration.scenecontext.dto.SceneContextEntry
+import kr.artel.orchestration.scenecontext.dto.SceneContextMacro
+import kr.artel.orchestration.scenecontext.dto.SceneContextMacroParameter
+import kr.artel.orchestration.scenecontext.dto.SceneContextMacroScreen
 import kr.artel.orchestration.scenecontext.dto.SceneContextResponse
 import kr.artel.orchestration.scenecontext.dto.SceneKnowledgeView
 import kr.artel.orchestration.scenecontext.repository.AnchoredKnowledgeRepository
 import kr.artel.orchestration.scenecontext.repository.AnchoredKnowledgeRow
 import org.springframework.stereotype.Service
+
+/**
+ * 응답에 싣는 `macro` 수의 상한(ARTEL-934).
+ *
+ * 이 payload 는 **시나리오를 시작할 때마다** 프롬프트에 실려 토큰 값을 낸다. 상한이 없으면 빌드에
+ * `macro` 가 쌓이는 만큼 모든 시나리오의 시작 비용이 같이 커진다. 30 은 실측으로 고른 값이 아니라
+ * 그 부피에 천장을 두는 값이다 — 로컬 DB 의 가장 큰 지도가 9 개다. 넘으면 이름순 앞 30 개만 보내고
+ * 나머지는 `macrosTotal` 로 잘렸다는 사실만 알린다.
+ */
+internal const val MAX_SCENE_CONTEXT_MACROS: Int = 30
 
 /**
  * QA agent 가 런 시작에 한 번 받아 가는 **씬별 맥락**을 조립한다(ARTEL-611).
@@ -44,6 +64,8 @@ import org.springframework.stereotype.Service
  * | 4 | `scene` 목록 | 지도가 있을 때만 |
  * | 5 | `v_content_map_capability` 전량 | 지도가 있을 때만 |
  * | 6 | 앵커 + 지식 요약 | 항상 |
+ * | 7 | `macro` 최대 30 개 (이름순, 전체 수 포함) | 지도가 있을 때만 |
+ * | 8 | `macro` 에 달린 `screen` 관계 | 지도가 있을 때만 |
  *
  * ## 접근 검사가 컨트롤러가 아니라 여기 있다
  *
@@ -55,6 +77,8 @@ class SceneContextService(
     private val gameBuilds: GameBuildRepository,
     private val contentMaps: ContentMapRepository,
     private val scenes: SceneRepository,
+    private val macros: MacroRepository,
+    private val screenMacros: ScreenMacroRepository,
     private val anchoredKnowledge: AnchoredKnowledgeRepository,
     private val qaTries: QaTryRepository,
     private val objectMapper: ObjectMapper,
@@ -121,6 +145,12 @@ class SceneContextService(
         val capabilitiesByScene = contentMaps.findAllCapabilityRows(contentMapId)
             .toList()
             .groupBy(ContentMapCapabilityRow::sceneName)
+        // `macro` 를 **먼저** 읽고 `screen` 관계를 나중에 읽는다. 둘이 한 트랜잭션이 아니라서 그 사이에
+        // 등록된 `macro` 가 있을 수 있다. 관계를 먼저 읽으면 그 `macro` 가 빈 `screens` 로 나가고,
+        // 이 응답에서 빈 `screens` 는 "아직 어디서 쓸지 모른다" 는 주장이라 거짓이 된다. 순서를
+        // 이렇게 두면 그 `macro` 는 이번 응답에 안 서고 다음 조회에 제대로 선다(`MacroViewService.list`).
+        val macroRows = macros.findSceneContextRowsByContentMapId(contentMapId, MAX_SCENE_CONTEXT_MACROS).toList()
+        val screensByMacroId = screenRowsOf(contentMapId, macroRows)
 
         return SceneContextResponse(
             gameBuildId = gameBuildId.toString(),
@@ -128,7 +158,59 @@ class SceneContextService(
             capture = contentMap.capture,
             scenes = mapScenes.map { scene -> entryOf(scene, capabilitiesByScene, knowledgeByScene) } +
                 anchorOnlyScenes(knowledgeByScene, mapScenes.mapTo(mutableSetOf(), SceneEntity::name)),
+            macros = macroRows.map { macroOf(it, screensByMacroId[it.id].orEmpty()) },
+            macrosTotal = macroRows.firstOrNull()?.total?.toInt() ?: 0,
         )
+    }
+
+    /**
+     * 읽어 온 `macro` 들에 달린 `screen` 관계를 `macro` id 로 묶는다. `macro` 가 없으면 질의를 돌리지 않는다.
+     *
+     * 지도 전체의 관계를 읽고 [macroRows] 에 든 `macro` 만 남긴다. 30 개 밖의 `macro` 관계를 읽는 낭비가
+     * 있으나 `screen_macro` 는 좁은 표이고, 같은 질의를 사람이 보는 목록(`MacroViewService`)이 이미
+     * 쓰므로 두 길이 같은 `screen` 이름을 낸다. 질의 순서가 `macro_id, screen.id` 라 묶은 뒤에도 각
+     * `macro` 의 `screen` 이 id 오름차순이다.
+     */
+    private suspend fun screenRowsOf(
+        contentMapId: Long,
+        macroRows: List<MacroSceneContextRow>,
+    ): Map<Long, List<MacroScreenRow>> {
+        if (macroRows.isEmpty()) return emptyMap()
+        val readMacroIds = macroRows.mapTo(mutableSetOf(), MacroSceneContextRow::id)
+        return screenMacros.findScreenRowsByContentMapId(contentMapId)
+            .toList()
+            .filter { it.macroId in readMacroIds }
+            .groupBy(MacroScreenRow::macroId)
+    }
+
+    /**
+     * `macro` 한 줄. `screens` 가 비어도 **싣는다** — 비어 있다는 것은 "아직 어디서 쓸지 모른다" 이지
+     * "없다" 가 아니고, 빼면 agent 는 이전 런이 등록한 `macro` 를 못 찾는다.
+     */
+    private fun macroOf(row: MacroSceneContextRow, screens: List<MacroScreenRow>) = SceneContextMacro(
+        name = row.name,
+        parameters = parametersOf(row.declaredParameters),
+        summary = firstBodyComment(row.source, row.name),
+        screens = screens.map { SceneContextMacroScreen(screenId = it.screenId.toString(), sceneName = it.sceneName) },
+    )
+
+    /**
+     * 진입점 `def` 의 parameter 를 **선언한 순서 그대로** 읽는다. 이름이 없는 항목은 건너뛰고, 타입을
+     * 못 읽는 항목은 `unknown` 으로 싣는다 — 이름과 개수와 순서가 호출 모양이라 타입이 비었다고 빼면
+     * agent 가 인자 개수를 틀린다.
+     */
+    private fun parametersOf(declared: Json?): List<SceneContextMacroParameter> {
+        val parameters = declared
+            ?.let { runCatching { objectMapper.readTree(it.asString()) }.getOrNull() }
+            ?.takeIf(JsonNode::isArray)
+            ?: return emptyList()
+        return parameters.mapNotNull { parameter ->
+            val name = parameter.path(MacroWriteFrames.PARAMETER_NAME_FIELD)
+                .takeIf(JsonNode::isTextual)?.asText() ?: return@mapNotNull null
+            val type = parameter.path(MacroWriteFrames.DECLARED_TYPE_FIELD)
+                .takeIf(JsonNode::isTextual)?.asText() ?: UNKNOWN_PARAMETER_TYPE
+            SceneContextMacroParameter(name = name, type = type)
+        }
     }
 
     /**
@@ -275,6 +357,8 @@ class SceneContextService(
         )
     }
 }
+
+private const val UNKNOWN_PARAMETER_TYPE = "unknown"
 
 /**
  * 한 조회에 걸리는 두 게이트. 축이 둘이라 묶어 든다.

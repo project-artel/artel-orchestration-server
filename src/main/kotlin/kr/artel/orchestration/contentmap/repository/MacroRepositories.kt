@@ -3,6 +3,7 @@ package kr.artel.orchestration.contentmap.repository
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.dto.MacroDetailRow
+import kr.artel.orchestration.contentmap.dto.MacroSceneContextRow
 import kr.artel.orchestration.contentmap.dto.MacroScreenRow
 import kr.artel.orchestration.contentmap.dto.MacroSummaryRow
 import kr.artel.orchestration.contentmap.dto.MacroUpsertRow
@@ -147,6 +148,33 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
     fun findSummariesByContentMapId(contentMapId: Long): Flow<MacroSummaryRow>
 
     /**
+     * scene context 응답에 실을 macro 를 이름 오름차순으로 [limit] 개까지 읽는다(ARTEL-934).
+     *
+     * `ORDER BY m.name` 이 응답의 순서를 정한다. 이 목록이 프롬프트 캐시를 타므로 호출마다 같은
+     * 순서여야 한다. `uk_macro_name (content_map_id, name)` 이 필터와 정렬을 함께 받는다.
+     *
+     * `LIMIT` 을 SQL 에서 건다. 읽어 온 뒤 자르면 `source` 가 한 건 20,000자인 macro 를 쓰지도
+     * 않을 만큼 올린다. 그래서 전체 수는 별도 질의 대신 `COUNT(*) OVER ()` 로 같은 행에 싣는다 —
+     * 윈도우는 `LIMIT` 보다 먼저 계산된다. 두 번째 질의로 세면 그 사이 등록된 macro 때문에 수와
+     * 목록이 어긋난다.
+     *
+     * `source` 는 요약 한 줄을 뽑으려고 읽는다. `definition_json` 은 parameter 배열만 자른다.
+     */
+    @Query(
+        """
+        SELECT m.id, m.name, m.source,
+               m.definition_json -> '${MacroWriteFrames.ENTRY_FIELD}' -> '${MacroWriteFrames.PARAMETERS_FIELD}'
+                   AS declared_parameters,
+               COUNT(*) OVER () AS total
+        FROM macro m
+        WHERE m.content_map_id = :contentMapId
+        ORDER BY m.name ASC
+        LIMIT :limit
+        """
+    )
+    fun findSceneContextRowsByContentMapId(contentMapId: Long, limit: Int): Flow<MacroSceneContextRow>
+
+    /**
      * macro 하나를 원문까지 읽는다(ARTEL-943).
      *
      * **`content_map_id` 로 함께 좁히는 것이 계약이다.** id 만으로 찾으면 다른 빌드에 등록된
@@ -201,9 +229,9 @@ interface ScreenMacroRepository : CoroutineCrudRepository<ScreenMacroEntity, Lon
      *
      * PK `(screen_id, macro_id)` 의 두 번째 컬럼으로 찾으므로 `idx_screen_macro_macro` 를 탄다.
      *
-     * 반대 방향(`screen` 으로 macro 찾기)은 메서드를 두지 않는다. 이 PR 에 호출부가 없고, 그쪽을
-     * 읽는 것은 scene context 응답(ARTEL-934)의 몫이다. PK 의 선두 컬럼이 `screen_id` 라 그 조회는
-     * index 를 더하지 않고도 선다.
+     * 반대 방향(`screen` 으로 macro 찾기)은 메서드를 두지 않는다. scene context 응답(ARTEL-934)도
+     * macro 쪽에서 `screen` 을 읽어 가므로([findScreenRowsByContentMapId]) 호출부가 없다.
+     * 필요해지면 PK 의 선두 컬럼이 `screen_id` 라 index 를 더하지 않고도 선다.
      */
     @Query("SELECT screen_id FROM screen_macro WHERE macro_id = :macroId ORDER BY screen_id ASC")
     fun findScreenIdsByMacroId(macroId: Long): Flow<Long>

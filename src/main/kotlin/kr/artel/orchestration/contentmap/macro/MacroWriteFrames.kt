@@ -118,6 +118,19 @@ object MacroWriteFrames {
 
     /** parameter 하나의 선언 타입. 없으면 응답의 `type` 이 `null` 이다. */
     const val TYPE_FIELD: String = "type"
+
+    /**
+     * 실제로 저장된 tree 에서 진입점 `def` 가 사는 칸(ARTEL-934). `definition_json` 은
+     * `{"name", "entry": {"name", "parameters", "statements"}, "helpers", "source"}` 모양이다.
+     *
+     * 위의 [DEFS_FIELD] · [TYPE_FIELD] 와 다른 칸을 가리킨다. 저장된 행을 열어 보면 `defs` 배열도
+     * parameter 의 `type` 도 없고, `entry.parameters[].declared_type` 이 있다. scene context 는
+     * 저장된 모양을 그대로 읽는다 — `MacroViewService` 쪽을 맞추는 일은 이 변경의 몫이 아니다.
+     */
+    const val ENTRY_FIELD: String = "entry"
+
+    /** 저장된 tree 에서 parameter 하나의 선언 타입이 사는 칸. 이름은 [PARAMETER_NAME_FIELD] 다. */
+    const val DECLARED_TYPE_FIELD: String = "declared_type"
 }
 
 /**

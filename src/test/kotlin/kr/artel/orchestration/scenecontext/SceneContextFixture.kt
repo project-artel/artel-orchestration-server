@@ -148,6 +148,71 @@ class SceneContextFixture(
         ).bind("id", capabilityId).bind("entryId", entryId).then().awaitFirstOrNull()
     }
 
+    /**
+     * `screen` 한 행. 같은 `scene` 안에서 `discriminator` 가 유일해야 하므로(`uk_screen_discriminator`)
+     * 호출마다 다른 selector 를 넣는다.
+     */
+    suspend fun newScreen(sceneId: Long, name: String? = null): Long =
+        db.sql(
+            """
+            INSERT INTO screen (scene_id, name, discriminator)
+            VALUES (:sceneId, :name, :discriminator::jsonb)
+            RETURNING id
+            """
+        )
+            .bind("sceneId", sceneId)
+            .let { if (name == null) it.bindNull("name", String::class.java) else it.bind("name", name) }
+            .bind("discriminator", """[{"selector":"Canvas[0]/Screen${System.nanoTime()}","active":true}]""")
+            .map { row, _ -> (row.get(0) as Number).toLong() }
+            .one().block()!!
+
+    /**
+     * 등록된 `macro` 한 행과 그것이 달린 `screen` 관계. `MacroDefinitionService` 를 지나지 않는다 —
+     * 그 경로는 QA 런과 agent 세션을 요구해 이 조회와 상관없는 픽스처를 여섯 개 더 세워야 한다.
+     *
+     * `definition_json` 은 실제로 저장되는 모양(`entry.parameters[].declared_type`)이다.
+     * [parameters] 는 (이름, 타입) 쌍이고, [bodyComment] 가 있으면 본문 첫 줄에 `#` 주석으로 적는다.
+     */
+    suspend fun newMacro(
+        contentMapId: Long,
+        name: String,
+        parameters: List<Pair<String, String>> = emptyList(),
+        bodyComment: String? = null,
+        screenIds: List<Long> = emptyList(),
+    ): Long {
+        val signature = parameters.joinToString(", ") { (parameterName, type) -> "$parameterName: $type" }
+        val source = buildString {
+            appendLine("def $name($signature) -> None:")
+            bodyComment?.let { appendLine("    # $it") }
+            append("    click(selector(\"Canvas/Button\"))")
+        }
+        val declaredParameters = parameters.joinToString(",", "[", "]") { (parameterName, type) ->
+            """{"name":"$parameterName","default":null,"declared_type":"$type"}"""
+        }
+        val definitionJson =
+            """{"name":"$name","entry":{"name":"$name","parameters":$declaredParameters,"statements":[]},"helpers":[],"source":"unused"}"""
+        val parameterNames = parameters.joinToString(",", "[", "]") { (parameterName, _) -> "\"$parameterName\"" }
+        val macroId = db.sql(
+            """
+            INSERT INTO macro (content_map_id, name, source, definition_json, parameter_names)
+            VALUES (:contentMapId, :name, :source, :definitionJson::jsonb, :parameterNames::jsonb)
+            RETURNING id
+            """
+        )
+            .bind("contentMapId", contentMapId)
+            .bind("name", name)
+            .bind("source", source)
+            .bind("definitionJson", definitionJson)
+            .bind("parameterNames", parameterNames)
+            .map { row, _ -> (row.get(0) as Number).toLong() }
+            .one().block()!!
+        screenIds.forEach { screenId ->
+            db.sql("INSERT INTO screen_macro (screen_id, macro_id) VALUES (:screenId, :macroId)")
+                .bind("screenId", screenId).bind("macroId", macroId).then().awaitFirstOrNull()
+        }
+        return macroId
+    }
+
     /** 지식 한 항목 + 앵커. [sceneName] 이 null 이면 앵커 없는 지식(= 게임 전체의 사실)이다. */
     suspend fun newKnowledge(
         projectId: Long,
