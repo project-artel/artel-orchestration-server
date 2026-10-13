@@ -133,8 +133,10 @@ class QaTryDetailIntegrationTest {
         qaTryRepository.deleteAll()
         qaRunRepository.deleteAll()
         testRunRepository.deleteAll()
-        gameBuildRepository.deleteAll()
+        // 인스턴스가 build 를 가리키므로(last_game_build_id) 인스턴스를 먼저 지운다. 거꾸로면 앞 테스트가 남긴
+        // 인스턴스에 막혀 이 클래스 전체가 정리 단계에서 실패한다.
         gameInstanceRepository.deleteAll()
+        gameBuildRepository.deleteAll()
         testScenarioRepository.deleteAll()
         projectMemberRepository.deleteAll()
         projectRepository.deleteAll()
