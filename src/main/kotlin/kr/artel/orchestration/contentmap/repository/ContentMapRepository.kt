@@ -3,7 +3,6 @@ package kr.artel.orchestration.contentmap.repository
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.dto.ContentMapCallEdge
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
-import kr.artel.orchestration.contentmap.dto.ContentMapObservationRow
 import kr.artel.orchestration.contentmap.dto.ContentMapScreenElement
 import kr.artel.orchestration.contentmap.dto.CapabilityOwner
 import kr.artel.orchestration.contentmap.dto.MethodArgument
@@ -245,42 +244,6 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
      */
     @Query("SELECT updated_at::text FROM content_map WHERE id = :contentMapId")
     suspend fun findUpdatedAt(contentMapId: Long): String?
-
-    /**
-     * **누를 것은 없고 볼 것은 있는 기능**(ARTEL-681). 위 창구가 `not-a-step` 을 거르므로 따로 낸다.
-     *
-     * 게임이 스스로 하는 일이다 — 화면을 열면 무엇이 보이나, 값이 이러하면 무엇이 보이나. 지금까지
-     * 케이스가 하나도 없었고(지도 31에서 137개 중 0건), 대신 그 결과가 엉뚱하게 조작 케이스의
-     * 기대결과로 흘러들어갔다(ARTEL-680).
-     *
-     * `call_path` 의 뿌리를 함께 낸다. **유니티가 정한 이름이라** 개발자가 무엇을 어떻게 부르든
-     * 흔들리지 않는다 — `Start` 면 화면을 열 때, `Update` 면 머무르는 동안이다.
-     */
-    @Query(
-        """
-        SELECT cm.id AS content_map_id, cm.capture,
-               s.id AS scene_id, s.name AS scene_name, s.summary AS scene_summary,
-               c.id AS capability_id, c.capability_key, c.origin, c.verification,
-               c.scene_presence, c.status,
-               c.actionability, c.observability, c.applicability, c.summary, c.given_text,
-               c.control_selector, c.control_path, c.control_label, c.interaction,
-               c.input_key, c.input_phase, c.repeat_until_done,
-               c.hint_action_method, c.hint_action_params,
-               ce.entry_id, ce.branch_offset, ce.record_kind, ce.trigger_kind,
-               ce.analysis_confidence, ce.condition_tree, ce.gaps,
-               substring(ce.call_path->>0 from '::([A-Za-z0-9_]+)') AS trigger_root
-        FROM capability c
-        JOIN scene s ON s.id = c.scene_id
-        JOIN content_map cm ON cm.id = s.content_map_id
-        JOIN capability_evidence ce ON ce.capability_id = c.id
-        WHERE cm.id = :contentMapId
-          AND c.merged_into IS NULL
-          AND c.actionability = 'not-a-step'
-          AND c.observability = 'observable'
-        ORDER BY s.name ASC, c.id ASC
-        """
-    )
-    fun findObservationRows(contentMapId: Long): Flow<ContentMapObservationRow>
 
     /**
      * **화면에 붙어 있는 UI 요소**(ARTEL-683). 있는지 확인하는 케이스가 여기서 나온다.

@@ -143,4 +143,23 @@ class MapTestCaseReadingsTest {
         assertThat(expected(sprite("ProjectileAnimator.spriteRenderer.sprite", "ProjectileAnimator.sprites.Item[0]")))
             .isEqualTo("`ProjectileAnimator.spriteRenderer.sprite` 표시가 갱신된다")
     }
+
+    /**
+     * **문장이 같아져도 효과는 둘 다 남는다.** 이름을 못 댄 그림 번호 둘은 같은 "갱신된다" 가 되는데,
+     * 거기서 하나를 버리면 그 효과로 잡던 케이스의 정체가 바뀌어 시나리오가 가리키던 줄이 끊긴다(실측 228).
+     * 보이는 문장은 생성기가 따로 거른다.
+     */
+    @Test
+    fun `문장이 같아져도 효과는 둘 다 남는다`() {
+        val told = MapTestCasePhrasing.expectedWithSource(
+            listOf(
+                sprite("ProjectileAnimator.spriteRenderer.sprite", "ProjectileAnimator.sprites.Item[0]"),
+                sprite("ProjectileAnimator.spriteRenderer.sprite", "ProjectileAnimator.sprites.Item[1]"),
+            ),
+            gameTypes = gameTypes,
+        )
+
+        assertThat(told).hasSize(2)
+        assertThat(told.map { it.expected }.distinct()).containsExactly("`ProjectileAnimator.spriteRenderer.sprite` 표시가 갱신된다")
+    }
 }

@@ -292,7 +292,7 @@ object MapTestCasePhrasing {
                 // 같은 말을 거르는 잣대는 **값을 빼기 전** 문장이다. 값을 뺀 문장으로 거르면 `sprites[0]` ·
                 // `sprites[1]` 이 같은 줄이 되어 한쪽 효과가 사라지고, 그 효과로 잡던 케이스의 정체가
                 // 바뀌어 시나리오가 가리키던 줄이 끊긴다. 보이는 문장은 [MapTestCaseGenerator] 가 한 번 더 거른다.
-                outcome(effect.kind, target, named) to Told(expected, doing(effect.kind, target, detail), effect, hidden = unread)
+                outcome(effect.kind, target, named) to Told(expected, doing(effect.kind, target, detail, sprite), effect, hidden = unread)
             }
             .filterTo(kept) { (key, _) -> seen.add(key) }
         return kept.map { it.second }
@@ -377,10 +377,19 @@ object MapTestCasePhrasing {
 
     private const val THINGS = "개를"
 
-    private fun doing(kind: String, target: String, detail: String?): Doing {
+    /** 이름을 셀 때 그림을 글자와 가르는 열쇠. 지도의 `kind` 어휘가 아니다. */
+    private const val SPRITE_KIND = "ui-value:sprite"
+
+    private fun doing(kind: String, target: String, detail: String?, sprite: Boolean = false): Doing {
         val value = detail?.let { "${code(it)} 로 " } ?: ""
         fun of(what: String, ends: String, joins: String, counted: Counted) =
             Doing(kind, what.trim(), ends, joins, counted)
+        // **그림은 글자와 따로 센다.** 둘 다 `ui-value` 로 와서 한 무리로 세면 그림 둘이 "글자 2곳" 이 된다
+        // (실측 228). 묶는 열쇠(`kind`)를 갈라야 따로 센다.
+        if (sprite) {
+            return Doing(SPRITE_KIND, "${code(target)} 표시를 $value".trim(), "갱신한다", "갱신하고",
+                Counted("그림", PLACES, "갱신한다", "갱신하고"))
+        }
         return when (kind) {
             "scene" -> of("${code(target)} 화면으로", "넘어간다", "넘어가고", Counted("화면", PLACES, "넘어간다", "넘어가고"))
             "active-state" -> {

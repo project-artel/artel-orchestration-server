@@ -61,6 +61,8 @@ class MapTestCaseGeneratorGoldenTest {
 
     private lateinit var cases: List<MapTestCase>
 
+    private var mapId = 0L
+
     @BeforeAll
     fun `문서를 적재하고 케이스를 뽑는다`(): Unit = runBlocking {
         val now = Instant.now()
@@ -93,7 +95,21 @@ class MapTestCaseGeneratorGoldenTest {
                 )
             )
         )
+        mapId = map.id!!
         cases = generator.generate(map.id!!)
+    }
+
+    /**
+     * **같은 지도를 다시 뽑아도 케이스의 정체가 같다.**
+     *
+     * 정체(`case_key`)가 흔들리면 다시 뽑을 때마다 시나리오가 가리키던 줄이 `broken` 이 되고 새 줄이
+     * 생긴다. 3단계에서 기대 문장을 거르는 잣대가 바뀌며 228 이 그렇게 됐고, 재생성으로야 알았다.
+     */
+    @Test
+    fun `같은 지도를 다시 뽑아도 정체가 같다`(): Unit = runBlocking {
+        val again = generator.generate(mapId)
+
+        assertThat(again.map { it.identity }).containsExactlyElementsOf(cases.map { it.identity })
     }
 
     /**
@@ -317,7 +333,7 @@ class MapTestCaseGeneratorGoldenTest {
     /**
      * **형제와 갈리는 것을 먼저 적는다**(ARTEL-662 의 꼬리).
      *
-     * 꼬리에 담는 수가 [MAX_TELLING] 로 잘리는데, 가나다순으로 자르면 **정작 옆줄과 갈라 주는
+     * 꼬리에 담는 수가 개수 상한으로 잘리던 때, 가나다순으로 자르면 **정작 옆줄과 갈라 주는
      * 비교가 뒤로 밀려 잘려 나간다.** 실측에서 `GameClearScene` 의 세 줄이 그랬다 — 셋을 가르는
      * 것은 `stagePosition` 하나인데 그것이 꼬리 맨 끝에 있어, 목록에서 줄을 훑는 사람은 같은
      * 글자 40자를 지나야 다른 데에 닿았다.

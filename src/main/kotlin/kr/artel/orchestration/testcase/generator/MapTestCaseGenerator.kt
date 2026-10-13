@@ -3,8 +3,6 @@ package kr.artel.orchestration.testcase.generator
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
-import kr.artel.orchestration.contentmap.dto.ContentMapObservationRow
-import kr.artel.orchestration.contentmap.dto.asCapabilityRow
 import com.fasterxml.jackson.databind.JsonNode
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
@@ -267,11 +265,20 @@ class MapTestCaseGenerator(
             val others = group.filterNot { it === case }.map { comparisonsIn(it.condition) }
             // **덜 가진 것부터 적는다.** 형제가 셋 이상이면 공통이 아니어도 대부분이 가진 비교가
             // 있고, 그것은 이 케이스를 옆줄과 갈라 주지 못한다. 가나다순으로 자르던 판에서
-            // 실측 85건 중 6건이 **이름이 같은 채로** 남았다 — 갈라 주는 비교가 [MAX_TELLING]
-            // 밖으로 밀려난 것이다. 같은 수면 가나다순으로 갈라 이름이 실행마다 흔들리지 않게 한다.
-            val telling = (comparisonsIn(case.condition) - shared)
+            // 실측 85건 중 6건이 **이름이 같은 채로** 남았다 — 갈라 주는 비교가 개수 상한 밖으로
+            // 밀려난 것이다. 같은 수면 가나다순으로 갈라 이름이 실행마다 흔들리지 않게 한다.
+            //
+            // **갈릴 때까지만 적는다.** 앞서는 셋에서 잘랐는데 그 수에는 근거가 없었다 — 실측 지도 1·2 에서
+            // 상한을 풀어도 이름이 하나도 안 바뀌었다. 형제 누구도 지금까지 적은 비교를 다 갖지 않으면 이미
+            // 갈린 것이고, 더 적는 것은 전제를 두 번 쓰는 일이다. 형제의 꼬리는 제 비교의 일부라 이 꼬리와
+            // 같아질 수 없다.
+            val ordered = (comparisonsIn(case.condition) - shared)
                 .sortedWith(compareBy({ c -> others.count { c in it } }, { it }))
-                .take(MAX_TELLING)
+            val telling = mutableListOf<String>()
+            for (comparison in ordered) {
+                telling += comparison
+                if (others.none { it.containsAll(telling) }) break
+            }
             if (telling.isEmpty()) case
             else case.copy(step = "${case.step} (${telling.joinToString(", ")} 일 때)")
         }
@@ -702,34 +709,6 @@ class MapTestCaseGenerator(
         }
 
     /**
-     * 이 관측을 케이스로 낼까(ARTEL-681).
-     *
-     * 셋으로 거른다 — 무엇이 일으키나, 볼 것이 있나, 여기 있다는 것이 확인됐나.
-     *
-     * ## 무엇이 일으키나는 `trigger_kind` 가 답한다
-     *
-     * 앞서는 메서드 이름 목록(`WATCHED_ROOTS`)으로 걸렀다. 손으로 적은 목록이라 두 가지를
-     * 놓쳤다. 컴파일러가 코루틴 이름을 바꾸면 목록에 없고(`Start1`), 목록에 안 적어 둔 Unity
-     * 콜백도 통째로 빠진다. 실측(word-venture, 2026-09-01)에서 `OnTriggerEnter2D` 12 ·
-     * `OnMouseEnter` 2 · `OnMouseExit` 2 · `OnDrag` 1 · `OnEndDrag` 1 이 그렇게 빠져 있었다.
-     *
-     * 빠진 것들이 사소하지 않다. `OnTriggerEnter2D` 는 `Player.HpText.text` 가 줄고 죽으면
-     * `GameOverScene` 으로 가는 것이고, `OnMouseEnter` 는 마우스를 올리면 1.2배가 되는 것이다.
-     * 구버전(specs_v2)도 이 자리를 12건 냈다.
-     *
-     * `trigger_kind` 는 적재기가 근거에서 읽는 값이라 목록을 손으로 늘릴 일이 없다.
-     * `lifecycle` 은 **Unity 가 부르는 콜백**이고 `unity-event` 는 **게임이 인스펙터로 연결한
-     * 자기 메서드**다. 뒤엣것은 내지 않는다 — 사람이 부를 수 있는 자리가 아니고, 실측에서
-     * `CardMouseUp` 과 `CardAlignment` 이 `this.transform` 세 줄을 똑같이 냈다.
-     *
-     * ## 확인 안 된 자리는 그 `scene` 의 사실이 아니다
-     *
-     * `persistent-unconfirmed` 는 `scene` 을 넘어 살아남는 오브젝트가 거기 있다는 사실만 말한다
-     * ([ContentMapCapabilityRow.scenePresence] 가 TC 생성기를 지목해 적어 두었다). 실측에서
-     * `SaveLoadController` 하나가 여섯 `scene` 에 앉아 *"`this.gameObject` 이(가) 사라진다"* 를
-     * 여섯 벌 냈다 — 아무도 확인한 적 없고, 실행하는 사람이 찾을 이름도 아니다.
-     */
-    /**
      * **케이스로서의 등급**(ARTEL-681).
      *
      * 지도의 `status` 를 그대로 쓰면 안 된다. 그것은 *"이 기능이 단독 명세가 되나"* 에 답하는
@@ -744,13 +723,6 @@ class MapTestCaseGenerator(
      */
     private fun caseGrade(row: ContentMapCapabilityRow): String =
         if (row.actionability == NOT_A_STEP) "runnable" else row.status
-
-    private suspend fun keptAsObservation(row: ContentMapObservationRow): Boolean {
-        if (row.triggerKind != ENGINE_CALLBACK) return false
-        if (row.scenePresence == UNCONFIRMED_HERE) return false
-        return effects.findByCapabilityIdOrderByIdAsc(row.capabilityId).toList()
-            .any { it.kind in VISIBLE }
-    }
 
     private suspend fun borrowed(
         row: ContentMapCapabilityRow,
@@ -823,14 +795,12 @@ class MapTestCaseGenerator(
     /** 효과 어휘의 씬 전환. `MapTestCasePhrasing` 이 같은 값으로 문장을 만든다. */
     private companion object {
         /**
-         * 조작 문장에 붙이는 **가르는 조건의 최대 개수**. 다 붙이면 전제를 통째로 두 번 쓰는 셈이고,
-         * 목록에서 눈으로 훑을 수 있는 길이를 넘긴다. 구별에 필요한 것은 대개 하나둘이다.
-         */
-        private const val MAX_TELLING = 3
-
-        /**
          * 한 케이스를 몇 갈래까지 펼 것인가(ARTEL-667). 갈래가 곱해지는 자리에서 케이스가
          * 폭발하는 것은 이 저장소가 이미 한 번 겪은 일이라, 넘으면 뭉친 채로 둔다.
+         *
+         * **값을 맞춘 것이 아니라 안전장치다.** 실측(word-venture 지도 1·2, 2026-10-13)에서 상한을
+         * 풀어 재생성해도 케이스가 하나도 안 바뀌었다 — 이 지도에서는 넷을 넘는 갈래가 없다. 그래서
+         * 이 수가 결과를 정하는 자리는 아직 없고, 다른 게임에서 걸리면 그때 그 실측으로 다시 정한다.
          */
         private const val MAX_BRANCHES = 4
 
@@ -838,24 +808,6 @@ class MapTestCaseGenerator(
 
         /** 누를 것이 없는 자리(ARTEL-681). */
         const val NOT_A_STEP = "not-a-step"
-
-        /**
-         * **화면에 보이는 효과만 케이스가 된다**(ARTEL-681).
-         *
-         * 값만 바뀌는 것(`write`)은 실행하는 사람이 눈으로 확인할 수 없고, 소리·애니메이션은 지금
-         * 판정할 수단이 없다. 수단이 생기면 그때 넣는다.
-         */
-        val VISIBLE = setOf(SCENE, "ui-value", "active-state", "transform", "instantiate", "destroy")
-
-        /**
-         * Unity 가 부르는 콜백(`capability_evidence.trigger_kind`). 다른 값은 `unity-event` 로,
-         * 게임이 인스펙터로 연결한 자기 메서드다 — 그것은 사람이 그 순간을 만들 수 없어서
-         * 관측 케이스로 내지 않는다([ContentMapRepository.findTestCaseRows] 가 거른다).
-         */
-        const val ENGINE_CALLBACK = "lifecycle"
-
-        /** 살아남아 거기 있을 뿐, 여기서 되는지는 아직 아무도 안 본 자리. */
-        const val UNCONFIRMED_HERE = "persistent-unconfirmed"
 
         /** 문서가 값을 못 읽은 자리에 적어 두는 글자. */
         const val UNREADABLE = "(not a"
