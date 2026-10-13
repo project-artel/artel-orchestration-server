@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.NotFoundException
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
@@ -15,6 +16,12 @@ import kr.artel.orchestration.testcase.dto.ValueMove
 import kr.artel.orchestration.testscenario.service.Guard
 import kr.artel.orchestration.testcase.dto.SceneEdge
 import kr.artel.orchestration.testcase.dto.SceneExit
+import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteRequest
+import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteResponse
+import kr.artel.orchestration.testcase.dto.TestCaseMoveRequest
+import kr.artel.orchestration.testcase.dto.TestCaseMoveResponse
+import kr.artel.orchestration.testcase.dto.parseOptionalWireId
+import kr.artel.orchestration.testcase.dto.parseWireIds
 import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
@@ -30,6 +37,8 @@ import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.transaction.reactive.TransactionalOperator
+import org.springframework.transaction.reactive.executeAndAwait
 import kr.artel.orchestration.testscenario.service.CaseConditionReader
 
 /**
@@ -48,6 +57,8 @@ class TestCaseService(
     private val repository: TestCaseRepository,
     private val projectAccessService: ProjectAccessService,
     private val objectMapper: ObjectMapper,
+    private val folderService: TestCaseFolderService,
+    private val transactionalOperator: TransactionalOperator,
 ) {
 
     private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
@@ -336,9 +347,15 @@ class TestCaseService(
         )
     }
 
-    /** 케이스 생성. scene/step/expectedValue 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404). */
+    /**
+     * 케이스 생성. scene/step/expectedValue 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404).
+     *
+     * `folderId` 가 있으면 이 프로젝트 folder 여야 한다(아니면 404). folder 확인과 저장 사이에 그 folder 가
+     * 지워지지 않게 [TestCaseFolderService.lockProjectFolders] 를 잡고 한 트랜잭션에서 저장한다.
+     */
     suspend fun createTestCase(projectId: Long, userId: Long, request: TestCaseCreateRequest): TestCaseResponse? {
         if (!projectAccessService.isMember(projectId, userId)) return null
+        val folderId = parseOptionalWireId(request.folderId, "folderId")
         val entity = TestCaseEntity(
             projectId = projectId,
             scene = request.scene.requireField("scene"),
@@ -346,8 +363,37 @@ class TestCaseService(
             precondition = request.precondition?.ifBlank { null },
             expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
+            folderId = folderId,
         )
-        return repository.save(entity).toTestCaseResponse()
+        if (folderId == null) return repository.save(entity).toTestCaseResponse()
+        return transactionalOperator.executeAndAwait {
+            folderService.lockProjectFolders(projectId)
+            folderService.requireFolder(projectId, folderId)
+            repository.save(entity)
+        }.toTestCaseResponse()
+    }
+
+    /**
+     * test case 를 folder 로 옮긴다(ARTEL-969). `folderId` 가 null 이면 folder 없음으로 옮긴다.
+     *
+     * 비멤버와 다른 프로젝트 folder 는 404 다. 다른 프로젝트 test case 와 없는 id 는 옮기지 않고 세지
+     * 않는다. folder 확인과 `UPDATE` 사이에 folder 가 지워지면 FK 위반(500)이 나므로 folder 쓰기와 같은
+     * lock 을 잡는다.
+     */
+    suspend fun moveTestCases(projectId: Long, userId: Long, request: TestCaseMoveRequest): TestCaseMoveResponse {
+        if (!projectAccessService.isMember(projectId, userId)) {
+            throw NotFoundException("프로젝트를 찾을 수 없습니다.")
+        }
+        val caseIds = parseWireIds(request.caseIds, "caseIds")
+        val folderId = parseOptionalWireId(request.folderId, "folderId")
+        val moved = transactionalOperator.executeAndAwait {
+            if (folderId != null) {
+                folderService.lockProjectFolders(projectId)
+                folderService.requireFolder(projectId, folderId)
+            }
+            repository.moveToFolder(projectId, caseIds, folderId)
+        }
+        return TestCaseMoveResponse(moved)
     }
 
     /**
@@ -378,6 +424,25 @@ class TestCaseService(
     /** 케이스 삭제(참여자만). 접근 불가면 조용히 no-op(존재 숨김). 조합 정리는 별도. */
     suspend fun deleteTestCase(caseId: Long, userId: Long) {
         accessible(caseId, userId)?.let { repository.delete(it) }
+    }
+
+    /**
+     * 여러 test case 를 한 번에 지운다(ARTEL-967). 비멤버면 본문과 무관하게 404 다.
+     *
+     * 시나리오가 `case_id` 로 인용한 케이스도 지운다. 단건 삭제와 같은 규칙이다 — 인용된 케이스를
+     * `BROKEN` 으로 돌리는 것은 content map 에서 기능이 사라졌을 때 자동으로 지우는
+     * [MapTestCaseWriter] 의 규칙이고, 이것은 사용자가 고른 케이스를 지우는 요청이다.
+     */
+    suspend fun bulkDeleteTestCases(
+        projectId: Long,
+        userId: Long,
+        request: TestCaseBulkDeleteRequest,
+    ): TestCaseBulkDeleteResponse {
+        if (!projectAccessService.isMember(projectId, userId)) {
+            throw NotFoundException("프로젝트를 찾을 수 없습니다.")
+        }
+        val caseIds = parseWireIds(request.caseIds, "caseIds")
+        return TestCaseBulkDeleteResponse(repository.deleteByProjectIdAndIdIn(projectId, caseIds))
     }
 
     private suspend fun accessible(caseId: Long, userId: Long): TestCaseEntity? {
