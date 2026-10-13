@@ -133,10 +133,12 @@ artel:
       max-limit: ${ARTEL_TESTCASE_SEARCH_MAX_LIMIT:20}
   macro:
     # MACRO_SEARCH(ARTEL-986): macro 의 이름, parameter, docstring 으로 벡터를 채우고 키워드 검색과
-    # 합쳐 돌려준다. Agent 가 없으면 매 tick 실패만 쌓이므로 기본은 끈다(로컬·테스트). 배포 환경에서 켠다.
-    # 꺼 둬도 MACRO_SEARCH 는 키워드 결과만으로 답한다.
+    # 합쳐 돌려준다. knowledge 와 testcase 백필과 달리 기본으로 켠다 — 켜는 것을 잊은 배포 환경에서
+    # 검색이 조용히 키워드 결과만 내는 쪽이, Agent 없는 로컬에서 tick 마다 실패 로그가 쌓이는 쪽보다
+    # 알아채기 어렵다. 로컬에서는 `ARTEL_MACRO_SEARCH_ENABLED=false` 로 끄고, 테스트는
+    # application-test.yml 이 끈다. 꺼 둬도 MACRO_SEARCH 는 키워드 결과만으로 답한다.
     search:
-      enabled: ${ARTEL_MACRO_SEARCH_ENABLED:false}
+      enabled: ${ARTEL_MACRO_SEARCH_ENABLED:true}
       # 벡터 모델은 knowledge 백필과 같아야 한다(Agent 의 embedding_model 과도 같아야 한다).
       model: ${ARTEL_MACRO_SEARCH_MODEL:${ARTEL_KNOWLEDGE_BACKFILL_MODEL:openai/text-embedding-3-large}}
       # 한 tick 처리 상한. macro 는 build 당 수십 개라 한 번의 /embed 로 끝난다.
