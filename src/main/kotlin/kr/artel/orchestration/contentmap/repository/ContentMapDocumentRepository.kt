@@ -22,6 +22,9 @@ interface ContentMapDocumentRepository : CoroutineCrudRepository<ContentMapDocum
 
     fun findByContentMapIdOrderByReceivedAtDesc(contentMapId: Long): Flow<ContentMapDocumentEntity>
 
+    /** 이 content map 에 적재를 마친 문서가 하나라도 있나. test case 생성의 전제다(ARTEL-971). */
+    suspend fun existsByContentMapIdAndIngestedAtIsNotNull(contentMapId: Long): Boolean
+
     /**
      * 아직 적재되지 않은 문서. ARTEL-442 가 집어 간다.
      *
