@@ -2,7 +2,7 @@
 
 - Date: 2026-10-13
 - Jira: ARTEL-980 (스토리 ARTEL-979)
-- Status: Reviewed
+- Status: Implemented
 
 ## Goal
 
@@ -256,6 +256,17 @@ plan-review(fast, medium)에서 받은 의견 가운데 반영하지 않은 것�
 - TTL 을 설정값 대신 상수로 두자는 제안: 선례인 `SdkLoginCodeStore` 도 `AuthProperties.sdkLoginCodeTtl`
   설정값을 쓴다. 그대로 설정값으로 둔다.
 - 저장소 변경 시 기존 `issue_tracker_link` 를 막거나 표시하자는 제안: Step 7 에 적은 대로 별도 작업으로 뺀다.
+
+## Implementation notes
+
+구현하면서 계획과 달라진 것.
+
+- `GitHubAppProperties.installationChoiceTtl` 에 0 보다 커야 한다는 `init { require(...) }` 를 두었다. Redis 는
+  TTL 0 을 거절한다.
+- `TrackerInstallationChoiceStore.delete` 만 Redis 장애를 삼키고 `warn` 로그를 남긴다. 부르는 시점에는 연결이
+  이미 저장되어 있어, 예외를 올리면 성공한 `PUT` 이 500 으로 보인다(pair review 의견).
+- 계정 종류 변환은 fake reader 를 거치지 않으므로, 실제 `GitHubUserInstallationClient` 를 네트워크 없는
+  `WebClient` stub 으로 부르는 테스트를 하나 더했다.
 
 ## Open Questions
 
