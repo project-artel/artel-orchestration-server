@@ -658,6 +658,60 @@ class ContentMapReingestTest {
         assertThat(scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList()).hasSize(1)
     }
 
+    /**
+     * **직렬화 참조의 순서 · 주인 · 타입이 남는다.**
+     *
+     * 목록 필드(`sprites`)의 몇 번째가 어느 그림인지는 순서에만 있다. 이름을 못 읽은 참조를 먼저 빼고
+     * 세면 뒤의 것들이 한 칸씩 당겨져 `sprites[2]` 가 다른 그림을 가리킨다 — 그래서 가운데에 이름 없는
+     * 참조를 끼워 둔다.
+     */
+    @Test
+    fun `참조의 순서와 주인과 타입이 남는다`(): Unit = runBlocking {
+        val map = newContentMap()
+        val refs = """
+            [
+              {"field": "sprites", "type": "UnityEngine.Sprite", "name": "Idle", "id": 1, "path": null, "asset": true, "carries": []},
+              {"field": "sprites", "type": "UnityEngine.Sprite", "name": null, "id": 2, "path": null, "asset": true, "carries": []},
+              {"field": "sprites", "type": "UnityEngine.Sprite", "name": "Hit", "id": 3, "path": null, "asset": true, "carries": []},
+              {"field": "background", "type": "UnityEngine.GameObject", "name": "Background", "id": 4, "path": "Background", "asset": false, "carries": ["UnityEngine.SpriteRenderer"]}
+            ]
+        """
+        val document = evidenceDocument().replace(
+            """{"type": "Demo.TitleController", "calls": [], "refs": []}""",
+            """{"type": "Demo.TitleController", "calls": [], "refs": $refs}""",
+        )
+
+        ingestNew(map.id!!, document)
+
+        val rows = db.sql(
+            """
+            SELECT field, target_name, position, owner_path, target_type, carries::text AS carries
+            FROM scene_object_ref WHERE content_map_id = :map ORDER BY field, position
+            """
+        )
+            .bind("map", map.id!!)
+            .map { row, _ ->
+                listOf(
+                    row.get("field", String::class.java),
+                    row.get("target_name", String::class.java),
+                    row.get("position", Integer::class.java)?.toInt(),
+                    row.get("owner_path", String::class.java),
+                    row.get("target_type", String::class.java),
+                    row.get("carries", String::class.java),
+                )
+            }
+            .all()
+            .collectList()
+            .awaitSingle()
+
+        assertThat(rows).containsExactly(
+            listOf("background", "Background", 0, "TitleController", "UnityEngine.GameObject", """["UnityEngine.SpriteRenderer"]"""),
+            listOf("sprites", "Idle", 0, "TitleController", "UnityEngine.Sprite", "[]"),
+            // 이름 없는 1번은 빠지고, `Hit` 는 제자리 2번을 지킨다.
+            listOf("sprites", "Hit", 2, "TitleController", "UnityEngine.Sprite", "[]"),
+        )
+    }
+
     // ---------- 2. 다른 출신 ----------
 
     /**

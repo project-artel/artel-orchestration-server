@@ -373,15 +373,23 @@ class ContentMapIngestService(
         val rows = model.allObjects.flatMap { obj ->
             val sceneId = sceneIds[obj.scene] ?: return@flatMap emptyList()
             obj.components.flatMap { component ->
-                component.refs.mapNotNull { ref ->
-                    val name = ref.path ?: ref.name ?: return@mapNotNull null
-                    SceneObjectRefEntity(
-                        contentMapId = contentMapId,
-                        sceneId = sceneId,
-                        ownerType = component.type.substringAfterLast('.').take(OWNER_WIDTH),
-                        field = ref.field.take(OWNER_WIDTH),
-                        targetName = name.take(NAME_WIDTH),
-                    )
+                // **순서는 이름을 거르기 전에 센다.** 이름 없는 참조를 먼저 빼면 뒤의 것들이 한 칸씩
+                // 당겨져, `sprites[4]` 가 다른 그림을 가리키게 된다.
+                component.refs.groupBy { it.field }.values.flatMap { sameField ->
+                    sameField.mapIndexedNotNull { position, ref ->
+                        val name = ref.path ?: ref.name ?: return@mapIndexedNotNull null
+                        SceneObjectRefEntity(
+                            contentMapId = contentMapId,
+                            sceneId = sceneId,
+                            ownerType = component.type.substringAfterLast('.').take(OWNER_WIDTH),
+                            field = ref.field.take(OWNER_WIDTH),
+                            targetName = name.take(NAME_WIDTH),
+                            position = position,
+                            ownerPath = obj.path.take(NAME_WIDTH),
+                            targetType = ref.type.take(OWNER_WIDTH),
+                            carries = Json.of(objectMapper.writeValueAsString(ref.carries)),
+                        )
+                    }
                 }
             }
         }

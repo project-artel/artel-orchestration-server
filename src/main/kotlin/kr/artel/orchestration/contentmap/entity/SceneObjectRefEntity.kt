@@ -1,5 +1,6 @@
 package kr.artel.orchestration.contentmap.entity
 
+import io.r2dbc.postgresql.codec.Json
 import org.springframework.data.annotation.Id
 import org.springframework.data.relational.core.mapping.Column
 import org.springframework.data.relational.core.mapping.Table
@@ -35,6 +36,22 @@ data class SceneObjectRefEntity(
 
     @Column("target_name")
     val targetName: String,
+
+    /** 같은 컴포넌트의 같은 필드 안에서 몇 번째인가. 목록 필드의 색인(`sprites[4]`)과 맞춘다. */
+    @Column("position")
+    val position: Int? = null,
+
+    /** 이 컴포넌트가 붙은 오브젝트의 하이어라키 경로. 같은 타입이 여럿 놓이면 목록이 주인마다 다르다. */
+    @Column("owner_path")
+    val ownerPath: String? = null,
+
+    /** 가리키는 것의 타입. `pulse` 가 그 값을 주는지 가른다 — 그림은 주고 GameObject 의 그림은 안 준다. */
+    @Column("target_type")
+    val targetType: String? = null,
+
+    /** 가리키는 프리팹에 실린 컴포넌트 타입들. */
+    @Column("carries")
+    val carries: Json = Json.of("[]"),
 
     @Column("created_at")
     val createdAt: Instant? = null,
