@@ -4525,6 +4525,86 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-case-versions": {
+      "get": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "listTestCaseVersions",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-versions/{gameBuildId}/cases": {
+      "get": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "listTestCasesOfVersion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "compareTo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionCasesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-case-spec/download": {
       "get": {
         "tags": [
@@ -10418,6 +10498,132 @@
             "type": "string"
           },
           "verification_status": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseVersionListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseVersionSummary"
+            }
+          }
+        }
+      },
+      "TestCaseVersionSummary": {
+        "required": [
+          "counts",
+          "createdAt",
+          "gameBuildId",
+          "latest",
+          "total",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "latest": {
+            "type": "boolean"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        }
+      },
+      "TestCaseVersionCasesResponse": {
+        "required": [
+          "gameBuildId",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "compareToGameBuildId": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseVersionRow"
+            }
+          }
+        }
+      },
+      "TestCaseVersionRow": {
+        "required": [
+          "createdAt",
+          "expectedValue",
+          "id",
+          "origin",
+          "presence",
+          "scene",
+          "step"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
+          },
+          "precondition": {
+            "type": "string"
+          },
+          "expectedValue": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "folderId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "verificationStatus": {
+            "type": "string"
+          },
+          "presence": {
+            "type": "string"
+          },
+          "compareVerificationStatus": {
             "type": "string"
           }
         }

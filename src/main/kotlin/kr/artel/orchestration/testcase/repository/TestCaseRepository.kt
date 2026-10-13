@@ -137,6 +137,15 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     fun findScenesOfUncovered(projectId: Long): Flow<UncoveredScene>
 
     /** 프로젝트의 전체 케이스 수(ARTEL-403). 커버리지의 분모다. */
+    /** 사람이 쓴 케이스(지도 출신이 아님) 수(ARTEL-1021). 버전 표에서 모든 버전에 있다고 보는 것들이다. */
+    @Query(
+        """
+        SELECT COUNT(*) FROM test_case
+         WHERE project_id = :projectId AND metadata ->> 'origin' IS DISTINCT FROM 'content-map'
+        """
+    )
+    suspend fun countManualByProjectId(projectId: Long): Long
+
     suspend fun countByProjectId(projectId: Long): Long
 
     /**

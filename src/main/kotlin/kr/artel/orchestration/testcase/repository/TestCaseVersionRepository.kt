@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.CaseVerdictHistoryRow
+import kr.artel.orchestration.testcase.dto.VersionStatusCount
 import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
@@ -90,6 +91,24 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
         """
     )
     fun findHistory(projectId: Long, testCaseId: Long): Flow<CaseVerdictHistoryRow>
+
+    /**
+     * 프로젝트의 버전 몫을 build · 출처 · 상태로 센다(ARTEL-1021). `manual` 은 사람이 쓴 케이스(지도 출신이
+     * 아님)의 몫이다 — 그 케이스는 모든 버전에 있다고 보므로, 몫이 없는 버전에서는 부르는 쪽이 `DRAFT` 로 센다.
+     */
+    @Query(
+        """
+        SELECT v.game_build_id,
+               (t.metadata ->> 'origin' IS DISTINCT FROM 'content-map') AS manual,
+               v.verification_status,
+               COUNT(*) AS total
+          FROM test_case_version v
+          JOIN test_case t ON t.id = v.test_case_id
+         WHERE t.project_id = :projectId
+         GROUP BY 1, 2, 3
+        """
+    )
+    fun countByBuild(projectId: Long): Flow<VersionStatusCount>
 
     /**
      * [testCaseIds] 가운데 **지도가 낸 케이스인데 [gameBuildId] 에 버전 몫이 없는 것**. TS 를 그 버전의 TR
