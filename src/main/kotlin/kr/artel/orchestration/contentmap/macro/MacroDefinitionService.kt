@@ -103,6 +103,16 @@ class MacroDefinitionService(
             )
         }
 
+        // 앞뒤 공백만 깎는다. agent-server 가 `inspect.cleandoc` 으로 이미 정리하므로 여기서 더 고칠
+        // 것이 없고, 빈 docstring 은 docstring 이 없는 것과 같아 null 로 적는다.
+        val docstring = request.docstring?.trim()?.takeIf(String::isNotEmpty)
+        if (docstring != null && docstring.length > MacroWriteFrames.MAX_DOCSTRING_LENGTH) {
+            return refuse(
+                type,
+                "payload.docstring is longer than ${MacroWriteFrames.MAX_DOCSTRING_LENGTH} characters"
+            )
+        }
+
         val parameters = request.parameters.map { it.trim() }
         if (parameters.any { it.isEmpty() }) {
             return refuse(type, "payload.parameters must be a list of names: ${request.parameters}")
@@ -132,6 +142,7 @@ class MacroDefinitionService(
                 source = source,
                 definitionJson = definitionJson,
                 parameterNames = parameterNames,
+                docstring = docstring,
             )
             recordRegistration(qaTry, contentMapId, name, source, definitionJson, parameterNames, upserted)
             screenIds.forEach { screenMacros.link(it, upserted.id) }
@@ -278,6 +289,7 @@ class MacroDefinitionService(
             definition = objectMapper.readTree(macro.definitionJson.asString()),
             parameters = readNames(macro.parameterNames),
             screenIds = screenMacros.findScreenIdsByMacroId(macroId).toList(),
+            docstring = macro.docstring,
         )
     }
 

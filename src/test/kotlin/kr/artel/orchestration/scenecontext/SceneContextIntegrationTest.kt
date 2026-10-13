@@ -610,7 +610,7 @@ class SceneContextIntegrationTest {
         fixture.newMacro(
             mapId, "attack_with_card",
             parameters = listOf("card" to "object", "count" to "int"),
-            bodyComment = "손패의 카드로 적을 공격한다",
+            docstring = "손패의 카드로 적을 공격한다",
             screenIds = listOf(dialog, hand),
         )
         fixture.newMacro(mapId, "open_menu", screenIds = listOf(menu))
@@ -634,6 +634,31 @@ class SceneContextIntegrationTest {
         assertThat(menuMacro.parameters).isEmpty()
         assertThat(menuMacro.summary).isNull()
         assertThat(response.macrosTotal).isEqualTo(2)
+    }
+
+    /**
+     * `summary` 는 `macro.docstring` 칸이고 `source` 를 읽지 않는다(ARTEL-985). 원문에 `#` 주석이 있어도
+     * 칸이 비어 있으면 null 이고, 칸에 값이 있으면 원문과 상관없이 그 값이다.
+     */
+    @Test
+    fun `macro summary 는 source 의 주석이 아니라 docstring 칸에서 온다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        fixture.newMacro(
+            mapId, "commented",
+            source = "def commented():\n    # 주석은 요약이 아니다\n    click(selector(\"Canvas/Button\"))\n",
+        )
+        fixture.newMacro(
+            mapId, "documented",
+            docstring = "칸에 적힌 docstring",
+            source = "def documented():\n    click(selector(\"Canvas/Button\"))\n",
+        )
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.macros.single { it.name == "commented" }.summary).isNull()
+        assertThat(response.macros.single { it.name == "documented" }.summary).isEqualTo("칸에 적힌 docstring")
     }
 
     /**
@@ -741,7 +766,7 @@ class SceneContextIntegrationTest {
         fixture.newMacro(
             mapId, "fire_ball",
             parameters = listOf("enemy" to "object"),
-            bodyComment = "적에게 화염구를 던진다",
+            docstring = "적에게 화염구를 던진다",
             screenIds = listOf(hand),
         )
 

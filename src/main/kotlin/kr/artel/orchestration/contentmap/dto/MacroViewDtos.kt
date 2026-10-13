@@ -38,6 +38,8 @@ data class MacroListResponse(
  * @property id `macro.id`. 상세 조회의 경로 변수가 이 값이다
  * @property updatedAt 정의를 마지막으로 고친 시각. 같은 이름을 다시 등록하면 제자리에서 갱신되므로
  *   이 값만 움직이고 [id] 는 그대로다
+ * @property docstring 진입점 `def` 의 docstring(ARTEL-985). `source` 를 싣지 않는 목록에서도 macro 가
+ *   무엇을 하는지 읽히게 하려고 싣는다. 없으면 null 이다
  */
 @Schema(description = "등록된 macro 한 줄. source 는 싣지 않는다")
 data class MacroSummaryResponse(
@@ -50,6 +52,8 @@ data class MacroSummaryResponse(
     val screens: List<MacroScreenResponse>,
     @Schema(description = "정의를 마지막으로 고친 시각")
     val updatedAt: Instant,
+    @Schema(description = "진입점 `def` 의 docstring. 없으면 null")
+    val docstring: String?,
 )
 
 /**
@@ -68,6 +72,8 @@ data class MacroDetailResponse(
     val parameters: List<MacroParameterResponse>,
     val screens: List<MacroScreenResponse>,
     val updatedAt: Instant,
+    @Schema(description = "진입점 `def` 의 docstring. 없으면 null")
+    val docstring: String?,
     @Schema(description = "저장된 원문 그대로. 공백을 깎지 않는다")
     val source: String,
 )

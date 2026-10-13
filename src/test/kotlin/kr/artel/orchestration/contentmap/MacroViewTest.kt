@@ -147,6 +147,21 @@ class MacroViewTest {
         assertThat(json).describedAs("목록이 비어서 통과한 것이 아니다").contains(ATTACK)
     }
 
+    /** 목록과 상세가 `macro.docstring` 을 싣는다(ARTEL-985). 없으면 null 이다. */
+    @Test
+    fun `목록과 상세가 docstring 을 싣는다`(): Unit = runBlocking {
+        val world = newWorld()
+        val documented = world.register(ATTACK, docstring = "카드 두 장을 합쳐 적을 공격한다")
+        val bare = world.register("close_dialog")
+
+        val items = view.list(world.userId, world.projectId, world.buildId)!!.items
+
+        assertThat(items.single { it.id == documented }.docstring).isEqualTo("카드 두 장을 합쳐 적을 공격한다")
+        assertThat(items.single { it.id == bare }.docstring).isNull()
+        assertThat(view.read(world.userId, world.projectId, world.buildId, documented)!!.docstring)
+            .isEqualTo("카드 두 장을 합쳐 적을 공격한다")
+    }
+
     /** 상세는 원문 **그대로**다. 들여쓰기가 Python 문법의 일부라 공백 하나도 깎지 않는다. */
     @Test
     fun `상세는 원문을 글자 그대로 낸다`(): Unit = runBlocking {
@@ -349,6 +364,7 @@ class MacroViewTest {
             name: String,
             screenIds: List<Long> = emptyList(),
             definition: String = DEFINITION,
+            docstring: String? = null,
         ): Long {
             val macroId = macros.upsertByName(
                 contentMapId = contentMapId,
@@ -356,6 +372,7 @@ class MacroViewTest {
                 source = SOURCE,
                 definitionJson = Json.of(definition.replace(ENTRYPOINT, name)),
                 parameterNames = Json.of("""["card_a","card_b","repeat"]"""),
+                docstring = docstring,
             ).id
             screenIds.forEach { screenMacros.link(it, macroId) }
             return macroId

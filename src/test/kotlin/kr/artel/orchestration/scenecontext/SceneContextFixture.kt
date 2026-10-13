@@ -171,19 +171,22 @@ class SceneContextFixture(
      * 그 경로는 QA 런과 agent 세션을 요구해 이 조회와 상관없는 픽스처를 여섯 개 더 세워야 한다.
      *
      * `definition_json` 은 실제로 저장되는 모양(`entry.parameters[].declared_type`)이다.
-     * [parameters] 는 (이름, 타입) 쌍이고, [bodyComment] 가 있으면 본문 첫 줄에 `#` 주석으로 적는다.
+     * [parameters] 는 (이름, 타입) 쌍이다. [docstring] 이 있으면 본문 첫 줄에 docstring 으로 적고
+     * `macro.docstring` 칸에도 같은 값을 적는다 — `MACRO_REGISTER` 가 두 곳에 함께 적는 것과 같다.
+     * [source] 를 주면 만든 원문 대신 그것을 적는다. 이때 [docstring] 은 `macro.docstring` 칸에만 간다.
      */
     suspend fun newMacro(
         contentMapId: Long,
         name: String,
         parameters: List<Pair<String, String>> = emptyList(),
-        bodyComment: String? = null,
+        docstring: String? = null,
         screenIds: List<Long> = emptyList(),
+        source: String? = null,
     ): Long {
         val signature = parameters.joinToString(", ") { (parameterName, type) -> "$parameterName: $type" }
-        val source = buildString {
+        val storedSource = source ?: buildString {
             appendLine("def $name($signature) -> None:")
-            bodyComment?.let { appendLine("    # $it") }
+            docstring?.let { appendLine("    \"\"\"$it\"\"\"") }
             append("    click(selector(\"Canvas/Button\"))")
         }
         val declaredParameters = parameters.joinToString(",", "[", "]") { (parameterName, type) ->
@@ -194,16 +197,17 @@ class SceneContextFixture(
         val parameterNames = parameters.joinToString(",", "[", "]") { (parameterName, _) -> "\"$parameterName\"" }
         val macroId = db.sql(
             """
-            INSERT INTO macro (content_map_id, name, source, definition_json, parameter_names)
-            VALUES (:contentMapId, :name, :source, :definitionJson::jsonb, :parameterNames::jsonb)
+            INSERT INTO macro (content_map_id, name, source, definition_json, parameter_names, docstring)
+            VALUES (:contentMapId, :name, :source, :definitionJson::jsonb, :parameterNames::jsonb, :docstring)
             RETURNING id
             """
         )
             .bind("contentMapId", contentMapId)
             .bind("name", name)
-            .bind("source", source)
+            .bind("source", storedSource)
             .bind("definitionJson", definitionJson)
             .bind("parameterNames", parameterNames)
+            .let { spec -> if (docstring == null) spec.bindNull("docstring", String::class.java) else spec.bind("docstring", docstring) }
             .map { row, _ -> (row.get(0) as Number).toLong() }
             .one().block()!!
         screenIds.forEach { screenId ->

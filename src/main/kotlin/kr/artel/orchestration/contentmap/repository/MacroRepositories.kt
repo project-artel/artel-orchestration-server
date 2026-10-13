@@ -41,7 +41,7 @@ import org.springframework.data.repository.kotlin.CoroutineCrudRepository
  * `jsonb_typeof` 가드가 없으면 `jsonb_array_elements` 가 배열 아닌 값에 예외를 던진다.
  */
 private const val MACRO_SUMMARY_COLUMNS = """
-    m.id, m.name, m.parameter_names, m.updated_at,
+    m.id, m.name, m.parameter_names, m.updated_at, m.docstring,
     CASE WHEN jsonb_typeof(m.definition_json -> '${MacroWriteFrames.DEFS_FIELD}') = 'array' THEN (
         SELECT d.value -> '${MacroWriteFrames.PARAMETERS_FIELD}'
         FROM jsonb_array_elements(m.definition_json -> '${MacroWriteFrames.DEFS_FIELD}') AS d
@@ -102,12 +102,13 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
      */
     @Query(
         """
-        INSERT INTO macro (content_map_id, name, source, definition_json, parameter_names)
-        VALUES (:contentMapId, :name, :source, :definitionJson, :parameterNames)
+        INSERT INTO macro (content_map_id, name, source, definition_json, parameter_names, docstring)
+        VALUES (:contentMapId, :name, :source, :definitionJson, :parameterNames, :docstring)
         ON CONFLICT (content_map_id, name) DO UPDATE SET
             source = EXCLUDED.source,
             definition_json = EXCLUDED.definition_json,
             parameter_names = EXCLUDED.parameter_names,
+            docstring = EXCLUDED.docstring,
             version = CASE
                 WHEN macro.source IS DISTINCT FROM EXCLUDED.source
                   OR macro.definition_json IS DISTINCT FROM EXCLUDED.definition_json
@@ -125,6 +126,7 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
         source: String,
         definitionJson: Json,
         parameterNames: Json,
+        docstring: String?,
     ): MacroUpsertRow
 
     /**
@@ -148,6 +150,10 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
     /**
      * revert 가 정의를 run 이전 내용으로 되돌린다. [version] 은 부르는 쪽이 잠근 행의 버전에 1 을
      * 더한 값이다.
+     *
+     * `docstring` 은 되돌린 tree 의 `entry.docstring` 으로 맞춘다(ARTEL-985). `macro_event` 는
+     * docstring 칸을 따로 두지 않으므로 이 값이 되돌린 정의의 docstring 이다. docstring 이 생기기 전
+     * 정의로 되돌리면 null 이 된다 — 그 정의의 `source` 에도 docstring 이 없다.
      */
     @Modifying
     @Query(
@@ -156,6 +162,7 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
         SET source = :source,
             definition_json = :definitionJson,
             parameter_names = :parameterNames,
+            docstring = CAST(:definitionJson AS jsonb) -> 'entry' ->> 'docstring',
             version = :version,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = :id
@@ -204,11 +211,12 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
      * 윈도우는 `LIMIT` 보다 먼저 계산된다. 두 번째 질의로 세면 그 사이 등록된 macro 때문에 수와
      * 목록이 어긋난다.
      *
-     * `source` 는 요약 한 줄을 뽑으려고 읽는다. `definition_json` 은 parameter 배열만 자른다.
+     * `source` 는 읽지 않는다. 요약은 `docstring` 칸이다(ARTEL-985). `definition_json` 은 parameter
+     * 배열만 자른다.
      */
     @Query(
         """
-        SELECT m.id, m.name, m.source,
+        SELECT m.id, m.name, m.docstring,
                m.definition_json -> '${MacroWriteFrames.ENTRY_FIELD}' -> '${MacroWriteFrames.PARAMETERS_FIELD}'
                    AS declared_parameters,
                COUNT(*) OVER () AS total

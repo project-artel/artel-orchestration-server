@@ -82,6 +82,15 @@ object MacroWriteFrames {
      */
     const val MAX_DEFINITION_LENGTH: Int = 200_000
 
+    /**
+     * `docstring` 상한(ARTEL-985). `macro.docstring` 은 `TEXT` 라 DB 가 막아 주지 않는다.
+     *
+     * docstring 은 scene context 의 `macros[].summary` 로 런을 시작할 때마다 프롬프트에 실린다.
+     * macro 30 개가 각자 2,000자면 60,000자이고, 그보다 긴 설명은 요약이 아니라 본문이다. 지금까지의
+     * 요약은 `#` 주석 한 줄이라 100자 안팎이었다.
+     */
+    const val MAX_DOCSTRING_LENGTH: Int = 2_000
+
     /** `require` statement 의 `kind` 값. [REMEDY_FIELD] 와 함께 DB CHECK 가 보는 두 key 다. */
     const val REQUIRE_KIND: String = "require"
 
@@ -152,6 +161,14 @@ data class MacroRegisterRequest(
     /** 진입점 `def` 줄의 parameter 이름. **순서가 뜻을 가진다.** */
     val parameters: List<String> = emptyList(),
     val screens: List<String> = emptyList(),
+    /**
+     * 진입점 `def` 의 docstring(ARTEL-985). agent-server 가 `inspect.cleandoc` 으로 정리해 보낸다.
+     * 없으면 null 이고, 이 필드를 모르는 agent-server 가 보낸 payload 도 null 로 읽힌다.
+     *
+     * [source] 안에도 같은 글자가 있지만 이 서비스는 Python 을 파싱하지 않으므로 따로 받는다.
+     * scene context 의 `macros[].summary` 가 이 값이다.
+     */
+    val docstring: String? = null,
 )
 
 /** [MacroWriteFrames.READ] 의 payload. 이름 하나로 조회한다. */
@@ -188,6 +205,8 @@ sealed interface MacroWrite {
         val definition: JsonNode,
         val parameters: List<String>,
         val screenIds: List<Long>,
+        /** `macro.docstring`. 등록할 때 docstring 이 없었으면 null 이다. */
+        val docstring: String?,
     ) : MacroWrite
 
     data class Rejected(val reason: String) : MacroWrite

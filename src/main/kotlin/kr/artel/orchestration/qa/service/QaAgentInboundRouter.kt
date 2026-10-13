@@ -1108,7 +1108,10 @@ class QaAgentInboundRouter(
         sendToAgent(qaTryId, sessionId, MacroWriteFrames.WRITE_RESULT, envelope.messageId, payload)
     }
 
-    /** 저장된 macro 정의를 Agent 에 돌려준다. `definition` 은 저장된 tree 그대로다. */
+    /**
+     * 저장된 macro 정의를 Agent 에 돌려준다. `definition` 은 저장된 tree 그대로다. `docstring` 은
+     * `macro.docstring` 칸이고 없으면 null 이다(ARTEL-985).
+     */
     private suspend fun answerMacroRead(
         qaTryId: Long,
         qaTry: QaTryEntity,
@@ -1121,6 +1124,9 @@ class QaAgentInboundRouter(
             .put("macro_id", result.macroId.toString())
             .put("name", result.name)
             .put("source", result.source)
+            // docstring 이 없으면 JSON null 로 싣는다. 칸을 빼지 않아야 agent 쪽이 "모르는 서버" 와
+            // "docstring 없음" 을 가를 수 있다.
+            .put("docstring", result.docstring)
         payload.set<JsonNode>("definition", result.definition)
         payload.putArray("parameters").apply { result.parameters.forEach { add(it) } }
         putIdStrings(payload, result.screenIds)
