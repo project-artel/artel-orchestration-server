@@ -45,8 +45,9 @@ data class SceneContextResponse(
  *
  * @property parameters 진입점 `def` 가 선언한 parameter. 선언한 순서 그대로다 — `run_macro` 가
  *   인자를 위치로 대응시키므로 순서가 바뀌면 호출이 틀린다. parameter 가 없으면 빈 목록이다.
- * @property summary 진입점 `def` 본문에서 처음 나오는 `#` 주석 줄의 글자. 앞의 `#` 과 공백은
- *   떼어 낸다. 주석이 없으면 null 이다.
+ * @property summary `macro.docstring` 칸 그대로(ARTEL-985). 진입점 `def` 의 docstring 이고, agent-server
+ *   가 `MACRO_REGISTER` 로 보낸 값이다. docstring 이 없는 macro 는 null 이다. `#` 주석 줄은 더 이상
+ *   읽지 않는다 — V101 이 기존 macro 의 그 줄을 docstring 으로 옮겼다.
  * @property screens 이 `macro` 가 쓰일 수 있다고 달아 둔 `screen`, `screen` id 오름차순.
  *   **빈 목록은 "아직 어디서 쓸지 모른다" 는 뜻이지 "어디서든 쓸 수 있다" 가 아니다.** 등록할 때
  *   `screen` 을 달지 않은 `macro` 도 이 목록에 들어오고, 그때 이 칸이 비어 있다.

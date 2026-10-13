@@ -128,6 +128,7 @@ class MacroViewService(
             parameters = parametersOf(row),
             screens = screens.map(::screenOf),
             updatedAt = row.updatedAt,
+            docstring = row.docstring,
             source = row.source,
         )
     }
@@ -139,6 +140,7 @@ class MacroViewService(
             parameters = parametersOf(row),
             screens = screens.map(::screenOf),
             updatedAt = row.updatedAt,
+            docstring = row.docstring,
         )
 
     private fun screenOf(row: MacroScreenRow) =

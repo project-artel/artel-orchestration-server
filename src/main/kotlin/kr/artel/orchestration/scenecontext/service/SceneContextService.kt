@@ -190,7 +190,7 @@ class SceneContextService(
     private fun macroOf(row: MacroSceneContextRow, screens: List<MacroScreenRow>) = SceneContextMacro(
         name = row.name,
         parameters = parametersOf(row.declaredParameters),
-        summary = firstBodyComment(row.source, row.name),
+        summary = row.docstring,
         screens = screens.map { SceneContextMacroScreen(screenId = it.screenId.toString(), sceneName = it.sceneName) },
     )
 

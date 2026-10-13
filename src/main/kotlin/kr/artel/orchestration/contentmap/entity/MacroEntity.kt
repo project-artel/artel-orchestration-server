@@ -74,6 +74,14 @@ data class MacroEntity(
     @Column("parameter_names")
     val parameterNames: Json = Json.of("[]"),
 
+    /**
+     * 진입점 `def` 의 docstring(ARTEL-985). [source] 안에도 있는 글자를 따로 둔 사본이다 — 이
+     * 서비스는 Python 을 파싱하지 않으므로 agent-server 가 `MACRO_REGISTER` 로 보낸 값을 그대로
+     * 적는다. scene context 의 `macros[].summary` 가 이 칸을 읽는다. docstring 이 없으면 null 이다.
+     */
+    @Column("docstring")
+    val docstring: String? = null,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,

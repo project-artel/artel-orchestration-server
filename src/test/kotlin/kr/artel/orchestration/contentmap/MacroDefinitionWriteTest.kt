@@ -335,6 +335,7 @@ class MacroDefinitionWriteTest {
                 """{"defs":[{"statements":[{"kind":"require","remedy":"대화창을 닫는다"}]}]}"""
             ),
             parameterNames = Json.of("[]"),
+            docstring = null,
         )
         assertThat(macros.findById(upserted.id)).isNotNull()
         assertThat(upserted.inserted).describedAs("처음 넣은 것이므로 xmax 가 0 이다").isTrue()
@@ -349,6 +350,7 @@ class MacroDefinitionWriteTest {
                 """{"defs":[{"statements":[{"kind":"require","remedy":"대화창을 닫는다"}]}]}"""
             ),
             parameterNames = Json.of("[]"),
+            docstring = null,
         )
         assertThat(again.id).isEqualTo(upserted.id)
         assertThat(again.inserted).describedAs("갱신이므로 xmax 가 0 이 아니다").isFalse()
@@ -362,6 +364,7 @@ class MacroDefinitionWriteTest {
                     source = "def blank_remedy(): pass",
                     definitionJson = Json.of("""{"defs":[{"statements":[{"kind":"require","remedy":"  "}]}]}"""),
                     parameterNames = Json.of("[]"),
+                    docstring = null,
                 )
             }
         }.isInstanceOf(DataIntegrityViolationException::class.java)
@@ -375,6 +378,7 @@ class MacroDefinitionWriteTest {
                     source = "def no_remedy(): pass",
                     definitionJson = Json.of("""{"defs":[{"statements":[{"kind":"require"}]}]}"""),
                     parameterNames = Json.of("[]"),
+                    docstring = null,
                 )
             }
         }.isInstanceOf(DataIntegrityViolationException::class.java)
@@ -490,6 +494,61 @@ class MacroDefinitionWriteTest {
         assertThat(macros.findAll().toList()).isEmpty()
     }
 
+    /**
+     * `docstring` 이 `macro.docstring` 에 적히고 `MACRO_READ_RESULT` 로 돌아온다(ARTEL-985). 앞뒤 공백은
+     * 깎는다. 다시 등록할 때 `docstring` 을 빼면 칸이 null 이 된다 — `source` 를 통째로 바꾸는 등록이라
+     * 앞 docstring 이 남으면 원문에 없는 요약이 scene context 에 실린다.
+     */
+    @Test
+    fun `docstring 이 저장되고 읽기 결과에 실린다`(): Unit = runBlocking {
+        val world = newWorld()
+
+        register(world, name = MACRO, docstring = "  카드 두 장을 합쳐 적을 공격한다\n")
+        assertThat(macros.findAll().toList().single().docstring).isEqualTo("카드 두 장을 합쳐 적을 공격한다")
+        recorder.sent.clear()
+
+        read(world, MACRO)
+        val answer = recorder.sent.single()
+        assertThat(answer.type).isEqualTo(MacroWriteFrames.READ_RESULT)
+        assertThat(answer.payload.path("docstring").asText()).isEqualTo("카드 두 장을 합쳐 적을 공격한다")
+        recorder.sent.clear()
+
+        register(world, name = MACRO)
+        assertThat(macros.findAll().toList().single().docstring).isNull()
+        read(world, MACRO)
+        val reread = recorder.sent.last().payload
+        assertThat(reread.has("docstring")).describedAs("docstring 이 없으면 칸을 빼지 않고 null 로 싣는다").isTrue()
+        assertThat(reread.path("docstring").isNull).isTrue()
+    }
+
+    @Test
+    fun `공백뿐인 docstring 은 null 로 적힌다`(): Unit = runBlocking {
+        val world = newWorld()
+
+        register(world, name = MACRO, docstring = "  \n\t ")
+
+        assertThat(macros.findAll().toList().single().docstring).isNull()
+        assertThat(recorder.sent.single().type).isEqualTo(MacroWriteFrames.WRITE_RESULT)
+    }
+
+    @Test
+    fun `상한을 넘는 docstring 은 거절된다`(): Unit = runBlocking {
+        val world = newWorld()
+
+        register(world, name = MACRO, docstring = "d".repeat(MacroWriteFrames.MAX_DOCSTRING_LENGTH + 1))
+
+        assertThat(recorder.sent.single().payload.path("message").asText())
+            .isEqualTo(
+                "${MacroWriteFrames.REGISTER} payload.docstring is longer than " +
+                    "${MacroWriteFrames.MAX_DOCSTRING_LENGTH} characters"
+            )
+        assertThat(macros.findAll().toList()).isEmpty()
+
+        recorder.sent.clear()
+        register(world, name = MACRO, docstring = "d".repeat(MacroWriteFrames.MAX_DOCSTRING_LENGTH))
+        assertThat(macros.findAll().toList().single().docstring).hasSize(MacroWriteFrames.MAX_DOCSTRING_LENGTH)
+    }
+
     /** `ck_macro_parameter_names_array` — 객체가 들어오면 "순서 있게" 가 뜻을 잃는다. */
     @Test
     fun `DB CHECK 가 배열이 아닌 parameter_names 를 막는다`(): Unit = runBlocking {
@@ -503,6 +562,7 @@ class MacroDefinitionWriteTest {
                     source = "def object_parameters(): pass",
                     definitionJson = Json.of("""{"defs":[]}"""),
                     parameterNames = Json.of("""{"card_a":"string"}"""),
+                    docstring = null,
                 )
             }
         }.isInstanceOf(DataIntegrityViolationException::class.java)
@@ -640,6 +700,7 @@ class MacroDefinitionWriteTest {
         source: String,
         parameters: List<String>,
         screens: List<Long>,
+        docstring: String? = null,
     ): String {
         val definition = """
             {"entrypoint":"$name","defs":[{"name":"$name",
@@ -654,6 +715,7 @@ class MacroDefinitionWriteTest {
         node.set<JsonNode>("definition", objectMapper.readTree(definition))
         node.putArray("parameters").apply { parameters.forEach { add(it) } }
         node.putArray("screens").apply { screens.forEach { add(it.toString()) } }
+        docstring?.let { node.put("docstring", it) }
         return objectMapper.writeValueAsString(node)
     }
 
@@ -663,7 +725,8 @@ class MacroDefinitionWriteTest {
         source: String = sourceOf(name),
         parameters: List<String> = listOf("card_a", "card_b"),
         screens: List<Long> = emptyList(),
-    ) = deliver(world, MacroWriteFrames.REGISTER, registerPayload(name, source, parameters, screens))
+        docstring: String? = null,
+    ) = deliver(world, MacroWriteFrames.REGISTER, registerPayload(name, source, parameters, screens, docstring))
 
     private suspend fun read(world: World, name: String) =
         deliver(world, MacroWriteFrames.READ, """{"name":"$name"}""")

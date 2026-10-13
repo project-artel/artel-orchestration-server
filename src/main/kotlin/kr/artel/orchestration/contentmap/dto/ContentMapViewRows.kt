@@ -300,12 +300,17 @@ data class MacroSummaryRow(
 
     @Column("updated_at")
     val updatedAt: Instant,
+
+    /** 진입점 `def` 의 docstring(ARTEL-985). 없으면 null. */
+    @Column("docstring")
+    val docstring: String?,
 )
 
 /**
- * scene context 가 읽는 macro 한 줄(ARTEL-934). `source` 는 요약 한 줄을 뽑는 데만 쓰고 응답에는
- * 싣지 않는다. `definition_json` 은 parameter 배열 조각만 잘라 온다.
+ * scene context 가 읽는 macro 한 줄(ARTEL-934). `source` 는 읽지 않는다 — 요약은 [docstring] 이다
+ * (ARTEL-985). `definition_json` 은 parameter 배열 조각만 잘라 온다.
  *
+ * @property docstring `macro.docstring`. 응답의 `summary` 가 이 값이고, docstring 이 없으면 null 이다
  * @property declaredParameters `definition_json -> entry -> parameters`. `[{"name": …,
  *   "declared_type": …}, …]` 를 기대하고, 그 자리가 없으면 null 이다
  * @property total 자르기 전 이 지도의 macro 수. 같은 질의의 `COUNT(*) OVER ()` 라 `LIMIT` 에
@@ -318,8 +323,8 @@ data class MacroSceneContextRow(
     @Column("name")
     val name: String,
 
-    @Column("source")
-    val source: String,
+    @Column("docstring")
+    val docstring: String?,
 
     @Column("declared_parameters")
     val declaredParameters: Json?,
@@ -352,6 +357,10 @@ data class MacroDetailRow(
 
     @Column("updated_at")
     val updatedAt: Instant,
+
+    /** 진입점 `def` 의 docstring(ARTEL-985). 없으면 null. */
+    @Column("docstring")
+    val docstring: String?,
 )
 
 /**

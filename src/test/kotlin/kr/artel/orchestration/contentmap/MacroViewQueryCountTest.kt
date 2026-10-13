@@ -101,6 +101,7 @@ class MacroViewQueryCountTest {
                 source = "def macro_$index(): pass",
                 definitionJson = Json.of("""{"defs":[{"name":"macro_$index","parameters":[]}]}"""),
                 parameterNames = Json.of("[]"),
+                docstring = null,
             ).id
             screenIds.forEach { screenMacros.link(it, macroId) }
         }
