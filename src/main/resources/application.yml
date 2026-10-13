@@ -226,6 +226,8 @@ artel:
     github:
       # 비어 있으면 연동 endpoint 만 503 이고, 기존 QA 경로는 그대로 돈다. 그래서 기동을 막지 않는다.
       # client-id/secret 은 이슈를 쓰는 데가 아니라 installation_id 의 소유를 확인하는 데 쓴다.
+      # App 의 Callback URL 이 /api/tracker/github/setup 이어야 authorize-url 흐름(이미 설치된
+      # installation 고르기)이 이 서버로 돌아온다.
       app-id: ${ARTEL_GITHUB_APP_ID:}
       app-slug: ${ARTEL_GITHUB_APP_SLUG:}
       private-key: ${ARTEL_GITHUB_APP_PRIVATE_KEY:}
@@ -235,6 +237,8 @@ artel:
       web-base-url: ${ARTEL_GITHUB_WEB_BASE_URL:https://github.com}
       token-refresh-skew: ${ARTEL_GITHUB_TOKEN_REFRESH_SKEW:PT5M}
       request-timeout: ${ARTEL_GITHUB_REQUEST_TIMEOUT:PT15S}
+      # 사용자 인가로 확인한 installation 목록을 Redis 에 두는 시간. 이 안에 하나를 골라야 한다.
+      installation-choice-ttl: ${ARTEL_GITHUB_INSTALLATION_CHOICE_TTL:PT10M}
   storage:
     # 기획서 원본을 담을 S3.
     bucket: ${ARTEL_S3_BUCKET:artel-local}

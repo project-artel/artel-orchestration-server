@@ -49,8 +49,14 @@ data class GitHubUserTokenResponse(
 /** `GET /user/installations` 의 봉투. 그 사람이 접근할 수 있는 installation 만 들어 있다. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class GitHubUserInstallationsResponse(
+    @param:JsonProperty("total_count") val totalCount: Int = 0,
     val installations: List<GitHubInstallationRef> = emptyList()
 )
 
+/** installation 한 건. [account] 가 없는 항목은 화면에 보일 이름이 없어 목록에서 뺀다. */
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class GitHubInstallationRef(val id: Long)
+data class GitHubInstallationRef(val id: Long, val account: GitHubAccount? = null)
+
+/** installation 이 설치된 계정. [type] 은 `User`, `Organization`, `Enterprise` 중 하나다. */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class GitHubAccount(val login: String, val type: String? = null)
