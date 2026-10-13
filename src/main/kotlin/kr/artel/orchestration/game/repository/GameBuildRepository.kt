@@ -38,6 +38,12 @@ interface GameBuildRepository : CoroutineCrudRepository<GameBuildEntity, Long> {
 
     suspend fun findByProjectIdAndVersion(projectId: Long, version: String): GameBuildEntity?
 
+    /** 프로젝트의 가장 최근 build(ARTEL-994). TR 을 만들 때 그 TR 의 버전으로 적는다. */
+    suspend fun findFirstByProjectIdOrderByCreatedAtDescIdDesc(projectId: Long): GameBuildEntity?
+
+    /** 프로젝트의 build 전부, 최근 것부터(ARTEL-994). 접근 확인은 호출하는 쪽이 한다. */
+    fun findByProjectIdOrderByCreatedAtDescIdDesc(projectId: Long): Flow<GameBuildEntity>
+
     /**
      * 빌드 id 만으로 접근을 확인한다. SDK 는 등록 응답으로 받은 빌드 id 를 들고 오지만 프로젝트
      * id 는 다시 보내지 않으므로, [findAccessibleById] 와 달리 프로젝트를 인자로 받지 않는다.

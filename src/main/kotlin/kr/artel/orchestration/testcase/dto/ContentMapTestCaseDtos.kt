@@ -9,6 +9,7 @@ import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
  * @property created 새로 만든 행 수. @property updated 문구나 구조가 바뀌어 고친 행 수.
  * @property deleted content map 에서 사라져 지운 행 수. @property broken 사라졌지만 시나리오가 인용해
  *   지우지 않고 `BROKEN` 으로 바꾼 행 수.
+ * @property regression 직전 build 에서 판정이 난 같은 케이스라 `REGRESSION` 으로 둔 행 수(ARTEL-994).
  */
 data class ContentMapTestCaseGenerationResponse(
     val folderId: String,
@@ -16,14 +17,16 @@ data class ContentMapTestCaseGenerationResponse(
     val updated: Int,
     val deleted: Int,
     val broken: Int,
+    val regression: Int,
 ) {
     companion object {
-        fun of(result: MapTestCaseWriter.Result) = ContentMapTestCaseGenerationResponse(
+        fun of(result: MapTestCaseWriter.Result, regression: Int) = ContentMapTestCaseGenerationResponse(
             folderId = requireNotNull(result.folderId) { "생성 결과에 folder 가 없다" }.toString(),
             created = result.created,
             updated = result.updated,
             deleted = result.deleted,
             broken = result.broken,
+            regression = regression,
         )
     }
 }

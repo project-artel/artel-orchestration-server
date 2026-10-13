@@ -52,6 +52,7 @@ import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.testcase.service.TestCaseVerdictService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -163,6 +164,7 @@ class QaAgentInboundRouter(
     private val macroSearch: MacroSearchService,
     private val grader: ExpectedStepsGrader,
     private val runStatusNotifier: QaRunStatusNotifier,
+    private val caseVerdicts: TestCaseVerdictService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -481,6 +483,8 @@ class QaAgentInboundRouter(
                 payload = envelope.payload
             )
             logService.publish(log)
+            // 같은 프레임의 재전송은 로그가 막는다. 상태 반영도 그 판단을 따른다.
+            if (log.inserted) recordCaseVerdict(qaTry, envelope)
             return
         }
         val completedAt = Instant.now(clock)
@@ -579,6 +583,26 @@ class QaAgentInboundRouter(
         } catch (error: Exception) {
             appendError(qaTryId, envelope, "STATUS verdict promotion failed: ${error.message}")
         }
+    }
+
+    /**
+     * 검증 스텝의 판정을 그 TC 의 상태로 옮긴다(ARTEL-994).
+     *
+     * 스텝 프레임은 `case_id` 와 `is_verification` 을 싣고 온다. 같은 `case_id` 가 이어진 구간의 마지막 스텝만
+     * `is_verification=true` 이고, 그 스텝의 COMPLETED/FAILED 가 곧 그 TC 의 판정이다(agent 의 `report_step`).
+     * 그 밖의 프레임은 무시한다. 반영과 그 실패 처리는 [TestCaseVerdictService] 가 맡는다 — 여기서 예외가
+     * 나가면 소켓이 닫혀 런 전체가 실패한다.
+     */
+    private suspend fun recordCaseVerdict(qaTry: QaTryEntity, envelope: QaAgentEnvelope) {
+        val payload = envelope.payload
+        if (!payload.path("is_verification").asBoolean(false)) return
+        val caseId = payload.path("case_id").takeIf { it.canConvertToLong() }?.asLong() ?: return
+        val passed = when (payload.path("status").asText()) {
+            "COMPLETED" -> true
+            "FAILED" -> false
+            else -> return
+        }
+        caseVerdicts.recordStepVerdict(qaTry, caseId, passed)
     }
 
     /**
