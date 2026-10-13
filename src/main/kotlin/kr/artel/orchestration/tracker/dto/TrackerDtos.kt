@@ -37,6 +37,12 @@ data class TrackerLinkUpsertRequest(
 
 data class TrackerInstallUrlResponse(val url: String)
 
+/**
+ * installation 이 설치된 계정의 종류. GitHub `account.type` 이 `User` 이면 [USER], 그 밖의 값
+ * (`Organization`, `Enterprise`)이면 [ORGANIZATION] 이다.
+ */
+enum class TrackerAccountType { USER, ORGANIZATION }
+
 /** 설치된 저장소 후보 한 건. */
 data class TrackerRepositoryResponse(
     val workspace: String,
