@@ -57,6 +57,18 @@ object MapTestCaseReadings {
     fun seesSprite(target: String, gameTypes: Set<String>): Boolean =
         operand(target.removeSuffix(SPRITE), gameTypes.mapTo(mutableSetOf(), ::shortName))
 
+    /**
+     * **기대값을 판독으로 맞춰 볼 수 있는가.**
+     *
+     * 값이 리터럴이거나 게임 타입 멤버 경로면 판독이 같은 것을 준다. `streamingText.Substring(0, i)` ·
+     * `Input.mousePosition` · `Vector3.zero` 처럼 호출이거나 엔진 값이면 판독에 그 값이 없다 — 한 글자씩
+     * 흘러나오는 중간 글자나 마우스 위치를 기대값으로 적으면 QA 는 화면에서 그 식을 찾는다.
+     *
+     * 비교의 한쪽을 가르는 것([mark])과 같은 잣대다.
+     */
+    fun seesValue(value: String, gameTypes: Set<String>): Boolean =
+        operand(value, gameTypes.mapTo(mutableSetOf(), ::shortName))
+
     /** 그림 기대결과인가. 글자와 같은 `ui-value` 로 오고 대상이 `.sprite` 로 끝난다. */
     fun isSprite(kind: String, target: String?): Boolean =
         kind == UI_VALUE && target?.endsWith(SPRITE) == true

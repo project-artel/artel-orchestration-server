@@ -277,6 +277,13 @@ object MapTestCasePhrasing {
                 // **이름을 못 댄 그림 번호는 값이 아니다.** `ProjectileAnimator.sprites[0]` 은 코드가
                 // 그 그림을 고르는 방법이고, 판독은 그림 이름을 준다. 값을 빼고 "갱신된다"로 말한다.
                 val detail = named?.takeUnless { sprite && UNNAMED_INDEX.containsMatchIn(it) }
+                    // **판독이 못 주는 값은 적지 않는다.** 씬·에셋 이름으로 풀렸으면(`battle1` · `Stage2BG`) 판독이
+                    // 그 이름을 주고, 못 풀었으면 값이 판독으로 읽히는지 본다. 무엇으로 바뀌는지는 몰라도 바뀐다는
+                    // 것은 확인된다.
+                    ?.takeIf { value ->
+                        gameTypes == null || value != readable(effect.detail) ||
+                            MapTestCaseReadings.seesValue(value, gameTypes)
+                    }
                 // **판독이 못 보는 그림은 기대결과에서 뺀다.** 사진을 찍어도 그 그림이 `Stage2BG` 인지는 알 수
                 // 없어서, 남기면 근거 없는 통과·실패가 된다. SDK 가 그 그림 이름을 실으면 다시 들어온다.
                 val unread = sprite && gameTypes != null &&
