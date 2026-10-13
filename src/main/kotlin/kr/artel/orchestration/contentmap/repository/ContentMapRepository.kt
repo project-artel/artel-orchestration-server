@@ -178,6 +178,43 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
     fun findCapabilityOwners(contentMapId: Long): Flow<CapabilityOwner>
 
     /**
+     * **이 게임의 코드가 선언한 타입들**. `Map.MapMove` 처럼 전체 이름이다.
+     *
+     * SDK 판독은 근거 문서가 이름 댄 **게임 타입**의 멤버를 읽는다. 사전조건의 비교가 판독으로
+     * 확인되는지 가르려면 그 비교가 부르는 타입이 게임 것인지 알아야 한다 — `MapMove.StagePosition`
+     * 은 읽히고 `Vector3.x` 는 안 읽힌다.
+     *
+     * 기능이 붙은 메서드의 타입만 보면 모자란다. `InteractionLock` 처럼 기능 없이 **불리기만** 하는
+     * 정적 타입도 판독이 읽는다(실측 지도 2). 그래서 문서의 `calls[].targetId` 도 함께 센다 —
+     * 근거 문서는 게임 어셈블리 안의 호출만 적는다. 씬에 귀속되지 못한 `unplaced` 타입
+     * (`TutorialController`)은 기능 행이 없어 둘 다에 안 잡히고, 그 쓰기를 든 표(V95)에만 남는다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT type_name FROM (
+            SELECT split_part(ce.method_id, '|', 2) AS type_name
+            FROM capability_evidence ce
+            JOIN capability c ON c.id = ce.capability_id
+            JOIN scene s ON s.id = c.scene_id
+            WHERE s.content_map_id = :contentMapId AND ce.method_id IS NOT NULL
+            UNION
+            SELECT split_part(call->>'targetId', '|', 2)
+            FROM capability_evidence ce
+            JOIN capability c ON c.id = ce.capability_id
+            JOIN scene s ON s.id = c.scene_id
+            CROSS JOIN LATERAL jsonb_array_elements(ce.calls) AS call
+            WHERE s.content_map_id = :contentMapId AND call->>'targetId' IS NOT NULL
+            UNION
+            SELECT source_type
+            FROM content_map_stray_effect
+            WHERE content_map_id = :contentMapId AND source_type IS NOT NULL
+        ) types
+        ORDER BY type_name ASC
+        """
+    )
+    fun findGameTypeNames(contentMapId: Long): Flow<String>
+
+    /**
      * 씬마다 **그 씬이 이름으로 아는 오브젝트들**.
      *
      * `GameObject.Find("이름")` 을 맞춰 보는 데 쓴다([MapTestCaseTargets.ofScene]). 인스펙터가

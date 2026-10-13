@@ -302,6 +302,11 @@ sealed interface ConditionNode {
         val context: String?,
         val offset: Int,
         val subjectLost: String? = null,
+        /**
+         * QA 실행 중 SDK `pulse` 로 이 비교를 확인할 수 있는가. 파서는 늘 `true` 로 두고, TC 생성기가
+         * 판독 계약에 비춰 내린다(`MapTestCaseReadings`). `false` 면 비교는 남기되 판정에서 뺀다.
+         */
+        val readable: Boolean = true,
     ) : ConditionNode
 
     /** 입력 조건. [input] 은 `key:RightArrow (down)` 처럼 이미 렌더된 문자열이다. */

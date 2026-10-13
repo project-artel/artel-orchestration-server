@@ -500,7 +500,10 @@ object MapTestCasePhrasing {
             ) {
                 null
             } else {
+                // **판독이 못 보는 비교는 그렇다고 적는다.** 갈래를 가르는 사실이라 지우지 않지만,
+                // 실행하는 쪽이 이것을 확인하려 들면 없는 값을 찾는다([MapTestCaseReadings]).
                 "${node.left} ${node.operator} ${node.right}".trim().ifBlank { null }
+                    ?.let { if (node.readable) it else "$it$UNREAD_MARK" }
             }
         is ConditionNode.Group -> {
             val joiner = if (node.kind == GroupKind.EVERY) AND else OR
@@ -563,6 +566,9 @@ object MapTestCasePhrasing {
      */
     private fun referenceCheck(node: ConditionNode.Test): Boolean =
         node.operator == "!=" && node.right.trim() == "null"
+
+    /** QA 실행 중 확인할 수 없는 비교 뒤에 붙는 말. */
+    const val UNREAD_MARK = " (확인 불가)"
 
     /** 지금 화면을 코드가 스스로 확인하는 자리. 사전조건이 이미 그 화면을 말했다. */
     private val ACTIVE_SCENE = Regex("""SceneManager\.GetActiveScene\(\)\.name""")

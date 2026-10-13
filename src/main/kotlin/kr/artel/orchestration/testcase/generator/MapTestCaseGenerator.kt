@@ -81,6 +81,8 @@ class MapTestCaseGenerator(
         val refs = objectRefs.findByContentMapId(contentMapId).toList()
             .groupBy { it.ownerType to it.field }
             .mapValues { (_, rows) -> rows.map { it.targetName }.toSet() }
+        // **판독이 읽는 타입들**([MapTestCaseReadings]). 사전조건의 비교가 QA 에서 확인되는지 가른다.
+        val gameTypes = contentMaps.findGameTypeNames(contentMapId).toList().toSet()
         // **읽는 곳은 하나다.** 앞서 창구가 셋이었고(조작 · 관측 · 존재 확인) 각자 다른 잣대를
         // 손으로 들고 있었다. 무엇을 남길지는 이제 질의가 정한다([ContentMapRepository.findTestCaseRows]).
         //
@@ -88,7 +90,7 @@ class MapTestCaseGenerator(
         // 갈림은 행이 스스로 말한다 — `actionability` 가 `not-a-step` 이면 볼 것이고 아니면
         // 누를 것이다. 아래(효과 읽기 · 갈래 펴기 · 합치기)는 두 벌이 되지 않는다.
         val drafts = contentMaps.findTestCaseRows(contentMapId).toList()
-            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, owners, namesByScene) }
+            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, owners, namesByScene, gameTypes) }
         return merged(drafts) + screenElements(contentMapId)
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
@@ -562,6 +564,7 @@ class MapTestCaseGenerator(
         refs: Map<Pair<String, String>, Set<String>>,
         owners: Map<Long, String>,
         namesByScene: Map<String, Set<String>>,
+        gameTypes: Set<String>,
     ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
@@ -601,6 +604,8 @@ class MapTestCaseGenerator(
             // 쓴다([branches] 가 "조작이 다르면 다른 케이스"를 이것으로 본다).
             val step = MapTestCasePhrasing.trial(act, repeats)
             val settledCondition = MapTestCaseLocals.settle(situation, source, settled)
+                // 판독으로 확인 못 하는 비교는 빼지 않고 표시만 한다. 빼면 갈래가 무너진다.
+                .let { it.copy(condition = MapTestCaseReadings.mark(it.condition, gameTypes)) }
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
             // 효과의 주인은 **그 효과를 든 기능**이다. 빌려 온 자리(`borrowed`)에서는 이 행이 아니다.
             MapTestCasePhrasing.expectedWithSource(
