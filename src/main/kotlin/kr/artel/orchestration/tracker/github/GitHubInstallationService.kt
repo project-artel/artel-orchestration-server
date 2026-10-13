@@ -15,7 +15,7 @@ import java.nio.charset.StandardCharsets
 private const val REPOSITORY_PAGE_SIZE = 100
 
 /**
- * GitHub App `installation` 흐름. 설치 주소를 만들고, 설치된 저장소를 읽어 온다.
+ * GitHub App `installation` 흐름. 설치 주소와 인가 주소를 만들고, 설치된 저장소를 읽어 온다.
  *
  * 이 둘은 [IssueTrackerClient][kr.artel.orchestration.tracker.client.IssueTrackerClient] port 에
  * 없다. 설치라는 개념 자체가 GitHub 고유라, port 에 올리면 Jira 구현체가 구현할 수 없는 메서드를
@@ -38,6 +38,22 @@ class GitHubInstallationService(
         val encoded = URLEncoder.encode(state, StandardCharsets.UTF_8)
         return "${properties.webBaseUrl.trimEnd('/')}/apps/${properties.appSlug}" +
             "/installations/new?state=$encoded"
+    }
+
+    /**
+     * GitHub App 사용자 인가 화면 주소. 이미 App 이 설치된 계정을 고르는 흐름의 시작이다.
+     *
+     * `redirect_uri` 는 싣지 않는다. App 에 등록된 Callback URL(`/api/tracker/github/setup`)이 쓰이고,
+     * 인가가 끝나면 그 경로로 `code` 와 `state` 만 실려 돌아온다(`installation_id` 없음).
+     */
+    fun authorizeUrl(state: String): String {
+        if (!properties.configured) {
+            throw TrackerNotConfiguredException("GitHub App이 설정되지 않았습니다.")
+        }
+        val clientId = URLEncoder.encode(properties.clientId, StandardCharsets.UTF_8)
+        val encodedState = URLEncoder.encode(state, StandardCharsets.UTF_8)
+        return "${properties.webBaseUrl.trimEnd('/')}/login/oauth/authorize" +
+            "?client_id=$clientId&state=$encodedState"
     }
 
     /**

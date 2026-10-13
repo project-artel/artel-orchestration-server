@@ -17,9 +17,17 @@ interface ProjectTrackerLinkRepository : CoroutineCrudRepository<ProjectTrackerL
     suspend fun deleteByProjectIdAndProvider(projectId: Long, provider: String): Int
 
     /**
-     * `installation` callback 이 부르는 upsert. 저장소 선택보다 `installation` 이 먼저 오므로, 행이
-     * 없으면 저장소 없이 만들고 있으면 `installation_ref` 만 갈아 끼운다 — 이미 고른 저장소를 재설치가
-     * 지우면 안 된다.
+     * 설치 복귀와 `PUT /tracker/github/installation` 이 부르는 upsert. 저장소 선택보다 `installation` 이
+     * 먼저 오므로, 행이 없으면 저장소 없이 만들고 있으면 `installation_ref` 를 갈아 끼운다.
+     *
+     * - 같은 installation 이 다시 붙으면(재설치) 이미 고른 저장소를 유지한다.
+     * - **다른** installation 이 붙으면 고른 저장소를 비운다. 이전 저장소는 새 installation token 으로
+     *   접근할 수 없을 수 있다.
+     * - 기존 `installation_ref` 가 NULL 이면 "다른 값" 으로 읽지 않고 저장소를 유지한다. 지금 흐름에서는
+     *   그런 행이 생기지 않지만(`upsertTarget` 앞의 `verifyRepositoryAccess` 가 installation 없이는
+     *   거절한다), NULL 비교 하나로 저장소가 지워지면 안 된다.
+     *
+     * 이미 내보낸 이슈(`issue_tracker_link`)는 건드리지 않는다. 연결 해제와 같은 판단이다.
      */
     @Modifying
     @Query(
@@ -28,6 +36,16 @@ interface ProjectTrackerLinkRepository : CoroutineCrudRepository<ProjectTrackerL
         VALUES (:projectId, :provider, :installationRef, :connectedBy, :now, :now)
         ON CONFLICT (project_id, provider) DO UPDATE
         SET installation_ref = EXCLUDED.installation_ref,
+            external_workspace = CASE
+                WHEN project_tracker_link.installation_ref IS NOT NULL
+                     AND project_tracker_link.installation_ref <> EXCLUDED.installation_ref THEN NULL
+                ELSE project_tracker_link.external_workspace
+            END,
+            external_repository = CASE
+                WHEN project_tracker_link.installation_ref IS NOT NULL
+                     AND project_tracker_link.installation_ref <> EXCLUDED.installation_ref THEN NULL
+                ELSE project_tracker_link.external_repository
+            END,
             connected_by = EXCLUDED.connected_by,
             updated_at = EXCLUDED.updated_at
         """
