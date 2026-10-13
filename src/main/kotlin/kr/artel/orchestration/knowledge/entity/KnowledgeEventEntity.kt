@@ -56,6 +56,17 @@ data class KnowledgeEventEntity(
     val after: Json? = null,
 
     /**
+     * 이 event 가 되돌린 event 의 id(V100). revert 가 아니면 null 이다. revert 는 이력을 고치지 않고
+     * 이 칸을 채운 event 를 덧붙인다.
+     */
+    @Column("reverts_event_id")
+    val revertsEventId: Long? = null,
+
+    /** revert 를 누른 사람(`app_user.id`). [revertsEventId] 와 함께 채워지거나 함께 비어 있다. */
+    @Column("reverted_by_app_user_id")
+    val revertedByAppUserId: Long? = null,
+
+    /**
      * 컬럼 기본값에 맡기지 않고 `Clock`으로 stamp한다 — R2DBC가 insert 후 기본값을 다시 읽지 않아
      * 저장 결과의 값이 null이 된다(`QaLogService`·`LlmUsageService`와 같은 이유).
      */
@@ -66,9 +77,8 @@ data class KnowledgeEventEntity(
 /**
  * [KnowledgeEventEntity.event]가 가질 수 있는 값. V27의 CHECK 제약과 같은 집합이다.
  *
- * `RESTORE`는 **이번 범위에서 쓰는 곳이 없다.** `KnowledgeService`에 복원 경로 자체가 없고
- * (생성/수정/소프트삭제뿐) 복원 기능 추가는 범위 밖이다. 나중에 붙을 때 CHECK와 이 enum을
- * 함께 갈지 않도록 값만 열어 둔다.
+ * `RESTORE`는 QA run 의 DELETE 를 사람이 revert 할 때 쓴다(V100). `deleted_at`만 비우고 버전은
+ * 올리지 않는다.
  */
 enum class KnowledgeEventType {
     CREATE,

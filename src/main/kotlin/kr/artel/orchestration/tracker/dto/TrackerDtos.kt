@@ -37,6 +37,27 @@ data class TrackerLinkUpsertRequest(
 
 data class TrackerInstallUrlResponse(val url: String)
 
+/**
+ * installation 이 설치된 계정의 종류. GitHub `account.type` 이 `User` 이면 [USER], 그 밖의 값
+ * (`Organization`, `Enterprise`)이면 [ORGANIZATION] 이다.
+ */
+enum class TrackerAccountType { USER, ORGANIZATION }
+
+/** 사용자 인가로 확인한 installation 후보 한 건. [installationId] 는 `installation_ref` 와 같은 문자열이다. */
+data class TrackerInstallationResponse(
+    val installationId: String,
+    val account: String,
+    val accountType: TrackerAccountType
+)
+
+/** 빈 배열이면 그 사람이 접근할 수 있는 곳에 App 이 아직 설치되지 않은 것이다. */
+data class TrackerInstallationPageResponse(val items: List<TrackerInstallationResponse>)
+
+/** `PUT /api/projects/{projectId}/tracker/github/installation` 의 본문. */
+data class TrackerInstallationSelectRequest(
+    @field:NotBlank val installationId: String = ""
+)
+
 /** 설치된 저장소 후보 한 건. */
 data class TrackerRepositoryResponse(
     val workspace: String,

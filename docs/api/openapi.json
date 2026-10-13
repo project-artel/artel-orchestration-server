@@ -236,6 +236,49 @@
         }
       }
     },
+    "/api/projects/{projectId}/tracker/github/installation": {
+      "put": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "installation 연결",
+        "description": "소유자만. 사용자 인가로 확인한 목록 안의 installation만 붙는다. installation이 바뀌면 고른 저장소는 비워진다.",
+        "operationId": "selectInstallation",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackerInstallationSelectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerLinkEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/tracker-link": {
       "get": {
         "tags": [
@@ -690,6 +733,87 @@
         "responses": {
           "200": {
             "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}": {
+      "put": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "updateFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "deleteFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
           }
         }
       }
@@ -1392,6 +1516,52 @@
         }
       }
     },
+    "/api/qa-runs/{qaRunId}/changes/{kind}/{targetId}/revert": {
+      "post": {
+        "tags": [
+          "qa-run-controller"
+        ],
+        "operationId": "revertQaRunChange",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/qa-runs/{qaRunId}/cancel": {
       "post": {
         "tags": [
@@ -1453,11 +1623,11 @@
             "required": false,
             "schema": {
               "type": "string",
+              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ],
-              "default": "MINE"
+              ]
             }
           }
         ],
@@ -1825,6 +1995,158 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-cases/move": {
+      "post": {
+        "tags": [
+          "test-case-controller"
+        ],
+        "operationId": "moveTestCases",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseMoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseMoveResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-cases/bulk-delete": {
+      "post": {
+        "tags": [
+          "test-case-controller"
+        ],
+        "operationId": "bulkDeleteTestCases",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseBulkDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseBulkDeleteResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders": {
+      "get": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "listFolders",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "createFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/invitations": {
       "get": {
         "tags": [
@@ -1950,6 +2272,46 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/GameInstanceResetResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/content-map/test-cases": {
+      "post": {
+        "tags": [
+          "content-map-test-case-controller"
+        ],
+        "operationId": "generateTestCases",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentMapTestCaseGenerationResponse"
                 }
               }
             }
@@ -3133,7 +3495,7 @@
           "Issue tracker"
         ],
         "summary": "GitHub App 설치 복귀",
-        "description": "서명된 state로 프로젝트를 찾아 installation_id를 저장하고 home으로 되돌린다.",
+        "description": "서명된 state로 프로젝트를 찾아 installation_id를 저장하고 home으로 되돌린다. installation_id 없이 code만 오면 고를 수 있는 installation 목록을 저장하고 tracker=choose로 되돌린다.",
         "operationId": "setup",
         "parameters": [
           {
@@ -3558,6 +3920,36 @@
         }
       }
     },
+    "/api/qa-runs/{qaRunId}/changes": {
+      "get": {
+        "tags": [
+          "qa-run-controller"
+        ],
+        "operationId": "listQaRunChanges",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunChangeListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/qa-models": {
       "get": {
         "tags": [
@@ -3614,6 +4006,39 @@
         }
       }
     },
+    "/api/projects/{projectId}/tracker/github/installations": {
+      "get": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "고를 수 있는 installation 목록",
+        "description": "소유자만. 사용자 인가 복귀에서 서버가 GitHub 에서 읽어 둔 목록이다. 없거나 만료됐으면 409 tracker_authorization_required.",
+        "operationId": "installations",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerInstallationPageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/tracker/github/install-url": {
       "get": {
         "tags": [
@@ -3622,6 +4047,39 @@
         "summary": "GitHub App 설치 주소",
         "description": "소유자만. state가 서명되어 있어 남의 프로젝트에 설치를 붙일 수 없다.",
         "operationId": "installUrl",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerInstallUrlResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/tracker/github/authorize-url": {
+      "get": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "GitHub App 사용자 인가 주소",
+        "description": "소유자만. 이미 App이 설치된 계정을 고르는 흐름의 시작이다. 인가가 끝나면 /api/tracker/github/setup 이 tracker=choose 로 되돌린다.",
+        "operationId": "authorizeUrl",
         "parameters": [
           {
             "name": "projectId",
@@ -5119,28 +5577,14 @@
           }
         }
       },
-      "TrackerLinkUpsertRequest": {
+      "TrackerInstallationSelectRequest": {
         "required": [
-          "provider",
-          "repository",
-          "workspace"
+          "installationId"
         ],
         "type": "object",
         "properties": {
-          "provider": {
+          "installationId": {
             "type": "string"
-          },
-          "workspace": {
-            "type": "string"
-          },
-          "repository": {
-            "type": "string"
-          },
-          "autoSyncSeverities": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           }
         }
       },
@@ -5184,6 +5628,31 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "TrackerLinkUpsertRequest": {
+        "required": [
+          "provider",
+          "repository",
+          "workspace"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "workspace": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "autoSyncSeverities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -5335,6 +5804,44 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "folderId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseFolderRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseFolderResponse": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "contentMapId": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
           }
         }
       },
@@ -6375,6 +6882,55 @@
           }
         }
       },
+      "QaRunChangeResponse": {
+        "required": [
+          "change",
+          "changedAt",
+          "decision",
+          "kind",
+          "name",
+          "qaTryId",
+          "revertible",
+          "targetId"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "targetId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "change": {
+            "type": "string"
+          },
+          "before": {
+            "type": "string"
+          },
+          "after": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "changedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "revertible": {
+            "type": "boolean"
+          },
+          "notRevertibleReason": {
+            "type": "string"
+          }
+        }
+      },
       "CreateProjectRequest": {
         "required": [
           "genre",
@@ -6684,6 +7240,58 @@
           },
           "expectedValue": {
             "type": "string"
+          },
+          "folderId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseMoveRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "folderId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseMoveResponse": {
+        "required": [
+          "moved"
+        ],
+        "type": "object",
+        "properties": {
+          "moved": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "TestCaseBulkDeleteRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TestCaseBulkDeleteResponse": {
+        "required": [
+          "deleted"
+        ],
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -6800,6 +7408,37 @@
           "requestedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ContentMapTestCaseGenerationResponse": {
+        "required": [
+          "broken",
+          "created",
+          "deleted",
+          "folderId",
+          "updated"
+        ],
+        "type": "object",
+        "properties": {
+          "folderId": {
+            "type": "string"
+          },
+          "created": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "deleted": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "broken": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -7046,11 +7685,11 @@
           },
           "kind": {
             "type": "string",
+            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ],
-            "default": "sdk"
+            ]
           }
         }
       },
@@ -8846,6 +9485,20 @@
           }
         }
       },
+      "QaRunChangeListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaRunChangeResponse"
+            }
+          }
+        }
+      },
       "QaModelResponse": {
         "required": [
           "id",
@@ -9033,6 +9686,43 @@
           },
           "private": {
             "type": "boolean"
+          }
+        }
+      },
+      "TrackerInstallationPageResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerInstallationResponse"
+            }
+          }
+        }
+      },
+      "TrackerInstallationResponse": {
+        "required": [
+          "account",
+          "accountType",
+          "installationId"
+        ],
+        "type": "object",
+        "properties": {
+          "installationId": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          },
+          "accountType": {
+            "type": "string",
+            "enum": [
+              "USER",
+              "ORGANIZATION"
+            ]
           }
         }
       },
@@ -9279,6 +9969,9 @@
             "type": "string",
             "format": "date-time"
           },
+          "folderId": {
+            "type": "string"
+          },
           "evidenceGaps": {
             "type": "array",
             "items": {
@@ -9405,6 +10098,20 @@
           "expiresAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "TestCaseFolderListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseFolderResponse"
+            }
           }
         }
       },

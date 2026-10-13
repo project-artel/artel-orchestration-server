@@ -4,7 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.contentmap.entity.MacroEntity
+import kr.artel.orchestration.contentmap.entity.MacroEventEntity
+import kr.artel.orchestration.contentmap.entity.MacroEventType
+import kr.artel.orchestration.contentmap.dto.MacroUpsertRow
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
+import kr.artel.orchestration.contentmap.repository.MacroEventRepository
 import kr.artel.orchestration.contentmap.repository.MacroRepository
 import kr.artel.orchestration.contentmap.repository.ScreenMacroRepository
 import kr.artel.orchestration.contentmap.repository.ScreenRepository
@@ -13,6 +18,8 @@ import kr.artel.orchestration.qa.entity.QaTryEntity
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
+import java.time.Clock
+import java.time.Instant
 
 /**
  * 등록된 macro 를 지도에 적고 다시 읽는 경로(ARTEL-921).
@@ -32,6 +39,11 @@ import org.springframework.transaction.reactive.executeAndAwait
  *
  * 쓰기 하나가 한 트랜잭션이다. 런이 중간에 끊겨도 그때까지 적은 것이 남는다.
  *
+ * ## 이력
+ *
+ * 정의를 바꾸는 등록은 `macro_event` 에 CREATE 나 UPDATE 하나를 같은 트랜잭션에서 남긴다(V100).
+ * QA run 화면이 그 run 이 바꾼 macro 를 diff 로 보여 주고 revert 할 근거가 이 이력이다.
+ *
  * ## `ContentMapMode.FROZEN` 을 여기서 보지 않는다
  *
  * 게이트는 라우터가 분기 **전에** 한 번만 거는 것이 이 서버의 규율이고(`allowContentMapWrite`),
@@ -44,8 +56,10 @@ class MacroDefinitionService(
     private val screens: ScreenRepository,
     private val macros: MacroRepository,
     private val screenMacros: ScreenMacroRepository,
+    private val macroEvents: MacroEventRepository,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
+    private val clock: Clock,
 ) {
 
     /**
@@ -120,14 +134,17 @@ class MacroDefinitionService(
             //
             // 새로 등록한 것인지도 이 문장이 직접 말한다(`inserted`). 앞서 따로 조회해 비교하면
             // 같은 이름이 동시에 둘 올 때 둘 다 "없었다" 를 읽어 둘 다 만들었다고 답한다.
+            val definitionJson = Json.of(definitionText)
+            val parameterNames = Json.of(objectMapper.writeValueAsString(parameters))
             val upserted = macros.upsertByName(
                 contentMapId = contentMapId,
                 name = name,
                 source = source,
-                definitionJson = Json.of(definitionText),
-                parameterNames = Json.of(objectMapper.writeValueAsString(parameters)),
+                definitionJson = definitionJson,
+                parameterNames = parameterNames,
                 docstring = docstring,
             )
+            recordRegistration(qaTry, contentMapId, name, source, definitionJson, parameterNames, upserted)
             screenIds.forEach { screenMacros.link(it, upserted.id) }
             MacroWrite.Registered(
                 macroId = upserted.id,
@@ -136,6 +153,112 @@ class MacroDefinitionService(
                 screenIds = screenMacros.findScreenIdsByMacroId(upserted.id).toList(),
             )
         }
+    }
+
+    /**
+     * 등록 하나를 `macro_event` 에 남긴다. [register] 의 트랜잭션 안에서 돈다.
+     *
+     * 새로 넣었으면 CREATE 다. 갱신이면 upsert 가 돌려준 버전을 직전 event 의 버전과 비교해, 올랐을
+     * 때만 UPDATE 를 남긴다 — 정의가 같은 등록은 버전을 안 올리므로(`upsertByName` KDoc) event 도 없다.
+     * upsert 가 이 행을 잠근 채라 그 사이 다른 등록의 event 가 끼어들지 않는다.
+     *
+     * 직전 event 가 없는 갱신은 V100 backfill 을 지나지 않은 행이다(이 서비스를 거치지 않고 넣은
+     * 행). 그때는 지금 내용을 UPDATE 로 남긴다. CREATE 로 남기면 만들지도 않은 run 이 만든 것이 된다.
+     */
+    private suspend fun recordRegistration(
+        qaTry: QaTryEntity,
+        contentMapId: Long,
+        name: String,
+        source: String,
+        definitionJson: Json,
+        parameterNames: Json,
+        upserted: MacroUpsertRow,
+    ) {
+        val event = if (upserted.inserted) {
+            MacroEventType.CREATE
+        } else {
+            val previousVersion = macroEvents.findLatestByMacroId(upserted.id)?.version
+            if (previousVersion == upserted.version) return
+            MacroEventType.UPDATE
+        }
+        macroEvents.save(
+            MacroEventEntity(
+                macroId = upserted.id,
+                contentMapId = contentMapId,
+                qaTryId = qaTry.id,
+                event = event.name,
+                version = upserted.version,
+                name = name,
+                source = source,
+                definitionJson = definitionJson,
+                parameterNames = parameterNames,
+                createdAt = Instant.now(clock),
+            )
+        )
+    }
+
+    /**
+     * QA run 이 만든 macro 를 revert 해 없앤다(V100). 행을 지우고 `screen_macro` 는 CASCADE 로 함께
+     * 지워진다. DELETE event 는 지우기 직전 버전과 이름만 싣는다.
+     *
+     * **호출자의 트랜잭션 안에서 돈다.** 호출자가 [current] 를 `FOR UPDATE` 로 잠그고 그 run 의 마지막
+     * event 가 아직 최신인지 확인한 같은 트랜잭션이어야, 그 사이 끼어든 등록을 덮지 않는다.
+     */
+    suspend fun revertToAbsent(current: MacroEntity, revertsEventId: Long, appUserId: Long) {
+        val macroId = requireNotNull(current.id)
+        macros.deleteById(macroId)
+        macroEvents.save(
+            MacroEventEntity(
+                macroId = macroId,
+                contentMapId = current.contentMapId,
+                qaTryId = null,
+                event = MacroEventType.DELETE.name,
+                version = current.version,
+                name = current.name,
+                revertsEventId = revertsEventId,
+                revertedByAppUserId = appUserId,
+                createdAt = Instant.now(clock),
+            )
+        )
+    }
+
+    /**
+     * QA run 이 고친 macro 를 run 이전 정의로 revert 한다(V100). 버전을 올리고 UPDATE event 를 남긴다.
+     * `screen_macro` 는 건드리지 않는다 — 등록도 관계를 빼지 않으므로(ARTEL-925) 되돌릴 것이 없다.
+     *
+     * 호출자의 트랜잭션 안에서 도는 이유는 [revertToAbsent] 와 같다.
+     */
+    suspend fun revertToDefinition(
+        current: MacroEntity,
+        target: MacroDefinitionContent,
+        revertsEventId: Long,
+        appUserId: Long,
+    ) {
+        val macroId = requireNotNull(current.id)
+        val nextVersion = current.version + 1
+        macros.rewriteDefinition(
+            id = macroId,
+            source = target.source,
+            definitionJson = target.definitionJson,
+            parameterNames = target.parameterNames,
+            version = nextVersion,
+        )
+        macroEvents.save(
+            MacroEventEntity(
+                macroId = macroId,
+                contentMapId = current.contentMapId,
+                qaTryId = null,
+                event = MacroEventType.UPDATE.name,
+                version = nextVersion,
+                name = current.name,
+                source = target.source,
+                definitionJson = target.definitionJson,
+                parameterNames = target.parameterNames,
+                revertsEventId = revertsEventId,
+                revertedByAppUserId = appUserId,
+                createdAt = Instant.now(clock),
+            )
+        )
     }
 
     /**
@@ -262,3 +385,15 @@ class MacroDefinitionService(
         data class No(val reason: String) : Step<Nothing>
     }
 }
+
+/**
+ * macro 정의의 세 칸. revert 가 run 이전 정의를 옮길 때 쓴다(V100).
+ *
+ * jsonb 두 칸은 DB 에서 읽은 그대로 들고 다닌다. 다시 직렬화하지 않으므로 비교도 그 텍스트로 한다
+ * — jsonb 가 내보내는 텍스트는 key 순서와 공백이 정해져 있다.
+ */
+data class MacroDefinitionContent(
+    val source: String,
+    val definitionJson: Json,
+    val parameterNames: Json,
+)
