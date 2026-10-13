@@ -183,12 +183,16 @@ class ScenarioLibraryService(
     private fun ObjectNode.longOrNull(field: String): Long? =
         get(field)?.takeIf { it.canConvertToLong() && !it.isNull }?.asLong()
 
-    private fun TestScenarioEntity.toLibraryScenario() = ScenarioLibraryScenario(
-        testScenarioId = requireNotNull(id).toString(),
-        title = title,
-        stepCount = stepsOf(steps).size,
-        updatedAt = updatedAt,
-    )
+    private fun TestScenarioEntity.toLibraryScenario(): ScenarioLibraryScenario {
+        val parsed = stepsOf(steps)
+        return ScenarioLibraryScenario(
+            testScenarioId = requireNotNull(id).toString(),
+            title = title,
+            stepCount = parsed.size,
+            caseCount = parsed.mapNotNull { it.longOrNull(CASE_ID) }.toSet().size,
+            updatedAt = updatedAt,
+        )
+    }
 
     private companion object {
         const val CASE_ID = "case_id"

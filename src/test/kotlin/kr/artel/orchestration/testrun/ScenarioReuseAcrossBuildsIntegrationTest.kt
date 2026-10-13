@@ -201,6 +201,8 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(library[0]["testRuns"][0]["testScenarios"].map { it["title"].asText() })
             .containsExactly("이미 있던 것", "보스전")
         assertThat(library[1]["testRuns"][0]["testScenarios"][0]["stepCount"].asInt()).isEqualTo(4)
+        // 수동 케이스까지 서로 다른 TC 셋, case_id 없는 스텝은 세지 않는다.
+        assertThat(library[1]["testRuns"][0]["testScenarios"][0]["caseCount"].asInt()).isEqualTo(3)
         assertThat(library[2]["testRuns"].single().path("testRunId").isNullish()).isTrue()
         assertThat(library[2]["testRuns"].single()["testScenarios"].map { it["testScenarioId"].asLong() })
             .containsExactly(loose.id)

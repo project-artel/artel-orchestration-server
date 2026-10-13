@@ -9949,6 +9949,7 @@
       },
       "ScenarioLibraryScenario": {
         "required": [
+          "caseCount",
           "stepCount",
           "testScenarioId",
           "title"
@@ -9962,6 +9963,10 @@
             "type": "string"
           },
           "stepCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "caseCount": {
             "type": "integer",
             "format": "int32"
           },

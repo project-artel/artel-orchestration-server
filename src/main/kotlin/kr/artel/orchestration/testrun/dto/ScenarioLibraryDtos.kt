@@ -26,10 +26,12 @@ data class ScenarioLibraryRun(
     val testScenarios: List<ScenarioLibraryScenario>,
 )
 
+/** @property caseCount 스텝이 검증하는 서로 다른 TC 수. 같은 TC 의 검증 구간은 한 번만 센다. */
 data class ScenarioLibraryScenario(
     val testScenarioId: String,
     val title: String,
     val stepCount: Int,
+    val caseCount: Int,
     val updatedAt: Instant?,
 )
 
