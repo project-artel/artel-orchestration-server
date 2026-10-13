@@ -46,7 +46,6 @@ import kr.artel.orchestration.contentmap.repository.upsert
 import kr.artel.orchestration.contentmap.scan.ContentMapEventStreamManager
 import kr.artel.orchestration.project.storage.DocumentStorage
 import org.slf4j.LoggerFactory
-import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
@@ -87,7 +86,6 @@ class ContentMapIngestService(
     private val builds: kr.artel.orchestration.game.repository.GameBuildRepository,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
-    private val mapTestCases: MapTestCaseWriter,
     private val transactionalOperator: TransactionalOperator,
     private val streamManager: ContentMapEventStreamManager,
     private val clock: Clock,
@@ -328,11 +326,9 @@ class ContentMapIngestService(
         // 아직 매달려 있어, "아무도 아무것도 모르는 `scene`"이라는 조건에 걸리지 않는다.
         val retiredScenes = scenes.retireVanishedScenes(document.contentMapId, sceneIds.keys.toTypedArray())
 
-        // **지도가 바뀌면 케이스도 함께 바뀐다**(ARTEL-578). 여기서 앉히는 이유는 한쪽만 커밋되면
-        // 두 표가 서로 다른 시점을 가리키기 때문이다 — 케이스는 사라진 기능을 시험하라고 하고,
-        // 지도는 그런 기능이 없다고 한다. **지도를 다 내린 맨 뒤**인 것도 같은 이유다: 사라진 기능이나
-        // 빈 `scene` 이 아직 표에 있으면 그 케이스를 다시 앉힌다.
-        val cases = mapTestCases.rewrite(document.contentMapId)
+        // **적재는 test case 를 만들지 않는다**(ARTEL-971). 예전에는 여기서 `MapTestCaseWriter.rewrite`
+        // 를 불러 적재할 때마다 test case 가 생기고 바뀌고 지워졌다. 이제 사용자가 build 별로
+        // `POST .../game-builds/{gameBuildId}/content-map/test-cases` 를 눌러 생성한다.
 
         documents.stampIngested(document.id!!, INGESTER_VERSION, Instant.now(clock))
 
@@ -348,7 +344,6 @@ class ContentMapIngestService(
             retiredScenes = retiredScenes.toInt(),
             persistentCapabilities = presences.count { it.persistent },
             evidencedPersistentCapabilities = presences.count { it == ScenePresence.PERSISTENT_EVIDENCED },
-            testCases = cases,
         )
     }
 
@@ -850,14 +845,6 @@ data class IngestResult(
      * 이고, 나머지를 지우는 것은 QA agent 다(ARTEL-644).
      */
     val evidencedPersistentCapabilities: Int = 0,
-
-    /**
-     * 이 지도가 앉힌 TC 의 변화(ARTEL-578). 지도가 바뀌면 케이스도 함께 바뀐다.
-     *
-     * 두 번째 적재부터 `created` 가 0 이어야 한다 — 아니면 겹침 판정이 같은 케이스를 못 알아본
-     * 것이고, 표가 적재할 때마다 부푼다.
-     */
-    val testCases: MapTestCaseWriter.Result = MapTestCaseWriter.Result(),
 )
 
 /**
