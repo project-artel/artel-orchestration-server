@@ -2,8 +2,6 @@ package kr.artel.orchestration.testcase.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.CapabilityCase
-import kr.artel.orchestration.testcase.dto.CaseTwin
-import kr.artel.orchestration.testcase.dto.CaseVerdictHistoryRow
 import kr.artel.orchestration.testcase.dto.CaseWrite
 import kr.artel.orchestration.testcase.dto.CaseInputRow
 import kr.artel.orchestration.testcase.dto.GroundedSceneEdgeRow
@@ -192,95 +190,14 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     )
     suspend fun recordVerdict(projectId: Long, testCaseId: Long, verificationStatus: String, gameBuildId: Long?): Int
 
-    /**
-     * 이 content map 의 `DRAFT` 행 가운데, **직전 build** 에 있던 같은 케이스가 판정을 받은 것을 `REGRESSION` 으로
-     * 바꾼다(ARTEL-994). 바꾼 행 수를 돌려준다.
-     *
-     * 직전 build 는 이 build 보다 먼저 만든 build 중 같은 `case_key` 를 가진 가장 최근 것이다. 그 행이
-     * VERIFIED · FAILED · REGRESSION 이면 이번 버전에서 다시 봐야 한다. REGRESSION 까지 넣는 것은, 한 버전을
-     * 건너뛰어 재검증하지 않았어도 그보다 앞의 판정이 여전히 다시 봐야 할 대상이기 때문이다.
-     * 앞 build 의 행은 바꾸지 않는다 — 그 행이 그 버전의 이력이다.
-     *
-     * editor 행은 버전 순서에 들지 않는다(ARTEL-1014). 직전 build 로 고르지 않고, 이 build 가 editor 행이면
-     * subquery 가 NULL 이 되어 아무 행도 바꾸지 않는다.
-     */
+    /** 이 케이스를 마지막으로 판정한 build(ARTEL-1018). 상태는 버전 몫에서 비추므로 여기서 바꾸지 않는다. */
     @Modifying
-    @Query(
-        """
-        UPDATE test_case t
-           SET verification_status = 'REGRESSION', updated_at = now()
-         WHERE t.project_id = :projectId
-           AND t.metadata ->> 'content_map_id' = CAST(:contentMapId AS TEXT)
-           AND t.verification_status = 'DRAFT'
-           AND t.metadata ->> 'case_key' IS NOT NULL
-           AND (
-               SELECT prev.verification_status
-                 FROM test_case prev
-                 JOIN content_map pcm ON CAST(pcm.id AS TEXT) = prev.metadata ->> 'content_map_id'
-                 JOIN game_build pb ON pb.id = pcm.game_build_id
-                 JOIN game_build cur ON cur.id = :gameBuildId
-                WHERE prev.project_id = t.project_id
-                  AND prev.metadata ->> 'case_key' = t.metadata ->> 'case_key'
-                  AND pb.is_editor = FALSE
-                  AND cur.is_editor = FALSE
-                  AND (pb.created_at, pb.id) < (cur.created_at, cur.id)
-                ORDER BY pb.created_at DESC, pb.id DESC
-                LIMIT 1
-           ) IN ('VERIFIED', 'FAILED', 'REGRESSION')
-        """
-    )
-    suspend fun markRegressionFromPreviousBuild(projectId: Long, contentMapId: Long, gameBuildId: Long): Int
+    @Query("UPDATE test_case SET last_verified_build_id = :gameBuildId, updated_at = now() WHERE id = :testCaseId")
+    suspend fun markLastVerifiedBuild(testCaseId: Long, gameBuildId: Long): Int
 
-    /**
-     * [sourceIds] 각각의 **[gameBuildId] 쪽 짝**(ARTEL-994). 짝은 같은 `case_key` 를 가진, 그 build 의 content
-     * map 에서 나온 행이다. 짝이 없는 id 는 결과에 없다. 이미 그 build 의 행이면 자기 자신이 짝이다.
-     */
-    @Query(
-        """
-        SELECT src.id AS source_id, dst.id AS target_id
-          FROM test_case src
-          JOIN test_case dst
-            ON dst.project_id = src.project_id
-           AND dst.metadata ->> 'case_key' = src.metadata ->> 'case_key'
-          JOIN content_map cm ON CAST(cm.id AS TEXT) = dst.metadata ->> 'content_map_id'
-         WHERE src.project_id = :projectId
-           AND src.id IN (:sourceIds)
-           AND src.metadata ->> 'case_key' IS NOT NULL
-           AND cm.game_build_id = :gameBuildId
-        """
-    )
-    fun findTwinsInBuild(projectId: Long, sourceIds: Collection<Long>, gameBuildId: Long): Flow<CaseTwin>
 
-    /** [ids] 가운데 build 를 넘어 짝을 찾을 수 있는 것, 곧 `case_key` 가 있는 행(ARTEL-994). */
-    @Query(
-        """
-        SELECT id FROM test_case
-         WHERE project_id = :projectId AND id IN (:ids) AND metadata ->> 'case_key' IS NOT NULL
-        """
-    )
-    fun findKeyedIds(projectId: Long, ids: Collection<Long>): Flow<Long>
 
-    /**
-     * [testCaseId] 와 같은 `case_key` 를 가진 build 별 행을 build 순서로(ARTEL-994). `case_key` 가 없는
-     * 케이스(사람이 쓴 것)는 build 에 묶이지 않으므로 빈 결과다. editor 행은 게임 버전이 아니라서 빠진다(ARTEL-1014).
-     */
-    @Query(
-        """
-        SELECT other.id AS test_case_id, gb.id AS game_build_id, gb.version, gb.label,
-               other.verification_status, gb.created_at AS build_created_at
-          FROM test_case me
-          JOIN test_case other
-            ON other.project_id = me.project_id
-           AND other.metadata ->> 'case_key' = me.metadata ->> 'case_key'
-          JOIN content_map cm ON CAST(cm.id AS TEXT) = other.metadata ->> 'content_map_id'
-          JOIN game_build gb ON gb.id = cm.game_build_id
-         WHERE me.id = :testCaseId AND me.project_id = :projectId
-           AND me.metadata ->> 'case_key' IS NOT NULL
-           AND gb.is_editor = FALSE
-         ORDER BY gb.created_at ASC, gb.id ASC
-        """
-    )
-    fun findVerdictHistory(projectId: Long, testCaseId: Long): Flow<CaseVerdictHistoryRow>
+
 
     /**
      * 명세 적재의 **보조** 키 — `spec_id`가 아직 없는 행만 고른다(ARTEL-329).

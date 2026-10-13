@@ -8,7 +8,6 @@ import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.testcase.dto.ContentMapTestCaseGenerationResponse
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
-import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
@@ -33,7 +32,6 @@ class ContentMapTestCaseService(
     private val documents: ContentMapDocumentRepository,
     private val folderService: TestCaseFolderService,
     private val writer: MapTestCaseWriter,
-    private val testCases: TestCaseRepository,
     private val transactionalOperator: TransactionalOperator,
 ) {
 
@@ -50,8 +48,7 @@ class ContentMapTestCaseService(
         val contentMapId = contentMaps.findByGameBuildId(gameBuildId)?.id
             ?.takeIf { documents.existsByContentMapIdAndIngestedAtIsNotNull(it) }
             ?: throw ConflictException("이 빌드에는 적재된 content map 이 없습니다.")
-        val generated = generateInTransaction(projectId, contentMapId, build)
-        return ContentMapTestCaseGenerationResponse.of(generated.result, generated.regression)
+        return ContentMapTestCaseGenerationResponse.of(generateInTransaction(projectId, contentMapId, build))
     }
 
     /**
@@ -62,30 +59,22 @@ class ContentMapTestCaseService(
         val build = contentMaps.findById(contentMapId)?.let { gameBuilds.findById(it.gameBuildId) }
             ?: return MapTestCaseWriter.Result()
                 .also { logger.warn("content map {} 의 build 를 찾지 못해 test case 를 생성하지 않는다", contentMapId) }
-        return generateInTransaction(build.projectId, contentMapId, build).result
+        return generateInTransaction(build.projectId, contentMapId, build)
     }
 
     /**
-     * @property regression 직전 build 에서 판정이 나 이번에 `REGRESSION` 으로 둔 행 수(ARTEL-994).
-     */
-    private data class Generated(val result: MapTestCaseWriter.Result, val regression: Int)
-
-    /**
-     * 생성 뒤 같은 트랜잭션에서 재검증 대상을 표시한다(ARTEL-994). 생성기([MapTestCaseWriter])는 판정을 모르고
-     * 알 필요도 없어, 그 바깥에서 직전 build 의 같은 `case_key` 를 보고 정한다. 다시 생성해도 결과가 같다 —
-     * `DRAFT` 인 행만 고르므로 이미 판정이 난 행은 그대로다.
+     * 그 build 의 버전 몫을 만든다(ARTEL-1018). 앞 버전에서 판정이 난 케이스의 새 몫은 writer 가
+     * `REGRESSION` 으로 시작시키고, 그 수가 결과의 `regression` 이다.
      */
     private suspend fun generateInTransaction(
         projectId: Long,
         contentMapId: Long,
         build: GameBuildEntity,
-    ): Generated =
+    ): MapTestCaseWriter.Result =
         transactionalOperator.executeAndAwait {
             folderService.lockProjectFolders(projectId)
             val folder = folderService.findOrCreateContentMapFolder(projectId, contentMapId, buildNameOf(build))
-            val result = writer.rewrite(projectId, contentMapId, folder.id!!)
-            val regression = testCases.markRegressionFromPreviousBuild(projectId, contentMapId, build.id!!)
-            Generated(result, regression)
+            writer.rewrite(projectId, requireNotNull(build.id), contentMapId, folder.id!!)
         }
 
     /** folder 이름에 쓰는 build 이름. 사람이 붙인 `label` 이 있으면 그것, 없으면 관찰한 `version`. */

@@ -24,6 +24,7 @@ import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
@@ -52,10 +53,10 @@ import java.util.UUID
 /**
  * 버전을 넘어 TS 를 재사용하는 흐름(ARTEL-994).
  *
- * 같은 실측 문서를 두 build 에 적재한다. #293 이후 두 build 는 같은 케이스를 각자의 행으로 갖고, 둘은
- * `case_key` 로만 이어진다. 여기서 지키는 것은 셋이다.
- * - 새 build 의 TC 는 직전 build 에서 판정이 난 케이스면 `REGRESSION` 으로 시작하고, 앞 build 의 행은 그대로다.
- * - TS 를 새 버전 TR 로 가져오면 복사본의 `case_id` 가 새 build 의 행으로 바뀐다. 원본은 그대로다.
+ * 같은 실측 문서를 두 build 에 적재한다. 같은 케이스는 버전을 넘어 한 `test_case` 이고 버전마다 몫
+ * (`test_case_version`)이 하나씩 생긴다(ARTEL-1018). 여기서 지키는 것은 셋이다.
+ * - 새 버전 몫은 직전 버전에서 판정이 난 케이스면 `REGRESSION` 으로 시작하고, 앞 버전 몫은 그대로다.
+ * - TS 를 새 버전 TR 로 가져오면 복사본은 같은 케이스를 가리키고, 이 버전에 없는 케이스를 알린다.
  * - 트리와 이력이 버전으로 묶인다.
  */
 @ActiveProfiles("test")
@@ -83,39 +84,44 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
     @Autowired private lateinit var storage: DocumentStorage
     @Autowired private lateinit var ingest: ContentMapIngestService
     @Autowired private lateinit var testCases: TestCaseRepository
+    @Autowired private lateinit var versions: TestCaseVersionRepository
     @Autowired private lateinit var scenarios: TestScenarioRepository
     @Autowired private lateinit var runScenarios: TestRunScenarioRepository
 
     @Test
-    fun `직전 build 에서 판정이 난 케이스만 새 build 에서 REGRESSION 으로 시작한다`(): Unit = runBlocking {
+    fun `같은 케이스는 버전을 넘어 한 행이고, 직전 버전에서 판정이 난 것만 새 버전에서 REGRESSION 으로 시작한다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
         val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
-        generate(token, projectId, buildA.gameBuildId)
-        val rowsA = rowsOf(projectId, buildA.contentMapId)
-        val verified = rowsA[0]
-        val failed = rowsA[1]
-        testCases.save(verified.copy(verificationStatus = "VERIFIED", lastVerifiedBuildId = buildA.gameBuildId))
-        testCases.save(failed.copy(verificationStatus = "FAILED", lastVerifiedBuildId = buildA.gameBuildId))
+        val generatedA = generate(token, projectId, buildA.gameBuildId).body
+        val versionsA = versions.findByGameBuildId(buildA.gameBuildId).toList().sortedBy { it.testCaseId }
+        val verified = versionsA[0]
+        val failed = versionsA[1]
+        versions.save(verified.copy(verificationStatus = "VERIFIED"))
+        versions.save(failed.copy(verificationStatus = "FAILED"))
+        val identitiesBefore = testCases.countByProjectId(projectId)
 
         val buildB = ingestedBuild(projectId, "2.0.0", Instant.now())
         val generated = generate(token, projectId, buildB.gameBuildId)
 
         assertThat(generated.status).isEqualTo(200)
+        assertThat(generated.body["created"].asInt()).isEqualTo(generatedA["created"].asInt())
         assertThat(generated.body["regression"].asInt()).isEqualTo(2)
-        val rowsB = rowsOf(projectId, buildB.contentMapId).associateBy(::caseKeyOf)
-        assertThat(rowsB.getValue(caseKeyOf(verified)).verificationStatus).isEqualTo("REGRESSION")
-        assertThat(rowsB.getValue(caseKeyOf(failed)).verificationStatus).isEqualTo("REGRESSION")
-        assertThat(rowsB.values.count { it.verificationStatus == "DRAFT" }).isEqualTo(rowsB.size - 2)
-        // 앞 build 의 행이 그 버전의 이력이다.
-        assertThat(testCases.findById(verified.id!!)!!.verificationStatus).isEqualTo("VERIFIED")
-        assertThat(testCases.findById(failed.id!!)!!.verificationStatus).isEqualTo("FAILED")
+        // 정체는 늘지 않는다 — 같은 케이스에 버전 몫만 하나씩 더 생긴다.
+        assertThat(testCases.countByProjectId(projectId)).isEqualTo(identitiesBefore)
+        val versionsB = versions.findByGameBuildId(buildB.gameBuildId).toList().associateBy { it.testCaseId }
+        assertThat(versionsB.getValue(verified.testCaseId).verificationStatus).isEqualTo("REGRESSION")
+        assertThat(versionsB.getValue(failed.testCaseId).verificationStatus).isEqualTo("REGRESSION")
+        assertThat(versionsB.values.count { it.verificationStatus == "DRAFT" }).isEqualTo(versionsB.size - 2)
+        // 앞 버전 몫이 그 버전의 이력이다. 정체는 가장 최근 버전(B)을 비춘다.
+        assertThat(versions.findById(verified.id!!)!!.verificationStatus).isEqualTo("VERIFIED")
+        assertThat(testCases.findById(verified.testCaseId)!!.verificationStatus).isEqualTo("REGRESSION")
 
         val again = generate(token, projectId, buildB.gameBuildId)
         assertThat(again.body["regression"].asInt()).isZero()
-        assertThat(rowsOf(projectId, buildB.contentMapId).count { it.verificationStatus == "REGRESSION" }).isEqualTo(2)
+        assertThat(again.body["created"].asInt()).isZero()
 
-        val history = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases/${verified.id}/verdict-history")
+        val history = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases/${verified.testCaseId}/verdict-history")
         assertThat(history.status).isEqualTo(200)
         assertThat(history.body["items"].map { it["version"].asText() to it["verificationStatus"].asText() })
             .containsExactly("1.0.0" to "VERIFIED", "2.0.0" to "REGRESSION")
@@ -199,13 +205,13 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
     }
 
     @Test
-    fun `앞 버전 TR 의 TS 를 가져오면 복사본이 이번 build 의 TC 를 가리킨다`(): Unit = runBlocking {
+    fun `앞 버전 TR 의 TS 를 가져오면 복사본이 같은 케이스를 가리키고, 이 버전에 없는 케이스를 알린다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
         val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
         generate(token, projectId, buildA.gameBuildId)
         val runA = createRun(token, projectId, "1.0 런")["id"].asLong()
-        val rowsA = rowsOf(projectId, buildA.contentMapId)
+        val caseIds = versions.findByGameBuildId(buildA.gameBuildId).toList().map { it.testCaseId }.sorted()
         val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "사람이 쓴 것", expectedValue = "x"))
         val source = scenarios.save(
             TestScenarioEntity(projectId = projectId).withDraft(
@@ -213,8 +219,8 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
                     title = "보스전",
                     description = "설명",
                     steps = listOf(
-                        ScenarioStep(action = "a", caseId = rowsA[0].id),
-                        ScenarioStep(action = "b", caseId = rowsA[1].id),
+                        ScenarioStep(action = "a", caseId = caseIds[0]),
+                        ScenarioStep(action = "b", caseId = caseIds[1]),
                         ScenarioStep(action = "c", caseId = manual.id),
                         ScenarioStep(action = "d"),
                     )
@@ -229,9 +235,8 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
 
         val buildB = ingestedBuild(projectId, "2.0.0", Instant.now())
         generate(token, projectId, buildB.gameBuildId)
-        val rowsB = rowsOf(projectId, buildB.contentMapId).associateBy(::caseKeyOf)
         // 두 번째 케이스는 2.0 에서 사라진 것으로 만든다.
-        testCases.deleteById(rowsB.getValue(caseKeyOf(rowsA[1])).id!!)
+        versions.delete(versions.findByTestCaseIdAndGameBuildId(caseIds[1], buildB.gameBuildId)!!)
         val runB = createRun(token, projectId, "2.0 런")["id"].asLong()
         val existing = scenarios.save(TestScenarioEntity(projectId = projectId, title = "이미 있던 것"))
         runScenarios.save(TestRunScenarioEntity(testRunId = runB, testScenarioId = existing.id!!, position = 0))
@@ -242,15 +247,12 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         )
 
         assertThat(imported.status).isEqualTo(201)
-        assertThat(imported.body["unmatchedCaseIds"].map { it.asText() }).containsExactly(rowsA[1].id.toString())
+        assertThat(imported.body["unmatchedCaseIds"].map { it.asText() }).containsExactly(caseIds[1].toString())
         val copyId = imported.body["importedScenarios"][0]["testScenarioId"].asLong()
         assertThat(copyId).isNotEqualTo(source.id)
         val copySteps = scenarios.findById(copyId)!!.toDraft(objectMapper).steps
-        assertThat(copySteps.map { it.caseId }).containsExactly(
-            rowsB.getValue(caseKeyOf(rowsA[0])).id, rowsA[1].id, manual.id, null
-        )
-        assertThat(scenarios.findById(source.id!!)!!.toDraft(objectMapper).steps.map { it.caseId })
-            .containsExactly(rowsA[0].id, rowsA[1].id, manual.id, null)
+        // 정체가 버전을 넘어 하나라 case_id 는 그대로다.
+        assertThat(copySteps.map { it.caseId }).containsExactly(caseIds[0], caseIds[1], manual.id, null)
         assertThat(runScenarios.findByTestRunIdOrderByPosition(runB).toList().map { it.testScenarioId to it.position })
             .containsExactly(existing.id!! to 0, copyId to 1)
 
@@ -332,14 +334,6 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         )
         return IngestedBuild(build.id!!, map.id!!)
     }
-
-    private suspend fun rowsOf(projectId: Long, contentMapId: Long): List<TestCaseEntity> =
-        testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { row ->
-            objectMapper.readTree(row.metadata.asString()).path("content_map_id").asLong() == contentMapId
-        }
-
-    private fun caseKeyOf(row: TestCaseEntity): String =
-        objectMapper.readTree(row.metadata.asString()).path("case_key").asText()
 
     private suspend fun signIn(): Pair<Long, String> {
         val providerUserId = UUID.randomUUID().toString()
