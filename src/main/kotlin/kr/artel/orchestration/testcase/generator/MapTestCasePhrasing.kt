@@ -225,7 +225,7 @@ object MapTestCasePhrasing {
      * 없는 케이스는 실행해도 통과·실패를 말할 수 없다.
      */
     fun expectedEach(effects: List<CapabilityEffectEntity>): List<String> =
-        expectedWithSource(effects, emptyMap()).map { it.expected }
+        expectedWithSource(effects, emptyMap()).map { it.expected }.distinct()
 
     /**
      * 효과 하나가 낸 **세 가지 모양**.
@@ -248,9 +248,12 @@ object MapTestCasePhrasing {
         refs: Map<Pair<String, String>, Set<String>> = emptyMap(),
         methodId: String? = null,
         sceneNames: Set<String> = emptySet(),
+        positions: Map<Pair<String, String>, Map<Int, Set<String>>> = emptyMap(),
+        gameTypes: Set<String>? = null,
     ): List<Told> {
         val seen = mutableSetOf<String>()
-        return effects.filter { EffectCategory.from(it.category)?.assertable == true }
+        val kept = mutableListOf<Pair<String, Told>>()
+        effects.filter { EffectCategory.from(it.category)?.assertable == true }
             .filterNot { it.kind in UNWATCHABLE }
             .mapNotNull { effect ->
                 val target = watchableTarget(effect, refs, methodId, sceneNames) ?: return@mapNotNull null
@@ -260,10 +263,23 @@ object MapTestCasePhrasing {
                 // 안다.** **값 쪽도 씬이 부르는 이름으로**(ARTEL-682): 대상만 풀고 값을 안 풀면 한 줄
                 // 안에서 두 말이 섞인다 — 실측에서 `wordHead 의 위치가
                 // MapMove.battle1.transform.position 로 바뀐다` 가 나왔다.
-                val detail = readable(effect.detail)?.let { MapTestCaseTargets.resolve(it, refs) }
-                Told(outcome(effect.kind, target, detail), doing(effect.kind, target, detail), effect)
+                val sprite = MapTestCaseReadings.isSprite(effect.kind, effect.target)
+                val named = readable(effect.detail)?.let { MapTestCaseTargets.resolve(it, refs, positions) }
+                // **이름을 못 댄 그림 번호는 값이 아니다.** `ProjectileAnimator.sprites[0]` 은 코드가
+                // 그 그림을 고르는 방법이고, 판독은 그림 이름을 준다. 값을 빼고 "갱신된다"로 말한다.
+                val detail = named?.takeUnless { sprite && UNNAMED_INDEX.containsMatchIn(it) }
+                // **판독이 못 보는 그림은 그렇다고 적는다.** 지우면 그 기대만 든 케이스가 통째로
+                // 사라져, SDK 가 그 값을 줄 때까지 이 구멍이 있다는 것조차 안 보인다.
+                val unread = sprite && gameTypes != null &&
+                    !MapTestCaseReadings.seesSprite(effect.target.orEmpty(), gameTypes)
+                val expected = outcome(effect.kind, target, detail).let { if (unread) it + UNREAD_MARK else it }
+                // 같은 말을 거르는 잣대는 **값을 빼기 전** 문장이다. 값을 뺀 문장으로 거르면 `sprites[0]` ·
+                // `sprites[1]` 이 같은 줄이 되어 한쪽 효과가 사라지고, 그 효과로 잡던 케이스의 정체가
+                // 바뀌어 시나리오가 가리키던 줄이 끊긴다. 보이는 문장은 [MapTestCaseGenerator] 가 한 번 더 거른다.
+                outcome(effect.kind, target, named) to Told(expected, doing(effect.kind, target, detail), effect)
             }
-            .filter { seen.add(it.expected) }
+            .filterTo(kept) { (key, _) -> seen.add(key) }
+        return kept.map { it.second }
     }
 
     // --- 조각 ------------------------------------------------------------------------
@@ -301,7 +317,7 @@ object MapTestCasePhrasing {
     private fun outcome(kind: String, target: String, detail: String?): String = when (kind) {
         "scene" -> "${code(target)} 화면으로 전환된다"
         "active-state" -> "${code(target)} 의 표시 상태가 ${detail?.let { "`$it`" } ?: "바뀐다"}"
-        "ui-value" -> "${code(target)} 표시가 ${detail?.let { "`$it` 로 " } ?: ""}갱신된다"
+        "ui-value" -> "${code(target)} 표시가 ${detail?.let { "${code(it)} 로 " } ?: ""}갱신된다"
         "instantiate" -> "${code(target)} 이(가) 생성된다"
         "destroy" -> "${code(target)} 이(가) 사라진다"
         "animation" -> "${code(target)} 애니메이션이 실행된다"
@@ -346,7 +362,7 @@ object MapTestCasePhrasing {
     private const val THINGS = "개를"
 
     private fun doing(kind: String, target: String, detail: String?): Doing {
-        val value = detail?.let { "`$it` 로 " } ?: ""
+        val value = detail?.let { "${code(it)} 로 " } ?: ""
         fun of(what: String, ends: String, joins: String, counted: Counted) =
             Doing(kind, what.trim(), ends, joins, counted)
         return when (kind) {
@@ -567,7 +583,10 @@ object MapTestCasePhrasing {
     private fun referenceCheck(node: ConditionNode.Test): Boolean =
         node.operator == "!=" && node.right.trim() == "null"
 
-    /** QA 실행 중 확인할 수 없는 비교 뒤에 붙는 말. */
+    /** 이름으로 못 바꾼 목록 번호. `sprites[0]` 꼴로 남은 자리다. */
+    private val UNNAMED_INDEX = Regex("""\w\[\d+\]""")
+
+    /** QA 실행 중 확인할 수 없는 비교·기대 뒤에 붙는 말. */
     const val UNREAD_MARK = " (확인 불가)"
 
     /** 지금 화면을 코드가 스스로 확인하는 자리. 사전조건이 이미 그 화면을 말했다. */

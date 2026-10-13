@@ -78,9 +78,17 @@ class MapTestCaseGenerator(
         val namesByScene = contentMaps.findSceneObjectNames(contentMapId).toList()
             .groupBy({ it.sceneName }, { it.path })
             .mapValues { (_, paths) -> paths.toSet() }
-        val refs = objectRefs.findByContentMapId(contentMapId).toList()
+        val refRows = objectRefs.findByContentMapId(contentMapId).toList()
+        val refs = refRows
             .groupBy { it.ownerType to it.field }
             .mapValues { (_, rows) -> rows.map { it.targetName }.toSet() }
+        // **목록의 몇 번째가 무엇인지**(V100). `sprites[4]` 를 그림 이름으로 바꾸는 데 쓴다. 주인이 여럿이면
+        // 같은 번호에 이름이 여럿이다.
+        val positions = refRows.filter { it.position != null }
+            .groupBy { it.ownerType to it.field }
+            .mapValues { (_, rows) ->
+                rows.groupBy({ it.position!! }, { it.targetName }).mapValues { (_, names) -> names.toSet() }
+            }
         // **판독이 읽는 타입들**([MapTestCaseReadings]). 사전조건의 비교가 QA 에서 확인되는지 가른다.
         val gameTypes = contentMaps.findGameTypeNames(contentMapId).toList().toSet()
         // **읽는 곳은 하나다.** 앞서 창구가 셋이었고(조작 · 관측 · 존재 확인) 각자 다른 잣대를
@@ -90,7 +98,7 @@ class MapTestCaseGenerator(
         // 갈림은 행이 스스로 말한다 — `actionability` 가 `not-a-step` 이면 볼 것이고 아니면
         // 누를 것이다. 아래(효과 읽기 · 갈래 펴기 · 합치기)는 두 벌이 되지 않는다.
         val drafts = contentMaps.findTestCaseRows(contentMapId).toList()
-            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, owners, namesByScene, gameTypes) }
+            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, positions, owners, namesByScene, gameTypes) }
         return merged(drafts) + screenElements(contentMapId)
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
@@ -562,6 +570,7 @@ class MapTestCaseGenerator(
         settled: Map<Long, Map<Int, String>>,
         exits: Set<LoopExits.Guard>,
         refs: Map<Pair<String, String>, Set<String>>,
+        positions: Map<Pair<String, String>, Map<Int, Set<String>>>,
         owners: Map<Long, String>,
         namesByScene: Map<String, Set<String>>,
         gameTypes: Set<String>,
@@ -609,7 +618,7 @@ class MapTestCaseGenerator(
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
             // 효과의 주인은 **그 효과를 든 기능**이다. 빌려 온 자리(`borrowed`)에서는 이 행이 아니다.
             MapTestCasePhrasing.expectedWithSource(
-                effectRows, refs, owners[source], namesByScene[row.sceneName].orEmpty(),
+                effectRows, refs, owners[source], namesByScene[row.sceneName].orEmpty(), positions, gameTypes,
             ).map { (outcome, does, effect) ->
                 Draft(
                     capabilityKey = key,

@@ -40,6 +40,30 @@ object MapTestCaseReadings {
         return marked(node, roots)
     }
 
+    /**
+     * **그림 기대결과를 `pulse` 가 확인하는가.**
+     *
+     * `pulse` 는 게임 타입 멤버가 SpriteRenderer 면 그 그림 이름을 싣는다. 그래서 대상이
+     * `SlimeAnimator.spriteRenderer.sprite` 처럼 게임 타입에서 시작하는 멤버 경로일 때만 확인된다.
+     * `GameObject.Find("Background").GetComponent().sprite` 는 이름으로 찾은 오브젝트에 호출로 닿는
+     * 자리라 판독에 없다 — 실측에서 `Background` 표시가 `Stage2BG` 로 갱신된다는 기대가 늘 실패했다.
+     *
+     * 비교의 한쪽을 가르는 것([mark])과 같은 잣대다. 판독이 읽는 것은 같기 때문이다.
+     *
+     * @param target 효과가 적은 대상 원문. 사람이 찾을 이름으로 바꾸기 **전** 것을 넘긴다 — 바꾼 뒤에는
+     *   호출이 지워져 있다.
+     */
+    fun seesSprite(target: String, gameTypes: Set<String>): Boolean =
+        operand(target.removeSuffix(SPRITE), gameTypes.mapTo(mutableSetOf(), ::shortName))
+
+    /** 그림 기대결과인가. 글자와 같은 `ui-value` 로 오고 대상이 `.sprite` 로 끝난다. */
+    fun isSprite(kind: String, target: String?): Boolean =
+        kind == UI_VALUE && target?.endsWith(SPRITE) == true
+
+    private const val SPRITE = ".sprite"
+
+    private const val UI_VALUE = "ui-value"
+
     private fun marked(node: ConditionNode, roots: Set<String>): ConditionNode = when (node) {
         is ConditionNode.Test -> node.copy(readable = operand(node.left, roots) && operand(node.right, roots))
         is ConditionNode.Group -> node.copy(parts = node.parts.map { marked(it, roots) })

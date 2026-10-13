@@ -89,7 +89,12 @@ object MapTestCaseTargets {
      */
     private fun readableIndex(text: String): String = LIST_ITEM_KEPT.replace(text, "[$1]")
 
-    fun resolve(target: String, refs: Map<Pair<String, String>, Set<String>>): String {
+    fun resolve(
+        target: String,
+        refs: Map<Pair<String, String>, Set<String>>,
+        positions: Map<Pair<String, String>, Map<Int, Set<String>>> = emptyMap(),
+    ): String {
+        byPosition(target, positions)?.let { return it }
         // 목록 색인은 지운다 — `backgorunds.Item[_]` 이 가리키는 필드는 `backgorunds` 다.
         val cleaned = LIST_ITEM.replace(target, "")
         val owner = cleaned.substringBefore('.', "")
@@ -115,6 +120,35 @@ object MapTestCaseTargets {
         }
         return readableIndex(target)
     }
+
+    /**
+     * **번호가 있는 목록 자리를 그 번호의 이름으로.**
+     *
+     * `SlimeAnimator.sprites.Item[4]` 는 목록의 다섯째다. 문서는 그 목록을 순서대로 적어 두고,
+     * 적재기가 그 순서를 `scene_object_ref.position` 으로 남긴다. 그래서 다섯째가 무엇인지 답이 있다.
+     *
+     * **주인마다 목록이 다르다.** 같은 타입이 여러 오브젝트에 붙으면(실측 `SlimeAnimator` 셋) 각자의
+     * 다섯째가 다른 그림이다. 하나를 고르면 나머지 둘일 때 거짓이라 **모두 적고 그중 하나라고 말한다.**
+     * 그 번호가 없는 주인은 그 자리에 오지 않으니 세지 않는다.
+     *
+     * 번호를 모르거나(`Item[_]`) 그 목록을 문서가 안 적었으면 null — 부르는 쪽이 원래 규칙으로 간다.
+     */
+    private fun byPosition(target: String, positions: Map<Pair<String, String>, Map<Int, Set<String>>>): String? {
+        val found = INDEXED.matchEntire(target) ?: return null
+        val (owner, field, index) = found.destructured
+        val names = positions[owner to field]?.get(index.toInt())?.sorted() ?: return null
+        return when (names.size) {
+            0 -> null
+            1 -> names.single()
+            else -> names.joinToString(NAMES) { "`$it`" } + ONE_OF
+        }
+    }
+
+    /** `Owner.field.Item[4]` — 번호를 읽은 목록 자리. 뒤에 아무것도 안 붙은 것만 본다. */
+    private val INDEXED = Regex("""([A-Za-z_]\w*)\.([A-Za-z_]\w*)\.Item\[(\d+)\]""")
+
+    /** 주인마다 이름이 다를 때 붙이는 말. 그중 하나가 맞으면 된다. */
+    private const val ONE_OF = " 중 하나"
 
     /**
      * **씬이 이름을 답했으면 코드의 꼬리는 뗀다**(ARTEL-682).
