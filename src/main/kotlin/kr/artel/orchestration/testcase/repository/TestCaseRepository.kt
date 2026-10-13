@@ -12,6 +12,7 @@ import kr.artel.orchestration.testcase.dto.ValueRaiser
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 
@@ -146,6 +147,17 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      * `VERIFIED`가 들어간다). 세 번 세는 값이 세 줄일 뿐이다.
      */
     suspend fun countByProjectIdAndVerificationStatus(projectId: Long, verificationStatus: String): Long
+
+    /**
+     * [ids] 중 이 프로젝트에 있는 test case 를 지우고 지운 행 수를 돌려준다(ARTEL-967).
+     *
+     * `project_id` 조건이 다른 프로젝트의 id 를 걸러 낸다 — 그 행은 남고 수에도 들지 않는다.
+     * 문장 하나라 Postgres 가 한 트랜잭션으로 실행한다. `test_case_embedding` 은
+     * `ON DELETE CASCADE` 로 함께 지워진다(V23).
+     */
+    @Modifying
+    @Query("DELETE FROM test_case WHERE project_id = :projectId AND id IN (:ids)")
+    suspend fun deleteByProjectIdAndIdIn(projectId: Long, ids: Collection<Long>): Int
 
     /**
      * 명세 적재의 **보조** 키 — `spec_id`가 아직 없는 행만 고른다(ARTEL-329).

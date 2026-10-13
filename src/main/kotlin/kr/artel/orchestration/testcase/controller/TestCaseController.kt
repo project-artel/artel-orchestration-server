@@ -2,6 +2,8 @@ package kr.artel.orchestration.testcase.controller
 
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
+import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteRequest
+import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
@@ -84,6 +86,19 @@ class TestCaseController(
         service.createTestCase(projectId, appUserId, request)
             ?.let { ResponseEntity.status(HttpStatus.CREATED).body(it) }
             ?: ResponseEntity.notFound().build()
+
+    /**
+     * 여러 케이스를 한 번에 지운다(ARTEL-967). 200 과 실제로 지운 건수를 낸다.
+     *
+     * `/{caseId}` 에는 POST 가 없어 경로가 겹치지 않는다.
+     */
+    @PostMapping("/bulk-delete")
+    suspend fun bulkDeleteTestCases(
+        @PathVariable projectId: Long,
+        @RequestBody request: TestCaseBulkDeleteRequest,
+        @CurrentUserId appUserId: Long
+    ): TestCaseBulkDeleteResponse =
+        service.bulkDeleteTestCases(projectId, appUserId, request)
 
     /** 케이스 단건. 목록보다 한 필드(`evidenceGaps`) 더 낸다 — [TestCaseDetailResponse] 참조. */
     @GetMapping("/{caseId}")

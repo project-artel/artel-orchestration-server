@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.NotFoundException
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
@@ -15,6 +16,8 @@ import kr.artel.orchestration.testcase.dto.ValueMove
 import kr.artel.orchestration.testscenario.service.Guard
 import kr.artel.orchestration.testcase.dto.SceneEdge
 import kr.artel.orchestration.testcase.dto.SceneExit
+import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteRequest
+import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
@@ -380,6 +383,31 @@ class TestCaseService(
         accessible(caseId, userId)?.let { repository.delete(it) }
     }
 
+    /**
+     * 여러 test case 를 한 번에 지운다(ARTEL-967). 비멤버면 본문과 무관하게 404 다.
+     *
+     * 시나리오가 `case_id` 로 인용한 케이스도 지운다. 단건 삭제와 같은 규칙이다 — 인용된 케이스를
+     * `BROKEN` 으로 돌리는 것은 content map 에서 기능이 사라졌을 때 자동으로 지우는
+     * [MapTestCaseWriter] 의 규칙이고, 이것은 사용자가 고른 케이스를 지우는 요청이다.
+     */
+    suspend fun bulkDeleteTestCases(
+        projectId: Long,
+        userId: Long,
+        request: TestCaseBulkDeleteRequest,
+    ): TestCaseBulkDeleteResponse {
+        if (!projectAccessService.isMember(projectId, userId)) {
+            throw NotFoundException("프로젝트를 찾을 수 없습니다.")
+        }
+        val rawIds = request.caseIds
+        if (rawIds == null || rawIds.size !in 1..BULK_DELETE_LIMIT) {
+            throw BadRequestException("caseIds 는 1건 이상 ${BULK_DELETE_LIMIT}건 이하여야 합니다.")
+        }
+        val caseIds = rawIds.map { rawId ->
+            rawId?.toLongOrNull() ?: throw BadRequestException("caseIds 에 숫자가 아닌 id 가 있습니다.")
+        }.distinct()
+        return TestCaseBulkDeleteResponse(repository.deleteByProjectIdAndIdIn(projectId, caseIds))
+    }
+
     private suspend fun accessible(caseId: Long, userId: Long): TestCaseEntity? {
         val entity = repository.findById(caseId) ?: return null
         return if (projectAccessService.isMember(entity.projectId, userId)) entity else null
@@ -388,4 +416,9 @@ class TestCaseService(
     private fun String?.requireField(name: String): String =
         this?.takeIf { it.isNotBlank() }
             ?: throw BadRequestException("$name is required")
+
+    companion object {
+        /** 일괄 삭제 한 번에 받는 id 상한. `IN (...)` bind 변수 수이기도 하다. */
+        private const val BULK_DELETE_LIMIT = 500
+    }
 }
