@@ -247,6 +247,10 @@ data class ScreenObservationRow(
 
     @Column("inserted")
     val inserted: Boolean,
+
+    /** upsert 뒤의 `macro.version`. 정의가 안 바뀐 갱신이면 앞 버전 그대로다(V100). */
+    @Column("version")
+    val version: Int,
 )
 
 /**
@@ -270,6 +274,10 @@ data class MacroUpsertRow(
 
     @Column("inserted")
     val inserted: Boolean,
+
+    /** upsert 뒤의 `macro.version`. 정의가 안 바뀐 갱신이면 앞 버전 그대로다(V100). */
+    @Column("version")
+    val version: Int,
 )
 
 /**

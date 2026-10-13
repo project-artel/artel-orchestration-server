@@ -74,6 +74,14 @@ data class MacroEntity(
     @Column("parameter_names")
     val parameterNames: Json = Json.of("[]"),
 
+    /**
+     * 현재 정의의 버전(V100). 정의가 실제로 바뀌는 등록과 revert 에서만 오르고, `macro_event` 의
+     * 최대 content 버전과 같아야 한다. `@Version` 을 붙이지 않는다 — 붙이면 Spring Data 가
+     * `save()` 마다 올리고 비교해, 정의가 안 바뀐 저장에도 버전이 오른다.
+     */
+    @Column("version")
+    val version: Int = 1,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,

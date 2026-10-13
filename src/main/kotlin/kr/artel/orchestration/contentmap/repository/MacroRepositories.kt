@@ -8,6 +8,7 @@ import kr.artel.orchestration.contentmap.dto.MacroScreenRow
 import kr.artel.orchestration.contentmap.dto.MacroSummaryRow
 import kr.artel.orchestration.contentmap.dto.MacroUpsertRow
 import kr.artel.orchestration.contentmap.entity.MacroEntity
+import kr.artel.orchestration.contentmap.entity.MacroEventEntity
 import kr.artel.orchestration.contentmap.entity.ScreenMacroEntity
 import kr.artel.orchestration.contentmap.macro.MacroWriteFrames
 import org.springframework.data.r2dbc.repository.Modifying
@@ -93,6 +94,11 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
      * `(xmax = 0) AS inserted` 가 새로 등록한 것과 갱신한 것을 가른다. 그 값을 upsert **전에**
      * 따로 조회해 비교하면 같은 이름이 동시에 둘 올 때 둘 다 "없었다" 를 읽어 둘 다 새로
      * 만들었다고 답한다. 읽는 법은 [ScreenRepository.observe] 의 KDoc 에 있다.
+     *
+     * **`version` 은 정의가 실제로 바뀔 때만 오른다**(V100). 같은 정의를 다시 등록해도 오르면 내용이
+     * 같은 event 가 쌓이고, 나중 run 의 같은 등록이 앞 run 의 변경을 덮은 것으로 읽혀 revert 가
+     * 막힌다. 비교를 SQL 안에서 하는 이유는 앞서 따로 조회하면 그 사이에 다른 등록이 끼어들 수 있어서다.
+     * jsonb 의 `IS DISTINCT FROM` 은 key 순서와 공백을 무시하고 값을 비교한다.
      */
     @Query(
         """
@@ -102,8 +108,15 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
             source = EXCLUDED.source,
             definition_json = EXCLUDED.definition_json,
             parameter_names = EXCLUDED.parameter_names,
+            version = CASE
+                WHEN macro.source IS DISTINCT FROM EXCLUDED.source
+                  OR macro.definition_json IS DISTINCT FROM EXCLUDED.definition_json
+                  OR macro.parameter_names IS DISTINCT FROM EXCLUDED.parameter_names
+                THEN macro.version + 1
+                ELSE macro.version
+            END,
             updated_at = CURRENT_TIMESTAMP
-        RETURNING id, (xmax = 0) AS inserted
+        RETURNING id, (xmax = 0) AS inserted, version
         """
     )
     suspend fun upsertByName(
@@ -122,6 +135,39 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
      * 않는다.
      */
     suspend fun findByContentMapIdAndName(contentMapId: Long, name: String): MacroEntity?
+
+    /**
+     * revert 가 대상 행을 잠그고 읽는다(V100).
+     *
+     * 잠근 트랜잭션 안에서 최신 event 를 확인해야, 확인과 쓰기 사이에 끼어든 등록을 덮어쓰지 않는다.
+     * 등록의 upsert 도 이 행을 잠그므로 둘 중 하나가 끝날 때까지 다른 쪽이 기다린다.
+     */
+    @Query("SELECT * FROM macro WHERE id = :id FOR UPDATE")
+    suspend fun findByIdForUpdate(id: Long): MacroEntity?
+
+    /**
+     * revert 가 정의를 run 이전 내용으로 되돌린다. [version] 은 부르는 쪽이 잠근 행의 버전에 1 을
+     * 더한 값이다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE macro
+        SET source = :source,
+            definition_json = :definitionJson,
+            parameter_names = :parameterNames,
+            version = :version,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = :id
+        """
+    )
+    suspend fun rewriteDefinition(
+        id: Long,
+        source: String,
+        definitionJson: Json,
+        parameterNames: Json,
+        version: Int,
+    ): Int
 
     /**
      * 이 지도에 등록된 macro 전부를 **목록이 쓰는 칸만** 읽는다(ARTEL-943).
@@ -271,4 +317,59 @@ interface ScreenMacroRepository : CoroutineCrudRepository<ScreenMacroEntity, Lon
         """
     )
     fun findScreenRowsByMacroId(contentMapId: Long, macroId: Long): Flow<MacroScreenRow>
+}
+
+/**
+ * macro 버전 이력(V100). **덧붙이기만 한다** — 수정도 삭제도 없다. revert 도 event 를 고치지 않고
+ * `reverts_event_id` 를 채운 event 를 덧붙인다.
+ */
+interface MacroEventRepository : CoroutineCrudRepository<MacroEventEntity, Long> {
+
+    /** QA run 하나의 모든 `qa_try` 가 남긴 event. id 오름차순이 일어난 순서다. */
+    @Query(
+        """
+        SELECT e.* FROM macro_event e
+          JOIN qa_try t ON t.id = e.qa_try_id
+         WHERE t.qa_run_id = :qaRunId
+         ORDER BY e.id ASC
+        """
+    )
+    fun findByQaRunId(qaRunId: Long): Flow<MacroEventEntity>
+
+    /**
+     * macro 마다 가장 나중의 event 하나. `idx_macro_event_target` 을 탄다.
+     *
+     * ⚠️ 빈 컬렉션을 넘기면 `IN ()` 이 되어 SQL 이 깨진다. 부르는 쪽이 먼저 거른다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT ON (macro_id) * FROM macro_event
+         WHERE macro_id IN (:macroIds)
+         ORDER BY macro_id, id DESC
+        """
+    )
+    fun findLatestByMacroIds(macroIds: Collection<Long>): Flow<MacroEventEntity>
+
+    @Query("SELECT * FROM macro_event WHERE macro_id = :macroId ORDER BY id DESC LIMIT 1")
+    suspend fun findLatestByMacroId(macroId: Long): MacroEventEntity?
+
+    /** [eventIds] 가운데 이미 되돌려진 것을 가리키는 revert event. 빈 컬렉션은 넘기지 않는다. */
+    @Query("SELECT * FROM macro_event WHERE reverts_event_id IN (:eventIds)")
+    fun findRevertsOf(eventIds: Collection<Long>): Flow<MacroEventEntity>
+
+    /**
+     * 그 버전의 정의를 만든 event. DELETE 는 정의를 싣지 않으므로 뺀다. 같은 버전의 content event 는
+     * `uq_macro_event_version` 으로 하나뿐이다.
+     */
+    @Query(
+        """
+        SELECT * FROM macro_event
+         WHERE macro_id = :macroId AND version = :version AND event <> 'DELETE'
+         ORDER BY id DESC
+         LIMIT 1
+        """
+    )
+    suspend fun findContentAt(macroId: Long, version: Int): MacroEventEntity?
+
+    fun findByMacroIdOrderByIdAsc(macroId: Long): Flow<MacroEventEntity>
 }

@@ -5,7 +5,11 @@ import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.qa.dto.CreateQaRunRequest
+import kr.artel.orchestration.qa.dto.QaRunChangeListResponse
+import kr.artel.orchestration.qa.dto.QaRunChangeResponse
 import kr.artel.orchestration.qa.dto.QaRunResponse
+import kr.artel.orchestration.qa.service.QaRunChangeKind
+import kr.artel.orchestration.qa.service.QaRunChangeService
 import kr.artel.orchestration.qa.service.QaTryService
 import kr.artel.orchestration.qa.service.toRunGates
 import kr.artel.orchestration.qa.service.toRunLabel
@@ -27,6 +31,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/qa-runs")
 class QaRunController(
     private val qaTryService: QaTryService,
+    private val qaRunChangeService: QaRunChangeService,
     private val objectMapper: ObjectMapper
 ) {
     @PostMapping
@@ -53,6 +58,32 @@ class QaRunController(
         @CurrentUserId appUserId: Long
     ): QaRunResponse =
         qaTryService.getRun(parseId(qaRunId), appUserId) ?: throw NotFoundException()
+
+    /**
+     * 이 런이 knowledge 와 macro 에 한 변경. 대상마다 한 줄이고 run 이전과 이후를 line diff 용 텍스트로
+     * 싣는다. 접근 규칙은 [getQaRun] 과 같다 — 보이지 않는 런은 404.
+     */
+    @GetMapping("/{qaRunId}/changes")
+    suspend fun listQaRunChanges(
+        @PathVariable qaRunId: String,
+        @CurrentUserId appUserId: Long
+    ): QaRunChangeListResponse =
+        qaRunChangeService.list(parseId(qaRunId), appUserId)
+
+    /**
+     * 이 런이 한 변경 하나를 revert 한다. `{kind}` 는 `knowledge` 또는 `macro`. 이 런이 그 대상을 바꾸지
+     * 않았으면 404, 뒤에 다른 변경이 있거나 이미 되돌렸으면 409 다.
+     */
+    @PostMapping("/{qaRunId}/changes/{kind}/{targetId}/revert")
+    suspend fun revertQaRunChange(
+        @PathVariable qaRunId: String,
+        @PathVariable kind: String,
+        @PathVariable targetId: String,
+        @CurrentUserId appUserId: Long
+    ): QaRunChangeResponse {
+        val changeKind = QaRunChangeKind.fromPath(kind) ?: throw BadRequestException("invalid change kind: $kind")
+        return qaRunChangeService.revert(parseId(qaRunId), changeKind, parseId(targetId), appUserId)
+    }
 
     /**
      * 런(TR) 전체를 취소한다. 활성 시나리오는 Agent 세션 종료까지 포함해 취소되고 qa_run이 닫혀,
