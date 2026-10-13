@@ -7,6 +7,7 @@ import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.project.FakeDocumentStorage
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -41,6 +42,7 @@ class IngestRealMapIntoProjectTest {
     @Autowired private lateinit var documents: ContentMapDocumentRepository
     @Autowired private lateinit var storage: DocumentStorage
     @Autowired private lateinit var testCases: TestCaseRepository
+    @Autowired private lateinit var contentMapTestCases: ContentMapTestCaseService
 
     @Test
     fun `올린 문서를 적재한다`() = runBlocking {
@@ -54,6 +56,8 @@ class IngestRealMapIntoProjectTest {
 
         val result = ingest.ingest(document)
         println("적재 결과: $result")
+        // 적재는 test case 를 만들지 않는다(ARTEL-971).
+        println("test case 생성 결과: ${contentMapTestCases.regenerate(document.contentMapId)}")
 
         val projectId = System.getenv("ARTEL_INGEST_PROJECT")?.toLongOrNull() ?: return@runBlocking
         val rows = testCases.findByProjectIdOrderByIdAsc(projectId).toList()

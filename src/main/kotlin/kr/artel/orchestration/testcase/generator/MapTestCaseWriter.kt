@@ -3,11 +3,9 @@ package kr.artel.orchestration.testcase.generator
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
-import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.dto.ConditionNodeResponse
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
-import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
 /**
@@ -17,11 +15,23 @@ import org.springframework.stereotype.Service
  * `specs_v2` 가 엑셀 경로로 넣은 줄을 읽었고, `capability_key` 칸(ARTEL-553)도 그 키로 지도를 되짚는
  * 길(ARTEL-555)도 **한 번도 안 쓰였다** — 오늘 쓰이는 모든 행의 그 칸이 `NULL` 이다. 여기가 그 자리다.
  *
- * ## 이 경로의 행만 건드린다
+ * ## 이 content map 의 행만 건드린다
  *
- * `metadata.origin` 에 [ORIGIN] 을 적는다. 손으로 쓴 케이스와 엑셀로 들어온 케이스는 그 표시가 없고,
- * 갈아 끼울 때 건너뛴다. 표시가 없으면 남의 행을 지우게 된다 — 두 경로가 한동안 공존하는 것이
- * 되돌아갈 길이므로(ARTEL-556 의 대조가 통과하기 전까지) 그 경계가 곧 안전장치다.
+ * `metadata.origin` 에 [ORIGIN] 을, `metadata.content_map_id` 에 content map id 를 적는다. 손으로 쓴
+ * 케이스와 엑셀로 들어온 케이스는 origin 표시가 없고, 갈아 끼울 때 건너뛴다. 표시가 없으면 남의 행을
+ * 지우게 된다 — 두 경로가 한동안 공존하는 것이 되돌아갈 길이므로(ARTEL-556 의 대조가 통과하기 전까지)
+ * 그 경계가 곧 안전장치다.
+ *
+ * **다른 content map 의 행도 남의 행이다**(ARTEL-971). 예전에는 origin 만 봐서, build A 의 content map
+ * 으로 생성하면 build B 의 content map 에서 나온 행이 사라진 것으로 판정되어 지워지거나 `BROKEN` 이
+ * 됐다. `content_map_id` 가 없는 origin 행은 어느 content map 의 것도 아니라 건드리지 않는다 — 이
+ * writer 는 처음부터 그 칸을 적었으므로 실제로는 없어야 하고, 있다면 사람이 고친 행이다.
+ *
+ * ## folder, lock, 트랜잭션은 부르는 쪽이 맡는다
+ *
+ * [rewrite] 는 비교와 쓰기만 한다. 새 행은 받은 folder 에 넣고, 이미 있는 행은 `copy(...)` 로 고쳐
+ * `folder_id` 를 바꾸지 않는다 — 사용자가 옮긴 folder 를 유지한다.
+ * [kr.artel.orchestration.testcase.service.ContentMapTestCaseService] 가 트랜잭션과 folder lock 안에서 부른다.
  *
  * ## 같은 케이스란 무엇인가
  *
@@ -42,23 +52,18 @@ import org.springframework.stereotype.Service
 @Service
 class MapTestCaseWriter(
     private val generator: MapTestCaseGenerator,
-    private val contentMaps: ContentMapRepository,
     private val testCases: TestCaseRepository,
     private val objectMapper: ObjectMapper,
 ) {
 
-    private val logger = LoggerFactory.getLogger(MapTestCaseWriter::class.java)
-
     /**
-     * 이 지도의 케이스를 다시 앉힌다. 적재 트랜잭션 안에서 불린다 — 지도가 바뀌면 케이스도 함께
-     * 바뀌어야 하고, 한쪽만 커밋되면 표가 서로 다른 시점을 가리킨다.
+     * 이 content map 의 케이스를 다시 앉힌다. 새 행은 [folderId] 에 넣는다.
+     *
+     * 트랜잭션 안에서 불러야 한다 — 생성 · 갱신 · 삭제가 한쪽만 커밋되면 표가 서로 다른 시점을 가리킨다.
      */
-    suspend fun rewrite(contentMapId: Long): Result {
-        val projectId = contentMaps.findProjectId(contentMapId)
-            ?: return Result().also { logger.warn("지도 {} 의 프로젝트를 찾지 못해 케이스를 앉히지 않는다", contentMapId) }
-
+    suspend fun rewrite(projectId: Long, contentMapId: Long, folderId: Long): Result {
         val generated = generator.generate(contentMapId).distinctBy(::identityOf)
-        val mine = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter(::isMine)
+        val mine = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { isMine(it, contentMapId) }
         val existing = mine.associateBy(::identityOf)
         // **키로 못 찾은 줄은 보이는 네 칸으로 한 번 더 찾는다**(ARTEL-617). 이 판이 오기 전에 앉은
         // 행에는 키가 없고, 키를 못 알아본 줄을 새 줄로 치면 같은 케이스가 두 벌이 된다.
@@ -73,7 +78,7 @@ class MapTestCaseWriter(
                 ?: byText[visibleIdentityOf(case)]?.firstOrNull { it.id !in claimed }
             prior?.id?.let(claimed::add)
             if (prior == null) {
-                testCases.save(entityOf(projectId, contentMapId, case))
+                testCases.save(entityOf(projectId, contentMapId, folderId, case))
                 created++
                 continue
             }
@@ -118,7 +123,7 @@ class MapTestCaseWriter(
             }
         }
 
-        return Result(created = created, updated = updated, deleted = deleted, broken = broken)
+        return Result(folderId = folderId, created = created, updated = updated, deleted = deleted, broken = broken)
     }
 
     /**
@@ -178,9 +183,12 @@ class MapTestCaseWriter(
     private fun visibleIdentityOf(row: TestCaseEntity): String =
         listOf(row.scene, row.precondition.orEmpty(), row.step, row.expectedValue).joinToString(" ")
 
-    private fun isMine(row: TestCaseEntity): Boolean =
-        runCatching { objectMapper.readTree(row.metadata.asString()) }.getOrNull()
-            ?.path(ORIGIN_FIELD)?.asText() == ORIGIN
+    private fun isMine(row: TestCaseEntity, contentMapId: Long): Boolean {
+        val metadata = runCatching { objectMapper.readTree(row.metadata.asString()) }.getOrNull() ?: return false
+        if (metadata.path(ORIGIN_FIELD).asText() != ORIGIN) return false
+        val source = metadata.path(CONTENT_MAP_ID)
+        return source.canConvertToLong() && source.asLong() == contentMapId
+    }
 
     /**
      * 사전조건의 **구조**를 그대로 싣는다(ARTEL-627).
@@ -195,8 +203,9 @@ class MapTestCaseWriter(
         ?.let { objectMapper.writeValueAsString(ConditionNodeResponse.of(it)) }
         ?.let(Json::of)
 
-    private fun entityOf(projectId: Long, contentMapId: Long, case: MapTestCase) = TestCaseEntity(
+    private fun entityOf(projectId: Long, contentMapId: Long, folderId: Long, case: MapTestCase) = TestCaseEntity(
         projectId = projectId,
+        folderId = folderId,
         scene = case.scene,
         step = case.step,
         precondition = case.precondition,
@@ -221,13 +230,14 @@ class MapTestCaseWriter(
      * 출처와, 이 줄이 어느 지도에서 왔는지와, 등급이 그렇게 나온 이유를 싣는다.
      *
      * `test_case` 에는 `content_map_id` 칸이 없다(ARTEL-553 이 키만 냈다). 지도가 여럿인 프로젝트에서
-     * 어느 지도의 산물인지 알아야 갈아 끼울 범위를 좁힐 수 있으므로 여기 적어 둔다.
+     * 어느 지도의 산물인지 알아야 갈아 끼울 범위를 좁힐 수 있으므로 여기 적어 둔다. [isMine] 이 이 값으로
+     * 범위를 좁힌다(ARTEL-971).
      */
     private fun metadataOf(contentMapId: Long, case: MapTestCase): Json = Json.of(
         objectMapper.writeValueAsString(
             buildMap {
                 put(ORIGIN_FIELD, ORIGIN)
-                put("content_map_id", contentMapId)
+                put(CONTENT_MAP_ID, contentMapId)
                 put("gaps", case.gaps)
                 // 문장과 무관한 정체(ARTEL-617). 다음 적재가 이것으로 같은 줄을 찾는다.
                 put(CASE_KEY, case.identity)
@@ -238,7 +248,9 @@ class MapTestCaseWriter(
         )
     )
 
+    /** @property folderId 새 행을 넣은 folder. content map 을 못 찾아 아무것도 하지 않았으면 null. */
     data class Result(
+        val folderId: Long? = null,
         val created: Int = 0,
         val updated: Int = 0,
         val deleted: Int = 0,
@@ -249,6 +261,9 @@ class MapTestCaseWriter(
         /** 이 경로가 앉힌 행이라는 표시. 이 값이 없는 행은 남의 것이라 건드리지 않는다. */
         const val ORIGIN = "content-map"
         const val ORIGIN_FIELD = "origin"
+
+        /** 이 행을 낸 content map. [rewrite] 가 이 값으로 자기 행을 고른다. */
+        private const val CONTENT_MAP_ID = "content_map_id"
 
         /** 이 케이스를 실행하면 되는 화면. 씬 전환이 아니면 없다. */
         const val ARRIVES_AT = "arrives_at"

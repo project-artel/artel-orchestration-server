@@ -91,6 +91,27 @@ class TestCaseFolderService(
         }
     }
 
+    /**
+     * content map 의 folder 를 찾거나 최상위에 만든다(ARTEL-971). **[lockProjectFolders] 를 잡은
+     * 트랜잭션 안에서 불러야 한다** — 이름이 비었는지 본 뒤에 쓰므로, lock 없이 동시에 부르면 같은 이름이
+     * unique index 에 걸려 500 이 된다.
+     *
+     * `content_map_id` 로만 찾는다. 사용자가 그 folder 를 옮기거나 이름을 바꿨어도 같은 folder 를 쓰고,
+     * 지웠으면 새로 만든다. 이름은 `"<buildName> content map"` 이고, 최상위에 같은 이름이 있으면 ` (2)`,
+     * ` (3)` … 중 처음 빈 이름을 쓴다.
+     */
+    suspend fun findOrCreateContentMapFolder(projectId: Long, contentMapId: Long, buildName: String): TestCaseFolderEntity {
+        folders.findByContentMapId(contentMapId)?.let { return it }
+        val baseName = "${buildName.trim()} content map"
+        var name = baseName
+        var suffixNumber = 1
+        while (folders.existsSiblingName(projectId, null, name, null)) {
+            suffixNumber++
+            name = "$baseName ($suffixNumber)"
+        }
+        return folders.save(TestCaseFolderEntity(projectId = projectId, name = name, contentMapId = contentMapId))
+    }
+
     /** 이 프로젝트의 folder 를 돌려준다. 없거나 다른 프로젝트 것이면 404 다. */
     suspend fun requireFolder(projectId: Long, folderId: Long): TestCaseFolderEntity =
         folders.findByIdAndProjectId(folderId, projectId)

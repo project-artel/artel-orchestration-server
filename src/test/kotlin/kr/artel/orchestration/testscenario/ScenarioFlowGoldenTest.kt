@@ -19,6 +19,7 @@ import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.support.testAppUser
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
 import kr.artel.orchestration.testscenario.service.ScenarioFlowMatrix
 import kr.artel.orchestration.testscenario.service.ScenarioFlowPlan
 import kr.artel.orchestration.testscenario.service.ScenarioFlowPlanner
@@ -70,6 +71,7 @@ class ScenarioFlowGoldenTest {
     @Autowired private lateinit var contentMaps: ContentMapRepository
     @Autowired private lateinit var documents: ContentMapDocumentRepository
     @Autowired private lateinit var testCases: TestCaseRepository
+    @Autowired private lateinit var contentMapTestCases: ContentMapTestCaseService
     @Autowired private lateinit var flowMatrix: ScenarioFlowMatrix
     @Autowired private lateinit var flowPlanner: ScenarioFlowPlanner
 
@@ -116,6 +118,8 @@ class ScenarioFlowGoldenTest {
                 )
             )
         )
+        // 적재는 test case 를 만들지 않는다(ARTEL-971). 생성 버튼과 같은 경로로 만든다.
+        contentMapTestCases.regenerate(map.id!!)
         caseIds = testCases.findIdsByProjectId(projectId).toList().sorted()
         matrix = flowMatrix.of(projectId, userId, caseIds)
         val flows = flowPlanner.of(projectId, userId, matrix)

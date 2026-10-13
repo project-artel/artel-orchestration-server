@@ -31,6 +31,9 @@ interface TestCaseFolderRepository : CoroutineCrudRepository<TestCaseFolderEntit
 
     suspend fun findByIdAndProjectId(id: Long, projectId: Long): TestCaseFolderEntity?
 
+    /** content map 에서 test case 를 생성할 때 만든 folder(ARTEL-971). content map 하나에 하나다(V99 UNIQUE). */
+    suspend fun findByContentMapId(contentMapId: Long): TestCaseFolderEntity?
+
     /**
      * 같은 부모 아래 [name] 을 쓰는 다른 folder 가 있나. `IS NOT DISTINCT FROM` 이라 [parentId] 가 null 이면
      * 최상위 folder 끼리 비교한다 — `=` 로 쓰면 null 과 null 이 같지 않아 늘 거짓이다.

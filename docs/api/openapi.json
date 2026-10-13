@@ -2190,6 +2190,46 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/content-map/test-cases": {
+      "post": {
+        "tags": [
+          "content-map-test-case-controller"
+        ],
+        "operationId": "generateTestCases",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentMapTestCaseGenerationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-builds/{gameBuildId}/content-map/scan": {
       "post": {
         "tags": [
@@ -7123,6 +7163,37 @@
           "requestedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ContentMapTestCaseGenerationResponse": {
+        "required": [
+          "broken",
+          "created",
+          "deleted",
+          "folderId",
+          "updated"
+        ],
+        "type": "object",
+        "properties": {
+          "folderId": {
+            "type": "string"
+          },
+          "created": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "deleted": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "broken": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
