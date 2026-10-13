@@ -15,6 +15,11 @@ data class QaRunEntity(
     @Id val id: Long? = null,
     @Column("test_run_id") val testRunId: Long,
     @Column("game_instance_id") val gameInstanceId: Long,
+    /**
+     * 이 실행이 돈 게임 build(ARTEL-994). 시작할 때 인스턴스의 `last_game_build_id` 를 고정한다 —
+     * 인스턴스 쪽 값은 다음 등록에서 바뀌므로 판정이 어느 버전 것인지는 여기서만 안다.
+     */
+    @Column("game_build_id") val gameBuildId: Long? = null,
     @Column("started_by") val startedBy: Long,
     @Column("agent_session_id") val agentSessionId: String? = null,
     val status: String,

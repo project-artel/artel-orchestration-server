@@ -372,7 +372,8 @@ class QaTryPersistenceService(
         startedBy: Long,
         scenarioIds: List<Long>,
         gates: QaRunGates = QaRunGates(),
-        label: String? = null
+        label: String? = null,
+        gameBuildId: Long? = null
     ): QaRunStarting =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -389,6 +390,7 @@ class QaTryPersistenceService(
                 QaRunEntity(
                     testRunId = testRunId,
                     gameInstanceId = gameInstanceId,
+                    gameBuildId = gameBuildId,
                     startedBy = startedBy,
                     status = "STARTING",
                     label = label,
@@ -664,7 +666,9 @@ class QaTryService(
             throw ActiveQaRunException()
         }
 
-        val started = persistence.createRunStarting(testRunId, gameInstanceId, userId, scenarioIds, gates, label)
+        val started = persistence.createRunStarting(
+            testRunId, gameInstanceId, userId, scenarioIds, gates, label, gameBuildId = instance.lastGameBuildId
+        )
         // 첫 시나리오 try 가 이 run 의 자리를 대표한다 — agent 세션은 아직 없다(ARTEL-836).
         runStatusNotifier.waitingAgent(
             requireNotNull(started.tries.first().id), gameInstanceId, requireNotNull(started.qaRun.id)

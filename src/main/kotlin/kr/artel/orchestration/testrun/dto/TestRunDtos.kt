@@ -12,13 +12,28 @@ data class TestRunUpdateRequest(
     val description: String? = null,
 )
 
-/** id 계열은 FE 64비트 정밀도 손실 방지로 문자열. */
+/**
+ * TR 을 만든 게임 버전(ARTEL-994). [label] 은 사람이 붙인 이름이고, 없으면 화면이 [version] 을 쓴다.
+ */
+data class TestRunGameBuild(
+    val gameBuildId: String,
+    val version: String,
+    val label: String?,
+)
+
+/**
+ * id 계열은 FE 64비트 정밀도 손실 방지로 문자열.
+ *
+ * @property gameBuild 이 TR 을 만든 게임 버전(ARTEL-994). build 가 없던 프로젝트의 TR, QA 를 한 번도 돌리지
+ *   않은 옛 TR 은 null 이다.
+ */
 data class TestRunResponse(
     val id: String,
     val projectId: String,
     val name: String,
     val description: String?,
     val createdAt: Instant,
+    val gameBuild: TestRunGameBuild? = null,
 )
 
 data class TestRunListResponse(val items: List<TestRunResponse>)

@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.controller
 
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
+import kr.artel.orchestration.testcase.dto.CaseVerdictHistoryResponse
 import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteRequest
 import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteResponse
 import kr.artel.orchestration.testcase.dto.TestCaseMoveRequest
@@ -13,6 +14,7 @@ import kr.artel.orchestration.testcase.dto.TestCaseListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseResponse
 import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
 import kr.artel.orchestration.testcase.service.TestCaseService
+import kr.artel.orchestration.testcase.service.TestCaseVerdictService
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -31,8 +33,21 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/projects/{projectId}/test-cases")
 class TestCaseController(
-    private val service: TestCaseService
+    private val service: TestCaseService,
+    private val verdictService: TestCaseVerdictService
 ) {
+
+    /**
+     * 같은 케이스의 build 별 판정(ARTEL-994). build 마다 다른 행이 같은 `case_key` 를 들고 있고, 그 행의 상태가
+     * 그 버전의 판정이다. 오래된 build 부터.
+     */
+    @GetMapping("/{testCaseId}/verdict-history")
+    suspend fun getVerdictHistory(
+        @PathVariable projectId: Long,
+        @PathVariable testCaseId: Long,
+        @CurrentUserId appUserId: Long
+    ): CaseVerdictHistoryResponse =
+        verdictService.history(projectId, testCaseId, appUserId)
 
     /**
      * 화면이 읽는 케이스 목록. 프로젝트의 케이스를 최근 것부터(`id DESC`) 전부 낸다.

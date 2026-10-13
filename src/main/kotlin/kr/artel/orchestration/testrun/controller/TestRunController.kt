@@ -10,11 +10,14 @@ import kr.artel.orchestration.testrun.dto.RunCoverageResponse
 import kr.artel.orchestration.testrun.dto.RunDeletionPreview
 import kr.artel.orchestration.testrun.dto.RunDeletionResult
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
+import kr.artel.orchestration.testrun.dto.ScenarioImportRequest
+import kr.artel.orchestration.testrun.dto.ScenarioImportResponse
 import kr.artel.orchestration.testrun.dto.SetRunScenariosRequest
 import kr.artel.orchestration.testrun.dto.TestRunCreateRequest
 import kr.artel.orchestration.testrun.dto.TestRunListResponse
 import kr.artel.orchestration.testrun.dto.TestRunResponse
 import kr.artel.orchestration.testrun.dto.TestRunUpdateRequest
+import kr.artel.orchestration.testrun.service.ScenarioLibraryService
 import kr.artel.orchestration.testrun.service.TestRunChatService
 import kr.artel.orchestration.testrun.service.TestRunService
 import kr.artel.orchestration.testscenario.dto.MessageResponse
@@ -31,6 +34,7 @@ import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -43,7 +47,8 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/projects/{projectId}/test-runs")
 class TestRunController(
     private val service: TestRunService,
-    private val chatService: TestRunChatService
+    private val chatService: TestRunChatService,
+    private val libraryService: ScenarioLibraryService
 ) {
 
     @GetMapping
@@ -108,6 +113,20 @@ class TestRunController(
         @RequestParam(required = false, defaultValue = "false") dropScenarios: Boolean,
         @CurrentUserId appUserId: Long
     ): RunDeletionResult = service.delete(runId, appUserId, dropScenarios)
+
+    /**
+     * 다른 TR 의 TS 를 **복사해** 이 TR 끝에 붙인다(ARTEL-994). 복사본의 `case_id` 는 이 TR 의 build 에서
+     * 같은 케이스로 바꿔 끼우고, 짝이 없는 것은 `unmatchedCaseIds` 로 알린다.
+     */
+    @PostMapping("/{runId}/scenarios/imports")
+    @ResponseStatus(HttpStatus.CREATED)
+    suspend fun importScenarios(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestBody request: ScenarioImportRequest,
+        @CurrentUserId appUserId: Long
+    ): ScenarioImportResponse =
+        libraryService.importIntoRun(projectId, runId, appUserId, request.testScenarioIds)
 
     @GetMapping("/{runId}/scenarios")
     suspend fun getScenarios(

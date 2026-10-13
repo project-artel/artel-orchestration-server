@@ -27,6 +27,13 @@ data class TestRunEntity(
     @Column("description")
     val description: String? = null,
 
+    /**
+     * 이 TR 을 만든 게임 버전(ARTEL-994). 만들 때 프로젝트의 최신 build 로 채운다. build 가 없던
+     * 프로젝트의 TR 이나 한 번도 QA 를 돌리지 않은 옛 TR 은 null 이다.
+     */
+    @Column("game_build_id")
+    val gameBuildId: Long? = null,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,

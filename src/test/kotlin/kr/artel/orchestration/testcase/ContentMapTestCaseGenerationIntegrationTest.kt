@@ -93,7 +93,7 @@ class ContentMapTestCaseGenerationIntegrationTest {
         assertThat(response.status).isEqualTo(200)
         val body = response.body
         assertThat(body.fieldNames().asSequence().toSet())
-            .containsExactlyInAnyOrder("folderId", "created", "updated", "deleted", "broken")
+            .containsExactlyInAnyOrder("folderId", "created", "updated", "deleted", "broken", "regression")
         assertThat(body["folderId"].isTextual).isTrue()
         assertThat(body["created"].asInt()).isPositive()
         val folder = folders.findById(body["folderId"].asText().toLong())!!

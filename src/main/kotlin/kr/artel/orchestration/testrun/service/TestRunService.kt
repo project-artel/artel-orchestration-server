@@ -4,6 +4,8 @@ import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.game.entity.GameBuildEntity
+import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
@@ -16,6 +18,7 @@ import kr.artel.orchestration.testrun.dto.RunDeletionResult
 import kr.artel.orchestration.testrun.dto.RunScenarioItem
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
 import kr.artel.orchestration.testrun.dto.TestRunCreateRequest
+import kr.artel.orchestration.testrun.dto.TestRunGameBuild
 import kr.artel.orchestration.testrun.dto.TestRunListResponse
 import kr.artel.orchestration.testrun.dto.TestRunResponse
 import kr.artel.orchestration.testrun.dto.TestRunUpdateRequest
@@ -43,26 +46,35 @@ class TestRunService(
     private val qaRunRepository: QaRunRepository,
     private val qaTryRepository: QaTryRepository,
     private val testCaseRepository: TestCaseRepository,
+    private val gameBuildRepository: GameBuildRepository,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
 ) {
     suspend fun list(projectId: Long, userId: Long): TestRunListResponse {
         if (!projectAccessService.isMember(projectId, userId)) return TestRunListResponse(emptyList())
-        val items = runRepository.findByProjectIdOrderByIdDesc(projectId).map { it.toResponse() }.toList()
-        return TestRunListResponse(items)
+        val runs = runRepository.findByProjectIdOrderByIdDesc(projectId).toList()
+        val builds = buildsOf(runs)
+        return TestRunListResponse(runs.map { run -> run.toResponse(run.gameBuildId?.let(builds::get)) })
     }
 
     suspend fun create(projectId: Long, userId: Long, request: TestRunCreateRequest): TestRunResponse? {
         if (!projectAccessService.isMember(projectId, userId)) return null
         val name = request.name?.takeIf { it.isNotBlank() }
             ?: throw BadRequestException("name is required")
+        // 만들 때의 최신 build 가 이 TR 의 버전이다(ARTEL-994). build 가 아직 없는 프로젝트면 비운다.
+        val latestBuild = gameBuildRepository.findFirstByProjectIdOrderByCreatedAtDescIdDesc(projectId)
         return runRepository.save(
-            TestRunEntity(projectId = projectId, name = name, description = request.description?.ifBlank { null })
-        ).toResponse()
+            TestRunEntity(
+                projectId = projectId,
+                name = name,
+                description = request.description?.ifBlank { null },
+                gameBuildId = latestBuild?.id,
+            )
+        ).toResponse(latestBuild)
     }
 
     suspend fun get(runId: Long, userId: Long): TestRunResponse? =
-        accessible(runId, userId)?.toResponse()
+        accessible(runId, userId)?.let { it.toResponse(buildOf(it)) }
 
     suspend fun update(runId: Long, userId: Long, request: TestRunUpdateRequest): TestRunResponse? {
         val existing = accessible(runId, userId) ?: return null
@@ -70,7 +82,7 @@ class TestRunService(
             name = request.name?.ifBlank { null } ?: existing.name,
             description = if (request.description == null) existing.description else request.description.ifBlank { null },
         )
-        return runRepository.save(updated).toResponse()
+        return runRepository.save(updated).let { it.toResponse(buildOf(it)) }
     }
 
     /**
@@ -213,12 +225,25 @@ class TestRunService(
         return if (projectAccessService.isMember(run.projectId, userId)) run else null
     }
 
-    private fun TestRunEntity.toResponse(): TestRunResponse =
+    private suspend fun buildOf(run: TestRunEntity): GameBuildEntity? =
+        run.gameBuildId?.let { gameBuildRepository.findById(it) }
+
+    private suspend fun buildsOf(runs: List<TestRunEntity>): Map<Long, GameBuildEntity> {
+        val ids = runs.mapNotNull { it.gameBuildId }.toSet()
+        if (ids.isEmpty()) return emptyMap()
+        return gameBuildRepository.findAllById(ids).toList().associateBy { requireNotNull(it.id) }
+    }
+
+    private fun TestRunEntity.toResponse(build: GameBuildEntity?): TestRunResponse =
         TestRunResponse(
             id = requireNotNull(id).toString(),
             projectId = projectId.toString(),
             name = name,
             description = description,
             createdAt = createdAt ?: Instant.EPOCH,
+            gameBuild = build?.toTestRunGameBuild(),
         )
 }
+
+internal fun GameBuildEntity.toTestRunGameBuild(): TestRunGameBuild =
+    TestRunGameBuild(gameBuildId = requireNotNull(id).toString(), version = version, label = label)

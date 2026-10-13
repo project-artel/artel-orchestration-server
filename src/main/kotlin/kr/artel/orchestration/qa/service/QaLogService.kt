@@ -57,7 +57,10 @@ internal val TYPES =
         // 새로 생긴 화면의 이름을 묻고 받는 둘(ARTEL-910). "이름이 왜 저 모양인가" 와 "왜 이름이
         // 없나" 를 되짚을 자리가 이 두 행 말고 없다 — 질문 행의 message 가 그림이 붙은 채로
         // 물었는지를 적고, 답 행의 message 가 답을 왜 안 썼는지를 적는다.
-        "SCREEN_NAME_REQUEST", "SCREEN_NAME"
+        "SCREEN_NAME_REQUEST", "SCREEN_NAME",
+        // QA 판정을 TC 상태에 반영한 기록(ARTEL-994). SSE 가 이 표를 읽으므로 화면이 TC 배지를
+        // 실시간으로 바꾸려면 여기 적혀야 한다.
+        "CASE_VERDICT"
     )
 
 data class QaLogAppendResult(val log: QaLogResponse, val inserted: Boolean)

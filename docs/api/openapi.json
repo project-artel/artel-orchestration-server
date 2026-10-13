@@ -1623,11 +1623,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -1738,6 +1738,56 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/TestRunResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/scenarios/imports": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "importScenarios",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioImportResponse"
                 }
               }
             }
@@ -4176,6 +4226,37 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-scenario-library": {
+      "get": {
+        "tags": [
+          "scenario-library-controller"
+        ],
+        "operationId": "library",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioLibraryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-runs/{runId}/deletion-preview": {
       "get": {
         "tags": [
@@ -4335,6 +4416,46 @@
                   "items": {
                     "$ref": "#/components/schemas/MessageResponse"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-cases/{testCaseId}/verdict-history": {
+      "get": {
+        "tags": [
+          "test-case-controller"
+        ],
+        "operationId": "getVerdictHistory",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "testCaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseVerdictHistoryResponse"
                 }
               }
             }
@@ -5667,6 +5788,24 @@
           }
         }
       },
+      "TestRunGameBuild": {
+        "required": [
+          "gameBuildId",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
       "TestRunResponse": {
         "required": [
           "createdAt",
@@ -5691,6 +5830,9 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "gameBuild": {
+            "$ref": "#/components/schemas/TestRunGameBuild"
           }
         }
       },
@@ -7086,6 +7228,61 @@
           }
         }
       },
+      "ScenarioImportRequest": {
+        "type": "object",
+        "properties": {
+          "testScenarioIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ImportedScenario": {
+        "required": [
+          "sourceTestScenarioId",
+          "testScenarioId",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "sourceTestScenarioId": {
+            "type": "string"
+          },
+          "testScenarioId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "ScenarioImportResponse": {
+        "required": [
+          "importedScenarios",
+          "testRunId",
+          "unmatchedCaseIds"
+        ],
+        "type": "object",
+        "properties": {
+          "testRunId": {
+            "type": "string"
+          },
+          "importedScenarios": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportedScenario"
+            }
+          },
+          "unmatchedCaseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "ChatScenarioStep": {
         "required": [
           "action"
@@ -7417,6 +7614,7 @@
           "created",
           "deleted",
           "folderId",
+          "regression",
           "updated"
         ],
         "type": "object",
@@ -7437,6 +7635,10 @@
             "format": "int32"
           },
           "broken": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "regression": {
             "type": "integer",
             "format": "int32"
           }
@@ -7685,11 +7887,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
@@ -9711,6 +9913,81 @@
           }
         }
       },
+      "ScenarioLibraryResponse": {
+        "required": [
+          "versions"
+        ],
+        "type": "object",
+        "properties": {
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioLibraryVersion"
+            }
+          }
+        }
+      },
+      "ScenarioLibraryRun": {
+        "required": [
+          "testScenarios"
+        ],
+        "type": "object",
+        "properties": {
+          "testRunId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "testScenarios": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioLibraryScenario"
+            }
+          }
+        }
+      },
+      "ScenarioLibraryScenario": {
+        "required": [
+          "stepCount",
+          "testScenarioId",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "testScenarioId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "stepCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ScenarioLibraryVersion": {
+        "required": [
+          "testRuns"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuild": {
+            "$ref": "#/components/schemas/TestRunGameBuild"
+          },
+          "testRuns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioLibraryRun"
+            }
+          }
+        }
+      },
       "TestRunListResponse": {
         "required": [
           "items"
@@ -9852,6 +10129,50 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TestCaseResponse"
+            }
+          }
+        }
+      },
+      "CaseVerdictHistoryItem": {
+        "required": [
+          "gameBuildId",
+          "testCaseId",
+          "verificationStatus",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "verificationStatus": {
+            "type": "string"
+          }
+        }
+      },
+      "CaseVerdictHistoryResponse": {
+        "required": [
+          "items",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseVerdictHistoryItem"
             }
           }
         }
