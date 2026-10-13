@@ -8548,9 +8548,68 @@
           }
         }
       },
+      "SceneContextMacro": {
+        "required": [
+          "name",
+          "parameters",
+          "screens"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneContextMacroParameter"
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "screens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneContextMacroScreen"
+            }
+          }
+        }
+      },
+      "SceneContextMacroParameter": {
+        "required": [
+          "name",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "SceneContextMacroScreen": {
+        "required": [
+          "screenId"
+        ],
+        "type": "object",
+        "properties": {
+          "screenId": {
+            "type": "string"
+          },
+          "sceneName": {
+            "type": "string"
+          }
+        }
+      },
       "SceneContextResponse": {
         "required": [
           "gameBuildId",
+          "macros",
+          "macrosTotal",
           "scenes"
         ],
         "type": "object",
@@ -8569,6 +8628,16 @@
             "items": {
               "$ref": "#/components/schemas/SceneContextEntry"
             }
+          },
+          "macros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneContextMacro"
+            }
+          },
+          "macrosTotal": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -10805,6 +10874,10 @@
             "type": "string",
             "description": "정의를 마지막으로 고친 시각",
             "format": "date-time"
+          },
+          "docstring": {
+            "type": "string",
+            "description": "진입점 `def` 의 docstring. 없으면 null"
           }
         },
         "description": "등록된 macro 한 줄. source 는 싣지 않는다"
@@ -10842,6 +10915,10 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "docstring": {
+            "type": "string",
+            "description": "진입점 `def` 의 docstring. 없으면 null"
           },
           "source": {
             "type": "string",

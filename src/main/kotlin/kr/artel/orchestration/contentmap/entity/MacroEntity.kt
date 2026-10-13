@@ -75,6 +75,14 @@ data class MacroEntity(
     val parameterNames: Json = Json.of("[]"),
 
     /**
+     * 진입점 `def` 의 docstring(ARTEL-985). [source] 안에도 있는 글자를 따로 둔 사본이다 — 이
+     * 서비스는 Python 을 파싱하지 않으므로 agent-server 가 `MACRO_REGISTER` 로 보낸 값을 그대로
+     * 적는다. scene context 의 `macros[].summary` 가 이 칸을 읽는다. docstring 이 없으면 null 이다.
+     */
+    @Column("docstring")
+    val docstring: String? = null,
+
+    /**
      * 현재 정의의 버전(V100). 정의가 실제로 바뀌는 등록과 revert 에서만 오르고, `macro_event` 의
      * 최대 content 버전과 같아야 한다. `@Version` 을 붙이지 않는다 — 붙이면 Spring Data 가
      * `save()` 마다 올리고 비교해, 정의가 안 바뀐 저장에도 버전이 오른다.

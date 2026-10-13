@@ -20,12 +20,65 @@ package kr.artel.orchestration.scenecontext.dto
  *   프롬프트 캐시를 타므로, 줄 순서가 조회마다 흔들리면 캐시가 통째로 깨진다. 두 무리를 섞어
  *   한 번에 정렬하지 않는 것은 지도에 씬이 생기고 사라져도 지도 쪽 블록의 순서가 흔들리지 않게
  *   하기 위해서다.
+ * @property macros 이 지도에 등록된 `macro` 를 이름 오름차순으로 최대 30 개(ARTEL-934). 이전 런이
+ *   등록한 `macro` 를 이번 런이 알아보게 하려는 칸이다. 지도가 없으면 비어 있다. 순서를 고정하는
+ *   이유는 [scenes] 와 같다 — 이 목록도 프롬프트 캐시를 탄다. 이름·parameter·한 줄 요약·붙은
+ *   `screen` 까지만 싣고 `source` 와 `definition_json` 은 싣지 않는다. 원문은 agent 가 필요할 때
+ *   `MACRO_READ` frame 으로 읽는다.
+ * @property macrosTotal 자르기 전 `macro` 수. [macros] 가 30 개에서 잘렸는지는 이 값이 [macros] 의
+ *   크기보다 큰지로 안다. 지도가 없으면 0 이다.
  */
 data class SceneContextResponse(
     val gameBuildId: String,
     val contentMapId: String? = null,
     val capture: String? = null,
     val scenes: List<SceneContextEntry> = emptyList(),
+    val macros: List<SceneContextMacro> = emptyList(),
+    val macrosTotal: Int = 0,
+)
+
+/**
+ * 등록된 `macro` 한 줄(ARTEL-934). **이름으로 찾고 `MACRO_READ` 로 원문을 읽으라는 색인**이다.
+ *
+ * 원문(`source`)도 실행용 tree(`definition_json`)도 담지 않는다. 한 건이 20,000자와 200,000자까지
+ * 가고, 이 payload 는 런을 시작할 때마다 내므로 `macro` 수십 개가 그대로 프롬프트 부피가 된다.
+ *
+ * @property parameters 진입점 `def` 가 선언한 parameter. 선언한 순서 그대로다 — `run_macro` 가
+ *   인자를 위치로 대응시키므로 순서가 바뀌면 호출이 틀린다. parameter 가 없으면 빈 목록이다.
+ * @property summary `macro.docstring` 칸 그대로(ARTEL-985). 진입점 `def` 의 docstring 이고, agent-server
+ *   가 `MACRO_REGISTER` 로 보낸 값이다. docstring 이 없는 macro 는 null 이다. `#` 주석 줄은 더 이상
+ *   읽지 않는다 — V101 이 기존 macro 의 그 줄을 docstring 으로 옮겼다.
+ * @property screens 이 `macro` 가 쓰일 수 있다고 달아 둔 `screen`, `screen` id 오름차순.
+ *   **빈 목록은 "아직 어디서 쓸지 모른다" 는 뜻이지 "어디서든 쓸 수 있다" 가 아니다.** 등록할 때
+ *   `screen` 을 달지 않은 `macro` 도 이 목록에 들어오고, 그때 이 칸이 비어 있다.
+ */
+data class SceneContextMacro(
+    val name: String,
+    val parameters: List<SceneContextMacroParameter> = emptyList(),
+    val summary: String? = null,
+    val screens: List<SceneContextMacroScreen> = emptyList(),
+)
+
+/**
+ * `macro` parameter 하나.
+ *
+ * @property type 진입점 `def` 가 적은 타입 이름(예 `object`, `string`). tree 에서 읽지 못하면
+ *   `unknown` 이다 — 저장할 때 모든 parameter 에 타입을 적도록 강제하므로 정상 행에서는 나오지 않는다.
+ */
+data class SceneContextMacroParameter(
+    val name: String,
+    val type: String,
+)
+
+/**
+ * `macro` 가 달린 `screen` 하나. 지식 앵커와 같은 이유로 id 는 문자열이다.
+ *
+ * @property sceneName `screen` 이 속한 `scene` 의 이름. `scene.name` 이 NOT NULL 이라 항상 있으나,
+ *   agent-server 쪽 계약이 null 을 허용하므로 타입은 nullable 로 둔다.
+ */
+data class SceneContextMacroScreen(
+    val screenId: String,
+    val sceneName: String?,
 )
 
 /**

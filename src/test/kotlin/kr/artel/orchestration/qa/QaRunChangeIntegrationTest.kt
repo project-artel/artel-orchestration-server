@@ -2,6 +2,7 @@ package kr.artel.orchestration.qa
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -376,6 +377,20 @@ class QaRunChangeIntegrationTest {
     }
 
     @Test
+    fun `macro UPDATE 를 revert 하면 docstring 도 run 이전 정의의 것으로 돌아간다`(): Unit = runBlocking {
+        val world = newWorld()
+        val earlier = newRun(world)
+        val macroId = register(world, earlier.tries[0], "def open_menu():\n    \"\"\"메뉴를 연다\"\"\"", docstring = "메뉴를 연다")
+        val run = newRun(world)
+        register(world, run.tries[0], "def open_menu():\n    \"\"\"Esc 로 메뉴를 연다\"\"\"", docstring = "Esc 로 메뉴를 연다")
+        assertThat(macros.findById(macroId)!!.docstring).isEqualTo("Esc 로 메뉴를 연다")
+
+        changeService.revert(run.id, QaRunChangeKind.MACRO, macroId, world.userId)
+
+        assertThat(macros.findById(macroId)!!.docstring).isEqualTo("메뉴를 연다")
+    }
+
+    @Test
     fun `목록 응답의 key 가 계약과 같다`(): Unit = runBlocking {
         val world = newWorld()
         val run = newRun(world)
@@ -420,13 +435,17 @@ class QaRunChangeIntegrationTest {
     private fun applied(mutation: KnowledgeMutation): Long =
         (mutation as? KnowledgeMutation.Applied)?.knowledgeId ?: error("knowledge 쓰기가 거절됨: $mutation")
 
-    private suspend fun register(world: World, qaTryId: Long, source: String): Long {
+    private suspend fun register(world: World, qaTryId: Long, source: String, docstring: String? = null): Long {
+        // agent-server 처럼 진입점의 docstring 을 tree 의 `entry.docstring` 과 payload 양쪽에 싣는다.
+        val definition = objectMapper.readTree("""{"entrypoint":"open_menu","defs":[]}""") as ObjectNode
+        if (docstring != null) definition.putObject("entry").put("docstring", docstring)
         val result = macroDefinitionService.register(
             qaTries.findById(qaTryId)!!,
             MacroRegisterRequest(
                 name = "open_menu",
                 source = source,
-                definition = objectMapper.readTree("""{"entrypoint":"open_menu","defs":[]}"""),
+                definition = definition,
+                docstring = docstring,
             )
         )
         return (result as? MacroWrite.Registered)?.macroId ?: error("macro 등록이 거절됨: $result")

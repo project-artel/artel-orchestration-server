@@ -103,6 +103,16 @@ class MacroDefinitionService(
             )
         }
 
+        // 앞뒤 공백만 깎는다. agent-server 가 `inspect.cleandoc` 으로 이미 정리하므로 여기서 더 고칠
+        // 것이 없고, 빈 docstring 은 docstring 이 없는 것과 같아 null 로 적는다.
+        val docstring = request.docstring?.trim()?.takeIf(String::isNotEmpty)
+        if (docstring != null && docstring.length > MacroWriteFrames.MAX_DOCSTRING_LENGTH) {
+            return refuse(
+                type,
+                "payload.docstring is longer than ${MacroWriteFrames.MAX_DOCSTRING_LENGTH} characters"
+            )
+        }
+
         val parameters = request.parameters.map { it.trim() }
         if (parameters.any { it.isEmpty() }) {
             return refuse(type, "payload.parameters must be a list of names: ${request.parameters}")
@@ -132,6 +142,7 @@ class MacroDefinitionService(
                 source = source,
                 definitionJson = definitionJson,
                 parameterNames = parameterNames,
+                docstring = docstring,
             )
             recordRegistration(qaTry, contentMapId, name, source, definitionJson, parameterNames, upserted)
             screenIds.forEach { screenMacros.link(it, upserted.id) }
@@ -278,6 +289,7 @@ class MacroDefinitionService(
             definition = objectMapper.readTree(macro.definitionJson.asString()),
             parameters = readNames(macro.parameterNames),
             screenIds = screenMacros.findScreenIdsByMacroId(macroId).toList(),
+            docstring = macro.docstring,
         )
     }
 
@@ -313,7 +325,7 @@ class MacroDefinitionService(
      * `content_map` 에 매달리고 `scene` 경계를 넘을 수 있어, agent 가 어느 `scene` 에 서 있는지가
      * 이 쓰기의 조건이 아니다. `qa_run_id` 도 요구하지 않는다 — macro 행에 런을 걸 칸이 없다.
      */
-    private suspend fun resolveContentMap(qaTry: QaTryEntity, type: String): Step<Long> {
+    internal suspend fun resolveContentMap(qaTry: QaTryEntity, type: String): Step<Long> {
         val instance = gameInstances.findById(qaTry.gameInstanceId)
             ?: return reject(type, "cannot resolve the game instance of this run")
         val buildId = instance.lastGameBuildId
@@ -368,7 +380,7 @@ class MacroDefinitionService(
      * 검증 한 칸의 결과. 거절 사유를 값으로 들고 다니게 하려고 둔 것이고, 바깥으로 나가는 결과는
      * [MacroWrite] 다.
      */
-    private sealed interface Step<out T> {
+    internal sealed interface Step<out T> {
         data class Ok<T>(val value: T) : Step<T>
         data class No(val reason: String) : Step<Nothing>
     }
