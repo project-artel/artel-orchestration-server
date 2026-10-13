@@ -17,6 +17,7 @@ fun TestCaseEntity.toTestCaseResponse(): TestCaseResponse =
         verificationStatus = verificationStatus,
         lastVerifiedBuildId = lastVerifiedBuildId?.toString(),
         createdAt = createdAt ?: Instant.EPOCH,
+        folderId = folderId?.toString(),
     )
 
 /**
@@ -39,6 +40,7 @@ fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper): TestCas
         verificationStatus = base.verificationStatus,
         lastVerifiedBuildId = base.lastVerifiedBuildId,
         createdAt = base.createdAt,
+        folderId = base.folderId,
         evidenceGaps = evidenceGaps(objectMapper),
     )
 }

@@ -13,6 +13,8 @@ data class TestCaseCreateRequest(
     val step: String? = null,
     val precondition: String? = null,
     val expectedValue: String? = null,
+    /** 넣을 folder(ARTEL-969). null 이거나 빈 문자열이면 folder 없음이다. */
+    val folderId: String? = null,
 )
 
 /** 케이스 수정. 검증상태(verificationStatus)도 여기서 바꿀 수 있다. */
@@ -23,6 +25,19 @@ data class TestCaseUpdateRequest(
     val expectedValue: String? = null,
     val verificationStatus: String? = null,
 )
+
+/**
+ * test case 일괄 삭제 요청(ARTEL-967). id 는 응답과 같이 문자열이다.
+ *
+ * 원소 타입을 `String?` 로 둔다. `List<String>` 이면 `[null]` 이 Jackson 을 그대로 지나 서비스에서
+ * 500 이 된다 — nullable 로 받아 서비스가 400 으로 막는다.
+ */
+data class TestCaseBulkDeleteRequest(
+    val caseIds: List<String?>? = null,
+)
+
+/** 일괄 삭제 응답. [deleted] 는 실제로 지운 행 수이고, 다른 프로젝트나 없는 id 는 세지 않는다. */
+data class TestCaseBulkDeleteResponse(val deleted: Int)
 
 /**
  * 조회 응답 한 줄. id 계열은 FE 64비트 정밀도 손실 방지로 문자열로 낸다.
@@ -41,6 +56,8 @@ data class TestCaseResponse(
     val verificationStatus: String,
     val lastVerifiedBuildId: String?,
     val createdAt: Instant,
+    /** 이 케이스가 든 folder(ARTEL-969). null 이면 folder 없음이다. */
+    val folderId: String?,
 )
 
 data class TestCaseListResponse(val items: List<TestCaseResponse>)
@@ -68,5 +85,6 @@ data class TestCaseDetailResponse(
     val verificationStatus: String,
     val lastVerifiedBuildId: String?,
     val createdAt: Instant,
+    val folderId: String?,
     val evidenceGaps: List<String>,
 )

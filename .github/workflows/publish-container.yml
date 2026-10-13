@@ -40,7 +40,7 @@ jobs:
       # 이유는 Jenkinsfile 의 Build stage 주석 참고(ARTEL-795) — 별도 daemon 이 같은
       # 에이전트를 나눠 쓰다 죽는 문제였다.
       - name: Build the jar
-        run: ./mvnw --batch-mode clean package -DskipTests -Dkotlin.compiler.execution.strategy=in-process
+        run: ./mvnw --batch-mode clean package -DskipTests -Dkotlin.compiler.daemon=false
         env:
           MAVEN_OPTS: -Xmx2g
 

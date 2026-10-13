@@ -20,6 +20,7 @@ import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.support.testAppUser
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.service.TestCaseService
+import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeAll
@@ -66,6 +67,7 @@ class AuthoringStateAfterGoldenTest {
     @Autowired private lateinit var contentMaps: ContentMapRepository
     @Autowired private lateinit var documents: ContentMapDocumentRepository
     @Autowired private lateinit var testCases: TestCaseService
+    @Autowired private lateinit var contentMapTestCases: ContentMapTestCaseService
 
     private lateinit var cases: List<AuthoringTestCase>
     private var projectId: Long = 0
@@ -112,6 +114,8 @@ class AuthoringStateAfterGoldenTest {
                 )
             )
         )
+        // 적재는 test case 를 만들지 않는다(ARTEL-971). 생성 버튼과 같은 경로로 만든다.
+        contentMapTestCases.regenerate(map.id!!)
         cases = testCases.getAuthoringCases(project.id!!, userId)
         projectId = project.id!!
     }
