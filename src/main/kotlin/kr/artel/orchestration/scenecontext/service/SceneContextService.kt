@@ -1,8 +1,6 @@
 package kr.artel.orchestration.scenecontext.service
 
-import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
-import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
@@ -10,7 +8,6 @@ import kr.artel.orchestration.contentmap.dto.MacroSceneContextRow
 import kr.artel.orchestration.contentmap.dto.MacroScreenRow
 import kr.artel.orchestration.contentmap.entity.ContentMapMode
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
-import kr.artel.orchestration.contentmap.macro.MacroWriteFrames
 import kr.artel.orchestration.contentmap.entity.SceneEntity
 import kr.artel.orchestration.contentmap.entity.Observability
 import kr.artel.orchestration.contentmap.entity.SpecStatus
@@ -25,8 +22,6 @@ import kr.artel.orchestration.qa.service.contentMapModeOf
 import kr.artel.orchestration.scenecontext.dto.SceneCapabilityView
 import kr.artel.orchestration.scenecontext.dto.SceneContextEntry
 import kr.artel.orchestration.scenecontext.dto.SceneContextMacro
-import kr.artel.orchestration.scenecontext.dto.SceneContextMacroParameter
-import kr.artel.orchestration.scenecontext.dto.SceneContextMacroScreen
 import kr.artel.orchestration.scenecontext.dto.SceneContextResponse
 import kr.artel.orchestration.scenecontext.dto.SceneKnowledgeView
 import kr.artel.orchestration.scenecontext.repository.AnchoredKnowledgeRepository
@@ -189,29 +184,10 @@ class SceneContextService(
      */
     private fun macroOf(row: MacroSceneContextRow, screens: List<MacroScreenRow>) = SceneContextMacro(
         name = row.name,
-        parameters = parametersOf(row.declaredParameters),
+        parameters = SceneContextMacroShapes.parameters(objectMapper, row.declaredParameters),
         summary = row.docstring,
-        screens = screens.map { SceneContextMacroScreen(screenId = it.screenId.toString(), sceneName = it.sceneName) },
+        screens = SceneContextMacroShapes.screens(screens),
     )
-
-    /**
-     * 진입점 `def` 의 parameter 를 **선언한 순서 그대로** 읽는다. 이름이 없는 항목은 건너뛰고, 타입을
-     * 못 읽는 항목은 `unknown` 으로 싣는다 — 이름과 개수와 순서가 호출 모양이라 타입이 비었다고 빼면
-     * agent 가 인자 개수를 틀린다.
-     */
-    private fun parametersOf(declared: Json?): List<SceneContextMacroParameter> {
-        val parameters = declared
-            ?.let { runCatching { objectMapper.readTree(it.asString()) }.getOrNull() }
-            ?.takeIf(JsonNode::isArray)
-            ?: return emptyList()
-        return parameters.mapNotNull { parameter ->
-            val name = parameter.path(MacroWriteFrames.PARAMETER_NAME_FIELD)
-                .takeIf(JsonNode::isTextual)?.asText() ?: return@mapNotNull null
-            val type = parameter.path(MacroWriteFrames.DECLARED_TYPE_FIELD)
-                .takeIf(JsonNode::isTextual)?.asText() ?: UNKNOWN_PARAMETER_TYPE
-            SceneContextMacroParameter(name = name, type = type)
-        }
-    }
 
     /**
      * 지도가 아는 씬 한 줄. capability 가 하나도 없어도 **목록에서 빼지 않는다.**
@@ -357,8 +333,6 @@ class SceneContextService(
         )
     }
 }
-
-private const val UNKNOWN_PARAMETER_TYPE = "unknown"
 
 /**
  * 한 조회에 걸리는 두 게이트. 축이 둘이라 묶어 든다.
