@@ -184,6 +184,17 @@ data class AgentCloseMessage(
 )
 
 /**
+ * Agent 에게 **이 턴만 끊으라**고 하는 프레임(ARTEL-954/955).
+ *
+ * [AgentCloseMessage] 와 갈라 둔 이유가 하나다: 사용자는 기다림을 그만두려는 것이지 대화를
+ * 끝내려는 것이 아니다. `close` 로 대신하면 Agent 가 Redis 의 세션을 지워, 다음 말이 앞의 대화를
+ * 모르는 새 세션을 연다.
+ */
+data class AgentCancelMessage(
+    val type: String = "cancel"
+)
+
+/**
  * Agent의 `test_case_search` 프레임에 대한 응답 프레임(ARTEL-206 Step 5).
  *
  * [correlationId]에 요청 messageId를 실어 Agent가 자기 도구 호출과 맞춘다. [results]의 각 항목은

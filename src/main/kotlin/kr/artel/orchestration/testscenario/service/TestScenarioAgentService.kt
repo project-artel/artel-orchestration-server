@@ -29,6 +29,8 @@ import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
 import kr.artel.orchestration.testscenario.agent.PhrasedStep
 import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
 import kr.artel.orchestration.testscenario.config.AuthoringExperimentProperties
+import kr.artel.orchestration.testrun.dto.RunChatCancellation
+import kr.artel.orchestration.testscenario.dto.AgentCancelMessage
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentReasoning
 import kr.artel.orchestration.testscenario.dto.AgentRef
@@ -65,6 +67,7 @@ import reactor.core.Disposable
 import reactor.core.publisher.Sinks
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 작성 챗봇의 Agent 서버 연동 서비스(코루틴). 실제 Agent 서버 계약(FastAPI)에 맞춘다:
@@ -234,6 +237,8 @@ class TestScenarioAgentService(
             // [sendTurn] 을 직접 부른다) 앞서 받아 둔 것이 그대로 살아 있다.
             existing.submitted.clear()
             existing.declined = 0
+            // 취소는 **그 턴에만** 걸린다(ARTEL-955). 안 내리면 다음 요청의 결과까지 버린다.
+            existing.cancelled.set(false)
             sendTurn(sessionKey, existing, turnInput, currentScenarios)
         } else {
             openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios)
@@ -293,6 +298,100 @@ class TestScenarioAgentService(
         sessions[sessionKey]?.let {
             it.watchdog?.cancel()
             it.watchdog = null
+        }
+    }
+
+    /**
+     * 도는 턴 **하나만** 끊는다(ARTEL-955). 사용자가 대화창에서 ESC 를 두 번 누른 길이다.
+     *
+     * [closeSession] 과 갈라 둔 이유: 사용자는 기다림을 그만두려는 것이지 대화를 끝내려는 것이
+     * 아니다. `close` 로 대신하면 Agent 가 Redis 의 세션을 지워, 다음 말이 앞의 대화를 모르는 새
+     * 세션을 연다.
+     *
+     * **이미 저장한 것은 지우지 않는다.** 이 턴이 `submit_scenario` 로 넘긴 시나리오는 하나씩
+     * 검수를 지나 저장을 마친 것들이고, 멈춘 것은 남은 작업이다. 몇 개가 남았는지는 세어서
+     * 사용자에게 말해 준다 — 취소했는데 시나리오가 늘어 있으면 그게 더 놀랄 일이다.
+     *
+     * **돈은 아껴지지 않는다.** 이미 나간 모델 호출은 그대로 청구된다. 아껴지는 것은 사람의
+     * 시간뿐이고, 그래서 이 기능의 값어치는 비용이 아니라 화면이 풀린다는 것 하나다.
+     *
+     * 순서가 중요하다 — **깃발을 먼저 세우고** 프레임을 보낸다. 거꾸로 하면 저쪽 답이 깃발보다
+     * 먼저 도착해, 취소한 턴의 결과가 평소대로 반영된다.
+     */
+    suspend fun cancelTurn(sessionKey: String): RunChatCancellation {
+        val session = sessions[sessionKey] ?: return RunChatCancellation(cancelled = false)
+        // 끊을 턴이 없다. 오류가 아니다 — 답이 방금 왔는데 ESC 를 누른 경우가 이 길이고,
+        // 그때 "취소했습니다"를 덧붙이면 방금 받은 답을 의심하게 된다.
+        if (!session.busy) return RunChatCancellation(cancelled = false)
+
+        // **두 번 끊지 않는다.** ESC 를 네 번 누르면 창구도 네 번 두드려지고, 넷이 거의 같은
+        // 순간에 도착하면 넷 다 `busy` 를 보고 지나간다 — 실측에서 대화에 "요청을 취소했습니다"
+        // 가 세 줄 남았다. 깃발을 세운 쪽만 끊고 나머지는 끊을 턴이 없었던 것으로 답한다.
+        if (!session.cancelled.compareAndSet(false, true)) {
+            return RunChatCancellation(cancelled = false)
+        }
+        // 카드 검토 모드는 저장하지 않고 제안으로만 두는 길이라 셀 것이 없다.
+        val saved = if (session.autoApply) session.submitted.size else 0
+        // 기다림을 끝낸다. 이것이 사용자가 실제로 얻는 것이다 — 화면이 풀리고 다음 말을 보낼 수
+        // 있게 된다. 시한 감시도 함께 꺼진다(5분 뒤 "멎었다"고 말하면 거짓이다).
+        stopWatching(sessionKey)
+        sendFrame(sessionKey, session, AgentCancelMessage())
+        saveAndNotify(sessionKey, session, cancelNotice(saved))
+        logger.info(
+            "저작 요청을 취소했다 [sessionKey={}, runId={}] 이미 저장한 것 {}개",
+            sessionKey, session.runId, saved,
+        )
+        return RunChatCancellation(cancelled = true, saved = saved)
+    }
+
+    /** 취소를 알리는 문장. 지우지 않은 것을 **수로** 말한다 — 말하지 않으면 사용자가 센다. */
+    private fun cancelNotice(saved: Int): String =
+        if (saved > 0) "요청을 취소했습니다. 이미 저장한 시나리오 ${saved}개는 그대로 둡니다."
+        else "요청을 취소했습니다."
+
+    /**
+     * 취소한 턴에서 **늦게 온 프레임**을 버린다(ARTEL-955).
+     *
+     * 제대로 끊긴 턴은 여기까지 오지 않는다 — Agent 가 턴 task 를 죽이면 도구 호출도 함께
+     * 죽는다. 여기로 오는 것은 둘뿐이다: 취소 프레임과 엇갈려 이미 선로에 있던 것, 그리고
+     * `cancel` 을 모르는 구버전 Agent 가 계속 보내는 것.
+     *
+     * **답을 기다리는 도구는 풀어 준다.** 버리고 가만히 있으면 저쪽은 20초를 더 기다렸다가
+     * "조회가 안 됐다"로 **일을 이어 간다** — 취소했는데 모델이 계속 도는 길이 그것이다.
+     */
+    private fun discardAfterCancel(sessionKey: String, session: AgentSession, node: JsonNode) {
+        val type = node.path("type").asText("")
+        val messageId = node.path("messageId").takeIf { it.isTextual }?.asText()
+        logger.info(
+            "취소한 턴의 프레임을 버린다 [sessionKey={}, runId={}] {}",
+            sessionKey, session.runId, type,
+        )
+        if (messageId == null) return
+        scope.launch {
+            when (type) {
+                // **받지 않는다.** 이 한 줄이 "이미 저장한 것은 지운다"와 "취소 뒤에도 계속
+                // 저장한다" 사이를 가른다 — 선로에 있던 제출이 그대로 들어오면 사용자는 취소한
+                // 뒤에 시나리오가 늘어나는 것을 본다.
+                "submit_scenario" -> sendFrame(
+                    sessionKey, session,
+                    SubmitScenarioResultFrame(
+                        correlationId = messageId,
+                        accepted = false,
+                        written = session.submitted.size,
+                        detail = "사용자가 이 요청을 취소했습니다. 더 내지 마세요.",
+                    ),
+                )
+                "test_case_search" -> sendFrame(
+                    sessionKey, session,
+                    TestCaseSearchErrorFrame(
+                        correlationId = messageId,
+                        detail = "사용자가 이 요청을 취소했습니다.",
+                    ),
+                )
+                // 나머지 도구는 자기 결과 프레임으로만 풀린다. 취소를 담을 칸이 없으므로
+                // 저쪽의 20초 시한에 맡긴다 — 어차피 그 턴은 답을 내지 못한다.
+                else -> Unit
+            }
         }
     }
 
@@ -1260,6 +1359,19 @@ class TestScenarioAgentService(
             // 도구를 마흔 번 부르며 일하는 턴을 "멎었다"고 말하면 안 된다.
             session?.lastHeard = System.currentTimeMillis()
             session?.let { traceInbound(it, node, payloadText) }
+            // 끊었다는 저쪽의 확인(ARTEL-954). 화면은 이미 REST 응답으로 알고 있으므로 여기서
+            // 할 일은 로그뿐이다 — `was_running=false` 면 끊을 턴이 저쪽에도 없었다는 뜻이다.
+            if (node.path("type").asText() == "cancelled") {
+                logger.info(
+                    "Agent 가 턴을 끊었다 [sessionKey={}] 돌던 턴={}",
+                    sessionKey, node.path("was_running").asBoolean(false),
+                )
+                return
+            }
+            if (session != null && session.cancelled.get()) {
+                discardAfterCancel(sessionKey, session, node)
+                return
+            }
             if (node.path("type").asText() == "uncovered_cases") {
                 if (session == null) {
                     logger.warn("uncovered_cases를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
@@ -1665,6 +1777,19 @@ class TestScenarioAgentService(
          * 답이 여럿 나오고(재작성), 그 둘을 나란히 놓고 보는 것이 이 기록의 쓸모다.
          */
         @Volatile var answers: Int = 0,
+        /**
+         * 이 턴을 사용자가 **취소했나**(ARTEL-955). 다음 요청이 받아들여질 때 내려간다.
+         *
+         * `AtomicBoolean` 인 것은 세우는 쪽을 **하나로 정하기 위해서**다. 취소 요청은 사용자가
+         * 누른 횟수만큼 오고 거의 같은 순간에 도착하므로, 평범한 플래그로는 둘 다 "내가 끊었다"
+         * 로 답해 대화에 같은 줄이 여러 개 남는다.
+         *
+         * 턴 단위의 값인데 세션에 두는 이유는 턴을 담은 객체가 없어서다. 그래서 창이 하나
+         * 남는다 — 취소한 뒤 새 요청을 보내고 **그 다음에** 앞 턴의 프레임이 오면, 깃발이
+         * 이미 내려가 있어 새 턴의 것으로 처리된다. 지금 Agent 는 `cancel` 을 받은 자리에서
+         * 턴 task 를 죽이므로 그 창은 왕복 한 번이고, 넓히지 않으려면 턴에 번호를 붙여야 한다.
+         */
+        val cancelled: AtomicBoolean = AtomicBoolean(false),
     ) {
         val busy: Boolean get() = watchdog?.isActive == true
     }

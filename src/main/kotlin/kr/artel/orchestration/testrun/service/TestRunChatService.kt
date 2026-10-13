@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.project.service.ProjectAccessService
+import kr.artel.orchestration.testrun.dto.RunChatCancellation
 import kr.artel.orchestration.testrun.dto.RunChatMessage
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
@@ -99,6 +100,17 @@ class TestRunChatService(
         // 보이지 않았다.
         agentService.deliver(appUserId, runId, outcome.notices, outcome.question)
         return outcome.applied
+    }
+
+    /**
+     * 도는 저작 요청 **하나만** 끊는다(ARTEL-955). 세션·대화·이미 저장한 시나리오는 그대로 남는다.
+     *
+     * [close] 와 다른 길인 것이 이 기능의 전부다 — 사용자가 멈추려는 것은 기다림이지 대화가 아니다.
+     * 접근 불가면 404.
+     */
+    suspend fun cancel(appUserId: Long, runId: Long): RunChatCancellation {
+        accessible(runId, appUserId) ?: throw NotFoundException()
+        return agentService.cancelTurn(sessionKey(appUserId, runId))
     }
 
     /**
