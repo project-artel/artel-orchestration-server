@@ -45,9 +45,10 @@ agent-server 는 바꾸지 않는다. 이미 스텝마다 `case_id`, `is_verific
 
 ## 1. orche (Subtask 1)
 
-### 1-1. 마이그레이션 `V101__version_test_runs_and_add_case_verdict_states.sql`
+### 1-1. 마이그레이션 `V103__version_test_runs_and_record_case_verdicts.sql`
 
-develop 의 최신은 V99 다. 실험 브랜치(미머지)가 V100 을 쓰므로 그 번호는 비워 둔다.
+구현 중 develop 이 V100(macro history)·V101·V102 까지 갔다(#295 · #296). 그래서 V103 이다.
+`qa_log.type` 에 `CASE_VERDICT` 도 더한다 — SSE 가 qa_log 를 polling 하므로 화면에 닿으려면 표에 적혀야 한다.
 
 ```sql
 ALTER TABLE test_run ADD COLUMN game_build_id BIGINT REFERENCES game_build(id) ON DELETE SET NULL;
@@ -142,3 +143,10 @@ ALTER TABLE qa_run   ADD COLUMN game_build_id BIGINT REFERENCES game_build(id) O
      4. `📂` 모달에서 build A 의 TS 를 가져온다. case_id 가 B 행으로 바뀌었는지 본다.
      5. 이력 표를 확인한다.
    - QA 실행에 공용 agent-server 를 쓸지는 그 시점에 묻는다.
+
+## 구현 중 바뀐 것 (최종)
+
+- `CASE_VERDICT` 는 live 전용이 아니라 qa_log 행으로 남긴다(SSE 가 표를 읽는다).
+- 가져오기 트리 시나리오에 `caseCount`(서로 다른 TC 수)를 싣는다 — 모달 목록의 TC 열.
+- home 모달은 사용자 시안 리뷰를 거쳐 "버전·런 탐색기"(고른 것 줄 + 왼쪽 버전→런 + 오른쪽 시나리오 목록)로 바뀌었다. 아이콘은 Tabler `playlist-add`(MIT), Lucide `clipboard-list`(ISC).
+- home 은 develop 의 새 QA 화면(`QaScenarioSteps`)에 TC 저장 상태 점을 붙였다(`QaStepTimeline` 은 develop 에서 지워졌다).
