@@ -133,13 +133,17 @@ class MapTestCaseGenerator(
     private fun merged(drafts: List<Draft>): List<MapTestCase> =
         drafts.groupBy { it.entryKey }
             .flatMap { (_, ofCapability) -> branches(ofCapability) }
-            .map { group ->
+            .mapNotNull { group ->
                 val first = group.first()
                 // 이 무리가 함께 서려면 참이어야 하는 것. 바깥의 `settled`(정착 인자)와 다른 값이다.
                 val groupCondition = weakest(group.map { it.condition })
                 // **이름과 기대결과가 같은 목록을 센다.** 이름의 `외 N건` 이 기대결과의 ` / ` 수와
                 // 어긋나면 읽는 사람이 하나를 못 찾는다. 같은 자리에서 한 번만 줄인다.
-                val shown = group.distinctBy { it.outcome }
+                //
+                // 판독이 확인 못 하는 기대([MapTestCasePhrasing.Told.hidden])는 여기서 빠진다. 정체는
+                // 아래에서 `group` 전체로 잡으므로 그대로다. 볼 것이 하나도 안 남으면 케이스가 아니다.
+                val shown = group.filterNot { it.hidden }.distinctBy { it.outcome }
+                if (shown.isEmpty()) return@mapNotNull null
                 MapTestCase(
                     capabilityKey = first.capabilityKey,
                     scene = first.scene,
@@ -545,6 +549,8 @@ class MapTestCaseGenerator(
         val gaps: List<String>,
         val arrivesAt: String? = null,
         val identity: String = "",
+        /** 판독이 확인 못 하는 기대. 정체에는 들고 보이는 기대결과에서는 뺀다. */
+        val hidden: Boolean = false,
         /**
          * **플레이어가 무엇을 건드렸나.** 이것이 곧 사람이 "기능 하나"로 세는 단위다.
          *
@@ -619,7 +625,7 @@ class MapTestCaseGenerator(
             // 효과의 주인은 **그 효과를 든 기능**이다. 빌려 온 자리(`borrowed`)에서는 이 행이 아니다.
             MapTestCasePhrasing.expectedWithSource(
                 effectRows, refs, owners[source], namesByScene[row.sceneName].orEmpty(), positions, gameTypes,
-            ).map { (outcome, does, effect) ->
+            ).map { (outcome, does, effect, hidden) ->
                 Draft(
                     capabilityKey = key,
                     act = act,
@@ -635,6 +641,7 @@ class MapTestCaseGenerator(
                     aimedAt = row.controlPath,
                     step = step,
                     outcome = outcome,
+                    hidden = hidden,
                     status = caseGrade(row),
                     gaps = reasons,
                     // 씬 효과의 대상이 곧 도착 화면이다. 산문에서 다시 뽑지 않는다.

@@ -47,6 +47,7 @@ object MapTestCaseReadings {
      * `SlimeAnimator.spriteRenderer.sprite` 처럼 게임 타입에서 시작하는 멤버 경로일 때만 확인된다.
      * `GameObject.Find("Background").GetComponent().sprite` 는 이름으로 찾은 오브젝트에 호출로 닿는
      * 자리라 판독에 없다 — 실측에서 `Background` 표시가 `Stage2BG` 로 갱신된다는 기대가 늘 실패했다.
+     * 판독이 GameObject 값에는 경로·켜짐·위치만 싣고 그 오브젝트의 그림은 안 싣기 때문이다(SDK `LiveState`).
      *
      * 비교의 한쪽을 가르는 것([mark])과 같은 잣대다. 판독이 읽는 것은 같기 때문이다.
      *

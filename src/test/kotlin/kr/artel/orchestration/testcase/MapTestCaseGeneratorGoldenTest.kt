@@ -173,7 +173,10 @@ class MapTestCaseGeneratorGoldenTest {
         // 2026-08-18) 것이고, 그 사이 SDK 가 조건을 다르게 낸다(ARTEL-700) — `IsStreaming != 0`
         // 처럼 호출 이름으로 적던 자리를 그 getter 가 실제로 하는 비교(`streamingCoroutine != 0`)
         // 로 바꿨다. 규칙이 달라진 것이 아니라 지도가 달라졌다.
-        assertThat(cases).hasSize(88)
+        //
+        // 88 → 84. 이름으로 찾은 `Background` 의 그림 기대를 뺐다. 판독이 GameObject 의 그림을 싣지
+        // 않아 늘 실패했고, 그 기대만 든 케이스 넷이 함께 빠진다. SDK 가 그 그림을 실으면 돌아온다.
+        assertThat(cases).hasSize(84)
     }
 
     /**
@@ -266,8 +269,9 @@ class MapTestCaseGeneratorGoldenTest {
 
         val many = cases.filter { it.expectedItems.size > 1 }
         // `ProjectileAnimator` 의 그림 두 항목은 이름을 몰라 둘 다 "갱신된다" 가 되어 한 항목으로 접힌다. 그 케이스가 여럿에서 빠져 두 항목이 함께 빠진다.
-        assertThat(many).hasSize(17)
-        assertThat(many.sumOf { it.expectedItems.size }).isEqualTo(49)
+        // `Background` 그림 기대가 빠져 170 도 항목이 하나만 남는다.
+        assertThat(many).hasSize(16)
+        assertThat(many.sumOf { it.expectedItems.size }).isEqualTo(47)
     }
 
     /**
@@ -416,7 +420,8 @@ class MapTestCaseGeneratorGoldenTest {
         // 갈래를 갈래대로 내면서 늘었다(ARTEL-667) — 지도의 `Return` 이 스테이지마다 한 줄이다.
         // 26 → 11. 빠진 열다섯은 `Update()` 아래 형제에게서 빌려 온 줄이다(ARTEL-680).
         // 30 → 27 도 같은 이유다(`unity-event` 를 뺐다). 27 → 23 은 문서가 바뀐 것이다.
-        assertThat(byScene["Map_scene"]).isEqualTo(23)
+        // 23 → 19 는 `Background` 그림 기대만 든 넷이 빠진 것이다.
+        assertThat(byScene["Map_scene"]).isEqualTo(19)
     }
 
     /**

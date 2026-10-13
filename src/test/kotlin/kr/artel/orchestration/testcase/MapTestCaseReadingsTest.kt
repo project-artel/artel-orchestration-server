@@ -109,19 +109,25 @@ class MapTestCaseReadingsTest {
         ),
     )
 
-    private fun expected(effect: CapabilityEffectEntity) =
+    private fun told(effect: CapabilityEffectEntity) =
         MapTestCasePhrasing.expectedWithSource(
             listOf(effect),
             refs = mapOf(("MapMove" to "stage2") to setOf("Stage2BG")),
             sceneNames = setOf("Background"),
             positions = positions,
             gameTypes = gameTypes,
-        ).single().expected
+        ).single()
 
+    private fun expected(effect: CapabilityEffectEntity) = told(effect).expected
+
+    /** 사진을 찍어도 그 그림이 `Stage2BG` 인지 알 수 없다. 효과는 남기되(정체) 보이는 기대에서는 뺀다. */
     @Test
-    fun `이름으로 찾은 오브젝트의 그림은 확인 불가로 남는다`() {
-        assertThat(expected(sprite("GameObject.Find(\"Background\").GetComponent().sprite", "MapMove.stage2")))
-            .isEqualTo("`Background` 표시가 `Stage2BG` 로 갱신된다 (확인 불가)")
+    fun `이름으로 찾은 오브젝트의 그림은 기대결과에서 빠진다`() {
+        val background = told(sprite("GameObject.Find(\"Background\").GetComponent().sprite", "MapMove.stage2"))
+
+        assertThat(background.hidden).isTrue()
+        assertThat(background.expected).isEqualTo("`Background` 표시가 `Stage2BG` 로 갱신된다")
+        assertThat(told(sprite("SlimeAnimator.spriteRenderer.sprite", "SlimeAnimator.sprites.Item[4]")).hidden).isFalse()
     }
 
     @Test

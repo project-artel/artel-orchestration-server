@@ -234,7 +234,16 @@ object MapTestCasePhrasing {
      * @property doing 케이스 이름에 붙는 문장 — `\`Map_scene\` 화면으로 넘어간다`
      * @property effect 그것을 낸 효과. 도착 화면처럼 구조로 읽을 것이 있다.
      */
-    data class Told(val expected: String, val doing: Doing, val effect: CapabilityEffectEntity)
+    data class Told(
+        val expected: String,
+        val doing: Doing,
+        val effect: CapabilityEffectEntity,
+        /**
+         * 판독이 확인하지 못하는 기대라 **보이는 기대결과에서는 뺀다.** 효과는 남는다 — 케이스의 정체가
+         * 효과로 잡혀 있어서, 효과까지 버리면 정체가 바뀌고 시나리오가 가리키던 줄이 끊긴다.
+         */
+        val hidden: Boolean = false,
+    )
 
     /**
      * [expectedEach] 와 같되 **어느 효과가 그 문장을 냈는지** 함께 낸다(ARTEL-614).
@@ -268,15 +277,15 @@ object MapTestCasePhrasing {
                 // **이름을 못 댄 그림 번호는 값이 아니다.** `ProjectileAnimator.sprites[0]` 은 코드가
                 // 그 그림을 고르는 방법이고, 판독은 그림 이름을 준다. 값을 빼고 "갱신된다"로 말한다.
                 val detail = named?.takeUnless { sprite && UNNAMED_INDEX.containsMatchIn(it) }
-                // **판독이 못 보는 그림은 그렇다고 적는다.** 지우면 그 기대만 든 케이스가 통째로
-                // 사라져, SDK 가 그 값을 줄 때까지 이 구멍이 있다는 것조차 안 보인다.
+                // **판독이 못 보는 그림은 기대결과에서 뺀다.** 사진을 찍어도 그 그림이 `Stage2BG` 인지는 알 수
+                // 없어서, 남기면 근거 없는 통과·실패가 된다. SDK 가 그 그림 이름을 실으면 다시 들어온다.
                 val unread = sprite && gameTypes != null &&
                     !MapTestCaseReadings.seesSprite(effect.target.orEmpty(), gameTypes)
-                val expected = outcome(effect.kind, target, detail).let { if (unread) it + UNREAD_MARK else it }
+                val expected = outcome(effect.kind, target, detail)
                 // 같은 말을 거르는 잣대는 **값을 빼기 전** 문장이다. 값을 뺀 문장으로 거르면 `sprites[0]` ·
                 // `sprites[1]` 이 같은 줄이 되어 한쪽 효과가 사라지고, 그 효과로 잡던 케이스의 정체가
                 // 바뀌어 시나리오가 가리키던 줄이 끊긴다. 보이는 문장은 [MapTestCaseGenerator] 가 한 번 더 거른다.
-                outcome(effect.kind, target, named) to Told(expected, doing(effect.kind, target, detail), effect)
+                outcome(effect.kind, target, named) to Told(expected, doing(effect.kind, target, detail), effect, hidden = unread)
             }
             .filterTo(kept) { (key, _) -> seen.add(key) }
         return kept.map { it.second }
@@ -586,7 +595,7 @@ object MapTestCasePhrasing {
     /** 이름으로 못 바꾼 목록 번호. `sprites[0]` 꼴로 남은 자리다. */
     private val UNNAMED_INDEX = Regex("""\w\[\d+\]""")
 
-    /** QA 실행 중 확인할 수 없는 비교·기대 뒤에 붙는 말. */
+    /** QA 실행 중 확인할 수 없는 비교 뒤에 붙는 말. */
     const val UNREAD_MARK = " (확인 불가)"
 
     /** 지금 화면을 코드가 스스로 확인하는 자리. 사전조건이 이미 그 화면을 말했다. */

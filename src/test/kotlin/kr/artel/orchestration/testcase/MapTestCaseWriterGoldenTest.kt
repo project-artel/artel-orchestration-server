@@ -160,8 +160,9 @@ class MapTestCaseWriterGoldenTest {
         // 88 → 92 읽는 곳을 하나로 합치고 남길 자리를 질의가 정한다(같은 곳에 이유).
         // 92 → 85 문서를 2026-09-01 것으로 바꿨다(같은 곳에 이유).
         // 85 → 88 못 푼 매개변수 조건을 버리지 않는다(같은 곳에 이유).
-        assertThat(mine()).hasSize(88)
-        assertThat(first.testCases.created).isEqualTo(88)
+        // 88 → 84 판독이 못 보는 `Background` 그림 기대를 뺐다(같은 곳에 이유).
+        assertThat(mine()).hasSize(84)
+        assertThat(first.testCases.created).isEqualTo(84)
     }
 
     /**
