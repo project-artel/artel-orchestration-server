@@ -325,7 +325,7 @@ class MacroDefinitionService(
      * `content_map` 에 매달리고 `scene` 경계를 넘을 수 있어, agent 가 어느 `scene` 에 서 있는지가
      * 이 쓰기의 조건이 아니다. `qa_run_id` 도 요구하지 않는다 — macro 행에 런을 걸 칸이 없다.
      */
-    private suspend fun resolveContentMap(qaTry: QaTryEntity, type: String): Step<Long> {
+    internal suspend fun resolveContentMap(qaTry: QaTryEntity, type: String): Step<Long> {
         val instance = gameInstances.findById(qaTry.gameInstanceId)
             ?: return reject(type, "cannot resolve the game instance of this run")
         val buildId = instance.lastGameBuildId
@@ -380,7 +380,7 @@ class MacroDefinitionService(
      * 검증 한 칸의 결과. 거절 사유를 값으로 들고 다니게 하려고 둔 것이고, 바깥으로 나가는 결과는
      * [MacroWrite] 다.
      */
-    private sealed interface Step<out T> {
+    internal sealed interface Step<out T> {
         data class Ok<T>(val value: T) : Step<T>
         data class No(val reason: String) : Step<Nothing>
     }

@@ -325,6 +325,21 @@ interface ScreenMacroRepository : CoroutineCrudRepository<ScreenMacroEntity, Lon
         """
     )
     fun findScreenRowsByMacroId(contentMapId: Long, macroId: Long): Flow<MacroScreenRow>
+
+    /**
+     * 검색 결과로 고른 macro 들에 달린 `screen` 을 이름과 함께 한 번에 읽는다(ARTEL-986).
+     *
+     * macro 마다 [findScreenRowsByMacroId] 를 부르면 결과 개수(최대 10)만큼 왕복이 생긴다.
+     * `content_map_id` 로 함께 좁히는 이유는 [findScreenRowsByMacroId] 와 같다.
+     */
+    @Query(
+        """
+        $MACRO_SCREEN_JOIN
+        WHERE m.content_map_id = :contentMapId AND sm.macro_id IN (:macroIds)
+        ORDER BY sm.macro_id ASC, sc.id ASC
+        """
+    )
+    fun findScreenRowsByMacroIds(contentMapId: Long, macroIds: Collection<Long>): Flow<MacroScreenRow>
 }
 
 /**
