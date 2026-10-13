@@ -45,8 +45,20 @@ data class GitHubAppProperties(
      * GitHub 호출 하나의 상한. ⚠️ [TrackerProperties.claimStaleAfter] 보다 훨씬 작아야 한다 —
      * 그 관계가 깨지면 `claim` 이 두 번 성립해 외부 이슈가 둘 생긴다.
      */
-    val requestTimeout: Duration = Duration.ofSeconds(15)
+    val requestTimeout: Duration = Duration.ofSeconds(15),
+    /**
+     * 사용자 인가로 확인한 installation 목록을 Redis 에 두는 시간. 이 안에 `PUT /installation` 으로
+     * 하나를 골라야 하고, 지나면 다시 인가를 거친다. 그 사이 GitHub 에서 권한이 빠져도 이 시간 동안은
+     * 연결이 통과한다 — user token 을 저장하지 않으므로 `PUT` 시점에 다시 확인할 수 없다.
+     */
+    val installationChoiceTtl: Duration = Duration.ofMinutes(10)
 ) {
+    init {
+        require(!installationChoiceTtl.isNegative && !installationChoiceTtl.isZero) {
+            "artel.tracker.github.installation-choice-ttl은 0보다 커야 합니다."
+        }
+    }
+
     /** App 을 쓸 수 있는 설정이 갖춰졌는지. 아니면 연동 endpoint 가 503 으로 거절한다. */
     val configured: Boolean
         get() = appId.isNotBlank() && appSlug.isNotBlank() && privateKey.isNotBlank() &&
