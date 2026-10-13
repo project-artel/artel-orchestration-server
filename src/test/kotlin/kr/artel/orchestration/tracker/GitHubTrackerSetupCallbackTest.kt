@@ -34,9 +34,9 @@ import reactor.core.publisher.Mono
  * 여기서 지키는 것은 둘이다. 하나는 **서명 없는 `state` 로는 아무 프로젝트에도 설치가 붙지 않는다**는
  * 것이고, 다른 하나는 이 경로가 브라우저에게 **JSON 오류를 보이지 않는다**는 것이다.
  *
- * `installation_id` 소유 확인(user token 교환)은 실제 GitHub 을 부르므로 여기서 검증할 수 없다 —
- * 이 스위트가 확인하는 것은 그 확인이 실패했을 때(테스트 환경에서는 항상 실패한다) 행이 만들어지지
- * 않는다는 사실이다. 성공 경로는 수동 확인 항목이다.
+ * 이 스위트는 실제 `GitHubUserInstallationReader` 를 쓰고, 테스트 profile 에는 App 설정이 없어 소유
+ * 확인이 항상 실패한다. 그래서 여기서 확인하는 것은 그 확인이 실패했을 때 행이 만들어지지 않는다는
+ * 사실이다. reader 를 fake 로 바꾼 성공 경로는 `GitHubInstallationChoiceHttpIntegrationTest` 가 본다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
