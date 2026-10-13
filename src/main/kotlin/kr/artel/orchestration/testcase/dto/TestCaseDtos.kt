@@ -13,6 +13,8 @@ data class TestCaseCreateRequest(
     val step: String? = null,
     val precondition: String? = null,
     val expectedValue: String? = null,
+    /** 넣을 folder(ARTEL-969). null 이거나 빈 문자열이면 folder 없음이다. */
+    val folderId: String? = null,
 )
 
 /** 케이스 수정. 검증상태(verificationStatus)도 여기서 바꿀 수 있다. */
@@ -54,6 +56,8 @@ data class TestCaseResponse(
     val verificationStatus: String,
     val lastVerifiedBuildId: String?,
     val createdAt: Instant,
+    /** 이 케이스가 든 folder(ARTEL-969). null 이면 folder 없음이다. */
+    val folderId: String?,
 )
 
 data class TestCaseListResponse(val items: List<TestCaseResponse>)
@@ -81,5 +85,6 @@ data class TestCaseDetailResponse(
     val verificationStatus: String,
     val lastVerifiedBuildId: String?,
     val createdAt: Instant,
+    val folderId: String?,
     val evidenceGaps: List<String>,
 )

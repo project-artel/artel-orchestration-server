@@ -4,6 +4,8 @@ import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteRequest
 import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteResponse
+import kr.artel.orchestration.testcase.dto.TestCaseMoveRequest
+import kr.artel.orchestration.testcase.dto.TestCaseMoveResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
@@ -99,6 +101,15 @@ class TestCaseController(
         @CurrentUserId appUserId: Long
     ): TestCaseBulkDeleteResponse =
         service.bulkDeleteTestCases(projectId, appUserId, request)
+
+    /** 여러 케이스를 folder 로 옮긴다(ARTEL-969). `folderId` 가 null 이면 folder 없음으로 옮긴다. */
+    @PostMapping("/move")
+    suspend fun moveTestCases(
+        @PathVariable projectId: Long,
+        @RequestBody request: TestCaseMoveRequest,
+        @CurrentUserId appUserId: Long
+    ): TestCaseMoveResponse =
+        service.moveTestCases(projectId, appUserId, request)
 
     /** 케이스 단건. 목록보다 한 필드(`evidenceGaps`) 더 낸다 — [TestCaseDetailResponse] 참조. */
     @GetMapping("/{caseId}")

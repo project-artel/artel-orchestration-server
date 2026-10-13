@@ -1,0 +1,40 @@
+package kr.artel.orchestration.testcase.entity
+
+import org.springframework.data.annotation.CreatedDate
+import org.springframework.data.annotation.Id
+import org.springframework.data.annotation.LastModifiedDate
+import org.springframework.data.relational.core.mapping.Column
+import org.springframework.data.relational.core.mapping.Table
+import java.time.Instant
+
+/**
+ * test case 를 묶는 folder(ARTEL-969). [parentId] 가 null 이면 최상위다.
+ *
+ * 같은 부모 아래 [name] 은 겹치지 않는다(V99 의 partial unique index 두 개).
+ */
+@Table("test_case_folder")
+data class TestCaseFolderEntity(
+    @Id
+    val id: Long? = null,
+
+    @Column("project_id")
+    val projectId: Long,
+
+    @Column("parent_id")
+    val parentId: Long? = null,
+
+    @Column("name")
+    val name: String,
+
+    /** content map 에서 test case 를 생성할 때 만든 folder 만 가진다(ARTEL-971). PUT 으로 바뀌지 않는다. */
+    @Column("content_map_id")
+    val contentMapId: Long? = null,
+
+    @CreatedDate
+    @Column("created_at")
+    val createdAt: Instant? = null,
+
+    @LastModifiedDate
+    @Column("updated_at")
+    val updatedAt: Instant? = null,
+)

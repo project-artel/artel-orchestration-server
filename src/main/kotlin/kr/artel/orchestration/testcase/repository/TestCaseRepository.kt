@@ -160,6 +160,19 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     suspend fun deleteByProjectIdAndIdIn(projectId: Long, ids: Collection<Long>): Int
 
     /**
+     * [ids] 중 이 프로젝트에 있는 test case 를 [folderId] 로 옮기고 옮긴 행 수를 돌려준다(ARTEL-969).
+     * [folderId] 가 null 이면 folder 없음으로 옮긴다. folder 가 이 프로젝트 것인지는 호출하는 쪽이 확인한다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE test_case SET folder_id = :folderId, updated_at = now()
+        WHERE project_id = :projectId AND id IN (:ids)
+        """
+    )
+    suspend fun moveToFolder(projectId: Long, ids: Collection<Long>, folderId: Long?): Int
+
+    /**
      * 명세 적재의 **보조** 키 — `spec_id`가 아직 없는 행만 고른다(ARTEL-329).
      *
      * spec_id가 붙기 전에 만들어진 행(손으로 만든 케이스, 이 계약 이전의 적재)을 새 명세가 이어받게

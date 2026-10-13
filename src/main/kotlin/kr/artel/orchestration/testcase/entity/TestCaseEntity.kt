@@ -146,6 +146,13 @@ data class TestCaseEntity(
     @Column("last_verified_build_id")
     val lastVerifiedBuildId: Long? = null,
 
+    /**
+     * 이 케이스가 든 folder(ARTEL-969). null 이면 folder 없음이다. `/test-cases/move` 와 생성 요청만 바꾼다 —
+     * 다른 갱신 경로는 `copy(...)` 로 이 값을 그대로 둔다.
+     */
+    @Column("folder_id")
+    val folderId: Long? = null,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,
