@@ -1516,6 +1516,52 @@
         }
       }
     },
+    "/api/qa-runs/{qaRunId}/changes/{kind}/{targetId}/revert": {
+      "post": {
+        "tags": [
+          "qa-run-controller"
+        ],
+        "operationId": "revertQaRunChange",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/qa-runs/{qaRunId}/cancel": {
       "post": {
         "tags": [
@@ -3867,6 +3913,36 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/QaRunResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qa-runs/{qaRunId}/changes": {
+      "get": {
+        "tags": [
+          "qa-run-controller"
+        ],
+        "operationId": "listQaRunChanges",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunChangeListResponse"
                 }
               }
             }
@@ -6806,6 +6882,55 @@
           }
         }
       },
+      "QaRunChangeResponse": {
+        "required": [
+          "change",
+          "changedAt",
+          "decision",
+          "kind",
+          "name",
+          "qaTryId",
+          "revertible",
+          "targetId"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "targetId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "change": {
+            "type": "string"
+          },
+          "before": {
+            "type": "string"
+          },
+          "after": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "changedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "revertible": {
+            "type": "boolean"
+          },
+          "notRevertibleReason": {
+            "type": "string"
+          }
+        }
+      },
       "CreateProjectRequest": {
         "required": [
           "genre",
@@ -9287,6 +9412,20 @@
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/PerformanceGroupResponse"
+            }
+          }
+        }
+      },
+      "QaRunChangeListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaRunChangeResponse"
             }
           }
         }

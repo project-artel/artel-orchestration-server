@@ -25,7 +25,7 @@ application, not one port. See `docs/deployment.md` § Ports.
 ## Documented API surface
 
 The route list is not repeated here. It lives in [`api/openapi.json`](api/openapi.json) —
-110 paths and 131 operations at the time of writing.
+115 paths and 136 operations at the time of writing.
 
 `ARTEL_SECRETS_KEY` encrypts the key saved by `PUT /api/admin/settings/llm`. Blank is allowed: the server starts and that `PUT` answers 409 `secrets_key_missing`. A non-blank value must be at least 32 characters and must not contain a placeholder (`change_me`, `change-me`, `changeme`, `replace-with`, `replace_with`, `your-secret`, `secret`, case-insensitive), otherwise the server refuses to start. Generate one with `openssl rand -hex 32`; keep it separate from `ARTEL_JWT_SECRET`. The value is never printed in the error.
 
@@ -52,6 +52,8 @@ instance holds one socket, and the newcomer is refused rather than displacing
 the incumbent. It closes with `4003` when the token's account is blocked, with
 the same code the HTTP API would answer 403 with as the close reason:
 `account_disabled` or `password_change_required`.
+
+`GET /api/qa-runs/{qaRunId}/changes` lists every knowledge entry and macro the run created, updated, or deleted, one item per target: the state before the run's first event against the state after its last event, with `before` / `after` as plain text for a line diff. `POST /api/qa-runs/{qaRunId}/changes/{kind}/{targetId}/revert` (`kind` is `knowledge` or `macro`) appends an event that undoes the run's change and answers with the updated item. It answers 404 when the run made no change to that target and 409 when the item is not revertible, with `code` set to `superseded` (a later event exists on that target), `already_reverted`, or `before_unknown` (the content before the run was never recorded). The same three values appear upper-cased in each item's `notRevertibleReason`.
 
 ## Verification
 

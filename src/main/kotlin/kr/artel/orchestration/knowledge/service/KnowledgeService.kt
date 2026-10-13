@@ -587,6 +587,139 @@ class KnowledgeService(
     }
 
     /**
+     * QA run 이 만든 항목을 revert 해 없앤다(V100). run 이전에 없던 항목이라 소프트삭제한다.
+     *
+     * **호출자의 트랜잭션 안에서 돈다.** 호출자가 [current] 를 `FOR UPDATE` 로 잠그고 그 run 의 마지막
+     * event 가 아직 최신인지 확인한 같은 트랜잭션이어야, 그 사이 끼어든 쓰기를 덮지 않는다.
+     *
+     * 하는 일은 [softDeleteFromQaTry] 의 운영 쪽과 같다: `deleted_at` · DELETE event · 임베딩 폐기.
+     * 다른 점 둘:
+     * - `deleted_by_qa_try_id` 를 비운다. 지운 것은 run 이 아니라 사람이고, 누가 지웠는지는 event 의
+     *   `reverted_by_app_user_id` 에 남는다.
+     * - [releaseShadow] 가 참이면 `shadows_id` 를 비운다. 스코프 run 이 baseline 을 고치며 만든 그림자를
+     *   지울 때다. 지운 그림자는 툼스톤이라 그대로 두면 baseline 을 그 스코프에서 계속 가리고, revert 가
+     *   "run 이전 상태" 대신 "baseline 삭제" 가 된다. 비워 두면 baseline 이 그 스코프에 다시 보이고,
+     *   그 스코프가 나중에 baseline 을 다시 고칠 때 `uq_knowledge_scope_shadow` 에 걸리지도 않는다.
+     *
+     * 앵커와 edge 는 건드리지 않는다. 앵커 조회는 `deleted_at` 을 걸어 이미 빠지고, 소프트삭제는
+     * edge 를 건드리지 않는다는 것이 [softDeleteFromQaTry] 의 규칙이다.
+     */
+    suspend fun revertToAbsent(
+        current: KnowledgeEntity,
+        revertsEventId: Long,
+        appUserId: Long,
+        releaseShadow: Boolean
+    ) {
+        val knowledgeId = requireNotNull(current.id)
+        val deletedAt = Instant.now(clock)
+        knowledgeRepository.save(
+            current.copy(
+                deletedAt = current.deletedAt ?: deletedAt,
+                deletedByQaTryId = if (current.deletedAt == null) null else current.deletedByQaTryId,
+                shadowsId = if (releaseShadow) null else current.shadowsId
+            )
+        )
+        if (current.deletedAt == null) {
+            eventRepository.save(
+                KnowledgeEventEntity(
+                    knowledgeId = knowledgeId,
+                    projectId = current.projectId,
+                    qaTryId = null,
+                    event = KnowledgeEventType.DELETE.name,
+                    version = current.version,
+                    after = null,
+                    revertsEventId = revertsEventId,
+                    revertedByAppUserId = appUserId,
+                    createdAt = deletedAt
+                )
+            )
+            embeddingRepository.discardFor(knowledgeId)
+        }
+        logger.info(
+            "knowledge revert(삭제): id={}, revertsEvent={}, appUser={}, releaseShadow={}",
+            knowledgeId, revertsEventId, appUserId, releaseShadow
+        )
+    }
+
+    /**
+     * QA run 이 고치거나 지운 항목을 run 이전 내용으로 revert 한다(V100). **호출자의 트랜잭션 안에서
+     * 돈다** — 이유는 [revertToAbsent] 와 같다.
+     *
+     * 두 가지가 따로 일어날 수 있다.
+     * - 내용이 [target] 과 다르면 내용을 되돌리고 버전을 올려 UPDATE event 를 남긴다.
+     *   [updateFromQaTry] 와 같은 규칙이다: 버전은 tag 를 포함한 세 칸으로 판정하고, 임베딩은
+     *   summary/description 이 바뀔 때만 버린다. `updated_by_qa_try_id` 는 비운다 — 마지막으로 고친
+     *   것은 run 이 아니라 사람이다.
+     * - 지워져 있으면 `deleted_at` 을 비우고 RESTORE event 를 남긴다. 버전은 올리지 않는다(V27).
+     *   `deleted_by_qa_try_id` 는 감사 기록이라 남긴다(V19). 임베딩은 백필이 다시 채운다.
+     *
+     * 두 event 모두 `reverts_event_id` 로 같은 event 를 가리킨다.
+     */
+    suspend fun revertToContent(
+        current: KnowledgeEntity,
+        target: KnowledgeContent,
+        revertsEventId: Long,
+        appUserId: Long
+    ) {
+        val knowledgeId = requireNotNull(current.id)
+        val embeddedTextChanged = current.summary != target.summary || current.description != target.description
+        val contentChanged = embeddedTextChanged || current.tag != target.tag
+        val wasDeleted = current.deletedAt != null
+        if (!contentChanged && !wasDeleted) return
+
+        val next = current.copy(
+            tag = target.tag,
+            summary = target.summary,
+            description = target.description,
+            version = if (contentChanged) current.version + 1 else current.version,
+            updatedByQaTryId = if (contentChanged) null else current.updatedByQaTryId,
+            deletedAt = null
+        )
+        knowledgeRepository.save(next)
+        val now = Instant.now(clock)
+        if (wasDeleted) {
+            eventRepository.save(
+                KnowledgeEventEntity(
+                    knowledgeId = knowledgeId,
+                    projectId = current.projectId,
+                    qaTryId = null,
+                    event = KnowledgeEventType.RESTORE.name,
+                    version = current.version,
+                    after = null,
+                    revertsEventId = revertsEventId,
+                    revertedByAppUserId = appUserId,
+                    createdAt = now
+                )
+            )
+        }
+        if (contentChanged) {
+            eventRepository.save(
+                contentEvent(next, KnowledgeEventType.UPDATE, qaTryId = null)
+                    .copy(revertsEventId = revertsEventId, revertedByAppUserId = appUserId)
+            )
+        }
+        if (embeddedTextChanged) embeddingRepository.discardFor(knowledgeId)
+        logger.info(
+            "knowledge revert(되돌림): id={}, revertsEvent={}, appUser={}, version={}, 복원={}, 임베딩 무효화={}",
+            knowledgeId, revertsEventId, appUserId, next.version, wasDeleted, embeddedTextChanged
+        )
+    }
+
+    /**
+     * 그 버전의 content. `knowledge_event` 의 스냅샷을 먼저 보고, 없으면 행이 아직 그 버전일 때만 행의
+     * 값을 쓴다. V27 이전에 만들어진 행은 버전 1 의 event 가 없을 수 있어서다(V100 이 아직 버전 1 인
+     * 행은 채웠다). 그 밖에는 null 이고, 그 버전의 내용은 더는 알 수 없다는 뜻이다.
+     */
+    suspend fun contentAt(knowledgeId: Long, version: Int, row: KnowledgeEntity?): KnowledgeContent? {
+        val event = eventRepository.findContentAt(knowledgeId, version)
+        if (event?.after != null) {
+            return objectMapper.readValue(event.after.asString(), KnowledgeContent::class.java)
+        }
+        if (row != null && row.version == version) return KnowledgeContent(row.tag, row.summary, row.description)
+        return null
+    }
+
+    /**
      * 이 쓰기가 원본 대신 그림자로 가야 하는가.
      *
      * 스코프 런이 baseline(`scope_id IS NULL`)을 건드릴 때만 참이다. 운영 런은 스코프가 없으니
@@ -721,3 +854,12 @@ sealed interface KnowledgeMutation {
     data class Applied(val knowledgeId: Long) : KnowledgeMutation
     data class Rejected(val reason: String) : KnowledgeMutation
 }
+
+/**
+ * knowledge 의 content 세 칸. `knowledge_event.after` 의 JSON 모양과 같다(V27).
+ */
+data class KnowledgeContent(
+    val tag: String,
+    val summary: String,
+    val description: String
+)
