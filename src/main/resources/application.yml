@@ -141,7 +141,9 @@ artel:
     # 저작을 모델에게 되돌려 보는 실험. 기본은 지금 그대로다 — 끄고 켜며 나란히 잰다.
     experiment:
       # false 면 흐름을 안 세우고 안 보낸다. 짝 행렬도 안 푼다.
-      flows: ${ARTEL_SCENARIO_FLOWS:true}
+      # 기본은 끈다(ARTEL-962) — 지금 agent 의 저작·수정 워크플로는 흐름을 읽지 않는데, 켜 두면
+      # 케이스 쌍마다 경로를 물어 큰 프로젝트에서 DB 요청 큐를 넘긴다.
+      flows: ${ARTEL_SCENARIO_FLOWS:false}
       # 0 이면 추론을 안 켠다. Haiku 4.5 는 1,024~32,000 이고 사양 기본값이 4,096 이다.
       reasoning-max-tokens: ${ARTEL_SCENARIO_REASONING_TOKENS:0}
   sdk:
