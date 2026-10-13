@@ -162,4 +162,30 @@ class MapTestCaseReadingsTest {
         assertThat(told).hasSize(2)
         assertThat(told.map { it.expected }.distinct()).containsExactly("`ProjectileAnimator.spriteRenderer.sprite` 표시가 갱신된다")
     }
+
+    // --- 판정 구조 ---------------------------------------------------------------
+
+    @Test
+    fun `판정 구조는 판독이 싣는 멤버와 칸을 든다`() {
+        val types = gameTypes + "Story.ChatWindowController" + "Combat.Enemies.Player" + "Story.StoryController"
+        fun check(kind: String, target: String, detail: String?) = kr.artel.orchestration.testcase.generator.MapTestCaseChecks.of(
+            CapabilityEffectEntity(capabilityId = 1, category = "observable", kind = kind, target = target, detail = detail),
+            named = target, value = null, methodId = null, gameTypes = types,
+        )
+
+        assertThat(check("ui-value", "ChatWindowController.chatName.text", "_, true").let { it.lookAt to it.field })
+            .isEqualTo("ChatWindowController.chatName" to "label")
+        assertThat(check("ui-value", "SlimeAnimator.spriteRenderer.sprite", null).let { it.lookAt to it.field })
+            .isEqualTo("SlimeAnimator.spriteRenderer" to "sprite")
+        // 애니메이터는 트리거 이름을 값으로 든다. 판독은 상태 이름이 그와 같을 때 그 이름을 싣는다.
+        assertThat(check("animation", "Player.animator", "SetTrigger(\"Death\")").let { Triple(it.lookAt, it.field, it.value) })
+            .isEqualTo(Triple("Player.animator", "state", "Death"))
+        // 목록 자리는 판독이 쓰는 꼴로. 번호를 모르면 목록 전체다.
+        assertThat(check("active-state", "StoryController.backgorunds.Item[0]", "true").lookAt)
+            .isEqualTo("StoryController.backgorunds[0]")
+        assertThat(check("active-state", "StoryController.backgorunds.Item[_]", "false").lookAt)
+            .isEqualTo("StoryController.backgorunds")
+        // 판독이 싣지 않는 대상은 멤버를 비운다. 그때는 사람용 이름으로 찾는다.
+        assertThat(check("ui-value", "GameObject.GetComponentInChildren().text", null).lookAt).isNull()
+    }
 }

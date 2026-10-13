@@ -87,6 +87,7 @@ class MapTestCaseWriter(
                 condition = conditionJson(case),
                 expectedValue = case.expected,
                 expectedItems = expectedItemsJson(case),
+                expectedChecks = expectedChecksJson(case),
                 status = case.status,
                 capabilityKey = case.capabilityKey,
                 metadata = metadataOf(contentMapId, case),
@@ -132,18 +133,20 @@ class MapTestCaseWriter(
      * 그 수가 "49행이 달라졌다"고 거짓말하는 것이다 — 실측에서 세 번을 이어 적재해도 계속
      * `updated=49` 였다.
      *
-     * 여기 실린 JSONB 칸이 셋(`metadata` · `condition` · `expected_items`)이라, 셋 다 빼고
-     * 나머지를 견준 뒤 각각 따로 본다.
+     * 여기 실린 JSONB 칸이 넷(`metadata` · `condition` · `expected_items` · `expected_checks`)이라,
+     * 넷 다 빼고 나머지를 견준 뒤 각각 따로 본다.
      */
     private fun changed(prior: TestCaseEntity, next: TestCaseEntity): Boolean =
         prior.copy(
             metadata = next.metadata,
             condition = next.condition,
             expectedItems = next.expectedItems,
+            expectedChecks = next.expectedChecks,
         ) != next ||
             !sameJson(prior.metadata, next.metadata) ||
             !sameJson(prior.condition, next.condition) ||
-            !sameJson(prior.expectedItems, next.expectedItems)
+            !sameJson(prior.expectedItems, next.expectedItems) ||
+            !sameJson(prior.expectedChecks, next.expectedChecks)
 
     private fun sameJson(a: Json?, b: Json?): Boolean {
         if (a == null || b == null) return a == null && b == null
@@ -203,6 +206,7 @@ class MapTestCaseWriter(
         condition = conditionJson(case),
         expectedValue = case.expected,
         expectedItems = expectedItemsJson(case),
+        expectedChecks = expectedChecksJson(case),
         status = case.status,
         capabilityKey = case.capabilityKey,
         metadata = metadataOf(contentMapId, case),
@@ -213,6 +217,12 @@ class MapTestCaseWriter(
      * 값이어야 하고, 빈 배열은 "기대결과가 없다"는 다른 말이다.
      */
     private fun expectedItemsJson(case: MapTestCase): Json? = case.expectedItems
+        .takeIf { it.isNotEmpty() }
+        ?.let { objectMapper.writeValueAsString(it) }
+        ?.let(Json::of)
+
+    /** 기대 항목마다 판정 구조를 싣는다(V101). 항목과 같은 이유로 비면 null 이다. */
+    private fun expectedChecksJson(case: MapTestCase): Json? = case.expectedChecks
         .takeIf { it.isNotEmpty() }
         ?.let { objectMapper.writeValueAsString(it) }
         ?.let(Json::of)

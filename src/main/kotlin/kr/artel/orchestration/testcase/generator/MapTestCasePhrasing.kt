@@ -243,6 +243,8 @@ object MapTestCasePhrasing {
          * 효과로 잡혀 있어서, 효과까지 버리면 정체가 바뀌고 시나리오가 가리키던 줄이 끊긴다.
          */
         val hidden: Boolean = false,
+        /** QA 가 판독에서 이 기대를 무엇으로 확인하나. 문장과 따로 코드 이름을 든다([MapTestCaseChecks]). */
+        val check: MapTestCaseCheck? = null,
     )
 
     /**
@@ -292,7 +294,10 @@ object MapTestCasePhrasing {
                 // 같은 말을 거르는 잣대는 **값을 빼기 전** 문장이다. 값을 뺀 문장으로 거르면 `sprites[0]` ·
                 // `sprites[1]` 이 같은 줄이 되어 한쪽 효과가 사라지고, 그 효과로 잡던 케이스의 정체가
                 // 바뀌어 시나리오가 가리키던 줄이 끊긴다. 보이는 문장은 [MapTestCaseGenerator] 가 한 번 더 거른다.
-                outcome(effect.kind, target, named) to Told(expected, doing(effect.kind, target, detail, sprite), effect, hidden = unread)
+                outcome(effect.kind, target, named) to Told(
+                    expected, doing(effect.kind, target, detail, sprite), effect, hidden = unread,
+                    check = MapTestCaseChecks.of(effect, target, detail, methodId, gameTypes),
+                )
             }
             .filterTo(kept) { (key, _) -> seen.add(key) }
         return kept.map { it.second }

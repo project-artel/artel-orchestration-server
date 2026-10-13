@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testscenario.dto
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.databind.JsonNode
 
 /**
  * QA 실행 시 Agent로 넘기는 시나리오 실행 계약(재설계 2026-08-07). 예전엔 [ScenarioCompositionService]가
@@ -38,4 +39,15 @@ data class AgentCase(
     val precondition: String?,
     @JsonProperty("test_step") val testStep: String,
     val expected: String,
+    /**
+     * 기대 항목마다 **판독에서 무엇으로 확인하나** — `[{kind, look_at, field, value, name}, …]`.
+     * [expected] 는 사람용 문장이라 씬 이름을 쓰고, 판독은 값을 코드 이름(`look_at`)으로 싣는다. 판정은 이쪽을
+     * 읽는다. 지도를 못 되짚는 TC 는 null.
+     */
+    val checks: JsonNode?,
+    /**
+     * [precondition] 의 비교 중 **판독으로 확인할 수 없는 것**(호출 · 지역 변수 · 엔진 값). 갈래를 가르는
+     * 사실이라 문장에는 남아 있지만, 판정이 그것을 확인하려 들면 없는 값을 찾는다. 없으면 빈 목록.
+     */
+    @JsonProperty("cannot_check") val cannotCheck: List<String>,
 )

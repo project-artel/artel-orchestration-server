@@ -309,6 +309,30 @@ class MapTestCaseWriterGoldenTest {
         assertThat(withTree.first().condition!!.asString()).contains("\"kind\"")
     }
 
+    /**
+     * **기대 항목마다 판정 구조가 같은 순서로 붙는다**(V101).
+     *
+     * 항목은 사람용 문장이고, 판정은 이쪽을 읽는다. 두 목록의 길이가 어긋나면 판정이 엉뚱한 항목의
+     * 구조로 통과·실패를 말한다.
+     */
+    @Test
+    fun `기대 항목마다 판정 구조가 붙는다`() {
+        val mapper = com.fasterxml.jackson.databind.ObjectMapper()
+        val rows = mine().filter { it.expectedItems != null }
+
+        assertThat(rows).isNotEmpty()
+        assertThat(rows).allSatisfy {
+            val items = mapper.readTree(it.expectedItems!!.asString())
+            val checks = mapper.readTree(it.expectedChecks!!.asString())
+            assertThat(checks.size()).isEqualTo(items.size())
+        }
+        // 실행 중에 채우는 필드(`chatName`)는 사람용 문장에 코드 이름이 남지만, 판정 구조는 판독의 멤버
+        // 이름을 든다. 판독이 `ChatWindowController.chatName = {label: …}` 으로 싣기 때문이다.
+        val chat = rows.flatMap { mapper.readTree(it.expectedChecks!!.asString()).toList() }
+            .first { it.path("look_at").asText() == "ChatWindowController.chatName" }
+        assertThat(chat.path("field").asText()).isEqualTo("label")
+    }
+
     companion object {
         private const val DOCUMENT = "src/test/resources/contentmap/wv-play-2026-09-01.json"
     }

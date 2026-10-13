@@ -39,6 +39,11 @@ data class MapTestCase(
      * 것과 같은 이유다(ARTEL-627). 실행이 항목마다 통과·실패를 답하려면 목록이어야 한다.
      */
     val expectedItems: List<String> = emptyList(),
+    /**
+     * [expectedItems] 와 같은 순서로, **QA 가 판독에서 무엇으로 확인하나.** 문장은 사람용이라 씬 이름을 쓰고,
+     * 이쪽은 판독이 싣는 코드 이름을 든다. 항목에 확인할 구조가 없으면 그 자리가 null 이다.
+     */
+    val expectedChecks: List<MapTestCaseCheck?> = emptyList(),
     val status: String,
     val gaps: List<String> = emptyList(),
     /**

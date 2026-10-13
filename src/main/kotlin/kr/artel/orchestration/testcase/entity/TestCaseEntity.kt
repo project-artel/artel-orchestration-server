@@ -87,6 +87,15 @@ data class TestCaseEntity(
     val expectedItems: Json? = null,
 
     /**
+     * [expectedItems] 와 같은 순서로, **QA 가 판독에서 무엇으로 확인하나**(V101). 항목은 사람용이라
+     * 씬 이름을 쓰고, 이쪽은 판독이 싣는 코드 이름을 든다 — `{kind, look_at, field, value, name}`.
+     *
+     * 지도를 못 되짚는 행은 null 이다([expectedItems] 와 같은 이유).
+     */
+    @Column("expected_checks")
+    val expectedChecks: Json? = null,
+
+    /**
      * 명세를 만든 쪽이 매긴 상태("ready" 등). **[verificationStatus]와 다른 축이다** —
      * 이쪽은 입력값이고 저쪽은 우리 QA 런의 결과다. 이 컬럼이 생기기 전 행에는 실제로 없어 nullable.
      */

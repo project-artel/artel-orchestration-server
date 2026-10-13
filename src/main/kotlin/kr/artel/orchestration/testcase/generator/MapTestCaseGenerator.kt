@@ -164,6 +164,8 @@ class MapTestCaseGenerator(
                     // 자리를 ` / ` 로 잇는다.
                     expected = shown.joinToString(OUTCOME_SEPARATOR) { it.outcome },
                     expectedItems = shown.map { it.outcome },
+                    // 항목과 같은 순서로 하나씩이다. 판정은 이쪽을 읽는다.
+                    expectedChecks = shown.map { it.check },
                     status = first.status,
                     gaps = group.flatMap { it.gaps }.distinct(),
                     arrivesAt = group.firstNotNullOfOrNull { it.arrivesAt },
@@ -558,6 +560,8 @@ class MapTestCaseGenerator(
         val identity: String = "",
         /** 판독이 확인 못 하는 기대. 정체에는 들고 보이는 기대결과에서는 뺀다. */
         val hidden: Boolean = false,
+        /** QA 가 판독에서 이 기대를 무엇으로 확인하나([MapTestCaseChecks]). */
+        val check: MapTestCaseCheck? = null,
         /**
          * **플레이어가 무엇을 건드렸나.** 이것이 곧 사람이 "기능 하나"로 세는 단위다.
          *
@@ -632,7 +636,7 @@ class MapTestCaseGenerator(
             // 효과의 주인은 **그 효과를 든 기능**이다. 빌려 온 자리(`borrowed`)에서는 이 행이 아니다.
             MapTestCasePhrasing.expectedWithSource(
                 effectRows, refs, owners[source], namesByScene[row.sceneName].orEmpty(), positions, gameTypes,
-            ).map { (outcome, does, effect, hidden) ->
+            ).map { (outcome, does, effect, hidden, check) ->
                 Draft(
                     capabilityKey = key,
                     act = act,
@@ -649,6 +653,7 @@ class MapTestCaseGenerator(
                     step = step,
                     outcome = outcome,
                     hidden = hidden,
+                    check = check,
                     status = caseGrade(row),
                     gaps = reasons,
                     // 씬 효과의 대상이 곧 도착 화면이다. 산문에서 다시 뽑지 않는다.
@@ -703,6 +708,7 @@ class MapTestCaseGenerator(
                 step = "`${element.path}` 이(가) 화면에 있는지 확인한다",
                 expected = "`${element.path}` 이(가) 화면에 있다",
                 expectedItems = listOf("`${element.path}` 이(가) 화면에 있다"),
+                expectedChecks = listOf(MapTestCaseChecks.presence(element.path)),
                 status = "runnable",
                 identity = "screen\u001F${element.sceneName}\u001F${element.path}",
             )
