@@ -45,7 +45,8 @@ class TestCaseFolderItemService(
 
     /**
      * [folderId] 의 항목을 [gameBuildId] 버전으로 푼다. 버전을 주지 않으면 프로젝트의 가장 최근 build 다.
-     * 그 버전에 없는 케이스도 줄로 내고 `inVersion=false` 로 표시한다 — 화면이 빗금 줄로 그린다.
+     * 그 버전에 없는 케이스(몫이 없는 케이스, 사람이 쓴 케이스도 같다)도 줄로 내고 `inVersion=false` 로 표시한다 —
+     * 화면이 빗금 줄로 그린다.
      */
     suspend fun list(projectId: Long, userId: Long, folderId: Long, gameBuildId: Long?): TestCaseFolderItemListResponse {
         folderService.requireMember(projectId, userId)
@@ -70,18 +71,14 @@ class TestCaseFolderItemService(
                 position = row.position,
                 hidden = row.hidden,
                 hiddenGameBuildIds = row.hiddenGameBuildIds.split(',').filter { it.isNotBlank() },
-                inVersion = buildId == null || !map || version != null,
+                inVersion = buildId == null || version != null,
                 origin = if (map) MAP else MANUAL,
                 scene = content?.scene ?: identity.scene,
                 step = content?.step ?: identity.step,
                 precondition = if (content != null) content.precondition else identity.precondition,
                 expectedValue = content?.expectedValue ?: identity.expectedValue,
                 status = if (content != null) content.status else identity.status,
-                verificationStatus = when {
-                    buildId == null -> identity.verificationStatus
-                    map -> version?.verificationStatus
-                    else -> version?.verificationStatus ?: DRAFT
-                },
+                verificationStatus = if (buildId == null) identity.verificationStatus else version?.verificationStatus,
                 createdAt = identity.createdAt ?: Instant.EPOCH,
             )
         }
@@ -172,6 +169,5 @@ class TestCaseFolderItemService(
     private companion object {
         const val MAP = "MAP"
         const val MANUAL = "MANUAL"
-        const val DRAFT = "DRAFT"
     }
 }

@@ -11,8 +11,8 @@ interface TestCaseFolderRepository : CoroutineCrudRepository<TestCaseFolderEntit
     /**
      * folder 목록과 folder 마다 담긴 케이스 수(ARTEL-1023).
      *
-     * `visible_count` 는 [gameBuildId] 버전에서 보이는 항목 수다 — 그 버전에서 숨기지 않았고, 그 버전에 있는
-     * 케이스(지도 케이스는 버전 몫이 있는 것, 사람이 쓴 케이스는 전부). [gameBuildId] 가 null 이면 null 이다.
+     * `visible_count` 는 [gameBuildId] 버전에서 보이는 항목 수다 — 그 버전에서 숨기지 않았고, 그 버전에 몫이 있는
+     * 케이스. [gameBuildId] 가 null 이면 null 이다.
      */
     @Query(
         """
@@ -21,15 +21,13 @@ interface TestCaseFolderRepository : CoroutineCrudRepository<TestCaseFolderEntit
                CASE WHEN :gameBuildId IS NULL THEN NULL ELSE
                    COUNT(i.id) FILTER (
                        WHERE NOT (CAST(:gameBuildId AS BIGINT) = ANY (i.hidden_game_build_ids))
-                         AND (t.metadata ->> 'origin' IS DISTINCT FROM 'content-map'
-                              OR EXISTS (SELECT 1 FROM test_case_version v
-                                          WHERE v.test_case_id = i.test_case_id
-                                            AND v.game_build_id = CAST(:gameBuildId AS BIGINT)))
+                         AND EXISTS (SELECT 1 FROM test_case_version v
+                                      WHERE v.test_case_id = i.test_case_id
+                                        AND v.game_build_id = CAST(:gameBuildId AS BIGINT))
                    )
                END AS visible_count
         FROM test_case_folder f
         LEFT JOIN test_case_folder_item i ON i.folder_id = f.id
-        LEFT JOIN test_case t ON t.id = i.test_case_id
         WHERE f.project_id = :projectId
         GROUP BY f.id
         ORDER BY f.id

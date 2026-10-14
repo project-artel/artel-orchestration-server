@@ -737,6 +737,173 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-case-versions/{gameBuildId}/hidden": {
+      "put": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "setTestCaseVersionHidden",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionHiddenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-versions/{gameBuildId}/group": {
+      "put": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "assignTestCaseVersionGroup",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionGroupAssignRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-version-groups/{versionGroupId}": {
+      "put": {
+        "tags": [
+          "test-case-version-group-controller"
+        ],
+        "operationId": "renameTestCaseVersionGroup",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "versionGroupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionGroupResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "test-case-version-group-controller"
+        ],
+        "operationId": "deleteTestCaseVersionGroup",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "versionGroupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-case-folders/{folderId}": {
       "put": {
         "tags": [
@@ -2220,6 +2387,97 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/TestCaseBulkDeleteResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-versions/{gameBuildId}/folder-copies": {
+      "post": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "copyTestCaseVersionToFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionCopyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-version-groups": {
+      "post": {
+        "tags": [
+          "test-case-version-group-controller"
+        ],
+        "operationId": "createTestCaseVersionGroup",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionGroupResponse"
                 }
               }
             }
@@ -4961,6 +5219,37 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-case-versions/unversioned/cases": {
+      "get": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "listUnversionedTestCases",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionCasesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-case-spec/download": {
       "get": {
         "tags": [
@@ -6384,6 +6673,45 @@
             "format": "date-time"
           },
           "folderId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseVersionHiddenRequest": {
+        "type": "object",
+        "properties": {
+          "hidden": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TestCaseVersionGroupAssignRequest": {
+        "type": "object",
+        "properties": {
+          "groupId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseVersionGroupRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseVersionGroupResponse": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
             "type": "string"
           }
         }
@@ -7989,6 +8317,17 @@
           "deleted": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "TestCaseVersionCopyRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
           }
         }
       },
@@ -10952,7 +11291,9 @@
       },
       "TestCaseVersionListResponse": {
         "required": [
-          "items"
+          "groups",
+          "items",
+          "unversionedTotal"
         ],
         "type": "object",
         "properties": {
@@ -10961,6 +11302,16 @@
             "items": {
               "$ref": "#/components/schemas/TestCaseVersionSummary"
             }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseVersionGroupResponse"
+            }
+          },
+          "unversionedTotal": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -10969,6 +11320,7 @@
           "counts",
           "createdAt",
           "gameBuildId",
+          "hidden",
           "latest",
           "total",
           "version"
@@ -11001,12 +11353,17 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          "groupId": {
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
           }
         }
       },
       "TestCaseVersionCasesResponse": {
         "required": [
-          "gameBuildId",
           "items"
         ],
         "type": "object",

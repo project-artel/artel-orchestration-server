@@ -92,10 +92,7 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
     )
     fun findHistory(projectId: Long, testCaseId: Long): Flow<CaseVerdictHistoryRow>
 
-    /**
-     * 프로젝트의 버전 몫을 build · 출처 · 상태로 센다(ARTEL-1021). `manual` 은 사람이 쓴 케이스(지도 출신이
-     * 아님)의 몫이다 — 그 케이스는 모든 버전에 있다고 보므로, 몫이 없는 버전에서는 부르는 쪽이 `DRAFT` 로 센다.
-     */
+    /** 버전마다 상태별 몫 수(ARTEL-1021). `manual` 은 사람이 쓴 케이스(지도 출신이 아님)의 몫이다. */
     @Query(
         """
         SELECT v.game_build_id,
@@ -109,6 +106,17 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
         """
     )
     fun countByBuild(projectId: Long): Flow<VersionStatusCount>
+
+    /** 어느 버전이든 몫이 하나라도 있는 케이스. 나머지가 "버전 없음" 이다(ARTEL-1023). */
+    @Query(
+        """
+        SELECT DISTINCT v.test_case_id
+          FROM test_case_version v
+          JOIN test_case t ON t.id = v.test_case_id
+         WHERE t.project_id = :projectId
+        """
+    )
+    fun findVersionedCaseIds(projectId: Long): Flow<Long>
 
     /**
      * [testCaseIds] 가운데 **지도가 낸 케이스인데 [gameBuildId] 에 버전 몫이 없는 것**. TS 를 그 버전의 TR

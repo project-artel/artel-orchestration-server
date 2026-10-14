@@ -158,6 +158,16 @@ class TestCaseFolderService(
         }
     }
 
+    /**
+     * [parentId] 아래에 이름이 겹치지 않는 folder 를 만든다. **[lockProjectFolders] 를 잡은 트랜잭션 안에서 불러야
+     * 한다.** 버전을 folder 로 복제할 때 쓴다(ARTEL-1023).
+     */
+    suspend fun createWithFreeName(projectId: Long, parentId: Long?, baseName: String): TestCaseFolderEntity {
+        parentId?.let { requireFolder(projectId, it) }
+        val name = freeName(projectId, parentId, baseName.take(NAME_MAX_LENGTH))
+        return folders.save(TestCaseFolderEntity(projectId = projectId, parentId = parentId, name = name))
+    }
+
     /** 같은 부모 아래 비어 있는 이름. [baseName] 이 겹치면 ` (2)`, ` (3)` … 을 붙인다. */
     private suspend fun freeName(projectId: Long, parentId: Long?, baseName: String): String {
         var name = baseName
@@ -203,7 +213,7 @@ class TestCaseFolderService(
         }
     }
 
-    private suspend fun responseOf(folderId: Long): TestCaseFolderResponse =
+    suspend fun responseOf(folderId: Long): TestCaseFolderResponse =
         requireNotNull(folders.findRowById(folderId)) { "방금 쓴 folder $folderId 를 다시 읽지 못했다" }.toResponse()
 
     private fun folderNameOf(raw: String?): String {

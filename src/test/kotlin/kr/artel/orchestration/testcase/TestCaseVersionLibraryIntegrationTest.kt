@@ -23,6 +23,7 @@ import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -50,7 +51,9 @@ import java.util.UUID
  * - 버전 목록은 최신 순이고 맨 앞이 `latest` 다. 수는 그 버전 표에 보일 케이스 수다.
  * - 버전 표는 그 버전의 몫으로 내용과 판정을 낸다.
  * - 비교하면 두 판정과 존재 여부(`BOTH` · `ONLY_THIS` · `ONLY_OTHER`)를 한 줄에 싣는다.
- * - 사람이 쓴 케이스는 모든 버전에 있다고 보고, 판정이 없으면 `DRAFT` 다.
+ * - 케이스는 몫이 있는 버전에만 있다. 사람이 쓴 케이스도 같고, 어느 버전에도 몫이 없으면 "버전 없음" 이다(ARTEL-1023).
+ *
+ * 버전 묶음 · 숨김 · folder 로 복제도 여기서 본다(ARTEL-1023).
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -102,24 +105,29 @@ class TestCaseVersionLibraryIntegrationTest {
         val items = listed.body["items"]
         assertThat(items.map { it["version"].asText() }).containsExactly("1.1.0", "1.0.0")
         assertThat(items.map { it["latest"].asBoolean() }).containsExactly(true, false)
-        // 1.1 은 몫 하나를 지웠으니 지도 케이스가 하나 적고, 사람이 쓴 케이스 하나가 더해진다.
-        assertThat(items[0]["total"].asInt()).isEqualTo(mapCases - 1 + 1)
+        // 1.1 은 몫 하나를 지웠으니 하나 적다. 사람이 쓴 케이스는 몫이 없어 어느 버전에도 들지 않는다.
+        assertThat(items[0]["total"].asInt()).isEqualTo(mapCases - 1)
+        assertThat(listed.body["unversionedTotal"].asInt()).isEqualTo(1)
         assertThat(items[0]["counts"]["FAILED"].asInt()).isEqualTo(1)
         assertThat(items[0]["counts"]["REGRESSION"].asInt()).isZero()
         assertThat(items[0]["counts"].fieldNames().asSequence().toSet())
             .containsExactlyInAnyOrder("DRAFT", "VERIFIED", "FAILED", "REGRESSION", "BROKEN")
-        assertThat(items[1]["total"].asInt()).isEqualTo(mapCases + 1)
+        assertThat(items[1]["total"].asInt()).isEqualTo(mapCases)
         assertThat(items[1]["counts"]["VERIFIED"].asInt()).isEqualTo(1)
 
         val plain = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/${buildB.gameBuildId}/cases")
         assertThat(plain.status).isEqualTo(200)
         val plainRows = plain.body["items"].associateBy { it["id"].asLong() }
-        assertThat(plainRows).hasSize(mapCases - 1 + 1)
+        assertThat(plainRows).hasSize(mapCases - 1)
         assertThat(plainRows).doesNotContainKey(onlyInOld.testCaseId)
+        assertThat(plainRows).doesNotContainKey(manual.id!!)
         assertThat(plainRows.getValue(passedThenFailed.testCaseId)["verificationStatus"].asText()).isEqualTo("FAILED")
-        assertThat(plainRows.getValue(manual.id!!)["origin"].asText()).isEqualTo("MANUAL")
-        assertThat(plainRows.getValue(manual.id!!)["verificationStatus"].asText()).isEqualTo("DRAFT")
         assertThat(plainRows.values.map { it["presence"].asText() }.toSet()).containsExactly("BOTH")
+
+        val unversioned = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/unversioned/cases").body
+        assertThat(unversioned["gameBuildId"].isNullish()).isTrue()
+        assertThat(unversioned["items"].map { it["id"].asLong() }).containsExactly(manual.id!!)
+        assertThat(unversioned["items"][0]["origin"].asText()).isEqualTo("MANUAL")
 
         val compared = call(
             token, HttpMethod.GET,
@@ -127,7 +135,7 @@ class TestCaseVersionLibraryIntegrationTest {
         )
         val rows = compared.body["items"].associateBy { it["id"].asLong() }
         assertThat(compared.body["compareToGameBuildId"].asText()).isEqualTo(buildA.gameBuildId.toString())
-        assertThat(rows).hasSize(mapCases + 1)
+        assertThat(rows).hasSize(mapCases)
         val regressed = rows.getValue(passedThenFailed.testCaseId)
         assertThat(regressed["presence"].asText()).isEqualTo("BOTH")
         assertThat(regressed["verificationStatus"].asText()).isEqualTo("FAILED")
@@ -143,6 +151,71 @@ class TestCaseVersionLibraryIntegrationTest {
             "/api/projects/$projectId/test-case-versions/${buildA.gameBuildId}/cases?compareTo=${buildB.gameBuildId}"
         ).body["items"].associateBy { it["id"].asLong() }
         assertThat(reversed.getValue(onlyInOld.testCaseId)["presence"].asText()).isEqualTo("ONLY_THIS")
+
+        // 사람이 쓴 케이스가 1.1 에서 판정을 받으면 1.1 에만 생긴다.
+        versions.save(TestCaseVersionEntity.snapshotOf(manual, buildB.gameBuildId).copy(verificationStatus = "VERIFIED"))
+        val afterVerdict = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions").body
+        assertThat(afterVerdict["items"][0]["total"].asInt()).isEqualTo(mapCases)
+        assertThat(afterVerdict["items"][1]["total"].asInt()).isEqualTo(mapCases)
+        assertThat(afterVerdict["unversionedTotal"].asInt()).isZero()
+        val manualRow = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/${buildB.gameBuildId}/cases")
+            .body["items"].single { it["id"].asLong() == manual.id!! }
+        assertThat(manualRow["origin"].asText()).isEqualTo("MANUAL")
+        assertThat(manualRow["step"].asText()).isEqualTo("사람이 쓴 것")
+        assertThat(manualRow["verificationStatus"].asText()).isEqualTo("VERIFIED")
+    }
+
+    @Test
+    fun `버전을 묶음에 넣고 숨기고 folder 로 복제한다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
+        call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildA.gameBuildId}/content-map/test-cases")
+        val now = Instant.now()
+        val buildB = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "2.0.0", createdAt = now, updatedAt = now))
+        val groupsUri = "/api/projects/$projectId/test-case-version-groups"
+
+        val group = call(token, HttpMethod.POST, groupsUri, """{"name":"1.X"}""")
+        assertThat(group.status).isEqualTo(201)
+        val groupId = group.body["id"].asText()
+        assertThat(call(token, HttpMethod.POST, groupsUri, """{"name":"1.X"}""").status).isEqualTo(409)
+        assertThat(call(token, HttpMethod.PUT, "$groupsUri/$groupId", """{"name":"1.x 계열"}""").body["name"].asText())
+            .isEqualTo("1.x 계열")
+
+        val versionsUri = "/api/projects/$projectId/test-case-versions"
+        assertThat(call(token, HttpMethod.PUT, "$versionsUri/${buildA.gameBuildId}/group", """{"groupId":"$groupId"}""").status)
+            .isEqualTo(204)
+        assertThat(call(token, HttpMethod.PUT, "$versionsUri/${buildB.id}/hidden", """{"hidden":true}""").status)
+            .isEqualTo(204)
+        val listed = call(token, HttpMethod.GET, versionsUri).body
+        assertThat(listed["groups"].map { it["name"].asText() }).containsExactly("1.x 계열")
+        val byVersion = listed["items"].associateBy { it["version"].asText() }
+        assertThat(byVersion.getValue("1.0.0")["groupId"].asText()).isEqualTo(groupId)
+        assertThat(byVersion.getValue("1.0.0")["hidden"].asBoolean()).isFalse()
+        assertThat(byVersion.getValue("2.0.0")["hidden"].asBoolean()).isTrue()
+        assertThat(byVersion.getValue("2.0.0")["groupId"].isNullish()).isTrue()
+
+        // 묶음을 지우면 안의 버전은 묶음 없음으로 돌아간다. 숨김은 그대로다.
+        call(token, HttpMethod.PUT, "$versionsUri/${buildB.id}/hidden", """{"hidden":false}""")
+        assertThat(call(token, HttpMethod.DELETE, "$groupsUri/$groupId").status).isEqualTo(204)
+        val afterDelete = call(token, HttpMethod.GET, versionsUri).body
+        assertThat(afterDelete["groups"]).isEmpty()
+        assertThat(afterDelete["items"].map { it["groupId"].isNullish() }).containsOnly(true)
+        assertThat(afterDelete["items"].map { it["hidden"].asBoolean() }).containsOnly(false)
+
+        val copied = call(token, HttpMethod.POST, "$versionsUri/${buildA.gameBuildId}/folder-copies", "{}")
+        assertThat(copied.status).isEqualTo(201)
+        assertThat(copied.body["name"].asText()).isEqualTo("1.0.0 사본")
+        val caseCount = versions.findByGameBuildId(buildA.gameBuildId).toList().size
+        assertThat(copied.body["caseCount"].asInt()).isEqualTo(caseCount)
+        assertThat(call(token, HttpMethod.POST, "$versionsUri/${buildA.gameBuildId}/folder-copies", "{}").body["name"].asText())
+            .isEqualTo("1.0.0 사본 (2)")
+
+        val otherProject = newProject(userId)
+        val foreign = gameBuilds.save(GameBuildEntity(projectId = otherProject, version = "9.9", createdAt = now, updatedAt = now))
+        assertThat(call(token, HttpMethod.PUT, "$versionsUri/${foreign.id}/hidden", """{"hidden":true}""").status).isEqualTo(404)
+        assertThat(call(token, HttpMethod.PUT, "$versionsUri/${buildA.gameBuildId}/group", """{"groupId":"999999"}""").status)
+            .isEqualTo(404)
     }
 
     @Test

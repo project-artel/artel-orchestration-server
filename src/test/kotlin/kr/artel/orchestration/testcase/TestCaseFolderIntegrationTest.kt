@@ -158,8 +158,9 @@ class TestCaseFolderIntegrationTest {
         assertThat(latest["gameBuildId"].asText()).isEqualTo("$build2")
         assertThat(latest["items"][0]["inVersion"].asBoolean()).isFalse()
         assertThat(latest["items"][0]["verificationStatus"].isNull).isTrue()
-        assertThat(latest["items"][1]["inVersion"].asBoolean()).isTrue()
-        assertThat(latest["items"][1]["verificationStatus"].asText()).isEqualTo("DRAFT")
+        // 사람이 쓴 케이스도 몫이 없으면 그 버전에 없다(ARTEL-1023).
+        assertThat(latest["items"][1]["inVersion"].asBoolean()).isFalse()
+        assertThat(latest["items"][1]["verificationStatus"].isNull).isTrue()
 
         val hideBody = """{"caseIds":["$manualCase"],"gameBuildId":"$build1","hidden":true}"""
         assertThat(items(token, projectId, folderId, HttpMethod.PUT, "/hidden", hideBody).body["changed"].asInt()).isEqualTo(1)
@@ -174,11 +175,11 @@ class TestCaseFolderIntegrationTest {
             .body["items"][1]["hiddenGameBuildIds"].map { it.asText() }
         assertThat(hiddenBuilds).containsExactly("$build1")
 
-        // 1.0: 지도 케이스만 보인다(사람이 쓴 케이스는 숨김). 1.1: 사람이 쓴 케이스만 보인다(지도 케이스는 몫이 없다).
+        // 1.0: 지도 케이스만 보인다(사람이 쓴 케이스는 몫도 없고 숨김). 1.1: 둘 다 몫이 없다.
         fun visibleIn(build: Long) = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-folders?gameBuildId=$build")
             .body["items"].single()["visibleCount"].asInt()
         assertThat(visibleIn(build1)).isEqualTo(1)
-        assertThat(visibleIn(build2)).isEqualTo(1)
+        assertThat(visibleIn(build2)).isZero()
 
         val unhide = """{"caseIds":["$manualCase"],"gameBuildId":"$build1","hidden":false}"""
         assertThat(items(token, projectId, folderId, HttpMethod.PUT, "/hidden", unhide).body["changed"].asInt()).isEqualTo(1)

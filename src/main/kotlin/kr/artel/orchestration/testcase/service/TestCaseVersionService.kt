@@ -6,6 +6,7 @@ import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.TestCaseVersionCasesResponse
+import kr.artel.orchestration.testcase.dto.TestCaseVersionGroupResponse
 import kr.artel.orchestration.testcase.dto.TestCaseVersionListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseVersionRow
 import kr.artel.orchestration.testcase.dto.TestCaseVersionSummary
@@ -15,6 +16,7 @@ import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionGroupRepository
 import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import org.springframework.stereotype.Service
 import java.time.Instant
@@ -22,8 +24,9 @@ import java.time.Instant
 /**
  * 케이스 라이브러리를 게임 버전별로 보는 조회(ARTEL-1021).
  *
- * 지도가 낸 케이스는 버전마다 몫(`test_case_version`)이 있고, 몫이 없으면 그 버전에 없는 케이스다. 사람이 쓴
- * 케이스는 지도와 무관하게 모든 버전에 있다고 본다 — 그 버전에서 판정을 받은 적 없으면 `DRAFT` 다.
+ * 케이스는 그 버전에 몫(`test_case_version`)이 있어야 그 버전에 있다. 지도가 낸 케이스는 생성할 때, 사람이 쓴 케이스는
+ * 그 버전에서 QA 판정을 받을 때 몫이 생긴다. 어느 버전에도 몫이 없는 케이스는 "버전 없음" 에 모인다(ARTEL-1023) —
+ * 예전에는 사람이 쓴 케이스를 모든 버전에 `DRAFT` 로 끼워 넣어, 버전마다 같은 줄이 되풀이됐다.
  */
 @Service
 class TestCaseVersionService(
@@ -33,22 +36,19 @@ class TestCaseVersionService(
     private val projectAccessService: ProjectAccessService,
     private val objectMapper: ObjectMapper,
     private val folderItems: TestCaseFolderItemRepository,
+    private val groups: TestCaseVersionGroupRepository,
 ) {
 
-    /** 버전 목록(최신 순)과 버전별 수. 비멤버면 404 다. */
+    /** 버전 목록(최신 순)과 버전별 수, 버전 묶음, "버전 없음" 수. 비멤버면 404 다. */
     suspend fun versions(projectId: Long, userId: Long): TestCaseVersionListResponse {
         if (!projectAccessService.isMember(projectId, userId)) throw NotFoundException("프로젝트를 찾을 수 없습니다.")
         val builds = gameBuilds.findAllForMember(projectId, userId).toList()
         val counts = versions.countByBuild(projectId).toList().groupBy { it.gameBuildId }
-        val manualTotal = testCases.countManualByProjectId(projectId).toInt()
+        val settings = groups.findSettings(projectId).toList().associateBy { it.gameBuildId }
         val items = builds.mapIndexed { index, build ->
             val byStatus = VerificationStatus.entries.associate { it.name to 0 }.toMutableMap()
-            var manualWithVersion = 0
-            counts[build.id].orEmpty().forEach { row ->
-                byStatus.merge(row.verificationStatus, row.total.toInt(), Int::plus)
-                if (row.manual) manualWithVersion += row.total.toInt()
-            }
-            byStatus.merge(VerificationStatus.DRAFT.name, manualTotal - manualWithVersion, Int::plus)
+            counts[build.id].orEmpty().forEach { row -> byStatus.merge(row.verificationStatus, row.total.toInt(), Int::plus) }
+            val setting = settings[build.id]
             TestCaseVersionSummary(
                 gameBuildId = requireNotNull(build.id).toString(),
                 version = build.version,
@@ -57,9 +57,18 @@ class TestCaseVersionService(
                 latest = index == 0,
                 total = byStatus.values.sum(),
                 counts = byStatus,
+                groupId = setting?.groupId?.toString(),
+                hidden = setting?.hidden ?: false,
             )
         }
-        return TestCaseVersionListResponse(items)
+        val versioned = versions.findVersionedCaseIds(projectId).toList().toSet()
+        val unversioned = testCases.findByProjectIdOrderByIdDesc(projectId).toList().count { it.id !in versioned }
+        return TestCaseVersionListResponse(
+            items = items,
+            groups = groups.findByProjectIdOrderByNameAscIdAsc(projectId).toList()
+                .map { TestCaseVersionGroupResponse(requireNotNull(it.id).toString(), it.name) },
+            unversionedTotal = unversioned,
+        )
     }
 
     /**
@@ -76,8 +85,7 @@ class TestCaseVersionService(
         val folderIds = folderItems.findFirstFolders(projectId).toList().associate { it.testCaseId to it.folderId }
         val items = testCases.findByProjectIdOrderByIdDesc(projectId).toList().mapNotNull { identity ->
             val id = requireNotNull(identity.id)
-            if (isMapCase(identity)) mapRow(identity, here[id], there[id], compareTo != null, folderIds)
-            else manualRow(identity, here[id], there[id], compareTo != null, folderIds)
+            rowOf(identity, here[id], there[id], compareTo != null, folderIds[id])
         }
         return TestCaseVersionCasesResponse(
             gameBuildId = gameBuildId.toString(),
@@ -86,55 +94,65 @@ class TestCaseVersionService(
         )
     }
 
-    private fun mapRow(
+    /** "버전 없음": 어느 버전에도 몫이 없는 케이스(ARTEL-1023). 판정 칸은 케이스의 상태다. */
+    suspend fun unversioned(projectId: Long, userId: Long): TestCaseVersionCasesResponse {
+        if (!projectAccessService.isMember(projectId, userId)) throw NotFoundException("프로젝트를 찾을 수 없습니다.")
+        val versioned = versions.findVersionedCaseIds(projectId).toList().toSet()
+        val folderIds = folderItems.findFirstFolders(projectId).toList().associate { it.testCaseId to it.folderId }
+        val items = testCases.findByProjectIdOrderByIdDesc(projectId).toList()
+            .filter { it.id !in versioned }
+            .map { identity ->
+                TestCaseVersionRow(
+                    id = requireNotNull(identity.id).toString(),
+                    scene = identity.scene,
+                    step = identity.step,
+                    precondition = identity.precondition,
+                    expectedValue = identity.expectedValue,
+                    status = identity.status,
+                    origin = if (isMapCase(identity)) MAP else MANUAL,
+                    folderId = folderIds[identity.id]?.toString(),
+                    createdAt = identity.createdAt ?: Instant.EPOCH,
+                    verificationStatus = identity.verificationStatus,
+                    presence = BOTH,
+                    compareVerificationStatus = null,
+                )
+            }
+        return TestCaseVersionCasesResponse(gameBuildId = null, compareToGameBuildId = null, items = items)
+    }
+
+    /**
+     * 한 줄. 이 버전에 몫이 없으면 비교할 때만(비교 버전에 몫이 있으면) 줄이 된다. 내용은 지도 케이스면 그 버전의 몫,
+     * 사람이 쓴 케이스면 정체(사람이 고친 내용)다.
+     */
+    private fun rowOf(
         identity: TestCaseEntity,
         here: TestCaseVersionEntity?,
         there: TestCaseVersionEntity?,
         comparing: Boolean,
-        folderIds: Map<Long, Long>,
+        folderId: Long?,
     ): TestCaseVersionRow? {
-        val content = here ?: there?.takeIf { comparing } ?: return null
+        val version = here ?: there?.takeIf { comparing } ?: return null
         val presence = when {
             !comparing || (here != null && there != null) -> BOTH
             here != null -> ONLY_THIS
             else -> ONLY_OTHER
         }
+        val map = isMapCase(identity)
         return TestCaseVersionRow(
             id = requireNotNull(identity.id).toString(),
-            scene = content.scene,
-            step = content.step,
-            precondition = content.precondition,
-            expectedValue = content.expectedValue,
-            status = content.status,
-            origin = MAP,
-            folderId = folderIds[identity.id]?.toString(),
+            scene = if (map) version.scene else identity.scene,
+            step = if (map) version.step else identity.step,
+            precondition = if (map) version.precondition else identity.precondition,
+            expectedValue = if (map) version.expectedValue else identity.expectedValue,
+            status = if (map) version.status else identity.status,
+            origin = if (map) MAP else MANUAL,
+            folderId = folderId?.toString(),
             createdAt = identity.createdAt ?: Instant.EPOCH,
             verificationStatus = here?.verificationStatus,
             presence = presence,
             compareVerificationStatus = there?.verificationStatus?.takeIf { comparing },
         )
     }
-
-    private fun manualRow(
-        identity: TestCaseEntity,
-        here: TestCaseVersionEntity?,
-        there: TestCaseVersionEntity?,
-        comparing: Boolean,
-        folderIds: Map<Long, Long>,
-    ) = TestCaseVersionRow(
-        id = requireNotNull(identity.id).toString(),
-        scene = identity.scene,
-        step = identity.step,
-        precondition = identity.precondition,
-        expectedValue = identity.expectedValue,
-        status = identity.status,
-        origin = MANUAL,
-        folderId = folderIds[identity.id]?.toString(),
-        createdAt = identity.createdAt ?: Instant.EPOCH,
-        verificationStatus = here?.verificationStatus ?: VerificationStatus.DRAFT.name,
-        presence = BOTH,
-        compareVerificationStatus = if (comparing) there?.verificationStatus ?: VerificationStatus.DRAFT.name else null,
-    )
 
     private fun isMapCase(identity: TestCaseEntity): Boolean =
         runCatching { objectMapper.readTree(identity.metadata.asString()) }.getOrNull()
