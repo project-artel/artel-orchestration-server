@@ -34,6 +34,10 @@ data class TestRunEntity(
     @Column("game_build_id")
     val gameBuildId: Long? = null,
 
+    /** 이 런이 든 폴더(ARTEL-1049). 폴더는 [gameBuildId] 와 같은 빌드 버전 안에만 있다. null 이면 그 버전 바로 아래다. */
+    @Column("folder_id")
+    val folderId: Long? = null,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,

@@ -29,6 +29,9 @@ import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.testrun.dto.TestRunGameBuildRequest
+import kr.artel.orchestration.testrun.dto.TestRunLastQa
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
@@ -48,6 +51,7 @@ class TestRunService(
     private val qaTryRepository: QaTryRepository,
     private val testCaseRepository: TestCaseRepository,
     private val gameBuildRepository: GameBuildRepository,
+    private val folderService: TestRunFolderService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
 ) {
@@ -55,24 +59,80 @@ class TestRunService(
         if (!projectAccessService.isMember(projectId, userId)) return TestRunListResponse(emptyList())
         val runs = runRepository.findByProjectIdOrderByIdDesc(projectId).toList()
         val builds = buildsOf(runs)
-        return TestRunListResponse(runs.map { run -> run.toResponse(run.gameBuildId?.let(builds::get)) })
+        // 테스트 런 화면의 표가 TS 수와 마지막 QA 를 보인다(ARTEL-1048). TR 마다 묻지 않고 프로젝트 단위로 한 번씩 센다.
+        val scenarioCounts = runRepository.countScenariosByProject(projectId).toList().associate { it.testRunId to it.scenarios.toInt() }
+        val lastQa = runRepository.findLastQaRunsByProject(projectId).toList().associateBy { it.testRunId }
+        return TestRunListResponse(
+            runs.map { run ->
+                run.toResponse(run.gameBuildId?.let(builds::get)).copy(
+                    scenarioCount = scenarioCounts[run.id] ?: 0,
+                    lastQaRun = lastQa[run.id]?.let {
+                        TestRunLastQa(
+                            qaRunId = it.qaRunId.toString(),
+                            status = it.status,
+                            startedAt = it.startedAt,
+                            passed = it.passed.toInt(),
+                            failed = it.failed.toInt(),
+                            total = it.total.toInt(),
+                        )
+                    },
+                )
+            }
+        )
     }
 
     suspend fun create(projectId: Long, userId: Long, request: TestRunCreateRequest): TestRunResponse? {
         if (!projectAccessService.isMember(projectId, userId)) return null
         val name = request.name?.takeIf { it.isNotBlank() }
             ?: throw BadRequestException("name is required")
-        // 만들 때의 최신 build 가 이 TR 의 버전이다(ARTEL-994). build 가 아직 없는 프로젝트면 비운다.
-        // editor 행은 게임 버전이 아니라서 고르지 않는다(ARTEL-1014). editor 행만 있으면 비운다.
-        val latestBuild = gameBuildRepository.findNonEditorNewestFirst(projectId).firstOrNull()
+        // 고른 TC 버전을 따른다(ARTEL-1048). 고르지 않았으면 만들 때의 최신 build 다(ARTEL-994) — build 가 아직 없는
+        // 프로젝트면 비운다. editor 행은 게임 버전이 아니라서 고르지 않는다(ARTEL-1014).
+        // 폴더 안에 만들면 그 폴더의 빌드 버전을 따른다(ARTEL-1049).
+        val folder = request.folderId?.let { folderService.folderOf(projectId, it) }
+        val build = when {
+            folder != null -> folder.gameBuildId?.let { gameBuildRepository.findById(it) }
+            request.unversioned -> null
+            request.gameBuildId != null -> versionBuild(projectId, request.gameBuildId)
+            else -> gameBuildRepository.findNonEditorNewestFirst(projectId).firstOrNull()
+        }
         return runRepository.save(
             TestRunEntity(
                 projectId = projectId,
                 name = name,
                 description = request.description?.ifBlank { null },
-                gameBuildId = latestBuild?.id,
+                gameBuildId = build?.id,
+                folderId = folder?.id,
             )
-        ).toResponse(latestBuild)
+        ).toResponse(build)
+    }
+
+    /**
+     * TR 을 다른 빌드 버전 · 폴더로 옮긴다(ARTEL-1048, 1049). 버전이 null 이면 버전 없음이다. 접근 불가면 null(→ 404).
+     *
+     * 담은 시나리오는 그대로다. 스텝의 `case_id` 는 버전을 넘어 같은 케이스라 바꿀 것이 없다(ARTEL-1018). 다음 저작부터
+     * 새 버전의 TC 와 지도를 본다.
+     */
+    suspend fun changeGameBuild(runId: Long, userId: Long, request: TestRunGameBuildRequest): TestRunResponse? {
+        val run = accessible(runId, userId) ?: return null
+        // 폴더는 한 빌드 버전 안에만 있다(ARTEL-1049). 폴더로 옮기면 그 폴더의 버전을 따르고, 버전만 바꾸면 폴더에서 나온다.
+        val folder = request.folderId?.let { folderService.folderOf(run.projectId, it) }
+        val build = if (folder != null) {
+            folder.gameBuildId?.let { gameBuildRepository.findById(it) }
+        } else {
+            request.gameBuildId?.let { versionBuild(run.projectId, it) }
+        }
+        return runRepository.save(run.copy(gameBuildId = build?.id, folderId = folder?.id)).toResponse(build)
+    }
+
+    /** 이 프로젝트의 게임 빌드. 없거나 다른 프로젝트 것이면 404, editor 면 409 다. */
+    private suspend fun versionBuild(projectId: Long, gameBuildId: String): GameBuildEntity {
+        val build = gameBuildId.toLongOrNull()?.let { gameBuildRepository.findById(it) }
+            ?.takeIf { it.projectId == projectId }
+            ?: throw NotFoundException("빌드를 찾을 수 없습니다.")
+        if (build.isEditor) {
+            throw ConflictException("editor 는 게임 버전이 아니라서 TR 의 버전으로 고를 수 없습니다.", code = "EDITOR_BUILD_IS_NOT_A_VERSION")
+        }
+        return build
     }
 
     suspend fun get(runId: Long, userId: Long): TestRunResponse? =
@@ -244,6 +304,7 @@ class TestRunService(
             description = description,
             createdAt = createdAt ?: Instant.EPOCH,
             gameBuild = build?.toTestRunGameBuild(),
+            folderId = folderId?.toString(),
         )
 }
 

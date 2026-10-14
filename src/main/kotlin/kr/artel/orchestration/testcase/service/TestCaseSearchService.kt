@@ -35,24 +35,29 @@ class TestCaseSearchService(
     /**
      * [projectId] 안에서 [query]에 의미가 가까운 케이스를 찾는다. [scene]으로 화면을 좁힐 수 있다.
      * 결과가 비는 것은 정상이다(백필 미완료·필터로 전부 걸러짐).
+     *
+     * [onlyIds] 가 있으면 그 케이스만 돌려준다(ARTEL-1048, TR 이 고른 빌드 버전). 거르기는 가장 가까운 것을 자른
+     * **뒤에** 하면 limit 보다 적게 나오므로, 그때는 상한만큼 넉넉히 가져와 거른 뒤 자른다.
      */
     suspend fun search(
         projectId: Long,
         query: String,
         scene: String?,
         limit: Int?,
+        onlyIds: Set<Long>? = null,
     ): TestCaseSearchResponse {
         val model = embeddingProperties.model
         val resolvedLimit = resolveLimit(limit)
 
-        val rows = searchRepository.searchNearest(
+        val nearest = searchRepository.searchNearest(
             projectId = projectId,
             queryVector = embedQuery(query, model),
             kind = CONTENT_KIND,
             model = model,
             scene = scene,
-            limit = resolvedLimit,
+            limit = if (onlyIds == null) resolvedLimit else searchProperties.maxLimit,
         )
+        val rows = if (onlyIds == null) nearest else nearest.filter { it.testCaseId in onlyIds }.take(resolvedLimit)
 
         logger.info(
             "TestCase 검색: project={}, 검색어 {}자, scene={}, limit={}, 결과={}건",

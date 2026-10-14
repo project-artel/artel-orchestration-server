@@ -47,6 +47,24 @@ class ScenarioCoverageAuditTest {
         assertThat(findings.rejected).isTrue()
     }
 
+    /**
+     * 런이 빌드 버전을 따르면 저작에 보낸 케이스만 판정을 요구한다(ARTEL-1048). 보내지 않은 다른 버전의 케이스는
+     * "검토 안 함" 이 아니고, 시나리오가 그것을 가리켜도 있는 케이스라 유령이 아니다.
+     */
+    @Test
+    fun `판정 요구는 보낸 범위로 하고 유령은 프로젝트 전체로 가린다`() {
+        val findings = ScenarioCoverageAudit.audit(
+            project,
+            ReviewedCases(included = listOf(1L, 2L), excluded = listOf(3L)),
+            listOf(scenario(1L, 2L, 5L)),
+            reviewScope = setOf(1L, 2L, 3L),
+        )
+
+        assertThat(findings.unreviewed).isEmpty()
+        assertThat(findings.ghost).isEmpty()
+        assertThat(findings.rejected).isFalse()
+    }
+
     @Test
     fun `관련 있다고 판정해 놓고 안 담으면 막는다`() {
         // 실측 65 대 66이 이 모양이었다. 시나리오는 완성돼 보이고 아무 데도 표시가 없다.

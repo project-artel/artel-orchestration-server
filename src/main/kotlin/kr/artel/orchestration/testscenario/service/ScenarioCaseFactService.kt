@@ -121,6 +121,8 @@ class ScenarioCaseFactService(
     )
 
     private suspend fun contentMapIdOf(projectId: Long, appUserId: Long): Long? {
+        // TR 이 고른 TC 버전의 지도만 본다(ARTEL-1048). 버전이 없는 TR 이면 예전처럼 최신 빌드다.
+        authoringGameBuildId()?.let { return contentMapRepository.findByGameBuildId(it)?.id }
         val build = buildRepository.findAllForMember(projectId, appUserId).firstOrNull() ?: return null
         return contentMapRepository.findByGameBuildId(build.id!!)?.id
     }
