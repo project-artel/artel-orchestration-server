@@ -61,6 +61,8 @@ data class TestCaseResponse(
      * folder 다(ARTEL-1023) — 전부는 folder 항목 API 가 낸다.
      */
     val folderId: String?,
+    /** `MAP`(지도가 낸 케이스, 자동 생성) 또는 `MANUAL`(사용자 생성)(ARTEL-1031). */
+    val origin: String,
 )
 
 data class TestCaseListResponse(val items: List<TestCaseResponse>)
@@ -89,5 +91,6 @@ data class TestCaseDetailResponse(
     val lastVerifiedBuildId: String?,
     val createdAt: Instant,
     val folderId: String?,
+    val origin: String,
     val evidenceGaps: List<String>,
 )

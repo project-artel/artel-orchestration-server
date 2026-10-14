@@ -95,7 +95,7 @@ class ContentMapTestCaseGenerationIntegrationTest {
         assertThat(response.status).isEqualTo(200)
         val body = response.body
         assertThat(body.fieldNames().asSequence().toSet())
-            .containsExactlyInAnyOrder("created", "updated", "deleted", "broken", "regression")
+            .containsExactlyInAnyOrder("created", "updated", "deleted", "broken", "regression", "carriedOver")
         assertThat(body["created"].asInt()).isPositive()
         // build 별 케이스는 버전 목록이 보인다(ARTEL-1023). folder 는 사용자가 모으는 곳이다.
         assertThat(folders.findAll().toList().filter { it.projectId == projectId }).isEmpty()

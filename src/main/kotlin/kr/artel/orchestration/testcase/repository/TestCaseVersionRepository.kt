@@ -107,6 +107,32 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
     )
     fun countByBuild(projectId: Long): Flow<VersionStatusCount>
 
+    /** 같은 프로젝트에서 [gameBuildId] 바로 앞의 build. 없으면 null(ARTEL-1031). */
+    @Query(
+        """
+        SELECT prev.id FROM game_build prev
+          JOIN game_build cur ON cur.id = :gameBuildId AND prev.project_id = cur.project_id
+         WHERE (prev.created_at, prev.id) < (cur.created_at, cur.id)
+         ORDER BY prev.created_at DESC, prev.id DESC
+         LIMIT 1
+        """
+    )
+    suspend fun findPreviousBuildId(gameBuildId: Long): Long?
+
+    /** [fromBuildId] 에 몫이 있고 [toBuildId] 에는 없는 사용자 생성 케이스. 다음 버전으로 이어 넣을 것들이다. */
+    @Query(
+        """
+        SELECT v.test_case_id
+          FROM test_case_version v
+          JOIN test_case t ON t.id = v.test_case_id
+         WHERE v.game_build_id = :fromBuildId
+           AND t.metadata ->> 'origin' IS DISTINCT FROM 'content-map'
+           AND NOT EXISTS (SELECT 1 FROM test_case_version w WHERE w.test_case_id = v.test_case_id AND w.game_build_id = :toBuildId)
+         ORDER BY v.test_case_id
+        """
+    )
+    fun findManualCaseIdsToCarry(fromBuildId: Long, toBuildId: Long): Flow<Long>
+
     /** 어느 버전이든 몫이 하나라도 있는 케이스. 나머지가 "버전 없음" 이다(ARTEL-1023). */
     @Query(
         """
