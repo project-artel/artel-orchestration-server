@@ -539,18 +539,7 @@ class TestScenarioAgentService(
     private suspend fun handleUncoveredRequest(sessionKey: String, session: AgentSession, node: JsonNode) {
         val correlationId = node.path("messageId").asText(null)
         try {
-            // 보낸 목록과 같은 집합을 센다 — TR 이 고른 TC 버전에 든 것만(ARTEL-1048).
-            val inVersion = session.version.gameBuildId?.let { authoringVersions.caseIds(it) }
-            val ids = testCaseRepository.findUncoveredIdsByProjectId(session.projectId).toList()
-                .filter { inVersion == null || it in inVersion }
-            val scenes = if (inVersion == null) {
-                testCaseRepository.findScenesOfUncovered(session.projectId).toList()
-            } else {
-                testCaseRepository.findAllById(ids).toList()
-                    .groupingBy { ScenarioStateReader.sceneOf(it) ?: it.scene }.eachCount()
-                    .map { (scene, count) -> UncoveredScene(scene, count.toLong()) }
-                    .sortedByDescending { it.count }
-            }
+            val (ids, scenes) = uncovered(session)
             // 성공도 남긴다. 이 경로가 조용하면 "도구를 안 불렀다"와 "불렀는지 알 수 없다"가
             // 로그에서 같아 보이고, 에이전트가 숫자를 지어냈는지 확인할 방법이 사라진다.
             logger.info(
@@ -1000,9 +989,25 @@ class TestScenarioAgentService(
      *
      * 전부 덮였으면 아무 말도 하지 않는다. "남은 것 없음"은 매번 붙으면 소음이 된다.
      */
+    /**
+     * 미커버 케이스와 화면별 수. 보낸 목록과 같은 집합을 센다 — TR 이 고른 빌드 버전에 든 것만(ARTEL-1048). 버전 없는
+     * 런이면 프로젝트 전체다.
+     */
+    private suspend fun uncovered(session: AgentSession): Pair<List<Long>, List<UncoveredScene>> {
+        val inVersion = session.version.gameBuildId?.let { authoringVersions.caseIds(it) }
+        val ids = testCaseRepository.findUncoveredIdsByProjectId(session.projectId).toList()
+            .filter { inVersion == null || it in inVersion }
+        if (inVersion == null) return ids to testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+        val scenes = testCaseRepository.findAllById(ids).toList()
+            .groupingBy { ScenarioStateReader.sceneOf(it) ?: it.scene }.eachCount()
+            .map { (scene, count) -> UncoveredScene(scene, count.toLong()) }
+            .sortedByDescending { it.count }
+        return ids to scenes
+    }
+
     private suspend fun recommendRemaining(sessionKey: String, session: AgentSession) {
         val uncovered = try {
-            testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+            uncovered(session).second
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1524,10 +1529,9 @@ class TestScenarioAgentService(
             }
             val category = node.path("category").takeIf { it.isTextual }?.asText()
             val limit = node.path("limit").takeIf { it.isNumber }?.asInt()
+            // TR 이 고른 빌드 버전에 든 것만 돌려준다(ARTEL-1048). 다른 버전에만 있는 케이스를 담으면 커버리지 기준에 없다.
             val inVersion = session.version.gameBuildId?.let { authoringVersions.caseIds(it) }
-            val found = testCaseSearchService.search(session.projectId, query, category, limit)
-            // TR 이 고른 TC 버전에 든 것만 돌려준다(ARTEL-1048). 다른 버전에만 있는 케이스를 담으면 커버리지 기준에 없다.
-            val response = if (inVersion == null) found else found.copy(results = found.results.filter { it.id.toLongOrNull() in inVersion })
+            val response = testCaseSearchService.search(session.projectId, query, category, limit, inVersion)
             emitFrame(
                 sessionKey,
                 session,

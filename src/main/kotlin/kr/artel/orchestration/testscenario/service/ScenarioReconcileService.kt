@@ -292,8 +292,13 @@ class ScenarioReconcileService(
         }
         // 검수는 저장 **전에** 끝난다. 통과하지 못한 결과는 한 줄도 들어가지 않는다 — 절반만 저장하면
         // "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어 보인다).
+        val projectCaseIds = testCaseRepository.findIdsByProjectId(projectId).toSet()
         val findings = ScenarioCoverageAudit.audit(
-            projectCaseIds = testCaseRepository.findIdsByProjectId(projectId).toSet(),
+            projectCaseIds = projectCaseIds,
+            // 판정을 요구하는 것은 저작에 보낸 케이스뿐이다 — 런이 빌드 버전을 따르면 그 버전에 든 것(ARTEL-1048).
+            // 프로젝트 전체로 세면 보내지도 않은 다른 버전의 케이스가 "검토 안 함" 이 되어 저장이 늘 막힌다.
+            reviewScope = authoringGameBuildId()?.let { build -> projectCaseIds intersect authoringVersions.caseIds(build) }
+                ?: projectCaseIds,
             reviewed = if (droppedSolo.isEmpty()) reviewed else reviewed?.let {
                 ReviewedCases(
                     included = it.included.filterNot(droppedSolo::contains),

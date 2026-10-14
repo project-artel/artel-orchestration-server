@@ -3,13 +3,17 @@ package kr.artel.orchestration.testscenario
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.game.entity.GameBuildEntity
+import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.support.testAppUser
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
@@ -44,6 +48,8 @@ class ScenarioCoverageIntegrationTest {
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
+    @Autowired private lateinit var gameBuildRepository: GameBuildRepository
+    @Autowired private lateinit var versionRepository: TestCaseVersionRepository
 
     // 제목을 케이스로 가른다 — 같은 런에서 같은 제목은 **갈아끼우는 것**이 저장 계약이라
     // (재작성 턴의 중복 저장을 막는 규칙, 계측 2026-09-08), 픽스처끼리 제목이 겹치면 안 된다.
@@ -180,6 +186,29 @@ class ScenarioCoverageIntegrationTest {
     }
 
     /** 이 프로젝트의 참여자 id. fixture가 만든 사용자를 되찾는다. */
+    /**
+     * 빌드 버전을 따르는 런은 그 버전에 든 케이스만 저작에 보내므로, 판정도 그만큼만 요구한다(ARTEL-1048). 프로젝트
+     * 전체로 세면 보내지도 않은 케이스(버전 없는 사용자 TC · 다른 버전에만 있는 TC)가 "검토 안 함" 이 되어 저장이 늘
+     * 막혔다. 버전 없는 런은 예전처럼 프로젝트 전체다.
+     */
+    @Test
+    fun `빌드 버전을 따르는 런은 그 버전에 든 케이스만 판정을 요구한다`(): Unit = runBlocking {
+        val (projectId, runId, cases) = fixture(3)
+        val now = Instant.now()
+        val build = gameBuildRepository.save(GameBuildEntity(projectId = projectId, version = "1.0.0", createdAt = now, updatedAt = now))
+        cases.take(2).forEach { id -> versionRepository.save(TestCaseVersionEntity.snapshotOf(testCaseRepository.findById(id)!!, build.id!!)) }
+        val versioned = runRepository.save(runRepository.findById(runId)!!.copy(gameBuildId = build.id))
+        val review = ReviewedCases(included = listOf(cases[0]), excluded = listOf(cases[1]))
+
+        val inVersion = reconcileService.reconcile(versioned.id!!, projectId, memberOf(projectId), listOf(scenario(cases[0])), review)
+        assertThat(inVersion.findings.unreviewed).isEmpty()
+
+        val unversioned = runRepository.save(TestRunEntity(projectId = projectId, name = "버전 없는 런")).id!!
+        val wholeProject = reconcileService.reconcile(unversioned, projectId, memberOf(projectId), listOf(scenario(cases[0])), review)
+        assertThat(wholeProject.findings.unreviewed).containsExactly(cases[2])
+        assertThat(wholeProject.rejected).isTrue()
+    }
+
     private suspend fun memberOf(projectId: Long): Long =
         projectMemberRepository.findByProjectId(projectId).toList().first().appUserId
 

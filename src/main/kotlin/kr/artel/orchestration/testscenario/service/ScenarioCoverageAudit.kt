@@ -113,7 +113,11 @@ object ScenarioCoverageAudit {
     }
 
     /**
-     * @param projectCaseIds 이 프로젝트의 TestCase id 전량. 1차 검수의 기준이자 유령 판별의 기준이다.
+     * @param projectCaseIds 이 프로젝트의 TestCase id 전량. 유령 판별의 기준이다.
+     * @param reviewScope 판정해야 할 케이스. 1차 검수("검토 안 함")의 기준이다. 저작에 보낸 목록과 같은 집합이어야 한다 —
+     *   런이 빌드 버전을 따르면 그 버전에 든 케이스뿐이고(ARTEL-1048), 아니면 [projectCaseIds] 와 같다. 둘을 가르는
+     *   이유: 다른 버전에만 있는 케이스는 보내지 않았으니 판정을 요구하면 안 되지만, 시나리오가 그것을 가리키는 것은
+     *   유령이 아니다(있는 케이스다).
      * @param reviewed Agent의 전 건 판정. **null이면 검사를 통째로 건너뛴다** — 이 필드를 보내지 않는
      *   구버전 Agent와 함께 배포되기 위해서다. 검사를 켜고 끄는 스위치가 이 null 하나뿐이라
      *   롤백이 Agent 재배포만으로 끝난다.
@@ -122,6 +126,7 @@ object ScenarioCoverageAudit {
         projectCaseIds: Set<Long>,
         reviewed: ReviewedCases?,
         scenarios: List<ScenarioResult>,
+        reviewScope: Set<Long> = projectCaseIds,
     ): Findings {
         val ungrounded = ungroundedSteps(scenarios)
         val unsourced = unsourcedSteps(scenarios)
@@ -134,7 +139,7 @@ object ScenarioCoverageAudit {
         return Findings(
             // 판정이 프로젝트 전량을 덮지 못한 부분. 있는 케이스만 따진다 — 판정에 남의 프로젝트
             // 번호가 섞여 있어도 그건 "검토 누락"이 아니라 유령이고, 그쪽은 담겼을 때만 문제 삼는다.
-            unreviewed = (projectCaseIds - judged).sorted(),
+            unreviewed = (reviewScope - judged).sorted(),
             missing = (declared - used).sorted(),
             ghost = (used - projectCaseIds).sorted(),
             excess = (used - declared).sorted(),
