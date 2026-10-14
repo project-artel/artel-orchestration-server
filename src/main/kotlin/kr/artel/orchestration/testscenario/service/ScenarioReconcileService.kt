@@ -4,6 +4,7 @@ import java.util.concurrent.ConcurrentHashMap
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.toSet
+import kotlinx.coroutines.withContext
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
@@ -46,6 +47,7 @@ import org.springframework.transaction.reactive.executeAndAwait
  */
 @Service
 class ScenarioReconcileService(
+    private val authoringVersions: AuthoringVersionResolver,
     // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
     private val conditions: CaseConditionReader,
 
@@ -123,6 +125,19 @@ class ScenarioReconcileService(
         scenarios: List<ScenarioResult>,
         reviewed: ReviewedCases? = null,
         save: Boolean = true,
+    ): ReconcileOutcome =
+        // 검수가 경로 · 기능을 비춰 볼 지도는 TR 이 고른 TC 버전의 것이다(ARTEL-1048).
+        withContext(authoringVersions.of(runId)) {
+            reconcileInVersion(runId, projectId, appUserId, scenarios, reviewed, save)
+        }
+
+    private suspend fun reconcileInVersion(
+        runId: Long,
+        projectId: Long,
+        appUserId: Long,
+        scenarios: List<ScenarioResult>,
+        reviewed: ReviewedCases?,
+        save: Boolean,
     ): ReconcileOutcome {
         // SAFETY: 빈 배열은 정상 턴 — DB 무변경(삽입도 삭제도 없음).
         if (scenarios.isEmpty()) {

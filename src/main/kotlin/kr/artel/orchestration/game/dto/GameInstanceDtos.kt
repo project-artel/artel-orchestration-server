@@ -36,7 +36,20 @@ data class GameInstanceResponse(
     val connected: Boolean,
     val lastConnectedAt: Instant?,
     val createdAt: Instant,
-    val updatedAt: Instant
+    val updatedAt: Instant,
+    /**
+     * 이 인스턴스가 마지막으로 보고한 빌드(ARTEL-1048). QA 를 시작하는 화면이 TR 의 TC 버전과 다른지 견주어 경고한다.
+     * 등록한 적이 없으면 null 이다.
+     */
+    val lastGameBuild: GameInstanceBuild? = null,
+)
+
+/** 인스턴스가 마지막으로 붙은 빌드. editor 면 [version] 은 editor 가 보고한 Player Settings 버전이다. */
+data class GameInstanceBuild(
+    val gameBuildId: String,
+    val version: String,
+    val label: String?,
+    val isEditor: Boolean,
 )
 
 /** 목록 응답 봉투. */

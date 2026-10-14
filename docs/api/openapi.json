@@ -618,6 +618,56 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/game-build": {
+      "put": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "changeGameBuild",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestRunGameBuildRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-cases/{caseId}": {
       "get": {
         "tags": [
@@ -6952,6 +7002,41 @@
           }
         }
       },
+      "TestRunLastQa": {
+        "required": [
+          "failed",
+          "passed",
+          "qaRunId",
+          "startedAt",
+          "status",
+          "total"
+        ],
+        "type": "object",
+        "properties": {
+          "qaRunId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "TestRunResponse": {
         "required": [
           "createdAt",
@@ -6979,6 +7064,13 @@
           },
           "gameBuild": {
             "$ref": "#/components/schemas/TestRunGameBuild"
+          },
+          "scenarioCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lastQaRun": {
+            "$ref": "#/components/schemas/TestRunLastQa"
           }
         }
       },
@@ -7027,6 +7119,14 @@
             "items": {
               "$ref": "#/components/schemas/RunScenarioItem"
             }
+          }
+        }
+      },
+      "TestRunGameBuildRequest": {
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
           }
         }
       },
@@ -8654,6 +8754,9 @@
         }
       },
       "TestRunCreateRequest": {
+        "required": [
+          "unversioned"
+        ],
         "type": "object",
         "properties": {
           "name": {
@@ -8661,6 +8764,12 @@
           },
           "description": {
             "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "unversioned": {
+            "type": "boolean"
           }
         }
       },
@@ -9692,6 +9801,28 @@
           }
         }
       },
+      "GameInstanceBuild": {
+        "required": [
+          "gameBuildId",
+          "isEditor",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
+          }
+        }
+      },
       "GameInstanceResponse": {
         "required": [
           "connected",
@@ -9733,6 +9864,9 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "lastGameBuild": {
+            "$ref": "#/components/schemas/GameInstanceBuild"
           }
         }
       },

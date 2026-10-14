@@ -2,9 +2,20 @@ package kr.artel.orchestration.testrun.dto
 
 import java.time.Instant
 
+/**
+ * @property gameBuildId 이 TR 이 따를 TC 버전(게임 빌드, ARTEL-1048). 주지 않으면 프로젝트의 최신 게임 빌드다.
+ * @property unversioned true 면 버전 없이 만든다. [gameBuildId] 와 함께 주지 않는다.
+ */
 data class TestRunCreateRequest(
     val name: String? = null,
     val description: String? = null,
+    val gameBuildId: String? = null,
+    val unversioned: Boolean = false,
+)
+
+/** TR 의 TC 버전을 바꾼다(ARTEL-1048). null 이면 버전 없음이다. */
+data class TestRunGameBuildRequest(
+    val gameBuildId: String? = null,
 )
 
 data class TestRunUpdateRequest(
@@ -34,6 +45,20 @@ data class TestRunResponse(
     val description: String?,
     val createdAt: Instant,
     val gameBuild: TestRunGameBuild? = null,
+    /** 담은 시나리오 수(ARTEL-1048). 목록에서만 채운다. */
+    val scenarioCount: Int? = null,
+    /** 마지막 QA 실행(ARTEL-1048). 돌린 적이 없으면 null 이다. 목록에서만 채운다. */
+    val lastQaRun: TestRunLastQa? = null,
+)
+
+/** TR 의 마지막 QA 실행 요약. [passed] · [failed] 는 그 실행의 시나리오 결과 수다. */
+data class TestRunLastQa(
+    val qaRunId: String,
+    val status: String,
+    val startedAt: Instant,
+    val passed: Int,
+    val failed: Int,
+    val total: Int,
 )
 
 data class TestRunListResponse(val items: List<TestRunResponse>)

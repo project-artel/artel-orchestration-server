@@ -108,7 +108,10 @@ class TestCaseService(
      *
      * 비참여자에겐 빈 목록 — 다른 조회와 같은 판단이다(존재 자체를 숨긴다).
      */
-    suspend fun getAuthoringCases(projectId: Long, userId: Long): List<AuthoringTestCase> {
+    /**
+     * [onlyIds] 가 있으면 그 케이스만 보낸다(ARTEL-1048) — TR 이 고른 TC 버전에 든 것. 없으면 프로젝트 전체다.
+     */
+    suspend fun getAuthoringCases(projectId: Long, userId: Long, onlyIds: Set<Long>? = null): List<AuthoringTestCase> {
         if (!projectAccessService.isMember(projectId, userId)) return emptyList()
         val changed = valuesChangedByCases(projectId)
         // **길은 우리가 찾지 않지만, 지도가 아는 것은 보낸다**(ARTEL-628).
@@ -130,6 +133,7 @@ class TestCaseService(
             // 없으므로 "없는 케이스 번호"로 걸려 저작이 통째로 막힌다 — 실측(런 268)에서 14건.
             // 보내는 것과 세는 것이 같은 집합이어야 한다.
             .filter { it.verificationStatus != "BROKEN" }
+            .filter { onlyIds == null || it.id in onlyIds }
             .map { case ->
             AuthoringTestCase(
                 id = case.id!!,

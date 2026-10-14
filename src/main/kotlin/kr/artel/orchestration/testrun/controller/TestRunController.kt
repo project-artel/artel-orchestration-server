@@ -14,6 +14,7 @@ import kr.artel.orchestration.testrun.dto.ScenarioImportRequest
 import kr.artel.orchestration.testrun.dto.ScenarioImportResponse
 import kr.artel.orchestration.testrun.dto.SetRunScenariosRequest
 import kr.artel.orchestration.testrun.dto.TestRunCreateRequest
+import kr.artel.orchestration.testrun.dto.TestRunGameBuildRequest
 import kr.artel.orchestration.testrun.dto.TestRunListResponse
 import kr.artel.orchestration.testrun.dto.TestRunResponse
 import kr.artel.orchestration.testrun.dto.TestRunUpdateRequest
@@ -75,6 +76,18 @@ class TestRunController(
         @CurrentUserId appUserId: Long
     ): ResponseEntity<TestRunResponse> =
         service.get(runId, appUserId)
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
+
+    /** TR 의 TC 버전을 바꾼다(ARTEL-1048). `gameBuildId` 가 null 이면 버전 없음. editor 면 409, 남의 빌드면 404. */
+    @PutMapping("/{runId}/game-build")
+    suspend fun changeGameBuild(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestBody request: TestRunGameBuildRequest,
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<TestRunResponse> =
+        service.changeGameBuild(runId, appUserId, request)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 

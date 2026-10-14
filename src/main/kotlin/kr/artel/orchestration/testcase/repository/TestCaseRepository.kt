@@ -483,6 +483,18 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     )
     suspend fun findEntrySceneName(projectId: Long): String?
 
+    /** [findEntrySceneName] 의 빌드 판(ARTEL-1048). TR 이 고른 TC 버전의 지도에서 입구를 읽는다. */
+    @Query(
+        """
+        SELECT s.name FROM scene s
+        JOIN content_map cm ON cm.id = s.content_map_id
+        WHERE s.is_entry AND cm.game_build_id = :gameBuildId
+        ORDER BY cm.id DESC
+        LIMIT 1
+        """
+    )
+    suspend fun findEntrySceneNameOfBuild(gameBuildId: Long): String?
+
     /**
      * **게임을 켜면 값이 무엇으로 시작하나**(ARTEL-665).
      *

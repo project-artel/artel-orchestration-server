@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
@@ -15,16 +16,23 @@ import kr.artel.orchestration.contentmap.ingest.ContentMapIngestService
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.game.entity.GameBuildEntity
+import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.project.FakeDocumentStorage
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.qa.entity.QaRunEntity
+import kr.artel.orchestration.qa.entity.QaTryEntity
+import kr.artel.orchestration.qa.repository.QaRunRepository
+import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
+import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
@@ -33,6 +41,9 @@ import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.entity.withDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+import kr.artel.orchestration.testscenario.service.AuthoringVersion
+import kr.artel.orchestration.testscenario.service.AuthoringVersionResolver
+import kr.artel.orchestration.testscenario.service.ScenarioCaseFactService
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -87,6 +98,12 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
     @Autowired private lateinit var versions: TestCaseVersionRepository
     @Autowired private lateinit var scenarios: TestScenarioRepository
     @Autowired private lateinit var runScenarios: TestRunScenarioRepository
+    @Autowired private lateinit var gameInstances: GameInstanceRepository
+    @Autowired private lateinit var qaRuns: QaRunRepository
+    @Autowired private lateinit var qaTries: QaTryRepository
+    @Autowired private lateinit var caseFactService: ScenarioCaseFactService
+    @Autowired private lateinit var authoringVersions: AuthoringVersionResolver
+    @Autowired private lateinit var testCaseService: TestCaseService
 
     @Test
     fun `같은 케이스는 버전을 넘어 한 행이고, 직전 버전에서 판정이 난 것만 새 버전에서 REGRESSION 으로 시작한다`(): Unit = runBlocking {
@@ -143,6 +160,104 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(run["gameBuild"]["version"].asText()).isEqualTo("1.1.0")
         val listed = call(token, HttpMethod.GET, "/api/projects/$projectId/test-runs").body["items"]
         assertThat(listed.map { it["gameBuild"]?.get("version")?.asText() }).containsExactly("1.1.0", null)
+    }
+
+    /** TR 은 만들 때 TC 버전을 고르고 나중에 바꿀 수 있다(ARTEL-1048). editor 와 남의 빌드는 고를 수 없다. */
+    @Test
+    fun `TR 은 고른 TC 버전을 따르고 나중에 바꿀 수 있다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val now = Instant.now()
+        val older = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.0.0", createdAt = now.minusSeconds(5), updatedAt = now))
+        val newer = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.1.0", createdAt = now, updatedAt = now))
+        val editor = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.1.0", isEditor = true, createdAt = now, updatedAt = now))
+        val foreign = gameBuilds.save(
+            GameBuildEntity(projectId = newProject(userId), version = "9.0.0", createdAt = now, updatedAt = now)
+        )
+        val runs = "/api/projects/$projectId/test-runs"
+
+        val picked = call(token, HttpMethod.POST, runs, """{"name":"앞 버전","gameBuildId":"${older.id}"}""")
+        assertThat(picked.body["gameBuild"]["version"].asText()).isEqualTo("1.0.0")
+        val unversioned = call(token, HttpMethod.POST, runs, """{"name":"버전 없음","unversioned":true}""")
+        assertThat(unversioned.body.path("gameBuild").isNullish()).isTrue()
+        assertThat(call(token, HttpMethod.POST, runs, """{"name":"x","gameBuildId":"${editor.id}"}""").status).isEqualTo(409)
+        assertThat(call(token, HttpMethod.POST, runs, """{"name":"x","gameBuildId":"${foreign.id}"}""").status).isEqualTo(404)
+
+        val runId = picked.body["id"].asText()
+        val moved = call(token, HttpMethod.PUT, "$runs/$runId/game-build", """{"gameBuildId":"${newer.id}"}""")
+        assertThat(moved.status).isEqualTo(200)
+        assertThat(moved.body["gameBuild"]["gameBuildId"].asText()).isEqualTo(newer.id.toString())
+        val cleared = call(token, HttpMethod.PUT, "$runs/$runId/game-build", """{"gameBuildId":null}""")
+        assertThat(cleared.body.path("gameBuild").isNullish()).isTrue()
+        assertThat(call(token, HttpMethod.PUT, "$runs/$runId/game-build", """{"gameBuildId":"${editor.id}"}""").status).isEqualTo(409)
+    }
+
+    /** 테스트 런 화면의 표가 쓰는 요약(ARTEL-1048): 담은 시나리오 수와 마지막 QA 실행의 결과 수. */
+    @Test
+    fun `TR 목록은 시나리오 수와 마지막 QA 결과를 싣는다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val runId = createRun(token, projectId, "요약")["id"].asLong()
+        val idle = createRun(token, projectId, "빈 런")["id"].asLong()
+        val draft = ScenarioDraft(title = "s", description = "", steps = listOf(ScenarioStep(action = "a")))
+        repeat(2) { position ->
+            val scenarioId = scenarios.save(TestScenarioEntity(projectId = projectId).withDraft(draft, objectMapper)).id!!
+            runScenarios.save(TestRunScenarioEntity(testRunId = runId, testScenarioId = scenarioId, position = position))
+        }
+        val now = Instant.now()
+        val instance = gameInstances.save(
+            GameInstanceEntity(projectId = projectId, name = "i", platform = "UNITY", sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now)
+        )!!
+        val scenarioIds = runScenarios.findByTestRunIdOrderByPosition(runId).toList().map { it.testScenarioId }
+        qaRuns.save(QaRunEntity(testRunId = runId, gameInstanceId = instance.id!!, startedBy = userId, status = "FAILED", startedAt = now.minusSeconds(60), completedAt = now.minusSeconds(30)))
+        val last = qaRuns.save(QaRunEntity(testRunId = runId, gameInstanceId = instance.id!!, startedBy = userId, status = "FAILED", startedAt = now, completedAt = now))
+        listOf("COMPLETED", "FAILED").zip(scenarioIds).forEach { (status, scenarioId) ->
+            qaTries.save(
+                QaTryEntity(
+                    testScenarioId = scenarioId, gameInstanceId = instance.id!!, qaRunId = last.id, startedBy = userId,
+                    status = status, runConfig = Json.of("{}"), startedAt = now, completedAt = now,
+                )
+            )
+        }
+
+        val items = call(token, HttpMethod.GET, "/api/projects/$projectId/test-runs").body["items"]
+            .associateBy { it["id"].asLong() }
+
+        assertThat(items[runId]!!["scenarioCount"].asInt()).isEqualTo(2)
+        val lastQa = items[runId]!!["lastQaRun"]
+        assertThat(lastQa["qaRunId"].asLong()).isEqualTo(last.id)
+        assertThat(listOf(lastQa["passed"].asInt(), lastQa["failed"].asInt(), lastQa["total"].asInt())).containsExactly(1, 1, 2)
+        assertThat(items[idle]!!["scenarioCount"].asInt()).isZero()
+        assertThat(items[idle]!!.path("lastQaRun").isNullish()).isTrue()
+    }
+
+    /**
+     * 저작은 TR 이 고른 TC 버전의 지도와 TC 만 본다(ARTEL-1048). 최신 빌드에 지도가 없어도, 맥락이 앞 버전을 가리키면 그
+     * 지도로 케이스를 비춘다. 저작에 보내는 목록도 그 버전에 든 것만이다.
+     */
+    @Test
+    fun `저작은 TR 이 고른 버전의 지도와 TC 만 본다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
+        generate(token, projectId, buildA.gameBuildId)
+        val now = Instant.now()
+        gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.1.0", createdAt = now, updatedAt = now))
+        val caseId = versions.findByGameBuildId(buildA.gameBuildId).toList().first().testCaseId
+        val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "다른 버전에만", expectedValue = "x"))
+
+        val latest = caseFactService.explain(projectId, userId, caseId)
+        assertThat(latest.note).contains("씬 명세가 아직 없어")
+        val inVersion = withContext(AuthoringVersion(buildA.gameBuildId)) { caseFactService.explain(projectId, userId, caseId) }
+        assertThat(inVersion.note ?: "").doesNotContain("씬 명세가 아직 없어")
+
+        val runId = call(token, HttpMethod.POST, "/api/projects/$projectId/test-runs", """{"name":"앞 버전","gameBuildId":"${buildA.gameBuildId}"}""")
+            .body["id"].asLong()
+        val version = authoringVersions.of(runId)
+        assertThat(version.gameBuildId).isEqualTo(buildA.gameBuildId)
+        val sent = testCaseService.getAuthoringCases(projectId, userId, authoringVersions.caseIds(buildA.gameBuildId)).map { it.id }
+        assertThat(sent).contains(caseId).doesNotContain(manual.id)
+        assertThat(testCaseService.getAuthoringCases(projectId, userId).map { it.id }).contains(manual.id)
     }
 
     /** editor 행은 게임 버전이 아니다(ARTEL-1014). 나중에 만들어졌어도 TR 의 버전과 트리에 들지 않는다. */

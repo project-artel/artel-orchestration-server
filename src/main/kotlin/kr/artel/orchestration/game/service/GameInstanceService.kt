@@ -1,12 +1,14 @@
 package kr.artel.orchestration.game.service
 
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.game.dto.GameInstanceBuild
 import kr.artel.orchestration.game.dto.GameInstanceListResponse
 import kr.artel.orchestration.game.dto.GameInstanceResponse
 import kr.artel.orchestration.game.dto.UpdateGameInstanceRequest
+import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.entity.GamePlatform
+import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.repository.ProjectRepository
@@ -32,15 +34,18 @@ import java.time.Instant
 class GameInstanceService(
     private val instanceRepository: GameInstanceRepository,
     private val projectRepository: ProjectRepository,
+    private val buildRepository: GameBuildRepository,
     private val sessionManager: SessionManager,
     private val clock: Clock
 ) {
     suspend fun list(userId: Long, projectId: Long): GameInstanceListResponse? {
         requireAccessibleProject(projectId, userId) ?: return null
-        val items = instanceRepository.findAllForMember(projectId, userId)
-            .map { it.toResponse() }
-            .toList()
-        return GameInstanceListResponse(items)
+        val instances = instanceRepository.findAllForMember(projectId, userId).toList()
+        val builds = instances.mapNotNull { it.lastGameBuildId }.toSet()
+            .takeIf { it.isNotEmpty() }
+            ?.let { ids -> buildRepository.findAllById(ids).toList().associateBy { requireNotNull(it.id) } }
+            .orEmpty()
+        return GameInstanceListResponse(instances.map { it.toResponse(it.lastGameBuildId?.let(builds::get)) })
     }
 
     suspend fun rename(
@@ -55,7 +60,7 @@ class GameInstanceService(
                 name = request.name?.trim()?.ifBlank { null } ?: instance.name,
                 updatedAt = Instant.now(clock)
             )
-        ).toResponse()
+        ).let { it.toResponse(it.lastGameBuildId?.let { id -> buildRepository.findById(id) }) }
     }
 
     /**
@@ -82,7 +87,7 @@ class GameInstanceService(
     private suspend fun requireAccessibleProject(projectId: Long, userId: Long): ProjectEntity? =
         projectRepository.findAccessibleById(projectId, userId)
 
-    private fun GameInstanceEntity.toResponse(): GameInstanceResponse {
+    private fun GameInstanceEntity.toResponse(build: GameBuildEntity?): GameInstanceResponse {
         val instanceId = requireNotNull(id)
         return GameInstanceResponse(
             id = instanceId.toString(),
@@ -92,7 +97,15 @@ class GameInstanceService(
             connected = sessionManager.hasSession(instanceId.toString()),
             lastConnectedAt = lastConnectedAt,
             createdAt = createdAt,
-            updatedAt = updatedAt
+            updatedAt = updatedAt,
+            lastGameBuild = build?.let {
+                GameInstanceBuild(
+                    gameBuildId = requireNotNull(it.id).toString(),
+                    version = it.version,
+                    label = it.label,
+                    isEditor = it.isEditor,
+                )
+            },
         )
     }
 

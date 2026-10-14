@@ -17,9 +17,11 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.withContext
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
+import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.service.TestCaseSearchService
@@ -88,6 +90,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 @Service
 class TestScenarioAgentService(
+    private val authoringVersions: AuthoringVersionResolver,
     @Value("\${artel.agent.base-url:http://localhost:8000}") private val agentBaseUrl: String,
     @Value("\${artel.agent.ws-base-url:ws://localhost:8000}") private val agentWsBaseUrl: String,
     @Value("\${artel.agent.model:}") private val configuredModel: String,
@@ -426,7 +429,9 @@ class TestScenarioAgentService(
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
         val locale = localeOf(appUserId)
-        val cases = testCaseList(projectId, appUserId)
+        // 저작은 TR 이 고른 TC 버전의 TC 와 지도만 본다(ARTEL-1048). 버전 없는 TR 이면 예전처럼 프로젝트 전체 · 최신 빌드다.
+        val version = authoringVersions.of(runId)
+        val cases = testCaseList(projectId, appUserId, version.gameBuildId)
         trace.record(
             runId, "판을 연다",
             "말: $userInput\n" +
@@ -438,7 +443,7 @@ class TestScenarioAgentService(
         // 케이스 88건이면 7,656칸과 11.2초가 통째로 빠진다. agent 는 흐름이 비면 스스로
         // 묶고 센다.
         val flows =
-            if (experiment.flows) computedFlows(runId, projectId, appUserId, cases.map { it.id })
+            if (experiment.flows) withContext(version) { computedFlows(runId, projectId, appUserId, cases.map { it.id }) }
             else emptyList<AuthoringFlow>().also {
                 logger.info("흐름을 안 세운다 — 모델이 스스로 묶는다 [projectId={}]", projectId)
                 trace.record(runId, "흐름 계산", "실험: 흐름을 안 세운다. 모델이 스스로 묶고 센다")
@@ -459,7 +464,10 @@ class TestScenarioAgentService(
             appUserId = appUserId,
             currentScenarios = currentScenarios,
             flows = flows,
-            entryScene = runCatching { testCaseRepository.findEntrySceneName(projectId) }
+            entryScene = runCatching {
+                version.gameBuildId?.let { testCaseRepository.findEntrySceneNameOfBuild(it) }
+                    ?: testCaseRepository.findEntrySceneName(projectId)
+            }
                 .onFailure { logger.warn("입구 씬 조회 실패 — 없이 보낸다: ${it.message}") }
                 .getOrNull(),
             // **흐름을 끄면 이 둘이 그 자리를 잇는다**(실험). 화면 간선은 받는 쪽이 접어 도달표로
@@ -475,7 +483,7 @@ class TestScenarioAgentService(
             .retrieve()
             .bodyToMono(AgentSessionOpenResponse::class.java)
             .awaitSingle()
-        openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply)
+        openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply, version)
         // 진행률의 분모. 흐름 하나가 시나리오 하나가 되는 것이 계산의 뜻이므로 그 수를 쓴다.
         sessions[sessionKey]?.expected = flows.size.takeIf { it > 0 }
     }
@@ -515,8 +523,8 @@ class TestScenarioAgentService(
      * [gameContext]와 같은 자리·같은 성격이다: 툴 호출이 아니라 첫 턴부터 쥐고 있는 배경 지식.
      * 비참여자면 빈 목록이라 기존과 동일하게 동작한다.
      */
-    private suspend fun testCaseList(projectId: Long, appUserId: Long): List<AuthoringTestCase> =
-        testCaseService.getAuthoringCases(projectId, appUserId)
+    private suspend fun testCaseList(projectId: Long, appUserId: Long, gameBuildId: Long?): List<AuthoringTestCase> =
+        testCaseService.getAuthoringCases(projectId, appUserId, gameBuildId?.let { authoringVersions.caseIds(it) })
 
     /**
      * 미커버 조회 프레임에 답한다(ARTEL-403).
@@ -531,8 +539,18 @@ class TestScenarioAgentService(
     private suspend fun handleUncoveredRequest(sessionKey: String, session: AgentSession, node: JsonNode) {
         val correlationId = node.path("messageId").asText(null)
         try {
+            // 보낸 목록과 같은 집합을 센다 — TR 이 고른 TC 버전에 든 것만(ARTEL-1048).
+            val inVersion = session.version.gameBuildId?.let { authoringVersions.caseIds(it) }
             val ids = testCaseRepository.findUncoveredIdsByProjectId(session.projectId).toList()
-            val scenes = testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+                .filter { inVersion == null || it in inVersion }
+            val scenes = if (inVersion == null) {
+                testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+            } else {
+                testCaseRepository.findAllById(ids).toList()
+                    .groupingBy { ScenarioStateReader.sceneOf(it) ?: it.scene }.eachCount()
+                    .map { (scene, count) -> UncoveredScene(scene, count.toLong()) }
+                    .sortedByDescending { it.count }
+            }
             // 성공도 남긴다. 이 경로가 조용하면 "도구를 안 불렀다"와 "불렀는지 알 수 없다"가
             // 로그에서 같아 보이고, 에이전트가 숫자를 지어냈는지 확인할 방법이 사라진다.
             logger.info(
@@ -1317,9 +1335,10 @@ class TestScenarioAgentService(
         appUserId: Long,
         agentSessionId: String,
         autoApply: Boolean,
+        version: AuthoringVersion,
     ) {
         val outbound = Sinks.many().unicast().onBackpressureBuffer<String>()
-        val session = AgentSession(outbound, runId, projectId, appUserId, agentSessionId, autoApply)
+        val session = AgentSession(outbound, runId, projectId, appUserId, agentSessionId, autoApply, version)
         sessions[sessionKey] = session
 
         val uri = URI.create("$agentWsBaseUrl/sessions/$agentSessionId")
@@ -1380,7 +1399,7 @@ class TestScenarioAgentService(
                 // 도구 프레임은 "멎지 않았다"의 첫 증거다(ARTEL-419). 턴을 보낸 뒤 여기까지는
                 // 오케스트레이션이 아무것도 보지 못하므로, 이 한 줄이 침묵과 진행을 가른다.
                 progress(sessionKey, AuthoringStage.LOOKING_UP_CASES)
-                scope.launch { handleUncoveredRequest(sessionKey, session, node) }
+                scope.launch(session.version) { handleUncoveredRequest(sessionKey, session, node) }
                 return
             }
             if (node.path("type").asText() == "explain_case") {
@@ -1389,7 +1408,7 @@ class TestScenarioAgentService(
                     return
                 }
                 progress(sessionKey, AuthoringStage.READING_CASE)
-                scope.launch { handleExplainCaseRequest(sessionKey, session, node) }
+                scope.launch(session.version) { handleExplainCaseRequest(sessionKey, session, node) }
                 return
             }
             if (node.path("type").asText() == "find_path") {
@@ -1398,7 +1417,7 @@ class TestScenarioAgentService(
                     return
                 }
                 progress(sessionKey, AuthoringStage.FINDING_PATH)
-                scope.launch { handleFindPathRequest(sessionKey, session, node) }
+                scope.launch(session.version) { handleFindPathRequest(sessionKey, session, node) }
                 return
             }
             // Agent 가 알려 주는 단계(ARTEL-487). **모르는 값은 버린다** — 단계는 알리는 것이지
@@ -1432,7 +1451,7 @@ class TestScenarioAgentService(
                 }
                 progress(sessionKey, AuthoringStage.LOOKING_UP_CASES)
                 // 검색은 임베딩(Agent /embed) 호출을 동반하는 suspend라 코루틴으로 넘긴다.
-                scope.launch { handleCaseSearch(sessionKey, session, node) }
+                scope.launch(session.version) { handleCaseSearch(sessionKey, session, node) }
                 return
             }
 
@@ -1505,7 +1524,10 @@ class TestScenarioAgentService(
             }
             val category = node.path("category").takeIf { it.isTextual }?.asText()
             val limit = node.path("limit").takeIf { it.isNumber }?.asInt()
-            val response = testCaseSearchService.search(session.projectId, query, category, limit)
+            val inVersion = session.version.gameBuildId?.let { authoringVersions.caseIds(it) }
+            val found = testCaseSearchService.search(session.projectId, query, category, limit)
+            // TR 이 고른 TC 버전에 든 것만 돌려준다(ARTEL-1048). 다른 버전에만 있는 케이스를 담으면 커버리지 기준에 없다.
+            val response = if (inVersion == null) found else found.copy(results = found.results.filter { it.id.toLongOrNull() in inVersion })
             emitFrame(
                 sessionKey,
                 session,
@@ -1695,6 +1717,8 @@ class TestScenarioAgentService(
         val appUserId: Long,
         val agentSessionId: String,
         @Volatile var autoApply: Boolean,
+        /** 이 TR 이 고른 TC 버전(ARTEL-1048). 도구 처리 코루틴이 이 맥락에서 돈다. */
+        val version: AuthoringVersion,
         /**
          * WS 송신 직렬화용 잠금.
          *
