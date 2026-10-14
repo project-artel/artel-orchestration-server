@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.entity.ContentMapMode
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.gamenote.service.GameNoteService
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.knowledge.service.KnowledgeCitationService
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
@@ -576,6 +577,7 @@ class QaTryService(
     private val readings: QaReadingsService,
     private val logService: QaLogService,
     private val runStatusNotifier: QaRunStatusNotifier,
+    private val gameNoteService: GameNoteService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -622,7 +624,8 @@ class QaTryService(
             promptVersion = settings.promptVersion,
             reasoning = settings.reasoning,
             arch = settings.arch,
-            llmKey = runKey.llmKey
+            llmKey = runKey.llmKey,
+            gameNotes = latestGameNotes(instance.projectId)
         )
 
         return try {
@@ -729,7 +732,8 @@ class QaTryService(
             promptVersion = settings.promptVersion,
             reasoning = settings.reasoning,
             arch = settings.arch,
-            llmKey = runKey.llmKey
+            llmKey = runKey.llmKey,
+            gameNotes = latestGameNotes(instance.projectId)
         )
 
         return try {
@@ -759,6 +763,15 @@ class QaTryService(
             )
         }
     }
+
+    /**
+     * 세션을 열기 직전에 읽은 최신 노트다(ARTEL-1061). 세션 개설 본문으로 한 번만 보내므로, 런이 도는 동안 저장한
+     * 버전은 다음 런부터 쓰인다.
+     */
+    private suspend fun latestGameNotes(projectId: Long): QaSessionGameNotes? =
+        gameNoteService.latestForRun(projectId)?.let { note ->
+            QaSessionGameNotes(version = note.version, body = note.body, genres = note.genreModules())
+        }
 
     private suspend fun failRun(started: QaRunStarting) {
         val now = Instant.now(clock)

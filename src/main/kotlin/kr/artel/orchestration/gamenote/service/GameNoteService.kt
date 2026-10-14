@@ -62,6 +62,15 @@ class GameNoteService(
         return saved.toResponse()
     }
 
+    /**
+     * 런 시작이 agent-server 에 실어 보낼 최신 버전. 없으면 null 이다.
+     *
+     * 접근 확인을 하지 않는다. 부르는 쪽(`QaTryService`)이 이미 그 프로젝트의 게임 인스턴스로 런을 열 수 있는지
+     * 확인했다.
+     */
+    suspend fun latestForRun(projectId: Long): ProjectGameNoteEntity? =
+        gameNoteRepository.findLatest(projectId)
+
     /** PoC 의 `save` 와 같다. 줄바꿈을 LF 로 맞추고 앞뒤 공백을 지운다. */
     private fun normalizeBody(body: String): String =
         body.replace("\r\n", "\n").trim()

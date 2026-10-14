@@ -100,6 +100,8 @@ Per-project notes a game's makers write for the agent-server planner, plus the g
 
 Any project member may read and save, as with `PATCH /api/projects/{projectId}`; anyone else gets 404. `PUT` normalizes `\r\n` to `\n`, trims the body, and stores `genres` in the order listed above, whatever order they were sent in. When the result equals the latest body and genre set, nothing is saved and the latest is returned unchanged. `baseVersion` must be the `version` the editor started from (0 for none): otherwise, or when another save takes the same version first, `PUT` answers 409 `game_notes_conflict`. A body over 20000 characters, an unknown or repeated genre, or a missing field is 400 `invalid_request` with `fields`.
 
+`POST /api/qa-runs` and `POST /api/qa-tries` read the latest version when they open the agent-server session and send it in the session-open body as `"game_notes": {"version": ..., "body": ..., "genres": [...]}`, or `"game_notes": null` when the project has none.
+
 ## Verification
 
 ```bash

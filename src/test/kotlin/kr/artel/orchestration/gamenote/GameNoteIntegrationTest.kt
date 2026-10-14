@@ -11,6 +11,8 @@ import kr.artel.orchestration.auth.config.AuthProperties
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.JwtService
+import kr.artel.orchestration.game.entity.GameInstanceEntity
+import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.gamenote.entity.GenreModule
 import kr.artel.orchestration.gamenote.repository.ProjectGameNoteRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
@@ -18,28 +20,73 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.qa.service.QaAgentEnvelope
+import kr.artel.orchestration.qa.service.QaAgentPort
+import kr.artel.orchestration.qa.service.QaAgentSession
+import kr.artel.orchestration.qa.service.QaAgentSessionContext
+import kr.artel.orchestration.qa.service.QaSessionGameNotes
+import kr.artel.orchestration.sdk.service.SessionManager
+import kr.artel.orchestration.support.deleteQaRuns
 import kr.artel.orchestration.support.testAppUser
+import kr.artel.orchestration.testrun.entity.TestRunEntity
+import kr.artel.orchestration.testrun.repository.TestRunRepository
+import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import kr.artel.orchestration.testrun.service.TestRunService
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
+import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.test.web.server.LocalServerPort
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Primary
 import org.springframework.http.HttpMethod
 import org.springframework.http.MediaType
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Mono
 import java.time.Instant
+import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * 프로젝트별 게임 노트(ARTEL-1061): `GET` · `PUT /api/projects/{projectId}/game-notes`.
+ * 프로젝트별 게임 노트(ARTEL-1061): `GET` · `PUT /api/projects/{projectId}/game-notes` 와 런 시작 때 agent-server
+ * 세션 개설로 가는 `game_notes`.
+ *
+ * agent-server 는 세션 개설 컨텍스트를 받아 두는 [RecordingAgentPort] 다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class GameNoteIntegrationTest {
+
+    class RecordingAgentPort : QaAgentPort {
+        val contexts: MutableList<QaAgentSessionContext> = CopyOnWriteArrayList()
+
+        override suspend fun createSession(
+            context: QaAgentSessionContext,
+            onMessage: suspend (QaAgentEnvelope) -> Unit,
+            onDisconnect: suspend () -> Unit
+        ): QaAgentSession {
+            contexts += context
+            return QaAgentSession("game-note-session-${contexts.size}")
+        }
+
+        override suspend fun send(sessionId: String, envelope: QaAgentEnvelope) = Unit
+
+        override suspend fun close(sessionId: String) = Unit
+    }
+
+    @TestConfiguration
+    class Fakes {
+        @Bean @Primary fun recordingAgentPort() = RecordingAgentPort()
+    }
 
     @LocalServerPort
     private val port: Int = 0
@@ -49,7 +96,14 @@ class GameNoteIntegrationTest {
     @Autowired private lateinit var authProperties: AuthProperties
     @Autowired private lateinit var databaseClient: DatabaseClient
     @Autowired private lateinit var objectMapper: ObjectMapper
+    @Autowired private lateinit var agentPort: RecordingAgentPort
+    @Autowired private lateinit var sessionManager: SessionManager
+    @Autowired private lateinit var testRunService: TestRunService
     @Autowired private lateinit var gameNoteRepository: ProjectGameNoteRepository
+    @Autowired private lateinit var testRunRepository: TestRunRepository
+    @Autowired private lateinit var runScenarioRepository: TestRunScenarioRepository
+    @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
+    @Autowired private lateinit var testScenarioRepository: TestScenarioRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
 
@@ -60,6 +114,7 @@ class GameNoteIntegrationTest {
 
     @BeforeEach
     fun seed(): Unit = runBlocking {
+        agentPort.contexts.clear()
         val (id, session) = signUp("game-note-owner")
         ownerId = id
         ownerSession = session
@@ -70,6 +125,11 @@ class GameNoteIntegrationTest {
 
     @AfterEach
     fun clean(): Unit = runBlocking {
+        databaseClient.deleteQaRuns()
+        runScenarioRepository.deleteAll()
+        gameInstanceRepository.deleteAll()
+        testRunRepository.deleteAll()
+        testScenarioRepository.deleteAll()
         projectMemberRepository.deleteAll()
         // `project_game_note` 는 프로젝트를 따라 지워진다(ON DELETE CASCADE).
         projectRepository.deleteAll()
@@ -244,6 +304,50 @@ class GameNoteIntegrationTest {
         assertThat(exchange(HttpMethod.PUT, notesPath(), """{"body":"노트","genres":[],"baseVersion":0}""").first).isEqualTo(404)
     }
 
+    // ------------------------------------------------------------ 런 시작
+
+    @Test
+    fun `a run on a project without notes sends no game notes`(): Unit = runBlocking {
+        val seed = seedRunnableInstance()
+
+        val (status, body) = exchange(
+            HttpMethod.POST, "/api/qa-runs", """{"testRunId":"${seed.testRunId}","gameInstanceId":"${seed.instanceId}"}"""
+        )
+
+        assertThat(status).describedAs(body).isEqualTo(201)
+        assertThat(agentPort.contexts.single().gameNotes).isNull()
+    }
+
+    @Test
+    fun `a run carries the latest notes at the moment it starts`(): Unit = runBlocking {
+        val seed = seedRunnableInstance()
+        call(HttpMethod.PUT, notesPath(), """{"body":"첫 노트","genres":["turn-based"],"baseVersion":0}""")
+        call(HttpMethod.PUT, notesPath(), """{"body":"고친 노트","genres":["ui-flow","turn-based"],"baseVersion":1}""")
+
+        val (status, body) = exchange(
+            HttpMethod.POST, "/api/qa-runs", """{"testRunId":"${seed.testRunId}","gameInstanceId":"${seed.instanceId}"}"""
+        )
+
+        assertThat(status).describedAs(body).isEqualTo(201)
+        assertThat(agentPort.contexts.single().gameNotes).isEqualTo(
+            QaSessionGameNotes(version = 2, body = "고친 노트", genres = listOf(GenreModule.UI_FLOW, GenreModule.TURN_BASED))
+        )
+    }
+
+    @Test
+    fun `a single scenario try carries the notes too`(): Unit = runBlocking {
+        val seed = seedRunnableInstance()
+        call(HttpMethod.PUT, notesPath(), """{"body":"노트","genres":["ui-flow"],"baseVersion":0}""")
+
+        val (status, body) = exchange(
+            HttpMethod.POST, "/api/qa-tries", """{"testScenarioId":"${seed.scenarioId}","gameInstanceId":"${seed.instanceId}"}"""
+        )
+
+        assertThat(status).describedAs(body).isEqualTo(201)
+        assertThat(agentPort.contexts.single().gameNotes)
+            .isEqualTo(QaSessionGameNotes(version = 1, body = "노트", genres = listOf(GenreModule.UI_FLOW)))
+    }
+
     // ------------------------------------------------------------ helpers
 
     private fun notesPath() = "/api/projects/$projectId/game-notes"
@@ -259,6 +363,24 @@ class GameNoteIntegrationTest {
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = userId, role = role.name, createdAt = Instant.now())
         )
+    }
+
+    private data class RunnableSeed(val testRunId: String, val scenarioId: String, val instanceId: String)
+
+    /** SDK 가 붙은 인스턴스와 시나리오 하나짜리 테스트 런. */
+    private suspend fun seedRunnableInstance(): RunnableSeed {
+        val now = Instant.now()
+        val instance = gameInstanceRepository.save(
+            GameInstanceEntity(
+                projectId = projectId, name = "inst", platform = "UNITY",
+                sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now
+            )
+        )
+        sessionManager.register(instance.id!!.toString(), Mockito.mock(WebSocketSession::class.java))
+        val testRun = testRunRepository.save(TestRunEntity(projectId = projectId, name = "런"))
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))
+        testRunService.setScenarios(testRun.id!!, ownerId, listOf(scenario.id!!))
+        return RunnableSeed(testRun.id!!.toString(), scenario.id!!.toString(), instance.id!!.toString())
     }
 
     private suspend fun countNotes(): Long =
