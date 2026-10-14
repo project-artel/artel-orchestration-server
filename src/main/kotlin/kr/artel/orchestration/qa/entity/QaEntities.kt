@@ -40,6 +40,8 @@ data class QaRunEntity(
      * 순서가 되고, 그 비용이 규칙을 지키는 비용보다 크다.
      */
     val label: String? = null,
+    /** 이 run 이 공용 key(`platform`)와 사용자 key(`user`) 중 무엇으로 돌았는지. 지출 화면이 둘을 가르는 근거다. */
+    @Column("key_source") val keySource: String = "platform",
     @Column("run_config") val runConfig: Json = Json.of("{}"),
     @Column("started_at") val startedAt: Instant,
     @Column("completed_at") val completedAt: Instant? = null,
@@ -89,6 +91,9 @@ data class QaTryEntity(
     @Column("steps_passed") val stepsPassed: Int? = null,
     @Column("cases_total") val casesTotal: Int? = null,
     @Column("cases_passed") val casesPassed: Int? = null,
+    // 이 try 가 공용 key(`platform`)와 사용자 key(`user`) 중 무엇으로 돌았는지. run 경로는 run 의 값과 같다.
+    // 단일 시나리오 경로는 qa_run 이 없어 이 열이 유일한 기록이다.
+    @Column("key_source") val keySource: String = "platform",
     @Column("started_at") val startedAt: Instant,
     @Column("completed_at") val completedAt: Instant? = null,
     @Column("created_at") val createdAt: Instant? = null,

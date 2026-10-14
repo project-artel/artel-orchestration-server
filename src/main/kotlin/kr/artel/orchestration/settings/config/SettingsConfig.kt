@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Configuration
     SecretsProperties::class,
     BedrockProperties::class,
     AnthropicProperties::class,
+    OpenAiProperties::class,
     AgentServerProperties::class
 )
 class SettingsConfig

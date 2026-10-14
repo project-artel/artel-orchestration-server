@@ -245,6 +245,11 @@ artel:
   anthropic:
     base-url: ${ARTEL_ANTHROPIC_BASE_URL:https://api.anthropic.com}
     check-timeout: ${ARTEL_ANTHROPIC_CHECK_TIMEOUT:PT15S}
+  # 사용자가 넣은 OpenAI API key 를 PUT /api/auth/me/llm-keys/openai 가 확인하는 곳(GET {base-url}/v1/models).
+  # 사용자 Claude API key 는 위 anthropic.base-url 로, 사용자 OpenRouter key 는 llm.openrouter-base-url 의 /key 로 확인한다.
+  openai:
+    base-url: ${ARTEL_OPENAI_BASE_URL:https://api.openai.com}
+    check-timeout: ${ARTEL_OPENAI_CHECK_TIMEOUT:PT15S}
   # 관리 화면에서 넣은 비밀(OpenRouter, Bedrock, Claude API key)을 AES-GCM 으로 잠그는 키의 원천. 32 글자 이상이고
   # 예시 문구를 담으면 기동하지 않는다. 비우면 관리 화면에서 key 를 저장할 수 없다. 바꾸면 저장된 값을 열 수 없어
   # key 를 다시 넣어야 한다.

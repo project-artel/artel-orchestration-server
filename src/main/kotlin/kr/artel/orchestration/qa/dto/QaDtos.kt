@@ -43,7 +43,13 @@ data class CreateQaTryRequest(
      * [knowledgeMode] 와 **따로** 여는 것이 요점이다. 한 스위치로 묶으면 지식이 도왔는지 지도가
      * 도왔는지를 가르는 2×2 가 성립하지 않는다.
      */
-    val contentMapMode: String? = null
+    val contentMapMode: String? = null,
+    /**
+     * 이 실행이 어느 key 로 도는지: `platform`(기본, 공용 key) 또는 `user`(사용자 key). `/api/qa-models` 항목의
+     * `keySource` 를 그대로 보낸다. `user` 인데 그 model 의 서비스 key 가 없으면 400 `llm_key_missing`, `platform`
+     * 인데 `gpt/` model 이면 400 `llm_key_missing` 이다.
+     */
+    val keySource: String? = null
 )
 
 /** 런(TR) 단위 QA 시작 요청(ARTEL-259). [testRunId]의 시나리오들을 순차 실행한다. 설정은 QaTry와 동일. */
@@ -89,7 +95,13 @@ data class CreateQaRunRequest(
      * 앞뒤 공백은 지우고, 그러고도 빈 문자열이면 null 로 읽는다 — 빈 이름은 묶음이 아니다.
      * 255자를 넘으면 400 이다.
      */
-    val label: String? = null
+    val label: String? = null,
+    /**
+     * 이 실행이 어느 key 로 도는지: `platform`(기본, 공용 key) 또는 `user`(사용자 key). `/api/qa-models` 항목의
+     * `keySource` 를 그대로 보낸다. `user` 인데 그 model 의 서비스 key 가 없으면 400 `llm_key_missing`, `platform`
+     * 인데 `gpt/` model 이면 400 `llm_key_missing` 이다.
+     */
+    val keySource: String? = null
 )
 
 data class QaReasoningRequest(
@@ -113,7 +125,26 @@ data class QaModelResponse(
     @JsonAlias("supports_vision") val supportsVision: Boolean,
     @JsonAlias("input_modalities") val inputModalities: List<String>,
     val multimodal: Boolean,
-    val reasoning: QaReasoningCapability?
+    val reasoning: QaReasoningCapability?,
+    /**
+     * 이 항목이 어느 key 로 도는지: `platform`(공용 key) 또는 `user`(사용자 key). 같은 model 이 두 항목으로 나올 수
+     * 있고, 실행 요청은 이 값을 `keySource` 로 그대로 보낸다.
+     */
+    val keySource: String = "platform",
+    /** 사용자 key 항목에서 그 key 의 서비스: `anthropic`, `openai`, `openrouter`. 공용 항목은 null 이다. */
+    val keyProvider: String? = null,
+    /** 사용자 key 항목에서 이 사용자가 그 서비스 key 를 넣었는지. 공용 항목은 null 이다. */
+    val keyRegistered: Boolean? = null,
+    /** 사용자 key 항목에서 넣은 key 의 `keyHint`. 넣지 않았거나 공용 항목이면 null 이다. */
+    val keyHint: String? = null,
+    /** `llm_model.pricing` 의 입력과 출력 단가. 열이 null 이면 null 이다. */
+    val pricing: QaModelPricing? = null
+)
+
+/** 백만 token 당 달러. `llm_model.pricing` 에 그 키가 없으면 그 칸이 null 이다. */
+data class QaModelPricing(
+    val inputPerMtok: Double?,
+    val outputPerMtok: Double?
 )
 
 data class QaTryResponse(

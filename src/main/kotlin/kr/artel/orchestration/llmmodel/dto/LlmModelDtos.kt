@@ -37,7 +37,10 @@ data class AdminLlmModelResponse(
     val id: String,
     val label: String,
     val provider: String,
-    /** `bedrock`(`bedrock/` 로 시작하는 id), `claude`(`claude/` 로 시작하는 id), 그 밖에는 `openrouter`. */
+    /**
+     * `bedrock`(`bedrock/` 로 시작하는 id), `claude`(`claude/` 로 시작하는 id), `gpt`(`gpt/` 로 시작하는 id),
+     * 그 밖에는 `openrouter`.
+     */
     val route: String,
     val enabled: Boolean,
     val supportsVision: Boolean,
