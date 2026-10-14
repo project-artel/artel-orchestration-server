@@ -26,9 +26,11 @@ import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseFolderRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -73,6 +75,7 @@ class ContentMapTestCaseGenerationIntegrationTest {
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
     @Autowired private lateinit var gameBuilds: GameBuildRepository
+    @Autowired private lateinit var versions: TestCaseVersionRepository
     @Autowired private lateinit var contentMaps: ContentMapRepository
     @Autowired private lateinit var documents: ContentMapDocumentRepository
     @Autowired private lateinit var storage: DocumentStorage
@@ -118,15 +121,15 @@ class ContentMapTestCaseGenerationIntegrationTest {
         // 같은 문서라 B 도 A 와 같은 수의 버전 몫을 새로 만든다.
         assertThat(generatedB["created"].asInt()).isEqualTo(generatedA["created"].asInt())
 
-        val againA = generate(token, projectId, buildA.gameBuildId).body
-        assertThat(againA["created"].asInt()).isZero()
-        assertThat(againA["deleted"].asInt()).isZero()
-        assertThat(againA["broken"].asInt()).isZero()
+        // 이미 만든 build 는 다시 만들지 않는다(ARTEL-1040). 다른 build 의 케이스도 그대로다.
+        val againA = generate(token, projectId, buildA.gameBuildId)
+        assertThat(againA.status).isEqualTo(409)
+        assertThat(againA.body["code"].asText()).isEqualTo("TEST_CASES_ALREADY_GENERATED")
         assertThat(rowsOf(projectId, buildB.contentMapId).map { it.id }).isEqualTo(rowsB)
     }
 
     @Test
-    fun `사용자가 folder 에 담은 test case 는 다시 생성해도 그 folder 에 있다`(): Unit = runBlocking {
+    fun `다시 생성은 막히고 사용자가 folder 에 담은 test case 는 그 folder 에 있다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
         val build = ingestedBuild(projectId, version = "1.0.0", label = "알파")
@@ -140,9 +143,40 @@ class ContentMapTestCaseGenerationIntegrationTest {
             """{"caseIds":["${moved.id}"]}""",
         )
 
-        generate(token, projectId, build.gameBuildId)
+        assertThat(generate(token, projectId, build.gameBuildId).status).isEqualTo(409)
 
         assertThat(folderItems.findFirstFolderId(moved.id!!)).isEqualTo(userFolderId.toLong())
+    }
+
+    /**
+     * 덮어쓰기(ARTEL-1041): 이미 만든 build 를 다시 만들되, 남는 지도 TC 의 판정은 그대로이고 사용자 생성 TC 는 건드리지
+     * 않는다. 후보 목록은 경고에 쓸 지도 TC 수와 판정 수를 싣는다.
+     */
+    @Test
+    fun `덮어쓰기는 이미 만든 build 를 다시 만들고 판정과 사용자 생성 TC 를 남긴다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val build = ingestedBuild(projectId, version = "1.0.0", label = null)
+        val created = generate(token, projectId, build.gameBuildId).body["created"].asInt()
+        val judged = versions.findByGameBuildId(build.gameBuildId).toList().first()
+        versions.save(judged.copy(verificationStatus = "VERIFIED"))
+        val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "사람이 쓴 것", expectedValue = "x"))
+        versions.save(TestCaseVersionEntity.snapshotOf(manual, build.gameBuildId))
+
+        val candidate = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/generation-candidates")
+            .body["items"].single()
+        assertThat(candidate["mapCases"].asInt()).isEqualTo(created)
+        assertThat(candidate["judged"].asInt()).isEqualTo(1)
+
+        val overwritten = call(
+            token, HttpMethod.POST,
+            "/api/projects/$projectId/game-builds/${build.gameBuildId}/content-map/test-cases?overwrite=true",
+        )
+
+        assertThat(overwritten.status).isEqualTo(200)
+        assertThat(overwritten.body["created"].asInt()).isZero()
+        assertThat(versions.findById(judged.id!!)!!.verificationStatus).isEqualTo("VERIFIED")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id!!, build.gameBuildId)).isNotNull
     }
 
     @Test
@@ -155,10 +189,10 @@ class ContentMapTestCaseGenerationIntegrationTest {
             async(Dispatchers.IO) { generate(token, projectId, build.gameBuildId) }
         }.awaitAll()
 
-        assertThat(responses.map { it.status }).containsOnly(200)
-        val createdTotal = responses.sumOf { it.body["created"].asInt() }
-        assertThat(responses.map { it.body["created"].asInt() }).contains(0)
-        assertThat(rowsOf(projectId, build.contentMapId)).hasSize(createdTotal)
+        // 하나만 만들고, 뒤에 lock 을 잡은 쪽은 이미 만든 build 라 409 다(ARTEL-1040).
+        assertThat(responses.map { it.status }).containsExactlyInAnyOrder(200, 409)
+        val created = responses.single { it.status == 200 }.body["created"].asInt()
+        assertThat(rowsOf(projectId, build.contentMapId)).hasSize(created)
     }
 
     @Test
@@ -199,6 +233,31 @@ class ContentMapTestCaseGenerationIntegrationTest {
 
         assertThat(generate(token, projectId, withoutMap.id!!).status).isEqualTo(409)
         assertThat(generate(token, projectId, withEmptyMap.id!!).status).isEqualTo(409)
+    }
+
+    /** 라이브러리 모달의 후보(ARTEL-1040). 최신 게임 빌드 순이고, 지도 상태와 이미 만들었는지를 싣는다. editor 는 없다. */
+    @Test
+    fun `생성 후보는 게임 빌드마다 지도 상태와 생성 여부를 싣는다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val generated = ingestedBuild(projectId, "1.0.0", null)
+        generate(token, projectId, generated.gameBuildId)
+        val ready = ingestedBuild(projectId, "1.1.0", null)
+        val now = Instant.now()
+        val noMap = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.2.0", createdAt = now, updatedAt = now))
+        gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.2.0", isEditor = true, createdAt = now, updatedAt = now))
+
+        val reply = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/generation-candidates")
+
+        assertThat(reply.status).isEqualTo(200)
+        val items = reply.body["items"].map { Triple(it["gameBuildId"].asLong(), it["mapState"].asText(), it["generated"].asBoolean()) }
+        assertThat(items).containsExactly(
+            Triple(noMap.id!!, "NO_MAP", false),
+            Triple(ready.gameBuildId, "READY", false),
+            Triple(generated.gameBuildId, "READY", true),
+        )
+        assertThat(call(signIn().second, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/generation-candidates").status)
+            .isEqualTo(404)
     }
 
     /** editor 는 게임 버전이 아니다(ARTEL-1014). 지도가 있어도 TC 를 따라가게 하지 않는다. */
