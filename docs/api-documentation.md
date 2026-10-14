@@ -79,6 +79,10 @@ A signed-in user can save their own Claude (`anthropic`), OpenAI (`openai`) and 
 
 `POST /api/qa-runs` and `POST /api/qa-tries` take an optional `keySource` (`platform` by default). `user` without a saved key for the model's service, `user` on a `bedrock/` model, `platform` on a `gpt/` model, and `platform` on a `claude/` model without the admin Claude API key all answer 400 `llm_key_missing`. The run records it in `qa_run.key_source` and `qa_try.key_source`. A `user` run sends the decrypted key to the agent-server in the session-open body as `"llm_key": {"service": ..., "api_key": ...}`; a `platform` run sends no `llm_key`. `POST /internal/llm-usage` takes an optional `keySource` per record and stores it in `llm_usage.key_source` (`platform` when absent).
 
+### Scenario execution mode
+
+A scenario carries `execution_mode`, either `ORDERED` (the default when a request leaves it out) or `FREE`. An `ORDERED` scenario is an ordered list of steps that the QA agent runs in order. A `FREE` scenario is a bundle of test cases: one step per test case, each step needs only `case_id`, and the QA agent decides the order and how to verify each one. The field is named `execution_mode` in the `draft` of `PUT` and approve requests, in `payload` of a scenario read, in project scenario list items, in the scenario library items, in each `scenarios` item of a run coverage response, and in the scenario the server sends to the QA agent. Saving a `FREE` draft (autosave or approve) answers 400 with `code` `invalid_free_scenario` when a step has no `case_id`, a `case_id` appears twice, or a step has a `step_kind` other than `ACTION`; an empty step list is accepted. The authoring chat of a test run (message relay and card commit) answers 409 with `code` `free_scenario_not_authorable` while the run holds a `FREE` scenario, because its step rewriting is built for `ORDERED` scenarios.
+
 ## Verification
 
 ```bash

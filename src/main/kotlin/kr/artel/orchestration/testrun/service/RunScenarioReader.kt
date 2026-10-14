@@ -1,5 +1,7 @@
 package kr.artel.orchestration.testrun.service
 
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
+import kr.artel.orchestration.testscenario.service.FreeScenarioNotAuthorableException
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
@@ -23,6 +25,18 @@ class RunScenarioReader(
     private val scenarioRepository: TestScenarioRepository,
     private val objectMapper: ObjectMapper,
 ) {
+    /**
+     * 이 런에 FREE 시나리오가 있으면 작성 챗봇을 시작하지 않고 거절한다(ARTEL-1028). 챗봇과 그 뒤의
+     * 재작성(repair·gap 채움·reconcile·absorb·bridge grounding)은 ORDERED 시나리오 기준이라, FREE 의
+     * TC 묶음을 모른 채 step 을 고쳐 쓴다.
+     */
+    suspend fun requireNoFreeScenario(runId: Long) {
+        val hasFree = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().any { link ->
+            scenarioRepository.findById(link.testScenarioId)?.executionMode == ScenarioExecutionMode.FREE
+        }
+        if (hasFree) throw FreeScenarioNotAuthorableException()
+    }
+
     suspend fun currentScenarios(runId: Long): List<CurrentScenario> {
         val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
         return links.mapNotNull { link ->

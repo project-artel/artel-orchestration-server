@@ -71,6 +71,7 @@ class TestRunChatService(
     /** 사용자 입력을 Agent로 중계한다. 결과 시나리오는 이 런에 반영된다. 접근 불가면 404. */
     suspend fun relay(appUserId: Long, runId: Long, message: RunChatMessage) {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
+        runScenarioReader.requireNoFreeScenario(runId)
         agentService.sendMessage(
             sessionKey = sessionKey(appUserId, runId),
             runId = runId,
@@ -90,6 +91,7 @@ class TestRunChatService(
      */
     suspend fun commitScenarios(appUserId: Long, runId: Long, scenarios: List<ScenarioResult>): Int {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
+        runScenarioReader.requireNoFreeScenario(runId)
         // 판정을 넘기지 않는다 — 이 경로의 시나리오는 사용자가 카드로 직접 고른 것이라 "Agent가 다
         // 봤는가"를 물을 대상이 아니다. 사람이 고른 것이 곧 요구다.
         //

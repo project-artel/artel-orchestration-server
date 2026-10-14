@@ -84,6 +84,7 @@ class TestScenarioService(
             testScenarioId = entity.id!!,
             projectId = entity.projectId,
             title = entity.title,
+            executionMode = entity.executionMode,
             createdAt = entity.createdAt,
             updatedAt = entity.updatedAt
         )
@@ -96,6 +97,7 @@ class TestScenarioService(
     suspend fun testScenarioUpdate(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft): ScenarioResponse {
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
             ?: throw NotFoundException()
+        ScenarioExecutionRules.validate(draft)
         // 기대 판정 라벨은 이 경로로 못 들어온다(ARTEL-301). 저작 화면은 라벨을 모르므로 자동저장이
         // 라벨 없는 steps를 보내고, 그대로 저장하면 스텝을 한 글자 고쳤을 뿐인데 그 시나리오의
         // 정답지가 통째로 사라진다. 규칙과 이유는 [ExpectedLabelPolicy]에 있다.
@@ -118,6 +120,7 @@ class TestScenarioService(
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
             ?: throw NotFoundException()
         if (draft != null) {
+            ScenarioExecutionRules.validate(draft)
             // 승인도 본문 저장 경로라 같은 규칙을 진다 — 라벨은 여기로 들어오지도 나가지도 않는다.
             val safe = draft.copy(
                 steps = ExpectedLabelPolicy.carryOver(draft.steps, entity.toDraft(objectMapper).steps)

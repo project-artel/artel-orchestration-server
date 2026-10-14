@@ -14,6 +14,8 @@ data class AgentScenario(
     val title: String,
     val description: String,
     val steps: List<AgentStep>,
+    /** `"ORDERED"` | `"FREE"`. FREE 면 step 하나가 TC 하나이고 순서·검증 방법은 agent 가 정한다(ARTEL-1028). */
+    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
 )
 
 /**

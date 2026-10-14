@@ -126,13 +126,27 @@ enum class ScenarioStepKind {
 }
 
 /**
+ * 시나리오를 QA agent 가 어떻게 수행하는가(ARTEL-1028). 와이어 값은 이름 그대로 `"ORDERED"` / `"FREE"` 다.
+ *
+ * [ORDERED]는 steps 가 순서 있는 행위 목록이고 agent 가 그 순서대로 수행한다. [FREE]는 TC 묶음이다 —
+ * step 하나가 TC 하나(`case_id` 만 필수)이고, 수행 순서와 검증 방법은 agent 가 정한다. 두 모드 모두
+ * qa_try·판정·채점은 step 번호로 이어지며, FREE 에서 step N 은 N 번째 TC 다.
+ */
+enum class ScenarioExecutionMode {
+    ORDERED,
+    FREE,
+}
+
+/**
  * 시나리오 초안(ScenarioDraft). test_scenario의 title/description/steps 컬럼으로 저장되고(ARTEL-291),
  * SSE 이벤트·조회 응답으로 FE에 전달된다. **시나리오 = steps의 순서 집합**(재설계). 생성 직후(빈 시나리오)를 위해 기본값을 둔다.
  */
 data class ScenarioDraft(
     val title: String = "",
     val description: String = "",
-    val steps: List<ScenarioStep> = emptyList()
+    val steps: List<ScenarioStep> = emptyList(),
+    /** 요청에 없으면 [ScenarioExecutionMode.ORDERED] 다(ARTEL-1028). */
+    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode = ScenarioExecutionMode.ORDERED,
 )
 
 /**

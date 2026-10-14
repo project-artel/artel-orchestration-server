@@ -6,6 +6,7 @@ import kr.artel.orchestration.testscenario.dto.AgentCase
 import kr.artel.orchestration.testscenario.dto.AgentScenario
 import kr.artel.orchestration.testscenario.dto.AgentStep
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import org.springframework.stereotype.Service
 
 /**
@@ -38,13 +39,16 @@ class ScenarioCompositionService(
             testCaseRepository.findAllById(caseIds).toList().associateBy { requireNotNull(it.id) }
         }
 
+        val free = draft.executionMode == ScenarioExecutionMode.FREE
         val steps = draft.steps.map { step ->
             // caseId가 있는 스텝엔 그 TC 스펙(CSV: 씬/사전조건/테스트 스텝/기대 결과)을 리졸브해 동봉.
             // 현행 TestCase 필드를 계약 이름으로 투영(category=씬, title=테스트 스텝). TC가 스펙으로
             // 재구조화되면 이 매핑만 바꾸면 되고 계약 필드명(@JsonProperty)은 그대로다.
             val tc = step.caseId?.let { caseById[it] }
+            // FREE 는 step 이 TC 하나라 action 을 비워 둘 수 있다. 비었으면 TC 의 테스트 스텝 글을 쓴다.
+            val action = if (free && step.action.isBlank() && tc != null) tc.step else step.action
             AgentStep(
-                action = step.action,
+                action = action,
                 caseId = step.caseId,
                 hint = step.hint,
                 input = step.input,
@@ -59,6 +63,6 @@ class ScenarioCompositionService(
                 },
             )
         }
-        return AgentScenario(title = draft.title, description = draft.description, steps = steps)
+        return AgentScenario(title = draft.title, description = draft.description, steps = steps, executionMode = draft.executionMode)
     }
 }

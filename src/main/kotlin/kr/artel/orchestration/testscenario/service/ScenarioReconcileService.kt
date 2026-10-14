@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import java.util.concurrent.ConcurrentHashMap
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
@@ -441,6 +442,9 @@ class ScenarioReconcileService(
                         logger.warn("수정 대상 시나리오 무효 — 스킵 [runId=$runId, scenarioId=$scenarioId]")
                         continue
                     }
+                    // FREE 시나리오는 챗봇이 본문을 교체하지 못한다(ARTEL-1028). 던지면 트랜잭션이 되돌아가
+                    // 이번 저장은 아무것도 반영하지 않는다.
+                    if (existing.executionMode == ScenarioExecutionMode.FREE) throw FreeScenarioNotAuthorableException()
                     // 교체 전에 사람이 단 기대 판정 라벨을 건져 온다(ARTEL-301). 에이전트는 라벨을
                     // 본 적도 돌려준 적도 없으므로, 그냥 덮어쓰면 챗봇으로 시나리오를 한 번 고칠
                     // 때마다 그 시나리오의 정답지가 통째로 사라진다.

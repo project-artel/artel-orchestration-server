@@ -1,5 +1,7 @@
 package kr.artel.orchestration.testrun.dto
 
+import com.fasterxml.jackson.annotation.JsonProperty
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import java.time.Instant
 
 /**
@@ -98,6 +100,7 @@ data class RunCoverageScenario(
     val position: Int,
     val testScenarioId: String,
     val title: String,
+    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
     val steps: Int,
     val cases: Int,
 )

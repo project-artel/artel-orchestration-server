@@ -6993,6 +6993,14 @@
             "items": {
               "$ref": "#/components/schemas/ScenarioStep"
             }
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ],
+            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request means ORDERED."
           }
         }
       },
@@ -12048,6 +12056,7 @@
       },
       "ScenarioSummary": {
         "required": [
+          "execution_mode",
           "projectId",
           "testScenarioId",
           "title"
@@ -12064,6 +12073,14 @@
           },
           "title": {
             "type": "string"
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ],
+            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request means ORDERED."
           },
           "createdAt": {
             "type": "string",
@@ -12112,6 +12129,7 @@
       "ScenarioLibraryScenario": {
         "required": [
           "caseCount",
+          "execution_mode",
           "stepCount",
           "testScenarioId",
           "title"
@@ -12123,6 +12141,14 @@
           },
           "title": {
             "type": "string"
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ],
+            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request means ORDERED."
           },
           "stepCount": {
             "type": "integer",
@@ -12231,6 +12257,7 @@
       "RunCoverageScenario": {
         "required": [
           "cases",
+          "execution_mode",
           "position",
           "steps",
           "testScenarioId",
@@ -12247,6 +12274,14 @@
           },
           "title": {
             "type": "string"
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ],
+            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request means ORDERED."
           },
           "steps": {
             "type": "integer",
