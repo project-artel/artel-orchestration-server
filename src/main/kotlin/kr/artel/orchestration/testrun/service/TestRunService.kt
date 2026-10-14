@@ -51,6 +51,7 @@ class TestRunService(
     private val qaTryRepository: QaTryRepository,
     private val testCaseRepository: TestCaseRepository,
     private val gameBuildRepository: GameBuildRepository,
+    private val folderService: TestRunFolderService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
 ) {
@@ -86,7 +87,10 @@ class TestRunService(
             ?: throw BadRequestException("name is required")
         // 고른 TC 버전을 따른다(ARTEL-1048). 고르지 않았으면 만들 때의 최신 build 다(ARTEL-994) — build 가 아직 없는
         // 프로젝트면 비운다. editor 행은 게임 버전이 아니라서 고르지 않는다(ARTEL-1014).
+        // 폴더 안에 만들면 그 폴더의 빌드 버전을 따른다(ARTEL-1049).
+        val folder = request.folderId?.let { folderService.folderOf(projectId, it) }
         val build = when {
+            folder != null -> folder.gameBuildId?.let { gameBuildRepository.findById(it) }
             request.unversioned -> null
             request.gameBuildId != null -> versionBuild(projectId, request.gameBuildId)
             else -> gameBuildRepository.findNonEditorNewestFirst(projectId).firstOrNull()
@@ -97,20 +101,27 @@ class TestRunService(
                 name = name,
                 description = request.description?.ifBlank { null },
                 gameBuildId = build?.id,
+                folderId = folder?.id,
             )
         ).toResponse(build)
     }
 
     /**
-     * TR 의 TC 버전을 바꾼다(ARTEL-1048). null 이면 버전 없음이다. 접근 불가면 null(→ 404).
+     * TR 을 다른 빌드 버전 · 폴더로 옮긴다(ARTEL-1048, 1049). 버전이 null 이면 버전 없음이다. 접근 불가면 null(→ 404).
      *
      * 담은 시나리오는 그대로다. 스텝의 `case_id` 는 버전을 넘어 같은 케이스라 바꿀 것이 없다(ARTEL-1018). 다음 저작부터
      * 새 버전의 TC 와 지도를 본다.
      */
     suspend fun changeGameBuild(runId: Long, userId: Long, request: TestRunGameBuildRequest): TestRunResponse? {
         val run = accessible(runId, userId) ?: return null
-        val build = request.gameBuildId?.let { versionBuild(run.projectId, it) }
-        return runRepository.save(run.copy(gameBuildId = build?.id)).toResponse(build)
+        // 폴더는 한 빌드 버전 안에만 있다(ARTEL-1049). 폴더로 옮기면 그 폴더의 버전을 따르고, 버전만 바꾸면 폴더에서 나온다.
+        val folder = request.folderId?.let { folderService.folderOf(run.projectId, it) }
+        val build = if (folder != null) {
+            folder.gameBuildId?.let { gameBuildRepository.findById(it) }
+        } else {
+            request.gameBuildId?.let { versionBuild(run.projectId, it) }
+        }
+        return runRepository.save(run.copy(gameBuildId = build?.id, folderId = folder?.id)).toResponse(build)
     }
 
     /** 이 프로젝트의 게임 빌드. 없거나 다른 프로젝트 것이면 404, editor 면 409 다. */
@@ -293,6 +304,7 @@ class TestRunService(
             description = description,
             createdAt = createdAt ?: Instant.EPOCH,
             gameBuild = build?.toTestRunGameBuild(),
+            folderId = folderId?.toString(),
         )
 }
 

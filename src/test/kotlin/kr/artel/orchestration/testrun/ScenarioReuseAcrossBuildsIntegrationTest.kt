@@ -192,6 +192,51 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(call(token, HttpMethod.PUT, "$runs/$runId/game-build", """{"gameBuildId":"${editor.id}"}""").status).isEqualTo(409)
     }
 
+    /**
+     * 테스트 런 폴더(ARTEL-1049)는 한 빌드 버전 안에만 있다. 폴더 안에 만든 런은 그 버전을 따르고, 다른 버전의 폴더로
+     * 옮기면 버전도 바뀐다. 버전만 바꾸면 폴더에서 나온다. 폴더를 지우면 안의 런은 버전 바로 아래로 나온다.
+     */
+    @Test
+    fun `테스트 런 폴더는 빌드 버전 안에만 있고 런을 담는다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val now = Instant.now()
+        val older = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.0.0", createdAt = now.minusSeconds(5), updatedAt = now))
+        val newer = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.1.0", createdAt = now, updatedAt = now))
+        val folders = "/api/projects/$projectId/test-run-folders"
+        val runs = "/api/projects/$projectId/test-runs"
+
+        val regression = call(token, HttpMethod.POST, folders, """{"name":"회귀","gameBuildId":"${older.id}"}""")
+        assertThat(regression.status).isEqualTo(201)
+        val regressionId = regression.body["id"].asText()
+        val nested = call(token, HttpMethod.POST, folders, """{"name":"상점","parentId":"$regressionId"}""").body
+        assertThat(nested["gameBuildId"].asLong()).isEqualTo(older.id)
+        assertThat(call(token, HttpMethod.POST, folders, """{"name":"회귀","gameBuildId":"${older.id}"}""").status).isEqualTo(409)
+        assertThat(call(token, HttpMethod.POST, folders, """{"name":"회귀","gameBuildId":"${newer.id}"}""").status).isEqualTo(201)
+        val newerFolder = call(token, HttpMethod.POST, folders, """{"name":"새 버전 폴더","gameBuildId":"${newer.id}"}""").body["id"].asText()
+
+        val inFolder = call(token, HttpMethod.POST, runs, """{"name":"폴더 안","folderId":"$regressionId"}""").body
+        assertThat(inFolder["gameBuild"]["gameBuildId"].asLong()).isEqualTo(older.id)
+        assertThat(inFolder["folderId"].asText()).isEqualTo(regressionId)
+        val runId = inFolder["id"].asText()
+
+        val moved = call(token, HttpMethod.PUT, "$runs/$runId/game-build", """{"folderId":"$newerFolder"}""").body
+        assertThat(moved["gameBuild"]["gameBuildId"].asLong()).isEqualTo(newer.id)
+        assertThat(moved["folderId"].asText()).isEqualTo(newerFolder)
+        val out = call(token, HttpMethod.PUT, "$runs/$runId/game-build", """{"gameBuildId":"${newer.id}"}""").body
+        assertThat(out.path("folderId").isNullish()).isTrue()
+
+        call(token, HttpMethod.PUT, "$runs/$runId/game-build", """{"folderId":"$regressionId"}""")
+        assertThat(call(token, HttpMethod.PUT, "$folders/$regressionId", """{"name":"회귀 묶음"}""").body["name"].asText()).isEqualTo("회귀 묶음")
+        assertThat(call(token, HttpMethod.DELETE, "$folders/$regressionId").status).isEqualTo(204)
+        val after = call(token, HttpMethod.GET, runs).body["items"].single { it["id"].asText() == runId }
+        assertThat(after.path("folderId").isNullish()).isTrue()
+        assertThat(after["gameBuild"]["gameBuildId"].asLong()).isEqualTo(older.id)
+        val left = call(token, HttpMethod.GET, folders).body["items"].map { it["name"].asText() }
+        assertThat(left).containsExactlyInAnyOrder("회귀", "새 버전 폴더")
+        assertThat(call(signIn().second, HttpMethod.GET, folders).status).isEqualTo(404)
+    }
+
     /** 테스트 런 화면의 표가 쓰는 요약(ARTEL-1048): 담은 시나리오 수와 마지막 QA 실행의 결과 수. */
     @Test
     fun `TR 목록은 시나리오 수와 마지막 QA 결과를 싣는다`(): Unit = runBlocking {

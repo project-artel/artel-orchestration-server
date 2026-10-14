@@ -5,17 +5,23 @@ import java.time.Instant
 /**
  * @property gameBuildId 이 TR 이 따를 TC 버전(게임 빌드, ARTEL-1048). 주지 않으면 프로젝트의 최신 게임 빌드다.
  * @property unversioned true 면 버전 없이 만든다. [gameBuildId] 와 함께 주지 않는다.
+ * @property folderId 그 폴더 안에 만든다(ARTEL-1049). 빌드 버전은 폴더의 것이다.
  */
 data class TestRunCreateRequest(
     val name: String? = null,
     val description: String? = null,
     val gameBuildId: String? = null,
     val unversioned: Boolean = false,
+    val folderId: String? = null,
 )
 
-/** TR 의 TC 버전을 바꾼다(ARTEL-1048). null 이면 버전 없음이다. */
+/**
+ * TR 을 다른 빌드 버전 · 폴더로 옮긴다(ARTEL-1048, 1049). [folderId] 를 주면 그 폴더 안으로 가고 빌드 버전도 폴더의
+ * 것이 된다. 주지 않으면 [gameBuildId] 버전 바로 아래로 간다(null 이면 버전 없음).
+ */
 data class TestRunGameBuildRequest(
     val gameBuildId: String? = null,
+    val folderId: String? = null,
 )
 
 data class TestRunUpdateRequest(
@@ -45,6 +51,8 @@ data class TestRunResponse(
     val description: String?,
     val createdAt: Instant,
     val gameBuild: TestRunGameBuild? = null,
+    /** 든 폴더(ARTEL-1049). null 이면 그 빌드 버전 바로 아래다. */
+    val folderId: String? = null,
     /** 담은 시나리오 수(ARTEL-1048). 목록에서만 채운다. */
     val scenarioCount: Int? = null,
     /** 마지막 QA 실행(ARTEL-1048). 돌린 적이 없으면 null 이다. 목록에서만 채운다. */

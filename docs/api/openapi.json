@@ -668,6 +668,87 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-run-folders/{testRunFolderId}": {
+      "put": {
+        "tags": [
+          "test-run-folder-controller"
+        ],
+        "operationId": "renameTestRunFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "testRunFolderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestRunFolderRenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "test-run-folder-controller"
+        ],
+        "operationId": "deleteTestRunFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "testRunFolderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-cases/{caseId}": {
       "get": {
         "tags": [
@@ -2442,6 +2523,76 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/RunChatCancellation"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-run-folders": {
+      "get": {
+        "tags": [
+          "test-run-folder-controller"
+        ],
+        "operationId": "listTestRunFolders",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunFolderListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "test-run-folder-controller"
+        ],
+        "operationId": "createTestRunFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestRunFolderCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunFolderResponse"
                 }
               }
             }
@@ -7065,6 +7216,9 @@
           "gameBuild": {
             "$ref": "#/components/schemas/TestRunGameBuild"
           },
+          "folderId": {
+            "type": "string"
+          },
           "scenarioCount": {
             "type": "integer",
             "format": "int32"
@@ -7126,6 +7280,38 @@
         "type": "object",
         "properties": {
           "gameBuildId": {
+            "type": "string"
+          },
+          "folderId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestRunFolderRenameRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "TestRunFolderResponse": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "name": {
             "type": "string"
           }
         }
@@ -8770,6 +8956,9 @@
           },
           "unversioned": {
             "type": "boolean"
+          },
+          "folderId": {
+            "type": "string"
           }
         }
       },
@@ -8965,6 +9154,20 @@
           "saved": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "TestRunFolderCreateRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
           }
         }
       },
@@ -12019,6 +12222,20 @@
             "type": "object",
             "additionalProperties": {
               "type": "object"
+            }
+          }
+        }
+      },
+      "TestRunFolderListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestRunFolderResponse"
             }
           }
         }
