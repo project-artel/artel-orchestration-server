@@ -50,7 +50,7 @@ class LlmKeySettingsIntegrationTest {
         private const val INVALID_KEY = "sk-or-v1-revoked-key-000000000000wxyz"
 
         /**
-         * V107 이 넣은 행 중 켜져 있고 Bedrock 이 아닌 12 개에 embedding model 을 더한 목록. 확인이 닿아야 한다고 보는
+         * V107 이 넣은 행 중 켜져 있고 Bedrock 도 Claude API(`claude/`)도 아닌 12 개에 embedding model 을 더한 목록. 확인이 닿아야 한다고 보는
          * model 은 `llm_model` 테이블이 정하므로, 시드가 바뀌면 이 목록도 바뀌어야 한다.
          */
         private val REQUIRED_OPENROUTER_MODELS = listOf(
@@ -127,7 +127,7 @@ class LlmKeySettingsIntegrationTest {
     fun clean(): Unit = runBlocking {
         databaseClient.sql("DELETE FROM platform_setting").fetch().rowsUpdated().awaitSingle()
         // 이 클래스가 켜고 끈 model 을 시드 상태로 되돌린다.
-        databaseClient.sql("UPDATE llm_model SET enabled = (id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol')), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = NOT (id IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol') OR id LIKE 'claude/%'), updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
     }
@@ -195,6 +195,17 @@ class LlmKeySettingsIntegrationTest {
         assertThat(result["requiredModels"].map { it.asText() }).doesNotContain("x-ai/grok-4.7")
         assertThat(result["requiredModels"].size()).isEqualTo(REQUIRED_OPENROUTER_MODELS.size - 1)
         assertThat(result["missingModels"].map { it.asText() }).containsExactly("openai/text-embedding-3-large")
+    }
+
+    @Test
+    fun `enabled bedrock and claude rows never join the required list`() {
+        call(HttpMethod.PUT, "/api/admin/settings/llm", """{"apiKey":"$VALID_KEY"}""")
+        call(HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"claude/claude-opus-5-5","enabled":true}""")
+        call(HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"bedrock/us.openai.gpt-6.1-sol","enabled":true}""")
+
+        val result = call(HttpMethod.POST, "/api/admin/settings/llm/check")
+
+        assertThat(result["requiredModels"].map { it.asText() }).containsExactlyElementsOf(REQUIRED_OPENROUTER_MODELS)
     }
 
     @Test

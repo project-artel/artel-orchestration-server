@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Configuration
     LlmKeyProperties::class,
     SecretsProperties::class,
     BedrockProperties::class,
+    AnthropicProperties::class,
     AgentServerProperties::class
 )
 class SettingsConfig

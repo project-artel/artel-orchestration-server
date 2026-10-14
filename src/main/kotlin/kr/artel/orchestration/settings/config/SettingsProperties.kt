@@ -42,6 +42,21 @@ data class BedrockProperties(
 }
 
 /**
+ * Claude API(Anthropic API) key 확인 호출이 가는 곳. key 자체는 `platform_setting` 에만 있고 여기에는 없다.
+ */
+@ConfigurationProperties("artel.anthropic")
+data class AnthropicProperties(
+    /** `GET {baseUrl}/v1/models` 를 부를 주소. 테스트가 가짜 서버로 돌린다. */
+    val baseUrl: String = "https://api.anthropic.com",
+    /** 확인 한 번의 응답 상한. 관리 화면의 버튼 하나가 기다리는 시간이다. */
+    val checkTimeout: Duration = Duration.ofSeconds(15)
+) {
+    init {
+        require(baseUrl.isNotBlank()) { "artel.anthropic.base-url must not be blank" }
+    }
+}
+
+/**
  * agent-server 가 들고 있는 key 와 카탈로그 캐시를 비우는 호출. `artel.agent.base-url` 은 다른 agent 호출도
  * 쓰는 값이고, 그쪽은 아직 `@Value` 로 읽는다.
  */
@@ -62,11 +77,11 @@ private const val MIN_SECRETS_KEY_LENGTH = 32
  * `platform_setting` 의 암호화된 값을 여는 비밀. `ARTEL_SECRETS_KEY` 다.
  *
  * 비어 있어도 서버는 뜬다. 그때는 관리 화면에서 key 를 저장할 수 없고(409 `secrets_key_missing`),
- * agent-server 는 OpenRouter key 와 Bedrock key 없이 돈다. 비어 있지 않은 값은 [MIN_SECRETS_KEY_LENGTH] 글자 이상이어야 하고
+ * agent-server 는 OpenRouter, Bedrock, Claude API key 없이 돈다. 비어 있지 않은 값은 [MIN_SECRETS_KEY_LENGTH] 글자 이상이어야 하고
  * 예시 문구([PLACEHOLDER_FRAGMENTS])를 담으면 안 된다. 어기면 서버가 뜨지 않는다. 값은 오류 메시지에
  * 싣지 않는다. `openssl rand -hex 32` 가 만드는 64 글자 hex 는 통과한다.
  *
- * 이 값을 바꾸면 이미 저장된 값을 열 수 없게 되므로, OpenRouter 와 Bedrock key 를 관리 화면에서 다시 넣어야 한다.
+ * 이 값을 바꾸면 이미 저장된 값을 열 수 없게 되므로, OpenRouter, Bedrock, Claude API key 를 관리 화면에서 다시 넣어야 한다.
  */
 @ConfigurationProperties("artel.secrets")
 data class SecretsProperties(

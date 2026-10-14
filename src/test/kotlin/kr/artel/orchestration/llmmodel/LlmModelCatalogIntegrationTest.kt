@@ -56,20 +56,72 @@ class LlmModelCatalogIntegrationTest {
 
     @AfterEach
     fun clean(): Unit = runBlocking {
-        databaseClient.sql("UPDATE llm_model SET enabled = (id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol')), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = NOT (id IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol') OR id LIKE 'claude/%'), updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
         appUserRepository.deleteById(memberId)
     }
 
     @Test
-    fun `the migration seeds fifteen rows and leaves only the two bedrock rows disabled`() {
+    fun `the migration seeds nineteen rows and leaves the two new bedrock rows and the four claude rows disabled`() {
         val rows = internal()
 
-        assertThat(rows).hasSize(15)
-        assertThat(rows.map { it["sortOrder"].asInt() }).isEqualTo((1..15).map { it * 10 })
+        assertThat(rows).hasSize(19)
+        assertThat(rows.map { it["sortOrder"].asInt() }).isEqualTo((1..19).map { it * 10 })
         assertThat(rows.filter { !it["enabled"].asBoolean() }.map { it["id"].asText() })
-            .containsExactly("bedrock/us.anthropic.claude-haiku-5-5", "bedrock/us.openai.gpt-6.1-sol")
+            .containsExactly(
+                "bedrock/us.anthropic.claude-haiku-5-5",
+                "bedrock/us.openai.gpt-6.1-sol",
+                "claude/claude-opus-5-5",
+                "claude/claude-sonnet-5-5",
+                "claude/claude-haiku-5-5",
+                "claude/claude-fable-5-1"
+            )
+    }
+
+    @Test
+    fun `the four claude rows carry the effort list and their pricing`() {
+        val byId = internal().associateBy { it["id"].asText() }
+        val expectedPricing = mapOf(
+            "claude/claude-opus-5-5" to listOf(4.00, 20.00, 5.00, 0.20),
+            "claude/claude-sonnet-5-5" to listOf(2.00, 10.00, 2.50, 0.20),
+            "claude/claude-haiku-5-5" to listOf(0.10, 0.50, 0.125, 0.01),
+            "claude/claude-fable-5-1" to listOf(10.00, 50.00, 12.50, 0.25)
+        )
+        val expectedLabels = mapOf(
+            "claude/claude-opus-5-5" to "Claude Opus 5.5 (Claude API)",
+            "claude/claude-sonnet-5-5" to "Claude Sonnet 5.5 (Claude API)",
+            "claude/claude-haiku-5-5" to "Claude Haiku 5.5 (Claude API)",
+            "claude/claude-fable-5-1" to "Claude Fable 5.1 (Claude API)"
+        )
+
+        for ((id, prices) in expectedPricing) {
+            val row = byId.getValue(id)
+            assertThat(row["label"].asText()).describedAs(id).isEqualTo(expectedLabels.getValue(id))
+            assertThat(row["provider"].asText()).describedAs(id).isEqualTo("anthropic")
+            assertThat(row["supportsStrictJson"].asBoolean()).describedAs(id).isTrue()
+            assertThat(row["maxInputTokens"].asInt()).describedAs(id).isEqualTo(872_000)
+            assertThat(row["inputModalities"].map { it.asText() }).describedAs(id).containsExactly("text", "image", "file")
+            assertThat(row["reasoning"]["kind"].asText()).describedAs(id).isEqualTo("effort")
+            assertThat(row["reasoning"]["efforts"].map { it.asText() }).describedAs(id)
+                .containsExactly("max", "xhigh", "high", "medium", "low")
+            assertThat(row["reasoning"]["defaultTokens"].isNull).describedAs(id).isTrue()
+            assertThat(row["enabled"].asBoolean()).describedAs(id).isFalse()
+            val pricing = row["pricing"]
+            assertThat(
+                listOf("inputPerMtok", "outputPerMtok", "cacheWritePerMtok", "cacheReadPerMtok").map { pricing[it].asDouble() }
+            ).describedAs(id).isEqualTo(prices)
+            assertThat(pricing["asOf"].asText()).describedAs(id).isEqualTo("2026-10-14")
+            assertThat(pricing["source"].asText()).describedAs(id).isEqualTo("Anthropic model table (claude-api skill, cached 2026-10-06)")
+        }
+
+        val haikuPricing = byId.getValue("claude/claude-haiku-5-5")["pricing"]
+        assertThat(haikuPricing["longContextThresholdTokens"].asInt()).isEqualTo(100_000)
+        assertThat(haikuPricing["longContextInputPerMtok"].asDouble()).isEqualTo(0.50)
+        assertThat(haikuPricing["longContextOutputPerMtok"].asDouble()).isEqualTo(2.50)
+        assertThat(haikuPricing["longContextCacheWritePerMtok"].asDouble()).isEqualTo(0.625)
+        assertThat(haikuPricing["longContextCacheReadPerMtok"].asDouble()).isEqualTo(0.05)
+        assertThat(byId.getValue("claude/claude-opus-5-5")["pricing"].has("longContextThresholdTokens")).isFalse()
     }
 
     @Test
@@ -125,7 +177,7 @@ class LlmModelCatalogIntegrationTest {
     fun `qa-models lists enabled rows only, in sort order, and follows a toggle`() {
         val before = qaModels()
         assertThat(before.map { it["id"].asText() }).hasSize(13)
-            .doesNotContain("bedrock/us.anthropic.claude-haiku-5-5", "bedrock/us.openai.gpt-6.1-sol")
+            .doesNotContain("bedrock/us.anthropic.claude-haiku-5-5", "bedrock/us.openai.gpt-6.1-sol", "claude/claude-opus-5-5")
         assertThat(before.first()["id"].asText()).isEqualTo("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")
         assertThat(before.first()["reasoning"]["kind"].asText()).isEqualTo("max_tokens")
         assertThat(before.first()["reasoning"].has("defaultTokens")).isFalse()
@@ -148,7 +200,7 @@ class LlmModelCatalogIntegrationTest {
     @Test
     fun `admin lists every row with its route and records who changed it`() {
         val rows = call(adminSession, HttpMethod.GET, "/api/admin/llm-models")
-        assertThat(rows.size()).isEqualTo(15)
+        assertThat(rows.size()).isEqualTo(19)
         val bedrock = rows.first { it["id"].asText() == "bedrock/us.openai.gpt-6.1-sol" }
         assertThat(bedrock["route"].asText()).isEqualTo("bedrock")
         assertThat(bedrock["provider"].asText()).isEqualTo("openai")
@@ -157,6 +209,12 @@ class LlmModelCatalogIntegrationTest {
         assertThat(bedrock["maxInputTokens"].asInt()).isEqualTo(922_000)
         assertThat(bedrock["updatedAt"].asText()).isNotBlank()
         assertThat(rows.first { it["id"].asText() == "openai/gpt-6-luna" }["route"].asText()).isEqualTo("openrouter")
+        // `anthropic/` 는 OpenRouter 경로이고, `claude/` 만 Claude API 경로다.
+        assertThat(rows.first { it["id"].asText() == "anthropic/claude-opus-5.5" }["route"].asText()).isEqualTo("openrouter")
+        val claude = rows.first { it["id"].asText() == "claude/claude-sonnet-5-5" }
+        assertThat(claude["route"].asText()).isEqualTo("claude")
+        assertThat(claude["provider"].asText()).isEqualTo("anthropic")
+        assertThat(claude["enabled"].asBoolean()).isFalse()
 
         val updated = call(adminSession, HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"google/gemma-4-31b-it:free","enabled":false}""")
         assertThat(updated["id"].asText()).isEqualTo("google/gemma-4-31b-it:free")

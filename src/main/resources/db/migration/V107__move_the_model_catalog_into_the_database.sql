@@ -4,7 +4,8 @@
 -- model 을 추가하는 일은 이 테이블에 행을 넣는 새 migration 이다. 관리 화면이 바꾸는 것은 enabled 하나뿐이다.
 
 CREATE TABLE IF NOT EXISTS llm_model (
-    -- 카탈로그 값. `bedrock/` 로 시작하면 AWS Bedrock 경로이고, 나머지는 OpenRouter slug 다.
+    -- 카탈로그 값. `bedrock/` 로 시작하면 AWS Bedrock 경로, `claude/` 로 시작하면 Claude API(Anthropic API) 경로이고,
+    -- 나머지는 OpenRouter slug 다. `claude/` 뒤는 Anthropic model id 다.
     id VARCHAR(200) PRIMARY KEY,
     label VARCHAR(200) NOT NULL,
     -- OpenRouter slug 의 author 부분: openai, anthropic, google, x-ai, moonshotai, z-ai, qwen.
@@ -106,5 +107,30 @@ INSERT INTO llm_model (
     -- max_input_tokens 는 context 1,050,000 에서 최대 출력 128,000 을 뺀 값이다.
     ('bedrock/us.openai.gpt-6.1-sol', 'GPT-6.1 Sol (AWS Bedrock)', 'openai', FALSE, 922000,
      '["text","image","file"]'::jsonb,
-     'effort', '["max","xhigh","high","medium","low"]'::jsonb, NULL, NULL, NULL, NULL, FALSE, 150)
+     'effort', '["max","xhigh","high","medium","low"]'::jsonb, NULL, NULL, NULL, NULL, FALSE, 150),
+    -- 아래 넷은 Claude API 경로다. 관리자가 Anthropic API key 를 넣고 확인이 통과할 때까지 꺼 둔 채 넣는다.
+    -- 창(1,000,000 에서 출력 128,000 을 뺀 값), modality, effort 다섯 개가 같다. structured outputs 는
+    -- `output_config.format` 으로 보낸다. Anthropic API 는 응답에 청구액을 싣지 않아 단가를 적는다.
+    -- 캐시 쓰기 단가는 입력의 1.25 배(5 분 TTL)다.
+    ('claude/claude-opus-5-5', 'Claude Opus 5.5 (Claude API)', 'anthropic', TRUE, 872000,
+     '["text","image","file"]'::jsonb,
+     'effort', '["max","xhigh","high","medium","low"]'::jsonb, NULL, NULL, NULL,
+     '{"inputPerMtok":4.00,"outputPerMtok":20.00,"cacheWritePerMtok":5.00,"cacheReadPerMtok":0.20,"asOf":"2026-10-14","source":"Anthropic model table (claude-api skill, cached 2026-10-06)"}'::jsonb,
+     FALSE, 160),
+    ('claude/claude-sonnet-5-5', 'Claude Sonnet 5.5 (Claude API)', 'anthropic', TRUE, 872000,
+     '["text","image","file"]'::jsonb,
+     'effort', '["max","xhigh","high","medium","low"]'::jsonb, NULL, NULL, NULL,
+     '{"inputPerMtok":2.00,"outputPerMtok":10.00,"cacheWritePerMtok":2.50,"cacheReadPerMtok":0.20,"asOf":"2026-10-14","source":"Anthropic model table (claude-api skill, cached 2026-10-06)"}'::jsonb,
+     FALSE, 170),
+    -- 입력이 100,000 token 을 넘으면 long context 단가를 쓴다.
+    ('claude/claude-haiku-5-5', 'Claude Haiku 5.5 (Claude API)', 'anthropic', TRUE, 872000,
+     '["text","image","file"]'::jsonb,
+     'effort', '["max","xhigh","high","medium","low"]'::jsonb, NULL, NULL, NULL,
+     '{"inputPerMtok":0.10,"outputPerMtok":0.50,"cacheWritePerMtok":0.125,"cacheReadPerMtok":0.01,"asOf":"2026-10-14","source":"Anthropic model table (claude-api skill, cached 2026-10-06)","longContextThresholdTokens":100000,"longContextInputPerMtok":0.50,"longContextOutputPerMtok":2.50,"longContextCacheWritePerMtok":0.625,"longContextCacheReadPerMtok":0.05}'::jsonb,
+     FALSE, 180),
+    ('claude/claude-fable-5-1', 'Claude Fable 5.1 (Claude API)', 'anthropic', TRUE, 872000,
+     '["text","image","file"]'::jsonb,
+     'effort', '["max","xhigh","high","medium","low"]'::jsonb, NULL, NULL, NULL,
+     '{"inputPerMtok":10.00,"outputPerMtok":50.00,"cacheWritePerMtok":12.50,"cacheReadPerMtok":0.25,"asOf":"2026-10-14","source":"Anthropic model table (claude-api skill, cached 2026-10-06)"}'::jsonb,
+     FALSE, 190)
 ON CONFLICT (id) DO NOTHING;

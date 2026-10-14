@@ -20,9 +20,9 @@ data class AgentCacheInvalidationResult(
 )
 
 /**
- * agent-server 가 들고 있는 OpenRouter key, Bedrock key, model 카탈로그 캐시를 비우라고 요청한다.
+ * agent-server 가 들고 있는 OpenRouter key, Bedrock key, Claude API key, model 카탈로그 캐시를 비우라고 요청한다.
  *
- * agent-server 는 셋을 30초씩 들고 있다. 관리자가 key 를 바꾸거나 model 을 끄면 이 호출로 다음 model 호출이
+ * agent-server 는 넷을 30초씩 들고 있다. 관리자가 key 를 바꾸거나 model 을 끄면 이 호출로 다음 model 호출이
  * 새 값을 읽게 한다. 실패해도 예외를 던지지 않는다 — 캐시는 30초 뒤에 저절로 만료되고, 그 30초 때문에 저장이
  * 실패하면 안 된다.
  *

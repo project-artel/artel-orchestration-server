@@ -23,7 +23,7 @@ import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.publisher.Mono
 
 /**
- * `ARTEL_SECRETS_KEY` 가 없는 설치. 테스트 기본 설정이 그렇다. 두 key 모두 저장을 409 `secrets_key_missing` 으로
+ * `ARTEL_SECRETS_KEY` 가 없는 설치. 테스트 기본 설정이 그렇다. 세 key 모두 저장을 409 `secrets_key_missing` 으로
  * 거절하고, 아무것도 남기지 않는다.
  */
 @ActiveProfiles("test")
@@ -56,9 +56,10 @@ class ProviderKeyWithoutSecretsKeyIntegrationTest {
     }
 
     @Test
-    fun `saving either key is 409 secrets_key_missing`(): Unit = runBlocking {
-        for (path in listOf("/api/admin/settings/bedrock", "/api/admin/settings/llm")) {
-            val (status, body) = put(path, """{"apiKey":"key-that-cannot-be-stored-0123456789"}""")
+    fun `saving any provider key is 409 secrets_key_missing`(): Unit = runBlocking {
+        for (path in listOf("/api/admin/settings/bedrock", "/api/admin/settings/llm", "/api/admin/settings/anthropic")) {
+            // `sk-ant-` 로 시작해야 Claude API key 의 형식 확인을 지나 암호화 단계까지 간다.
+            val (status, body) = put(path, """{"apiKey":"sk-ant-key-that-cannot-be-stored-0123456789"}""")
             assertThat(status).describedAs(path).isEqualTo(409)
             assertThat(objectMapper.readTree(body)["code"].asText()).describedAs(path).isEqualTo("secrets_key_missing")
         }

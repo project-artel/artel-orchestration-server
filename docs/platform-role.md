@@ -65,6 +65,9 @@
 | `GET /api/admin/settings/bedrock` | Bedrock API key 가 있는지와 끝 네 글자, region, 마지막 확인 결과 |
 | `PUT /api/admin/settings/bedrock` | Bedrock API key 를 넣거나 지운다 |
 | `POST /api/admin/settings/bedrock/check` | 켜진 Bedrock model 마다 Converse 를 한 번 불러 닿는지 본다 |
+| `GET /api/admin/settings/anthropic` | Claude API key 가 있는지와 끝 네 글자, 마지막 확인 결과 |
+| `PUT /api/admin/settings/anthropic` | Claude API key 를 넣거나 지운다. `sk-ant-` 로 시작해야 한다 |
+| `POST /api/admin/settings/anthropic/check` | Anthropic API 의 model 목록을 한 번 받아 켜진 `claude/` model 이 있는지 본다 |
 | `GET /api/admin/llm-models` | model 카탈로그 전체와 켜짐 여부 |
 | `PATCH /api/admin/llm-models` | model 하나를 켜거나 끈다(본문 `{id, enabled}`) |
 

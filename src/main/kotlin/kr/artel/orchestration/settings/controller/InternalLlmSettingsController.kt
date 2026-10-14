@@ -1,5 +1,6 @@
 package kr.artel.orchestration.settings.controller
 
+import kr.artel.orchestration.settings.service.AnthropicKeyService
 import kr.artel.orchestration.settings.service.BedrockKeyService
 import kr.artel.orchestration.settings.service.LlmKeyService
 import org.springframework.web.bind.annotation.GetMapping
@@ -15,14 +16,17 @@ data class InternalLlmSettingsResponse(
     /** 관리 화면에서 넣은 OpenRouter API key. 없으면 null 이고, agent-server 는 OpenRouter 를 부르지 못한다. */
     val openrouterApiKey: String?,
     /** 관리 화면에서 넣은 Bedrock API key. 없으면 null 이고, agent-server 는 AWS 기본 credential chain 을 쓴다. */
-    val bedrockApiKey: String?
+    val bedrockApiKey: String?,
+    /** 관리 화면에서 넣은 Claude API key. 없으면 null 이고, agent-server 는 `claude/` model 을 부르지 못한다. */
+    val anthropicApiKey: String?
 ) {
     override fun toString(): String =
-        "InternalLlmSettingsResponse(openrouterApiKeySet=${openrouterApiKey != null}, bedrockApiKeySet=${bedrockApiKey != null})"
+        "InternalLlmSettingsResponse(openrouterApiKeySet=${openrouterApiKey != null}, " +
+            "bedrockApiKeySet=${bedrockApiKey != null}, anthropicApiKeySet=${anthropicApiKey != null})"
 }
 
 /**
- * `artel-agent-server` 가 OpenRouter 와 Bedrock API key 를 묻는 경로.
+ * `artel-agent-server` 가 OpenRouter, Bedrock, Claude API key 를 묻는 경로.
  *
  * `/internal/` 아래라 내부 포트(8081)에만 있고 인증이 없다(`.agents/docs/project.md` 의 신뢰 경계).
  * 공개 포트에서 이 경로는 404 다.
@@ -31,12 +35,14 @@ data class InternalLlmSettingsResponse(
 @RequestMapping("/internal/settings/llm")
 class InternalLlmSettingsController(
     private val llmKeyService: LlmKeyService,
-    private val bedrockKeyService: BedrockKeyService
+    private val bedrockKeyService: BedrockKeyService,
+    private val anthropicKeyService: AnthropicKeyService
 ) {
 
     @GetMapping
     suspend fun llmSettings(): InternalLlmSettingsResponse = InternalLlmSettingsResponse(
         openrouterApiKey = llmKeyService.effectiveKey().apiKey,
-        bedrockApiKey = bedrockKeyService.storedKey()
+        bedrockApiKey = bedrockKeyService.storedKey(),
+        anthropicApiKey = anthropicKeyService.storedKey()
     )
 }

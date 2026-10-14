@@ -967,6 +967,54 @@
         }
       }
     },
+    "/api/admin/settings/anthropic": {
+      "get": {
+        "tags": [
+          "admin-anthropic-settings-controller"
+        ],
+        "operationId": "anthropicKeyStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin-anthropic-settings-controller"
+        ],
+        "operationId": "updateAnthropicKey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAnthropicKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/test-cases/content-maps/{contentMapId}/regenerate": {
       "post": {
         "tags": [
@@ -3207,6 +3255,26 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/BedrockCheck"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings/anthropic/check": {
+      "post": {
+        "tags": [
+          "admin-anthropic-settings-controller"
+        ],
+        "operationId": "checkAnthropicKey",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicCheck"
                 }
               }
             }
@@ -6424,6 +6492,80 @@
           }
         }
       },
+      "UpdateAnthropicKeyRequest": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          }
+        }
+      },
+      "AnthropicCheck": {
+        "required": [
+          "checkedAt",
+          "keyConfigured",
+          "keyValid",
+          "models"
+        ],
+        "type": "object",
+        "properties": {
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "keyConfigured": {
+            "type": "boolean"
+          },
+          "keyValid": {
+            "type": "boolean"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnthropicModelCheck"
+            }
+          }
+        }
+      },
+      "AnthropicKeyStatus": {
+        "required": [
+          "configured"
+        ],
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "maskedKey": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastCheck": {
+            "$ref": "#/components/schemas/AnthropicCheck"
+          }
+        }
+      },
+      "AnthropicModelCheck": {
+        "required": [
+          "id",
+          "reachable"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reachable": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
       "TestCaseSpecIngestResult": {
         "required": [
           "created",
@@ -8586,6 +8728,9 @@
             "type": "string"
           },
           "bedrockApiKey": {
+            "type": "string"
+          },
+          "anthropicApiKey": {
             "type": "string"
           }
         }

@@ -21,6 +21,12 @@ import java.time.Instant
 
 /** 이 접두어로 시작하는 id 는 OpenRouter 가 아니라 AWS Bedrock 으로 부른다. */
 const val BEDROCK_MODEL_PREFIX = "bedrock/"
+
+/** 이 접두어로 시작하는 id 는 Claude API(Anthropic API)로 부른다. 뒤는 Anthropic model id 다. */
+const val CLAUDE_MODEL_PREFIX = "claude/"
+private const val ROUTE_BEDROCK = "bedrock"
+private const val ROUTE_CLAUDE = "claude"
+private const val ROUTE_OPENROUTER = "openrouter"
 private val STRING_LIST = object : TypeReference<List<String>>() {}
 
 /**
@@ -81,15 +87,28 @@ class LlmModelService(
             .map { it.id }
             .filter { it.startsWith(BEDROCK_MODEL_PREFIX) }
 
+    /** Claude API key 확인이 볼 model. 켜진 `claude/` 행의 id 를 `sort_order` 순서로 돌려준다. */
+    suspend fun enabledClaudeModelIds(): List<String> =
+        repository.findAllByEnabledTrueOrderBySortOrderAsc()
+            .map { it.id }
+            .filter { it.startsWith(CLAUDE_MODEL_PREFIX) }
+
     /**
-     * OpenRouter key 하나로 닿아야 하는 model: 켜진 행 중 Bedrock 이 아닌 것, 그리고 embedding model
-     * (`artel.knowledge.backfill.model`). 꺼진 model 은 key 로 닿을 필요가 없다.
+     * OpenRouter key 하나로 닿아야 하는 model: 켜진 행 중 Bedrock 과 Claude API 가 아닌 것, 그리고 embedding
+     * model(`artel.knowledge.backfill.model`). 꺼진 model 은 key 로 닿을 필요가 없다.
      */
     suspend fun requiredOpenRouterModels(): List<String> =
         (repository.findAllByEnabledTrueOrderBySortOrderAsc()
             .map { it.id }
-            .filterNot { it.startsWith(BEDROCK_MODEL_PREFIX) } + backfillProperties.model)
+            .filter { routeOf(it) == ROUTE_OPENROUTER } + backfillProperties.model)
             .distinct()
+
+    /** id 의 접두어로 정해지는 호출 경로. `GET /api/admin/llm-models` 의 `route` 값이다. */
+    private fun routeOf(id: String): String = when {
+        id.startsWith(BEDROCK_MODEL_PREFIX) -> ROUTE_BEDROCK
+        id.startsWith(CLAUDE_MODEL_PREFIX) -> ROUTE_CLAUDE
+        else -> ROUTE_OPENROUTER
+    }
 
     private fun toInternal(entity: LlmModelEntity) = InternalLlmModelResponse(
         id = entity.id,
@@ -124,7 +143,7 @@ class LlmModelService(
         id = entity.id,
         label = entity.label,
         provider = entity.provider,
-        route = if (entity.id.startsWith(BEDROCK_MODEL_PREFIX)) "bedrock" else "openrouter",
+        route = routeOf(entity.id),
         enabled = entity.enabled,
         supportsVision = "image" in strings(entity.inputModalities),
         maxInputTokens = entity.maxInputTokens,
