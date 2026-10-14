@@ -919,6 +919,54 @@
         }
       }
     },
+    "/api/admin/settings/bedrock": {
+      "get": {
+        "tags": [
+          "admin-bedrock-settings-controller"
+        ],
+        "operationId": "bedrockKeyStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BedrockKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin-bedrock-settings-controller"
+        ],
+        "operationId": "updateBedrockKey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBedrockKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BedrockKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/test-cases/content-maps/{contentMapId}/regenerate": {
       "post": {
         "tags": [
@@ -1364,7 +1412,7 @@
         "tags": [
           "qa-try-controller"
         ],
-        "operationId": "list_1",
+        "operationId": "list_2",
         "parameters": [
           {
             "name": "projectId",
@@ -1592,7 +1640,7 @@
         ],
         "summary": "프로젝트 목록",
         "description": "참여 중인 프로젝트를 최근 수정순으로 조회한다. `scope=ALL`은 개발자 등급 전용이다.",
-        "operationId": "list_3",
+        "operationId": "list_4",
         "parameters": [
           {
             "name": "page",
@@ -1680,7 +1728,7 @@
         "tags": [
           "test-run-controller"
         ],
-        "operationId": "list_5",
+        "operationId": "list_6",
         "parameters": [
           {
             "name": "projectId",
@@ -2204,7 +2252,7 @@
         ],
         "summary": "보낸 초대 목록",
         "description": "소유자만 볼 수 있다. 아직 답을 기다리는 초대만 나온다.",
-        "operationId": "list_8",
+        "operationId": "list_9",
         "parameters": [
           {
             "name": "projectId",
@@ -2420,7 +2468,7 @@
         ],
         "summary": "기획서 이력",
         "description": "최신 버전이 앞에 온다.",
-        "operationId": "list_12",
+        "operationId": "list_13",
         "parameters": [
           {
             "name": "projectId",
@@ -2948,7 +2996,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "list_14",
+        "operationId": "list_15",
         "responses": {
           "200": {
             "description": "OK",
@@ -3106,6 +3154,26 @@
         }
       }
     },
+    "/api/admin/settings/llm/invalidate-cache": {
+      "post": {
+        "tags": [
+          "admin-llm-settings-controller"
+        ],
+        "operationId": "invalidateAgentCache",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCacheInvalidationResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/settings/llm/check": {
       "post": {
         "tags": [
@@ -3119,6 +3187,26 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/LlmKeyCheckResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings/bedrock/check": {
+      "post": {
+        "tags": [
+          "admin-bedrock-settings-controller"
+        ],
+        "operationId": "checkBedrockKey",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BedrockCheck"
                 }
               }
             }
@@ -3418,6 +3506,57 @@
         }
       }
     },
+    "/api/admin/llm-models": {
+      "get": {
+        "tags": [
+          "admin-llm-model-controller"
+        ],
+        "operationId": "list_16",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminLlmModelResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "admin-llm-model-controller"
+        ],
+        "operationId": "update_3",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLlmModelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLlmModelResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/settings/llm": {
       "get": {
         "tags": [
@@ -3485,6 +3624,29 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/SceneContextResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/llm-models": {
+      "get": {
+        "tags": [
+          "internal-llm-model-controller"
+        ],
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InternalLlmModelResponse"
+                  }
                 }
               }
             }
@@ -3587,7 +3749,7 @@
         ],
         "summary": "SDK 프로젝트 목록",
         "description": "참여 중인 프로젝트를 최근 수정순으로 조회한다.",
-        "operationId": "list",
+        "operationId": "list_1",
         "responses": {
           "200": {
             "description": "OK",
@@ -4005,7 +4167,7 @@
         "tags": [
           "qa-model-controller"
         ],
-        "operationId": "list_2",
+        "operationId": "list_3",
         "responses": {
           "200": {
             "description": "OK",
@@ -4160,7 +4322,7 @@
         "tags": [
           "project-test-scenario-controller"
         ],
-        "operationId": "list_4",
+        "operationId": "list_5",
         "parameters": [
           {
             "name": "projectId",
@@ -4563,7 +4725,7 @@
         ],
         "summary": "멤버 목록",
         "description": "참여자면 누구나 볼 수 있다. 소유자가 먼저, 그 안에서는 참여한 순서다. 참여자가 아니면 404.",
-        "operationId": "list_6",
+        "operationId": "list_7",
         "parameters": [
           {
             "name": "projectId",
@@ -4679,7 +4841,7 @@
         "tags": [
           "project-issue-controller"
         ],
-        "operationId": "list_7",
+        "operationId": "list_8",
         "parameters": [
           {
             "name": "projectId",
@@ -4794,7 +4956,7 @@
         ],
         "summary": "게임 인스턴스 목록",
         "description": "최근에 만든 것이 앞에 온다.",
-        "operationId": "list_9",
+        "operationId": "list_10",
         "parameters": [
           {
             "name": "projectId",
@@ -4828,7 +4990,7 @@
         ],
         "summary": "게임 빌드 목록",
         "description": "최근에 보고된 것이 앞에 온다.",
-        "operationId": "list_10",
+        "operationId": "list_11",
         "parameters": [
           {
             "name": "projectId",
@@ -4902,7 +5064,7 @@
         ],
         "summary": "등록된 macro 목록",
         "description": "이 빌드에 등록된 macro 를 이름 오름차순으로 읽는다. `source` 는 싣지 않는다 — 원문은 상세 조회에 있다. 등록된 것이 없으면 빈 `items` 다.",
-        "operationId": "list_11",
+        "operationId": "list_12",
         "parameters": [
           {
             "name": "projectId",
@@ -5371,7 +5533,7 @@
         ],
         "summary": "받은 초대 목록",
         "description": "로그인한 계정으로 온 초대와 그 계정의 확인된 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없어도 계정으로 온 초대는 나온다.",
-        "operationId": "list_13",
+        "operationId": "list_14",
         "responses": {
           "200": {
             "description": "OK",
@@ -6110,7 +6272,6 @@
             "type": "string",
             "enum": [
               "admin",
-              "environment",
               "none"
             ]
           },
@@ -6153,7 +6314,6 @@
           "adminKeyStored",
           "adminKeyUnreadable",
           "configured",
-          "environmentKeyPresent",
           "secretsKeyConfigured",
           "source"
         ],
@@ -6166,7 +6326,6 @@
             "type": "string",
             "enum": [
               "admin",
-              "environment",
               "none"
             ]
           },
@@ -6183,14 +6342,85 @@
             "type": "string",
             "format": "date-time"
           },
-          "environmentKeyPresent": {
-            "type": "boolean"
-          },
           "secretsKeyConfigured": {
             "type": "boolean"
           },
           "lastCheck": {
             "$ref": "#/components/schemas/LlmKeyCheckResult"
+          }
+        }
+      },
+      "UpdateBedrockKeyRequest": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          }
+        }
+      },
+      "BedrockCheck": {
+        "required": [
+          "checkedAt",
+          "keyConfigured",
+          "models"
+        ],
+        "type": "object",
+        "properties": {
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "keyConfigured": {
+            "type": "boolean"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BedrockModelCheck"
+            }
+          }
+        }
+      },
+      "BedrockKeyStatus": {
+        "required": [
+          "configured",
+          "region"
+        ],
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "maskedKey": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "region": {
+            "type": "string"
+          },
+          "lastCheck": {
+            "$ref": "#/components/schemas/BedrockCheck"
+          }
+        }
+      },
+      "BedrockModelCheck": {
+        "required": [
+          "id",
+          "reachable"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reachable": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
           }
         }
       },
@@ -8131,6 +8361,20 @@
           }
         }
       },
+      "AgentCacheInvalidationResult": {
+        "required": [
+          "agentServerInvalidated"
+        ],
+        "type": "object",
+        "properties": {
+          "agentServerInvalidated": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
       "UpdateProjectRequest": {
         "type": "object",
         "properties": {
@@ -8279,22 +8523,70 @@
           }
         }
       },
-      "InternalLlmSettingsResponse": {
+      "UpdateLlmModelRequest": {
         "required": [
-          "source"
+          "enabled",
+          "id"
         ],
         "type": "object",
         "properties": {
-          "apiKey": {
+          "id": {
             "type": "string"
           },
-          "source": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AdminLlmModelResponse": {
+        "required": [
+          "enabled",
+          "id",
+          "label",
+          "maxInputTokens",
+          "provider",
+          "route",
+          "supportsVision",
+          "updatedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "supportsVision": {
+            "type": "boolean"
+          },
+          "maxInputTokens": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
             "type": "string",
-            "enum": [
-              "admin",
-              "environment",
-              "none"
-            ]
+            "format": "date-time"
+          }
+        }
+      },
+      "InternalLlmSettingsResponse": {
+        "type": "object",
+        "properties": {
+          "openrouterApiKey": {
+            "type": "string"
+          },
+          "bedrockApiKey": {
+            "type": "string"
           }
         }
       },
@@ -8733,6 +9025,85 @@
             }
           }
         ]
+      },
+      "InternalLlmModelResponse": {
+        "required": [
+          "enabled",
+          "id",
+          "inputModalities",
+          "label",
+          "maxInputTokens",
+          "provider",
+          "sortOrder",
+          "supportsStrictJson"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "supportsStrictJson": {
+            "type": "boolean"
+          },
+          "maxInputTokens": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "inputModalities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reasoning": {
+            "$ref": "#/components/schemas/LlmModelReasoning"
+          },
+          "pricing": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "LlmModelReasoning": {
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "efforts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "minTokens": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxTokens": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
       },
       "KnowledgeListResponse": {
         "required": [

@@ -133,7 +133,11 @@ class AdminUserAndPasswordIntegrationTest {
                 Triple(HttpMethod.PATCH, "/api/admin/users/$userId", """{"platformRole":"ADMIN"}"""),
                 Triple(HttpMethod.GET, "/api/admin/settings/llm", null),
                 Triple(HttpMethod.PUT, "/api/admin/settings/llm", """{"apiKey":"sk-or-v1-should-not-be-stored"}"""),
-                Triple(HttpMethod.POST, "/api/admin/settings/llm/check", null)
+                Triple(HttpMethod.POST, "/api/admin/settings/llm/check", null),
+                Triple(HttpMethod.POST, "/api/admin/settings/llm/invalidate-cache", null),
+                Triple(HttpMethod.GET, "/api/admin/settings/bedrock", null),
+                Triple(HttpMethod.PUT, "/api/admin/settings/bedrock", """{"apiKey":"bedrock-key-should-not-be-stored"}"""),
+                Triple(HttpMethod.POST, "/api/admin/settings/bedrock/check", null)
             )
             for ((method, path, json) in requests) {
                 val response = call(method, path, session, json)
