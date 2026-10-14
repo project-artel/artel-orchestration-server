@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.qa.service.QaTryDetailService
 import kr.artel.orchestration.qa.service.QaTryService
 import kr.artel.orchestration.qa.service.toContentMapMode
+import kr.artel.orchestration.qa.service.toFunctionOptions
 import kr.artel.orchestration.qa.service.toKnowledgeSettings
 import kr.artel.orchestration.qa.service.toRunSettings
 import kr.artel.orchestration.userllmkey.service.UserLlmKeyService
@@ -65,7 +66,8 @@ class QaTryController(
                 request.toRunSettings(objectMapper),
                 request.toKnowledgeSettings(),
                 request.toContentMapMode(),
-                runKey
+                runKey,
+                request.toFunctionOptions()
             )
         )
     }
