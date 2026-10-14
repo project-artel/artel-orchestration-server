@@ -1623,11 +1623,11 @@
             "required": false,
             "schema": {
               "type": "string",
+              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ],
-              "default": "MINE"
+              ]
             }
           }
         ],
@@ -6511,6 +6511,9 @@
           },
           "sceneScan": {
             "$ref": "#/components/schemas/JsonNode"
+          },
+          "isEditor": {
+            "type": "boolean"
           }
         }
       },
@@ -6520,6 +6523,7 @@
           "gameVersion",
           "instanceId",
           "instanceName",
+          "isEditor",
           "projectId"
         ],
         "type": "object",
@@ -6538,6 +6542,9 @@
           },
           "gameVersion": {
             "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
           }
         }
       },
@@ -7887,11 +7894,11 @@
           },
           "kind": {
             "type": "string",
+            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ],
-            "default": "sdk"
+            ]
           }
         }
       },
@@ -8226,6 +8233,7 @@
         "required": [
           "createdAt",
           "id",
+          "isEditor",
           "projectId",
           "updatedAt",
           "version"
@@ -8246,6 +8254,9 @@
           },
           "notes": {
             "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
           },
           "createdAt": {
             "type": "string",

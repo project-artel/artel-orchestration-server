@@ -18,6 +18,12 @@ import java.time.Instant
  *
  * [sceneScan]은 SDK가 등록 시 보고한 씬 스캔 JSON을 그대로 담는다. 빌드당 최신본 하나만
  * 의미가 있어 재등록마다 덮어쓴다. null은 아직 스캔을 보고한 적 없다는 뜻이다.
+ *
+ * [isEditor]가 true인 행은 Unity editor 실행을 받는 프로젝트당 한 행이다(ARTEL-1014). editor 는
+ * development build 와 같은 Player Settings 버전을 보고하지만 계속 바뀌는 작업 상태라 게임 버전이
+ * 아니다. 그래서 이 행의 [version]과 [sceneScan]은 editor 가 등록할 때마다 마지막 보고값으로 바뀌고,
+ * 빌드를 버전 순서로 읽는 곳(TR 의 버전, 가져오기 트리, REGRESSION 의 직전 build, 판정 이력)은 이 행을
+ * 빼고 읽는다.
  */
 @Table("game_build")
 data class GameBuildEntity(
@@ -38,6 +44,9 @@ data class GameBuildEntity(
 
     @Column("scene_scan")
     val sceneScan: Json? = null,
+
+    @Column("is_editor")
+    val isEditor: Boolean = false,
 
     @Column("created_at")
     val createdAt: Instant,

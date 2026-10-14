@@ -2,6 +2,7 @@ package kr.artel.orchestration.game
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
@@ -217,6 +218,97 @@ class SdkRegistrationIntegrationTest {
         assertThat(build.sceneScan).isNotNull()
     }
 
+    /** editor 는 development build 와 같은 버전을 보고한다. 같은 행이면 editor 가 그 build 의 scan 을 덮어쓴다. */
+    @Test
+    fun `keeps the editor and a development build with the same version in separate builds`(): Unit = runBlocking {
+        val user = signIn()
+        val projectId = createProject(user.webToken)
+
+        val development = register(
+            user.sdkToken, projectId, "sdk-uuid-player", "1.2.3",
+            sceneScan = """{"scenesInBuild":["Main"]}""", isEditor = false
+        )
+        val editor = register(
+            user.sdkToken, projectId, "sdk-uuid-editor", "1.2.3",
+            sceneScan = """{"scenesInBuild":["Main","Work"]}""", isEditor = true
+        )
+
+        assertThat(editor["gameBuildId"].asText()).isNotEqualTo(development["gameBuildId"].asText())
+        assertThat(development["isEditor"].asBoolean()).isFalse()
+        assertThat(editor["isEditor"].asBoolean()).isTrue()
+        assertThat(buildRepository.count()).isEqualTo(2L)
+        val developmentBuild = buildRepository.findById(development["gameBuildId"].asLong())!!
+        assertThat(objectMapper.readTree(developmentBuild.sceneScan!!.asString())["scenesInBuild"]).hasSize(1)
+
+        // 그 뒤 development build 가 다시 등록돼도 editor 행이 아니라 자기 행으로 간다.
+        val again = register(user.sdkToken, projectId, "sdk-uuid-player", "1.2.3")
+        assertThat(again["gameBuildId"].asText()).isEqualTo(development["gameBuildId"].asText())
+    }
+
+    @Test
+    fun `keeps one editor build and follows the version the editor reports`(): Unit = runBlocking {
+        val user = signIn()
+        val projectId = createProject(user.webToken)
+
+        val first = register(
+            user.sdkToken, projectId, "sdk-uuid-editor", "1.2.3",
+            sceneScan = """{"scenesInBuild":["Main"]}""", isEditor = true
+        )
+        val second = register(user.sdkToken, projectId, "sdk-uuid-editor", "1.3.0", isEditor = true)
+        // 스캔 없는 등록은 version 만 바꾸고 앞 스캔을 남긴다.
+        val afterSecond = buildRepository.findById(first["gameBuildId"].asLong())!!
+        assertThat(afterSecond.version).isEqualTo("1.3.0")
+        assertThat(objectMapper.readTree(afterSecond.sceneScan!!.asString())["scenesInBuild"]).hasSize(1)
+        val third = register(
+            user.sdkToken, projectId, "sdk-uuid-other-editor", "1.4.0",
+            sceneScan = """{"scenesInBuild":["Main","Level1"]}""", isEditor = true
+        )
+
+        assertThat(listOf(second, third).map { it["gameBuildId"].asText() })
+            .containsOnly(first["gameBuildId"].asText())
+        assertThat(third["gameVersion"].asText()).isEqualTo("1.4.0")
+        assertThat(buildRepository.count()).isEqualTo(1L)
+        val stored = buildRepository.findAll().first()
+        assertThat(stored.isEditor).isTrue()
+        assertThat(stored.version).isEqualTo("1.4.0")
+        assertThat(objectMapper.readTree(stored.sceneScan!!.asString())["scenesInBuild"]).hasSize(2)
+        // 두 editor 인스턴스가 모두 editor 행을 가리킨다. QA run 과 scan 이 이 값을 읽는다.
+        assertThat(instanceRepository.findAll().toList().map { it.lastGameBuildId }.toSet())
+            .containsExactly(stored.id)
+    }
+
+    /** isEditor 를 모르는 구버전 SDK 는 development build 로 다룬다. */
+    @Test
+    fun `treats a registration without isEditor as a development build`(): Unit = runBlocking {
+        val user = signIn()
+        val projectId = createProject(user.webToken)
+
+        val editor = register(user.sdkToken, projectId, "sdk-uuid-editor", "1.2.3", isEditor = true)
+        val legacy = register(user.sdkToken, projectId, "sdk-uuid-legacy", "1.2.3")
+        val legacyAgain = register(user.sdkToken, projectId, "sdk-uuid-legacy", "1.2.3")
+
+        assertThat(legacy["isEditor"].asBoolean()).isFalse()
+        assertThat(legacy["gameBuildId"].asText()).isNotEqualTo(editor["gameBuildId"].asText())
+        assertThat(legacyAgain["gameBuildId"].asText()).isEqualTo(legacy["gameBuildId"].asText())
+        assertThat(buildRepository.count()).isEqualTo(2L)
+    }
+
+    @Test
+    fun `lists the editor build after every development build`(): Unit = runBlocking {
+        val user = signIn()
+        val projectId = createProject(user.webToken)
+
+        register(user.sdkToken, projectId, "sdk-uuid-player", "1.0.0")
+        register(user.sdkToken, projectId, "sdk-uuid-editor", "1.1.0", isEditor = true)
+        register(user.sdkToken, projectId, "sdk-uuid-player", "1.1.0")
+        register(user.sdkToken, projectId, "sdk-uuid-player", "1.2.0")
+
+        val items = get(user.webToken, "/api/projects/$projectId/game-builds")["items"]
+        assertThat(items.map { it["version"].asText() to it["isEditor"].asBoolean() }).containsExactly(
+            "1.2.0" to false, "1.1.0" to false, "1.0.0" to false, "1.1.0" to true
+        )
+    }
+
     @Test
     fun `refuses a project the user does not belong to`(): Unit = runBlocking {
         val owner = signIn()
@@ -262,7 +354,8 @@ class SdkRegistrationIntegrationTest {
         sdkUuid: String,
         gameVersion: String,
         instanceName: String? = null,
-        sceneScan: String? = null
+        sceneScan: String? = null,
+        isEditor: Boolean? = null
     ) = objectMapper.readTree(
         client().post()
             .uri("/api/sdk/registrations")
@@ -273,6 +366,7 @@ class SdkRegistrationIntegrationTest {
                     append("""{"projectId":"$projectId","sdkUuid":"$sdkUuid","gameVersion":"$gameVersion"""")
                     if (instanceName != null) append(""","instanceName":"$instanceName"""")
                     if (sceneScan != null) append(""","sceneScan":$sceneScan""")
+                    if (isEditor != null) append(""","isEditor":$isEditor""")
                     append("}")
                 }
             )
