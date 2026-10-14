@@ -1,7 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
 import kr.artel.orchestration.common.error.BadRequestException
-import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.ScenarioStepKind
@@ -11,19 +10,8 @@ class InvalidFreeScenarioException(message: String) :
     BadRequestException(message, code = "invalid_free_scenario")
 
 /**
- * 작성 챗봇과 자동 step 재작성은 ORDERED 시나리오를 위해 만들어졌다. FREE 시나리오가 걸리면 재작성하지
- * 않고 이 오류로 거절한다. 409, code `free_scenario_not_authorable`.
- */
-class FreeScenarioNotAuthorableException(message: String = DEFAULT_MESSAGE) :
-    ConflictException(message, code = "free_scenario_not_authorable") {
-    companion object {
-        const val DEFAULT_MESSAGE =
-            "TC 묶음(FREE) 시나리오는 작성 챗봇으로 고칠 수 없습니다. 시나리오 편집 화면에서 직접 수정하세요."
-    }
-}
-
-/**
- * [ScenarioExecutionMode.FREE] 초안의 저장 규칙(ARTEL-1028). 자동저장과 승인이 같은 규칙을 지난다.
+ * [ScenarioExecutionMode.FREE] 초안의 저장 규칙(ARTEL-1028). 자동저장과 승인, 작성 챗봇의 저장(reconcile)이
+ * 같은 규칙을 지난다.
  *
  * - 모든 step 에 `case_id` 가 있다.
  * - 같은 `case_id` 가 두 번 나오지 않는다.

@@ -304,6 +304,9 @@ object ScenarioConflictSplit {
                 title = titleOf(scenario.title, part),
                 description = scenario.description,
                 steps = steps.filterIndexed { index, _ -> owner[index] == part },
+                // 조각도 원본의 실행 방식을 따른다. 빠지면 FREE 에서 ORDERED 로 바꾸는 수정이 null 로
+                // 읽혀 저장된 FREE 가 남는다.
+                executionMode = scenario.executionMode,
             )
         }
     }

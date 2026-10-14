@@ -168,12 +168,16 @@ data class ScenarioDraft(
  * @property steps 이 시나리오의 스텝들(순서=실행 순서). 각 스텝은 행위 + 선택적 caseId. Agent 계약의
  *   `steps`에 대응한다. 타입이 [ScenarioStep]이 아니라 [ChatScenarioStep]인 것은 의도다 — 에이전트는
  *   기대 판정 라벨을 본 적이 없고, 이 타입에는 그 필드가 아예 없어 되돌려 보낼 수도 없다(ARTEL-301).
+ * @property executionMode 실행 방식(ARTEL-1028). null 은 "말하지 않았다" 이다 — 새 시나리오는 ORDERED,
+ *   기존 시나리오 수정은 저장된 값을 유지한다. 해석은
+ *   [kr.artel.orchestration.testscenario.service.ScenarioReconcileService.withExecutionModes] 한 곳에서 한다.
  */
 data class ScenarioResult(
     @JsonProperty("scenario_id") val scenarioId: Long? = null,
     val title: String = "",
     val description: String = "",
-    val steps: List<ChatScenarioStep> = emptyList()
+    val steps: List<ChatScenarioStep> = emptyList(),
+    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
 )
 
 /**
