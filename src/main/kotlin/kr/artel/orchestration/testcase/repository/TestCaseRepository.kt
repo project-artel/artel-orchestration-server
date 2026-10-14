@@ -168,18 +168,9 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     @Query("DELETE FROM test_case WHERE project_id = :projectId AND id IN (:ids)")
     suspend fun deleteByProjectIdAndIdIn(projectId: Long, ids: Collection<Long>): Int
 
-    /**
-     * [ids] 중 이 프로젝트에 있는 test case 를 [folderId] 로 옮기고 옮긴 행 수를 돌려준다(ARTEL-969).
-     * [folderId] 가 null 이면 folder 없음으로 옮긴다. folder 가 이 프로젝트 것인지는 호출하는 쪽이 확인한다.
-     */
-    @Modifying
-    @Query(
-        """
-        UPDATE test_case SET folder_id = :folderId, updated_at = now()
-        WHERE project_id = :projectId AND id IN (:ids)
-        """
-    )
-    suspend fun moveToFolder(projectId: Long, ids: Collection<Long>, folderId: Long?): Int
+    /** [ids] 중 이 프로젝트에 있는 test case 수. 예전 folder 옮기기 응답의 `moved` 를 센다. */
+    @Query("SELECT COUNT(*) FROM test_case WHERE project_id = :projectId AND id IN (:ids)")
+    suspend fun countByProjectIdAndIdIn(projectId: Long, ids: Collection<Long>): Long
 
     /**
      * QA 검증 스텝의 판정을 이 케이스의 상태로 옮긴다(ARTEL-994). [verificationStatus] 는 VERIFIED 또는 FAILED 다.

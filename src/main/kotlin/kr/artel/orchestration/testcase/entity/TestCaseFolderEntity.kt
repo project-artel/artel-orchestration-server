@@ -26,10 +26,6 @@ data class TestCaseFolderEntity(
     @Column("name")
     val name: String,
 
-    /** content map 에서 test case 를 생성할 때 만든 folder 만 가진다(ARTEL-971). PUT 으로 바뀌지 않는다. */
-    @Column("content_map_id")
-    val contentMapId: Long? = null,
-
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,

@@ -13,6 +13,7 @@ import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
+import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import org.springframework.stereotype.Service
@@ -31,6 +32,7 @@ class TestCaseVersionService(
     private val gameBuilds: GameBuildRepository,
     private val projectAccessService: ProjectAccessService,
     private val objectMapper: ObjectMapper,
+    private val folderItems: TestCaseFolderItemRepository,
 ) {
 
     /** 버전 목록(최신 순)과 버전별 수. 비멤버면 404 다. */
@@ -71,10 +73,11 @@ class TestCaseVersionService(
         }
         val here = versions.findByGameBuildId(gameBuildId).toList().associateBy { it.testCaseId }
         val there = compareTo?.let { versions.findByGameBuildId(it).toList().associateBy { v -> v.testCaseId } }.orEmpty()
+        val folderIds = folderItems.findFirstFolders(projectId).toList().associate { it.testCaseId to it.folderId }
         val items = testCases.findByProjectIdOrderByIdDesc(projectId).toList().mapNotNull { identity ->
             val id = requireNotNull(identity.id)
-            if (isMapCase(identity)) mapRow(identity, here[id], there[id], compareTo != null)
-            else manualRow(identity, here[id], there[id], compareTo != null)
+            if (isMapCase(identity)) mapRow(identity, here[id], there[id], compareTo != null, folderIds)
+            else manualRow(identity, here[id], there[id], compareTo != null, folderIds)
         }
         return TestCaseVersionCasesResponse(
             gameBuildId = gameBuildId.toString(),
@@ -88,6 +91,7 @@ class TestCaseVersionService(
         here: TestCaseVersionEntity?,
         there: TestCaseVersionEntity?,
         comparing: Boolean,
+        folderIds: Map<Long, Long>,
     ): TestCaseVersionRow? {
         val content = here ?: there?.takeIf { comparing } ?: return null
         val presence = when {
@@ -103,7 +107,7 @@ class TestCaseVersionService(
             expectedValue = content.expectedValue,
             status = content.status,
             origin = MAP,
-            folderId = identity.folderId?.toString(),
+            folderId = folderIds[identity.id]?.toString(),
             createdAt = identity.createdAt ?: Instant.EPOCH,
             verificationStatus = here?.verificationStatus,
             presence = presence,
@@ -116,6 +120,7 @@ class TestCaseVersionService(
         here: TestCaseVersionEntity?,
         there: TestCaseVersionEntity?,
         comparing: Boolean,
+        folderIds: Map<Long, Long>,
     ) = TestCaseVersionRow(
         id = requireNotNull(identity.id).toString(),
         scene = identity.scene,
@@ -124,7 +129,7 @@ class TestCaseVersionService(
         expectedValue = identity.expectedValue,
         status = identity.status,
         origin = MANUAL,
-        folderId = identity.folderId?.toString(),
+        folderId = folderIds[identity.id]?.toString(),
         createdAt = identity.createdAt ?: Instant.EPOCH,
         verificationStatus = here?.verificationStatus ?: VerificationStatus.DRAFT.name,
         presence = BOTH,

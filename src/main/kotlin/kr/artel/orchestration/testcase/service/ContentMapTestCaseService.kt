@@ -21,9 +21,9 @@ import org.springframework.transaction.reactive.executeAndAwait
  * - [generate] — `POST /api/projects/{projectId}/game-builds/{gameBuildId}/content-map/test-cases`. 사용자가 누른다.
  * - [regenerate] — `/internal/test-cases/content-maps/{contentMapId}/regenerate`. 생성기를 고친 뒤 개발자가 부른다.
  *
- * 두 경로 모두 한 트랜잭션 안에서 프로젝트 folder lock → content map folder 찾기 또는 만들기 →
- * [MapTestCaseWriter.rewrite] 순서로 실행한다. 같은 build 를 두 요청이 동시에 생성해도 두 번째는 첫 번째가
- * commit 한 행을 보고 아무것도 새로 만들지 않는다.
+ * 두 경로 모두 한 트랜잭션 안에서 [MapTestCaseWriter.rewrite] 를 부른다. 생성한 케이스를 folder 에 넣지
+ * 않는다 — build 별 케이스는 버전 목록이 보인다(ARTEL-1023). 프로젝트 folder lock 은 그대로 잡는다. 같은 build 를
+ * 두 요청이 동시에 생성하는 것을 그 lock 이 한 줄로 세운다.
  */
 @Service
 class ContentMapTestCaseService(
@@ -73,11 +73,6 @@ class ContentMapTestCaseService(
     ): MapTestCaseWriter.Result =
         transactionalOperator.executeAndAwait {
             folderService.lockProjectFolders(projectId)
-            val folder = folderService.findOrCreateContentMapFolder(projectId, contentMapId, buildNameOf(build))
-            writer.rewrite(projectId, requireNotNull(build.id), contentMapId, folder.id!!)
+            writer.rewrite(projectId, requireNotNull(build.id), contentMapId)
         }
-
-    /** folder 이름에 쓰는 build 이름. 사람이 붙인 `label` 이 있으면 그것, 없으면 관찰한 `version`. */
-    private fun buildNameOf(build: GameBuildEntity): String =
-        build.label?.takeIf { it.isNotBlank() } ?: build.version
 }

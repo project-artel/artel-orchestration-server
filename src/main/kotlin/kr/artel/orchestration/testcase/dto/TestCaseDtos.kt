@@ -56,7 +56,10 @@ data class TestCaseResponse(
     val verificationStatus: String,
     val lastVerifiedBuildId: String?,
     val createdAt: Instant,
-    /** 이 케이스가 든 folder(ARTEL-969). null 이면 folder 없음이다. */
+    /**
+     * 이 케이스가 든 folder(ARTEL-969). null 이면 folder 없음이다. 케이스가 여러 folder 에 들면 처음 담긴
+     * folder 다(ARTEL-1023) — 전부는 folder 항목 API 가 낸다.
+     */
     val folderId: String?,
 )
 

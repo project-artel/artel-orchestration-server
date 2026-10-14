@@ -27,11 +27,11 @@ import org.springframework.stereotype.Service
  * 판정이 버전마다 다른 id 를 가리켰다. 이 writer 는 한 build 의 버전 몫만 만들고 고치고 지운다 — 다른
  * build 의 몫은 그 버전의 이력이라 건드리지 않는다.
  *
- * ## folder, lock, 트랜잭션은 부르는 쪽이 맡는다
+ * ## 트랜잭션은 부르는 쪽이 맡는다
  *
- * [rewrite] 는 비교와 쓰기만 한다. 새 행은 받은 folder 에 넣고, 이미 있는 행은 `copy(...)` 로 고쳐
- * `folder_id` 를 바꾸지 않는다 — 사용자가 옮긴 folder 를 유지한다.
- * [kr.artel.orchestration.testcase.service.ContentMapTestCaseService] 가 트랜잭션과 folder lock 안에서 부른다.
+ * [rewrite] 는 비교와 쓰기만 한다. 새 케이스를 folder 에 넣지 않는다 — 버전별 목록이 그 build 의 케이스를
+ * 보이고, folder 는 사용자가 모으는 곳이다(ARTEL-1023).
+ * [kr.artel.orchestration.testcase.service.ContentMapTestCaseService] 가 트랜잭션 안에서 부른다.
  *
  * ## 같은 케이스란 무엇인가
  *
@@ -61,8 +61,7 @@ class MapTestCaseWriter(
      * build [gameBuildId] 의 content map 이 낸 케이스를 그 버전 몫(`test_case_version`)으로 앉힌다(ARTEL-1018).
      *
      * **케이스의 정체는 프로젝트 전체에서 하나다.** 같은 `case_key` 는 어느 build 의 지도가 내도 같은
-     * `test_case` 행이고, build 마다 달라지는 것은 버전 몫에 남는다. 정체가 없으면 새로 만들어 [folderId]
-     * 에 넣는다. 정체의 내용 칸은 끝에서 가장 최근 버전을 비춘다(`syncIdentities`).
+     * `test_case` 행이고, build 마다 달라지는 것은 버전 몫에 남는다. 정체가 없으면 새로 만든다. 정체의 내용 칸은 끝에서 가장 최근 버전을 비춘다(`syncIdentities`).
      *
      * - 새 버전 몫은 앞선 버전의 판정이 VERIFIED · FAILED · REGRESSION 이면 `REGRESSION` 으로 시작한다.
      *   앞 버전에서 판정이 난 것을 이번 버전에서 다시 봐야 하기 때문이다. 앞 버전 몫은 바꾸지 않는다 — 그
@@ -72,7 +71,7 @@ class MapTestCaseWriter(
      *
      * 트랜잭션 안에서 불러야 한다 — 생성 · 갱신 · 삭제가 한쪽만 커밋되면 표가 서로 다른 시점을 가리킨다.
      */
-    suspend fun rewrite(projectId: Long, gameBuildId: Long, contentMapId: Long, folderId: Long): Result {
+    suspend fun rewrite(projectId: Long, gameBuildId: Long, contentMapId: Long): Result {
         val generated = generator.generate(contentMapId).distinctBy(::identityOf)
         val identities = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter(::isMapOrigin)
         val byKey = identities.mapNotNull { row -> keyOf(row)?.let { it to row } }.toMap()
@@ -91,7 +90,7 @@ class MapTestCaseWriter(
         for (case in generated) {
             val identity = byKey[identityOf(case)]
                 ?: byText[visibleIdentityOf(case)]?.firstOrNull { it.id !in claimed }
-                ?: testCases.save(entityOf(projectId, contentMapId, folderId, case))
+                ?: testCases.save(entityOf(projectId, contentMapId, case))
             val testCaseId = requireNotNull(identity.id)
             claimed += testCaseId
             val prior = versionsHere[testCaseId]
@@ -141,7 +140,6 @@ class MapTestCaseWriter(
         val touched = claimed + gone.map { it.testCaseId }
         if (touched.isNotEmpty()) versions.syncIdentities(touched)
         return Result(
-            folderId = folderId,
             created = created,
             updated = updated,
             deleted = deleted,
@@ -232,9 +230,8 @@ class MapTestCaseWriter(
         ?.let { objectMapper.writeValueAsString(ConditionNodeResponse.of(it)) }
         ?.let(Json::of)
 
-    private fun entityOf(projectId: Long, contentMapId: Long, folderId: Long, case: MapTestCase) = TestCaseEntity(
+    private fun entityOf(projectId: Long, contentMapId: Long, case: MapTestCase) = TestCaseEntity(
         projectId = projectId,
-        folderId = folderId,
         scene = case.scene,
         step = case.step,
         precondition = case.precondition,
@@ -299,9 +296,7 @@ class MapTestCaseWriter(
         )
     )
 
-    /** @property folderId 새 행을 넣은 folder. content map 을 못 찾아 아무것도 하지 않았으면 null. */
     data class Result(
-        val folderId: Long? = null,
         val created: Int = 0,
         val updated: Int = 0,
         val deleted: Int = 0,

@@ -818,6 +818,106 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/items/order": {
+      "put": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "reorderFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderItemOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/items/hidden": {
+      "put": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "setFolderItemsHidden",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderItemHiddenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/me/profile": {
       "put": {
         "tags": [
@@ -2142,6 +2242,15 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
           }
         ],
         "responses": {
@@ -2178,6 +2287,253 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/TestCaseFolderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/items": {
+      "get": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "listFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "addFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderItemsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/items/removals": {
+      "post": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "removeFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderItemsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/items/moves": {
+      "post": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "moveFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderItemMoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/clones": {
+      "post": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "cloneFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderCloneRequest"
               }
             }
           },
@@ -6045,6 +6401,7 @@
       },
       "TestCaseFolderResponse": {
         "required": [
+          "caseCount",
           "id",
           "name"
         ],
@@ -6059,11 +6416,53 @@
           "name": {
             "type": "string"
           },
-          "contentMapId": {
-            "type": "string"
+          "caseCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "visibleCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "TestCaseFolderItemOrderRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TestCaseFolderItemsChangeResponse": {
+        "required": [
+          "changed"
+        ],
+        "type": "object",
+        "properties": {
+          "changed": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "TestCaseFolderItemHiddenRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "gameBuildId": {
             "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
           }
         }
       },
@@ -7579,6 +7978,45 @@
           }
         }
       },
+      "TestCaseFolderItemsRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TestCaseFolderItemMoveRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "targetFolderId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseFolderCloneRequest": {
+        "type": "object",
+        "properties": {
+          "parentId": {
+            "type": "string"
+          },
+          "toRoot": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "CreateInvitationRequest": {
         "required": [
           "role"
@@ -7700,15 +8138,11 @@
           "broken",
           "created",
           "deleted",
-          "folderId",
           "regression",
           "updated"
         ],
         "type": "object",
         "properties": {
-          "folderId": {
-            "type": "string"
-          },
           "created": {
             "type": "integer",
             "format": "int32"
@@ -10655,6 +11089,81 @@
             "items": {
               "$ref": "#/components/schemas/TestCaseFolderResponse"
             }
+          }
+        }
+      },
+      "TestCaseFolderItemListResponse": {
+        "required": [
+          "folderId",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "folderId": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseFolderItemResponse"
+            }
+          }
+        }
+      },
+      "TestCaseFolderItemResponse": {
+        "required": [
+          "createdAt",
+          "expectedValue",
+          "hidden",
+          "inVersion",
+          "origin",
+          "position",
+          "scene",
+          "step",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "inVersion": {
+            "type": "boolean"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
+          },
+          "precondition": {
+            "type": "string"
+          },
+          "expectedValue": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "verificationStatus": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

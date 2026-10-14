@@ -4,8 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import java.time.Instant
 
-/** TestCase 엔티티 → 응답 DTO. 여러 도메인(케이스/시나리오 조합)이 공유한다. id 계열은 문자열. */
-fun TestCaseEntity.toTestCaseResponse(): TestCaseResponse =
+/**
+ * TestCase 엔티티 → 응답 DTO. 여러 도메인(케이스/시나리오 조합)이 공유한다. id 계열은 문자열.
+ *
+ * [folderId] 는 케이스가 처음 담긴 folder 다(ARTEL-1023). 케이스가 folder 를 칸으로 들지 않으므로 부르는 쪽이
+ * 항목 표에서 읽어 넘긴다.
+ */
+fun TestCaseEntity.toTestCaseResponse(folderId: Long? = null): TestCaseResponse =
     TestCaseResponse(
         id = requireNotNull(id).toString(),
         projectId = projectId.toString(),
@@ -27,8 +32,8 @@ fun TestCaseEntity.toTestCaseResponse(): TestCaseResponse =
  * 않는 이유는 단건 조회가 이미 이 행을 통째로 읽어와 **metadata가 손에 있기** 때문이다 —
  * `metadata->'source'->'evidence_gaps'` SQL을 한 번 더 도는 쪽이 오히려 왕복이 하나 는다.
  */
-fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper): TestCaseDetailResponse {
-    val base = toTestCaseResponse()
+fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper, folderId: Long? = null): TestCaseDetailResponse {
+    val base = toTestCaseResponse(folderId)
     return TestCaseDetailResponse(
         id = base.id,
         projectId = base.projectId,

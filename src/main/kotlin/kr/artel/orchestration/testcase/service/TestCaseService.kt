@@ -33,6 +33,7 @@ import kr.artel.orchestration.testcase.dto.toTestCaseResponse
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.entity.VerificationStatus
+import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import org.slf4j.LoggerFactory
@@ -59,6 +60,7 @@ class TestCaseService(
     private val objectMapper: ObjectMapper,
     private val folderService: TestCaseFolderService,
     private val transactionalOperator: TransactionalOperator,
+    private val folderItems: TestCaseFolderItemRepository,
 ) {
 
     private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
@@ -71,8 +73,9 @@ class TestCaseService(
      */
     suspend fun listTestCases(projectId: Long, userId: Long): TestCaseListResponse {
         if (!projectAccessService.isMember(projectId, userId)) return TestCaseListResponse(emptyList())
+        val folderIds = folderItems.findFirstFolders(projectId).toList().associate { it.testCaseId to it.folderId }
         val items = repository.findByProjectIdOrderByIdDesc(projectId)
-            .map { it.toTestCaseResponse() }
+            .map { it.toTestCaseResponse(folderIds[it.id]) }
             .toList()
         return TestCaseListResponse(items)
     }
@@ -350,8 +353,9 @@ class TestCaseService(
     /**
      * 케이스 생성. scene/step/expectedValue 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404).
      *
-     * `folderId` 가 있으면 이 프로젝트 folder 여야 한다(아니면 404). folder 확인과 저장 사이에 그 folder 가
-     * 지워지지 않게 [TestCaseFolderService.lockProjectFolders] 를 잡고 한 트랜잭션에서 저장한다.
+     * `folderId` 가 있으면 이 프로젝트 folder 여야 한다(아니면 404). 그 folder 의 끝에 넣는다(ARTEL-1023).
+     * folder 확인과 저장 사이에 그 folder 가 지워지지 않게 [TestCaseFolderService.lockProjectFolders] 를 잡고 한
+     * 트랜잭션에서 저장한다.
      */
     suspend fun createTestCase(projectId: Long, userId: Long, request: TestCaseCreateRequest): TestCaseResponse? {
         if (!projectAccessService.isMember(projectId, userId)) return null
@@ -363,18 +367,20 @@ class TestCaseService(
             precondition = request.precondition?.ifBlank { null },
             expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
-            folderId = folderId,
         )
         if (folderId == null) return repository.save(entity).toTestCaseResponse()
         return transactionalOperator.executeAndAwait {
             folderService.lockProjectFolders(projectId)
             folderService.requireFolder(projectId, folderId)
-            repository.save(entity)
-        }.toTestCaseResponse()
+            repository.save(entity).also { folderItems.append(projectId, folderId, listOf(requireNotNull(it.id))) }
+        }.toTestCaseResponse(folderId)
     }
 
     /**
      * test case 를 folder 로 옮긴다(ARTEL-969). `folderId` 가 null 이면 folder 없음으로 옮긴다.
+     *
+     * 케이스가 folder 하나에만 들던 때의 요청이라, 케이스를 **모든 folder 에서 뺀 뒤** `folderId` 끝에 넣는다
+     * (ARTEL-1023). folder 사이 옮기기는 [TestCaseFolderItemService.move] 다.
      *
      * 비멤버와 다른 프로젝트 folder 는 404 다. 다른 프로젝트 test case 와 없는 id 는 옮기지 않고 세지
      * 않는다. folder 확인과 `UPDATE` 사이에 folder 가 지워지면 FK 위반(500)이 나므로 folder 쓰기와 같은
@@ -387,11 +393,11 @@ class TestCaseService(
         val caseIds = parseWireIds(request.caseIds, "caseIds")
         val folderId = parseOptionalWireId(request.folderId, "folderId")
         val moved = transactionalOperator.executeAndAwait {
-            if (folderId != null) {
-                folderService.lockProjectFolders(projectId)
-                folderService.requireFolder(projectId, folderId)
-            }
-            repository.moveToFolder(projectId, caseIds, folderId)
+            folderService.lockProjectFolders(projectId)
+            if (folderId != null) folderService.requireFolder(projectId, folderId)
+            folderItems.removeEverywhere(projectId, caseIds)
+            if (folderId != null) folderItems.append(projectId, folderId, caseIds)
+            repository.countByProjectIdAndIdIn(projectId, caseIds).toInt()
         }
         return TestCaseMoveResponse(moved)
     }
@@ -402,7 +408,7 @@ class TestCaseService(
      * 목록과 달리 `evidenceGaps`까지 낸다 — 왜 상세에만 싣는지는 [TestCaseDetailResponse] 참조.
      */
     suspend fun getTestCase(caseId: Long, userId: Long): TestCaseDetailResponse? =
-        accessible(caseId, userId)?.toTestCaseDetailResponse(objectMapper)
+        accessible(caseId, userId)?.toTestCaseDetailResponse(objectMapper, folderItems.findFirstFolderId(caseId))
 
     /** 케이스 수정. 준 필드만 반영. verificationStatus는 enum 검증. */
     suspend fun updateTestCase(caseId: Long, userId: Long, request: TestCaseUpdateRequest): TestCaseResponse? {
@@ -418,7 +424,7 @@ class TestCaseService(
             expectedValue = request.expectedValue?.ifBlank { null } ?: existing.expectedValue,
             verificationStatus = statusName ?: existing.verificationStatus,
         )
-        return repository.save(updated).toTestCaseResponse()
+        return repository.save(updated).toTestCaseResponse(folderItems.findFirstFolderId(caseId))
     }
 
     /** 케이스 삭제(참여자만). 접근 불가면 조용히 no-op(존재 숨김). 조합 정리는 별도. */
