@@ -41,8 +41,9 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * 관리 화면의 Bedrock API key(저장, 지우기, 확인, 내부 포트로 건네기)와 agent-server 캐시 비우기.
  *
- * Bedrock runtime 과 agent-server 는 이 클래스가 띄운 가짜 서버다. 가짜 Bedrock 은 Haiku 5.5 에는 200 을,
- * GPT-6.1 Sol 에는 실제 Bedrock 처럼 "not available for this account" 400 을 낸다.
+ * Bedrock runtime 과 agent-server 는 이 클래스가 띄운 가짜 서버다. 가짜 Bedrock 은 Haiku 4.5 와 Haiku 5.5 에는
+ * 200 을, GPT-6.1 Sol 에는 실제 Bedrock 처럼 "not available for this account" 400 을 낸다. Haiku 4.5 는 켜진 채로
+ * 시드되므로 모든 확인에 들어간다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -52,6 +53,7 @@ class BedrockKeyAndAgentCacheIntegrationTest {
     companion object {
         private const val BEDROCK_KEY = "ABSKQmVkcm9ja0FQSUtleS1hZG1pbi1wYWdlLTAxMjM0NTY3ODk=wxyz"
         private const val OPENROUTER_KEY = "sk-or-v1-admin-page-key-0123456789abcdef"
+        private const val HAIKU_4_5 = "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0"
         private const val HAIKU = "bedrock/us.anthropic.claude-haiku-5-5"
         private const val SOL = "bedrock/us.openai.gpt-6.1-sol"
         private const val SOL_REFUSAL =
@@ -69,7 +71,8 @@ class BedrockKeyAndAgentCacheIntegrationTest {
         private val fakeBedrock: DisposableServer by lazy {
             HttpServer.create().port(0).route { routes ->
                 routes.post("/model/{modelId}/converse") { request, response ->
-                    val modelId = request.param("modelId")!!
+                    // WebClient 는 Haiku 4.5 id 의 `:` 를 `%3A` 로 보낸다. boto3 도 같고, Bedrock 은 그 경로를 받는다.
+                    val modelId = java.net.URLDecoder.decode(request.param("modelId")!!, Charsets.UTF_8)
                     bedrockCalls.add(modelId to request.requestHeaders().get("Authorization"))
                     request.receive().then(
                         if (modelId == "us.openai.gpt-6.1-sol") {
@@ -135,7 +138,7 @@ class BedrockKeyAndAgentCacheIntegrationTest {
     @AfterEach
     fun clean(): Unit = runBlocking {
         databaseClient.sql("DELETE FROM platform_setting").fetch().rowsUpdated().awaitSingle()
-        databaseClient.sql("UPDATE llm_model SET enabled = (id NOT LIKE 'bedrock/%'), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = (id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol')), updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
         appUserRepository.deleteById(memberId)
@@ -186,16 +189,21 @@ class BedrockKeyAndAgentCacheIntegrationTest {
 
         assertThat(result["keyConfigured"].asBoolean()).isTrue()
         val byId = result["models"].associateBy { it["id"].asText() }
-        assertThat(byId.keys).containsExactlyInAnyOrder(HAIKU, SOL)
+        assertThat(byId.keys).containsExactlyInAnyOrder(HAIKU_4_5, HAIKU, SOL)
+        assertThat(byId.getValue(HAIKU_4_5)["reachable"].asBoolean()).isTrue()
         assertThat(byId.getValue(HAIKU)["reachable"].asBoolean()).isTrue()
         assertThat(byId.getValue(HAIKU)["error"].isNull).isTrue()
         assertThat(byId.getValue(SOL)["reachable"].asBoolean()).isFalse()
         assertThat(byId.getValue(SOL)["error"].asText()).isEqualTo(SOL_REFUSAL)
-        assertThat(bedrockCalls.map { it.first }).containsExactlyInAnyOrder("us.anthropic.claude-haiku-5-5", "us.openai.gpt-6.1-sol")
+        assertThat(bedrockCalls.map { it.first }).containsExactlyInAnyOrder(
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "us.anthropic.claude-haiku-5-5",
+            "us.openai.gpt-6.1-sol"
+        )
         assertThat(bedrockCalls.map { it.second }.toSet()).containsExactly("Bearer $BEDROCK_KEY")
 
         val lastCheck = call(HttpMethod.GET, "/api/admin/settings/bedrock")["lastCheck"]
-        assertThat(lastCheck["models"].size()).isEqualTo(2)
+        assertThat(lastCheck["models"].size()).isEqualTo(3)
     }
 
     @Test
@@ -205,8 +213,9 @@ class BedrockKeyAndAgentCacheIntegrationTest {
 
         val result = call(HttpMethod.POST, "/api/admin/settings/bedrock/check")
 
-        assertThat(result["models"].map { it["id"].asText() }).containsExactly(HAIKU)
-        assertThat(bedrockCalls.map { it.first }).containsExactly("us.anthropic.claude-haiku-5-5")
+        assertThat(result["models"].map { it["id"].asText() }).containsExactly(HAIKU_4_5, HAIKU)
+        assertThat(bedrockCalls.map { it.first })
+            .containsExactlyInAnyOrder("us.anthropic.claude-haiku-4-5-20251001-v1:0", "us.anthropic.claude-haiku-5-5")
     }
 
     @Test

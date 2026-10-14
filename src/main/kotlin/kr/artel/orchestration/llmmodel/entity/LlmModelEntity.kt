@@ -45,6 +45,10 @@ data class LlmModelEntity(
     @Column("reasoning_step")
     val reasoningStep: Int?,
 
+    /** 요청이 추론을 고르지 않았을 때 켤 token 예산. provider 기본값이 없는 model 에만 있다. */
+    @Column("reasoning_default_tokens")
+    val reasoningDefaultTokens: Int?,
+
     /** camelCase 키의 객체 또는 null. */
     @Column("pricing")
     val pricing: Json?,

@@ -50,28 +50,27 @@ class LlmKeySettingsIntegrationTest {
         private const val INVALID_KEY = "sk-or-v1-revoked-key-000000000000wxyz"
 
         /**
-         * V107 이 넣은 행 중 켜져 있고 Bedrock 이 아닌 13 개에 embedding model 을 더한 목록. 확인이 닿아야 한다고 보는
+         * V107 이 넣은 행 중 켜져 있고 Bedrock 이 아닌 12 개에 embedding model 을 더한 목록. 확인이 닿아야 한다고 보는
          * model 은 `llm_model` 테이블이 정하므로, 시드가 바뀌면 이 목록도 바뀌어야 한다.
          */
         private val REQUIRED_OPENROUTER_MODELS = listOf(
-            "openai/gpt-5.6-luna",
-            "openai/gpt-5.6-sol",
-            "openai/gpt-chat-latest",
-            "anthropic/claude-haiku-5.5",
-            "anthropic/claude-sonnet-5",
-            "anthropic/claude-opus-5",
+            "openai/gpt-6.1-sol",
+            "openai/gpt-6-astra",
+            "openai/gpt-6-luna",
+            "openai/gpt-5.6-terra",
+            "anthropic/claude-opus-5.5",
+            "anthropic/claude-sonnet-5.5",
             "google/gemini-3.8-flash",
-            "google/gemini-3.7-flash",
             "google/gemma-4-31b-it:free",
-            "x-ai/grok-4.6",
+            "x-ai/grok-4.7",
             "moonshotai/kimi-k3",
             "z-ai/glm-5.3-flash",
-            "qwen/qwen3.8-max",
+            "qwen/qwen3.7-max",
             "openai/text-embedding-3-large"
         )
 
         /** 가짜 OpenRouter 가 내지 않는 둘. 확인 결과의 missingModels 가 이 둘이어야 한다. */
-        private val UNLISTED_MODELS = setOf("x-ai/grok-4.6", "openai/text-embedding-3-large")
+        private val UNLISTED_MODELS = setOf("x-ai/grok-4.7", "openai/text-embedding-3-large")
 
         private val fakeOpenRouter: DisposableServer by lazy {
             val listedModels = REQUIRED_OPENROUTER_MODELS.filterNot { it in UNLISTED_MODELS } + "some/other-model"
@@ -128,7 +127,7 @@ class LlmKeySettingsIntegrationTest {
     fun clean(): Unit = runBlocking {
         databaseClient.sql("DELETE FROM platform_setting").fetch().rowsUpdated().awaitSingle()
         // 이 클래스가 켜고 끈 model 을 시드 상태로 되돌린다.
-        databaseClient.sql("UPDATE llm_model SET enabled = (id NOT LIKE 'bedrock/%'), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = (id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol')), updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
     }
@@ -189,11 +188,11 @@ class LlmKeySettingsIntegrationTest {
     @Test
     fun `the required list follows the table, so a disabled model no longer has to be reachable`() {
         call(HttpMethod.PUT, "/api/admin/settings/llm", """{"apiKey":"$VALID_KEY"}""")
-        call(HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"x-ai/grok-4.6","enabled":false}""")
+        call(HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"x-ai/grok-4.7","enabled":false}""")
 
         val result = call(HttpMethod.POST, "/api/admin/settings/llm/check")
 
-        assertThat(result["requiredModels"].map { it.asText() }).doesNotContain("x-ai/grok-4.6")
+        assertThat(result["requiredModels"].map { it.asText() }).doesNotContain("x-ai/grok-4.7")
         assertThat(result["requiredModels"].size()).isEqualTo(REQUIRED_OPENROUTER_MODELS.size - 1)
         assertThat(result["missingModels"].map { it.asText() }).containsExactly("openai/text-embedding-3-large")
     }

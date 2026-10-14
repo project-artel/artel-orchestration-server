@@ -56,7 +56,7 @@ class LlmModelCatalogIntegrationTest {
 
     @AfterEach
     fun clean(): Unit = runBlocking {
-        databaseClient.sql("UPDATE llm_model SET enabled = (id NOT LIKE 'bedrock/%'), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = (id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol')), updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
         appUserRepository.deleteById(memberId)
@@ -85,6 +85,7 @@ class LlmModelCatalogIntegrationTest {
         assertThat(haiku["reasoning"]["kind"].asText()).isEqualTo("effort")
         assertThat(haiku["reasoning"]["efforts"].map { it.asText() }).containsExactly("max", "xhigh", "high", "medium", "low")
         assertThat(haiku["reasoning"]["minTokens"].isNull).isTrue()
+        assertThat(haiku["reasoning"]["defaultTokens"].isNull).isTrue()
         assertThat(haiku["pricing"]["inputPerMtok"].asDouble()).isEqualTo(0.10)
         assertThat(haiku["pricing"]["cacheWritePerMtok"].asDouble()).isEqualTo(0.125)
         assertThat(haiku["pricing"]["asOf"].asText()).isEqualTo("2026-10-13")
@@ -99,16 +100,35 @@ class LlmModelCatalogIntegrationTest {
         assertThat(sol["reasoning"]["efforts"].map { it.asText() }).containsExactly("max", "xhigh", "high", "medium", "low")
         assertThat(sol["pricing"].isNull).isTrue()
 
-        val chat = byId.getValue("openai/gpt-chat-latest")
-        assertThat(chat["reasoning"].isNull).isTrue()
-        assertThat(chat["pricing"].isNull).isTrue()
+        // 켜진 채로 시드되는 유일한 Bedrock 행이고, effort 가 아니라 token 예산으로 추론한다.
+        val haiku45 = byId.getValue("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")
+        assertThat(haiku45["enabled"].asBoolean()).isTrue()
+        assertThat(haiku45["supportsStrictJson"].asBoolean()).isTrue()
+        assertThat(haiku45["maxInputTokens"].asInt()).isEqualTo(183_616)
+        assertThat(haiku45["reasoning"]["kind"].asText()).isEqualTo("max_tokens")
+        assertThat(haiku45["reasoning"]["efforts"].isNull).isTrue()
+        assertThat(haiku45["reasoning"]["minTokens"].asInt()).isEqualTo(1_024)
+        assertThat(haiku45["reasoning"]["maxTokens"].asInt()).isEqualTo(32_000)
+        assertThat(haiku45["reasoning"]["defaultTokens"].asInt()).isEqualTo(4_096)
+        assertThat(haiku45["pricing"]["inputPerMtok"].asDouble()).isEqualTo(1.00)
+        assertThat(haiku45["pricing"]["cacheWritePerMtok"].asDouble()).isEqualTo(1.25)
+        assertThat(haiku45["pricing"].has("longContextThresholdTokens")).isFalse()
+        assertThat(haiku45["sortOrder"].asInt()).isEqualTo(10)
+
+        val qwen = byId.getValue("qwen/qwen3.7-max")
+        assertThat(qwen["reasoning"].isNull).isTrue()
+        assertThat(qwen["pricing"].isNull).isTrue()
+        assertThat(qwen["inputModalities"].map { it.asText() }).containsExactly("text")
     }
 
     @Test
     fun `qa-models lists enabled rows only, in sort order, and follows a toggle`() {
         val before = qaModels()
-        assertThat(before.map { it["id"].asText() }).hasSize(13).noneMatch { it.startsWith("bedrock/") }
-        assertThat(before.first()["id"].asText()).isEqualTo("openai/gpt-5.6-luna")
+        assertThat(before.map { it["id"].asText() }).hasSize(13)
+            .doesNotContain("bedrock/us.anthropic.claude-haiku-5-5", "bedrock/us.openai.gpt-6.1-sol")
+        assertThat(before.first()["id"].asText()).isEqualTo("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")
+        assertThat(before.first()["reasoning"]["kind"].asText()).isEqualTo("max_tokens")
+        assertThat(before.first()["reasoning"].has("defaultTokens")).isFalse()
 
         val gemini = before.first { it["id"].asText() == "google/gemini-3.8-flash" }
         assertThat(gemini["supportsVision"].asBoolean()).isTrue()
@@ -136,7 +156,7 @@ class LlmModelCatalogIntegrationTest {
         assertThat(bedrock["supportsVision"].asBoolean()).isTrue()
         assertThat(bedrock["maxInputTokens"].asInt()).isEqualTo(922_000)
         assertThat(bedrock["updatedAt"].asText()).isNotBlank()
-        assertThat(rows.first { it["id"].asText() == "openai/gpt-5.6-luna" }["route"].asText()).isEqualTo("openrouter")
+        assertThat(rows.first { it["id"].asText() == "openai/gpt-6-luna" }["route"].asText()).isEqualTo("openrouter")
 
         val updated = call(adminSession, HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"google/gemma-4-31b-it:free","enabled":false}""")
         assertThat(updated["id"].asText()).isEqualTo("google/gemma-4-31b-it:free")

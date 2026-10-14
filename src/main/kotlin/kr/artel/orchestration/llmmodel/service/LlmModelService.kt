@@ -138,7 +138,8 @@ class LlmModelService(
             efforts = entity.reasoningEfforts?.let(::strings),
             minTokens = entity.reasoningMinTokens,
             maxTokens = entity.reasoningMaxTokens,
-            step = entity.reasoningStep
+            step = entity.reasoningStep,
+            defaultTokens = entity.reasoningDefaultTokens
         )
     }
 
