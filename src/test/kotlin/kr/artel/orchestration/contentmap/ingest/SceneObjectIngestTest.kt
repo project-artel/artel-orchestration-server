@@ -22,6 +22,7 @@ import kr.artel.orchestration.project.FakeDocumentStorage
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.scenecontext.service.SceneContextService
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -63,6 +64,7 @@ class SceneObjectIngestTest {
     @Autowired private lateinit var ingest: ContentMapIngestService
     @Autowired private lateinit var backfill: SceneObjectBackfillWorker
     @Autowired private lateinit var writer: SceneObjectWriter
+    @Autowired private lateinit var sceneContext: SceneContextService
     @Autowired private lateinit var storage: DocumentStorage
     @Autowired private lateinit var projects: ProjectRepository
     @Autowired private lateinit var gameBuilds: GameBuildRepository
@@ -117,6 +119,26 @@ class SceneObjectIngestTest {
 
         assertThat(storedObjects(map.id!!).map { it.selector })
             .containsExactly("Canvas[0]/CombineButton[2]", "TitleMenu")
+    }
+
+    /**
+     * 적재한 것이 `scene-context` 로 나간다. 오브젝트는 그 `scene` 아래, 코드가 쓰는 필드는 그 `capability`
+     * 의 `writes` 로. `active-state` 효과는 `write` 가 아니라 들어가지 않는다.
+     */
+    @Test
+    fun `적재한 오브젝트와 writes 가 scene-context 에 실린다`(): Unit = runBlocking {
+        val map = newContentMap()
+        ingestNew(map.id!!, fixture)
+        val build = gameBuilds.findById(map.gameBuildId)!!
+
+        val response = sceneContext.read(build.projectId, build.id!!, qaTryId = null)!!
+
+        val battle = response.scenes.single { it.sceneName == "BattleScene" }
+        assertThat(battle.objectsTotal).isEqualTo(2)
+        assertThat(battle.objects.map { it.selector }).containsExactly("Canvas[0]/CombineButton[2]", "Word[13]")
+        val combine = battle.capabilities.single { it.controlPath == "Canvas/CombineButton" }
+        assertThat(combine.writes)
+            .containsExactly("SelectableObject.selectable", "Player.HpText.text", "(not a simple receiver)")
     }
 
     // ------------------------------------------------------------------ 백필

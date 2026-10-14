@@ -1,8 +1,10 @@
 package kr.artel.orchestration.scenecontext
 
 import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
 import kr.artel.orchestration.contentmap.repository.CapabilityRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
+import kr.artel.orchestration.contentmap.repository.SceneObjectRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
@@ -52,6 +54,8 @@ class SceneContextQueryCountTest {
     @SpyBean private lateinit var contentMaps: ContentMapRepository
     @SpyBean private lateinit var scenes: SceneRepository
     @SpyBean private lateinit var anchoredKnowledge: AnchoredKnowledgeRepository
+    @SpyBean private lateinit var sceneObjects: SceneObjectRepository
+    @SpyBean private lateinit var capabilityEffects: CapabilityEffectRepository
 
     private lateinit var fixture: SceneContextFixture
 
@@ -69,10 +73,10 @@ class SceneContextQueryCountTest {
     }
 
     /**
-     * 씬 [sceneCount] 개, 씬마다 기능 하나와 앵커 지식 하나를 세우고 한 번 읽는다.
+     * 씬 [sceneCount] 개, 씬마다 기능 하나(`write` 하나)와 오브젝트 하나, 앵커 지식 하나를 세우고 한 번 읽는다.
      *
-     * 그리고 씬 수와 무관해야 하는 네 조회가 **각각 정확히 한 번**만 돌았는지 본다: 지도 고르기 ·
-     * 씬 목록 · capability 전량 · 앵커.
+     * 그리고 씬 수와 무관해야 하는 여섯 조회가 **각각 정확히 한 번**만 돌았는지 본다: 지도 고르기 ·
+     * 씬 목록 · capability 전량 · 앵커 · `scene_object` 전량 · `write` 효과 전량.
      */
     private suspend fun readAndVerifyQueries(sceneCount: Int) {
         val projectId = fixture.newProject()
@@ -81,11 +85,13 @@ class SceneContextQueryCountTest {
         repeat(sceneCount) { index ->
             val sceneName = "Scene$index"
             val sceneId = fixture.newScene(mapId, sceneName)
-            fixture.newCapability(mapId, sceneId, summary = "기능 $index")
+            val capabilityId = fixture.newCapability(mapId, sceneId, summary = "기능 $index")
+            fixture.newWrite(capabilityId, "Owner.field$index")
+            fixture.newSceneObject(mapId, sceneId, "Object[$index]", components = listOf("Owner" to listOf("field$index")))
             fixture.newKnowledge(projectId, "사실 $index", "본문", sceneName = sceneName)
         }
 
-        clearInvocations(contentMaps, scenes, anchoredKnowledge)
+        clearInvocations(contentMaps, scenes, anchoredKnowledge, sceneObjects, capabilityEffects)
 
         val response = sceneContext.read(projectId, buildId, qaTryId = null)!!
         assertThat(response.scenes).hasSize(sceneCount)
@@ -95,15 +101,17 @@ class SceneContextQueryCountTest {
         verify(contentMaps, times(1)).findAllCapabilityRows(mapId)
         verify(scenes, times(1)).findByContentMapIdOrderByNameAsc(mapId)
         verify(anchoredKnowledge, times(1)).findAnchoredKnowledge(projectId, null)
+        verify(sceneObjects, times(1)).findByContentMapIdOrderByIdAsc(mapId)
+        verify(capabilityEffects, times(1)).findWritesByContentMapId(mapId)
         verifyNoMoreQueries()
     }
 
     /**
-     * 위에서 센 넷 말고는 아무것도 부르지 않았음을 못박는다. 이것이 없으면 씬마다 도는 새 질의가
+     * 위에서 센 여섯 말고는 아무것도 부르지 않았음을 못박는다. 이것이 없으면 씬마다 도는 새 질의가
      * 다른 메서드로 들어올 때 통과한다 — 예컨대 `findStepCapabilityRowsByScene` 은 씬 이름을 받으므로
      * 정확히 그 회귀의 모양이다.
      */
     private fun verifyNoMoreQueries() {
-        verifyNoMoreInteractions(contentMaps, scenes, anchoredKnowledge)
+        verifyNoMoreInteractions(contentMaps, scenes, anchoredKnowledge, sceneObjects, capabilityEffects)
     }
 }
