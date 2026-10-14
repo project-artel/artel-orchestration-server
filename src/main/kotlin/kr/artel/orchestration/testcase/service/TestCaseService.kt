@@ -6,6 +6,7 @@ import kr.artel.orchestration.common.error.NotFoundException
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
@@ -60,6 +61,8 @@ class TestCaseService(
     private val objectMapper: ObjectMapper,
     private val folderService: TestCaseFolderService,
     private val transactionalOperator: TransactionalOperator,
+    private val gameBuilds: GameBuildRepository,
+    private val manualCases: ManualCaseVersionService,
     private val folderItems: TestCaseFolderItemRepository,
 ) {
 
@@ -356,10 +359,16 @@ class TestCaseService(
      * `folderId` 가 있으면 이 프로젝트 folder 여야 한다(아니면 404). 그 folder 의 끝에 넣는다(ARTEL-1023).
      * folder 확인과 저장 사이에 그 folder 가 지워지지 않게 [TestCaseFolderService.lockProjectFolders] 를 잡고 한
      * 트랜잭션에서 저장한다.
+     *
+     * `gameBuildId` 가 있으면 그 버전에 넣는다(ARTEL-1031). 이 프로젝트 build 가 아니면 404 다.
      */
     suspend fun createTestCase(projectId: Long, userId: Long, request: TestCaseCreateRequest): TestCaseResponse? {
         if (!projectAccessService.isMember(projectId, userId)) return null
         val folderId = parseOptionalWireId(request.folderId, "folderId")
+        val gameBuildId = parseOptionalWireId(request.gameBuildId, "gameBuildId")
+        if (gameBuildId != null) {
+            gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: throw NotFoundException("버전을 찾을 수 없습니다.")
+        }
         val entity = TestCaseEntity(
             projectId = projectId,
             scene = request.scene.requireField("scene"),
@@ -368,12 +377,17 @@ class TestCaseService(
             expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
         )
-        if (folderId == null) return repository.save(entity).toTestCaseResponse()
-        return transactionalOperator.executeAndAwait {
+        if (folderId == null && gameBuildId == null) return repository.save(entity).toTestCaseResponse()
+        val saved = transactionalOperator.executeAndAwait {
             folderService.lockProjectFolders(projectId)
-            folderService.requireFolder(projectId, folderId)
-            repository.save(entity).also { folderItems.append(projectId, folderId, listOf(requireNotNull(it.id))).toList() }
-        }.toTestCaseResponse(folderId)
+            folderId?.let { folderService.requireFolder(projectId, it) }
+            val created = repository.save(entity)
+            val caseId = requireNotNull(created.id)
+            folderId?.let { folderItems.append(projectId, it, listOf(caseId)).toList() }
+            gameBuildId?.let { manualCases.attachNewCase(projectId, it, caseId) }
+            created
+        }
+        return saved.toTestCaseResponse(folderId)
     }
 
     /**

@@ -87,6 +87,14 @@ class ManualCaseVersionService(
         return insert(projectId, gameBuildId, caseIds).size
     }
 
+    /**
+     * 막 만든 사용자 생성 케이스를 [gameBuildId] 버전에 넣는다(ARTEL-1031). 케이스 생성 트랜잭션 안에서 부른다.
+     * build 가 이 프로젝트 것인지는 부르는 쪽이 확인한다.
+     */
+    suspend fun attachNewCase(projectId: Long, gameBuildId: Long, testCaseId: Long) {
+        insert(projectId, gameBuildId, listOf(testCaseId))
+    }
+
     /** 몫을 만든다. lock 을 잡은 트랜잭션 안에서 불러야 한다. */
     private suspend fun insert(projectId: Long, gameBuildId: Long, caseIds: Collection<Long>): List<Long> {
         val candidates = testCases.findAllById(caseIds).toList()

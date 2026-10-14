@@ -268,6 +268,41 @@ class TestCaseVersionLibraryIntegrationTest {
     }
 
     @Test
+    fun `케이스를 만들면서 버전과 폴더에 함께 넣는다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val now = Instant.now()
+        val build = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "2.0", createdAt = now, updatedAt = now))
+        val folderId = call(token, HttpMethod.POST, "/api/projects/$projectId/test-case-folders", """{"name":"회귀"}""")
+            .body["id"].asText()
+
+        val created = call(
+            token, HttpMethod.POST, "/api/projects/$projectId/test-cases",
+            """{"scene":"S","step":"새 케이스","expectedValue":"x","folderId":"$folderId","gameBuildId":"${build.id}"}""",
+        )
+        assertThat(created.status).isEqualTo(201)
+        assertThat(created.body["origin"].asText()).isEqualTo("MANUAL")
+        val caseId = created.body["id"].asLong()
+        assertThat(versions.findByTestCaseIdAndGameBuildId(caseId, build.id!!)!!.verificationStatus).isEqualTo("DRAFT")
+        val inVersion = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/${build.id}/cases").body["items"]
+        assertThat(inVersion.map { it["id"].asLong() }).contains(caseId)
+        val inFolder = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-folders/$folderId/items?gameBuildId=${build.id}")
+            .body["items"].single()
+        assertThat(inFolder["inVersion"].asBoolean()).isTrue()
+
+        // 버전 없이 만들면 버전 없음이다. 다른 프로젝트 build 는 404 다.
+        val loose = call(token, HttpMethod.POST, "/api/projects/$projectId/test-cases", """{"scene":"S","step":"버전 없이","expectedValue":"x"}""")
+        assertThat(versions.countByTestCaseId(loose.body["id"].asLong())).isZero()
+        val foreign = gameBuilds.save(
+            GameBuildEntity(projectId = newProject(userId), version = "9.9", createdAt = now, updatedAt = now)
+        )
+        assertThat(
+            call(token, HttpMethod.POST, "/api/projects/$projectId/test-cases",
+                """{"scene":"S","step":"남의 버전","expectedValue":"x","gameBuildId":"${foreign.id}"}""").status
+        ).isEqualTo(404)
+    }
+
+    @Test
     fun `다른 프로젝트의 버전은 없는 것이다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
