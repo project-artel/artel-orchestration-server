@@ -5,14 +5,14 @@ import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 /**
  * build 의 content map 에서 test case 를 생성한 결과(ARTEL-971).
  *
- * @property folderId 새 test case 를 넣은 folder. 새 행이 0건이어도 찾거나 만든 folder 를 낸다.
- * @property created 새로 만든 행 수. @property updated 문구나 구조가 바뀌어 고친 행 수.
- * @property deleted content map 에서 사라져 지운 행 수. @property broken 사라졌지만 시나리오가 인용해
- *   지우지 않고 `BROKEN` 으로 바꾼 행 수.
- * @property regression 직전 build 에서 판정이 난 같은 케이스라 `REGRESSION` 으로 둔 행 수(ARTEL-994).
+ * 수는 모두 이 build 의 버전 몫(`test_case_version`) 기준이다(ARTEL-1018). 케이스의 정체는 버전을 넘어 하나다.
+ *
+ * @property created 이 build 에 새로 생긴 버전 몫 수. @property updated 문구나 구조가 바뀌어 고친 몫 수.
+ * @property deleted 이 build 에서 사라져 지운 몫 수(다른 버전에도 없으면 케이스째 지운 것 포함).
+ * @property broken 어느 버전에도 남지 않았지만 시나리오가 인용해 지우지 않고 `BROKEN` 으로 둔 케이스 수.
+ * @property regression 앞 버전에서 판정이 나 이번 몫을 `REGRESSION` 으로 시작한 수(ARTEL-994).
  */
 data class ContentMapTestCaseGenerationResponse(
-    val folderId: String,
     val created: Int,
     val updated: Int,
     val deleted: Int,
@@ -20,13 +20,12 @@ data class ContentMapTestCaseGenerationResponse(
     val regression: Int,
 ) {
     companion object {
-        fun of(result: MapTestCaseWriter.Result, regression: Int) = ContentMapTestCaseGenerationResponse(
-            folderId = requireNotNull(result.folderId) { "생성 결과에 folder 가 없다" }.toString(),
+        fun of(result: MapTestCaseWriter.Result) = ContentMapTestCaseGenerationResponse(
             created = result.created,
             updated = result.updated,
             deleted = result.deleted,
             broken = result.broken,
-            regression = regression,
+            regression = result.regression,
         )
     }
 }

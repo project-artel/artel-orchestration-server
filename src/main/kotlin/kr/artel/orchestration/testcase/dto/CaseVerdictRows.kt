@@ -3,17 +3,7 @@ package kr.artel.orchestration.testcase.dto
 import java.time.Instant
 
 /**
- * 다른 build 에 있는 **같은 케이스**의 짝(ARTEL-994). TS 를 다른 버전 TR 로 가져올 때, step 의 `case_id` 를
- * [sourceId] 에서 [targetId] 로 바꿔 끼운다. 짝은 `metadata.case_key` 로 찾는다.
- */
-data class CaseTwin(
-    val sourceId: Long,
-    val targetId: Long,
-)
-
-/**
- * 한 케이스의 build 별 행(ARTEL-994). 같은 `case_key` 를 가진 행이 build 마다 하나씩 있고, 그 행의 상태가
- * 그 버전의 판정이다.
+ * 한 케이스의 build 별 몫(ARTEL-1018). `test_case_version` 한 행이고, 그 상태가 그 버전의 판정이다.
  */
 data class CaseVerdictHistoryRow(
     val testCaseId: Long,
