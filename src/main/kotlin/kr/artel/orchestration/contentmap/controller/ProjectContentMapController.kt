@@ -10,6 +10,7 @@ import kr.artel.orchestration.contentmap.dto.ContentMapResponse
 import kr.artel.orchestration.contentmap.dto.ContentMapStreamEvent
 import kr.artel.orchestration.contentmap.dto.StartContentMapScanResponse
 import kr.artel.orchestration.contentmap.scan.ContentMapScanService
+import kr.artel.orchestration.contentmap.scan.ScanTestCases
 import kr.artel.orchestration.contentmap.service.ContentMapViewService
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 
@@ -63,7 +65,8 @@ class ProjectContentMapController(
     @Operation(
         summary = "원격 근거 스캔 요청",
         description = "이 빌드를 실행 중인 게임에 근거 스캔을 시킨다. 즉시 202 로 답하며, 완료는 " +
-            "조회 API 의 `lastScan` 으로 확인한다. 붙어 있는 게임이 없으면 409.",
+            "조회 API 의 `lastScan` 으로 확인한다. 붙어 있는 게임이 없으면 409. `generateTestCases=true` 면 " +
+            "문서가 다 읽힌 뒤 TC 도 만들고, editor 이거나 이미 TC 를 만든 빌드면 스캔 전에 409.",
     )
     @PostMapping("/scan")
     @ResponseStatus(HttpStatus.ACCEPTED)
@@ -71,8 +74,15 @@ class ProjectContentMapController(
         @CurrentUserId appUserId: Long,
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
         @Parameter(description = "게임 빌드 id", required = true) @PathVariable gameBuildId: Long,
+        @Parameter(description = "true 면 스캔 문서가 다 읽힌 뒤 TC 도 만든다. 결과는 lastScan.testCases")
+        @RequestParam(defaultValue = "false") generateTestCases: Boolean,
+        @Parameter(description = "TC 를 만들 때 앞 버전의 사용자 생성 TC 를 이어 넣는다")
+        @RequestParam(defaultValue = "true") carryOver: Boolean,
     ): StartContentMapScanResponse {
-        val status = scan.startScan(appUserId, projectId, gameBuildId)
+        val status = scan.startScan(
+            appUserId, projectId, gameBuildId,
+            testCaseRequest = if (generateTestCases) ScanTestCases(carryOver = carryOver) else null,
+        )
             ?: throw NotFoundException("게임 빌드를 찾을 수 없습니다.")
         return StartContentMapScanResponse(
             gameInstanceId = status.gameInstanceId,

@@ -134,9 +134,8 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(versions.findById(verified.id!!)!!.verificationStatus).isEqualTo("VERIFIED")
         assertThat(testCases.findById(verified.testCaseId)!!.verificationStatus).isEqualTo("REGRESSION")
 
-        val again = generate(token, projectId, buildB.gameBuildId)
-        assertThat(again.body["regression"].asInt()).isZero()
-        assertThat(again.body["created"].asInt()).isZero()
+        // 같은 build 는 다시 만들지 않는다(ARTEL-1040).
+        assertThat(generate(token, projectId, buildB.gameBuildId).status).isEqualTo(409)
 
         val history = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases/${verified.testCaseId}/verdict-history")
         assertThat(history.status).isEqualTo(200)

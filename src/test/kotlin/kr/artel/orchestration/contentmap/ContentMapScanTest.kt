@@ -3,8 +3,11 @@ package kr.artel.orchestration.contentmap
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.common.error.ConflictException
+import kr.artel.orchestration.contentmap.entity.ContentMapEntity
+import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.scan.ContentMapScanService
 import kr.artel.orchestration.contentmap.scan.ScanState
+import kr.artel.orchestration.contentmap.scan.ScanTestCases
 import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
@@ -14,6 +17,10 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.sdk.service.SessionManager
+import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
@@ -46,6 +53,9 @@ class ContentMapScanTest {
     @Autowired private lateinit var gameBuilds: GameBuildRepository
     @Autowired private lateinit var gameInstances: GameInstanceRepository
     @Autowired private lateinit var db: DatabaseClient
+    @Autowired private lateinit var contentMaps: ContentMapRepository
+    @Autowired private lateinit var testCases: TestCaseRepository
+    @Autowired private lateinit var versions: TestCaseVersionRepository
 
     private val objectMapper = ObjectMapper()
 
@@ -144,6 +154,30 @@ class ContentMapScanTest {
 
         // 정상 경로는 막히지 않는다 — 검사를 더하면서 버튼 자체를 죽이면 안 된다.
         assertThat(scan.startScan(userId, mine, buildId)).isNotNull()
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
+    /**
+     * 스캔하고 TC 생성(ARTEL-1040)은 TC 를 못 만들 build 면 **스캔을 보내기 전에** 409 다. 게임이 스캔을 마친 뒤에
+     * 막히면 그 수고가 버려진다.
+     */
+    @Test
+    fun `이미 TC 를 만든 build 에는 스캔하고 TC 생성을 시킬 수 없다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        val map = contentMaps.save(ContentMapEntity(gameBuildId = buildId))
+        val testCase = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "지도", expectedValue = "x"))
+        versions.save(TestCaseVersionEntity.snapshotOf(testCase, buildId).copy(contentMapId = map.id))
+
+        assertThatThrownBy { runBlocking { scan.startScan(userId, projectId, buildId, ScanTestCases(carryOver = true)) } }
+            .isInstanceOf(ConflictException::class.java)
+            .extracting("code").isEqualTo("TEST_CASES_ALREADY_GENERATED")
+        // 그냥 스캔은 막지 않는다.
+        assertThat(scan.startScan(userId, projectId, buildId)).isNotNull()
 
         sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
     }

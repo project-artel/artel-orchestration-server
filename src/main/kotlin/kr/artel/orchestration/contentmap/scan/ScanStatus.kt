@@ -50,4 +50,33 @@ data class ScanStatus(
     val ingestedDocuments: Int? = null,
     /** [ScanState.FAILED] 일 때 사람에게 보여 줄 사유 한 줄. */
     val error: String? = null,
+    /** 스캔이 끝나면 TC 도 만들라는 요청과 그 결과(ARTEL-1040). 그냥 스캔이면 null 이다. */
+    val testCases: ScanTestCases? = null,
 )
+
+/**
+ * "스캔하고 TC 생성" 의 TC 쪽. 스캔이 성공해 문서가 다 읽힌 뒤에만 만든다 — 스캔이 깨지면 [ScanTestCaseState.PENDING]
+ * 으로 남는다.
+ */
+data class ScanTestCases(
+    val carryOver: Boolean,
+    val state: ScanTestCaseState = ScanTestCaseState.PENDING,
+    val created: Int? = null,
+    val carriedOver: Int? = null,
+    /** [ScanTestCaseState.SKIPPED] · [ScanTestCaseState.FAILED] 일 때 사람에게 보여 줄 사유. */
+    val reason: String? = null,
+)
+
+enum class ScanTestCaseState {
+    /** 스캔이 아직 끝나지 않았다. */
+    PENDING,
+
+    /** 만들었다. */
+    GENERATED,
+
+    /** 그사이 이 빌드에서 TC 를 만들어 두어 건너뛰었다. */
+    SKIPPED,
+
+    /** 만들지 못했다. */
+    FAILED,
+}

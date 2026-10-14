@@ -19,6 +19,10 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -62,6 +66,8 @@ class ScanResultRoutingTest {
     @Autowired private lateinit var documents: ContentMapDocumentRepository
     @Autowired private lateinit var capabilities: CapabilityRepository
     @Autowired private lateinit var db: DatabaseClient
+    @Autowired private lateinit var testCases: TestCaseRepository
+    @Autowired private lateinit var versions: TestCaseVersionRepository
 
     private val fakeStorage: FakeDocumentStorage get() = storage as FakeDocumentStorage
 
@@ -93,6 +99,39 @@ class ScanResultRoutingTest {
         assertThat(status.state).isEqualTo(ScanState.SUCCEEDED)
         assertThat(status.ingestedDocuments).isEqualTo(1)
         assertThat(status.finishedAt).isNotNull()
+    }
+
+    /** 스캔하고 TC 생성(ARTEL-1040): 문서가 다 앉은 뒤 그 지도로 TC 를 만들고, 결과를 스캔 상태에 싣는다. */
+    @Test
+    fun `TC 생성을 함께 요청한 스캔은 적재 뒤 TC 를 만든다`(): Unit = runBlocking {
+        val world = newWorld()
+        newDocument(world.contentMapId, healthyDocument())
+        statuses.put(requestedStatus(world).copy(testCases = ScanTestCases(carryOver = true)))
+
+        assertThat(router.handle(world.instanceId, actionResult(success = true))).isTrue()
+
+        val status = statuses.find(world.gameBuildId)!!
+        assertThat(status.state).isEqualTo(ScanState.SUCCEEDED)
+        val testCases = status.testCases!!
+        assertThat(testCases.state).isEqualTo(ScanTestCaseState.GENERATED)
+        assertThat(testCases.created).isEqualTo(versions.findByGameBuildId(world.gameBuildId).toList().size)
+    }
+
+    /** 그사이 같은 build 의 TC 를 누가 만들었으면 건너뛰고, 스캔은 그대로 성공이다. */
+    @Test
+    fun `이미 TC 를 만든 build 면 스캔 뒤 생성을 건너뛴다`(): Unit = runBlocking {
+        val world = newWorld()
+        newDocument(world.contentMapId, healthyDocument())
+        val testCase = testCases.save(TestCaseEntity(projectId = world.projectId, scene = "S", step = "지도", expectedValue = "x"))
+        versions.save(TestCaseVersionEntity.snapshotOf(testCase, world.gameBuildId).copy(contentMapId = world.contentMapId))
+        statuses.put(requestedStatus(world).copy(testCases = ScanTestCases(carryOver = true)))
+
+        router.handle(world.instanceId, actionResult(success = true))
+
+        val status = statuses.find(world.gameBuildId)!!
+        assertThat(status.state).isEqualTo(ScanState.SUCCEEDED)
+        assertThat(status.testCases!!.state).isEqualTo(ScanTestCaseState.SKIPPED)
+        assertThat(versions.findByGameBuildId(world.gameBuildId).toList()).hasSize(1)
     }
 
     /**

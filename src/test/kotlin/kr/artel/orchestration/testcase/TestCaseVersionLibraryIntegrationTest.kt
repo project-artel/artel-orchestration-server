@@ -242,26 +242,27 @@ class TestCaseVersionLibraryIntegrationTest {
         assertThat(rowA.verificationStatus).isEqualTo("DRAFT")
         versions.save(rowA.copy(verificationStatus = "VERIFIED"))
 
-        // 이어 넣기를 끄고 생성하면 따라오지 않는다.
+        // 다음 버전을 생성하면(이어 넣기는 기본값으로 켜져 있다) 앞 버전에 있던 사용자 생성 케이스가 따라온다. 앞에서
+        // 판정이 난 것은 재검증 필요다.
         val buildB = ingestedBuild(projectId, "1.1.0", Instant.now())
-        val withoutCarry = call(
-            token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/content-map/test-cases?carryOver=false",
-        ).body
-        assertThat(withoutCarry["carriedOver"].asInt()).isZero()
-        assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id!!, buildB.gameBuildId)).isNull()
-
-        // 켜고(기본값) 다시 생성하면 앞 버전에 있던 사용자 생성 케이스가 따라온다. 앞에서 판정이 난 것은 재검증 필요다.
         val generated = call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/content-map/test-cases").body
         assertThat(generated["carriedOver"].asInt()).isEqualTo(2)
         assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id!!, buildB.gameBuildId)!!.verificationStatus).isEqualTo("REGRESSION")
         assertThat(versions.findByTestCaseIdAndGameBuildId(draftOnly.id!!, buildB.gameBuildId)!!.verificationStatus).isEqualTo("DRAFT")
         assertThat(testCases.findById(manual.id!!)!!.verificationStatus).isEqualTo("REGRESSION")
 
-        // 다시 생성해도 두 번 넣지 않는다.
+        // 같은 build 는 다시 만들지 않는다(ARTEL-1040).
         assertThat(
-            call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/content-map/test-cases")
-                .body["carriedOver"].asInt()
-        ).isZero()
+            call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/content-map/test-cases").status
+        ).isEqualTo(409)
+
+        // 이어 넣기를 끄고 다음 버전을 만들면 따라오지 않는다.
+        val buildC = ingestedBuild(projectId, "1.2.0", Instant.now())
+        val withoutCarry = call(
+            token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildC.gameBuildId}/content-map/test-cases?carryOver=false",
+        ).body
+        assertThat(withoutCarry["carriedOver"].asInt()).isZero()
+        assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id!!, buildC.gameBuildId)).isNull()
 
         val removed = call(
             token, HttpMethod.POST, "/api/projects/$projectId/test-case-versions/${buildB.gameBuildId}/cases/removals",

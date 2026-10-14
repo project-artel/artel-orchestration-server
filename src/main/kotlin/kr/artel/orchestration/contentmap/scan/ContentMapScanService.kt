@@ -10,6 +10,7 @@ import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.sdk.dto.ActionItemDto
 import kr.artel.orchestration.sdk.dto.ActionResponseDto
 import kr.artel.orchestration.sdk.service.SessionManager
+import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -45,6 +46,7 @@ class ContentMapScanService(
     private val sessionManager: SessionManager,
     private val statuses: ScanStatusRegistry,
     private val streamManager: ContentMapEventStreamManager,
+    private val testCases: ContentMapTestCaseService,
     private val clock: Clock,
 ) {
 
@@ -62,9 +64,19 @@ class ContentMapScanService(
      * 경로의 [projectId] 까지 보는 것은 그것이 장식이 되지 않게 하려는 것이다 — 안 보면 아무
      * 프로젝트 id 나 넣어도 통과하고, 한 사람이 여러 프로젝트의 멤버인 흔한 경우에 권한 검사만으로는
      * 안 걸린다.
+     *
+     * [testCaseRequest] 가 있으면 스캔 문서가 다 읽힌 뒤 TC 도 만든다([ScanResultRouter], ARTEL-1040). editor 이거나 이미
+     * TC 를 만든 build 면 스캔을 보내기 전에 409 다.
      */
-    suspend fun startScan(userId: Long, projectId: Long, gameBuildId: Long): ScanStatus? {
-        gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: return null
+    suspend fun startScan(
+        userId: Long,
+        projectId: Long,
+        gameBuildId: Long,
+        testCaseRequest: ScanTestCases? = null,
+    ): ScanStatus? {
+        val build = gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: return null
+        // 스캔하고 TC 생성(ARTEL-1040): 스캔이 끝난 뒤에 막히면 게임을 돌린 수고가 버려진다. 막힐 것은 먼저 막는다.
+        if (testCaseRequest != null) testCases.requireGeneratable(build)
 
         // 붙어 있는지는 DB 가 아니라 SessionManager 가 아는 사실이라 여기서 거른다.
         val instance = gameInstances.findByLastGameBuildIdForMember(gameBuildId, userId)
@@ -100,6 +112,7 @@ class ContentMapScanService(
             gameInstanceName = instance.name,
             state = ScanState.REQUESTED,
             requestedAt = Instant.now(clock),
+            testCases = testCaseRequest,
         )
         statuses.put(status)
         // 이미 이 빌드의 events 스트림을 구독 중인 다른 사람이 있을 수 있다 — 그 화면은 이 버튼을
