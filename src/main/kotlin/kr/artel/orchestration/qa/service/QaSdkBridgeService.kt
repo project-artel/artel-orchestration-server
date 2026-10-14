@@ -2,11 +2,14 @@ package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.CancellationException
 import kr.artel.orchestration.contentmap.observe.ScreenNameFrames
 import kr.artel.orchestration.contentmap.observe.ScreenSelectorFrames
+import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.sdk.dto.ActionItemDto
 import kr.artel.orchestration.sdk.dto.AgentGameState
 import org.springframework.stereotype.Service
 import java.time.Instant
@@ -148,6 +151,87 @@ class QaSdkBridgeService(
         logService.publish(outbound)
         sendAgent(qaTryId, sessionId, "ACTION_RESULT", correlationId, payload)
         return true
+    }
+
+    /**
+     * behavior 가 끝났다는 SDK 프레임을 타임라인에 남기고 agent 로 옮긴다 (계약 4절 `BEHAVIOR_ENDED relay`).
+     *
+     * [routeActionResult] 와 같은 두 줄(`SDK_TO_ORCHE`, `ORCHE_TO_AGENT`)을 남기되, 봉투의 payload 는 SDK 객체에서 `type`
+     * 만 뺀 것이다. 필드를 읽어 판단하지 않는다. `ACTION_RESULT` 와 달리 짝이 되는 `ACTION` 행이 없으므로 `correlationId` 는
+     * 싣지 않는다 — 저쪽에서 답을 기다리는 tool 이 없다.
+     *
+     * `messageId` 는 SDK 프레임의 `id` 가 정수일 때만 쓴다. `behaviorId` 로 대신하지 않는다: 그 번호는 SDK 프로세스마다 다시
+     * 1 부터 시작하므로, 같은 try 안에서 연결이 끊겼다 이어지면 다른 behavior 의 종료가 중복으로 버려진다.
+     */
+    suspend fun routeBehaviorEnded(gameInstanceId: Long, payloadText: String): Boolean {
+        val qaTry = tryRepository.findActiveByGameInstanceId(gameInstanceId) ?: return false
+        val frame = objectMapper.readTree(payloadText)
+        val payload = (frame.deepCopy<JsonNode>() as ObjectNode).apply { remove("type") }
+        val qaTryId = requireNotNull(qaTry.id)
+        val sessionId = qaTry.agentSessionId
+        val messageId = frame.path("id").takeIf { it.isIntegralNumber }?.longValue()?.toString()
+        val name = payload.path("name").asText("")
+        val reason = payload.path("reason").asText("")
+        val inbound = logService.append(
+            qaTryId = qaTryId,
+            direction = "SDK_TO_ORCHE",
+            type = "BEHAVIOR_ENDED",
+            messageId = messageId,
+            message = "Behavior ended: $name ($reason).",
+            payload = payload
+        )
+        logService.publish(inbound)
+        if (!inbound.inserted) return true
+        if (sessionId == null) return true
+        val outbound = logService.append(
+            qaTryId = qaTryId,
+            direction = "ORCHE_TO_AGENT",
+            type = "BEHAVIOR_ENDED",
+            messageId = messageId,
+            message = "Behavior end relayed.",
+            payload = payload
+        )
+        logService.publish(outbound)
+        sendAgent(qaTryId, sessionId, "BEHAVIOR_ENDED", null, payload)
+        return true
+    }
+
+    /**
+     * 허용 목록에 없는 cheat · behavior 호출을 SDK 로 보내지 않고 agent 에게 실패로 돌려준다.
+     *
+     * [QaActionDispatchService] 가 부른다. `ACTION_RESULT` 와 같은 모양(`results[]` 에 `id` · `success` · `error` · `action`)으로
+     * 답하고 `correlationId` 는 agent 가 보낸 `ACTION` 의 messageId 다. 그래서 agent 쪽에서는 SDK 가 거절한 것과 같은 길로 읽힌다.
+     * [rejections] 의 키는 `ACTION` 항목의 `id` 이고, 거절된 항목마다 이유가 있다. 배치의 나머지 항목은 실행하지 않았다고 답한다.
+     */
+    suspend fun rejectActions(
+        qaTry: QaTryEntity,
+        agentMessageId: String,
+        actions: List<ActionItemDto>,
+        rejections: Map<Long, String>
+    ) {
+        val qaTryId = requireNotNull(qaTry.id)
+        val results = objectMapper.createArrayNode()
+        for (action in actions) {
+            results.addObject()
+                .put("id", action.id)
+                .put("success", false)
+                .put("error", rejections[action.id] ?: "not run: another action in the same batch was rejected")
+                .put("action", action.method)
+        }
+        val payload = objectMapper.createObjectNode().put("type", "ACTION_RESULT")
+        payload.set<JsonNode>("results", results)
+        val summary = rejections.values.first()
+        val outbound = logService.append(
+            qaTryId = qaTryId,
+            direction = "ORCHE_TO_AGENT",
+            type = "ACTION_RESULT",
+            correlationId = agentMessageId,
+            message = "Action rejected: $summary",
+            payload = payload
+        )
+        logService.publish(outbound)
+        val sessionId = qaTry.agentSessionId ?: return
+        sendAgent(qaTryId, sessionId, "ACTION_RESULT", agentMessageId, payload)
     }
 
     private suspend fun appendUnknownResult(
