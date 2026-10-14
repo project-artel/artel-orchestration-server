@@ -2,6 +2,8 @@ package kr.artel.orchestration.settings.controller
 
 import kr.artel.orchestration.auth.service.PlatformAccessService
 import kr.artel.orchestration.auth.web.CurrentUserId
+import kr.artel.orchestration.settings.service.AgentCacheInvalidationResult
+import kr.artel.orchestration.settings.service.AgentCacheInvalidator
 import kr.artel.orchestration.settings.service.LlmKeyCheckResult
 import kr.artel.orchestration.settings.service.LlmKeyService
 import kr.artel.orchestration.settings.service.LlmKeyStatus
@@ -31,6 +33,7 @@ data class UpdateLlmKeyRequest(val apiKey: String? = null) {
 @RequestMapping("/api/admin/settings/llm")
 class AdminLlmSettingsController(
     private val llmKeyService: LlmKeyService,
+    private val agentCacheInvalidator: AgentCacheInvalidator,
     private val platformAccessService: PlatformAccessService
 ) {
     @GetMapping
@@ -50,5 +53,15 @@ class AdminLlmSettingsController(
     suspend fun checkLlmKey(@CurrentUserId userId: Long): LlmKeyCheckResult {
         platformAccessService.requireAdmin(userId)
         return llmKeyService.check(userId)
+    }
+
+    /**
+     * agent-server 가 들고 있는 key 와 model 카탈로그 캐시를 비우라고 요청한다. agent-server 가 답하지 않아도
+     * 200 이고, 실패한 이유는 `error` 에 담긴다.
+     */
+    @PostMapping("/invalidate-cache")
+    suspend fun invalidateAgentCache(@CurrentUserId userId: Long): AgentCacheInvalidationResult {
+        platformAccessService.requireAdmin(userId)
+        return agentCacheInvalidator.invalidate()
     }
 }

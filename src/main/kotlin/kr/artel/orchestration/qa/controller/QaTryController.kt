@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.map
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.issue.dto.IssuePageResponse
 import kr.artel.orchestration.issue.service.IssueService
+import kr.artel.orchestration.llmmodel.service.LlmModelService
 import kr.artel.orchestration.qa.dto.CreateQaTryRequest
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
@@ -18,6 +19,7 @@ import kr.artel.orchestration.qa.service.QaTryService
 import kr.artel.orchestration.qa.service.toContentMapMode
 import kr.artel.orchestration.qa.service.toKnowledgeSettings
 import kr.artel.orchestration.qa.service.toRunSettings
+import kr.artel.orchestration.userllmkey.service.UserLlmKeyService
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
@@ -40,23 +42,33 @@ class QaTryController(
     private val service: QaTryService,
     private val issueService: IssueService,
     private val detailService: QaTryDetailService,
+    private val llmModelService: LlmModelService,
+    private val userLlmKeyService: UserLlmKeyService,
     private val objectMapper: ObjectMapper
 ) {
+    /**
+     * 요청의 `model` 이 카탈로그에 없으면 400 `llm_model_unknown`, 꺼져 있으면 400 `llm_model_disabled` 다.
+     * `keySource` 에 맞는 key 가 없으면 400 `llm_key_missing` 이다.
+     */
     @PostMapping
     suspend fun create(
         @RequestBody request: CreateQaTryRequest,
         @CurrentUserId appUserId: Long
-    ): ResponseEntity<QaTryResponse> =
-        ResponseEntity.status(HttpStatus.CREATED).body(
+    ): ResponseEntity<QaTryResponse> {
+        llmModelService.requireSelectable(request.model)
+        val runKey = userLlmKeyService.resolveForRun(appUserId, request.model, request.keySource)
+        return ResponseEntity.status(HttpStatus.CREATED).body(
             service.create(
                 parseId(request.testScenarioId),
                 parseId(request.gameInstanceId),
                 appUserId,
                 request.toRunSettings(objectMapper),
                 request.toKnowledgeSettings(),
-                request.toContentMapMode()
+                request.toContentMapMode(),
+                runKey
             )
         )
+    }
 
     /** One project's runs, newest first — the way back to a run after its URL is lost. */
     @GetMapping

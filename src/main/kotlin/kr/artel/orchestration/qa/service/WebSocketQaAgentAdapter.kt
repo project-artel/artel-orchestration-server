@@ -32,6 +32,8 @@ internal data class QaSessionOpenRequest(
     @JsonProperty("language") val language: String?,
     @JsonProperty("prompt_version") val promptVersion: String?,
     val arch: JsonNode?,
+    // 사용자 key 로 도는 run 에만 싣는다. NON_NULL 이라 공용 key run 에는 필드가 아예 없다.
+    @JsonProperty("llm_key") val llmKey: QaSessionLlmKey? = null,
     val context: QaSessionOpenContext
 )
 
@@ -92,6 +94,7 @@ class WebSocketQaAgentAdapter(
             language = context.language,
             promptVersion = context.promptVersion,
             arch = context.arch,
+            llmKey = context.llmKey,
             context = QaSessionOpenContext(
                 gameInstanceId = context.gameInstanceId,
                 projectId = context.projectId,

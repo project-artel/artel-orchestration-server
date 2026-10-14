@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotNull
 import jakarta.validation.constraints.PositiveOrZero
 import jakarta.validation.constraints.Size
 import kr.artel.orchestration.llmusage.entity.LlmUsageServiceType
+import kr.artel.orchestration.userllmkey.entity.KeySource
 import java.math.BigDecimal
 import java.time.Instant
 
@@ -33,6 +34,8 @@ data class LlmUsageBatchRequest(
  * @property costEstimated [costUsd]를 보낸 쪽이 계산했으면 true, provider가 청구한 값이면 false.
  * [costUsd]가 없으면 null이어야 한다 — 금액과 유무가 묶여 있다.
  * @property calledAt agent가 provider를 실제로 호출한 시각(ISO-8601 UTC). 집계 기준 시각이다.
+ * @property keySource 이 호출이 공용 key(`platform`)와 사용자 key(`user`) 중 무엇으로 나갔는지. 없으면 `platform`
+ * 이다 — 이 필드를 모르는 agent-server 는 공용 key 만 쓴다. 모르는 값은 400 이다.
  */
 data class LlmUsageRecord(
     @field:NotNull
@@ -71,5 +74,7 @@ data class LlmUsageRecord(
     val latencyMs: Int = 0,
 
     @field:NotNull
-    val calledAt: Instant? = null
+    val calledAt: Instant? = null,
+
+    val keySource: KeySource? = null
 )
