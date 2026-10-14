@@ -179,27 +179,27 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         val projectId = newProject(userId)
         val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(120))
         generate(token, projectId, buildA.gameBuildId)
-        val rowsA = rowsOf(projectId, buildA.contentMapId)
-        val verified = rowsA[0]
-        val untouched = rowsA[1]
-        testCases.save(verified.copy(verificationStatus = "VERIFIED", lastVerifiedBuildId = buildA.gameBuildId))
+        val versionsA = versions.findByGameBuildId(buildA.gameBuildId).toList().sortedBy { it.testCaseId }
+        val verified = versionsA[0]
+        val untouched = versionsA[1]
+        versions.save(verified.copy(verificationStatus = "VERIFIED"))
 
         val editor = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60), isEditor = true)
         val editorGenerated = generate(token, projectId, editor.gameBuildId)
         assertThat(editorGenerated.body["regression"].asInt()).isZero()
-        val rowsEditor = rowsOf(projectId, editor.contentMapId).associateBy(::caseKeyOf)
-        testCases.save(rowsEditor.getValue(caseKeyOf(untouched)).copy(verificationStatus = "FAILED"))
+        versions.save(versions.findByTestCaseIdAndGameBuildId(untouched.testCaseId, editor.gameBuildId)!!.copy(verificationStatus = "FAILED"))
 
         val buildB = ingestedBuild(projectId, "2.0.0", Instant.now())
         val generated = generate(token, projectId, buildB.gameBuildId)
 
         // editor 의 FAILED 를 직전으로 봤다면 2건이다.
         assertThat(generated.body["regression"].asInt()).isEqualTo(1)
-        val rowsB = rowsOf(projectId, buildB.contentMapId).associateBy(::caseKeyOf)
-        assertThat(rowsB.getValue(caseKeyOf(verified)).verificationStatus).isEqualTo("REGRESSION")
-        assertThat(rowsB.getValue(caseKeyOf(untouched)).verificationStatus).isEqualTo("DRAFT")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(verified.testCaseId, buildB.gameBuildId)!!.verificationStatus)
+            .isEqualTo("REGRESSION")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(untouched.testCaseId, buildB.gameBuildId)!!.verificationStatus)
+            .isEqualTo("DRAFT")
 
-        val history = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases/${verified.id}/verdict-history")
+        val history = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases/${verified.testCaseId}/verdict-history")
         assertThat(history.body["items"].map { it["gameBuildId"].asLong() })
             .containsExactly(buildA.gameBuildId, buildB.gameBuildId)
     }
