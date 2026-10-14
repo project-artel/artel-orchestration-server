@@ -380,6 +380,7 @@ class TestCaseService(
             precondition = request.precondition?.ifBlank { null },
             expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
+            functions = request.functions?.validated(),
         )
         if (folderId == null && gameBuildId == null) return repository.save(entity).toTestCaseResponse()
         val saved = transactionalOperator.executeAndAwait {
@@ -441,6 +442,7 @@ class TestCaseService(
             precondition = if (request.precondition == null) existing.precondition else request.precondition.ifBlank { null },
             expectedValue = request.expectedValue?.ifBlank { null } ?: existing.expectedValue,
             verificationStatus = statusName ?: existing.verificationStatus,
+            functions = request.functions?.validated() ?: existing.functions,
         )
         return repository.save(updated).toTestCaseResponse(folderItems.findFirstFolderId(caseId))
     }

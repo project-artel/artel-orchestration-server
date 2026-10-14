@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testscenario.service
 
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.testcase.dto.functionsOrNull
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.dto.AgentCase
 import kr.artel.orchestration.testscenario.dto.AgentScenario
@@ -59,6 +60,7 @@ class ScenarioCompositionService(
                         precondition = it.precondition,
                         testStep = it.step,
                         expected = it.expectedValue,
+                        functions = it.functionsOrNull(),
                     )
                 },
             )
