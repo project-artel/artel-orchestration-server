@@ -1,8 +1,22 @@
 package kr.artel.orchestration.testcase.dto
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import java.time.Instant
+
+/** metadata 의 `origin` 만 읽는다. 상태가 없는 읽기라 화면용 매핑마다 새로 만들지 않는다. */
+private val metadataReader = jacksonObjectMapper()
+
+/**
+ * 케이스의 출처(ARTEL-1031). 지도가 낸 케이스는 `MAP`(화면의 "자동 생성"), 나머지는 `MANUAL`("사용자 생성")이다.
+ * 사람이 화면에서 쓴 케이스와 예전 엑셀 경로로 들어온 케이스는 `origin` 표시가 없어 `MANUAL` 이다.
+ */
+fun TestCaseEntity.originLabel(): String =
+    if (runCatching { metadataReader.readTree(metadata.asString()) }.getOrNull()
+            ?.path(MapTestCaseWriter.ORIGIN_FIELD)?.asText() == MapTestCaseWriter.ORIGIN
+    ) "MAP" else "MANUAL"
 
 /**
  * TestCase 엔티티 → 응답 DTO. 여러 도메인(케이스/시나리오 조합)이 공유한다. id 계열은 문자열.
@@ -23,6 +37,7 @@ fun TestCaseEntity.toTestCaseResponse(folderId: Long? = null): TestCaseResponse 
         lastVerifiedBuildId = lastVerifiedBuildId?.toString(),
         createdAt = createdAt ?: Instant.EPOCH,
         folderId = folderId?.toString(),
+        origin = originLabel(),
     )
 
 /**
@@ -46,6 +61,7 @@ fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper, folderId
         lastVerifiedBuildId = base.lastVerifiedBuildId,
         createdAt = base.createdAt,
         folderId = base.folderId,
+        origin = base.origin,
         evidenceGaps = evidenceGaps(objectMapper),
     )
 }

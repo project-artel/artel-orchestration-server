@@ -15,6 +15,11 @@ data class TestCaseCreateRequest(
     val expectedValue: String? = null,
     /** 넣을 folder(ARTEL-969). null 이거나 빈 문자열이면 folder 없음이다. */
     val folderId: String? = null,
+    /**
+     * 넣을 버전(game build)(ARTEL-1031). 주면 그 버전에 `DRAFT` 몫을 만들어 버전 라이브러리에 바로 보인다. null 이거나
+     * 빈 문자열이면 어느 버전에도 넣지 않는다("버전 없음").
+     */
+    val gameBuildId: String? = null,
 )
 
 /** 케이스 수정. 검증상태(verificationStatus)도 여기서 바꿀 수 있다. */
@@ -61,6 +66,8 @@ data class TestCaseResponse(
      * folder 다(ARTEL-1023) — 전부는 folder 항목 API 가 낸다.
      */
     val folderId: String?,
+    /** `MAP`(지도가 낸 케이스, 자동 생성) 또는 `MANUAL`(사용자 생성)(ARTEL-1031). */
+    val origin: String,
 )
 
 data class TestCaseListResponse(val items: List<TestCaseResponse>)
@@ -89,5 +96,6 @@ data class TestCaseDetailResponse(
     val lastVerifiedBuildId: String?,
     val createdAt: Instant,
     val folderId: String?,
+    val origin: String,
     val evidenceGaps: List<String>,
 )

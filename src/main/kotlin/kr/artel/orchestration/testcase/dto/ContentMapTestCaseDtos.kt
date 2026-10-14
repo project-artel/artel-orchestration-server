@@ -11,6 +11,7 @@ import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
  * @property deleted 이 build 에서 사라져 지운 몫 수(다른 버전에도 없으면 케이스째 지운 것 포함).
  * @property broken 어느 버전에도 남지 않았지만 시나리오가 인용해 지우지 않고 `BROKEN` 으로 둔 케이스 수.
  * @property regression 앞 버전에서 판정이 나 이번 몫을 `REGRESSION` 으로 시작한 수(ARTEL-994).
+ * @property carriedOver 바로 앞 버전에 있던 사용자 생성 케이스를 이 버전에 이어 넣은 수(ARTEL-1031).
  */
 data class ContentMapTestCaseGenerationResponse(
     val created: Int,
@@ -18,14 +19,16 @@ data class ContentMapTestCaseGenerationResponse(
     val deleted: Int,
     val broken: Int,
     val regression: Int,
+    val carriedOver: Int,
 ) {
     companion object {
-        fun of(result: MapTestCaseWriter.Result) = ContentMapTestCaseGenerationResponse(
+        fun of(result: MapTestCaseWriter.Result, carriedOver: Int) = ContentMapTestCaseGenerationResponse(
             created = result.created,
             updated = result.updated,
             deleted = result.deleted,
             broken = result.broken,
             regression = result.regression,
+            carriedOver = carriedOver,
         )
     }
 }
