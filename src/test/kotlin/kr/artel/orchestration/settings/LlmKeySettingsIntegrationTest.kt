@@ -31,14 +31,12 @@ import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.publisher.Mono
 import reactor.netty.DisposableServer
 import reactor.netty.http.server.HttpServer
-import java.util.concurrent.atomic.AtomicReference
 
 /**
- * 관리 화면의 OpenRouter API key: 저장, 출처 순서, 내부 포트로 건네기, OpenRouter 확인, 그리고 key 원문이
+ * 관리 화면의 OpenRouter API key: 저장, 환경 변수를 읽지 않는다는 것, 내부 포트로 건네기, OpenRouter 확인, 그리고 key 원문이
  * 어느 공개 응답에도, 어느 로그에도 나가지 않는다는 것.
  *
- * OpenRouter 와 `artel-agent-server` 는 이 클래스가 띄운 가짜 서버다. OpenRouter 는 [VALID_KEY] 만 받아 주고,
- * 필요한 model 중 둘을 뺀 목록을 낸다. agent 는 `GET /internal/models/required` 에 [REQUIRED_MODELS] 를 낸다.
+ * OpenRouter 는 이 클래스가 띄운 가짜 서버다. [VALID_KEY] 만 받아 주고, 필요한 model 중 둘을 뺀 목록을 낸다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -47,34 +45,35 @@ class LlmKeySettingsIntegrationTest {
 
     companion object {
         private const val VALID_KEY = "sk-or-v1-admin-page-key-0123456789abcdef"
+        /** 예전 `OPENROUTER_API_KEY` 자리에 남아 있는 값. 이제는 어디에도 쓰이지 않아야 한다. */
         private const val ENVIRONMENT_KEY = "sk-or-v1-environment-key-fedcba9876543210"
         private const val INVALID_KEY = "sk-or-v1-revoked-key-000000000000wxyz"
 
-        /** 가짜 OpenRouter 가 내지 않는 둘. 확인 결과의 missingModels 가 이 둘이어야 한다. */
-        private val UNLISTED_MODELS = setOf("x-ai/grok-4.6", "openai/text-embedding-3-large")
-
-        private val REQUIRED_MODELS = listOf(
-            "openai/gpt-test-one",
-            "anthropic/claude-test-two",
-            "x-ai/grok-4.6",
-            "google/gemini-test-three",
+        /**
+         * V109 가 넣은 행 중 켜져 있고 Bedrock 도 Claude API(`claude/`)도 아닌 12 개에 embedding model 을 더한 목록. 확인이 닿아야 한다고 보는
+         * model 은 `llm_model` 테이블이 정하므로, 시드가 바뀌면 이 목록도 바뀌어야 한다.
+         */
+        private val REQUIRED_OPENROUTER_MODELS = listOf(
+            "openai/gpt-6.1-sol",
+            "openai/gpt-6-astra",
+            "openai/gpt-6-luna",
+            "openai/gpt-5.6-terra",
+            "anthropic/claude-opus-5.5",
+            "anthropic/claude-sonnet-5.5",
+            "google/gemini-3.8-flash",
+            "google/gemma-4-31b-it:free",
+            "x-ai/grok-4.7",
+            "moonshotai/kimi-k3",
+            "z-ai/glm-5.3-flash",
+            "qwen/qwen3.7-max",
             "openai/text-embedding-3-large"
         )
 
-        /** 가짜 agent 의 `/models/required` 응답. 테스트가 바꿔 끼운다. status 와 본문이다. */
-        private val agentAnswer = AtomicReference(200 to """{"slugs":[${REQUIRED_MODELS.joinToString(",") { "\"$it\"" }}]}""")
-
-        private val fakeAgent: DisposableServer by lazy {
-            HttpServer.create().port(0).route { routes ->
-                routes.get("/internal/models/required") { _, response ->
-                    val (status, body) = agentAnswer.get()
-                    response.status(status).header("Content-Type", "application/json").sendString(Mono.just(body))
-                }
-            }.bindNow()
-        }
+        /** 가짜 OpenRouter 가 내지 않는 둘. 확인 결과의 missingModels 가 이 둘이어야 한다. */
+        private val UNLISTED_MODELS = setOf("x-ai/grok-4.7", "openai/text-embedding-3-large")
 
         private val fakeOpenRouter: DisposableServer by lazy {
-            val listedModels = REQUIRED_MODELS.filterNot { it in UNLISTED_MODELS } + "some/other-model"
+            val listedModels = REQUIRED_OPENROUTER_MODELS.filterNot { it in UNLISTED_MODELS } + "some/other-model"
             val modelsJson = listedModels.joinToString(",", prefix = """{"data":[""", postfix = "]}") { """{"id":"$it","name":"x"}""" }
             HttpServer.create().port(0).route { routes ->
                 routes.get("/api/v1/key") { request, response ->
@@ -97,9 +96,7 @@ class LlmKeySettingsIntegrationTest {
         @DynamicPropertySource
         fun settings(registry: DynamicPropertyRegistry) {
             registry.add("artel.llm.openrouter-base-url") { "http://localhost:${fakeOpenRouter.port()}/api/v1" }
-            registry.add("artel.agent.base-url") { "http://localhost:${fakeAgent.port()}/internal" }
-            // 캐시가 켜져 있으면 테스트끼리 agent 응답이 새므로 끈다. 캐시는 RequiredModelsClientTest 가 본다.
-            registry.add("artel.agent.required-models-ttl") { "PT0S" }
+            // 예전 설정 이름에 값이 남아 있는 설치를 흉내 낸다. 서버는 이 값을 읽지 않아야 한다.
             registry.add("artel.llm.openrouter-api-key") { ENVIRONMENT_KEY }
             registry.add("artel.secrets.key") { "test-only-aes-key-that-is-at-least-32-characters" }
         }
@@ -120,7 +117,6 @@ class LlmKeySettingsIntegrationTest {
 
     @BeforeEach
     fun seedAdmin(): Unit = runBlocking {
-        agentAnswer.set(200 to """{"slugs":[${REQUIRED_MODELS.joinToString(",") { "\"$it\"" }}]}""")
         databaseClient.sql("DELETE FROM platform_setting").fetch().rowsUpdated().awaitSingle()
         val admin = appUserRepository.save(testAppUser("llm-admin").copy(platformRole = PlatformRole.ADMIN.name))
         adminId = admin.id!!
@@ -130,25 +126,40 @@ class LlmKeySettingsIntegrationTest {
     @AfterEach
     fun clean(): Unit = runBlocking {
         databaseClient.sql("DELETE FROM platform_setting").fetch().rowsUpdated().awaitSingle()
+        // 이 클래스가 켜고 끈 model 을 시드 상태로 되돌린다.
+        databaseClient.sql("UPDATE llm_model SET enabled = NOT (id IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol') OR id LIKE 'claude/%'), updated_by = NULL")
+            .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
     }
 
     @Test
-    fun `falls back to the environment key, then prefers the admin key, then falls back again when cleared`() {
+    fun `the key comes only from the database, never from the environment`() {
         val initial = call(HttpMethod.GET, "/api/admin/settings/llm")
-        assertThat(initial["source"].asText()).isEqualTo("environment")
-        assertThat(initial["maskedKey"].asText()).isEqualTo("****3210")
-        assertThat(internalSettings()["apiKey"].asText()).isEqualTo(ENVIRONMENT_KEY)
+        assertThat(initial["configured"].asBoolean()).isFalse()
+        assertThat(initial["source"].asText()).isEqualTo("none")
+        assertThat(initial["maskedKey"].isNull).isTrue()
+        assertThat(initial.has("environmentKeyPresent")).isFalse()
+        assertThat(internalSettings()["openrouterApiKey"].isNull).isTrue()
 
         val stored = call(HttpMethod.PUT, "/api/admin/settings/llm", """{"apiKey":"$VALID_KEY"}""")
         assertThat(stored["source"].asText()).isEqualTo("admin")
         assertThat(stored["maskedKey"].asText()).isEqualTo("****cdef")
-        assertThat(internalSettings()["apiKey"].asText()).isEqualTo(VALID_KEY)
-        assertThat(internalSettings()["source"].asText()).isEqualTo("admin")
+        assertThat(internalSettings()["openrouterApiKey"].asText()).isEqualTo(VALID_KEY)
 
         val cleared = call(HttpMethod.PUT, "/api/admin/settings/llm", """{"apiKey":null}""")
-        assertThat(cleared["source"].asText()).isEqualTo("environment")
+        assertThat(cleared["source"].asText()).isEqualTo("none")
+        assertThat(cleared["configured"].asBoolean()).isFalse()
         assertThat(cleared["adminKeyStored"].asBoolean()).isFalse()
+        assertThat(internalSettings()["openrouterApiKey"].isNull).isTrue()
+    }
+
+    @Test
+    fun `check without a stored key reports no_key`() {
+        val result = call(HttpMethod.POST, "/api/admin/settings/llm/check")
+
+        assertThat(result["keyValid"].asBoolean()).isFalse()
+        assertThat(result["error"].asText()).isEqualTo("no_key")
+        assertThat(result["source"].asText()).isEqualTo("none")
     }
 
     @Test
@@ -169,10 +180,32 @@ class LlmKeySettingsIntegrationTest {
 
         assertThat(result["keyValid"].asBoolean()).isTrue()
         assertThat(result["error"].isNull).isTrue()
-        assertThat(result["requiredModels"].map { it.asText() }).containsExactlyElementsOf(REQUIRED_MODELS)
         assertThat(result["missingModels"].map { it.asText() }).containsExactlyInAnyOrderElementsOf(UNLISTED_MODELS)
-        assertThat(result["reachableModels"].size()).isEqualTo(REQUIRED_MODELS.size - UNLISTED_MODELS.size)
+        assertThat(result["reachableModels"].size()).isEqualTo(REQUIRED_OPENROUTER_MODELS.size - UNLISTED_MODELS.size)
         assertThat(call(HttpMethod.GET, "/api/admin/settings/llm")["lastCheck"]["keyValid"].asBoolean()).isTrue()
+    }
+
+    @Test
+    fun `the required list follows the table, so a disabled model no longer has to be reachable`() {
+        call(HttpMethod.PUT, "/api/admin/settings/llm", """{"apiKey":"$VALID_KEY"}""")
+        call(HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"x-ai/grok-4.7","enabled":false}""")
+
+        val result = call(HttpMethod.POST, "/api/admin/settings/llm/check")
+
+        assertThat(result["requiredModels"].map { it.asText() }).doesNotContain("x-ai/grok-4.7")
+        assertThat(result["requiredModels"].size()).isEqualTo(REQUIRED_OPENROUTER_MODELS.size - 1)
+        assertThat(result["missingModels"].map { it.asText() }).containsExactly("openai/text-embedding-3-large")
+    }
+
+    @Test
+    fun `enabled bedrock and claude rows never join the required list`() {
+        call(HttpMethod.PUT, "/api/admin/settings/llm", """{"apiKey":"$VALID_KEY"}""")
+        call(HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"claude/claude-opus-5-5","enabled":true}""")
+        call(HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"bedrock/us.openai.gpt-6.1-sol","enabled":true}""")
+
+        val result = call(HttpMethod.POST, "/api/admin/settings/llm/check")
+
+        assertThat(result["requiredModels"].map { it.asText() }).containsExactlyElementsOf(REQUIRED_OPENROUTER_MODELS)
     }
 
     @Test
@@ -183,26 +216,7 @@ class LlmKeySettingsIntegrationTest {
 
         assertThat(result["keyValid"].asBoolean()).isFalse()
         assertThat(result["error"].asText()).isEqualTo("invalid_key")
-        assertThat(result["missingModels"].size()).isEqualTo(REQUIRED_MODELS.size)
-    }
-
-    @Test
-    fun `check answers upstream_unavailable when the agent server fails or answers something that is not a slug list`(
-        output: CapturedOutput
-    ) {
-        call(HttpMethod.PUT, "/api/admin/settings/llm", """{"apiKey":"$VALID_KEY"}""")
-
-        for (answer in listOf(503 to "{}", 200 to """{"slugs":[]}""", 200 to """{"models":["a/b"]}""", 200 to "[1,2]")) {
-            agentAnswer.set(answer)
-
-            val result = call(HttpMethod.POST, "/api/admin/settings/llm/check")
-
-            assertThat(result["error"].asText()).isEqualTo("upstream_unavailable")
-            assertThat(result["keyValid"].asBoolean()).isFalse()
-            assertThat(result["requiredModels"].size()).isZero()
-            assertThat(result["missingModels"].size()).isZero()
-        }
-        assertThat(output.all).contains("/models/required").doesNotContain(VALID_KEY)
+        assertThat(result["missingModels"].size()).isEqualTo(REQUIRED_OPENROUTER_MODELS.size)
     }
 
     @Test
@@ -227,7 +241,7 @@ class LlmKeySettingsIntegrationTest {
             callRaw(HttpMethod.GET, "/api/admin/settings/llm")
         )
         // 내부 경로는 key 를 건네는 것이 일이다. 그 응답이 로그에도 남지 않는지만 본다.
-        assertThat(internalSettings()["apiKey"].asText()).isEqualTo(VALID_KEY)
+        assertThat(internalSettings()["openrouterApiKey"].asText()).isEqualTo(VALID_KEY)
 
         for (body in publicBodies) {
             assertThat(body).doesNotContain(VALID_KEY).doesNotContain(ENVIRONMENT_KEY)

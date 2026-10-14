@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.llmmodel.service.LlmModelService
 import kr.artel.orchestration.qa.dto.CreateQaRunRequest
 import kr.artel.orchestration.qa.dto.QaRunChangeListResponse
 import kr.artel.orchestration.qa.dto.QaRunChangeResponse
@@ -32,14 +33,17 @@ import org.springframework.web.bind.annotation.RestController
 class QaRunController(
     private val qaTryService: QaTryService,
     private val qaRunChangeService: QaRunChangeService,
+    private val llmModelService: LlmModelService,
     private val objectMapper: ObjectMapper
 ) {
+    /** 요청의 `model` 이 카탈로그에 없으면 400 `llm_model_unknown`, 꺼져 있으면 400 `llm_model_disabled` 다. */
     @PostMapping
     suspend fun createQaRun(
         @RequestBody request: CreateQaRunRequest,
         @CurrentUserId appUserId: Long
-    ): ResponseEntity<QaRunResponse> =
-        ResponseEntity.status(HttpStatus.CREATED).body(
+    ): ResponseEntity<QaRunResponse> {
+        llmModelService.requireSelectable(request.model)
+        return ResponseEntity.status(HttpStatus.CREATED).body(
             qaTryService.createRun(
                 parseId(request.testRunId),
                 parseId(request.gameInstanceId),
@@ -50,6 +54,7 @@ class QaRunController(
                 request.toRunLabel()
             )
         )
+    }
 
     /** 런 하나 + 시나리오별 try 상태. FE 런 화면이 종단까지 폴링하는 개요. */
     @GetMapping("/{qaRunId}")

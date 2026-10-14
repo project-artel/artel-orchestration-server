@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.map
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.issue.dto.IssuePageResponse
 import kr.artel.orchestration.issue.service.IssueService
+import kr.artel.orchestration.llmmodel.service.LlmModelService
 import kr.artel.orchestration.qa.dto.CreateQaTryRequest
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
@@ -40,14 +41,17 @@ class QaTryController(
     private val service: QaTryService,
     private val issueService: IssueService,
     private val detailService: QaTryDetailService,
+    private val llmModelService: LlmModelService,
     private val objectMapper: ObjectMapper
 ) {
+    /** 요청의 `model` 이 카탈로그에 없으면 400 `llm_model_unknown`, 꺼져 있으면 400 `llm_model_disabled` 다. */
     @PostMapping
     suspend fun create(
         @RequestBody request: CreateQaTryRequest,
         @CurrentUserId appUserId: Long
-    ): ResponseEntity<QaTryResponse> =
-        ResponseEntity.status(HttpStatus.CREATED).body(
+    ): ResponseEntity<QaTryResponse> {
+        llmModelService.requireSelectable(request.model)
+        return ResponseEntity.status(HttpStatus.CREATED).body(
             service.create(
                 parseId(request.testScenarioId),
                 parseId(request.gameInstanceId),
@@ -57,6 +61,7 @@ class QaTryController(
                 request.toContentMapMode()
             )
         )
+    }
 
     /** One project's runs, newest first — the way back to a run after its URL is lost. */
     @GetMapping
