@@ -85,6 +85,10 @@
       "description": "로그인한 사용자의 SDK 토큰 발급"
     },
     {
+      "name": "Game notes",
+      "description": "planner 에게 주는 프로젝트별 게임 노트와 genre module"
+    },
+    {
       "name": "Project Invitation",
       "description": "프로젝트 초대 발송·조회·취소"
     },
@@ -1276,6 +1280,82 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-notes": {
+      "get": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 최신 버전",
+        "description": "저장한 적이 없으면 `version: 0`, 빈 `body` 와 `genres`, null `updatedAt` · `updatedBy` 다.",
+        "operationId": "getGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 저장",
+        "description": "새 버전을 만들어 돌려준다. 본문과 장르 집합이 최신과 같으면 버전을 올리지 않는다. `baseVersion` 이 최신이 아니면 409 `game_notes_conflict`, 본문이 20000 자를 넘거나 장르가 틀리면 400 이다.",
+        "operationId": "putGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGameNotesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
                 }
               }
             }
@@ -8081,6 +8161,80 @@
           },
           "hidden": {
             "type": "boolean"
+          }
+        }
+      },
+      "UpdateGameNotesRequest": {
+        "required": [
+          "baseVersion",
+          "body",
+          "genres"
+        ],
+        "type": "object",
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "baseVersion": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "GameNoteAuthorResponse": {
+        "required": [
+          "displayName",
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          }
+        }
+      },
+      "GameNotesResponse": {
+        "required": [
+          "body",
+          "genres",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "body": {
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "ui-flow",
+                "turn-based"
+              ]
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/GameNoteAuthorResponse"
           }
         }
       },

@@ -89,6 +89,17 @@ A scenario carries `execution_mode`, either `ORDERED` (the default for a new sce
 
 The authoring chat of a test run creates and updates `FREE` scenarios as well. Each scenario in a `submit_scenario` frame from the agent, in the proposals (`scenarios`) of the chat SSE `result` event, and in the `scenarios` of `POST /api/projects/{projectId}/test-runs/{runId}/scenarios/commit` carries `execution_mode`. When it is missing, a new scenario is `ORDERED` and an update keeps the stored value of the scenario it updates (found by `scenario_id`, or by a title already in the run); an update that names a different value changes the mode. The proposals of the SSE `result` event always carry the value. Each item of `current_scenarios`, sent to the agent when a session opens and with every turn, carries the stored `execution_mode`. A `FREE` scenario is saved with its steps as given: the code splitting, bridge insertion, case operation filling and opening note that rewrite `ORDERED` steps do not touch it. A `FREE` scenario that breaks the rules above is not saved: a `submit_scenario` frame gets `accepted: false` with the rule in `detail`, and the commit answers 400 with `code` `invalid_free_scenario`. Gap filling and merge absorption still leave `FREE` scenarios unchanged.
 
+### Game notes
+
+Per-project notes a game's makers write for the agent-server planner, plus the genre modules (`ui-flow`, `turn-based`) to attach to its prompt. Every save that changes something is a new row in `project_game_note`; rows are never updated.
+
+| Request | Response |
+|---|---|
+| `GET /api/projects/{projectId}/game-notes` | 200 `{version, body, genres, updatedAt, updatedBy: {id, displayName}}`, the latest version. Without notes: `{"version": 0, "body": "", "genres": [], "updatedAt": null, "updatedBy": null}` |
+| `PUT /api/projects/{projectId}/game-notes` `{body, genres, baseVersion}` | 200, the new latest version |
+
+Any project member may read and save, as with `PATCH /api/projects/{projectId}`; anyone else gets 404. `PUT` normalizes `\r\n` to `\n`, trims the body, and stores `genres` in the order listed above, whatever order they were sent in. When the result equals the latest body and genre set, nothing is saved and the latest is returned unchanged. `baseVersion` must be the `version` the editor started from (0 for none): otherwise, or when another save takes the same version first, `PUT` answers 409 `game_notes_conflict`. A body over 20000 characters, an unknown or repeated genre, or a missing field is 400 `invalid_request` with `fields`.
+
 ## Verification
 
 ```bash
