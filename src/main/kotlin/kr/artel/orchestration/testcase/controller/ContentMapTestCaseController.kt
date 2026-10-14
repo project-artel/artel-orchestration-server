@@ -3,6 +3,8 @@ package kr.artel.orchestration.testcase.controller
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testcase.dto.ContentMapTestCaseGenerationResponse
 import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
+import kr.artel.orchestration.testcase.dto.TestCaseGenerationCandidatesResponse
+import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestParam
@@ -28,4 +30,14 @@ class ContentMapTestCaseController(
         @RequestParam(defaultValue = "true") carryOver: Boolean,
     ): ContentMapTestCaseGenerationResponse =
         service.generate(appUserId, projectId, gameBuildId, carryOver)
+
+    /**
+     * 케이스 라이브러리의 "지도에서 TC 생성" 모달이 고를 게임 빌드(ARTEL-1040). 빌드마다 지도 상태와 이미 만들었는지를
+     * 싣는다. editor build 는 없다.
+     */
+    @GetMapping("/api/projects/{projectId}/test-case-versions/generation-candidates")
+    suspend fun listTestCaseGenerationCandidates(
+        @PathVariable projectId: Long,
+        @CurrentUserId appUserId: Long,
+    ): TestCaseGenerationCandidatesResponse = service.candidates(appUserId, projectId)
 }

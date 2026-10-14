@@ -3145,7 +3145,7 @@
           "Content Map"
         ],
         "summary": "원격 근거 스캔 요청",
-        "description": "이 빌드를 실행 중인 게임에 근거 스캔을 시킨다. 즉시 202 로 답하며, 완료는 조회 API 의 `lastScan` 으로 확인한다. 붙어 있는 게임이 없으면 409.",
+        "description": "이 빌드를 실행 중인 게임에 근거 스캔을 시킨다. 즉시 202 로 답하며, 완료는 조회 API 의 `lastScan` 으로 확인한다. 붙어 있는 게임이 없으면 409. `generateTestCases=true` 면 문서가 다 읽힌 뒤 TC 도 만들고, editor 이거나 이미 TC 를 만든 빌드면 스캔 전에 409.",
         "operationId": "startScan",
         "parameters": [
           {
@@ -3166,6 +3166,26 @@
             "schema": {
               "type": "integer",
               "format": "int64"
+            }
+          },
+          {
+            "name": "generateTestCases",
+            "in": "query",
+            "description": "true 면 스캔 문서가 다 읽힌 뒤 TC 도 만든다. 결과는 lastScan.testCases",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "carryOver",
+            "in": "query",
+            "description": "TC 를 만들 때 앞 버전의 사용자 생성 TC 를 이어 넣는다",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true
             }
           }
         ],
@@ -5350,6 +5370,37 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/TestCaseVersionCasesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-versions/generation-candidates": {
+      "get": {
+        "tags": [
+          "content-map-test-case-controller"
+        ],
+        "operationId": "listTestCaseGenerationCandidates",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseGenerationCandidatesResponse"
                 }
               }
             }
@@ -11581,6 +11632,56 @@
           }
         }
       },
+      "TestCaseGenerationCandidate": {
+        "required": [
+          "createdAt",
+          "gameBuildId",
+          "generated",
+          "mapState",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "mapState": {
+            "type": "string",
+            "enum": [
+              "NO_MAP",
+              "NOT_READ",
+              "READY"
+            ]
+          },
+          "generated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TestCaseGenerationCandidatesResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseGenerationCandidate"
+            }
+          }
+        }
+      },
       "TestCaseSpecDownloadResponse": {
         "required": [
           "downloadUrl",
@@ -12552,6 +12653,9 @@
           "error": {
             "type": "string",
             "description": "FAILED 일 때 사람에게 보여 줄 사유"
+          },
+          "testCases": {
+            "$ref": "#/components/schemas/ScanTestCases"
           }
         },
         "description": "마지막 원격 스캔의 상태"
@@ -12582,6 +12686,39 @@
           }
         },
         "description": "적재를 기다리는 문서"
+      },
+      "ScanTestCases": {
+        "required": [
+          "carryOver",
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "carryOver": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "GENERATED",
+              "SKIPPED",
+              "FAILED"
+            ]
+          },
+          "created": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "carriedOver": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "description": "스캔하고 TC 생성(ARTEL-1040)일 때 TC 쪽 결과. 그냥 스캔이면 null"
       },
       "SceneCapabilityCountResponse": {
         "required": [

@@ -32,3 +32,31 @@ data class ContentMapTestCaseGenerationResponse(
         )
     }
 }
+
+/**
+ * 라이브러리의 "지도에서 TC 생성" 모달에 보일 게임 빌드 하나(ARTEL-1040). editor build 는 없다.
+ *
+ * @property mapState 지도가 어디까지 왔나. `READY` 일 때만 만들 수 있다.
+ * @property generated 이미 이 빌드에서 지도로 TC 를 만들었다. 같은 빌드에 다시 만들 수 없다.
+ */
+data class TestCaseGenerationCandidate(
+    val gameBuildId: String,
+    val version: String,
+    val label: String?,
+    val createdAt: java.time.Instant,
+    val mapState: MapState,
+    val generated: Boolean,
+) {
+    enum class MapState {
+        /** 스캔된 문서가 없다. */
+        NO_MAP,
+
+        /** 문서는 올라왔지만 하나도 읽히지 않았다. */
+        NOT_READ,
+
+        /** 읽힌 문서가 있다. */
+        READY,
+    }
+}
+
+data class TestCaseGenerationCandidatesResponse(val items: List<TestCaseGenerationCandidate>)

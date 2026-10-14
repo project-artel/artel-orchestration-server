@@ -7,7 +7,9 @@ import kr.artel.orchestration.contentmap.dto.ContentMapStreamEvent
 import kr.artel.orchestration.contentmap.dto.LastScanResponse
 import kr.artel.orchestration.contentmap.ingest.ContentMapIngestService
 import kr.artel.orchestration.contentmap.ingest.IngestOutcome
+import kr.artel.orchestration.common.error.ApiException
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -32,6 +34,7 @@ class ScanResultRouter(
     private val ingest: ContentMapIngestService,
     private val statuses: ScanStatusRegistry,
     private val streamManager: ContentMapEventStreamManager,
+    private val testCaseService: ContentMapTestCaseService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock,
 ) {
@@ -121,12 +124,16 @@ class ScanResultRouter(
 
         val failed = outcomes.filterIsInstance<IngestOutcome.Failed>()
         val ingested = outcomes.size - failed.size
+        // 스캔하고 TC 생성(ARTEL-1040). 문서가 하나도 깨지지 않았을 때만 만든다 — 깨진 지도로 만든 TC 는 다시 만들 수 없다.
+        val requested = statuses.find(gameBuildId)?.takeIf { it.state == ScanState.REQUESTED }?.testCases
+        val testCases = if (failed.isEmpty() && requested != null) generateTestCases(gameBuildId, requested) else requested
         statuses.complete(gameBuildId) { current ->
             if (failed.isEmpty()) {
                 current.copy(
                     state = ScanState.SUCCEEDED,
                     finishedAt = Instant.now(clock),
                     ingestedDocuments = ingested,
+                    testCases = testCases,
                 )
             } else {
                 // 깨진 문서의 사유는 이미 ingest_error 에 durable 하게 남았다. 여기서는 화면이
@@ -141,6 +148,24 @@ class ScanResultRouter(
         }?.let { publishScan(gameBuildId, it) }
         logger.info("근거 스캔 적재 완료 [gameBuildId={}, 앉힘={}, 깨짐={}]", gameBuildId, ingested, failed.size)
     }
+
+    /**
+     * 스캔이 앉힌 지도로 TC 를 만든다. 실패해도 스캔은 성공이다 — TC 쪽 결과만 [ScanTestCases] 에 적는다. 그사이
+     * 누가 같은 build 의 TC 를 만들었으면 건너뛴다.
+     */
+    private suspend fun generateTestCases(gameBuildId: Long, request: ScanTestCases): ScanTestCases =
+        try {
+            val result = testCaseService.generateAfterScan(gameBuildId, request.carryOver)
+            request.copy(state = ScanTestCaseState.GENERATED, created = result.created, carriedOver = result.carriedOver)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (rejected: ApiException) {
+            val skipped = rejected.code == ContentMapTestCaseService.TEST_CASES_ALREADY_GENERATED
+            request.copy(state = if (skipped) ScanTestCaseState.SKIPPED else ScanTestCaseState.FAILED, reason = rejected.message)
+        } catch (failure: Exception) {
+            logger.error("스캔 뒤 TC 생성 실패 [gameBuildId={}]", gameBuildId, failure)
+            request.copy(state = ScanTestCaseState.FAILED, reason = GENERIC_TEST_CASE_FAILURE)
+        }
 
     private fun fail(gameBuildId: Long, reason: String) {
         statuses.complete(gameBuildId) {
@@ -179,6 +204,7 @@ class ScanResultRouter(
 
         const val GENERIC_SCAN_FAILURE = "게임이 근거 스캔에 실패했습니다."
         const val GENERIC_INGEST_FAILURE = "근거 문서를 씬 명세로 앉히지 못했습니다."
+        const val GENERIC_TEST_CASE_FAILURE = "스캔은 끝났지만 test case 를 만들지 못했습니다."
         const val NO_BUILD = "이 게임이 어느 빌드인지 아직 서버에 보고되지 않았습니다."
     }
 }

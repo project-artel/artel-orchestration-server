@@ -118,15 +118,15 @@ class ContentMapTestCaseGenerationIntegrationTest {
         // 같은 문서라 B 도 A 와 같은 수의 버전 몫을 새로 만든다.
         assertThat(generatedB["created"].asInt()).isEqualTo(generatedA["created"].asInt())
 
-        val againA = generate(token, projectId, buildA.gameBuildId).body
-        assertThat(againA["created"].asInt()).isZero()
-        assertThat(againA["deleted"].asInt()).isZero()
-        assertThat(againA["broken"].asInt()).isZero()
+        // 이미 만든 build 는 다시 만들지 않는다(ARTEL-1040). 다른 build 의 케이스도 그대로다.
+        val againA = generate(token, projectId, buildA.gameBuildId)
+        assertThat(againA.status).isEqualTo(409)
+        assertThat(againA.body["code"].asText()).isEqualTo("TEST_CASES_ALREADY_GENERATED")
         assertThat(rowsOf(projectId, buildB.contentMapId).map { it.id }).isEqualTo(rowsB)
     }
 
     @Test
-    fun `사용자가 folder 에 담은 test case 는 다시 생성해도 그 folder 에 있다`(): Unit = runBlocking {
+    fun `다시 생성은 막히고 사용자가 folder 에 담은 test case 는 그 folder 에 있다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
         val build = ingestedBuild(projectId, version = "1.0.0", label = "알파")
@@ -140,7 +140,7 @@ class ContentMapTestCaseGenerationIntegrationTest {
             """{"caseIds":["${moved.id}"]}""",
         )
 
-        generate(token, projectId, build.gameBuildId)
+        assertThat(generate(token, projectId, build.gameBuildId).status).isEqualTo(409)
 
         assertThat(folderItems.findFirstFolderId(moved.id!!)).isEqualTo(userFolderId.toLong())
     }
@@ -155,10 +155,10 @@ class ContentMapTestCaseGenerationIntegrationTest {
             async(Dispatchers.IO) { generate(token, projectId, build.gameBuildId) }
         }.awaitAll()
 
-        assertThat(responses.map { it.status }).containsOnly(200)
-        val createdTotal = responses.sumOf { it.body["created"].asInt() }
-        assertThat(responses.map { it.body["created"].asInt() }).contains(0)
-        assertThat(rowsOf(projectId, build.contentMapId)).hasSize(createdTotal)
+        // 하나만 만들고, 뒤에 lock 을 잡은 쪽은 이미 만든 build 라 409 다(ARTEL-1040).
+        assertThat(responses.map { it.status }).containsExactlyInAnyOrder(200, 409)
+        val created = responses.single { it.status == 200 }.body["created"].asInt()
+        assertThat(rowsOf(projectId, build.contentMapId)).hasSize(created)
     }
 
     @Test
@@ -199,6 +199,31 @@ class ContentMapTestCaseGenerationIntegrationTest {
 
         assertThat(generate(token, projectId, withoutMap.id!!).status).isEqualTo(409)
         assertThat(generate(token, projectId, withEmptyMap.id!!).status).isEqualTo(409)
+    }
+
+    /** 라이브러리 모달의 후보(ARTEL-1040). 최신 게임 빌드 순이고, 지도 상태와 이미 만들었는지를 싣는다. editor 는 없다. */
+    @Test
+    fun `생성 후보는 게임 빌드마다 지도 상태와 생성 여부를 싣는다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val generated = ingestedBuild(projectId, "1.0.0", null)
+        generate(token, projectId, generated.gameBuildId)
+        val ready = ingestedBuild(projectId, "1.1.0", null)
+        val now = Instant.now()
+        val noMap = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.2.0", createdAt = now, updatedAt = now))
+        gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.2.0", isEditor = true, createdAt = now, updatedAt = now))
+
+        val reply = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/generation-candidates")
+
+        assertThat(reply.status).isEqualTo(200)
+        val items = reply.body["items"].map { Triple(it["gameBuildId"].asLong(), it["mapState"].asText(), it["generated"].asBoolean()) }
+        assertThat(items).containsExactly(
+            Triple(noMap.id!!, "NO_MAP", false),
+            Triple(ready.gameBuildId, "READY", false),
+            Triple(generated.gameBuildId, "READY", true),
+        )
+        assertThat(call(signIn().second, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/generation-candidates").status)
+            .isEqualTo(404)
     }
 
     /** editor 는 게임 버전이 아니다(ARTEL-1014). 지도가 있어도 TC 를 따라가게 하지 않는다. */
