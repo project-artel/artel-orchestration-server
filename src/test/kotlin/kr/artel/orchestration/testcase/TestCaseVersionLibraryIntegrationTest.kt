@@ -99,6 +99,10 @@ class TestCaseVersionLibraryIntegrationTest {
         versions.delete(versions.findByTestCaseIdAndGameBuildId(onlyInOld.testCaseId, buildB.gameBuildId)!!)
         val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "사람이 쓴 것", expectedValue = "x"))
         val mapCases = versionsA.size
+        // editor 는 게임 버전이 아니라 목록에 없다(ARTEL-1014). 가장 나중에 붙었어도 그렇다.
+        gameBuilds.save(
+            GameBuildEntity(projectId = projectId, version = "1.1.0", isEditor = true, createdAt = Instant.now(), updatedAt = Instant.now())
+        )
 
         val listed = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions")
         assertThat(listed.status).isEqualTo(200)

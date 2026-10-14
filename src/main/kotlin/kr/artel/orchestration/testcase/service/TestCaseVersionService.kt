@@ -39,10 +39,13 @@ class TestCaseVersionService(
     private val groups: TestCaseVersionGroupRepository,
 ) {
 
-    /** 버전 목록(최신 순)과 버전별 수, 버전 묶음, "버전 없음" 수. 비멤버면 404 다. */
+    /**
+     * 버전 목록(최신 순)과 버전별 수, 버전 묶음, "버전 없음" 수. 비멤버면 404 다.
+     * editor build 는 게임 버전이 아니라서 목록에 없다(ARTEL-1014).
+     */
     suspend fun versions(projectId: Long, userId: Long): TestCaseVersionListResponse {
         if (!projectAccessService.isMember(projectId, userId)) throw NotFoundException("프로젝트를 찾을 수 없습니다.")
-        val builds = gameBuilds.findAllForMember(projectId, userId).toList()
+        val builds = gameBuilds.findAllForMember(projectId, userId).toList().filterNot { it.isEditor }
         val counts = versions.countByBuild(projectId).toList().groupBy { it.gameBuildId }
         val settings = groups.findSettings(projectId).toList().associateBy { it.gameBuildId }
         val items = builds.mapIndexed { index, build ->

@@ -41,11 +41,18 @@ class ContentMapTestCaseService(
     /**
      * build 가 없거나 비멤버이거나 다른 프로젝트 build 면 404 다 — 셋을 구분하지 않는다
      * ([kr.artel.orchestration.contentmap.service.ContentMapViewService.read] 와 같은 확인).
-     * build 에 content map 이 없거나 적재를 마친 문서가 없으면 409 다.
+     * build 에 content map 이 없거나 적재를 마친 문서가 없으면 409 다. editor build 도 409 다 — editor 는 게임 버전이
+     * 아니어서 TC 를 따라가게 할 수 없다(ARTEL-1014). 그 지도는 게임 지식으로만 쓴다.
      */
     suspend fun generate(userId: Long, projectId: Long, gameBuildId: Long): ContentMapTestCaseGenerationResponse {
         val build = gameBuilds.findAccessibleById(gameBuildId, projectId, userId)
             ?: throw NotFoundException("빌드를 찾을 수 없습니다.")
+        if (build.isEditor) {
+            throw ConflictException(
+                "editor 는 게임 버전이 아니라서 test case 를 만들지 않습니다. 게임 빌드에서 생성하세요.",
+                code = "EDITOR_BUILD_HAS_NO_TEST_CASES",
+            )
+        }
         val contentMapId = contentMaps.findByGameBuildId(gameBuildId)?.id
             ?.takeIf { documents.existsByContentMapIdAndIngestedAtIsNotNull(it) }
             ?: throw ConflictException("이 빌드에는 적재된 content map 이 없습니다.")
@@ -55,12 +62,16 @@ class ContentMapTestCaseService(
 
     /**
      * content map id 로 다시 생성한다. 멤버 확인을 하지 않는다 — 내부 포트에만 있는 경로다.
-     * content map 이나 그 build 를 못 찾으면 예전과 같이 아무것도 하지 않고 0건을 돌려준다.
+     * content map 이나 그 build 를 못 찾으면 예전과 같이 아무것도 하지 않고 0건을 돌려준다. editor build 도 그렇다.
      */
     suspend fun regenerate(contentMapId: Long): MapTestCaseWriter.Result {
         val build = contentMaps.findById(contentMapId)?.let { gameBuilds.findById(it.gameBuildId) }
             ?: return MapTestCaseWriter.Result()
                 .also { logger.warn("content map {} 의 build 를 찾지 못해 test case 를 생성하지 않는다", contentMapId) }
+        if (build.isEditor) {
+            logger.info("content map {} 은 editor build 의 것이라 test case 를 생성하지 않는다", contentMapId)
+            return MapTestCaseWriter.Result()
+        }
         return generateInTransaction(build.projectId, contentMapId, build).first
     }
 

@@ -170,8 +170,8 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
     }
 
     /**
-     * editor 판정은 버전 이력이 아니다(ARTEL-1014). editor 에서 만든 TC 는 REGRESSION 으로 시작하지 않고, 다음
-     * build 의 직전 build 는 editor 가 아니라 그 앞의 development build 다.
+     * editor 는 버전 이력이 아니다(ARTEL-1014). editor build 에서는 TC 를 만들지 않고, 다음 build 의 직전 build 는
+     * editor 가 아니라 그 앞의 development build 다.
      */
     @Test
     fun `REGRESSION 과 판정 이력은 editor build 를 버전으로 세지 않는다`(): Unit = runBlocking {
@@ -186,13 +186,13 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
 
         val editor = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60), isEditor = true)
         val editorGenerated = generate(token, projectId, editor.gameBuildId)
-        assertThat(editorGenerated.body["regression"].asInt()).isZero()
-        versions.save(versions.findByTestCaseIdAndGameBuildId(untouched.testCaseId, editor.gameBuildId)!!.copy(verificationStatus = "FAILED"))
+        assertThat(editorGenerated.status).isEqualTo(409)
+        assertThat(editorGenerated.body["code"].asText()).isEqualTo("EDITOR_BUILD_HAS_NO_TEST_CASES")
+        assertThat(versions.findByGameBuildId(editor.gameBuildId).toList()).isEmpty()
 
         val buildB = ingestedBuild(projectId, "2.0.0", Instant.now())
         val generated = generate(token, projectId, buildB.gameBuildId)
 
-        // editor 의 FAILED 를 직전으로 봤다면 2건이다.
         assertThat(generated.body["regression"].asInt()).isEqualTo(1)
         assertThat(versions.findByTestCaseIdAndGameBuildId(verified.testCaseId, buildB.gameBuildId)!!.verificationStatus)
             .isEqualTo("REGRESSION")
