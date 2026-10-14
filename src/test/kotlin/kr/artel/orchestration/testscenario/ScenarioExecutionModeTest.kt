@@ -11,6 +11,8 @@ import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.ScenarioStep
 import kr.artel.orchestration.testscenario.dto.ScenarioStepKind
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
+import kr.artel.orchestration.testscenario.entity.withDraft
 import kr.artel.orchestration.testscenario.service.InvalidFreeScenarioException
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.testscenario.service.ScenarioExecutionRules
@@ -71,6 +73,16 @@ class ScenarioExecutionModeTest {
     }
 
     @Test
+    fun `execution_mode 를 보내지 않은 저장은 FREE 시나리오를 FREE 로 둔다`() {
+        val stored = TestScenarioEntity(id = 1L, projectId = 1L, executionMode = ScenarioExecutionMode.FREE)
+        val unstated = ScenarioDraft(title = "CLI 가 고친 제목", steps = listOf(ScenarioStep(caseId = 1L)))
+
+        assertThat(stored.withDraft(unstated, objectMapper).executionMode).isEqualTo(ScenarioExecutionMode.FREE)
+        assertThat(stored.withDraft(unstated.copy(executionMode = ScenarioExecutionMode.ORDERED), objectMapper).executionMode)
+            .isEqualTo(ScenarioExecutionMode.ORDERED)
+    }
+
+    @Test
     fun `ORDERED 초안은 case_id 없는 step 과 GAP 도 검사하지 않는다`() {
         val draft = ScenarioDraft(
             steps = listOf(ScenarioStep(action = "이동"), ScenarioStep(caseId = 1L, stepKind = ScenarioStepKind.GAP)),
@@ -79,9 +91,11 @@ class ScenarioExecutionModeTest {
     }
 
     @Test
-    fun `execution_mode 가 없는 요청은 ORDERED 이고 와이어 이름은 execution_mode 다`() {
+    fun `execution_mode 가 없는 요청은 값이 없고 ORDERED 로 읽히며 와이어 이름은 execution_mode 다`() {
         val missing = objectMapper.readValue<ScenarioDraft>("""{"title":"t","steps":[]}""")
-        assertThat(missing.executionMode).isEqualTo(ScenarioExecutionMode.ORDERED)
+        assertThat(missing.executionMode).isNull()
+        assertThat(missing.mode).isEqualTo(ScenarioExecutionMode.ORDERED)
+        assertThat(objectMapper.readTree(objectMapper.writeValueAsString(missing)).has("mode")).isFalse()
 
         val parsed = objectMapper.readValue<ScenarioDraft>("""{"execution_mode":"FREE"}""")
         assertThat(parsed.executionMode).isEqualTo(ScenarioExecutionMode.FREE)

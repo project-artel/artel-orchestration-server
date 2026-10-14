@@ -29,6 +29,6 @@ fun TestScenarioEntity.withDraft(draft: ScenarioDraft, objectMapper: ObjectMappe
     copy(
         title = draft.title,
         description = draft.description,
-        executionMode = draft.executionMode,
+        executionMode = draft.executionMode ?: executionMode,
         steps = Json.of(objectMapper.writeValueAsString(draft.steps)),
     )

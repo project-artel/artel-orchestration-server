@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.dto
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonValue
 
@@ -145,9 +146,18 @@ data class ScenarioDraft(
     val title: String = "",
     val description: String = "",
     val steps: List<ScenarioStep> = emptyList(),
-    /** 요청에 없으면 [ScenarioExecutionMode.ORDERED] 다(ARTEL-1028). */
-    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode = ScenarioExecutionMode.ORDERED,
-)
+    /**
+     * 실행 방식(ARTEL-1028). **null 은 "요청이 말하지 않았다"** 이고, 저장할 때 기존 값을 유지한다
+     * ([kr.artel.orchestration.testscenario.entity.withDraft]). 기본값을 ORDERED 로 두면 이 필드를
+     * 모르는 client(지금의 `artel scenario update`)가 본문을 저장할 때 FREE 시나리오가 조용히 ORDERED 로
+     * 바뀐다. 조회 응답은 엔티티에서 만들어지므로 항상 값이 있다. 읽을 때는 [mode] 를 쓴다.
+     */
+    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
+) {
+    /** 값이 없으면 ORDERED 로 읽은 실행 방식. */
+    @get:JsonIgnore
+    val mode: ScenarioExecutionMode get() = executionMode ?: ScenarioExecutionMode.ORDERED
+}
 
 /**
  * Agent 턴 결과가 참조하는 시나리오 하나(ARTEL-206 Step 5·6, 재설계 2026-08-07). Agent는 시나리오를

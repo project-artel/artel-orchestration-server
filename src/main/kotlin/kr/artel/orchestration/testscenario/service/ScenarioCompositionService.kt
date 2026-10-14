@@ -63,6 +63,6 @@ class ScenarioCompositionService(
                 },
             )
         }
-        return AgentScenario(title = draft.title, description = draft.description, steps = steps, executionMode = draft.executionMode)
+        return AgentScenario(title = draft.title, description = draft.description, steps = steps, executionMode = draft.mode)
     }
 }

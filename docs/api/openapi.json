@@ -7000,7 +7000,7 @@
               "ORDERED",
               "FREE"
             ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request means ORDERED."
+            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
           }
         }
       },
@@ -12080,7 +12080,7 @@
               "ORDERED",
               "FREE"
             ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request means ORDERED."
+            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
           },
           "createdAt": {
             "type": "string",
@@ -12148,7 +12148,7 @@
               "ORDERED",
               "FREE"
             ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request means ORDERED."
+            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
           },
           "stepCount": {
             "type": "integer",
@@ -12281,7 +12281,7 @@
               "ORDERED",
               "FREE"
             ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request means ORDERED."
+            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
           },
           "steps": {
             "type": "integer",
