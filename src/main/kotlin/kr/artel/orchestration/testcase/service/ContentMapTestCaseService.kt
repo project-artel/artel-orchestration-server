@@ -43,8 +43,15 @@ class ContentMapTestCaseService(
      * ([kr.artel.orchestration.contentmap.service.ContentMapViewService.read] 와 같은 확인).
      * build 에 content map 이 없거나 적재를 마친 문서가 없으면 409 다. editor build 도 409 다 — editor 는 게임 버전이
      * 아니어서 TC 를 따라가게 할 수 없다(ARTEL-1014). 그 지도는 게임 지식으로만 쓴다.
+     *
+     * [carryOver] 가 false 면 앞 버전의 사용자 생성 케이스를 이어 넣지 않고 `carriedOver` 는 0 이다.
      */
-    suspend fun generate(userId: Long, projectId: Long, gameBuildId: Long): ContentMapTestCaseGenerationResponse {
+    suspend fun generate(
+        userId: Long,
+        projectId: Long,
+        gameBuildId: Long,
+        carryOver: Boolean = true,
+    ): ContentMapTestCaseGenerationResponse {
         val build = gameBuilds.findAccessibleById(gameBuildId, projectId, userId)
             ?: throw NotFoundException("빌드를 찾을 수 없습니다.")
         if (build.isEditor) {
@@ -56,7 +63,7 @@ class ContentMapTestCaseService(
         val contentMapId = contentMaps.findByGameBuildId(gameBuildId)?.id
             ?.takeIf { documents.existsByContentMapIdAndIngestedAtIsNotNull(it) }
             ?: throw ConflictException("이 빌드에는 적재된 content map 이 없습니다.")
-        val (result, carriedOver) = generateInTransaction(projectId, contentMapId, build)
+        val (result, carriedOver) = generateInTransaction(projectId, contentMapId, build, carryOver)
         return ContentMapTestCaseGenerationResponse.of(result, carriedOver)
     }
 
@@ -79,17 +86,19 @@ class ContentMapTestCaseService(
      * 그 build 의 버전 몫을 만든다(ARTEL-1018). 앞 버전에서 판정이 난 케이스의 새 몫은 writer 가
      * `REGRESSION` 으로 시작시키고, 그 수가 결과의 `regression` 이다.
      *
-     * 이어서 바로 앞 버전에 있던 사용자 생성 케이스를 이 버전에 넣는다(ARTEL-1031). 그 수가 두 번째 값이다.
+     * [carryOver] 면 이어서 바로 앞 버전에 있던 사용자 생성 케이스를 이 버전에 넣는다(ARTEL-1031). 그 수가 두 번째
+     * 값이다.
      */
     private suspend fun generateInTransaction(
         projectId: Long,
         contentMapId: Long,
         build: GameBuildEntity,
+        carryOver: Boolean = true,
     ): Pair<MapTestCaseWriter.Result, Int> =
         transactionalOperator.executeAndAwait {
             folderService.lockProjectFolders(projectId)
             val gameBuildId = requireNotNull(build.id)
             val result = writer.rewrite(projectId, gameBuildId, contentMapId)
-            result to manualCases.carryOver(projectId, gameBuildId)
+            result to if (carryOver) manualCases.carryOver(projectId, gameBuildId) else 0
         }
 }

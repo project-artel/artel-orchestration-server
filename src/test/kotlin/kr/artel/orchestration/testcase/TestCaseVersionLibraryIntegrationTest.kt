@@ -242,8 +242,15 @@ class TestCaseVersionLibraryIntegrationTest {
         assertThat(rowA.verificationStatus).isEqualTo("DRAFT")
         versions.save(rowA.copy(verificationStatus = "VERIFIED"))
 
-        // 다음 버전을 생성하면 앞 버전에 있던 사용자 생성 케이스가 따라온다. 앞에서 판정이 난 것은 재검증 필요다.
+        // 이어 넣기를 끄고 생성하면 따라오지 않는다.
         val buildB = ingestedBuild(projectId, "1.1.0", Instant.now())
+        val withoutCarry = call(
+            token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/content-map/test-cases?carryOver=false",
+        ).body
+        assertThat(withoutCarry["carriedOver"].asInt()).isZero()
+        assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id!!, buildB.gameBuildId)).isNull()
+
+        // 켜고(기본값) 다시 생성하면 앞 버전에 있던 사용자 생성 케이스가 따라온다. 앞에서 판정이 난 것은 재검증 필요다.
         val generated = call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/content-map/test-cases").body
         assertThat(generated["carriedOver"].asInt()).isEqualTo(2)
         assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id!!, buildB.gameBuildId)!!.verificationStatus).isEqualTo("REGRESSION")
