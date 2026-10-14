@@ -78,7 +78,12 @@ class MapTestCaseWriter(
         // **키로 못 찾은 줄은 보이는 네 칸으로 한 번 더 찾는다**(ARTEL-617). 키가 생기기 전에 이 지도가
         // 앉힌 행에는 키가 없고, 그 줄을 새 줄로 치면 같은 케이스가 두 벌이 된다.
         val byText = identities.filter { keyOf(it) == null && isFrom(it, contentMapId) }.groupBy(::visibleIdentityOf)
-        val versionsHere = versions.findByGameBuildId(gameBuildId).toList().associateBy { it.testCaseId }
+        // 이 build 의 몫 중 **지도 케이스의 것만** 다룬다(ARTEL-1031). 사용자 생성 케이스의 몫(QA 판정이나 사람이 넣은 것)은
+        // 지도에 없으니, 함께 읽으면 아래에서 "이 버전에서 사라진 케이스" 로 보고 지운다.
+        val mapIds = identities.mapNotNull { it.id }.toSet()
+        val versionsHere = versions.findByGameBuildId(gameBuildId).toList()
+            .filter { it.testCaseId in mapIds }
+            .associateBy { it.testCaseId }
         val previous = identities.mapNotNull { it.id }.takeIf { it.isNotEmpty() }
             ?.let { ids -> versions.findPreviousStatuses(ids, gameBuildId).toList().associate { it.testCaseId to it.verificationStatus } }
             .orEmpty()

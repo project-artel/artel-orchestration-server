@@ -49,7 +49,8 @@ import java.util.UUID
  *
  * agent 는 스텝마다 `case_id` 와 `is_verification` 을 싣는다. 같은 `case_id` 구간의 마지막 스텝만 검증
  * 스텝이고, 그 스텝의 COMPLETED/FAILED 가 그 TC 의 판정이다. 여기서 지키는 것은 넷이다: 검증 스텝만 옮긴다,
- * 판정이 어느 build 것인지 남긴다, `BROKEN` 은 건드리지 않는다, 재전송은 두 번 세지 않는다.
+ * 판정이 어느 build 것인지 남긴다, `BROKEN` 은 건드리지 않는다, 재전송은 두 번 세지 않는다. 판정은 그 게임 빌드에
+ * 든 케이스에만 적고, editor 실행은 같은 버전의 게임 빌드 판정이다(ARTEL-1014).
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
@@ -195,9 +196,59 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(caseVerdictLogs(run.tryId)).isEmpty()
     }
 
-    private data class RunningRun(val tryId: Long, val gameBuildId: Long, val passedCaseId: Long, val failedCaseId: Long)
+    @Test
+    fun `이 게임 빌드에 없는 TC 는 판정이 와도 그대로다`(): Unit = runBlocking {
+        val run = runningRun()
+        versions.delete(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.gameBuildId)!!)
 
-    private suspend fun runningRun(): RunningRun {
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true)
+
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.gameBuildId)).isNull()
+        assertThat(testCaseRepository.findById(run.passedCaseId)!!.verificationStatus).isEqualTo("DRAFT")
+        assertThat(caseVerdictLogs(run.tryId)).isEmpty()
+    }
+
+    /** editor 는 게임 버전이 아니다(ARTEL-1014). editor 에서 돌린 판정은 editor 가 보고한 버전의 게임 빌드 몫이다. */
+    @Test
+    fun `editor 실행의 판정은 같은 버전의 게임 빌드에 적힌다`(): Unit = runBlocking {
+        val run = runningRun(onEditor = true)
+
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true)
+
+        assertThat(run.runBuildId).isNotEqualTo(run.gameBuildId)
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.gameBuildId)!!.verificationStatus)
+            .isEqualTo("VERIFIED")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.runBuildId)).isNull()
+        assertThat(testCaseRepository.findById(run.passedCaseId)!!.lastVerifiedBuildId).isEqualTo(run.gameBuildId)
+        assertThat(caseVerdictLogs(run.tryId).single().path("game_build_id").asLong()).isEqualTo(run.gameBuildId)
+    }
+
+    @Test
+    fun `같은 버전의 게임 빌드가 없는 editor 실행은 판정을 적지 않는다`(): Unit = runBlocking {
+        val run = runningRun(onEditor = true, editorVersion = "1.1.0")
+
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true)
+
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.gameBuildId)!!.verificationStatus)
+            .isEqualTo("DRAFT")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.runBuildId)).isNull()
+        assertThat(caseVerdictLogs(run.tryId)).isEmpty()
+    }
+
+    /** [gameBuildId] 는 케이스가 든 게임 빌드, [runBuildId] 는 qa_run 이 붙은 build 다. editor 실행이면 둘이 다르다. */
+    private data class RunningRun(
+        val tryId: Long,
+        val gameBuildId: Long,
+        val runBuildId: Long,
+        val passedCaseId: Long,
+        val failedCaseId: Long,
+    )
+
+    /**
+     * 게임 빌드 1.0.0 에 든 케이스 둘을 검증하는 시나리오를 돌리는 중인 run. [onEditor] 면 그 run 은 [editorVersion] 을
+     * 보고한 editor 행에 붙는다.
+     */
+    private suspend fun runningRun(onEditor: Boolean = false, editorVersion: String = "1.0.0"): RunningRun {
         val owner = oauthUserService.upsert(
             OAuthIdentity(
                 provider = "github", providerUserId = "994", login = "verdict",
@@ -215,10 +266,13 @@ class CaseVerdictFromQaIntegrationTest {
         val build = gameBuildRepository.save(
             GameBuildEntity(projectId = projectId, version = "1.0.0", createdAt = now, updatedAt = now)
         )
+        val runBuild = if (!onEditor) build else gameBuildRepository.save(
+            GameBuildEntity(projectId = projectId, version = editorVersion, isEditor = true, createdAt = now, updatedAt = now)
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = projectId, name = "inst", platform = "UNITY", sdkUuid = UUID.randomUUID().toString(),
-                lastGameBuildId = build.id, createdAt = now, updatedAt = now
+                lastGameBuildId = runBuild.id, createdAt = now, updatedAt = now
             )
         )!!
         val passedCase = testCaseRepository.save(
@@ -227,6 +281,8 @@ class CaseVerdictFromQaIntegrationTest {
         val failedCase = testCaseRepository.save(
             TestCaseEntity(projectId = projectId, scene = "S", step = "실패할 것", expectedValue = "y")
         )
+        versions.save(TestCaseVersionEntity.snapshotOf(passedCase, build.id!!))
+        versions.save(TestCaseVersionEntity.snapshotOf(failedCase, build.id!!))
         val testRun = testRunRepository.save(TestRunEntity(projectId = projectId, name = "런"))
         val draft = ScenarioDraft(
             title = "판정",
@@ -239,14 +295,14 @@ class CaseVerdictFromQaIntegrationTest {
         )
         val scenarioId = scenarioRepository.save(TestScenarioEntity(projectId = projectId).withDraft(draft, objectMapper)).id!!
         val started = persistence.createRunStarting(
-            testRun.id!!, instance.id!!, ownerId, listOf(scenarioId), gameBuildId = build.id
+            testRun.id!!, instance.id!!, ownerId, listOf(scenarioId), gameBuildId = runBuild.id
         )
         val tryId = requireNotNull(started.tries.first().id)
         persistence.attachRunAndMarkRunning(
             started.qaRun, tryId, "session-verdict-1",
             objectMapper.readTree("""{"model":"anthropic/claude-sonnet-5"}""")
         )
-        return RunningRun(tryId, build.id!!, passedCase.id!!, failedCase.id!!)
+        return RunningRun(tryId, build.id!!, runBuild.id!!, passedCase.id!!, failedCase.id!!)
     }
 
     private suspend fun reportStep(

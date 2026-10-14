@@ -99,6 +99,10 @@ class TestCaseVersionLibraryIntegrationTest {
         versions.delete(versions.findByTestCaseIdAndGameBuildId(onlyInOld.testCaseId, buildB.gameBuildId)!!)
         val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "사람이 쓴 것", expectedValue = "x"))
         val mapCases = versionsA.size
+        // editor 는 게임 버전이 아니라 목록에 없다(ARTEL-1014). 가장 나중에 붙었어도 그렇다.
+        gameBuilds.save(
+            GameBuildEntity(projectId = projectId, version = "1.1.0", isEditor = true, createdAt = Instant.now(), updatedAt = Instant.now())
+        )
 
         val listed = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions")
         assertThat(listed.status).isEqualTo(200)
@@ -216,6 +220,97 @@ class TestCaseVersionLibraryIntegrationTest {
         assertThat(call(token, HttpMethod.PUT, "$versionsUri/${foreign.id}/hidden", """{"hidden":true}""").status).isEqualTo(404)
         assertThat(call(token, HttpMethod.PUT, "$versionsUri/${buildA.gameBuildId}/group", """{"groupId":"999999"}""").status)
             .isEqualTo(404)
+    }
+
+    @Test
+    fun `사용자 생성 케이스를 버전에 넣고, 다음 버전 생성 때 이어 넣는다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
+        call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildA.gameBuildId}/content-map/test-cases")
+        val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "사람이 쓴 것", expectedValue = "x"))
+        val draftOnly = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "판정 없는 것", expectedValue = "y"))
+        val mapCase = versions.findByGameBuildId(buildA.gameBuildId).toList().first().testCaseId
+        val uri = "/api/projects/$projectId/test-case-versions/${buildA.gameBuildId}/cases"
+
+        // 지도 케이스와 같은 케이스 두 번은 건너뛴다.
+        val added = call(token, HttpMethod.POST, uri, """{"caseIds":["${manual.id}","${manual.id}","${draftOnly.id}","$mapCase"]}""")
+        assertThat(added.status).isEqualTo(200)
+        assertThat(added.body["caseIds"].map { it.asLong() }).containsExactlyInAnyOrder(manual.id, draftOnly.id)
+        assertThat(call(token, HttpMethod.POST, uri, """{"caseIds":["${manual.id}"]}""").body["caseIds"]).isEmpty()
+        val rowA = versions.findByTestCaseIdAndGameBuildId(manual.id!!, buildA.gameBuildId)!!
+        assertThat(rowA.verificationStatus).isEqualTo("DRAFT")
+        versions.save(rowA.copy(verificationStatus = "VERIFIED"))
+
+        // 이어 넣기를 끄고 생성하면 따라오지 않는다.
+        val buildB = ingestedBuild(projectId, "1.1.0", Instant.now())
+        val withoutCarry = call(
+            token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/content-map/test-cases?carryOver=false",
+        ).body
+        assertThat(withoutCarry["carriedOver"].asInt()).isZero()
+        assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id!!, buildB.gameBuildId)).isNull()
+
+        // 켜고(기본값) 다시 생성하면 앞 버전에 있던 사용자 생성 케이스가 따라온다. 앞에서 판정이 난 것은 재검증 필요다.
+        val generated = call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/content-map/test-cases").body
+        assertThat(generated["carriedOver"].asInt()).isEqualTo(2)
+        assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id!!, buildB.gameBuildId)!!.verificationStatus).isEqualTo("REGRESSION")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(draftOnly.id!!, buildB.gameBuildId)!!.verificationStatus).isEqualTo("DRAFT")
+        assertThat(testCases.findById(manual.id!!)!!.verificationStatus).isEqualTo("REGRESSION")
+
+        // 다시 생성해도 두 번 넣지 않는다.
+        assertThat(
+            call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/content-map/test-cases")
+                .body["carriedOver"].asInt()
+        ).isZero()
+
+        val removed = call(
+            token, HttpMethod.POST, "/api/projects/$projectId/test-case-versions/${buildB.gameBuildId}/cases/removals",
+            """{"caseIds":["${draftOnly.id}","$mapCase"]}""",
+        ).body
+        assertThat(removed["caseIds"].map { it.asLong() }).containsExactly(draftOnly.id)
+        assertThat(versions.findByTestCaseIdAndGameBuildId(draftOnly.id!!, buildB.gameBuildId)).isNull()
+        assertThat(versions.findByTestCaseIdAndGameBuildId(mapCase, buildB.gameBuildId)).isNotNull
+
+        // 케이스 목록은 출처를 싣는다.
+        val origins = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases").body["items"]
+            .associate { it["id"].asLong() to it["origin"].asText() }
+        assertThat(origins[manual.id!!]).isEqualTo("MANUAL")
+        assertThat(origins[mapCase]).isEqualTo("MAP")
+    }
+
+    @Test
+    fun `케이스를 만들면서 버전과 폴더에 함께 넣는다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val now = Instant.now()
+        val build = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "2.0", createdAt = now, updatedAt = now))
+        val folderId = call(token, HttpMethod.POST, "/api/projects/$projectId/test-case-folders", """{"name":"회귀"}""")
+            .body["id"].asText()
+
+        val created = call(
+            token, HttpMethod.POST, "/api/projects/$projectId/test-cases",
+            """{"scene":"S","step":"새 케이스","expectedValue":"x","folderId":"$folderId","gameBuildId":"${build.id}"}""",
+        )
+        assertThat(created.status).isEqualTo(201)
+        assertThat(created.body["origin"].asText()).isEqualTo("MANUAL")
+        val caseId = created.body["id"].asLong()
+        assertThat(versions.findByTestCaseIdAndGameBuildId(caseId, build.id!!)!!.verificationStatus).isEqualTo("DRAFT")
+        val inVersion = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/${build.id}/cases").body["items"]
+        assertThat(inVersion.map { it["id"].asLong() }).contains(caseId)
+        val inFolder = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-folders/$folderId/items?gameBuildId=${build.id}")
+            .body["items"].single()
+        assertThat(inFolder["inVersion"].asBoolean()).isTrue()
+
+        // 버전 없이 만들면 버전 없음이다. 다른 프로젝트 build 는 404 다.
+        val loose = call(token, HttpMethod.POST, "/api/projects/$projectId/test-cases", """{"scene":"S","step":"버전 없이","expectedValue":"x"}""")
+        assertThat(versions.countByTestCaseId(loose.body["id"].asLong())).isZero()
+        val foreign = gameBuilds.save(
+            GameBuildEntity(projectId = newProject(userId), version = "9.9", createdAt = now, updatedAt = now)
+        )
+        assertThat(
+            call(token, HttpMethod.POST, "/api/projects/$projectId/test-cases",
+                """{"scene":"S","step":"남의 버전","expectedValue":"x","gameBuildId":"${foreign.id}"}""").status
+        ).isEqualTo(404)
     }
 
     @Test

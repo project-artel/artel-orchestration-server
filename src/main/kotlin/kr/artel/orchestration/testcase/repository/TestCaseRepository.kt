@@ -163,24 +163,6 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     @Query("SELECT COUNT(*) FROM test_case WHERE project_id = :projectId AND id IN (:ids)")
     suspend fun countByProjectIdAndIdIn(projectId: Long, ids: Collection<Long>): Long
 
-    /**
-     * QA 검증 스텝의 판정을 이 케이스의 상태로 옮긴다(ARTEL-994). [verificationStatus] 는 VERIFIED 또는 FAILED 다.
-     *
-     * `BROKEN` 은 건드리지 않는다 — 지도에서 사라진 행이라 판정이 났어도 다시 살아난 것이 아니다. 그
-     * 표시는 다음 생성이 지도를 보고 정한다. 바꾼 행 수(0 또는 1)를 돌려준다.
-     */
-    @Modifying
-    @Query(
-        """
-        UPDATE test_case
-           SET verification_status = :verificationStatus,
-               last_verified_build_id = COALESCE(:gameBuildId, last_verified_build_id),
-               updated_at = now()
-         WHERE id = :testCaseId AND project_id = :projectId AND verification_status <> 'BROKEN'
-        """
-    )
-    suspend fun recordVerdict(projectId: Long, testCaseId: Long, verificationStatus: String, gameBuildId: Long?): Int
-
     /** 이 케이스를 마지막으로 판정한 build(ARTEL-1018). 상태는 버전 몫에서 비추므로 여기서 바꾸지 않는다. */
     @Modifying
     @Query("UPDATE test_case SET last_verified_build_id = :gameBuildId, updated_at = now() WHERE id = :testCaseId")
