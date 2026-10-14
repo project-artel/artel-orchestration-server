@@ -41,6 +41,7 @@ import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.entity.withDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+import kr.artel.orchestration.testscenario.service.AuthoringCases
 import kr.artel.orchestration.testscenario.service.AuthoringVersion
 import kr.artel.orchestration.testscenario.service.AuthoringVersionResolver
 import kr.artel.orchestration.testscenario.service.ScenarioCaseFactService
@@ -104,6 +105,7 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
     @Autowired private lateinit var caseFactService: ScenarioCaseFactService
     @Autowired private lateinit var authoringVersions: AuthoringVersionResolver
     @Autowired private lateinit var testCaseService: TestCaseService
+    @Autowired private lateinit var authoringCases: AuthoringCases
 
     @Test
     fun `같은 케이스는 버전을 넘어 한 행이고, 직전 버전에서 판정이 난 것만 새 버전에서 REGRESSION 으로 시작한다`(): Unit = runBlocking {
@@ -303,6 +305,71 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         val sent = testCaseService.getAuthoringCases(projectId, userId, authoringVersions.caseIds(buildA.gameBuildId)).map { it.id }
         assertThat(sent).contains(caseId).doesNotContain(manual.id)
         assertThat(testCaseService.getAuthoringCases(projectId, userId).map { it.id }).contains(manual.id)
+    }
+
+    /**
+     * 같은 지도를 적재한 버전이면 저작에 보내는 목록이 맥락이 없을 때와 **똑같다**(ARTEL-1064). 버전 몫을 읽게 바꾼
+     * 것이 같은 지도 프로젝트의 저작을 조금도 바꾸지 않는다는 전후 비교다.
+     */
+    @Test
+    fun `같은 지도 버전이면 저작 목록 · 화면 간선 · 시작값이 맥락 없을 때와 같다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val build = ingestedBuild(projectId, "1.0.0", Instant.now())
+        generate(token, projectId, build.gameBuildId)
+        val inVersion = authoringVersions.caseIds(build.gameBuildId)
+
+        val before = testCaseService.getAuthoringCases(projectId, userId).filter { it.id in inVersion }
+        val after = withContext(AuthoringVersion(build.gameBuildId)) { testCaseService.getAuthoringCases(projectId, userId, inVersion) }
+
+        assertThat(after).isNotEmpty().isEqualTo(before)
+        assertThat(withContext(AuthoringVersion(build.gameBuildId)) { testCaseService.sceneEdges(projectId) })
+            .isEqualTo(testCaseService.sceneEdges(projectId))
+        assertThat(withContext(AuthoringVersion(build.gameBuildId)) { testCaseService.startingValues(projectId) })
+            .isEqualTo(testCaseService.startingValues(projectId))
+    }
+
+    /**
+     * 버전마다 내용이 다르면 각 런이 자기 버전의 내용과 능력을 쓴다(ARTEL-1064). B 의 몫만 스텝을 바꾸고 B 지도에 없는
+     * 능력을 가리키게 하면, B 를 따르는 저작은 바뀐 스텝과 "누를 것 없음" 을 받고 A 를 따르는 저작은 예전 것을 받는다.
+     * 그 버전에서 BROKEN 인 몫은 보내지 않는다.
+     */
+    @Test
+    fun `버전마다 내용이 다르면 저작은 자기 버전의 내용과 능력을 쓴다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
+        generate(token, projectId, buildA.gameBuildId)
+        val buildB = ingestedBuild(projectId, "1.1.0", Instant.now())
+        generate(token, projectId, buildB.gameBuildId)
+        val listA = withContext(AuthoringVersion(buildA.gameBuildId)) {
+            testCaseService.getAuthoringCases(projectId, userId, authoringVersions.caseIds(buildA.gameBuildId))
+        }
+        val target = listA.first { it.input.isNotEmpty() }
+        val original = target.step
+        val rowB = versions.findByTestCaseIdAndGameBuildId(target.id, buildB.gameBuildId)!!
+        versions.save(rowB.copy(step = "B 에서 바뀐 스텝", capabilityKey = "no-such-capability"))
+
+        val inA = withContext(AuthoringVersion(buildA.gameBuildId)) {
+            testCaseService.getAuthoringCases(projectId, userId, authoringVersions.caseIds(buildA.gameBuildId))
+        }.single { it.id == target.id }
+        val inB = withContext(AuthoringVersion(buildB.gameBuildId)) {
+            testCaseService.getAuthoringCases(projectId, userId, authoringVersions.caseIds(buildB.gameBuildId))
+        }.single { it.id == target.id }
+        assertThat(inA.step).isEqualTo(original)
+        assertThat(inA.input).isNotEmpty()
+        assertThat(inB.step).isEqualTo("B 에서 바뀐 스텝")
+        assertThat(inB.input).isEmpty()
+        assertThat(withContext(AuthoringVersion(buildB.gameBuildId)) { authoringCases.byId(target.id) }!!.step).isEqualTo("B 에서 바뀐 스텝")
+        // 맥락이 없으면 대표 행 그대로다.
+        assertThat(authoringCases.byId(target.id)!!.step).isEqualTo(testCases.findById(target.id)!!.step)
+
+        versions.save(versions.findByTestCaseIdAndGameBuildId(target.id, buildB.gameBuildId)!!.copy(verificationStatus = "BROKEN"))
+        assertThat(authoringVersions.caseIds(buildB.gameBuildId)).doesNotContain(target.id)
+        val sentB = withContext(AuthoringVersion(buildB.gameBuildId)) {
+            testCaseService.getAuthoringCases(projectId, userId, authoringVersions.caseIds(buildB.gameBuildId))
+        }
+        assertThat(sentB.map { it.id }).doesNotContain(target.id)
     }
 
     /** editor 행은 게임 버전이 아니다(ARTEL-1014). 나중에 만들어졌어도 TR 의 버전과 트리에 들지 않는다. */

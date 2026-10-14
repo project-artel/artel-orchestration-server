@@ -90,6 +90,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 @Service
 class TestScenarioAgentService(
+    private val authoringCases: AuthoringCases,
     private val authoringVersions: AuthoringVersionResolver,
     @Value("\${artel.agent.base-url:http://localhost:8000}") private val agentBaseUrl: String,
     @Value("\${artel.agent.ws-base-url:ws://localhost:8000}") private val agentWsBaseUrl: String,
@@ -431,7 +432,8 @@ class TestScenarioAgentService(
         val locale = localeOf(appUserId)
         // 저작은 TR 이 고른 TC 버전의 TC 와 지도만 본다(ARTEL-1048). 버전 없는 TR 이면 예전처럼 프로젝트 전체 · 최신 빌드다.
         val version = authoringVersions.of(runId)
-        val cases = testCaseList(projectId, appUserId, version.gameBuildId)
+        // 목록의 내용 · 입력 · 바꾸는 값까지 그 버전 것이어야 하므로 맥락 안에서 읽는다(ARTEL-1064).
+        val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
         trace.record(
             runId, "판을 연다",
             "말: $userInput\n" +
@@ -464,17 +466,14 @@ class TestScenarioAgentService(
             appUserId = appUserId,
             currentScenarios = currentScenarios,
             flows = flows,
-            entryScene = runCatching {
-                version.gameBuildId?.let { testCaseRepository.findEntrySceneNameOfBuild(it) }
-                    ?: testCaseRepository.findEntrySceneName(projectId)
-            }
+            entryScene = runCatching { withContext(version) { authoringCases.entrySceneName(projectId) } }
                 .onFailure { logger.warn("입구 씬 조회 실패 — 없이 보낸다: ${it.message}") }
                 .getOrNull(),
             // **흐름을 끄면 이 둘이 그 자리를 잇는다**(실험). 화면 간선은 받는 쪽이 접어 도달표로
             // 싣고, 시작값은 흐름 계산만 알던 사실이다. 흐름을 켠 판에도 보낸다 — 정보가 같아야
             // 스위치 하나만 비교된다.
-            sceneEdges = testCaseService.sceneEdges(projectId),
-            startingValues = testCaseService.startingValues(projectId),
+            sceneEdges = withContext(version) { testCaseService.sceneEdges(projectId) },
+            startingValues = withContext(version) { testCaseService.startingValues(projectId) },
         )
         val resp = webClient.post()
             .uri("$agentBaseUrl/sessions")
@@ -998,7 +997,7 @@ class TestScenarioAgentService(
         val ids = testCaseRepository.findUncoveredIdsByProjectId(session.projectId).toList()
             .filter { inVersion == null || it in inVersion }
         if (inVersion == null) return ids to testCaseRepository.findScenesOfUncovered(session.projectId).toList()
-        val scenes = testCaseRepository.findAllById(ids).toList()
+        val scenes = withContext(session.version) { authoringCases.byIds(ids) }
             .groupingBy { ScenarioStateReader.sceneOf(it) ?: it.scene }.eachCount()
             .map { (scene, count) -> UncoveredScene(scene, count.toLong()) }
             .sortedByDescending { it.count }
