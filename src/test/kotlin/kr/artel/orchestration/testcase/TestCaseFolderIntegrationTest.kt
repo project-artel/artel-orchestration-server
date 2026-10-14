@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
@@ -80,6 +81,7 @@ class TestCaseFolderIntegrationTest {
         val added = items(token, projectId, folderA, HttpMethod.POST, "", """{"caseIds":["$c1","$c2","$c3","$c1","$foreign"]}""")
         assertThat(added.status).isEqualTo(200)
         assertThat(added.body["changed"].asInt()).isEqualTo(3)
+        assertThat(added.body["caseIds"].map { it.asText() }).containsExactlyInAnyOrder("$c1", "$c2", "$c3")
         assertThat(caseIdsIn(token, projectId, folderA)).containsExactly("$c1", "$c2", "$c3")
 
         val reordered = items(token, projectId, folderA, HttpMethod.PUT, "/order", """{"caseIds":["$c3","$c1","$c2"]}""")
@@ -94,6 +96,8 @@ class TestCaseFolderIntegrationTest {
             token, projectId, folderA, HttpMethod.POST, "/moves", """{"caseIds":["$c1","$c2"],"targetFolderId":"$folderB"}"""
         )
         assertThat(moved.body["changed"].asInt()).isEqualTo(2)
+        assertThat(moved.body["caseIds"].map { it.asText() }).containsExactly("$c1")
+        assertThat(moved.body["droppedCaseIds"].map { it.asText() }).containsExactly("$c2")
         assertThat(caseIdsIn(token, projectId, folderA)).containsExactly("$c3")
         assertThat(caseIdsIn(token, projectId, folderB)).containsExactly("$c2", "$c1")
         val positions = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-folders/$folderB/items")
@@ -147,6 +151,7 @@ class TestCaseFolderIntegrationTest {
         assertThat(oldMap["step"].asText()).isEqualTo("1.0 의 문구")
         assertThat(oldMap["verificationStatus"].asText()).isEqualTo("VERIFIED")
         assertThat(oldMap["origin"].asText()).isEqualTo("MAP")
+        assertThat(oldMap["hiddenGameBuildIds"]).isEmpty()
 
         // 버전을 주지 않으면 가장 최근 build(1.1)다. 지도 케이스는 그 버전에 몫이 없다.
         val latest = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-folders/$folderId/items").body
@@ -165,6 +170,9 @@ class TestCaseFolderIntegrationTest {
         val hiddenInNew = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-folders/$folderId/items?gameBuildId=$build2")
             .body["items"].map { it["hidden"].asBoolean() }
         assertThat(hiddenInNew).containsExactly(false, false)
+        val hiddenBuilds = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-folders/$folderId/items")
+            .body["items"][1]["hiddenGameBuildIds"].map { it.asText() }
+        assertThat(hiddenBuilds).containsExactly("$build1")
 
         // 1.0: 지도 케이스만 보인다(사람이 쓴 케이스는 숨김). 1.1: 사람이 쓴 케이스만 보인다(지도 케이스는 몫이 없다).
         fun visibleIn(build: Long) = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-folders?gameBuildId=$build")
@@ -402,7 +410,7 @@ class TestCaseFolderIntegrationTest {
         val caseId = testCaseRepository.save(
             TestCaseEntity(projectId = projectId, scene = "Title", step = "시작", expectedValue = "넘어간다")
         ).id!!
-        if (folderId != null) folderItems.append(projectId, folderId, listOf(caseId))
+        if (folderId != null) folderItems.append(projectId, folderId, listOf(caseId)).toList()
         return caseId
     }
 

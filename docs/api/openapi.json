@@ -6439,13 +6439,27 @@
       },
       "TestCaseFolderItemsChangeResponse": {
         "required": [
-          "changed"
+          "caseIds",
+          "changed",
+          "droppedCaseIds"
         ],
         "type": "object",
         "properties": {
           "changed": {
             "type": "integer",
             "format": "int32"
+          },
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "droppedCaseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -11118,6 +11132,7 @@
           "createdAt",
           "expectedValue",
           "hidden",
+          "hiddenGameBuildIds",
           "inVersion",
           "origin",
           "position",
@@ -11136,6 +11151,12 @@
           },
           "hidden": {
             "type": "boolean"
+          },
+          "hiddenGameBuildIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "inVersion": {
             "type": "boolean"

@@ -69,6 +69,7 @@ class TestCaseFolderItemService(
                 testCaseId = row.testCaseId.toString(),
                 position = row.position,
                 hidden = row.hidden,
+                hiddenGameBuildIds = row.hiddenGameBuildIds.split(',').filter { it.isNotBlank() },
                 inVersion = buildId == null || !map || version != null,
                 origin = if (map) MAP else MANUAL,
                 scene = content?.scene ?: identity.scene,
@@ -90,12 +91,12 @@ class TestCaseFolderItemService(
     /** 케이스를 [folderId] 끝에 넣는다. 이미 든 케이스는 그대로 두고 세지 않는다. */
     suspend fun add(projectId: Long, userId: Long, folderId: Long, request: TestCaseFolderItemsRequest) =
         write(projectId, userId, folderId) {
-            items.append(projectId, folderId, parseWireIds(request.caseIds, "caseIds"))
+            Changed(items.append(projectId, folderId, parseWireIds(request.caseIds, "caseIds")).toList())
         }
 
     suspend fun remove(projectId: Long, userId: Long, folderId: Long, request: TestCaseFolderItemsRequest) =
         write(projectId, userId, folderId) {
-            items.remove(folderId, parseWireIds(request.caseIds, "caseIds")).also { items.compact(folderId) }
+            Changed(items.remove(folderId, parseWireIds(request.caseIds, "caseIds")).toList().also { items.compact(folderId) })
         }
 
     /**
@@ -110,11 +111,11 @@ class TestCaseFolderItemService(
             if (targetId == folderId) throw BadRequestException("같은 folder 로는 옮길 수 없습니다.")
             folderService.requireFolder(projectId, targetId)
             val shared = items.findShared(folderId, targetId, caseIds).toList()
-            val dropped = if (shared.isEmpty()) 0 else items.remove(folderId, shared)
+            val dropped = if (shared.isEmpty()) emptyList() else items.remove(folderId, shared).toList()
             val rest = caseIds - shared.toSet()
-            val moved = if (rest.isEmpty()) 0 else items.move(folderId, targetId, rest)
+            val moved = if (rest.isEmpty()) emptyList() else items.move(folderId, targetId, rest).toList()
             items.compact(folderId)
-            dropped + moved
+            Changed(moved, dropped)
         }
 
     /** 순서를 통째로 다시 정한다. [TestCaseFolderItemOrderRequest.caseIds] 가 그 folder 의 항목 전부가 아니면 400 이다. */
@@ -125,7 +126,9 @@ class TestCaseFolderItemService(
             if (caseIds.size != current.size || caseIds.toSet() != current.toSet()) {
                 throw BadRequestException("caseIds 는 이 folder 의 항목 전부여야 합니다.")
             }
-            if (caseIds == current) 0 else items.reorder(folderId, caseIds)
+            val positions = current.withIndex().associate { it.value to it.index }
+            if (caseIds != current) items.reorder(folderId, caseIds)
+            Changed(caseIds.filterIndexed { index, caseId -> positions[caseId] != index })
         }
 
     /** 버전별 숨김을 켜고 끈다. 이미 그 상태인 항목은 세지 않는다. */
@@ -137,14 +140,14 @@ class TestCaseFolderItemService(
             val hidden = request.hidden ?: throw BadRequestException("hidden 이 필요합니다.")
             gameBuilds.findAccessibleById(gameBuildId, projectId, userId)
                 ?: throw NotFoundException("버전을 찾을 수 없습니다.")
-            if (hidden) items.hide(folderId, caseIds, gameBuildId) else items.unhide(folderId, caseIds, gameBuildId)
+            Changed((if (hidden) items.hide(folderId, caseIds, gameBuildId) else items.unhide(folderId, caseIds, gameBuildId)).toList())
         }
 
     private suspend fun write(
         projectId: Long,
         userId: Long,
         folderId: Long,
-        block: suspend () -> Int,
+        block: suspend () -> Changed,
     ): TestCaseFolderItemsChangeResponse {
         folderService.requireMember(projectId, userId)
         val changed = transactionalOperator.executeAndAwait {
@@ -152,8 +155,15 @@ class TestCaseFolderItemService(
             folderService.requireFolder(projectId, folderId)
             block()
         }
-        return TestCaseFolderItemsChangeResponse(changed)
+        return TestCaseFolderItemsChangeResponse(
+            changed = changed.caseIds.size + changed.droppedCaseIds.size,
+            caseIds = changed.caseIds.map(Long::toString),
+            droppedCaseIds = changed.droppedCaseIds.map(Long::toString),
+        )
     }
+
+    /** 한 쓰기에서 실제로 바뀐 케이스. */
+    private data class Changed(val caseIds: List<Long>, val droppedCaseIds: List<Long> = emptyList())
 
     private fun isMapCase(metadata: String): Boolean =
         runCatching { objectMapper.readTree(metadata) }.getOrNull()

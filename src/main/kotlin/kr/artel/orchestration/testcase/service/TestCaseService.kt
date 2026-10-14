@@ -372,7 +372,7 @@ class TestCaseService(
         return transactionalOperator.executeAndAwait {
             folderService.lockProjectFolders(projectId)
             folderService.requireFolder(projectId, folderId)
-            repository.save(entity).also { folderItems.append(projectId, folderId, listOf(requireNotNull(it.id))) }
+            repository.save(entity).also { folderItems.append(projectId, folderId, listOf(requireNotNull(it.id))).toList() }
         }.toTestCaseResponse(folderId)
     }
 
@@ -396,7 +396,7 @@ class TestCaseService(
             folderService.lockProjectFolders(projectId)
             if (folderId != null) folderService.requireFolder(projectId, folderId)
             folderItems.removeEverywhere(projectId, caseIds)
-            if (folderId != null) folderItems.append(projectId, folderId, caseIds)
+            if (folderId != null) folderItems.append(projectId, folderId, caseIds).toList()
             repository.countByProjectIdAndIdIn(projectId, caseIds).toInt()
         }
         return TestCaseMoveResponse(moved)

@@ -83,8 +83,19 @@ data class TestCaseFolderItemHiddenRequest(
     val hidden: Boolean? = null,
 )
 
-/** 항목 쓰기의 결과. [changed] 는 실제로 바뀐 항목 수이고, 이미 그 상태였거나 다른 프로젝트 케이스는 세지 않는다. */
-data class TestCaseFolderItemsChangeResponse(val changed: Int)
+/**
+ * 항목 쓰기의 결과. 이미 그 상태였거나 다른 프로젝트 케이스는 싣지 않는다 — home 이 Undo 할 때 실제로 바뀐 것만
+ * 되돌린다.
+ *
+ * @property changed [caseIds] 와 [droppedCaseIds] 의 수.
+ * @property caseIds 실제로 넣거나 빼거나 옮기거나 숨김을 바꾼 케이스.
+ * @property droppedCaseIds 옮기기에서만: 대상 folder 에 이미 있어 옮기지 않고 이쪽 항목만 지운 케이스.
+ */
+data class TestCaseFolderItemsChangeResponse(
+    val changed: Int,
+    val caseIds: List<String>,
+    val droppedCaseIds: List<String> = emptyList(),
+)
 
 /**
  * folder 복제 요청(ARTEL-1023). 하위 folder 와 항목(숨김 포함)을 함께 복제한다.
@@ -104,12 +115,14 @@ data class TestCaseFolderCloneRequest(
  * @property inVersion 그 버전에 있는 케이스인가. 지도 케이스는 버전 몫이 있으면, 사람이 쓴 케이스는 늘 있다.
  *   없으면 내용은 가장 최근 버전의 것이고 [verificationStatus] 는 null 이다.
  * @property hidden 이 folder 에서 그 버전에 숨겼나.
+ * @property hiddenGameBuildIds 이 folder 에서 숨긴 버전 전부. home 이 지운 folder 를 Undo 로 되살릴 때 쓴다.
  * @property origin `MAP` 또는 `MANUAL`.
  */
 data class TestCaseFolderItemResponse(
     val testCaseId: String,
     val position: Int,
     val hidden: Boolean,
+    val hiddenGameBuildIds: List<String>,
     val inVersion: Boolean,
     val origin: String,
     val scene: String,
@@ -133,6 +146,8 @@ data class TestCaseFolderItemRow(
     val testCaseId: Long,
     val position: Int,
     val hidden: Boolean,
+    /** `,` 로 이은 build id. 배열 칸을 projection 으로 바로 읽지 않으려고 SQL 에서 글자로 만든다. */
+    val hiddenGameBuildIds: String,
 )
 
 /** 케이스가 처음 담긴 folder. 케이스 응답의 `folderId` 를 채운다. */

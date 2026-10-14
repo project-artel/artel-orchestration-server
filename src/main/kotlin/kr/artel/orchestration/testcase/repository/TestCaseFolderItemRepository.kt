@@ -22,7 +22,8 @@ interface TestCaseFolderItemRepository : CoroutineCrudRepository<TestCaseFolderI
     @Query(
         """
         SELECT i.test_case_id, i.position,
-               COALESCE(CAST(:gameBuildId AS BIGINT) = ANY (i.hidden_game_build_ids), FALSE) AS hidden
+               COALESCE(CAST(:gameBuildId AS BIGINT) = ANY (i.hidden_game_build_ids), FALSE) AS hidden,
+               array_to_string(i.hidden_game_build_ids, ',') AS hidden_game_build_ids
           FROM test_case_folder_item i
          WHERE i.folder_id = :folderId
          ORDER BY i.position, i.id
@@ -35,9 +36,8 @@ interface TestCaseFolderItemRepository : CoroutineCrudRepository<TestCaseFolderI
 
     /**
      * [caseIds] 중 이 프로젝트 케이스이고 아직 [folderId] 에 없는 것을 끝에 붙인다. 요청한 순서를 지킨다.
-     * 붙인 수를 돌려준다.
+     * 실제로 붙인 케이스 id 를 돌려준다 — home 이 Undo 할 때 그것만 뺀다.
      */
-    @Modifying
     @Query(
         """
         INSERT INTO test_case_folder_item (folder_id, test_case_id, position)
@@ -48,13 +48,13 @@ interface TestCaseFolderItemRepository : CoroutineCrudRepository<TestCaseFolderI
          WHERE t.project_id = :projectId
            AND t.id IN (:caseIds)
            AND NOT EXISTS (SELECT 1 FROM test_case_folder_item i WHERE i.folder_id = :folderId AND i.test_case_id = t.id)
+        RETURNING test_case_id
         """
     )
-    suspend fun append(projectId: Long, folderId: Long, caseIds: Collection<Long>, order: String = caseIds.joinToString(",")): Int
+    fun append(projectId: Long, folderId: Long, caseIds: Collection<Long>, order: String = caseIds.joinToString(",")): Flow<Long>
 
-    @Modifying
-    @Query("DELETE FROM test_case_folder_item WHERE folder_id = :folderId AND test_case_id IN (:caseIds)")
-    suspend fun remove(folderId: Long, caseIds: Collection<Long>): Int
+    @Query("DELETE FROM test_case_folder_item WHERE folder_id = :folderId AND test_case_id IN (:caseIds) RETURNING test_case_id")
+    fun remove(folderId: Long, caseIds: Collection<Long>): Flow<Long>
 
     /** [caseIds] 를 이 프로젝트의 모든 folder 에서 뺀다. 예전 단일 folder 옮기기(`/test-cases/move`)가 쓴다. */
     @Modifying
@@ -71,7 +71,6 @@ interface TestCaseFolderItemRepository : CoroutineCrudRepository<TestCaseFolderI
      * [fromFolderId] 의 [caseIds] 항목을 [toFolderId] 끝으로 옮긴다. 숨김은 따라간다. 대상에 이미 있는 케이스는
      * 옮기지 않는다 — 부르는 쪽이 [remove] 로 이쪽 항목을 먼저 정리한다.
      */
-    @Modifying
     @Query(
         """
         UPDATE test_case_folder_item i
@@ -83,9 +82,10 @@ interface TestCaseFolderItemRepository : CoroutineCrudRepository<TestCaseFolderI
                   FROM test_case_folder_item s
                  WHERE s.folder_id = :fromFolderId AND s.test_case_id IN (:caseIds)) r
          WHERE i.id = r.id
+        RETURNING i.test_case_id
         """
     )
-    suspend fun move(fromFolderId: Long, toFolderId: Long, caseIds: Collection<Long>): Int
+    fun move(fromFolderId: Long, toFolderId: Long, caseIds: Collection<Long>): Flow<Long>
 
     /** [folderId] 에도 [otherFolderId] 에도 있는 [caseIds]. 옮기기 전에 겹치는 것을 고른다. */
     @Query(
@@ -121,27 +121,28 @@ interface TestCaseFolderItemRepository : CoroutineCrudRepository<TestCaseFolderI
     )
     suspend fun compact(folderId: Long): Int
 
-    @Modifying
+    /** 숨김 쓰기는 실제로 바뀐 케이스 id 를 돌려준다. 이미 그 상태였던 것은 없다. */
     @Query(
         """
         UPDATE test_case_folder_item
            SET hidden_game_build_ids = array_append(hidden_game_build_ids, :gameBuildId)
          WHERE folder_id = :folderId AND test_case_id IN (:caseIds)
            AND NOT (:gameBuildId = ANY (hidden_game_build_ids))
+        RETURNING test_case_id
         """
     )
-    suspend fun hide(folderId: Long, caseIds: Collection<Long>, gameBuildId: Long): Int
+    fun hide(folderId: Long, caseIds: Collection<Long>, gameBuildId: Long): Flow<Long>
 
-    @Modifying
     @Query(
         """
         UPDATE test_case_folder_item
            SET hidden_game_build_ids = array_remove(hidden_game_build_ids, :gameBuildId)
          WHERE folder_id = :folderId AND test_case_id IN (:caseIds)
            AND :gameBuildId = ANY (hidden_game_build_ids)
+        RETURNING test_case_id
         """
     )
-    suspend fun unhide(folderId: Long, caseIds: Collection<Long>, gameBuildId: Long): Int
+    fun unhide(folderId: Long, caseIds: Collection<Long>, gameBuildId: Long): Flow<Long>
 
     /** [fromFolderId] 의 항목을 순서와 숨김째 [toFolderId] 로 복사한다. 복제가 쓴다. */
     @Modifying
