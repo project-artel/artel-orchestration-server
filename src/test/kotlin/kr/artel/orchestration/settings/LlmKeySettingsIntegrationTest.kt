@@ -50,7 +50,7 @@ class LlmKeySettingsIntegrationTest {
         private const val INVALID_KEY = "sk-or-v1-revoked-key-000000000000wxyz"
 
         /**
-         * V107 이 넣은 행 중 켜져 있고 Bedrock 도 Claude API(`claude/`)도 아닌 12 개에 embedding model 을 더한 목록. 확인이 닿아야 한다고 보는
+         * V109 가 넣은 행 중 켜져 있고 Bedrock 도 Claude API(`claude/`)도 아닌 12 개에 embedding model 을 더한 목록. 확인이 닿아야 한다고 보는
          * model 은 `llm_model` 테이블이 정하므로, 시드가 바뀌면 이 목록도 바뀌어야 한다.
          */
         private val REQUIRED_OPENROUTER_MODELS = listOf(

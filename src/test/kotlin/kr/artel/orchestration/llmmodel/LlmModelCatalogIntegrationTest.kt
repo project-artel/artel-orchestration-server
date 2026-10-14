@@ -24,7 +24,7 @@ import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
 
-/** V107 이 넣은 카탈로그와 그것을 읽는 세 경로(내부, 선택 목록, 관리). */
+/** V109 가 넣은 카탈로그와 그것을 읽는 세 경로(내부, 선택 목록, 관리). */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class LlmModelCatalogIntegrationTest {
