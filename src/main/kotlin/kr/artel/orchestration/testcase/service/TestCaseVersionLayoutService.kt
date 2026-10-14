@@ -66,7 +66,7 @@ class TestCaseVersionLayoutService(
         return responseOf(saved)
     }
 
-    /** 묶음을 지운다. 안의 버전은 묶음 없음으로 돌아간다(V106 FK). */
+    /** 묶음을 지운다. 안의 버전은 묶음 없음으로 돌아간다(V108 FK). */
     suspend fun deleteGroup(projectId: Long, userId: Long, groupId: Long) {
         folderService.requireMember(projectId, userId)
         transactionalOperator.executeAndAwait {

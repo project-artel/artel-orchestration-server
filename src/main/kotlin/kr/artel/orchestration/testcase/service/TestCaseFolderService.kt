@@ -99,7 +99,7 @@ class TestCaseFolderService(
 
     /**
      * folder 를 지운다. 하위 folder 는 FK cascade 로 함께 지워진다(V99). 항목도 cascade 로 지워지고 케이스 자체는
-     * 남는다 — 다른 folder 에 없으면 folder 없음이 된다(V105).
+     * 남는다 — 다른 folder 에 없으면 folder 없음이 된다(V107).
      */
     suspend fun delete(projectId: Long, userId: Long, folderId: Long) {
         requireMember(projectId, userId)
