@@ -51,8 +51,9 @@ class ContentMapTestCaseService(
      * build 에 content map 이 없거나 적재를 마친 문서가 없으면 409 다. editor build 도 409 다 — editor 는 게임 버전이
      * 아니어서 TC 를 따라가게 할 수 없다(ARTEL-1014). 그 지도는 게임 지식으로만 쓴다.
      *
-     * 이미 지도에서 TC 를 만든 build 도 409(`TEST_CASES_ALREADY_GENERATED`)다(ARTEL-1040). 같은 build 의 새 TC 버전은
-     * 아직 설계 중이라, 덮어쓰지 않고 막는다.
+     * 이미 지도에서 TC 를 만든 build 도 409(`TEST_CASES_ALREADY_GENERATED`)다(ARTEL-1040). [overwrite] 면 막지 않고
+     * 그 버전의 지도 TC 를 지금 지도로 덮어쓴다(ARTEL-1041) — 남는 TC 의 판정은 그대로이고, 지도에서 사라진 TC 는 그
+     * 판정과 함께 빠지며, 사용자 생성 TC 는 건드리지 않는다. 화면이 경고를 보인 뒤에만 보낸다.
      *
      * [carryOver] 가 false 면 앞 버전의 사용자 생성 케이스를 이어 넣지 않고 `carriedOver` 는 0 이다.
      */
@@ -61,10 +62,11 @@ class ContentMapTestCaseService(
         projectId: Long,
         gameBuildId: Long,
         carryOver: Boolean = true,
+        overwrite: Boolean = false,
     ): ContentMapTestCaseGenerationResponse {
         val build = gameBuilds.findAccessibleById(gameBuildId, projectId, userId)
             ?: throw NotFoundException("빌드를 찾을 수 없습니다.")
-        return generateFor(build, carryOver)
+        return generateFor(build, carryOver, overwrite)
     }
 
     /**
@@ -91,6 +93,7 @@ class ContentMapTestCaseService(
         val items = gameBuilds.findNonEditorNewestFirst(projectId).toList().map { build ->
             val gameBuildId = requireNotNull(build.id)
             val progress = documents.countIngestProgressByGameBuild(gameBuildId)
+            val count = versions.countMapCasesByGameBuildId(gameBuildId)
             TestCaseGenerationCandidate(
                 gameBuildId = gameBuildId.toString(),
                 version = build.version,
@@ -101,19 +104,25 @@ class ContentMapTestCaseService(
                     progress.ingested == 0L -> TestCaseGenerationCandidate.MapState.NOT_READ
                     else -> TestCaseGenerationCandidate.MapState.READY
                 },
-                generated = versions.existsMapCasesByGameBuildId(gameBuildId),
+                generated = (count?.mapCases ?: 0L) > 0L,
+                mapCases = count?.mapCases?.toInt() ?: 0,
+                judged = count?.judged?.toInt() ?: 0,
             )
         }
         return TestCaseGenerationCandidatesResponse(items)
     }
 
-    private suspend fun generateFor(build: GameBuildEntity, carryOver: Boolean): ContentMapTestCaseGenerationResponse {
+    private suspend fun generateFor(
+        build: GameBuildEntity,
+        carryOver: Boolean,
+        overwrite: Boolean = false,
+    ): ContentMapTestCaseGenerationResponse {
         rejectEditor(build)
         val gameBuildId = requireNotNull(build.id)
         val contentMapId = contentMaps.findByGameBuildId(gameBuildId)?.id
             ?.takeIf { documents.existsByContentMapIdAndIngestedAtIsNotNull(it) }
             ?: throw ConflictException("이 빌드에는 적재된 content map 이 없습니다.")
-        val (result, carriedOver) = generateInTransaction(build.projectId, contentMapId, build, carryOver, firstTimeOnly = true)
+        val (result, carriedOver) = generateInTransaction(build.projectId, contentMapId, build, carryOver, firstTimeOnly = !overwrite)
         return ContentMapTestCaseGenerationResponse.of(result, carriedOver)
     }
 

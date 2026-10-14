@@ -37,7 +37,8 @@ data class ContentMapTestCaseGenerationResponse(
  * 라이브러리의 "지도에서 TC 생성" 모달에 보일 게임 빌드 하나(ARTEL-1040). editor build 는 없다.
  *
  * @property mapState 지도가 어디까지 왔나. `READY` 일 때만 만들 수 있다.
- * @property generated 이미 이 빌드에서 지도로 TC 를 만들었다. 같은 빌드에 다시 만들 수 없다.
+ * @property generated 이미 이 빌드에서 지도로 TC 를 만들었다. 다시 만들려면 덮어쓴다(`overwrite=true`).
+ * @property mapCases 이 빌드의 지도 TC 수. @property judged 그중 판정(통과 · 실패 · 재검증 필요)이 난 수.
  */
 data class TestCaseGenerationCandidate(
     val gameBuildId: String,
@@ -46,6 +47,8 @@ data class TestCaseGenerationCandidate(
     val createdAt: java.time.Instant,
     val mapState: MapState,
     val generated: Boolean,
+    val mapCases: Int = 0,
+    val judged: Int = 0,
 ) {
     enum class MapState {
         /** 스캔된 문서가 없다. */

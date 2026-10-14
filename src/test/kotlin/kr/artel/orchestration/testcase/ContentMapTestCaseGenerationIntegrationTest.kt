@@ -26,9 +26,11 @@ import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseFolderRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -73,6 +75,7 @@ class ContentMapTestCaseGenerationIntegrationTest {
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
     @Autowired private lateinit var gameBuilds: GameBuildRepository
+    @Autowired private lateinit var versions: TestCaseVersionRepository
     @Autowired private lateinit var contentMaps: ContentMapRepository
     @Autowired private lateinit var documents: ContentMapDocumentRepository
     @Autowired private lateinit var storage: DocumentStorage
@@ -143,6 +146,37 @@ class ContentMapTestCaseGenerationIntegrationTest {
         assertThat(generate(token, projectId, build.gameBuildId).status).isEqualTo(409)
 
         assertThat(folderItems.findFirstFolderId(moved.id!!)).isEqualTo(userFolderId.toLong())
+    }
+
+    /**
+     * 덮어쓰기(ARTEL-1041): 이미 만든 build 를 다시 만들되, 남는 지도 TC 의 판정은 그대로이고 사용자 생성 TC 는 건드리지
+     * 않는다. 후보 목록은 경고에 쓸 지도 TC 수와 판정 수를 싣는다.
+     */
+    @Test
+    fun `덮어쓰기는 이미 만든 build 를 다시 만들고 판정과 사용자 생성 TC 를 남긴다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val build = ingestedBuild(projectId, version = "1.0.0", label = null)
+        val created = generate(token, projectId, build.gameBuildId).body["created"].asInt()
+        val judged = versions.findByGameBuildId(build.gameBuildId).toList().first()
+        versions.save(judged.copy(verificationStatus = "VERIFIED"))
+        val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "사람이 쓴 것", expectedValue = "x"))
+        versions.save(TestCaseVersionEntity.snapshotOf(manual, build.gameBuildId))
+
+        val candidate = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/generation-candidates")
+            .body["items"].single()
+        assertThat(candidate["mapCases"].asInt()).isEqualTo(created)
+        assertThat(candidate["judged"].asInt()).isEqualTo(1)
+
+        val overwritten = call(
+            token, HttpMethod.POST,
+            "/api/projects/$projectId/game-builds/${build.gameBuildId}/content-map/test-cases?overwrite=true",
+        )
+
+        assertThat(overwritten.status).isEqualTo(200)
+        assertThat(overwritten.body["created"].asInt()).isZero()
+        assertThat(versions.findById(judged.id!!)!!.verificationStatus).isEqualTo("VERIFIED")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id!!, build.gameBuildId)).isNotNull
     }
 
     @Test

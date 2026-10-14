@@ -22,6 +22,21 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
     )
     suspend fun existsMapCasesByGameBuildId(gameBuildId: Long): Boolean
 
+    /**
+     * 이 build 의 지도 몫 수와 그중 판정이 난 수(ARTEL-1041). 덮어쓰기 경고가 "무엇을 잃을 수 있나" 를 말할 때 쓴다.
+     * 집계만 있는 질의라 지도 몫이 없어도 행 하나(전부 0)가 돌아온다.
+     */
+    @Query(
+        """
+        SELECT count(*) FILTER (WHERE content_map_id IS NOT NULL) AS map_cases,
+               count(*) FILTER (WHERE content_map_id IS NOT NULL
+                                  AND verification_status IN ('VERIFIED', 'FAILED', 'REGRESSION')) AS judged
+          FROM test_case_version
+         WHERE game_build_id = :gameBuildId
+        """
+    )
+    suspend fun countMapCasesByGameBuildId(gameBuildId: Long): MapCaseCount?
+
     suspend fun findByTestCaseIdAndGameBuildId(testCaseId: Long, gameBuildId: Long): TestCaseVersionEntity?
 
     suspend fun countByTestCaseId(testCaseId: Long): Long
@@ -182,3 +197,6 @@ data class PreviousStatus(
     val testCaseId: Long,
     val verificationStatus: String,
 )
+
+/** [TestCaseVersionRepository.countMapCasesByGameBuildId] 결과. */
+data class MapCaseCount(val mapCases: Long, val judged: Long)

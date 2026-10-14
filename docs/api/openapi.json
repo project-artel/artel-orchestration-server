@@ -3123,6 +3123,15 @@
               "type": "boolean",
               "default": true
             }
+          },
+          {
+            "name": "overwrite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -11637,6 +11646,8 @@
           "createdAt",
           "gameBuildId",
           "generated",
+          "judged",
+          "mapCases",
           "mapState",
           "version"
         ],
@@ -11665,6 +11676,14 @@
           },
           "generated": {
             "type": "boolean"
+          },
+          "mapCases": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "judged": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },

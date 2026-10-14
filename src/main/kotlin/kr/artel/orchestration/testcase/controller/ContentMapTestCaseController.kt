@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.RestController
  *
  * `carryOver=false` 면 앞 버전의 사용자 생성 케이스를 이어 넣지 않는다. 생성할 때마다 사용자가 고르고, 주지 않으면
  * 이어 넣는다.
+ *
+ * 이미 TC 를 만든 build 는 409 다. `overwrite=true` 면 그 버전의 지도 TC 를 지금 지도로 덮어쓴다(ARTEL-1041).
  */
 @RestController
 class ContentMapTestCaseController(
@@ -28,8 +30,9 @@ class ContentMapTestCaseController(
         @PathVariable gameBuildId: Long,
         @CurrentUserId appUserId: Long,
         @RequestParam(defaultValue = "true") carryOver: Boolean,
+        @RequestParam(defaultValue = "false") overwrite: Boolean,
     ): ContentMapTestCaseGenerationResponse =
-        service.generate(appUserId, projectId, gameBuildId, carryOver)
+        service.generate(appUserId, projectId, gameBuildId, carryOver, overwrite)
 
     /**
      * 케이스 라이브러리의 "지도에서 TC 생성" 모달이 고를 게임 빌드(ARTEL-1040). 빌드마다 지도 상태와 이미 만들었는지를
