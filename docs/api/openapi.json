@@ -1138,6 +1138,67 @@
         }
       }
     },
+    "/api/auth/me/llm-keys/{service}": {
+      "put": {
+        "tags": [
+          "user-llm-key-controller"
+        ],
+        "operationId": "putLlmKey",
+        "parameters": [
+          {
+            "name": "service",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserLlmKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserLlmKeyResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "user-llm-key-controller"
+        ],
+        "operationId": "deleteLlmKey",
+        "parameters": [
+          {
+            "name": "service",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/admin/settings/llm": {
       "get": {
         "tags": [
@@ -6491,6 +6552,29 @@
         }
       }
     },
+    "/api/auth/me/llm-keys": {
+      "get": {
+        "tags": [
+          "user-llm-key-controller"
+        ],
+        "operationId": "listLlmKeys",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserLlmKeyResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/members/{userId}": {
       "delete": {
         "tags": [
@@ -7245,6 +7329,34 @@
           }
         }
       },
+      "UpdateUserLlmKeyRequest": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          }
+        }
+      },
+      "UserLlmKeyResponse": {
+        "required": [
+          "keyHint",
+          "service",
+          "verifiedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "keyHint": {
+            "type": "string"
+          },
+          "verifiedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "UpdateLlmKeyRequest": {
         "type": "object",
         "properties": {
@@ -7617,6 +7729,13 @@
           "calledAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "keySource": {
+            "type": "string",
+            "enum": [
+              "platform",
+              "user"
+            ]
           }
         }
       },
@@ -8163,6 +8282,9 @@
           },
           "contentMapMode": {
             "type": "string"
+          },
+          "keySource": {
+            "type": "string"
           }
         }
       },
@@ -8285,6 +8407,9 @@
             "type": "string"
           },
           "label": {
+            "type": "string"
+          },
+          "keySource": {
             "type": "string"
           }
         }
@@ -11243,10 +11368,24 @@
           }
         }
       },
+      "QaModelPricing": {
+        "type": "object",
+        "properties": {
+          "inputPerMtok": {
+            "type": "number",
+            "format": "double"
+          },
+          "outputPerMtok": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
       "QaModelResponse": {
         "required": [
           "id",
           "inputModalities",
+          "keySource",
           "label",
           "multimodal",
           "provider",
@@ -11281,6 +11420,21 @@
           },
           "reasoning": {
             "$ref": "#/components/schemas/QaReasoningCapability"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "keyProvider": {
+            "type": "string"
+          },
+          "keyRegistered": {
+            "type": "boolean"
+          },
+          "keyHint": {
+            "type": "string"
+          },
+          "pricing": {
+            "$ref": "#/components/schemas/QaModelPricing"
           }
         }
       },

@@ -5,6 +5,7 @@ import kr.artel.orchestration.llmusage.dto.LlmUsageRecord
 import kr.artel.orchestration.llmusage.entity.LlmUsageEntity
 import kr.artel.orchestration.llmusage.entity.costOriginOf
 import kr.artel.orchestration.llmusage.repository.LlmUsageRepository
+import kr.artel.orchestration.userllmkey.entity.KeySource
 import org.springframework.stereotype.Service
 import java.time.Clock
 import java.time.Instant
@@ -50,6 +51,7 @@ class LlmUsageService(
         costEstimated = costOriginOf(costUsd, costEstimated),
         latencyMs = latencyMs,
         calledAt = requireNotNull(calledAt),
-        createdAt = receivedAt
+        createdAt = receivedAt,
+        keySource = (keySource ?: KeySource.PLATFORM).wire
     )
 }

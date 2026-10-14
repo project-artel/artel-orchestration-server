@@ -52,7 +52,7 @@ class QaRequestModelValidationIntegrationTest {
 
     @AfterEach
     fun clean(): Unit = runBlocking {
-        databaseClient.sql("UPDATE llm_model SET enabled = NOT (id IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol') OR id LIKE 'claude/%'), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol'), updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(userId)
     }

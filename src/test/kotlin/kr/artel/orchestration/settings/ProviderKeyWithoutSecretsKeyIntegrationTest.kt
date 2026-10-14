@@ -23,8 +23,8 @@ import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.publisher.Mono
 
 /**
- * `ARTEL_SECRETS_KEY` 가 없는 설치. 테스트 기본 설정이 그렇다. 세 key 모두 저장을 409 `secrets_key_missing` 으로
- * 거절하고, 아무것도 남기지 않는다.
+ * `ARTEL_SECRETS_KEY` 가 없는 설치. 테스트 기본 설정이 그렇다. 세 key 와 사용자 key 모두 저장을 409
+ * `secrets_key_missing` 으로 거절하고, 아무것도 남기지 않는다.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -64,6 +64,19 @@ class ProviderKeyWithoutSecretsKeyIntegrationTest {
             assertThat(objectMapper.readTree(body)["code"].asText()).describedAs(path).isEqualTo("secrets_key_missing")
         }
         val rows = databaseClient.sql("SELECT COUNT(*) AS n FROM platform_setting")
+            .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .one().awaitSingle()
+        assertThat(rows).isZero()
+    }
+
+    /** 사용자 key 도 같다. 저장할 수 없으니 서비스에 묻기 전에 거절한다 — 이 테스트에는 가짜 서비스가 없다. */
+    @Test
+    fun `saving a user key is 409 secrets_key_missing before the service is called`(): Unit = runBlocking {
+        val (status, body) = put("/api/auth/me/llm-keys/openai", """{"apiKey":"sk-proj-key-that-cannot-be-stored-0123456789"}""")
+
+        assertThat(status).isEqualTo(409)
+        assertThat(objectMapper.readTree(body)["code"].asText()).isEqualTo("secrets_key_missing")
+        val rows = databaseClient.sql("SELECT COUNT(*) AS n FROM user_llm_key")
             .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }
             .one().awaitSingle()
         assertThat(rows).isZero()

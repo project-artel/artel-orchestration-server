@@ -57,6 +57,21 @@ data class AnthropicProperties(
 }
 
 /**
+ * 사용자가 넣은 OpenAI API key 를 확인하는 호출이 가는 곳. key 자체는 `user_llm_key` 에만 있고 여기에는 없다.
+ */
+@ConfigurationProperties("artel.openai")
+data class OpenAiProperties(
+    /** `GET {baseUrl}/v1/models` 를 부를 주소. 테스트가 가짜 서버로 돌린다. */
+    val baseUrl: String = "https://api.openai.com",
+    /** 확인 한 번의 응답 상한. 사용자가 key 를 저장하는 요청 하나가 기다리는 시간이다. */
+    val checkTimeout: Duration = Duration.ofSeconds(15)
+) {
+    init {
+        require(baseUrl.isNotBlank()) { "artel.openai.base-url must not be blank" }
+    }
+}
+
+/**
  * agent-server 가 들고 있는 key 와 카탈로그 캐시를 비우는 호출. `artel.agent.base-url` 은 다른 agent 호출도
  * 쓰는 값이고, 그쪽은 아직 `@Value` 로 읽는다.
  */

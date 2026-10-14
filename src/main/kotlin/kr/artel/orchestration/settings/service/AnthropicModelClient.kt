@@ -19,8 +19,8 @@ private const val MAX_ERROR_LENGTH = 300
 /** `GET /v1/models` 한 번에 받을 수 있는 최대 개수. Anthropic API 의 `limit` 상한이 1000 이다. */
 private const val MODEL_PAGE_LIMIT = 1000
 
-/** 요청마다 싣는 `anthropic-version` 헤더 값. */
-private const val ANTHROPIC_VERSION = "2023-06-01"
+/** 요청마다 싣는 `anthropic-version` 헤더 값. 사용자 key 확인(`UserLlmKeyCheckClient`)도 같은 값을 싣는다. */
+internal const val ANTHROPIC_VERSION = "2023-06-01"
 
 /** Anthropic API 가 key 를 받아 준 결과. */
 sealed interface AnthropicListing {

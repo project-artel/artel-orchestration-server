@@ -127,12 +127,14 @@ class AnthropicKeyIntegrationTest {
         val member = appUserRepository.save(testAppUser("anthropic-member"))
         memberId = member.id!!
         memberSession = jwtService.issue(AuthenticatedUser(memberId.toString(), "password", "anthropic-member", "anthropic-member", null))
+        // V110 이 `claude/` 행을 켠 채로 둔다. 이 클래스의 확인 테스트는 각자 켤 행을 고르므로 모두 끈 데서 시작한다.
+        databaseClient.sql("UPDATE llm_model SET enabled = FALSE WHERE id LIKE 'claude/%'").fetch().rowsUpdated().awaitSingle()
     }
 
     @AfterEach
     fun clean(): Unit = runBlocking {
         databaseClient.sql("DELETE FROM platform_setting").fetch().rowsUpdated().awaitSingle()
-        databaseClient.sql("UPDATE llm_model SET enabled = NOT (id IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol') OR id LIKE 'claude/%'), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol'), updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
         appUserRepository.deleteById(memberId)

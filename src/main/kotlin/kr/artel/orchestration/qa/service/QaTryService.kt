@@ -36,6 +36,7 @@ import kr.artel.orchestration.testrun.service.TestRunService
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
+import kr.artel.orchestration.userllmkey.entity.KeySource
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -152,6 +153,21 @@ data class QaRunSettings(
     val promptVersion: String? = null,
     val reasoning: JsonNode? = null,
     val arch: JsonNode? = null
+)
+
+/**
+ * 이 run 이 어느 key 로 도는지(ARTEL-1037). `UserLlmKeyService.resolveForRun` 이 요청의 `keySource` 를 확인해
+ * 만든다.
+ *
+ * [QaRunSettings] 와 따로 두는 이유는 기록되는 방식이 달라서다. 그쪽은 Agent 가 확정해 돌려준 값이 남고, 이쪽은
+ * Orchestration 이 정한 [keySource] 가 run 을 만드는 순간 `key_source` 열에 남는다. [llmKey] 는 세션 개설 본문에만
+ * 실리고 어디에도 남지 않는다.
+ *
+ * @param llmKey [keySource] 가 [KeySource.USER] 일 때만 있다.
+ */
+data class QaRunKey(
+    val keySource: KeySource = KeySource.PLATFORM,
+    val llmKey: QaSessionLlmKey? = null
 )
 
 fun CreateQaTryRequest.toRunSettings(objectMapper: ObjectMapper) = QaRunSettings(
@@ -320,7 +336,8 @@ class QaTryPersistenceService(
         gameInstanceId: Long,
         startedBy: Long,
         knowledge: QaKnowledgeSettings,
-        contentMapMode: ContentMapMode = ContentMapMode.DEFAULT
+        contentMapMode: ContentMapMode = ContentMapMode.DEFAULT,
+        keySource: KeySource = KeySource.PLATFORM
     ): Pair<QaTryEntity, QaLogAppendResult> =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -331,6 +348,7 @@ class QaTryPersistenceService(
                     startedBy = startedBy,
                     status = "STARTING",
                     knowledgeScopeId = knowledge.scopeId,
+                    keySource = keySource.wire,
                     runConfig = Json.of(
                         objectMapper.writeValueAsString(
                             objectMapper.createObjectNode()
@@ -373,7 +391,8 @@ class QaTryPersistenceService(
         scenarioIds: List<Long>,
         gates: QaRunGates = QaRunGates(),
         label: String? = null,
-        gameBuildId: Long? = null
+        gameBuildId: Long? = null,
+        keySource: KeySource = KeySource.PLATFORM
     ): QaRunStarting =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -394,6 +413,7 @@ class QaTryPersistenceService(
                     startedBy = startedBy,
                     status = "STARTING",
                     label = label,
+                    keySource = keySource.wire,
                     startedAt = now
                 )
             )
@@ -407,6 +427,7 @@ class QaTryPersistenceService(
                         startedBy = startedBy,
                         status = "PENDING",
                         runConfig = gateConfig,
+                        keySource = keySource.wire,
                         startedAt = now
                     )
                 )
@@ -559,7 +580,8 @@ class QaTryService(
         userId: Long,
         settings: QaRunSettings = QaRunSettings(),
         knowledge: QaKnowledgeSettings = QaKnowledgeSettings(),
-        contentMapMode: ContentMapMode = ContentMapMode.DEFAULT
+        contentMapMode: ContentMapMode = ContentMapMode.DEFAULT,
+        runKey: QaRunKey = QaRunKey()
     ): QaTryResponse {
         val scenario = scenarioAccessService.accessibleScenario(testScenarioId, userId)
             ?: throw NotFoundException()
@@ -576,7 +598,7 @@ class QaTryService(
         }
 
         val (starting, startLog) =
-            persistence.createStarting(testScenarioId, gameInstanceId, userId, knowledge, contentMapMode)
+            persistence.createStarting(testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, runKey.keySource)
         logService.publish(startLog)
         val qaTryId = requireNotNull(starting.id)
         // agent 세션은 아직 없다 — SDK 화면에 "agent 를 기다리는 중" 을 보인다(ARTEL-836).
@@ -594,7 +616,8 @@ class QaTryService(
             language = settings.language,
             promptVersion = settings.promptVersion,
             reasoning = settings.reasoning,
-            arch = settings.arch
+            arch = settings.arch,
+            llmKey = runKey.llmKey
         )
 
         return try {
@@ -636,7 +659,8 @@ class QaTryService(
         settings: QaRunSettings = QaRunSettings(),
         force: Boolean = false,
         gates: QaRunGates = QaRunGates(),
-        label: String? = null
+        label: String? = null,
+        runKey: QaRunKey = QaRunKey()
     ): QaRunResponse {
         val scenarios = testRunService.getScenarios(testRunId, userId)
             ?: throw NotFoundException()
@@ -667,7 +691,9 @@ class QaTryService(
         }
 
         val started = persistence.createRunStarting(
-            testRunId, gameInstanceId, userId, scenarioIds, gates, label, gameBuildId = instance.lastGameBuildId
+            testRunId, gameInstanceId, userId, scenarioIds, gates, label,
+            gameBuildId = instance.lastGameBuildId,
+            keySource = runKey.keySource
         )
         // 첫 시나리오 try 가 이 run 의 자리를 대표한다 — agent 세션은 아직 없다(ARTEL-836).
         runStatusNotifier.waitingAgent(
@@ -693,7 +719,8 @@ class QaTryService(
             language = settings.language,
             promptVersion = settings.promptVersion,
             reasoning = settings.reasoning,
-            arch = settings.arch
+            arch = settings.arch,
+            llmKey = runKey.llmKey
         )
 
         return try {

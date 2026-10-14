@@ -23,13 +23,15 @@ class QaRunConfigContractTest {
         promptVersion: String? = null,
         arch: String? = null,
         projectId: String? = null,
-        gameBuildId: String? = null
+        gameBuildId: String? = null,
+        llmKey: QaSessionLlmKey? = null
     ) = QaSessionOpenRequest(
         model = model,
         reasoning = null,
         language = language,
         promptVersion = promptVersion,
         arch = arch?.let { objectMapper.readTree(it) },
+        llmKey = llmKey,
         context = QaSessionOpenContext(
             qaTryId = "7",
             gameInstanceId = "1",
@@ -87,6 +89,28 @@ class QaRunConfigContractTest {
         // Agent 는 조회를 건너뛴 채 런을 시작한다 — 세션을 여는 것 자체는 막지 않는다.
         assertThat(json).contains("\"project_id\":\"3\"")
         assertThat(json).doesNotContain("game_build_id")
+    }
+
+    @Test
+    fun `sends a user key as llm_key with snake case api_key`() {
+        val apiKey = "sk-ant-api03-user-key-0123456789abcdef-wxyz"
+        val request = openRequest(model = "claude/claude-sonnet-5-5", llmKey = QaSessionLlmKey("anthropic", apiKey))
+
+        val llmKey = objectMapper.readTree(objectMapper.writeValueAsString(request)).path("llm_key")
+
+        assertThat(llmKey.fieldNames().asSequence().toList()).containsExactly("service", "api_key")
+        assertThat(llmKey.path("service").asText()).isEqualTo("anthropic")
+        assertThat(llmKey.path("api_key").asText()).isEqualTo(apiKey)
+        // WebFlux 의 Jackson encoder 는 DEBUG 로그에 보낸 객체의 toString 을 남긴다.
+        assertThat(request.toString()).doesNotContain(apiKey).contains("QaSessionLlmKey(service=anthropic)")
+    }
+
+    @Test
+    fun `omits llm_key on a platform key run`() {
+        val json = objectMapper.writeValueAsString(openRequest(model = "openai/gpt-6-luna"))
+
+        // 필드가 없으면 agent-server 는 공용 key 를 쓴다. null 을 실으면 그 기본값을 덮는다.
+        assertThat(json).doesNotContain("llm_key", "api_key")
     }
 
     @Test

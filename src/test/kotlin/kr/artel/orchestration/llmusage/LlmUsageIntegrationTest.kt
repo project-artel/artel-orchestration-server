@@ -151,6 +151,27 @@ class LlmUsageIntegrationTest {
         assertThat(row.costEstimated).isFalse()
     }
 
+    @Test
+    fun `stores which key a call went out with, platform when the sender does not say`(): Unit = runBlocking {
+        post(
+            """{"records":[
+                ${record("QA_RUN", 21, keySource = "user")},
+                ${record("QA_RUN", 22, keySource = "platform")},
+                ${record("QA_RUN", 23)}
+            ]}"""
+        ).expectStatus().isNoContent
+
+        val keySourceByReference = llmUsageRepository.findAll().toList().associate { it.referenceId to it.keySource }
+        assertThat(keySourceByReference).isEqualTo(mapOf(21L to "user", 22L to "platform", 23L to "platform"))
+    }
+
+    @Test
+    fun `rejects a key source outside platform and user`(): Unit = runBlocking {
+        post("""{"records":[${record("QA_RUN", 31, keySource = "admin")}]}""").expectStatus().isBadRequest
+
+        assertThat(llmUsageRepository.findAll().toList()).isEmpty()
+    }
+
     private fun post(body: String): WebTestClient.ResponseSpec =
         webTestClient.post()
             .uri("/internal/llm-usage")
@@ -158,8 +179,8 @@ class LlmUsageIntegrationTest {
             .bodyValue(body)
             .exchange()
 
-    private fun record(service: String, referenceId: Long): String = """
-        {
+    private fun record(service: String, referenceId: Long, keySource: String? = null): String = """
+        {${keySource?.let { "\n            \"keySource\":\"$it\"," } ?: ""}
             "service":"$service",
             "referenceId":$referenceId,
             "provider":"anthropic",

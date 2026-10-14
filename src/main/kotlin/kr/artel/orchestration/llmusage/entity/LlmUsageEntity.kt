@@ -40,7 +40,9 @@ data class LlmUsageEntity(
     @Column("cost_estimated") val costEstimated: Boolean? = costOriginOf(costUsd, null),
     @Column("latency_ms") val latencyMs: Int,
     @Column("called_at") val calledAt: Instant,
-    @Column("created_at") val createdAt: Instant? = null
+    @Column("created_at") val createdAt: Instant? = null,
+    /** `platform`(공용 key) 또는 `user`(사용자 key). */
+    @Column("key_source") val keySource: String = "platform"
 )
 
 /**

@@ -24,7 +24,7 @@ import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
 
-/** V109 가 넣은 카탈로그와 그것을 읽는 세 경로(내부, 선택 목록, 관리). */
+/** V109 와 V110 이 넣은 카탈로그와 그것을 읽는 세 경로(내부, 선택 목록, 관리). */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class LlmModelCatalogIntegrationTest {
@@ -56,26 +56,22 @@ class LlmModelCatalogIntegrationTest {
 
     @AfterEach
     fun clean(): Unit = runBlocking {
-        databaseClient.sql("UPDATE llm_model SET enabled = NOT (id IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol') OR id LIKE 'claude/%'), updated_by = NULL")
+        databaseClient.sql("UPDATE llm_model SET enabled = id NOT IN ('bedrock/us.anthropic.claude-haiku-5-5', 'bedrock/us.openai.gpt-6.1-sol'), updated_by = NULL")
             .fetch().rowsUpdated().awaitSingle()
         appUserRepository.deleteById(adminId)
         appUserRepository.deleteById(memberId)
     }
 
     @Test
-    fun `the migration seeds nineteen rows and leaves the two new bedrock rows and the four claude rows disabled`() {
+    fun `the migrations seed twenty-three rows and leave only the two new bedrock rows disabled`() {
         val rows = internal()
 
-        assertThat(rows).hasSize(19)
-        assertThat(rows.map { it["sortOrder"].asInt() }).isEqualTo((1..19).map { it * 10 })
+        assertThat(rows).hasSize(23)
+        assertThat(rows.map { it["sortOrder"].asInt() }).isEqualTo((1..23).map { it * 10 })
         assertThat(rows.filter { !it["enabled"].asBoolean() }.map { it["id"].asText() })
             .containsExactly(
                 "bedrock/us.anthropic.claude-haiku-5-5",
-                "bedrock/us.openai.gpt-6.1-sol",
-                "claude/claude-opus-5-5",
-                "claude/claude-sonnet-5-5",
-                "claude/claude-haiku-5-5",
-                "claude/claude-fable-5-1"
+                "bedrock/us.openai.gpt-6.1-sol"
             )
     }
 
@@ -106,7 +102,8 @@ class LlmModelCatalogIntegrationTest {
             assertThat(row["reasoning"]["efforts"].map { it.asText() }).describedAs(id)
                 .containsExactly("max", "xhigh", "high", "medium", "low")
             assertThat(row["reasoning"]["defaultTokens"].isNull).describedAs(id).isTrue()
-            assertThat(row["enabled"].asBoolean()).describedAs(id).isFalse()
+            // V110 이 켠다. 공용 Anthropic key 가 없으면 공용 항목에서 빠지는 것은 `/api/qa-models` 가 정한다.
+            assertThat(row["enabled"].asBoolean()).describedAs(id).isTrue()
             val pricing = row["pricing"]
             assertThat(
                 listOf("inputPerMtok", "outputPerMtok", "cacheWritePerMtok", "cacheReadPerMtok").map { pricing[it].asDouble() }
@@ -122,6 +119,21 @@ class LlmModelCatalogIntegrationTest {
         assertThat(haikuPricing["longContextCacheWritePerMtok"].asDouble()).isEqualTo(0.625)
         assertThat(haikuPricing["longContextCacheReadPerMtok"].asDouble()).isEqualTo(0.05)
         assertThat(byId.getValue("claude/claude-opus-5-5")["pricing"].has("longContextThresholdTokens")).isFalse()
+    }
+
+    @Test
+    fun `the four gpt rows copy the openrouter openai rows and are enabled`() {
+        val byId = internal().associateBy { it["id"].asText() }
+
+        for (name in listOf("gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-terra")) {
+            val gpt = byId.getValue("gpt/$name")
+            val openRouter = byId.getValue("openai/$name")
+            assertThat(gpt["label"].asText()).describedAs(name).isEqualTo(openRouter["label"].asText() + " (OpenAI API)")
+            for (field in listOf("provider", "supportsStrictJson", "maxInputTokens", "inputModalities", "reasoning", "pricing")) {
+                assertThat(gpt[field]).describedAs("$name $field").isEqualTo(openRouter[field])
+            }
+            assertThat(gpt["enabled"].asBoolean()).describedAs(name).isTrue()
+        }
     }
 
     @Test
@@ -175,7 +187,7 @@ class LlmModelCatalogIntegrationTest {
 
     @Test
     fun `qa-models lists enabled rows only, in sort order, and follows a toggle`() {
-        val before = qaModels()
+        val before = platformQaModels()
         assertThat(before.map { it["id"].asText() }).hasSize(13)
             .doesNotContain("bedrock/us.anthropic.claude-haiku-5-5", "bedrock/us.openai.gpt-6.1-sol", "claude/claude-opus-5-5")
         assertThat(before.first()["id"].asText()).isEqualTo("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")
@@ -192,7 +204,7 @@ class LlmModelCatalogIntegrationTest {
         call(adminSession, HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"google/gemma-4-31b-it:free","enabled":false}""")
         call(adminSession, HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"bedrock/us.openai.gpt-6.1-sol","enabled":true}""")
 
-        val after = qaModels().map { it["id"].asText() }
+        val after = platformQaModels().map { it["id"].asText() }
         assertThat(after).doesNotContain("google/gemma-4-31b-it:free").contains("bedrock/us.openai.gpt-6.1-sol")
         assertThat(after).hasSize(13)
     }
@@ -200,7 +212,7 @@ class LlmModelCatalogIntegrationTest {
     @Test
     fun `admin lists every row with its route and records who changed it`() {
         val rows = call(adminSession, HttpMethod.GET, "/api/admin/llm-models")
-        assertThat(rows.size()).isEqualTo(19)
+        assertThat(rows.size()).isEqualTo(23)
         val bedrock = rows.first { it["id"].asText() == "bedrock/us.openai.gpt-6.1-sol" }
         assertThat(bedrock["route"].asText()).isEqualTo("bedrock")
         assertThat(bedrock["provider"].asText()).isEqualTo("openai")
@@ -214,7 +226,8 @@ class LlmModelCatalogIntegrationTest {
         val claude = rows.first { it["id"].asText() == "claude/claude-sonnet-5-5" }
         assertThat(claude["route"].asText()).isEqualTo("claude")
         assertThat(claude["provider"].asText()).isEqualTo("anthropic")
-        assertThat(claude["enabled"].asBoolean()).isFalse()
+        assertThat(claude["enabled"].asBoolean()).isTrue()
+        assertThat(rows.first { it["id"].asText() == "gpt/gpt-6-luna" }["route"].asText()).isEqualTo("gpt")
 
         val updated = call(adminSession, HttpMethod.PATCH, "/api/admin/llm-models", """{"id":"google/gemma-4-31b-it:free","enabled":false}""")
         assertThat(updated["id"].asText()).isEqualTo("google/gemma-4-31b-it:free")
@@ -248,6 +261,9 @@ class LlmModelCatalogIntegrationTest {
     ).toList()
 
     private fun qaModels(): List<JsonNode> = call(memberSession, HttpMethod.GET, "/api/qa-models").toList()
+
+    /** 공용 key 항목만. 사용자 key 항목은 `UserLlmKeyIntegrationTest` 가 본다. */
+    private fun platformQaModels(): List<JsonNode> = qaModels().filter { it["keySource"].asText() == "platform" }
 
     private fun call(session: String, method: HttpMethod, path: String, json: String? = null): JsonNode =
         objectMapper.readTree(request(session, method, path, json).retrieve().bodyToMono(ByteArray::class.java).block())
