@@ -6584,6 +6584,50 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-builds/{buildId}/game-functions": {
+      "get": {
+        "tags": [
+          "Game Build"
+        ],
+        "summary": "빌드가 등록한 cheat · behavior 목록",
+        "description": "SDK 가 마지막으로 보낸 `GAME_FUNCTION_CATALOG` 의 내용이다. 목록을 보낸 적 없는 빌드는 404 가 아니라 revision 0, receivedAt null, 빈 목록 둘로 답한다.",
+        "operationId": "gameFunctions",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "buildId",
+            "in": "path",
+            "description": "게임 빌드 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameFunctionCatalogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/documents/{documentId}/download-url": {
       "get": {
         "tags": [
@@ -7115,8 +7159,7 @@
             "enum": [
               "ORDERED",
               "FREE"
-            ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
+            ]
           }
         }
       },
@@ -7500,6 +7543,20 @@
           }
         }
       },
+      "JsonNode": {
+        "type": "object"
+      },
+      "TestCaseFunctions": {
+        "type": "object",
+        "properties": {
+          "cheats": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "behaviors": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        }
+      },
       "TestCaseUpdateRequest": {
         "type": "object",
         "properties": {
@@ -7517,6 +7574,9 @@
           },
           "verificationStatus": {
             "type": "string"
+          },
+          "functions": {
+            "$ref": "#/components/schemas/TestCaseFunctions"
           }
         }
       },
@@ -7569,6 +7629,9 @@
           },
           "origin": {
             "type": "string"
+          },
+          "functions": {
+            "$ref": "#/components/schemas/TestCaseFunctions"
           }
         }
       },
@@ -8428,9 +8491,6 @@
           }
         }
       },
-      "JsonNode": {
-        "type": "object"
-      },
       "SdkRegistrationRequest": {
         "required": [
           "gameVersion",
@@ -8808,6 +8868,24 @@
           "contentMapMode": {
             "type": "string"
           },
+          "cheatMode": {
+            "type": "string"
+          },
+          "behaviorMode": {
+            "type": "string"
+          },
+          "allowedCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowedBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "keySource": {
             "type": "string"
           }
@@ -8827,6 +8905,10 @@
       },
       "QaTryResponse": {
         "required": [
+          "behaviorMode",
+          "cheatMode",
+          "effectiveBehaviors",
+          "effectiveCheats",
           "gameInstanceId",
           "id",
           "startedAt",
@@ -8876,6 +8958,36 @@
           },
           "knowledgeScopeId": {
             "type": "string"
+          },
+          "cheatMode": {
+            "type": "string"
+          },
+          "behaviorMode": {
+            "type": "string"
+          },
+          "allowedCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowedBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "effectiveCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "effectiveBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "qaRunId": {
             "type": "string"
@@ -8933,6 +9045,24 @@
           },
           "label": {
             "type": "string"
+          },
+          "cheatMode": {
+            "type": "string"
+          },
+          "behaviorMode": {
+            "type": "string"
+          },
+          "allowedCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowedBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "keySource": {
             "type": "string"
@@ -9344,8 +9474,7 @@
             "enum": [
               "ORDERED",
               "FREE"
-            ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a commit keeps the stored value of the scenario it updates (by scenario_id, or by a title already in the run) and means ORDERED for a new scenario. Always present on the proposals of the run chat SSE result event."
+            ]
           }
         }
       },
@@ -9438,6 +9567,9 @@
           },
           "gameBuildId": {
             "type": "string"
+          },
+          "functions": {
+            "$ref": "#/components/schemas/TestCaseFunctions"
           }
         }
       },
@@ -11214,6 +11346,10 @@
       },
       "QaTryDetailResponse": {
         "required": [
+          "behaviorMode",
+          "cheatMode",
+          "effectiveBehaviors",
+          "effectiveCheats",
           "feedback",
           "issues",
           "qaTryId",
@@ -11274,6 +11410,36 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/QaTryToolCall"
+            }
+          },
+          "cheatMode": {
+            "type": "string"
+          },
+          "behaviorMode": {
+            "type": "string"
+          },
+          "allowedCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowedBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "effectiveCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "effectiveBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
         }
@@ -12272,8 +12438,7 @@
             "enum": [
               "ORDERED",
               "FREE"
-            ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
+            ]
           },
           "createdAt": {
             "type": "string",
@@ -12340,8 +12505,7 @@
             "enum": [
               "ORDERED",
               "FREE"
-            ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
+            ]
           },
           "stepCount": {
             "type": "integer",
@@ -12473,8 +12637,7 @@
             "enum": [
               "ORDERED",
               "FREE"
-            ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
+            ]
           },
           "steps": {
             "type": "integer",
@@ -12642,6 +12805,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "functions": {
+            "$ref": "#/components/schemas/TestCaseFunctions"
           }
         }
       },
@@ -14294,6 +14460,36 @@
       },
       "ServerSentEventContentMapStreamEvent": {
         "type": "object"
+      },
+      "GameFunctionCatalogResponse": {
+        "required": [
+          "behaviors",
+          "cheats",
+          "revision"
+        ],
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cheats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonNode"
+            }
+          },
+          "behaviors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonNode"
+            }
+          }
+        }
       },
       "DownloadTicketResponse": {
         "required": [
