@@ -2,6 +2,7 @@ package kr.artel.orchestration.testrun.service
 
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.game.entity.GameBuildEntity
@@ -62,7 +63,8 @@ class TestRunService(
         val name = request.name?.takeIf { it.isNotBlank() }
             ?: throw BadRequestException("name is required")
         // 만들 때의 최신 build 가 이 TR 의 버전이다(ARTEL-994). build 가 아직 없는 프로젝트면 비운다.
-        val latestBuild = gameBuildRepository.findFirstByProjectIdOrderByCreatedAtDescIdDesc(projectId)
+        // editor 행은 게임 버전이 아니라서 고르지 않는다(ARTEL-1014). editor 행만 있으면 비운다.
+        val latestBuild = gameBuildRepository.findNonEditorNewestFirst(projectId).firstOrNull()
         return runRepository.save(
             TestRunEntity(
                 projectId = projectId,

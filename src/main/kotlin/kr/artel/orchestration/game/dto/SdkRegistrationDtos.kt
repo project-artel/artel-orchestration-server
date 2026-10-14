@@ -22,6 +22,9 @@ import jakarta.validation.constraints.Size
  * @property gameVersion Unity Player Settings의 버전 문자열
  * @property sceneScan SDK가 등록 시점에 만든 씬 스캔 JSON. 구조는 SDK가 정하고 서버는
  * 해석 없이 게임 빌드에 그대로 저장한다. 스캔이 없는 구버전 SDK는 생략한다
+ * @property isEditor Unity editor 에서 실행 중인가(ARTEL-1014). true면 버전으로 빌드를 찾지 않고 프로젝트의
+ * editor 행 하나에 붙어 그 행의 version 과 scene_scan 을 바꾼다. editor 는 development build 와 같은 버전을
+ * 보고하므로 이 값이 없으면 둘이 한 행이 된다. 이 필드가 없는 구버전 SDK는 false 로 다룬다
  */
 data class SdkRegistrationRequest(
     @field:NotBlank
@@ -38,7 +41,9 @@ data class SdkRegistrationRequest(
     @field:Size(max = 64)
     val gameVersion: String,
 
-    val sceneScan: JsonNode? = null
+    val sceneScan: JsonNode? = null,
+
+    val isEditor: Boolean? = null
 )
 
 /**
@@ -46,11 +51,14 @@ data class SdkRegistrationRequest(
  *
  * instanceId는 SDK가 이후 웹소켓 핸드셰이크와 캡처 티켓 요청에 싣는 값이다. 등록이 그 값을
  * 알려주는 유일한 경로다.
+ *
+ * isEditor 는 gameBuildId 가 프로젝트의 editor 행이면 true 다.
  */
 data class SdkRegistrationResponse(
     val instanceId: String,
     val projectId: String,
     val instanceName: String,
     val gameBuildId: String,
-    val gameVersion: String
+    val gameVersion: String,
+    val isEditor: Boolean
 )

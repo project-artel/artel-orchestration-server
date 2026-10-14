@@ -139,6 +139,65 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(listed.map { it["gameBuild"]?.get("version")?.asText() }).containsExactly("1.1.0", null)
     }
 
+    /** editor 행은 게임 버전이 아니다(ARTEL-1014). 나중에 만들어졌어도 TR 의 버전과 트리에 들지 않는다. */
+    @Test
+    fun `TR 의 버전과 가져오기 트리는 editor build 를 건너뛴다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val now = Instant.now()
+        gameBuilds.save(
+            GameBuildEntity(projectId = projectId, version = "1.0.0", isEditor = true, createdAt = now.minusSeconds(10), updatedAt = now)
+        )
+        val editorOnly = createRun(token, projectId, "editor 만 있음")
+        assertThat(editorOnly.path("gameBuild").isNullish()).isTrue()
+
+        gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.0.0", createdAt = now.minusSeconds(5), updatedAt = now))
+        val editorNewest = gameBuilds.findEditor(projectId)!!
+        gameBuilds.save(editorNewest.copy(createdAt = now, updatedAt = now))
+        val run = createRun(token, projectId, "새 런")
+
+        assertThat(run["gameBuild"]["version"].asText()).isEqualTo("1.0.0")
+        assertThat(run["gameBuild"]["gameBuildId"].asText()).isNotEqualTo(editorNewest.id.toString())
+        val library = call(token, HttpMethod.GET, "/api/projects/$projectId/test-scenario-library").body["versions"]
+        assertThat(library.map { it["gameBuild"]?.get("gameBuildId")?.asText() })
+            .containsExactly(run["gameBuild"]["gameBuildId"].asText(), null)
+    }
+
+    /**
+     * editor 판정은 버전 이력이 아니다(ARTEL-1014). editor 에서 만든 TC 는 REGRESSION 으로 시작하지 않고, 다음
+     * build 의 직전 build 는 editor 가 아니라 그 앞의 development build 다.
+     */
+    @Test
+    fun `REGRESSION 과 판정 이력은 editor build 를 버전으로 세지 않는다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(120))
+        generate(token, projectId, buildA.gameBuildId)
+        val rowsA = rowsOf(projectId, buildA.contentMapId)
+        val verified = rowsA[0]
+        val untouched = rowsA[1]
+        testCases.save(verified.copy(verificationStatus = "VERIFIED", lastVerifiedBuildId = buildA.gameBuildId))
+
+        val editor = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60), isEditor = true)
+        val editorGenerated = generate(token, projectId, editor.gameBuildId)
+        assertThat(editorGenerated.body["regression"].asInt()).isZero()
+        val rowsEditor = rowsOf(projectId, editor.contentMapId).associateBy(::caseKeyOf)
+        testCases.save(rowsEditor.getValue(caseKeyOf(untouched)).copy(verificationStatus = "FAILED"))
+
+        val buildB = ingestedBuild(projectId, "2.0.0", Instant.now())
+        val generated = generate(token, projectId, buildB.gameBuildId)
+
+        // editor 의 FAILED 를 직전으로 봤다면 2건이다.
+        assertThat(generated.body["regression"].asInt()).isEqualTo(1)
+        val rowsB = rowsOf(projectId, buildB.contentMapId).associateBy(::caseKeyOf)
+        assertThat(rowsB.getValue(caseKeyOf(verified)).verificationStatus).isEqualTo("REGRESSION")
+        assertThat(rowsB.getValue(caseKeyOf(untouched)).verificationStatus).isEqualTo("DRAFT")
+
+        val history = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases/${verified.id}/verdict-history")
+        assertThat(history.body["items"].map { it["gameBuildId"].asLong() })
+            .containsExactly(buildA.gameBuildId, buildB.gameBuildId)
+    }
+
     @Test
     fun `앞 버전 TR 의 TS 를 가져오면 복사본이 이번 build 의 TC 를 가리킨다`(): Unit = runBlocking {
         val (userId, token) = signIn()
@@ -237,9 +296,16 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
 
     private data class IngestedBuild(val gameBuildId: Long, val contentMapId: Long)
 
-    private suspend fun ingestedBuild(projectId: Long, version: String, createdAt: Instant): IngestedBuild {
+    private suspend fun ingestedBuild(
+        projectId: Long,
+        version: String,
+        createdAt: Instant,
+        isEditor: Boolean = false,
+    ): IngestedBuild {
         val build = gameBuilds.save(
-            GameBuildEntity(projectId = projectId, version = version, createdAt = createdAt, updatedAt = createdAt)
+            GameBuildEntity(
+                projectId = projectId, version = version, isEditor = isEditor, createdAt = createdAt, updatedAt = createdAt
+            )
         )
         val map = contentMaps.save(
             ContentMapEntity(

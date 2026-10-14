@@ -64,6 +64,7 @@ class GameBuildService(
         version = version,
         label = label,
         notes = notes,
+        isEditor = isEditor,
         createdAt = createdAt,
         updatedAt = updatedAt
     )

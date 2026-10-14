@@ -200,6 +200,9 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      * VERIFIED · FAILED · REGRESSION 이면 이번 버전에서 다시 봐야 한다. REGRESSION 까지 넣는 것은, 한 버전을
      * 건너뛰어 재검증하지 않았어도 그보다 앞의 판정이 여전히 다시 봐야 할 대상이기 때문이다.
      * 앞 build 의 행은 바꾸지 않는다 — 그 행이 그 버전의 이력이다.
+     *
+     * editor 행은 버전 순서에 들지 않는다(ARTEL-1014). 직전 build 로 고르지 않고, 이 build 가 editor 행이면
+     * subquery 가 NULL 이 되어 아무 행도 바꾸지 않는다.
      */
     @Modifying
     @Query(
@@ -218,6 +221,8 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
                  JOIN game_build cur ON cur.id = :gameBuildId
                 WHERE prev.project_id = t.project_id
                   AND prev.metadata ->> 'case_key' = t.metadata ->> 'case_key'
+                  AND pb.is_editor = FALSE
+                  AND cur.is_editor = FALSE
                   AND (pb.created_at, pb.id) < (cur.created_at, cur.id)
                 ORDER BY pb.created_at DESC, pb.id DESC
                 LIMIT 1
@@ -257,7 +262,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
 
     /**
      * [testCaseId] 와 같은 `case_key` 를 가진 build 별 행을 build 순서로(ARTEL-994). `case_key` 가 없는
-     * 케이스(사람이 쓴 것)는 build 에 묶이지 않으므로 빈 결과다.
+     * 케이스(사람이 쓴 것)는 build 에 묶이지 않으므로 빈 결과다. editor 행은 게임 버전이 아니라서 빠진다(ARTEL-1014).
      */
     @Query(
         """
@@ -271,6 +276,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
           JOIN game_build gb ON gb.id = cm.game_build_id
          WHERE me.id = :testCaseId AND me.project_id = :projectId
            AND me.metadata ->> 'case_key' IS NOT NULL
+           AND gb.is_editor = FALSE
          ORDER BY gb.created_at ASC, gb.id ASC
         """
     )
