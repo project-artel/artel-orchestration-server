@@ -9167,6 +9167,14 @@
             "items": {
               "$ref": "#/components/schemas/ChatScenarioStep"
             }
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ],
+            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a commit keeps the stored value of the scenario it updates (by scenario_id, or by a title already in the run) and means ORDERED for a new scenario. Always present on the proposals of the run chat SSE result event."
           }
         }
       },
