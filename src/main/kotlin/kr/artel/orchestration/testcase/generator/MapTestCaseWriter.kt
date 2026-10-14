@@ -5,7 +5,9 @@ import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.dto.ConditionNodeResponse
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import org.springframework.stereotype.Service
 
 /**
@@ -15,23 +17,21 @@ import org.springframework.stereotype.Service
  * `specs_v2` 가 엑셀 경로로 넣은 줄을 읽었고, `capability_key` 칸(ARTEL-553)도 그 키로 지도를 되짚는
  * 길(ARTEL-555)도 **한 번도 안 쓰였다** — 오늘 쓰이는 모든 행의 그 칸이 `NULL` 이다. 여기가 그 자리다.
  *
- * ## 이 content map 의 행만 건드린다
+ * ## 정체는 하나, 버전마다 몫 하나 (ARTEL-1018)
  *
- * `metadata.origin` 에 [ORIGIN] 을, `metadata.content_map_id` 에 content map id 를 적는다. 손으로 쓴
- * 케이스와 엑셀로 들어온 케이스는 origin 표시가 없고, 갈아 끼울 때 건너뛴다. 표시가 없으면 남의 행을
- * 지우게 된다 — 두 경로가 한동안 공존하는 것이 되돌아갈 길이므로(ARTEL-556 의 대조가 통과하기 전까지)
- * 그 경계가 곧 안전장치다.
+ * `metadata.origin` 에 [ORIGIN] 을 적는다. 손으로 쓴 케이스와 엑셀로 들어온 케이스는 origin 표시가 없고,
+ * 이 writer 가 건드리지 않는다.
  *
- * **다른 content map 의 행도 남의 행이다**(ARTEL-971). 예전에는 origin 만 봐서, build A 의 content map
- * 으로 생성하면 build B 의 content map 에서 나온 행이 사라진 것으로 판정되어 지워지거나 `BROKEN` 이
- * 됐다. `content_map_id` 가 없는 origin 행은 어느 content map 의 것도 아니라 건드리지 않는다 — 이
- * writer 는 처음부터 그 칸을 적었으므로 실제로는 없어야 하고, 있다면 사람이 고친 행이다.
+ * 같은 케이스(`metadata.case_key`)는 프로젝트 안에서 `test_case` 한 행이다. build 마다 달라지는 내용과
+ * 판정은 `test_case_version` 에 남는다. 예전(ARTEL-971)에는 build 마다 행이 따로 있어, 시나리오 · 폴더 ·
+ * 판정이 버전마다 다른 id 를 가리켰다. 이 writer 는 한 build 의 버전 몫만 만들고 고치고 지운다 — 다른
+ * build 의 몫은 그 버전의 이력이라 건드리지 않는다.
  *
- * ## folder, lock, 트랜잭션은 부르는 쪽이 맡는다
+ * ## 트랜잭션은 부르는 쪽이 맡는다
  *
- * [rewrite] 는 비교와 쓰기만 한다. 새 행은 받은 folder 에 넣고, 이미 있는 행은 `copy(...)` 로 고쳐
- * `folder_id` 를 바꾸지 않는다 — 사용자가 옮긴 folder 를 유지한다.
- * [kr.artel.orchestration.testcase.service.ContentMapTestCaseService] 가 트랜잭션과 folder lock 안에서 부른다.
+ * [rewrite] 는 비교와 쓰기만 한다. 새 케이스를 folder 에 넣지 않는다 — 버전별 목록이 그 build 의 케이스를
+ * 보이고, folder 는 사용자가 모으는 곳이다(ARTEL-1023).
+ * [kr.artel.orchestration.testcase.service.ContentMapTestCaseService] 가 트랜잭션 안에서 부른다.
  *
  * ## 같은 케이스란 무엇인가
  *
@@ -53,77 +53,99 @@ import org.springframework.stereotype.Service
 class MapTestCaseWriter(
     private val generator: MapTestCaseGenerator,
     private val testCases: TestCaseRepository,
+    private val versions: TestCaseVersionRepository,
     private val objectMapper: ObjectMapper,
 ) {
 
     /**
-     * 이 content map 의 케이스를 다시 앉힌다. 새 행은 [folderId] 에 넣는다.
+     * build [gameBuildId] 의 content map 이 낸 케이스를 그 버전 몫(`test_case_version`)으로 앉힌다(ARTEL-1018).
+     *
+     * **케이스의 정체는 프로젝트 전체에서 하나다.** 같은 `case_key` 는 어느 build 의 지도가 내도 같은
+     * `test_case` 행이고, build 마다 달라지는 것은 버전 몫에 남는다. 정체가 없으면 새로 만든다. 정체의 내용 칸은 끝에서 가장 최근 버전을 비춘다(`syncIdentities`).
+     *
+     * - 새 버전 몫은 앞선 버전의 판정이 VERIFIED · FAILED · REGRESSION 이면 `REGRESSION` 으로 시작한다.
+     *   앞 버전에서 판정이 난 것을 이번 버전에서 다시 봐야 하기 때문이다. 앞 버전 몫은 바꾸지 않는다 — 그
+     *   행이 그 버전의 이력이다.
+     * - 이번 생성에 없는 이 build 의 버전 몫은 지운다. 그래서 버전이 하나도 안 남은 정체는, 시나리오가
+     *   인용하면 `BROKEN` 으로 남기고 아니면 지운다.
      *
      * 트랜잭션 안에서 불러야 한다 — 생성 · 갱신 · 삭제가 한쪽만 커밋되면 표가 서로 다른 시점을 가리킨다.
      */
-    suspend fun rewrite(projectId: Long, contentMapId: Long, folderId: Long): Result {
+    suspend fun rewrite(projectId: Long, gameBuildId: Long, contentMapId: Long): Result {
         val generated = generator.generate(contentMapId).distinctBy(::identityOf)
-        val mine = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { isMine(it, contentMapId) }
-        val existing = mine.associateBy(::identityOf)
-        // **키로 못 찾은 줄은 보이는 네 칸으로 한 번 더 찾는다**(ARTEL-617). 이 판이 오기 전에 앉은
-        // 행에는 키가 없고, 키를 못 알아본 줄을 새 줄로 치면 같은 케이스가 두 벌이 된다.
-        val byText = mine.groupBy(::visibleIdentityOf)
+        val identities = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter(::isMapOrigin)
+        val byKey = identities.mapNotNull { row -> keyOf(row)?.let { it to row } }.toMap()
+        // **키로 못 찾은 줄은 보이는 네 칸으로 한 번 더 찾는다**(ARTEL-617). 키가 생기기 전에 이 지도가
+        // 앉힌 행에는 키가 없고, 그 줄을 새 줄로 치면 같은 케이스가 두 벌이 된다.
+        val byText = identities.filter { keyOf(it) == null && isFrom(it, contentMapId) }.groupBy(::visibleIdentityOf)
+        val versionsHere = versions.findByGameBuildId(gameBuildId).toList().associateBy { it.testCaseId }
+        val previous = identities.mapNotNull { it.id }.takeIf { it.isNotEmpty() }
+            ?.let { ids -> versions.findPreviousStatuses(ids, gameBuildId).toList().associate { it.testCaseId to it.verificationStatus } }
+            .orEmpty()
         val claimed = mutableSetOf<Long>()
-        val cited = testCases.findCaseIdsCitedByScenarios(projectId).toList().toSet()
 
         var created = 0
         var updated = 0
+        var regression = 0
         for (case in generated) {
-            val prior = existing[identityOf(case)]
+            val identity = byKey[identityOf(case)]
                 ?: byText[visibleIdentityOf(case)]?.firstOrNull { it.id !in claimed }
-            prior?.id?.let(claimed::add)
+                ?: testCases.save(entityOf(projectId, contentMapId, case))
+            val testCaseId = requireNotNull(identity.id)
+            claimed += testCaseId
+            val prior = versionsHere[testCaseId]
             if (prior == null) {
-                testCases.save(entityOf(projectId, contentMapId, folderId, case))
+                val startsAs = if (previous[testCaseId] in JUDGED) REGRESSION else DRAFT
+                if (startsAs == REGRESSION) regression++
+                versions.save(versionOf(testCaseId, gameBuildId, contentMapId, case, startsAs))
                 created++
                 continue
             }
-            // **보이는 칸까지 되돌린다**(ARTEL-617). 정체가 문장에서 지도로 옮겨 갔으므로 같은
-            // 줄이어도 문구가 다를 수 있고, 되돌리지 않으면 문장 규칙을 고친 보람이 기존 행에
-            // 영영 닿지 않는다. 이 행들은 지도가 낸 것이라 지도가 원본이다.
-            val next = prior.copy(
-                scene = case.scene,
-                step = case.step,
-                precondition = case.precondition,
-                condition = conditionJson(case),
-                expectedValue = case.expected,
-                expectedItems = expectedItemsJson(case),
-                status = case.status,
-                capabilityKey = case.capabilityKey,
-                metadata = metadataOf(contentMapId, case),
+            // **보이는 칸까지 되돌린다**(ARTEL-617). 정체가 문장에서 지도로 옮겨 갔으므로 같은 줄이어도
+            // 문구가 다를 수 있고, 되돌리지 않으면 문장 규칙을 고친 보람이 기존 행에 영영 닿지 않는다.
+            val next = versionOf(
+                testCaseId, gameBuildId, contentMapId, case,
                 // 상했다고 돌려놓았던 줄이 지도에 다시 나타나면 성립한다는 뜻이다.
-                verificationStatus = if (prior.verificationStatus == BROKEN) DRAFT else prior.verificationStatus,
-            )
-            // **`Json` 은 값으로 견줄 수 없다.** 데이터 클래스의 `!=` 에 맡기면 내용이 같아도 늘
-            // 다르다고 나와, 아무것도 안 바뀐 재적재가 매번 전량을 다시 쓴다 — 실측에서 두 번째·세
-            // 번째 적재가 계속 `updated=49` 였다. 쓰기가 헛도는 것보다 나쁜 것은 그 수가 "49행이
-            // 달라졌다"고 거짓말하는 것이다.
-            if (changed(prior, next)) {
-                testCases.save(next)
+                if (prior.verificationStatus == BROKEN) DRAFT else prior.verificationStatus,
+            ).copy(id = prior.id, verifiedAt = prior.verifiedAt, createdAt = prior.createdAt)
+            if (versionChanged(prior, next)) {
+                versions.save(next)
                 updated++
             }
         }
 
-        // 아무 케이스도 자기 줄이라 하지 않은 것이 사라진 것이다. 키로도 문장으로도 안 잡혔다는 뜻이다.
+        // 이번 생성이 자기 것이라 하지 않은 이 build 의 몫이 이 버전에서 사라진 케이스다.
         var deleted = 0
         var broken = 0
-        for (stale in mine.filterNot { it.id in claimed }) {
-            if (stale.id in cited) {
-                if (stale.verificationStatus != BROKEN) {
-                    testCases.save(stale.copy(verificationStatus = BROKEN))
+        val cited = testCases.findCaseIdsCitedByScenarios(projectId).toList().toSet()
+        val gone = versionsHere.values.filterNot { it.testCaseId in claimed }
+        for (stale in gone) {
+            versions.delete(stale)
+            if (versions.countByTestCaseId(stale.testCaseId) > 0) {
+                deleted++
+                continue
+            }
+            val identity = testCases.findById(stale.testCaseId) ?: continue
+            if (stale.testCaseId in cited) {
+                if (identity.verificationStatus != BROKEN) {
+                    testCases.save(identity.copy(verificationStatus = BROKEN))
                     broken++
                 }
             } else {
-                testCases.delete(stale)
+                testCases.delete(identity)
                 deleted++
             }
         }
 
-        return Result(folderId = folderId, created = created, updated = updated, deleted = deleted, broken = broken)
+        val touched = claimed + gone.map { it.testCaseId }
+        if (touched.isNotEmpty()) versions.syncIdentities(touched)
+        return Result(
+            created = created,
+            updated = updated,
+            deleted = deleted,
+            broken = broken,
+            regression = regression,
+        )
     }
 
     /**
@@ -140,11 +162,12 @@ class MapTestCaseWriter(
      * 여기 실린 JSONB 칸이 셋(`metadata` · `condition` · `expected_items`)이라, 셋 다 빼고
      * 나머지를 견준 뒤 각각 따로 본다.
      */
-    private fun changed(prior: TestCaseEntity, next: TestCaseEntity): Boolean =
+    private fun versionChanged(prior: TestCaseVersionEntity, next: TestCaseVersionEntity): Boolean =
         prior.copy(
             metadata = next.metadata,
             condition = next.condition,
             expectedItems = next.expectedItems,
+            updatedAt = next.updatedAt,
         ) != next ||
             !sameJson(prior.metadata, next.metadata) ||
             !sameJson(prior.condition, next.condition) ||
@@ -183,10 +206,14 @@ class MapTestCaseWriter(
     private fun visibleIdentityOf(row: TestCaseEntity): String =
         listOf(row.scene, row.precondition.orEmpty(), row.step, row.expectedValue).joinToString(" ")
 
-    private fun isMine(row: TestCaseEntity, contentMapId: Long): Boolean {
-        val metadata = runCatching { objectMapper.readTree(row.metadata.asString()) }.getOrNull() ?: return false
-        if (metadata.path(ORIGIN_FIELD).asText() != ORIGIN) return false
-        val source = metadata.path(CONTENT_MAP_ID)
+    private fun isMapOrigin(row: TestCaseEntity): Boolean =
+        runCatching { objectMapper.readTree(row.metadata.asString()) }.getOrNull()
+            ?.path(ORIGIN_FIELD)?.asText() == ORIGIN
+
+    /** 키가 생기기 전의 줄을 찾을 때만 쓴다. 그 줄은 자기를 낸 content map 의 것만 견준다. */
+    private fun isFrom(row: TestCaseEntity, contentMapId: Long): Boolean {
+        val source = runCatching { objectMapper.readTree(row.metadata.asString()) }.getOrNull()
+            ?.path(CONTENT_MAP_ID) ?: return false
         return source.canConvertToLong() && source.asLong() == contentMapId
     }
 
@@ -203,9 +230,8 @@ class MapTestCaseWriter(
         ?.let { objectMapper.writeValueAsString(ConditionNodeResponse.of(it)) }
         ?.let(Json::of)
 
-    private fun entityOf(projectId: Long, contentMapId: Long, folderId: Long, case: MapTestCase) = TestCaseEntity(
+    private fun entityOf(projectId: Long, contentMapId: Long, case: MapTestCase) = TestCaseEntity(
         projectId = projectId,
-        folderId = folderId,
         scene = case.scene,
         step = case.step,
         precondition = case.precondition,
@@ -215,6 +241,28 @@ class MapTestCaseWriter(
         status = case.status,
         capabilityKey = case.capabilityKey,
         metadata = metadataOf(contentMapId, case),
+    )
+
+    private fun versionOf(
+        testCaseId: Long,
+        gameBuildId: Long,
+        contentMapId: Long,
+        case: MapTestCase,
+        verificationStatus: String,
+    ) = TestCaseVersionEntity(
+        testCaseId = testCaseId,
+        gameBuildId = gameBuildId,
+        contentMapId = contentMapId,
+        scene = case.scene,
+        step = case.step,
+        precondition = case.precondition,
+        condition = conditionJson(case),
+        expectedValue = case.expected,
+        expectedItems = expectedItemsJson(case),
+        status = case.status,
+        capabilityKey = case.capabilityKey,
+        metadata = metadataOf(contentMapId, case),
+        verificationStatus = verificationStatus,
     )
 
     /**
@@ -230,7 +278,7 @@ class MapTestCaseWriter(
      * 출처와, 이 줄이 어느 지도에서 왔는지와, 등급이 그렇게 나온 이유를 싣는다.
      *
      * `test_case` 에는 `content_map_id` 칸이 없다(ARTEL-553 이 키만 냈다). 지도가 여럿인 프로젝트에서
-     * 어느 지도의 산물인지 알아야 갈아 끼울 범위를 좁힐 수 있으므로 여기 적어 둔다. [isMine] 이 이 값으로
+     * 어느 지도의 산물인지 알아야 갈아 끼울 범위를 좁힐 수 있으므로 여기 적어 둔다. [isFrom] 이 이 값으로
      * 범위를 좁힌다(ARTEL-971).
      */
     private fun metadataOf(contentMapId: Long, case: MapTestCase): Json = Json.of(
@@ -248,13 +296,12 @@ class MapTestCaseWriter(
         )
     )
 
-    /** @property folderId 새 행을 넣은 folder. content map 을 못 찾아 아무것도 하지 않았으면 null. */
     data class Result(
-        val folderId: Long? = null,
         val created: Int = 0,
         val updated: Int = 0,
         val deleted: Int = 0,
         val broken: Int = 0,
+        val regression: Int = 0,
     )
 
     companion object {
@@ -272,5 +319,9 @@ class MapTestCaseWriter(
         const val CASE_KEY = "case_key"
         private const val BROKEN = "BROKEN"
         private const val DRAFT = "DRAFT"
+        private const val REGRESSION = "REGRESSION"
+
+        /** 앞 버전에서 이 상태였으면 새 버전 몫은 다시 봐야 할 것으로 시작한다. */
+        private val JUDGED = setOf("VERIFIED", "FAILED", REGRESSION)
     }
 }

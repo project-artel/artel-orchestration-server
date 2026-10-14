@@ -24,7 +24,9 @@ import kr.artel.orchestration.qa.service.QaAgentEnvelope
 import kr.artel.orchestration.qa.service.QaAgentInboundRouter
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
@@ -62,6 +64,7 @@ class CaseVerdictFromQaIntegrationTest {
     @Autowired private lateinit var scenarioRepository: TestScenarioRepository
     @Autowired private lateinit var testRunRepository: TestRunRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
+    @Autowired private lateinit var versions: TestCaseVersionRepository
     @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
     @Autowired private lateinit var gameBuildRepository: GameBuildRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
@@ -85,6 +88,7 @@ class CaseVerdictFromQaIntegrationTest {
         gameInstanceRepository.deleteAll()
         testRunRepository.deleteAll()
         scenarioRepository.deleteAll()
+        versions.deleteAll()
         testCaseRepository.deleteAll()
         gameBuildRepository.deleteAll()
         projectMemberRepository.deleteAll()
@@ -108,10 +112,36 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(failed.verificationStatus).isEqualTo("FAILED")
         assertThat(failed.lastVerifiedBuildId).isEqualTo(run.gameBuildId)
 
+        // 판정은 그 build 의 버전 몫에 적히고(ARTEL-1018), 정체는 그 몫을 비춘다.
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.gameBuildId)!!.verificationStatus)
+            .isEqualTo("VERIFIED")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.failedCaseId, run.gameBuildId)!!.verificationStatus)
+            .isEqualTo("FAILED")
+
         val verdicts = caseVerdictLogs(run.tryId)
         assertThat(verdicts.map { it.path("case_id").asLong() to it.path("verification_status").asText() })
             .containsExactly(run.passedCaseId to "VERIFIED", run.failedCaseId to "FAILED")
         assertThat(verdicts).allSatisfy { assertThat(it.path("game_build_id").asLong()).isEqualTo(run.gameBuildId) }
+    }
+
+    @Test
+    fun `앞 버전 몫은 새 버전에서 난 판정이 와도 그대로다`(): Unit = runBlocking {
+        val run = runningRun()
+        val testCase = testCaseRepository.findById(run.passedCaseId)!!
+        val project = testCase.projectId
+        val now = Instant.now()
+        val older = gameBuildRepository.save(
+            GameBuildEntity(projectId = project, version = "0.9.0", createdAt = now.minusSeconds(3600), updatedAt = now)
+        )
+        versions.save(TestCaseVersionEntity.snapshotOf(testCase, older.id!!).copy(verificationStatus = "VERIFIED"))
+
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = false)
+
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, older.id!!)!!.verificationStatus)
+            .isEqualTo("VERIFIED")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.gameBuildId)!!.verificationStatus)
+            .isEqualTo("FAILED")
+        assertThat(testCaseRepository.findById(run.passedCaseId)!!.verificationStatus).isEqualTo("FAILED")
     }
 
     @Test

@@ -6,12 +6,15 @@ import kotlinx.coroutines.reactor.awaitSingle
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
+import kr.artel.orchestration.testcase.dto.TestCaseFolderCloneRequest
 import kr.artel.orchestration.testcase.dto.TestCaseFolderListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseFolderRequest
 import kr.artel.orchestration.testcase.dto.TestCaseFolderResponse
 import kr.artel.orchestration.testcase.dto.parseOptionalWireId
 import kr.artel.orchestration.testcase.entity.TestCaseFolderEntity
+import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseFolderRepository
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Service
@@ -37,11 +40,23 @@ class TestCaseFolderService(
     private val projectAccessService: ProjectAccessService,
     private val transactionalOperator: TransactionalOperator,
     private val databaseClient: DatabaseClient,
+    private val items: TestCaseFolderItemRepository,
+    private val gameBuilds: GameBuildRepository,
 ) {
 
-    suspend fun list(projectId: Long, userId: Long): TestCaseFolderListResponse {
+    /**
+     * folder 목록. [gameBuildId] 를 주면 folder 마다 그 버전에서 보이는 항목 수를 함께 센다(ARTEL-1023).
+     * 다른 프로젝트 build 면 404 다.
+     */
+    suspend fun list(projectId: Long, userId: Long, gameBuildId: Long? = null): TestCaseFolderListResponse {
         requireMember(projectId, userId)
-        return TestCaseFolderListResponse(folders.findRowsByProjectId(projectId).map { it.toResponse() }.toList())
+        if (gameBuildId != null) {
+            gameBuilds.findAccessibleById(gameBuildId, projectId, userId)
+                ?: throw NotFoundException("버전을 찾을 수 없습니다.")
+        }
+        return TestCaseFolderListResponse(
+            folders.findRowsByProjectId(projectId, gameBuildId).map { it.toResponse() }.toList()
+        )
     }
 
     suspend fun create(projectId: Long, userId: Long, request: TestCaseFolderRequest): TestCaseFolderResponse {
@@ -82,7 +97,10 @@ class TestCaseFolderService(
         return responseOf(folderId)
     }
 
-    /** folder 를 지운다. 하위 folder 는 FK cascade 로 함께 지워지고, 그 안의 test case 는 folder 없음이 된다(V99). */
+    /**
+     * folder 를 지운다. 하위 folder 는 FK cascade 로 함께 지워진다(V99). 항목도 cascade 로 지워지고 케이스 자체는
+     * 남는다 — 다른 folder 에 없으면 folder 없음이 된다(V107).
+     */
     suspend fun delete(projectId: Long, userId: Long, folderId: Long) {
         requireMember(projectId, userId)
         transactionalOperator.executeAndAwait {
@@ -92,24 +110,74 @@ class TestCaseFolderService(
     }
 
     /**
-     * content map 의 folder 를 찾거나 최상위에 만든다(ARTEL-971). **[lockProjectFolders] 를 잡은
-     * 트랜잭션 안에서 불러야 한다** — 이름이 비었는지 본 뒤에 쓰므로, lock 없이 동시에 부르면 같은 이름이
-     * unique index 에 걸려 500 이 된다.
+     * folder 를 하위 folder 와 항목째 복제한다(ARTEL-1023). 항목의 순서와 버전별 숨김도 따라간다.
      *
-     * `content_map_id` 로만 찾는다. 사용자가 그 folder 를 옮기거나 이름을 바꿨어도 같은 folder 를 쓰고,
-     * 지웠으면 새로 만든다. 이름은 `"<buildName> content map"` 이고, 최상위에 같은 이름이 있으면 ` (2)`,
-     * ` (3)` … 중 처음 빈 이름을 쓴다.
+     * 복제본은 [TestCaseFolderCloneRequest.parentId] 아래, 없으면 원본과 같은 부모 아래에 둔다
+     * ([TestCaseFolderCloneRequest.toRoot] 면 최상위). 자기 하위 folder 안으로는 400 이다 — 복제하면서 늘어나는
+     * 트리를 다시 복제하게 된다. 이름이 겹치면 ` (2)`, ` (3)` … 중 처음 빈 이름을 쓴다. 하위 folder 는 원본 이름
+     * 그대로다(부모가 새것이라 겹칠 수 없다).
      */
-    suspend fun findOrCreateContentMapFolder(projectId: Long, contentMapId: Long, buildName: String): TestCaseFolderEntity {
-        folders.findByContentMapId(contentMapId)?.let { return it }
-        val baseName = "${buildName.trim()} content map"
+    suspend fun clone(
+        projectId: Long,
+        userId: Long,
+        folderId: Long,
+        request: TestCaseFolderCloneRequest,
+    ): TestCaseFolderResponse {
+        requireMember(projectId, userId)
+        val requestedParentId = parseOptionalWireId(request.parentId, "parentId")
+        val cloneId = transactionalOperator.executeAndAwait {
+            lockProjectFolders(projectId)
+            val source = requireFolder(projectId, folderId)
+            val parentId = when {
+                request.toRoot == true -> null
+                requestedParentId != null -> requestedParentId.also {
+                    requireFolder(projectId, it)
+                    if (folders.isSelfOrDescendant(folderId, it)) {
+                        throw BadRequestException("folder 를 자기 하위 folder 안으로 복제할 수 없습니다.")
+                    }
+                }
+                else -> source.parentId
+            }
+            val baseName = request.name?.let(::folderNameOf) ?: "${source.name} 사본".take(NAME_MAX_LENGTH)
+            val root = folders.save(
+                TestCaseFolderEntity(projectId = projectId, parentId = parentId, name = freeName(projectId, parentId, baseName))
+            )
+            copyTree(source, requireNotNull(root.id))
+            root.id!!
+        }
+        return responseOf(cloneId)
+    }
+
+    /** [source] 의 항목과 하위 트리를 [targetId] 아래로 복사한다. */
+    private suspend fun copyTree(source: TestCaseFolderEntity, targetId: Long) {
+        val sourceId = requireNotNull(source.id)
+        items.copyAll(sourceId, targetId)
+        folders.findByParentIdOrderByIdAsc(sourceId).toList().forEach { child ->
+            val copy = folders.save(TestCaseFolderEntity(projectId = source.projectId, parentId = targetId, name = child.name))
+            copyTree(child, requireNotNull(copy.id))
+        }
+    }
+
+    /**
+     * [parentId] 아래에 이름이 겹치지 않는 folder 를 만든다. **[lockProjectFolders] 를 잡은 트랜잭션 안에서 불러야
+     * 한다.** 버전을 folder 로 복제할 때 쓴다(ARTEL-1023).
+     */
+    suspend fun createWithFreeName(projectId: Long, parentId: Long?, baseName: String): TestCaseFolderEntity {
+        parentId?.let { requireFolder(projectId, it) }
+        val name = freeName(projectId, parentId, baseName.take(NAME_MAX_LENGTH))
+        return folders.save(TestCaseFolderEntity(projectId = projectId, parentId = parentId, name = name))
+    }
+
+    /** 같은 부모 아래 비어 있는 이름. [baseName] 이 겹치면 ` (2)`, ` (3)` … 을 붙인다. */
+    private suspend fun freeName(projectId: Long, parentId: Long?, baseName: String): String {
         var name = baseName
         var suffixNumber = 1
-        while (folders.existsSiblingName(projectId, null, name, null)) {
+        while (folders.existsSiblingName(projectId, parentId, name, null)) {
             suffixNumber++
-            name = "$baseName ($suffixNumber)"
+            val suffix = " ($suffixNumber)"
+            name = baseName.take(NAME_MAX_LENGTH - suffix.length) + suffix
         }
-        return folders.save(TestCaseFolderEntity(projectId = projectId, name = name, contentMapId = contentMapId))
+        return name
     }
 
     /** 이 프로젝트의 folder 를 돌려준다. 없거나 다른 프로젝트 것이면 404 다. */
@@ -138,13 +206,14 @@ class TestCaseFolderService(
         }
     }
 
-    private suspend fun requireMember(projectId: Long, userId: Long) {
+    /** 비멤버면 404 다. folder 항목 서비스도 같은 확인을 쓴다. */
+    suspend fun requireMember(projectId: Long, userId: Long) {
         if (!projectAccessService.isMember(projectId, userId)) {
             throw NotFoundException("프로젝트를 찾을 수 없습니다.")
         }
     }
 
-    private suspend fun responseOf(folderId: Long): TestCaseFolderResponse =
+    suspend fun responseOf(folderId: Long): TestCaseFolderResponse =
         requireNotNull(folders.findRowById(folderId)) { "방금 쓴 folder $folderId 를 다시 읽지 못했다" }.toResponse()
 
     private fun folderNameOf(raw: String?): String {

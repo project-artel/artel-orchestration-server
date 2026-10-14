@@ -12,7 +12,7 @@ import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.parseWireIds
-import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import kr.artel.orchestration.testrun.dto.ImportedScenario
 import kr.artel.orchestration.testrun.dto.ScenarioImportResponse
 import kr.artel.orchestration.testrun.dto.ScenarioLibraryResponse
@@ -34,9 +34,9 @@ import org.springframework.transaction.reactive.executeAndAwait
  * **복사한다.** 원본을 같은 id 로 연결하면 한쪽에서 고친 것이 다른 버전의 TR 까지 바뀐다. 버전마다 TR 을 다시
  * 꾸리는 것이 목적이라, 앞 버전 TR 의 TS 는 그때 모습 그대로 남아야 한다.
  *
- * **복사하면서 TC 를 이번 버전 것으로 바꿔 끼운다.** #293 이후 TC 는 build 마다 다른 행이고, step 의 `case_id`
- * 는 원본 TS 가 만들어진 build 의 행을 가리킨다. 그대로 두면 이번 버전 QA 의 판정이 앞 버전 행에 쌓인다.
- * 짝은 `metadata.case_key` 로 찾고, 같은 이유로 `step_source_capability_id` 도 `capability_key` 로 바꾼다.
+ * **`case_id` 는 그대로 둔다.** 케이스의 정체는 버전을 넘어 하나이고(ARTEL-1018), QA 판정은 실행한 build 의
+ * 버전 몫에 적힌다. 이 TR 의 build 에 몫이 없는 지도 케이스만 `unmatchedCaseIds` 로 알린다.
+ * `step_source_capability_id` 는 content map 마다 다른 id 라 이 TR build 의 같은 `capability_key` 로 바꾼다.
  */
 @Service
 class ScenarioLibraryService(
@@ -44,7 +44,7 @@ class ScenarioLibraryService(
     private val runScenarioRepository: TestRunScenarioRepository,
     private val scenarioRepository: TestScenarioRepository,
     private val gameBuildRepository: GameBuildRepository,
-    private val testCaseRepository: TestCaseRepository,
+    private val versionRepository: TestCaseVersionRepository,
     private val contentMapRepository: ContentMapRepository,
     private val capabilityRepository: CapabilityRepository,
     private val projectAccessService: ProjectAccessService,
@@ -139,12 +139,11 @@ class ScenarioLibraryService(
     }
 
     /**
-     * @property cases 원본 `case_id` → 이번 build 의 짝. @property capabilities 원본 capability id → 이번 build
-     *   content map 의 같은 `capability_key`. @property unmatchedCaseIds `case_key` 가 있는데 이번 build 에 짝이
-     *   없는 것. `case_key` 가 없는 케이스(사람이 쓴 것)는 build 에 묶이지 않아 그대로 두고 세지도 않는다.
+     * @property capabilities 원본 capability id → 이번 build content map 의 같은 `capability_key`.
+     * @property unmatchedCaseIds 지도 케이스인데 이번 build 에 버전 몫이 없는 것. 사람이 쓴 케이스는 버전에
+     *   묶이지 않아 세지 않는다.
      */
     private data class Remap(
-        val cases: Map<Long, Long>,
         val capabilities: Map<Long, Long>,
         val unmatchedCaseIds: Set<Long>,
     )
@@ -152,11 +151,10 @@ class ScenarioLibraryService(
     private suspend fun remapFor(projectId: Long, gameBuildId: Long, sources: List<TestScenarioEntity>): Remap {
         val steps = sources.flatMap { stepsOf(it.steps) }
         val caseIds = steps.mapNotNull { it.longOrNull(CASE_ID) }.toSet()
-        val cases = if (caseIds.isEmpty()) emptyMap()
-        else testCaseRepository.findTwinsInBuild(projectId, caseIds, gameBuildId).toList()
-            .associate { it.sourceId to it.targetId }
-        val keyed = if (caseIds.isEmpty()) emptySet()
-        else testCaseRepository.findKeyedIds(projectId, caseIds).toList().toSet()
+        // 케이스의 정체는 버전을 넘어 하나라(ARTEL-1018) `case_id` 는 그대로 둔다. 이 버전에 몫이 없는 지도
+        // 케이스만 알린다.
+        val missing = if (caseIds.isEmpty()) emptySet()
+        else versionRepository.findMapCaseIdsMissingIn(projectId, caseIds, gameBuildId).toList().toSet()
 
         val capabilityIds = steps.mapNotNull { it.longOrNull(CAPABILITY_ID) }.toSet()
         val targetMapId = contentMapRepository.findByGameBuildId(gameBuildId)?.id
@@ -164,14 +162,13 @@ class ScenarioLibraryService(
             val key = capabilityRepository.findById(id)?.capabilityKey ?: return@mapNotNull null
             capabilityRepository.findByContentMapIdAndCapabilityKey(targetMapId, key)?.id?.let { id to it }
         }.toMap()
-        return Remap(cases = cases, capabilities = capabilities, unmatchedCaseIds = keyed - cases.keys)
+        return Remap(capabilities = capabilities, unmatchedCaseIds = missing)
     }
 
-    /** 알지 못하는 칸까지 그대로 옮기려고 DTO 를 거치지 않고 JSON 위에서 두 칸만 바꾼다. */
+    /** 알지 못하는 칸까지 그대로 옮기려고 DTO 를 거치지 않고 JSON 위에서 한 칸만 바꾼다. */
     private fun rewriteSteps(steps: Json, remap: Remap): Json {
         val array = stepsOf(steps)
         for (step in array) {
-            step.longOrNull(CASE_ID)?.let { remap.cases[it] }?.let { step.put(CASE_ID, it) }
             step.longOrNull(CAPABILITY_ID)?.let { remap.capabilities[it] }?.let { step.put(CAPABILITY_ID, it) }
         }
         return Json.of(objectMapper.writeValueAsString(objectMapper.createArrayNode().addAll(array)))

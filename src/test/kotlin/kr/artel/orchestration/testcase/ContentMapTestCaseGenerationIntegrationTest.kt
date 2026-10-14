@@ -26,6 +26,7 @@ import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseFolderRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
@@ -78,10 +79,11 @@ class ContentMapTestCaseGenerationIntegrationTest {
     @Autowired private lateinit var ingest: ContentMapIngestService
     @Autowired private lateinit var testCases: TestCaseRepository
     @Autowired private lateinit var folders: TestCaseFolderRepository
+    @Autowired private lateinit var folderItems: TestCaseFolderItemRepository
     @Autowired private lateinit var contentMapTestCases: ContentMapTestCaseService
 
     @Test
-    fun `적재만으로는 test case 가 생기지 않고 생성하면 build 이름의 folder 에 들어간다`(): Unit = runBlocking {
+    fun `적재만으로는 test case 가 생기지 않고 생성해도 folder 를 만들지 않는다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
         val build = ingestedBuild(projectId, version = "1.0.0", label = "알파")
@@ -93,16 +95,13 @@ class ContentMapTestCaseGenerationIntegrationTest {
         assertThat(response.status).isEqualTo(200)
         val body = response.body
         assertThat(body.fieldNames().asSequence().toSet())
-            .containsExactlyInAnyOrder("folderId", "created", "updated", "deleted", "broken", "regression")
-        assertThat(body["folderId"].isTextual).isTrue()
+            .containsExactlyInAnyOrder("created", "updated", "deleted", "broken", "regression")
         assertThat(body["created"].asInt()).isPositive()
-        val folder = folders.findById(body["folderId"].asText().toLong())!!
-        assertThat(folder.name).isEqualTo("알파 content map")
-        assertThat(folder.parentId).isNull()
-        assertThat(folder.contentMapId).isEqualTo(build.contentMapId)
+        // build 별 케이스는 버전 목록이 보인다(ARTEL-1023). folder 는 사용자가 모으는 곳이다.
+        assertThat(folders.findAll().toList().filter { it.projectId == projectId }).isEmpty()
         val rows = rowsOf(projectId, build.contentMapId)
         assertThat(rows).hasSize(body["created"].asInt())
-        assertThat(rows).allSatisfy { assertThat(it.folderId).isEqualTo(folder.id) }
+        assertThat(rows.map { folderItems.findFirstFolderId(it.id!!) }).containsOnlyNulls()
     }
 
     @Test
@@ -116,21 +115,18 @@ class ContentMapTestCaseGenerationIntegrationTest {
         val generatedB = generate(token, projectId, buildB.gameBuildId).body
         val rowsB = rowsOf(projectId, buildB.contentMapId).map { it.id }
 
-        // 같은 문서라 B 도 A 와 같은 수를 새로 만든다 — 프로젝트 전체를 비교했다면 0 이었다.
+        // 같은 문서라 B 도 A 와 같은 수의 버전 몫을 새로 만든다.
         assertThat(generatedB["created"].asInt()).isEqualTo(generatedA["created"].asInt())
-        assertThat(generatedB["folderId"].asText()).isNotEqualTo(generatedA["folderId"].asText())
-        assertThat(folders.findById(generatedB["folderId"].asText().toLong())!!.name).isEqualTo("2.0.0 content map")
 
         val againA = generate(token, projectId, buildA.gameBuildId).body
         assertThat(againA["created"].asInt()).isZero()
         assertThat(againA["deleted"].asInt()).isZero()
         assertThat(againA["broken"].asInt()).isZero()
-        assertThat(againA["folderId"].asText()).isEqualTo(generatedA["folderId"].asText())
         assertThat(rowsOf(projectId, buildB.contentMapId).map { it.id }).isEqualTo(rowsB)
     }
 
     @Test
-    fun `사용자가 옮긴 test case 의 folder 는 다시 생성해도 그대로다`(): Unit = runBlocking {
+    fun `사용자가 folder 에 담은 test case 는 다시 생성해도 그 folder 에 있다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
         val build = ingestedBuild(projectId, version = "1.0.0", label = "알파")
@@ -140,41 +136,13 @@ class ContentMapTestCaseGenerationIntegrationTest {
         ).body["id"].asText()
         val moved = rowsOf(projectId, build.contentMapId).first()
         call(
-            token, HttpMethod.POST, "/api/projects/$projectId/test-cases/move",
-            """{"caseIds":["${moved.id}"],"folderId":"$userFolderId"}""",
+            token, HttpMethod.POST, "/api/projects/$projectId/test-case-folders/$userFolderId/items",
+            """{"caseIds":["${moved.id}"]}""",
         )
 
         generate(token, projectId, build.gameBuildId)
 
-        assertThat(testCases.findById(moved.id!!)!!.folderId).isEqualTo(userFolderId.toLong())
-    }
-
-    @Test
-    fun `content map folder 를 지우면 다음 생성이 새로 만들고 기존 행은 folder 없음으로 남는다`(): Unit = runBlocking {
-        val (userId, token) = signIn()
-        val projectId = newProject(userId)
-        val build = ingestedBuild(projectId, version = "1.0.0", label = "알파")
-        val firstFolderId = generate(token, projectId, build.gameBuildId).body["folderId"].asText()
-        call(token, HttpMethod.DELETE, "/api/projects/$projectId/test-case-folders/$firstFolderId")
-
-        val again = generate(token, projectId, build.gameBuildId).body
-
-        assertThat(again["folderId"].asText()).isNotEqualTo(firstFolderId)
-        assertThat(again["created"].asInt()).isZero()
-        assertThat(rowsOf(projectId, build.contentMapId)).allSatisfy { assertThat(it.folderId).isNull() }
-    }
-
-    @Test
-    fun `최상위에 같은 이름이 있으면 번호를 붙인다`(): Unit = runBlocking {
-        val (userId, token) = signIn()
-        val projectId = newProject(userId)
-        val build = ingestedBuild(projectId, version = "1.0.0", label = "알파")
-        call(token, HttpMethod.POST, "/api/projects/$projectId/test-case-folders", """{"name":"알파 content map"}""")
-        call(token, HttpMethod.POST, "/api/projects/$projectId/test-case-folders", """{"name":"알파 content map (2)"}""")
-
-        val folderId = generate(token, projectId, build.gameBuildId).body["folderId"].asText()
-
-        assertThat(folders.findById(folderId.toLong())!!.name).isEqualTo("알파 content map (3)")
+        assertThat(folderItems.findFirstFolderId(moved.id!!)).isEqualTo(userFolderId.toLong())
     }
 
     @Test
@@ -191,21 +159,19 @@ class ContentMapTestCaseGenerationIntegrationTest {
         val createdTotal = responses.sumOf { it.body["created"].asInt() }
         assertThat(responses.map { it.body["created"].asInt() }).contains(0)
         assertThat(rowsOf(projectId, build.contentMapId)).hasSize(createdTotal)
-        assertThat(responses.map { it.body["folderId"].asText() }.distinct()).hasSize(1)
     }
 
     @Test
-    fun `internal 재생성도 같은 folder 와 범위를 쓴다`(): Unit = runBlocking {
+    fun `internal 재생성도 같은 범위를 쓴다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
         val build = ingestedBuild(projectId, version = "1.0.0", label = "알파")
-        val folderId = generate(token, projectId, build.gameBuildId).body["folderId"].asText()
+        generate(token, projectId, build.gameBuildId)
 
         val result = contentMapTestCases.regenerate(build.contentMapId)
 
-        assertThat(result.folderId).isEqualTo(folderId.toLong())
         assertThat(result.created).isZero()
-        assertThat(contentMapTestCases.regenerate(999_999_999).folderId).isNull()
+        assertThat(contentMapTestCases.regenerate(999_999_999).created).isZero()
     }
 
     @Test
