@@ -107,12 +107,17 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
     )
     fun countByBuild(projectId: Long): Flow<VersionStatusCount>
 
-    /** 같은 프로젝트에서 [gameBuildId] 바로 앞의 build. 없으면 null(ARTEL-1031). */
+    /**
+     * 같은 프로젝트에서 [gameBuildId] 바로 앞의 게임 버전. 없으면 null(ARTEL-1031). editor 행은 게임 버전이 아니라서
+     * 고르지 않고, [gameBuildId] 가 editor 행이면 null 이다(ARTEL-1014).
+     */
     @Query(
         """
         SELECT prev.id FROM game_build prev
           JOIN game_build cur ON cur.id = :gameBuildId AND prev.project_id = cur.project_id
-         WHERE (prev.created_at, prev.id) < (cur.created_at, cur.id)
+         WHERE prev.is_editor = FALSE
+           AND cur.is_editor = FALSE
+           AND (prev.created_at, prev.id) < (cur.created_at, cur.id)
          ORDER BY prev.created_at DESC, prev.id DESC
          LIMIT 1
         """
