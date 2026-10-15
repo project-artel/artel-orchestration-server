@@ -34,6 +34,8 @@ import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.testrun.service.TestRunService
 import kr.artel.orchestration.testscenario.entity.toDraft
+import kr.artel.orchestration.testcase.service.CaseScope
+import kr.artel.orchestration.testcase.service.TestCaseReader
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
 import kr.artel.orchestration.userllmkey.entity.KeySource
@@ -560,6 +562,7 @@ class QaTryService(
     private val scenarioAccessService: TestScenarioAccessService,
     private val platformAccessService: PlatformAccessService,
     private val compositionService: ScenarioCompositionService,
+    private val testCaseReader: TestCaseReader,
     private val testRunService: TestRunService,
     private val instanceRepository: GameInstanceRepository,
     private val sessionManager: SessionManager,
@@ -699,13 +702,15 @@ class QaTryService(
         runStatusNotifier.waitingAgent(
             requireNotNull(started.tries.first().id), gameInstanceId, requireNotNull(started.qaRun.id)
         )
+        // 판정은 켜진 게임 버전의 내용으로 내고 그 버전에 적는다(ARTEL-1069). 빌드를 모르면 예전처럼 최신 내용이다.
+        val judgedScope = CaseScope.of(testCaseReader.judgedBuildId(instance.lastGameBuildId))
         val agentScenarios = started.tries.zip(scenarioIds).map { (qaTry, scenarioId) ->
             val entity = scenarioAccessService.accessibleScenario(scenarioId, userId)
                 ?: throw NotFoundException()
             QaAgentScenario(
                 qaTryId = requireNotNull(qaTry.id).toString(),
                 testScenarioId = scenarioId.toString(),
-                scenario = compositionService.agentScenario(entity.toDraft(objectMapper))
+                scenario = compositionService.agentScenario(entity.toDraft(objectMapper), judgedScope)
             )
         }
         val context = QaAgentSessionContext(

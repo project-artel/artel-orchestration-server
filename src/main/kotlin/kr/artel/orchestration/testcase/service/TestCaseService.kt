@@ -67,6 +67,7 @@ class TestCaseService(
     private val folderItems: TestCaseFolderItemRepository,
     // 저작이 TC 와 지도 사실을 읽는 자리(ARTEL-1064). 런이 빌드 버전을 따르면 그 버전의 것을 준다.
     private val authoringCases: AuthoringCases,
+    private val reader: TestCaseReader,
 ) {
 
     private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
@@ -77,9 +78,16 @@ class TestCaseService(
      * 거르고, 필터를 타는 경로가 없으니 그 코드는 "동작한다"고 말할 근거도 없었다.
      * 서버에서 걸러야 할 만큼 목록이 커지면 그때 실제 소비자에 맞춰 다시 넣는 편이 낫다.
      */
-    suspend fun listTestCases(projectId: Long, userId: Long): TestCaseListResponse {
+    suspend fun listTestCases(projectId: Long, userId: Long, gameBuildId: Long? = null): TestCaseListResponse {
         if (!projectAccessService.isMember(projectId, userId)) return TestCaseListResponse(emptyList())
         val folderIds = folderItems.findFirstFolders(projectId).toList().associate { it.testCaseId to it.folderId }
+        if (gameBuildId != null) {
+            // 버전을 따르는 화면(TR)은 그 버전에 든 케이스만, 그 버전 내용으로 받는다(ARTEL-1069).
+            gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: throw NotFoundException("버전을 찾을 수 없습니다.")
+            val items = reader.inScope(projectId, CaseScope.Version(gameBuildId)).asReversed()
+                .map { it.toTestCaseResponse(folderIds[it.id]) }
+            return TestCaseListResponse(items)
+        }
         val items = repository.findByProjectIdOrderByIdDesc(projectId)
             .map { it.toTestCaseResponse(folderIds[it.id]) }
             .toList()
@@ -429,8 +437,15 @@ class TestCaseService(
      *
      * 목록과 달리 `evidenceGaps`까지 낸다 — 왜 상세에만 싣는지는 [TestCaseDetailResponse] 참조.
      */
-    suspend fun getTestCase(caseId: Long, userId: Long): TestCaseDetailResponse? =
-        accessible(caseId, userId)?.toTestCaseDetailResponse(objectMapper, folderItems.findFirstFolderId(caseId))
+    /**
+     * 케이스 단건. [gameBuildId] 를 주면 그 버전으로 비춘다(ARTEL-1069) — TR 화면이 TR 버전의 내용과 판정을 본다.
+     * 그 버전에 몫이 없으면 정체 그대로다.
+     */
+    suspend fun getTestCase(caseId: Long, userId: Long, gameBuildId: Long? = null): TestCaseDetailResponse? {
+        val identity = accessible(caseId, userId) ?: return null
+        return reader.overlay(identity, CaseScope.of(gameBuildId))
+            .toTestCaseDetailResponse(objectMapper, folderItems.findFirstFolderId(caseId))
+    }
 
     /** 케이스 수정. 준 필드만 반영. verificationStatus는 enum 검증. */
     suspend fun updateTestCase(caseId: Long, userId: Long, request: TestCaseUpdateRequest): TestCaseResponse? {

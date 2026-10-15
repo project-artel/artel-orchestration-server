@@ -1,7 +1,7 @@
 package kr.artel.orchestration.testscenario.service
 
-import kotlinx.coroutines.flow.toList
-import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.service.CaseScope
+import kr.artel.orchestration.testcase.service.TestCaseReader
 import kr.artel.orchestration.testscenario.dto.AgentCase
 import kr.artel.orchestration.testscenario.dto.AgentScenario
 import kr.artel.orchestration.testscenario.dto.AgentStep
@@ -23,20 +23,19 @@ import org.springframework.stereotype.Service
  */
 @Service
 class ScenarioCompositionService(
-    private val testCaseRepository: TestCaseRepository,
+    private val testCaseReader: TestCaseReader,
 ) {
     /**
      * QA 실행용 시나리오 계약([AgentScenario])을 만든다. 직렬화는 Jackson에 맡긴다(예전엔 JsonNode를 손으로
      * 조립했으나 타입 DTO로 전환 — 팀 리뷰 피드백). [draft]는 시나리오 본문이며, 접근 검증은 호출부
      * ([kr.artel.orchestration.qa.service.QaTryService])가 이미 마친 뒤 넘긴다.
+     *
+     * 케이스 내용은 [scope] 버전의 것이다 — QA 는 켜진 게임 버전으로 판정하고 그 버전에 기록한다(ARTEL-1069).
+     * 그 버전에 없는 케이스는 판정하지 않는다: 스텝은 그대로 돌되 `case_id` 를 비워 보낸다. 기록할 자리가 없는 판정을
+     * 내게 하지 않기 위해서다.
      */
-    suspend fun agentScenario(draft: ScenarioDraft): AgentScenario {
-        val caseIds = draft.steps.mapNotNull { it.caseId }.toSet()
-        val caseById = if (caseIds.isEmpty()) {
-            emptyMap()
-        } else {
-            testCaseRepository.findAllById(caseIds).toList().associateBy { requireNotNull(it.id) }
-        }
+    suspend fun agentScenario(draft: ScenarioDraft, scope: CaseScope = CaseScope.Latest): AgentScenario {
+        val caseById = testCaseReader.byIds(draft.steps.mapNotNull { it.caseId }.toSet(), scope)
 
         val steps = draft.steps.map { step ->
             // caseId가 있는 스텝엔 그 TC 스펙(CSV: 씬/사전조건/테스트 스텝/기대 결과)을 리졸브해 동봉.
@@ -45,7 +44,7 @@ class ScenarioCompositionService(
             val tc = step.caseId?.let { caseById[it] }
             AgentStep(
                 action = step.action,
-                caseId = step.caseId,
+                caseId = tc?.id ?: step.caseId.takeIf { scope == CaseScope.Latest },
                 hint = step.hint,
                 input = step.input,
                 case = tc?.let {

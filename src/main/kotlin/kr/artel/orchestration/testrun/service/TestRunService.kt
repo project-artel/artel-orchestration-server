@@ -11,7 +11,11 @@ import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.service.CaseScope
+import kr.artel.orchestration.testcase.service.TestCaseReader
+import kr.artel.orchestration.testrun.dto.RunCasesOutsideBuildResponse
 import kr.artel.orchestration.testrun.dto.RunCoverageResponse
 import kr.artel.orchestration.testrun.dto.RunCoverageScenario
 import kr.artel.orchestration.testrun.dto.RunDeletionPreview
@@ -50,6 +54,8 @@ class TestRunService(
     private val qaRunRepository: QaRunRepository,
     private val qaTryRepository: QaTryRepository,
     private val testCaseRepository: TestCaseRepository,
+    private val testCaseReader: TestCaseReader,
+    private val gameInstanceRepository: GameInstanceRepository,
     private val gameBuildRepository: GameBuildRepository,
     private val folderService: TestRunFolderService,
     private val objectMapper: ObjectMapper,
@@ -264,14 +270,39 @@ class TestRunService(
         }
         // 런 합계는 시나리오별 수의 덧셈이 아니다 — 같은 케이스가 두 시나리오에 들어가는 것은
         // 정상이고(맥락이 다르면 다른 검증이다), 그것을 2로 세면 덮은 범위보다 커진다.
-        val covered = rows.flatMap { it.second }.toSet().size
-        val total = testCaseRepository.countByProjectId(run.projectId).toInt()
+        // 버전을 따르는 런은 그 버전의 케이스가 기준이다(ARTEL-1069). 저작이 보는 목록 · 검수와 같은 집합이다.
+        val inVersion = run.gameBuildId?.let { testCaseReader.caseIds(it) }
+        val coveredIds = rows.flatMap { it.second }.toSet()
+        val covered = (inVersion?.let { coveredIds intersect it } ?: coveredIds).size
+        val total = inVersion?.size ?: testCaseRepository.countByProjectId(run.projectId).toInt()
         return RunCoverageResponse(
             testRunId = runId.toString(),
             total = total,
             covered = covered,
             uncovered = (total - covered).coerceAtLeast(0),
             scenarios = rows.map { it.first },
+        )
+    }
+
+    /**
+     * 이 런의 시나리오가 담은 케이스 중 [gameInstanceId] 게임의 버전에 없는 것(ARTEL-1069). QA 는 그 케이스를 판정하지
+     * 않고 넘기므로, 시작하기 전에 화면이 몇 건인지 알린다. 게임 버전을 모르면 판정 버전도 정할 수 없어 빈 목록이다.
+     * 런이나 게임이 없거나 다른 프로젝트 것이면 null 이다.
+     */
+    suspend fun casesOutsideBuild(runId: Long, gameInstanceId: Long, userId: Long): RunCasesOutsideBuildResponse? {
+        val run = accessible(runId, userId) ?: return null
+        val instance = gameInstanceRepository.findById(gameInstanceId)?.takeIf { it.projectId == run.projectId } ?: return null
+        val judged = testCaseReader.judgedBuildId(instance.lastGameBuildId)
+            ?: return RunCasesOutsideBuildResponse(runId.toString(), gameBuildId = null, testCaseIds = emptyList())
+        val caseIds = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+            .mapNotNull { scenarioRepository.findById(it.testScenarioId) }
+            .flatMap { scenario -> scenario.toDraft(objectMapper).steps.mapNotNull { it.caseId } }
+            .toSortedSet()
+        val present = testCaseReader.byIds(caseIds, CaseScope.Version(judged)).keys
+        return RunCasesOutsideBuildResponse(
+            testRunId = runId.toString(),
+            gameBuildId = judged.toString(),
+            testCaseIds = caseIds.filterNot { it in present }.map { it.toString() },
         )
     }
 
