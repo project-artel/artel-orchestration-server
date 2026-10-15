@@ -6,6 +6,7 @@ import kr.artel.orchestration.testscenario.dto.AgentCase
 import kr.artel.orchestration.testscenario.dto.AgentScenario
 import kr.artel.orchestration.testscenario.dto.AgentStep
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import org.springframework.stereotype.Service
 
 /**
@@ -34,7 +35,8 @@ class ScenarioCompositionService(
      * - 케이스 내용(사전조건 · 기대 결과)은 [caseScope] — TR 이 따르는 버전이다. 시나리오를 쓸 때 본 내용 그대로 판정한다.
      *   그 버전에 몫이 없는 케이스는 정체(최신) 내용이다.
      * - 판정은 [recordedBuildId] — 켜진 게임 버전에 적힌다. 그 버전에 없는 케이스는 기록할 자리가 없으므로 판정하지
-     *   않는다: 스텝은 그대로 돌되 `case_id` 를 비워 보낸다. null 이면(게임 버전을 모름) 거르지 않는다.
+     *   않는다: 스텝은 그대로 돌되 `case_id` 를 비워 보낸다. FREE 시나리오는 스텝이 곧 케이스라 그 스텝을 뺀다.
+     *   null 이면(게임 버전을 모름) 거르지 않는다.
      */
     suspend fun agentScenario(
         draft: ScenarioDraft,
@@ -47,13 +49,19 @@ class ScenarioCompositionService(
             .filter { recordable == null || it.id in recordable }
             .associateBy { requireNotNull(it.id) }
 
-        val steps = draft.steps.map { step ->
+        val free = draft.executionMode == ScenarioExecutionMode.FREE
+        val steps = draft.steps.mapNotNull { step ->
             // caseId가 있는 스텝엔 그 TC 스펙(CSV: 씬/사전조건/테스트 스텝/기대 결과)을 리졸브해 동봉.
             // 현행 TestCase 필드를 계약 이름으로 투영(category=씬, title=테스트 스텝). TC가 스펙으로
             // 재구조화되면 이 매핑만 바꾸면 되고 계약 필드명(@JsonProperty)은 그대로다.
             val tc = step.caseId?.let { caseById[it] }
+            // FREE 는 스텝이 곧 TC 하나다. 기록할 자리가 없는 케이스는 비워 보내지 않고 뺀다 — `case_id` 가 빈
+            // FREE 항목은 Agent 가 판정할 것도 할 일도 없는 줄이 된다(ARTEL-1069).
+            if (free && step.caseId != null && tc == null && recordable != null) return@mapNotNull null
+            // FREE 는 step 이 TC 하나라 action 을 비워 둘 수 있다. 비었으면 TC 의 테스트 스텝 글을 쓴다.
+            val action = if (free && step.action.isBlank() && tc != null) tc.step else step.action
             AgentStep(
-                action = step.action,
+                action = action,
                 caseId = tc?.id ?: step.caseId.takeIf { recordable == null },
                 hint = step.hint,
                 input = step.input,
@@ -68,6 +76,6 @@ class ScenarioCompositionService(
                 },
             )
         }
-        return AgentScenario(title = draft.title, description = draft.description, steps = steps)
+        return AgentScenario(title = draft.title, description = draft.description, steps = steps, executionMode = draft.mode)
     }
 }

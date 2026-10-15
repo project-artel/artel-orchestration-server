@@ -56,6 +56,7 @@ import kr.artel.orchestration.testscenario.dto.ScenarioQuestionOption
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestionSource
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchErrorFrame
 import kr.artel.orchestration.testscenario.dto.UncoveredCasesResultFrame
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchResultFrame
@@ -719,6 +720,22 @@ class TestScenarioAgentService(
             )
         } catch (e: CancellationException) {
             throw e
+        } catch (e: InvalidFreeScenarioException) {
+            // FREE 규칙 위반은 Agent 가 고칠 수 있는 거절이다(ARTEL-1028). 무엇이 틀렸는지 그대로 돌려준다 —
+            // 메시지는 우리가 쓴 안내라 내보내도 된다.
+            session.declined += 1
+            logger.info(
+                "FREE 시나리오 되돌림 [sessionKey={}, runId={}] {}", sessionKey, session.runId, e.message,
+            )
+            sendFrame(
+                sessionKey, session,
+                SubmitScenarioResultFrame(
+                    correlationId = correlationId,
+                    accepted = false,
+                    written = session.submitted.size,
+                    detail = e.message,
+                ),
+            )
         } catch (e: Exception) {
             logger.error("시나리오 받기 실패 [sessionKey=$sessionKey]: ${e.message}")
             sendFrame(
@@ -813,10 +830,18 @@ class TestScenarioAgentService(
         val reviewed = if (pending != null) mergeVerdicts(pending.reviewed, event.reviewed) else event.reviewed
 
         progress(sessionKey, AuthoringStage.CHECKING)
-        val outcome = reconcileService.reconcile(
-            session.runId, session.projectId, session.appUserId, scenarios, reviewed,
-            save = saveHere,
-        )
+        val outcome = try {
+            reconcileService.reconcile(
+                session.runId, session.projectId, session.appUserId, scenarios, reviewed,
+                save = saveHere,
+            )
+        } catch (e: InvalidFreeScenarioException) {
+            // 결과 봉투로 온 FREE 가 규칙을 어겼다(ARTEL-1028). 턴은 이미 끝나 Agent 에게 되돌릴 자리가
+            // 없으므로, 저장하지 않았다는 것과 이유를 사용자에게 알린다.
+            progress(sessionKey, AuthoringStage.BLOCKED)
+            saveAndNotify(sessionKey, session, "시나리오를 저장하지 않았습니다 — ${e.message}")
+            return
+        }
         if (!outcome.rejected) {
             progress(sessionKey, AuthoringStage.SAVED)
             // **판 하나가 답을 남긴다**(실험). 다섯 판을 돌리고 이 줄들만 모으면 판정 표가 된다 —
@@ -957,7 +982,12 @@ class TestScenarioAgentService(
      * 저장 전이라 번호가 없다 — `scenario_id` 는 null 이고, 제목이 짝을 맞추는 열쇠다.
      */
     private fun asCurrent(authored: List<ScenarioResult>): List<CurrentScenario> =
-        authored.map { CurrentScenario(null, it.title, it.description, it.steps) }
+        authored.map {
+            CurrentScenario(
+                null, it.title, it.description, it.steps,
+                executionMode = it.executionMode ?: ScenarioExecutionMode.ORDERED,
+            )
+        }
 
     private fun repairPrompt(findings: ScenarioCoverageAudit.Findings): String = buildString {
         append("앞서 낸 시나리오는 `current_scenarios` 에 있습니다 — 아직 저장 전이라 ")
@@ -1464,10 +1494,15 @@ class TestScenarioAgentService(
             // 결과든 오류든 **턴은 여기서 끝난다.** 감시를 풀지 않으면 잠시 뒤 "멎었다"고
             // 말하게 되고, 그건 방금 답을 받은 사용자에게 거짓말이다.
             stopWatching(sessionKey)
-            streamManager.emit(sessionKey, event)
+            // 제안 카드에는 실행 방식이 늘 실린다(ARTEL-1028). Agent 가 비워 둔 결과는 수정 대상의 저장된 값을
+            // 읽어야 해서 DB 를 거치므로, 그런 결과는 아래 코루틴에서 채워 내보낸다.
+            val needsModes = event.type == "result" && session != null &&
+                event.scenarios.orEmpty().any { it.executionMode == null }
+            if (!needsModes) streamManager.emit(sessionKey, event)
 
             if (event.type == "result" && session != null) {
                 scope.launch {
+                    if (needsModes) streamManager.emit(sessionKey, withExecutionModes(session, event))
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
                     try {
                         // 결과·설명 칸은 payload 로 함께 든다(ARTEL-927). `content` 는 세 칸을 이은
@@ -1508,6 +1543,24 @@ class TestScenarioAgentService(
             logger.error("Agent WS 수신 메시지 처리 실패 [sessionKey=$sessionKey]: ${e.message}", e)
         }
     }
+
+    /**
+     * 결과 봉투의 제안마다 실행 방식을 채운다(ARTEL-1028). 읽지 못하면 받은 그대로 둔다 — 제안을
+     * 화면에 못 보내는 것보다 값 하나가 빈 편이 낫고, 커밋은 빈 값을 저장된 값 유지로 읽는다.
+     */
+    private suspend fun withExecutionModes(session: AgentSession, event: ScenarioStreamEvent): ScenarioStreamEvent =
+        try {
+            event.copy(
+                scenarios = reconcileService.withExecutionModes(
+                    session.runId, session.projectId, event.scenarios.orEmpty(),
+                ),
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn("제안의 실행 방식을 읽지 못했다 — 받은 그대로 보낸다 [runId={}]: {}", session.runId, e.message)
+            event
+        }
 
     /**
      * Agent의 `test_case_search` 프레임을 처리해 `test_case_search_result`로 답한다(ARTEL-206 Step 5).

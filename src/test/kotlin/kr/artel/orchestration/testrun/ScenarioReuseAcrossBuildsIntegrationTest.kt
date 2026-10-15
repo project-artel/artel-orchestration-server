@@ -38,6 +38,7 @@ import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.ScenarioStep
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.entity.toDraft
@@ -423,6 +424,13 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         // 게임 버전을 모르면 거르지 않고, 버전 없는 TR 은 정체(최신) 내용이다.
         val unknown = compositionService.agentScenario(draft).steps
         assertThat(unknown.map { it.caseId }).containsExactly(changed, gone, manual.id, null)
+        // FREE 는 스텝이 곧 케이스다. 게임 버전에 없는 케이스는 비우지 않고 뺀다.
+        val free = draft.copy(
+            steps = draft.steps.filter { it.caseId != null },
+            executionMode = ScenarioExecutionMode.FREE,
+        )
+        val freeSent = compositionService.agentScenario(free, CaseScope.Version(buildA.gameBuildId), buildB.gameBuildId).steps
+        assertThat(freeSent.map { it.caseId }).containsExactly(changed, manual.id)
     }
 
     /**

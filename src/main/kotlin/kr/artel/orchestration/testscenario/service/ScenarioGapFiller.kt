@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
@@ -56,6 +57,8 @@ class ScenarioGapFiller(
         var filled = 0
         for (link in runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()) {
             val scenario = scenarioRepository.findById(link.testScenarioId) ?: continue
+            // FREE 는 GAP 줄이 있을 수 없고 step 을 다시 쓰지도 않는다(ARTEL-1028).
+            if (scenario.executionMode == ScenarioExecutionMode.FREE) continue
             val draft = scenario.toDraft(objectMapper)
             val steps = draft.steps.toMutableList()
             var touched = false

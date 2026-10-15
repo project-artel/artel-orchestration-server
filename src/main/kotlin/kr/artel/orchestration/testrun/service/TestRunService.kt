@@ -264,6 +264,7 @@ class TestRunService(
                 position = link.position,
                 testScenarioId = link.testScenarioId.toString(),
                 title = draft.title,
+                executionMode = draft.mode,
                 steps = draft.steps.size,
                 cases = cases.size,
             ) to cases

@@ -7060,6 +7060,13 @@
             "items": {
               "$ref": "#/components/schemas/ScenarioStep"
             }
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
           }
         }
       },
@@ -9229,6 +9236,13 @@
             "items": {
               "$ref": "#/components/schemas/ChatScenarioStep"
             }
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
           }
         }
       },
@@ -12118,6 +12132,7 @@
       },
       "ScenarioSummary": {
         "required": [
+          "execution_mode",
           "projectId",
           "testScenarioId",
           "title"
@@ -12134,6 +12149,13 @@
           },
           "title": {
             "type": "string"
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
           },
           "createdAt": {
             "type": "string",
@@ -12182,6 +12204,7 @@
       "ScenarioLibraryScenario": {
         "required": [
           "caseCount",
+          "execution_mode",
           "stepCount",
           "testScenarioId",
           "title"
@@ -12193,6 +12216,13 @@
           },
           "title": {
             "type": "string"
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
           },
           "stepCount": {
             "type": "integer",
@@ -12301,6 +12331,7 @@
       "RunCoverageScenario": {
         "required": [
           "cases",
+          "execution_mode",
           "position",
           "steps",
           "testScenarioId",
@@ -12317,6 +12348,13 @@
           },
           "title": {
             "type": "string"
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
           },
           "steps": {
             "type": "integer",

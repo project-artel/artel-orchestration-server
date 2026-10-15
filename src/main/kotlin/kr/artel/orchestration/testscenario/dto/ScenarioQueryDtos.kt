@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.dto
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Instant
 
 /**
@@ -38,6 +39,7 @@ data class ScenarioSummary(
     val testScenarioId: Long,
     val projectId: Long,
     val title: String,
+    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
     val createdAt: Instant?,
     val updatedAt: Instant?
 )

@@ -21,6 +21,7 @@ fun TestScenarioEntity.toDraft(objectMapper: ObjectMapper): ScenarioDraft =
         title = title,
         description = description,
         steps = objectMapper.readValue<List<ScenarioStep>>(steps.asString()),
+        executionMode = executionMode,
     )
 
 /** [draft]를 세 컬럼으로 분해해 얹은 사본을 돌려준다. 저장은 호출부가 한다. */
@@ -28,5 +29,6 @@ fun TestScenarioEntity.withDraft(draft: ScenarioDraft, objectMapper: ObjectMappe
     copy(
         title = draft.title,
         description = draft.description,
+        executionMode = draft.executionMode ?: executionMode,
         steps = Json.of(objectMapper.writeValueAsString(draft.steps)),
     )
