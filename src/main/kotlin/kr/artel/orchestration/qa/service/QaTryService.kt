@@ -782,7 +782,7 @@ class QaTryService(
         readings.stopIfIdle(started.qaRun.gameInstanceId)
     }
 
-    private fun QaRunEntity.toRunResponse(tries: List<QaTryEntity>) = QaRunResponse(
+    private suspend fun QaRunEntity.toRunResponse(tries: List<QaTryEntity>) = QaRunResponse(
         id = requireNotNull(id).toString(),
         testRunId = testRunId.toString(),
         gameInstanceId = gameInstanceId.toString(),
@@ -791,7 +791,8 @@ class QaTryService(
         startedAt = startedAt,
         completedAt = completedAt,
         label = label,
-        tries = tries.map { it.toResponse() }
+        tries = tries.map { it.toResponse() },
+        judgedGameBuildId = testCaseReader.judgedBuildId(gameBuildId)?.toString()
     )
 
     /**

@@ -193,7 +193,12 @@ data class QaRunResponse(
     val completedAt: Instant?,
     /** 이 run 이 속한 실험 묶음. 요청이 안 줬으면 null 이다. */
     val label: String? = null,
-    val tries: List<QaTryResponse> = emptyList()
+    val tries: List<QaTryResponse> = emptyList(),
+    /**
+     * 이 run 의 판정이 속한 게임 빌드(ARTEL-1069). 케이스 내용도 이 버전의 것으로 판정했다. 게임 버전을 몰랐으면
+     * null 이고 그때는 최신 내용으로 판정했다. 화면이 FREE 시나리오의 케이스를 같은 버전으로 보인다.
+     */
+    val judgedGameBuildId: String? = null
 )
 
 data class QaLogResponse(

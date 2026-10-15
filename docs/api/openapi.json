@@ -2187,11 +2187,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -8870,6 +8870,9 @@
             "items": {
               "$ref": "#/components/schemas/QaTryResponse"
             }
+          },
+          "judgedGameBuildId": {
+            "type": "string"
           }
         }
       },
@@ -9841,11 +9844,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
