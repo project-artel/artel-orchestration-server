@@ -183,6 +183,18 @@ class FeatureModelSettingsIntegrationTest {
         assertThat(featureModelService.resolveAuthoringModel()).isEqualTo(ENV_MODEL)
     }
 
+    @Test
+    fun `a stored authoring model turned off later falls back to the environment one`(): Unit = runBlocking {
+        call(HttpMethod.PUT, "/api/admin/settings/models", """{"scenarioAuthoringModel":"$ENABLED","decisionModel":null}""")
+        setEnabled(ENABLED, false)
+
+        assertThat(featureModelService.resolveAuthoringModel()).isEqualTo(ENV_MODEL)
+        // 저장된 값은 지우지 않는다. 다시 켜면 그 model 로 돌아간다.
+        assertThat(featureModelService.status().scenarioAuthoringModel).isEqualTo(ENABLED)
+        setEnabled(ENABLED, true)
+        assertThat(featureModelService.resolveAuthoringModel()).isEqualTo(ENABLED)
+    }
+
     private fun settingRows(): Long = runBlocking {
         databaseClient.sql("SELECT COUNT(*) AS n FROM platform_setting WHERE setting_key LIKE 'llm.model.%'")
             .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }

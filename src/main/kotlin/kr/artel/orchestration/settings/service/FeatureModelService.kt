@@ -2,9 +2,9 @@ package kr.artel.orchestration.settings.service
 
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.llmmodel.repository.LlmModelRepository
+import kr.artel.orchestration.settings.config.AgentServerProperties
 import kr.artel.orchestration.settings.repository.PlatformSettingRepository
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
@@ -46,7 +46,7 @@ class FeatureModelService(
     private val agentCacheInvalidator: AgentCacheInvalidator,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock,
-    @Value("\${artel.agent.model:}") private val configuredModel: String
+    private val agentServerProperties: AgentServerProperties
 ) {
     private val logger = LoggerFactory.getLogger(FeatureModelService::class.java)
 
@@ -71,7 +71,17 @@ class FeatureModelService(
      * 시나리오 저작 agent 에 보낼 model. 저장된 값 → `artel.agent.model` → null(agent-server 기본값) 순이다.
      * 세션을 열 때마다 읽는다.
      */
-    suspend fun resolveAuthoringModel(): String? = storedAuthoringModel() ?: envModel()
+    suspend fun resolveAuthoringModel(): String? = storedAuthoringModel()?.takeIf { usable(it) } ?: envModel()
+
+    /**
+     * 저장한 뒤 카탈로그에서 꺼지거나 빠진 model 은 건너뛴다. agent-server 는 꺼진 model 을 거절하므로,
+     * 그대로 보내면 저작 대화가 매번 실패한다.
+     */
+    private suspend fun usable(id: String): Boolean {
+        val enabled = llmModelRepository.findById(id)?.enabled == true
+        if (!enabled) logger.warn("저장된 시나리오 저작 model 이 꺼져 있거나 카탈로그에 없어 건너뛴다 [model=$id]")
+        return enabled
+    }
 
     /**
      * 두 설정을 함께 바꾼다. null 이나 빈 문자열이면 행을 지운다. 검증에 실패하면 아무것도 바꾸지 않는다.
@@ -113,5 +123,5 @@ class FeatureModelService(
     private suspend fun storedAuthoringModel(): String? =
         platformSettingRepository.findById(SCENARIO_AUTHORING_MODEL_SETTING)?.settingValue
 
-    private fun envModel(): String? = configuredModel.takeIf { it.isNotBlank() }
+    private fun envModel(): String? = agentServerProperties.model.takeIf { it.isNotBlank() }
 }
