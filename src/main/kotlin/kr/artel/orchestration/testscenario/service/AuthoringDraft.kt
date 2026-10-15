@@ -111,6 +111,28 @@ class AuthoringDraft {
         return edited + added
     }
 
+    /**
+     * draft 만 — 승인 전 draft 만 고치는 턴(ARTEL-1074)이 Agent 에게 보일 것. 고친 것은 원래 번호, 새것은
+     * 음수 번호다. 저장된 시나리오는 싣지 않는다.
+     */
+    @Synchronized
+    fun draftsOnly(): List<CurrentScenario> =
+        entries.values.map { CurrentScenario(agentIdOf(it.draftId), it.title, it.description, it.steps) }
+
+    /**
+     * draft 만 고치는 턴에서 Agent 가 낸 번호를 고칠 draft 의 번호로 푼다. draft 의 번호면 그대로, 번호가
+     * 없으면 draft 가 하나일 때만 그 draft 다. 그 밖(저장된 시나리오 · 없는 번호 · 여럿 중 미지정)은 null 이다.
+     */
+    @Synchronized
+    fun draftTarget(submittedId: Long?): Long? {
+        val ids = entries.keys.mapNotNull(::agentIdOf)
+        return when {
+            submittedId != null -> submittedId.takeIf { it in ids }
+            ids.size == 1 -> ids.single()
+            else -> null
+        }
+    }
+
     private fun nextNewKey(): String {
         lastNew += 1
         return newKey(lastNew)
@@ -147,6 +169,12 @@ class AuthoringDraftStore(
     fun of(sessionKey: String): AuthoringDraft = drafts.computeIfAbsent(sessionKey) { AuthoringDraft() }
 
     fun list(sessionKey: String): List<DraftScenario> = drafts[sessionKey]?.list().orEmpty()
+
+    /** 승인 전 draft 가 있는가. 있으면 새 요청은 받지 않고 draft 만 고친다(ARTEL-1074). */
+    fun hasDrafts(sessionKey: String): Boolean = drafts[sessionKey]?.isEmpty() == false
+
+    /** draft 만 — [AuthoringDraft.draftsOnly]. */
+    fun draftsOnly(sessionKey: String): List<CurrentScenario> = drafts[sessionKey]?.draftsOnly().orEmpty()
 
     /** draft 가 있을 때만 겹친다. */
     fun overlay(sessionKey: String, current: List<CurrentScenario>): List<CurrentScenario> =

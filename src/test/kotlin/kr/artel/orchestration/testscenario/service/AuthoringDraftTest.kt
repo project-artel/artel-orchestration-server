@@ -100,4 +100,24 @@ class AuthoringDraftTest {
         val saved = listOf(current(7, "7"))
         assertThat(AuthoringDraft().overlay(saved)).isSameAs(saved)
     }
+
+    @Test
+    fun `draft 만 고치는 턴은 draft 만 보이고 draft 번호로만 고친다`() {
+        val draft = AuthoringDraft()
+        draft.accept(null, listOf(result("새 흐름", 1)), emptyList())
+
+        assertThat(draft.draftsOnly().map { it.scenarioId to it.title }).containsExactly(-1L to "새 흐름")
+        // 번호 없이 오면 draft 가 하나일 때만 그 draft 다.
+        assertThat(draft.draftTarget(null)).isEqualTo(-1L)
+        assertThat(draft.draftTarget(-1)).isEqualTo(-1L)
+        // 저장된 시나리오 번호나 없는 번호는 draft 가 아니다.
+        assertThat(draft.draftTarget(7)).isNull()
+        assertThat(draft.draftTarget(-9)).isNull()
+
+        draft.accept(7, listOf(result("고친 흐름", 2, id = 7)), emptyList())
+        assertThat(draft.draftsOnly().map { it.scenarioId }).containsExactly(-1L, 7L)
+        assertThat(draft.draftTarget(7)).isEqualTo(7L)
+        // draft 가 여럿이면 번호 없이는 고를 수 없다.
+        assertThat(draft.draftTarget(null)).isNull()
+    }
 }

@@ -152,16 +152,19 @@ class RunChatDraftIntegrationTest {
         return project.id!!
     }
 
-    private fun say(client: WebClient, projectId: Long, runId: Long, token: String, text: String) {
+    /** 말을 보내고 응답 상태와 본문을 돌려준다. draft 가 있는 동안의 거절(409)도 그대로 본다. */
+    private fun say(
+        client: WebClient, projectId: Long, runId: Long, token: String, text: String, draftOnly: Boolean = false,
+    ): Pair<Int, String> =
         client.post()
             .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
-            .bodyValue(mapOf("message" to text, "autoApply" to false))
-            .retrieve()
-            .toEntity(String::class.java)
-            .block(Duration.ofSeconds(5))
-    }
+            .bodyValue(mapOf("message" to text, "autoApply" to false, "draftOnly" to draftOnly))
+            .exchangeToMono { response ->
+                response.bodyToMono(String::class.java).defaultIfEmpty("").map { response.statusCode().value() to it }
+            }
+            .block(Duration.ofSeconds(5))!!
 
     private fun draft(client: WebClient, projectId: Long, runId: Long, token: String): List<DraftScenario> =
         client.get()
@@ -198,12 +201,19 @@ class RunChatDraftIntegrationTest {
         assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).isEmpty()
         assertThat(draftEvents).anyMatch { it.drafts?.map { d -> d.title } == listOf("첫 draft") }
 
-        // 둘째 턴 — Agent 는 draft 가 적용된 모습을 본다. 새 draft 는 음수 번호다.
-        say(client, projectId, runId, token, "닫는 것까지 넣어줘")
+        // draft 가 있는 동안 새 요청은 받지 않는다 — draft 만 고치는 말로 보내야 한다.
+        val refused = say(client, projectId, runId, token, "다른 시나리오도 만들어줘")
+        assertThat(refused.first).isEqualTo(409)
+        assertThat(refused.second).contains("draft_pending")
+        assertThat(inboundFrames).noneMatch { it.contains("다른 시나리오도") }
+
+        // 둘째 턴 — draft 만 고치는 말. Agent 는 draft 만 본다. 새 draft 는 음수 번호다.
+        assertThat(say(client, projectId, runId, token, "닫는 것까지 넣어줘", draftOnly = true).first).isEqualTo(200)
         Thread.sleep(1500)
         val turn = objectMapper.readTree(inboundFrames.last { it.contains("닫는 것까지") })
         assertThat(turn.get("current_scenarios").map { it.get("scenario_id").asLong() to it.get("title").asText() })
             .containsExactly(-1L to "첫 draft")
+        assertThat(turn.toString()).contains("승인 전 draft 만 고친다")
 
         // 음수 번호로 돌아온 것은 **같은 draft** 를 고친 것이다. 새것이 하나 더 생기지 않는다.
         val second = draft(client, projectId, runId, token)
@@ -227,6 +237,11 @@ class RunChatDraftIntegrationTest {
         assertThat(scenarioRepository.findById(links.single().testScenarioId)!!.title).isEqualTo("다시 쓴 draft")
         Thread.sleep(300)
         assertThat(draftEvents.last().drafts).isEmpty()
+
+        // draft 가 없으면 draft 만 고치는 말은 받지 않고, 보통 말은 다시 받는다.
+        val noDraft = say(client, projectId, runId, token, "고쳐줘", draftOnly = true)
+        assertThat(noDraft.first).isEqualTo(409)
+        assertThat(noDraft.second).contains("no_draft")
 
         stream.dispose()
     }

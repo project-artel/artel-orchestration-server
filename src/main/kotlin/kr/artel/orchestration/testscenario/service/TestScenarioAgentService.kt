@@ -139,6 +139,7 @@ class TestScenarioAgentService(
         autoApply: Boolean,
         currentScenarios: List<CurrentScenario>,
         answer: ScenarioQuestionAnswer? = null,
+        draftOnly: Boolean = false,
     ) {
         // 되묻는 질문에 대한 답이면 **무엇에 대한 답인지 함께 실어 보낸다**(ARTEL-487). 보기 id만
         // 보내면 모델은 그것이 무슨 뜻인지 모른다 — 질문과 보기 문구를 여기서 다시 붙인다.
@@ -201,6 +202,9 @@ class TestScenarioAgentService(
             pending != null && userInput.isNotBlank() ->
                 "(직전에 물어본 것: ${pending.text})\n\n$userInput"
             else -> userInput
+        }.let { input ->
+            // draft 만 고치는 턴(ARTEL-1074)은 모델에게 그 범위를 말해 둔다. 대화에는 남기지 않는다.
+            if (draftOnly && input.isNotBlank()) "$DRAFT_ONLY_NOTE\n\n$input" else input
         }
         // **보낼 말이 없으면 보내지 않는다**(ARTEL-487). 이미 답한 질문의 보기를 한 번 더 누르면
         // 여기까지 온다 — 새로고침한 화면이 그 버튼을 되살려 주기 때문이다(런 150). 그때 빈 턴을
@@ -239,6 +243,7 @@ class TestScenarioAgentService(
         if (existing != null) {
             // 토글을 매 턴 반영해 대화 중 변경도 다음 결과부터 적용되게 한다.
             existing.autoApply = autoApply
+            existing.draftOnly = draftOnly
             // **새 요청이면 지난 턴에 받아 둔 것을 비운다.** 재작성 턴은 이 길로 오지 않으므로(그쪽은
             // [sendTurn] 을 직접 부른다) 앞서 받아 둔 것이 그대로 살아 있다.
             existing.submitted.clear()
@@ -247,7 +252,7 @@ class TestScenarioAgentService(
             existing.cancelled.set(false)
             sendTurn(sessionKey, existing, turnInput, currentScenarios)
         } else {
-            openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios)
+            openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly)
         }
         // 보낸 뒤에 알린다. 세션 오픈이나 턴 전송이 실패하면 "보냈다"가 거짓이 되고,
         // 그 경우 사용자는 진행 중인 것처럼 보이는 화면 앞에서 오지 않을 답을 기다리게 된다.
@@ -427,6 +432,7 @@ class TestScenarioAgentService(
         userInput: String,
         autoApply: Boolean,
         currentScenarios: List<CurrentScenario>,
+        draftOnly: Boolean = false,
     ) {
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
@@ -489,6 +495,7 @@ class TestScenarioAgentService(
             .bodyToMono(AgentSessionOpenResponse::class.java)
             .awaitSingle()
         openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply, version)
+        sessions[sessionKey]?.draftOnly = draftOnly
         // 진행률의 분모. 흐름 하나가 시나리오 하나가 되는 것이 계산의 뜻이므로 그 수를 쓴다.
         sessions[sessionKey]?.expected = flows.size.takeIf { it > 0 }
     }
@@ -681,7 +688,26 @@ class TestScenarioAgentService(
         correlationId: String?,
     ) {
         try {
-            val raw = objectMapper.treeToValue(node.path("scenario"), ScenarioResult::class.java)
+            val submittedRaw = objectMapper.treeToValue(node.path("scenario"), ScenarioResult::class.java)
+            // draft 만 고치는 턴(ARTEL-1074)은 draft 가 아닌 것을 받지 않는다. 번호 없이 오면 draft 가
+            // 하나일 때만 그 draft 로 읽는다 — 여럿이면 어느 것인지 모델이 골라야 한다.
+            val raw = if (!session.draftOnly) submittedRaw else {
+                val target = drafts.of(sessionKey).draftTarget(submittedRaw.scenarioId)
+                if (target == null) {
+                    session.declined += 1
+                    sendFrame(
+                        sessionKey, session,
+                        SubmitScenarioResultFrame(
+                            correlationId = correlationId,
+                            accepted = false,
+                            written = session.submitted.size,
+                            detail = DRAFT_ONLY_REFUSAL,
+                        ),
+                    )
+                    return
+                }
+                submittedRaw.copy(scenarioId = target)
+            }
             // **음수 번호는 draft 의 새 시나리오다**(ARTEL-1074). 저장된 적이 없으니 검수와 저장에는
             // 새것으로 넘긴다 — 음수 번호로 저장 경로에 들어가면 없는 시나리오를 고치려 든다.
             val scenario = if ((raw.scenarioId ?: 0) < 0) raw.copy(scenarioId = null) else raw
@@ -1874,6 +1900,11 @@ class TestScenarioAgentService(
          */
         @Volatile var declined: Int = 0,
         /**
+         * 이 턴은 승인 전 draft 만 고친다(ARTEL-1074). 새 시나리오는 받지 않고, 번호 없이 오면 draft 가
+         * 하나일 때만 그 draft 로 읽는다. 매 턴 갱신한다.
+         */
+        @Volatile var draftOnly: Boolean = false,
+        /**
          * 시나리오를 **한 번에 하나씩** 받게 하는 잠금.
          *
          * 프레임마다 코루틴을 띄우므로 앞엣것을 검수하는 동안 뒤엣것이 들어온다. 그러면 [submitted]
@@ -1944,6 +1975,14 @@ class TestScenarioAgentService(
     )
 
     companion object {
+        /** draft 만 고치는 턴(ARTEL-1074)에 모델에게 붙이는 범위. */
+        const val DRAFT_ONLY_NOTE =
+            "(지금은 승인 전 draft 만 고친다. current_scenarios 에 있는 draft 의 scenario_id 로 고치고, 새 시나리오는 만들지 않는다.)"
+
+        /** draft 만 고치는 턴에서 draft 가 아닌 것을 낸 모델에게 돌려주는 말. */
+        const val DRAFT_ONLY_REFUSAL =
+            "지금은 승인 전 draft 만 고칠 수 있습니다. current_scenarios 에 있는 draft 의 scenario_id 로 다시 내 주세요. 새 시나리오는 만들 수 없습니다."
+
         /**
          * 재작성을 몇 번까지 시킬지.
          *

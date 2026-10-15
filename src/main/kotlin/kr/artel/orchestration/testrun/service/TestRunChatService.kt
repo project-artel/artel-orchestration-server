@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testrun.service
 
 import com.fasterxml.jackson.core.type.TypeReference
+import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -79,6 +80,16 @@ class TestRunChatService(
     suspend fun relay(appUserId: Long, runId: Long, message: RunChatMessage) {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
         val key = sessionKey(appUserId, runId)
+        // **승인 전 draft 가 있으면 새 요청은 받지 않는다**(ARTEL-1074). draft 를 그대로 둔 채 새 요청을 받으면
+        // 고칠 대상이 draft 인지 저장된 시나리오인지 갈리고, 결과가 엉뚱한 draft 에 겹친다. 그동안의 말은
+        // draft 만 고치는 길([RunChatMessage.draftOnly])로 받는다.
+        val pending = drafts.hasDrafts(key)
+        if (pending && !message.draftOnly) {
+            throw ConflictException("승인하지 않은 draft 가 있습니다. draft 를 승인하거나 버린 뒤 새 요청을 보내 주세요.", DRAFT_PENDING)
+        }
+        if (!pending && message.draftOnly) {
+            throw ConflictException("고칠 draft 가 없습니다.", NO_DRAFT)
+        }
         val saved = runScenarioReader.currentScenarios(runId)
         agentService.sendMessage(
             sessionKey = key,
@@ -86,12 +97,19 @@ class TestRunChatService(
             projectId = run.projectId,
             appUserId = appUserId,
             userInput = message.message,
-            autoApply = message.autoApply,
+            // draft 만 고치는 말의 결과는 늘 draft 에 남는다.
+            autoApply = message.autoApply && !message.draftOnly,
             // **draft 위에서 이어 고친다**(ARTEL-1074). 자동저장을 끈 채 다시 말하면 Agent 는 draft 가
             // 적용된 모습을 현재 상태로 본다 — "이건 빼 줘" 가 draft 에 먹어야 한다. 자동저장을 켠
             // 턴은 저장된 것만 본다. 그 턴의 결과는 바로 저장되는데, 저장 경로는 draft 번호를 모른다.
-            currentScenarios = if (message.autoApply) saved else drafts.overlay(key, saved),
+            // draft 만 고치는 말은 draft 만 보인다 — 저장된 것을 고칠 길이 없어야 범위가 지켜진다.
+            currentScenarios = when {
+                message.draftOnly -> drafts.draftsOnly(key)
+                message.autoApply -> saved
+                else -> drafts.overlay(key, saved)
+            },
             answer = message.answer,
+            draftOnly = message.draftOnly,
         )
     }
 
@@ -208,4 +226,12 @@ class TestRunChatService(
     }
 
     private fun sessionKey(appUserId: Long, runId: Long) = "$appUserId:$runId"
+
+    companion object {
+        /** 승인 전 draft 가 있어 새 요청을 받지 않는다(ARTEL-1074). 화면은 draft 만 고치는 입력으로 안내한다. */
+        const val DRAFT_PENDING = "draft_pending"
+
+        /** draft 만 고치는 말인데 고칠 draft 가 없다. */
+        const val NO_DRAFT = "no_draft"
+    }
 }
