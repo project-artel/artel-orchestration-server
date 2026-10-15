@@ -50,15 +50,17 @@ class ResourceQueryService(
         "case" -> {
             // 버전을 넘어 찾는다 — 사용자가 말하는 케이스가 지금 버전에 없는 옛 케이스일 수 있다.
             val like = "%${text.trim()}%"
+            // "TC 359" · "#359" · "359" 처럼 번호로 말하면 그 번호의 케이스다. 글자로 찾으면 번호는 맞을 리 없다.
+            val number = NUMBER.find(text)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
             val rows = rows(
                 """
-                SELECT DISTINCT t.id FROM test_case t
+                SELECT DISTINCT t.id, (t.id = :number) AS exact FROM test_case t
                   LEFT JOIN test_case_version v ON v.test_case_id = t.id
                  WHERE t.project_id = :projectId
-                   AND (:text = '%%' OR t.step ILIKE :text OR t.scene ILIKE :text OR t.expected_value ILIKE :text
+                   AND (t.id = :number OR :text = '%%' OR t.step ILIKE :text OR t.scene ILIKE :text OR t.expected_value ILIKE :text
                         OR v.step ILIKE :text OR v.expected_value ILIKE :text)
-                 ORDER BY t.id LIMIT :limit
-                """, "projectId" to scope.projectId, "text" to like, "limit" to limit,
+                 ORDER BY exact DESC, t.id LIMIT :limit
+                """, "projectId" to scope.projectId, "text" to like, "number" to number, "limit" to limit,
             )
             val ids = rows.map { it.long("id") }
             ResourceAnswer(caseItems(scope, ids))
@@ -341,9 +343,19 @@ class ResourceQueryService(
           JOIN test_scenario s ON s.id = t.test_scenario_id WHERE t.qa_run_id = :id ORDER BY t.id
         """, "id" to qaRunId,
     ).map {
+        // 실패한 검증을 요약에 바로 싣는다. 시도 상태가 COMPLETED 여도 케이스는 실패했을 수 있다 — 따로 더 읽어야
+        // 보이게 두면 "다 잘 끝났다" 로 요약된다(실측: QA 17).
+        val failedCases = rows(
+            """
+            SELECT payload ->> 'case_id' AS case_id, payload ->> 'message' AS message FROM qa_log
+             WHERE qa_try_id = :id AND type = 'STATUS' AND payload ->> 'status' = 'FAILED'
+               AND payload ->> 'is_verification' = 'true' ORDER BY (payload ->> 'step')::int LIMIT 10
+            """, "id" to it.long("id"),
+        ).map { failed -> mapOf("case_ref" to failed.str("case_id")?.let { c -> "[[tc:$c]]" }, "reason" to failed.str("message")?.take(STEP_TEXT)) }
         mapOf("qa_try_id" to it["id"], "scenario" to it["title"], "status" to it["status"],
             "cases" to "${it["cases_passed"] ?: "?"}/${it["cases_total"] ?: "?"}",
-            "steps" to "${it["steps_passed"] ?: "?"}/${it["steps_total"] ?: "?"}")
+            "steps" to "${it["steps_passed"] ?: "?"}/${it["steps_total"] ?: "?"}",
+            "failed_cases" to failedCases)
     }
 
     private suspend fun qaTry(scope: Scope, id: Long): ResourceAnswer {
@@ -405,6 +417,9 @@ class ResourceQueryService(
         const val DEFAULT_LIMIT = 10
         const val MAX_LIMIT = 30
         const val STEP_TEXT = 300
+
+        /** 말 속의 번호. 검색어가 "TC 359" 이면 359 다. */
+        private val NUMBER = Regex("""^\s*(?:tc|TC|#)?\s*(\d+)\s*$""")
 
         /** 종류마다 따라갈 수 있는 관계. 결과의 `relations` 와 잘못 부른 때의 안내가 같은 표를 쓴다. */
         val RELATIONS: Map<String, List<String>> = mapOf(
