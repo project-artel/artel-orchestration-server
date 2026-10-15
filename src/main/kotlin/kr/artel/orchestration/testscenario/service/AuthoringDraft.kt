@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
 import kr.artel.orchestration.testscenario.dto.DraftScenario
 import kr.artel.orchestration.testscenario.dto.DraftScenarioEdit
@@ -39,9 +40,16 @@ class AuthoringDraft {
      *   자리에 들고, 나머지는 새 draft 가 된다.
      * @param absorbed 이 시나리오로 합쳐질 번호. 음수(draft 의 새것)는 지금 draft 에서 뺀다 — 저장된
      *   적이 없으니 런에서 걷어낼 것도 없다.
+     * @param savedSteps 기존 시나리오를 고친 것이면 그 시나리오의 지금 스텝. 처음 고칠 때 화면이 견줄
+     *   기준([DraftScenario.baseSteps])이 된다. 이미 draft 가 있으면 그 draft 가 기준이다.
      */
     @Synchronized
-    fun accept(targetId: Long?, checked: List<ScenarioResult>, absorbed: List<Long>): List<DraftScenario> {
+    fun accept(
+        targetId: Long?,
+        checked: List<ScenarioResult>,
+        absorbed: List<Long>,
+        savedSteps: List<ChatScenarioStep>? = null,
+    ): List<DraftScenario> {
         if (checked.isEmpty()) return emptyList()
         val firstKey = when {
             targetId != null && targetId > 0 -> editKey(targetId)
@@ -52,6 +60,7 @@ class AuthoringDraft {
         absorbed.filter { it < 0 }.map { newKey(-it) }.filter { it != firstKey }.forEach { entries.remove(it) }
 
         val placed = mutableListOf<DraftScenario>()
+        val base = entries[firstKey]?.steps ?: savedSteps?.takeIf { firstKey.startsWith(EDIT) }
         checked.forEachIndexed { index, scenario ->
             val key = if (index == 0) firstKey else nextNewKey()
             val draft = DraftScenario(
@@ -61,6 +70,7 @@ class AuthoringDraft {
                 description = scenario.description,
                 steps = scenario.steps,
                 absorbedScenarioIds = if (index == 0) kept else emptyList(),
+                baseSteps = if (index == 0) base else null,
             )
             entries[key] = draft
             placed += draft

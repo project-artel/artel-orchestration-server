@@ -44,6 +44,7 @@ import kr.artel.orchestration.testscenario.dto.AuthoringFlow
 import kr.artel.orchestration.testscenario.dto.AuthoringHop
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
+import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
 import kr.artel.orchestration.testscenario.dto.ReviewedCases
 import kr.artel.orchestration.testscenario.dto.CaseFactsResultFrame
@@ -244,6 +245,7 @@ class TestScenarioAgentService(
             // 토글을 매 턴 반영해 대화 중 변경도 다음 결과부터 적용되게 한다.
             existing.autoApply = autoApply
             existing.draftOnly = draftOnly
+            existing.shownSteps = shownStepsOf(currentScenarios)
             // **새 요청이면 지난 턴에 받아 둔 것을 비운다.** 재작성 턴은 이 길로 오지 않으므로(그쪽은
             // [sendTurn] 을 직접 부른다) 앞서 받아 둔 것이 그대로 살아 있다.
             existing.submitted.clear()
@@ -496,6 +498,7 @@ class TestScenarioAgentService(
             .awaitSingle()
         openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply, version)
         sessions[sessionKey]?.draftOnly = draftOnly
+        sessions[sessionKey]?.shownSteps = shownStepsOf(currentScenarios)
         // 진행률의 분모. 흐름 하나가 시나리오 하나가 되는 것이 계산의 뜻이므로 그 수를 쓴다.
         sessions[sessionKey]?.expected = flows.size.takeIf { it > 0 }
     }
@@ -672,7 +675,10 @@ class TestScenarioAgentService(
                     refused += "'${raw.title}' — ${outcome.findings.rejectionMessage()}"
                     continue
                 }
-                drafts.of(sessionKey).accept(raw.scenarioId, outcome.checked.ifEmpty { listOf(scenario) }, emptyList())
+                drafts.of(sessionKey).accept(
+                    raw.scenarioId, outcome.checked.ifEmpty { listOf(scenario) }, emptyList(),
+                    raw.scenarioId?.let { session.shownSteps[it] },
+                )
             }
         }
         drafts.publish(sessionKey)
@@ -680,6 +686,10 @@ class TestScenarioAgentService(
             saveAndNotify(sessionKey, session, "검수를 지나지 못해 draft 에 담지 않은 것이 있습니다.\n" + refused.joinToString("\n"))
         }
     }
+
+    /** 저장된 시나리오(양수 번호)의 스텝만. draft(음수)는 draft 저장소가 기준을 든다. */
+    private fun shownStepsOf(currentScenarios: List<CurrentScenario>): Map<Long, List<ChatScenarioStep>> =
+        currentScenarios.mapNotNull { scenario -> scenario.scenarioId?.takeIf { it > 0 }?.let { it to scenario.steps } }.toMap()
 
     private suspend fun submitOne(
         sessionKey: String,
@@ -757,7 +767,7 @@ class TestScenarioAgentService(
                 else ScenarioAbsorbService.Outcome()
             // 저장하지 않는 턴은 draft 에 둔다(ARTEL-1074). 하나 받을 때마다 보내 화면의 목록이 함께 자란다.
             if (!session.autoApply) {
-                drafts.of(sessionKey).accept(raw.scenarioId, checked, absorbedIds)
+                drafts.of(sessionKey).accept(raw.scenarioId, checked, absorbedIds, raw.scenarioId?.let { session.shownSteps[it] })
                 drafts.publish(sessionKey)
             }
             logger.info(
@@ -1904,6 +1914,11 @@ class TestScenarioAgentService(
          * 하나일 때만 그 draft 로 읽는다. 매 턴 갱신한다.
          */
         @Volatile var draftOnly: Boolean = false,
+        /**
+         * 이번 턴에 모델에게 보인 저장된 시나리오의 스텝(번호 → 스텝). 기존 시나리오를 고친 draft 가 화면에서
+         * 견줄 기준이다(ARTEL-1075). 매 턴 갱신한다.
+         */
+        @Volatile var shownSteps: Map<Long, List<ChatScenarioStep>> = emptyMap(),
         /**
          * 시나리오를 **한 번에 하나씩** 받게 하는 잠금.
          *

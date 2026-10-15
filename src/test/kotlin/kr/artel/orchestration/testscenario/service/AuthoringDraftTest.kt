@@ -120,4 +120,20 @@ class AuthoringDraftTest {
         // draft 가 여럿이면 번호 없이는 고를 수 없다.
         assertThat(draft.draftTarget(null)).isNull()
     }
+
+    @Test
+    fun `바뀐 자리를 칠할 기준은 직전 draft 이고, 기존 시나리오를 처음 고치면 그 시나리오다`() {
+        val draft = AuthoringDraft()
+        val saved = listOf(ChatScenarioStep(action = "saved", caseId = 7))
+
+        draft.accept(null, listOf(result("새 흐름", 1)), emptyList())
+        draft.accept(7, listOf(result("고친 흐름", 2, id = 7)), emptyList(), saved)
+        assertThat(draft.list().map { it.draftId to it.baseSteps?.map { s -> s.action } })
+            .containsExactly("new-1" to null, "edit-7" to listOf("saved"))
+
+        draft.accept(-1, listOf(result("다시 쓴 새 흐름", 1, 3)), emptyList())
+        draft.accept(7, listOf(result("또 고친 흐름", 4, id = 7)), emptyList(), saved)
+        assertThat(draft.list().map { it.draftId to it.baseSteps?.map { s -> s.action } })
+            .containsExactly("new-1" to listOf("do 1"), "edit-7" to listOf("do 2"))
+    }
 }

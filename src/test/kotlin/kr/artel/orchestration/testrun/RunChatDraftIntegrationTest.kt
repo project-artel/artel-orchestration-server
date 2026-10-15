@@ -219,6 +219,9 @@ class RunChatDraftIntegrationTest {
         val second = draft(client, projectId, runId, token)
         assertThat(second.map { it.draftId to it.title }).containsExactly("new-1" to "다시 쓴 draft")
         assertThat(second.single().steps).hasSize(2)
+        // 화면이 어디가 바뀌었는지 칠할 기준은 고치기 전의 draft 다.
+        assertThat(second.single().baseSteps!!.map { it.action }).containsExactly("메뉴를 연다")
+        assertThat(first.single().baseSteps).isNull()
         assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()).isEmpty()
 
         // 승인하면 그제야 런에 들어간다. draft 는 비고, 화면에도 빈 draft 가 간다.

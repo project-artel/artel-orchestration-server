@@ -13,6 +13,9 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * @property scenarioId 고칠 기존 시나리오. null 이면 승인할 때 새로 만든다.
  * @property absorbedScenarioIds 승인하면 이 시나리오로 합쳐져 런에서 빠질 것들. 정말 빠지는지는
  *   승인할 때 [kr.artel.orchestration.testscenario.service.ScenarioAbsorbService] 가 다시 센다.
+ * @property baseSteps 이번 변경 전의 스텝 — 화면이 어디가 바뀌고 무엇이 새로 들어왔는지 칠하는 기준이다.
+ *   Agent 가 draft 를 다시 쓰면 직전 draft, 기존 시나리오를 처음 고치면 그 시나리오의 스텝이다. 처음 생긴
+ *   새 draft 는 견줄 것이 없어 null 이다.
  */
 data class DraftScenario(
     @JsonProperty("draft_id") val draftId: String,
@@ -21,6 +24,7 @@ data class DraftScenario(
     val description: String,
     val steps: List<ChatScenarioStep>,
     @JsonProperty("absorbed_scenario_ids") val absorbedScenarioIds: List<Long> = emptyList(),
+    @JsonProperty("base_steps") val baseSteps: List<ChatScenarioStep>? = null,
 ) {
     fun toResult() = ScenarioResult(scenarioId, title, description, steps)
 }

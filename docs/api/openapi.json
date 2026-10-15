@@ -7777,6 +7777,12 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          "base_steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatScenarioStep"
+            }
           }
         }
       },
