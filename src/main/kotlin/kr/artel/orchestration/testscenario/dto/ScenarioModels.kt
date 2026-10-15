@@ -354,6 +354,11 @@ data class ScenarioStreamEvent(
      * 칩을 그린다. Agent 가 검사해서 보내므로 여기 없는 표식은 이미 지워져 있다.
      */
     val refs: List<AgentRef> = emptyList(),
+    /**
+     * 자동저장을 끈 턴이 모아 둔 draft **전부**(ARTEL-1074). `draft` 이벤트에만 실린다.
+     * 조각이 아니라 전부라, 화면은 받은 것으로 갈아 끼우기만 한다.
+     */
+    val drafts: List<DraftScenario>? = null,
 )
 
 /**

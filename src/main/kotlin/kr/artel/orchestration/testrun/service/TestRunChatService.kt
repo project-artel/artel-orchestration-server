@@ -11,9 +11,14 @@ import kr.artel.orchestration.testrun.dto.RunChatMessage
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
 import kr.artel.orchestration.testrun.repository.TestRunRepository
+import kr.artel.orchestration.testscenario.dto.DraftApplyResult
+import kr.artel.orchestration.testscenario.dto.DraftScenario
+import kr.artel.orchestration.testscenario.dto.DraftScenarioEdit
 import kr.artel.orchestration.testscenario.dto.MessageResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
+import kr.artel.orchestration.testscenario.service.AuthoringDraftStore
+import kr.artel.orchestration.testscenario.service.ScenarioAbsorbService
 import kr.artel.orchestration.testscenario.service.ScenarioReconcileService
 import kr.artel.orchestration.testscenario.service.TestScenarioAgentService
 import kr.artel.orchestration.testscenario.service.TestScenarioStreamManager
@@ -40,6 +45,8 @@ class TestRunChatService(
     private val reconcileService: ScenarioReconcileService,
     private val runScenarioReader: RunScenarioReader,
     private val objectMapper: com.fasterxml.jackson.databind.ObjectMapper,
+    private val drafts: AuthoringDraftStore,
+    private val absorbService: ScenarioAbsorbService,
 ) {
 
     /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다(재방문 복원). 접근 불가면 빈 목록. */
@@ -71,16 +78,85 @@ class TestRunChatService(
     /** 사용자 입력을 Agent로 중계한다. 결과 시나리오는 이 런에 반영된다. 접근 불가면 404. */
     suspend fun relay(appUserId: Long, runId: Long, message: RunChatMessage) {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
+        val key = sessionKey(appUserId, runId)
+        val saved = runScenarioReader.currentScenarios(runId)
         agentService.sendMessage(
-            sessionKey = sessionKey(appUserId, runId),
+            sessionKey = key,
             runId = runId,
             projectId = run.projectId,
             appUserId = appUserId,
             userInput = message.message,
             autoApply = message.autoApply,
-            currentScenarios = runScenarioReader.currentScenarios(runId),
+            // **draft 위에서 이어 고친다**(ARTEL-1074). 자동저장을 끈 채 다시 말하면 Agent 는 draft 가
+            // 적용된 모습을 현재 상태로 본다 — "이건 빼 줘" 가 draft 에 먹어야 한다. 자동저장을 켠
+            // 턴은 저장된 것만 본다. 그 턴의 결과는 바로 저장되는데, 저장 경로는 draft 번호를 모른다.
+            currentScenarios = if (message.autoApply) saved else drafts.overlay(key, saved),
             answer = message.answer,
         )
+    }
+
+    /** 이 대화의 draft(ARTEL-1074). 새로고침한 화면이 되찾는 길이다. 접근 불가면 404. */
+    suspend fun draft(appUserId: Long, runId: Long): List<DraftScenario> {
+        accessible(runId, appUserId) ?: throw NotFoundException()
+        return drafts.list(sessionKey(appUserId, runId))
+    }
+
+    /**
+     * 사용자가 고친 본문으로 draft 를 바꾼다(ARTEL-1074). 시나리오에는 쓰지 않는다 — 승인하기 전까지는
+     * draft 다. 다음 턴의 Agent 는 고친 모습을 본다. 없는 draft 면 404.
+     */
+    suspend fun updateDraft(appUserId: Long, runId: Long, draftId: String, edit: DraftScenarioEdit): DraftScenario {
+        accessible(runId, appUserId) ?: throw NotFoundException()
+        val key = sessionKey(appUserId, runId)
+        val updated = drafts.of(key).update(draftId, edit) ?: throw NotFoundException("draft 가 없습니다.")
+        drafts.publish(key)
+        return updated
+    }
+
+    /**
+     * 고른 draft 를 반영한다(ARTEL-1074). 자동저장과 **같은 엔진**이다 — 본문은 [ScenarioReconcileService],
+     * 합치기의 걷어내기는 [ScenarioAbsorbService]. 하나씩 반영해서, 하나가 막혀도 나머지는 들어간다.
+     * 막힌 것은 draft 에 되돌려 두고 이유를 낸다. 접근 불가면 404.
+     */
+    suspend fun applyDraft(appUserId: Long, runId: Long, draftIds: List<String>): DraftApplyResult {
+        val run = accessible(runId, appUserId) ?: throw NotFoundException()
+        val key = sessionKey(appUserId, runId)
+        val draft = drafts.of(key)
+        var applied = 0
+        val absorbed = mutableListOf<String>()
+        val kept = mutableListOf<String>()
+        val refused = mutableListOf<String>()
+        for (item in draft.take(draftIds)) {
+            val outcome = reconcileService.reconcile(runId, run.projectId, appUserId, listOf(item.toResult()))
+            if (outcome.rejected) {
+                draft.restore(item)
+                refused += "'${item.title}' — ${outcome.findings.rejectionMessage()}"
+                continue
+            }
+            applied += outcome.applied
+            // 합치기는 **저장된 최종본**으로 센다. draft 본문으로 세면 코드가 손댄 뒤의 실제 본문과 달라
+            // 실제로는 빠진 케이스를 있다고 세고 원본을 지울 수 있다.
+            val keeper = outcome.saved.firstOrNull()
+            if (keeper != null && item.absorbedScenarioIds.isNotEmpty()) {
+                val result = absorbService.absorb(
+                    runId, keeper.scenarioId, outcome.checked.firstOrNull() ?: item.toResult(), item.absorbedScenarioIds,
+                )
+                absorbed += result.absorbed
+                kept += result.kept
+            }
+            agentService.deliver(appUserId, runId, outcome.notices, outcome.question)
+        }
+        drafts.publish(key)
+        return DraftApplyResult(applied, absorbed, kept, refused, draft.list())
+    }
+
+    /** 고른 draft 를 버린다(ARTEL-1074). 남은 draft 를 돌려준다. 접근 불가면 404. */
+    suspend fun discardDraft(appUserId: Long, runId: Long, draftIds: List<String>): List<DraftScenario> {
+        accessible(runId, appUserId) ?: throw NotFoundException()
+        val key = sessionKey(appUserId, runId)
+        drafts.of(key).take(draftIds)
+        drafts.publish(key)
+        return drafts.list(key)
     }
 
     /**
@@ -121,6 +197,8 @@ class TestRunChatService(
         accessible(runId, appUserId) ?: throw NotFoundException()
         val key = sessionKey(appUserId, runId)
         agentService.closeSession(key)
+        // draft 는 대화를 닫을 때 버린다(ARTEL-1074). Agent WS 가 혼자 끊기는 것과 달리 이것은 사용자가 한 일이다.
+        drafts.drop(key)
         streamManager.complete(key)
     }
 

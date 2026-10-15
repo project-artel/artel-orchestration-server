@@ -115,6 +115,7 @@ class TestScenarioAgentService(
     private val flowMatrix: ScenarioFlowMatrix,
     private val flowPlanner: ScenarioFlowPlanner,
     private val experiment: AuthoringExperimentProperties,
+    private val drafts: AuthoringDraftStore,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -645,6 +646,34 @@ class TestScenarioAgentService(
         }
     }
 
+    /**
+     * 결과 봉투에 통째로 실려 온 시나리오를 draft 에 담는다(ARTEL-1074). 옛 Agent 와 도중에 계약을
+     * 끄는 되돌림 경로가 이 길이다 — 하나씩 받는 길과 같이 시나리오마다 검수를 지난 것만 담는다.
+     * 막힌 것은 담지 않고 말로 알린다. 하나씩 받는 길처럼 되돌려 다시 쓰게 할 상대가 이미 없다.
+     */
+    private suspend fun draftEnvelope(sessionKey: String, session: AgentSession, scenarios: List<ScenarioResult>) {
+        if (scenarios.isEmpty()) return
+        val refused = mutableListOf<String>()
+        session.submitLock.withLock {
+            for (raw in scenarios) {
+                val scenario = if ((raw.scenarioId ?: 0) < 0) raw.copy(scenarioId = null) else raw
+                val outcome = reconcileService.reconcile(
+                    session.runId, session.projectId, session.appUserId, listOf(scenario),
+                    reviewed = null, save = false,
+                )
+                if (outcome.rejected) {
+                    refused += "'${raw.title}' — ${outcome.findings.rejectionMessage()}"
+                    continue
+                }
+                drafts.of(sessionKey).accept(raw.scenarioId, outcome.checked.ifEmpty { listOf(scenario) }, emptyList())
+            }
+        }
+        drafts.publish(sessionKey)
+        if (refused.isNotEmpty()) {
+            saveAndNotify(sessionKey, session, "검수를 지나지 못해 draft 에 담지 않은 것이 있습니다.\n" + refused.joinToString("\n"))
+        }
+    }
+
     private suspend fun submitOne(
         sessionKey: String,
         session: AgentSession,
@@ -652,7 +681,13 @@ class TestScenarioAgentService(
         correlationId: String?,
     ) {
         try {
-            val scenario = objectMapper.treeToValue(node.path("scenario"), ScenarioResult::class.java)
+            val raw = objectMapper.treeToValue(node.path("scenario"), ScenarioResult::class.java)
+            // **음수 번호는 draft 의 새 시나리오다**(ARTEL-1074). 저장된 적이 없으니 검수와 저장에는
+            // 새것으로 넘긴다 — 음수 번호로 저장 경로에 들어가면 없는 시나리오를 고치려 든다.
+            val scenario = if ((raw.scenarioId ?: 0) < 0) raw.copy(scenarioId = null) else raw
+            val absorbedIds = node.path("absorbedScenarioIds").mapNotNull {
+                it.takeIf { n -> n.isNumber }?.asLong()
+            }
             val outcome = reconcileService.reconcile(
                 session.runId, session.projectId, session.appUserId,
                 listOf(scenario),
@@ -691,15 +726,18 @@ class TestScenarioAgentService(
                         session.runId,
                         scenario.scenarioId,
                         checked.first(),
-                        node.path("absorbedScenarioIds").mapNotNull {
-                            it.takeIf { n -> n.isNumber }?.asLong()
-                        },
+                        absorbedIds.filter { it > 0 },
                     )
                 else ScenarioAbsorbService.Outcome()
+            // 저장하지 않는 턴은 draft 에 둔다(ARTEL-1074). 하나 받을 때마다 보내 화면의 목록이 함께 자란다.
+            if (!session.autoApply) {
+                drafts.of(sessionKey).accept(raw.scenarioId, checked, absorbedIds)
+                drafts.publish(sessionKey)
+            }
             logger.info(
                 "시나리오 하나 받음 [sessionKey={}, runId={}] {} — 지금까지 {}개{}",
                 sessionKey, session.runId, scenario.title, session.submitted.size,
-                if (session.autoApply) " (저장함)" else " (카드로 낼 것)",
+                if (session.autoApply) " (저장함)" else " (draft 에 둠)",
             )
             streamManager.emit(
                 sessionKey,
@@ -1537,6 +1575,14 @@ class TestScenarioAgentService(
                             throw err
                         } catch (err: Exception) {
                             logger.error("시나리오 반영 실패 [sessionKey=$sessionKey]: ${err.message}")
+                        }
+                    } else {
+                        try {
+                            draftEnvelope(sessionKey, session, event.scenarios.orEmpty())
+                        } catch (err: CancellationException) {
+                            throw err
+                        } catch (err: Exception) {
+                            logger.error("draft 담기 실패 [sessionKey=$sessionKey]: ${err.message}")
                         }
                     }
                 }
