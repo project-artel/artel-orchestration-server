@@ -118,6 +118,7 @@ class ScenarioLibraryService(
                         projectId = source.projectId,
                         title = source.title,
                         description = source.description,
+                        executionMode = source.executionMode,
                         steps = remap?.let { rewriteSteps(source.steps, it) } ?: source.steps,
                     )
                 )
@@ -185,6 +186,7 @@ class ScenarioLibraryService(
         return ScenarioLibraryScenario(
             testScenarioId = requireNotNull(id).toString(),
             title = title,
+            executionMode = executionMode,
             stepCount = parsed.size,
             caseCount = parsed.mapNotNull { it.longOrNull(CASE_ID) }.toSet().size,
             updatedAt = updatedAt,

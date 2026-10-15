@@ -28,5 +28,10 @@ data class CurrentScenario(
     @JsonProperty("scenario_id") val scenarioId: Long?,
     val title: String,
     val description: String,
-    val steps: List<ChatScenarioStep>
+    val steps: List<ChatScenarioStep>,
+    /**
+     * 실행 방식(ARTEL-1028). FREE 를 고칠 때 Agent 가 step 하나에 TC 하나인 모양을 지키도록 알려 준다.
+     * 항상 값을 싣는다 — agent-server 는 값이 없으면 ORDERED 로 읽는다.
+     */
+    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode = ScenarioExecutionMode.ORDERED,
 )

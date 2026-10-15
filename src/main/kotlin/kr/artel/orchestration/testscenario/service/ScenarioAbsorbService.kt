@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.qa.repository.QaTryRepository
@@ -78,6 +79,11 @@ class ScenarioAbsorbService(
             if (id !in inRun) continue // 이 런의 것이 아니면 없던 말로 친다 — 유령 번호 방어
             val scenario = scenarioRepository.findById(id) ?: continue
             val draft = scenario.toDraft(objectMapper)
+            // FREE 는 챗봇 합치기의 대상이 아니다(ARTEL-1028). 지우지 않고 그대로 둔다.
+            if (draft.executionMode == ScenarioExecutionMode.FREE) {
+                kept += "'${draft.title}' 은 TC 묶음(FREE)이라 합치지 않고 그대로 두었습니다"
+                continue
+            }
             val mine = draft.steps.mapNotNull { it.caseId }.toSet()
             val missing = mine - covered
             if (missing.isNotEmpty()) {

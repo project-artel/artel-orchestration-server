@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import java.util.concurrent.ConcurrentHashMap
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
@@ -145,6 +146,16 @@ class ScenarioReconcileService(
             return ReconcileOutcome(0)
         }
 
+        // **FREE 는 아래의 step 재작성을 지나지 않는다**(ARTEL-1028). 나누기·브리지 메우기·조작 채우기·
+        // 시작 안내는 순서 있는 step 목록을 전제로 step 을 더하거나 고치는데, FREE 는 step 하나가 TC 하나인
+        // 묶음이라 그대로 저장해야 한다. 규칙 검사는 저장 여부와 무관하게 먼저 한다 — 카드로만 내는 턴도
+        // 저장할 수 없는 모양을 내보내지 않는다. 어기면 [InvalidFreeScenarioException] 이고, 한 줄도
+        // 저장하지 않는다.
+        val stated = withExecutionModes(runId, projectId, scenarios)
+        val free = stated.filter { it.executionMode == ScenarioExecutionMode.FREE }
+        free.forEach { ScenarioExecutionRules.validate(draftFor(it, emptyList())) }
+        val ordered = stated.filterNot { it.executionMode == ScenarioExecutionMode.FREE }
+
         // 같은 자리의 케이스들을 본다(ARTEL-466). 나누고 합치는 문제는 말만 한다 — 그건 요청이
         // 정하는 것이지 코드가 정할 일이 아니다.
         val known = projectFacts(projectId)
@@ -172,7 +183,7 @@ class ScenarioReconcileService(
         // 다시 쓰게 하는 대신 코드가 그 자리에서 채우거나(위치+조작 표기로 결정적 매칭),
         // 못 채우면 UNKNOWN 으로 정직하게 남긴다 — 반려 헛바퀴(같은 자리 9~10연속)가
         // 원천에서 사라진다. 규칙은 [ScenarioBridgeGrounding] 에 있다.
-        val citedIds = scenarios.flatMap { it.steps }.mapNotNull { it.stepSourceCapabilityId }.toSet()
+        val citedIds = ordered.flatMap { it.steps }.mapNotNull { it.stepSourceCapabilityId }.toSet()
         val liveCited =
             if (citedIds.isEmpty()) emptySet()
             else runCatching { pathService.liveCapabilities(projectId, appUserId, citedIds) }
@@ -185,7 +196,7 @@ class ScenarioReconcileService(
         }.onFailure { logger.warn("간선 조회 실패 — 되찾기를 건너뛴다: ${it.message}") }
             .getOrDefault(emptyList())
         val groundedBridges = ScenarioBridgeGrounding.apply(
-            scenarios,
+            ordered,
             sceneOf = { id -> byId[id]?.scene },
             arrivesAt = { id -> byId[id]?.arrivesAt ?: byId[id]?.scene },
             edges = groundingEdges,
@@ -231,7 +242,8 @@ class ScenarioReconcileService(
         val split = repairedSplit(given)
         // **덜 담긴 것은 런 전체로 본다**(ARTEL-516). 이번 턴에 쓴 것만 보면, 다른 시나리오에
         // 이미 있는 갈래를 "빠졌다"고 세어 전건을 담은 뒤에도 되묻기가 멈추지 않는다.
-        val covered = coveredInRun(runId, given, split)
+        // FREE 에 담긴 케이스도 이 런에 담긴 것이다. 빼고 세면 그 케이스를 빠졌다고 알린다.
+        val covered = coveredInRun(runId, given + free, repairedSplit(given + free))
         val siblings = ScenarioSiblingCheck.analyze(facts, split, covered) { value -> movable.any { written -> sameTail(written, value) } }
         if (siblings.conflicting.isNotEmpty()) {
             // 나눈 뒤에도 남았다면 나누는 쪽에 구멍이 있다는 뜻이다. 저장은 막지 않되 남긴다.
@@ -290,6 +302,9 @@ class ScenarioReconcileService(
                 steps = withOpeningNote(scenario.steps, openingFacts(projectId, facts), found.opening)
             )
         }
+        // 재작성을 지난 ORDERED 뒤에 FREE 를 그대로 붙인다. 나누기가 만든 자리 번호([divided] 의
+        // anchorOf)는 앞쪽 ORDERED 목록의 번호라, 뒤에 붙여야 그 번호가 그대로 맞는다.
+        val checked = opened + free
         // 검수는 저장 **전에** 끝난다. 통과하지 못한 결과는 한 줄도 들어가지 않는다 — 절반만 저장하면
         // "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어 보인다).
         val projectCaseIds = testCaseRepository.findIdsByProjectId(projectId).toSet()
@@ -305,11 +320,11 @@ class ScenarioReconcileService(
                     excluded = (it.excluded + it.included.filter(droppedSolo::contains)).distinct(),
                 )
             },
-            scenarios = opened,
+            scenarios = checked,
         ).let {
             it.copy(
-                ungrounded = it.ungrounded + ghostCapabilities(projectId, appUserId, opened),
-                falseUnknowns = falseUnknowns(routes, opened, blocked.toSet()),
+                ungrounded = it.ungrounded + ghostCapabilities(projectId, appUserId, checked),
+                falseUnknowns = falseUnknowns(routes, checked, blocked.toSet()),
                 conflicting = siblings.conflicting,
             )
         }
@@ -398,19 +413,19 @@ class ScenarioReconcileService(
             if (question == null) addAll(notices)
             // 갈래는 **알림으로만** 남는다(ARTEL-903) — 질문에서 빠졌으니 건너뛸 이유도 없다.
             addAll(siblingNotices(siblings, describe))
-            unsourcedNotice(findings, opened)?.let(::add)
+            unsourcedNotice(findings, checked)?.let(::add)
         }
 
         // **검수만 하고 돌려주는 자리**(시나리오 하나씩 받기). 저장은 카드가 나간 뒤에 한다는
         // 경로가 따로 있고, 그 경로도 카드를 내보내기 전에 같은 검수를 지나야 한다. 통과한 결과를
         // 함께 돌려주는 것은 코드가 메운 `bridge` 까지 담긴 것이 최종본이기 때문이다.
         if (!save) {
-            trace.record(runId, "4. 저장한다", "저장하지 않는다(검수만) — 시나리오 ${opened.size}개")
+            trace.record(runId, "4. 저장한다", "저장하지 않는다(검수만) — 시나리오 ${checked.size}개")
             // 이 출구도 어긋남을 실어야 한다 — 하나씩 받는 턴의 끝(검수만)이 이 길로 오고,
             // 판 요약이 세는 것이 바로 이 값이다. 실측(런 16): 검수는 1건을 짚었는데 요약은
             // 0건이라 적었다.
             return ReconcileOutcome(
-                0, findings, allNotices, question, questions, opened,
+                0, findings, allNotices, question, questions, checked,
                 contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" },
             )
         }
@@ -429,9 +444,9 @@ class ScenarioReconcileService(
             // 새 시나리오는 런의 현재 마지막 position 다음부터 붙인다. 비어 있으면 0부터.
             var runPosition = (links.maxOfOrNull { it.position } ?: -1) + 1
             // 나눠서 생긴 조각을 원본 옆으로 옮기려면 저장된 id 를 자리별로 들고 있어야 한다.
-            val savedId = arrayOfNulls<Long>(opened.size)
+            val savedId = arrayOfNulls<Long>(checked.size)
             val fromSplit = mutableListOf<Pair<Long, Int>>()
-            for ((index, scenario) in opened.withIndex()) {
+            for ((index, scenario) in checked.withIndex()) {
                 val scenarioId = scenario.scenarioId ?: idByTitle[scenario.title.trim()]
                 if (scenarioId != null) {
                     // 수정: 기존 시나리오 본문을 통째로 교체한다.
@@ -473,18 +488,49 @@ class ScenarioReconcileService(
                 placeBesideOrigin(runId, fromSplit.mapNotNull { (id, anchor) -> savedId[anchor]?.let { id to it } })
             }
         }
-        logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${opened.size}]")
+        logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${checked.size}]")
         trace.record(
             runId, "4. 저장한다",
-            "시나리오 $applied/${opened.size}개\n" +
-                opened.joinToString("\n") { "  · ${it.title} — 스텝 ${it.steps.size}" } +
+            "시나리오 $applied/${checked.size}개\n" +
+                checked.joinToString("\n") { "  · ${it.title} — 스텝 ${it.steps.size}" } +
                 (if (questions.isEmpty()) "" else "\n되묻는다: " + questions.joinToString(" · ") { it.id }),
         )
         return ReconcileOutcome(
-            applied, findings, allNotices, question, questions, opened,
+            applied, findings, allNotices, question, questions, checked,
             contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" },
             saved = savedScenarios,
         )
+    }
+
+    /**
+     * 결과마다 실행 방식을 채운다(ARTEL-1028). 값이 있으면 그대로 둔다. 없으면 수정 대상의 저장된 값을
+     * 쓰고, 수정 대상이 없으면(새 시나리오) ORDERED 다.
+     *
+     * 수정 대상은 저장할 때와 같은 규칙으로 찾는다 — `scenario_id` 가 있으면 그 시나리오(같은 프로젝트일
+     * 때만), 없으면 이 런에서 제목이 같은 시나리오. 규칙이 갈리면 FREE 를 고치는 결과가 ORDERED 로
+     * 읽혀 재작성을 지나고, 저장할 때 모드까지 ORDERED 로 바뀐다.
+     *
+     * 화면으로 나가는 제안도 이 함수를 지난다 — 화면은 값이 늘 있다고 읽는다.
+     */
+    suspend fun withExecutionModes(
+        runId: Long,
+        projectId: Long,
+        scenarios: List<ScenarioResult>,
+    ): List<ScenarioResult> {
+        if (scenarios.all { it.executionMode != null }) return scenarios
+        val inRun = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+            .mapNotNull { scenarioRepository.findById(it.testScenarioId) }
+        val modeByTitle = inRun.associate { it.title.trim() to it.executionMode }
+        return scenarios.map { scenario ->
+            if (scenario.executionMode != null) return@map scenario
+            val storedMode = when (val scenarioId = scenario.scenarioId) {
+                null -> modeByTitle[scenario.title.trim()]
+                else -> (inRun.firstOrNull { it.id == scenarioId } ?: scenarioRepository.findById(scenarioId))
+                    ?.takeIf { it.projectId == projectId }
+                    ?.executionMode
+            }
+            scenario.copy(executionMode = storedMode ?: ScenarioExecutionMode.ORDERED)
+        }
     }
 
     /**
@@ -1274,6 +1320,7 @@ class ScenarioReconcileService(
         title = scenario.title,
         description = scenario.description,
         steps = ExpectedLabelPolicy.carryOver(scenario.steps.map { it.toStoredStep() }, previous),
+        executionMode = scenario.executionMode,
     )
     private companion object {
         /**

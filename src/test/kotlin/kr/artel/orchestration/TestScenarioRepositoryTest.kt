@@ -5,6 +5,7 @@ import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.ScenarioStep
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.entity.toDraft
@@ -88,5 +89,27 @@ class TestScenarioRepositoryTest {
         val found = repository.findByProjectId(projectId).toList()
         assertThat(found).hasSize(2)
         assertThat(found.map { it.title }).containsExactlyInAnyOrder("첫째", "둘째")
+    }
+
+    @Test
+    fun testExecutionModeRoundTripAndDefault(): Unit = runBlocking {
+        val projectId = System.nanoTime()
+
+        val fresh = repository.save(TestScenarioEntity(projectId = projectId))
+        assertThat(fresh.executionMode).isEqualTo(ScenarioExecutionMode.ORDERED)
+
+        val saved = repository.save(
+            fresh.withDraft(
+                ScenarioDraft(
+                    title = "TC 묶음",
+                    steps = listOf(ScenarioStep(caseId = 5L)),
+                    executionMode = ScenarioExecutionMode.FREE,
+                ),
+                objectMapper,
+            )
+        )
+        val reloaded = repository.findById(saved.id!!)!!
+        assertThat(reloaded.executionMode).isEqualTo(ScenarioExecutionMode.FREE)
+        assertThat(reloaded.toDraft(objectMapper).executionMode).isEqualTo(ScenarioExecutionMode.FREE)
     }
 }
