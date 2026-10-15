@@ -30,12 +30,22 @@ class ScenarioCompositionService(
      * 조립했으나 타입 DTO로 전환 — 팀 리뷰 피드백). [draft]는 시나리오 본문이며, 접근 검증은 호출부
      * ([kr.artel.orchestration.qa.service.QaTryService])가 이미 마친 뒤 넘긴다.
      *
-     * 케이스 내용은 [scope] 버전의 것이다 — QA 는 켜진 게임 버전으로 판정하고 그 버전에 기록한다(ARTEL-1069).
-     * 그 버전에 없는 케이스는 판정하지 않는다: 스텝은 그대로 돌되 `case_id` 를 비워 보낸다. 기록할 자리가 없는 판정을
-     * 내게 하지 않기 위해서다.
+     * 판정 기준과 기록 자리는 다른 버전이다(ARTEL-1069).
+     * - 케이스 내용(사전조건 · 기대 결과)은 [caseScope] — TR 이 따르는 버전이다. 시나리오를 쓸 때 본 내용 그대로 판정한다.
+     *   그 버전에 몫이 없는 케이스는 정체(최신) 내용이다.
+     * - 판정은 [recordedBuildId] — 켜진 게임 버전에 적힌다. 그 버전에 없는 케이스는 기록할 자리가 없으므로 판정하지
+     *   않는다: 스텝은 그대로 돌되 `case_id` 를 비워 보낸다. null 이면(게임 버전을 모름) 거르지 않는다.
      */
-    suspend fun agentScenario(draft: ScenarioDraft, scope: CaseScope = CaseScope.Latest): AgentScenario {
-        val caseById = testCaseReader.byIds(draft.steps.mapNotNull { it.caseId }.toSet(), scope)
+    suspend fun agentScenario(
+        draft: ScenarioDraft,
+        caseScope: CaseScope = CaseScope.Latest,
+        recordedBuildId: Long? = null,
+    ): AgentScenario {
+        val caseIds = draft.steps.mapNotNull { it.caseId }.toSet()
+        val recordable = recordedBuildId?.let { testCaseReader.byIds(caseIds, CaseScope.Version(it)).keys }
+        val caseById = testCaseReader.overlay(testCaseReader.byIds(caseIds, CaseScope.Latest).values.toList(), caseScope)
+            .filter { recordable == null || it.id in recordable }
+            .associateBy { requireNotNull(it.id) }
 
         val steps = draft.steps.map { step ->
             // caseId가 있는 스텝엔 그 TC 스펙(CSV: 씬/사전조건/테스트 스텝/기대 결과)을 리졸브해 동봉.
@@ -44,7 +54,7 @@ class ScenarioCompositionService(
             val tc = step.caseId?.let { caseById[it] }
             AgentStep(
                 action = step.action,
-                caseId = tc?.id ?: step.caseId.takeIf { scope == CaseScope.Latest },
+                caseId = tc?.id ?: step.caseId.takeIf { recordable == null },
                 hint = step.hint,
                 input = step.input,
                 case = tc?.let {

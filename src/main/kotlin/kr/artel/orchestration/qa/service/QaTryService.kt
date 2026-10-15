@@ -36,6 +36,7 @@ import kr.artel.orchestration.testrun.service.TestRunService
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testcase.service.CaseScope
 import kr.artel.orchestration.testcase.service.TestCaseReader
+import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
 import kr.artel.orchestration.userllmkey.entity.KeySource
@@ -563,6 +564,7 @@ class QaTryService(
     private val platformAccessService: PlatformAccessService,
     private val compositionService: ScenarioCompositionService,
     private val testCaseReader: TestCaseReader,
+    private val testRuns: TestRunRepository,
     private val testRunService: TestRunService,
     private val instanceRepository: GameInstanceRepository,
     private val sessionManager: SessionManager,
@@ -702,15 +704,17 @@ class QaTryService(
         runStatusNotifier.waitingAgent(
             requireNotNull(started.tries.first().id), gameInstanceId, requireNotNull(started.qaRun.id)
         )
-        // 판정은 켜진 게임 버전의 내용으로 내고 그 버전에 적는다(ARTEL-1069). 빌드를 모르면 예전처럼 최신 내용이다.
-        val judgedScope = CaseScope.of(testCaseReader.judgedBuildId(instance.lastGameBuildId))
+        // 판정 기준은 TR 의 버전 내용이고, 기록은 켜진 게임 버전에 적힌다(ARTEL-1069). 게임 버전에 없는 케이스는
+        // 판정하지 않고 넘긴다. TR 에 버전이 없으면 최신 내용, 게임 버전을 모르면 거르지 않는다.
+        val caseScope = CaseScope.of(testRuns.findById(testRunId)?.gameBuildId)
+        val recordedBuildId = testCaseReader.judgedBuildId(instance.lastGameBuildId)
         val agentScenarios = started.tries.zip(scenarioIds).map { (qaTry, scenarioId) ->
             val entity = scenarioAccessService.accessibleScenario(scenarioId, userId)
                 ?: throw NotFoundException()
             QaAgentScenario(
                 qaTryId = requireNotNull(qaTry.id).toString(),
                 testScenarioId = scenarioId.toString(),
-                scenario = compositionService.agentScenario(entity.toDraft(objectMapper), judgedScope)
+                scenario = compositionService.agentScenario(entity.toDraft(objectMapper), caseScope, recordedBuildId)
             )
         }
         val context = QaAgentSessionContext(
@@ -792,7 +796,7 @@ class QaTryService(
         completedAt = completedAt,
         label = label,
         tries = tries.map { it.toResponse() },
-        judgedGameBuildId = testCaseReader.judgedBuildId(gameBuildId)?.toString()
+        testRunGameBuildId = testRuns.findById(testRunId)?.gameBuildId?.toString()
     )
 
     /**

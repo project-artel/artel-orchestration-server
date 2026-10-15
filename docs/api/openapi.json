@@ -8871,7 +8871,7 @@
               "$ref": "#/components/schemas/QaTryResponse"
             }
           },
-          "judgedGameBuildId": {
+          "testRunGameBuildId": {
             "type": "string"
           }
         }

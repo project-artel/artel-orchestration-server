@@ -376,11 +376,12 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
     }
 
     /**
-     * QA 는 켜진 게임 버전의 내용으로 판정하고 그 버전에 적는다(ARTEL-1069). 그 버전에 없는 케이스는 `case_id` 를 비워
-     * 판정 없이 넘긴다. 사람이 쓴 케이스는 버전 몫이 스냅샷일 뿐이라 사람이 고친 정체의 내용을 보낸다.
+     * 판정 기준은 TR 버전의 내용이고 기록은 켜진 게임 버전이다(ARTEL-1069). 게임 버전에 없는 케이스는 기록할 자리가
+     * 없으므로 `case_id` 를 비워 판정 없이 넘긴다. 사람이 쓴 케이스는 버전 몫이 스냅샷일 뿐이라 사람이 고친 정체의
+     * 내용을 보낸다.
      */
     @Test
-    fun `QA 는 켜진 게임 버전의 내용으로 판정하고 그 버전에 없는 케이스는 판정 없이 넘긴다`(): Unit = runBlocking {
+    fun `QA 는 TR 버전의 내용으로 판정하고 게임 버전에 없는 케이스는 판정 없이 넘긴다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
         val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
@@ -406,19 +407,21 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
             ),
         )
 
-        val onB = compositionService.agentScenario(draft, CaseScope.Version(buildB.gameBuildId)).steps
-        val onA = compositionService.agentScenario(draft, CaseScope.Version(buildA.gameBuildId)).steps
-        val unknown = compositionService.agentScenario(draft).steps
+        // TR 은 1.0, 게임은 1.1.
+        val sent = compositionService.agentScenario(draft, CaseScope.Version(buildA.gameBuildId), buildB.gameBuildId).steps
 
-        assertThat(onB[0].case!!.expected).isEqualTo("B 의 기대 결과")
-        assertThat(onA[0].case!!.expected).isEqualTo(expectedInA)
-        assertThat(onB[1].caseId).isNull()
-        assertThat(onB[1].case).isNull()
-        assertThat(onB[1].action).isEqualTo("b")
-        assertThat(onB[2].case!!.testStep).isEqualTo("사람이 고친 것")
-        // 사람이 쓴 케이스는 A 에 몫이 없어 A 에서는 판정하지 않는다.
-        assertThat(onA[2].caseId).isNull()
-        // 게임 버전을 모르면 예전처럼 정체(최신)로 다 판정한다.
+        assertThat(sent[0].case!!.expected).isEqualTo(expectedInA)
+        assertThat(sent[1].caseId).isNull()
+        assertThat(sent[1].case).isNull()
+        assertThat(sent[1].action).isEqualTo("b")
+        // 1.0 에 몫이 없는 사람이 쓴 케이스도 1.1 에 적을 자리가 있으면 판정한다. 내용은 사람이 고친 것이다.
+        assertThat(sent[2].caseId).isEqualTo(manual.id)
+        assertThat(sent[2].case!!.testStep).isEqualTo("사람이 고친 것")
+        // 같은 TR 이 1.1 게임으로 돌아도 판정 기준은 그대로 1.0 의 내용이다.
+        assertThat(compositionService.agentScenario(draft, CaseScope.Version(buildB.gameBuildId), buildB.gameBuildId).steps[0].case!!.expected)
+            .isEqualTo("B 의 기대 결과")
+        // 게임 버전을 모르면 거르지 않고, 버전 없는 TR 은 정체(최신) 내용이다.
+        val unknown = compositionService.agentScenario(draft).steps
         assertThat(unknown.map { it.caseId }).containsExactly(changed, gone, manual.id, null)
     }
 

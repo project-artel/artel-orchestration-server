@@ -195,10 +195,10 @@ data class QaRunResponse(
     val label: String? = null,
     val tries: List<QaTryResponse> = emptyList(),
     /**
-     * 이 run 의 판정이 속한 게임 빌드(ARTEL-1069). 케이스 내용도 이 버전의 것으로 판정했다. 게임 버전을 몰랐으면
-     * null 이고 그때는 최신 내용으로 판정했다. 화면이 FREE 시나리오의 케이스를 같은 버전으로 보인다.
+     * 판정 기준이 된 케이스 내용의 버전 — 이 run 의 TR 이 따르는 게임 빌드다(ARTEL-1069). TR 에 버전이 없으면 null 이고
+     * 그때는 최신 내용으로 판정했다. 화면이 FREE 시나리오의 케이스를 같은 버전으로 보인다.
      */
-    val judgedGameBuildId: String? = null
+    val testRunGameBuildId: String? = null
 )
 
 data class QaLogResponse(
