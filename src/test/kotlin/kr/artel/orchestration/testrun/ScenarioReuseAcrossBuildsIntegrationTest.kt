@@ -559,6 +559,9 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         @Suppress("UNCHECKED_CAST")
         assertThat((hit.fields["versions"] as List<Map<String, Any?>>).map { it["version"] }).containsExactly("1.0.0")
 
+        // 번호로 말하면 그 번호의 케이스다.
+        assertThat(resources.query(trScope, ResourceRequest("find", "case", text = "TC $changed")).items.first().id).isEqualTo(changed)
+
         // 버전 사이 차이 — 1.0 의 기대 결과가 이 런의 버전(1.1)과 다르다.
         val versionsOf = resources.query(trScope, ResourceRequest("related", "case", id = changed, relation = "versions"))
         val v10 = versionsOf.items.single { it.fields["version"] == "1.0.0" }
