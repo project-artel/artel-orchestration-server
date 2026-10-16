@@ -146,8 +146,8 @@ class ResourceQueryService(
                 """, "ids" to ids,
             ).sortedBy { ids.indexOf(it.long("id")) }.map {
                 item("issue", it.long("id"), it.str("title") ?: "",
-                    mapOf("severity" to it["severity"], "status" to it["status"], "qa_try_id" to it["qa_try_id"],
-                        "qa_run_id" to it["qa_run_id"], "detail" to it["detail"]?.let(::jsonText)?.take(STEP_TEXT)),
+                    mapOf("severity" to it["severity"], "status" to it["status"],
+                        "qa_run" to it["qa_run_id"]?.let { r -> linkRef("qa", (r as Number).toLong(), "QA 실행") }, "detail" to it["detail"]?.let(::jsonText)?.take(STEP_TEXT)),
                     emptyList())
             })
         }
@@ -177,7 +177,7 @@ class ResourceQueryService(
                     "no" to index + 1,
                     "action" to step.path("action").asText().take(STEP_TEXT),
                     "tc_no" to caseId?.let { tcNo },
-                    "case_ref" to caseId?.let { "[[tc:$it]]" },
+                    "case" to caseRef(caseId?.toString(), step.path("action").asText().take(STEP_TEXT)),
                 )
             }
             ResourceAnswer(listOf(scenarioItem(id, row.str("title"), mapOf("description" to row["description"], "steps" to steps))))
@@ -194,7 +194,7 @@ class ResourceQueryService(
                 SELECT s.id, s.title FROM test_run_scenario l JOIN test_scenario s ON s.id = l.test_scenario_id
                  WHERE l.test_run_id = :id ORDER BY l.position
                 """, "id" to id,
-            ).map { mapOf("ref" to "[[ts:${it.long("id")}]]", "title" to it["title"]) }
+            ).map { mapOf("ref" to "[[ts:${it.long("id")}]]", "label" to it["title"]) }
             ResourceAnswer(listOf(item("test_run", id, row.str("name") ?: "",
                 mapOf("version" to (row["version"] ?: "버전 없음"), "scenarios" to scenarios), RELATIONS.getValue("test_run"))))
         }
@@ -297,10 +297,9 @@ class ResourceQueryService(
             if (builds[caseId].isNullOrEmpty()) {
                 fields["version_note"] = "어느 게임 버전에도 속하지 않은 케이스(사람이 쓴 버전 없는 케이스)"
             }
-            if (detailed) {
-                fields["precondition"] = case.precondition
-                fields["origin"] = case.originLabel()
-            }
+            // 케이스를 말할 때는 번호가 아니라 이름과 사전조건 · 기대 결과로 말한다 — 찾기 결과에도 싣는다.
+            fields["precondition"] = case.precondition
+            if (detailed) fields["origin"] = case.originLabel()
             item("case", caseId, case.step, fields, RELATIONS.getValue("case"))
         }
     }
@@ -376,16 +375,17 @@ class ResourceQueryService(
             val tryId = row.long("qa_try_id")
             val before = if (!failed) emptyList() else rows(
                 """
-                SELECT (payload ->> 'step')::int AS step, payload ->> 'case_id' AS case_id, payload ->> 'message' AS message
-                  FROM qa_log WHERE qa_try_id = :tryId AND type = 'STATUS' AND payload ->> 'status' = 'FAILED'
-                   AND (payload ->> 'step')::int < :step ORDER BY (payload ->> 'step')::int LIMIT 3
+                SELECT (l.payload ->> 'step')::int AS step, l.payload ->> 'case_id' AS case_id, l.payload ->> 'message' AS message, c.step AS case_name
+                  FROM qa_log l LEFT JOIN test_case c ON c.id = (l.payload ->> 'case_id')::bigint
+                 WHERE l.qa_try_id = :tryId AND l.type = 'STATUS' AND l.payload ->> 'status' = 'FAILED'
+                   AND (l.payload ->> 'step')::int < :step ORDER BY (l.payload ->> 'step')::int LIMIT 3
                 """, "tryId" to tryId, "step" to (row["step"] as Number).toInt(),
-            ).map { mapOf("step" to it["step"], "case_id" to it["case_id"], "message" to it.str("message")?.take(STEP_TEXT)) }
+            ).map { mapOf("step" to it["step"], "case" to caseRef(it.str("case_id"), it.str("case_name")), "message" to it.str("message")?.take(STEP_TEXT)) }
             item("verdict", tryId, "${row["status"]} · ${row["version"] ?: "?"}",
                 mapOf(
                     "result" to if (failed) "FAILED" else "PASSED",
                     "game_version" to row["version"],
-                    "qa_run_id" to row["qa_run_id"],
+                    "qa_run" to row["qa_run_id"]?.let { linkRef("qa", (it as Number).toLong(), "QA 실행") },
                     "step" to row["step"],
                     "reason" to row.str("message")?.take(STEP_TEXT),
                     "earlier_failed_steps" to before,
@@ -408,12 +408,14 @@ class ResourceQueryService(
         // 보이게 두면 "다 잘 끝났다" 로 요약된다(실측: QA 17).
         val failedCases = rows(
             """
-            SELECT payload ->> 'case_id' AS case_id, payload ->> 'message' AS message FROM qa_log
-             WHERE qa_try_id = :id AND type = 'STATUS' AND payload ->> 'status' = 'FAILED'
-               AND payload ->> 'is_verification' = 'true' ORDER BY (payload ->> 'step')::int LIMIT 10
+            SELECT l.payload ->> 'case_id' AS case_id, l.payload ->> 'message' AS message, c.step AS case_name FROM qa_log l
+              LEFT JOIN test_case c ON c.id = (l.payload ->> 'case_id')::bigint
+             WHERE l.qa_try_id = :id AND l.type = 'STATUS' AND l.payload ->> 'status' = 'FAILED'
+               AND l.payload ->> 'is_verification' = 'true' ORDER BY (l.payload ->> 'step')::int LIMIT 10
             """, "id" to it.long("id"),
-        ).map { failed -> mapOf("case_ref" to failed.str("case_id")?.let { c -> "[[tc:$c]]" }, "reason" to failed.str("message")?.take(STEP_TEXT)) }
+        ).map { failed -> mapOf("case" to caseRef(failed.str("case_id"), failed.str("case_name")), "reason" to failed.str("message")?.take(STEP_TEXT)) }
         mapOf("qa_try_id" to it["id"], "scenario" to it["title"], "status" to it["status"],
+            "qa_run" to linkRef("qa", qaRunId, "QA 실행"),
             "cases" to "${it["cases_passed"] ?: "?"}/${it["cases_total"] ?: "?"}",
             "steps" to "${it["steps_passed"] ?: "?"}/${it["steps_total"] ?: "?"}",
             "failed_cases" to failedCases)
@@ -430,17 +432,19 @@ class ResourceQueryService(
         ).firstOrNull() ?: return note("이 프로젝트에 QA 시도 $id 이 없다.")
         val failed = rows(
             """
-            SELECT (payload ->> 'step')::int AS step, payload ->> 'case_id' AS case_id, payload ->> 'message' AS message,
-                   payload ->> 'is_verification' AS verification
-              FROM qa_log WHERE qa_try_id = :id AND type = 'STATUS' AND payload ->> 'status' = 'FAILED'
-             ORDER BY (payload ->> 'step')::int LIMIT 20
+            SELECT (l.payload ->> 'step')::int AS step, l.payload ->> 'case_id' AS case_id, l.payload ->> 'message' AS message,
+                   l.payload ->> 'is_verification' AS verification, c.step AS case_name
+              FROM qa_log l LEFT JOIN test_case c ON c.id = (l.payload ->> 'case_id')::bigint
+             WHERE l.qa_try_id = :id AND l.type = 'STATUS' AND l.payload ->> 'status' = 'FAILED'
+             ORDER BY (l.payload ->> 'step')::int LIMIT 20
             """, "id" to id,
         ).map {
-            mapOf("step" to it["step"], "case_ref" to it.str("case_id")?.let { c -> "[[tc:$c]]" },
+            mapOf("step" to it["step"], "case" to caseRef(it.str("case_id"), it.str("case_name")),
                 "is_verification" to (it["verification"] == "true"), "reason" to it.str("message")?.take(STEP_TEXT))
         }
         return ResourceAnswer(listOf(item("qa_try", id, row.str("title") ?: "",
-            mapOf("status" to row["status"], "qa_run_id" to row["qa_run_id"], "scenario_ref" to "[[ts:${row.long("scenario_id")}]]",
+            mapOf("status" to row["status"], "qa_run" to row["qa_run_id"]?.let { linkRef("qa", (it as Number).toLong(), "QA 실행") },
+                "scenario" to mapOf("ref" to "[[ts:${row.long("scenario_id")}]]", "label" to row.str("title")),
                 "game_version" to row["version"], "cases" to "${row["cases_passed"] ?: "?"}/${row["cases_total"] ?: "?"}",
                 "failed_steps" to failed),
             RELATIONS.getValue("qa_try"))))
@@ -455,12 +459,20 @@ class ResourceQueryService(
     private fun item(kind: String, id: Long, label: String, fields: Map<String, Any?>, relations: List<String>) =
         ResourceItem(
             kind = kind, id = id, label = label,
-            ref = when (kind) { "case" -> "[[tc:$id]]"; "scenario" -> "[[ts:$id]]"; else -> null },
+            // 표식은 화면이 칩으로 그리고 그 페이지로 보낸다 — 케이스 · 시나리오 · 테스트 런 · QA 실행 · 이슈 · 빌드.
+            ref = MARKER_KINDS[kind]?.let { "[[$it:$id]]" },
             fields = fields.filterValues { it != null },
             relations = relations,
         )
 
     private fun note(text: String) = ResourceAnswer(emptyList(), text)
+
+    /** 결과 안쪽에 싣는 케이스 표식. 이름을 함께 실어 칩이 번호가 아니라 이름으로 보이게 한다. */
+    private fun caseRef(caseId: String?, name: String?): Map<String, Any?>? =
+        caseId?.let { mapOf("ref" to "[[tc:$it]]", "label" to (name ?: "케이스")) }
+
+    /** 결과 안쪽에 싣는 페이지 표식(QA 실행 등). */
+    private fun linkRef(kind: String, id: Long, label: String): Map<String, Any?> = mapOf("ref" to "[[$kind:$id]]", "label" to label)
 
     private suspend fun rows(sql: String, vararg binds: Pair<String, Any>): List<Map<String, Any?>> {
         var spec = db.sql(sql.trimIndent())
@@ -503,6 +515,11 @@ class ResourceQueryService(
         const val DEFAULT_LIMIT = 10
         const val MAX_LIMIT = 30
         const val STEP_TEXT = 300
+
+        /** 종류 → 화면 칩 표식. */
+        private val MARKER_KINDS = mapOf(
+            "case" to "tc", "scenario" to "ts", "test_run" to "tr", "qa_run" to "qa", "issue" to "issue", "build" to "build",
+        )
 
         private val logger = LoggerFactory.getLogger(ResourceQueryService::class.java)
         private val WORD = Regex("""[\p{L}\p{N}_/.]+""")

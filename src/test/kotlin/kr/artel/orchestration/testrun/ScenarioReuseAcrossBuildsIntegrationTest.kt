@@ -591,7 +591,8 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         // 시나리오를 읽으면 스텝마다 화면의 TC 순번과 케이스 표식이 있다(jsonb 를 내용으로 읽는다).
         @Suppress("UNCHECKED_CAST")
         val steps = resources.query(trScope, ResourceRequest("get", "scenario", id = scenario.id)).items.single().fields["steps"] as List<Map<String, Any?>>
-        assertThat(steps.single()).containsEntry("tc_no", 1).containsEntry("case_ref", "[[tc:$changed]]")
+        assertThat(steps.single()).containsEntry("tc_no", 1)
+        assertThat((steps.single()["case"] as Map<*, *>)["ref"]).isEqualTo("[[tc:$changed]]")
         // 버전 없는 사용자 케이스는 그렇다고 적는다.
         val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "설정 창을 연다", expectedValue = "x"))
         assertThat(resources.query(trScope, ResourceRequest("get", "case", id = manual.id)).items.single().fields).containsKey("version_note")
