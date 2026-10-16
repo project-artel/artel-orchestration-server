@@ -37,6 +37,7 @@ class TestCaseVersionService(
     private val objectMapper: ObjectMapper,
     private val folderItems: TestCaseFolderItemRepository,
     private val groups: TestCaseVersionGroupRepository,
+    private val reader: TestCaseReader,
 ) {
 
     /**
@@ -140,15 +141,16 @@ class TestCaseVersionService(
             here != null -> ONLY_THIS
             else -> ONLY_OTHER
         }
-        val map = isMapCase(identity)
+        // 내용을 비추는 규칙은 TR · QA 와 같은 한 자리다(ARTEL-1069).
+        val shown = reader.project(identity, version)
         return TestCaseVersionRow(
             id = requireNotNull(identity.id).toString(),
-            scene = if (map) version.scene else identity.scene,
-            step = if (map) version.step else identity.step,
-            precondition = if (map) version.precondition else identity.precondition,
-            expectedValue = if (map) version.expectedValue else identity.expectedValue,
-            status = if (map) version.status else identity.status,
-            origin = if (map) MAP else MANUAL,
+            scene = shown.scene,
+            step = shown.step,
+            precondition = shown.precondition,
+            expectedValue = shown.expectedValue,
+            status = shown.status,
+            origin = if (isMapCase(identity)) MAP else MANUAL,
             folderId = folderId?.toString(),
             createdAt = identity.createdAt ?: Instant.EPOCH,
             verificationStatus = here?.verificationStatus,

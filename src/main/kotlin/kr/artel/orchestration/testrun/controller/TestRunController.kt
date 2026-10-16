@@ -6,6 +6,7 @@ import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testrun.dto.CommitScenariosRequest
 import kr.artel.orchestration.testrun.dto.RunChatCancellation
 import kr.artel.orchestration.testrun.dto.RunChatMessage
+import kr.artel.orchestration.testrun.dto.RunCasesOutsideBuildResponse
 import kr.artel.orchestration.testrun.dto.RunCoverageResponse
 import kr.artel.orchestration.testrun.dto.RunDeletionPreview
 import kr.artel.orchestration.testrun.dto.RunDeletionResult
@@ -166,6 +167,21 @@ class TestRunController(
         @CurrentUserId appUserId: Long
     ): ResponseEntity<RunCoverageResponse> =
         service.coverage(runId, appUserId)
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
+
+    /**
+     * 이 런의 케이스 중 [gameInstanceId] 게임의 버전에 없는 것(ARTEL-1069). QA 는 그 케이스를 판정하지 않고 넘기므로,
+     * QA 를 시작하기 전에 화면이 알린다.
+     */
+    @GetMapping("/{runId}/cases-outside-build")
+    suspend fun casesOutsideBuild(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestParam gameInstanceId: Long,
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<RunCasesOutsideBuildResponse> =
+        service.casesOutsideBuild(runId, gameInstanceId, appUserId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 

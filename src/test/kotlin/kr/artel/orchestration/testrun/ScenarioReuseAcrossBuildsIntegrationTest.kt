@@ -30,20 +30,25 @@ import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
+import kr.artel.orchestration.testcase.service.CaseScope
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.ScenarioStep
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.entity.withDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+import kr.artel.orchestration.testscenario.service.AuthoringCases
 import kr.artel.orchestration.testscenario.service.AuthoringVersion
 import kr.artel.orchestration.testscenario.service.AuthoringVersionResolver
 import kr.artel.orchestration.testscenario.service.ScenarioCaseFactService
+import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -104,6 +109,8 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
     @Autowired private lateinit var caseFactService: ScenarioCaseFactService
     @Autowired private lateinit var authoringVersions: AuthoringVersionResolver
     @Autowired private lateinit var testCaseService: TestCaseService
+    @Autowired private lateinit var authoringCases: AuthoringCases
+    @Autowired private lateinit var compositionService: ScenarioCompositionService
 
     @Test
     fun `같은 케이스는 버전을 넘어 한 행이고, 직전 버전에서 판정이 난 것만 새 버전에서 REGRESSION 으로 시작한다`(): Unit = runBlocking {
@@ -302,6 +309,197 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         val sent = testCaseService.getAuthoringCases(projectId, userId, authoringVersions.caseIds(buildA.gameBuildId)).map { it.id }
         assertThat(sent).contains(caseId).doesNotContain(manual.id)
         assertThat(testCaseService.getAuthoringCases(projectId, userId).map { it.id }).contains(manual.id)
+    }
+
+    /**
+     * 같은 지도를 적재한 버전이면 저작에 보내는 목록이 맥락이 없을 때와 **똑같다**(ARTEL-1064). 버전 몫을 읽게 바꾼
+     * 것이 같은 지도 프로젝트의 저작을 조금도 바꾸지 않는다는 전후 비교다.
+     */
+    @Test
+    fun `같은 지도 버전이면 저작 목록 · 화면 간선 · 시작값이 맥락 없을 때와 같다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val build = ingestedBuild(projectId, "1.0.0", Instant.now())
+        generate(token, projectId, build.gameBuildId)
+        val inVersion = authoringVersions.caseIds(build.gameBuildId)
+
+        val before = testCaseService.getAuthoringCases(projectId, userId).filter { it.id in inVersion }
+        val after = withContext(AuthoringVersion(build.gameBuildId)) { testCaseService.getAuthoringCases(projectId, userId, inVersion) }
+
+        assertThat(after).isNotEmpty().isEqualTo(before)
+        assertThat(withContext(AuthoringVersion(build.gameBuildId)) { testCaseService.sceneEdges(projectId) })
+            .isEqualTo(testCaseService.sceneEdges(projectId))
+        assertThat(withContext(AuthoringVersion(build.gameBuildId)) { testCaseService.startingValues(projectId) })
+            .isEqualTo(testCaseService.startingValues(projectId))
+    }
+
+    /**
+     * 버전마다 내용이 다르면 각 런이 자기 버전의 내용과 능력을 쓴다(ARTEL-1064). B 의 몫만 스텝을 바꾸고 B 지도에 없는
+     * 능력을 가리키게 하면, B 를 따르는 저작은 바뀐 스텝과 "누를 것 없음" 을 받고 A 를 따르는 저작은 예전 것을 받는다.
+     * 그 버전에서 BROKEN 인 몫은 보내지 않는다.
+     */
+    @Test
+    fun `버전마다 내용이 다르면 저작은 자기 버전의 내용과 능력을 쓴다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
+        generate(token, projectId, buildA.gameBuildId)
+        val buildB = ingestedBuild(projectId, "1.1.0", Instant.now())
+        generate(token, projectId, buildB.gameBuildId)
+        val listA = withContext(AuthoringVersion(buildA.gameBuildId)) {
+            testCaseService.getAuthoringCases(projectId, userId, authoringVersions.caseIds(buildA.gameBuildId))
+        }
+        val target = listA.first { it.input.isNotEmpty() }
+        val original = target.step
+        val rowB = versions.findByTestCaseIdAndGameBuildId(target.id, buildB.gameBuildId)!!
+        versions.save(rowB.copy(step = "B 에서 바뀐 스텝", capabilityKey = "no-such-capability"))
+
+        val inA = withContext(AuthoringVersion(buildA.gameBuildId)) {
+            testCaseService.getAuthoringCases(projectId, userId, authoringVersions.caseIds(buildA.gameBuildId))
+        }.single { it.id == target.id }
+        val inB = withContext(AuthoringVersion(buildB.gameBuildId)) {
+            testCaseService.getAuthoringCases(projectId, userId, authoringVersions.caseIds(buildB.gameBuildId))
+        }.single { it.id == target.id }
+        assertThat(inA.step).isEqualTo(original)
+        assertThat(inA.input).isNotEmpty()
+        assertThat(inB.step).isEqualTo("B 에서 바뀐 스텝")
+        assertThat(inB.input).isEmpty()
+        assertThat(withContext(AuthoringVersion(buildB.gameBuildId)) { authoringCases.byId(target.id) }!!.step).isEqualTo("B 에서 바뀐 스텝")
+        // 맥락이 없으면 대표 행 그대로다.
+        assertThat(authoringCases.byId(target.id)!!.step).isEqualTo(testCases.findById(target.id)!!.step)
+
+        versions.save(versions.findByTestCaseIdAndGameBuildId(target.id, buildB.gameBuildId)!!.copy(verificationStatus = "BROKEN"))
+        assertThat(authoringVersions.caseIds(buildB.gameBuildId)).doesNotContain(target.id)
+        val sentB = withContext(AuthoringVersion(buildB.gameBuildId)) {
+            testCaseService.getAuthoringCases(projectId, userId, authoringVersions.caseIds(buildB.gameBuildId))
+        }
+        assertThat(sentB.map { it.id }).doesNotContain(target.id)
+    }
+
+    /**
+     * 판정 기준은 TR 버전의 내용이고 기록은 켜진 게임 버전이다(ARTEL-1069). 게임 버전에 없는 케이스는 기록할 자리가
+     * 없으므로 `case_id` 를 비워 판정 없이 넘긴다. 사람이 쓴 케이스는 버전 몫이 스냅샷일 뿐이라 사람이 고친 정체의
+     * 내용을 보낸다.
+     */
+    @Test
+    fun `QA 는 TR 버전의 내용으로 판정하고 게임 버전에 없는 케이스는 판정 없이 넘긴다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
+        generate(token, projectId, buildA.gameBuildId)
+        val buildB = ingestedBuild(projectId, "1.1.0", Instant.now())
+        generate(token, projectId, buildB.gameBuildId)
+        val caseIds = versions.findByGameBuildId(buildA.gameBuildId).toList().map { it.testCaseId }.sorted()
+        val changed = caseIds[0]
+        val gone = caseIds[1]
+        val expectedInA = versions.findByTestCaseIdAndGameBuildId(changed, buildA.gameBuildId)!!.expectedValue
+        versions.save(versions.findByTestCaseIdAndGameBuildId(changed, buildB.gameBuildId)!!.copy(expectedValue = "B 의 기대 결과"))
+        versions.delete(versions.findByTestCaseIdAndGameBuildId(gone, buildB.gameBuildId)!!)
+        val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "사람이 고친 것", expectedValue = "x"))
+        versions.save(TestCaseVersionEntity.snapshotOf(manual, buildB.gameBuildId).copy(step = "판정 받던 때의 스냅샷"))
+        val draft = ScenarioDraft(
+            title = "t",
+            description = "d",
+            steps = listOf(
+                ScenarioStep(action = "a", caseId = changed),
+                ScenarioStep(action = "b", caseId = gone),
+                ScenarioStep(action = "c", caseId = manual.id),
+                ScenarioStep(action = "d"),
+            ),
+        )
+
+        // TR 은 1.0, 게임은 1.1.
+        val sent = compositionService.agentScenario(draft, CaseScope.Version(buildA.gameBuildId), buildB.gameBuildId).steps
+
+        assertThat(sent[0].case!!.expected).isEqualTo(expectedInA)
+        assertThat(sent[1].caseId).isNull()
+        assertThat(sent[1].case).isNull()
+        assertThat(sent[1].action).isEqualTo("b")
+        // 1.0 에 몫이 없는 사람이 쓴 케이스도 1.1 에 적을 자리가 있으면 판정한다. 내용은 사람이 고친 것이다.
+        assertThat(sent[2].caseId).isEqualTo(manual.id)
+        assertThat(sent[2].case!!.testStep).isEqualTo("사람이 고친 것")
+        // 같은 TR 이 1.1 게임으로 돌아도 판정 기준은 그대로 1.0 의 내용이다.
+        assertThat(compositionService.agentScenario(draft, CaseScope.Version(buildB.gameBuildId), buildB.gameBuildId).steps[0].case!!.expected)
+            .isEqualTo("B 의 기대 결과")
+        // 게임 버전을 모르면 거르지 않고, 버전 없는 TR 은 정체(최신) 내용이다.
+        val unknown = compositionService.agentScenario(draft).steps
+        assertThat(unknown.map { it.caseId }).containsExactly(changed, gone, manual.id, null)
+        // FREE 는 스텝이 곧 케이스다. 게임 버전에 없는 케이스는 비우지 않고 뺀다.
+        val free = draft.copy(
+            steps = draft.steps.filter { it.caseId != null },
+            executionMode = ScenarioExecutionMode.FREE,
+        )
+        val freeSent = compositionService.agentScenario(free, CaseScope.Version(buildA.gameBuildId), buildB.gameBuildId).steps
+        assertThat(freeSent.map { it.caseId }).containsExactly(changed, manual.id)
+    }
+
+    /**
+     * TR 화면이 읽는 케이스 · 커버리지는 TR 의 버전을 따르고, QA 전에 켜진 게임 버전에 없는 케이스를 알린다(ARTEL-1069).
+     * editor 로 켠 게임은 같은 버전의 게임 빌드로 판정한다.
+     */
+    @Test
+    fun `TR 화면의 케이스와 커버리지는 TR 버전을 따르고 게임 버전에 없는 케이스를 알린다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
+        generate(token, projectId, buildA.gameBuildId)
+        val buildB = ingestedBuild(projectId, "1.1.0", Instant.now())
+        generate(token, projectId, buildB.gameBuildId)
+        val inA = authoringVersions.caseIds(buildA.gameBuildId)
+        val caseIds = inA.sorted()
+        versions.save(versions.findByTestCaseIdAndGameBuildId(caseIds[0], buildB.gameBuildId)!!.copy(step = "B 의 스텝"))
+        versions.delete(versions.findByTestCaseIdAndGameBuildId(caseIds[1], buildB.gameBuildId)!!)
+        val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "버전 없음", expectedValue = "x"))
+        val runId = call(token, HttpMethod.POST, "/api/projects/$projectId/test-runs", """{"name":"1.0 런","gameBuildId":"${buildA.gameBuildId}"}""")
+            .body["id"].asLong()
+        val scenario = scenarios.save(
+            TestScenarioEntity(projectId = projectId).withDraft(
+                ScenarioDraft(
+                    title = "s",
+                    description = "",
+                    steps = listOf(
+                        ScenarioStep(action = "a", caseId = caseIds[0]),
+                        ScenarioStep(action = "b", caseId = caseIds[1]),
+                        ScenarioStep(action = "c", caseId = manual.id),
+                    ),
+                ),
+                objectMapper,
+            )
+        )
+        runScenarios.save(TestRunScenarioEntity(testRunId = runId, testScenarioId = scenario.id!!, position = 0))
+
+        val coverage = call(token, HttpMethod.GET, "/api/projects/$projectId/test-runs/$runId/coverage").body
+        assertThat(coverage["total"].asInt()).isEqualTo(inA.size)
+        assertThat(coverage["covered"].asInt()).isEqualTo(2)
+
+        val listA = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases?gameBuildId=${buildA.gameBuildId}").body["items"]
+        assertThat(listA.map { it["id"].asLong() }).containsExactlyInAnyOrderElementsOf(inA)
+        val listB = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases?gameBuildId=${buildB.gameBuildId}").body["items"]
+        assertThat(listB.map { it["id"].asLong() }).doesNotContain(caseIds[1], manual.id)
+        fun detail(build: Long) = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases/${caseIds[0]}?gameBuildId=$build").body
+        assertThat(detail(buildB.gameBuildId)["step"].asText()).isEqualTo("B 의 스텝")
+        assertThat(detail(buildA.gameBuildId)["step"].asText()).isNotEqualTo("B 의 스텝")
+
+        val now = Instant.now()
+        val editor = gameBuilds.save(
+            GameBuildEntity(projectId = projectId, version = "1.1.0", isEditor = true, createdAt = now, updatedAt = now)
+        )
+        suspend fun outside(build: Long?): JsonNode {
+            val instance = gameInstances.save(
+                GameInstanceEntity(
+                    projectId = projectId, name = "i", platform = "UNITY", sdkUuid = UUID.randomUUID().toString(),
+                    lastGameBuildId = build, createdAt = now, updatedAt = now,
+                )
+            )!!
+            return call(token, HttpMethod.GET, "/api/projects/$projectId/test-runs/$runId/cases-outside-build?gameInstanceId=${instance.id}").body
+        }
+        val onB = outside(buildB.gameBuildId)
+        assertThat(onB["gameBuildId"].asLong()).isEqualTo(buildB.gameBuildId)
+        assertThat(onB["testCaseIds"].map { it.asLong() }).containsExactly(caseIds[1], manual.id)
+        assertThat(outside(editor.id)["testCaseIds"].map { it.asLong() }).containsExactly(caseIds[1], manual.id)
+        val onUnknown = outside(null)
+        assertThat(onUnknown.path("gameBuildId").isNullish()).isTrue()
+        assertThat(onUnknown["testCaseIds"]).isEmpty()
     }
 
     /** editor 행은 게임 버전이 아니다(ARTEL-1014). 나중에 만들어졌어도 TR 의 버전과 트리에 들지 않는다. */

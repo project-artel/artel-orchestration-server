@@ -1,8 +1,6 @@
 package kr.artel.orchestration.testscenario.service
 
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.toSet
-import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
+import kr.artel.orchestration.testcase.service.TestCaseReader
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import org.springframework.stereotype.Service
 import kotlin.coroutines.AbstractCoroutineContextElement
@@ -27,12 +25,14 @@ suspend fun authoringGameBuildId(): Long? = coroutineContext[AuthoringVersion]?.
 @Service
 class AuthoringVersionResolver(
     private val testRuns: TestRunRepository,
-    private val versions: TestCaseVersionRepository,
+    private val reader: TestCaseReader,
 ) {
     /** TR 의 TC 버전. TR 이 없거나 버전이 없으면 `AuthoringVersion(null)` 이다. */
     suspend fun of(runId: Long): AuthoringVersion = AuthoringVersion(testRuns.findById(runId)?.gameBuildId)
 
-    /** 그 버전에 든 케이스 id. 저작에 보내는 목록 · 검색 · 미커버가 같은 집합을 쓴다. */
-    suspend fun caseIds(gameBuildId: Long): Set<Long> =
-        versions.findByGameBuildId(gameBuildId).map { it.testCaseId }.toSet()
+    /**
+     * 그 버전에 든 케이스 id. 저작에 보내는 목록 · 검색 · 미커버 · 검수가 같은 집합을 쓴다. 그 버전에서 `BROKEN` 인
+     * 몫은 뺀다 — 보내는 목록이 그 버전의 판정 상태로 거르기 때문이다(ARTEL-1064). 규칙은 [TestCaseReader.caseIds] 하나다.
+     */
+    suspend fun caseIds(gameBuildId: Long): Set<Long> = reader.caseIds(gameBuildId)
 }
