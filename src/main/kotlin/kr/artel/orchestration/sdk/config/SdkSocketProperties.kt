@@ -62,6 +62,15 @@ data class SdkSocketProperties(
      *
      * ping 주기의 세 배다. pong 을 두 번 놓쳐도 닫지 않는다. 너무 길게 잡으면 끊긴 세션이 그만큼
      * 연결됨으로 남고, SDK 의 재연결도 그만큼 거절된다(ARTEL-1111).
+     *
+     * 검사는 ping 을 보낼 때만 하므로, 끊긴 뒤 닫힐 때까지는 최대 이 값에 [pingInterval] 을 더한
+     * 60초가 걸린다.
      */
     val idleTimeout: Duration = Duration.ofSeconds(45),
-)
+) {
+    init {
+        require(idleTimeout > pingInterval) {
+            "artel.sdk.socket.idle-timeout($idleTimeout) 은 ping-interval($pingInterval) 보다 길어야 한다. 아니면 pong 을 기다리기 전에 세션을 닫는다."
+        }
+    }
+}

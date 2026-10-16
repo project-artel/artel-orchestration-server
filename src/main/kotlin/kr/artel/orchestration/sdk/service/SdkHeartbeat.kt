@@ -63,7 +63,7 @@ class SdkHeartbeat(
                     logger.warn("SDK 세션 heartbeat 시간 초과로 닫음 [instanceId: $instanceId]: ${silentMillis}ms 동안 받은 frame 없음")
                     session.close(HEARTBEAT_TIMEOUT).subscribe(
                         {},
-                        { error -> logger.warn("heartbeat 시간 초과 세션 닫기 실패 [instanceId: $instanceId]: ${error.message}") }
+                        { error -> logger.error("heartbeat 시간 초과 세션 닫기 실패, 세션이 남을 수 있음 [instanceId: $instanceId]", error) }
                     )
                     sink.complete()
                 } else {

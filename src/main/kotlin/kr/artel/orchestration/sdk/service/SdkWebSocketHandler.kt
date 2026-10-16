@@ -135,6 +135,9 @@ class SdkWebSocketHandler(
         val receiveEnded = Sinks.empty<Void>()
 
         val receive = session.receive()
+            // concatMap 앞에서 기록한다. 다만 handler 하나가 idle-timeout 보다 오래 걸리고 그 뒤에
+            // frame 32개가 밀려 있으면 receive 가 요청을 멈춰 pong 도 읽히지 않는다. 그때는 살아 있는
+            // 세션이 닫힐 수 있다. 지금 handler 들은 그만큼 오래 걸리지 않는다.
             .doOnNext { heartbeat.seen() }
             // 서버가 보낸 ping 의 pong 이다. 생존 신호로만 쓰고 메시지 handler 로는 넘기지 않는다.
             .filter { message -> message.type != WebSocketMessage.Type.PONG }
