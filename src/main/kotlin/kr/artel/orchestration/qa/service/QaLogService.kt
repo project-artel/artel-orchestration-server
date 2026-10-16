@@ -60,7 +60,9 @@ internal val TYPES =
         "SCREEN_NAME_REQUEST", "SCREEN_NAME",
         // QA 판정을 TC 상태에 반영한 기록(ARTEL-994). SSE 가 이 표를 읽으므로 화면이 TC 배지를
         // 실시간으로 바꾸려면 여기 적혀야 한다.
-        "CASE_VERDICT"
+        "CASE_VERDICT",
+        // behavior 가 끝났다는 SDK 프레임(ARTEL-1053). 왜 멈췄는지(`reason`)를 되짚을 자리가 이 행뿐이다.
+        "BEHAVIOR_ENDED"
     )
 
 data class QaLogAppendResult(val log: QaLogResponse, val inserted: Boolean)

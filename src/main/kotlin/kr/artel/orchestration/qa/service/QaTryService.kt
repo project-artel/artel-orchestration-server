@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.entity.ContentMapMode
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.game.service.GameFunctionCatalogService
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.knowledge.service.KnowledgeCitationService
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
@@ -96,6 +97,11 @@ internal fun mergeCarriedGates(carrier: String, agentConfig: JsonNode?, objectMa
         for (field in CARRIED_GATE_FIELDS) {
             val value = carried.path(field)
             if (value.isTextual) put(field, value.asText())
+        }
+        // cheat · behavior 옵션은 배열도 싣는다(허용 목록과 보낸 이름들). 값을 그대로 옮긴다.
+        for (field in CARRIED_FUNCTION_FIELDS) {
+            val value = carried.path(field)
+            if (!value.isMissingNode && !value.isNull) set<JsonNode>(field, value)
         }
     }
 }
@@ -330,6 +336,8 @@ class QaTryPersistenceService(
      *   지식창고에 쓸 수 있다. `attachAndMarkRunning`이 Agent 설정을 덮어쓸 때 같은 값을 다시 얹는다.
      * @param contentMapMode 이 런에 content map 을 얼마나 열어 줄지. [knowledge] 와 같은 순간에 같은
      *   이유로 기록된다 — 그 창에서 게이트가 비어 있으면 `frozen` 으로 돌린 arm 이 지도에 쓸 수 있다.
+     * @param functions 이 런이 쓸 cheat · behavior 옵션과 agent 에게 보낼 이름들(ARTEL-1053). 같은 창에서 같은 이유로
+     *   기록된다 — 이름이 없으면 그 창에 도착한 `invoke_cheat` 를 허용 검사가 판단할 근거가 없다.
      */
     suspend fun createStarting(
         testScenarioId: Long,
@@ -337,7 +345,8 @@ class QaTryPersistenceService(
         startedBy: Long,
         knowledge: QaKnowledgeSettings,
         contentMapMode: ContentMapMode = ContentMapMode.DEFAULT,
-        keySource: KeySource = KeySource.PLATFORM
+        keySource: KeySource = KeySource.PLATFORM,
+        functions: QaResolvedFunctions? = null
     ): Pair<QaTryEntity, QaLogAppendResult> =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -354,6 +363,7 @@ class QaTryPersistenceService(
                             objectMapper.createObjectNode()
                                 .put(KNOWLEDGE_MODE_FIELD, knowledge.mode.wire)
                                 .put(CONTENT_MAP_MODE_FIELD, contentMapMode.wire)
+                                .also { config -> functions?.writeTo(config) }
                         )
                     ),
                     startedAt = now
@@ -383,6 +393,8 @@ class QaTryPersistenceService(
      * @param label 이 run 이 속한 실험 묶음의 이름. [gates] 와 같은 자리에서 받되 `run_config` 가
      *   아니라 `qa_run` 컬럼에 남는다 — 묶음은 run 단위이고 arm 은 try 단위라, 둘을 한 곳에 두면
      *   `qa_try` 를 세는 집계가 묶음까지 세게 된다. null 이면 어느 실험에도 안 묶인 run 이다.
+     * @param functions 이 run 의 cheat · behavior 옵션과 보낸 이름들(ARTEL-1053). [gates] 와 같이 run 에 하나이고 모든 try 가
+     *   같은 것을 받는다. null 이면 `run_config` 에 싣지 않는다.
      */
     suspend fun createRunStarting(
         testRunId: Long,
@@ -392,7 +404,8 @@ class QaTryPersistenceService(
         gates: QaRunGates = QaRunGates(),
         label: String? = null,
         gameBuildId: Long? = null,
-        keySource: KeySource = KeySource.PLATFORM
+        keySource: KeySource = KeySource.PLATFORM,
+        functions: QaResolvedFunctions? = null
     ): QaRunStarting =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -402,6 +415,7 @@ class QaTryPersistenceService(
                     objectMapper.createObjectNode().apply {
                         gates.knowledgeMode?.let { put(KNOWLEDGE_MODE_FIELD, it.wire) }
                         gates.contentMapMode?.let { put(CONTENT_MAP_MODE_FIELD, it.wire) }
+                        functions?.writeTo(this)
                     }
                 )
             )
@@ -571,6 +585,7 @@ class QaTryService(
     private val readings: QaReadingsService,
     private val logService: QaLogService,
     private val runStatusNotifier: QaRunStatusNotifier,
+    private val functionCatalogs: GameFunctionCatalogService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -581,7 +596,8 @@ class QaTryService(
         settings: QaRunSettings = QaRunSettings(),
         knowledge: QaKnowledgeSettings = QaKnowledgeSettings(),
         contentMapMode: ContentMapMode = ContentMapMode.DEFAULT,
-        runKey: QaRunKey = QaRunKey()
+        runKey: QaRunKey = QaRunKey(),
+        functionOptions: QaFunctionOptions = QaFunctionOptions()
     ): QaTryResponse {
         val scenario = scenarioAccessService.accessibleScenario(testScenarioId, userId)
             ?: throw NotFoundException()
@@ -597,8 +613,11 @@ class QaTryService(
             throw ActiveQaRunException("An active QA try already exists")
         }
 
-        val (starting, startLog) =
-            persistence.createStarting(testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, runKey.keySource)
+        // 카탈로그와 맞춰 보는 것은 행을 만들기 **전에** 한다. 허용 목록의 이름이 틀렸으면 400 이고 STARTING 행은 남지 않는다.
+        val functions = functionOptions.resolve(functionCatalogs.catalogOfBuild(instance.lastGameBuildId))
+        val (starting, startLog) = persistence.createStarting(
+            testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, runKey.keySource, functions
+        )
         logService.publish(startLog)
         val qaTryId = requireNotNull(starting.id)
         // agent 세션은 아직 없다 — SDK 화면에 "agent 를 기다리는 중" 을 보인다(ARTEL-836).
@@ -617,7 +636,9 @@ class QaTryService(
             promptVersion = settings.promptVersion,
             reasoning = settings.reasoning,
             arch = settings.arch,
-            llmKey = runKey.llmKey
+            llmKey = runKey.llmKey,
+            cheats = functions.cheats,
+            behaviors = functions.behaviors
         )
 
         return try {
@@ -660,7 +681,8 @@ class QaTryService(
         force: Boolean = false,
         gates: QaRunGates = QaRunGates(),
         label: String? = null,
-        runKey: QaRunKey = QaRunKey()
+        runKey: QaRunKey = QaRunKey(),
+        functionOptions: QaFunctionOptions = QaFunctionOptions()
     ): QaRunResponse {
         val scenarios = testRunService.getScenarios(testRunId, userId)
             ?: throw NotFoundException()
@@ -690,10 +712,13 @@ class QaTryService(
             throw ActiveQaRunException()
         }
 
+        // 행을 만들기 전에 카탈로그와 맞춘다. 이름이 틀렸으면 400 이고 qa_run 이 남지 않는다.
+        val functions = functionOptions.resolve(functionCatalogs.catalogOfBuild(instance.lastGameBuildId))
         val started = persistence.createRunStarting(
             testRunId, gameInstanceId, userId, scenarioIds, gates, label,
             gameBuildId = instance.lastGameBuildId,
-            keySource = runKey.keySource
+            keySource = runKey.keySource,
+            functions = functions
         )
         // 첫 시나리오 try 가 이 run 의 자리를 대표한다 — agent 세션은 아직 없다(ARTEL-836).
         runStatusNotifier.waitingAgent(
@@ -720,7 +745,9 @@ class QaTryService(
             promptVersion = settings.promptVersion,
             reasoning = settings.reasoning,
             arch = settings.arch,
-            llmKey = runKey.llmKey
+            llmKey = runKey.llmKey,
+            cheats = functions.cheats,
+            behaviors = functions.behaviors
         )
 
         return try {
@@ -969,7 +996,9 @@ class QaTryService(
         )
     }
 
-    private fun QaTryEntity.toResponse() = QaTryResponse(
+    private fun QaTryEntity.toResponse(
+        functions: QaFunctionAllowList = QaFunctionAllowList.of(runConfig.asString(), objectMapper)
+    ) = QaTryResponse(
         id = requireNotNull(id).toString(),
         testScenarioId = testScenarioId.toString(),
         gameInstanceId = gameInstanceId.toString(),
@@ -983,6 +1012,12 @@ class QaTryService(
         agentFingerprint = agentFingerprint,
         runConfig = objectMapper.readTree(runConfig.asString()),
         knowledgeScopeId = knowledgeScopeId?.toString(),
+        cheatMode = functions.cheatMode.wire,
+        behaviorMode = functions.behaviorMode.wire,
+        allowedCheats = functions.allowedCheats,
+        allowedBehaviors = functions.allowedBehaviors,
+        effectiveCheats = functions.effectiveCheats,
+        effectiveBehaviors = functions.effectiveBehaviors,
         qaRunId = qaRunId?.toString()
     )
 }

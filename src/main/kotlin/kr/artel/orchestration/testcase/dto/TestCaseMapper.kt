@@ -38,7 +38,12 @@ fun TestCaseEntity.toTestCaseResponse(folderId: Long? = null): TestCaseResponse 
         createdAt = createdAt ?: Instant.EPOCH,
         folderId = folderId?.toString(),
         origin = originLabel(),
+        functions = functionsOrNull(),
     )
+
+/** 저장된 허용 범위. 정한 적 없으면(컬럼이 NULL) null 이다. 읽을 수 없는 값도 null 로 읽어 목록 전체를 막지 않는다. */
+fun TestCaseEntity.functionsOrNull(): TestCaseFunctions? =
+    functions?.let { runCatching { metadataReader.readValue(it.asString(), TestCaseFunctions::class.java) }.getOrNull() }
 
 /**
  * 엔티티 → 단건 조회 응답. 목록용 [toTestCaseResponse]에 `evidenceGaps`만 얹는다.
@@ -63,6 +68,7 @@ fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper, folderId
         folderId = base.folderId,
         origin = base.origin,
         evidenceGaps = evidenceGaps(objectMapper),
+        functions = base.functions,
     )
 }
 

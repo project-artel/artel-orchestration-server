@@ -2,8 +2,10 @@ package kr.artel.orchestration.game.repository
 
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.game.entity.GameBuildEntity
+import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
+import java.time.Instant
 
 /**
  * 빌드에는 soft delete가 없다. 지워도 SDK가 같은 버전을 다시 보고하는 순간 되살아나므로,
@@ -84,4 +86,20 @@ interface GameBuildRepository : CoroutineCrudRepository<GameBuildEntity, Long> {
         """
     )
     suspend fun findAccessibleByIdForMember(id: Long, userId: Long): GameBuildEntity?
+
+    /**
+     * `GAME_FUNCTION_CATALOG` 프레임이 가져온 목록을 빌드에 덮어쓴다. 행을 읽지 않고 이 문장 하나로 쓰므로, 같은 프레임이
+     * 두 번 와도 마지막 것이 남는다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE game_build
+        SET game_function_catalog = CAST(:catalog AS jsonb),
+            game_function_catalog_revision = :revision,
+            game_function_catalog_received_at = :receivedAt
+        WHERE id = :id
+        """
+    )
+    suspend fun storeGameFunctionCatalog(id: Long, catalog: String, revision: Int, receivedAt: Instant): Int
 }
