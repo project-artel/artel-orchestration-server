@@ -783,6 +783,111 @@ class SceneContextIntegrationTest {
         assertThat(rawBody(projectId, buildId)).doesNotContain("definition_json", "definitionJson", "\"source\"")
     }
 
+    // ------------------------------------------------------------------ 오브젝트와 writes (ARTEL-1059)
+
+    /**
+     * 나가는 JSON 한 `scene`. 오브젝트는 `scene` 아래 문서(id) 순서로, 코드가 쓰는 필드는 `capability` 의
+     * `writes` 로 온다. 칸 이름은 agent-server 가 camelCase 로 읽는 계약 그대로다.
+     */
+    @Test
+    fun `scene 의 오브젝트와 capability 의 writes 가 나가는 JSON 모양`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val title = fixture.newScene(mapId, "TitleScene")
+        fixture.newSceneObject(mapId, battle, "Word[13]", active = false,
+            components = listOf("SelectableObject" to listOf("selectable"), "Player" to listOf("HpText", "hp")))
+        fixture.newSceneObject(mapId, battle, "Canvas[0]/CombineButton[2]",
+            components = listOf("Button" to emptyList()))
+        fixture.newSceneObject(mapId, title, "TitleMenu", components = listOf("TitleMenu" to emptyList()))
+        val combine = fixture.newCapability(mapId, battle, summary = "합친다", controlPath = "Canvas/CombineButton")
+        fixture.newWrite(combine, "SelectableObject.selectable")
+        fixture.newWrite(combine, "Canvas/CombinePanel", kind = "active-state")
+
+        val root = ObjectMapper().readTree(rawBody(projectId, buildId))
+
+        val battleScene = root.path("scenes").single { it.path("sceneName").asText() == "BattleScene" }
+        assertThat(battleScene.path("objectsTotal").asInt()).isEqualTo(2)
+        assertThat(battleScene.path("objects").toString()).isEqualTo(
+            """[{"selector":"Word[13]","active":false,"components":[{"type":"SelectableObject","fields":["selectable"]},""" +
+                """{"type":"Player","fields":["HpText","hp"]}]},""" +
+                """{"selector":"Canvas[0]/CombineButton[2]","active":true,"components":[{"type":"Button","fields":[]}]}]"""
+        )
+        // `active-state` 는 `write` 가 아니다.
+        assertThat(battleScene.path("capabilities").single().path("writes").toString())
+            .isEqualTo("""["SelectableObject.selectable"]""")
+
+        val titleScene = root.path("scenes").single { it.path("sceneName").asText() == "TitleScene" }
+        assertThat(titleScene.path("objects").map { it.path("selector").asText() }).containsExactly("TitleMenu")
+    }
+
+    /**
+     * `scene` 하나에 오브젝트 60 개, 컴포넌트 하나에 필드 16 개까지다. `objectsTotal` 이 자르기 전 수를
+     * 말한다. 잘리고 남는 것은 앞쪽이다 — 문서 순서와 이름 오름차순이 고정이라 조회마다 같은 줄이 남는다.
+     */
+    @Test
+    fun `오브젝트는 60 개, 필드는 16 개에서 잘린다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val manyFields = (0 until 20).map { "field%02d".format(it) }
+        fixture.newSceneObject(mapId, battle, "Manager[0]", components = listOf("StageManager" to manyFields))
+        (1 until 61).forEach { fixture.newSceneObject(mapId, battle, "Enemy[$it]") }
+
+        val scene = get(projectId, buildId).scenes.single()
+
+        assertThat(scene.objectsTotal).isEqualTo(61)
+        assertThat(scene.objects).hasSize(60)
+        assertThat(scene.objects.first().components.single().fields).isEqualTo(manyFields.take(16))
+        assertThat(scene.objects.last().selector).isEqualTo("Enemy[59]")
+    }
+
+    /**
+     * 접힌 줄의 `writes` 는 무리 전부의 것을 중복 없이 합치고 8 개에서 자른다. 같은 진입점이 부르는 메서드들이
+     * 나눠 쓰는 값이라, 대표 행 하나의 것만 실으면 버튼이 바꾸는 값 일부가 빠진다.
+     */
+    @Test
+    fun `접힌 줄의 writes 는 무리 전부를 합쳐 8 개에서 자른다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val entry = "Assembly-CSharp|Combat.CombineZone|OnButtonClick|System.Void()"
+        val first = fixture.newCapability(mapId, battle, summary = "하나", entryId = entry)
+        val second = fixture.newCapability(mapId, battle, summary = "둘", entryId = entry)
+        listOf("Zone.a", "Zone.b").forEach { fixture.newWrite(first, it) }
+        listOf("Zone.b", "Zone.c", "Zone.d", "Zone.e", "Zone.f", "Zone.g", "Zone.h", "Zone.i").forEach {
+            fixture.newWrite(second, it)
+        }
+
+        val capability = get(projectId, buildId).scenes.single().capabilities.single()
+
+        assertThat(capability.covers).isEqualTo(2)
+        assertThat(capability.writes)
+            .containsExactly("Zone.a", "Zone.b", "Zone.c", "Zone.d", "Zone.e", "Zone.f", "Zone.g", "Zone.h")
+    }
+
+    /**
+     * 오브젝트도 `write` 도 없으면 빈 목록과 0 이다. 칸이 아예 빠지지 않는다 — V114 이전에 적재되어 아직
+     * 백필되지 않은 지도도 이 모양이고, agent-server 는 "없음" 을 빈 목록으로 읽는다.
+     */
+    @Test
+    fun `오브젝트와 writes 가 없으면 빈 목록이다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val title = fixture.newScene(mapId, "TitleScene")
+        fixture.newCapability(mapId, title, summary = "시작한다")
+
+        val scene = ObjectMapper().readTree(rawBody(projectId, buildId)).path("scenes").single()
+
+        assertThat(scene.path("objects").toString()).isEqualTo("[]")
+        assertThat(scene.path("objectsTotal").asInt(-1)).isEqualTo(0)
+        assertThat(scene.path("capabilities").single().path("writes").toString()).isEqualTo("[]")
+    }
+
     // ---------- 호출 ----------
 
     private fun internalClient() = WebClient.create("http://localhost:${internalApiServer.port}")

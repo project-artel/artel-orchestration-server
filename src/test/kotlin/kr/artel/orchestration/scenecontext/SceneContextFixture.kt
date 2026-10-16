@@ -217,6 +217,45 @@ class SceneContextFixture(
         return macroId
     }
 
+    /**
+     * `scene_object` 한 행(ARTEL-1059). [components] 는 (짧은 타입 이름, 필드) 쌍이고 적재가 넣는 JSON
+     * 모양 그대로 적는다.
+     */
+    suspend fun newSceneObject(
+        contentMapId: Long,
+        sceneId: Long,
+        selector: String,
+        active: Boolean = true,
+        components: List<Pair<String, List<String>>> = emptyList(),
+    ) {
+        val componentsJson = components.joinToString(",", "[", "]") { (type, fields) ->
+            val fieldsJson = fields.joinToString(",", "[", "]") { "\"$it\"" }
+            """{"type":"$type","fields":$fieldsJson}"""
+        }
+        db.sql(
+            """
+            INSERT INTO scene_object (content_map_id, scene_id, selector, active, components)
+            VALUES (:contentMapId, :sceneId, :selector, :active, :components::jsonb)
+            """
+        )
+            .bind("contentMapId", contentMapId)
+            .bind("sceneId", sceneId)
+            .bind("selector", selector)
+            .bind("active", active)
+            .bind("components", componentsJson)
+            .then().awaitFirstOrNull()
+    }
+
+    /** `capability_effect` 의 `write` 한 행. `scene-context` 의 `writes` 가 읽는 것이 이 `target` 이다. */
+    suspend fun newWrite(capabilityId: Long, target: String, kind: String = "write") {
+        db.sql(
+            """
+            INSERT INTO capability_effect (capability_id, category, kind, target)
+            VALUES (:capabilityId, 'state', :kind, :target)
+            """
+        ).bind("capabilityId", capabilityId).bind("kind", kind).bind("target", target).then().awaitFirstOrNull()
+    }
+
     /** 지식 한 항목 + 앵커. [sceneName] 이 null 이면 앵커 없는 지식(= 게임 전체의 사실)이다. */
     suspend fun newKnowledge(
         projectId: Long,

@@ -394,3 +394,16 @@ data class MacroScreenRow(
     @Column("scene_name")
     val sceneName: String,
 )
+
+/**
+ * `capability` 하나가 쓰는 상태 필드 하나(ARTEL-1059). `capability_effect` 의 `kind = 'write'` 행이다.
+ *
+ * @property target 점 표기 대상(`SelectableObject.selectable`). 효과 행 그대로라 잘라 넣은 값일 수 있다.
+ */
+data class CapabilityWriteRow(
+    @Column("capability_id")
+    val capabilityId: Long,
+
+    @Column("target")
+    val target: String,
+)
