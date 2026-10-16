@@ -133,6 +133,30 @@ A summary is `{name, parameters, docstring, gameBuildId, buildVersion, buildLabe
 
 The internal list is for the agent-server's planner–executer engine and carries `source`. It has no authentication, like everything under `/internal/`, and answers 404 for a deleted project.
 
+### MCP access tokens
+
+`artel-macro-mcp` is a remote MCP server and the OAuth 2.1 authorization server for its clients (Claude Code, Codex). It issues the access JWT that its clients use, and this server verifies it.
+
+The MCP server forwards the user's access JWT as `Authorization: Bearer`. A bearer whose unverified `iss` equals `artel.mcp.issuer` is verified against `artel.mcp.jwks-uri`; every other bearer goes through the existing session, SDK and CLI token paths unchanged. The token must have header `typ` `at+jwt` (RFC 9068; `application/at+jwt` is also accepted, plain `JWT` or no `typ` is 401), an RS256 or ES256 signature from a key in the MCP JWKS, `aud` containing `artel.mcp.audience`, and a valid `exp` / `nbf`. `sub` is the `app_user.id`, so every endpoint resolves the user as it does for a browser session. The JWKS is cached and fetched again only for an unknown `kid`. Any failure is 401.
+
+An access JWT opens only these routes, by the scopes in its `scope` claim (space-separated); project routes still check membership:
+
+| Scope | Routes |
+|---|---|
+| `macro:read` | `GET /api/projects`, `GET /api/projects/{projectId}/game-builds`, `GET /api/macros/grammar`, `GET /api/projects/{projectId}/developer-macros`, `GET /api/projects/{projectId}/developer-macros/{name}` |
+| `macro:write` | `POST /api/projects/{projectId}/developer-macros:check`, `PUT /api/projects/{projectId}/developer-macros/{name}`, `DELETE /api/projects/{projectId}/developer-macros/{name}` |
+
+Any other route is 403 `mcp_route_forbidden`, whatever the scope. A listed route without its scope is 403 `insufficient_scope`.
+
+**Configuration.** Everything is off by default, and the server starts without any of it.
+
+| Key | Environment variable | Default | Meaning |
+|---|---|---|---|
+| `artel.mcp.issuer` | `ARTEL_MCP_ISSUER` | blank | expected `iss` of access JWTs. Must differ from `artel.auth.issuer` (startup fails otherwise) |
+| `artel.mcp.jwks-uri` | `ARTEL_MCP_JWKS_URI` | blank | MCP JWKS, `{MCP}/.well-known/jwks.json`. Set both this and `issuer`, or neither (startup fails otherwise); access JWTs are accepted only when both are set |
+| `artel.mcp.audience` | `ARTEL_MCP_AUDIENCE` | `artel-orchestration` | required `aud` of access JWTs |
+| `artel.mcp.jwks-timeout` | — | `5s` | timeout of a JWKS fetch |
+
 ## Verification
 
 ```bash
