@@ -668,6 +668,64 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft/{draftId}": {
+      "put": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "updateChatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "draftId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftScenarioEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftScenario"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-run-folders/{testRunFolderId}": {
       "put": {
         "tags": [
@@ -2283,11 +2341,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -2548,6 +2606,109 @@
               "*/*": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft/discard": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "discardChatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftSelection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DraftScenario"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft/apply": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "applyChatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftSelection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftApplyResult"
                 }
               }
             }
@@ -5848,6 +6009,49 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft": {
+      "get": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "chatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DraftScenario"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-runs/{runId}/cases-outside-build": {
       "get": {
         "tags": [
@@ -7534,6 +7738,117 @@
           },
           "folderId": {
             "type": "string"
+          }
+        }
+      },
+      "ChatScenarioStep": {
+        "required": [
+          "action"
+        ],
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "case_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "input": {
+            "type": "string"
+          },
+          "step_source": {
+            "type": "string",
+            "enum": [
+              "CASE",
+              "CAPABILITY",
+              "UNKNOWN",
+              "HUMAN"
+            ]
+          },
+          "step_kind": {
+            "type": "string",
+            "enum": [
+              "ACTION",
+              "GAP",
+              "OPENING"
+            ]
+          },
+          "step_source_capability_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "step_unknown_reason": {
+            "type": "string"
+          }
+        }
+      },
+      "DraftScenarioEdit": {
+        "required": [
+          "description",
+          "steps",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatScenarioStep"
+            }
+          }
+        }
+      },
+      "DraftScenario": {
+        "required": [
+          "absorbed_scenario_ids",
+          "description",
+          "draft_id",
+          "steps",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "type": "string"
+          },
+          "scenario_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatScenarioStep"
+            }
+          },
+          "absorbed_scenario_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "base_steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatScenarioStep"
+            }
           }
         }
       },
@@ -9325,51 +9640,6 @@
           }
         }
       },
-      "ChatScenarioStep": {
-        "required": [
-          "action"
-        ],
-        "type": "object",
-        "properties": {
-          "action": {
-            "type": "string"
-          },
-          "case_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "hint": {
-            "type": "string"
-          },
-          "input": {
-            "type": "string"
-          },
-          "step_source": {
-            "type": "string",
-            "enum": [
-              "CASE",
-              "CAPABILITY",
-              "UNKNOWN",
-              "HUMAN"
-            ]
-          },
-          "step_kind": {
-            "type": "string",
-            "enum": [
-              "ACTION",
-              "GAP",
-              "OPENING"
-            ]
-          },
-          "step_source_capability_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "step_unknown_reason": {
-            "type": "string"
-          }
-        }
-      },
       "CommitScenariosRequest": {
         "required": [
           "scenarios"
@@ -9420,6 +9690,7 @@
       "RunChatMessage": {
         "required": [
           "autoApply",
+          "draftOnly",
           "message"
         ],
         "type": "object",
@@ -9431,6 +9702,9 @@
             "$ref": "#/components/schemas/ScenarioQuestionAnswer"
           },
           "autoApply": {
+            "type": "boolean"
+          },
+          "draftOnly": {
             "type": "boolean"
           }
         }
@@ -9453,6 +9727,60 @@
           },
           "text": {
             "type": "string"
+          }
+        }
+      },
+      "DraftSelection": {
+        "required": [
+          "draft_ids"
+        ],
+        "type": "object",
+        "properties": {
+          "draft_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "DraftApplyResult": {
+        "required": [
+          "absorbed",
+          "applied",
+          "drafts",
+          "kept",
+          "refused"
+        ],
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "absorbed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kept": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "refused": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "drafts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DraftScenario"
+            }
           }
         }
       },
@@ -10029,11 +10357,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },

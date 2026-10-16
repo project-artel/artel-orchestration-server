@@ -12,9 +12,12 @@ import kr.artel.orchestration.testscenario.dto.ScenarioQuestionAnswer
  *   보기를 고르고 한 줄 덧붙이는 것이 가장 흔한 모양이라 둘을 나누지 않는다.
  * @property autoApply Agent 결과를 서버가 즉시 반영할지. `true`(기본)면 자동저장, `false`면 저장하지 않고
  *   제안으로만 두어 사용자가 카드로 검토·커밋한다(카드 검토 모드). FE의 사용자 토글에서 정한다.
+ * @property draftOnly 승인 전 draft 만 고치는 말(ARTEL-1074). draft 가 있는 동안은 이 말만 받는다 — 결과는 늘
+ *   draft 에 남고([autoApply] 를 보지 않는다), 모델은 draft 만 본다.
  */
 data class RunChatMessage(
     val message: String,
     val answer: ScenarioQuestionAnswer? = null,
-    val autoApply: Boolean = true
+    val autoApply: Boolean = true,
+    val draftOnly: Boolean = false,
 )
