@@ -1299,6 +1299,341 @@
         }
       }
     },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/subscription": {
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "subscribeIssueDiscussion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/state": {
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "setIssueDiscussionState",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscussionStateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/pin": {
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "pinIssueDiscussion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/decision": {
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "setIssueDiscussionDecision",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/comments/{commentId}/reaction": {
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "reactToIssueDiscussionComment",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "commentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionComment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-notes": {
+      "get": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 최신 버전",
+        "description": "저장한 적이 없으면 `version: 0`, 빈 `body` 와 `genres`, null `updatedAt` · `updatedBy` 다.",
+        "operationId": "getGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 저장",
+        "description": "새 버전을 만들어 돌려준다. 본문과 장르 집합이 최신과 같으면 버전을 올리지 않는다. `baseVersion` 이 최신이 아니면 409 `game_notes_conflict`, 본문이 20000 자를 넘거나 장르가 틀리면 400 이다.",
+        "operationId": "putGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGameNotesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/developer-macros/{name}": {
       "get": {
         "tags": [
@@ -1423,82 +1758,6 @@
         "responses": {
           "204": {
             "description": "No Content"
-          }
-        }
-      }
-    },
-    "/api/projects/{projectId}/game-notes": {
-      "get": {
-        "tags": [
-          "Game notes"
-        ],
-        "summary": "게임 노트 최신 버전",
-        "description": "저장한 적이 없으면 `version: 0`, 빈 `body` 와 `genres`, null `updatedAt` · `updatedBy` 다.",
-        "operationId": "getGameNotes",
-        "parameters": [
-          {
-            "name": "projectId",
-            "in": "path",
-            "description": "프로젝트 id",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/GameNotesResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Game notes"
-        ],
-        "summary": "게임 노트 저장",
-        "description": "새 버전을 만들어 돌려준다. 본문과 장르 집합이 최신과 같으면 버전을 올리지 않는다. `baseVersion` 이 최신이 아니면 409 `game_notes_conflict`, 본문이 20000 자를 넘거나 장르가 틀리면 400 이다.",
-        "operationId": "putGameNotes",
-        "parameters": [
-          {
-            "name": "projectId",
-            "in": "path",
-            "description": "프로젝트 id",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateGameNotesRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/GameNotesResponse"
-                }
-              }
-            }
           }
         }
       }
@@ -3811,6 +4070,243 @@
         }
       }
     },
+    "/api/projects/{projectId}/issue-discussions": {
+      "get": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "listIssueDiscussions",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mine",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "subscribed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "issueId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionPageDiscussionSummary"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "createIssueDiscussion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscussionDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/comments": {
+      "get": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "listIssueDiscussionComments",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionPageDiscussionComment"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "createIssueDiscussionComment",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionComment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/invitations": {
       "get": {
         "tags": [
@@ -5015,6 +5511,153 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/ProjectDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}": {
+      "get": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "getIssueDiscussion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "editIssueDiscussion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscussionEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/comments/{commentId}": {
+      "patch": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "editIssueDiscussionComment",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "commentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionComment"
                 }
               }
             }
@@ -6891,6 +7534,103 @@
         }
       }
     },
+    "/api/projects/{projectId}/issues/{issueId}": {
+      "get": {
+        "tags": [
+          "project-issue-controller"
+        ],
+        "operationId": "get_3",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/issue-options": {
+      "get": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "listDiscussionIssueOptions",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionPageDiscussionIssue"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/invitation-suggestions": {
       "get": {
         "tags": [
@@ -8643,6 +9383,306 @@
           }
         }
       },
+      "EnabledRequest": {
+        "required": [
+          "enabled"
+        ],
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionComment": {
+        "required": [
+          "author",
+          "body",
+          "canEdit",
+          "createdAt",
+          "id",
+          "mentions",
+          "reacted",
+          "reactionCount",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "author": {
+            "$ref": "#/components/schemas/DiscussionPerson"
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionPerson"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reactionCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reacted": {
+            "type": "boolean"
+          },
+          "canEdit": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionDetail": {
+        "required": [
+          "author",
+          "body",
+          "canEdit",
+          "canPin",
+          "commentCount",
+          "createdAt",
+          "excerpt",
+          "id",
+          "issueCount",
+          "issues",
+          "mentions",
+          "pinned",
+          "purpose",
+          "state",
+          "subscribed",
+          "title",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "author": {
+            "$ref": "#/components/schemas/DiscussionPerson"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "commentCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "subscribed": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "body": {
+            "type": "string"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionIssue"
+            }
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionPerson"
+            }
+          },
+          "decision": {
+            "$ref": "#/components/schemas/DiscussionComment"
+          },
+          "canEdit": {
+            "type": "boolean"
+          },
+          "canPin": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionIssue": {
+        "required": [
+          "id",
+          "qaTryId",
+          "severity",
+          "status",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "qaRunId": {
+            "type": "string"
+          }
+        }
+      },
+      "DiscussionPerson": {
+        "required": [
+          "displayName",
+          "id",
+          "userTag"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "userTag": {
+            "type": "string"
+          }
+        }
+      },
+      "DiscussionStateRequest": {
+        "required": [
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "DecisionRequest": {
+        "type": "object",
+        "properties": {
+          "commentId": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateGameNotesRequest": {
+        "required": [
+          "baseVersion",
+          "body",
+          "genres"
+        ],
+        "type": "object",
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "baseVersion": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "GameNoteAuthorResponse": {
+        "required": [
+          "displayName",
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          }
+        }
+      },
+      "GameNotesResponse": {
+        "required": [
+          "body",
+          "genres",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "body": {
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "ui-flow",
+                "turn-based"
+              ]
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/GameNoteAuthorResponse"
+          }
+        }
+      },
       "PutDeveloperMacroRequest": {
         "required": [
           "gameBuildId",
@@ -8723,80 +9763,6 @@
           },
           "updatedBy": {
             "$ref": "#/components/schemas/DeveloperMacroAuthor"
-          }
-        }
-      },
-      "UpdateGameNotesRequest": {
-        "required": [
-          "baseVersion",
-          "body",
-          "genres"
-        ],
-        "type": "object",
-        "properties": {
-          "body": {
-            "maxLength": 20000,
-            "minLength": 0,
-            "type": "string"
-          },
-          "genres": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "baseVersion": {
-            "type": "integer",
-            "format": "int32"
-          }
-        }
-      },
-      "GameNoteAuthorResponse": {
-        "required": [
-          "displayName",
-          "id"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          }
-        }
-      },
-      "GameNotesResponse": {
-        "required": [
-          "body",
-          "genres",
-          "version"
-        ],
-        "type": "object",
-        "properties": {
-          "version": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "body": {
-            "type": "string"
-          },
-          "genres": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "ui-flow",
-                "turn-based"
-              ]
-            }
-          },
-          "updatedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updatedBy": {
-            "$ref": "#/components/schemas/GameNoteAuthorResponse"
           }
         }
       },
@@ -10750,6 +11716,65 @@
           }
         }
       },
+      "DiscussionDraft": {
+        "required": [
+          "body",
+          "clientRequestId",
+          "issueIds",
+          "mentionedUserIds",
+          "purpose",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "issueIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mentionedUserIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "clientRequestId": {
+            "type": "string"
+          }
+        }
+      },
+      "CommentDraft": {
+        "required": [
+          "body",
+          "clientRequestId",
+          "mentionedUserIds"
+        ],
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "mentionedUserIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "clientRequestId": {
+            "type": "string"
+          }
+        }
+      },
       "CreateInvitationRequest": {
         "required": [
           "role"
@@ -11511,6 +12536,67 @@
               "CASUAL",
               "OTHER"
             ]
+          }
+        }
+      },
+      "DiscussionEdit": {
+        "required": [
+          "body",
+          "issueIds",
+          "mentionedUserIds",
+          "purpose",
+          "title",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "issueIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mentionedUserIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "CommentEdit": {
+        "required": [
+          "body",
+          "mentionedUserIds",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "mentionedUserIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -14660,6 +15746,133 @@
           "nodeLimit": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "DiscussionPageDiscussionSummary": {
+        "required": [
+          "hasMore",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionSummary"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionSummary": {
+        "required": [
+          "author",
+          "commentCount",
+          "createdAt",
+          "excerpt",
+          "id",
+          "issueCount",
+          "pinned",
+          "purpose",
+          "state",
+          "subscribed",
+          "title",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "author": {
+            "$ref": "#/components/schemas/DiscussionPerson"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "commentCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "subscribed": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "DiscussionPageDiscussionComment": {
+        "required": [
+          "hasMore",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionComment"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionPageDiscussionIssue": {
+        "required": [
+          "hasMore",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionIssue"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          },
+          "hasMore": {
+            "type": "boolean"
           }
         }
       },

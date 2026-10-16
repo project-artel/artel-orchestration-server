@@ -22,6 +22,10 @@ import org.springframework.web.bind.annotation.RestController
 class ProjectIssueController(
     private val service: IssueService
 ) {
+    @GetMapping("/{issueId}")
+    suspend fun get(@PathVariable projectId: Long, @PathVariable issueId: Long, @CurrentUserId appUserId: Long) =
+        service.getByProject(projectId, issueId, appUserId)
+
     /**
      * @param status 없으면 해결·미해결 모두. `OPEN`/`RESOLVED` 외의 값은 400.
      * @param severity 없으면 모든 등급. 사다리 밖의 값은 400.

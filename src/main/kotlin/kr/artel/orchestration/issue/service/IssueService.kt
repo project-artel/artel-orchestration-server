@@ -142,6 +142,13 @@ class IssueService(
         return page(issueRepository.findPageByQaTry(qaTryId, beforeId, size + 1).toList(), size)
     }
 
+    suspend fun getByProject(projectId: Long, issueId: Long, userId: Long): IssueResponse {
+        projectAccess.requireMember(projectId, userId)
+        if (issueRepository.findProjectIdByIssueId(issueId) != projectId) throw NotFoundException()
+        val issue = issueRepository.findById(issueId) ?: throw NotFoundException()
+        return page(listOf(issue), 1).items.single()
+    }
+
     /** 한 프로젝트의 이슈 한 페이지. 참여자가 아니면 404 — 빈 목록으로 위장하지 않는다. */
     suspend fun listByProject(
         projectId: Long,
