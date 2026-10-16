@@ -80,7 +80,12 @@ data class AgentServerProperties(
     /** `/internal` 까지 포함한 agent-server 주소(`http://agent-server:8000/internal`). */
     val baseUrl: String = "http://localhost:8000",
     /** `POST {baseUrl}/llm-cache/invalidate` 의 응답 상한. 저장 응답이 이만큼까지 늦어질 수 있다. */
-    val cacheInvalidateTimeout: Duration = Duration.ofSeconds(3)
+    val cacheInvalidateTimeout: Duration = Duration.ofSeconds(3),
+    /**
+     * 관리 화면에서 시나리오 저작 model 을 고르지 않았을 때 쓰는 model(`ARTEL_AGENT_MODEL`). 비어 있으면
+     * agent-server 의 `DEFAULT_MODEL` 을 쓴다.
+     */
+    val model: String = ""
 )
 
 /** 이 문구 중 하나를 (대소문자 무시하고) 담은 `ARTEL_SECRETS_KEY` 는 예시 값을 그대로 둔 것으로 본다. */

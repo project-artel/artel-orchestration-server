@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import io.netty.channel.ChannelOption
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.reactive.awaitSingle
+import kr.artel.orchestration.settings.service.FeatureModelService
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.MediaType
@@ -26,7 +27,7 @@ import java.time.Duration
 @Component
 class ScenarioStepPhrasingClient(
     @Value("\${artel.agent.base-url}") private val agentBaseUrl: String,
-    @Value("\${artel.agent.model:}") private val configuredModel: String,
+    private val featureModels: FeatureModelService,
     @Value("\${artel.agent.step-phrasing-timeout:PT20S}") private val responseTimeout: Duration,
 ) {
     private val logger = LoggerFactory.getLogger(ScenarioStepPhrasingClient::class.java)
@@ -65,7 +66,7 @@ class ScenarioStepPhrasingClient(
                         after = after,
                         locale = locale,
                         // 세션 오픈과 같은 규칙 — 명시적 override 가 있을 때만 보낸다.
-                        model = configuredModel.takeIf { it.isNotBlank() },
+                        model = featureModels.resolveAuthoringModel(),
                     )
                 )
                 .retrieve()

@@ -162,7 +162,8 @@ class BedrockKeyAndAgentCacheIntegrationTest {
         val internal = internalSettings()
         assertThat(internal["bedrockApiKey"].asText()).isEqualTo(BEDROCK_KEY)
         assertThat(internal["openrouterApiKey"].asText()).isEqualTo(OPENROUTER_KEY)
-        assertThat(internal.fieldNames().asSequence().toList()).containsExactlyInAnyOrder("openrouterApiKey", "bedrockApiKey", "anthropicApiKey")
+        assertThat(internal.fieldNames().asSequence().toList()).containsExactlyInAnyOrder(
+            "openrouterApiKey", "bedrockApiKey", "anthropicApiKey", "typesafeApiKey")
 
         val storedValue = databaseClient.sql("SELECT setting_value FROM platform_setting WHERE setting_key = 'bedrock.api_key'")
             .map { row, _ -> row.get("setting_value", String::class.java)!! }
