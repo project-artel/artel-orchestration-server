@@ -831,6 +831,15 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
           }
         ],
         "responses": {
@@ -2332,11 +2341,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -2868,6 +2877,15 @@
             "name": "projectId",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "format": "int64"
@@ -6034,6 +6052,55 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/cases-outside-build": {
+      "get": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "casesOutsideBuild",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameInstanceId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunCasesOutsideBuildResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-cases/{testCaseId}/verdict-history": {
       "get": {
         "tags": [
@@ -7319,8 +7386,7 @@
             "enum": [
               "ORDERED",
               "FREE"
-            ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
+            ]
           }
         }
       },
@@ -9297,6 +9363,9 @@
             "items": {
               "$ref": "#/components/schemas/QaTryResponse"
             }
+          },
+          "testRunGameBuildId": {
+            "type": "string"
           }
         }
       },
@@ -9614,8 +9683,7 @@
             "enum": [
               "ORDERED",
               "FREE"
-            ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a commit keeps the stored value of the scenario it updates (by scenario_id, or by a title already in the run) and means ORDERED for a new scenario. Always present on the proposals of the run chat SSE result event."
+            ]
           }
         }
       },
@@ -10289,11 +10357,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
@@ -10939,7 +11007,8 @@
           "scenePresence",
           "status",
           "summary",
-          "verification"
+          "verification",
+          "writes"
         ],
         "type": "object",
         "properties": {
@@ -11013,6 +11082,12 @@
           "covers": {
             "type": "integer",
             "format": "int32"
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -11022,6 +11097,8 @@
           "knowledge",
           "knownToContentMap",
           "notAStepCapabilities",
+          "objects",
+          "objectsTotal",
           "sceneName"
         ],
         "type": "object",
@@ -11055,6 +11132,16 @@
             "items": {
               "$ref": "#/components/schemas/SceneKnowledgeView"
             }
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneObjectView"
+            }
+          },
+          "objectsTotal": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -11163,6 +11250,46 @@
           },
           "summary": {
             "type": "string"
+          }
+        }
+      },
+      "SceneObjectComponentView": {
+        "required": [
+          "fields",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SceneObjectView": {
+        "required": [
+          "active",
+          "components",
+          "selector"
+        ],
+        "type": "object",
+        "properties": {
+          "selector": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneObjectComponentView"
+            }
           }
         }
       },
@@ -12600,8 +12727,7 @@
             "enum": [
               "ORDERED",
               "FREE"
-            ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
+            ]
           },
           "createdAt": {
             "type": "string",
@@ -12668,8 +12794,7 @@
             "enum": [
               "ORDERED",
               "FREE"
-            ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
+            ]
           },
           "stepCount": {
             "type": "integer",
@@ -12801,8 +12926,7 @@
             "enum": [
               "ORDERED",
               "FREE"
-            ],
-            "description": "ORDERED runs steps in order. FREE is a bundle of test cases (one step per case_id) that the QA agent orders and verifies by itself. Missing in a request keeps the scenario's current value (ORDERED for a new scenario)."
+            ]
           },
           "steps": {
             "type": "integer",
@@ -12838,6 +12962,27 @@
             "type": "object",
             "additionalProperties": {
               "type": "object"
+            }
+          }
+        }
+      },
+      "RunCasesOutsideBuildResponse": {
+        "required": [
+          "testCaseIds",
+          "testRunId"
+        ],
+        "type": "object",
+        "properties": {
+          "testRunId": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "testCaseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
         }

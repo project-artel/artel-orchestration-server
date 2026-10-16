@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service
  */
 @Service
 class ScenarioFlowPlanner(
+    private val authoringCases: AuthoringCases,
     private val conditions: CaseConditionReader,
     private val testCaseRepository: TestCaseRepository,
     private val objectMapper: ObjectMapper,
@@ -32,7 +33,7 @@ class ScenarioFlowPlanner(
         log: (String) -> Unit = {},
     ): List<ScenarioFlowPlan.Flow> {
         val raisedIn = runCatching {
-            testCaseRepository.findValueRaisers(projectId).toList()
+            authoringCases.valueRaisers(projectId).toList()
                 .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
                 .mapValues { (_, scenes) -> scenes.toSet() }
         }.onFailure { logger.warn("저절로 바뀌는 자리 조회 실패: ${it.message}") }
@@ -40,12 +41,12 @@ class ScenarioFlowPlanner(
 
         // **게임을 켜면 열리는 화면**(ARTEL-659). 없으면 null 이고, 그때는 예전처럼 계산이 스스로
         // 출발점을 고른다 — 못 읽는 것이 저작을 막을 이유는 아니다.
-        val entry = runCatching { testCaseRepository.findEntrySceneName(projectId) }
+        val entry = runCatching { authoringCases.entrySceneName(projectId) }
             .onFailure { logger.warn("입구 씬 조회 실패 — 없이 간다: ${it.message}") }
             .getOrNull()
 
         val cases = matrix.testCaseIds.mapNotNull { id ->
-            val case = testCaseRepository.findById(id) ?: return@mapNotNull null
+            val case = authoringCases.byId(id) ?: return@mapNotNull null
             if (case.projectId != projectId) return@mapNotNull null
             val guards = conditions.guardsOf(case)
             // **그 케이스가 서 있는 화면에서 저절로 바뀌는 값은 지나면 모르게 된다.** 도착 화면도
@@ -68,7 +69,7 @@ class ScenarioFlowPlanner(
         // **지도가 만들 수 있다고 말하는 값만 시작 조건이다.** 아무 기능도 안 쓰는 값은 거의 모든
         // 케이스에 붙어 있는 배경 조건이라(`InteractionLock.IsLocked` 가 스물두 번), 그것까지 적으면
         // 안내가 스물여덟 줄이 되고 아무도 안 읽는다.
-        val produced = runCatching { testCaseRepository.findWrittenValues(projectId).toList() }
+        val produced = runCatching { authoringCases.writtenValues(projectId).toList() }
             .getOrDefault(emptyList())
             .mapTo(mutableSetOf()) { ScenarioStateReader.normalize(it).lowercase() }
 
@@ -86,7 +87,7 @@ class ScenarioFlowPlanner(
         // **게임을 켜면 값이 무엇으로 시작하나**(ARTEL-665). 입구 화면이 저장소에서 읽을 때 적어
         // 두는 기본값이다 — `PlayerPrefs.GetInt("StagePosition", -1)` 의 `-1`.
         val starting = runCatching {
-            testCaseRepository.findStartingValues(projectId).toList()
+            authoringCases.startingValues(projectId).toList()
                 .mapNotNull { row -> ScenarioStateReader.defaultOf(row.detail)?.let { ScenarioStateReader.normalize(row.name) to it } }
                 .toMap()
         }.onFailure { logger.warn("처음 값 조회 실패 — 없이 간다: ${it.message}") }
