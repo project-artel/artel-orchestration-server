@@ -247,6 +247,7 @@ class TestScenarioAgentService(
             existing.autoApply = autoApply
             existing.draftOnly = draftOnly
             existing.shownSteps = shownStepsOf(currentScenarios)
+            existing.shownModes = shownModesOf(currentScenarios)
             // **새 요청이면 지난 턴에 받아 둔 것을 비운다.** 재작성 턴은 이 길로 오지 않으므로(그쪽은
             // [sendTurn] 을 직접 부른다) 앞서 받아 둔 것이 그대로 살아 있다.
             existing.submitted.clear()
@@ -498,6 +499,7 @@ class TestScenarioAgentService(
         openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply, version)
         sessions[sessionKey]?.draftOnly = draftOnly
         sessions[sessionKey]?.shownSteps = shownStepsOf(currentScenarios)
+        sessions[sessionKey]?.shownModes = shownModesOf(currentScenarios)
         // 진행률의 분모. 흐름 하나가 시나리오 하나가 되는 것이 계산의 뜻이므로 그 수를 쓴다.
         sessions[sessionKey]?.expected = flows.size.takeIf { it > 0 }
     }
@@ -677,6 +679,7 @@ class TestScenarioAgentService(
                 drafts.of(sessionKey).accept(
                     raw.scenarioId, outcome.checked.ifEmpty { listOf(scenario) }, emptyList(),
                     raw.scenarioId?.let { session.shownSteps[it] },
+                    raw.scenarioId?.let { session.shownModes[it] },
                 )
             }
         }
@@ -689,6 +692,10 @@ class TestScenarioAgentService(
     /** 저장된 시나리오(양수 번호)의 스텝만. draft(음수)는 draft 저장소가 기준을 든다. */
     private fun shownStepsOf(currentScenarios: List<CurrentScenario>): Map<Long, List<ChatScenarioStep>> =
         currentScenarios.mapNotNull { scenario -> scenario.scenarioId?.takeIf { it > 0 }?.let { it to scenario.steps } }.toMap()
+
+    /** 저장된 시나리오(양수 번호)의 실행 방식(ARTEL-1109). draft 가 방식을 잃지 않도록 [shownStepsOf] 와 짝으로 든다. */
+    private fun shownModesOf(currentScenarios: List<CurrentScenario>): Map<Long, ScenarioExecutionMode> =
+        currentScenarios.mapNotNull { scenario -> scenario.scenarioId?.takeIf { it > 0 }?.let { it to scenario.executionMode } }.toMap()
 
     private suspend fun submitOne(
         sessionKey: String,
@@ -766,7 +773,10 @@ class TestScenarioAgentService(
                 else ScenarioAbsorbService.Outcome()
             // 저장하지 않는 턴은 draft 에 둔다(ARTEL-1074). 하나 받을 때마다 보내 화면의 목록이 함께 자란다.
             if (!session.autoApply) {
-                drafts.of(sessionKey).accept(raw.scenarioId, checked, absorbedIds, raw.scenarioId?.let { session.shownSteps[it] })
+                drafts.of(sessionKey).accept(
+                    raw.scenarioId, checked, absorbedIds,
+                    raw.scenarioId?.let { session.shownSteps[it] }, raw.scenarioId?.let { session.shownModes[it] },
+                )
                 drafts.publish(sessionKey)
             }
             logger.info(
@@ -1918,6 +1928,8 @@ class TestScenarioAgentService(
          * 견줄 기준이다(ARTEL-1075). 매 턴 갱신한다.
          */
         @Volatile var shownSteps: Map<Long, List<ChatScenarioStep>> = emptyMap(),
+        /** 이번 턴에 모델에게 보인 저장된 시나리오의 실행 방식(ARTEL-1109). 매 턴 갱신한다. */
+        @Volatile var shownModes: Map<Long, ScenarioExecutionMode> = emptyMap(),
         /**
          * 시나리오를 **한 번에 하나씩** 받게 하는 잠금.
          *

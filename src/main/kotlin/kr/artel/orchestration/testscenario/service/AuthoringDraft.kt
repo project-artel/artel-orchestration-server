@@ -4,6 +4,7 @@ import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
 import kr.artel.orchestration.testscenario.dto.DraftScenario
 import kr.artel.orchestration.testscenario.dto.DraftScenarioEdit
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import org.springframework.stereotype.Component
@@ -42,6 +43,8 @@ class AuthoringDraft {
      *   적이 없으니 런에서 걷어낼 것도 없다.
      * @param savedSteps 기존 시나리오를 고친 것이면 그 시나리오의 지금 스텝. 처음 고칠 때 화면이 견줄
      *   기준([DraftScenario.baseSteps])이 된다. 이미 draft 가 있으면 그 draft 가 기준이다.
+     * @param savedMode 기존 시나리오를 고친 것이면 그 시나리오의 지금 실행 방식. 결과에 방식이 없을 때
+     *   (ARTEL-1109) 이미 있는 draft 의 방식, 그것도 없으면 이 값, 그것도 없으면 ORDERED 를 쓴다.
      */
     @Synchronized
     fun accept(
@@ -49,6 +52,7 @@ class AuthoringDraft {
         checked: List<ScenarioResult>,
         absorbed: List<Long>,
         savedSteps: List<ChatScenarioStep>? = null,
+        savedMode: ScenarioExecutionMode? = null,
     ): List<DraftScenario> {
         if (checked.isEmpty()) return emptyList()
         val firstKey = when {
@@ -69,6 +73,10 @@ class AuthoringDraft {
                 title = scenario.title,
                 description = scenario.description,
                 steps = scenario.steps,
+                executionMode = scenario.executionMode
+                    ?: entries[key]?.executionMode
+                    ?: savedMode?.takeIf { key.startsWith(EDIT) }
+                    ?: ScenarioExecutionMode.ORDERED,
                 absorbedScenarioIds = if (index == 0) kept else emptyList(),
                 baseSteps = if (index == 0) base else null,
             )
@@ -113,11 +121,11 @@ class AuthoringDraft {
             .filter { it.scenarioId == null || it.scenarioId !in absorbed }
             .map { scenario ->
                 val draft = scenario.scenarioId?.let { entries[editKey(it)] } ?: return@map scenario
-                CurrentScenario(scenario.scenarioId, draft.title, draft.description, draft.steps)
+                CurrentScenario(scenario.scenarioId, draft.title, draft.description, draft.steps, draft.executionMode)
             }
         val added = entries.values
             .filter { it.draftId.startsWith(NEW) }
-            .map { CurrentScenario(agentIdOf(it.draftId), it.title, it.description, it.steps) }
+            .map { CurrentScenario(agentIdOf(it.draftId), it.title, it.description, it.steps, it.executionMode) }
         return edited + added
     }
 
@@ -127,7 +135,7 @@ class AuthoringDraft {
      */
     @Synchronized
     fun draftsOnly(): List<CurrentScenario> =
-        entries.values.map { CurrentScenario(agentIdOf(it.draftId), it.title, it.description, it.steps) }
+        entries.values.map { CurrentScenario(agentIdOf(it.draftId), it.title, it.description, it.steps, it.executionMode) }
 
     /**
      * draft 만 고치는 턴에서 Agent 가 낸 번호를 고칠 draft 의 번호로 푼다. draft 의 번호면 그대로, 번호가
