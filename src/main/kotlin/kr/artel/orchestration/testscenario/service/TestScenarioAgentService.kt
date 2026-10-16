@@ -1582,19 +1582,16 @@ class TestScenarioAgentService(
                     if (needsModes) streamManager.emit(sessionKey, withExecutionModes(session, event))
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
                     try {
-                        // 결과·설명 칸은 payload 로 함께 든다(ARTEL-927). `content` 는 세 칸을 이은
-                        // 글 그대로라 옛 화면과 대화 기록은 바뀌지 않는다.
+                        // 결과·설명·질문 칸은 payload 로 함께 든다(ARTEL-927 · ARTEL-1117). `content` 는
+                        // 세 칸을 이은 글 그대로라 옛 화면과 대화 기록은 바뀌지 않는다.
+                        //
+                        // 모델이 물은 것은 답 안의 `asks` 다. 따로 `question` 메시지로 저장하던 길은
+                        // 걷었다 — 프레임에 옛 `question`·`questions` 가 실려 와도 묻지 않는다. 사용자는
+                        // 대화로 답하고, 저작은 그것을 대화 기억으로 잇는다(ARTEL-942).
                         saveMessage(
                             session.runId, session.appUserId, "ASSISTANT", event.message ?: "",
                             event.reply?.payload(event.refs),
                         )
-                        // 모델이 스스로 물은 것도 같은 모양으로 나간다 — 화면이 두 벌을 그릴
-                        // 이유가 없고, 답이 돌아오는 길도 하나여야 한다. 여럿이면 한 묶음으로
-                        // 묻는다(ARTEL-927) — 첫 것만 저장하면 나머지에 답할 길이 없다.
-                        event.questions.ifEmpty { listOfNotNull(event.question) }
-                            .mapNotNull { fromAgent(it) }
-                            .takeIf { it.isNotEmpty() }
-                            ?.let { ask(sessionKey, session, it, event.refs) }
                     } catch (err: CancellationException) {
                         throw err
                     } catch (err: Exception) {
@@ -1718,26 +1715,6 @@ class TestScenarioAgentService(
                 payload = payload?.let { Json.of(objectMapper.writeValueAsString(it)) },
             )
         )
-    }
-
-    /**
-     * 모델이 낸 질문을 우리 것과 같은 모양으로 맞춘다(ARTEL-487).
-     *
-     * 출처를 여기서 못 박는 이유는, 프레임에 적힌 값을 그대로 믿으면 모델이 자기 질문을 코드가
-     * 계산한 것처럼 표시할 수 있기 때문이다 — 근거 있는 질문과 그렇지 않은 질문의 구분이 이
-     * 한 필드에 걸려 있다.
-     *
-     * 물음이 비었거나 id 가 없으면 **묻지 않는다.** 빈 질문은 사용자에게 답할 수 없는 것을
-     * 내미는 일이고, id 가 없으면 답이 돌아와도 무엇에 대한 것인지 잇지 못한다.
-     */
-    private fun fromAgent(question: ScenarioQuestion?): ScenarioQuestion? {
-        if (question == null) return null
-        if (question.text.isBlank()) {
-            logger.warn("빈 질문이 와서 묻지 않는다")
-            return null
-        }
-        val id = question.id.ifBlank { "agent:" + question.text.hashCode().toString(16) }
-        return question.copy(id = id, source = ScenarioQuestionSource.AGENT)
     }
 
     /**
