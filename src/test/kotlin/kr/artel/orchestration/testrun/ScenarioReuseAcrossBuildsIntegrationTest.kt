@@ -558,9 +558,11 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(issue.fields["status"]).isEqualTo("OPEN")
         assertThat(issue.fields["detail"] as String).contains("카드만 소비됨")
 
-        // 옛 버전에만 있는 케이스도 찾는다. 이 런의 버전에 없다는 것과 어느 버전에 있는지를 싣는다.
+        // 기본은 이 런의 버전 안에서만 찾는다. 옛 버전에만 있는 케이스는 다른 버전을 물을 때(all_versions)만 나온다.
         val oldCase = versions.findByTestCaseIdAndGameBuildId(oldOnly, buildA.gameBuildId)!!
-        val found = resources.query(trScope, ResourceRequest("find", "case", text = oldCase.step.take(12)))
+        assertThat(resources.query(trScope, ResourceRequest("find", "case", text = oldCase.step.take(12))).items.map { it.id })
+            .doesNotContain(oldOnly)
+        val found = resources.query(trScope, ResourceRequest("find", "case", text = oldCase.step.take(12), allVersions = true))
         val hit = found.items.first { it.id == oldOnly }
         assertThat(hit.ref).isEqualTo("[[tc:$oldOnly]]")
         assertThat(hit.fields["in_this_test_run_version"]).isEqualTo(false)
@@ -603,6 +605,11 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
             .containsExactly(qaRun.id)
 
         // 다른 프로젝트 범위에서는 없는 것이다. 잘못 부르면 쓸 수 있는 것을 말로 돌려준다.
+        // 멤버가 아니면 이 프로젝트의 무엇도 없다 — 세션을 연 뒤라도 조회마다 다시 본다.
+        val (stranger, _) = signIn()
+        val asStranger = ResourceQueryService.Scope(projectId, buildB.gameBuildId, userId = stranger)
+        assertThat(resources.query(asStranger, ResourceRequest("get", "case", id = changed)).items).isEmpty()
+        assertThat(resources.query(asStranger, ResourceRequest("find", "issue", text = "공격카드")).items).isEmpty()
         val other = ResourceQueryService.Scope(newProject(userId), null)
         assertThat(resources.query(other, ResourceRequest("get", "case", id = changed)).items).isEmpty()
         assertThat(resources.query(trScope, ResourceRequest("related", "case", id = changed, relation = "nope")).note).contains("versions")

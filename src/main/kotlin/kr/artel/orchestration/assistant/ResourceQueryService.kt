@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testcase.dto.originLabel
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.service.CaseScope
 import kr.artel.orchestration.testcase.service.TestCaseSearchService
 import io.r2dbc.postgresql.codec.Json
@@ -31,13 +32,18 @@ class ResourceQueryService(
     private val reader: TestCaseReader,
     private val objectMapper: ObjectMapper,
     private val caseSearch: TestCaseSearchService,
+    private val projectAccess: ProjectAccessService,
 ) {
 
     /** 질문 하나. [op] 와 [kind] 가 맞지 않으면 무엇을 쓸 수 있는지 말로 돌려준다(모델이 고쳐 부르게). */
     suspend fun query(scope: Scope, request: ResourceRequest): ResourceAnswer {
+        // 세션을 열 때 이미 멤버인지 보았지만, 조회마다 다시 본다. 멤버가 아니면 이 프로젝트의 무엇도 없는 것과 같다.
+        if (scope.userId != null && !projectAccess.isMember(scope.projectId, scope.userId)) {
+            return note("이 프로젝트를 볼 수 없다.")
+        }
         val limit = (request.limit ?: DEFAULT_LIMIT).coerceIn(1, MAX_LIMIT)
         return when (request.op) {
-            "find" -> find(scope, request.kind, request.text.orEmpty(), limit)
+            "find" -> find(scope, request.kind, request.text.orEmpty(), limit, request.allVersions)
             // id 없는 test_run 은 지금 대화가 열린 TR 이다 — "이 테스트 런" 이 가리키는 것.
             "get" -> (request.id ?: scope.runId.takeIf { request.kind == "test_run" })?.let { get(scope, request.kind, it) }
                 ?: note("get 에는 id 가 필요하다. 지금 테스트 런은 kind=test_run 에 id 없이 부른다.")
@@ -52,20 +58,27 @@ class ResourceQueryService(
 
     // ── find ─────────────────────────────────────────────────────────────────────────────
 
-    private suspend fun find(scope: Scope, kind: String, text: String, limit: Int): ResourceAnswer = when (kind) {
+    private suspend fun find(scope: Scope, kind: String, text: String, limit: Int, allVersions: Boolean = false): ResourceAnswer = when (kind) {
         "case" -> {
             // 버전을 넘어 찾는다 — 사용자가 말하는 케이스가 지금 버전에 없는 옛 케이스일 수 있다.
             // **뜻으로 먼저 찾는다.** 사용자는 "전투 화면" 이라 말하고 케이스에는 `TurnBattleScene` 이라 적혀 있다 — 글자
             // 일치로는 못 찾았다(POC 측정 V5 · F1). 의미 검색이 실패하면 낱말 검색만으로 간다.
-            val semantic = runCatching { caseSearch.search(scope.projectId, text, null, limit).results.map { it.id.toLong() } }
+            val semantic = runCatching { caseSearch.search(scope.projectId, text, null, MAX_LIMIT).results.map { it.id.toLong() } }
                 .onFailure { logger.warn("케이스 의미 검색 실패 — 낱말 검색만 쓴다: {}", it.message) }
                 .getOrDefault(emptyList())
             val byWords = wordMatches(
                 "SELECT t.id FROM test_case t LEFT JOIN test_case_version v ON v.test_case_id = t.id WHERE t.project_id = :projectId",
                 listOf("t.step", "t.scene", "t.expected_value", "v.step", "v.expected_value"),
-                "t.id", text, limit, "projectId" to scope.projectId,
+                "t.id", text, MAX_LIMIT, "projectId" to scope.projectId,
             )
-            ResourceAnswer(caseItems(scope, (semantic + byWords).distinct().take(limit)))
+            // **기본은 지금 TR 의 버전 안에서만 찾는다.** 다른 버전은 사용자가 그쪽을 묻는다고 모델이 판단할 때만
+            // (`all_versions`) 넓힌다. TR 에 버전이 없으면 거르지 않는다.
+            val inTr = if (allVersions) null else scope.gameBuildId?.let { reader.caseIds(it) }
+            val found = (semantic + byWords).distinct().filter { inTr == null || it in inTr }.take(limit)
+            ResourceAnswer(
+                caseItems(scope, found),
+                if (found.isEmpty() && inTr != null) "이 테스트 런의 버전에서는 찾지 못했다. 다른 버전을 묻는 것이면 all_versions 로 다시 찾는다." else null,
+            )
         }
         "scenario" -> {
             val ids = wordMatches(
@@ -484,7 +497,7 @@ class ResourceQueryService(
     private fun Map<String, Any?>.str(key: String): String? = this[key]?.toString()
 
     /** 세션이 정한 범위. 프레임은 이것을 바꿀 수 없다. */
-    data class Scope(val projectId: Long, val gameBuildId: Long?, val runId: Long? = null)
+    data class Scope(val projectId: Long, val gameBuildId: Long?, val runId: Long? = null, val userId: Long? = null)
 
     companion object {
         const val DEFAULT_LIMIT = 10
@@ -517,6 +530,8 @@ data class ResourceRequest(
     val text: String? = null,
     val relation: String? = null,
     val limit: Int? = null,
+    /** case 찾기를 지금 TR 버전 밖까지 넓힌다. 사용자가 다른 버전을 묻는다고 모델이 판단할 때만 켠다. */
+    val allVersions: Boolean = false,
 )
 
 /** 엔터티 하나의 요약. [ref] 는 TC · TS 표식이다. [relations] 는 `related` 로 따라갈 수 있는 이름이다. */
