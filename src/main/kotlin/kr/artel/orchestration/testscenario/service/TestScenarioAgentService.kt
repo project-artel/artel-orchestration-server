@@ -1691,7 +1691,7 @@ class TestScenarioAgentService(
                 limit = node.path("limit").takeIf { it.isNumber }?.asInt(),
             )
             val result = resourceQueryService.query(
-                ResourceQueryService.Scope(session.projectId, session.version.gameBuildId), request,
+                ResourceQueryService.Scope(session.projectId, session.version.gameBuildId, session.runId), request,
             )
             logger.info(
                 "리소스 조회 [sessionKey={}] {} {} id={} → {}건", sessionKey, request.op, request.kind, request.id, result.items.size,
