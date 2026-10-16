@@ -6,7 +6,10 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
+import kr.artel.orchestration.testcase.service.TestCaseReader
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.ScenarioStep
@@ -139,6 +142,17 @@ class ScenarioExecutionModeTest {
             check(method.name == "findAllById") { "예상 밖 호출: ${method.name}" }
             flowOf(*cases.toTypedArray())
         } as TestCaseRepository
-        return ScenarioCompositionService(repository)
+        // 버전을 고르지 않은 조립(최신)은 버전 몫과 게임 빌드를 읽지 않는다(ARTEL-1069).
+        val untouched = { type: Class<*> ->
+            Proxy.newProxyInstance(javaClass.classLoader, arrayOf(type)) { _, method, _ ->
+                error("예상 밖 호출: ${method.name}")
+            }
+        }
+        val reader = TestCaseReader(
+            repository,
+            untouched(TestCaseVersionRepository::class.java) as TestCaseVersionRepository,
+            untouched(GameBuildRepository::class.java) as GameBuildRepository,
+        )
+        return ScenarioCompositionService(reader)
     }
 }

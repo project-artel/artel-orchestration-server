@@ -85,7 +85,12 @@ data class AgentServerProperties(
      * 관리 화면에서 시나리오 저작 model 을 고르지 않았을 때 쓰는 model(`ARTEL_AGENT_MODEL`). 비어 있으면
      * agent-server 의 `DEFAULT_MODEL` 을 쓴다.
      */
-    val model: String = ""
+    val model: String = "",
+    /**
+     * `GET {baseUrl}/macros/grammar` 와 `POST {baseUrl}/macros/check` 의 응답 상한(ARTEL-1088). 검사는 parser 와
+     * selector 검사뿐이라 LLM 을 부르지 않는다. 개발자의 에이전트가 이 응답을 기다린다.
+     */
+    val macroTimeout: Duration = Duration.ofSeconds(10)
 )
 
 /** 이 문구 중 하나를 (대소문자 무시하고) 담은 `ARTEL_SECRETS_KEY` 는 예시 값을 그대로 둔 것으로 본다. */

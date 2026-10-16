@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
-import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaRunRepository
@@ -32,7 +31,7 @@ class TestCaseVerdictService(
     private val versions: TestCaseVersionRepository,
     private val scenarios: TestScenarioRepository,
     private val qaRuns: QaRunRepository,
-    private val gameBuilds: GameBuildRepository,
+    private val reader: TestCaseReader,
     private val logService: QaLogService,
     private val projectAccessService: ProjectAccessService,
     private val objectMapper: ObjectMapper,
@@ -44,7 +43,7 @@ class TestCaseVerdictService(
      * 검증 스텝 하나의 판정을 [testCaseId] 의 상태로 옮긴다. 통과면 VERIFIED, 실패면 FAILED 다.
      *
      * 실제로 바뀌었으면 `CASE_VERDICT` 행을 qa_log 에 남기고 내보낸다. SSE 가 이 표를 읽으므로 화면은 이 행으로
-     * TC 배지를 바꾼다. 케이스가 이 try 의 프로젝트에 없거나 `BROKEN` 이면 아무것도 하지 않는다.
+     * TC 배지를 바꾼다. 케이스가 이 try 의 프로젝트에 없거나 `BROKEN` 이면 아무것도 하지 않는다. BROKEN 은 그 게임 빌드의 몫으로 본다.
      *
      * 판정은 **그 게임 빌드에 든 케이스에만** 적는다. 그 빌드에 버전 몫이 없는 케이스, 게임 빌드를 정할 수 없는
      * 실행은 TC 에 아무것도 남기지 않는다 — 스텝 결과는 qa_log 에 이미 있다. editor 실행은 editor 가 보고한
@@ -58,16 +57,19 @@ class TestCaseVerdictService(
         runCatching {
             val projectId = scenarios.findById(qaTry.testScenarioId)?.projectId ?: return
             val status = if (passed) VerificationStatus.VERIFIED else VerificationStatus.FAILED
-            val testCase = testCases.findById(testCaseId)
-                ?.takeIf { it.projectId == projectId && it.verificationStatus != VerificationStatus.BROKEN.name }
-            if (testCase == null) {
-                logger.info("TC {} 는 qa_try {} 의 프로젝트에 없거나 BROKEN 이라 판정을 옮기지 않는다", testCaseId, qaTryId)
+            if (testCases.findById(testCaseId)?.projectId != projectId) {
+                logger.info("TC {} 는 qa_try {} 의 프로젝트에 없어 판정을 옮기지 않는다", testCaseId, qaTryId)
                 return
             }
             val gameBuildId = judgedBuildId(qaTry)
             val version = gameBuildId?.let { versions.findByTestCaseIdAndGameBuildId(testCaseId, it) }
             if (gameBuildId == null || version == null) {
                 logger.info("TC {} 는 qa_try {} 의 게임 빌드 {} 에 없어 판정을 옮기지 않는다", testCaseId, qaTryId, gameBuildId)
+                return
+            }
+            // 깨졌는지는 그 버전의 몫으로 본다(ARTEL-1069). 최신 버전에서 깨졌어도 이 버전에선 멀쩡할 수 있다.
+            if (version.verificationStatus == VerificationStatus.BROKEN.name) {
+                logger.info("TC {} 는 게임 빌드 {} 에서 BROKEN 이라 판정을 옮기지 않는다", testCaseId, gameBuildId)
                 return
             }
             versions.save(version.copy(verificationStatus = status.name, verifiedAt = Instant.now(clock)))
@@ -95,11 +97,8 @@ class TestCaseVerdictService(
      * 이 실행의 판정이 속할 게임 빌드. qa_run 이 붙은 build 이고, editor 면 editor 가 보고한 버전과 같은 게임 빌드다
      * (ARTEL-1014 의 editor 행은 게임 버전이 아니다). 그런 빌드가 아직 없으면 null 이다.
      */
-    private suspend fun judgedBuildId(qaTry: QaTryEntity): Long? {
-        val build = qaTry.qaRunId?.let { qaRuns.findById(it) }?.gameBuildId?.let { gameBuilds.findById(it) } ?: return null
-        if (!build.isEditor) return build.id
-        return gameBuilds.findNonEditorByVersion(build.projectId, build.version)?.id
-    }
+    private suspend fun judgedBuildId(qaTry: QaTryEntity): Long? =
+        reader.judgedBuildId(qaTry.qaRunId?.let { qaRuns.findById(it) }?.gameBuildId)
 
     /**
      * [testCaseId] 의 build 별 판정. 비멤버이거나 다른 프로젝트 케이스면 404 다.

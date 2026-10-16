@@ -17,6 +17,9 @@ const val CREDENTIAL_CLAIM = "cred"
 /** [CREDENTIAL_CLAIM] 이 이 값이면 그 요청의 자격증명은 CLI 토큰이다. */
 const val CREDENTIAL_CLI = "cli"
 
+/** [CREDENTIAL_CLAIM] 이 이 값이면 그 요청의 자격증명은 `artel-macro-mcp` 가 발급한 MCP access JWT 다(ARTEL-1088). */
+const val CREDENTIAL_MCP = "mcp"
+
 private const val BEARER_PREFIX = "Bearer "
 
 /**
@@ -29,11 +32,17 @@ private const val BEARER_PREFIX = "Bearer "
  * 판단이 한 곳에만 있어야 하므로 이 함수를 두 converter 가 반대 방향으로 쓴다 — CLI 토큰 필터는
  * 값이 있을 때 받고, `SecurityConfig.cookieTokenConverter` 는 값이 있을 때 거절한다.
  */
-fun ServerHttpRequest.cliTokenOrNull(): String? {
+fun ServerHttpRequest.cliTokenOrNull(): String? =
+    bearerTokenOrNull()?.takeIf { it.startsWith(CLI_TOKEN_PREFIX) }
+
+/**
+ * `Authorization: Bearer` 의 값. 자격증명 종류는 가리지 않는다 — CLI 토큰과 MCP access JWT
+ * (`auth.mcp.McpAccessTokenDetector`)가 각자 이 값을 보고 자기 것인지 판단한다.
+ */
+fun ServerHttpRequest.bearerTokenOrNull(): String? {
     val authorization = headers.getFirst(HttpHeaders.AUTHORIZATION) ?: return null
     if (!authorization.regionMatches(0, BEARER_PREFIX, 0, BEARER_PREFIX.length, ignoreCase = true)) {
         return null
     }
-    val token = authorization.substring(BEARER_PREFIX.length).trim()
-    return if (token.startsWith(CLI_TOKEN_PREFIX)) token else null
+    return authorization.substring(BEARER_PREFIX.length).trim().ifEmpty { null }
 }

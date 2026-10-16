@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -52,7 +53,9 @@ class TestCaseController(
     /**
      * 화면이 읽는 케이스 목록. 프로젝트의 케이스를 최근 것부터(`id DESC`) 전부 낸다.
      *
-     * 필터는 없다. 유일한 소비자인 케이스 라이브러리 화면이 전량을 받아 브라우저에서 거르기
+     * `gameBuildId` 를 주면 그 버전에 든 케이스만 그 버전 내용으로 낸다(ARTEL-1069, TR 화면용).
+     *
+     * 그 밖의 필터는 없다. 유일한 소비자인 케이스 라이브러리 화면이 전량을 받아 브라우저에서 거르기
      * 때문이다 — 서버에 씬/상태 파라미터가 있었지만 **보내는 쪽이 없어** 지웠다.
      *
      * [getAllTestCases]와 둘 다 "전량"이지만 받는 쪽이 다르다: 이쪽은 화면용이라 id를 문자열로
@@ -62,9 +65,10 @@ class TestCaseController(
     @GetMapping
     suspend fun listTestCases(
         @PathVariable projectId: Long,
+        @RequestParam(required = false) gameBuildId: Long?,
         @CurrentUserId appUserId: Long
     ): TestCaseListResponse =
-        service.listTestCases(projectId, appUserId)
+        service.listTestCases(projectId, appUserId, gameBuildId)
 
     /**
      * 저작 Agent 세션에 싣는 전량 목록을 그대로 낸다(ARTEL-318).
@@ -126,14 +130,18 @@ class TestCaseController(
     ): TestCaseMoveResponse =
         service.moveTestCases(projectId, appUserId, request)
 
-    /** 케이스 단건. 목록보다 한 필드(`evidenceGaps`) 더 낸다 — [TestCaseDetailResponse] 참조. */
+    /**
+     * 케이스 단건. 목록보다 한 필드(`evidenceGaps`) 더 낸다 — [TestCaseDetailResponse] 참조. `gameBuildId` 를 주면 그
+     * 버전의 내용과 판정이다(ARTEL-1069).
+     */
     @GetMapping("/{caseId}")
     suspend fun getTestCase(
         @PathVariable projectId: Long,
         @PathVariable caseId: Long,
+        @RequestParam(required = false) gameBuildId: Long?,
         @CurrentUserId appUserId: Long
     ): ResponseEntity<TestCaseDetailResponse> =
-        service.getTestCase(caseId, appUserId)
+        service.getTestCase(caseId, appUserId, gameBuildId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 

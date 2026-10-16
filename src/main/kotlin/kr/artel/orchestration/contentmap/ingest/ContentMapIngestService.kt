@@ -81,6 +81,7 @@ class ContentMapIngestService(
     private val proofs: CapabilityProofRepository,
     private val sceneEdges: SceneEdgeRepository,
     private val objectRefs: SceneObjectRefRepository,
+    private val sceneObjectWriter: SceneObjectWriter,
     private val strayEffects: kr.artel.orchestration.contentmap.repository.ContentMapStrayEffectRepository,
     private val contentMaps: kr.artel.orchestration.contentmap.repository.ContentMapRepository,
     private val builds: kr.artel.orchestration.game.repository.GameBuildRepository,
@@ -245,6 +246,10 @@ class ContentMapIngestService(
         // `ChatWindowController.anyKeyPrompt` 라 부르고 하이어라키에는 `Canvas/ChatWindow/AnyKeyPrompt`
         // 가 있다. 그 대응이 문서의 직렬화 참조에 있다.
         writeObjectRefs(document.contentMapId, model, sceneIds)
+
+        // `scene` 에 놓인 오브젝트와 코드가 그 컴포넌트에서 읽고 쓰는 필드(ARTEL-1059). `scene-context` 가
+        // 이것을 실어 planner 가 아직 가 보지 않은 `scene` 의 오브젝트를 지어내지 않게 한다.
+        sceneObjectWriter.rewrite(document.contentMapId, model, sceneIds)
 
         // 키가 같은 후보는 **같은 명세의 다른 조각**이다. 실측 529 후보 중 38건이 그렇고, 씬·진입점·
         // 메서드·갈래·조건·조작이 전부 같은 채 `effects` 만 다르다(20그룹) 또는 `recordKind` 만
