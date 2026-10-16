@@ -1749,7 +1749,8 @@ class TestScenarioAgentService(
         // 여기서 다른 `kind` 를 남기지 않으면 이미 답한 질문이 다음 턴의 맥락으로 또 따라붙는다.
         saveMessage(
             runId, appUserId, "ASSISTANT", message,
-            mapOf("kind" to "answered", "id" to "${ScenarioQuestionBuilder.GAP_PREFIX}$blockedBy"),
+            // 채운 줄도 남긴다(ARTEL-1117) — 다음 시나리오의 같은 구간을 이 말로 채운다.
+            mapOf("kind" to "answered", "id" to "${ScenarioQuestionBuilder.GAP_PREFIX}$blockedBy", "filled" to written),
         )
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "applied"))
