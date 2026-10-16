@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaRunRepository
@@ -36,6 +38,7 @@ class TestCaseVerdictService(
     private val projectAccessService: ProjectAccessService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock,
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
 ) {
     private val logger = LoggerFactory.getLogger(TestCaseVerdictService::class.java)
 
@@ -75,6 +78,7 @@ class TestCaseVerdictService(
             versions.save(version.copy(verificationStatus = status.name, verifiedAt = Instant.now(clock)))
             testCases.markLastVerifiedBuild(testCaseId, gameBuildId)
             versions.syncIdentities(listOf(testCaseId))
+            projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // transaction 없음
             val payload = objectMapper.createObjectNode()
                 .put("case_id", testCaseId)
                 .put("verification_status", status.name)
