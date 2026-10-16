@@ -6,6 +6,7 @@ import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.qa.service.QaRunStatusNotifier
+import kr.artel.orchestration.sdk.config.SdkSocketProperties
 import kr.artel.orchestration.sdk.dto.BaseMessage
 import kr.artel.orchestration.sdk.service.handler.SdkMessageHandler
 import org.slf4j.LoggerFactory
@@ -14,11 +15,14 @@ import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.CloseStatus
 import org.springframework.web.reactive.socket.WebSocketHandler
+import org.springframework.web.reactive.socket.WebSocketMessage
 import org.springframework.web.reactive.socket.WebSocketSession
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.reactor.mono
 import org.springframework.web.util.UriComponentsBuilder
+import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import reactor.core.publisher.Sinks
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
@@ -47,6 +51,7 @@ class SdkWebSocketHandler(
     @Qualifier("sdkJwtDecoder") private val sdkJwtDecoder: ReactiveJwtDecoder,
     private val sessionUserResolver: SessionUserResolver,
     private val accountStateService: AccountStateService,
+    private val socketProperties: SdkSocketProperties,
     handlers: List<SdkMessageHandler>
 ) : WebSocketHandler {
 
@@ -126,7 +131,13 @@ class SdkWebSocketHandler(
         // concatMap: 한 세션의 프레임을 순서대로 하나씩 처리한다. flatMap이면 프레임이 동시에
         // 처리되어, Agent로 나가는 unicast sink에 동시 tryEmitNext가 걸려 FAIL_NON_SERIALIZED로
         // 드롭되거나 GAME_STATE 순서가 뒤집힌다.
+        val heartbeat = SdkHeartbeat(instanceId, session, socketProperties.pingInterval, socketProperties.idleTimeout)
+        val receiveEnded = Sinks.empty<Void>()
+
         val receive = session.receive()
+            .doOnNext { heartbeat.seen() }
+            // 서버가 보낸 ping 의 pong 이다. 생존 신호로만 쓰고 메시지 handler 로는 넘기지 않는다.
+            .filter { message -> message.type != WebSocketMessage.Type.PONG }
             .concatMap { message -> dispatch(instanceId, message.payloadAsText, session) }
             .doOnError { error ->
                 logger.error("웹소켓 에러 발생 [instanceId: $instanceId]: ${error.message}", error)
@@ -135,6 +146,7 @@ class SdkWebSocketHandler(
             // 정리는 수신이 끝나는 시점에 건다. 전송 쪽이 끝나기를 기다리는 자리에 두면,
             // 전송은 세션이 지워지며 큐가 닫혀야 끝나므로 서로를 기다리다 멈춘다.
             .doFinally {
+                receiveEnded.tryEmitEmpty()
                 // 자기 세션일 때만 지운다. 늦게 끊긴 좀비 연결이 살아 있는 연결의 자리를
                 // 비우면, SDK는 연결된 채로 액션을 받지 못한다.
                 sessionManager.removeSession(instanceId, session)
@@ -150,7 +162,8 @@ class SdkWebSocketHandler(
 
         // 전송과 수신을 함께 물려 둘 다 끝나야 핸들러가 끝난다. Spring이 문서에서 보여 주는
         // 형태 그대로다.
-        return session.send(outbound.map(session::textMessage)).and(receive)
+        val messages = outbound.map(session::textMessage)
+        return session.send(Flux.merge(messages, heartbeat.pings(receiveEnded.asMono()))).and(receive)
     }
 
     /** 미지원·손상 프레임은 그 프레임만 버리고 연결과 다음 프레임은 계속 처리한다. */

@@ -1,6 +1,7 @@
 package kr.artel.orchestration.sdk.config
 
 import org.springframework.boot.context.properties.ConfigurationProperties
+import java.time.Duration
 
 /**
  * SDK·뷰어 웹소켓이 한 메시지로 받아들이는 최대 크기.
@@ -52,4 +53,15 @@ data class SdkSocketProperties(
      * 합쳐진 크기다.
      */
     val maxMessageBytes: Int = 256 * 1024,
+    /**
+     * 서버가 SDK 세션에 ping frame 을 보내는 주기. `SdkHeartbeat` 참고.
+     */
+    val pingInterval: Duration = Duration.ofSeconds(15),
+    /**
+     * 이 시간 동안 아무 frame 도 받지 못한 SDK 세션을 닫는다.
+     *
+     * ping 주기의 세 배다. pong 을 두 번 놓쳐도 닫지 않는다. 너무 길게 잡으면 끊긴 세션이 그만큼
+     * 연결됨으로 남고, SDK 의 재연결도 그만큼 거절된다(ARTEL-1111).
+     */
+    val idleTimeout: Duration = Duration.ofSeconds(45),
 )

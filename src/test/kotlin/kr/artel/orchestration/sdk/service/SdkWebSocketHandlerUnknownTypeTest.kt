@@ -8,6 +8,7 @@ import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.qa.service.QaRunStatusNotifier
+import kr.artel.orchestration.sdk.config.SdkSocketProperties
 import kr.artel.orchestration.sdk.service.handler.SdkMessageHandler
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -52,6 +53,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
         mock(ReactiveJwtDecoder::class.java),
         mock(SessionUserResolver::class.java),
         mock(AccountStateService::class.java),
+        SdkSocketProperties(),
         listOf(knownHandler)
     )
 
@@ -116,6 +118,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
             mock(ReactiveJwtDecoder::class.java),
             mock(SessionUserResolver::class.java),
             mock(AccountStateService::class.java),
+            SdkSocketProperties(),
             listOf(knownHandler, exploding)
         )
         val session = mock(WebSocketSession::class.java)
