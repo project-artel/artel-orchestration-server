@@ -69,3 +69,8 @@ artel:
   macro:
     search:
       enabled: false
+  # scene_object 백필은 기동할 때 한 번 돈다(application.yml). 테스트 컨텍스트마다 공유 DB 의 지도를 가짜
+  # 스토리지로 읽으려 들지 않도록 끈다. 백필을 보는 테스트는 worker 를 직접 부른다.
+  content-map:
+    scene-object-backfill:
+      enabled: false

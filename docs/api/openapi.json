@@ -10611,7 +10611,8 @@
           "scenePresence",
           "status",
           "summary",
-          "verification"
+          "verification",
+          "writes"
         ],
         "type": "object",
         "properties": {
@@ -10685,6 +10686,12 @@
           "covers": {
             "type": "integer",
             "format": "int32"
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -10694,6 +10701,8 @@
           "knowledge",
           "knownToContentMap",
           "notAStepCapabilities",
+          "objects",
+          "objectsTotal",
           "sceneName"
         ],
         "type": "object",
@@ -10727,6 +10736,16 @@
             "items": {
               "$ref": "#/components/schemas/SceneKnowledgeView"
             }
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneObjectView"
+            }
+          },
+          "objectsTotal": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -10835,6 +10854,46 @@
           },
           "summary": {
             "type": "string"
+          }
+        }
+      },
+      "SceneObjectComponentView": {
+        "required": [
+          "fields",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SceneObjectView": {
+        "required": [
+          "active",
+          "components",
+          "selector"
+        ],
+        "type": "object",
+        "properties": {
+          "selector": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneObjectComponentView"
+            }
           }
         }
       },

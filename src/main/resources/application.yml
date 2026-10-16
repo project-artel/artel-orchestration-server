@@ -152,6 +152,11 @@ artel:
       rrf-k: ${ARTEL_MACRO_SEARCH_RRF_K:60}
       # 질의 임베딩이 이 시간을 넘기면 키워드 결과만으로 답한다.
       query-timeout: ${ARTEL_MACRO_SEARCH_QUERY_TIMEOUT:PT5S}
+  content-map:
+    # V114 이전에 적재된 지도에 scene_object 를 채운다(ARTEL-1059). 기동할 때 한 번 돌고, 이미 채운 지도는
+    # 다시 고르지 않는다. 테스트는 application-test.yml 이 끈다.
+    scene-object-backfill:
+      enabled: ${ARTEL_SCENE_OBJECT_BACKFILL_ENABLED:true}
   scenario:
     # 저작 한 판을 처음부터 끝까지 파일로 받아 적는다(ARTEL-650). 답 하나가 여러 손을 거치며
     # 모양을 바뀌는데 어느 손에서 뒤집혔는지가 곧 원인이라, 그것을 되짚으려고 둔다.

@@ -110,6 +110,10 @@ data class SceneContextMacroScreen(
  *   쪽도 알 수 있게 하기 위해서다. 각 줄의 `status` 를 읽으면 같은 값이 나온다.
  * @property knowledge 이 씬에 묶인 지식. **본문은 없다** — 이 블록은 매 모델 호출마다 다시
  *   그려지므로 본문을 실으면 그 비용을 런 내내 매 턴 다시 낸다.
+ * @property objects 이 씬에 놓인 오브젝트, 문서 순서로 최대 60 개(ARTEL-1059). planner 가 아직 가 보지
+ *   않은 씬의 스크립트를 쓸 때 selector 와 필드 이름을 지어내지 않게 하려는 칸이다. 지도가 없거나 V114
+ *   이전에 적재되어 아직 백필되지 않은 지도면 비어 있다.
+ * @property objectsTotal 자르기 전 오브젝트 수. [objects] 가 60 개에서 잘렸는지는 이 값으로 안다.
  */
 data class SceneContextEntry(
     val sceneName: String,
@@ -119,6 +123,34 @@ data class SceneContextEntry(
     val capabilities: List<SceneCapabilityView> = emptyList(),
     val notAStepCapabilities: List<SceneCapabilityView> = emptyList(),
     val knowledge: List<SceneKnowledgeView> = emptyList(),
+    val objects: List<SceneObjectView> = emptyList(),
+    val objectsTotal: Int = 0,
+)
+
+/**
+ * 씬에 놓인 오브젝트 하나(ARTEL-1059). `scene_object` 한 행이다.
+ *
+ * @property selector `Canvas[2]/continue[2]` 처럼 형제 인덱스가 박힌 경로. [SceneCapabilityView.controlSelectorHint]
+ *   와 같은 값이라 같은 한계가 있다 — 런마다 흔들릴 수 있어 조준 키로 믿으면 안 된다.
+ * @property active 스캔 시점의 활성 상태. 실행 중에는 바뀔 수 있다.
+ * @property components 문서의 컴포넌트 순서 그대로다.
+ */
+data class SceneObjectView(
+    val selector: String,
+    val active: Boolean,
+    val components: List<SceneObjectComponentView> = emptyList(),
+)
+
+/**
+ * 오브젝트의 컴포넌트 하나.
+ *
+ * @property type 타입 이름의 마지막 마디(`SelectableObject`). 코드의 표현식이 타입을 부르는 이름이다.
+ * @property fields 코드가 조건에서 읽거나 효과로 쓰는 이 타입의 필드, 이름 오름차순으로 최대 16 개.
+ *   `Type.field` 로 이어 쓰면 코드가 쓰는 표현식이 된다. 코드가 건드리지 않는 타입이면 비어 있다.
+ */
+data class SceneObjectComponentView(
+    val type: String,
+    val fields: List<String> = emptyList(),
 )
 
 /**
@@ -126,7 +158,8 @@ data class SceneContextEntry(
  *
  * **`condition_tree` · `evidence` 주소(`entry_id`) · 효과는 여기 없다.** 프롬프트에 그릴 수 없는 것을
  * 실으면 런당 payload 만 부풀고 agent 는 그것을 읽지 않는다. 필요해지면 그때 브라우저 조회가
- * 이미 내주고 있다.
+ * 이미 내주고 있다. 효과 중 `write` 의 대상만은 [writes] 로 싣는다(ARTEL-1059) — planner 가 그것을
+ * 한 줄로 그려 쓴다.
  *
  * @property capabilityId 액션·관측을 되짚을 때 쓰는 표시·조인용 id.
  * @property capabilityKey 재적재를 넘어 살아남는 참조 키. **기억해 둘 값은 이쪽이다.** evidence
@@ -192,6 +225,14 @@ data class SceneCapabilityView(
      * 그래서 읽는 쪽에서 접는다. 이 수는 접혔다는 사실 자체를 숨기지 않기 위한 것이다.
      */
     val covers: Int = 1,
+    /**
+     * 이 `capability` 의 코드가 쓰는 상태 필드(`SelectableObject.selectable`), 최대 8 개(ARTEL-1059).
+     *
+     * `capability_effect` 의 `kind = 'write'` 행의 `target` 이다. 접힌 줄이면 [covers] 의 행 전부의 것을
+     * 중복 없이 합친다 — 같은 진입점이 부르는 메서드들이 나눠 쓰는 값이고, 버튼 하나를 누르면 그 전부가
+     * 바뀐다. "누르면 무엇이 바뀌나"를 알아야 planner 가 조작의 순서를 정한다. 없으면 빈 목록이다.
+     */
+    val writes: List<String> = emptyList(),
 )
 
 /**
