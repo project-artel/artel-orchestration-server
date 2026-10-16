@@ -21,14 +21,15 @@ import org.springframework.web.bind.annotation.RestController
 class ProjectQaLaunchController(
     private val service: QaLaunchReadService,
 ) {
-    /** 프로젝트의 QA 실행, 최신순. */
+    /** 프로젝트의 QA 실행, 최신순. `testRunId` 를 주면 그 테스트 런의 실행만. */
     @GetMapping("/qa-runs")
     suspend fun listQaRuns(
         @PathVariable projectId: Long,
         @RequestParam(defaultValue = "20") limit: Int,
+        @RequestParam(required = false) testRunId: Long?,
         @CurrentUserId appUserId: Long,
     ): QaRunSummaryListResponse =
-        service.listRuns(projectId, appUserId, limit)
+        service.listRuns(projectId, appUserId, limit, testRunId)
 
     /** 테스트 런의 마지막 실행 · 그 실행의 이슈 · 그 뒤로 바뀐 것. */
     @GetMapping("/test-runs/{runId}/since-last-qa")

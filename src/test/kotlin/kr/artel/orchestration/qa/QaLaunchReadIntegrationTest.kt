@@ -152,6 +152,24 @@ class QaLaunchReadIntegrationTest {
     }
 
     @Test
+    fun `테스트 런을 지목하면 그 런의 실행만 고른다`(): Unit = runBlocking {
+        val mine = newQaRun(lastStart)
+        val otherRunId = testRunRepository.save(
+            TestRunEntity(projectId = projectId, name = "회귀 2차", createdAt = longAgo, updatedAt = longAgo)
+        )!!.id!!
+        val other = qaRunRepository.save(
+            QaRunEntity(
+                testRunId = otherRunId, gameInstanceId = instanceId, startedBy = ownerId, status = "COMPLETED",
+                startedAt = lastStart, completedAt = lastStart, createdAt = lastStart, updatedAt = lastStart,
+            )
+        )!!.id!!
+
+        assertThat(service.listRuns(projectId, ownerId, 10, runId).items.map { it.id }).containsExactly(mine.toString())
+        assertThat(service.listRuns(projectId, ownerId, 10, otherRunId).items.map { it.id }).containsExactly(other.toString())
+        assertThat(service.listRuns(projectId, ownerId, 10).items).hasSize(2)
+    }
+
+    @Test
     fun `판정이 없는 실행은 케이스 수가 0 이 아니라 없다`(): Unit = runBlocking {
         val run = newQaRun(lastStart, status = "CANCELLED")
         newTry(run, model = "openai/gpt-6.1-sol", passed = null, total = null, status = "CANCELLED")
