@@ -203,9 +203,17 @@ artel:
     max-framerate: ${ARTEL_STREAM_MAX_FRAMERATE:30}
   # artel-macro-mcp 와 맞물리는 설정(ARTEL-1088). issuer 와 jwks-uri 가 둘 다 있을 때만 MCP access JWT 를 받는다.
   mcp:
+    base-url: ${ARTEL_MCP_BASE_URL:}
     issuer: ${ARTEL_MCP_ISSUER:}
     jwks-uri: ${ARTEL_MCP_JWKS_URI:}
     audience: ${ARTEL_MCP_AUDIENCE:artel-orchestration}
+    handoff:
+      # handoff JWT 의 iss. MCP 서버의 HANDOFF_ISSUER(비면 그쪽 ORCHESTRATION_BASE_URL)와 같아야 한다.
+      # 이 서버의 공개 base URL 을 쓴다.
+      issuer: ${ARTEL_MCP_HANDOFF_ISSUER:}
+      # RSA PKCS#8 PEM. 한 줄 환경변수면 개행을 \n 으로 적는다.
+      private-key: ${ARTEL_MCP_HANDOFF_PRIVATE_KEY:}
+      generate-dev-key: ${ARTEL_MCP_HANDOFF_GENERATE_DEV_KEY:false}
   auth:
     frontend-url: ${ARTEL_HOME_URL:http://localhost:5173}
     # CORS 허용 origin(콤마 구분). frontend-url은 항상 자동 포함된다. 와일드카드(https://*.artel.kr) 허용.

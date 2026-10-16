@@ -200,6 +200,8 @@ class SecurityConfig {
                 "/api/auth/providers",
                 "/api/auth/signup",
                 "/api/auth/login",
+                // handoff 서명 공개키(ARTEL-1088). MCP 서버가 세션 없이 읽는다. `/api` 밖이고 공개키만 낸다.
+                "/.well-known/artel-handoff-jwks.json",
                 // 내부 서버-투-서버 경로 전부. 보내는 주체가 사람이 아니라 Agent 서버라
                 // 엔드유저 JWT가 없다. 이 접두사가 곧 신뢰 경계이므로, 새 내부 엔드포인트는
                 // 여기에 줄을 더하는 것이 아니라 `/internal/` 아래에 두어야 한다.

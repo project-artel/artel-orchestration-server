@@ -133,11 +133,11 @@ A summary is `{name, parameters, docstring, gameBuildId, buildVersion, buildLabe
 
 The internal list is for the agent-server's planner–executer engine and carries `source`. It has no authentication, like everything under `/internal/`, and answers 404 for a deleted project.
 
-### MCP access tokens
+### MCP access tokens and login handoff
 
-`artel-macro-mcp` is a remote MCP server and the OAuth 2.1 authorization server for its clients (Claude Code, Codex). It issues the access JWT that its clients use, and this server verifies it.
+`artel-macro-mcp` is a remote MCP server and the OAuth 2.1 authorization server for its clients (Claude Code, Codex). Two JWTs cross between it and this server.
 
-The MCP server forwards the user's access JWT as `Authorization: Bearer`. A bearer whose unverified `iss` equals `artel.mcp.issuer` is verified against `artel.mcp.jwks-uri`; every other bearer goes through the existing session, SDK and CLI token paths unchanged. The token must have header `typ` `at+jwt` (RFC 9068; `application/at+jwt` is also accepted, plain `JWT` or no `typ` is 401), an RS256 or ES256 signature from a key in the MCP JWKS, `aud` containing `artel.mcp.audience`, and a valid `exp` / `nbf`. `sub` is the `app_user.id`, so every endpoint resolves the user as it does for a browser session. The JWKS is cached and fetched again only for an unknown `kid`. Any failure is 401.
+**Access JWT (issued by the MCP server, verified here).** The MCP server forwards the user's access JWT as `Authorization: Bearer`. A bearer whose unverified `iss` equals `artel.mcp.issuer` is verified against `artel.mcp.jwks-uri`; every other bearer goes through the existing session, SDK and CLI token paths unchanged. The token must have header `typ` `at+jwt` (RFC 9068; `application/at+jwt` is also accepted, plain `JWT` or no `typ` is 401), an RS256 or ES256 signature from a key in the MCP JWKS, `aud` containing `artel.mcp.audience`, and a valid `exp` / `nbf`. `sub` is the `app_user.id`, so every endpoint resolves the user as it does for a browser session. The JWKS is cached and fetched again only for an unknown `kid`. Any failure is 401.
 
 An access JWT opens only these routes, by the scopes in its `scope` claim (space-separated); project routes still check membership:
 
@@ -148,14 +148,37 @@ An access JWT opens only these routes, by the scopes in its `scope` claim (space
 
 Any other route is 403 `mcp_route_forbidden`, whatever the scope. A listed route without its scope is 403 `insufficient_scope`.
 
+**Handoff JWT (issued here, verified by the MCP server).** When the user allows the connection on home's `/mcp/connect`, home calls:
+
+| Request | Response |
+|---|---|
+| `POST /api/mcp/handoffs` `{requestId}` | 200 `{redirectUrl}` |
+| `GET /.well-known/artel-handoff-jwks.json` | 200 JWK set, no authentication, `Cache-Control: max-age=300, public` |
+
+`requestId` is the MCP server's opaque id for the stored authorization request: 1 to 128 characters of `A-Z a-z 0-9 . _ ~ -`. `redirectUrl` is `{artel.mcp.base-url}/oauth/handoff?token=<handoff JWT>`. The handoff JWT is signed RS256 with `kid` set to the key's RFC 7638 thumbprint, and carries `iss` = `artel.mcp.handoff.issuer`, `aud` = `artel-macro-mcp`, `sub` = `app_user.id`, `request_id`, a new `jti` (UUID) per call, `iat`, and `exp` = `iat` + 2 minutes. The MCP server verifies it with the JWKS above and accepts each `jti` once. The JWKS carries the public key only, and is `{"keys": []}` when no key is configured.
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `invalid_request` | `requestId` blank, longer than 128 characters, or with other characters |
+| 401 | `unauthorized` | no session |
+| 403 | `mcp_handoff_requires_session` | the caller used a CLI token: only a browser session (cookie or session JWT) can allow a connection |
+| 403 | `mcp_route_forbidden` | the caller used an MCP access JWT (refused by the route table before the endpoint) |
+| 503 | `mcp_handoff_not_configured` | no signing key, or `artel.mcp.base-url` or `artel.mcp.handoff.issuer` is blank |
+
 **Configuration.** Everything is off by default, and the server starts without any of it.
 
 | Key | Environment variable | Default | Meaning |
 |---|---|---|---|
+| `artel.mcp.base-url` | `ARTEL_MCP_BASE_URL` | blank | MCP server's public URL; `redirectUrl` is built on it |
 | `artel.mcp.issuer` | `ARTEL_MCP_ISSUER` | blank | expected `iss` of access JWTs. Must differ from `artel.auth.issuer` (startup fails otherwise) |
 | `artel.mcp.jwks-uri` | `ARTEL_MCP_JWKS_URI` | blank | MCP JWKS, `{MCP}/.well-known/jwks.json`. Set both this and `issuer`, or neither (startup fails otherwise); access JWTs are accepted only when both are set |
 | `artel.mcp.audience` | `ARTEL_MCP_AUDIENCE` | `artel-orchestration` | required `aud` of access JWTs |
 | `artel.mcp.jwks-timeout` | — | `5s` | timeout of a JWKS fetch |
+| `artel.mcp.handoff.issuer` | `ARTEL_MCP_HANDOFF_ISSUER` | blank | `iss` of handoff JWTs. Must equal `HANDOFF_ISSUER` on the MCP server, which falls back to its `ORCHESTRATION_BASE_URL`; use this server's public base URL |
+| `artel.mcp.handoff.audience` | — | `artel-macro-mcp` | `aud` of handoff JWTs |
+| `artel.mcp.handoff.ttl` | — | `2m` | handoff JWT lifetime |
+| `artel.mcp.handoff.private-key` | `ARTEL_MCP_HANDOFF_PRIVATE_KEY` | blank | RSA PKCS#8 PEM, at least 2048 bits (`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`). In a one-line variable write line breaks as `\n`. A key that cannot be read stops startup; the error never contains the key |
+| `artel.mcp.handoff.generate-dev-key` | `ARTEL_MCP_HANDOFF_GENERATE_DEV_KEY` | `false` | with no `private-key`, make a new key on every start. Local use only: a restart invalidates handoffs in flight, and each replica would sign with its own key |
 
 ## Verification
 
