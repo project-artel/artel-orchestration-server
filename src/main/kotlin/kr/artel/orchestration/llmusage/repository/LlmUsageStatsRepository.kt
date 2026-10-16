@@ -302,6 +302,44 @@ class LlmUsageStatsRepository(
         pricedCalls = longAt("priced_calls")
     )
 
+    /**
+     * 방금 적재한 사용량 기록이 속한 프로젝트 id 들(중복 없음). 변경 알림 대상을 찾는 데 쓴다.
+     *
+     * [aggregate] 와 같은 규칙으로 다형 참조를 푼다. (service, referenceId) 쌍을 평행한 배열 둘로 받아
+     * 한 문장으로 푼다. 프로젝트를 못 푼 쌍은 결과에 없다.
+     */
+    suspend fun findProjectIds(services: List<String>, referenceIds: List<Long>): List<Long> {
+        require(services.size == referenceIds.size) { "services 와 referenceIds 의 길이가 다르다" }
+        if (services.isEmpty()) return emptyList()
+        val sql = """
+            WITH refs AS (
+                SELECT DISTINCT r.service, r.reference_id
+                  FROM unnest(CAST(:services AS text[]), CAST(:referenceIds AS bigint[])) AS r(service, reference_id)
+            )
+            SELECT ts.project_id AS project_id
+              FROM refs r
+              JOIN qa_try qt ON r.service = 'QA_RUN' AND qt.id = r.reference_id
+              JOIN test_scenario ts ON ts.id = qt.test_scenario_id
+            UNION
+            SELECT tr.project_id
+              FROM refs r
+              JOIN test_run tr ON r.service = 'SCENARIO' AND tr.id = r.reference_id
+            UNION
+            SELECT pd.project_id
+              FROM refs r
+              JOIN project_document pd ON r.service = 'GAME_CONTEXT' AND pd.id = r.reference_id
+            UNION
+            SELECT r.reference_id
+              FROM refs r
+             WHERE r.service IN ('KNOWLEDGE_QUERY', 'EMBEDDING')
+        """.trimIndent()
+        return databaseClient.sql(sql)
+            .bind("services", services.toTypedArray())
+            .bind("referenceIds", referenceIds.toTypedArray())
+            .map { row: Readable -> row.longAt("project_id") }
+            .flow().toList()
+    }
+
     private fun Readable.longAt(name: String): Long =
         get(name, java.lang.Long::class.java)!!.toLong()
 }
