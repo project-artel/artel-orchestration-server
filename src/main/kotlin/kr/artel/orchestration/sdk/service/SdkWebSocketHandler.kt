@@ -58,11 +58,22 @@ class SdkWebSocketHandler(
     private val logger = LoggerFactory.getLogger(SdkWebSocketHandler::class.java)
     private val handlerMap = handlers.associateBy { it.messageType }
 
+    override fun handle(session: WebSocketSession): Mono<Void> {
+        // receive() 는 검증보다 먼저, mono { } 밖에서 부른다. Spring 은 이 호출 시점에 Netty pipeline 에
+        // 조각난 메시지를 합치는 aggregator 를 붙이고, mono { } 의 본문은 다른 thread 에서 늦게 돈다.
+        // 검증이 끝난 뒤에 부르면 그 사이 SDK 가 보낸 첫 큰 메시지(websocket-sharp 는 1016 바이트를
+        // 넘으면 조각낸다)가 조각 그대로 버퍼에 쌓인다. 그러면 첫 조각은 잘린 JSON 으로 dispatch 되고,
+        // 다음 continuation frame 에서 Spring 이 `'type' must not be null` 을 던져 연결이 끊긴다
+        // (ARTEL-1112).
+        val inbound = session.receive()
+        return handshake(session, inbound)
+    }
+
     // 인터페이스가 Mono<Void>를 요구하므로 시그니처는 유지하고, 내부는 mono { } 코루틴
     // 빌더로 감싼다. 저장소 조회가 suspend 함수라 코루틴 컨텍스트가 필요하다. 못 찾음(null)은
     // 명시적으로 분기해 거절한다. switchIfEmpty를 쓰지 않는 이유는 open()이 반환하는
     // Mono<Void>가 항상 비어 있어 거절 경로가 다시 도는 문제를 피하기 위해서다.
-    override fun handle(session: WebSocketSession): Mono<Void> = mono {
+    private fun handshake(session: WebSocketSession, inbound: Flux<WebSocketMessage>): Mono<Void> = mono {
         val token = queryParam(session, TOKEN_PARAM)
         val requestedInstanceId = queryParam(session, INSTANCE_ID_PARAM)?.toLongOrNull()
 
@@ -100,7 +111,7 @@ class SdkWebSocketHandler(
 
         // open()이 반환하는 전송/수신 파이프라인은 소켓이 닫힐 때까지 살아 있어야 한다.
         // 여기서 await하지 않으면 handle의 Mono가 즉시 완료되어 Spring이 세션을 닫는다.
-        open(session, requireNotNull(entity.id).toString()).awaitFirstOrNull()
+        open(session, requireNotNull(entity.id).toString(), inbound).awaitFirstOrNull()
     }.then()
 
     /**
@@ -109,7 +120,7 @@ class SdkWebSocketHandler(
      * 앞 연결을 밀어내지 않는 이유는, 진행 중인 QA 세션이 우연한 두 번째 실행 때문에 소켓을
      * 빼앗기는 쪽이 더 나쁘기 때문이다. 거절당한 쪽은 닫힘 코드로 이유를 알 수 있다.
      */
-    private fun open(session: WebSocketSession, instanceId: String): Mono<Void> {
+    private fun open(session: WebSocketSession, instanceId: String, inbound: Flux<WebSocketMessage>): Mono<Void> {
         val outbound = sessionManager.register(instanceId, session)
 
         if (outbound == null) {
@@ -134,7 +145,7 @@ class SdkWebSocketHandler(
         val heartbeat = SdkHeartbeat(instanceId, session, socketProperties.pingInterval, socketProperties.idleTimeout)
         val receiveEnded = Sinks.empty<Void>()
 
-        val receive = session.receive()
+        val receive = inbound
             // concatMap 앞에서 기록한다. 다만 handler 하나가 idle-timeout 보다 오래 걸리고 그 뒤에
             // frame 32개가 밀려 있으면 receive 가 요청을 멈춰 pong 도 읽히지 않는다. 그때는 살아 있는
             // 세션이 닫힐 수 있다. 지금 handler 들은 그만큼 오래 걸리지 않는다.

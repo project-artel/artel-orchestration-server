@@ -13,8 +13,12 @@ import kr.artel.orchestration.sdk.service.handler.SdkMessageHandler
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyNoInteractions
+import org.mockito.Mockito.`when`
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
 import org.springframework.web.reactive.socket.WebSocketSession
+import reactor.core.publisher.Flux
 
 /**
  * ARTEL-372 Scope 1 — 모르는 `type`이 와도 연결이 끊기거나 오류가 나지 않아야 한다.
@@ -127,5 +131,34 @@ class SdkWebSocketHandlerUnknownTypeTest {
         handler.dispatch("7", """{"type":"KNOWN"}""", session).block()
 
         assertThat(handled).isEqualTo(1)
+    }
+
+    /**
+     * ARTEL-1112 — `receive()` 를 부르는 시점에 Spring 이 조각난 메시지를 합치는 aggregator 를 붙인다.
+     * 토큰과 인스턴스를 확인하기 전에, `handle()` 이 반환되기 전에 불러야 연결 직후 SDK 가 보낸 첫 큰
+     * 메시지가 조각 그대로 쌓이지 않는다. 그래서 반환된 Mono 를 구독하지 않은 상태에서도 이미 불렸어야 한다.
+     */
+    @Test
+    fun `receive is requested before authentication so the first fragmented message is aggregated`() {
+        val repository = mock(GameInstanceRepository::class.java)
+        val handler = SdkWebSocketHandler(
+            strictMapper,
+            repository,
+            mock(SessionManager::class.java),
+            mock(QaExecutionFailureService::class.java),
+            mock(QaRunStatusNotifier::class.java),
+            mock(ReactiveJwtDecoder::class.java),
+            mock(SessionUserResolver::class.java),
+            mock(AccountStateService::class.java),
+            SdkSocketProperties(),
+            listOf(knownHandler)
+        )
+        val session = mock(WebSocketSession::class.java)
+        `when`(session.receive()).thenReturn(Flux.never())
+
+        handler.handle(session)
+
+        verify(session).receive()
+        verifyNoInteractions(repository)
     }
 }
