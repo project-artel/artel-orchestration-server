@@ -102,6 +102,37 @@ Any project member may read and save, as with `PATCH /api/projects/{projectId}`;
 
 `POST /api/qa-runs` and `POST /api/qa-tries` read the latest version when they open the agent-server session and send it in the session-open body as `"game_notes": {"version": ..., "body": ..., "genres": [...]}`, or `"game_notes": null` when the project has none.
 
+### Developer macros
+
+A game developer writes macros in the macro DSL from their own coding agent, through `artel-macro-mcp`, and stores them per project. These are not the macros the QA agent registers on a build's `content_map` (`/api/projects/{projectId}/game-builds/{gameBuildId}/macros`): a developer macro belongs to the project, its name is unique within the project, and it records the build it was last written against. Rows live in `developer_macro` (V116).
+
+| Request | Response |
+|---|---|
+| `GET /api/macros/grammar` | 200 `{grammar, rules}` |
+| `GET /api/projects/{projectId}/developer-macros` | 200 `{items: [summary]}`, by name ascending |
+| `GET /api/projects/{projectId}/developer-macros/{name}` | 200 detail |
+| `POST /api/projects/{projectId}/developer-macros:check` `{name, source, gameBuildId}` | 200 `{ok, parameters, docstring, rejection}` |
+| `PUT /api/projects/{projectId}/developer-macros/{name}` `{source, gameBuildId}` | 200 detail |
+| `DELETE /api/projects/{projectId}/developer-macros/{name}` | 204 |
+| `GET /internal/projects/{projectId}/developer-macros` | 200 `{items: [detail]}`, internal port only |
+
+A summary is `{name, parameters, docstring, gameBuildId, buildVersion, buildLabel, version, updatedAt, updatedBy}`; a detail adds `source`. `parameters` is the entry `def`'s parameter names in order, as strings. `gameBuildId` is a string, like `GameBuildResponse.id`, and `buildVersion` / `buildLabel` are that build's. `updatedBy` is `{id, nickname}` with `id` a string `app_user.id`, or `null` once that user is deleted. `version` starts at 1 and goes up only when the stored definition changes: putting the same source again, or the same source against another build, keeps it.
+
+`grammar` is the agent-server's `GET /internal/macros/grammar` body, `{grammar, rules}` (`grammar` is the DSL description in markdown, `rules` the developer macro rules as sentences), passed through with its content type and not parsed here. It is not tied to a project, so it has no member check.
+
+`gameBuildId` in a request is a string of digits; a JSON number is also accepted. It must be a build of the same project. `name` (in the `:check` body or the `PUT` path) is a Python identifier of at most 200 characters, `source` at most 20,000 characters.
+
+`:check` and `PUT` send `{name, source, imports}` to the agent-server's `POST /internal/macros/check`, where `imports` maps the name of every other developer macro in the project to its source, so `from macros import ...` resolves against them. Nothing is stored by `:check`. A check that fails is not an HTTP error there: it is 200 with `ok: false`, `parameters` and `docstring` null, and `rejection: {line, reason}` (`line` counts from 1, null when the reason has no line). A pass is `ok: true` with `parameters` and `docstring`, and `rejection: null`. `PUT` runs the same check and stores what the agent-server returned (definition, parameter names, docstring), never what the client claims. A docstring longer than 2,000 characters is a rejection with no line.
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `invalid_request` | a field fails validation; `fields` names it |
+| 400 | `developer_macro_rejected` | `PUT` only: the check rejected the source; `fields` carries `reason` and, when known, `line` (a string, since `fields` is a string map) |
+| 404 | `not_found` | not a member of the project, the build belongs to another project, or no developer macro by that name (`GET` detail, `DELETE`) |
+| 503 | `agent_unavailable` | the agent-server did not answer within `artel.agent.macro-timeout` (default 10s), answered an error, or answered outside the contract |
+
+The internal list is for the agent-server's planner–executer engine and carries `source`. It has no authentication, like everything under `/internal/`, and answers 404 for a deleted project.
+
 ## Verification
 
 ```bash

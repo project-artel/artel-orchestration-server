@@ -57,6 +57,10 @@
       "description": "Agent action delivery to connected game instances"
     },
     {
+      "name": "Developer Macro",
+      "description": "게임 개발자가 MCP 로 검사하고 등록하는 macro"
+    },
+    {
       "name": "SDK auth",
       "description": "SDK 브라우저 로그인"
     },
@@ -1283,6 +1287,134 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/developer-macros/{name}": {
+      "get": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 상세",
+        "description": "목록 한 줄에 원문(`source`)을 더한 것이다.",
+        "operationId": "readDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "macro 이름(진입점 `def` 이름)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 등록",
+        "description": "검사를 통과하면 이름으로 넣거나 갱신하고 저장된 행을 돌려준다. `version` 은 정의가 실제로 바뀔 때만 오른다. 거절이면 400 `developer_macro_rejected` 이고 `fields` 에 `line`·`reason` 이 실린다.",
+        "operationId": "putDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "macro 이름(진입점 `def` 이름)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutDeveloperMacroRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 삭제",
+        "description": "행을 지운다. 그 이름이 없으면 404 다.",
+        "operationId": "deleteDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "macro 이름(진입점 `def` 이름)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
           }
         }
       }
@@ -4048,6 +4180,50 @@
         }
       }
     },
+    "/api/projects/{projectId}/developer-macros:check": {
+      "post": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 검사",
+        "description": "agent-server 가 원문을 검사한다. 통과면 `{ok: true, parameters, docstring}`, 거절이면 `{ok: false, rejection: {line, reason}}` 이고 둘 다 200 이다. 저장하지 않는다.",
+        "operationId": "checkDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckDeveloperMacroRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/issues/{issueId}/tracker-sync": {
       "post": {
         "tags": [
@@ -5128,6 +5304,37 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/SceneContextResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/projects/{projectId}/developer-macros": {
+      "get": {
+        "tags": [
+          "internal-developer-macro-controller"
+        ],
+        "operationId": "listDeveloperMacrosForAgent",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalDeveloperMacroListResponse"
                 }
               }
             }
@@ -7016,6 +7223,62 @@
         }
       }
     },
+    "/api/projects/{projectId}/developer-macros": {
+      "get": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 목록",
+        "description": "프로젝트의 developer macro 를 이름 오름차순으로 읽는다. 원문(`source`)은 상세에 있다.",
+        "operationId": "listDeveloperMacros",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/macros/grammar": {
+      "get": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "macro 문법 글",
+        "description": "agent-server 의 `{grammar, rules}` JSON 을 본문과 content type 그대로 중계한다. `grammar` 는 macro DSL 문법 설명(markdown), `rules` 는 developer macro 규칙 문장 목록이다.",
+        "operationId": "grammar",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/llm-usage/stats": {
       "get": {
         "tags": [
@@ -8161,6 +8424,89 @@
           },
           "hidden": {
             "type": "boolean"
+          }
+        }
+      },
+      "PutDeveloperMacroRequest": {
+        "required": [
+          "gameBuildId",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "source": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "gameBuildId": {
+            "pattern": "^[0-9]{1,18}$",
+            "type": "string"
+          }
+        }
+      },
+      "DeveloperMacroAuthor": {
+        "required": [
+          "id",
+          "nickname"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          }
+        }
+      },
+      "DeveloperMacroDetailResponse": {
+        "required": [
+          "buildVersion",
+          "docstring",
+          "gameBuildId",
+          "name",
+          "parameters",
+          "source",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "docstring": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "buildVersion": {
+            "type": "string"
+          },
+          "buildLabel": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/DeveloperMacroAuthor"
           }
         }
       },
@@ -10359,6 +10705,69 @@
           }
         }
       },
+      "CheckDeveloperMacroRequest": {
+        "required": [
+          "gameBuildId",
+          "name",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 0,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "gameBuildId": {
+            "pattern": "^[0-9]{1,18}$",
+            "type": "string"
+          }
+        }
+      },
+      "DeveloperMacroCheckResponse": {
+        "required": [
+          "ok"
+        ],
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "docstring": {
+            "type": "string"
+          },
+          "rejection": {
+            "$ref": "#/components/schemas/DeveloperMacroRejection"
+          }
+        }
+      },
+      "DeveloperMacroRejection": {
+        "required": [
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
       "IssueTrackerEnvelope": {
         "required": [
           "tracker"
@@ -11513,6 +11922,20 @@
             }
           }
         ]
+      },
+      "InternalDeveloperMacroListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeveloperMacroDetailResponse"
+            }
+          }
+        }
       },
       "InternalLlmModelResponse": {
         "required": [
@@ -14940,6 +15363,66 @@
       },
       "ServerSentEventDocumentStreamEvent": {
         "type": "object"
+      },
+      "DeveloperMacroListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeveloperMacroSummaryResponse"
+            }
+          }
+        }
+      },
+      "DeveloperMacroSummaryResponse": {
+        "required": [
+          "buildVersion",
+          "docstring",
+          "gameBuildId",
+          "name",
+          "parameters",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "docstring": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "buildVersion": {
+            "type": "string"
+          },
+          "buildLabel": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/DeveloperMacroAuthor"
+          }
+        }
       },
       "LlmUsageDailyCell": {
         "required": [
