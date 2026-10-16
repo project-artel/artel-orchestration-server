@@ -89,6 +89,97 @@ A scenario carries `execution_mode`, either `ORDERED` (the default for a new sce
 
 The authoring chat of a test run creates and updates `FREE` scenarios as well. Each scenario in a `submit_scenario` frame from the agent, in the proposals (`scenarios`) of the chat SSE `result` event, and in the `scenarios` of `POST /api/projects/{projectId}/test-runs/{runId}/scenarios/commit` carries `execution_mode`. When it is missing, a new scenario is `ORDERED` and an update keeps the stored value of the scenario it updates (found by `scenario_id`, or by a title already in the run); an update that names a different value changes the mode. The proposals of the SSE `result` event always carry the value. Each item of `current_scenarios`, sent to the agent when a session opens and with every turn, carries the stored `execution_mode`. A `FREE` scenario is saved with its steps as given: the code splitting, bridge insertion, case operation filling and opening note that rewrite `ORDERED` steps do not touch it. A `FREE` scenario that breaks the rules above is not saved: a `submit_scenario` frame gets `accepted: false` with the rule in `detail`, and the commit answers 400 with `code` `invalid_free_scenario`. Gap filling and merge absorption still leave `FREE` scenarios unchanged.
 
+### Game notes
+
+Per-project notes a game's makers write for the agent-server planner, plus the genre modules (`ui-flow`, `turn-based`) to attach to its prompt. Every save that changes something is a new row in `project_game_note`; rows are never updated.
+
+| Request | Response |
+|---|---|
+| `GET /api/projects/{projectId}/game-notes` | 200 `{version, body, genres, updatedAt, updatedBy: {id, displayName}}`, the latest version. Without notes: `{"version": 0, "body": "", "genres": [], "updatedAt": null, "updatedBy": null}` |
+| `PUT /api/projects/{projectId}/game-notes` `{body, genres, baseVersion}` | 200, the new latest version |
+
+Any project member may read and save, as with `PATCH /api/projects/{projectId}`; anyone else gets 404. `PUT` normalizes `\r\n` to `\n`, trims the body, and stores `genres` in the order listed above, whatever order they were sent in. When the result equals the latest body and genre set, nothing is saved and the latest is returned unchanged. `baseVersion` must be the `version` the editor started from (0 for none): otherwise, or when another save takes the same version first, `PUT` answers 409 `game_notes_conflict`. A body over 20000 characters, an unknown or repeated genre, or a missing field is 400 `invalid_request` with `fields`.
+
+`POST /api/qa-runs` and `POST /api/qa-tries` read the latest version when they open the agent-server session and send it in the session-open body as `"game_notes": {"version": ..., "body": ..., "genres": [...]}`, or `"game_notes": null` when the project has none.
+
+### Developer macros
+
+A game developer writes macros in the macro DSL from their own coding agent, through `artel-macro-mcp`, and stores them per project. These are not the macros the QA agent registers on a build's `content_map` (`/api/projects/{projectId}/game-builds/{gameBuildId}/macros`): a developer macro belongs to the project, its name is unique within the project, and it records the build it was last written against. Rows live in `developer_macro` (V116).
+
+| Request | Response |
+|---|---|
+| `GET /api/macros/grammar` | 200 `{grammar, rules}` |
+| `GET /api/projects/{projectId}/developer-macros` | 200 `{items: [summary]}`, by name ascending |
+| `GET /api/projects/{projectId}/developer-macros/{name}` | 200 detail |
+| `POST /api/projects/{projectId}/developer-macros:check` `{name, source, gameBuildId}` | 200 `{ok, parameters, docstring, rejection}` |
+| `PUT /api/projects/{projectId}/developer-macros/{name}` `{source, gameBuildId}` | 200 detail |
+| `DELETE /api/projects/{projectId}/developer-macros/{name}` | 204 |
+| `GET /internal/projects/{projectId}/developer-macros` | 200 `{items: [detail]}`, internal port only |
+
+A summary is `{name, parameters, docstring, gameBuildId, buildVersion, buildLabel, version, updatedAt, updatedBy}`; a detail adds `source`. `parameters` is the entry `def`'s parameter names in order, as strings. `gameBuildId` is a string, like `GameBuildResponse.id`, and `buildVersion` / `buildLabel` are that build's. `updatedBy` is `{id, nickname}` with `id` a string `app_user.id`, or `null` once that user is deleted. `version` starts at 1 and goes up only when the stored definition changes: putting the same source again, or the same source against another build, keeps it.
+
+`grammar` is the agent-server's `GET /internal/macros/grammar` body, `{grammar, rules}` (`grammar` is the DSL description in markdown, `rules` the developer macro rules as sentences), passed through with its content type and not parsed here. It is not tied to a project, so it has no member check.
+
+`gameBuildId` in a request is a string of digits; a JSON number is also accepted. It must be a build of the same project. `name` (in the `:check` body or the `PUT` path) is a Python identifier of at most 200 characters, `source` at most 20,000 characters.
+
+`:check` and `PUT` send `{name, source, imports}` to the agent-server's `POST /internal/macros/check`, where `imports` maps the name of every other developer macro in the project to its source, so `from macros import ...` resolves against them. Nothing is stored by `:check`. A check that fails is not an HTTP error there: it is 200 with `ok: false`, `parameters` and `docstring` null, and `rejection: {line, reason}` (`line` counts from 1, null when the reason has no line). A pass is `ok: true` with `parameters` and `docstring`, and `rejection: null`. `PUT` runs the same check and stores what the agent-server returned (definition, parameter names, docstring), never what the client claims. A docstring longer than 2,000 characters is a rejection with no line.
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `invalid_request` | a field fails validation; `fields` names it |
+| 400 | `developer_macro_rejected` | `PUT` only: the check rejected the source; `fields` carries `reason` and, when known, `line` (a string, since `fields` is a string map) |
+| 404 | `not_found` | not a member of the project, the build belongs to another project, or no developer macro by that name (`GET` detail, `DELETE`) |
+| 503 | `agent_unavailable` | the agent-server did not answer within `artel.agent.macro-timeout` (default 10s), answered an error, or answered outside the contract |
+
+The internal list is for the agent-server's planner–executer engine and carries `source`. It has no authentication, like everything under `/internal/`, and answers 404 for a deleted project.
+
+### MCP access tokens and login handoff
+
+`artel-macro-mcp` is a remote MCP server and the OAuth 2.1 authorization server for its clients (Claude Code, Codex). Two JWTs cross between it and this server.
+
+**Access JWT (issued by the MCP server, verified here).** The MCP server forwards the user's access JWT as `Authorization: Bearer`. A bearer whose unverified `iss` equals `artel.mcp.issuer` is verified against `artel.mcp.jwks-uri`; every other bearer goes through the existing session, SDK and CLI token paths unchanged. The token must have header `typ` `at+jwt` (RFC 9068; `application/at+jwt` is also accepted, plain `JWT` or no `typ` is 401), an RS256 or ES256 signature from a key in the MCP JWKS, `aud` containing `artel.mcp.audience`, and a valid `exp` / `nbf`. `sub` is the `app_user.id`, so every endpoint resolves the user as it does for a browser session. The JWKS is cached and fetched again only for an unknown `kid`. Any failure is 401.
+
+An access JWT opens only these routes, by the scopes in its `scope` claim (space-separated); project routes still check membership:
+
+| Scope | Routes |
+|---|---|
+| `macro:read` | `GET /api/projects`, `GET /api/projects/{projectId}/game-builds`, `GET /api/macros/grammar`, `GET /api/projects/{projectId}/developer-macros`, `GET /api/projects/{projectId}/developer-macros/{name}` |
+| `macro:write` | `POST /api/projects/{projectId}/developer-macros:check`, `PUT /api/projects/{projectId}/developer-macros/{name}`, `DELETE /api/projects/{projectId}/developer-macros/{name}` |
+
+Any other route is 403 `mcp_route_forbidden`, whatever the scope. A listed route without its scope is 403 `insufficient_scope`.
+
+**Handoff JWT (issued here, verified by the MCP server).** When the user allows the connection on home's `/mcp/connect`, home calls:
+
+| Request | Response |
+|---|---|
+| `POST /api/mcp/handoffs` `{requestId}` | 200 `{redirectUrl}` |
+| `GET /.well-known/artel-handoff-jwks.json` | 200 JWK set, no authentication, `Cache-Control: max-age=300, public` |
+
+`requestId` is the MCP server's opaque id for the stored authorization request: 1 to 128 characters of `A-Z a-z 0-9 . _ ~ -`. `redirectUrl` is `{artel.mcp.base-url}/oauth/handoff?token=<handoff JWT>`. The handoff JWT is signed RS256 with `kid` set to the key's RFC 7638 thumbprint, and carries `iss` = `artel.mcp.handoff.issuer`, `aud` = `artel-macro-mcp`, `sub` = `app_user.id`, `request_id`, a new `jti` (UUID) per call, `iat`, and `exp` = `iat` + 2 minutes. The MCP server verifies it with the JWKS above and accepts each `jti` once. The JWKS carries the public key only, and is `{"keys": []}` when no key is configured.
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `invalid_request` | `requestId` blank, longer than 128 characters, or with other characters |
+| 401 | `unauthorized` | no session |
+| 403 | `mcp_handoff_requires_session` | the caller used a CLI token: only a browser session (cookie or session JWT) can allow a connection |
+| 403 | `mcp_route_forbidden` | the caller used an MCP access JWT (refused by the route table before the endpoint) |
+| 503 | `mcp_handoff_not_configured` | no signing key, or `artel.mcp.base-url` or `artel.mcp.handoff.issuer` is blank |
+
+**Configuration.** Everything is off by default, and the server starts without any of it.
+
+| Key | Environment variable | Default | Meaning |
+|---|---|---|---|
+| `artel.mcp.base-url` | `ARTEL_MCP_BASE_URL` | blank | MCP server's public URL; `redirectUrl` is built on it |
+| `artel.mcp.issuer` | `ARTEL_MCP_ISSUER` | blank | expected `iss` of access JWTs. Must differ from `artel.auth.issuer` (startup fails otherwise) |
+| `artel.mcp.jwks-uri` | `ARTEL_MCP_JWKS_URI` | blank | MCP JWKS, `{MCP}/.well-known/jwks.json`. Set both this and `issuer`, or neither (startup fails otherwise); access JWTs are accepted only when both are set |
+| `artel.mcp.audience` | `ARTEL_MCP_AUDIENCE` | `artel-orchestration` | required `aud` of access JWTs |
+| `artel.mcp.jwks-timeout` | — | `5s` | timeout of a JWKS fetch |
+| `artel.mcp.handoff.issuer` | `ARTEL_MCP_HANDOFF_ISSUER` | blank | `iss` of handoff JWTs. Must equal `HANDOFF_ISSUER` on the MCP server, which falls back to its `ORCHESTRATION_BASE_URL`; use this server's public base URL |
+| `artel.mcp.handoff.audience` | — | `artel-macro-mcp` | `aud` of handoff JWTs |
+| `artel.mcp.handoff.ttl` | — | `2m` | handoff JWT lifetime |
+| `artel.mcp.handoff.private-key` | `ARTEL_MCP_HANDOFF_PRIVATE_KEY` | blank | RSA PKCS#8 PEM, at least 2048 bits (`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`). In a one-line variable write line breaks as `\n`. A key that cannot be read stops startup; the error never contains the key |
+| `artel.mcp.handoff.generate-dev-key` | `ARTEL_MCP_HANDOFF_GENERATE_DEV_KEY` | `false` | with no `private-key`, make a new key on every start. Local use only: a restart invalidates handoffs in flight, and each replica would sign with its own key |
+
 ## Verification
 
 ```bash

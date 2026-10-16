@@ -6,6 +6,10 @@ import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.reactor.mono
 import kr.artel.orchestration.auth.cli.CliTokenAuthenticationManager
 import kr.artel.orchestration.auth.cli.cliTokenOrNull
+import kr.artel.orchestration.auth.mcp.McpAccessTokenAuthenticationManager
+import kr.artel.orchestration.auth.mcp.McpAccessTokenDetector
+import kr.artel.orchestration.auth.mcp.McpProperties
+import kr.artel.orchestration.auth.mcp.McpScopeWebFilter
 import kr.artel.orchestration.auth.oauth.OAuthIdentityResolver
 import kr.artel.orchestration.auth.service.AccountDisabledException
 import kr.artel.orchestration.auth.service.AccountStateService
@@ -63,7 +67,8 @@ import javax.crypto.spec.SecretKeySpec
     AuthProperties::class,
     SignupProperties::class,
     GitHubOAuthProperties::class,
-    LoginRateLimitProperties::class
+    LoginRateLimitProperties::class,
+    McpProperties::class
 )
 class SecurityConfig {
 
@@ -119,7 +124,8 @@ class SecurityConfig {
     fun trackerSetupSecurityWebFilterChain(
         http: ServerHttpSecurity,
         properties: AuthProperties,
-        accountStateService: AccountStateService
+        accountStateService: AccountStateService,
+        mcpAccessTokenDetector: McpAccessTokenDetector
     ): SecurityWebFilterChain = http
         .securityMatcher(PathPatternParserServerWebExchangeMatcher("/api/tracker/github/setup"))
         .addFilterBefore(AccountStateWebFilter(accountStateService), SecurityWebFiltersOrder.EXCEPTION_TRANSLATION)
@@ -130,7 +136,7 @@ class SecurityConfig {
         .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
         .authorizeExchange { it.anyExchange().authenticated() }
         .oauth2ResourceServer {
-            it.bearerTokenConverter(cookieTokenConverter(properties))
+            it.bearerTokenConverter(cookieTokenConverter(properties, mcpAccessTokenDetector))
             it.jwt { }
             it.authenticationEntryPoint(trackerSetupEntryPoint(properties))
         }
@@ -156,6 +162,8 @@ class SecurityConfig {
         identityResolver: OAuthIdentityResolver,
         oauthLoginService: OAuthLoginService,
         cliTokenAuthenticationManager: CliTokenAuthenticationManager,
+        mcpAccessTokenDetector: McpAccessTokenDetector,
+        mcpProperties: McpProperties,
         accountStateService: AccountStateService,
         // GitHub 두 변수가 다 있을 때만 있다(GitHubOAuthClientConfig).
         clientRegistrationRepository: ObjectProvider<ReactiveClientRegistrationRepository>
@@ -192,6 +200,8 @@ class SecurityConfig {
                 "/api/auth/providers",
                 "/api/auth/signup",
                 "/api/auth/login",
+                // handoff 서명 공개키(ARTEL-1088). MCP 서버가 세션 없이 읽는다. `/api` 밖이고 공개키만 낸다.
+                "/.well-known/artel-handoff-jwks.json",
                 // 내부 서버-투-서버 경로 전부. 보내는 주체가 사람이 아니라 Agent 서버라
                 // 엔드유저 JWT가 없다. 이 접두사가 곧 신뢰 경계이므로, 새 내부 엔드포인트는
                 // 여기에 줄을 더하는 것이 아니라 `/internal/` 아래에 두어야 한다.
@@ -240,11 +250,20 @@ class SecurityConfig {
             cliTokenAuthenticationFilter(cliTokenAuthenticationManager),
             SecurityWebFiltersOrder.AUTHENTICATION
         )
+        // MCP access JWT 도 CLI 토큰과 같은 이유로 같은 체인에 필터 하나를 더한다(ARTEL-1088). 다른 것은 MCP 가
+        // 여는 경로가 좁다는 점이고, 그 좁힘은 아래 McpScopeWebFilter 가 맡는다. MCP 가 꺼져 있으면 detector 가
+        // 아무 요청도 고르지 않아 이 필터는 그냥 지나간다.
+        .addFilterBefore(
+            mcpAccessTokenAuthenticationFilter(mcpAccessTokenDetector, McpAccessTokenAuthenticationManager(mcpProperties)),
+            SecurityWebFiltersOrder.AUTHENTICATION
+        )
         // 인증이 끝난 뒤, 인가보다 먼저 계정이 막혔는지 본다. 세 체인 모두에 붙여 SDK 와 tracker 경로도
         // 막힌 계정을 받지 않는다.
         .addFilterBefore(AccountStateWebFilter(accountStateService), SecurityWebFiltersOrder.EXCEPTION_TRANSLATION)
+        // 인증이 끝난 뒤, 인가보다 먼저 MCP access JWT 의 scope → 경로 허용표를 본다. 다른 자격증명은 건드리지 않는다.
+        .addFilterBefore(McpScopeWebFilter(), SecurityWebFiltersOrder.EXCEPTION_TRANSLATION)
         .oauth2ResourceServer {
-            it.bearerTokenConverter(cookieTokenConverter(properties))
+            it.bearerTokenConverter(cookieTokenConverter(properties, mcpAccessTokenDetector))
             it.jwt { }
             it.authenticationEntryPoint(jsonAuthenticationEntryPoint())
         }
@@ -392,11 +411,17 @@ class SecurityConfig {
      * 쿠키로 떨어뜨리지 않고 곧장 `Mono.empty()` 인 것이 중요하다. `artel_` bearer 와 세션 쿠키를
      * 함께 실은 요청에서 쿠키로 넘어가면, 앞 필터가 CLI 토큰 주인으로 인증해 둔 것을 뒤 필터가
      * 쿠키 주인으로 덮어쓴다. 헤더에 `artel_` 이 있으면 그 요청은 CLI 토큰 요청이고 그것으로 끝이다.
+     *
+     * MCP access JWT 도 같은 이유로 거절한다(ARTEL-1088). 앞에 끼운 MCP 필터가 이미 인증해 두었고, 여기서 받으면
+     * 세션 디코더가 MCP 서명을 몰라 401 을 낸다. [McpAccessTokenDetector] 는 MCP 가 꺼져 있으면 늘 null 이다.
      */
-    private fun cookieTokenConverter(properties: AuthProperties): ServerAuthenticationConverter {
+    private fun cookieTokenConverter(
+        properties: AuthProperties,
+        mcpAccessTokenDetector: McpAccessTokenDetector
+    ): ServerAuthenticationConverter {
         val headerConverter = ServerBearerTokenAuthenticationConverter()
         return ServerAuthenticationConverter { exchange ->
-            if (exchange.request.cliTokenOrNull() != null) {
+            if (exchange.request.cliTokenOrNull() != null || mcpAccessTokenDetector.tokenOrNull(exchange.request) != null) {
                 Mono.empty()
             } else {
                 headerConverter.convert(exchange).switchIfEmpty(Mono.defer {
@@ -424,6 +449,25 @@ class SecurityConfig {
         AuthenticationWebFilter(cliTokenAuthenticationManager).apply {
             setServerAuthenticationConverter { exchange ->
                 Mono.justOrEmpty(exchange.request.cliTokenOrNull())
+                    .map<Authentication> { BearerTokenAuthenticationToken(it) }
+            }
+            setSecurityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+            setAuthenticationFailureHandler(
+                ServerAuthenticationEntryPointFailureHandler(jsonAuthenticationEntryPoint())
+            )
+        }
+
+    /**
+     * MCP access JWT 를 MCP JWKS 로 검증하는 필터. [cliTokenAuthenticationFilter] 와 같은 이유로 `@Bean` 이 아니고,
+     * 같은 이유로 `NoOpServerSecurityContextRepository` 를 쓴다. 실패는 다른 자격증명과 같은 401 JSON 이다.
+     */
+    private fun mcpAccessTokenAuthenticationFilter(
+        detector: McpAccessTokenDetector,
+        authenticationManager: McpAccessTokenAuthenticationManager
+    ): AuthenticationWebFilter =
+        AuthenticationWebFilter(authenticationManager).apply {
+            setServerAuthenticationConverter { exchange ->
+                Mono.justOrEmpty(detector.tokenOrNull(exchange.request))
                     .map<Authentication> { BearerTokenAuthenticationToken(it) }
             }
             setSecurityContextRepository(NoOpServerSecurityContextRepository.getInstance())

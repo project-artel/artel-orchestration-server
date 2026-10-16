@@ -36,6 +36,9 @@ internal data class QaSessionOpenRequest(
     val arch: JsonNode?,
     // 사용자 key 로 도는 run 에만 싣는다. NON_NULL 이라 공용 key run 에는 필드가 아예 없다.
     @JsonProperty("llm_key") val llmKey: QaSessionLlmKey? = null,
+    // 노트가 없는 프로젝트는 필드를 빼지 않고 null 을 싣는다. 이 값은 고를 수 있는 축이 아니라 프로젝트의 사실이라,
+    // 덮어쓸 agent-server 기본값이 없다.
+    @JsonProperty("game_notes") @get:JsonInclude(JsonInclude.Include.ALWAYS) val gameNotes: QaSessionGameNotes? = null,
     val context: QaSessionOpenContext
 )
 
@@ -96,6 +99,7 @@ internal fun QaAgentSessionContext.toOpenRequest(): QaSessionOpenRequest {
         promptVersion = promptVersion,
         arch = archNode,
         llmKey = llmKey,
+        gameNotes = gameNotes,
         context = QaSessionOpenContext(
             gameInstanceId = gameInstanceId,
             projectId = projectId,

@@ -157,15 +157,31 @@ class CaseVerdictFromQaIntegrationTest {
     }
 
     @Test
-    fun `BROKEN 인 TC 는 판정이 와도 그대로다`(): Unit = runBlocking {
+    fun `그 게임 버전에서 BROKEN 인 TC 는 판정이 와도 그대로다`(): Unit = runBlocking {
+        val run = runningRun()
+        versions.save(versionOf(run.passedCaseId).copy(verificationStatus = "BROKEN"))
+        versions.syncIdentities(listOf(run.passedCaseId))
+
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true)
+
+        assertThat(versionOf(run.passedCaseId).verificationStatus).isEqualTo("BROKEN")
+        assertThat(testCaseRepository.findById(run.passedCaseId)!!.verificationStatus).isEqualTo("BROKEN")
+        assertThat(caseVerdictLogs(run.tryId)).isEmpty()
+    }
+
+    /** 깨졌는지는 판정할 게임 버전의 몫으로 본다(ARTEL-1069). 다른 버전에서 깨졌어도 이 버전 몫에는 적는다. */
+    @Test
+    fun `다른 버전에서만 BROKEN 인 TC 는 이 게임 버전에 판정을 적는다`(): Unit = runBlocking {
         val run = runningRun()
         testCaseRepository.save(testCaseRepository.findById(run.passedCaseId)!!.copy(verificationStatus = "BROKEN"))
 
         reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true)
 
-        assertThat(testCaseRepository.findById(run.passedCaseId)!!.verificationStatus).isEqualTo("BROKEN")
-        assertThat(caseVerdictLogs(run.tryId)).isEmpty()
+        assertThat(versionOf(run.passedCaseId).verificationStatus).isEqualTo("VERIFIED")
+        assertThat(caseVerdictLogs(run.tryId)).hasSize(1)
     }
+
+    private suspend fun versionOf(testCaseId: Long) = versions.findAll().toList().single { it.testCaseId == testCaseId }
 
     @Test
     fun `같은 프레임의 재전송은 판정 기록을 하나만 남긴다`(): Unit = runBlocking {

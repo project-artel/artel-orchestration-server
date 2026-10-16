@@ -116,12 +116,24 @@ data class RunCoverageScenario(
  * `TurnBattleScene 8/29` 를 내보냈지만, 시나리오는 여러 씬을 지나는 흐름이라 그 수로는 다음에
  * 무엇을 할지 정할 수 없다. 단위는 사용자가 만든 것, 곧 시나리오다.
  *
- * @property total 프로젝트의 케이스 전량. 비교 축으로만 쓴다.
+ * @property total 기준 케이스 수. 버전을 따르는 런은 그 버전의 케이스(`BROKEN` 제외), 아니면 프로젝트 전량이다
+ *   (ARTEL-1069). 비교 축으로만 쓴다.
  * @property covered 이 런의 시나리오들이 담은 서로 다른 케이스 수. 시나리오끼리 겹치면 한 번만
  *   센다 — 같은 케이스가 맥락을 달리해 두 시나리오에 들어가는 것은 정상이고, 그 둘을 2로 세면
  *   이 런이 실제로 덮은 범위보다 커진다.
  * @property uncovered `total - covered`. 화면이 다시 빼지 않게 세어 준다.
  */
+/**
+ * 런의 케이스 중 켜진 게임의 버전에 없는 것(ARTEL-1069). QA 는 이 케이스들을 판정하지 않고 넘긴다.
+ *
+ * @property gameBuildId 판정이 속할 게임 빌드. 게임 버전을 모르면 null 이고 목록은 비어 있다.
+ */
+data class RunCasesOutsideBuildResponse(
+    val testRunId: String,
+    val gameBuildId: String?,
+    val testCaseIds: List<String>,
+)
+
 data class RunCoverageResponse(
     val testRunId: String,
     val total: Int,

@@ -29,7 +29,8 @@ RuntimeException
 { "code": "invalid_document", "message": "기획서는 PDF 파일만 올릴 수 있습니다.", "fields": {} }
 ```
 
-`fields`는 DTO 검증 실패일 때만 채워진다.
+`fields`는 DTO 검증 실패일 때, 그리고 예외가 `responseFields`를 채운 4xx일 때만 채워진다
+(예: `developer_macro_rejected` 의 `line`·`reason`). 5xx는 `fields`도 내보내지 않는다.
 
 > **보안 규약 — 서버 오류 원문은 클라이언트로 내보내지 않는다.**
 > - **5xx**: 예외 message를 **절대 클라이언트로 보내지 않는다**. 내부 구조·원인(호스트·드라이버·

@@ -1,8 +1,8 @@
 # 2026-10-14 — 시나리오 작성이 TR 빌드 버전의 TC 내용을 쓰게 한다
 
 - Date: 2026-10-14
-- Jira: ARTEL-1048 (후속 작업은 새 Jira 로 쪼갠다)
-- Status: Draft
+- Jira: ARTEL-1048(Step 0) · ARTEL-1064(Step 1~3)
+- Status: Step 0~3 구현 완료(실제 에이전트 연결 E2E 는 아직)
 
 ## Goal
 
@@ -62,13 +62,13 @@ TR 은 빌드 버전 하나를 따른다(#313). 그 런에서 시나리오를 �
 
 설계 원칙: **판독기(`CaseConditionReader` · `ScenarioStateReader`)와 검수 로직은 그대로 두고, TC 를 읽어 오는 자리만 바꾼다.** 버전 몫(`test_case_version`)을 대표 행과 같은 모양(`TestCaseEntity`, id 는 대표 id)으로 비춰 넘기면, 34곳 중 판독기 7곳과 순수 로직은 손대지 않아도 된다. 버전은 이미 있는 `AuthoringVersion` 맥락에서 읽는다.
 
-- [ ] **Step 0: R1 막기 (#313 에 넣는다, 머지 전 필수)**
+- [x] **Step 0: R1 막기 (#313 에 넣는다, 머지 전 필수)**
   - 검수 기준 집합을 맥락의 버전 케이스로 바꾼다(`ScenarioReconcileService:296`). 버전 없는 런은 지금처럼 프로젝트 전체다.
   - `recommendRemaining` 의 미커버도 같은 집합으로 거른다.
   - 검색은 버전이 있을 때 limit 를 넉넉히 가져온 뒤 거르고 자른다.
   - 테스트: 버전 밖 TC 가 있는 프로젝트에서 버전 런 저장이 거절되지 않는다. 버전 없는 런은 예전과 같다.
   - 규모: 약 40줄 + 통합 테스트 1개.
-- [ ] **Step 1: 버전을 아는 TC 공급원 `AuthoringCases`**
+- [x] **Step 1: 버전을 아는 TC 공급원 `AuthoringCases`**
   - 맥락에 버전이 있으면 그 빌드의 `test_case_version` 을 `TestCaseEntity` 모양(id = 대표 id, 내용 = 몫)으로 비춘다. 없으면 지금처럼 `test_case`.
   - 메서드: `all(projectId)` · `byId(id)` · `ids(projectId)`.
   - 바꿀 호출 자리(약 10곳):
@@ -76,12 +76,12 @@ TR 은 빌드 버전 하나를 따른다(#313). 그 런에서 시나리오를 �
     - `ScenarioFlowPlanner.of`, `caseFacts`, `openingFacts`, 미커버 장면 세기, 검수 기준 집합
   - `projectFacts` 캐시 키를 `(projectId, gameBuildId)` 로 바꾼다.
   - 규모: 서비스 1개 신설 + 호출 자리 ~150줄.
-- [ ] **Step 2: 능력과 잇는 SQL 을 그 빌드 지도로 좁힌다**
+- [x] **Step 2: 능력과 잇는 SQL 을 그 빌드 지도로 좁힌다**
   - `tc.capability_key` 를 쓰는 9개 질의에 빌드판을 둔다(`test_case_version v` 의 `capability_key` 를 쓰고, 능력은 그 빌드의 `content_map` 으로 한정): `findValuesChangedByCases` · `findSceneExits` · `findGroundedSceneEdges` · `findCaseInputs` · `findWrittenValues` · `findStrayWrittenValues` · `findValueRaisers` · `findValueMoves` · `findCaseIdByCapability`.
   - `findStartingValues`, 흐름 계획의 입구 씬(`findEntrySceneNameOfBuild`)도 빌드판으로.
   - 호출하는 쪽은 맥락에서 빌드를 읽어 빌드판 · 프로젝트판을 고른다(한 곳에 모은다).
   - 규모: SQL 11개 ~300줄, 호출 자리 ~60줄.
-- [ ] **Step 3: 테스트**
+- [x] **Step 3: 테스트**
   - 갈린 내용 픽스처: 같은 케이스가 빌드 A 와 B 에서 스텝 · 조건 · 능력이 다르다(B 의 지도에서 능력 하나를 빼거나 조건을 바꾼다).
   - 단언:
     - A 런의 세션 목록 · `explain` · `findPath` · 검수가 A 의 내용을 쓴다.
@@ -112,3 +112,15 @@ TR 은 빌드 버전 하나를 따른다(#313). 그 런에서 시나리오를 �
 - Step 0 을 #313 에 바로 넣고, Step 1~3 은 새 Jira 로 따로 갈까?
 - 버전 밖 사용자 TC(버전 없음)를 버전 런 작성에 넣을지? 넣는다면 "버전 + 버전 없음" 을 기준 집합으로 삼는다.
 - 임베딩 갱신(R5)은 이번 범위에 넣을지?
+
+## 구현 메모 (2026-10-14)
+
+- `AuthoringCases`(testscenario/service): 저작이 TC 와 지도 사실을 읽는 유일한 자리다.
+  - 그 버전 몫이 **없는** 케이스는 대표 행 그대로 둔다. 옛 시나리오가 가리키는 케이스의 사실이 사라지지 않게 하려는 것이다. 보내는 목록만 그 버전 것으로 거른다.
+- `AuthoringVersionResolver.caseIds` 는 그 버전에서 `BROKEN` 인 몫을 뺀다. 보내는 목록 · 검색 · 미커버 · 검수 범위가 같은 집합을 쓴다.
+- 검수의 유령 판별은 "대표 행이 살아 있는 케이스 ∪ 그 버전에서 살아 있는 케이스" 다.
+- 세션 열기의 목록 · 입구 씬 · 화면 간선 · 시작값을 버전 맥락 안에서 읽는다.
+- 남은 것:
+  - 실제 에이전트를 붙인 작성 E2E.
+  - 임베딩 갱신(R5, 범위 밖).
+  - `TestCaseService` 의 화면용 미커버 요약(`findScenesOfUncovered`)은 저작 경로가 아니라 그대로 두었다.
