@@ -37,6 +37,10 @@
       "description": "프로젝트 생성·조회·수정·삭제"
     },
     {
+      "name": "MCP",
+      "description": "artel-macro-mcp 로그인 넘겨주기"
+    },
+    {
       "name": "Macro",
       "description": "빌드에 등록된 macro 를 읽는다"
     },
@@ -4224,6 +4228,38 @@
         }
       }
     },
+    "/api/mcp/handoffs": {
+      "post": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "MCP 로그인 넘겨주기",
+        "description": "로그인한 사용자가 MCP 연결을 허용하면 2분짜리 handoff JWT 를 서명해 MCP 로 갈 주소를 돌려준다. 브라우저 세션만 받고, CLI 토큰과 MCP access JWT 는 403 이다.",
+        "operationId": "createMcpHandoff",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMcpHandoffRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpHandoffResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/issues/{issueId}/tracker-sync": {
       "post": {
         "tags": [
@@ -7566,6 +7602,31 @@
         }
       }
     },
+    "/.well-known/artel-handoff-jwks.json": {
+      "get": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "handoff 서명 공개키(JWKS)",
+        "description": "handoff JWT 를 검증할 RSA 공개키. 설정이 없으면 빈 `keys` 다.",
+        "operationId": "handoffJwks",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/members/{userId}": {
       "delete": {
         "tags": [
@@ -10764,6 +10825,31 @@
             "format": "int32"
           },
           "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateMcpHandoffRequest": {
+        "required": [
+          "requestId"
+        ],
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "maxLength": 128,
+            "minLength": 0,
+            "pattern": "^[A-Za-z0-9._~-]+$",
+            "type": "string"
+          }
+        }
+      },
+      "McpHandoffResponse": {
+        "required": [
+          "redirectUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "redirectUrl": {
             "type": "string"
           }
         }
