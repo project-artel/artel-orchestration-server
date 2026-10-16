@@ -26,11 +26,17 @@ class QaLaunchReadService(
     private val testRunRepository: TestRunRepository,
 ) {
 
-    /** 프로젝트의 실행을 최신순으로 [limit] 개. */
-    suspend fun listRuns(projectId: Long, appUserId: Long, limit: Int): QaRunSummaryListResponse {
+    /**
+     * 프로젝트의 실행을 최신순으로 [limit] 개. [testRunId] 를 주면 그 테스트 런의 실행만 고른다.
+     *
+     * 히스토리 화면은 테스트 런마다 따로 읽는다(ARTEL-1100). 실행은 계속 쌓이므로 프로젝트 전체의
+     * 최신 몇 개로는 오래된 런의 실행이 잘려 나간다. 다른 프로젝트의 런을 지목하면 비어 있다 —
+     * 실행을 프로젝트로 거르는 조건이 쿼리에 있다.
+     */
+    suspend fun listRuns(projectId: Long, appUserId: Long, limit: Int, testRunId: Long? = null): QaRunSummaryListResponse {
         if (limit !in 1..MAX_LIMIT) throw BadRequestException("limit 은 1~$MAX_LIMIT 이어야 합니다.")
         projectAccess.requireMember(projectId, appUserId)
-        return QaRunSummaryListResponse(repository.findRuns(projectId, null, limit).map { it.toResponse() })
+        return QaRunSummaryListResponse(repository.findRuns(projectId, testRunId, limit).map { it.toResponse() })
     }
 
     /**
