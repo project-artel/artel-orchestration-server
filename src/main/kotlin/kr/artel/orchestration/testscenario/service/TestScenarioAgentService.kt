@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
+import kr.artel.orchestration.settings.service.FeatureModelService
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -95,7 +96,7 @@ class TestScenarioAgentService(
     private val authoringVersions: AuthoringVersionResolver,
     @Value("\${artel.agent.base-url:http://localhost:8000}") private val agentBaseUrl: String,
     @Value("\${artel.agent.ws-base-url:ws://localhost:8000}") private val agentWsBaseUrl: String,
-    @Value("\${artel.agent.model:}") private val configuredModel: String,
+    private val featureModels: FeatureModelService,
     private val objectMapper: ObjectMapper,
     private val streamManager: TestScenarioStreamManager,
     private val runMessageRepository: TestRunMessageRepository,
@@ -431,6 +432,8 @@ class TestScenarioAgentService(
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
         val locale = localeOf(appUserId)
+        // 저장된 model → 환경 변수 → agent-server 기본값 순이다. 세션을 열 때마다 읽는다.
+        val configuredModel = featureModels.resolveAuthoringModel().orEmpty()
         // 저작은 TR 이 고른 TC 버전의 TC 와 지도만 본다(ARTEL-1048). 버전 없는 TR 이면 예전처럼 프로젝트 전체 · 최신 빌드다.
         val version = authoringVersions.of(runId)
         // 목록의 내용 · 입력 · 바꾸는 값까지 그 버전 것이어야 하므로 맥락 안에서 읽는다(ARTEL-1064).

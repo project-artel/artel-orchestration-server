@@ -1339,6 +1339,102 @@
         }
       }
     },
+    "/api/admin/settings/typesafe": {
+      "get": {
+        "tags": [
+          "admin-typesafe-settings-controller"
+        ],
+        "operationId": "typesafeKeyStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypesafeKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin-typesafe-settings-controller"
+        ],
+        "operationId": "updateTypesafeKey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTypesafeKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypesafeKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings/models": {
+      "get": {
+        "tags": [
+          "admin-feature-model-settings-controller"
+        ],
+        "operationId": "featureModels_1",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureModelStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin-feature-model-settings-controller"
+        ],
+        "operationId": "updateFeatureModels",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFeatureModelsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureModelStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/settings/llm": {
       "get": {
         "tags": [
@@ -2187,11 +2283,11 @@
             "required": false,
             "schema": {
               "type": "string",
+              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ],
-              "default": "MINE"
+              ]
             }
           }
         ],
@@ -4697,6 +4793,26 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/AdminLlmModelResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/settings/models": {
+      "get": {
+        "tags": [
+          "internal-feature-model-settings-controller"
+        ],
+        "operationId": "featureModels",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalFeatureModels"
                 }
               }
             }
@@ -7777,6 +7893,61 @@
           }
         }
       },
+      "UpdateTypesafeKeyRequest": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          }
+        }
+      },
+      "TypesafeKeyStatus": {
+        "required": [
+          "configured"
+        ],
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "maskedKey": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UpdateFeatureModelsRequest": {
+        "type": "object",
+        "properties": {
+          "scenarioAuthoringModel": {
+            "type": "string"
+          },
+          "decisionModel": {
+            "type": "string"
+          }
+        }
+      },
+      "FeatureModelStatus": {
+        "type": "object",
+        "properties": {
+          "scenarioAuthoringModel": {
+            "type": "string"
+          },
+          "scenarioAuthoringFallback": {
+            "type": "string"
+          },
+          "decisionModel": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "UpdateLlmKeyRequest": {
         "type": "object",
         "properties": {
@@ -9858,11 +10029,11 @@
           },
           "kind": {
             "type": "string",
+            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ],
-            "default": "sdk"
+            ]
           }
         }
       },
@@ -10338,6 +10509,17 @@
           }
         }
       },
+      "InternalFeatureModels": {
+        "type": "object",
+        "properties": {
+          "scenarioAuthoringModel": {
+            "type": "string"
+          },
+          "decisionModel": {
+            "type": "string"
+          }
+        }
+      },
       "InternalLlmSettingsResponse": {
         "type": "object",
         "properties": {
@@ -10348,6 +10530,9 @@
             "type": "string"
           },
           "anthropicApiKey": {
+            "type": "string"
+          },
+          "typesafeApiKey": {
             "type": "string"
           }
         }
