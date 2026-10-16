@@ -7,6 +7,7 @@ import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.game.dto.GameBuildListResponse
+import kr.artel.orchestration.game.dto.GameBuildSummaryListResponse
 import kr.artel.orchestration.game.dto.GameFunctionCatalogResponse
 import kr.artel.orchestration.game.dto.GameBuildResponse
 import kr.artel.orchestration.game.dto.UpdateGameBuildRequest
@@ -40,6 +41,18 @@ class GameBuildController(
         @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long
     ): GameBuildListResponse =
         buildService.list(appUserId, projectId) ?: throw projectNotFound()
+
+    @Operation(
+        summary = "게임 빌드 요약 목록",
+        description = "빌드마다 인스턴스 수와 연결 수, cheat · behavior 수, QA run 수와 가장 최근 run 을 붙인다. " +
+            "순서는 빌드 목록과 같다."
+    )
+    @GetMapping("/summary")
+    suspend fun summary(
+        @CurrentUserId appUserId: Long,
+        @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long
+    ): GameBuildSummaryListResponse =
+        buildService.summaries(appUserId, projectId) ?: throw projectNotFound()
 
     @Operation(
         summary = "게임 빌드 설명 수정",
