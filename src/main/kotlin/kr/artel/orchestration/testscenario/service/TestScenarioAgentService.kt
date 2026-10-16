@@ -250,6 +250,7 @@ class TestScenarioAgentService(
             // **새 요청이면 지난 턴에 받아 둔 것을 비운다.** 재작성 턴은 이 길로 오지 않으므로(그쪽은
             // [sendTurn] 을 직접 부른다) 앞서 받아 둔 것이 그대로 살아 있다.
             existing.submitted.clear()
+            existing.draftQuestions.clear()
             existing.declined = 0
             // 취소는 **그 턴에만** 걸린다(ARTEL-955). 안 내리면 다음 요청의 결과까지 버린다.
             existing.cancelled.set(false)
@@ -678,6 +679,7 @@ class TestScenarioAgentService(
                     raw.scenarioId, outcome.checked.ifEmpty { listOf(scenario) }, emptyList(),
                     raw.scenarioId?.let { session.shownSteps[it] },
                 )
+                session.draftQuestions += outcome.questions.ifEmpty { listOfNotNull(outcome.question) }
             }
         }
         drafts.publish(sessionKey)
@@ -768,6 +770,7 @@ class TestScenarioAgentService(
             if (!session.autoApply) {
                 drafts.of(sessionKey).accept(raw.scenarioId, checked, absorbedIds, raw.scenarioId?.let { session.shownSteps[it] })
                 drafts.publish(sessionKey)
+                session.draftQuestions += outcome.questions.ifEmpty { listOfNotNull(outcome.question) }
             }
             logger.info(
                 "시나리오 하나 받음 [sessionKey={}, runId={}] {} — 지금까지 {}개{}",
@@ -1611,6 +1614,13 @@ class TestScenarioAgentService(
                     } else {
                         try {
                             draftEnvelope(sessionKey, session, event.scenarios.orEmpty())
+                            // draft 턴도 메우지 못한 구간은 묻는다(ARTEL-1117). 턴끝 검수([applyOrRepair])는
+                            // 저장하는 턴에만 돌아서, draft 에서는 제출 때 찾은 공백을 아무도 묻지 않았다(실측
+                            // 런 184: TurnBattleScene→GameClearScene 공백이 스텝에만 남았다). 제출마다 모아 둔
+                            // 것을 턴 끝에 한 번에 묻는다 — 같은 자리는 한 번만.
+                            val asked = session.draftQuestions.distinctBy { it.id }
+                            session.draftQuestions.clear()
+                            if (asked.isNotEmpty()) ask(sessionKey, session, asked)
                         } catch (err: CancellationException) {
                             throw err
                         } catch (err: Exception) {
@@ -1885,6 +1895,12 @@ class TestScenarioAgentService(
          * 센다. [submitLock] 아래에서만 는다.
          */
         @Volatile var declined: Int = 0,
+        /**
+         * draft 턴(자동 저장 끔)에서 제출마다 검수가 낸 질문 — 메우지 못한 구간(ARTEL-1117). 저장하는 턴은
+         * 턴끝 검수가 다시 계산해 묻지만 draft 턴은 그 검수를 돌지 않으므로, 여기 모았다가 턴 끝에 묻는다.
+         * [submitLock] 아래에서 는다.
+         */
+        val draftQuestions: MutableList<ScenarioQuestion> = mutableListOf(),
         /**
          * 이 턴은 승인 전 draft 만 고친다(ARTEL-1074). 새 시나리오는 받지 않고, 번호 없이 오면 draft 가
          * 하나일 때만 그 draft 로 읽는다. 매 턴 갱신한다.
