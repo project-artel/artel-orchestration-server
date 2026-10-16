@@ -243,6 +243,18 @@ enum class AuthoringStage(@get:JsonValue val wire: String) {
     /** Agent가 케이스를 물어봤다(`uncovered_cases`/`test_case_search`). 멎지 않았다는 첫 증거다. */
     LOOKING_UP_CASES("looking_up_cases"),
 
+    /** 질문 답이 서비스 기록을 읽는 중이다(ARTEL-1086). 무엇을 읽는지 단계마다 한 줄로 보인다. */
+    READING_CASES("reading_cases"),
+    READING_VERSIONS("reading_versions"),
+    READING_VERDICTS("reading_verdicts"),
+    READING_QA_RUNS("reading_qa_runs"),
+    READING_ISSUES("reading_issues"),
+    READING_SCENARIOS("reading_scenarios"),
+    READING_BUILDS("reading_builds"),
+
+    /** 한 말에 섞인 요청을 나누는 중이다(ARTEL-1086). 나뉜 요청은 차례로 제 갈래를 탄다. */
+    SPLITTING("splitting"),
+
     /** Agent가 케이스 하나의 근거를 물어봤다(`explain_case`). 무엇으로 스텝을 쓸지 확인하는 중이다. */
     READING_CASE("reading_case"),
 
