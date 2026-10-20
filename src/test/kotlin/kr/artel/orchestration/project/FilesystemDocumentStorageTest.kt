@@ -7,6 +7,7 @@ import kr.artel.orchestration.project.storage.InvalidStorageObjectKeyException
 import kr.artel.orchestration.project.storage.StorageObjectIncompleteException
 import kr.artel.orchestration.project.storage.StorageObjectTooLargeException
 import kr.artel.orchestration.project.storage.StorageUrlSigner
+import kr.artel.orchestration.project.storage.UrlAudience
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
@@ -33,9 +34,13 @@ class FilesystemDocumentStorageTest {
     private val clock: Clock = Clock.fixed(now, ZoneOffset.UTC)
     private val signer = StorageUrlSigner("test-jwt-secret-that-is-at-least-32-bytes-long", clock)
 
-    private fun storage(root: Path = temporaryDirectory.resolve("storage")) = FilesystemDocumentStorage(
+    private fun storage(
+        root: Path = temporaryDirectory.resolve("storage"),
+        internalBaseUrl: String? = null
+    ) = FilesystemDocumentStorage(
         root = root,
         publicBaseUrl = "http://127.0.0.1:8088/",
+        internalBaseUrl = internalBaseUrl,
         uploadUrlTtl = Duration.ofMinutes(10),
         downloadUrlTtl = Duration.ofMinutes(5),
         signer = signer,
@@ -44,6 +49,29 @@ class FilesystemDocumentStorageTest {
 
     private fun bodyOf(vararg chunks: String): Flux<DataBuffer> =
         Flux.fromIterable(chunks.map { DefaultDataBufferFactory.sharedInstance.wrap(it.toByteArray()) })
+
+    @Test
+    fun `SERVER 용 다운로드 URL 은 내부 주소를 쓰고 PUBLIC 용은 공개 주소를 쓴다`() {
+        val storage = storage(internalBaseUrl = "http://orchestration:8080/")
+
+        val server = storage.presignDownload("qa-captures/1/a.jpg", "a.jpg", audience = UrlAudience.SERVER)
+        val public = storage.presignDownload("qa-captures/1/a.jpg", "a.jpg")
+
+        assertThat(server.url).startsWith("http://orchestration:8080/api/storage/objects/qa-captures/1/a.jpg?")
+        assertThat(public.url).startsWith("http://127.0.0.1:8088/api/storage/objects/qa-captures/1/a.jpg?")
+        // 서명은 주소와 무관하므로 쿼리가 같다.
+        assertThat(URI.create(server.url).rawQuery).isEqualTo(URI.create(public.url).rawQuery)
+    }
+
+    @Test
+    fun `내부 주소가 없으면 SERVER 용 URL 도 공개 주소를 쓴다`() {
+        val blank = storage(internalBaseUrl = "  ")
+
+        assertThat(blank.presignDownload("k/a.jpg", "a.jpg", audience = UrlAudience.SERVER).url)
+            .startsWith("http://127.0.0.1:8088/api/storage/objects/k/a.jpg?")
+        assertThat(storage().presignDownload("k/a.jpg", "a.jpg", audience = UrlAudience.SERVER).url)
+            .startsWith("http://127.0.0.1:8088/api/storage/objects/k/a.jpg?")
+    }
 
     @Test
     fun `업로드 URL 은 ARTEL_HOME_URL 아래의 서명 경로이고 키 조각을 인코딩한다`() {

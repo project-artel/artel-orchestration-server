@@ -45,6 +45,8 @@ class FilesystemDocumentStorage(
     root: Path,
     /** URL 의 앞부분. 브라우저와 agent-server 가 모두 닿는 주소여야 한다(`ARTEL_HOME_URL`). */
     publicBaseUrl: String,
+    /** agent-server 에 내주는 URL 의 앞부분(`ARTEL_INTERNAL_BASE_URL`). 비어 있으면 [publicBaseUrl] 을 쓴다. */
+    internalBaseUrl: String? = null,
     private val uploadUrlTtl: Duration,
     private val downloadUrlTtl: Duration,
     private val signer: StorageUrlSigner,
@@ -55,6 +57,7 @@ class FilesystemDocumentStorage(
     private val contentTypesRoot: Path
     private val uploadsRoot: Path
     private val baseUrl = publicBaseUrl.trimEnd('/')
+    private val serverBaseUrl = internalBaseUrl?.trim()?.trimEnd('/')?.ifBlank { null } ?: baseUrl
 
     init {
         val absoluteRoot = root.toAbsolutePath().normalize()
@@ -81,12 +84,17 @@ class FilesystemDocumentStorage(
      * 파일 이름은 `filename` 쿼리로 싣고 서명에 넣는다. S3 의 `response-content-disposition` 과 같은 방식이다.
      * 같은 객체를 부르는 쪽마다 이름이 달라(기획서 원래 이름, `screen-<id>.jpg`) 객체 쪽에 저장해 둘 수 없다.
      */
-    override fun presignDownload(objectKey: String, fileName: String, ttl: Duration?): PresignedDownload {
+    override fun presignDownload(
+        objectKey: String,
+        fileName: String,
+        ttl: Duration?,
+        audience: UrlAudience
+    ): PresignedDownload {
         requireValidObjectKey(objectKey)
         val expiresAt = Instant.now(clock).plus(ttl ?: downloadUrlTtl)
         val signature = signer.signDownload(objectKey, expiresAt, fileName)
         return PresignedDownload(
-            url = "${objectUrl(objectKey)}?expires=${expiresAt.epochSecond}" +
+            url = "${objectUrl(objectKey, audience)}?expires=${expiresAt.epochSecond}" +
                 "&filename=${encodeQueryValue(fileName)}&signature=$signature",
             expiresAt = expiresAt
         )
@@ -234,8 +242,8 @@ class FilesystemDocumentStorage(
         if (!directory.toRealPath().startsWith(base)) throw InvalidStorageObjectKeyException()
     }
 
-    private fun objectUrl(objectKey: String): String =
-        "$baseUrl$OBJECTS_PATH/" + objectKey.split('/').joinToString("/", transform = ::encodeQueryValue)
+    private fun objectUrl(objectKey: String, audience: UrlAudience = UrlAudience.PUBLIC): String =
+        "${if (audience == UrlAudience.SERVER) serverBaseUrl else baseUrl}$OBJECTS_PATH/" + objectKey.split('/').joinToString("/", transform = ::encodeQueryValue)
 
     private fun encodeQueryValue(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20")

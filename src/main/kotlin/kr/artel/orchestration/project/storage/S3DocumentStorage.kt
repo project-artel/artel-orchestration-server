@@ -76,14 +76,14 @@ class S3DocumentStorage internal constructor(
             .build()
     }
 
-    private val lazyPresigner = lazy {
+    private fun buildPresigner(presignTo: URI?): S3Presigner =
         S3Presigner.builder()
             .region(region)
             .credentialsProvider(
                 requireNotNull(credentials) { "서명할 자격증명이 없으면 presigner를 쓰지 않는다" }
             )
             .apply {
-                presignEndpoint?.let {
+                presignTo?.let {
                     endpointOverride(it)
                     // 서명 대상 URL 모양이 실제 PUT 대상과 같아야 서명이 맞는다.
                     serviceConfiguration(
@@ -92,6 +92,17 @@ class S3DocumentStorage internal constructor(
                 }
             }
             .build()
+
+    private val lazyPresigner = lazy { buildPresigner(presignEndpoint) }
+
+    /**
+     * agent-server 에 내주는 URL 을 서명하는 presigner. S3 서명은 Host 를 포함하므로 URL 문자열의 host 만
+     * 바꾸지 않고 [endpoint] 로 처음부터 따로 만든다. [endpoint] 가 없으면 공개 presigner 를 그대로 쓴다.
+     */
+    private val lazyServerPresigner = if (endpoint == null || endpoint == presignEndpoint) {
+        lazyPresigner
+    } else {
+        lazy { buildPresigner(endpoint) }
     }
 
     private val client: S3AsyncClient get() = lazyClient.value
@@ -101,6 +112,7 @@ class S3DocumentStorage internal constructor(
     override fun destroy() {
         if (lazyClient.isInitialized()) lazyClient.value.close()
         if (lazyPresigner.isInitialized()) lazyPresigner.value.close()
+        if (lazyServerPresigner !== lazyPresigner && lazyServerPresigner.isInitialized()) lazyServerPresigner.value.close()
     }
 
     override fun presignUpload(
@@ -137,7 +149,8 @@ class S3DocumentStorage internal constructor(
     override fun presignDownload(
         objectKey: String,
         fileName: String,
-        ttl: Duration?
+        ttl: Duration?,
+        audience: UrlAudience
     ): PresignedDownload = wrapping {
         val validity = ttl ?: properties.downloadUrlTtl
         val url = if (credentials == null) {
@@ -152,7 +165,8 @@ class S3DocumentStorage internal constructor(
                 .responseContentDisposition(contentDisposition(fileName))
                 .build()
 
-            presigner.presignGetObject(
+            val signer = if (audience == UrlAudience.SERVER) lazyServerPresigner.value else presigner
+            signer.presignGetObject(
                 GetObjectPresignRequest.builder()
                     .signatureDuration(validity)
                     .getObjectRequest(getRequest)

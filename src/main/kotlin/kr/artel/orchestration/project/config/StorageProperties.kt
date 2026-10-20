@@ -22,6 +22,8 @@ import java.time.Duration
  * @property bucket 원본을 담을 버킷. 비어 있으면 기동을 멈춘다
  * @property endpoint 로컬 MinIO 등으로 돌릴 때만 지정한다
  * @property presignEndpoint 브라우저에 내주는 presigned URL 의 주소. 비우면 [endpoint] 를 쓴다
+ * @property internalBaseUrl `backend=filesystem` 에서 agent-server 에 내주는 URL 의 앞부분. 비우면 공개 주소(`ARTEL_HOME_URL`)를 쓴다.
+ *   S3 모드의 같은 역할은 [endpoint] 가 맡는다
  * @property accessKey 선택. [secretKey]와 함께 있어야 한다
  * @property secretKey 선택. [accessKey]와 함께 있어야 한다
  * @property uploadUrlTtl 업로드 URL 유효 기간
@@ -40,6 +42,7 @@ class StorageProperties(
     val region: String = "ap-northeast-2",
     endpoint: String? = null,
     presignEndpoint: String? = null,
+    internalBaseUrl: String? = null,
     accessKey: String? = null,
     secretKey: String? = null,
     val uploadUrlTtl: Duration = Duration.ofMinutes(10),
@@ -67,6 +70,7 @@ class StorageProperties(
     val presignEndpoint: String? = presignEndpoint?.trim()?.ifBlank { null } ?: this.endpoint
     val accessKey: String? = accessKey?.trim()?.ifBlank { null }
     val dir: String? = dir?.trim()?.ifBlank { null }
+    val internalBaseUrl: String? = internalBaseUrl?.trim()?.ifBlank { null }
     val secretKey: String? = secretKey?.trim()?.ifBlank { null }
 
     /** 둘 다 있어야 쓴다. 하나만 있으면 설정 실수이므로 조용히 기본 체인으로 넘어가지 않는다. */

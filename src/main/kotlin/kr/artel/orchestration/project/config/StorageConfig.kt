@@ -41,7 +41,10 @@ class StorageConfig {
     fun storageUrlSigner(authProperties: AuthProperties, clock: Clock): StorageUrlSigner =
         StorageUrlSigner(authProperties.jwtSecret, clock)
 
-    /** URL 은 `ARTEL_HOME_URL` 을 앞에 붙인다. 브라우저도 agent-server 도 그 주소의 `/api` 로 이 서버에 닿는다. */
+    /**
+     * URL 은 `ARTEL_HOME_URL` 을 앞에 붙인다. 브라우저는 그 주소의 `/api` 로 이 서버에 닿는다.
+     * agent-server 에 내주는 URL 은 `ARTEL_INTERNAL_BASE_URL` 이 있으면 그것을 앞에 붙인다.
+     */
     @Bean
     @ConditionalOnProperty(prefix = "artel.storage", name = ["backend"], havingValue = "filesystem")
     fun filesystemDocumentStorage(
@@ -53,6 +56,7 @@ class StorageConfig {
         FilesystemDocumentStorage(
             root = Path.of(requireNotNull(properties.dir)),
             publicBaseUrl = authProperties.frontendOrigin,
+            internalBaseUrl = properties.internalBaseUrl,
             uploadUrlTtl = properties.uploadUrlTtl,
             downloadUrlTtl = properties.downloadUrlTtl,
             signer = signer,

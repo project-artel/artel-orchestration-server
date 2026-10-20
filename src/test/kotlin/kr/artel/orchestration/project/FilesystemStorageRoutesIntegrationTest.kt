@@ -2,6 +2,7 @@ package kr.artel.orchestration.project
 
 import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.project.storage.FilesystemDocumentStorage
+import kr.artel.orchestration.project.storage.UrlAudience
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -39,6 +40,7 @@ class FilesystemStorageRoutesIntegrationTest {
         @DynamicPropertySource
         fun storageDirectory(registry: DynamicPropertyRegistry) {
             registry.add("artel.storage.dir") { storageDirectory.toString() }
+        registry.add("artel.storage.internal-base-url") { "http://orchestration.internal:8080" }
         }
     }
 
@@ -92,6 +94,20 @@ class FilesystemStorageRoutesIntegrationTest {
                 HttpHeaders.CONTENT_DISPOSITION,
                 "attachment; filename=\"___ 1.pdf\"; filename*=UTF-8''%EA%B8%B0%ED%9A%8D%EC%84%9C%201.pdf"
             )
+            .expectBody().consumeWith { assertThat(it.responseBody).isEqualTo(content) }
+    }
+
+    @Test
+    fun `내부 주소로 서명한 SERVER 용 URL 도 같은 컨트롤러가 받는다`() {
+        val content = "internal".toByteArray()
+        storage.put("qa-captures/1/internal.jpg", content, "image/jpeg").block()
+
+        val download = storage.presignDownload("qa-captures/1/internal.jpg", "internal.jpg", audience = UrlAudience.SERVER)
+
+        assertThat(download.url).startsWith("http://orchestration.internal:8080/api/storage/objects/")
+        client.get().uri(local(download.url))
+            .exchange()
+            .expectStatus().isOk
             .expectBody().consumeWith { assertThat(it.responseBody).isEqualTo(content) }
     }
 
