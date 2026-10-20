@@ -59,6 +59,17 @@ the same code the HTTP API would answer 403 with as the close reason:
 
 `GET /api/qa-runs/{qaRunId}/changes` lists every knowledge entry and macro the run created, updated, or deleted, one item per target: the state before the run's first event against the state after its last event, with `before` / `after` as plain text for a line diff. `POST /api/qa-runs/{qaRunId}/changes/{kind}/{targetId}/revert` (`kind` is `knowledge` or `macro`) appends an event that undoes the run's change and answers with the updated item. It answers 404 when the run made no change to that target and 409 when the item is not revertible, with `code` set to `superseded` (a later event exists on that target), `already_reverted`, or `before_unknown` (the content before the run was never recorded). The same three values appear upper-cased in each item's `notRevertibleReason`.
 
+### Project QA run lists
+
+Two read endpoints list a project's QA runs, newest first. A non-member gets 404 from both.
+
+| Endpoint | Query | Response |
+| --- | --- | --- |
+| `GET /api/projects/{projectId}/qa-runs` | `limit` (default 20), `testRunId` | `QaRunSummaryListResponse` — the QA launch screen and QA history |
+| `GET /api/projects/{projectId}/game-builds/{gameBuildId}/qa-runs` | `size` (1–100, default 20; 400 outside) | `QaRunListResponse` — runs on that build, each with `gameBuildId` and `tries` |
+
+The build list was `GET /api/projects/{projectId}/qa-runs?gameBuildId=` until ARTEL-1155. That form no longer exists: the project path ignores `gameBuildId` and answers with the QA launch list. A non-numeric `gameBuildId` in the build path is 400.
+
 ### User LLM keys
 
 A signed-in user can save their own Claude (`anthropic`), OpenAI (`openai`) and OpenRouter (`openrouter`) key and run QA on it instead of the platform key.

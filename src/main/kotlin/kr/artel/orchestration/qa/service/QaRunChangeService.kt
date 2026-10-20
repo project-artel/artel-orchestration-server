@@ -2,8 +2,12 @@ package kr.artel.orchestration.qa.service
 
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.qa.dto.QaRunChangeListResponse
 import kr.artel.orchestration.qa.dto.QaRunChangeResponse
+import kr.artel.orchestration.qa.entity.QaRunEntity
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -54,6 +58,8 @@ class QaRunChangeService(
     private val knowledgeLedger: KnowledgeRunChangeLedger,
     private val macroLedger: MacroRunChangeLedger,
     private val transactionalOperator: TransactionalOperator,
+    private val gameInstances: GameInstanceRepository,
+    private val projectChanges: ProjectChangeStreamManager,
 ) {
     private val logger = LoggerFactory.getLogger(QaRunChangeService::class.java)
 
@@ -69,11 +75,20 @@ class QaRunChangeService(
      * run 이 그 대상을 바꾸지 않았거나 바꾼 결과가 run 이전과 같으면 404 다. 목록에 없는 항목이다.
      */
     suspend fun revert(qaRunId: Long, kind: QaRunChangeKind, targetId: Long, appUserId: Long): QaRunChangeResponse {
-        requireAccessibleRun(qaRunId, appUserId)
-        return when (kind) {
+        val run = requireAccessibleRun(qaRunId, appUserId)
+        val response = when (kind) {
             QaRunChangeKind.KNOWLEDGE -> revert(knowledgeLedger, qaRunId, targetId, appUserId)
             QaRunChangeKind.MACRO -> revert(macroLedger, qaRunId, targetId, appUserId)
         }
+        // revert transaction 이 commit 된 뒤다. 실험 scope 의 knowledge 를 되돌린 경우에도 알리지만, 다시 읽을 뿐이라 해가 없다.
+        gameInstances.findById(run.gameInstanceId)?.projectId?.let { projectId ->
+            val topic = when (kind) {
+                QaRunChangeKind.KNOWLEDGE -> ProjectChangeTopic.KNOWLEDGE
+                QaRunChangeKind.MACRO -> ProjectChangeTopic.MACROS
+            }
+            projectChanges.notify(projectId, topic)
+        }
+        return response
     }
 
     private suspend fun <C : Any, R : Any> revert(
@@ -97,9 +112,8 @@ class QaRunChangeService(
             ?: error("revert 뒤에 항목이 사라졌다: kind=${ledger.kind}, target=$targetId")
     }
 
-    private suspend fun requireAccessibleRun(qaRunId: Long, appUserId: Long) {
+    private suspend fun requireAccessibleRun(qaRunId: Long, appUserId: Long): QaRunEntity =
         qaRuns.findAccessibleById(qaRunId, appUserId) ?: throw NotFoundException()
-    }
 
     private suspend fun <C : Any, R : Any> collapse(
         ledger: RunChangeLedger<C, R>,

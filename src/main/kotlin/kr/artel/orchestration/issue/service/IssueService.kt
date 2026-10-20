@@ -3,6 +3,7 @@ package kr.artel.orchestration.issue.service
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
@@ -12,10 +13,13 @@ import kr.artel.orchestration.issue.entity.IssueEntity
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.entity.IssueStatus
 import kr.artel.orchestration.issue.repository.IssueRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.tracker.dto.IssueTrackerResponse
 import kr.artel.orchestration.tracker.service.IssueTrackerSyncService
+import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import java.nio.charset.StandardCharsets
@@ -50,8 +54,11 @@ class IssueService(
     private val projectAccess: ProjectAccessService,
     private val trackerSync: IssueTrackerSyncService,
     private val objectMapper: ObjectMapper,
-    private val clock: Clock
+    private val clock: Clock,
+    private val projectChanges: ProjectChangeStreamManager
 ) {
+    private val logger = LoggerFactory.getLogger(IssueService::class.java)
+
     /**
      * Agent가 보고한 이슈 한 건을 저장한다. messageId로 멱등하다 — 재전송된 프레임은
      * 중복 행을 만들지 않고 기존 행으로 흡수된다(QaLogService.append와 동일 패턴).
@@ -108,7 +115,11 @@ class IssueService(
         //
         // ⚠️ **결과를 기다리지 않는다.** 내보내기는 별도 scope 에서 돌고 실패는 로그로만 남는다 —
         // GitHub 이 죽어 있어도 QA 런과 agent 응답은 그대로 간다.
-        if (created) trackerSync.launchAutoSync(id)
+        if (created) {
+            trackerSync.launchAutoSync(id)
+            // 트랜잭션 없이 save 한 문장이라 여기가 commit 뒤다. 재전송으로 흡수된 프레임은 바뀐 것이 없다.
+            notifyIssuesChanged(id)
+        }
         // 저장된 행의 id를 돌려준다(ARTEL-366). 재전송이면 **첫 번째 보고의 id**다 — 그래야 같은
         // 프레임을 두 번 보낸 Agent가 두 번 다 같은 답을 받는다.
         return id
@@ -164,14 +175,32 @@ class IssueService(
         // 실제로 상태가 바뀐 경우에만 외부 이슈를 건드린다. 이미 해결된 이슈에 재요청이 오면 저쪽에도
         // 아무 일이 없어야 한다. 실패해도 이 응답은 성공이다 — 사람이 누른 전이가 GitHub 때문에
         // 실패하면 안 된다.
-        if (changed == 1) trackerSync.launchResolved(issueId)
+        if (changed == 1) {
+            trackerSync.launchResolved(issueId)
+            notifyIssuesChanged(issueId)
+        }
     }
 
     /** 해결 표시를 되돌린다. 이미 미해결이면 그대로 성공한다([resolve]와 같은 이유). */
     suspend fun reopen(issueId: Long, userId: Long) {
         requireAccessible(issueId, userId)
         val changed = issueRepository.reopen(issueId, updatedAt = Instant.now(clock))
-        if (changed == 1) trackerSync.launchReopened(issueId)
+        if (changed == 1) {
+            trackerSync.launchReopened(issueId)
+            notifyIssuesChanged(issueId)
+        }
+    }
+
+    /** 이슈가 속한 프로젝트에 ISSUES 변경을 알린다. 조회 실패가 이미 끝난 쓰기를 실패시키지 않게 삼킨다. */
+    private suspend fun notifyIssuesChanged(issueId: Long) {
+        try {
+            val projectId = issueRepository.findProjectIdByIssueId(issueId) ?: return
+            projectChanges.notify(projectId, ProjectChangeTopic.ISSUES)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            logger.warn("이슈 변경 알림 실패 [issueId: {}]", issueId, error)
+        }
     }
 
     /**

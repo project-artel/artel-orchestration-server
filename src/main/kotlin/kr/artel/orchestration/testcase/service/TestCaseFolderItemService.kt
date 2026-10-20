@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.testcase.dto.TestCaseFolderItemHiddenRequest
 import kr.artel.orchestration.testcase.dto.TestCaseFolderItemListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseFolderItemMoveRequest
@@ -42,6 +44,7 @@ class TestCaseFolderItemService(
     private val gameBuilds: GameBuildRepository,
     private val transactionalOperator: TransactionalOperator,
     private val objectMapper: ObjectMapper,
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
 ) {
 
     /**
@@ -154,6 +157,7 @@ class TestCaseFolderItemService(
             folderService.requireFolder(projectId, folderId)
             block()
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return TestCaseFolderItemsChangeResponse(
             changed = changed.caseIds.size + changed.droppedCaseIds.size,
             caseIds = changed.caseIds.map(Long::toString),
