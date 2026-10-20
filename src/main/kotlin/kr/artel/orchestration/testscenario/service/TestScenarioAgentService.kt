@@ -36,6 +36,9 @@ import kr.artel.orchestration.testrun.dto.RunChatCancellation
 import kr.artel.orchestration.testscenario.dto.AgentCancelMessage
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentReasoning
+import kr.artel.orchestration.assistant.ResourceAnswer
+import kr.artel.orchestration.assistant.ResourceQueryService
+import kr.artel.orchestration.assistant.ResourceRequest
 import kr.artel.orchestration.testscenario.dto.AgentRef
 import kr.artel.orchestration.testscenario.dto.SavedScenarioFrame
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
@@ -118,6 +121,7 @@ class TestScenarioAgentService(
     private val flowPlanner: ScenarioFlowPlanner,
     private val experiment: AuthoringExperimentProperties,
     private val drafts: AuthoringDraftStore,
+    private val resourceQueryService: ResourceQueryService,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -1558,6 +1562,14 @@ class TestScenarioAgentService(
                 scope.launch { handleSubmitScenario(sessionKey, session, node) }
                 return
             }
+            if (node.path("type").asText() == "resource_query") {
+                if (session == null) {
+                    logger.warn("resource_query 를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
+                    return
+                }
+                scope.launch(session.version) { handleResourceQuery(sessionKey, session, node) }
+                return
+            }
             if (node.path("type").asText() == "test_case_search") {
                 if (session == null) {
                     logger.warn("test_case_search를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
@@ -1663,6 +1675,41 @@ class TestScenarioAgentService(
      * 어떤 실패도 throw하지 않는다 — 검색 하나가 receive 체인을 끊어 WS/세션을 죽이면 안 된다. 대기 중인
      * Agent 도구를 풀기 위해 실패는 `error` 프레임(correlationId 포함)으로 되돌린다.
      */
+    /**
+     * 범용 질문 Agent 의 리소스 조회(ARTEL-1085, POC). 범위는 세션이 정한다 — 프로젝트와 TR 버전. 실패해도 세션을
+     * 죽이지 않고 `note` 에 이유를 실어 답한다. 기다리는 Agent 도구를 풀어야 하기 때문이다.
+     */
+    private suspend fun handleResourceQuery(sessionKey: String, session: AgentSession, node: JsonNode) {
+        val messageId = node.path("messageId").takeIf { it.isTextual }?.asText()
+        val answer = try {
+            val request = ResourceRequest(
+                op = node.path("op").asText(""),
+                kind = node.path("kind").asText(""),
+                id = node.path("id").takeIf { it.isNumber }?.asLong(),
+                text = node.path("text").takeIf { it.isTextual }?.asText(),
+                relation = node.path("relation").takeIf { it.isTextual }?.asText(),
+                limit = node.path("limit").takeIf { it.isNumber }?.asInt(),
+                allVersions = node.path("all_versions").asBoolean(false),
+            )
+            val result = resourceQueryService.query(
+                ResourceQueryService.Scope(session.projectId, session.version.gameBuildId, session.runId, session.appUserId), request,
+            )
+            logger.info(
+                "리소스 조회 [sessionKey={}] {} {} id={} → {}건", sessionKey, request.op, request.kind, request.id, result.items.size,
+            )
+            result
+        } catch (err: CancellationException) {
+            throw err
+        } catch (err: Exception) {
+            logger.error("resource_query 처리 실패 [sessionKey=$sessionKey]: ${err.message}", err)
+            ResourceAnswer(emptyList(), "조회하지 못했다: ${err.message}")
+        }
+        emitFrame(
+            sessionKey, session,
+            mapOf("type" to "resource_query_result", "correlationId" to messageId, "items" to answer.items, "note" to answer.note),
+        )
+    }
+
     private suspend fun handleCaseSearch(sessionKey: String, session: AgentSession, node: JsonNode) {
         val messageId = node.path("messageId").takeIf { it.isTextual }?.asText()
         try {
