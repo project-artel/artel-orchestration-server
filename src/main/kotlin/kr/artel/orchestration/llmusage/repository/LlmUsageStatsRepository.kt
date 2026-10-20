@@ -23,6 +23,7 @@ import java.time.LocalDate
  * - `QA_RUN`          → `qa_try.id` → `test_scenario.project_id`
  * - `SCENARIO`        → `test_run.id` → `test_run.project_id`
  * - `GAME_CONTEXT`    → `project_document.id` → `project_document.project_id`
+ * - `PROJECT_AGENT`   → `project_agent_conversation.id` → `project_agent_conversation.project_id`
  * - `KNOWLEDGE_QUERY` → `project.id` (이미 프로젝트다)
  * - `EMBEDDING`       → `project.id` (이미 프로젝트다)
  *
@@ -80,6 +81,7 @@ class LlmUsageStatsRepository(
                            WHEN 'QA_RUN'       THEN ts.project_id
                            WHEN 'SCENARIO'     THEN tr.project_id
                            WHEN 'GAME_CONTEXT' THEN pd.project_id
+                           WHEN 'PROJECT_AGENT' THEN pac.project_id
                            ELSE u.reference_id
                        END AS project_id
                   FROM llm_usage u
@@ -91,6 +93,8 @@ class LlmUsageStatsRepository(
                          ON u.service = 'SCENARIO' AND tr.id = u.reference_id
                   LEFT JOIN project_document pd
                          ON u.service = 'GAME_CONTEXT' AND pd.id = u.reference_id
+                  LEFT JOIN project_agent_conversation pac
+                         ON u.service = 'PROJECT_AGENT' AND pac.id = u.reference_id
                  WHERE u.called_at >= :from
                    AND u.called_at < :to
             ),
@@ -182,12 +186,15 @@ class LlmUsageStatsRepository(
                      ON u.service = 'SCENARIO' AND tr.id = u.reference_id
               LEFT JOIN project_document pd
                      ON u.service = 'GAME_CONTEXT' AND pd.id = u.reference_id
+              LEFT JOIN project_agent_conversation pac
+                     ON u.service = 'PROJECT_AGENT' AND pac.id = u.reference_id
              WHERE u.called_at >= :from
                AND u.called_at < :to
                AND CASE u.service
                        WHEN 'QA_RUN'       THEN ts.project_id
                        WHEN 'SCENARIO'     THEN tr.project_id
                        WHEN 'GAME_CONTEXT' THEN pd.project_id
+                       WHEN 'PROJECT_AGENT' THEN pac.project_id
                        ELSE u.reference_id
                    END IS NULL
             """.trimIndent()
