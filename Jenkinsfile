@@ -136,19 +136,14 @@ pipeline {
                     steps {
                         // 애플리케이션 환경변수는 Jenkins Credentials에 Secret file로 등록한
                         // .env에서 온다. 등록 절차는 docs/deployment.md 참조.
+                        //
+                        // `docker run -d` 만으로 끝내지 않는다. 새 컨테이너가 기동에 실패해도
+                        // 빌드가 초록으로 남고, 앞 컨테이너는 이미 지운 뒤라 서버가 내려간 채로
+                        // 있다(ARTEL-1152). 스크립트가 새 컨테이너가 답할 때까지 기다리고, 답하지
+                        // 않으면 로그를 남기고 직전 이미지로 되돌린 뒤 빌드를 실패시킨다.
+                        sh 'chmod +x scripts/deploy-container.sh'
                         withCredentials([file(credentialsId: "${env.APP_NAME}-env-${env.TARGET_ENV}", variable: 'ENV_FILE')]) {
-                            sh '''
-                                docker stop $CONTAINER_NAME || true
-                                docker rm $CONTAINER_NAME || true
-
-                                docker run -d \
-                                  --name $CONTAINER_NAME \
-                                  --restart unless-stopped \
-                                  --network app-net \
-                                  --env-file "$ENV_FILE" \
-                                  -e SPRING_PROFILES_ACTIVE=$TARGET_ENV \
-                                  $IMAGE_TAG
-                            '''
+                            sh './scripts/deploy-container.sh'
                         }
 
                         // 배포 이미지는 빌드 번호로 태그가 갈려 재사용되지 않는다. 지우지 않으면

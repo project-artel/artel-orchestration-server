@@ -39,7 +39,7 @@ they hold no end-user JWT. That is safe only while the port stays off the public
 
 ### Never publish the internal port
 
-**Do not add `-p` to the `docker run` in `Jenkinsfile`, and do not point the reverse proxy
+**Do not add `-p` to the `docker run` in `scripts/deploy-container.sh`, and do not point the reverse proxy
 at 8081.** The container joins `app-net` and publishes nothing to the host, so the
 internal port is reachable only from sibling containers. That absence is the actual
 control — the application-level split makes the boundary reviewable, but it cannot stop a
@@ -163,6 +163,40 @@ The `file()` credential binding does **not** mask the file's contents. Never `ca
 The file's path does appear in the log, because Jenkins runs `sh` steps under `sh -xe`
 and xtrace prints the expanded command. Keeping the path out of the visible log depends
 entirely on the credentials-binding console filter, not on how the step is quoted.
+
+## Startup check and rollback
+
+The `Deploy` stage runs `scripts/deploy-container.sh`. It records the image the running
+container was started from, replaces the container, and then waits for the new one to
+answer `GET /api/auth/providers` with 200 (from inside the container, via `docker exec ...
+curl`, because nothing is published to the host). That path needs no session and reads the
+database, so a 200 means the Spring context started, the security filter chain ran, and the
+DB is reachable. There is no actuator in this server, so there is no dedicated health path.
+
+When the new container does not answer within `HEALTH_TIMEOUT_SECONDS` (180) or dies once
+while starting (`RestartCount` above 0), the script prints its last 200 log lines, removes
+it, starts the recorded previous image under the same name, and exits 1 so the build fails.
+The rollback is skipped on a first deploy, when there is no previous container.
+
+The previous image is still on the agent at that point. The image cleanup runs only after a
+deploy succeeds, and it runs while that image is the one in use, which `docker rmi` refuses
+to remove. A rollback is a fresh `docker run` with the same Secret file, so a
+key the new image needed and the old one did not is harmless.
+
+The rollback does not undo migrations. Flyway in the old image ignores versions it does not
+know (its default `ignoreMigrationPatterns` is `*:future`), so it starts on a schema the new
+image migrated. It fails only when a migration removed or renamed something the old code
+still reads.
+
+To roll back by hand, find the tags with
+`docker images --filter "reference=artel-orchestration-server:<env>-*"` and run the script
+with that tag:
+
+```bash
+CONTAINER_NAME=artel-orchestration-server-<env> TARGET_ENV=<env> \
+  IMAGE_TAG=artel-orchestration-server:<env>-<build> ENV_FILE=<path to the .env> \
+  ./scripts/deploy-container.sh
+```
 
 ## Adding a new environment
 
