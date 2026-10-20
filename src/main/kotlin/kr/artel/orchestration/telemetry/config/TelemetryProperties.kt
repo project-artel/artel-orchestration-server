@@ -56,7 +56,7 @@ data class TelemetryProperties(
     val consentFromEnvironment: Boolean
         get() = consent.trim().lowercase() == "on"
 
-    /** `POST /api/telemetry/reports` 와 `DELETE /api/telemetry/reports/{installId}` 를 받는 쪽의 한도. */
+    /** `POST /telemetry/reports` 와 `DELETE /telemetry/reports/{installId}` 를 받는 쪽의 한도. */
     data class Receiver(
         /** 요청 본문 상한(바이트). 넘으면 413 이다. 하루치 report 는 보통 수 KB 다. */
         val maxBodyBytes: Int = 256 * 1024,

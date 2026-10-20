@@ -12,7 +12,7 @@ import java.util.concurrent.ConcurrentHashMap
 private data class RequestWindow(val startedAt: Instant, val requests: Int)
 
 /**
- * 공개 receiver(`/api/telemetry/reports`)의 요청을 클라이언트 주소마다 센다. 모양은 `LoginAttemptLimiter` 를 따른다.
+ * 공개 receiver(`/telemetry/reports`)의 요청을 클라이언트 주소마다 센다. 모양은 `LoginAttemptLimiter` 를 따른다.
  *
  * 성공과 실패를 가리지 않고 센다. 정상인 설치는 하루 한 번, 밀린 날이 있어도 한 tick 에 7번까지 보내므로 기본 한도
  * 30번에 닿지 않는다.

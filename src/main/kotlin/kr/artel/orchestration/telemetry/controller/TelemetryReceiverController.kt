@@ -21,13 +21,14 @@ import org.springframework.web.server.ServerWebExchange
  * 직접 설치한 서버가 보내는 telemetry report 를 받는다. 세션 없이 부르는 공개 경로다(`SecurityConfig`).
  *
  * `/internal` 아래에 두지 않는다. `/internal` 은 내부 포트에만 있고, 보내는 쪽은 인터넷 너머의 다른 설치다.
+ * 인증이 없으므로 `/api` 아래에도 두지 않는다(`.agents/docs/project.md` 규칙 2).
  * 인증이 없는 대신 세 가지로 막는다. 클라이언트 주소마다 한 시간 30번(429), 본문 256 KB(413), report 타입 검증(400).
  * 순서도 그렇다 — 본문을 읽기 전에 횟수를 센다.
  *
  * 보낸 쪽 주소는 횟수를 세는 데만 쓰고 저장하지 않는다.
  */
 @RestController
-@RequestMapping("/api/telemetry/reports")
+@RequestMapping("/telemetry/reports")
 class TelemetryReceiverController(
     private val receiverService: TelemetryReceiverService,
     private val limiter: TelemetryReceiverLimiter,

@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------
 -- 계획은 `.plan/general/2026-10-20-opt-in-telemetry-from-self-hosted-installs.md` 다.
 --
--- consent 한 설치가 UTC 하루에 한 번 `POST /api/telemetry/reports` 로 report 하나를 보낸다. 이 표는 그것을
+-- consent 한 설치가 UTC 하루에 한 번 `POST /telemetry/reports` 로 report 하나를 보낸다. 이 표는 그것을
 -- 받는 artel.kr 서버에서만 행이 생긴다. 직접 설치한 서버에도 같은 마이그레이션이 돌지만 그쪽 표는 비어 있다.
 --
 -- 보낸 쪽 IP 주소는 저장하지 않는다. 설치를 가르는 값은 `install_id` 하나이고, 그것은 사람이 아니라 설치에

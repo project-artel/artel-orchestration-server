@@ -25,7 +25,7 @@ data class TelemetryStatus(
 /**
  * `PUT /api/admin/settings/telemetry` 요청 본문.
  *
- * [deleteSentData] 가 true 면 consent 를 끄기 전에 receiver 에 `DELETE /api/telemetry/reports/{installId}` 를 보내
+ * [deleteSentData] 가 true 면 consent 를 끄기 전에 receiver 에 `DELETE /telemetry/reports/{installId}` 를 보내
  * 이미 보낸 report 를 지운다. 그 요청이 실패하면 아무것도 바꾸지 않고 503 이다.
  */
 data class UpdateTelemetryRequest(

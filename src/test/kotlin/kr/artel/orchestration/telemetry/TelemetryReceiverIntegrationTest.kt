@@ -19,7 +19,7 @@ import java.time.ZoneOffset
 import java.util.UUID
 
 /**
- * artel.kr 의 receiver(`POST /api/telemetry/reports`, `DELETE /api/telemetry/reports/{installId}`).
+ * artel.kr 의 receiver(`POST /telemetry/reports`, `DELETE /telemetry/reports/{installId}`).
  *
  * 세션 없이 부른다. 횟수 한도가 클라이언트 주소마다 걸리므로 테스트마다 다른 `X-Forwarded-For` 를 보내 서로의 횟수가
  * 섞이지 않게 한다.
@@ -63,12 +63,12 @@ class TelemetryReceiverIntegrationTest {
         post(report(installId, model = "m", daysAgo = 1), address)
         post(report(installId, model = "m", daysAgo = 2), address)
 
-        assertThat(exchange(HttpMethod.DELETE, "/api/telemetry/reports/$installId", null, address)).isEqualTo(204)
+        assertThat(exchange(HttpMethod.DELETE, "/telemetry/reports/$installId", null, address)).isEqualTo(204)
 
         val count = databaseClient.sql("SELECT COUNT(*) AS n FROM telemetry_report WHERE install_id = CAST(:id AS uuid)")
             .bind("id", installId).map { row, _ -> (row.get("n") as Number).toLong() }.one().awaitSingle()
         assertThat(count).isZero()
-        assertThat(exchange(HttpMethod.DELETE, "/api/telemetry/reports/not-a-uuid", null, address)).isEqualTo(400)
+        assertThat(exchange(HttpMethod.DELETE, "/telemetry/reports/not-a-uuid", null, address)).isEqualTo(400)
     }
 
     @Test
@@ -124,7 +124,7 @@ class TelemetryReceiverIntegrationTest {
 
     private fun today(): LocalDate = LocalDate.now(ZoneOffset.UTC)
 
-    private fun post(body: String, address: String): Int = exchange(HttpMethod.POST, "/api/telemetry/reports", body, address)
+    private fun post(body: String, address: String): Int = exchange(HttpMethod.POST, "/telemetry/reports", body, address)
 
     private fun exchange(method: HttpMethod, path: String, body: String?, address: String): Int {
         val spec = WebClient.create("http://localhost:$port").method(method).uri(path).header("X-Forwarded-For", address)
