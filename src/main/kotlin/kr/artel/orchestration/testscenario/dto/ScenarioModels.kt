@@ -345,8 +345,9 @@ data class ScenarioStreamEvent(
     /** 어림잡은 전체 시나리오 수. 모르면 null 이고, 그때 화면은 진행률 대신 세는 수만 보인다. */
     val expected: Int? = null,
     /**
-     * Agent 답의 결과·설명 칸(ARTEL-927). `result` 에만 실리고, 인사·실패 문구처럼 글만 있는
-     * 답에는 없다. 세 번째 칸인 질문은 [questions] 로 따로 온다.
+     * Agent 답의 결과·설명·질문 칸(ARTEL-927, 질문 칸은 ARTEL-1117). `result` 에만 실리고, 인사·실패
+     * 문구처럼 글만 있는 답에는 없다. 모델이 물은 것은 [AgentReply.asks] 로 답 안에 든다 — [questions] 는
+     * 이제 오케가 계산으로 만드는 질문(경로 공백)만 싣는다.
      */
     val reply: AgentReply? = null,
     /**
@@ -395,22 +396,29 @@ data class AgentRef(
 }
 
 /**
- * Agent 답을 사람이 읽는 두 칸으로 나눈 것(ARTEL-927).
+ * Agent 답을 사람이 읽는 세 칸으로 나눈 것(ARTEL-927, 질문 칸은 ARTEL-1117).
  *
  * 한 덩어리 글이던 답에서는 무엇을 했는지와 왜 그랬는지가 섞여, 사용자가 반박하거나 결정할
  * 자리가 보이지 않았다. [result] 는 Agent 코드가 센 사실(무엇을 몇 스텝으로 저장), [detail] 은
- * 판단한 모델의 설명(마크다운 — 문단·목록·표)이다.
+ * 판단한 모델의 설명(마크다운 — 문단·목록·표), [asks] 는 모델이 사용자에게 묻는 것이다.
  */
 data class AgentReply(
     val result: String,
     val detail: String = "",
     /** 바뀐 시나리오(ARTEL-937). 화면이 결과 박스에 추가·수정·삭제 색으로 나눠 그린다. */
     val changes: List<AgentChange> = emptyList(),
+    /**
+     * 모델이 묻는 것(ARTEL-1117). 예전에는 답과 따로 `question` 메시지로 저장해 화면이 모달로 받았다.
+     * 저작이 대화를 기억하게 되어(ARTEL-942) 답 맨 아래에 싣고, 사용자는 평범한 대화로 답한다 —
+     * 그래서 기다리는 질문(`lastQuestion`)으로 걸지 않는다.
+     */
+    val asks: List<ScenarioQuestion> = emptyList(),
 ) {
     /** 답 말풍선에 붙일 `payload`. 화면은 `kind` 로 질문(`question`)·답한 질문(`answered`)과 가른다. */
     fun payload(refs: List<AgentRef> = emptyList()): Map<String, Any?> =
         mapOf("kind" to KIND, "result" to result, "detail" to detail) +
             (if (changes.isEmpty()) emptyMap() else mapOf("changes" to changes.map { it.one() })) +
+            (if (asks.isEmpty()) emptyMap() else mapOf("asks" to asks.map { it.copy(source = ScenarioQuestionSource.AGENT).one() })) +
             AgentRef.field(refs)
 
     companion object {

@@ -187,6 +187,45 @@ class ScenarioBridgeRepairTest {
     }
 
     /**
+     * 예전에 들은 구간은 묻지 않고 그 말로 채운다(ARTEL-1117). 한 번 답한 질문은 다시 묻지 않으므로, 그 답을 쓰지
+     * 않으면 같은 구간이 묻지도 채우지도 않은 채 남는다(실측 런 184 · 185).
+     */
+    @Test
+    fun `예전에 들은 구간은 알림 대신 그 말로 채우고 알린다`() {
+        val repaired = ScenarioBridgeRepair.apply(
+            listOf(verify(1), verify(2)),
+            mapOf(
+                0 to ScenarioPathAnswer(
+                    ScenarioPathResult.UNKNOWN,
+                    blockedBy = "TurnBattleScene→GameClearScene",
+                    note = "TurnBattleScene 에서 GameClearScene 로 넘어가는 것은 저절로 일어난다.",
+                )
+            ),
+            knownHow = { if (it == "TurnBattleScene→GameClearScene") listOf("모든 적을 처치하여 클리어한다") else null },
+        )
+
+        assertThat(repaired.steps.map { it.action }).containsExactly("검증", "모든 적을 처치하여 클리어한다", "검증")
+        // 사람이 알려 준 길이다 — 판정 대상이 아니고, 코드가 다시 덮지 않는다.
+        assertThat(repaired.steps[1].stepSource).isEqualTo(ScenarioStepSource.HUMAN)
+        assertThat(repaired.steps[1].stepKind).isEqualTo(ScenarioStepKind.ACTION)
+        assertThat(repaired.steps[1].caseId).isNull()
+        assertThat(repaired.steps.none { it.stepKind == ScenarioStepKind.GAP }).isTrue()
+        // 무엇을 사용자 말로 채웠는지는 말한다 — 다르면 고칠 수 있게.
+        assertThat(repaired.notices.single()).contains("알려주신 방법으로 채웠습니다")
+    }
+
+    @Test
+    fun `들은 적 없는 구간은 그대로 알림으로 남는다`() {
+        val repaired = ScenarioBridgeRepair.apply(
+            listOf(verify(1), verify(2)),
+            mapOf(0 to ScenarioPathAnswer(ScenarioPathResult.UNKNOWN, blockedBy = "StagePosition", note = "방법이 없다.")),
+            knownHow = { if (it == "다른 구간") listOf("무언가") else null },
+        )
+
+        assertThat(repaired.steps[1].stepKind).isEqualTo(ScenarioStepKind.GAP)
+    }
+
+    /**
      * **제자리로 돌아오는 고리는 시키지 않는다**(ARTEL-686).
      *
      * 실측(런 270): 클리어 화면의 두 케이스 사이에 `클리어 화면 → 지도`, `지도 → 전투` 가

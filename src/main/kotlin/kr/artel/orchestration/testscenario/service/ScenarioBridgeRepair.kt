@@ -72,6 +72,11 @@ object ScenarioBridgeRepair {
         caseOf: (Long) -> Long? = { null },
         /** 그 케이스가 서 있는 화면. 모르면 `null` 이고, 그때는 예전처럼 조작을 적는다. */
         sceneOf: (Long) -> String? = { null },
+        /**
+         * 막힌 구간(`blockedBy`)을 사용자가 **예전에 알려 준** 방법(ARTEL-1117). 있으면 알림 블록 대신 그 말을
+         * 사람이 쓴 스텝으로 넣는다 — 씬을 넘어가는 방법은 게임의 사실이라 한 번 들으면 다음 판에도 맞다.
+         */
+        knownHow: (String) -> List<String>? = { null },
     ): Repaired {
         val gaps = gaps(steps)
         // 메울 자리가 없어도 접기는 한다 — 중복은 사이가 비어서 생기는 것이 아니다.
@@ -92,6 +97,7 @@ object ScenarioBridgeRepair {
                     existing, dropRepeatOf(steps.getOrNull(gap.at.first - 1), answer), caseOf,
                     sameScene = sceneOf(gap.fromCaseId) != null &&
                         sceneOf(gap.fromCaseId) == sceneOf(gap.toCaseId),
+                    knownHow = knownHow,
                 )
                 out += filled
                 // 알림은 **알림 블록이 실제로 들어갔을 때만** 낸다. 사람이 이미 손으로 채운 구간까지
@@ -196,6 +202,7 @@ object ScenarioBridgeRepair {
         caseOf: (Long) -> Long? = { null },
         /** 이 구간의 두 끝이 같은 화면인가(ARTEL-686). 같으면 나갔다 오는 길은 이동이 아니다. */
         sameScene: Boolean = false,
+        knownHow: (String) -> List<String>? = { null },
     ): List<ChatScenarioStep> {
         if (answer.result == ScenarioPathResult.NOT_REQUIRED) return existing
         // 사람이 손으로 채운 구간은 그대로 둔다. 명세가 모르는 것을 사용자가 알려준 자리라,
@@ -234,6 +241,20 @@ object ScenarioBridgeRepair {
         }
         val leftover = existing.drop(answer.actions.size)
         if (answer.result == ScenarioPathResult.KNOWN) return known + leftover
+
+        // **예전에 들은 방법이 있으면 그것으로 채운다**(ARTEL-1117). 한 번 답한 질문은 프로젝트 전체에서 다시
+        // 묻지 않는데(ARTEL-676), 그 답을 다음 시나리오에 쓰지 않으면 같은 구간이 묻지도 채우지도 않은 채
+        // 남는다(실측 런 184 · 185: TurnBattleScene→GameClearScene 는 런 79 에서 답을 받았다).
+        answer.blockedBy?.let(knownHow)?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() }?.let { lines ->
+            return known + lines.map { line ->
+                ChatScenarioStep(
+                    action = line,
+                    caseId = null,
+                    stepSource = ScenarioStepSource.HUMAN,
+                    stepKind = ScenarioStepKind.ACTION,
+                )
+            }
+        }
 
         // **제자리로 돌아오는 고리는 시키지 않는다**(ARTEL-686).
         //
