@@ -24,6 +24,8 @@ import kr.artel.orchestration.developermacro.dto.MAX_DEVELOPER_MACRO_NAME_LENGTH
 import kr.artel.orchestration.developermacro.dto.PutDeveloperMacroRequest
 import kr.artel.orchestration.developermacro.repository.DeveloperMacroRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import org.springframework.stereotype.Service
@@ -49,6 +51,7 @@ class DeveloperMacroService(
     private val gameBuilds: GameBuildRepository,
     private val agent: AgentMacroClient,
     private val objectMapper: ObjectMapper,
+    private val projectChanges: ProjectChangeStreamManager,
 ) {
 
     suspend fun list(userId: Long, projectId: Long): DeveloperMacroListResponse {
@@ -111,6 +114,8 @@ class DeveloperMacroService(
             createdBy = userId,
             updatedBy = userId,
         )
+        // 트랜잭션 없이 upsert 한 문장이라 여기가 commit 뒤다.
+        projectChanges.notify(projectId, ProjectChangeTopic.MACROS)
         // upsert 직후라 행이 있다. 없으면 그 사이에 누가 지운 것이고, 그때는 지운 쪽이 마지막이다.
         return repository.findDetail(projectId, name)?.toResponse() ?: throw developerMacroNotFound()
     }
@@ -118,6 +123,7 @@ class DeveloperMacroService(
     suspend fun delete(userId: Long, projectId: Long, name: String) {
         projectAccess.requireMember(projectId, userId)
         if (repository.deleteByProjectIdAndName(projectId, name) == 0) throw developerMacroNotFound()
+        projectChanges.notify(projectId, ProjectChangeTopic.MACROS)
     }
 
     /**

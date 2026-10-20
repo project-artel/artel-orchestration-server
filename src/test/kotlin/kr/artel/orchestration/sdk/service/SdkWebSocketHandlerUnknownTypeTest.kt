@@ -6,6 +6,7 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import kr.artel.orchestration.auth.service.AccountStateService
 import kr.artel.orchestration.auth.service.SessionUserResolver
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.qa.service.QaRunStatusNotifier
 import kr.artel.orchestration.sdk.service.handler.SdkMessageHandler
@@ -52,6 +53,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
         mock(ReactiveJwtDecoder::class.java),
         mock(SessionUserResolver::class.java),
         mock(AccountStateService::class.java),
+        ProjectChangeStreamManager(),
         listOf(knownHandler)
     )
 
@@ -116,6 +118,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
             mock(ReactiveJwtDecoder::class.java),
             mock(SessionUserResolver::class.java),
             mock(AccountStateService::class.java),
+            ProjectChangeStreamManager(),
             listOf(knownHandler, exploding)
         )
         val session = mock(WebSocketSession::class.java)
