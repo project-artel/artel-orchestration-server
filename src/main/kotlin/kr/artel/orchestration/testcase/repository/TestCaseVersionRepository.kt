@@ -105,10 +105,13 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
     @Query(
         """
         SELECT v.test_case_id, gb.id AS game_build_id, gb.version, gb.label,
-               v.verification_status, gb.created_at AS build_created_at
+               v.verification_status, gb.created_at AS build_created_at,
+               v.verdict_qa_log_id, l.qa_try_id AS verdict_qa_try_id, qt.qa_run_id AS verdict_qa_run_id
           FROM test_case_version v
           JOIN test_case t ON t.id = v.test_case_id
           JOIN game_build gb ON gb.id = v.game_build_id
+          LEFT JOIN qa_log l ON l.id = v.verdict_qa_log_id
+          LEFT JOIN qa_try qt ON qt.id = l.qa_try_id
          WHERE v.test_case_id = :testCaseId AND t.project_id = :projectId
            AND gb.is_editor = FALSE
          ORDER BY gb.created_at ASC, gb.id ASC

@@ -64,6 +64,10 @@ data class TestCaseVersionEntity(
     @Column("verified_at")
     val verifiedAt: Instant? = null,
 
+    /** 이 판정을 낸 스텝 STATUS 행(ARTEL-1134). 판정 근거는 그 행의 payload 에 있다. */
+    @Column("verdict_qa_log_id")
+    val verdictQaLogId: Long? = null,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,

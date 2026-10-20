@@ -362,6 +362,16 @@ interface QaLogRepository : CoroutineCrudRepository<QaLogEntity, Long> {
         """
     )
     fun findStepVerdicts(qaTryId: Long): Flow<QaLogEntity>
+
+    /** 캡처 기록(ARTEL-1134). SCREENSHOT 행의 `message_id` 가 캡처 id 다(`QaCaptureService`). */
+    @Query(
+        """
+        SELECT * FROM qa_log
+        WHERE qa_try_id = :qaTryId AND type = 'SCREENSHOT' AND message_id IN (:captureIds)
+        ORDER BY id ASC
+        """
+    )
+    fun findScreenshots(qaTryId: Long, captureIds: Collection<String>): Flow<QaLogEntity>
 }
 
 /** 채점 결과 저장소(ARTEL-301). 읽기는 후속 점수 화면이 쓴다. */

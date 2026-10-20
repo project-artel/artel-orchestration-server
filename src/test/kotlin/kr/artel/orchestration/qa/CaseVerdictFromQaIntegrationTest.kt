@@ -1,6 +1,7 @@
 package kr.artel.orchestration.qa
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
@@ -23,6 +24,10 @@ import kr.artel.orchestration.qa.repository.QaTryScoreRepository
 import kr.artel.orchestration.qa.service.QaAgentEnvelope
 import kr.artel.orchestration.qa.service.QaAgentInboundRouter
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
+import kr.artel.orchestration.qa.service.QaVerdictService
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.testcase.service.TestCaseVerdictService
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -74,6 +79,8 @@ class CaseVerdictFromQaIntegrationTest {
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
     @Autowired private lateinit var oauthUserService: OAuthUserService
     @Autowired private lateinit var objectMapper: ObjectMapper
+    @Autowired private lateinit var qaVerdictService: QaVerdictService
+    @Autowired private lateinit var caseVerdictService: TestCaseVerdictService
 
     @BeforeEach
     fun cleanBefore(): Unit = runBlocking { wipe() }
@@ -123,6 +130,49 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(verdicts.map { it.path("case_id").asLong() to it.path("verification_status").asText() })
             .containsExactly(run.passedCaseId to "VERIFIED", run.failedCaseId to "FAILED")
         assertThat(verdicts).allSatisfy { assertThat(it.path("game_build_id").asLong()).isEqualTo(run.gameBuildId) }
+    }
+
+    @Test
+    fun `판정 근거가 TC 판정에 이어지고 런의 판정 목록으로 읽힌다`(): Unit = runBlocking {
+        val run = runningRun()
+
+        reportStep(run.tryId, step = 1, caseId = run.passedCaseId, verification = false, passed = true)
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true) { payload ->
+            payload.put("reason", "Stage 글자가 떴다").put("evidence", "verified")
+            payload.putArray("checks").addObject()
+                .put("expected", "Stage 글자").put("observed", "Stage : 0").put("met", "yes")
+                .putArray("sources").addObject()
+                .put("kind", "pulse").put("key", "MapScene::stage").put("value", "Stage : 0")
+                .put("recorded", "Stage : 0").put("citation", "match")
+        }
+        reportStep(run.tryId, step = 3, caseId = run.failedCaseId, verification = true, passed = false)
+
+        // TC 판정은 그 판정을 실은 STATUS 행을 가리킨다.
+        val stepTwo = qaLogRepository.findStepVerdicts(run.tryId).toList()
+            .single { objectMapper.readTree(it.payload.asString()).path("step").asInt() == 2 }
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.gameBuildId)!!.verdictQaLogId)
+            .isEqualTo(stepTwo.id)
+        assertThat(caseVerdictLogs(run.tryId).first().path("verdict_log_id").asLong()).isEqualTo(stepTwo.id)
+        val history = caseVerdictService.history(run.projectId, run.passedCaseId, run.ownerId).items.single()
+        assertThat(listOf(history.qaRunId, history.qaTryId, history.verdictLogId))
+            .containsExactly(run.qaRunId.toString(), run.tryId.toString(), stepTwo.id.toString())
+
+        // 런의 판정 목록은 스텝 순서로 근거를 싣고, 근거 칸이 없는 판정은 `none` 이다.
+        val verdicts = qaVerdictService.list(run.qaRunId, run.ownerId).tries.single().verdicts
+        assertThat(verdicts.map { it.step }).containsExactly(1, 2, 3)
+        val judged = verdicts[1]
+        assertThat(judged.logId).isEqualTo(stepTwo.id.toString())
+        assertThat(judged.stepTitle).isEqualTo("2")
+        assertThat(judged.reason).isEqualTo("Stage 글자가 떴다")
+        assertThat(judged.evidence).isEqualTo("verified")
+        assertThat(judged.checks!!.path(0).path("sources").path(0).path("citation").asText()).isEqualTo("match")
+        assertThat(verdicts[2].passed).isFalse()
+        assertThat(verdicts[2].evidence).isEqualTo("none")
+        assertThat(verdicts[2].reason).isNull()
+
+        // 보이지 않는 런은 없는 것이다.
+        assertThatThrownBy { runBlocking { qaVerdictService.list(run.qaRunId, run.ownerId + 999) } }
+            .isInstanceOf(NotFoundException::class.java)
     }
 
     @Test
@@ -258,6 +308,9 @@ class CaseVerdictFromQaIntegrationTest {
         val runBuildId: Long,
         val passedCaseId: Long,
         val failedCaseId: Long,
+        val qaRunId: Long,
+        val projectId: Long,
+        val ownerId: Long,
     )
 
     /**
@@ -318,7 +371,9 @@ class CaseVerdictFromQaIntegrationTest {
             started.qaRun, tryId, "session-verdict-1",
             objectMapper.readTree("""{"model":"anthropic/claude-sonnet-5"}""")
         )
-        return RunningRun(tryId, build.id!!, runBuild.id!!, passedCase.id!!, failedCase.id!!)
+        return RunningRun(
+            tryId, build.id!!, runBuild.id!!, passedCase.id!!, failedCase.id!!, started.qaRun.id!!, projectId, ownerId
+        )
     }
 
     private suspend fun reportStep(
@@ -328,6 +383,7 @@ class CaseVerdictFromQaIntegrationTest {
         verification: Boolean,
         passed: Boolean,
         messageId: String = UUID.randomUUID().toString(),
+        evidence: (ObjectNode) -> Unit = {},
     ) {
         val payload = objectMapper.createObjectNode()
             .put("status", if (passed) "COMPLETED" else "FAILED")
@@ -335,6 +391,7 @@ class CaseVerdictFromQaIntegrationTest {
             .put("is_verification", verification)
             .put("message", "step $step")
         caseId?.let { payload.put("case_id", it) }
+        evidence(payload)
         router.handle(
             QaAgentEnvelope(
                 messageId = messageId,

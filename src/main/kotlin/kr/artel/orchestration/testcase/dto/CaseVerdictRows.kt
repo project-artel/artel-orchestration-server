@@ -12,6 +12,10 @@ data class CaseVerdictHistoryRow(
     val label: String?,
     val verificationStatus: String,
     val buildCreatedAt: Instant,
+    /** 이 판정을 낸 STATUS 행과 그 실행(ARTEL-1134). 근거 기록이 이어지기 전의 판정은 비어 있다. */
+    val verdictQaLogId: Long? = null,
+    val verdictQaTryId: Long? = null,
+    val verdictQaRunId: Long? = null,
 )
 
 /** `GET /api/projects/{projectId}/test-cases/{testCaseId}/verdict-history` 의 한 줄. id 는 문자열이다. */
@@ -21,6 +25,10 @@ data class CaseVerdictHistoryItem(
     val version: String,
     val label: String?,
     val verificationStatus: String,
+    /** 이 판정의 근거로 가는 길(ARTEL-1134): 실행 · 시나리오 실행 · STATUS 행. 근거가 이어지기 전 판정은 null. */
+    val qaRunId: String? = null,
+    val qaTryId: String? = null,
+    val verdictLogId: String? = null,
 )
 
 /** build 순서(오래된 것부터)의 판정. `case_key` 가 없는 케이스는 [items] 가 비어 있다. */

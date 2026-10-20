@@ -1295,6 +1295,82 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-notes": {
+      "get": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 최신 버전",
+        "description": "저장한 적이 없으면 `version: 0`, 빈 `body` 와 `genres`, null `updatedAt` · `updatedBy` 다.",
+        "operationId": "getGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 저장",
+        "description": "새 버전을 만들어 돌려준다. 본문과 장르 집합이 최신과 같으면 버전을 올리지 않는다. `baseVersion` 이 최신이 아니면 409 `game_notes_conflict`, 본문이 20000 자를 넘거나 장르가 틀리면 400 이다.",
+        "operationId": "putGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGameNotesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/developer-macros/{name}": {
       "get": {
         "tags": [
@@ -1419,82 +1495,6 @@
         "responses": {
           "204": {
             "description": "No Content"
-          }
-        }
-      }
-    },
-    "/api/projects/{projectId}/game-notes": {
-      "get": {
-        "tags": [
-          "Game notes"
-        ],
-        "summary": "게임 노트 최신 버전",
-        "description": "저장한 적이 없으면 `version: 0`, 빈 `body` 와 `genres`, null `updatedAt` · `updatedBy` 다.",
-        "operationId": "getGameNotes",
-        "parameters": [
-          {
-            "name": "projectId",
-            "in": "path",
-            "description": "프로젝트 id",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/GameNotesResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Game notes"
-        ],
-        "summary": "게임 노트 저장",
-        "description": "새 버전을 만들어 돌려준다. 본문과 장르 집합이 최신과 같으면 버전을 올리지 않는다. `baseVersion` 이 최신이 아니면 409 `game_notes_conflict`, 본문이 20000 자를 넘거나 장르가 틀리면 400 이다.",
-        "operationId": "putGameNotes",
-        "parameters": [
-          {
-            "name": "projectId",
-            "in": "path",
-            "description": "프로젝트 id",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateGameNotesRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/GameNotesResponse"
-                }
-              }
-            }
           }
         }
       }
@@ -5879,6 +5879,36 @@
         }
       }
     },
+    "/api/qa-runs/{qaRunId}/verdicts": {
+      "get": {
+        "tags": [
+          "qa-run-controller"
+        ],
+        "operationId": "listQaRunVerdicts",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunVerdictsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/qa-runs/{qaRunId}/changes": {
       "get": {
         "tags": [
@@ -8488,6 +8518,80 @@
           }
         }
       },
+      "UpdateGameNotesRequest": {
+        "required": [
+          "baseVersion",
+          "body",
+          "genres"
+        ],
+        "type": "object",
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "baseVersion": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "GameNoteAuthorResponse": {
+        "required": [
+          "displayName",
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          }
+        }
+      },
+      "GameNotesResponse": {
+        "required": [
+          "body",
+          "genres",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "body": {
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "ui-flow",
+                "turn-based"
+              ]
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/GameNoteAuthorResponse"
+          }
+        }
+      },
       "PutDeveloperMacroRequest": {
         "required": [
           "gameBuildId",
@@ -8568,80 +8672,6 @@
           },
           "updatedBy": {
             "$ref": "#/components/schemas/DeveloperMacroAuthor"
-          }
-        }
-      },
-      "UpdateGameNotesRequest": {
-        "required": [
-          "baseVersion",
-          "body",
-          "genres"
-        ],
-        "type": "object",
-        "properties": {
-          "body": {
-            "maxLength": 20000,
-            "minLength": 0,
-            "type": "string"
-          },
-          "genres": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "baseVersion": {
-            "type": "integer",
-            "format": "int32"
-          }
-        }
-      },
-      "GameNoteAuthorResponse": {
-        "required": [
-          "displayName",
-          "id"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          }
-        }
-      },
-      "GameNotesResponse": {
-        "required": [
-          "body",
-          "genres",
-          "version"
-        ],
-        "type": "object",
-        "properties": {
-          "version": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "body": {
-            "type": "string"
-          },
-          "genres": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "ui-flow",
-                "turn-based"
-              ]
-            }
-          },
-          "updatedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updatedBy": {
-            "$ref": "#/components/schemas/GameNoteAuthorResponse"
           }
         }
       },
@@ -13070,6 +13100,129 @@
           }
         }
       },
+      "QaRunVerdictsResponse": {
+        "required": [
+          "qaRunId",
+          "tries"
+        ],
+        "type": "object",
+        "properties": {
+          "qaRunId": {
+            "type": "string"
+          },
+          "tries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaTryVerdicts"
+            }
+          }
+        }
+      },
+      "QaStepVerdict": {
+        "required": [
+          "captures",
+          "evidence",
+          "isVerification",
+          "logId",
+          "message",
+          "passed",
+          "step"
+        ],
+        "type": "object",
+        "properties": {
+          "logId": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "stepTitle": {
+            "type": "string"
+          },
+          "caseId": {
+            "type": "string"
+          },
+          "isVerification": {
+            "type": "boolean"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "checks": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "captures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaVerdictCapture"
+            }
+          },
+          "judgedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QaTryVerdicts": {
+        "required": [
+          "qaTryId",
+          "scenarioTitle",
+          "status",
+          "testScenarioId",
+          "verdicts"
+        ],
+        "type": "object",
+        "properties": {
+          "qaTryId": {
+            "type": "string"
+          },
+          "testScenarioId": {
+            "type": "string"
+          },
+          "scenarioTitle": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "verdicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaStepVerdict"
+            }
+          }
+        }
+      },
+      "QaVerdictCapture": {
+        "required": [
+          "captureId",
+          "expiresAt",
+          "url"
+        ],
+        "type": "object",
+        "properties": {
+          "captureId": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "QaRunChangeListResponse": {
         "required": [
           "items"
@@ -13700,6 +13853,15 @@
             "type": "string"
           },
           "verificationStatus": {
+            "type": "string"
+          },
+          "qaRunId": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "verdictLogId": {
             "type": "string"
           }
         }
