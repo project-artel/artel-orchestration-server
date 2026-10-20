@@ -30,8 +30,8 @@ data class StoredTelemetryConsent(val enabled: Boolean)
  * telemetry consent 와 그에 딸린 두 값(install id, 마지막 전송 날짜)을 `platform_setting` 에 둔다. 모양은
  * `AnthropicKeyService` 를 따른다.
  *
- * **적용되는 consent.** `telemetry.consent` 행이 있으면 그 값이고, 없으면 `ARTEL_TELEMETRY` 다. 관리 화면이나 첫
- * 가입에서 한 번 고르면 행이 생기고, 그 뒤로는 환경 변수를 바꿔도 따르지 않는다.
+ * **적용되는 consent.** `telemetry.consent` 행이 있으면 그 값이고, 없으면 `ARTEL_TELEMETRY` 다. 관리 화면에서
+ * 한 번 고르면 행이 생기고, 그 뒤로는 환경 변수를 바꿔도 따르지 않는다.
  *
  * **consent 가 켜질 때 마지막 전송 날짜를 그제로 당긴다.** 다음 tick 에 어제 report 하나만 나간다. 관리 화면의
  * 미리보기가 보여 준 것이 바로 그 report 다. consent 가 꺼져 있던 동안의 날들은 보내지 않는다 — 날짜를 당기지
