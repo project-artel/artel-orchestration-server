@@ -13103,12 +13103,36 @@
       "QaRunVerdictsResponse": {
         "required": [
           "qaRunId",
+          "startedAt",
+          "status",
+          "testRunId",
+          "testRunName",
           "tries"
         ],
         "type": "object",
         "properties": {
           "qaRunId": {
             "type": "string"
+          },
+          "testRunId": {
+            "type": "string"
+          },
+          "testRunName": {
+            "type": "string"
+          },
+          "gameBuildVersion": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
           },
           "tries": {
             "type": "array",
@@ -13118,8 +13142,73 @@
           }
         }
       },
+      "QaScenarioStepView": {
+        "required": [
+          "step",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "title": {
+            "type": "string"
+          },
+          "caseId": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          }
+        }
+      },
+      "QaStepAction": {
+        "required": [
+          "count",
+          "kind"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "QaStepIssue": {
+        "required": [
+          "issueId",
+          "severity",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "issueId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "QaStepVerdict": {
         "required": [
+          "actions",
           "captures",
           "evidence",
           "isVerification",
@@ -13167,6 +13256,12 @@
               "$ref": "#/components/schemas/QaVerdictCapture"
             }
           },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaStepAction"
+            }
+          },
           "judgedAt": {
             "type": "string",
             "format": "date-time"
@@ -13175,9 +13270,13 @@
       },
       "QaTryVerdicts": {
         "required": [
+          "executionMode",
+          "issues",
           "qaTryId",
           "scenarioTitle",
+          "startedAt",
           "status",
+          "steps",
           "testScenarioId",
           "verdicts"
         ],
@@ -13192,13 +13291,39 @@
           "scenarioTitle": {
             "type": "string"
           },
+          "executionMode": {
+            "type": "string"
+          },
           "status": {
             "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaScenarioStepView"
+            }
           },
           "verdicts": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/QaStepVerdict"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaStepIssue"
             }
           }
         }

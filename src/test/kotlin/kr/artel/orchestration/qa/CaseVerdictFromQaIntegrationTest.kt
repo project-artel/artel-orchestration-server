@@ -19,6 +19,8 @@ import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.qa.entity.QaLogEntity
+import kr.artel.orchestration.issue.entity.IssueEntity
+import kr.artel.orchestration.issue.repository.IssueRepository
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
@@ -82,6 +84,7 @@ class CaseVerdictFromQaIntegrationTest {
     @Autowired private lateinit var oauthUserService: OAuthUserService
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var qaVerdictService: QaVerdictService
+    @Autowired private lateinit var issueRepository: IssueRepository
     @Autowired private lateinit var caseVerdictService: TestCaseVerdictService
 
     @BeforeEach
@@ -91,6 +94,7 @@ class CaseVerdictFromQaIntegrationTest {
     fun cleanAfter(): Unit = runBlocking { wipe() }
 
     private suspend fun wipe() {
+        issueRepository.deleteAll()
         scoreRepository.deleteAll()
         qaLogRepository.deleteAll()
         qaTryRepository.deleteAll()
@@ -147,6 +151,27 @@ class CaseVerdictFromQaIntegrationTest {
                 .put("kind", "pulse").put("key", "MapScene::stage").put("value", "Stage : 0")
                 .put("recorded", "Stage : 0").put("citation", "match")
         }
+        // 스텝 2 에서 Return 을 두 번 눌렀다. SDK 로 나간 같은 행은 세지 않는다.
+        repeat(2) {
+            qaLogRepository.save(
+                QaLogEntity(
+                    qaTryId = run.tryId, direction = "AGENT_TO_ORCHE", type = "ACTION", message = "Pressing Return",
+                    payload = Json.of("""{"step":2,"message":"Pressing Return","actions":[{"method":"key_click"}]}"""),
+                )
+            )
+        }
+        qaLogRepository.save(
+            QaLogEntity(
+                qaTryId = run.tryId, direction = "ORCHE_TO_SDK", type = "ACTION", message = "Pressing Return",
+                payload = Json.of("""{"step":2,"message":"Pressing Return"}"""),
+            )
+        )
+        issueRepository.save(
+            IssueEntity(
+                qaTryId = run.tryId, severity = "MAJOR", title = "카드가 안 생긴다",
+                detail = Json.of("""{"step":3}"""), reportedAt = Instant.now(),
+            )
+        )
         // 근거 칸이 없는 판정의 이유는 바로 앞 판정 도구 호출의 `thought` 다.
         qaLogRepository.save(
             QaLogEntity(
@@ -166,8 +191,16 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(listOf(history.qaRunId, history.qaTryId, history.verdictLogId))
             .containsExactly(run.qaRunId.toString(), run.tryId.toString(), stepTwo.id.toString())
 
+        // 런의 판정 목록은 출처(TR · 빌드), 시나리오의 모든 스텝과 TC 기대, 스텝에 붙은 이슈를 함께 싣는다.
+        val listed = qaVerdictService.list(run.qaRunId, run.ownerId)
+        assertThat(listed.testRunName).isEqualTo("런")
+        assertThat(listed.gameBuildVersion).isEqualTo("1.0.0")
+        val scenario = listed.tries.single()
+        assertThat(scenario.steps.map { it.step to it.expected }).containsExactly(1 to "x", 2 to "x", 3 to "y")
+        assertThat(scenario.issues.map { it.step to it.severity }).containsExactly(3 to "MAJOR")
         // 런의 판정 목록은 스텝 순서로 근거를 싣고, 근거 칸이 없는 판정은 `none` 이다.
-        val verdicts = qaVerdictService.list(run.qaRunId, run.ownerId).tries.single().verdicts
+        val verdicts = scenario.verdicts
+        assertThat(verdicts[1].actions.map { Triple(it.kind, it.label, it.count) }).containsExactly(Triple("key", "Return", 2))
         assertThat(verdicts.map { it.step }).containsExactly(1, 2, 3)
         val judged = verdicts[1]
         assertThat(judged.logId).isEqualTo(stepTwo.id.toString())

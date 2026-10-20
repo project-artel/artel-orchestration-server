@@ -383,6 +383,16 @@ interface QaLogRepository : CoroutineCrudRepository<QaLogEntity, Long> {
         """
     )
     fun findVerdictToolCalls(qaTryId: Long): Flow<QaLogEntity>
+
+    /** agent 가 보낸 행동 행(ARTEL-1134). 같은 행동이 SDK 로 나간 행(`ORCHE_TO_SDK`)도 있어 그쪽은 뺀다. */
+    @Query(
+        """
+        SELECT * FROM qa_log
+        WHERE qa_try_id = :qaTryId AND type = 'ACTION' AND direction = 'AGENT_TO_ORCHE'
+        ORDER BY id ASC
+        """
+    )
+    fun findAgentActions(qaTryId: Long): Flow<QaLogEntity>
 }
 
 /** 채점 결과 저장소(ARTEL-301). 읽기는 후속 점수 화면이 쓴다. */
