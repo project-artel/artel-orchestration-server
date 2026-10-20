@@ -8,9 +8,20 @@ pipeline {
     // 30 은 지금 되돌아볼 만한 폭이다. 그보다 오래된 빌드는 로그를 열어 본 적이 없다.
     options {
         buildDiscarder(logRotator(numToKeepStr: '30'))
+        skipDefaultCheckout(true)
+        disableConcurrentBuilds(abortPrevious: true)
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    parameters {
+        booleanParam(name: 'FORCE_REVALIDATE', defaultValue: false,
+            description: 'Run compilation and context test even when this PR input already passed')
     }
 
     environment {
+        MAVEN_OPTS = '-Xmx2g'
+        CI_TOOLCHAIN_VERSION = 'jdk21-kotlin-inprocess-context-v1'
         APP_NAME = 'artel-orchestration-server'
         IMAGE_NAME = 'artel-orchestration-server'
         APP_PORT = '8080'
@@ -20,6 +31,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+                sh 'python3 -m unittest discover -s scripts/tests -p "test_*.py"'
             }
         }
 
@@ -77,6 +89,34 @@ pipeline {
             }
         }
 
+        stage('Reuse successful PR verification') {
+            steps {
+                script {
+                    def policy = load 'ci/policy.groovy'
+                    // Flyway checks above always rerun: peer migration state can change independently.
+                    def base = env.CHANGE_TARGET ?: 'develop'
+                    withEnv(["CI_BASE_BRANCH=${base}"]) {
+                        env.CI_INPUT_KEY = sh(returnStdout: true, script: '''
+                            set -eu
+                            git check-ref-format "refs/heads/$CI_BASE_BRANCH"
+                            git fetch --no-tags origin "+refs/heads/$CI_BASE_BRANCH:refs/remotes/origin/$CI_BASE_BRANCH"
+                            { git rev-parse HEAD; git rev-parse "refs/remotes/origin/$CI_BASE_BRANCH";
+                              printf '%s\n' "$CI_TOOLCHAIN_VERSION" "$NODE_NAME";
+                              java -version 2>&1; } | sha256sum | cut -d ' ' -f 1
+                        ''').trim()
+                    }
+                    def previous = currentBuild.previousSuccessfulBuild
+                    env.REUSE_CI = policy.reuse(env.CHANGE_ID != null, params.FORCE_REVALIDATE,
+                        currentBuild.currentResult, env.CI_INPUT_KEY,
+                        previous?.buildVariables?.get('CI_INPUT_KEY')).toString()
+                    if (env.REUSE_CI == 'true') {
+                        currentBuild.description = "Reused verification from #${previous.number}"
+                        echo "Compilation/context result reused from ${previous.absoluteUrl}"
+                    }
+                }
+            }
+        }
+
         // **Kotlin 컴파일을 별도 데몬에 맡기지 않는다.** 기본값은 컴파일러를 자기 JVM 으로
         // 띄우는데, `agent any` 라 세 레포의 잡이 같은 에이전트를 나눠 쓰고 그 JVM 이 먼저
         // 죽는다. 죽는 모양이 컴파일 오류가 아니라 RMI 연결 끊김이라 원인이 안 보인다.
@@ -93,6 +133,7 @@ pipeline {
         // `MAVEN_OPTS` 로 명시한다 — 안 주면 컨테이너가 주는 기본값에 맡기게 되고, 그 값이
         // 바뀌는 날 같은 실패가 다시 난다.
         stage('Build') {
+            when { expression { env.REUSE_CI != 'true' } }
             environment {
                 MAVEN_OPTS = '-Xmx2g'
             }
@@ -102,87 +143,62 @@ pipeline {
                 // 빌드 쪽에서 daemon 이 내려가면 남은 빌드가 `java.rmi.UnmarshalException` 으로 죽는다
                 // (ARTEL-795). kotlin-maven-plugin 2.3 은 `kotlin.compiler.execution.strategy` 를
                 // 읽지 않고 daemon 을 그대로 띄우므로, daemon 을 끄는 `kotlin.compiler.daemon` 을 쓴다.
-                sh './mvnw clean package -DskipTests -Dkotlin.compiler.daemon=false'
+                sh './mvnw -B clean package -DskipTests -Dkotlin.compiler.daemon=false'
             }
         }
 
-        // 배포 대상 브랜치에서만 실행한다. PR job의 BRANCH_NAME은 'PR-<번호>'라
-        // 아래 branch 조건에 걸리지 않고, 피처 브랜치도 마찬가지다. 이 가드가
-        // 없으면 두 경우 모두 resolveTargetEnv에서 error가 나 빌드가 실패한다.
-        stage('Deploy Pipeline') {
+        stage('Context Startup Check') {
+            when { expression { env.REUSE_CI != 'true' } }
+            steps {
+                // package already compiled tests. Calling the goal avoids a second compile.
+                sh './mvnw -B surefire:test -Dtest=ApplicationContextStartupTest'
+            }
+            post { always { junit allowEmptyResults: false, testResults: 'target/surefire-reports/TEST-*.xml' } }
+        }
+
+        stage('Publish deployment image') {
             when {
-                anyOf {
-                    branch 'main'
-                    branch 'operation'
-                    branch 'develop'
-                    branch 'stage'
+                expression {
+                    currentBuild.currentResult == 'SUCCESS' &&
+                        env.BRANCH_NAME in ['develop', 'stage', 'main', 'operation']
                 }
             }
-
-            stages {
-                stage('Docker Build') {
-                    steps {
-                        script {
-                            env.TARGET_ENV = resolveTargetEnv(env.BRANCH_NAME)
-                            env.CONTAINER_NAME = "${APP_NAME}-${env.TARGET_ENV}"
-                            env.IMAGE_TAG = "${IMAGE_NAME}:${env.TARGET_ENV}-${env.BUILD_NUMBER}"
-                        }
-
-                        sh 'docker build -t $IMAGE_TAG .'
-                    }
-                }
-
-                stage('Deploy') {
-                    steps {
-                        // 애플리케이션 환경변수는 Jenkins Credentials에 Secret file로 등록한
-                        // .env에서 온다. 등록 절차는 docs/deployment.md 참조.
-                        withCredentials([file(credentialsId: "${env.APP_NAME}-env-${env.TARGET_ENV}", variable: 'ENV_FILE')]) {
-                            sh '''
-                                docker stop $CONTAINER_NAME || true
-                                docker rm $CONTAINER_NAME || true
-
-                                docker run -d \
-                                  --name $CONTAINER_NAME \
-                                  --restart unless-stopped \
-                                  --network app-net \
-                                  --env-file "$ENV_FILE" \
-                                  -e SPRING_PROFILES_ACTIVE=$TARGET_ENV \
-                                  $IMAGE_TAG
-                            '''
-                        }
-
-                        // 배포 이미지는 빌드 번호로 태그가 갈려 재사용되지 않는다. 지우지 않으면
-                        // 배포할 때마다 앞의 것이 디스크에 영원히 남는다 — temurin JRE 에 fat jar
-                        // 를 얹은 것이라 하나가 가볍지 않다. 셋을 남기는 것은 지금 도는 것 하나와,
-                        // 손으로 되돌릴 자리 둘이다.
-                        //
-                        // `-f` 를 쓰지 않는다. 컨테이너가 쓰고 있는 이미지는 `docker rmi` 가
-                        // 거절하고, 그 거절이 도는 stage 를 발밑에서 빼가지 않게 하는 유일한
-                        // 방어다.
-                        //
-                        // 생성 시각이 아니라 빌드 번호로 정렬한다. `docker images` 의 기본 순서를
-                        // 믿고 짰다가 같은 초에 만들어진 다섯 개가 뒤섞여 나오는 것을 봤다 — 그
-                        // 정렬은 초 단위라 동률에서 순서를 보장하지 않는다. 태그 뒤쪽의 빌드
-                        // 번호는 단조 증가하므로 동률이 없다.
-                        sh '''
-                            docker images --filter "reference=$IMAGE_NAME:$TARGET_ENV-*" \
-                              --format '{{.Tag}}' \
-                              | sort -t- -k2 -n -r \
-                              | tail -n +4 \
-                              | sed "s|^|$IMAGE_NAME:|" \
-                              | xargs -r docker rmi || true
-                        '''
-                    }
+            steps {
+                script {
+                    def target = env.BRANCH_NAME in ['develop', 'stage'] ? 'stage' : 'operation'
+                    env.DEPLOY_IMAGE_TAG = "artel-orchestration-server:ci-${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
+                    sh '''
+                        docker build --label "artel.ci.job=$JOB_NAME" \
+                          --label "artel.ci.build=$BUILD_NUMBER" \
+                          --label "artel.ci.commit=$GIT_COMMIT" \
+                          -t "$DEPLOY_IMAGE_TAG" .
+                        docker image inspect --format '{{.Id}}' "$DEPLOY_IMAGE_TAG" > image-id.txt
+                    '''
+                    def manifest = [version: 1, job: env.JOB_NAME, build: env.BUILD_NUMBER.toInteger(),
+                        commit: env.GIT_COMMIT, image: readFile('image-id.txt').trim(),
+                        environment: target, node: env.NODE_NAME]
+                    writeFile file: 'deployment.json', text: groovy.json.JsonOutput.toJson(manifest)
+                    archiveArtifacts artifacts: 'deployment.json', fingerprint: true
                 }
             }
         }
+
     }
 
     // verify-flyway-upgrade.sh는 trap으로 스스로 정리한다. 이것은 잡이 강제 종료돼 trap이
     // 돌지 못한 경우의 안전망이다. 이 빌드가 붙인 라벨 값만 지운다 —
-    // disableConcurrentBuilds가 없어 같은 에이전트에서 다른 브랜치 잡이 동시에 돌 수 있고,
+    // 다른 브랜치 job은 같은 에이전트에서 동시에 돌 수 있으므로,
     // 라벨 키만으로 지우면 남의 검증용 DB를 죽인다.
     post {
+        success {
+            script {
+                if (env.DEPLOY_IMAGE_TAG) {
+                    build job: 'artel-orchestration-deploy', wait: false, propagate: false,
+                        parameters: [string(name: 'SOURCE_JOB', value: env.JOB_NAME),
+                                     string(name: 'SOURCE_BUILD', value: env.BUILD_NUMBER)]
+                }
+            }
+        }
         always {
             script {
                 def runLabel = env.BUILD_TAG ? env.BUILD_TAG.replaceAll(/[^A-Za-z0-9._-]/, '_') : 'local'
@@ -192,34 +208,9 @@ pipeline {
                 )
             }
 
-            // 남의 것을 건드리지 않는 것만 고른다 — `agent any` 라 세 레포의 잡이 같은 에이전트를
-            // 나눠 쓴다. `image prune` 은 태그 없는 고아만, `builder prune` 은 일주일 넘게 안 쓰인
-            // 캐시만 가져간다. `system prune -a` 나 `volume prune` 이었다면 옆에서 도는 잡의
-            // 이미지와, 이름 붙은 볼륨까지 죽였을 것이다.
-            sh '''
-                docker image prune -f
-                docker builder prune -f --filter until=168h
-            '''
-
-            // `./mvnw clean package` 의 clean 은 시작할 때 돌아서, 끝난 뒤 target/ 이 fat jar 를
-            // 담은 채 남는다. 멀티브랜치 잡은 브랜치마다 · PR 마다 워크스페이스를 따로 파므로
-            // 존재했던 모든 PR 의 fat jar 가 하나씩 남아 있었다.
-            //
-            // 여기 남는 것 중 다음 빌드가 쓰는 것은 없다. `checkout scm` 이 트리를 다시 만들고,
-            // maven 저장소는 워크스페이스가 아니라 에이전트 홈에 있어 다시 받지 않는다.
+            // CI owns only its workspace and its labeled Flyway containers.
+            // Published images must remain available to the separate CD job.
             deleteDir()
         }
     }
-}
-
-def resolveTargetEnv(String branchName) {
-    if (branchName == 'main' || branchName == 'operation') {
-        return 'operation'
-    }
-
-    if (branchName == 'develop' || branchName == 'stage') {
-        return 'stage'
-    }
-
-    error "Unsupported branch for deployment: ${branchName}"
 }

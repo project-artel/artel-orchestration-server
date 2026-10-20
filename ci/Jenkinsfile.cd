@@ -1,0 +1,92 @@
+// Trusted inline pipeline installed by scripts/jenkins/install-cd.groovy, never loaded from a PR.
+// __POLICY_BASE64__ and __DEPLOY_BASE64__ are replaced by the installer after review.
+import jenkins.model.Jenkins
+import hudson.model.Cause
+import groovy.json.JsonSlurperClassic
+
+@NonCPS
+Map source(String job, String number, def currentRun) {
+    def policy = new GroovyShell().evaluate(new String('__POLICY_BASE64__'.decodeBase64(), 'UTF-8'))
+    if (!(number ==~ /[1-9][0-9]*/) || !policy.environmentFor(job)) {
+        throw new IllegalArgumentException('Source job/build is not allowed')
+    }
+    def cause = currentRun.getCause(Cause.UpstreamCause)
+    if (cause == null || cause.upstreamProject != job || cause.upstreamBuild.toString() != number) {
+        throw new IllegalArgumentException('A matching direct upstream CI cause is required')
+    }
+    def run = Jenkins.get().getItemByFullName(job)?.getBuildByNumber(number.toInteger())
+    if (run == null) throw new IllegalArgumentException('Upstream CI does not exist')
+    if (run.building) return [waiting: true]
+    if (!policy.validSource(job, run.number, cause.upstreamProject, cause.upstreamBuild, run.result?.toString())) {
+        throw new IllegalArgumentException('Only successful CI may deploy')
+    }
+    def manifest
+    run.artifactManager.root().child('deployment.json').open().withCloseable { stream ->
+        manifest = new JsonSlurperClassic().parseText(stream.getText('UTF-8'))
+    }
+    def target = policy.environmentFor(job)
+    if (manifest.version != 1 || manifest.job != job || manifest.build != run.number ||
+        manifest.environment != target || manifest.node != 'built-in' ||
+        !(manifest.image ==~ /sha256:[a-f0-9]{64}/) || !(manifest.commit ==~ /[a-f0-9]{40}/)) {
+        throw new IllegalArgumentException('Invalid deployment manifest')
+    }
+    def newer = ['develop', 'stage', 'main', 'operation'].collect { branch ->
+        Jenkins.get().getItemByFullName("artel-orchestration-server/${branch}")?.lastSuccessfulBuild
+    }.findAll { candidate -> candidate != null && policy.environmentFor(candidate.parent.fullName) == target }
+    def latest = newer.collect { it.startTimeInMillis }.max() ?: run.startTimeInMillis
+    return manifest + [waiting: false, stale: policy.stale(run.startTimeInMillis, latest as long)]
+}
+
+def candidate
+pipeline {
+    agent none
+    options {
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+    }
+    parameters {
+        string(name: 'SOURCE_JOB', defaultValue: '', description: 'Successful allowlisted upstream CI job')
+        string(name: 'SOURCE_BUILD', defaultValue: '', description: 'Exact upstream build number')
+    }
+    stages {
+        stage('Validate upstream') {
+            steps {
+                script {
+                    timeout(time: 5, unit: 'MINUTES') {
+                        waitUntil(initialRecurrencePeriod: 1000) {
+                            candidate = source(params.SOURCE_JOB, params.SOURCE_BUILD, currentBuild.rawBuild)
+                            return !candidate.waiting
+                        }
+                    }
+                    if (candidate.stale) currentBuild.description = 'Skipped obsolete successful CI'
+                }
+            }
+        }
+        stage('Deploy verified image') {
+            when { beforeAgent true; expression { !candidate.stale } }
+            agent { label 'built-in' }
+            steps {
+                script {
+                    // Recheck after acquiring the agent: a newer CI can finish while we wait.
+                    candidate = source(params.SOURCE_JOB, params.SOURCE_BUILD, currentBuild.rawBuild)
+                    if (candidate.stale) {
+                        currentBuild.description = 'Skipped obsolete successful CI'
+                        return
+                    }
+                    writeFile file: 'deploy-verified-image.sh', encoding: 'Base64', text: '__DEPLOY_BASE64__'
+                    withEnv(["IMAGE_ID=${candidate.image}", "TARGET_ENV=${candidate.environment}",
+                             "SOURCE_JOB=${candidate.job}", "SOURCE_BUILD=${candidate.build}",
+                             "SOURCE_COMMIT=${candidate.commit}"]) {
+                        withCredentials([file(credentialsId: "artel-orchestration-server-env-${candidate.environment}", variable: 'ENV_FILE')]) {
+                            sh 'bash deploy-verified-image.sh'
+                        }
+                    }
+                    currentBuild.description = "${candidate.environment} ${candidate.commit.take(12)}"
+                }
+            }
+            post { always { deleteDir() } }
+        }
+    }
+}
