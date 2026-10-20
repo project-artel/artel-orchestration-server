@@ -46,13 +46,15 @@ class QaVerdictService(
             val rows = qaLogs.findStepVerdicts(qaTryId).toList().associateBy { payloadOf(it).path("step").asInt() }
             val payloads = rows.mapValues { (_, row) -> payloadOf(row) }
             val captures = captureLinks(qaTryId, payloads.values.flatMap(::capturedIds).toSet())
+            val calls = if (payloads.values.all { it.hasNonNull("reason") }) emptyList()
+            else qaLogs.findVerdictToolCalls(qaTryId).toList()
             QaTryVerdicts(
                 qaTryId = qaTryId.toString(),
                 testScenarioId = qaTry.testScenarioId.toString(),
                 scenarioTitle = scenario?.title.orEmpty(),
                 status = qaTry.status,
                 verdicts = rows.toSortedMap().map { (step, row) ->
-                    verdictOf(row, payloads.getValue(step), steps, captures)
+                    verdictOf(row, payloads.getValue(step), steps, captures, calls)
                 },
             )
         }
@@ -64,6 +66,7 @@ class QaVerdictService(
         payload: JsonNode,
         steps: JsonNode?,
         captures: Map<String, QaVerdictCapture>,
+        calls: List<QaLogEntity>,
     ): QaStepVerdict {
         val step = payload.path("step").asInt()
         val checks = payload.path("checks").takeIf { it.isArray }
@@ -76,12 +79,27 @@ class QaVerdictService(
             isVerification = payload.path("is_verification").asBoolean(false),
             passed = payload.path("status").asText() == "COMPLETED",
             message = payload.path("message").asText(row.message.orEmpty()),
-            reason = payload.path("reason").asText("").takeIf { it.isNotBlank() },
+            reason = payload.path("reason").asText("").takeIf { it.isNotBlank() } ?: thoughtOf(row, payload, calls),
             evidence = evidence,
             checks = checks,
             captures = capturedIds(payload).mapNotNull(captures::get),
             judgedAt = row.createdAt,
         )
+    }
+
+    /**
+     * 근거 칸이 생기기 전 판정의 이유. 판정 STATUS 바로 앞의 같은 스텝(FREE 는 같은 TC) 판정 도구 호출에 모델이 쓴
+     * `thought` 가 남아 있다 — 그래서 지난 실행도 "왜" 를 보인다.
+     */
+    private fun thoughtOf(row: QaLogEntity, payload: JsonNode, calls: List<QaLogEntity>): String? {
+        val statusId = requireNotNull(row.id)
+        val step = payload.path("step").asInt()
+        val caseId = payload.path("case_id").takeIf { it.canConvertToLong() }?.asLong()
+        return calls.lastOrNull { call ->
+            val args = payloadOf(call).path("args")
+            requireNotNull(call.id) < statusId &&
+                (args.path("step").asInt(-1) == step || (caseId != null && args.path("case_id").asLong(-1) == caseId))
+        }?.let { payloadOf(it).path("args").path("thought").asText("").takeIf(String::isNotBlank) }
     }
 
     private fun payloadOf(row: QaLogEntity): JsonNode = objectMapper.readTree(row.payload.asString())

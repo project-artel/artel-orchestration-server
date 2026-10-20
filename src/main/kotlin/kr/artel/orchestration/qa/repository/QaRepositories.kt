@@ -372,6 +372,17 @@ interface QaLogRepository : CoroutineCrudRepository<QaLogEntity, Long> {
         """
     )
     fun findScreenshots(qaTryId: Long, captureIds: Collection<String>): Flow<QaLogEntity>
+
+    /** 판정 도구 호출 행(ARTEL-1134). 근거 칸이 생기기 전 판정의 이유(`thought`)가 여기에만 있다. */
+    @Query(
+        """
+        SELECT * FROM qa_log
+        WHERE qa_try_id = :qaTryId AND type = 'TOOL'
+          AND payload ->> 'tool' IN ('report_step', 'report_case')
+        ORDER BY id ASC
+        """
+    )
+    fun findVerdictToolCalls(qaTryId: Long): Flow<QaLogEntity>
 }
 
 /** 채점 결과 저장소(ARTEL-301). 읽기는 후속 점수 화면이 쓴다. */

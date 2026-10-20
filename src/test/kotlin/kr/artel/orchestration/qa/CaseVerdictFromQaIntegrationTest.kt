@@ -17,6 +17,8 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.qa.entity.QaLogEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
@@ -145,6 +147,13 @@ class CaseVerdictFromQaIntegrationTest {
                 .put("kind", "pulse").put("key", "MapScene::stage").put("value", "Stage : 0")
                 .put("recorded", "Stage : 0").put("citation", "match")
         }
+        // 근거 칸이 없는 판정의 이유는 바로 앞 판정 도구 호출의 `thought` 다.
+        qaLogRepository.save(
+            QaLogEntity(
+                qaTryId = run.tryId, direction = "AGENT_TO_ORCHE", type = "TOOL", message = "report_step",
+                payload = Json.of("""{"tool":"report_step","args":{"step":3,"passed":false,"thought":"적이 남아 있다"}}"""),
+            )
+        )
         reportStep(run.tryId, step = 3, caseId = run.failedCaseId, verification = true, passed = false)
 
         // TC 판정은 그 판정을 실은 STATUS 행을 가리킨다.
@@ -168,7 +177,8 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(judged.checks!!.path(0).path("sources").path(0).path("citation").asText()).isEqualTo("match")
         assertThat(verdicts[2].passed).isFalse()
         assertThat(verdicts[2].evidence).isEqualTo("none")
-        assertThat(verdicts[2].reason).isNull()
+        assertThat(verdicts[2].reason).isEqualTo("적이 남아 있다")
+        assertThat(verdicts[0].reason).isNull()
 
         // 보이지 않는 런은 없는 것이다.
         assertThatThrownBy { runBlocking { qaVerdictService.list(run.qaRunId, run.ownerId + 999) } }
