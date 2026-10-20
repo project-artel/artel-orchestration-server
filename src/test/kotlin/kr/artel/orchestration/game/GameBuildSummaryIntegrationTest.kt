@@ -219,19 +219,20 @@ class GameBuildSummaryIntegrationTest {
         val withoutBuild = seedRun(testRunId, instance, null, "CANCELLED", now.minusSeconds(400))
         seedTry(third, passed = 1, total = 3)
 
-        val all = get("/api/projects/$projectId/qa-runs")["items"].toList()
-        assertThat(all.map { it["id"].asText() })
-            .containsExactly(third.toString(), second.toString(), first.toString(), withoutBuild.toString())
-        assertThat(all[0]["gameBuildId"].asText()).isEqualTo(buildB.toString())
-        assertThat(all[0]["tries"]).hasSize(1)
-        assertThat(all[3]["gameBuildId"].isNull).isTrue()
-        println(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(all[0]))
-
         val onlyB = get("/api/projects/$projectId/qa-runs?gameBuildId=$buildB")["items"].toList()
         assertThat(onlyB.map { it["id"].asText() }).containsExactly(third.toString(), second.toString())
+        assertThat(onlyB[0]["gameBuildId"].asText()).isEqualTo(buildB.toString())
+        assertThat(onlyB[0]["tries"]).hasSize(1)
+        val onlyA = get("/api/projects/$projectId/qa-runs?gameBuildId=$buildA")["items"].toList()
+        assertThat(onlyA.map { it["id"].asText() }).containsExactly(first.toString())
+        println(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(onlyB[0]))
 
-        val limited = get("/api/projects/$projectId/qa-runs?size=1")["items"].toList()
+        val limited = get("/api/projects/$projectId/qa-runs?gameBuildId=$buildB&size=1")["items"].toList()
         assertThat(limited.map { it["id"].asText() }).containsExactly(third.toString())
+
+        // `gameBuildId` 가 없으면 같은 경로의 QA 실행 목록(ProjectQaLaunchController)이 답한다. 빌드 없이 돈 run 도 거기 있다.
+        val launch = get("/api/projects/$projectId/qa-runs")["items"].toList()
+        assertThat(launch.map { it["id"].asText() }).contains(withoutBuild.toString())
 
         assertThat(get("/api/qa-runs/$third")["gameBuildId"].asText()).isEqualTo(buildB.toString())
     }
@@ -239,19 +240,19 @@ class GameBuildSummaryIntegrationTest {
     @Test
     fun `rejects a size outside 1 to 100 and a malformed build id`(): Unit = runBlocking {
         listOf("0", "101", "-1").forEach {
-            assertThat(errorOf { get("/api/projects/$projectId/qa-runs?size=$it") }.statusCode)
+            assertThat(errorOf { get("/api/projects/$projectId/qa-runs?gameBuildId=1&size=$it") }.statusCode)
                 .isEqualTo(HttpStatus.BAD_REQUEST)
         }
         assertThat(errorOf { get("/api/projects/$projectId/qa-runs?gameBuildId=abc") }.statusCode)
             .isEqualTo(HttpStatus.BAD_REQUEST)
-        assertThat(get("/api/projects/$projectId/qa-runs?size=100")["items"]).isEmpty()
+        assertThat(get("/api/projects/$projectId/qa-runs?gameBuildId=1&size=100")["items"]).isEmpty()
     }
 
     @Test
     fun `hides the run list from a stranger`(): Unit = runBlocking {
         val stranger = jwtService.issue(oauthUserService.upsert(identity("77", "stranger")))
 
-        assertThat(errorOf { get("/api/projects/$projectId/qa-runs", stranger) }.statusCode)
+        assertThat(errorOf { get("/api/projects/$projectId/qa-runs?gameBuildId=1", stranger) }.statusCode)
             .isEqualTo(HttpStatus.NOT_FOUND)
     }
 

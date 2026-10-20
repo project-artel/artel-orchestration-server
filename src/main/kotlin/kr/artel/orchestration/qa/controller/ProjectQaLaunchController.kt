@@ -21,7 +21,11 @@ import org.springframework.web.bind.annotation.RestController
 class ProjectQaLaunchController(
     private val service: QaLaunchReadService,
 ) {
-    /** 프로젝트의 QA 실행, 최신순. `testRunId` 를 주면 그 테스트 런의 실행만. */
+    /**
+     * 프로젝트의 QA 실행, 최신순. `testRunId` 를 주면 그 테스트 런의 실행만.
+     *
+     * `gameBuildId` 가 붙은 같은 경로는 [ProjectQaRunController.list] 가 받는다 — 같은 조건으로 둘이 매핑되면 기동이 멈춘다.
+     */
     @GetMapping("/qa-runs")
     suspend fun listQaRuns(
         @PathVariable projectId: Long,
