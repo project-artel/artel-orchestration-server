@@ -3,6 +3,8 @@ package kr.artel.orchestration.qa.service
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.project.service.ProjectAccessService
+import kr.artel.orchestration.qa.dto.QaRunListItem
+import kr.artel.orchestration.qa.dto.QaRunListResponse
 import kr.artel.orchestration.qa.dto.QaRunSummaryListResponse
 import kr.artel.orchestration.qa.dto.QaRunSummaryResponse
 import kr.artel.orchestration.qa.dto.SinceLastQaChange
@@ -24,6 +26,7 @@ class QaLaunchReadService(
     private val repository: QaLaunchReadRepository,
     private val projectAccess: ProjectAccessService,
     private val testRunRepository: TestRunRepository,
+    private val qaTryService: QaTryService,
 ) {
 
     /**
@@ -37,6 +40,26 @@ class QaLaunchReadService(
         if (limit !in 1..MAX_LIMIT) throw BadRequestException("limit 은 1~$MAX_LIMIT 이어야 합니다.")
         projectAccess.requireMember(projectId, appUserId)
         return QaRunSummaryListResponse(repository.findRuns(projectId, testRunId, limit).map { it.toResponse() })
+    }
+
+    /**
+     * `GET /api/projects/{projectId}/qa-runs` 의 응답(ARTEL-1161) — [listRuns] 의 요약 줄에 run 개요(`tries` 등)를 붙인다.
+     *
+     * 이 경로는 QA 실행 · 히스토리(ARTEL-1083, `limit` · `testRunId`)와 빌드 상세(ARTEL-1104, `size` · `gameBuildId`)가
+     * 같이 쓴다. 상한은 부르는 쪽이 자기 파라미터 규칙으로 확인한다 — `limit` 은 [MAX_LIMIT], `size` 는 [MAX_SIZE].
+     */
+    suspend fun listProjectRuns(
+        projectId: Long,
+        appUserId: Long,
+        count: Int,
+        testRunId: Long?,
+        gameBuildId: Long?,
+    ): QaRunListResponse {
+        require(count in 1..MAX_SIZE) { "count 는 1~$MAX_SIZE 이어야 한다: $count" }
+        projectAccess.requireMember(projectId, appUserId)
+        val summaries = repository.findRuns(projectId, testRunId, count, gameBuildId).map { it.toResponse() }
+        val runs = qaTryService.runResponses(summaries.map { it.id.toLong() })
+        return QaRunListResponse(summaries.mapNotNull { summary -> runs[summary.id.toLong()]?.let { QaRunListItem.of(summary, it) } })
     }
 
     /**
@@ -97,5 +120,6 @@ class QaLaunchReadService(
 
     companion object {
         const val MAX_LIMIT = 50
+        const val MAX_SIZE = 100
     }
 }

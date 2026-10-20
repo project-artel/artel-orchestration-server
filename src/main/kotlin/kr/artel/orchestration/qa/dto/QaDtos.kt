@@ -349,7 +349,3 @@ data class QaTryToolCall(
     val calls: Long
 )
 
-/** 프로젝트의 run 목록 응답 봉투. 새 것이 앞에 온다. */
-data class QaRunListResponse(
-    val items: List<QaRunResponse>
-)

@@ -237,6 +237,34 @@ class GameBuildSummaryIntegrationTest {
     }
 
     @Test
+    fun `serves the QA screen's limit and testRunId on the same list, with both shapes in one row`(): Unit = runBlocking {
+        // ARTEL-1161: QA 실행 · 히스토리(ARTEL-1083)와 빌드 상세(ARTEL-1104)가 이 경로를 따로 만들었다. 한 핸들러가 둘 다 받는다.
+        val build = seedBuild("1.0.0")
+        val instance = seedInstance(build, lastConnectedAt = now, connected = false)
+        val runA = testRunRepository.save(TestRunEntity(projectId = projectId, name = "A"))!!.id!!
+        val runB = testRunRepository.save(TestRunEntity(projectId = projectId, name = "B"))!!.id!!
+        val older = seedRun(runA, instance, build, "COMPLETED", now.minusSeconds(200))
+        val newer = seedRun(runB, instance, build, "COMPLETED", now.minusSeconds(100))
+        seedTry(older, passed = 2, total = 3)
+
+        val onlyA = get("/api/projects/$projectId/qa-runs?limit=10&testRunId=$runA")["items"].toList()
+        assertThat(onlyA.map { it["id"].asText() }).containsExactly(older.toString())
+        val row = onlyA.single()
+        assertThat(row["testRunName"].asText()).isEqualTo("A")
+        assertThat(row["casesPassed"].isNull).isTrue() // 케이스 판정이 없으면 0 이 아니라 null 이다(ARTEL-1083 규칙)
+        assertThat(row["issueCount"].asInt()).isZero()
+        assertThat(row["gameBuildId"].asText()).isEqualTo(build.toString())
+        assertThat(row["tries"]).hasSize(1)
+
+        assertThat(get("/api/projects/$projectId/qa-runs?limit=1")["items"].map { it["id"].asText() })
+            .containsExactly(newer.toString())
+        listOf("0", "51").forEach {
+            assertThat(errorOf { get("/api/projects/$projectId/qa-runs?limit=$it") }.statusCode)
+                .isEqualTo(HttpStatus.BAD_REQUEST)
+        }
+    }
+
+    @Test
     fun `rejects a size outside 1 to 100 and a malformed build id`(): Unit = runBlocking {
         listOf("0", "101", "-1").forEach {
             assertThat(errorOf { get("/api/projects/$projectId/qa-runs?size=$it") }.statusCode)

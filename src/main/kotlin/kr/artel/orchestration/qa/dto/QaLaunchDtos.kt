@@ -37,6 +37,63 @@ data class QaRunSummaryResponse(
 data class QaRunSummaryListResponse(val items: List<QaRunSummaryResponse>)
 
 /**
+ * `GET /api/projects/{projectId}/qa-runs` 의 한 줄(ARTEL-1161). [QaRunSummaryResponse] 의 칸에 [QaRunResponse] 의 칸을 더한다.
+ *
+ * 이 경로를 두 화면이 따로 만들었다 — QA 실행 · 히스토리(ARTEL-1083)는 요약 칸을, 빌드 상세(ARTEL-1104)는 `tries` 까지 든
+ * 개요를 읽는다. 한 경로에 핸들러는 하나뿐이라 두 모양을 한 줄에 싣는다. 겹치는 칸(`id` · `testRunId` · `gameInstanceId` ·
+ * `status` · `startedAt` · `completedAt`)은 두 쪽 값이 같다.
+ */
+data class QaRunListItem(
+    val id: String,
+    val testRunId: String,
+    val testRunName: String?,
+    val gameInstanceId: String,
+    val gameInstanceName: String?,
+    val gameBuildVersion: String?,
+    val model: String?,
+    val reasoningEffort: String?,
+    val keySource: String?,
+    val status: String,
+    val startedAt: Instant,
+    val completedAt: Instant?,
+    val casesPassed: Int?,
+    val casesTotal: Int?,
+    val issueCount: Int,
+    val gameBuildId: String?,
+    val startedBy: String,
+    val label: String?,
+    val tries: List<QaTryResponse>,
+    val testRunGameBuildId: String?,
+) {
+    companion object {
+        fun of(summary: QaRunSummaryResponse, run: QaRunResponse) = QaRunListItem(
+            id = summary.id,
+            testRunId = summary.testRunId,
+            testRunName = summary.testRunName,
+            gameInstanceId = summary.gameInstanceId,
+            gameInstanceName = summary.gameInstanceName,
+            gameBuildVersion = summary.gameBuildVersion,
+            model = summary.model,
+            reasoningEffort = summary.reasoningEffort,
+            keySource = summary.keySource,
+            status = summary.status,
+            startedAt = summary.startedAt,
+            completedAt = summary.completedAt,
+            casesPassed = summary.casesPassed,
+            casesTotal = summary.casesTotal,
+            issueCount = summary.issueCount,
+            gameBuildId = run.gameBuildId,
+            startedBy = run.startedBy,
+            label = run.label,
+            tries = run.tries,
+            testRunGameBuildId = run.testRunGameBuildId,
+        )
+    }
+}
+
+data class QaRunListResponse(val items: List<QaRunListItem>)
+
+/**
  * 테스트 런의 마지막 실행에서 나온 이슈 한 건(ARTEL-1083). 화면은 제목만 나열하고, 누르면 이슈로 간다.
  *
  * @property step 이슈가 나온 스텝 번호. 에이전트가 안 실었으면 null.

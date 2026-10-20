@@ -41,21 +41,6 @@ interface QaRunRepository : CoroutineCrudRepository<QaRunEntity, Long> {
     )
     suspend fun findAccessibleById(id: Long, userId: Long): QaRunEntity?
 
-    /**
-     * 프로젝트의 run, 새 것부터. [gameBuildId] 가 null 이면 빌드를 따지지 않는다. 접근 확인은 호출하는 쪽이 한다.
-     */
-    @Query(
-        """
-        SELECT qr.* FROM qa_run qr
-        JOIN test_run tr ON tr.id = qr.test_run_id
-        WHERE tr.project_id = :projectId
-          AND (CAST(:gameBuildId AS BIGINT) IS NULL OR qr.game_build_id = :gameBuildId)
-        ORDER BY qr.started_at DESC, qr.id DESC
-        LIMIT :limit
-        """
-    )
-    fun findByProject(projectId: Long, gameBuildId: Long?, limit: Int): Flow<QaRunEntity>
-
     @Modifying
     @Query(
         """

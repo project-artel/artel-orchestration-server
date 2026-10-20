@@ -24,7 +24,6 @@ import kr.artel.orchestration.knowledge.service.KnowledgeCitationService
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
 import kr.artel.orchestration.project.repository.ProjectRepository
-import kr.artel.orchestration.qa.dto.QaRunListResponse
 import kr.artel.orchestration.qa.dto.QaRunResponse
 import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.dto.QaTryResponse
@@ -854,17 +853,14 @@ class QaTryService(
     }
 
     /**
-     * 프로젝트의 run 을 새 것부터. [gameBuildId] 를 주면 그 빌드로 돈 run 만이다. 프로젝트에 접근할 수 없으면 null 이고
-     * 컨트롤러가 404 로 옮긴다. try 는 run 마다 묻지 않고 한 문장으로 모아 읽는다.
+     * run 들의 개요를 id 로. 프로젝트 run 목록(ARTEL-1161)이 요약 줄에 `tries` 를 붙일 때 쓴다. 접근 확인은 부르는 쪽이
+     * 이미 했다. try 는 run 마다 묻지 않고 한 문장으로 모아 읽는다.
      */
-    suspend fun listRunsByProject(projectId: Long, userId: Long, gameBuildId: Long?, size: Int): QaRunListResponse? {
-        projectRepository.findAccessibleById(projectId, userId) ?: return null
-        val runs = runRepository.findByProject(projectId, gameBuildId, size).toList()
-        if (runs.isEmpty()) return QaRunListResponse(emptyList())
-        val triesByRun = tryRepository.findByQaRunIdInOrderById(runs.map { requireNotNull(it.id) })
-            .toList()
-            .groupBy { it.qaRunId }
-        return QaRunListResponse(runs.map { it.toRunResponse(triesByRun[it.id].orEmpty()) })
+    suspend fun runResponses(qaRunIds: List<Long>): Map<Long, QaRunResponse> {
+        if (qaRunIds.isEmpty()) return emptyMap()
+        val triesByRun = tryRepository.findByQaRunIdInOrderById(qaRunIds).toList().groupBy { it.qaRunId }
+        return runRepository.findAllById(qaRunIds).toList()
+            .associate { requireNotNull(it.id) to it.toRunResponse(triesByRun[it.id].orEmpty()) }
     }
 
     suspend fun get(qaTryId: Long, userId: Long): QaTryResponse? =

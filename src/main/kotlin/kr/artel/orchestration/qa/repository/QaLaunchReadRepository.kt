@@ -71,8 +71,9 @@ class QaLaunchReadRepository(
      *
      * 케이스 합은 SUM 이라 판정이 하나도 없으면 null 로 남는다. 0 으로 뭉개면 "0/0 통과" 로 읽힌다.
      */
-    suspend fun findRuns(projectId: Long, testRunId: Long?, limit: Int): List<QaRunSummaryRow> {
+    suspend fun findRuns(projectId: Long, testRunId: Long?, limit: Int, gameBuildId: Long? = null): List<QaRunSummaryRow> {
         val runFilter = if (testRunId != null) "AND r.test_run_id = :testRunId" else ""
+        val buildFilter = if (gameBuildId != null) "AND r.game_build_id = :gameBuildId" else ""
         var spec = databaseClient.sql(
             """
             SELECT r.id, r.test_run_id, tr.name AS test_run_name,
@@ -97,6 +98,7 @@ class QaLaunchReadRepository(
               ) agg ON TRUE
              WHERE gi.project_id = :projectId
                $runFilter
+               $buildFilter
              ORDER BY r.started_at DESC, r.id DESC
              LIMIT :limit
             """.trimIndent()
@@ -104,6 +106,7 @@ class QaLaunchReadRepository(
             .bind("projectId", projectId)
             .bind("limit", limit)
         if (testRunId != null) spec = spec.bind("testRunId", testRunId)
+        if (gameBuildId != null) spec = spec.bind("gameBuildId", gameBuildId)
         return spec.map { row: Readable -> row.toRunRow() }.flow().toList()
     }
 

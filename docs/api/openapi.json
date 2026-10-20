@@ -53,10 +53,6 @@
       "description": "빌드에 앉은 씬 명세를 읽는다"
     },
     {
-      "name": "QA Run",
-      "description": "프로젝트의 QA run 목록"
-    },
-    {
       "name": "Issue tracker",
       "description": "프로젝트와 외부 이슈 트래커의 연결"
     },
@@ -1299,6 +1295,82 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-notes": {
+      "get": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 최신 버전",
+        "description": "저장한 적이 없으면 `version: 0`, 빈 `body` 와 `genres`, null `updatedAt` · `updatedBy` 다.",
+        "operationId": "getGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 저장",
+        "description": "새 버전을 만들어 돌려준다. 본문과 장르 집합이 최신과 같으면 버전을 올리지 않는다. `baseVersion` 이 최신이 아니면 409 `game_notes_conflict`, 본문이 20000 자를 넘거나 장르가 틀리면 400 이다.",
+        "operationId": "putGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGameNotesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/developer-macros/{name}": {
       "get": {
         "tags": [
@@ -1423,82 +1495,6 @@
         "responses": {
           "204": {
             "description": "No Content"
-          }
-        }
-      }
-    },
-    "/api/projects/{projectId}/game-notes": {
-      "get": {
-        "tags": [
-          "Game notes"
-        ],
-        "summary": "게임 노트 최신 버전",
-        "description": "저장한 적이 없으면 `version: 0`, 빈 `body` 와 `genres`, null `updatedAt` · `updatedBy` 다.",
-        "operationId": "getGameNotes",
-        "parameters": [
-          {
-            "name": "projectId",
-            "in": "path",
-            "description": "프로젝트 id",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/GameNotesResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Game notes"
-        ],
-        "summary": "게임 노트 저장",
-        "description": "새 버전을 만들어 돌려준다. 본문과 장르 집합이 최신과 같으면 버전을 올리지 않는다. `baseVersion` 이 최신이 아니면 409 `game_notes_conflict`, 본문이 20000 자를 넘거나 장르가 틀리면 400 이다.",
-        "operationId": "putGameNotes",
-        "parameters": [
-          {
-            "name": "projectId",
-            "in": "path",
-            "description": "프로젝트 id",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateGameNotesRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/GameNotesResponse"
-                }
-              }
-            }
           }
         }
       }
@@ -3818,7 +3814,7 @@
         ],
         "summary": "보낸 초대 목록",
         "description": "소유자만 볼 수 있다. 아직 답을 기다리는 초대만 나온다.",
-        "operationId": "list_10",
+        "operationId": "list_9",
         "parameters": [
           {
             "name": "projectId",
@@ -4072,7 +4068,7 @@
         ],
         "summary": "기획서 이력",
         "description": "최신 버전이 앞에 온다.",
-        "operationId": "list_14",
+        "operationId": "list_13",
         "parameters": [
           {
             "name": "projectId",
@@ -4676,7 +4672,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "list_16",
+        "operationId": "list_15",
         "responses": {
           "200": {
             "description": "OK",
@@ -5211,7 +5207,7 @@
         "tags": [
           "admin-llm-model-controller"
         ],
-        "operationId": "list_17",
+        "operationId": "list_16",
         "responses": {
           "200": {
             "description": "OK",
@@ -6170,6 +6166,46 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/since-last-qa": {
+      "get": {
+        "tags": [
+          "project-qa-launch-controller"
+        ],
+        "operationId": "sinceLastQa",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/SinceLastQaResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-runs/{runId}/deletion-preview": {
       "get": {
         "tags": [
@@ -6657,16 +6693,13 @@
     "/api/projects/{projectId}/qa-runs": {
       "get": {
         "tags": [
-          "QA Run"
+          "project-qa-launch-controller"
         ],
-        "summary": "프로젝트의 QA run 목록",
-        "description": "새 것이 앞에 온다. `gameBuildId` 를 주면 그 빌드로 돈 run 만 온다. `size` 는 1 이상 100 이하이고 벗어나면 400 이다. 프로젝트가 없거나 참여자가 아니면 404 다.",
-        "operationId": "list_7",
+        "operationId": "listQaRuns",
         "parameters": [
           {
             "name": "projectId",
             "in": "path",
-            "description": "프로젝트 id",
             "required": true,
             "schema": {
               "type": "integer",
@@ -6674,12 +6707,12 @@
             }
           },
           {
-            "name": "gameBuildId",
+            "name": "limit",
             "in": "query",
-            "description": "이 게임 빌드로 돈 run 만",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "integer",
+              "format": "int32"
             }
           },
           {
@@ -6688,8 +6721,24 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "format": "int32",
-              "default": 20
+              "format": "int32"
+            }
+          },
+          {
+            "name": "testRunId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -6714,7 +6763,7 @@
         ],
         "summary": "멤버 목록",
         "description": "참여자면 누구나 볼 수 있다. 소유자가 먼저, 그 안에서는 참여한 순서다. 참여자가 아니면 404.",
-        "operationId": "list_8",
+        "operationId": "list_7",
         "parameters": [
           {
             "name": "projectId",
@@ -6830,7 +6879,7 @@
         "tags": [
           "project-issue-controller"
         ],
-        "operationId": "list_9",
+        "operationId": "list_8",
         "parameters": [
           {
             "name": "projectId",
@@ -6945,7 +6994,7 @@
         ],
         "summary": "게임 인스턴스 목록",
         "description": "최근에 만든 것이 앞에 온다.",
-        "operationId": "list_11",
+        "operationId": "list_10",
         "parameters": [
           {
             "name": "projectId",
@@ -6979,7 +7028,7 @@
         ],
         "summary": "게임 빌드 목록",
         "description": "최근에 보고된 것이 앞에 온다.",
-        "operationId": "list_12",
+        "operationId": "list_11",
         "parameters": [
           {
             "name": "projectId",
@@ -7053,7 +7102,7 @@
         ],
         "summary": "등록된 macro 목록",
         "description": "이 빌드에 등록된 macro 를 이름 오름차순으로 읽는다. `source` 는 싣지 않는다 — 원문은 상세 조회에 있다. 등록된 것이 없으면 빈 `items` 다.",
-        "operationId": "list_13",
+        "operationId": "list_12",
         "parameters": [
           {
             "name": "projectId",
@@ -7656,7 +7705,7 @@
         ],
         "summary": "받은 초대 목록",
         "description": "로그인한 계정으로 온 초대와 그 계정의 확인된 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없어도 계정으로 온 초대는 나온다.",
-        "operationId": "list_15",
+        "operationId": "list_14",
         "responses": {
           "200": {
             "description": "OK",
@@ -8352,6 +8401,7 @@
           "absorbed_scenario_ids",
           "description",
           "draft_id",
+          "execution_mode",
           "steps",
           "title"
         ],
@@ -8375,6 +8425,13 @@
             "items": {
               "$ref": "#/components/schemas/ChatScenarioStep"
             }
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
           },
           "absorbed_scenario_ids": {
             "type": "array",
@@ -8643,6 +8700,80 @@
           }
         }
       },
+      "UpdateGameNotesRequest": {
+        "required": [
+          "baseVersion",
+          "body",
+          "genres"
+        ],
+        "type": "object",
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "baseVersion": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "GameNoteAuthorResponse": {
+        "required": [
+          "displayName",
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          }
+        }
+      },
+      "GameNotesResponse": {
+        "required": [
+          "body",
+          "genres",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "body": {
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "ui-flow",
+                "turn-based"
+              ]
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/GameNoteAuthorResponse"
+          }
+        }
+      },
       "PutDeveloperMacroRequest": {
         "required": [
           "gameBuildId",
@@ -8723,80 +8854,6 @@
           },
           "updatedBy": {
             "$ref": "#/components/schemas/DeveloperMacroAuthor"
-          }
-        }
-      },
-      "UpdateGameNotesRequest": {
-        "required": [
-          "baseVersion",
-          "body",
-          "genres"
-        ],
-        "type": "object",
-        "properties": {
-          "body": {
-            "maxLength": 20000,
-            "minLength": 0,
-            "type": "string"
-          },
-          "genres": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "baseVersion": {
-            "type": "integer",
-            "format": "int32"
-          }
-        }
-      },
-      "GameNoteAuthorResponse": {
-        "required": [
-          "displayName",
-          "id"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          }
-        }
-      },
-      "GameNotesResponse": {
-        "required": [
-          "body",
-          "genres",
-          "version"
-        ],
-        "type": "object",
-        "properties": {
-          "version": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "body": {
-            "type": "string"
-          },
-          "genres": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "ui-flow",
-                "turn-based"
-              ]
-            }
-          },
-          "updatedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updatedBy": {
-            "$ref": "#/components/schemas/GameNoteAuthorResponse"
           }
         }
       },
@@ -13766,6 +13823,163 @@
           }
         }
       },
+      "QaRunSummaryResponse": {
+        "required": [
+          "gameInstanceId",
+          "id",
+          "issueCount",
+          "startedAt",
+          "status",
+          "testRunId"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "testRunId": {
+            "type": "string"
+          },
+          "testRunName": {
+            "type": "string"
+          },
+          "gameInstanceId": {
+            "type": "string"
+          },
+          "gameInstanceName": {
+            "type": "string"
+          },
+          "gameBuildVersion": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "casesPassed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "casesTotal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "SinceLastQaChange": {
+        "required": [
+          "at",
+          "count",
+          "kind"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "subjectId": {
+            "type": "string"
+          },
+          "subjectName": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "SinceLastQaIssue": {
+        "required": [
+          "id",
+          "qaTryId",
+          "reportedAt",
+          "scenarioId",
+          "scenarioTitle",
+          "status",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "scenarioId": {
+            "type": "string"
+          },
+          "scenarioTitle": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reportedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SinceLastQaResponse": {
+        "required": [
+          "changes",
+          "issues"
+        ],
+        "type": "object",
+        "properties": {
+          "lastQaRun": {
+            "$ref": "#/components/schemas/QaRunSummaryResponse"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SinceLastQaIssue"
+            }
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SinceLastQaChange"
+            }
+          }
+        }
+      },
       "RunDeletionPreview": {
         "required": [
           "keptForQaHistoryCount",
@@ -14467,6 +14681,89 @@
           }
         }
       },
+      "QaRunListItem": {
+        "required": [
+          "gameInstanceId",
+          "id",
+          "issueCount",
+          "startedAt",
+          "startedBy",
+          "status",
+          "testRunId",
+          "tries"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "testRunId": {
+            "type": "string"
+          },
+          "testRunName": {
+            "type": "string"
+          },
+          "gameInstanceId": {
+            "type": "string"
+          },
+          "gameInstanceName": {
+            "type": "string"
+          },
+          "gameBuildVersion": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "casesPassed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "casesTotal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "startedBy": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "tries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaTryResponse"
+            }
+          },
+          "testRunGameBuildId": {
+            "type": "string"
+          }
+        }
+      },
       "QaRunListResponse": {
         "required": [
           "items"
@@ -14476,7 +14773,7 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/QaRunResponse"
+              "$ref": "#/components/schemas/QaRunListItem"
             }
           }
         }
