@@ -8,7 +8,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
 
-/** `telemetry_error_event`(V120). orchestration 이 5xx 로 답한 예외를 telemetry report 에 싣기 위해 남긴다. */
+/** `telemetry_error_event`(V131). orchestration 이 5xx 로 답한 예외를 telemetry report 에 싣기 위해 남긴다. */
 @Repository
 class TelemetryErrorEventRepository(
     private val databaseClient: DatabaseClient
@@ -38,7 +38,7 @@ class TelemetryErrorEventRepository(
             .fetch().rowsUpdated().awaitSingle()
 }
 
-/** `telemetry_report`(V119). artel.kr 의 receiver 가 받은 report 를 둔다. */
+/** `telemetry_report`(V130). artel.kr 의 receiver 가 받은 report 를 둔다. */
 @Repository
 class TelemetryReportRepository(
     private val databaseClient: DatabaseClient
