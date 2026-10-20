@@ -67,7 +67,14 @@ class ApiExceptionHandler {
             else error.message ?: genericMessageFor(error.status.value())
         return ResponseEntity.status(error.status)
             .headers { headers -> error.responseHeaders.forEach(headers::set) }
-            .body(ApiErrorResponse(code = error.code, message = clientMessage))
+            .body(
+                ApiErrorResponse(
+                    code = error.code,
+                    message = clientMessage,
+                    // 5xx 는 message 와 같은 이유로 fields 도 내보내지 않는다.
+                    fields = if (serverError) emptyMap() else error.responseFields
+                )
+            )
     }
 
     /**
@@ -122,7 +129,8 @@ class ApiExceptionHandler {
 }
 
 /**
- * @property fields 필드별 오류. 검증 실패가 아니면 비어 있다
+ * @property fields 필드별 오류. DTO 검증 실패와 [kr.artel.orchestration.common.error.ApiException.responseFields] 를
+ *   채운 4xx 가 아니면 비어 있다
  */
 data class ApiErrorResponse(
     val code: String,

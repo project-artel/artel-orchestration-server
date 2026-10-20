@@ -66,6 +66,22 @@ interface ContentMapDocumentRepository : CoroutineCrudRepository<ContentMapDocum
     fun findPendingByGameBuild(gameBuildId: Long, limit: Int): Flow<ContentMapDocumentEntity>
 
     /**
+     * `scene_object` 가 하나도 없는 지도마다 **가장 나중에 적재된** 문서 한 장(ARTEL-1059 백필).
+     *
+     * 지도의 `scene` · `capability` 행은 지금 그 문서의 것이다. 오브젝트도 같은 문서에서 와야 `scene-context`
+     * 가 한 `scene` 아래 싣는 `capabilities` 와 `objects` 가 같은 코드를 말한다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT ON (d.content_map_id) d.* FROM content_map_document d
+        WHERE d.ingested_at IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM scene_object o WHERE o.content_map_id = d.content_map_id)
+        ORDER BY d.content_map_id, d.ingested_at DESC, d.id DESC
+        """
+    )
+    fun findLatestIngestedWithoutSceneObjects(): Flow<ContentMapDocumentEntity>
+
+    /**
      * 적재 도장. **행 전체를 저장하지 않고 두 칸만 갱신한다.**
      *
      * `save(entity.copy(...))` 는 UPDATE 에 모든 칸을 실어, 읽어 온 엔티티에 없던 값(`received_at` 은

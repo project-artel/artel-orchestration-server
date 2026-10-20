@@ -14,6 +14,7 @@ import kr.artel.orchestration.contentmap.entity.Actionability
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.testcase.dto.CaseGuard
 import kr.artel.orchestration.testcase.dto.ValueMove
+import kr.artel.orchestration.testscenario.service.AuthoringCases
 import kr.artel.orchestration.testscenario.service.Guard
 import kr.artel.orchestration.testcase.dto.SceneEdge
 import kr.artel.orchestration.testcase.dto.SceneExit
@@ -64,6 +65,9 @@ class TestCaseService(
     private val gameBuilds: GameBuildRepository,
     private val manualCases: ManualCaseVersionService,
     private val folderItems: TestCaseFolderItemRepository,
+    // 저작이 TC 와 지도 사실을 읽는 자리(ARTEL-1064). 런이 빌드 버전을 따르면 그 버전의 것을 준다.
+    private val authoringCases: AuthoringCases,
+    private val reader: TestCaseReader,
 ) {
 
     private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
@@ -74,9 +78,16 @@ class TestCaseService(
      * 거르고, 필터를 타는 경로가 없으니 그 코드는 "동작한다"고 말할 근거도 없었다.
      * 서버에서 걸러야 할 만큼 목록이 커지면 그때 실제 소비자에 맞춰 다시 넣는 편이 낫다.
      */
-    suspend fun listTestCases(projectId: Long, userId: Long): TestCaseListResponse {
+    suspend fun listTestCases(projectId: Long, userId: Long, gameBuildId: Long? = null): TestCaseListResponse {
         if (!projectAccessService.isMember(projectId, userId)) return TestCaseListResponse(emptyList())
         val folderIds = folderItems.findFirstFolders(projectId).toList().associate { it.testCaseId to it.folderId }
+        if (gameBuildId != null) {
+            // 버전을 따르는 화면(TR)은 그 버전에 든 케이스만, 그 버전 내용으로 받는다(ARTEL-1069).
+            gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: throw NotFoundException("버전을 찾을 수 없습니다.")
+            val items = reader.inScope(projectId, CaseScope.Version(gameBuildId)).asReversed()
+                .map { it.toTestCaseResponse(folderIds[it.id]) }
+            return TestCaseListResponse(items)
+        }
         val items = repository.findByProjectIdOrderByIdDesc(projectId)
             .map { it.toTestCaseResponse(folderIds[it.id]) }
             .toList()
@@ -127,7 +138,8 @@ class TestCaseService(
         // 했는데, 그 도구가 준 나머지(씬 · 요구 · 남기는 것)는 이 목록에 이미 실려 있었다.
         // 한 칸을 옮기면 왕복이 사라진다 — 늘 참인 사실은 목록이 한 번 말한다.
         val inputs = caseInputs(projectId)
-        return repository.findByProjectIdOrderByIdAsc(projectId)
+        // 런이 빌드 버전을 따르면 케이스 내용은 그 버전 몫이다(ARTEL-1064). 맥락이 없으면 대표 행 그대로다.
+        return authoringCases.all(projectId)
             // **깨진 것은 저작 재료가 아니다**(ARTEL-685). 지도를 다시 적재하면 더 이상 뒷받침되지
             // 않는 케이스가 `BROKEN` 으로 남는다. 보내면 모델이 그것을 담고, 커버리지 기준에는
             // 없으므로 "없는 케이스 번호"로 걸려 저작이 통째로 막힌다 — 실측(런 268)에서 14건.
@@ -228,7 +240,7 @@ class TestCaseService(
     }
 
     private suspend fun valueMoves(projectId: Long): Map<String, List<OwnedMove>> = runCatching {
-        repository.findValueMoves(projectId).toList()
+        authoringCases.valueMoves(projectId).toList()
             .map { row ->
                 OwnedMove(
                     owner = row.target,
@@ -258,7 +270,7 @@ class TestCaseService(
     private data class OwnedMove(val owner: String, val move: ValueMove)
 
     private suspend fun valueRaisers(projectId: Long): Map<String, List<String>> = runCatching {
-        repository.findValueRaisers(projectId).toList()
+        authoringCases.valueRaisers(projectId).toList()
             .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
             .mapValues { (_, scenes) -> scenes.distinct().sorted() }
     }.getOrElse { emptyMap() }
@@ -268,7 +280,7 @@ class TestCaseService(
      * `capability_key` 가 없어서 가리킬 조작이 없다.
      */
     private suspend fun caseInputs(projectId: Long): Map<Long, String> = runCatching {
-        repository.findCaseInputs(projectId).toList()
+        authoringCases.caseInputs(projectId).toList()
             .filter { it.input.isNotBlank() }
             .associate { it.testCaseId to it.input }
     }.getOrElse { emptyMap() }
@@ -288,7 +300,7 @@ class TestCaseService(
      * 정렬은 프롬프트 캐시 때문이다 — 같은 지도면 바이트까지 같아야 앞부분이 재활용된다.
      */
     suspend fun sceneEdges(projectId: Long): List<SceneEdge> = runCatching {
-        repository.findSceneExits(projectId).toList()
+        authoringCases.sceneExits(projectId).toList()
             .groupBy { it.fromScene to it.toScene }
             // 한 화면으로 가는 길이 여럿이면 **누를 것이 있는 쪽**을 먼저 든다.
             .map { (pair, ways) -> SceneEdge(pair.first, pair.second, ways.firstNotNullOfOrNull { it.byOperation }) }
@@ -304,7 +316,7 @@ class TestCaseService(
      * 흐름을 끄면 이 값이 아무 데도 안 나가므로, 세션을 열 때 직접 싣는다.
      */
     suspend fun startingValues(projectId: Long): Map<String, String> = runCatching {
-        repository.findStartingValues(projectId).toList()
+        authoringCases.startingValues(projectId).toList()
             .mapNotNull { row -> ScenarioStateReader.defaultOf(row.detail)?.let { ScenarioStateReader.normalize(row.name) to it } }
             .sortedBy { it.first }
             .toMap()
@@ -312,7 +324,7 @@ class TestCaseService(
         .getOrElse { emptyMap() }
 
     private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Map<String, String>> = runCatching {
-        repository.findValuesChangedByCases(projectId).toList()
+        authoringCases.valuesChangedByCases(projectId).toList()
             .groupBy { it.caseId }
             .mapValues { (_, writes) ->
                 writes.mapNotNull { write ->
@@ -426,8 +438,15 @@ class TestCaseService(
      *
      * 목록과 달리 `evidenceGaps`까지 낸다 — 왜 상세에만 싣는지는 [TestCaseDetailResponse] 참조.
      */
-    suspend fun getTestCase(caseId: Long, userId: Long): TestCaseDetailResponse? =
-        accessible(caseId, userId)?.toTestCaseDetailResponse(objectMapper, folderItems.findFirstFolderId(caseId))
+    /**
+     * 케이스 단건. [gameBuildId] 를 주면 그 버전으로 비춘다(ARTEL-1069) — TR 화면이 TR 버전의 내용과 판정을 본다.
+     * 그 버전에 몫이 없으면 정체 그대로다.
+     */
+    suspend fun getTestCase(caseId: Long, userId: Long, gameBuildId: Long? = null): TestCaseDetailResponse? {
+        val identity = accessible(caseId, userId) ?: return null
+        return reader.overlay(identity, CaseScope.of(gameBuildId))
+            .toTestCaseDetailResponse(objectMapper, folderItems.findFirstFolderId(caseId))
+    }
 
     /** 케이스 수정. 준 필드만 반영. verificationStatus는 enum 검증. */
     suspend fun updateTestCase(caseId: Long, userId: Long, request: TestCaseUpdateRequest): TestCaseResponse? {

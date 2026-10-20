@@ -2,6 +2,7 @@ package kr.artel.orchestration.contentmap.repository
 
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.Flow
+import kr.artel.orchestration.contentmap.dto.CapabilityWriteRow
 import kr.artel.orchestration.contentmap.entity.CapabilityEffectEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityEvidenceEntity
 import kr.artel.orchestration.contentmap.entity.CapabilityInferenceEntity
@@ -156,6 +157,25 @@ interface CapabilityEffectRepository : CoroutineCrudRepository<CapabilityEffectE
 
     /** 효과가 가리키는 값으로 되찾기. 관측이 어느 기능의 결과인지 맞출 때 쓴다. */
     fun findByTarget(target: String): Flow<CapabilityEffectEntity>
+
+    /**
+     * 지도 하나의 `write` 효과 전부(ARTEL-1059). `scene-context` 가 `capability` 마다 `writes` 로 싣는다.
+     *
+     * 지도 단위로 한 번 읽는다 — `capability` 마다 읽으면 런 시작이 `capability` 수만큼 느려진다
+     * (`SceneContextService` 의 질의 표). 순서는 `capability` id, 그 안에서 적재가 넣은 순서다.
+     */
+    @Query(
+        """
+        SELECT e.capability_id, e.target
+        FROM capability_effect e
+        JOIN capability c ON c.id = e.capability_id
+        WHERE c.content_map_id = :contentMapId
+          AND e.kind = 'write'
+          AND e.target IS NOT NULL
+        ORDER BY e.capability_id, e.id
+        """
+    )
+    fun findWritesByContentMapId(contentMapId: Long): Flow<CapabilityWriteRow>
 
     /**
      * 재적재가 근거 출신 효과만 갈아엎는다. 효과에는 안정 키가 없어 지우고 다시 넣는 것이 유일한 길이고,

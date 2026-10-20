@@ -48,6 +48,7 @@ import org.springframework.transaction.reactive.executeAndAwait
  */
 @Service
 class ScenarioReconcileService(
+    private val authoringCases: AuthoringCases,
     private val authoringVersions: AuthoringVersionResolver,
     // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
     private val conditions: CaseConditionReader,
@@ -190,7 +191,7 @@ class ScenarioReconcileService(
                 .onFailure { logger.warn("기능 실재 확인 실패 — 되찾기를 건너뛴다: ${it.message}") }
                 .getOrDefault(citedIds)
         val groundingEdges = runCatching {
-            testCaseRepository.findGroundedSceneEdges(projectId).toList().map {
+            authoringCases.groundedSceneEdges(projectId).toList().map {
                 ScenarioBridgeGrounding.Edge(it.fromScene, it.toScene, it.byOperation, it.capabilityId)
             }
         }.onFailure { logger.warn("간선 조회 실패 — 되찾기를 건너뛴다: ${it.message}") }
@@ -207,7 +208,7 @@ class ScenarioReconcileService(
         }
 
         val startingValues = runCatching {
-            testCaseRepository.findStartingValues(projectId).toList()
+            authoringCases.startingValues(projectId).toList()
                 .mapNotNull { row ->
                     ScenarioStateReader.defaultOf(row.detail)
                         ?.let { ScenarioStateReader.normalize(row.name) to it }
@@ -307,13 +308,15 @@ class ScenarioReconcileService(
         val checked = opened + free
         // 검수는 저장 **전에** 끝난다. 통과하지 못한 결과는 한 줄도 들어가지 않는다 — 절반만 저장하면
         // "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어 보인다).
-        val projectCaseIds = testCaseRepository.findIdsByProjectId(projectId).toSet()
+        val liveCaseIds = testCaseRepository.findIdsByProjectId(projectId).toSet()
+        // 판정을 요구하는 것은 저작에 보낸 케이스뿐이다 — 런이 빌드 버전을 따르면 그 버전에 든 것(ARTEL-1048).
+        // 프로젝트 전체로 세면 보내지도 않은 다른 버전의 케이스가 "검토 안 함" 이 되어 저장이 늘 막힌다.
+        // 보낸 목록은 그 버전의 판정 상태로 거르므로(ARTEL-1064) 같은 집합을 쓴다. 그 버전에서 살아 있는 케이스는
+        // 대표 행이 BROKEN 이어도 있는 케이스라 유령이 아니다.
+        val versionCaseIds = authoringGameBuildId()?.let { authoringVersions.caseIds(it) }
         val findings = ScenarioCoverageAudit.audit(
-            projectCaseIds = projectCaseIds,
-            // 판정을 요구하는 것은 저작에 보낸 케이스뿐이다 — 런이 빌드 버전을 따르면 그 버전에 든 것(ARTEL-1048).
-            // 프로젝트 전체로 세면 보내지도 않은 다른 버전의 케이스가 "검토 안 함" 이 되어 저장이 늘 막힌다.
-            reviewScope = authoringGameBuildId()?.let { build -> projectCaseIds intersect authoringVersions.caseIds(build) }
-                ?: projectCaseIds,
+            projectCaseIds = liveCaseIds + versionCaseIds.orEmpty(),
+            reviewScope = versionCaseIds ?: liveCaseIds,
             reviewed = if (droppedSolo.isEmpty()) reviewed else reviewed?.let {
                 ReviewedCases(
                     included = it.included.filterNot(droppedSolo::contains),
@@ -727,13 +730,13 @@ class ScenarioReconcileService(
         OpeningFacts(
             guards = facts.associate { it.id to it.guards },
             arrivesAt = runCatching {
-                testCaseRepository.findByProjectIdOrderByIdAsc(projectId).toList().associate { case ->
+                authoringCases.all(projectId).associate { case ->
                     case.id!! to runCatching { objectMapper.readTree(case.metadata.asString()) }
                         .getOrNull()?.path("arrives_at")?.asText(null)?.takeIf { it.isNotBlank() }
                 }
             }.getOrElse { emptyMap() },
             raisedIn = runCatching {
-                testCaseRepository.findValueRaisers(projectId).toList()
+                authoringCases.valueRaisers(projectId).toList()
                     .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
                     .mapValues { (_, scenes) -> scenes.distinct().sorted() }
             }.getOrElse { emptyMap() },
@@ -864,15 +867,17 @@ class ScenarioReconcileService(
         val changedBy: Map<Long, Set<String>>,
     )
 
-    private val held = ConcurrentHashMap<Long, ProjectFacts>()
+    // 프로젝트와 빌드 버전마다 따로 든다(ARTEL-1064). 버전이 다른 두 런의 사실이 섞이면 안 된다.
+    private val held = ConcurrentHashMap<Pair<Long, Long?>, ProjectFacts>()
 
     /** 이 프로젝트에 대해 들고 있던 것을 버린다. 새 요청이 시작될 때 부른다. */
     fun forget(projectId: Long) {
-        held.remove(projectId)
+        held.keys.removeIf { it.first == projectId }
     }
 
-    private suspend fun projectFacts(projectId: Long): ProjectFacts =
-        held[projectId] ?: ProjectFacts(
+    private suspend fun projectFacts(projectId: Long): ProjectFacts {
+        val key = projectId to authoringGameBuildId()
+        return held[key] ?: ProjectFacts(
             cases = caseFacts(projectId),
             raisedIn = raisedIn(projectId),
             changedIn = changedIn(projectId),
@@ -881,10 +886,11 @@ class ScenarioReconcileService(
             movable = movableValues(projectId),
             strayMovers = strayMoverNames(projectId),
             changedBy = valuesChangedByCases(projectId),
-        ).also { held[projectId] = it }
+        ).also { held[key] = it }
+    }
 
     private suspend fun caseFacts(projectId: Long): List<ScenarioSiblingCheck.CaseFact> = runCatching {
-        testCaseRepository.findByProjectIdOrderByIdAsc(projectId).toList().map { case ->
+        authoringCases.all(projectId).map { case ->
             ScenarioSiblingCheck.CaseFact(
                 id = case.id!!,
                 scene = ScenarioStateReader.sceneOf(case),
@@ -937,7 +943,7 @@ class ScenarioReconcileService(
 
     /** 값이 어떤 방식으로든 적히는 화면들 — 걷기의 놓아주기(clears) 전용. */
     private suspend fun changedIn(projectId: Long): Map<String, Set<String>> = runCatching {
-        testCaseRepository.findValueMoves(projectId).toList()
+        authoringCases.valueMoves(projectId).toList()
             .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
             .mapValues { (_, scenes) -> scenes.toSet() }
     }.onFailure { logger.warn("값이 바뀌는 화면 조회 실패 — 어긋남을 더 잡는다: ${it.message}") }
@@ -951,7 +957,7 @@ class ScenarioReconcileService(
         (raised.keys + changed.keys).associateWith { raised[it].orEmpty() + changed[it].orEmpty() }
 
     private suspend fun raisedIn(projectId: Long): Map<String, Set<String>> = runCatching {
-        testCaseRepository.findValueRaisers(projectId).toList()
+        authoringCases.valueRaisers(projectId).toList()
             .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
             .mapValues { (_, scenes) -> scenes.toSet() }
     }.onFailure { logger.warn("저절로 바뀌는 자리 조회 실패 — 어긋남을 덜 잡는다: ${it.message}") }
@@ -1030,7 +1036,7 @@ class ScenarioReconcileService(
      * 못 읽으면 빈 집합이고, 그러면 예전처럼 전부 놓아 준다 — 조회 실패가 저작을 막을 이유는 아니다.
      */
     private suspend fun onlyClimbing(projectId: Long): Set<String> = runCatching {
-        testCaseRepository.findValueMoves(projectId).toList()
+        authoringCases.valueMoves(projectId).toList()
             .mapNotNull { row -> row.detail?.trim()?.takeIf { it.length > 1 && (it[0] == '+' || it[0] == '-') }
                 ?.let { ScenarioStateReader.normalize(row.target).lowercase() to it[0] } }
             .groupBy({ it.first }, { it.second })
@@ -1100,7 +1106,7 @@ class ScenarioReconcileService(
         .getOrDefault(emptyMap())
 
     private suspend fun caseOfCapability(projectId: Long): (Long) -> Long? = runCatching {
-        testCaseRepository.findCaseIdByCapability(projectId).toList()
+        authoringCases.caseIdByCapability(projectId).toList()
             .associate { it.capabilityId to it.testCaseId }
     }.onFailure { logger.warn("기능의 케이스 조회 실패 — 이름 없이 메운다: ${it.message}") }
         .getOrDefault(emptyMap())
@@ -1111,7 +1117,7 @@ class ScenarioReconcileService(
      * (`waitingForAcknowledge`)으로 적히므로 전체 경로와 꼬리를 둘 다 담는다.
      */
     private suspend fun strayMoverNames(projectId: Long): Set<String> = runCatching {
-        testCaseRepository.findStrayWrittenValues(projectId).toList()
+        authoringCases.strayWrittenValues(projectId).toList()
             .flatMap { target ->
                 val normalized = ScenarioStateReader.normalize(target)
                 listOf(normalized, normalized.substringAfterLast('.'))
@@ -1120,7 +1126,7 @@ class ScenarioReconcileService(
         .getOrElse { emptySet() }
 
     private suspend fun movableValues(projectId: Long): Set<String> = runCatching {
-        testCaseRepository.findWrittenValues(projectId).toList().toSet()
+        authoringCases.writtenValues(projectId).toList().toSet()
     }.onFailure { logger.warn("지도가 움직이는 값 조회 실패 — 예전처럼 나눈다: ${it.message}") }
         .getOrElse { emptySet() }
 
@@ -1135,7 +1141,7 @@ class ScenarioReconcileService(
             guarded.substringBeforeLast('.', "") == written
 
     private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Set<String>> = runCatching {
-        testCaseRepository.findValuesChangedByCases(projectId).toList()
+        authoringCases.valuesChangedByCases(projectId).toList()
             .groupBy({ it.caseId }, { it.target })
             .mapValues { (_, targets) -> targets.toSet() }
     }.onFailure { logger.warn("케이스가 바꾸는 값 조회 실패 — 순서를 모른 채 나눈다: ${it.message}") }

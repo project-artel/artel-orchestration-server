@@ -37,6 +37,10 @@
       "description": "프로젝트 생성·조회·수정·삭제"
     },
     {
+      "name": "MCP",
+      "description": "artel-macro-mcp 로그인 넘겨주기"
+    },
+    {
       "name": "Macro",
       "description": "빌드에 등록된 macro 를 읽는다"
     },
@@ -59,6 +63,10 @@
     {
       "name": "SDK orchestration",
       "description": "Agent action delivery to connected game instances"
+    },
+    {
+      "name": "Developer Macro",
+      "description": "게임 개발자가 MCP 로 검사하고 등록하는 macro"
     },
     {
       "name": "SDK auth",
@@ -87,6 +95,10 @@
     {
       "name": "SDK token",
       "description": "로그인한 사용자의 SDK 토큰 발급"
+    },
+    {
+      "name": "Game notes",
+      "description": "planner 에게 주는 프로젝트별 게임 노트와 genre module"
     },
     {
       "name": "Project Invitation",
@@ -672,6 +684,64 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft/{draftId}": {
+      "put": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "updateChatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "draftId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftScenarioEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftScenario"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-run-folders/{testRunFolderId}": {
       "put": {
         "tags": [
@@ -773,6 +843,15 @@
             "name": "caseId",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "format": "int64"
@@ -1213,6 +1292,210 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/developer-macros/{name}": {
+      "get": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 상세",
+        "description": "목록 한 줄에 원문(`source`)을 더한 것이다.",
+        "operationId": "readDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "macro 이름(진입점 `def` 이름)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 등록",
+        "description": "검사를 통과하면 이름으로 넣거나 갱신하고 저장된 행을 돌려준다. `version` 은 정의가 실제로 바뀔 때만 오른다. 거절이면 400 `developer_macro_rejected` 이고 `fields` 에 `line`·`reason` 이 실린다.",
+        "operationId": "putDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "macro 이름(진입점 `def` 이름)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutDeveloperMacroRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 삭제",
+        "description": "행을 지운다. 그 이름이 없으면 404 다.",
+        "operationId": "deleteDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "macro 이름(진입점 `def` 이름)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-notes": {
+      "get": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 최신 버전",
+        "description": "저장한 적이 없으면 `version: 0`, 빈 `body` 와 `genres`, null `updatedAt` · `updatedBy` 다.",
+        "operationId": "getGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 저장",
+        "description": "새 버전을 만들어 돌려준다. 본문과 장르 집합이 최신과 같으면 버전을 올리지 않는다. `baseVersion` 이 최신이 아니면 409 `game_notes_conflict`, 본문이 20000 자를 넘거나 장르가 틀리면 400 이다.",
+        "operationId": "putGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGameNotesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
                 }
               }
             }
@@ -2278,11 +2561,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -2550,6 +2833,109 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft/discard": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "discardChatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftSelection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DraftScenario"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft/apply": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "applyChatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftSelection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftApplyResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-runs/{runId}/chat/close": {
       "post": {
         "tags": [
@@ -2711,6 +3097,15 @@
             "name": "projectId",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "format": "int64"
@@ -3786,6 +4181,82 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/UploadTicketResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/developer-macros:check": {
+      "post": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 검사",
+        "description": "agent-server 가 원문을 검사한다. 통과면 `{ok: true, parameters, docstring}`, 거절이면 `{ok: false, rejection: {line, reason}}` 이고 둘 다 200 이다. 저장하지 않는다.",
+        "operationId": "checkDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckDeveloperMacroRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mcp/handoffs": {
+      "post": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "MCP 로그인 넘겨주기",
+        "description": "로그인한 사용자가 MCP 연결을 허용하면 2분짜리 handoff JWT 를 서명해 MCP 로 갈 주소를 돌려준다. 브라우저 세션만 받고, CLI 토큰과 MCP access JWT 는 403 이다.",
+        "operationId": "createMcpHandoff",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMcpHandoffRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpHandoffResponse"
                 }
               }
             }
@@ -4880,6 +5351,37 @@
         }
       }
     },
+    "/internal/projects/{projectId}/developer-macros": {
+      "get": {
+        "tags": [
+          "internal-developer-macro-controller"
+        ],
+        "operationId": "listDeveloperMacrosForAgent",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalDeveloperMacroListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/llm-models": {
       "get": {
         "tags": [
@@ -5827,6 +6329,98 @@
                   "items": {
                     "$ref": "#/components/schemas/MessageResponse"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft": {
+      "get": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "chatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DraftScenario"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/cases-outside-build": {
+      "get": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "casesOutsideBuild",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameInstanceId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunCasesOutsideBuildResponse"
                 }
               }
             }
@@ -6800,6 +7394,62 @@
         }
       }
     },
+    "/api/projects/{projectId}/developer-macros": {
+      "get": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 목록",
+        "description": "프로젝트의 developer macro 를 이름 오름차순으로 읽는다. 원문(`source`)은 상세에 있다.",
+        "operationId": "listDeveloperMacros",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/macros/grammar": {
+      "get": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "macro 문법 글",
+        "description": "agent-server 의 `{grammar, rules}` JSON 을 본문과 content type 그대로 중계한다. `grammar` 는 macro DSL 문법 설명(markdown), `rules` 는 developer macro 규칙 문장 목록이다.",
+        "operationId": "grammar",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/llm-usage/stats": {
       "get": {
         "tags": [
@@ -7079,6 +7729,31 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/UserLlmKeyResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/artel-handoff-jwks.json": {
+      "get": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "handoff 서명 공개키(JWKS)",
+        "description": "handoff JWT 를 검증할 RSA 공개키. 설정이 없으면 빈 `keys` 다.",
+        "operationId": "handoffJwks",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object"
                   }
                 }
               }
@@ -7605,6 +8280,117 @@
           }
         }
       },
+      "ChatScenarioStep": {
+        "required": [
+          "action"
+        ],
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "case_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "input": {
+            "type": "string"
+          },
+          "step_source": {
+            "type": "string",
+            "enum": [
+              "CASE",
+              "CAPABILITY",
+              "UNKNOWN",
+              "HUMAN"
+            ]
+          },
+          "step_kind": {
+            "type": "string",
+            "enum": [
+              "ACTION",
+              "GAP",
+              "OPENING"
+            ]
+          },
+          "step_source_capability_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "step_unknown_reason": {
+            "type": "string"
+          }
+        }
+      },
+      "DraftScenarioEdit": {
+        "required": [
+          "description",
+          "steps",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatScenarioStep"
+            }
+          }
+        }
+      },
+      "DraftScenario": {
+        "required": [
+          "absorbed_scenario_ids",
+          "description",
+          "draft_id",
+          "steps",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "type": "string"
+          },
+          "scenario_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatScenarioStep"
+            }
+          },
+          "absorbed_scenario_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "base_steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatScenarioStep"
+            }
+          }
+        }
+      },
       "TestRunFolderRenameRequest": {
         "type": "object",
         "properties": {
@@ -7854,6 +8640,163 @@
           },
           "hidden": {
             "type": "boolean"
+          }
+        }
+      },
+      "PutDeveloperMacroRequest": {
+        "required": [
+          "gameBuildId",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "source": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "gameBuildId": {
+            "pattern": "^[0-9]{1,18}$",
+            "type": "string"
+          }
+        }
+      },
+      "DeveloperMacroAuthor": {
+        "required": [
+          "id",
+          "nickname"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          }
+        }
+      },
+      "DeveloperMacroDetailResponse": {
+        "required": [
+          "buildVersion",
+          "docstring",
+          "gameBuildId",
+          "name",
+          "parameters",
+          "source",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "docstring": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "buildVersion": {
+            "type": "string"
+          },
+          "buildLabel": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/DeveloperMacroAuthor"
+          }
+        }
+      },
+      "UpdateGameNotesRequest": {
+        "required": [
+          "baseVersion",
+          "body",
+          "genres"
+        ],
+        "type": "object",
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "baseVersion": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "GameNoteAuthorResponse": {
+        "required": [
+          "displayName",
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          }
+        }
+      },
+      "GameNotesResponse": {
+        "required": [
+          "body",
+          "genres",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "body": {
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "ui-flow",
+                "turn-based"
+              ]
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/GameNoteAuthorResponse"
           }
         }
       },
@@ -9206,6 +10149,9 @@
             "items": {
               "$ref": "#/components/schemas/QaTryResponse"
             }
+          },
+          "testRunGameBuildId": {
+            "type": "string"
           }
         }
       },
@@ -9480,51 +10426,6 @@
           }
         }
       },
-      "ChatScenarioStep": {
-        "required": [
-          "action"
-        ],
-        "type": "object",
-        "properties": {
-          "action": {
-            "type": "string"
-          },
-          "case_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "hint": {
-            "type": "string"
-          },
-          "input": {
-            "type": "string"
-          },
-          "step_source": {
-            "type": "string",
-            "enum": [
-              "CASE",
-              "CAPABILITY",
-              "UNKNOWN",
-              "HUMAN"
-            ]
-          },
-          "step_kind": {
-            "type": "string",
-            "enum": [
-              "ACTION",
-              "GAP",
-              "OPENING"
-            ]
-          },
-          "step_source_capability_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "step_unknown_reason": {
-            "type": "string"
-          }
-        }
-      },
       "CommitScenariosRequest": {
         "required": [
           "scenarios"
@@ -9575,6 +10476,7 @@
       "RunChatMessage": {
         "required": [
           "autoApply",
+          "draftOnly",
           "message"
         ],
         "type": "object",
@@ -9586,6 +10488,9 @@
             "$ref": "#/components/schemas/ScenarioQuestionAnswer"
           },
           "autoApply": {
+            "type": "boolean"
+          },
+          "draftOnly": {
             "type": "boolean"
           }
         }
@@ -9608,6 +10513,60 @@
           },
           "text": {
             "type": "string"
+          }
+        }
+      },
+      "DraftSelection": {
+        "required": [
+          "draft_ids"
+        ],
+        "type": "object",
+        "properties": {
+          "draft_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "DraftApplyResult": {
+        "required": [
+          "absorbed",
+          "applied",
+          "drafts",
+          "kept",
+          "refused"
+        ],
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "absorbed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kept": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "refused": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "drafts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DraftScenario"
+            }
           }
         }
       },
@@ -10035,6 +10994,94 @@
           }
         }
       },
+      "CheckDeveloperMacroRequest": {
+        "required": [
+          "gameBuildId",
+          "name",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 0,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "gameBuildId": {
+            "pattern": "^[0-9]{1,18}$",
+            "type": "string"
+          }
+        }
+      },
+      "DeveloperMacroCheckResponse": {
+        "required": [
+          "ok"
+        ],
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "docstring": {
+            "type": "string"
+          },
+          "rejection": {
+            "$ref": "#/components/schemas/DeveloperMacroRejection"
+          }
+        }
+      },
+      "DeveloperMacroRejection": {
+        "required": [
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateMcpHandoffRequest": {
+        "required": [
+          "requestId"
+        ],
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "maxLength": 128,
+            "minLength": 0,
+            "pattern": "^[A-Za-z0-9._~-]+$",
+            "type": "string"
+          }
+        }
+      },
+      "McpHandoffResponse": {
+        "required": [
+          "redirectUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "redirectUrl": {
+            "type": "string"
+          }
+        }
+      },
       "IssueTrackerEnvelope": {
         "required": [
           "tracker"
@@ -10187,11 +11234,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
@@ -10837,7 +11884,8 @@
           "scenePresence",
           "status",
           "summary",
-          "verification"
+          "verification",
+          "writes"
         ],
         "type": "object",
         "properties": {
@@ -10911,6 +11959,12 @@
           "covers": {
             "type": "integer",
             "format": "int32"
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -10920,6 +11974,8 @@
           "knowledge",
           "knownToContentMap",
           "notAStepCapabilities",
+          "objects",
+          "objectsTotal",
           "sceneName"
         ],
         "type": "object",
@@ -10953,6 +12009,16 @@
             "items": {
               "$ref": "#/components/schemas/SceneKnowledgeView"
             }
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneObjectView"
+            }
+          },
+          "objectsTotal": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -11064,6 +12130,46 @@
           }
         }
       },
+      "SceneObjectComponentView": {
+        "required": [
+          "fields",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SceneObjectView": {
+        "required": [
+          "active",
+          "components",
+          "selector"
+        ],
+        "type": "object",
+        "properties": {
+          "selector": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneObjectComponentView"
+            }
+          }
+        }
+      },
       "Test": {
         "required": [
           "kind",
@@ -11130,6 +12236,20 @@
             }
           }
         ]
+      },
+      "InternalDeveloperMacroListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeveloperMacroDetailResponse"
+            }
+          }
+        }
       },
       "InternalLlmModelResponse": {
         "required": [
@@ -12767,6 +13887,27 @@
             "type": "object",
             "additionalProperties": {
               "type": "object"
+            }
+          }
+        }
+      },
+      "RunCasesOutsideBuildResponse": {
+        "required": [
+          "testCaseIds",
+          "testRunId"
+        ],
+        "type": "object",
+        "properties": {
+          "testRunId": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "testCaseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
         }
@@ -14726,6 +15867,66 @@
       },
       "ServerSentEventDocumentStreamEvent": {
         "type": "object"
+      },
+      "DeveloperMacroListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeveloperMacroSummaryResponse"
+            }
+          }
+        }
+      },
+      "DeveloperMacroSummaryResponse": {
+        "required": [
+          "buildVersion",
+          "docstring",
+          "gameBuildId",
+          "name",
+          "parameters",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "docstring": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "buildVersion": {
+            "type": "string"
+          },
+          "buildLabel": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/DeveloperMacroAuthor"
+          }
+        }
       },
       "LlmUsageDailyCell": {
         "required": [
