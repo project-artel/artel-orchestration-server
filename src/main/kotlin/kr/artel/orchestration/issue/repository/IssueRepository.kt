@@ -32,7 +32,8 @@ interface IssueRepository : CoroutineCrudRepository<IssueEntity, Long> {
     fun findPageByQaTry(qaTryId: Long, beforeId: Long?, limit: Int): Flow<IssueEntity>
 
     /**
-     * 한 프로젝트의 모든 실행이 남긴 이슈, 최신순 한 페이지.
+     * 한 프로젝트의 모든 실행이 남긴 이슈, 최신순 한 페이지. 빌드는 run 이 고른 빌드를 먼저 보고, 없으면
+     * TR 의 빌드를 본다 — 출처 표시([IssueOriginRepository])와 같은 규칙이다.
      *
      * `project_member` 조인이 **없다**. 비참여자를 조인으로 걸러내면 200 + 빈 목록이 나가고,
      * 화면은 그것을 "이슈가 없는 프로젝트"와 구분할 수 없다. 멤버십은 서비스가
@@ -43,9 +44,20 @@ interface IssueRepository : CoroutineCrudRepository<IssueEntity, Long> {
         SELECT i.* FROM issue i
         JOIN qa_try qt ON qt.id = i.qa_try_id
         JOIN test_scenario ts ON ts.id = qt.test_scenario_id
+        LEFT JOIN qa_run r ON r.id = qt.qa_run_id
+        LEFT JOIN test_run tr ON tr.id = r.test_run_id
         WHERE ts.project_id = :projectId
           AND (:status IS NULL OR i.status = :status)
           AND (:severity IS NULL OR i.severity = :severity)
+          AND (:gameBuildId IS NULL OR COALESCE(r.game_build_id, tr.game_build_id) = :gameBuildId)
+          AND (:unversioned = FALSE OR COALESCE(r.game_build_id, tr.game_build_id) IS NULL)
+          AND (:testRunId IS NULL OR r.test_run_id = :testRunId)
+          AND (CASE WHEN :archived THEN i.archived_at IS NOT NULL ELSE i.archived_at IS NULL END)
+          AND (:query = '' OR position(lower(:query) in lower(i.title)) > 0)
+          AND (:categoryId IS NULL OR EXISTS (
+                SELECT 1 FROM issue_category_issue ci WHERE ci.issue_id = i.id AND ci.category_id = :categoryId))
+          AND (:folderId IS NULL OR EXISTS (
+                SELECT 1 FROM issue_folder_item fi WHERE fi.issue_id = i.id AND fi.folder_id = :folderId))
           AND (:beforeId IS NULL OR i.id < :beforeId)
         ORDER BY i.id DESC
         LIMIT :limit
@@ -55,6 +67,13 @@ interface IssueRepository : CoroutineCrudRepository<IssueEntity, Long> {
         projectId: Long,
         status: String?,
         severity: String?,
+        gameBuildId: Long?,
+        unversioned: Boolean,
+        testRunId: Long?,
+        folderId: Long?,
+        categoryId: Long?,
+        archived: Boolean,
+        query: String,
         beforeId: Long?,
         limit: Int
     ): Flow<IssueEntity>
@@ -93,6 +112,11 @@ interface IssueRepository : CoroutineCrudRepository<IssueEntity, Long> {
         """
     )
     suspend fun resolve(id: Long, resolvedAt: Instant, resolvedBy: Long, updatedAt: Instant): Int
+
+    /** 보관(숨김)하거나 되돌린다. 지우지 않고 목록 · 개수에서만 뺀다(V120). */
+    @Modifying
+    @Query("UPDATE issue SET archived_at = :archivedAt, updated_at = :updatedAt WHERE id = :id")
+    suspend fun setArchived(id: Long, archivedAt: Instant?, updatedAt: Instant): Int
 
     /** 해결 취소. 처리 흔적을 지워 신규 이슈와 같은 모양으로 되돌린다. */
     @Modifying
