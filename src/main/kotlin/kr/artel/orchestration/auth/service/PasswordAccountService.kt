@@ -13,7 +13,6 @@ import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.ForbiddenException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.common.error.UnauthorizedException
-import kr.artel.orchestration.telemetry.service.TelemetryConsentService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
@@ -53,7 +52,6 @@ class PasswordAccountService(
     private val passwordHasher: PasswordHasher,
     private val temporaryPasswordGenerator: TemporaryPasswordGenerator,
     private val signupProperties: SignupProperties,
-    private val telemetryConsentService: TelemetryConsentService,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock
 ) {
@@ -67,13 +65,10 @@ class PasswordAccountService(
      * 동시에 와도 ADMIN 은 하나다. 늦게 온 쪽은 잠금이 풀린 뒤 행이 있는 것을 보고 USER 가 되거나,
      * 가입이 닫혀 있으면 403 을 받는다.
      *
-     * [telemetryOptIn] 은 첫 가입자일 때만 같은 트랜잭션 안에서 저장한다. 가입이 실패하면 consent 도 남지 않는다.
-     * 저장할지 말지의 나머지 조건(보낼 곳이 있는지, 이미 고른 값이 있는지)은 `TelemetryConsentService` 가 본다.
-     *
      * BCrypt 해시는 트랜잭션 밖에서 먼저 만든다. 잠금을 잡은 채 수십 ms 를 CPU 로 쓰면 그동안 다른
      * 가입이 전부 기다린다.
      */
-    suspend fun signup(email: String, password: String, name: String, telemetryOptIn: Boolean? = null): AuthenticatedUser {
+    suspend fun signup(email: String, password: String, name: String): AuthenticatedUser {
         val loginEmail = normalizeEmail(email)
         val displayName = normalizeName(name)
         validatePassword(password)
@@ -82,17 +77,13 @@ class PasswordAccountService(
         val user = transactionalOperator.executeAndAwait {
             val isFirstUser = firstUserGate.lockAndCheckFirstUser()
             if (!isFirstUser && !signupProperties.open) throw SignupClosedException()
-            val inserted = insertAccount(
+            insertAccount(
                 loginEmail = loginEmail,
                 displayName = displayName,
                 passwordHash = passwordHash,
                 platformRole = if (isFirstUser) PlatformRole.ADMIN else PlatformRole.USER,
                 mustChangePassword = false
             )
-            if (isFirstUser && telemetryOptIn != null) {
-                telemetryConsentService.saveSignupChoice(telemetryOptIn, requireNotNull(inserted.id))
-            }
-            inserted
         }!!
         return authenticatedUser(user, loginEmail)
     }

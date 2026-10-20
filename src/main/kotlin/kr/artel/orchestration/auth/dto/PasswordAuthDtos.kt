@@ -10,12 +10,7 @@ data class AuthProvidersResponse(
     /** GitHub OAuth 두 변수가 다 있을 때만 true 다. false 면 `/oauth2/authorization/github` 는 404 다. */
     val github: Boolean,
     /** 지금 `POST /api/auth/signup` 이 받아들여지는지. 첫 사용자가 아직 없거나 `ARTEL_SIGNUP_OPEN=true` 일 때다. */
-    val signupOpen: Boolean,
-    /**
-     * 가입 화면이 telemetry checkbox 를 보일지. `ARTEL_TELEMETRY_URL` 이 있고 관리자가 아직 consent 를 고르지 않았을 때만
-     * true 다. 그 값은 첫 가입자의 [SignupRequest.telemetryOptIn] 으로만 저장된다.
-     */
-    val telemetryAvailable: Boolean
+    val signupOpen: Boolean
 )
 
 /**
@@ -28,14 +23,9 @@ data class SignupRequest(
     val email: String,
     val password: String,
     /** 표시 이름이자 nickname. */
-    val name: String,
-    /**
-     * 가입 화면의 telemetry checkbox. 설치의 첫 가입자이고 `ARTEL_TELEMETRY_URL` 이 있고 저장된 consent 가 없을 때만
-     * 저장된다. 그 밖에는 무시한다. null 은 화면이 checkbox 를 보이지 않았다는 뜻이다.
-     */
-    val telemetryOptIn: Boolean? = null
+    val name: String
 ) {
-    override fun toString(): String = "SignupRequest(email=$email, name=$name, telemetryOptIn=$telemetryOptIn)"
+    override fun toString(): String = "SignupRequest(email=$email, name=$name)"
 }
 
 /** `POST /api/auth/login` 요청 본문. [toString] 은 [SignupRequest] 와 같은 이유로 덮어쓴다. */

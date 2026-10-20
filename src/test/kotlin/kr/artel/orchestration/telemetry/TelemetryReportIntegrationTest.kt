@@ -385,10 +385,12 @@ class TelemetryReportIntegrationTest {
     }
 
     @Test
-    fun `providers reports telemetryAvailable until a consent is stored`(): Unit = runBlocking {
-        assertThat(providers()["telemetryAvailable"].asBoolean()).isTrue()
+    fun `settings report source environment until an admin decides`(): Unit = runBlocking {
+        assertThat(call(adminSession, HttpMethod.GET, "/api/admin/settings/telemetry").second["source"].asText())
+            .isEqualTo("environment")
         consentService.saveConsent(false, adminId)
-        assertThat(providers()["telemetryAvailable"].asBoolean()).isFalse()
+        assertThat(call(adminSession, HttpMethod.GET, "/api/admin/settings/telemetry").second["source"].asText())
+            .isEqualTo("setting")
     }
 
     // ── fixture ─────────────────────────────────────────────────
@@ -468,10 +470,6 @@ class TelemetryReportIntegrationTest {
         if (value == null) bindNull(name, Integer::class.java) else bind(name, value)
 
     private fun today(): LocalDate = LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC)
-
-    private fun providers(): JsonNode = objectMapper.readTree(
-        WebClient.create("http://localhost:$port").get().uri("/api/auth/providers").retrieve().bodyToMono(String::class.java).block()
-    )
 
     private fun call(session: String, method: HttpMethod, path: String, json: String? = null): Pair<Int, JsonNode> {
         val spec = WebClient.create("http://localhost:$port").method(method).uri(path).cookie(authProperties.cookieName, session)

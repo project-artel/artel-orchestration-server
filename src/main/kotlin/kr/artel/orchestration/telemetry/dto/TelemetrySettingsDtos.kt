@@ -2,7 +2,7 @@ package kr.artel.orchestration.telemetry.dto
 
 import java.time.LocalDate
 
-/** [TelemetryStatus.source] 값. 관리 화면이나 첫 가입에서 고른 값이 `platform_setting` 에 있다. */
+/** [TelemetryStatus.source] 값. 관리 화면에서 고른 값이 `platform_setting` 에 있다. */
 const val CONSENT_SOURCE_SETTING = "setting"
 
 /** [TelemetryStatus.source] 값. 아직 아무도 고르지 않아 `ARTEL_TELEMETRY` 를 따른다. */

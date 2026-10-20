@@ -60,9 +60,6 @@ class TelemetryConsentService(
     /** 지금 적용되는 consent. 보낼 곳이 있는지는 보지 않는다. */
     suspend fun isEnabled(): Boolean = storedConsent()?.enabled ?: properties.consentFromEnvironment
 
-    /** 관리자가 아직 고르지 않았는지. 첫 가입 화면이 checkbox 를 보일지 정한다. */
-    suspend fun hasStoredConsent(): Boolean = storedConsent() != null
-
     suspend fun installId(): String? =
         platformSettingRepository.findById(TELEMETRY_INSTALL_ID_SETTING)?.settingValue
 
@@ -86,17 +83,6 @@ class TelemetryConsentService(
             if (!wasEnabled) startSendingFromYesterday(actorUserId)
         }
         logger.info("Telemetry consent set to {} by app_user {}", if (enabled) "on" else "off", actorUserId)
-    }
-
-    /**
-     * 첫 가입자가 가입 화면의 checkbox 로 고른 값을 저장한다. 가입 트랜잭션 안에서 부른다.
-     *
-     * 보낼 곳이 없거나 이미 저장된 consent 가 있으면 아무것도 하지 않는다. 가입 화면은 그 둘이 다 아닐 때만 checkbox 를
-     * 보이므로, 그 밖의 값은 화면이 보낸 것이 아니다.
-     */
-    suspend fun saveSignupChoice(optIn: Boolean, firstUserId: Long) {
-        if (!properties.endpointConfigured || hasStoredConsent()) return
-        saveConsent(optIn, firstUserId)
     }
 
     /** consent 를 끄고 install id 와 마지막 전송 날짜를 지운다. 다시 켜면 새 install id 로 시작한다. */
