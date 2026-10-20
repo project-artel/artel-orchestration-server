@@ -2,7 +2,7 @@
 
 - Date: 2026-10-16
 - Jira: https://artel-asm.atlassian.net/browse/ARTEL-1114
-- Status: Implementation complete; local validation recorded
+- Status: 2차 확장(2026-10-20)까지 구현 · 로컬 검증 완료, PR 대기
 - Branch: `feat/issue-sharing-api-ARTEL-1114`
 - Base: `origin/develop`의 `cc5f0e21`
 
@@ -13,7 +13,7 @@
 ## Approach (Checklist)
 
 - [x] 기존 issue/member/access API와 승인 목업 조사 및 계약 검토.
-- [x] `issue/discussion`의 controller/service/repository/DTO 및 `V117__create_issue_discussions.sql` 구현.
+- [x] `issue/discussion`의 controller/service/repository/DTO 및 `V118__create_issue_discussions.sql`(열린 #314·#324 가 V117 을 써서 V118) 구현.
 - [x] 원본 보고서 단건 API에서 기존 `IssueService.page` 응답 조립 재사용.
 - [x] PostgreSQL HTTP 통합 테스트, migration 검증, 실제 브라우저 연결.
 - [x] pair review 및 계획 최종 반영.
@@ -38,22 +38,46 @@
 | PUT /{discussionId}/comments/{commentId}/reaction | 본인의 댓글 반응 여부 설정 |
 | GET /api/projects/{projectId}/issues/{issueId} | 원본 IssueResponse 단건 조회 |
 
-- `purpose`: SHARE/QUESTION/DECISION. `state`: OPEN/CLOSED. ID는 decimal string, 시간은 ISO-8601이다.
+- `purpose`: RESOLUTION(이슈 해결 요청)/QUESTION(확인 요청)/DECISION(결정 사항). `state`: DRAFT/OPEN/CLOSED. ID는 decimal string, 시간은 ISO-8601이다.
 - 페이지는 `{items,nextCursor,hasMore}`. 기본 30개, 최대 100개. 글은 pinned/id 내림차순(`1:42` 형식 cursor), 댓글은 id 오름차순이다.
 - 제목 200자, 본문 20,000자, 댓글 10,000자, 이슈 링크·멘션 각 50개, 검색어 200자로 제한한다.
 - 목록은 excerpt·작성자·개수·상태·최근 활동 시각만 싣는다. 연결 보고서 detail은 필요할 때 별도 조회한다. 집계·작성자·링크를 배치 조회한다.
-- 모든 접근에서 현재 project membership과 soft deletion을 검증한다. 작성자/OWNER만 글 편집·논의 종료·결정 지정을, OWNER만 고정을, 댓글 작성자만 댓글 편집을 할 수 있다.
+- 모든 접근에서 현재 project membership과 soft deletion을 검증한다. 글 내용 편집은 작성자만(OWNER 도 불가, 2026-10-20), 상태·결정 지정은 작성자/OWNER, 고정은 OWNER, 댓글 편집은 댓글 작성자, 댓글 삭제는 작성자/OWNER 만 할 수 있다. 응답의 `canEdit` 은 내용 편집, `canManage` 는 상태·결정이다.
 - 연결 이슈와 멘션 사용자는 같은 프로젝트에 속해야 한다. 결정 댓글은 composite FK로 같은 글에 속함을 검증한다.
 - 글·댓글 생성은 UUID `clientRequestId`와 정규화된 최초 payload의 SHA-256을 보관한다. unique 제약과 transaction 안의 `INSERT ON CONFLICT DO NOTHING`으로 동시 재전송을 처리한다. 같은 payload는 기존 결과, 다른 payload는 409다.
 - 본문 편집 version과 state/pin/decision의 필드 UPDATE를 분리했다. 글 생성 재시도가 후속 편집이나 구독 변경을 되돌리지 않는다.
-- 본문은 plain text다. reaction/subscription은 명시적인 enabled 값으로 설정한다.
+- 본문은 마크다운 원문으로 저장하고 화면이 데이터로 파싱해 그린다(HTML 저장 없음). `[[tc:<id>]]` 는 글 빌드 버전의 TC 참조다. reaction/subscription은 명시적인 enabled 값으로 설정한다.
+
+## 2차 확장 (2026-10-20)
+
+사용자 검토를 받으며 게시판과 전체 이슈 화면을 넓혔다. 서버 쪽 추가분:
+
+| 마이그레이션 | 내용 |
+|---|---|
+| V119 | `issue_folder` · `issue_folder_item` — 전체 이슈 화면의 우클릭 폴더 |
+| V120 | 이슈 `project_id` · 프로젝트별 번호(`project_no`, trigger + counter) · `archived_at`, `issue_category` 와 이슈/글 연결, 글 목적·상태 값 교체, 확인 요청 승인(`issue_discussion_reviewer`), 대댓글 `parent_id`, `project.discussion_approvals_required` |
+| V121 | 글 프로젝트별 번호 |
+| V122 | 글 `game_build_id` |
+
+| API | 내용 |
+|---|---|
+| `GET /api/projects/{p}/issues` | origin(빌드 · TR · 시나리오), number, categories, archivedAt. `gameBuildId` · `testRunId` · `unversioned` · `folderId` · `categoryId` · `archived` · `query` 거르기 |
+| `GET /api/projects/{p}/issues/facets` | 빌드 · TR · 심각도별 건수. `status` · `gameBuildId` · `testRunId` 로 범위를 좁힌다 |
+| `POST /api/issues/{id}/archive` · `unarchive` | 보관(숨김) |
+| `/api/projects/{p}/issue-folders` | 폴더 CRUD · 복제 · 항목 넣기/빼기 |
+| `/api/projects/{p}/issue-categories`, `PUT .../issues/{id}/categories` | 카테고리 CRUD, 이슈 · 글에 붙이기 |
+| `GET .../issue-discussions/pages` | 쪽 번호 목록(`total`). "논의 중"은 Draft 포함. `categoryId` · `gameBuildId` 거르기 |
+| `PUT .../issue-discussions/{id}/approval` | 확인 요청 승인/취소. 작성자 제외 멤버, 정해진 수가 모이면 자동 해결. 손으로 해결은 409, 다시 열면 승인 초기화 |
+| `GET/PUT .../issue-discussions/settings` | 필요한 승인 수(OWNER) |
+| `DELETE .../issue-discussions/{id}/comments/{cid}` | 댓글 삭제(답글 · 결정 함께 정리) |
 
 ## Validation
 
 - `./mvnw -q -Dtest=DiscussionHttpIntegrationTest,IssueHttpIntegrationTest,IssueIntegrationTest test`: **24개 통과**. 새 HTTP 테스트 8개에 접근 경계, 권한 회수, soft deletion, 재전송·동시 생성, version 충돌, 결정 FK, 페이지·검색 상한, 댓글 편집, 가벼운 이슈 선택기가 포함된다.
 - `./mvnw -q test`: **2,099개 중 실패 108개**. 변경 전 `cc5f0e21`을 별도 임시 디렉터리에서 실행하면 **2,091개 중 동일한 테스트 108개 실패**. class/test 이름 집합 비교에서 추가 실패 0개. 기존 content-map assertion과 여러 HTTP 테스트의 context/connection 오류는 범위 밖이다.
 - 기존 OpenAPI와 의미 비교: 새 경로 11개, 기존 경로 변경·삭제 0개.
-- 최신 원격 refs 확인 후 migration version collision 검사 통과. `verify-flyway-upgrade.sh`의 base 적용 → V117 적용 → **97개 migration validate 통과**.
+- 최신 원격 refs 확인 후 migration version collision 검사 통과. `verify-flyway-upgrade.sh`의 base 적용 → V118 적용 → **97개 migration validate 통과**.
+- 2차 확장: `DiscussionHttpIntegrationTest` 12개(승인 · Draft · 대댓글 · 카테고리 · 번호 · 보관 · 쪽 목록 · 빌드 거르기 · 댓글 삭제 · 작성자 전용 편집), `IssueIntegrationTest` 12개(origin · 거르기 · facets 범위 · 폴더 · 제목 검색), `OpenApiSnapshotTest` 통과. develop 의 마지막 migration 은 V117 이라 V118~V122 충돌 없음.
 - `git diff --check` 통과. 새 Kotlin 파일은 ktfmt Kotlinlang style로 정리했다.
 
 ## Context / Constraints

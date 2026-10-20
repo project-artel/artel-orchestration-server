@@ -53,6 +53,7 @@ class DiscussionHttpIntegrationTest {
     @Autowired private lateinit var oauthUserService: OAuthUserService
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var issueRepository: IssueRepository
+    @Autowired private lateinit var gameBuildRepository: kr.artel.orchestration.game.repository.GameBuildRepository
     @Autowired private lateinit var trackerLinkRepository: IssueTrackerLinkRepository
     @Autowired private lateinit var qaTryRepository: QaTryRepository
     @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
@@ -174,7 +175,7 @@ class DiscussionHttpIntegrationTest {
             DiscussionDraft(
                 "동시 요청",
                 "같은 본문",
-                "SHARE",
+                "RESOLUTION",
                 clientRequestId = UUID.randomUUID().toString(),
             )
         val ids = coroutineScope {
@@ -408,6 +409,187 @@ class DiscussionHttpIntegrationTest {
             .isAfterOrEqualTo(Instant.parse(before))
     }
 
+    /** 확인 요청은 검토자 승인이 프로젝트 설정 수 이상이면 해결된다. Draft · 대댓글 · 카테고리 · 이슈 번호 · 보관도 본다. */
+    @Test
+    fun `확인 요청은 승인 수가 차면 해결되고 Draft 와 대댓글과 카테고리를 다룬다`(): Unit = runBlocking {
+        val owner = signIn("42", "owner")
+        val member = signIn("43", "member")
+        val seed = seed(owner.userId)
+        projectMemberRepository.save(
+            ProjectMemberEntity(projectId = seed.projectId, appUserId = member.userId, role = "MEMBER", createdAt = Instant.now())
+        )
+        val first = seedIssue(seed.qaTryId, "MAJOR", "첫 이슈")
+        val second = seedIssue(seed.qaTryId, "MINOR", "둘째 이슈")
+        val base = "/api/projects/${seed.projectId}"
+        val path = "$base/issue-discussions"
+
+        // 이슈 번호는 프로젝트 안에서 1 부터 매긴다.
+        val issues = request(owner.token, "GET", "$base/issues")["items"].associateBy { it["id"].asText() }
+        assertThat(issues.getValue(first.toString())["number"].asText()).isEqualTo("1")
+        assertThat(issues.getValue(second.toString())["number"].asText()).isEqualTo("2")
+
+        // 카테고리: 만들고 이슈에 붙이고 그것으로 거른다.
+        val category = request(owner.token, "POST", "$base/issue-categories", mapOf("name" to "전투", "color" to "red"))
+        val categoryId = category["id"].asText()
+        assertThat(statusOf { request(owner.token, "POST", "$base/issue-categories", mapOf("name" to "전투")) }).isEqualTo(409)
+        request(owner.token, "PUT", "$base/issues/$first/categories", mapOf("categoryIds" to listOf(categoryId)))
+        val tagged = request(owner.token, "GET", "$base/issues?categoryId=$categoryId")["items"]
+        assertThat(tagged.map { it["id"].asText() }).containsExactly(first.toString())
+        assertThat(tagged[0]["categories"][0]["name"].asText()).isEqualTo("전투")
+
+        // 보관하면 목록과 개수에서 빠지고 보관함에 보인다.
+        request(owner.token, "POST", "/api/issues/$second/archive")
+        assertThat(request(owner.token, "GET", "$base/issues")["items"].map { it["id"].asText() }).containsExactly(first.toString())
+        assertThat(request(owner.token, "GET", "$base/issues?archived=true")["items"].map { it["id"].asText() })
+            .containsExactly(second.toString())
+        val facets = request(owner.token, "GET", "$base/issues/facets")
+        assertThat(facets["total"].asLong()).isEqualTo(1)
+        assertThat(facets["archived"].asLong()).isEqualTo(1)
+        request(owner.token, "POST", "/api/issues/$second/unarchive")
+
+        // Draft 로 쓰고, 공개한 뒤에는 Draft 로 되돌리지 못한다.
+        val draftBody = draft(first) + mapOf(
+            "purpose" to "QUESTION",
+            "draft" to true,
+            "reviewerIds" to listOf(member.userId.toString()),
+            "categoryIds" to listOf(categoryId),
+        )
+        val created = request(owner.token, "POST", path, draftBody)
+        val id = created["id"].asText()
+        assertThat(created["state"].asText()).isEqualTo("DRAFT")
+        assertThat(created["reviewers"][0]["person"]["id"].asText()).isEqualTo(member.userId.toString())
+        assertThat(created["categories"][0]["id"].asText()).isEqualTo(categoryId)
+        assertThat(statusOf { request(member.token, "PUT", "$path/$id/approval", mapOf("approved" to true)) }).isEqualTo(409)
+        request(owner.token, "PUT", "$path/$id/state", mapOf("state" to "OPEN"))
+        assertThat(statusOf { request(owner.token, "PUT", "$path/$id/state", mapOf("state" to "DRAFT")) }).isEqualTo(400)
+        // 확인 요청은 손으로 해결하지 못한다.
+        assertThat(statusOf { request(owner.token, "PUT", "$path/$id/state", mapOf("state" to "CLOSED")) }).isEqualTo(409)
+
+        // 승인 수 설정은 OWNER 만. 2 로 올리면 한 명 승인으로는 해결되지 않는다.
+        assertThat(statusOf { request(member.token, "PUT", "$path/settings", mapOf("approvalsRequired" to 2)) }).isEqualTo(403)
+        request(owner.token, "PUT", "$path/settings", mapOf("approvalsRequired" to 2))
+        assertThat(statusOf { request(owner.token, "PUT", "$path/$id/approval", mapOf("approved" to true)) }).isEqualTo(403)
+        val once = request(member.token, "PUT", "$path/$id/approval", mapOf("approved" to true))
+        assertThat(once["state"].asText()).isEqualTo("OPEN")
+        assertThat(once["canApprove"].asBoolean()).isTrue()
+        request(owner.token, "PUT", "$path/settings", mapOf("approvalsRequired" to 1))
+        request(member.token, "PUT", "$path/$id/approval", mapOf("approved" to false))
+        val resolved = request(member.token, "PUT", "$path/$id/approval", mapOf("approved" to true))
+        assertThat(resolved["state"].asText()).isEqualTo("CLOSED")
+        assertThat(resolved["reviewers"][0]["approvedAt"].isNull).isFalse()
+        // 다시 열면 승인을 처음부터 다시 받는다.
+        val reopened = request(owner.token, "PUT", "$path/$id/state", mapOf("state" to "OPEN"))
+        assertThat(reopened["reviewers"].all { it["approvedAt"].isNull }).isTrue()
+
+        // 대댓글은 한 단계만.
+        val top = request(owner.token, "POST", "$path/$id/comments", mapOf("body" to "확인했습니다", "clientRequestId" to UUID.randomUUID().toString()))
+        val reply = request(
+            member.token, "POST", "$path/$id/comments",
+            mapOf("body" to "감사합니다", "clientRequestId" to UUID.randomUUID().toString(), "parentId" to top["id"].asText()),
+        )
+        assertThat(reply["parentId"].asText()).isEqualTo(top["id"].asText())
+        assertThat(
+            statusOf {
+                request(
+                    owner.token, "POST", "$path/$id/comments",
+                    mapOf("body" to "더 깊게", "clientRequestId" to UUID.randomUUID().toString(), "parentId" to reply["id"].asText()),
+                )
+            }
+        ).isEqualTo(400)
+        assertThat(request(owner.token, "GET", "$path?categoryId=$categoryId")["items"]).hasSize(1)
+    }
+
+    /** 글은 프로젝트마다 1 부터 번호를 받고, 게시판은 쪽 번호로 나뉘며, "논의 중" 은 Draft 를 함께 보인다. */
+    @Test
+    fun `글 번호와 쪽 목록과 논의 중의 Draft`(): Unit = runBlocking {
+        val owner = signIn("42", "owner")
+        val seed = seed(owner.userId)
+        val path = "/api/projects/${seed.projectId}/issue-discussions"
+        val first = request(owner.token, "POST", path, draft())
+        val second = request(owner.token, "POST", path, draft() + mapOf("draft" to true))
+        request(owner.token, "POST", path, draft())
+        assertThat(first["number"].asText()).isEqualTo("1")
+        assertThat(second["number"].asText()).isEqualTo("2")
+        request(owner.token, "PUT", "$path/${first["id"].asText()}/state", mapOf("state" to "CLOSED"))
+
+        val open = request(owner.token, "GET", "$path/pages?state=OPEN&size=1&page=1")
+        assertThat(open["total"].asLong()).isEqualTo(2)
+        assertThat(open["items"]).hasSize(1)
+        assertThat(open["items"][0]["number"].asText()).isEqualTo("3")
+        val next = request(owner.token, "GET", "$path/pages?state=OPEN&size=1&page=2")
+        assertThat(next["items"][0]["state"].asText()).isEqualTo("DRAFT")
+        assertThat(request(owner.token, "GET", "$path/pages?state=CLOSED")["total"].asLong()).isEqualTo(1)
+        assertThat(statusOf { request(owner.token, "GET", "$path/pages?page=0") }).isEqualTo(400)
+
+        // 글에 빌드 버전을 정하고 그 버전으로 거른다. 다른 프로젝트 빌드는 404.
+        val build = gameBuildRepository.save(
+            kr.artel.orchestration.game.entity.GameBuildEntity(
+                projectId = seed.projectId, version = "2.0", createdAt = Instant.now(), updatedAt = Instant.now(),
+            )
+        )!!.id!!
+        val versioned = request(owner.token, "POST", path, draft() + mapOf("gameBuildId" to build.toString()))
+        assertThat(versioned["buildVersion"].asText()).isEqualTo("2.0")
+        val onBuild = request(owner.token, "GET", "$path/pages?gameBuildId=$build")
+        assertThat(onBuild["items"].map { it["id"].asText() }).containsExactly(versioned["id"].asText())
+        assertThat(statusOf { request(owner.token, "POST", path, draft() + mapOf("gameBuildId" to "999999")) }).isEqualTo(404)
+    }
+
+    /** 글 내용은 쓴 사람만 고친다. OWNER 는 남의 글을 고치지 못하고, 상태 · 고정만 다룬다. */
+    @Test
+    fun `남이 쓴 글은 OWNER 도 고치지 못한다`(): Unit = runBlocking {
+        val owner = signIn("42", "owner")
+        val member = signIn("43", "member")
+        val seed = seed(owner.userId)
+        projectMemberRepository.save(
+            ProjectMemberEntity(projectId = seed.projectId, appUserId = member.userId, role = "MEMBER", createdAt = Instant.now())
+        )
+        val path = "/api/projects/${seed.projectId}/issue-discussions"
+        val payload = draft()
+        val id = request(member.token, "POST", path, payload)["id"].asText()
+
+        val seenByOwner = request(owner.token, "GET", "$path/$id")
+        assertThat(seenByOwner["canEdit"].asBoolean()).isFalse()
+        assertThat(seenByOwner["canManage"].asBoolean()).isTrue()
+        assertThat(request(member.token, "GET", "$path/$id")["canEdit"].asBoolean()).isTrue()
+
+        assertThat(statusOf { request(owner.token, "PATCH", "$path/$id", payload + mapOf("title" to "남이 고침", "version" to 0)) })
+            .isEqualTo(403)
+        assertThat(request(member.token, "PATCH", "$path/$id", payload + mapOf("title" to "내가 고침", "version" to 0))["title"].asText())
+            .isEqualTo("내가 고침")
+        // 상태는 OWNER 도 바꾼다.
+        assertThat(request(owner.token, "PUT", "$path/$id/state", mapOf("state" to "CLOSED"))["state"].asText()).isEqualTo("CLOSED")
+    }
+
+    /** 댓글은 쓴 사람이나 OWNER 가 지운다. 답글은 함께 지워지고, 결정으로 지정된 댓글이면 결정이 풀린다. */
+    @Test
+    fun `댓글을 지우면 답글과 결정이 함께 정리된다`(): Unit = runBlocking {
+        val owner = signIn("42", "owner")
+        val member = signIn("43", "member")
+        val other = signIn("44", "other")
+        val seed = seed(owner.userId)
+        for (user in listOf(member, other))
+            projectMemberRepository.save(
+                ProjectMemberEntity(projectId = seed.projectId, appUserId = user.userId, role = "MEMBER", createdAt = Instant.now())
+            )
+        val path = "/api/projects/${seed.projectId}/issue-discussions"
+        val id = request(owner.token, "POST", path, draft())["id"].asText()
+        fun comment(token: String, body: String, parentId: String? = null) =
+            request(token, "POST", "$path/$id/comments", mapOf("body" to body, "clientRequestId" to UUID.randomUUID().toString(), "parentId" to parentId))
+        val top = comment(member.token, "원인을 찾았습니다")
+        assertThat(top["canDelete"].asBoolean()).isTrue()
+        comment(owner.token, "확인", top["id"].asText())
+        request(owner.token, "PUT", "$path/$id/decision", mapOf("commentId" to top["id"].asText()))
+
+        assertThat(statusOf { request(other.token, "DELETE", "$path/$id/comments/${top["id"].asText()}") }).isEqualTo(403)
+        request(member.token, "DELETE", "$path/$id/comments/${top["id"].asText()}")
+        assertThat(request(owner.token, "GET", "$path/$id/comments")["items"]).isEmpty()
+        assertThat(request(owner.token, "GET", "$path/$id")["decision"].isNull).isTrue()
+
+        val second = comment(member.token, "다른 의견")
+        request(owner.token, "DELETE", "$path/$id/comments/${second["id"].asText()}")
+        assertThat(request(owner.token, "GET", "$path/$id/comments")["items"]).isEmpty()
+    }
+
     @Test
     fun `이슈 선택기는 본문 없이 검색하고 페이지를 나눈다`(): Unit = runBlocking {
         val owner = signIn("42", "owner")
@@ -432,7 +614,7 @@ class DiscussionHttpIntegrationTest {
         mapOf(
             "title" to "보상 문제 공유",
             "body" to "재현 조건을 함께 확인해 주세요.",
-            "purpose" to "SHARE",
+            "purpose" to "RESOLUTION",
             "issueIds" to listOfNotNull(issueId?.toString()),
             "clientRequestId" to UUID.randomUUID().toString(),
         )
@@ -450,7 +632,7 @@ class DiscussionHttpIntegrationTest {
                 .let { if (body == null) it else it.bodyValue(body) }
                 .retrieve()
                 .bodyToMono(String::class.java)
-                .block()
+                .block() ?: "null"
         )
 
     private fun statusOf(call: () -> Any?): Int =

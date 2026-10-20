@@ -1,6 +1,7 @@
 package kr.artel.orchestration.issue.discussion
 
 import kr.artel.orchestration.auth.web.CurrentUserId
+import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.*
 
 @RestController
@@ -17,7 +18,42 @@ class DiscussionController(private val service: DiscussionService) {
         @RequestParam(required = false) query: String?,
         @RequestParam(required = false) cursor: String?,
         @RequestParam(defaultValue = "30") size: Int,
-    ) = service.list(projectId, userId, state, mine, subscribed, issueId, query, cursor, size)
+        @RequestParam(required = false) categoryId: Long?,
+    ) = service.list(projectId, userId, state, mine, subscribed, issueId, query, cursor, size, categoryId)
+
+    /** 쪽 번호로 나눈 목록(게시판 화면). `state=OPEN` 은 Draft 를 함께 보인다. */
+    @GetMapping("/pages")
+    suspend fun pageIssueDiscussions(
+        @PathVariable projectId: Long,
+        @CurrentUserId userId: Long,
+        @RequestParam(required = false) state: String?,
+        @RequestParam(defaultValue = "false") mine: Boolean,
+        @RequestParam(defaultValue = "false") subscribed: Boolean,
+        @RequestParam(required = false) query: String?,
+        @RequestParam(required = false) categoryId: Long?,
+        @RequestParam(defaultValue = "1") page: Int,
+        @RequestParam(defaultValue = "20") size: Int,
+        @RequestParam(required = false) gameBuildId: Long?,
+    ) = service.page(projectId, userId, state, mine, subscribed, query, categoryId, page, size, gameBuildId)
+
+    @GetMapping("/settings")
+    suspend fun getIssueDiscussionSettings(@PathVariable projectId: Long, @CurrentUserId userId: Long) =
+        service.settings(projectId, userId)
+
+    @PutMapping("/settings")
+    suspend fun updateIssueDiscussionSettings(
+        @PathVariable projectId: Long,
+        @CurrentUserId userId: Long,
+        @RequestBody request: DiscussionSettings,
+    ) = service.updateSettings(projectId, userId, request)
+
+    @PutMapping("/{discussionId}/approval")
+    suspend fun approveIssueDiscussion(
+        @PathVariable projectId: Long,
+        @PathVariable discussionId: Long,
+        @CurrentUserId userId: Long,
+        @RequestBody request: ApprovalRequest,
+    ) = service.approve(projectId, discussionId, userId, request.approved)
 
     @GetMapping("/issue-options")
     suspend fun listDiscussionIssueOptions(
@@ -107,6 +143,15 @@ class DiscussionController(private val service: DiscussionService) {
         @CurrentUserId userId: Long,
         @RequestBody request: CommentEdit,
     ) = service.editComment(projectId, discussionId, commentId, userId, request)
+
+    @DeleteMapping("/{discussionId}/comments/{commentId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    suspend fun deleteIssueDiscussionComment(
+        @PathVariable projectId: Long,
+        @PathVariable discussionId: Long,
+        @PathVariable commentId: Long,
+        @CurrentUserId userId: Long,
+    ) = service.deleteComment(projectId, discussionId, commentId, userId)
 
     @PutMapping("/{discussionId}/comments/{commentId}/reaction")
     suspend fun reactToIssueDiscussionComment(
