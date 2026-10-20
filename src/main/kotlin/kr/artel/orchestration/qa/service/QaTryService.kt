@@ -23,6 +23,8 @@ import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.knowledge.service.KnowledgeCitationService
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
+import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.qa.dto.QaRunListResponse
 import kr.artel.orchestration.qa.dto.QaRunResponse
 import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.dto.QaTryResponse
@@ -582,6 +584,7 @@ class QaTryService(
     private val testRuns: TestRunRepository,
     private val testRunService: TestRunService,
     private val instanceRepository: GameInstanceRepository,
+    private val projectRepository: ProjectRepository,
     private val sessionManager: SessionManager,
     private val agentPort: QaAgentPort,
     private val inboundRouter: QaAgentInboundRouter,
@@ -830,6 +833,7 @@ class QaTryService(
         id = requireNotNull(id).toString(),
         testRunId = testRunId.toString(),
         gameInstanceId = gameInstanceId.toString(),
+        gameBuildId = gameBuildId?.toString(),
         startedBy = startedBy.toString(),
         status = status,
         startedAt = startedAt,
@@ -847,6 +851,20 @@ class QaTryService(
         val run = runRepository.findAccessibleById(qaRunId, userId) ?: return null
         val tries = tryRepository.findByQaRunId(qaRunId).toList()
         return run.toRunResponse(tries)
+    }
+
+    /**
+     * 프로젝트의 run 을 새 것부터. [gameBuildId] 를 주면 그 빌드로 돈 run 만이다. 프로젝트에 접근할 수 없으면 null 이고
+     * 컨트롤러가 404 로 옮긴다. try 는 run 마다 묻지 않고 한 문장으로 모아 읽는다.
+     */
+    suspend fun listRunsByProject(projectId: Long, userId: Long, gameBuildId: Long?, size: Int): QaRunListResponse? {
+        projectRepository.findAccessibleById(projectId, userId) ?: return null
+        val runs = runRepository.findByProject(projectId, gameBuildId, size).toList()
+        if (runs.isEmpty()) return QaRunListResponse(emptyList())
+        val triesByRun = tryRepository.findByQaRunIdInOrderById(runs.map { requireNotNull(it.id) })
+            .toList()
+            .groupBy { it.qaRunId }
+        return QaRunListResponse(runs.map { it.toRunResponse(triesByRun[it.id].orEmpty()) })
     }
 
     suspend fun get(qaTryId: Long, userId: Long): QaTryResponse? =

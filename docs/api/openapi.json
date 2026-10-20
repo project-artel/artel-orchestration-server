@@ -53,6 +53,10 @@
       "description": "빌드에 앉은 씬 명세를 읽는다"
     },
     {
+      "name": "QA Run",
+      "description": "프로젝트의 QA run 목록"
+    },
+    {
       "name": "Issue tracker",
       "description": "프로젝트와 외부 이슈 트래커의 연결"
     },
@@ -3814,7 +3818,7 @@
         ],
         "summary": "보낸 초대 목록",
         "description": "소유자만 볼 수 있다. 아직 답을 기다리는 초대만 나온다.",
-        "operationId": "list_9",
+        "operationId": "list_10",
         "parameters": [
           {
             "name": "projectId",
@@ -4068,7 +4072,7 @@
         ],
         "summary": "기획서 이력",
         "description": "최신 버전이 앞에 온다.",
-        "operationId": "list_13",
+        "operationId": "list_14",
         "parameters": [
           {
             "name": "projectId",
@@ -4672,7 +4676,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "list_15",
+        "operationId": "list_16",
         "responses": {
           "200": {
             "description": "OK",
@@ -5207,7 +5211,7 @@
         "tags": [
           "admin-llm-model-controller"
         ],
-        "operationId": "list_16",
+        "operationId": "list_17",
         "responses": {
           "200": {
             "description": "OK",
@@ -6650,6 +6654,59 @@
         }
       }
     },
+    "/api/projects/{projectId}/qa-runs": {
+      "get": {
+        "tags": [
+          "QA Run"
+        ],
+        "summary": "프로젝트의 QA run 목록",
+        "description": "새 것이 앞에 온다. `gameBuildId` 를 주면 그 빌드로 돈 run 만 온다. `size` 는 1 이상 100 이하이고 벗어나면 400 이다. 프로젝트가 없거나 참여자가 아니면 404 다.",
+        "operationId": "list_7",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "description": "이 게임 빌드로 돈 run 만",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/members": {
       "get": {
         "tags": [
@@ -6657,7 +6714,7 @@
         ],
         "summary": "멤버 목록",
         "description": "참여자면 누구나 볼 수 있다. 소유자가 먼저, 그 안에서는 참여한 순서다. 참여자가 아니면 404.",
-        "operationId": "list_7",
+        "operationId": "list_8",
         "parameters": [
           {
             "name": "projectId",
@@ -6773,7 +6830,7 @@
         "tags": [
           "project-issue-controller"
         ],
-        "operationId": "list_8",
+        "operationId": "list_9",
         "parameters": [
           {
             "name": "projectId",
@@ -6888,7 +6945,7 @@
         ],
         "summary": "게임 인스턴스 목록",
         "description": "최근에 만든 것이 앞에 온다.",
-        "operationId": "list_10",
+        "operationId": "list_11",
         "parameters": [
           {
             "name": "projectId",
@@ -6922,7 +6979,7 @@
         ],
         "summary": "게임 빌드 목록",
         "description": "최근에 보고된 것이 앞에 온다.",
-        "operationId": "list_11",
+        "operationId": "list_12",
         "parameters": [
           {
             "name": "projectId",
@@ -6996,7 +7053,7 @@
         ],
         "summary": "등록된 macro 목록",
         "description": "이 빌드에 등록된 macro 를 이름 오름차순으로 읽는다. `source` 는 싣지 않는다 — 원문은 상세 조회에 있다. 등록된 것이 없으면 빈 `items` 다.",
-        "operationId": "list_12",
+        "operationId": "list_13",
         "parameters": [
           {
             "name": "projectId",
@@ -7215,6 +7272,40 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/GameFunctionCatalogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-builds/summary": {
+      "get": {
+        "tags": [
+          "Game Build"
+        ],
+        "summary": "게임 빌드 요약 목록",
+        "description": "빌드마다 인스턴스 수와 연결 수, cheat · behavior 수, QA run 수와 가장 최근 run 을 붙인다. 순서는 빌드 목록과 같다.",
+        "operationId": "summary",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameBuildSummaryListResponse"
                 }
               }
             }
@@ -7565,7 +7656,7 @@
         ],
         "summary": "받은 초대 목록",
         "description": "로그인한 계정으로 온 초대와 그 계정의 확인된 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없어도 계정으로 온 초대는 나온다.",
-        "operationId": "list_14",
+        "operationId": "list_15",
         "responses": {
           "200": {
             "description": "OK",
@@ -10031,6 +10122,9 @@
             "type": "string"
           },
           "gameInstanceId": {
+            "type": "string"
+          },
+          "gameBuildId": {
             "type": "string"
           },
           "startedBy": {
@@ -14373,6 +14467,20 @@
           }
         }
       },
+      "QaRunListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaRunResponse"
+            }
+          }
+        }
+      },
       "ProjectMemberResponse": {
         "required": [
           "displayName",
@@ -15629,6 +15737,115 @@
             "items": {
               "$ref": "#/components/schemas/JsonNode"
             }
+          }
+        }
+      },
+      "GameBuildSummaryListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GameBuildSummaryResponse"
+            }
+          }
+        }
+      },
+      "GameBuildSummaryResponse": {
+        "required": [
+          "behaviorCount",
+          "cheatCount",
+          "connectedCount",
+          "createdAt",
+          "gameBuildId",
+          "instanceCount",
+          "isEditor",
+          "qaRunCount",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastReportedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "instanceCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "connectedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cheatCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "behaviorCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "catalogReceivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "qaRunCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "latestQaRun": {
+            "$ref": "#/components/schemas/LatestQaRunSummary"
+          }
+        }
+      },
+      "LatestQaRunSummary": {
+        "required": [
+          "qaRunId",
+          "startedAt",
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "qaRunId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stepsPassed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "stepsTotal": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },

@@ -224,6 +224,8 @@ data class QaRunResponse(
     val id: String,
     val testRunId: String,
     val gameInstanceId: String,
+    /** 이 run 이 시작할 때 고정한 게임 빌드 id. 빌드를 모르는 옛 run 은 null 이다. */
+    val gameBuildId: String? = null,
     val startedBy: String,
     val status: String,
     val startedAt: Instant,
@@ -345,4 +347,9 @@ data class QaTryDetailUsage(
 data class QaTryToolCall(
     val tool: String,
     val calls: Long
+)
+
+/** 프로젝트의 run 목록 응답 봉투. 새 것이 앞에 온다. */
+data class QaRunListResponse(
+    val items: List<QaRunResponse>
 )
