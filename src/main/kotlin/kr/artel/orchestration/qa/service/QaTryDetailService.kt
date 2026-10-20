@@ -1,5 +1,6 @@
 package kr.artel.orchestration.qa.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.qa.dto.QaTryDetailResponse
 import kr.artel.orchestration.qa.dto.QaTryDetailUsage
@@ -20,7 +21,8 @@ import org.springframework.stereotype.Service
 @Service
 class QaTryDetailService(
     private val tryRepository: QaTryRepository,
-    private val detailRepository: QaTryDetailRepository
+    private val detailRepository: QaTryDetailRepository,
+    private val objectMapper: ObjectMapper
 ) {
 
     /**
@@ -38,7 +40,11 @@ class QaTryDetailService(
         // 접근이 확인된 행이므로 상세 질의가 비면 그 사이에 지워진 것이다. 404가 맞다.
         val detail = detailRepository.findDetail(qaTryId) ?: throw NotFoundException()
         val toolCalls = detailRepository.findToolCalls(qaTryId)
-        return qaTry.toDetailResponse(detail, toolCalls.map { QaTryToolCall(it.tool, it.calls) })
+        return qaTry.toDetailResponse(
+            detail,
+            toolCalls.map { QaTryToolCall(it.tool, it.calls) },
+            QaFunctionAllowList.of(qaTry.runConfig.asString(), objectMapper)
+        )
     }
 
     /**
@@ -49,7 +55,8 @@ class QaTryDetailService(
      */
     private fun QaTryEntity.toDetailResponse(
         detail: QaTryDetailRow,
-        toolCalls: List<QaTryToolCall>
+        toolCalls: List<QaTryToolCall>,
+        functions: QaFunctionAllowList
     ) = QaTryDetailResponse(
         qaTryId = id.toString(),
         status = status,
@@ -75,6 +82,12 @@ class QaTryDetailService(
             cacheWriteTokens = detail.cacheWriteTokens,
             outputTokens = detail.outputTokens
         ),
-        toolCalls = toolCalls
+        toolCalls = toolCalls,
+        cheatMode = functions.cheatMode.wire,
+        behaviorMode = functions.behaviorMode.wire,
+        allowedCheats = functions.allowedCheats,
+        allowedBehaviors = functions.allowedBehaviors,
+        effectiveCheats = functions.effectiveCheats,
+        effectiveBehaviors = functions.effectiveBehaviors
     )
 }

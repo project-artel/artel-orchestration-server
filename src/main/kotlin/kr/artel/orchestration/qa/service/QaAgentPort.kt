@@ -64,6 +64,10 @@ data class QaAgentSessionContext(
     val arch: JsonNode? = null,
     // 사용자 key 로 도는 run 에만 있다. 없으면 agent-server 는 공용 key 를 쓴다.
     val llmKey: QaSessionLlmKey? = null,
+    // 이 런에 열어 준 cheat · behavior 항목(ARTEL-1053). 카탈로그에서 run 옵션으로 이미 거른 것이다. 비어 있으면 세션 개설
+    // 본문에 싣지 않는다.
+    val cheats: List<JsonNode>? = null,
+    val behaviors: List<JsonNode>? = null,
     // 프로젝트에 게임 노트가 없으면 null 이다.
     val gameNotes: QaSessionGameNotes? = null,
     // Agent 가 런 시작에 이 빌드의 scene context 를 한 번 조회하는 데 쓰는 두 값 (ARTEL-676).
