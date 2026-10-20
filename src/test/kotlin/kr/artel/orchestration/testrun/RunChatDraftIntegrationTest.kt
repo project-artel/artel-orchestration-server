@@ -219,6 +219,8 @@ class RunChatDraftIntegrationTest {
         val second = draft(client, projectId, runId, token)
         assertThat(second.map { it.draftId to it.title }).containsExactly("new-1" to "다시 쓴 draft")
         assertThat(second.single().steps).hasSize(2)
+        // 방식을 싣지 않은 결과는 새 draft 에서 ORDERED 이고, JSON 에는 항상 값이 실린다(ARTEL-1109).
+        assertThat(second.single().executionMode).isEqualTo(kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode.ORDERED)
         // 화면이 어디가 바뀌었는지 칠할 기준은 고치기 전의 draft 다.
         assertThat(second.single().baseSteps!!.map { it.action }).containsExactly("메뉴를 연다")
         assertThat(first.single().baseSteps).isNull()
