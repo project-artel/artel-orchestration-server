@@ -6,17 +6,26 @@ import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testrun.dto.CommitScenariosRequest
 import kr.artel.orchestration.testrun.dto.RunChatCancellation
 import kr.artel.orchestration.testrun.dto.RunChatMessage
+import kr.artel.orchestration.testrun.dto.RunCasesOutsideBuildResponse
 import kr.artel.orchestration.testrun.dto.RunCoverageResponse
 import kr.artel.orchestration.testrun.dto.RunDeletionPreview
 import kr.artel.orchestration.testrun.dto.RunDeletionResult
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
+import kr.artel.orchestration.testrun.dto.ScenarioImportRequest
+import kr.artel.orchestration.testrun.dto.ScenarioImportResponse
 import kr.artel.orchestration.testrun.dto.SetRunScenariosRequest
 import kr.artel.orchestration.testrun.dto.TestRunCreateRequest
+import kr.artel.orchestration.testrun.dto.TestRunGameBuildRequest
 import kr.artel.orchestration.testrun.dto.TestRunListResponse
 import kr.artel.orchestration.testrun.dto.TestRunResponse
 import kr.artel.orchestration.testrun.dto.TestRunUpdateRequest
+import kr.artel.orchestration.testrun.service.ScenarioLibraryService
 import kr.artel.orchestration.testrun.service.TestRunChatService
 import kr.artel.orchestration.testrun.service.TestRunService
+import kr.artel.orchestration.testscenario.dto.DraftApplyResult
+import kr.artel.orchestration.testscenario.dto.DraftScenario
+import kr.artel.orchestration.testscenario.dto.DraftScenarioEdit
+import kr.artel.orchestration.testscenario.dto.DraftSelection
 import kr.artel.orchestration.testscenario.dto.MessageResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import org.springframework.http.HttpStatus
@@ -31,6 +40,7 @@ import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -43,7 +53,8 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/projects/{projectId}/test-runs")
 class TestRunController(
     private val service: TestRunService,
-    private val chatService: TestRunChatService
+    private val chatService: TestRunChatService,
+    private val libraryService: ScenarioLibraryService
 ) {
 
     @GetMapping
@@ -70,6 +81,18 @@ class TestRunController(
         @CurrentUserId appUserId: Long
     ): ResponseEntity<TestRunResponse> =
         service.get(runId, appUserId)
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
+
+    /** TR 의 TC 버전을 바꾼다(ARTEL-1048). `gameBuildId` 가 null 이면 버전 없음. editor 면 409, 남의 빌드면 404. */
+    @PutMapping("/{runId}/game-build")
+    suspend fun changeGameBuild(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestBody request: TestRunGameBuildRequest,
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<TestRunResponse> =
+        service.changeGameBuild(runId, appUserId, request)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 
@@ -109,6 +132,20 @@ class TestRunController(
         @CurrentUserId appUserId: Long
     ): RunDeletionResult = service.delete(runId, appUserId, dropScenarios)
 
+    /**
+     * 다른 TR 의 TS 를 **복사해** 이 TR 끝에 붙인다(ARTEL-994). 복사본의 `case_id` 는 이 TR 의 build 에서
+     * 같은 케이스로 바꿔 끼우고, 짝이 없는 것은 `unmatchedCaseIds` 로 알린다.
+     */
+    @PostMapping("/{runId}/scenarios/imports")
+    @ResponseStatus(HttpStatus.CREATED)
+    suspend fun importScenarios(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestBody request: ScenarioImportRequest,
+        @CurrentUserId appUserId: Long
+    ): ScenarioImportResponse =
+        libraryService.importIntoRun(projectId, runId, appUserId, request.testScenarioIds)
+
     @GetMapping("/{runId}/scenarios")
     suspend fun getScenarios(
         @PathVariable projectId: Long,
@@ -134,6 +171,21 @@ class TestRunController(
         @CurrentUserId appUserId: Long
     ): ResponseEntity<RunCoverageResponse> =
         service.coverage(runId, appUserId)
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
+
+    /**
+     * 이 런의 케이스 중 [gameInstanceId] 게임의 버전에 없는 것(ARTEL-1069). QA 는 그 케이스를 판정하지 않고 넘기므로,
+     * QA 를 시작하기 전에 화면이 알린다.
+     */
+    @GetMapping("/{runId}/cases-outside-build")
+    suspend fun casesOutsideBuild(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestParam gameInstanceId: Long,
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<RunCasesOutsideBuildResponse> =
+        service.casesOutsideBuild(runId, gameInstanceId, appUserId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 
@@ -211,6 +263,46 @@ class TestRunController(
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
     }
+
+    /** 자동저장을 끈 턴이 모아 둔 draft(ARTEL-1074). 대화가 없으면 빈 배열. */
+    @GetMapping("/{runId}/chat/draft")
+    suspend fun chatDraft(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @CurrentUserId appUserId: Long
+    ): List<DraftScenario> =
+        chatService.draft(appUserId, runId)
+
+    /** draft 하나를 사용자가 고친 본문으로 바꾼다(ARTEL-1074). 시나리오에는 쓰지 않는다. */
+    @PutMapping("/{runId}/chat/draft/{draftId}")
+    suspend fun updateChatDraft(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @PathVariable draftId: String,
+        @RequestBody edit: DraftScenarioEdit,
+        @CurrentUserId appUserId: Long
+    ): DraftScenario =
+        chatService.updateDraft(appUserId, runId, draftId, edit)
+
+    /** 고른 draft 를 자동저장과 같은 엔진으로 반영한다(ARTEL-1074). */
+    @PostMapping("/{runId}/chat/draft/apply")
+    suspend fun applyChatDraft(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestBody selection: DraftSelection,
+        @CurrentUserId appUserId: Long
+    ): DraftApplyResult =
+        chatService.applyDraft(appUserId, runId, selection.draftIds)
+
+    /** 고른 draft 를 버린다(ARTEL-1074). 남은 draft 를 돌려준다. */
+    @PostMapping("/{runId}/chat/draft/discard")
+    suspend fun discardChatDraft(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestBody selection: DraftSelection,
+        @CurrentUserId appUserId: Long
+    ): List<DraftScenario> =
+        chatService.discardDraft(appUserId, runId, selection.draftIds)
 
     /**
      * 도는 저작 요청을 취소한다(ARTEL-955). 화면에서 ESC 를 두 번 누른 길이다.

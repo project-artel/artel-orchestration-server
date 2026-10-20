@@ -40,6 +40,14 @@ abstract class ApiException(
      */
     open val responseHeaders: Map<String, String>
         get() = emptyMap()
+
+    /**
+     * 응답 본문의 `fields` 에 실을 값. 대부분 비어 있고, 요청의 **어느 부분**이 틀렸는지를 code 와 message 만으로
+     * 전할 수 없을 때만 채운다(예: macro 검사가 거절한 줄 번호). 4xx message 와 같은 규약으로 도메인 값과
+     * 요청 입력만 담는다 — 잡은 예외의 raw message 를 넣지 않는다.
+     */
+    open val responseFields: Map<String, String>
+        get() = emptyMap()
 }
 
 /** 400 — 요청 값이 잘못됨. */

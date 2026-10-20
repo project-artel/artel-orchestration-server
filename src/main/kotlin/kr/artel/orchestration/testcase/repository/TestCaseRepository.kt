@@ -12,6 +12,7 @@ import kr.artel.orchestration.testcase.dto.ValueRaiser
 import kr.artel.orchestration.testcase.dto.TestCaseListItem
 import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 
@@ -146,6 +147,30 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      * `VERIFIED`가 들어간다). 세 번 세는 값이 세 줄일 뿐이다.
      */
     suspend fun countByProjectIdAndVerificationStatus(projectId: Long, verificationStatus: String): Long
+
+    /**
+     * [ids] 중 이 프로젝트에 있는 test case 를 지우고 지운 행 수를 돌려준다(ARTEL-967).
+     *
+     * `project_id` 조건이 다른 프로젝트의 id 를 걸러 낸다 — 그 행은 남고 수에도 들지 않는다.
+     * 문장 하나라 Postgres 가 한 트랜잭션으로 실행한다. `test_case_embedding` 은
+     * `ON DELETE CASCADE` 로 함께 지워진다(V23).
+     */
+    @Modifying
+    @Query("DELETE FROM test_case WHERE project_id = :projectId AND id IN (:ids)")
+    suspend fun deleteByProjectIdAndIdIn(projectId: Long, ids: Collection<Long>): Int
+
+    /** [ids] 중 이 프로젝트에 있는 test case 수. 예전 folder 옮기기 응답의 `moved` 를 센다. */
+    @Query("SELECT COUNT(*) FROM test_case WHERE project_id = :projectId AND id IN (:ids)")
+    suspend fun countByProjectIdAndIdIn(projectId: Long, ids: Collection<Long>): Long
+
+    /** 이 케이스를 마지막으로 판정한 build(ARTEL-1018). 상태는 버전 몫에서 비추므로 여기서 바꾸지 않는다. */
+    @Modifying
+    @Query("UPDATE test_case SET last_verified_build_id = :gameBuildId, updated_at = now() WHERE id = :testCaseId")
+    suspend fun markLastVerifiedBuild(testCaseId: Long, gameBuildId: Long): Int
+
+
+
+
 
     /**
      * 명세 적재의 **보조** 키 — `spec_id`가 아직 없는 행만 고른다(ARTEL-329).
@@ -458,6 +483,18 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     )
     suspend fun findEntrySceneName(projectId: Long): String?
 
+    /** [findEntrySceneName] 의 빌드 판(ARTEL-1048). TR 이 고른 TC 버전의 지도에서 입구를 읽는다. */
+    @Query(
+        """
+        SELECT s.name FROM scene s
+        JOIN content_map cm ON cm.id = s.content_map_id
+        WHERE s.is_entry AND cm.game_build_id = :gameBuildId
+        ORDER BY cm.id DESC
+        LIMIT 1
+        """
+    )
+    suspend fun findEntrySceneNameOfBuild(gameBuildId: Long): String?
+
     /**
      * **게임을 켜면 값이 무엇으로 시작하나**(ARTEL-665).
      *
@@ -565,4 +602,167 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
     )
     fun findCaseIdByCapability(projectId: Long): Flow<CapabilityCase>
+
+    // ── 빌드판(ARTEL-1064) ─────────────────────────────────────────────────────────────────────
+    // 저작이 TR 의 빌드 버전을 따를 때 쓴다. 위의 프로젝트판은 케이스의 `capability_key`(내용 해시)로 지도를 되짚어
+    // **모든 지도**(다른 빌드, 같은 게임을 올린 다른 프로젝트까지)의 능력을 잡는다. 빌드판은 지도를 그 빌드의 것 하나로
+    // 두고, 케이스와 능력을 잇는 키도 그 버전 몫(`test_case_version.capability_key`)의 것을 쓴다. 고르는 자리는
+    // `AuthoringCases` 하나다.
+
+    /** [findValuesChangedByCases] 의 빌드판. */
+    @Query(
+        """
+        SELECT v.test_case_id AS case_id, ce.target AS target, ce.detail AS detail
+        FROM test_case_version v
+        JOIN capability c ON c.capability_key = v.capability_key AND c.merged_into IS NULL
+        JOIN scene s ON s.id = c.scene_id AND s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind = 'write'
+        WHERE v.game_build_id = :gameBuildId
+          AND v.capability_key IS NOT NULL
+          AND ce.target IS NOT NULL
+        """
+    )
+    fun findValuesChangedByCasesOfBuild(gameBuildId: Long): Flow<CaseWrite>
+
+    /** [findSceneExits] 의 빌드판. */
+    @Query(
+        """
+        SELECT DISTINCT s.name AS from_scene,
+               e.to_scene_name AS to_scene,
+               coalesce(c.input_key, c.control_label, c.control_path) AS by_operation
+        FROM scene s
+        JOIN scene_edge e ON e.from_scene_id = s.id
+        LEFT JOIN capability c ON c.id = e.capability_id
+          AND c.interaction <> 'none'
+          AND c.actionability NOT IN ('not-a-step', 'unreachable-precondition')
+        WHERE s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
+        """
+    )
+    fun findSceneExitsOfBuild(gameBuildId: Long): Flow<SceneExitRow>
+
+    /** [findGroundedSceneEdges] 의 빌드판. */
+    @Query(
+        """
+        SELECT DISTINCT s.name AS from_scene,
+               e.to_scene_name AS to_scene,
+               coalesce(c.input_key, c.control_label, c.control_path) AS by_operation,
+               e.capability_id AS capability_id
+        FROM scene s
+        JOIN scene_edge e ON e.from_scene_id = s.id
+        LEFT JOIN capability c ON c.id = e.capability_id
+          AND c.interaction <> 'none'
+          AND c.actionability NOT IN ('not-a-step', 'unreachable-precondition')
+        WHERE e.capability_id IS NOT NULL
+          AND s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
+        """
+    )
+    fun findGroundedSceneEdgesOfBuild(gameBuildId: Long): Flow<GroundedSceneEdgeRow>
+
+    /** [findCaseInputs] 의 빌드판. 그 빌드 지도의 능력 하나에만 이어지므로 한 케이스에 한 줄이다. */
+    @Query(
+        """
+        SELECT v.test_case_id AS test_case_id,
+               CASE
+                   WHEN c.input_key IS NOT NULL THEN 'key:' || c.input_key
+                   WHEN c.control_path IS NOT NULL THEN 'click:' || c.control_path
+                   WHEN c.control_label IS NOT NULL THEN 'click:' || c.control_label
+                   ELSE ''
+               END AS input
+        FROM test_case_version v
+        JOIN capability c ON c.capability_key = v.capability_key AND c.merged_into IS NULL
+        JOIN scene s ON s.id = c.scene_id AND s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
+        WHERE v.game_build_id = :gameBuildId AND v.capability_key IS NOT NULL
+        """
+    )
+    fun findCaseInputsOfBuild(gameBuildId: Long): Flow<CaseInputRow>
+
+    /** [findWrittenValues] 의 빌드판. */
+    @Query(
+        """
+        SELECT DISTINCT ce.target
+        FROM scene s
+        JOIN capability c ON c.scene_id = s.id AND c.merged_into IS NULL
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind IN ('write', 'active-state')
+        WHERE ce.target IS NOT NULL
+          AND s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
+        UNION
+        SELECT DISTINCT se.target
+        FROM content_map_stray_effect se
+        WHERE se.kind IN ('write', 'active-state')
+          AND se.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
+        """
+    )
+    fun findWrittenValuesOfBuild(gameBuildId: Long): Flow<String>
+
+    /** [findStrayWrittenValues] 의 빌드판. */
+    @Query(
+        """
+        SELECT DISTINCT se.target
+        FROM content_map_stray_effect se
+        WHERE se.kind IN ('write', 'active-state')
+          AND se.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
+        """
+    )
+    fun findStrayWrittenValuesOfBuild(gameBuildId: Long): Flow<String>
+
+    /** [findValueRaisers] 의 빌드판. */
+    @Query(
+        """
+        SELECT DISTINCT ce.target AS target, s.name AS scene
+        FROM scene s
+        JOIN capability c ON c.scene_id = s.id AND c.merged_into IS NULL
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind = 'write'
+        WHERE ce.target IS NOT NULL
+          AND ce.detail ~ '^[+-][0-9]'
+          AND s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
+        """
+    )
+    fun findValueRaisersOfBuild(gameBuildId: Long): Flow<ValueRaiser>
+
+    /** [findStartingValues] 의 빌드판. 그 빌드 지도의 입구 화면만 본다. */
+    @Query(
+        """
+        SELECT DISTINCT regexp_replace(e.target, '^.*\.', '') AS name, e.detail AS detail
+        FROM capability_effect e
+        JOIN capability c ON c.id = e.capability_id AND c.merged_into IS NULL
+        JOIN scene s ON s.id = c.scene_id AND s.is_entry
+        WHERE s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
+          AND e.target IS NOT NULL
+          AND e.detail ~ 'Get(Int|Float|String|Bool)\('
+        """
+    )
+    fun findStartingValuesOfBuild(gameBuildId: Long): Flow<StartingValue>
+
+    /** [findValueMoves] 의 빌드판. */
+    @Query(
+        """
+        SELECT DISTINCT ce.target AS target,
+               s.name AS scene,
+               ce.detail AS detail,
+               c.actionability AS actionability,
+               coalesce(c.input_key, c.control_path, c.control_label) AS operation,
+               c.interaction AS interaction,
+               e.condition_tree AS condition_tree
+        FROM scene s
+        JOIN capability c ON c.scene_id = s.id AND c.merged_into IS NULL
+        JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind = 'write'
+        LEFT JOIN capability_evidence e ON e.capability_id = c.id
+        WHERE ce.target IS NOT NULL
+          AND s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
+        ORDER BY 1, 2
+        """
+    )
+    fun findValueMovesOfBuild(gameBuildId: Long): Flow<ValueMoveRow>
+
+    /** [findCaseIdByCapability] 의 빌드판. */
+    @Query(
+        """
+        SELECT c.id AS capability_id, v.test_case_id AS test_case_id
+        FROM test_case_version v
+        JOIN capability c ON c.capability_key = v.capability_key AND c.merged_into IS NULL
+        JOIN scene s ON s.id = c.scene_id AND s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
+        WHERE v.game_build_id = :gameBuildId AND v.capability_key IS NOT NULL
+        """
+    )
+    fun findCaseIdByCapabilityOfBuild(gameBuildId: Long): Flow<CapabilityCase>
 }

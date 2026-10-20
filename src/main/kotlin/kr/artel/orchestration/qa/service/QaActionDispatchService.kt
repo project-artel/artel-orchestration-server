@@ -27,7 +27,8 @@ class QaActionDispatchService(
     private val databaseClient: DatabaseClient,
     private val sessionManager: SessionManager,
     private val objectMapper: ObjectMapper,
-    private val transactionalOperator: TransactionalOperator
+    private val transactionalOperator: TransactionalOperator,
+    private val sdkBridge: QaSdkBridgeService
 ) {
     suspend fun dispatch(
         qaTryId: Long,
@@ -47,6 +48,23 @@ class QaActionDispatchService(
         val qaTry = tryRepository.findById(qaTryId)
             ?.takeIf { it.status == "STARTING" || it.status == "RUNNING" }
             ?: throw IllegalStateException("QA try is not active")
+
+        val rejections = functionRejections(qaTry.runConfig.asString(), actions)
+        if (rejections.isNotEmpty()) {
+            // SDK 로 보내지 않는다. 배치 전체를 거절하고, 이유를 agent 에게 `ACTION_RESULT` 실패로 돌려준다.
+            // 던지지 않는 것은 던진 예외가 수신 체인에서 삼켜져 agent 가 답을 기다리다 멈추기 때문이다.
+            val inbound = logService.append(
+                qaTryId = qaTryId,
+                direction = "AGENT_TO_ORCHE",
+                type = "ACTION",
+                messageId = agentMessageId,
+                message = message,
+                payload = actionsPayload
+            )
+            logService.publish(inbound)
+            if (inbound.inserted) sdkBridge.rejectActions(qaTry, agentMessageId, actions, rejections)
+            return false
+        }
 
         try {
             // inbound append + outbound append + SDK 전송을 한 트랜잭션으로 묶는다. 원자화 전에는
@@ -88,6 +106,37 @@ class QaActionDispatchService(
             logService.publish(audit)
             throw error
         }
+    }
+
+    /**
+     * `invoke_cheat` 와 `start_behavior` 중 이 try 의 허용 목록에 없는 이름을 부르는 항목을 골라 이유를 단다.
+     *
+     * 허용 목록은 세션을 열 때 agent 에게 실제로 보낸 이름들이다(`run_config.effective_cheats`, `effective_behaviors`).
+     * agent 가 받은 적 없는 이름을 부르면 환각이거나 `cheatMode = off` 를 우회하려는 호출이므로 SDK 에 닿기 전에 막는다.
+     * `stop_behavior` 와 `extend_behavior` 는 이름을 싣지 않고 이미 시작한 id 만 가리키므로 검사하지 않는다.
+     *
+     * @return `ACTION` 항목의 `id` 에서 거절 이유로 가는 맵. 비어 있으면 모두 통과다.
+     */
+    private fun functionRejections(runConfigJson: String, actions: List<ActionItemDto>): Map<Long, String> {
+        val rejections = LinkedHashMap<Long, String>()
+        var allowList: QaFunctionAllowList? = null
+        for (action in actions) {
+            val kind = when (action.method) {
+                INVOKE_CHEAT_METHOD -> "cheat"
+                START_BEHAVIOR_METHOD -> "behavior"
+                else -> continue
+            }
+            val list = allowList ?: QaFunctionAllowList.of(runConfigJson, objectMapper).also { allowList = it }
+            val params = objectMapper.valueToTree<JsonNode>(action.params)
+            val name = params.path(0).path("name").takeIf { it.isTextual }?.asText()
+            val allowed = if (kind == "cheat") list.effectiveCheats else list.effectiveBehaviors
+            when {
+                name.isNullOrBlank() -> rejections[action.id] = "bad argument name: ${action.method} needs params[0].name"
+                name !in allowed -> rejections[action.id] =
+                    "$kind not allowed in this run: $name. Allowed: ${allowed.joinToString(", ").ifEmpty { "none" }}"
+            }
+        }
+        return rejections
     }
 
     private suspend fun insertOutbound(

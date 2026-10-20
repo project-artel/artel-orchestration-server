@@ -1,6 +1,7 @@
 package kr.artel.orchestration.tracker.client
 
 import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.UpstreamUnavailableException
 import kr.artel.orchestration.tracker.entity.TrackerProvider
 
@@ -81,3 +82,13 @@ class TrackerNotInstalledException(message: String) :
 /** 저장소가 없거나 App 이 그 저장소에 접근할 수 없을 때. */
 class TrackerRepositoryUnavailableException(message: String) :
     BadRequestException(message, code = "tracker_repository_unavailable")
+
+/**
+ * 사용자 인가로 확인한 installation 목록이 없거나 만료됐을 때. 화면은 GitHub 인가를 다시 시작한다.
+ */
+class TrackerAuthorizationRequiredException(message: String) :
+    ConflictException(message, code = "tracker_authorization_required")
+
+/** 고른 installation 이 사용자 인가로 확인한 목록에 없을 때. 클라이언트가 보낸 id 는 믿지 않는다. */
+class TrackerInstallationNotVerifiedException(message: String) :
+    BadRequestException(message, code = "tracker_installation_not_verified")

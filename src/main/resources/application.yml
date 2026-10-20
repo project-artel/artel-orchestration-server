@@ -23,11 +23,11 @@ spring:
     max-in-memory-size: 2MB
   # @Scheduled는 앱 전체가 하나의 TaskScheduler 풀을 공유하고 기본 크기가 1이다. 그러면 knowledge·
   # testcase 백필 tick이 스레드 하나를 두고 직렬화되어, 한쪽이 Agent 응답을 기다리는 동안(최대 PT2M)
-  # 다른 쪽이 굶는다. 독립 백필 워커 수만큼 스레드를 준다(현재 2개). 워커가 늘면 이 값도 올린다.
+  # 다른 쪽이 굶는다. 독립 백필 워커 수만큼 스레드를 준다(현재 3개: knowledge, testcase, macro). 워커가 늘면 이 값도 올린다.
   task:
     scheduling:
       pool:
-        size: ${ARTEL_SCHEDULING_POOL_SIZE:2}
+        size: ${ARTEL_SCHEDULING_POOL_SIZE:3}
   # SDK 로그인 일회용 코드가 여기 산다. DB와 달리 application-db.yml로 빼지 않는다 —
   # 그 파일은 optional import라 없으면 조용히 넘어가는데, Redis 설정이 조용히 빠지면
   # 기본값 localhost로 붙는다. 컨테이너 안에서 localhost는 앱 자신이라 기동은 정상이고
@@ -61,6 +61,8 @@ artel:
     port: ${ARTEL_INTERNAL_API_PORT:8081}
   agent:
     base-url: ${ARTEL_AGENT_BASE_URL:http://localhost:8000}
+    # 관리 화면이 key 나 model 을 바꾼 뒤 POST {base-url}/llm-cache/invalidate 를 기다리는 상한.
+    cache-invalidate-timeout: ${ARTEL_AGENT_CACHE_INVALIDATE_TIMEOUT:PT3S}
     ws-base-url: ${ARTEL_AGENT_WS_BASE_URL:ws://localhost:8000}
     # 비우면 모델 필드를 생략하고 Agent 가 자기 카탈로그의 기본 모델을 고른다. 모델을 갈아 끼울
     # 때 여기 적힌 옛 slug 를 강제하지 않으려는 것이다(`extract.model` 과 같은 규칙).
@@ -69,7 +71,6 @@ artel:
     # 가 `${artel.agent.model:}` 을 읽는데 여기에 매핑이 없으면 늘 빈 값이고, 그러면 지정한 모델이
     # 조용히 무시된다 — 로그에는 Agent 의 기본 모델이 찍혀서 설정이 먹은 것처럼 보인다.
     model: ${ARTEL_AGENT_MODEL:}
-    model-catalog-ttl: ${ARTEL_AGENT_MODEL_CATALOG_TTL:PT5M}
     # 업로드 문서 → /extract → reference_context 적재(pull 파이프라인).
     extract:
       # 로컬에 Agent가 없으면 업로드마다 FAILED로 남으니 끌 수 있게 둔다.
@@ -131,6 +132,31 @@ artel:
       default-limit: ${ARTEL_TESTCASE_SEARCH_DEFAULT_LIMIT:5}
       # 결과가 Agent 컨텍스트로 들어간다. 요청이 더 커도 여기서 잘린다.
       max-limit: ${ARTEL_TESTCASE_SEARCH_MAX_LIMIT:20}
+  macro:
+    # MACRO_SEARCH(ARTEL-986): macro 의 이름, parameter, docstring 으로 벡터를 채우고 키워드 검색과
+    # 합쳐 돌려준다. knowledge 와 testcase 백필과 달리 기본으로 켠다 — 켜는 것을 잊은 배포 환경에서
+    # 검색이 조용히 키워드 결과만 내는 쪽이, Agent 없는 로컬에서 tick 마다 실패 로그가 쌓이는 쪽보다
+    # 알아채기 어렵다. 로컬에서는 `ARTEL_MACRO_SEARCH_ENABLED=false` 로 끄고, 테스트는
+    # application-test.yml 이 끈다. 꺼 둬도 MACRO_SEARCH 는 키워드 결과만으로 답한다.
+    search:
+      enabled: ${ARTEL_MACRO_SEARCH_ENABLED:true}
+      # 벡터 모델은 knowledge 백필과 같아야 한다(Agent 의 embedding_model 과도 같아야 한다).
+      model: ${ARTEL_MACRO_SEARCH_MODEL:${ARTEL_KNOWLEDGE_BACKFILL_MODEL:openai/text-embedding-3-large}}
+      # 한 tick 처리 상한. macro 는 build 당 수십 개라 한 번의 /embed 로 끝난다.
+      batch-size: ${ARTEL_MACRO_SEARCH_BATCH_SIZE:64}
+      max-attempts: ${ARTEL_MACRO_SEARCH_MAX_ATTEMPTS:5}
+      fixed-delay: ${ARTEL_MACRO_SEARCH_FIXED_DELAY:PT10S}
+      default-limit: ${ARTEL_MACRO_SEARCH_DEFAULT_LIMIT:5}
+      # 결과가 Agent 컨텍스트로 들어간다. 요청이 더 커도 거절한다(조용히 자르지 않는다).
+      max-limit: ${ARTEL_MACRO_SEARCH_MAX_LIMIT:10}
+      rrf-k: ${ARTEL_MACRO_SEARCH_RRF_K:60}
+      # 질의 임베딩이 이 시간을 넘기면 키워드 결과만으로 답한다.
+      query-timeout: ${ARTEL_MACRO_SEARCH_QUERY_TIMEOUT:PT5S}
+  content-map:
+    # V114 이전에 적재된 지도에 scene_object 를 채운다(ARTEL-1059). 기동할 때 한 번 돌고, 이미 채운 지도는
+    # 다시 고르지 않는다. 테스트는 application-test.yml 이 끈다.
+    scene-object-backfill:
+      enabled: ${ARTEL_SCENE_OBJECT_BACKFILL_ENABLED:true}
   scenario:
     # 저작 한 판을 처음부터 끝까지 파일로 받아 적는다(ARTEL-650). 답 하나가 여러 손을 거치며
     # 모양을 바뀌는데 어느 손에서 뒤집혔는지가 곧 원인이라, 그것을 되짚으려고 둔다.
@@ -175,6 +201,19 @@ artel:
     turn-credential: ${ARTEL_TURN_CREDENTIAL:}
     max-width: ${ARTEL_STREAM_MAX_WIDTH:1280}
     max-framerate: ${ARTEL_STREAM_MAX_FRAMERATE:30}
+  # artel-macro-mcp 와 맞물리는 설정(ARTEL-1088). issuer 와 jwks-uri 가 둘 다 있을 때만 MCP access JWT 를 받는다.
+  mcp:
+    base-url: ${ARTEL_MCP_BASE_URL:}
+    issuer: ${ARTEL_MCP_ISSUER:}
+    jwks-uri: ${ARTEL_MCP_JWKS_URI:}
+    audience: ${ARTEL_MCP_AUDIENCE:artel-orchestration}
+    handoff:
+      # handoff JWT 의 iss. MCP 서버의 HANDOFF_ISSUER(비면 그쪽 ORCHESTRATION_BASE_URL)와 같아야 한다.
+      # 이 서버의 공개 base URL 을 쓴다.
+      issuer: ${ARTEL_MCP_HANDOFF_ISSUER:}
+      # RSA PKCS#8 PEM. 한 줄 환경변수면 개행을 \n 으로 적는다.
+      private-key: ${ARTEL_MCP_HANDOFF_PRIVATE_KEY:}
+      generate-dev-key: ${ARTEL_MCP_HANDOFF_GENERATE_DEV_KEY:false}
   auth:
     frontend-url: ${ARTEL_HOME_URL:http://localhost:5173}
     # CORS 허용 origin(콤마 구분). frontend-url은 항상 자동 포함된다. 와일드카드(https://*.artel.kr) 허용.
@@ -208,14 +247,30 @@ artel:
       max-failures: ${ARTEL_LOGIN_MAX_FAILURES:10}
       address-max-failures: ${ARTEL_LOGIN_ADDRESS_MAX_FAILURES:100}
       window: ${ARTEL_LOGIN_FAILURE_WINDOW:PT15M}
-  # agent-server 가 내부 포트(GET /internal/settings/llm)로 받아 가는 OpenRouter API key.
-  # 관리 화면에서 넣은 값이 먼저이고, 없으면 OPENROUTER_API_KEY 다.
+  # OpenRouter key 확인 호출. key 는 관리 화면에서 넣은 값(platform_setting)뿐이고 환경 변수는 없다.
+  # agent-server 는 내부 포트(GET /internal/settings/llm)로 key 를 받아 간다.
   llm:
-    openrouter-api-key: ${OPENROUTER_API_KEY:}
     openrouter-base-url: ${ARTEL_OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
     check-timeout: ${ARTEL_OPENROUTER_CHECK_TIMEOUT:PT15S}
-  # 관리 화면에서 넣은 비밀(OpenRouter API key)을 AES-GCM 으로 잠그는 키의 원천. 32 바이트 이상.
-  # 비우면 관리 화면에서 key 를 저장할 수 없고 OPENROUTER_API_KEY 만 쓰인다. 바꾸면 저장된 값을 열 수 없다.
+  # 관리 화면의 Bedrock key 확인이 Converse 를 부르는 곳. key 는 platform_setting 에만 있다.
+  bedrock:
+    # agent-server 의 BEDROCK_REGION 과 같은 값이어야 확인 결과가 실제 호출과 맞는다.
+    region: ${BEDROCK_REGION:us-west-2}
+    # 비우면 https://bedrock-runtime.{region}.amazonaws.com 이다.
+    runtime-base-url: ${ARTEL_BEDROCK_RUNTIME_BASE_URL:}
+    check-timeout: ${ARTEL_BEDROCK_CHECK_TIMEOUT:PT15S}
+  # 관리 화면의 Claude API key 확인이 GET /v1/models 를 부르는 곳. key 는 platform_setting 에만 있다.
+  anthropic:
+    base-url: ${ARTEL_ANTHROPIC_BASE_URL:https://api.anthropic.com}
+    check-timeout: ${ARTEL_ANTHROPIC_CHECK_TIMEOUT:PT15S}
+  # 사용자가 넣은 OpenAI API key 를 PUT /api/auth/me/llm-keys/openai 가 확인하는 곳(GET {base-url}/v1/models).
+  # 사용자 Claude API key 는 위 anthropic.base-url 로, 사용자 OpenRouter key 는 llm.openrouter-base-url 의 /key 로 확인한다.
+  openai:
+    base-url: ${ARTEL_OPENAI_BASE_URL:https://api.openai.com}
+    check-timeout: ${ARTEL_OPENAI_CHECK_TIMEOUT:PT15S}
+  # 관리 화면에서 넣은 비밀(OpenRouter, Bedrock, Claude API key)을 AES-GCM 으로 잠그는 키의 원천. 32 글자 이상이고
+  # 예시 문구를 담으면 기동하지 않는다. 비우면 관리 화면에서 key 를 저장할 수 없다. 바꾸면 저장된 값을 열 수 없어
+  # key 를 다시 넣어야 한다.
   secrets:
     key: ${ARTEL_SECRETS_KEY:}
   # 결함을 외부 이슈 tracker 로 내보내는 연동(ARTEL-671).
@@ -226,6 +281,8 @@ artel:
     github:
       # 비어 있으면 연동 endpoint 만 503 이고, 기존 QA 경로는 그대로 돈다. 그래서 기동을 막지 않는다.
       # client-id/secret 은 이슈를 쓰는 데가 아니라 installation_id 의 소유를 확인하는 데 쓴다.
+      # App 의 Callback URL 이 /api/tracker/github/setup 이어야 authorize-url 흐름(이미 설치된
+      # installation 고르기)이 이 서버로 돌아온다.
       app-id: ${ARTEL_GITHUB_APP_ID:}
       app-slug: ${ARTEL_GITHUB_APP_SLUG:}
       private-key: ${ARTEL_GITHUB_APP_PRIVATE_KEY:}
@@ -235,6 +292,8 @@ artel:
       web-base-url: ${ARTEL_GITHUB_WEB_BASE_URL:https://github.com}
       token-refresh-skew: ${ARTEL_GITHUB_TOKEN_REFRESH_SKEW:PT5M}
       request-timeout: ${ARTEL_GITHUB_REQUEST_TIMEOUT:PT15S}
+      # 사용자 인가로 확인한 installation 목록을 Redis 에 두는 시간. 이 안에 하나를 골라야 한다.
+      installation-choice-ttl: ${ARTEL_GITHUB_INSTALLATION_CHOICE_TTL:PT10M}
   storage:
     # 기획서 원본을 담을 S3.
     bucket: ${ARTEL_S3_BUCKET:artel-local}

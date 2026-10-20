@@ -36,6 +36,7 @@ import org.springframework.stereotype.Service
  */
 @Service
 class ScenarioPathService(
+    private val authoringCases: AuthoringCases,
     // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
     private val conditions: CaseConditionReader,
     private val capabilityConditions: CapabilityConditionReader,
@@ -62,8 +63,9 @@ class ScenarioPathService(
         fromTestCaseId: Long,
         toTestCaseId: Long,
     ): ScenarioPathAnswer {
-        val from = testCaseRepository.findById(fromTestCaseId)
-        val to = testCaseRepository.findById(toTestCaseId)
+        // 런이 빌드 버전을 따르면 두 케이스 모두 그 버전 내용이다(ARTEL-1064).
+        val from = authoringCases.byId(fromTestCaseId)
+        val to = authoringCases.byId(toTestCaseId)
         if (from == null || from.projectId != projectId) return unknownCase(fromTestCaseId)
         if (to == null || to.projectId != projectId) return unknownCase(toTestCaseId)
 
@@ -821,6 +823,8 @@ class ScenarioPathService(
     // ---- 조립 -----------------------------------------------------------------------
 
     private suspend fun contentMapIdOf(projectId: Long, appUserId: Long): Long? {
+        // TR 이 고른 TC 버전의 지도만 본다(ARTEL-1048). 버전이 없는 TR 이면 예전처럼 최신 빌드다.
+        authoringGameBuildId()?.let { return contentMapRepository.findByGameBuildId(it)?.id }
         val build = buildRepository.findAllForMember(projectId, appUserId).firstOrNull() ?: return null
         return contentMapRepository.findByGameBuildId(build.id!!)?.id
     }

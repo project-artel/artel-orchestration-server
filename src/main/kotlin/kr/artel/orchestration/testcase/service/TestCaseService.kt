@@ -2,9 +2,11 @@ package kr.artel.orchestration.testcase.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.NotFoundException
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
@@ -12,9 +14,16 @@ import kr.artel.orchestration.contentmap.entity.Actionability
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.testcase.dto.CaseGuard
 import kr.artel.orchestration.testcase.dto.ValueMove
+import kr.artel.orchestration.testscenario.service.AuthoringCases
 import kr.artel.orchestration.testscenario.service.Guard
 import kr.artel.orchestration.testcase.dto.SceneEdge
 import kr.artel.orchestration.testcase.dto.SceneExit
+import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteRequest
+import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteResponse
+import kr.artel.orchestration.testcase.dto.TestCaseMoveRequest
+import kr.artel.orchestration.testcase.dto.TestCaseMoveResponse
+import kr.artel.orchestration.testcase.dto.parseOptionalWireId
+import kr.artel.orchestration.testcase.dto.parseWireIds
 import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
@@ -26,10 +35,13 @@ import kr.artel.orchestration.testcase.dto.toTestCaseResponse
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.entity.VerificationStatus
+import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.transaction.reactive.TransactionalOperator
+import org.springframework.transaction.reactive.executeAndAwait
 import kr.artel.orchestration.testscenario.service.CaseConditionReader
 
 /**
@@ -48,6 +60,14 @@ class TestCaseService(
     private val repository: TestCaseRepository,
     private val projectAccessService: ProjectAccessService,
     private val objectMapper: ObjectMapper,
+    private val folderService: TestCaseFolderService,
+    private val transactionalOperator: TransactionalOperator,
+    private val gameBuilds: GameBuildRepository,
+    private val manualCases: ManualCaseVersionService,
+    private val folderItems: TestCaseFolderItemRepository,
+    // 저작이 TC 와 지도 사실을 읽는 자리(ARTEL-1064). 런이 빌드 버전을 따르면 그 버전의 것을 준다.
+    private val authoringCases: AuthoringCases,
+    private val reader: TestCaseReader,
 ) {
 
     private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
@@ -58,10 +78,18 @@ class TestCaseService(
      * 거르고, 필터를 타는 경로가 없으니 그 코드는 "동작한다"고 말할 근거도 없었다.
      * 서버에서 걸러야 할 만큼 목록이 커지면 그때 실제 소비자에 맞춰 다시 넣는 편이 낫다.
      */
-    suspend fun listTestCases(projectId: Long, userId: Long): TestCaseListResponse {
+    suspend fun listTestCases(projectId: Long, userId: Long, gameBuildId: Long? = null): TestCaseListResponse {
         if (!projectAccessService.isMember(projectId, userId)) return TestCaseListResponse(emptyList())
+        val folderIds = folderItems.findFirstFolders(projectId).toList().associate { it.testCaseId to it.folderId }
+        if (gameBuildId != null) {
+            // 버전을 따르는 화면(TR)은 그 버전에 든 케이스만, 그 버전 내용으로 받는다(ARTEL-1069).
+            gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: throw NotFoundException("버전을 찾을 수 없습니다.")
+            val items = reader.inScope(projectId, CaseScope.Version(gameBuildId)).asReversed()
+                .map { it.toTestCaseResponse(folderIds[it.id]) }
+            return TestCaseListResponse(items)
+        }
         val items = repository.findByProjectIdOrderByIdDesc(projectId)
-            .map { it.toTestCaseResponse() }
+            .map { it.toTestCaseResponse(folderIds[it.id]) }
             .toList()
         return TestCaseListResponse(items)
     }
@@ -91,7 +119,10 @@ class TestCaseService(
      *
      * 비참여자에겐 빈 목록 — 다른 조회와 같은 판단이다(존재 자체를 숨긴다).
      */
-    suspend fun getAuthoringCases(projectId: Long, userId: Long): List<AuthoringTestCase> {
+    /**
+     * [onlyIds] 가 있으면 그 케이스만 보낸다(ARTEL-1048) — TR 이 고른 TC 버전에 든 것. 없으면 프로젝트 전체다.
+     */
+    suspend fun getAuthoringCases(projectId: Long, userId: Long, onlyIds: Set<Long>? = null): List<AuthoringTestCase> {
         if (!projectAccessService.isMember(projectId, userId)) return emptyList()
         val changed = valuesChangedByCases(projectId)
         // **길은 우리가 찾지 않지만, 지도가 아는 것은 보낸다**(ARTEL-628).
@@ -107,12 +138,14 @@ class TestCaseService(
         // 했는데, 그 도구가 준 나머지(씬 · 요구 · 남기는 것)는 이 목록에 이미 실려 있었다.
         // 한 칸을 옮기면 왕복이 사라진다 — 늘 참인 사실은 목록이 한 번 말한다.
         val inputs = caseInputs(projectId)
-        return repository.findByProjectIdOrderByIdAsc(projectId)
+        // 런이 빌드 버전을 따르면 케이스 내용은 그 버전 몫이다(ARTEL-1064). 맥락이 없으면 대표 행 그대로다.
+        return authoringCases.all(projectId)
             // **깨진 것은 저작 재료가 아니다**(ARTEL-685). 지도를 다시 적재하면 더 이상 뒷받침되지
             // 않는 케이스가 `BROKEN` 으로 남는다. 보내면 모델이 그것을 담고, 커버리지 기준에는
             // 없으므로 "없는 케이스 번호"로 걸려 저작이 통째로 막힌다 — 실측(런 268)에서 14건.
             // 보내는 것과 세는 것이 같은 집합이어야 한다.
             .filter { it.verificationStatus != "BROKEN" }
+            .filter { onlyIds == null || it.id in onlyIds }
             .map { case ->
             AuthoringTestCase(
                 id = case.id!!,
@@ -207,7 +240,7 @@ class TestCaseService(
     }
 
     private suspend fun valueMoves(projectId: Long): Map<String, List<OwnedMove>> = runCatching {
-        repository.findValueMoves(projectId).toList()
+        authoringCases.valueMoves(projectId).toList()
             .map { row ->
                 OwnedMove(
                     owner = row.target,
@@ -237,7 +270,7 @@ class TestCaseService(
     private data class OwnedMove(val owner: String, val move: ValueMove)
 
     private suspend fun valueRaisers(projectId: Long): Map<String, List<String>> = runCatching {
-        repository.findValueRaisers(projectId).toList()
+        authoringCases.valueRaisers(projectId).toList()
             .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
             .mapValues { (_, scenes) -> scenes.distinct().sorted() }
     }.getOrElse { emptyMap() }
@@ -247,7 +280,7 @@ class TestCaseService(
      * `capability_key` 가 없어서 가리킬 조작이 없다.
      */
     private suspend fun caseInputs(projectId: Long): Map<Long, String> = runCatching {
-        repository.findCaseInputs(projectId).toList()
+        authoringCases.caseInputs(projectId).toList()
             .filter { it.input.isNotBlank() }
             .associate { it.testCaseId to it.input }
     }.getOrElse { emptyMap() }
@@ -267,7 +300,7 @@ class TestCaseService(
      * 정렬은 프롬프트 캐시 때문이다 — 같은 지도면 바이트까지 같아야 앞부분이 재활용된다.
      */
     suspend fun sceneEdges(projectId: Long): List<SceneEdge> = runCatching {
-        repository.findSceneExits(projectId).toList()
+        authoringCases.sceneExits(projectId).toList()
             .groupBy { it.fromScene to it.toScene }
             // 한 화면으로 가는 길이 여럿이면 **누를 것이 있는 쪽**을 먼저 든다.
             .map { (pair, ways) -> SceneEdge(pair.first, pair.second, ways.firstNotNullOfOrNull { it.byOperation }) }
@@ -283,7 +316,7 @@ class TestCaseService(
      * 흐름을 끄면 이 값이 아무 데도 안 나가므로, 세션을 열 때 직접 싣는다.
      */
     suspend fun startingValues(projectId: Long): Map<String, String> = runCatching {
-        repository.findStartingValues(projectId).toList()
+        authoringCases.startingValues(projectId).toList()
             .mapNotNull { row -> ScenarioStateReader.defaultOf(row.detail)?.let { ScenarioStateReader.normalize(row.name) to it } }
             .sortedBy { it.first }
             .toMap()
@@ -291,7 +324,7 @@ class TestCaseService(
         .getOrElse { emptyMap() }
 
     private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Map<String, String>> = runCatching {
-        repository.findValuesChangedByCases(projectId).toList()
+        authoringCases.valuesChangedByCases(projectId).toList()
             .groupBy { it.caseId }
             .mapValues { (_, writes) ->
                 writes.mapNotNull { write ->
@@ -336,9 +369,22 @@ class TestCaseService(
         )
     }
 
-    /** 케이스 생성. scene/step/expectedValue 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404). */
+    /**
+     * 케이스 생성. scene/step/expectedValue 필수. 상태는 DRAFT로 시작. 비참여자면 null(→404).
+     *
+     * `folderId` 가 있으면 이 프로젝트 folder 여야 한다(아니면 404). 그 folder 의 끝에 넣는다(ARTEL-1023).
+     * folder 확인과 저장 사이에 그 folder 가 지워지지 않게 [TestCaseFolderService.lockProjectFolders] 를 잡고 한
+     * 트랜잭션에서 저장한다.
+     *
+     * `gameBuildId` 가 있으면 그 버전에 넣는다(ARTEL-1031). 이 프로젝트 build 가 아니면 404 다.
+     */
     suspend fun createTestCase(projectId: Long, userId: Long, request: TestCaseCreateRequest): TestCaseResponse? {
         if (!projectAccessService.isMember(projectId, userId)) return null
+        val folderId = parseOptionalWireId(request.folderId, "folderId")
+        val gameBuildId = parseOptionalWireId(request.gameBuildId, "gameBuildId")
+        if (gameBuildId != null) {
+            gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: throw NotFoundException("버전을 찾을 수 없습니다.")
+        }
         val entity = TestCaseEntity(
             projectId = projectId,
             scene = request.scene.requireField("scene"),
@@ -346,8 +392,45 @@ class TestCaseService(
             precondition = request.precondition?.ifBlank { null },
             expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
+            functions = request.functions?.validated(),
         )
-        return repository.save(entity).toTestCaseResponse()
+        if (folderId == null && gameBuildId == null) return repository.save(entity).toTestCaseResponse()
+        val saved = transactionalOperator.executeAndAwait {
+            folderService.lockProjectFolders(projectId)
+            folderId?.let { folderService.requireFolder(projectId, it) }
+            val created = repository.save(entity)
+            val caseId = requireNotNull(created.id)
+            folderId?.let { folderItems.append(projectId, it, listOf(caseId)).toList() }
+            gameBuildId?.let { manualCases.attachNewCase(projectId, it, caseId) }
+            created
+        }
+        return saved.toTestCaseResponse(folderId)
+    }
+
+    /**
+     * test case 를 folder 로 옮긴다(ARTEL-969). `folderId` 가 null 이면 folder 없음으로 옮긴다.
+     *
+     * 케이스가 folder 하나에만 들던 때의 요청이라, 케이스를 **모든 folder 에서 뺀 뒤** `folderId` 끝에 넣는다
+     * (ARTEL-1023). folder 사이 옮기기는 [TestCaseFolderItemService.move] 다.
+     *
+     * 비멤버와 다른 프로젝트 folder 는 404 다. 다른 프로젝트 test case 와 없는 id 는 옮기지 않고 세지
+     * 않는다. folder 확인과 `UPDATE` 사이에 folder 가 지워지면 FK 위반(500)이 나므로 folder 쓰기와 같은
+     * lock 을 잡는다.
+     */
+    suspend fun moveTestCases(projectId: Long, userId: Long, request: TestCaseMoveRequest): TestCaseMoveResponse {
+        if (!projectAccessService.isMember(projectId, userId)) {
+            throw NotFoundException("프로젝트를 찾을 수 없습니다.")
+        }
+        val caseIds = parseWireIds(request.caseIds, "caseIds")
+        val folderId = parseOptionalWireId(request.folderId, "folderId")
+        val moved = transactionalOperator.executeAndAwait {
+            folderService.lockProjectFolders(projectId)
+            if (folderId != null) folderService.requireFolder(projectId, folderId)
+            folderItems.removeEverywhere(projectId, caseIds)
+            if (folderId != null) folderItems.append(projectId, folderId, caseIds).toList()
+            repository.countByProjectIdAndIdIn(projectId, caseIds).toInt()
+        }
+        return TestCaseMoveResponse(moved)
     }
 
     /**
@@ -355,8 +438,15 @@ class TestCaseService(
      *
      * 목록과 달리 `evidenceGaps`까지 낸다 — 왜 상세에만 싣는지는 [TestCaseDetailResponse] 참조.
      */
-    suspend fun getTestCase(caseId: Long, userId: Long): TestCaseDetailResponse? =
-        accessible(caseId, userId)?.toTestCaseDetailResponse(objectMapper)
+    /**
+     * 케이스 단건. [gameBuildId] 를 주면 그 버전으로 비춘다(ARTEL-1069) — TR 화면이 TR 버전의 내용과 판정을 본다.
+     * 그 버전에 몫이 없으면 정체 그대로다.
+     */
+    suspend fun getTestCase(caseId: Long, userId: Long, gameBuildId: Long? = null): TestCaseDetailResponse? {
+        val identity = accessible(caseId, userId) ?: return null
+        return reader.overlay(identity, CaseScope.of(gameBuildId))
+            .toTestCaseDetailResponse(objectMapper, folderItems.findFirstFolderId(caseId))
+    }
 
     /** 케이스 수정. 준 필드만 반영. verificationStatus는 enum 검증. */
     suspend fun updateTestCase(caseId: Long, userId: Long, request: TestCaseUpdateRequest): TestCaseResponse? {
@@ -371,13 +461,33 @@ class TestCaseService(
             precondition = if (request.precondition == null) existing.precondition else request.precondition.ifBlank { null },
             expectedValue = request.expectedValue?.ifBlank { null } ?: existing.expectedValue,
             verificationStatus = statusName ?: existing.verificationStatus,
+            functions = request.functions?.validated() ?: existing.functions,
         )
-        return repository.save(updated).toTestCaseResponse()
+        return repository.save(updated).toTestCaseResponse(folderItems.findFirstFolderId(caseId))
     }
 
     /** 케이스 삭제(참여자만). 접근 불가면 조용히 no-op(존재 숨김). 조합 정리는 별도. */
     suspend fun deleteTestCase(caseId: Long, userId: Long) {
         accessible(caseId, userId)?.let { repository.delete(it) }
+    }
+
+    /**
+     * 여러 test case 를 한 번에 지운다(ARTEL-967). 비멤버면 본문과 무관하게 404 다.
+     *
+     * 시나리오가 `case_id` 로 인용한 케이스도 지운다. 단건 삭제와 같은 규칙이다 — 인용된 케이스를
+     * `BROKEN` 으로 돌리는 것은 content map 에서 기능이 사라졌을 때 자동으로 지우는
+     * [MapTestCaseWriter] 의 규칙이고, 이것은 사용자가 고른 케이스를 지우는 요청이다.
+     */
+    suspend fun bulkDeleteTestCases(
+        projectId: Long,
+        userId: Long,
+        request: TestCaseBulkDeleteRequest,
+    ): TestCaseBulkDeleteResponse {
+        if (!projectAccessService.isMember(projectId, userId)) {
+            throw NotFoundException("프로젝트를 찾을 수 없습니다.")
+        }
+        val caseIds = parseWireIds(request.caseIds, "caseIds")
+        return TestCaseBulkDeleteResponse(repository.deleteByProjectIdAndIdIn(projectId, caseIds))
     }
 
     private suspend fun accessible(caseId: Long, userId: Long): TestCaseEntity? {

@@ -26,7 +26,10 @@ data class UpdateGameBuildRequest(
 /**
  * 게임 빌드 응답.
  *
- * @property version Unity Player Settings에서 관찰한 값. 읽기 전용이다
+ * @property version Unity Player Settings에서 관찰한 값. 읽기 전용이다. editor 행이면 editor 가 마지막으로
+ * 보고한 값이라 다음 editor 등록에서 바뀔 수 있다
+ * @property isEditor 프로젝트의 editor 행인가(ARTEL-1014). 게임 버전이 아니라 editor 작업 상태다. 목록에서
+ * 마지막에 온다
  */
 data class GameBuildResponse(
     val id: String,
@@ -34,6 +37,7 @@ data class GameBuildResponse(
     val version: String,
     val label: String?,
     val notes: String?,
+    val isEditor: Boolean,
     val createdAt: Instant,
     val updatedAt: Instant
 )
@@ -41,4 +45,49 @@ data class GameBuildResponse(
 /** 목록 응답 봉투. */
 data class GameBuildListResponse(
     val items: List<GameBuildResponse>
+)
+
+/**
+ * 빌드 하나의 요약 한 줄. 빌드 목록 화면이 빌드마다 따로 묻지 않고 이 한 응답으로 그린다.
+ *
+ * @property instanceCount `last_game_build_id` 가 이 빌드인 게임 인스턴스 수. 삭제된 인스턴스는 빠진다
+ * @property connectedCount 그 인스턴스 중 지금 SDK 소켓이 붙어 있는 수
+ * @property lastReportedAt 그 인스턴스들의 `last_connected_at` 중 가장 늦은 것. 인스턴스가 없으면 null
+ * @property cheatCount `game_function_catalog.cheats` 의 길이. 목록을 보낸 적 없으면 0
+ * @property behaviorCount `game_function_catalog.behaviors` 의 길이. 목록을 보낸 적 없으면 0
+ * @property catalogReceivedAt 목록을 마지막으로 받은 시각. 보낸 적 없으면 null
+ * @property qaRunCount 이 빌드로 돈 QA run 수
+ * @property latestQaRun `started_at` 이 가장 늦은 run. run 이 없으면 null
+ */
+data class GameBuildSummaryResponse(
+    val gameBuildId: String,
+    val version: String,
+    val label: String?,
+    val isEditor: Boolean,
+    val createdAt: Instant,
+    val lastReportedAt: Instant?,
+    val instanceCount: Int,
+    val connectedCount: Int,
+    val cheatCount: Int,
+    val behaviorCount: Int,
+    val catalogReceivedAt: Instant?,
+    val qaRunCount: Int,
+    val latestQaRun: LatestQaRunSummary?
+)
+
+/**
+ * @property stepsPassed 그 run 의 try 들이 합산한 통과 step 수. 끝난 try 가 하나도 없으면 null
+ * @property stepsTotal 같은 합산의 전체 step 수. 끝난 try 가 하나도 없으면 null
+ */
+data class LatestQaRunSummary(
+    val qaRunId: String,
+    val status: String,
+    val startedAt: Instant,
+    val completedAt: Instant?,
+    val stepsPassed: Int?,
+    val stepsTotal: Int?
+)
+
+data class GameBuildSummaryListResponse(
+    val items: List<GameBuildSummaryResponse>
 )

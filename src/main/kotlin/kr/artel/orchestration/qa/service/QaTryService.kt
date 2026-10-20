@@ -17,10 +17,14 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.entity.ContentMapMode
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.game.service.GameFunctionCatalogService
+import kr.artel.orchestration.gamenote.service.GameNoteService
 import kr.artel.orchestration.knowledge.entity.KnowledgeMode
 import kr.artel.orchestration.knowledge.service.KnowledgeCitationService
 import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
+import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.qa.dto.QaRunListResponse
 import kr.artel.orchestration.qa.dto.QaRunResponse
 import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.dto.QaTryResponse
@@ -34,8 +38,12 @@ import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.testrun.service.TestRunService
 import kr.artel.orchestration.testscenario.entity.toDraft
+import kr.artel.orchestration.testcase.service.CaseScope
+import kr.artel.orchestration.testcase.service.TestCaseReader
+import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.testscenario.service.TestScenarioAccessService
+import kr.artel.orchestration.userllmkey.entity.KeySource
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -96,6 +104,11 @@ internal fun mergeCarriedGates(carrier: String, agentConfig: JsonNode?, objectMa
             val value = carried.path(field)
             if (value.isTextual) put(field, value.asText())
         }
+        // cheat · behavior 옵션은 배열도 싣는다(허용 목록과 보낸 이름들). 값을 그대로 옮긴다.
+        for (field in CARRIED_FUNCTION_FIELDS) {
+            val value = carried.path(field)
+            if (!value.isMissingNode && !value.isNull) set<JsonNode>(field, value)
+        }
     }
 }
 
@@ -152,6 +165,21 @@ data class QaRunSettings(
     val promptVersion: String? = null,
     val reasoning: JsonNode? = null,
     val arch: JsonNode? = null
+)
+
+/**
+ * 이 run 이 어느 key 로 도는지(ARTEL-1037). `UserLlmKeyService.resolveForRun` 이 요청의 `keySource` 를 확인해
+ * 만든다.
+ *
+ * [QaRunSettings] 와 따로 두는 이유는 기록되는 방식이 달라서다. 그쪽은 Agent 가 확정해 돌려준 값이 남고, 이쪽은
+ * Orchestration 이 정한 [keySource] 가 run 을 만드는 순간 `key_source` 열에 남는다. [llmKey] 는 세션 개설 본문에만
+ * 실리고 어디에도 남지 않는다.
+ *
+ * @param llmKey [keySource] 가 [KeySource.USER] 일 때만 있다.
+ */
+data class QaRunKey(
+    val keySource: KeySource = KeySource.PLATFORM,
+    val llmKey: QaSessionLlmKey? = null
 )
 
 fun CreateQaTryRequest.toRunSettings(objectMapper: ObjectMapper) = QaRunSettings(
@@ -314,13 +342,17 @@ class QaTryPersistenceService(
      *   지식창고에 쓸 수 있다. `attachAndMarkRunning`이 Agent 설정을 덮어쓸 때 같은 값을 다시 얹는다.
      * @param contentMapMode 이 런에 content map 을 얼마나 열어 줄지. [knowledge] 와 같은 순간에 같은
      *   이유로 기록된다 — 그 창에서 게이트가 비어 있으면 `frozen` 으로 돌린 arm 이 지도에 쓸 수 있다.
+     * @param functions 이 런이 쓸 cheat · behavior 옵션과 agent 에게 보낼 이름들(ARTEL-1053). 같은 창에서 같은 이유로
+     *   기록된다 — 이름이 없으면 그 창에 도착한 `invoke_cheat` 를 허용 검사가 판단할 근거가 없다.
      */
     suspend fun createStarting(
         testScenarioId: Long,
         gameInstanceId: Long,
         startedBy: Long,
         knowledge: QaKnowledgeSettings,
-        contentMapMode: ContentMapMode = ContentMapMode.DEFAULT
+        contentMapMode: ContentMapMode = ContentMapMode.DEFAULT,
+        keySource: KeySource = KeySource.PLATFORM,
+        functions: QaResolvedFunctions? = null
     ): Pair<QaTryEntity, QaLogAppendResult> =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -331,11 +363,13 @@ class QaTryPersistenceService(
                     startedBy = startedBy,
                     status = "STARTING",
                     knowledgeScopeId = knowledge.scopeId,
+                    keySource = keySource.wire,
                     runConfig = Json.of(
                         objectMapper.writeValueAsString(
                             objectMapper.createObjectNode()
                                 .put(KNOWLEDGE_MODE_FIELD, knowledge.mode.wire)
                                 .put(CONTENT_MAP_MODE_FIELD, contentMapMode.wire)
+                                .also { config -> functions?.writeTo(config) }
                         )
                     ),
                     startedAt = now
@@ -365,6 +399,8 @@ class QaTryPersistenceService(
      * @param label 이 run 이 속한 실험 묶음의 이름. [gates] 와 같은 자리에서 받되 `run_config` 가
      *   아니라 `qa_run` 컬럼에 남는다 — 묶음은 run 단위이고 arm 은 try 단위라, 둘을 한 곳에 두면
      *   `qa_try` 를 세는 집계가 묶음까지 세게 된다. null 이면 어느 실험에도 안 묶인 run 이다.
+     * @param functions 이 run 의 cheat · behavior 옵션과 보낸 이름들(ARTEL-1053). [gates] 와 같이 run 에 하나이고 모든 try 가
+     *   같은 것을 받는다. null 이면 `run_config` 에 싣지 않는다.
      */
     suspend fun createRunStarting(
         testRunId: Long,
@@ -372,7 +408,10 @@ class QaTryPersistenceService(
         startedBy: Long,
         scenarioIds: List<Long>,
         gates: QaRunGates = QaRunGates(),
-        label: String? = null
+        label: String? = null,
+        gameBuildId: Long? = null,
+        keySource: KeySource = KeySource.PLATFORM,
+        functions: QaResolvedFunctions? = null
     ): QaRunStarting =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -382,6 +421,7 @@ class QaTryPersistenceService(
                     objectMapper.createObjectNode().apply {
                         gates.knowledgeMode?.let { put(KNOWLEDGE_MODE_FIELD, it.wire) }
                         gates.contentMapMode?.let { put(CONTENT_MAP_MODE_FIELD, it.wire) }
+                        functions?.writeTo(this)
                     }
                 )
             )
@@ -389,9 +429,11 @@ class QaTryPersistenceService(
                 QaRunEntity(
                     testRunId = testRunId,
                     gameInstanceId = gameInstanceId,
+                    gameBuildId = gameBuildId,
                     startedBy = startedBy,
                     status = "STARTING",
                     label = label,
+                    keySource = keySource.wire,
                     startedAt = now
                 )
             )
@@ -405,6 +447,7 @@ class QaTryPersistenceService(
                         startedBy = startedBy,
                         status = "PENDING",
                         runConfig = gateConfig,
+                        keySource = keySource.wire,
                         startedAt = now
                     )
                 )
@@ -537,8 +580,11 @@ class QaTryService(
     private val scenarioAccessService: TestScenarioAccessService,
     private val platformAccessService: PlatformAccessService,
     private val compositionService: ScenarioCompositionService,
+    private val testCaseReader: TestCaseReader,
+    private val testRuns: TestRunRepository,
     private val testRunService: TestRunService,
     private val instanceRepository: GameInstanceRepository,
+    private val projectRepository: ProjectRepository,
     private val sessionManager: SessionManager,
     private val agentPort: QaAgentPort,
     private val inboundRouter: QaAgentInboundRouter,
@@ -548,6 +594,8 @@ class QaTryService(
     private val readings: QaReadingsService,
     private val logService: QaLogService,
     private val runStatusNotifier: QaRunStatusNotifier,
+    private val functionCatalogs: GameFunctionCatalogService,
+    private val gameNoteService: GameNoteService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -557,7 +605,9 @@ class QaTryService(
         userId: Long,
         settings: QaRunSettings = QaRunSettings(),
         knowledge: QaKnowledgeSettings = QaKnowledgeSettings(),
-        contentMapMode: ContentMapMode = ContentMapMode.DEFAULT
+        contentMapMode: ContentMapMode = ContentMapMode.DEFAULT,
+        runKey: QaRunKey = QaRunKey(),
+        functionOptions: QaFunctionOptions = QaFunctionOptions()
     ): QaTryResponse {
         val scenario = scenarioAccessService.accessibleScenario(testScenarioId, userId)
             ?: throw NotFoundException()
@@ -573,8 +623,11 @@ class QaTryService(
             throw ActiveQaRunException("An active QA try already exists")
         }
 
-        val (starting, startLog) =
-            persistence.createStarting(testScenarioId, gameInstanceId, userId, knowledge, contentMapMode)
+        // 카탈로그와 맞춰 보는 것은 행을 만들기 **전에** 한다. 허용 목록의 이름이 틀렸으면 400 이고 STARTING 행은 남지 않는다.
+        val functions = functionOptions.resolve(functionCatalogs.catalogOfBuild(instance.lastGameBuildId))
+        val (starting, startLog) = persistence.createStarting(
+            testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, runKey.keySource, functions
+        )
         logService.publish(startLog)
         val qaTryId = requireNotNull(starting.id)
         // agent 세션은 아직 없다 — SDK 화면에 "agent 를 기다리는 중" 을 보인다(ARTEL-836).
@@ -592,7 +645,11 @@ class QaTryService(
             language = settings.language,
             promptVersion = settings.promptVersion,
             reasoning = settings.reasoning,
-            arch = settings.arch
+            arch = settings.arch,
+            llmKey = runKey.llmKey,
+            cheats = functions.cheats,
+            behaviors = functions.behaviors,
+            gameNotes = latestGameNotes(instance.projectId)
         )
 
         return try {
@@ -634,7 +691,9 @@ class QaTryService(
         settings: QaRunSettings = QaRunSettings(),
         force: Boolean = false,
         gates: QaRunGates = QaRunGates(),
-        label: String? = null
+        label: String? = null,
+        runKey: QaRunKey = QaRunKey(),
+        functionOptions: QaFunctionOptions = QaFunctionOptions()
     ): QaRunResponse {
         val scenarios = testRunService.getScenarios(testRunId, userId)
             ?: throw NotFoundException()
@@ -664,18 +723,29 @@ class QaTryService(
             throw ActiveQaRunException()
         }
 
-        val started = persistence.createRunStarting(testRunId, gameInstanceId, userId, scenarioIds, gates, label)
+        // 행을 만들기 전에 카탈로그와 맞춘다. 이름이 틀렸으면 400 이고 qa_run 이 남지 않는다.
+        val functions = functionOptions.resolve(functionCatalogs.catalogOfBuild(instance.lastGameBuildId))
+        val started = persistence.createRunStarting(
+            testRunId, gameInstanceId, userId, scenarioIds, gates, label,
+            gameBuildId = instance.lastGameBuildId,
+            keySource = runKey.keySource,
+            functions = functions
+        )
         // 첫 시나리오 try 가 이 run 의 자리를 대표한다 — agent 세션은 아직 없다(ARTEL-836).
         runStatusNotifier.waitingAgent(
             requireNotNull(started.tries.first().id), gameInstanceId, requireNotNull(started.qaRun.id)
         )
+        // 판정 기준은 TR 의 버전 내용이고, 기록은 켜진 게임 버전에 적힌다(ARTEL-1069). 게임 버전에 없는 케이스는
+        // 판정하지 않고 넘긴다. TR 에 버전이 없으면 최신 내용, 게임 버전을 모르면 거르지 않는다.
+        val caseScope = CaseScope.of(testRuns.findById(testRunId)?.gameBuildId)
+        val recordedBuildId = testCaseReader.judgedBuildId(instance.lastGameBuildId)
         val agentScenarios = started.tries.zip(scenarioIds).map { (qaTry, scenarioId) ->
             val entity = scenarioAccessService.accessibleScenario(scenarioId, userId)
                 ?: throw NotFoundException()
             QaAgentScenario(
                 qaTryId = requireNotNull(qaTry.id).toString(),
                 testScenarioId = scenarioId.toString(),
-                scenario = compositionService.agentScenario(entity.toDraft(objectMapper))
+                scenario = compositionService.agentScenario(entity.toDraft(objectMapper), caseScope, recordedBuildId)
             )
         }
         val context = QaAgentSessionContext(
@@ -689,7 +759,11 @@ class QaTryService(
             language = settings.language,
             promptVersion = settings.promptVersion,
             reasoning = settings.reasoning,
-            arch = settings.arch
+            arch = settings.arch,
+            llmKey = runKey.llmKey,
+            cheats = functions.cheats,
+            behaviors = functions.behaviors,
+            gameNotes = latestGameNotes(instance.projectId)
         )
 
         return try {
@@ -720,6 +794,15 @@ class QaTryService(
         }
     }
 
+    /**
+     * 세션을 열기 직전에 읽은 최신 노트다(ARTEL-1061). 세션 개설 본문으로 한 번만 보내므로, 런이 도는 동안 저장한
+     * 버전은 다음 런부터 쓰인다.
+     */
+    private suspend fun latestGameNotes(projectId: Long): QaSessionGameNotes? =
+        gameNoteService.latestForRun(projectId)?.let { note ->
+            QaSessionGameNotes(version = note.version, body = note.body, genres = note.genreModules())
+        }
+
     private suspend fun failRun(started: QaRunStarting) {
         val now = Instant.now(clock)
         val runId = requireNotNull(started.qaRun.id)
@@ -746,16 +829,18 @@ class QaTryService(
         readings.stopIfIdle(started.qaRun.gameInstanceId)
     }
 
-    private fun QaRunEntity.toRunResponse(tries: List<QaTryEntity>) = QaRunResponse(
+    private suspend fun QaRunEntity.toRunResponse(tries: List<QaTryEntity>) = QaRunResponse(
         id = requireNotNull(id).toString(),
         testRunId = testRunId.toString(),
         gameInstanceId = gameInstanceId.toString(),
+        gameBuildId = gameBuildId?.toString(),
         startedBy = startedBy.toString(),
         status = status,
         startedAt = startedAt,
         completedAt = completedAt,
         label = label,
-        tries = tries.map { it.toResponse() }
+        tries = tries.map { it.toResponse() },
+        testRunGameBuildId = testRuns.findById(testRunId)?.gameBuildId?.toString()
     )
 
     /**
@@ -766,6 +851,20 @@ class QaTryService(
         val run = runRepository.findAccessibleById(qaRunId, userId) ?: return null
         val tries = tryRepository.findByQaRunId(qaRunId).toList()
         return run.toRunResponse(tries)
+    }
+
+    /**
+     * 프로젝트의 run 을 새 것부터. [gameBuildId] 를 주면 그 빌드로 돈 run 만이다. 프로젝트에 접근할 수 없으면 null 이고
+     * 컨트롤러가 404 로 옮긴다. try 는 run 마다 묻지 않고 한 문장으로 모아 읽는다.
+     */
+    suspend fun listRunsByProject(projectId: Long, userId: Long, gameBuildId: Long?, size: Int): QaRunListResponse? {
+        projectRepository.findAccessibleById(projectId, userId) ?: return null
+        val runs = runRepository.findByProject(projectId, gameBuildId, size).toList()
+        if (runs.isEmpty()) return QaRunListResponse(emptyList())
+        val triesByRun = tryRepository.findByQaRunIdInOrderById(runs.map { requireNotNull(it.id) })
+            .toList()
+            .groupBy { it.qaRunId }
+        return QaRunListResponse(runs.map { it.toRunResponse(triesByRun[it.id].orEmpty()) })
     }
 
     suspend fun get(qaTryId: Long, userId: Long): QaTryResponse? =
@@ -938,7 +1037,9 @@ class QaTryService(
         )
     }
 
-    private fun QaTryEntity.toResponse() = QaTryResponse(
+    private fun QaTryEntity.toResponse(
+        functions: QaFunctionAllowList = QaFunctionAllowList.of(runConfig.asString(), objectMapper)
+    ) = QaTryResponse(
         id = requireNotNull(id).toString(),
         testScenarioId = testScenarioId.toString(),
         gameInstanceId = gameInstanceId.toString(),
@@ -952,6 +1053,12 @@ class QaTryService(
         agentFingerprint = agentFingerprint,
         runConfig = objectMapper.readTree(runConfig.asString()),
         knowledgeScopeId = knowledgeScopeId?.toString(),
+        cheatMode = functions.cheatMode.wire,
+        behaviorMode = functions.behaviorMode.wire,
+        allowedCheats = functions.allowedCheats,
+        allowedBehaviors = functions.allowedBehaviors,
+        effectiveCheats = functions.effectiveCheats,
+        effectiveBehaviors = functions.effectiveBehaviors,
         qaRunId = qaRunId?.toString()
     )
 }

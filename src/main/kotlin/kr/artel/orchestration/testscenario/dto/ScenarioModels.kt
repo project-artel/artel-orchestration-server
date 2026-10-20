@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.dto
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonValue
 
@@ -126,14 +127,37 @@ enum class ScenarioStepKind {
 }
 
 /**
+ * 시나리오를 QA agent 가 어떻게 수행하는가(ARTEL-1028). 와이어 값은 이름 그대로 `"ORDERED"` / `"FREE"` 다.
+ *
+ * [ORDERED]는 steps 가 순서 있는 행위 목록이고 agent 가 그 순서대로 수행한다. [FREE]는 TC 묶음이다 —
+ * step 하나가 TC 하나(`case_id` 만 필수)이고, 수행 순서와 검증 방법은 agent 가 정한다. 두 모드 모두
+ * qa_try·판정·채점은 step 번호로 이어지며, FREE 에서 step N 은 N 번째 TC 다.
+ */
+enum class ScenarioExecutionMode {
+    ORDERED,
+    FREE,
+}
+
+/**
  * 시나리오 초안(ScenarioDraft). test_scenario의 title/description/steps 컬럼으로 저장되고(ARTEL-291),
  * SSE 이벤트·조회 응답으로 FE에 전달된다. **시나리오 = steps의 순서 집합**(재설계). 생성 직후(빈 시나리오)를 위해 기본값을 둔다.
  */
 data class ScenarioDraft(
     val title: String = "",
     val description: String = "",
-    val steps: List<ScenarioStep> = emptyList()
-)
+    val steps: List<ScenarioStep> = emptyList(),
+    /**
+     * 실행 방식(ARTEL-1028). **null 은 "요청이 말하지 않았다"** 이고, 저장할 때 기존 값을 유지한다
+     * ([kr.artel.orchestration.testscenario.entity.withDraft]). 기본값을 ORDERED 로 두면 이 필드를
+     * 모르는 client(지금의 `artel scenario update`)가 본문을 저장할 때 FREE 시나리오가 조용히 ORDERED 로
+     * 바뀐다. 조회 응답은 엔티티에서 만들어지므로 항상 값이 있다. 읽을 때는 [mode] 를 쓴다.
+     */
+    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
+) {
+    /** 값이 없으면 ORDERED 로 읽은 실행 방식. */
+    @get:JsonIgnore
+    val mode: ScenarioExecutionMode get() = executionMode ?: ScenarioExecutionMode.ORDERED
+}
 
 /**
  * Agent 턴 결과가 참조하는 시나리오 하나(ARTEL-206 Step 5·6, 재설계 2026-08-07). Agent는 시나리오를
@@ -144,12 +168,16 @@ data class ScenarioDraft(
  * @property steps 이 시나리오의 스텝들(순서=실행 순서). 각 스텝은 행위 + 선택적 caseId. Agent 계약의
  *   `steps`에 대응한다. 타입이 [ScenarioStep]이 아니라 [ChatScenarioStep]인 것은 의도다 — 에이전트는
  *   기대 판정 라벨을 본 적이 없고, 이 타입에는 그 필드가 아예 없어 되돌려 보낼 수도 없다(ARTEL-301).
+ * @property executionMode 실행 방식(ARTEL-1028). null 은 "말하지 않았다" 이다 — 새 시나리오는 ORDERED,
+ *   기존 시나리오 수정은 저장된 값을 유지한다. 해석은
+ *   [kr.artel.orchestration.testscenario.service.ScenarioReconcileService.withExecutionModes] 한 곳에서 한다.
  */
 data class ScenarioResult(
     @JsonProperty("scenario_id") val scenarioId: Long? = null,
     val title: String = "",
     val description: String = "",
-    val steps: List<ChatScenarioStep> = emptyList()
+    val steps: List<ChatScenarioStep> = emptyList(),
+    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
 )
 
 /**
@@ -214,6 +242,18 @@ enum class AuthoringStage(@get:JsonValue val wire: String) {
 
     /** Agent가 케이스를 물어봤다(`uncovered_cases`/`test_case_search`). 멎지 않았다는 첫 증거다. */
     LOOKING_UP_CASES("looking_up_cases"),
+
+    /** 질문 답이 서비스 기록을 읽는 중이다(ARTEL-1086). 무엇을 읽는지 단계마다 한 줄로 보인다. */
+    READING_CASES("reading_cases"),
+    READING_VERSIONS("reading_versions"),
+    READING_VERDICTS("reading_verdicts"),
+    READING_QA_RUNS("reading_qa_runs"),
+    READING_ISSUES("reading_issues"),
+    READING_SCENARIOS("reading_scenarios"),
+    READING_BUILDS("reading_builds"),
+
+    /** 한 말에 섞인 요청을 나누는 중이다(ARTEL-1086). 나뉜 요청은 차례로 제 갈래를 탄다. */
+    SPLITTING("splitting"),
 
     /** Agent가 케이스 하나의 근거를 물어봤다(`explain_case`). 무엇으로 스텝을 쓸지 확인하는 중이다. */
     READING_CASE("reading_case"),
@@ -317,8 +357,9 @@ data class ScenarioStreamEvent(
     /** 어림잡은 전체 시나리오 수. 모르면 null 이고, 그때 화면은 진행률 대신 세는 수만 보인다. */
     val expected: Int? = null,
     /**
-     * Agent 답의 결과·설명 칸(ARTEL-927). `result` 에만 실리고, 인사·실패 문구처럼 글만 있는
-     * 답에는 없다. 세 번째 칸인 질문은 [questions] 로 따로 온다.
+     * Agent 답의 결과·설명·질문 칸(ARTEL-927, 질문 칸은 ARTEL-1117). `result` 에만 실리고, 인사·실패
+     * 문구처럼 글만 있는 답에는 없다. 모델이 물은 것은 [AgentReply.asks] 로 답 안에 든다 — [questions] 는
+     * 이제 오케가 계산으로 만드는 질문(경로 공백)만 싣는다.
      */
     val reply: AgentReply? = null,
     /**
@@ -326,6 +367,11 @@ data class ScenarioStreamEvent(
      * 칩을 그린다. Agent 가 검사해서 보내므로 여기 없는 표식은 이미 지워져 있다.
      */
     val refs: List<AgentRef> = emptyList(),
+    /**
+     * 자동저장을 끈 턴이 모아 둔 draft **전부**(ARTEL-1074). `draft` 이벤트에만 실린다.
+     * 조각이 아니라 전부라, 화면은 받은 것으로 갈아 끼우기만 한다.
+     */
+    val drafts: List<DraftScenario>? = null,
 )
 
 /**
@@ -362,22 +408,29 @@ data class AgentRef(
 }
 
 /**
- * Agent 답을 사람이 읽는 두 칸으로 나눈 것(ARTEL-927).
+ * Agent 답을 사람이 읽는 세 칸으로 나눈 것(ARTEL-927, 질문 칸은 ARTEL-1117).
  *
  * 한 덩어리 글이던 답에서는 무엇을 했는지와 왜 그랬는지가 섞여, 사용자가 반박하거나 결정할
  * 자리가 보이지 않았다. [result] 는 Agent 코드가 센 사실(무엇을 몇 스텝으로 저장), [detail] 은
- * 판단한 모델의 설명(마크다운 — 문단·목록·표)이다.
+ * 판단한 모델의 설명(마크다운 — 문단·목록·표), [asks] 는 모델이 사용자에게 묻는 것이다.
  */
 data class AgentReply(
     val result: String,
     val detail: String = "",
     /** 바뀐 시나리오(ARTEL-937). 화면이 결과 박스에 추가·수정·삭제 색으로 나눠 그린다. */
     val changes: List<AgentChange> = emptyList(),
+    /**
+     * 모델이 묻는 것(ARTEL-1117). 예전에는 답과 따로 `question` 메시지로 저장해 화면이 모달로 받았다.
+     * 저작이 대화를 기억하게 되어(ARTEL-942) 답 맨 아래에 싣고, 사용자는 평범한 대화로 답한다 —
+     * 그래서 기다리는 질문(`lastQuestion`)으로 걸지 않는다.
+     */
+    val asks: List<ScenarioQuestion> = emptyList(),
 ) {
     /** 답 말풍선에 붙일 `payload`. 화면은 `kind` 로 질문(`question`)·답한 질문(`answered`)과 가른다. */
     fun payload(refs: List<AgentRef> = emptyList()): Map<String, Any?> =
         mapOf("kind" to KIND, "result" to result, "detail" to detail) +
             (if (changes.isEmpty()) emptyMap() else mapOf("changes" to changes.map { it.one() })) +
+            (if (asks.isEmpty()) emptyMap() else mapOf("asks" to asks.map { it.copy(source = ScenarioQuestionSource.AGENT).one() })) +
             AgentRef.field(refs)
 
     companion object {

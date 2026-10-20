@@ -36,6 +36,10 @@ private const val INSTANCE_RETRY_ATTEMPTS = 3
  *
  * 요청에 씬 스캔이 실려 있으면 빌드에 함께 저장한다. 같은 빌드는 같은 씬 구성을 가지므로
  * 최신 스캔 하나만 남기고 재등록마다 덮어쓴다.
+ *
+ * Unity editor 실행(`isEditor = true`)은 버전으로 빌드를 찾지 않는다(ARTEL-1014). editor 는 development
+ * build 와 같은 Player Settings 버전을 보고하므로, 버전으로 찾으면 editor 실행이 그 build 의 scan 과
+ * content map 을 덮어쓴다. 대신 프로젝트의 editor 행 하나에 붙고, 그 행의 version 을 보고된 값으로 바꾼다.
  */
 @Service
 class SdkRegistrationService(
@@ -60,7 +64,7 @@ class SdkRegistrationService(
         val sceneScan = request.sceneScan?.let { Json.of(objectMapper.writeValueAsString(it)) }
         // 빌드 조회·생성과 인스턴스 갱신을 한 트랜잭션으로 묶는다.
         return transactionalOperator.executeAndAwait {
-            val build = findOrCreateBuild(projectId, request.gameVersion.trim(), sceneScan, now)
+            val build = findOrCreateBuild(projectId, request.gameVersion.trim(), request.isEditor == true, sceneScan, now)
             val instance = findOrCreateInstance(projectId, sdkUuid, request.instanceName, now)
             // 빌드 id를 인스턴스에 남긴다. 곧 열릴 웹소켓의 성능 런이 이 값을 읽어 자신을
             // 빌드에 묶는다(ARTEL-378 빌드 추세). 응답으로만 돌려주면 소켓 쪽에서 알 길이 없다.
@@ -76,7 +80,8 @@ class SdkRegistrationService(
                 projectId = saved.projectId.toString(),
                 instanceName = saved.name,
                 gameBuildId = requireNotNull(build.id).toString(),
-                gameVersion = build.version
+                gameVersion = build.version,
+                isEditor = build.isEditor
             )
         }
     }
@@ -140,37 +145,47 @@ class SdkRegistrationService(
     }
 
     /**
-     * 같은 (프로젝트, 버전)이면 기존 빌드를 그대로 쓴다. 스캔이 실려 있으면 기존 빌드라도
-     * scene_scan을 새 값으로 덮어쓴다. 기존 행의 UPDATE는 유니크 제약과 충돌하지 않는다.
+     * development build 는 같은 (프로젝트, 버전)의 non-editor 행을 그대로 쓴다. editor 는 프로젝트의 editor
+     * 행 하나를 쓴다. 둘 다 없으면 만든다.
      *
-     * 조회 후 저장 사이에 경합이 난다. 유니크 제약이 그 충돌을 예외로 만들고, 여기서 다시
-     * 읽어 재시도한다. 재시도마다 조회를 새로 해야 이미 만들어진 행을 찾아 끝날 수 있다.
+     * 있는 행은 version 이 바뀌었거나 스캔이 실려 있을 때만 저장한다. development build 는 같은 version 으로
+     * 찾았으므로 version 이 바뀌지 않는다. editor 행은 등록마다 보고된 version 을 따라간다. 스캔이 없는 등록은
+     * 앞 스캔을 지우지 않는다. 기존 행의 UPDATE는 유니크 인덱스와 충돌하지 않는다.
      *
-     * 테스트가 H2에서 돌기 때문에 PostgreSQL의 ON CONFLICT는 쓸 수 없고, 양쪽에서 동작하는
-     * 이 형태를 쓴다.
+     * 조회 후 저장 사이에 경합이 난다. 유니크 인덱스(`uk_game_build_project_version`,
+     * `uk_game_build_project_editor`)가 그 충돌을 예외로 만들고, 여기서 다시 읽어 재시도한다. 재시도마다 조회를
+     * 새로 해야 이미 만들어진 행을 찾아 끝날 수 있다.
      */
     private suspend fun findOrCreateBuild(
         projectId: Long,
         version: String,
+        isEditor: Boolean,
         sceneScan: Json?,
         now: Instant
     ): GameBuildEntity {
         var remaining = BUILD_RETRY_ATTEMPTS
         while (true) {
             try {
-                val existing = buildRepository.findByProjectIdAndVersion(projectId, version)
+                val existing = if (isEditor) {
+                    buildRepository.findEditor(projectId)
+                } else {
+                    buildRepository.findNonEditorByVersion(projectId, version)
+                }
                 return when {
                     existing == null -> buildRepository.save(
                         GameBuildEntity(
                             projectId = projectId,
                             version = version,
                             sceneScan = sceneScan,
+                            isEditor = isEditor,
                             createdAt = now,
                             updatedAt = now
                         )
                     )
-                    sceneScan == null -> existing
-                    else -> buildRepository.save(existing.copy(sceneScan = sceneScan, updatedAt = now))
+                    existing.version == version && sceneScan == null -> existing
+                    else -> buildRepository.save(
+                        existing.copy(version = version, sceneScan = sceneScan ?: existing.sceneScan, updatedAt = now)
+                    )
                 }
             } catch (e: DataIntegrityViolationException) {
                 if (remaining-- <= 0) throw e

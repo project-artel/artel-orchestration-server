@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service
  */
 @Service
 class ScenarioCaseFactService(
+    private val authoringCases: AuthoringCases,
     // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
     private val conditions: CaseConditionReader,
 
@@ -42,7 +43,7 @@ class ScenarioCaseFactService(
 ) {
     /** 케이스 하나를 지도에 비춰 본다. 지도가 없거나 케이스가 남의 것이면 조작 없이 사유만 낸다. */
     suspend fun explain(projectId: Long, appUserId: Long, testCaseId: Long): CaseFacts {
-        val case = testCaseRepository.findById(testCaseId)
+        val case = authoringCases.byId(testCaseId)
         if (case == null || case.projectId != projectId) {
             return CaseFacts(testCaseId, note = "이 프로젝트에 없는 케이스다.")
         }
@@ -121,6 +122,8 @@ class ScenarioCaseFactService(
     )
 
     private suspend fun contentMapIdOf(projectId: Long, appUserId: Long): Long? {
+        // TR 이 고른 TC 버전의 지도만 본다(ARTEL-1048). 버전이 없는 TR 이면 예전처럼 최신 빌드다.
+        authoringGameBuildId()?.let { return contentMapRepository.findByGameBuildId(it)?.id }
         val build = buildRepository.findAllForMember(projectId, appUserId).firstOrNull() ?: return null
         return contentMapRepository.findByGameBuildId(build.id!!)?.id
     }

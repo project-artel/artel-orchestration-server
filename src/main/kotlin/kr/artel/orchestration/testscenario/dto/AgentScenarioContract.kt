@@ -1,7 +1,9 @@
 package kr.artel.orchestration.testscenario.dto
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.JsonNode
+import kr.artel.orchestration.testcase.dto.TestCaseFunctions
 
 /**
  * QA 실행 시 Agent로 넘기는 시나리오 실행 계약(재설계 2026-08-07). 예전엔 [ScenarioCompositionService]가
@@ -15,6 +17,8 @@ data class AgentScenario(
     val title: String,
     val description: String,
     val steps: List<AgentStep>,
+    /** `"ORDERED"` | `"FREE"`. FREE 면 step 하나가 TC 하나이고 순서·검증 방법은 agent 가 정한다(ARTEL-1028). */
+    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
 )
 
 /**
@@ -50,4 +54,9 @@ data class AgentCase(
      * 사실이라 문장에는 남아 있지만, 판정이 그것을 확인하려 들면 없는 값을 찾는다. 없으면 빈 목록.
      */
     @JsonProperty("cannot_check") val cannotCheck: List<String>,
+    /**
+     * 이 TC 를 돌릴 때 허용할 cheat · behavior(ARTEL-1053). 정한 적 없으면 키를 싣지 않는다 — 없는 `functions` 는 agent 쪽에서
+     * 둘 다 `all` 이다. 위 계약 DTO 와 달리 이 필드만 NON_NULL 인 것은 `null` 과 "정하지 않음"을 가를 이유가 없어서다.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL) val functions: TestCaseFunctions? = null,
 )

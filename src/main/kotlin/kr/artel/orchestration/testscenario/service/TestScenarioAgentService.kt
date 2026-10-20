@@ -17,9 +17,12 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.withContext
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
+import kr.artel.orchestration.settings.service.FeatureModelService
+import kr.artel.orchestration.testcase.dto.UncoveredScene
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.service.TestCaseSearchService
@@ -33,6 +36,9 @@ import kr.artel.orchestration.testrun.dto.RunChatCancellation
 import kr.artel.orchestration.testscenario.dto.AgentCancelMessage
 import kr.artel.orchestration.testscenario.dto.AgentCloseMessage
 import kr.artel.orchestration.testscenario.dto.AgentReasoning
+import kr.artel.orchestration.assistant.ResourceAnswer
+import kr.artel.orchestration.assistant.ResourceQueryService
+import kr.artel.orchestration.assistant.ResourceRequest
 import kr.artel.orchestration.testscenario.dto.AgentRef
 import kr.artel.orchestration.testscenario.dto.SavedScenarioFrame
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
@@ -41,6 +47,7 @@ import kr.artel.orchestration.testscenario.dto.AuthoringFlow
 import kr.artel.orchestration.testscenario.dto.AuthoringHop
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenResponse
 import kr.artel.orchestration.testscenario.dto.AgentTurnMessage
+import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
 import kr.artel.orchestration.testscenario.dto.ReviewedCases
 import kr.artel.orchestration.testscenario.dto.CaseFactsResultFrame
@@ -54,6 +61,7 @@ import kr.artel.orchestration.testscenario.dto.ScenarioQuestionOption
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestionSource
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchErrorFrame
 import kr.artel.orchestration.testscenario.dto.UncoveredCasesResultFrame
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchResultFrame
@@ -88,9 +96,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 @Service
 class TestScenarioAgentService(
+    private val authoringCases: AuthoringCases,
+    private val authoringVersions: AuthoringVersionResolver,
     @Value("\${artel.agent.base-url:http://localhost:8000}") private val agentBaseUrl: String,
     @Value("\${artel.agent.ws-base-url:ws://localhost:8000}") private val agentWsBaseUrl: String,
-    @Value("\${artel.agent.model:}") private val configuredModel: String,
+    private val featureModels: FeatureModelService,
     private val objectMapper: ObjectMapper,
     private val streamManager: TestScenarioStreamManager,
     private val runMessageRepository: TestRunMessageRepository,
@@ -110,6 +120,8 @@ class TestScenarioAgentService(
     private val flowMatrix: ScenarioFlowMatrix,
     private val flowPlanner: ScenarioFlowPlanner,
     private val experiment: AuthoringExperimentProperties,
+    private val drafts: AuthoringDraftStore,
+    private val resourceQueryService: ResourceQueryService,
 ) {
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
@@ -133,6 +145,7 @@ class TestScenarioAgentService(
         autoApply: Boolean,
         currentScenarios: List<CurrentScenario>,
         answer: ScenarioQuestionAnswer? = null,
+        draftOnly: Boolean = false,
     ) {
         // 되묻는 질문에 대한 답이면 **무엇에 대한 답인지 함께 실어 보낸다**(ARTEL-487). 보기 id만
         // 보내면 모델은 그것이 무슨 뜻인지 모른다 — 질문과 보기 문구를 여기서 다시 붙인다.
@@ -195,6 +208,9 @@ class TestScenarioAgentService(
             pending != null && userInput.isNotBlank() ->
                 "(직전에 물어본 것: ${pending.text})\n\n$userInput"
             else -> userInput
+        }.let { input ->
+            // draft 만 고치는 턴(ARTEL-1074)은 모델에게 그 범위를 말해 둔다. 대화에는 남기지 않는다.
+            if (draftOnly && input.isNotBlank()) "$DRAFT_ONLY_NOTE\n\n$input" else input
         }
         // **보낼 말이 없으면 보내지 않는다**(ARTEL-487). 이미 답한 질문의 보기를 한 번 더 누르면
         // 여기까지 온다 — 새로고침한 화면이 그 버튼을 되살려 주기 때문이다(런 150). 그때 빈 턴을
@@ -233,15 +249,19 @@ class TestScenarioAgentService(
         if (existing != null) {
             // 토글을 매 턴 반영해 대화 중 변경도 다음 결과부터 적용되게 한다.
             existing.autoApply = autoApply
+            existing.draftOnly = draftOnly
+            existing.shownSteps = shownStepsOf(currentScenarios)
+            existing.shownModes = shownModesOf(currentScenarios)
             // **새 요청이면 지난 턴에 받아 둔 것을 비운다.** 재작성 턴은 이 길로 오지 않으므로(그쪽은
             // [sendTurn] 을 직접 부른다) 앞서 받아 둔 것이 그대로 살아 있다.
             existing.submitted.clear()
+            existing.draftQuestions.clear()
             existing.declined = 0
             // 취소는 **그 턴에만** 걸린다(ARTEL-955). 안 내리면 다음 요청의 결과까지 버린다.
             existing.cancelled.set(false)
             sendTurn(sessionKey, existing, turnInput, currentScenarios)
         } else {
-            openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios)
+            openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly)
         }
         // 보낸 뒤에 알린다. 세션 오픈이나 턴 전송이 실패하면 "보냈다"가 거짓이 되고,
         // 그 경우 사용자는 진행 중인 것처럼 보이는 화면 앞에서 오지 않을 답을 기다리게 된다.
@@ -421,12 +441,18 @@ class TestScenarioAgentService(
         userInput: String,
         autoApply: Boolean,
         currentScenarios: List<CurrentScenario>,
+        draftOnly: Boolean = false,
     ) {
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
         val locale = localeOf(appUserId)
-        val cases = testCaseList(projectId, appUserId)
+        // 저장된 model → 환경 변수 → agent-server 기본값 순이다. 세션을 열 때마다 읽는다.
+        val configuredModel = featureModels.resolveAuthoringModel().orEmpty()
+        // 저작은 TR 이 고른 TC 버전의 TC 와 지도만 본다(ARTEL-1048). 버전 없는 TR 이면 예전처럼 프로젝트 전체 · 최신 빌드다.
+        val version = authoringVersions.of(runId)
+        // 목록의 내용 · 입력 · 바꾸는 값까지 그 버전 것이어야 하므로 맥락 안에서 읽는다(ARTEL-1064).
+        val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
         trace.record(
             runId, "판을 연다",
             "말: $userInput\n" +
@@ -438,7 +464,7 @@ class TestScenarioAgentService(
         // 케이스 88건이면 7,656칸과 11.2초가 통째로 빠진다. agent 는 흐름이 비면 스스로
         // 묶고 센다.
         val flows =
-            if (experiment.flows) computedFlows(runId, projectId, appUserId, cases.map { it.id })
+            if (experiment.flows) withContext(version) { computedFlows(runId, projectId, appUserId, cases.map { it.id }) }
             else emptyList<AuthoringFlow>().also {
                 logger.info("흐름을 안 세운다 — 모델이 스스로 묶는다 [projectId={}]", projectId)
                 trace.record(runId, "흐름 계산", "실험: 흐름을 안 세운다. 모델이 스스로 묶고 센다")
@@ -459,14 +485,14 @@ class TestScenarioAgentService(
             appUserId = appUserId,
             currentScenarios = currentScenarios,
             flows = flows,
-            entryScene = runCatching { testCaseRepository.findEntrySceneName(projectId) }
+            entryScene = runCatching { withContext(version) { authoringCases.entrySceneName(projectId) } }
                 .onFailure { logger.warn("입구 씬 조회 실패 — 없이 보낸다: ${it.message}") }
                 .getOrNull(),
             // **흐름을 끄면 이 둘이 그 자리를 잇는다**(실험). 화면 간선은 받는 쪽이 접어 도달표로
             // 싣고, 시작값은 흐름 계산만 알던 사실이다. 흐름을 켠 판에도 보낸다 — 정보가 같아야
             // 스위치 하나만 비교된다.
-            sceneEdges = testCaseService.sceneEdges(projectId),
-            startingValues = testCaseService.startingValues(projectId),
+            sceneEdges = withContext(version) { testCaseService.sceneEdges(projectId) },
+            startingValues = withContext(version) { testCaseService.startingValues(projectId) },
         )
         val resp = webClient.post()
             .uri("$agentBaseUrl/sessions")
@@ -475,7 +501,10 @@ class TestScenarioAgentService(
             .retrieve()
             .bodyToMono(AgentSessionOpenResponse::class.java)
             .awaitSingle()
-        openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply)
+        openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply, version)
+        sessions[sessionKey]?.draftOnly = draftOnly
+        sessions[sessionKey]?.shownSteps = shownStepsOf(currentScenarios)
+        sessions[sessionKey]?.shownModes = shownModesOf(currentScenarios)
         // 진행률의 분모. 흐름 하나가 시나리오 하나가 되는 것이 계산의 뜻이므로 그 수를 쓴다.
         sessions[sessionKey]?.expected = flows.size.takeIf { it > 0 }
     }
@@ -515,8 +544,8 @@ class TestScenarioAgentService(
      * [gameContext]와 같은 자리·같은 성격이다: 툴 호출이 아니라 첫 턴부터 쥐고 있는 배경 지식.
      * 비참여자면 빈 목록이라 기존과 동일하게 동작한다.
      */
-    private suspend fun testCaseList(projectId: Long, appUserId: Long): List<AuthoringTestCase> =
-        testCaseService.getAuthoringCases(projectId, appUserId)
+    private suspend fun testCaseList(projectId: Long, appUserId: Long, gameBuildId: Long?): List<AuthoringTestCase> =
+        testCaseService.getAuthoringCases(projectId, appUserId, gameBuildId?.let { authoringVersions.caseIds(it) })
 
     /**
      * 미커버 조회 프레임에 답한다(ARTEL-403).
@@ -531,8 +560,7 @@ class TestScenarioAgentService(
     private suspend fun handleUncoveredRequest(sessionKey: String, session: AgentSession, node: JsonNode) {
         val correlationId = node.path("messageId").asText(null)
         try {
-            val ids = testCaseRepository.findUncoveredIdsByProjectId(session.projectId).toList()
-            val scenes = testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+            val (ids, scenes) = uncovered(session)
             // 성공도 남긴다. 이 경로가 조용하면 "도구를 안 불렀다"와 "불렀는지 알 수 없다"가
             // 로그에서 같아 보이고, 에이전트가 숫자를 지어냈는지 확인할 방법이 사라진다.
             logger.info(
@@ -634,6 +662,47 @@ class TestScenarioAgentService(
         }
     }
 
+    /**
+     * 결과 봉투에 통째로 실려 온 시나리오를 draft 에 담는다(ARTEL-1074). 옛 Agent 와 도중에 계약을
+     * 끄는 되돌림 경로가 이 길이다 — 하나씩 받는 길과 같이 시나리오마다 검수를 지난 것만 담는다.
+     * 막힌 것은 담지 않고 말로 알린다. 하나씩 받는 길처럼 되돌려 다시 쓰게 할 상대가 이미 없다.
+     */
+    private suspend fun draftEnvelope(sessionKey: String, session: AgentSession, scenarios: List<ScenarioResult>) {
+        if (scenarios.isEmpty()) return
+        val refused = mutableListOf<String>()
+        session.submitLock.withLock {
+            for (raw in scenarios) {
+                val scenario = if ((raw.scenarioId ?: 0) < 0) raw.copy(scenarioId = null) else raw
+                val outcome = reconcileService.reconcile(
+                    session.runId, session.projectId, session.appUserId, listOf(scenario),
+                    reviewed = null, save = false,
+                )
+                if (outcome.rejected) {
+                    refused += "'${raw.title}' — ${outcome.findings.rejectionMessage()}"
+                    continue
+                }
+                drafts.of(sessionKey).accept(
+                    raw.scenarioId, outcome.checked.ifEmpty { listOf(scenario) }, emptyList(),
+                    raw.scenarioId?.let { session.shownSteps[it] },
+                    raw.scenarioId?.let { session.shownModes[it] },
+                )
+                session.draftQuestions += outcome.questions.ifEmpty { listOfNotNull(outcome.question) }
+            }
+        }
+        drafts.publish(sessionKey)
+        if (refused.isNotEmpty()) {
+            saveAndNotify(sessionKey, session, "검수를 지나지 못해 draft 에 담지 않은 것이 있습니다.\n" + refused.joinToString("\n"))
+        }
+    }
+
+    /** 저장된 시나리오(양수 번호)의 스텝만. draft(음수)는 draft 저장소가 기준을 든다. */
+    private fun shownStepsOf(currentScenarios: List<CurrentScenario>): Map<Long, List<ChatScenarioStep>> =
+        currentScenarios.mapNotNull { scenario -> scenario.scenarioId?.takeIf { it > 0 }?.let { it to scenario.steps } }.toMap()
+
+    /** 저장된 시나리오(양수 번호)의 실행 방식(ARTEL-1109). draft 가 방식을 잃지 않도록 [shownStepsOf] 와 짝으로 든다. */
+    private fun shownModesOf(currentScenarios: List<CurrentScenario>): Map<Long, ScenarioExecutionMode> =
+        currentScenarios.mapNotNull { scenario -> scenario.scenarioId?.takeIf { it > 0 }?.let { it to scenario.executionMode } }.toMap()
+
     private suspend fun submitOne(
         sessionKey: String,
         session: AgentSession,
@@ -641,7 +710,32 @@ class TestScenarioAgentService(
         correlationId: String?,
     ) {
         try {
-            val scenario = objectMapper.treeToValue(node.path("scenario"), ScenarioResult::class.java)
+            val submittedRaw = objectMapper.treeToValue(node.path("scenario"), ScenarioResult::class.java)
+            // draft 만 고치는 턴(ARTEL-1074)은 draft 가 아닌 것을 받지 않는다. 번호 없이 오면 draft 가
+            // 하나일 때만 그 draft 로 읽는다 — 여럿이면 어느 것인지 모델이 골라야 한다.
+            val raw = if (!session.draftOnly) submittedRaw else {
+                val target = drafts.of(sessionKey).draftTarget(submittedRaw.scenarioId)
+                if (target == null) {
+                    session.declined += 1
+                    sendFrame(
+                        sessionKey, session,
+                        SubmitScenarioResultFrame(
+                            correlationId = correlationId,
+                            accepted = false,
+                            written = session.submitted.size,
+                            detail = DRAFT_ONLY_REFUSAL,
+                        ),
+                    )
+                    return
+                }
+                submittedRaw.copy(scenarioId = target)
+            }
+            // **음수 번호는 draft 의 새 시나리오다**(ARTEL-1074). 저장된 적이 없으니 검수와 저장에는
+            // 새것으로 넘긴다 — 음수 번호로 저장 경로에 들어가면 없는 시나리오를 고치려 든다.
+            val scenario = if ((raw.scenarioId ?: 0) < 0) raw.copy(scenarioId = null) else raw
+            val absorbedIds = node.path("absorbedScenarioIds").mapNotNull {
+                it.takeIf { n -> n.isNumber }?.asLong()
+            }
             val outcome = reconcileService.reconcile(
                 session.runId, session.projectId, session.appUserId,
                 listOf(scenario),
@@ -680,15 +774,22 @@ class TestScenarioAgentService(
                         session.runId,
                         scenario.scenarioId,
                         checked.first(),
-                        node.path("absorbedScenarioIds").mapNotNull {
-                            it.takeIf { n -> n.isNumber }?.asLong()
-                        },
+                        absorbedIds.filter { it > 0 },
                     )
                 else ScenarioAbsorbService.Outcome()
+            // 저장하지 않는 턴은 draft 에 둔다(ARTEL-1074). 하나 받을 때마다 보내 화면의 목록이 함께 자란다.
+            if (!session.autoApply) {
+                drafts.of(sessionKey).accept(
+                    raw.scenarioId, checked, absorbedIds,
+                    raw.scenarioId?.let { session.shownSteps[it] }, raw.scenarioId?.let { session.shownModes[it] },
+                )
+                drafts.publish(sessionKey)
+                session.draftQuestions += outcome.questions.ifEmpty { listOfNotNull(outcome.question) }
+            }
             logger.info(
                 "시나리오 하나 받음 [sessionKey={}, runId={}] {} — 지금까지 {}개{}",
                 sessionKey, session.runId, scenario.title, session.submitted.size,
-                if (session.autoApply) " (저장함)" else " (카드로 낼 것)",
+                if (session.autoApply) " (저장함)" else " (draft 에 둠)",
             )
             streamManager.emit(
                 sessionKey,
@@ -713,6 +814,22 @@ class TestScenarioAgentService(
             )
         } catch (e: CancellationException) {
             throw e
+        } catch (e: InvalidFreeScenarioException) {
+            // FREE 규칙 위반은 Agent 가 고칠 수 있는 거절이다(ARTEL-1028). 무엇이 틀렸는지 그대로 돌려준다 —
+            // 메시지는 우리가 쓴 안내라 내보내도 된다.
+            session.declined += 1
+            logger.info(
+                "FREE 시나리오 되돌림 [sessionKey={}, runId={}] {}", sessionKey, session.runId, e.message,
+            )
+            sendFrame(
+                sessionKey, session,
+                SubmitScenarioResultFrame(
+                    correlationId = correlationId,
+                    accepted = false,
+                    written = session.submitted.size,
+                    detail = e.message,
+                ),
+            )
         } catch (e: Exception) {
             logger.error("시나리오 받기 실패 [sessionKey=$sessionKey]: ${e.message}")
             sendFrame(
@@ -807,10 +924,18 @@ class TestScenarioAgentService(
         val reviewed = if (pending != null) mergeVerdicts(pending.reviewed, event.reviewed) else event.reviewed
 
         progress(sessionKey, AuthoringStage.CHECKING)
-        val outcome = reconcileService.reconcile(
-            session.runId, session.projectId, session.appUserId, scenarios, reviewed,
-            save = saveHere,
-        )
+        val outcome = try {
+            reconcileService.reconcile(
+                session.runId, session.projectId, session.appUserId, scenarios, reviewed,
+                save = saveHere,
+            )
+        } catch (e: InvalidFreeScenarioException) {
+            // 결과 봉투로 온 FREE 가 규칙을 어겼다(ARTEL-1028). 턴은 이미 끝나 Agent 에게 되돌릴 자리가
+            // 없으므로, 저장하지 않았다는 것과 이유를 사용자에게 알린다.
+            progress(sessionKey, AuthoringStage.BLOCKED)
+            saveAndNotify(sessionKey, session, "시나리오를 저장하지 않았습니다 — ${e.message}")
+            return
+        }
         if (!outcome.rejected) {
             progress(sessionKey, AuthoringStage.SAVED)
             // **판 하나가 답을 남긴다**(실험). 다섯 판을 돌리고 이 줄들만 모으면 판정 표가 된다 —
@@ -951,7 +1076,12 @@ class TestScenarioAgentService(
      * 저장 전이라 번호가 없다 — `scenario_id` 는 null 이고, 제목이 짝을 맞추는 열쇠다.
      */
     private fun asCurrent(authored: List<ScenarioResult>): List<CurrentScenario> =
-        authored.map { CurrentScenario(null, it.title, it.description, it.steps) }
+        authored.map {
+            CurrentScenario(
+                null, it.title, it.description, it.steps,
+                executionMode = it.executionMode ?: ScenarioExecutionMode.ORDERED,
+            )
+        }
 
     private fun repairPrompt(findings: ScenarioCoverageAudit.Findings): String = buildString {
         append("앞서 낸 시나리오는 `current_scenarios` 에 있습니다 — 아직 저장 전이라 ")
@@ -982,9 +1112,25 @@ class TestScenarioAgentService(
      *
      * 전부 덮였으면 아무 말도 하지 않는다. "남은 것 없음"은 매번 붙으면 소음이 된다.
      */
+    /**
+     * 미커버 케이스와 화면별 수. 보낸 목록과 같은 집합을 센다 — TR 이 고른 빌드 버전에 든 것만(ARTEL-1048). 버전 없는
+     * 런이면 프로젝트 전체다.
+     */
+    private suspend fun uncovered(session: AgentSession): Pair<List<Long>, List<UncoveredScene>> {
+        val inVersion = session.version.gameBuildId?.let { authoringVersions.caseIds(it) }
+        val ids = testCaseRepository.findUncoveredIdsByProjectId(session.projectId).toList()
+            .filter { inVersion == null || it in inVersion }
+        if (inVersion == null) return ids to testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+        val scenes = withContext(session.version) { authoringCases.byIds(ids) }
+            .groupingBy { ScenarioStateReader.sceneOf(it) ?: it.scene }.eachCount()
+            .map { (scene, count) -> UncoveredScene(scene, count.toLong()) }
+            .sortedByDescending { it.count }
+        return ids to scenes
+    }
+
     private suspend fun recommendRemaining(sessionKey: String, session: AgentSession) {
         val uncovered = try {
-            testCaseRepository.findScenesOfUncovered(session.projectId).toList()
+            uncovered(session).second
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1317,9 +1463,10 @@ class TestScenarioAgentService(
         appUserId: Long,
         agentSessionId: String,
         autoApply: Boolean,
+        version: AuthoringVersion,
     ) {
         val outbound = Sinks.many().unicast().onBackpressureBuffer<String>()
-        val session = AgentSession(outbound, runId, projectId, appUserId, agentSessionId, autoApply)
+        val session = AgentSession(outbound, runId, projectId, appUserId, agentSessionId, autoApply, version)
         sessions[sessionKey] = session
 
         val uri = URI.create("$agentWsBaseUrl/sessions/$agentSessionId")
@@ -1380,7 +1527,7 @@ class TestScenarioAgentService(
                 // 도구 프레임은 "멎지 않았다"의 첫 증거다(ARTEL-419). 턴을 보낸 뒤 여기까지는
                 // 오케스트레이션이 아무것도 보지 못하므로, 이 한 줄이 침묵과 진행을 가른다.
                 progress(sessionKey, AuthoringStage.LOOKING_UP_CASES)
-                scope.launch { handleUncoveredRequest(sessionKey, session, node) }
+                scope.launch(session.version) { handleUncoveredRequest(sessionKey, session, node) }
                 return
             }
             if (node.path("type").asText() == "explain_case") {
@@ -1389,7 +1536,7 @@ class TestScenarioAgentService(
                     return
                 }
                 progress(sessionKey, AuthoringStage.READING_CASE)
-                scope.launch { handleExplainCaseRequest(sessionKey, session, node) }
+                scope.launch(session.version) { handleExplainCaseRequest(sessionKey, session, node) }
                 return
             }
             if (node.path("type").asText() == "find_path") {
@@ -1398,7 +1545,7 @@ class TestScenarioAgentService(
                     return
                 }
                 progress(sessionKey, AuthoringStage.FINDING_PATH)
-                scope.launch { handleFindPathRequest(sessionKey, session, node) }
+                scope.launch(session.version) { handleFindPathRequest(sessionKey, session, node) }
                 return
             }
             // Agent 가 알려 주는 단계(ARTEL-487). **모르는 값은 버린다** — 단계는 알리는 것이지
@@ -1425,6 +1572,14 @@ class TestScenarioAgentService(
                 scope.launch { handleSubmitScenario(sessionKey, session, node) }
                 return
             }
+            if (node.path("type").asText() == "resource_query") {
+                if (session == null) {
+                    logger.warn("resource_query 를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
+                    return
+                }
+                scope.launch(session.version) { handleResourceQuery(sessionKey, session, node) }
+                return
+            }
             if (node.path("type").asText() == "test_case_search") {
                 if (session == null) {
                     logger.warn("test_case_search를 받았지만 세션이 없어 무시 [sessionKey=$sessionKey]")
@@ -1432,7 +1587,7 @@ class TestScenarioAgentService(
                 }
                 progress(sessionKey, AuthoringStage.LOOKING_UP_CASES)
                 // 검색은 임베딩(Agent /embed) 호출을 동반하는 suspend라 코루틴으로 넘긴다.
-                scope.launch { handleCaseSearch(sessionKey, session, node) }
+                scope.launch(session.version) { handleCaseSearch(sessionKey, session, node) }
                 return
             }
 
@@ -1441,25 +1596,27 @@ class TestScenarioAgentService(
             // 결과든 오류든 **턴은 여기서 끝난다.** 감시를 풀지 않으면 잠시 뒤 "멎었다"고
             // 말하게 되고, 그건 방금 답을 받은 사용자에게 거짓말이다.
             stopWatching(sessionKey)
-            streamManager.emit(sessionKey, event)
+            // 제안 카드에는 실행 방식이 늘 실린다(ARTEL-1028). Agent 가 비워 둔 결과는 수정 대상의 저장된 값을
+            // 읽어야 해서 DB 를 거치므로, 그런 결과는 아래 코루틴에서 채워 내보낸다.
+            val needsModes = event.type == "result" && session != null &&
+                event.scenarios.orEmpty().any { it.executionMode == null }
+            if (!needsModes) streamManager.emit(sessionKey, event)
 
             if (event.type == "result" && session != null) {
                 scope.launch {
+                    if (needsModes) streamManager.emit(sessionKey, withExecutionModes(session, event))
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
                     try {
-                        // 결과·설명 칸은 payload 로 함께 든다(ARTEL-927). `content` 는 세 칸을 이은
-                        // 글 그대로라 옛 화면과 대화 기록은 바뀌지 않는다.
+                        // 결과·설명·질문 칸은 payload 로 함께 든다(ARTEL-927 · ARTEL-1117). `content` 는
+                        // 세 칸을 이은 글 그대로라 옛 화면과 대화 기록은 바뀌지 않는다.
+                        //
+                        // 모델이 물은 것은 답 안의 `asks` 다. 따로 `question` 메시지로 저장하던 길은
+                        // 걷었다 — 프레임에 옛 `question`·`questions` 가 실려 와도 묻지 않는다. 사용자는
+                        // 대화로 답하고, 저작은 그것을 대화 기억으로 잇는다(ARTEL-942).
                         saveMessage(
                             session.runId, session.appUserId, "ASSISTANT", event.message ?: "",
                             event.reply?.payload(event.refs),
                         )
-                        // 모델이 스스로 물은 것도 같은 모양으로 나간다 — 화면이 두 벌을 그릴
-                        // 이유가 없고, 답이 돌아오는 길도 하나여야 한다. 여럿이면 한 묶음으로
-                        // 묻는다(ARTEL-927) — 첫 것만 저장하면 나머지에 답할 길이 없다.
-                        event.questions.ifEmpty { listOfNotNull(event.question) }
-                            .mapNotNull { fromAgent(it) }
-                            .takeIf { it.isNotEmpty() }
-                            ?.let { ask(sessionKey, session, it, event.refs) }
                     } catch (err: CancellationException) {
                         throw err
                     } catch (err: Exception) {
@@ -1476,6 +1633,21 @@ class TestScenarioAgentService(
                         } catch (err: Exception) {
                             logger.error("시나리오 반영 실패 [sessionKey=$sessionKey]: ${err.message}")
                         }
+                    } else {
+                        try {
+                            draftEnvelope(sessionKey, session, event.scenarios.orEmpty())
+                            // draft 턴도 메우지 못한 구간은 묻는다(ARTEL-1117). 턴끝 검수([applyOrRepair])는
+                            // 저장하는 턴에만 돌아서, draft 에서는 제출 때 찾은 공백을 아무도 묻지 않았다(실측
+                            // 런 184: TurnBattleScene→GameClearScene 공백이 스텝에만 남았다). 제출마다 모아 둔
+                            // 것을 턴 끝에 한 번에 묻는다 — 같은 자리는 한 번만.
+                            val asked = session.draftQuestions.distinctBy { it.id }
+                            session.draftQuestions.clear()
+                            if (asked.isNotEmpty()) ask(sessionKey, session, asked)
+                        } catch (err: CancellationException) {
+                            throw err
+                        } catch (err: Exception) {
+                            logger.error("draft 담기 실패 [sessionKey=$sessionKey]: ${err.message}")
+                        }
                     }
                 }
             }
@@ -1487,6 +1659,24 @@ class TestScenarioAgentService(
     }
 
     /**
+     * 결과 봉투의 제안마다 실행 방식을 채운다(ARTEL-1028). 읽지 못하면 받은 그대로 둔다 — 제안을
+     * 화면에 못 보내는 것보다 값 하나가 빈 편이 낫고, 커밋은 빈 값을 저장된 값 유지로 읽는다.
+     */
+    private suspend fun withExecutionModes(session: AgentSession, event: ScenarioStreamEvent): ScenarioStreamEvent =
+        try {
+            event.copy(
+                scenarios = reconcileService.withExecutionModes(
+                    session.runId, session.projectId, event.scenarios.orEmpty(),
+                ),
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn("제안의 실행 방식을 읽지 못했다 — 받은 그대로 보낸다 [runId={}]: {}", session.runId, e.message)
+            event
+        }
+
+    /**
      * Agent의 `test_case_search` 프레임을 처리해 `test_case_search_result`로 답한다(ARTEL-206 Step 5).
      *
      * **검색 범위는 프레임이 아니라 세션 바인딩의 projectId에서 나온다.** Agent가 프로젝트를 지목할 수
@@ -1495,6 +1685,41 @@ class TestScenarioAgentService(
      * 어떤 실패도 throw하지 않는다 — 검색 하나가 receive 체인을 끊어 WS/세션을 죽이면 안 된다. 대기 중인
      * Agent 도구를 풀기 위해 실패는 `error` 프레임(correlationId 포함)으로 되돌린다.
      */
+    /**
+     * 범용 질문 Agent 의 리소스 조회(ARTEL-1085, POC). 범위는 세션이 정한다 — 프로젝트와 TR 버전. 실패해도 세션을
+     * 죽이지 않고 `note` 에 이유를 실어 답한다. 기다리는 Agent 도구를 풀어야 하기 때문이다.
+     */
+    private suspend fun handleResourceQuery(sessionKey: String, session: AgentSession, node: JsonNode) {
+        val messageId = node.path("messageId").takeIf { it.isTextual }?.asText()
+        val answer = try {
+            val request = ResourceRequest(
+                op = node.path("op").asText(""),
+                kind = node.path("kind").asText(""),
+                id = node.path("id").takeIf { it.isNumber }?.asLong(),
+                text = node.path("text").takeIf { it.isTextual }?.asText(),
+                relation = node.path("relation").takeIf { it.isTextual }?.asText(),
+                limit = node.path("limit").takeIf { it.isNumber }?.asInt(),
+                allVersions = node.path("all_versions").asBoolean(false),
+            )
+            val result = resourceQueryService.query(
+                ResourceQueryService.Scope(session.projectId, session.version.gameBuildId, session.runId, session.appUserId), request,
+            )
+            logger.info(
+                "리소스 조회 [sessionKey={}] {} {} id={} → {}건", sessionKey, request.op, request.kind, request.id, result.items.size,
+            )
+            result
+        } catch (err: CancellationException) {
+            throw err
+        } catch (err: Exception) {
+            logger.error("resource_query 처리 실패 [sessionKey=$sessionKey]: ${err.message}", err)
+            ResourceAnswer(emptyList(), "조회하지 못했다: ${err.message}")
+        }
+        emitFrame(
+            sessionKey, session,
+            mapOf("type" to "resource_query_result", "correlationId" to messageId, "items" to answer.items, "note" to answer.note),
+        )
+    }
+
     private suspend fun handleCaseSearch(sessionKey: String, session: AgentSession, node: JsonNode) {
         val messageId = node.path("messageId").takeIf { it.isTextual }?.asText()
         try {
@@ -1505,7 +1730,9 @@ class TestScenarioAgentService(
             }
             val category = node.path("category").takeIf { it.isTextual }?.asText()
             val limit = node.path("limit").takeIf { it.isNumber }?.asInt()
-            val response = testCaseSearchService.search(session.projectId, query, category, limit)
+            // TR 이 고른 빌드 버전에 든 것만 돌려준다(ARTEL-1048). 다른 버전에만 있는 케이스를 담으면 커버리지 기준에 없다.
+            val inVersion = session.version.gameBuildId?.let { authoringVersions.caseIds(it) }
+            val response = testCaseSearchService.search(session.projectId, query, category, limit, inVersion)
             emitFrame(
                 sessionKey,
                 session,
@@ -1558,26 +1785,6 @@ class TestScenarioAgentService(
     }
 
     /**
-     * 모델이 낸 질문을 우리 것과 같은 모양으로 맞춘다(ARTEL-487).
-     *
-     * 출처를 여기서 못 박는 이유는, 프레임에 적힌 값을 그대로 믿으면 모델이 자기 질문을 코드가
-     * 계산한 것처럼 표시할 수 있기 때문이다 — 근거 있는 질문과 그렇지 않은 질문의 구분이 이
-     * 한 필드에 걸려 있다.
-     *
-     * 물음이 비었거나 id 가 없으면 **묻지 않는다.** 빈 질문은 사용자에게 답할 수 없는 것을
-     * 내미는 일이고, id 가 없으면 답이 돌아와도 무엇에 대한 것인지 잇지 못한다.
-     */
-    private fun fromAgent(question: ScenarioQuestion?): ScenarioQuestion? {
-        if (question == null) return null
-        if (question.text.isBlank()) {
-            logger.warn("빈 질문이 와서 묻지 않는다")
-            return null
-        }
-        val id = question.id.ifBlank { "agent:" + question.text.hashCode().toString(16) }
-        return question.copy(id = id, source = ScenarioQuestionSource.AGENT)
-    }
-
-    /**
      * 미상 구간을 사용자 말로 채웠다고 알린다.
      *
      * 채팅에 한 줄 남기고 화면에 `applied` 를 흘린다. 시나리오가 바뀌었는데 화면이 그대로면
@@ -1599,7 +1806,8 @@ class TestScenarioAgentService(
         // 여기서 다른 `kind` 를 남기지 않으면 이미 답한 질문이 다음 턴의 맥락으로 또 따라붙는다.
         saveMessage(
             runId, appUserId, "ASSISTANT", message,
-            mapOf("kind" to "answered", "id" to "${ScenarioQuestionBuilder.GAP_PREFIX}$blockedBy"),
+            // 채운 줄도 남긴다(ARTEL-1117) — 다음 시나리오의 같은 구간을 이 말로 채운다.
+            mapOf("kind" to "answered", "id" to "${ScenarioQuestionBuilder.GAP_PREFIX}$blockedBy", "filled" to written),
         )
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "applied"))
@@ -1695,6 +1903,8 @@ class TestScenarioAgentService(
         val appUserId: Long,
         val agentSessionId: String,
         @Volatile var autoApply: Boolean,
+        /** 이 TR 이 고른 TC 버전(ARTEL-1048). 도구 처리 코루틴이 이 맥락에서 돈다. */
+        val version: AuthoringVersion,
         /**
          * WS 송신 직렬화용 잠금.
          *
@@ -1743,6 +1953,24 @@ class TestScenarioAgentService(
          * 센다. [submitLock] 아래에서만 는다.
          */
         @Volatile var declined: Int = 0,
+        /**
+         * draft 턴(자동 저장 끔)에서 제출마다 검수가 낸 질문 — 메우지 못한 구간(ARTEL-1117). 저장하는 턴은
+         * 턴끝 검수가 다시 계산해 묻지만 draft 턴은 그 검수를 돌지 않으므로, 여기 모았다가 턴 끝에 묻는다.
+         * [submitLock] 아래에서 는다.
+         */
+        val draftQuestions: MutableList<ScenarioQuestion> = mutableListOf(),
+        /**
+         * 이 턴은 승인 전 draft 만 고친다(ARTEL-1074). 새 시나리오는 받지 않고, 번호 없이 오면 draft 가
+         * 하나일 때만 그 draft 로 읽는다. 매 턴 갱신한다.
+         */
+        @Volatile var draftOnly: Boolean = false,
+        /**
+         * 이번 턴에 모델에게 보인 저장된 시나리오의 스텝(번호 → 스텝). 기존 시나리오를 고친 draft 가 화면에서
+         * 견줄 기준이다(ARTEL-1075). 매 턴 갱신한다.
+         */
+        @Volatile var shownSteps: Map<Long, List<ChatScenarioStep>> = emptyMap(),
+        /** 이번 턴에 모델에게 보인 저장된 시나리오의 실행 방식(ARTEL-1109). 매 턴 갱신한다. */
+        @Volatile var shownModes: Map<Long, ScenarioExecutionMode> = emptyMap(),
         /**
          * 시나리오를 **한 번에 하나씩** 받게 하는 잠금.
          *
@@ -1814,6 +2042,14 @@ class TestScenarioAgentService(
     )
 
     companion object {
+        /** draft 만 고치는 턴(ARTEL-1074)에 모델에게 붙이는 범위. */
+        const val DRAFT_ONLY_NOTE =
+            "(지금은 승인 전 draft 만 고친다. current_scenarios 에 있는 draft 의 scenario_id 로 고치고, 새 시나리오는 만들지 않는다.)"
+
+        /** draft 만 고치는 턴에서 draft 가 아닌 것을 낸 모델에게 돌려주는 말. */
+        const val DRAFT_ONLY_REFUSAL =
+            "지금은 승인 전 draft 만 고칠 수 있습니다. current_scenarios 에 있는 draft 의 scenario_id 로 다시 내 주세요. 새 시나리오는 만들 수 없습니다."
+
         /**
          * 재작성을 몇 번까지 시킬지.
          *

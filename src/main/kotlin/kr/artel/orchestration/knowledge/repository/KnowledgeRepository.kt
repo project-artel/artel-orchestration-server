@@ -82,6 +82,18 @@ interface KnowledgeRepository : CoroutineCrudRepository<KnowledgeEntity, Long> {
     suspend fun findShadow(scopeId: Long, shadowsId: Long): KnowledgeEntity?
 
     /**
+     * QA run 의 변경을 revert 할 대상 행을 잠그고 읽는다(V100).
+     *
+     * ⚠️ 프로젝트도 스코프도 걸지 않는다. 대상은 run 의 `knowledge_event` 가 가리킨 id 이고, 그 run 에
+     * 접근할 수 있는지는 부르는 쪽이 먼저 확인한다. 소프트삭제된 행도 돌려준다 — run 의 DELETE 를
+     * revert 하려면 지워진 행을 읽어야 한다. 그림자 행도 그 id 그대로 돌려준다.
+     *
+     * 잠그는 이유는 최신 event 확인과 쓰기 사이에 다른 쓰기가 끼어들지 못하게 하려는 것이다.
+     */
+    @Query("SELECT * FROM knowledge WHERE id = :id FOR UPDATE")
+    suspend fun findByIdForUpdate(id: Long): KnowledgeEntity?
+
+    /**
      * [findVisibleById]와 같되 **소프트삭제된 행도 돌려준다**(ARTEL-274).
      *
      * ⚠️ 이 파일에서 `DeletedAtIsNull`을 걸지 않는 유일한 조회다. 그래서 왜 있는지를 여기 못박아

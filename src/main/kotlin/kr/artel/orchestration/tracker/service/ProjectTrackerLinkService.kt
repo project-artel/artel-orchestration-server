@@ -92,8 +92,12 @@ class ProjectTrackerLinkService(
     }
 
     /**
-     * 설치 callback 이 부르는 자리. state 검증은 호출부가 이미 했고, 여기서는 그 state 가 가리키는
-     * 사람이 지금도 그 프로젝트의 OWNER 인지 한 번 더 본다 — state 를 발급받은 뒤 권한이 빠졌을 수 있다.
+     * 설치 callback 과 `PUT /tracker/github/installation` 이 부르는 자리. installation 의 확인은 호출부가
+     * 이미 했고, 여기서는 그 사람이 지금도 그 프로젝트의 OWNER 인지 한 번 더 본다 — state 를 발급받은 뒤
+     * 권한이 빠졌을 수 있다.
+     *
+     * 다른 installation 이 붙으면 고른 저장소가 비워진다
+     * ([ProjectTrackerLinkRepository.attachInstallation]). 이미 내보낸 이슈는 그대로 둔다.
      */
     suspend fun attachInstallation(
         projectId: Long,

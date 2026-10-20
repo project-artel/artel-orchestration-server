@@ -58,9 +58,22 @@
 | `POST /api/admin/users` | 계정을 만들고 임시 비밀번호를 한 번 돌려준다 |
 | `POST /api/admin/users/:userId/reset-password` | 비밀번호를 새 임시 비밀번호로 바꾼다 |
 | `PATCH /api/admin/users/:userId` | `platformRole` 과 `disabled` 를 바꾼다 |
-| `GET /api/admin/settings/llm` | OpenRouter API key 의 출처와 끝 네 글자, 마지막 확인 결과 |
+| `GET /api/admin/settings/llm` | OpenRouter API key 가 있는지와 끝 네 글자, 마지막 확인 결과 |
 | `PUT /api/admin/settings/llm` | 관리 화면의 key 를 넣거나 지운다 |
 | `POST /api/admin/settings/llm/check` | 그 key 로 필요한 model 에 닿는지 OpenRouter 에 묻는다 |
+| `POST /api/admin/settings/llm/invalidate-cache` | agent-server 가 들고 있는 key 와 model 카탈로그 캐시를 비우라고 요청한다 |
+| `GET /api/admin/settings/bedrock` | Bedrock API key 가 있는지와 끝 네 글자, region, 마지막 확인 결과 |
+| `PUT /api/admin/settings/bedrock` | Bedrock API key 를 넣거나 지운다 |
+| `POST /api/admin/settings/bedrock/check` | 켜진 Bedrock model 마다 Converse 를 한 번 불러 닿는지 본다 |
+| `GET /api/admin/settings/anthropic` | Claude API key 가 있는지와 끝 네 글자, 마지막 확인 결과 |
+| `PUT /api/admin/settings/anthropic` | Claude API key 를 넣거나 지운다. `sk-ant-` 로 시작해야 한다 |
+| `POST /api/admin/settings/anthropic/check` | Anthropic API 의 model 목록을 한 번 받아 켜진 `claude/` model 이 있는지 본다 |
+| `GET /api/admin/settings/typesafe` | TypeSafe API key 가 있는지와 끝 네 글자 |
+| `PUT /api/admin/settings/typesafe` | TypeSafe API key 를 넣거나 지운다. 있으면 Jev 를 TypeSafe 에 직접 부른다 |
+| `GET /api/admin/settings/models` | 시나리오 저작과 Jev decision 질문에 쓸 model, 저장된 값이 없을 때 쓰이는 값 |
+| `PUT /api/admin/settings/models` | 두 model 을 함께 바꾼다. null 이면 지운다. 켜진 `llm_model.id` 만 받는다 |
+| `GET /api/admin/llm-models` | model 카탈로그 전체와 켜짐 여부 |
+| `PATCH /api/admin/llm-models` | model 하나를 켜거나 끈다(본문 `{id, enabled}`) |
 
 프로젝트 쓰기는 `DEVELOPER` 와 같이 열지 않는다. `ADMIN` 도 참여하지 않은 프로젝트를 지우거나 기획서를
 올리지 못한다.

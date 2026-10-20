@@ -15,6 +15,11 @@ data class QaRunEntity(
     @Id val id: Long? = null,
     @Column("test_run_id") val testRunId: Long,
     @Column("game_instance_id") val gameInstanceId: Long,
+    /**
+     * 이 실행이 돈 게임 build(ARTEL-994). 시작할 때 인스턴스의 `last_game_build_id` 를 고정한다 —
+     * 인스턴스 쪽 값은 다음 등록에서 바뀌므로 판정이 어느 버전 것인지는 여기서만 안다.
+     */
+    @Column("game_build_id") val gameBuildId: Long? = null,
     @Column("started_by") val startedBy: Long,
     @Column("agent_session_id") val agentSessionId: String? = null,
     val status: String,
@@ -35,6 +40,8 @@ data class QaRunEntity(
      * 순서가 되고, 그 비용이 규칙을 지키는 비용보다 크다.
      */
     val label: String? = null,
+    /** 이 run 이 공용 key(`platform`)와 사용자 key(`user`) 중 무엇으로 돌았는지. 지출 화면이 둘을 가르는 근거다. */
+    @Column("key_source") val keySource: String = "platform",
     @Column("run_config") val runConfig: Json = Json.of("{}"),
     @Column("started_at") val startedAt: Instant,
     @Column("completed_at") val completedAt: Instant? = null,
@@ -84,6 +91,9 @@ data class QaTryEntity(
     @Column("steps_passed") val stepsPassed: Int? = null,
     @Column("cases_total") val casesTotal: Int? = null,
     @Column("cases_passed") val casesPassed: Int? = null,
+    // 이 try 가 공용 key(`platform`)와 사용자 key(`user`) 중 무엇으로 돌았는지. run 경로는 run 의 값과 같다.
+    // 단일 시나리오 경로는 qa_run 이 없어 이 열이 유일한 기록이다.
+    @Column("key_source") val keySource: String = "platform",
     @Column("started_at") val startedAt: Instant,
     @Column("completed_at") val completedAt: Instant? = null,
     @Column("created_at") val createdAt: Instant? = null,

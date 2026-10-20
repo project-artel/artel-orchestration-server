@@ -98,7 +98,11 @@ pipeline {
             }
             steps {
                 sh 'chmod +x mvnw'
-                sh './mvnw clean package -DskipTests -Dkotlin.compiler.execution.strategy=in-process'
+                // 같은 에이전트에서 도는 빌드들이 Kotlin compile daemon 하나를 나눠 쓰다가, 먼저 끝난
+                // 빌드 쪽에서 daemon 이 내려가면 남은 빌드가 `java.rmi.UnmarshalException` 으로 죽는다
+                // (ARTEL-795). kotlin-maven-plugin 2.3 은 `kotlin.compiler.execution.strategy` 를
+                // 읽지 않고 daemon 을 그대로 띄우므로, daemon 을 끄는 `kotlin.compiler.daemon` 을 쓴다.
+                sh './mvnw clean package -DskipTests -Dkotlin.compiler.daemon=false'
             }
         }
 

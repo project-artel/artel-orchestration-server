@@ -87,7 +87,7 @@ data class TestCaseEntity(
     val expectedItems: Json? = null,
 
     /**
-     * [expectedItems] 와 같은 순서로, **QA 가 판독에서 무엇으로 확인하나**(V101). 항목은 사람용이라
+     * [expectedItems] 와 같은 순서로, **QA 가 판독에서 무엇으로 확인하나**(V123). 항목은 사람용이라
      * 씬 이름을 쓰고, 이쪽은 판독이 싣는 코드 이름을 든다 — `{kind, look_at, field, value, name}`.
      *
      * 지도를 못 되짚는 행은 null 이다([expectedItems] 와 같은 이유).
@@ -154,6 +154,15 @@ data class TestCaseEntity(
 
     @Column("last_verified_build_id")
     val lastVerifiedBuildId: Long? = null,
+
+    /**
+     * 이 케이스를 돌릴 때 agent 에게 허용할 cheat · behavior(ARTEL-1053).
+     * `{"cheats": "all"|"none"|[이름...], "behaviors": 같은 모양}`. run 이 연 목록을 좁히기만 한다.
+     *
+     * NULL 과 빠진 키는 `all` 이다. 명세 적재는 이 칸을 쓰지 않으므로 재전송이 사람이 정한 범위를 지우지 않는다.
+     */
+    @Column("functions")
+    val functions: Json? = null,
 
     @CreatedDate
     @Column("created_at")

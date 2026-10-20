@@ -1,5 +1,6 @@
 package kr.artel.orchestration.scenecontext
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.config.InternalApiServer
@@ -13,6 +14,8 @@ import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.scenecontext.dto.SceneContextMacroParameter
+import kr.artel.orchestration.scenecontext.dto.SceneContextMacroScreen
 import kr.artel.orchestration.scenecontext.dto.SceneContextResponse
 import kr.artel.orchestration.scenecontext.service.SceneContextService
 import org.assertj.core.api.Assertions.assertThat
@@ -581,6 +584,308 @@ class SceneContextIntegrationTest {
 
         assertThatThrownBy { runBlocking { sceneContext.read(projectId, buildId, qaTryId = 987_654_321L) } }
             .isInstanceOf(NotFoundException::class.java)
+    }
+
+    // ------------------------------------------------------------------ macro (ARTEL-934)
+
+    /**
+     * 두 `macro` 가 서로 다른 `screen` 에 달리면 각자 **자기** `screen` 과 `scene` 이름을 들고 온다.
+     *
+     * 관계를 `macro` id 로 묶는 자리가 틀리면 두 `macro` 가 같은 `screen` 목록을 들고 나온다.
+     * `macro` 가 하나뿐인 테스트로는 잡히지 않는다. 한 `macro` 에는 서로 다른 `scene` 의 `screen`
+     * 둘을 달아, `screen` id 순서와 `scene` 이름이 함께 맞는지도 본다.
+     */
+    @Test
+    fun `macro 마다 자기 screen 과 scene 이름이 붙는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val title = fixture.newScene(mapId, "TitleScene")
+        val hand = fixture.newScreen(battle, "손패")
+        val dialog = fixture.newScreen(battle)
+        val menu = fixture.newScreen(title, "메뉴")
+
+        // 거꾸로 단다. 관계를 적은 순서가 아니라 screen id 순서로 나와야 한다.
+        fixture.newMacro(
+            mapId, "attack_with_card",
+            parameters = listOf("card" to "object", "count" to "int"),
+            docstring = "손패의 카드로 적을 공격한다",
+            screenIds = listOf(dialog, hand),
+        )
+        fixture.newMacro(mapId, "open_menu", screenIds = listOf(menu))
+
+        val response = get(projectId, buildId)
+
+        val attack = response.macros.single { it.name == "attack_with_card" }
+        assertThat(attack.screens).containsExactly(
+            SceneContextMacroScreen(screenId = hand.toString(), sceneName = "BattleScene"),
+            SceneContextMacroScreen(screenId = dialog.toString(), sceneName = "BattleScene"),
+        )
+        assertThat(attack.parameters).containsExactly(
+            SceneContextMacroParameter("card", "object"),
+            SceneContextMacroParameter("count", "int"),
+        )
+        assertThat(attack.summary).isEqualTo("손패의 카드로 적을 공격한다")
+
+        val menuMacro = response.macros.single { it.name == "open_menu" }
+        assertThat(menuMacro.screens)
+            .containsExactly(SceneContextMacroScreen(screenId = menu.toString(), sceneName = "TitleScene"))
+        assertThat(menuMacro.parameters).isEmpty()
+        assertThat(menuMacro.summary).isNull()
+        assertThat(response.macrosTotal).isEqualTo(2)
+    }
+
+    /**
+     * `summary` 는 `macro.docstring` 칸이고 `source` 를 읽지 않는다(ARTEL-985). 원문에 `#` 주석이 있어도
+     * 칸이 비어 있으면 null 이고, 칸에 값이 있으면 원문과 상관없이 그 값이다.
+     */
+    @Test
+    fun `macro summary 는 source 의 주석이 아니라 docstring 칸에서 온다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        fixture.newMacro(
+            mapId, "commented",
+            source = "def commented():\n    # 주석은 요약이 아니다\n    click(selector(\"Canvas/Button\"))\n",
+        )
+        fixture.newMacro(
+            mapId, "documented",
+            docstring = "칸에 적힌 docstring",
+            source = "def documented():\n    click(selector(\"Canvas/Button\"))\n",
+        )
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.macros.single { it.name == "commented" }.summary).isNull()
+        assertThat(response.macros.single { it.name == "documented" }.summary).isEqualTo("칸에 적힌 docstring")
+    }
+
+    /**
+     * `screen` 이 없는 `macro` 도 목록에 선다. 빈 `screens` 의 뜻은 "아직 어디서 쓸지 모른다" 라서,
+     * 이 `macro` 를 빼면 이전 런이 등록해 둔 것을 이번 런이 영영 못 찾는다.
+     */
+    @Test
+    fun `screen 이 없는 macro 도 빈 screens 로 나온다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        fixture.newMacro(mapId, "unplaced")
+
+        val response = get(projectId, buildId)
+
+        val macro = response.macros.single()
+        assertThat(macro.name).isEqualTo("unplaced")
+        assertThat(macro.screens).isEmpty()
+        assertThat(response.macrosTotal).isEqualTo(1)
+    }
+
+    /** 이름 오름차순이다. 등록한 순서로 내면 프롬프트 캐시가 등록 순서에 흔들린다. */
+    @Test
+    fun `macro 는 이름 오름차순이다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        listOf("zeta", "alpha", "mid").forEach { fixture.newMacro(mapId, it) }
+
+        assertThat(get(projectId, buildId).macros.map { it.name }).containsExactly("alpha", "mid", "zeta")
+    }
+
+    /**
+     * 30 개를 넘으면 이름순 앞 30 개만 오고 `macrosTotal` 이 자르기 전 수를 말한다. 이름을 두 자리
+     * 숫자로 적어 사전순과 숫자순이 같게 하므로, 잘린 뒤 남는 것이 `m00`..`m29` 여야 한다.
+     */
+    @Test
+    fun `macro 는 30 개에서 잘리고 macrosTotal 은 전체 수다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        (0 until 33).reversed().forEach { fixture.newMacro(mapId, "m%02d".format(it)) }
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.macros).hasSize(30)
+        assertThat(response.macros.map { it.name }).isEqualTo((0 until 30).map { "m%02d".format(it) })
+        assertThat(response.macrosTotal).isEqualTo(33)
+    }
+
+    /** 지도가 없으면 `macro` 도 없다. */
+    @Test
+    fun `지도가 없는 빌드는 macro 가 비어 있다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.macros).isEmpty()
+        assertThat(response.macrosTotal).isEqualTo(0)
+    }
+
+    /** 다른 빌드의 `macro` 는 섞이지 않는다 — 이름의 유일 범위가 지도 하나다. */
+    @Test
+    fun `다른 빌드의 macro 는 오지 않는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val otherMapId = fixture.newContentMap(fixture.newBuild(projectId))
+        fixture.newMacro(mapId, "mine")
+        fixture.newMacro(otherMapId, "theirs")
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.macros.map { it.name }).containsExactly("mine")
+        assertThat(response.macrosTotal).isEqualTo(1)
+    }
+
+    /** `content_map_mode = off` 인 런은 지도가 없는 빌드와 같은 답이다. `macro` 도 비어야 한다. */
+    @Test
+    fun `content map 모드가 off 면 macro 도 비어 있다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        fixture.newMacro(mapId, "hidden")
+        val qaTryId = newQaTry(projectId, contentMapMode = ContentMapMode.OFF)
+
+        val response = sceneContext.read(projectId, buildId, qaTryId)!!
+
+        assertThat(response.macros).isEmpty()
+        assertThat(response.macrosTotal).isEqualTo(0)
+    }
+
+    /**
+     * 나가는 JSON 한 줄. `source` 와 `definition_json` 이 key 로도 없어야 하고, 이름 · 필드 이름은
+     * agent-server 가 코딩하는 계약 그대로다.
+     */
+    @Test
+    fun `macro 한 개가 나가는 JSON 모양`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val hand = fixture.newScreen(battle, "손패")
+        fixture.newMacro(
+            mapId, "fire_ball",
+            parameters = listOf("enemy" to "object"),
+            docstring = "적에게 화염구를 던진다",
+            screenIds = listOf(hand),
+        )
+
+        val root = ObjectMapper().readTree(rawBody(projectId, buildId))
+
+        assertThat(root.path("macrosTotal").asInt()).isEqualTo(1)
+        val macro = root.path("macros").single()
+        assertThat(macro.fieldNames().asSequence().toList())
+            .containsExactlyInAnyOrder("name", "parameters", "summary", "screens")
+        assertThat(macro.path("parameters").single().toString())
+            .isEqualTo("""{"name":"enemy","type":"object"}""")
+        assertThat(macro.path("screens").single().toString())
+            .isEqualTo("""{"screenId":"$hand","sceneName":"BattleScene"}""")
+        assertThat(rawBody(projectId, buildId)).doesNotContain("definition_json", "definitionJson", "\"source\"")
+    }
+
+    // ------------------------------------------------------------------ 오브젝트와 writes (ARTEL-1059)
+
+    /**
+     * 나가는 JSON 한 `scene`. 오브젝트는 `scene` 아래 문서(id) 순서로, 코드가 쓰는 필드는 `capability` 의
+     * `writes` 로 온다. 칸 이름은 agent-server 가 camelCase 로 읽는 계약 그대로다.
+     */
+    @Test
+    fun `scene 의 오브젝트와 capability 의 writes 가 나가는 JSON 모양`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val title = fixture.newScene(mapId, "TitleScene")
+        fixture.newSceneObject(mapId, battle, "Word[13]", active = false,
+            components = listOf("SelectableObject" to listOf("selectable"), "Player" to listOf("HpText", "hp")))
+        fixture.newSceneObject(mapId, battle, "Canvas[0]/CombineButton[2]",
+            components = listOf("Button" to emptyList()))
+        fixture.newSceneObject(mapId, title, "TitleMenu", components = listOf("TitleMenu" to emptyList()))
+        val combine = fixture.newCapability(mapId, battle, summary = "합친다", controlPath = "Canvas/CombineButton")
+        fixture.newWrite(combine, "SelectableObject.selectable")
+        fixture.newWrite(combine, "Canvas/CombinePanel", kind = "active-state")
+
+        val root = ObjectMapper().readTree(rawBody(projectId, buildId))
+
+        val battleScene = root.path("scenes").single { it.path("sceneName").asText() == "BattleScene" }
+        assertThat(battleScene.path("objectsTotal").asInt()).isEqualTo(2)
+        assertThat(battleScene.path("objects").toString()).isEqualTo(
+            """[{"selector":"Word[13]","active":false,"components":[{"type":"SelectableObject","fields":["selectable"]},""" +
+                """{"type":"Player","fields":["HpText","hp"]}]},""" +
+                """{"selector":"Canvas[0]/CombineButton[2]","active":true,"components":[{"type":"Button","fields":[]}]}]"""
+        )
+        // `active-state` 는 `write` 가 아니다.
+        assertThat(battleScene.path("capabilities").single().path("writes").toString())
+            .isEqualTo("""["SelectableObject.selectable"]""")
+
+        val titleScene = root.path("scenes").single { it.path("sceneName").asText() == "TitleScene" }
+        assertThat(titleScene.path("objects").map { it.path("selector").asText() }).containsExactly("TitleMenu")
+    }
+
+    /**
+     * `scene` 하나에 오브젝트 60 개, 컴포넌트 하나에 필드 16 개까지다. `objectsTotal` 이 자르기 전 수를
+     * 말한다. 잘리고 남는 것은 앞쪽이다 — 문서 순서와 이름 오름차순이 고정이라 조회마다 같은 줄이 남는다.
+     */
+    @Test
+    fun `오브젝트는 60 개, 필드는 16 개에서 잘린다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val manyFields = (0 until 20).map { "field%02d".format(it) }
+        fixture.newSceneObject(mapId, battle, "Manager[0]", components = listOf("StageManager" to manyFields))
+        (1 until 61).forEach { fixture.newSceneObject(mapId, battle, "Enemy[$it]") }
+
+        val scene = get(projectId, buildId).scenes.single()
+
+        assertThat(scene.objectsTotal).isEqualTo(61)
+        assertThat(scene.objects).hasSize(60)
+        assertThat(scene.objects.first().components.single().fields).isEqualTo(manyFields.take(16))
+        assertThat(scene.objects.last().selector).isEqualTo("Enemy[59]")
+    }
+
+    /**
+     * 접힌 줄의 `writes` 는 무리 전부의 것을 중복 없이 합치고 8 개에서 자른다. 같은 진입점이 부르는 메서드들이
+     * 나눠 쓰는 값이라, 대표 행 하나의 것만 실으면 버튼이 바꾸는 값 일부가 빠진다.
+     */
+    @Test
+    fun `접힌 줄의 writes 는 무리 전부를 합쳐 8 개에서 자른다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val entry = "Assembly-CSharp|Combat.CombineZone|OnButtonClick|System.Void()"
+        val first = fixture.newCapability(mapId, battle, summary = "하나", entryId = entry)
+        val second = fixture.newCapability(mapId, battle, summary = "둘", entryId = entry)
+        listOf("Zone.a", "Zone.b").forEach { fixture.newWrite(first, it) }
+        listOf("Zone.b", "Zone.c", "Zone.d", "Zone.e", "Zone.f", "Zone.g", "Zone.h", "Zone.i").forEach {
+            fixture.newWrite(second, it)
+        }
+
+        val capability = get(projectId, buildId).scenes.single().capabilities.single()
+
+        assertThat(capability.covers).isEqualTo(2)
+        assertThat(capability.writes)
+            .containsExactly("Zone.a", "Zone.b", "Zone.c", "Zone.d", "Zone.e", "Zone.f", "Zone.g", "Zone.h")
+    }
+
+    /**
+     * 오브젝트도 `write` 도 없으면 빈 목록과 0 이다. 칸이 아예 빠지지 않는다 — V114 이전에 적재되어 아직
+     * 백필되지 않은 지도도 이 모양이고, agent-server 는 "없음" 을 빈 목록으로 읽는다.
+     */
+    @Test
+    fun `오브젝트와 writes 가 없으면 빈 목록이다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val title = fixture.newScene(mapId, "TitleScene")
+        fixture.newCapability(mapId, title, summary = "시작한다")
+
+        val scene = ObjectMapper().readTree(rawBody(projectId, buildId)).path("scenes").single()
+
+        assertThat(scene.path("objects").toString()).isEqualTo("[]")
+        assertThat(scene.path("objectsTotal").asInt(-1)).isEqualTo(0)
+        assertThat(scene.path("capabilities").single().path("writes").toString()).isEqualTo("[]")
     }
 
     // ---------- 호출 ----------

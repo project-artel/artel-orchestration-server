@@ -1,15 +1,25 @@
 package kr.artel.orchestration.scenecontext.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.contentmap.dto.CapabilityWriteRow
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
+import kr.artel.orchestration.contentmap.dto.MacroSceneContextRow
+import kr.artel.orchestration.contentmap.dto.MacroScreenRow
 import kr.artel.orchestration.contentmap.entity.ContentMapMode
 import kr.artel.orchestration.contentmap.evidence.EvidenceParser
 import kr.artel.orchestration.contentmap.entity.SceneEntity
+import kr.artel.orchestration.contentmap.entity.SceneObjectComponent
+import kr.artel.orchestration.contentmap.entity.SceneObjectEntity
 import kr.artel.orchestration.contentmap.entity.Observability
 import kr.artel.orchestration.contentmap.entity.SpecStatus
+import kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
+import kr.artel.orchestration.contentmap.repository.MacroRepository
+import kr.artel.orchestration.contentmap.repository.ScreenMacroRepository
+import kr.artel.orchestration.contentmap.repository.SceneObjectRepository
 import kr.artel.orchestration.contentmap.repository.SceneRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.knowledge.entity.KnowledgeScope
@@ -17,11 +27,38 @@ import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.qa.service.contentMapModeOf
 import kr.artel.orchestration.scenecontext.dto.SceneCapabilityView
 import kr.artel.orchestration.scenecontext.dto.SceneContextEntry
+import kr.artel.orchestration.scenecontext.dto.SceneContextMacro
 import kr.artel.orchestration.scenecontext.dto.SceneContextResponse
 import kr.artel.orchestration.scenecontext.dto.SceneKnowledgeView
+import kr.artel.orchestration.scenecontext.dto.SceneObjectComponentView
+import kr.artel.orchestration.scenecontext.dto.SceneObjectView
 import kr.artel.orchestration.scenecontext.repository.AnchoredKnowledgeRepository
 import kr.artel.orchestration.scenecontext.repository.AnchoredKnowledgeRow
 import org.springframework.stereotype.Service
+
+/**
+ * 응답에 싣는 `macro` 수의 상한(ARTEL-934).
+ *
+ * 이 payload 는 **시나리오를 시작할 때마다** 프롬프트에 실려 토큰 값을 낸다. 상한이 없으면 빌드에
+ * `macro` 가 쌓이는 만큼 모든 시나리오의 시작 비용이 같이 커진다. 30 은 실측으로 고른 값이 아니라
+ * 그 부피에 천장을 두는 값이다 — 로컬 DB 의 가장 큰 지도가 9 개다. 넘으면 이름순 앞 30 개만 보내고
+ * 나머지는 `macrosTotal` 로 잘렸다는 사실만 알린다.
+ */
+internal const val MAX_SCENE_CONTEXT_MACROS: Int = 30
+
+/**
+ * `scene` 하나에 싣는 오브젝트 수, 컴포넌트 하나에 싣는 필드 수, `capability` 하나에 싣는 `writes` 수의
+ * 상한(ARTEL-1059).
+ *
+ * [MAX_SCENE_CONTEXT_MACROS] 와 같은 이유로 실측이 아니라 천장이다. WordVenture 실측에서 가장 큰
+ * `scene`(`TurnBattleScene`)이 오브젝트 30 개, 컴포넌트 하나의 필드가 최대 10 개, 진입점 하나의 `write` 가
+ * 최대 9 개다. 오브젝트와 필드는 그 실측이 잘리지 않게 여유를 두었다. `write` 는 PoC 가 그린 6 개보다
+ * 조금 넓은 8 개이고, 실측 진입점 52 개 중 이것을 넘는 것은 하나(9 개)다. 프롬프트에 몇 줄을 그릴지는
+ * 이보다 좁게 agent-server 가 정한다.
+ */
+internal const val MAX_SCENE_CONTEXT_OBJECTS: Int = 60
+internal const val MAX_SCENE_OBJECT_FIELDS: Int = 16
+internal const val MAX_CAPABILITY_WRITES: Int = 8
 
 /**
  * QA agent 가 런 시작에 한 번 받아 가는 **씬별 맥락**을 조립한다(ARTEL-611).
@@ -44,6 +81,10 @@ import org.springframework.stereotype.Service
  * | 4 | `scene` 목록 | 지도가 있을 때만 |
  * | 5 | `v_content_map_capability` 전량 | 지도가 있을 때만 |
  * | 6 | 앵커 + 지식 요약 | 항상 |
+ * | 7 | `macro` 최대 30 개 (이름순, 전체 수 포함) | 지도가 있을 때만 |
+ * | 8 | `macro` 에 달린 `screen` 관계 | 지도가 있을 때만 |
+ * | 9 | `scene_object` 전량 | 지도가 있을 때만 |
+ * | 10 | `capability_effect` 의 `write` 전량 | 지도가 있을 때만 |
  *
  * ## 접근 검사가 컨트롤러가 아니라 여기 있다
  *
@@ -55,6 +96,10 @@ class SceneContextService(
     private val gameBuilds: GameBuildRepository,
     private val contentMaps: ContentMapRepository,
     private val scenes: SceneRepository,
+    private val macros: MacroRepository,
+    private val screenMacros: ScreenMacroRepository,
+    private val sceneObjects: SceneObjectRepository,
+    private val capabilityEffects: CapabilityEffectRepository,
     private val anchoredKnowledge: AnchoredKnowledgeRepository,
     private val qaTries: QaTryRepository,
     private val objectMapper: ObjectMapper,
@@ -121,15 +166,61 @@ class SceneContextService(
         val capabilitiesByScene = contentMaps.findAllCapabilityRows(contentMapId)
             .toList()
             .groupBy(ContentMapCapabilityRow::sceneName)
+        // `macro` 를 **먼저** 읽고 `screen` 관계를 나중에 읽는다. 둘이 한 트랜잭션이 아니라서 그 사이에
+        // 등록된 `macro` 가 있을 수 있다. 관계를 먼저 읽으면 그 `macro` 가 빈 `screens` 로 나가고,
+        // 이 응답에서 빈 `screens` 는 "아직 어디서 쓸지 모른다" 는 주장이라 거짓이 된다. 순서를
+        // 이렇게 두면 그 `macro` 는 이번 응답에 안 서고 다음 조회에 제대로 선다(`MacroViewService.list`).
+        val macroRows = macros.findSceneContextRowsByContentMapId(contentMapId, MAX_SCENE_CONTEXT_MACROS).toList()
+        val screensByMacroId = screenRowsOf(contentMapId, macroRows)
+        val objectsBySceneId = sceneObjects.findByContentMapIdOrderByIdAsc(contentMapId)
+            .toList()
+            .groupBy(SceneObjectEntity::sceneId)
+        val writesByCapabilityId = capabilityEffects.findWritesByContentMapId(contentMapId)
+            .toList()
+            .groupBy(CapabilityWriteRow::capabilityId, CapabilityWriteRow::target)
+        val mapWideRows = MapWideRows(capabilitiesByScene, knowledgeByScene, objectsBySceneId, writesByCapabilityId)
 
         return SceneContextResponse(
             gameBuildId = gameBuildId.toString(),
             contentMapId = contentMapId.toString(),
             capture = contentMap.capture,
-            scenes = mapScenes.map { scene -> entryOf(scene, capabilitiesByScene, knowledgeByScene) } +
+            scenes = mapScenes.map { scene -> entryOf(scene, mapWideRows) } +
                 anchorOnlyScenes(knowledgeByScene, mapScenes.mapTo(mutableSetOf(), SceneEntity::name)),
+            macros = macroRows.map { macroOf(it, screensByMacroId[it.id].orEmpty()) },
+            macrosTotal = macroRows.firstOrNull()?.total?.toInt() ?: 0,
         )
     }
+
+    /**
+     * 읽어 온 `macro` 들에 달린 `screen` 관계를 `macro` id 로 묶는다. `macro` 가 없으면 질의를 돌리지 않는다.
+     *
+     * 지도 전체의 관계를 읽고 [macroRows] 에 든 `macro` 만 남긴다. 30 개 밖의 `macro` 관계를 읽는 낭비가
+     * 있으나 `screen_macro` 는 좁은 표이고, 같은 질의를 사람이 보는 목록(`MacroViewService`)이 이미
+     * 쓰므로 두 길이 같은 `screen` 이름을 낸다. 질의 순서가 `macro_id, screen.id` 라 묶은 뒤에도 각
+     * `macro` 의 `screen` 이 id 오름차순이다.
+     */
+    private suspend fun screenRowsOf(
+        contentMapId: Long,
+        macroRows: List<MacroSceneContextRow>,
+    ): Map<Long, List<MacroScreenRow>> {
+        if (macroRows.isEmpty()) return emptyMap()
+        val readMacroIds = macroRows.mapTo(mutableSetOf(), MacroSceneContextRow::id)
+        return screenMacros.findScreenRowsByContentMapId(contentMapId)
+            .toList()
+            .filter { it.macroId in readMacroIds }
+            .groupBy(MacroScreenRow::macroId)
+    }
+
+    /**
+     * `macro` 한 줄. `screens` 가 비어도 **싣는다** — 비어 있다는 것은 "아직 어디서 쓸지 모른다" 이지
+     * "없다" 가 아니고, 빼면 agent 는 이전 런이 등록한 `macro` 를 못 찾는다.
+     */
+    private fun macroOf(row: MacroSceneContextRow, screens: List<MacroScreenRow>) = SceneContextMacro(
+        name = row.name,
+        parameters = SceneContextMacroShapes.parameters(objectMapper, row.declaredParameters),
+        summary = row.docstring,
+        screens = SceneContextMacroShapes.screens(screens),
+    )
 
     /**
      * 지도가 아는 씬 한 줄. capability 가 하나도 없어도 **목록에서 빼지 않는다.**
@@ -142,21 +233,35 @@ class SceneContextService(
      * 질의 수를 고정한 것이 이 서비스의 설계이고, 나누는 일은 이미 읽어 온 목록에서 한다.
      * [partition] 이 원래 순서를 지키므로 뷰 질의의 `ORDER BY` 가 두 목록에 그대로 남는다.
      */
-    private fun entryOf(
-        scene: SceneEntity,
-        capabilitiesByScene: Map<String, List<ContentMapCapabilityRow>>,
-        knowledgeByScene: Map<String, List<AnchoredKnowledgeRow>>,
-    ): SceneContextEntry {
-        val (notASteps, steps) = capabilitiesByScene[scene.name].orEmpty()
+    private fun entryOf(scene: SceneEntity, mapWideRows: MapWideRows): SceneContextEntry {
+        val (notASteps, steps) = mapWideRows.capabilitiesByScene[scene.name].orEmpty()
             .partition { it.status == SpecStatus.NOT_A_STEP.wire }
+        val objects = mapWideRows.objectsBySceneId[scene.id].orEmpty()
         return SceneContextEntry(
             sceneName = scene.name,
             knownToContentMap = true,
             origin = scene.origin,
             sceneSummary = scene.summary,
-            capabilities = foldByEntry(steps),
-            notAStepCapabilities = foldByEntry(notASteps),
-            knowledge = knowledgeByScene[scene.name].orEmpty().map(::knowledgeOf),
+            capabilities = foldByEntry(steps, mapWideRows.writesByCapabilityId),
+            notAStepCapabilities = foldByEntry(notASteps, mapWideRows.writesByCapabilityId),
+            knowledge = mapWideRows.knowledgeByScene[scene.name].orEmpty().map(::knowledgeOf),
+            objects = objects.take(MAX_SCENE_CONTEXT_OBJECTS).map(::objectOf),
+            objectsTotal = objects.size,
+        )
+    }
+
+    /**
+     * 오브젝트 한 줄. `components` 는 적재가 [SceneObjectComponent] 로 직렬화해 넣은 값이라 같은 타입으로
+     * 되읽는다. 깨져 있으면 이 응답을 실패시킨다 — 조용히 비우면 "코드가 건드리지 않는 오브젝트"로 읽힌다.
+     */
+    private fun objectOf(row: SceneObjectEntity): SceneObjectView {
+        val components: List<SceneObjectComponent> = objectMapper.readValue(row.components.asString())
+        return SceneObjectView(
+            selector = row.selector,
+            active = row.active,
+            components = components.map { component ->
+                SceneObjectComponentView(type = component.type, fields = component.fields.take(MAX_SCENE_OBJECT_FIELDS))
+            },
         )
     }
 
@@ -181,10 +286,21 @@ class SceneContextService(
      * 중복이 먹고 있었다 — 실측으로 1,300 행이 319 로 접힌다.
      *
      * `entry_id` 가 없는 행은 근거 출신이 아니다. 그때는 적재의 키로 물러서므로 접히지 않는다.
+     *
+     * `writes` 는 대표 행이 아니라 무리 전부의 것을 합친다. 같은 진입점이 부르는 메서드들이 나눠 쓰는
+     * 값이라, 대표 하나의 것만 실으면 버튼이 바꾸는 값 일부가 빠진다.
      */
-    private fun foldByEntry(rows: List<ContentMapCapabilityRow>): List<SceneCapabilityView> =
+    private fun foldByEntry(
+        rows: List<ContentMapCapabilityRow>,
+        writesByCapabilityId: Map<Long, List<String>>,
+    ): List<SceneCapabilityView> =
         rows.groupBy { it.entryId ?: "\u0000${it.capabilityId}" }
-            .map { (_, group) -> capabilityOf(representativeOf(group), covers = group.size) }
+            .map { (_, group) ->
+                val writes = group.flatMap { writesByCapabilityId[it.capabilityId].orEmpty() }
+                    .distinct()
+                    .take(MAX_CAPABILITY_WRITES)
+                capabilityOf(representativeOf(group), covers = group.size, writes = writes)
+            }
 
     /**
      * 접힌 무리를 대표할 행.
@@ -224,7 +340,7 @@ class SceneContextService(
                 )
             }
 
-    private fun capabilityOf(row: ContentMapCapabilityRow, covers: Int = 1) = SceneCapabilityView(
+    private fun capabilityOf(row: ContentMapCapabilityRow, covers: Int, writes: List<String>) = SceneCapabilityView(
         capabilityId = row.capabilityId.toString(),
         capabilityKey = row.capabilityKey,
         summary = row.summary,
@@ -246,6 +362,7 @@ class SceneContextService(
         repeatUntilDone = row.repeatUntilDone,
         controlSelectorHint = row.controlSelector,
         covers = covers,
+        writes = writes,
     )
 
     private fun knowledgeOf(row: AnchoredKnowledgeRow) = SceneKnowledgeView(
@@ -275,6 +392,18 @@ class SceneContextService(
         )
     }
 }
+
+/**
+ * 지도 단위로 한 번씩 읽어 온 것들. `scene` 마다 이 안에서 자기 몫을 꺼낸다.
+ *
+ * 묶는 이유는 [SceneContextService.entryOf] 의 인자가 넷으로 늘어서다. 질의를 더 돌리는 자리가 아니다.
+ */
+private data class MapWideRows(
+    val capabilitiesByScene: Map<String, List<ContentMapCapabilityRow>>,
+    val knowledgeByScene: Map<String, List<AnchoredKnowledgeRow>>,
+    val objectsBySceneId: Map<Long, List<SceneObjectEntity>>,
+    val writesByCapabilityId: Map<Long, List<String>>,
+)
 
 /**
  * 한 조회에 걸리는 두 게이트. 축이 둘이라 묶어 든다.

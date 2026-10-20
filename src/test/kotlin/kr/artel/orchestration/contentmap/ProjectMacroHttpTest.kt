@@ -84,14 +84,16 @@ class ProjectMacroHttpTest {
         assertThat(item["screens"].single()["sceneName"].asText()).isEqualTo("TurnBattleScene")
         assertThat(item.fieldNames().asSequence().toList())
             .describedAs("목록에는 source 도 definition 도 없다")
-            .containsExactlyInAnyOrder("id", "name", "parameters", "screens", "updatedAt")
+            .containsExactlyInAnyOrder("id", "name", "parameters", "screens", "updatedAt", "docstring")
+        assertThat(item["docstring"].asText()).isEqualTo(DOCSTRING)
 
         val detail = get(world.token, "${world.base}/macros/${world.macroId}")
 
         assertThat(detail["source"].asText()).isEqualTo(SOURCE)
         assertThat(detail.fieldNames().asSequence().toList())
             .describedAs("상세는 목록 항목에 source 를 더한 것이다")
-            .containsExactlyInAnyOrder("id", "name", "parameters", "screens", "updatedAt", "source")
+            .containsExactlyInAnyOrder("id", "name", "parameters", "screens", "updatedAt", "docstring", "source")
+        assertThat(detail["docstring"].asText()).isEqualTo(DOCSTRING)
     }
 
     /** 이 빌드에 없는 macro 는 404 다. 200 에 빈 몸통으로 답하면 화면이 빈 원문을 그린다. */
@@ -156,6 +158,7 @@ class ProjectMacroHttpTest {
             source = SOURCE,
             definitionJson = Json.of(DEFINITION),
             parameterNames = Json.of("""["card_a"]"""),
+            docstring = DOCSTRING,
         ).id
         screenMacros.link(screenId, macroId)
 
@@ -188,6 +191,8 @@ class ProjectMacroHttpTest {
             HttpStatus.valueOf(e.statusCode.value())
         }
 }
+
+private const val DOCSTRING = "카드 두 장을 합쳐 적을 공격한다"
 
 private val SOURCE = """
     def attack_with_combined_card(card_a: string):

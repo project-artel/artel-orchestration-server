@@ -3,7 +3,7 @@ package kr.artel.orchestration.settings.service
 import com.fasterxml.jackson.annotation.JsonValue
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.BadRequestException
-import kr.artel.orchestration.settings.config.LlmKeyProperties
+import kr.artel.orchestration.llmmodel.service.LlmModelService
 import kr.artel.orchestration.settings.repository.PlatformSettingRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -26,10 +26,7 @@ enum class LlmKeySource(@get:JsonValue val wireName: String) {
     /** 관리 화면에서 넣은 값(`platform_setting`). */
     ADMIN("admin"),
 
-    /** `OPENROUTER_API_KEY` 환경 변수. */
-    ENVIRONMENT("environment"),
-
-    /** 둘 다 없다. */
+    /** 저장된 값이 없거나 열 수 없다. */
     NONE("none")
 }
 
@@ -53,7 +50,7 @@ data class LlmKeyCheckResult(
     /** 확인에 쓴 key 의 끝 네 글자를 가린 모양. key 가 없었으면 null 이다. */
     val maskedKey: String?,
     val keyValid: Boolean,
-    /** 닿아야 하는 model 전부. `artel-agent-server` 의 `GET /internal/models/required` 가 준 목록이다. 그 목록을 받지 못했으면 비어 있다. */
+    /** 닿아야 하는 model 전부. `LlmModelService.requiredOpenRouterModels` 가 확인하는 순간 정한다. */
     val requiredModels: List<String>,
     val reachableModels: List<String>,
     val missingModels: List<String>,
@@ -73,8 +70,6 @@ data class LlmKeyStatus(
     val adminKeyUnreadable: Boolean,
     /** 관리 화면에서 넣은 값이 마지막으로 바뀐 시각. */
     val adminKeyUpdatedAt: Instant?,
-    /** `OPENROUTER_API_KEY` 가 있는지. */
-    val environmentKeyPresent: Boolean,
     /** `ARTEL_SECRETS_KEY` 가 있는지. false 면 관리 화면에서 key 를 저장할 수 없다. */
     val secretsKeyConfigured: Boolean,
     val lastCheck: LlmKeyCheckResult?
@@ -83,8 +78,8 @@ data class LlmKeyStatus(
 /**
  * OpenRouter API key 를 저장하고, 지금 쓰일 key 를 정하고, 확인한다.
  *
- * 순서는 관리 화면에서 넣은 값, 그다음 `OPENROUTER_API_KEY` 다. key 원문은 [effectiveKey] 로만 나가고,
- * 그것을 부르는 곳은 내부 포트의 `GET /internal/settings/llm` 과 key 확인뿐이다. 공개 API 는 끝 네
+ * key 는 관리 화면에서 넣은 값 하나뿐이다. 환경 변수로 받는 길은 없다. key 원문은 [effectiveKey] 로만
+ * 나가고, 그것을 부르는 곳은 내부 포트의 `GET /internal/settings/llm` 과 key 확인뿐이다. 공개 API 는 끝 네
  * 글자만 본다.
  */
 @Service
@@ -92,8 +87,8 @@ class LlmKeyService(
     private val platformSettingRepository: PlatformSettingRepository,
     private val secretCipher: SecretCipher,
     private val openRouterModelClient: OpenRouterModelClient,
-    private val requiredModelsClient: RequiredModelsClient,
-    private val properties: LlmKeyProperties,
+    private val llmModelService: LlmModelService,
+    private val agentCacheInvalidator: AgentCacheInvalidator,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock
@@ -103,8 +98,6 @@ class LlmKeyService(
     suspend fun effectiveKey(): EffectiveLlmKey {
         val adminKey = readAdminKey()
         if (adminKey != null) return EffectiveLlmKey(adminKey, LlmKeySource.ADMIN)
-        val environmentKey = properties.openrouterApiKey.trim()
-        if (environmentKey.isNotEmpty()) return EffectiveLlmKey(environmentKey, LlmKeySource.ENVIRONMENT)
         return EffectiveLlmKey(null, LlmKeySource.NONE)
     }
 
@@ -118,16 +111,17 @@ class LlmKeyService(
             adminKeyStored = stored != null,
             adminKeyUnreadable = stored != null && effective.source != LlmKeySource.ADMIN,
             adminKeyUpdatedAt = stored?.updatedAt,
-            environmentKeyPresent = properties.openrouterApiKey.isNotBlank(),
             secretsKeyConfigured = secretCipher.configured,
             lastCheck = readLastCheck()
         )
     }
 
     /**
-     * 관리 화면의 key 를 바꾼다. null 이나 빈 문자열이면 지운다 — 그 뒤로는 `OPENROUTER_API_KEY` 가 쓰인다.
+     * 관리 화면의 key 를 바꾼다. null 이나 빈 문자열이면 지운다 — 그 뒤로 agent-server 는 OpenRouter key 가
+     * 없다.
      *
-     * 마지막 확인 결과도 함께 지운다. 다른 key 에 대한 결과가 새 key 의 것처럼 보이면 안 된다.
+     * 마지막 확인 결과도 함께 지운다. 다른 key 에 대한 결과가 새 key 의 것처럼 보이면 안 된다. 저장한 뒤에는
+     * agent-server 의 캐시를 비우라고 요청한다. 그 요청이 실패해도 저장은 성공이다.
      */
     suspend fun updateAdminKey(apiKey: String?, adminUserId: Long): LlmKeyStatus {
         val trimmed = apiKey?.trim().orEmpty()
@@ -137,9 +131,10 @@ class LlmKeyService(
                 platformSettingRepository.deleteById(OPENROUTER_LAST_CHECK_SETTING)
             }
             logger.info("OpenRouter API key cleared by app_user {}", adminUserId)
+            agentCacheInvalidator.invalidateAfterChange("clearing the OpenRouter API key")
             return status()
         }
-        validateApiKey(trimmed)
+        validateApiKey(trimmed, MAX_API_KEY_LENGTH)
         val ciphertext = secretCipher.encrypt(trimmed, OPENROUTER_API_KEY_SETTING)
         transactionalOperator.executeAndAwait {
             platformSettingRepository.upsert(
@@ -152,6 +147,7 @@ class LlmKeyService(
             platformSettingRepository.deleteById(OPENROUTER_LAST_CHECK_SETTING)
         }
         logger.info("OpenRouter API key replaced by app_user {}", adminUserId)
+        agentCacheInvalidator.invalidateAfterChange("saving the OpenRouter API key")
         return status()
     }
 
@@ -159,21 +155,17 @@ class LlmKeyService(
     suspend fun check(adminUserId: Long): LlmKeyCheckResult {
         val effective = effectiveKey()
         val apiKey = effective.apiKey
+        val requiredModels = llmModelService.requiredOpenRouterModels()
         val result = if (apiKey == null) {
-            checkResult(effective, emptyList(), keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.NO_KEY)
+            checkResult(effective, requiredModels, keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.NO_KEY)
         } else {
-            val required = requiredModelsClient.slugs()
-            if (required == null) {
-                checkResult(effective, emptyList(), keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.UPSTREAM_UNAVAILABLE)
-            } else {
-                when (val listing = openRouterModelClient.list(apiKey)) {
-                    is OpenRouterListing.Reachable ->
-                        checkResult(effective, required, keyValid = true, reachable = listing.modelIds, error = null)
-                    OpenRouterListing.InvalidKey ->
-                        checkResult(effective, required, keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.INVALID_KEY)
-                    OpenRouterListing.Unavailable ->
-                        checkResult(effective, required, keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.UPSTREAM_UNAVAILABLE)
-                }
+            when (val listing = openRouterModelClient.list(apiKey)) {
+                is OpenRouterListing.Reachable ->
+                    checkResult(effective, requiredModels, keyValid = true, reachable = listing.modelIds, error = null)
+                OpenRouterListing.InvalidKey ->
+                    checkResult(effective, requiredModels, keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.INVALID_KEY)
+                OpenRouterListing.Unavailable ->
+                    checkResult(effective, requiredModels, keyValid = false, reachable = emptySet(), error = LlmKeyCheckError.UPSTREAM_UNAVAILABLE)
             }
         }
         platformSettingRepository.upsert(
@@ -188,7 +180,7 @@ class LlmKeyService(
 
     private fun checkResult(
         effective: EffectiveLlmKey,
-        required: List<String>,
+        requiredModels: List<String>,
         keyValid: Boolean,
         reachable: Set<String>,
         error: LlmKeyCheckError?
@@ -197,9 +189,9 @@ class LlmKeyService(
         source = effective.source,
         maskedKey = effective.apiKey?.let(::mask),
         keyValid = keyValid,
-        requiredModels = required,
-        reachableModels = required.filter { it in reachable },
-        missingModels = required.filterNot { it in reachable },
+        requiredModels = requiredModels,
+        reachableModels = requiredModels.filter { it in reachable },
+        missingModels = requiredModels.filterNot { it in reachable },
         error = error
     )
 
@@ -209,7 +201,7 @@ class LlmKeyService(
         if (plaintext == null) {
             logger.warn(
                 "Stored OpenRouter API key could not be decrypted; ARTEL_SECRETS_KEY is missing or changed. " +
-                    "Falling back to OPENROUTER_API_KEY."
+                    "Enter the key again on the admin page."
             )
         }
         return plaintext
@@ -223,14 +215,18 @@ class LlmKeyService(
             null
         }
     }
+}
 
-    private fun validateApiKey(apiKey: String) {
-        if (apiKey.length !in MIN_API_KEY_LENGTH..MAX_API_KEY_LENGTH || apiKey.any(Char::isWhitespace)) {
-            throw BadRequestException(
-                "API key 는 공백 없이 ${MIN_API_KEY_LENGTH}자 이상 ${MAX_API_KEY_LENGTH}자 이하여야 합니다.",
-                code = "invalid_api_key"
-            )
-        }
+/**
+ * 공백이 없고 길이가 [MIN_API_KEY_LENGTH] 이상 [maxLength] 이하인지 본다. 아니면 400 `invalid_api_key` 다.
+ * Bedrock API key 는 OpenRouter key 보다 길어 상한을 부르는 쪽이 정한다.
+ */
+fun validateApiKey(apiKey: String, maxLength: Int) {
+    if (apiKey.length !in MIN_API_KEY_LENGTH..maxLength || apiKey.any(Char::isWhitespace)) {
+        throw BadRequestException(
+            "API key 는 공백 없이 ${MIN_API_KEY_LENGTH}자 이상 ${maxLength}자 이하여야 합니다.",
+            code = "invalid_api_key"
+        )
     }
 }
 

@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testscenario.entity
 
 import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import org.springframework.data.annotation.CreatedDate
 import org.springframework.data.annotation.Id
 import org.springframework.data.annotation.LastModifiedDate
@@ -36,6 +37,9 @@ data class TestScenarioEntity(
 
     @Column("steps")
     val steps: Json = Json.of("[]"),
+
+    @Column("execution_mode")
+    val executionMode: ScenarioExecutionMode = ScenarioExecutionMode.ORDERED,
 
     @CreatedDate
     @Column("created_at")

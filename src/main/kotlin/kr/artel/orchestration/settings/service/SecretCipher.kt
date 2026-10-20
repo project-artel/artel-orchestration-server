@@ -50,7 +50,7 @@ class SecretCipher(properties: SecretsProperties) {
 
     /**
      * 열지 못하면 null 이다. `ARTEL_SECRETS_KEY` 가 없거나 바뀌었거나 값이 망가진 경우다. 원인을 예외로
-     * 올리지 않는 이유는 그때도 `OPENROUTER_API_KEY` 로 계속 돌아야 하기 때문이다.
+     * 올리지 않는 이유는 그때도 서버가 key 없는 상태로 계속 돌아야 하기 때문이다.
      */
     fun decrypt(stored: String, settingKey: String): String? {
         val key = aesKey ?: return null
@@ -79,6 +79,6 @@ class SecretCipher(properties: SecretsProperties) {
 /** `ARTEL_SECRETS_KEY` 없이 비밀 설정을 저장하려 할 때. */
 class SecretsKeyMissingException :
     ConflictException(
-        "ARTEL_SECRETS_KEY 가 설정되지 않아 값을 암호화해 저장할 수 없습니다. 서버 환경 변수에 넣거나 OPENROUTER_API_KEY 를 쓰세요.",
+        "ARTEL_SECRETS_KEY 가 설정되지 않아 값을 암호화해 저장할 수 없습니다. 서버 환경 변수에 넣은 뒤 다시 시도하세요.",
         code = "secrets_key_missing"
     )

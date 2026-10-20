@@ -2,13 +2,20 @@ package kr.artel.orchestration.testrun.service
 
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.game.entity.GameBuildEntity
+import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.service.CaseScope
+import kr.artel.orchestration.testcase.service.TestCaseReader
+import kr.artel.orchestration.testrun.dto.RunCasesOutsideBuildResponse
 import kr.artel.orchestration.testrun.dto.RunCoverageResponse
 import kr.artel.orchestration.testrun.dto.RunCoverageScenario
 import kr.artel.orchestration.testrun.dto.RunDeletionPreview
@@ -16,6 +23,7 @@ import kr.artel.orchestration.testrun.dto.RunDeletionResult
 import kr.artel.orchestration.testrun.dto.RunScenarioItem
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
 import kr.artel.orchestration.testrun.dto.TestRunCreateRequest
+import kr.artel.orchestration.testrun.dto.TestRunGameBuild
 import kr.artel.orchestration.testrun.dto.TestRunListResponse
 import kr.artel.orchestration.testrun.dto.TestRunResponse
 import kr.artel.orchestration.testrun.dto.TestRunUpdateRequest
@@ -25,6 +33,9 @@ import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.testrun.dto.TestRunGameBuildRequest
+import kr.artel.orchestration.testrun.dto.TestRunLastQa
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
@@ -43,26 +54,95 @@ class TestRunService(
     private val qaRunRepository: QaRunRepository,
     private val qaTryRepository: QaTryRepository,
     private val testCaseRepository: TestCaseRepository,
+    private val testCaseReader: TestCaseReader,
+    private val gameInstanceRepository: GameInstanceRepository,
+    private val gameBuildRepository: GameBuildRepository,
+    private val folderService: TestRunFolderService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
 ) {
     suspend fun list(projectId: Long, userId: Long): TestRunListResponse {
         if (!projectAccessService.isMember(projectId, userId)) return TestRunListResponse(emptyList())
-        val items = runRepository.findByProjectIdOrderByIdDesc(projectId).map { it.toResponse() }.toList()
-        return TestRunListResponse(items)
+        val runs = runRepository.findByProjectIdOrderByIdDesc(projectId).toList()
+        val builds = buildsOf(runs)
+        // 테스트 런 화면의 표가 TS 수와 마지막 QA 를 보인다(ARTEL-1048). TR 마다 묻지 않고 프로젝트 단위로 한 번씩 센다.
+        val scenarioCounts = runRepository.countScenariosByProject(projectId).toList().associate { it.testRunId to it.scenarios.toInt() }
+        val lastQa = runRepository.findLastQaRunsByProject(projectId).toList().associateBy { it.testRunId }
+        return TestRunListResponse(
+            runs.map { run ->
+                run.toResponse(run.gameBuildId?.let(builds::get)).copy(
+                    scenarioCount = scenarioCounts[run.id] ?: 0,
+                    lastQaRun = lastQa[run.id]?.let {
+                        TestRunLastQa(
+                            qaRunId = it.qaRunId.toString(),
+                            status = it.status,
+                            startedAt = it.startedAt,
+                            passed = it.passed.toInt(),
+                            failed = it.failed.toInt(),
+                            total = it.total.toInt(),
+                        )
+                    },
+                )
+            }
+        )
     }
 
     suspend fun create(projectId: Long, userId: Long, request: TestRunCreateRequest): TestRunResponse? {
         if (!projectAccessService.isMember(projectId, userId)) return null
         val name = request.name?.takeIf { it.isNotBlank() }
             ?: throw BadRequestException("name is required")
+        // 고른 TC 버전을 따른다(ARTEL-1048). 고르지 않았으면 만들 때의 최신 build 다(ARTEL-994) — build 가 아직 없는
+        // 프로젝트면 비운다. editor 행은 게임 버전이 아니라서 고르지 않는다(ARTEL-1014).
+        // 폴더 안에 만들면 그 폴더의 빌드 버전을 따른다(ARTEL-1049).
+        val folder = request.folderId?.let { folderService.folderOf(projectId, it) }
+        val build = when {
+            folder != null -> folder.gameBuildId?.let { gameBuildRepository.findById(it) }
+            request.unversioned -> null
+            request.gameBuildId != null -> versionBuild(projectId, request.gameBuildId)
+            else -> gameBuildRepository.findNonEditorNewestFirst(projectId).firstOrNull()
+        }
         return runRepository.save(
-            TestRunEntity(projectId = projectId, name = name, description = request.description?.ifBlank { null })
-        ).toResponse()
+            TestRunEntity(
+                projectId = projectId,
+                name = name,
+                description = request.description?.ifBlank { null },
+                gameBuildId = build?.id,
+                folderId = folder?.id,
+            )
+        ).toResponse(build)
+    }
+
+    /**
+     * TR 을 다른 빌드 버전 · 폴더로 옮긴다(ARTEL-1048, 1049). 버전이 null 이면 버전 없음이다. 접근 불가면 null(→ 404).
+     *
+     * 담은 시나리오는 그대로다. 스텝의 `case_id` 는 버전을 넘어 같은 케이스라 바꿀 것이 없다(ARTEL-1018). 다음 저작부터
+     * 새 버전의 TC 와 지도를 본다.
+     */
+    suspend fun changeGameBuild(runId: Long, userId: Long, request: TestRunGameBuildRequest): TestRunResponse? {
+        val run = accessible(runId, userId) ?: return null
+        // 폴더는 한 빌드 버전 안에만 있다(ARTEL-1049). 폴더로 옮기면 그 폴더의 버전을 따르고, 버전만 바꾸면 폴더에서 나온다.
+        val folder = request.folderId?.let { folderService.folderOf(run.projectId, it) }
+        val build = if (folder != null) {
+            folder.gameBuildId?.let { gameBuildRepository.findById(it) }
+        } else {
+            request.gameBuildId?.let { versionBuild(run.projectId, it) }
+        }
+        return runRepository.save(run.copy(gameBuildId = build?.id, folderId = folder?.id)).toResponse(build)
+    }
+
+    /** 이 프로젝트의 게임 빌드. 없거나 다른 프로젝트 것이면 404, editor 면 409 다. */
+    private suspend fun versionBuild(projectId: Long, gameBuildId: String): GameBuildEntity {
+        val build = gameBuildId.toLongOrNull()?.let { gameBuildRepository.findById(it) }
+            ?.takeIf { it.projectId == projectId }
+            ?: throw NotFoundException("빌드를 찾을 수 없습니다.")
+        if (build.isEditor) {
+            throw ConflictException("editor 는 게임 버전이 아니라서 TR 의 버전으로 고를 수 없습니다.", code = "EDITOR_BUILD_IS_NOT_A_VERSION")
+        }
+        return build
     }
 
     suspend fun get(runId: Long, userId: Long): TestRunResponse? =
-        accessible(runId, userId)?.toResponse()
+        accessible(runId, userId)?.let { it.toResponse(buildOf(it)) }
 
     suspend fun update(runId: Long, userId: Long, request: TestRunUpdateRequest): TestRunResponse? {
         val existing = accessible(runId, userId) ?: return null
@@ -70,7 +150,7 @@ class TestRunService(
             name = request.name?.ifBlank { null } ?: existing.name,
             description = if (request.description == null) existing.description else request.description.ifBlank { null },
         )
-        return runRepository.save(updated).toResponse()
+        return runRepository.save(updated).let { it.toResponse(buildOf(it)) }
     }
 
     /**
@@ -184,20 +264,46 @@ class TestRunService(
                 position = link.position,
                 testScenarioId = link.testScenarioId.toString(),
                 title = draft.title,
+                executionMode = draft.mode,
                 steps = draft.steps.size,
                 cases = cases.size,
             ) to cases
         }
         // 런 합계는 시나리오별 수의 덧셈이 아니다 — 같은 케이스가 두 시나리오에 들어가는 것은
         // 정상이고(맥락이 다르면 다른 검증이다), 그것을 2로 세면 덮은 범위보다 커진다.
-        val covered = rows.flatMap { it.second }.toSet().size
-        val total = testCaseRepository.countByProjectId(run.projectId).toInt()
+        // 버전을 따르는 런은 그 버전의 케이스가 기준이다(ARTEL-1069). 저작이 보는 목록 · 검수와 같은 집합이다.
+        val inVersion = run.gameBuildId?.let { testCaseReader.caseIds(it) }
+        val coveredIds = rows.flatMap { it.second }.toSet()
+        val covered = (inVersion?.let { coveredIds intersect it } ?: coveredIds).size
+        val total = inVersion?.size ?: testCaseRepository.countByProjectId(run.projectId).toInt()
         return RunCoverageResponse(
             testRunId = runId.toString(),
             total = total,
             covered = covered,
             uncovered = (total - covered).coerceAtLeast(0),
             scenarios = rows.map { it.first },
+        )
+    }
+
+    /**
+     * 이 런의 시나리오가 담은 케이스 중 [gameInstanceId] 게임의 버전에 없는 것(ARTEL-1069). QA 는 그 케이스를 판정하지
+     * 않고 넘기므로, 시작하기 전에 화면이 몇 건인지 알린다. 게임 버전을 모르면 판정 버전도 정할 수 없어 빈 목록이다.
+     * 런이나 게임이 없거나 다른 프로젝트 것이면 null 이다.
+     */
+    suspend fun casesOutsideBuild(runId: Long, gameInstanceId: Long, userId: Long): RunCasesOutsideBuildResponse? {
+        val run = accessible(runId, userId) ?: return null
+        val instance = gameInstanceRepository.findById(gameInstanceId)?.takeIf { it.projectId == run.projectId } ?: return null
+        val judged = testCaseReader.judgedBuildId(instance.lastGameBuildId)
+            ?: return RunCasesOutsideBuildResponse(runId.toString(), gameBuildId = null, testCaseIds = emptyList())
+        val caseIds = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+            .mapNotNull { scenarioRepository.findById(it.testScenarioId) }
+            .flatMap { scenario -> scenario.toDraft(objectMapper).steps.mapNotNull { it.caseId } }
+            .toSortedSet()
+        val present = testCaseReader.byIds(caseIds, CaseScope.Version(judged)).keys
+        return RunCasesOutsideBuildResponse(
+            testRunId = runId.toString(),
+            gameBuildId = judged.toString(),
+            testCaseIds = caseIds.filterNot { it in present }.map { it.toString() },
         )
     }
 
@@ -213,12 +319,26 @@ class TestRunService(
         return if (projectAccessService.isMember(run.projectId, userId)) run else null
     }
 
-    private fun TestRunEntity.toResponse(): TestRunResponse =
+    private suspend fun buildOf(run: TestRunEntity): GameBuildEntity? =
+        run.gameBuildId?.let { gameBuildRepository.findById(it) }
+
+    private suspend fun buildsOf(runs: List<TestRunEntity>): Map<Long, GameBuildEntity> {
+        val ids = runs.mapNotNull { it.gameBuildId }.toSet()
+        if (ids.isEmpty()) return emptyMap()
+        return gameBuildRepository.findAllById(ids).toList().associateBy { requireNotNull(it.id) }
+    }
+
+    private fun TestRunEntity.toResponse(build: GameBuildEntity?): TestRunResponse =
         TestRunResponse(
             id = requireNotNull(id).toString(),
             projectId = projectId.toString(),
             name = name,
             description = description,
             createdAt = createdAt ?: Instant.EPOCH,
+            gameBuild = build?.toTestRunGameBuild(),
+            folderId = folderId?.toString(),
         )
 }
+
+internal fun GameBuildEntity.toTestRunGameBuild(): TestRunGameBuild =
+    TestRunGameBuild(gameBuildId = requireNotNull(id).toString(), version = version, label = label)

@@ -64,3 +64,13 @@ artel:
     upload-url-ttl: PT10M
     download-url-ttl: PT5M
     max-upload-bytes: 1048576
+  # macro embedding 백필은 기본으로 켜져 있다(application.yml). 테스트에서는 scheduler 가 10초마다
+  # 없는 Agent 의 /embed 를 부르지 않도록 끈다. 백필을 보는 테스트는 worker 를 직접 부른다.
+  macro:
+    search:
+      enabled: false
+  # scene_object 백필은 기동할 때 한 번 돈다(application.yml). 테스트 컨텍스트마다 공유 DB 의 지도를 가짜
+  # 스토리지로 읽으려 들지 않도록 끈다. 백필을 보는 테스트는 worker 를 직접 부른다.
+  content-map:
+    scene-object-backfill:
+      enabled: false

@@ -10,6 +10,10 @@ import kr.artel.orchestration.contentmap.macro.MacroReadRequest
 import kr.artel.orchestration.contentmap.macro.MacroRegisterRequest
 import kr.artel.orchestration.contentmap.macro.MacroWrite
 import kr.artel.orchestration.contentmap.macro.MacroWriteFrames
+import kr.artel.orchestration.contentmap.macro.search.MacroSearchFrames
+import kr.artel.orchestration.contentmap.macro.search.MacroSearchOutcome
+import kr.artel.orchestration.contentmap.macro.search.MacroSearchRequest
+import kr.artel.orchestration.contentmap.macro.search.MacroSearchService
 import kr.artel.orchestration.contentmap.observe.AgentCapabilityWriteService
 import kr.artel.orchestration.contentmap.observe.CapabilityDiscoveredRequest
 import kr.artel.orchestration.contentmap.observe.CapabilityVerdictRequest
@@ -48,6 +52,7 @@ import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.testcase.service.TestCaseVerdictService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -121,6 +126,7 @@ private val SUPPORTED_TYPES =
     setOf("LOG", "ACTION", "STATUS", "ERROR", "CHAT", "ISSUE", "KNOWLEDGE_SEARCH", "KNOWLEDGE_EXPAND") +
         CapabilityWriteFrames.INBOUND_TYPES +
         MacroWriteFrames.INBOUND +
+        MacroSearchFrames.INBOUND +
         TOOL_TYPES +
         KNOWLEDGE_WRITE_TYPES +
         ScreenSelectorFrames.INBOUND +
@@ -155,8 +161,10 @@ class QaAgentInboundRouter(
     private val gameInstanceRepository: GameInstanceRepository,
     private val capabilityWrites: AgentCapabilityWriteService,
     private val macroDefinitions: MacroDefinitionService,
+    private val macroSearch: MacroSearchService,
     private val grader: ExpectedStepsGrader,
     private val runStatusNotifier: QaRunStatusNotifier,
+    private val caseVerdicts: TestCaseVerdictService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock
 ) {
@@ -223,6 +231,13 @@ class QaAgentInboundRouter(
         if (envelope.type in MacroWriteFrames.INBOUND) {
             val qaTry = activeTry(qaTryId) ?: return
             routeMacro(qaTryId, qaTry, envelope)
+            return
+        }
+        // macro 검색도 payload 만 싣고 응답을 기다린다(ARTEL-986). 읽기만 하므로 `allowContentMapWrite` 를
+        // 걸지 않는다 — `MACRO_READ` 와 같다.
+        if (envelope.type in MacroSearchFrames.INBOUND) {
+            val qaTry = activeTry(qaTryId) ?: return
+            routeMacroSearch(qaTryId, qaTry, envelope)
             return
         }
         // 확장도 payload에 표시용 message가 없고 응답을 기다린다 — 검색과 같은 자리에 둔다.
@@ -468,6 +483,8 @@ class QaAgentInboundRouter(
                 payload = envelope.payload
             )
             logService.publish(log)
+            // 같은 프레임의 재전송은 로그가 막는다. 상태 반영도 그 판단을 따른다.
+            if (log.inserted) recordCaseVerdict(qaTry, envelope)
             return
         }
         val completedAt = Instant.now(clock)
@@ -566,6 +583,26 @@ class QaAgentInboundRouter(
         } catch (error: Exception) {
             appendError(qaTryId, envelope, "STATUS verdict promotion failed: ${error.message}")
         }
+    }
+
+    /**
+     * 검증 스텝의 판정을 그 TC 의 상태로 옮긴다(ARTEL-994).
+     *
+     * 스텝 프레임은 `case_id` 와 `is_verification` 을 싣고 온다. 같은 `case_id` 가 이어진 구간의 마지막 스텝만
+     * `is_verification=true` 이고, 그 스텝의 COMPLETED/FAILED 가 곧 그 TC 의 판정이다(agent 의 `report_step`).
+     * 그 밖의 프레임은 무시한다. 반영과 그 실패 처리는 [TestCaseVerdictService] 가 맡는다 — 여기서 예외가
+     * 나가면 소켓이 닫혀 런 전체가 실패한다.
+     */
+    private suspend fun recordCaseVerdict(qaTry: QaTryEntity, envelope: QaAgentEnvelope) {
+        val payload = envelope.payload
+        if (!payload.path("is_verification").asBoolean(false)) return
+        val caseId = payload.path("case_id").takeIf { it.canConvertToLong() }?.asLong() ?: return
+        val passed = when (payload.path("status").asText()) {
+            "COMPLETED" -> true
+            "FAILED" -> false
+            else -> return
+        }
+        caseVerdicts.recordStepVerdict(qaTry, caseId, passed)
     }
 
     /**
@@ -1081,6 +1118,46 @@ class QaAgentInboundRouter(
     }
 
     /**
+     * macro 를 질의 문장으로 찾아 `MACRO_SEARCH_RESULT` 로 돌려준다 (ARTEL-986).
+     *
+     * [routeKnowledgeSearch] 와 같은 골격이다. 세션을 가장 먼저 보고(답할 곳이 없으면 임베딩 호출만
+     * 낭비한다), 이후 모든 실패는 `ERROR` 프레임으로 같은 correlation 에 답해 기다리는 tool 을 푼다.
+     * 질의 임베딩 실패는 실패가 아니다 — 서비스가 키워드 결과로 답하고 `vectorAvailable=false` 를 싣는다.
+     */
+    private suspend fun routeMacroSearch(
+        qaTryId: Long,
+        qaTry: QaTryEntity,
+        envelope: QaAgentEnvelope
+    ) {
+        val sessionId = qaTry.agentSessionId
+        if (sessionId == null) {
+            appendError(qaTryId, envelope, "${MacroSearchFrames.SEARCH} has no Agent session to answer")
+            return
+        }
+        val outcome = try {
+            macroSearch.search(
+                qaTry,
+                objectMapper.treeToValue(envelope.payload, MacroSearchRequest::class.java)
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            answerWithError(qaTryId, sessionId, envelope, "${MacroSearchFrames.SEARCH} failed: ${error.message}")
+            return
+        }
+        when (outcome) {
+            is MacroSearchOutcome.Rejected -> answerWithError(qaTryId, sessionId, envelope, outcome.reason)
+            is MacroSearchOutcome.Found -> sendToAgent(
+                qaTryId,
+                sessionId,
+                MacroSearchFrames.SEARCH_RESULT,
+                envelope.messageId,
+                objectMapper.valueToTree(outcome.response)
+            )
+        }
+    }
+
+    /**
      * macro 등록이 성공했음을 Agent 에 알린다.
      *
      * id 를 문자열로 싣는다. 64비트 id 가 JSON 숫자로 나가면 자바스크립트 소비자에서 정밀도가
@@ -1108,7 +1185,10 @@ class QaAgentInboundRouter(
         sendToAgent(qaTryId, sessionId, MacroWriteFrames.WRITE_RESULT, envelope.messageId, payload)
     }
 
-    /** 저장된 macro 정의를 Agent 에 돌려준다. `definition` 은 저장된 tree 그대로다. */
+    /**
+     * 저장된 macro 정의를 Agent 에 돌려준다. `definition` 은 저장된 tree 그대로다. `docstring` 은
+     * `macro.docstring` 칸이고 없으면 null 이다(ARTEL-985).
+     */
     private suspend fun answerMacroRead(
         qaTryId: Long,
         qaTry: QaTryEntity,
@@ -1121,6 +1201,9 @@ class QaAgentInboundRouter(
             .put("macro_id", result.macroId.toString())
             .put("name", result.name)
             .put("source", result.source)
+            // docstring 이 없으면 JSON null 로 싣는다. 칸을 빼지 않아야 agent 쪽이 "모르는 서버" 와
+            // "docstring 없음" 을 가를 수 있다.
+            .put("docstring", result.docstring)
         payload.set<JsonNode>("definition", result.definition)
         payload.putArray("parameters").apply { result.parameters.forEach { add(it) } }
         putIdStrings(payload, result.screenIds)

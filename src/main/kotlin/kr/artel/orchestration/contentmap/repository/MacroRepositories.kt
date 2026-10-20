@@ -3,10 +3,12 @@ package kr.artel.orchestration.contentmap.repository
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.dto.MacroDetailRow
+import kr.artel.orchestration.contentmap.dto.MacroSceneContextRow
 import kr.artel.orchestration.contentmap.dto.MacroScreenRow
 import kr.artel.orchestration.contentmap.dto.MacroSummaryRow
 import kr.artel.orchestration.contentmap.dto.MacroUpsertRow
 import kr.artel.orchestration.contentmap.entity.MacroEntity
+import kr.artel.orchestration.contentmap.entity.MacroEventEntity
 import kr.artel.orchestration.contentmap.entity.ScreenMacroEntity
 import kr.artel.orchestration.contentmap.macro.MacroWriteFrames
 import org.springframework.data.r2dbc.repository.Modifying
@@ -39,7 +41,7 @@ import org.springframework.data.repository.kotlin.CoroutineCrudRepository
  * `jsonb_typeof` 가드가 없으면 `jsonb_array_elements` 가 배열 아닌 값에 예외를 던진다.
  */
 private const val MACRO_SUMMARY_COLUMNS = """
-    m.id, m.name, m.parameter_names, m.updated_at,
+    m.id, m.name, m.parameter_names, m.updated_at, m.docstring,
     CASE WHEN jsonb_typeof(m.definition_json -> '${MacroWriteFrames.DEFS_FIELD}') = 'array' THEN (
         SELECT d.value -> '${MacroWriteFrames.PARAMETERS_FIELD}'
         FROM jsonb_array_elements(m.definition_json -> '${MacroWriteFrames.DEFS_FIELD}') AS d
@@ -92,17 +94,30 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
      * `(xmax = 0) AS inserted` 가 새로 등록한 것과 갱신한 것을 가른다. 그 값을 upsert **전에**
      * 따로 조회해 비교하면 같은 이름이 동시에 둘 올 때 둘 다 "없었다" 를 읽어 둘 다 새로
      * 만들었다고 답한다. 읽는 법은 [ScreenRepository.observe] 의 KDoc 에 있다.
+     *
+     * **`version` 은 정의가 실제로 바뀔 때만 오른다**(V100). 같은 정의를 다시 등록해도 오르면 내용이
+     * 같은 event 가 쌓이고, 나중 run 의 같은 등록이 앞 run 의 변경을 덮은 것으로 읽혀 revert 가
+     * 막힌다. 비교를 SQL 안에서 하는 이유는 앞서 따로 조회하면 그 사이에 다른 등록이 끼어들 수 있어서다.
+     * jsonb 의 `IS DISTINCT FROM` 은 key 순서와 공백을 무시하고 값을 비교한다.
      */
     @Query(
         """
-        INSERT INTO macro (content_map_id, name, source, definition_json, parameter_names)
-        VALUES (:contentMapId, :name, :source, :definitionJson, :parameterNames)
+        INSERT INTO macro (content_map_id, name, source, definition_json, parameter_names, docstring)
+        VALUES (:contentMapId, :name, :source, :definitionJson, :parameterNames, :docstring)
         ON CONFLICT (content_map_id, name) DO UPDATE SET
             source = EXCLUDED.source,
             definition_json = EXCLUDED.definition_json,
             parameter_names = EXCLUDED.parameter_names,
+            docstring = EXCLUDED.docstring,
+            version = CASE
+                WHEN macro.source IS DISTINCT FROM EXCLUDED.source
+                  OR macro.definition_json IS DISTINCT FROM EXCLUDED.definition_json
+                  OR macro.parameter_names IS DISTINCT FROM EXCLUDED.parameter_names
+                THEN macro.version + 1
+                ELSE macro.version
+            END,
             updated_at = CURRENT_TIMESTAMP
-        RETURNING id, (xmax = 0) AS inserted
+        RETURNING id, (xmax = 0) AS inserted, version
         """
     )
     suspend fun upsertByName(
@@ -111,6 +126,7 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
         source: String,
         definitionJson: Json,
         parameterNames: Json,
+        docstring: String?,
     ): MacroUpsertRow
 
     /**
@@ -121,6 +137,44 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
      * 않는다.
      */
     suspend fun findByContentMapIdAndName(contentMapId: Long, name: String): MacroEntity?
+
+    /**
+     * revert 가 대상 행을 잠그고 읽는다(V100).
+     *
+     * 잠근 트랜잭션 안에서 최신 event 를 확인해야, 확인과 쓰기 사이에 끼어든 등록을 덮어쓰지 않는다.
+     * 등록의 upsert 도 이 행을 잠그므로 둘 중 하나가 끝날 때까지 다른 쪽이 기다린다.
+     */
+    @Query("SELECT * FROM macro WHERE id = :id FOR UPDATE")
+    suspend fun findByIdForUpdate(id: Long): MacroEntity?
+
+    /**
+     * revert 가 정의를 run 이전 내용으로 되돌린다. [version] 은 부르는 쪽이 잠근 행의 버전에 1 을
+     * 더한 값이다.
+     *
+     * `docstring` 은 되돌린 tree 의 `entry.docstring` 으로 맞춘다(ARTEL-985). `macro_event` 는
+     * docstring 칸을 따로 두지 않으므로 이 값이 되돌린 정의의 docstring 이다. docstring 이 생기기 전
+     * 정의로 되돌리면 null 이 된다 — 그 정의의 `source` 에도 docstring 이 없다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE macro
+        SET source = :source,
+            definition_json = :definitionJson,
+            parameter_names = :parameterNames,
+            docstring = CAST(:definitionJson AS jsonb) -> 'entry' ->> 'docstring',
+            version = :version,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = :id
+        """
+    )
+    suspend fun rewriteDefinition(
+        id: Long,
+        source: String,
+        definitionJson: Json,
+        parameterNames: Json,
+        version: Int,
+    ): Int
 
     /**
      * 이 지도에 등록된 macro 전부를 **목록이 쓰는 칸만** 읽는다(ARTEL-943).
@@ -145,6 +199,34 @@ interface MacroRepository : CoroutineCrudRepository<MacroEntity, Long> {
         """
     )
     fun findSummariesByContentMapId(contentMapId: Long): Flow<MacroSummaryRow>
+
+    /**
+     * scene context 응답에 실을 macro 를 이름 오름차순으로 [limit] 개까지 읽는다(ARTEL-934).
+     *
+     * `ORDER BY m.name` 이 응답의 순서를 정한다. 이 목록이 프롬프트 캐시를 타므로 호출마다 같은
+     * 순서여야 한다. `uk_macro_name (content_map_id, name)` 이 필터와 정렬을 함께 받는다.
+     *
+     * `LIMIT` 을 SQL 에서 건다. 읽어 온 뒤 자르면 `source` 가 한 건 20,000자인 macro 를 쓰지도
+     * 않을 만큼 올린다. 그래서 전체 수는 별도 질의 대신 `COUNT(*) OVER ()` 로 같은 행에 싣는다 —
+     * 윈도우는 `LIMIT` 보다 먼저 계산된다. 두 번째 질의로 세면 그 사이 등록된 macro 때문에 수와
+     * 목록이 어긋난다.
+     *
+     * `source` 는 읽지 않는다. 요약은 `docstring` 칸이다(ARTEL-985). `definition_json` 은 parameter
+     * 배열만 자른다.
+     */
+    @Query(
+        """
+        SELECT m.id, m.name, m.docstring,
+               m.definition_json -> '${MacroWriteFrames.ENTRY_FIELD}' -> '${MacroWriteFrames.PARAMETERS_FIELD}'
+                   AS declared_parameters,
+               COUNT(*) OVER () AS total
+        FROM macro m
+        WHERE m.content_map_id = :contentMapId
+        ORDER BY m.name ASC
+        LIMIT :limit
+        """
+    )
+    fun findSceneContextRowsByContentMapId(contentMapId: Long, limit: Int): Flow<MacroSceneContextRow>
 
     /**
      * macro 하나를 원문까지 읽는다(ARTEL-943).
@@ -201,9 +283,9 @@ interface ScreenMacroRepository : CoroutineCrudRepository<ScreenMacroEntity, Lon
      *
      * PK `(screen_id, macro_id)` 의 두 번째 컬럼으로 찾으므로 `idx_screen_macro_macro` 를 탄다.
      *
-     * 반대 방향(`screen` 으로 macro 찾기)은 메서드를 두지 않는다. 이 PR 에 호출부가 없고, 그쪽을
-     * 읽는 것은 scene context 응답(ARTEL-934)의 몫이다. PK 의 선두 컬럼이 `screen_id` 라 그 조회는
-     * index 를 더하지 않고도 선다.
+     * 반대 방향(`screen` 으로 macro 찾기)은 메서드를 두지 않는다. scene context 응답(ARTEL-934)도
+     * macro 쪽에서 `screen` 을 읽어 가므로([findScreenRowsByContentMapId]) 호출부가 없다.
+     * 필요해지면 PK 의 선두 컬럼이 `screen_id` 라 index 를 더하지 않고도 선다.
      */
     @Query("SELECT screen_id FROM screen_macro WHERE macro_id = :macroId ORDER BY screen_id ASC")
     fun findScreenIdsByMacroId(macroId: Long): Flow<Long>
@@ -243,4 +325,74 @@ interface ScreenMacroRepository : CoroutineCrudRepository<ScreenMacroEntity, Lon
         """
     )
     fun findScreenRowsByMacroId(contentMapId: Long, macroId: Long): Flow<MacroScreenRow>
+
+    /**
+     * 검색 결과로 고른 macro 들에 달린 `screen` 을 이름과 함께 한 번에 읽는다(ARTEL-986).
+     *
+     * macro 마다 [findScreenRowsByMacroId] 를 부르면 결과 개수(최대 10)만큼 왕복이 생긴다.
+     * `content_map_id` 로 함께 좁히는 이유는 [findScreenRowsByMacroId] 와 같다.
+     */
+    @Query(
+        """
+        $MACRO_SCREEN_JOIN
+        WHERE m.content_map_id = :contentMapId AND sm.macro_id IN (:macroIds)
+        ORDER BY sm.macro_id ASC, sc.id ASC
+        """
+    )
+    fun findScreenRowsByMacroIds(contentMapId: Long, macroIds: Collection<Long>): Flow<MacroScreenRow>
+}
+
+/**
+ * macro 버전 이력(V100). **덧붙이기만 한다** — 수정도 삭제도 없다. revert 도 event 를 고치지 않고
+ * `reverts_event_id` 를 채운 event 를 덧붙인다.
+ */
+interface MacroEventRepository : CoroutineCrudRepository<MacroEventEntity, Long> {
+
+    /** QA run 하나의 모든 `qa_try` 가 남긴 event. id 오름차순이 일어난 순서다. */
+    @Query(
+        """
+        SELECT e.* FROM macro_event e
+          JOIN qa_try t ON t.id = e.qa_try_id
+         WHERE t.qa_run_id = :qaRunId
+         ORDER BY e.id ASC
+        """
+    )
+    fun findByQaRunId(qaRunId: Long): Flow<MacroEventEntity>
+
+    /**
+     * macro 마다 가장 나중의 event 하나. `idx_macro_event_target` 을 탄다.
+     *
+     * ⚠️ 빈 컬렉션을 넘기면 `IN ()` 이 되어 SQL 이 깨진다. 부르는 쪽이 먼저 거른다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT ON (macro_id) * FROM macro_event
+         WHERE macro_id IN (:macroIds)
+         ORDER BY macro_id, id DESC
+        """
+    )
+    fun findLatestByMacroIds(macroIds: Collection<Long>): Flow<MacroEventEntity>
+
+    @Query("SELECT * FROM macro_event WHERE macro_id = :macroId ORDER BY id DESC LIMIT 1")
+    suspend fun findLatestByMacroId(macroId: Long): MacroEventEntity?
+
+    /** [eventIds] 가운데 이미 되돌려진 것을 가리키는 revert event. 빈 컬렉션은 넘기지 않는다. */
+    @Query("SELECT * FROM macro_event WHERE reverts_event_id IN (:eventIds)")
+    fun findRevertsOf(eventIds: Collection<Long>): Flow<MacroEventEntity>
+
+    /**
+     * 그 버전의 정의를 만든 event. DELETE 는 정의를 싣지 않으므로 뺀다. 같은 버전의 content event 는
+     * `uq_macro_event_version` 으로 하나뿐이다.
+     */
+    @Query(
+        """
+        SELECT * FROM macro_event
+         WHERE macro_id = :macroId AND version = :version AND event <> 'DELETE'
+         ORDER BY id DESC
+         LIMIT 1
+        """
+    )
+    suspend fun findContentAt(macroId: Long, version: Int): MacroEventEntity?
+
+    fun findByMacroIdOrderByIdAsc(macroId: Long): Flow<MacroEventEntity>
 }

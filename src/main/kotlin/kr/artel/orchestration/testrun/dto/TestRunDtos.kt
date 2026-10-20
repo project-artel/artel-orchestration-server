@@ -1,10 +1,29 @@
 package kr.artel.orchestration.testrun.dto
 
+import com.fasterxml.jackson.annotation.JsonProperty
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import java.time.Instant
 
+/**
+ * @property gameBuildId 이 TR 이 따를 TC 버전(게임 빌드, ARTEL-1048). 주지 않으면 프로젝트의 최신 게임 빌드다.
+ * @property unversioned true 면 버전 없이 만든다. [gameBuildId] 와 함께 주지 않는다.
+ * @property folderId 그 폴더 안에 만든다(ARTEL-1049). 빌드 버전은 폴더의 것이다.
+ */
 data class TestRunCreateRequest(
     val name: String? = null,
     val description: String? = null,
+    val gameBuildId: String? = null,
+    val unversioned: Boolean = false,
+    val folderId: String? = null,
+)
+
+/**
+ * TR 을 다른 빌드 버전 · 폴더로 옮긴다(ARTEL-1048, 1049). [folderId] 를 주면 그 폴더 안으로 가고 빌드 버전도 폴더의
+ * 것이 된다. 주지 않으면 [gameBuildId] 버전 바로 아래로 간다(null 이면 버전 없음).
+ */
+data class TestRunGameBuildRequest(
+    val gameBuildId: String? = null,
+    val folderId: String? = null,
 )
 
 data class TestRunUpdateRequest(
@@ -12,13 +31,44 @@ data class TestRunUpdateRequest(
     val description: String? = null,
 )
 
-/** id 계열은 FE 64비트 정밀도 손실 방지로 문자열. */
+/**
+ * TR 을 만든 게임 버전(ARTEL-994). [label] 은 사람이 붙인 이름이고, 없으면 화면이 [version] 을 쓴다.
+ */
+data class TestRunGameBuild(
+    val gameBuildId: String,
+    val version: String,
+    val label: String?,
+)
+
+/**
+ * id 계열은 FE 64비트 정밀도 손실 방지로 문자열.
+ *
+ * @property gameBuild 이 TR 을 만든 게임 버전(ARTEL-994). build 가 없던 프로젝트의 TR, QA 를 한 번도 돌리지
+ *   않은 옛 TR 은 null 이다.
+ */
 data class TestRunResponse(
     val id: String,
     val projectId: String,
     val name: String,
     val description: String?,
     val createdAt: Instant,
+    val gameBuild: TestRunGameBuild? = null,
+    /** 든 폴더(ARTEL-1049). null 이면 그 빌드 버전 바로 아래다. */
+    val folderId: String? = null,
+    /** 담은 시나리오 수(ARTEL-1048). 목록에서만 채운다. */
+    val scenarioCount: Int? = null,
+    /** 마지막 QA 실행(ARTEL-1048). 돌린 적이 없으면 null 이다. 목록에서만 채운다. */
+    val lastQaRun: TestRunLastQa? = null,
+)
+
+/** TR 의 마지막 QA 실행 요약. [passed] · [failed] 는 그 실행의 시나리오 결과 수다. */
+data class TestRunLastQa(
+    val qaRunId: String,
+    val status: String,
+    val startedAt: Instant,
+    val passed: Int,
+    val failed: Int,
+    val total: Int,
 )
 
 data class TestRunListResponse(val items: List<TestRunResponse>)
@@ -50,6 +100,7 @@ data class RunCoverageScenario(
     val position: Int,
     val testScenarioId: String,
     val title: String,
+    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
     val steps: Int,
     val cases: Int,
 )
@@ -65,12 +116,24 @@ data class RunCoverageScenario(
  * `TurnBattleScene 8/29` 를 내보냈지만, 시나리오는 여러 씬을 지나는 흐름이라 그 수로는 다음에
  * 무엇을 할지 정할 수 없다. 단위는 사용자가 만든 것, 곧 시나리오다.
  *
- * @property total 프로젝트의 케이스 전량. 비교 축으로만 쓴다.
+ * @property total 기준 케이스 수. 버전을 따르는 런은 그 버전의 케이스(`BROKEN` 제외), 아니면 프로젝트 전량이다
+ *   (ARTEL-1069). 비교 축으로만 쓴다.
  * @property covered 이 런의 시나리오들이 담은 서로 다른 케이스 수. 시나리오끼리 겹치면 한 번만
  *   센다 — 같은 케이스가 맥락을 달리해 두 시나리오에 들어가는 것은 정상이고, 그 둘을 2로 세면
  *   이 런이 실제로 덮은 범위보다 커진다.
  * @property uncovered `total - covered`. 화면이 다시 빼지 않게 세어 준다.
  */
+/**
+ * 런의 케이스 중 켜진 게임의 버전에 없는 것(ARTEL-1069). QA 는 이 케이스들을 판정하지 않고 넘긴다.
+ *
+ * @property gameBuildId 판정이 속할 게임 빌드. 게임 버전을 모르면 null 이고 목록은 비어 있다.
+ */
+data class RunCasesOutsideBuildResponse(
+    val testRunId: String,
+    val gameBuildId: String?,
+    val testCaseIds: List<String>,
+)
+
 data class RunCoverageResponse(
     val testRunId: String,
     val total: Int,

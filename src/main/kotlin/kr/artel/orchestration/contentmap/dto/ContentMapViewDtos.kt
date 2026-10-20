@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import io.swagger.v3.oas.annotations.media.Schema
 import kr.artel.orchestration.contentmap.scan.ScanState
 import kr.artel.orchestration.contentmap.scan.ScanStatus
+import kr.artel.orchestration.contentmap.scan.ScanTestCases
 import java.time.Instant
 
 /**
@@ -580,6 +581,8 @@ data class LastScanResponse(
     val ingestedDocuments: Int?,
     @Schema(description = "FAILED 일 때 사람에게 보여 줄 사유")
     val error: String?,
+    @Schema(description = "스캔하고 TC 생성(ARTEL-1040)일 때 TC 쪽 결과. 그냥 스캔이면 null")
+    val testCases: ScanTestCases? = null,
 ) {
     companion object {
         fun of(status: ScanStatus) = LastScanResponse(
@@ -590,6 +593,7 @@ data class LastScanResponse(
             finishedAt = status.finishedAt,
             ingestedDocuments = status.ingestedDocuments,
             error = status.error,
+            testCases = status.testCases,
         )
     }
 }

@@ -41,6 +41,21 @@ interface QaRunRepository : CoroutineCrudRepository<QaRunEntity, Long> {
     )
     suspend fun findAccessibleById(id: Long, userId: Long): QaRunEntity?
 
+    /**
+     * 프로젝트의 run, 새 것부터. [gameBuildId] 가 null 이면 빌드를 따지지 않는다. 접근 확인은 호출하는 쪽이 한다.
+     */
+    @Query(
+        """
+        SELECT qr.* FROM qa_run qr
+        JOIN test_run tr ON tr.id = qr.test_run_id
+        WHERE tr.project_id = :projectId
+          AND (CAST(:gameBuildId AS BIGINT) IS NULL OR qr.game_build_id = :gameBuildId)
+        ORDER BY qr.started_at DESC, qr.id DESC
+        LIMIT :limit
+        """
+    )
+    fun findByProject(projectId: Long, gameBuildId: Long?, limit: Int): Flow<QaRunEntity>
+
     @Modifying
     @Query(
         """
@@ -99,6 +114,9 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
     /** 한 런의 시나리오별 qa_try를 적재 순서(id 오름차순 = 시나리오 순서)로. */
     @Query("SELECT * FROM qa_try WHERE qa_run_id = :qaRunId ORDER BY id ASC")
     fun findByQaRunId(qaRunId: Long): Flow<QaTryEntity>
+
+    /** 여러 런의 try 를 한 번에, 런 안에서는 [findByQaRunId] 와 같은 순서(id 오름차순)로. */
+    fun findByQaRunIdInOrderById(qaRunIds: Collection<Long>): Flow<QaTryEntity>
 
     /**
      * One project's runs, newest first. Membership is what makes them visible — unless

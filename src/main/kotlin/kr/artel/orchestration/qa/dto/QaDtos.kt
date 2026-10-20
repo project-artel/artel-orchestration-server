@@ -43,7 +43,27 @@ data class CreateQaTryRequest(
      * [knowledgeMode] 와 **따로** 여는 것이 요점이다. 한 스위치로 묶으면 지식이 도왔는지 지도가
      * 도왔는지를 가르는 2×2 가 성립하지 않는다.
      */
-    val contentMapMode: String? = null
+    val contentMapMode: String? = null,
+    /**
+     * 이 런에에 게임이 등록한 cheat 를 열어 줄지: `on`(기본) / `off`. 잘못된 값은 400 이다.
+     * `off` 면 agent 는 cheat 목록을 받지 않는다.
+     */
+    val cheatMode: String? = null,
+    /** behavior 의 짝. [cheatMode] 와 같이 `on`(기본) / `off` 다. */
+    val behaviorMode: String? = null,
+    /**
+     * 쓸 수 있는 cheat 이름. null 이면 빌드가 등록한 cheat 전부다. 빈 이름이나 null 원소는 400 이고, 빌드가 목록을 보낸 적
+     * 있는데 거기 없는 이름이 들어 있어도 400 이다.
+     */
+    val allowedCheats: List<String?>? = null,
+    /** behavior 의 짝. [allowedCheats] 와 같다. */
+    val allowedBehaviors: List<String?>? = null,
+    /**
+     * 이 실행이 어느 key 로 도는지: `platform`(기본, 공용 key) 또는 `user`(사용자 key). `/api/qa-models` 항목의
+     * `keySource` 를 그대로 보낸다. `user` 인데 그 model 의 서비스 key 가 없으면 400 `llm_key_missing`, `platform`
+     * 인데 `gpt/` model 이면 400 `llm_key_missing` 이다.
+     */
+    val keySource: String? = null
 )
 
 /** 런(TR) 단위 QA 시작 요청(ARTEL-259). [testRunId]의 시나리오들을 순차 실행한다. 설정은 QaTry와 동일. */
@@ -89,7 +109,27 @@ data class CreateQaRunRequest(
      * 앞뒤 공백은 지우고, 그러고도 빈 문자열이면 null 로 읽는다 — 빈 이름은 묶음이 아니다.
      * 255자를 넘으면 400 이다.
      */
-    val label: String? = null
+    val label: String? = null,
+    /**
+     * 이 run 에에 게임이 등록한 cheat 를 열어 줄지: `on`(기본) / `off`. 잘못된 값은 400 이다.
+     * `off` 면 agent 는 cheat 목록을 받지 않는다.
+     */
+    val cheatMode: String? = null,
+    /** behavior 의 짝. [cheatMode] 와 같이 `on`(기본) / `off` 다. */
+    val behaviorMode: String? = null,
+    /**
+     * 쓸 수 있는 cheat 이름. null 이면 빌드가 등록한 cheat 전부다. 빈 이름이나 null 원소는 400 이고, 빌드가 목록을 보낸 적
+     * 있는데 거기 없는 이름이 들어 있어도 400 이다.
+     */
+    val allowedCheats: List<String?>? = null,
+    /** behavior 의 짝. [allowedCheats] 와 같다. */
+    val allowedBehaviors: List<String?>? = null,
+    /**
+     * 이 실행이 어느 key 로 도는지: `platform`(기본, 공용 key) 또는 `user`(사용자 key). `/api/qa-models` 항목의
+     * `keySource` 를 그대로 보낸다. `user` 인데 그 model 의 서비스 key 가 없으면 400 `llm_key_missing`, `platform`
+     * 인데 `gpt/` model 이면 400 `llm_key_missing` 이다.
+     */
+    val keySource: String? = null
 )
 
 data class QaReasoningRequest(
@@ -113,7 +153,26 @@ data class QaModelResponse(
     @JsonAlias("supports_vision") val supportsVision: Boolean,
     @JsonAlias("input_modalities") val inputModalities: List<String>,
     val multimodal: Boolean,
-    val reasoning: QaReasoningCapability?
+    val reasoning: QaReasoningCapability?,
+    /**
+     * 이 항목이 어느 key 로 도는지: `platform`(공용 key) 또는 `user`(사용자 key). 같은 model 이 두 항목으로 나올 수
+     * 있고, 실행 요청은 이 값을 `keySource` 로 그대로 보낸다.
+     */
+    val keySource: String = "platform",
+    /** 사용자 key 항목에서 그 key 의 서비스: `anthropic`, `openai`, `openrouter`. 공용 항목은 null 이다. */
+    val keyProvider: String? = null,
+    /** 사용자 key 항목에서 이 사용자가 그 서비스 key 를 넣었는지. 공용 항목은 null 이다. */
+    val keyRegistered: Boolean? = null,
+    /** 사용자 key 항목에서 넣은 key 의 `keyHint`. 넣지 않았거나 공용 항목이면 null 이다. */
+    val keyHint: String? = null,
+    /** `llm_model.pricing` 의 입력과 출력 단가. 열이 null 이면 null 이다. */
+    val pricing: QaModelPricing? = null
+)
+
+/** 백만 token 당 달러. `llm_model.pricing` 에 그 키가 없으면 그 칸이 null 이다. */
+data class QaModelPricing(
+    val inputPerMtok: Double?,
+    val outputPerMtok: Double?
 )
 
 data class QaTryResponse(
@@ -140,6 +199,15 @@ data class QaTryResponse(
      * 아니라 [runConfig] 안에 있다 — 비교 축은 전부 그 스냅샷에 모여야 집계가 한 곳만 읽는다.
      */
     val knowledgeScopeId: String? = null,
+    /** 이 런에 cheat 를 열었는가: `on` / `off`. 이 기능 이전의 런은 `on` 이지만 [effectiveCheats] 가 비어 있다. */
+    val cheatMode: String = "on",
+    val behaviorMode: String = "on",
+    /** 요청이 준 허용 목록. null 이면 요청이 목록을 주지 않았다(카탈로그 전부). */
+    val allowedCheats: List<String>? = null,
+    val allowedBehaviors: List<String>? = null,
+    /** 세션을 열 때 agent 에게 실제로 보낸 cheat 이름. 허용 검사가 이 목록을 본다. */
+    val effectiveCheats: List<String> = emptyList(),
+    val effectiveBehaviors: List<String> = emptyList(),
     /**
      * 이 try 가 속한 부모 `qa_run`(ARTEL-259, ARTEL-722). null이면 `qa_run` 이 생기기 전의
      * 단독 실행(하위호환) try다 — `qa_try.qa_run_id` 가 nullable 인 것과 같은 이유다. 화면이
@@ -156,13 +224,20 @@ data class QaRunResponse(
     val id: String,
     val testRunId: String,
     val gameInstanceId: String,
+    /** 이 run 이 시작할 때 고정한 게임 빌드 id. 빌드를 모르는 옛 run 은 null 이다. */
+    val gameBuildId: String? = null,
     val startedBy: String,
     val status: String,
     val startedAt: Instant,
     val completedAt: Instant?,
     /** 이 run 이 속한 실험 묶음. 요청이 안 줬으면 null 이다. */
     val label: String? = null,
-    val tries: List<QaTryResponse> = emptyList()
+    val tries: List<QaTryResponse> = emptyList(),
+    /**
+     * 판정 기준이 된 케이스 내용의 버전 — 이 run 의 TR 이 따르는 게임 빌드다(ARTEL-1069). TR 에 버전이 없으면 null 이고
+     * 그때는 최신 내용으로 판정했다. 화면이 FREE 시나리오의 케이스를 같은 버전으로 보인다.
+     */
+    val testRunGameBuildId: String? = null
 )
 
 data class QaLogResponse(
@@ -236,7 +311,16 @@ data class QaTryDetailResponse(
     val feedback: Long,
     val usage: QaTryDetailUsage,
     /** 많이 부른 것이 앞이다. 한 번도 안 불렀으면 빈 목록. */
-    val toolCalls: List<QaTryToolCall>
+    val toolCalls: List<QaTryToolCall>,
+    /** 이 런에 cheat 를 열었는가: `on` / `off`. 이 기능 이전의 런은 `on` 이지만 [effectiveCheats] 가 비어 있다. */
+    val cheatMode: String = "on",
+    val behaviorMode: String = "on",
+    /** 요청이 준 허용 목록. null 이면 요청이 목록을 주지 않았다(카탈로그 전부). */
+    val allowedCheats: List<String>? = null,
+    val allowedBehaviors: List<String>? = null,
+    /** 세션을 열 때 agent 에게 실제로 보낸 cheat 이름. 허용 검사가 이 목록을 본다. */
+    val effectiveCheats: List<String> = emptyList(),
+    val effectiveBehaviors: List<String> = emptyList()
 )
 
 /**
@@ -263,4 +347,9 @@ data class QaTryDetailUsage(
 data class QaTryToolCall(
     val tool: String,
     val calls: Long
+)
+
+/** 프로젝트의 run 목록 응답 봉투. 새 것이 앞에 온다. */
+data class QaRunListResponse(
+    val items: List<QaRunResponse>
 )

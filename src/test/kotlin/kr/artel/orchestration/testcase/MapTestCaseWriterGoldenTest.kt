@@ -8,7 +8,6 @@ import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import kr.artel.orchestration.contentmap.ingest.ContentMapIngestService
-import kr.artel.orchestration.contentmap.ingest.IngestResult
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.game.entity.GameBuildEntity
@@ -20,6 +19,7 @@ import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
 import com.fasterxml.jackson.databind.node.ObjectNode
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
@@ -66,6 +66,7 @@ class MapTestCaseWriterGoldenTest {
     }
 
     @Autowired private lateinit var ingest: ContentMapIngestService
+    @Autowired private lateinit var contentMapTestCases: ContentMapTestCaseService
     @Autowired private lateinit var storage: DocumentStorage
     @Autowired private lateinit var projects: ProjectRepository
     @Autowired private lateinit var gameBuilds: GameBuildRepository
@@ -77,8 +78,9 @@ class MapTestCaseWriterGoldenTest {
 
     private var projectId: Long = 0
     private var contentMapId: Long = 0
-    private lateinit var first: IngestResult
-    private lateinit var second: IngestResult
+    private lateinit var first: MapTestCaseWriter.Result
+    private lateinit var second: MapTestCaseWriter.Result
+    private var countAfterIngestOnly: Long = 0
     private lateinit var rows: List<TestCaseEntity>
     private lateinit var document: ContentMapDocumentEntity
 
@@ -124,16 +126,34 @@ class MapTestCaseWriterGoldenTest {
             )
         )
 
+        // 적재만 먼저 한다. 적재는 test case 를 만들지 않는다(ARTEL-971).
+        ingest.ingest(document)
+        countAfterIngestOnly = testCases.countByProjectId(projectId)
+
         first = ingestOnce()
         second = ingestOnce()
         rows = testCases.findByProjectIdOrderByIdAsc(projectId).toList()
     }
 
     /**
-     * 같은 문서 행을 다시 적재한다. 해시가 유일 제약이라 두 번째 행을 만들 수 없고, 실제 재적재도
-     * 그 모양이다 — SDK 가 같은 빌드를 다시 올리면 문서는 하나고 적재만 다시 돈다.
+     * 같은 문서 행을 다시 적재하고 test case 를 생성한다. 해시가 유일 제약이라 두 번째 행을 만들 수 없고,
+     * 실제 재적재도 그 모양이다 — SDK 가 같은 빌드를 다시 올리면 문서는 하나고 적재만 다시 돈다.
+     *
+     * 적재는 test case 를 만들지 않으므로(ARTEL-971) 생성 버튼과 같은 경로를 이어서 부른다.
      */
-    private suspend fun ingestOnce(): IngestResult = ingest.ingest(document)
+    private suspend fun ingestOnce(): MapTestCaseWriter.Result {
+        ingest.ingest(document)
+        return contentMapTestCases.regenerate(contentMapId)
+    }
+
+    /**
+     * **적재만으로는 test case 가 생기지 않는다**(ARTEL-971). 손으로 쓴 1건만 남아 있어야 한다.
+     * 적재가 test case 를 바꾸면 사용자가 원하지 않을 때 표가 바뀐다.
+     */
+    @Test
+    fun `적재만으로는 test case 수가 변하지 않는다`() {
+        assertThat(countAfterIngestOnly).isEqualTo(1)
+    }
 
     private fun mine() = rows.filter {
         objectMapper.readTree(it.metadata.asString()).path("origin").asText() == MapTestCaseWriter.ORIGIN
@@ -162,7 +182,7 @@ class MapTestCaseWriterGoldenTest {
         // 85 → 88 못 푼 매개변수 조건을 버리지 않는다(같은 곳에 이유).
         // 88 → 84 판독이 못 보는 `Background` 그림 기대를 뺐다(같은 곳에 이유).
         assertThat(mine()).hasSize(84)
-        assertThat(first.testCases.created).isEqualTo(84)
+        assertThat(first.created).isEqualTo(84)
     }
 
     /**
@@ -195,13 +215,13 @@ class MapTestCaseWriterGoldenTest {
      */
     @Test
     fun `같은 문서를 다시 적재해도 케이스가 늘지 않는다`() {
-        assertThat(second.testCases.created).isZero()
-        assertThat(second.testCases.deleted).isZero()
-        assertThat(second.testCases.broken).isZero()
+        assertThat(second.created).isZero()
+        assertThat(second.deleted).isZero()
+        assertThat(second.broken).isZero()
         // **한 행도 다시 쓰지 않는다.** `metadata` 는 `jsonb` 라 키 순서가 정규화되어 저장되므로
         // 글자로 견주면 늘 다르게 나오고, 그러면 아무것도 안 바뀐 적재가 매번 전량을 다시 쓴다.
         // 헛도는 쓰기보다 나쁜 것은 그 수가 "49행이 달라졌다"고 거짓말하는 것이다.
-        assertThat(second.testCases.updated).isZero()
+        assertThat(second.updated).isZero()
     }
 
     /**
@@ -243,9 +263,9 @@ class MapTestCaseWriterGoldenTest {
         val after = ingestOnce()
 
         // 새로 만들지도, 지우지도 않는다 — 같은 줄을 찾아 문구만 되돌린다.
-        assertThat(after.testCases.created).isZero()
-        assertThat(after.testCases.deleted).isZero()
-        assertThat(after.testCases.broken).isZero()
+        assertThat(after.created).isZero()
+        assertThat(after.deleted).isZero()
+        assertThat(after.broken).isZero()
         assertThat(testCases.findById(one.id!!)?.step).isEqualTo(one.step)
     }
 
@@ -281,7 +301,7 @@ class MapTestCaseWriterGoldenTest {
 
         val after = ingestOnce()
 
-        assertThat(after.testCases.broken).isEqualTo(1)
+        assertThat(after.broken).isEqualTo(1)
         assertThat(testCases.findById(cited.id!!)?.verificationStatus).isEqualTo("BROKEN")
     }
 
@@ -310,7 +330,7 @@ class MapTestCaseWriterGoldenTest {
     }
 
     /**
-     * **기대 항목마다 판정 구조가 같은 순서로 붙는다**(V101).
+     * **기대 항목마다 판정 구조가 같은 순서로 붙는다**(V123).
      *
      * 항목은 사람용 문장이고, 판정은 이쪽을 읽는다. 두 목록의 길이가 어긋나면 판정이 엉뚱한 항목의
      * 구조로 통과·실패를 말한다.

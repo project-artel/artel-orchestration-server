@@ -247,6 +247,10 @@ data class ScreenObservationRow(
 
     @Column("inserted")
     val inserted: Boolean,
+
+    /** upsert 뒤의 `macro.version`. 정의가 안 바뀐 갱신이면 앞 버전 그대로다(V100). */
+    @Column("version")
+    val version: Int,
 )
 
 /**
@@ -270,6 +274,10 @@ data class MacroUpsertRow(
 
     @Column("inserted")
     val inserted: Boolean,
+
+    /** upsert 뒤의 `macro.version`. 정의가 안 바뀐 갱신이면 앞 버전 그대로다(V100). */
+    @Column("version")
+    val version: Int,
 )
 
 /**
@@ -300,6 +308,37 @@ data class MacroSummaryRow(
 
     @Column("updated_at")
     val updatedAt: Instant,
+
+    /** 진입점 `def` 의 docstring(ARTEL-985). 없으면 null. */
+    @Column("docstring")
+    val docstring: String?,
+)
+
+/**
+ * scene context 가 읽는 macro 한 줄(ARTEL-934). `source` 는 읽지 않는다 — 요약은 [docstring] 이다
+ * (ARTEL-985). `definition_json` 은 parameter 배열 조각만 잘라 온다.
+ *
+ * @property docstring `macro.docstring`. 응답의 `summary` 가 이 값이고, docstring 이 없으면 null 이다
+ * @property declaredParameters `definition_json -> entry -> parameters`. `[{"name": …,
+ *   "declared_type": …}, …]` 를 기대하고, 그 자리가 없으면 null 이다
+ * @property total 자르기 전 이 지도의 macro 수. 같은 질의의 `COUNT(*) OVER ()` 라 `LIMIT` 에
+ *   잘린 뒤에도 전체 수가 나오고, 목록과 어긋날 두 번째 질의가 없다
+ */
+data class MacroSceneContextRow(
+    @Column("id")
+    val id: Long,
+
+    @Column("name")
+    val name: String,
+
+    @Column("docstring")
+    val docstring: String?,
+
+    @Column("declared_parameters")
+    val declaredParameters: Json?,
+
+    @Column("total")
+    val total: Long,
 )
 
 /**
@@ -326,6 +365,10 @@ data class MacroDetailRow(
 
     @Column("updated_at")
     val updatedAt: Instant,
+
+    /** 진입점 `def` 의 docstring(ARTEL-985). 없으면 null. */
+    @Column("docstring")
+    val docstring: String?,
 )
 
 /**
@@ -350,4 +393,17 @@ data class MacroScreenRow(
 
     @Column("scene_name")
     val sceneName: String,
+)
+
+/**
+ * `capability` 하나가 쓰는 상태 필드 하나(ARTEL-1059). `capability_effect` 의 `kind = 'write'` 행이다.
+ *
+ * @property target 점 표기 대상(`SelectableObject.selectable`). 효과 행 그대로라 잘라 넣은 값일 수 있다.
+ */
+data class CapabilityWriteRow(
+    @Column("capability_id")
+    val capabilityId: Long,
+
+    @Column("target")
+    val target: String,
 )

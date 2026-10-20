@@ -46,7 +46,6 @@ import kr.artel.orchestration.contentmap.repository.upsert
 import kr.artel.orchestration.contentmap.scan.ContentMapEventStreamManager
 import kr.artel.orchestration.project.storage.DocumentStorage
 import org.slf4j.LoggerFactory
-import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
@@ -82,12 +81,12 @@ class ContentMapIngestService(
     private val proofs: CapabilityProofRepository,
     private val sceneEdges: SceneEdgeRepository,
     private val objectRefs: SceneObjectRefRepository,
+    private val sceneObjectWriter: SceneObjectWriter,
     private val strayEffects: kr.artel.orchestration.contentmap.repository.ContentMapStrayEffectRepository,
     private val contentMaps: kr.artel.orchestration.contentmap.repository.ContentMapRepository,
     private val builds: kr.artel.orchestration.game.repository.GameBuildRepository,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
-    private val mapTestCases: MapTestCaseWriter,
     private val transactionalOperator: TransactionalOperator,
     private val streamManager: ContentMapEventStreamManager,
     private val clock: Clock,
@@ -248,6 +247,10 @@ class ContentMapIngestService(
         // 가 있다. 그 대응이 문서의 직렬화 참조에 있다.
         writeObjectRefs(document.contentMapId, model, sceneIds)
 
+        // `scene` 에 놓인 오브젝트와 코드가 그 컴포넌트에서 읽고 쓰는 필드(ARTEL-1059). `scene-context` 가
+        // 이것을 실어 planner 가 아직 가 보지 않은 `scene` 의 오브젝트를 지어내지 않게 한다.
+        sceneObjectWriter.rewrite(document.contentMapId, model, sceneIds)
+
         // 키가 같은 후보는 **같은 명세의 다른 조각**이다. 실측 529 후보 중 38건이 그렇고, 씬·진입점·
         // 메서드·갈래·조건·조작이 전부 같은 채 `effects` 만 다르다(20그룹) 또는 `recordKind` 만
         // 다르다(8그룹). given 과 when 이 같으면 한 줄이고, then 은 그 줄에 함께 달린다 — 따로 쓰면
@@ -328,11 +331,9 @@ class ContentMapIngestService(
         // 아직 매달려 있어, "아무도 아무것도 모르는 `scene`"이라는 조건에 걸리지 않는다.
         val retiredScenes = scenes.retireVanishedScenes(document.contentMapId, sceneIds.keys.toTypedArray())
 
-        // **지도가 바뀌면 케이스도 함께 바뀐다**(ARTEL-578). 여기서 앉히는 이유는 한쪽만 커밋되면
-        // 두 표가 서로 다른 시점을 가리키기 때문이다 — 케이스는 사라진 기능을 시험하라고 하고,
-        // 지도는 그런 기능이 없다고 한다. **지도를 다 내린 맨 뒤**인 것도 같은 이유다: 사라진 기능이나
-        // 빈 `scene` 이 아직 표에 있으면 그 케이스를 다시 앉힌다.
-        val cases = mapTestCases.rewrite(document.contentMapId)
+        // **적재는 test case 를 만들지 않는다**(ARTEL-971). 예전에는 여기서 `MapTestCaseWriter.rewrite`
+        // 를 불러 적재할 때마다 test case 가 생기고 바뀌고 지워졌다. 이제 사용자가 build 별로
+        // `POST .../game-builds/{gameBuildId}/content-map/test-cases` 를 눌러 생성한다.
 
         documents.stampIngested(document.id!!, INGESTER_VERSION, Instant.now(clock))
 
@@ -348,7 +349,6 @@ class ContentMapIngestService(
             retiredScenes = retiredScenes.toInt(),
             persistentCapabilities = presences.count { it.persistent },
             evidencedPersistentCapabilities = presences.count { it == ScenePresence.PERSISTENT_EVIDENCED },
-            testCases = cases,
         )
     }
 
@@ -858,14 +858,6 @@ data class IngestResult(
      * 이고, 나머지를 지우는 것은 QA agent 다(ARTEL-644).
      */
     val evidencedPersistentCapabilities: Int = 0,
-
-    /**
-     * 이 지도가 앉힌 TC 의 변화(ARTEL-578). 지도가 바뀌면 케이스도 함께 바뀐다.
-     *
-     * 두 번째 적재부터 `created` 가 0 이어야 한다 — 아니면 겹침 판정이 같은 케이스를 못 알아본
-     * 것이고, 표가 적재할 때마다 부푼다.
-     */
-    val testCases: MapTestCaseWriter.Result = MapTestCaseWriter.Result(),
 )
 
 /**

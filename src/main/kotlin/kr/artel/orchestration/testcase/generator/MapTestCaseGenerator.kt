@@ -80,7 +80,7 @@ class MapTestCaseGenerator(
         val refs = refRows
             .groupBy { it.ownerType to it.field }
             .mapValues { (_, rows) -> rows.map { it.targetName }.toSet() }
-        // **목록의 몇 번째가 무엇인지**(V100). `sprites[4]` 를 그림 이름으로 바꾸는 데 쓴다. 주인이 여럿이면
+        // **목록의 몇 번째가 무엇인지**(V123). `sprites[4]` 를 그림 이름으로 바꾸는 데 쓴다. 주인이 여럿이면
         // 같은 번호에 이름이 여럿이다.
         val positions = refRows.filter { it.position != null }
             .groupBy { it.ownerType to it.field }

@@ -37,6 +37,10 @@
       "description": "프로젝트 생성·조회·수정·삭제"
     },
     {
+      "name": "MCP",
+      "description": "artel-macro-mcp 로그인 넘겨주기"
+    },
+    {
       "name": "Macro",
       "description": "빌드에 등록된 macro 를 읽는다"
     },
@@ -49,12 +53,20 @@
       "description": "빌드에 앉은 씬 명세를 읽는다"
     },
     {
+      "name": "QA Run",
+      "description": "프로젝트의 QA run 목록"
+    },
+    {
       "name": "Issue tracker",
       "description": "프로젝트와 외부 이슈 트래커의 연결"
     },
     {
       "name": "SDK orchestration",
       "description": "Agent action delivery to connected game instances"
+    },
+    {
+      "name": "Developer Macro",
+      "description": "게임 개발자가 MCP 로 검사하고 등록하는 macro"
     },
     {
       "name": "SDK auth",
@@ -83,6 +95,10 @@
     {
       "name": "SDK token",
       "description": "로그인한 사용자의 SDK 토큰 발급"
+    },
+    {
+      "name": "Game notes",
+      "description": "planner 에게 주는 프로젝트별 게임 노트와 genre module"
     },
     {
       "name": "Project Invitation",
@@ -229,6 +245,49 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/ScenarioResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/tracker/github/installation": {
+      "put": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "installation 연결",
+        "description": "소유자만. 사용자 인가로 확인한 목록 안의 installation만 붙는다. installation이 바뀌면 고른 저장소는 비워진다.",
+        "operationId": "selectInstallation",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackerInstallationSelectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerLinkEnvelope"
                 }
               }
             }
@@ -575,6 +634,195 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/game-build": {
+      "put": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "changeGameBuild",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestRunGameBuildRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft/{draftId}": {
+      "put": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "updateChatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "draftId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftScenarioEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftScenario"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-run-folders/{testRunFolderId}": {
+      "put": {
+        "tags": [
+          "test-run-folder-controller"
+        ],
+        "operationId": "renameTestRunFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "testRunFolderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestRunFolderRenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "test-run-folder-controller"
+        ],
+        "operationId": "deleteTestRunFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "testRunFolderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-cases/{caseId}": {
       "get": {
         "tags": [
@@ -595,6 +843,15 @@
             "name": "caseId",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "format": "int64"
@@ -694,6 +951,558 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-case-versions/{gameBuildId}/hidden": {
+      "put": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "setTestCaseVersionHidden",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionHiddenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-versions/{gameBuildId}/group": {
+      "put": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "assignTestCaseVersionGroup",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionGroupAssignRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-version-groups/{versionGroupId}": {
+      "put": {
+        "tags": [
+          "test-case-version-group-controller"
+        ],
+        "operationId": "renameTestCaseVersionGroup",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "versionGroupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionGroupResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "test-case-version-group-controller"
+        ],
+        "operationId": "deleteTestCaseVersionGroup",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "versionGroupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}": {
+      "put": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "updateFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "deleteFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/items/order": {
+      "put": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "reorderFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderItemOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/items/hidden": {
+      "put": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "setFolderItemsHidden",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderItemHiddenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/developer-macros/{name}": {
+      "get": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 상세",
+        "description": "목록 한 줄에 원문(`source`)을 더한 것이다.",
+        "operationId": "readDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "macro 이름(진입점 `def` 이름)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 등록",
+        "description": "검사를 통과하면 이름으로 넣거나 갱신하고 저장된 행을 돌려준다. `version` 은 정의가 실제로 바뀔 때만 오른다. 거절이면 400 `developer_macro_rejected` 이고 `fields` 에 `line`·`reason` 이 실린다.",
+        "operationId": "putDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "macro 이름(진입점 `def` 이름)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutDeveloperMacroRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 삭제",
+        "description": "행을 지운다. 그 이름이 없으면 404 다.",
+        "operationId": "deleteDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "macro 이름(진입점 `def` 이름)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-notes": {
+      "get": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 최신 버전",
+        "description": "저장한 적이 없으면 `version: 0`, 빈 `body` 와 `genres`, null `updatedAt` · `updatedBy` 다.",
+        "operationId": "getGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Game notes"
+        ],
+        "summary": "게임 노트 저장",
+        "description": "새 버전을 만들어 돌려준다. 본문과 장르 집합이 최신과 같으면 버전을 올리지 않는다. `baseVersion` 이 최신이 아니면 409 `game_notes_conflict`, 본문이 20000 자를 넘거나 장르가 틀리면 400 이다.",
+        "operationId": "putGameNotes",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGameNotesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameNotesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/me/profile": {
       "put": {
         "tags": [
@@ -747,6 +1556,163 @@
         }
       }
     },
+    "/api/auth/me/llm-keys/{service}": {
+      "put": {
+        "tags": [
+          "user-llm-key-controller"
+        ],
+        "operationId": "putLlmKey",
+        "parameters": [
+          {
+            "name": "service",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserLlmKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserLlmKeyResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "user-llm-key-controller"
+        ],
+        "operationId": "deleteLlmKey",
+        "parameters": [
+          {
+            "name": "service",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/admin/settings/typesafe": {
+      "get": {
+        "tags": [
+          "admin-typesafe-settings-controller"
+        ],
+        "operationId": "typesafeKeyStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypesafeKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin-typesafe-settings-controller"
+        ],
+        "operationId": "updateTypesafeKey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTypesafeKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypesafeKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings/models": {
+      "get": {
+        "tags": [
+          "admin-feature-model-settings-controller"
+        ],
+        "operationId": "featureModels_1",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureModelStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin-feature-model-settings-controller"
+        ],
+        "operationId": "updateFeatureModels",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFeatureModelsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureModelStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/settings/llm": {
       "get": {
         "tags": [
@@ -788,6 +1754,102 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/LlmKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings/bedrock": {
+      "get": {
+        "tags": [
+          "admin-bedrock-settings-controller"
+        ],
+        "operationId": "bedrockKeyStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BedrockKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin-bedrock-settings-controller"
+        ],
+        "operationId": "updateBedrockKey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBedrockKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BedrockKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings/anthropic": {
+      "get": {
+        "tags": [
+          "admin-anthropic-settings-controller"
+        ],
+        "operationId": "anthropicKeyStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin-anthropic-settings-controller"
+        ],
+        "operationId": "updateAnthropicKey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAnthropicKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicKeyStatus"
                 }
               }
             }
@@ -1274,7 +2336,7 @@
         "tags": [
           "qa-try-controller"
         ],
-        "operationId": "list_1",
+        "operationId": "list_2",
         "parameters": [
           {
             "name": "projectId",
@@ -1426,6 +2488,52 @@
         }
       }
     },
+    "/api/qa-runs/{qaRunId}/changes/{kind}/{targetId}/revert": {
+      "post": {
+        "tags": [
+          "qa-run-controller"
+        ],
+        "operationId": "revertQaRunChange",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/qa-runs/{qaRunId}/cancel": {
       "post": {
         "tags": [
@@ -1456,7 +2564,7 @@
         ],
         "summary": "프로젝트 목록",
         "description": "참여 중인 프로젝트를 최근 수정순으로 조회한다. `scope=ALL`은 개발자 등급 전용이다.",
-        "operationId": "list_3",
+        "operationId": "list_4",
         "parameters": [
           {
             "name": "page",
@@ -1544,7 +2652,7 @@
         "tags": [
           "test-run-controller"
         ],
-        "operationId": "list_5",
+        "operationId": "list_6",
         "parameters": [
           {
             "name": "projectId",
@@ -1602,6 +2710,56 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/TestRunResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/scenarios/imports": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "importScenarios",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioImportResponse"
                 }
               }
             }
@@ -1709,6 +2867,109 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft/discard": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "discardChatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftSelection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DraftScenario"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft/apply": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "applyChatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftSelection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftApplyResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-runs/{runId}/chat/close": {
       "post": {
         "tags": [
@@ -1789,6 +3050,76 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-run-folders": {
+      "get": {
+        "tags": [
+          "test-run-folder-controller"
+        ],
+        "operationId": "listTestRunFolders",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunFolderListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "test-run-folder-controller"
+        ],
+        "operationId": "createTestRunFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestRunFolderCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-cases": {
       "get": {
         "tags": [
@@ -1800,6 +3131,15 @@
             "name": "projectId",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "format": "int64"
@@ -1859,6 +3199,652 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-cases/move": {
+      "post": {
+        "tags": [
+          "test-case-controller"
+        ],
+        "operationId": "moveTestCases",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseMoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseMoveResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-cases/bulk-delete": {
+      "post": {
+        "tags": [
+          "test-case-controller"
+        ],
+        "operationId": "bulkDeleteTestCases",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseBulkDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseBulkDeleteResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-versions/{gameBuildId}/folder-copies": {
+      "post": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "copyTestCaseVersionToFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionCopyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-versions/{gameBuildId}/cases": {
+      "get": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "listTestCasesOfVersion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "compareTo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionCasesResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "addTestCasesToVersion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionCasesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionCasesChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-versions/{gameBuildId}/cases/removals": {
+      "post": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "removeTestCasesFromVersion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionCasesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionCasesChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-version-groups": {
+      "post": {
+        "tags": [
+          "test-case-version-group-controller"
+        ],
+        "operationId": "createTestCaseVersionGroup",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseVersionGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionGroupResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders": {
+      "get": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "listFolders",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "createFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/items": {
+      "get": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "listFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "addFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderItemsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/items/removals": {
+      "post": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "removeFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderItemsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/items/moves": {
+      "post": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "moveFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderItemMoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-folders/{folderId}/clones": {
+      "post": {
+        "tags": [
+          "test-case-folder-controller"
+        ],
+        "operationId": "cloneFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseFolderCloneRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/invitations": {
       "get": {
         "tags": [
@@ -1866,7 +3852,7 @@
         ],
         "summary": "보낸 초대 목록",
         "description": "소유자만 볼 수 있다. 아직 답을 기다리는 초대만 나온다.",
-        "operationId": "list_8",
+        "operationId": "list_10",
         "parameters": [
           {
             "name": "projectId",
@@ -1991,13 +3977,71 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/content-map/test-cases": {
+      "post": {
+        "tags": [
+          "content-map-test-case-controller"
+        ],
+        "operationId": "generateTestCases",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "carryOver",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          {
+            "name": "overwrite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentMapTestCaseGenerationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-builds/{gameBuildId}/content-map/scan": {
       "post": {
         "tags": [
           "Content Map"
         ],
         "summary": "원격 근거 스캔 요청",
-        "description": "이 빌드를 실행 중인 게임에 근거 스캔을 시킨다. 즉시 202 로 답하며, 완료는 조회 API 의 `lastScan` 으로 확인한다. 붙어 있는 게임이 없으면 409.",
+        "description": "이 빌드를 실행 중인 게임에 근거 스캔을 시킨다. 즉시 202 로 답하며, 완료는 조회 API 의 `lastScan` 으로 확인한다. 붙어 있는 게임이 없으면 409. `generateTestCases=true` 면 문서가 다 읽힌 뒤 TC 도 만들고, editor 이거나 이미 TC 를 만든 빌드면 스캔 전에 409.",
         "operationId": "startScan",
         "parameters": [
           {
@@ -2018,6 +4062,26 @@
             "schema": {
               "type": "integer",
               "format": "int64"
+            }
+          },
+          {
+            "name": "generateTestCases",
+            "in": "query",
+            "description": "true 면 스캔 문서가 다 읽힌 뒤 TC 도 만든다. 결과는 lastScan.testCases",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "carryOver",
+            "in": "query",
+            "description": "TC 를 만들 때 앞 버전의 사용자 생성 TC 를 이어 넣는다",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true
             }
           }
         ],
@@ -2042,7 +4106,7 @@
         ],
         "summary": "기획서 이력",
         "description": "최신 버전이 앞에 온다.",
-        "operationId": "list_12",
+        "operationId": "list_14",
         "parameters": [
           {
             "name": "projectId",
@@ -2151,6 +4215,82 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/UploadTicketResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/developer-macros:check": {
+      "post": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 검사",
+        "description": "agent-server 가 원문을 검사한다. 통과면 `{ok: true, parameters, docstring}`, 거절이면 `{ok: false, rejection: {line, reason}}` 이고 둘 다 200 이다. 저장하지 않는다.",
+        "operationId": "checkDeveloperMacro",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckDeveloperMacroRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mcp/handoffs": {
+      "post": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "MCP 로그인 넘겨주기",
+        "description": "로그인한 사용자가 MCP 연결을 허용하면 2분짜리 handoff JWT 를 서명해 MCP 로 갈 주소를 돌려준다. 브라우저 세션만 받고, CLI 토큰과 MCP access JWT 는 403 이다.",
+        "operationId": "createMcpHandoff",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMcpHandoffRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpHandoffResponse"
                 }
               }
             }
@@ -2570,7 +4710,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "list_14",
+        "operationId": "list_16",
         "responses": {
           "200": {
             "description": "OK",
@@ -2728,6 +4868,26 @@
         }
       }
     },
+    "/api/admin/settings/llm/invalidate-cache": {
+      "post": {
+        "tags": [
+          "admin-llm-settings-controller"
+        ],
+        "operationId": "invalidateAgentCache",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCacheInvalidationResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/settings/llm/check": {
       "post": {
         "tags": [
@@ -2741,6 +4901,46 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/LlmKeyCheckResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings/bedrock/check": {
+      "post": {
+        "tags": [
+          "admin-bedrock-settings-controller"
+        ],
+        "operationId": "checkBedrockKey",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BedrockCheck"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings/anthropic/check": {
+      "post": {
+        "tags": [
+          "admin-anthropic-settings-controller"
+        ],
+        "operationId": "checkAnthropicKey",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicCheck"
                 }
               }
             }
@@ -3040,6 +5240,77 @@
         }
       }
     },
+    "/api/admin/llm-models": {
+      "get": {
+        "tags": [
+          "admin-llm-model-controller"
+        ],
+        "operationId": "list_17",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminLlmModelResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "admin-llm-model-controller"
+        ],
+        "operationId": "update_3",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLlmModelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLlmModelResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/settings/models": {
+      "get": {
+        "tags": [
+          "internal-feature-model-settings-controller"
+        ],
+        "operationId": "featureModels",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalFeatureModels"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/settings/llm": {
       "get": {
         "tags": [
@@ -3114,6 +5385,60 @@
         }
       }
     },
+    "/internal/projects/{projectId}/developer-macros": {
+      "get": {
+        "tags": [
+          "internal-developer-macro-controller"
+        ],
+        "operationId": "listDeveloperMacrosForAgent",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalDeveloperMacroListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/llm-models": {
+      "get": {
+        "tags": [
+          "internal-llm-model-controller"
+        ],
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InternalLlmModelResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/knowledge": {
       "get": {
         "tags": [
@@ -3167,7 +5492,7 @@
           "Issue tracker"
         ],
         "summary": "GitHub App 설치 복귀",
-        "description": "서명된 state로 프로젝트를 찾아 installation_id를 저장하고 home으로 되돌린다.",
+        "description": "서명된 state로 프로젝트를 찾아 installation_id를 저장하고 home으로 되돌린다. installation_id 없이 code만 오면 고를 수 있는 installation 목록을 저장하고 tracker=choose로 되돌린다.",
         "operationId": "setup",
         "parameters": [
           {
@@ -3209,7 +5534,7 @@
         ],
         "summary": "SDK 프로젝트 목록",
         "description": "참여 중인 프로젝트를 최근 수정순으로 조회한다.",
-        "operationId": "list",
+        "operationId": "list_1",
         "responses": {
           "200": {
             "description": "OK",
@@ -3592,12 +5917,42 @@
         }
       }
     },
+    "/api/qa-runs/{qaRunId}/changes": {
+      "get": {
+        "tags": [
+          "qa-run-controller"
+        ],
+        "operationId": "listQaRunChanges",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunChangeListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/qa-models": {
       "get": {
         "tags": [
           "qa-model-controller"
         ],
-        "operationId": "list_2",
+        "operationId": "list_3",
         "responses": {
           "200": {
             "description": "OK",
@@ -3648,6 +6003,39 @@
         }
       }
     },
+    "/api/projects/{projectId}/tracker/github/installations": {
+      "get": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "고를 수 있는 installation 목록",
+        "description": "소유자만. 사용자 인가 복귀에서 서버가 GitHub 에서 읽어 둔 목록이다. 없거나 만료됐으면 409 tracker_authorization_required.",
+        "operationId": "installations",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerInstallationPageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/tracker/github/install-url": {
       "get": {
         "tags": [
@@ -3681,12 +6069,45 @@
         }
       }
     },
+    "/api/projects/{projectId}/tracker/github/authorize-url": {
+      "get": {
+        "tags": [
+          "Issue tracker"
+        ],
+        "summary": "GitHub App 사용자 인가 주소",
+        "description": "소유자만. 이미 App이 설치된 계정을 고르는 흐름의 시작이다. 인가가 끝나면 /api/tracker/github/setup 이 tracker=choose 로 되돌린다.",
+        "operationId": "authorizeUrl",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerInstallUrlResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-scenario": {
       "get": {
         "tags": [
           "project-test-scenario-controller"
         ],
-        "operationId": "list_4",
+        "operationId": "list_5",
         "parameters": [
           {
             "name": "projectId",
@@ -3745,6 +6166,37 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/ScenarioResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-scenario-library": {
+      "get": {
+        "tags": [
+          "scenario-library-controller"
+        ],
+        "operationId": "library",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioLibraryResponse"
                 }
               }
             }
@@ -3918,6 +6370,138 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/chat/draft": {
+      "get": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "chatDraft",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DraftScenario"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/cases-outside-build": {
+      "get": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "casesOutsideBuild",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameInstanceId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunCasesOutsideBuildResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-cases/{testCaseId}/verdict-history": {
+      "get": {
+        "tags": [
+          "test-case-controller"
+        ],
+        "operationId": "getVerdictHistory",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "testCaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseVerdictHistoryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-cases/coverage": {
       "get": {
         "tags": [
@@ -3980,6 +6564,99 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-case-versions": {
+      "get": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "listTestCaseVersions",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-versions/unversioned/cases": {
+      "get": {
+        "tags": [
+          "test-case-version-controller"
+        ],
+        "operationId": "listUnversionedTestCases",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseVersionCasesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-case-versions/generation-candidates": {
+      "get": {
+        "tags": [
+          "content-map-test-case-controller"
+        ],
+        "operationId": "listTestCaseGenerationCandidates",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseGenerationCandidatesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-case-spec/download": {
       "get": {
         "tags": [
@@ -4011,6 +6688,59 @@
         }
       }
     },
+    "/api/projects/{projectId}/qa-runs": {
+      "get": {
+        "tags": [
+          "QA Run"
+        ],
+        "summary": "프로젝트의 QA run 목록",
+        "description": "새 것이 앞에 온다. `gameBuildId` 를 주면 그 빌드로 돈 run 만 온다. `size` 는 1 이상 100 이하이고 벗어나면 400 이다. 프로젝트가 없거나 참여자가 아니면 404 다.",
+        "operationId": "list_7",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "description": "이 게임 빌드로 돈 run 만",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/members": {
       "get": {
         "tags": [
@@ -4018,7 +6748,7 @@
         ],
         "summary": "멤버 목록",
         "description": "참여자면 누구나 볼 수 있다. 소유자가 먼저, 그 안에서는 참여한 순서다. 참여자가 아니면 404.",
-        "operationId": "list_6",
+        "operationId": "list_8",
         "parameters": [
           {
             "name": "projectId",
@@ -4134,7 +6864,7 @@
         "tags": [
           "project-issue-controller"
         ],
-        "operationId": "list_7",
+        "operationId": "list_9",
         "parameters": [
           {
             "name": "projectId",
@@ -4249,7 +6979,7 @@
         ],
         "summary": "게임 인스턴스 목록",
         "description": "최근에 만든 것이 앞에 온다.",
-        "operationId": "list_9",
+        "operationId": "list_11",
         "parameters": [
           {
             "name": "projectId",
@@ -4283,7 +7013,7 @@
         ],
         "summary": "게임 빌드 목록",
         "description": "최근에 보고된 것이 앞에 온다.",
-        "operationId": "list_10",
+        "operationId": "list_12",
         "parameters": [
           {
             "name": "projectId",
@@ -4357,7 +7087,7 @@
         ],
         "summary": "등록된 macro 목록",
         "description": "이 빌드에 등록된 macro 를 이름 오름차순으로 읽는다. `source` 는 싣지 않는다 — 원문은 상세 조회에 있다. 등록된 것이 없으면 빈 `items` 다.",
-        "operationId": "list_11",
+        "operationId": "list_13",
         "parameters": [
           {
             "name": "projectId",
@@ -4539,6 +7269,84 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-builds/{buildId}/game-functions": {
+      "get": {
+        "tags": [
+          "Game Build"
+        ],
+        "summary": "빌드가 등록한 cheat · behavior 목록",
+        "description": "SDK 가 마지막으로 보낸 `GAME_FUNCTION_CATALOG` 의 내용이다. 목록을 보낸 적 없는 빌드는 404 가 아니라 revision 0, receivedAt null, 빈 목록 둘로 답한다.",
+        "operationId": "gameFunctions",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "buildId",
+            "in": "path",
+            "description": "게임 빌드 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameFunctionCatalogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-builds/summary": {
+      "get": {
+        "tags": [
+          "Game Build"
+        ],
+        "summary": "게임 빌드 요약 목록",
+        "description": "빌드마다 인스턴스 수와 연결 수, cheat · behavior 수, QA run 수와 가장 최근 run 을 붙인다. 순서는 빌드 목록과 같다.",
+        "operationId": "summary",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameBuildSummaryListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/documents/{documentId}/download-url": {
       "get": {
         "tags": [
@@ -4613,6 +7421,62 @@
                   "items": {
                     "$ref": "#/components/schemas/ServerSentEventDocumentStreamEvent"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/developer-macros": {
+      "get": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "developer macro 목록",
+        "description": "프로젝트의 developer macro 를 이름 오름차순으로 읽는다. 원문(`source`)은 상세에 있다.",
+        "operationId": "listDeveloperMacros",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperMacroListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/macros/grammar": {
+      "get": {
+        "tags": [
+          "Developer Macro"
+        ],
+        "summary": "macro 문법 글",
+        "description": "agent-server 의 `{grammar, rules}` JSON 을 본문과 content type 그대로 중계한다. `grammar` 는 macro DSL 문법 설명(markdown), `rules` 는 developer macro 규칙 문장 목록이다.",
+        "operationId": "grammar",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -4826,7 +7690,7 @@
         ],
         "summary": "받은 초대 목록",
         "description": "로그인한 계정으로 온 초대와 그 계정의 확인된 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없어도 계정으로 온 초대는 나온다.",
-        "operationId": "list_13",
+        "operationId": "list_15",
         "responses": {
           "200": {
             "description": "OK",
@@ -4877,6 +7741,54 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/AuthUserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me/llm-keys": {
+      "get": {
+        "tags": [
+          "user-llm-key-controller"
+        ],
+        "operationId": "listLlmKeys",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserLlmKeyResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/artel-handoff-jwks.json": {
+      "get": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "handoff 서명 공개키(JWKS)",
+        "description": "handoff JWT 를 검증할 RSA 공개키. 설정이 없으면 빈 `keys` 다.",
+        "operationId": "handoffJwks",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object"
+                  }
                 }
               }
             }
@@ -5041,6 +7953,13 @@
             "items": {
               "$ref": "#/components/schemas/ScenarioStep"
             }
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
           }
         }
       },
@@ -5153,28 +8072,14 @@
           }
         }
       },
-      "TrackerLinkUpsertRequest": {
+      "TrackerInstallationSelectRequest": {
         "required": [
-          "provider",
-          "repository",
-          "workspace"
+          "installationId"
         ],
         "type": "object",
         "properties": {
-          "provider": {
+          "installationId": {
             "type": "string"
-          },
-          "workspace": {
-            "type": "string"
-          },
-          "repository": {
-            "type": "string"
-          },
-          "autoSyncSeverities": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           }
         }
       },
@@ -5221,6 +8126,31 @@
           }
         }
       },
+      "TrackerLinkUpsertRequest": {
+        "required": [
+          "provider",
+          "repository",
+          "workspace"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "workspace": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "autoSyncSeverities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "TestRunUpdateRequest": {
         "type": "object",
         "properties": {
@@ -5229,6 +8159,59 @@
           },
           "description": {
             "type": "string"
+          }
+        }
+      },
+      "TestRunGameBuild": {
+        "required": [
+          "gameBuildId",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "TestRunLastQa": {
+        "required": [
+          "failed",
+          "passed",
+          "qaRunId",
+          "startedAt",
+          "status",
+          "total"
+        ],
+        "type": "object",
+        "properties": {
+          "qaRunId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -5256,6 +8239,19 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "gameBuild": {
+            "$ref": "#/components/schemas/TestRunGameBuild"
+          },
+          "folderId": {
+            "type": "string"
+          },
+          "scenarioCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lastQaRun": {
+            "$ref": "#/components/schemas/TestRunLastQa"
           }
         }
       },
@@ -5307,6 +8303,171 @@
           }
         }
       },
+      "TestRunGameBuildRequest": {
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "folderId": {
+            "type": "string"
+          }
+        }
+      },
+      "ChatScenarioStep": {
+        "required": [
+          "action"
+        ],
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "case_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "input": {
+            "type": "string"
+          },
+          "step_source": {
+            "type": "string",
+            "enum": [
+              "CASE",
+              "CAPABILITY",
+              "UNKNOWN",
+              "HUMAN"
+            ]
+          },
+          "step_kind": {
+            "type": "string",
+            "enum": [
+              "ACTION",
+              "GAP",
+              "OPENING"
+            ]
+          },
+          "step_source_capability_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "step_unknown_reason": {
+            "type": "string"
+          }
+        }
+      },
+      "DraftScenarioEdit": {
+        "required": [
+          "description",
+          "steps",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatScenarioStep"
+            }
+          }
+        }
+      },
+      "DraftScenario": {
+        "required": [
+          "absorbed_scenario_ids",
+          "description",
+          "draft_id",
+          "steps",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "type": "string"
+          },
+          "scenario_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatScenarioStep"
+            }
+          },
+          "absorbed_scenario_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "base_steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatScenarioStep"
+            }
+          }
+        }
+      },
+      "TestRunFolderRenameRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "TestRunFolderResponse": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "JsonNode": {
+        "type": "object"
+      },
+      "TestCaseFunctions": {
+        "type": "object",
+        "properties": {
+          "cheats": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "behaviors": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        }
+      },
       "TestCaseUpdateRequest": {
         "type": "object",
         "properties": {
@@ -5324,6 +8485,9 @@
           },
           "verificationStatus": {
             "type": "string"
+          },
+          "functions": {
+            "$ref": "#/components/schemas/TestCaseFunctions"
           }
         }
       },
@@ -5332,6 +8496,7 @@
           "createdAt",
           "expectedValue",
           "id",
+          "origin",
           "projectId",
           "scene",
           "step",
@@ -5369,6 +8534,303 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "folderId": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "functions": {
+            "$ref": "#/components/schemas/TestCaseFunctions"
+          }
+        }
+      },
+      "TestCaseVersionHiddenRequest": {
+        "type": "object",
+        "properties": {
+          "hidden": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TestCaseVersionGroupAssignRequest": {
+        "type": "object",
+        "properties": {
+          "groupId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseVersionGroupRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseVersionGroupResponse": {
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseFolderRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseFolderResponse": {
+        "required": [
+          "caseCount",
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "caseCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "visibleCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "TestCaseFolderItemOrderRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TestCaseFolderItemsChangeResponse": {
+        "required": [
+          "caseIds",
+          "changed",
+          "droppedCaseIds"
+        ],
+        "type": "object",
+        "properties": {
+          "changed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "droppedCaseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TestCaseFolderItemHiddenRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PutDeveloperMacroRequest": {
+        "required": [
+          "gameBuildId",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "source": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "gameBuildId": {
+            "pattern": "^[0-9]{1,18}$",
+            "type": "string"
+          }
+        }
+      },
+      "DeveloperMacroAuthor": {
+        "required": [
+          "id",
+          "nickname"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          }
+        }
+      },
+      "DeveloperMacroDetailResponse": {
+        "required": [
+          "buildVersion",
+          "docstring",
+          "gameBuildId",
+          "name",
+          "parameters",
+          "source",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "docstring": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "buildVersion": {
+            "type": "string"
+          },
+          "buildLabel": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/DeveloperMacroAuthor"
+          }
+        }
+      },
+      "UpdateGameNotesRequest": {
+        "required": [
+          "baseVersion",
+          "body",
+          "genres"
+        ],
+        "type": "object",
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "baseVersion": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "GameNoteAuthorResponse": {
+        "required": [
+          "displayName",
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          }
+        }
+      },
+      "GameNotesResponse": {
+        "required": [
+          "body",
+          "genres",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "body": {
+            "type": "string"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "ui-flow",
+                "turn-based"
+              ]
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/GameNoteAuthorResponse"
           }
         }
       },
@@ -5468,6 +8930,89 @@
           }
         }
       },
+      "UpdateUserLlmKeyRequest": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          }
+        }
+      },
+      "UserLlmKeyResponse": {
+        "required": [
+          "keyHint",
+          "service",
+          "verifiedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "keyHint": {
+            "type": "string"
+          },
+          "verifiedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UpdateTypesafeKeyRequest": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          }
+        }
+      },
+      "TypesafeKeyStatus": {
+        "required": [
+          "configured"
+        ],
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "maskedKey": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UpdateFeatureModelsRequest": {
+        "type": "object",
+        "properties": {
+          "scenarioAuthoringModel": {
+            "type": "string"
+          },
+          "decisionModel": {
+            "type": "string"
+          }
+        }
+      },
+      "FeatureModelStatus": {
+        "type": "object",
+        "properties": {
+          "scenarioAuthoringModel": {
+            "type": "string"
+          },
+          "scenarioAuthoringFallback": {
+            "type": "string"
+          },
+          "decisionModel": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "UpdateLlmKeyRequest": {
         "type": "object",
         "properties": {
@@ -5495,7 +9040,6 @@
             "type": "string",
             "enum": [
               "admin",
-              "environment",
               "none"
             ]
           },
@@ -5538,7 +9082,6 @@
           "adminKeyStored",
           "adminKeyUnreadable",
           "configured",
-          "environmentKeyPresent",
           "secretsKeyConfigured",
           "source"
         ],
@@ -5551,7 +9094,6 @@
             "type": "string",
             "enum": [
               "admin",
-              "environment",
               "none"
             ]
           },
@@ -5568,14 +9110,159 @@
             "type": "string",
             "format": "date-time"
           },
-          "environmentKeyPresent": {
-            "type": "boolean"
-          },
           "secretsKeyConfigured": {
             "type": "boolean"
           },
           "lastCheck": {
             "$ref": "#/components/schemas/LlmKeyCheckResult"
+          }
+        }
+      },
+      "UpdateBedrockKeyRequest": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          }
+        }
+      },
+      "BedrockCheck": {
+        "required": [
+          "checkedAt",
+          "keyConfigured",
+          "models"
+        ],
+        "type": "object",
+        "properties": {
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "keyConfigured": {
+            "type": "boolean"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BedrockModelCheck"
+            }
+          }
+        }
+      },
+      "BedrockKeyStatus": {
+        "required": [
+          "configured",
+          "region"
+        ],
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "maskedKey": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "region": {
+            "type": "string"
+          },
+          "lastCheck": {
+            "$ref": "#/components/schemas/BedrockCheck"
+          }
+        }
+      },
+      "BedrockModelCheck": {
+        "required": [
+          "id",
+          "reachable"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reachable": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateAnthropicKeyRequest": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          }
+        }
+      },
+      "AnthropicCheck": {
+        "required": [
+          "checkedAt",
+          "keyConfigured",
+          "keyValid",
+          "models"
+        ],
+        "type": "object",
+        "properties": {
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "keyConfigured": {
+            "type": "boolean"
+          },
+          "keyValid": {
+            "type": "boolean"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnthropicModelCheck"
+            }
+          }
+        }
+      },
+      "AnthropicKeyStatus": {
+        "required": [
+          "configured"
+        ],
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "maskedKey": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastCheck": {
+            "$ref": "#/components/schemas/AnthropicCheck"
+          }
+        }
+      },
+      "AnthropicModelCheck": {
+        "required": [
+          "id",
+          "reachable"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reachable": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
           }
         }
       },
@@ -5698,6 +9385,13 @@
           "calledAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "keySource": {
+            "type": "string",
+            "enum": [
+              "platform",
+              "user"
+            ]
           }
         }
       },
@@ -5865,9 +9559,6 @@
           }
         }
       },
-      "JsonNode": {
-        "type": "object"
-      },
       "SdkRegistrationRequest": {
         "required": [
           "gameVersion",
@@ -5896,6 +9587,9 @@
           },
           "sceneScan": {
             "$ref": "#/components/schemas/JsonNode"
+          },
+          "isEditor": {
+            "type": "boolean"
           }
         }
       },
@@ -5905,6 +9599,7 @@
           "gameVersion",
           "instanceId",
           "instanceName",
+          "isEditor",
           "projectId"
         ],
         "type": "object",
@@ -5923,6 +9618,9 @@
           },
           "gameVersion": {
             "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
           }
         }
       },
@@ -6237,6 +9935,27 @@
           },
           "contentMapMode": {
             "type": "string"
+          },
+          "cheatMode": {
+            "type": "string"
+          },
+          "behaviorMode": {
+            "type": "string"
+          },
+          "allowedCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowedBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "keySource": {
+            "type": "string"
           }
         }
       },
@@ -6254,6 +9973,10 @@
       },
       "QaTryResponse": {
         "required": [
+          "behaviorMode",
+          "cheatMode",
+          "effectiveBehaviors",
+          "effectiveCheats",
           "gameInstanceId",
           "id",
           "startedAt",
@@ -6303,6 +10026,36 @@
           },
           "knowledgeScopeId": {
             "type": "string"
+          },
+          "cheatMode": {
+            "type": "string"
+          },
+          "behaviorMode": {
+            "type": "string"
+          },
+          "allowedCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowedBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "effectiveCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "effectiveBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "qaRunId": {
             "type": "string"
@@ -6360,6 +10113,27 @@
           },
           "label": {
             "type": "string"
+          },
+          "cheatMode": {
+            "type": "string"
+          },
+          "behaviorMode": {
+            "type": "string"
+          },
+          "allowedCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowedBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "keySource": {
+            "type": "string"
           }
         }
       },
@@ -6384,6 +10158,9 @@
           "gameInstanceId": {
             "type": "string"
           },
+          "gameBuildId": {
+            "type": "string"
+          },
           "startedBy": {
             "type": "string"
           },
@@ -6406,6 +10183,58 @@
             "items": {
               "$ref": "#/components/schemas/QaTryResponse"
             }
+          },
+          "testRunGameBuildId": {
+            "type": "string"
+          }
+        }
+      },
+      "QaRunChangeResponse": {
+        "required": [
+          "change",
+          "changedAt",
+          "decision",
+          "kind",
+          "name",
+          "qaTryId",
+          "revertible",
+          "targetId"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "targetId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "change": {
+            "type": "string"
+          },
+          "before": {
+            "type": "string"
+          },
+          "after": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "changedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "revertible": {
+            "type": "boolean"
+          },
+          "notRevertibleReason": {
+            "type": "string"
           }
         }
       },
@@ -6554,6 +10383,9 @@
         }
       },
       "TestRunCreateRequest": {
+        "required": [
+          "unversioned"
+        ],
         "type": "object",
         "properties": {
           "name": {
@@ -6561,51 +10393,70 @@
           },
           "description": {
             "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "unversioned": {
+            "type": "boolean"
+          },
+          "folderId": {
+            "type": "string"
           }
         }
       },
-      "ChatScenarioStep": {
+      "ScenarioImportRequest": {
+        "type": "object",
+        "properties": {
+          "testScenarioIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ImportedScenario": {
         "required": [
-          "action"
+          "sourceTestScenarioId",
+          "testScenarioId",
+          "title"
         ],
         "type": "object",
         "properties": {
-          "action": {
+          "sourceTestScenarioId": {
             "type": "string"
           },
-          "case_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "hint": {
+          "testScenarioId": {
             "type": "string"
           },
-          "input": {
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "ScenarioImportResponse": {
+        "required": [
+          "importedScenarios",
+          "testRunId",
+          "unmatchedCaseIds"
+        ],
+        "type": "object",
+        "properties": {
+          "testRunId": {
             "type": "string"
           },
-          "step_source": {
-            "type": "string",
-            "enum": [
-              "CASE",
-              "CAPABILITY",
-              "UNKNOWN",
-              "HUMAN"
-            ]
+          "importedScenarios": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportedScenario"
+            }
           },
-          "step_kind": {
-            "type": "string",
-            "enum": [
-              "ACTION",
-              "GAP",
-              "OPENING"
-            ]
-          },
-          "step_source_capability_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "step_unknown_reason": {
-            "type": "string"
+          "unmatchedCaseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -6646,12 +10497,20 @@
             "items": {
               "$ref": "#/components/schemas/ChatScenarioStep"
             }
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
           }
         }
       },
       "RunChatMessage": {
         "required": [
           "autoApply",
+          "draftOnly",
           "message"
         ],
         "type": "object",
@@ -6663,6 +10522,9 @@
             "$ref": "#/components/schemas/ScenarioQuestionAnswer"
           },
           "autoApply": {
+            "type": "boolean"
+          },
+          "draftOnly": {
             "type": "boolean"
           }
         }
@@ -6688,6 +10550,60 @@
           }
         }
       },
+      "DraftSelection": {
+        "required": [
+          "draft_ids"
+        ],
+        "type": "object",
+        "properties": {
+          "draft_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "DraftApplyResult": {
+        "required": [
+          "absorbed",
+          "applied",
+          "drafts",
+          "kept",
+          "refused"
+        ],
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "absorbed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kept": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "refused": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "drafts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DraftScenario"
+            }
+          }
+        }
+      },
       "RunChatCancellation": {
         "required": [
           "cancelled",
@@ -6704,6 +10620,20 @@
           }
         }
       },
+      "TestRunFolderCreateRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          }
+        }
+      },
       "TestCaseCreateRequest": {
         "type": "object",
         "properties": {
@@ -6717,6 +10647,139 @@
             "type": "string"
           },
           "expectedValue": {
+            "type": "string"
+          },
+          "folderId": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "functions": {
+            "$ref": "#/components/schemas/TestCaseFunctions"
+          }
+        }
+      },
+      "TestCaseMoveRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "folderId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseMoveResponse": {
+        "required": [
+          "moved"
+        ],
+        "type": "object",
+        "properties": {
+          "moved": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "TestCaseBulkDeleteRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TestCaseBulkDeleteResponse": {
+        "required": [
+          "deleted"
+        ],
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "TestCaseVersionCopyRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseVersionCasesRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TestCaseVersionCasesChangeResponse": {
+        "required": [
+          "caseIds"
+        ],
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TestCaseFolderItemsRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TestCaseFolderItemMoveRequest": {
+        "type": "object",
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "targetFolderId": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseFolderCloneRequest": {
+        "type": "object",
+        "properties": {
+          "parentId": {
+            "type": "string"
+          },
+          "toRoot": {
+            "type": "boolean"
+          },
+          "name": {
             "type": "string"
           }
         }
@@ -6837,6 +10900,43 @@
           }
         }
       },
+      "ContentMapTestCaseGenerationResponse": {
+        "required": [
+          "broken",
+          "carriedOver",
+          "created",
+          "deleted",
+          "regression",
+          "updated"
+        ],
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "deleted": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "broken": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "regression": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "carriedOver": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "StartContentMapScanResponse": {
         "required": [
           "gameInstanceId",
@@ -6925,6 +11025,94 @@
           "expiresAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "CheckDeveloperMacroRequest": {
+        "required": [
+          "gameBuildId",
+          "name",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 0,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 20000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "gameBuildId": {
+            "pattern": "^[0-9]{1,18}$",
+            "type": "string"
+          }
+        }
+      },
+      "DeveloperMacroCheckResponse": {
+        "required": [
+          "ok"
+        ],
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "docstring": {
+            "type": "string"
+          },
+          "rejection": {
+            "$ref": "#/components/schemas/DeveloperMacroRejection"
+          }
+        }
+      },
+      "DeveloperMacroRejection": {
+        "required": [
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateMcpHandoffRequest": {
+        "required": [
+          "requestId"
+        ],
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "maxLength": 128,
+            "minLength": 0,
+            "pattern": "^[A-Za-z0-9._~-]+$",
+            "type": "string"
+          }
+        }
+      },
+      "McpHandoffResponse": {
+        "required": [
+          "redirectUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "redirectUrl": {
+            "type": "string"
           }
         }
       },
@@ -7317,6 +11505,20 @@
           }
         }
       },
+      "AgentCacheInvalidationResult": {
+        "required": [
+          "agentServerInvalidated"
+        ],
+        "type": "object",
+        "properties": {
+          "agentServerInvalidated": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
       "UpdateProjectRequest": {
         "type": "object",
         "properties": {
@@ -7353,6 +11555,28 @@
             "maxLength": 80,
             "minLength": 1,
             "type": "string"
+          }
+        }
+      },
+      "GameInstanceBuild": {
+        "required": [
+          "gameBuildId",
+          "isEditor",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
           }
         }
       },
@@ -7397,6 +11621,9 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "lastGameBuild": {
+            "$ref": "#/components/schemas/GameInstanceBuild"
           }
         }
       },
@@ -7419,6 +11646,7 @@
         "required": [
           "createdAt",
           "id",
+          "isEditor",
           "projectId",
           "updatedAt",
           "version"
@@ -7439,6 +11667,9 @@
           },
           "notes": {
             "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
           },
           "createdAt": {
             "type": "string",
@@ -7461,22 +11692,87 @@
           }
         }
       },
-      "InternalLlmSettingsResponse": {
+      "UpdateLlmModelRequest": {
         "required": [
-          "source"
+          "enabled",
+          "id"
         ],
         "type": "object",
         "properties": {
-          "apiKey": {
+          "id": {
             "type": "string"
           },
-          "source": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AdminLlmModelResponse": {
+        "required": [
+          "enabled",
+          "id",
+          "label",
+          "maxInputTokens",
+          "provider",
+          "route",
+          "supportsVision",
+          "updatedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "supportsVision": {
+            "type": "boolean"
+          },
+          "maxInputTokens": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
             "type": "string",
-            "enum": [
-              "admin",
-              "environment",
-              "none"
-            ]
+            "format": "date-time"
+          }
+        }
+      },
+      "InternalFeatureModels": {
+        "type": "object",
+        "properties": {
+          "scenarioAuthoringModel": {
+            "type": "string"
+          },
+          "decisionModel": {
+            "type": "string"
+          }
+        }
+      },
+      "InternalLlmSettingsResponse": {
+        "type": "object",
+        "properties": {
+          "openrouterApiKey": {
+            "type": "string"
+          },
+          "bedrockApiKey": {
+            "type": "string"
+          },
+          "anthropicApiKey": {
+            "type": "string"
+          },
+          "typesafeApiKey": {
+            "type": "string"
           }
         }
       },
@@ -7622,7 +11918,8 @@
           "scenePresence",
           "status",
           "summary",
-          "verification"
+          "verification",
+          "writes"
         ],
         "type": "object",
         "properties": {
@@ -7696,6 +11993,12 @@
           "covers": {
             "type": "integer",
             "format": "int32"
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -7705,6 +12008,8 @@
           "knowledge",
           "knownToContentMap",
           "notAStepCapabilities",
+          "objects",
+          "objectsTotal",
           "sceneName"
         ],
         "type": "object",
@@ -7738,12 +12043,81 @@
             "items": {
               "$ref": "#/components/schemas/SceneKnowledgeView"
             }
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneObjectView"
+            }
+          },
+          "objectsTotal": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "SceneContextMacro": {
+        "required": [
+          "name",
+          "parameters",
+          "screens"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneContextMacroParameter"
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "screens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneContextMacroScreen"
+            }
+          }
+        }
+      },
+      "SceneContextMacroParameter": {
+        "required": [
+          "name",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "SceneContextMacroScreen": {
+        "required": [
+          "screenId"
+        ],
+        "type": "object",
+        "properties": {
+          "screenId": {
+            "type": "string"
+          },
+          "sceneName": {
+            "type": "string"
           }
         }
       },
       "SceneContextResponse": {
         "required": [
           "gameBuildId",
+          "macros",
+          "macrosTotal",
           "scenes"
         ],
         "type": "object",
@@ -7762,6 +12136,16 @@
             "items": {
               "$ref": "#/components/schemas/SceneContextEntry"
             }
+          },
+          "macros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneContextMacro"
+            }
+          },
+          "macrosTotal": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -7777,6 +12161,46 @@
           },
           "summary": {
             "type": "string"
+          }
+        }
+      },
+      "SceneObjectComponentView": {
+        "required": [
+          "fields",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SceneObjectView": {
+        "required": [
+          "active",
+          "components",
+          "selector"
+        ],
+        "type": "object",
+        "properties": {
+          "selector": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SceneObjectComponentView"
+            }
           }
         }
       },
@@ -7850,6 +12274,103 @@
             }
           }
         ]
+      },
+      "InternalDeveloperMacroListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeveloperMacroDetailResponse"
+            }
+          }
+        }
+      },
+      "InternalLlmModelResponse": {
+        "required": [
+          "enabled",
+          "id",
+          "inputModalities",
+          "label",
+          "maxInputTokens",
+          "provider",
+          "sortOrder",
+          "supportsStrictJson"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "supportsStrictJson": {
+            "type": "boolean"
+          },
+          "maxInputTokens": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "inputModalities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reasoning": {
+            "$ref": "#/components/schemas/LlmModelReasoning"
+          },
+          "pricing": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "LlmModelReasoning": {
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "efforts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "minTokens": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxTokens": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "defaultTokens": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
       },
       "KnowledgeListResponse": {
         "required": [
@@ -8077,6 +12598,10 @@
       },
       "QaTryDetailResponse": {
         "required": [
+          "behaviorMode",
+          "cheatMode",
+          "effectiveBehaviors",
+          "effectiveCheats",
           "feedback",
           "issues",
           "qaTryId",
@@ -8137,6 +12662,36 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/QaTryToolCall"
+            }
+          },
+          "cheatMode": {
+            "type": "string"
+          },
+          "behaviorMode": {
+            "type": "string"
+          },
+          "allowedCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowedBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "effectiveCheats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "effectiveBehaviors": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
         }
@@ -8815,10 +13370,38 @@
           }
         }
       },
+      "QaRunChangeListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaRunChangeResponse"
+            }
+          }
+        }
+      },
+      "QaModelPricing": {
+        "type": "object",
+        "properties": {
+          "inputPerMtok": {
+            "type": "number",
+            "format": "double"
+          },
+          "outputPerMtok": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
       "QaModelResponse": {
         "required": [
           "id",
           "inputModalities",
+          "keySource",
           "label",
           "multimodal",
           "provider",
@@ -8853,6 +13436,21 @@
           },
           "reasoning": {
             "$ref": "#/components/schemas/QaReasoningCapability"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "keyProvider": {
+            "type": "string"
+          },
+          "keyRegistered": {
+            "type": "boolean"
+          },
+          "keyHint": {
+            "type": "string"
+          },
+          "pricing": {
+            "$ref": "#/components/schemas/QaModelPricing"
           }
         }
       },
@@ -9005,6 +13603,43 @@
           }
         }
       },
+      "TrackerInstallationPageResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerInstallationResponse"
+            }
+          }
+        }
+      },
+      "TrackerInstallationResponse": {
+        "required": [
+          "account",
+          "accountType",
+          "installationId"
+        ],
+        "type": "object",
+        "properties": {
+          "installationId": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          },
+          "accountType": {
+            "type": "string",
+            "enum": [
+              "USER",
+              "ORGANIZATION"
+            ]
+          }
+        }
+      },
       "TrackerInstallUrlResponse": {
         "required": [
           "url"
@@ -9032,6 +13667,7 @@
       },
       "ScenarioSummary": {
         "required": [
+          "execution_mode",
           "projectId",
           "testScenarioId",
           "title"
@@ -9049,6 +13685,13 @@
           "title": {
             "type": "string"
           },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
@@ -9056,6 +13699,94 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ScenarioLibraryResponse": {
+        "required": [
+          "versions"
+        ],
+        "type": "object",
+        "properties": {
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioLibraryVersion"
+            }
+          }
+        }
+      },
+      "ScenarioLibraryRun": {
+        "required": [
+          "testScenarios"
+        ],
+        "type": "object",
+        "properties": {
+          "testRunId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "testScenarios": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioLibraryScenario"
+            }
+          }
+        }
+      },
+      "ScenarioLibraryScenario": {
+        "required": [
+          "caseCount",
+          "execution_mode",
+          "stepCount",
+          "testScenarioId",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "testScenarioId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
+          },
+          "stepCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "caseCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ScenarioLibraryVersion": {
+        "required": [
+          "testRuns"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuild": {
+            "$ref": "#/components/schemas/TestRunGameBuild"
+          },
+          "testRuns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioLibraryRun"
+            }
           }
         }
       },
@@ -9135,6 +13866,7 @@
       "RunCoverageScenario": {
         "required": [
           "cases",
+          "execution_mode",
           "position",
           "steps",
           "testScenarioId",
@@ -9151,6 +13883,13 @@
           },
           "title": {
             "type": "string"
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
           },
           "steps": {
             "type": "integer",
@@ -9190,6 +13929,41 @@
           }
         }
       },
+      "RunCasesOutsideBuildResponse": {
+        "required": [
+          "testCaseIds",
+          "testRunId"
+        ],
+        "type": "object",
+        "properties": {
+          "testRunId": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "testCaseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TestRunFolderListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestRunFolderResponse"
+            }
+          }
+        }
+      },
       "TestCaseListResponse": {
         "required": [
           "items"
@@ -9204,12 +13978,57 @@
           }
         }
       },
+      "CaseVerdictHistoryItem": {
+        "required": [
+          "gameBuildId",
+          "testCaseId",
+          "verificationStatus",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "verificationStatus": {
+            "type": "string"
+          }
+        }
+      },
+      "CaseVerdictHistoryResponse": {
+        "required": [
+          "items",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseVerdictHistoryItem"
+            }
+          }
+        }
+      },
       "TestCaseDetailResponse": {
         "required": [
           "createdAt",
           "evidenceGaps",
           "expectedValue",
           "id",
+          "origin",
           "projectId",
           "scene",
           "step",
@@ -9248,11 +14067,20 @@
             "type": "string",
             "format": "date-time"
           },
+          "folderId": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
           "evidenceGaps": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "functions": {
+            "$ref": "#/components/schemas/TestCaseFunctions"
           }
         }
       },
@@ -9361,6 +14189,210 @@
           }
         }
       },
+      "TestCaseVersionListResponse": {
+        "required": [
+          "groups",
+          "items",
+          "unversionedTotal"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseVersionSummary"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseVersionGroupResponse"
+            }
+          },
+          "unversionedTotal": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "TestCaseVersionSummary": {
+        "required": [
+          "counts",
+          "createdAt",
+          "gameBuildId",
+          "hidden",
+          "latest",
+          "total",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "latest": {
+            "type": "boolean"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "groupId": {
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TestCaseVersionCasesResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "compareToGameBuildId": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseVersionRow"
+            }
+          }
+        }
+      },
+      "TestCaseVersionRow": {
+        "required": [
+          "createdAt",
+          "expectedValue",
+          "id",
+          "origin",
+          "presence",
+          "scene",
+          "step"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
+          },
+          "precondition": {
+            "type": "string"
+          },
+          "expectedValue": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "folderId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "verificationStatus": {
+            "type": "string"
+          },
+          "presence": {
+            "type": "string"
+          },
+          "compareVerificationStatus": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseGenerationCandidate": {
+        "required": [
+          "createdAt",
+          "gameBuildId",
+          "generated",
+          "judged",
+          "mapCases",
+          "mapState",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "mapState": {
+            "type": "string",
+            "enum": [
+              "NO_MAP",
+              "NOT_READ",
+              "READY"
+            ]
+          },
+          "generated": {
+            "type": "boolean"
+          },
+          "mapCases": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "judged": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "TestCaseGenerationCandidatesResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseGenerationCandidate"
+            }
+          }
+        }
+      },
       "TestCaseSpecDownloadResponse": {
         "required": [
           "downloadUrl",
@@ -9374,6 +14406,116 @@
           "expiresAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "TestCaseFolderListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseFolderResponse"
+            }
+          }
+        }
+      },
+      "TestCaseFolderItemListResponse": {
+        "required": [
+          "folderId",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "folderId": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestCaseFolderItemResponse"
+            }
+          }
+        }
+      },
+      "TestCaseFolderItemResponse": {
+        "required": [
+          "createdAt",
+          "expectedValue",
+          "hidden",
+          "hiddenGameBuildIds",
+          "inVersion",
+          "origin",
+          "position",
+          "scene",
+          "step",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "hiddenGameBuildIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "inVersion": {
+            "type": "boolean"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
+          },
+          "precondition": {
+            "type": "string"
+          },
+          "expectedValue": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "verificationStatus": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QaRunListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaRunResponse"
+            }
           }
         }
       },
@@ -9810,6 +14952,10 @@
             "type": "string",
             "description": "정의를 마지막으로 고친 시각",
             "format": "date-time"
+          },
+          "docstring": {
+            "type": "string",
+            "description": "진입점 `def` 의 docstring. 없으면 null"
           }
         },
         "description": "등록된 macro 한 줄. source 는 싣지 않는다"
@@ -9847,6 +14993,10 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "docstring": {
+            "type": "string",
+            "description": "진입점 `def` 의 docstring. 없으면 null"
           },
           "source": {
             "type": "string",
@@ -10228,6 +15378,9 @@
           "error": {
             "type": "string",
             "description": "FAILED 일 때 사람에게 보여 줄 사유"
+          },
+          "testCases": {
+            "$ref": "#/components/schemas/ScanTestCases"
           }
         },
         "description": "마지막 원격 스캔의 상태"
@@ -10258,6 +15411,39 @@
           }
         },
         "description": "적재를 기다리는 문서"
+      },
+      "ScanTestCases": {
+        "required": [
+          "carryOver",
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "carryOver": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "GENERATED",
+              "SKIPPED",
+              "FAILED"
+            ]
+          },
+          "created": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "carriedOver": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "description": "스캔하고 TC 생성(ARTEL-1040)일 때 TC 쪽 결과. 그냥 스캔이면 null"
       },
       "SceneCapabilityCountResponse": {
         "required": [
@@ -10562,6 +15748,145 @@
       "ServerSentEventContentMapStreamEvent": {
         "type": "object"
       },
+      "GameFunctionCatalogResponse": {
+        "required": [
+          "behaviors",
+          "cheats",
+          "revision"
+        ],
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cheats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonNode"
+            }
+          },
+          "behaviors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonNode"
+            }
+          }
+        }
+      },
+      "GameBuildSummaryListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GameBuildSummaryResponse"
+            }
+          }
+        }
+      },
+      "GameBuildSummaryResponse": {
+        "required": [
+          "behaviorCount",
+          "cheatCount",
+          "connectedCount",
+          "createdAt",
+          "gameBuildId",
+          "instanceCount",
+          "isEditor",
+          "qaRunCount",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastReportedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "instanceCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "connectedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cheatCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "behaviorCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "catalogReceivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "qaRunCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "latestQaRun": {
+            "$ref": "#/components/schemas/LatestQaRunSummary"
+          }
+        }
+      },
+      "LatestQaRunSummary": {
+        "required": [
+          "qaRunId",
+          "startedAt",
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "qaRunId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stepsPassed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "stepsTotal": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "DownloadTicketResponse": {
         "required": [
           "downloadUrl",
@@ -10580,6 +15905,66 @@
       },
       "ServerSentEventDocumentStreamEvent": {
         "type": "object"
+      },
+      "DeveloperMacroListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeveloperMacroSummaryResponse"
+            }
+          }
+        }
+      },
+      "DeveloperMacroSummaryResponse": {
+        "required": [
+          "buildVersion",
+          "docstring",
+          "gameBuildId",
+          "name",
+          "parameters",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "docstring": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "buildVersion": {
+            "type": "string"
+          },
+          "buildLabel": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/DeveloperMacroAuthor"
+          }
+        }
       },
       "LlmUsageDailyCell": {
         "required": [
