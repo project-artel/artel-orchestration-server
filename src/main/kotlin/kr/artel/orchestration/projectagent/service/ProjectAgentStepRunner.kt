@@ -16,6 +16,7 @@ import kr.artel.orchestration.projectagent.config.ProjectAgentProperties
 import kr.artel.orchestration.projectagent.dto.AssistantPayload
 import kr.artel.orchestration.projectagent.dto.NoticeKind
 import kr.artel.orchestration.projectagent.dto.NoticePayload
+import kr.artel.orchestration.projectagent.dto.ToolResultPayload
 import kr.artel.orchestration.projectagent.dto.ToolCallRecord
 import kr.artel.orchestration.projectagent.entity.ProjectAgentConversationEntity
 import kr.artel.orchestration.projectagent.entity.ProjectAgentMessageEntity
@@ -106,7 +107,7 @@ class ProjectAgentStepRunner(
             locale = localeOf(conversation.appUserId),
             toolsEnabled = toolResultsSinceLastInput(history) < properties.toolCallLimit,
             pageCatalog = conversation.pageCatalog?.let(store::toNode) ?: emptyCatalog(),
-            messages = history.mapNotNull(::toStepMessage),
+            messages = stepMessages(history),
         )
     }
 
@@ -115,6 +116,31 @@ class ProjectAgentStepRunner(
         val lastInput = history.indexOfLast { it.role == ProjectAgentRole.USER || it.role == ProjectAgentRole.EVENT }
         return history.drop(lastInput + 1).count { it.role == ProjectAgentRole.TOOL_RESULT }
     }
+
+    /**
+     * agent-server 로 보낼 messages. ASSISTANT 의 tool call 에 TOOL_RESULT 가 없는데 그 뒤에 USER 나 EVENT 가
+     * 이어졌다면(결과를 저장하다 실패한 대화 등) 그 호출마다 `cancelled` 결과를 끼워 넣는다. provider 는 답 없는
+     * tool_use 를 거절한다.
+     */
+    private fun stepMessages(history: List<ProjectAgentMessageEntity>): List<StepMessage> =
+        history.flatMapIndexed { index, message ->
+            val converted = listOfNotNull(toStepMessage(message))
+            if (message.role != ProjectAgentRole.ASSISTANT) return@flatMapIndexed converted
+            val later = history.drop(index + 1)
+            if (later.none { it.role == ProjectAgentRole.USER || it.role == ProjectAgentRole.EVENT }) {
+                return@flatMapIndexed converted
+            }
+            val answered = later.filter { it.role == ProjectAgentRole.TOOL_RESULT }
+                .mapNotNull { store.parseToolResult(it)?.callId }.toSet()
+            val unanswered = store.parseAssistant(message).toolCalls.map { it.callId }.filter { it !in answered }
+            converted + unanswered.map { callId ->
+                StepMessage(
+                    "tool",
+                    objectMapper.writeValueAsString(ToolResultPayload(callId = callId, status = "cancelled")),
+                    toolCallId = callId,
+                )
+            }
+        }
 
     private fun toStepMessage(message: ProjectAgentMessageEntity): StepMessage? = when (message.role) {
         ProjectAgentRole.USER -> {
@@ -147,13 +173,17 @@ class ProjectAgentStepRunner(
         locks.withLock(conversationId) {
             if (!isCurrent(conversationId, self)) return@withLock
             // tools_enabled=false 로 불렀는데 호출이 오면 따르지 않는다. 따르면 한도가 의미가 없다.
-            val calls = if (toolsEnabled) response.toolCalls else emptyList()
+            val calls = if (toolsEnabled) uniqueCallIds(response.toolCalls) else emptyList()
+            val next = if (calls.isEmpty()) ProjectAgentStatus.IDLE else ProjectAgentStatus.AWAITING_TOOL
+            // 상태를 먼저 바꾼다. 이미 RUNNING 이 아니면(다른 경로가 대화를 옮겼다) 이 결과는 버린다.
+            val moved = conversations.move(conversationId, listOf(ProjectAgentStatus.RUNNING), next, store.now())
+            if (moved == 0) return@withLock
             val locale = localeOf(store.reload(conversationId).appUserId)
             store.append(
                 conversationId,
                 ProjectAgentRole.ASSISTANT,
                 response.content.orEmpty(),
-                AssistantPayload(calls.map { ToolCallRecord(it.id.ifBlank { generatedCallId() }, it.name, it.args) }),
+                AssistantPayload(calls.map { ToolCallRecord(it.id, it.name, it.args) }),
             )
             if (!toolsEnabled) {
                 store.append(
@@ -163,9 +193,17 @@ class ProjectAgentStepRunner(
                     NoticePayload(NoticeKind.STEP_LIMIT),
                 )
             }
-            val next = if (calls.isEmpty()) ProjectAgentStatus.IDLE else ProjectAgentStatus.AWAITING_TOOL
-            conversations.move(conversationId, listOf(ProjectAgentStatus.RUNNING), next, store.now())
             store.publishConversation(conversationId)
+        }
+    }
+
+    /** 한 응답 안에서 id 가 비었거나 겹치는 호출에는 새 id 를 준다. id 가 겹치면 어느 호출의 결과인지 가릴 수 없다. */
+    private fun uniqueCallIds(calls: List<StepToolCall>): List<StepToolCall> {
+        val seen = mutableSetOf<String>()
+        return calls.map { call ->
+            val id = if (call.id.isBlank() || call.id in seen) generatedCallId() else call.id
+            seen += id
+            call.copy(id = id)
         }
     }
 
@@ -174,7 +212,7 @@ class ProjectAgentStepRunner(
         try {
             locks.withLock(conversationId) {
                 if (!isCurrent(conversationId, self)) return@withLock
-                markError(conversationId)
+                markError(conversationId, listOf(ProjectAgentStatus.RUNNING, ProjectAgentStatus.AWAITING_TOOL))
             }
         } catch (error: CancellationException) {
             throw error
@@ -184,10 +222,13 @@ class ProjectAgentStepRunner(
     }
 
     /** 부팅 때 `RUNNING` 으로 남은 대화를 포함해 NOTICE `error` 와 함께 `ERROR` 로 넘긴다. */
-    suspend fun markError(conversationId: Long) {
+    suspend fun markError(
+        conversationId: Long,
+        from: List<String> = listOf(ProjectAgentStatus.RUNNING),
+    ) {
         val locale = localeOf(store.reload(conversationId).appUserId)
         val moved = conversations.move(
-            conversationId, listOf(ProjectAgentStatus.RUNNING), ProjectAgentStatus.ERROR, store.now(),
+            conversationId, from, ProjectAgentStatus.ERROR, store.now(),
         )
         if (moved == 0) return
         store.append(

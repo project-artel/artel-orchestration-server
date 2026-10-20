@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onSubscription
+import kotlinx.coroutines.flow.transformWhile
 import kr.artel.orchestration.projectagent.config.ProjectAgentProperties
 import kr.artel.orchestration.projectagent.dto.ProjectAgentConversationResponse
 import kr.artel.orchestration.projectagent.dto.ProjectAgentMessageResponse
@@ -40,12 +41,25 @@ class ProjectAgentStreamHub(private val properties: ProjectAgentProperties) {
                 emit(ServerSentEvent.builder<Any>().comment("heartbeat").build())
             }
         }
-        return merge(events(conversationId), heartbeat)
+        // heartbeat 는 끝나지 않으므로, 닫힘 표시를 만나면 합친 흐름 전체를 여기서 끊는다.
+        return merge(events(conversationId), heartbeat).transformWhile { event ->
+            if (event === CLOSED) {
+                false
+            } else {
+                emit(event)
+                true
+            }
+        }
     }
 
     fun publish(message: ProjectAgentMessageResponse) = publish(message.conversationId, "message", message)
 
     fun publish(conversation: ProjectAgentConversationResponse) = publish(conversation.id, "conversation", conversation)
+
+    /** 대화가 지워졌다. 구독 중인 stream 을 모두 끝낸다. 이후에는 아무것도 내보내지 않는다. */
+    fun close(conversationId: Long) {
+        channels[conversationId]?.events?.tryEmit(CLOSED)
+    }
 
     private fun publish(conversationId: Long, name: String, data: Any) {
         val channel = channels[conversationId] ?: return
@@ -64,5 +78,10 @@ class ProjectAgentStreamHub(private val properties: ProjectAgentProperties) {
                 existing?.also { it.subscribers-- }?.takeIf { it.subscribers > 0 }
             }
         }
+    }
+
+    private companion object {
+        /** 구독자에게 보내지 않고 stream 을 끝내는 표시. 비교는 동일 객체로 한다. */
+        val CLOSED: ServerSentEvent<Any> = ServerSentEvent.builder<Any>().comment("closed").build()
     }
 }

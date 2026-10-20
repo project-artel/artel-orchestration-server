@@ -2,6 +2,10 @@ package kr.artel.orchestration.projectagent
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.service.JwtService
@@ -11,7 +15,12 @@ import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.projectagent.dto.SendProjectAgentMessageRequest
+import kr.artel.orchestration.projectagent.dto.ProjectAgentToolResultRequest
 import kr.artel.orchestration.projectagent.entity.ProjectAgentConversationEntity
+import kr.artel.orchestration.projectagent.entity.ProjectAgentMessageEntity
+import kr.artel.orchestration.projectagent.entity.ProjectAgentRole
+import kr.artel.orchestration.projectagent.repository.ProjectAgentMessageRepository
 import kr.artel.orchestration.projectagent.entity.ProjectAgentStatus
 import kr.artel.orchestration.projectagent.repository.ProjectAgentConversationRepository
 import kr.artel.orchestration.projectagent.service.ProjectAgentService
@@ -74,6 +83,9 @@ class ProjectAgentConversationIntegrationTest {
 
     @Autowired
     private lateinit var service: ProjectAgentService
+
+    @Autowired
+    private lateinit var messageRepository: ProjectAgentMessageRepository
 
     @Autowired
     private lateinit var databaseClient: DatabaseClient
@@ -527,6 +539,154 @@ class ProjectAgentConversationIntegrationTest {
         assertThat(items.map { it["role"].asText() }).containsExactly("NOTICE")
         assertThat(items[0]["payload"]["kind"].asText()).isEqualTo("error")
         assertThat(send(member, stuck).first).isEqualTo(202)
+    }
+
+    @Test
+    fun `요청 coroutine 이 취소돼도 대화는 RUNNING 에 갇히지 않는다`(): Unit = runBlocking {
+        val member = newMember("disconnect")
+        val conversationId = createConversation(member)
+        // 취소가 claim 앞, 저장 중간, step 시작 뒤 어디에 닿든 대화는 IDLE 로 돌아오거나 시작조차 하지 않아야 한다.
+        repeat(15) { attempt ->
+            val job = async(Dispatchers.Default) {
+                service.sendMessage(member.projectId, conversationId, member.appUserId, SendProjectAgentMessageRequest("메시지 $attempt"))
+            }
+            delay(attempt.toLong() % 5)
+            job.cancelAndJoin()
+            awaitStatus(member, conversationId, "IDLE")
+            val items = roles(member, conversationId)
+            assertThat(items.count { it == "USER" }).isEqualTo(items.count { it == "ASSISTANT" })
+        }
+
+        // tool 결과 쪽도 같다. 취소가 어디에 닿든 AWAITING_TOOL 인데 답할 호출이 없는 상태가 남으면 안 된다.
+        queuedReplies.add(Reply(200, OPEN_PAGE_REPLY))
+        send(member, conversationId)
+        awaitStatus(member, conversationId, "AWAITING_TOOL")
+        val job = async(Dispatchers.Default) {
+            service.submitToolResult(
+                member.projectId, conversationId, member.appUserId, ProjectAgentToolResultRequest("call_1", "ok"),
+            )
+        }
+        job.cancelAndJoin()
+        Thread.sleep(300)
+        val status = statusOf(member, conversationId)
+        if (status == "AWAITING_TOOL") {
+            assertThat(toolResult(member, conversationId, "call_1").first).isEqualTo(202)
+        }
+        awaitStatus(member, conversationId, "IDLE")
+    }
+
+    @Test
+    fun `한 응답에서 겹치는 tool call id 는 서로 다른 id 로 바뀐다`(): Unit = runBlocking {
+        val member = newMember("dup")
+        val conversationId = createConversation(member)
+        queuedReplies.add(
+            Reply(
+                200,
+                """{"content":"","tool_calls":[{"id":"call_dup","name":"read_page","args":{}},{"id":"call_dup","name":"read_page","args":{}},{"id":"","name":"read_page","args":{}}]}""",
+            )
+        )
+        send(member, conversationId)
+        awaitStatus(member, conversationId, "AWAITING_TOOL")
+        val calls = call(member, HttpMethod.GET, "/$conversationId/messages").second!!["items"][1]["payload"]["toolCalls"]
+        val ids = calls.map { it["callId"].asText() }
+        assertThat(ids).hasSize(3).doesNotHaveDuplicates()
+        assertThat(ids[0]).isEqualTo("call_dup")
+
+        ids.dropLast(1).forEach { assertThat(toolResult(member, conversationId, it).first).isEqualTo(202) }
+        Thread.sleep(300)
+        assertThat(statusOf(member, conversationId)).isEqualTo("AWAITING_TOOL")
+        toolResult(member, conversationId, ids.last())
+        awaitStatus(member, conversationId, "IDLE")
+        assertThat(stepRequests).hasSize(2)
+    }
+
+    @Test
+    fun `대화를 지우면 구독 중인 SSE stream 이 끝난다`(): Unit = runBlocking {
+        val member = newMember("sse-delete")
+        val conversationId = createConversation(member)
+        val events = CopyOnWriteArrayList<ServerSentEvent<String>>()
+        val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val subscription = client().get()
+            .uri("/api/projects/${member.projectId}/agent/conversations/$conversationId/stream")
+            .accept(MediaType.TEXT_EVENT_STREAM)
+            .cookie("artel_access_token", member.token)
+            .retrieve()
+            .bodyToFlux(object : ParameterizedTypeReference<ServerSentEvent<String>>() {})
+            .doOnNext { events.add(it) }
+            .doOnComplete { completed.set(true) }
+            .subscribe()
+        try {
+            awaitUntil { events.any { it.comment() == "open" } }
+            assertThat(call(member, HttpMethod.DELETE, "/$conversationId").first).isEqualTo(204)
+            awaitUntil { completed.get() }
+            assertThat(events.mapNotNull { it.event() }).isEmpty()
+            assertThat(events.mapNotNull { it.comment() }).doesNotContain("closed")
+        } finally {
+            subscription.dispose()
+        }
+    }
+
+    @Test
+    fun `답 없는 tool call 뒤에 입력이 이어진 대화는 cancelled 결과를 끼워 step 에 보낸다`(): Unit = runBlocking {
+        val member = newMember("history")
+        val now = Instant.now()
+        val conversationId = conversationRepository.save(
+            ProjectAgentConversationEntity(
+                projectId = member.projectId, appUserId = member.appUserId,
+                status = ProjectAgentStatus.ERROR, createdAt = now, lastMessageAt = now,
+            )
+        ).id!!
+        messageRepository.save(ProjectAgentMessageEntity(conversationId = conversationId, role = ProjectAgentRole.USER, content = "처음", createdAt = now))
+        messageRepository.save(
+            ProjectAgentMessageEntity(
+                conversationId = conversationId, role = ProjectAgentRole.ASSISTANT, content = "엽니다", createdAt = now,
+                payload = Json.of("""{"toolCalls":[{"callId":"call_x","tool":"read_page","args":{}},{"callId":"call_y","tool":"read_page","args":{}}]}"""),
+            )
+        )
+        messageRepository.save(
+            ProjectAgentMessageEntity(
+                conversationId = conversationId, role = ProjectAgentRole.TOOL_RESULT, createdAt = now,
+                payload = Json.of("""{"callId":"call_y","status":"ok"}"""),
+            )
+        )
+
+        send(member, conversationId, "다시")
+        awaitStatus(member, conversationId, "IDLE")
+
+        val messages = objectMapper.readTree(stepRequests.single())["messages"]
+        assertThat(messages.map { it["role"].asText() }).containsExactly("user", "assistant", "tool", "tool", "user")
+        assertThat(messages[2]["tool_call_id"].asText()).isEqualTo("call_x")
+        assertThat(objectMapper.readTree(messages[2]["content"].asText())["status"].asText()).isEqualTo("cancelled")
+        assertThat(messages[3]["tool_call_id"].asText()).isEqualTo("call_y")
+    }
+
+    @Test
+    fun `잘못된 입력은 400 이고 대화는 그대로다`(): Unit = runBlocking {
+        val member = newMember("validation")
+        // JSON null 은 없는 것으로 본다.
+        assertThat(call(member, HttpMethod.POST, "", """{"pageCatalog":null}""").first).isEqualTo(201)
+        assertThat(call(member, HttpMethod.POST, "", """{}""").first).isEqualTo(201)
+        assertThat(call(member, HttpMethod.POST, "", """{"pageCatalog":{"x":1}}""").first).isEqualTo(400)
+        assertThat(call(member, HttpMethod.POST, "", """{"pageCatalog":[]}""").first).isEqualTo(400)
+        assertThat(call(member, HttpMethod.POST, "", """{"pageCatalog":{"pages":"no"}}""").first).isEqualTo(400)
+
+        val conversationId = createConversation(member)
+        assertThat(
+            call(member, HttpMethod.POST, "/$conversationId/messages", """{"text":"안녕","pageCatalog":{"pages":{}}}""").first
+        ).isEqualTo(400)
+        assertThat(statusOf(member, conversationId)).isEqualTo("IDLE")
+        assertThat(
+            call(member, HttpMethod.POST, "/$conversationId/messages", """{"text":"안녕","pageCatalog":null}""").first
+        ).isEqualTo(202)
+        awaitStatus(member, conversationId, "IDLE")
+
+        val tooLong = "가".repeat(2001)
+        assertThat(call(member, HttpMethod.POST, "/$conversationId/events", """{"kind":"${"k".repeat(65)}","summary":"s"}""").first).isEqualTo(400)
+        assertThat(call(member, HttpMethod.POST, "/$conversationId/events", """{"kind":"job_finished","summary":"$tooLong"}""").first).isEqualTo(400)
+        assertThat(call(member, HttpMethod.POST, "/$conversationId/tool-results", """{"callId":" ","status":"ok"}""").first).isEqualTo(400)
+        assertThat(call(member, HttpMethod.POST, "/$conversationId/tool-results", """{"callId":"c","status":"error","error":"$tooLong"}""").first).isEqualTo(400)
+        assertThat(roles(member, conversationId)).containsExactly("USER", "ASSISTANT")
+        assertThat(statusOf(member, conversationId)).isEqualTo("IDLE")
     }
 
     @Test

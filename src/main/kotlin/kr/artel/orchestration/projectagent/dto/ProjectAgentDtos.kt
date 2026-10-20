@@ -31,7 +31,7 @@ data class ProjectAgentMessageResponse(
 
 data class ProjectAgentMessageList(val items: List<ProjectAgentMessageResponse>)
 
-data class CreateProjectAgentConversationRequest(val pageCatalog: JsonNode)
+data class CreateProjectAgentConversationRequest(val pageCatalog: JsonNode? = null)
 
 data class RenameProjectAgentConversationRequest(val title: String)
 
