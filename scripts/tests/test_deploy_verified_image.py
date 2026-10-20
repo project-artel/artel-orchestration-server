@@ -22,11 +22,13 @@ elif a[0]=='inspect':
     elif '-f' in a:
         out=str(c.get('restarts',0)) if 'RestartCount' in a[2] else str(c['running']).lower()
 elif a[0]=='rename':
-    if a[1] not in s['containers'] or a[2] in s['containers']:rc=1
+    if mode=='rename_fail' and a[2].endswith('-rollback'):rc=1
+    elif a[1] not in s['containers'] or a[2] in s['containers']:rc=1
     else:s['containers'][a[2]]=s['containers'].pop(a[1])
 elif a[0] in ['stop','start']:
     c=s['containers'].get(a[1]);rc=0 if c else 1
-    if c:c['running']=a[0]=='start'
+    if mode=='stop_fail' and a[0]=='stop':rc=1
+    elif c:c['running']=a[0]=='start'
 elif a[0]=='run':
     name=a[a.index('--name')+1]
     s['containers'][name]={'kind':'new','running':True,'restarts':0,'env':'new'}
@@ -100,5 +102,15 @@ class DeploymentTests(unittest.TestCase):
     def test_unresolved_backup_is_not_destroyed(self):
         r,s=self.run_case(backup=True);self.assertEqual(r.returncode,2);self.assertTrue(s['containers'][NAME]['running'])
         self.assertIn(NAME+'-rollback',s['containers'])
+
+    def test_rename_failure_preserves_old_container(self):
+        r,s=self.run_case('rename_fail');self.assertNotEqual(r.returncode,0)
+        self.assertTrue(s['containers'][NAME]['running'])
+        self.assertFalse(any(c[0]=='run' for c in s['calls']))
+
+    def test_stop_failure_restores_original_name(self):
+        r,s=self.run_case('stop_fail');self.assertNotEqual(r.returncode,0)
+        self.assertTrue(s['containers'][NAME]['running']);self.assertNotIn(NAME+'-rollback',s['containers'])
+        self.assertIn('ROLLBACK_OK',r.stderr)
 
 if __name__=='__main__':unittest.main()

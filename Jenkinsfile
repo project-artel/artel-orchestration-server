@@ -31,7 +31,6 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-                sh 'python3 -m unittest discover -s scripts/tests -p "test_*.py"'
             }
         }
 
@@ -193,7 +192,7 @@ pipeline {
         success {
             script {
                 if (env.DEPLOY_IMAGE_TAG) {
-                    build job: 'artel-orchestration-deploy', wait: false, propagate: false,
+                    build job: '/artel-orchestration-deploy', wait: false, propagate: false,
                         parameters: [string(name: 'SOURCE_JOB', value: env.JOB_NAME),
                                      string(name: 'SOURCE_BUILD', value: env.BUILD_NUMBER)]
                 }

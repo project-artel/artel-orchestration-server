@@ -64,6 +64,15 @@ pipeline {
                 }
             }
         }
+        stage('Approve operation') {
+            when { expression { !candidate.stale && candidate.environment == 'operation' } }
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    input message: "Deploy verified operation image from ${params.SOURCE_JOB} #${params.SOURCE_BUILD}?",
+                          submitter: 'admin'
+                }
+            }
+        }
         stage('Deploy verified image') {
             when { beforeAgent true; expression { !candidate.stale } }
             agent { label 'built-in' }

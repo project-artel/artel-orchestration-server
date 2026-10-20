@@ -19,7 +19,7 @@ ARTEL-1165는 기존 multibranch job을 CI 전용으로 바꾸고 `artel-orchest
 
 CD는 정확한 allowlist의 job, 직접 `UpstreamCause`, build 번호와 SUCCESS를 확인한다. CI가 post 단계에서 요청하므로 CI 종료를 node 없이 최대 5분 기다린다. manifest는 그 build의 artifact storage에서 읽으며, 전달받은 임의 image parameter는 사용하지 않는다. image label도 교차 확인한다. 같은 host의 Docker socket에 대한 권한 자체가 강력하므로 이것이 악성 PR을 격리하는 보안 sandbox라고 주장하지 않는다.
 
-하나의 CD job이 네 branch의 배포를 직렬화한다. stage와 operation을 동시에 배포하지 않는 보수적 선택이다. source보다 늦게 시작해 성공한 동일 환경의 CI가 있으면 이전 요청을 건너뛰며, agent 획득 직후 다시 확인한다. CI build 번호를 서로 다른 job 사이에서 비교하지 않는다. job이 성공했다고 서비스 health가 보장되지는 않으므로 CD 상태를 별도 확인해야 한다.
+하나의 CD job이 네 branch의 배포를 직렬화한다. operation 승인 대기 중에는 stage CD도 최대 1시간 대기할 수 있다. stage와 operation을 동시에 배포하지 않는 보수적 선택이다. source보다 늦게 시작해 성공한 동일 환경의 CI가 있으면 이전 요청을 건너뛰며, agent 획득 직후 다시 확인한다. CI build 번호를 서로 다른 job 사이에서 비교하지 않는다. job이 성공했다고 서비스 health가 보장되지는 않으므로 CD 상태를 별도 확인해야 한다.
 
 배포는 이전 container를 rename하고 stop하여 환경·설정을 보존한다. 새 container는 restart=no로 기동한다. 내부 `GET http://localhost:8080/api/auth/providers` HTTP 200을 최대 180초 내 연속 3회(3초 간격) 확인하며 RestartCount 증가를 실패로 본다. 성공 후 restart=unless-stopped로 바꾼다. run/health/update 실패 또는 TERM에는 새 container를 제거하고 이전 container를 복구한다. 복구 health 실패도 CD 실패로 남긴다. 첫 배포에는 복구 대상이 없다.
 
@@ -31,10 +31,12 @@ SIGKILL, host 장애나 Docker daemon 장애는 trap으로 복구를 보장할 �
 2. `scripts/jenkins/install-cd.groovy`를 관리자 script console에서 실행한다. bindings는 `pipelineText`=`ci/Jenkinsfile.cd`, `policyText`=`ci/policy.groovy`, `deployText`=`scripts/deploy-verified-image.sh`의 UTF-8 내용이다. 기존 job은 기본적으로 덮어쓰지 않는다. 의도한 update만 `replaceExisting=true`를 지정한다.
 3. draft PR은 사람이 검토하고 ready-for-review로 변경해야 한다. 변경 승인 뒤 CI branch를 병합한다.
 4. 기존 Jenkinsfile로 시작한 legacy build와 기존 배포가 남아 있지 않은지 확인한다. 실행 중 배포를 무조건 중단하지 말고 완료·복구까지 기다린다. 기존 다른 PR의 Jenkinsfile도 rollout 대상이며 과거 script가 남은 build는 별도 drain한다.
-5. 모든 CD 경로가 이 job을 사용하도록 전환한 뒤 job을 enable한다. 테스트 환경에서 정확한 upstream SUCCESS → artifact → CD → readiness 연결을 확인한다. operation은 별도 승인된 source build로 적용한다.
+5. 모든 CD 경로가 이 job을 사용하도록 전환한 뒤 job을 enable한다. 테스트 환경에서 정확한 upstream SUCCESS → artifact → CD → readiness 연결을 확인한다. operation은 trusted CD의 `Approve operation`에서 `admin`이 명시적으로 승인해야 하며, 1시간 이내 승인하지 않으면 실패한다. 승인 대기는 executor를 점유하지 않는다.
 6. 중복 branch discovery는 기존 설정과 PR 목록을 확인한 뒤 별도 변경한다. 이 코드가 branch/PR discovery를 변경하지는 않는다.
 
 CD를 먼저 disable하면 CI의 downstream 요청은 실패할 수 있지만 서비스는 변경되지 않는다. 롤백은 CD disable → 진행 중 배포 완료/복구 확인 → pipeline commit revert 순서다. 기존 trusted job definition과 정상 image는 보존한다.
+
+이미지 보존은 ARTEL-1165 담당자가 rollout 시 디스크를 확인하고, 이후 주 1회 사용량과 pending manifest를 점검하는 수동 절차로 시작한다. active/rollback/pending image는 삭제하지 않으며 정상 배포 최근 3개는 남긴다. 무제한 보존을 장기 정책으로 사용하지 않는다. 자동 GC는 아직 구현하지 않았다.
 
 ## 검증
 
@@ -46,3 +48,5 @@ python3 -m unittest discover -s scripts/tests -v
 `ci/policy-test.groovy`는 binding `policy`에 `ci/policy.groovy`를 평가한 객체를 주어 GroovyShell에서 실행한다. Jenkinsfile과 CD는 `pipeline-model-converter/validate`로 검사한다. Docker stub 테스트는 실제 shell의 성공/실패/rollback/TERM/입력 거절 경계를 검사하지만 실제 Docker 네트워크 및 application 기동을 대체하지 않는다. 격리 CI는 배포 금지 branch 이름으로 실행한다.
 
 실제 적용 전후 PR 대기/실행 시간, 중복 취소/재사용 비율, CD health 실패/복구 결과를 각각 측정한다. 현재 문서에는 성능 개선률을 약속하지 않는다.
+
+배포 경계의 Python 테스트는 개발/검증 환경에서 실행한다. 현재 Jenkins image에는 Python이 없으므로 Java CI에 Python 의존성을 추가하지 않는다.
