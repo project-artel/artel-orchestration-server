@@ -1,6 +1,7 @@
 package kr.artel.orchestration.config
 
 import kr.artel.orchestration.common.error.ApiException
+import kr.artel.orchestration.telemetry.service.TelemetryErrorRecorder
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -19,9 +20,14 @@ import org.springframework.web.server.ResponseStatusException
  * 않는다. 내부 구조·원인(호스트·드라이버·스택 조각 등)이 4xx로도 새어나갈 수 있기 때문이다.
  * 클라이언트에는 기계 판별용 [ApiErrorResponse.code]와 상태별 **일반 문구**만 준다.
  * 구체 원인은 서버 로그에만 남긴다(클라이언트는 code로 자체 카피를 매핑한다).
+ *
+ * 5xx 로 답한 예외는 [TelemetryErrorRecorder] 에도 넘긴다. telemetry consent 가 켜진 설치에서만 클래스 이름과
+ * `kr.artel` frame 이 남고, message 는 거기서도 남지 않는다.
  */
 @RestControllerAdvice
-class ApiExceptionHandler {
+class ApiExceptionHandler(
+    private val telemetryErrorRecorder: TelemetryErrorRecorder
+) {
 
     private val logger = LoggerFactory.getLogger(ApiExceptionHandler::class.java)
 
@@ -59,6 +65,7 @@ class ApiExceptionHandler {
         val serverError = error.status.value() >= 500
         if (serverError) {
             logger.error("API 오류 [{}]: {}", error.code, error.message, error)
+            telemetryErrorRecorder.record(error, error.code)
         } else {
             logger.debug("API 오류 [{}]: {}", error.code, error.message)
         }
@@ -83,10 +90,14 @@ class ApiExceptionHandler {
      */
     @ExceptionHandler(ResponseStatusException::class)
     fun handleStatus(error: ResponseStatusException): ResponseEntity<ApiErrorResponse> {
-        if (error.statusCode.value() >= 500) logger.error("상태 오류 [{}]", error.statusCode.value(), error)
+        val code = error.statusCode.value().toErrorCode()
+        if (error.statusCode.value() >= 500) {
+            logger.error("상태 오류 [{}]", error.statusCode.value(), error)
+            telemetryErrorRecorder.record(error, code)
+        }
         return ResponseEntity.status(error.statusCode).body(
             ApiErrorResponse(
-                code = error.statusCode.value().toErrorCode(),
+                code = code,
                 message = genericMessageFor(error.statusCode.value())
             )
         )
@@ -98,9 +109,10 @@ class ApiExceptionHandler {
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(error: Exception): ResponseEntity<ApiErrorResponse> {
         logger.error("처리하지 못한 오류", error)
+        telemetryErrorRecorder.record(error, INTERNAL_ERROR_CODE)
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
             ApiErrorResponse(
-                code = "internal_error",
+                code = INTERNAL_ERROR_CODE,
                 message = "요청을 처리하지 못했습니다."
             )
         )
@@ -127,6 +139,9 @@ class ApiExceptionHandler {
         else -> "요청을 처리할 수 없습니다."
     }
 }
+
+/** 예상하지 못한 오류의 응답 code. */
+private const val INTERNAL_ERROR_CODE = "internal_error"
 
 /**
  * @property fields 필드별 오류. DTO 검증 실패와 [kr.artel.orchestration.common.error.ApiException.responseFields] 를

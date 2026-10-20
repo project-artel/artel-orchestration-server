@@ -17,6 +17,8 @@ import kr.artel.orchestration.auth.service.RefreshTokenService
 import kr.artel.orchestration.auth.service.UNKNOWN_CLIENT_ADDRESS
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.common.error.UnauthorizedException
+import kr.artel.orchestration.telemetry.config.TelemetryProperties
+import kr.artel.orchestration.telemetry.service.TelemetryConsentService
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
@@ -45,21 +47,24 @@ class PasswordAuthController(
     private val authCookies: AuthCookies,
     private val authProperties: AuthProperties,
     private val gitHubOAuthProperties: GitHubOAuthProperties,
-    private val loginAttemptLimiter: LoginAttemptLimiter
+    private val loginAttemptLimiter: LoginAttemptLimiter,
+    private val telemetryProperties: TelemetryProperties,
+    private val telemetryConsentService: TelemetryConsentService
 ) {
     /** 세션 없이 부른다. 로그인 화면이 GitHub 버튼과 가입 링크를 보일지 고른다. */
     @GetMapping("/providers")
     suspend fun providers(): AuthProvidersResponse = AuthProvidersResponse(
         password = true,
         github = gitHubOAuthProperties.enabled,
-        signupOpen = passwordAccountService.signupOpen()
+        signupOpen = passwordAccountService.signupOpen(),
+        telemetryAvailable = telemetryProperties.endpointConfigured && !telemetryConsentService.hasStoredConsent()
     )
 
     /** 가입하고 바로 로그인시킨다. 설치의 첫 사용자면 `platformRole` 이 `ADMIN` 이다. */
     @PostMapping("/signup")
     @ResponseStatus(HttpStatus.CREATED)
     suspend fun signup(@RequestBody request: SignupRequest, exchange: ServerWebExchange): AuthUserResponse {
-        val user = passwordAccountService.signup(request.email, request.password, request.name)
+        val user = passwordAccountService.signup(request.email, request.password, request.name, request.telemetryOptIn)
         return startSession(user, exchange)
     }
 
