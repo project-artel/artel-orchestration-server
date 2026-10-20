@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -37,6 +38,17 @@ class IssueController(
     }
 
     /** 해결 표시 취소. 없거나 접근 불가면 404. */
+    /** 보관(숨김). 지우지 않고 목록에서 뺀다(ARTEL-1114). */
+    @PostMapping("/{issueId}/archive")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    suspend fun archive(@PathVariable issueId: Long, @CurrentUserId appUserId: Long) =
+        service.archive(issueId, appUserId, true)
+
+    @PostMapping("/{issueId}/unarchive")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    suspend fun unarchive(@PathVariable issueId: Long, @CurrentUserId appUserId: Long) =
+        service.archive(issueId, appUserId, false)
+
     @PostMapping("/{issueId}/reopen")
     suspend fun reopen(
         @PathVariable issueId: Long,

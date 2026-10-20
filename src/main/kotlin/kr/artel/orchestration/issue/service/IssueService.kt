@@ -7,11 +7,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.issue.category.CategoryTag
+import kr.artel.orchestration.issue.category.IssueCategoryRepository
+import kr.artel.orchestration.issue.dto.IssueFacetsResponse
+import kr.artel.orchestration.issue.dto.IssueOrigin
 import kr.artel.orchestration.issue.dto.IssuePageResponse
 import kr.artel.orchestration.issue.dto.IssueResponse
 import kr.artel.orchestration.issue.entity.IssueEntity
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.entity.IssueStatus
+import kr.artel.orchestration.issue.repository.IssueOriginRepository
 import kr.artel.orchestration.issue.repository.IssueRepository
 import kr.artel.orchestration.project.event.ProjectChangeStreamManager
 import kr.artel.orchestration.project.event.ProjectChangeTopic
@@ -50,6 +55,8 @@ const val MAX_PAGE_SIZE = 100
 @Service
 class IssueService(
     private val issueRepository: IssueRepository,
+    private val issueOriginRepository: IssueOriginRepository,
+    private val issueCategoryRepository: IssueCategoryRepository,
     private val qaTryRepository: QaTryRepository,
     private val projectAccess: ProjectAccessService,
     private val trackerSync: IssueTrackerSyncService,
@@ -142,6 +149,13 @@ class IssueService(
         return page(issueRepository.findPageByQaTry(qaTryId, beforeId, size + 1).toList(), size)
     }
 
+    suspend fun getByProject(projectId: Long, issueId: Long, userId: Long): IssueResponse {
+        projectAccess.requireMember(projectId, userId)
+        if (issueRepository.findProjectIdByIssueId(issueId) != projectId) throw NotFoundException()
+        val issue = issueRepository.findById(issueId) ?: throw NotFoundException()
+        return page(listOf(issue), 1).items.single()
+    }
+
     /** 한 프로젝트의 이슈 한 페이지. 참여자가 아니면 404 — 빈 목록으로 위장하지 않는다. */
     suspend fun listByProject(
         projectId: Long,
@@ -149,16 +163,49 @@ class IssueService(
         status: String?,
         severity: String?,
         beforeId: Long?,
-        size: Int
+        size: Int,
+        gameBuildId: Long? = null,
+        testRunId: Long? = null,
+        folderId: Long? = null,
+        unversioned: Boolean = false,
+        categoryId: Long? = null,
+        archived: Boolean = false,
+        query: String? = null
     ): IssuePageResponse {
         requireSize(size)
         requireStatus(status)
         requireSeverity(severity)
         if (!projectAccess.isMember(projectId, userId)) throw NotFoundException()
         return page(
-            issueRepository.findPageByProject(projectId, status, severity, beforeId, size + 1).toList(),
+            issueRepository.findPageByProject(
+                projectId, status, severity, gameBuildId, unversioned, testRunId, folderId, categoryId, archived,
+                query.orEmpty().trim().take(200), beforeId, size + 1
+            ).toList(),
             size
         )
+    }
+
+    /** 프로젝트 이슈를 빌드 · TR · 심각도로 센 것. 목록 옆 거르기 칸의 개수다. */
+    suspend fun facetsByProject(
+        projectId: Long,
+        userId: Long,
+        status: String?,
+        gameBuildId: Long? = null,
+        testRunId: Long? = null,
+    ): IssueFacetsResponse {
+        requireStatus(status)
+        if (!projectAccess.isMember(projectId, userId)) throw NotFoundException()
+        val facets = issueOriginRepository.facets(projectId, status, gameBuildId, testRunId)
+        return IssueFacetsResponse(facets.total, facets.archived, facets.builds, facets.testRuns, facets.severities)
+    }
+
+    /** 보관(숨김). 지우지 않고 목록 · 개수에서만 뺀다. 여러 번 불러도 같다. */
+    suspend fun archive(issueId: Long, userId: Long, archived: Boolean) {
+        requireAccessible(issueId, userId)
+        val now = Instant.now(clock)
+        val current = issueRepository.findById(issueId) ?: throw NotFoundException()
+        if ((current.archivedAt != null) == archived) return
+        issueRepository.setArchived(issueId, if (archived) now else null, now)
     }
 
     /**
@@ -256,14 +303,24 @@ class IssueService(
         val qaRunIds = qaTryRepository.findAllById(items.map { it.qaTryId }.distinct())
             .toList()
             .associate { requireNotNull(it.id) to it.qaRunId }
+        // 어느 빌드 · TR · 시나리오에서 나왔나. 목록 한 줄만 보고도 출처를 알 수 있게 같은 페이지 단위로 한 번 읽는다.
+        val origins = issueOriginRepository.originsOf(items.map { it.qaTryId })
+        val categories = issueCategoryRepository.tagsOf(IssueCategoryRepository.Target.ISSUE, items.mapNotNull { it.id })
         return IssuePageResponse(
-            items = items.map { it.toResponse(trackers[it.id], qaRunIds[it.qaTryId]) },
+            items = items.map {
+                it.toResponse(trackers[it.id], qaRunIds[it.qaTryId], origins[it.qaTryId], categories[it.id].orEmpty())
+            },
             nextBeforeId = if (hasMore) items.lastOrNull()?.id?.toString() else null,
             hasMore = hasMore
         )
     }
 
-    private fun IssueEntity.toResponse(tracker: IssueTrackerResponse? = null, qaRunId: Long? = null) = IssueResponse(
+    private fun IssueEntity.toResponse(
+        tracker: IssueTrackerResponse? = null,
+        qaRunId: Long? = null,
+        origin: IssueOrigin? = null,
+        categories: List<CategoryTag> = emptyList()
+    ) = IssueResponse(
         id = requireNotNull(id).toString(),
         qaTryId = qaTryId.toString(),
         severity = severity,
@@ -275,6 +332,10 @@ class IssueService(
         resolvedAt = resolvedAt,
         resolvedBy = resolvedBy?.toString(),
         tracker = tracker,
-        qaRunId = qaRunId?.toString()
+        qaRunId = qaRunId?.toString(),
+        origin = origin,
+        number = projectNo?.toString(),
+        archivedAt = archivedAt,
+        categories = categories
     )
 }
