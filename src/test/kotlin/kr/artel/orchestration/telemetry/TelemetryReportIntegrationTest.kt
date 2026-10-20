@@ -246,8 +246,14 @@ class TelemetryReportIntegrationTest {
         environmentOff.saveConsent(true, adminId)
         assertThat(environmentOff.isEnabled()).isTrue()
         assertThat(environmentOff.installId()).isNotNull()
-        // 켜는 순간 그제까지 보낸 것으로 당긴다. 다음 tick 은 어제 하나만 보낸다.
-        assertThat(environmentOff.lastSentDate()).isEqualTo(today().minusDays(2))
+        // 켜도 보낸 날짜를 쓰지 않는다. 날짜가 없으면 다음 tick 은 어제 하나만 보낸다.
+        assertThat(environmentOff.lastSentDate()).isNull()
+
+        // 꺼져 있던 동안의 날을 보내지 않도록, 다시 켤 때 그제보다 오래된 날짜는 지운다.
+        environmentOff.markSent(today().minusDays(10))
+        environmentOff.saveConsent(false, adminId)
+        environmentOff.saveConsent(true, adminId)
+        assertThat(environmentOff.lastSentDate()).isNull()
     }
 
     // ── 보내기 ───────────────────────────────────────────────────
@@ -344,7 +350,7 @@ class TelemetryReportIntegrationTest {
         assertThat(turnedOn["enabled"].asBoolean()).isTrue()
         assertThat(turnedOn["source"].asText()).isEqualTo("setting")
         val installId = turnedOn["installId"].asText()
-        assertThat(turnedOn["lastSentDate"].asText()).isEqualTo(today().minusDays(2).toString())
+        assertThat(turnedOn["lastSentDate"].isNull).isTrue()
 
         val preview = call(adminSession, HttpMethod.GET, "/api/admin/settings/telemetry/preview").second
         assertThat(preview["schemaVersion"].asInt()).isEqualTo(1)

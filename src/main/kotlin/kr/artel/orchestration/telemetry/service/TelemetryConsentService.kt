@@ -33,9 +33,10 @@ data class StoredTelemetryConsent(val enabled: Boolean)
  * **적용되는 consent.** `telemetry.consent` 행이 있으면 그 값이고, 없으면 `ARTEL_TELEMETRY` 다. 관리 화면에서
  * 한 번 고르면 행이 생기고, 그 뒤로는 환경 변수를 바꿔도 따르지 않는다.
  *
- * **consent 가 켜질 때 마지막 전송 날짜를 그제로 당긴다.** 다음 tick 에 어제 report 하나만 나간다. 관리 화면의
- * 미리보기가 보여 준 것이 바로 그 report 다. consent 가 꺼져 있던 동안의 날들은 보내지 않는다 — 날짜를 당기지
- * 않으면 scheduler 가 최대 7일 전까지 거슬러 그 날들을 보낸다.
+ * **consent 가 켜질 때 그제보다 오래된 마지막 전송 날짜를 지운다.** 날짜가 없으면 scheduler 는 그제까지 보낸 것으로
+ * 보고 어제 report 하나만 보낸다. 관리 화면의 미리보기가 보여 준 것이 바로 그 report 다. consent 가 꺼져 있던 동안의
+ * 날들은 보내지 않는다. 날짜를 그제로 써 두지 않고 지우는 것은, 관리 화면이 보내지 않은 날을 "마지막으로 보낸 날짜"로
+ * 보이지 않게 하기 위해서다.
  */
 @Service
 class TelemetryConsentService(
@@ -80,7 +81,7 @@ class TelemetryConsentService(
         upsertPlain(TELEMETRY_CONSENT_SETTING, objectMapper.writeValueAsString(StoredTelemetryConsent(enabled)), actorUserId)
         if (enabled) {
             ensureInstallId(actorUserId)
-            if (!wasEnabled) startSendingFromYesterday(actorUserId)
+            if (!wasEnabled) startSendingFromYesterday()
         }
         logger.info("Telemetry consent set to {} by app_user {}", if (enabled) "on" else "off", actorUserId)
     }
@@ -114,12 +115,10 @@ class TelemetryConsentService(
         upsertPlain(TELEMETRY_LAST_SENT_DATE_SETTING, reportDate.toString(), actorUserId = null)
     }
 
-    private suspend fun startSendingFromYesterday(actorUserId: Long) {
+    private suspend fun startSendingFromYesterday() {
         val dayBeforeYesterday = LocalDate.now(clock.withZone(ZoneOffset.UTC)).minusDays(2)
-        val lastSent = lastSentDate()
-        if (lastSent == null || lastSent.isBefore(dayBeforeYesterday)) {
-            upsertPlain(TELEMETRY_LAST_SENT_DATE_SETTING, dayBeforeYesterday.toString(), actorUserId)
-        }
+        val lastSent = lastSentDate() ?: return
+        if (lastSent.isBefore(dayBeforeYesterday)) platformSettingRepository.deleteById(TELEMETRY_LAST_SENT_DATE_SETTING)
     }
 
     private suspend fun storedConsent(): StoredTelemetryConsent? {
