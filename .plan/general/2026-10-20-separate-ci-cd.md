@@ -2,7 +2,7 @@
 
 - Date: 2026-10-20
 - Jira: ARTEL-1165
-- Status: Revised after fast and medium review
+- Status: Implemented and validated; human review and rollout pending
 
 ## Goal
 
@@ -21,7 +21,7 @@ registry/agent 신규 인프라, 전체 테스트 suite 수리, 증분 compiler 
 
 ## Approach (Checklist)
 - [x] **Step 0: Recon** 기존 Jenkins/PR/배포 설정과 Docker host 확인.
-- [ ] **Step 1: Implementation**
+- [x] **Step 1: Implementation**
   - Jenkinsfile을 CI 전용으로 변경. skipDefaultCheckout, abortPrevious, timestamps.
   - checkout한 실제 SHA, migration 검사 후 확인한 PR base SHA 및 환경 버전으로 CI_INPUT_KEY를 기록. 직전 성공 RunWrapper.buildVariables와 같으면 compile/context 단계만 생략. Flyway 검사는 현재 peer branch 상태가 달라질 수 있어 매번 실행. FORCE_REVALIDATE=false parameter로 수동 재검증 가능. develop은 이미지/CD가 필요하므로 성공 재사용은 PR만 적용.
   - PR base가 변경되면 재검증. 같은 job의 동시 실행은 최신 것으로 취소. 완료된 동일 revision만 재사용하며 완전한 webhook admission 서비스를 구현했다고 주장하지 않음.
@@ -31,7 +31,7 @@ registry/agent 신규 인프라, 전체 테스트 suite 수리, 증분 compiler 
   - CD는 하나의 serial job, abortPrevious 없음. 큐에서 기다린 오래된 upstream은 최신 성공 branch build와 비교해 생략. 같은 host label로 image 접근. credential은 CD 내부에서만 사용.
   - deploy script는 image ID 입력을 검증. 이전 container를 stop+rename하여 설정을 보존. 새 container start/health 실패 또는 TERM에 기존 container 복구. endpoint는 컨테이너 내부 localhost:8080/api/auth/providers, 180초 내 HTTP 200 연속 3회·3초 간격·RestartCount=0. 이전 container 복구도 동일 검증(복구 시작 restart count를 baseline으로 사용). 첫 배포 실패/복구 실패는 실패로 종료. DB schema rollback은 보장하지 않음.
   - job 설치용 Groovy는 대상 job만 생성/변경, 기본 disabled. 명시적 활성화 필요. CI migration 후 기존 in-flight legacy 배포가 없는지 확인하는 rollout 문서.
-- [ ] **Step 2: Tests** Python Docker stub으로 성공/실패/rollback/first deploy/invalid input/TERM 경계 검증. Groovy helper/격리 Jenkins 검증으로 reuse hit/miss/base 변경/force/UNSTABLE 차단/upstream 위조/stale skip 확인. Jenkins Declarative lint. 격리 validation job에서 context test 실행. pair review.
+- [x] **Step 2: Tests** Python Docker stub으로 성공/실패/rollback/first deploy/invalid input/TERM 경계 검증. Groovy helper/격리 Jenkins 검증으로 reuse hit/miss/base 변경/force/UNSTABLE 차단/upstream 위조/stale skip 확인. Jenkins Declarative lint. 격리 validation job에서 context test 실행. pair review.
 - [ ] **Step 3: Rollout / Rollback** draft PR과 disabled CD job 준비. 인간 리뷰 후 merge/기존 CI drain/CD enable 순서. 코드 revert와 job disable로 rollback.
 
 ## Validation
@@ -45,3 +45,14 @@ registry/agent 신규 인프라, 전체 테스트 suite 수리, 증분 compiler 
 ## Open Questions
 - 사용자 요청 범위의 구현·격리 검증은 완료하되, 저장소가 요구하는 인간 draft 리뷰/ready/merge 이후 실서비스 활성화한다. PDF에는 구현/격리 검증/실서비스 미적용을 구분한다.
 - 동시 도착의 완전한 webhook admission은 도입하지 않음. abortPrevious와 성공 PR 재사용을 제공하며 이 한계를 명시한다.
+
+## Validation results
+
+- Fast/medium findings incorporated; heavy review PASS before implementation.
+- Pair review PASS after correcting the absolute downstream job path and operation approval boundary.
+- Deployment shell boundary tests: 13 passed, including failed run/health/update, TERM, rename/stop failure and rollback failure.
+- Groovy policy: 16 assertions passed. CI/CD Declarative validators both passed.
+- Actual ARTEL-1165 feature CI #2: SUCCESS; duration 184257 ms; JUnit 1 test, 0 failures, 0 skips. This is a different sample from the incident baseline and not a controlled speedup measurement.
+- Isolated downstream dispatch #2: direct upstream mismatch rejected before deployment; upstream test SUCCESS. Verification jobs disabled after completion.
+- Exact reviewed trusted CD script approved after explicit user permission. Production CD job remains disabled; no stage/operation deployment performed by this change.
+- First CI found Python absent in the Jenkins image. Removed that unnecessary runtime dependency; Python boundary tests remain local verification.

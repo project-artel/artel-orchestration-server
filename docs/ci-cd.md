@@ -15,7 +15,7 @@ ARTEL-1165는 기존 multibranch job을 CI 전용으로 바꾸고 `artel-orchest
 
 ## CD 신뢰 경계
 
-`ci/Jenkinsfile.cd`는 administrator가 설치하는 trusted inline pipeline이다. PR에서 load하거나 upstream script를 실행하지 않는다. installer는 policy와 deploy script를 검토 시점의 내용으로 embed하며 기본 disabled 상태로 만든다. 코드 변경 후에는 재설치가 필요하다.
+`ci/Jenkinsfile.cd`는 administrator가 설치하는 trusted inline pipeline이다. PR에서 load하거나 upstream script를 실행하지 않는다. installer는 policy와 deploy script를 검토 시점의 내용으로 embed하며 기본 disabled 상태로 만든다. 코드 변경 후에는 재설치가 필요하다. Jenkins Script Approval에 정확한 reviewed script hash의 실행 승인도 필요하며, 전역 sandbox 해제는 하지 않는다.
 
 CD는 정확한 allowlist의 job, 직접 `UpstreamCause`, build 번호와 SUCCESS를 확인한다. CI가 post 단계에서 요청하므로 CI 종료를 node 없이 최대 5분 기다린다. manifest는 그 build의 artifact storage에서 읽으며, 전달받은 임의 image parameter는 사용하지 않는다. image label도 교차 확인한다. 같은 host의 Docker socket에 대한 권한 자체가 강력하므로 이것이 악성 PR을 격리하는 보안 sandbox라고 주장하지 않는다.
 
@@ -50,3 +50,9 @@ python3 -m unittest discover -s scripts/tests -v
 실제 적용 전후 PR 대기/실행 시간, 중복 취소/재사용 비율, CD health 실패/복구 결과를 각각 측정한다. 현재 문서에는 성능 개선률을 약속하지 않는다.
 
 배포 경계의 Python 테스트는 개발/검증 환경에서 실행한다. 현재 Jenkins image에는 Python이 없으므로 Java CI에 Python 의존성을 추가하지 않는다.
+
+## ARTEL-1165 검증 기록
+
+2026-10-20에 deployment boundary 13개와 policy assertion 16개가 통과했고, CI/CD Declarative validator가 모두 성공했다. 실제 feature CI #2는 SUCCESS이며 context JUnit 1개가 실행돼 failure 0, skip 0이었다. 184257 ms는 해당 실행의 시간일 뿐, 진단 때 PR #344와 입력·환경이 같지 않아 성능 절감률로 비교하지 않는다.
+
+격리 dispatch 검증은 절대 root job 호출에 성공했으며, 위조된 upstream은 `A matching direct upstream CI cause is required`로 거절했다. CD job은 disabled로 준비했고 실제 stage/operation 배포·rollback 실험은 아직 하지 않았다. Docker stub 테스트는 이 실서비스 검증을 대체하지 않는다.
