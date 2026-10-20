@@ -117,7 +117,7 @@ class McpAccessTokenIntegrationTest {
     @Autowired private lateinit var gameBuilds: GameBuildRepository
 
     @Test
-    fun `macro read token 이 프로젝트 목록·build 목록·문법·developer macro 조회를 연다`() {
+    fun `macro read token 이 프로젝트 목록·build 목록·cheat 목록·문법·developer macro 조회를 연다`() {
         val world = newWorld()
         val token = mint(world.userId, scope = "macro:read")
 
@@ -126,6 +126,9 @@ class McpAccessTokenIntegrationTest {
         assertThat(projectList.body["total"].asLong()).describedAs("sub 가 @CurrentUserId 로 풀린다").isEqualTo(1)
 
         assertThat(call(token, HttpMethod.GET, "${world.base}/game-builds").status).isEqualTo(200)
+        val functions = call(token, HttpMethod.GET, "${world.base}/game-builds/${world.buildId}/game-functions")
+        assertThat(functions.status).isEqualTo(200)
+        assertThat(functions.body["revision"].asInt()).describedAs("목록을 보낸 적 없는 빌드").isEqualTo(0)
         assertThat(call(token, HttpMethod.GET, "/api/macros/grammar").status).isEqualTo(200)
         assertThat(call(token, HttpMethod.GET, "${world.base}/developer-macros").status).isEqualTo(200)
         assertThat(call(token, HttpMethod.GET, "${world.base}/developer-macros/open_shop").status)
@@ -151,6 +154,16 @@ class McpAccessTokenIntegrationTest {
         assertThat(stored.status).isEqualTo(200)
         assertThat(stored.body["updatedBy"]["id"].asText()).isEqualTo(world.userId.toString())
         assertThat(call(writer, HttpMethod.DELETE, "${world.base}/developer-macros/open_shop").status).isEqualTo(204)
+    }
+
+    @Test
+    fun `cheat 목록은 macro read 가 없으면 403 insufficient_scope 다`() {
+        val world = newWorld()
+        val writeOnly = mint(world.userId, scope = "macro:write")
+
+        val refused = call(writeOnly, HttpMethod.GET, "${world.base}/game-builds/${world.buildId}/game-functions")
+        assertThat(refused.status).isEqualTo(403)
+        assertThat(refused.body["code"].asText()).isEqualTo("insufficient_scope")
     }
 
     @Test

@@ -27,15 +27,19 @@ private class McpRoute(val method: HttpMethod, pattern: String, val scope: McpSc
 /**
  * MCP access JWT 가 열 수 있는 경로 전부(계약 §2). 이 밖은 403 이다.
  *
- * `macro:read` 는 MCP 의 `list_projects`·`list_builds`·`macro_grammar`·`list_macros`·`get_macro` 가 부르는 것,
- * `macro:write` 는 `check_macro`·`publish_macro`·`delete_macro` 가 부르는 것이다. 검사는 아무것도 쓰지 않지만
- * `macro:write` 에 둔다 — 계약이 그렇게 정했고, 검사만 하는 클라이언트는 없다.
+ * `macro:read` 는 MCP 의 `list_projects`·`list_builds`·`macro_grammar`·`list_macros`·`get_macro`·`list_cheats` 가
+ * 부르는 것, `macro:write` 는 `publish_macros`·`delete_macro` 가 부르는 것이다. 검사(`:check`)는 아무것도 쓰지 않지만
+ * `macro:write` 에 둔다 — 계약이 그렇게 정했다.
+ *
+ * `game-functions` 는 빌드가 보낸 cheat·behavior 목록이다(ARTEL-1147). 개발자 에이전트가 게임 코드에 쓴 cheat 가
+ * 빌드에 들어갔는지 확인하는 데 쓴다. 읽기만 하므로 `macro:read` 다.
  *
  * 프로젝트 경로의 멤버 검사는 여기서 하지 않는다. 각 서비스가 `ProjectAccessService` 로 이미 한다.
  */
 private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.GET, "/api/projects", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds", McpScope.MACRO_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds/{buildId}/game-functions", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/macros/grammar", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/developer-macros", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/developer-macros/{name}", McpScope.MACRO_READ),
