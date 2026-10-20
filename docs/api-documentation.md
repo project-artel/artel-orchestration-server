@@ -143,7 +143,7 @@ An access JWT opens only these routes, by the scopes in its `scope` claim (space
 
 | Scope | Routes |
 |---|---|
-| `macro:read` | `GET /api/projects`, `GET /api/projects/{projectId}/game-builds`, `GET /api/macros/grammar`, `GET /api/projects/{projectId}/developer-macros`, `GET /api/projects/{projectId}/developer-macros/{name}` |
+| `macro:read` | `GET /api/projects`, `GET /api/projects/{projectId}/game-builds`, `GET /api/projects/{projectId}/game-builds/{buildId}/game-functions`, `GET /api/macros/grammar`, `GET /api/projects/{projectId}/developer-macros`, `GET /api/projects/{projectId}/developer-macros/{name}` |
 | `macro:write` | `POST /api/projects/{projectId}/developer-macros:check`, `PUT /api/projects/{projectId}/developer-macros/{name}`, `DELETE /api/projects/{projectId}/developer-macros/{name}` |
 
 Any other route is 403 `mcp_route_forbidden`, whatever the scope. A listed route without its scope is 403 `insufficient_scope`.
