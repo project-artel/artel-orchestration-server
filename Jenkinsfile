@@ -106,6 +106,25 @@ pipeline {
             }
         }
 
+        // Build 는 `-DskipTests` 라 컴파일만 본다. 컴파일은 되고 Spring context 가 뜨지 않는 결함은
+        // 배포된 컨테이너가 기동에서 죽을 때 처음 드러난다. 두 PR 이 같은 경로를 각자 등록해 develop 에서
+        // `Ambiguous mapping` 이 난 것이 그 예다(ARTEL-1153). 각 PR 은 혼자서는 멀쩡했다.
+        //
+        // 전체 suite 가 아니라 context 를 띄우는 테스트 하나만 실행한다. Deploy Pipeline 앞에 두어 뜨지
+        // 않는 develop 은 배포되지 않게 한다.
+        //
+        // `surefire:test` 를 goal 로 직접 부른다. `-DskipTests` 도 테스트 소스는 컴파일하므로, Build 가
+        // 남긴 `target/test-classes` 를 다시 컴파일하지 않고 그대로 실행한다. 테스트 DB 는 Testcontainers
+        // 가 띄우므로 에이전트의 docker 를 쓴다.
+        stage('Context Startup Check') {
+            environment {
+                MAVEN_OPTS = '-Xmx2g'
+            }
+            steps {
+                sh './mvnw surefire:test -Dtest=ApplicationContextStartupTest'
+            }
+        }
+
         // 배포 대상 브랜치에서만 실행한다. PR job의 BRANCH_NAME은 'PR-<번호>'라
         // 아래 branch 조건에 걸리지 않고, 피처 브랜치도 마찬가지다. 이 가드가
         // 없으면 두 경우 모두 resolveTargetEnv에서 error가 나 빌드가 실패한다.
