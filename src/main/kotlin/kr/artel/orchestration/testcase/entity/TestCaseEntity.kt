@@ -146,6 +146,15 @@ data class TestCaseEntity(
     @Column("last_verified_build_id")
     val lastVerifiedBuildId: Long? = null,
 
+    /**
+     * 이 케이스를 돌릴 때 agent 에게 허용할 cheat · behavior(ARTEL-1053).
+     * `{"cheats": "all"|"none"|[이름...], "behaviors": 같은 모양}`. run 이 연 목록을 좁히기만 한다.
+     *
+     * NULL 과 빠진 키는 `all` 이다. 명세 적재는 이 칸을 쓰지 않으므로 재전송이 사람이 정한 범위를 지우지 않는다.
+     */
+    @Column("functions")
+    val functions: Json? = null,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,

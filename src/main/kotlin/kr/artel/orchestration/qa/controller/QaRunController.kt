@@ -12,6 +12,7 @@ import kr.artel.orchestration.qa.dto.QaRunResponse
 import kr.artel.orchestration.qa.service.QaRunChangeKind
 import kr.artel.orchestration.qa.service.QaRunChangeService
 import kr.artel.orchestration.qa.service.QaTryService
+import kr.artel.orchestration.qa.service.toFunctionOptions
 import kr.artel.orchestration.qa.service.toRunGates
 import kr.artel.orchestration.qa.service.toRunLabel
 import kr.artel.orchestration.qa.service.toRunSettings
@@ -40,7 +41,9 @@ class QaRunController(
 ) {
     /**
      * 요청의 `model` 이 카탈로그에 없으면 400 `llm_model_unknown`, 꺼져 있으면 400 `llm_model_disabled` 다.
-     * `keySource` 에 맞는 key 가 없으면 400 `llm_key_missing` 이다.
+     * `keySource` 에 맞는 key 가 없으면 400 `llm_key_missing` 이다. `cheatMode` · `behaviorMode` 가 `on` 과 `off` 가 아니거나
+     * `allowedCheats` · `allowedBehaviors` 에 빈 이름이 있으면, 또 빌드가 목록을 보낸 적 있는데 거기 없는 이름이 있으면
+     * 400 이다.
      */
     @PostMapping
     suspend fun createQaRun(
@@ -58,7 +61,8 @@ class QaRunController(
                 request.force,
                 request.toRunGates(),
                 request.toRunLabel(),
-                runKey
+                runKey,
+                request.toFunctionOptions()
             )
         )
     }

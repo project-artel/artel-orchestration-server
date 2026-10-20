@@ -5,6 +5,8 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.JsonNodeFactory
+import com.fasterxml.jackson.databind.node.ObjectNode
 import kr.artel.orchestration.testscenario.dto.AgentScenario
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.reactor.awaitSingle
@@ -56,6 +58,9 @@ internal data class QaSessionOpenContext(
     @JsonProperty("game_build_id") val gameBuildId: String? = null,
     @JsonProperty("qa_run_id") val qaRunId: String? = null,
     val scenarios: List<QaSessionOpenScenario>? = null,
+    // 이 런에 열어 준 cheat · behavior 항목(ARTEL-1053). 비면 필드가 나가지 않는다.
+    val cheats: List<JsonNode>? = null,
+    val behaviors: List<JsonNode>? = null,
     @JsonProperty("qa_try_id") val qaTryId: String? = null,
     @JsonProperty("test_scenario_id") val testScenarioId: String? = null,
     val scenario: JsonNode? = null
@@ -68,6 +73,47 @@ internal data class QaSessionOpenResponse(
     // which is why the try is still allowed to start — see QaTryPersistenceService.
     @JsonProperty("run_config") val runConfig: JsonNode? = null
 )
+
+/**
+ * 세션 개설 본문을 만든다.
+ *
+ * cheat · behavior 는 **고른 목록이 비어 있지 않을 때만** 싣는다(계약 4절). `arch.cheats = "on"` 은 `context.cheats` 가 있을 때만,
+ * `arch.behaviors = "on"` 은 `context.behaviors` 가 있을 때만 나가고, 요청이 이미 가진 `arch` 객체에 합쳐진다. 키가 없으면
+ * agent-server 는 기본값 `off` 로 읽는다. 목록이 비었는데 요청의 `arch` 가 `cheats` 를 들고 있으면 그 값은 건드리지 않는다.
+ */
+internal fun QaAgentSessionContext.toOpenRequest(): QaSessionOpenRequest {
+    val sentCheats = cheats?.takeIf { it.isNotEmpty() }
+    val sentBehaviors = behaviors?.takeIf { it.isNotEmpty() }
+    val archNode = if (sentCheats == null && sentBehaviors == null) {
+        arch
+    } else {
+        ((arch as? ObjectNode)?.deepCopy() ?: JsonNodeFactory.instance.objectNode()).apply {
+            if (sentCheats != null) put("cheats", "on")
+            if (sentBehaviors != null) put("behaviors", "on")
+        }
+    }
+    return QaSessionOpenRequest(
+        model = model,
+        reasoning = reasoning,
+        language = language,
+        promptVersion = promptVersion,
+        arch = archNode,
+        llmKey = llmKey,
+        gameNotes = gameNotes,
+        context = QaSessionOpenContext(
+            gameInstanceId = gameInstanceId,
+            projectId = projectId,
+            gameBuildId = gameBuildId,
+            qaRunId = qaRunId,
+            scenarios = scenarios?.map { QaSessionOpenScenario(it.qaTryId, it.testScenarioId, it.scenario) },
+            cheats = sentCheats,
+            behaviors = sentBehaviors,
+            qaTryId = qaTryId,
+            testScenarioId = testScenarioId,
+            scenario = scenario
+        )
+    )
+}
 
 /**
  * The QA Agent transport stays on Reactor internally: the WebSocket client, its
@@ -91,27 +137,7 @@ class WebSocketQaAgentAdapter(
         onMessage: suspend (QaAgentEnvelope) -> Unit,
         onDisconnect: suspend () -> Unit
     ): QaAgentSession {
-        val request = QaSessionOpenRequest(
-            model = context.model,
-            reasoning = context.reasoning,
-            language = context.language,
-            promptVersion = context.promptVersion,
-            arch = context.arch,
-            llmKey = context.llmKey,
-            gameNotes = context.gameNotes,
-            context = QaSessionOpenContext(
-                gameInstanceId = context.gameInstanceId,
-                projectId = context.projectId,
-                gameBuildId = context.gameBuildId,
-                qaRunId = context.qaRunId,
-                scenarios = context.scenarios?.map {
-                    QaSessionOpenScenario(it.qaTryId, it.testScenarioId, it.scenario)
-                },
-                qaTryId = context.qaTryId,
-                testScenarioId = context.testScenarioId,
-                scenario = context.scenario
-            )
-        )
+        val request = context.toOpenRequest()
         try {
             val response = webClient.post()
                 .uri("$baseUrl/qa-sessions")
