@@ -46,8 +46,8 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 /**
- * 빌드 요약 `GET /api/projects/{id}/game-builds/summary` 와 프로젝트 run 목록 `GET /api/projects/{id}/qa-runs`
- * (ARTEL-1104).
+ * 빌드 요약 `GET /api/projects/{id}/game-builds/summary` 와 빌드별 run 목록
+ * `GET /api/projects/{id}/game-builds/{buildId}/qa-runs`(ARTEL-1104, ARTEL-1155).
  *
  * 인스턴스 0 · 1 · 2 개인 빌드 셋과 editor 행을 한 프로젝트에 세우고, 인스턴스 수, 연결 수, 목록 개수, run 수와
  * 가장 최근 run 의 step 합을 한 응답에서 읽는다.
@@ -219,19 +219,20 @@ class GameBuildSummaryIntegrationTest {
         val withoutBuild = seedRun(testRunId, instance, null, "CANCELLED", now.minusSeconds(400))
         seedTry(third, passed = 1, total = 3)
 
-        val all = get("/api/projects/$projectId/qa-runs")["items"].toList()
-        assertThat(all.map { it["id"].asText() })
-            .containsExactly(third.toString(), second.toString(), first.toString(), withoutBuild.toString())
-        assertThat(all[0]["gameBuildId"].asText()).isEqualTo(buildB.toString())
-        assertThat(all[0]["tries"]).hasSize(1)
-        assertThat(all[3]["gameBuildId"].isNull).isTrue()
-        println(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(all[0]))
-
-        val onlyB = get("/api/projects/$projectId/qa-runs?gameBuildId=$buildB")["items"].toList()
+        val onlyB = get("/api/projects/$projectId/game-builds/$buildB/qa-runs")["items"].toList()
         assertThat(onlyB.map { it["id"].asText() }).containsExactly(third.toString(), second.toString())
+        assertThat(onlyB[0]["gameBuildId"].asText()).isEqualTo(buildB.toString())
+        assertThat(onlyB[0]["tries"]).hasSize(1)
+        val onlyA = get("/api/projects/$projectId/game-builds/$buildA/qa-runs")["items"].toList()
+        assertThat(onlyA.map { it["id"].asText() }).containsExactly(first.toString())
+        println(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(onlyB[0]))
 
-        val limited = get("/api/projects/$projectId/qa-runs?size=1")["items"].toList()
+        val limited = get("/api/projects/$projectId/game-builds/$buildB/qa-runs?size=1")["items"].toList()
         assertThat(limited.map { it["id"].asText() }).containsExactly(third.toString())
+
+        // 프로젝트 경로는 QA 실행 목록(ProjectQaLaunchController)만 답한다. `gameBuildId` 를 붙여도 거르지 않고, 빌드 없이 돈 run 도 있다.
+        val launch = get("/api/projects/$projectId/qa-runs?gameBuildId=$buildB")["items"].toList()
+        assertThat(launch.map { it["id"].asText() }).contains(withoutBuild.toString(), first.toString())
 
         assertThat(get("/api/qa-runs/$third")["gameBuildId"].asText()).isEqualTo(buildB.toString())
     }
@@ -239,19 +240,19 @@ class GameBuildSummaryIntegrationTest {
     @Test
     fun `rejects a size outside 1 to 100 and a malformed build id`(): Unit = runBlocking {
         listOf("0", "101", "-1").forEach {
-            assertThat(errorOf { get("/api/projects/$projectId/qa-runs?size=$it") }.statusCode)
+            assertThat(errorOf { get("/api/projects/$projectId/game-builds/1/qa-runs?size=$it") }.statusCode)
                 .isEqualTo(HttpStatus.BAD_REQUEST)
         }
-        assertThat(errorOf { get("/api/projects/$projectId/qa-runs?gameBuildId=abc") }.statusCode)
+        assertThat(errorOf { get("/api/projects/$projectId/game-builds/abc/qa-runs") }.statusCode)
             .isEqualTo(HttpStatus.BAD_REQUEST)
-        assertThat(get("/api/projects/$projectId/qa-runs?size=100")["items"]).isEmpty()
+        assertThat(get("/api/projects/$projectId/game-builds/1/qa-runs?size=100")["items"]).isEmpty()
     }
 
     @Test
     fun `hides the run list from a stranger`(): Unit = runBlocking {
         val stranger = jwtService.issue(oauthUserService.upsert(identity("77", "stranger")))
 
-        assertThat(errorOf { get("/api/projects/$projectId/qa-runs", stranger) }.statusCode)
+        assertThat(errorOf { get("/api/projects/$projectId/game-builds/1/qa-runs", stranger) }.statusCode)
             .isEqualTo(HttpStatus.NOT_FOUND)
     }
 
