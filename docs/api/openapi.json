@@ -17,32 +17,12 @@
       "description": "GitHub App 설치 복귀"
     },
     {
-      "name": "Scene Context (internal)",
-      "description": "QA agent 가 런 시작에 받는 씬별 capability·앵커 지식"
-    },
-    {
-      "name": "SDK QA capture",
-      "description": "QA 화면 캡처 업로드 서명"
-    },
-    {
       "name": "SDK project",
       "description": "SDK가 등록 대상으로 고를 프로젝트 목록"
     },
     {
-      "name": "Issue tracker",
-      "description": "GitHub App 설치 흐름"
-    },
-    {
-      "name": "Project",
-      "description": "프로젝트 생성·조회·수정·삭제"
-    },
-    {
       "name": "MCP",
       "description": "artel-macro-mcp 로그인 넘겨주기"
-    },
-    {
-      "name": "Macro",
-      "description": "빌드에 등록된 macro 를 읽는다"
     },
     {
       "name": "Invitation",
@@ -53,10 +33,6 @@
       "description": "빌드에 앉은 씬 명세를 읽는다"
     },
     {
-      "name": "QA Run",
-      "description": "프로젝트의 QA run 목록"
-    },
-    {
       "name": "Issue tracker",
       "description": "프로젝트와 외부 이슈 트래커의 연결"
     },
@@ -65,16 +41,56 @@
       "description": "Agent action delivery to connected game instances"
     },
     {
+      "name": "SDK Content Map",
+      "description": "SDK 가 보고하는 근거 문서 수용"
+    },
+    {
+      "name": "Project Member",
+      "description": "프로젝트 멤버 조회·내보내기"
+    },
+    {
+      "name": "SDK token",
+      "description": "로그인한 사용자의 SDK 토큰 발급"
+    },
+    {
+      "name": "SDK Registration",
+      "description": "SDK 인스턴스 등록 및 게임 버전 보고"
+    },
+    {
+      "name": "Scene Context (internal)",
+      "description": "QA agent 가 런 시작에 받는 씬별 capability·앵커 지식"
+    },
+    {
+      "name": "SDK QA capture",
+      "description": "QA 화면 캡처 업로드 서명"
+    },
+    {
+      "name": "Issue tracker",
+      "description": "GitHub App 설치 흐름"
+    },
+    {
+      "name": "Project",
+      "description": "프로젝트 생성·조회·수정·삭제"
+    },
+    {
+      "name": "Macro",
+      "description": "빌드에 등록된 macro 를 읽는다"
+    },
+    {
+      "name": "Project Events",
+      "description": "프로젝트 데이터 변경 알림"
+    },
+    {
+      "name": "QA Run",
+      "description": "프로젝트의 QA run 목록"
+    },
+    {
       "name": "Developer Macro",
       "description": "게임 개발자가 MCP 로 검사하고 등록하는 macro"
     },
     {
       "name": "SDK auth",
       "description": "SDK 브라우저 로그인"
-    },
-    {
-      "name": "SDK Content Map",
-      "description": "SDK 가 보고하는 근거 문서 수용"
     },
     {
       "name": "Game Instance",
@@ -89,24 +105,12 @@
       "description": "SDK가 보고한 게임 버전 조회·수정"
     },
     {
-      "name": "Project Member",
-      "description": "프로젝트 멤버 조회·내보내기"
-    },
-    {
-      "name": "SDK token",
-      "description": "로그인한 사용자의 SDK 토큰 발급"
-    },
-    {
       "name": "Game notes",
       "description": "planner 에게 주는 프로젝트별 게임 노트와 genre module"
     },
     {
       "name": "Project Invitation",
       "description": "프로젝트 초대 발송·조회·취소"
-    },
-    {
-      "name": "SDK Registration",
-      "description": "SDK 인스턴스 등록 및 게임 버전 보고"
     }
   ],
   "paths": {
@@ -2259,6 +2263,54 @@
         }
       }
     },
+    "/api/admin/settings/telemetry": {
+      "get": {
+        "tags": [
+          "admin-telemetry-settings-controller"
+        ],
+        "operationId": "telemetryStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin-telemetry-settings-controller"
+        ],
+        "operationId": "updateTelemetry",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTelemetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/settings/models": {
       "get": {
         "tags": [
@@ -2447,6 +2499,19 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/telemetry/reports": {
+      "post": {
+        "tags": [
+          "telemetry-receiver-controller"
+        ],
+        "operationId": "receive",
+        "responses": {
+          "204": {
+            "description": "No Content"
           }
         }
       }
@@ -4948,7 +5013,7 @@
         ],
         "summary": "보낸 초대 목록",
         "description": "소유자만 볼 수 있다. 아직 답을 기다리는 초대만 나온다.",
-        "operationId": "list_10",
+        "operationId": "list_9",
         "parameters": [
           {
             "name": "projectId",
@@ -5355,6 +5420,304 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/DeveloperMacroCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/agent/conversations": {
+      "get": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "list_15",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentConversationList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "create_5",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectAgentConversationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentConversationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}/tool-results": {
+      "post": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "submitToolResult",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectAgentToolResultRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}/messages": {
+      "get": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "messages",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentMessageList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "sendMessage_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendProjectAgentMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}/events": {
+      "post": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "sendEvent",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectAgentEventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}/cancel": {
+      "post": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "cancel_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentConversationResponse"
                 }
               }
             }
@@ -5854,7 +6217,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "list_16",
+        "operationId": "list_17",
         "responses": {
           "200": {
             "description": "OK",
@@ -5875,7 +6238,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "create_5",
+        "operationId": "create_6",
         "requestBody": {
           "content": {
             "application/json": {
@@ -6530,6 +6893,125 @@
         }
       }
     },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}": {
+      "get": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "get_4",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentConversationResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "delete_6",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "rename_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameProjectAgentConversationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentConversationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/users/{targetUserId}": {
       "patch": {
         "tags": [
@@ -6576,7 +7058,7 @@
         "tags": [
           "admin-llm-model-controller"
         ],
-        "operationId": "list_17",
+        "operationId": "list_18",
         "responses": {
           "200": {
             "description": "OK",
@@ -7535,6 +8017,46 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/since-last-qa": {
+      "get": {
+        "tags": [
+          "project-qa-launch-controller"
+        ],
+        "operationId": "sinceLastQa",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/SinceLastQaResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-runs/{runId}/deletion-preview": {
       "get": {
         "tags": [
@@ -8022,16 +8544,13 @@
     "/api/projects/{projectId}/qa-runs": {
       "get": {
         "tags": [
-          "QA Run"
+          "project-qa-launch-controller"
         ],
-        "summary": "프로젝트의 QA run 목록",
-        "description": "새 것이 앞에 온다. `gameBuildId` 를 주면 그 빌드로 돈 run 만 온다. `size` 는 1 이상 100 이하이고 벗어나면 400 이다. 프로젝트가 없거나 참여자가 아니면 404 다.",
-        "operationId": "list_7",
+        "operationId": "listQaRuns",
         "parameters": [
           {
             "name": "projectId",
             "in": "path",
-            "description": "프로젝트 id",
             "required": true,
             "schema": {
               "type": "integer",
@@ -8039,22 +8558,22 @@
             }
           },
           {
-            "name": "gameBuildId",
-            "in": "query",
-            "description": "이 게임 빌드로 돈 run 만",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "size",
+            "name": "limit",
             "in": "query",
             "required": false,
             "schema": {
               "type": "integer",
               "format": "int32",
               "default": 20
+            }
+          },
+          {
+            "name": "testRunId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
             }
           }
         ],
@@ -8064,7 +8583,7 @@
             "content": {
               "*/*": {
                 "schema": {
-                  "$ref": "#/components/schemas/QaRunListResponse"
+                  "$ref": "#/components/schemas/QaRunSummaryListResponse"
                 }
               }
             }
@@ -8079,7 +8598,7 @@
         ],
         "summary": "멤버 목록",
         "description": "참여자면 누구나 볼 수 있다. 소유자가 먼저, 그 안에서는 참여한 순서다. 참여자가 아니면 404.",
-        "operationId": "list_8",
+        "operationId": "list_7",
         "parameters": [
           {
             "name": "projectId",
@@ -8195,7 +8714,7 @@
         "tags": [
           "project-issue-controller"
         ],
-        "operationId": "list_9",
+        "operationId": "list_8",
         "parameters": [
           {
             "name": "projectId",
@@ -8629,7 +9148,7 @@
         ],
         "summary": "게임 인스턴스 목록",
         "description": "최근에 만든 것이 앞에 온다.",
-        "operationId": "list_11",
+        "operationId": "list_10",
         "parameters": [
           {
             "name": "projectId",
@@ -8663,7 +9182,7 @@
         ],
         "summary": "게임 빌드 목록",
         "description": "최근에 보고된 것이 앞에 온다.",
-        "operationId": "list_12",
+        "operationId": "list_11",
         "parameters": [
           {
             "name": "projectId",
@@ -8683,6 +9202,60 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/GameBuildListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/qa-runs": {
+      "get": {
+        "tags": [
+          "QA Run"
+        ],
+        "summary": "빌드 하나로 돈 프로젝트의 QA run 목록",
+        "description": "새 것이 앞에 온다. `size` 는 1 이상 100 이하이고 벗어나면 400 이다. 프로젝트가 없거나 참여자가 아니면 404 다.",
+        "operationId": "list_12",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "description": "게임 빌드 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunListResponse"
                 }
               }
             }
@@ -8997,6 +9570,43 @@
         }
       }
     },
+    "/api/projects/{projectId}/events": {
+      "get": {
+        "tags": [
+          "Project Events"
+        ],
+        "summary": "프로젝트 변경 스트림",
+        "description": "프로젝트의 게임 인스턴스, 빌드, macro, issue, knowledge, test case, 사용량이 바뀌면 `changed` 프레임에 topic 만 실어 보낸다. 구독 직후 `ready` 프레임을 한 번 보내며, client 는 이때 모든 목록을 다시 읽는다. 접근할 수 없는 프로젝트는 stream 이 열리지 않고 404 로 끝난다.",
+        "operationId": "events_2",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerSentEventProjectChangeEvent"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/documents/{documentId}/download-url": {
       "get": {
         "tags": [
@@ -9048,7 +9658,7 @@
         ],
         "summary": "문서 추출 상태 스트림",
         "description": "프로젝트 문서 전부의 parse_status 변화를 SSE로 흘린다. 구독 직후 snapshot 프레임을 한 번 보내고, 그 뒤로는 parse_status가 바뀔 때마다 document 프레임을 보낸다. 접근할 수 없는 프로젝트는 stream이 열리지 않고 404로 끝난다.",
-        "operationId": "events_2",
+        "operationId": "events_3",
         "parameters": [
           {
             "name": "projectId",
@@ -9105,6 +9715,49 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/DeveloperMacroListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}/stream": {
+      "get": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "stream",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerSentEventObject"
+                  }
                 }
               }
             }
@@ -9340,7 +9993,7 @@
         ],
         "summary": "받은 초대 목록",
         "description": "로그인한 계정으로 온 초대와 그 계정의 확인된 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없어도 계정으로 온 초대는 나온다.",
-        "operationId": "list_15",
+        "operationId": "list_16",
         "responses": {
           "200": {
             "description": "OK",
@@ -9421,6 +10074,26 @@
         }
       }
     },
+    "/api/admin/settings/telemetry/preview": {
+      "get": {
+        "tags": [
+          "admin-telemetry-settings-controller"
+        ],
+        "operationId": "previewTelemetryReport",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryReport"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/.well-known/artel-handoff-jwks.json": {
       "get": {
         "tags": [
@@ -9442,6 +10115,29 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/telemetry/reports/{installId}": {
+      "delete": {
+        "tags": [
+          "telemetry-receiver-controller"
+        ],
+        "operationId": "forget",
+        "parameters": [
+          {
+            "name": "installId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
           }
         }
       }
@@ -10036,6 +10732,7 @@
           "absorbed_scenario_ids",
           "description",
           "draft_id",
+          "execution_mode",
           "steps",
           "title"
         ],
@@ -10059,6 +10756,13 @@
             "items": {
               "$ref": "#/components/schemas/ChatScenarioStep"
             }
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
           },
           "absorbed_scenario_ids": {
             "type": "array",
@@ -11048,6 +11752,46 @@
           }
         }
       },
+      "UpdateTelemetryRequest": {
+        "required": [
+          "enabled"
+        ],
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "deleteSentData": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TelemetryStatus": {
+        "required": [
+          "available",
+          "enabled",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string"
+          },
+          "installId": {
+            "type": "string"
+          },
+          "lastSentDate": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
       "UpdateFeatureModelsRequest": {
         "type": "object",
         "properties": {
@@ -11399,7 +12143,8 @@
               "SCENARIO",
               "KNOWLEDGE_QUERY",
               "GAME_CONTEXT",
-              "EMBEDDING"
+              "EMBEDDING",
+              "PROJECT_AGENT"
             ]
           },
           "referenceId": {
@@ -13263,6 +14008,140 @@
           }
         }
       },
+      "CreateProjectAgentConversationRequest": {
+        "type": "object",
+        "properties": {
+          "pageCatalog": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        }
+      },
+      "ProjectAgentConversationResponse": {
+        "required": [
+          "createdAt",
+          "id",
+          "lastMessageAt",
+          "projectId",
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "projectId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastMessageAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProjectAgentToolResultRequest": {
+        "required": [
+          "callId",
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "callId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "error": {
+            "type": "string"
+          },
+          "page": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        }
+      },
+      "ProjectAgentMessageResponse": {
+        "required": [
+          "content",
+          "conversationId",
+          "createdAt",
+          "id",
+          "role"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "conversationId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "role": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SendProjectAgentMessageRequest": {
+        "required": [
+          "text"
+        ],
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "pageCatalog": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "page": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        }
+      },
+      "ProjectAgentEventRequest": {
+        "required": [
+          "kind",
+          "summary"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        }
+      },
       "CreateMcpHandoffRequest": {
         "required": [
           "requestId"
@@ -13928,6 +14807,17 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "RenameProjectAgentConversationRequest": {
+        "required": [
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
           }
         }
       },
@@ -16104,6 +16994,163 @@
           }
         }
       },
+      "QaRunSummaryResponse": {
+        "required": [
+          "gameInstanceId",
+          "id",
+          "issueCount",
+          "startedAt",
+          "status",
+          "testRunId"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "testRunId": {
+            "type": "string"
+          },
+          "testRunName": {
+            "type": "string"
+          },
+          "gameInstanceId": {
+            "type": "string"
+          },
+          "gameInstanceName": {
+            "type": "string"
+          },
+          "gameBuildVersion": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "casesPassed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "casesTotal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "SinceLastQaChange": {
+        "required": [
+          "at",
+          "count",
+          "kind"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "subjectId": {
+            "type": "string"
+          },
+          "subjectName": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "SinceLastQaIssue": {
+        "required": [
+          "id",
+          "qaTryId",
+          "reportedAt",
+          "scenarioId",
+          "scenarioTitle",
+          "status",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "scenarioId": {
+            "type": "string"
+          },
+          "scenarioTitle": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reportedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SinceLastQaResponse": {
+        "required": [
+          "changes",
+          "issues"
+        ],
+        "type": "object",
+        "properties": {
+          "lastQaRun": {
+            "$ref": "#/components/schemas/QaRunSummaryResponse"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SinceLastQaIssue"
+            }
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SinceLastQaChange"
+            }
+          }
+        }
+      },
       "RunDeletionPreview": {
         "required": [
           "keptForQaHistoryCount",
@@ -16805,7 +17852,7 @@
           }
         }
       },
-      "QaRunListResponse": {
+      "QaRunSummaryListResponse": {
         "required": [
           "items"
         ],
@@ -16814,7 +17861,7 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/QaRunResponse"
+              "$ref": "#/components/schemas/QaRunSummaryResponse"
             }
           }
         }
@@ -17355,6 +18402,20 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GameBuildResponse"
+            }
+          }
+        }
+      },
+      "QaRunListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaRunResponse"
             }
           }
         }
@@ -18488,6 +19549,9 @@
           }
         }
       },
+      "ServerSentEventProjectChangeEvent": {
+        "type": "object"
+      },
       "DownloadTicketResponse": {
         "required": [
           "downloadUrl",
@@ -18564,6 +19628,37 @@
           },
           "updatedBy": {
             "$ref": "#/components/schemas/DeveloperMacroAuthor"
+          }
+        }
+      },
+      "ProjectAgentConversationList": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectAgentConversationResponse"
+            }
+          }
+        }
+      },
+      "ServerSentEventObject": {
+        "type": "object"
+      },
+      "ProjectAgentMessageList": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectAgentMessageResponse"
+            }
           }
         }
       },
@@ -18965,6 +20060,224 @@
           "revokedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ErrorSummary": {
+        "required": [
+          "count",
+          "frames",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "exceptionType": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "LlmUsageSummary": {
+        "required": [
+          "cacheWriteTokens",
+          "cachedInputTokens",
+          "calls",
+          "inputTokens",
+          "keySource",
+          "latencyMsSum",
+          "model",
+          "outputTokens",
+          "provider",
+          "reasoningTokens",
+          "service"
+        ],
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "inputTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outputTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cachedInputTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reasoningTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cacheWriteTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "costUsdSum": {
+            "type": "number"
+          },
+          "latencyMsSum": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "QaStructureUsage": {
+        "required": [
+          "durationSecondsMax",
+          "durationSecondsSum",
+          "toolCalls",
+          "tries",
+          "triesByStatus"
+        ],
+        "type": "object",
+        "properties": {
+          "agentArch": {
+            "type": "string"
+          },
+          "agentFingerprint": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "type": "string"
+          },
+          "tries": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "triesByStatus": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "stepsTotal": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stepsPassed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "casesTotal": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "casesPassed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "durationSecondsSum": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "durationSecondsMax": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "toolCalls": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        }
+      },
+      "TelemetryInstall": {
+        "required": [
+          "agentServerVersions",
+          "reportDate"
+        ],
+        "type": "object",
+        "properties": {
+          "installId": {
+            "type": "string"
+          },
+          "orchestrationVersion": {
+            "type": "string"
+          },
+          "agentServerVersions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reportDate": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "TelemetryReport": {
+        "required": [
+          "errors",
+          "install",
+          "llmUsage",
+          "qaStructures",
+          "schemaVersion"
+        ],
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "install": {
+            "$ref": "#/components/schemas/TelemetryInstall"
+          },
+          "qaStructures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaStructureUsage"
+            }
+          },
+          "llmUsage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LlmUsageSummary"
+            }
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErrorSummary"
+            }
           }
         }
       },
