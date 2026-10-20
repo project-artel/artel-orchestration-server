@@ -295,6 +295,10 @@ artel:
       # 사용자 인가로 확인한 installation 목록을 Redis 에 두는 시간. 이 안에 하나를 골라야 한다.
       installation-choice-ttl: ${ARTEL_GITHUB_INSTALLATION_CHOICE_TTL:PT10M}
   storage:
+    # s3 | filesystem. filesystem 은 MinIO 없이 도는 데스크톱 번들용이고, 객체를 dir 아래에 두며
+    # 이 서버의 /api/storage/objects/ 가 서명한 URL 로 올리고 내려준다. 그때 dir 은 필수다.
+    backend: ${ARTEL_STORAGE:s3}
+    dir: ${ARTEL_STORAGE_DIR:}
     # 기획서 원본을 담을 S3.
     bucket: ${ARTEL_S3_BUCKET:artel-local}
     region: ${ARTEL_S3_REGION:ap-northeast-2}

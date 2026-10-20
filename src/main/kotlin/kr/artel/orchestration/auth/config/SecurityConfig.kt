@@ -18,9 +18,11 @@ import kr.artel.orchestration.auth.service.OAuthSignupClosedException
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.RefreshTokenService
 import kr.artel.orchestration.auth.web.AccountStateWebFilter
+import kr.artel.orchestration.project.storage.FilesystemDocumentStorage
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -108,6 +110,26 @@ class SecurityConfig {
         .exceptionHandling {
             it.authenticationEntryPoint(jsonAuthenticationEntryPoint())
         }
+        .build()
+
+    /**
+     * 파일시스템 저장소의 서명 URL 전용 체인(`ARTEL_STORAGE=filesystem` 일 때만 있다).
+     *
+     * 이 경로의 자격증명은 URL 의 서명이고 `StorageObjectController` 가 직접 확인한다. SDK, CLI, agent-server 는
+     * 세션 없이 이 URL 을 부른다. 기본 체인에 permitAll 로만 두면 만료된 세션 쿠키를 실은 브라우저 요청이 resource
+     * server 단계에서 401 이 되므로, 쿠키와 bearer 를 아예 읽지 않는 체인으로 가른다. 범위는 이 접두사 하나다.
+     */
+    @Bean
+    @Order(2)
+    @ConditionalOnProperty(prefix = "artel.storage", name = ["backend"], havingValue = "filesystem")
+    fun storageObjectSecurityWebFilterChain(http: ServerHttpSecurity): SecurityWebFilterChain = http
+        .securityMatcher(PathPatternParserServerWebExchangeMatcher("${FilesystemDocumentStorage.OBJECTS_PATH}/**"))
+        .csrf { it.disable() }
+        .cors { }
+        .httpBasic { it.disable() }
+        .formLogin { it.disable() }
+        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+        .authorizeExchange { it.anyExchange().permitAll() }
         .build()
 
     /**
