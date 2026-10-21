@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.contentmap.entity.ScreenEntity
 import kr.artel.orchestration.contentmap.repository.ScreenRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.project.storage.UrlAudience
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
@@ -27,7 +28,7 @@ class ScreenRefs(
     /** [screenId] 의 화면 참조. id 가 null 이거나 그 행이 없으면 null 이다. */
     suspend fun of(screenId: Long?): ScreenSelectorScreenRef? {
         val screen = screenId?.let { screens.findById(it) } ?: return null
-        val signed = screen.imageObjectKey?.let { storage.presignDownload(it, "screen-${screen.id}.jpg") }
+        val signed = screen.imageObjectKey?.let { storage.presignDownload(it, "screen-${screen.id}.jpg", audience = UrlAudience.SERVER) }
         return ScreenSelectorScreenRef(
             screenId = screen.id.toString(),
             name = screen.name,

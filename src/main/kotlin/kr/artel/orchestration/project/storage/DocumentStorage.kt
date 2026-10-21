@@ -19,11 +19,15 @@ interface DocumentStorage {
      * [ttl]은 기본 유효 기간을 덮어쓴다. 사람이 즉시 클릭하는 링크와, 진행 중인 QA 런이
      * 끝날 때까지 살아 있어야 하는 캡처 링크는 필요한 수명이 다르다. 기본값을 캡처에 맞춰
      * 늘리면 기획서 다운로드 URL도 같이 길어지므로 호출 시점에 정한다.
+     *
+     * [audience] 는 그 URL 을 누가 연다는 뜻이다. 브라우저·SDK·CLI 는 [UrlAudience.PUBLIC],
+     * agent-server 에 넘기는 URL 은 [UrlAudience.SERVER] 다. 서명은 두 경우 모두 유효하고 주소만 다르다.
      */
     fun presignDownload(
         objectKey: String,
         fileName: String,
-        ttl: Duration? = null
+        ttl: Duration? = null,
+        audience: UrlAudience = UrlAudience.PUBLIC
     ): PresignedDownload
 
     /**
@@ -62,6 +66,21 @@ interface DocumentStorage {
     fun sha256(objectKey: String): Mono<String>
 
     fun delete(objectKey: String): Mono<Void>
+}
+
+/**
+ * presigned URL 을 여는 쪽. 같은 객체라도 여는 쪽에 따라 닿는 주소가 다르다.
+ */
+enum class UrlAudience {
+    /** 브라우저, SDK, CLI. 공개 주소로 닿는다. */
+    PUBLIC,
+
+    /**
+     * agent-server 처럼 이 서버와 같은 기계나 compose 네트워크에 있는 쪽. 내부 주소가 설정돼 있으면 그 주소로 닿고,
+     * 없으면 [PUBLIC] 과 같다. 공개 주소로 되돌아오면 router 가 hairpin NAT 을 막거나, compose 안에서
+     * `localhost` 가 컨테이너 자신을 가리켜 닿지 못한다.
+     */
+    SERVER
 }
 
 data class PresignedUpload(

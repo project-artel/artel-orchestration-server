@@ -2,6 +2,7 @@ package kr.artel.orchestration.project
 
 import kr.artel.orchestration.project.config.StorageProperties
 import kr.artel.orchestration.project.storage.S3DocumentStorage
+import kr.artel.orchestration.project.storage.UrlAudience
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
@@ -25,6 +26,35 @@ class S3DocumentStorageTest {
         accessKey = accessKey,
         secretKey = secretKey
     )
+
+    @Test
+    fun `SERVER 용 다운로드 URL 은 endpoint 로, PUBLIC 용은 presign endpoint 로 서명한다`() {
+        val storage = S3DocumentStorage(
+            properties(endpoint = "http://minio:9000", presignEndpoint = "http://localhost:9000"),
+            Clock.systemUTC()
+        )
+
+        val server = storage.presignDownload("projects/1/a.pdf", "a.pdf", audience = UrlAudience.SERVER)
+        val public = storage.presignDownload("projects/1/a.pdf", "a.pdf")
+
+        assertThat(server.url).startsWith("http://minio:9000/artel-test/projects/1/a.pdf?")
+        assertThat(server.url).contains("X-Amz-Signature")
+        assertThat(public.url).startsWith("http://localhost:9000/artel-test/projects/1/a.pdf?")
+        // Host 가 서명에 들어가므로 두 URL 의 서명은 달라야 한다. 문자열만 바꾼 URL 이 아니라는 증거다.
+        assertThat(signatureOf(server.url)).isNotEqualTo(signatureOf(public.url))
+    }
+
+    @Test
+    fun `endpoint 가 없으면 SERVER 용 URL 도 기존 주소로 서명한다`() {
+        val storage = S3DocumentStorage(properties(), Clock.systemUTC())
+
+        val server = storage.presignDownload("projects/1/a.pdf", "a.pdf", audience = UrlAudience.SERVER)
+
+        assertThat(server.url).startsWith("https://artel-test.s3.ap-northeast-2.amazonaws.com/projects/1/a.pdf?")
+    }
+
+    private fun signatureOf(url: String): String =
+        Regex("X-Amz-Signature=([0-9a-f]+)").find(url)!!.groupValues[1]
 
     /**
      * 설정에 담긴 키만으로 서명이 되어야 한다.
