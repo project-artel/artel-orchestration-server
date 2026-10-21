@@ -75,8 +75,14 @@ class ScanResponseContractTest {
         assertThat(json.fieldNames().asSequence().toList()).containsExactly(
             "state", "gameInstanceId", "gameInstanceName", "requestedAt",
             "finishedAt", "ingestedDocuments", "error", "testCases",
+            "phase", "progress", "updatedAt",
         )
         assertThat(json["state"].asText()).isEqualTo("FAILED")
+        // 단계도 서수가 아니라 이름이다. 진행을 안 보내는 옛 SDK 면 SCANNING 에 머물고 progress 는 null 이다(ARTEL-1178).
+        assertThat(json["phase"].asText()).isEqualTo("SCANNING")
+        assertThat(json["progress"].isNull).isTrue()
+        // 아무것도 안 움직였으면 마지막으로 움직인 때는 요청한 때다.
+        assertThat(json["updatedAt"].asText()).isEqualTo(json["requestedAt"].asText())
         // 그냥 스캔이면 TC 쪽 결과가 없다. 칸은 빠지지 않고 null 로 나간다(ARTEL-1040).
         assertThat(json["testCases"].isNull).isTrue()
         assertThat(json["ingestedDocuments"].asInt()).isZero()
