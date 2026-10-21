@@ -18,6 +18,7 @@ import kr.artel.orchestration.scenecontext.dto.SceneContextMacroParameter
 import kr.artel.orchestration.scenecontext.dto.SceneContextMacroScreen
 import kr.artel.orchestration.scenecontext.dto.SceneContextResponse
 import kr.artel.orchestration.scenecontext.service.SceneContextService
+import kr.artel.orchestration.support.deleteQaRuns
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterEach
@@ -86,7 +87,8 @@ class SceneContextIntegrationTest {
      */
     @AfterEach
     fun cleanQaRows(): Unit = runBlocking {
-        db.sql("DELETE FROM qa_try").then().block()
+        // 남의 클래스가 남긴 qa_run 이 아래 삭제를 FK 로 막지 않게 먼저 비운다(ARTEL-1163).
+        db.deleteQaRuns()
         db.sql("DELETE FROM game_instance").then().block()
         db.sql("DELETE FROM test_scenario").then().block()
         db.sql("DELETE FROM app_user WHERE display_name = 'agent'").then().block()

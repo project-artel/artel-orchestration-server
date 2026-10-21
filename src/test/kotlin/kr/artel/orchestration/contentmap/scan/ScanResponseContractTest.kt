@@ -74,9 +74,11 @@ class ScanResponseContractTest {
 
         assertThat(json.fieldNames().asSequence().toList()).containsExactly(
             "state", "gameInstanceId", "gameInstanceName", "requestedAt",
-            "finishedAt", "ingestedDocuments", "error",
+            "finishedAt", "ingestedDocuments", "error", "testCases",
         )
         assertThat(json["state"].asText()).isEqualTo("FAILED")
+        // 그냥 스캔이면 TC 쪽 결과가 없다. 칸은 빠지지 않고 null 로 나간다(ARTEL-1040).
+        assertThat(json["testCases"].isNull).isTrue()
         assertThat(json["ingestedDocuments"].asInt()).isZero()
         assertThat(json["error"].asText()).isEqualTo("릴리스 빌드에서는 스캔할 수 없습니다.")
         // gameBuildId 는 싣지 않는다 — 이 응답은 이미 그 빌드의 조회 결과 안에 있다.
