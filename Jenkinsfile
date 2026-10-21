@@ -31,6 +31,12 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+                script {
+                    env.GIT_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    if (!(env.GIT_COMMIT ==~ /[a-f0-9]{40}/)) {
+                        error 'Checkout commit SHA is invalid'
+                    }
+                }
             }
         }
 
