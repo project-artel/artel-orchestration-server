@@ -1,5 +1,6 @@
 package kr.artel.orchestration.auth
 
+import org.springframework.r2dbc.core.DatabaseClient
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
@@ -8,6 +9,7 @@ import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
+import kr.artel.orchestration.support.deleteQaRuns
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -32,10 +34,13 @@ class AuthProfileIntegrationTest {
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
+    @Autowired private lateinit var db: DatabaseClient
 
     /** 리액티브 트랜잭션은 구독 컨텍스트에 묶여 있어 @Transactional 테스트 롤백이 동작하지 않는다. */
     @BeforeEach
     fun clean(): Unit = runBlocking {
+        // 남의 클래스가 남긴 qa_run 이 아래 삭제를 FK 로 막지 않게 먼저 비운다(ARTEL-1163).
+        db.deleteQaRuns()
         identityRepository.deleteAll()
         appUserRepository.deleteAll()
     }

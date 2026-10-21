@@ -11,6 +11,8 @@ import kr.artel.orchestration.game.entity.GamePlatform
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.sdk.service.SessionManager
 import org.springframework.stereotype.Service
@@ -36,7 +38,8 @@ class GameInstanceService(
     private val projectRepository: ProjectRepository,
     private val buildRepository: GameBuildRepository,
     private val sessionManager: SessionManager,
-    private val clock: Clock
+    private val clock: Clock,
+    private val projectChangeStreamManager: ProjectChangeStreamManager
 ) {
     suspend fun list(userId: Long, projectId: Long): GameInstanceListResponse? {
         requireAccessibleProject(projectId, userId) ?: return null
@@ -55,12 +58,15 @@ class GameInstanceService(
         request: UpdateGameInstanceRequest
     ): GameInstanceResponse? {
         val instance = instanceRepository.findAccessibleById(instanceId, projectId, userId) ?: return null
-        return instanceRepository.save(
+        val saved = instanceRepository.save(
             instance.copy(
                 name = request.name?.trim()?.ifBlank { null } ?: instance.name,
                 updatedAt = Instant.now(clock)
             )
-        ).let { it.toResponse(it.lastGameBuildId?.let { id -> buildRepository.findById(id) }) }
+        )
+        // 트랜잭션 없이 save 한 건이 곧 commit 이므로 바로 알린다.
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
+        return saved.toResponse(saved.lastGameBuildId?.let { id -> buildRepository.findById(id) })
     }
 
     /**
@@ -75,6 +81,7 @@ class GameInstanceService(
         val instance = instanceRepository.findAccessibleById(instanceId, projectId, userId) ?: return false
         val now = Instant.now(clock)
         instanceRepository.save(instance.copy(deletedAt = now, updatedAt = now))
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
         return true
     }
 

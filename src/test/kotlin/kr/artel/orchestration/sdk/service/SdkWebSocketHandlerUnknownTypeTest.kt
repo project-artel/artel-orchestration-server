@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import kr.artel.orchestration.auth.service.AccountStateService
 import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.contentmap.scan.ScanResultRouter
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.qa.service.QaRunStatusNotifier
 import kr.artel.orchestration.sdk.config.SdkSocketProperties
@@ -58,6 +60,8 @@ class SdkWebSocketHandlerUnknownTypeTest {
         mock(SessionUserResolver::class.java),
         mock(AccountStateService::class.java),
         SdkSocketProperties(),
+        ProjectChangeStreamManager(),
+        mock(ScanResultRouter::class.java),
         listOf(knownHandler)
     )
 
@@ -123,6 +127,8 @@ class SdkWebSocketHandlerUnknownTypeTest {
             mock(SessionUserResolver::class.java),
             mock(AccountStateService::class.java),
             SdkSocketProperties(),
+            ProjectChangeStreamManager(),
+            mock(ScanResultRouter::class.java),
             listOf(knownHandler, exploding)
         )
         val session = mock(WebSocketSession::class.java)
@@ -151,6 +157,8 @@ class SdkWebSocketHandlerUnknownTypeTest {
             mock(SessionUserResolver::class.java),
             mock(AccountStateService::class.java),
             SdkSocketProperties(),
+            ProjectChangeStreamManager(),
+            mock(ScanResultRouter::class.java),
             listOf(knownHandler)
         )
         val session = mock(WebSocketSession::class.java)

@@ -14,6 +14,8 @@ import kr.artel.orchestration.knowledge.repository.KnowledgeGraphTraversalReposi
 import kr.artel.orchestration.knowledge.repository.KnowledgeNeighbourRow
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeSimilarRow
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -54,7 +56,8 @@ class KnowledgeGraphService(
     private val knowledgeRepository: KnowledgeRepository,
     private val edgeRepository: KnowledgeEdgeRepository,
     private val traversalRepository: KnowledgeGraphTraversalRepository,
-    private val clock: Clock
+    private val clock: Clock,
+    private val projectChangeStreamManager: ProjectChangeStreamManager
 ) {
     private val logger = LoggerFactory.getLogger(KnowledgeGraphService::class.java)
 
@@ -129,6 +132,8 @@ class KnowledgeGraphService(
                 createdByQaTryId = qaTryId
             )
         )
+        // 단일 save 라 이미 commit 됐다. 화면은 PRODUCTION scope 만 읽는다.
+        if (scope.isProduction) projectChangeStreamManager.notify(projectId, ProjectChangeTopic.KNOWLEDGE)
         logger.info(
             "knowledge 링크: edge={}, {} {} {}, project={}, scope={}, qaTry={}",
             saved.id, storedFrom, relation.name, storedTo, projectId, scope, qaTryId
@@ -206,6 +211,8 @@ class KnowledgeGraphService(
         }
 
         edgeRepository.save(edge.copy(deletedAt = deletedAt, deletedByQaTryId = qaTryId))
+        // 단일 save 라 이미 commit 됐다. 툼스톤 갈래는 실험 scope 전용이라 위에서 이미 반환했다.
+        if (scope.isProduction) projectChangeStreamManager.notify(projectId, ProjectChangeTopic.KNOWLEDGE)
         // 지우는 주체가 Agent라 삭제는 반드시 눈에 보여야 한다(knowledge 소프트삭제와 같은 이유).
         logger.info(
             "knowledge 링크 해제: edge={}, {} {} {}, project={}, scope={}, qaTry={}",

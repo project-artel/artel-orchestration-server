@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.project.config.StorageProperties
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.project.storage.UrlAudience
 import kr.artel.orchestration.qa.dto.QaCaptureTicketRequest
 import kr.artel.orchestration.qa.dto.QaCaptureTicketResponse
 import kr.artel.orchestration.qa.repository.QaTryRepository
@@ -58,7 +59,8 @@ class QaCaptureService(
         val download = storage.presignDownload(
             objectKey,
             fileName,
-            properties.captureDownloadUrlTtl
+            properties.captureDownloadUrlTtl,
+            UrlAudience.SERVER
         )
 
         appendEvidence(qaTryId, captureId, objectKey, download.url, request)

@@ -3,7 +3,10 @@ package kr.artel.orchestration.sdk.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.auth.service.AccountStateService
 import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.contentmap.scan.ScanResultRouter
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.qa.service.QaRunStatusNotifier
 import kr.artel.orchestration.sdk.config.SdkSocketProperties
@@ -52,6 +55,8 @@ class SdkWebSocketHandler(
     private val sessionUserResolver: SessionUserResolver,
     private val accountStateService: AccountStateService,
     private val socketProperties: SdkSocketProperties,
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
+    private val scanResults: ScanResultRouter,
     handlers: List<SdkMessageHandler>
 ) : WebSocketHandler {
 
@@ -111,7 +116,7 @@ class SdkWebSocketHandler(
 
         // open()이 반환하는 전송/수신 파이프라인은 소켓이 닫힐 때까지 살아 있어야 한다.
         // 여기서 await하지 않으면 handle의 Mono가 즉시 완료되어 Spring이 세션을 닫는다.
-        open(session, requireNotNull(entity.id).toString(), inbound).awaitFirstOrNull()
+        open(session, requireNotNull(entity.id).toString(), entity.projectId, inbound).awaitFirstOrNull()
     }.then()
 
     /**
@@ -120,7 +125,7 @@ class SdkWebSocketHandler(
      * 앞 연결을 밀어내지 않는 이유는, 진행 중인 QA 세션이 우연한 두 번째 실행 때문에 소켓을
      * 빼앗기는 쪽이 더 나쁘기 때문이다. 거절당한 쪽은 닫힘 코드로 이유를 알 수 있다.
      */
-    private fun open(session: WebSocketSession, instanceId: String, inbound: Flux<WebSocketMessage>): Mono<Void> {
+    private fun open(session: WebSocketSession, instanceId: String, projectId: Long, inbound: Flux<WebSocketMessage>): Mono<Void> {
         val outbound = sessionManager.register(instanceId, session)
 
         if (outbound == null) {
@@ -129,6 +134,8 @@ class SdkWebSocketHandler(
         }
 
         logger.info("웹소켓 연결 성공 - instanceId: $instanceId")
+        // connected 는 읽을 때 SessionManager 로 계산하므로 등록 직후에 알린다.
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
 
         // 이 인스턴스에 활성 QA try 가 있으면 지금 상태를 다시 보낸다(ARTEL-836) — 끊겼다 붙은
         // 창이 옛 문구를 들고 있지 않게 한다. suspend 라 mono{}로 감싸 fire-and-forget으로 흘린다
@@ -164,6 +171,13 @@ class SdkWebSocketHandler(
                 // 자기 세션일 때만 지운다. 늦게 끊긴 좀비 연결이 살아 있는 연결의 자리를
                 // 비우면, SDK는 연결된 채로 액션을 받지 못한다.
                 sessionManager.removeSession(instanceId, session)
+                projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
+                // 이 게임이 돌던 근거 스캔은 결과가 오지 않는다. 실패로 닫아 화면이 영영 기다리지 않게 한다(ARTEL-1178).
+                // 같은 인스턴스가 이미 다시 붙었으면(위 removeSession 이 남의 자리를 안 지움) 그 스캔은 살아 있을 수 있다.
+                if (!sessionManager.hasSession(instanceId)) {
+                    runCatching { scanResults.gameDisconnected(instanceId.toLong()) }
+                        .onFailure { error -> logger.error("스캔 연결 종료 처리 실패 [instanceId=$instanceId]", error) }
+                }
                 // sdkDisconnected는 이제 suspend라 doFinally(동기 Reactor 콜백)에서
                 // mono { } 로 감싸 fire-and-forget으로 흘린다.
                 mono { qaExecutionFailureService.sdkDisconnected(instanceId.toLong()) }

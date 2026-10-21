@@ -17,9 +17,13 @@ import java.time.Duration
  * 허용 형식(application/pdf)은 설정이 아니라 상수다. 배포마다 다르게 두면 이후 파서가 읽지
  * 못하는 형식을 특정 환경만 받아들이는 상태가 생긴다.
  *
+ * @property backend 객체를 어디에 두는지. 기본은 S3 다. `filesystem` 은 MinIO 없이 도는 데스크톱 번들용이다
+ * @property dir `backend=filesystem` 일 때 객체를 두는 디렉터리. 그 모드에서 비어 있으면 기동을 멈춘다
  * @property bucket 원본을 담을 버킷. 비어 있으면 기동을 멈춘다
  * @property endpoint 로컬 MinIO 등으로 돌릴 때만 지정한다
  * @property presignEndpoint 브라우저에 내주는 presigned URL 의 주소. 비우면 [endpoint] 를 쓴다
+ * @property internalBaseUrl `backend=filesystem` 에서 agent-server 에 내주는 URL 의 앞부분. 비우면 공개 주소(`ARTEL_HOME_URL`)를 쓴다.
+ *   S3 모드의 같은 역할은 [endpoint] 가 맡는다
  * @property accessKey 선택. [secretKey]와 함께 있어야 한다
  * @property secretKey 선택. [accessKey]와 함께 있어야 한다
  * @property uploadUrlTtl 업로드 URL 유효 기간
@@ -33,9 +37,12 @@ import java.time.Duration
 @ConfigurationProperties(prefix = "artel.storage")
 class StorageProperties(
     val bucket: String,
+    val backend: StorageBackend = StorageBackend.S3,
+    dir: String? = null,
     val region: String = "ap-northeast-2",
     endpoint: String? = null,
     presignEndpoint: String? = null,
+    internalBaseUrl: String? = null,
     accessKey: String? = null,
     secretKey: String? = null,
     val uploadUrlTtl: Duration = Duration.ofMinutes(10),
@@ -62,6 +69,8 @@ class StorageProperties(
      */
     val presignEndpoint: String? = presignEndpoint?.trim()?.ifBlank { null } ?: this.endpoint
     val accessKey: String? = accessKey?.trim()?.ifBlank { null }
+    val dir: String? = dir?.trim()?.ifBlank { null }
+    val internalBaseUrl: String? = internalBaseUrl?.trim()?.ifBlank { null }
     val secretKey: String? = secretKey?.trim()?.ifBlank { null }
 
     /** 둘 다 있어야 쓴다. 하나만 있으면 설정 실수이므로 조용히 기본 체인으로 넘어가지 않는다. */
@@ -73,6 +82,10 @@ class StorageProperties(
         }
 
     init {
+        // 디렉터리 없이 filesystem 으로 뜨면 첫 업로드에서야 실패한다. 그 전에 멈춘다.
+        require(backend != StorageBackend.FILESYSTEM || this.dir != null) {
+            "ARTEL_STORAGE_DIR (artel.storage.dir) is required when ARTEL_STORAGE=filesystem"
+        }
         require(bucket.isNotBlank()) { "artel.storage.bucket must not be blank" }
         require((this.accessKey == null) == (this.secretKey == null)) {
             "artel.storage.access-key and secret-key must be set together, or both left empty"
@@ -98,4 +111,17 @@ class StorageProperties(
         /** Agent의 `RUN_DEADLINE_SECONDS`. 그 값이 바뀌면 여기도 같이 올린다. */
         val MIN_CAPTURE_DOWNLOAD_URL_TTL: Duration = Duration.ofSeconds(600)
     }
+}
+
+/**
+ * 객체 저장소 구현. `ARTEL_STORAGE` 로 고른다.
+ *
+ * [StorageConfig] 의 `@ConditionalOnProperty` 가 같은 키를 문자열로 읽는다. 값이나 기본값을 바꾸면 그쪽도 같이 바꾼다.
+ */
+enum class StorageBackend {
+    /** S3 또는 MinIO. presigned URL 은 저장소가 직접 받는다. */
+    S3,
+
+    /** 로컬 디렉터리. 서명한 URL 을 이 서버의 `/api/storage/objects/` 가 받는다. */
+    FILESYSTEM
 }

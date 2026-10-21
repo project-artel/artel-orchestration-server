@@ -7,6 +7,8 @@ import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.ContentMapTestCaseGenerationResponse
 import kr.artel.orchestration.testcase.dto.TestCaseGenerationCandidate
@@ -41,6 +43,7 @@ class ContentMapTestCaseService(
     private val versions: TestCaseVersionRepository,
     private val projectAccessService: ProjectAccessService,
     private val transactionalOperator: TransactionalOperator,
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
 ) {
 
     private val logger = LoggerFactory.getLogger(ContentMapTestCaseService::class.java)
@@ -171,8 +174,8 @@ class ContentMapTestCaseService(
         build: GameBuildEntity,
         carryOver: Boolean = true,
         firstTimeOnly: Boolean = false,
-    ): Pair<MapTestCaseWriter.Result, Int> =
-        transactionalOperator.executeAndAwait {
+    ): Pair<MapTestCaseWriter.Result, Int> {
+        val written = transactionalOperator.executeAndAwait {
             folderService.lockProjectFolders(projectId)
             val gameBuildId = requireNotNull(build.id)
             // lock 을 잡은 뒤에 본다. 같은 build 를 둘이 동시에 만들면 뒤의 것이 여기서 막힌다.
@@ -180,6 +183,10 @@ class ContentMapTestCaseService(
             val result = writer.rewrite(projectId, gameBuildId, contentMapId)
             result to if (carryOver) manualCases.carryOver(projectId, gameBuildId) else 0
         }
+        // rewrite 는 build 하나에서 여러 행을 쓰므로 행마다 알리지 않고 commit 뒤에 한 번만 알린다.
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES)
+        return written
+    }
 
     companion object {
         const val EDITOR_BUILD_HAS_NO_TEST_CASES = "EDITOR_BUILD_HAS_NO_TEST_CASES"

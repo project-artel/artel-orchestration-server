@@ -10,6 +10,8 @@ import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.issue.entity.IssueEntity
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.repository.IssueRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.tracker.client.IssueTrackerClientRegistry
 import kr.artel.orchestration.tracker.client.TrackerTarget
@@ -52,7 +54,8 @@ class IssueTrackerSyncService(
     private val bodyWriter: TrackerIssueBodyWriter,
     private val properties: TrackerProperties,
     private val scope: CoroutineScope,
-    private val clock: Clock
+    private val clock: Clock,
+    private val projectChanges: ProjectChangeStreamManager
 ) {
     private val logger = LoggerFactory.getLogger(IssueTrackerSyncService::class.java)
 
@@ -205,6 +208,8 @@ class IssueTrackerSyncService(
             issueLinkRepository.markFailed(linkId, summarize(error), Instant.now(clock))
             logger.warn("이슈 {}를 {}로 내보내지 못했습니다", issueId, context.provider, error)
         }
+        // 이슈 목록의 tracker 칸(SYNCED 또는 FAILED)이 바뀌었다. 트랜잭션 없이 쓴 문장이라 여기가 commit 뒤다.
+        projectChanges.notify(context.projectId, ProjectChangeTopic.ISSUES)
     }
 
     /**
