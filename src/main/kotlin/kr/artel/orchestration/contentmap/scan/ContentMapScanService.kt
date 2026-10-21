@@ -14,6 +14,7 @@ import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
 
@@ -67,6 +68,8 @@ class ContentMapScanService(
      *
      * [testCaseRequest] 가 있으면 스캔 문서가 다 읽힌 뒤 TC 도 만든다([ScanResultRouter], ARTEL-1040). editor 이거나 이미
      * TC 를 만든 build 면 스캔을 보내기 전에 409 다.
+     *
+     * 같은 빌드에 스캔이 이미 돌고 있어도 409(`scan_in_progress`) 다(ARTEL-1178).
      */
     suspend fun startScan(
         userId: Long,
@@ -89,37 +92,61 @@ class ContentMapScanService(
 
         val instanceId = instance.id!!
         val requestId = REQUEST_IDS.incrementAndGet()
-
-        // 이 id 로 짝을 맞추지 않는다 — 결과 라우팅은 액션 이름으로 한다(ScanResultRouter). 그래서
-        // qa_log 가 발급하는 id 와 값이 겹쳐도 무해하다. 로그에서 한 번의 누름을 따라가는 용도다.
-        sessionManager.sendAction(
-            instanceId.toString(),
-            ActionResponseDto(
-                id = requestId,
-                actions = listOf(
-                    ActionItemDto(id = requestId, method = SCAN_EVIDENCE, params = emptyList()),
-                ),
-            ),
-        )
-        logger.info(
-            "근거 스캔 요청 [gameBuildId={}, gameInstanceId={}, requestId={}]",
-            gameBuildId, instanceId, requestId,
-        )
-
+        val now = Instant.now(clock)
         val status = ScanStatus(
             gameBuildId = gameBuildId,
             gameInstanceId = instanceId,
             gameInstanceName = instance.name,
             state = ScanState.REQUESTED,
-            requestedAt = Instant.now(clock),
+            requestedAt = now,
             testCases = testCaseRequest,
         )
-        statuses.put(status)
+        // 보내기 전에 자리부터 잡는다(ARTEL-1178). 이 빌드에 이미 돌고 있는 스캔이 있으면 두 번째 스캔을 게임 줄에
+        // 세우지 않는다 — SDK 는 받은 대로 처음부터 다시 돌고, 앞 결과는 뒤 요청에 덮여 화면이 누구의 결과인지 모른다.
+        val running = statuses.reserve(status) { isStillRunning(it, now) }
+        if (running != null) {
+            throw ConflictException(
+                "${running.gameInstanceName} 에서 이 빌드의 스캔이 이미 돌고 있습니다. 끝난 뒤에 다시 시도해 주세요.",
+                SCAN_IN_PROGRESS,
+            )
+        }
+
+        // 이 id 로 짝을 맞추지 않는다 — 결과 라우팅은 액션 이름으로 한다(ScanResultRouter). 그래서
+        // qa_log 가 발급하는 id 와 값이 겹쳐도 무해하다. 로그에서 한 번의 누름을 따라가는 용도다.
+        try {
+            sessionManager.sendAction(
+                instanceId.toString(),
+                ActionResponseDto(
+                    id = requestId,
+                    actions = listOf(
+                        ActionItemDto(id = requestId, method = SCAN_EVIDENCE, params = emptyList()),
+                    ),
+                ),
+            )
+        } catch (failure: Throwable) {
+            statuses.release(status)
+            throw failure
+        }
+        logger.info(
+            "근거 스캔 요청 [gameBuildId={}, gameInstanceId={}, requestId={}]",
+            gameBuildId, instanceId, requestId,
+        )
+
         // 이미 이 빌드의 events 스트림을 구독 중인 다른 사람이 있을 수 있다 — 그 화면은 이 버튼을
         // 누른 적이 없으므로, REQUESTED 로 넘어간 사실을 스스로 알 방법이 SSE 뿐이다.
         streamManager.emit(gameBuildId, ContentMapStreamEvent(type = "scan", scan = LastScanResponse.of(status)))
         return status
     }
+
+    /**
+     * 앞 스캔이 아직 돌고 있다고 볼 것인가. 둘 다 맞아야 한다 — 받은 게임이 아직 붙어 있고, [STALE_AFTER] 안에
+     * 소식이 있었다.
+     *
+     * 게임이 끊기면 결과는 오지 않는다. 서버는 그 스캔을 끝낼 길이 없으니 여기서 없는 것으로 친다.
+     */
+    private fun isStillRunning(status: ScanStatus, now: Instant): Boolean =
+        sessionManager.hasSession(status.gameInstanceId.toString()) &&
+            Duration.between(status.updatedAt, now) < STALE_AFTER
 
     companion object {
         /**
@@ -129,6 +156,18 @@ class ContentMapScanService(
          * 기능이고 근거 문서와 무관하다.
          */
         const val SCAN_EVIDENCE = "scan_evidence"
+
+        /** 같은 빌드에 스캔이 돌고 있어 거절했다(ARTEL-1178). 화면은 이 code 로 "이미 도는 중" 을 말한다. */
+        const val SCAN_IN_PROGRESS = "scan_in_progress"
+
+        /**
+         * 이만큼 소식이 없으면 게임이 붙어 있어도 그 스캔은 죽은 것으로 친다.
+         *
+         * 진행을 보내는 SDK 는 씬마다 이 시계를 민다. 진행을 안 보내는 옛 SDK 의 큰 게임은 한 시간 넘게 걸릴 수
+         * 있고, 그때는 두 번째 요청이 통과한다 — 버튼이 영영 막히는 쪽보다 낫다. 설정값으로 두지 않은 이유는
+         * [ScanStatusRegistry] 의 상한과 같다.
+         */
+        val STALE_AFTER: Duration = Duration.ofMinutes(60)
 
         /** 프로세스 안에서만 뜻이 있는 번호. 위 sendAction 의 주석이 그 범위를 말한다. */
         private val REQUEST_IDS = AtomicLong()
