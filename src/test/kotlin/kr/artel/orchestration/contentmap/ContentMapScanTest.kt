@@ -6,7 +6,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.common.error.ConflictException
+import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
+import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.scan.ContentMapScanService
 import kr.artel.orchestration.contentmap.scan.ScanPhase
@@ -60,6 +62,7 @@ class ContentMapScanTest {
     @Autowired private lateinit var gameInstances: GameInstanceRepository
     @Autowired private lateinit var db: DatabaseClient
     @Autowired private lateinit var contentMaps: ContentMapRepository
+    @Autowired private lateinit var documents: ContentMapDocumentRepository
     @Autowired private lateinit var testCases: TestCaseRepository
     @Autowired private lateinit var versions: TestCaseVersionRepository
     @Autowired private lateinit var statuses: ScanStatusRegistry
@@ -364,7 +367,45 @@ class ContentMapScanTest {
         assertThat(scan.cancelScan(newUser(), projectId, buildId)).isNull()
     }
 
+    /**
+     * 끊은 스캔이 올려 둔 접수증은 대기에서 빠지고, 앞선 스캔이 남긴 것은 그대로 있다.
+     *
+     * 남겨 두면 다음 스캔의 적재가 반쪽 순회의 문서까지 같이 앉힌다. 그렇다고 통째로 지우면 앞선 스캔에서 깨져
+     * 다시 시도하려고 남아 있는 문서까지 날아간다.
+     */
+    @Test
+    fun `끊으면 이 스캔이 올린 문서만 대기에서 뺀다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        val map = contentMaps.save(ContentMapEntity(gameBuildId = buildId))
+
+        // 앞선 스캔이 남긴 것. 요청보다 전에 받았다.
+        val older = documents.save(document(map.id!!, Instant.now().minusSeconds(600)))
+
+        val started = requireNotNull(scan.startScan(userId, projectId, buildId))
+        // 이 스캔이 올린 것.
+        val mine = documents.save(document(map.id!!, started.requestedAt.plusSeconds(1)))
+
+        scan.cancelScan(userId, projectId, buildId)
+
+        assertThat(documents.findById(mine.id!!)).isNull()
+        assertThat(documents.findById(older.id!!)).isNotNull()
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
     // ---------- 픽스처 ----------
+
+    private fun document(contentMapId: Long, receivedAt: Instant) = ContentMapDocumentEntity(
+        contentMapId = contentMapId,
+        objectKey = "evidence/${System.nanoTime()}.json",
+        contentHash = "%064x".format(System.nanoTime()),
+        byteSize = 10,
+        receivedAt = receivedAt,
+    )
 
     private fun requested(gameBuildId: Long, gameInstanceId: Long, at: Instant) = ScanStatus(
         gameBuildId = gameBuildId,

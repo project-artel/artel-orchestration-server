@@ -3,6 +3,7 @@ package kr.artel.orchestration.contentmap.scan
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.firstOrNull
 import kr.artel.orchestration.common.error.ConflictException
+import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.dto.ContentMapStreamEvent
 import kr.artel.orchestration.contentmap.dto.LastScanResponse
 import kr.artel.orchestration.game.repository.GameBuildRepository
@@ -45,6 +46,7 @@ class ContentMapScanService(
     private val gameBuilds: GameBuildRepository,
     private val gameInstances: GameInstanceRepository,
     private val sessionManager: SessionManager,
+    private val documents: ContentMapDocumentRepository,
     private val statuses: ScanStatusRegistry,
     private val streamManager: ContentMapEventStreamManager,
     private val testCases: ContentMapTestCaseService,
@@ -179,6 +181,18 @@ class ContentMapScanService(
                 "스캔 취소를 게임에 못 보냈다. 상태는 닫는다 [gameBuildId={}, gameInstanceId={}]: {}",
                 gameBuildId, running.gameInstanceId, failure.message,
             )
+        }
+
+        // 올라간 것이 있으면 접수증을 지운다. 남겨 두면 다음 스캔의 적재가 반쪽 순회의 문서까지 같이 앉히고,
+        // 그 문서는 "이 게임엔 씬이 이것뿐" 이라고 말해 지도에서 못 돈 씬을 지운다.
+        //
+        // 이 스캔이 요청된 뒤에 받은 것만 지운다. 앞선 스캔에서 적재하다 깨진 문서는 다음에 다시 시도하려고
+        // 대기에 남아 있는 것이라, 통째로 지우면 취소와 무관한 그것까지 날아간다.
+        val discarded = runCatching { documents.deletePendingReceivedSince(gameBuildId, running.requestedAt) }
+            .onFailure { logger.warn("끊긴 스캔의 접수증을 못 지웠다 [gameBuildId={}]: {}", gameBuildId, it.message) }
+            .getOrDefault(0)
+        if (discarded > 0) {
+            logger.info("끊긴 스캔이 올린 문서 {}장을 대기에서 뺐다 [gameBuildId={}]", discarded, gameBuildId)
         }
 
         val cancelled = statuses.complete(gameBuildId) { status ->
