@@ -1,9 +1,7 @@
 package kr.artel.orchestration.auth.sdk
 
-import kotlinx.coroutines.reactor.awaitSingle
-import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kr.artel.orchestration.auth.config.AuthProperties
-import org.springframework.data.redis.core.ReactiveStringRedisTemplate
+import kr.artel.orchestration.store.ExpiringKeyValueStore
 import org.springframework.stereotype.Component
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -29,8 +27,9 @@ internal const val SDK_LOGIN_CODE_KEY_PREFIX = "artel:sdk:login-code:"
  * 받아 가므로, 무엇으로 발급된 코드인지가 값에 없으면 CLI용 코드를 `/api/auth/sdk/token`에서
  * 30일짜리 SDK JWT로 바꿔 갈 수 있다.
  *
- * **왜 Redis인가.** 발급은 브라우저가, 교환은 SDK가 부른다. 서로 다른 요청이라 인스턴스가 둘
- * 이상이면 다른 프로세스로 갈라지고, 인메모리로는 그 순간 교환이 실패한다.
+ * **왜 공유 저장소인가.** 발급은 브라우저가, 교환은 SDK가 부른다. 서로 다른 요청이라 인스턴스가 둘
+ * 이상이면 다른 프로세스로 갈라지고, 인메모리로는 그 순간 교환이 실패한다. 저장소는 `ARTEL_STORE` 로
+ * 고른다(`redis` 기본, `postgres` 면 `expiring_entry` 표). 의미는 [ExpiringKeyValueStore] 가 같게 지킨다.
  *
  * **키에 코드 원문을 쓰지 않는다.** Redis를 들여다볼 수 있는 쪽(운영자, `MONITOR`, 덤프)이
  * 유효한 로그인 코드를 그대로 읽게 된다. 키는 코드의 SHA-256이고 원문은 어디에도 남지 않는다.
@@ -41,7 +40,7 @@ internal const val SDK_LOGIN_CODE_KEY_PREFIX = "artel:sdk:login-code:"
  */
 @Component
 class SdkLoginCodeStore(
-    private val redis: ReactiveStringRedisTemplate,
+    private val store: ExpiringKeyValueStore,
     private val properties: AuthProperties
 ) {
     private val random = SecureRandom()
@@ -67,9 +66,7 @@ class SdkLoginCodeStore(
     suspend fun issue(userId: Long, codeChallenge: String, kind: SdkLoginCodeKind): String {
         val bytes = ByteArray(CODE_BYTES).also(random::nextBytes)
         val code = encoder.encodeToString(bytes)
-        redis.opsForValue()
-            .set(keyOf(code), "${kind.wireValue}:$userId:$codeChallenge", properties.sdkLoginCodeTtl)
-            .awaitSingle()
+        store.set(keyOf(code), "${kind.wireValue}:$userId:$codeChallenge", properties.sdkLoginCodeTtl)
         return code
     }
 
@@ -96,7 +93,7 @@ class SdkLoginCodeStore(
      * sdk로 본다"는 분기를 남기면 kind를 가른 이유 자체가 그 분기로 되돌아간다.
      */
     suspend fun consume(code: String, codeVerifier: String, kind: SdkLoginCodeKind): Long? {
-        val stored = redis.opsForValue().getAndDelete(keyOf(code)).awaitSingleOrNull()
+        val stored = store.getAndDelete(keyOf(code))
             ?: return null
 
         // 값은 "<kind>:<userId>:<codeChallenge>"다. 경계를 앞에서부터 ':' 두 개로 잡는 근거는
