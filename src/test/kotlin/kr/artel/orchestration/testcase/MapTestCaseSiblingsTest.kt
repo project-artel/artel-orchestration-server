@@ -61,4 +61,32 @@ class MapTestCaseSiblingsTest {
 
         assertThat(MapTestCaseSiblings.of(1, edges)).isEmpty()
     }
+
+    /**
+     * 미리 묶어 둔 색인(ARTEL-1187)이 예전처럼 **호출 관계의 원래 순서**로 내고, 같은 기능은 처음 것 하나만 남긴다.
+     * 호출자가 둘인 기능은 두 호출자 아래 형제를 모두 빌려 온다. 코루틴 상태 머신 이름은 원래 메서드로 묶인다.
+     */
+    @Test
+    fun `색인은 원래 순서와 첫 번째만 남기기를 지킨다`() {
+        val edges = listOf(
+            edge("Fire", 2),
+            edge("Talk", 1),
+            edge("Fire", 1),
+            edge("Talk", 3),
+            edge("Fire", 3),
+            edge("Fire", 4),
+            ContentMapCallEdge(
+                callerMethodId = "Assembly-CSharp|Map.MapMove/<Talk>d__8|MoveNext|System.Boolean()",
+                callerCondition = null,
+                capabilityId = 5,
+                conditionTree = null,
+            ),
+        )
+
+        val index = MapTestCaseSiblings.Index(edges)
+
+        assertThat(index.of(1).map { it.capabilityId }).containsExactly(2L, 3L, 4L, 5L)
+        assertThat(index.of(1)).isEqualTo(MapTestCaseSiblings.of(1, edges))
+        assertThat(index.of(99)).isEmpty()
+    }
 }
