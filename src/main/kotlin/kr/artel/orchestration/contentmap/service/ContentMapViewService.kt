@@ -78,6 +78,7 @@ class ContentMapViewService(
     private val screenTransitions: ScreenTransitionRepository,
     private val documents: ContentMapDocumentRepository,
     private val scanStatuses: ScanStatusRegistry,
+    private val testCaseGenerations: kr.artel.orchestration.testcase.service.TestCaseGenerationRegistry,
     private val streamManager: ContentMapEventStreamManager,
     private val storage: DocumentStorage,
     private val objectMapper: ObjectMapper,
@@ -195,6 +196,8 @@ class ContentMapViewService(
                 failedDocuments = allDocuments.count { it.ingestFailedAt != null && it.ingestedAt == null },
             ),
             documents = allDocuments.map(::documentEventOf),
+            testCaseGeneration = testCaseGenerations.find(gameBuildId)
+                ?.let(kr.artel.orchestration.testcase.dto.TestCaseGenerationResponse::of),
         )
     }
 
