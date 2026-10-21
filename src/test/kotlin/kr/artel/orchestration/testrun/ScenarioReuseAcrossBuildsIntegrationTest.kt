@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testrun
 
+import org.springframework.r2dbc.core.DatabaseClient
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
@@ -34,6 +35,7 @@ import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.support.deleteQaRuns
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -55,6 +57,7 @@ import kr.artel.orchestration.testscenario.service.AuthoringVersionResolver
 import kr.artel.orchestration.testscenario.service.ScenarioCaseFactService
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -118,7 +121,18 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
     @Autowired private lateinit var compositionService: ScenarioCompositionService
     @Autowired private lateinit var resources: ResourceQueryService
     @Autowired private lateinit var qaLogs: QaLogRepository
-    @Autowired private lateinit var db: org.springframework.r2dbc.core.DatabaseClient
+    @Autowired private lateinit var db: DatabaseClient
+
+    /**
+     * 이 클래스가 만든 `qa_run` 을 스위트의 다음 클래스에 넘기지 않는다(ARTEL-1163).
+     * 리액티브 트랜잭션은 롤백되지 않고 스위트가 DB 하나를 공유하므로, 남은 `qa_run` 은 뒤에 오는
+     * 클래스의 `DELETE FROM game_instance` · `test_run` · `app_user` 를
+     * `qa_run_game_instance_id_fkey` · `qa_run_test_run_id_fkey` · `qa_run_started_by_fkey` 로 막는다.
+     */
+    @AfterEach
+    fun removeQaRuns() {
+        db.deleteQaRuns()
+    }
 
     @Test
     fun `같은 케이스는 버전을 넘어 한 행이고, 직전 버전에서 판정이 난 것만 새 버전에서 REGRESSION 으로 시작한다`(): Unit = runBlocking {

@@ -34,6 +34,10 @@ object PostgresTestContainer {
             .withDatabaseName("artel_test")
             .withUsername("artel")
             .withPassword("artel")
+            // 기본 100 이면 컨텍스트 수가 늘어날 때 뒤에 뜨는 컨텍스트가 Flyway 단계에서
+            // "too many clients already" 로 실패한다. 컨텍스트 cache 상한은 `spring.properties` 에서
+            // 128 이고, 컨텍스트 하나가 커넥션을 최대 3 개 잡는다(`application-test.yml`).
+            .withCommand("postgres", "-c", "max_connections=400")
             .also { it.start() }
     }
 
