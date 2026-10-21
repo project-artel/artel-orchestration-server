@@ -1,6 +1,7 @@
 package kr.artel.orchestration.issue.dto
 
 import com.fasterxml.jackson.databind.JsonNode
+import kr.artel.orchestration.issue.category.CategoryTag
 import kr.artel.orchestration.tracker.dto.IssueTrackerResponse
 import java.time.Instant
 
@@ -35,7 +36,54 @@ data class IssueResponse(
     val resolvedAt: Instant?,
     val resolvedBy: String?,
     val tracker: IssueTrackerResponse? = null,
-    val qaRunId: String? = null
+    val qaRunId: String? = null,
+    val origin: IssueOrigin? = null,
+    /** 프로젝트 안 번호. 화면이 `#` 뒤에 보이는 값이다. [id] 는 API 가 가리키는 값으로 그대로 둔다. */
+    val number: String? = null,
+    val archivedAt: Instant? = null,
+    val categories: List<CategoryTag> = emptyList()
+)
+
+/**
+ * 이슈가 나온 자리 — 어느 빌드 버전의 어느 TR 에서, 어느 시나리오를 돌리다 나왔나. 목록 한 줄만 보고도 출처를
+ * 알 수 있게 싣는다. run 없이 돈 예전 실행은 TR · 빌드가 비어 있다.
+ */
+data class IssueOrigin(
+    val testScenarioId: String,
+    val testScenarioTitle: String,
+    val testRunId: String?,
+    val testRunName: String?,
+    val gameBuildId: String?,
+    val buildVersion: String?,
+    val buildLabel: String?,
+    val model: String?,
+    val qaRunStartedAt: Instant?
+)
+
+/** 프로젝트 이슈를 빌드 · TR · 심각도로 센 것. 목록 옆 거르기 칸이 개수를 같이 보이려고 쓴다. */
+data class IssueFacetsResponse(
+    val total: Long,
+    /** 보관한 이슈 수. 위의 개수에는 들지 않는다. */
+    val archived: Long,
+    val builds: List<IssueBuildFacet>,
+    val testRuns: List<IssueTestRunFacet>,
+    val severities: Map<String, Long>
+)
+
+data class IssueBuildFacet(
+    val gameBuildId: String?,
+    val version: String?,
+    val label: String?,
+    val count: Long,
+    val openCount: Long
+)
+
+data class IssueTestRunFacet(
+    val testRunId: String?,
+    val name: String?,
+    val gameBuildId: String?,
+    val count: Long,
+    val openCount: Long
 )
 
 /**
