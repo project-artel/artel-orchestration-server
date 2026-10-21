@@ -50,6 +50,14 @@ data class ScanStatus(
     val ingestedDocuments: Int? = null,
     /** [ScanState.FAILED] 일 때 사람에게 보여 줄 사유 한 줄. */
     val error: String? = null,
+    /**
+     * 사람이 끊어서 [ScanState.FAILED] 가 된 것인가(ARTEL-1183).
+     *
+     * 상태를 하나 더 두는 대신 칸으로 둔다. 취소는 끝나는 방식이 실패와 같다 — 문서가 안 앉고 다음 요청이 풀린다.
+     * 다른 것은 화면이 할 말뿐이라 그 한 가지만 적는다. [ScanState] 에 값을 더하면 그것을 읽는 모든 자리가
+     * "성공도 실패도 아닌 것" 을 새로 다뤄야 한다.
+     */
+    val cancelled: Boolean = false,
     /** 스캔이 끝나면 TC 도 만들라는 요청과 그 결과(ARTEL-1040). 그냥 스캔이면 null 이다. */
     val testCases: ScanTestCases? = null,
     /**

@@ -18,6 +18,7 @@ import org.springframework.http.codec.ServerSentEvent
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseStatus
@@ -90,6 +91,33 @@ class ProjectContentMapController(
             state = status.state,
             requestedAt = status.requestedAt,
         )
+    }
+
+    /**
+     * 도는 근거 스캔을 끊는다(ARTEL-1183).
+     *
+     * - **204** — 끊었다
+     * - **404** — 빌드가 없거나 접근할 수 없다
+     * - **409** — 돌고 있는 스캔이 없거나(`scan_not_running`), 서버가 문서를 읽는 중이라 끊을 수 없다
+     *   (`scan_not_cancellable`)
+     *
+     * `DELETE` 인 이유는 끊는 대상이 바로 `POST /scan` 이 만든 그 스캔이기 때문이다. 결과는 본문이 아니라 SSE
+     * `scan` 으로 흐른다 — 이 빌드를 보는 다른 화면도 함께 알아야 한다.
+     */
+    @Operation(
+        summary = "도는 근거 스캔 취소",
+        description = "게임에 멈추라고 보내고 그 스캔을 실패로 닫는다. 게임이 쥔 단계(SCANNING · UPLOADING)에서만 " +
+            "끊을 수 있고, 서버가 문서를 읽는 단계면 409. 돌고 있는 스캔이 없어도 409 다.",
+    )
+    @DeleteMapping("/scan")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    suspend fun cancelScan(
+        @CurrentUserId appUserId: Long,
+        @Parameter(description = "프로젝트 id", required = true) @PathVariable projectId: Long,
+        @Parameter(description = "게임 빌드 id", required = true) @PathVariable gameBuildId: Long,
+    ) {
+        scan.cancelScan(appUserId, projectId, gameBuildId)
+            ?: throw NotFoundException("게임 빌드를 찾을 수 없습니다.")
     }
 
     /**
