@@ -172,6 +172,8 @@ class WebSocketQaAgentAdapter(
             connection.closing = true
             connection.outbound.tryEmitComplete()
             connection.disposable?.dispose()
+            // 이쪽에서 닫는 것은 지금 끊는 것이다. 남은 프레임을 마저 처리하지 않는다.
+            connection.handling?.dispose()
         }
     }
 
@@ -182,32 +184,46 @@ class WebSocketQaAgentAdapter(
     ) {
         val ready = Sinks.one<Void>()
         val outbound = Sinks.many().unicast().onBackpressureBuffer<String>()
+        val inbound = Sinks.many().unicast().onBackpressureBuffer<String>()
         val connection = AgentConnection(outbound)
         if (sessions.putIfAbsent(sessionId, connection) != null) {
             throw IllegalStateException("Duplicate QA Agent session: $sessionId")
         }
 
+        // 받은 프레임의 처리는 소켓과 따로 돈다(ARTEL-1176). agent 는 런이 끝나면 종료 STATUS 를 보내고 곧바로
+        // 닫는다. 그때 이쪽이 보내던 판독 중계가 닫힌 소켓에 쓰다 실패하면 reactor-netty 가 연결 handler 를
+        // 취소하고, 처리가 그 안에 있으면 이미 받아 두고 아직 처리하지 못한 판정과 종료 STATUS 가 같이 버려진다.
+        // stage 런 157 이 그렇게 끝났다 — 판정 101개 중 100개만 남고 런은 `onDisconnect` 로 실패 처리됐다.
+        // 그래서 소켓은 받은 글자를 `inbound` 에 넣기만 하고, 끝나면 그것을 닫는다. 처리는 남은 것을 다 돈 뒤에
+        // 끝나고, `onDisconnect` 도 그때 부른다.
+        connection.handling = inbound.asFlux()
+            .concatMap { payload ->
+                mono {
+                    val envelope = objectMapper.readValue(payload, QaAgentEnvelope::class.java)
+                    onMessage(envelope)
+                }.then()
+                    // An unparseable frame must not terminate the receive chain:
+                    // that closes the socket and fails the whole run.
+                    .onErrorResume { Mono.empty() }
+            }
+            .doFinally {
+                sessions.remove(sessionId, connection)
+                if (!connection.closing) {
+                    mono { onDisconnect() }.subscribe()
+                }
+            }
+            .subscribe()
+
         val disposable = wsClient.execute(URI.create("$wsBaseUrl/qa-sessions/$sessionId")) { ws ->
             ready.tryEmitEmpty()
             val send = ws.send(outbound.asFlux().map(ws::textMessage))
+            // 글자로 옮기는 것은 여기서 한다. frame 의 buffer 는 이 자리를 지나면 풀린다.
             val receive = ws.receive()
-                .concatMap { frame ->
-                    val payload = frame.payloadAsText
-                    mono {
-                        val envelope = objectMapper.readValue(payload, QaAgentEnvelope::class.java)
-                        onMessage(envelope)
-                    }.then()
-                        // An unparseable frame must not terminate the receive chain:
-                        // that closes the socket and fails the whole run.
-                        .onErrorResume { Mono.empty() }
-                }
+                .doOnNext { frame -> inbound.tryEmitNext(frame.payloadAsText) }
                 .then()
             send.and(receive)
         }.doFinally {
-            sessions.remove(sessionId, connection)
-            if (!connection.closing) {
-                mono { onDisconnect() }.subscribe()
-            }
+            inbound.tryEmitComplete()
         }.subscribe(
             {},
             { error -> ready.tryEmitError(error) }
@@ -219,6 +235,7 @@ class WebSocketQaAgentAdapter(
     private class AgentConnection(
         val outbound: Sinks.Many<String>,
         @Volatile var disposable: Disposable? = null,
+        @Volatile var handling: Disposable? = null,
         @Volatile var closing: Boolean = false
     )
 }
