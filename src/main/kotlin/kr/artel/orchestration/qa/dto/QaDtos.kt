@@ -140,8 +140,8 @@ data class QaReasoningRequest(
 data class QaReasoningCapability(
     val kind: String,
     val efforts: List<String>?,
-    @JsonAlias("min_tokens") val minTokens: Int?,
-    @JsonAlias("max_tokens") val maxTokens: Int?,
+    @param:JsonAlias("min_tokens") val minTokens: Int?,
+    @param:JsonAlias("max_tokens") val maxTokens: Int?,
     val step: Int?
 )
 
@@ -149,9 +149,9 @@ data class QaModelResponse(
     val id: String,
     val label: String,
     val provider: String,
-    @JsonAlias("supports_strict_json") val supportsStrictJson: Boolean,
-    @JsonAlias("supports_vision") val supportsVision: Boolean,
-    @JsonAlias("input_modalities") val inputModalities: List<String>,
+    @param:JsonAlias("supports_strict_json") val supportsStrictJson: Boolean,
+    @param:JsonAlias("supports_vision") val supportsVision: Boolean,
+    @param:JsonAlias("input_modalities") val inputModalities: List<String>,
     val multimodal: Boolean,
     val reasoning: QaReasoningCapability?,
     /**

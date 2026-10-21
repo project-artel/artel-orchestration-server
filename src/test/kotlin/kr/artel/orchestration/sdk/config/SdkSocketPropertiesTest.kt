@@ -82,7 +82,7 @@ class SdkSocketPropertiesTest {
 
         val strategy = (service as HandshakeWebSocketService).upgradeStrategy
         assertThat(strategy).isInstanceOf(ReactorNettyRequestUpgradeStrategy::class.java)
-        assertThat((strategy as ReactorNettyRequestUpgradeStrategy).maxFramePayloadLength)
+        assertThat((strategy as ReactorNettyRequestUpgradeStrategy).websocketServerSpec.maxFramePayloadLength())
             .isEqualTo(properties.maxMessageBytes)
     }
 }

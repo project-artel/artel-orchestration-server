@@ -274,11 +274,11 @@ class LlmUsageStatsRepository(
     }
 
     private fun Readable.toStatsRow() = LlmUsageStatsRow(
-        groupingMask = get("grouping_mask", java.lang.Integer::class.java)!!.toInt(),
+        groupingMask = get("grouping_mask", Int::class.javaObjectType)!!,
         service = get("service", String::class.java),
         provider = get("provider", String::class.java),
         model = get("model", String::class.java),
-        projectId = get("project_id", java.lang.Long::class.java)?.toLong(),
+        projectId = get("project_id", Long::class.javaObjectType),
         projectName = get("project_name", String::class.java),
         calledOn = get("called_on", LocalDate::class.java),
         inputTokens = longAt("input_tokens"),
@@ -291,8 +291,8 @@ class LlmUsageStatsRepository(
     )
 
     private fun Readable.toQaRunUsageRow() = QaRunUsageRow(
-        qaTryId = get("qa_try_id", java.lang.Long::class.java)!!.toLong(),
-        projectId = get("project_id", java.lang.Long::class.java)!!.toLong(),
+        qaTryId = get("qa_try_id", Long::class.javaObjectType)!!,
+        projectId = get("project_id", Long::class.javaObjectType)!!,
         status = get("status", String::class.java)!!,
         startedAt = get("started_at", Instant::class.java)!!,
         completedAt = get("completed_at", Instant::class.java),
@@ -348,7 +348,7 @@ class LlmUsageStatsRepository(
     }
 
     private fun Readable.longAt(name: String): Long =
-        get(name, java.lang.Long::class.java)!!.toLong()
+        get(name, Long::class.javaObjectType)!!
 }
 
 /**

@@ -81,10 +81,10 @@ class ScenarioPathServiceTest {
                 provider = "github", providerUserId = "path-${seq.incrementAndGet()}",
                 login = "path", displayName = "Path", avatarUrl = null, email = null,
             )
-        )!!.userId.toLong()
+        ).userId.toLong()
         val project = projectRepository.save(
             ProjectEntity(name = "path-${seq.incrementAndGet()}", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectId = project.id!!
         memberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = userId, role = "OWNER", createdAt = now)
@@ -103,10 +103,10 @@ class ScenarioPathServiceTest {
         )
         contentMapId = map.id!!
         mapSceneId = sceneRepository.save(
-            SceneEntity(contentMapId = map.id!!, name = "Map_scene", walked = true)
+            SceneEntity(contentMapId = map.id, name = "Map_scene", walked = true)
         ).id!!
         battleSceneId = sceneRepository.save(
-            SceneEntity(contentMapId = map.id!!, name = "TurnBattleScene", walked = true)
+            SceneEntity(contentMapId = map.id, name = "TurnBattleScene", walked = true)
         ).id!!
     }
 
@@ -249,18 +249,18 @@ class ScenarioPathServiceTest {
         val now = Instant.now()
         val bare = projectRepository.save(
             ProjectEntity(name = "bare-${seq.incrementAndGet()}", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!
+        )
         memberRepository.save(
             ProjectMemberEntity(projectId = bare.id!!, appUserId = userId, role = "OWNER", createdAt = now)
         )
         val a = testCaseRepository.save(
-            TestCaseEntity(projectId = bare.id!!, scene = "Map_scene", step = "a", expectedValue = "e")
+            TestCaseEntity(projectId = bare.id, scene = "Map_scene", step = "a", expectedValue = "e")
         ).id!!
         val b = testCaseRepository.save(
-            TestCaseEntity(projectId = bare.id!!, scene = "Map_scene", step = "b", expectedValue = "e")
+            TestCaseEntity(projectId = bare.id, scene = "Map_scene", step = "b", expectedValue = "e")
         ).id!!
 
-        val answer = service.findPath(bare.id!!, userId, a, b)
+        val answer = service.findPath(bare.id, userId, a, b)
 
         assertThat(answer.result).isEqualTo(ScenarioPathResult.UNKNOWN)
         assertThat(answer.blockedBy).isEqualTo("content-map")

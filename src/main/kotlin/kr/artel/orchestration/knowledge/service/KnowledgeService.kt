@@ -311,7 +311,7 @@ class KnowledgeService(
             row
         }
         notifyKnowledgeChanged(projectId, scope)
-        return KnowledgeMutation.Applied(requireNotNull(saved?.id))
+        return KnowledgeMutation.Applied(requireNotNull(saved.id))
     }
 
     /**
@@ -432,9 +432,9 @@ class KnowledgeService(
             }
             logger.info(
                 "knowledge 스코프 수정(그림자 생성): baseline={}, shadow={}, project={}, scope={}, qaTry={}",
-                knowledgeId, shadow?.id, projectId, scope, qaTryId
+                knowledgeId, shadow.id, projectId, scope, qaTryId
             )
-            return KnowledgeMutation.Applied(requireNotNull(shadow?.id))
+            return KnowledgeMutation.Applied(requireNotNull(shadow.id))
         }
 
         val versioned = if (contentChanged) next.copy(version = current.version + 1) else next
@@ -508,9 +508,9 @@ class KnowledgeService(
             }
             logger.info(
                 "knowledge 스코프 삭제(툼스톤 생성): baseline={}, tombstone={}, project={}, scope={}, qaTry={}",
-                knowledgeId, tombstone?.id, projectId, scope, qaTryId
+                knowledgeId, tombstone.id, projectId, scope, qaTryId
             )
-            return KnowledgeMutation.Applied(requireNotNull(tombstone?.id))
+            return KnowledgeMutation.Applied(requireNotNull(tombstone.id))
         }
 
         transactionalOperator.executeAndAwait {

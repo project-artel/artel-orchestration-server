@@ -292,7 +292,7 @@ class McpAccessTokenIntegrationTest {
             ProjectMemberEntity(projectId = project.id!!, appUserId = user.userId.toLong(), role = "OWNER", createdAt = now)
         )
         val build = gameBuilds.save(
-            GameBuildEntity(projectId = project.id!!, version = "1.0.$seed", createdAt = now, updatedAt = now)
+            GameBuildEntity(projectId = project.id, version = "1.0.$seed", createdAt = now, updatedAt = now)
         )
         World(user.userId.toLong(), jwtService.issue(user), "/api/projects/${project.id}", build.id!!)
     }

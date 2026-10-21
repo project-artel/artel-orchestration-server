@@ -516,7 +516,7 @@ class KnowledgeEdgeIntegrationTest {
         val now = Instant.now()
         val resolvedProjectId = projectId ?: projectRepository.save(
             ProjectEntity(name = "knowledge-edge", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = resolvedProjectId,
@@ -527,7 +527,7 @@ class KnowledgeEdgeIntegrationTest {
         )
         val scenario = testScenarioRepository.save(
             TestScenarioEntity(projectId = resolvedProjectId)
-        )!!
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = resolvedProjectId,
@@ -537,7 +537,7 @@ class KnowledgeEdgeIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val qaTry = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -550,7 +550,7 @@ class KnowledgeEdgeIntegrationTest {
                     ?: Json.of("{}"),
                 startedAt = now
             )
-        )!!
+        )
         return RunningQaTry(qaTryId = qaTry.id!!, projectId = resolvedProjectId)
     }
 
@@ -564,7 +564,7 @@ class KnowledgeEdgeIntegrationTest {
                 avatarUrl = null,
                 email = "user-$seed@example.com"
             )
-        )!!
+        )
 
     private data class RunningQaTry(val qaTryId: Long, val projectId: Long)
 

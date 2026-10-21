@@ -264,7 +264,7 @@ class ScanResultRoutingTest {
         // 화면이 읽는 창구도 같은 말을 한다.
         val response = view.read(world.userId, world.projectId, world.gameBuildId)!!
         assertThat(response.lastScan!!.state).isEqualTo(ScanState.FAILED)
-        assertThat(response.lastScan!!.error).isEqualTo("릴리스 빌드에서는 스캔할 수 없습니다.")
+        assertThat(response.lastScan.error).isEqualTo("릴리스 빌드에서는 스캔할 수 없습니다.")
     }
 
     /**
@@ -452,7 +452,7 @@ class ScanResultRoutingTest {
     private suspend fun newWorld(): World {
         val now = Instant.now()
         val userId = db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('console', 'console-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
         val project = projects.save(
             ProjectEntity(name = "scan-result-${System.nanoTime()}", genre = "ACTION", createdAt = now, updatedAt = now)

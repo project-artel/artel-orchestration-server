@@ -67,7 +67,7 @@ class KnowledgeDetailIntegrationTest {
         val now = Instant.now()
         projectId = projectRepository.save(
             ProjectEntity(name = "knowledge-detail", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = projectId,
@@ -119,7 +119,7 @@ class KnowledgeDetailIntegrationTest {
         val now = Instant.now()
         val otherProjectId = projectRepository.save(
             ProjectEntity(name = "other-project", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = otherProjectId, appUserId = userId, role = ProjectRole.OWNER.name, createdAt = now)
         )
@@ -217,7 +217,7 @@ class KnowledgeDetailIntegrationTest {
                 avatarUrl = null,
                 email = "$seed@example.com"
             )
-        )!!
+        )
 
     private companion object {
         /** 실험 엔티티가 아직 없으므로 스코프 id는 운영(NULL)이 아니기만 하면 된다. */

@@ -74,10 +74,10 @@ class ScenarioCaseFactServiceTest {
                 provider = "github", providerUserId = "facts-${seq.incrementAndGet()}",
                 login = "facts", displayName = "Facts", avatarUrl = null, email = null,
             )
-        )!!.userId.toLong()
+        ).userId.toLong()
         projectId = projectRepository.save(
             ProjectEntity(name = "facts-${seq.incrementAndGet()}", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         memberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = userId, role = "OWNER", createdAt = now)
         )
@@ -95,7 +95,7 @@ class ScenarioCaseFactServiceTest {
         )
         contentMapId = map.id!!
         mapSceneId = sceneRepository.save(
-            SceneEntity(contentMapId = map.id!!, name = "Map_scene", walked = true)
+            SceneEntity(contentMapId = map.id, name = "Map_scene", walked = true)
         ).id!!
     }
 

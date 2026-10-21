@@ -522,7 +522,7 @@ class ScreenSelectorProposalTest {
         )
         val instance = gameInstances.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 lastGameBuildId = build.id,
@@ -540,7 +540,7 @@ class ScreenSelectorProposalTest {
             )
         )
         val user = newUser()
-        val testRunId = testRuns.save(TestRunEntity(projectId = project.id!!, name = "런")).id!!
+        val testRunId = testRuns.save(TestRunEntity(projectId = project.id, name = "런")).id!!
         qaRuns.save(
             QaRunEntity(
                 testRunId = testRunId,
@@ -550,18 +550,18 @@ class ScreenSelectorProposalTest {
                 startedAt = now,
             )
         )
-        val scenario = testScenarios.save(TestScenarioEntity(projectId = project.id!!))!!
+        val scenario = testScenarios.save(TestScenarioEntity(projectId = project.id))
         val qaTry = qaTries.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
-                gameInstanceId = instance.id!!,
+                gameInstanceId = instance.id,
                 startedBy = user,
                 agentSessionId = SESSION_ID,
                 status = "RUNNING",
                 startedAt = now,
             )
-        )!!
-        return World(instance.id!!, contentMap.id!!, qaTry.id!!)
+        )
+        return World(instance.id, contentMap.id!!, qaTry.id!!)
     }
 
     private suspend fun newScene(world: World, name: String): Long =
@@ -586,6 +586,6 @@ class ScreenSelectorProposalTest {
 
     private fun newUser(): Long =
         db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('selector', 'selector-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 }

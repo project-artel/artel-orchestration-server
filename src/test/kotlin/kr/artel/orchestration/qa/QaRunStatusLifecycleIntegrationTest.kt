@@ -272,7 +272,7 @@ class QaRunStatusLifecycleIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "run-status-p", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now
@@ -280,15 +280,15 @@ class QaRunStatusLifecycleIntegrationTest {
         )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!, name = "inst", platform = "UNITY",
+                projectId = project.id, name = "inst", platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now
             )
-        )!!
-        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))!!
-        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
-        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        )
+        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id, name = "런"))
+        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
+        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
         testRunService.setScenarios(testRun.id!!, ownerId, listOf(s1.id!!, s2.id!!))
-        return Seed(ownerId, instance.id!!, s1.id!!, testRun.id!!)
+        return Seed(ownerId, instance.id!!, s1.id, testRun.id)
     }
 
     private suspend fun signIn(): AuthenticatedUser =
@@ -301,5 +301,5 @@ class QaRunStatusLifecycleIntegrationTest {
                 avatarUrl = null,
                 email = "run-status@example.com"
             )
-        )!!
+        )
 }
