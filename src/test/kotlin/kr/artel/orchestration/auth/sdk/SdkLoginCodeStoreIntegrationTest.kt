@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import kr.artel.orchestration.store.RedisExpiringKeyValueStore
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate
 import org.springframework.test.context.ActiveProfiles
 import java.security.MessageDigest
@@ -102,8 +103,8 @@ class SdkLoginCodeStoreIntegrationTest {
     /** 이 이슈의 본래 목적. 발급과 교환이 다른 프로세스로 갈라져도 성립해야 한다. */
     @Test
     fun `한 인스턴스가 발급한 코드를 다른 인스턴스가 교환한다`(): Unit = runBlocking {
-        val issuer = SdkLoginCodeStore(redis, properties)
-        val exchanger = SdkLoginCodeStore(redis, properties)
+        val issuer = SdkLoginCodeStore(RedisExpiringKeyValueStore(redis), properties)
+        val exchanger = SdkLoginCodeStore(RedisExpiringKeyValueStore(redis), properties)
 
         val code = issuer.issue(42L, challengeOf(VERIFIER), SdkLoginCodeKind.SDK)
 
