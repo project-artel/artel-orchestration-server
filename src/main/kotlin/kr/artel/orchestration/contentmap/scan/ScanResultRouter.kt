@@ -175,6 +175,20 @@ class ScanResultRouter(
             request.copy(state = ScanTestCaseState.FAILED, reason = GENERIC_TEST_CASE_FAILURE)
         }
 
+    /**
+     * 게임 연결이 끊겼을 때 `SdkWebSocketHandler` 가 부른다(ARTEL-1178). 그 게임이 돌던 스캔은 결과가 오지 않으므로
+     * 실패로 닫고 화면에 알린다. 이것이 없으면 화면은 영영 "스캔하는 중" 이고, 다음 요청만 60분 뒤에 풀렸다.
+     */
+    fun gameDisconnected(gameInstanceId: Long) {
+        val now = Instant.now(clock)
+        statuses.completeGameSideOn(gameInstanceId) {
+            it.copy(state = ScanState.FAILED, finishedAt = now, updatedAt = now, error = GAME_DISCONNECTED)
+        }.forEach {
+            logger.warn("스캔 도중 게임 연결이 끊겼다 [gameBuildId={}, gameInstanceId={}]", it.gameBuildId, gameInstanceId)
+            publishScan(it.gameBuildId, it)
+        }
+    }
+
     private fun fail(gameBuildId: Long, reason: String) {
         statuses.complete(gameBuildId) {
             val now = Instant.now(clock)
@@ -224,6 +238,7 @@ class ScanResultRouter(
         const val GENERIC_SCAN_FAILURE = "게임이 근거 스캔에 실패했습니다."
         const val GENERIC_INGEST_FAILURE = "근거 문서를 씬 명세로 앉히지 못했습니다."
         const val GENERIC_TEST_CASE_FAILURE = "스캔은 끝났지만 test case 를 만들지 못했습니다."
+        const val GAME_DISCONNECTED = "스캔 도중 게임 연결이 끊겼습니다. 게임을 다시 켠 뒤 스캔해 주세요."
         const val NO_BUILD = "이 게임이 어느 빌드인지 아직 서버에 보고되지 않았습니다."
     }
 }

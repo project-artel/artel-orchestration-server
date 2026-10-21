@@ -369,6 +369,26 @@ class ScanResultRoutingTest {
         )
     }
 
+    /**
+     * 게임이 씬을 도는 도중 끊기면 결과는 오지 않는다. 그 스캔은 실패로 닫히고 화면에 흘러간다 — 아니면 화면은 영영 "스캔하는
+     * 중" 이다. 이미 결과를 받아 서버가 적재 중인 스캔은 건드리지 않는다.
+     */
+    @Test
+    fun `게임이 씬을 도는 도중 끊기면 그 스캔은 실패로 닫힌다`(): Unit = runBlocking {
+        val scanning = newWorld()
+        val ingesting = newWorld()
+        statuses.put(requestedStatus(scanning).copy(phase = ScanPhase.SCANNING))
+        statuses.put(requestedStatus(ingesting).copy(gameInstanceId = scanning.instanceId, phase = ScanPhase.INGESTING))
+
+        val events = collectScanEvents(scanning.gameBuildId, 1) { router.gameDisconnected(scanning.instanceId) }
+
+        val closed = statuses.find(scanning.gameBuildId)!!
+        assertThat(closed.state).isEqualTo(ScanState.FAILED)
+        assertThat(closed.error).contains("연결이 끊겼습니다")
+        assertThat(events.single().state).isEqualTo(ScanState.FAILED)
+        assertThat(statuses.find(ingesting.gameBuildId)!!.state).isEqualTo(ScanState.REQUESTED)
+    }
+
     // ---------- 픽스처 ----------
 
     private suspend fun collectScanEvents(

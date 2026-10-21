@@ -93,7 +93,25 @@ class ScanStatusRegistry {
             if (current.state == ScanState.REQUESTED) finish(current) else current
         }
 
+    /**
+     * 이 인스턴스에 보낸, 아직 게임 쪽 단계(씬 스캔 · 업로드)에 있는 스캔을 모두 끝으로 옮긴다. 옮긴 것을 돌려준다.
+     *
+     * 게임이 끊기면 결과는 영영 오지 않는다. 서버 쪽 단계(적재 · TC 생성)는 이미 결과를 받은 뒤라 끊겨도 끝까지 간다.
+     */
+    fun completeGameSideOn(gameInstanceId: Long, finish: (ScanStatus) -> ScanStatus): List<ScanStatus> =
+        synchronized(statuses) {
+            statuses.values
+                .filter {
+                    it.gameInstanceId == gameInstanceId &&
+                        it.state == ScanState.REQUESTED &&
+                        it.phase in GAME_SIDE_PHASES
+                }
+                .map { finish(it).also { finished -> statuses[finished.gameBuildId] = finished } }
+        }
+
     private companion object {
+        val GAME_SIDE_PHASES = setOf(ScanPhase.SCANNING, ScanPhase.UPLOADING)
+
         const val MAX_TRACKED_BUILDS = 256
         const val INITIAL_CAPACITY = 32
         const val LOAD_FACTOR = 0.75f
