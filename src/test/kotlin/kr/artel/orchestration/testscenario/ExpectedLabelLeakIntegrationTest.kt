@@ -81,7 +81,7 @@ class ExpectedLabelLeakIntegrationTest {
                 provider = "github", providerUserId = "302", login = "labeler",
                 displayName = "labeler", avatarUrl = null, email = "labeler@example.com"
             )
-        )!!.userId.toLong()
+        ).userId.toLong()
         projectId = requireNotNull(
             projectRepository.save(
                 ProjectEntity(name = "label-p", genre = "ACTION", createdAt = now, updatedAt = now)

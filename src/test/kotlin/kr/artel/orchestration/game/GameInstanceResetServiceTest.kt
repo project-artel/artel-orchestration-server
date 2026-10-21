@@ -230,7 +230,7 @@ class GameInstanceResetServiceTest {
 
     private suspend fun newUser(): Long =
         db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('console', 'console-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 
     private suspend fun newProject(userId: Long): Long {

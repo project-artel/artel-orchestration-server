@@ -32,7 +32,7 @@ data class ScenarioLibraryRun(
 data class ScenarioLibraryScenario(
     val testScenarioId: String,
     val title: String,
-    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
     val stepCount: Int,
     val caseCount: Int,
     val updatedAt: Instant?,

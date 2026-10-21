@@ -3,6 +3,7 @@ package kr.artel.orchestration.qa.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kr.artel.orchestration.settings.config.AgentServerProperties
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -49,7 +50,10 @@ class WebSocketQaAgentAdapterTest {
             }
         }.bindNow()
         val port = agent!!.port()
-        val adapter = WebSocketQaAgentAdapter("http://localhost:$port", "ws://localhost:$port", objectMapper)
+        val adapter = WebSocketQaAgentAdapter(
+            AgentServerProperties(baseUrl = "http://localhost:$port", wsBaseUrl = "ws://localhost:$port"),
+            objectMapper
+        )
 
         val handled = Collections.synchronizedList(mutableListOf<Long>())
         val handledAtDisconnect = CompletableDeferred<Int>()
@@ -93,7 +97,10 @@ class WebSocketQaAgentAdapterTest {
             }
         }.bindNow()
         val port = agent!!.port()
-        val adapter = WebSocketQaAgentAdapter("http://localhost:$port", "ws://localhost:$port", objectMapper)
+        val adapter = WebSocketQaAgentAdapter(
+            AgentServerProperties(baseUrl = "http://localhost:$port", wsBaseUrl = "ws://localhost:$port"),
+            objectMapper
+        )
 
         val handled = Collections.synchronizedList(mutableListOf<Long>())
         val first = CompletableDeferred<Unit>()

@@ -32,7 +32,7 @@ data class KnowledgeSearchRequest(
     val source: String? = null,
     val limit: Int? = null,
     val step: Int? = null,
-    @JsonProperty("scene_name") val sceneName: String? = null
+    @param:JsonProperty("scene_name") val sceneName: String? = null
 )
 
 /**
@@ -49,8 +49,8 @@ data class KnowledgeSearchRequest(
  *   문자열로 낸다(FE 64비트 정밀도 손실 방지).
  */
 data class KnowledgeAnchorView(
-    @JsonProperty("scene_name") val sceneName: String,
-    @JsonProperty("screen_id") val screenId: String? = null
+    @param:JsonProperty("scene_name") val sceneName: String,
+    @param:JsonProperty("screen_id") val screenId: String? = null
 )
 
 /**

@@ -123,6 +123,6 @@ class PostgresExpiringKeyValueStoreIntegrationTest {
     private fun rowCount(key: String): Long =
         databaseClient.sql("SELECT count(*) AS n FROM expiring_entry WHERE entry_key = :key")
             .bind("key", key)
-            .map { row -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row -> row.get("n", Long::class.javaObjectType)!! }
             .one().block()!!
 }

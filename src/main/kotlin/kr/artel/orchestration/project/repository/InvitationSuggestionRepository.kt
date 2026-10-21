@@ -69,7 +69,7 @@ class InvitationSuggestionRepository(
     }
 
     private fun toRow(row: Readable, metadata: Any?) = SuggestionRow(
-        appUserId = requireNotNull(row.get("app_user_id", java.lang.Long::class.java)).toLong(),
+        appUserId = requireNotNull(row.get("app_user_id", Long::class.javaObjectType)),
         nickname = requireNotNull(row.get("nickname", String::class.java)),
         userTag = requireNotNull(row.get("user_tag", String::class.java)),
         displayName = requireNotNull(row.get("display_name", String::class.java)),

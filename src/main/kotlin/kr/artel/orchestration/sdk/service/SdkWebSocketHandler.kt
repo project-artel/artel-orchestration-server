@@ -51,7 +51,7 @@ class SdkWebSocketHandler(
     private val qaExecutionFailureService: QaExecutionFailureService,
     private val runStatusNotifier: QaRunStatusNotifier,
     // 디코더가 두 개다. 브라우저 쪽이 @Primary라 이름만으로는 그쪽이 주입된다.
-    @Qualifier("sdkJwtDecoder") private val sdkJwtDecoder: ReactiveJwtDecoder,
+    @param:Qualifier("sdkJwtDecoder") private val sdkJwtDecoder: ReactiveJwtDecoder,
     private val sessionUserResolver: SessionUserResolver,
     private val accountStateService: AccountStateService,
     private val socketProperties: SdkSocketProperties,

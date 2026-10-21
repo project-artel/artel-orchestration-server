@@ -67,7 +67,7 @@ class IssueCategoryRepository(private val database: DatabaseClient) {
     suspend fun insert(projectId: Long, name: String, color: String): Long =
         database.sql("INSERT INTO issue_category (project_id, name, color) VALUES (:projectId, :name, :color) RETURNING id")
             .bind("projectId", projectId).bind("name", name).bind("color", color)
-            .map { row -> row.get("id", java.lang.Long::class.java)!!.toLong() }.one().awaitSingle()
+            .map { row -> row.get("id", Long::class.javaObjectType)!! }.one().awaitSingle()
 
     suspend fun update(categoryId: Long, name: String, color: String) {
         database.sql("UPDATE issue_category SET name = :name, color = :color WHERE id = :categoryId")
@@ -85,7 +85,7 @@ class IssueCategoryRepository(private val database: DatabaseClient) {
         if (ids.isEmpty()) return emptySet()
         return database.sql("SELECT id FROM issue_category WHERE project_id = :projectId AND id = ANY(CAST(:ids AS BIGINT[]))")
             .bind("projectId", projectId).bind("ids", ids.toTypedArray())
-            .map { row -> row.get("id", java.lang.Long::class.java)!!.toLong() }.all().collectList().awaitSingle().toSet()
+            .map { row -> row.get("id", Long::class.javaObjectType)!! }.all().collectList().awaitSingle().toSet()
     }
 
     /** [table] 의 [column] 행이 가진 카테고리를 [categoryIds] 로 바꾼다. [table] 은 이 파일의 두 표 중 하나다. */
@@ -110,8 +110,8 @@ class IssueCategoryRepository(private val database: DatabaseClient) {
         )
             .bind("ids", targetIds.distinct().toTypedArray())
             .map { row ->
-                row.get("target_id", java.lang.Long::class.java)!!.toLong() to CategoryTag(
-                    row.get("id", java.lang.Long::class.java)!!.toString(),
+                row.get("target_id", Long::class.javaObjectType)!! to CategoryTag(
+                    row.get("id", Long::class.javaObjectType)!!.toString(),
                     row.get("name", String::class.java)!!,
                     row.get("color", String::class.java)!!,
                 )
@@ -126,11 +126,11 @@ class IssueCategoryRepository(private val database: DatabaseClient) {
     }
 
     private fun Readable.toResponse() = IssueCategoryResponse(
-        get("id", java.lang.Long::class.java)!!.toString(),
+        get("id", Long::class.javaObjectType)!!.toString(),
         get("name", String::class.java)!!,
         get("color", String::class.java)!!,
-        get("issue_count", java.lang.Long::class.java)?.toLong() ?: 0,
-        get("discussion_count", java.lang.Long::class.java)?.toLong() ?: 0,
+        get("issue_count", Long::class.javaObjectType) ?: 0,
+        get("discussion_count", Long::class.javaObjectType) ?: 0,
     )
 }
 

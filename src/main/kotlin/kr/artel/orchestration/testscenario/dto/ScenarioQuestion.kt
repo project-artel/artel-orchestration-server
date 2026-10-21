@@ -29,7 +29,7 @@ data class ScenarioQuestion(
     val text: String,
     val why: String? = null,
     val options: List<ScenarioQuestionOption> = emptyList(),
-    @JsonProperty("allow_free_text") val allowFreeText: Boolean = true,
+    @param:JsonProperty("allow_free_text") val allowFreeText: Boolean = true,
     /** 이 질문을 만든 쪽. `code` 는 계산된 사실에서, `agent` 는 모델이 물은 것. */
     val source: ScenarioQuestionSource = ScenarioQuestionSource.CODE,
 ) {
@@ -84,7 +84,7 @@ enum class ScenarioQuestionSource { CODE, AGENT }
  *   화면이 지난 질문의 답을 보낼 수 있고, 그때 턴을 잃는 것보다 그냥 말로 취급하는 편이 낫다.
  */
 data class ScenarioQuestionAnswer(
-    @JsonProperty("question_id") val questionId: String,
-    @JsonProperty("option_ids") val optionIds: List<String> = emptyList(),
+    @param:JsonProperty("question_id") val questionId: String,
+    @param:JsonProperty("option_ids") val optionIds: List<String> = emptyList(),
     val text: String? = null,
 )

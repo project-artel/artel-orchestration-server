@@ -53,5 +53,5 @@ data class UpdateExpectedLabelsRequest(
 /** 스텝 번호(1부터)와 그 스텝의 기대 판정. */
 data class ExpectedLabelEntry(
     val step: Int,
-    @com.fasterxml.jackson.annotation.JsonProperty("expected_passed") val expectedPassed: Boolean?
+    @param:com.fasterxml.jackson.annotation.JsonProperty("expected_passed") val expectedPassed: Boolean?
 )

@@ -101,7 +101,7 @@ data class SdkAction(
     val tag: String,
     val name: String,
     val success: Boolean,
-    @JsonProperty("returnValue") val returnValue: Any? = null,
+    @param:JsonProperty("returnValue") val returnValue: Any? = null,
     val error: SdkError? = null,
     val timeStamp: String
 )

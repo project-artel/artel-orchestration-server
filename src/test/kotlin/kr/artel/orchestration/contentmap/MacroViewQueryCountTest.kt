@@ -82,7 +82,7 @@ class MacroViewQueryCountTest {
                 capture = Capture.PLAYER.wire,
                 evidenceDigest = "macro-count-${System.nanoTime()}",
             )
-        )!!.id!!
+        ).id!!
         val sceneId = scenes.save(SceneEntity(contentMapId = contentMapId, name = "Scene")).id!!
         // 한 `scene` 안에서 `screen` 을 가르는 것은 `discriminator` 다(V56 의 uk_screen_discriminator).
         val screenIds = (0 until 2).map { index ->
@@ -130,7 +130,7 @@ class MacroViewQueryCountTest {
             "INSERT INTO app_user (display_name, nickname, user_tag) " +
                 "VALUES ('console', 'console-' || gen_random_uuid(), '0000') RETURNING id"
         )
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 
     private suspend fun newProject(userId: Long): Long {

@@ -218,7 +218,7 @@ class IssueHttpIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "issue-http", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -228,18 +228,18 @@ class IssueHttpIntegrationTest {
             )
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = project.id!!)
-        )!!
+            TestScenarioEntity(projectId = project.id)
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val qaTry = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -249,8 +249,8 @@ class IssueHttpIntegrationTest {
                 startedAt = now,
                 completedAt = now
             )
-        )!!
-        return Seed(project.id!!, qaTry.id!!)
+        )
+        return Seed(project.id, qaTry.id!!)
     }
 
     private suspend fun seedIssue(qaTryId: Long, severity: String, title: String): Long =
@@ -265,7 +265,7 @@ class IssueHttpIntegrationTest {
                 createdAt = Instant.now(),
                 updatedAt = Instant.now()
             )
-        )!!.id!!
+        ).id!!
 
     private fun get(token: String, uri: String) = objectMapper.readTree(
         client().get().uri(uri).cookie("artel_access_token", token)

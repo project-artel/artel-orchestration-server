@@ -32,7 +32,7 @@ class TrackerSeeder(
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = name, genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         memberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -41,17 +41,17 @@ class TrackerSeeder(
                 createdAt = now
             )
         )
-        val scenario = scenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        val scenario = scenarioRepository.save(TestScenarioEntity(projectId = project.id))
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val qaTry = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -61,8 +61,8 @@ class TrackerSeeder(
                 startedAt = now,
                 completedAt = now
             )
-        )!!
-        return TrackerSeed(project.id!!, qaTry.id!!)
+        )
+        return TrackerSeed(project.id, qaTry.id!!)
     }
 
     suspend fun join(projectId: Long, userId: Long, role: ProjectRole) {
@@ -90,5 +90,5 @@ class TrackerSeeder(
                 createdAt = Instant.now(),
                 updatedAt = Instant.now()
             )
-        )!!.id!!
+        ).id!!
 }

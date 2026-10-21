@@ -76,13 +76,13 @@ class TestCaseVectorSearchRepository(
         return spec
             .map { row: Readable ->
                 TestCaseSearchRow(
-                    testCaseId = row.get("test_case_id", java.lang.Long::class.java)!!.toLong(),
+                    testCaseId = row.get("test_case_id", Long::class.javaObjectType)!!,
                     scene = row.get("scene", String::class.java)!!,
                     step = row.get("step", String::class.java)!!,
                     precondition = row.get("precondition", String::class.java),
                     expectedValue = row.get("expected_value", String::class.java)!!,
                     verificationStatus = row.get("verification_status", String::class.java)!!,
-                    distance = row.get("distance", java.lang.Double::class.java)!!.toDouble()
+                    distance = row.get("distance", Double::class.javaObjectType)!!
                 )
             }
             .flow()

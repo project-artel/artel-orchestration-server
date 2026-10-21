@@ -74,7 +74,7 @@ class QaTryResponseRunIdIntegrationTest {
         val now = Instant.now()
         projectId = projectRepository.save(
             ProjectEntity(name = "qa-try-run-id", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = projectId,
@@ -83,7 +83,7 @@ class QaTryResponseRunIdIntegrationTest {
                 createdAt = now
             )
         )
-        scenarioId = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))!!.id!!
+        scenarioId = testScenarioRepository.save(TestScenarioEntity(projectId = projectId)).id!!
         gameInstanceId = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = projectId,
@@ -93,7 +93,7 @@ class QaTryResponseRunIdIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     /**
@@ -168,7 +168,7 @@ class QaTryResponseRunIdIntegrationTest {
 
     private suspend fun seedQaRun(): Long {
         val now = Instant.now()
-        val testRun = testRunRepository.save(TestRunEntity(projectId = projectId, name = "런"))!!
+        val testRun = testRunRepository.save(TestRunEntity(projectId = projectId, name = "런"))
         return qaRunRepository.save(
             QaRunEntity(
                 testRunId = testRun.id!!,
@@ -178,7 +178,7 @@ class QaTryResponseRunIdIntegrationTest {
                 startedAt = now,
                 completedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun seedQaTry(qaRunId: Long?): Long {
@@ -193,7 +193,7 @@ class QaTryResponseRunIdIntegrationTest {
                 startedAt = now,
                 completedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun signIn(): AuthenticatedUser =
@@ -206,5 +206,5 @@ class QaTryResponseRunIdIntegrationTest {
                 avatarUrl = null,
                 email = "qa-try-run-id@example.com"
             )
-        )!!
+        )
 }
