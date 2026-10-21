@@ -12,6 +12,7 @@ import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.llmusage.entity.LlmUsageEntity
 import kr.artel.orchestration.llmusage.repository.LlmUsageRepository
+import kr.artel.orchestration.llmusage.repository.LlmUsageStatsRepository
 import kr.artel.orchestration.llmusage.service.LlmUsageStatsService
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
@@ -57,6 +58,7 @@ import java.util.UUID
 class LlmUsageStatsIntegrationTest {
 
     @Autowired private lateinit var statsService: LlmUsageStatsService
+    @Autowired private lateinit var statsRepository: LlmUsageStatsRepository
     @Autowired private lateinit var llmUsageRepository: LlmUsageRepository
     @Autowired private lateinit var qaTryRepository: QaTryRepository
     @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
@@ -160,6 +162,20 @@ class LlmUsageStatsIntegrationTest {
         assertThat(byProject).hasSize(1)
         assertThat(byProject.single().projectId).isEqualTo(projectId.toString())
         assertThat(byProject.single().totals.inputTokens).isEqualTo(700)
+    }
+
+    @Test
+    fun `findProjectIds resolves every service's reference to its project`(): Unit = runBlocking {
+        val qaTryId = seedRun()
+        val testRunId = testRunRepository.save(TestRunEntity(projectId = otherProjectId, name = "run-set"))!!.id!!
+
+        val projectIds = statsRepository.findProjectIds(
+            services = listOf("QA_RUN", "SCENARIO", "EMBEDDING", "QA_RUN", "GAME_CONTEXT"),
+            referenceIds = listOf(qaTryId, testRunId, projectId, qaTryId, 999_999L),
+        )
+
+        // 같은 프로젝트는 한 번만 돌아오고, 못 푼 참조(없는 문서)는 빠진다.
+        assertThat(projectIds).containsExactlyInAnyOrder(projectId, otherProjectId)
     }
 
     @Test

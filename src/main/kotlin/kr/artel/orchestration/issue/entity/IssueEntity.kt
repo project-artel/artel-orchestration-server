@@ -33,5 +33,9 @@ data class IssueEntity(
     @Column("resolved_at") val resolvedAt: Instant? = null,
     @Column("resolved_by") val resolvedBy: Long? = null,
     @Column("created_at") val createdAt: Instant? = null,
-    @Column("updated_at") val updatedAt: Instant? = null
+    @Column("updated_at") val updatedAt: Instant? = null,
+    /** 프로젝트 안 번호(V120). 넣을 때 DB 트리거가 채우므로 새 행은 null 로 보낸다. */
+    @Column("project_no") val projectNo: Long? = null,
+    /** 보관한 때. null 이면 보관하지 않았다(V120). */
+    @Column("archived_at") val archivedAt: Instant? = null
 )

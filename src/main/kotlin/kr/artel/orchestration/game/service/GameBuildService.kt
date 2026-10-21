@@ -12,6 +12,8 @@ import kr.artel.orchestration.game.dto.LatestQaRunSummary
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.game.repository.GameBuildSummaryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.repository.ProjectRepository
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -32,7 +34,8 @@ class GameBuildService(
     private val summaryRepository: GameBuildSummaryRepository,
     private val sessionManager: SessionManager,
     private val projectRepository: ProjectRepository,
-    private val clock: Clock
+    private val clock: Clock,
+    private val projectChangeStreamManager: ProjectChangeStreamManager
 ) {
     suspend fun list(userId: Long, projectId: Long): GameBuildListResponse? {
         projectRepository.findAccessibleById(projectId, userId) ?: return null
@@ -81,7 +84,11 @@ class GameBuildService(
         request: UpdateGameBuildRequest
     ): GameBuildResponse? {
         val build = buildRepository.findAccessibleById(buildId, projectId, userId) ?: return null
-        return buildRepository.save(build.applying(request)).toResponse()
+        val saved = buildRepository.save(build.applying(request))
+        // save 가 곧 commit 이다. 인스턴스 응답에도 빌드 label 이 실려 있어 둘 다 알린다.
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_BUILDS)
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
+        return saved.toResponse()
     }
 
     private fun GameBuildEntity.applying(request: UpdateGameBuildRequest) = copy(

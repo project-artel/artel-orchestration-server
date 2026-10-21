@@ -8,6 +8,7 @@ package kr.artel.orchestration.llmusage.entity
  * - [SCENARIO]        : `test_run.id` — 작성 세션이 런 단위라 한 세션의 지출이 시나리오 하나에
  *                       귀속되지 않는다(ARTEL-206 Step 6). 시나리오별 드릴다운이 필요해지면
  *                       Agent가 시나리오를 확정한 뒤 별도 컬럼으로 받아야 한다.
+ * - [PROJECT_AGENT]   : `project_agent_conversation.id`
  * - [KNOWLEDGE_QUERY] : `project.id`
  * - [GAME_CONTEXT]    : `project_document.id`
  * - [EMBEDDING]       : `project.id`
@@ -20,5 +21,6 @@ enum class LlmUsageServiceType {
     SCENARIO,
     KNOWLEDGE_QUERY,
     GAME_CONTEXT,
-    EMBEDDING
+    EMBEDDING,
+    PROJECT_AGENT
 }

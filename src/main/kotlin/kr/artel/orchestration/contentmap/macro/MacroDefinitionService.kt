@@ -3,6 +3,7 @@ package kr.artel.orchestration.contentmap.macro
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.entity.MacroEntity
 import kr.artel.orchestration.contentmap.entity.MacroEventEntity
@@ -14,7 +15,10 @@ import kr.artel.orchestration.contentmap.repository.MacroRepository
 import kr.artel.orchestration.contentmap.repository.ScreenMacroRepository
 import kr.artel.orchestration.contentmap.repository.ScreenRepository
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.qa.entity.QaTryEntity
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
@@ -60,7 +64,9 @@ class MacroDefinitionService(
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock,
+    private val projectChanges: ProjectChangeStreamManager,
 ) {
+    private val logger = LoggerFactory.getLogger(MacroDefinitionService::class.java)
 
     /**
      * 등록된 macro 정의를 적는다. 같은 이름이 이미 있으면 **제자리에서 갱신하고** 관계 행을 남긴다.
@@ -127,7 +133,7 @@ class MacroDefinitionService(
             is Step.Ok -> step.value
         }
 
-        return transactionalOperator.executeAndAwait {
+        val written = transactionalOperator.executeAndAwait {
             // `ON CONFLICT DO UPDATE ... RETURNING` 이라 충돌해도 유니크 위반이 아니라 UPDATE 로
             // 가고 늘 한 행이 돌아온다. 그래서 `AgentCapabilityWriteService` 가 쓰는 "트랜잭션 밖에서
             // 다시 조회해 복구" 가 여기에는 필요 없다.
@@ -153,6 +159,9 @@ class MacroDefinitionService(
                 screenIds = screenMacros.findScreenIdsByMacroId(upserted.id).toList(),
             )
         }
+        // commit 뒤에 알린다. 프로젝트 id 는 이 런의 game instance 가 든다.
+        notifyMacrosChanged { gameInstances.findById(qaTry.gameInstanceId)?.projectId }
+        return written
     }
 
     /**
@@ -259,6 +268,17 @@ class MacroDefinitionService(
                 createdAt = Instant.now(clock),
             )
         )
+    }
+
+    /** [resolveProjectId] 로 프로젝트를 찾아 MACROS 변경을 알린다. 알림 실패가 호출자로 번지지 않게 삼킨다. */
+    private suspend fun notifyMacrosChanged(resolveProjectId: suspend () -> Long?) {
+        try {
+            resolveProjectId()?.let { projectChanges.notify(it, ProjectChangeTopic.MACROS) }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            logger.warn("macro 변경 알림 실패", error)
+        }
     }
 
     /**

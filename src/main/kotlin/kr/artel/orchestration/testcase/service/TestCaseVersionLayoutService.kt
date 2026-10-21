@@ -5,6 +5,8 @@ import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.testcase.dto.TestCaseFolderResponse
 import kr.artel.orchestration.testcase.dto.TestCaseVersionCopyRequest
 import kr.artel.orchestration.testcase.dto.TestCaseVersionGroupAssignRequest
@@ -36,6 +38,7 @@ class TestCaseVersionLayoutService(
     private val folderService: TestCaseFolderService,
     private val folderItems: TestCaseFolderItemRepository,
     private val transactionalOperator: TransactionalOperator,
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
 ) {
 
     suspend fun createGroup(projectId: Long, userId: Long, request: TestCaseVersionGroupRequest): TestCaseVersionGroupResponse {
@@ -46,6 +49,7 @@ class TestCaseVersionLayoutService(
             requireFreeName(projectId, name, null)
             groups.save(TestCaseVersionGroupEntity(projectId = projectId, name = name))
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return responseOf(saved)
     }
 
@@ -63,6 +67,7 @@ class TestCaseVersionLayoutService(
             requireFreeName(projectId, name, groupId)
             groups.save(group.copy(name = name))
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return responseOf(saved)
     }
 
@@ -73,6 +78,7 @@ class TestCaseVersionLayoutService(
             folderService.lockProjectFolders(projectId)
             groups.delete(requireGroup(projectId, groupId))
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
     }
 
     /** 버전을 묶음에 넣는다. `groupId` 가 없으면 묶음에서 뺀다. */
@@ -84,12 +90,14 @@ class TestCaseVersionLayoutService(
             groupId?.let { requireGroup(projectId, it) }
             groups.upsertGroup(gameBuildId, groupId)
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
     }
 
     suspend fun setHidden(projectId: Long, userId: Long, gameBuildId: Long, request: TestCaseVersionHiddenRequest) {
         requireBuild(projectId, userId, gameBuildId)
         val hidden = request.hidden ?: throw BadRequestException("hidden 이 필요합니다.")
         groups.upsertHidden(gameBuildId, hidden)
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
     }
 
     /**
@@ -113,6 +121,7 @@ class TestCaseVersionLayoutService(
             caseIds.chunked(CHUNK).forEach { chunk -> folderItems.append(projectId, requireNotNull(folder.id), chunk).toList() }
             requireNotNull(folder.id)
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return folderService.responseOf(folderId)
     }
 
