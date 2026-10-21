@@ -5258,6 +5258,41 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "Content Map"
+        ],
+        "summary": "도는 근거 스캔 취소",
+        "description": "게임에 멈추라고 보내고 그 스캔을 실패로 닫는다. 게임이 쥔 단계(SCANNING · UPLOADING)에서만 끊을 수 있고, 서버가 문서를 읽는 단계면 409. 돌고 있는 스캔이 없어도 409 다.",
+        "operationId": "cancelScan",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "description": "게임 빌드 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
       }
     },
     "/api/projects/{projectId}/documents": {
@@ -18999,6 +19034,7 @@
       },
       "LastScanResponse": {
         "required": [
+          "cancelled",
           "gameInstanceId",
           "gameInstanceName",
           "phase",
@@ -19041,6 +19077,10 @@
           "error": {
             "type": "string",
             "description": "FAILED 일 때 사람에게 보여 줄 사유"
+          },
+          "cancelled": {
+            "type": "boolean",
+            "description": "사람이 끊어서 FAILED 가 된 것인가. 화면이 취소와 실패를 갈라 말한다"
           },
           "testCases": {
             "$ref": "#/components/schemas/ScanTestCases"

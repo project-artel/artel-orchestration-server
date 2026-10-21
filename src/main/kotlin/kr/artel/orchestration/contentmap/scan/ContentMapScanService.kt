@@ -139,6 +139,63 @@ class ContentMapScanService(
     }
 
     /**
+     * 도는 스캔을 끊는다(ARTEL-1183).
+     *
+     * 빌드를 못 찾거나 접근할 수 없으면 null 이고, 호출부가 404 로 답한다.
+     *
+     * **게임 쪽 단계에서만 끊을 수 있다.** [ScanPhase.SCANNING] · [ScanPhase.UPLOADING] 은 게임이 쥐고 있어
+     * 멈춰 달라고 보낼 상대가 있다. 뒤의 둘은 서버가 WS 프레임을 처리하는 코루틴 안에서 그대로 돌아, 바깥에서
+     * 끊을 손잡이가 없다 — 그 자리에서는 409 로 "지금은 못 끊는다"를 말하는 것이 사실이다.
+     *
+     * 도는 스캔이 없을 때도 409 다. 204 로 조용히 넘기면 화면은 자기가 무언가를 끊었다고 여기는데, 그때 실제로
+     * 일어난 일은 아무것도 없다. 버튼은 스캔이 도는 동안만 보이므로 여기 닿았다는 것은 화면이 낡았다는 뜻이고,
+     * 409 와 사유를 받아야 다시 읽어 올 수 있다.
+     *
+     * 게임이 이미 끊겼어도 상태는 닫는다. 보낼 상대가 없는 것이 스캔을 열어 둘 이유는 아니다.
+     */
+    suspend fun cancelScan(userId: Long, projectId: Long, gameBuildId: Long): ScanStatus? {
+        gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: return null
+
+        val running = statuses.find(gameBuildId)
+        if (running == null || running.state != ScanState.REQUESTED) {
+            throw ConflictException(
+                "이 빌드에 돌고 있는 스캔이 없습니다. 화면을 다시 읽어 주세요.",
+                SCAN_NOT_RUNNING,
+            )
+        }
+        if (running.phase != ScanPhase.SCANNING && running.phase != ScanPhase.UPLOADING) {
+            throw ConflictException(
+                "올라온 문서를 서버가 읽는 중이라 지금은 끊을 수 없습니다. 끝난 뒤에 결과를 확인해 주세요.",
+                SCAN_NOT_CANCELLABLE,
+            )
+        }
+
+        // 보내기는 해 보되 못 보내도 멈추지 않는다. 게임이 그새 끊겼다면 받을 상대가 없을 뿐이고, 그때도 상태는
+        // 닫아야 다음 요청이 풀린다.
+        try {
+            sessionManager.send(running.gameInstanceId.toString(), mapOf("type" to CANCEL_EVIDENCE_SCAN))
+        } catch (failure: Throwable) {
+            logger.warn(
+                "스캔 취소를 게임에 못 보냈다. 상태는 닫는다 [gameBuildId={}, gameInstanceId={}]: {}",
+                gameBuildId, running.gameInstanceId, failure.message,
+            )
+        }
+
+        val cancelled = statuses.complete(gameBuildId) { status ->
+            status.copy(
+                state = ScanState.FAILED,
+                finishedAt = Instant.now(clock),
+                error = "사용자가 스캔을 취소했습니다.",
+                cancelled = true,
+            )
+        } ?: return null
+
+        logger.info("근거 스캔 취소 [gameBuildId={}, gameInstanceId={}]", gameBuildId, cancelled.gameInstanceId)
+        streamManager.emit(gameBuildId, ContentMapStreamEvent(type = "scan", scan = LastScanResponse.of(cancelled)))
+        return cancelled
+    }
+
+    /**
      * 앞 스캔이 아직 돌고 있다고 볼 것인가. 둘 다 맞아야 한다 — 받은 게임이 아직 붙어 있고, [STALE_AFTER] 안에
      * 소식이 있었다.
      *
@@ -168,6 +225,15 @@ class ContentMapScanService(
          * [ScanStatusRegistry] 의 상한과 같다.
          */
         val STALE_AFTER: Duration = Duration.ofMinutes(60)
+
+        /** 도는 스캔이 없을 때. 화면이 낡았다는 뜻이라 조용히 넘기지 않는다. */
+        const val SCAN_NOT_RUNNING = "scan_not_running"
+
+        /** 서버 쪽 단계라 끊을 손잡이가 없을 때. */
+        const val SCAN_NOT_CANCELLABLE = "scan_not_cancellable"
+
+        /** 게임이 액션 큐 밖에서 받는 멈춤 통지. SDK 의 `ArtelManager.HandleMessage` 가 가른다. */
+        const val CANCEL_EVIDENCE_SCAN = "CANCEL_EVIDENCE_SCAN"
 
         /** 프로세스 안에서만 뜻이 있는 번호. 위 sendAction 의 주석이 그 범위를 말한다. */
         private val REQUEST_IDS = AtomicLong()

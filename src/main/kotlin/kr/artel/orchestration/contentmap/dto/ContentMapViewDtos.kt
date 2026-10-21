@@ -583,6 +583,8 @@ data class LastScanResponse(
     val ingestedDocuments: Int?,
     @Schema(description = "FAILED 일 때 사람에게 보여 줄 사유")
     val error: String?,
+    @Schema(description = "사람이 끊어서 FAILED 가 된 것인가. 화면이 취소와 실패를 갈라 말한다")
+    val cancelled: Boolean = false,
     @Schema(description = "스캔하고 TC 생성(ARTEL-1040)일 때 TC 쪽 결과. 그냥 스캔이면 null")
     val testCases: ScanTestCases? = null,
     @Schema(description = "SCANNING · UPLOADING · INGESTING · GENERATING_TEST_CASES. 끝난 뒤에는 마지막으로 지난 단계")
@@ -601,6 +603,7 @@ data class LastScanResponse(
             finishedAt = status.finishedAt,
             ingestedDocuments = status.ingestedDocuments,
             error = status.error,
+            cancelled = status.cancelled,
             testCases = status.testCases,
             phase = status.phase,
             progress = status.progress,

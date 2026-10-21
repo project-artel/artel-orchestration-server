@@ -9,6 +9,7 @@ import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.scan.ContentMapScanService
+import kr.artel.orchestration.contentmap.scan.ScanPhase
 import kr.artel.orchestration.contentmap.scan.ScanState
 import kr.artel.orchestration.contentmap.scan.ScanStatus
 import kr.artel.orchestration.contentmap.scan.ScanStatusRegistry
@@ -283,6 +284,84 @@ class ContentMapScanTest {
         val buildId = newBuild(projectId)
 
         assertThat(scan.startScan(stranger, projectId, buildId)).isNull()
+    }
+
+    /** 게임이 쥔 단계에서는 끊을 수 있고, 그 스캔은 취소로 닫힌다. */
+    @Test
+    fun `도는 스캔을 끊으면 취소로 닫힌다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+
+        assertThat(scan.startScan(userId, projectId, buildId)).isNotNull()
+
+        val cancelled = scan.cancelScan(userId, projectId, buildId)
+        assertThat(cancelled).isNotNull()
+        assertThat(cancelled!!.state).isEqualTo(ScanState.FAILED)
+        assertThat(cancelled.cancelled).isTrue()
+        assertThat(cancelled.error).contains("취소")
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
+    /** 끊고 나면 다음 요청이 풀린다. 그것이 취소를 만든 이유다. */
+    @Test
+    fun `끊은 뒤에는 같은 빌드에 다시 시킬 수 있다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+
+        scan.startScan(userId, projectId, buildId)
+        scan.cancelScan(userId, projectId, buildId)
+
+        assertThat(scan.startScan(userId, projectId, buildId)).isNotNull()
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
+    /** 서버가 문서를 읽는 중에는 끊을 손잡이가 없다. 그 사실을 409 로 말한다. */
+    @Test
+    fun `서버가 읽는 단계에서는 끊을 수 없다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+
+        scan.startScan(userId, projectId, buildId)
+        statuses.advance(buildId) { it.copy(phase = ScanPhase.INGESTING) }
+
+        assertThatThrownBy { runBlocking { scan.cancelScan(userId, projectId, buildId) } }
+            .isInstanceOf(ConflictException::class.java)
+            .extracting("code").isEqualTo(ContentMapScanService.SCAN_NOT_CANCELLABLE)
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
+    /** 돌고 있는 것이 없는데 끊으라고 하면 화면이 낡은 것이다. 조용히 넘기지 않는다. */
+    @Test
+    fun `돌고 있는 스캔이 없으면 끊기도 409 다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+
+        assertThatThrownBy { runBlocking { scan.cancelScan(userId, projectId, buildId) } }
+            .isInstanceOf(ConflictException::class.java)
+            .extracting("code").isEqualTo(ContentMapScanService.SCAN_NOT_RUNNING)
+    }
+
+    /** 남의 프로젝트 빌드는 끊지도 못한다. 404 가 되도록 null 이다. */
+    @Test
+    fun `남의 프로젝트 빌드는 끊지 못한다`(): Unit = runBlocking {
+        val owner = newUser()
+        val projectId = newProject(owner)
+        val buildId = newBuild(projectId)
+
+        assertThat(scan.cancelScan(newUser(), projectId, buildId)).isNull()
     }
 
     // ---------- 픽스처 ----------

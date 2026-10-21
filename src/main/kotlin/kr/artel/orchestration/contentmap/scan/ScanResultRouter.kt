@@ -68,6 +68,21 @@ class ScanResultRouter(
             return true
         }
 
+        // 끊긴 스캔의 늦은 결과는 앉히지 않는다(ARTEL-1183). 취소는 게임에 멈추라고 보내지만, 그 사이 이미 올라간
+        // 문서의 성공 결과가 뒤늦게 도착할 수 있다. 앉히면 사람이 끊은 스캔이 지도를 바꾸고, 그 지도는 반쯤 돈 순회의
+        // 것이라 못 돈 씬이 사라진 모습이 된다.
+        //
+        // **모르는 것은 막지 않는다.** 상태는 프로세스 메모리에 살아서 서버가 다시 뜨면 비어 있다. 그때 `find` 는
+        // null 이고, 그 결과는 끊긴 것이 아니라 재시작을 건너온 것이므로 지금까지 하던 대로 앉힌다.
+        val known = statuses.find(gameBuildId)
+        if (known != null && known.state != ScanState.REQUESTED) {
+            logger.info(
+                "이미 닫힌 스캔의 결과가 늦게 도착해 앉히지 않는다 [gameBuildId={}, state={}, cancelled={}]",
+                gameBuildId, known.state, known.cancelled,
+            )
+            return true
+        }
+
         enterPhase(gameBuildId, ScanPhase.INGESTING)
         ingestFor(gameBuildId)
         return true

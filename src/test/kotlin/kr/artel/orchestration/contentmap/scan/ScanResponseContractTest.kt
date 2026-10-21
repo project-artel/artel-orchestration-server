@@ -74,9 +74,11 @@ class ScanResponseContractTest {
 
         assertThat(json.fieldNames().asSequence().toList()).containsExactly(
             "state", "gameInstanceId", "gameInstanceName", "requestedAt",
-            "finishedAt", "ingestedDocuments", "error", "testCases",
+            "finishedAt", "ingestedDocuments", "error", "cancelled", "testCases",
             "phase", "progress", "updatedAt",
         )
+        // 끊어서 끝난 것과 깨져서 끝난 것은 상태가 같다. 화면이 둘을 갈라 말할 수 있는 칸이 이것뿐이다(ARTEL-1183).
+        assertThat(json["cancelled"].asBoolean()).isFalse()
         assertThat(json["state"].asText()).isEqualTo("FAILED")
         // 단계도 서수가 아니라 이름이다. 진행을 안 보내는 옛 SDK 면 SCANNING 에 머물고 progress 는 null 이다(ARTEL-1178).
         assertThat(json["phase"].asText()).isEqualTo("SCANNING")
