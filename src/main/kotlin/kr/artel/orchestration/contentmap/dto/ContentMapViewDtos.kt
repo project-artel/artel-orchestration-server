@@ -632,7 +632,7 @@ data class StartContentMapScanResponse(
  */
 @Schema(description = "content map SSE 이벤트")
 data class ContentMapStreamEvent(
-    @Schema(description = "snapshot · scan · ingest · document")
+    @Schema(description = "snapshot · scan · ingest · document · testCaseGeneration")
     val type: String,
     @Schema(description = "type = snapshot · scan 일 때만 싣는다")
     val scan: LastScanResponse? = null,
@@ -642,6 +642,8 @@ data class ContentMapStreamEvent(
     val document: ContentMapDocumentEventResponse? = null,
     @Schema(description = "type = snapshot 일 때만 싣는다")
     val documents: List<ContentMapDocumentEventResponse>? = null,
+    @Schema(description = "type = snapshot · testCaseGeneration 일 때 싣는다(ARTEL-1187). 이 서버가 모르면 null")
+    val testCaseGeneration: kr.artel.orchestration.testcase.dto.TestCaseGenerationResponse? = null,
 )
 
 /**
