@@ -44,10 +44,13 @@ import kr.artel.orchestration.contentmap.repository.ScreenRepository
 import kr.artel.orchestration.contentmap.repository.ScreenTransitionRepository
 import kr.artel.orchestration.contentmap.scan.ContentMapEventStreamManager
 import kr.artel.orchestration.contentmap.scan.ScanStatusRegistry
+import kr.artel.orchestration.contentmap.SceneBuildOrder
+import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
 import org.springframework.http.codec.ServerSentEvent
 import org.springframework.stereotype.Service
+import org.slf4j.LoggerFactory
 
 /**
  * 사람이 브라우저에서 **씬 명세를 읽는** 자리. `content_map` 을 프로덕션에서 처음으로 읽는 코드다.
@@ -89,6 +92,8 @@ class ContentMapViewService(
      */
     private val evidence = EvidenceParser(objectMapper)
 
+    private val logger = LoggerFactory.getLogger(ContentMapViewService::class.java)
+
     /**
      * 이 빌드의 씬 명세를 읽는다. 접근할 수 없는 빌드면 null(→ 404).
      *
@@ -104,7 +109,7 @@ class ContentMapViewService(
         projectId: Long,
         gameBuildId: Long,
     ): ContentMapResponse? {
-        gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: return null
+        val build = gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: return null
 
         // 마지막 스캔은 지도가 있든 없든 답한다. 지도가 없을 때야말로 화면이 그것을 물어야 한다 —
         // "아직 스캔한 적이 없다"와 "눌렀는데 게임이 실패로 답했다"가 여기서 갈린다.
@@ -120,7 +125,7 @@ class ContentMapViewService(
 
         return ContentMapResponse(
             contentMap = summaryOf(contentMap, allDocuments),
-            scenes = scenesOf(contentMapId),
+            scenes = scenesOf(contentMapId, buildOrderOf(build)),
             edges = sceneEdges.findByContentMapId(contentMapId).map(::edgeOf).toList(),
             // 화면 전이는 씬 안에 접지 않는다. 씬 경계를 넘는 전이는 두 씬에 걸쳐 있어 어느 쪽에
             // 넣어도 반쪽이 되고, 화면은 그 선을 씬 컨테이너 **밖에** 그려야 한다.
@@ -230,7 +235,20 @@ class ContentMapViewService(
      * 화면은 씬마다 도는 대신 지도 한 번으로 읽어 묶는다. 씬 수만큼 왕복을 내지 않으려는 것이고,
      * 화면이 0 행인 지도(= QA 런 전의 모든 빌드)에서 그 왕복은 전부 헛것이다.
      */
-    private suspend fun scenesOf(contentMapId: Long): List<ContentMapSceneResponse> {
+    /**
+     * 씬 이름 → 빌드 설정 순번. 씬 스캔이 깨졌으면 순번 없이 간다 — 순서는 지도를 보기 좋게 할 뿐이라, 못 읽었다고
+     * 지도를 막을 이유가 아니다.
+     */
+    private fun buildOrderOf(build: GameBuildEntity): Map<String, Int> =
+        runCatching { SceneBuildOrder.names(build.sceneScan, objectMapper) }
+            .onFailure { logger.warn("씬 스캔의 빌드 설정 순서를 못 읽었다 — 순서 없이 간다 [gameBuildId=${build.id}] ${it.message}") }
+            .getOrDefault(emptyList())
+            .withIndex()
+            // 같은 이름이 두 번 오면(폴더만 다른 씬) 앞 순번을 쓴다.
+            .reversed()
+            .associate { (index, name) -> name to index }
+
+    private suspend fun scenesOf(contentMapId: Long, buildOrder: Map<String, Int>): List<ContentMapSceneResponse> {
         val counts = capabilities.countByScene(contentMapId).toList().associateBy { it.sceneId }
         val steps = stepsByScene(contentMapId)
         val capabilityLists = capabilities.findSceneCapabilities(contentMapId).toList()
@@ -255,6 +273,8 @@ class ContentMapViewService(
                 thumbnail = thumbnailOf(scene),
                 screens = screensByScene[scene.id].orEmpty(),
                 capabilityList = capabilityLists[scene.id].orEmpty(),
+                buildOrder = buildOrder[scene.name],
+                entry = scene.isEntry || buildOrder[scene.name] == 0,
             )
         }
     }
