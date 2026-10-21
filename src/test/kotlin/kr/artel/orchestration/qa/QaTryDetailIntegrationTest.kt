@@ -104,7 +104,7 @@ class QaTryDetailIntegrationTest {
         strangerId = signIn("detail-stranger", "8191").userId.toLong()
         projectId = projectRepository.save(
             ProjectEntity(name = "detail-project", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = projectId,
@@ -115,7 +115,7 @@ class QaTryDetailIntegrationTest {
         )
         scenarioId = testScenarioRepository.save(
             TestScenarioEntity(projectId = projectId, title = "게임 시작 -> 1 스테이지 완료까지")
-        )!!.id!!
+        ).id!!
         gameInstanceId = newGameInstance()
     }
 
@@ -356,7 +356,7 @@ class QaTryDetailIntegrationTest {
                 startedAt = now,
                 completedAt = if (terminal) now.plus(Duration.ofMinutes(5)) else null
             )
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun seedUsage(
@@ -442,13 +442,13 @@ class QaTryDetailIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!.id!!
+        ).id!!
         val contentMapId = contentMapRepository.save(
             ContentMapEntity(gameBuildId = buildId, createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         val sceneId = sceneRepository.save(
             SceneEntity(contentMapId = contentMapId, name = "TitleScene")
-        )!!.id!!
+        ).id!!
         val capabilityId = capabilityRepository.save(
             CapabilityEntity(
                 sceneId = sceneId,
@@ -457,7 +457,7 @@ class QaTryDetailIntegrationTest {
                 summary = "MapSceneButton 을 누르면 StoryScene 으로 간다",
                 interaction = "click"
             )
-        )!!.id!!
+        ).id!!
         observationRepository.save(
             CapabilityObservationEntity(
                 capabilityId = capabilityId,
@@ -481,7 +481,7 @@ class QaTryDetailIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!.id!!
+        ).id!!
         return qaRunRepository.save(
             QaRunEntity(
                 testRunId = testRunId,
@@ -494,7 +494,7 @@ class QaTryDetailIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun newGameInstance(): Long =
@@ -507,7 +507,7 @@ class QaTryDetailIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!.id!!
+        ).id!!
 
     private suspend fun signIn(login: String, providerUserId: String): AuthenticatedUser =
         oauthUserService.upsert(
@@ -519,5 +519,5 @@ class QaTryDetailIntegrationTest {
                 avatarUrl = null,
                 email = "$login@example.com"
             )
-        )!!
+        )
 }

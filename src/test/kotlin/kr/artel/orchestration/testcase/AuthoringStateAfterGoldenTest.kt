@@ -85,7 +85,7 @@ class AuthoringStateAfterGoldenTest {
         )
         val build = gameBuilds.save(
             GameBuildEntity(
-                projectId = project.id!!, version = "gen", createdAt = now, updatedAt = now,
+                projectId = project.id, version = "gen", createdAt = now, updatedAt = now,
                 // 실제 SDK 가 보내는 씬 스캔의 최소형 — 0번이 부팅 씬이다. 이것이 있어야
                 // 적재가 `scene.is_entry` 를 찍고, 입구 씬의 시작값이 저작에 실린다.
                 sceneScan = Json.of("""{"scenesInBuild":["TitleScene"]}"""),
@@ -115,9 +115,9 @@ class AuthoringStateAfterGoldenTest {
             )
         )
         // 적재는 test case 를 만들지 않는다(ARTEL-971). 생성 버튼과 같은 경로로 만든다.
-        contentMapTestCases.regenerate(map.id!!)
-        cases = testCases.getAuthoringCases(project.id!!, userId)
-        projectId = project.id!!
+        contentMapTestCases.regenerate(map.id)
+        cases = testCases.getAuthoringCases(project.id, userId)
+        projectId = project.id
     }
 
     /**

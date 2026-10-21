@@ -49,7 +49,7 @@ object ScreenNameFrames {
  *   이름이 이미 있으면 묻지 않는다.
  */
 data class ScreenNameRequestPayload(
-    @JsonProperty("request_id") val requestId: String,
+    @param:JsonProperty("request_id") val requestId: String,
     val screen: ScreenSelectorScreenRef,
     val scene: ScreenSelectorSceneRef,
 )
@@ -65,7 +65,7 @@ data class ScreenNameRequestPayload(
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class ScreenNamePayload(
-    @JsonProperty("request_id") val requestId: String? = null,
+    @param:JsonProperty("request_id") val requestId: String? = null,
     val name: String? = null,
     val note: String? = null,
 )

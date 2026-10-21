@@ -217,7 +217,7 @@ class QaCaptureIntegrationTest {
         assertThat(payload["targetId"].asInt()).isEqualTo(7)
         assertThat(payload["objectKey"].asText()).startsWith("qa-captures/${seeded.qaTryId}/")
         assertThat(payload["url"].asText()).isEqualTo(ticket["downloadUrl"].asText())
-        assertThat(log.payload.asString()!!.toByteArray(StandardCharsets.UTF_8).size)
+        assertThat(log.payload.asString().toByteArray(StandardCharsets.UTF_8).size)
             .isLessThan(2048)
     }
 
@@ -280,11 +280,11 @@ class QaCaptureIntegrationTest {
             )
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = project.id!!)
+            TestScenarioEntity(projectId = project.id)
         )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
@@ -304,7 +304,7 @@ class QaCaptureIntegrationTest {
         )
         return SeededRun(
             sdkToken = jwtService.issueSdkToken(owner.userId).token,
-            instanceId = instance.id!!.toString(),
+            instanceId = instance.id.toString(),
             qaTryId = qaTry.id!!
         )
     }

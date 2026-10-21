@@ -353,7 +353,7 @@ class ScreenNameTest {
         val named = screens.nameIfAbsent(screen.id!!, "두 번째 이름")
 
         assertThat(named).isZero()
-        assertThat(screens.findById(screen.id!!)!!.name).isEqualTo("첫 이름")
+        assertThat(screens.findById(screen.id)!!.name).isEqualTo("첫 이름")
     }
 
     // ---------- 못 쓸 답 ----------
@@ -583,7 +583,7 @@ class ScreenNameTest {
         )
         val instance = gameInstances.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 lastGameBuildId = build.id,
@@ -601,7 +601,7 @@ class ScreenNameTest {
             )
         )
         val startedBy = newUser()
-        val testRunId = testRuns.save(TestRunEntity(projectId = project.id!!, name = "런")).id!!
+        val testRunId = testRuns.save(TestRunEntity(projectId = project.id, name = "런")).id!!
         val qaRun = qaRuns.save(
             QaRunEntity(
                 testRunId = testRunId,
@@ -611,11 +611,11 @@ class ScreenNameTest {
                 startedAt = now,
             )
         )
-        val scenario = testScenarios.save(TestScenarioEntity(projectId = project.id!!))
+        val scenario = testScenarios.save(TestScenarioEntity(projectId = project.id))
         val qaTry = qaTries.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
-                gameInstanceId = instance.id!!,
+                gameInstanceId = instance.id,
                 qaRunId = qaRun.id,
                 startedBy = startedBy,
                 agentSessionId = agentSessionId,
@@ -623,7 +623,7 @@ class ScreenNameTest {
                 startedAt = now,
             )
         )
-        return World(instance.id!!, build.id!!, contentMap.id!!, qaTry.id!!)
+        return World(instance.id, build.id, contentMap.id!!, qaTry.id!!)
     }
 
     private suspend fun newScene(world: World, name: String): Long =
@@ -647,6 +647,6 @@ class ScreenNameTest {
             "INSERT INTO app_user (display_name, nickname, user_tag) " +
                 "VALUES ('screen-name', 'screen-name-' || gen_random_uuid(), '0000') RETURNING id"
         )
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 }

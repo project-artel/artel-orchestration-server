@@ -197,7 +197,7 @@ class QaRunInboundActivationIntegrationTest {
                 provider = "github", providerUserId = "9999", login = "stranger",
                 displayName = "stranger", avatarUrl = null, email = "stranger@example.com"
             )
-        )!!
+        )
         assertThat(service.getRun(run.runId, stranger.userId.toLong())).isNull()
     }
 
@@ -332,7 +332,7 @@ class QaRunInboundActivationIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "act-p", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now
@@ -340,13 +340,13 @@ class QaRunInboundActivationIntegrationTest {
         )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!, name = "inst", platform = "UNITY",
+                projectId = project.id, name = "inst", platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now
             )
-        )!!
-        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))!!
-        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
-        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        )
+        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id, name = "런"))
+        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
+        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
 
         val started =
             persistence.createRunStarting(testRun.id!!, instance.id!!, ownerId, listOf(s1.id!!, s2.id!!), gates)
@@ -355,7 +355,7 @@ class QaRunInboundActivationIntegrationTest {
         persistence.attachRunAndMarkRunning(
             started.qaRun, firstTryId, "session-run-1", objectMapper.readTree(resolvedConfig)
         )
-        return RunningRun(started.qaRun.id!!, firstTryId, pendingTryId, ownerId, instance.id!!)
+        return RunningRun(started.qaRun.id!!, firstTryId, pendingTryId, ownerId, instance.id)
     }
 
     private fun terminalStatusFrame(qaTryId: Long) =
@@ -379,5 +379,5 @@ class QaRunInboundActivationIntegrationTest {
                 avatarUrl = null,
                 email = "runact@example.com"
             )
-        )!!
+        )
 }

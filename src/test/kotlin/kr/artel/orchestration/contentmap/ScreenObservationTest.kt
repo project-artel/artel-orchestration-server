@@ -637,7 +637,7 @@ class ScreenObservationTest {
         )
         val instance = gameInstances.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 lastGameBuildId = build.id,
@@ -655,7 +655,7 @@ class ScreenObservationTest {
             )
         )
         if (withRun) {
-            val testRunId = testRuns.save(TestRunEntity(projectId = project.id!!, name = "런")).id!!
+            val testRunId = testRuns.save(TestRunEntity(projectId = project.id, name = "런")).id!!
             qaRuns.save(
                 QaRunEntity(
                     testRunId = testRunId,
@@ -687,7 +687,7 @@ class ScreenObservationTest {
         db.sql("SELECT screen_defining_selector(:sceneId, :selector) AS defining")
             .bind("sceneId", sceneId)
             .bind("selector", selector)
-            .map { row, _ -> row.get("defining", java.lang.Boolean::class.java)!!.booleanValue() }
+            .map { row, _ -> row.get("defining", Boolean::class.javaObjectType)!! }
             .one()
             .block()!!
 
@@ -838,6 +838,6 @@ class ScreenObservationTest {
 
     private fun newUser(): Long =
         db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('screen', 'screen-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 }

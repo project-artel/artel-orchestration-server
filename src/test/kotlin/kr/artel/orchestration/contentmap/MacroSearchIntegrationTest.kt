@@ -484,7 +484,7 @@ class MacroSearchIntegrationTest {
     private suspend fun embeddingRowCount(macroId: Long): Long =
         databaseClient.sql("SELECT COUNT(*) AS n FROM macro_embedding WHERE macro_id = :id")
             .bind("id", macroId)
-            .map { row: Readable -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row: Readable -> row.get("n", Long::class.javaObjectType)!! }
             .one()
             .awaitSingle()
 
@@ -549,13 +549,13 @@ class MacroSearchIntegrationTest {
         val userId = signIn().userId.toLong()
         val project = projects.save(
             ProjectEntity(name = "macro-${System.nanoTime()}", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         val build = gameBuilds.save(
             GameBuildEntity(projectId = project.id!!, version = "v${System.nanoTime()}", createdAt = now, updatedAt = now)
-        )!!
+        )
         val instance = gameInstances.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 lastGameBuildId = build.id,
@@ -563,7 +563,7 @@ class MacroSearchIntegrationTest {
                 createdAt = now,
                 updatedAt = now,
             )
-        )!!
+        )
         val contentMap = contentMaps.save(
             ContentMapEntity(
                 gameBuildId = build.id!!,
@@ -571,17 +571,17 @@ class MacroSearchIntegrationTest {
                 capture = Capture.PLAYER.wire,
                 evidenceDigest = "macro-write",
             )
-        )!!
+        )
         val sceneId = scenes.save(
             SceneEntity(contentMapId = contentMap.id!!, name = BATTLE, walked = true)
-        )!!.id!!
+        ).id!!
         val screenA = screens.save(
             ScreenEntity(sceneId = sceneId, discriminator = Json.of("""[{"selector":"Canvas[0]/Hand","active":true}]"""))
-        )!!.id!!
+        ).id!!
         val screenB = screens.save(
             ScreenEntity(sceneId = sceneId, discriminator = Json.of("""[{"selector":"Canvas[0]/Zone","active":true}]"""))
-        )!!.id!!
-        val testRunId = testRuns.save(TestRunEntity(projectId = project.id!!, name = "런"))!!.id!!
+        ).id!!
+        val testRunId = testRuns.save(TestRunEntity(projectId = project.id, name = "런")).id!!
         val qaRun = qaRuns.save(
             QaRunEntity(
                 testRunId = testRunId,
@@ -590,12 +590,12 @@ class MacroSearchIntegrationTest {
                 status = "RUNNING",
                 startedAt = now,
             )
-        )!!
-        val scenario = testScenarios.save(TestScenarioEntity(projectId = project.id!!))!!
+        )
+        val scenario = testScenarios.save(TestScenarioEntity(projectId = project.id))
         val qaTry = qaTries.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
-                gameInstanceId = instance.id!!,
+                gameInstanceId = instance.id,
                 qaRunId = qaRun.id,
                 startedBy = userId,
                 agentSessionId = agentSessionId,
@@ -605,9 +605,9 @@ class MacroSearchIntegrationTest {
                 runConfig = Json.of("{}"),
                 startedAt = now,
             )
-        )!!
+        )
         return World(
-            contentMapId = contentMap.id!!,
+            contentMapId = contentMap.id,
             sceneId = sceneId,
             screenA = screenA,
             screenB = screenB,

@@ -235,7 +235,7 @@ class LlmModelCatalogIntegrationTest {
 
         val updatedBy = runBlocking {
             databaseClient.sql("SELECT updated_by FROM llm_model WHERE id = 'google/gemma-4-31b-it:free'")
-                .map { row, _ -> row.get("updated_by", java.lang.Long::class.java)!!.toLong() }
+                .map { row, _ -> row.get("updated_by", Long::class.javaObjectType)!! }
                 .one().awaitSingle()
         }
         assertThat(updatedBy).isEqualTo(adminId)

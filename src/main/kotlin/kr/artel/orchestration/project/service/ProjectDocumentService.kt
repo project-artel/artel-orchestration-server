@@ -28,7 +28,7 @@ import kr.artel.orchestration.project.storage.StoredObject
 import kr.artel.orchestration.knowledge.service.DocumentKnowledgeExtractionService
 import kr.artel.orchestration.knowledge.service.KnowledgeService
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
+import kr.artel.orchestration.settings.config.AgentServerProperties
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.codec.ServerSentEvent
 import org.springframework.stereotype.Service
@@ -65,8 +65,10 @@ class ProjectDocumentService(
     private val knowledgeService: KnowledgeService,
     private val projectAccessService: ProjectAccessService,
     private val streamManager: DocumentEventStreamManager,
-    @Value("\${artel.agent.extract.enabled:true}") private val extractionEnabled: Boolean
+    agentProperties: AgentServerProperties
 ) {
+    private val extractionEnabled = agentProperties.extract.enabled
+
     private val logger = LoggerFactory.getLogger(ProjectDocumentService::class.java)
 
     /**

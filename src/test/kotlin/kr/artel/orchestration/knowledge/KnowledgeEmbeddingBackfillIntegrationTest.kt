@@ -121,7 +121,7 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
     private suspend fun countRows(sql: String, vararg binds: Pair<String, Any>): Long {
         var spec = databaseClient.sql(sql)
         binds.forEach { (name, value) -> spec = spec.bind(name, value) }
-        return spec.map { row -> row.get(0, java.lang.Long::class.java)!!.toLong() }
+        return spec.map { row -> row.get(0, Long::class.javaObjectType)!! }
             .one()
             .awaitFirstOrNull() ?: 0L
     }
@@ -443,7 +443,7 @@ class KnowledgeEmbeddingBackfillIntegrationTest {
                     )
                     delay(holdMillis)
                     claimed
-                }!!
+                }
             }
             val other = async {
                 delay(300)

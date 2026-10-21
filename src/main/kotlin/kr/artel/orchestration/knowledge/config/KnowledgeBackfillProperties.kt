@@ -1,6 +1,7 @@
 package kr.artel.orchestration.knowledge.config
 
 import kr.artel.orchestration.common.embedding.EmbeddingBackfillConfig
+import java.time.Duration
 import org.springframework.boot.context.properties.ConfigurationProperties
 
 /**
@@ -43,7 +44,10 @@ data class KnowledgeBackfillProperties(
     override val maxAttempts: Int = 5,
 
     /** tick 간격(밀리초). 겹치지 않도록 fixedDelay로 쓴다. */
-    val intervalMillis: Long = 60_000
+    val intervalMillis: Long = 60_000,
+
+    /** `/knowledge-queries` timeout and fallback for `/embed`. */
+    val timeout: Duration = Duration.ofMinutes(2)
 ) : EmbeddingBackfillConfig {
     init {
         require(batchSize > 0) { "artel.knowledge.backfill.batch-size는 1 이상이어야 합니다." }

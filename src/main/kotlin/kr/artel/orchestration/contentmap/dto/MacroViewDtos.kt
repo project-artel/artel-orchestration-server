@@ -16,7 +16,7 @@ import java.time.Instant
  */
 @Schema(description = "빌드에 등록된 macro 목록")
 data class MacroListResponse(
-    @Schema(description = "macro 목록. 이름 오름차순")
+    @field:Schema(description = "macro 목록. 이름 오름차순")
     val items: List<MacroSummaryResponse>,
 ) {
     companion object {
@@ -44,15 +44,15 @@ data class MacroListResponse(
 @Schema(description = "등록된 macro 한 줄. source 는 싣지 않는다")
 data class MacroSummaryResponse(
     val id: Long,
-    @Schema(description = "진입점 `def` 의 이름. 같은 빌드 안에서 유일하다")
+    @field:Schema(description = "진입점 `def` 의 이름. 같은 빌드 안에서 유일하다")
     val name: String,
-    @Schema(description = "진입점 `def` 줄의 parameter. 순서가 뜻을 가진다")
+    @field:Schema(description = "진입점 `def` 줄의 parameter. 순서가 뜻을 가진다")
     val parameters: List<MacroParameterResponse>,
-    @Schema(description = "이 macro 를 쓸 수 있다고 이어 둔 screen. 빈 배열은 '아직 어디서 쓸지 모른다' 다")
+    @field:Schema(description = "이 macro 를 쓸 수 있다고 이어 둔 screen. 빈 배열은 '아직 어디서 쓸지 모른다' 다")
     val screens: List<MacroScreenResponse>,
-    @Schema(description = "정의를 마지막으로 고친 시각")
+    @field:Schema(description = "정의를 마지막으로 고친 시각")
     val updatedAt: Instant,
-    @Schema(description = "진입점 `def` 의 docstring. 없으면 null")
+    @field:Schema(description = "진입점 `def` 의 docstring. 없으면 null")
     val docstring: String?,
 )
 
@@ -72,9 +72,9 @@ data class MacroDetailResponse(
     val parameters: List<MacroParameterResponse>,
     val screens: List<MacroScreenResponse>,
     val updatedAt: Instant,
-    @Schema(description = "진입점 `def` 의 docstring. 없으면 null")
+    @field:Schema(description = "진입점 `def` 의 docstring. 없으면 null")
     val docstring: String?,
-    @Schema(description = "저장된 원문 그대로. 공백을 깎지 않는다")
+    @field:Schema(description = "저장된 원문 그대로. 공백을 깎지 않는다")
     val source: String,
 )
 
@@ -92,7 +92,7 @@ data class MacroDetailResponse(
 @Schema(description = "macro 의 parameter 하나")
 data class MacroParameterResponse(
     val name: String,
-    @Schema(description = "선언 타입. 저장된 tree 가 말하지 않으면 null")
+    @field:Schema(description = "선언 타입. 저장된 tree 가 말하지 않으면 null")
     val type: String?,
 )
 
@@ -109,8 +109,8 @@ data class MacroParameterResponse(
 @Schema(description = "macro 가 이어진 screen 하나")
 data class MacroScreenResponse(
     val id: Long,
-    @Schema(description = "표시용. 아직 아무도 이름을 안 붙였으면 null")
+    @field:Schema(description = "표시용. 아직 아무도 이름을 안 붙였으면 null")
     val name: String?,
-    @Schema(description = "이 화면이 속한 씬의 이름")
+    @field:Schema(description = "이 화면이 속한 씬의 이름")
     val sceneName: String,
 )

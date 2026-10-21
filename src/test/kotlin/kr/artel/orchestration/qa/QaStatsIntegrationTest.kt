@@ -86,7 +86,7 @@ class QaStatsIntegrationTest {
         ownerId = owner.userId.toLong()
         val project = projectRepository.save(
             ProjectEntity(name = "stats-project", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectId = project.id!!
         projectMemberRepository.save(
             ProjectMemberEntity(
@@ -98,7 +98,7 @@ class QaStatsIntegrationTest {
         )
         scenarioId = testScenarioRepository.save(
             TestScenarioEntity(projectId = projectId)
-        )!!.id!!
+        ).id!!
     }
 
     @AfterEach
@@ -675,14 +675,14 @@ class QaStatsIntegrationTest {
                         createdAt = now,
                         updatedAt = now
                     )
-                )!!.id!!,
+                ).id!!,
                 startedBy = ownerId,
                 status = "COMPLETED",
                 label = "content-map-2x2-반복",
                 startedAt = now.minus(Duration.ofDays(1)),
                 completedAt = now
             )
-        )!!.id!!
+        ).id!!
         seedRun(model = "sonnet-5", status = "COMPLETED", qaRunId = pilotMiddle)
         seedRun(model = "gpt-4o", status = "COMPLETED", qaRunId = pilotDetail)
         seedRun(model = "haiku", status = "COMPLETED", qaRunId = repeatMiddle)
@@ -821,7 +821,7 @@ class QaStatsIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val terminal = status in setOf("COMPLETED", "FAILED", "CANCELLED")
         return qaTryRepository.save(
             QaTryEntity(
@@ -841,7 +841,7 @@ class QaStatsIntegrationTest {
                 startedAt = startedAt,
                 completedAt = if (terminal) startedAt.plusMillis(durationMs) else null
             )
-        )!!.id!!
+        ).id!!
     }
 
     /** `grader='expected-steps'` 채점 한 줄. detail 모양은 ExpectedStepsGrader가 쓰는 것과 같다. */
@@ -880,7 +880,7 @@ class QaStatsIntegrationTest {
     ): Pair<Long, Long> {
         val testRunId = testRunRepository.save(
             TestRunEntity(projectId = projectId, name = testRunName)
-        )!!.id!!
+        ).id!!
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = projectId,
@@ -890,7 +890,7 @@ class QaStatsIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val qaRunId = qaRunRepository.save(
             QaRunEntity(
                 testRunId = testRunId,
@@ -902,7 +902,7 @@ class QaStatsIntegrationTest {
                 startedAt = startedAt,
                 completedAt = now
             )
-        )!!.id!!
+        ).id!!
         return testRunId to qaRunId
     }
 
@@ -921,21 +921,21 @@ class QaStatsIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
-        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        )
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "foreign-label-instance-${instanceSeq++}",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val testRunId = testRunRepository.save(
-            TestRunEntity(projectId = project.id!!, name = "남의 런")
-        )!!.id!!
+            TestRunEntity(projectId = project.id, name = "남의 런")
+        ).id!!
         val startedAt = now.minus(Duration.ofDays(1))
         val qaRunId = qaRunRepository.save(
             QaRunEntity(
@@ -947,11 +947,11 @@ class QaStatsIntegrationTest {
                 startedAt = startedAt,
                 completedAt = now
             )
-        )!!.id!!
+        ).id!!
         qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
-                gameInstanceId = instance.id!!,
+                gameInstanceId = instance.id,
                 qaRunId = qaRunId,
                 startedBy = ownerId,
                 status = "COMPLETED",
@@ -976,18 +976,18 @@ class QaStatsIntegrationTest {
                 updatedAt = now,
                 deletedAt = deletedAt
             )
-        )!!
-        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        )
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "foreign-instance-${instanceSeq++}",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val startedAt = now.minus(Duration.ofDays(1))
         return qaTryRepository.save(
             QaTryEntity(
@@ -1002,7 +1002,7 @@ class QaStatsIntegrationTest {
                 startedAt = startedAt,
                 completedAt = startedAt.plusMillis(30_000)
             )
-        )!!.id!!
+        ).id!!
     }
 
     /** `app_user.platform_role`을 올린다. 주는 화면도 API도 없어 테스트도 행을 직접 고친다. */
@@ -1046,5 +1046,5 @@ class QaStatsIntegrationTest {
                 avatarUrl = null,
                 email = "$login@example.com"
             )
-        )!!
+        )
 }

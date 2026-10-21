@@ -130,7 +130,7 @@ class TestCaseVersionLibraryIntegrationTest {
 
         val unversioned = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/unversioned/cases").body
         assertThat(unversioned["gameBuildId"].isNullish()).isTrue()
-        assertThat(unversioned["items"].map { it["id"].asLong() }).containsExactly(manual.id!!)
+        assertThat(unversioned["items"].map { it["id"].asLong() }).containsExactly(manual.id)
         assertThat(unversioned["items"][0]["origin"].asText()).isEqualTo("MANUAL")
 
         val compared = call(
@@ -163,7 +163,7 @@ class TestCaseVersionLibraryIntegrationTest {
         assertThat(afterVerdict["items"][1]["total"].asInt()).isEqualTo(mapCases)
         assertThat(afterVerdict["unversionedTotal"].asInt()).isZero()
         val manualRow = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/${buildB.gameBuildId}/cases")
-            .body["items"].single { it["id"].asLong() == manual.id!! }
+            .body["items"].single { it["id"].asLong() == manual.id }
         assertThat(manualRow["origin"].asText()).isEqualTo("MANUAL")
         assertThat(manualRow["step"].asText()).isEqualTo("사람이 쓴 것")
         assertThat(manualRow["verificationStatus"].asText()).isEqualTo("VERIFIED")
@@ -247,9 +247,9 @@ class TestCaseVersionLibraryIntegrationTest {
         val buildB = ingestedBuild(projectId, "1.1.0", Instant.now())
         val generated = call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/content-map/test-cases").body
         assertThat(generated["carriedOver"].asInt()).isEqualTo(2)
-        assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id!!, buildB.gameBuildId)!!.verificationStatus).isEqualTo("REGRESSION")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id, buildB.gameBuildId)!!.verificationStatus).isEqualTo("REGRESSION")
         assertThat(versions.findByTestCaseIdAndGameBuildId(draftOnly.id!!, buildB.gameBuildId)!!.verificationStatus).isEqualTo("DRAFT")
-        assertThat(testCases.findById(manual.id!!)!!.verificationStatus).isEqualTo("REGRESSION")
+        assertThat(testCases.findById(manual.id)!!.verificationStatus).isEqualTo("REGRESSION")
 
         // 같은 build 는 다시 만들지 않는다(ARTEL-1040).
         assertThat(
@@ -262,20 +262,20 @@ class TestCaseVersionLibraryIntegrationTest {
             token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildC.gameBuildId}/content-map/test-cases?carryOver=false",
         ).body
         assertThat(withoutCarry["carriedOver"].asInt()).isZero()
-        assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id!!, buildC.gameBuildId)).isNull()
+        assertThat(versions.findByTestCaseIdAndGameBuildId(manual.id, buildC.gameBuildId)).isNull()
 
         val removed = call(
             token, HttpMethod.POST, "/api/projects/$projectId/test-case-versions/${buildB.gameBuildId}/cases/removals",
             """{"caseIds":["${draftOnly.id}","$mapCase"]}""",
         ).body
         assertThat(removed["caseIds"].map { it.asLong() }).containsExactly(draftOnly.id)
-        assertThat(versions.findByTestCaseIdAndGameBuildId(draftOnly.id!!, buildB.gameBuildId)).isNull()
+        assertThat(versions.findByTestCaseIdAndGameBuildId(draftOnly.id, buildB.gameBuildId)).isNull()
         assertThat(versions.findByTestCaseIdAndGameBuildId(mapCase, buildB.gameBuildId)).isNotNull
 
         // 케이스 목록은 출처를 싣는다.
         val origins = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases").body["items"]
             .associate { it["id"].asLong() to it["origin"].asText() }
-        assertThat(origins[manual.id!!]).isEqualTo("MANUAL")
+        assertThat(origins[manual.id]).isEqualTo("MANUAL")
         assertThat(origins[mapCase]).isEqualTo("MAP")
     }
 
@@ -356,7 +356,7 @@ class TestCaseVersionLibraryIntegrationTest {
                 )
             )
         )
-        return IngestedBuild(build.id!!, map.id!!)
+        return IngestedBuild(build.id, map.id)
     }
 
     private suspend fun signIn(): Pair<Long, String> {
@@ -370,7 +370,7 @@ class TestCaseVersionLibraryIntegrationTest {
                 avatarUrl = null,
                 email = null,
             )
-        )!!
+        )
         return user.userId.toLong() to jwtService.issue(user)
     }
 
