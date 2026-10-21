@@ -100,7 +100,7 @@ data class RunCoverageScenario(
     val position: Int,
     val testScenarioId: String,
     val title: String,
-    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
     val steps: Int,
     val cases: Int,
 )

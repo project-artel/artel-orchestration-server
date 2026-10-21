@@ -113,7 +113,7 @@ class MacroEmbeddingRepository(
             .bind("kind", kind)
             .bind("model", model)
             .map { row: Readable ->
-                row.get("embedding_id", java.lang.Long::class.java)!!.toLong() to
+                row.get("embedding_id", Long::class.javaObjectType)!! to
                     (row.get("source_text", String::class.java) to inputOf(row, idColumn = "macro_id"))
             }
             .flow()
@@ -134,7 +134,7 @@ class MacroEmbeddingRepository(
     }
 
     private fun inputOf(row: Readable, idColumn: String) = MacroEmbeddingInput(
-        macroId = row.get(idColumn, java.lang.Long::class.java)!!.toLong(),
+        macroId = row.get(idColumn, Long::class.javaObjectType)!!,
         name = row.get("name", String::class.java)!!,
         parameterNames = namesOf(row.get("parameter_names", Json::class.java)),
         docstring = row.get("docstring", String::class.java),

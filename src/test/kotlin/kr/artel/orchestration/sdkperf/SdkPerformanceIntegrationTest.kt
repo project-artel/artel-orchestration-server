@@ -63,7 +63,7 @@ class SdkPerformanceIntegrationTest {
         val detail = query.runDetail(run, world.user)!!
         assertThat(detail.runId).isEqualTo(run)
         assertThat(detail.summary!!.sampleCount).isEqualTo(2)
-        assertThat(detail.summary!!.coveredMs).isEqualTo(2000.0)
+        assertThat(detail.summary.coveredMs).isEqualTo(2000.0)
         assertThat(detail.device!!.sdkVersion).isEqualTo("0.1.0")
         // 런 밖 표본은 요약에 들어가지 않지만 원본으로는 남아 있다.
         assertThat(count("SELECT COUNT(*) FROM sdk_performance_sample WHERE game_instance_id=$instance"))
@@ -600,7 +600,7 @@ class SdkPerformanceIntegrationTest {
 
         val detail = query.runDetail(run, world.user)!!
         assertThat(detail.summary!!.sampleCount).isEqualTo(1)
-        assertThat(detail.summary!!.groups.getValue("gc").availability).isEqualTo(MetricGroupAvailability.MEASURED)
+        assertThat(detail.summary.groups.getValue("gc").availability).isEqualTo(MetricGroupAvailability.MEASURED)
         assertThat(detail.series.points.any { it.groups.containsKey("gc") }).isTrue()
     }
 
@@ -634,10 +634,10 @@ class SdkPerformanceIntegrationTest {
     }
 
     private suspend fun id(sql: String): Long =
-        db.sql(sql).map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }.flow().toList().single()
+        db.sql(sql).map { row, _ -> row.get("id", Long::class.javaObjectType)!! }.flow().toList().single()
 
     private suspend fun count(sql: String): Long =
-        db.sql(sql).map { row, _ -> row.get(0, java.lang.Long::class.java)!!.toLong() }.flow().toList().single()
+        db.sql(sql).map { row, _ -> row.get(0, Long::class.javaObjectType)!! }.flow().toList().single()
 
     private suspend fun exec(sql: String) {
         db.sql(sql).fetch().awaitRowsUpdated()

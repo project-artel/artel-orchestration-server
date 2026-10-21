@@ -176,7 +176,7 @@ class BedrockKeyAndAgentCacheIntegrationTest {
         assertThat(cleared["lastCheck"].isNull).isTrue()
         assertThat(internalSettings()["bedrockApiKey"].isNull).isTrue()
         val remaining = databaseClient.sql("SELECT COUNT(*) AS n FROM platform_setting WHERE setting_key LIKE 'bedrock.%'")
-            .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("n", Long::class.javaObjectType)!! }
             .one().awaitSingle()
         assertThat(remaining).isZero()
     }

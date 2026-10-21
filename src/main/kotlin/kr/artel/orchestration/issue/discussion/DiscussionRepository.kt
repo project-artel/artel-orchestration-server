@@ -257,8 +257,8 @@ class DiscussionRepository(private val database: DatabaseClient) {
                     row.string("severity"),
                     row.string("status"),
                     row.long("qa_try_id").toString(),
-                    row.get("qa_run_id", java.lang.Long::class.java)?.toString(),
-                    row.get("project_no", java.lang.Long::class.java)?.toString(),
+                    row.get("qa_run_id", Long::class.javaObjectType)?.toString(),
+                    row.get("project_no", Long::class.javaObjectType)?.toString(),
                 )
             }
             .all()
@@ -296,8 +296,8 @@ class DiscussionRepository(private val database: DatabaseClient) {
                     row.string("severity"),
                     row.string("status"),
                     row.long("qa_try_id").toString(),
-                    row.get("qa_run_id", java.lang.Long::class.java)?.toString(),
-                    row.get("project_no", java.lang.Long::class.java)?.toString(),
+                    row.get("qa_run_id", Long::class.javaObjectType)?.toString(),
+                    row.get("project_no", Long::class.javaObjectType)?.toString(),
                 )
             }
             .all()
@@ -332,7 +332,7 @@ class DiscussionRepository(private val database: DatabaseClient) {
                 )
                 .bind("id", id)
         statement =
-            if (commentId == null) statement.bindNull("commentId", java.lang.Long::class.java)
+            if (commentId == null) statement.bindNull("commentId", Long::class.javaObjectType)
             else statement.bind("commentId", commentId)
         statement.fetch().rowsUpdated().awaitSingle()
     }
@@ -391,7 +391,7 @@ class DiscussionRepository(private val database: DatabaseClient) {
                 )
                 .let { statement ->
                     content.parentId?.let { statement.bind("parentId", it) }
-                        ?: statement.bindNull("parentId", java.lang.Long::class.java)
+                        ?: statement.bindNull("parentId", Long::class.javaObjectType)
                 }
                 .bind("id", id)
                 .bind("userId", userId)
@@ -466,7 +466,7 @@ class DiscussionRepository(private val database: DatabaseClient) {
         database
             .sql("UPDATE issue_discussion SET game_build_id = :gameBuildId WHERE id = :id")
             .bind("id", id)
-            .let { if (gameBuildId == null) it.bindNull("gameBuildId", java.lang.Long::class.java) else it.bind("gameBuildId", gameBuildId) }
+            .let { if (gameBuildId == null) it.bindNull("gameBuildId", Long::class.javaObjectType) else it.bind("gameBuildId", gameBuildId) }
             .fetch()
             .rowsUpdated()
             .awaitSingle()
@@ -612,13 +612,13 @@ class DiscussionRepository(private val database: DatabaseClient) {
                 row.int("version"),
                 reviewerCount = row.long("reviewer_count"),
                 approvalCount = row.long("approval_count"),
-                number = row.get("project_no", java.lang.Long::class.java)?.toString(),
-                gameBuildId = row.get("game_build_id", java.lang.Long::class.java)?.toString(),
+                number = row.get("project_no", Long::class.javaObjectType)?.toString(),
+                gameBuildId = row.get("game_build_id", Long::class.javaObjectType)?.toString(),
                 buildVersion = row.get("build_version", String::class.java),
             ),
             row.string("body"),
             row.ids(),
-            row.get("decision_comment_id", java.lang.Long::class.java)?.toLong(),
+            row.get("decision_comment_id", Long::class.javaObjectType),
             row.string("request_hash"),
         )
 
@@ -634,7 +634,7 @@ class DiscussionRepository(private val database: DatabaseClient) {
             row.long("reaction_count"),
             row.bool("reacted"),
             row.string("request_hash"),
-            row.get("parent_id", java.lang.Long::class.java)?.toLong(),
+            row.get("parent_id", Long::class.javaObjectType),
         )
 
     private fun person(row: Readable) =
@@ -646,12 +646,12 @@ class DiscussionRepository(private val database: DatabaseClient) {
 
     private fun Readable.string(name: String) = get(name, String::class.java)!!
 
-    private fun Readable.long(name: String) = get(name, java.lang.Long::class.java)!!.toLong()
+    private fun Readable.long(name: String) = get(name, Long::class.javaObjectType)!!
 
-    private fun Readable.int(name: String) = get(name, java.lang.Integer::class.java)!!.toInt()
+    private fun Readable.int(name: String) = get(name, Int::class.javaObjectType)!!
 
     private fun Readable.bool(name: String) =
-        get(name, java.lang.Boolean::class.java)!!.booleanValue()
+        get(name, Boolean::class.javaObjectType)!!
 
     private fun Readable.instant(name: String): Instant =
         get(name, OffsetDateTime::class.java)!!.toInstant()

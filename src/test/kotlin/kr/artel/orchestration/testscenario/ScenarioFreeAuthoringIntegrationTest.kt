@@ -83,7 +83,7 @@ class ScenarioFreeAuthoringIntegrationTest {
                 provider = "github", providerUserId = "1028", login = "free-author",
                 displayName = "free-author", avatarUrl = null, email = "free-author@example.com"
             )
-        )!!.userId.toLong()
+        ).userId.toLong()
         projectId = requireNotNull(
             projectRepository.save(
                 ProjectEntity(name = "free-p", genre = "ACTION", createdAt = now, updatedAt = now)

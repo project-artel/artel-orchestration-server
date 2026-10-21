@@ -84,7 +84,7 @@ class PasswordAccountService(
                 platformRole = if (isFirstUser) PlatformRole.ADMIN else PlatformRole.USER,
                 mustChangePassword = false
             )
-        }!!
+        }
         return authenticatedUser(user, loginEmail)
     }
 
@@ -153,7 +153,7 @@ class PasswordAccountService(
                 platformRole = platformRole,
                 mustChangePassword = true
             )
-        }!!
+        }
         return CreatedAccount(user, temporaryPassword)
     }
 

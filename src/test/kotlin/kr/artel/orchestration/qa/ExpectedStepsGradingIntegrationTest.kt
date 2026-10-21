@@ -256,12 +256,12 @@ class ExpectedStepsGradingIntegrationTest {
                 provider = "github", providerUserId = "301", login = "grade",
                 displayName = "grade", avatarUrl = null, email = "grade@example.com"
             )
-        )!!
+        )
         val ownerId = owner.userId.toLong()
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "grade-p", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!, appUserId = ownerId,
@@ -270,14 +270,14 @@ class ExpectedStepsGradingIntegrationTest {
         )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!, name = "inst", platform = "UNITY",
+                projectId = project.id, name = "inst", platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now
             )
-        )!!
-        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))
+        )
+        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id, name = "런"))
         val scenarioId = requireNotNull(
             scenarioRepository.save(
-                TestScenarioEntity(projectId = project.id!!).withDraft(draftFor(labels), objectMapper)
+                TestScenarioEntity(projectId = project.id).withDraft(draftFor(labels), objectMapper)
             ).id
         )
 
@@ -289,7 +289,7 @@ class ExpectedStepsGradingIntegrationTest {
             started.qaRun, tryId, "session-grade-1",
             objectMapper.readTree("""{"model":"anthropic/claude-sonnet-5"}""")
         )
-        return RunningRun(requireNotNull(started.qaRun.id), tryId, scenarioId, instance.id!!)
+        return RunningRun(requireNotNull(started.qaRun.id), tryId, scenarioId, instance.id)
     }
 
     private fun draftFor(labels: List<Boolean?>) = ScenarioDraft(

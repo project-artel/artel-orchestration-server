@@ -85,8 +85,8 @@ class IssueOriginRepository(private val database: DatabaseClient) {
         )
             .bind("projectId", projectId)
             .let { if (status == null) it.bindNull("status", String::class.java) else it.bind("status", status) }
-            .let { if (gameBuildId == null) it.bindNull("gameBuildId", java.lang.Long::class.java) else it.bind("gameBuildId", gameBuildId) }
-            .let { if (testRunId == null) it.bindNull("testRunId", java.lang.Long::class.java) else it.bind("testRunId", testRunId) }
+            .let { if (gameBuildId == null) it.bindNull("gameBuildId", Long::class.javaObjectType) else it.bind("gameBuildId", gameBuildId) }
+            .let { if (testRunId == null) it.bindNull("testRunId", Long::class.javaObjectType) else it.bind("testRunId", testRunId) }
             .map { row -> row.facetRow() }
             .all()
             .collectList()
@@ -94,7 +94,7 @@ class IssueOriginRepository(private val database: DatabaseClient) {
         val total = rows.firstOrNull { it.kind == Kind.TOTAL }?.count ?: 0
         val archived = database.sql("SELECT count(*) AS n FROM issue WHERE project_id = :projectId AND archived_at IS NOT NULL")
             .bind("projectId", projectId)
-            .map { row -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row -> row.get("n", Long::class.javaObjectType)!! }
             .one().awaitSingle()
         return Facets(
             total = total,
@@ -156,7 +156,7 @@ class IssueOriginRepository(private val database: DatabaseClient) {
         )
     }
 
-    private fun Readable.long(name: String): Long? = get(name, java.lang.Long::class.java)?.toLong()
+    private fun Readable.long(name: String): Long? = get(name, Long::class.javaObjectType)
 
-    private fun Readable.int(name: String): Int = get(name, java.lang.Integer::class.java)?.toInt() ?: 0
+    private fun Readable.int(name: String): Int = get(name, Int::class.javaObjectType) ?: 0
 }

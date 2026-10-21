@@ -98,7 +98,7 @@ class MacroSearchRepository(
             .toList()
 
     private fun rowOf(row: Readable) = MacroSearchRow(
-        id = row.get("id", java.lang.Long::class.java)!!.toLong(),
+        id = row.get("id", Long::class.javaObjectType)!!,
         name = row.get("name", String::class.java)!!,
         docstring = row.get("docstring", String::class.java),
         declaredParameters = row.get("declared_parameters", Json::class.java),

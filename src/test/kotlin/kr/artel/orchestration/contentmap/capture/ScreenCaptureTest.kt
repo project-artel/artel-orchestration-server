@@ -162,7 +162,7 @@ class ScreenCaptureTest {
         )
 
         assertThat(attached).isZero()
-        assertThat(screens.findById(screen.id!!)!!.imageObjectKey)
+        assertThat(screens.findById(screen.id)!!.imageObjectKey)
             .isEqualTo("qa-captures/${world.qaTryId}/first.jpg")
     }
 
@@ -343,7 +343,7 @@ class ScreenCaptureTest {
         )
         val instance = gameInstances.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 lastGameBuildId = build.id,
@@ -361,7 +361,7 @@ class ScreenCaptureTest {
             )
         )
         val startedBy = newUser()
-        val testRunId = testRuns.save(TestRunEntity(projectId = project.id!!, name = "런")).id!!
+        val testRunId = testRuns.save(TestRunEntity(projectId = project.id, name = "런")).id!!
         val qaRun = qaRuns.save(
             QaRunEntity(
                 testRunId = testRunId,
@@ -373,18 +373,18 @@ class ScreenCaptureTest {
         )
         // 화면 관측은 활성 `qa_run` 을 보고, capture 요청은 활성 `qa_try` 를 본다 — ticket 을 발급하는
         // `QaCaptureService` 가 그것을 보기 때문이다. 둘 다 있어야 실제 런과 같은 모양이 된다.
-        val scenario = testScenarios.save(TestScenarioEntity(projectId = project.id!!))
+        val scenario = testScenarios.save(TestScenarioEntity(projectId = project.id))
         val qaTry = qaTries.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
-                gameInstanceId = instance.id!!,
+                gameInstanceId = instance.id,
                 qaRunId = qaRun.id,
                 startedBy = startedBy,
                 status = "RUNNING",
                 startedAt = now,
             )
         )
-        return World(instance.id!!, contentMap.id!!, qaTry.id!!)
+        return World(instance.id, contentMap.id!!, qaTry.id!!)
     }
 
     private suspend fun newScene(world: World, name: String): Long =
@@ -405,6 +405,6 @@ class ScreenCaptureTest {
 
     private fun newUser(): Long =
         db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('capture', 'capture-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 }

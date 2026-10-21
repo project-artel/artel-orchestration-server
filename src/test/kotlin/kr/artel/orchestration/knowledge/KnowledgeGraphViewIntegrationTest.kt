@@ -104,7 +104,7 @@ class KnowledgeGraphViewIntegrationTest {
         val now = Instant.now()
         projectId = projectRepository.save(
             ProjectEntity(name = "knowledge-graph-view", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = projectId,
@@ -493,7 +493,7 @@ class KnowledgeGraphViewIntegrationTest {
     /** run 하나 + 그 run 에 속한 qa_try 하나(ARTEL-722). run id를 함께 돌려준다. */
     private suspend fun seedQaTryInRun(): Pair<Long, Long> {
         val now = Instant.now()
-        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))!!
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = projectId,
@@ -503,8 +503,8 @@ class KnowledgeGraphViewIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
-        val testRun = testRunRepository.save(TestRunEntity(projectId = projectId, name = "런"))!!
+        )
+        val testRun = testRunRepository.save(TestRunEntity(projectId = projectId, name = "런"))
         val qaRun = qaRunRepository.save(
             QaRunEntity(
                 testRunId = testRun.id!!,
@@ -514,25 +514,25 @@ class KnowledgeGraphViewIntegrationTest {
                 startedAt = now,
                 completedAt = now
             )
-        )!!
+        )
         val qaTry = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
-                gameInstanceId = instance.id!!,
+                gameInstanceId = instance.id,
                 qaRunId = qaRun.id,
                 startedBy = userId,
                 status = "COMPLETED",
                 startedAt = now,
                 completedAt = now
             )
-        )!!
+        )
         return qaTry.id!! to qaRun.id!!
     }
 
     /** `qa_run`이 생기기 전의 단독 실행(하위호환) qa_try 하나. */
     private suspend fun seedStandaloneQaTry(): Long {
         val now = Instant.now()
-        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))!!
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = projectId,
@@ -542,7 +542,7 @@ class KnowledgeGraphViewIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         return qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -552,7 +552,7 @@ class KnowledgeGraphViewIntegrationTest {
                 startedAt = now,
                 completedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun givenKnowledge(
@@ -631,7 +631,7 @@ class KnowledgeGraphViewIntegrationTest {
                 avatarUrl = null,
                 email = "$seed@example.com"
             )
-        )!!
+        )
 
     private companion object {
         /** 실험 엔티티가 아직 없으므로 스코프 id는 운영(NULL)이 아니기만 하면 된다(V28 주석 참조). */

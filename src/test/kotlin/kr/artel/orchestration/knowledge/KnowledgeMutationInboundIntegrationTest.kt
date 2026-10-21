@@ -344,7 +344,7 @@ class KnowledgeMutationInboundIntegrationTest {
         val visible = anchorRepository.findVisibleFor(listOf(inScope.id!!), 5_003L).toList()
         assertThat(visible.map { it.sceneName }).containsExactly("Town")
         // 운영 런에는 그 지식이 없으므로 그 앵커도 없다.
-        assertThat(anchorRepository.findVisibleFor(listOf(inScope.id!!), null).toList()).isEmpty()
+        assertThat(anchorRepository.findVisibleFor(listOf(inScope.id), null).toList()).isEmpty()
         assertThat(errorLogs(run.qaTryId)).isEmpty()
     }
 
@@ -386,7 +386,7 @@ class KnowledgeMutationInboundIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "knowledge-mutation", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -396,18 +396,18 @@ class KnowledgeMutationInboundIntegrationTest {
             )
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = project.id!!)
-        )!!
+            TestScenarioEntity(projectId = project.id)
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val qaTry = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -421,8 +421,8 @@ class KnowledgeMutationInboundIntegrationTest {
                     ?: Json.of("{}"),
                 startedAt = now
             )
-        )!!
-        return RunningQaTry(qaTryId = qaTry.id!!, projectId = project.id!!)
+        )
+        return RunningQaTry(qaTryId = qaTry.id!!, projectId = project.id)
     }
 
     private suspend fun signIn(seed: String): AuthenticatedUser =
@@ -435,7 +435,7 @@ class KnowledgeMutationInboundIntegrationTest {
                 avatarUrl = null,
                 email = "user-$seed@example.com"
             )
-        )!!
+        )
 
     private data class RunningQaTry(val qaTryId: Long, val projectId: Long)
 }

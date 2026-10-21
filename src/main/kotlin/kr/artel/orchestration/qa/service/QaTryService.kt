@@ -383,7 +383,7 @@ class QaTryPersistenceService(
                 payload = objectMapper.valueToTree(QaStatusPayload("STARTING", null))
             )
             qaTry to startLog
-        } ?: error("QA try creation returned no result")
+        }
 
     /**
      * 런 단위 실행을 적재한다(ARTEL-259): qa_run(STARTING) 하나 + 시나리오당 qa_try(PENDING) N개를
@@ -461,7 +461,7 @@ class QaTryPersistenceService(
                 qaTry
             }
             QaRunStarting(qaRun, tries)
-        } ?: error("QA run creation returned no result")
+        }
 
     /**
      * 런 세션을 부착하고 실행 상태로 만든다(ARTEL-259): qa_run STARTING→RUNNING + Agent가 확정한
@@ -517,7 +517,7 @@ class QaTryPersistenceService(
                 payload = objectMapper.valueToTree(QaStatusPayload("RUNNING", null))
             )
             requireNotNull(runRepository.findById(runId))
-        } ?: error("QA run transition returned no result")
+        }
 
     /**
      * @param runConfig what the Agent resolved the session to, or null if it did
@@ -570,7 +570,7 @@ class QaTryPersistenceService(
                 payload = objectMapper.valueToTree(QaStatusPayload("RUNNING", null))
             )
             running to runningLog
-        } ?: error("QA try transition returned no result")
+        }
 }
 
 @Service

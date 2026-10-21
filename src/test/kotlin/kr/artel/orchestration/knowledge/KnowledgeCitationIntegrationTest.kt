@@ -416,7 +416,7 @@ class KnowledgeCitationIntegrationTest {
                 runConfig = Json.of(REPORTING_CONFIG),
                 startedAt = Instant.now()
             )
-        )!!.id!!
+        ).id!!
         // 첫 시나리오는 이 클래스가 이미 준비한 try를 런에 붙여 쓴다.
         qaTryRepository.save(qaTryRepository.findById(qaTryId)!!.copy(qaRunId = runId))
         val second = seedTry(status = "PENDING", runConfig = REPORTING_CONFIG, qaRunId = runId)
@@ -594,14 +594,14 @@ class KnowledgeCitationIntegrationTest {
                 runConfig = Json.of(runConfig),
                 startedAt = Instant.now()
             )
-        )!!.id!!
+        ).id!!
 
     private suspend fun seed(owner: AuthenticatedUser) {
         ownerId = owner.userId.toLong()
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "knowledge-citation-project", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectId = project.id!!
         projectMemberRepository.save(
             ProjectMemberEntity(
@@ -613,10 +613,10 @@ class KnowledgeCitationIntegrationTest {
         )
         scenarioId = testScenarioRepository.save(
             TestScenarioEntity(projectId = projectId)
-        )!!.id!!
+        ).id!!
         testRunId = testRunRepository.save(
             TestRunEntity(projectId = projectId, name = "citation-run", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         instanceId = gameInstance("instance")
         qaTryId = seedTry(status = "RUNNING", runConfig = REPORTING_CONFIG)
     }
@@ -632,7 +632,7 @@ class KnowledgeCitationIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun signIn(): AuthenticatedUser =
@@ -645,5 +645,5 @@ class KnowledgeCitationIntegrationTest {
                 avatarUrl = null,
                 email = "citer@example.com"
             )
-        )!!
+        )
 }
