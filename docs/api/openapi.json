@@ -19074,6 +19074,7 @@
         "required": [
           "gameInstanceId",
           "gameInstanceName",
+          "phase",
           "requestedAt",
           "state"
         ],
@@ -19116,6 +19117,24 @@
           },
           "testCases": {
             "$ref": "#/components/schemas/ScanTestCases"
+          },
+          "phase": {
+            "type": "string",
+            "description": "SCANNING · UPLOADING · INGESTING · GENERATING_TEST_CASES. 끝난 뒤에는 마지막으로 지난 단계",
+            "enum": [
+              "SCANNING",
+              "UPLOADING",
+              "INGESTING",
+              "GENERATING_TEST_CASES"
+            ]
+          },
+          "progress": {
+            "$ref": "#/components/schemas/ScanProgress"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "마지막으로 움직인 시각. 진행이 오면 밀린다",
+            "format": "date-time"
           }
         },
         "description": "마지막 원격 스캔의 상태"
@@ -19146,6 +19165,27 @@
           }
         },
         "description": "적재를 기다리는 문서"
+      },
+      "ScanProgress": {
+        "required": [
+          "done",
+          "total"
+        ],
+        "type": "object",
+        "properties": {
+          "done": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "scene": {
+            "type": "string"
+          }
+        },
+        "description": "지금 단계의 몇 개 중 몇 개(SCANNING 이면 씬 수). 게임이 알려 준 적이 없으면 null"
       },
       "ScanTestCases": {
         "required": [
