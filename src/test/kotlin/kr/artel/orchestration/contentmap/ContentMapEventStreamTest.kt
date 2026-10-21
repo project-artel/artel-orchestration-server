@@ -113,8 +113,8 @@ class ContentMapEventStreamTest {
         assertThat(first.type).isEqualTo("snapshot")
         assertThat(first.scan).isNull()
         assertThat(first.ingest!!.receivedDocuments).isZero()
-        assertThat(first.ingest!!.ingestedDocuments).isZero()
-        assertThat(first.ingest!!.failedDocuments).isZero()
+        assertThat(first.ingest.ingestedDocuments).isZero()
+        assertThat(first.ingest.failedDocuments).isZero()
         assertThat(first.documents).isEmpty()
     }
 
@@ -168,13 +168,13 @@ class ContentMapEventStreamTest {
 
         val ingestEvent = events.single { it.type == "ingest" }
         assertThat(ingestEvent.ingest!!.receivedDocuments).isEqualTo(1)
-        assertThat(ingestEvent.ingest!!.ingestedDocuments).isEqualTo(1)
-        assertThat(ingestEvent.ingest!!.failedDocuments).isZero()
+        assertThat(ingestEvent.ingest.ingestedDocuments).isEqualTo(1)
+        assertThat(ingestEvent.ingest.failedDocuments).isZero()
 
         val documentEvent = events.single { it.type == "document" }
         assertThat(documentEvent.document!!.documentId).isEqualTo(document.id)
-        assertThat(documentEvent.document!!.ingestedAt).isNotNull()
-        assertThat(documentEvent.document!!.ingestFailedAt).isNull()
+        assertThat(documentEvent.document.ingestedAt).isNotNull()
+        assertThat(documentEvent.document.ingestFailedAt).isNull()
     }
 
     /**
@@ -223,7 +223,7 @@ class ContentMapEventStreamTest {
 
     private suspend fun newUser(): Long =
         db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('console', 'console-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 
     private suspend fun newProject(userId: Long): Long {

@@ -346,7 +346,7 @@ class ContentMapTestCaseGenerationIntegrationTest {
         contentMaps.save(ContentMapEntity(gameBuildId = withEmptyMap.id!!))
 
         assertThat(generate(token, projectId, withoutMap.id!!).status).isEqualTo(409)
-        assertThat(generate(token, projectId, withEmptyMap.id!!).status).isEqualTo(409)
+        assertThat(generate(token, projectId, withEmptyMap.id).status).isEqualTo(409)
     }
 
     /** 라이브러리 모달의 후보(ARTEL-1040). 최신 게임 빌드 순이고, 지도 상태와 이미 만들었는지를 싣는다. editor 는 없다. */
@@ -419,7 +419,7 @@ class ContentMapTestCaseGenerationIntegrationTest {
                 )
             )
         )
-        return IngestedBuild(build.id!!, map.id!!)
+        return IngestedBuild(build.id, map.id)
     }
 
     /** 이 content map 에서 나온 행. `metadata.content_map_id` 가 출처다. */
@@ -439,7 +439,7 @@ class ContentMapTestCaseGenerationIntegrationTest {
                 avatarUrl = null,
                 email = null,
             )
-        )!!
+        )
         return user.userId.toLong() to jwtService.issue(user)
     }
 

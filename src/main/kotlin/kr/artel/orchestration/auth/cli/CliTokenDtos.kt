@@ -23,7 +23,7 @@ data class CreateCliTokenRequest(
     @field:Size(max = MAX_CLI_TOKEN_NAME_LENGTH)
     val name: String,
 
-    @JsonProperty(required = true)
+    @param:JsonProperty(required = true)
     val expiresInDays: Int?
 )
 
@@ -50,7 +50,7 @@ data class ExchangeCliTokenRequest(
     @field:Size(max = MAX_CLI_TOKEN_NAME_LENGTH)
     val name: String,
 
-    @JsonProperty(required = true)
+    @param:JsonProperty(required = true)
     val expiresInDays: Int?
 )
 

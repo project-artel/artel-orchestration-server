@@ -160,7 +160,7 @@ class ContentMapSchemaTest {
             runBlocking {
                 contentMaps.save(
                     ContentMapEntity(
-                        gameBuildId = build.id!!,
+                        gameBuildId = build.id,
                         schemaVersion = 6,
                         capture = Capture.PLAYER.wire,
                         evidenceDigest = "aaaa",
@@ -185,7 +185,7 @@ class ContentMapSchemaTest {
             ContentMapEntity(gameBuildId = build.id!!, rootedBy = ContentMapRoot.OBSERVATION.wire)
         )
 
-        val found = contentMaps.findByGameBuildId(build.id!!)
+        val found = contentMaps.findByGameBuildId(build.id)
         assertThat(found?.id).isEqualTo(observed.id)
         assertThat(found?.schemaVersion).isNull()
         assertThat(found?.evidenceDigest).isNull()
@@ -281,7 +281,7 @@ class ContentMapSchemaTest {
 
         val fromObservation = capabilities.save(
             CapabilityEntity(
-                sceneId = scene.id!!,
+                sceneId = scene.id,
                 contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 verification = VerificationState.CONFIRMED.wire,
@@ -293,12 +293,12 @@ class ContentMapSchemaTest {
             )
         )
 
-        assertThat(evidences.findById(fromEvidence.id!!)).isNotNull
+        assertThat(evidences.findById(fromEvidence.id)).isNotNull
         // 근거 행이 없는 것이 정상이다. 이 null 이 "IL 근거가 없다"를 그대로 말한다.
         assertThat(evidences.findById(fromObservation.id!!)).isNull()
 
         val byOrigin = capabilities
-            .findBySceneIdAndOriginOrderByIdAsc(scene.id!!, CapabilityOrigin.OBSERVED.wire)
+            .findBySceneIdAndOriginOrderByIdAsc(scene.id, CapabilityOrigin.OBSERVED.wire)
             .toList()
         assertThat(byOrigin).hasSize(1)
         assertThat(byOrigin[0].id).isEqualTo(fromObservation.id)
@@ -378,7 +378,7 @@ class ContentMapSchemaTest {
         )
         val notAStep = capabilities.save(
             CapabilityEntity(
-                sceneId = scene.id!!,
+                sceneId = scene.id,
                 contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`WaveEndSensor()` 코루틴이 마지막 웨이브 뒤 `GameClearScene` 으로 보낸다",
@@ -388,7 +388,7 @@ class ContentMapSchemaTest {
         )
         val merged = capabilities.save(
             CapabilityEntity(
-                sceneId = scene.id!!,
+                sceneId = scene.id,
                 contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "나중에 evidence 로도 확인되어 접힌 기능",
@@ -399,14 +399,14 @@ class ContentMapSchemaTest {
         )
         capabilities.save(merged.copy(mergedInto = runnable.id))
 
-        val stepRows = contentMaps.findStepCapabilityRows(map.id!!).toList()
+        val stepRows = contentMaps.findStepCapabilityRows(map.id).toList()
 
         assertThat(stepRows.map { it.capabilityId }).containsExactly(runnable.id)
         assertThat(stepRows[0].sceneName).isEqualTo("TurnBattleScene")
         // 관측 출신이라 IL 근거가 없고, 그래서 근거 컬럼이 null 이다. 그것이 정직한 상태다.
         assertThat(stepRows[0].entryId).isNull()
 
-        val allRows = contentMaps.findAllCapabilityRows(map.id!!).toList()
+        val allRows = contentMaps.findAllCapabilityRows(map.id).toList()
 
         assertThat(allRows.map { it.capabilityId }).containsExactly(runnable.id, notAStep.id)
         assertThat(allRows.single { it.capabilityId == notAStep.id }.status)
@@ -451,7 +451,7 @@ class ContentMapSchemaTest {
         // 조작이 없다 — 코루틴이 스스로 하는 일
         capabilities.save(
             CapabilityEntity(
-                sceneId = scene.id!!,
+                sceneId = scene.id,
                 contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "자동 전이",
@@ -463,7 +463,7 @@ class ContentMapSchemaTest {
         // 세 칸이 다 찬 것 — 사유가 없어야 한다
         val runnable = capabilities.save(
             CapabilityEntity(
-                sceneId = scene.id!!,
+                sceneId = scene.id,
                 contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "`key:Return` 을 누르면 `TurnBattleScene` 으로 이동",
@@ -485,7 +485,7 @@ class ContentMapSchemaTest {
             )
         )
 
-        val gaps = contentMaps.findSpecGaps(map.id!!).toList().associate { it.capabilityId to it.reason }
+        val gaps = contentMaps.findSpecGaps(map.id).toList().associate { it.capabilityId to it.reason }
 
         assertThat(gaps[needsProbe.id]).isEqualTo(SpecGapReason.THEN_MISSING.wire)
         assertThat(gaps.values).contains(SpecGapReason.WHEN_MISSING.wire)
@@ -514,7 +514,7 @@ class ContentMapSchemaTest {
         )
         edges.save(
             SceneEdgeEntity(
-                fromSceneId = title.id!!,
+                fromSceneId = title.id,
                 toSceneName = "StoryScene",
                 givenText = "`SaveLoadController.LoadPlayData() == -1`",
                 source = EdgeSource.STATIC.wire,
@@ -523,8 +523,8 @@ class ContentMapSchemaTest {
             )
         )
 
-        val all = edges.findByFromSceneIdOrderByIdAsc(title.id!!).toList()
-        val unverified = edges.findByFromSceneIdAndVerifiedAtIsNullOrderByIdAsc(title.id!!).toList()
+        val all = edges.findByFromSceneIdOrderByIdAsc(title.id).toList()
+        val unverified = edges.findByFromSceneIdAndVerifiedAtIsNullOrderByIdAsc(title.id).toList()
 
         assertThat(all).hasSize(2)
         assertThat(unverified).hasSize(1)
@@ -553,7 +553,7 @@ class ContentMapSchemaTest {
         )
         capabilities.save(
             CapabilityEntity(
-                sceneId = scene.id!!,
+                sceneId = scene.id,
                 contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.EVIDENCE.wire,
                 summary = "아직 안 눌러본 기능",
@@ -565,7 +565,7 @@ class ContentMapSchemaTest {
         // 관측 출신은 분모에 들어가지 않는다 — 정적 분석이 알아낸 것이 아니다
         capabilities.save(
             CapabilityEntity(
-                sceneId = scene.id!!,
+                sceneId = scene.id,
                 contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 verification = VerificationState.CONFIRMED.wire,
@@ -576,7 +576,7 @@ class ContentMapSchemaTest {
             )
         )
 
-        val count = capabilities.countEvidenceVerification(map.id!!)
+        val count = capabilities.countEvidenceVerification(map.id)
 
         assertThat(count).isNotNull
         assertThat(count!!.total).isEqualTo(2)
@@ -650,7 +650,7 @@ class ContentMapSchemaTest {
             )
         )
 
-        val gaps = contentMaps.findSpecGaps(map.id!!).toList().associate { it.capabilityId to it.reason }
+        val gaps = contentMaps.findSpecGaps(map.id).toList().associate { it.capabilityId to it.reason }
 
         assertThat(gaps[orphan.id]).isEqualTo(SpecGapReason.EVIDENCE_MISSING.wire)
     }
@@ -696,7 +696,7 @@ class ContentMapSchemaTest {
             // 관측 가능한 효과를 붙여 then-* 분기가 가리지 않게 한다
             effects.save(
                 CapabilityEffectEntity(
-                    capabilityId = capability.id!!,
+                    capabilityId = capability.id,
                     category = EffectCategory.OBSERVABLE.wire,
                     kind = "scene",
                     target = "SomeScene",
@@ -704,7 +704,7 @@ class ContentMapSchemaTest {
                     watchable = true,
                 )
             )
-            return capability.id!!
+            return capability.id
         }
 
         val subjectLost = withGaps("subjectLost", EvidenceGap.SUBJECT_NULL.wire, AnalysisConfidence.DERIVED.wire)
@@ -717,7 +717,7 @@ class ContentMapSchemaTest {
         val ambiguous = withGaps("ambiguous", null, AnalysisConfidence.AMBIGUOUS.wire)
         val clean = withGaps("clean", null, AnalysisConfidence.EXACT.wire)
 
-        val gaps = contentMaps.findSpecGaps(map.id!!).toList().associate { it.capabilityId to it.reason }
+        val gaps = contentMaps.findSpecGaps(map.id).toList().associate { it.capabilityId to it.reason }
 
         assertThat(gaps[subjectLost]).isEqualTo(SpecGapReason.GIVEN_SUBJECT_UNKNOWN.wire)
         assertThat(gaps[notComposed]).isEqualTo(SpecGapReason.GIVEN_INCOMPLETE.wire)
@@ -764,7 +764,7 @@ class ContentMapSchemaTest {
         )
         effects.save(
             CapabilityEffectEntity(
-                capabilityId = both.id!!,
+                capabilityId = both.id,
                 category = EffectCategory.STATE.wire,
                 kind = "write",
                 target = "T.counter",
@@ -772,7 +772,7 @@ class ContentMapSchemaTest {
             )
         )
 
-        val gaps = contentMaps.findSpecGaps(map.id!!).toList().associate { it.capabilityId to it.reason }
+        val gaps = contentMaps.findSpecGaps(map.id).toList().associate { it.capabilityId to it.reason }
 
         assertThat(gaps[both.id]).isEqualTo(SpecGapReason.GIVEN_INCOMPLETE.wire)
     }
@@ -792,7 +792,7 @@ class ContentMapSchemaTest {
             ScreenEntity(sceneId = scene.id!!, discriminator = Json.of("""[{"a":1}]"""))
         )
         val to = screens.save(
-            ScreenEntity(sceneId = scene.id!!, discriminator = Json.of("""[{"a":2}]"""))
+            ScreenEntity(sceneId = scene.id, discriminator = Json.of("""[{"a":2}]"""))
         )
 
         transitions.save(
@@ -808,8 +808,8 @@ class ContentMapSchemaTest {
             runBlocking {
                 transitions.save(
                     ScreenTransitionEntity(
-                        fromScreenId = from.id!!,
-                        toScreenId = to.id!!,
+                        fromScreenId = from.id,
+                        toScreenId = to.id,
                         kind = TransitionKind.AUTO.wire,
                         crossesScene = false,
                     )
@@ -832,7 +832,7 @@ class ContentMapSchemaTest {
         )
         val capability = capabilities.save(
             CapabilityEntity(
-                sceneId = scene.id!!,
+                sceneId = scene.id,
                 contentMapId = scene.contentMapId,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 summary = "관측된 기능",
@@ -843,10 +843,10 @@ class ContentMapSchemaTest {
         )
 
         screenCapabilities.observe(screen.id!!, capability.id!!, firedIncrement = 1)
-        screenCapabilities.observe(screen.id!!, capability.id!!, firedIncrement = 0)
-        screenCapabilities.observe(screen.id!!, capability.id!!, firedIncrement = 1)
+        screenCapabilities.observe(screen.id, capability.id, firedIncrement = 0)
+        screenCapabilities.observe(screen.id, capability.id, firedIncrement = 1)
 
-        val rows = screenCapabilities.findByScreenId(screen.id!!).toList()
+        val rows = screenCapabilities.findByScreenId(screen.id).toList()
 
         assertThat(rows).hasSize(1)
         assertThat(rows[0].observedCount).isEqualTo(3)
@@ -917,7 +917,7 @@ class ContentMapSchemaTest {
     fun `안정 키가 한 지도 안에서 중복되면 거절한다`(): Unit = runBlocking {
         val map = newContentMap()
         val title = newScene(map.id!!, "TitleScene")
-        val battle = newScene(map.id!!, "TurnBattleScene")
+        val battle = newScene(map.id, "TurnBattleScene")
 
         capabilities.save(
             CapabilityEntity(
@@ -1162,7 +1162,7 @@ class ContentMapSchemaTest {
         chain.forEach { (seq, resolution, rule) ->
             proofs.save(
                 CapabilityProofEntity(
-                    capabilityId = capability.id!!,
+                    capabilityId = capability.id,
                     effectId = effect.id!!,
                     seq = seq,
                     source = "GameClearController::ShowReward",
@@ -1181,7 +1181,7 @@ class ContentMapSchemaTest {
         assertThat(blurred.seq).isEqualTo(2)
         assertThat(blurred.rule).isEqualTo("prefab-field-resolution")
         // 효과의 등급은 사슬의 최솟값과 같다.
-        assertThat(effects.findById(effect.id!!)!!.resolution)
+        assertThat(effects.findById(effect.id)!!.resolution)
             .isEqualTo(AnalysisConfidence.AMBIGUOUS.wire)
     }
 
@@ -1696,7 +1696,7 @@ class ContentMapSchemaTest {
                     callPath = Json.of("""["Cards.Card::$summary"]"""),
                 )
             )
-            return capability.id!!
+            return capability.id
         }
 
         val spawned = save(summary = "spawned", spawnedByField = "Cards.CardManager.cardPrefab")

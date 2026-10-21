@@ -12,8 +12,8 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * 끝점을 문자열로 받는 것도 같은 관례다(FE·Agent 쪽 64비트 정밀도 손실 방지).
  */
 data class KnowledgeLinkRequest(
-    @JsonProperty("from_knowledge_id") val fromKnowledgeId: String? = null,
-    @JsonProperty("to_knowledge_id") val toKnowledgeId: String? = null,
+    @param:JsonProperty("from_knowledge_id") val fromKnowledgeId: String? = null,
+    @param:JsonProperty("to_knowledge_id") val toKnowledgeId: String? = null,
     val relation: String? = null,
     val note: String? = null,
 )
@@ -29,8 +29,8 @@ data class KnowledgeLinkRequest(
  * 지워진 관계에 붙일 곳도 없다.
  */
 data class KnowledgeUnlinkRequest(
-    @JsonProperty("from_knowledge_id") val fromKnowledgeId: String? = null,
-    @JsonProperty("to_knowledge_id") val toKnowledgeId: String? = null,
+    @param:JsonProperty("from_knowledge_id") val fromKnowledgeId: String? = null,
+    @param:JsonProperty("to_knowledge_id") val toKnowledgeId: String? = null,
     val relation: String? = null,
 )
 
@@ -43,9 +43,9 @@ data class KnowledgeUnlinkRequest(
  * 것이 목적이 아니다.
  */
 data class KnowledgeExpandRequest(
-    @JsonProperty("knowledge_id") val knowledgeId: String? = null,
+    @param:JsonProperty("knowledge_id") val knowledgeId: String? = null,
     val depth: Int? = null,
-    @JsonProperty("include_similar") val includeSimilar: Boolean = true,
+    @param:JsonProperty("include_similar") val includeSimilar: Boolean = true,
     /**
      * 이 확장이 난 런 스텝(선택, ARTEL-293). 검색과 같은 이유로 받는다 — 확장도 usage 행을
      * 남기므로, 검색만 좌표를 갖고 확장은 못 갖는 것은 같은 표에 두 규칙을 두는 셈이다.

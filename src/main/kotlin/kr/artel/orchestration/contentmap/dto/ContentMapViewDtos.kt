@@ -37,21 +37,21 @@ import java.time.Instant
  */
 @Schema(description = "씬 명세(content map) 조회 결과")
 data class ContentMapResponse(
-    @Schema(description = "지도 루트. null 이면 이 빌드에 등록된 `evidence` 문서가 없다")
+    @field:Schema(description = "지도 루트. null 이면 이 빌드에 등록된 `evidence` 문서가 없다")
     val contentMap: ContentMapSummaryResponse?,
-    @Schema(description = "씬 목록. 이름 오름차순")
+    @field:Schema(description = "씬 목록. 이름 오름차순")
     val scenes: List<ContentMapSceneResponse>,
-    @Schema(description = "씬 전이")
+    @field:Schema(description = "씬 전이")
     val edges: List<ContentMapEdgeResponse>,
-    @Schema(description = "화면 전이. QA 런이 관측한 것만 있다")
+    @field:Schema(description = "화면 전이. QA 런이 관측한 것만 있다")
     val screenTransitions: List<ContentMapScreenTransitionResponse> = emptyList(),
-    @Schema(description = "명세가 못 된 사유의 분포. QA 결함이 아니라 개발 우선순위 신호다")
+    @field:Schema(description = "명세가 못 된 사유의 분포. QA 결함이 아니라 개발 우선순위 신호다")
     val gaps: List<SpecGapCountResponse>,
-    @Schema(description = "`evidence` 출신 기능 중 실행으로 확인된 비율")
+    @field:Schema(description = "`evidence` 출신 기능 중 실행으로 확인된 비율")
     val verification: VerificationResponse,
-    @Schema(description = "등록됐지만 아직 앉지 못한 문서")
+    @field:Schema(description = "등록됐지만 아직 앉지 못한 문서")
     val pendingDocuments: List<PendingDocumentResponse>,
-    @Schema(description = "이 빌드에 마지막으로 시킨 원격 스캔. null 이면 이 서버가 뜬 뒤로 시킨 적이 없다")
+    @field:Schema(description = "이 빌드에 마지막으로 시킨 원격 스캔. null 이면 이 서버가 뜬 뒤로 시킨 적이 없다")
     val lastScan: LastScanResponse? = null,
 ) {
     companion object {
@@ -93,18 +93,18 @@ data class ContentMapResponse(
 @Schema(description = "지도 루트")
 data class ContentMapSummaryResponse(
     val id: Long,
-    @Schema(description = "이 지도를 세운 경로. evidence 는 근거 문서 등록이, observation 은 QA 런의 관측이 세웠다")
+    @field:Schema(description = "이 지도를 세운 경로. evidence 는 근거 문서 등록이, observation 은 QA 런의 관측이 세웠다")
     val rootedBy: String,
-    @Schema(description = "editor · editor-play · player 중 하나. 근거 문서가 아직 없으면 null")
+    @field:Schema(description = "editor · editor-play · player 중 하나. 근거 문서가 아직 없으면 null")
     val capture: String?,
-    @Schema(description = "근거 문서의 세대. 근거 문서가 아직 없으면 null")
+    @field:Schema(description = "근거 문서의 세대. 근거 문서가 아직 없으면 null")
     val schemaVersion: Int?,
-    @Schema(description = "구워진 `evidence` 전체의 지문. 값이 달라지면 코드가 바뀐 것이다. 근거 문서가 아직 없으면 null")
+    @field:Schema(description = "구워진 `evidence` 전체의 지문. 값이 달라지면 코드가 바뀐 것이다. 근거 문서가 아직 없으면 null")
     val evidenceDigest: String?,
     val unity: String?,
     val platform: String?,
     val sdkVersion: String?,
-    @Schema(description = "마지막 적재 시각. null 이면 등록만 되고 아직 앉지 않았다")
+    @field:Schema(description = "마지막 적재 시각. null 이면 등록만 되고 아직 앉지 않았다")
     val ingestedAt: Instant?,
 )
 
@@ -124,18 +124,18 @@ data class ContentMapSummaryResponse(
 data class ContentMapSceneResponse(
     val id: Long,
     val name: String,
-    @Schema(description = "순회했나. false 면 기능이 비어 있는 것이 정상이다")
+    @field:Schema(description = "순회했나. false 면 기능이 비어 있는 것이 정상이다")
     val walked: Boolean,
-    @Schema(description = "evidence · observed. observed 는 QA 런이 서 보기만 한 씬이라 기능이 비는 것이 정상이다")
+    @field:Schema(description = "evidence · observed. observed 는 QA 런이 서 보기만 한 씬이라 기능이 비는 것이 정상이다")
     val origin: String,
     val capabilities: SceneCapabilityCountResponse,
-    @Schema(description = "이 씬의 조작 단계. not-a-step 은 빠진다")
+    @field:Schema(description = "이 씬의 조작 단계. not-a-step 은 빠진다")
     val steps: List<SceneStepResponse> = emptyList(),
-    @Schema(description = "이 씬의 대표 이미지. null 이면 `evidence` 가 캡처를 아예 신고하지 않았다")
+    @field:Schema(description = "이 씬의 대표 이미지. null 이면 `evidence` 가 캡처를 아예 신고하지 않았다")
     val thumbnail: SceneThumbnailResponse? = null,
-    @Schema(description = "이 씬에서 관측된 화면. QA 런 전에는 비고 그것이 정상이다")
+    @field:Schema(description = "이 씬에서 관측된 화면. QA 런 전에는 비고 그것이 정상이다")
     val screens: List<ContentMapScreenResponse> = emptyList(),
-    @Schema(description = "capabilities 가 센 그 행들. 개수의 합이 capabilities.total 과 같다")
+    @field:Schema(description = "capabilities 가 센 그 행들. 개수의 합이 capabilities.total 과 같다")
     val capabilityList: List<SceneCapabilityResponse> = emptyList(),
 )
 
@@ -164,19 +164,19 @@ data class ContentMapSceneResponse(
 @Schema(description = "씬 안의 화면 하나")
 data class ContentMapScreenResponse(
     val id: Long,
-    @Schema(description = "이 화면이 속한 씬. 화면 전이가 화면 id 로만 오므로 되짚을 자리가 필요하다")
+    @field:Schema(description = "이 화면이 속한 씬. 화면 전이가 화면 id 로만 오므로 되짚을 자리가 필요하다")
     val sceneId: Long,
-    @Schema(description = "표시용. 조인 키가 아니다")
+    @field:Schema(description = "표시용. 조인 키가 아니다")
     val name: String?,
-    @Schema(description = "이 화면임을 판정하는 pulse 관측 조건. 서버는 읽지 않고 그대로 옮긴다")
+    @field:Schema(description = "이 화면임을 판정하는 pulse 관측 조건. 서버는 읽지 않고 그대로 옮긴다")
     val discriminator: JsonNode,
-    @Schema(description = "이 화면을 몇 번 지나갔나")
+    @field:Schema(description = "이 화면을 몇 번 지나갔나")
     val observedCount: Int,
-    @Schema(description = "이 화면을 처음 본 QA 런")
+    @field:Schema(description = "이 화면을 처음 본 QA 런")
     val firstSeenQaRunId: Long?,
-    @Schema(description = "이 화면의 캡처. null 이면 아직 못 찍었다")
+    @field:Schema(description = "이 화면의 캡처. null 이면 아직 못 찍었다")
     val image: ScreenImageResponse? = null,
-    @Schema(description = "이 screen 에 묶인 capability. scene 의 capabilityList 로 대신 채우지 않는다")
+    @field:Schema(description = "이 screen 에 묶인 capability. scene 의 capabilityList 로 대신 채우지 않는다")
     val capabilities: List<ScreenCapabilityResponse> = emptyList(),
 )
 
@@ -201,18 +201,18 @@ data class ContentMapScreenResponse(
  */
 @Schema(description = "screen 에 묶인 capability 하나")
 data class ScreenCapabilityResponse(
-    @Schema(description = "capability.id. scene 의 capabilityList 와 steps 의 같은 id 가 같은 행이다")
+    @field:Schema(description = "capability.id. scene 의 capabilityList 와 steps 의 같은 id 가 같은 행이다")
     val id: Long,
     val summary: String,
-    @Schema(description = "runnable · needs-probe · unreachable-precondition · not-a-step")
+    @field:Schema(description = "runnable · needs-probe · unreachable-precondition · not-a-step")
     val status: String,
-    @Schema(description = "evidence · observed · inferred · human. 어디서 알아냈나")
+    @field:Schema(description = "evidence · observed · inferred · human. 어디서 알아냈나")
     val origin: String,
-    @Schema(description = "unverified · confirmed · contradicted. 실행으로 확인됐나")
+    @field:Schema(description = "unverified · confirmed · contradicted. 실행으로 확인됐나")
     val verification: String,
-    @Schema(description = "이 screen 에서 이 capability 를 몇 번 봤나")
+    @field:Schema(description = "이 screen 에서 이 capability 를 몇 번 봤나")
     val observedCount: Int,
-    @Schema(description = "그중 실제로 무언가 변한 횟수. observedCount 와의 차이가 결함 신호다")
+    @field:Schema(description = "그중 실제로 무언가 변한 횟수. observedCount 와의 차이가 결함 신호다")
     val firedCount: Int,
 ) {
     companion object {
@@ -240,10 +240,10 @@ data class ScreenCapabilityResponse(
  */
 @Schema(description = "화면 캡처의 서명된 주소")
 data class ScreenImageResponse(
-    @Schema(description = "서명된 단기 주소")
+    @field:Schema(description = "서명된 단기 주소")
     val url: String,
     val expiresAt: Instant,
-    @Schema(description = "찍은 시각. null 이면 관측이 시각을 남기지 않았다")
+    @field:Schema(description = "찍은 시각. null 이면 관측이 시각을 남기지 않았다")
     val capturedAt: Instant?,
 )
 
@@ -265,17 +265,17 @@ data class ContentMapScreenTransitionResponse(
     val id: Long,
     val fromScreenId: Long,
     val toScreenId: Long,
-    @Schema(description = "null 이면 자동 전이 — TC 가 지시할 수 없다")
+    @field:Schema(description = "null 이면 자동 전이 — TC 가 지시할 수 없다")
     val capabilityId: Long?,
-    @Schema(description = "무엇을 해서 넘어갔나")
+    @field:Schema(description = "무엇을 해서 넘어갔나")
     val capabilitySummary: String?,
-    @Schema(description = "action · state · auto")
+    @field:Schema(description = "action · state · auto")
     val kind: String,
-    @Schema(description = "씬 경계를 넘었나. false 면 같은 씬 안의 상태 변화다")
+    @field:Schema(description = "씬 경계를 넘었나. false 면 같은 씬 안의 상태 변화다")
     val crossesScene: Boolean,
-    @Schema(description = "이 전이를 몇 번 지나갔나")
+    @field:Schema(description = "이 전이를 몇 번 지나갔나")
     val observedCount: Int,
-    @Schema(description = "이 전이를 처음 본 QA 런")
+    @field:Schema(description = "이 전이를 처음 본 QA 런")
     val firstSeenQaRunId: Long?,
 ) {
     companion object {
@@ -326,27 +326,27 @@ data class ContentMapScreenTransitionResponse(
  */
 @Schema(description = "씬 하나의 기능 하나")
 data class SceneCapabilityResponse(
-    @Schema(description = "capability.id. steps 의 같은 id 와 같은 행이다")
+    @field:Schema(description = "capability.id. steps 의 같은 id 와 같은 행이다")
     val id: Long,
     val summary: String,
-    @Schema(description = "runnable · needs-probe · unreachable-precondition · not-a-step")
+    @field:Schema(description = "runnable · needs-probe · unreachable-precondition · not-a-step")
     val status: String,
-    @Schema(description = "evidence · observed · inferred · human. 어디서 알아냈나")
+    @field:Schema(description = "evidence · observed · inferred · human. 어디서 알아냈나")
     val origin: String,
-    @Schema(description = "unverified · confirmed · contradicted. 실행으로 확인됐나")
+    @field:Schema(description = "unverified · confirmed · contradicted. 실행으로 확인됐나")
     val verification: String,
-    @Schema(
+    @field:Schema(
         description = "placed · persistent-evidenced · persistent-unconfirmed. " +
             "이 행이 왜 이 scene 에 있나. persistent-unconfirmed 는 여기서 되는지 아직 아무도 안 봤다"
     )
     val scenePresence: String,
-    @Schema(description = "이 조작을 실제로 할 수 있는가")
+    @field:Schema(description = "이 조작을 실제로 할 수 있는가")
     val actionability: String,
-    @Schema(description = "그 결과를 볼 수 있는가")
+    @field:Schema(description = "그 결과를 볼 수 있는가")
     val observability: String,
-    @Schema(description = "이 빌드에 이 규칙이 적용되는가")
+    @field:Schema(description = "이 빌드에 이 규칙이 적용되는가")
     val applicability: String,
-    @Schema(description = "click · press · none 등. 프로토콜 메서드가 아니라 의도다")
+    @field:Schema(description = "click · press · none 등. 프로토콜 메서드가 아니라 의도다")
     val interaction: String,
 ) {
     companion object {
@@ -373,14 +373,14 @@ data class SceneCapabilityResponse(
  * 화면이 "아직 안 올렸다"와 "이 씬은 못 찍는다"를 다르게 말할 수 있어야 한다.
  */
 data class SceneThumbnailResponse(
-    @Schema(description = "available · unavailable")
+    @field:Schema(description = "available · unavailable")
     val state: String,
-    @Schema(description = "서명된 단기 주소. state 가 available 일 때만 있다")
+    @field:Schema(description = "서명된 단기 주소. state 가 available 일 때만 있다")
     val url: String? = null,
     val expiresAt: Instant? = null,
     val width: Int? = null,
     val height: Int? = null,
-    @Schema(description = "못 만든 이유. SDK 가 준 failureCode 를 그대로 옮긴다")
+    @field:Schema(description = "못 만든 이유. SDK 가 준 failureCode 를 그대로 옮긴다")
     val reason: String? = null,
 )
 
@@ -411,22 +411,22 @@ data class SceneThumbnailResponse(
  */
 @Schema(description = "씬 하나의 조작 단계")
 data class SceneStepResponse(
-    @Schema(description = "capability.id")
+    @field:Schema(description = "capability.id")
     val id: Long,
     val summary: String,
-    @Schema(description = "runnable · needs-probe · unreachable-precondition")
+    @field:Schema(description = "runnable · needs-probe · unreachable-precondition")
     val status: String,
-    @Schema(description = "click · press · drag · none 등")
+    @field:Schema(description = "click · press · drag · none 등")
     val interaction: String,
-    @Schema(description = "press 일 때의 키 이름")
+    @field:Schema(description = "press 일 때의 키 이름")
     val inputKey: String?,
-    @Schema(description = "누를 수 있는 것에 쓰인 글자")
+    @field:Schema(description = "누를 수 있는 것에 쓰인 글자")
     val controlLabel: String?,
-    @Schema(description = "사람이 읽는 계층 경로")
+    @field:Schema(description = "사람이 읽는 계층 경로")
     val controlPath: String?,
-    @Schema(description = "조건 한 줄. 오늘은 전부 null 이다(ARTEL-447)")
+    @field:Schema(description = "조건 한 줄. 오늘은 전부 null 이다(ARTEL-447)")
     val givenText: String?,
-    @Schema(description = "정규화된 조건 트리. null 이면 `evidence` 가 없어 조건을 모른다")
+    @field:Schema(description = "정규화된 조건 트리. null 이면 `evidence` 가 없어 조건을 모른다")
     val given: ConditionNodeResponse?,
 )
 
@@ -441,15 +441,15 @@ data class SceneStepResponse(
  */
 @Schema(description = "씬 하나의 기능 상태 분포")
 data class SceneCapabilityCountResponse(
-    @Schema(description = "네 칸의 합")
+    @field:Schema(description = "네 칸의 합")
     val total: Long,
-    @Schema(description = "조작이 있고 관측 가능한 효과가 있다. 판정까지 자동")
+    @field:Schema(description = "조작이 있고 관측 가능한 효과가 있다. 판정까지 자동")
     val runnable: Long,
-    @Schema(description = "조작은 있는데 무엇이 달라지는지 `evidence` 가 말하지 않는다")
+    @field:Schema(description = "조작은 있는데 무엇이 달라지는지 `evidence` 가 말하지 않는다")
     val needsProbe: Long,
-    @Schema(description = "조작이 없다. 단독 명세가 아니라 given/then 의 재료다")
+    @field:Schema(description = "조작이 없다. 단독 명세가 아니라 given/then 의 재료다")
     val notAStep: Long,
-    @Schema(description = "조건은 아는데 그 상태를 만드는 절차가 `evidence` 에 없다")
+    @field:Schema(description = "조건은 아는데 그 상태를 만드는 절차가 `evidence` 에 없다")
     val unreachablePrecondition: Long,
 ) {
     companion object {
@@ -479,19 +479,19 @@ data class SceneCapabilityCountResponse(
 data class ContentMapEdgeResponse(
     val fromSceneId: Long,
     val toSceneName: String,
-    @Schema(description = "아직 순회하지 못한 씬이면 null")
+    @field:Schema(description = "아직 순회하지 못한 씬이면 null")
     val toSceneId: Long?,
-    @Schema(description = "자동 전이거나 기능이 지워졌으면 null")
+    @field:Schema(description = "자동 전이거나 기능이 지워졌으면 null")
     val capabilityId: Long?,
-    @Schema(description = "무엇을 해서 그 씬으로 가는가. 계약 밖의 덤이다")
+    @field:Schema(description = "무엇을 해서 그 씬으로 가는가. 계약 밖의 덤이다")
     val capabilitySummary: String?,
-    @Schema(description = "같은 컨트롤이 조건으로 갈릴 때 둘을 가르는 조건. 계약 밖의 덤이다")
+    @field:Schema(description = "같은 컨트롤이 조건으로 갈릴 때 둘을 가르는 조건. 계약 밖의 덤이다")
     val givenText: String?,
-    @Schema(description = "정규화된 전이 조건. null 이면 조건을 말하는 `evidence` 가 없다")
+    @field:Schema(description = "정규화된 전이 조건. null 이면 조건을 말하는 `evidence` 가 없다")
     val given: ConditionNodeResponse?,
-    @Schema(description = "static · runtime. runtime 은 정적 분석이 놓친 전이다")
+    @field:Schema(description = "static · runtime. runtime 은 정적 분석이 놓친 전이다")
     val source: String,
-    @Schema(description = "null 이면 아직 못 가본 전이 — 커버리지 구멍이다")
+    @field:Schema(description = "null 이면 아직 못 가본 전이 — 커버리지 구멍이다")
     val verifiedAt: Instant?,
 ) {
     companion object {
@@ -532,9 +532,9 @@ data class SpecGapCountResponse(
  */
 @Schema(description = "`evidence` 출신 기능의 실행 확인 비율")
 data class VerificationResponse(
-    @Schema(description = "verification 이 unverified 가 아닌 기능 수")
+    @field:Schema(description = "verification 이 unverified 가 아닌 기능 수")
     val verified: Long,
-    @Schema(description = "`evidence` 출신 기능 수")
+    @field:Schema(description = "`evidence` 출신 기능 수")
     val total: Long,
 )
 
@@ -551,9 +551,9 @@ data class VerificationResponse(
 data class PendingDocumentResponse(
     val documentId: Long,
     val receivedAt: Instant,
-    @Schema(description = "마지막 적재 실패 시각. null 이면 아직 시도하지 않았다")
+    @field:Schema(description = "마지막 적재 실패 시각. null 이면 아직 시도하지 않았다")
     val ingestFailedAt: Instant?,
-    @Schema(description = "마지막 실패 사유 한 줄")
+    @field:Schema(description = "마지막 실패 사유 한 줄")
     val ingestError: String?,
 )
 
@@ -571,19 +571,19 @@ data class PendingDocumentResponse(
  */
 @Schema(description = "마지막 원격 스캔의 상태")
 data class LastScanResponse(
-    @Schema(description = "REQUESTED · SUCCEEDED · FAILED")
+    @field:Schema(description = "REQUESTED · SUCCEEDED · FAILED")
     val state: ScanState,
-    @Schema(description = "명령을 받은 게임 인스턴스")
+    @field:Schema(description = "명령을 받은 게임 인스턴스")
     val gameInstanceId: Long,
     val gameInstanceName: String,
     val requestedAt: Instant,
-    @Schema(description = "끝난 시각. REQUESTED 이면 null")
+    @field:Schema(description = "끝난 시각. REQUESTED 이면 null")
     val finishedAt: Instant?,
-    @Schema(description = "이번 스캔이 앉힌 문서 수. SUCCEEDED 인데 0 이면 올라온 문서가 없었다는 뜻")
+    @field:Schema(description = "이번 스캔이 앉힌 문서 수. SUCCEEDED 인데 0 이면 올라온 문서가 없었다는 뜻")
     val ingestedDocuments: Int?,
-    @Schema(description = "FAILED 일 때 사람에게 보여 줄 사유")
+    @field:Schema(description = "FAILED 일 때 사람에게 보여 줄 사유")
     val error: String?,
-    @Schema(description = "스캔하고 TC 생성(ARTEL-1040)일 때 TC 쪽 결과. 그냥 스캔이면 null")
+    @field:Schema(description = "스캔하고 TC 생성(ARTEL-1040)일 때 TC 쪽 결과. 그냥 스캔이면 null")
     val testCases: ScanTestCases? = null,
     @Schema(description = "SCANNING · UPLOADING · INGESTING · GENERATING_TEST_CASES. 끝난 뒤에는 마지막으로 지난 단계")
     val phase: ScanPhase = ScanPhase.SCANNING,
@@ -617,10 +617,10 @@ data class LastScanResponse(
  */
 @Schema(description = "원격 스캔 요청 결과")
 data class StartContentMapScanResponse(
-    @Schema(description = "명령을 받은 게임 인스턴스")
+    @field:Schema(description = "명령을 받은 게임 인스턴스")
     val gameInstanceId: Long,
     val gameInstanceName: String,
-    @Schema(description = "늘 REQUESTED 다. 조회 API 의 lastScan.state 가 여기서 움직이는 것을 본다")
+    @field:Schema(description = "늘 REQUESTED 다. 조회 API 의 lastScan.state 가 여기서 움직이는 것을 본다")
     val state: ScanState,
     val requestedAt: Instant,
 )
@@ -643,17 +643,17 @@ data class StartContentMapScanResponse(
  */
 @Schema(description = "content map SSE 이벤트")
 data class ContentMapStreamEvent(
-    @Schema(description = "snapshot · scan · ingest · document · testCaseGeneration")
+    @field:Schema(description = "snapshot · scan · ingest · document · testCaseGeneration")
     val type: String,
-    @Schema(description = "type = snapshot · scan 일 때만 싣는다")
+    @field:Schema(description = "type = snapshot · scan 일 때만 싣는다")
     val scan: LastScanResponse? = null,
-    @Schema(description = "type = snapshot · ingest 일 때만 싣는다")
+    @field:Schema(description = "type = snapshot · ingest 일 때만 싣는다")
     val ingest: IngestProgressResponse? = null,
-    @Schema(description = "type = document 일 때만 싣는다")
+    @field:Schema(description = "type = document 일 때만 싣는다")
     val document: ContentMapDocumentEventResponse? = null,
-    @Schema(description = "type = snapshot 일 때만 싣는다")
+    @field:Schema(description = "type = snapshot 일 때만 싣는다")
     val documents: List<ContentMapDocumentEventResponse>? = null,
-    @Schema(description = "type = snapshot · testCaseGeneration 일 때 싣는다(ARTEL-1187). 이 서버가 모르면 null")
+    @field:Schema(description = "type = snapshot · testCaseGeneration 일 때 싣는다(ARTEL-1187). 이 서버가 모르면 null")
     val testCaseGeneration: kr.artel.orchestration.testcase.dto.TestCaseGenerationResponse? = null,
 )
 
@@ -667,11 +667,11 @@ data class ContentMapStreamEvent(
  */
 @Schema(description = "문서 적재 진행")
 data class IngestProgressResponse(
-    @Schema(description = "이 빌드에 올라온 content_map_document 행 전부")
+    @field:Schema(description = "이 빌드에 올라온 content_map_document 행 전부")
     val receivedDocuments: Int,
-    @Schema(description = "ingested_at 이 찍힌 문서 수")
+    @field:Schema(description = "ingested_at 이 찍힌 문서 수")
     val ingestedDocuments: Int,
-    @Schema(description = "ingest_failed_at 이 찍혔고 아직 ingested_at 이 없는 문서 수")
+    @field:Schema(description = "ingest_failed_at 이 찍혔고 아직 ingested_at 이 없는 문서 수")
     val failedDocuments: Int,
 )
 
@@ -686,10 +686,10 @@ data class IngestProgressResponse(
 data class ContentMapDocumentEventResponse(
     val documentId: Long,
     val receivedAt: Instant,
-    @Schema(description = "앉은 시각. null 이면 아직 앉지 않았다")
+    @field:Schema(description = "앉은 시각. null 이면 아직 앉지 않았다")
     val ingestedAt: Instant?,
-    @Schema(description = "마지막 적재 실패 시각. null 이면 아직 시도하지 않았다")
+    @field:Schema(description = "마지막 적재 실패 시각. null 이면 아직 시도하지 않았다")
     val ingestFailedAt: Instant?,
-    @Schema(description = "마지막 실패 사유 한 줄")
+    @field:Schema(description = "마지막 실패 사유 한 줄")
     val ingestError: String?,
 )

@@ -51,7 +51,7 @@ class PostgresExpiringKeyValueStore(
             // R2DBC 매퍼는 null 을 돌려줄 수 없어 만료 여부를 값과 함께 받아 밖에서 거른다.
             .map { row ->
                 Pair(
-                    row.get("live", java.lang.Boolean::class.java)!!.booleanValue(),
+                    row.get("live", Boolean::class.javaObjectType)!!,
                     row.get("entry_value", String::class.java)!!
                 )
             }

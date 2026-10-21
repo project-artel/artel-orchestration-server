@@ -102,16 +102,16 @@ class AdminUserService(
             ?: throw BadRequestException("platformRole 은 USER, DEVELOPER, ADMIN 중 하나여야 합니다.", code = "invalid_platform_role")
 
     private fun toResponse(row: Row) = AdminUserResponse(
-        id = row.get("id", java.lang.Long::class.java).toString(),
+        id = row.get("id", Long::class.javaObjectType).toString(),
         displayName = row.get("display_name", String::class.java)!!,
         nickname = row.get("nickname", String::class.java)!!,
         userTag = row.get("user_tag", String::class.java)!!,
         email = row.get("email", String::class.java),
         loginEmail = row.get("login_email", String::class.java),
         platformRole = row.get("platform_role", String::class.java)!!,
-        disabled = row.get("disabled", java.lang.Boolean::class.java)?.booleanValue() == true,
-        hasPassword = row.get("has_password", java.lang.Boolean::class.java)?.booleanValue() == true,
-        mustChangePassword = row.get("must_change_password", java.lang.Boolean::class.java)?.booleanValue() == true,
+        disabled = row.get("disabled", Boolean::class.javaObjectType) == true,
+        hasPassword = row.get("has_password", Boolean::class.javaObjectType) == true,
+        mustChangePassword = row.get("must_change_password", Boolean::class.javaObjectType) == true,
         oauthProviders = row.get("oauth_providers", String::class.java)?.split(',').orEmpty(),
         createdAt = row.get("created_at", OffsetDateTime::class.java)!!.toInstant()
     )

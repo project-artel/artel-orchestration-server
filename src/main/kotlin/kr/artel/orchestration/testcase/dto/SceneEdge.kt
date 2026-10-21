@@ -13,7 +13,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * @property by [SceneExit.by] 와 같은 규칙 — null 이면 저절로 간다(지시할 수 없다).
  */
 data class SceneEdge(
-    @JsonProperty("from_scene") val fromScene: String,
-    @JsonProperty("to_scene") val toScene: String,
-    @JsonInclude(JsonInclude.Include.NON_NULL) val by: String? = null,
+    @param:JsonProperty("from_scene") val fromScene: String,
+    @param:JsonProperty("to_scene") val toScene: String,
+    @get:JsonInclude(JsonInclude.Include.NON_NULL) val by: String? = null,
 )

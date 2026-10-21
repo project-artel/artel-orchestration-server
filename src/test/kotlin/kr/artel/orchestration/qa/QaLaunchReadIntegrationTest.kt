@@ -91,7 +91,7 @@ class QaLaunchReadIntegrationTest {
         strangerId = signIn("launch-stranger", "9302")
         projectId = projectRepository.save(
             ProjectEntity(name = "launch-project", genre = "RPG", createdAt = longAgo, updatedAt = longAgo)
-        )!!.id!!
+        ).id!!
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = longAgo)
         )
@@ -100,11 +100,11 @@ class QaLaunchReadIntegrationTest {
                 projectId = projectId, name = "Dem의 MacBook Pro", platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(), createdAt = longAgo, updatedAt = longAgo,
             )
-        )!!.id!!
+        ).id!!
         runId = testRunRepository.save(
             TestRunEntity(projectId = projectId, name = "회귀 1차", createdAt = longAgo, updatedAt = longAgo)
-        )!!.id!!
-        oldScenarioId = testScenarioRepository.save(TestScenarioEntity(projectId = projectId, title = "맵 배경이 바뀐다"))!!.id!!
+        ).id!!
+        oldScenarioId = testScenarioRepository.save(TestScenarioEntity(projectId = projectId, title = "맵 배경이 바뀐다")).id!!
         testRunScenarioRepository.save(TestRunScenarioEntity(testRunId = runId, testScenarioId = oldScenarioId, position = 0))
         stamp("test_scenario", oldScenarioId, "updated_at", longAgo)
         stampWhere("test_run_scenario", "test_scenario_id = $oldScenarioId", "created_at", longAgo)
@@ -156,13 +156,13 @@ class QaLaunchReadIntegrationTest {
         val mine = newQaRun(lastStart)
         val otherRunId = testRunRepository.save(
             TestRunEntity(projectId = projectId, name = "회귀 2차", createdAt = longAgo, updatedAt = longAgo)
-        )!!.id!!
+        ).id!!
         val other = qaRunRepository.save(
             QaRunEntity(
                 testRunId = otherRunId, gameInstanceId = instanceId, startedBy = ownerId, status = "COMPLETED",
                 startedAt = lastStart, completedAt = lastStart, createdAt = lastStart, updatedAt = lastStart,
             )
-        )!!.id!!
+        ).id!!
 
         assertThat(service.listRuns(projectId, ownerId, 10, runId).items.map { it.id }).containsExactly(mine.toString())
         assertThat(service.listRuns(projectId, ownerId, 10, otherRunId).items.map { it.id }).containsExactly(other.toString())
@@ -224,11 +224,11 @@ class QaLaunchReadIntegrationTest {
             issueRepository.save(it.copy(status = "RESOLVED", resolvedAt = Instant.now(), resolvedBy = ownerId))
         }
         gameBuildRepository.save(GameBuildEntity(projectId = projectId, version = "1.1-e2e", createdAt = Instant.now(), updatedAt = Instant.now()))
-        val added = testScenarioRepository.save(TestScenarioEntity(projectId = projectId, title = "엔딩까지 한 번에"))!!.id!!
+        val added = testScenarioRepository.save(TestScenarioEntity(projectId = projectId, title = "엔딩까지 한 번에")).id!!
         testRunScenarioRepository.save(TestRunScenarioEntity(testRunId = runId, testScenarioId = added, position = 1))
         stamp("test_scenario", oldScenarioId, "updated_at", Instant.now())
         // 앞에 있던 것 — 나오면 안 된다.
-        val oldBuild = gameBuildRepository.save(GameBuildEntity(projectId = projectId, version = "1.0", createdAt = longAgo, updatedAt = longAgo))!!.id!!
+        val oldBuild = gameBuildRepository.save(GameBuildEntity(projectId = projectId, version = "1.0", createdAt = longAgo, updatedAt = longAgo)).id!!
         stamp("game_build", oldBuild, "created_at", longAgo)
 
         val kinds = service.sinceLastQa(projectId, runId, ownerId).changes.map { it.kind to it.subjectName }
@@ -245,10 +245,10 @@ class QaLaunchReadIntegrationTest {
     fun `다른 프로젝트의 런을 지목하면 404 다`(): Unit = runBlocking {
         val otherProject = projectRepository.save(
             ProjectEntity(name = "other", genre = "RPG", createdAt = longAgo, updatedAt = longAgo)
-        )!!.id!!
+        ).id!!
         val otherRun = testRunRepository.save(
             TestRunEntity(projectId = otherProject, name = "남의 런", createdAt = longAgo, updatedAt = longAgo)
-        )!!.id!!
+        ).id!!
 
         assertThatThrownBy { runBlocking { service.sinceLastQa(projectId, otherRun, ownerId) } }
             .isInstanceOf(NotFoundException::class.java)
@@ -268,7 +268,7 @@ class QaLaunchReadIntegrationTest {
                 createdAt = startedAt,
                 updatedAt = startedAt,
             )
-        )!!.id!!
+        ).id!!
 
     private suspend fun newTry(qaRunId: Long, model: String, passed: Int?, total: Int?, status: String = "COMPLETED"): Long {
         val run = qaRunRepository.findById(qaRunId)!!
@@ -285,7 +285,7 @@ class QaLaunchReadIntegrationTest {
                 startedAt = run.startedAt,
                 completedAt = run.startedAt.plus(Duration.ofMinutes(5)),
             )
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun newIssue(qaTryId: Long, title: String, step: String? = null): Long =
@@ -297,7 +297,7 @@ class QaLaunchReadIntegrationTest {
                 detail = Json.of(if (step == null) "{}" else """{"step": $step}"""),
                 reportedAt = qaTryRepository.findById(qaTryId)!!.startedAt,
             )
-        )!!.id!!
+        ).id!!
 
     private suspend fun stamp(table: String, id: Long, column: String, at: Instant) =
         stampWhere(table, "id = $id", column, at)
@@ -314,5 +314,5 @@ class QaLaunchReadIntegrationTest {
                 provider = "github", providerUserId = providerUserId, login = login,
                 displayName = login, avatarUrl = null, email = "$login@example.com",
             )
-        )!!.userId.toLong()
+        ).userId.toLong()
 }

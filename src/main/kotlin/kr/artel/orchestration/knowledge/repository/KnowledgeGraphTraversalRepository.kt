@@ -268,7 +268,7 @@ class KnowledgeGraphTraversalRepository(
                 source = row.getString("source"),
                 summary = row.getString("summary"),
                 version = row.getInt("version"),
-                distance = row.get("distance", java.lang.Double::class.java)!!.toDouble()
+                distance = row.get("distance", Double::class.javaObjectType)!!
             )
         }.flow().toList()
     }
@@ -278,7 +278,7 @@ class KnowledgeGraphTraversalRepository(
      * 질의 자체가 실패하므로 BIGINT로 못박아 보낸다([KnowledgeVectorSearchRepository]와 같은 이유).
      */
     private fun GenericExecuteSpec.bindScope(scope: KnowledgeScope): GenericExecuteSpec =
-        scope.id?.let { bind("scopeId", it) } ?: bindNull("scopeId", java.lang.Long::class.java)
+        scope.id?.let { bind("scopeId", it) } ?: bindNull("scopeId", Long::class.javaObjectType)
 
     private fun Readable.toNeighbourRow() = KnowledgeNeighbourRow(
         edgeId = getLong("edge_id"),
@@ -294,8 +294,8 @@ class KnowledgeGraphTraversalRepository(
         version = getInt("version")
     )
 
-    private fun Readable.getLong(name: String) = get(name, java.lang.Long::class.java)!!.toLong()
-    private fun Readable.getInt(name: String) = get(name, java.lang.Integer::class.java)!!.toInt()
+    private fun Readable.getLong(name: String) = get(name, Long::class.javaObjectType)!!
+    private fun Readable.getInt(name: String) = get(name, Int::class.javaObjectType)!!
     private fun Readable.getString(name: String) = get(name, String::class.java)!!
 }
 

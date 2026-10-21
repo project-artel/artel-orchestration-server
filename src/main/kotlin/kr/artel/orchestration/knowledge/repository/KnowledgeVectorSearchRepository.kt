@@ -115,7 +115,7 @@ class KnowledgeVectorSearchRepository(
         // 운영 런은 scope가 NULL이다. 타입 없는 NULL을 보내면 Postgres가 파라미터 타입을 정하지
         // 못해 질의 자체가 실패하므로 BIGINT로 못박아 보낸다.
         spec = scope.id?.let { spec.bind("scopeId", it) }
-            ?: spec.bindNull("scopeId", java.lang.Long::class.java)
+            ?: spec.bindNull("scopeId", Long::class.javaObjectType)
 
         tags.forEachIndexed { index, tag -> spec = spec.bind("tag$index", tag) }
         if (source != null) spec = spec.bind("source", source)
@@ -124,13 +124,13 @@ class KnowledgeVectorSearchRepository(
         return spec
             .map { row: Readable ->
                 KnowledgeSearchRow(
-                    knowledgeId = row.get("knowledge_id", java.lang.Long::class.java)!!.toLong(),
+                    knowledgeId = row.get("knowledge_id", Long::class.javaObjectType)!!,
                     tag = row.get("tag", String::class.java)!!,
                     source = row.get("source", String::class.java)!!,
                     summary = row.get("summary", String::class.java)!!,
                     description = row.get("description", String::class.java)!!,
-                    version = row.get("version", java.lang.Integer::class.java)!!.toInt(),
-                    distance = row.get("distance", java.lang.Double::class.java)!!.toDouble()
+                    version = row.get("version", Int::class.javaObjectType)!!,
+                    distance = row.get("distance", Double::class.javaObjectType)!!
                 )
             }
             .flow()

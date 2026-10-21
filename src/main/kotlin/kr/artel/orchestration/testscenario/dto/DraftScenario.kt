@@ -20,14 +20,14 @@ import com.fasterxml.jackson.annotation.JsonProperty
  *   ORDERED 로 바뀌지 않는다. 항상 값을 싣는다.
  */
 data class DraftScenario(
-    @JsonProperty("draft_id") val draftId: String,
-    @JsonProperty("scenario_id") val scenarioId: Long?,
+    @param:JsonProperty("draft_id") val draftId: String,
+    @param:JsonProperty("scenario_id") val scenarioId: Long?,
     val title: String,
     val description: String,
     val steps: List<ChatScenarioStep>,
-    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
-    @JsonProperty("absorbed_scenario_ids") val absorbedScenarioIds: List<Long> = emptyList(),
-    @JsonProperty("base_steps") val baseSteps: List<ChatScenarioStep>? = null,
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
+    @param:JsonProperty("absorbed_scenario_ids") val absorbedScenarioIds: List<Long> = emptyList(),
+    @param:JsonProperty("base_steps") val baseSteps: List<ChatScenarioStep>? = null,
 ) {
     fun toResult() = ScenarioResult(scenarioId, title, description, steps, executionMode)
 }
@@ -41,7 +41,7 @@ data class DraftScenarioEdit(
 
 /** 승인 · 버리기가 고른 draft 들(ARTEL-1074). */
 data class DraftSelection(
-    @JsonProperty("draft_ids") val draftIds: List<String> = emptyList(),
+    @param:JsonProperty("draft_ids") val draftIds: List<String> = emptyList(),
 )
 
 /**

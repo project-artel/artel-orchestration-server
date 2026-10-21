@@ -293,7 +293,7 @@ class QaRunConfigPersistenceIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "run-p", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now
@@ -301,13 +301,13 @@ class QaRunConfigPersistenceIntegrationTest {
         )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!, name = "inst", platform = "UNITY",
+                projectId = project.id, name = "inst", platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now
             )
-        )!!
-        val run = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))!!
-        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
-        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        )
+        val run = testRunRepository.save(TestRunEntity(projectId = project.id, name = "런"))
+        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
+        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
 
         val started = persistence.createRunStarting(run.id!!, instance.id!!, ownerId, listOf(s1.id!!, s2.id!!))
 
@@ -416,7 +416,7 @@ class QaRunConfigPersistenceIntegrationTest {
     @Test
     fun `run 경로의 두 gate 가 모든 try 에 실린다`(): Unit = runBlocking {
         val ids = seedIds()
-        val second = testScenarioRepository.save(TestScenarioEntity(projectId = ids.projectId))!!.id!!
+        val second = testScenarioRepository.save(TestScenarioEntity(projectId = ids.projectId)).id!!
 
         val started = persistence.createRunStarting(
             ids.testRunId,
@@ -521,7 +521,7 @@ class QaRunConfigPersistenceIntegrationTest {
     @Test
     fun `run 경로가 label 을 qa_run 에 남긴다`(): Unit = runBlocking {
         val ids = seedIds()
-        val second = testScenarioRepository.save(TestScenarioEntity(projectId = ids.projectId))!!.id!!
+        val second = testScenarioRepository.save(TestScenarioEntity(projectId = ids.projectId)).id!!
 
         val started = persistence.createRunStarting(
             ids.testRunId,
@@ -592,7 +592,7 @@ class QaRunConfigPersistenceIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "run-config-project", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -602,22 +602,22 @@ class QaRunConfigPersistenceIntegrationTest {
             )
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = project.id!!)
-        )!!
+            TestScenarioEntity(projectId = project.id)
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
-        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))!!
+        )
+        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id, name = "런"))
         return SeedIds(
             ownerId = ownerId,
-            projectId = project.id!!,
+            projectId = project.id,
             scenarioId = scenario.id!!,
             instanceId = instance.id!!,
             testRunId = testRun.id!!
@@ -648,5 +648,5 @@ class QaRunConfigPersistenceIntegrationTest {
                 avatarUrl = null,
                 email = "runconfig@example.com"
             )
-        )!!
+        )
 }

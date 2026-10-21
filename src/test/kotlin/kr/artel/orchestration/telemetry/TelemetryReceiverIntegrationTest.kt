@@ -49,11 +49,11 @@ class TelemetryReceiverIntegrationTest {
         val rows = databaseClient.sql(
             "SELECT report ->> 'qaStructures' AS structures, schema_version FROM telemetry_report WHERE install_id = CAST(:id AS uuid)"
         ).bind("id", installId)
-            .map { row, _ -> row.get("structures", String::class.java)!! to row.get("schema_version", Integer::class.java)!! }
+            .map { row, _ -> row.get("structures", String::class.java)!! to row.get("schema_version", Int::class.javaObjectType)!! }
             .all().collectList().awaitSingle()
         assertThat(rows).hasSize(1)
         assertThat(rows.single().first).contains("claude/sonnet")
-        assertThat(rows.single().second.toInt()).isEqualTo(1)
+        assertThat(rows.single().second).isEqualTo(1)
     }
 
     @Test

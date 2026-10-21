@@ -380,13 +380,13 @@ class GameNoteIntegrationTest {
         val testRun = testRunRepository.save(TestRunEntity(projectId = projectId, name = "런"))
         val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))
         testRunService.setScenarios(testRun.id!!, ownerId, listOf(scenario.id!!))
-        return RunnableSeed(testRun.id!!.toString(), scenario.id!!.toString(), instance.id!!.toString())
+        return RunnableSeed(testRun.id.toString(), scenario.id.toString(), instance.id.toString())
     }
 
     private suspend fun countNotes(): Long =
         databaseClient.sql("SELECT COUNT(*) AS n FROM project_game_note WHERE project_id = :projectId")
             .bind("projectId", projectId)
-            .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("n", Long::class.javaObjectType)!! }
             .one().awaitSingle()
 
     private fun call(method: HttpMethod, path: String, json: String? = null, session: String = ownerSession): JsonNode {

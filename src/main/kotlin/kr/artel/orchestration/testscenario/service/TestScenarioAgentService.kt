@@ -66,7 +66,7 @@ import kr.artel.orchestration.testscenario.dto.TestCaseSearchErrorFrame
 import kr.artel.orchestration.testscenario.dto.UncoveredCasesResultFrame
 import kr.artel.orchestration.testscenario.dto.TestCaseSearchResultFrame
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
+import kr.artel.orchestration.settings.config.AgentServerProperties
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
@@ -98,8 +98,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class TestScenarioAgentService(
     private val authoringCases: AuthoringCases,
     private val authoringVersions: AuthoringVersionResolver,
-    @Value("\${artel.agent.base-url:http://localhost:8000}") private val agentBaseUrl: String,
-    @Value("\${artel.agent.ws-base-url:ws://localhost:8000}") private val agentWsBaseUrl: String,
+    agentProperties: AgentServerProperties,
     private val featureModels: FeatureModelService,
     private val objectMapper: ObjectMapper,
     private val streamManager: TestScenarioStreamManager,
@@ -123,6 +122,9 @@ class TestScenarioAgentService(
     private val drafts: AuthoringDraftStore,
     private val resourceQueryService: ResourceQueryService,
 ) {
+    private val agentBaseUrl = agentProperties.baseUrl
+    private val agentWsBaseUrl = agentProperties.wsBaseUrl
+
     private val logger = LoggerFactory.getLogger(TestScenarioAgentService::class.java)
     private val webClient = WebClient.create()
     private val wsClient = ReactorNettyWebSocketClient()
@@ -193,7 +195,7 @@ class TestScenarioAgentService(
         if (declined(pending, answer, userInput)) {
             sessions[sessionKey]?.question = null
             saveMessage(runId, appUserId, "USER", answerSummary(pending, answer))
-            notifyDeclined(sessionKey, runId, appUserId, pending!!, askedBatch(sessionKey, pending!!))
+            notifyDeclined(sessionKey, runId, appUserId, pending!!, askedBatch(sessionKey, pending))
             return
         }
 

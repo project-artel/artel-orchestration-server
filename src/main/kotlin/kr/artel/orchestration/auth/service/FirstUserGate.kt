@@ -49,6 +49,6 @@ class FirstUserGate(private val databaseClient: DatabaseClient) {
     /** 잠금 없이 읽는다. `GET /api/auth/providers` 처럼 판정이 아니라 안내에 쓰는 자리다. */
     suspend fun anyUserExists(): Boolean =
         databaseClient.sql("SELECT EXISTS (SELECT 1 FROM app_user) AS present")
-            .map { row, _ -> row.get("present", java.lang.Boolean::class.java)?.booleanValue() ?: false }
+            .map { row, _ -> row.get("present", Boolean::class.javaObjectType) ?: false }
             .one().awaitSingle()
 }
