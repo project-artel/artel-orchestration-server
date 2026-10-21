@@ -210,6 +210,7 @@ class SecurityConfig {
                 "/ws/sdk",
                 // SDK가 코드를 토큰으로 바꾸는 경로. 이 요청에는 아직 세션도 토큰도 없다.
                 "/api/auth/sdk/token",
+                "/api/auth/sdk/login",
                 // CLI가 코드를 CLI 토큰으로 바꾸는 경로. 같은 이유로 열려 있다 — 자격증명은
                 // 일회용 코드와 code_verifier이며 CliTokenController.exchangeLoginCode가 직접 검증한다.
                 // 이 줄이 아래 "/api/auth/**" 규칙보다 먼저 있어야 한다. 먼저 맞는 규칙이 이긴다.
