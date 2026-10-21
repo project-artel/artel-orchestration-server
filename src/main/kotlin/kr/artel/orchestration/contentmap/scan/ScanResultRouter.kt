@@ -68,6 +68,7 @@ class ScanResultRouter(
             return true
         }
 
+        enterPhase(gameBuildId, ScanPhase.INGESTING)
         ingestFor(gameBuildId)
         return true
     }
@@ -126,12 +127,18 @@ class ScanResultRouter(
         val ingested = outcomes.size - failed.size
         // 스캔하고 TC 생성(ARTEL-1040). 문서가 하나도 깨지지 않았을 때만 만든다 — 깨진 지도로 만든 TC 는 다시 만들 수 없다.
         val requested = statuses.find(gameBuildId)?.takeIf { it.state == ScanState.REQUESTED }?.testCases
-        val testCases = if (failed.isEmpty() && requested != null) generateTestCases(gameBuildId, requested) else requested
+        val testCases = if (failed.isEmpty() && requested != null) {
+            enterPhase(gameBuildId, ScanPhase.GENERATING_TEST_CASES)
+            generateTestCases(gameBuildId, requested)
+        } else {
+            requested
+        }
         statuses.complete(gameBuildId) { current ->
             if (failed.isEmpty()) {
                 current.copy(
                     state = ScanState.SUCCEEDED,
                     finishedAt = Instant.now(clock),
+                    updatedAt = Instant.now(clock),
                     ingestedDocuments = ingested,
                     testCases = testCases,
                 )
@@ -141,6 +148,7 @@ class ScanResultRouter(
                 current.copy(
                     state = ScanState.FAILED,
                     finishedAt = Instant.now(clock),
+                    updatedAt = Instant.now(clock),
                     ingestedDocuments = ingested,
                     error = failed.first().reason,
                 )
@@ -169,7 +177,18 @@ class ScanResultRouter(
 
     private fun fail(gameBuildId: Long, reason: String) {
         statuses.complete(gameBuildId) {
-            it.copy(state = ScanState.FAILED, finishedAt = Instant.now(clock), error = reason)
+            val now = Instant.now(clock)
+            it.copy(state = ScanState.FAILED, finishedAt = now, updatedAt = now, error = reason)
+        }?.let { publishScan(gameBuildId, it) }
+    }
+
+    /**
+     * 서버 쪽 단계로 옮기고 흘린다(ARTEL-1178). 적재 · TC 생성은 큰 게임에서 수십 초가 걸려, 옮긴 것을 알리지
+     * 않으면 화면은 게임이 아직 씬을 도는 줄 안다. 게임이 준 진행은 이 단계의 것이 아니라 비운다.
+     */
+    private fun enterPhase(gameBuildId: Long, phase: ScanPhase) {
+        statuses.advance(gameBuildId) {
+            it.copy(phase = phase, progress = null, updatedAt = Instant.now(clock))
         }?.let { publishScan(gameBuildId, it) }
     }
 
