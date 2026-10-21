@@ -195,7 +195,7 @@ class EvidenceDocumentService(
             replaceSceneCaptures(gameBuildId, contentMap.id, winner.id!!, request.sceneCaptures)
             return response(contentMap, winner, header, alreadyRegistered = true)
         }
-        replaceSceneCaptures(gameBuildId, contentMap.id!!, saved.id!!, request.sceneCaptures)
+        replaceSceneCaptures(gameBuildId, contentMap.id, saved.id!!, request.sceneCaptures)
         return response(contentMap, saved, header, alreadyRegistered = false)
     }
 

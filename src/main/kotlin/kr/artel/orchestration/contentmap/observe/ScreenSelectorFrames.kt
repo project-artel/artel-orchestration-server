@@ -89,7 +89,7 @@ object ScreenSelectorFrames {
 
 /** 제안이 가리키는 씬. 이름은 사람이 읽고 id 는 답이 되돌아올 자리를 정한다. */
 data class ScreenSelectorSceneRef(
-    @JsonProperty("scene_id") val sceneId: String,
+    @param:JsonProperty("scene_id") val sceneId: String,
     val name: String,
 )
 
@@ -100,12 +100,12 @@ data class ScreenSelectorSceneRef(
  * 다른 payload 와 같은 관례다.
  */
 data class ScreenSelectorScreenRef(
-    @JsonProperty("screen_id") val screenId: String,
+    @param:JsonProperty("screen_id") val screenId: String,
     val name: String? = null,
     val discriminator: List<ScreenDiscriminatorEntry> = emptyList(),
     /** 이 화면의 캡처. 서명된 단기 주소이고, 캡처가 없으면 null 이다. */
-    @JsonProperty("capture_url") val captureUrl: String? = null,
-    @JsonProperty("capture_expires_at") val captureExpiresAt: Instant? = null,
+    @param:JsonProperty("capture_url") val captureUrl: String? = null,
+    @param:JsonProperty("capture_expires_at") val captureExpiresAt: Instant? = null,
 )
 
 /**
@@ -142,10 +142,10 @@ data class ScreenSelectorCandidate(
     val selector: String,
     val path: String,
     val active: Boolean,
-    @JsonProperty("instances_in_reading") val instancesInReading: Int,
-    @JsonProperty("readings_seen_in_scene") val readingsSeenInScene: Int,
-    @JsonProperty("distinct_values_observed") val distinctValuesObserved: Int,
-    @JsonProperty("in_whitelist") val inWhitelist: Boolean,
+    @param:JsonProperty("instances_in_reading") val instancesInReading: Int,
+    @param:JsonProperty("readings_seen_in_scene") val readingsSeenInScene: Int,
+    @param:JsonProperty("distinct_values_observed") val distinctValuesObserved: Int,
+    @param:JsonProperty("in_whitelist") val inWhitelist: Boolean,
 )
 
 /**
@@ -163,8 +163,8 @@ data class ScreenSelectorCandidate(
 data class ScreenSelectorProposalPayload(
     val reason: String,
     val scene: ScreenSelectorSceneRef,
-    @JsonProperty("previous_screen") val previousScreen: ScreenSelectorScreenRef? = null,
-    @JsonProperty("current_screen") val currentScreen: ScreenSelectorScreenRef? = null,
+    @param:JsonProperty("previous_screen") val previousScreen: ScreenSelectorScreenRef? = null,
+    @param:JsonProperty("current_screen") val currentScreen: ScreenSelectorScreenRef? = null,
     val changes: List<ScreenSelectorChange> = emptyList(),
     val candidates: List<ScreenSelectorCandidate> = emptyList(),
 )
@@ -185,7 +185,7 @@ data class ScreenSelectorProposalPayload(
 data class ScreenSelectorEntryFrame(
     val match: String? = null,
     val pattern: String? = null,
-    @JsonProperty("screen_defining") val screenDefining: Boolean? = null,
+    @param:JsonProperty("screen_defining") val screenDefining: Boolean? = null,
     val reason: String? = null,
 )
 
@@ -201,7 +201,7 @@ data class ScreenSelectorEntryFrame(
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class ScreenSelectorVerdictPayload(
-    @JsonProperty("proposal_id") val proposalId: String? = null,
+    @param:JsonProperty("proposal_id") val proposalId: String? = null,
     val entries: List<ScreenSelectorEntryFrame> = emptyList(),
     val note: String? = null,
 )
@@ -226,7 +226,7 @@ data class ScreenSelectorRulePayload(
 data class ScreenSelectorAcceptedEntry(
     val match: String,
     val pattern: String,
-    @JsonProperty("screen_defining") val screenDefining: Boolean,
+    @param:JsonProperty("screen_defining") val screenDefining: Boolean,
 )
 
 /** 거절한 항목 하나와 그 사유. 사유 없이 거절하면 부른 쪽이 같은 실수를 반복한다. */
@@ -246,10 +246,10 @@ data class ScreenSelectorRejectedEntry(
  */
 data class ScreenSelectorResultPayload(
     val type: String,
-    @JsonProperty("scene_id") val sceneId: String? = null,
+    @param:JsonProperty("scene_id") val sceneId: String? = null,
     val accepted: List<ScreenSelectorAcceptedEntry> = emptyList(),
     val rejected: List<ScreenSelectorRejectedEntry> = emptyList(),
-    @JsonProperty("folded_screens") val foldedScreens: Int = 0,
+    @param:JsonProperty("folded_screens") val foldedScreens: Int = 0,
 )
 
 /**
@@ -268,6 +268,6 @@ data class ScreenSelectorResultPayload(
  */
 data class ScreenSettledPayload(
     val scene: ScreenSelectorSceneRef,
-    @JsonProperty("previous_screen") val previousScreen: ScreenSelectorScreenRef? = null,
-    @JsonProperty("current_screen") val currentScreen: ScreenSelectorScreenRef,
+    @param:JsonProperty("previous_screen") val previousScreen: ScreenSelectorScreenRef? = null,
+    @param:JsonProperty("current_screen") val currentScreen: ScreenSelectorScreenRef,
 )

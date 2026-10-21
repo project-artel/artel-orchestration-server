@@ -392,7 +392,7 @@ class TestCaseFolderIntegrationTest {
                 avatarUrl = null,
                 email = null,
             )
-        )!!
+        )
         return user.userId.toLong() to jwtService.issue(user)
     }
 

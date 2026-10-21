@@ -262,7 +262,7 @@ class QaVerdictPromotionIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "verdict-p", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now
@@ -270,14 +270,14 @@ class QaVerdictPromotionIntegrationTest {
         )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!, name = "inst", platform = "UNITY",
+                projectId = project.id, name = "inst", platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now
             )
-        )!!
-        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))
+        )
+        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id, name = "런"))
         val scenarioIds = (1..scenarioCount).map {
             testScenarioRepository.save(
-                TestScenarioEntity(projectId = project.id!!)
+                TestScenarioEntity(projectId = project.id)
             ).id!!
         }
 

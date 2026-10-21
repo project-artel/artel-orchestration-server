@@ -42,7 +42,7 @@ class IssueFolderRepository(private val database: DatabaseClient) {
             .bind("projectId", projectId)
             .bindNullable("parentId", parentId)
             .bind("name", name)
-            .map { row -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row -> row.get("id", Long::class.javaObjectType)!! }
             .one().awaitSingle()
 
     suspend fun update(folderId: Long, parentId: Long?, name: String) {
@@ -72,7 +72,7 @@ class IssueFolderRepository(private val database: DatabaseClient) {
             .bindNullable("parentId", parentId)
             .bind("name", name)
             .bindNullable("excludeId", excludeId)
-            .map { row -> row.get(0, java.lang.Boolean::class.java)!!.booleanValue() }
+            .map { row -> row.get(0, Boolean::class.javaObjectType)!! }
             .one().awaitSingle()
 
     /** [candidateId] 가 [folderId] 자신이거나 그 아래에 있나. folder 를 자기 하위로 옮기는 순환을 막는다. */
@@ -89,7 +89,7 @@ class IssueFolderRepository(private val database: DatabaseClient) {
         )
             .bind("folderId", folderId)
             .bind("candidateId", candidateId)
-            .map { row -> row.get(0, java.lang.Boolean::class.java)!!.booleanValue() }
+            .map { row -> row.get(0, Boolean::class.javaObjectType)!! }
             .one().awaitSingle()
 
     suspend fun addItems(folderId: Long, issueIds: List<Long>) {
@@ -131,7 +131,7 @@ class IssueFolderRepository(private val database: DatabaseClient) {
         )
             .bind("projectId", projectId)
             .bind("ids", ids.toTypedArray())
-            .map { row -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row -> row.get("id", Long::class.javaObjectType)!! }
             .all().collectList().awaitSingle().toSet()
     }
 
@@ -143,12 +143,12 @@ class IssueFolderRepository(private val database: DatabaseClient) {
     }
 
     private fun Readable.toRow() = Row(
-        id = get("id", java.lang.Long::class.java)!!.toLong(),
-        parentId = get("parent_id", java.lang.Long::class.java)?.toLong(),
+        id = get("id", Long::class.javaObjectType)!!,
+        parentId = get("parent_id", Long::class.javaObjectType),
         name = get("name", String::class.java)!!,
-        issueCount = get("issue_count", java.lang.Integer::class.java)?.toInt() ?: 0,
+        issueCount = get("issue_count", Int::class.javaObjectType) ?: 0,
     )
 
     private fun DatabaseClient.GenericExecuteSpec.bindNullable(name: String, value: Long?) =
-        if (value == null) bindNull(name, java.lang.Long::class.java) else bind(name, value)
+        if (value == null) bindNull(name, Long::class.javaObjectType) else bind(name, value)
 }

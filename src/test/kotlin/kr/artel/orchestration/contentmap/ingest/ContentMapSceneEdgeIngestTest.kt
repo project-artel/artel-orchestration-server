@@ -280,9 +280,9 @@ class ContentMapSceneEdgeIngestTest {
 
         // QA 런이 이 전이를 밟았다고 찍어 둔다. 화면 전이까지 만드는 이유는 세 칸을 모두 채워야
         // "무엇 하나라도 되돌아가면 깨진다"가 성립하기 때문이다.
-        val scene = scenes.findByContentMapIdAndName(map.id!!, "TitleScene")!!
+        val scene = scenes.findByContentMapIdAndName(map.id, "TitleScene")!!
         val transitionId = stampObservedTransition(scene.id!!)
-        val walked = edgeIdOf(map.id!!, "MapScene")
+        val walked = edgeIdOf(map.id, "MapScene")
         db.sql(
             """
             UPDATE scene_edge
@@ -299,7 +299,7 @@ class ContentMapSceneEdgeIngestTest {
         val second = ingest.ingest(documents.findById(document.id!!)!!)
 
         assertThat(second.sceneEdges).isEqualTo(2)
-        assertThat(edgeCountOf(map.id!!)).isEqualTo(2)
+        assertThat(edgeCountOf(map.id)).isEqualTo(2)
 
         val row = edges.findById(walked)!!
         assertThat(row.verifiedAt).isEqualTo(VERIFIED_AT)
@@ -322,11 +322,11 @@ class ContentMapSceneEdgeIngestTest {
         val map = newContentMap("scene-edge-unwalked")
         ingest.ingest(register(map.id!!, evidenceDocument().toByteArray()))
 
-        val unwalked = edges.findById(edgeIdOf(map.id!!, "OptionsScene"))!!
+        val unwalked = edges.findById(edgeIdOf(map.id, "OptionsScene"))!!
         assertThat(unwalked.toSceneName).isEqualTo("OptionsScene")
         assertThat(unwalked.toSceneId).isNull()
         // 그 이름의 씬 행이 생기지도 않았다. 문서가 씬을 순회했다고 말한 적이 없다.
-        assertThat(scenes.findByContentMapIdAndName(map.id!!, "OptionsScene")).isNull()
+        assertThat(scenes.findByContentMapIdAndName(map.id, "OptionsScene")).isNull()
     }
 
     // ---------- 3. 문서가 말을 바꿨을 때 ----------
@@ -351,8 +351,8 @@ class ContentMapSceneEdgeIngestTest {
         val map = newContentMap("scene-edge-retire")
         ingest.ingest(register(map.id!!, evidenceDocument().toByteArray()))
 
-        val scene = scenes.findByContentMapIdAndName(map.id!!, "TitleScene")!!
-        val vanishing = edgeIdOf(map.id!!, "MapScene")
+        val scene = scenes.findByContentMapIdAndName(map.id, "TitleScene")!!
+        val vanishing = edgeIdOf(map.id, "MapScene")
 
         // 정적 분석이 놓친 전이. QA 런만 아는 것이라 스캔이 손대면 안 된다.
         val runtimeEdge = edges.save(
@@ -368,7 +368,7 @@ class ContentMapSceneEdgeIngestTest {
         // 이미 밟아 본 정적 간선. 문서가 말을 바꿔도 밟았다는 사실은 남는다.
         val walked = edges.save(
             SceneEdgeEntity(
-                fromSceneId = scene.id!!,
+                fromSceneId = scene.id,
                 toSceneName = "CreditsScene",
                 capabilityId = null,
                 source = EdgeSource.STATIC.wire,
@@ -377,17 +377,17 @@ class ContentMapSceneEdgeIngestTest {
             )
         )
 
-        val result = ingest.ingest(register(map.id!!, evidenceDocument(withSceneChange = false).toByteArray()))
+        val result = ingest.ingest(register(map.id, evidenceDocument(withSceneChange = false).toByteArray()))
 
         assertThat(result.sceneEdges).isEqualTo(1)
         assertThat(edges.findById(vanishing)).isNull()
         assertThat(edges.findById(runtimeEdge.id!!)).isNotNull()
         assertThat(edges.findById(walked.id!!)).isNotNull()
         // 문서가 계속 말하는 쪽은 그대로 있다 — 쓸어 내기가 이웃까지 가져가지 않는다.
-        assertThat(edges.findById(edgeIdOf(map.id!!, "OptionsScene"))).isNotNull()
+        assertThat(edges.findById(edgeIdOf(map.id, "OptionsScene"))).isNotNull()
 
         assertThat(
-            edges.findByFromSceneIdOrderByIdAsc(scene.id!!).toList().map { it.toSceneName },
+            edges.findByFromSceneIdOrderByIdAsc(scene.id).toList().map { it.toSceneName },
         ).containsExactlyInAnyOrder("OptionsScene", "SecretScene", "CreditsScene")
     }
 

@@ -112,7 +112,7 @@ class AgentCapabilityWriteService(
             )
         }
         val capability = if (hasKey) {
-            capabilities.findByContentMapIdAndCapabilityKey(target.contentMapId, request.capabilityKey!!)
+            capabilities.findByContentMapIdAndCapabilityKey(target.contentMapId, request.capabilityKey)
                 ?: return refuse(
                     CapabilityWriteFrames.VERDICT,
                     "references an unknown capability_key: ${request.capabilityKey}"

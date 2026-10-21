@@ -88,11 +88,11 @@ class GameBuildSummaryIntegrationTest {
         token = jwtService.issue(user)
         projectId = projectRepository.save(
             ProjectEntity(name = "build-summary", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         memberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = userId, role = ProjectRole.OWNER.name, createdAt = now)
         )
-        scenarioId = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))!!.id!!
+        scenarioId = testScenarioRepository.save(TestScenarioEntity(projectId = projectId)).id!!
     }
 
     @AfterEach
@@ -128,7 +128,7 @@ class GameBuildSummaryIntegrationTest {
         seedInstance(middle, lastConnectedAt = now.minusSeconds(50), connected = true)
         seedInstance(newest, lastConnectedAt = now.minusSeconds(40), connected = true)
         seedInstance(newest, lastConnectedAt = now.minusSeconds(20), connected = false)
-        val testRunId = testRunRepository.save(TestRunEntity(projectId = projectId, name = "TR"))!!.id!!
+        val testRunId = testRunRepository.save(TestRunEntity(projectId = projectId, name = "TR")).id!!
         val instanceId = instanceRepository.findAll().toList().first().id!!
         val oldRun = seedRun(testRunId, instanceId, newest, "FAILED", now.minusSeconds(3000))
         seedTry(oldRun, passed = 0, total = 5)
@@ -176,7 +176,7 @@ class GameBuildSummaryIntegrationTest {
     fun `leaves the step sums null while no try of the latest run has finished`(): Unit = runBlocking {
         val build = seedBuild("2.0.0")
         val instance = seedInstance(build, lastConnectedAt = null, connected = false)
-        val testRunId = testRunRepository.save(TestRunEntity(projectId = projectId, name = "TR"))!!.id!!
+        val testRunId = testRunRepository.save(TestRunEntity(projectId = projectId, name = "TR")).id!!
         val run = seedRun(testRunId, instance, build, "RUNNING", now, completedAt = null)
         seedTry(run, passed = null, total = null)
 
@@ -212,7 +212,7 @@ class GameBuildSummaryIntegrationTest {
         val buildA = seedBuild("1.0.0", createdAt = now.minusSeconds(20))
         val buildB = seedBuild("1.1.0", createdAt = now.minusSeconds(10))
         val instance = seedInstance(buildB, lastConnectedAt = now, connected = false)
-        val testRunId = testRunRepository.save(TestRunEntity(projectId = projectId, name = "TR"))!!.id!!
+        val testRunId = testRunRepository.save(TestRunEntity(projectId = projectId, name = "TR")).id!!
         val first = seedRun(testRunId, instance, buildA, "COMPLETED", now.minusSeconds(300))
         val second = seedRun(testRunId, instance, buildB, "COMPLETED", now.minusSeconds(200))
         val third = seedRun(testRunId, instance, buildB, "FAILED", now.minusSeconds(100))
@@ -274,7 +274,7 @@ class GameBuildSummaryIntegrationTest {
             createdAt = createdAt,
             updatedAt = createdAt
         )
-    )!!.id!!
+    ).id!!
 
     private suspend fun seedInstance(buildId: Long, lastConnectedAt: Instant?, connected: Boolean): Long {
         val id = instanceRepository.save(
@@ -288,7 +288,7 @@ class GameBuildSummaryIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!.id!!
+        ).id!!
         if (connected) {
             val socket = Mockito.mock(WebSocketSession::class.java)
             sessionManager.register(id.toString(), socket)
@@ -314,7 +314,7 @@ class GameBuildSummaryIntegrationTest {
             startedAt = startedAt,
             completedAt = completedAt
         )
-    )!!.id!!
+    ).id!!
 
     private suspend fun seedTry(runId: Long, passed: Int?, total: Int?) {
         val instanceId = qaRunRepository.findById(runId)!!.gameInstanceId

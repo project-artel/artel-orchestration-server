@@ -329,15 +329,15 @@ class DeveloperMacroIntegrationTest {
             ProjectMemberEntity(projectId = project.id!!, appUserId = owner.userId.toLong(), role = "OWNER", createdAt = now)
         )
         val buildA = gameBuilds.save(
-            GameBuildEntity(projectId = project.id!!, version = "1.0.$seed", createdAt = now, updatedAt = now)
+            GameBuildEntity(projectId = project.id, version = "1.0.$seed", createdAt = now, updatedAt = now)
         )
         val buildB = gameBuilds.save(
-            GameBuildEntity(projectId = project.id!!, version = "1.1.$seed", label = "Beta", createdAt = now, updatedAt = now)
+            GameBuildEntity(projectId = project.id, version = "1.1.$seed", label = "Beta", createdAt = now, updatedAt = now)
         )
         World(
             ownerId = owner.userId.toLong(),
             ownerSession = jwtService.issue(owner),
-            projectId = project.id!!,
+            projectId = project.id,
             base = "/api/projects/${project.id}",
             buildA = buildA.id!!,
             buildAVersion = buildA.version,

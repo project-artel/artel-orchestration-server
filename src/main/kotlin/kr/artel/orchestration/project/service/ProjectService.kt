@@ -158,7 +158,7 @@ class ProjectService(
             )
             projectRepository.save(project.copy(deletedAt = Instant.now(clock)))
             DeleteProjectResponse(deleted = true, projectId = projectId.toString())
-        }!!
+        }
 
     private suspend fun summaries(
         userId: Long,

@@ -47,15 +47,15 @@ import kr.artel.orchestration.testcase.dto.TestCaseSearchHit
  * @property blockedBy 무엇 때문에 막혔나. `blocked` 일 때만 찬다.
  */
 data class AuthoringHop(
-    @JsonProperty("from_case_id") val fromCaseId: Long,
-    @JsonProperty("to_case_id") val toCaseId: Long,
+    @param:JsonProperty("from_case_id") val fromCaseId: Long,
+    @param:JsonProperty("to_case_id") val toCaseId: Long,
     val link: String,
     val actions: List<String> = emptyList(),
-    @JsonProperty("blocked_by") val blockedBy: String? = null,
+    @param:JsonProperty("blocked_by") val blockedBy: String? = null,
 )
 
 data class AuthoringFlow(
-    @JsonProperty("case_ids") val caseIds: List<Long>,
+    @param:JsonProperty("case_ids") val caseIds: List<Long>,
     val opening: List<String> = emptyList(),
     val gaps: Int = 0,
     /**
@@ -71,13 +71,13 @@ data class AuthoringFlow(
  * 추론 예산. Anthropic 은 `effort` 를 안 받고 token 예산으로만 켜므로 이 칸 하나다.
  */
 data class AgentReasoning(
-    @JsonProperty("max_tokens") val maxTokens: Int,
+    @param:JsonProperty("max_tokens") val maxTokens: Int,
 )
 
 data class AgentSessionOpenRequest(
-    @JsonProperty("user_input") val userInput: String,
-    @JsonProperty("unity_context") val unityContext: Map<String, Any> = emptyMap(),
-    @JsonProperty("game_context") val gameContext: Map<String, Any> = emptyMap(),
+    @param:JsonProperty("user_input") val userInput: String,
+    @param:JsonProperty("unity_context") val unityContext: Map<String, Any> = emptyMap(),
+    @param:JsonProperty("game_context") val gameContext: Map<String, Any> = emptyMap(),
     /**
      * 프로젝트 TestCase 전량(ARTEL-318). 지금까지 Agent는 `test_case_search`(벡터)로만 케이스를 알 수
      * 있어 실효 노출이 30~40건이었고, 못 찾은 것이 있다는 사실조차 알 수 없었다. 전량을 미리 실어
@@ -86,8 +86,8 @@ data class AgentSessionOpenRequest(
      * **기본값이 빈 목록인 것은 하위 호환 장치다.** Agent는 이 값이 비면 기존 검색 경로로 동작하므로,
      * 되돌릴 때 양쪽을 다시 배포하지 않아도 된다.
     */
-    @JsonProperty("test_case_list") val testCaseList: List<AuthoringTestCase> = emptyList(),
-    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @param:JsonProperty("test_case_list") val testCaseList: List<AuthoringTestCase> = emptyList(),
+    @get:JsonInclude(JsonInclude.Include.NON_NULL)
     val model: String? = null,
     /**
      * 모델에게 줄 추론 예산. 안 보내면 agent 가 안 켠다 — 지금까지의 저작이 그랬다.
@@ -95,22 +95,22 @@ data class AgentSessionOpenRequest(
      * 모델이 그 설정을 못 받으면 agent 가 세션을 열 때 거절한다. 조용히 낮추지 않는 것이
      * 양쪽의 규칙이다 — 낮춘 채로 돈 판은 무엇으로 잰 것인지 모르게 된다.
      */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @get:JsonInclude(JsonInclude.Include.NON_NULL)
     val reasoning: AgentReasoning? = null,
     /**
      * 생성 결과의 출력 언어. Agent 계약의 `locale`(ko|en)에 대응한다.
      * 사용자의 계정 locale에서 정하며, 미설정 사용자는 en으로 보낸다.
      */
     val locale: String,
-    @JsonProperty("project_id") val projectId: Long,
-    @JsonProperty("run_id") val runId: Long,
+    @param:JsonProperty("project_id") val projectId: Long,
+    @param:JsonProperty("run_id") val runId: Long,
     /**
      * 세션을 연 사용자. Agent 가 내부 채점 창구(`/internal/experiment/authoring/score`)로
      * 묶기·순서를 검증할 때 지도 읽기 스코프로 쓴다 — `content_map` 조회가 프로젝트와
      * 사용자로 좁혀지기 때문에, 이 값이 없으면 채점이 남의 지도를 보거나 빈 지도를 본다.
      */
-    @JsonProperty("app_user_id") val appUserId: Long? = null,
-    @JsonProperty("current_scenarios") val currentScenarios: List<CurrentScenario> = emptyList(),
+    @param:JsonProperty("app_user_id") val appUserId: Long? = null,
+    @param:JsonProperty("current_scenarios") val currentScenarios: List<CurrentScenario> = emptyList(),
     /**
      * **계산이 낸, 걸을 수 있는 흐름들**(ARTEL-658).
      *
@@ -133,7 +133,7 @@ data class AgentSessionOpenRequest(
      *
      * 모르면 `null`. 지어내지 않고, 받는 쪽이 "안 왔다"라고 적는다.
      */
-    @JsonProperty("entry_scene") val entryScene: String? = null,
+    @param:JsonProperty("entry_scene") val entryScene: String? = null,
     /**
      * **지도 전체의 화면 간선**(흐름 없는 저작 실험).
      *
@@ -144,7 +144,7 @@ data class AgentSessionOpenRequest(
      *
      * 기본값이 빈 목록인 것은 [flows] 와 같은 이유다 — 비면 받는 쪽이 표를 안 만들 뿐이다.
      */
-    @JsonProperty("scene_edges") val sceneEdges: List<SceneEdge> = emptyList(),
+    @param:JsonProperty("scene_edges") val sceneEdges: List<SceneEdge> = emptyList(),
     /**
      * **게임을 켜면 값이 무엇으로 시작하나**(흐름 없는 저작 실험).
      *
@@ -152,14 +152,14 @@ data class AgentSessionOpenRequest(
      * 첫 케이스를 놓을 수 있는지조차 판단할 근거가 없다. 이름은 마지막 마디, 값은 지도가 적은
      * 기본값 리터럴이다.
      */
-    @JsonProperty("starting_values") val startingValues: Map<String, String> = emptyMap(),
+    @param:JsonProperty("starting_values") val startingValues: Map<String, String> = emptyMap(),
 )
 
 /**
  * Agent 서버 `POST /sessions` 응답 본문. 이 session_id로 WS `/sessions/{session_id}`를 연다.
  */
 data class AgentSessionOpenResponse(
-    @JsonProperty("session_id") val sessionId: String
+    @param:JsonProperty("session_id") val sessionId: String
 )
 
 /**
@@ -170,8 +170,8 @@ data class AgentSessionOpenResponse(
  */
 data class AgentTurnMessage(
     val type: String = "turn",
-    @JsonProperty("user_input") val userInput: String,
-    @JsonProperty("current_scenarios") val currentScenarios: List<CurrentScenario> = emptyList(),
+    @param:JsonProperty("user_input") val userInput: String,
+    @param:JsonProperty("current_scenarios") val currentScenarios: List<CurrentScenario> = emptyList(),
     val model: String? = null
 )
 

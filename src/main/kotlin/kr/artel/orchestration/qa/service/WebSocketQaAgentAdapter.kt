@@ -12,7 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.reactor.mono
-import org.springframework.beans.factory.annotation.Value
+import kr.artel.orchestration.settings.config.AgentServerProperties
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
@@ -31,47 +31,47 @@ internal data class QaSessionOpenRequest(
     val type: String = "QA",
     val model: String?,
     val reasoning: JsonNode?,
-    @JsonProperty("language") val language: String?,
-    @JsonProperty("prompt_version") val promptVersion: String?,
+    @param:JsonProperty("language") val language: String?,
+    @param:JsonProperty("prompt_version") val promptVersion: String?,
     val arch: JsonNode?,
     // 사용자 key 로 도는 run 에만 싣는다. NON_NULL 이라 공용 key run 에는 필드가 아예 없다.
-    @JsonProperty("llm_key") val llmKey: QaSessionLlmKey? = null,
+    @param:JsonProperty("llm_key") val llmKey: QaSessionLlmKey? = null,
     // 노트가 없는 프로젝트는 필드를 빼지 않고 null 을 싣는다. 이 값은 고를 수 있는 축이 아니라 프로젝트의 사실이라,
     // 덮어쓸 agent-server 기본값이 없다.
-    @JsonProperty("game_notes") @get:JsonInclude(JsonInclude.Include.ALWAYS) val gameNotes: QaSessionGameNotes? = null,
+    @param:JsonProperty("game_notes") @get:JsonInclude(JsonInclude.Include.ALWAYS) val gameNotes: QaSessionGameNotes? = null,
     val context: QaSessionOpenContext
 )
 
 internal data class QaSessionOpenScenario(
-    @JsonProperty("qa_try_id") val qaTryId: String,
-    @JsonProperty("test_scenario_id") val testScenarioId: String,
+    @param:JsonProperty("qa_try_id") val qaTryId: String,
+    @param:JsonProperty("test_scenario_id") val testScenarioId: String,
     val scenario: AgentScenario
 )
 
 // NON_NULL: 런 단위(scenarios[])와 단일(qa_try_id/…) 중 채운 쪽만 나간다. Agent가 둘 다 받는다.
 @JsonInclude(JsonInclude.Include.NON_NULL)
 internal data class QaSessionOpenContext(
-    @JsonProperty("game_instance_id") val gameInstanceId: String,
+    @param:JsonProperty("game_instance_id") val gameInstanceId: String,
     // Agent 가 이 빌드의 scene context 를 조회하는 데 쓴다 (ARTEL-676). NON_NULL 이라
     // 값이 없으면 필드가 아예 나가지 않고, Agent 는 조회를 건너뛴 채 런을 시작한다.
-    @JsonProperty("project_id") val projectId: String? = null,
-    @JsonProperty("game_build_id") val gameBuildId: String? = null,
-    @JsonProperty("qa_run_id") val qaRunId: String? = null,
+    @param:JsonProperty("project_id") val projectId: String? = null,
+    @param:JsonProperty("game_build_id") val gameBuildId: String? = null,
+    @param:JsonProperty("qa_run_id") val qaRunId: String? = null,
     val scenarios: List<QaSessionOpenScenario>? = null,
     // 이 런에 열어 준 cheat · behavior 항목(ARTEL-1053). 비면 필드가 나가지 않는다.
     val cheats: List<JsonNode>? = null,
     val behaviors: List<JsonNode>? = null,
-    @JsonProperty("qa_try_id") val qaTryId: String? = null,
-    @JsonProperty("test_scenario_id") val testScenarioId: String? = null,
+    @param:JsonProperty("qa_try_id") val qaTryId: String? = null,
+    @param:JsonProperty("test_scenario_id") val testScenarioId: String? = null,
     val scenario: JsonNode? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 internal data class QaSessionOpenResponse(
-    @JsonProperty("session_id") val sessionId: String,
+    @param:JsonProperty("session_id") val sessionId: String,
     // Absent from an Agent that predates reporting it. Null here means "not told",
     // which is why the try is still allowed to start — see QaTryPersistenceService.
-    @JsonProperty("run_config") val runConfig: JsonNode? = null
+    @param:JsonProperty("run_config") val runConfig: JsonNode? = null
 )
 
 /**
@@ -124,10 +124,12 @@ internal fun QaAgentSessionContext.toOpenRequest(): QaSessionOpenRequest {
  */
 @Service
 class WebSocketQaAgentAdapter(
-    @Value("\${artel.agent.base-url:http://localhost:8000}") private val baseUrl: String,
-    @Value("\${artel.agent.ws-base-url:ws://localhost:8000}") private val wsBaseUrl: String,
+    properties: AgentServerProperties,
     private val objectMapper: ObjectMapper
 ) : QaAgentPort {
+    private val baseUrl = properties.baseUrl
+    private val wsBaseUrl = properties.wsBaseUrl
+
     private val webClient = WebClient.create()
     private val wsClient = ReactorNettyWebSocketClient()
     private val sessions = ConcurrentHashMap<String, AgentConnection>()

@@ -93,7 +93,7 @@ class PlatformRoleAccessIntegrationTest {
 
         val project = projectRepository.save(
             ProjectEntity(name = "platform-role", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectId = project.id!!
         projectMemberRepository.save(
             ProjectMemberEntity(
@@ -103,7 +103,7 @@ class PlatformRoleAccessIntegrationTest {
                 createdAt = now
             )
         )
-        scenarioId = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))!!.id!!
+        scenarioId = testScenarioRepository.save(TestScenarioEntity(projectId = projectId)).id!!
     }
 
     // ------------------------------------------------ 등급 자체
@@ -246,7 +246,7 @@ class PlatformRoleAccessIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         return qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenarioId,
@@ -256,7 +256,7 @@ class PlatformRoleAccessIntegrationTest {
                 startedAt = now.minusSeconds(60),
                 completedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun promote(userId: Long) {
@@ -301,5 +301,5 @@ class PlatformRoleAccessIntegrationTest {
                 avatarUrl = null,
                 email = "$seed@example.com"
             )
-        )!!
+        )
 }

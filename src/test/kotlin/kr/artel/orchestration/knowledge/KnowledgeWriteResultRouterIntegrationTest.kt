@@ -339,7 +339,7 @@ class KnowledgeWriteResultRouterIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "knowledge-write-result", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -348,17 +348,17 @@ class KnowledgeWriteResultRouterIntegrationTest {
                 createdAt = now
             )
         )
-        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val qaTry = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -372,8 +372,8 @@ class KnowledgeWriteResultRouterIntegrationTest {
                     ?: Json.of("{}"),
                 startedAt = now
             )
-        )!!
-        return RunningQaTry(qaTryId = qaTry.id!!, projectId = project.id!!)
+        )
+        return RunningQaTry(qaTryId = qaTry.id!!, projectId = project.id)
     }
 
     private suspend fun signIn(seed: String): AuthenticatedUser =
@@ -386,7 +386,7 @@ class KnowledgeWriteResultRouterIntegrationTest {
                 avatarUrl = null,
                 email = "user-$seed@example.com"
             )
-        )!!
+        )
 
     private data class RunningQaTry(val qaTryId: Long, val projectId: Long)
 }

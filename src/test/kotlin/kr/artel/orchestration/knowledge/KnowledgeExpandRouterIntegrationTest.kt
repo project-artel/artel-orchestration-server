@@ -338,19 +338,19 @@ class KnowledgeExpandRouterIntegrationTest {
                 avatarUrl = null,
                 email = "expander@example.com"
             )
-        )!!
+        )
         val ownerId = owner.userId.toLong()
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "knowledge-expand", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectId = project.id!!
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now)
         )
         val scenario = testScenarioRepository.save(
             TestScenarioEntity(projectId = projectId)
-        )!!
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = projectId,
@@ -360,7 +360,7 @@ class KnowledgeExpandRouterIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         qaTryId = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -373,6 +373,6 @@ class KnowledgeExpandRouterIntegrationTest {
                     ?: Json.of("{}"),
                 startedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 }

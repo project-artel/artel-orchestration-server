@@ -115,7 +115,7 @@ class KnowledgeStatsIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "knowledge-stats", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectId = project.id!!
         projectMemberRepository.save(
             ProjectMemberEntity(
@@ -250,7 +250,7 @@ class KnowledgeStatsIntegrationTest {
         assertThat(aggregate.total!!.entryVersions)
             .describedAs("축을 모르는 행이 축 통계에 섞이면 안 된다")
             .isEqualTo(1)
-        assertThat(aggregate.total!!.retrievalTotal).isZero()
+        assertThat(aggregate.total.retrievalTotal).isZero()
     }
 
     /** 총계는 셀 자르기와 무관하게 전체에서 나온다. 잘린 셀의 합으로 총계를 내면 안 된다. */
@@ -480,18 +480,18 @@ class KnowledgeStatsIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "foreign-stats", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
-        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        )
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "foreign-instance-${UUID.randomUUID().toString().take(8)}",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val foreignRun = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -505,9 +505,9 @@ class KnowledgeStatsIntegrationTest {
                 startedAt = now,
                 completedAt = now
             )
-        )!!.id!!
+        ).id!!
         knowledgeService.createFromQaTry(
-            project.id!!, KnowledgeScope.PRODUCTION, foreignRun,
+            project.id, KnowledgeScope.PRODUCTION, foreignRun,
             KnowledgeMutationRequest(tag = "RULE", summary = "남의 지식", description = "d")
         )
     }
@@ -581,12 +581,12 @@ class KnowledgeStatsIntegrationTest {
             .bind("projectId", projectId)
             .map { row: Readable ->
                 EntryFact(
-                    knowledgeId = row.get("knowledge_id", java.lang.Long::class.java)!!.toLong(),
-                    version = row.get("version", java.lang.Integer::class.java)!!.toInt(),
-                    isCurrent = row.get("is_current", java.lang.Boolean::class.java)!!.booleanValue(),
-                    createdByQaTryId = row.get("created_by_qa_try_id", java.lang.Long::class.java)?.toLong(),
-                    deletedByQaTryId = row.get("deleted_by_qa_try_id", java.lang.Long::class.java)?.toLong(),
-                    retrievalCount = row.get("retrieval_count", java.lang.Long::class.java)!!.toLong()
+                    knowledgeId = row.get("knowledge_id", Long::class.javaObjectType)!!,
+                    version = row.get("version", Int::class.javaObjectType)!!,
+                    isCurrent = row.get("is_current", Boolean::class.javaObjectType)!!,
+                    createdByQaTryId = row.get("created_by_qa_try_id", Long::class.javaObjectType),
+                    deletedByQaTryId = row.get("deleted_by_qa_try_id", Long::class.javaObjectType),
+                    retrievalCount = row.get("retrieval_count", Long::class.javaObjectType)!!
                 )
             }
             .flow()
@@ -610,7 +610,7 @@ class KnowledgeStatsIntegrationTest {
         val now = Instant.now()
         val scenario = testScenarioRepository.save(
             TestScenarioEntity(projectId = projectId)
-        )!!
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = projectId,
@@ -620,7 +620,7 @@ class KnowledgeStatsIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         return qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -633,7 +633,7 @@ class KnowledgeStatsIntegrationTest {
                 reasoningEffort = effort,
                 startedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun execute(sql: String) {
@@ -650,5 +650,5 @@ class KnowledgeStatsIntegrationTest {
                 avatarUrl = null,
                 email = "$seed@example.com"
             )
-        )!!
+        )
 }

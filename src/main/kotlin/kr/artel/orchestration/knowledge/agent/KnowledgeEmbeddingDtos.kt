@@ -35,7 +35,7 @@ data class KnowledgeQueryItem(
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class KnowledgeQueriesRequest(
     val items: List<KnowledgeQueryItem>,
-    @JsonProperty("project_id") val projectId: Long? = null
+    @param:JsonProperty("project_id") val projectId: Long? = null
 )
 
 /** 항목 하나에 대해 생성된 검색 질문들(현재 3개). */

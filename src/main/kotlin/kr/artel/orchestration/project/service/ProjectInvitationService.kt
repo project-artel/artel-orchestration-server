@@ -153,7 +153,7 @@ class ProjectInvitationService(
             }
 
             toResponse(saved, project)
-        }!!
+        }
     }
 
     /**
@@ -380,7 +380,7 @@ class ProjectInvitationService(
                 ),
                 project
             )
-        }!!
+        }
 
     /** 거절한다. 멤버 행은 생기지 않는다. */
     suspend fun decline(userId: Long, invitationId: Long): ProjectInvitationResponse =
@@ -398,7 +398,7 @@ class ProjectInvitationService(
                 ),
                 project
             )
-        }!!
+        }
 
     /**
      * 이 초대가 이 사용자의 것인지 판정한다.
