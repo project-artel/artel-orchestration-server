@@ -75,7 +75,7 @@ data class PulseObject(
      * [ScreenSelectorWhitelist] 가 정한다. 이 칸이 남아 있는 것은 처음 보는 selector 를 목록
      * 후보로 제안하는 데 쓰기 위해서이고, 그 소비자는 ARTEL-655 다.
      */
-    @JsonProperty("offers")
+    @param:JsonProperty("offers")
     val offers: Map<String, Any?>? = null,
 ) {
     /** `discriminator` 와 기능 대조가 쓰는 키. selector 가 없으면 path 로 내려간다. */

@@ -417,7 +417,7 @@ class ContentMapViewGoldenTest {
         assertThat(registered.scenes).isEmpty()
         assertThat(registered.pendingDocuments).hasSize(1)
         with(registered.pendingDocuments.single()) {
-            assertThat(documentId).isEqualTo(document.id!!)
+            assertThat(documentId).isEqualTo(document.id)
             assertThat(receivedAt).isNotNull()
             assertThat(ingestFailedAt).isEqualTo(failedAt)
             assertThat(ingestError).isEqualTo("schema 7 은 아직 읽지 못합니다.")
@@ -742,8 +742,8 @@ class ContentMapViewGoldenTest {
             assertThat(discriminator[0]["active"].asBoolean()).isTrue()
             // 객체 키 자체는 나가지 않는다. 나가는 것은 스토리지가 서명한 주소다
             assertThat(image!!.url).contains(objectKey)
-            assertThat(image!!.expiresAt).isNotNull()
-            assertThat(image!!.capturedAt).isEqualTo(capturedAt)
+            assertThat(image.expiresAt).isNotNull()
+            assertThat(image.capturedAt).isEqualTo(capturedAt)
         }
         // 캡처가 없으면 칸이 통째로 없다. `screen` 에는 실패 코드 칸이 없어 가를 두 상태가 아니다
         with(scene.screens.single { it.id == bare.id }) {

@@ -159,7 +159,7 @@ class KnowledgeStatsRepository(
     }
 
     private fun Readable.toStatsRow() = KnowledgeStatsRow(
-        groupingMask = get("grouping_mask", java.lang.Integer::class.java)!!.toInt(),
+        groupingMask = get("grouping_mask", Int::class.javaObjectType)!!,
         model = get("model", String::class.java),
         reasoningEffort = get("reasoning_effort", String::class.java),
         promptVersion = get("prompt_version", String::class.java),
@@ -174,7 +174,7 @@ class KnowledgeStatsRepository(
     )
 
     private fun Readable.longAt(name: String): Long =
-        get(name, java.lang.Long::class.java)!!.toLong()
+        get(name, Long::class.javaObjectType)!!
 }
 
 /**

@@ -32,10 +32,10 @@ data class AuthoringTestCase(
     val scene: String,
     val step: String,
     val precondition: String?,
-    @JsonProperty("expected_value") val expectedValue: String,
-    @JsonProperty("verification_status") val verificationStatus: String,
-    @JsonProperty("state_before") val stateBefore: List<CaseGuard> = emptyList(),
-    @JsonProperty("state_after") val stateAfter: Map<String, String> = emptyMap(),
+    @param:JsonProperty("expected_value") val expectedValue: String,
+    @param:JsonProperty("verification_status") val verificationStatus: String,
+    @param:JsonProperty("state_before") val stateBefore: List<CaseGuard> = emptyList(),
+    @param:JsonProperty("state_after") val stateAfter: Map<String, String> = emptyMap(),
     val exits: List<SceneExit> = emptyList(),
     /**
      * 이 케이스가 가리키는 **조작의 기계값**. 스텝의 `input` 칸에 그대로 넣는 값이다
@@ -78,7 +78,7 @@ data class CaseGuard(
      * 비어 있으면 어디서 움직이는지 지도가 말하지 않는 것이다. 그때는 저작이 알아서 한다 —
      * 없는 것을 있다고 하지 않는다.
      */
-    @JsonProperty("raised_in") val raisedIn: List<String> = emptyList(),
+    @param:JsonProperty("raised_in") val raisedIn: List<String> = emptyList(),
 
     /**
      * 그 값이 **어떻게** 움직이나(ARTEL-646).
@@ -108,5 +108,5 @@ data class ValueMove(
     val scene: String,
     val by: String? = null,
     val how: String? = null,
-    @JsonProperty("when") val whenTrue: String? = null,
+    @param:JsonProperty("when") val whenTrue: String? = null,
 )

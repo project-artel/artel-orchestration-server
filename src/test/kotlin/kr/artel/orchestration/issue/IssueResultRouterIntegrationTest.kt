@@ -217,7 +217,7 @@ class IssueResultRouterIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "issue-result", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -226,17 +226,17 @@ class IssueResultRouterIntegrationTest {
                 createdAt = now
             )
         )
-        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         return qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -246,7 +246,7 @@ class IssueResultRouterIntegrationTest {
                 status = "RUNNING",
                 startedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun signIn(seed: String): AuthenticatedUser =
@@ -259,5 +259,5 @@ class IssueResultRouterIntegrationTest {
                 avatarUrl = null,
                 email = "user-$seed@example.com"
             )
-        )!!
+        )
 }

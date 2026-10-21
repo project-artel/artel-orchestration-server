@@ -208,7 +208,7 @@ class QaRunTakeoverIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "takeover-p", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now
@@ -216,17 +216,17 @@ class QaRunTakeoverIntegrationTest {
         )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!, name = "inst", platform = "UNITY",
+                projectId = project.id, name = "inst", platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now
             )
-        )!!
+        )
         // 시작 전제: 그 인스턴스에 SDK가 붙어 있어야 한다.
         sessionManager.register(instance.id!!.toString(), Mockito.mock(WebSocketSession::class.java))
-        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))!!
-        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
-        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id, name = "런"))
+        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
+        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
         testRunService.setScenarios(testRun.id!!, ownerId, listOf(s1.id!!, s2.id!!))
-        return Seed(0, testRun.id!!, 0, 0, ownerId, instance.id!!, "")
+        return Seed(0, testRun.id, 0, 0, ownerId, instance.id, "")
     }
 
     /** [idleInstance] 위에 qa_run RUNNING + 첫 시나리오 RUNNING + 두 번째 PENDING을 올린다. */
@@ -259,5 +259,5 @@ class QaRunTakeoverIntegrationTest {
                 avatarUrl = null,
                 email = "takeover@example.com"
             )
-        )!!
+        )
 }

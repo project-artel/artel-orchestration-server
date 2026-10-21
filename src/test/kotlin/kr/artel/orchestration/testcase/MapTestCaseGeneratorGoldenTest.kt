@@ -66,7 +66,7 @@ class MapTestCaseGeneratorGoldenTest {
         val now = Instant.now()
         val project = projects.save(
             ProjectEntity(name = "gen-golden", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!
+        )
         val build = gameBuilds.save(
             GameBuildEntity(projectId = project.id!!, version = "gen", createdAt = now, updatedAt = now)
         )
@@ -93,7 +93,7 @@ class MapTestCaseGeneratorGoldenTest {
                 )
             )
         )
-        cases = generator.generate(map.id!!)
+        cases = generator.generate(map.id)
     }
 
     /**

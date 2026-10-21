@@ -106,7 +106,7 @@ class OAuthUserService(
                 displayName = saved.displayName,
                 avatarUrl = saved.avatarUrl
             )
-        }!!
+        }
 
     /**
      * 처음 보는 제공자 계정이므로 사용자 본체부터 만든다. nickname과 user_tag는 이때 정해진다 —

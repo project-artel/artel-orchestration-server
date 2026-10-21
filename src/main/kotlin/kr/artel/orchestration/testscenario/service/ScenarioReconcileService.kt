@@ -484,9 +484,9 @@ class ScenarioReconcileService(
                     )
                     runPosition++
                     savedId[index] = saved.id
-                    savedScenarios += SavedScenario(saved.id!!, scenario.title, created = true)
-                    idByTitle[scenario.title.trim()] = saved.id!!
-                    divided.anchorOf[index]?.let { anchor -> fromSplit += saved.id!! to anchor }
+                    savedScenarios += SavedScenario(saved.id, scenario.title, created = true)
+                    idByTitle[scenario.title.trim()] = saved.id
+                    divided.anchorOf[index]?.let { anchor -> fromSplit += saved.id to anchor }
                     applied++
                 }
             }

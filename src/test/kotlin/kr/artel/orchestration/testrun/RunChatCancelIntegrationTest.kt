@@ -132,7 +132,7 @@ class RunChatCancelIntegrationTest {
                 avatarUrl = null,
                 email = null,
             )
-        )!!
+        )
         return user.userId.toLong() to jwtService.issue(user)
     }
 
@@ -140,11 +140,11 @@ class RunChatCancelIntegrationTest {
         val now = java.time.Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "cancel-project", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = project.id!!, appUserId = appUserId, role = "OWNER", createdAt = now)
         )
-        return project.id!!
+        return project.id
     }
 
     private fun cancel(client: WebClient, projectId: Long, runId: Long, token: String): RunChatCancellation? =
@@ -288,7 +288,7 @@ class RunChatCancelIntegrationTest {
         val now = java.time.Instant.now()
         val other = projectRepository.save(
             ProjectEntity(name = "not-mine", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!
+        )
         val runId = runRepository.save(TestRunEntity(projectId = other.id!!, name = "런")).id!!
 
         val status = client.post()

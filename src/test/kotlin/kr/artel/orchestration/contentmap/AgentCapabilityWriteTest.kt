@@ -756,7 +756,7 @@ class AgentCapabilityWriteTest {
         val userId = signIn().userId.toLong()
         val project = projects.save(
             ProjectEntity(name = "cap-write-${System.nanoTime()}", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         val build = gameBuilds.save(
             GameBuildEntity(
                 projectId = project.id!!,
@@ -764,10 +764,10 @@ class AgentCapabilityWriteTest {
                 createdAt = now,
                 updatedAt = now,
             )
-        )!!
+        )
         val instance = gameInstances.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 lastGameBuildId = build.id,
@@ -775,7 +775,7 @@ class AgentCapabilityWriteTest {
                 createdAt = now,
                 updatedAt = now,
             )
-        )!!
+        )
         val contentMap = contentMaps.save(
             ContentMapEntity(
                 gameBuildId = build.id!!,
@@ -783,14 +783,14 @@ class AgentCapabilityWriteTest {
                 capture = Capture.PLAYER.wire,
                 evidenceDigest = "capability-write",
             )
-        )!!
+        )
         val battle = scenes.save(
             SceneEntity(contentMapId = contentMap.id!!, name = BATTLE, walked = true)
-        )!!.id!!
+        ).id!!
         val title = scenes.save(
-            SceneEntity(contentMapId = contentMap.id!!, name = TITLE, walked = true)
-        )!!.id!!
-        val testRunId = testRuns.save(TestRunEntity(projectId = project.id!!, name = "런"))!!.id!!
+            SceneEntity(contentMapId = contentMap.id, name = TITLE, walked = true)
+        ).id!!
+        val testRunId = testRuns.save(TestRunEntity(projectId = project.id, name = "런")).id!!
         val qaRun = qaRuns.save(
             QaRunEntity(
                 testRunId = testRunId,
@@ -799,12 +799,12 @@ class AgentCapabilityWriteTest {
                 status = "RUNNING",
                 startedAt = now,
             )
-        )!!
-        val scenario = testScenarios.save(TestScenarioEntity(projectId = project.id!!))!!
+        )
+        val scenario = testScenarios.save(TestScenarioEntity(projectId = project.id))
         val qaTry = qaTries.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
-                gameInstanceId = instance.id!!,
+                gameInstanceId = instance.id,
                 qaRunId = qaRun.id,
                 startedBy = userId,
                 agentSessionId = agentSessionId,
@@ -818,9 +818,9 @@ class AgentCapabilityWriteTest {
                     ?: Json.of("{}"),
                 startedAt = now,
             )
-        )!!
+        )
         return World(
-            contentMapId = contentMap.id!!,
+            contentMapId = contentMap.id,
             battle = battle,
             title = title,
             qaRunId = qaRun.id!!,

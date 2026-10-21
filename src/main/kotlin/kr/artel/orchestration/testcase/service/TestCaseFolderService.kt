@@ -149,7 +149,7 @@ class TestCaseFolderService(
                 TestCaseFolderEntity(projectId = projectId, parentId = parentId, name = freeName(projectId, parentId, baseName))
             )
             copyTree(source, requireNotNull(root.id))
-            root.id!!
+            root.id
         }
         projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return responseOf(cloneId)

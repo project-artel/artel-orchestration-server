@@ -327,7 +327,7 @@ class QaStatsRepository(
         }
 
     private fun Readable.toStatsRow() = QaStatsRow(
-        groupingMask = get("grouping_mask", java.lang.Integer::class.java)!!.toInt(),
+        groupingMask = get("grouping_mask", Int::class.javaObjectType)!!,
         model = get("model", String::class.java),
         reasoningEffort = get("reasoning_effort", String::class.java),
         promptVersion = get("prompt_version", String::class.java),
@@ -343,7 +343,7 @@ class QaStatsRepository(
         reasoningTokens = longAt("reasoning_tokens"),
         costUsd = get("cost_usd", BigDecimal::class.java),
         llmCalls = longAt("llm_calls"),
-        avgCompletedDurationMs = get("avg_completed_duration_ms", java.lang.Double::class.java)?.toDouble(),
+        avgCompletedDurationMs = get("avg_completed_duration_ms", Double::class.javaObjectType),
         verdictKnown = longAt("verdict_known"),
         stepsTotal = longAt("steps_total"),
         stepsPassed = longAt("steps_passed"),
@@ -358,7 +358,7 @@ class QaStatsRepository(
     )
 
     private fun Readable.longAt(name: String): Long =
-        get(name, java.lang.Long::class.java)!!.toLong()
+        get(name, Long::class.javaObjectType)!!
 }
 
 /**

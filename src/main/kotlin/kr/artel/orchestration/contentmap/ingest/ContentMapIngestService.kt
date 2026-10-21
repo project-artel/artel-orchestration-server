@@ -336,10 +336,10 @@ class ContentMapIngestService(
         // 를 불러 적재할 때마다 test case 가 생기고 바뀌고 지워졌다. 이제 사용자가 build 별로
         // `POST .../game-builds/{gameBuildId}/content-map/test-cases` 를 눌러 생성한다.
 
-        documents.stampIngested(document.id!!, INGESTER_VERSION, Instant.now(clock))
+        documents.stampIngested(document.id, INGESTER_VERSION, Instant.now(clock))
 
         return IngestResult(
-            documentId = document.id!!,
+            documentId = document.id,
             contentMapId = document.contentMapId,
             scenes = sceneIds.size,
             capabilities = keptKeys.size,

@@ -523,15 +523,15 @@ class UserLlmKeyIntegrationTest {
         )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!, name = "inst", platform = "UNITY",
+                projectId = project.id, name = "inst", platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now
             )
         )
         sessionManager.register(instance.id!!.toString(), Mockito.mock(WebSocketSession::class.java))
-        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id!!, name = "런"))
-        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))
+        val testRun = testRunRepository.save(TestRunEntity(projectId = project.id, name = "런"))
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
         testRunService.setScenarios(testRun.id!!, userId, listOf(scenario.id!!))
-        return RunnableSeed(testRun.id!!.toString(), scenario.id!!.toString(), instance.id!!.toString())
+        return RunnableSeed(testRun.id.toString(), scenario.id.toString(), instance.id.toString())
     }
 
     private fun requestBody(path: String, targetId: String, instanceId: String, fields: String): String {
@@ -541,7 +541,7 @@ class UserLlmKeyIntegrationTest {
 
     private suspend fun countKeys(): Long =
         databaseClient.sql("SELECT COUNT(*) AS n FROM user_llm_key")
-            .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("n", Long::class.javaObjectType)!! }
             .one().awaitSingle()
 
     private fun put(service: String, apiKey: String): JsonNode =

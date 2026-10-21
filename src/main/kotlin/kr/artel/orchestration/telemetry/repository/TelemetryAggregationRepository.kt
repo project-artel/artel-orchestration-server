@@ -278,7 +278,7 @@ class TelemetryAggregationRepository(
 
     private fun Readable.long(name: String): Long = requireNotNull(nullableLong(name)) { "$name is null" }
 
-    private fun Readable.nullableLong(name: String): Long? = get(name, java.lang.Long::class.java)?.toLong()
+    private fun Readable.nullableLong(name: String): Long? = get(name, Long::class.javaObjectType)
 
     private fun Readable.text(name: String): String = requireNotNull(get(name, String::class.java)) { "$name is null" }
 }
