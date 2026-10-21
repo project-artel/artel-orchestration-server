@@ -3,6 +3,8 @@ package kr.artel.orchestration.testcase.service
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.testcase.dto.TestCaseVersionCasesChangeResponse
 import kr.artel.orchestration.testcase.dto.TestCaseVersionCasesRequest
 import kr.artel.orchestration.testcase.dto.originLabel
@@ -35,6 +37,7 @@ class ManualCaseVersionService(
     private val gameBuilds: GameBuildRepository,
     private val folderService: TestCaseFolderService,
     private val transactionalOperator: TransactionalOperator,
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
 ) {
 
     /** 고른 케이스 중 이 프로젝트의 사용자 생성 케이스이고 아직 이 버전에 없는 것을 넣는다. 비멤버 · 다른 프로젝트 build 는 404. */
@@ -50,6 +53,7 @@ class ManualCaseVersionService(
             folderService.lockProjectFolders(projectId)
             insert(projectId, gameBuildId, caseIds)
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return TestCaseVersionCasesChangeResponse(added.map(Long::toString))
     }
 
@@ -73,6 +77,7 @@ class ManualCaseVersionService(
             if (removedIds.isNotEmpty()) versions.syncIdentities(removedIds)
             removedIds
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return TestCaseVersionCasesChangeResponse(removed.map(Long::toString))
     }
 

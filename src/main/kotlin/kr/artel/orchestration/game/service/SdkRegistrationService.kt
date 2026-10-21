@@ -9,6 +9,8 @@ import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.entity.GamePlatform
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.common.error.ConflictException
 import org.springframework.dao.DataIntegrityViolationException
@@ -48,7 +50,8 @@ class SdkRegistrationService(
     private val projectRepository: ProjectRepository,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
-    private val clock: Clock
+    private val clock: Clock,
+    private val projectChangeStreamManager: ProjectChangeStreamManager
 ) {
     /**
      * 프로젝트를 찾지 못하거나 요청자가 그 프로젝트의 참여자가 아니면 null이다. 컨트롤러가
@@ -63,7 +66,7 @@ class SdkRegistrationService(
         val now = Instant.now(clock)
         val sceneScan = request.sceneScan?.let { Json.of(objectMapper.writeValueAsString(it)) }
         // 빌드 조회·생성과 인스턴스 갱신을 한 트랜잭션으로 묶는다.
-        return transactionalOperator.executeAndAwait {
+        val response = transactionalOperator.executeAndAwait {
             val build = findOrCreateBuild(projectId, request.gameVersion.trim(), request.isEditor == true, sceneScan, now)
             val instance = findOrCreateInstance(projectId, sdkUuid, request.instanceName, now)
             // 빌드 id를 인스턴스에 남긴다. 곧 열릴 웹소켓의 성능 런이 이 값을 읽어 자신을
@@ -84,6 +87,10 @@ class SdkRegistrationService(
                 isEditor = build.isEditor
             )
         }
+        // commit 뒤에 알린다. 인스턴스의 접속 시각과 빌드(생성·version 변경)가 함께 바뀐다.
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_BUILDS)
+        return response
     }
 
     /**

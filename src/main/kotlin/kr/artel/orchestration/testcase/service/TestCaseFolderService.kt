@@ -7,6 +7,8 @@ import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.TestCaseFolderCloneRequest
 import kr.artel.orchestration.testcase.dto.TestCaseFolderListResponse
@@ -42,6 +44,7 @@ class TestCaseFolderService(
     private val databaseClient: DatabaseClient,
     private val items: TestCaseFolderItemRepository,
     private val gameBuilds: GameBuildRepository,
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
 ) {
 
     /**
@@ -69,6 +72,7 @@ class TestCaseFolderService(
             requireFreeName(projectId, parentId, name, excludeId = null)
             folders.save(TestCaseFolderEntity(projectId = projectId, parentId = parentId, name = name))
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return responseOf(saved.id!!)
     }
 
@@ -94,6 +98,7 @@ class TestCaseFolderService(
             requireFreeName(projectId, parentId, name, excludeId = folderId)
             folders.save(folder.copy(parentId = parentId, name = name))
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return responseOf(folderId)
     }
 
@@ -107,6 +112,7 @@ class TestCaseFolderService(
             lockProjectFolders(projectId)
             folders.delete(requireFolder(projectId, folderId))
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
     }
 
     /**
@@ -145,6 +151,7 @@ class TestCaseFolderService(
             copyTree(source, requireNotNull(root.id))
             root.id!!
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return responseOf(cloneId)
     }
 

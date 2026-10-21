@@ -224,6 +224,11 @@ class SecurityConfig {
                 "/api/auth/login",
                 // handoff 서명 공개키(ARTEL-1088). MCP 서버가 세션 없이 읽는다. `/api` 밖이고 공개키만 낸다.
                 "/.well-known/artel-handoff-jwks.json",
+                // 직접 설치한 서버가 보내는 telemetry report 와 그 지우기. 보내는 쪽은 다른 설치라 세션이 없고,
+                // 인터넷 너머에서 오므로 `/internal` 에 둘 수 없다. 무인증이라 `/api` 밖에 둔다(project.md 규칙 2). 한도·크기·모양 검사는 TelemetryReceiverController 가 한다.
+                // `/**` 가 아니라 두 줄로 적어 아래 경로가 더 생겨도 저절로 열리지 않게 한다.
+                "/telemetry/reports",
+                "/telemetry/reports/*",
                 // 내부 서버-투-서버 경로 전부. 보내는 주체가 사람이 아니라 Agent 서버라
                 // 엔드유저 JWT가 없다. 이 접두사가 곧 신뢰 경계이므로, 새 내부 엔드포인트는
                 // 여기에 줄을 더하는 것이 아니라 `/internal/` 아래에 두어야 한다.

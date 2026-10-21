@@ -23,6 +23,7 @@ import java.time.LocalDate
  * - `QA_RUN`          → `qa_try.id` → `test_scenario.project_id`
  * - `SCENARIO`        → `test_run.id` → `test_run.project_id`
  * - `GAME_CONTEXT`    → `project_document.id` → `project_document.project_id`
+ * - `PROJECT_AGENT`   → `project_agent_conversation.id` → `project_agent_conversation.project_id`
  * - `KNOWLEDGE_QUERY` → `project.id` (이미 프로젝트다)
  * - `EMBEDDING`       → `project.id` (이미 프로젝트다)
  *
@@ -80,6 +81,7 @@ class LlmUsageStatsRepository(
                            WHEN 'QA_RUN'       THEN ts.project_id
                            WHEN 'SCENARIO'     THEN tr.project_id
                            WHEN 'GAME_CONTEXT' THEN pd.project_id
+                           WHEN 'PROJECT_AGENT' THEN pac.project_id
                            ELSE u.reference_id
                        END AS project_id
                   FROM llm_usage u
@@ -91,6 +93,8 @@ class LlmUsageStatsRepository(
                          ON u.service = 'SCENARIO' AND tr.id = u.reference_id
                   LEFT JOIN project_document pd
                          ON u.service = 'GAME_CONTEXT' AND pd.id = u.reference_id
+                  LEFT JOIN project_agent_conversation pac
+                         ON u.service = 'PROJECT_AGENT' AND pac.id = u.reference_id
                  WHERE u.called_at >= :from
                    AND u.called_at < :to
             ),
@@ -182,12 +186,15 @@ class LlmUsageStatsRepository(
                      ON u.service = 'SCENARIO' AND tr.id = u.reference_id
               LEFT JOIN project_document pd
                      ON u.service = 'GAME_CONTEXT' AND pd.id = u.reference_id
+              LEFT JOIN project_agent_conversation pac
+                     ON u.service = 'PROJECT_AGENT' AND pac.id = u.reference_id
              WHERE u.called_at >= :from
                AND u.called_at < :to
                AND CASE u.service
                        WHEN 'QA_RUN'       THEN ts.project_id
                        WHEN 'SCENARIO'     THEN tr.project_id
                        WHEN 'GAME_CONTEXT' THEN pd.project_id
+                       WHEN 'PROJECT_AGENT' THEN pac.project_id
                        ELSE u.reference_id
                    END IS NULL
             """.trimIndent()
@@ -301,6 +308,44 @@ class LlmUsageStatsRepository(
         calls = longAt("calls"),
         pricedCalls = longAt("priced_calls")
     )
+
+    /**
+     * 방금 적재한 사용량 기록이 속한 프로젝트 id 들(중복 없음). 변경 알림 대상을 찾는 데 쓴다.
+     *
+     * [aggregate] 와 같은 규칙으로 다형 참조를 푼다. (service, referenceId) 쌍을 평행한 배열 둘로 받아
+     * 한 문장으로 푼다. 프로젝트를 못 푼 쌍은 결과에 없다.
+     */
+    suspend fun findProjectIds(services: List<String>, referenceIds: List<Long>): List<Long> {
+        require(services.size == referenceIds.size) { "services 와 referenceIds 의 길이가 다르다" }
+        if (services.isEmpty()) return emptyList()
+        val sql = """
+            WITH refs AS (
+                SELECT DISTINCT r.service, r.reference_id
+                  FROM unnest(CAST(:services AS text[]), CAST(:referenceIds AS bigint[])) AS r(service, reference_id)
+            )
+            SELECT ts.project_id AS project_id
+              FROM refs r
+              JOIN qa_try qt ON r.service = 'QA_RUN' AND qt.id = r.reference_id
+              JOIN test_scenario ts ON ts.id = qt.test_scenario_id
+            UNION
+            SELECT tr.project_id
+              FROM refs r
+              JOIN test_run tr ON r.service = 'SCENARIO' AND tr.id = r.reference_id
+            UNION
+            SELECT pd.project_id
+              FROM refs r
+              JOIN project_document pd ON r.service = 'GAME_CONTEXT' AND pd.id = r.reference_id
+            UNION
+            SELECT r.reference_id
+              FROM refs r
+             WHERE r.service IN ('KNOWLEDGE_QUERY', 'EMBEDDING')
+        """.trimIndent()
+        return databaseClient.sql(sql)
+            .bind("services", services.toTypedArray())
+            .bind("referenceIds", referenceIds.toTypedArray())
+            .map { row: Readable -> row.longAt("project_id") }
+            .flow().toList()
+    }
 
     private fun Readable.longAt(name: String): Long =
         get(name, java.lang.Long::class.java)!!.toLong()
