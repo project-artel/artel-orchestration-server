@@ -3220,11 +3220,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -5138,6 +5138,56 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/test-cases/verdict-carry-over": {
+      "post": {
+        "tags": [
+          "content-map-test-case-controller"
+        ],
+        "operationId": "carryVerdicts",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerdictCarryOverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerdictCarryOverResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-builds/{gameBuildId}/content-map/test-cases": {
       "post": {
         "tags": [
@@ -5179,6 +5229,30 @@
             "schema": {
               "type": "boolean",
               "default": false
+            }
+          },
+          {
+            "name": "verdicts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "NONE",
+                "SAME_CONTENT",
+                "SELECTED"
+              ]
+            }
+          },
+          {
+            "name": "testCaseIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           }
         ],
@@ -10511,6 +10585,7 @@
       "TestRunGameBuild": {
         "required": [
           "gameBuildId",
+          "isEditor",
           "version"
         ],
         "type": "object",
@@ -10523,6 +10598,9 @@
           },
           "label": {
             "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
           }
         }
       },
@@ -13817,6 +13895,53 @@
           }
         }
       },
+      "VerdictCarryOverRequest": {
+        "type": "object",
+        "properties": {
+          "testCaseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "VerdictCarryOverResponse": {
+        "required": [
+          "carried",
+          "skipped"
+        ],
+        "type": "object",
+        "properties": {
+          "carried": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VerdictCarryOverSkipped"
+            }
+          }
+        }
+      },
+      "VerdictCarryOverSkipped": {
+        "required": [
+          "reason",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
       "ContentMapTestCaseGenerationResponse": {
         "required": [
           "broken",
@@ -13824,7 +13949,9 @@
           "created",
           "deleted",
           "regression",
-          "updated"
+          "updated",
+          "verdictsCarried",
+          "verdictsReset"
         ],
         "type": "object",
         "properties": {
@@ -13849,6 +13976,14 @@
             "format": "int32"
           },
           "carriedOver": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "verdictsCarried": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "verdictsReset": {
             "type": "integer",
             "format": "int32"
           }
@@ -14319,11 +14454,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
@@ -17328,6 +17463,7 @@
       "CaseVerdictHistoryItem": {
         "required": [
           "gameBuildId",
+          "isEditor",
           "testCaseId",
           "verificationStatus",
           "version"
@@ -17347,6 +17483,12 @@
             "type": "string"
           },
           "verificationStatus": {
+            "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
+          },
+          "verdictCarriedFromBuildId": {
             "type": "string"
           }
         }
@@ -17568,6 +17710,7 @@
           "createdAt",
           "gameBuildId",
           "hidden",
+          "isEditor",
           "latest",
           "total",
           "version"
@@ -17586,6 +17729,9 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "isEditor": {
+            "type": "boolean"
           },
           "latest": {
             "type": "boolean"
@@ -17685,6 +17831,7 @@
           "createdAt",
           "gameBuildId",
           "generated",
+          "isEditor",
           "judged",
           "mapCases",
           "mapState",
@@ -17700,6 +17847,9 @@
           },
           "label": {
             "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
           },
           "createdAt": {
             "type": "string",

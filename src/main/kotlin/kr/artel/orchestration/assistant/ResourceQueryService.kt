@@ -117,14 +117,14 @@ class ResourceQueryService(
                 RELATIONS.getValue("qa_run"))
         })
         "build" -> {
-            // editor 빌드는 게임 버전이 아니다(ARTEL-1014). 가장 최근에 생겨도 "최신 빌드" 가 아니다(POC 측정 N5).
+            // editor 행도 그 version 의 버전이다(ARTEL-1180). 가장 최근에 생긴 행이 최신 버전이다.
             val builds = rows(
                 """
                 SELECT id, version, label, is_editor, created_at FROM game_build
-                 WHERE project_id = :projectId ORDER BY is_editor, created_at DESC LIMIT :limit
+                 WHERE project_id = :projectId ORDER BY created_at DESC, id DESC LIMIT :limit
                 """, "projectId" to scope.projectId, "limit" to limit,
             )
-            val latest = builds.firstOrNull { it["is_editor"] == false }?.long("id")
+            val latest = builds.firstOrNull()?.long("id")
             ResourceAnswer(builds.map { row ->
                 item("build", row.long("id"), row.str("label") ?: row.str("version") ?: "",
                     mapOf("version" to row["version"], "is_editor" to row["is_editor"], "latest_game_version" to (row.long("id") == latest),
@@ -304,14 +304,14 @@ class ResourceQueryService(
         }
     }
 
-    /** 케이스가 든 빌드와 그 빌드의 판정. 옛 → 새 순이다. editor 빌드는 게임 버전이 아니라 뺀다. */
+    /** 케이스가 든 빌드와 그 빌드의 판정. 옛 → 새 순이다. editor 행도 버전이다(ARTEL-1180). */
     private suspend fun buildsOf(caseIds: List<Long>): Map<Long, List<Map<String, Any?>>> {
         if (caseIds.isEmpty()) return emptyMap()
         return rows(
             """
             SELECT v.test_case_id, b.version, v.verification_status FROM test_case_version v
               JOIN game_build b ON b.id = v.game_build_id
-             WHERE v.test_case_id IN (:ids) AND b.is_editor = FALSE ORDER BY b.created_at, b.id
+             WHERE v.test_case_id IN (:ids) ORDER BY b.created_at, b.id
             """, "ids" to caseIds,
         ).groupBy({ it.long("test_case_id") }, { mapOf("version" to it["version"], "status" to it["verification_status"]) })
     }
@@ -324,7 +324,7 @@ class ResourceQueryService(
             """
             SELECT v.game_build_id, b.version, b.label, b.created_at, v.verification_status FROM test_case_version v
               JOIN game_build b ON b.id = v.game_build_id
-             WHERE v.test_case_id = :id AND b.is_editor = FALSE ORDER BY b.created_at, b.id
+             WHERE v.test_case_id = :id ORDER BY b.created_at, b.id
             """, "id" to caseId,
         )
         val base = reader.overlay(identity, CaseScope.of(scope.gameBuildId))

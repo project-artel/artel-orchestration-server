@@ -208,7 +208,9 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(picked.body["gameBuild"]["version"].asText()).isEqualTo("1.0.0")
         val unversioned = call(token, HttpMethod.POST, runs, """{"name":"버전 없음","unversioned":true}""")
         assertThat(unversioned.body.path("gameBuild").isNullish()).isTrue()
-        assertThat(call(token, HttpMethod.POST, runs, """{"name":"x","gameBuildId":"${editor.id}"}""").status).isEqualTo(409)
+        // editor 버전도 TR 의 버전으로 고를 수 있다(ARTEL-1180).
+        assertThat(call(token, HttpMethod.POST, runs, """{"name":"x","gameBuildId":"${editor.id}"}""").body["gameBuild"]["isEditor"].asBoolean())
+            .isTrue()
         assertThat(call(token, HttpMethod.POST, runs, """{"name":"x","gameBuildId":"${foreign.id}"}""").status).isEqualTo(404)
 
         val runId = picked.body["id"].asText()
@@ -217,7 +219,8 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(moved.body["gameBuild"]["gameBuildId"].asText()).isEqualTo(newer.id.toString())
         val cleared = call(token, HttpMethod.PUT, "$runs/$runId/game-build", """{"gameBuildId":null}""")
         assertThat(cleared.body.path("gameBuild").isNullish()).isTrue()
-        assertThat(call(token, HttpMethod.PUT, "$runs/$runId/game-build", """{"gameBuildId":"${editor.id}"}""").status).isEqualTo(409)
+        assertThat(call(token, HttpMethod.PUT, "$runs/$runId/game-build", """{"gameBuildId":"${editor.id}"}""").body["gameBuild"]["gameBuildId"].asText())
+            .isEqualTo(editor.id.toString())
     }
 
     /**
@@ -610,10 +613,12 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         // 버전 없는 사용자 케이스는 그렇다고 적는다.
         val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "설정 창을 연다", expectedValue = "x"))
         assertThat(resources.query(trScope, ResourceRequest("get", "case", id = manual.id)).items.single().fields).containsKey("version_note")
-        // 최신 게임 버전은 editor 빌드가 아니다.
-        gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.1.0", isEditor = true, createdAt = Instant.now().plusSeconds(60), updatedAt = Instant.now()))
+        // editor 행도 버전이다(ARTEL-1180). 가장 나중에 생긴 editor 버전이 최신이다.
+        val editorLatest = gameBuilds.save(
+            GameBuildEntity(projectId = projectId, version = "1.1.0", isEditor = true, createdAt = Instant.now().plusSeconds(60), updatedAt = Instant.now())
+        )
         val builds = resources.query(trScope, ResourceRequest("find", "build")).items
-        assertThat(builds.single { it.fields["latest_game_version"] == true }.id).isEqualTo(buildB.gameBuildId)
+        assertThat(builds.single { it.fields["latest_game_version"] == true }.id).isEqualTo(editorLatest.id)
         val tryItem = resources.query(trScope, ResourceRequest("get", "qa_try", id = qaTry.id)).items.single()
         assertThat((tryItem.fields["failed_steps"] as List<*>)).hasSize(2)
         assertThat(resources.query(trScope, ResourceRequest("related", "test_run", id = runId, relation = "qa_runs")).items.map { it.id })
@@ -630,36 +635,39 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(resources.query(trScope, ResourceRequest("related", "case", id = changed, relation = "nope")).note).contains("versions")
     }
 
-    /** editor 행은 게임 버전이 아니다(ARTEL-1014). 나중에 만들어졌어도 TR 의 버전과 트리에 들지 않는다. */
+    /** editor 행도 그 version 의 버전이다(ARTEL-1180). 가장 최근에 생긴 버전이 TR 의 버전이 되고 트리에도 든다. */
     @Test
-    fun `TR 의 버전과 가져오기 트리는 editor build 를 건너뛴다`(): Unit = runBlocking {
+    fun `TR 의 버전과 가져오기 트리에 editor 버전도 든다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
         val now = Instant.now()
-        gameBuilds.save(
+        val editor = gameBuilds.save(
             GameBuildEntity(projectId = projectId, version = "1.0.0", isEditor = true, createdAt = now.minusSeconds(10), updatedAt = now)
         )
         val editorOnly = createRun(token, projectId, "editor 만 있음")
-        assertThat(editorOnly.path("gameBuild").isNullish()).isTrue()
+        assertThat(editorOnly["gameBuild"]["gameBuildId"].asText()).isEqualTo(editor.id.toString())
 
-        gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.0.0", createdAt = now.minusSeconds(5), updatedAt = now))
-        val editorNewest = gameBuilds.findEditor(projectId)!!
-        gameBuilds.save(editorNewest.copy(createdAt = now, updatedAt = now))
-        val run = createRun(token, projectId, "새 런")
+        val build = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.0.0", createdAt = now.minusSeconds(5), updatedAt = now))
+        val onBuild = createRun(token, projectId, "빌드 런")
+        assertThat(onBuild["gameBuild"]["gameBuildId"].asText()).isEqualTo(build.id.toString())
 
-        assertThat(run["gameBuild"]["version"].asText()).isEqualTo("1.0.0")
-        assertThat(run["gameBuild"]["gameBuildId"].asText()).isNotEqualTo(editorNewest.id.toString())
+        val bumped = gameBuilds.save(
+            GameBuildEntity(projectId = projectId, version = "1.1.0", isEditor = true, createdAt = now, updatedAt = now)
+        )
+        val onBumped = createRun(token, projectId, "editor 1.1.0 런")
+        assertThat(onBumped["gameBuild"]["gameBuildId"].asText()).isEqualTo(bumped.id.toString())
+
         val library = call(token, HttpMethod.GET, "/api/projects/$projectId/test-scenario-library").body["versions"]
-        assertThat(library.map { it["gameBuild"]?.get("gameBuildId")?.asText() })
-            .containsExactly(run["gameBuild"]["gameBuildId"].asText(), null)
+        assertThat(library.mapNotNull { it["gameBuild"]?.get("gameBuildId")?.asText() })
+            .containsExactly(bumped.id.toString(), build.id.toString(), editor.id.toString())
     }
 
     /**
-     * editor 는 버전 이력이 아니다(ARTEL-1014). editor build 에서는 TC 를 만들지 않고, 다음 build 의 직전 build 는
-     * editor 가 아니라 그 앞의 development build 다.
+     * editor 버전도 TC 를 만들고 버전 이력에 든다(ARTEL-1180). 앞 버전에서 판정이 난 케이스는 editor 버전에서도
+     * REGRESSION 이고, 그 뒤 build 의 앞 버전은 editor 다.
      */
     @Test
-    fun `REGRESSION 과 판정 이력은 editor build 를 버전으로 세지 않는다`(): Unit = runBlocking {
+    fun `editor 버전도 TC 를 만들고 REGRESSION 과 판정 이력에 든다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
         val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(120))
@@ -669,24 +677,149 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         val untouched = versionsA[1]
         versions.save(verified.copy(verificationStatus = "VERIFIED"))
 
-        val editor = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60), isEditor = true)
+        val editor = ingestedBuild(projectId, "1.1.0", Instant.now().minusSeconds(60), isEditor = true)
         val editorGenerated = generate(token, projectId, editor.gameBuildId)
-        assertThat(editorGenerated.status).isEqualTo(409)
-        assertThat(editorGenerated.body["code"].asText()).isEqualTo("EDITOR_BUILD_HAS_NO_TEST_CASES")
-        assertThat(versions.findByGameBuildId(editor.gameBuildId).toList()).isEmpty()
+        assertThat(editorGenerated.status).isEqualTo(200)
+        assertThat(editorGenerated.body["regression"].asInt()).isEqualTo(1)
+        assertThat(versions.findByTestCaseIdAndGameBuildId(verified.testCaseId, editor.gameBuildId)!!.verificationStatus)
+            .isEqualTo("REGRESSION")
 
-        val buildB = ingestedBuild(projectId, "2.0.0", Instant.now())
+        val buildB = ingestedBuild(projectId, "1.1.0", Instant.now())
         val generated = generate(token, projectId, buildB.gameBuildId)
 
         assertThat(generated.body["regression"].asInt()).isEqualTo(1)
-        assertThat(versions.findByTestCaseIdAndGameBuildId(verified.testCaseId, buildB.gameBuildId)!!.verificationStatus)
-            .isEqualTo("REGRESSION")
         assertThat(versions.findByTestCaseIdAndGameBuildId(untouched.testCaseId, buildB.gameBuildId)!!.verificationStatus)
             .isEqualTo("DRAFT")
 
         val history = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases/${verified.testCaseId}/verdict-history")
-        assertThat(history.body["items"].map { it["gameBuildId"].asLong() })
-            .containsExactly(buildA.gameBuildId, buildB.gameBuildId)
+        assertThat(history.body["items"].map { it["gameBuildId"].asLong() to it["isEditor"].asBoolean() })
+            .containsExactly(buildA.gameBuildId to false, editor.gameBuildId to true, buildB.gameBuildId to false)
+    }
+
+    /** 새 버전에서 내용이 같은 TC 는 앞 버전 판정을 이어받고, 출처를 남긴다(ARTEL-1180). */
+    @Test
+    fun `새 버전 생성에서 SAME_CONTENT 는 앞 버전 판정을 이어받고 다음 버전도 처음 본 build 를 출처로 든다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(120))
+        generate(token, projectId, buildA.gameBuildId)
+        val (passed, failed, untouched) = versions.findByGameBuildId(buildA.gameBuildId).toList().sortedBy { it.testCaseId }
+        versions.save(passed.copy(verificationStatus = "VERIFIED"))
+        versions.save(failed.copy(verificationStatus = "FAILED"))
+
+        val buildB = ingestedBuild(projectId, "1.0.1", Instant.now().minusSeconds(60), isEditor = true)
+        val generated = generateWith(token, projectId, buildB.gameBuildId, "verdicts=SAME_CONTENT")
+
+        assertThat(generated.status).isEqualTo(200)
+        assertThat(generated.body["regression"].asInt()).isEqualTo(2)
+        assertThat(generated.body["verdictsCarried"].asInt()).isEqualTo(2)
+        val inB = versions.findByGameBuildId(buildB.gameBuildId).toList().associateBy { it.testCaseId }
+        assertThat(inB.getValue(passed.testCaseId).verificationStatus).isEqualTo("VERIFIED")
+        assertThat(inB.getValue(failed.testCaseId).verificationStatus).isEqualTo("FAILED")
+        assertThat(inB.getValue(untouched.testCaseId).verificationStatus).isEqualTo("DRAFT")
+        assertThat(inB.getValue(passed.testCaseId).verdictCarriedFromBuildId).isEqualTo(buildA.gameBuildId)
+        assertThat(inB.getValue(untouched.testCaseId).verdictCarriedFromBuildId).isNull()
+
+        // 이어받은 판정을 다시 이어받아도 출처는 실제로 본 build 다.
+        val buildC = ingestedBuild(projectId, "1.0.2", Instant.now())
+        generateWith(token, projectId, buildC.gameBuildId, "verdicts=SAME_CONTENT")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(passed.testCaseId, buildC.gameBuildId)!!.verdictCarriedFromBuildId)
+            .isEqualTo(buildA.gameBuildId)
+        val history = call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases/${passed.testCaseId}/verdict-history")
+        assertThat(history.body["items"].map { it["verdictCarriedFromBuildId"].asText(null) })
+            .containsExactly(null, buildA.gameBuildId.toString(), buildA.gameBuildId.toString())
+    }
+
+    /** SELECTED 는 고른 TC 만 이어받는다. 고르지 않은 TC 는 다시 검증한다(ARTEL-1180). */
+    @Test
+    fun `새 버전 생성에서 SELECTED 는 고른 TC 만 이어받고 ids 없이는 400 이다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
+        generate(token, projectId, buildA.gameBuildId)
+        val (chosen, other) = versions.findByGameBuildId(buildA.gameBuildId).toList().sortedBy { it.testCaseId }
+        versions.save(chosen.copy(verificationStatus = "VERIFIED"))
+        versions.save(other.copy(verificationStatus = "VERIFIED"))
+
+        val buildB = ingestedBuild(projectId, "1.0.1", Instant.now())
+        assertThat(generateWith(token, projectId, buildB.gameBuildId, "verdicts=SELECTED").status).isEqualTo(400)
+        val generated = generateWith(token, projectId, buildB.gameBuildId, "verdicts=SELECTED&testCaseIds=${chosen.testCaseId}")
+
+        assertThat(generated.body["verdictsCarried"].asInt()).isEqualTo(1)
+        assertThat(versions.findByTestCaseIdAndGameBuildId(chosen.testCaseId, buildB.gameBuildId)!!.verificationStatus)
+            .isEqualTo("VERIFIED")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(other.testCaseId, buildB.gameBuildId)!!.verificationStatus)
+            .isEqualTo("REGRESSION")
+    }
+
+    /** 같은 버전을 덮어써 다시 만들 때 NONE 은 남아 있던 판정까지 다시 검증한다. 고르지 않으면 판정이 남는다(ARTEL-1180). */
+    @Test
+    fun `덮어쓰기 생성에서 NONE 은 이 버전의 판정을 REGRESSION 으로 돌리고, 고르지 않으면 판정을 지킨다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val build = ingestedBuild(projectId, "1.0.0", Instant.now(), isEditor = true)
+        generate(token, projectId, build.gameBuildId)
+        val (judged, _) = versions.findByGameBuildId(build.gameBuildId).toList().sortedBy { it.testCaseId }
+        versions.save(judged.copy(verificationStatus = "VERIFIED"))
+
+        val kept = generateWith(token, projectId, build.gameBuildId, "overwrite=true")
+        assertThat(kept.status).isEqualTo(200)
+        assertThat(versions.findById(judged.id!!)!!.verificationStatus).isEqualTo("VERIFIED")
+
+        val reset = generateWith(token, projectId, build.gameBuildId, "overwrite=true&verdicts=NONE")
+        assertThat(reset.body["verdictsReset"].asInt()).isEqualTo(1)
+        assertThat(versions.findById(judged.id!!)!!.verificationStatus).isEqualTo("REGRESSION")
+    }
+
+    /** 생성 뒤 고른 TC 만 이어받는다. 못 받는 TC 는 까닭과 함께 돌려준다(ARTEL-1180). */
+    @Test
+    fun `생성 뒤 고른 TC 에 앞 버전 판정을 이어받고, 못 받는 것은 까닭을 준다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(60))
+        generate(token, projectId, buildA.gameBuildId)
+        val (verified, judgedHere, untouched) = versions.findByGameBuildId(buildA.gameBuildId).toList().sortedBy { it.testCaseId }
+        versions.save(verified.copy(verificationStatus = "VERIFIED"))
+        versions.save(judgedHere.copy(verificationStatus = "FAILED"))
+        val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "사람이 쓴 것", expectedValue = "x"))
+        versions.save(
+            TestCaseVersionEntity.snapshotOf(manual, buildA.gameBuildId).copy(verificationStatus = "VERIFIED")
+        )
+
+        val buildB = ingestedBuild(projectId, "1.0.1", Instant.now())
+        generate(token, projectId, buildB.gameBuildId)
+        // 이 버전에서 직접 판정이 난 몫, 내용이 바뀐 사용자 생성 몫.
+        val hereB = versions.findByTestCaseIdAndGameBuildId(judgedHere.testCaseId, buildB.gameBuildId)!!
+        versions.save(hereB.copy(verificationStatus = "VERIFIED"))
+        val manualB = versions.findByTestCaseIdAndGameBuildId(manual.id!!, buildB.gameBuildId)!!
+        versions.save(manualB.copy(expectedValue = "y"))
+
+        val ids = listOf(verified.testCaseId, judgedHere.testCaseId, untouched.testCaseId, manual.id!!, 999_999L)
+        val reply = call(
+            token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/test-cases/verdict-carry-over",
+            """{"testCaseIds":[${ids.joinToString(",") { "\"$it\"" }}]}""",
+        )
+
+        assertThat(reply.status).isEqualTo(200)
+        assertThat(reply.body["carried"].map { it.asLong() }).containsExactly(verified.testCaseId)
+        assertThat(reply.body["skipped"].associate { it["testCaseId"].asLong() to it["reason"].asText() }).containsExactlyInAnyOrderEntriesOf(
+            mapOf(
+                judgedHere.testCaseId to "JUDGED_IN_THIS_VERSION",
+                untouched.testCaseId to "NO_PREVIOUS_VERDICT",
+                manual.id!! to "CONTENT_CHANGED",
+                999_999L to "NOT_IN_VERSION",
+            )
+        )
+        val carried = versions.findByTestCaseIdAndGameBuildId(verified.testCaseId, buildB.gameBuildId)!!
+        assertThat(carried.verificationStatus).isEqualTo("VERIFIED")
+        assertThat(carried.verdictCarriedFromBuildId).isEqualTo(buildA.gameBuildId)
+        assertThat(testCases.findById(verified.testCaseId)!!.verificationStatus).isEqualTo("VERIFIED")
+
+        val empty = call(
+            token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${buildB.gameBuildId}/test-cases/verdict-carry-over",
+            """{"testCaseIds":[]}""",
+        )
+        assertThat(empty.status).isEqualTo(400)
     }
 
     @Test
@@ -852,6 +985,9 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
 
     private fun generate(token: String, projectId: Long, gameBuildId: Long): Reply =
         call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/$gameBuildId/content-map/test-cases")
+
+    private fun generateWith(token: String, projectId: Long, gameBuildId: Long, query: String): Reply =
+        call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/$gameBuildId/content-map/test-cases?$query")
 
     private fun call(token: String, method: HttpMethod, uri: String, body: String? = null): Reply {
         val request = WebClient.create("http://localhost:$port").method(method).uri(uri)

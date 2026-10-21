@@ -163,7 +163,7 @@ class QaLaunchReadRepository(
             """
             SELECT 'BUILD_REPORTED' AS kind, gb.created_at AS at, gb.id AS subject_id, gb.version AS subject_name, 1 AS cnt
               FROM game_build gb
-             WHERE gb.project_id = :projectId AND gb.is_editor = FALSE AND gb.created_at > :since
+             WHERE gb.project_id = :projectId AND gb.created_at > :since
             """, mapOf("projectId" to projectId, "since" to since),
         )
         rows += changes(

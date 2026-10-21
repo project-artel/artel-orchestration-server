@@ -70,7 +70,7 @@ class ScenarioLibraryService(
         )
 
         val runsByBuild = runs.groupBy { it.gameBuildId }
-        val versions = gameBuildRepository.findNonEditorNewestFirst(projectId).toList()
+        val versions = gameBuildRepository.findVersionsNewestFirst(projectId).toList()
             .mapNotNull { build ->
                 val buildRuns = runsByBuild[build.id] ?: return@mapNotNull null
                 ScenarioLibraryVersion(
