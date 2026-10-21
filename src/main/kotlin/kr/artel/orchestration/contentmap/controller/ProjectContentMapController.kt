@@ -66,7 +66,7 @@ class ProjectContentMapController(
         summary = "원격 근거 스캔 요청",
         description = "이 빌드를 실행 중인 게임에 근거 스캔을 시킨다. 즉시 202 로 답하며, 완료는 " +
             "조회 API 의 `lastScan` 으로 확인한다. 붙어 있는 게임이 없으면 409. `generateTestCases=true` 면 " +
-            "문서가 다 읽힌 뒤 TC 도 만들고, editor 이거나 이미 TC 를 만든 빌드면 스캔 전에 409.",
+            "문서가 다 읽힌 뒤 TC 도 만들고, 이미 TC 를 만든 빌드면 스캔 전에 409.",
     )
     @PostMapping("/scan")
     @ResponseStatus(HttpStatus.ACCEPTED)

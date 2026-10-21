@@ -65,8 +65,8 @@ class ContentMapScanService(
      * 프로젝트 id 나 넣어도 통과하고, 한 사람이 여러 프로젝트의 멤버인 흔한 경우에 권한 검사만으로는
      * 안 걸린다.
      *
-     * [testCaseRequest] 가 있으면 스캔 문서가 다 읽힌 뒤 TC 도 만든다([ScanResultRouter], ARTEL-1040). editor 이거나 이미
-     * TC 를 만든 build 면 스캔을 보내기 전에 409 다.
+     * [testCaseRequest] 가 있으면 스캔 문서가 다 읽힌 뒤 TC 도 만든다([ScanResultRouter], ARTEL-1040). 이미 TC 를 만든
+     * build 면 스캔을 보내기 전에 409 다. editor 버전도 만들 수 있다(ARTEL-1180).
      */
     suspend fun startScan(
         userId: Long,
