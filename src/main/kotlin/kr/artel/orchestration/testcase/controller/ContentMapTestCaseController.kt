@@ -4,10 +4,13 @@ import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testcase.dto.ContentMapTestCaseGenerationResponse
 import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
 import kr.artel.orchestration.testcase.dto.TestCaseGenerationCandidatesResponse
+import org.springframework.http.HttpStatus
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -33,6 +36,18 @@ class ContentMapTestCaseController(
         @RequestParam(defaultValue = "false") overwrite: Boolean,
     ): ContentMapTestCaseGenerationResponse =
         service.generate(appUserId, projectId, gameBuildId, carryOver, overwrite)
+
+    /**
+     * 도는 지도 TC 생성을 끊는다(ARTEL-1187). 끊긴 생성의 요청은 409(`TEST_CASE_GENERATION_CANCELLED`)로 끝나고 아무것도
+     * 바뀌지 않는다. 도는 것이 없으면 409(`TEST_CASE_GENERATION_NOT_RUNNING`).
+     */
+    @DeleteMapping("/api/projects/{projectId}/game-builds/{gameBuildId}/content-map/test-cases/generation")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    suspend fun cancelTestCaseGeneration(
+        @PathVariable projectId: Long,
+        @PathVariable gameBuildId: Long,
+        @CurrentUserId appUserId: Long,
+    ) = service.cancel(appUserId, projectId, gameBuildId)
 
     /**
      * 케이스 라이브러리의 "지도에서 TC 생성" 모달이 고를 게임 빌드(ARTEL-1040). 빌드마다 지도 상태와 이미 만들었는지를

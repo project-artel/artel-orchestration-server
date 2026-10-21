@@ -119,6 +119,9 @@ data class ContentMapSummaryResponse(
  *   **QA 런이 서 보기만 한 씬**이다(ARTEL-689). 문서가 없는 씬은 더 약한 주장이라, 둘을 같아
  *   보이게 그리면 지도의 어느 부분이 어디서 왔는지가 화면에서 사라진다. `observed` 씬은
  *   [thumbnail] 과 [capabilities] 가 비어 있는 것이 정상이다 — 그 값들은 근거 walk 가 만든다
+ * @property buildOrder 빌드 설정 순번(ARTEL-1173). 화면이 지도를 게임 시작 씬부터 순서대로 그리고 나열하는 값이다.
+ *   씬 그래프는 순환이라 구조만으로는 순서를 알 수 없다
+ * @property entry 부팅 씬인가. [SceneEntity.isEntry] 가 적재 때 적은 사실이고, 그 전에 적재된 지도는 [buildOrder] 0 으로 대신 안다
  */
 @Schema(description = "씬 하나")
 data class ContentMapSceneResponse(
@@ -137,6 +140,10 @@ data class ContentMapSceneResponse(
     val screens: List<ContentMapScreenResponse> = emptyList(),
     @field:Schema(description = "capabilities 가 센 그 행들. 개수의 합이 capabilities.total 과 같다")
     val capabilityList: List<SceneCapabilityResponse> = emptyList(),
+    @Schema(description = "유니티 빌드 설정에서의 순번(0 부터). 빌드의 씬 스캔이 없거나 그 목록에 없는 씬이면 null")
+    val buildOrder: Int? = null,
+    @Schema(description = "게임을 켜면 열리는 씬인가. 적재기가 적은 입구 씬이거나 빌드 설정 0번이다")
+    val entry: Boolean = false,
 )
 
 /**
@@ -646,7 +653,7 @@ data class StartContentMapScanResponse(
  */
 @Schema(description = "content map SSE 이벤트")
 data class ContentMapStreamEvent(
-    @field:Schema(description = "snapshot · scan · ingest · document")
+    @field:Schema(description = "snapshot · scan · ingest · document · testCaseGeneration")
     val type: String,
     @field:Schema(description = "type = snapshot · scan 일 때만 싣는다")
     val scan: LastScanResponse? = null,
@@ -656,6 +663,8 @@ data class ContentMapStreamEvent(
     val document: ContentMapDocumentEventResponse? = null,
     @field:Schema(description = "type = snapshot 일 때만 싣는다")
     val documents: List<ContentMapDocumentEventResponse>? = null,
+    @field:Schema(description = "type = snapshot · testCaseGeneration 일 때 싣는다(ARTEL-1187). 이 서버가 모르면 null")
+    val testCaseGeneration: kr.artel.orchestration.testcase.dto.TestCaseGenerationResponse? = null,
 )
 
 /**
