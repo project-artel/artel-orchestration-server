@@ -3,6 +3,7 @@ package kr.artel.orchestration.testcase
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
@@ -27,7 +28,7 @@ import java.time.Instant
  *
  * 생성은 `TransactionalOperator.executeAndAwait` 하나 안에서 돌고, 취소는 그 코루틴을 끊는다. 끊긴 트랜잭션이
  * 커밋되면(Spring 5.x 의 리액티브 트랜잭션은 취소를 커밋으로 다뤘다) 반쯤 쓴 TC 가 남는다. 생성 서비스와 같은 모양
- * (`supervisorScope` 안의 `async` 자식이 트랜잭션을 열고, 바깥에서 그 자식을 cancel)으로 행을 쓴 뒤 끊어 본다.
+ * (`supervisorScope` 안의 `Dispatchers.Default` `async` 자식이 트랜잭션을 열고, 바깥에서 그 자식을 cancel)으로 행을 쓴 뒤 끊어 본다.
  *
  * 통합 테스트의 취소 시험은 생성이 프로젝트 잠금 앞에서 멈춘 채 끊겨, 쓴 것이 없어서 이것을 보지 못한다.
  */
@@ -49,7 +50,7 @@ class TestCaseGenerationRollbackTest {
         val written = CompletableDeferred<Long>()
 
         supervisorScope {
-            val run = async(start = CoroutineStart.LAZY) {
+            val run = async(Dispatchers.Default, start = CoroutineStart.LAZY) {
                 transactionalOperator.executeAndAwait {
                     val saved = testCases.save(
                         TestCaseEntity(projectId = projectId, scene = "S", step = "쓰는 도중", expectedValue = "x", metadata = Json.of("{}"))

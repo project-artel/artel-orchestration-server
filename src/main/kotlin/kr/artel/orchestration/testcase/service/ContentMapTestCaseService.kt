@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.service
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
@@ -166,9 +167,14 @@ class ContentMapTestCaseService(
      *
      * 일은 자식 코루틴으로 돈다. 취소 API 가 이 요청 전체가 아니라 그 일만 끊어야 409 로 "취소했다" 를 답할 수 있다.
      * 끊기면 트랜잭션이 롤백된다.
+     *
+     * **그 자식은 [Dispatchers.Default] 에서 돈다.** 요청 코루틴은 Netty · R2DBC 이벤트 루프 스레드에서 이어지고, 생성의
+     * 계산(형제 찾기 · 합치기)은 CPU 를 오래 쓴다. 2026-10-21 1.4.0 생성은 `reactor-tcp-nio-10` 하나를 CPU 387초 동안
+     * 쥐었다. 그 스레드에 붙은 DB 커넥션을 쓰는 다른 요청은 그동안 응답을 못 받는다. 트랜잭션은 코루틴 컨텍스트를 따라가므로
+     * 디스패처를 바꿔도 같은 트랜잭션이다(`TestCaseGenerationRollbackTest`).
      */
     private suspend fun <T> tracked(gameBuildId: Long, work: suspend (GenerationProgress) -> T): T = supervisorScope {
-        val run = async(start = CoroutineStart.LAZY) { work(Reporter(gameBuildId)) }
+        val run = async(Dispatchers.Default, start = CoroutineStart.LAZY) { work(Reporter(gameBuildId)) }
         generations.start(gameBuildId, run, Instant.now(clock))?.let {
             run.cancel()
             throw ConflictException("이 빌드의 TC 생성이 이미 돌고 있습니다. 끝난 뒤에 다시 시도해 주세요.", GENERATION_IN_PROGRESS)
