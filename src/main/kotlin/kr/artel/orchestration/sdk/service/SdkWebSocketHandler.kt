@@ -3,6 +3,7 @@ package kr.artel.orchestration.sdk.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.auth.service.AccountStateService
 import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.contentmap.scan.ScanResultRouter
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.project.event.ProjectChangeStreamManager
 import kr.artel.orchestration.project.event.ProjectChangeTopic
@@ -50,6 +51,7 @@ class SdkWebSocketHandler(
     private val sessionUserResolver: SessionUserResolver,
     private val accountStateService: AccountStateService,
     private val projectChangeStreamManager: ProjectChangeStreamManager,
+    private val scanResults: ScanResultRouter,
     handlers: List<SdkMessageHandler>
 ) : WebSocketHandler {
 
@@ -144,6 +146,12 @@ class SdkWebSocketHandler(
                 // 비우면, SDK는 연결된 채로 액션을 받지 못한다.
                 sessionManager.removeSession(instanceId, session)
                 projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
+                // 이 게임이 돌던 근거 스캔은 결과가 오지 않는다. 실패로 닫아 화면이 영영 기다리지 않게 한다(ARTEL-1178).
+                // 같은 인스턴스가 이미 다시 붙었으면(위 removeSession 이 남의 자리를 안 지움) 그 스캔은 살아 있을 수 있다.
+                if (!sessionManager.hasSession(instanceId)) {
+                    runCatching { scanResults.gameDisconnected(instanceId.toLong()) }
+                        .onFailure { error -> logger.error("스캔 연결 종료 처리 실패 [instanceId=$instanceId]", error) }
+                }
                 // sdkDisconnected는 이제 suspend라 doFinally(동기 Reactor 콜백)에서
                 // mono { } 로 감싸 fire-and-forget으로 흘린다.
                 mono { qaExecutionFailureService.sdkDisconnected(instanceId.toLong()) }

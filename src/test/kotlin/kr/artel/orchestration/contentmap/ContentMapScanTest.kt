@@ -1,12 +1,17 @@
 package kr.artel.orchestration.contentmap
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.scan.ContentMapScanService
 import kr.artel.orchestration.contentmap.scan.ScanState
+import kr.artel.orchestration.contentmap.scan.ScanStatus
+import kr.artel.orchestration.contentmap.scan.ScanStatusRegistry
 import kr.artel.orchestration.contentmap.scan.ScanTestCases
 import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.entity.GameInstanceEntity
@@ -56,6 +61,7 @@ class ContentMapScanTest {
     @Autowired private lateinit var contentMaps: ContentMapRepository
     @Autowired private lateinit var testCases: TestCaseRepository
     @Autowired private lateinit var versions: TestCaseVersionRepository
+    @Autowired private lateinit var statuses: ScanStatusRegistry
 
     private val objectMapper = ObjectMapper()
 
@@ -182,6 +188,92 @@ class ContentMapScanTest {
         sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
     }
 
+    /**
+     * 같은 빌드에 스캔이 돌고 있으면 두 번째 요청은 **게임에 나가지 않고** 409 다(ARTEL-1178).
+     *
+     * 나가는 줄을 함께 세는 것이 요점이다. 409 만 보면 "답은 거절인데 액션은 나갔다" 를 놓친다 — SDK 는 받은 대로
+     * 처음부터 다시 돈다.
+     */
+    @Test
+    fun `같은 빌드에 스캔이 돌고 있으면 두 번째 요청은 409 다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        val outbound = requireNotNull(sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java)))
+
+        assertThat(scan.startScan(userId, projectId, buildId)).isNotNull()
+        assertThatThrownBy { runBlocking { scan.startScan(userId, projectId, buildId) } }
+            .isInstanceOf(ConflictException::class.java)
+            .extracting("code").isEqualTo(ContentMapScanService.SCAN_IN_PROGRESS)
+
+        StepVerifier.create(outbound)
+            .expectNextCount(1)
+            .expectNoEvent(Duration.ofMillis(300))
+            .thenCancel()
+            .verify(Duration.ofSeconds(5))
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
+    /** 거의 같은 때 들어온 요청 여럿 중 하나만 통과한다. 보기와 넣기가 갈라져 있으면 여럿이 통과한다. */
+    @Test
+    fun `동시에 여러 번 눌러도 한 건만 나간다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+
+        val outcomes = (1..8).map {
+            async(Dispatchers.Default) { runCatching { scan.startScan(userId, projectId, buildId) } }
+        }.awaitAll()
+
+        assertThat(outcomes.count { it.isSuccess }).isEqualTo(1)
+        assertThat(outcomes.mapNotNull { (it.exceptionOrNull() as? ConflictException)?.code }.toSet())
+            .containsExactly(ContentMapScanService.SCAN_IN_PROGRESS)
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
+    /** 앞 스캔을 받은 게임이 끊겼으면 결과는 영영 안 온다. 그 스캔이 버튼을 막으면 안 된다. */
+    @Test
+    fun `앞 스캔을 받은 게임이 끊겼으면 다시 시킬 수 있다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val gone = newInstance(projectId, buildId, name = "끊긴 게임")
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        statuses.put(requested(buildId, gone, Instant.now()))
+
+        val status = scan.startScan(userId, projectId, buildId)
+
+        assertThat(status!!.gameInstanceId).isEqualTo(instanceId)
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
+    /** 게임이 붙어 있어도 [ContentMapScanService.STALE_AFTER] 동안 소식이 없던 스캔은 막지 않는다. */
+    @Test
+    fun `오래 소식이 없는 스캔은 다음 요청을 막지 않는다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        val longAgo = Instant.now().minus(ContentMapScanService.STALE_AFTER).minusSeconds(1)
+        statuses.put(requested(buildId, instanceId, longAgo))
+
+        assertThat(scan.startScan(userId, projectId, buildId)).isNotNull()
+
+        // 소식이 막 있었던 스캔은 여전히 막는다.
+        statuses.put(requested(buildId, instanceId, Instant.now()))
+        assertThatThrownBy { runBlocking { scan.startScan(userId, projectId, buildId) } }
+            .isInstanceOf(ConflictException::class.java)
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
     /** 남의 프로젝트 빌드는 프로젝트 id 를 맞춰 보내도 null 이다. */
     @Test
     fun `남의 프로젝트 빌드에는 스캔을 못 시킨다`(): Unit = runBlocking {
@@ -194,6 +286,14 @@ class ContentMapScanTest {
     }
 
     // ---------- 픽스처 ----------
+
+    private fun requested(gameBuildId: Long, gameInstanceId: Long, at: Instant) = ScanStatus(
+        gameBuildId = gameBuildId,
+        gameInstanceId = gameInstanceId,
+        gameInstanceName = "instance",
+        state = ScanState.REQUESTED,
+        requestedAt = at,
+    )
 
     private suspend fun newUser(): Long =
         db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('console', 'console-' || gen_random_uuid(), '0000') RETURNING id")

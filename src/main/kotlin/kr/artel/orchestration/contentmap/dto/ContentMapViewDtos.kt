@@ -2,6 +2,8 @@ package kr.artel.orchestration.contentmap.dto
 
 import com.fasterxml.jackson.databind.JsonNode
 import io.swagger.v3.oas.annotations.media.Schema
+import kr.artel.orchestration.contentmap.scan.ScanPhase
+import kr.artel.orchestration.contentmap.scan.ScanProgress
 import kr.artel.orchestration.contentmap.scan.ScanState
 import kr.artel.orchestration.contentmap.scan.ScanStatus
 import kr.artel.orchestration.contentmap.scan.ScanTestCases
@@ -583,6 +585,12 @@ data class LastScanResponse(
     val error: String?,
     @field:Schema(description = "스캔하고 TC 생성(ARTEL-1040)일 때 TC 쪽 결과. 그냥 스캔이면 null")
     val testCases: ScanTestCases? = null,
+    @Schema(description = "SCANNING · UPLOADING · INGESTING · GENERATING_TEST_CASES. 끝난 뒤에는 마지막으로 지난 단계")
+    val phase: ScanPhase = ScanPhase.SCANNING,
+    @Schema(description = "지금 단계의 몇 개 중 몇 개(SCANNING 이면 씬 수). 게임이 알려 준 적이 없으면 null")
+    val progress: ScanProgress? = null,
+    @Schema(description = "마지막으로 움직인 시각. 진행이 오면 밀린다")
+    val updatedAt: Instant? = null,
 ) {
     companion object {
         fun of(status: ScanStatus) = LastScanResponse(
@@ -594,6 +602,9 @@ data class LastScanResponse(
             ingestedDocuments = status.ingestedDocuments,
             error = status.error,
             testCases = status.testCases,
+            phase = status.phase,
+            progress = status.progress,
+            updatedAt = status.updatedAt,
         )
     }
 }
@@ -649,8 +660,8 @@ data class ContentMapStreamEvent(
  *
  * 분모([receivedDocuments])가 스캔이 도는 동안 계속 늘어나므로, 서버가 계산해 보내는 퍼센트는
  * 보내는 순간 이미 낡는다. 두 수를 그대로 주면 화면이 자기가 그리는 시점의 값으로 비율을 만들 수
- * 있다. 스캔 자체에는 퍼센트가 없다 — [ScanState] 는 [ScanState.REQUESTED],
- * [ScanState.SUCCEEDED], [ScanState.FAILED] 셋뿐이고 서버가 중간 진행을 모른다.
+ * 있다. 스캔 쪽 진행도 같은 이유로 두 수만 싣는다 — [LastScanResponse.phase] · [LastScanResponse.progress]
+ * (ARTEL-1178).
  */
 @Schema(description = "문서 적재 진행")
 data class IngestProgressResponse(
