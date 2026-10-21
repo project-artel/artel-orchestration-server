@@ -2,6 +2,7 @@ package kr.artel.orchestration.contentmap.ingest
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.contentmap.SceneBuildOrder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.collect
@@ -479,10 +480,7 @@ class ContentMapIngestService(
         val entry = runCatching {
             val map = contentMaps.findById(contentMapId) ?: return
             val scan = builds.findById(map.gameBuildId)?.sceneScan ?: return
-            objectMapper.readTree(scan.asString()).path("scenesInBuild")
-                .firstOrNull()?.asText(null)
-                ?.substringAfterLast('/')?.removeSuffix(".unity")
-                ?.takeIf { it.isNotBlank() }
+            SceneBuildOrder.names(scan, objectMapper).firstOrNull()
         }.onFailure { logger.warn("입구 씬을 못 읽었다 — 없이 간다 [contentMapId=$contentMapId] ${it.message}") }
             .getOrNull() ?: return
 
