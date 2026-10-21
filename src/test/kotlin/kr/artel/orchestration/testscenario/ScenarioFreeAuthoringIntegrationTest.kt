@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario
 
+import org.springframework.r2dbc.core.DatabaseClient
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -12,6 +13,7 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.support.deleteQaRuns
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testrun.entity.TestRunEntity
@@ -56,6 +58,7 @@ class ScenarioFreeAuthoringIntegrationTest {
     @Autowired private lateinit var runScenarioReader: RunScenarioReader
     @Autowired private lateinit var scenarioRepository: TestScenarioRepository
     @Autowired private lateinit var runScenarioRepository: TestRunScenarioRepository
+    @Autowired private lateinit var db: DatabaseClient
     @Autowired private lateinit var runRepository: TestRunRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
@@ -100,6 +103,8 @@ class ScenarioFreeAuthoringIntegrationTest {
     fun clean(): Unit = runBlocking { wipe() }
 
     private suspend fun wipe() {
+        // 남의 클래스가 남긴 qa_run 이 아래 삭제를 FK 로 막지 않게 먼저 비운다(ARTEL-1163).
+        db.deleteQaRuns()
         runScenarioRepository.deleteAll()
         runRepository.deleteAll()
         scenarioRepository.deleteAll()
