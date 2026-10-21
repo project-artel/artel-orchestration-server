@@ -264,7 +264,7 @@ class SecurityConfig {
                     it.authenticationFailureHandler { webFilterExchange, _ ->
                         webFilterExchange.exchange.response.statusCode = HttpStatus.FOUND
                         webFilterExchange.exchange.response.headers.location =
-                            URI.create("${properties.frontendOrigin}/login?error=oauth")
+                            OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties, "oauth")
                         webFilterExchange.exchange.response.setComplete()
                     }
                 }
@@ -274,6 +274,7 @@ class SecurityConfig {
         // 필터 하나를 더한다. 별도 체인을 두려면 authorizeExchange 규칙을 두 벌로 복사해야 하고,
         // 그 둘은 반드시 어긋난다. SDK 체인이 따로인 것은 반대 이유다 — 그쪽은 audience 로 경로를
         // 좁히는 것이 목적이라 체인이 맞다.
+        .addFilterBefore(OAuthReturnTargetFilter(properties), SecurityWebFiltersOrder.FIRST)
         .addFilterBefore(
             cliTokenAuthenticationFilter(cliTokenAuthenticationManager),
             SecurityWebFiltersOrder.AUTHENTICATION
@@ -401,7 +402,7 @@ class SecurityConfig {
             response.addCookie(authCookies.access(token))
             response.addCookie(authCookies.refresh(refresh.token))
             response.statusCode = HttpStatus.FOUND
-            response.headers.location = URI.create(properties.frontendOrigin)
+            response.headers.location = OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties)
             response.setComplete().awaitSingleOrNull()
         }
             .onErrorResume { error ->
@@ -411,7 +412,7 @@ class SecurityConfig {
                 val response = webFilterExchange.exchange.response
                 response.statusCode = HttpStatus.FOUND
                 response.headers.location =
-                    URI.create("${properties.frontendOrigin}/login?error=server")
+                    OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties, "server")
                 response.setComplete()
             }
     }
@@ -422,7 +423,7 @@ class SecurityConfig {
         error: String
     ): Void? {
         exchange.response.statusCode = HttpStatus.FOUND
-        exchange.response.headers.location = URI.create("${properties.frontendOrigin}/login?error=$error")
+        exchange.response.headers.location = OAuthReturnTargetFilter.destination(exchange, properties, error)
         return exchange.response.setComplete().awaitSingleOrNull()
     }
 

@@ -217,6 +217,7 @@ artel:
       generate-dev-key: ${ARTEL_MCP_HANDOFF_GENERATE_DEV_KEY:false}
   auth:
     frontend-url: ${ARTEL_HOME_URL:http://localhost:5173}
+    onboarding-url: ${ARTEL_ONBOARDING_URL:https://artel.kr}
     # CORS 허용 origin(콤마 구분). frontend-url은 항상 자동 포함된다. 와일드카드(https://*.artel.kr) 허용.
     allowed-origins: ${ARTEL_ALLOWED_ORIGINS:https://home.stage.artel.kr,https://artel.kr,https://www.artel.kr,https://admin.artel.kr}
     issuer: ${ARTEL_JWT_ISSUER:artel-orchestration-server}
