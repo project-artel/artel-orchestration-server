@@ -170,9 +170,6 @@ class MapTestCaseGenerator(
                 // 판독이 확인 못 하는 기대([MapTestCasePhrasing.Told.hidden])는 여기서 빠진다. 정체는
                 // 아래에서 `group` 전체로 잡으므로 그대로다. 볼 것이 하나도 안 남으면 케이스가 아니다.
                 val shown = group.filterNot { it.hidden }.distinctBy { it.outcome }
-                // **판독이 못 보는 조건으로만 갈리던 갈래가 한 무리가 되면 "다음 중 하나" 다**(ARTEL-1209).
-                // 그 조건을 지웠으니 QA 는 지금 어느 갈래인지 모른다. 결과 중 하나가 나오면 된다.
-                val oneOf = reading && shown.size > 1 && shown.map { it.removed }.distinct().size > 1
                 // 옛 방식은 볼 것이 없으면 내지 않는다. 판독 기준은 **TC 를 지우지 않고 그 부분만 지운다**(ARTEL-1209):
                 // 조작은 남고, QA 는 그 조작이 되는지만 본다.
                 if (shown.isEmpty() && !reading) return@mapNotNull null
@@ -181,7 +178,7 @@ class MapTestCaseGenerator(
                     scene = first.scene,
                     precondition = MapTestCasePhrasing.precondition(
                         first.scene, groupCondition, first.inputKey, compactValues = reading,
-                    ),
+                    ).let { text -> if (first.setup.isEmpty()) text else "$text / ${MapTestCaseReadingRules.SETUP}${first.setup.joinToString(" 그리고 ")}" },
                     // **구조를 버리지 않는다**(ARTEL-627). 위 문장은 이것을 사람 말로 렌더한 것이고,
                     // 소비하는 쪽은 문장이 아니라 이쪽을 읽는다.
                     condition = groupCondition,
@@ -198,11 +195,11 @@ class MapTestCaseGenerator(
                     // 펴고, 채점은 스텝 단위라 어느 지점이 틀렸는지는 그대로 드러난다. 구버전도 같은
                     // 자리를 ` / ` 로 잇는다.
                     expected = if (shown.isEmpty()) MapTestCaseReadingRules.NO_READABLE_RESULT
-                    else shown.joinToString(OUTCOME_SEPARATOR) { it.outcome }
-                        .let { if (oneOf) MapTestCaseReadingRules.ONE_OF + it else it },
+                    else shown.joinToString(OUTCOME_SEPARATOR) { it.outcome },
                     expectedItems = shown.map { it.outcome },
                     // 항목과 같은 순서로 하나씩이다. 판정은 이쪽을 읽는다.
-                    expectedChecks = shown.map { d -> if (oneOf) d.check?.copy(oneOf = true) else d.check },
+                    expectedChecks = shown.map { it.check },
+                    setup = first.setup,
                     status = first.status,
                     gaps = group.flatMap { it.gaps }.distinct(),
                     arrivesAt = group.firstNotNullOfOrNull { it.arrivesAt },
@@ -469,12 +466,14 @@ class MapTestCaseGenerator(
                 // 하나에 매달린 앞·뒤 이동이 한 줄이 되어 `LeftArrow` 가 사라졌다. 대표 문구만 남고
                 // 기대결과는 양쪽이 섞여, 오른쪽을 누르고 왼쪽 결과를 기다리는 표가 된다.
                 group.first().step == draft.step &&
+                    // **준비할 상태가 다르면 다른 TC 다**(ARTEL-1209). 판독이 못 볼 뿐 다른 갈래다.
+                    group.first().removed == draft.removed &&
                     group.all { ConditionOverlap.provablyTogether(it.condition, draft.condition) }
             }
             if (home != null) home += draft else groups += mutableListOf(draft)
         }
         // 전환끼리는 조작과 도착 화면으로 가른다. 같은 키로 같은 곳에 가는 갈래는 한 줄이면 된다.
-        return groups + moves.groupBy { it.step to it.arrivesAt }.values.map { it.toList() }
+        return groups + moves.groupBy { Triple(it.step, it.arrivesAt, it.removed) }.values.map { it.toList() }
     }
 
     /**
@@ -601,6 +600,8 @@ class MapTestCaseGenerator(
         val check: MapTestCaseCheck? = null,
         /** 판독 기준으로 묶을 때 사전조건에서 지운 비교들의 서명(ARTEL-1209). 그것만 다른 갈래는 "다음 중 하나" 다. */
         val removed: String = "",
+        /** 판독이 못 봐서 사전조건에서 지운 비교들. 시나리오가 만들어 둘 "준비할 상태" 다. */
+        val setup: List<String> = emptyList(),
         /** 지우거나 정리하기 전 조건. 토글을 찾는 데 쓴다 — 판독이 못 보는 비교가 토글을 읽기도 한다. */
         val fullCondition: ConditionNode? = null,
         /**
@@ -707,6 +708,7 @@ class MapTestCaseGenerator(
                     condition = if (simplified != null) simplified.condition else settledCondition.condition,
                     fullCondition = settledCondition.condition,
                     removed = readable?.removed.orEmpty(),
+                    setup = readable?.setup.orEmpty(),
                     inputKey = row.inputKey,
                     aimedAt = row.controlPath,
                     step = step,

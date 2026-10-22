@@ -306,6 +306,8 @@ class MapTestCaseWriter(
                 put(CASE_KEY, case.identity)
                 // 토글(ARTEL-1209). 시나리오가 단계 순서를 세울 때 읽는다.
                 if (case.toggles.isNotEmpty()) put(TOGGLES, case.toggles)
+                // 준비할 상태(ARTEL-1209). QA 계약의 `cannot_check` 로 나간다.
+                if (case.setup.isNotEmpty()) put(SETUP, case.setup)
                 // **어느 화면이 되나**(ARTEL-614). 저작이 브리지를 고를 때 읽는다 — 기대결과
                 // 산문에서 뽑으면 그것이 곧 없애려는 문자열 맞춤이다.
                 case.arrivesAt?.let { put(ARRIVES_AT, it) }
@@ -335,6 +337,7 @@ class MapTestCaseWriter(
         /** 문장과 무관한 정체(ARTEL-617). 지도 키와 그 케이스를 낸 효과로 만든다. */
         const val CASE_KEY = "case_key"
         const val TOGGLES = "toggles"
+        const val SETUP = "setup"
         private const val BROKEN = "BROKEN"
         private const val DRAFT = "DRAFT"
         private const val REGRESSION = "REGRESSION"

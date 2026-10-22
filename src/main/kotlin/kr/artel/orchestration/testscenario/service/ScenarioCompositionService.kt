@@ -77,7 +77,9 @@ class ScenarioCompositionService(
                         testStep = it.step,
                         expected = it.expectedValue,
                         checks = it.expectedChecks?.let { json -> objectMapper.readTree(json.asString()) },
-                        cannotCheck = unreadable(it.condition?.let { json -> objectMapper.readTree(json.asString()) }),
+                        // 판독 기준 TC 는 판독 못 하는 비교를 조건에서 지우고 "준비할 상태"(`metadata.setup`)로 옮겨 둔다(ARTEL-1209).
+                        cannotCheck = (unreadable(it.condition?.let { json -> objectMapper.readTree(json.asString()) }) +
+                            setupOf(it.metadata?.let { json -> objectMapper.readTree(json.asString()) })).distinct(),
                         functions = it.functionsOrNull(),
                     )
                 },
@@ -99,4 +101,8 @@ class ScenarioCompositionService(
         }
         return own + node.path("parts").flatMap(::unreadable)
     }
+
+    /** TC 메타데이터의 "준비할 상태". 판독으로 확인할 수 없어 시나리오가 만들어 두어야 하는 상태다. */
+    private fun setupOf(metadata: JsonNode?): List<String> =
+        metadata?.path("setup")?.takeIf { it.isArray }?.map { it.asText() }.orEmpty()
 }

@@ -25,19 +25,27 @@ object MapTestCaseReadingRules {
      * 판독이 못 보는 비교(호출 · 지역 변수 · 엔진 값, [MapTestCaseReadings])는 지운다. QA 가 그것을 확인하려
      * 들면 없는 값을 찾는다. `또는` 의 한쪽을 지우면 전제가 좁아질 뿐 여전히 그 TC 에 닿는 길이라 남은 쪽을 둔다.
      *
-     * [removed] 는 지운 비교들의 서명이다. 그것만 다르고 결과가 다른 갈래끼리는 QA 가 어느 쪽인지 알 수 없어
-     * "다음 중 하나" 로 합친다([alternatives]).
+     * [removed] 는 지운 비교들의 서명이다. **그것이 다르면 다른 TC 다** — 갈래는 실제로 다른 동작이라 따로 시험해야
+     * 한다. 판독이 못 볼 뿐 게임 안에서 만들 수는 있는 상태(저장 데이터 유무, 튜토리얼을 끝냈는지)가 대부분이라,
+     * 지운 비교는 [setup] 으로 남겨 "준비할 상태" 로 적는다. 만들 수 있는지는 코드가 아니라 저작이 판단한다 —
+     * 지도는 그런 상태를 호출 결과로만 알아서, 어느 조작이 그것을 바꾸는지 잇지 못한다(실측 83 종 중 1 종).
      */
-    data class Readable(val condition: ConditionNode?, val removed: String)
+    data class Readable(val condition: ConditionNode?, val removed: String, val setup: List<String>)
 
     fun readable(node: ConditionNode?): Readable {
-        val removed = mutableListOf<String>()
-        return Readable(kept(node, removed), removed.sorted().joinToString(","))
+        val removed = mutableListOf<ConditionNode.Test>()
+        val kept = kept(node, removed)
+        val unique = removed.distinctBy(ConditionPrune::signature).sortedBy(ConditionPrune::signature)
+        return Readable(
+            kept,
+            unique.joinToString(",") { ConditionPrune.signature(it) },
+            unique.map { "${it.left.trim()} ${it.operator} ${it.right.trim()}" },
+        )
     }
 
-    private fun kept(node: ConditionNode?, removed: MutableList<String>): ConditionNode? = when (node) {
+    private fun kept(node: ConditionNode?, removed: MutableList<ConditionNode.Test>): ConditionNode? = when (node) {
         null -> null
-        is ConditionNode.Test -> if (node.readable) node else null.also { removed += ConditionPrune.signature(node) }
+        is ConditionNode.Test -> if (node.readable) node else null.also { removed += node }
         is ConditionNode.Group -> {
             val parts = node.parts.mapNotNull { kept(it, removed) }
             when (parts.size) {
@@ -314,8 +322,8 @@ object MapTestCaseReadingRules {
     /** 판독으로 확인할 수 있는 기대가 하나도 안 남은 TC 의 기대결과. 조작이 되는지만 본다. */
     const val NO_READABLE_RESULT = "판독으로 확인할 수 있는 결과 없음 — 조작이 되는지만 본다"
 
-    /** 기대결과 앞에 붙는 말. 항목 중 하나가 나오면 된다. */
-    const val ONE_OF = "다음 중 하나: "
+    /** 사전조건 끝에 붙는 말. 판독으로 확인할 수 없어 판정에서 빼고, 시나리오가 만들어 두어야 하는 상태다. */
+    const val SETUP = "준비할 상태(판독으로 확인 안 됨): "
 
     private const val ANY_SCENE_KEY = "any-scene"
     private const val SCENE_MARK = "\u0000scene\u0000"

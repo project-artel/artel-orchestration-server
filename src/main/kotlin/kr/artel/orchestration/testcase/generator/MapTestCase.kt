@@ -49,6 +49,11 @@ data class MapTestCase(
      * (`flag == 0` 첫 번째 키, `flag != 0` 두 번째 키). 시나리오가 순서를 세울 때 쓰도록 남긴다.
      */
     val toggles: List<String> = emptyList(),
+    /**
+     * **준비할 상태**(ARTEL-1209). 판독으로 확인할 수 없어 판정용 사전조건에서 뺀 비교들이다. 시나리오가 그 상태를
+     * 만든 뒤 QA 가 결과를 본다. 만들 수 없으면 QA 는 `SETUP-FAILED` 로 알린다.
+     */
+    val setup: List<String> = emptyList(),
     val status: String,
     val gaps: List<String> = emptyList(),
     /**
