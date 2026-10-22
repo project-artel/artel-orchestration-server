@@ -16,6 +16,8 @@ data class TestCaseVersionSummary(
     val version: String,
     val label: String?,
     val createdAt: Instant,
+    /** editor 행인가(ARTEL-1180). 같은 version 의 build 행과 따로 있다. */
+    val isEditor: Boolean = false,
     val latest: Boolean,
     val total: Int,
     val counts: Map<String, Int>,

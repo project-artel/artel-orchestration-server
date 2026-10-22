@@ -26,10 +26,9 @@ data class UpdateGameBuildRequest(
 /**
  * 게임 빌드 응답.
  *
- * @property version Unity Player Settings에서 관찰한 값. 읽기 전용이다. editor 행이면 editor 가 마지막으로
- * 보고한 값이라 다음 editor 등록에서 바뀔 수 있다
- * @property isEditor 프로젝트의 editor 행인가(ARTEL-1014). 게임 버전이 아니라 editor 작업 상태다. 목록에서
- * 마지막에 온다
+ * @property version Unity Player Settings에서 관찰한 값. 읽기 전용이다
+ * @property isEditor editor 행인가(ARTEL-1014). editor 도 version 마다 한 행이고 그 version 의 버전이다(ARTEL-1180).
+ * 같은 version 의 build 행과는 따로 있고, 버전을 올리지 않은 editor 재등록은 그 행의 스캔을 덮는다
  */
 data class GameBuildResponse(
     val id: String,
