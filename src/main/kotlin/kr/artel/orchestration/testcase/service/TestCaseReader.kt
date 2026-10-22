@@ -101,9 +101,14 @@ class TestCaseReader(
     }
 
     /** 버전 몫 하나를 정체 모양으로. 규칙은 클래스 설명에 적었다. */
-    fun project(identity: TestCaseEntity, version: TestCaseVersionEntity): TestCaseEntity {
+    fun project(
+        identity: TestCaseEntity,
+        version: TestCaseVersionEntity,
+        /** 부르는 쪽이 이미 본 출처. 목록처럼 줄마다 부를 때 metadata 를 두 번 읽지 않게 넘긴다. */
+        isMap: Boolean = identity.originLabel() == MAP,
+    ): TestCaseEntity {
         val base = identity.copy(verificationStatus = version.verificationStatus)
-        if (identity.originLabel() != MAP) return base
+        if (!isMap) return base
         return base.copy(
             scene = version.scene,
             step = version.step,

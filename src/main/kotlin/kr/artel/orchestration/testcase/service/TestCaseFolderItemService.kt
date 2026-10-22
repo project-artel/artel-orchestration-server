@@ -1,6 +1,5 @@
 package kr.artel.orchestration.testcase.service
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.BadRequestException
@@ -17,7 +16,6 @@ import kr.artel.orchestration.testcase.dto.TestCaseFolderItemsChangeResponse
 import kr.artel.orchestration.testcase.dto.TestCaseFolderItemsRequest
 import kr.artel.orchestration.testcase.dto.parseOptionalWireId
 import kr.artel.orchestration.testcase.dto.parseWireIds
-import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
@@ -25,6 +23,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Instant
+import kr.artel.orchestration.testcase.dto.isMapOrigin
 
 /**
  * folder 가 담은 케이스(ARTEL-1023). 넣기 · 빼기 · 옮기기 · 순서 · 버전별 숨김과, 항목을 버전으로 푼 목록.
@@ -43,7 +42,6 @@ class TestCaseFolderItemService(
     private val versions: TestCaseVersionRepository,
     private val gameBuilds: GameBuildRepository,
     private val transactionalOperator: TransactionalOperator,
-    private val objectMapper: ObjectMapper,
     private val projectChangeStreamManager: ProjectChangeStreamManager,
 ) {
 
@@ -168,9 +166,7 @@ class TestCaseFolderItemService(
     /** 한 쓰기에서 실제로 바뀐 케이스. */
     private data class Changed(val caseIds: List<Long>, val droppedCaseIds: List<Long> = emptyList())
 
-    private fun isMapCase(metadata: String): Boolean =
-        runCatching { objectMapper.readTree(metadata) }.getOrNull()
-            ?.path(MapTestCaseWriter.ORIGIN_FIELD)?.asText() == MapTestCaseWriter.ORIGIN
+    private fun isMapCase(metadata: String): Boolean = isMapOrigin(metadata)
 
     private companion object {
         const val MAP = "MAP"

@@ -1,6 +1,5 @@
 package kr.artel.orchestration.testcase.service
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.game.repository.GameBuildRepository
@@ -13,13 +12,13 @@ import kr.artel.orchestration.testcase.dto.TestCaseVersionSummary
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.entity.VerificationStatus
-import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import kr.artel.orchestration.testcase.repository.TestCaseVersionGroupRepository
 import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import org.springframework.stereotype.Service
 import java.time.Instant
+import kr.artel.orchestration.testcase.dto.isMapOrigin
 
 /**
  * 케이스 라이브러리를 게임 버전별로 보는 조회(ARTEL-1021).
@@ -34,7 +33,6 @@ class TestCaseVersionService(
     private val versions: TestCaseVersionRepository,
     private val gameBuilds: GameBuildRepository,
     private val projectAccessService: ProjectAccessService,
-    private val objectMapper: ObjectMapper,
     private val folderItems: TestCaseFolderItemRepository,
     private val groups: TestCaseVersionGroupRepository,
     private val reader: TestCaseReader,
@@ -142,8 +140,9 @@ class TestCaseVersionService(
             here != null -> ONLY_THIS
             else -> ONLY_OTHER
         }
-        // 내용을 비추는 규칙은 TR · QA 와 같은 한 자리다(ARTEL-1069).
-        val shown = reader.project(identity, version)
+        // 출처는 한 번만 본다. 내용을 비추는 규칙은 TR · QA 와 같은 한 자리다(ARTEL-1069).
+        val map = isMapCase(identity)
+        val shown = reader.project(identity, version, map)
         return TestCaseVersionRow(
             id = requireNotNull(identity.id).toString(),
             scene = shown.scene,
@@ -151,7 +150,7 @@ class TestCaseVersionService(
             precondition = shown.precondition,
             expectedValue = shown.expectedValue,
             status = shown.status,
-            origin = if (isMapCase(identity)) MAP else MANUAL,
+            origin = if (map) MAP else MANUAL,
             folderId = folderId?.toString(),
             createdAt = identity.createdAt ?: Instant.EPOCH,
             verificationStatus = here?.verificationStatus,
@@ -160,9 +159,7 @@ class TestCaseVersionService(
         )
     }
 
-    private fun isMapCase(identity: TestCaseEntity): Boolean =
-        runCatching { objectMapper.readTree(identity.metadata.asString()) }.getOrNull()
-            ?.path(MapTestCaseWriter.ORIGIN_FIELD)?.asText() == MapTestCaseWriter.ORIGIN
+    private fun isMapCase(identity: TestCaseEntity): Boolean = isMapOrigin(identity.metadata.asString())
 
     private companion object {
         const val MAP = "MAP"
