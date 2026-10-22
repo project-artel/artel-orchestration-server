@@ -822,6 +822,36 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(empty.status).isEqualTo(400)
     }
 
+    /** 라이브러리 버전 메뉴: 고른 버전에서 이 버전의 모든 TC 판정을 가져온다. 바로 앞이 아닌 버전도 된다(ARTEL-1180). */
+    @Test
+    fun `고른 버전에서 이 버전의 모든 TC 판정을 가져온다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val buildA = ingestedBuild(projectId, "1.0.0", Instant.now().minusSeconds(120))
+        generate(token, projectId, buildA.gameBuildId)
+        val (passed, failed) = versions.findByGameBuildId(buildA.gameBuildId).toList().sortedBy { it.testCaseId }
+        versions.save(passed.copy(verificationStatus = "VERIFIED"))
+        versions.save(failed.copy(verificationStatus = "FAILED"))
+        val buildB = ingestedBuild(projectId, "1.1.0", Instant.now().minusSeconds(60))
+        generate(token, projectId, buildB.gameBuildId)
+        // 바로 앞 버전(B)에서는 다시 검증 전이라 판정이 없다.
+        val buildC = ingestedBuild(projectId, "1.2.0", Instant.now(), isEditor = true)
+        generate(token, projectId, buildC.gameBuildId)
+        val carryUri = "/api/projects/$projectId/game-builds/${buildC.gameBuildId}/test-cases/verdict-carry-over"
+
+        assertThat(call(token, HttpMethod.POST, carryUri, "{}").status).isEqualTo(400)
+        assertThat(call(token, HttpMethod.POST, carryUri, """{"fromGameBuildId":"${buildC.gameBuildId}"}""").status).isEqualTo(400)
+        val reply = call(token, HttpMethod.POST, carryUri, """{"fromGameBuildId":"${buildA.gameBuildId}"}""")
+
+        assertThat(reply.status).isEqualTo(200)
+        assertThat(reply.body["carried"].map { it.asLong() }).containsExactlyInAnyOrder(passed.testCaseId, failed.testCaseId)
+        assertThat(reply.body["skipped"].map { it["reason"].asText() }.toSet()).containsOnly("NO_PREVIOUS_VERDICT")
+        val inC = versions.findByGameBuildId(buildC.gameBuildId).toList().associateBy { it.testCaseId }
+        assertThat(inC.getValue(passed.testCaseId).verificationStatus).isEqualTo("VERIFIED")
+        assertThat(inC.getValue(failed.testCaseId).verificationStatus).isEqualTo("FAILED")
+        assertThat(inC.getValue(failed.testCaseId).verdictCarriedFromBuildId).isEqualTo(buildA.gameBuildId)
+    }
+
     @Test
     fun `앞 버전 TR 의 TS 를 가져오면 복사본이 같은 케이스를 가리키고, 이 버전에 없는 케이스를 알린다`(): Unit = runBlocking {
         val (userId, token) = signIn()

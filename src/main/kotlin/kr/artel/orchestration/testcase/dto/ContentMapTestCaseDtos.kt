@@ -78,10 +78,16 @@ data class TestCaseGenerationCandidate(
 data class TestCaseGenerationCandidatesResponse(val items: List<TestCaseGenerationCandidate>)
 
 /**
- * 생성 뒤 고른 TC 에 앞 버전 판정을 이어받는 요청(ARTEL-1180).
+ * 생성 뒤 판정을 가져오는 요청(ARTEL-1180).
  * `POST /api/projects/{projectId}/game-builds/{gameBuildId}/test-cases/verdict-carry-over`.
+ *
+ * @property fromGameBuildId 가져올 버전. 없으면 케이스마다 바로 앞 버전.
+ * @property testCaseIds 가져올 TC. 없으면 이 버전의 모든 TC(이때는 [fromGameBuildId] 가 있어야 한다).
  */
-data class VerdictCarryOverRequest(val testCaseIds: List<String?>? = null)
+data class VerdictCarryOverRequest(
+    val testCaseIds: List<String?>? = null,
+    val fromGameBuildId: String? = null,
+)
 
 /** 이어받지 못한 TC 하나와 그 까닭([VerdictCarryOverService.Skip] 의 이름). */
 data class VerdictCarryOverSkipped(val testCaseId: String, val reason: String)

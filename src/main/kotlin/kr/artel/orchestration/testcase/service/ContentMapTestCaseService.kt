@@ -80,20 +80,29 @@ class ContentMapTestCaseService(
     }
 
     /**
-     * 생성 뒤 고른 TC 에 앞 버전 판정을 이어받는다(ARTEL-1180). 규칙은 [VerdictCarryOverService.carry] 에 있다.
-     * build 가 없거나 비멤버면 404 다. [testCaseIds] 가 비면 400 이다.
+     * 생성 뒤 판정을 가져온다(ARTEL-1180). 규칙은 [VerdictCarryOverService.carry] 에 있다.
+     *
+     * [fromGameBuildId] 는 가져올 버전이다 — 없으면 케이스마다 바로 앞 버전. [testCaseIds] 가 null 이면 이 버전의 모든
+     * TC 다. 둘 다 없거나 [testCaseIds] 가 빈 목록이면 400, 가져올 버전이 이 버전 자신이어도 400 이다. 두 build 중
+     * 하나라도 없거나 비멤버 · 다른 프로젝트면 404 다.
      */
     suspend fun carryVerdicts(
         userId: Long,
         projectId: Long,
         gameBuildId: Long,
-        testCaseIds: List<Long>,
+        testCaseIds: List<Long>?,
+        fromGameBuildId: Long? = null,
     ): VerdictCarryOverService.Outcome {
-        if (testCaseIds.isEmpty()) throw BadRequestException("testCaseIds 가 비어 있습니다.")
+        if (testCaseIds?.isEmpty() == true) throw BadRequestException("testCaseIds 가 비어 있습니다.")
+        if (testCaseIds == null && fromGameBuildId == null) throw BadRequestException("testCaseIds 나 fromGameBuildId 가 필요합니다.")
+        if (fromGameBuildId == gameBuildId) throw BadRequestException("같은 버전에서는 가져올 수 없습니다.")
         gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: throw NotFoundException("빌드를 찾을 수 없습니다.")
+        if (fromGameBuildId != null) {
+            gameBuilds.findAccessibleById(fromGameBuildId, projectId, userId) ?: throw NotFoundException("가져올 버전을 찾을 수 없습니다.")
+        }
         val outcome = transactionalOperator.executeAndAwait {
             folderService.lockProjectFolders(projectId)
-            verdictCarry.carry(gameBuildId, testCaseIds)
+            verdictCarry.carry(gameBuildId, testCaseIds, fromGameBuildId)
         }
         if (outcome.carried.isNotEmpty()) projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES)
         return outcome

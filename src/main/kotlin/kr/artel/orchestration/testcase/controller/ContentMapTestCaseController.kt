@@ -51,8 +51,9 @@ class ContentMapTestCaseController(
     }
 
     /**
-     * 생성 뒤 고른 TC 에 앞 버전 판정을 이어받는다(ARTEL-1180). 이 버전에서 직접 판정이 난 TC, 앞 버전 판정이 없는 TC,
-     * 내용이 바뀐 TC 는 이어받지 않고 `skipped` 에 까닭과 함께 싣는다.
+     * 생성 뒤 판정을 가져온다(ARTEL-1180). `fromGameBuildId` 버전(없으면 바로 앞 버전)에서, `testCaseIds`(없으면 이 버전의
+     * 모든 TC)의 판정을 가져온다. 이 버전에서 직접 판정이 난 TC, 가져올 판정이 없는 TC, 내용이 바뀐 TC 는 가져오지 않고
+     * `skipped` 에 까닭과 함께 싣는다.
      */
     @PostMapping("/api/projects/{projectId}/game-builds/{gameBuildId}/test-cases/verdict-carry-over")
     suspend fun carryVerdicts(
@@ -61,7 +62,8 @@ class ContentMapTestCaseController(
         @CurrentUserId appUserId: Long,
         @RequestBody request: VerdictCarryOverRequest,
     ): VerdictCarryOverResponse {
-        val outcome = service.carryVerdicts(appUserId, projectId, gameBuildId, ids(request.testCaseIds))
+        val from = request.fromGameBuildId?.let { it.trim().toLongOrNull() ?: throw BadRequestException("invalid id: $it") }
+        val outcome = service.carryVerdicts(appUserId, projectId, gameBuildId, request.testCaseIds?.let(::ids), from)
         return VerdictCarryOverResponse(
             carried = outcome.carried.map { it.toString() },
             skipped = outcome.skipped.map { (testCaseId, reason) -> VerdictCarryOverSkipped(testCaseId.toString(), reason.name) },

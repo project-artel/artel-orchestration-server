@@ -13903,6 +13903,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "fromGameBuildId": {
+            "type": "string"
           }
         }
       },

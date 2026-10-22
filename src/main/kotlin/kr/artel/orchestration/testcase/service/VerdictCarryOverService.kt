@@ -49,7 +49,7 @@ class VerdictCarryOverService(
         /** 이 버전에서 직접 판정이 났다. 앞 버전 것으로 덮지 않는다. */
         JUDGED_IN_THIS_VERSION,
 
-        /** 앞 버전 몫이 없거나 판정(통과 · 실패)이 없다. */
+        /** 가져올 버전에 그 케이스의 몫이 없거나, 판정(통과 · 실패)이 없다. */
         NO_PREVIOUS_VERDICT,
 
         /** 앞 버전과 내용이 다르다. */
@@ -88,15 +88,23 @@ class VerdictCarryOverService(
         return Outcome(carried = carried, reset = reset)
     }
 
-    /** 생성 뒤에 고른 케이스만 이어받는다. 이어받지 못한 케이스는 까닭과 함께 돌려준다. */
-    suspend fun carry(gameBuildId: Long, testCaseIds: Collection<Long>): Outcome {
-        val rows = versions.findByGameBuildId(gameBuildId).toList()
-            .filter { it.testCaseId in testCaseIds }
-            .associateBy { it.testCaseId }
-        val previous = previousOf(rows.values, gameBuildId)
+    /**
+     * 생성 뒤에 판정을 가져온다. 이어받지 못한 케이스는 까닭과 함께 돌려준다.
+     *
+     * [fromBuildId] 를 주면 그 버전의 몫에서, 없으면 케이스마다 바로 앞 버전 몫에서 가져온다. [testCaseIds] 가 null 이면
+     * 이 버전의 모든 몫이다(라이브러리 버전 메뉴의 "다른 버전에서 판정 결과 가져오기").
+     */
+    suspend fun carry(gameBuildId: Long, testCaseIds: Collection<Long>?, fromBuildId: Long? = null): Outcome {
+        val here = versions.findByGameBuildId(gameBuildId).toList()
+        val rows = here.filter { testCaseIds == null || it.testCaseId in testCaseIds }.associateBy { it.testCaseId }
+        val previous = if (fromBuildId == null) {
+            previousOf(rows.values, gameBuildId)
+        } else {
+            versions.findByGameBuildId(fromBuildId).toList().filter { it.testCaseId in rows }.associateBy { it.testCaseId }
+        }
         val carried = mutableListOf<Long>()
         val skipped = linkedMapOf<Long, Skip>()
-        for (testCaseId in testCaseIds.distinct()) {
+        for (testCaseId in (testCaseIds ?: rows.keys).distinct()) {
             val row = rows[testCaseId]
             val reason = if (row == null) Skip.NOT_IN_VERSION else eligibility(row, previous[testCaseId])
             if (reason != null) {
