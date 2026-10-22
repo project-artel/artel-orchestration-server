@@ -71,7 +71,7 @@ class MapTestCaseGroupingMeasureTest {
         assumeTrue(!docs.isNullOrBlank(), "tc.measure.docs 가 없어 건너뛴다")
         val out = File(System.getProperty("tc.measure.out") ?: "target/tc-measure").apply { mkdirs() }
 
-        val lines = mutableListOf("문서 | 방식 | TC | 씬 빼고 서로 다른 TC | 성립 불가 사전조건 | 판독 못 하는 기대 항목 | 다음 중 하나 | 어느 씬에서나 | 볼 결과 없음")
+        val lines = mutableListOf("문서 | 방식 | TC | 씬 빼고 서로 다른 TC | 성립 불가 사전조건 | 판독 못 하는 기대 항목 | 판독 못 하는 사전조건 비교 | 다음 중 하나 | 어느 씬에서나 | 볼 결과 없음")
         for (path in docs!!.split(',').map { it.trim() }) {
             val mapId = load(File(path))
             val names = contentMaps.findSceneObjectNames(mapId).toList()
@@ -96,7 +96,8 @@ class MapTestCaseGroupingMeasureTest {
         val oneOf = cases.count { it.expected.startsWith(MapTestCaseReadingRules.ONE_OF) }
         val anyScene = cases.count { it.step.endsWith(MapTestCaseReadingRules.ANY_SCENE) }
         val nothing = cases.count { it.expected == MapTestCaseReadingRules.NO_READABLE_RESULT }
-        return "$doc | ${grouping.name.lowercase()} | ${cases.size} | $distinct | $impossible | $unreadable | $oneOf | $anyScene | $nothing"
+        val unreadablePre = cases.count { it.precondition.contains("(확인 불가)") }
+        return "$doc | ${grouping.name.lowercase()} | ${cases.size} | $distinct | $impossible | $unreadable | $unreadablePre | $oneOf | $anyScene | $nothing"
     }
 
     /** 문서 하나를 새 프로젝트 · 빌드 · 지도로 적재한다. 다른 측정과 섞이지 않게 매번 새로 만든다. */

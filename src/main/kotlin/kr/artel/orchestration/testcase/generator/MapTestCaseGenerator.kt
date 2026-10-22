@@ -683,7 +683,8 @@ class MapTestCaseGenerator(
                     // 실측에서 `GameClearController` 가 그렇다.
                     entryKey = row.entryId?.let { "${row.sceneName}\u001F$it" } ?: key,
                     scene = row.sceneName,
-                    condition = readable?.condition ?: settledCondition.condition,
+                    // 지운 뒤 아무것도 안 남으면 조건이 없는 것이다. `?:` 로 되돌리면 지운 비교가 되살아난다.
+                    condition = if (readable != null) readable.condition else settledCondition.condition,
                     removed = readable?.removed.orEmpty(),
                     inputKey = row.inputKey,
                     aimedAt = row.controlPath,
