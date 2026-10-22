@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory
 import io.netty.channel.ChannelOption
 import kotlinx.coroutines.reactive.awaitSingle
 import kr.artel.orchestration.projectagent.config.ProjectAgentProperties
+import kr.artel.orchestration.qa.service.QaSessionLlmKey
 import kr.artel.orchestration.settings.config.AgentServerProperties
 import org.springframework.http.MediaType
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
@@ -48,12 +49,17 @@ class ProjectAgentStepClient(
             .awaitSingle()
 }
 
-/** agent-server 로 보내는 요청(snake_case). `model` 이 null 이면 agent-server 가 기본 model 을 쓴다. */
+/**
+ * agent-server 로 보내는 요청(snake_case). `model` 이 null 이면 agent-server 가 기본 model 을 쓴다.
+ *
+ * `llm_key` 는 사용자 key 로 도는 step 에만 실린다. 원문이 담기므로 이 본문을 로그로 남기지 않는다.
+ */
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
 data class ProjectAgentStepRequest(
     val conversationId: Long,
     val projectId: Long,
     val model: String?,
+    val llmKey: QaSessionLlmKey? = null,
     val locale: String,
     val toolsEnabled: Boolean,
     val pageCatalog: JsonNode,

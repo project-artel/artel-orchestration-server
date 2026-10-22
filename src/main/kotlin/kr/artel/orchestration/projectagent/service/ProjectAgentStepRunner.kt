@@ -23,9 +23,12 @@ import kr.artel.orchestration.projectagent.entity.ProjectAgentMessageEntity
 import kr.artel.orchestration.projectagent.entity.ProjectAgentRole
 import kr.artel.orchestration.projectagent.entity.ProjectAgentStatus
 import kr.artel.orchestration.projectagent.repository.ProjectAgentConversationRepository
-import kr.artel.orchestration.settings.service.FeatureModelService
+import kr.artel.orchestration.projectagent.dto.ProjectAgentFailureCause
+import kr.artel.orchestration.userllmkey.entity.KeySource
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Component
+import org.springframework.web.reactive.function.client.WebClientResponseException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -46,7 +49,7 @@ class ProjectAgentStepRunner(
     private val conversations: ProjectAgentConversationRepository,
     private val locks: ProjectAgentLocks,
     private val client: ProjectAgentStepClient,
-    private val featureModels: FeatureModelService,
+    private val models: ProjectAgentModelService,
     private val users: AppUserRepository,
     private val properties: ProjectAgentProperties,
     private val objectMapper: ObjectMapper,
@@ -74,6 +77,13 @@ class ProjectAgentStepRunner(
             buildRequest(store.reload(conversationId))
         } catch (error: CancellationException) {
             throw error
+        } catch (error: UnusableProjectAgentModelException) {
+            logger.warn(
+                "사용자가 고른 project agent model 을 쓸 수 없다 [conversation: {}, model: {}, cause: {}]",
+                conversationId, error.model, error.failureCause,
+            )
+            fail(conversationId, self, StepFailure(error.failureCause, error.model, error.keySource))
+            return
         } catch (error: Exception) {
             logger.error("project agent step 요청을 만들지 못했다 [conversation: {}]", conversationId, error)
             fail(conversationId, self)
@@ -84,8 +94,14 @@ class ProjectAgentStepRunner(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            logger.warn("project agent step 호출 실패 [conversation: {}]: {}", conversationId, error.message)
-            fail(conversationId, self)
+            val cause = failureCauseOf(error)
+            // 요청 본문은 남기지 않는다. 사용자 key 원문(`llm_key`)이 실려 있다.
+            logger.warn(
+                "project agent step 호출 실패 [conversation: {}, model: {}, cause: {}]: {}",
+                conversationId, request.model, cause, error.message,
+            )
+            val keySource = if (request.llmKey == null) KeySource.PLATFORM else KeySource.USER
+            fail(conversationId, self, StepFailure(cause, request.model, keySource))
             return
         }
         try {
@@ -100,10 +116,12 @@ class ProjectAgentStepRunner(
 
     private suspend fun buildRequest(conversation: ProjectAgentConversationEntity): ProjectAgentStepRequest {
         val history = store.history(conversation.id!!)
+        val selection = models.resolveForStep(conversation.appUserId, conversation.projectId)
         return ProjectAgentStepRequest(
             conversationId = conversation.id,
             projectId = conversation.projectId,
-            model = featureModels.resolveAuthoringModel(),
+            model = selection.model,
+            llmKey = selection.llmKey,
             locale = localeOf(conversation.appUserId),
             toolsEnabled = toolResultsSinceLastInput(history) < properties.toolCallLimit,
             pageCatalog = conversation.pageCatalog?.let(store::toNode) ?: emptyCatalog(),
@@ -207,12 +225,30 @@ class ProjectAgentStepRunner(
         }
     }
 
-    /** NOTICE `error` 를 저장하고 대화를 `ERROR` 로 넘긴다. */
-    private suspend fun fail(conversationId: Long, self: Job?) {
+    /**
+     * agent-server 실패 본문의 `detail.code`. 모르는 값이거나 본문을 읽지 못하면 `llm_provider_error` 다.
+     * 코드가 없는 422 는 agent-server 가 model 을 거절한 것이라 `llm_model_unavailable` 로 본다.
+     */
+    private fun failureCauseOf(error: Exception): String {
+        if (error !is WebClientResponseException) return ProjectAgentFailureCause.LLM_PROVIDER_ERROR
+        val code = try {
+            objectMapper.readTree(error.responseBodyAsString)?.path("detail")?.path("code")?.asText()
+        } catch (parseError: Exception) {
+            null
+        }
+        return when {
+            code in ProjectAgentFailureCause.ALL -> code!!
+            error.statusCode.value() == HttpStatus.UNPROCESSABLE_ENTITY.value() -> ProjectAgentFailureCause.LLM_MODEL_UNAVAILABLE
+            else -> ProjectAgentFailureCause.LLM_PROVIDER_ERROR
+        }
+    }
+
+    /** NOTICE `error` 를 저장하고 대화를 `ERROR` 로 넘긴다. [failure] 가 없으면 원인 없는 일반 문장이다. */
+    private suspend fun fail(conversationId: Long, self: Job?, failure: StepFailure? = null) {
         try {
             locks.withLock(conversationId) {
                 if (!isCurrent(conversationId, self)) return@withLock
-                markError(conversationId, listOf(ProjectAgentStatus.RUNNING, ProjectAgentStatus.AWAITING_TOOL))
+                markError(conversationId, listOf(ProjectAgentStatus.RUNNING, ProjectAgentStatus.AWAITING_TOOL), failure)
             }
         } catch (error: CancellationException) {
             throw error
@@ -225,6 +261,7 @@ class ProjectAgentStepRunner(
     suspend fun markError(
         conversationId: Long,
         from: List<String> = listOf(ProjectAgentStatus.RUNNING),
+        failure: StepFailure? = null,
     ) {
         val locale = localeOf(store.reload(conversationId).appUserId)
         val moved = conversations.move(
@@ -234,8 +271,8 @@ class ProjectAgentStepRunner(
         store.append(
             conversationId,
             ProjectAgentRole.NOTICE,
-            ProjectAgentNotices.text(NoticeKind.ERROR, locale),
-            NoticePayload(NoticeKind.ERROR),
+            ProjectAgentNotices.errorText(failure?.cause, failure?.keySource, failure?.model, locale),
+            NoticePayload(NoticeKind.ERROR, failure?.cause, failure?.model, failure?.keySource?.wire),
         )
         store.publishConversation(conversationId)
     }
@@ -252,3 +289,6 @@ class ProjectAgentStepRunner(
         const val DEFAULT_LOCALE = "ko"
     }
 }
+
+/** 실패한 step 의 원인과 그 step 이 쓰려던 model · key. NOTICE `error` 의 payload 와 문장을 정한다. */
+data class StepFailure(val cause: String, val model: String?, val keySource: KeySource)
