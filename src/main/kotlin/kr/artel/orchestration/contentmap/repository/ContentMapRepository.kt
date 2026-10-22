@@ -214,6 +214,21 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
     fun findGameTypeNames(contentMapId: Long): Flow<String>
 
     /**
+     * **효과가 쓰는 값들**(ARTEL-1209). 조건이 읽는 값 중 여기 든 것이 토글이다 — 조작하면 바뀌는 상태라,
+     * 같은 화면에서 `flag == 0` 과 `flag != 0` 을 차례로 거친다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT f.target
+        FROM capability_effect f
+        JOIN capability c ON c.id = f.capability_id
+        WHERE c.content_map_id = :contentMapId AND f.kind = 'write' AND f.target IS NOT NULL
+        ORDER BY f.target ASC
+        """
+    )
+    fun findWrittenMembers(contentMapId: Long): Flow<String>
+
+    /**
      * 씬마다 **그 씬이 이름으로 아는 오브젝트들**.
      *
      * `GameObject.Find("이름")` 을 맞춰 보는 데 쓴다([MapTestCaseTargets.ofScene]). 인스펙터가

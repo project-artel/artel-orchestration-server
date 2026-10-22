@@ -73,4 +73,45 @@ class MapTestCaseReadingRulesTest {
         assertThat(out.single().scene).isEqualTo("TitleScene")
         assertThat(out.single().step).endsWith(MapTestCaseReadingRules.ANY_SCENE)
     }
+
+    private fun either(vararg parts: ConditionNode) = ConditionNode.Group(GroupKind.EITHER, parts.toList())
+
+    /** 실측 1.4.0 `GameClearController.Update`: `flag == 0` 아래에서 부른 메서드의 조건 트리가 `flag != 0` 갈래까지 들고 왔다. */
+    @Test
+    fun `바깥 조건과 부딪히는 또는 갈래를 뺀다`() {
+        val tree = every(
+            test("GameClearController.flag", "==", "0"),
+            either(every(test("GameClearController.flag", "!=", "0"), test("InteractionLock.IsLocked", "==", "0")), test("InteractionLock.IsLocked", "==", "0")),
+        )
+
+        val out = MapTestCaseReadingRules.simplified(tree)
+
+        assertThat(out.impossible).isFalse()
+        assertThat(out.condition).isEqualTo(every(test("GameClearController.flag", "==", "0"), test("InteractionLock.IsLocked", "==", "0")))
+    }
+
+    @Test
+    fun `갈래가 다 부딪히면 갈 수 없는 길이다`() {
+        val tree = every(test("A.b", "==", "0"), either(test("A.b", "==", "1"), test("A.b", "==", "2")))
+        assertThat(MapTestCaseReadingRules.simplified(tree).impossible).isTrue()
+    }
+
+    @Test
+    fun `같은 덩어리는 한 번만 쓴다`() {
+        val arm = either(test("A.b", "==", "1"), test("A.c", "==", "1"))
+        assertThat(MapTestCaseReadingRules.simplified(every(arm, arm)).condition).isEqualTo(arm)
+    }
+
+    @Test
+    fun `효과가 쓰고 조건이 읽는 값이 토글이다`() {
+        val tree = every(test("GameClearController.flag", "==", "0"), test("InteractionLock.IsLocked", "==", "0"))
+        assertThat(MapTestCaseReadingRules.toggles(tree, setOf("GameClearController.flag", "Player.Hp"))).containsExactly("GameClearController.flag")
+    }
+
+    @Test
+    fun `값 나열은 그중 하나로 줄여 적는다`() {
+        val list = either(*(0..4).map { test("StageDataSingleton.stagePosition", "==", "$it") }.toTypedArray())
+        assertThat(kr.artel.orchestration.testcase.generator.MapTestCasePhrasing.precondition("MapScene", list, compactValues = true))
+            .isEqualTo("MapScene 화면인 상태 / StageDataSingleton.stagePosition 가 0 · 1 · 2 · 3 · 4 중 하나")
+    }
 }

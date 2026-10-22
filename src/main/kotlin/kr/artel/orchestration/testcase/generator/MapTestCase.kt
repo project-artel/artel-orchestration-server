@@ -44,6 +44,11 @@ data class MapTestCase(
      * 이쪽은 판독이 싣는 코드 이름을 든다. 항목에 확인할 구조가 없으면 그 자리가 null 이다.
      */
     val expectedChecks: List<MapTestCaseCheck?> = emptyList(),
+    /**
+     * 이 사전조건이 읽는 **토글**(ARTEL-1209). 조작하면 바뀌는 상태라 같은 화면에서 차례로 거친다
+     * (`flag == 0` 첫 번째 키, `flag != 0` 두 번째 키). 시나리오가 순서를 세울 때 쓰도록 남긴다.
+     */
+    val toggles: List<String> = emptyList(),
     val status: String,
     val gaps: List<String> = emptyList(),
     /**

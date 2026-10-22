@@ -50,6 +50,95 @@ object MapTestCaseReadingRules {
     }
 
     /**
+     * **사전조건을 뜻을 바꾸지 않고 정리한 것.** [impossible] 이면 갈래가 하나도 안 남았다.
+     *
+     * 두 가지를 한다(실측 1.4.0 에서 비교 5 개 이상인 사전조건 52 건 가운데):
+     *
+     * - **바깥 조건과 부딪히는 `또는` 갈래를 뺀다**(18 건). 근거 문서는 `flag == 0` 아래에서 부른 메서드의 조건
+     *   트리를 통째로 붙여서, 그 안의 `flag != 0` 갈래까지 들어온다. 그 갈래는 값을 쓰기 전이라 갈 수 없는 길이거나,
+     *   값을 쓴 뒤의 일이라 "조작하기 전 상태" 가 아니다. 어느 쪽이든 사전조건이 아니다
+     * - **같은 덩어리는 한 번만 쓴다**(16 건)
+     */
+    data class Simplified(val condition: ConditionNode?, val impossible: Boolean)
+
+    fun simplified(node: ConditionNode?): Simplified {
+        if (node == null) return Simplified(null, false)
+        val out = pruned(node, emptyList())
+        return if (out == DEAD) Simplified(null, true) else Simplified(out, false)
+    }
+
+    private val DEAD = ConditionNode.Unknown("dead", null)
+
+    private fun pruned(node: ConditionNode, context: List<ConditionNode.Test>): ConditionNode? = when (node) {
+        is ConditionNode.Group -> when (node.kind) {
+            GroupKind.EVERY -> {
+                val here = context + node.parts.filterIsInstance<ConditionNode.Test>()
+                if (clashes(here)) DEAD
+                else {
+                    val parts = node.parts.map { pruned(it, here) }
+                    if (parts.any { it == DEAD }) DEAD else joined(GroupKind.EVERY, parts.filterNotNull())
+                }
+            }
+            GroupKind.EITHER -> {
+                val arms = node.parts.mapNotNull { arm ->
+                    val own = when (arm) {
+                        is ConditionNode.Test -> listOf(arm)
+                        is ConditionNode.Group -> if (arm.kind == GroupKind.EVERY) arm.parts.filterIsInstance<ConditionNode.Test>() else emptyList()
+                        else -> emptyList()
+                    }
+                    if (clashes(context + own)) null else pruned(arm, context + own).takeUnless { it == DEAD }
+                }
+                if (arms.isEmpty()) DEAD else joined(GroupKind.EITHER, arms)
+            }
+        }
+        else -> node
+    }
+
+    private fun joined(kind: GroupKind, parts: List<ConditionNode>): ConditionNode? {
+        val unique = parts.distinctBy(ConditionPrune::signature)
+        return when (unique.size) {
+            0 -> null
+            1 -> unique.single()
+            else -> ConditionNode.Group(kind, unique)
+        }
+    }
+
+    /** 함께 참이어야 하는 비교들 사이에 한 값이 둘인 것이 있나. 씬 비교는 [impossible] 이 따로 본다. */
+    private fun clashes(tests: List<ConditionNode.Test>): Boolean {
+        val equals = mutableMapOf<String, MutableSet<String>>()
+        val differs = mutableMapOf<String, MutableSet<String>>()
+        for (test in tests) {
+            val right = test.right.trim()
+            if (!LITERAL.matches(right)) continue
+            when (test.operator) {
+                "==" -> equals.getOrPut(test.left.trim()) { mutableSetOf() } += right
+                "!=" -> differs.getOrPut(test.left.trim()) { mutableSetOf() } += right
+            }
+        }
+        return equals.any { (left, values) -> values.size > 1 || values.any { it in differs[left].orEmpty() } }
+    }
+
+    /**
+     * **이 사전조건이 읽는 토글들.** 토글은 지도에서 어떤 효과가 쓰고 어떤 조건이 읽는 값이다 — 조작하면 바뀌는
+     * 상태라, 같은 화면에서 `flag == 0`(첫 번째 키) 과 `flag != 0`(두 번째 키) 을 차례로 거친다. 시나리오가 순서를
+     * 세울 때 쓰도록 남긴다.
+     *
+     * @param written 지도에서 효과가 쓰는 값들
+     */
+    fun toggles(node: ConditionNode?, written: Set<String>): List<String> {
+        val all = mutableListOf<String>()
+        fun walk(n: ConditionNode?) {
+            when (n) {
+                is ConditionNode.Test -> if (n.left.trim() in written) all += n.left.trim()
+                is ConditionNode.Group -> n.parts.forEach(::walk)
+                else -> Unit
+            }
+        }
+        walk(node)
+        return all.distinct().sorted()
+    }
+
+    /**
      * **이 사전조건은 성립할 수 없는가.**
      *
      * 함께 참이어야 하는 비교들(`그리고` 로 이어진 것, `또는` 안은 보지 않는다) 사이에서 두 모양만 본다:

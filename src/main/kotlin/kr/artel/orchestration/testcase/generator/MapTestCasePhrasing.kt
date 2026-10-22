@@ -34,10 +34,14 @@ object MapTestCasePhrasing {
      *
      * 조건이 없으면 화면만 남는다. 그것도 사전조건이다 — "그 화면이기만 하면 된다".
      */
-    fun precondition(scene: String, condition: ConditionNode?, inputKey: String? = null): String {
+    /**
+     * @param compactValues 같은 값의 `==` 를 `또는` 으로 나열한 갈래를 "`x` 가 0 · 1 · 2 중 하나" 로 줄여 적는다
+     *   (ARTEL-1209, 판독 기준). 실측 1.4.0 에서 `stagePosition == 0 또는 1 또는 2 또는 3 또는 4` 꼴이 18 건이었다
+     */
+    fun precondition(scene: String, condition: ConditionNode?, inputKey: String? = null, compactValues: Boolean = false): String {
         val state = "$scene 화면인 상태"
         // 갈래를 묶으면 같은 검사가 갈래마다 되풀이된다. 뜻이 같은 채로 읽을 것만 줄인다(ARTEL-624).
-        val text = stateText(ConditionPrune.of(condition), scene)
+        val text = stateText(ConditionPrune.of(condition), scene, compactValues)
             ?.let { if (inputKey == null) it else withoutInputCheck(it) }
             ?.ifBlank { null }
             ?: return state
@@ -527,7 +531,7 @@ object MapTestCasePhrasing {
      * 것**이기 때문이다 — 코드가 근거로 쓸 때는 좁혀야 하지만(`ScenarioConditionTree.guards`),
      * 사람에게는 명세가 말한 대로 보여 주는 것이 맞다.
      */
-    private fun stateText(node: ConditionNode?, scene: String): String? = when (node) {
+    private fun stateText(node: ConditionNode?, scene: String, compact: Boolean = false): String? = when (node) {
         null, is ConditionNode.Always, is ConditionNode.Gesture -> null
         // 못 읽은 조건을 사전조건에 적으면 실행하는 사람이 만들 수 없는 상태를 요구받는다.
         is ConditionNode.Unknown -> null
@@ -551,10 +555,10 @@ object MapTestCasePhrasing {
                 "${node.left} ${node.operator} ${node.right}".trim().ifBlank { null }
                     ?.let { if (node.readable) it else "$it$UNREAD_MARK" }
             }
-        is ConditionNode.Group -> {
+        is ConditionNode.Group -> valueList(node, compact) ?: run {
             val joiner = if (node.kind == GroupKind.EVERY) AND else OR
             val nested = if (node.kind == GroupKind.EVERY) OR else AND
-            val parts = node.parts.mapNotNull { stateText(it, scene) }
+            val parts = node.parts.mapNotNull { stateText(it, scene, compact) }
                 // 같은 갈래끼리는 편다. 갈래를 이어 붙이면 같은 비교가 여러 번 들어오고(호출자
                 // 조건과 불린 쪽 조건이 겹친다), 사람이 읽는 글이라 같은 말을 두 번 하지 않는다.
                 .flatMap { if (it.contains(nested)) listOf(it) else it.split(joiner) }
@@ -570,6 +574,19 @@ object MapTestCasePhrasing {
                 else -> parts.joinToString(joiner) { if (it.contains(nested)) "($it)" else it }
             }
         }
+    }
+
+    /**
+     * `x == a 또는 x == b 또는 …` 를 "`x` 가 a · b · … 중 하나" 로. 셋 이상일 때만 줄인다 — 둘이면 원래 꼴이 더 읽힌다.
+     */
+    private fun valueList(node: ConditionNode.Group, compact: Boolean): String? {
+        if (!compact || node.kind != GroupKind.EITHER || node.parts.size < 3) return null
+        val tests = node.parts.filterIsInstance<ConditionNode.Test>()
+        if (tests.size != node.parts.size || tests.any { it.operator != "==" }) return null
+        val left = tests.map { it.left.trim() }.distinct().singleOrNull() ?: return null
+        val values = tests.map { it.right.trim() }.distinct()
+        val mark = if (tests.any { !it.readable }) UNREAD_MARK else ""
+        return "$left 가 ${values.joinToString(" · ")} 중 하나$mark"
     }
 
     /**

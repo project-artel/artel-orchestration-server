@@ -99,6 +99,8 @@ class MapTestCaseGenerator(
             }
         // **판독이 읽는 타입들**([MapTestCaseReadings]). 사전조건의 비교가 QA 에서 확인되는지 가른다.
         val gameTypes = contentMaps.findGameTypeNames(contentMapId).toList().toSet()
+        // **토글**(ARTEL-1209): 효과가 쓰고 조건이 읽는 값. 판독 기준일 때만 쓴다.
+        val written = if (reading) contentMaps.findWrittenMembers(contentMapId).toList().toSet() else emptySet()
         // **읽는 곳은 하나다.** 앞서 창구가 셋이었고(조작 · 관측 · 존재 확인) 각자 다른 잣대를
         // 손으로 들고 있었다. 무엇을 남길지는 이제 질의가 정한다([ContentMapRepository.findTestCaseRows]).
         //
@@ -107,7 +109,7 @@ class MapTestCaseGenerator(
         // 누를 것이다. 아래(효과 읽기 · 갈래 펴기 · 합치기)는 두 벌이 되지 않는다.
         val drafts = contentMaps.findTestCaseRows(contentMapId).toList()
             .flatMap { row -> draftsOf(row, edges, settled, exits, refs, positions, owners, namesByScene, gameTypes, reading) }
-        return (merged(drafts, reading) + screenElements(contentMapId))
+        return (merged(drafts, reading, written) + screenElements(contentMapId))
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
             // 못 적으면 케이스가 아니다. 조작은 눌러 보면 되지만 관측은 볼 시점이 전부다.
@@ -147,13 +149,15 @@ class MapTestCaseGenerator(
      *
      * 순서는 첫 조각의 자리를 지킨다. 뷰의 정렬이 프롬프트 캐시 계약이라 흔들면 안 된다.
      */
-    private fun merged(drafts: List<Draft>, reading: Boolean = false): List<MapTestCase> =
+    private fun merged(drafts: List<Draft>, reading: Boolean = false, written: Set<String> = emptySet()): List<MapTestCase> =
         drafts.groupBy { it.entryKey }
             .flatMap { (_, ofCapability) -> branches(ofCapability) }
             .mapNotNull { group ->
                 val first = group.first()
                 // 이 무리가 함께 서려면 참이어야 하는 것. 바깥의 `settled`(정착 인자)와 다른 값이다.
+                // 묶으면 같은 덩어리가 겹치고 부딪히는 갈래가 생긴다. 판독 기준이면 뜻을 바꾸지 않고 정리한다(ARTEL-1209).
                 val groupCondition = weakest(group.map { it.condition })
+                    .let { if (reading) MapTestCaseReadingRules.simplified(it).condition else it }
                 // **이름과 기대결과가 같은 목록을 센다.** 이름의 `외 N건` 이 기대결과의 ` / ` 수와
                 // 어긋나면 읽는 사람이 하나를 못 찾는다. 같은 자리에서 한 번만 줄인다.
                 //
@@ -170,11 +174,12 @@ class MapTestCaseGenerator(
                     capabilityKey = first.capabilityKey,
                     scene = first.scene,
                     precondition = MapTestCasePhrasing.precondition(
-                        first.scene, groupCondition, first.inputKey,
+                        first.scene, groupCondition, first.inputKey, compactValues = reading,
                     ),
                     // **구조를 버리지 않는다**(ARTEL-627). 위 문장은 이것을 사람 말로 렌더한 것이고,
                     // 소비하는 쪽은 문장이 아니라 이쪽을 읽는다.
                     condition = groupCondition,
+                    toggles = if (reading) group.flatMap { MapTestCaseReadingRules.toggles(it.fullCondition, written) }.distinct().sorted() else emptyList(),
                     aimedAt = first.aimedAt,
                     // **이름은 조작이 아니라 시험이다**([MapTestCasePhrasing.trial]). 무엇이
                     // 일어나는지는 그 `group` 이 다 모여야 알 수 있어서 여기서 짓는다. 관측은 부를 조작이
@@ -590,6 +595,8 @@ class MapTestCaseGenerator(
         val check: MapTestCaseCheck? = null,
         /** 판독 기준으로 묶을 때 사전조건에서 지운 비교들의 서명(ARTEL-1209). 그것만 다른 갈래는 "다음 중 하나" 다. */
         val removed: String = "",
+        /** 지우거나 정리하기 전 조건. 토글을 찾는 데 쓴다 — 판독이 못 보는 비교가 토글을 읽기도 한다. */
+        val fullCondition: ConditionNode? = null,
         /**
          * **플레이어가 무엇을 건드렸나.** 이것이 곧 사람이 "기능 하나"로 세는 단위다.
          *
@@ -667,6 +674,9 @@ class MapTestCaseGenerator(
                 return@flatMap emptyList()
             }
             val readable = if (reading) MapTestCaseReadingRules.readable(settledCondition.condition) else null
+            // 바깥 조건과 부딪히는 `또는` 갈래를 빼고 같은 덩어리를 한 번만 쓴다. 갈래가 하나도 안 남으면 갈 수 없는 길이다.
+            val simplified = readable?.let { MapTestCaseReadingRules.simplified(it.condition) }
+            if (simplified?.impossible == true) return@flatMap emptyList()
             val sceneNames = namesByScene[row.sceneName].orEmpty()
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
             // 효과의 주인은 **그 효과를 든 기능**이다. 빌려 온 자리(`borrowed`)에서는 이 행이 아니다.
@@ -684,7 +694,8 @@ class MapTestCaseGenerator(
                     entryKey = row.entryId?.let { "${row.sceneName}\u001F$it" } ?: key,
                     scene = row.sceneName,
                     // 지운 뒤 아무것도 안 남으면 조건이 없는 것이다. `?:` 로 되돌리면 지운 비교가 되살아난다.
-                    condition = if (readable != null) readable.condition else settledCondition.condition,
+                    condition = if (simplified != null) simplified.condition else settledCondition.condition,
+                    fullCondition = settledCondition.condition,
                     removed = readable?.removed.orEmpty(),
                     inputKey = row.inputKey,
                     aimedAt = row.controlPath,
