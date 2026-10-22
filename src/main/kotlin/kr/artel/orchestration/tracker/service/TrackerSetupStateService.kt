@@ -39,7 +39,7 @@ private const val PROVIDER_CLAIM = "provider"
 class TrackerSetupStateService(
     private val jwtEncoder: JwtEncoder,
     // 이름으로 받지 않으면 @Primary인 브라우저 access 디코더가 주입되어 state가 전부 떨어진다.
-    @Qualifier("trackerSetupJwtDecoder") private val decoder: NimbusReactiveJwtDecoder,
+    @param:Qualifier("trackerSetupJwtDecoder") private val decoder: NimbusReactiveJwtDecoder,
     private val properties: AuthProperties,
     private val clock: Clock
 ) {

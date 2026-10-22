@@ -475,11 +475,11 @@ class QaRunChangeIntegrationTest {
         )
         members.save(ProjectMemberEntity(projectId = project.id!!, appUserId = userId, role = "OWNER", createdAt = now))
         val build = gameBuilds.save(
-            GameBuildEntity(projectId = project.id!!, version = "v${System.nanoTime()}", createdAt = now, updatedAt = now)
+            GameBuildEntity(projectId = project.id, version = "v${System.nanoTime()}", createdAt = now, updatedAt = now)
         )
         val instance = gameInstances.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 lastGameBuildId = build.id,
@@ -496,11 +496,11 @@ class QaRunChangeIntegrationTest {
                 evidenceDigest = "run-changes",
             )
         )
-        val testRunId = testRuns.save(TestRunEntity(projectId = project.id!!, name = "런"))!!.id!!
+        val testRunId = testRuns.save(TestRunEntity(projectId = project.id, name = "런")).id!!
         return World(
             userId = userId,
             token = jwtService.issue(user),
-            projectId = project.id!!,
+            projectId = project.id,
             gameInstanceId = instance.id!!,
             testRunId = testRunId,
         )
@@ -518,9 +518,9 @@ class QaRunChangeIntegrationTest {
                 startedAt = now,
                 completedAt = now,
             )
-        )!!
+        )
         val tries = (1..2).map {
-            val scenario = testScenarios.save(TestScenarioEntity(projectId = world.projectId))!!
+            val scenario = testScenarios.save(TestScenarioEntity(projectId = world.projectId))
             qaTries.save(
                 QaTryEntity(
                     testScenarioId = scenario.id!!,
@@ -536,7 +536,7 @@ class QaRunChangeIntegrationTest {
                     startedAt = now,
                     completedAt = now,
                 )
-            )!!.id!!
+            ).id!!
         }
         return Run(run.id!!, tries)
     }

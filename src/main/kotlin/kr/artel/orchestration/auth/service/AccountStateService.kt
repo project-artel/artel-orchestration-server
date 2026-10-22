@@ -36,9 +36,9 @@ class AccountStateService(private val databaseClient: DatabaseClient) {
             .bind("userId", userId)
             .map { row, _ ->
                 AccountStateRow(
-                    disabled = row.get("disabled", java.lang.Boolean::class.java)?.booleanValue() == true,
+                    disabled = row.get("disabled", Boolean::class.javaObjectType) == true,
                     mustChangePassword =
-                        row.get("must_change_password", java.lang.Boolean::class.java)?.booleanValue() == true
+                        row.get("must_change_password", Boolean::class.javaObjectType) == true
                 )
             }
             .one()

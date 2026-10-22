@@ -80,10 +80,10 @@ class ScenarioFlowMatrixTest {
                 provider = "github", providerUserId = "matrix-${seq.incrementAndGet()}",
                 login = "matrix", displayName = "Matrix", avatarUrl = null, email = null,
             )
-        )!!.userId.toLong()
+        ).userId.toLong()
         val project = projectRepository.save(
             ProjectEntity(name = "matrix-${seq.incrementAndGet()}", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectId = project.id!!
         memberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = userId, role = "OWNER", createdAt = now)

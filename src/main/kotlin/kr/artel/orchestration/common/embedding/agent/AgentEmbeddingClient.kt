@@ -2,14 +2,14 @@ package kr.artel.orchestration.common.embedding.agent
 
 import io.netty.channel.ChannelOption
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
+import kr.artel.orchestration.settings.config.AgentServerProperties
+import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import org.springframework.http.MediaType
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.awaitBody
 import reactor.netty.http.client.HttpClient
-import java.time.Duration
 
 /**
  * [EmbeddingClient]의 HTTP 구현(`POST {agent}/embed`). `AgentExtractClient`와 같은 자리·같은 방식이다.
@@ -19,12 +19,11 @@ import java.time.Duration
  */
 @Component
 class AgentEmbeddingClient(
-    @Value("\${artel.agent.base-url}") private val agentBaseUrl: String,
-    // 임베딩이 공용 모듈로 나오며 타임아웃 키가 바뀌어도 기존 배포의 튜닝값이 유지되게 한다:
-    // 임베딩 전용 키가 있으면 그것, 없으면 knowledge 백필이 쓰던 값, 그것도 없으면 PT2M.
-    @Value("\${artel.agent.embed-timeout:\${artel.knowledge.backfill.timeout:PT2M}}")
-    private val responseTimeout: Duration
+    properties: AgentServerProperties,
+    backfill: KnowledgeBackfillProperties
 ) : EmbeddingClient {
+    private val agentBaseUrl = properties.baseUrl
+    private val responseTimeout = properties.embedTimeout ?: backfill.timeout
 
     private val logger = LoggerFactory.getLogger(AgentEmbeddingClient::class.java)
 

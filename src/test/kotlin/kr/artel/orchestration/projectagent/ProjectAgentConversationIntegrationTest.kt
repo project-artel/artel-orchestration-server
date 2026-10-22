@@ -147,12 +147,12 @@ class ProjectAgentConversationIntegrationTest {
         val providerUserId = "$label-${seq.incrementAndGet()}"
         val user = oauthUserService.upsert(
             OAuthIdentity("github", providerUserId, "pa-$providerUserId", "Project Agent", null, null)
-        )!!
+        )
         val appUserId = user.userId.toLong()
         val now = Instant.now()
         val project = projectId ?: projectRepository.save(
             ProjectEntity(name = "agent-project", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = project, appUserId = appUserId, role = "OWNER", createdAt = now)
         )

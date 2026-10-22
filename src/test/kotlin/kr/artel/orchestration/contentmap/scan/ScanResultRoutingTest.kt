@@ -110,6 +110,47 @@ class ScanResultRoutingTest {
         assertThat(status.finishedAt).isNotNull()
     }
 
+    /**
+     * 끊은 스캔의 늦은 성공 결과는 앉히지 않는다(ARTEL-1183).
+     *
+     * 취소는 게임에 멈추라고 보내지만, 그 사이 이미 올라간 문서의 성공 결과가 뒤늦게 도착할 수 있다. 앉히면 사람이
+     * 끊은 스캔이 지도를 바꾸고, 그 지도는 반쯤 돈 순회의 것이라 못 돈 씬이 사라진 모습이 된다.
+     */
+    @Test
+    fun `끊은 스캔의 늦은 결과는 앉히지 않는다`(): Unit = runBlocking {
+        val world = newWorld()
+        val document = newDocument(world.contentMapId, healthyDocument())
+
+        statuses.put(
+            requestedStatus(world).copy(state = ScanState.FAILED, cancelled = true, error = "사용자가 스캔을 취소했습니다."),
+        )
+
+        // 프레임은 우리 것이므로 처리했다고 답하되, 적재는 하지 않는다.
+        assertThat(router.handle(world.instanceId, actionResult(success = true))).isTrue()
+
+        assertThat(documents.findById(document.id!!)!!.ingestedAt).isNull()
+
+        val status = statuses.find(world.gameBuildId)!!
+        assertThat(status.state).isEqualTo(ScanState.FAILED)
+        assertThat(status.cancelled).isTrue()
+    }
+
+    /**
+     * 상태를 모르는 결과는 지금까지 하던 대로 앉힌다.
+     *
+     * 상태는 프로세스 메모리에 살아서 서버가 다시 뜨면 비어 있다. 그때 결과가 오는 것은 끊긴 것이 아니라 재시작을
+     * 건너온 것이라, 모른다는 이유로 막으면 멀쩡한 스캔이 버려진다.
+     */
+    @Test
+    fun `상태를 모르는 결과는 그대로 앉힌다`(): Unit = runBlocking {
+        val world = newWorld()
+        val document = newDocument(world.contentMapId, healthyDocument())
+
+        assertThat(router.handle(world.instanceId, actionResult(success = true))).isTrue()
+
+        assertThat(documents.findById(document.id!!)!!.ingestedAt).isNotNull()
+    }
+
     /** 스캔하고 TC 생성(ARTEL-1040): 문서가 다 앉은 뒤 그 지도로 TC 를 만들고, 결과를 스캔 상태에 싣는다. */
     @Test
     fun `TC 생성을 함께 요청한 스캔은 적재 뒤 TC 를 만든다`(): Unit = runBlocking {
@@ -264,7 +305,7 @@ class ScanResultRoutingTest {
         // 화면이 읽는 창구도 같은 말을 한다.
         val response = view.read(world.userId, world.projectId, world.gameBuildId)!!
         assertThat(response.lastScan!!.state).isEqualTo(ScanState.FAILED)
-        assertThat(response.lastScan!!.error).isEqualTo("릴리스 빌드에서는 스캔할 수 없습니다.")
+        assertThat(response.lastScan.error).isEqualTo("릴리스 빌드에서는 스캔할 수 없습니다.")
     }
 
     /**
@@ -452,7 +493,7 @@ class ScanResultRoutingTest {
     private suspend fun newWorld(): World {
         val now = Instant.now()
         val userId = db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('console', 'console-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
         val project = projects.save(
             ProjectEntity(name = "scan-result-${System.nanoTime()}", genre = "ACTION", createdAt = now, updatedAt = now)

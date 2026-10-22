@@ -6,9 +6,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.common.error.ConflictException
+import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
+import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
 import kr.artel.orchestration.contentmap.scan.ContentMapScanService
+import kr.artel.orchestration.contentmap.scan.ScanPhase
 import kr.artel.orchestration.contentmap.scan.ScanState
 import kr.artel.orchestration.contentmap.scan.ScanStatus
 import kr.artel.orchestration.contentmap.scan.ScanStatusRegistry
@@ -59,6 +62,7 @@ class ContentMapScanTest {
     @Autowired private lateinit var gameInstances: GameInstanceRepository
     @Autowired private lateinit var db: DatabaseClient
     @Autowired private lateinit var contentMaps: ContentMapRepository
+    @Autowired private lateinit var documents: ContentMapDocumentRepository
     @Autowired private lateinit var testCases: TestCaseRepository
     @Autowired private lateinit var versions: TestCaseVersionRepository
     @Autowired private lateinit var statuses: ScanStatusRegistry
@@ -285,7 +289,123 @@ class ContentMapScanTest {
         assertThat(scan.startScan(stranger, projectId, buildId)).isNull()
     }
 
+    /** 게임이 쥔 단계에서는 끊을 수 있고, 그 스캔은 취소로 닫힌다. */
+    @Test
+    fun `도는 스캔을 끊으면 취소로 닫힌다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+
+        assertThat(scan.startScan(userId, projectId, buildId)).isNotNull()
+
+        val cancelled = scan.cancelScan(userId, projectId, buildId)
+        assertThat(cancelled).isNotNull()
+        assertThat(cancelled!!.state).isEqualTo(ScanState.FAILED)
+        assertThat(cancelled.cancelled).isTrue()
+        assertThat(cancelled.error).contains("취소")
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
+    /** 끊고 나면 다음 요청이 풀린다. 그것이 취소를 만든 이유다. */
+    @Test
+    fun `끊은 뒤에는 같은 빌드에 다시 시킬 수 있다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+
+        scan.startScan(userId, projectId, buildId)
+        scan.cancelScan(userId, projectId, buildId)
+
+        assertThat(scan.startScan(userId, projectId, buildId)).isNotNull()
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
+    /** 서버가 문서를 읽는 중에는 끊을 손잡이가 없다. 그 사실을 409 로 말한다. */
+    @Test
+    fun `서버가 읽는 단계에서는 끊을 수 없다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+
+        scan.startScan(userId, projectId, buildId)
+        statuses.advance(buildId) { it.copy(phase = ScanPhase.INGESTING) }
+
+        assertThatThrownBy { runBlocking { scan.cancelScan(userId, projectId, buildId) } }
+            .isInstanceOf(ConflictException::class.java)
+            .extracting("code").isEqualTo(ContentMapScanService.SCAN_NOT_CANCELLABLE)
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
+    /** 돌고 있는 것이 없는데 끊으라고 하면 화면이 낡은 것이다. 조용히 넘기지 않는다. */
+    @Test
+    fun `돌고 있는 스캔이 없으면 끊기도 409 다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+
+        assertThatThrownBy { runBlocking { scan.cancelScan(userId, projectId, buildId) } }
+            .isInstanceOf(ConflictException::class.java)
+            .extracting("code").isEqualTo(ContentMapScanService.SCAN_NOT_RUNNING)
+    }
+
+    /** 남의 프로젝트 빌드는 끊지도 못한다. 404 가 되도록 null 이다. */
+    @Test
+    fun `남의 프로젝트 빌드는 끊지 못한다`(): Unit = runBlocking {
+        val owner = newUser()
+        val projectId = newProject(owner)
+        val buildId = newBuild(projectId)
+
+        assertThat(scan.cancelScan(newUser(), projectId, buildId)).isNull()
+    }
+
+    /**
+     * 끊은 스캔이 올려 둔 접수증은 대기에서 빠지고, 앞선 스캔이 남긴 것은 그대로 있다.
+     *
+     * 남겨 두면 다음 스캔의 적재가 반쪽 순회의 문서까지 같이 앉힌다. 그렇다고 통째로 지우면 앞선 스캔에서 깨져
+     * 다시 시도하려고 남아 있는 문서까지 날아간다.
+     */
+    @Test
+    fun `끊으면 이 스캔이 올린 문서만 대기에서 뺀다`(): Unit = runBlocking {
+        val userId = newUser()
+        val projectId = newProject(userId)
+        val buildId = newBuild(projectId)
+        val instanceId = newInstance(projectId, buildId)
+        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        val map = contentMaps.save(ContentMapEntity(gameBuildId = buildId))
+
+        // 앞선 스캔이 남긴 것. 요청보다 전에 받았다.
+        val older = documents.save(document(map.id!!, Instant.now().minusSeconds(600)))
+
+        val started = requireNotNull(scan.startScan(userId, projectId, buildId))
+        // 이 스캔이 올린 것.
+        val mine = documents.save(document(map.id!!, started.requestedAt.plusSeconds(1)))
+
+        scan.cancelScan(userId, projectId, buildId)
+
+        assertThat(documents.findById(mine.id!!)).isNull()
+        assertThat(documents.findById(older.id!!)).isNotNull()
+
+        sessionManager.removeSession(instanceId.toString(), sessionManager.getSession(instanceId.toString())!!)
+    }
+
     // ---------- 픽스처 ----------
+
+    private fun document(contentMapId: Long, receivedAt: Instant) = ContentMapDocumentEntity(
+        contentMapId = contentMapId,
+        objectKey = "evidence/${System.nanoTime()}.json",
+        contentHash = "%064x".format(System.nanoTime()),
+        byteSize = 10,
+        receivedAt = receivedAt,
+    )
 
     private fun requested(gameBuildId: Long, gameInstanceId: Long, at: Instant) = ScanStatus(
         gameBuildId = gameBuildId,
@@ -297,7 +417,7 @@ class ContentMapScanTest {
 
     private suspend fun newUser(): Long =
         db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('console', 'console-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 
     private suspend fun newProject(userId: Long): Long {

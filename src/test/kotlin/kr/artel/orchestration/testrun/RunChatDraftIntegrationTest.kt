@@ -137,7 +137,7 @@ class RunChatDraftIntegrationTest {
                 avatarUrl = null,
                 email = null,
             )
-        )!!
+        )
         return user.userId.toLong() to jwtService.issue(user)
     }
 
@@ -145,11 +145,11 @@ class RunChatDraftIntegrationTest {
         val now = java.time.Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "draft-project", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = project.id!!, appUserId = appUserId, role = "OWNER", createdAt = now)
         )
-        return project.id!!
+        return project.id
     }
 
     /** 말을 보내고 응답 상태와 본문을 돌려준다. draft 가 있는 동안의 거절(409)도 그대로 본다. */

@@ -2,6 +2,7 @@ package kr.artel.orchestration.contentmap.ingest
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.contentmap.SceneBuildOrder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.collect
@@ -335,10 +336,10 @@ class ContentMapIngestService(
         // 를 불러 적재할 때마다 test case 가 생기고 바뀌고 지워졌다. 이제 사용자가 build 별로
         // `POST .../game-builds/{gameBuildId}/content-map/test-cases` 를 눌러 생성한다.
 
-        documents.stampIngested(document.id!!, INGESTER_VERSION, Instant.now(clock))
+        documents.stampIngested(document.id, INGESTER_VERSION, Instant.now(clock))
 
         return IngestResult(
-            documentId = document.id!!,
+            documentId = document.id,
             contentMapId = document.contentMapId,
             scenes = sceneIds.size,
             capabilities = keptKeys.size,
@@ -479,10 +480,7 @@ class ContentMapIngestService(
         val entry = runCatching {
             val map = contentMaps.findById(contentMapId) ?: return
             val scan = builds.findById(map.gameBuildId)?.sceneScan ?: return
-            objectMapper.readTree(scan.asString()).path("scenesInBuild")
-                .firstOrNull()?.asText(null)
-                ?.substringAfterLast('/')?.removeSuffix(".unity")
-                ?.takeIf { it.isNotBlank() }
+            SceneBuildOrder.names(scan, objectMapper).firstOrNull()
         }.onFailure { logger.warn("입구 씬을 못 읽었다 — 없이 간다 [contentMapId=$contentMapId] ${it.message}") }
             .getOrNull() ?: return
 

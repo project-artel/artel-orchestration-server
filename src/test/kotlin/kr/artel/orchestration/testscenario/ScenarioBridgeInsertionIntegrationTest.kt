@@ -91,10 +91,10 @@ class ScenarioBridgeInsertionIntegrationTest {
                 provider = "github", providerUserId = "bridge-${seq.incrementAndGet()}",
                 login = "bridge", displayName = "Bridge", avatarUrl = null, email = null,
             )
-        )!!.userId.toLong()
+        ).userId.toLong()
         projectId = projectRepository.save(
             ProjectEntity(name = "bridge-${seq.incrementAndGet()}", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         memberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = userId, role = "OWNER", createdAt = now)
         )
@@ -113,10 +113,10 @@ class ScenarioBridgeInsertionIntegrationTest {
         )
         contentMapId = map.id!!
         mapSceneId = sceneRepository.save(
-            SceneEntity(contentMapId = map.id!!, name = "Map_scene", walked = true)
+            SceneEntity(contentMapId = map.id, name = "Map_scene", walked = true)
         ).id!!
         battleSceneId = sceneRepository.save(
-            SceneEntity(contentMapId = map.id!!, name = "TurnBattleScene", walked = true)
+            SceneEntity(contentMapId = map.id, name = "TurnBattleScene", walked = true)
         ).id!!
     }
 
@@ -359,7 +359,7 @@ class ScenarioBridgeInsertionIntegrationTest {
         val now = Instant.now()
         val bare = projectRepository.save(
             ProjectEntity(name = "bare-${seq.incrementAndGet()}", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         memberRepository.save(
             ProjectMemberEntity(projectId = bare, appUserId = userId, role = "OWNER", createdAt = now)
         )
@@ -895,7 +895,7 @@ class ScenarioBridgeInsertionIntegrationTest {
         val again = reconcileService.reconcile(runId, projectId, userId, listOf(one))
 
         // **답한 것은 다시 묻지 않는다.** 조건이 사라진 것이 아니라 답을 들은 것뿐이다.
-        assertThat(again.questions).noneMatch { it.id == asked.question!!.id }
+        assertThat(again.questions).noneMatch { it.id == asked.question.id }
         // 묻지 않는 대신 통보는 남는다 — 그 구간이 여전히 미상이라는 사실은 말해야 한다.
         //
         // 문구가 아니라 **사유**를 본다. ARTEL-876 이 이 알림을 "스스로 원인을 말하게" 고치며

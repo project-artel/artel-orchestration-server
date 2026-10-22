@@ -17,10 +17,10 @@ import kr.artel.orchestration.knowledge.dto.KnowledgeMetadata
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class ExtractRequest(
-    @JsonProperty("source_url") val sourceUrl: String,
+    @param:JsonProperty("source_url") val sourceUrl: String,
     val filename: String,
     val model: String? = null,
-    @JsonProperty("document_id") val documentId: Long? = null,
+    @param:JsonProperty("document_id") val documentId: Long? = null,
 )
 
 /**
@@ -30,5 +30,5 @@ data class ExtractRequest(
 data class ExtractResponse(
     val source: String? = null,
     val metadata: KnowledgeMetadata? = null,
-    @JsonProperty("game_context") val gameContext: List<KnowledgeIngestItem> = emptyList(),
+    @param:JsonProperty("game_context") val gameContext: List<KnowledgeIngestItem> = emptyList(),
 )

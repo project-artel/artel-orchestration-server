@@ -2,14 +2,13 @@ package kr.artel.orchestration.knowledge.agent
 
 import io.netty.channel.ChannelOption
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
+import kr.artel.orchestration.settings.config.AgentServerProperties
 import org.springframework.http.MediaType
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.awaitBody
 import reactor.netty.http.client.HttpClient
-import java.time.Duration
 
 /**
  * Agent Server `POST /extract` 전용 클라이언트.
@@ -20,10 +19,12 @@ import java.time.Duration
  */
 @Component
 class AgentExtractClient(
-    @Value("\${artel.agent.base-url}") private val agentBaseUrl: String,
-    @Value("\${artel.agent.extract.timeout:PT3M}") private val responseTimeout: Duration,
-    @Value("\${artel.agent.extract.model:}") private val model: String?
+    properties: AgentServerProperties
 ) {
+    private val agentBaseUrl = properties.baseUrl
+    private val responseTimeout = properties.extract.timeout
+    private val model = properties.extract.model
+
     private val logger = LoggerFactory.getLogger(AgentExtractClient::class.java)
 
     private val webClient: WebClient = WebClient.builder()
@@ -48,7 +49,7 @@ class AgentExtractClient(
         val request = ExtractRequest(
             sourceUrl = sourceUrl,
             filename = filename,
-            model = model?.ifBlank { null },
+            model = model.ifBlank { null },
             documentId = documentId
         )
         logger.info("Agent /extract 요청: filename={}", filename)

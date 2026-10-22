@@ -47,8 +47,8 @@ class SdkPerformanceRepository(
               :focused,:battery,:hasProcess,:cpu,:workingSet,:privateBytes,:heap,:gen0,:gen1,:gen2,:processMs)
             RETURNING id
             """
-        ).bind("sessionId",sessionId).bind("instanceId",instanceId).bindNullable("runId",runId,java.lang.Long::class.java)
-            .bindNullable("messageId",message.id,java.lang.Long::class.java).bind("at",at)
+        ).bind("sessionId",sessionId).bind("instanceId",instanceId).bindNullable("runId",runId,Long::class.javaObjectType)
+            .bindNullable("messageId",message.id,Long::class.javaObjectType).bind("at",at)
             .bind("frameCount",message.frameTimes.frameCount).bind("sampledMs",message.frameTimes.sampledMs)
             .bind("meanMs",message.frameTimes.meanMs).bind("minMs",message.frameTimes.minMs)
             .bind("maxMs",message.frameTimes.maxMs).bind("p95Ms",message.frameTimes.p95Ms)
@@ -56,14 +56,14 @@ class SdkPerformanceRepository(
             .bind("pointOneLow",message.frameTimes.pointOnePercentLowFps).bind("hitchCount",message.frameTimes.hitchCount)
             .bind("hitchThreshold",message.frameTimes.hitchThresholdMs).bind("budgetMs",message.frameTimes.budgetMs)
             .bind("focused",message.status.isFocused).bindNullable("battery",message.status.batteryStatus,String::class.java)
-            .bind("hasProcess",p != null).bindNullable("cpu",p?.cpuPercent,java.lang.Double::class.java)
-            .bindNullable("workingSet",p?.workingSetBytes,java.lang.Long::class.java)
-            .bindNullable("privateBytes",p?.privateBytes,java.lang.Long::class.java)
-            .bindNullable("heap",p?.managedHeapBytes,java.lang.Long::class.java)
-            .bindNullable("gen0",p?.gen0Collections,java.lang.Integer::class.java)
-            .bindNullable("gen1",p?.gen1Collections,java.lang.Integer::class.java)
-            .bindNullable("gen2",p?.gen2Collections,java.lang.Integer::class.java)
-            .bindNullable("processMs",p?.sampledMs,java.lang.Double::class.java)
+            .bind("hasProcess",p != null).bindNullable("cpu",p?.cpuPercent,Double::class.javaObjectType)
+            .bindNullable("workingSet",p?.workingSetBytes,Long::class.javaObjectType)
+            .bindNullable("privateBytes",p?.privateBytes,Long::class.javaObjectType)
+            .bindNullable("heap",p?.managedHeapBytes,Long::class.javaObjectType)
+            .bindNullable("gen0",p?.gen0Collections,Int::class.javaObjectType)
+            .bindNullable("gen1",p?.gen1Collections,Int::class.javaObjectType)
+            .bindNullable("gen2",p?.gen2Collections,Int::class.javaObjectType)
+            .bindNullable("processMs",p?.sampledMs,Double::class.javaObjectType)
         return sql.map { row, _ -> row.long("id") }.one().awaitSingleOrNull()
     }
 
@@ -163,8 +163,8 @@ class SdkPerformanceRepository(
             .bind("p99",f.p99Ms*f.frameCount).bind("oneLow",f.onePercentLowFps*f.frameCount)
             .bind("hitches",f.hitchCount)
             .bind("processCount",if(p==null) 0 else 1).bind("cpuWeighted",(p?.cpuPercent ?: 0.0)*processMs)
-            .bind("cpuWeight",processMs).bindNullable("cpu",p?.cpuPercent,java.lang.Double::class.java)
-            .bindNullable("workingSet",p?.workingSetBytes,java.lang.Long::class.java)
+            .bind("cpuWeight",processMs).bindNullable("cpu",p?.cpuPercent,Double::class.javaObjectType)
+            .bindNullable("workingSet",p?.workingSetBytes,Long::class.javaObjectType)
             .bind("gen0",p?.gen0Collections ?: 0).bind("gen1",p?.gen1Collections ?: 0)
             .bind("gen2",p?.gen2Collections ?: 0).bind("discharging",if(message.status.batteryStatus=="Discharging") 1 else 0)
             .fetch().awaitRowsUpdated()
@@ -172,7 +172,7 @@ class SdkPerformanceRepository(
             .bind("sampled",f.sampledMs).bind("p95",f.p95Ms*f.frameCount).bind("max",f.maxMs)
             .bind("hitches",f.hitchCount).bind("processCount",if(p==null) 0 else 1)
             .bind("cpuWeighted",(p?.cpuPercent ?: 0.0)*processMs).bind("cpuWeight",processMs)
-            .bindNullable("workingSet",p?.workingSetBytes,java.lang.Long::class.java)
+            .bindNullable("workingSet",p?.workingSetBytes,Long::class.javaObjectType)
             .bind("focused",if(message.status.isFocused) 1 else 0).fetch().awaitRowsUpdated()
     }
 
@@ -182,7 +182,7 @@ class SdkPerformanceRepository(
         db.sql("""UPDATE sdk_performance_run_summary s SET is_editor=:isEditor,collected_groups=:collectedGroups
             FROM qa_run r WHERE s.qa_run_id=r.id AND r.game_instance_id=:instanceId
             AND r.status IN ('STARTING','RUNNING')""")
-            .bindNullable("isEditor",d.isEditor,java.lang.Boolean::class.java)
+            .bindNullable("isEditor",d.isEditor,Boolean::class.javaObjectType)
             .bindNullable("collectedGroups",d.collectedGroups?.toTypedArray(),Array<String>::class.java)
             .bind("instanceId",instanceId).fetch().awaitRowsUpdated()
     }
@@ -237,14 +237,14 @@ class SdkPerformanceRepository(
 
     private fun DatabaseClient.GenericExecuteSpec.bindDevice(d:SdkDeviceInfo):DatabaseClient.GenericExecuteSpec = this
         .bindNullable("deviceModel",d.deviceModel,String::class.java).bindNullable("processorType",d.processorType,String::class.java)
-        .bindNullable("processorCount",d.processorCount,java.lang.Integer::class.java).bindNullable("systemMemory",d.systemMemoryMb,java.lang.Integer::class.java)
+        .bindNullable("processorCount",d.processorCount,Int::class.javaObjectType).bindNullable("systemMemory",d.systemMemoryMb,Int::class.javaObjectType)
         .bindNullable("graphicsName",d.graphicsDeviceName,String::class.java).bindNullable("graphicsType",d.graphicsDeviceType,String::class.java)
-        .bindNullable("graphicsMemory",d.graphicsMemoryMb,java.lang.Integer::class.java).bindNullable("os",d.operatingSystem,String::class.java)
-        .bindNullable("quality",d.qualityLevel,java.lang.Integer::class.java).bindNullable("width",d.resolutionWidth,java.lang.Integer::class.java)
-        .bindNullable("height",d.resolutionHeight,java.lang.Integer::class.java).bindNullable("refresh",d.refreshRateHz,java.lang.Double::class.java)
-        .bindNullable("dpi",d.dpi,java.lang.Double::class.java).bindNullable("fullscreen",d.fullScreenMode,String::class.java)
-        .bindNullable("target",d.targetFrameRate,java.lang.Integer::class.java).bindNullable("vsync",d.vSyncCount,java.lang.Integer::class.java)
-        .bindNullable("isEditor",d.isEditor,java.lang.Boolean::class.java).bindNullable("isDebug",d.isDebugBuild,java.lang.Boolean::class.java)
+        .bindNullable("graphicsMemory",d.graphicsMemoryMb,Int::class.javaObjectType).bindNullable("os",d.operatingSystem,String::class.java)
+        .bindNullable("quality",d.qualityLevel,Int::class.javaObjectType).bindNullable("width",d.resolutionWidth,Int::class.javaObjectType)
+        .bindNullable("height",d.resolutionHeight,Int::class.javaObjectType).bindNullable("refresh",d.refreshRateHz,Double::class.javaObjectType)
+        .bindNullable("dpi",d.dpi,Double::class.javaObjectType).bindNullable("fullscreen",d.fullScreenMode,String::class.java)
+        .bindNullable("target",d.targetFrameRate,Int::class.javaObjectType).bindNullable("vsync",d.vSyncCount,Int::class.javaObjectType)
+        .bindNullable("isEditor",d.isEditor,Boolean::class.javaObjectType).bindNullable("isDebug",d.isDebugBuild,Boolean::class.javaObjectType)
         .bindNullable("backend",d.scriptingBackend,String::class.java).bindNullable("sdk",d.sdkVersion,String::class.java)
         .bindNullable("collectedGroups",d.collectedGroups?.toTypedArray(),Array<String>::class.java)
 
@@ -257,9 +257,9 @@ class SdkPerformanceRepository(
         nullableLong("gen1_collections"),nullableLong("gen2_collections"),nullableLong("discharging_sample_count"),stringArray("collected_groups"))
     private fun Readable.toDevice()=DeviceRow(nullableBoolean("is_editor"),string("scripting_backend"),string("sdk_version"),string("device_model"),string("processor_type"),nullableInt("processor_count"),string("graphics_device_name"),string("graphics_device_type"),string("operating_system"),nullableInt("target_frame_rate"),nullableInt("v_sync_count"),nullableDouble("refresh_rate_hz"))
     private fun Readable.toSeries()=SeriesRow(instant("bucket_at"),long("sample_count"),long("frame_count"),double("sampled_ms"),double("frame_time_sum_ms"),double("p95_sum"),double("frame_max_ms"),long("hitch_count"),long("process_count"),double("cpu_sum"),double("cpu_ms"),nullableLong("working_set"),long("focused_count"))
-    private fun Readable.long(n:String)=get(n,java.lang.Long::class.java)!!.toLong(); private fun Readable.nullableLong(n:String)=get(n,java.lang.Long::class.java)?.toLong()
-    private fun Readable.nullableInt(n:String)=get(n,java.lang.Integer::class.java)?.toInt(); private fun Readable.double(n:String)=get(n,java.lang.Double::class.java)!!.toDouble(); private fun Readable.nullableDouble(n:String)=get(n,java.lang.Double::class.java)?.toDouble()
-    private fun Readable.string(n:String)=get(n,String::class.java); private fun Readable.instant(n:String)=get(n,Instant::class.java)!!; private fun Readable.nullableInstant(n:String)=get(n,Instant::class.java); private fun Readable.nullableBoolean(n:String)=get(n,java.lang.Boolean::class.java)?.booleanValue()
+    private fun Readable.long(n:String)=get(n,Long::class.javaObjectType)!!; private fun Readable.nullableLong(n:String)=get(n,Long::class.javaObjectType)
+    private fun Readable.nullableInt(n:String)=get(n,Int::class.javaObjectType); private fun Readable.double(n:String)=get(n,Double::class.javaObjectType)!!; private fun Readable.nullableDouble(n:String)=get(n,Double::class.javaObjectType)
+    private fun Readable.string(n:String)=get(n,String::class.java); private fun Readable.instant(n:String)=get(n,Instant::class.java)!!; private fun Readable.nullableInstant(n:String)=get(n,Instant::class.java); private fun Readable.nullableBoolean(n:String)=get(n,Boolean::class.javaObjectType)
     private fun Readable.stringArray(n:String)=get(n,Array<String>::class.java)?.toList()
 
     companion object {

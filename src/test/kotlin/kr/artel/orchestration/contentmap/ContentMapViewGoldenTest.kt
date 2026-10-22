@@ -334,6 +334,39 @@ class ContentMapViewGoldenTest {
      * 화면이 "문서를 올리세요"를 그려야 하는 정상 상태다. 404 로 답하면 화면은 그 상태와 "남의
      * 빌드"를 구분할 수 없다.
      */
+    /**
+     * **씬마다 빌드 설정 순번과 입구 여부가 실린다**(ARTEL-1173). 씬 그래프는 순환이라 화면이 구조만으로는 게임 시작
+     * 씬을 모른다 — 이 둘이 지도를 시작 씬부터 그리게 한다.
+     *
+     * 순번은 빌드의 `scene_scan.scenesInBuild` 를 이름으로 맞춘 것이라, 목록에 없는 씬은 null 이고 목록에만 있는
+     * 씬은 응답에 생기지 않는다. 골든 빌드는 씬 스캔 없이 만들어져 처음에는 전부 null 이다.
+     */
+    @Test
+    fun `씬은 빌드 설정 순번과 입구 여부를 싣는다`(): Unit = runBlocking {
+        assertThat(response.scenes.map { it.buildOrder }).containsOnlyNulls()
+        assertThat(response.scenes.map { it.entry }).containsOnly(false)
+
+        val names = response.scenes.map { it.name }
+        // 응답 순서(이름 순)를 뒤집은 것을 빌드 설정으로 두고, 마지막 씬은 목록에서 뺀다. 목록에만 있는 씬 하나를 끼운다.
+        val inBuild = names.reversed().dropLast(1)
+        val scan = (inBuild.take(1) + "NotInMap" + inBuild.drop(1)).map { "Assets/Scenes/$it.unity" }
+        val build = gameBuilds.findById(gameBuildId)!!
+        gameBuilds.save(build.copy(sceneScan = Json.of("""{"scenesInBuild":${scan.joinToString(",", "[", "]") { "\"$it\"" }}}""")))
+        try {
+            val ordered = view.read(userId, projectId, gameBuildId)!!.scenes.associateBy { it.name }
+
+            assertThat(ordered[inBuild[0]]!!.buildOrder).isZero()
+            assertThat(ordered[inBuild[0]]!!.entry).isTrue()
+            // `NotInMap` 이 1 번을 차지하므로 그다음 씬은 2 번이다 — 순번은 지도가 아니라 빌드 설정의 자리다.
+            assertThat(ordered[inBuild[1]]!!.buildOrder).isEqualTo(2)
+            assertThat(ordered[inBuild[1]]!!.entry).isFalse()
+            assertThat(ordered[names.first()]!!.buildOrder).isNull()
+            assertThat(ordered.keys).doesNotContain("NotInMap")
+        } finally {
+            gameBuilds.save(build)
+        }
+    }
+
     @Test
     fun `문서가 없는 빌드는 404 가 아니라 빈 응답이다`(): Unit = runBlocking {
         val empty = view.read(userId, projectId, newBuild(projectId))!!
@@ -384,7 +417,7 @@ class ContentMapViewGoldenTest {
         assertThat(registered.scenes).isEmpty()
         assertThat(registered.pendingDocuments).hasSize(1)
         with(registered.pendingDocuments.single()) {
-            assertThat(documentId).isEqualTo(document.id!!)
+            assertThat(documentId).isEqualTo(document.id)
             assertThat(receivedAt).isNotNull()
             assertThat(ingestFailedAt).isEqualTo(failedAt)
             assertThat(ingestError).isEqualTo("schema 7 은 아직 읽지 못합니다.")
@@ -709,8 +742,8 @@ class ContentMapViewGoldenTest {
             assertThat(discriminator[0]["active"].asBoolean()).isTrue()
             // 객체 키 자체는 나가지 않는다. 나가는 것은 스토리지가 서명한 주소다
             assertThat(image!!.url).contains(objectKey)
-            assertThat(image!!.expiresAt).isNotNull()
-            assertThat(image!!.capturedAt).isEqualTo(capturedAt)
+            assertThat(image.expiresAt).isNotNull()
+            assertThat(image.capturedAt).isEqualTo(capturedAt)
         }
         // 캡처가 없으면 칸이 통째로 없다. `screen` 에는 실패 코드 칸이 없어 가를 두 상태가 아니다
         with(scene.screens.single { it.id == bare.id }) {

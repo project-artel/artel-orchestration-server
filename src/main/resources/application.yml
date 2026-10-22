@@ -181,6 +181,10 @@ artel:
       # 전투 씬의 전량 판독 78,946 바이트가 소켓을 끊었다. 무엇에 맞춰 이 값을 잡았는지는
       # SdkSocketProperties 가 적어 두었다: 벽은 서버 메모리가 아니라 에이전트의 컨텍스트다.
       max-message-bytes: ${ARTEL_SDK_SOCKET_MAX_MESSAGE_BYTES:262144}
+      # 서버가 SDK 세션에 ping 을 보내는 주기와, 아무 frame 도 받지 못하면 세션을 닫는 시간.
+      # close frame 없이 끊긴 세션이 연결됨으로 남아 SDK 의 재연결을 막지 않게 한다(ARTEL-1111).
+      ping-interval: ${ARTEL_SDK_SOCKET_PING_INTERVAL:15s}
+      idle-timeout: ${ARTEL_SDK_SOCKET_IDLE_TIMEOUT:45s}
 
   stream:
     enabled: ${ARTEL_STREAM_ENABLED:true}
@@ -217,6 +221,7 @@ artel:
       generate-dev-key: ${ARTEL_MCP_HANDOFF_GENERATE_DEV_KEY:false}
   auth:
     frontend-url: ${ARTEL_HOME_URL:http://localhost:5173}
+    onboarding-url: ${ARTEL_ONBOARDING_URL:https://artel.kr}
     # CORS 허용 origin(콤마 구분). frontend-url은 항상 자동 포함된다. 와일드카드(https://*.artel.kr) 허용.
     allowed-origins: ${ARTEL_ALLOWED_ORIGINS:https://home.stage.artel.kr,https://artel.kr,https://www.artel.kr,https://admin.artel.kr}
     issuer: ${ARTEL_JWT_ISSUER:artel-orchestration-server}

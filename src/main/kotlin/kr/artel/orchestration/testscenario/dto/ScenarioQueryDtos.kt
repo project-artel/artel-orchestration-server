@@ -39,7 +39,7 @@ data class ScenarioSummary(
     val testScenarioId: Long,
     val projectId: Long,
     val title: String,
-    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
     val createdAt: Instant?,
     val updatedAt: Instant?
 )

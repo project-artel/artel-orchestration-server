@@ -526,7 +526,7 @@ class DiscussionHttpIntegrationTest {
             kr.artel.orchestration.game.entity.GameBuildEntity(
                 projectId = seed.projectId, version = "2.0", createdAt = Instant.now(), updatedAt = Instant.now(),
             )
-        )!!.id!!
+        ).id!!
         val versioned = request(owner.token, "POST", path, draft() + mapOf("gameBuildId" to build.toString()))
         assertThat(versioned["buildVersion"].asText()).isEqualTo("2.0")
         val onBuild = request(owner.token, "GET", "$path/pages?gameBuildId=$build")
@@ -672,7 +672,7 @@ class DiscussionHttpIntegrationTest {
                     createdAt = now,
                     updatedAt = now,
                 )
-            )!!
+            )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -681,18 +681,18 @@ class DiscussionHttpIntegrationTest {
                 createdAt = now,
             )
         )
-        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id!!))!!
+        val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
         val instance =
             gameInstanceRepository.save(
                 GameInstanceEntity(
-                    projectId = project.id!!,
+                    projectId = project.id,
                     name = "instance",
                     platform = "UNITY",
                     sdkUuid = UUID.randomUUID().toString(),
                     createdAt = now,
                     updatedAt = now,
                 )
-            )!!
+            )
         val qaTry =
             qaTryRepository.save(
                 QaTryEntity(
@@ -703,8 +703,8 @@ class DiscussionHttpIntegrationTest {
                     startedAt = now,
                     completedAt = now,
                 )
-            )!!
-        return Seed(project.id!!, qaTry.id!!)
+            )
+        return Seed(project.id, qaTry.id!!)
     }
 
     private suspend fun seedIssue(qaTryId: Long, severity: String, title: String): Long =
@@ -720,6 +720,6 @@ class DiscussionHttpIntegrationTest {
                     createdAt = Instant.now(),
                     updatedAt = Instant.now(),
                 )
-            )!!
+            )
             .id!!
 }

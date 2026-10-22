@@ -44,24 +44,24 @@ class GameBuildSummaryRepository(
             .bind("projectId", projectId)
             .map { row, _ ->
                 Row(
-                    id = row.get("id", java.lang.Long::class.java)!!.toLong(),
+                    id = row.get("id", Long::class.javaObjectType)!!,
                     version = row.get("version", String::class.java)!!,
                     label = row.get("label", String::class.java),
-                    isEditor = row.get("is_editor", java.lang.Boolean::class.java)!!.booleanValue(),
+                    isEditor = row.get("is_editor", Boolean::class.javaObjectType)!!,
                     createdAt = row.get("created_at", Instant::class.java)!!,
                     instanceIds = row.get("instance_ids", String::class.java)
                         ?.split(',')?.filter { it.isNotBlank() }?.map { it.toLong() }.orEmpty(),
                     lastReportedAt = row.get("last_reported_at", Instant::class.java),
-                    cheatCount = row.get("cheat_count", java.lang.Integer::class.java)!!.toInt(),
-                    behaviorCount = row.get("behavior_count", java.lang.Integer::class.java)!!.toInt(),
+                    cheatCount = row.get("cheat_count", Int::class.javaObjectType)!!,
+                    behaviorCount = row.get("behavior_count", Int::class.javaObjectType)!!,
                     catalogReceivedAt = row.get("catalog_received_at", Instant::class.java),
-                    qaRunCount = row.get("qa_run_count", java.lang.Long::class.java)!!.toInt(),
-                    latestRunId = row.get("latest_run_id", java.lang.Long::class.java)?.toLong(),
+                    qaRunCount = row.get("qa_run_count", Long::class.javaObjectType)!!.toInt(),
+                    latestRunId = row.get("latest_run_id", Long::class.javaObjectType),
                     latestRunStatus = row.get("latest_run_status", String::class.java),
                     latestRunStartedAt = row.get("latest_run_started_at", Instant::class.java),
                     latestRunCompletedAt = row.get("latest_run_completed_at", Instant::class.java),
-                    stepsPassed = row.get("steps_passed", java.lang.Long::class.java)?.toInt(),
-                    stepsTotal = row.get("steps_total", java.lang.Long::class.java)?.toInt()
+                    stepsPassed = row.get("steps_passed", Long::class.javaObjectType)?.toInt(),
+                    stepsTotal = row.get("steps_total", Long::class.javaObjectType)?.toInt()
                 )
             }
             .flow()

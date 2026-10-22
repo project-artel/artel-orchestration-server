@@ -94,10 +94,10 @@ class ContentMapIngestTransactionTest {
             .isNotNull()
 
         // 이 지도 범위로만 센다. 다른 테스트가 남긴 행과 섞이면 이 단언은 아무것도 지키지 못한다.
-        assertThat(capabilities.findEvidenceCapabilitiesOfMap(map.id!!).toList()).isEmpty()
-        assertThat(countOfMap("capability_evidence e JOIN capability c ON c.id = e.capability_id", map.id!!)).isZero()
-        assertThat(countOfMap("capability_effect f JOIN capability c ON c.id = f.capability_id", map.id!!)).isZero()
-        assertThat(countOfMap("scene s2 JOIN capability c ON c.scene_id = s2.id", map.id!!)).isZero()
+        assertThat(capabilities.findEvidenceCapabilitiesOfMap(map.id).toList()).isEmpty()
+        assertThat(countOfMap("capability_evidence e JOIN capability c ON c.id = e.capability_id", map.id)).isZero()
+        assertThat(countOfMap("capability_effect f JOIN capability c ON c.id = f.capability_id", map.id)).isZero()
+        assertThat(countOfMap("scene s2 JOIN capability c ON c.scene_id = s2.id", map.id)).isZero()
 
         val reloaded = documents.findById(document.id!!)!!
         assertThat(reloaded.ingestedAt).isNull()
@@ -123,8 +123,8 @@ class ContentMapIngestTransactionTest {
         val results = service.ingestPending(limit = 10)
 
         assertThat(results.map { it.documentId }).contains(healthyDocument.id)
-        assertThat(capabilities.findEvidenceCapabilitiesOfMap(healthy.id!!).toList()).isNotEmpty()
-        assertThat(capabilities.findEvidenceCapabilitiesOfMap(broken.id!!).toList()).isEmpty()
+        assertThat(capabilities.findEvidenceCapabilitiesOfMap(healthy.id).toList()).isNotEmpty()
+        assertThat(capabilities.findEvidenceCapabilitiesOfMap(broken.id).toList()).isEmpty()
         assertThat(documents.findById(healthyDocument.id!!)!!.ingestedAt).isNotNull()
     }
 
