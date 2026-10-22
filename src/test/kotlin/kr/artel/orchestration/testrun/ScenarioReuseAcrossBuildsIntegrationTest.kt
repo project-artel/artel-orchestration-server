@@ -858,9 +858,14 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(inC.getValue(passed.testCaseId).verificationStatus).isEqualTo("VERIFIED")
         assertThat(inC.getValue(failed.testCaseId).verificationStatus).isEqualTo("FAILED")
         assertThat(inC.getValue(failed.testCaseId).verdictCarriedFromBuildId).isEqualTo(buildA.gameBuildId)
-        // 가져온 뒤 미리 보기는 이미 받은 몫도 다시 받을 수 있다고 본다 — 출처가 남아 있어 이 버전에서 본 판정이 아니다.
-        assertThat(call(token, HttpMethod.GET, "$carryUri/preview?fromGameBuildId=${buildA.gameBuildId}").body["items"]
-            .map { it["carryable"].asBoolean() }).containsOnly(true)
+        // 가져온 뒤에는 같은 출처의 같은 판정이라 다시 가져올 것이 없다(ARTEL-1213). 미리 보기와 가져오기가 같은 까닭을 준다.
+        val again = call(token, HttpMethod.GET, "$carryUri/preview?fromGameBuildId=${buildA.gameBuildId}").body["items"]
+        assertThat(again.map { it["carryable"].asBoolean() }).containsOnly(false)
+        assertThat(again.map { it["reason"].asText() }).containsOnly("ALREADY_CARRIED")
+        val repeat = call(token, HttpMethod.POST, carryUri, """{"fromGameBuildId":"${buildA.gameBuildId}"}""")
+        assertThat(repeat.body["carried"]).isEmpty()
+        assertThat(repeat.body["skipped"].filter { it["testCaseId"].asLong() in setOf(passed.testCaseId, failed.testCaseId) }
+            .map { it["reason"].asText() }).containsOnly("ALREADY_CARRIED")
 
         // "모두 다시 검증": 가져오지 않고 이 버전의 판정을 REGRESSION 으로 돌린다.
         val reset = call(token, HttpMethod.POST, carryUri, """{"resetAll":true}""")
