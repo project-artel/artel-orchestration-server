@@ -9283,6 +9283,55 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/test-cases/verdict-carry-over/preview": {
+      "get": {
+        "tags": [
+          "content-map-test-case-controller"
+        ],
+        "operationId": "previewVerdicts",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "fromGameBuildId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerdictCarryPreviewResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-builds/{gameBuildId}/qa-runs": {
       "get": {
         "tags": [
@@ -13896,6 +13945,9 @@
         }
       },
       "VerdictCarryOverRequest": {
+        "required": [
+          "resetAll"
+        ],
         "type": "object",
         "properties": {
           "testCaseIds": {
@@ -13906,12 +13958,16 @@
           },
           "fromGameBuildId": {
             "type": "string"
+          },
+          "resetAll": {
+            "type": "boolean"
           }
         }
       },
       "VerdictCarryOverResponse": {
         "required": [
           "carried",
+          "reset",
           "skipped"
         ],
         "type": "object",
@@ -13926,6 +13982,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/VerdictCarryOverSkipped"
+            }
+          },
+          "reset": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
         }
@@ -18555,6 +18617,57 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GameBuildResponse"
+            }
+          }
+        }
+      },
+      "VerdictCarryPreviewItem": {
+        "required": [
+          "carryable",
+          "expectedValue",
+          "scene",
+          "sourceStatus",
+          "step",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
+          },
+          "expectedValue": {
+            "type": "string"
+          },
+          "sourceStatus": {
+            "type": "string"
+          },
+          "targetStatus": {
+            "type": "string"
+          },
+          "carryable": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "VerdictCarryPreviewResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VerdictCarryPreviewItem"
             }
           }
         }

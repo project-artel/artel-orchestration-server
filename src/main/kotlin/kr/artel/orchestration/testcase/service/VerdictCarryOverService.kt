@@ -118,6 +118,28 @@ class VerdictCarryOverService(
         return Outcome(carried = carried, skipped = skipped)
     }
 
+    /** 미리 보기 한 줄: 가져올 버전의 몫 하나와, 받는 버전에서의 상태와, 가져올 수 있는지. */
+    data class PreviewRow(
+        val source: TestCaseVersionEntity,
+        val targetStatus: String?,
+        val skip: Skip?,
+    )
+
+    /**
+     * [fromBuildId] 버전의 판정 난 몫을 [gameBuildId] 버전에 가져오면 어떻게 되는지, 아무것도 바꾸지 않고 본다(ARTEL-1181).
+     * 판정 가져오기 창의 오른쪽 표가 쓴다. 규칙은 [carry] 와 같다.
+     */
+    suspend fun preview(gameBuildId: Long, fromBuildId: Long): List<PreviewRow> {
+        val targets = versions.findByGameBuildId(gameBuildId).toList().associateBy { it.testCaseId }
+        return versions.findByGameBuildId(fromBuildId).toList()
+            .filter { it.verificationStatus in VERDICTS }
+            .sortedBy { it.testCaseId }
+            .map { source ->
+                val target = targets[source.testCaseId]
+                PreviewRow(source, target?.verificationStatus, if (target == null) Skip.NOT_IN_VERSION else eligibility(target, source))
+            }
+    }
+
     /** 이어받을 수 있으면 null, 아니면 까닭. */
     private fun eligibility(row: TestCaseVersionEntity, previous: TestCaseVersionEntity?): Skip? = when {
         row.verificationStatus == BROKEN -> Skip.BROKEN

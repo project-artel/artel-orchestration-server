@@ -841,6 +841,14 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
 
         assertThat(call(token, HttpMethod.POST, carryUri, "{}").status).isEqualTo(400)
         assertThat(call(token, HttpMethod.POST, carryUri, """{"fromGameBuildId":"${buildC.gameBuildId}"}""").status).isEqualTo(400)
+        // 미리 보기(ARTEL-1181): A 에서 판정 난 두 몫만, 아무것도 바꾸지 않고 가져올 수 있는지를 준다.
+        val preview = call(token, HttpMethod.GET, "$carryUri/preview?fromGameBuildId=${buildA.gameBuildId}")
+        assertThat(preview.status).isEqualTo(200)
+        assertThat(preview.body["items"].map { it["testCaseId"].asLong() to it["sourceStatus"].asText() })
+            .containsExactly(passed.testCaseId to "VERIFIED", failed.testCaseId to "FAILED")
+        assertThat(preview.body["items"].map { it["carryable"].asBoolean() }).containsOnly(true)
+        assertThat(preview.body["items"][0]["targetStatus"].asText()).isEqualTo("REGRESSION")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(passed.testCaseId, buildC.gameBuildId)!!.verificationStatus).isEqualTo("REGRESSION")
         val reply = call(token, HttpMethod.POST, carryUri, """{"fromGameBuildId":"${buildA.gameBuildId}"}""")
 
         assertThat(reply.status).isEqualTo(200)
@@ -850,6 +858,16 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         assertThat(inC.getValue(passed.testCaseId).verificationStatus).isEqualTo("VERIFIED")
         assertThat(inC.getValue(failed.testCaseId).verificationStatus).isEqualTo("FAILED")
         assertThat(inC.getValue(failed.testCaseId).verdictCarriedFromBuildId).isEqualTo(buildA.gameBuildId)
+        // 가져온 뒤 미리 보기는 이미 받은 몫도 다시 받을 수 있다고 본다 — 출처가 남아 있어 이 버전에서 본 판정이 아니다.
+        assertThat(call(token, HttpMethod.GET, "$carryUri/preview?fromGameBuildId=${buildA.gameBuildId}").body["items"]
+            .map { it["carryable"].asBoolean() }).containsOnly(true)
+
+        // "모두 다시 검증": 가져오지 않고 이 버전의 판정을 REGRESSION 으로 돌린다.
+        val reset = call(token, HttpMethod.POST, carryUri, """{"resetAll":true}""")
+        assertThat(reset.body["reset"].map { it.asLong() }).containsExactlyInAnyOrder(passed.testCaseId, failed.testCaseId)
+        val afterReset = versions.findByTestCaseIdAndGameBuildId(passed.testCaseId, buildC.gameBuildId)!!
+        assertThat(afterReset.verificationStatus).isEqualTo("REGRESSION")
+        assertThat(afterReset.verdictCarriedFromBuildId).isNull()
     }
 
     @Test

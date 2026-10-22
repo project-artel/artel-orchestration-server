@@ -92,7 +92,18 @@ class ContentMapTestCaseService(
         gameBuildId: Long,
         testCaseIds: List<Long>?,
         fromGameBuildId: Long? = null,
+        resetAll: Boolean = false,
     ): VerdictCarryOverService.Outcome {
+        if (resetAll) {
+            // "모두 다시 검증"(ARTEL-1181): 가져오지 않고 이 버전에 남은 판정을 REGRESSION 으로 돌린다.
+            gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: throw NotFoundException("빌드를 찾을 수 없습니다.")
+            val reset = transactionalOperator.executeAndAwait {
+                folderService.lockProjectFolders(projectId)
+                verdictCarry.afterGeneration(gameBuildId, VerdictCarryOverService.Mode.NONE)
+            }
+            if (reset.reset.isNotEmpty()) projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES)
+            return reset
+        }
         if (testCaseIds?.isEmpty() == true) throw BadRequestException("testCaseIds 가 비어 있습니다.")
         if (testCaseIds == null && fromGameBuildId == null) throw BadRequestException("testCaseIds 나 fromGameBuildId 가 필요합니다.")
         if (fromGameBuildId == gameBuildId) throw BadRequestException("같은 버전에서는 가져올 수 없습니다.")
@@ -106,6 +117,22 @@ class ContentMapTestCaseService(
         }
         if (outcome.carried.isNotEmpty()) projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES)
         return outcome
+    }
+
+    /**
+     * [fromGameBuildId] 의 판정을 [gameBuildId] 에 가져오면 어떻게 되는지 미리 본다(ARTEL-1181). 아무것도 바꾸지 않는다.
+     * 두 build 중 하나라도 없거나 비멤버면 404, 같은 build 면 400 이다.
+     */
+    suspend fun previewVerdicts(
+        userId: Long,
+        projectId: Long,
+        gameBuildId: Long,
+        fromGameBuildId: Long,
+    ): List<VerdictCarryOverService.PreviewRow> {
+        if (fromGameBuildId == gameBuildId) throw BadRequestException("같은 버전에서는 가져올 수 없습니다.")
+        gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: throw NotFoundException("빌드를 찾을 수 없습니다.")
+        gameBuilds.findAccessibleById(fromGameBuildId, projectId, userId) ?: throw NotFoundException("가져올 버전을 찾을 수 없습니다.")
+        return verdictCarry.preview(gameBuildId, fromGameBuildId)
     }
 
     /**

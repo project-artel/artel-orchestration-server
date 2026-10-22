@@ -5,6 +5,8 @@ import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.testcase.dto.VerdictCarryOverRequest
 import kr.artel.orchestration.testcase.dto.VerdictCarryOverResponse
 import kr.artel.orchestration.testcase.dto.VerdictCarryOverSkipped
+import kr.artel.orchestration.testcase.dto.VerdictCarryPreviewItem
+import kr.artel.orchestration.testcase.dto.VerdictCarryPreviewResponse
 import kr.artel.orchestration.testcase.service.VerdictCarryOverService
 import kr.artel.orchestration.testcase.dto.ContentMapTestCaseGenerationResponse
 import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
@@ -63,12 +65,39 @@ class ContentMapTestCaseController(
         @RequestBody request: VerdictCarryOverRequest,
     ): VerdictCarryOverResponse {
         val from = request.fromGameBuildId?.let { it.trim().toLongOrNull() ?: throw BadRequestException("invalid id: $it") }
-        val outcome = service.carryVerdicts(appUserId, projectId, gameBuildId, request.testCaseIds?.let(::ids), from)
+        val outcome = service.carryVerdicts(appUserId, projectId, gameBuildId, request.testCaseIds?.let(::ids), from, request.resetAll)
         return VerdictCarryOverResponse(
             carried = outcome.carried.map { it.toString() },
             skipped = outcome.skipped.map { (testCaseId, reason) -> VerdictCarryOverSkipped(testCaseId.toString(), reason.name) },
+            reset = outcome.reset.map { it.toString() },
         )
     }
+
+    /**
+     * `fromGameBuildId` 버전의 판정을 이 버전에 가져오면 어떻게 되는지 미리 본다(ARTEL-1181). 아무것도 바꾸지 않는다.
+     * 판정 가져오기 창의 오른쪽 표다.
+     */
+    @GetMapping("/api/projects/{projectId}/game-builds/{gameBuildId}/test-cases/verdict-carry-over/preview")
+    suspend fun previewVerdicts(
+        @PathVariable projectId: Long,
+        @PathVariable gameBuildId: Long,
+        @CurrentUserId appUserId: Long,
+        @RequestParam fromGameBuildId: Long,
+    ): VerdictCarryPreviewResponse =
+        VerdictCarryPreviewResponse(
+            service.previewVerdicts(appUserId, projectId, gameBuildId, fromGameBuildId).map { row ->
+                VerdictCarryPreviewItem(
+                    testCaseId = row.source.testCaseId.toString(),
+                    scene = row.source.scene,
+                    step = row.source.step,
+                    expectedValue = row.source.expectedValue,
+                    sourceStatus = row.source.verificationStatus,
+                    targetStatus = row.targetStatus,
+                    carryable = row.skip == null,
+                    reason = row.skip?.name,
+                )
+            }
+        )
 
     private fun ids(raw: List<String?>?): List<Long> =
         raw.orEmpty().filterNotNull().map { it.trim().toLongOrNull() ?: throw BadRequestException("invalid id: $it") }

@@ -83,17 +83,39 @@ data class TestCaseGenerationCandidatesResponse(val items: List<TestCaseGenerati
  *
  * @property fromGameBuildId 가져올 버전. 없으면 케이스마다 바로 앞 버전.
  * @property testCaseIds 가져올 TC. 없으면 이 버전의 모든 TC(이때는 [fromGameBuildId] 가 있어야 한다).
+ * @property resetAll true 면 가져오지 않고 이 버전의 판정을 모두 다시 검증하도록 돌린다(ARTEL-1181). 나머지 칸은 보지 않는다.
  */
 data class VerdictCarryOverRequest(
     val testCaseIds: List<String?>? = null,
     val fromGameBuildId: String? = null,
+    val resetAll: Boolean = false,
 )
 
 /** 이어받지 못한 TC 하나와 그 까닭([VerdictCarryOverService.Skip] 의 이름). */
 data class VerdictCarryOverSkipped(val testCaseId: String, val reason: String)
 
-/** @property carried 이어받은 TC. @property skipped 이어받지 못한 TC 와 까닭. */
+/** @property carried 이어받은 TC. @property skipped 이어받지 못한 TC 와 까닭. @property reset 다시 검증하도록 돌린 TC. */
 data class VerdictCarryOverResponse(
     val carried: List<String>,
     val skipped: List<VerdictCarryOverSkipped>,
+    val reset: List<String> = emptyList(),
 )
+
+/**
+ * 판정 가져오기 미리 보기의 한 줄(ARTEL-1181). 가져올 버전에서 판정(통과 · 실패)이 난 몫 하나다.
+ *
+ * @property sourceStatus 가져올 버전의 판정. @property targetStatus 받는 버전의 지금 상태. 받는 버전에 없으면 null.
+ * @property carryable 가져올 수 있나. 아니면 [reason] 에 까닭([VerdictCarryOverService.Skip] 의 이름).
+ */
+data class VerdictCarryPreviewItem(
+    val testCaseId: String,
+    val scene: String,
+    val step: String,
+    val expectedValue: String,
+    val sourceStatus: String,
+    val targetStatus: String?,
+    val carryable: Boolean,
+    val reason: String?,
+)
+
+data class VerdictCarryPreviewResponse(val items: List<VerdictCarryPreviewItem>)
