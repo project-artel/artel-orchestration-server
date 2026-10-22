@@ -1,5 +1,8 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
+
 import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import java.util.concurrent.ConcurrentHashMap
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -48,6 +51,7 @@ import org.springframework.transaction.reactive.executeAndAwait
  */
 @Service
 class ScenarioReconcileService(
+    private val projectChanges: ProjectChangeStreamManager,
     private val authoringCases: AuthoringCases,
     private val authoringVersions: AuthoringVersionResolver,
     // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
@@ -494,6 +498,7 @@ class ScenarioReconcileService(
                 placeBesideOrigin(runId, fromSplit.mapNotNull { (id, anchor) -> savedId[anchor]?.let { id to it } })
             }
         }
+        if (applied > 0) projectChanges.notify(projectId, ProjectChangeTopic.TEST_RUNS)
         logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${checked.size}]")
         trace.record(
             runId, "4. 저장한다",
