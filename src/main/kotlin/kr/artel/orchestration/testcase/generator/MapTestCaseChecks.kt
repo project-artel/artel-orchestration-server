@@ -29,6 +29,11 @@ data class MapTestCaseCheck(
     val field: String,
     val value: String?,
     val name: String,
+    /**
+     * 이 항목이 **다른 항목들 중 하나**인가(ARTEL-1209). 판독이 못 보는 조건으로만 갈리던 갈래를 합친 TC 에서,
+     * QA 는 어느 갈래인지 모르므로 이 표시가 붙은 항목 중 하나가 나오면 된다. 아니면 칸이 없다.
+     */
+    @JsonProperty("one_of") val oneOf: Boolean? = null,
 )
 
 object MapTestCaseChecks {

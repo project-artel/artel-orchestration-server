@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import com.fasterxml.jackson.databind.JsonNode
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
+import kr.artel.orchestration.testcase.config.MapTestCaseGeneratorProperties
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import kr.artel.orchestration.contentmap.evidence.ConditionOverlap
 import kr.artel.orchestration.contentmap.evidence.ConditionPrune
@@ -54,9 +55,18 @@ class MapTestCaseGenerator(
     private val effects: CapabilityEffectRepository,
     private val objectRefs: kr.artel.orchestration.contentmap.repository.SceneObjectRefRepository,
     private val objectMapper: ObjectMapper,
+    private val properties: MapTestCaseGeneratorProperties,
+    private val scenes: kr.artel.orchestration.contentmap.repository.SceneRepository,
 ) {
 
-    suspend fun generate(contentMapId: Long): List<MapTestCase> {
+    /**
+     * @param grouping 나누고 묶는 방식. 기본은 설정값이고, 같은 지도로 두 방식을 견줄 때 바꿔 부른다(ARTEL-1209).
+     */
+    suspend fun generate(
+        contentMapId: Long,
+        grouping: MapTestCaseGeneratorProperties.Grouping = properties.grouping,
+    ): List<MapTestCase> {
+        val reading = grouping == MapTestCaseGeneratorProperties.Grouping.READING
         val edges = contentMaps.findCallEdges(contentMapId).toList()
         // 매개변수 이름을 호출자가 넘긴 값으로 되돌리려면 필요하다(ARTEL-602).
         val settled = contentMaps.findSettledArguments(contentMapId).toList()
@@ -96,14 +106,23 @@ class MapTestCaseGenerator(
         // 갈림은 행이 스스로 말한다 — `actionability` 가 `not-a-step` 이면 볼 것이고 아니면
         // 누를 것이다. 아래(효과 읽기 · 갈래 펴기 · 합치기)는 두 벌이 되지 않는다.
         val drafts = contentMaps.findTestCaseRows(contentMapId).toList()
-            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, positions, owners, namesByScene, gameTypes) }
-        return merged(drafts) + screenElements(contentMapId)
+            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, positions, owners, namesByScene, gameTypes, reading) }
+        return (merged(drafts, reading) + screenElements(contentMapId))
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
             // 못 적으면 케이스가 아니다. 조작은 눌러 보면 되지만 관측은 볼 시점이 전부다.
             .filterNot {
                 it.watching &&
                     (it.precondition.contains(UNREADABLE) || it.expected.contains(UNREADABLE))
+            }
+            // **씬만 다른 같은 시험은 하나다**(ARTEL-1209). 모든 씬에 깔린 UI 가 씬마다 한 벌씩 나오던 자리다.
+            // 묶고 펼치는 사이에 갈래의 조건이 합쳐져 모순이 생기기도 한다(실측 1.4.0: `flag != 0` 과 `flag == 0`).
+            // 초안에서 한 번 걸렀어도 마지막에 다시 본다.
+            .let { cases -> if (reading) cases.filterNot { MapTestCaseReadingRules.impossible(it.condition, it.scene) } else cases }
+            .let { cases ->
+                if (!reading) return@let cases
+                val entry = scenes.findByContentMapIdOrderByNameAsc(contentMapId).toList().firstOrNull { it.isEntry }?.name
+                MapTestCaseReadingRules.acrossScenes(cases, entry)
             }
     }
 
@@ -128,7 +147,7 @@ class MapTestCaseGenerator(
      *
      * 순서는 첫 조각의 자리를 지킨다. 뷰의 정렬이 프롬프트 캐시 계약이라 흔들면 안 된다.
      */
-    private fun merged(drafts: List<Draft>): List<MapTestCase> =
+    private fun merged(drafts: List<Draft>, reading: Boolean = false): List<MapTestCase> =
         drafts.groupBy { it.entryKey }
             .flatMap { (_, ofCapability) -> branches(ofCapability) }
             .mapNotNull { group ->
@@ -141,7 +160,12 @@ class MapTestCaseGenerator(
                 // 판독이 확인 못 하는 기대([MapTestCasePhrasing.Told.hidden])는 여기서 빠진다. 정체는
                 // 아래에서 `group` 전체로 잡으므로 그대로다. 볼 것이 하나도 안 남으면 케이스가 아니다.
                 val shown = group.filterNot { it.hidden }.distinctBy { it.outcome }
-                if (shown.isEmpty()) return@mapNotNull null
+                // **판독이 못 보는 조건으로만 갈리던 갈래가 한 무리가 되면 "다음 중 하나" 다**(ARTEL-1209).
+                // 그 조건을 지웠으니 QA 는 지금 어느 갈래인지 모른다. 결과 중 하나가 나오면 된다.
+                val oneOf = reading && shown.size > 1 && shown.map { it.removed }.distinct().size > 1
+                // 옛 방식은 볼 것이 없으면 내지 않는다. 판독 기준은 **TC 를 지우지 않고 그 부분만 지운다**(ARTEL-1209):
+                // 조작은 남고, QA 는 그 조작이 되는지만 본다.
+                if (shown.isEmpty() && !reading) return@mapNotNull null
                 MapTestCase(
                     capabilityKey = first.capabilityKey,
                     scene = first.scene,
@@ -162,10 +186,12 @@ class MapTestCaseGenerator(
                     // **한 기능이 내는 관측들을 함께 적는다.** 저작이 이것을 조작 하나 + 검증 여럿으로
                     // 펴고, 채점은 스텝 단위라 어느 지점이 틀렸는지는 그대로 드러난다. 구버전도 같은
                     // 자리를 ` / ` 로 잇는다.
-                    expected = shown.joinToString(OUTCOME_SEPARATOR) { it.outcome },
+                    expected = if (shown.isEmpty()) MapTestCaseReadingRules.NO_READABLE_RESULT
+                    else shown.joinToString(OUTCOME_SEPARATOR) { it.outcome }
+                        .let { if (oneOf) MapTestCaseReadingRules.ONE_OF + it else it },
                     expectedItems = shown.map { it.outcome },
                     // 항목과 같은 순서로 하나씩이다. 판정은 이쪽을 읽는다.
-                    expectedChecks = shown.map { it.check },
+                    expectedChecks = shown.map { d -> if (oneOf) d.check?.copy(oneOf = true) else d.check },
                     status = first.status,
                     gaps = group.flatMap { it.gaps }.distinct(),
                     arrivesAt = group.firstNotNullOfOrNull { it.arrivesAt },
@@ -562,6 +588,8 @@ class MapTestCaseGenerator(
         val hidden: Boolean = false,
         /** QA 가 판독에서 이 기대를 무엇으로 확인하나([MapTestCaseChecks]). */
         val check: MapTestCaseCheck? = null,
+        /** 판독 기준으로 묶을 때 사전조건에서 지운 비교들의 서명(ARTEL-1209). 그것만 다른 갈래는 "다음 중 하나" 다. */
+        val removed: String = "",
         /**
          * **플레이어가 무엇을 건드렸나.** 이것이 곧 사람이 "기능 하나"로 세는 단위다.
          *
@@ -591,6 +619,7 @@ class MapTestCaseGenerator(
         owners: Map<Long, String>,
         namesByScene: Map<String, Set<String>>,
         gameTypes: Set<String>,
+        reading: Boolean = false,
     ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
@@ -632,6 +661,13 @@ class MapTestCaseGenerator(
             val settledCondition = MapTestCaseLocals.settle(situation, source, settled)
                 // 판독으로 확인 못 하는 비교는 빼지 않고 표시만 한다. 빼면 갈래가 무너진다.
                 .let { it.copy(condition = MapTestCaseReadings.mark(it.condition, gameTypes)) }
+            // **판독 기준**(ARTEL-1209): 성립할 수 없는 갈래는 버리고, 판독이 못 보는 비교는 사전조건에서 지운다.
+            // 정체는 지우기 전 조건으로 잡는다 — 바뀌지 않은 TC 가 옛 방식과 같은 줄로 이어진다.
+            if (reading && MapTestCaseReadingRules.impossible(settledCondition.condition, row.sceneName)) {
+                return@flatMap emptyList()
+            }
+            val readable = if (reading) MapTestCaseReadingRules.readable(settledCondition.condition) else null
+            val sceneNames = namesByScene[row.sceneName].orEmpty()
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
             // 효과의 주인은 **그 효과를 든 기능**이다. 빌려 온 자리(`borrowed`)에서는 이 행이 아니다.
             MapTestCasePhrasing.expectedWithSource(
@@ -647,12 +683,14 @@ class MapTestCaseGenerator(
                     // 실측에서 `GameClearController` 가 그렇다.
                     entryKey = row.entryId?.let { "${row.sceneName}\u001F$it" } ?: key,
                     scene = row.sceneName,
-                    condition = settledCondition.condition,
+                    condition = readable?.condition ?: settledCondition.condition,
+                    removed = readable?.removed.orEmpty(),
                     inputKey = row.inputKey,
                     aimedAt = row.controlPath,
                     step = step,
                     outcome = outcome,
-                    hidden = hidden,
+                    // 판독으로 확인할 수 없는 기대 항목은 보이는 기대결과에서 뺀다. 효과는 정체에 남는다.
+                    hidden = hidden || (reading && !MapTestCaseReadingRules.collectable(check, sceneNames)),
                     check = check,
                     status = caseGrade(row),
                     gaps = reasons,
