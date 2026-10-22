@@ -245,36 +245,41 @@ class SdkRegistrationIntegrationTest {
         assertThat(again["gameBuildId"].asText()).isEqualTo(development["gameBuildId"].asText())
     }
 
+    /** editor 도 version 마다 한 행이다(ARTEL-1180). 버전을 올리지 않은 재등록은 그 행의 스캔만 덮는다. */
     @Test
-    fun `keeps one editor build and follows the version the editor reports`(): Unit = runBlocking {
+    fun `keeps one editor build per version and overwrites the scan within a version`(): Unit = runBlocking {
         val user = signIn()
         val projectId = createProject(user.webToken)
 
         val first = register(
-            user.sdkToken, projectId, "sdk-uuid-editor", "1.2.3",
+            user.sdkToken, projectId, "sdk-uuid-editor", "1.3.0",
             sceneScan = """{"scenesInBuild":["Main"]}""", isEditor = true
         )
-        val second = register(user.sdkToken, projectId, "sdk-uuid-editor", "1.3.0", isEditor = true)
-        // 스캔 없는 등록은 version 만 바꾸고 앞 스캔을 남긴다.
-        val afterSecond = buildRepository.findById(first["gameBuildId"].asLong())!!
-        assertThat(afterSecond.version).isEqualTo("1.3.0")
-        assertThat(objectMapper.readTree(afterSecond.sceneScan!!.asString())["scenesInBuild"]).hasSize(1)
-        val third = register(
-            user.sdkToken, projectId, "sdk-uuid-other-editor", "1.4.0",
+        // 스캔 없는 재등록은 앞 스캔을 남긴다.
+        val again = register(user.sdkToken, projectId, "sdk-uuid-editor", "1.3.0", isEditor = true)
+        assertThat(again["gameBuildId"].asText()).isEqualTo(first["gameBuildId"].asText())
+        assertThat(objectMapper.readTree(buildRepository.findById(first["gameBuildId"].asLong())!!.sceneScan!!.asString())["scenesInBuild"])
+            .hasSize(1)
+        // 같은 버전에서 바뀐 작업 상태는 그 행의 스캔을 덮는다. 다른 editor 인스턴스도 같은 행이다.
+        val other = register(
+            user.sdkToken, projectId, "sdk-uuid-other-editor", "1.3.0",
+            sceneScan = """{"scenesInBuild":["Main","Work"]}""", isEditor = true
+        )
+        assertThat(other["gameBuildId"].asText()).isEqualTo(first["gameBuildId"].asText())
+        assertThat(objectMapper.readTree(buildRepository.findById(first["gameBuildId"].asLong())!!.sceneScan!!.asString())["scenesInBuild"])
+            .hasSize(2)
+
+        // 버전을 올리면 새 행이다. 앞 버전 행은 그대로 남는다.
+        val bumped = register(
+            user.sdkToken, projectId, "sdk-uuid-editor", "1.4.0",
             sceneScan = """{"scenesInBuild":["Main","Level1"]}""", isEditor = true
         )
-
-        assertThat(listOf(second, third).map { it["gameBuildId"].asText() })
-            .containsOnly(first["gameBuildId"].asText())
-        assertThat(third["gameVersion"].asText()).isEqualTo("1.4.0")
-        assertThat(buildRepository.count()).isEqualTo(1L)
-        val stored = buildRepository.findAll().first()
-        assertThat(stored.isEditor).isTrue()
-        assertThat(stored.version).isEqualTo("1.4.0")
-        assertThat(objectMapper.readTree(stored.sceneScan!!.asString())["scenesInBuild"]).hasSize(2)
-        // 두 editor 인스턴스가 모두 editor 행을 가리킨다. QA run 과 scan 이 이 값을 읽는다.
-        assertThat(instanceRepository.findAll().toList().map { it.lastGameBuildId }.toSet())
-            .containsExactly(stored.id)
+        assertThat(bumped["gameBuildId"].asText()).isNotEqualTo(first["gameBuildId"].asText())
+        assertThat(bumped["gameVersion"].asText()).isEqualTo("1.4.0")
+        val builds = buildRepository.findAll().toList()
+        assertThat(builds.map { it.version to it.isEditor }).containsExactlyInAnyOrder("1.3.0" to true, "1.4.0" to true)
+        assertThat(instanceRepository.findAll().toList().first { it.sdkUuid == "sdk-uuid-editor" }.lastGameBuildId)
+            .isEqualTo(bumped["gameBuildId"].asLong())
     }
 
     /** isEditor 를 모르는 구버전 SDK 는 development build 로 다룬다. */
@@ -293,8 +298,9 @@ class SdkRegistrationIntegrationTest {
         assertThat(buildRepository.count()).isEqualTo(2L)
     }
 
+    /** editor 행도 그 version 의 버전이라 만든 순서대로 섞인다(ARTEL-1180). */
     @Test
-    fun `lists the editor build after every development build`(): Unit = runBlocking {
+    fun `lists builds and editor builds newest first`(): Unit = runBlocking {
         val user = signIn()
         val projectId = createProject(user.webToken)
 
@@ -305,7 +311,7 @@ class SdkRegistrationIntegrationTest {
 
         val items = get(user.webToken, "/api/projects/$projectId/game-builds")["items"]
         assertThat(items.map { it["version"].asText() to it["isEditor"].asBoolean() }).containsExactly(
-            "1.2.0" to false, "1.1.0" to false, "1.0.0" to false, "1.1.0" to true
+            "1.2.0" to false, "1.1.0" to false, "1.1.0" to true, "1.0.0" to false
         )
     }
 

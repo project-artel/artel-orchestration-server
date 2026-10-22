@@ -71,9 +71,6 @@ class TestRunFolderService(
     private suspend fun versionBuildId(projectId: Long, gameBuildId: String): Long {
         val build = gameBuildId.toLongOrNull()?.let { gameBuilds.findById(it) }?.takeIf { it.projectId == projectId }
             ?: throw NotFoundException("빌드를 찾을 수 없습니다.")
-        if (build.isEditor) {
-            throw ConflictException("editor 는 게임 버전이 아니라서 폴더를 둘 수 없습니다.", code = "EDITOR_BUILD_IS_NOT_A_VERSION")
-        }
         return requireNotNull(build.id)
     }
 

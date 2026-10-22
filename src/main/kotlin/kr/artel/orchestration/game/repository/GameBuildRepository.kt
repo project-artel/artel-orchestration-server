@@ -16,11 +16,10 @@ import java.time.Instant
 interface GameBuildRepository : CoroutineCrudRepository<GameBuildEntity, Long> {
 
     /**
-     * 화면의 빌드 목록. non-editor 행은 최근 것부터, editor 행은 마지막이다(ARTEL-1014).
+     * 화면의 빌드 목록, 최근 것부터. editor 행도 그 version 의 버전이라 섞여 있다(ARTEL-1180).
      *
-     * `ScenarioPathService` 와 `ScenarioCaseFactService` 의 `contentMapIdOf` 가 이 순서의 첫 행을 "지금 build" 로
-     * 쓴다. 그래서 editor 행은 non-editor 행이 하나도 없을 때만 첫 행이 된다. 순서를 바꾸면 두 곳이 읽는 content
-     * map 도 바뀐다.
+     * `ScenarioPathService` 와 `ScenarioCaseFactService` 의 `contentMapIdOf` 가 TR 에 버전이 없을 때 이 순서의 첫 행을
+     * "지금 build" 로 쓴다. 순서를 바꾸면 두 곳이 읽는 content map 도 바뀐다.
      */
     @Query(
         """
@@ -29,7 +28,7 @@ interface GameBuildRepository : CoroutineCrudRepository<GameBuildEntity, Long> {
         JOIN project_member m ON m.project_id = gb.project_id
         WHERE gb.project_id = :projectId AND m.app_user_id = :userId
           AND p.deleted_at IS NULL
-        ORDER BY gb.is_editor, gb.created_at DESC, gb.id DESC
+        ORDER BY gb.created_at DESC, gb.id DESC
         """
     )
     fun findAllForMember(projectId: Long, userId: Long): Flow<GameBuildEntity>
@@ -52,23 +51,25 @@ interface GameBuildRepository : CoroutineCrudRepository<GameBuildEntity, Long> {
     @Query("SELECT * FROM game_build WHERE project_id = :projectId AND version = :version AND is_editor = FALSE")
     suspend fun findNonEditorByVersion(projectId: Long, version: String): GameBuildEntity?
 
-    /** 프로젝트의 editor 행. 프로젝트마다 많아야 하나다(`uk_game_build_project_editor`, ARTEL-1014). */
-    @Query("SELECT * FROM game_build WHERE project_id = :projectId AND is_editor = TRUE")
-    suspend fun findEditor(projectId: Long): GameBuildEntity?
+    /**
+     * 프로젝트의 그 version 의 editor 행. editor 는 version 마다 한 행이다(`uk_game_build_project_editor_version`,
+     * ARTEL-1180). 같은 version 의 development build 행과는 다른 행이다(ARTEL-1014).
+     */
+    @Query("SELECT * FROM game_build WHERE project_id = :projectId AND version = :version AND is_editor = TRUE")
+    suspend fun findEditorByVersion(projectId: Long, version: String): GameBuildEntity?
 
     /**
-     * 프로젝트의 게임 버전, 최근 것부터(ARTEL-994). editor 행은 게임 버전이 아니라서 빠진다(ARTEL-1014).
-     * TR 을 만들 때 첫 행을 그 TR 의 버전으로 적고, 가져오기 트리가 이 순서로 버전을 묶는다. 접근 확인은
-     * 호출하는 쪽이 한다.
+     * 프로젝트의 버전, 최근 것부터(ARTEL-994). editor 행도 그 version 의 버전이다(ARTEL-1180). TR 을 만들 때 첫 행을
+     * 그 TR 의 버전으로 적고, 가져오기 트리가 이 순서로 버전을 묶는다. 접근 확인은 호출하는 쪽이 한다.
      */
     @Query(
         """
         SELECT * FROM game_build
-        WHERE project_id = :projectId AND is_editor = FALSE
+        WHERE project_id = :projectId
         ORDER BY created_at DESC, id DESC
         """
     )
-    fun findNonEditorNewestFirst(projectId: Long): Flow<GameBuildEntity>
+    fun findVersionsNewestFirst(projectId: Long): Flow<GameBuildEntity>
 
     /**
      * 빌드 id 만으로 접근을 확인한다. SDK 는 등록 응답으로 받은 빌드 id 를 들고 오지만 프로젝트

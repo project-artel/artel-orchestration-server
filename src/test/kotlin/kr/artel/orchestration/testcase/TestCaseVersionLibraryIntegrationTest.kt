@@ -99,7 +99,7 @@ class TestCaseVersionLibraryIntegrationTest {
         versions.delete(versions.findByTestCaseIdAndGameBuildId(onlyInOld.testCaseId, buildB.gameBuildId)!!)
         val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "사람이 쓴 것", expectedValue = "x"))
         val mapCases = versionsA.size
-        // editor 는 게임 버전이 아니라 목록에 없다(ARTEL-1014). 가장 나중에 붙었어도 그렇다.
+        // editor 행도 그 version 의 버전이라 목록에 든다(ARTEL-1180). 가장 나중에 붙었으니 최신이다.
         gameBuilds.save(
             GameBuildEntity(projectId = projectId, version = "1.1.0", isEditor = true, createdAt = Instant.now(), updatedAt = Instant.now())
         )
@@ -107,17 +107,19 @@ class TestCaseVersionLibraryIntegrationTest {
         val listed = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions")
         assertThat(listed.status).isEqualTo(200)
         val items = listed.body["items"]
-        assertThat(items.map { it["version"].asText() }).containsExactly("1.1.0", "1.0.0")
-        assertThat(items.map { it["latest"].asBoolean() }).containsExactly(true, false)
+        assertThat(items.map { it["version"].asText() to it["isEditor"].asBoolean() })
+            .containsExactly("1.1.0" to true, "1.1.0" to false, "1.0.0" to false)
+        assertThat(items.map { it["latest"].asBoolean() }).containsExactly(true, false, false)
+        assertThat(items[0]["total"].asInt()).isZero()
         // 1.1 은 몫 하나를 지웠으니 하나 적다. 사람이 쓴 케이스는 몫이 없어 어느 버전에도 들지 않는다.
-        assertThat(items[0]["total"].asInt()).isEqualTo(mapCases - 1)
+        assertThat(items[1]["total"].asInt()).isEqualTo(mapCases - 1)
         assertThat(listed.body["unversionedTotal"].asInt()).isEqualTo(1)
-        assertThat(items[0]["counts"]["FAILED"].asInt()).isEqualTo(1)
-        assertThat(items[0]["counts"]["REGRESSION"].asInt()).isZero()
-        assertThat(items[0]["counts"].fieldNames().asSequence().toSet())
+        assertThat(items[1]["counts"]["FAILED"].asInt()).isEqualTo(1)
+        assertThat(items[1]["counts"]["REGRESSION"].asInt()).isZero()
+        assertThat(items[1]["counts"].fieldNames().asSequence().toSet())
             .containsExactlyInAnyOrder("DRAFT", "VERIFIED", "FAILED", "REGRESSION", "BROKEN")
-        assertThat(items[1]["total"].asInt()).isEqualTo(mapCases)
-        assertThat(items[1]["counts"]["VERIFIED"].asInt()).isEqualTo(1)
+        assertThat(items[2]["total"].asInt()).isEqualTo(mapCases)
+        assertThat(items[2]["counts"]["VERIFIED"].asInt()).isEqualTo(1)
 
         val plain = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/${buildB.gameBuildId}/cases")
         assertThat(plain.status).isEqualTo(200)
@@ -159,8 +161,8 @@ class TestCaseVersionLibraryIntegrationTest {
         // 사람이 쓴 케이스가 1.1 에서 판정을 받으면 1.1 에만 생긴다.
         versions.save(TestCaseVersionEntity.snapshotOf(manual, buildB.gameBuildId).copy(verificationStatus = "VERIFIED"))
         val afterVerdict = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions").body
-        assertThat(afterVerdict["items"][0]["total"].asInt()).isEqualTo(mapCases)
         assertThat(afterVerdict["items"][1]["total"].asInt()).isEqualTo(mapCases)
+        assertThat(afterVerdict["items"][2]["total"].asInt()).isEqualTo(mapCases)
         assertThat(afterVerdict["unversionedTotal"].asInt()).isZero()
         val manualRow = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/${buildB.gameBuildId}/cases")
             .body["items"].single { it["id"].asLong() == manual.id }

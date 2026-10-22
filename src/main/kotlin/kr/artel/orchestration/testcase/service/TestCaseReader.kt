@@ -90,12 +90,13 @@ class TestCaseReader(
             .toSet()
 
     /**
-     * 켜진 게임 빌드 [gameBuildId] 의 판정이 속할 버전. editor 면 editor 가 보고한 버전과 같은 게임 빌드다(ARTEL-1014 의
-     * editor 행은 게임 버전이 아니다). 빌드를 모르거나 그런 게임 빌드가 아직 없으면 null 이다.
+     * 켜진 build [gameBuildId] 의 판정이 속할 버전. build 행이면 그 행이다. editor 행은 그 editor 버전에서 TC 를 만들었으면
+     * 그 행이고(ARTEL-1180), 아니면 예전처럼 같은 version 의 게임 빌드다(ARTEL-1014). 빌드를 모르거나 둘 다 없으면 null 이다.
      */
     suspend fun judgedBuildId(gameBuildId: Long?): Long? {
         val build = gameBuildId?.let { gameBuilds.findById(it) } ?: return null
         if (!build.isEditor) return build.id
+        if (versions.existsByGameBuildId(requireNotNull(build.id))) return build.id
         return gameBuilds.findNonEditorByVersion(build.projectId, build.version)?.id
     }
 

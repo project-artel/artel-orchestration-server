@@ -84,7 +84,7 @@ class TestRunController(
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
 
-    /** TR 의 TC 버전을 바꾼다(ARTEL-1048). `gameBuildId` 가 null 이면 버전 없음. editor 면 409, 남의 빌드면 404. */
+    /** TR 의 TC 버전을 바꾼다(ARTEL-1048). `gameBuildId` 가 null 이면 버전 없음. 남의 빌드면 404. editor 버전도 고를 수 있다(ARTEL-1180). */
     @PutMapping("/{runId}/game-build")
     suspend fun changeGameBuild(
         @PathVariable projectId: Long,

@@ -22,11 +22,11 @@ import java.time.Instant
  * [gameFunctionCatalog]는 SDK 가 `GAME_FUNCTION_CATALOG` 프레임으로 보낸 cheat · behavior 목록이다.
  * [sceneScan] 처럼 최신본 하나만 두고 프레임마다 덮어쓴다. 세 칸이 모두 null 이면 목록을 보낸 적 없는 빌드다.
  *
- * [isEditor]가 true인 행은 Unity editor 실행을 받는 프로젝트당 한 행이다(ARTEL-1014). editor 는
- * development build 와 같은 Player Settings 버전을 보고하지만 계속 바뀌는 작업 상태라 게임 버전이
- * 아니다. 그래서 이 행의 [version]과 [sceneScan]은 editor 가 등록할 때마다 마지막 보고값으로 바뀌고,
- * 빌드를 버전 순서로 읽는 곳(TR 의 버전, 가져오기 트리, REGRESSION 의 직전 build, 판정 이력)은 이 행을
- * 빼고 읽는다.
+ * [isEditor]가 true인 행은 Unity editor 실행을 받는다. editor 는 development build 와 같은 Player Settings
+ * 버전을 보고하므로 같은 version 의 build 행과 따로 둔다(ARTEL-1014) — editor 는 버전을 올리지 않고도 계속 바뀌는
+ * 작업 상태라서, 같은 version 재등록은 그 editor 행의 [sceneScan]만 덮는다. editor 행은 version 마다 하나이고
+ * 그 version 의 버전이다(ARTEL-1180): TC 를 만들 수 있고, 버전 순서(TR 의 버전, 가져오기 트리, 앞 버전, 판정 이력)에
+ * 만든 순서대로 들어간다.
  */
 @Table("game_build")
 data class GameBuildEntity(

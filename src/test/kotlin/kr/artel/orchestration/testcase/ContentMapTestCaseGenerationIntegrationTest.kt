@@ -115,7 +115,9 @@ class ContentMapTestCaseGenerationIntegrationTest {
         assertThat(response.status).isEqualTo(200)
         val body = response.body
         assertThat(body.fieldNames().asSequence().toSet())
-            .containsExactlyInAnyOrder("created", "updated", "deleted", "broken", "regression", "carriedOver")
+            .containsExactlyInAnyOrder(
+                "created", "updated", "deleted", "broken", "regression", "carriedOver", "verdictsCarried", "verdictsReset",
+            )
         assertThat(body["created"].asInt()).isPositive()
         // build 별 케이스는 버전 목록이 보인다(ARTEL-1023). folder 는 사용자가 모으는 곳이다.
         assertThat(folders.findAll().toList().filter { it.projectId == projectId }).isEmpty()
@@ -359,24 +361,27 @@ class ContentMapTestCaseGenerationIntegrationTest {
         val ready = ingestedBuild(projectId, "1.1.0", null)
         val now = Instant.now()
         val noMap = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.2.0", createdAt = now, updatedAt = now))
-        gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.2.0", isEditor = true, createdAt = now, updatedAt = now))
+        val editor = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.2.0", isEditor = true, createdAt = now, updatedAt = now))
 
         val reply = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/generation-candidates")
 
         assertThat(reply.status).isEqualTo(200)
         val items = reply.body["items"].map { Triple(it["gameBuildId"].asLong(), it["mapState"].asText(), it["generated"].asBoolean()) }
+        // editor 행도 후보다(ARTEL-1180). 같은 시각이면 나중에 만든 행이 앞이다.
         assertThat(items).containsExactly(
+            Triple(editor.id!!, "NO_MAP", false),
             Triple(noMap.id!!, "NO_MAP", false),
             Triple(ready.gameBuildId, "READY", false),
             Triple(generated.gameBuildId, "READY", true),
         )
+        assertThat(reply.body["items"].map { it["isEditor"].asBoolean() }).containsExactly(true, false, false, false)
         assertThat(call(signIn().second, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/generation-candidates").status)
             .isEqualTo(404)
     }
 
-    /** editor 는 게임 버전이 아니다(ARTEL-1014). 지도가 있어도 TC 를 따라가게 하지 않는다. */
+    /** editor 도 그 version 의 버전이라 TC 를 만든다(ARTEL-1180). */
     @Test
-    fun `editor build 에서는 생성하지 않고 409 다`(): Unit = runBlocking {
+    fun `editor build 에서도 생성한다`(): Unit = runBlocking {
         val (userId, token) = signIn()
         val projectId = newProject(userId)
         val editor = ingestedBuild(projectId, "1.0.0", null)
@@ -384,9 +389,9 @@ class ContentMapTestCaseGenerationIntegrationTest {
 
         val reply = generate(token, projectId, editor.gameBuildId)
 
-        assertThat(reply.status).isEqualTo(409)
-        assertThat(reply.body["code"].asText()).isEqualTo("EDITOR_BUILD_HAS_NO_TEST_CASES")
-        assertThat(testCases.countByProjectId(projectId)).isZero()
+        assertThat(reply.status).isEqualTo(200)
+        assertThat(reply.body["created"].asInt()).isPositive()
+        assertThat(testCases.countByProjectId(projectId)).isPositive()
     }
 
     private data class IngestedBuild(val gameBuildId: Long, val contentMapId: Long)
