@@ -30,13 +30,15 @@ class ProjectAgentModelController(private val service: ProjectAgentModelService)
 
     /**
      * 400 `llm_model_unknown` · `llm_model_disabled`(model), 400 `llm_key_missing`(그 key 로 부를 수 없음),
-     * 400 `invalid_request`(모르는 `keySource`) 다. QA run 을 시작할 때와 같은 확인이다.
+     * 400 `invalid_request`(모르는 `keySource`) 다. QA run 을 시작할 때와 같은 확인이다. [projectId] 를 주면 응답의
+     * `effective*` 가 그 프로젝트의 설정까지 따른다. 그 프로젝트의 멤버가 아니면 404 다.
      */
     @PutMapping("/api/auth/me/project-agent-model")
     suspend fun updateMyProjectAgentModel(
         @CurrentUserId appUserId: Long,
         @RequestBody request: UpdateUserProjectAgentModelRequest,
-    ): UserProjectAgentModelResponse = service.updateUser(appUserId, request)
+        @RequestParam(required = false) projectId: Long?,
+    ): UserProjectAgentModelResponse = service.updateUser(appUserId, request, projectId)
 
     /** 멤버 누구나 읽는다. */
     @GetMapping("/api/projects/{projectId}/project-agent-model")

@@ -228,6 +228,23 @@ class ProjectAgentModelIntegrationTest {
     }
 
     @Test
+    fun `사용자가 선택을 지울 때 projectId 를 주면 응답의 effectiveModel 이 프로젝트 설정을 따른다`(): Unit = runBlocking {
+        val owner = newMember("clear-owner")
+        val outsider = newMember("clear-outsider")
+        storeAdminAnthropicKey()
+        assertThat(callProject(owner, owner.projectId, HttpMethod.PUT, """{"model":"$PROJECT_MODEL"}""").first).isEqualTo(200)
+
+        val (status, cleared) = callMe(owner, HttpMethod.PUT, """{"model":null}""", "?projectId=${owner.projectId}")
+        assertThat(status).isEqualTo(200)
+        assertThat(cleared!!["model"].isNull).isTrue()
+        assertThat(cleared["effectiveModel"].asText()).isEqualTo(PROJECT_MODEL)
+        // projectId 가 없으면 관리자 설정 이하를 따른다.
+        assertThat(callMe(owner, HttpMethod.PUT, """{"model":null}""").second!!["effectiveModel"].isNull).isTrue()
+        // 멤버가 아닌 프로젝트면 404 다.
+        assertThat(callMe(outsider, HttpMethod.PUT, """{"model":null}""", "?projectId=${owner.projectId}").first).isEqualTo(404)
+    }
+
+    @Test
     fun `프로젝트 설정은 공용 key 로 부를 수 있는 model 만 받고 key 가 사라지면 관리자 설정으로 넘어간다`(): Unit = runBlocking {
         val owner = newMember("project-key")
         for (model in listOf(GPT_MODEL, PROJECT_MODEL)) {

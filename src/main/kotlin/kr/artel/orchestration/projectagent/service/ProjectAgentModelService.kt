@@ -102,9 +102,15 @@ class ProjectAgentModelService(
     /**
      * 사용자 선택을 바꾼다. QA run 과 같은 확인을 거친다 — 카탈로그에 없으면 400 `llm_model_unknown`, 꺼졌으면 400
      * `llm_model_disabled`, key 가 없으면 400 `llm_key_missing`. [UpdateUserProjectAgentModelRequest.model] 이
-     * 비면 두 칸을 모두 지운다.
+     * 비면 두 칸을 모두 지운다. [projectId] 를 주면 응답을 [userView] 와 같이 그 프로젝트 기준으로 만들고, 그 프로젝트의
+     * 멤버가 아니면 아무것도 바꾸지 않고 404 다.
      */
-    suspend fun updateUser(appUserId: Long, request: UpdateUserProjectAgentModelRequest): UserProjectAgentModelResponse {
+    suspend fun updateUser(
+        appUserId: Long,
+        request: UpdateUserProjectAgentModelRequest,
+        projectId: Long? = null,
+    ): UserProjectAgentModelResponse {
+        projectId?.let { projectAccessService.requireMember(it, appUserId) }
         val model = request.model?.trim()?.takeIf { it.isNotEmpty() }
         val keySource = if (model == null) {
             null
@@ -116,7 +122,7 @@ class ProjectAgentModelService(
             throw UnauthorizedException()
         }
         logger.info("app_user {} set project agent model={} keySource={}", appUserId, model, keySource)
-        return userView(appUserId, null)
+        return userView(appUserId, projectId)
     }
 
     /** 프로젝트 멤버 누구나 읽는다. 멤버가 아니면 404 다. */

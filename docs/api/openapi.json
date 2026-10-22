@@ -2206,6 +2206,17 @@
           "project-agent-model-controller"
         ],
         "operationId": "updateMyProjectAgentModel",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
