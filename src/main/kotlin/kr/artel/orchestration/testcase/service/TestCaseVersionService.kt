@@ -9,8 +9,6 @@ import kr.artel.orchestration.testcase.dto.TestCaseVersionGroupResponse
 import kr.artel.orchestration.testcase.dto.TestCaseVersionListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseVersionRow
 import kr.artel.orchestration.testcase.dto.TestCaseVersionSummary
-import kr.artel.orchestration.testcase.entity.TestCaseEntity
-import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -18,7 +16,8 @@ import kr.artel.orchestration.testcase.repository.TestCaseVersionGroupRepository
 import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import org.springframework.stereotype.Service
 import java.time.Instant
-import kr.artel.orchestration.testcase.dto.isMapOrigin
+import kr.artel.orchestration.testcase.dto.CaseListFields
+import kr.artel.orchestration.testcase.dto.VersionListFields
 
 /**
  * 케이스 라이브러리를 게임 버전별로 보는 조회(ARTEL-1021).
@@ -83,12 +82,12 @@ class TestCaseVersionService(
         if (compareTo != null) {
             gameBuilds.findAccessibleById(compareTo, projectId, userId) ?: throw NotFoundException("비교할 버전을 찾을 수 없습니다.")
         }
-        val here = versions.findByGameBuildId(gameBuildId).toList().associateBy { it.testCaseId }
-        val there = compareTo?.let { versions.findByGameBuildId(it).toList().associateBy { v -> v.testCaseId } }.orEmpty()
+        // 목록에 보일 칸만 읽는다(ARTEL-1212). 행 전체를 읽으면 쓰지 않는 JSON 칸까지 2천여 줄 × 2 테이블이었다.
+        val here = versions.findListFieldsByGameBuildId(gameBuildId).toList().associateBy { it.testCaseId }
+        val there = compareTo?.let { versions.findListFieldsByGameBuildId(it).toList().associateBy { v -> v.testCaseId } }.orEmpty()
         val folderIds = folderItems.findFirstFolders(projectId).toList().associate { it.testCaseId to it.folderId }
-        val items = testCases.findByProjectIdOrderByIdDesc(projectId).toList().mapNotNull { identity ->
-            val id = requireNotNull(identity.id)
-            rowOf(identity, here[id], there[id], compareTo != null, folderIds[id])
+        val items = testCases.findListFieldsByProjectIdOrderByIdDesc(projectId).toList().mapNotNull { case ->
+            rowOf(case, here[case.id], there[case.id], compareTo != null, folderIds[case.id])
         }
         return TestCaseVersionCasesResponse(
             gameBuildId = gameBuildId.toString(),
@@ -102,20 +101,20 @@ class TestCaseVersionService(
         if (!projectAccessService.isMember(projectId, userId)) throw NotFoundException("프로젝트를 찾을 수 없습니다.")
         val versioned = versions.findVersionedCaseIds(projectId).toList().toSet()
         val folderIds = folderItems.findFirstFolders(projectId).toList().associate { it.testCaseId to it.folderId }
-        val items = testCases.findByProjectIdOrderByIdDesc(projectId).toList()
+        val items = testCases.findListFieldsByProjectIdOrderByIdDesc(projectId).toList()
             .filter { it.id !in versioned }
-            .map { identity ->
+            .map { case ->
                 TestCaseVersionRow(
-                    id = requireNotNull(identity.id).toString(),
-                    scene = identity.scene,
-                    step = identity.step,
-                    precondition = identity.precondition,
-                    expectedValue = identity.expectedValue,
-                    status = identity.status,
-                    origin = if (isMapCase(identity)) MAP else MANUAL,
-                    folderId = folderIds[identity.id]?.toString(),
-                    createdAt = identity.createdAt ?: Instant.EPOCH,
-                    verificationStatus = identity.verificationStatus,
+                    id = case.id.toString(),
+                    scene = case.scene,
+                    step = case.step,
+                    precondition = case.precondition,
+                    expectedValue = case.expectedValue,
+                    status = case.status,
+                    origin = if (case.fromMap) MAP else MANUAL,
+                    folderId = folderIds[case.id]?.toString(),
+                    createdAt = case.createdAt ?: Instant.EPOCH,
+                    verificationStatus = case.verificationStatus,
                     presence = BOTH,
                     compareVerificationStatus = null,
                 )
@@ -128,9 +127,9 @@ class TestCaseVersionService(
      * 사람이 쓴 케이스면 정체(사람이 고친 내용)다.
      */
     private fun rowOf(
-        identity: TestCaseEntity,
-        here: TestCaseVersionEntity?,
-        there: TestCaseVersionEntity?,
+        case: CaseListFields,
+        here: VersionListFields?,
+        there: VersionListFields?,
         comparing: Boolean,
         folderId: Long?,
     ): TestCaseVersionRow? {
@@ -140,26 +139,23 @@ class TestCaseVersionService(
             here != null -> ONLY_THIS
             else -> ONLY_OTHER
         }
-        // 출처는 한 번만 본다. 내용을 비추는 규칙은 TR · QA 와 같은 한 자리다(ARTEL-1069).
-        val map = isMapCase(identity)
-        val shown = reader.project(identity, version, map)
+        // 내용을 비추는 규칙은 TR · QA 와 같은 한 자리다(ARTEL-1069). 목록은 칸만 읽은 행이라 그 규칙의 목록판을 쓴다.
+        val shown = reader.projectListRow(case, version)
         return TestCaseVersionRow(
-            id = requireNotNull(identity.id).toString(),
+            id = case.id.toString(),
             scene = shown.scene,
             step = shown.step,
             precondition = shown.precondition,
             expectedValue = shown.expectedValue,
             status = shown.status,
-            origin = if (map) MAP else MANUAL,
+            origin = if (case.fromMap) MAP else MANUAL,
             folderId = folderId?.toString(),
-            createdAt = identity.createdAt ?: Instant.EPOCH,
+            createdAt = case.createdAt ?: Instant.EPOCH,
             verificationStatus = here?.verificationStatus,
             presence = presence,
             compareVerificationStatus = there?.verificationStatus?.takeIf { comparing },
         )
     }
-
-    private fun isMapCase(identity: TestCaseEntity): Boolean = isMapOrigin(identity.metadata.asString())
 
     private companion object {
         const val MAP = "MAP"

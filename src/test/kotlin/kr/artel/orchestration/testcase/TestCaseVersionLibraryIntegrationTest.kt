@@ -159,7 +159,11 @@ class TestCaseVersionLibraryIntegrationTest {
         assertThat(reversed.getValue(onlyInOld.testCaseId)["presence"].asText()).isEqualTo("ONLY_THIS")
 
         // 사람이 쓴 케이스가 1.1 에서 판정을 받으면 1.1 에만 생긴다.
-        versions.save(TestCaseVersionEntity.snapshotOf(manual, buildB.gameBuildId).copy(verificationStatus = "VERIFIED"))
+        // 버전 몫의 글을 일부러 다르게 둔다. 사람이 쓴 케이스는 목록에 정체(사람이 고친 내용)를 보여야 한다(ARTEL-1212).
+        versions.save(
+            TestCaseVersionEntity.snapshotOf(manual, buildB.gameBuildId)
+                .copy(verificationStatus = "VERIFIED", step = "버전 몫에 남은 옛 문장"),
+        )
         val afterVerdict = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions").body
         assertThat(afterVerdict["items"][1]["total"].asInt()).isEqualTo(mapCases)
         assertThat(afterVerdict["items"][2]["total"].asInt()).isEqualTo(mapCases)

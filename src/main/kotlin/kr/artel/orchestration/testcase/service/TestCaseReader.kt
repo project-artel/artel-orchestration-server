@@ -2,6 +2,8 @@ package kr.artel.orchestration.testcase.service
 
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.testcase.dto.CaseListFields
+import kr.artel.orchestration.testcase.dto.VersionListFields
 import kr.artel.orchestration.testcase.dto.originLabel
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
@@ -122,6 +124,17 @@ class TestCaseReader(
         )
     }
 
+    /**
+     * 목록용 [project](ARTEL-1212). 칸만 읽은 행에 같은 규칙을 쓴다: 지도 케이스면 그 버전 몫의 내용, 아니면 사람이 고친
+     * 정체의 내용. [project] 의 규칙을 바꾸면 여기도 같이 바꾼다(TestCaseVersionLibraryIntegrationTest 가 두 길의 출력을 본다).
+     */
+    fun projectListRow(case: CaseListFields, version: VersionListFields): ShownContent =
+        if (case.fromMap) {
+            ShownContent(version.scene, version.step, version.precondition, version.expectedValue, version.status)
+        } else {
+            ShownContent(case.scene, case.step, case.precondition, case.expectedValue, case.status)
+        }
+
     private suspend fun rowsOf(gameBuildId: Long): Map<Long, TestCaseVersionEntity> =
         versions.findByGameBuildId(gameBuildId).toList().associateBy { it.testCaseId }
 
@@ -129,3 +142,12 @@ class TestCaseReader(
         const val MAP = "MAP"
     }
 }
+
+/** 목록 한 줄에 보일 내용(ARTEL-1212). */
+data class ShownContent(
+    val scene: String,
+    val step: String,
+    val precondition: String?,
+    val expectedValue: String,
+    val status: String?,
+)
