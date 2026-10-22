@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import com.fasterxml.jackson.databind.JsonNode
+import kr.artel.orchestration.contentmap.dto.ScenePlacedType
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.testcase.config.MapTestCaseGeneratorProperties
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
@@ -101,6 +102,11 @@ class MapTestCaseGenerator(
         val gameTypes = contentMaps.findGameTypeNames(contentMapId).toList().toSet()
         // **토글**(ARTEL-1209): 효과가 쓰고 조건이 읽는 값. 판독 기준일 때만 쓴다.
         val written = if (reading) contentMaps.findWrittenMembers(contentMapId).toList().toSet() else emptySet()
+        // **씬마다 놓인 타입**(ARTEL-1209). 그 씬에 없는 오브젝트의 비교는 판독이 못 본다. `*` 는 어느 씬에나 있다.
+        val placed = if (reading) {
+            contentMaps.findPlacedTypes(contentMapId).toList().groupBy({ it.sceneName }, { it.typeName })
+                .mapValues { (_, types) -> types.toSet() }
+        } else emptyMap()
         // **읽는 곳은 하나다.** 앞서 창구가 셋이었고(조작 · 관측 · 존재 확인) 각자 다른 잣대를
         // 손으로 들고 있었다. 무엇을 남길지는 이제 질의가 정한다([ContentMapRepository.findTestCaseRows]).
         //
@@ -108,7 +114,7 @@ class MapTestCaseGenerator(
         // 갈림은 행이 스스로 말한다 — `actionability` 가 `not-a-step` 이면 볼 것이고 아니면
         // 누를 것이다. 아래(효과 읽기 · 갈래 펴기 · 합치기)는 두 벌이 되지 않는다.
         val drafts = contentMaps.findTestCaseRows(contentMapId).toList()
-            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, positions, owners, namesByScene, gameTypes, reading) }
+            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, positions, owners, namesByScene, gameTypes, reading, placed) }
         return (merged(drafts, reading, written) + screenElements(contentMapId))
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
@@ -627,6 +633,7 @@ class MapTestCaseGenerator(
         namesByScene: Map<String, Set<String>>,
         gameTypes: Set<String>,
         reading: Boolean = false,
+        placed: Map<String, Set<String>> = emptyMap(),
     ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
@@ -673,7 +680,10 @@ class MapTestCaseGenerator(
             if (reading && MapTestCaseReadingRules.impossible(settledCondition.condition, row.sceneName)) {
                 return@flatMap emptyList()
             }
-            val readable = if (reading) MapTestCaseReadingRules.readable(settledCondition.condition) else null
+            val inScene = placed[row.sceneName].orEmpty() + placed[ScenePlacedType.ANY_SCENE].orEmpty()
+            val readable = if (reading) {
+                MapTestCaseReadingRules.readable(MapTestCaseReadingRules.inScene(settledCondition.condition, inScene))
+            } else null
             // 바깥 조건과 부딪히는 `또는` 갈래를 빼고 같은 덩어리를 한 번만 쓴다. 갈래가 하나도 안 남으면 갈 수 없는 길이다.
             val simplified = readable?.let { MapTestCaseReadingRules.simplified(it.condition) }
             if (simplified?.impossible == true) return@flatMap emptyList()

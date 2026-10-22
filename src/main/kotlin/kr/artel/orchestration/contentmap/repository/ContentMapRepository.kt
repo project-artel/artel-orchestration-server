@@ -5,6 +5,7 @@ import kr.artel.orchestration.contentmap.dto.ContentMapCallEdge
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
 import kr.artel.orchestration.contentmap.dto.ContentMapScreenElement
 import kr.artel.orchestration.contentmap.dto.CapabilityOwner
+import kr.artel.orchestration.contentmap.dto.ScenePlacedType
 import kr.artel.orchestration.contentmap.dto.MethodArgument
 import kr.artel.orchestration.contentmap.dto.SpecGapRow
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
@@ -227,6 +228,35 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
         """
     )
     fun findWrittenMembers(contentMapId: Long): Flow<String>
+
+    /**
+     * **씬마다 놓인 타입**(ARTEL-1209). 판독은 그 씬에 놓인 오브젝트의 멤버만 싣는다 — TitleScene 의 TC 에
+     * `MapMove.movement` 조건이 붙어도 그 씬에는 `MapMove` 가 없어 확인할 수 없다(실측 1.4.0).
+     *
+     * 씬 오브젝트 표(V114)의 컴포넌트 타입과, 그 씬에 놓인 기능의 주인 타입을 함께 센다. 씬을 넘어 살아남는
+     * 오브젝트는 씬 오브젝트 표에 없어서, 그런 기능의 주인 타입은 `*`(어느 씬에나)로 낸다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT scene_name, type_name FROM (
+            SELECT s.name AS scene_name, comp->>'type' AS type_name
+            FROM scene_object o
+            JOIN scene s ON s.id = o.scene_id
+            CROSS JOIN LATERAL jsonb_array_elements(o.components) AS comp
+            WHERE o.content_map_id = :contentMapId
+            UNION
+            SELECT CASE WHEN c.scene_presence LIKE 'persistent%' THEN '*' ELSE s.name END,
+                   regexp_replace(split_part(split_part(ce.method_id, '|', 2), '/', 1), '^.*\.', '')
+            FROM capability_evidence ce
+            JOIN capability c ON c.id = ce.capability_id
+            JOIN scene s ON s.id = c.scene_id
+            WHERE c.content_map_id = :contentMapId AND ce.method_id IS NOT NULL
+              AND (c.scene_presence = 'placed' OR c.scene_presence LIKE 'persistent%')
+        ) placed
+        WHERE type_name IS NOT NULL AND type_name <> ''
+        """
+    )
+    fun findPlacedTypes(contentMapId: Long): Flow<ScenePlacedType>
 
     /**
      * 씬마다 **그 씬이 이름으로 아는 오브젝트들**.

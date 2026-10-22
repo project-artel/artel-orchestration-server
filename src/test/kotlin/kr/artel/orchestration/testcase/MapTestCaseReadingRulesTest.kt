@@ -114,4 +114,23 @@ class MapTestCaseReadingRulesTest {
         assertThat(kr.artel.orchestration.testcase.generator.MapTestCasePhrasing.precondition("MapScene", list, compactValues = true))
             .isEqualTo("MapScene 화면인 상태 / StageDataSingleton.stagePosition 가 0 · 1 · 2 · 3 · 4 중 하나")
     }
+
+    /** 실측 1.4.0: TitleScene 의 `Escape` 키 TC 에 MapScene 에만 있는 `MapMove` 의 조건이 붙었다. */
+    @Test
+    fun `그 씬에 놓이지 않은 타입의 비교는 판독이 못 본다`() {
+        val map = test("MapMove.movement", "==", "0")
+        val lock = ConditionNode.Test(left = "InteractionLock.IsLocked", operator = "==", right = "0", context = "static", offset = 0)
+
+        val marked = MapTestCaseReadingRules.inScene(every(map, lock, test("SettingsMenu.IsOpen", "!=", "0")), setOf("SettingsMenu", "TitleSceneManager")) as ConditionNode.Group
+
+        assertThat(marked.parts.map { (it as ConditionNode.Test).readable }).containsExactly(false, true, true)
+    }
+
+    @Test
+    fun `한 비교의 참 거짓만 다른 두 갈래는 그 비교를 지운다`() {
+        val c = test("MapMove.enteringStage", "==", "0")
+        val tree = either(every(test("MapMove.movement", "==", "0"), c), every(test("MapMove.movement", "!=", "0"), c))
+
+        assertThat(MapTestCaseReadingRules.simplified(tree).condition).isEqualTo(c)
+    }
 }

@@ -50,6 +50,35 @@ object MapTestCaseReadingRules {
     }
 
     /**
+     * **그 씬에 놓이지 않은 타입의 비교는 판독이 못 본다**(ARTEL-1209).
+     *
+     * 판독은 그 씬에 놓인 오브젝트의 멤버만 싣는다. 실측 1.4.0 에서 TitleScene 의 `Escape` 키 TC 에
+     * `MapMove.movement == 0` 이 붙었는데, `MapMove` 는 MapScene 에만 있다 — 깊은 호출 사슬을 따라 다른 씬의
+     * 코드 조건까지 모인 것이다. 정적 멤버(`context = static`)는 씬과 상관없이 실린다.
+     *
+     * @param placed 이 씬에 놓인 타입(마지막 마디). 씬을 넘어 살아남는 것도 든다
+     */
+    fun inScene(node: ConditionNode?, placed: Set<String>): ConditionNode? = when (node) {
+        null -> null
+        is ConditionNode.Test ->
+            if (node.context == STATIC || (rooted(node.left, placed) && rooted(node.right, placed))) node
+            else node.copy(readable = false)
+        is ConditionNode.Group -> node.copy(parts = node.parts.map { inScene(it, placed)!! })
+        else -> node
+    }
+
+    /** 값이 리터럴이거나 자기 자신(`this`)이면 씬과 상관없다. 멤버 경로면 그 첫 마디가 이 씬에 놓여 있어야 한다. */
+    private fun rooted(text: String, placed: Set<String>): Boolean {
+        val value = text.trim()
+        if (value.isEmpty() || LITERAL.matches(value) || !value.contains('.')) return true
+        val root = value.removePrefix("(").substringBefore('.').trim()
+        return root in SELF || root in placed
+    }
+
+    private val SELF = setOf("this", "Component", "SceneManager")
+    private const val STATIC = "static"
+
+    /**
      * **사전조건을 뜻을 바꾸지 않고 정리한 것.** [impossible] 이면 갈래가 하나도 안 남았다.
      *
      * 두 가지를 한다(실측 1.4.0 에서 비교 5 개 이상인 사전조건 52 건 가운데):
@@ -95,12 +124,58 @@ object MapTestCaseReadingRules {
     }
 
     private fun joined(kind: GroupKind, parts: List<ConditionNode>): ConditionNode? {
-        val unique = parts.distinctBy(ConditionPrune::signature)
+        val unique = (if (kind == GroupKind.EITHER) complemented(parts) else parts).distinctBy(ConditionPrune::signature)
         return when (unique.size) {
             0 -> null
             1 -> unique.single()
             else -> ConditionNode.Group(kind, unique)
         }
+    }
+
+    /**
+     * **`(A 그리고 C) 또는 (A 아님 그리고 C)` 는 `C` 다.** 두 갈래가 한 비교의 참 · 거짓만 다르고 나머지가 같으면
+     * 그 비교는 결과를 가르지 않는다. 실측 1.4.0 에서 `(movement == 0 그리고 …) 또는 (movement != 0 그리고 …)` 가
+     * 그 모양이었다. 더 줄지 않을 때까지 되풀이한다.
+     */
+    private fun complemented(arms: List<ConditionNode>): List<ConditionNode> {
+        var current = arms
+        while (true) {
+            val sets = current.map { arm -> conjunctsOf(arm) }
+            var merged: Pair<Int, Int>? = null
+            var common: List<ConditionNode> = emptyList()
+            loop@ for (i in sets.indices) for (j in i + 1 until sets.size) {
+                val a = sets[i] ?: continue
+                val b = sets[j] ?: continue
+                if (a.size != b.size) continue
+                val onlyA = a.filter { x -> b.none { ConditionPrune.signature(it) == ConditionPrune.signature(x) } }
+                val onlyB = b.filter { x -> a.none { ConditionPrune.signature(it) == ConditionPrune.signature(x) } }
+                if (onlyA.size == 1 && onlyB.size == 1 && opposite(onlyA.single(), onlyB.single())) {
+                    merged = i to j
+                    common = a - onlyA.toSet()
+                    break@loop
+                }
+            }
+            val (i, j) = merged ?: return current
+            val replacement = when (common.size) {
+                0 -> return listOf(ConditionNode.Always)
+                1 -> common.single()
+                else -> ConditionNode.Group(GroupKind.EVERY, common)
+            }
+            current = current.filterIndexed { k, _ -> k != i && k != j } + replacement
+        }
+    }
+
+    /** 갈래가 비교들의 `그리고` 이면 그 비교들. 아니면 null. */
+    private fun conjunctsOf(arm: ConditionNode): List<ConditionNode>? = when (arm) {
+        is ConditionNode.Test -> listOf(arm)
+        is ConditionNode.Group -> if (arm.kind == GroupKind.EVERY && arm.parts.all { it is ConditionNode.Test }) arm.parts else null
+        else -> null
+    }
+
+    private fun opposite(a: ConditionNode, b: ConditionNode): Boolean {
+        if (a !is ConditionNode.Test || b !is ConditionNode.Test) return false
+        if (a.left.trim() != b.left.trim() || a.right.trim() != b.right.trim()) return false
+        return setOf(a.operator, b.operator) == setOf("==", "!=")
     }
 
     /** 함께 참이어야 하는 비교들 사이에 한 값이 둘인 것이 있나. 씬 비교는 [impossible] 이 따로 본다. */
