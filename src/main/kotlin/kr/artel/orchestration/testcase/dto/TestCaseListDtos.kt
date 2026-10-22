@@ -30,9 +30,9 @@ data class TestCaseListItem(
     val scene: String,
     val step: String,
     val precondition: String?,
-    @JsonProperty("expected_value")
+    @param:JsonProperty("expected_value")
     val expectedValue: String,
-    @JsonProperty("verification_status")
+    @param:JsonProperty("verification_status")
     val verificationStatus: String,
 )
 

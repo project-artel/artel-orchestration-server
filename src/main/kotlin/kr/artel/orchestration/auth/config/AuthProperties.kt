@@ -35,7 +35,8 @@ data class AuthProperties(
     // CORS 허용 origin(패턴). OAuth 리다이렉트 대상인 frontendUrl(단일)과 달리, API를 호출할 수 있는
     // 브라우저 출처는 여러 개일 수 있다(stage/prod, Vercel 프리뷰 등). https://*.artel.kr 같은 와일드카드도
     // 허용되도록 CORS는 allowedOriginPatterns로 적용한다.
-    val allowedOrigins: List<String> = emptyList()
+    val allowedOrigins: List<String> = emptyList(),
+    val onboardingUrl: String = "https://artel.kr"
 ) {
     /** Frontend origin without a trailing slash, safe to concatenate redirect paths onto. */
     val frontendOrigin: String

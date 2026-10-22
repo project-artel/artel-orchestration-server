@@ -173,7 +173,7 @@ class AnthropicKeyIntegrationTest {
         assertThat(cleared["lastCheck"].isNull).isTrue()
         assertThat(internalSettings()["anthropicApiKey"].isNull).isTrue()
         val remaining = databaseClient.sql("SELECT COUNT(*) AS n FROM platform_setting WHERE setting_key LIKE 'anthropic.%'")
-            .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("n", Long::class.javaObjectType)!! }
             .one().awaitSingle()
         assertThat(remaining).isZero()
     }
@@ -195,7 +195,7 @@ class AnthropicKeyIntegrationTest {
             assertThat(objectMapper.readTree(body)["code"].asText()).isEqualTo("invalid_api_key")
         }
         val rows = databaseClient.sql("SELECT COUNT(*) AS n FROM platform_setting")
-            .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("n", Long::class.javaObjectType)!! }
             .one().awaitSingle()
         assertThat(rows).isZero()
         assertThat(invalidations.get()).isZero()

@@ -210,6 +210,7 @@ class SecurityConfig {
                 "/ws/sdk",
                 // SDK가 코드를 토큰으로 바꾸는 경로. 이 요청에는 아직 세션도 토큰도 없다.
                 "/api/auth/sdk/token",
+                "/api/auth/sdk/login",
                 // CLI가 코드를 CLI 토큰으로 바꾸는 경로. 같은 이유로 열려 있다 — 자격증명은
                 // 일회용 코드와 code_verifier이며 CliTokenController.exchangeLoginCode가 직접 검증한다.
                 // 이 줄이 아래 "/api/auth/**" 규칙보다 먼저 있어야 한다. 먼저 맞는 규칙이 이긴다.
@@ -263,7 +264,7 @@ class SecurityConfig {
                     it.authenticationFailureHandler { webFilterExchange, _ ->
                         webFilterExchange.exchange.response.statusCode = HttpStatus.FOUND
                         webFilterExchange.exchange.response.headers.location =
-                            URI.create("${properties.frontendOrigin}/login?error=oauth")
+                            OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties, "oauth")
                         webFilterExchange.exchange.response.setComplete()
                     }
                 }
@@ -273,6 +274,7 @@ class SecurityConfig {
         // 필터 하나를 더한다. 별도 체인을 두려면 authorizeExchange 규칙을 두 벌로 복사해야 하고,
         // 그 둘은 반드시 어긋난다. SDK 체인이 따로인 것은 반대 이유다 — 그쪽은 audience 로 경로를
         // 좁히는 것이 목적이라 체인이 맞다.
+        .addFilterBefore(OAuthReturnTargetFilter(properties), SecurityWebFiltersOrder.FIRST)
         .addFilterBefore(
             cliTokenAuthenticationFilter(cliTokenAuthenticationManager),
             SecurityWebFiltersOrder.AUTHENTICATION
@@ -400,7 +402,7 @@ class SecurityConfig {
             response.addCookie(authCookies.access(token))
             response.addCookie(authCookies.refresh(refresh.token))
             response.statusCode = HttpStatus.FOUND
-            response.headers.location = URI.create(properties.frontendOrigin)
+            response.headers.location = OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties)
             response.setComplete().awaitSingleOrNull()
         }
             .onErrorResume { error ->
@@ -410,7 +412,7 @@ class SecurityConfig {
                 val response = webFilterExchange.exchange.response
                 response.statusCode = HttpStatus.FOUND
                 response.headers.location =
-                    URI.create("${properties.frontendOrigin}/login?error=server")
+                    OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties, "server")
                 response.setComplete()
             }
     }
@@ -421,7 +423,7 @@ class SecurityConfig {
         error: String
     ): Void? {
         exchange.response.statusCode = HttpStatus.FOUND
-        exchange.response.headers.location = URI.create("${properties.frontendOrigin}/login?error=$error")
+        exchange.response.headers.location = OAuthReturnTargetFilter.destination(exchange, properties, error)
         return exchange.response.setComplete().awaitSingleOrNull()
     }
 

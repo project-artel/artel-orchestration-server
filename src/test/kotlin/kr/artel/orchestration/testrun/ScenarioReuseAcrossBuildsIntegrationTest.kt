@@ -283,14 +283,14 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         val now = Instant.now()
         val instance = gameInstances.save(
             GameInstanceEntity(projectId = projectId, name = "i", platform = "UNITY", sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now)
-        )!!
+        )
         val scenarioIds = runScenarios.findByTestRunIdOrderByPosition(runId).toList().map { it.testScenarioId }
         qaRuns.save(QaRunEntity(testRunId = runId, gameInstanceId = instance.id!!, startedBy = userId, status = "FAILED", startedAt = now.minusSeconds(60), completedAt = now.minusSeconds(30)))
-        val last = qaRuns.save(QaRunEntity(testRunId = runId, gameInstanceId = instance.id!!, startedBy = userId, status = "FAILED", startedAt = now, completedAt = now))
+        val last = qaRuns.save(QaRunEntity(testRunId = runId, gameInstanceId = instance.id, startedBy = userId, status = "FAILED", startedAt = now, completedAt = now))
         listOf("COMPLETED", "FAILED").zip(scenarioIds).forEach { (status, scenarioId) ->
             qaTries.save(
                 QaTryEntity(
-                    testScenarioId = scenarioId, gameInstanceId = instance.id!!, qaRunId = last.id, startedBy = userId,
+                    testScenarioId = scenarioId, gameInstanceId = instance.id, qaRunId = last.id, startedBy = userId,
                     status = status, runConfig = Json.of("{}"), startedAt = now, completedAt = now,
                 )
             )
@@ -325,7 +325,7 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         val latest = caseFactService.explain(projectId, userId, caseId)
         assertThat(latest.note).contains("씬 명세가 아직 없어")
         val inVersion = withContext(AuthoringVersion(buildA.gameBuildId)) { caseFactService.explain(projectId, userId, caseId) }
-        assertThat(inVersion.note ?: "").doesNotContain("씬 명세가 아직 없어")
+        assertThat(inVersion.note).doesNotContain("씬 명세가 아직 없어")
 
         val runId = call(token, HttpMethod.POST, "/api/projects/$projectId/test-runs", """{"name":"앞 버전","gameBuildId":"${buildA.gameBuildId}"}""")
             .body["id"].asLong()
@@ -515,7 +515,7 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
                     projectId = projectId, name = "i", platform = "UNITY", sdkUuid = UUID.randomUUID().toString(),
                     lastGameBuildId = build, createdAt = now, updatedAt = now,
                 )
-            )!!
+            )
             return call(token, HttpMethod.GET, "/api/projects/$projectId/test-runs/$runId/cases-outside-build?gameInstanceId=${instance.id}").body
         }
         val onB = outside(buildB.gameBuildId)
@@ -555,10 +555,10 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         val now = Instant.now()
         val instance = gameInstances.save(
             GameInstanceEntity(projectId = projectId, name = "i", platform = "UNITY", sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now)
-        )!!
+        )
         val qaRun = qaRuns.save(QaRunEntity(testRunId = runId, gameInstanceId = instance.id!!, startedBy = userId, status = "FAILED", startedAt = now, completedAt = now, gameBuildId = buildB.gameBuildId))
         val qaTry = qaTries.save(
-            QaTryEntity(testScenarioId = scenario.id!!, gameInstanceId = instance.id!!, qaRunId = qaRun.id, startedBy = userId,
+            QaTryEntity(testScenarioId = scenario.id, gameInstanceId = instance.id, qaRunId = qaRun.id, startedBy = userId,
                 status = "FAILED", runConfig = Json.of("{}"), startedAt = now, completedAt = now)
         )
         listOf(
@@ -920,7 +920,7 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
         // 정체가 버전을 넘어 하나라 case_id 는 그대로다.
         assertThat(copySteps.map { it.caseId }).containsExactly(caseIds[0], caseIds[1], manual.id, null)
         assertThat(runScenarios.findByTestRunIdOrderByPosition(runB).toList().map { it.testScenarioId to it.position })
-            .containsExactly(existing.id!! to 0, copyId to 1)
+            .containsExactly(existing.id to 0, copyId to 1)
 
         val library = call(token, HttpMethod.GET, "/api/projects/$projectId/test-scenario-library").body["versions"]
         assertThat(library.map { it["gameBuild"]?.get("version")?.asText() }).containsExactly("2.0.0", "1.0.0", null)
@@ -998,7 +998,7 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
                 )
             )
         )
-        return IngestedBuild(build.id!!, map.id!!)
+        return IngestedBuild(build.id, map.id)
     }
 
     private suspend fun signIn(): Pair<Long, String> {
@@ -1012,7 +1012,7 @@ class ScenarioReuseAcrossBuildsIntegrationTest {
                 avatarUrl = null,
                 email = null,
             )
-        )!!
+        )
         return user.userId.toLong() to jwtService.issue(user)
     }
 

@@ -97,8 +97,8 @@ class EmbeddingQueueRepository(
             .bind("limit", limit)
             .map { row: Readable ->
                 ClaimedRow(
-                    pendingId = row.get("pending_id", java.lang.Long::class.java)!!.toLong(),
-                    ownerId = row.get("owner_id", java.lang.Long::class.java)!!.toLong()
+                    pendingId = row.get("pending_id", Long::class.javaObjectType)!!,
+                    ownerId = row.get("owner_id", Long::class.javaObjectType)!!
                 )
             }
             .flow()

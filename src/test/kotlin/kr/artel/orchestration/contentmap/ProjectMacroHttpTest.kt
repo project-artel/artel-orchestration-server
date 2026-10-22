@@ -132,7 +132,7 @@ class ProjectMacroHttpTest {
             )
         )
         val buildId = gameBuilds.save(
-            GameBuildEntity(projectId = project.id!!, version = "v$seed", createdAt = now, updatedAt = now)
+            GameBuildEntity(projectId = project.id, version = "v$seed", createdAt = now, updatedAt = now)
         ).id!!
         val contentMapId = contentMaps.save(
             ContentMapEntity(
@@ -141,17 +141,17 @@ class ProjectMacroHttpTest {
                 capture = Capture.PLAYER.wire,
                 evidenceDigest = "macro-http-$seed",
             )
-        )!!.id!!
+        ).id!!
         val sceneId = scenes.save(
             SceneEntity(contentMapId = contentMapId, name = "TurnBattleScene", walked = true)
-        )!!.id!!
+        ).id!!
         val screenId = screens.save(
             ScreenEntity(
                 sceneId = sceneId,
                 name = "손패",
                 discriminator = Json.of("""[{"selector":"Canvas[0]/Hand","active":true}]"""),
             )
-        )!!.id!!
+        ).id!!
         val macroId = macros.upsertByName(
             contentMapId = contentMapId,
             name = "attack_with_combined_card",

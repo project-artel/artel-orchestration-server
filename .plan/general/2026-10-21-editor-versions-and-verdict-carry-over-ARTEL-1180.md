@@ -35,14 +35,14 @@
 
 ## Context / Constraints
 
-- develop 최신 마이그레이션은 V132 → V133.
+- develop 최신 마이그레이션은 V134 → V135 (처음 V133 으로 잡았다가 develop 의 V134 뒤로 옮겼다).
 - `findAllForMember` 의 첫 행을 저작(`contentMapIdOf`)이 "지금 build" 로 쓴다. 에디터 행이 버전이 되므로 정렬에서
   `is_editor` 를 빼 최신 버전이 첫 행이 되게 한다.
 - `TestCaseReader.judgedBuildId`: 에디터 build 에 버전 몫이 있으면 그 build, 없으면 지금처럼 같은 version 의 빌드.
 
 ## Approach (Checklist)
 
-- [ ] V133: editor partial unique index 교체, `verdict_carried_from_build_id` 추가.
+- [ ] V135: editor partial unique index 교체, `verdict_carried_from_build_id` 추가.
 - [ ] 등록: `findEditorByVersion`.
 - [ ] 버전 순서에서 editor 제외 제거(GameBuildRepository · TestCaseVersionRepository · TestRun · Library · QaLaunchRead · Assistant).
 - [ ] 생성: editor 거부 제거, 후보에 editor 표시, `verdicts` 요청 · 응답 수.

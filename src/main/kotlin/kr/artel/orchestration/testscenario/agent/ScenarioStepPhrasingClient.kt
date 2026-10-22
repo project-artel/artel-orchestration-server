@@ -6,13 +6,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.reactive.awaitSingle
 import kr.artel.orchestration.settings.service.FeatureModelService
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
+import kr.artel.orchestration.settings.config.AgentServerProperties
 import org.springframework.http.MediaType
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import reactor.netty.http.client.HttpClient
-import java.time.Duration
 
 /**
  * 사용자가 알려준 통과 방법을 **스텝 문장으로 다듬는다**(`POST {agent}/scenario-steps/phrase`, ARTEL-487).
@@ -26,10 +25,12 @@ import java.time.Duration
  */
 @Component
 class ScenarioStepPhrasingClient(
-    @Value("\${artel.agent.base-url}") private val agentBaseUrl: String,
+    properties: AgentServerProperties,
     private val featureModels: FeatureModelService,
-    @Value("\${artel.agent.step-phrasing-timeout:PT20S}") private val responseTimeout: Duration,
 ) {
+    private val agentBaseUrl = properties.baseUrl
+    private val responseTimeout = properties.stepPhrasingTimeout
+
     private val logger = LoggerFactory.getLogger(ScenarioStepPhrasingClient::class.java)
 
     private val webClient: WebClient = WebClient.builder()
@@ -94,7 +95,7 @@ class ScenarioStepPhrasingClient(
 
 data class PhraseRequest(
     val said: String,
-    @JsonProperty("blocked_by") val blockedBy: String,
+    @param:JsonProperty("blocked_by") val blockedBy: String,
     val before: String,
     val after: String,
     val locale: String,

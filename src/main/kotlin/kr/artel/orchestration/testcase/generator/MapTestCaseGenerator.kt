@@ -58,8 +58,10 @@ class MapTestCaseGenerator(
     private val objectMapper: ObjectMapper,
 ) {
 
-    suspend fun generate(contentMapId: Long): List<MapTestCase> {
-        val edges = contentMaps.findCallEdges(contentMapId).toList()
+    suspend fun generate(contentMapId: Long, progress: GenerationProgress = GenerationProgress.NONE): List<MapTestCase> {
+        progress.report(GenerationPhase.READING_MAP, 0, 0)
+        // 기능 행마다 다시 훑지 않게 한 번 풀어 둔다(ARTEL-1187).
+        val siblings = MapTestCaseSiblings.Index(contentMaps.findCallEdges(contentMapId).toList())
         // 매개변수 이름을 호출자가 넘긴 값으로 되돌리려면 필요하다(ARTEL-602).
         val settled = contentMaps.findSettledArguments(contentMapId).toList()
             .groupBy { it.capabilityId }
@@ -87,8 +89,15 @@ class MapTestCaseGenerator(
         // **게임이 스스로 하는 일도 케이스다**(ARTEL-681). 누를 것이 없으면 관측으로 적는데, 그
         // 갈림은 행이 스스로 말한다 — `actionability` 가 `not-a-step` 이면 볼 것이고 아니면
         // 누를 것이다. 아래(효과 읽기 · 갈래 펴기 · 합치기)는 두 벌이 되지 않는다.
-        val drafts = contentMaps.findTestCaseRows(contentMapId).toList()
-            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, owners, namesByScene) }
+        // 기능 행마다 묻지 않고 지도 하나치를 한 번에 읽는다(ARTEL-1187).
+        val effectsOf = effects.findByContentMapIdOrderByIdAsc(contentMapId).toList().groupBy { it.capabilityId }
+        val rows = contentMaps.findTestCaseRows(contentMapId).toList()
+        // 기능 행마다 한 칸씩 민다(ARTEL-1187). 큰 지도에서 시간이 가장 많이 드는 자리라 여기가 진행의 분모다.
+        val drafts = rows.flatMapIndexed { index, row ->
+            progress.report(GenerationPhase.DRAFTING, index, rows.size)
+            draftsOf(row, siblings, effectsOf, settled, exits, refs, owners, namesByScene)
+        }
+        progress.report(GenerationPhase.DRAFTING, rows.size, rows.size)
         return merged(drafts) + screenElements(contentMapId)
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
@@ -556,7 +565,8 @@ class MapTestCaseGenerator(
      */
     private suspend fun draftsOf(
         row: ContentMapCapabilityRow,
-        edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
+        siblings: MapTestCaseSiblings.Index,
+        effectsOf: Map<Long, List<CapabilityEffectEntity>>,
         settled: Map<Long, Map<Int, String>>,
         exits: Set<LoopExits.Guard>,
         refs: Map<Pair<String, String>, Set<String>>,
@@ -572,12 +582,12 @@ class MapTestCaseGenerator(
 
         // 자기 효과가 먼저다. 없을 때만 공통 호출자를 통해 빌려 온다 — 자기가 결과를 들고 있으면
         // 그것이 이 조작의 결과이고, 남의 것까지 끌어오면 무관한 결과가 붙는다.
-        val own = effects.findByCapabilityIdOrderByIdAsc(row.capabilityId).toList()
+        val own = effectsOf[row.capabilityId].orEmpty()
         val sources: List<Source> =
             if (own.isNotEmpty()) {
                 listOf(Source(condition, own, row.capabilityId, LoopExits.reachedByRepeating(condition, exits)))
             } else {
-                borrowed(row, condition, edges, exits)
+                borrowed(row, condition, siblings, effectsOf, exits)
             }
 
         return sources.flatMap { (situation, effectRows, source, repeats) ->
@@ -734,10 +744,11 @@ class MapTestCaseGenerator(
     private suspend fun borrowed(
         row: ContentMapCapabilityRow,
         condition: ConditionNode?,
-        edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
+        siblings: MapTestCaseSiblings.Index,
+        effectsOf: Map<Long, List<CapabilityEffectEntity>>,
         exits: Set<LoopExits.Guard>,
     ): List<Source> =
-        MapTestCaseSiblings.of(row.capabilityId, edges).mapNotNull { borrowed ->
+        siblings.of(row.capabilityId).mapNotNull { borrowed ->
             val callerCondition = parse(borrowed.callerCondition)
             val ownCondition = parse(borrowed.ownCondition)
             // **모순되는 갈래는 잇지 않는다.** 이은 케이스의 사전조건이 양쪽을 함께 드는데 둘이
@@ -747,7 +758,7 @@ class MapTestCaseGenerator(
             if (!ConditionOverlap.compatible(condition, ownCondition)) return@mapNotNull null
             if (!ConditionOverlap.compatible(callerCondition, ownCondition)) return@mapNotNull null
 
-            val rows = effects.findByCapabilityIdOrderByIdAsc(borrowed.capabilityId).toList()
+            val rows = effectsOf[borrowed.capabilityId].orEmpty()
             if (rows.isEmpty()) return@mapNotNull null
             // **호출자 조건은 판정에만 쓰고 문장에는 싣지 않는다.** 그것은 "코드가 그 호출에
             // 닿는 조건"이지 테스터가 만들 것이 아니다 — 코루틴이 몇 번째 대사를 넘겼는지 같은

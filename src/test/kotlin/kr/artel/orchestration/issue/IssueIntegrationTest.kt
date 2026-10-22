@@ -220,10 +220,10 @@ class IssueIntegrationTest {
         val owner = signIn("42", "octocat")
         val seed = seedProject(owner)
         val now = Instant.now()
-        val oldBuild = gameBuildRepository.save(GameBuildEntity(projectId = seed.projectId, version = "1.0", createdAt = now, updatedAt = now))!!.id!!
-        val newBuild = gameBuildRepository.save(GameBuildEntity(projectId = seed.projectId, version = "1.1", label = "hotfix", createdAt = now, updatedAt = now))!!.id!!
+        val oldBuild = gameBuildRepository.save(GameBuildEntity(projectId = seed.projectId, version = "1.0", createdAt = now, updatedAt = now)).id!!
+        val newBuild = gameBuildRepository.save(GameBuildEntity(projectId = seed.projectId, version = "1.1", label = "hotfix", createdAt = now, updatedAt = now)).id!!
         // TR 은 1.0 에 있지만 run 이 1.1 을 골랐다 — 이슈는 1.1 에서 나온 것이다.
-        val trOld = testRunRepository.save(TestRunEntity(projectId = seed.projectId, name = "전투 TR", gameBuildId = oldBuild))!!.id!!
+        val trOld = testRunRepository.save(TestRunEntity(projectId = seed.projectId, name = "전투 TR", gameBuildId = oldBuild)).id!!
         val runPicked = seedQaRun(seed, trOld, gameBuildId = newBuild)
         val runInherited = seedQaRun(seed, trOld)
         val fromPicked = seedIssue(seedQaTry(seed, qaRunId = runPicked), "BLOCKER", "1.1 에서 나옴")
@@ -404,7 +404,7 @@ class IssueIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "issue-project", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -414,21 +414,21 @@ class IssueIntegrationTest {
             )
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = project.id!!)
-        )!!
+            TestScenarioEntity(projectId = project.id)
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val seed = Seed(
             ownerId = ownerId,
-            projectId = project.id!!,
+            projectId = project.id,
             testScenarioId = scenario.id!!,
             gameInstanceId = instance.id!!,
             qaTryId = 0
@@ -454,13 +454,13 @@ class IssueIntegrationTest {
                 startedAt = now,
                 completedAt = if (status == "RUNNING") null else now
             )
-        )!!.id!!
+        ).id!!
     }
 
     /** run 하나(ARTEL-259 최소형). qa_try 를 여기 붙여야 `IssueResponse.qaRunId` 가 문자열을 낸다. */
     private suspend fun seedQaRun(seed: Seed, testRunId: Long? = null, gameBuildId: Long? = null): Long {
         val now = Instant.now()
-        val runOf = testRunId ?: testRunRepository.save(TestRunEntity(projectId = seed.projectId, name = "런"))!!.id!!
+        val runOf = testRunId ?: testRunRepository.save(TestRunEntity(projectId = seed.projectId, name = "런")).id!!
         return qaRunRepository.save(
             QaRunEntity(
                 testRunId = runOf,
@@ -471,7 +471,7 @@ class IssueIntegrationTest {
                 startedAt = now,
                 completedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     /**
@@ -490,7 +490,7 @@ class IssueIntegrationTest {
                 createdAt = Instant.now(),
                 updatedAt = Instant.now()
             )
-        )!!.id!!
+        ).id!!
 
     private data class Seed(
         val ownerId: Long,
@@ -510,7 +510,7 @@ class IssueIntegrationTest {
                 avatarUrl = null,
                 email = "$login@example.com"
             )
-        )!!
+        )
 
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(5)

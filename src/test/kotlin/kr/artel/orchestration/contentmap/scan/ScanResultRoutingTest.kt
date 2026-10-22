@@ -1,7 +1,14 @@
 package kr.artel.orchestration.contentmap.scan
 
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kr.artel.orchestration.contentmap.dto.LastScanResponse
 import kr.artel.orchestration.contentmap.entity.Capture
 import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
@@ -56,6 +63,8 @@ class ScanResultRoutingTest {
 
     @Autowired private lateinit var router: ScanResultRouter
     @Autowired private lateinit var statuses: ScanStatusRegistry
+    @Autowired private lateinit var progress: ScanProgressRecorder
+    @Autowired private lateinit var streamManager: ContentMapEventStreamManager
     @Autowired private lateinit var view: ContentMapViewService
     @Autowired private lateinit var storage: DocumentStorage
     @Autowired private lateinit var projects: ProjectRepository
@@ -99,6 +108,47 @@ class ScanResultRoutingTest {
         assertThat(status.state).isEqualTo(ScanState.SUCCEEDED)
         assertThat(status.ingestedDocuments).isEqualTo(1)
         assertThat(status.finishedAt).isNotNull()
+    }
+
+    /**
+     * 끊은 스캔의 늦은 성공 결과는 앉히지 않는다(ARTEL-1183).
+     *
+     * 취소는 게임에 멈추라고 보내지만, 그 사이 이미 올라간 문서의 성공 결과가 뒤늦게 도착할 수 있다. 앉히면 사람이
+     * 끊은 스캔이 지도를 바꾸고, 그 지도는 반쯤 돈 순회의 것이라 못 돈 씬이 사라진 모습이 된다.
+     */
+    @Test
+    fun `끊은 스캔의 늦은 결과는 앉히지 않는다`(): Unit = runBlocking {
+        val world = newWorld()
+        val document = newDocument(world.contentMapId, healthyDocument())
+
+        statuses.put(
+            requestedStatus(world).copy(state = ScanState.FAILED, cancelled = true, error = "사용자가 스캔을 취소했습니다."),
+        )
+
+        // 프레임은 우리 것이므로 처리했다고 답하되, 적재는 하지 않는다.
+        assertThat(router.handle(world.instanceId, actionResult(success = true))).isTrue()
+
+        assertThat(documents.findById(document.id!!)!!.ingestedAt).isNull()
+
+        val status = statuses.find(world.gameBuildId)!!
+        assertThat(status.state).isEqualTo(ScanState.FAILED)
+        assertThat(status.cancelled).isTrue()
+    }
+
+    /**
+     * 상태를 모르는 결과는 지금까지 하던 대로 앉힌다.
+     *
+     * 상태는 프로세스 메모리에 살아서 서버가 다시 뜨면 비어 있다. 그때 결과가 오는 것은 끊긴 것이 아니라 재시작을
+     * 건너온 것이라, 모른다는 이유로 막으면 멀쩡한 스캔이 버려진다.
+     */
+    @Test
+    fun `상태를 모르는 결과는 그대로 앉힌다`(): Unit = runBlocking {
+        val world = newWorld()
+        val document = newDocument(world.contentMapId, healthyDocument())
+
+        assertThat(router.handle(world.instanceId, actionResult(success = true))).isTrue()
+
+        assertThat(documents.findById(document.id!!)!!.ingestedAt).isNotNull()
     }
 
     /** 스캔하고 TC 생성(ARTEL-1040): 문서가 다 앉은 뒤 그 지도로 TC 를 만들고, 결과를 스캔 상태에 싣는다. */
@@ -255,7 +305,7 @@ class ScanResultRoutingTest {
         // 화면이 읽는 창구도 같은 말을 한다.
         val response = view.read(world.userId, world.projectId, world.gameBuildId)!!
         assertThat(response.lastScan!!.state).isEqualTo(ScanState.FAILED)
-        assertThat(response.lastScan!!.error).isEqualTo("릴리스 빌드에서는 스캔할 수 없습니다.")
+        assertThat(response.lastScan.error).isEqualTo("릴리스 빌드에서는 스캔할 수 없습니다.")
     }
 
     /**
@@ -295,7 +345,113 @@ class ScanResultRoutingTest {
         assertThat(statuses.find(world.gameBuildId)!!.state).isEqualTo(ScanState.REQUESTED)
     }
 
+    /** 게임이 알린 씬 진행이 마지막 스캔 상태에 적히고 `scan` 이벤트로 흘러간다(ARTEL-1178). */
+    @Test
+    fun `게임이 알린 진행이 상태와 화면에 간다`(): Unit = runBlocking {
+        val world = newWorld()
+        statuses.put(requestedStatus(world))
+        val events = collectScanEvents(world.gameBuildId, 1) {
+            progress.record(world.instanceId, progressFrame("SCANNING", done = 3, total = 12, scene = "Title"))
+        }
+
+        val status = statuses.find(world.gameBuildId)!!
+        assertThat(status.phase).isEqualTo(ScanPhase.SCANNING)
+        assertThat(status.progress).isEqualTo(ScanProgress(done = 3, total = 12, scene = "Title"))
+        assertThat(events.single().progress).isEqualTo(status.progress)
+    }
+
+    /**
+     * 우리가 그 인스턴스에 보낸, 아직 도는 스캔의 진행만 적는다. 다른 인스턴스의 진행 · 끝난 스캔 뒤에 늦게 닿은 진행 ·
+     * 서버 쪽 단계를 사칭한 진행은 버린다.
+     */
+    @Test
+    fun `남의 스캔 · 끝난 스캔 · 서버 단계의 진행은 버린다`(): Unit = runBlocking {
+        val world = newWorld()
+        statuses.put(requestedStatus(world).copy(gameInstanceId = world.instanceId + 100_000))
+        progress.record(world.instanceId, progressFrame("SCANNING", done = 1, total = 2))
+        assertThat(statuses.find(world.gameBuildId)!!.progress).isNull()
+
+        statuses.put(requestedStatus(world))
+        progress.record(world.instanceId, progressFrame("INGESTING", done = 1, total = 2))
+        assertThat(statuses.find(world.gameBuildId)!!.progress).isNull()
+
+        statuses.put(requestedStatus(world).copy(state = ScanState.SUCCEEDED, finishedAt = Instant.now()))
+        progress.record(world.instanceId, progressFrame("UPLOADING", done = 0, total = 1))
+        assertThat(statuses.find(world.gameBuildId)!!.phase).isEqualTo(ScanPhase.SCANNING)
+    }
+
+    /** 게임이 보낸 수가 범위를 벗어나도 상태는 범위 안에 있다. */
+    @Test
+    fun `진행 수는 범위 안으로 자른다`(): Unit = runBlocking {
+        val world = newWorld()
+        statuses.put(requestedStatus(world))
+        progress.record(world.instanceId, progressFrame("SCANNING", done = 40, total = 12, scene = "S".repeat(500)))
+
+        val recorded = statuses.find(world.gameBuildId)!!.progress!!
+        assertThat(recorded.done).isEqualTo(12)
+        assertThat(recorded.scene).hasSize(200)
+    }
+
+    /** 결과가 오면 적재 · TC 생성 단계를 차례로 알린 뒤 끝난다. 큰 게임에서 이 둘이 수십 초다. */
+    @Test
+    fun `결과가 오면 적재와 TC 생성 단계를 지나 끝난다`(): Unit = runBlocking {
+        val world = newWorld()
+        newDocument(world.contentMapId, healthyDocument())
+        statuses.put(requestedStatus(world).copy(testCases = ScanTestCases(carryOver = true)))
+
+        val events = collectScanEvents(world.gameBuildId, 3) {
+            router.handle(world.instanceId, actionResult(success = true))
+        }
+
+        assertThat(events.map { it.state to it.phase }).containsExactly(
+            ScanState.REQUESTED to ScanPhase.INGESTING,
+            ScanState.REQUESTED to ScanPhase.GENERATING_TEST_CASES,
+            ScanState.SUCCEEDED to ScanPhase.GENERATING_TEST_CASES,
+        )
+    }
+
+    /**
+     * 게임이 씬을 도는 도중 끊기면 결과는 오지 않는다. 그 스캔은 실패로 닫히고 화면에 흘러간다 — 아니면 화면은 영영 "스캔하는
+     * 중" 이다. 이미 결과를 받아 서버가 적재 중인 스캔은 건드리지 않는다.
+     */
+    @Test
+    fun `게임이 씬을 도는 도중 끊기면 그 스캔은 실패로 닫힌다`(): Unit = runBlocking {
+        val scanning = newWorld()
+        val ingesting = newWorld()
+        statuses.put(requestedStatus(scanning).copy(phase = ScanPhase.SCANNING))
+        statuses.put(requestedStatus(ingesting).copy(gameInstanceId = scanning.instanceId, phase = ScanPhase.INGESTING))
+
+        val events = collectScanEvents(scanning.gameBuildId, 1) { router.gameDisconnected(scanning.instanceId) }
+
+        val closed = statuses.find(scanning.gameBuildId)!!
+        assertThat(closed.state).isEqualTo(ScanState.FAILED)
+        assertThat(closed.error).contains("연결이 끊겼습니다")
+        assertThat(events.single().state).isEqualTo(ScanState.FAILED)
+        assertThat(statuses.find(ingesting.gameBuildId)!!.state).isEqualTo(ScanState.REQUESTED)
+    }
+
     // ---------- 픽스처 ----------
+
+    private suspend fun collectScanEvents(
+        gameBuildId: Long,
+        count: Int,
+        action: suspend () -> Unit,
+    ): List<LastScanResponse> = coroutineScope {
+        val collected = async(start = CoroutineStart.UNDISPATCHED) {
+            withTimeout(10_000) {
+                streamManager.stream(gameBuildId)
+                    .mapNotNull { it.data()?.scan }
+                    .take(count)
+                    .toList()
+            }
+        }
+        action()
+        collected.await()
+    }
+
+    private fun progressFrame(stage: String, done: Int, total: Int, scene: String? = null) =
+        """{"type":"EVIDENCE_SCAN_PROGRESS","stage":"$stage","done":$done,"total":$total""" +
+            (scene?.let { ""","scene":"$it"""" } ?: "") + "}"
 
     private data class World(
         val userId: Long,
@@ -337,7 +493,7 @@ class ScanResultRoutingTest {
     private suspend fun newWorld(): World {
         val now = Instant.now()
         val userId = db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('console', 'console-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
         val project = projects.save(
             ProjectEntity(name = "scan-result-${System.nanoTime()}", genre = "ACTION", createdAt = now, updatedAt = now)

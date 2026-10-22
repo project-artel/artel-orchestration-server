@@ -68,6 +68,22 @@ class ScanResultRouter(
             return true
         }
 
+        // 끊긴 스캔의 늦은 결과는 앉히지 않는다(ARTEL-1183). 취소는 게임에 멈추라고 보내지만, 그 사이 이미 올라간
+        // 문서의 성공 결과가 뒤늦게 도착할 수 있다. 앉히면 사람이 끊은 스캔이 지도를 바꾸고, 그 지도는 반쯤 돈 순회의
+        // 것이라 못 돈 씬이 사라진 모습이 된다.
+        //
+        // **모르는 것은 막지 않는다.** 상태는 프로세스 메모리에 살아서 서버가 다시 뜨면 비어 있다. 그때 `find` 는
+        // null 이고, 그 결과는 끊긴 것이 아니라 재시작을 건너온 것이므로 지금까지 하던 대로 앉힌다.
+        val known = statuses.find(gameBuildId)
+        if (known != null && known.state != ScanState.REQUESTED) {
+            logger.info(
+                "이미 닫힌 스캔의 결과가 늦게 도착해 앉히지 않는다 [gameBuildId={}, state={}, cancelled={}]",
+                gameBuildId, known.state, known.cancelled,
+            )
+            return true
+        }
+
+        enterPhase(gameBuildId, ScanPhase.INGESTING)
         ingestFor(gameBuildId)
         return true
     }
@@ -126,12 +142,18 @@ class ScanResultRouter(
         val ingested = outcomes.size - failed.size
         // 스캔하고 TC 생성(ARTEL-1040). 문서가 하나도 깨지지 않았을 때만 만든다 — 깨진 지도로 만든 TC 는 다시 만들 수 없다.
         val requested = statuses.find(gameBuildId)?.takeIf { it.state == ScanState.REQUESTED }?.testCases
-        val testCases = if (failed.isEmpty() && requested != null) generateTestCases(gameBuildId, requested) else requested
+        val testCases = if (failed.isEmpty() && requested != null) {
+            enterPhase(gameBuildId, ScanPhase.GENERATING_TEST_CASES)
+            generateTestCases(gameBuildId, requested)
+        } else {
+            requested
+        }
         statuses.complete(gameBuildId) { current ->
             if (failed.isEmpty()) {
                 current.copy(
                     state = ScanState.SUCCEEDED,
                     finishedAt = Instant.now(clock),
+                    updatedAt = Instant.now(clock),
                     ingestedDocuments = ingested,
                     testCases = testCases,
                 )
@@ -141,6 +163,7 @@ class ScanResultRouter(
                 current.copy(
                     state = ScanState.FAILED,
                     finishedAt = Instant.now(clock),
+                    updatedAt = Instant.now(clock),
                     ingestedDocuments = ingested,
                     error = failed.first().reason,
                 )
@@ -167,9 +190,34 @@ class ScanResultRouter(
             request.copy(state = ScanTestCaseState.FAILED, reason = GENERIC_TEST_CASE_FAILURE)
         }
 
+    /**
+     * 게임 연결이 끊겼을 때 `SdkWebSocketHandler` 가 부른다(ARTEL-1178). 그 게임이 돌던 스캔은 결과가 오지 않으므로
+     * 실패로 닫고 화면에 알린다. 이것이 없으면 화면은 영영 "스캔하는 중" 이고, 다음 요청만 60분 뒤에 풀렸다.
+     */
+    fun gameDisconnected(gameInstanceId: Long) {
+        val now = Instant.now(clock)
+        statuses.completeGameSideOn(gameInstanceId) {
+            it.copy(state = ScanState.FAILED, finishedAt = now, updatedAt = now, error = GAME_DISCONNECTED)
+        }.forEach {
+            logger.warn("스캔 도중 게임 연결이 끊겼다 [gameBuildId={}, gameInstanceId={}]", it.gameBuildId, gameInstanceId)
+            publishScan(it.gameBuildId, it)
+        }
+    }
+
     private fun fail(gameBuildId: Long, reason: String) {
         statuses.complete(gameBuildId) {
-            it.copy(state = ScanState.FAILED, finishedAt = Instant.now(clock), error = reason)
+            val now = Instant.now(clock)
+            it.copy(state = ScanState.FAILED, finishedAt = now, updatedAt = now, error = reason)
+        }?.let { publishScan(gameBuildId, it) }
+    }
+
+    /**
+     * 서버 쪽 단계로 옮기고 흘린다(ARTEL-1178). 적재 · TC 생성은 큰 게임에서 수십 초가 걸려, 옮긴 것을 알리지
+     * 않으면 화면은 게임이 아직 씬을 도는 줄 안다. 게임이 준 진행은 이 단계의 것이 아니라 비운다.
+     */
+    private fun enterPhase(gameBuildId: Long, phase: ScanPhase) {
+        statuses.advance(gameBuildId) {
+            it.copy(phase = phase, progress = null, updatedAt = Instant.now(clock))
         }?.let { publishScan(gameBuildId, it) }
     }
 
@@ -205,6 +253,7 @@ class ScanResultRouter(
         const val GENERIC_SCAN_FAILURE = "게임이 근거 스캔에 실패했습니다."
         const val GENERIC_INGEST_FAILURE = "근거 문서를 씬 명세로 앉히지 못했습니다."
         const val GENERIC_TEST_CASE_FAILURE = "스캔은 끝났지만 test case 를 만들지 못했습니다."
+        const val GAME_DISCONNECTED = "스캔 도중 게임 연결이 끊겼습니다. 게임을 다시 켠 뒤 스캔해 주세요."
         const val NO_BUILD = "이 게임이 어느 빌드인지 아직 서버에 보고되지 않았습니다."
     }
 }

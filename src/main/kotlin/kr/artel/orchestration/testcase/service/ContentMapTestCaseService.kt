@@ -1,7 +1,17 @@
 package kr.artel.orchestration.testcase.service
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.supervisorScope
+import kr.artel.orchestration.common.error.ApiException
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
+import kr.artel.orchestration.contentmap.dto.ContentMapStreamEvent
+import kr.artel.orchestration.contentmap.scan.ContentMapEventStreamManager
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.contentmap.repository.ContentMapDocumentRepository
 import kr.artel.orchestration.contentmap.repository.ContentMapRepository
@@ -15,11 +25,16 @@ import kr.artel.orchestration.testcase.dto.ContentMapTestCaseGenerationResponse
 import kr.artel.orchestration.testcase.dto.TestCaseGenerationCandidate
 import kr.artel.orchestration.testcase.dto.TestCaseGenerationCandidatesResponse
 import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
+import kr.artel.orchestration.testcase.dto.TestCaseGenerationResponse
+import kr.artel.orchestration.testcase.generator.GenerationPhase
+import kr.artel.orchestration.testcase.generator.GenerationProgress
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
 import org.springframework.transaction.reactive.executeAndAwait
+import java.time.Clock
+import java.time.Instant
 
 /**
  * build 하나의 content map 에서 test case 를 생성한다(ARTEL-971).
@@ -46,6 +61,9 @@ class ContentMapTestCaseService(
     private val projectAccessService: ProjectAccessService,
     private val transactionalOperator: TransactionalOperator,
     private val projectChangeStreamManager: ProjectChangeStreamManager,
+    private val generations: TestCaseGenerationRegistry,
+    private val streamManager: ContentMapEventStreamManager,
+    private val clock: Clock,
 ) {
 
     private val logger = LoggerFactory.getLogger(ContentMapTestCaseService::class.java)
@@ -189,10 +207,95 @@ class ContentMapTestCaseService(
         val contentMapId = contentMaps.findByGameBuildId(gameBuildId)?.id
             ?.takeIf { documents.existsByContentMapIdAndIngestedAtIsNotNull(it) }
             ?: throw ConflictException("이 빌드에는 적재된 content map 이 없습니다.")
-        val generated = generateInTransaction(
-            build.projectId, contentMapId, build, carryOver, firstTimeOnly = !overwrite, verdicts = verdicts, selected = selected,
-        )
+        val generated = tracked(gameBuildId) { progress ->
+            generateInTransaction(
+                build.projectId, contentMapId, build, carryOver,
+                firstTimeOnly = !overwrite, verdicts = verdicts, selected = selected, progress = progress,
+            )
+        }
         return ContentMapTestCaseGenerationResponse.of(generated.result, generated.carriedOver, generated.verdicts)
+    }
+
+    /**
+     * 도는 생성을 끊는다(ARTEL-1187). 한 트랜잭션이라 아무것도 바뀌지 않는다. 접근할 수 없는 빌드면 404, 도는
+     * 생성이 없으면 409(`TEST_CASE_GENERATION_NOT_RUNNING`).
+     */
+    suspend fun cancel(userId: Long, projectId: Long, gameBuildId: Long) {
+        gameBuilds.findAccessibleById(gameBuildId, projectId, userId) ?: throw NotFoundException("빌드를 찾을 수 없습니다.")
+        if (!generations.cancel(gameBuildId)) {
+            throw ConflictException("이 빌드에 돌고 있는 TC 생성이 없습니다.", GENERATION_NOT_RUNNING)
+        }
+        logger.info("지도 TC 생성 취소 요청 [gameBuildId={}]", gameBuildId)
+    }
+
+    /**
+     * 생성 하나를 빌드 자리에 묶어 돌린다(ARTEL-1187). 자리를 잡고(같은 빌드에 돌고 있으면 409), 단계 · 진행을 화면
+     * 지도 SSE 로 흘리고, 끝 상태(성공 · 실패 · 취소)를 남긴다.
+     *
+     * 일은 자식 코루틴으로 돈다. 취소 API 가 이 요청 전체가 아니라 그 일만 끊어야 409 로 "취소했다" 를 답할 수 있다.
+     * 끊기면 트랜잭션이 롤백된다.
+     *
+     * **그 자식은 [Dispatchers.Default] 에서 돈다.** 요청 코루틴은 Netty · R2DBC 이벤트 루프 스레드에서 이어지고, 생성의
+     * 계산(형제 찾기 · 합치기)은 CPU 를 오래 쓴다. 2026-10-21 1.4.0 생성은 `reactor-tcp-nio-10` 하나를 CPU 387초 동안
+     * 쥐었다. 그 스레드에 붙은 DB 커넥션을 쓰는 다른 요청은 그동안 응답을 못 받는다. 트랜잭션은 코루틴 컨텍스트를 따라가므로
+     * 디스패처를 바꿔도 같은 트랜잭션이다(`TestCaseGenerationRollbackTest`).
+     */
+    private suspend fun <T> tracked(gameBuildId: Long, work: suspend (GenerationProgress) -> T): T = supervisorScope {
+        val run = async(Dispatchers.Default, start = CoroutineStart.LAZY) { work(Reporter(gameBuildId)) }
+        generations.start(gameBuildId, run, Instant.now(clock))?.let {
+            run.cancel()
+            throw ConflictException("이 빌드의 TC 생성이 이미 돌고 있습니다. 끝난 뒤에 다시 시도해 주세요.", GENERATION_IN_PROGRESS)
+        }
+        generations.find(gameBuildId)?.let { publish(gameBuildId, it) }
+        val started = System.nanoTime()
+        try {
+            run.await().also {
+                finish(gameBuildId, TestCaseGenerationState.SUCCEEDED)
+                logger.info("지도 TC 생성 완료 [gameBuildId={}, {}ms]", gameBuildId, (System.nanoTime() - started) / 1_000_000)
+            }
+        } catch (cancelled: CancellationException) {
+            if (generations.cancelRequested(gameBuildId) && currentCoroutineContext().isActive) {
+                finish(gameBuildId, TestCaseGenerationState.CANCELLED)
+                throw ConflictException("TC 생성을 취소했습니다. 아무것도 바뀌지 않았습니다.", GENERATION_CANCELLED)
+            }
+            // 요청 자체가 끊겼다(화면을 닫는 등). 트랜잭션은 롤백됐다.
+            finish(gameBuildId, TestCaseGenerationState.FAILED, REQUEST_DROPPED)
+            throw cancelled
+        } catch (failure: Exception) {
+            logger.error("지도 TC 생성 실패 [gameBuildId={}]", gameBuildId, failure)
+            finish(gameBuildId, TestCaseGenerationState.FAILED, (failure as? ApiException)?.message ?: GENERIC_FAILURE)
+            throw failure
+        }
+    }
+
+    private fun finish(gameBuildId: Long, state: TestCaseGenerationState, error: String? = null) {
+        generations.finish(gameBuildId, state, Instant.now(clock), error)?.let { publish(gameBuildId, it) }
+    }
+
+    private fun publish(gameBuildId: Long, status: TestCaseGenerationStatus) {
+        streamManager.emit(
+            gameBuildId,
+            ContentMapStreamEvent(type = GENERATION_EVENT, testCaseGeneration = TestCaseGenerationResponse.of(status)),
+        )
+    }
+
+    /**
+     * 생성기 · writer 가 알리는 진행을 레지스트리와 SSE 로 옮긴다. 기능 행마다 알려 오므로 단계가 바뀔 때와 끝날
+     * 때 말고는 [REPORT_INTERVAL_NANOS] 에 한 번만 흘린다 — 행 7,863개를 다 흘리면 화면이 그리는 것보다 빨리 쌓인다.
+     */
+    private inner class Reporter(private val gameBuildId: Long) : GenerationProgress {
+        private var lastPhase: GenerationPhase? = null
+        private var lastAt = 0L
+
+        override fun report(phase: GenerationPhase, done: Int, total: Int) {
+            val now = System.nanoTime()
+            if (phase == lastPhase && done != total && now - lastAt < REPORT_INTERVAL_NANOS) return
+            lastPhase = phase
+            lastAt = now
+            val known = total > 0
+            generations.progress(gameBuildId, phase, done.takeIf { known }, total.takeIf { known }, Instant.now(clock))
+                ?.let { publish(gameBuildId, it) }
+        }
     }
 
     private fun alreadyGenerated() = ConflictException(
@@ -231,13 +334,15 @@ class ContentMapTestCaseService(
         firstTimeOnly: Boolean = false,
         verdicts: VerdictCarryOverService.Mode? = null,
         selected: Set<Long> = emptySet(),
+        progress: GenerationProgress = GenerationProgress.NONE,
     ): Generated {
         val written = transactionalOperator.executeAndAwait {
             folderService.lockProjectFolders(projectId)
             val gameBuildId = requireNotNull(build.id)
             // lock 을 잡은 뒤에 본다. 같은 build 를 둘이 동시에 만들면 뒤의 것이 여기서 막힌다.
             if (firstTimeOnly && versions.existsMapCasesByGameBuildId(gameBuildId)) throw alreadyGenerated()
-            val result = writer.rewrite(projectId, gameBuildId, contentMapId)
+            val result = writer.rewrite(projectId, gameBuildId, contentMapId, progress)
+            if (carryOver) progress.report(GenerationPhase.CARRYING_OVER, 0, 0)
             val carriedOver = if (carryOver) manualCases.carryOver(projectId, gameBuildId) else 0
             Generated(result, carriedOver, verdicts?.let { verdictCarry.afterGeneration(gameBuildId, it, selected) })
         }
@@ -254,5 +359,20 @@ class ContentMapTestCaseService(
 
     companion object {
         const val TEST_CASES_ALREADY_GENERATED = "TEST_CASES_ALREADY_GENERATED"
+
+        /** 같은 빌드에 생성이 이미 돌고 있다(ARTEL-1187). */
+        const val GENERATION_IN_PROGRESS = "TEST_CASE_GENERATION_IN_PROGRESS"
+
+        /** 사용자가 취소했다. 아무것도 바뀌지 않았다. */
+        const val GENERATION_CANCELLED = "TEST_CASE_GENERATION_CANCELLED"
+
+        /** 취소할 생성이 없다. */
+        const val GENERATION_NOT_RUNNING = "TEST_CASE_GENERATION_NOT_RUNNING"
+
+        const val GENERATION_EVENT = "testCaseGeneration"
+
+        private const val REPORT_INTERVAL_NANOS = 300_000_000L
+        private const val GENERIC_FAILURE = "TC 를 만들지 못했습니다. 아무것도 바뀌지 않았습니다."
+        private const val REQUEST_DROPPED = "요청이 끊겨 TC 생성을 멈췄습니다. 아무것도 바뀌지 않았습니다."
     }
 }

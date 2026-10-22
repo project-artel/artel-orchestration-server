@@ -84,7 +84,7 @@ data class SdkRunStatus(
     // `is` 접두 불리언은 Jackson의 빈 명명 규칙이 "is"를 떼어 `focused`로 읽으려 드는
     // 자리다. 코틀린 모듈이 생성자 파라미터 이름으로 덮어 주긴 하지만, 그 동작에 기대면
     // 모듈 설정이 바뀌는 순간 값이 조용히 기본값으로 들어온다. 와이어 이름을 못 박는다.
-    @JsonProperty("isFocused")
+    @param:JsonProperty("isFocused")
     val isFocused: Boolean,
     val batteryStatus: String? = null
 )
@@ -132,9 +132,9 @@ data class SdkDeviceInfo(
     val targetFrameRate: Int? = null,
     val vSyncCount: Int? = null,
     // SdkRunStatus.isFocused와 같은 이유로 와이어 이름을 못 박는다.
-    @JsonProperty("isEditor")
+    @param:JsonProperty("isEditor")
     val isEditor: Boolean? = null,
-    @JsonProperty("isDebugBuild")
+    @param:JsonProperty("isDebugBuild")
     val isDebugBuild: Boolean? = null,
     val scriptingBackend: String? = null,
     val sdkVersion: String? = null,

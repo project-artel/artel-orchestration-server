@@ -132,7 +132,7 @@ class QaLaunchReadRepository(
                     qaTryId = row.long("qa_try_id"),
                     scenarioId = row.long("test_scenario_id"),
                     scenarioTitle = row.get("scenario_title", String::class.java) ?: "",
-                    step = row.get("step", Integer::class.java)?.toInt(),
+                    step = row.get("step", Int::class.javaObjectType),
                     reportedAt = row.instant("reported_at")!!,
                 )
             }
@@ -206,9 +206,9 @@ class QaLaunchReadRepository(
                 SinceLastQaChangeRow(
                     kind = row.get("kind", String::class.java)!!,
                     at = row.instant("at")!!,
-                    subjectId = row.get("subject_id", java.lang.Long::class.java)?.toLong(),
+                    subjectId = row.get("subject_id", Long::class.javaObjectType),
                     subjectName = row.get("subject_name", String::class.java),
-                    count = row.get("cnt", Integer::class.java)?.toInt() ?: 1,
+                    count = row.get("cnt", Int::class.javaObjectType) ?: 1,
                 )
             }
             .flow()

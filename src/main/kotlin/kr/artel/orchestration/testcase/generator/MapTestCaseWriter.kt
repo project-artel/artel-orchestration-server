@@ -71,8 +71,13 @@ class MapTestCaseWriter(
      *
      * 트랜잭션 안에서 불러야 한다 — 생성 · 갱신 · 삭제가 한쪽만 커밋되면 표가 서로 다른 시점을 가리킨다.
      */
-    suspend fun rewrite(projectId: Long, gameBuildId: Long, contentMapId: Long): Result {
-        val generated = generator.generate(contentMapId).distinctBy(::identityOf)
+    suspend fun rewrite(
+        projectId: Long,
+        gameBuildId: Long,
+        contentMapId: Long,
+        progress: GenerationProgress = GenerationProgress.NONE,
+    ): Result {
+        val generated = generator.generate(contentMapId, progress).distinctBy(::identityOf)
         val identities = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter(::isMapOrigin)
         val byKey = identities.mapNotNull { row -> keyOf(row)?.let { it to row } }.toMap()
         // **키로 못 찾은 줄은 보이는 네 칸으로 한 번 더 찾는다**(ARTEL-617). 키가 생기기 전에 이 지도가
@@ -92,7 +97,8 @@ class MapTestCaseWriter(
         var created = 0
         var updated = 0
         var regression = 0
-        for (case in generated) {
+        for ((index, case) in generated.withIndex()) {
+            progress.report(GenerationPhase.WRITING, index, generated.size)
             val identity = byKey[identityOf(case)]
                 ?: byText[visibleIdentityOf(case)]?.firstOrNull { it.id !in claimed }
                 ?: testCases.save(entityOf(projectId, contentMapId, case))

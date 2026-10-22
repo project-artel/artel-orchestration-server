@@ -1,7 +1,12 @@
 package kr.artel.orchestration.testcase.dto
 
+import io.swagger.v3.oas.annotations.media.Schema
+import kr.artel.orchestration.testcase.generator.GenerationPhase
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
+import kr.artel.orchestration.testcase.service.TestCaseGenerationState
+import kr.artel.orchestration.testcase.service.TestCaseGenerationStatus
 import kr.artel.orchestration.testcase.service.VerdictCarryOverService
+import java.time.Instant
 
 /**
  * build 의 content map 에서 test case 를 생성한 결과(ARTEL-971).
@@ -119,3 +124,39 @@ data class VerdictCarryPreviewItem(
 )
 
 data class VerdictCarryPreviewResponse(val items: List<VerdictCarryPreviewItem>)
+
+/**
+ * 빌드의 마지막 지도 TC 생성(ARTEL-1187). 화면 지도 SSE 의 `testCaseGeneration` 이벤트와 `snapshot` 에 실린다.
+ *
+ * 퍼센트를 만들지 않는다. 단계마다 분모가 달라 몫은 화면이 정한다
+ * ([kr.artel.orchestration.contentmap.dto.IngestProgressResponse] 와 같은 이유).
+ */
+@Schema(description = "지도 TC 생성 진행")
+data class TestCaseGenerationResponse(
+    @Schema(description = "RUNNING · SUCCEEDED · FAILED · CANCELLED")
+    val state: TestCaseGenerationState,
+    @Schema(description = "READING_MAP · DRAFTING · WRITING · CARRYING_OVER. 끝난 뒤에는 마지막으로 지난 단계")
+    val phase: GenerationPhase,
+    @Schema(description = "지금 단계의 몇 개째. 분모가 없는 단계면 null")
+    val done: Int?,
+    @Schema(description = "지금 단계의 전체. DRAFTING 이면 기능 행 수, WRITING 이면 케이스 수")
+    val total: Int?,
+    val startedAt: Instant,
+    val updatedAt: Instant,
+    val finishedAt: Instant?,
+    @Schema(description = "FAILED 일 때 사람에게 보일 사유")
+    val error: String?,
+) {
+    companion object {
+        fun of(status: TestCaseGenerationStatus) = TestCaseGenerationResponse(
+            state = status.state,
+            phase = status.phase,
+            done = status.done,
+            total = status.total,
+            startedAt = status.startedAt,
+            updatedAt = status.updatedAt,
+            finishedAt = status.finishedAt,
+            error = status.error,
+        )
+    }
+}

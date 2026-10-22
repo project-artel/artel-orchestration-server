@@ -25,7 +25,7 @@ data class CurrentScenario(
      * 산문으로 적어 보냈더니 모델이 이 구조 필드를 먼저 보고 *"기존 시나리오 목록이 비어 있어
      * 교체할 수 없습니다"* 라고 답했다(런 181) — 그러고는 아무것도 저장되지 않았다.
      */
-    @JsonProperty("scenario_id") val scenarioId: Long?,
+    @param:JsonProperty("scenario_id") val scenarioId: Long?,
     val title: String,
     val description: String,
     val steps: List<ChatScenarioStep>,
@@ -33,5 +33,5 @@ data class CurrentScenario(
      * 실행 방식(ARTEL-1028). FREE 를 고칠 때 Agent 가 step 하나에 TC 하나인 모양을 지키도록 알려 준다.
      * 항상 값을 싣는다 — agent-server 는 값이 없으면 ORDERED 로 읽는다.
      */
-    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode = ScenarioExecutionMode.ORDERED,
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode = ScenarioExecutionMode.ORDERED,
 )

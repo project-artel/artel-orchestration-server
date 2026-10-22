@@ -3,7 +3,21 @@ package kr.artel.orchestration.testcase
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import io.r2dbc.spi.ConnectionFactory
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.transformWhile
+import kotlinx.coroutines.reactive.awaitFirstOrNull
+import kotlinx.coroutines.reactive.awaitSingle
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kr.artel.orchestration.contentmap.scan.ContentMapEventStreamManager
+import kr.artel.orchestration.testcase.generator.GenerationPhase
+import kr.artel.orchestration.testcase.service.TestCaseGenerationRegistry
+import kr.artel.orchestration.testcase.service.TestCaseGenerationState
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.toList
@@ -84,6 +98,9 @@ class ContentMapTestCaseGenerationIntegrationTest {
     @Autowired private lateinit var folders: TestCaseFolderRepository
     @Autowired private lateinit var folderItems: TestCaseFolderItemRepository
     @Autowired private lateinit var contentMapTestCases: ContentMapTestCaseService
+    @Autowired private lateinit var generations: TestCaseGenerationRegistry
+    @Autowired private lateinit var streamManager: ContentMapEventStreamManager
+    @Autowired private lateinit var connectionFactory: ConnectionFactory
 
     @Test
     fun `적재만으로는 test case 가 생기지 않고 생성해도 folder 를 만들지 않는다`(): Unit = runBlocking {
@@ -197,6 +214,103 @@ class ContentMapTestCaseGenerationIntegrationTest {
         assertThat(rowsOf(projectId, build.contentMapId)).hasSize(created)
     }
 
+    /**
+     * 생성이 도는 동안 단계 · 진행이 화면 지도 SSE 로 흘러간다(ARTEL-1187). 첫 이벤트는 자리를 잡은 RUNNING, 중간에
+     * 기능 행 수를 분모로 한 DRAFTING, 끝은 SUCCEEDED 다.
+     */
+    @Test
+    fun `생성 진행이 SSE 로 흘러간다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val build = ingestedBuild(projectId, version = "1.0.0", label = null)
+
+        val events = coroutineScope {
+            val collected = async(start = CoroutineStart.UNDISPATCHED) {
+                withTimeout(30_000) {
+                    streamManager.stream(build.gameBuildId)
+                        .mapNotNull { it.data()?.testCaseGeneration }
+                        .transformWhile { emit(it); it.state == TestCaseGenerationState.RUNNING }
+                        .toList()
+                }
+            }
+            assertThat(withContext(Dispatchers.IO) { generate(token, projectId, build.gameBuildId) }.status).isEqualTo(200)
+            collected.await()
+        }
+
+        assertThat(events.first().state).isEqualTo(TestCaseGenerationState.RUNNING)
+        assertThat(events.first().phase).isEqualTo(GenerationPhase.READING_MAP)
+        assertThat(events.filter { it.phase == GenerationPhase.DRAFTING }.mapNotNull { it.total }).isNotEmpty().allMatch { it > 0 }
+        assertThat(events.last().state).isEqualTo(TestCaseGenerationState.SUCCEEDED)
+        assertThat(generations.find(build.gameBuildId)!!.state).isEqualTo(TestCaseGenerationState.SUCCEEDED)
+    }
+
+    /**
+     * 도는 생성이 있으면 두 번째 요청은 기다리지 않고 409 다. 취소하면 그 생성의 요청은 409(취소)로 끝나고 아무것도
+     * 바뀌지 않는다(ARTEL-1187).
+     *
+     * 생성을 중간에 세워 두려고 이 테스트가 프로젝트 잠금을 먼저 쥔다. 생성은 자리를 잡은 뒤 그 잠금에서 기다린다.
+     */
+    @Test
+    fun `도는 생성은 중복을 거절하고 취소하면 아무것도 바뀌지 않는다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val build = ingestedBuild(projectId, version = "1.0.0", label = null)
+        val uri = "/api/projects/$projectId/game-builds/${build.gameBuildId}/content-map/test-cases/generation"
+
+        assertThat(call(token, HttpMethod.DELETE, uri).body["code"].asText()).isEqualTo(ContentMapTestCaseService.GENERATION_NOT_RUNNING)
+
+        val connection = connectionFactory.create().awaitSingle()
+        try {
+            connection.createStatement("SELECT pg_advisory_lock(hashtextextended('test_case_folder:$projectId', 0))")
+                .execute().awaitSingle().map { _, _ -> 1 }.awaitSingle()
+
+            val first = async(Dispatchers.IO) { generate(token, projectId, build.gameBuildId) }
+            withTimeout(10_000) {
+                while (generations.find(build.gameBuildId)?.state != TestCaseGenerationState.RUNNING) delay(50)
+            }
+
+            val second = generate(token, projectId, build.gameBuildId)
+            assertThat(second.status).isEqualTo(409)
+            assertThat(second.body["code"].asText()).isEqualTo(ContentMapTestCaseService.GENERATION_IN_PROGRESS)
+
+            assertThat(call(token, HttpMethod.DELETE, uri).status).isEqualTo(204)
+            val cancelled = first.await()
+            assertThat(cancelled.status).isEqualTo(409)
+            assertThat(cancelled.body["code"].asText()).isEqualTo(ContentMapTestCaseService.GENERATION_CANCELLED)
+        } finally {
+            connection.createStatement("SELECT pg_advisory_unlock_all()").execute().awaitSingle().map { _, _ -> 1 }.awaitSingle()
+            connection.close().awaitFirstOrNull()
+        }
+
+        assertThat(generations.find(build.gameBuildId)!!.state).isEqualTo(TestCaseGenerationState.CANCELLED)
+        assertThat(rowsOf(projectId, build.contentMapId)).isEmpty()
+        // 취소한 뒤에는 다시 만들 수 있다.
+        assertThat(generate(token, projectId, build.gameBuildId).status).isEqualTo(200)
+    }
+
+    /**
+     * 긴 `case_key` 도 저장된다(ARTEL-1187). btree 인덱스는 압축 뒤 2,704바이트를 넘는 행을 거절해, project 1 · 1.4.0
+     * 의 4,368바이트 키 하나가 생성 전체를 롤백시켰다. 무작위 문자라 압축되지 않는다.
+     */
+    @Test
+    fun `압축되지 않는 긴 case_key 도 저장된다`(): Unit = runBlocking {
+        val (userId, _) = signIn()
+        val projectId = newProject(userId)
+        val longKey = (1..6000).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
+
+        val saved = testCases.save(
+            TestCaseEntity(
+                projectId = projectId,
+                scene = "S",
+                step = "긴 키",
+                expectedValue = "x",
+                metadata = Json.of(objectMapper.writeValueAsString(mapOf("origin" to "content-map", "case_key" to longKey))),
+            )
+        )
+
+        assertThat(saved.id).isNotNull()
+    }
+
     @Test
     fun `internal 재생성도 같은 범위를 쓴다`(): Unit = runBlocking {
         val (userId, token) = signIn()
@@ -234,7 +348,7 @@ class ContentMapTestCaseGenerationIntegrationTest {
         contentMaps.save(ContentMapEntity(gameBuildId = withEmptyMap.id!!))
 
         assertThat(generate(token, projectId, withoutMap.id!!).status).isEqualTo(409)
-        assertThat(generate(token, projectId, withEmptyMap.id!!).status).isEqualTo(409)
+        assertThat(generate(token, projectId, withEmptyMap.id).status).isEqualTo(409)
     }
 
     /** 라이브러리 모달의 후보(ARTEL-1040). 최신 게임 빌드 순이고, 지도 상태와 이미 만들었는지를 싣는다. editor 는 없다. */
@@ -310,7 +424,7 @@ class ContentMapTestCaseGenerationIntegrationTest {
                 )
             )
         )
-        return IngestedBuild(build.id!!, map.id!!)
+        return IngestedBuild(build.id, map.id)
     }
 
     /** 이 content map 에서 나온 행. `metadata.content_map_id` 가 출처다. */
@@ -330,7 +444,7 @@ class ContentMapTestCaseGenerationIntegrationTest {
                 avatarUrl = null,
                 email = null,
             )
-        )!!
+        )
         return user.userId.toLong() to jwtService.issue(user)
     }
 

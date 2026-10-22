@@ -473,7 +473,7 @@ class TelemetryReportIntegrationTest {
         if (value == null) bindNull(name, String::class.java) else bind(name, value)
 
     private fun DatabaseClient.GenericExecuteSpec.bindNullableInt(name: String, value: Int?) =
-        if (value == null) bindNull(name, Integer::class.java) else bind(name, value)
+        if (value == null) bindNull(name, Int::class.javaObjectType) else bind(name, value)
 
     private fun today(): LocalDate = LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC)
 

@@ -88,7 +88,7 @@ class SceneObjectIngestTest {
 
         ingestNew(map.id!!, fixture)
 
-        assertThat(storedObjects(map.id!!)).containsExactly(
+        assertThat(storedObjects(map.id)).containsExactly(
             StoredObject(
                 "BattleScene", "Canvas[0]/CombineButton[2]", true,
                 listOf(SceneObjectComponent("Button"), SceneObjectComponent("CombineZone")),
@@ -115,9 +115,9 @@ class SceneObjectIngestTest {
         val map = newContentMap()
         ingestNew(map.id!!, fixture)
 
-        ingestNew(map.id!!, withoutObject(fixture, selector = "Word[13]"))
+        ingestNew(map.id, withoutObject(fixture, selector = "Word[13]"))
 
-        assertThat(storedObjects(map.id!!).map { it.selector })
+        assertThat(storedObjects(map.id).map { it.selector })
             .containsExactly("Canvas[0]/CombineButton[2]", "TitleMenu")
     }
 
@@ -169,19 +169,19 @@ class SceneObjectIngestTest {
 
         val map = newContentMap()
         ingestNew(map.id!!, fixture)
-        val ingested = storedObjects(map.id!!)
-        sceneObjects.deleteByContentMapId(map.id!!)
+        val ingested = storedObjects(map.id)
+        sceneObjects.deleteByContentMapId(map.id)
 
         val result = backfill.runOnce()
 
-        assertThat(storedObjects(map.id!!)).isEqualTo(ingested)
-        assertThat(storedObjects(broken.id!!)).isEmpty()
+        assertThat(storedObjects(map.id)).isEqualTo(ingested)
+        assertThat(storedObjects(broken.id)).isEmpty()
         assertThat(result.filled).isGreaterThanOrEqualTo(1)
         assertThat(result.failed).isGreaterThanOrEqualTo(1)
 
         // 채운 지도는 다시 고르지 않는다 — 두 번 돌려도 두 벌이 되지 않는다.
         backfill.runOnce()
-        assertThat(storedObjects(map.id!!)).isEqualTo(ingested)
+        assertThat(storedObjects(map.id)).isEqualTo(ingested)
     }
 
     /**
@@ -191,15 +191,15 @@ class SceneObjectIngestTest {
     fun `이미 오브젝트가 있는 지도에는 백필이 넣지 않는다`(): Unit = runBlocking {
         val map = newContentMap()
         ingestNew(map.id!!, fixture)
-        val before = storedObjects(map.id!!)
-        val sceneIds = scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList().associate { it.name to it.id!! }
+        val before = storedObjects(map.id)
+        val sceneIds = scenes.findByContentMapIdOrderByNameAsc(map.id).toList().associate { it.name to it.id!! }
 
         val inserted = transactionalOperator.executeAndAwait {
-            writer.fillIfEmpty(map.id!!, EvidenceParser(objectMapper).parse(fixture), sceneIds)
+            writer.fillIfEmpty(map.id, EvidenceParser(objectMapper).parse(fixture), sceneIds)
         }
 
         assertThat(inserted).isNull()
-        assertThat(storedObjects(map.id!!)).isEqualTo(before)
+        assertThat(storedObjects(map.id)).isEqualTo(before)
     }
 
     // ------------------------------------------------------------------ 세우기

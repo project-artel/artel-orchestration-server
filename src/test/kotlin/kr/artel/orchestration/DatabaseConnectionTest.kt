@@ -23,7 +23,7 @@ class DatabaseConnectionTest {
     fun testR2dbcConnectionAndFlywayMigration() {
         // 1. R2DBC 커넥션으로 쿼리 실행 검증
         val one = databaseClient.sql("SELECT 1")
-            .map { row -> row.get(0, Integer::class.java) }
+            .map { row -> row.get(0, Int::class.javaObjectType) }
             .one()
             .block()
         assertThat(one).isEqualTo(1)
@@ -44,11 +44,11 @@ class DatabaseConnectionTest {
         )
         for (table in tables) {
             val count = databaseClient.sql("SELECT COUNT(*) FROM $table")
-                .map { row -> row.get(0, java.lang.Long::class.java) }
+                .map { row -> row.get(0, Long::class.javaObjectType) }
                 .one()
                 .block()
             assertThat(count).isNotNull
-            assertThat(count!!.toLong()).isGreaterThanOrEqualTo(0L)
+            assertThat(count!!).isGreaterThanOrEqualTo(0L)
         }
     }
 }

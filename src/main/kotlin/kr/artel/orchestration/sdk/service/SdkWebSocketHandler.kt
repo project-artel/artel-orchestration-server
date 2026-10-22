@@ -3,11 +3,13 @@ package kr.artel.orchestration.sdk.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.auth.service.AccountStateService
 import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.contentmap.scan.ScanResultRouter
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.project.event.ProjectChangeStreamManager
 import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.qa.service.QaRunStatusNotifier
+import kr.artel.orchestration.sdk.config.SdkSocketProperties
 import kr.artel.orchestration.sdk.dto.BaseMessage
 import kr.artel.orchestration.sdk.service.handler.SdkMessageHandler
 import org.slf4j.LoggerFactory
@@ -16,11 +18,14 @@ import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.CloseStatus
 import org.springframework.web.reactive.socket.WebSocketHandler
+import org.springframework.web.reactive.socket.WebSocketMessage
 import org.springframework.web.reactive.socket.WebSocketSession
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.reactor.mono
 import org.springframework.web.util.UriComponentsBuilder
+import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import reactor.core.publisher.Sinks
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
@@ -46,21 +51,34 @@ class SdkWebSocketHandler(
     private val qaExecutionFailureService: QaExecutionFailureService,
     private val runStatusNotifier: QaRunStatusNotifier,
     // 디코더가 두 개다. 브라우저 쪽이 @Primary라 이름만으로는 그쪽이 주입된다.
-    @Qualifier("sdkJwtDecoder") private val sdkJwtDecoder: ReactiveJwtDecoder,
+    @param:Qualifier("sdkJwtDecoder") private val sdkJwtDecoder: ReactiveJwtDecoder,
     private val sessionUserResolver: SessionUserResolver,
     private val accountStateService: AccountStateService,
+    private val socketProperties: SdkSocketProperties,
     private val projectChangeStreamManager: ProjectChangeStreamManager,
+    private val scanResults: ScanResultRouter,
     handlers: List<SdkMessageHandler>
 ) : WebSocketHandler {
 
     private val logger = LoggerFactory.getLogger(SdkWebSocketHandler::class.java)
     private val handlerMap = handlers.associateBy { it.messageType }
 
+    override fun handle(session: WebSocketSession): Mono<Void> {
+        // receive() 는 검증보다 먼저, mono { } 밖에서 부른다. Spring 은 이 호출 시점에 Netty pipeline 에
+        // 조각난 메시지를 합치는 aggregator 를 붙이고, mono { } 의 본문은 다른 thread 에서 늦게 돈다.
+        // 검증이 끝난 뒤에 부르면 그 사이 SDK 가 보낸 첫 큰 메시지(websocket-sharp 는 1016 바이트를
+        // 넘으면 조각낸다)가 조각 그대로 버퍼에 쌓인다. 그러면 첫 조각은 잘린 JSON 으로 dispatch 되고,
+        // 다음 continuation frame 에서 Spring 이 `'type' must not be null` 을 던져 연결이 끊긴다
+        // (ARTEL-1112).
+        val inbound = session.receive()
+        return handshake(session, inbound)
+    }
+
     // 인터페이스가 Mono<Void>를 요구하므로 시그니처는 유지하고, 내부는 mono { } 코루틴
     // 빌더로 감싼다. 저장소 조회가 suspend 함수라 코루틴 컨텍스트가 필요하다. 못 찾음(null)은
     // 명시적으로 분기해 거절한다. switchIfEmpty를 쓰지 않는 이유는 open()이 반환하는
     // Mono<Void>가 항상 비어 있어 거절 경로가 다시 도는 문제를 피하기 위해서다.
-    override fun handle(session: WebSocketSession): Mono<Void> = mono {
+    private fun handshake(session: WebSocketSession, inbound: Flux<WebSocketMessage>): Mono<Void> = mono {
         val token = queryParam(session, TOKEN_PARAM)
         val requestedInstanceId = queryParam(session, INSTANCE_ID_PARAM)?.toLongOrNull()
 
@@ -98,7 +116,7 @@ class SdkWebSocketHandler(
 
         // open()이 반환하는 전송/수신 파이프라인은 소켓이 닫힐 때까지 살아 있어야 한다.
         // 여기서 await하지 않으면 handle의 Mono가 즉시 완료되어 Spring이 세션을 닫는다.
-        open(session, requireNotNull(entity.id).toString(), entity.projectId).awaitFirstOrNull()
+        open(session, requireNotNull(entity.id).toString(), entity.projectId, inbound).awaitFirstOrNull()
     }.then()
 
     /**
@@ -107,7 +125,7 @@ class SdkWebSocketHandler(
      * 앞 연결을 밀어내지 않는 이유는, 진행 중인 QA 세션이 우연한 두 번째 실행 때문에 소켓을
      * 빼앗기는 쪽이 더 나쁘기 때문이다. 거절당한 쪽은 닫힘 코드로 이유를 알 수 있다.
      */
-    private fun open(session: WebSocketSession, instanceId: String, projectId: Long): Mono<Void> {
+    private fun open(session: WebSocketSession, instanceId: String, projectId: Long, inbound: Flux<WebSocketMessage>): Mono<Void> {
         val outbound = sessionManager.register(instanceId, session)
 
         if (outbound == null) {
@@ -131,7 +149,16 @@ class SdkWebSocketHandler(
         // concatMap: 한 세션의 프레임을 순서대로 하나씩 처리한다. flatMap이면 프레임이 동시에
         // 처리되어, Agent로 나가는 unicast sink에 동시 tryEmitNext가 걸려 FAIL_NON_SERIALIZED로
         // 드롭되거나 GAME_STATE 순서가 뒤집힌다.
-        val receive = session.receive()
+        val heartbeat = SdkHeartbeat(instanceId, session, socketProperties.pingInterval, socketProperties.idleTimeout)
+        val receiveEnded = Sinks.empty<Void>()
+
+        val receive = inbound
+            // concatMap 앞에서 기록한다. 다만 handler 하나가 idle-timeout 보다 오래 걸리고 그 뒤에
+            // frame 32개가 밀려 있으면 receive 가 요청을 멈춰 pong 도 읽히지 않는다. 그때는 살아 있는
+            // 세션이 닫힐 수 있다. 지금 handler 들은 그만큼 오래 걸리지 않는다.
+            .doOnNext { heartbeat.seen() }
+            // 서버가 보낸 ping 의 pong 이다. 생존 신호로만 쓰고 메시지 handler 로는 넘기지 않는다.
+            .filter { message -> message.type != WebSocketMessage.Type.PONG }
             .concatMap { message -> dispatch(instanceId, message.payloadAsText, session) }
             .doOnError { error ->
                 logger.error("웹소켓 에러 발생 [instanceId: $instanceId]: ${error.message}", error)
@@ -140,10 +167,17 @@ class SdkWebSocketHandler(
             // 정리는 수신이 끝나는 시점에 건다. 전송 쪽이 끝나기를 기다리는 자리에 두면,
             // 전송은 세션이 지워지며 큐가 닫혀야 끝나므로 서로를 기다리다 멈춘다.
             .doFinally {
+                receiveEnded.tryEmitEmpty()
                 // 자기 세션일 때만 지운다. 늦게 끊긴 좀비 연결이 살아 있는 연결의 자리를
                 // 비우면, SDK는 연결된 채로 액션을 받지 못한다.
                 sessionManager.removeSession(instanceId, session)
                 projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
+                // 이 게임이 돌던 근거 스캔은 결과가 오지 않는다. 실패로 닫아 화면이 영영 기다리지 않게 한다(ARTEL-1178).
+                // 같은 인스턴스가 이미 다시 붙었으면(위 removeSession 이 남의 자리를 안 지움) 그 스캔은 살아 있을 수 있다.
+                if (!sessionManager.hasSession(instanceId)) {
+                    runCatching { scanResults.gameDisconnected(instanceId.toLong()) }
+                        .onFailure { error -> logger.error("스캔 연결 종료 처리 실패 [instanceId=$instanceId]", error) }
+                }
                 // sdkDisconnected는 이제 suspend라 doFinally(동기 Reactor 콜백)에서
                 // mono { } 로 감싸 fire-and-forget으로 흘린다.
                 mono { qaExecutionFailureService.sdkDisconnected(instanceId.toLong()) }
@@ -156,7 +190,8 @@ class SdkWebSocketHandler(
 
         // 전송과 수신을 함께 물려 둘 다 끝나야 핸들러가 끝난다. Spring이 문서에서 보여 주는
         // 형태 그대로다.
-        return session.send(outbound.map(session::textMessage)).and(receive)
+        val messages = outbound.map(session::textMessage)
+        return session.send(Flux.merge(messages, heartbeat.pings(receiveEnded.asMono()))).and(receive)
     }
 
     /** 미지원·손상 프레임은 그 프레임만 버리고 연결과 다음 프레임은 계속 처리한다. */

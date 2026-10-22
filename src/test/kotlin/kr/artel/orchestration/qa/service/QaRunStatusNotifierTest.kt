@@ -220,31 +220,31 @@ class QaRunStatusNotifierTest {
                 avatarUrl = null,
                 email = "run-status@example.com"
             )
-        )!!.userId.toLong()
+        ).userId.toLong()
 
     private suspend fun seedInstance(projectName: String): SeededInstance {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = projectName, genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = project.id!!, name = "inst", platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(), createdAt = now, updatedAt = now
             )
-        )!!
-        return SeededInstance(instance.id!!, project.id!!)
+        )
+        return SeededInstance(instance.id!!, project.id)
     }
 
     private suspend fun seedRun(gameInstanceId: Long, testRunName: String, label: String?): QaRunEntity {
         val project = requireNotNull(gameInstanceRepository.findById(gameInstanceId)).projectId
-        val testRun = testRunRepository.save(TestRunEntity(projectId = project, name = testRunName))!!
+        val testRun = testRunRepository.save(TestRunEntity(projectId = project, name = testRunName))
         return qaRunRepository.save(
             QaRunEntity(
                 testRunId = testRun.id!!, gameInstanceId = gameInstanceId, startedBy = seedUser(),
                 status = "RUNNING", label = label, startedAt = Instant.now()
             )
-        )!!
+        )
     }
 
     /**
@@ -255,12 +255,12 @@ class QaRunStatusNotifierTest {
         val projectId = requireNotNull(gameInstanceRepository.findById(gameInstanceId)).projectId
         val scenario = testScenarioRepository.save(
             TestScenarioEntity(projectId = projectId, title = "run status seed")
-        )!!
+        )
         return qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!, gameInstanceId = gameInstanceId, startedBy = seedUser(),
                 status = status, agentSessionId = agentSessionId, startedAt = Instant.now()
             )
-        )!!
+        )
     }
 }

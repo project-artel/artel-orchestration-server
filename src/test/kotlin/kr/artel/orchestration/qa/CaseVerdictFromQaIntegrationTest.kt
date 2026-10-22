@@ -138,7 +138,7 @@ class CaseVerdictFromQaIntegrationTest {
 
         reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = false)
 
-        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, older.id!!)!!.verificationStatus)
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, older.id)!!.verificationStatus)
             .isEqualTo("VERIFIED")
         assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.gameBuildId)!!.verificationStatus)
             .isEqualTo("FAILED")
@@ -201,14 +201,14 @@ class CaseVerdictFromQaIntegrationTest {
         val now = Instant.now()
         val otherProject = projectRepository.save(
             ProjectEntity(name = "other", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         val foreign = testCaseRepository.save(
             TestCaseEntity(projectId = otherProject.id!!, scene = "S", step = "남의 것", expectedValue = "x")
         )
 
         reportStep(run.tryId, step = 2, caseId = foreign.id!!, verification = true, passed = true)
 
-        assertThat(testCaseRepository.findById(foreign.id!!)!!.verificationStatus).isEqualTo("DRAFT")
+        assertThat(testCaseRepository.findById(foreign.id)!!.verificationStatus).isEqualTo("DRAFT")
         assertThat(caseVerdictLogs(run.tryId)).isEmpty()
     }
 
@@ -289,12 +289,12 @@ class CaseVerdictFromQaIntegrationTest {
                 provider = "github", providerUserId = "994", login = "verdict",
                 displayName = "verdict", avatarUrl = null, email = "verdict@example.com"
             )
-        )!!
+        )
         val ownerId = owner.userId.toLong()
         val now = Instant.now()
         val projectId = projectRepository.save(
             ProjectEntity(name = "verdict-p", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now)
         )
@@ -309,7 +309,7 @@ class CaseVerdictFromQaIntegrationTest {
                 projectId = projectId, name = "inst", platform = "UNITY", sdkUuid = UUID.randomUUID().toString(),
                 lastGameBuildId = runBuild.id, createdAt = now, updatedAt = now
             )
-        )!!
+        )
         val passedCase = testCaseRepository.save(
             TestCaseEntity(projectId = projectId, scene = "S", step = "통과할 것", expectedValue = "x")
         )
@@ -317,7 +317,7 @@ class CaseVerdictFromQaIntegrationTest {
             TestCaseEntity(projectId = projectId, scene = "S", step = "실패할 것", expectedValue = "y")
         )
         versions.save(TestCaseVersionEntity.snapshotOf(passedCase, build.id!!))
-        versions.save(TestCaseVersionEntity.snapshotOf(failedCase, build.id!!))
+        versions.save(TestCaseVersionEntity.snapshotOf(failedCase, build.id))
         val testRun = testRunRepository.save(TestRunEntity(projectId = projectId, name = "런"))
         val draft = ScenarioDraft(
             title = "판정",
@@ -337,7 +337,7 @@ class CaseVerdictFromQaIntegrationTest {
             started.qaRun, tryId, "session-verdict-1",
             objectMapper.readTree("""{"model":"anthropic/claude-sonnet-5"}""")
         )
-        return RunningRun(tryId, build.id!!, runBuild.id!!, passedCase.id!!, failedCase.id!!)
+        return RunningRun(tryId, build.id, runBuild.id!!, passedCase.id!!, failedCase.id!!)
     }
 
     private suspend fun reportStep(

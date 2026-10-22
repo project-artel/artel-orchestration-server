@@ -494,14 +494,14 @@ class KnowledgeSearchRouterIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "knowledge-search-project", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectId = project.id!!
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now)
         )
         val scenario = testScenarioRepository.save(
             TestScenarioEntity(projectId = projectId)
-        )!!
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
                 projectId = projectId,
@@ -511,7 +511,7 @@ class KnowledgeSearchRouterIntegrationTest {
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         qaTryId = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -522,7 +522,7 @@ class KnowledgeSearchRouterIntegrationTest {
                 status = "RUNNING",
                 startedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun signIn(): AuthenticatedUser =
@@ -535,6 +535,6 @@ class KnowledgeSearchRouterIntegrationTest {
                 avatarUrl = null,
                 email = "searcher@example.com"
             )
-        )!!
+        )
 
 }
