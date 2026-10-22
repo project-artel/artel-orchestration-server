@@ -1303,6 +1303,76 @@
         }
       }
     },
+    "/api/projects/{projectId}/project-agent-model": {
+      "get": {
+        "tags": [
+          "project-agent-model-controller"
+        ],
+        "operationId": "projectAgentModelOfProject",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentModelOfProjectResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "project-agent-model-controller"
+        ],
+        "operationId": "updateProjectAgentModelOfProject",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectAgentModelOfProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentModelOfProjectResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/issues/{issueId}/categories": {
       "put": {
         "tags": [
@@ -2097,6 +2167,65 @@
         "responses": {
           "204": {
             "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/auth/me/project-agent-model": {
+      "get": {
+        "tags": [
+          "project-agent-model-controller"
+        ],
+        "operationId": "myProjectAgentModel",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProjectAgentModelResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "project-agent-model-controller"
+        ],
+        "operationId": "updateMyProjectAgentModel",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserProjectAgentModelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProjectAgentModelResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -3220,11 +3349,11 @@
             "required": false,
             "schema": {
               "type": "string",
+              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ],
-              "default": "MINE"
+              ]
             }
           }
         ],
@@ -11139,6 +11268,28 @@
           }
         }
       },
+      "UpdateProjectAgentModelOfProjectRequest": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          }
+        }
+      },
+      "ProjectAgentModelOfProjectResponse": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "effectiveModel": {
+            "type": "string"
+          },
+          "problem": {
+            "type": "string"
+          }
+        }
+      },
       "CategoryAssignment": {
         "type": "object",
         "properties": {
@@ -11710,6 +11861,37 @@
           }
         }
       },
+      "UpdateUserProjectAgentModelRequest": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          }
+        }
+      },
+      "UserProjectAgentModelResponse": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "effectiveModel": {
+            "type": "string"
+          },
+          "effectiveKeySource": {
+            "type": "string"
+          },
+          "problem": {
+            "type": "string"
+          }
+        }
+      },
       "UpdateProfileRequest": {
         "type": "object",
         "properties": {
@@ -11908,10 +12090,16 @@
           },
           "decisionModel": {
             "type": "string"
+          },
+          "projectAgentModel": {
+            "type": "string"
           }
         }
       },
       "FeatureModelStatus": {
+        "required": [
+          "keyMissing"
+        ],
         "type": "object",
         "properties": {
           "scenarioAuthoringModel": {
@@ -11922,6 +12110,18 @@
           },
           "decisionModel": {
             "type": "string"
+          },
+          "projectAgentModel": {
+            "type": "string"
+          },
+          "projectAgentFallback": {
+            "type": "string"
+          },
+          "keyMissing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "updatedAt": {
             "type": "string",
@@ -14427,11 +14627,11 @@
           },
           "kind": {
             "type": "string",
+            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ],
-            "default": "sdk"
+            ]
           }
         }
       },
