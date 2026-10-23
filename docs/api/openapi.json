@@ -638,6 +638,94 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/map": {
+      "get": {
+        "tags": [
+          "test-run-map-controller"
+        ],
+        "operationId": "getTestRunMap",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunMapResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "test-run-map-controller"
+        ],
+        "operationId": "saveTestRunMap",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestRunMapSaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunMapResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-runs/{runId}/game-build": {
       "put": {
         "tags": [
@@ -3360,11 +3448,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -11024,6 +11112,167 @@
           }
         }
       },
+      "RunMapAnnotation": {
+        "required": [
+          "id",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          },
+          "w": {
+            "type": "number",
+            "format": "double"
+          },
+          "h": {
+            "type": "number",
+            "format": "double"
+          },
+          "x1": {
+            "type": "number",
+            "format": "double"
+          },
+          "y1": {
+            "type": "number",
+            "format": "double"
+          },
+          "x2": {
+            "type": "number",
+            "format": "double"
+          },
+          "y2": {
+            "type": "number",
+            "format": "double"
+          },
+          "text": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            }
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RunMapFrame": {
+        "required": [
+          "folded",
+          "x",
+          "y"
+        ],
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          },
+          "folded": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TestRunMapSaveRequest": {
+        "required": [
+          "annotations",
+          "layout",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "layout": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RunMapFrame"
+            }
+          },
+          "annotations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunMapAnnotation"
+            }
+          }
+        }
+      },
+      "TestRunMapResponse": {
+        "required": [
+          "annotations",
+          "authors",
+          "layout",
+          "runId",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "layout": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RunMapFrame"
+            }
+          },
+          "annotations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunMapAnnotation"
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "type": "string"
+          },
+          "authors": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "TestRunGameBuildRequest": {
         "type": "object",
         "properties": {
@@ -14838,11 +15087,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
