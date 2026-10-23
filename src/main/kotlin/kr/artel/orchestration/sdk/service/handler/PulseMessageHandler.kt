@@ -25,6 +25,7 @@ import org.springframework.web.reactive.socket.WebSocketSession
 class PulseMessageHandler(
     private val qaBridge: QaSdkBridgeService,
     private val screenObservation: ScreenObservationService,
+    private val demonstrations: kr.artel.orchestration.demonstration.DemonstrationService? = null,
 ) : SdkMessageHandler {
 
     private val logger = LoggerFactory.getLogger(PulseMessageHandler::class.java)
@@ -39,6 +40,7 @@ class PulseMessageHandler(
 
         val gameInstanceId = instanceId.toLong()
         qaBridge.routePulse(gameInstanceId, payloadText)
+        demonstrations?.pulse(gameInstanceId,payloadText)
 
         // 중계 **뒤에** 부른다. 앞에 두면 화면 적재가 느릴 때 `pulse` 가 agent 에 늦게 닿는다.
         //
