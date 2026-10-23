@@ -226,7 +226,8 @@ class MapTestCaseGenerator(
             .let(::withBranchesApart)
             // **갈래를 펴다 보면 서로 다른 케이스의 갈래가 같아진다.** 같은 기능이 같은 전제에서
             // 같은 것을 확인하라고 두 줄로 나오면 실행하는 사람은 같은 일을 두 번 한다.
-            .distinctBy { listOf(it.capabilityKey, it.precondition, it.step, it.expected) }
+            // 준비할 상태는 문장에 없지만 다른 갈래다(ARTEL-1209). 빼면 1.4.1 에서 24 건이 하나로 접혔다.
+            .distinctBy { listOf(it.capabilityKey, it.precondition, it.step, it.expected, it.setup) }
             .let(::withTellingSteps)
 
     /**
@@ -514,8 +515,10 @@ class MapTestCaseGenerator(
         // `MapSceneButton` 만 `InitPlayData()` 를 부른다.
         //
         // 합쳐진 줄은 `capabilityKey` 를 하나만 들어서, 나머지 조작의 효과가 저작에 닿지도 않았다.
+        //
+        // 준비할 상태도 본다(ARTEL-1209). 문장에는 없지만 다른 갈래라, 빼면 다른 기능의 TC 가 이 줄로 접혔다.
         cases.groupBy {
-            listOf(it.scene, it.precondition, it.expected, it.watching, it.aimedAt)
+            listOf(it.scene, it.precondition, it.expected, it.watching, it.aimedAt, it.setup)
         }
             .map { (_, group) ->
                 if (group.size == 1) group.single()

@@ -23,6 +23,24 @@ class MapTestCaseReadingRulesTest {
         assertThat(MapTestCaseReadingRules.impossible(every(test("MapMove.position", "==", "1"), test("MapMove.position", "!=", "2")), "MapScene")).isFalse()
     }
 
+    /** 1.4.1 에서 나온 모양 셋: 접힌 상수(`TakeHit(-AttackDamage)`), 넘긴 `false`(`if (useDotween)`), `||` 의 앞이 참인 경로. */
+    @Test
+    fun `양쪽이 리터럴인 비교는 값을 따진다`() {
+        val hp = test("Player.Hp", ">", "0")
+        assertThat(MapTestCaseReadingRules.simplified(every(test("-4", ">", "0"), hp)).impossible).isTrue()
+        assertThat(MapTestCaseReadingRules.simplified(every(test("0", "!=", "0"), hp)).impossible).isTrue()
+        assertThat(MapTestCaseReadingRules.impossible(every(test("1", "==", "0"), hp), "S")).isTrue()
+        // 참이면 조건이 아니다.
+        assertThat(MapTestCaseReadingRules.simplified(every(test("-4", "<=", "0"), hp)).condition).isEqualTo(hp)
+        // 늘 참인 갈래가 있으면 `또는` 이 통째로 참이고, 늘 거짓인 갈래는 빠진다.
+        val either = ConditionNode.Group(GroupKind.EITHER, listOf(test("1", "!=", "0"), hp))
+        assertThat(MapTestCaseReadingRules.simplified(either).condition).isNull()
+        val dead = ConditionNode.Group(GroupKind.EITHER, listOf(test("1", "==", "0"), hp))
+        assertThat(MapTestCaseReadingRules.simplified(dead).condition).isEqualTo(hp)
+        // 한쪽이라도 리터럴이 아니면 따지지 않는다.
+        assertThat(MapTestCaseReadingRules.constant(test("damage", ">", "0"))).isNull()
+    }
+
     @Test
     fun `다른 씬이어야 성립하는 사전조건은 성립하지 않는다`() {
         val other = test("SceneManager.GetActiveScene().name", "==", "\"GameClearScene\"")

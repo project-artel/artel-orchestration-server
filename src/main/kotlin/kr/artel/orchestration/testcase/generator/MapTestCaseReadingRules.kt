@@ -143,18 +143,59 @@ object MapTestCaseReadingRules {
                 }
             }
             GroupKind.EITHER -> {
-                val arms = node.parts.mapNotNull { arm ->
+                val arms = node.parts.map { arm ->
                     val own = when (arm) {
                         is ConditionNode.Test -> listOf(arm)
                         is ConditionNode.Group -> if (arm.kind == GroupKind.EVERY) arm.parts.filterIsInstance<ConditionNode.Test>() else emptyList()
                         else -> emptyList()
                     }
-                    if (clashes(context + own)) null else pruned(arm, context + own).takeUnless { it == DEAD }
+                    if (clashes(context + own)) DEAD else pruned(arm, context + own)
                 }
-                if (arms.isEmpty()) DEAD else joined(GroupKind.EITHER, arms)
+                // 늘 참인 갈래가 하나라도 있으면 `또는` 전체가 늘 참이다.
+                if (arms.any { it == null }) null
+                else arms.filterNotNull().filterNot { it == DEAD }.let { live ->
+                    if (live.isEmpty()) DEAD else joined(GroupKind.EITHER, live)
+                }
             }
         }
+        is ConditionNode.Test -> when (constant(node)) {
+            true -> null
+            false -> DEAD
+            null -> node
+        }
         else -> node
+    }
+
+    /**
+     * **양쪽이 다 리터럴인 비교의 값.** 리터럴이 아닌 쪽이 있으면 `null` 이다.
+     *
+     * 근거 문서는 경로마다 조건을 모으며 값을 이미 아는 자리를 리터럴로 적는다. 컴파일러가 접은 상수
+     * (`TakeHit(-AttackDamage)` → `-4 > 0`), 호출자가 넘긴 `true` · `false`(`if (useDotween)` → `0 != 0`),
+     * `||` 의 앞이 참인 경로(`narration` → `1 == 0`)가 그렇다. 거짓이면 그 경로는 실행되지 않고, 참이면 조건이 아니다
+     * (실측 1.4.1: 실행할 수 없는 TC 24 건).
+     */
+    fun constant(test: ConditionNode.Test): Boolean? {
+        val left = test.left.trim()
+        val right = test.right.trim()
+        if (!LITERAL.matches(left) || !LITERAL.matches(right)) return null
+        val a = left.toDoubleOrNull()
+        val b = right.toDoubleOrNull()
+        if (a != null && b != null) {
+            return when (test.operator) {
+                "==" -> a == b
+                "!=" -> a != b
+                "<" -> a < b
+                "<=" -> a <= b
+                ">" -> a > b
+                ">=" -> a >= b
+                else -> null
+            }
+        }
+        return when (test.operator) {
+            "==" -> left == right
+            "!=" -> left != right
+            else -> null
+        }
     }
 
     private fun joined(kind: GroupKind, parts: List<ConditionNode>): ConditionNode? {
@@ -250,10 +291,11 @@ object MapTestCaseReadingRules {
     /**
      * **이 사전조건은 성립할 수 없는가.**
      *
-     * 함께 참이어야 하는 비교들(`그리고` 로 이어진 것, `또는` 안은 보지 않는다) 사이에서 두 모양만 본다:
+     * 함께 참이어야 하는 비교들(`그리고` 로 이어진 것, `또는` 안은 보지 않는다) 사이에서 세 모양만 본다:
      *
      * - 같은 값을 두고 `== a` 와 `!= a`, 또는 `== a` 와 `== b` — 한 값이 둘일 수 없다
      * - 지금 씬이 이 TC 의 씬이 아니어야 하는 비교 — `GetActiveScene().name == "다른씬"` 이나 `!= "이씬"`
+     * - 양쪽이 리터럴인데 거짓인 비교 — `1 == 0`([constant])
      *
      * 근거 문서가 호출 사슬을 따라 조건을 모으다 생긴 것이다. 그런 갈래는 실행할 수 없어 버린다.
      */
@@ -263,6 +305,7 @@ object MapTestCaseReadingRules {
         val equals = mutableMapOf<String, MutableSet<String>>()
         val differs = mutableMapOf<String, MutableSet<String>>()
         for (test in all) {
+            if (constant(test) == false) return true
             val left = test.left.trim()
             val right = test.right.trim()
             if (left == ACTIVE_SCENE) {
@@ -330,6 +373,7 @@ object MapTestCaseReadingRules {
                 case.expected.replace(case.scene, SCENE_MARK),
                 case.expectedChecks.toString(),
                 case.watching.toString(),
+                case.setup.toString(),
             )
         }
         return groups.values.map { same ->
