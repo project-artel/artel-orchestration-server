@@ -11,7 +11,20 @@ import com.fasterxml.jackson.databind.JsonNode
  */
 enum class CodeVerdict { PASS, FAIL, WEAK_PASS, WEAK_FAIL, UNKNOWN }
 
-data class CodeCheck(val result: CodeVerdict, val reasons: List<String>)
+data class CodeCheck(val result: CodeVerdict, val items: List<CodeCheckItem>)
+
+/**
+ * 효과 하나를 확인한 내용. 화면이 표로 그린다: 무엇을(`target`) 무엇으로 기대했고(`expected`) 기록에는 무엇이
+ * 있었나(`observed`). 확인하지 못했으면 그 까닭이 [note] 다.
+ */
+data class CodeCheckItem(
+    val kind: String,
+    val target: String,
+    val expected: String?,
+    val observed: String?,
+    val result: CodeVerdict,
+    val note: String? = null,
+)
 
 /** TC `case_key` 의 효과 하나: 무엇이(`target`) 어떻게 되어야 하나(`kind` · `value`), 어떤 계기에서(`cond`). */
 data class CaseEffect(val kind: String, val target: String, val value: String, val cond: String)
@@ -121,9 +134,9 @@ class PulseState private constructor(
 object VerdictCodeChecker {
 
     fun check(effects: List<CaseEffect>, now: PulseState, before: PulseState): CodeCheck {
-        if (effects.isEmpty()) return CodeCheck(CodeVerdict.UNKNOWN, listOf("TC 에 확인할 효과가 없다"))
-        val results = effects.map { checkChanged(it, now, before) }
-        return CodeCheck(combine(results.map { it.first }), results.map { "${it.second}" })
+        if (effects.isEmpty()) return CodeCheck(CodeVerdict.UNKNOWN, emptyList())
+        val items = effects.map { checkChanged(it, now, before) }
+        return CodeCheck(combine(items.map { it.result }), items)
     }
 
     /** 조건 갈래가 여럿이면 하나만 일어나도 된다. 확정 결과가 약한 결과보다 먼저다. */
@@ -139,59 +152,68 @@ object VerdictCodeChecker {
      * 입력 계기(`gesture|`)가 있는 효과는 "그렇게 됐다" 는 뜻이다. 앞 판정 시점에 이미 그 상태였으면 전환을 본 것이
      * 아니라서 확정하지 않는다 — 끝 상태만 보면 POC 에서 8건이 모두 틀렸다.
      */
-    private fun checkChanged(effect: CaseEffect, now: PulseState, before: PulseState): Pair<CodeVerdict, String> {
-        val (result, why) = check(effect, now, before)
+    private fun checkChanged(effect: CaseEffect, now: PulseState, before: PulseState): CodeCheckItem {
+        val item = check(effect, now, before)
         val triggered = effect.kind != "screen" && "gesture|" in effect.cond
-        if (result == CodeVerdict.PASS && triggered && check(effect, before, before).first == CodeVerdict.PASS) {
-            return CodeVerdict.UNKNOWN to "이미 그 상태였다(전환을 못 봄) — $why"
+        if (item.result == CodeVerdict.PASS && triggered && check(effect, before, before).result == CodeVerdict.PASS) {
+            return item.copy(result = CodeVerdict.UNKNOWN, note = "행동 전에도 이미 그 상태였다")
         }
-        return result to why
+        return item
     }
 
-    private fun check(effect: CaseEffect, state: PulseState, before: PulseState): Pair<CodeVerdict, String> {
-        val target = effect.target
-        return when (effect.kind) {
-            "scene" -> (if (state.scene == target) CodeVerdict.PASS else CodeVerdict.FAIL) to "씬 ${state.scene}, 기대 $target"
-            "screen" -> screen(effect, state)
-            "active-state" -> activeState(effect, state)
-            "ui-value" -> uiValue(effect, state, before)
-            "instantiate" -> instantiate(target, state, before)
-            else -> CodeVerdict.UNKNOWN to "${effect.kind} 은 코드 검사가 없다"
-        }
+    private fun check(effect: CaseEffect, state: PulseState, before: PulseState): CodeCheckItem = when (effect.kind) {
+        "scene" -> item(effect, effect.target, state.scene, if (state.scene == effect.target) CodeVerdict.PASS else CodeVerdict.FAIL)
+        "screen" -> screen(effect, state)
+        "active-state" -> activeState(effect, state)
+        "ui-value" -> uiValue(effect, state, before)
+        "instantiate" -> instantiate(effect, state, before)
+        else -> unknown(effect, null, "이 효과는 코드로 확인하지 않는다")
     }
 
-    private fun screen(effect: CaseEffect, state: PulseState): Pair<CodeVerdict, String> {
+    private fun item(effect: CaseEffect, expected: String?, observed: String?, result: CodeVerdict, target: String = effect.target) =
+        CodeCheckItem(effect.kind, target, expected, observed, result)
+
+    private fun unknown(effect: CaseEffect, expected: String?, note: String, target: String = effect.target) =
+        CodeCheckItem(effect.kind, target, expected, null, CodeVerdict.UNKNOWN, note)
+
+    private fun screen(effect: CaseEffect, state: PulseState): CodeCheckItem {
         val want = plain(effect.value)
-        if (state.scene != effect.target) return CodeVerdict.FAIL to "씬 ${state.scene}, 기대 ${effect.target}"
-        val seen = state.objectsAt(want)
-        if (seen.isEmpty()) return CodeVerdict.UNKNOWN to "$want 이(가) 기록에 없다"
-        return (if (seen.any { it.active }) CodeVerdict.PASS else CodeVerdict.FAIL) to "$want 표시 ${seen.map { it.active }}"
-    }
-
-    private fun activeState(effect: CaseEffect, state: PulseState): Pair<CodeVerdict, String> {
-        val target = effect.target
-        if (target.startsWith("Component.") || target.startsWith("this.")) {
-            return CodeVerdict.UNKNOWN to "대상 오브젝트를 특정하지 못했다"
+        if (state.scene != effect.target) {
+            return CodeCheckItem("scene", effect.target, effect.target, state.scene, CodeVerdict.FAIL)
         }
-        val want = literal(effect.value) as? Boolean ?: return CodeVerdict.UNKNOWN to "기대 값이 식이다: ${effect.value}"
-        val actives = state.membersOf(target).mapNotNull { (value, rest) -> activeOf(value, rest) }
-        if (actives.isEmpty()) return CodeVerdict.UNKNOWN to "$target 이(가) 기록에 없다"
-        return (if (want in actives) CodeVerdict.PASS else CodeVerdict.FAIL) to "$target 표시 $actives, 기대 $want"
+        val seen = state.objectsAt(want)
+        if (seen.isEmpty()) return unknown(effect, "true", "기록에 없다", target = want)
+        val shown = seen.any { it.active }
+        return item(effect, "true", shown.toString(), if (shown) CodeVerdict.PASS else CodeVerdict.FAIL, target = want)
     }
 
-    private fun uiValue(effect: CaseEffect, state: PulseState, before: PulseState): Pair<CodeVerdict, String> {
-        val target = effect.target
-        val shown = shown(state, target)
-        if (shown.isEmpty()) return CodeVerdict.UNKNOWN to "$target 이(가) 기록에 없다"
+    private fun activeState(effect: CaseEffect, state: PulseState): CodeCheckItem {
+        if (effect.target.startsWith("Component.") || effect.target.startsWith("this.")) {
+            return unknown(effect, effect.value, "대상 오브젝트를 특정하지 못했다")
+        }
+        val want = literal(effect.value) as? Boolean ?: return unknown(effect, effect.value, "기대 값이 식이다")
+        val actives = state.membersOf(effect.target).mapNotNull { (value, rest) -> activeOf(value, rest) }.distinct()
+        if (actives.isEmpty()) return unknown(effect, want.toString(), "기록에 없다")
+        return item(effect, want.toString(), actives.joinToString(", "), if (want in actives) CodeVerdict.PASS else CodeVerdict.FAIL)
+    }
+
+    private fun uiValue(effect: CaseEffect, state: PulseState, before: PulseState): CodeCheckItem {
+        val shown = shown(state, effect.target)
+        if (shown.isEmpty()) return unknown(effect, effect.value, "기록에 없다")
         val want = literal(effect.value.substringBefore(','))
         if (want is String) {
-            return (if (want in shown) CodeVerdict.PASS else CodeVerdict.FAIL) to "$target 표시 ${shown.take(2)}, 기대 \"$want\""
+            return item(effect, want, shown.first(), if (want in shown) CodeVerdict.PASS else CodeVerdict.FAIL)
         }
         // 기대가 식이면 갱신됐는지만 본다.
-        val previous = shown(before, target)
+        val previous = shown(before, effect.target)
         val changed = shown != previous
-        return (if (changed) CodeVerdict.WEAK_PASS else CodeVerdict.WEAK_FAIL) to
-            "$target ${previous.firstOrNull()} → ${shown.firstOrNull()}"
+        return CodeCheckItem(
+            kind = effect.kind,
+            target = effect.target,
+            expected = "갱신",
+            observed = "${previous.firstOrNull() ?: "없음"} → ${shown.first()}",
+            result = if (changed) CodeVerdict.WEAK_PASS else CodeVerdict.WEAK_FAIL,
+        )
     }
 
     private fun shown(state: PulseState, target: String): List<String> =
@@ -203,17 +225,17 @@ object VerdictCodeChecker {
             }
         }
 
-    private fun instantiate(target: String, state: PulseState, before: PulseState): Pair<CodeVerdict, String> {
-        val names = state.membersOf(target)
+    private fun instantiate(effect: CaseEffect, state: PulseState, before: PulseState): CodeCheckItem {
+        val names = state.membersOf(effect.target)
             .mapNotNull { (value, _) -> value.takeIf { it.isObject } }
             .mapNotNull { it.path("name").textOrNull() ?: plain(it.path("path").textOrNull()).takeIf(String::isNotBlank) }
             .map { it.substringAfterLast('/') }
-        if (names.isEmpty()) return CodeVerdict.UNKNOWN to "$target 이(가) 만드는 오브젝트 이름을 모른다"
-        val created = state.newObjectsSince(before).filter { seen ->
+        if (names.isEmpty()) return unknown(effect, "생성", "만드는 오브젝트 이름을 모른다")
+        val created = state.newObjectsSince(before).count { seen ->
             val last = seen.path.orEmpty().substringAfterLast('/')
             names.any { last.startsWith(it) }
         }
-        return (if (created.isNotEmpty()) CodeVerdict.PASS else CodeVerdict.FAIL) to "새 ${names.first()} ${created.size}개"
+        return item(effect, "${names.first()} 생성", "${created}개 생성", if (created > 0) CodeVerdict.PASS else CodeVerdict.FAIL)
     }
 
     private fun activeOf(value: JsonNode, rest: List<String>): Boolean? = when {

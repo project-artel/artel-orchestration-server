@@ -94,8 +94,20 @@ data class QaStepVerdict(
 data class QaCodeCheck(
     /** `PASS` · `FAIL`(기록으로 확정) · `WEAK_PASS` · `WEAK_FAIL`(바뀌었는지만 봄) · `UNKNOWN`(확인 못 함). */
     val result: String,
-    /** 효과마다 무엇을 읽었는지. */
-    val reasons: List<String>,
+    /** 효과마다 확인한 내용. TC 에 효과 정보(`case_key`)가 없으면 비어 있다. */
+    val items: List<QaCodeCheckItem>,
+)
+
+data class QaCodeCheckItem(
+    /** `active-state` · `scene` · `screen` · `ui-value` · `instantiate` 등 효과의 종류. */
+    val kind: String,
+    val target: String,
+    val expected: String?,
+    /** 판정 시점의 기록에서 읽은 값. 확인하지 못했으면 null. */
+    val observed: String?,
+    val result: String,
+    /** 확인하지 못한 까닭. */
+    val note: String?,
 )
 
 data class QaVerdictCapture(

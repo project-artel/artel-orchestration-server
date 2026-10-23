@@ -9,6 +9,7 @@ import kr.artel.orchestration.project.config.StorageProperties
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.issue.repository.IssueRepository
 import kr.artel.orchestration.qa.dto.QaCodeCheck
+import kr.artel.orchestration.qa.dto.QaCodeCheckItem
 import kr.artel.orchestration.qa.dto.QaRunVerdictsResponse
 import kr.artel.orchestration.qa.dto.QaScenarioStepView
 import kr.artel.orchestration.qa.dto.QaStepAction
@@ -175,7 +176,12 @@ class QaVerdictService(
             captures = capturedIds(payload).mapNotNull(captures::get),
             actions = actions,
             judgedAt = row.createdAt,
-            codeCheck = check?.let { QaCodeCheck(it.result.name, it.reasons) },
+            codeCheck = check?.let { found ->
+                QaCodeCheck(
+                    result = found.result.name,
+                    items = found.items.map { QaCodeCheckItem(it.kind, it.target, it.expected, it.observed, it.result.name, it.note) },
+                )
+            },
             needsReview = needsReview(payload.path("is_verification").asBoolean(false), payload.path("status").asText() == "COMPLETED", check),
         )
     }

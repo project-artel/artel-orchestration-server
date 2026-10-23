@@ -49,7 +49,7 @@ class QaVerdictCodeCheckService(
             if (verdictId in targetIds) {
                 val caseKey = caseIdOf(payload)?.let(caseKeys::get)
                 checks[verdictId] = if (caseKey.isNullOrBlank()) {
-                    CodeCheck(CodeVerdict.UNKNOWN, listOf("TC 의 효과 정보(case_key)가 없다"))
+                    CodeCheck(CodeVerdict.UNKNOWN, emptyList())
                 } else {
                     VerdictCodeChecker.check(CaseKeyEffects.parse(caseKey), now, before)
                 }

@@ -17111,7 +17111,7 @@
       },
       "QaCodeCheck": {
         "required": [
-          "reasons",
+          "items",
           "result"
         ],
         "type": "object",
@@ -17119,11 +17119,39 @@
           "result": {
             "type": "string"
           },
-          "reasons": {
+          "items": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/QaCodeCheckItem"
             }
+          }
+        }
+      },
+      "QaCodeCheckItem": {
+        "required": [
+          "kind",
+          "result",
+          "target"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          },
+          "observed": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
           }
         }
       },
