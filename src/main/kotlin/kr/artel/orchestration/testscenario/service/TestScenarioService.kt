@@ -1,5 +1,8 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
+
 import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -28,6 +31,7 @@ import org.springframework.transaction.reactive.TransactionalOperator
  */
 @Service
 class TestScenarioService(
+    private val projectChanges: ProjectChangeStreamManager,
     private val scenarioRepository: TestScenarioRepository,
     private val accessService: TestScenarioAccessService,
     private val runScenarioRepository: TestRunScenarioRepository,
@@ -107,6 +111,7 @@ class TestScenarioService(
             steps = ExpectedLabelPolicy.carryOver(stated.steps, entity.toDraft(objectMapper).steps)
         )
         val saved = scenarioRepository.save(entity.withDraft(safe, objectMapper))
+        projectChanges.notify(saved.projectId, ProjectChangeTopic.TEST_RUNS)
         return ScenarioResponse(
             testScenarioId = saved.id!!,
             projectId = saved.projectId,
@@ -129,6 +134,7 @@ class TestScenarioService(
                 steps = ExpectedLabelPolicy.carryOver(stated.steps, entity.toDraft(objectMapper).steps)
             )
             scenarioRepository.save(entity.withDraft(safe, objectMapper))
+            projectChanges.notify(entity.projectId, ProjectChangeTopic.TEST_RUNS)
         }
     }
 
@@ -183,7 +189,7 @@ class TestScenarioService(
      * 부분 삭제 상태가 남지 않게 한다. 대화 세션은 런 단위라 여기서 닫지 않는다(런 대화는 계속된다).
      */
     suspend fun delete(appUserId: Long, testScenarioId: Long, force: Boolean = false) {
-        accessService.accessibleScenario(testScenarioId, appUserId) ?: throw NotFoundException()
+        val scenario = accessService.accessibleScenario(testScenarioId, appUserId) ?: throw NotFoundException()
         val runCount = qaTryRepository.countByTestScenarioId(testScenarioId)
         if (runCount > 0 && !force) {
             throw ConflictException(
@@ -198,5 +204,6 @@ class TestScenarioService(
             runScenarioRepository.deleteByTestScenarioId(testScenarioId)
             scenarioRepository.deleteById(testScenarioId)
         }
+        projectChanges.notify(scenario.projectId, ProjectChangeTopic.TEST_RUNS)
     }
 }

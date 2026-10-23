@@ -1,5 +1,8 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
+
 import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
@@ -37,6 +40,7 @@ import org.springframework.transaction.reactive.executeAndAwait
  */
 @Service
 class ScenarioAbsorbService(
+    private val projectChanges: ProjectChangeStreamManager,
     private val runScenarioRepository: TestRunScenarioRepository,
     private val scenarioRepository: TestScenarioRepository,
     private val qaTryRepository: QaTryRepository,
@@ -100,6 +104,7 @@ class ScenarioAbsorbService(
                 links.filter { it.testScenarioId == id }.forEach { runScenarioRepository.delete(it) }
                 if (!elsewhere) scenarioRepository.deleteById(id)
             }
+            projectChanges.notify(scenario.projectId, ProjectChangeTopic.TEST_RUNS)
             logger.info(
                 "합치면서 걷어냄 [runId={}, testScenarioId={}] {} — {}",
                 runId, id, draft.title, if (elsewhere) "다른 런에 남음(조합만 해제)" else "본체까지 삭제",
