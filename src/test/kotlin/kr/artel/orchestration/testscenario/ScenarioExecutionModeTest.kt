@@ -5,6 +5,8 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.qa.review.CaseDecisionRow
+import kr.artel.orchestration.qa.review.QaVerdictReviewRepository
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -153,6 +155,11 @@ class ScenarioExecutionModeTest {
             untouched(TestCaseVersionRepository::class.java) as TestCaseVersionRepository,
             untouched(GameBuildRepository::class.java) as GameBuildRepository,
         )
-        return ScenarioCompositionService(reader)
+        // 사람 판정 기록은 없다(ARTEL-1256).
+        val reviews = Proxy.newProxyInstance(javaClass.classLoader, arrayOf(QaVerdictReviewRepository::class.java)) { _, method, _ ->
+            check(method.name == "findDecisionsByCases") { "예상 밖 호출: ${method.name}" }
+            flowOf<CaseDecisionRow>()
+        } as QaVerdictReviewRepository
+        return ScenarioCompositionService(reader, reviews)
     }
 }
