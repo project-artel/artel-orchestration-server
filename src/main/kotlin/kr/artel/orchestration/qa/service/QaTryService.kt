@@ -671,7 +671,8 @@ class QaTryService(
             throw error
         } catch (error: Exception) {
             failureService.failStarting(qaTryId, "QA Agent session creation failed.")
-            throw UpstreamUnavailableException(
+            // agent-server 가 4xx 로 거절했으면 그 status 와 이유를 그대로 돌려준다(ARTEL-1236).
+            throw error as? QaAgentRejectedException ?: UpstreamUnavailableException(
                 error.message ?: "QA Agent 세션 생성에 실패했습니다.",
                 cause = error
             )
@@ -787,7 +788,7 @@ class QaTryService(
             throw error
         } catch (error: Exception) {
             failRun(started)
-            throw UpstreamUnavailableException(
+            throw error as? QaAgentRejectedException ?: UpstreamUnavailableException(
                 error.message ?: "QA Run 세션 생성에 실패했습니다.",
                 cause = error
             )
