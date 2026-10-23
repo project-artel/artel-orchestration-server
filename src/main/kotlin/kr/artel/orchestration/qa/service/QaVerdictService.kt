@@ -8,6 +8,7 @@ import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.project.config.StorageProperties
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.issue.repository.IssueRepository
+import kr.artel.orchestration.qa.dto.QaCodeCheck
 import kr.artel.orchestration.qa.dto.QaRunVerdictsResponse
 import kr.artel.orchestration.qa.dto.QaScenarioStepView
 import kr.artel.orchestration.qa.dto.QaStepAction
@@ -19,6 +20,9 @@ import kr.artel.orchestration.qa.entity.QaLogEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.qa.verdict.CodeCheck
+import kr.artel.orchestration.qa.verdict.QaVerdictCodeCheckService
+import kr.artel.orchestration.qa.verdict.needsReview
 import kr.artel.orchestration.testcase.service.CaseScope
 import kr.artel.orchestration.testcase.service.TestCaseReader
 import kr.artel.orchestration.testrun.repository.TestRunRepository
@@ -46,6 +50,7 @@ class QaVerdictService(
     private val gameBuilds: GameBuildRepository,
     private val issues: IssueRepository,
     private val caseReader: TestCaseReader,
+    private val codeChecks: QaVerdictCodeCheckService,
     private val storage: DocumentStorage,
     private val storageProperties: StorageProperties,
     private val objectMapper: ObjectMapper,
@@ -53,14 +58,17 @@ class QaVerdictService(
     /** 보이지 않는 런은 404 다([QaRunChangeService] 와 같은 규칙). */
     suspend fun list(qaRunId: Long, appUserId: Long): QaRunVerdictsResponse {
         val run = qaRuns.findAccessibleById(qaRunId, appUserId) ?: throw NotFoundException()
-        val scope = CaseScope.of(caseReader.judgedBuildId(run.gameBuildId))
+        val judgedBuildId = caseReader.judgedBuildId(run.gameBuildId)
+        val scope = CaseScope.of(judgedBuildId)
         val tries = qaTries.findByQaRunId(qaRunId).toList().sortedBy { it.id }.map { qaTry ->
             val qaTryId = requireNotNull(qaTry.id)
             val scenario = scenarios.findById(qaTry.testScenarioId)
             val steps = scenario?.let { objectMapper.readTree(it.steps.asString()) }
             // 한 스텝에 판정이 둘이면(FREE 의 덮어쓰기) 나중 것이 그 스텝의 판정이다.
-            val rows = qaLogs.findStepVerdicts(qaTryId).toList().associateBy { payloadOf(it).path("step").asInt() }
-            val payloads = rows.mapValues { (_, row) -> payloadOf(row) }
+            val verdictRows = qaLogs.findStepVerdicts(qaTryId).toList().map { it to payloadOf(it) }
+            val rows = verdictRows.associateBy({ it.second.path("step").asInt() }, { it.first })
+            val payloads = verdictRows.associateBy({ it.second.path("step").asInt() }, { it.second })
+            val checks = codeChecks.checkTry(qaTryId, judgedBuildId, verdictRows)
             val captures = captureLinks(qaTryId, payloads.values.flatMap(::capturedIds).toSet())
             val calls = if (payloads.values.all { it.hasNonNull("reason") }) emptyList()
             else qaLogs.findVerdictToolCalls(qaTryId).toList()
@@ -76,7 +84,7 @@ class QaVerdictService(
                 completedAt = qaTry.completedAt,
                 steps = stepViews(steps, scope),
                 verdicts = rows.toSortedMap().map { (step, row) ->
-                    verdictOf(row, payloads.getValue(step), steps, captures, calls, actions[step].orEmpty())
+                    verdictOf(row, payloads.getValue(step), steps, captures, calls, actions[step].orEmpty(), checks[row.id])
                 },
                 issues = issues.findPageByQaTry(qaTryId, null, MAX_ISSUES).toList().sortedBy { it.id }.map { issue ->
                     val detail = objectMapper.readTree(issue.detail.asString())
@@ -87,7 +95,7 @@ class QaVerdictService(
                         step = detail.path("step").takeIf { it.canConvertToInt() }?.asInt(),
                     )
                 },
-            )
+            ).let { tried -> tried.copy(reviewCount = tried.verdicts.count { it.needsReview }) }
         }
         return QaRunVerdictsResponse(
             qaRunId = qaRunId.toString(),
@@ -148,6 +156,7 @@ class QaVerdictService(
         captures: Map<String, QaVerdictCapture>,
         calls: List<QaLogEntity>,
         actions: List<QaStepAction>,
+        check: CodeCheck?,
     ): QaStepVerdict {
         val step = payload.path("step").asInt()
         val checks = payload.path("checks").takeIf { it.isArray }
@@ -166,6 +175,8 @@ class QaVerdictService(
             captures = capturedIds(payload).mapNotNull(captures::get),
             actions = actions,
             judgedAt = row.createdAt,
+            codeCheck = check?.let { QaCodeCheck(it.result.name, it.reasons) },
+            needsReview = needsReview(payload.path("is_verification").asBoolean(false), payload.path("status").asText() == "COMPLETED", check),
         )
     }
 

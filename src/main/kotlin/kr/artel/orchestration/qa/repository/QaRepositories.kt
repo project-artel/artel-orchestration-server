@@ -411,6 +411,19 @@ interface QaLogRepository : CoroutineCrudRepository<QaLogEntity, Long> {
         """
     )
     fun findAgentActions(qaTryId: Long): Flow<QaLogEntity>
+
+    /**
+     * SDK 가 보낸 상태 기록(ARTEL-1252). 같은 기록을 agent 로 넘긴 행(`ORCHE_TO_AGENT`)도 있어 그쪽은 뺀다.
+     * 판정 코드 검사가 차례로 접어 판정 시점의 상태를 만든다.
+     */
+    @Query(
+        """
+        SELECT * FROM qa_log
+        WHERE qa_try_id = :qaTryId AND type = 'PULSE' AND direction = 'SDK_TO_ORCHE'
+        ORDER BY id ASC
+        """
+    )
+    fun findSdkPulses(qaTryId: Long): Flow<QaLogEntity>
 }
 
 /** 채점 결과 저장소(ARTEL-301). 읽기는 후속 점수 화면이 쓴다. */

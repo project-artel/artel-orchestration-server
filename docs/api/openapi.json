@@ -3360,11 +3360,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -14868,11 +14868,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
@@ -17109,6 +17109,24 @@
           }
         }
       },
+      "QaCodeCheck": {
+        "required": [
+          "reasons",
+          "result"
+        ],
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "QaRunVerdictsResponse": {
         "required": [
           "qaRunId",
@@ -17223,6 +17241,7 @@
           "isVerification",
           "logId",
           "message",
+          "needsReview",
           "passed",
           "step"
         ],
@@ -17274,6 +17293,12 @@
           "judgedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "codeCheck": {
+            "$ref": "#/components/schemas/QaCodeCheck"
+          },
+          "needsReview": {
+            "type": "boolean"
           }
         }
       },
@@ -17282,6 +17307,7 @@
           "executionMode",
           "issues",
           "qaTryId",
+          "reviewCount",
           "scenarioTitle",
           "startedAt",
           "status",
@@ -17334,6 +17360,10 @@
             "items": {
               "$ref": "#/components/schemas/QaStepIssue"
             }
+          },
+          "reviewCount": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },

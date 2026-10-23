@@ -37,6 +37,8 @@ data class QaTryVerdicts(
     val verdicts: List<QaStepVerdict>,
     /** 이 시나리오 실행이 보고한 결함. `step` 으로 스텝에 붙는다. */
     val issues: List<QaStepIssue>,
+    /** 사람이 다시 볼 판정 수(ARTEL-1252). */
+    val reviewCount: Int = 0,
 )
 
 data class QaScenarioStepView(
@@ -83,6 +85,17 @@ data class QaStepVerdict(
     /** 이 스텝에서 한 행동. */
     val actions: List<QaStepAction>,
     val judgedAt: Instant?,
+    /** 판정을 코드로 다시 본 결과(ARTEL-1252). 검증 판정에만 있다. 판정을 바꾸지 않는다. */
+    val codeCheck: QaCodeCheck? = null,
+    /** 사람이 다시 볼 판정인가. 기준은 `needsReview` 다. */
+    val needsReview: Boolean = false,
+)
+
+data class QaCodeCheck(
+    /** `PASS` · `FAIL`(기록으로 확정) · `WEAK_PASS` · `WEAK_FAIL`(바뀌었는지만 봄) · `UNKNOWN`(확인 못 함). */
+    val result: String,
+    /** 효과마다 무엇을 읽었는지. */
+    val reasons: List<String>,
 )
 
 data class QaVerdictCapture(

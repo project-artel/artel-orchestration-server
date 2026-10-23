@@ -45,3 +45,9 @@ data class CaseVerdictHistoryResponse(
     val testCaseId: String,
     val items: List<CaseVerdictHistoryItem>,
 )
+
+/** TC 하나의 `case_key`(ARTEL-1252). 판정한 빌드의 몫에 있으면 그것을, 없으면 TC 의 것을 쓴다. */
+data class CaseKeyRow(
+    val testCaseId: Long,
+    val caseKey: String?,
+)
