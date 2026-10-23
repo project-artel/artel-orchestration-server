@@ -3360,11 +3360,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -14868,11 +14868,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
@@ -17109,6 +17109,52 @@
           }
         }
       },
+      "QaCodeCheck": {
+        "required": [
+          "items",
+          "result"
+        ],
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaCodeCheckItem"
+            }
+          }
+        }
+      },
+      "QaCodeCheckItem": {
+        "required": [
+          "kind",
+          "result",
+          "target"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          },
+          "observed": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
       "QaRunVerdictsResponse": {
         "required": [
           "qaRunId",
@@ -17223,6 +17269,7 @@
           "isVerification",
           "logId",
           "message",
+          "needsReview",
           "passed",
           "step"
         ],
@@ -17274,6 +17321,12 @@
           "judgedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "codeCheck": {
+            "$ref": "#/components/schemas/QaCodeCheck"
+          },
+          "needsReview": {
+            "type": "boolean"
           }
         }
       },
@@ -17282,6 +17335,7 @@
           "executionMode",
           "issues",
           "qaTryId",
+          "reviewCount",
           "scenarioTitle",
           "startedAt",
           "status",
@@ -17334,6 +17388,10 @@
             "items": {
               "$ref": "#/components/schemas/QaStepIssue"
             }
+          },
+          "reviewCount": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },

@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testcase.repository
 
 import kotlinx.coroutines.flow.Flow
+import kr.artel.orchestration.testcase.dto.CaseKeyRow
 import kr.artel.orchestration.testcase.dto.CaseVerdictHistoryRow
 import kr.artel.orchestration.testcase.dto.VersionListFields
 import kr.artel.orchestration.testcase.dto.VersionStatusCount
@@ -139,6 +140,20 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
         """
     )
     fun findHistory(projectId: Long, testCaseId: Long): Flow<CaseVerdictHistoryRow>
+
+    /**
+     * 판정 코드 검사가 읽을 `case_key`(ARTEL-1252). 그 빌드의 몫이 없으면(빌드 없는 런 · 지난 몫) TC 의 키다.
+     * 빌드가 없으면 [gameBuildId] 에 -1 을 준다 — R2DBC 는 null 비교 파라미터를 받지 않는다.
+     */
+    @Query(
+        """
+        SELECT c.id AS test_case_id, COALESCE(v.metadata ->> 'case_key', c.metadata ->> 'case_key') AS case_key
+          FROM test_case c
+          LEFT JOIN test_case_version v ON v.test_case_id = c.id AND v.game_build_id = :gameBuildId
+         WHERE c.id IN (:testCaseIds)
+        """
+    )
+    fun findCaseKeys(gameBuildId: Long, testCaseIds: Collection<Long>): Flow<CaseKeyRow>
 
     /** 버전마다 상태별 몫 수(ARTEL-1021). `manual` 은 사람이 쓴 케이스(지도 출신이 아님)의 몫이다. */
     @Query(

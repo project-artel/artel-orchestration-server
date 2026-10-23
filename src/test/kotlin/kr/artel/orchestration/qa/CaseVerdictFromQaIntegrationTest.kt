@@ -219,6 +219,40 @@ class CaseVerdictFromQaIntegrationTest {
     }
 
     @Test
+    fun `판정 목록은 검증 판정마다 코드 검사 결과와 다시 볼 판정을 싣는다`(): Unit = runBlocking {
+        val run = runningRun()
+        // 두 TC 모두 "S 화면에 Canvas/Stage 가 보인다" 를 기대한다(ARTEL-1252).
+        for (caseId in listOf(run.passedCaseId, run.failedCaseId)) {
+            val version = versions.findByTestCaseIdAndGameBuildId(caseId, run.gameBuildId)!!
+            versions.save(version.copy(metadata = Json.of("""{"case_key":"screen\u001fS\u001fCanvas/Stage"}""")))
+        }
+        qaLogRepository.save(
+            QaLogEntity(
+                qaTryId = run.tryId, direction = "SDK_TO_ORCHE", type = "PULSE", message = "Pulse received.",
+                payload = Json.of("""{"scene":"S","active":[{"path":"Canvas/Stage","selector":"Canvas/Stage[3]"}]}"""),
+            )
+        )
+
+        reportStep(run.tryId, step = 1, caseId = run.passedCaseId, verification = false, passed = true)
+        // AI 통과 · 코드 확정 통과: 다시 볼 필요 없다.
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true)
+        // AI 실패 · 코드 확정 통과: 서로 반대라 다시 본다.
+        reportStep(run.tryId, step = 3, caseId = run.failedCaseId, verification = true, passed = false)
+
+        val scenario = qaVerdictService.list(run.qaRunId, run.ownerId).tries.single()
+        val (nonVerification, passed, failed) = scenario.verdicts
+        assertThat(nonVerification.codeCheck).isNull()
+        assertThat(nonVerification.needsReview).isFalse()
+        assertThat(passed.codeCheck!!.result).isEqualTo("PASS")
+        val item = passed.codeCheck!!.items.single()
+        assertThat(listOf(item.target, item.expected, item.observed, item.result)).containsExactly("Canvas/Stage", "true", "true", "PASS")
+        assertThat(passed.needsReview).isFalse()
+        assertThat(failed.codeCheck!!.result).isEqualTo("PASS")
+        assertThat(failed.needsReview).isTrue()
+        assertThat(scenario.reviewCount).isEqualTo(1)
+    }
+
+    @Test
     fun `앞 버전 몫은 새 버전에서 난 판정이 와도 그대로다`(): Unit = runBlocking {
         val run = runningRun()
         val testCase = testCaseRepository.findById(run.passedCaseId)!!
