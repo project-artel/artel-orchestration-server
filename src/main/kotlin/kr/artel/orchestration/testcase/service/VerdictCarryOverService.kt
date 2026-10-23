@@ -54,6 +54,9 @@ class VerdictCarryOverService(
 
         /** 앞 버전과 내용이 다르다. */
         CONTENT_CHANGED,
+
+        /** 이미 같은 판정을 같은 출처에서 이어받았다. 가져와도 바뀌는 것이 없다. */
+        ALREADY_CARRIED,
     }
 
     data class Outcome(
@@ -147,6 +150,8 @@ class VerdictCarryOverService(
         row.verificationStatus == BROKEN -> Skip.BROKEN
         row.verificationStatus in VERDICTS && row.verdictCarriedFromBuildId == null -> Skip.JUDGED_IN_THIS_VERSION
         previous == null || previous.verificationStatus !in VERDICTS -> Skip.NO_PREVIOUS_VERDICT
+        row.verificationStatus == previous.verificationStatus && row.verdictCarriedFromBuildId == originOf(previous) ->
+            Skip.ALREADY_CARRIED
         !sameContent(row, previous) -> Skip.CONTENT_CHANGED
         else -> null
     }
@@ -154,10 +159,13 @@ class VerdictCarryOverService(
     private fun inherit(row: TestCaseVersionEntity, previous: TestCaseVersionEntity) = row.copy(
         verificationStatus = previous.verificationStatus,
         verifiedAt = previous.verifiedAt,
-        verdictCarriedFromBuildId = previous.verdictCarriedFromBuildId ?: previous.gameBuildId,
+        verdictCarriedFromBuildId = originOf(previous),
         // 근거도 판정을 따라온다. 이 판정을 실제로 낸 실행의 STATUS 행이다(ARTEL-1134).
         verdictQaLogId = previous.verdictQaLogId,
     )
+
+    /** 그 몫의 판정을 실제로 본 build. 이어받은 것이면 그 출처, 아니면 자기 버전이다. */
+    private fun originOf(previous: TestCaseVersionEntity): Long = previous.verdictCarriedFromBuildId ?: previous.gameBuildId
 
     /**
      * 지도 몫은 `case_key` 가 같으면 같다 — 정체가 그 키로 묶였으므로 문구가 다듬어져도 같은 효과다. 키가 없는 옛 몫과

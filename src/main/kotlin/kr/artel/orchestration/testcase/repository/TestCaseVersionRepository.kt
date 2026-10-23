@@ -3,6 +3,7 @@ package kr.artel.orchestration.testcase.repository
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.testcase.dto.CaseKeyRow
 import kr.artel.orchestration.testcase.dto.CaseVerdictHistoryRow
+import kr.artel.orchestration.testcase.dto.VersionListFields
 import kr.artel.orchestration.testcase.dto.VersionStatusCount
 import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import org.springframework.data.r2dbc.repository.Modifying
@@ -13,6 +14,16 @@ import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEntity, Long> {
 
     fun findByGameBuildId(gameBuildId: Long): Flow<TestCaseVersionEntity>
+
+    /** 케이스 목록에 보일 칸만(ARTEL-1212). 2천여 줄이면 행 전체가 약 5MB, 이 칸들은 그 일부다. */
+    @Query(
+        """
+        SELECT test_case_id, scene, step, precondition, expected_value, status, verification_status
+          FROM test_case_version
+         WHERE game_build_id = :gameBuildId
+        """
+    )
+    fun findListFieldsByGameBuildId(gameBuildId: Long): Flow<VersionListFields>
 
     suspend fun existsByGameBuildId(gameBuildId: Long): Boolean
 
