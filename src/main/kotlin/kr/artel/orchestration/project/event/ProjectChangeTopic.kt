@@ -28,6 +28,9 @@ enum class ProjectChangeTopic {
     /** 테스트 런과 시나리오 구성 및 커버리지. */
     TEST_RUNS,
 
+    /** Artel Bot 이 런의 시나리오를 고치는 동안의 잠금과 풀림(ARTEL-1264). */
+    RUN_LOCKS,
+
     /** LLM 사용량 기록. */
     USAGE,
 }

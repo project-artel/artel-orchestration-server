@@ -64,6 +64,7 @@ class TestRunService(
     private val folderService: TestRunFolderService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
+    private val runLocks: RunAuthoringLocks,
 ) {
     suspend fun list(projectId: Long, userId: Long): TestRunListResponse {
         if (!projectAccessService.isMember(projectId, userId)) return TestRunListResponse(emptyList())
@@ -223,6 +224,8 @@ class TestRunService(
 
     suspend fun setScenarios(runId: Long, userId: Long, scenarioIds: List<Long>): RunScenariosResponse? {
         val run = accessible(runId, userId) ?: return null
+        // Artel Bot 이 고치는 중에는 런 구성도 바꾸지 못한다(ARTEL-1264). AI 도 결과를 런 끝에 붙인다.
+        runLocks.assertWritable(runId)
         validateScenarios(run.projectId, scenarioIds)
         transactionalOperator.executeAndAwait {
             runScenarioRepository.deleteByTestRunId(runId)

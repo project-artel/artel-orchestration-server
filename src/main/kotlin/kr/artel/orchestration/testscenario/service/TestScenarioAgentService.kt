@@ -29,6 +29,7 @@ import kr.artel.orchestration.testcase.service.TestCaseSearchService
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
+import kr.artel.orchestration.testrun.service.RunAuthoringLocks
 import kr.artel.orchestration.testscenario.agent.PhrasedStep
 import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
 import kr.artel.orchestration.testscenario.config.AuthoringExperimentProperties
@@ -121,6 +122,8 @@ class TestScenarioAgentService(
     private val experiment: AuthoringExperimentProperties,
     private val drafts: AuthoringDraftStore,
     private val resourceQueryService: ResourceQueryService,
+    /** AI 턴이 도는 동안 런을 잠근다(ARTEL-1264). 턴의 시작 · 끝을 아는 곳이 여기라 여기서 잡고 푼다. */
+    private val runLocks: RunAuthoringLocks,
 ) {
     private val agentBaseUrl = agentProperties.baseUrl
     private val agentWsBaseUrl = agentProperties.wsBaseUrl
@@ -292,6 +295,7 @@ class TestScenarioAgentService(
      */
     private fun watch(sessionKey: String, runId: Long, appUserId: Long) {
         val session = sessions[sessionKey] ?: return
+        runLocks.hold(runId, session.projectId, appUserId, sessionKey)
         session.watchdog?.cancel()
         session.lastHeard = System.currentTimeMillis()
         session.watchdog = scope.launch {
@@ -312,15 +316,21 @@ class TestScenarioAgentService(
                 sessionKey,
                 ScenarioStreamEvent(type = "error", code = "turn_timeout", detail = message),
             )
+            // 기다림이 끝났으니 런도 푼다. 늦게 온 결과는 그래도 반영된다(위 설명) — 그 사이 고친 것은 덮일 수 있다.
+            runLocks.release(sessionKey)
         }
     }
 
-    /** 소식이 왔다 — 기다림이 끝났다. */
-    private fun stopWatching(sessionKey: String) {
+    /**
+     * 소식이 왔다 — 기다림이 끝났다. [release] 가 false 면 런 잠금은 쥔 채 둔다: 결과 프레임은 기다림의 끝이지만
+     * 저장은 그 뒤에 따로 돈다. 저장 전에 풀면 그 틈에 고친 것을 AI 결과가 덮는다.
+     */
+    private fun stopWatching(sessionKey: String, release: Boolean = true) {
         sessions[sessionKey]?.let {
             it.watchdog?.cancel()
             it.watchdog = null
         }
+        if (release) runLocks.release(sessionKey)
     }
 
     /**
@@ -422,6 +432,7 @@ class TestScenarioAgentService(
      * 만료시키도록 하고, 우리 쪽 WS 구독도 정리한다. 세션이 없으면(이미 종료) 조용히 무시한다.
      */
     fun closeSession(sessionKey: String) {
+        runLocks.release(sessionKey)
         val session = sessions.remove(sessionKey) ?: return
         try {
             val json = objectMapper.writeValueAsString(AgentCloseMessage())
@@ -1277,6 +1288,7 @@ class TestScenarioAgentService(
             sessionKey,
             ScenarioStreamEvent(type = "progress", stage = stage, done = done, total = total),
         )
+        runLocks.stage(sessionKey, stage)
     }
 
     /**
@@ -1481,6 +1493,8 @@ class TestScenarioAgentService(
                 .then()
             send.and(receive)
         }.doFinally {
+            // WS 가 끊기면 턴도 끝난 것이다. 쥔 런 잠금을 놓는다.
+            runLocks.release(sessionKey)
             sessions.remove(sessionKey)
             logger.info("Agent WS 연결 종료 및 정리 [sessionKey=$sessionKey]")
         }
@@ -1597,7 +1611,8 @@ class TestScenarioAgentService(
             val event = objectMapper.readValue(payloadText, ScenarioStreamEvent::class.java)
             // 결과든 오류든 **턴은 여기서 끝난다.** 감시를 풀지 않으면 잠시 뒤 "멎었다"고
             // 말하게 되고, 그건 방금 답을 받은 사용자에게 거짓말이다.
-            stopWatching(sessionKey)
+            // 결과는 아래에서 저장한 뒤에 런 잠금을 푼다(ARTEL-1264). 오류는 저장할 것이 없어 바로 푼다.
+            stopWatching(sessionKey, release = event.type != "result" || session == null)
             // 제안 카드에는 실행 방식이 늘 실린다(ARTEL-1028). Agent 가 비워 둔 결과는 수정 대상의 저장된 값을
             // 읽어야 해서 DB 를 거치므로, 그런 결과는 아래 코루틴에서 채워 내보낸다.
             val needsModes = event.type == "result" && session != null &&
@@ -1606,6 +1621,7 @@ class TestScenarioAgentService(
 
             if (event.type == "result" && session != null) {
                 scope.launch {
+                  try {
                     if (needsModes) streamManager.emit(sessionKey, withExecutionModes(session, event))
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
                     try {
@@ -1651,6 +1667,10 @@ class TestScenarioAgentService(
                             logger.error("draft 담기 실패 [sessionKey=$sessionKey]: ${err.message}")
                         }
                     }
+                  } finally {
+                    // 저장까지 끝났다. 검수에 걸려 재작성 턴이 나갔으면 그 턴이 잠금을 이어 쥔다.
+                    if (sessions[sessionKey]?.busy != true) runLocks.release(sessionKey)
+                  }
                 }
             }
         } catch (e: CancellationException) {
