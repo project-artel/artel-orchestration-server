@@ -11,10 +11,16 @@ import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Clock
 import java.time.Instant
 
-/** 시나리오 저작 agent 가 쓰는 model 의 `llm_model.id`. 행이 없으면 환경 변수, 그것도 없으면 agent-server 기본값이다. */
+/**
+ * 시나리오 저작 agent 가 쓰는 model 의 `llm_model.id`. 행이 없으면 환경 변수, 그것도 없으면 공용 key 가 유효한
+ * provider 의 model([ProviderDefaultModels])이다.
+ */
 const val SCENARIO_AUTHORING_MODEL_SETTING = "llm.model.scenario_authoring"
 
-/** Jev decision 질문에 답하는 model. `llm_model.id` 이거나 [JEV_MODEL_ID] 다. 행이 없으면 Jev 다. */
+/**
+ * Jev decision 질문에 답하는 model. `llm_model.id` 이거나 [JEV_MODEL_ID] 다. 행이 없으면 공용 key 가 유효한
+ * provider 의 model([ProviderDefaultModels])이고, OpenRouter key 가 유효하면 그것은 Jev 다.
+ */
 const val DECISION_MODEL_SETTING = "llm.model.decision"
 
 /**
@@ -30,7 +36,10 @@ const val JEV_MODEL_ID = "typesafe/jev-1.13"
 data class FeatureModelStatus(
     /** 저장된 시나리오 저작 model. 없으면 null 이다. */
     val scenarioAuthoringModel: String?,
-    /** [scenarioAuthoringModel] 이 null 일 때 쓰이는 값. `artel.agent.model` 이 있으면 그 값, 없으면 null(agent-server 기본값). */
+    /**
+     * [scenarioAuthoringModel] 이 null 일 때 쓰이는 값. `artel.agent.model` 이 있으면 그 값, 없으면 공용 key 가 유효한
+     * provider 의 model 이다. 그런 provider 도 없으면 null(agent-server 기본값)이다.
+     */
     val scenarioAuthoringFallback: String?,
     /** 저장된 decision model. null 이면 Jev([JEV_MODEL_ID]) 다. */
     val decisionModel: String?,
@@ -50,8 +59,24 @@ data class FeatureModelStatus(
     val updatedAt: Instant?
 )
 
-/** `GET /internal/settings/models` 응답. */
-data class InternalFeatureModels(val scenarioAuthoringModel: String?, val decisionModel: String?)
+/**
+ * `GET /internal/settings/models` 응답.
+ *
+ * @property scenarioAuthoringModel 저장된 값. 없으면 null 이다
+ * @property decisionModel 저장된 값. 없으면 null 이다
+ * @property effective 지금 실제로 쓰이는 값. 저장된 값이 없을 때 고른 기본값이 여기 있다(ARTEL-1237)
+ */
+data class InternalFeatureModels(
+    val scenarioAuthoringModel: String?,
+    val decisionModel: String?,
+    val effective: EffectiveFeatureModels
+)
+
+/**
+ * 설정과 기본값을 합친 결과. [decisionModel] 이 [JEV_MODEL_ID] 면 Jev 다. 둘 다 null 이면 공용 key 가 유효한
+ * provider 가 없다는 뜻이고, agent-server 는 자기 기본값을 쓴다.
+ */
+data class EffectiveFeatureModels(val scenarioAuthoringModel: String?, val decisionModel: String?)
 
 /**
  * 기능별 LLM model 설정. `platform_setting` 의 평문 세 행([SCENARIO_AUTHORING_MODEL_SETTING],
@@ -65,7 +90,8 @@ class FeatureModelService(
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock,
     private val agentServerProperties: AgentServerProperties,
-    private val platformKeyPresence: PlatformKeyPresence
+    private val platformKeyPresence: PlatformKeyPresence,
+    private val providerDefaultModels: ProviderDefaultModels
 ) {
     private val logger = LoggerFactory.getLogger(FeatureModelService::class.java)
 
@@ -76,7 +102,7 @@ class FeatureModelService(
         val storedModels = listOfNotNull(authoring?.settingValue, decision?.settingValue, projectAgent?.settingValue)
         return FeatureModelStatus(
             scenarioAuthoringModel = authoring?.settingValue,
-            scenarioAuthoringFallback = envModel(),
+            scenarioAuthoringFallback = envModel() ?: providerDefaultModels.pick().scenarioAuthoringModel,
             decisionModel = decision?.settingValue,
             projectAgentModel = projectAgent?.settingValue,
             projectAgentFallback = resolveAuthoringModel(),
@@ -86,17 +112,26 @@ class FeatureModelService(
     }
 
     /** agent-server 용. */
-    suspend fun internalModels(): InternalFeatureModels = InternalFeatureModels(
-        scenarioAuthoringModel = storedAuthoringModel(),
-        decisionModel = platformSettingRepository.findById(DECISION_MODEL_SETTING)?.settingValue
-    )
+    suspend fun internalModels(): InternalFeatureModels {
+        val storedDecision = platformSettingRepository.findById(DECISION_MODEL_SETTING)?.settingValue
+        return InternalFeatureModels(
+            scenarioAuthoringModel = storedAuthoringModel(),
+            decisionModel = storedDecision,
+            effective = EffectiveFeatureModels(
+                scenarioAuthoringModel = resolveAuthoringModel(),
+                decisionModel = storedDecision ?: providerDefaultModels.pick().decisionModel
+            )
+        )
+    }
 
     /**
-     * 시나리오 저작 agent 에 보낼 model. 저장된 값 → `artel.agent.model` → null(agent-server 기본값) 순이다.
-     * 세션을 열 때마다 읽는다.
+     * 시나리오 저작 agent 에 보낼 model. 저장된 값 → `artel.agent.model` → 공용 key 가 유효한 provider 의 model →
+     * null(agent-server 기본값) 순이다. 세션을 열 때마다 읽는다.
      */
     suspend fun resolveAuthoringModel(): String? =
-        storedAuthoringModel()?.takeIf { usable(it, SCENARIO_AUTHORING_MODEL_SETTING) } ?: envModel()
+        storedAuthoringModel()?.takeIf { usable(it, SCENARIO_AUTHORING_MODEL_SETTING) }
+            ?: envModel()
+            ?: providerDefaultModels.pick().scenarioAuthoringModel
 
     /**
      * 관리자가 고른 project agent model. 저장된 값이 꺼졌거나 카탈로그에 없으면 null 이다 — 그때 부르는 쪽은
