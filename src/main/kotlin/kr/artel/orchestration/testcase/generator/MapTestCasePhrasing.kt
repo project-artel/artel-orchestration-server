@@ -337,7 +337,25 @@ object MapTestCasePhrasing {
      * 것을 여럿 적은 자리가 그렇다(`` `Background1` · `Background2` ``). 한 겹 더 두르면
      * 어디까지가 한 이름인지 읽는 사람이 알 수 없다.
      */
-    private fun code(target: String): String = if (target.startsWith("`")) target else "`$target`"
+    private fun code(target: String): String = if (target.startsWith("`")) target else readableName(target)
+
+    /**
+     * **코드 경로를 사람이 읽는 이름으로**(ARTEL-1209). `DialogueWindowPresentation.NameLabel.gameObject` 는
+     * `` `NameLabel`(DialogueWindowPresentation) `` 이 된다.
+     *
+     * 끝의 유니티 접근자(`gameObject` · `transform` · `text` · `sprite`)는 문장이 이미 말한다("표시 상태" · "글자" ·
+     * "표시"). 맨 앞의 타입은 주인이라 괄호로 뒤에 둔다. 씬 경로(`Canvas/…`)와 한 마디 이름은 그대로다. 판정은 이 문장이
+     * 아니라 판정 구조(`checks`)를 읽으므로 코드 이름은 거기에 남아 있다.
+     */
+    fun readableName(target: String): String {
+        if (!CODE_PATH.matches(target)) return "`$target`"
+        val parts = target.split('.').let { all -> if (all.last() in ACCESSORS) all.dropLast(1) else all }
+        if (parts.size < 2) return "`${parts.single()}`"
+        return "`${parts.drop(1).joinToString(".")}`(${parts.first()})"
+    }
+
+    private val CODE_PATH = Regex("""^[A-Z]\w*(\.[A-Za-z_]\w*)+$""")
+    private val ACCESSORS = setOf("gameObject", "transform", "text", "sprite")
 
     private fun outcome(kind: String, target: String, detail: String?): String = when (kind) {
         "scene" -> "${code(target)} 화면으로 전환된다"

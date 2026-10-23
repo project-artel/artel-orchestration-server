@@ -133,15 +133,15 @@ class MapTestCaseReadingsTest {
     @Test
     fun `목록 번호는 주인마다의 그림 이름으로 적는다`() {
         assertThat(expected(sprite("SlimeAnimator.spriteRenderer.sprite", "SlimeAnimator.sprites.Item[4]")))
-            .isEqualTo("`SlimeAnimator.spriteRenderer.sprite` 표시가 `Cat_05` · `Flower_05` · `Rock_05` 중 하나 로 갱신된다")
+            .isEqualTo("`spriteRenderer`(SlimeAnimator) 표시가 `Cat_05` · `Flower_05` · `Rock_05` 중 하나 로 갱신된다")
         assertThat(expected(sprite("SlimeAnimator.spriteRenderer.sprite", "SlimeAnimator.sprites.Item[6]")))
-            .isEqualTo("`SlimeAnimator.spriteRenderer.sprite` 표시가 `Cat_07` · `Flower_07` 중 하나 로 갱신된다")
+            .isEqualTo("`spriteRenderer`(SlimeAnimator) 표시가 `Cat_07` · `Flower_07` 중 하나 로 갱신된다")
     }
 
     @Test
     fun `이름을 모르는 그림 번호는 값을 빼고 갱신된다고만 적는다`() {
         assertThat(expected(sprite("ProjectileAnimator.spriteRenderer.sprite", "ProjectileAnimator.sprites.Item[0]")))
-            .isEqualTo("`ProjectileAnimator.spriteRenderer.sprite` 표시가 갱신된다")
+            .isEqualTo("`spriteRenderer`(ProjectileAnimator) 표시가 갱신된다")
     }
 
     /**
@@ -160,7 +160,7 @@ class MapTestCaseReadingsTest {
         )
 
         assertThat(told).hasSize(2)
-        assertThat(told.map { it.expected }.distinct()).containsExactly("`ProjectileAnimator.spriteRenderer.sprite` 표시가 갱신된다")
+        assertThat(told.map { it.expected }.distinct()).containsExactly("`spriteRenderer`(ProjectileAnimator) 표시가 갱신된다")
     }
 
     // --- 판정 구조 ---------------------------------------------------------------

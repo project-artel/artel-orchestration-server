@@ -602,7 +602,7 @@ class MapTestCaseGeneratorGoldenTest {
         // `Item` 은 한 줄도 남지 않는다. `SlimeAnimator.sprites.Item[4]` 는 주인 셋의 다섯째 그림이 된다.
         assertThat(outcomes).noneMatch { it.contains(".Item[") }
         assertThat(outcomes).noneMatch { it.contains("sprites[") }
-        assertThat(outcomes).anyMatch { it.contains("`SlimeAnimator.spriteRenderer.sprite` 표시가 `") && it.contains("중 하나 로 갱신된다") }
+        assertThat(outcomes).anyMatch { it.contains("`spriteRenderer`(SlimeAnimator) 표시가 `") && it.contains("중 하나 로 갱신된다") }
     }
 
     /**

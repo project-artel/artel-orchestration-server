@@ -106,7 +106,13 @@ class MapTestCaseReadingRulesTest {
 
         assertThat(out).hasSize(1)
         assertThat(out.single().scene).isEqualTo("TitleScene")
-        assertThat(out.single().step).endsWith(MapTestCaseReadingRules.ANY_SCENE)
+        assertThat(out.single().step).endsWith("(여러 씬: TitleScene · EndingScene · MapScene)")
+        // 지도의 씬 전부면 늘어놓지 않는다.
+        val all = MapTestCaseReadingRules.acrossScenes(
+            listOf(case("EndingScene"), case("TitleScene"), case("MapScene")), entryScene = "TitleScene",
+            allScenes = setOf("EndingScene", "TitleScene", "MapScene"),
+        )
+        assertThat(all.single().step).endsWith(MapTestCaseReadingRules.ALL_SCENES)
     }
 
     private fun either(vararg parts: ConditionNode) = ConditionNode.Group(GroupKind.EITHER, parts.toList())

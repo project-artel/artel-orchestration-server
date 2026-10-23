@@ -136,7 +136,7 @@ class MapTestCaseGroupingMeasureTest {
             case.expectedChecks.count { !MapTestCaseReadingRules.collectable(it, names[case.scene].orEmpty()) }
         }
         val withSetup = cases.count { it.setup.isNotEmpty() }
-        val anyScene = cases.count { it.step.endsWith(MapTestCaseReadingRules.ANY_SCENE) }
+        val anyScene = cases.count { it.step.contains(MapTestCaseReadingRules.ANY_SCENE) || it.step.endsWith(MapTestCaseReadingRules.ALL_SCENES) }
         val nothing = cases.count { it.expected == MapTestCaseReadingRules.NO_READABLE_RESULT }
         val unreadablePre = cases.count { it.precondition.contains("(확인 불가)") }
         val longPre = cases.count { it.precondition.split("그리고").size >= 5 }

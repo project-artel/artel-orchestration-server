@@ -146,8 +146,9 @@ class MapTestCaseGenerator(
             .let { cases -> if (reading) cases.filterNot { MapTestCaseReadingRules.impossible(it.condition, it.scene) } else cases }
             .let { cases ->
                 if (!reading) return@let cases
-                val entry = scenes.findByContentMapIdOrderByNameAsc(contentMapId).toList().firstOrNull { it.isEntry }?.name
-                MapTestCaseReadingRules.acrossScenes(MapTestCaseReadingRules.sameToReader(cases), entry)
+                val mapScenes = scenes.findByContentMapIdOrderByNameAsc(contentMapId).toList()
+                val entry = mapScenes.firstOrNull { it.isEntry }?.name
+                MapTestCaseReadingRules.acrossScenes(MapTestCaseReadingRules.sameToReader(cases), entry, mapScenes.map { it.name }.toSet())
             }
     }
 

@@ -382,15 +382,16 @@ object MapTestCaseReadingRules {
      * **씬만 다른 같은 TC 를 하나로.**
      *
      * 모든 씬에 깔린 UI 는 씬마다 같은 시험을 낸다. 조작 · 사전조건 · 기대결과 · 판정 구조가 씬 이름을 빼고
-     * 같으면 같은 시험이라, 하나를 남기고 "어느 씬에서나" 를 적는다. QA 는 그 하나의 씬에서 확인한다.
+     * 같으면 같은 시험이라, 하나를 남기고 그 씬들을 적는다("여러 씬: A · B"). QA 는 그 하나의 씬에서 확인한다.
      *
      * **남기는 씬은 입구 씬이 먼저다.** 가나다순으로 고르면 설정 메뉴 하나를 보려고 엔딩까지 가야 한다(실측
      * 1.4.0 에서 203 건이 `EndingScene` 에 몰렸다). 입구 씬은 게임이 처음 여는 씬이라 어느 TC 보다 가깝다.
      * 묶인 씬에 입구 씬이 없으면 처음 것을 남긴다.
      *
      * @param entryScene 지도가 아는 입구 씬(`scene.is_entry`). 모르면 null
+     * @param allScenes 지도의 씬 전부. 묶인 씬이 이것과 같으면 이름을 늘어놓지 않고 "모든 씬" 이라 적는다
      */
-    fun acrossScenes(cases: List<MapTestCase>, entryScene: String? = null): List<MapTestCase> {
+    fun acrossScenes(cases: List<MapTestCase>, entryScene: String? = null, allScenes: Set<String> = emptySet()): List<MapTestCase> {
         val groups = cases.groupBy { case ->
             listOf(
                 case.step.replace(case.scene, SCENE_MARK),
@@ -404,15 +405,21 @@ object MapTestCaseReadingRules {
             val first = same.firstOrNull { it.scene == entryScene } ?: same.first()
             if (same.map { it.scene }.distinct().size < 2) return@map first
             first.copy(
-                step = "${first.step} $ANY_SCENE",
+                step = "${first.step} " + same.map { it.scene }.distinct().let { here ->
+                    if (allScenes.isNotEmpty() && here.toSet() == allScenes) ALL_SCENES
+                    else here.sortedWith(compareBy({ it != first.scene }, { it })).joinToString(" · ", prefix = ANY_SCENE, postfix = ")")
+                },
                 setup = eitherSetup(same.map { it.setup }),
                 identity = first.identity + IDENTITY_SEPARATOR + ANY_SCENE_KEY,
             )
         }
     }
 
-    /** 사람이 읽는 표시. 이 TC 는 여러 씬에서 같은 시험이라 하나만 냈다는 뜻이다. */
-    const val ANY_SCENE = "(어느 씬에서나)"
+    /** 사람이 읽는 표시의 앞머리. 이 TC 는 뒤에 적은 씬들에서 같은 시험이라 하나만 냈다는 뜻이다. 남긴 씬이 맨 앞이다. */
+    const val ANY_SCENE = "(여러 씬: "
+
+    /** 지도의 씬 전부에 같은 시험이 있을 때. */
+    const val ALL_SCENES = "(모든 씬)"
 
     /** 판독으로 확인할 수 있는 기대가 하나도 안 남은 TC 의 기대결과. 조작이 되는지만 본다. */
     const val NO_READABLE_RESULT = "판독으로 확인할 수 있는 결과 없음 — 조작이 되는지만 본다"
