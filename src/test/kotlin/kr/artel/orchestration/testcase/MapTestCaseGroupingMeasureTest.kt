@@ -21,6 +21,7 @@ import kr.artel.orchestration.testcase.generator.MapTestCaseGenerator
 import kr.artel.orchestration.testcase.generator.MapTestCaseReadingRules
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -171,6 +172,10 @@ class MapTestCaseGroupingMeasureTest {
         val first = objectMapper.readTree(bytes).path("scenes").path(0).asText(null)
         scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList().firstOrNull { it.name == first }
             ?.let { scenes.save(it.copy(isEntry = true)) }
+        // **통계를 채운다.** 빈 컨테이너에 갓 적재하면 표 통계가 0 행이라 플래너가 `findCallEdges` 를 nested loop 로
+        // 돈다. 그 질의 하나에 70 초가 들었다(실측 1.4.0). 실제 DB 는 다른 지도가 있어 통계가 차 있고,
+        // 같은 질의가 0.6 초다(로컬 `artel_ts_reuse`, 지도 9). 측정을 그쪽에 맞춘다.
+        db.sql("ANALYZE").then().awaitSingleOrNull()
         return map.id!!
     }
 }

@@ -178,6 +178,21 @@ interface CapabilityEffectRepository : CoroutineCrudRepository<CapabilityEffectE
     fun findWritesByContentMapId(contentMapId: Long): Flow<CapabilityWriteRow>
 
     /**
+     * 지도 하나의 효과 전부(ARTEL-1209). TC 생성기가 `capability` 마다 읽으면 1.4.0 에서 질의가 행 수 × 형제 수만큼
+     * 나간다. 순서는 [findByCapabilityIdOrderByIdAsc] 와 같다 — `capability` id, 그 안에서 id.
+     */
+    @Query(
+        """
+        SELECT e.*
+        FROM capability_effect e
+        JOIN capability c ON c.id = e.capability_id
+        WHERE c.content_map_id = :contentMapId
+        ORDER BY e.capability_id, e.id
+        """
+    )
+    fun findByContentMapId(contentMapId: Long): Flow<CapabilityEffectEntity>
+
+    /**
      * 재적재가 근거 출신 효과만 갈아엎는다. 효과에는 안정 키가 없어 지우고 다시 넣는 것이 유일한 길이고,
      * `origin` 으로 좁히지 않으면 관측이 남긴 효과까지 스캔이 지운다.
      */
