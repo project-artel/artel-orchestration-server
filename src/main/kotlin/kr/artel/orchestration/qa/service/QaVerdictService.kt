@@ -8,8 +8,10 @@ import kr.artel.orchestration.project.storage.DocumentStorage
 import kr.artel.orchestration.project.config.StorageProperties
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.issue.repository.IssueRepository
+import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.qa.dto.QaCodeCheck
 import kr.artel.orchestration.qa.dto.QaCodeCheckItem
+import kr.artel.orchestration.qa.dto.QaHumanDecision
 import kr.artel.orchestration.qa.dto.QaRunVerdictsResponse
 import kr.artel.orchestration.qa.dto.QaScenarioStepView
 import kr.artel.orchestration.qa.dto.QaStepAction
@@ -21,6 +23,9 @@ import kr.artel.orchestration.qa.entity.QaLogEntity
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.qa.review.QaVerdictReviewEntity
+import kr.artel.orchestration.qa.review.QaVerdictReviewRepository
+import kr.artel.orchestration.qa.review.QaVerdictReviewService
 import kr.artel.orchestration.qa.verdict.CodeCheck
 import kr.artel.orchestration.qa.verdict.QaVerdictCodeCheckService
 import kr.artel.orchestration.qa.verdict.needsReview
@@ -34,6 +39,9 @@ private val EVIDENCE_STATES = setOf("verified", "uncertain", "none")
 
 /** 한 시나리오 실행에서 이슈를 이만큼 넘게 보고하는 일은 없다. 이슈 화면의 페이지 상한과 같다. */
 private const val MAX_ISSUES = 200
+
+/** 아직 끝나지 않은 실행. 이때는 추가 검토를 고르지 않는다 — 판정이 더 올 수 있다. */
+private val ACTIVE_RUN = setOf("PENDING", "STARTING", "RUNNING")
 
 /**
  * 런의 스텝 판정과 그 근거를 읽는다(ARTEL-1134). QA 가 끝난 뒤 사용자가 "왜 이 판정인가" 를 보는 자리다.
@@ -52,6 +60,9 @@ class QaVerdictService(
     private val issues: IssueRepository,
     private val caseReader: TestCaseReader,
     private val codeChecks: QaVerdictCodeCheckService,
+    private val reviews: QaVerdictReviewRepository,
+    private val reviewService: QaVerdictReviewService,
+    private val users: AppUserRepository,
     private val storage: DocumentStorage,
     private val storageProperties: StorageProperties,
     private val objectMapper: ObjectMapper,
@@ -61,6 +72,11 @@ class QaVerdictService(
         val run = qaRuns.findAccessibleById(qaRunId, appUserId) ?: throw NotFoundException()
         val judgedBuildId = caseReader.judgedBuildId(run.gameBuildId)
         val scope = CaseScope.of(judgedBuildId)
+        // 이 기능 전의 실행 · 아직 끝나지 않은 실행은 고른 기록이 없다. 끝난 실행이면 지금 고른 것을 남긴다.
+        val finished = run.status !in ACTIVE_RUN
+        val decisions = reviews.findByQaRunId(qaRunId).toList().associateBy { it.qaLogId }
+        val names = decisions.values.mapNotNull { it.decidedBy }.distinct()
+            .associateWith { users.findById(it)?.displayName }
         val tries = qaTries.findByQaRunId(qaRunId).toList().sortedBy { it.id }.map { qaTry ->
             val qaTryId = requireNotNull(qaTry.id)
             val scenario = scenarios.findById(qaTry.testScenarioId)
@@ -70,6 +86,7 @@ class QaVerdictService(
             val rows = verdictRows.associateBy({ it.second.path("step").asInt() }, { it.first })
             val payloads = verdictRows.associateBy({ it.second.path("step").asInt() }, { it.second })
             val checks = codeChecks.checkTry(qaTryId, judgedBuildId, verdictRows)
+            if (finished) reviewService.flag(qaRunId, qaTryId, verdictRows, checks)
             val captures = captureLinks(qaTryId, payloads.values.flatMap(::capturedIds).toSet())
             val calls = if (payloads.values.all { it.hasNonNull("reason") }) emptyList()
             else qaLogs.findVerdictToolCalls(qaTryId).toList()
@@ -86,6 +103,7 @@ class QaVerdictService(
                 steps = stepViews(steps, scope),
                 verdicts = rows.toSortedMap().map { (step, row) ->
                     verdictOf(row, payloads.getValue(step), steps, captures, calls, actions[step].orEmpty(), checks[row.id])
+                        .withDecision(decisions[row.id], names)
                 },
                 issues = issues.findPageByQaTry(qaTryId, null, MAX_ISSUES).toList().sortedBy { it.id }.map { issue ->
                     val detail = objectMapper.readTree(issue.detail.asString())
@@ -96,7 +114,12 @@ class QaVerdictService(
                         step = detail.path("step").takeIf { it.canConvertToInt() }?.asInt(),
                     )
                 },
-            ).let { tried -> tried.copy(reviewCount = tried.verdicts.count { it.needsReview }) }
+            ).let { tried ->
+                tried.copy(
+                    reviewCount = tried.verdicts.count { it.needsReview },
+                    reviewedCount = tried.verdicts.count { it.humanDecision?.flagged == true },
+                )
+            }
         }
         return QaRunVerdictsResponse(
             qaRunId = qaRunId.toString(),
@@ -149,6 +172,30 @@ class QaVerdictService(
         message.startsWith("Dragging") -> "drag" to null
         else -> "other" to message.substringBefore(' ').ifBlank { null }
     }
+
+    /** 사람이 정한 판정을 얹는다. 정했으면 추가 검토가 끝난 것이다. */
+    private fun QaStepVerdict.withDecision(decision: QaVerdictReviewEntity?, names: Map<Long, String?>): QaStepVerdict {
+        if (decision?.decision == null) return this
+        return copy(
+            needsReview = false,
+            humanDecision = QaHumanDecision(
+                passed = decision.decision == QaVerdictReviewService.PASSED,
+                note = decision.note,
+                decidedBy = decision.decidedBy?.let(names::get),
+                decidedAt = decision.decidedAt,
+                flagged = decision.flagged || needsReview,
+            ),
+        )
+    }
+
+    /** 방금 정한 판정을 화면에 돌려줄 모양으로. */
+    suspend fun decisionOf(decision: QaVerdictReviewEntity) = QaHumanDecision(
+        passed = decision.decision == QaVerdictReviewService.PASSED,
+        note = decision.note,
+        decidedBy = decision.decidedBy?.let { users.findById(it)?.displayName },
+        decidedAt = decision.decidedAt,
+        flagged = decision.flagged,
+    )
 
     private fun verdictOf(
         row: QaLogEntity,

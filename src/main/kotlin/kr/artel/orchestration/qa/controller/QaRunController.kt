@@ -9,7 +9,10 @@ import kr.artel.orchestration.qa.dto.CreateQaRunRequest
 import kr.artel.orchestration.qa.dto.QaRunChangeListResponse
 import kr.artel.orchestration.qa.dto.QaRunChangeResponse
 import kr.artel.orchestration.qa.dto.QaRunResponse
+import kr.artel.orchestration.qa.dto.QaHumanDecision
 import kr.artel.orchestration.qa.dto.QaRunVerdictsResponse
+import kr.artel.orchestration.qa.dto.QaVerdictReviewRequest
+import kr.artel.orchestration.qa.review.QaVerdictReviewService
 import kr.artel.orchestration.qa.service.QaRunChangeKind
 import kr.artel.orchestration.qa.service.QaRunChangeService
 import kr.artel.orchestration.qa.service.QaTryService
@@ -24,6 +27,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
@@ -38,6 +42,7 @@ class QaRunController(
     private val qaTryService: QaTryService,
     private val qaRunChangeService: QaRunChangeService,
     private val qaVerdictService: QaVerdictService,
+    private val qaVerdictReviewService: QaVerdictReviewService,
     private val llmModelService: LlmModelService,
     private val userLlmKeyService: UserLlmKeyService,
     private val objectMapper: ObjectMapper
@@ -88,6 +93,26 @@ class QaRunController(
         @CurrentUserId appUserId: Long
     ): QaRunVerdictsResponse =
         qaVerdictService.list(parseId(qaRunId), appUserId)
+
+    /**
+     * 사람이 스텝 판정을 통과 · 실패로 확정한다(ARTEL-1254). 그 판정의 TC 판정도 사람 결정으로 바뀐다. 다시 보내면
+     * 덮어쓴다. 보이지 않는 런이거나 그 런의 스텝 판정이 아니면 404 다.
+     */
+    @PutMapping("/{qaRunId}/verdicts/{verdictLogId}/review")
+    suspend fun reviewQaRunVerdict(
+        @PathVariable qaRunId: String,
+        @PathVariable verdictLogId: String,
+        @RequestBody request: QaVerdictReviewRequest,
+        @CurrentUserId appUserId: Long
+    ): QaHumanDecision {
+        val passed = when (request.decision) {
+            QaVerdictReviewService.PASSED -> true
+            QaVerdictReviewService.FAILED -> false
+            else -> throw BadRequestException("decision 은 PASSED 나 FAILED 여야 합니다.")
+        }
+        val saved = qaVerdictReviewService.decide(parseId(qaRunId), parseId(verdictLogId), appUserId, passed, request.note)
+        return qaVerdictService.decisionOf(saved)
+    }
 
     /**
      * 이 런이 knowledge 와 macro 에 한 변경. 대상마다 한 줄이고 run 이전과 이후를 line diff 용 텍스트로
