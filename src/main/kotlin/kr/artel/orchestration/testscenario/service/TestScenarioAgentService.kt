@@ -29,6 +29,8 @@ import kr.artel.orchestration.testcase.service.TestCaseSearchService
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
+import kr.artel.orchestration.testrun.service.RunAuthoringLocks
+import kr.artel.orchestration.testrun.service.RunScenarioReader
 import kr.artel.orchestration.testscenario.agent.PhrasedStep
 import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
 import kr.artel.orchestration.testscenario.config.AuthoringExperimentProperties
@@ -121,6 +123,10 @@ class TestScenarioAgentService(
     private val experiment: AuthoringExperimentProperties,
     private val drafts: AuthoringDraftStore,
     private val resourceQueryService: ResourceQueryService,
+    /** AI 가 고친 시나리오를 턴 끝까지 잠근다(ARTEL-1264). 턴의 시작 · 끝과 고친 시나리오를 아는 곳이 여기다. */
+    private val runLocks: RunAuthoringLocks,
+    /** 저장 직전에 지금 본문을 읽어, 턴 시작에 AI 가 본 것과 비교한다(ARTEL-1264). */
+    private val runScenarioReader: RunScenarioReader,
 ) {
     private val agentBaseUrl = agentProperties.baseUrl
     private val agentWsBaseUrl = agentProperties.wsBaseUrl
@@ -292,6 +298,7 @@ class TestScenarioAgentService(
      */
     private fun watch(sessionKey: String, runId: Long, appUserId: Long) {
         val session = sessions[sessionKey] ?: return
+        runLocks.hold(runId, session.projectId, appUserId, sessionKey, choosing = session.autoApply)
         session.watchdog?.cancel()
         session.lastHeard = System.currentTimeMillis()
         session.watchdog = scope.launch {
@@ -312,15 +319,21 @@ class TestScenarioAgentService(
                 sessionKey,
                 ScenarioStreamEvent(type = "error", code = "turn_timeout", detail = message),
             )
+            // 기다림이 끝났으니 런도 푼다. 늦게 온 결과는 그래도 반영된다(위 설명) — 그 사이 고친 것은 덮일 수 있다.
+            runLocks.release(sessionKey)
         }
     }
 
-    /** 소식이 왔다 — 기다림이 끝났다. */
-    private fun stopWatching(sessionKey: String) {
+    /**
+     * 소식이 왔다 — 기다림이 끝났다. [release] 가 false 면 런 잠금은 쥔 채 둔다: 결과 프레임은 기다림의 끝이지만
+     * 저장은 그 뒤에 따로 돈다. 저장 전에 풀면 그 틈에 고친 것을 AI 결과가 덮는다.
+     */
+    private fun stopWatching(sessionKey: String, release: Boolean = true) {
         sessions[sessionKey]?.let {
             it.watchdog?.cancel()
             it.watchdog = null
         }
+        if (release) runLocks.release(sessionKey)
     }
 
     /**
@@ -422,6 +435,7 @@ class TestScenarioAgentService(
      * 만료시키도록 하고, 우리 쪽 WS 구독도 정리한다. 세션이 없으면(이미 종료) 조용히 무시한다.
      */
     fun closeSession(sessionKey: String) {
+        runLocks.release(sessionKey)
         val session = sessions.remove(sessionKey) ?: return
         try {
             val json = objectMapper.writeValueAsString(AgentCloseMessage())
@@ -735,6 +749,10 @@ class TestScenarioAgentService(
             // **음수 번호는 draft 의 새 시나리오다**(ARTEL-1074). 저장된 적이 없으니 검수와 저장에는
             // 새것으로 넘긴다 — 음수 번호로 저장 경로에 들어가면 없는 시나리오를 고치려 든다.
             val scenario = if ((raw.scenarioId ?: 0) < 0) raw.copy(scenarioId = null) else raw
+            // **그 사이 사람이 고쳤거나 다른 사람의 AI 가 쥐고 있으면 덮지 않는다**(ARTEL-1264). 저장하는 턴이어도
+            // 이 시나리오만 draft 로 돌려 사용자가 보고 고르게 한다.
+            val diverted = if (session.autoApply) overwriteBlocker(sessionKey, session, scenario.scenarioId) else null
+            val save = session.autoApply && diverted == null
             val absorbedIds = node.path("absorbedScenarioIds").mapNotNull {
                 it.takeIf { n -> n.isNumber }?.asLong()
             }
@@ -744,7 +762,7 @@ class TestScenarioAgentService(
                 // 전 건 판정은 시나리오 하나로 물을 것이 아니다 — 무엇을 담고 무엇을 뺐는지는
                 // 턴이 끝나야 답이 나온다. 여기서 보는 것은 이 시나리오 안에서 닫히는 것뿐이다.
                 reviewed = null,
-                save = session.autoApply,
+                save = save,
             )
             if (outcome.rejected) {
                 session.declined += 1
@@ -771,7 +789,7 @@ class TestScenarioAgentService(
             // 턴에서 원본을 지우면 사용자가 커밋하기도 전에 원본이 사라진다. 실제로 걷어냈는지는
             // 코드가 세어 프레임에 싣는다(모델이 "합쳤습니다" 라고 지어내지 못하게).
             val absorb =
-                if (session.autoApply)
+                if (save)
                     absorbService.absorb(
                         session.runId,
                         scenario.scenarioId,
@@ -780,7 +798,7 @@ class TestScenarioAgentService(
                     )
                 else ScenarioAbsorbService.Outcome()
             // 저장하지 않는 턴은 draft 에 둔다(ARTEL-1074). 하나 받을 때마다 보내 화면의 목록이 함께 자란다.
-            if (!session.autoApply) {
+            if (!save) {
                 drafts.of(sessionKey).accept(
                     raw.scenarioId, checked, absorbedIds,
                     raw.scenarioId?.let { session.shownSteps[it] }, raw.scenarioId?.let { session.shownModes[it] },
@@ -788,10 +806,13 @@ class TestScenarioAgentService(
                 drafts.publish(sessionKey)
                 session.draftQuestions += outcome.questions.ifEmpty { listOfNotNull(outcome.question) }
             }
+            if (diverted != null) saveAndNotify(sessionKey, session, divertedNotice(scenario.title, diverted))
+            // 고친 시나리오는 턴이 끝날 때까지 잠근다. 다음 비교의 기준도 방금 저장한 본문으로 옮긴다.
+            if (save) lockAndRebaseline(sessionKey, session, outcome.saved.map { it.scenarioId })
             logger.info(
                 "시나리오 하나 받음 [sessionKey={}, runId={}] {} — 지금까지 {}개{}",
                 sessionKey, session.runId, scenario.title, session.submitted.size,
-                if (session.autoApply) " (저장함)" else " (draft 에 둠)",
+                if (save) " (저장함)" else " (draft 에 둠)",
             )
             streamManager.emit(
                 sessionKey,
@@ -904,6 +925,31 @@ class TestScenarioAgentService(
         }
     }
 
+    /**
+     * AI 가 이 시나리오를 덮으면 안 되는 까닭(ARTEL-1264). 괜찮으면 null.
+     *
+     * - 다른 사람의 Artel Bot 이 이 턴에 고쳐 쥐고 있다.
+     * - 이 턴을 시작할 때 AI 에게 보여 준 본문과 지금 저장된 본문이 다르다 — 그 사이 누가 고쳤다. 덮으면 그것이 사라진다.
+     */
+    private suspend fun overwriteBlocker(sessionKey: String, session: AgentSession, scenarioId: Long?): String? {
+        if (scenarioId == null || scenarioId <= 0) return null
+        if (runLocks.heldByOther(scenarioId, sessionKey)) return "다른 사람의 Artel Bot 이 고치는 중"
+        val shown = session.shownSteps[scenarioId] ?: return null
+        val now = runScenarioReader.currentSteps(scenarioId) ?: return null
+        return if (now != shown) "AI 가 읽은 뒤 다른 사람이 고친 것" else null
+    }
+
+    private fun divertedNotice(title: String, why: String): String =
+        "'$title' 은 $why 이 있어 덮지 않고 draft 로 남겼습니다. 바뀐 내용을 보고 승인하거나 버려 주세요."
+
+    /** 저장한 시나리오를 잠그고, 이 턴의 다음 비교 기준을 방금 저장한 본문으로 옮긴다(같은 턴의 재작성이 자기 저장과 비교되지 않게). */
+    private suspend fun lockAndRebaseline(sessionKey: String, session: AgentSession, scenarioIds: List<Long>) {
+        if (scenarioIds.isEmpty()) return
+        runLocks.lockScenarios(sessionKey, scenarioIds)
+        val now = scenarioIds.mapNotNull { id -> runScenarioReader.currentSteps(id)?.let { id to it } }
+        session.shownSteps = session.shownSteps + now
+    }
+
     private suspend fun applyOrRepair(
         sessionKey: String,
         session: AgentSession,
@@ -926,9 +972,25 @@ class TestScenarioAgentService(
         val reviewed = if (pending != null) mergeVerdicts(pending.reviewed, event.reviewed) else event.reviewed
 
         progress(sessionKey, AuthoringStage.CHECKING)
+        // 결과 봉투로 한꺼번에 온 것도 저장 직전에 비교한다(ARTEL-1264). 덮으면 안 되는 것은 draft 로 돌린다.
+        val held = if (saveHere && session.autoApply) {
+            scenarios.mapNotNull { s -> overwriteBlocker(sessionKey, session, s.scenarioId)?.let { s to it } }
+        } else emptyList()
+        if (held.isNotEmpty()) {
+            held.forEach { (s, _) ->
+                drafts.of(sessionKey).accept(s.scenarioId, listOf(s), emptyList(), s.scenarioId?.let { session.shownSteps[it] }, s.scenarioId?.let { session.shownModes[it] })
+            }
+            drafts.publish(sessionKey)
+            held.forEach { (s, why) -> saveAndNotify(sessionKey, session, divertedNotice(s.title, why)) }
+        }
+        val toSave = scenarios.filterNot { s -> held.any { it.first === s } }
+        if (toSave.isEmpty() && held.isNotEmpty()) {
+            progress(sessionKey, AuthoringStage.SAVED)
+            return
+        }
         val outcome = try {
             reconcileService.reconcile(
-                session.runId, session.projectId, session.appUserId, scenarios, reviewed,
+                session.runId, session.projectId, session.appUserId, toSave, reviewed,
                 save = saveHere,
             )
         } catch (e: InvalidFreeScenarioException) {
@@ -939,6 +1001,7 @@ class TestScenarioAgentService(
             return
         }
         if (!outcome.rejected) {
+            if (saveHere && session.autoApply) lockAndRebaseline(sessionKey, session, outcome.saved.map { it.scenarioId })
             progress(sessionKey, AuthoringStage.SAVED)
             // **판 하나가 답을 남긴다**(실험). 다섯 판을 돌리고 이 줄들만 모으면 판정 표가 된다 —
             // 트레이스 산문을 손으로 다시 캐지 않는다.
@@ -1277,6 +1340,7 @@ class TestScenarioAgentService(
             sessionKey,
             ScenarioStreamEvent(type = "progress", stage = stage, done = done, total = total),
         )
+        runLocks.stage(sessionKey, stage)
     }
 
     /**
@@ -1481,6 +1545,8 @@ class TestScenarioAgentService(
                 .then()
             send.and(receive)
         }.doFinally {
+            // WS 가 끊기면 턴도 끝난 것이다. 쥔 런 잠금을 놓는다.
+            runLocks.release(sessionKey)
             sessions.remove(sessionKey)
             logger.info("Agent WS 연결 종료 및 정리 [sessionKey=$sessionKey]")
         }
@@ -1597,7 +1663,8 @@ class TestScenarioAgentService(
             val event = objectMapper.readValue(payloadText, ScenarioStreamEvent::class.java)
             // 결과든 오류든 **턴은 여기서 끝난다.** 감시를 풀지 않으면 잠시 뒤 "멎었다"고
             // 말하게 되고, 그건 방금 답을 받은 사용자에게 거짓말이다.
-            stopWatching(sessionKey)
+            // 결과는 아래에서 저장한 뒤에 런 잠금을 푼다(ARTEL-1264). 오류는 저장할 것이 없어 바로 푼다.
+            stopWatching(sessionKey, release = event.type != "result" || session == null)
             // 제안 카드에는 실행 방식이 늘 실린다(ARTEL-1028). Agent 가 비워 둔 결과는 수정 대상의 저장된 값을
             // 읽어야 해서 DB 를 거치므로, 그런 결과는 아래 코루틴에서 채워 내보낸다.
             val needsModes = event.type == "result" && session != null &&
@@ -1606,6 +1673,7 @@ class TestScenarioAgentService(
 
             if (event.type == "result" && session != null) {
                 scope.launch {
+                  try {
                     if (needsModes) streamManager.emit(sessionKey, withExecutionModes(session, event))
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
                     try {
@@ -1651,6 +1719,10 @@ class TestScenarioAgentService(
                             logger.error("draft 담기 실패 [sessionKey=$sessionKey]: ${err.message}")
                         }
                     }
+                  } finally {
+                    // 저장까지 끝났다. 검수에 걸려 재작성 턴이 나갔으면 그 턴이 잠금을 이어 쥔다.
+                    if (sessions[sessionKey]?.busy != true) runLocks.release(sessionKey)
+                  }
                 }
             }
         } catch (e: CancellationException) {
