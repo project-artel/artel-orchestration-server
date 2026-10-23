@@ -1,5 +1,8 @@
 package kr.artel.orchestration.testrun.service
 
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
+
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
 import kotlinx.coroutines.flow.firstOrNull
@@ -47,6 +50,7 @@ import java.time.Instant
  */
 @Service
 class TestRunService(
+    private val projectChanges: ProjectChangeStreamManager,
     private val runRepository: TestRunRepository,
     private val runScenarioRepository: TestRunScenarioRepository,
     private val scenarioRepository: TestScenarioRepository,
@@ -109,7 +113,7 @@ class TestRunService(
                 gameBuildId = build?.id,
                 folderId = folder?.id,
             )
-        ).toResponse(build)
+        ).toResponse(build).also { projectChanges.notify(projectId, ProjectChangeTopic.TEST_RUNS) }
     }
 
     /**
@@ -128,6 +132,7 @@ class TestRunService(
             request.gameBuildId?.let { versionBuild(run.projectId, it) }
         }
         return runRepository.save(run.copy(gameBuildId = build?.id, folderId = folder?.id)).toResponse(build)
+            .also { projectChanges.notify(run.projectId, ProjectChangeTopic.TEST_RUNS) }
     }
 
     /** 이 프로젝트의 버전. 없거나 다른 프로젝트 것이면 404 다. editor 행도 고를 수 있다(ARTEL-1180). */
@@ -148,6 +153,7 @@ class TestRunService(
             description = if (request.description == null) existing.description else request.description.ifBlank { null },
         )
         return runRepository.save(updated).let { it.toResponse(buildOf(it)) }
+            .also { projectChanges.notify(existing.projectId, ProjectChangeTopic.TEST_RUNS) }
     }
 
     /**
@@ -206,6 +212,7 @@ class TestRunService(
             runScenarioRepository.deleteByTestRunId(runId)
             runRepository.delete(run)
         }
+        projectChanges.notify(run.projectId, ProjectChangeTopic.TEST_RUNS)
         return RunDeletionResult(deletedScenarioCount = deleted, keptForQaHistoryCount = kept)
     }
 
@@ -224,6 +231,7 @@ class TestRunService(
             }
             runScenarioRepository.saveAll(rows).toList()
         }
+        projectChanges.notify(run.projectId, ProjectChangeTopic.TEST_RUNS)
         return resolveScenarios(runId)
     }
 
