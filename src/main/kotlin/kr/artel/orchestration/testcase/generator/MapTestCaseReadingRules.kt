@@ -354,6 +354,31 @@ object MapTestCaseReadingRules {
     }
 
     /**
+     * **읽는 쪽이 구별할 수 없는 TC 는 하나다.**
+     *
+     * 준비할 상태([MapTestCase.setup])만 다른 갈래는 문장 · 판정 구조가 같다. 준비할 상태는 판독이 못 읽어 문장에 싣지
+     * 않으므로, 사람도 QA 도 둘을 가를 수 없다(실측 1.4.1: 26 묶음 57 건). 하나를 남기고 준비할 상태는 [eitherSetup] 으로
+     * 잇는다. 앞 단계는 준비할 상태까지 보고 묶어 정보를 잃지 않고, 여기서 한 번만 접는다. 정체는 남는 TC 의 것이다.
+     */
+    fun sameToReader(cases: List<MapTestCase>): List<MapTestCase> =
+        cases.groupBy { listOf(it.scene, it.step, it.precondition, it.expected, it.expectedChecks.toString(), it.watching.toString()) }
+            .values.map { same ->
+                if (same.size == 1) same.single()
+                else same.first().copy(setup = eitherSetup(same.map { it.setup }), gaps = same.flatMap { it.gaps }.distinct())
+            }
+
+    /**
+     * 갈래마다의 준비할 상태를 하나로 잇는다. 하나만 있으면 그대로이고, 여럿이면 `또는` 하나로 적는다 —
+     * 목록의 항목은 함께 참이어야 하는 것이라([MapTestCasePhrasing] 이 `그리고` 로 잇는다) 갈래를 나란히 넣으면 뜻이 바뀐다.
+     */
+    fun eitherSetup(setups: List<List<String>>): List<String> {
+        val arms = setups.distinct()
+        if (arms.size == 1) return arms.single()
+        if (arms.any { it.isEmpty() }) return emptyList()
+        return listOf(arms.joinToString(" 또는 ") { arm -> "(${arm.joinToString(" 그리고 ")})" })
+    }
+
+    /**
      * **씬만 다른 같은 TC 를 하나로.**
      *
      * 모든 씬에 깔린 UI 는 씬마다 같은 시험을 낸다. 조작 · 사전조건 · 기대결과 · 판정 구조가 씬 이름을 빼고
@@ -373,7 +398,6 @@ object MapTestCaseReadingRules {
                 case.expected.replace(case.scene, SCENE_MARK),
                 case.expectedChecks.toString(),
                 case.watching.toString(),
-                case.setup.toString(),
             )
         }
         return groups.values.map { same ->
@@ -381,6 +405,7 @@ object MapTestCaseReadingRules {
             if (same.map { it.scene }.distinct().size < 2) return@map first
             first.copy(
                 step = "${first.step} $ANY_SCENE",
+                setup = eitherSetup(same.map { it.setup }),
                 identity = first.identity + IDENTITY_SEPARATOR + ANY_SCENE_KEY,
             )
         }

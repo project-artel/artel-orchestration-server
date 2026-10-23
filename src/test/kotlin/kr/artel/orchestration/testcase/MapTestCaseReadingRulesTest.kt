@@ -42,6 +42,23 @@ class MapTestCaseReadingRulesTest {
     }
 
     @Test
+    fun `준비할 상태만 다른 TC 는 하나로 접고 준비할 상태를 또는 으로 잇는다`() {
+        val save = MapTestCase(
+            capabilityKey = "a", scene = "TitleScene", precondition = "TitleScene 화면인 상태", condition = null,
+            step = "`닫기` 을(를) 클릭한다", expected = "`confirm` 이 꺼진다", status = "runnable", setup = listOf("save != 0"), identity = "a",
+        )
+        val refresh = save.copy(capabilityKey = "b", setup = listOf("refresh != 0", "save != 0"), identity = "b")
+
+        val out = MapTestCaseReadingRules.sameToReader(listOf(save, refresh))
+
+        assertThat(out).hasSize(1)
+        assertThat(out.single().identity).isEqualTo("a")
+        assertThat(out.single().setup).containsExactly("(save != 0) 또는 (refresh != 0 그리고 save != 0)")
+        // 준비할 것이 없는 갈래가 있으면 준비할 것이 없다.
+        assertThat(MapTestCaseReadingRules.eitherSetup(listOf(listOf("save != 0"), emptyList()))).isEmpty()
+    }
+
+    @Test
     fun `다른 씬이어야 성립하는 사전조건은 성립하지 않는다`() {
         val other = test("SceneManager.GetActiveScene().name", "==", "\"GameClearScene\"")
         assertThat(MapTestCaseReadingRules.impossible(other, "MapScene")).isTrue()
