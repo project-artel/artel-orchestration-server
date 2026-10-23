@@ -12,6 +12,9 @@ import kr.artel.orchestration.project.event.ProjectChangeStreamManager
 import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
+import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -21,6 +24,7 @@ import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.core.ParameterizedTypeReference
 import org.springframework.http.MediaType
 import org.springframework.http.codec.ServerSentEvent
+import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.Disposable
@@ -44,6 +48,8 @@ class ProjectEventStreamIntegrationTest {
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
     @Autowired private lateinit var streamManager: ProjectChangeStreamManager
+    @Autowired private lateinit var scenarios: TestScenarioRepository
+    @Autowired private lateinit var database: DatabaseClient
 
     private val sseType = object : ParameterizedTypeReference<ServerSentEvent<ProjectChangeEvent>>() {}
 
@@ -134,6 +140,63 @@ class ProjectEventStreamIntegrationTest {
             .block(Duration.ofSeconds(5))
 
         assertThat(status).isEqualTo(404)
+    }
+
+    @Test
+    fun `런 구성 변경과 시나리오 삭제 알림 뒤 최신 개수를 조회한다`(): Unit = runBlocking {
+        val token = signIn()
+        val projectId = createProject(token)
+        val runsUri = "/api/projects/$projectId/test-runs"
+        val runId = post(token, runsUri, """{"name":"SSE 런"}""")["id"].asText()
+        val ordered = scenarios.save(TestScenarioEntity(projectId = projectId.toLong(), title = "ORDERED"))
+        val free = scenarios.save(TestScenarioEntity(
+            projectId = projectId.toLong(), title = "FREE", executionMode = ScenarioExecutionMode.FREE,
+        ))
+        val events = CopyOnWriteArrayList<ServerSentEvent<ProjectChangeEvent>>()
+        val subscription = subscribeSse(projectId, token) { events.add(it) }
+        try {
+            awaitUntil { events.any { it.event() == "ready" } }
+            fun count() = objectMapper.readTree(client().get().uri(runsUri)
+                .cookie("artel_access_token", token).retrieve().bodyToMono(String::class.java).block())
+                .get("items").single { it["id"].asText() == runId }["scenarioCount"].asInt()
+            fun changes() = events.count { it.data()?.topic == ProjectChangeTopic.TEST_RUNS }
+            for ((index, scenario) in listOf(ordered, free).withIndex()) {
+                client().put().uri("$runsUri/$runId/scenarios").cookie("artel_access_token", token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue("""{"scenarioIds":["${scenario.id}"]}""")
+                    .retrieve().toBodilessEntity().block()
+                awaitUntil { changes() == index + 1 }
+                assertThat(count()).isEqualTo(1)
+            }
+
+            // 테스트 전용 제약으로 삽입을 실패시켜 앞선 링크 삭제도 rollback되는지 확인한다.
+            database.sql("ALTER TABLE test_run_scenario ADD CONSTRAINT sse_test_reject_link CHECK (test_scenario_id <> ${ordered.id})")
+                .then().block()
+            val failedStatus = try {
+                client().put().uri("$runsUri/$runId/scenarios").cookie("artel_access_token", token)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue("""{"scenarioIds":["${ordered.id}"]}""")
+                    .exchangeToMono { Mono.just(it.statusCode().value()) }.block()
+            } finally {
+                database.sql("ALTER TABLE test_run_scenario DROP CONSTRAINT sse_test_reject_link").then().block()
+            }
+            assertThat(failedStatus).isGreaterThanOrEqualTo(400)
+            streamManager.notify(projectId.toLong(), ProjectChangeTopic.MACROS)
+            awaitUntil { events.any { it.data()?.topic == ProjectChangeTopic.MACROS } }
+            assertThat(changes()).isEqualTo(2)
+            assertThat(count()).isEqualTo(1)
+
+            client().delete().uri("/api/test-scenario/${free.id}").cookie("artel_access_token", token)
+                .retrieve().toBodilessEntity().block()
+            awaitUntil { changes() == 3 }
+            assertThat(count()).isZero()
+
+            post(token, "$runsUri/$runId/scenarios/imports", """{"testScenarioIds":["${ordered.id}"]}""")
+            awaitUntil { changes() == 4 }
+            assertThat(count()).isEqualTo(1)
+        } finally {
+            subscription.dispose()
+        }
     }
 
     private fun awaitUntil(timeoutMs: Long = 5_000, intervalMs: Long = 50, condition: () -> Boolean) {

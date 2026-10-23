@@ -25,6 +25,9 @@ enum class ProjectChangeTopic {
     /** test case, test case 폴더와 폴더 안의 항목. */
     TEST_CASES,
 
+    /** 테스트 런과 시나리오 구성 및 커버리지. */
+    TEST_RUNS,
+
     /** LLM 사용량 기록. */
     USAGE,
 }
