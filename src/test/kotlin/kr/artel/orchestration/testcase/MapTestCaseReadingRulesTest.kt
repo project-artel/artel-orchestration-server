@@ -117,14 +117,20 @@ class MapTestCaseReadingRulesTest {
 
     /** 실측 1.4.0: TitleScene 의 `Escape` 키 TC 에 MapScene 에만 있는 `MapMove` 의 조건이 붙었다. */
     @Test
-    fun `그 씬에 놓이지 않은 타입의 비교는 판독이 못 본다`() {
-        val map = test("MapMove.movement", "==", "0")
+    fun `그 씬에 없는 오브젝트를 요구하는 갈래는 그 씬에서 갈 수 없다`() {
+        val here = setOf("SettingsMenu", "TitleSceneManager")
+        val anywhere = here + "MapMove"
         val lock = ConditionNode.Test(left = "InteractionLock.IsLocked", operator = "==", right = "0", context = "static", offset = 0)
+        val open = test("SettingsMenu.IsOpen", "!=", "0")
 
-        val marked = MapTestCaseReadingRules.inScene(every(map, lock, test("SettingsMenu.IsOpen", "!=", "0"), test("TutorialController.finished", "==", "0")), setOf("SettingsMenu", "TitleSceneManager"), setOf("SettingsMenu", "TitleSceneManager", "MapMove")) as ConditionNode.Group
-
-        // `TutorialController` 는 어느 씬에도 놓이지 않아(실행 중에 만든다) 막지 않는다.
-        assertThat(marked.parts.map { (it as ConditionNode.Test).readable }).containsExactly(false, true, true, true)
+        // `그리고` 로 걸리면 갈래째 갈 수 없다.
+        val all = MapTestCaseReadingRules.simplified(MapTestCaseReadingRules.inScene(every(test("MapMove.movement", "==", "0"), lock), here, anywhere))
+        assertThat(all.impossible).isTrue()
+        // `또는` 의 한쪽이면 그 쪽만 빠진다. 어느 씬에도 안 놓인 타입(`TutorialController`)은 막지 않는다.
+        val one = MapTestCaseReadingRules.simplified(
+            MapTestCaseReadingRules.inScene(every(open, either(test("MapMove.movement", "==", "0"), test("TutorialController.finished", "==", "0"))), here, anywhere),
+        )
+        assertThat(one.condition).isEqualTo(every(open, test("TutorialController.finished", "==", "0")))
     }
 
     @Test

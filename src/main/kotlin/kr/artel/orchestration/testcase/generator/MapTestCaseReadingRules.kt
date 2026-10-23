@@ -93,7 +93,10 @@ object MapTestCaseReadingRules {
         null -> null
         is ConditionNode.Test ->
             if (node.context == STATIC || (rooted(node.left, here, anywhere) && rooted(node.right, here, anywhere))) node
-            else node.copy(readable = false)
+            // **이 씬에서는 갈 수 없는 길이다.** 그 오브젝트가 없으니 그 비교가 걸린 갈래는 돌지 않는다. 판독 못 하는
+            // 비교(준비할 상태)와 다르다 — 준비해서 만들 수 있는 것이 아니다. [simplified] 가 `그리고` 면 갈래째,
+            // `또는` 의 한쪽이면 그 쪽만 버린다.
+            else DEAD
         is ConditionNode.Group -> node.copy(parts = node.parts.map { inScene(it, here, anywhere)!! })
         else -> node
     }
