@@ -20,6 +20,7 @@ import kr.artel.orchestration.testcase.generator.MapTestCase
 import kr.artel.orchestration.testcase.generator.MapTestCaseGenerator
 import kr.artel.orchestration.testcase.generator.MapTestCaseReadingRules
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.reactor.awaitSingle
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -64,6 +65,24 @@ class MapTestCaseGroupingMeasureTest {
     @Autowired private lateinit var documents: ContentMapDocumentRepository
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var scenes: kr.artel.orchestration.contentmap.repository.SceneRepository
+    @Autowired private lateinit var db: org.springframework.r2dbc.core.DatabaseClient
+
+    /** 생성에 쓰이는 표들의 행 수. 같은 지도로 두 번 생성해 결과가 다를 때 무엇이 바뀌었는지 본다. */
+    private suspend fun snapshot(mapId: Long): String = listOf(
+        "capability" to "select count(*) from capability where content_map_id = $mapId and merged_into is null",
+        "effect" to "select count(*) from capability_effect f join capability c on c.id = f.capability_id where c.content_map_id = $mapId",
+        "scene_object" to "select count(*) from scene_object where content_map_id = $mapId",
+        "screen" to "select count(*) from screen s join scene sc on sc.id = s.scene_id where sc.content_map_id = $mapId",
+        "entry" to "select count(*) from scene where content_map_id = $mapId and is_entry",
+        "stray" to "select count(*) from content_map_stray_effect where content_map_id = $mapId",
+    ).let { queries ->
+        val parts = mutableListOf<String>()
+        for ((name, sql) in queries) {
+            val n = runCatching { db.sql(sql).map { row, _ -> (row.get(0) as Number).toLong() }.one().awaitSingle() }.getOrElse { -1L }
+            parts += "$name=$n"
+        }
+        parts.joinToString(" ")
+    }
 
     @Test
     fun `두 묶기를 같은 문서로 견준다`(): Unit = runBlocking {
@@ -73,11 +92,33 @@ class MapTestCaseGroupingMeasureTest {
 
         val lines = mutableListOf("문서 | 방식 | TC | 씬 빼고 서로 다른 TC | 성립 불가 사전조건 | 판독 못 하는 기대 항목 | 판독 못 하는 사전조건 비교 | 준비할 상태 있음 | 어느 씬에서나 | 볼 결과 없음 | 사전조건 비교 5+ | 토글 든 TC")
         for (path in docs!!.split(',').map { it.trim() }) {
-            val mapId = load(File(path))
+            var mapId = 0L
+            val loadMs = kotlin.system.measureTimeMillis { mapId = load(File(path)) }
+            lines += "# ${File(path).name} 적재 ${loadMs} ms"
             val names = contentMaps.findSceneObjectNames(mapId).toList()
                 .groupBy({ it.sceneName }, { it.path }).mapValues { (_, v) -> v.toSet() }
-            for (grouping in Grouping.entries) {
-                val cases = generator.generate(mapId, grouping)
+            val groupings = System.getProperty("tc.measure.groupings")?.split(',')?.map { Grouping.valueOf(it.trim().uppercase()) }
+                ?: Grouping.entries
+            for (grouping in groupings) {
+                var cases: List<MapTestCase> = emptyList()
+                val samples = java.util.concurrent.ConcurrentHashMap<String, Int>()
+                val sampler = Thread {
+                    while (!Thread.currentThread().isInterrupted) {
+                        Thread.getAllStackTraces().values.forEach { stack ->
+                            val ours = stack.firstOrNull { it.className.startsWith("kr.artel") } ?: return@forEach
+                            if (stack.none { it.className.contains("testcase.generator") }) return@forEach
+                            samples.merge("${ours.className.substringAfterLast('.')}.${ours.methodName}:${ours.lineNumber}", 1, Int::plus)
+                        }
+                        try { Thread.sleep(200) } catch (e: InterruptedException) { break }
+                    }
+                }.apply { isDaemon = true; start() }
+                lines += "# 생성 전 ${snapshot(mapId)}"
+                val genMs = kotlin.system.measureTimeMillis { cases = generator.generate(mapId, grouping) }
+                sampler.interrupt()
+                File(out, "${File(path).nameWithoutExtension}-${grouping.name.lowercase()}-hot.txt").writeText(
+                    samples.entries.sortedByDescending { it.value }.take(40).joinToString("\n") { "${it.value}\t${it.key}" },
+                )
+                lines += "# ${File(path).name} ${grouping.name.lowercase()} 생성 ${genMs} ms"
                 lines += row(File(path).name, grouping, cases, names)
                 File(out, "${File(path).nameWithoutExtension}-${grouping.name.lowercase()}.json")
                     .writeText(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(cases))

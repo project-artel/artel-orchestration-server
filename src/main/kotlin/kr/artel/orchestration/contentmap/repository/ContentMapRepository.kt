@@ -370,6 +370,9 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
           AND callee_cap.merged_into IS NULL
           AND caller.method_id IS NOT NULL
           AND callee.method_id IS DISTINCT FROM caller.method_id
+        -- **순서를 못 박는다**(ARTEL-1209). 생성기는 같은 형제가 여러 간선으로 나오면 처음 것의 조건을 쓴다. 순서가
+        -- 없으면 같은 지도로 두 번 생성해도 결과가 달랐다(실측 1.4.0: 524 건과 509 건).
+        ORDER BY caller.method_id ASC, callee_cap.id ASC, caller_cap.id ASC, callee.capability_id ASC
         """
     )
     fun findCallEdges(contentMapId: Long): Flow<ContentMapCallEdge>

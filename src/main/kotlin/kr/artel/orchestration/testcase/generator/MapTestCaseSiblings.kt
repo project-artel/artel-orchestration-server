@@ -49,7 +49,41 @@ object MapTestCaseSiblings {
      * 값은 (빌려 올 기능, 그 호출이 일어나는 조건들). 조건은 **호출자의 것과 불린 쪽의 것 둘 다**다 —
      * 그 결과가 나려면 부르는 조건도 참이어야 한다.
      */
-    fun of(capabilityId: Long, edges: List<ContentMapCallEdge>): List<Borrowed> {
+    fun of(capabilityId: Long, edges: List<ContentMapCallEdge>): List<Borrowed> = Index(edges).of(capabilityId)
+
+    /**
+     * **간선을 한 번만 색인한다**(ARTEL-1209).
+     *
+     * 앞서는 기능마다 간선 전체를 처음부터 훑고 간선마다 메서드 이름을 정규식으로 다시 풀었다. 기능 수 × 간선 수만큼
+     * 일을 해서, 1.4.0(기능 7,863 개)에서 TC 생성의 약 95% 가 [sourceMethod] 에 묶였다(생성 5 분 남짓). 지도 하나를
+     * 생성하는 동안 간선은 그대로라 한 번 색인하면 된다. 결과는 원래 간선 순서를 지킨다 — 순서가 바뀌면 기대결과
+     * 항목의 순서가 바뀐다.
+     */
+    class Index(edges: List<ContentMapCallEdge>) {
+        private val indexed = edges.withIndex().toList()
+        private val byCallee = indexed.groupBy { it.value.capabilityId }
+        private val sources = HashMap<String, String>()
+        private val bySource = indexed.groupBy { source(it.value.callerMethodId) }
+
+        private fun source(methodId: String): String = sources.getOrPut(methodId) { sourceMethod(methodId) }
+
+        fun of(capabilityId: Long): List<Borrowed> {
+            val callers = byCallee[capabilityId].orEmpty()
+            if (callers.isEmpty()) return emptyList()
+            val callerMethods = callers.map { source(it.value.callerMethodId) }
+                .filterNot { it.substringAfterLast('|') in LIFECYCLE }
+                .toSet()
+            if (callerMethods.isEmpty()) return emptyList()
+            return callerMethods.flatMap { bySource[it].orEmpty() }
+                .filter { it.value.capabilityId != capabilityId }
+                .sortedBy { it.index }
+                .map { Borrowed(it.value.capabilityId, it.value.callerCondition, it.value.conditionTree) }
+                .distinctBy { it.capabilityId }
+        }
+    }
+
+    /** 색인 없이 한 번 묻는 옛 경로. 테스트가 쓴다. 생성기는 [Index] 를 쓴다. */
+    fun scan(capabilityId: Long, edges: List<ContentMapCallEdge>): List<Borrowed> {
         val callers = edges.filter { it.capabilityId == capabilityId }
         if (callers.isEmpty()) return emptyList()
         // **생명주기 메서드는 공통 호출자가 아니다**(ARTEL-680). 위 주석이 걱정한 `Update()` 를

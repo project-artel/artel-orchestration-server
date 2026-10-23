@@ -69,6 +69,8 @@ class MapTestCaseGenerator(
     ): List<MapTestCase> {
         val reading = grouping == MapTestCaseGeneratorProperties.Grouping.READING
         val edges = contentMaps.findCallEdges(contentMapId).toList()
+        // 간선은 생성하는 동안 그대로다. 한 번 색인한다 — 기능마다 다시 훑으면 1.4.0 에서 생성이 5 분이 걸렸다.
+        val siblings = MapTestCaseSiblings.Index(edges)
         // 매개변수 이름을 호출자가 넘긴 값으로 되돌리려면 필요하다(ARTEL-602).
         val settled = contentMaps.findSettledArguments(contentMapId).toList()
             .groupBy { it.capabilityId }
@@ -114,7 +116,7 @@ class MapTestCaseGenerator(
         // 갈림은 행이 스스로 말한다 — `actionability` 가 `not-a-step` 이면 볼 것이고 아니면
         // 누를 것이다. 아래(효과 읽기 · 갈래 펴기 · 합치기)는 두 벌이 되지 않는다.
         val drafts = contentMaps.findTestCaseRows(contentMapId).toList()
-            .flatMap { row -> draftsOf(row, edges, settled, exits, refs, positions, owners, namesByScene, gameTypes, reading, placed) }
+            .flatMap { row -> draftsOf(row, siblings, settled, exits, refs, positions, owners, namesByScene, gameTypes, reading, placed) }
         return (merged(drafts, reading, written) + screenElements(contentMapId))
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
@@ -625,7 +627,7 @@ class MapTestCaseGenerator(
      */
     private suspend fun draftsOf(
         row: ContentMapCapabilityRow,
-        edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
+        siblings: MapTestCaseSiblings.Index,
         settled: Map<Long, Map<Int, String>>,
         exits: Set<LoopExits.Guard>,
         refs: Map<Pair<String, String>, Set<String>>,
@@ -650,7 +652,7 @@ class MapTestCaseGenerator(
             if (own.isNotEmpty()) {
                 listOf(Source(condition, own, row.capabilityId, LoopExits.reachedByRepeating(condition, exits)))
             } else {
-                borrowed(row, condition, edges, exits)
+                borrowed(row, condition, siblings, exits)
             }
 
         return sources.flatMap { (situation, effectRows, source, repeats) ->
@@ -797,10 +799,10 @@ class MapTestCaseGenerator(
     private suspend fun borrowed(
         row: ContentMapCapabilityRow,
         condition: ConditionNode?,
-        edges: List<kr.artel.orchestration.contentmap.dto.ContentMapCallEdge>,
+        siblings: MapTestCaseSiblings.Index,
         exits: Set<LoopExits.Guard>,
     ): List<Source> =
-        MapTestCaseSiblings.of(row.capabilityId, edges).mapNotNull { borrowed ->
+        siblings.of(row.capabilityId).mapNotNull { borrowed ->
             val callerCondition = parse(borrowed.callerCondition)
             val ownCondition = parse(borrowed.ownCondition)
             // **모순되는 갈래는 잇지 않는다.** 이은 케이스의 사전조건이 양쪽을 함께 드는데 둘이
