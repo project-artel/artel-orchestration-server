@@ -4,10 +4,22 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.sdk.dto.ActionResponseDto
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.web.reactive.socket.CloseStatus
 import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Sinks
+import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
+
+/** 같은 인스턴스의 새 연결에 자리를 넘기며 앞 세션을 닫는 코드. SDK 는 4001 이 아닌 닫힘에서는 다시 연결한다. */
+internal val SESSION_REPLACED = CloseStatus(4009, "Replaced by a new connection")
+
+/**
+ * 연결 등록 결과.
+ *
+ * @property replaced 같은 인스턴스의 앞 세션이 ping 에 답하지 않아 그 자리를 넘겨받았는지
+ */
+data class SdkRegistration(val outbound: Flux<String>, val replaced: Boolean)
 
 /**
  * 현재 연결된 웹소켓 세션들을 관리하고, 서버에서 클라이언트로 메시지(액션)를 전송하는 서비스
@@ -38,12 +50,51 @@ class SessionManager(private val objectMapper: ObjectMapper) {
      * 물려야 한다. 물리지 않으면 등록은 됐는데 아무것도 나가지 않는 세션이 된다.
      */
     fun register(instanceId: String, session: WebSocketSession): Flux<String>? {
-        val registered = SdkSession(session)
+        val registered = SdkSession(session, liveness = null)
         return if (sessions.putIfAbsent(instanceId, registered) == null) {
             registered.outbound()
         } else {
             null
         }
+    }
+
+    /**
+     * [register] 와 같되, 자리에 앞 세션이 있으면 그 세션에 ping 을 한 번 보낸다(ARTEL-1234). [probeTimeout] 안에
+     * 답이 오면 지금처럼 null 이다 — 진행 중인 QA 세션이 우연한 두 번째 실행에 소켓을 빼앗기지 않는다. 답이 없으면
+     * 앞 세션을 [SESSION_REPLACED] 로 닫고 새 연결이 자리를 잡는다.
+     *
+     * 게임 쪽 소켓이 close frame 없이 끊기면(Windows 와 WSL 사이 `An existing connection was forcibly closed`)
+     * heartbeat 가 앞 세션을 닫기까지 최대 60초가 걸렸고, 그동안 SDK 의 재연결은 모두 4002 로 거절됐다.
+     *
+     * [liveness] 가 없는 앞 세션([register] 로 들어온 것)에는 물을 수 없으므로 살아 있다고 보고 거절한다.
+     */
+    suspend fun registerReplacingSilent(
+        instanceId: String,
+        session: WebSocketSession,
+        liveness: SdkLiveness,
+        probeTimeout: Duration
+    ): SdkRegistration? {
+        val candidate = SdkSession(session, liveness)
+        val incumbent = sessions.putIfAbsent(instanceId, candidate)
+            ?: return SdkRegistration(candidate.outbound(), replaced = false)
+        val incumbentLiveness = incumbent.liveness ?: return null
+        if (incumbentLiveness.answersPing(probeTimeout)) return null
+
+        if (!sessions.replace(instanceId, incumbent, candidate)) {
+            // 기다리는 사이 앞 세션이 스스로 빠졌거나 다른 연결이 먼저 자리를 넘겨받았다.
+            return if (sessions.putIfAbsent(instanceId, candidate) == null) {
+                SdkRegistration(candidate.outbound(), replaced = false)
+            } else {
+                null
+            }
+        }
+        logger.warn("SDK 세션 교체 [instanceId: $instanceId]: 앞 세션이 ${probeTimeout.toMillis()}ms 안에 ping 에 답하지 않음")
+        incumbent.close()
+        incumbent.session.close(SESSION_REPLACED).subscribe(
+            {},
+            { error -> logger.warn("교체된 SDK 세션 닫기 실패 [instanceId: $instanceId]: ${error.message}") }
+        )
+        return SdkRegistration(candidate.outbound(), replaced = true)
     }
 
     /** 자기가 등록해 둔 세션일 때만 지운다. */
@@ -101,7 +152,7 @@ class SessionManager(private val objectMapper: ObjectMapper) {
      * unicast인 이유는 구독자가 정확히 하나(전송 파이프라인)이기 때문이다. multicast로 두면
      * 구독이 붙기 전에 넣은 메시지가 조용히 버려진다.
      */
-    private class SdkSession(val session: WebSocketSession) {
+    private class SdkSession(val session: WebSocketSession, val liveness: SdkLiveness?) {
         private val sink = Sinks.many().unicast().onBackpressureBuffer<String>()
 
         fun outbound(): Flux<String> = sink.asFlux()

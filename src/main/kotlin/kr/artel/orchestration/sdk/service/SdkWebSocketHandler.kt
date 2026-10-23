@@ -9,6 +9,7 @@ import kr.artel.orchestration.project.event.ProjectChangeStreamManager
 import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
 import kr.artel.orchestration.qa.service.QaRunStatusNotifier
+import kr.artel.orchestration.qa.service.QaSdkReconnectService
 import kr.artel.orchestration.sdk.config.SdkSocketProperties
 import kr.artel.orchestration.sdk.dto.BaseMessage
 import kr.artel.orchestration.sdk.service.handler.SdkMessageHandler
@@ -57,6 +58,7 @@ class SdkWebSocketHandler(
     private val socketProperties: SdkSocketProperties,
     private val projectChangeStreamManager: ProjectChangeStreamManager,
     private val scanResults: ScanResultRouter,
+    private val sdkReconnect: QaSdkReconnectService,
     handlers: List<SdkMessageHandler>
 ) : WebSocketHandler {
 
@@ -114,26 +116,42 @@ class SdkWebSocketHandler(
             return@mono
         }
 
-        // open()이 반환하는 전송/수신 파이프라인은 소켓이 닫힐 때까지 살아 있어야 한다.
-        // 여기서 await하지 않으면 handle의 Mono가 즉시 완료되어 Spring이 세션을 닫는다.
-        open(session, requireNotNull(entity.id).toString(), entity.projectId, inbound).awaitFirstOrNull()
-    }.then()
-
-    /**
-     * 이미 연결된 인스턴스면 새 연결을 거절한다.
-     *
-     * 앞 연결을 밀어내지 않는 이유는, 진행 중인 QA 세션이 우연한 두 번째 실행 때문에 소켓을
-     * 빼앗기는 쪽이 더 나쁘기 때문이다. 거절당한 쪽은 닫힘 코드로 이유를 알 수 있다.
-     */
-    private fun open(session: WebSocketSession, instanceId: String, projectId: Long, inbound: Flux<WebSocketMessage>): Mono<Void> {
-        val outbound = sessionManager.register(instanceId, session)
-
-        if (outbound == null) {
+        val instanceId = requireNotNull(entity.id).toString()
+        val heartbeat = SdkHeartbeat(instanceId, session, socketProperties.pingInterval, socketProperties.idleTimeout)
+        // 이미 연결된 인스턴스면 앞 세션에 ping 을 한 번 보낸다. 답하면 새 연결을 거절한다 — 진행 중인 QA 세션이
+        // 우연한 두 번째 실행 때문에 소켓을 빼앗기는 쪽이 더 나쁘다. 답하지 않으면 앞 세션은 끊긴 것이고, 새 연결이
+        // 그 자리를 넘겨받는다(ARTEL-1234).
+        val registration = sessionManager.registerReplacingSilent(
+            instanceId, session, heartbeat, socketProperties.replaceProbeTimeout
+        )
+        if (registration == null) {
             logger.warn("웹소켓 연결 거부: 이미 연결된 게임 인스턴스 - instanceId: $instanceId")
-            return session.close(CloseStatus(4002, "Instance already connected"))
+            session.close(CloseStatus(4002, "Instance already connected")).awaitFirstOrNull()
+            return@mono
         }
 
-        logger.info("웹소켓 연결 성공 - instanceId: $instanceId")
+        // open()이 반환하는 전송/수신 파이프라인은 소켓이 닫힐 때까지 살아 있어야 한다.
+        // 여기서 await하지 않으면 handle의 Mono가 즉시 완료되어 Spring이 세션을 닫는다.
+        open(session, instanceId, entity.projectId, inbound, registration, heartbeat).awaitFirstOrNull()
+    }.then()
+
+    private fun open(
+        session: WebSocketSession,
+        instanceId: String,
+        projectId: Long,
+        inbound: Flux<WebSocketMessage>,
+        registration: SdkRegistration,
+        heartbeat: SdkHeartbeat
+    ): Mono<Void> {
+        val outbound = registration.outbound
+        logger.info("웹소켓 연결 성공 - instanceId: $instanceId, replaced: ${registration.replaced}")
+        if (registration.replaced) {
+            mono { sdkReconnect.sessionReplaced(instanceId.toLong(), socketProperties.replaceProbeTimeout) }
+                .subscribe(
+                    {},
+                    { error -> logger.error("SDK 세션 교체 기록 실패 [instanceId=$instanceId]", error) }
+                )
+        }
         // connected 는 읽을 때 SessionManager 로 계산하므로 등록 직후에 알린다.
         projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
 
@@ -149,7 +167,6 @@ class SdkWebSocketHandler(
         // concatMap: 한 세션의 프레임을 순서대로 하나씩 처리한다. flatMap이면 프레임이 동시에
         // 처리되어, Agent로 나가는 unicast sink에 동시 tryEmitNext가 걸려 FAIL_NON_SERIALIZED로
         // 드롭되거나 GAME_STATE 순서가 뒤집힌다.
-        val heartbeat = SdkHeartbeat(instanceId, session, socketProperties.pingInterval, socketProperties.idleTimeout)
         val receiveEnded = Sinks.empty<Void>()
 
         val receive = inbound
@@ -172,20 +189,22 @@ class SdkWebSocketHandler(
                 // 비우면, SDK는 연결된 채로 액션을 받지 못한다.
                 sessionManager.removeSession(instanceId, session)
                 projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
-                // 이 게임이 돌던 근거 스캔은 결과가 오지 않는다. 실패로 닫아 화면이 영영 기다리지 않게 한다(ARTEL-1178).
-                // 같은 인스턴스가 이미 다시 붙었으면(위 removeSession 이 남의 자리를 안 지움) 그 스캔은 살아 있을 수 있다.
-                if (!sessionManager.hasSession(instanceId)) {
+                // 같은 인스턴스가 이미 다시 붙었으면(위 removeSession 이 남의 자리를 안 지움) 이 연결이 하던 일은 새
+                // 연결이 잇는다. 끊긴 세션을 새 연결이 넘겨받은 경우가 그렇다(ARTEL-1234).
+                val continuedByNewConnection = sessionManager.hasSession(instanceId)
+                if (!continuedByNewConnection) {
+                    // 이 게임이 돌던 근거 스캔은 결과가 오지 않는다. 실패로 닫아 화면이 영영 기다리지 않게 한다(ARTEL-1178).
                     runCatching { scanResults.gameDisconnected(instanceId.toLong()) }
                         .onFailure { error -> logger.error("스캔 연결 종료 처리 실패 [instanceId=$instanceId]", error) }
+                    // sdkDisconnected는 이제 suspend라 doFinally(동기 Reactor 콜백)에서
+                    // mono { } 로 감싸 fire-and-forget으로 흘린다.
+                    mono { qaExecutionFailureService.sdkDisconnected(instanceId.toLong()) }
+                        .subscribe(
+                            {},
+                            { error -> logger.error("QA SDK 연결 종료 처리 실패 [instanceId=$instanceId]", error) }
+                        )
                 }
-                // sdkDisconnected는 이제 suspend라 doFinally(동기 Reactor 콜백)에서
-                // mono { } 로 감싸 fire-and-forget으로 흘린다.
-                mono { qaExecutionFailureService.sdkDisconnected(instanceId.toLong()) }
-                    .subscribe(
-                        {},
-                        { error -> logger.error("QA SDK 연결 종료 처리 실패 [instanceId=$instanceId]", error) }
-                    )
-                logger.info("웹소켓 연결 종료 - instanceId: $instanceId")
+                logger.info("웹소켓 연결 종료 - instanceId: $instanceId, continuedByNewConnection: $continuedByNewConnection")
             }
 
         // 전송과 수신을 함께 물려 둘 다 끝나야 핸들러가 끝난다. Spring이 문서에서 보여 주는
