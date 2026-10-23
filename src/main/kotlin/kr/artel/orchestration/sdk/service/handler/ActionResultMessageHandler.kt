@@ -29,7 +29,8 @@ import org.springframework.web.reactive.socket.WebSocketSession
 class ActionResultMessageHandler(
     private val scanResults: ScanResultRouter,
     private val screenCaptures: ScreenCaptureResultRouter,
-    private val qaBridge: QaSdkBridgeService
+    private val qaBridge: QaSdkBridgeService,
+    private val demonstrations: kr.artel.orchestration.demonstration.DemonstrationService? = null
 ) : SdkMessageHandler {
 
     private val logger = LoggerFactory.getLogger(ActionResultMessageHandler::class.java)
@@ -40,6 +41,7 @@ class ActionResultMessageHandler(
         logger.info("액션 결과 수신 [instanceId: $instanceId]: $payloadText")
 
         val gameInstanceId = instanceId.toLong()
+        if (demonstrations?.actionResult(gameInstanceId,payloadText) == true) return
         if (scanResults.handle(gameInstanceId, payloadText)) {
             return
         }

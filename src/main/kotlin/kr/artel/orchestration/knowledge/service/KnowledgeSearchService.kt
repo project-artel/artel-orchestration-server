@@ -234,6 +234,7 @@ class KnowledgeSearchService(
         // 없는 항목·다른 프로젝트·다른 스코프의 항목은 여기서 걸린다. 오류가 아니라 빈 결과다 —
         // 스코프 런이 방금 자기가 지운 항목을 펴려는 경우가 정상 경로에 있다.
         val seed = knowledgeRepository.findVisibleById(knowledgeId, projectId, scope.id) ?: return empty
+        if (seed.source == "DEMONSTRATION") return empty
 
         // 상한으로 자르되 거절하지 않는다(resolveLimit과 같은 판단). 결과가 Agent 컨텍스트로
         // 들어가는 것을 막는 것이 목적이지 도구 호출을 실패시키는 것이 목적이 아니다.

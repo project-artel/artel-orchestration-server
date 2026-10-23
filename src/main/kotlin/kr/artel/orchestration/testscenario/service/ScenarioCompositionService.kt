@@ -1,6 +1,8 @@
 package kr.artel.orchestration.testscenario.service
 
 import kr.artel.orchestration.testcase.dto.functionsOrNull
+import kr.artel.orchestration.demonstration.DemonstrationCase
+import kr.artel.orchestration.demonstration.ProcedureSnapshot
 import kr.artel.orchestration.testcase.service.CaseScope
 import kr.artel.orchestration.testcase.service.TestCaseReader
 import kr.artel.orchestration.testscenario.dto.AgentCase
@@ -26,6 +28,7 @@ import org.springframework.stereotype.Service
 @Service
 class ScenarioCompositionService(
     private val testCaseReader: TestCaseReader,
+    private val procedures: kr.artel.orchestration.demonstration.VerificationProcedureService? = null,
 ) {
     /**
      * QA 실행용 시나리오 계약([AgentScenario])을 만든다. 직렬화는 Jackson에 맡긴다(예전엔 JsonNode를 손으로
@@ -43,12 +46,25 @@ class ScenarioCompositionService(
         draft: ScenarioDraft,
         caseScope: CaseScope = CaseScope.Latest,
         recordedBuildId: Long? = null,
+        qaTryId: Long? = null,
+        actualGameBuildId: Long? = recordedBuildId,
+        procedureSnapshots: MutableMap<DemonstrationCase, ProcedureSnapshot?> = mutableMapOf(),
     ): AgentScenario {
         val caseIds = draft.steps.mapNotNull { it.caseId }.toSet()
         val recordable = recordedBuildId?.let { testCaseReader.byIds(caseIds, CaseScope.Version(it)).keys }
         val caseById = testCaseReader.overlay(testCaseReader.byIds(caseIds, CaseScope.Latest).values.toList(), caseScope)
             .filter { recordable == null || it.id in recordable }
             .associateBy { requireNotNull(it.id) }
+
+        for (testCase in caseById.values) {
+            val reference = DemonstrationCase(requireNotNull(testCase.id), testCase.scene, testCase.precondition, testCase.step, testCase.expectedValue)
+            if (!procedureSnapshots.containsKey(reference)) {
+                procedureSnapshots[reference] = procedures?.forCase(testCase.projectId, actualGameBuildId, reference)
+            }
+            procedureSnapshots[reference]?.let { snapshot ->
+                if (qaTryId != null) procedures?.recordUsage(qaTryId, snapshot)
+            }
+        }
 
         val free = draft.executionMode == ScenarioExecutionMode.FREE
         val steps = draft.steps.mapNotNull { step ->
@@ -74,6 +90,7 @@ class ScenarioCompositionService(
                         testStep = it.step,
                         expected = it.expectedValue,
                         functions = it.functionsOrNull(),
+                        verificationProcedure = procedureSnapshots[DemonstrationCase(requireNotNull(it.id), it.scene, it.precondition, it.step, it.expectedValue)],
                     )
                 },
             )

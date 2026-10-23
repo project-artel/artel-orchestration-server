@@ -399,6 +399,7 @@ class KnowledgeService(
         // 프로젝트·스코프 격리: 다른 프로젝트나 다른 스코프의 id를 넣으면 여기서 행이 잡히지 않는다.
         val current = knowledgeRepository.findVisibleById(knowledgeId, projectId, scope.id)
             ?: return KnowledgeMutation.Rejected(describeMissing(knowledgeId, projectId, scope))
+        if (current.source == KnowledgeSource.DEMONSTRATION.name) return KnowledgeMutation.Rejected("Approved demonstration procedures require human revision.")
 
         val next = current.copy(
             tag = tag?.name ?: current.tag,
@@ -474,6 +475,7 @@ class KnowledgeService(
             ?: return KnowledgeMutation.Rejected("knowledge_id must be a numeric id")
         val current = knowledgeRepository.findVisibleById(knowledgeId, projectId, scope.id)
             ?: return KnowledgeMutation.Rejected(describeMissing(knowledgeId, projectId, scope))
+        if (current.source == KnowledgeSource.DEMONSTRATION.name) return KnowledgeMutation.Rejected("Approved demonstration procedures require human revision.")
 
         val deletedAt = Instant.now(clock)
         if (shadowRequired(current, scope)) {
