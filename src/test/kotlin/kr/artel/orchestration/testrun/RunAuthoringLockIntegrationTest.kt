@@ -43,7 +43,7 @@ class RunAuthoringLockIntegrationTest {
     @Autowired private lateinit var objectMapper: ObjectMapper
 
     @Test
-    fun `AI 가 고친 시나리오만 잠그고, 같은 런의 다른 시나리오와 런 구성은 그대로 쓴다`(): Unit = runBlocking {
+    fun `보낸 순간 런의 TS 를 다 잠갔다가, AI 가 고친 시나리오만 남기고 런 구성은 막지 않는다`(): Unit = runBlocking {
         val f = fixture()
         val other = scenarioRepository.save(
             TestScenarioEntity(projectId = f.projectId, title = "다른 시나리오", steps = Json.of(objectMapper.writeValueAsString(emptyList<Any>()))),
@@ -52,8 +52,9 @@ class RunAuthoringLockIntegrationTest {
         val key = "${f.userId}:${f.runId}"
         locks.hold(f.runId, f.projectId, f.userId, key)
         try {
-            // 턴이 시작했지만 아직 아무것도 고치지 않았다 — 잠긴 것이 없다.
-            scenarioService.testScenarioUpdate(f.userId, f.scenarioId, ScenarioDraft(title = "고치기 전"))
+            // 보낸 순간에는 무엇을 고칠지 몰라 런의 TS 전부가 잠긴다.
+            assertThrows<LockedException> { runBlocking { scenarioService.testScenarioUpdate(f.userId, other, ScenarioDraft(title = "고르는 중")) } }
+            // AI 가 하나를 고쳐 내보내면 그것만 남는다.
             locks.lockScenarios(key, listOf(f.scenarioId))
             // 요청한 본인의 손 편집도 막는다 — AI 결과가 끝에 통째로 덮는다.
             val error = assertThrows<LockedException> {
@@ -77,6 +78,8 @@ class RunAuthoringLockIntegrationTest {
         val other = member(f.projectId)
         val key = "${f.userId}:${f.runId}"
         locks.hold(f.runId, f.projectId, f.userId, key)
+        assertThat(chatService.authoringLock(other, f.runId).scenarios.single().choosing).isTrue()
+        // 새 TS 를 쓰는 흐름이면 있는 TS 는 고치지 않으므로 고르는 중 잠금이 풀린다.
         locks.stage(key, AuthoringStage.WRITING)
         assertThat(chatService.authoringLock(other, f.runId).scenarios).isEmpty()
         locks.lockScenarios(key, listOf(f.scenarioId))
@@ -87,10 +90,11 @@ class RunAuthoringLockIntegrationTest {
             assertThat(seen.requestedBy).isEqualTo(f.userId.toString())
             assertThat(seen.requestedByName).isNotBlank()
             assertThat(seen.stage).isEqualTo(AuthoringStage.WRITING)
+            assertThat(seen.choosing).isFalse()
             assertThat(chatService.authoringLock(f.userId, f.runId).scenarios.single().mine).isTrue()
             // 다른 사람의 AI 는 이 시나리오를 쓰지 못하고, 같은 세션의 AI 는 쓴다.
-            assertThat(locks.heldByOther(f.scenarioId, "$other:${f.runId}")).isTrue()
-            assertThat(locks.heldByOther(f.scenarioId, key)).isFalse()
+            assertThat(runBlocking { locks.heldByOther(f.scenarioId, "$other:${f.runId}") }).isTrue()
+            assertThat(runBlocking { locks.heldByOther(f.scenarioId, key) }).isFalse()
         } finally {
             locks.release(key)
         }
@@ -103,7 +107,6 @@ class RunAuthoringLockIntegrationTest {
         val g = fixture()
         val key = "${g.userId}:${g.runId}"
         locks.hold(g.runId, g.projectId, g.userId, key)
-        locks.lockScenarios(key, listOf(g.scenarioId))
         try {
             val saved = scenarioService.testScenarioUpdate(f.userId, f.scenarioId, ScenarioDraft(title = "다른 런은 그대로"))
             assertThat(saved.payload.title).isEqualTo("다른 런은 그대로")

@@ -19,4 +19,6 @@ data class ScenarioAuthoringLock(
     val mine: Boolean,
     val startedAt: Instant,
     val stage: AuthoringStage?,
+    /** 아직 AI 가 고칠 것을 고르는 중이라 함께 잠긴 것이다. 고르면 고른 것만 남는다. */
+    val choosing: Boolean = false,
 )

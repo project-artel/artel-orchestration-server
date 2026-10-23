@@ -17872,6 +17872,7 @@
       },
       "ScenarioAuthoringLock": {
         "required": [
+          "choosing",
           "mine",
           "requestedBy",
           "requestedByName",
@@ -17924,6 +17925,9 @@
               "repairing",
               "blocked"
             ]
+          },
+          "choosing": {
+            "type": "boolean"
           }
         }
       },

@@ -298,7 +298,7 @@ class TestScenarioAgentService(
      */
     private fun watch(sessionKey: String, runId: Long, appUserId: Long) {
         val session = sessions[sessionKey] ?: return
-        runLocks.hold(runId, session.projectId, appUserId, sessionKey)
+        runLocks.hold(runId, session.projectId, appUserId, sessionKey, choosing = session.autoApply)
         session.watchdog?.cancel()
         session.lastHeard = System.currentTimeMillis()
         session.watchdog = scope.launch {
