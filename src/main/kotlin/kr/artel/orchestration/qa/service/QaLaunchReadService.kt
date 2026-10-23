@@ -3,6 +3,8 @@ package kr.artel.orchestration.qa.service
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.project.service.ProjectAccessService
+import kr.artel.orchestration.qa.dto.QaNotice
+import kr.artel.orchestration.qa.dto.QaNoticeListResponse
 import kr.artel.orchestration.qa.dto.QaRunSummaryListResponse
 import kr.artel.orchestration.qa.dto.QaRunSummaryResponse
 import kr.artel.orchestration.qa.dto.SinceLastQaChange
@@ -77,6 +79,29 @@ class QaLaunchReadService(
         return SinceLastQaResponse(lastQaRun = last.toResponse(), issues = issues, changes = changes)
     }
 
+    /** 상단바 알림함(ARTEL-1254): 내가 시작해 끝난 실행 최신 [limit] 개와 읽지 않은 수. */
+    suspend fun listNotices(appUserId: Long, limit: Int): QaNoticeListResponse {
+        if (limit !in 1..MAX_LIMIT) throw BadRequestException("limit 은 1~$MAX_LIMIT 이어야 합니다.")
+        val items = repository.findNotices(appUserId, limit).map {
+            QaNotice(run = it.run.toResponse(), projectId = it.projectId.toString(), projectName = it.projectName, read = it.read)
+        }
+        return QaNoticeListResponse(items, repository.countUnreadNotices(appUserId))
+    }
+
+    /** 알림 하나를 읽음으로. 내가 시작한 실행이 아니면 404 다. */
+    suspend fun readNotice(appUserId: Long, qaRunId: Long): QaNoticeListResponse {
+        if (repository.markNoticeRead(appUserId, qaRunId) == 0L && !repository.isNoticeOf(appUserId, qaRunId)) {
+            throw NotFoundException()
+        }
+        return listNotices(appUserId, NOTICE_LIMIT)
+    }
+
+    /** 내 알림 전부를 읽음으로. */
+    suspend fun readAllNotices(appUserId: Long): QaNoticeListResponse {
+        repository.markAllNoticesRead(appUserId)
+        return listNotices(appUserId, NOTICE_LIMIT)
+    }
+
     private fun QaRunSummaryRow.toResponse() = QaRunSummaryResponse(
         id = id.toString(),
         testRunId = testRunId.toString(),
@@ -100,5 +125,7 @@ class QaLaunchReadService(
 
     companion object {
         const val MAX_LIMIT = 50
+        /** 알림함이 한 번에 보이는 수. 읽음으로 둔 뒤 돌려주는 목록도 이만큼이다. */
+        const val NOTICE_LIMIT = 10
     }
 }

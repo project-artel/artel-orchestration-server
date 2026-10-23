@@ -42,6 +42,21 @@ data class QaRunSummaryResponse(
 data class QaRunSummaryListResponse(val items: List<QaRunSummaryResponse>)
 
 /**
+ * 상단바 알림함 한 줄(ARTEL-1254). 내가 시작해 끝난 실행이다.
+ *
+ * @property read 알림함에서 눌렀거나 모두 읽음으로 둔 것.
+ */
+data class QaNotice(
+    val run: QaRunSummaryResponse,
+    val projectId: String,
+    val projectName: String,
+    val read: Boolean,
+)
+
+/** `GET /api/qa-notices`. [unreadCount] 는 [items] 밖의 오래된 것까지 센다. */
+data class QaNoticeListResponse(val items: List<QaNotice>, val unreadCount: Int)
+
+/**
  * 테스트 런의 마지막 실행에서 나온 이슈 한 건(ARTEL-1083). 화면은 제목만 나열하고, 누르면 이슈로 간다.
  *
  * @property step 이슈가 나온 스텝 번호. 에이전트가 안 실었으면 null.
