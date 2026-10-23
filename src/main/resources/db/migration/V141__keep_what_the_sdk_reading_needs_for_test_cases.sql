@@ -11,10 +11,10 @@
 --
 -- 이미 적재된 지도는 이 칸이 빈다. `POST /internal/content-maps/{id}/reingest` 로 다시 적재하면 찬다.
 ALTER TABLE scene_object_ref
-    ADD COLUMN position    INT,
-    ADD COLUMN owner_path  VARCHAR(512),
-    ADD COLUMN target_type VARCHAR(255),
-    ADD COLUMN carries     JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ADD COLUMN IF NOT EXISTS position    INT,
+    ADD COLUMN IF NOT EXISTS owner_path  VARCHAR(512),
+    ADD COLUMN IF NOT EXISTS target_type VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS carries     JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 COMMENT ON COLUMN scene_object_ref.position IS
     '같은 컴포넌트의 같은 필드 안에서 몇 번째인가(0부터). 목록 필드의 색인과 맞춘다.';
@@ -35,8 +35,8 @@ COMMENT ON COLUMN scene_object_ref.carries IS
 -- 항목과 같은 순서의 배열이다: `[{kind, look_at, field, value, name}, …]`. 지도를 못 되짚는 행은 null.
 -- 케이스 내용은 버전마다 따로 있으므로(V106) 버전 행에도 같은 칸을 둔다. 문장만 버전을 따르고 구조가
 -- 최신이면 판정이 다른 문장의 항목을 본다.
-ALTER TABLE test_case ADD COLUMN expected_checks JSONB;
-ALTER TABLE test_case_version ADD COLUMN expected_checks JSONB;
+ALTER TABLE test_case ADD COLUMN IF NOT EXISTS expected_checks JSONB;
+ALTER TABLE test_case_version ADD COLUMN IF NOT EXISTS expected_checks JSONB;
 
 COMMENT ON COLUMN test_case.expected_checks IS
     'expected_items 와 같은 순서로, QA 가 판독에서 확인할 코드 이름(look_at)·칸(field)·값(value). 사람용 문장과 따로 둔다.';
