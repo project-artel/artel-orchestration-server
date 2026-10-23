@@ -18,6 +18,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.Mockito.`when`
+import kr.artel.orchestration.qa.service.QaSdkReconnectService
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
 import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Flux
@@ -62,6 +63,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
         SdkSocketProperties(),
         ProjectChangeStreamManager(),
         mock(ScanResultRouter::class.java),
+        mock(QaSdkReconnectService::class.java),
         listOf(knownHandler)
     )
 
@@ -129,6 +131,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
             SdkSocketProperties(),
             ProjectChangeStreamManager(),
             mock(ScanResultRouter::class.java),
+            mock(QaSdkReconnectService::class.java),
             listOf(knownHandler, exploding)
         )
         val session = mock(WebSocketSession::class.java)
@@ -159,6 +162,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
             SdkSocketProperties(),
             ProjectChangeStreamManager(),
             mock(ScanResultRouter::class.java),
+            mock(QaSdkReconnectService::class.java),
             listOf(knownHandler)
         )
         val session = mock(WebSocketSession::class.java)
