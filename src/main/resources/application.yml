@@ -10,6 +10,12 @@ server:
   # OAuth2의 {baseUrl}이 http로 조립되어 redirect_uri가 등록값(https)과 어긋난다.
   # 프록시가 넘기는 X-Forwarded-Proto를 반영하도록 한다. WebFlux라 native가 아닌 framework다.
   forward-headers-strategy: framework
+  # 큰 JSON 응답을 gzip 으로 보낸다(ARTEL-1212). TC 2천여 개 목록이 약 2MB 였다. `text/event-stream` 은
+  # 목록에 넣지 않는다 — 압축기가 이벤트를 버퍼에 모아 SSE 가 늦게 닿는다. 2KB 보다 작은 응답은 압축하지 않는다.
+  compression:
+    enabled: true
+    mime-types: application/json,application/problem+json,text/plain,text/html,text/css,application/javascript
+    min-response-size: 2KB
 
 spring:
   config:

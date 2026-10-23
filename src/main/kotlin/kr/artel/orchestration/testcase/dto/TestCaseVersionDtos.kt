@@ -102,3 +102,31 @@ data class VersionStatusCount(
     val verificationStatus: String,
     val total: Long,
 )
+
+/**
+ * 케이스 목록에 보일 칸만 읽은 케이스 정체(ARTEL-1212). 목록에 쓰지 않는 JSON 칸(metadata · condition 등)은 읽지 않는다.
+ *
+ * @property fromMap metadata 맨 위 `origin` 이 지도(`content-map`)인가. DB 가 답한다.
+ */
+data class CaseListFields(
+    val id: Long,
+    val scene: String,
+    val step: String,
+    val precondition: String?,
+    val expectedValue: String,
+    val status: String?,
+    val verificationStatus: String,
+    val createdAt: Instant?,
+    val fromMap: Boolean,
+)
+
+/** 케이스 목록에 보일 칸만 읽은 버전 몫(ARTEL-1212). */
+data class VersionListFields(
+    val testCaseId: Long,
+    val scene: String,
+    val step: String,
+    val precondition: String?,
+    val expectedValue: String,
+    val status: String?,
+    val verificationStatus: String,
+)
