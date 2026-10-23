@@ -31,6 +31,7 @@ import kr.artel.orchestration.qa.service.QaTryPersistenceService
 import kr.artel.orchestration.qa.service.QaVerdictService
 import kr.artel.orchestration.qa.review.QaVerdictReviewService
 import kr.artel.orchestration.qa.service.QaLaunchReadService
+import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.testcase.service.TestCaseVerdictService
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -90,6 +91,7 @@ class CaseVerdictFromQaIntegrationTest {
     @Autowired private lateinit var caseVerdictService: TestCaseVerdictService
     @Autowired private lateinit var reviewService: QaVerdictReviewService
     @Autowired private lateinit var launchReadService: QaLaunchReadService
+    @Autowired private lateinit var composition: ScenarioCompositionService
 
     @BeforeEach
     fun cleanBefore(): Unit = runBlocking { wipe() }
@@ -297,9 +299,25 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(listOf(scenario.reviewCount, scenario.reviewedCount)).containsExactly(0, 1)
         assertThat(launchReadService.listRuns(run.projectId, run.ownerId, 20).items.single().reviewPending).isEqualTo(0)
 
+        // 다음 QA 가 같은 TC 를 판정할 때 사람 판정 기록을 함께 받는다(ARTEL-1256). 기록이 없는 TC 는 키가 없다.
+        val draft = ScenarioDraft(
+            title = "다음",
+            description = "",
+            steps = listOf(ScenarioStep(action = "a", caseId = run.failedCaseId), ScenarioStep(action = "b", caseId = run.passedCaseId)),
+        )
+        val (reviewed, plain) = composition.agentScenario(draft).steps
+        val review = reviewed.case!!.reviews!!.single()
+        assertThat(listOf(review.aiPassed, review.humanPassed, review.note, review.gameBuildVersion))
+            .containsExactly(false, true, "영역이 켜졌다", "1.0.0")
+        // agent 는 `decided_at` 을 문자열로 받는다. 숫자로 가면 세션 오픈이 422 다.
+        assertThat(objectMapper.readTree(objectMapper.writeValueAsString(reviewed.case)).path("reviews").path(0).path("decided_at").isTextual).isTrue()
+        assertThat(plain.case!!.reviews).isNull()
+        assertThat(objectMapper.writeValueAsString(plain.case)).doesNotContain("reviews")
+
         // 다시 정하면 덮어쓴다. 보이지 않는 실행은 없는 것이다.
         reviewService.decide(run.qaRunId, stepThree.logId.toLong(), run.ownerId, passed = false, note = null)
         assertThat(versionOf(run.failedCaseId).verificationStatus).isEqualTo("FAILED")
+        assertThat(composition.agentScenario(draft).steps.first().case!!.reviews!!.single().humanPassed).isFalse()
         assertThatThrownBy { runBlocking { reviewService.decide(run.qaRunId, stepThree.logId.toLong(), run.ownerId + 999, true, null) } }
             .isInstanceOf(NotFoundException::class.java)
     }

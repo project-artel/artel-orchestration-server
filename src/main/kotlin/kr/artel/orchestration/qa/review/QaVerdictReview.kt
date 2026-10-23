@@ -29,6 +29,16 @@ data class QaVerdictReviewEntity(
     @Column("created_at") val createdAt: Instant,
 )
 
+/** TC 하나에 사람이 정한 판정 한 건(ARTEL-1256). 다음 QA 가 같은 TC 를 판정할 때 참고로 넘긴다. */
+data class CaseDecisionRow(
+    val testCaseId: Long,
+    val aiPassed: Boolean,
+    val decision: String,
+    val note: String?,
+    val decidedAt: Instant?,
+    val gameBuildVersion: String?,
+)
+
 /** 실행 하나의 추가 검토 수: 고른 것 전부와 그중 사람이 아직 정하지 않은 것. */
 data class ReviewCountRow(val qaRunId: Long, val flagged: Int, val pending: Int)
 
@@ -70,6 +80,27 @@ interface QaVerdictReviewRepository : CoroutineCrudRepository<QaVerdictReviewEnt
     ): Int
 
     fun findByQaRunId(qaRunId: Long): Flow<QaVerdictReviewEntity>
+
+    /**
+     * TC 마다 사람이 정한 판정 중 최근 [perCase] 건(ARTEL-1256). 같은 판정을 다시 정했으면 마지막 결정 하나다.
+     * 판정한 빌드의 버전을 함께 읽는다 — 다른 버전의 기록인지 agent 가 보게 한다.
+     */
+    @Query(
+        """
+        SELECT test_case_id, ai_passed, decision, note, decided_at, game_build_version
+          FROM (
+                SELECT r.test_case_id, r.ai_passed, r.decision, r.note, r.decided_at, gb.version AS game_build_version,
+                       ROW_NUMBER() OVER (PARTITION BY r.test_case_id ORDER BY r.decided_at DESC, r.qa_log_id DESC) AS rank
+                  FROM qa_verdict_review r
+                  JOIN qa_run run ON run.id = r.qa_run_id
+                  LEFT JOIN game_build gb ON gb.id = run.game_build_id
+                 WHERE r.decision IS NOT NULL AND r.test_case_id IN (:testCaseIds)
+               ) ranked
+         WHERE rank <= :perCase
+         ORDER BY test_case_id, decided_at DESC
+        """
+    )
+    fun findDecisionsByCases(testCaseIds: Collection<Long>, perCase: Int): Flow<CaseDecisionRow>
 
     @Query(
         """
