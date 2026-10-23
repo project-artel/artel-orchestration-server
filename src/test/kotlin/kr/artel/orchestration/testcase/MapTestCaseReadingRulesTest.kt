@@ -134,4 +134,17 @@ class MapTestCaseReadingRulesTest {
 
         assertThat(MapTestCaseReadingRules.simplified(tree).condition).isEqualTo(c)
     }
+
+    /** 실측 1.4.0: `또는` 의 양쪽이던 `IsActive(movement) != 0` 과 `== 0` 이 낱개로 나열돼 "둘 다 준비하라" 가 됐다. */
+    @Test
+    fun `준비할 상태도 원래 구조를 지킨다`() {
+        val c = test("MapMove.enteringStage", "==", "0")
+        val tree = either(
+            every(test("TweenExtensions.IsActive(MapMove.movement)", "!=", "0", readable = false), c),
+            every(test("TweenExtensions.IsActive(MapMove.movement)", "==", "0", readable = false), c),
+        )
+
+        // 지운 두 비교는 참 거짓만 다른 갈래라 서로 지운다. 준비할 상태가 남지 않는다.
+        assertThat(MapTestCaseReadingRules.readable(tree).setup).isEmpty()
+    }
 }

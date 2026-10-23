@@ -576,6 +576,9 @@ object MapTestCasePhrasing {
         }
     }
 
+    /** 조건 트리 하나를 사람이 읽는 줄로. 화면 이름은 붙이지 않는다(ARTEL-1209, 준비할 상태). */
+    fun conditionText(node: ConditionNode): String? = stateText(node, "", compact = true)
+
     /**
      * `x == a 또는 x == b 또는 …` 를 "`x` 가 a · b · … 중 하나" 로. 셋 이상일 때만 줄인다 — 둘이면 원래 꼴이 더 읽힌다.
      */

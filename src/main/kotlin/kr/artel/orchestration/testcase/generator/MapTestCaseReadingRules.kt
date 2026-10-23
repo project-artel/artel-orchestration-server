@@ -35,12 +35,30 @@ object MapTestCaseReadingRules {
     fun readable(node: ConditionNode?): Readable {
         val removed = mutableListOf<ConditionNode.Test>()
         val kept = kept(node, removed)
-        val unique = removed.distinctBy(ConditionPrune::signature).sortedBy(ConditionPrune::signature)
+        // **준비할 상태도 원래 구조를 지킨다.** 지운 비교만 남긴 트리를 같은 규칙으로 정리해 적는다 — 낱개로 나열하면
+        // `또는` 의 양쪽 갈래였던 `x != 0` 과 `x == 0` 이 "둘 다 준비하라" 가 된다(실측 1.4.0).
+        val setup = unreadableOnly(node)?.let { simplified(it).condition }
+            ?.takeUnless { it == ConditionNode.Always }
         return Readable(
             kept,
-            unique.joinToString(",") { ConditionPrune.signature(it) },
-            unique.map { "${it.left.trim()} ${it.operator} ${it.right.trim()}" },
+            setup?.let(ConditionPrune::signature).orEmpty(),
+            listOfNotNull(setup?.let { MapTestCasePhrasing.conditionText(it) }),
         )
+    }
+
+    /** 판독이 못 보는 비교만 남긴 트리. 구조(그리고 · 또는)는 그대로다. */
+    private fun unreadableOnly(node: ConditionNode?): ConditionNode? = when (node) {
+        null -> null
+        is ConditionNode.Test -> if (node.readable) null else node.copy(readable = true)
+        is ConditionNode.Group -> {
+            val parts = node.parts.mapNotNull(::unreadableOnly)
+            when (parts.size) {
+                0 -> null
+                1 -> parts.single()
+                else -> ConditionNode.Group(node.kind, parts)
+            }
+        }
+        else -> null
     }
 
     private fun kept(node: ConditionNode?, removed: MutableList<ConditionNode.Test>): ConditionNode? = when (node) {
