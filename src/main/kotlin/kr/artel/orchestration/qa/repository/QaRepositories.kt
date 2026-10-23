@@ -380,6 +380,50 @@ interface QaLogRepository : CoroutineCrudRepository<QaLogEntity, Long> {
         """
     )
     fun findStepVerdicts(qaTryId: Long): Flow<QaLogEntity>
+
+    /** 캡처 기록(ARTEL-1134). SCREENSHOT 행의 `message_id` 가 캡처 id 다(`QaCaptureService`). */
+    @Query(
+        """
+        SELECT * FROM qa_log
+        WHERE qa_try_id = :qaTryId AND type = 'SCREENSHOT' AND message_id IN (:captureIds)
+        ORDER BY id ASC
+        """
+    )
+    fun findScreenshots(qaTryId: Long, captureIds: Collection<String>): Flow<QaLogEntity>
+
+    /** 판정 도구 호출 행(ARTEL-1134). 근거 칸이 생기기 전 판정의 이유(`thought`)가 여기에만 있다. */
+    @Query(
+        """
+        SELECT * FROM qa_log
+        WHERE qa_try_id = :qaTryId AND type = 'TOOL'
+          AND payload ->> 'tool' IN ('report_step', 'report_case')
+        ORDER BY id ASC
+        """
+    )
+    fun findVerdictToolCalls(qaTryId: Long): Flow<QaLogEntity>
+
+    /** agent 가 보낸 행동 행(ARTEL-1134). 같은 행동이 SDK 로 나간 행(`ORCHE_TO_SDK`)도 있어 그쪽은 뺀다. */
+    @Query(
+        """
+        SELECT * FROM qa_log
+        WHERE qa_try_id = :qaTryId AND type = 'ACTION' AND direction = 'AGENT_TO_ORCHE'
+        ORDER BY id ASC
+        """
+    )
+    fun findAgentActions(qaTryId: Long): Flow<QaLogEntity>
+
+    /**
+     * SDK 가 보낸 상태 기록(ARTEL-1252). 같은 기록을 agent 로 넘긴 행(`ORCHE_TO_AGENT`)도 있어 그쪽은 뺀다.
+     * 판정 코드 검사가 차례로 접어 판정 시점의 상태를 만든다.
+     */
+    @Query(
+        """
+        SELECT * FROM qa_log
+        WHERE qa_try_id = :qaTryId AND type = 'PULSE' AND direction = 'SDK_TO_ORCHE'
+        ORDER BY id ASC
+        """
+    )
+    fun findSdkPulses(qaTryId: Long): Flow<QaLogEntity>
 }
 
 /** 채점 결과 저장소(ARTEL-301). 읽기는 후속 점수 화면이 쓴다. */
