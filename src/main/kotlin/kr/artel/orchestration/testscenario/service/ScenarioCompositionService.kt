@@ -89,7 +89,7 @@ class ScenarioCompositionService(
                                 humanPassed = row.decision == QaVerdictReviewService.PASSED,
                                 note = row.note,
                                 gameBuildVersion = row.gameBuildVersion,
-                                decidedAt = row.decidedAt,
+                                decidedAt = row.decidedAt?.toString(),
                             )
                         },
                     )

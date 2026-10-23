@@ -309,6 +309,8 @@ class CaseVerdictFromQaIntegrationTest {
         val review = reviewed.case!!.reviews!!.single()
         assertThat(listOf(review.aiPassed, review.humanPassed, review.note, review.gameBuildVersion))
             .containsExactly(false, true, "영역이 켜졌다", "1.0.0")
+        // agent 는 `decided_at` 을 문자열로 받는다. 숫자로 가면 세션 오픈이 422 다.
+        assertThat(objectMapper.readTree(objectMapper.writeValueAsString(reviewed.case)).path("reviews").path(0).path("decided_at").isTextual).isTrue()
         assertThat(plain.case!!.reviews).isNull()
         assertThat(objectMapper.writeValueAsString(plain.case)).doesNotContain("reviews")
 

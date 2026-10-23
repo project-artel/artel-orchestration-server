@@ -1,6 +1,5 @@
 package kr.artel.orchestration.testscenario.dto
 
-import java.time.Instant
 
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -62,5 +61,6 @@ data class AgentCaseReview(
     @param:JsonProperty("human_passed") val humanPassed: Boolean,
     val note: String?,
     @param:JsonProperty("game_build_version") val gameBuildVersion: String?,
-    @param:JsonProperty("decided_at") val decidedAt: Instant?,
+    /** ISO-8601 문자열. `Instant` 로 두면 Jackson 이 숫자로 써서 agent 가 422 로 거절한다. */
+    @param:JsonProperty("decided_at") val decidedAt: String?,
 )
