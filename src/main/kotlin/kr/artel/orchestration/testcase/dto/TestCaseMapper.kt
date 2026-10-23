@@ -1,22 +1,46 @@
 package kr.artel.orchestration.testcase.dto
 
+import com.fasterxml.jackson.core.JsonFactory
+import com.fasterxml.jackson.core.JsonToken
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import java.time.Instant
 
-/** metadata 의 `origin` 만 읽는다. 상태가 없는 읽기라 화면용 매핑마다 새로 만들지 않는다. */
+/** 저장된 JSON 칸을 읽는다. 상태가 없는 읽기라 화면용 매핑마다 새로 만들지 않는다. */
 private val metadataReader = jacksonObjectMapper()
+
+/** metadata 의 `origin` 만 훑는 파서를 만든다. */
+private val metadataFactory = JsonFactory()
+
+/**
+ * metadata 맨 위의 `origin` 이 지도(`content-map`)인가. 트리를 짓지 않고 앞에서부터 훑다가 그 칸을 만나면 멈춘다.
+ *
+ * 케이스 목록은 줄마다 이 값을 본다. 예전에는 줄마다 metadata 전체를 트리로 읽어(2천여 줄이면 약 2MB) 목록 응답의
+ * 절반 가까이가 여기서 쓰였다(ARTEL-1212). 읽지 못하는 metadata 는 지도가 아니다.
+ */
+fun isMapOrigin(metadata: String): Boolean =
+    runCatching {
+        metadataFactory.createParser(metadata).use { parser ->
+            if (parser.nextToken() != JsonToken.START_OBJECT) return@use false
+            while (parser.nextToken() == JsonToken.FIELD_NAME) {
+                val name = parser.currentName()
+                val value = parser.nextToken()
+                if (name == MapTestCaseWriter.ORIGIN_FIELD) {
+                    return@use value == JsonToken.VALUE_STRING && parser.text == MapTestCaseWriter.ORIGIN
+                }
+                parser.skipChildren()
+            }
+            false
+        }
+    }.getOrDefault(false)
 
 /**
  * 케이스의 출처(ARTEL-1031). 지도가 낸 케이스는 `MAP`(화면의 "자동 생성"), 나머지는 `MANUAL`("사용자 생성")이다.
  * 사람이 화면에서 쓴 케이스와 예전 엑셀 경로로 들어온 케이스는 `origin` 표시가 없어 `MANUAL` 이다.
  */
-fun TestCaseEntity.originLabel(): String =
-    if (runCatching { metadataReader.readTree(metadata.asString()) }.getOrNull()
-            ?.path(MapTestCaseWriter.ORIGIN_FIELD)?.asText() == MapTestCaseWriter.ORIGIN
-    ) "MAP" else "MANUAL"
+fun TestCaseEntity.originLabel(): String = if (isMapOrigin(metadata.asString())) "MAP" else "MANUAL"
 
 /**
  * TestCase 엔티티 → 응답 DTO. 여러 도메인(케이스/시나리오 조합)이 공유한다. id 계열은 문자열.
