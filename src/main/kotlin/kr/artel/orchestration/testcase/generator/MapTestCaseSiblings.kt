@@ -52,58 +52,41 @@ object MapTestCaseSiblings {
     fun of(capabilityId: Long, edges: List<ContentMapCallEdge>): List<Borrowed> = Index(edges).of(capabilityId)
 
     /**
-     * **간선을 한 번만 색인한다**(ARTEL-1209).
+     * 지도 하나치 호출 관계를 **한 번만** 풀어 둔 것(ARTEL-1187).
      *
-     * 앞서는 기능마다 간선 전체를 처음부터 훑고 간선마다 메서드 이름을 정규식으로 다시 풀었다. 기능 수 × 간선 수만큼
-     * 일을 해서, 1.4.0(기능 7,863 개)에서 TC 생성의 약 95% 가 [sourceMethod] 에 묶였다(생성 5 분 남짓). 지도 하나를
-     * 생성하는 동안 간선은 그대로라 한 번 색인하면 된다. 결과는 원래 간선 순서를 지킨다 — 순서가 바뀌면 기대결과
-     * 항목의 순서가 바뀐다.
+     * 예전에는 기능 행마다 [of] 가 호출 관계 전부를 처음부터 훑고, 훑을 때마다 [sourceMethod] 로 메서드 이름을
+     * 다시 풀었다. 실측 project 1 · 1.4.0 은 기능 7,863개에 호출 관계 404,131개라, TC 생성이 8분 넘게 이
+     * 계산에 묶였다. 여기서는 이름을 관계마다 한 번 풀고, 기능별 · 메서드별로 묶어 둔다.
+     *
+     * 결과는 [of] 와 같다 — 순서는 호출 관계의 원래 순서이고, 같은 기능은 처음 나온 것 하나만 남긴다.
      */
-    class Index(edges: List<ContentMapCallEdge>) {
-        private val indexed = edges.withIndex().toList()
-        private val byCallee = indexed.groupBy { it.value.capabilityId }
-        private val sources = HashMap<String, String>()
-        private val bySource = indexed.groupBy { source(it.value.callerMethodId) }
-
-        private fun source(methodId: String): String = sources.getOrPut(methodId) { sourceMethod(methodId) }
+    class Index(private val edges: List<ContentMapCallEdge>) {
+        private val sources: List<String> = edges.map { sourceMethod(it.callerMethodId) }
+        private val byCapability: Map<Long, List<Int>> = edges.indices.groupBy { edges[it].capabilityId }
+        private val bySource: Map<String, List<Int>> = edges.indices.groupBy { sources[it] }
 
         fun of(capabilityId: Long): List<Borrowed> {
-            val callers = byCallee[capabilityId].orEmpty()
-            if (callers.isEmpty()) return emptyList()
-            val callerMethods = callers.map { source(it.value.callerMethodId) }
+            val callers = byCapability[capabilityId] ?: return emptyList()
+            // **생명주기 메서드는 공통 호출자가 아니다**(ARTEL-680). 위 주석이 걱정한 `Update()` 를
+            // 한 단계 제한으로는 못 막는다 — 직접 호출자가 이미 `Update()` 인 경우가 있다.
+            //
+            // 실측(지도 31, Map_scene): `CharacterMove()`(Return 입력)와 `ShowBattle()`(배경 갱신)이
+            // 둘 다 `Update()` 아래 있다. 그래서 Return 케이스가 배경 갱신 결과를 빌려 갔고, 조작
+            // 하나에 케이스 열둘이 매달렸다. 저작이 "첫 스테이지"에 5스테이지 케이스를 고른 원인이다.
+            //
+            // 같은 프레임 루프에서 도는 것은 **형제일 뿐 인과가 아니다.** 이 파일이 이미 진입점 공유로
+            // 겪은 일과 같은 것이고(위의 "RightArrow 를 누르면 배경이 바뀐다"), 유니티가 정한 이름이라
+            // 게임에 붙는 규칙이 아니다.
+            val callerMethods = callers.map { sources[it] }
                 .filterNot { it.substringAfterLast('|') in LIFECYCLE }
                 .toSet()
             if (callerMethods.isEmpty()) return emptyList()
             return callerMethods.flatMap { bySource[it].orEmpty() }
-                .filter { it.value.capabilityId != capabilityId }
-                .sortedBy { it.index }
-                .map { Borrowed(it.value.capabilityId, it.value.callerCondition, it.value.conditionTree) }
+                .sorted()
+                .filter { edges[it].capabilityId != capabilityId }
+                .map { Borrowed(edges[it].capabilityId, edges[it].callerCondition, edges[it].conditionTree) }
                 .distinctBy { it.capabilityId }
         }
-    }
-
-    /** 색인 없이 한 번 묻는 옛 경로. 테스트가 쓴다. 생성기는 [Index] 를 쓴다. */
-    fun scan(capabilityId: Long, edges: List<ContentMapCallEdge>): List<Borrowed> {
-        val callers = edges.filter { it.capabilityId == capabilityId }
-        if (callers.isEmpty()) return emptyList()
-        // **생명주기 메서드는 공통 호출자가 아니다**(ARTEL-680). 위 주석이 걱정한 `Update()` 를
-        // 한 단계 제한으로는 못 막는다 — 직접 호출자가 이미 `Update()` 인 경우가 있다.
-        //
-        // 실측(지도 31, Map_scene): `CharacterMove()`(Return 입력)와 `ShowBattle()`(배경 갱신)이
-        // 둘 다 `Update()` 아래 있다. 그래서 Return 케이스가 배경 갱신 결과를 빌려 갔고, 조작
-        // 하나에 케이스 열둘이 매달렸다. 저작이 "첫 스테이지"에 5스테이지 케이스를 고른 원인이다.
-        //
-        // 같은 프레임 루프에서 도는 것은 **형제일 뿐 인과가 아니다.** 이 파일이 이미 진입점 공유로
-        // 겪은 일과 같은 것이고(위의 "RightArrow 를 누르면 배경이 바뀐다"), 유니티가 정한 이름이라
-        // 게임에 붙는 규칙이 아니다.
-        val callerMethods = callers.map { sourceMethod(it.callerMethodId) }
-            .filterNot { it.substringAfterLast('|') in LIFECYCLE }
-            .toSet()
-        if (callerMethods.isEmpty()) return emptyList()
-        return edges
-            .filter { sourceMethod(it.callerMethodId) in callerMethods && it.capabilityId != capabilityId }
-            .map { Borrowed(it.capabilityId, it.callerCondition, it.conditionTree) }
-            .distinctBy { it.capabilityId }
     }
 
     /**

@@ -8,6 +8,8 @@ import kotlinx.coroutines.withContext
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.common.xlsx.SpecXlsxWriter
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.project.storage.DocumentStorage
@@ -49,6 +51,7 @@ class TestCaseSpecService(
     private val projectRepository: ProjectRepository,
     private val transactionalOperator: TransactionalOperator,
     private val embeddingRepository: TestCaseEmbeddingRepository,
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
 ) {
 
     /**
@@ -91,6 +94,8 @@ class TestCaseSpecService(
 
             val xlsx = xlsxWriter.write(envelope.cases)
             val result = upsertCases(projectId, envelope)
+            // DB commit 이 끝났으므로 S3 저장이 실패해도 케이스 목록은 이미 바뀌어 있다.
+            projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES)
             storage.put(objectKeyFor(projectId), xlsx, SpecXlsxWriter.XLSX_CONTENT_TYPE)
                 .awaitSingleOrNull()
             result

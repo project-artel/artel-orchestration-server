@@ -10,6 +10,7 @@ import kr.artel.orchestration.project.entity.ProjectDocumentEntity
 import kr.artel.orchestration.project.repository.ProjectDocumentRepository
 import kr.artel.orchestration.project.service.DocumentEventStreamManager
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.project.storage.UrlAudience
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.util.concurrent.ConcurrentHashMap
@@ -102,7 +103,7 @@ class DocumentKnowledgeExtractionService(
 
     /** presign은 로컬 서명 계산(네트워크 없음)이라 그대로 호출한다. */
     private fun presignDownloadUrl(document: ProjectDocumentEntity): String =
-        storage.presignDownload(document.objectKey, document.fileName).url
+        storage.presignDownload(document.objectKey, document.fileName, audience = UrlAudience.SERVER).url
 
     private suspend fun markStatus(document: ProjectDocumentEntity, documentId: Long, status: ParseStatus) {
         projectDocumentRepository.updateParseStatus(documentId, status.name)

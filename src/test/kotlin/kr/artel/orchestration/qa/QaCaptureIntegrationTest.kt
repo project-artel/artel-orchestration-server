@@ -110,6 +110,17 @@ class QaCaptureIntegrationTest {
         assertThat(ticket["downloadUrl"].asText()).contains("qa-captures/${seeded.qaTryId}/")
     }
 
+    /** 이 URL 은 agent-server 가 연다. 공개 주소가 아니라 SERVER 용 주소로 서명해야 한다. */
+    @Test
+    fun `signs the capture download url for the agent server`(): Unit = runBlocking {
+        val seeded = seedRunningQaTry()
+
+        val ticket = issueTicket(seeded.sdkToken, seeded.instanceId, "image/jpeg", 120_000)
+
+        assertThat(ticket["downloadUrl"].asText()).startsWith("http://fake-storage.internal/")
+        assertThat(ticket["uploadUrl"].asText()).startsWith("https://fake-storage.test/")
+    }
+
     /**
      * 런 데드라인(Agent RUN_DEADLINE_SECONDS=600) 안에 만료되면, 런 초반 캡처를 후반에 열지
      * 못한다. 그때의 증상은 "이미지를 받지 못했다"라는 모호한 실패라 원인을 찾기 어렵다.
@@ -206,7 +217,7 @@ class QaCaptureIntegrationTest {
         assertThat(payload["targetId"].asInt()).isEqualTo(7)
         assertThat(payload["objectKey"].asText()).startsWith("qa-captures/${seeded.qaTryId}/")
         assertThat(payload["url"].asText()).isEqualTo(ticket["downloadUrl"].asText())
-        assertThat(log.payload.asString()!!.toByteArray(StandardCharsets.UTF_8).size)
+        assertThat(log.payload.asString().toByteArray(StandardCharsets.UTF_8).size)
             .isLessThan(2048)
     }
 
@@ -269,11 +280,11 @@ class QaCaptureIntegrationTest {
             )
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = project.id!!)
+            TestScenarioEntity(projectId = project.id)
         )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
@@ -293,7 +304,7 @@ class QaCaptureIntegrationTest {
         )
         return SeededRun(
             sdkToken = jwtService.issueSdkToken(owner.userId).token,
-            instanceId = instance.id!!.toString(),
+            instanceId = instance.id.toString(),
             qaTryId = qaTry.id!!
         )
     }

@@ -168,6 +168,6 @@ class ExpectedStepsGrader(
  */
 data class ExpectedStep(
     val step: Int,
-    @com.fasterxml.jackson.annotation.JsonProperty("case_id") val caseId: Long?,
-    @com.fasterxml.jackson.annotation.JsonProperty("expected_passed") val expectedPassed: Boolean
+    @param:com.fasterxml.jackson.annotation.JsonProperty("case_id") val caseId: Long?,
+    @param:com.fasterxml.jackson.annotation.JsonProperty("expected_passed") val expectedPassed: Boolean
 )

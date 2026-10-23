@@ -18,9 +18,11 @@ import kr.artel.orchestration.auth.service.OAuthSignupClosedException
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.RefreshTokenService
 import kr.artel.orchestration.auth.web.AccountStateWebFilter
+import kr.artel.orchestration.project.storage.FilesystemDocumentStorage
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -111,6 +113,26 @@ class SecurityConfig {
         .build()
 
     /**
+     * 파일시스템 저장소의 서명 URL 전용 체인(`ARTEL_STORAGE=filesystem` 일 때만 있다).
+     *
+     * 이 경로의 자격증명은 URL 의 서명이고 `StorageObjectController` 가 직접 확인한다. SDK, CLI, agent-server 는
+     * 세션 없이 이 URL 을 부른다. 기본 체인에 permitAll 로만 두면 만료된 세션 쿠키를 실은 브라우저 요청이 resource
+     * server 단계에서 401 이 되므로, 쿠키와 bearer 를 아예 읽지 않는 체인으로 가른다. 범위는 이 접두사 하나다.
+     */
+    @Bean
+    @Order(2)
+    @ConditionalOnProperty(prefix = "artel.storage", name = ["backend"], havingValue = "filesystem")
+    fun storageObjectSecurityWebFilterChain(http: ServerHttpSecurity): SecurityWebFilterChain = http
+        .securityMatcher(PathPatternParserServerWebExchangeMatcher("${FilesystemDocumentStorage.OBJECTS_PATH}/**"))
+        .csrf { it.disable() }
+        .cors { }
+        .httpBasic { it.disable() }
+        .formLogin { it.disable() }
+        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+        .authorizeExchange { it.anyExchange().permitAll() }
+        .build()
+
+    /**
      * GitHub App 설치 복귀 경로 전용 체인.
      *
      * 경로는 여전히 **인증 대상**이다(`project.md` 규칙 2 — 무인증 라우트를 `/api/` 아래 두지 않는다).
@@ -188,6 +210,7 @@ class SecurityConfig {
                 "/ws/sdk",
                 // SDK가 코드를 토큰으로 바꾸는 경로. 이 요청에는 아직 세션도 토큰도 없다.
                 "/api/auth/sdk/token",
+                "/api/auth/sdk/login",
                 // CLI가 코드를 CLI 토큰으로 바꾸는 경로. 같은 이유로 열려 있다 — 자격증명은
                 // 일회용 코드와 code_verifier이며 CliTokenController.exchangeLoginCode가 직접 검증한다.
                 // 이 줄이 아래 "/api/auth/**" 규칙보다 먼저 있어야 한다. 먼저 맞는 규칙이 이긴다.
@@ -202,6 +225,11 @@ class SecurityConfig {
                 "/api/auth/login",
                 // handoff 서명 공개키(ARTEL-1088). MCP 서버가 세션 없이 읽는다. `/api` 밖이고 공개키만 낸다.
                 "/.well-known/artel-handoff-jwks.json",
+                // 직접 설치한 서버가 보내는 telemetry report 와 그 지우기. 보내는 쪽은 다른 설치라 세션이 없고,
+                // 인터넷 너머에서 오므로 `/internal` 에 둘 수 없다. 무인증이라 `/api` 밖에 둔다(project.md 규칙 2). 한도·크기·모양 검사는 TelemetryReceiverController 가 한다.
+                // `/**` 가 아니라 두 줄로 적어 아래 경로가 더 생겨도 저절로 열리지 않게 한다.
+                "/telemetry/reports",
+                "/telemetry/reports/*",
                 // 내부 서버-투-서버 경로 전부. 보내는 주체가 사람이 아니라 Agent 서버라
                 // 엔드유저 JWT가 없다. 이 접두사가 곧 신뢰 경계이므로, 새 내부 엔드포인트는
                 // 여기에 줄을 더하는 것이 아니라 `/internal/` 아래에 두어야 한다.
@@ -236,7 +264,7 @@ class SecurityConfig {
                     it.authenticationFailureHandler { webFilterExchange, _ ->
                         webFilterExchange.exchange.response.statusCode = HttpStatus.FOUND
                         webFilterExchange.exchange.response.headers.location =
-                            URI.create("${properties.frontendOrigin}/login?error=oauth")
+                            OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties, "oauth")
                         webFilterExchange.exchange.response.setComplete()
                     }
                 }
@@ -246,6 +274,7 @@ class SecurityConfig {
         // 필터 하나를 더한다. 별도 체인을 두려면 authorizeExchange 규칙을 두 벌로 복사해야 하고,
         // 그 둘은 반드시 어긋난다. SDK 체인이 따로인 것은 반대 이유다 — 그쪽은 audience 로 경로를
         // 좁히는 것이 목적이라 체인이 맞다.
+        .addFilterBefore(OAuthReturnTargetFilter(properties), SecurityWebFiltersOrder.FIRST)
         .addFilterBefore(
             cliTokenAuthenticationFilter(cliTokenAuthenticationManager),
             SecurityWebFiltersOrder.AUTHENTICATION
@@ -373,7 +402,7 @@ class SecurityConfig {
             response.addCookie(authCookies.access(token))
             response.addCookie(authCookies.refresh(refresh.token))
             response.statusCode = HttpStatus.FOUND
-            response.headers.location = URI.create(properties.frontendOrigin)
+            response.headers.location = OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties)
             response.setComplete().awaitSingleOrNull()
         }
             .onErrorResume { error ->
@@ -383,7 +412,7 @@ class SecurityConfig {
                 val response = webFilterExchange.exchange.response
                 response.statusCode = HttpStatus.FOUND
                 response.headers.location =
-                    URI.create("${properties.frontendOrigin}/login?error=server")
+                    OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties, "server")
                 response.setComplete()
             }
     }
@@ -394,7 +423,7 @@ class SecurityConfig {
         error: String
     ): Void? {
         exchange.response.statusCode = HttpStatus.FOUND
-        exchange.response.headers.location = URI.create("${properties.frontendOrigin}/login?error=$error")
+        exchange.response.headers.location = OAuthReturnTargetFilter.destination(exchange, properties, error)
         return exchange.response.setComplete().awaitSingleOrNull()
     }
 

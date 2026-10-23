@@ -113,7 +113,7 @@ class EvidenceDocumentServiceTest {
     private suspend fun seed(): Triple<Long, Long, Long> {
         val now = Instant.now()
         val userId = db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('sdk', 'sdk-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
         val project = projects.save(
             ProjectEntity(name = "evidence-${System.nanoTime()}", genre = "ACTION", createdAt = now, updatedAt = now)
@@ -300,7 +300,7 @@ class EvidenceDocumentServiceTest {
     fun `남의 빌드는 보이지 않는다`(): Unit = runBlocking {
         val (_, _, buildId) = seed()
         val stranger = db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('stranger', 'stranger-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 
         assertThat(service.createUploadTicket(stranger, buildId, EvidenceUploadTicketRequest(10))).isNull()

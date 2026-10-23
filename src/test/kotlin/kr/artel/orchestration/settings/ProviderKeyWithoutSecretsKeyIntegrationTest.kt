@@ -64,7 +64,7 @@ class ProviderKeyWithoutSecretsKeyIntegrationTest {
             assertThat(objectMapper.readTree(body)["code"].asText()).describedAs(path).isEqualTo("secrets_key_missing")
         }
         val rows = databaseClient.sql("SELECT COUNT(*) AS n FROM platform_setting")
-            .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("n", Long::class.javaObjectType)!! }
             .one().awaitSingle()
         assertThat(rows).isZero()
     }
@@ -77,7 +77,7 @@ class ProviderKeyWithoutSecretsKeyIntegrationTest {
         assertThat(status).isEqualTo(409)
         assertThat(objectMapper.readTree(body)["code"].asText()).isEqualTo("secrets_key_missing")
         val rows = databaseClient.sql("SELECT COUNT(*) AS n FROM user_llm_key")
-            .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("n", Long::class.javaObjectType)!! }
             .one().awaitSingle()
         assertThat(rows).isZero()
     }

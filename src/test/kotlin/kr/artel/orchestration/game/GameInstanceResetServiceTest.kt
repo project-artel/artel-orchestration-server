@@ -16,12 +16,14 @@ import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
+import kr.artel.orchestration.support.deleteQaRuns
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
@@ -56,6 +58,17 @@ class GameInstanceResetServiceTest {
     @Autowired private lateinit var db: DatabaseClient
 
     private val objectMapper = ObjectMapper()
+
+    /**
+     * 이 클래스가 만든 `qa_run` 을 스위트의 다음 클래스에 넘기지 않는다(ARTEL-1163).
+     * 리액티브 트랜잭션은 롤백되지 않고 스위트가 DB 하나를 공유하므로, 남은 `qa_run` 은 뒤에 오는
+     * 클래스의 `DELETE FROM game_instance` · `test_run` · `app_user` 를
+     * `qa_run_game_instance_id_fkey` · `qa_run_test_run_id_fkey` · `qa_run_started_by_fkey` 로 막는다.
+     */
+    @AfterEach
+    fun removeQaRuns() {
+        db.deleteQaRuns()
+    }
 
     /** 파라미터를 생략한 기본 호출은 clearPlayerPrefs=false 로 나간다. */
     @Test
@@ -217,7 +230,7 @@ class GameInstanceResetServiceTest {
 
     private suspend fun newUser(): Long =
         db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('console', 'console-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 
     private suspend fun newProject(userId: Long): Long {

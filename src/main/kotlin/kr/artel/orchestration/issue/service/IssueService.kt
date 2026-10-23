@@ -3,19 +3,28 @@ package kr.artel.orchestration.issue.service
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.issue.category.CategoryTag
+import kr.artel.orchestration.issue.category.IssueCategoryRepository
+import kr.artel.orchestration.issue.dto.IssueFacetsResponse
+import kr.artel.orchestration.issue.dto.IssueOrigin
 import kr.artel.orchestration.issue.dto.IssuePageResponse
 import kr.artel.orchestration.issue.dto.IssueResponse
 import kr.artel.orchestration.issue.entity.IssueEntity
 import kr.artel.orchestration.issue.entity.IssueSeverity
 import kr.artel.orchestration.issue.entity.IssueStatus
+import kr.artel.orchestration.issue.repository.IssueOriginRepository
 import kr.artel.orchestration.issue.repository.IssueRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.tracker.dto.IssueTrackerResponse
 import kr.artel.orchestration.tracker.service.IssueTrackerSyncService
+import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import java.nio.charset.StandardCharsets
@@ -46,12 +55,17 @@ const val MAX_PAGE_SIZE = 100
 @Service
 class IssueService(
     private val issueRepository: IssueRepository,
+    private val issueOriginRepository: IssueOriginRepository,
+    private val issueCategoryRepository: IssueCategoryRepository,
     private val qaTryRepository: QaTryRepository,
     private val projectAccess: ProjectAccessService,
     private val trackerSync: IssueTrackerSyncService,
     private val objectMapper: ObjectMapper,
-    private val clock: Clock
+    private val clock: Clock,
+    private val projectChanges: ProjectChangeStreamManager
 ) {
+    private val logger = LoggerFactory.getLogger(IssueService::class.java)
+
     /**
      * Agent가 보고한 이슈 한 건을 저장한다. messageId로 멱등하다 — 재전송된 프레임은
      * 중복 행을 만들지 않고 기존 행으로 흡수된다(QaLogService.append와 동일 패턴).
@@ -108,7 +122,11 @@ class IssueService(
         //
         // ⚠️ **결과를 기다리지 않는다.** 내보내기는 별도 scope 에서 돌고 실패는 로그로만 남는다 —
         // GitHub 이 죽어 있어도 QA 런과 agent 응답은 그대로 간다.
-        if (created) trackerSync.launchAutoSync(id)
+        if (created) {
+            trackerSync.launchAutoSync(id)
+            // 트랜잭션 없이 save 한 문장이라 여기가 commit 뒤다. 재전송으로 흡수된 프레임은 바뀐 것이 없다.
+            notifyIssuesChanged(id)
+        }
         // 저장된 행의 id를 돌려준다(ARTEL-366). 재전송이면 **첫 번째 보고의 id**다 — 그래야 같은
         // 프레임을 두 번 보낸 Agent가 두 번 다 같은 답을 받는다.
         return id
@@ -131,6 +149,13 @@ class IssueService(
         return page(issueRepository.findPageByQaTry(qaTryId, beforeId, size + 1).toList(), size)
     }
 
+    suspend fun getByProject(projectId: Long, issueId: Long, userId: Long): IssueResponse {
+        projectAccess.requireMember(projectId, userId)
+        if (issueRepository.findProjectIdByIssueId(issueId) != projectId) throw NotFoundException()
+        val issue = issueRepository.findById(issueId) ?: throw NotFoundException()
+        return page(listOf(issue), 1).items.single()
+    }
+
     /** 한 프로젝트의 이슈 한 페이지. 참여자가 아니면 404 — 빈 목록으로 위장하지 않는다. */
     suspend fun listByProject(
         projectId: Long,
@@ -138,16 +163,49 @@ class IssueService(
         status: String?,
         severity: String?,
         beforeId: Long?,
-        size: Int
+        size: Int,
+        gameBuildId: Long? = null,
+        testRunId: Long? = null,
+        folderId: Long? = null,
+        unversioned: Boolean = false,
+        categoryId: Long? = null,
+        archived: Boolean = false,
+        query: String? = null
     ): IssuePageResponse {
         requireSize(size)
         requireStatus(status)
         requireSeverity(severity)
         if (!projectAccess.isMember(projectId, userId)) throw NotFoundException()
         return page(
-            issueRepository.findPageByProject(projectId, status, severity, beforeId, size + 1).toList(),
+            issueRepository.findPageByProject(
+                projectId, status, severity, gameBuildId, unversioned, testRunId, folderId, categoryId, archived,
+                query.orEmpty().trim().take(200), beforeId, size + 1
+            ).toList(),
             size
         )
+    }
+
+    /** 프로젝트 이슈를 빌드 · TR · 심각도로 센 것. 목록 옆 거르기 칸의 개수다. */
+    suspend fun facetsByProject(
+        projectId: Long,
+        userId: Long,
+        status: String?,
+        gameBuildId: Long? = null,
+        testRunId: Long? = null,
+    ): IssueFacetsResponse {
+        requireStatus(status)
+        if (!projectAccess.isMember(projectId, userId)) throw NotFoundException()
+        val facets = issueOriginRepository.facets(projectId, status, gameBuildId, testRunId)
+        return IssueFacetsResponse(facets.total, facets.archived, facets.builds, facets.testRuns, facets.severities)
+    }
+
+    /** 보관(숨김). 지우지 않고 목록 · 개수에서만 뺀다. 여러 번 불러도 같다. */
+    suspend fun archive(issueId: Long, userId: Long, archived: Boolean) {
+        requireAccessible(issueId, userId)
+        val now = Instant.now(clock)
+        val current = issueRepository.findById(issueId) ?: throw NotFoundException()
+        if ((current.archivedAt != null) == archived) return
+        issueRepository.setArchived(issueId, if (archived) now else null, now)
     }
 
     /**
@@ -164,14 +222,32 @@ class IssueService(
         // 실제로 상태가 바뀐 경우에만 외부 이슈를 건드린다. 이미 해결된 이슈에 재요청이 오면 저쪽에도
         // 아무 일이 없어야 한다. 실패해도 이 응답은 성공이다 — 사람이 누른 전이가 GitHub 때문에
         // 실패하면 안 된다.
-        if (changed == 1) trackerSync.launchResolved(issueId)
+        if (changed == 1) {
+            trackerSync.launchResolved(issueId)
+            notifyIssuesChanged(issueId)
+        }
     }
 
     /** 해결 표시를 되돌린다. 이미 미해결이면 그대로 성공한다([resolve]와 같은 이유). */
     suspend fun reopen(issueId: Long, userId: Long) {
         requireAccessible(issueId, userId)
         val changed = issueRepository.reopen(issueId, updatedAt = Instant.now(clock))
-        if (changed == 1) trackerSync.launchReopened(issueId)
+        if (changed == 1) {
+            trackerSync.launchReopened(issueId)
+            notifyIssuesChanged(issueId)
+        }
+    }
+
+    /** 이슈가 속한 프로젝트에 ISSUES 변경을 알린다. 조회 실패가 이미 끝난 쓰기를 실패시키지 않게 삼킨다. */
+    private suspend fun notifyIssuesChanged(issueId: Long) {
+        try {
+            val projectId = issueRepository.findProjectIdByIssueId(issueId) ?: return
+            projectChanges.notify(projectId, ProjectChangeTopic.ISSUES)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            logger.warn("이슈 변경 알림 실패 [issueId: {}]", issueId, error)
+        }
     }
 
     /**
@@ -227,14 +303,24 @@ class IssueService(
         val qaRunIds = qaTryRepository.findAllById(items.map { it.qaTryId }.distinct())
             .toList()
             .associate { requireNotNull(it.id) to it.qaRunId }
+        // 어느 빌드 · TR · 시나리오에서 나왔나. 목록 한 줄만 보고도 출처를 알 수 있게 같은 페이지 단위로 한 번 읽는다.
+        val origins = issueOriginRepository.originsOf(items.map { it.qaTryId })
+        val categories = issueCategoryRepository.tagsOf(IssueCategoryRepository.Target.ISSUE, items.mapNotNull { it.id })
         return IssuePageResponse(
-            items = items.map { it.toResponse(trackers[it.id], qaRunIds[it.qaTryId]) },
+            items = items.map {
+                it.toResponse(trackers[it.id], qaRunIds[it.qaTryId], origins[it.qaTryId], categories[it.id].orEmpty())
+            },
             nextBeforeId = if (hasMore) items.lastOrNull()?.id?.toString() else null,
             hasMore = hasMore
         )
     }
 
-    private fun IssueEntity.toResponse(tracker: IssueTrackerResponse? = null, qaRunId: Long? = null) = IssueResponse(
+    private fun IssueEntity.toResponse(
+        tracker: IssueTrackerResponse? = null,
+        qaRunId: Long? = null,
+        origin: IssueOrigin? = null,
+        categories: List<CategoryTag> = emptyList()
+    ) = IssueResponse(
         id = requireNotNull(id).toString(),
         qaTryId = qaTryId.toString(),
         severity = severity,
@@ -246,6 +332,10 @@ class IssueService(
         resolvedAt = resolvedAt,
         resolvedBy = resolvedBy?.toString(),
         tracker = tracker,
-        qaRunId = qaRunId?.toString()
+        qaRunId = qaRunId?.toString(),
+        origin = origin,
+        number = projectNo?.toString(),
+        archivedAt = archivedAt,
+        categories = categories
     )
 }

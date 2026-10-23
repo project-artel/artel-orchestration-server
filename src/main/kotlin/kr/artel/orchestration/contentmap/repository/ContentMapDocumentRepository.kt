@@ -66,6 +66,33 @@ interface ContentMapDocumentRepository : CoroutineCrudRepository<ContentMapDocum
     fun findPendingByGameBuild(gameBuildId: Long, limit: Int): Flow<ContentMapDocumentEntity>
 
     /**
+     * 끊긴 스캔이 올려 둔 접수증을 지운다(ARTEL-1183).
+     *
+     * **[since] 로 좁히는 것이 요점이다.** [findPendingByGameBuild] 는 "이 스캔의 문서" 가 아니라 "이 빌드의 안 앉은
+     * 문서 전부" 를 고른다. 거기에는 앞선 스캔에서 적재하다 깨진 문서가 섞여 있고(그 정렬의
+     * `ingest_failed_at ASC NULLS FIRST` 가 그것들을 다음에 다시 시도하려고 남겨 둔 것이다), 통째로 지우면 취소와
+     * 무관한 그 문서까지 날아간다. 이 스캔이 요청된 뒤에 받은 것만 이 스캔의 것이다.
+     *
+     * 지우지 않으면 반쪽 순회의 문서가 대기에 남아 **다음 스캔의 적재가 그것까지 같이 앉힌다.** 그 문서는 "이 게임엔
+     * 씬이 이것뿐" 이라고 말하므로, 앉으면 지도에서 못 돈 씬이 사라진다.
+     *
+     * 스토리지의 파일은 남는다. [kr.artel.orchestration.project.storage.DocumentStorage] 에 삭제가 없다 — 포트를
+     * 넓히는 일이라 여기서 하지 않는다. 접수증이 없으면 다시 앉을 길도 없으므로 목적은 이것으로 선다.
+     */
+    @Modifying
+    @Query(
+        """
+        DELETE FROM content_map_document d
+        USING content_map m
+        WHERE d.content_map_id = m.id
+          AND m.game_build_id = :gameBuildId
+          AND d.ingested_at IS NULL
+          AND d.received_at >= :since
+        """
+    )
+    suspend fun deletePendingReceivedSince(gameBuildId: Long, since: Instant): Int
+
+    /**
      * `scene_object` 가 하나도 없는 지도마다 **가장 나중에 적재된** 문서 한 장(ARTEL-1059 백필).
      *
      * 지도의 `scene` · `capability` 행은 지금 그 문서의 것이다. 오브젝트도 같은 문서에서 와야 `scene-context`

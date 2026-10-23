@@ -33,7 +33,7 @@ data class QaAgentScenario(
  */
 data class QaSessionLlmKey(
     val service: String,
-    @JsonProperty("api_key") val apiKey: String
+    @param:JsonProperty("api_key") val apiKey: String
 ) {
     override fun toString(): String = "QaSessionLlmKey(service=$service)"
 }

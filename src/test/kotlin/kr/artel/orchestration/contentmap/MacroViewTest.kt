@@ -323,10 +323,10 @@ class MacroViewTest {
                 capture = Capture.PLAYER.wire,
                 evidenceDigest = "macro-view-${System.nanoTime()}",
             )
-        )!!.id!!
+        ).id!!
         val sceneId = scenes.save(
             SceneEntity(contentMapId = contentMapId, name = BATTLE, walked = true)
-        )!!.id!!
+        ).id!!
         // 이름이 붙은 `screen` 과 안 붙은 `screen` 을 함께 둔다. 이름은 LLM 이 짓는 표시용 값이라
         // nullable 이고, 응답이 그것을 견디는지 한 테스트에서 함께 보인다.
         val hand = screens.save(
@@ -335,13 +335,13 @@ class MacroViewTest {
                 name = "손패",
                 discriminator = Json.of("""[{"selector":"Canvas[0]/Hand","active":true}]"""),
             )
-        )!!.id!!
+        ).id!!
         val dialog = screens.save(
             ScreenEntity(
                 sceneId = sceneId,
                 discriminator = Json.of("""[{"selector":"Canvas[0]/Dialog","active":true}]"""),
             )
-        )!!.id!!
+        ).id!!
         return World(userId, projectId, buildId, contentMapId, hand, dialog)
     }
 
@@ -384,7 +384,7 @@ class MacroViewTest {
             "INSERT INTO app_user (display_name, nickname, user_tag) " +
                 "VALUES ('console', 'console-' || gen_random_uuid(), '0000') RETURNING id"
         )
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 
     private suspend fun newProject(userId: Long): Long {

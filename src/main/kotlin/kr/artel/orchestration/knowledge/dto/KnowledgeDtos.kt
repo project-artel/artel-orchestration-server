@@ -14,7 +14,7 @@ import java.time.Instant
 data class KnowledgeIngestRequest(
     val source: String? = null,
     val metadata: KnowledgeMetadata? = null,
-    @JsonProperty("game_context") val gameContext: List<KnowledgeIngestItem> = emptyList(),
+    @param:JsonProperty("game_context") val gameContext: List<KnowledgeIngestItem> = emptyList(),
 )
 
 /** source별 가변 메타. Phase 1은 docs의 hash/id만 컬럼으로 승격해 쓰고 filename은 저장 안 함. */
@@ -55,12 +55,12 @@ data class KnowledgeIngestItem(
  *   화면 앵커는 나중에 어느 씬의 화면이었는지 되짚을 수 없다.
  */
 data class KnowledgeMutationRequest(
-    @JsonProperty("knowledge_id") val knowledgeId: String? = null,
+    @param:JsonProperty("knowledge_id") val knowledgeId: String? = null,
     val tag: String? = null,
     val summary: String? = null,
     val description: String? = null,
-    @JsonProperty("scene_name") val sceneName: String? = null,
-    @JsonProperty("screen_id") val screenId: String? = null,
+    @param:JsonProperty("scene_name") val sceneName: String? = null,
+    @param:JsonProperty("screen_id") val screenId: String? = null,
 )
 
 /** knowledge 조회 응답 한 줄. id 계열은 FE 64비트 정밀도 손실 방지로 문자열로 낸다. */

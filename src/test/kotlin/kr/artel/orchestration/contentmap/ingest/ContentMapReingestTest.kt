@@ -271,15 +271,15 @@ class ContentMapReingestTest {
         val map = newContentMap()
 
         ingestNew(map.id!!, evidenceDocument(capture = Capture.EDITOR.wire))
-        val afterEditor = scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList()
+        val afterEditor = scenes.findByContentMapIdOrderByNameAsc(map.id).toList()
         assertThat(afterEditor).singleElement().satisfies({
             assertThat(it.name).isEqualTo("TitleScene")
             assertThat(it.capture).isEqualTo(Capture.EDITOR.wire)
             assertThat(it.origin).isEqualTo(SceneOrigin.EVIDENCE.wire)
         })
 
-        ingestNew(map.id!!, evidenceDocument(capture = Capture.PLAYER.wire))
-        val afterPlayer = scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList()
+        ingestNew(map.id, evidenceDocument(capture = Capture.PLAYER.wire))
+        val afterPlayer = scenes.findByContentMapIdOrderByNameAsc(map.id).toList()
 
         assertThat(afterPlayer).singleElement().satisfies({
             // 새 행이 아니라 같은 행이다. id 가 그것을 말한다.
@@ -307,7 +307,7 @@ class ContentMapReingestTest {
             )
         )
 
-        ingestNew(map.id!!, evidenceDocument())
+        ingestNew(map.id, evidenceDocument())
 
         val after = scenes.findById(observed.id!!)!!
         assertThat(after.origin).isEqualTo(SceneOrigin.EVIDENCE.wire)
@@ -329,7 +329,7 @@ class ContentMapReingestTest {
 
         val result = ingestNew(map.id!!, persistentEvidenceDocument())
 
-        assertThat(scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList().map { it.name })
+        assertThat(scenes.findByContentMapIdOrderByNameAsc(map.id).toList().map { it.name })
             .containsExactly("MapScene", "TitleScene")
         // `Demo.HudController` 는 `scene` 둘에 다 앉는다. 지목받은 것은 `MapScene` 하나다.
         assertThat(result.persistentCapabilities).isEqualTo(2)
@@ -360,7 +360,7 @@ class ContentMapReingestTest {
             WHERE ce.entry_id = :entryId AND s.name = 'MapScene'
             """
         ).bind("entryId", hudEntry)
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one()
             .awaitSingle()
 
@@ -398,11 +398,11 @@ class ContentMapReingestTest {
             SceneEntity(contentMapId = map.id!!, name = "DontDestroyOnLoad", origin = SceneOrigin.EVIDENCE.wire)
         )
 
-        val result = ingestNew(map.id!!, evidenceDocument())
+        val result = ingestNew(map.id, evidenceDocument())
 
         assertThat(result.retiredScenes).isEqualTo(1)
         assertThat(scenes.findById(stale.id!!)).isNull()
-        assertThat(scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList().map { it.name })
+        assertThat(scenes.findByContentMapIdOrderByNameAsc(map.id).toList().map { it.name })
             .containsExactly("TitleScene")
     }
 
@@ -421,14 +421,14 @@ class ContentMapReingestTest {
         )
         val screen = screens.observe(observed.id!!, """[{"selector":"Canvas[2]/continue[1]","active":true}]""", null)
 
-        ingestNew(map.id!!, evidenceDocument())
+        ingestNew(map.id, evidenceDocument())
 
-        val rows = scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList().filter { it.name == "TitleScene" }
+        val rows = scenes.findByContentMapIdOrderByNameAsc(map.id).toList().filter { it.name == "TitleScene" }
         assertThat(rows).hasSize(1)
         assertThat(rows.single().id).isEqualTo(observed.id)
         assertThat(rows.single().origin).isEqualTo(SceneOrigin.EVIDENCE.wire)
         // 관측이 벌어 온 것이 살아남는다. 이것이 행을 이어 쓰는 이유다.
-        assertThat(screens.findBySceneIdOrderByIdAsc(observed.id!!).toList().map { it.id })
+        assertThat(screens.findBySceneIdOrderByIdAsc(observed.id).toList().map { it.id })
             .containsExactly(screen.id)
     }
 
@@ -600,7 +600,7 @@ class ContentMapReingestTest {
         )
             .bind("map", contentMapId)
             .bind("entry", entryId)
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one()
             .awaitSingleOrNull()
 
@@ -641,11 +641,11 @@ class ContentMapReingestTest {
         val document = register(map.id!!, evidenceDocument())
 
         val first = service.ingest(document)
-        val before = evidenceKeys(map.id!!)
+        val before = evidenceKeys(map.id)
 
         // 등록 경로가 다시 집어 왔을 때와 같은 상태로 넣는다 — 도장이 찍힌 행이다.
         val second = service.ingest(documents.findById(document.id!!)!!)
-        val after = evidenceKeys(map.id!!)
+        val after = evidenceKeys(map.id)
 
         assertThat(first.capabilities).isEqualTo(3)
         assertThat(second.capabilities).isEqualTo(3)
@@ -655,7 +655,7 @@ class ContentMapReingestTest {
         assertThat(after).isEqualTo(before)
 
         // 씬도 늘지 않는다. 늘면 기능이 씬마다 갈려 커버리지 분모가 매 스캔 부푼다.
-        assertThat(scenes.findByContentMapIdOrderByNameAsc(map.id!!).toList()).hasSize(1)
+        assertThat(scenes.findByContentMapIdOrderByNameAsc(map.id).toList()).hasSize(1)
     }
 
     /**
@@ -726,11 +726,11 @@ class ContentMapReingestTest {
         val document = register(map.id!!, evidenceDocument())
         service.ingest(document)
 
-        val scene = scenes.findByContentMapIdAndName(map.id!!, "TitleScene")!!
+        val scene = scenes.findByContentMapIdAndName(map.id, "TitleScene")!!
         val observed = capabilities.save(
             CapabilityEntity(
                 sceneId = scene.id!!,
-                contentMapId = map.id!!,
+                contentMapId = map.id,
                 origin = CapabilityOrigin.OBSERVED.wire,
                 verification = VerificationState.CONFIRMED.wire,
                 summary = "`Canvas/LogoImage` 를 3회 연속 클릭하면 `DebugPanel` 이 열린다",
@@ -741,8 +741,8 @@ class ContentMapReingestTest {
         )
         val inferred = capabilities.save(
             CapabilityEntity(
-                sceneId = scene.id!!,
-                contentMapId = map.id!!,
+                sceneId = scene.id,
+                contentMapId = map.id,
                 origin = CapabilityOrigin.INFERRED.wire,
                 summary = "`Canvas/StartButton` 이 비활성인 동안은 어떤 조작도 받지 않는다",
                 interaction = Interaction.NONE.wire,
@@ -751,7 +751,7 @@ class ContentMapReingestTest {
         )
 
         // 사라진 기능이 있는 문서로 재적재한다. 내리는 경로가 도는 동안에도 남의 출신은 남아야 한다.
-        val result = service.ingest(register(map.id!!, evidenceDocument(withOptions = false)))
+        val result = service.ingest(register(map.id, evidenceDocument(withOptions = false)))
 
         assertThat(result.deleted).isEqualTo(1)
 
@@ -786,8 +786,8 @@ class ContentMapReingestTest {
         val map = newContentMap()
         ingestNew(map.id!!, evidenceDocument())
 
-        val scene = scenes.findByContentMapIdAndName(map.id!!, "TitleScene")!!
-        val vanishing = capabilityIdOf(map.id!!, optionsEntry)!!
+        val scene = scenes.findByContentMapIdAndName(map.id, "TitleScene")!!
+        val vanishing = capabilityIdOf(map.id, optionsEntry)!!
         edges.save(
             SceneEdgeEntity(
                 fromSceneId = scene.id!!,
@@ -799,7 +799,7 @@ class ContentMapReingestTest {
             )
         )
 
-        val result = ingestNew(map.id!!, evidenceDocument(withOptions = false))
+        val result = ingestNew(map.id, evidenceDocument(withOptions = false))
 
         assertThat(result.markedNotApplicable).isEqualTo(1)
         assertThat(result.deleted).isZero()
@@ -814,12 +814,12 @@ class ContentMapReingestTest {
         //
         // 도착 씬 이름으로 짚는다. 적재기가 ARTEL-445 부터 `startGame` 의 `kind='scene'` 효과로
         // `TitleScene → MapScene` 정적 간선을 함께 쓰므로, 이 씬에서 나가는 간선은 하나가 아니다.
-        val edge = edges.findByFromSceneIdAndToSceneName(scene.id!!, "OptionsScene").toList().single()
+        val edge = edges.findByFromSceneIdAndToSceneName(scene.id, "OptionsScene").toList().single()
         assertThat(edge.capabilityId).isEqualTo(vanishing)
         assertThat(edge.observedCount).isEqualTo(3)
 
         // 남은 둘은 그대로 적용된다 — 내리는 경로가 이웃까지 쓸어가지 않는다.
-        assertThat(capabilityRow(capabilityIdOf(map.id!!, startGameEntry)!!)!!["applicability"])
+        assertThat(capabilityRow(capabilityIdOf(map.id, startGameEntry)!!)!!["applicability"])
             .isEqualTo(Applicability.APPLIES.wire)
     }
 
@@ -835,15 +835,15 @@ class ContentMapReingestTest {
     fun `참조 없는 사라진 기능은 지운다`(): Unit = runBlocking {
         val map = newContentMap()
         ingestNew(map.id!!, evidenceDocument())
-        val vanishing = capabilityIdOf(map.id!!, optionsEntry)!!
+        val vanishing = capabilityIdOf(map.id, optionsEntry)!!
 
-        val result = ingestNew(map.id!!, evidenceDocument(withOptions = false))
+        val result = ingestNew(map.id, evidenceDocument(withOptions = false))
 
         assertThat(result.deleted).isEqualTo(1)
         assertThat(result.markedNotApplicable).isZero()
         assertThat(result.capabilities).isEqualTo(2)
         assertThat(capabilityRow(vanishing)).isNull()
-        assertThat(evidenceKeys(map.id!!)).hasSize(2)
+        assertThat(evidenceKeys(map.id)).hasSize(2)
         // 근거 행도 함께 사라진다. 남으면 `v_spec_gap` 이 주인 없는 근거를 세게 된다.
         assertThat(analysisConfidenceOf(vanishing)).isNull()
     }
@@ -869,7 +869,7 @@ class ContentMapReingestTest {
         val document = register(map.id!!, evidenceDocument())
         service.ingest(document)
 
-        val capabilityId = capabilityIdOf(map.id!!, startGameEntry)!!
+        val capabilityId = capabilityIdOf(map.id, startGameEntry)!!
         confirm(capabilityId)
         assertThat(analysisConfidenceOf(capabilityId)).isEqualTo("exact")
 
@@ -880,18 +880,18 @@ class ContentMapReingestTest {
             .isEqualTo(VerificationState.CONFIRMED.wire)
 
         // 같은 키, 다른 근거. 확신도만 달라져도 그 판정은 지금 코드에 대한 것이 아니다.
-        ingestNew(map.id!!, evidenceDocument(startGameConfidence = "derived"))
+        ingestNew(map.id, evidenceDocument(startGameConfidence = "derived"))
 
-        val sameRow = capabilityIdOf(map.id!!, startGameEntry)
+        val sameRow = capabilityIdOf(map.id, startGameEntry)
         assertThat(sameRow).isEqualTo(capabilityId)
         assertThat(analysisConfidenceOf(capabilityId)).isEqualTo("derived")
         assertThat(capabilityRow(capabilityId)!!["verification"])
             .isEqualTo(VerificationState.UNVERIFIED.wire)
 
         // 옆 행은 근거가 그대로라 건드려지지 않는다 — 되돌리기가 문서 단위가 아니라 행 단위다.
-        val neighbour = capabilityIdOf(map.id!!, quitPopupEntry)!!
+        val neighbour = capabilityIdOf(map.id, quitPopupEntry)!!
         confirm(neighbour)
-        ingestNew(map.id!!, evidenceDocument(startGameConfidence = "partial"))
+        ingestNew(map.id, evidenceDocument(startGameConfidence = "partial"))
         assertThat(capabilityRow(neighbour)!!["verification"])
             .isEqualTo(VerificationState.CONFIRMED.wire)
     }

@@ -96,7 +96,7 @@ class SceneCaptureRegistrationTest {
     private suspend fun seed(): Pair<Long, Long> {
         val now = Instant.now()
         val userId = db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('sdk', 'sdk-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
         val project = projects.save(
             ProjectEntity(name = "capture-${System.nanoTime()}", genre = "ACTION", createdAt = now, updatedAt = now)
@@ -223,7 +223,7 @@ class SceneCaptureRegistrationTest {
     fun `남의 빌드에는 티켓을 내지 않는다`(): Unit = runBlocking {
         val (_, buildId) = seed()
         val stranger = db.sql("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('stranger', 'stranger-' || gen_random_uuid(), '0000') RETURNING id")
-            .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
             .one().block()!!
 
         val batch = service.createSceneCaptureTickets(

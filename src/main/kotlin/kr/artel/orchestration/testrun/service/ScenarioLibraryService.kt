@@ -1,5 +1,8 @@
 package kr.artel.orchestration.testrun.service
 
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
+
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
@@ -40,6 +43,7 @@ import org.springframework.transaction.reactive.executeAndAwait
  */
 @Service
 class ScenarioLibraryService(
+    private val projectChanges: ProjectChangeStreamManager,
     private val runRepository: TestRunRepository,
     private val runScenarioRepository: TestRunScenarioRepository,
     private val scenarioRepository: TestScenarioRepository,
@@ -70,7 +74,7 @@ class ScenarioLibraryService(
         )
 
         val runsByBuild = runs.groupBy { it.gameBuildId }
-        val versions = gameBuildRepository.findNonEditorNewestFirst(projectId).toList()
+        val versions = gameBuildRepository.findVersionsNewestFirst(projectId).toList()
             .mapNotNull { build ->
                 val buildRuns = runsByBuild[build.id] ?: return@mapNotNull null
                 ScenarioLibraryVersion(
@@ -132,6 +136,7 @@ class ScenarioLibraryService(
                 )
             }
         }
+        if (imported.isNotEmpty()) projectChanges.notify(projectId, ProjectChangeTopic.TEST_RUNS)
         return ScenarioImportResponse(
             testRunId = runId.toString(),
             importedScenarios = imported,

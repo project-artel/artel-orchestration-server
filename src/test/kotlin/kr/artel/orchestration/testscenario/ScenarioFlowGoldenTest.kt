@@ -119,7 +119,7 @@ class ScenarioFlowGoldenTest {
             )
         )
         // 적재는 test case 를 만들지 않는다(ARTEL-971). 생성 버튼과 같은 경로로 만든다.
-        contentMapTestCases.regenerate(map.id!!)
+        contentMapTestCases.regenerate(map.id)
         caseIds = testCases.findIdsByProjectId(projectId).toList().sorted()
         matrix = flowMatrix.of(projectId, userId, caseIds)
         val flows = flowPlanner.of(projectId, userId, matrix)

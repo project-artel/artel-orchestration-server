@@ -1,5 +1,6 @@
 package kr.artel.orchestration.issue
 
+import org.springframework.r2dbc.core.DatabaseClient
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.runBlocking
@@ -19,6 +20,7 @@ import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.support.deleteQaRuns
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import kr.artel.orchestration.tracker.entity.IssueTrackerLinkEntity
@@ -64,11 +66,14 @@ class IssueHttpIntegrationTest {
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
+    @Autowired private lateinit var db: DatabaseClient
 
     /** 리액티브 트랜잭션은 롤백되지 않고 DB를 공유하므로 FK 순서대로 직접 비운다. */
     @BeforeEach
     @AfterEach
     fun clean(): Unit = runBlocking {
+        // 남의 클래스가 남긴 qa_run 이 아래 삭제를 FK 로 막지 않게 먼저 비운다(ARTEL-1163).
+        db.deleteQaRuns()
         trackerLinkRepository.deleteAll()
         issueRepository.deleteAll()
         qaTryRepository.deleteAll()
@@ -213,7 +218,7 @@ class IssueHttpIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "issue-http", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -223,18 +228,18 @@ class IssueHttpIntegrationTest {
             )
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = project.id!!)
-        )!!
+            TestScenarioEntity(projectId = project.id)
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val qaTry = qaTryRepository.save(
             QaTryEntity(
                 testScenarioId = scenario.id!!,
@@ -244,8 +249,8 @@ class IssueHttpIntegrationTest {
                 startedAt = now,
                 completedAt = now
             )
-        )!!
-        return Seed(project.id!!, qaTry.id!!)
+        )
+        return Seed(project.id, qaTry.id!!)
     }
 
     private suspend fun seedIssue(qaTryId: Long, severity: String, title: String): Long =
@@ -260,7 +265,7 @@ class IssueHttpIntegrationTest {
                 createdAt = Instant.now(),
                 updatedAt = Instant.now()
             )
-        )!!.id!!
+        ).id!!
 
     private fun get(token: String, uri: String) = objectMapper.readTree(
         client().get().uri(uri).cookie("artel_access_token", token)

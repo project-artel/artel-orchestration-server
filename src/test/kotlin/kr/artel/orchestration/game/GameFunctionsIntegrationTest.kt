@@ -507,7 +507,7 @@ class GameFunctionsIntegrationTest {
         )!!
 
         assertThat(created.functions!!.cheats).isEqualTo(objectMapper.readTree("""["give_gold"]"""))
-        assertThat(created.functions!!.behaviors).isEqualTo(objectMapper.readTree(""""none""""))
+        assertThat(created.functions.behaviors).isEqualTo(objectMapper.readTree(""""none""""))
         val detail = testCaseService.getTestCase(created.id.toLong(), seed.ownerId)!!
         assertThat(detail.functions).isEqualTo(created.functions)
 
@@ -575,7 +575,7 @@ class GameFunctionsIntegrationTest {
         val now = Instant.now()
         val projectId = projectRepository.save(
             ProjectEntity(name = "functions-p", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = projectId, appUserId = ownerId, role = ProjectRole.OWNER.name, createdAt = now)
         )
@@ -587,14 +587,14 @@ class GameFunctionsIntegrationTest {
                 projectId = projectId, name = "inst", platform = "UNITY", sdkUuid = UUID.randomUUID().toString(),
                 lastGameBuildId = build.id, createdAt = now, updatedAt = now
             )
-        )!!
-        val testRun = testRunRepository.save(TestRunEntity(projectId = projectId, name = "런"))!!
-        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))!!
-        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))!!
+        )
+        val testRun = testRunRepository.save(TestRunEntity(projectId = projectId, name = "런"))
+        val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))
+        val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))
         testRunService.setScenarios(testRun.id!!, ownerId, listOf(s1.id!!, s2.id!!))
         return Seed(
-            ownerId, jwtService.issue(owner), projectId, build.id!!, instance.id!!, s1.id!!, testRun.id!!,
-            connectSdk(instance.id!!)
+            ownerId, jwtService.issue(owner), projectId, build.id!!, instance.id!!, s1.id, testRun.id,
+            connectSdk(instance.id)
         )
     }
 
@@ -608,7 +608,7 @@ class GameFunctionsIntegrationTest {
                 avatarUrl = null,
                 email = "$login@example.com"
             )
-        )!!
+        )
 
     private fun draftFor(caseId: Long) =
         ScenarioDraft(title = "t", description = "", steps = listOf(ScenarioStep(action = "1", caseId = caseId)))

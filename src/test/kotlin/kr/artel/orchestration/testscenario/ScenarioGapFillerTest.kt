@@ -54,7 +54,7 @@ class ScenarioGapFillerTest {
         val now = Instant.now()
         projectId = projectRepository.save(
             ProjectEntity(name = "gap-${seq.incrementAndGet()}", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
         runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
     }
 
@@ -184,6 +184,6 @@ class ScenarioGapFillerTest {
         runScenarioRepository.save(
             TestRunScenarioEntity(testRunId = runId, testScenarioId = scenario.id!!, position = position)
         )
-        return scenario.id!!
+        return scenario.id
     }
 }

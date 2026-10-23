@@ -193,7 +193,7 @@ class ConditionBranchesTest {
     @Test
     fun `gesture 가 없으면 가장 작은 offset 을 쓰고 always 는 null 이다`() {
         val testOnly = records(MAP_MOVE).first {
-            it.condition is ConditionNode.Test && (it.condition as ConditionNode.Test).left == "stagePosition"
+            it.condition is ConditionNode.Test && it.condition.left == "stagePosition"
         }
         val always = records(MAP_MOVE).first { it.condition is ConditionNode.Always }
 

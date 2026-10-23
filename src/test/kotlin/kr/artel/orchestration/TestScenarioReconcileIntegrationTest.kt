@@ -1205,7 +1205,7 @@ class TestScenarioReconcileIntegrationTest {
                 avatarUrl = null,
                 email = null
             )
-        )!!
+        )
         return user.userId.toLong() to jwtService.issue(user)
     }
 
@@ -1213,11 +1213,11 @@ class TestScenarioReconcileIntegrationTest {
         val now = java.time.Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "recon-project", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = project.id!!, appUserId = appUserId, role = "OWNER", createdAt = now)
         )
-        return project.id!!
+        return project.id
     }
 
     private fun postMessage(

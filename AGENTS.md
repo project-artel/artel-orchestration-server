@@ -76,3 +76,18 @@ For tracked Git work, follow:
 
 Use project-local skills when installed and applicable. Skill instructions
 define their own triggers, formats, and output paths.
+
+## Code Review Rules
+
+- Write all code review titles, descriptions, comments, and summaries in Korean.
+- Preserve code identifiers, file paths, commands, error messages, and technical terms in their original form.
+- For each finding, concisely explain the cause, impact, and suggested fix.
+
+## Writing Style
+
+Follow [`.agents/docs/writing-style.md`](.agents/docs/writing-style.md) for chat
+replies, reviews, plans, handoffs, issues, commit titles and bodies, pull
+requests, release notes, source comments, and all frontend copy (including
+localization, errors, labels, and accessibility text).
+Its wording and title rules take precedence over older style examples;
+preserve project-specific technical constraints and workflows.

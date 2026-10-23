@@ -15,7 +15,7 @@ import com.fasterxml.jackson.annotation.JsonValue
  */
 data class ScenarioStep(
     val action: String = "",
-    @JsonProperty("case_id") val caseId: Long? = null,
+    @param:JsonProperty("case_id") val caseId: Long? = null,
     val hint: String? = null,
     val input: String? = null,
     /**
@@ -35,7 +35,7 @@ data class ScenarioStep(
      * 무의미해지고, 그 사고는 점수가 좋아 보일 뿐이라 조용하다. 에이전트가 읽는 두 경로는 타입으로
      * 갈라져 있다: QA 실행은 [AgentStep], 작성 챗봇은 [ChatScenarioStep] — 둘 다 이 필드가 없다.
      */
-    @JsonProperty("expected_passed") val expectedPassed: Boolean? = null,
+    @param:JsonProperty("expected_passed") val expectedPassed: Boolean? = null,
     /**
      * 이 스텝을 **어디서 가져왔는가**(ARTEL-467). `CASE`|`CAPABILITY`|`UNKNOWN`.
      *
@@ -46,16 +46,16 @@ data class ScenarioStep(
      * **null이면 검사를 건너뛴다.** 이 필드를 보내지 않는 구버전 Agent와 함께 배포되기 위해서이고,
      * 되돌리는 스위치가 이 null 하나뿐이라 롤백이 Agent 재배포만으로 끝난다([ReviewedCases]와 같은 규율).
      */
-    @JsonProperty("step_source") val stepSource: ScenarioStepSource? = null,
+    @param:JsonProperty("step_source") val stepSource: ScenarioStepSource? = null,
     /**
      * 할 일인가 알림인가(ARTEL-468). null은 [ScenarioStepKind.ACTION] — 이 필드가 없던 시절의
      * 시나리오다. [ScenarioStepKind.GAP]은 수행 대상도 판정 대상도 아니다.
      */
-    @JsonProperty("step_kind") val stepKind: ScenarioStepKind? = null,
+    @param:JsonProperty("step_kind") val stepKind: ScenarioStepKind? = null,
     /** [stepSource]가 `CAPABILITY`일 때 그 기능의 id. `capability.id`와 타입이 같아 검사가 조건문 하나다. */
-    @JsonProperty("step_source_capability_id") val stepSourceCapabilityId: Long? = null,
+    @param:JsonProperty("step_source_capability_id") val stepSourceCapabilityId: Long? = null,
     /** [stepSource]가 `UNKNOWN`일 때 **무엇이 막는지**. 사용자에게 물어볼 거리가 이 문장이다. */
-    @JsonProperty("step_unknown_reason") val stepUnknownReason: String? = null,
+    @param:JsonProperty("step_unknown_reason") val stepUnknownReason: String? = null,
 )
 
 /**
@@ -152,7 +152,7 @@ data class ScenarioDraft(
      * 모르는 client(지금의 `artel scenario update`)가 본문을 저장할 때 FREE 시나리오가 조용히 ORDERED 로
      * 바뀐다. 조회 응답은 엔티티에서 만들어지므로 항상 값이 있다. 읽을 때는 [mode] 를 쓴다.
      */
-    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
 ) {
     /** 값이 없으면 ORDERED 로 읽은 실행 방식. */
     @get:JsonIgnore
@@ -173,11 +173,11 @@ data class ScenarioDraft(
  *   [kr.artel.orchestration.testscenario.service.ScenarioReconcileService.withExecutionModes] 한 곳에서 한다.
  */
 data class ScenarioResult(
-    @JsonProperty("scenario_id") val scenarioId: Long? = null,
+    @param:JsonProperty("scenario_id") val scenarioId: Long? = null,
     val title: String = "",
     val description: String = "",
     val steps: List<ChatScenarioStep> = emptyList(),
-    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
 )
 
 /**
@@ -196,8 +196,8 @@ data class ScenarioResult(
  * Agent의 자기 서술이라 검사할 수 없다. 포함 쪽의 근거는 스텝이 증명한다.
  */
 data class ReviewedCases(
-    @JsonProperty("in") val included: List<Long> = emptyList(),
-    @JsonProperty("out") val excluded: List<Long> = emptyList(),
+    @param:JsonProperty("in") val included: List<Long> = emptyList(),
+    @param:JsonProperty("out") val excluded: List<Long> = emptyList(),
 )
 
 /**
@@ -381,7 +381,7 @@ data class ScenarioStreamEvent(
 data class AgentChange(
     val action: String,
     val title: String,
-    @com.fasterxml.jackson.annotation.JsonProperty("scenario_id") val scenarioId: Long? = null,
+    @param:com.fasterxml.jackson.annotation.JsonProperty("scenario_id") val scenarioId: Long? = null,
 ) {
     fun one(): Map<String, Any?> = mapOf("action" to action, "title" to title, "scenario_id" to scenarioId)
 }

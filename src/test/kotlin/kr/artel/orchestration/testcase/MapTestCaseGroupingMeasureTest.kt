@@ -114,7 +114,7 @@ class MapTestCaseGroupingMeasureTest {
                     }
                 }.apply { isDaemon = true; start() }
                 lines += "# 생성 전 ${snapshot(mapId)}"
-                val genMs = kotlin.system.measureTimeMillis { cases = generator.generate(mapId, grouping) }
+                val genMs = kotlin.system.measureTimeMillis { cases = generator.generate(mapId, grouping = grouping) }
                 sampler.interrupt()
                 File(out, "${File(path).nameWithoutExtension}-${grouping.name.lowercase()}-hot.txt").writeText(
                     samples.entries.sortedByDescending { it.value }.take(40).joinToString("\n") { "${it.value}\t${it.key}" },

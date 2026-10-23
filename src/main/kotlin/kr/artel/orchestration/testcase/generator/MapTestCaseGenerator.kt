@@ -65,14 +65,13 @@ class MapTestCaseGenerator(
      */
     suspend fun generate(
         contentMapId: Long,
+        progress: GenerationProgress = GenerationProgress.NONE,
         grouping: MapTestCaseGeneratorProperties.Grouping = properties.grouping,
     ): List<MapTestCase> {
         val reading = grouping == MapTestCaseGeneratorProperties.Grouping.READING
-        val edges = contentMaps.findCallEdges(contentMapId).toList()
-        // 간선은 생성하는 동안 그대로다. 한 번 색인한다 — 기능마다 다시 훑으면 1.4.0 에서 생성이 5 분이 걸렸다.
-        val siblings = MapTestCaseSiblings.Index(edges)
-        // 효과도 한 번에 읽는다. 자기 효과와 형제에게 빌리는 효과를 `capability` 마다 물으면 형제 수만큼 질의가 나갔다.
-        val effectsOf = effects.findByContentMapId(contentMapId).toList().groupBy { it.capabilityId }
+        progress.report(GenerationPhase.READING_MAP, 0, 0)
+        // 기능 행마다 다시 훑지 않게 한 번 풀어 둔다(ARTEL-1187).
+        val siblings = MapTestCaseSiblings.Index(contentMaps.findCallEdges(contentMapId).toList())
         // 매개변수 이름을 호출자가 넘긴 값으로 되돌리려면 필요하다(ARTEL-602).
         val settled = contentMaps.findSettledArguments(contentMapId).toList()
             .groupBy { it.capabilityId }
@@ -117,8 +116,15 @@ class MapTestCaseGenerator(
         // **게임이 스스로 하는 일도 케이스다**(ARTEL-681). 누를 것이 없으면 관측으로 적는데, 그
         // 갈림은 행이 스스로 말한다 — `actionability` 가 `not-a-step` 이면 볼 것이고 아니면
         // 누를 것이다. 아래(효과 읽기 · 갈래 펴기 · 합치기)는 두 벌이 되지 않는다.
-        val drafts = contentMaps.findTestCaseRows(contentMapId).toList()
-            .flatMap { row -> draftsOf(row, siblings, effectsOf, settled, exits, refs, positions, owners, namesByScene, gameTypes, reading, placed) }
+        // 기능 행마다 묻지 않고 지도 하나치를 한 번에 읽는다(ARTEL-1187).
+        val effectsOf = effects.findByContentMapIdOrderByIdAsc(contentMapId).toList().groupBy { it.capabilityId }
+        val rows = contentMaps.findTestCaseRows(contentMapId).toList()
+        // 기능 행마다 한 칸씩 민다(ARTEL-1187). 큰 지도에서 시간이 가장 많이 드는 자리라 여기가 진행의 분모다.
+        val drafts = rows.flatMapIndexed { index, row ->
+            progress.report(GenerationPhase.DRAFTING, index, rows.size)
+            draftsOf(row, siblings, effectsOf, settled, exits, refs, positions, owners, namesByScene, gameTypes, reading, placed)
+        }
+        progress.report(GenerationPhase.DRAFTING, rows.size, rows.size)
         return (merged(drafts, reading, written) + screenElements(contentMapId))
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을

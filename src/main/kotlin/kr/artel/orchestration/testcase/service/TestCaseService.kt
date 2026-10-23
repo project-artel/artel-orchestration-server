@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
 import kr.artel.orchestration.testcase.dto.AuthoringTestCase
@@ -68,6 +70,7 @@ class TestCaseService(
     // 저작이 TC 와 지도 사실을 읽는 자리(ARTEL-1064). 런이 빌드 버전을 따르면 그 버전의 것을 준다.
     private val authoringCases: AuthoringCases,
     private val reader: TestCaseReader,
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
 ) {
 
     private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
@@ -394,7 +397,11 @@ class TestCaseService(
             verificationStatus = VerificationStatus.DRAFT.name,
             functions = request.functions?.validated(),
         )
-        if (folderId == null && gameBuildId == null) return repository.save(entity).toTestCaseResponse()
+        if (folderId == null && gameBuildId == null) {
+            val created = repository.save(entity)
+            projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음
+            return created.toTestCaseResponse()
+        }
         val saved = transactionalOperator.executeAndAwait {
             folderService.lockProjectFolders(projectId)
             folderId?.let { folderService.requireFolder(projectId, it) }
@@ -404,6 +411,7 @@ class TestCaseService(
             gameBuildId?.let { manualCases.attachNewCase(projectId, it, caseId) }
             created
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return saved.toTestCaseResponse(folderId)
     }
 
@@ -430,6 +438,7 @@ class TestCaseService(
             if (folderId != null) folderItems.append(projectId, folderId, caseIds).toList()
             repository.countByProjectIdAndIdIn(projectId, caseIds).toInt()
         }
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return TestCaseMoveResponse(moved)
     }
 
@@ -463,12 +472,17 @@ class TestCaseService(
             verificationStatus = statusName ?: existing.verificationStatus,
             functions = request.functions?.validated() ?: existing.functions,
         )
-        return repository.save(updated).toTestCaseResponse(folderItems.findFirstFolderId(caseId))
+        val saved = repository.save(updated)
+        projectChangeStreamManager.notify(saved.projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음
+        return saved.toTestCaseResponse(folderItems.findFirstFolderId(caseId))
     }
 
     /** 케이스 삭제(참여자만). 접근 불가면 조용히 no-op(존재 숨김). 조합 정리는 별도. */
     suspend fun deleteTestCase(caseId: Long, userId: Long) {
-        accessible(caseId, userId)?.let { repository.delete(it) }
+        accessible(caseId, userId)?.let {
+            repository.delete(it)
+            projectChangeStreamManager.notify(it.projectId, ProjectChangeTopic.TEST_CASES) // 단일 delete, transaction 없음
+        }
     }
 
     /**
@@ -487,7 +501,9 @@ class TestCaseService(
             throw NotFoundException("프로젝트를 찾을 수 없습니다.")
         }
         val caseIds = parseWireIds(request.caseIds, "caseIds")
-        return TestCaseBulkDeleteResponse(repository.deleteByProjectIdAndIdIn(projectId, caseIds))
+        val deleted = repository.deleteByProjectIdAndIdIn(projectId, caseIds)
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // 단일 delete, transaction 없음
+        return TestCaseBulkDeleteResponse(deleted)
     }
 
     private suspend fun accessible(caseId: Long, userId: Long): TestCaseEntity? {

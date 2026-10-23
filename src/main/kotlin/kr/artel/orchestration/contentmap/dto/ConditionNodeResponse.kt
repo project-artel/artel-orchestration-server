@@ -64,9 +64,9 @@ sealed interface ConditionNodeResponse {
         val left: String,
         val operator: String,
         val right: String,
-        @Schema(description = "null 이면 주어를 못 찾았다. subjectLost 가 사유를 든다")
+        @field:Schema(description = "null 이면 주어를 못 찾았다. subjectLost 가 사유를 든다")
         val context: String?,
-        @Schema(description = "주어를 잃은 사유. context 가 null 일 때만 찬다")
+        @field:Schema(description = "주어를 잃은 사유. context 가 null 일 때만 찬다")
         val subjectLost: String?,
         val offset: Int,
         @Schema(description = "false 면 QA 실행 중 SDK pulse 로 확인할 수 없는 비교다. 판정에서 뺀다. 확인할 수 있으면 칸이 없다")
@@ -78,7 +78,7 @@ sealed interface ConditionNodeResponse {
     @Schema(description = "입력 조건")
     data class Gesture(
         override val kind: String = "gesture",
-        @Schema(description = "`key:RightArrow (down)` 꼴. 근거가 렌더한 문자열 그대로다")
+        @field:Schema(description = "`key:RightArrow (down)` 꼴. 근거가 렌더한 문자열 그대로다")
         val input: String,
         val offset: Int,
     ) : ConditionNodeResponse
@@ -106,7 +106,7 @@ sealed interface ConditionNodeResponse {
     data class Unknown(
         override val kind: String = "unknown",
         val reason: String,
-        @Schema(description = "무엇에서 막혔는지. `operand:ldlen` 꼴")
+        @field:Schema(description = "무엇에서 막혔는지. `operand:ldlen` 꼴")
         val unread: String?,
     ) : ConditionNodeResponse
 

@@ -33,11 +33,13 @@ data class TestRunUpdateRequest(
 
 /**
  * TR 을 만든 게임 버전(ARTEL-994). [label] 은 사람이 붙인 이름이고, 없으면 화면이 [version] 을 쓴다.
+ * [isEditor] 면 editor 버전이다(ARTEL-1180). 같은 version 의 build 행과 따로 있다.
  */
 data class TestRunGameBuild(
     val gameBuildId: String,
     val version: String,
     val label: String?,
+    val isEditor: Boolean = false,
 )
 
 /**
@@ -100,7 +102,7 @@ data class RunCoverageScenario(
     val position: Int,
     val testScenarioId: String,
     val title: String,
-    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
     val steps: Int,
     val cases: Int,
 )

@@ -128,7 +128,7 @@ class TypesafeKeyIntegrationTest {
             assertThat(objectMapper.readTree(body)["code"].asText()).isEqualTo("invalid_api_key")
         }
         val rows = databaseClient.sql("SELECT COUNT(*) AS n FROM platform_setting")
-            .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("n", Long::class.javaObjectType)!! }
             .one().awaitSingle()
         assertThat(rows).isZero()
         assertThat(invalidations.get()).isZero()
