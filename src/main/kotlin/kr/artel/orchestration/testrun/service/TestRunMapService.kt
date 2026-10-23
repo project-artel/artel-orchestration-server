@@ -104,25 +104,34 @@ class TestRunMapService(
                     val text = a.text ?: bad("${a.type} 에 text 가 없습니다.")
                     text(text)
                     if (a.type == "note" && a.color != null && a.color !in NOTE_COLORS) bad("메모 색은 $NOTE_COLORS 중 하나입니다.")
+                    if (a.type == "text") shapeColor(a.color)
                 }
                 "rect", "ellipse", "section" -> {
                     coord(a.x); coord(a.y); size(a.w); size(a.h)
                     a.text?.let(::text)
+                    shapeColor(a.color)
                 }
                 "arrow" -> {
                     coord(a.x1); coord(a.y1); coord(a.x2); coord(a.y2)
                     // 휜 화살표의 조절점. 둘 다 있거나 둘 다 없다.
                     if ((a.cx == null) != (a.cy == null)) bad("arrow 의 cx · cy 는 함께 보냅니다.")
                     if (a.cx != null) { coord(a.cx); coord(a.cy) }
+                    shapeColor(a.color)
                 }
                 "pen" -> {
                     val points = a.points ?: bad("pen 에 points 가 없습니다.")
                     if (points.size < 2 || points.size > MAX_PEN_POINTS) bad("그림의 점은 2~${MAX_PEN_POINTS}개입니다.")
                     points.forEach { p -> if (p.size != 2) bad("그림의 점은 [x, y] 입니다."); coord(p[0]); coord(p[1]) }
+                    shapeColor(a.color)
                 }
                 else -> bad("모르는 주석 type 입니다: ${a.type}")
             }
         }
+    }
+
+    /** 메모 외의 주석 색. 없으면 기본(회색) 색이다. */
+    private fun shapeColor(value: String?) {
+        if (value != null && value !in SHAPE_COLORS) bad("색은 $SHAPE_COLORS 중 하나입니다.")
     }
 
     private fun coord(value: Double?) {
@@ -175,6 +184,8 @@ class TestRunMapService(
         const val MAX_ID_LENGTH = 64
         const val MAX_COORD = 1_000_000.0
         val NOTE_COLORS = setOf("y", "p", "b", "g")
+        /** 도형 · 글 · 화살표 · 그림의 색. 메모의 넷에 빨강을 더했다. 정해진 색만 받아 다크 · 라이트에서 화면이 맞춘다. */
+        val SHAPE_COLORS = setOf("y", "p", "b", "g", "r")
         private val LAYOUT_TYPE = object : TypeReference<Map<String, RunMapFrame>>() {}
         private val ANNOTATIONS_TYPE = object : TypeReference<List<RunMapAnnotation>>() {}
     }

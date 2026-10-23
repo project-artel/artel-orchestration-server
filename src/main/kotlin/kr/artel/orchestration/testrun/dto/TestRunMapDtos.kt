@@ -17,6 +17,8 @@ data class RunMapFrame(
  * - `arrow`: [x1] [y1] [x2] [y2]. 휘었으면 조절점 [cx] [cy] 도 온다.
  * - `pen`: [points]
  *
+ * 메모 외의 주석도 [color] 를 가질 수 있다(`y` `p` `b` `g` `r`). 없으면 기본색이다.
+ *
  * [createdBy] · [createdAt] 은 서버가 채운다. 클라이언트가 보낸 값은 쓰지 않는다.
  */
 data class RunMapAnnotation(

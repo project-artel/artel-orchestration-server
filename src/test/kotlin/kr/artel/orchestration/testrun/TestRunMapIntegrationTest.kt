@@ -150,6 +150,14 @@ class TestRunMapIntegrationTest {
         assertThrows<BadRequestException> {
             runBlocking { mapService.save(f.projectId, f.runId, f.userId, TestRunMapSaveRequest(version = saved.version, annotations = listOf(RunMapAnnotation(id = "a2", type = "arrow", x1 = 0.0, y1 = 0.0, x2 = 1.0, y2 = 1.0, cx = 5.0)))) }
         }
+        val colored = mapService.save(
+            f.projectId, f.runId, f.userId,
+            TestRunMapSaveRequest(version = saved.version, annotations = listOf(RunMapAnnotation(id = "r2", type = "rect", x = 0.0, y = 0.0, w = 10.0, h = 10.0, color = "r"))),
+        )
+        assertThat(colored.annotations.single().color).isEqualTo("r")
+        assertThrows<BadRequestException> {
+            runBlocking { mapService.save(f.projectId, f.runId, f.userId, TestRunMapSaveRequest(version = colored.version, annotations = listOf(RunMapAnnotation(id = "r3", type = "rect", x = 0.0, y = 0.0, w = 10.0, h = 10.0, color = "#ff0000")))) }
+        }
     }
 
     @Test
