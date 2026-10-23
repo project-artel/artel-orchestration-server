@@ -1,5 +1,6 @@
 package kr.artel.orchestration.qa
 
+import org.springframework.r2dbc.core.DatabaseClient
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
@@ -41,12 +42,14 @@ import kr.artel.orchestration.qa.service.NotRevertibleReason
 import kr.artel.orchestration.qa.service.QaRunChangeKind
 import kr.artel.orchestration.qa.service.QaRunChangeNotRevertibleException
 import kr.artel.orchestration.qa.service.QaRunChangeService
+import kr.artel.orchestration.support.deleteQaRuns
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -95,8 +98,20 @@ class QaRunChangeIntegrationTest {
     @Autowired private lateinit var testScenarios: TestScenarioRepository
     @Autowired private lateinit var qaRuns: QaRunRepository
     @Autowired private lateinit var qaTries: QaTryRepository
+    @Autowired private lateinit var db: DatabaseClient
 
     // ------------------------------------------------------------------ 합치기
+
+    /**
+     * 이 클래스가 만든 `qa_run` 을 스위트의 다음 클래스에 넘기지 않는다(ARTEL-1163).
+     * 리액티브 트랜잭션은 롤백되지 않고 스위트가 DB 하나를 공유하므로, 남은 `qa_run` 은 뒤에 오는
+     * 클래스의 `DELETE FROM game_instance` · `test_run` · `app_user` 를
+     * `qa_run_game_instance_id_fkey` · `qa_run_test_run_id_fkey` · `qa_run_started_by_fkey` 로 막는다.
+     */
+    @AfterEach
+    fun removeQaRuns() {
+        db.deleteQaRuns()
+    }
 
     @Test
     fun `같은 run 의 여러 try 가 만들고 고친 knowledge 는 CREATE 한 줄이다`(): Unit = runBlocking {
@@ -460,11 +475,11 @@ class QaRunChangeIntegrationTest {
         )
         members.save(ProjectMemberEntity(projectId = project.id!!, appUserId = userId, role = "OWNER", createdAt = now))
         val build = gameBuilds.save(
-            GameBuildEntity(projectId = project.id!!, version = "v${System.nanoTime()}", createdAt = now, updatedAt = now)
+            GameBuildEntity(projectId = project.id, version = "v${System.nanoTime()}", createdAt = now, updatedAt = now)
         )
         val instance = gameInstances.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 lastGameBuildId = build.id,
@@ -481,11 +496,11 @@ class QaRunChangeIntegrationTest {
                 evidenceDigest = "run-changes",
             )
         )
-        val testRunId = testRuns.save(TestRunEntity(projectId = project.id!!, name = "런"))!!.id!!
+        val testRunId = testRuns.save(TestRunEntity(projectId = project.id, name = "런")).id!!
         return World(
             userId = userId,
             token = jwtService.issue(user),
-            projectId = project.id!!,
+            projectId = project.id,
             gameInstanceId = instance.id!!,
             testRunId = testRunId,
         )
@@ -503,9 +518,9 @@ class QaRunChangeIntegrationTest {
                 startedAt = now,
                 completedAt = now,
             )
-        )!!
+        )
         val tries = (1..2).map {
-            val scenario = testScenarios.save(TestScenarioEntity(projectId = world.projectId))!!
+            val scenario = testScenarios.save(TestScenarioEntity(projectId = world.projectId))
             qaTries.save(
                 QaTryEntity(
                     testScenarioId = scenario.id!!,
@@ -521,7 +536,7 @@ class QaRunChangeIntegrationTest {
                     startedAt = now,
                     completedAt = now,
                 )
-            )!!.id!!
+            ).id!!
         }
         return Run(run.id!!, tries)
     }

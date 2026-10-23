@@ -73,12 +73,12 @@ enum class CapabilityVerdict(val wire: String) {
  */
 data class CapabilityVerdictRequest(
     val scene: String? = null,
-    @JsonProperty("capability_key") val capabilityKey: String? = null,
-    @JsonProperty("capability_id") val capabilityId: String? = null,
+    @param:JsonProperty("capability_key") val capabilityKey: String? = null,
+    @param:JsonProperty("capability_id") val capabilityId: String? = null,
     val verdict: String? = null,
     val rationale: String? = null,
-    @JsonProperty("capture_id") val captureId: String? = null,
-    @JsonProperty("screen_id") val screenId: String? = null,
+    @param:JsonProperty("capture_id") val captureId: String? = null,
+    @param:JsonProperty("screen_id") val screenId: String? = null,
     val action: CapabilityActionRecord? = null,
 )
 
@@ -110,15 +110,15 @@ data class CapabilityDiscoveredRequest(
     val scene: String? = null,
     val origin: String? = null,
     val summary: String? = null,
-    @JsonProperty("given_text") val givenText: String? = null,
+    @param:JsonProperty("given_text") val givenText: String? = null,
     val interaction: String? = null,
-    @JsonProperty("input_key") val inputKey: String? = null,
-    @JsonProperty("input_phase") val inputPhase: String? = null,
-    @JsonProperty("control_path") val controlPath: String? = null,
-    @JsonProperty("control_label") val controlLabel: String? = null,
+    @param:JsonProperty("input_key") val inputKey: String? = null,
+    @param:JsonProperty("input_phase") val inputPhase: String? = null,
+    @param:JsonProperty("control_path") val controlPath: String? = null,
+    @param:JsonProperty("control_label") val controlLabel: String? = null,
     val rationale: String? = null,
-    @JsonProperty("capture_id") val captureId: String? = null,
-    @JsonProperty("screen_id") val screenId: String? = null,
+    @param:JsonProperty("capture_id") val captureId: String? = null,
+    @param:JsonProperty("screen_id") val screenId: String? = null,
     val verdict: String? = null,
     /** [verdict] 를 만든 조작. [CapabilityVerdictRequest.action] 과 같은 값이다. */
     val action: CapabilityActionRecord? = null,
@@ -127,5 +127,5 @@ data class CapabilityDiscoveredRequest(
      * 비면 거절한다 — 근거를 밝히지 않은 추론은 그럴듯한 거짓말이고, `capability_inference` 가 존재하는
      * 이유가 그것을 막는 것이다.
      */
-    @JsonProperty("based_on") val basedOn: List<String> = emptyList(),
+    @param:JsonProperty("based_on") val basedOn: List<String> = emptyList(),
 )

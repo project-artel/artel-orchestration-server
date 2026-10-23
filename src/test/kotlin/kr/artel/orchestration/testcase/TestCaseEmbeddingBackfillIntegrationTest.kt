@@ -174,7 +174,7 @@ class TestCaseEmbeddingBackfillIntegrationTest {
             "SELECT count(*) AS c FROM test_case_embedding WHERE test_case_id = :id AND source_text IS NOT NULL"
         )
             .bind("id", caseId)
-            .map { row: Readable -> row.get("c", java.lang.Long::class.java)!!.toLong() }
+            .map { row: Readable -> row.get("c", Long::class.javaObjectType)!! }
             .one()
             .awaitSingle()
 

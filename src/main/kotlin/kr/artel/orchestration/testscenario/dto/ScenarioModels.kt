@@ -15,7 +15,7 @@ import com.fasterxml.jackson.annotation.JsonValue
  */
 data class ScenarioStep(
     val action: String = "",
-    @JsonProperty("case_id") val caseId: Long? = null,
+    @param:JsonProperty("case_id") val caseId: Long? = null,
     val hint: String? = null,
     val input: String? = null,
     /**
@@ -35,7 +35,7 @@ data class ScenarioStep(
      * 무의미해지고, 그 사고는 점수가 좋아 보일 뿐이라 조용하다. 에이전트가 읽는 두 경로는 타입으로
      * 갈라져 있다: QA 실행은 [AgentStep], 작성 챗봇은 [ChatScenarioStep] — 둘 다 이 필드가 없다.
      */
-    @JsonProperty("expected_passed") val expectedPassed: Boolean? = null,
+    @param:JsonProperty("expected_passed") val expectedPassed: Boolean? = null,
     /**
      * 이 스텝을 **어디서 가져왔는가**(ARTEL-467). `CASE`|`CAPABILITY`|`UNKNOWN`.
      *
@@ -46,16 +46,16 @@ data class ScenarioStep(
      * **null이면 검사를 건너뛴다.** 이 필드를 보내지 않는 구버전 Agent와 함께 배포되기 위해서이고,
      * 되돌리는 스위치가 이 null 하나뿐이라 롤백이 Agent 재배포만으로 끝난다([ReviewedCases]와 같은 규율).
      */
-    @JsonProperty("step_source") val stepSource: ScenarioStepSource? = null,
+    @param:JsonProperty("step_source") val stepSource: ScenarioStepSource? = null,
     /**
      * 할 일인가 알림인가(ARTEL-468). null은 [ScenarioStepKind.ACTION] — 이 필드가 없던 시절의
      * 시나리오다. [ScenarioStepKind.GAP]은 수행 대상도 판정 대상도 아니다.
      */
-    @JsonProperty("step_kind") val stepKind: ScenarioStepKind? = null,
+    @param:JsonProperty("step_kind") val stepKind: ScenarioStepKind? = null,
     /** [stepSource]가 `CAPABILITY`일 때 그 기능의 id. `capability.id`와 타입이 같아 검사가 조건문 하나다. */
-    @JsonProperty("step_source_capability_id") val stepSourceCapabilityId: Long? = null,
+    @param:JsonProperty("step_source_capability_id") val stepSourceCapabilityId: Long? = null,
     /** [stepSource]가 `UNKNOWN`일 때 **무엇이 막는지**. 사용자에게 물어볼 거리가 이 문장이다. */
-    @JsonProperty("step_unknown_reason") val stepUnknownReason: String? = null,
+    @param:JsonProperty("step_unknown_reason") val stepUnknownReason: String? = null,
 )
 
 /**
@@ -152,7 +152,7 @@ data class ScenarioDraft(
      * 모르는 client(지금의 `artel scenario update`)가 본문을 저장할 때 FREE 시나리오가 조용히 ORDERED 로
      * 바뀐다. 조회 응답은 엔티티에서 만들어지므로 항상 값이 있다. 읽을 때는 [mode] 를 쓴다.
      */
-    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
 ) {
     /** 값이 없으면 ORDERED 로 읽은 실행 방식. */
     @get:JsonIgnore
@@ -173,11 +173,11 @@ data class ScenarioDraft(
  *   [kr.artel.orchestration.testscenario.service.ScenarioReconcileService.withExecutionModes] 한 곳에서 한다.
  */
 data class ScenarioResult(
-    @JsonProperty("scenario_id") val scenarioId: Long? = null,
+    @param:JsonProperty("scenario_id") val scenarioId: Long? = null,
     val title: String = "",
     val description: String = "",
     val steps: List<ChatScenarioStep> = emptyList(),
-    @JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
 )
 
 /**
@@ -196,8 +196,8 @@ data class ScenarioResult(
  * Agent의 자기 서술이라 검사할 수 없다. 포함 쪽의 근거는 스텝이 증명한다.
  */
 data class ReviewedCases(
-    @JsonProperty("in") val included: List<Long> = emptyList(),
-    @JsonProperty("out") val excluded: List<Long> = emptyList(),
+    @param:JsonProperty("in") val included: List<Long> = emptyList(),
+    @param:JsonProperty("out") val excluded: List<Long> = emptyList(),
 )
 
 /**
@@ -242,6 +242,18 @@ enum class AuthoringStage(@get:JsonValue val wire: String) {
 
     /** Agent가 케이스를 물어봤다(`uncovered_cases`/`test_case_search`). 멎지 않았다는 첫 증거다. */
     LOOKING_UP_CASES("looking_up_cases"),
+
+    /** 질문 답이 서비스 기록을 읽는 중이다(ARTEL-1086). 무엇을 읽는지 단계마다 한 줄로 보인다. */
+    READING_CASES("reading_cases"),
+    READING_VERSIONS("reading_versions"),
+    READING_VERDICTS("reading_verdicts"),
+    READING_QA_RUNS("reading_qa_runs"),
+    READING_ISSUES("reading_issues"),
+    READING_SCENARIOS("reading_scenarios"),
+    READING_BUILDS("reading_builds"),
+
+    /** 한 말에 섞인 요청을 나누는 중이다(ARTEL-1086). 나뉜 요청은 차례로 제 갈래를 탄다. */
+    SPLITTING("splitting"),
 
     /** Agent가 케이스 하나의 근거를 물어봤다(`explain_case`). 무엇으로 스텝을 쓸지 확인하는 중이다. */
     READING_CASE("reading_case"),
@@ -345,8 +357,9 @@ data class ScenarioStreamEvent(
     /** 어림잡은 전체 시나리오 수. 모르면 null 이고, 그때 화면은 진행률 대신 세는 수만 보인다. */
     val expected: Int? = null,
     /**
-     * Agent 답의 결과·설명 칸(ARTEL-927). `result` 에만 실리고, 인사·실패 문구처럼 글만 있는
-     * 답에는 없다. 세 번째 칸인 질문은 [questions] 로 따로 온다.
+     * Agent 답의 결과·설명·질문 칸(ARTEL-927, 질문 칸은 ARTEL-1117). `result` 에만 실리고, 인사·실패
+     * 문구처럼 글만 있는 답에는 없다. 모델이 물은 것은 [AgentReply.asks] 로 답 안에 든다 — [questions] 는
+     * 이제 오케가 계산으로 만드는 질문(경로 공백)만 싣는다.
      */
     val reply: AgentReply? = null,
     /**
@@ -368,7 +381,7 @@ data class ScenarioStreamEvent(
 data class AgentChange(
     val action: String,
     val title: String,
-    @com.fasterxml.jackson.annotation.JsonProperty("scenario_id") val scenarioId: Long? = null,
+    @param:com.fasterxml.jackson.annotation.JsonProperty("scenario_id") val scenarioId: Long? = null,
 ) {
     fun one(): Map<String, Any?> = mapOf("action" to action, "title" to title, "scenario_id" to scenarioId)
 }
@@ -395,22 +408,29 @@ data class AgentRef(
 }
 
 /**
- * Agent 답을 사람이 읽는 두 칸으로 나눈 것(ARTEL-927).
+ * Agent 답을 사람이 읽는 세 칸으로 나눈 것(ARTEL-927, 질문 칸은 ARTEL-1117).
  *
  * 한 덩어리 글이던 답에서는 무엇을 했는지와 왜 그랬는지가 섞여, 사용자가 반박하거나 결정할
  * 자리가 보이지 않았다. [result] 는 Agent 코드가 센 사실(무엇을 몇 스텝으로 저장), [detail] 은
- * 판단한 모델의 설명(마크다운 — 문단·목록·표)이다.
+ * 판단한 모델의 설명(마크다운 — 문단·목록·표), [asks] 는 모델이 사용자에게 묻는 것이다.
  */
 data class AgentReply(
     val result: String,
     val detail: String = "",
     /** 바뀐 시나리오(ARTEL-937). 화면이 결과 박스에 추가·수정·삭제 색으로 나눠 그린다. */
     val changes: List<AgentChange> = emptyList(),
+    /**
+     * 모델이 묻는 것(ARTEL-1117). 예전에는 답과 따로 `question` 메시지로 저장해 화면이 모달로 받았다.
+     * 저작이 대화를 기억하게 되어(ARTEL-942) 답 맨 아래에 싣고, 사용자는 평범한 대화로 답한다 —
+     * 그래서 기다리는 질문(`lastQuestion`)으로 걸지 않는다.
+     */
+    val asks: List<ScenarioQuestion> = emptyList(),
 ) {
     /** 답 말풍선에 붙일 `payload`. 화면은 `kind` 로 질문(`question`)·답한 질문(`answered`)과 가른다. */
     fun payload(refs: List<AgentRef> = emptyList()): Map<String, Any?> =
         mapOf("kind" to KIND, "result" to result, "detail" to detail) +
             (if (changes.isEmpty()) emptyMap() else mapOf("changes" to changes.map { it.one() })) +
+            (if (asks.isEmpty()) emptyMap() else mapOf("asks" to asks.map { it.copy(source = ScenarioQuestionSource.AGENT).one() })) +
             AgentRef.field(refs)
 
     companion object {

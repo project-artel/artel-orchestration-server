@@ -1,5 +1,8 @@
 package kr.artel.orchestration.testscenario.service
 
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
+
 import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import java.util.concurrent.ConcurrentHashMap
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -48,6 +51,7 @@ import org.springframework.transaction.reactive.executeAndAwait
  */
 @Service
 class ScenarioReconcileService(
+    private val projectChanges: ProjectChangeStreamManager,
     private val authoringCases: AuthoringCases,
     private val authoringVersions: AuthoringVersionResolver,
     // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
@@ -259,12 +263,15 @@ class ScenarioReconcileService(
         // 그러면 에이전트에게 다시 쓰라고 시키게 된다 — 그 방법이 안 통한다는 것이 이 작업의 전제다.
         // **메우기는 끌 수 있다**(ARTEL-673). 끄면 모델이 쓴 스텝만 남는다 — 못 이어지는 자리를
         // 코드가 채우는 대신 검사가 짚는다.
+        // 예전에 사용자가 알려 준 구간(ARTEL-1117) — 그 구간은 다시 묻지 않고 그 말로 채운다.
+        val knownHow = if (repair.bridges) knownGapAnswers(projectId) else emptyMap()
         val (bridged, notices, blocked) =
             if (repair.bridges)
                 repairByInsertion(
                     routes, given, describe, openingFacts(projectId, facts), known.caseOfCapability,
                     { id -> byId[id]?.scene },
                     { id -> byId[id]?.guards.orEmpty() }, ::writesOfCapabilities,
+                    knownHow::get,
                 )
             else Triple(given, emptyList(), emptyList())
         trace.record(
@@ -481,9 +488,9 @@ class ScenarioReconcileService(
                     )
                     runPosition++
                     savedId[index] = saved.id
-                    savedScenarios += SavedScenario(saved.id!!, scenario.title, created = true)
-                    idByTitle[scenario.title.trim()] = saved.id!!
-                    divided.anchorOf[index]?.let { anchor -> fromSplit += saved.id!! to anchor }
+                    savedScenarios += SavedScenario(saved.id, scenario.title, created = true)
+                    idByTitle[scenario.title.trim()] = saved.id
+                    divided.anchorOf[index]?.let { anchor -> fromSplit += saved.id to anchor }
                     applied++
                 }
             }
@@ -491,6 +498,7 @@ class ScenarioReconcileService(
                 placeBesideOrigin(runId, fromSplit.mapNotNull { (id, anchor) -> savedId[anchor]?.let { id to it } })
             }
         }
+        if (applied > 0) projectChanges.notify(projectId, ProjectChangeTopic.TEST_RUNS)
         logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${checked.size}]")
         trace.record(
             runId, "4. 저장한다",
@@ -606,6 +614,7 @@ class ScenarioReconcileService(
         sceneOf: (Long) -> String?,
         guardsOf: (Long) -> List<Guard>,
         writesOf: suspend (List<Long>) -> Map<String, String?>,
+        knownHow: (String) -> List<String>? = { null },
     ): Triple<List<ScenarioResult>, List<String>, List<String>> {
         val notices = mutableListOf<String>()
         // 무엇이 막았는지를 따로 모은다 — 알림 문장에서 되뽑으면 문구를 다듬을 때마다 깨진다.
@@ -629,14 +638,17 @@ class ScenarioReconcileService(
                             writesOf,
                         )
                         put(index, answer)
-                        if (answer.result == ScenarioPathResult.UNKNOWN) {
+                        // 예전에 들은 구간은 채워지므로 막힌 것으로 세지 않는다 — 세면 그 구간을 또 묻는다.
+                        if (answer.result == ScenarioPathResult.UNKNOWN &&
+                            answer.blockedBy?.let(knownHow).isNullOrEmpty()
+                        ) {
                             answer.blockedBy?.let(blocked::add)
                         }
                     }
                 }
             }
             val result = ScenarioBridgeRepair.apply(
-                scenario.steps, answers, describe, caseOf, sceneOf,
+                scenario.steps, answers, describe, caseOf, sceneOf, knownHow,
             )
             if (result.steps.size != scenario.steps.size) {
                 logger.info(
@@ -1193,6 +1205,28 @@ class ScenarioReconcileService(
      * 읽지 못하면 빈 집합이다. 그때는 예전처럼 한 번 더 묻게 되는데, 못 읽었다고 질문을 통째로
      * 삼키는 것보다는 낫다.
      */
+    /**
+     * 사용자가 경로 공백에 알려 준 방법 — 구간(`blockedBy`) → 채운 줄들(ARTEL-1117). 같은 구간에 답이 여럿이면
+     * 나중 것이다. "그대로 두기" 처럼 채운 줄이 없는 답은 빠진다(그 구간은 묻지 않고 비워 둔다).
+     *
+     * 채운 줄은 답 기록의 `filled` 에 있다. 그 칸이 생기기 전의 기록은 본문의 `· ` 줄에서 읽는다 —
+     * [TestScenarioAgentService.notifyGapFilled] 가 쓰는 모양이다.
+     */
+    private suspend fun knownGapAnswers(projectId: Long): Map<String, List<String>> = runCatching {
+        val known = linkedMapOf<String, List<String>>()
+        for (row in runMessageRepository.findAnsweredInProject(projectId).toList()) {
+            val payload = row.payload?.let { objectMapper.readTree(it.asString()) } ?: continue
+            if (payload.path("kind").asText() != "answered") continue
+            val id = payload.path("id").asText()
+            if (!id.startsWith(ScenarioQuestionBuilder.GAP_PREFIX)) continue
+            val lines = payload.path("filled").takeIf { it.isArray }?.mapNotNull { it.asText().takeIf(String::isNotBlank) }
+                ?: row.content.lines().filter { it.startsWith("· ") }.map { it.removePrefix("· ").trim() }.filter(String::isNotBlank)
+            if (lines.isNotEmpty()) known[id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)] = lines
+        }
+        known.toMap()
+    }.onFailure { logger.warn("예전에 들은 경로를 읽지 못했다 — 그 구간을 다시 묻는다: ${it.message}") }
+        .getOrDefault(emptyMap())
+
     private suspend fun answeredQuestionIds(projectId: Long): Set<String> = runCatching {
         runMessageRepository.findAnsweredInProject(projectId)
             .toList()

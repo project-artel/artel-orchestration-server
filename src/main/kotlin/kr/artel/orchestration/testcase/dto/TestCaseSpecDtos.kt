@@ -36,11 +36,11 @@ data class TestCaseSpecEnvelope(
      * 같은 판단이다(`TestCaseSpecService`의 옛 `*_HEADERS`). 확정되면 별칭을 하나로 줄인다.
      * TODO(ARTEL-329): 보내는 쪽과 키 이름을 확정하면 [JsonAlias]를 제거한다.
      */
-    @JsonAlias("test_cases", "items", "data", "specs")
+    @param:JsonAlias("test_cases", "items", "data", "specs")
     val cases: List<TestCaseSpecEntry> = emptyList(),
     /** Agent가 이 명세를 보낸 시각. 우리가 저장한 시각과 구분해 `source_sent_at`으로 남는다. */
-    @JsonProperty("created_at") val createdAt: Instant? = null,
-    @JsonProperty("updated_at") val updatedAt: Instant? = null,
+    @param:JsonProperty("created_at") val createdAt: Instant? = null,
+    @param:JsonProperty("updated_at") val updatedAt: Instant? = null,
 )
 
 /**
@@ -51,7 +51,7 @@ data class TestCaseSpecEnvelope(
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class TestCaseSpecEntry(
-    @JsonProperty("schema_version") val schemaVersion: String? = null,
+    @param:JsonProperty("schema_version") val schemaVersion: String? = null,
     val spec: TestCaseSpecBody,
     /**
      * `source`/`generation`을 통째로 담는 원본 노드. 구조를 세우지 않고 [JsonNode]로 받는 것은
@@ -72,7 +72,7 @@ data class TestCaseSpecBody(
     val scene: String? = null,
     val precondition: String? = null,
     val step: String? = null,
-    @JsonProperty("expected_value") val expectedValue: String? = null,
+    @param:JsonProperty("expected_value") val expectedValue: String? = null,
     val status: String? = null,
 )
 

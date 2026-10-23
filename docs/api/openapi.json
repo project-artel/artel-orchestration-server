@@ -17,32 +17,12 @@
       "description": "GitHub App 설치 복귀"
     },
     {
-      "name": "Scene Context (internal)",
-      "description": "QA agent 가 런 시작에 받는 씬별 capability·앵커 지식"
-    },
-    {
-      "name": "SDK QA capture",
-      "description": "QA 화면 캡처 업로드 서명"
-    },
-    {
       "name": "SDK project",
       "description": "SDK가 등록 대상으로 고를 프로젝트 목록"
     },
     {
-      "name": "Issue tracker",
-      "description": "GitHub App 설치 흐름"
-    },
-    {
-      "name": "Project",
-      "description": "프로젝트 생성·조회·수정·삭제"
-    },
-    {
       "name": "MCP",
       "description": "artel-macro-mcp 로그인 넘겨주기"
-    },
-    {
-      "name": "Macro",
-      "description": "빌드에 등록된 macro 를 읽는다"
     },
     {
       "name": "Invitation",
@@ -53,10 +33,6 @@
       "description": "빌드에 앉은 씬 명세를 읽는다"
     },
     {
-      "name": "QA Run",
-      "description": "프로젝트의 QA run 목록"
-    },
-    {
       "name": "Issue tracker",
       "description": "프로젝트와 외부 이슈 트래커의 연결"
     },
@@ -65,16 +41,56 @@
       "description": "Agent action delivery to connected game instances"
     },
     {
+      "name": "SDK Content Map",
+      "description": "SDK 가 보고하는 근거 문서 수용"
+    },
+    {
+      "name": "Project Member",
+      "description": "프로젝트 멤버 조회·내보내기"
+    },
+    {
+      "name": "SDK token",
+      "description": "로그인한 사용자의 SDK 토큰 발급"
+    },
+    {
+      "name": "SDK Registration",
+      "description": "SDK 인스턴스 등록 및 게임 버전 보고"
+    },
+    {
+      "name": "Scene Context (internal)",
+      "description": "QA agent 가 런 시작에 받는 씬별 capability·앵커 지식"
+    },
+    {
+      "name": "SDK QA capture",
+      "description": "QA 화면 캡처 업로드 서명"
+    },
+    {
+      "name": "Issue tracker",
+      "description": "GitHub App 설치 흐름"
+    },
+    {
+      "name": "Project",
+      "description": "프로젝트 생성·조회·수정·삭제"
+    },
+    {
+      "name": "Macro",
+      "description": "빌드에 등록된 macro 를 읽는다"
+    },
+    {
+      "name": "Project Events",
+      "description": "프로젝트 데이터 변경 알림"
+    },
+    {
+      "name": "QA Run",
+      "description": "프로젝트의 QA run 목록"
+    },
+    {
       "name": "Developer Macro",
       "description": "게임 개발자가 MCP 로 검사하고 등록하는 macro"
     },
     {
       "name": "SDK auth",
       "description": "SDK 브라우저 로그인"
-    },
-    {
-      "name": "SDK Content Map",
-      "description": "SDK 가 보고하는 근거 문서 수용"
     },
     {
       "name": "Game Instance",
@@ -89,24 +105,12 @@
       "description": "SDK가 보고한 게임 버전 조회·수정"
     },
     {
-      "name": "Project Member",
-      "description": "프로젝트 멤버 조회·내보내기"
-    },
-    {
-      "name": "SDK token",
-      "description": "로그인한 사용자의 SDK 토큰 발급"
-    },
-    {
       "name": "Game notes",
       "description": "planner 에게 주는 프로젝트별 게임 노트와 genre module"
     },
     {
       "name": "Project Invitation",
       "description": "프로젝트 초대 발송·조회·취소"
-    },
-    {
-      "name": "SDK Registration",
-      "description": "SDK 인스턴스 등록 및 게임 버전 보고"
     }
   ],
   "paths": {
@@ -1299,6 +1303,670 @@
         }
       }
     },
+    "/api/projects/{projectId}/project-agent-model": {
+      "get": {
+        "tags": [
+          "project-agent-model-controller"
+        ],
+        "operationId": "projectAgentModelOfProject",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentModelOfProjectResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "project-agent-model-controller"
+        ],
+        "operationId": "updateProjectAgentModelOfProject",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectAgentModelOfProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentModelOfProjectResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issues/{issueId}/categories": {
+      "put": {
+        "tags": [
+          "issue-category-controller"
+        ],
+        "operationId": "setIssueCategories",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryAssignment"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CategoryTag"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-folders/{folderId}": {
+      "put": {
+        "tags": [
+          "issue-folder-controller"
+        ],
+        "operationId": "updateIssueFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueFolderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "issue-folder-controller"
+        ],
+        "operationId": "deleteIssueFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/subscription": {
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "subscribeIssueDiscussion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/state": {
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "setIssueDiscussionState",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscussionStateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/pin": {
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "pinIssueDiscussion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/decision": {
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "setIssueDiscussionDecision",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/comments/{commentId}/reaction": {
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "reactToIssueDiscussionComment",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "commentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionComment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/approval": {
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "approveIssueDiscussion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/settings": {
+      "get": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "getIssueDiscussionSettings",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionSettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "updateIssueDiscussionSettings",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscussionSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionSettings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-categories/{categoryId}": {
+      "put": {
+        "tags": [
+          "issue-category-controller"
+        ],
+        "operationId": "updateIssueCategory",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "categoryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueCategoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueCategoryResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "issue-category-controller"
+        ],
+        "operationId": "deleteIssueCategory",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "categoryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-notes": {
       "get": {
         "tags": [
@@ -1503,6 +2171,76 @@
         }
       }
     },
+    "/api/auth/me/project-agent-model": {
+      "get": {
+        "tags": [
+          "project-agent-model-controller"
+        ],
+        "operationId": "myProjectAgentModel",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProjectAgentModelResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "project-agent-model-controller"
+        ],
+        "operationId": "updateMyProjectAgentModel",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserProjectAgentModelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProjectAgentModelResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/me/profile": {
       "put": {
         "tags": [
@@ -1658,6 +2396,54 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/TypesafeKeyStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings/telemetry": {
+      "get": {
+        "tags": [
+          "admin-telemetry-settings-controller"
+        ],
+        "operationId": "telemetryStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin-telemetry-settings-controller"
+        ],
+        "operationId": "updateTelemetry",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTelemetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryStatus"
                 }
               }
             }
@@ -1853,6 +2639,19 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/telemetry/reports": {
+      "post": {
+        "tags": [
+          "telemetry-receiver-controller"
+        ],
+        "operationId": "receive",
+        "responses": {
+          "204": {
+            "description": "No Content"
           }
         }
       }
@@ -2561,11 +3360,11 @@
             "required": false,
             "schema": {
               "type": "string",
+              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ],
-              "default": "MINE"
+              ]
             }
           }
         ],
@@ -3811,6 +4610,542 @@
         }
       }
     },
+    "/api/projects/{projectId}/issue-folders": {
+      "get": {
+        "tags": [
+          "issue-folder-controller"
+        ],
+        "operationId": "listIssueFolders",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueFolderListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "issue-folder-controller"
+        ],
+        "operationId": "createIssueFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueFolderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-folders/{folderId}/items": {
+      "post": {
+        "tags": [
+          "issue-folder-controller"
+        ],
+        "operationId": "addIssueFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueFolderItemsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-folders/{folderId}/items/removals": {
+      "post": {
+        "tags": [
+          "issue-folder-controller"
+        ],
+        "operationId": "removeIssueFolderItems",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueFolderItemsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-folders/{folderId}/clones": {
+      "post": {
+        "tags": [
+          "issue-folder-controller"
+        ],
+        "operationId": "cloneIssueFolder",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueFolderCloneRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueFolderResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions": {
+      "get": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "listIssueDiscussions",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mine",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "subscribed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "issueId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 30
+            }
+          },
+          {
+            "name": "categoryId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionPageDiscussionSummary"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "createIssueDiscussion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscussionDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/comments": {
+      "get": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "listIssueDiscussionComments",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionPageDiscussionComment"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "createIssueDiscussionComment",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionComment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-categories": {
+      "get": {
+        "tags": [
+          "issue-category-controller"
+        ],
+        "operationId": "listIssueCategories",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueCategoryListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "issue-category-controller"
+        ],
+        "operationId": "createIssueCategory",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueCategoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueCategoryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/invitations": {
       "get": {
         "tags": [
@@ -3818,7 +5153,7 @@
         ],
         "summary": "보낸 초대 목록",
         "description": "소유자만 볼 수 있다. 아직 답을 기다리는 초대만 나온다.",
-        "operationId": "list_10",
+        "operationId": "list_9",
         "parameters": [
           {
             "name": "projectId",
@@ -3943,6 +5278,56 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/test-cases/verdict-carry-over": {
+      "post": {
+        "tags": [
+          "content-map-test-case-controller"
+        ],
+        "operationId": "carryVerdicts",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerdictCarryOverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerdictCarryOverResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-builds/{gameBuildId}/content-map/test-cases": {
       "post": {
         "tags": [
@@ -3985,6 +5370,30 @@
               "type": "boolean",
               "default": false
             }
+          },
+          {
+            "name": "verdicts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "NONE",
+                "SAME_CONTENT",
+                "SELECTED"
+              ]
+            }
+          },
+          {
+            "name": "testCaseIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         ],
         "responses": {
@@ -4007,7 +5416,7 @@
           "Content Map"
         ],
         "summary": "원격 근거 스캔 요청",
-        "description": "이 빌드를 실행 중인 게임에 근거 스캔을 시킨다. 즉시 202 로 답하며, 완료는 조회 API 의 `lastScan` 으로 확인한다. 붙어 있는 게임이 없으면 409. `generateTestCases=true` 면 문서가 다 읽힌 뒤 TC 도 만들고, editor 이거나 이미 TC 를 만든 빌드면 스캔 전에 409.",
+        "description": "이 빌드를 실행 중인 게임에 근거 스캔을 시킨다. 즉시 202 로 답하며, 완료는 조회 API 의 `lastScan` 으로 확인한다. 붙어 있는 게임이 없으면 409. `generateTestCases=true` 면 문서가 다 읽힌 뒤 TC 도 만들고, 이미 TC 를 만든 빌드면 스캔 전에 409.",
         "operationId": "startScan",
         "parameters": [
           {
@@ -4061,6 +5470,41 @@
                 }
               }
             }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Content Map"
+        ],
+        "summary": "도는 근거 스캔 취소",
+        "description": "게임에 멈추라고 보내고 그 스캔을 실패로 닫는다. 게임이 쥔 단계(SCANNING · UPLOADING)에서만 끊을 수 있고, 서버가 문서를 읽는 단계면 409. 돌고 있는 스캔이 없어도 409 다.",
+        "operationId": "cancelScan",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "description": "게임 빌드 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
           }
         }
       }
@@ -4232,6 +5676,304 @@
         }
       }
     },
+    "/api/projects/{projectId}/agent/conversations": {
+      "get": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "list_15",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentConversationList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "create_5",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectAgentConversationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentConversationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}/tool-results": {
+      "post": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "submitToolResult",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectAgentToolResultRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}/messages": {
+      "get": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "messages",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentMessageList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "sendMessage_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendProjectAgentMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}/events": {
+      "post": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "sendEvent",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectAgentEventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}/cancel": {
+      "post": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "cancel_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentConversationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/mcp/handoffs": {
       "post": {
         "tags": [
@@ -4260,6 +6002,30 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/issues/{issueId}/unarchive": {
+      "post": {
+        "tags": [
+          "issue-controller"
+        ],
+        "operationId": "unarchive",
+        "parameters": [
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
           }
         }
       }
@@ -4339,6 +6105,30 @@
         "responses": {
           "200": {
             "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/issues/{issueId}/archive": {
+      "post": {
+        "tags": [
+          "issue-controller"
+        ],
+        "operationId": "archive",
+        "parameters": [
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
           }
         }
       }
@@ -4676,7 +6466,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "list_16",
+        "operationId": "list_17",
         "responses": {
           "200": {
             "description": "OK",
@@ -4697,7 +6487,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "create_5",
+        "operationId": "create_6",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5022,6 +6812,193 @@
         }
       }
     },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}": {
+      "get": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "getIssueDiscussion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "editIssueDiscussion",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscussionEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/{discussionId}/comments/{commentId}": {
+      "delete": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "deleteIssueDiscussionComment",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "commentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "editIssueDiscussionComment",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "discussionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "commentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionComment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-instances/{instanceId}": {
       "delete": {
         "tags": [
@@ -5165,6 +7142,125 @@
         }
       }
     },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}": {
+      "get": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "get_4",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentConversationResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "delete_6",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "rename_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameProjectAgentConversationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAgentConversationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/users/{targetUserId}": {
       "patch": {
         "tags": [
@@ -5211,7 +7307,7 @@
         "tags": [
           "admin-llm-model-controller"
         ],
-        "operationId": "list_17",
+        "operationId": "list_18",
         "responses": {
           "200": {
             "description": "OK",
@@ -6200,6 +8296,46 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/since-last-qa": {
+      "get": {
+        "tags": [
+          "project-qa-launch-controller"
+        ],
+        "operationId": "sinceLastQa",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/SinceLastQaResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-runs/{runId}/deletion-preview": {
       "get": {
         "tags": [
@@ -6687,16 +8823,13 @@
     "/api/projects/{projectId}/qa-runs": {
       "get": {
         "tags": [
-          "QA Run"
+          "project-qa-launch-controller"
         ],
-        "summary": "프로젝트의 QA run 목록",
-        "description": "새 것이 앞에 온다. `gameBuildId` 를 주면 그 빌드로 돈 run 만 온다. `size` 는 1 이상 100 이하이고 벗어나면 400 이다. 프로젝트가 없거나 참여자가 아니면 404 다.",
-        "operationId": "list_7",
+        "operationId": "listQaRuns",
         "parameters": [
           {
             "name": "projectId",
             "in": "path",
-            "description": "프로젝트 id",
             "required": true,
             "schema": {
               "type": "integer",
@@ -6704,22 +8837,22 @@
             }
           },
           {
-            "name": "gameBuildId",
-            "in": "query",
-            "description": "이 게임 빌드로 돈 run 만",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "size",
+            "name": "limit",
             "in": "query",
             "required": false,
             "schema": {
               "type": "integer",
               "format": "int32",
               "default": 20
+            }
+          },
+          {
+            "name": "testRunId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
             }
           }
         ],
@@ -6729,7 +8862,7 @@
             "content": {
               "*/*": {
                 "schema": {
-                  "$ref": "#/components/schemas/QaRunListResponse"
+                  "$ref": "#/components/schemas/QaRunSummaryListResponse"
                 }
               }
             }
@@ -6744,7 +8877,7 @@
         ],
         "summary": "멤버 목록",
         "description": "참여자면 누구나 볼 수 있다. 소유자가 먼저, 그 안에서는 참여한 순서다. 참여자가 아니면 404.",
-        "operationId": "list_8",
+        "operationId": "list_7",
         "parameters": [
           {
             "name": "projectId",
@@ -6860,7 +8993,7 @@
         "tags": [
           "project-issue-controller"
         ],
-        "operationId": "list_9",
+        "operationId": "list_8",
         "parameters": [
           {
             "name": "projectId",
@@ -6905,6 +9038,68 @@
               "format": "int32",
               "default": 50
             }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "testRunId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folderId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "unversioned",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "categoryId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6914,6 +9109,263 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/IssuePageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issues/{issueId}": {
+      "get": {
+        "tags": [
+          "project-issue-controller"
+        ],
+        "operationId": "get_3",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issues/facets": {
+      "get": {
+        "tags": [
+          "project-issue-controller"
+        ],
+        "operationId": "facets",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "testRunId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueFacetsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/pages": {
+      "get": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "pageIssueDiscussions",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mine",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "subscribed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "categoryId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 20
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionNumberedPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/issue-discussions/issue-options": {
+      "get": {
+        "tags": [
+          "discussion-controller"
+        ],
+        "operationId": "listDiscussionIssueOptions",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscussionPageDiscussionIssue"
                 }
               }
             }
@@ -6975,7 +9427,7 @@
         ],
         "summary": "게임 인스턴스 목록",
         "description": "최근에 만든 것이 앞에 온다.",
-        "operationId": "list_11",
+        "operationId": "list_10",
         "parameters": [
           {
             "name": "projectId",
@@ -7009,7 +9461,7 @@
         ],
         "summary": "게임 빌드 목록",
         "description": "최근에 보고된 것이 앞에 온다.",
-        "operationId": "list_12",
+        "operationId": "list_11",
         "parameters": [
           {
             "name": "projectId",
@@ -7029,6 +9481,109 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/GameBuildListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/test-cases/verdict-carry-over/preview": {
+      "get": {
+        "tags": [
+          "content-map-test-case-controller"
+        ],
+        "operationId": "previewVerdicts",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "fromGameBuildId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerdictCarryPreviewResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/qa-runs": {
+      "get": {
+        "tags": [
+          "QA Run"
+        ],
+        "summary": "빌드 하나로 돈 프로젝트의 QA run 목록",
+        "description": "새 것이 앞에 온다. `size` 는 1 이상 100 이하이고 벗어나면 400 이다. 프로젝트가 없거나 참여자가 아니면 404 다.",
+        "operationId": "list_12",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "description": "게임 빌드 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunListResponse"
                 }
               }
             }
@@ -7343,6 +9898,43 @@
         }
       }
     },
+    "/api/projects/{projectId}/events": {
+      "get": {
+        "tags": [
+          "Project Events"
+        ],
+        "summary": "프로젝트 변경 스트림",
+        "description": "프로젝트의 게임 인스턴스, 빌드, macro, issue, knowledge, test case, 사용량이 바뀌면 `changed` 프레임에 topic 만 실어 보낸다. 구독 직후 `ready` 프레임을 한 번 보내며, client 는 이때 모든 목록을 다시 읽는다. 접근할 수 없는 프로젝트는 stream 이 열리지 않고 404 로 끝난다.",
+        "operationId": "events_2",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerSentEventProjectChangeEvent"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/documents/{documentId}/download-url": {
       "get": {
         "tags": [
@@ -7394,7 +9986,7 @@
         ],
         "summary": "문서 추출 상태 스트림",
         "description": "프로젝트 문서 전부의 parse_status 변화를 SSE로 흘린다. 구독 직후 snapshot 프레임을 한 번 보내고, 그 뒤로는 parse_status가 바뀔 때마다 document 프레임을 보낸다. 접근할 수 없는 프로젝트는 stream이 열리지 않고 404로 끝난다.",
-        "operationId": "events_2",
+        "operationId": "events_3",
         "parameters": [
           {
             "name": "projectId",
@@ -7451,6 +10043,49 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/DeveloperMacroListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/agent/conversations/{conversationId}/stream": {
+      "get": {
+        "tags": [
+          "project-agent-controller"
+        ],
+        "operationId": "stream",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerSentEventObject"
+                  }
                 }
               }
             }
@@ -7686,7 +10321,7 @@
         ],
         "summary": "받은 초대 목록",
         "description": "로그인한 계정으로 온 초대와 그 계정의 확인된 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없어도 계정으로 온 초대는 나온다.",
-        "operationId": "list_15",
+        "operationId": "list_16",
         "responses": {
           "200": {
             "description": "OK",
@@ -7700,6 +10335,46 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/auth/sdk/login": {
+      "get": {
+        "tags": [
+          "sdk-login-controller"
+        ],
+        "operationId": "login_1",
+        "parameters": [
+          {
+            "name": "port",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "challenge",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       }
@@ -7767,6 +10442,26 @@
         }
       }
     },
+    "/api/admin/settings/telemetry/preview": {
+      "get": {
+        "tags": [
+          "admin-telemetry-settings-controller"
+        ],
+        "operationId": "previewTelemetryReport",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryReport"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/.well-known/artel-handoff-jwks.json": {
       "get": {
         "tags": [
@@ -7788,6 +10483,29 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/telemetry/reports/{installId}": {
+      "delete": {
+        "tags": [
+          "telemetry-receiver-controller"
+        ],
+        "operationId": "forget",
+        "parameters": [
+          {
+            "name": "installId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
           }
         }
       }
@@ -7852,6 +10570,39 @@
             "name": "invitationId",
             "in": "path",
             "description": "초대 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/content-map/test-cases/generation": {
+      "delete": {
+        "tags": [
+          "content-map-test-case-controller"
+        ],
+        "operationId": "cancelTestCaseGeneration",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
@@ -8161,6 +10912,7 @@
       "TestRunGameBuild": {
         "required": [
           "gameBuildId",
+          "isEditor",
           "version"
         ],
         "type": "object",
@@ -8173,6 +10925,9 @@
           },
           "label": {
             "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
           }
         }
       },
@@ -8382,6 +11137,7 @@
           "absorbed_scenario_ids",
           "description",
           "draft_id",
+          "execution_mode",
           "steps",
           "title"
         ],
@@ -8405,6 +11161,13 @@
             "items": {
               "$ref": "#/components/schemas/ChatScenarioStep"
             }
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "ORDERED",
+              "FREE"
+            ]
           },
           "absorbed_scenario_ids": {
             "type": "array",
@@ -8673,6 +11436,442 @@
           }
         }
       },
+      "UpdateProjectAgentModelOfProjectRequest": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          }
+        }
+      },
+      "ProjectAgentModelOfProjectResponse": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "effectiveModel": {
+            "type": "string"
+          },
+          "problem": {
+            "type": "string"
+          }
+        }
+      },
+      "CategoryAssignment": {
+        "type": "object",
+        "properties": {
+          "categoryIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CategoryTag": {
+        "required": [
+          "color",
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          }
+        }
+      },
+      "IssueFolderRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          }
+        }
+      },
+      "IssueFolderResponse": {
+        "required": [
+          "id",
+          "issueCount",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "EnabledRequest": {
+        "required": [
+          "enabled"
+        ],
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionComment": {
+        "required": [
+          "author",
+          "body",
+          "canDelete",
+          "canEdit",
+          "createdAt",
+          "id",
+          "mentions",
+          "reacted",
+          "reactionCount",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "author": {
+            "$ref": "#/components/schemas/DiscussionPerson"
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionPerson"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reactionCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reacted": {
+            "type": "boolean"
+          },
+          "canEdit": {
+            "type": "boolean"
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "canDelete": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionDetail": {
+        "required": [
+          "approvalsRequired",
+          "author",
+          "body",
+          "canApprove",
+          "canEdit",
+          "canManage",
+          "canPin",
+          "categories",
+          "commentCount",
+          "createdAt",
+          "excerpt",
+          "id",
+          "issueCount",
+          "issues",
+          "mentions",
+          "pinned",
+          "purpose",
+          "reviewers",
+          "state",
+          "subscribed",
+          "title",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "number": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "buildVersion": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "author": {
+            "$ref": "#/components/schemas/DiscussionPerson"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "commentCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "subscribed": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "body": {
+            "type": "string"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionIssue"
+            }
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionPerson"
+            }
+          },
+          "decision": {
+            "$ref": "#/components/schemas/DiscussionComment"
+          },
+          "canEdit": {
+            "type": "boolean"
+          },
+          "canPin": {
+            "type": "boolean"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CategoryTag"
+            }
+          },
+          "reviewers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionReviewer"
+            }
+          },
+          "approvalsRequired": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "canApprove": {
+            "type": "boolean"
+          },
+          "canManage": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionIssue": {
+        "required": [
+          "id",
+          "qaTryId",
+          "severity",
+          "status",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "qaRunId": {
+            "type": "string"
+          },
+          "number": {
+            "type": "string"
+          }
+        }
+      },
+      "DiscussionPerson": {
+        "required": [
+          "displayName",
+          "id",
+          "userTag"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "userTag": {
+            "type": "string"
+          }
+        }
+      },
+      "DiscussionReviewer": {
+        "required": [
+          "person"
+        ],
+        "type": "object",
+        "properties": {
+          "person": {
+            "$ref": "#/components/schemas/DiscussionPerson"
+          },
+          "approvedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DiscussionStateRequest": {
+        "required": [
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "DecisionRequest": {
+        "type": "object",
+        "properties": {
+          "commentId": {
+            "type": "string"
+          }
+        }
+      },
+      "ApprovalRequest": {
+        "required": [
+          "approved"
+        ],
+        "type": "object",
+        "properties": {
+          "approved": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionSettings": {
+        "required": [
+          "approvalsRequired"
+        ],
+        "type": "object",
+        "properties": {
+          "approvalsRequired": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "IssueCategoryRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          }
+        }
+      },
+      "IssueCategoryResponse": {
+        "required": [
+          "color",
+          "discussionCount",
+          "id",
+          "issueCount",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "discussionCount": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "UpdateGameNotesRequest": {
         "required": [
           "baseVersion",
@@ -8830,6 +12029,37 @@
           }
         }
       },
+      "UpdateUserProjectAgentModelRequest": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          }
+        }
+      },
+      "UserProjectAgentModelResponse": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "effectiveModel": {
+            "type": "string"
+          },
+          "effectiveKeySource": {
+            "type": "string"
+          },
+          "problem": {
+            "type": "string"
+          }
+        }
+      },
       "UpdateProfileRequest": {
         "type": "object",
         "properties": {
@@ -8980,6 +12210,46 @@
           }
         }
       },
+      "UpdateTelemetryRequest": {
+        "required": [
+          "enabled"
+        ],
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "deleteSentData": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TelemetryStatus": {
+        "required": [
+          "available",
+          "enabled",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string"
+          },
+          "installId": {
+            "type": "string"
+          },
+          "lastSentDate": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
       "UpdateFeatureModelsRequest": {
         "type": "object",
         "properties": {
@@ -8988,10 +12258,16 @@
           },
           "decisionModel": {
             "type": "string"
+          },
+          "projectAgentModel": {
+            "type": "string"
           }
         }
       },
       "FeatureModelStatus": {
+        "required": [
+          "keyMissing"
+        ],
         "type": "object",
         "properties": {
           "scenarioAuthoringModel": {
@@ -9002,6 +12278,18 @@
           },
           "decisionModel": {
             "type": "string"
+          },
+          "projectAgentModel": {
+            "type": "string"
+          },
+          "projectAgentFallback": {
+            "type": "string"
+          },
+          "keyMissing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "updatedAt": {
             "type": "string",
@@ -9331,7 +12619,8 @@
               "SCENARIO",
               "KNOWLEDGE_QUERY",
               "GAME_CONTEXT",
-              "EMBEDDING"
+              "EMBEDDING",
+              "PROJECT_AGENT"
             ]
           },
           "referenceId": {
@@ -10780,6 +14069,114 @@
           }
         }
       },
+      "IssueFolderItemsRequest": {
+        "type": "object",
+        "properties": {
+          "issueIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "IssueFolderCloneRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "toRoot": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionDraft": {
+        "required": [
+          "body",
+          "categoryIds",
+          "clientRequestId",
+          "draft",
+          "issueIds",
+          "mentionedUserIds",
+          "purpose",
+          "reviewerIds",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "issueIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mentionedUserIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "clientRequestId": {
+            "type": "string"
+          },
+          "draft": {
+            "type": "boolean"
+          },
+          "reviewerIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "categoryIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "gameBuildId": {
+            "type": "string"
+          }
+        }
+      },
+      "CommentDraft": {
+        "required": [
+          "body",
+          "clientRequestId",
+          "mentionedUserIds"
+        ],
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "mentionedUserIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "clientRequestId": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          }
+        }
+      },
       "CreateInvitationRequest": {
         "required": [
           "role"
@@ -10896,6 +14293,69 @@
           }
         }
       },
+      "VerdictCarryOverRequest": {
+        "required": [
+          "resetAll"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fromGameBuildId": {
+            "type": "string"
+          },
+          "resetAll": {
+            "type": "boolean"
+          }
+        }
+      },
+      "VerdictCarryOverResponse": {
+        "required": [
+          "carried",
+          "reset",
+          "skipped"
+        ],
+        "type": "object",
+        "properties": {
+          "carried": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VerdictCarryOverSkipped"
+            }
+          },
+          "reset": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "VerdictCarryOverSkipped": {
+        "required": [
+          "reason",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
       "ContentMapTestCaseGenerationResponse": {
         "required": [
           "broken",
@@ -10903,7 +14363,9 @@
           "created",
           "deleted",
           "regression",
-          "updated"
+          "updated",
+          "verdictsCarried",
+          "verdictsReset"
         ],
         "type": "object",
         "properties": {
@@ -10928,6 +14390,14 @@
             "format": "int32"
           },
           "carriedOver": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "verdictsCarried": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "verdictsReset": {
             "type": "integer",
             "format": "int32"
           }
@@ -11084,6 +14554,140 @@
           },
           "reason": {
             "type": "string"
+          }
+        }
+      },
+      "CreateProjectAgentConversationRequest": {
+        "type": "object",
+        "properties": {
+          "pageCatalog": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        }
+      },
+      "ProjectAgentConversationResponse": {
+        "required": [
+          "createdAt",
+          "id",
+          "lastMessageAt",
+          "projectId",
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "projectId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastMessageAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProjectAgentToolResultRequest": {
+        "required": [
+          "callId",
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "callId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "error": {
+            "type": "string"
+          },
+          "page": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        }
+      },
+      "ProjectAgentMessageResponse": {
+        "required": [
+          "content",
+          "conversationId",
+          "createdAt",
+          "id",
+          "role"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "conversationId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "role": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SendProjectAgentMessageRequest": {
+        "required": [
+          "text"
+        ],
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "pageCatalog": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "page": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        }
+      },
+      "ProjectAgentEventRequest": {
+        "required": [
+          "kind",
+          "summary"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/JsonNode"
           }
         }
       },
@@ -11264,11 +14868,11 @@
           },
           "kind": {
             "type": "string",
+            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ],
-            "default": "sdk"
+            ]
           }
         }
       },
@@ -11544,6 +15148,84 @@
           }
         }
       },
+      "DiscussionEdit": {
+        "required": [
+          "body",
+          "categoryIds",
+          "issueIds",
+          "mentionedUserIds",
+          "purpose",
+          "reviewerIds",
+          "title",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "issueIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mentionedUserIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reviewerIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "categoryIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "gameBuildId": {
+            "type": "string"
+          }
+        }
+      },
+      "CommentEdit": {
+        "required": [
+          "body",
+          "mentionedUserIds",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "mentionedUserIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "UpdateGameInstanceRequest": {
         "type": "object",
         "properties": {
@@ -11674,6 +15356,17 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "RenameProjectAgentConversationRequest": {
+        "required": [
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
           }
         }
       },
@@ -12511,6 +16204,43 @@
           }
         }
       },
+      "IssueOrigin": {
+        "required": [
+          "testScenarioId",
+          "testScenarioTitle"
+        ],
+        "type": "object",
+        "properties": {
+          "testScenarioId": {
+            "type": "string"
+          },
+          "testScenarioTitle": {
+            "type": "string"
+          },
+          "testRunId": {
+            "type": "string"
+          },
+          "testRunName": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "buildVersion": {
+            "type": "string"
+          },
+          "buildLabel": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "qaRunStartedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "IssuePageResponse": {
         "required": [
           "hasMore",
@@ -12534,6 +16264,7 @@
       },
       "IssueResponse": {
         "required": [
+          "categories",
           "detail",
           "id",
           "qaTryId",
@@ -12582,6 +16313,22 @@
           },
           "qaRunId": {
             "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/IssueOrigin"
+          },
+          "number": {
+            "type": "string"
+          },
+          "archivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CategoryTag"
+            }
           }
         }
       },
@@ -14044,6 +17791,163 @@
           }
         }
       },
+      "QaRunSummaryResponse": {
+        "required": [
+          "gameInstanceId",
+          "id",
+          "issueCount",
+          "startedAt",
+          "status",
+          "testRunId"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "testRunId": {
+            "type": "string"
+          },
+          "testRunName": {
+            "type": "string"
+          },
+          "gameInstanceId": {
+            "type": "string"
+          },
+          "gameInstanceName": {
+            "type": "string"
+          },
+          "gameBuildVersion": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "casesPassed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "casesTotal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "SinceLastQaChange": {
+        "required": [
+          "at",
+          "count",
+          "kind"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "subjectId": {
+            "type": "string"
+          },
+          "subjectName": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "SinceLastQaIssue": {
+        "required": [
+          "id",
+          "qaTryId",
+          "reportedAt",
+          "scenarioId",
+          "scenarioTitle",
+          "status",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "scenarioId": {
+            "type": "string"
+          },
+          "scenarioTitle": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reportedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SinceLastQaResponse": {
+        "required": [
+          "changes",
+          "issues"
+        ],
+        "type": "object",
+        "properties": {
+          "lastQaRun": {
+            "$ref": "#/components/schemas/QaRunSummaryResponse"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SinceLastQaIssue"
+            }
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SinceLastQaChange"
+            }
+          }
+        }
+      },
       "RunDeletionPreview": {
         "required": [
           "keptForQaHistoryCount",
@@ -14221,6 +18125,7 @@
       "CaseVerdictHistoryItem": {
         "required": [
           "gameBuildId",
+          "isEditor",
           "testCaseId",
           "verificationStatus",
           "version"
@@ -14249,6 +18154,12 @@
             "type": "string"
           },
           "verdictLogId": {
+            "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
+          },
+          "verdictCarriedFromBuildId": {
             "type": "string"
           }
         }
@@ -14470,6 +18381,7 @@
           "createdAt",
           "gameBuildId",
           "hidden",
+          "isEditor",
           "latest",
           "total",
           "version"
@@ -14488,6 +18400,9 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "isEditor": {
+            "type": "boolean"
           },
           "latest": {
             "type": "boolean"
@@ -14587,6 +18502,7 @@
           "createdAt",
           "gameBuildId",
           "generated",
+          "isEditor",
           "judged",
           "mapCases",
           "mapState",
@@ -14602,6 +18518,9 @@
           },
           "label": {
             "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
           },
           "createdAt": {
             "type": "string",
@@ -14754,7 +18673,7 @@
           }
         }
       },
-      "QaRunListResponse": {
+      "QaRunSummaryListResponse": {
         "required": [
           "items"
         ],
@@ -14763,7 +18682,7 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/QaRunResponse"
+              "$ref": "#/components/schemas/QaRunSummaryResponse"
             }
           }
         }
@@ -14950,6 +18869,307 @@
           }
         }
       },
+      "IssueBuildFacet": {
+        "required": [
+          "count",
+          "openCount"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "openCount": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "IssueFacetsResponse": {
+        "required": [
+          "archived",
+          "builds",
+          "severities",
+          "testRuns",
+          "total"
+        ],
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "archived": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "builds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueBuildFacet"
+            }
+          },
+          "testRuns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueTestRunFacet"
+            }
+          },
+          "severities": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        }
+      },
+      "IssueTestRunFacet": {
+        "required": [
+          "count",
+          "openCount"
+        ],
+        "type": "object",
+        "properties": {
+          "testRunId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "openCount": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "IssueFolderListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueFolderResponse"
+            }
+          }
+        }
+      },
+      "DiscussionPageDiscussionSummary": {
+        "required": [
+          "hasMore",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionSummary"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionSummary": {
+        "required": [
+          "approvalCount",
+          "author",
+          "categories",
+          "commentCount",
+          "createdAt",
+          "excerpt",
+          "id",
+          "issueCount",
+          "pinned",
+          "purpose",
+          "reviewerCount",
+          "state",
+          "subscribed",
+          "title",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "author": {
+            "$ref": "#/components/schemas/DiscussionPerson"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "commentCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "subscribed": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CategoryTag"
+            }
+          },
+          "reviewerCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "approvalCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "number": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "buildVersion": {
+            "type": "string"
+          }
+        }
+      },
+      "DiscussionPageDiscussionComment": {
+        "required": [
+          "hasMore",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionComment"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DiscussionNumberedPage": {
+        "required": [
+          "items",
+          "page",
+          "size",
+          "total"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionSummary"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DiscussionPageDiscussionIssue": {
+        "required": [
+          "hasMore",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussionIssue"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        }
+      },
+      "IssueCategoryListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueCategoryResponse"
+            }
+          }
+        }
+      },
       "InvitationSuggestionResponse": {
         "required": [
           "appUserId",
@@ -15003,6 +19223,71 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GameBuildResponse"
+            }
+          }
+        }
+      },
+      "VerdictCarryPreviewItem": {
+        "required": [
+          "carryable",
+          "expectedValue",
+          "scene",
+          "sourceStatus",
+          "step",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
+          },
+          "expectedValue": {
+            "type": "string"
+          },
+          "sourceStatus": {
+            "type": "string"
+          },
+          "targetStatus": {
+            "type": "string"
+          },
+          "carryable": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "VerdictCarryPreviewResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VerdictCarryPreviewItem"
+            }
+          }
+        }
+      },
+      "QaRunListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaRunResponse"
             }
           }
         }
@@ -15383,6 +19668,7 @@
         "required": [
           "capabilities",
           "capabilityList",
+          "entry",
           "id",
           "name",
           "origin",
@@ -15433,6 +19719,15 @@
             "items": {
               "$ref": "#/components/schemas/SceneCapabilityResponse"
             }
+          },
+          "buildOrder": {
+            "type": "integer",
+            "description": "유니티 빌드 설정에서의 순번(0 부터). 빌드의 씬 스캔이 없거나 그 목록에 없는 씬이면 null",
+            "format": "int32"
+          },
+          "entry": {
+            "type": "boolean",
+            "description": "게임을 켜면 열리는 씬인가. 적재기가 적은 입구 씬이거나 빌드 설정 0번이다"
           }
         },
         "description": "씬 하나"
@@ -15586,8 +19881,10 @@
       },
       "LastScanResponse": {
         "required": [
+          "cancelled",
           "gameInstanceId",
           "gameInstanceName",
+          "phase",
           "requestedAt",
           "state"
         ],
@@ -15628,8 +19925,30 @@
             "type": "string",
             "description": "FAILED 일 때 사람에게 보여 줄 사유"
           },
+          "cancelled": {
+            "type": "boolean",
+            "description": "사람이 끊어서 FAILED 가 된 것인가. 화면이 취소와 실패를 갈라 말한다"
+          },
           "testCases": {
             "$ref": "#/components/schemas/ScanTestCases"
+          },
+          "phase": {
+            "type": "string",
+            "description": "SCANNING · UPLOADING · INGESTING · GENERATING_TEST_CASES. 끝난 뒤에는 마지막으로 지난 단계",
+            "enum": [
+              "SCANNING",
+              "UPLOADING",
+              "INGESTING",
+              "GENERATING_TEST_CASES"
+            ]
+          },
+          "progress": {
+            "$ref": "#/components/schemas/ScanProgress"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "마지막으로 움직인 시각. 진행이 오면 밀린다",
+            "format": "date-time"
           }
         },
         "description": "마지막 원격 스캔의 상태"
@@ -15660,6 +19979,27 @@
           }
         },
         "description": "적재를 기다리는 문서"
+      },
+      "ScanProgress": {
+        "required": [
+          "done",
+          "total"
+        ],
+        "type": "object",
+        "properties": {
+          "done": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "scene": {
+            "type": "string"
+          }
+        },
+        "description": "지금 단계의 몇 개 중 몇 개(SCANNING 이면 씬 수). 게임이 알려 준 적이 없으면 null"
       },
       "ScanTestCases": {
         "required": [
@@ -16136,6 +20476,9 @@
           }
         }
       },
+      "ServerSentEventProjectChangeEvent": {
+        "type": "object"
+      },
       "DownloadTicketResponse": {
         "required": [
           "downloadUrl",
@@ -16212,6 +20555,37 @@
           },
           "updatedBy": {
             "$ref": "#/components/schemas/DeveloperMacroAuthor"
+          }
+        }
+      },
+      "ProjectAgentConversationList": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectAgentConversationResponse"
+            }
+          }
+        }
+      },
+      "ServerSentEventObject": {
+        "type": "object"
+      },
+      "ProjectAgentMessageList": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectAgentMessageResponse"
+            }
           }
         }
       },
@@ -16613,6 +20987,224 @@
           "revokedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ErrorSummary": {
+        "required": [
+          "count",
+          "frames",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "exceptionType": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "LlmUsageSummary": {
+        "required": [
+          "cacheWriteTokens",
+          "cachedInputTokens",
+          "calls",
+          "inputTokens",
+          "keySource",
+          "latencyMsSum",
+          "model",
+          "outputTokens",
+          "provider",
+          "reasoningTokens",
+          "service"
+        ],
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "inputTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outputTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cachedInputTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reasoningTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cacheWriteTokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "costUsdSum": {
+            "type": "number"
+          },
+          "latencyMsSum": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "QaStructureUsage": {
+        "required": [
+          "durationSecondsMax",
+          "durationSecondsSum",
+          "toolCalls",
+          "tries",
+          "triesByStatus"
+        ],
+        "type": "object",
+        "properties": {
+          "agentArch": {
+            "type": "string"
+          },
+          "agentFingerprint": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "type": "string"
+          },
+          "tries": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "triesByStatus": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "stepsTotal": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stepsPassed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "casesTotal": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "casesPassed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "durationSecondsSum": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "durationSecondsMax": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "toolCalls": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        }
+      },
+      "TelemetryInstall": {
+        "required": [
+          "agentServerVersions",
+          "reportDate"
+        ],
+        "type": "object",
+        "properties": {
+          "installId": {
+            "type": "string"
+          },
+          "orchestrationVersion": {
+            "type": "string"
+          },
+          "agentServerVersions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reportDate": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "TelemetryReport": {
+        "required": [
+          "errors",
+          "install",
+          "llmUsage",
+          "qaStructures",
+          "schemaVersion"
+        ],
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "install": {
+            "$ref": "#/components/schemas/TelemetryInstall"
+          },
+          "qaStructures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaStructureUsage"
+            }
+          },
+          "llmUsage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LlmUsageSummary"
+            }
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErrorSummary"
+            }
           }
         }
       },

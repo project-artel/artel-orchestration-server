@@ -74,9 +74,19 @@ class ScanResponseContractTest {
 
         assertThat(json.fieldNames().asSequence().toList()).containsExactly(
             "state", "gameInstanceId", "gameInstanceName", "requestedAt",
-            "finishedAt", "ingestedDocuments", "error",
+            "finishedAt", "ingestedDocuments", "error", "cancelled", "testCases",
+            "phase", "progress", "updatedAt",
         )
+        // 끊어서 끝난 것과 깨져서 끝난 것은 상태가 같다. 화면이 둘을 갈라 말할 수 있는 칸이 이것뿐이다(ARTEL-1183).
+        assertThat(json["cancelled"].asBoolean()).isFalse()
         assertThat(json["state"].asText()).isEqualTo("FAILED")
+        // 단계도 서수가 아니라 이름이다. 진행을 안 보내는 옛 SDK 면 SCANNING 에 머물고 progress 는 null 이다(ARTEL-1178).
+        assertThat(json["phase"].asText()).isEqualTo("SCANNING")
+        assertThat(json["progress"].isNull).isTrue()
+        // 아무것도 안 움직였으면 마지막으로 움직인 때는 요청한 때다.
+        assertThat(json["updatedAt"].asText()).isEqualTo(json["requestedAt"].asText())
+        // 그냥 스캔이면 TC 쪽 결과가 없다. 칸은 빠지지 않고 null 로 나간다(ARTEL-1040).
+        assertThat(json["testCases"].isNull).isTrue()
         assertThat(json["ingestedDocuments"].asInt()).isZero()
         assertThat(json["error"].asText()).isEqualTo("릴리스 빌드에서는 스캔할 수 없습니다.")
         // gameBuildId 는 싣지 않는다 — 이 응답은 이미 그 빌드의 조회 결과 안에 있다.

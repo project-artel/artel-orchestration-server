@@ -13,6 +13,8 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
 
     fun findByGameBuildId(gameBuildId: Long): Flow<TestCaseVersionEntity>
 
+    suspend fun existsByGameBuildId(gameBuildId: Long): Boolean
+
     /**
      * 이 build 에서 지도로 TC 를 만든 적이 있는지(ARTEL-1040). 지도 몫만 `content_map_id` 를 든다 — 사용자 생성 몫은
      * null 이라, 버전에 넣어 둔 사용자 생성 TC 가 지도 생성을 막지 않는다.
@@ -43,10 +45,7 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
 
     /**
      * 각 케이스의 **[gameBuildId] 보다 앞선 버전 중 가장 최근 것**의 상태. 새 버전 몫이 REGRESSION 으로
-     * 시작할지 정할 때 읽는다. 앞선 버전이 없는 케이스는 결과에 없다.
-     *
-     * editor 행은 게임 버전이 아니라서 앞선 버전으로 고르지 않고, [gameBuildId] 가 editor 행이면 결과가 비어 모두
-     * DRAFT 로 시작한다(ARTEL-1014).
+     * 시작할지 정할 때 읽는다. 앞선 버전이 없는 케이스는 결과에 없다. editor 행도 버전이다(ARTEL-1180).
      */
     @Query(
         """
@@ -55,13 +54,25 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
           JOIN game_build pb ON pb.id = v.game_build_id
           JOIN game_build cur ON cur.id = :gameBuildId
          WHERE v.test_case_id IN (:testCaseIds)
-           AND pb.is_editor = FALSE
-           AND cur.is_editor = FALSE
            AND (pb.created_at, pb.id) < (cur.created_at, cur.id)
          ORDER BY v.test_case_id, pb.created_at DESC, pb.id DESC
         """
     )
     fun findPreviousStatuses(testCaseIds: Collection<Long>, gameBuildId: Long): Flow<PreviousStatus>
+
+    /** [findPreviousStatuses] 와 같은 앞 버전 몫을 통째로. 판정을 이어받을 때 내용과 출처까지 본다(ARTEL-1180). */
+    @Query(
+        """
+        SELECT DISTINCT ON (v.test_case_id) v.*
+          FROM test_case_version v
+          JOIN game_build pb ON pb.id = v.game_build_id
+          JOIN game_build cur ON cur.id = :gameBuildId
+         WHERE v.test_case_id IN (:testCaseIds)
+           AND (pb.created_at, pb.id) < (cur.created_at, cur.id)
+         ORDER BY v.test_case_id, pb.created_at DESC, pb.id DESC
+        """
+    )
+    fun findPreviousVersions(testCaseIds: Collection<Long>, gameBuildId: Long): Flow<TestCaseVersionEntity>
 
     /**
      * [testCaseIds] 의 정체(`test_case`)에 가장 최근 버전을 비춘다(ARTEL-1018).
@@ -70,8 +81,7 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
      * 케이스는 사람이 고친 내용이 원본이고, 버전 몫은 판정을 받던 때의 스냅샷일 뿐이다.
      * 버전이 하나도 없는 케이스는 건드리지 않는다.
      *
-     * "가장 최근" 은 게임 버전(editor 가 아닌 행) 중에서 고른다. editor 행은 게임 버전이 아니라서(ARTEL-1014)
-     * 그 케이스가 editor 행에만 있을 때만 비춘다.
+     * "가장 최근" 은 build 를 만든 순서다. editor 행도 버전이다(ARTEL-1180).
      */
     @Modifying
     @Query(
@@ -92,28 +102,28 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
                   FROM test_case_version tv
                   JOIN game_build gb ON gb.id = tv.game_build_id
                  WHERE tv.test_case_id IN (:testCaseIds)
-                 ORDER BY tv.test_case_id, gb.is_editor, gb.created_at DESC, gb.id DESC) v
+                 ORDER BY tv.test_case_id, gb.created_at DESC, gb.id DESC) v
          WHERE t.id = v.test_case_id
         """
     )
     suspend fun syncIdentities(testCaseIds: Collection<Long>): Int
 
     /**
-     * [testCaseId] 의 버전별 몫을 오래된 build 부터(ARTEL-1018). 버전 몫이 없는 케이스는 빈 결과다. editor 행은
-     * 게임 버전이 아니라서 빠진다(ARTEL-1014).
+     * [testCaseId] 의 버전별 몫을 오래된 build 부터(ARTEL-1018). 버전 몫이 없는 케이스는 빈 결과다. editor 행도
+     * 버전이다(ARTEL-1180).
      */
     @Query(
         """
         SELECT v.test_case_id, gb.id AS game_build_id, gb.version, gb.label,
                v.verification_status, gb.created_at AS build_created_at,
-               v.verdict_qa_log_id, l.qa_try_id AS verdict_qa_try_id, qt.qa_run_id AS verdict_qa_run_id
+               v.verdict_qa_log_id, l.qa_try_id AS verdict_qa_try_id, qt.qa_run_id AS verdict_qa_run_id,
+               gb.is_editor, v.verdict_carried_from_build_id
           FROM test_case_version v
           JOIN test_case t ON t.id = v.test_case_id
           JOIN game_build gb ON gb.id = v.game_build_id
           LEFT JOIN qa_log l ON l.id = v.verdict_qa_log_id
           LEFT JOIN qa_try qt ON qt.id = l.qa_try_id
          WHERE v.test_case_id = :testCaseId AND t.project_id = :projectId
-           AND gb.is_editor = FALSE
          ORDER BY gb.created_at ASC, gb.id ASC
         """
     )
@@ -135,16 +145,13 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
     fun countByBuild(projectId: Long): Flow<VersionStatusCount>
 
     /**
-     * 같은 프로젝트에서 [gameBuildId] 바로 앞의 게임 버전. 없으면 null(ARTEL-1031). editor 행은 게임 버전이 아니라서
-     * 고르지 않고, [gameBuildId] 가 editor 행이면 null 이다(ARTEL-1014).
+     * 같은 프로젝트에서 [gameBuildId] 바로 앞의 버전. 없으면 null(ARTEL-1031). editor 행도 버전이다(ARTEL-1180).
      */
     @Query(
         """
         SELECT prev.id FROM game_build prev
           JOIN game_build cur ON cur.id = :gameBuildId AND prev.project_id = cur.project_id
-         WHERE prev.is_editor = FALSE
-           AND cur.is_editor = FALSE
-           AND (prev.created_at, prev.id) < (cur.created_at, cur.id)
+         WHERE (prev.created_at, prev.id) < (cur.created_at, cur.id)
          ORDER BY prev.created_at DESC, prev.id DESC
          LIMIT 1
         """

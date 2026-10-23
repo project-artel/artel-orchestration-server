@@ -9,6 +9,8 @@ import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.entity.GamePlatform
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.common.error.ConflictException
 import org.springframework.dao.DataIntegrityViolationException
@@ -37,9 +39,9 @@ private const val INSTANCE_RETRY_ATTEMPTS = 3
  * 요청에 씬 스캔이 실려 있으면 빌드에 함께 저장한다. 같은 빌드는 같은 씬 구성을 가지므로
  * 최신 스캔 하나만 남기고 재등록마다 덮어쓴다.
  *
- * Unity editor 실행(`isEditor = true`)은 버전으로 빌드를 찾지 않는다(ARTEL-1014). editor 는 development
- * build 와 같은 Player Settings 버전을 보고하므로, 버전으로 찾으면 editor 실행이 그 build 의 scan 과
- * content map 을 덮어쓴다. 대신 프로젝트의 editor 행 하나에 붙고, 그 행의 version 을 보고된 값으로 바꾼다.
+ * Unity editor 실행(`isEditor = true`)은 같은 version 의 editor 행에 붙는다(ARTEL-1014, ARTEL-1180). editor 는
+ * development build 와 같은 Player Settings 버전을 보고하므로, build 행과 같이 찾으면 editor 실행이 그 build 의
+ * scan 과 content map 을 덮어쓴다.
  */
 @Service
 class SdkRegistrationService(
@@ -48,7 +50,8 @@ class SdkRegistrationService(
     private val projectRepository: ProjectRepository,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
-    private val clock: Clock
+    private val clock: Clock,
+    private val projectChangeStreamManager: ProjectChangeStreamManager
 ) {
     /**
      * 프로젝트를 찾지 못하거나 요청자가 그 프로젝트의 참여자가 아니면 null이다. 컨트롤러가
@@ -63,7 +66,7 @@ class SdkRegistrationService(
         val now = Instant.now(clock)
         val sceneScan = request.sceneScan?.let { Json.of(objectMapper.writeValueAsString(it)) }
         // 빌드 조회·생성과 인스턴스 갱신을 한 트랜잭션으로 묶는다.
-        return transactionalOperator.executeAndAwait {
+        val response = transactionalOperator.executeAndAwait {
             val build = findOrCreateBuild(projectId, request.gameVersion.trim(), request.isEditor == true, sceneScan, now)
             val instance = findOrCreateInstance(projectId, sdkUuid, request.instanceName, now)
             // 빌드 id를 인스턴스에 남긴다. 곧 열릴 웹소켓의 성능 런이 이 값을 읽어 자신을
@@ -84,6 +87,10 @@ class SdkRegistrationService(
                 isEditor = build.isEditor
             )
         }
+        // commit 뒤에 알린다. 인스턴스의 접속 시각과 빌드(생성·version 변경)가 함께 바뀐다.
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
+        projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_BUILDS)
+        return response
     }
 
     /**
@@ -145,15 +152,15 @@ class SdkRegistrationService(
     }
 
     /**
-     * development build 는 같은 (프로젝트, 버전)의 non-editor 행을 그대로 쓴다. editor 는 프로젝트의 editor
-     * 행 하나를 쓴다. 둘 다 없으면 만든다.
+     * development build 는 같은 (프로젝트, 버전)의 non-editor 행을, editor 는 같은 (프로젝트, 버전)의 editor 행을
+     * 쓴다(ARTEL-1180). 없으면 만든다. 같은 버전의 두 행은 서로 덮지 않는다(ARTEL-1014) — editor 는 버전을 올리지
+     * 않고도 계속 바뀌는 작업 상태라서, 같은 버전 재등록은 그 editor 행의 스캔을 덮는다.
      *
-     * 있는 행은 version 이 바뀌었거나 스캔이 실려 있을 때만 저장한다. development build 는 같은 version 으로
-     * 찾았으므로 version 이 바뀌지 않는다. editor 행은 등록마다 보고된 version 을 따라간다. 스캔이 없는 등록은
-     * 앞 스캔을 지우지 않는다. 기존 행의 UPDATE는 유니크 인덱스와 충돌하지 않는다.
+     * 있는 행은 스캔이 실려 있을 때만 저장한다. 같은 version 으로 찾았으므로 version 은 바뀌지 않는다. 스캔이 없는
+     * 등록은 앞 스캔을 지우지 않는다.
      *
      * 조회 후 저장 사이에 경합이 난다. 유니크 인덱스(`uk_game_build_project_version`,
-     * `uk_game_build_project_editor`)가 그 충돌을 예외로 만들고, 여기서 다시 읽어 재시도한다. 재시도마다 조회를
+     * `uk_game_build_project_editor_version`)가 그 충돌을 예외로 만들고, 여기서 다시 읽어 재시도한다. 재시도마다 조회를
      * 새로 해야 이미 만들어진 행을 찾아 끝날 수 있다.
      */
     private suspend fun findOrCreateBuild(
@@ -167,7 +174,7 @@ class SdkRegistrationService(
         while (true) {
             try {
                 val existing = if (isEditor) {
-                    buildRepository.findEditor(projectId)
+                    buildRepository.findEditorByVersion(projectId, version)
                 } else {
                     buildRepository.findNonEditorByVersion(projectId, version)
                 }

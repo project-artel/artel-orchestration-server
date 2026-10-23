@@ -72,8 +72,7 @@ data class OpenAiProperties(
 }
 
 /**
- * agent-server 가 들고 있는 key 와 카탈로그 캐시를 비우는 호출. `artel.agent.base-url` 은 다른 agent 호출도
- * 쓰는 값이고, 그쪽은 아직 `@Value` 로 읽는다.
+ * agent-server HTTP 및 WebSocket 호출 설정.
  */
 @ConfigurationProperties("artel.agent")
 data class AgentServerProperties(
@@ -90,7 +89,24 @@ data class AgentServerProperties(
      * `GET {baseUrl}/macros/grammar` 와 `POST {baseUrl}/macros/check` 의 응답 상한(ARTEL-1088). 검사는 parser 와
      * selector 검사뿐이라 LLM 을 부르지 않는다. 개발자의 에이전트가 이 응답을 기다린다.
      */
-    val macroTimeout: Duration = Duration.ofSeconds(10)
+    val macroTimeout: Duration = Duration.ofSeconds(10),
+    /** Agent session WebSocket base URL. */
+    val wsBaseUrl: String = "ws://localhost:8000",
+    /** Null preserves the legacy knowledge backfill timeout fallback. */
+    val embedTimeout: Duration? = null,
+    /** Timeout for `POST /scenario-steps/phrase`. */
+    val stepPhrasingTimeout: Duration = Duration.ofSeconds(20),
+    /** Document extraction settings under `artel.agent.extract`. */
+    val extract: AgentExtractProperties = AgentExtractProperties()
+)
+
+data class AgentExtractProperties(
+    /** Whether uploaded documents are sent to the Agent. */
+    val enabled: Boolean = true,
+    /** Timeout for `POST /extract`. */
+    val timeout: Duration = Duration.ofMinutes(3),
+    /** Empty delegates model selection to the Agent. */
+    val model: String = ""
 )
 
 /** 이 문구 중 하나를 (대소문자 무시하고) 담은 `ARTEL_SECRETS_KEY` 는 예시 값을 그대로 둔 것으로 본다. */

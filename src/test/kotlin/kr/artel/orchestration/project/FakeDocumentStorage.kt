@@ -1,6 +1,7 @@
 package kr.artel.orchestration.project
 
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.project.storage.UrlAudience
 import kr.artel.orchestration.project.storage.DocumentStorageException
 import kr.artel.orchestration.project.storage.PresignedDownload
 import kr.artel.orchestration.project.storage.PresignedUpload
@@ -69,9 +70,11 @@ class FakeDocumentStorage : DocumentStorage {
     override fun presignDownload(
         objectKey: String,
         fileName: String,
-        ttl: Duration?
+        ttl: Duration?,
+        audience: UrlAudience
     ) = PresignedDownload(
-        url = "https://fake-storage.test/$objectKey?download=$fileName",
+        url = (if (audience == UrlAudience.SERVER) "http://fake-storage.internal" else "https://fake-storage.test") +
+            "/$objectKey?download=$fileName",
         // 만료 시각을 요청된 수명에서 그대로 계산한다. TTL이 런 데드라인을 넘는지 검증하는
         // 테스트가 이 값을 읽는다.
         expiresAt = FIXED_NOW.plus(ttl ?: DEFAULT_DOWNLOAD_TTL)

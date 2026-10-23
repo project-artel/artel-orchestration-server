@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaRunRepository
@@ -36,6 +38,7 @@ class TestCaseVerdictService(
     private val projectAccessService: ProjectAccessService,
     private val objectMapper: ObjectMapper,
     private val clock: Clock,
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
 ) {
     private val logger = LoggerFactory.getLogger(TestCaseVerdictService::class.java)
 
@@ -47,8 +50,8 @@ class TestCaseVerdictService(
      * TC 배지를 바꾼다. 케이스가 이 try 의 프로젝트에 없거나 `BROKEN` 이면 아무것도 하지 않는다. BROKEN 은 그 게임 빌드의 몫으로 본다.
      *
      * 판정은 **그 게임 빌드에 든 케이스에만** 적는다. 그 빌드에 버전 몫이 없는 케이스, 게임 빌드를 정할 수 없는
-     * 실행은 TC 에 아무것도 남기지 않는다 — 스텝 결과는 qa_log 에 이미 있다. editor 실행은 editor 가 보고한
-     * 버전과 같은 게임 빌드의 판정이다([judgedBuildId]).
+     * 실행은 TC 에 아무것도 남기지 않는다 — 스텝 결과는 qa_log 에 이미 있다. editor 실행은 그 editor 버전에 TC 가
+     * 있으면 그 버전의, 없으면 같은 version 의 게임 빌드의 판정이다([judgedBuildId]).
      *
      * **QA 를 멈추지 않는다.** 여기서 난 오류는 로그만 남긴다 — 상태 반영이 실패했다고 실행 중인 시나리오를
      * 끊으면 잃는 것이 더 크다.
@@ -73,11 +76,18 @@ class TestCaseVerdictService(
                 logger.info("TC {} 는 게임 빌드 {} 에서 BROKEN 이라 판정을 옮기지 않는다", testCaseId, gameBuildId)
                 return
             }
+            // 이 버전에서 직접 본 판정이다. 앞 버전에서 이어받았던 표시는 지운다(ARTEL-1180).
             versions.save(
-                version.copy(verificationStatus = status.name, verifiedAt = Instant.now(clock), verdictQaLogId = verdictLogId)
+                version.copy(
+                    verificationStatus = status.name,
+                    verifiedAt = Instant.now(clock),
+                    verdictQaLogId = verdictLogId,
+                    verdictCarriedFromBuildId = null,
+                )
             )
             testCases.markLastVerifiedBuild(testCaseId, gameBuildId)
             versions.syncIdentities(listOf(testCaseId))
+            projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // transaction 없음
             val payload = objectMapper.createObjectNode()
                 .put("case_id", testCaseId)
                 .put("verification_status", status.name)
@@ -97,10 +107,7 @@ class TestCaseVerdictService(
         }
     }
 
-    /**
-     * 이 실행의 판정이 속할 게임 빌드. qa_run 이 붙은 build 이고, editor 면 editor 가 보고한 버전과 같은 게임 빌드다
-     * (ARTEL-1014 의 editor 행은 게임 버전이 아니다). 그런 빌드가 아직 없으면 null 이다.
-     */
+    /** 이 실행의 판정이 속할 버전. 규칙은 [TestCaseReader.judgedBuildId] 에 있다. */
     private suspend fun judgedBuildId(qaTry: QaTryEntity): Long? =
         reader.judgedBuildId(qaTry.qaRunId?.let { qaRuns.findById(it) }?.gameBuildId)
 
@@ -123,6 +130,8 @@ class TestCaseVerdictService(
                 qaRunId = row.verdictQaRunId?.toString(),
                 qaTryId = row.verdictQaTryId?.toString(),
                 verdictLogId = row.verdictQaLogId?.toString(),
+                isEditor = row.isEditor,
+                verdictCarriedFromBuildId = row.verdictCarriedFromBuildId?.toString(),
             )
         }.toList()
         return CaseVerdictHistoryResponse(testCaseId = testCaseId.toString(), items = items)

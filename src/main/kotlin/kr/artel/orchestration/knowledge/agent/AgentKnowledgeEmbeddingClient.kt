@@ -2,14 +2,14 @@ package kr.artel.orchestration.knowledge.agent
 
 import io.netty.channel.ChannelOption
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
+import kr.artel.orchestration.settings.config.AgentServerProperties
+import kr.artel.orchestration.knowledge.config.KnowledgeBackfillProperties
 import org.springframework.http.MediaType
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.awaitBody
 import reactor.netty.http.client.HttpClient
-import java.time.Duration
 
 /**
  * [KnowledgeEmbeddingAgent]의 HTTP 구현. `AgentExtractClient`와 같은 자리·같은 방식이다.
@@ -19,10 +19,11 @@ import java.time.Duration
  */
 @Component
 class AgentKnowledgeEmbeddingClient(
-    @Value("" +
-            "\${artel.agent.base-url}") private val agentBaseUrl: String,
-    @Value("\${artel.knowledge.backfill.timeout:PT2M}") private val responseTimeout: Duration
+    properties: AgentServerProperties,
+    backfill: KnowledgeBackfillProperties
 ) : KnowledgeEmbeddingAgent {
+    private val agentBaseUrl = properties.baseUrl
+    private val responseTimeout = backfill.timeout
 
     private val logger = LoggerFactory.getLogger(AgentKnowledgeEmbeddingClient::class.java)
 

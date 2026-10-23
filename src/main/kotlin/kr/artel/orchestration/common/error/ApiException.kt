@@ -88,3 +88,6 @@ open class UpstreamUnavailableException(
     code: String = "upstream_unavailable",
     cause: Throwable? = null,
 ) : ApiException(HttpStatus.SERVICE_UNAVAILABLE, code, message, ErrorSeverity.TRANSIENT, cause)
+
+open class PayloadTooLargeException(message: String, code: String = "payload_too_large") :
+    ApiException(HttpStatus.PAYLOAD_TOO_LARGE, code, message)

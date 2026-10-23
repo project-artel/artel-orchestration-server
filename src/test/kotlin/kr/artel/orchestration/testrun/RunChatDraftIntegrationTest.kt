@@ -137,7 +137,7 @@ class RunChatDraftIntegrationTest {
                 avatarUrl = null,
                 email = null,
             )
-        )!!
+        )
         return user.userId.toLong() to jwtService.issue(user)
     }
 
@@ -145,11 +145,11 @@ class RunChatDraftIntegrationTest {
         val now = java.time.Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "draft-project", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = project.id!!, appUserId = appUserId, role = "OWNER", createdAt = now)
         )
-        return project.id!!
+        return project.id
     }
 
     /** 말을 보내고 응답 상태와 본문을 돌려준다. draft 가 있는 동안의 거절(409)도 그대로 본다. */
@@ -219,6 +219,8 @@ class RunChatDraftIntegrationTest {
         val second = draft(client, projectId, runId, token)
         assertThat(second.map { it.draftId to it.title }).containsExactly("new-1" to "다시 쓴 draft")
         assertThat(second.single().steps).hasSize(2)
+        // 방식을 싣지 않은 결과는 새 draft 에서 ORDERED 이고, JSON 에는 항상 값이 실린다(ARTEL-1109).
+        assertThat(second.single().executionMode).isEqualTo(kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode.ORDERED)
         // 화면이 어디가 바뀌었는지 칠할 기준은 고치기 전의 draft 다.
         assertThat(second.single().baseSteps!!.map { it.action }).containsExactly("메뉴를 연다")
         assertThat(first.single().baseSteps).isNull()

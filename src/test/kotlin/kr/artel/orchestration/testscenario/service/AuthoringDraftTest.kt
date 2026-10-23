@@ -3,6 +3,7 @@ package kr.artel.orchestration.testscenario.service
 import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
 import kr.artel.orchestration.testscenario.dto.DraftScenarioEdit
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -135,5 +136,48 @@ class AuthoringDraftTest {
         draft.accept(7, listOf(result("또 고친 흐름", 4, id = 7)), emptyList(), saved)
         assertThat(draft.list().map { it.draftId to it.baseSteps?.map { s -> s.action } })
             .containsExactly("new-1" to listOf("do 1"), "edit-7" to listOf("do 2"))
+    }
+
+    private fun freeResult(title: String, id: Long? = null) =
+        result(title, 1, id = id).copy(executionMode = ScenarioExecutionMode.FREE)
+
+    @Test
+    fun `결과가 FREE 면 draft 도 FREE 이고, 방식이 없는 새 draft 는 ORDERED 다`() {
+        val draft = AuthoringDraft()
+
+        draft.accept(null, listOf(freeResult("자유 흐름"), result("보통 흐름", 2)), emptyList())
+
+        assertThat(draft.list().map { it.executionMode })
+            .containsExactly(ScenarioExecutionMode.FREE, ScenarioExecutionMode.ORDERED)
+    }
+
+    @Test
+    fun `방식이 없는 결과는 고치는 시나리오의 저장된 방식을 따르고, 이미 있는 draft 는 그 방식을 지킨다`() {
+        val draft = AuthoringDraft()
+
+        draft.accept(7, listOf(result("고친 흐름", 1, id = 7)), emptyList(), savedMode = ScenarioExecutionMode.FREE)
+        assertThat(draft.list().single().executionMode).isEqualTo(ScenarioExecutionMode.FREE)
+
+        // 저장된 방식을 다시 주지 않아도 이미 있는 draft 의 방식이 남는다.
+        draft.accept(7, listOf(result("또 고친 흐름", 2, id = 7)), emptyList())
+        assertThat(draft.list().single().executionMode).isEqualTo(ScenarioExecutionMode.FREE)
+
+        // 새 draft 는 저장된 방식을 물려받지 않는다.
+        draft.accept(null, listOf(result("새 흐름", 3)), emptyList(), savedMode = ScenarioExecutionMode.FREE)
+        assertThat(draft.list().last().executionMode).isEqualTo(ScenarioExecutionMode.ORDERED)
+    }
+
+    @Test
+    fun `사람이 본문을 고쳐도 방식은 그대로이고, 겹친 모습과 승인할 결과에도 실린다`() {
+        val draft = AuthoringDraft()
+        draft.accept(7, listOf(freeResult("자유 흐름", id = 7)), emptyList())
+
+        val edited = draft.update("edit-7", DraftScenarioEdit(title = "사람이 고침"))!!
+
+        assertThat(edited.executionMode).isEqualTo(ScenarioExecutionMode.FREE)
+        assertThat(edited.toResult().executionMode).isEqualTo(ScenarioExecutionMode.FREE)
+        assertThat(draft.overlay(listOf(current(7, "7 원본"))).single().executionMode)
+            .isEqualTo(ScenarioExecutionMode.FREE)
+        assertThat(draft.draftsOnly().single().executionMode).isEqualTo(ScenarioExecutionMode.FREE)
     }
 }

@@ -90,7 +90,7 @@ class QaActionDispatchService(
                 logService.publish(inbound)
                 logService.publish(QaLogAppendResult(outboundResponse, true))
                 true
-            } ?: false
+            }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -164,7 +164,7 @@ class QaActionDispatchService(
                 else spec.bind("message", message)
             }
             .bind("payload", objectMapper.writeValueAsString(payload))
-            .map { row -> requireNotNull(row.get("id", java.lang.Long::class.java)).toLong() }
+            .map { row -> requireNotNull(row.get("id", Long::class.javaObjectType)) }
             .one()
             .awaitSingle()
         return requireNotNull(logRepository.findById(id))

@@ -117,7 +117,7 @@ class EvidenceJoinTest {
         assertThat(ambiguous).isNotEmpty
         assertThat(ambiguous).allSatisfy {
             assertThat(it.spawn!!.field).isNull()
-            assertThat(it.spawn!!.scenePath).isNull()
+            assertThat(it.spawn.scenePath).isNull()
             assertThat(it.gaps).contains(EvidenceGap.SPAWN_ORIGIN_AMBIGUOUS.wire)
         }
         // 정확히 귀속된 자리는 그대로 남는다 — 한 씬이 흐리다고 다른 씬의 좋은 귀속까지 버리지 않는다.

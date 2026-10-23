@@ -10,8 +10,15 @@ import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.game.entity.GameBuildEntity
 import kr.artel.orchestration.game.entity.GameInstanceEntity
+import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.issue.folder.IssueFolderCloneRequest
+import kr.artel.orchestration.issue.folder.IssueFolderItemsRequest
+import kr.artel.orchestration.issue.folder.IssueFolderRequest
+import kr.artel.orchestration.issue.folder.IssueFolderService
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.issue.entity.IssueEntity
 import kr.artel.orchestration.issue.repository.IssueRepository
@@ -64,6 +71,8 @@ class IssueIntegrationTest {
     @Autowired private lateinit var qaTryRepository: QaTryRepository
     @Autowired private lateinit var qaRunRepository: QaRunRepository
     @Autowired private lateinit var testRunRepository: TestRunRepository
+    @Autowired private lateinit var gameBuildRepository: GameBuildRepository
+    @Autowired private lateinit var issueFolderService: IssueFolderService
     @Autowired private lateinit var gameInstanceRepository: GameInstanceRepository
     @Autowired private lateinit var testScenarioRepository: TestScenarioRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
@@ -202,6 +211,98 @@ class IssueIntegrationTest {
         assertThat(byId.getValue(standaloneIssueId.toString()).qaRunId).isNull()
     }
 
+    /**
+     * 목록 한 줄만 보고도 어느 빌드의 어느 TR · 시나리오에서 나왔는지 알 수 있어야 한다. 빌드는 run 이 고른 것을
+     * 먼저 보고 없으면 TR 의 빌드로 본다. 같은 규칙으로 거르고 센다.
+     */
+    @Test
+    fun `이슈는 나온 빌드 · TR · 시나리오를 싣고 그것으로 거르고 센다`(): Unit = runBlocking {
+        val owner = signIn("42", "octocat")
+        val seed = seedProject(owner)
+        val now = Instant.now()
+        val oldBuild = gameBuildRepository.save(GameBuildEntity(projectId = seed.projectId, version = "1.0", createdAt = now, updatedAt = now)).id!!
+        val newBuild = gameBuildRepository.save(GameBuildEntity(projectId = seed.projectId, version = "1.1", label = "hotfix", createdAt = now, updatedAt = now)).id!!
+        // TR 은 1.0 에 있지만 run 이 1.1 을 골랐다 — 이슈는 1.1 에서 나온 것이다.
+        val trOld = testRunRepository.save(TestRunEntity(projectId = seed.projectId, name = "전투 TR", gameBuildId = oldBuild)).id!!
+        val runPicked = seedQaRun(seed, trOld, gameBuildId = newBuild)
+        val runInherited = seedQaRun(seed, trOld)
+        val fromPicked = seedIssue(seedQaTry(seed, qaRunId = runPicked), "BLOCKER", "1.1 에서 나옴")
+        val fromInherited = seedIssue(seedQaTry(seed, qaRunId = runInherited), "MAJOR", "TR 빌드 1.0 에서 나옴")
+        val standalone = seedIssue(seed.qaTryId, "MINOR", "run 없이 나옴")
+
+        val byId = issueService.listByProject(seed.projectId, seed.ownerId, null, null, null, 50).items.associateBy { it.id }
+        val picked = byId.getValue(fromPicked.toString()).origin!!
+        assertThat(picked.buildVersion).isEqualTo("1.1")
+        assertThat(picked.buildLabel).isEqualTo("hotfix")
+        assertThat(picked.testRunName).isEqualTo("전투 TR")
+        assertThat(picked.testScenarioId).isEqualTo(seed.testScenarioId.toString())
+        assertThat(byId.getValue(fromInherited.toString()).origin!!.buildVersion).isEqualTo("1.0")
+        val alone = byId.getValue(standalone.toString()).origin!!
+        assertThat(alone.testRunId).isNull()
+        assertThat(alone.gameBuildId).isNull()
+
+        val onNew = issueService.listByProject(seed.projectId, seed.ownerId, null, null, null, 50, gameBuildId = newBuild)
+        assertThat(onNew.items.map { it.title }).containsExactly("1.1 에서 나옴")
+        val titled = issueService.listByProject(seed.projectId, seed.ownerId, null, null, null, 50, query = "tr 빌드")
+        assertThat(titled.items.map { it.title }).containsExactly("TR 빌드 1.0 에서 나옴")
+        val noBuild = issueService.listByProject(seed.projectId, seed.ownerId, null, null, null, 50, unversioned = true)
+        assertThat(noBuild.items.map { it.title }).containsExactly("run 없이 나옴")
+        val onTr = issueService.listByProject(seed.projectId, seed.ownerId, null, null, null, 50, testRunId = trOld)
+        assertThat(onTr.items.map { it.title }).containsExactlyInAnyOrder("1.1 에서 나옴", "TR 빌드 1.0 에서 나옴")
+
+        issueService.resolve(fromInherited, seed.ownerId)
+        val facets = issueService.facetsByProject(seed.projectId, seed.ownerId, null)
+        assertThat(facets.total).isEqualTo(3)
+        assertThat(facets.builds.map { Triple(it.version, it.count, it.openCount) })
+            .containsExactlyInAnyOrder(Triple("1.1", 1L, 1L), Triple("1.0", 1L, 0L), Triple(null, 1L, 1L))
+        assertThat(facets.testRuns.single { it.testRunId == trOld.toString() }.count).isEqualTo(2)
+        assertThat(facets.severities).containsEntry("BLOCKER", 1L).containsEntry("MAJOR", 1L).containsEntry("MINOR", 1L)
+        assertThat(issueService.facetsByProject(seed.projectId, seed.ownerId, "OPEN").total).isEqualTo(2)
+        // 빌드 · TR 을 주면 그 안에서만 센다.
+        val onNewFacets = issueService.facetsByProject(seed.projectId, seed.ownerId, null, gameBuildId = newBuild)
+        assertThat(onNewFacets.total).isEqualTo(1)
+        assertThat(onNewFacets.severities).containsOnlyKeys("BLOCKER")
+        val onTrFacets = issueService.facetsByProject(seed.projectId, seed.ownerId, null, testRunId = trOld)
+        assertThat(onTrFacets.severities).containsOnlyKeys("BLOCKER", "MAJOR")
+    }
+
+    /** 우클릭으로 만든 folder 에 이슈를 담고, 그 folder 로 목록을 거르고, 복제 · 이동 · 삭제한다(ARTEL-1114). */
+    @Test
+    fun `이슈 folder 에 담고 거르고 복제하고 지운다`(): Unit = runBlocking {
+        val owner = signIn("42", "octocat")
+        val seed = seedProject(owner)
+        val first = seedIssue(seed.qaTryId, "MAJOR", "담을 이슈")
+        seedIssue(seed.qaTryId, "MINOR", "안 담을 이슈")
+        val combat = issueFolderService.create(seed.projectId, seed.ownerId, IssueFolderRequest(name = "전투"))
+        val child = issueFolderService.create(seed.projectId, seed.ownerId, IssueFolderRequest(name = "조합", parentId = combat.id))
+
+        assertThatThrownBy { runBlocking { issueFolderService.create(seed.projectId, seed.ownerId, IssueFolderRequest(name = "전투")) } }
+            .isInstanceOf(ConflictException::class.java)
+        assertThatThrownBy {
+            runBlocking { issueFolderService.update(seed.projectId, seed.ownerId, combat.id.toLong(), IssueFolderRequest(name = "전투", parentId = child.id)) }
+        }.isInstanceOf(BadRequestException::class.java)
+
+        val filled = issueFolderService.addItems(seed.projectId, seed.ownerId, child.id.toLong(), IssueFolderItemsRequest(listOf(first.toString())))
+        assertThat(filled.issueCount).isEqualTo(1)
+        val inFolder = issueService.listByProject(seed.projectId, seed.ownerId, null, null, null, 50, folderId = child.id.toLong())
+        assertThat(inFolder.items.map { it.title }).containsExactly("담을 이슈")
+
+        val copy = issueFolderService.clone(seed.projectId, seed.ownerId, combat.id.toLong(), IssueFolderCloneRequest())
+        assertThat(copy.name).isEqualTo("전투 사본")
+        val all = issueFolderService.list(seed.projectId, seed.ownerId).items
+        assertThat(all.map { it.name }).containsExactlyInAnyOrder("전투", "조합", "전투 사본", "조합")
+        assertThat(all.filter { it.name == "조합" }.map { it.issueCount }).containsOnly(1)
+
+        issueFolderService.removeItems(seed.projectId, seed.ownerId, child.id.toLong(), IssueFolderItemsRequest(listOf(first.toString())))
+        issueFolderService.delete(seed.projectId, seed.ownerId, combat.id.toLong())
+        assertThat(issueFolderService.list(seed.projectId, seed.ownerId).items.map { it.name }).containsExactlyInAnyOrder("전투 사본", "조합")
+        assertThat(issueRepository.findById(first)).isNotNull()
+
+        val stranger = signIn("43", "stranger")
+        assertThatThrownBy { runBlocking { issueFolderService.list(seed.projectId, stranger.userId.toLong()) } }
+            .isInstanceOf(NotFoundException::class.java)
+    }
+
     @Test
     fun `resolving records who and when, and asking twice does not move the timestamp`(): Unit = runBlocking {
         val owner = signIn("42", "octocat")
@@ -303,7 +404,7 @@ class IssueIntegrationTest {
         val now = Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "issue-project", genre = "ACTION", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(
                 projectId = project.id!!,
@@ -313,21 +414,21 @@ class IssueIntegrationTest {
             )
         )
         val scenario = testScenarioRepository.save(
-            TestScenarioEntity(projectId = project.id!!)
-        )!!
+            TestScenarioEntity(projectId = project.id)
+        )
         val instance = gameInstanceRepository.save(
             GameInstanceEntity(
-                projectId = project.id!!,
+                projectId = project.id,
                 name = "instance",
                 platform = "UNITY",
                 sdkUuid = UUID.randomUUID().toString(),
                 createdAt = now,
                 updatedAt = now
             )
-        )!!
+        )
         val seed = Seed(
             ownerId = ownerId,
-            projectId = project.id!!,
+            projectId = project.id,
             testScenarioId = scenario.id!!,
             gameInstanceId = instance.id!!,
             qaTryId = 0
@@ -353,23 +454,24 @@ class IssueIntegrationTest {
                 startedAt = now,
                 completedAt = if (status == "RUNNING") null else now
             )
-        )!!.id!!
+        ).id!!
     }
 
     /** run 하나(ARTEL-259 최소형). qa_try 를 여기 붙여야 `IssueResponse.qaRunId` 가 문자열을 낸다. */
-    private suspend fun seedQaRun(seed: Seed): Long {
+    private suspend fun seedQaRun(seed: Seed, testRunId: Long? = null, gameBuildId: Long? = null): Long {
         val now = Instant.now()
-        val testRun = testRunRepository.save(TestRunEntity(projectId = seed.projectId, name = "런"))!!
+        val runOf = testRunId ?: testRunRepository.save(TestRunEntity(projectId = seed.projectId, name = "런")).id!!
         return qaRunRepository.save(
             QaRunEntity(
-                testRunId = testRun.id!!,
+                testRunId = runOf,
+                gameBuildId = gameBuildId,
                 gameInstanceId = seed.gameInstanceId,
                 startedBy = seed.ownerId,
                 status = "COMPLETED",
                 startedAt = now,
                 completedAt = now
             )
-        )!!.id!!
+        ).id!!
     }
 
     /**
@@ -388,7 +490,7 @@ class IssueIntegrationTest {
                 createdAt = Instant.now(),
                 updatedAt = Instant.now()
             )
-        )!!.id!!
+        ).id!!
 
     private data class Seed(
         val ownerId: Long,
@@ -408,7 +510,7 @@ class IssueIntegrationTest {
                 avatarUrl = null,
                 email = "$login@example.com"
             )
-        )!!
+        )
 
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(5)

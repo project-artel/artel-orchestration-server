@@ -137,7 +137,7 @@ class ScreenCaptureService(
      */
     private suspend fun nextActionId(): Long =
         databaseClient.sql("SELECT nextval(pg_get_serial_sequence('qa_log', 'id')) AS id")
-            .map { row -> requireNotNull(row.get("id", java.lang.Long::class.java)).toLong() }
+            .map { row -> requireNotNull(row.get("id", Long::class.javaObjectType)) }
             .one()
             .awaitSingle()
 

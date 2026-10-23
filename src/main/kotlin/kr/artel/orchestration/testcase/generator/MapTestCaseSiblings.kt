@@ -49,27 +49,44 @@ object MapTestCaseSiblings {
      * 값은 (빌려 올 기능, 그 호출이 일어나는 조건들). 조건은 **호출자의 것과 불린 쪽의 것 둘 다**다 —
      * 그 결과가 나려면 부르는 조건도 참이어야 한다.
      */
-    fun of(capabilityId: Long, edges: List<ContentMapCallEdge>): List<Borrowed> {
-        val callers = edges.filter { it.capabilityId == capabilityId }
-        if (callers.isEmpty()) return emptyList()
-        // **생명주기 메서드는 공통 호출자가 아니다**(ARTEL-680). 위 주석이 걱정한 `Update()` 를
-        // 한 단계 제한으로는 못 막는다 — 직접 호출자가 이미 `Update()` 인 경우가 있다.
-        //
-        // 실측(지도 31, Map_scene): `CharacterMove()`(Return 입력)와 `ShowBattle()`(배경 갱신)이
-        // 둘 다 `Update()` 아래 있다. 그래서 Return 케이스가 배경 갱신 결과를 빌려 갔고, 조작
-        // 하나에 케이스 열둘이 매달렸다. 저작이 "첫 스테이지"에 5스테이지 케이스를 고른 원인이다.
-        //
-        // 같은 프레임 루프에서 도는 것은 **형제일 뿐 인과가 아니다.** 이 파일이 이미 진입점 공유로
-        // 겪은 일과 같은 것이고(위의 "RightArrow 를 누르면 배경이 바뀐다"), 유니티가 정한 이름이라
-        // 게임에 붙는 규칙이 아니다.
-        val callerMethods = callers.map { sourceMethod(it.callerMethodId) }
-            .filterNot { it.substringAfterLast('|') in LIFECYCLE }
-            .toSet()
-        if (callerMethods.isEmpty()) return emptyList()
-        return edges
-            .filter { sourceMethod(it.callerMethodId) in callerMethods && it.capabilityId != capabilityId }
-            .map { Borrowed(it.capabilityId, it.callerCondition, it.conditionTree) }
-            .distinctBy { it.capabilityId }
+    fun of(capabilityId: Long, edges: List<ContentMapCallEdge>): List<Borrowed> = Index(edges).of(capabilityId)
+
+    /**
+     * 지도 하나치 호출 관계를 **한 번만** 풀어 둔 것(ARTEL-1187).
+     *
+     * 예전에는 기능 행마다 [of] 가 호출 관계 전부를 처음부터 훑고, 훑을 때마다 [sourceMethod] 로 메서드 이름을
+     * 다시 풀었다. 실측 project 1 · 1.4.0 은 기능 7,863개에 호출 관계 404,131개라, TC 생성이 8분 넘게 이
+     * 계산에 묶였다. 여기서는 이름을 관계마다 한 번 풀고, 기능별 · 메서드별로 묶어 둔다.
+     *
+     * 결과는 [of] 와 같다 — 순서는 호출 관계의 원래 순서이고, 같은 기능은 처음 나온 것 하나만 남긴다.
+     */
+    class Index(private val edges: List<ContentMapCallEdge>) {
+        private val sources: List<String> = edges.map { sourceMethod(it.callerMethodId) }
+        private val byCapability: Map<Long, List<Int>> = edges.indices.groupBy { edges[it].capabilityId }
+        private val bySource: Map<String, List<Int>> = edges.indices.groupBy { sources[it] }
+
+        fun of(capabilityId: Long): List<Borrowed> {
+            val callers = byCapability[capabilityId] ?: return emptyList()
+            // **생명주기 메서드는 공통 호출자가 아니다**(ARTEL-680). 위 주석이 걱정한 `Update()` 를
+            // 한 단계 제한으로는 못 막는다 — 직접 호출자가 이미 `Update()` 인 경우가 있다.
+            //
+            // 실측(지도 31, Map_scene): `CharacterMove()`(Return 입력)와 `ShowBattle()`(배경 갱신)이
+            // 둘 다 `Update()` 아래 있다. 그래서 Return 케이스가 배경 갱신 결과를 빌려 갔고, 조작
+            // 하나에 케이스 열둘이 매달렸다. 저작이 "첫 스테이지"에 5스테이지 케이스를 고른 원인이다.
+            //
+            // 같은 프레임 루프에서 도는 것은 **형제일 뿐 인과가 아니다.** 이 파일이 이미 진입점 공유로
+            // 겪은 일과 같은 것이고(위의 "RightArrow 를 누르면 배경이 바뀐다"), 유니티가 정한 이름이라
+            // 게임에 붙는 규칙이 아니다.
+            val callerMethods = callers.map { sources[it] }
+                .filterNot { it.substringAfterLast('|') in LIFECYCLE }
+                .toSet()
+            if (callerMethods.isEmpty()) return emptyList()
+            return callerMethods.flatMap { bySource[it].orEmpty() }
+                .sorted()
+                .filter { edges[it].capabilityId != capabilityId }
+                .map { Borrowed(edges[it].capabilityId, edges[it].callerCondition, edges[it].conditionTree) }
+                .distinctBy { it.capabilityId }
+        }
     }
 
     /**

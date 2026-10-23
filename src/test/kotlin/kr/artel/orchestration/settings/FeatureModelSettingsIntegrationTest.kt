@@ -10,7 +10,10 @@ import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.config.InternalApiServer
+import kr.artel.orchestration.settings.repository.PlatformSettingRepository
+import kr.artel.orchestration.settings.service.ANTHROPIC_API_KEY_SETTING
 import kr.artel.orchestration.settings.service.FeatureModelService
+import kr.artel.orchestration.settings.service.SecretCipher
 import kr.artel.orchestration.support.testAppUser
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
@@ -29,6 +32,7 @@ import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.publisher.Mono
 import reactor.netty.DisposableServer
 import reactor.netty.http.server.HttpServer
+import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -45,6 +49,7 @@ class FeatureModelSettingsIntegrationTest {
         private const val ENABLED = "claude/claude-opus-5-5"
         private const val DISABLED = "claude/claude-haiku-5-5"
         private const val JEV = "typesafe/jev-1.13"
+        private const val GPT = "gpt/gpt-6.1-sol"
 
         private val invalidations = AtomicInteger()
 
@@ -62,6 +67,7 @@ class FeatureModelSettingsIntegrationTest {
         fun settings(registry: DynamicPropertyRegistry) {
             registry.add("artel.agent.base-url") { "http://localhost:${fakeAgentServer.port()}/internal" }
             registry.add("artel.agent.model") { ENV_MODEL }
+            registry.add("artel.secrets.key") { "test-only-aes-key-that-is-at-least-32-characters" }
         }
     }
 
@@ -75,6 +81,8 @@ class FeatureModelSettingsIntegrationTest {
     @Autowired private lateinit var databaseClient: DatabaseClient
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var featureModelService: FeatureModelService
+    @Autowired private lateinit var platformSettingRepository: PlatformSettingRepository
+    @Autowired private lateinit var secretCipher: SecretCipher
 
     private var adminId: Long = 0
     private var memberId: Long = 0
@@ -195,9 +203,76 @@ class FeatureModelSettingsIntegrationTest {
         assertThat(featureModelService.resolveAuthoringModel()).isEqualTo(ENABLED)
     }
 
+    @Test
+    fun `stores the project agent model, reports the authoring model as its fallback, and null clears it`(): Unit = runBlocking {
+        val empty = call(HttpMethod.GET, "/api/admin/settings/models")
+        assertThat(empty["projectAgentModel"].isNull).isTrue()
+        assertThat(empty["projectAgentFallback"].asText()).isEqualTo(ENV_MODEL)
+        assertThat(empty["keyMissing"]).isEmpty()
+
+        val stored = call(
+            HttpMethod.PUT, "/api/admin/settings/models",
+            """{"scenarioAuthoringModel":null,"decisionModel":null,"projectAgentModel":"$ENABLED"}"""
+        )
+        assertThat(stored["projectAgentModel"].asText()).isEqualTo(ENABLED)
+        assertThat(stored["updatedAt"].isNull).isFalse()
+        assertThat(featureModelService.resolveProjectAgentAdminModel()).isEqualTo(ENABLED)
+        // project agent model 은 agent-server 가 읽지 않는다. 내부 응답의 모양은 그대로다.
+        assertThat(internalModels().fieldNames().asSequence().toList())
+            .containsExactlyInAnyOrder("scenarioAuthoringModel", "decisionModel")
+
+        // 다른 두 필드만 보내면 project agent model 도 지워진다. 세 필드를 늘 함께 보낸다.
+        val cleared = call(HttpMethod.PUT, "/api/admin/settings/models", """{"scenarioAuthoringModel":null,"decisionModel":null}""")
+        assertThat(cleared["projectAgentModel"].isNull).isTrue()
+        assertThat(settingRows()).isZero()
+    }
+
+    @Test
+    fun `an unknown or disabled project agent model is 400`() {
+        for ((model, code) in listOf("no/such-model" to "llm_model_not_found", DISABLED to "llm_model_disabled")) {
+            val (status, body) = exchange(
+                adminSession, HttpMethod.PUT, "/api/admin/settings/models",
+                """{"scenarioAuthoringModel":null,"decisionModel":null,"projectAgentModel":"$model"}"""
+            )
+            assertThat(status).describedAs(model).isEqualTo(400)
+            assertThat(objectMapper.readTree(body)["code"].asText()).describedAs(model).isEqualTo(code)
+        }
+    }
+
+    @Test
+    fun `a project agent model turned off later is skipped and the fallback follows the stored authoring model`(): Unit = runBlocking {
+        call(
+            HttpMethod.PUT, "/api/admin/settings/models",
+            """{"scenarioAuthoringModel":"$ENABLED","decisionModel":null,"projectAgentModel":"$GPT"}"""
+        )
+        assertThat(call(HttpMethod.GET, "/api/admin/settings/models")["projectAgentFallback"].asText()).isEqualTo(ENABLED)
+        setEnabled(GPT, false)
+        assertThat(featureModelService.resolveProjectAgentAdminModel()).isNull()
+        setEnabled(GPT, true)
+        assertThat(featureModelService.resolveProjectAgentAdminModel()).isEqualTo(GPT)
+    }
+
+    @Test
+    fun `keyMissing lists stored models whose route has no platform key, and saving them is still allowed`(): Unit = runBlocking {
+        val stored = call(
+            HttpMethod.PUT, "/api/admin/settings/models",
+            """{"scenarioAuthoringModel":"$ENABLED","decisionModel":"$JEV","projectAgentModel":"$GPT"}"""
+        )
+        // Claude API key 도, OpenRouter key 도 없다. `gpt/` 는 공용 key 가 늘 없다.
+        assertThat(stored["keyMissing"].map { it.asText() }).containsExactly(ENABLED, JEV, GPT)
+
+        platformSettingRepository.upsert(
+            ANTHROPIC_API_KEY_SETTING,
+            secretCipher.encrypt("sk-ant-api03-admin-key-0123456789abcdef-zzzz", ANTHROPIC_API_KEY_SETTING),
+            true, adminId, Instant.now()
+        )
+        assertThat(call(HttpMethod.GET, "/api/admin/settings/models")["keyMissing"].map { it.asText() })
+            .containsExactly(JEV, GPT)
+    }
+
     private fun settingRows(): Long = runBlocking {
         databaseClient.sql("SELECT COUNT(*) AS n FROM platform_setting WHERE setting_key LIKE 'llm.model.%'")
-            .map { row, _ -> row.get("n", java.lang.Long::class.java)!!.toLong() }
+            .map { row, _ -> row.get("n", Long::class.javaObjectType)!! }
             .one().awaitSingle()
     }
 

@@ -171,7 +171,7 @@ class TestScenarioPipelineIntegrationTest {
                 avatarUrl = null,
                 email = null
             )
-        )!!
+        )
         return user.userId.toLong() to jwtService.issue(user)
     }
 
@@ -180,11 +180,11 @@ class TestScenarioPipelineIntegrationTest {
         val now = java.time.Instant.now()
         val project = projectRepository.save(
             ProjectEntity(name = "test-project", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!
+        )
         projectMemberRepository.save(
             ProjectMemberEntity(projectId = project.id!!, appUserId = appUserId, role = "OWNER", createdAt = now)
         )
-        return project.id!!
+        return project.id
     }
 
     /** 참여자 없이 프로젝트만 생성(비참여자 검증용). */
@@ -192,7 +192,7 @@ class TestScenarioPipelineIntegrationTest {
         val now = java.time.Instant.now()
         return projectRepository.save(
             ProjectEntity(name = "no-member", genre = "RPG", createdAt = now, updatedAt = now)
-        )!!.id!!
+        ).id!!
     }
 
     private suspend fun createRun(projectId: Long): Long =
@@ -582,7 +582,7 @@ class TestScenarioPipelineIntegrationTest {
                 projectId = projectId, name = "inst", platform = "UNITY",
                 createdAt = now, updatedAt = now
             )
-        )!!
+        )
         // 종료된(active 아닌) 실행 이력 한 건: uk_qa_try_active_instance(STARTING/RUNNING)와 무관.
         qaTryRepository.save(
             QaTryEntity(

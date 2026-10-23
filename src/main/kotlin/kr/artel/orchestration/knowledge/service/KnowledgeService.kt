@@ -20,6 +20,8 @@ import kr.artel.orchestration.knowledge.repository.KnowledgeEdgeRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeEmbeddingRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeEventRepository
 import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import org.slf4j.LoggerFactory
@@ -72,9 +74,18 @@ class KnowledgeService(
     private val edgeRepository: KnowledgeEdgeRepository,
     private val transactionalOperator: TransactionalOperator,
     private val objectMapper: ObjectMapper,
-    private val clock: Clock
+    private val clock: Clock,
+    private val projectChangeStreamManager: ProjectChangeStreamManager
 ) {
     private val logger = LoggerFactory.getLogger(KnowledgeService::class.java)
+
+    /**
+     * knowledge 그래프 화면이 바뀌었다고 알린다. 화면은 `PRODUCTION` scope 만 읽으므로 실험 scope 의
+     * 쓰기는 알리지 않는다. 반드시 트랜잭션이 commit 된 뒤에 부른다.
+     */
+    private fun notifyKnowledgeChanged(projectId: Long, scope: KnowledgeScope) {
+        if (scope.isProduction) projectChangeStreamManager.notify(projectId, ProjectChangeTopic.KNOWLEDGE)
+    }
 
     /**
      * 한 출처(문서/QA 런)에서 온 knowledge 항목 배치를 저장한다.
@@ -124,6 +135,8 @@ class KnowledgeService(
                 linkItemsToDocumentNode(projectId, scope, documentId, fileName, contentHash, saved)
             }
         }
+        // 배치 전체가 commit 된 뒤 한 번만 알린다.
+        notifyKnowledgeChanged(projectId, scope)
     }
 
     /**
@@ -297,7 +310,8 @@ class KnowledgeService(
             }
             row
         }
-        return KnowledgeMutation.Applied(requireNotNull(saved?.id))
+        notifyKnowledgeChanged(projectId, scope)
+        return KnowledgeMutation.Applied(requireNotNull(saved.id))
     }
 
     /**
@@ -418,9 +432,9 @@ class KnowledgeService(
             }
             logger.info(
                 "knowledge 스코프 수정(그림자 생성): baseline={}, shadow={}, project={}, scope={}, qaTry={}",
-                knowledgeId, shadow?.id, projectId, scope, qaTryId
+                knowledgeId, shadow.id, projectId, scope, qaTryId
             )
-            return KnowledgeMutation.Applied(requireNotNull(shadow?.id))
+            return KnowledgeMutation.Applied(requireNotNull(shadow.id))
         }
 
         val versioned = if (contentChanged) next.copy(version = current.version + 1) else next
@@ -431,6 +445,7 @@ class KnowledgeService(
             }
             if (embeddedTextChanged) embeddingRepository.discardFor(knowledgeId)
         }
+        notifyKnowledgeChanged(projectId, scope)
         logger.info(
             "knowledge 수정: id={}, project={}, scope={}, qaTry={}, version={}, 임베딩 무효화={}",
             knowledgeId, projectId, scope, qaTryId, versioned.version, embeddedTextChanged
@@ -493,9 +508,9 @@ class KnowledgeService(
             }
             logger.info(
                 "knowledge 스코프 삭제(툼스톤 생성): baseline={}, tombstone={}, project={}, scope={}, qaTry={}",
-                knowledgeId, tombstone?.id, projectId, scope, qaTryId
+                knowledgeId, tombstone.id, projectId, scope, qaTryId
             )
-            return KnowledgeMutation.Applied(requireNotNull(tombstone?.id))
+            return KnowledgeMutation.Applied(requireNotNull(tombstone.id))
         }
 
         transactionalOperator.executeAndAwait {
@@ -516,6 +531,7 @@ class KnowledgeService(
             )
             embeddingRepository.discardFor(knowledgeId)
         }
+        notifyKnowledgeChanged(projectId, scope)
         // 지우는 주체가 Agent라 삭제는 반드시 눈에 보여야 한다. 출처는 컬럼에도 남는다.
         logger.info(
             "knowledge 소프트삭제: id={}, project={}, scope={}, qaTry={}",
@@ -578,6 +594,10 @@ class KnowledgeService(
                 embeddingRepository.discardFor(requireNotNull(current.id))
             }
             edges.forEach { edge -> edgeRepository.save(edge.copy(deletedAt = deletedAt)) }
+        }
+        // baseline(운영) 행만 지웠으므로 항상 knowledge 화면에 보이는 변경이다.
+        if (rows.isNotEmpty() || edges.isNotEmpty()) {
+            projectChangeStreamManager.notify(projectId, ProjectChangeTopic.KNOWLEDGE)
         }
         logger.info(
             "문서 삭제로 knowledge 소프트삭제: project={}, document={}, 지운수={}, PART_OF edge 지운수={}",
