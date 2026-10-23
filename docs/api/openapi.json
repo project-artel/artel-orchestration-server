@@ -17858,13 +17858,30 @@
       },
       "RunAuthoringLockResponse": {
         "required": [
-          "locked",
-          "mine"
+          "scenarios"
         ],
         "type": "object",
         "properties": {
-          "locked": {
-            "type": "boolean"
+          "scenarios": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioAuthoringLock"
+            }
+          }
+        }
+      },
+      "ScenarioAuthoringLock": {
+        "required": [
+          "mine",
+          "requestedBy",
+          "requestedByName",
+          "scenarioId",
+          "startedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "scenarioId": {
+            "type": "string"
           },
           "requestedBy": {
             "type": "string"

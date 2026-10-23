@@ -10,7 +10,6 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.support.testAppUser
-import kr.artel.orchestration.testrun.dto.RunChatMessage
 import kr.artel.orchestration.testrun.dto.TestRunCreateRequest
 import kr.artel.orchestration.testrun.service.RunAuthoringLocks
 import kr.artel.orchestration.testrun.service.TestRunChatService
@@ -44,58 +43,72 @@ class RunAuthoringLockIntegrationTest {
     @Autowired private lateinit var objectMapper: ObjectMapper
 
     @Test
-    fun `잠긴 동안 사람의 TS 저장 · 승인 · 런 구성 바꾸기를 423 으로 막고, 풀리면 된다`(): Unit = runBlocking {
+    fun `AI 가 고친 시나리오만 잠그고, 같은 런의 다른 시나리오와 런 구성은 그대로 쓴다`(): Unit = runBlocking {
         val f = fixture()
-        locks.hold(f.runId, f.projectId, f.userId, "${f.userId}:${f.runId}")
+        val other = scenarioRepository.save(
+            TestScenarioEntity(projectId = f.projectId, title = "다른 시나리오", steps = Json.of(objectMapper.writeValueAsString(emptyList<Any>()))),
+        ).id!!
+        runService.setScenarios(f.runId, f.userId, listOf(f.scenarioId, other))
+        val key = "${f.userId}:${f.runId}"
+        locks.hold(f.runId, f.projectId, f.userId, key)
         try {
+            // 턴이 시작했지만 아직 아무것도 고치지 않았다 — 잠긴 것이 없다.
+            scenarioService.testScenarioUpdate(f.userId, f.scenarioId, ScenarioDraft(title = "고치기 전"))
+            locks.lockScenarios(key, listOf(f.scenarioId))
             // 요청한 본인의 손 편집도 막는다 — AI 결과가 끝에 통째로 덮는다.
             val error = assertThrows<LockedException> {
                 runBlocking { scenarioService.testScenarioUpdate(f.userId, f.scenarioId, ScenarioDraft(title = "고침")) }
             }
             assertThat(error.code).isEqualTo(RunAuthoringLocks.RUN_LOCKED)
             assertThrows<LockedException> { runBlocking { scenarioService.testScenarioApprove(f.userId, f.scenarioId, ScenarioDraft(title = "승인")) } }
-            assertThrows<LockedException> { runBlocking { runService.setScenarios(f.runId, f.userId, emptyList()) } }
+            // 같은 런의 다른 시나리오와 런 구성은 막지 않는다.
+            assertThat(scenarioService.testScenarioUpdate(f.userId, other, ScenarioDraft(title = "옆 시나리오")).payload.title).isEqualTo("옆 시나리오")
+            runService.setScenarios(f.runId, f.userId, listOf(other, f.scenarioId))
         } finally {
-            locks.release("${f.userId}:${f.runId}")
+            locks.release(key)
         }
         val saved = scenarioService.testScenarioUpdate(f.userId, f.scenarioId, ScenarioDraft(title = "풀린 뒤"))
         assertThat(saved.payload.title).isEqualTo("풀린 뒤")
     }
 
     @Test
-    fun `다른 사람은 잠긴 런에 챗봇 요청을 보내지 못하고, 잠금은 누가 언제 무엇을 하는지 알려 준다`(): Unit = runBlocking {
+    fun `잠금은 어느 시나리오를 누가 언제부터 무엇을 하며 고치는지 알려 준다`(): Unit = runBlocking {
         val f = fixture()
         val other = member(f.projectId)
-        locks.hold(f.runId, f.projectId, f.userId, "${f.userId}:${f.runId}")
-        locks.stage("${f.userId}:${f.runId}", AuthoringStage.WRITING)
+        val key = "${f.userId}:${f.runId}"
+        locks.hold(f.runId, f.projectId, f.userId, key)
+        locks.stage(key, AuthoringStage.WRITING)
+        assertThat(chatService.authoringLock(other, f.runId).scenarios).isEmpty()
+        locks.lockScenarios(key, listOf(f.scenarioId))
         try {
-            val error = assertThrows<LockedException> {
-                runBlocking { chatService.relay(other, f.runId, RunChatMessage(message = "로그인 넣어 줘")) }
-            }
-            assertThat(error.message).contains("Artel Bot")
-            val seen = chatService.authoringLock(other, f.runId)
-            assertThat(seen.locked).isTrue()
+            val seen = chatService.authoringLock(other, f.runId).scenarios.single()
+            assertThat(seen.scenarioId).isEqualTo(f.scenarioId.toString())
             assertThat(seen.mine).isFalse()
             assertThat(seen.requestedBy).isEqualTo(f.userId.toString())
             assertThat(seen.requestedByName).isNotBlank()
             assertThat(seen.stage).isEqualTo(AuthoringStage.WRITING)
-            assertThat(chatService.authoringLock(f.userId, f.runId).mine).isTrue()
+            assertThat(chatService.authoringLock(f.userId, f.runId).scenarios.single().mine).isTrue()
+            // 다른 사람의 AI 는 이 시나리오를 쓰지 못하고, 같은 세션의 AI 는 쓴다.
+            assertThat(locks.heldByOther(f.scenarioId, "$other:${f.runId}")).isTrue()
+            assertThat(locks.heldByOther(f.scenarioId, key)).isFalse()
         } finally {
-            locks.release("${f.userId}:${f.runId}")
+            locks.release(key)
         }
-        assertThat(chatService.authoringLock(other, f.runId).locked).isFalse()
+        assertThat(chatService.authoringLock(other, f.runId).scenarios).isEmpty()
     }
 
     @Test
     fun `다른 런의 잠금은 이 런을 막지 않는다`(): Unit = runBlocking {
         val f = fixture()
         val g = fixture()
-        locks.hold(g.runId, g.projectId, g.userId, "${g.userId}:${g.runId}")
+        val key = "${g.userId}:${g.runId}"
+        locks.hold(g.runId, g.projectId, g.userId, key)
+        locks.lockScenarios(key, listOf(g.scenarioId))
         try {
             val saved = scenarioService.testScenarioUpdate(f.userId, f.scenarioId, ScenarioDraft(title = "다른 런은 그대로"))
             assertThat(saved.payload.title).isEqualTo("다른 런은 그대로")
         } finally {
-            locks.release("${g.userId}:${g.runId}")
+            locks.release(key)
         }
     }
 

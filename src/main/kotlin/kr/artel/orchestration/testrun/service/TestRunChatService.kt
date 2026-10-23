@@ -81,9 +81,6 @@ class TestRunChatService(
     suspend fun relay(appUserId: Long, runId: Long, message: RunChatMessage) {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
         val key = sessionKey(appUserId, runId)
-        // **다른 사람의 Artel Bot 이 이 런을 고치는 중이면 받지 않는다**(ARTEL-1264). 같은 사람의 앞선 턴은
-        // 아래 Agent 서비스가 "아직 처리 중" 으로 답한다.
-        assertNotLockedByOther(runId, key)
         // **승인 전 draft 가 있으면 새 요청은 받지 않는다**(ARTEL-1074). draft 를 그대로 둔 채 새 요청을 받으면
         // 고칠 대상이 draft 인지 저장된 시나리오인지 갈리고, 결과가 엉뚱한 draft 에 겹친다. 그동안의 말은
         // draft 만 고치는 길([RunChatMessage.draftOnly])로 받는다.
@@ -143,13 +140,19 @@ class TestRunChatService(
     suspend fun applyDraft(appUserId: Long, runId: Long, draftIds: List<String>): DraftApplyResult {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
         val key = sessionKey(appUserId, runId)
-        runLocks.assertWritable(runId)
         val draft = drafts.of(key)
         var applied = 0
         val absorbed = mutableListOf<String>()
         val kept = mutableListOf<String>()
         val refused = mutableListOf<String>()
         for (item in draft.take(draftIds)) {
+            // 다른 사람의 Artel Bot 이 고치는 중인 시나리오는 승인하지 않고 draft 에 남긴다(ARTEL-1264).
+            val target = item.toResult().scenarioId
+            if (target != null && target > 0 && runLocks.heldByOther(target, key)) {
+                draft.restore(item)
+                refused += "'${item.title}' — 다른 사람의 Artel Bot 이 이 시나리오를 고치는 중이라 승인하지 않았습니다."
+                continue
+            }
             val outcome = reconcileService.reconcile(runId, run.projectId, appUserId, listOf(item.toResult()))
             if (outcome.rejected) {
                 draft.restore(item)
@@ -189,7 +192,9 @@ class TestRunChatService(
      */
     suspend fun commitScenarios(appUserId: Long, runId: Long, scenarios: List<ScenarioResult>): Int {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
-        runLocks.assertWritable(runId)
+        // 다른 사람의 Artel Bot 이 고치는 중인 시나리오는 커밋하지 못한다(ARTEL-1264).
+        val key = sessionKey(appUserId, runId)
+        scenarios.mapNotNull { it.scenarioId?.takeIf { id -> id > 0 } }.forEach { runLocks.assertWritableBy(it, key) }
         // 판정을 넘기지 않는다 — 이 경로의 시나리오는 사용자가 카드로 직접 고른 것이라 "Agent가 다
         // 봤는가"를 물을 대상이 아니다. 사람이 고른 것이 곧 요구다.
         //
@@ -233,13 +238,7 @@ class TestRunChatService(
 
     private fun sessionKey(appUserId: Long, runId: Long) = "$appUserId:$runId"
 
-    /** 런이 다른 세션(다른 사람의 Artel Bot)에게 잠겨 있으면 423. */
-    private suspend fun assertNotLockedByOther(runId: Long, key: String) {
-        val lock = runLocks.lockOf(runId) ?: return
-        if (lock.sessionKey != key) runLocks.assertWritable(runId)
-    }
-
-    /** 이 런이 Artel Bot 에게 잠겨 있나(ARTEL-1264). 접근 불가면 404. */
+    /** 이 런에서 Artel Bot 이 고치는 중이라 잠긴 시나리오들(ARTEL-1264). 접근 불가면 404. */
     suspend fun authoringLock(appUserId: Long, runId: Long) =
         accessible(runId, appUserId)?.let { runLocks.describe(runId, appUserId) } ?: throw NotFoundException()
 

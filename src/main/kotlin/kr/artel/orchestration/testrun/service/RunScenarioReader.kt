@@ -3,6 +3,7 @@ package kr.artel.orchestration.testrun.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
 import kr.artel.orchestration.testscenario.dto.CurrentScenario
 import kr.artel.orchestration.testscenario.dto.toChatStep
 import kr.artel.orchestration.testscenario.entity.toDraft
@@ -23,6 +24,10 @@ class RunScenarioReader(
     private val scenarioRepository: TestScenarioRepository,
     private val objectMapper: ObjectMapper,
 ) {
+    /** 시나리오 하나의 지금 스텝(챗봇 계약 모양). 없으면 null. 저장 직전 비교용(ARTEL-1264). */
+    suspend fun currentSteps(scenarioId: Long): List<ChatScenarioStep>? =
+        scenarioRepository.findById(scenarioId)?.toDraft(objectMapper)?.steps?.map { it.toChatStep() }
+
     suspend fun currentScenarios(runId: Long): List<CurrentScenario> {
         val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
         return links.mapNotNull { link ->
