@@ -683,7 +683,9 @@ class MapTestCaseGenerator(
             }
             val inScene = placed[row.sceneName].orEmpty() + placed[ScenePlacedType.ANY_SCENE].orEmpty()
             val readable = if (reading) {
-                MapTestCaseReadingRules.readable(MapTestCaseReadingRules.inScene(settledCondition.condition, inScene))
+                MapTestCaseReadingRules.readable(
+                    MapTestCaseReadingRules.inScene(settledCondition.condition, inScene, placed.values.flatten().toSet()),
+                )
             } else null
             // 바깥 조건과 부딪히는 `또는` 갈래를 빼고 같은 덩어리를 한 번만 쓴다. 갈래가 하나도 안 남으면 갈 수 없는 길이다.
             val simplified = readable?.let { MapTestCaseReadingRules.simplified(it.condition) }

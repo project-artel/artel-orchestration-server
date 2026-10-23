@@ -208,6 +208,14 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
             SELECT source_type
             FROM content_map_stray_effect
             WHERE content_map_id = :contentMapId AND source_type IS NOT NULL
+            UNION
+            -- 진입점의 타입(ARTEL-1209). 1.4.0 의 `TutorialController` 는 기능의 주인도 호출 대상도 아니고
+            -- 진입점으로만 나오는데, 다른 코드의 조건이 그 멤버를 읽고 판독도 그 값을 싣는다.
+            SELECT split_part(ce.entry_id, '|', 2)
+            FROM capability_evidence ce
+            JOIN capability c ON c.id = ce.capability_id
+            JOIN scene s ON s.id = c.scene_id
+            WHERE s.content_map_id = :contentMapId AND ce.entry_id IS NOT NULL
         ) types
         ORDER BY type_name ASC
         """

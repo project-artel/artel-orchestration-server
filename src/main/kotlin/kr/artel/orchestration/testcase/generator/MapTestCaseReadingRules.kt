@@ -64,23 +64,28 @@ object MapTestCaseReadingRules {
      * `MapMove.movement == 0` 이 붙었는데, `MapMove` 는 MapScene 에만 있다 — 깊은 호출 사슬을 따라 다른 씬의
      * 코드 조건까지 모인 것이다. 정적 멤버(`context = static`)는 씬과 상관없이 실린다.
      *
-     * @param placed 이 씬에 놓인 타입(마지막 마디). 씬을 넘어 살아남는 것도 든다
+     * **어느 씬에도 놓이지 않은 타입은 막지 않는다.** 코드가 실행 중에 만드는 것(튜토리얼 관리자 · 생성되는 적)은
+     * 지도가 씬에 놓인 것으로 모른다. 1.0 판독 기록에서도 `DontDestroyOnLoad/TutorialController` 로 읽혔다.
+     * 다른 씬에는 놓였는데 이 씬에는 없는 타입만 이 씬에서 못 본다.
+     *
+     * @param here 이 씬에 놓인 타입(마지막 마디). 씬을 넘어 살아남는 것도 든다
+     * @param anywhere 어느 씬에든 놓인 타입
      */
-    fun inScene(node: ConditionNode?, placed: Set<String>): ConditionNode? = when (node) {
+    fun inScene(node: ConditionNode?, here: Set<String>, anywhere: Set<String>): ConditionNode? = when (node) {
         null -> null
         is ConditionNode.Test ->
-            if (node.context == STATIC || (rooted(node.left, placed) && rooted(node.right, placed))) node
+            if (node.context == STATIC || (rooted(node.left, here, anywhere) && rooted(node.right, here, anywhere))) node
             else node.copy(readable = false)
-        is ConditionNode.Group -> node.copy(parts = node.parts.map { inScene(it, placed)!! })
+        is ConditionNode.Group -> node.copy(parts = node.parts.map { inScene(it, here, anywhere)!! })
         else -> node
     }
 
-    /** 값이 리터럴이거나 자기 자신(`this`)이면 씬과 상관없다. 멤버 경로면 그 첫 마디가 이 씬에 놓여 있어야 한다. */
-    private fun rooted(text: String, placed: Set<String>): Boolean {
+    /** 값이 리터럴이거나 자기 자신(`this`)이면 씬과 상관없다. 멤버 경로면 그 첫 마디가 이 씬에 있거나, 어디에도 안 놓였어야 한다. */
+    private fun rooted(text: String, here: Set<String>, anywhere: Set<String>): Boolean {
         val value = text.trim()
         if (value.isEmpty() || LITERAL.matches(value) || !value.contains('.')) return true
         val root = value.removePrefix("(").substringBefore('.').trim()
-        return root in SELF || root in placed
+        return root in SELF || root in here || root !in anywhere
     }
 
     private val SELF = setOf("this", "Component", "SceneManager")

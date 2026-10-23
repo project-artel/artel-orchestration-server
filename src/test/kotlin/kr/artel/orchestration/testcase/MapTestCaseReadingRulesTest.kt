@@ -121,9 +121,10 @@ class MapTestCaseReadingRulesTest {
         val map = test("MapMove.movement", "==", "0")
         val lock = ConditionNode.Test(left = "InteractionLock.IsLocked", operator = "==", right = "0", context = "static", offset = 0)
 
-        val marked = MapTestCaseReadingRules.inScene(every(map, lock, test("SettingsMenu.IsOpen", "!=", "0")), setOf("SettingsMenu", "TitleSceneManager")) as ConditionNode.Group
+        val marked = MapTestCaseReadingRules.inScene(every(map, lock, test("SettingsMenu.IsOpen", "!=", "0"), test("TutorialController.finished", "==", "0")), setOf("SettingsMenu", "TitleSceneManager"), setOf("SettingsMenu", "TitleSceneManager", "MapMove")) as ConditionNode.Group
 
-        assertThat(marked.parts.map { (it as ConditionNode.Test).readable }).containsExactly(false, true, true)
+        // `TutorialController` 는 어느 씬에도 놓이지 않아(실행 중에 만든다) 막지 않는다.
+        assertThat(marked.parts.map { (it as ConditionNode.Test).readable }).containsExactly(false, true, true, true)
     }
 
     @Test
