@@ -3370,6 +3370,57 @@
         }
       }
     },
+    "/api/qa-notices/{qaRunId}/read": {
+      "post": {
+        "tags": [
+          "qa-notice-controller"
+        ],
+        "operationId": "readQaNotice",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaNoticeListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qa-notices/read-all": {
+      "post": {
+        "tags": [
+          "qa-notice-controller"
+        ],
+        "operationId": "readAllQaNotices",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaNoticeListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects": {
       "get": {
         "tags": [
@@ -8080,6 +8131,38 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/QaRunChangeListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qa-notices": {
+      "get": {
+        "tags": [
+          "qa-notice-controller"
+        ],
+        "operationId": "listQaNotices",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaNoticeListResponse"
                 }
               }
             }
@@ -13610,6 +13693,125 @@
           }
         }
       },
+      "QaNotice": {
+        "required": [
+          "projectId",
+          "projectName",
+          "read",
+          "run"
+        ],
+        "type": "object",
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/QaRunSummaryResponse"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "read": {
+            "type": "boolean"
+          }
+        }
+      },
+      "QaNoticeListResponse": {
+        "required": [
+          "items",
+          "unreadCount"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaNotice"
+            }
+          },
+          "unreadCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "QaRunSummaryResponse": {
+        "required": [
+          "gameInstanceId",
+          "id",
+          "issueCount",
+          "reviewFlagged",
+          "reviewPending",
+          "startedAt",
+          "startedBy",
+          "status",
+          "testRunId"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "testRunId": {
+            "type": "string"
+          },
+          "testRunName": {
+            "type": "string"
+          },
+          "gameInstanceId": {
+            "type": "string"
+          },
+          "gameInstanceName": {
+            "type": "string"
+          },
+          "gameBuildVersion": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "casesPassed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "casesTotal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "startedBy": {
+            "type": "string"
+          },
+          "reviewFlagged": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reviewPending": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "CreateProjectRequest": {
         "required": [
           "genre",
@@ -17941,83 +18143,6 @@
             "items": {
               "$ref": "#/components/schemas/TestRunResponse"
             }
-          }
-        }
-      },
-      "QaRunSummaryResponse": {
-        "required": [
-          "gameInstanceId",
-          "id",
-          "issueCount",
-          "reviewFlagged",
-          "reviewPending",
-          "startedAt",
-          "startedBy",
-          "status",
-          "testRunId"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "testRunId": {
-            "type": "string"
-          },
-          "testRunName": {
-            "type": "string"
-          },
-          "gameInstanceId": {
-            "type": "string"
-          },
-          "gameInstanceName": {
-            "type": "string"
-          },
-          "gameBuildVersion": {
-            "type": "string"
-          },
-          "model": {
-            "type": "string"
-          },
-          "reasoningEffort": {
-            "type": "string"
-          },
-          "keySource": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "startedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "completedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "casesPassed": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "casesTotal": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "issueCount": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "startedBy": {
-            "type": "string"
-          },
-          "reviewFlagged": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "reviewPending": {
-            "type": "integer",
-            "format": "int32"
           }
         }
       },
