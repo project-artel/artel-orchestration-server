@@ -65,7 +65,10 @@ object MapTestCaseSiblings {
         private val byCapability: Map<Long, List<Int>> = edges.indices.groupBy { edges[it].capabilityId }
         private val bySource: Map<String, List<Int>> = edges.indices.groupBy { sources[it] }
 
-        fun of(capabilityId: Long): List<Borrowed> {
+        /**
+         * @param path 이 기능이 실제로 거친 메서드들([pathMethod] 꼴). 주면 **그 경로 위의 호출자만** 공통 호출자로 본다.
+         */
+        fun of(capabilityId: Long, path: Set<String>? = null): List<Borrowed> {
             val callers = byCapability[capabilityId] ?: return emptyList()
             // **생명주기 메서드는 공통 호출자가 아니다**(ARTEL-680). 위 주석이 걱정한 `Update()` 를
             // 한 단계 제한으로는 못 막는다 — 직접 호출자가 이미 `Update()` 인 경우가 있다.
@@ -77,8 +80,14 @@ object MapTestCaseSiblings {
             // 같은 프레임 루프에서 도는 것은 **형제일 뿐 인과가 아니다.** 이 파일이 이미 진입점 공유로
             // 겪은 일과 같은 것이고(위의 "RightArrow 를 누르면 배경이 바뀐다"), 유니티가 정한 이름이라
             // 게임에 붙는 규칙이 아니다.
+            //
+            // **이 기능이 거친 경로 위의 호출자만 본다**(ARTEL-1209). 여러 곳에서 불리는 함수는 호출자도 여럿인데, 그중
+            // 이 조작이 지나온 것은 하나다. 다 보면 남의 호출자가 부른 결과까지 빌려 온다 — 실측(1.4.1): `서버에 저장`
+            // 버튼이 부른 `Localization.Translate()` 가, 대사 창이 같은 함수를 부른다는 이유로 대사 창 이름표 결과를
+            // 빌려 갔다(이름표만 확인하는 TC 141 건). 경로는 근거 문서가 기능마다 싣는 `callPath` 다.
             val callerMethods = callers.map { sources[it] }
                 .filterNot { it.substringAfterLast('|') in LIFECYCLE }
+                .filter { path.isNullOrEmpty() || it in path }
                 .toSet()
             if (callerMethods.isEmpty()) return emptyList()
             return callerMethods.flatMap { bySource[it].orEmpty() }
@@ -114,6 +123,18 @@ object MapTestCaseSiblings {
         val generated = GENERATED.find(parts[1])?.groupValues?.get(1)
             ?: GENERATED.find(parts[2])?.groupValues?.get(1)
         return owner + "|" + (generated ?: parts[2])
+    }
+
+    /**
+     * 호출 경로의 한 칸(`System.Void Scenes.AccountPanel::ShowStatus(System.String)`)을 [sourceMethod] 와 같은 꼴로.
+     * 컴파일러가 만든 이름도 같은 방법으로 되돌린다.
+     */
+    fun pathMethod(signature: String): String {
+        val head = signature.substringBefore('(')
+        val type = head.substringBeforeLast("::").substringAfterLast(' ')
+        val name = head.substringAfterLast("::")
+        val generated = GENERATED.find(type)?.groupValues?.get(1) ?: GENERATED.find(name)?.groupValues?.get(1)
+        return type.substringBefore('/') + "|" + (generated ?: name)
     }
 
     /** `<StoryTelling>d__8` · `<StoryTelling>b__8_0` 에서 원래 이름을 꺼낸다. */

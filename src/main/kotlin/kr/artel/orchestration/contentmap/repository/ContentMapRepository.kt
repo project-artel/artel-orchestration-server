@@ -178,6 +178,20 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
     fun findCapabilityOwners(contentMapId: Long): Flow<CapabilityOwner>
 
     /**
+     * 기능마다 거친 호출 경로(ARTEL-1209). TC 생성기가 결과를 빌려 올 공통 호출자를 이 경로 위로 좁힌다.
+     */
+    @Query(
+        """
+        SELECT ce.capability_id, ce.call_path
+        FROM capability_evidence ce
+        JOIN capability c ON c.id = ce.capability_id
+        JOIN scene s ON s.id = c.scene_id
+        WHERE s.content_map_id = :contentMapId AND ce.call_path IS NOT NULL
+        """
+    )
+    fun findCallPaths(contentMapId: Long): Flow<kr.artel.orchestration.contentmap.dto.CapabilityCallPath>
+
+    /**
      * **이 게임의 코드가 선언한 타입들**. `Map.MapMove` 처럼 전체 이름이다.
      *
      * SDK 판독은 근거 문서가 이름 댄 **게임 타입**의 멤버를 읽는다. 사전조건의 비교가 판독으로

@@ -72,6 +72,13 @@ class MapTestCaseGenerator(
         progress.report(GenerationPhase.READING_MAP, 0, 0)
         // 기능 행마다 다시 훑지 않게 한 번 풀어 둔다(ARTEL-1187).
         val siblings = MapTestCaseSiblings.Index(contentMaps.findCallEdges(contentMapId).toList())
+        // **빌려 올 호출자를 이 기능이 거친 경로로 좁힌다**(ARTEL-1209). 판독 기준일 때만.
+        val paths = if (reading) {
+            contentMaps.findCallPaths(contentMapId).toList().associate { row ->
+                row.capabilityId to objectMapper.readTree(row.callPath!!.asString())
+                    .mapNotNull { it.asText(null) }.map(MapTestCaseSiblings::pathMethod).toSet()
+            }
+        } else emptyMap()
         // 매개변수 이름을 호출자가 넘긴 값으로 되돌리려면 필요하다(ARTEL-602).
         val settled = contentMaps.findSettledArguments(contentMapId).toList()
             .groupBy { it.capabilityId }
@@ -122,7 +129,7 @@ class MapTestCaseGenerator(
         // 기능 행마다 한 칸씩 민다(ARTEL-1187). 큰 지도에서 시간이 가장 많이 드는 자리라 여기가 진행의 분모다.
         val drafts = rows.flatMapIndexed { index, row ->
             progress.report(GenerationPhase.DRAFTING, index, rows.size)
-            draftsOf(row, siblings, effectsOf, settled, exits, refs, positions, owners, namesByScene, gameTypes, reading, placed)
+            draftsOf(row, siblings, paths[row.capabilityId], effectsOf, settled, exits, refs, positions, owners, namesByScene, gameTypes, reading, placed)
         }
         progress.report(GenerationPhase.DRAFTING, rows.size, rows.size)
         return (merged(drafts, reading, written) + screenElements(contentMapId))
@@ -641,6 +648,7 @@ class MapTestCaseGenerator(
     private suspend fun draftsOf(
         row: ContentMapCapabilityRow,
         siblings: MapTestCaseSiblings.Index,
+        path: Set<String>?,
         effectsOf: Map<Long, List<CapabilityEffectEntity>>,
         settled: Map<Long, Map<Int, String>>,
         exits: Set<LoopExits.Guard>,
@@ -666,7 +674,7 @@ class MapTestCaseGenerator(
             if (own.isNotEmpty()) {
                 listOf(Source(condition, own, row.capabilityId, LoopExits.reachedByRepeating(condition, exits)))
             } else {
-                borrowed(row, condition, siblings, effectsOf, exits)
+                borrowed(row, condition, siblings, path, effectsOf, exits)
             }
 
         return sources.flatMap { (situation, effectRows, source, repeats) ->
@@ -814,10 +822,11 @@ class MapTestCaseGenerator(
         row: ContentMapCapabilityRow,
         condition: ConditionNode?,
         siblings: MapTestCaseSiblings.Index,
+        path: Set<String>?,
         effectsOf: Map<Long, List<CapabilityEffectEntity>>,
         exits: Set<LoopExits.Guard>,
     ): List<Source> =
-        siblings.of(row.capabilityId).mapNotNull { borrowed ->
+        siblings.of(row.capabilityId, path).mapNotNull { borrowed ->
             val callerCondition = parse(borrowed.callerCondition)
             val ownCondition = parse(borrowed.ownCondition)
             // **모순되는 갈래는 잇지 않는다.** 이은 케이스의 사전조건이 양쪽을 함께 드는데 둘이
