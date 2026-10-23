@@ -11157,6 +11157,14 @@
             "type": "number",
             "format": "double"
           },
+          "cx": {
+            "type": "number",
+            "format": "double"
+          },
+          "cy": {
+            "type": "number",
+            "format": "double"
+          },
           "text": {
             "type": "string"
           },

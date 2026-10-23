@@ -100,16 +100,20 @@ class TestRunMapService(
             if (!ids.add(a.id)) bad("주석 id 가 겹칩니다: ${a.id}")
             when (a.type) {
                 "note", "text" -> {
-                    coord(a.x); coord(a.y)
+                    coord(a.x); coord(a.y); optionalSize(a.w); optionalSize(a.h)
                     val text = a.text ?: bad("${a.type} 에 text 가 없습니다.")
-                    if (text.length > MAX_TEXT_LENGTH) bad("글은 ${MAX_TEXT_LENGTH}자까지입니다.")
+                    text(text)
                     if (a.type == "note" && a.color != null && a.color !in NOTE_COLORS) bad("메모 색은 $NOTE_COLORS 중 하나입니다.")
                 }
-                "rect", "ellipse" -> {
+                "rect", "ellipse", "section" -> {
                     coord(a.x); coord(a.y); size(a.w); size(a.h)
+                    a.text?.let(::text)
                 }
                 "arrow" -> {
                     coord(a.x1); coord(a.y1); coord(a.x2); coord(a.y2)
+                    // 휜 화살표의 조절점. 둘 다 있거나 둘 다 없다.
+                    if ((a.cx == null) != (a.cy == null)) bad("arrow 의 cx · cy 는 함께 보냅니다.")
+                    if (a.cx != null) { coord(a.cx); coord(a.cy) }
                 }
                 "pen" -> {
                     val points = a.points ?: bad("pen 에 points 가 없습니다.")
@@ -123,6 +127,14 @@ class TestRunMapService(
 
     private fun coord(value: Double?) {
         if (value == null || !value.isFinite() || abs(value) > MAX_COORD) bad("좌표가 비었거나 범위를 벗어났습니다.")
+    }
+
+    private fun text(value: String) {
+        if (value.length > MAX_TEXT_LENGTH) bad("글은 ${MAX_TEXT_LENGTH}자까지입니다.")
+    }
+
+    private fun optionalSize(value: Double?) {
+        if (value != null) size(value)
     }
 
     private fun size(value: Double?) {

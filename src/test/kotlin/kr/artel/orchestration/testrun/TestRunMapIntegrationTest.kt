@@ -128,6 +128,31 @@ class TestRunMapIntegrationTest {
     }
 
     @Test
+    fun `휜 화살표 · 글을 넣은 도형 · 묶음 상자 · 크기를 바꾼 메모를 그대로 돌려준다`(): Unit = runBlocking {
+        val f = fixture()
+        val saved = mapService.save(
+            f.projectId, f.runId, f.userId,
+            TestRunMapSaveRequest(
+                version = 0,
+                annotations = listOf(
+                    RunMapAnnotation(id = "a1", type = "arrow", x1 = 0.0, y1 = 0.0, x2 = 100.0, y2 = 0.0, cx = 50.0, cy = 40.0),
+                    RunMapAnnotation(id = "r1", type = "rect", x = 0.0, y = 0.0, w = 80.0, h = 40.0, text = "로그인 구간"),
+                    RunMapAnnotation(id = "s1", type = "section", x = 0.0, y = 0.0, w = 600.0, h = 400.0, text = "튜토리얼"),
+                    RunMapAnnotation(id = "n1", type = "note", x = 0.0, y = 0.0, w = 260.0, h = 180.0, text = "크게", color = "b"),
+                ),
+            ),
+        )
+        val byId = saved.annotations.associateBy { it.id }
+        assertThat(byId["a1"]!!.cx).isEqualTo(50.0)
+        assertThat(byId["r1"]!!.text).isEqualTo("로그인 구간")
+        assertThat(byId["s1"]!!.text).isEqualTo("튜토리얼")
+        assertThat(byId["n1"]!!.w).isEqualTo(260.0)
+        assertThrows<BadRequestException> {
+            runBlocking { mapService.save(f.projectId, f.runId, f.userId, TestRunMapSaveRequest(version = saved.version, annotations = listOf(RunMapAnnotation(id = "a2", type = "arrow", x1 = 0.0, y1 = 0.0, x2 = 1.0, y2 = 1.0, cx = 5.0)))) }
+        }
+    }
+
+    @Test
     fun `참여자가 아니거나 다른 프로젝트 경로면 404`(): Unit = runBlocking {
         val f = fixture()
         val stranger = appUserRepository.save(testAppUser("run-map-stranger", Instant.now())).id!!
