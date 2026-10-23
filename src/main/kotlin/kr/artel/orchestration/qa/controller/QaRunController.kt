@@ -9,9 +9,11 @@ import kr.artel.orchestration.qa.dto.CreateQaRunRequest
 import kr.artel.orchestration.qa.dto.QaRunChangeListResponse
 import kr.artel.orchestration.qa.dto.QaRunChangeResponse
 import kr.artel.orchestration.qa.dto.QaRunResponse
+import kr.artel.orchestration.qa.dto.QaRunVerdictsResponse
 import kr.artel.orchestration.qa.service.QaRunChangeKind
 import kr.artel.orchestration.qa.service.QaRunChangeService
 import kr.artel.orchestration.qa.service.QaTryService
+import kr.artel.orchestration.qa.service.QaVerdictService
 import kr.artel.orchestration.qa.service.toFunctionOptions
 import kr.artel.orchestration.qa.service.toRunGates
 import kr.artel.orchestration.qa.service.toRunLabel
@@ -35,6 +37,7 @@ import org.springframework.web.bind.annotation.RestController
 class QaRunController(
     private val qaTryService: QaTryService,
     private val qaRunChangeService: QaRunChangeService,
+    private val qaVerdictService: QaVerdictService,
     private val llmModelService: LlmModelService,
     private val userLlmKeyService: UserLlmKeyService,
     private val objectMapper: ObjectMapper
@@ -74,6 +77,17 @@ class QaRunController(
         @CurrentUserId appUserId: Long
     ): QaRunResponse =
         qaTryService.getRun(parseId(qaRunId), appUserId) ?: throw NotFoundException()
+
+    /**
+     * 이 런의 스텝 판정과 그 근거(ARTEL-1134): 판정 이유, 기대 항목별 근거와 판독 기록 대조, 근거로 댄 캡처.
+     * 접근 규칙은 [getQaRun] 과 같다 — 보이지 않는 런은 404.
+     */
+    @GetMapping("/{qaRunId}/verdicts")
+    suspend fun listQaRunVerdicts(
+        @PathVariable qaRunId: String,
+        @CurrentUserId appUserId: Long
+    ): QaRunVerdictsResponse =
+        qaVerdictService.list(parseId(qaRunId), appUserId)
 
     /**
      * 이 런이 knowledge 와 macro 에 한 변경. 대상마다 한 줄이고 run 이전과 이후를 line diff 용 텍스트로

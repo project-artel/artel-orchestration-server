@@ -12,6 +12,10 @@ data class CaseVerdictHistoryRow(
     val label: String?,
     val verificationStatus: String,
     val buildCreatedAt: Instant,
+    /** 이 판정을 낸 STATUS 행과 그 실행(ARTEL-1134). 근거 기록이 이어지기 전의 판정은 비어 있다. */
+    val verdictQaLogId: Long? = null,
+    val verdictQaTryId: Long? = null,
+    val verdictQaRunId: Long? = null,
     val isEditor: Boolean = false,
     val verdictCarriedFromBuildId: Long? = null,
 )
@@ -28,6 +32,10 @@ data class CaseVerdictHistoryItem(
     val version: String,
     val label: String?,
     val verificationStatus: String,
+    /** 이 판정의 근거로 가는 길(ARTEL-1134): 실행 · 시나리오 실행 · STATUS 행. 근거가 이어지기 전 판정은 null. */
+    val qaRunId: String? = null,
+    val qaTryId: String? = null,
+    val verdictLogId: String? = null,
     val isEditor: Boolean = false,
     val verdictCarriedFromBuildId: String? = null,
 )

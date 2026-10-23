@@ -7979,6 +7979,36 @@
         }
       }
     },
+    "/api/qa-runs/{qaRunId}/verdicts": {
+      "get": {
+        "tags": [
+          "qa-run-controller"
+        ],
+        "operationId": "listQaRunVerdicts",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunVerdictsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/qa-runs/{qaRunId}/changes": {
       "get": {
         "tags": [
@@ -17079,6 +17109,254 @@
           }
         }
       },
+      "QaRunVerdictsResponse": {
+        "required": [
+          "qaRunId",
+          "startedAt",
+          "status",
+          "testRunId",
+          "testRunName",
+          "tries"
+        ],
+        "type": "object",
+        "properties": {
+          "qaRunId": {
+            "type": "string"
+          },
+          "testRunId": {
+            "type": "string"
+          },
+          "testRunName": {
+            "type": "string"
+          },
+          "gameBuildVersion": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaTryVerdicts"
+            }
+          }
+        }
+      },
+      "QaScenarioStepView": {
+        "required": [
+          "step",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "title": {
+            "type": "string"
+          },
+          "caseId": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          }
+        }
+      },
+      "QaStepAction": {
+        "required": [
+          "count",
+          "kind"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "QaStepIssue": {
+        "required": [
+          "issueId",
+          "severity",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "issueId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "QaStepVerdict": {
+        "required": [
+          "actions",
+          "captures",
+          "evidence",
+          "isVerification",
+          "logId",
+          "message",
+          "passed",
+          "step"
+        ],
+        "type": "object",
+        "properties": {
+          "logId": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "stepTitle": {
+            "type": "string"
+          },
+          "caseId": {
+            "type": "string"
+          },
+          "isVerification": {
+            "type": "boolean"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "checks": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "captures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaVerdictCapture"
+            }
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaStepAction"
+            }
+          },
+          "judgedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QaTryVerdicts": {
+        "required": [
+          "executionMode",
+          "issues",
+          "qaTryId",
+          "scenarioTitle",
+          "startedAt",
+          "status",
+          "steps",
+          "testScenarioId",
+          "verdicts"
+        ],
+        "type": "object",
+        "properties": {
+          "qaTryId": {
+            "type": "string"
+          },
+          "testScenarioId": {
+            "type": "string"
+          },
+          "scenarioTitle": {
+            "type": "string"
+          },
+          "executionMode": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaScenarioStepView"
+            }
+          },
+          "verdicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaStepVerdict"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaStepIssue"
+            }
+          }
+        }
+      },
+      "QaVerdictCapture": {
+        "required": [
+          "captureId",
+          "expiresAt",
+          "url"
+        ],
+        "type": "object",
+        "properties": {
+          "captureId": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "QaRunChangeListResponse": {
         "required": [
           "items"
@@ -17867,6 +18145,15 @@
             "type": "string"
           },
           "verificationStatus": {
+            "type": "string"
+          },
+          "qaRunId": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "verdictLogId": {
             "type": "string"
           },
           "isEditor": {
