@@ -27,7 +27,7 @@ object MapTestCaseReadingRules {
      *
      * [removed] 는 지운 비교들의 서명이다. **그것이 다르면 다른 TC 다** — 갈래는 실제로 다른 동작이라 따로 시험해야
      * 한다. 판독이 못 볼 뿐 게임 안에서 만들 수는 있는 상태(저장 데이터 유무, 튜토리얼을 끝냈는지)가 대부분이라,
-     * 지운 비교는 [setup] 으로 남겨 "준비할 상태" 로 적는다. 만들 수 있는지는 코드가 아니라 저작이 판단한다 —
+     * 지운 비교는 [setup] 으로 메타데이터에 남긴다(사전조건 문장에는 싣지 않는다). 만들 수 있는지는 코드가 아니라 저작이 판단한다 —
      * 지도는 그런 상태를 호출 결과로만 알아서, 어느 조작이 그것을 바꾸는지 잇지 못한다(실측 83 종 중 1 종).
      */
     data class Readable(val condition: ConditionNode?, val removed: String, val setup: List<String>)
@@ -347,9 +347,6 @@ object MapTestCaseReadingRules {
 
     /** 판독으로 확인할 수 있는 기대가 하나도 안 남은 TC 의 기대결과. 조작이 되는지만 본다. */
     const val NO_READABLE_RESULT = "판독으로 확인할 수 있는 결과 없음 — 조작이 되는지만 본다"
-
-    /** 사전조건 끝에 붙는 말. 판독으로 확인할 수 없어 판정에서 빼고, 시나리오가 만들어 두어야 하는 상태다. */
-    const val SETUP = "준비할 상태(판독으로 확인 안 됨): "
 
     private const val ANY_SCENE_KEY = "any-scene"
     private const val SCENE_MARK = "\u0000scene\u0000"

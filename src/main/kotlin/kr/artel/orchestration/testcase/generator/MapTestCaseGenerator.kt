@@ -186,9 +186,11 @@ class MapTestCaseGenerator(
                 MapTestCase(
                     capabilityKey = first.capabilityKey,
                     scene = first.scene,
+                    // 준비할 상태([MapTestCase.setup])는 문장에 싣지 않는다. 판독이 못 읽는 식이라 사람도 대개 못 읽는다
+                    // (1.4.1 실측: 385 건 중 260 건이 `Mathf.Clamp01(...)` · `GetEnumerator()` 같은 식).
                     precondition = MapTestCasePhrasing.precondition(
                         first.scene, groupCondition, first.inputKey, compactValues = reading,
-                    ).let { text -> if (first.setup.isEmpty()) text else "$text / ${MapTestCaseReadingRules.SETUP}${first.setup.joinToString(" 그리고 ")}" },
+                    ),
                     // **구조를 버리지 않는다**(ARTEL-627). 위 문장은 이것을 사람 말로 렌더한 것이고,
                     // 소비하는 쪽은 문장이 아니라 이쪽을 읽는다.
                     condition = groupCondition,
