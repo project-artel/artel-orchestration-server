@@ -77,6 +77,10 @@
       "description": "빌드에 등록된 macro 를 읽는다"
     },
     {
+      "name": "QA try performance (internal)",
+      "description": "QA agent 가 런 도중 읽는 SDK 성능 표본"
+    },
+    {
       "name": "Project Events",
       "description": "프로젝트 데이터 변경 알림"
     },
@@ -7386,6 +7390,57 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/InternalLlmSettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/qa-tries/{qaTryId}/performance": {
+      "get": {
+        "tags": [
+          "QA try performance (internal)"
+        ],
+        "summary": "QA try 의 최근 성능 표본 조회",
+        "description": "SDK 가 1초마다 보낸 표본을 시각 순으로 준다. `sinceFrame` 은 그 frame 이상, `lastSeconds` 는 마지막 그 초만큼으로 좁힌다. 둘 다 없으면 마지막 60초다. 한 번에 600개까지 준다.",
+        "operationId": "performance",
+        "parameters": [
+          {
+            "name": "qaTryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sinceFrame",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "lastSeconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaTryPerformanceResponse"
                 }
               }
             }
@@ -15449,6 +15504,60 @@
           },
           "typesafeApiKey": {
             "type": "string"
+          }
+        }
+      },
+      "QaTryPerformanceResponse": {
+        "required": [
+          "samples"
+        ],
+        "type": "object",
+        "properties": {
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaTryPerformanceSample"
+            }
+          }
+        }
+      },
+      "QaTryPerformanceSample": {
+        "required": [
+          "at",
+          "fps",
+          "frame",
+          "frameTimeMs",
+          "hitchCount"
+        ],
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "frameTimeMs": {
+            "type": "number",
+            "format": "double"
+          },
+          "fps": {
+            "type": "number",
+            "format": "double"
+          },
+          "hitchCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cpuPercent": {
+            "type": "number",
+            "format": "double"
+          },
+          "memoryMb": {
+            "type": "number",
+            "format": "double"
           }
         }
       },
