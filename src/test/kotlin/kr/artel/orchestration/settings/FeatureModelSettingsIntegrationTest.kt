@@ -12,7 +12,14 @@ import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.config.InternalApiServer
 import kr.artel.orchestration.settings.repository.PlatformSettingRepository
 import kr.artel.orchestration.settings.service.ANTHROPIC_API_KEY_SETTING
+import kr.artel.orchestration.settings.service.BEDROCK_API_KEY_SETTING
 import kr.artel.orchestration.settings.service.FeatureModelService
+import kr.artel.orchestration.settings.service.LlmKeyCheckResult
+import kr.artel.orchestration.settings.service.LlmKeySource
+import kr.artel.orchestration.settings.service.OPENROUTER_API_KEY_SETTING
+import kr.artel.orchestration.settings.service.OPENROUTER_LAST_CHECK_SETTING
+import kr.artel.orchestration.settings.service.PlatformProvider
+import kr.artel.orchestration.settings.service.ProviderDefaultModels
 import kr.artel.orchestration.settings.service.SecretCipher
 import kr.artel.orchestration.support.testAppUser
 import org.assertj.core.api.Assertions.assertThat
@@ -50,6 +57,9 @@ class FeatureModelSettingsIntegrationTest {
         private const val DISABLED = "claude/claude-haiku-5-5"
         private const val JEV = "typesafe/jev-1.13"
         private const val GPT = "gpt/gpt-6.1-sol"
+        private const val SONNET = "claude/claude-sonnet-5-5"
+        private const val ANTHROPIC_KEY = "sk-ant-api03-admin-key-0123456789abcdef-zzzz"
+        private const val OPENROUTER_KEY = "sk-or-v1-admin-key-0123456789abcdef-wxyz"
 
         private val invalidations = AtomicInteger()
 
@@ -83,6 +93,7 @@ class FeatureModelSettingsIntegrationTest {
     @Autowired private lateinit var featureModelService: FeatureModelService
     @Autowired private lateinit var platformSettingRepository: PlatformSettingRepository
     @Autowired private lateinit var secretCipher: SecretCipher
+    @Autowired private lateinit var providerDefaultModels: ProviderDefaultModels
 
     private var adminId: Long = 0
     private var memberId: Long = 0
@@ -120,7 +131,7 @@ class FeatureModelSettingsIntegrationTest {
         assertThat(status["decisionModel"].isNull).isTrue()
         assertThat(status["updatedAt"].isNull).isTrue()
         assertThat(internalModels().fieldNames().asSequence().toList())
-            .containsExactlyInAnyOrder("scenarioAuthoringModel", "decisionModel")
+            .containsExactlyInAnyOrder("scenarioAuthoringModel", "decisionModel", "effective")
     }
 
     @Test
@@ -219,7 +230,7 @@ class FeatureModelSettingsIntegrationTest {
         assertThat(featureModelService.resolveProjectAgentAdminModel()).isEqualTo(ENABLED)
         // project agent model 은 agent-server 가 읽지 않는다. 내부 응답의 모양은 그대로다.
         assertThat(internalModels().fieldNames().asSequence().toList())
-            .containsExactlyInAnyOrder("scenarioAuthoringModel", "decisionModel")
+            .containsExactlyInAnyOrder("scenarioAuthoringModel", "decisionModel", "effective")
 
         // 다른 두 필드만 보내면 project agent model 도 지워진다. 세 필드를 늘 함께 보낸다.
         val cleared = call(HttpMethod.PUT, "/api/admin/settings/models", """{"scenarioAuthoringModel":null,"decisionModel":null}""")
@@ -268,6 +279,86 @@ class FeatureModelSettingsIntegrationTest {
         )
         assertThat(call(HttpMethod.GET, "/api/admin/settings/models")["keyMissing"].map { it.asText() })
             .containsExactly(JEV, GPT)
+    }
+
+    @Test
+    fun `with no valid platform key there is no provider default and decision stays null`(): Unit = runBlocking {
+        val defaults = providerDefaultModels.pick()
+
+        assertThat(defaults.provider).isNull()
+        assertThat(defaults.scenarioAuthoringModel).isNull()
+        val effective = internalModels()["effective"]
+        // 시나리오 저작은 `artel.agent.model` 이 먼저다.
+        assertThat(effective["scenarioAuthoringModel"].asText()).isEqualTo(ENV_MODEL)
+        assertThat(effective["decisionModel"].isNull).isTrue()
+    }
+
+    @Test
+    fun `an Anthropic key alone makes claude-sonnet-5-5 the default for authoring and decisions`(): Unit = runBlocking {
+        storeKey(ANTHROPIC_API_KEY_SETTING, ANTHROPIC_KEY)
+
+        val defaults = providerDefaultModels.pick()
+
+        assertThat(defaults.provider).isEqualTo(PlatformProvider.ANTHROPIC)
+        assertThat(defaults.scenarioAuthoringModel).isEqualTo(SONNET)
+        assertThat(defaults.decisionModel).isEqualTo(SONNET)
+        val internal = internalModels()
+        // 저장된 값은 비어 있는 그대로 보인다. 고른 값은 `effective` 에만 있다.
+        assertThat(internal["decisionModel"].isNull).isTrue()
+        assertThat(internal["effective"]["decisionModel"].asText()).isEqualTo(SONNET)
+    }
+
+    @Test
+    fun `OpenRouter comes before Anthropic and keeps Jev for decisions`(): Unit = runBlocking {
+        storeKey(ANTHROPIC_API_KEY_SETTING, ANTHROPIC_KEY)
+        storeKey(OPENROUTER_API_KEY_SETTING, OPENROUTER_KEY)
+
+        val defaults = providerDefaultModels.pick()
+
+        assertThat(defaults.provider).isEqualTo(PlatformProvider.OPENROUTER)
+        assertThat(defaults.scenarioAuthoringModel).isEqualTo("openai/gpt-6-luna")
+        assertThat(defaults.decisionModel).isEqualTo(JEV)
+    }
+
+    @Test
+    fun `an OpenRouter key whose last check failed is skipped`(): Unit = runBlocking {
+        storeKey(ANTHROPIC_API_KEY_SETTING, ANTHROPIC_KEY)
+        storeKey(OPENROUTER_API_KEY_SETTING, OPENROUTER_KEY)
+        val failedCheck = LlmKeyCheckResult(
+            checkedAt = Instant.now(), source = LlmKeySource.ADMIN, maskedKey = "****wxyz", keyValid = false,
+            requiredModels = emptyList(), reachableModels = emptyList(), missingModels = emptyList(), error = null
+        )
+        platformSettingRepository.upsert(
+            OPENROUTER_LAST_CHECK_SETTING, objectMapper.writeValueAsString(failedCheck), false, adminId, Instant.now()
+        )
+
+        assertThat(providerDefaultModels.pick().provider).isEqualTo(PlatformProvider.ANTHROPIC)
+    }
+
+    @Test
+    fun `a disabled preferred model falls back to the provider's first enabled model`(): Unit = runBlocking {
+        storeKey(ANTHROPIC_API_KEY_SETTING, ANTHROPIC_KEY)
+        setEnabled(SONNET, false)
+
+        val defaults = providerDefaultModels.pick()
+
+        assertThat(defaults.scenarioAuthoringModel).startsWith("claude/").isNotEqualTo(SONNET)
+        setEnabled(SONNET, true)
+    }
+
+    @Test
+    fun `a Bedrock key alone picks an enabled bedrock model`(): Unit = runBlocking {
+        storeKey(BEDROCK_API_KEY_SETTING, "bedrock-api-key-0123456789abcdef")
+
+        val defaults = providerDefaultModels.pick()
+
+        assertThat(defaults.provider).isEqualTo(PlatformProvider.BEDROCK)
+        assertThat(defaults.scenarioAuthoringModel).startsWith("bedrock/")
+        assertThat(defaults.decisionModel).isEqualTo(defaults.scenarioAuthoringModel)
+    }
+
+    private suspend fun storeKey(settingKey: String, apiKey: String) {
+        platformSettingRepository.upsert(settingKey, secretCipher.encrypt(apiKey, settingKey), true, adminId, Instant.now())
     }
 
     private fun settingRows(): Long = runBlocking {
