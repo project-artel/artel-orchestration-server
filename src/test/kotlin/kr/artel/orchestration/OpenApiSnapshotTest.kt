@@ -27,7 +27,11 @@ class OpenApiSnapshotTest {
 
     @Test
     fun `snapshot the runtime OpenAPI contract`() {
-        val spec = WebClient.create("http://localhost:$port")
+        // 스펙이 기본 버퍼 상한(256KB)을 넘었다. 스냅샷은 한 번 읽는 것이라 넉넉히 둔다.
+        val spec = WebClient.builder()
+            .baseUrl("http://localhost:$port")
+            .codecs { it.defaultCodecs().maxInMemorySize(SPEC_BUFFER_BYTES) }
+            .build()
             .get()
             .uri("/v3/api-docs")
             .retrieve()
@@ -61,5 +65,9 @@ class OpenApiSnapshotTest {
                 Separators.createDefaultInstance()
                     .withObjectFieldValueSpacing(Separators.Spacing.AFTER)
             )
+    }
+
+    private companion object {
+        const val SPEC_BUFFER_BYTES = 4 * 1024 * 1024
     }
 }

@@ -32,6 +32,11 @@ data class QaRunSummaryResponse(
     val casesPassed: Int?,
     val casesTotal: Int?,
     val issueCount: Int,
+    /** 실행을 시작한 사람(app_user id). 화면이 "내가 시작한 실행" 의 끝 알림을 고른다. */
+    val startedBy: String = "",
+    /** 추가 검토로 고른 판정 수와, 그중 사람이 아직 정하지 않은 수(ARTEL-1254). */
+    val reviewFlagged: Int = 0,
+    val reviewPending: Int = 0,
 )
 
 data class QaRunSummaryListResponse(val items: List<QaRunSummaryResponse>)

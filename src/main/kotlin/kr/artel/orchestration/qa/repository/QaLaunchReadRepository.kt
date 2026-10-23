@@ -25,6 +25,10 @@ data class QaRunSummaryRow(
     val casesPassed: Int?,
     val casesTotal: Int?,
     val issueCount: Int,
+    val startedBy: Long = 0,
+    /** 코드 검사가 추가 검토로 고른 판정 수와, 그중 사람이 아직 정하지 않은 수(ARTEL-1254). */
+    val reviewFlagged: Int = 0,
+    val reviewPending: Int = 0,
 )
 
 data class SinceLastQaIssueRow(
@@ -82,7 +86,11 @@ class QaLaunchReadRepository(
                    r.status, r.started_at, r.completed_at,
                    agg.cases_passed, agg.cases_total,
                    (SELECT COUNT(*) FROM issue i JOIN qa_try t2 ON t2.id = i.qa_try_id
-                     WHERE t2.qa_run_id = r.id) AS issue_count
+                     WHERE t2.qa_run_id = r.id) AS issue_count,
+                   r.started_by,
+                   (SELECT COUNT(*) FROM qa_verdict_review v WHERE v.qa_run_id = r.id AND v.flagged) AS review_flagged,
+                   (SELECT COUNT(*) FROM qa_verdict_review v
+                     WHERE v.qa_run_id = r.id AND v.flagged AND v.decision IS NULL) AS review_pending
               FROM qa_run r
               JOIN game_instance gi ON gi.id = r.game_instance_id
               LEFT JOIN test_run tr ON tr.id = r.test_run_id
@@ -230,6 +238,9 @@ class QaLaunchReadRepository(
         casesPassed = (get("cases_passed", Number::class.java))?.toInt(),
         casesTotal = (get("cases_total", Number::class.java))?.toInt(),
         issueCount = (get("issue_count", Number::class.java))?.toInt() ?: 0,
+        startedBy = long("started_by"),
+        reviewFlagged = (get("review_flagged", Number::class.java))?.toInt() ?: 0,
+        reviewPending = (get("review_pending", Number::class.java))?.toInt() ?: 0,
     )
 
     private fun Readable.long(name: String): Long = (get(name, Number::class.java))!!.toLong()

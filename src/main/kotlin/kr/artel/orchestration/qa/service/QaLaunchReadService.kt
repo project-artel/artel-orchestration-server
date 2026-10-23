@@ -93,6 +93,9 @@ class QaLaunchReadService(
         casesPassed = casesPassed,
         casesTotal = casesTotal,
         issueCount = issueCount,
+        startedBy = startedBy.toString(),
+        reviewFlagged = reviewFlagged,
+        reviewPending = reviewPending,
     )
 
     companion object {

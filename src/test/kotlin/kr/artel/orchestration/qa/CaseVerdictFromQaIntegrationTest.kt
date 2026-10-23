@@ -29,6 +29,8 @@ import kr.artel.orchestration.qa.service.QaAgentEnvelope
 import kr.artel.orchestration.qa.service.QaAgentInboundRouter
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
 import kr.artel.orchestration.qa.service.QaVerdictService
+import kr.artel.orchestration.qa.review.QaVerdictReviewService
+import kr.artel.orchestration.qa.service.QaLaunchReadService
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.testcase.service.TestCaseVerdictService
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -86,6 +88,8 @@ class CaseVerdictFromQaIntegrationTest {
     @Autowired private lateinit var qaVerdictService: QaVerdictService
     @Autowired private lateinit var issueRepository: IssueRepository
     @Autowired private lateinit var caseVerdictService: TestCaseVerdictService
+    @Autowired private lateinit var reviewService: QaVerdictReviewService
+    @Autowired private lateinit var launchReadService: QaLaunchReadService
 
     @BeforeEach
     fun cleanBefore(): Unit = runBlocking { wipe() }
@@ -250,6 +254,54 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(failed.codeCheck!!.result).isEqualTo("PASS")
         assertThat(failed.needsReview).isTrue()
         assertThat(scenario.reviewCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `사람이 추가 검토 판정을 확정하면 TC 판정이 따르고 남은 검토 수가 준다`(): Unit = runBlocking {
+        val run = runningRun()
+        for (caseId in listOf(run.passedCaseId, run.failedCaseId)) {
+            val version = versions.findByTestCaseIdAndGameBuildId(caseId, run.gameBuildId)!!
+            versions.save(version.copy(metadata = Json.of("""{"case_key":"screen\u001fS\u001fCanvas/Stage"}""")))
+        }
+        qaLogRepository.save(
+            QaLogEntity(
+                qaTryId = run.tryId, direction = "SDK_TO_ORCHE", type = "PULSE", message = "Pulse received.",
+                payload = Json.of("""{"scene":"S","active":[{"path":"Canvas/Stage","selector":"Canvas/Stage[3]"}]}"""),
+            )
+        )
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true)
+        // AI 실패 · 코드 확정 통과: 추가 검토로 고른다.
+        reportStep(run.tryId, step = 3, caseId = run.failedCaseId, verification = true, passed = false)
+        assertThat(versionOf(run.failedCaseId).verificationStatus).isEqualTo("FAILED")
+
+        reviewService.flagRun(run.qaRunId, run.gameBuildId)
+        reviewService.flagRun(run.qaRunId, run.gameBuildId)
+        val listed = launchReadService.listRuns(run.projectId, run.ownerId, 20).items.single()
+        assertThat(listOf(listed.reviewFlagged, listed.reviewPending)).containsExactly(1, 1)
+        assertThat(listed.startedBy).isEqualTo(run.ownerId.toString())
+
+        val stepThree = qaVerdictService.list(run.qaRunId, run.ownerId).tries.single().verdicts.single { it.step == 3 }
+        assertThat(stepThree.needsReview).isTrue()
+        reviewService.decide(run.qaRunId, stepThree.logId.toLong(), run.ownerId, passed = true, note = "  영역이 켜졌다  ")
+
+        // TC 판정은 사람 결정을 따른다.
+        assertThat(versionOf(run.failedCaseId).verificationStatus).isEqualTo("VERIFIED")
+        val scenario = qaVerdictService.list(run.qaRunId, run.ownerId).tries.single()
+        val decided = scenario.verdicts.single { it.step == 3 }
+        assertThat(decided.passed).isFalse()
+        assertThat(decided.needsReview).isFalse()
+        assertThat(decided.humanDecision!!.passed).isTrue()
+        assertThat(decided.humanDecision!!.note).isEqualTo("영역이 켜졌다")
+        assertThat(decided.humanDecision!!.decidedBy).isEqualTo("verdict")
+        assertThat(decided.humanDecision!!.flagged).isTrue()
+        assertThat(listOf(scenario.reviewCount, scenario.reviewedCount)).containsExactly(0, 1)
+        assertThat(launchReadService.listRuns(run.projectId, run.ownerId, 20).items.single().reviewPending).isEqualTo(0)
+
+        // 다시 정하면 덮어쓴다. 보이지 않는 실행은 없는 것이다.
+        reviewService.decide(run.qaRunId, stepThree.logId.toLong(), run.ownerId, passed = false, note = null)
+        assertThat(versionOf(run.failedCaseId).verificationStatus).isEqualTo("FAILED")
+        assertThatThrownBy { runBlocking { reviewService.decide(run.qaRunId, stepThree.logId.toLong(), run.ownerId + 999, true, null) } }
+            .isInstanceOf(NotFoundException::class.java)
     }
 
     @Test
