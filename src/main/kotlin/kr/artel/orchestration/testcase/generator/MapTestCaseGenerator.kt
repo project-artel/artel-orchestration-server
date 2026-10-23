@@ -3,10 +3,10 @@ package kr.artel.orchestration.testcase.generator
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
-import kr.artel.orchestration.contentmap.dto.ContentMapObservationRow
-import kr.artel.orchestration.contentmap.dto.asCapabilityRow
 import com.fasterxml.jackson.databind.JsonNode
+import kr.artel.orchestration.contentmap.dto.ScenePlacedType
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
+import kr.artel.orchestration.testcase.config.MapTestCaseGeneratorProperties
 import kr.artel.orchestration.testscenario.service.ScenarioStateReader
 import kr.artel.orchestration.contentmap.evidence.ConditionOverlap
 import kr.artel.orchestration.contentmap.evidence.ConditionPrune
@@ -56,12 +56,29 @@ class MapTestCaseGenerator(
     private val effects: CapabilityEffectRepository,
     private val objectRefs: kr.artel.orchestration.contentmap.repository.SceneObjectRefRepository,
     private val objectMapper: ObjectMapper,
+    private val properties: MapTestCaseGeneratorProperties,
+    private val scenes: kr.artel.orchestration.contentmap.repository.SceneRepository,
 ) {
 
-    suspend fun generate(contentMapId: Long, progress: GenerationProgress = GenerationProgress.NONE): List<MapTestCase> {
+    /**
+     * @param grouping 나누고 묶는 방식. 기본은 설정값이고, 같은 지도로 두 방식을 견줄 때 바꿔 부른다(ARTEL-1209).
+     */
+    suspend fun generate(
+        contentMapId: Long,
+        progress: GenerationProgress = GenerationProgress.NONE,
+        grouping: MapTestCaseGeneratorProperties.Grouping = properties.grouping,
+    ): List<MapTestCase> {
+        val reading = grouping == MapTestCaseGeneratorProperties.Grouping.READING
         progress.report(GenerationPhase.READING_MAP, 0, 0)
         // 기능 행마다 다시 훑지 않게 한 번 풀어 둔다(ARTEL-1187).
         val siblings = MapTestCaseSiblings.Index(contentMaps.findCallEdges(contentMapId).toList())
+        // **빌려 올 호출자를 이 기능이 거친 경로로 좁힌다**(ARTEL-1209). 판독 기준일 때만.
+        val paths = if (reading) {
+            contentMaps.findCallPaths(contentMapId).toList().associate { row ->
+                row.capabilityId to objectMapper.readTree(row.callPath!!.asString())
+                    .mapNotNull { it.asText(null) }.map(MapTestCaseSiblings::pathMethod).toSet()
+            }
+        } else emptyMap()
         // 매개변수 이름을 호출자가 넘긴 값으로 되돌리려면 필요하다(ARTEL-602).
         val settled = contentMaps.findSettledArguments(contentMapId).toList()
             .groupBy { it.capabilityId }
@@ -80,9 +97,26 @@ class MapTestCaseGenerator(
         val namesByScene = contentMaps.findSceneObjectNames(contentMapId).toList()
             .groupBy({ it.sceneName }, { it.path })
             .mapValues { (_, paths) -> paths.toSet() }
-        val refs = objectRefs.findByContentMapId(contentMapId).toList()
+        val refRows = objectRefs.findByContentMapId(contentMapId).toList()
+        val refs = refRows
             .groupBy { it.ownerType to it.field }
             .mapValues { (_, rows) -> rows.map { it.targetName }.toSet() }
+        // **목록의 몇 번째가 무엇인지**(V141). `sprites[4]` 를 그림 이름으로 바꾸는 데 쓴다. 주인이 여럿이면
+        // 같은 번호에 이름이 여럿이다.
+        val positions = refRows.filter { it.position != null }
+            .groupBy { it.ownerType to it.field }
+            .mapValues { (_, rows) ->
+                rows.groupBy({ it.position!! }, { it.targetName }).mapValues { (_, names) -> names.toSet() }
+            }
+        // **판독이 읽는 타입들**([MapTestCaseReadings]). 사전조건의 비교가 QA 에서 확인되는지 가른다.
+        val gameTypes = contentMaps.findGameTypeNames(contentMapId).toList().toSet()
+        // **토글**(ARTEL-1209): 효과가 쓰고 조건이 읽는 값. 판독 기준일 때만 쓴다.
+        val written = if (reading) contentMaps.findWrittenMembers(contentMapId).toList().toSet() else emptySet()
+        // **씬마다 놓인 타입**(ARTEL-1209). 그 씬에 없는 오브젝트의 비교는 판독이 못 본다. `*` 는 어느 씬에나 있다.
+        val placed = if (reading) {
+            contentMaps.findPlacedTypes(contentMapId).toList().groupBy({ it.sceneName }, { it.typeName })
+                .mapValues { (_, types) -> types.toSet() }
+        } else emptyMap()
         // **읽는 곳은 하나다.** 앞서 창구가 셋이었고(조작 · 관측 · 존재 확인) 각자 다른 잣대를
         // 손으로 들고 있었다. 무엇을 남길지는 이제 질의가 정한다([ContentMapRepository.findTestCaseRows]).
         //
@@ -95,16 +129,26 @@ class MapTestCaseGenerator(
         // 기능 행마다 한 칸씩 민다(ARTEL-1187). 큰 지도에서 시간이 가장 많이 드는 자리라 여기가 진행의 분모다.
         val drafts = rows.flatMapIndexed { index, row ->
             progress.report(GenerationPhase.DRAFTING, index, rows.size)
-            draftsOf(row, siblings, effectsOf, settled, exits, refs, owners, namesByScene)
+            draftsOf(row, siblings, paths[row.capabilityId], effectsOf, settled, exits, refs, positions, owners, namesByScene, gameTypes, reading, placed)
         }
         progress.report(GenerationPhase.DRAFTING, rows.size, rows.size)
-        return merged(drafts) + screenElements(contentMapId)
+        return (merged(drafts, reading, written) + screenElements(contentMapId))
             // **언제 볼지 못 적으면 내지 않는다**(ARTEL-681). 문서가 값을 못 읽은 자리는
             // `(not a literal)` 로 적혀 있는데, 관측은 그 조건이 곧 "언제 확인하나"라서 그것을
             // 못 적으면 케이스가 아니다. 조작은 눌러 보면 되지만 관측은 볼 시점이 전부다.
             .filterNot {
                 it.watching &&
                     (it.precondition.contains(UNREADABLE) || it.expected.contains(UNREADABLE))
+            }
+            // **씬만 다른 같은 시험은 하나다**(ARTEL-1209). 모든 씬에 깔린 UI 가 씬마다 한 벌씩 나오던 자리다.
+            // 묶고 펼치는 사이에 갈래의 조건이 합쳐져 모순이 생기기도 한다(실측 1.4.0: `flag != 0` 과 `flag == 0`).
+            // 초안에서 한 번 걸렀어도 마지막에 다시 본다.
+            .let { cases -> if (reading) cases.filterNot { MapTestCaseReadingRules.impossible(it.condition, it.scene) } else cases }
+            .let { cases ->
+                if (!reading) return@let cases
+                val mapScenes = scenes.findByContentMapIdOrderByNameAsc(contentMapId).toList()
+                val entry = mapScenes.firstOrNull { it.isEntry }?.name
+                MapTestCaseReadingRules.acrossScenes(MapTestCaseReadingRules.sameToReader(cases), entry, mapScenes.map { it.name }.toSet())
             }
     }
 
@@ -129,25 +173,36 @@ class MapTestCaseGenerator(
      *
      * 순서는 첫 조각의 자리를 지킨다. 뷰의 정렬이 프롬프트 캐시 계약이라 흔들면 안 된다.
      */
-    private fun merged(drafts: List<Draft>): List<MapTestCase> =
+    private fun merged(drafts: List<Draft>, reading: Boolean = false, written: Set<String> = emptySet()): List<MapTestCase> =
         drafts.groupBy { it.entryKey }
             .flatMap { (_, ofCapability) -> branches(ofCapability) }
-            .map { group ->
+            .mapNotNull { group ->
                 val first = group.first()
                 // 이 무리가 함께 서려면 참이어야 하는 것. 바깥의 `settled`(정착 인자)와 다른 값이다.
+                // 묶으면 같은 덩어리가 겹치고 부딪히는 갈래가 생긴다. 판독 기준이면 뜻을 바꾸지 않고 정리한다(ARTEL-1209).
                 val groupCondition = weakest(group.map { it.condition })
+                    .let { if (reading) MapTestCaseReadingRules.simplified(it).condition else it }
                 // **이름과 기대결과가 같은 목록을 센다.** 이름의 `외 N건` 이 기대결과의 ` / ` 수와
                 // 어긋나면 읽는 사람이 하나를 못 찾는다. 같은 자리에서 한 번만 줄인다.
-                val shown = group.distinctBy { it.outcome }
+                //
+                // 판독이 확인 못 하는 기대([MapTestCasePhrasing.Told.hidden])는 여기서 빠진다. 정체는
+                // 아래에서 `group` 전체로 잡으므로 그대로다. 볼 것이 하나도 안 남으면 케이스가 아니다.
+                val shown = group.filterNot { it.hidden }.distinctBy { it.outcome }
+                // 옛 방식은 볼 것이 없으면 내지 않는다. 판독 기준은 **TC 를 지우지 않고 그 부분만 지운다**(ARTEL-1209):
+                // 조작은 남고, QA 는 그 조작이 되는지만 본다.
+                if (shown.isEmpty() && !reading) return@mapNotNull null
                 MapTestCase(
                     capabilityKey = first.capabilityKey,
                     scene = first.scene,
+                    // 준비할 상태([MapTestCase.setup])는 문장에 싣지 않는다. 판독이 못 읽는 식이라 사람도 대개 못 읽는다
+                    // (1.4.1 실측: 385 건 중 260 건이 `Mathf.Clamp01(...)` · `GetEnumerator()` 같은 식).
                     precondition = MapTestCasePhrasing.precondition(
-                        first.scene, groupCondition, first.inputKey,
+                        first.scene, groupCondition, first.inputKey, compactValues = reading,
                     ),
                     // **구조를 버리지 않는다**(ARTEL-627). 위 문장은 이것을 사람 말로 렌더한 것이고,
                     // 소비하는 쪽은 문장이 아니라 이쪽을 읽는다.
                     condition = groupCondition,
+                    toggles = if (reading) group.flatMap { MapTestCaseReadingRules.toggles(it.fullCondition, written) }.distinct().sorted() else emptyList(),
                     aimedAt = first.aimedAt,
                     // **이름은 조작이 아니라 시험이다**([MapTestCasePhrasing.trial]). 무엇이
                     // 일어나는지는 그 `group` 이 다 모여야 알 수 있어서 여기서 짓는다. 관측은 부를 조작이
@@ -159,8 +214,12 @@ class MapTestCaseGenerator(
                     // **한 기능이 내는 관측들을 함께 적는다.** 저작이 이것을 조작 하나 + 검증 여럿으로
                     // 펴고, 채점은 스텝 단위라 어느 지점이 틀렸는지는 그대로 드러난다. 구버전도 같은
                     // 자리를 ` / ` 로 잇는다.
-                    expected = shown.joinToString(OUTCOME_SEPARATOR) { it.outcome },
+                    expected = if (shown.isEmpty()) MapTestCaseReadingRules.NO_READABLE_RESULT
+                    else shown.joinToString(OUTCOME_SEPARATOR) { it.outcome },
                     expectedItems = shown.map { it.outcome },
+                    // 항목과 같은 순서로 하나씩이다. 판정은 이쪽을 읽는다.
+                    expectedChecks = shown.map { it.check },
+                    setup = first.setup,
                     status = first.status,
                     gaps = group.flatMap { it.gaps }.distinct(),
                     arrivesAt = group.firstNotNullOfOrNull { it.arrivesAt },
@@ -175,7 +234,8 @@ class MapTestCaseGenerator(
             .let(::withBranchesApart)
             // **갈래를 펴다 보면 서로 다른 케이스의 갈래가 같아진다.** 같은 기능이 같은 전제에서
             // 같은 것을 확인하라고 두 줄로 나오면 실행하는 사람은 같은 일을 두 번 한다.
-            .distinctBy { listOf(it.capabilityKey, it.precondition, it.step, it.expected) }
+            // 준비할 상태는 문장에 없지만 다른 갈래다(ARTEL-1209). 빼면 1.4.1 에서 24 건이 하나로 접혔다.
+            .distinctBy { listOf(it.capabilityKey, it.precondition, it.step, it.expected, it.setup) }
             .let(::withTellingSteps)
 
     /**
@@ -262,11 +322,20 @@ class MapTestCaseGenerator(
             val others = group.filterNot { it === case }.map { comparisonsIn(it.condition) }
             // **덜 가진 것부터 적는다.** 형제가 셋 이상이면 공통이 아니어도 대부분이 가진 비교가
             // 있고, 그것은 이 케이스를 옆줄과 갈라 주지 못한다. 가나다순으로 자르던 판에서
-            // 실측 85건 중 6건이 **이름이 같은 채로** 남았다 — 갈라 주는 비교가 [MAX_TELLING]
-            // 밖으로 밀려난 것이다. 같은 수면 가나다순으로 갈라 이름이 실행마다 흔들리지 않게 한다.
-            val telling = (comparisonsIn(case.condition) - shared)
+            // 실측 85건 중 6건이 **이름이 같은 채로** 남았다 — 갈라 주는 비교가 개수 상한 밖으로
+            // 밀려난 것이다. 같은 수면 가나다순으로 갈라 이름이 실행마다 흔들리지 않게 한다.
+            //
+            // **갈릴 때까지만 적는다.** 앞서는 셋에서 잘랐는데 그 수에는 근거가 없었다 — 실측 지도 1·2 에서
+            // 상한을 풀어도 이름이 하나도 안 바뀌었다. 형제 누구도 지금까지 적은 비교를 다 갖지 않으면 이미
+            // 갈린 것이고, 더 적는 것은 전제를 두 번 쓰는 일이다. 형제의 꼬리는 제 비교의 일부라 이 꼬리와
+            // 같아질 수 없다.
+            val ordered = (comparisonsIn(case.condition) - shared)
                 .sortedWith(compareBy({ c -> others.count { c in it } }, { it }))
-                .take(MAX_TELLING)
+            val telling = mutableListOf<String>()
+            for (comparison in ordered) {
+                telling += comparison
+                if (others.none { it.containsAll(telling) }) break
+            }
             if (telling.isEmpty()) case
             else case.copy(step = "${case.step} (${telling.joinToString(", ")} 일 때)")
         }
@@ -418,12 +487,14 @@ class MapTestCaseGenerator(
                 // 하나에 매달린 앞·뒤 이동이 한 줄이 되어 `LeftArrow` 가 사라졌다. 대표 문구만 남고
                 // 기대결과는 양쪽이 섞여, 오른쪽을 누르고 왼쪽 결과를 기다리는 표가 된다.
                 group.first().step == draft.step &&
+                    // **준비할 상태가 다르면 다른 TC 다**(ARTEL-1209). 판독이 못 볼 뿐 다른 갈래다.
+                    group.first().removed == draft.removed &&
                     group.all { ConditionOverlap.provablyTogether(it.condition, draft.condition) }
             }
             if (home != null) home += draft else groups += mutableListOf(draft)
         }
         // 전환끼리는 조작과 도착 화면으로 가른다. 같은 키로 같은 곳에 가는 갈래는 한 줄이면 된다.
-        return groups + moves.groupBy { it.step to it.arrivesAt }.values.map { it.toList() }
+        return groups + moves.groupBy { Triple(it.step, it.arrivesAt, it.removed) }.values.map { it.toList() }
     }
 
     /**
@@ -452,8 +523,10 @@ class MapTestCaseGenerator(
         // `MapSceneButton` 만 `InitPlayData()` 를 부른다.
         //
         // 합쳐진 줄은 `capabilityKey` 를 하나만 들어서, 나머지 조작의 효과가 저작에 닿지도 않았다.
+        //
+        // 준비할 상태도 본다(ARTEL-1209). 문장에는 없지만 다른 갈래라, 빼면 다른 기능의 TC 가 이 줄로 접혔다.
         cases.groupBy {
-            listOf(it.scene, it.precondition, it.expected, it.watching, it.aimedAt)
+            listOf(it.scene, it.precondition, it.expected, it.watching, it.aimedAt, it.setup)
         }
             .map { (_, group) ->
                 if (group.size == 1) group.single()
@@ -544,6 +617,16 @@ class MapTestCaseGenerator(
         val gaps: List<String>,
         val arrivesAt: String? = null,
         val identity: String = "",
+        /** 판독이 확인 못 하는 기대. 정체에는 들고 보이는 기대결과에서는 뺀다. */
+        val hidden: Boolean = false,
+        /** QA 가 판독에서 이 기대를 무엇으로 확인하나([MapTestCaseChecks]). */
+        val check: MapTestCaseCheck? = null,
+        /** 판독 기준으로 묶을 때 사전조건에서 지운 비교들의 서명(ARTEL-1209). 그것만 다른 갈래는 "다음 중 하나" 다. */
+        val removed: String = "",
+        /** 판독이 못 봐서 사전조건에서 지운 비교들. 시나리오가 만들어 둘 "준비할 상태" 다. */
+        val setup: List<String> = emptyList(),
+        /** 지우거나 정리하기 전 조건. 토글을 찾는 데 쓴다 — 판독이 못 보는 비교가 토글을 읽기도 한다. */
+        val fullCondition: ConditionNode? = null,
         /**
          * **플레이어가 무엇을 건드렸나.** 이것이 곧 사람이 "기능 하나"로 세는 단위다.
          *
@@ -566,12 +649,17 @@ class MapTestCaseGenerator(
     private suspend fun draftsOf(
         row: ContentMapCapabilityRow,
         siblings: MapTestCaseSiblings.Index,
+        path: Set<String>?,
         effectsOf: Map<Long, List<CapabilityEffectEntity>>,
         settled: Map<Long, Map<Int, String>>,
         exits: Set<LoopExits.Guard>,
         refs: Map<Pair<String, String>, Set<String>>,
+        positions: Map<Pair<String, String>, Map<Int, Set<String>>>,
         owners: Map<Long, String>,
         namesByScene: Map<String, Set<String>>,
+        gameTypes: Set<String>,
+        reading: Boolean = false,
+        placed: Map<String, Set<String>> = emptyMap(),
     ): List<Draft> {
         // 키가 없는 행은 evidence 출신이 아니다. 케이스가 지도를 되짚을 방법이 없으므로 내지 않는다 —
         // 되짚지 못하는 케이스는 이 개편이 없애려는 바로 그 문자열 맞춤으로 돌아간다.
@@ -587,7 +675,7 @@ class MapTestCaseGenerator(
             if (own.isNotEmpty()) {
                 listOf(Source(condition, own, row.capabilityId, LoopExits.reachedByRepeating(condition, exits)))
             } else {
-                borrowed(row, condition, siblings, effectsOf, exits)
+                borrowed(row, condition, siblings, path, effectsOf, exits)
             }
 
         return sources.flatMap { (situation, effectRows, source, repeats) ->
@@ -611,11 +699,28 @@ class MapTestCaseGenerator(
             // 쓴다([branches] 가 "조작이 다르면 다른 케이스"를 이것으로 본다).
             val step = MapTestCasePhrasing.trial(act, repeats)
             val settledCondition = MapTestCaseLocals.settle(situation, source, settled)
+                // 판독으로 확인 못 하는 비교는 빼지 않고 표시만 한다. 빼면 갈래가 무너진다.
+                .let { it.copy(condition = MapTestCaseReadings.mark(it.condition, gameTypes)) }
+            // **판독 기준**(ARTEL-1209): 성립할 수 없는 갈래는 버리고, 판독이 못 보는 비교는 사전조건에서 지운다.
+            // 정체는 지우기 전 조건으로 잡는다 — 바뀌지 않은 TC 가 옛 방식과 같은 줄로 이어진다.
+            if (reading && MapTestCaseReadingRules.impossible(settledCondition.condition, row.sceneName)) {
+                return@flatMap emptyList()
+            }
+            val inScene = placed[row.sceneName].orEmpty() + placed[ScenePlacedType.ANY_SCENE].orEmpty()
+            val readable = if (reading) {
+                MapTestCaseReadingRules.readable(
+                    MapTestCaseReadingRules.inScene(settledCondition.condition, inScene, placed.values.flatten().toSet()),
+                )
+            } else null
+            // 바깥 조건과 부딪히는 `또는` 갈래를 빼고 같은 덩어리를 한 번만 쓴다. 갈래가 하나도 안 남으면 갈 수 없는 길이다.
+            val simplified = readable?.let { MapTestCaseReadingRules.simplified(it.condition) }
+            if (simplified?.impossible == true) return@flatMap emptyList()
+            val sceneNames = namesByScene[row.sceneName].orEmpty()
             val reasons = if (settledCondition.unsettable) gaps + MapTestCaseLocals.UNSETTABLE else gaps
             // 효과의 주인은 **그 효과를 든 기능**이다. 빌려 온 자리(`borrowed`)에서는 이 행이 아니다.
             MapTestCasePhrasing.expectedWithSource(
-                effectRows, refs, owners[source], namesByScene[row.sceneName].orEmpty(),
-            ).map { (outcome, does, effect) ->
+                effectRows, refs, owners[source], namesByScene[row.sceneName].orEmpty(), positions, gameTypes,
+            ).map { (outcome, does, effect, hidden, check) ->
                 Draft(
                     capabilityKey = key,
                     act = act,
@@ -626,11 +731,18 @@ class MapTestCaseGenerator(
                     // 실측에서 `GameClearController` 가 그렇다.
                     entryKey = row.entryId?.let { "${row.sceneName}\u001F$it" } ?: key,
                     scene = row.sceneName,
-                    condition = settledCondition.condition,
+                    // 지운 뒤 아무것도 안 남으면 조건이 없는 것이다. `?:` 로 되돌리면 지운 비교가 되살아난다.
+                    condition = if (simplified != null) simplified.condition else settledCondition.condition,
+                    fullCondition = settledCondition.condition,
+                    removed = readable?.removed.orEmpty(),
+                    setup = readable?.setup.orEmpty(),
                     inputKey = row.inputKey,
                     aimedAt = row.controlPath,
                     step = step,
                     outcome = outcome,
+                    // 판독으로 확인할 수 없는 기대 항목은 보이는 기대결과에서 뺀다. 효과는 정체에 남는다.
+                    hidden = hidden || (reading && !MapTestCaseReadingRules.collectable(check, sceneNames)),
+                    check = check,
                     status = caseGrade(row),
                     gaps = reasons,
                     // 씬 효과의 대상이 곧 도착 화면이다. 산문에서 다시 뽑지 않는다.
@@ -685,39 +797,12 @@ class MapTestCaseGenerator(
                 step = "`${element.path}` 이(가) 화면에 있는지 확인한다",
                 expected = "`${element.path}` 이(가) 화면에 있다",
                 expectedItems = listOf("`${element.path}` 이(가) 화면에 있다"),
+                expectedChecks = listOf(MapTestCaseChecks.presence(element.path)),
                 status = "runnable",
                 identity = "screen\u001F${element.sceneName}\u001F${element.path}",
             )
         }
 
-    /**
-     * 이 관측을 케이스로 낼까(ARTEL-681).
-     *
-     * 셋으로 거른다 — 무엇이 일으키나, 볼 것이 있나, 여기 있다는 것이 확인됐나.
-     *
-     * ## 무엇이 일으키나는 `trigger_kind` 가 답한다
-     *
-     * 앞서는 메서드 이름 목록(`WATCHED_ROOTS`)으로 걸렀다. 손으로 적은 목록이라 두 가지를
-     * 놓쳤다. 컴파일러가 코루틴 이름을 바꾸면 목록에 없고(`Start1`), 목록에 안 적어 둔 Unity
-     * 콜백도 통째로 빠진다. 실측(word-venture, 2026-09-01)에서 `OnTriggerEnter2D` 12 ·
-     * `OnMouseEnter` 2 · `OnMouseExit` 2 · `OnDrag` 1 · `OnEndDrag` 1 이 그렇게 빠져 있었다.
-     *
-     * 빠진 것들이 사소하지 않다. `OnTriggerEnter2D` 는 `Player.HpText.text` 가 줄고 죽으면
-     * `GameOverScene` 으로 가는 것이고, `OnMouseEnter` 는 마우스를 올리면 1.2배가 되는 것이다.
-     * 구버전(specs_v2)도 이 자리를 12건 냈다.
-     *
-     * `trigger_kind` 는 적재기가 근거에서 읽는 값이라 목록을 손으로 늘릴 일이 없다.
-     * `lifecycle` 은 **Unity 가 부르는 콜백**이고 `unity-event` 는 **게임이 인스펙터로 연결한
-     * 자기 메서드**다. 뒤엣것은 내지 않는다 — 사람이 부를 수 있는 자리가 아니고, 실측에서
-     * `CardMouseUp` 과 `CardAlignment` 이 `this.transform` 세 줄을 똑같이 냈다.
-     *
-     * ## 확인 안 된 자리는 그 `scene` 의 사실이 아니다
-     *
-     * `persistent-unconfirmed` 는 `scene` 을 넘어 살아남는 오브젝트가 거기 있다는 사실만 말한다
-     * ([ContentMapCapabilityRow.scenePresence] 가 TC 생성기를 지목해 적어 두었다). 실측에서
-     * `SaveLoadController` 하나가 여섯 `scene` 에 앉아 *"`this.gameObject` 이(가) 사라진다"* 를
-     * 여섯 벌 냈다 — 아무도 확인한 적 없고, 실행하는 사람이 찾을 이름도 아니다.
-     */
     /**
      * **케이스로서의 등급**(ARTEL-681).
      *
@@ -734,21 +819,15 @@ class MapTestCaseGenerator(
     private fun caseGrade(row: ContentMapCapabilityRow): String =
         if (row.actionability == NOT_A_STEP) "runnable" else row.status
 
-    private suspend fun keptAsObservation(row: ContentMapObservationRow): Boolean {
-        if (row.triggerKind != ENGINE_CALLBACK) return false
-        if (row.scenePresence == UNCONFIRMED_HERE) return false
-        return effects.findByCapabilityIdOrderByIdAsc(row.capabilityId).toList()
-            .any { it.kind in VISIBLE }
-    }
-
     private suspend fun borrowed(
         row: ContentMapCapabilityRow,
         condition: ConditionNode?,
         siblings: MapTestCaseSiblings.Index,
+        path: Set<String>?,
         effectsOf: Map<Long, List<CapabilityEffectEntity>>,
         exits: Set<LoopExits.Guard>,
     ): List<Source> =
-        siblings.of(row.capabilityId).mapNotNull { borrowed ->
+        siblings.of(row.capabilityId, path).mapNotNull { borrowed ->
             val callerCondition = parse(borrowed.callerCondition)
             val ownCondition = parse(borrowed.ownCondition)
             // **모순되는 갈래는 잇지 않는다.** 이은 케이스의 사전조건이 양쪽을 함께 드는데 둘이
@@ -813,14 +892,12 @@ class MapTestCaseGenerator(
     /** 효과 어휘의 씬 전환. `MapTestCasePhrasing` 이 같은 값으로 문장을 만든다. */
     private companion object {
         /**
-         * 조작 문장에 붙이는 **가르는 조건의 최대 개수**. 다 붙이면 전제를 통째로 두 번 쓰는 셈이고,
-         * 목록에서 눈으로 훑을 수 있는 길이를 넘긴다. 구별에 필요한 것은 대개 하나둘이다.
-         */
-        private const val MAX_TELLING = 3
-
-        /**
          * 한 케이스를 몇 갈래까지 펼 것인가(ARTEL-667). 갈래가 곱해지는 자리에서 케이스가
          * 폭발하는 것은 이 저장소가 이미 한 번 겪은 일이라, 넘으면 뭉친 채로 둔다.
+         *
+         * **값을 맞춘 것이 아니라 안전장치다.** 실측(word-venture 지도 1·2, 2026-10-13)에서 상한을
+         * 풀어 재생성해도 케이스가 하나도 안 바뀌었다 — 이 지도에서는 넷을 넘는 갈래가 없다. 그래서
+         * 이 수가 결과를 정하는 자리는 아직 없고, 다른 게임에서 걸리면 그때 그 실측으로 다시 정한다.
          */
         private const val MAX_BRANCHES = 4
 
@@ -828,24 +905,6 @@ class MapTestCaseGenerator(
 
         /** 누를 것이 없는 자리(ARTEL-681). */
         const val NOT_A_STEP = "not-a-step"
-
-        /**
-         * **화면에 보이는 효과만 케이스가 된다**(ARTEL-681).
-         *
-         * 값만 바뀌는 것(`write`)은 실행하는 사람이 눈으로 확인할 수 없고, 소리·애니메이션은 지금
-         * 판정할 수단이 없다. 수단이 생기면 그때 넣는다.
-         */
-        val VISIBLE = setOf(SCENE, "ui-value", "active-state", "transform", "instantiate", "destroy")
-
-        /**
-         * Unity 가 부르는 콜백(`capability_evidence.trigger_kind`). 다른 값은 `unity-event` 로,
-         * 게임이 인스펙터로 연결한 자기 메서드다 — 그것은 사람이 그 순간을 만들 수 없어서
-         * 관측 케이스로 내지 않는다([ContentMapRepository.findTestCaseRows] 가 거른다).
-         */
-        const val ENGINE_CALLBACK = "lifecycle"
-
-        /** 살아남아 거기 있을 뿐, 여기서 되는지는 아직 아무도 안 본 자리. */
-        const val UNCONFIRMED_HERE = "persistent-unconfirmed"
 
         /** 문서가 값을 못 읽은 자리에 적어 두는 글자. */
         const val UNREADABLE = "(not a"

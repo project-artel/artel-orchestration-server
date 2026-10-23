@@ -2791,6 +2791,40 @@
         }
       }
     },
+    "/internal/content-maps/{contentMapId}/reingest": {
+      "post": {
+        "tags": [
+          "content-map-reingest-controller"
+        ],
+        "operationId": "reingest",
+        "parameters": [
+          {
+            "name": "contentMapId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/action/{instanceId}": {
       "post": {
         "tags": [
@@ -15900,6 +15934,10 @@
               "offset": {
                 "type": "integer",
                 "format": "int32"
+              },
+              "readable": {
+                "type": "boolean",
+                "description": "false 면 QA 실행 중 SDK pulse 로 확인할 수 없는 비교다. 판정에서 뺀다. 확인할 수 있으면 칸이 없다"
               }
             }
           }

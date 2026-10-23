@@ -49,6 +49,10 @@ data class TestCaseVersionEntity(
     @Column("expected_items")
     val expectedItems: Json? = null,
 
+    /** [expectedItems] 와 같은 순서로, QA 가 판독에서 확인할 코드 이름([TestCaseEntity.expectedChecks] 와 같은 뜻). */
+    @Column("expected_checks")
+    val expectedChecks: Json? = null,
+
     @Column("status")
     val status: String? = null,
 

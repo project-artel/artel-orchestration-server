@@ -153,6 +153,6 @@ class ScenarioExecutionModeTest {
             untouched(TestCaseVersionRepository::class.java) as TestCaseVersionRepository,
             untouched(GameBuildRepository::class.java) as GameBuildRepository,
         )
-        return ScenarioCompositionService(reader)
+        return ScenarioCompositionService(reader, objectMapper)
     }
 }

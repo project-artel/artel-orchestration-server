@@ -61,6 +61,8 @@ class MapTestCaseGeneratorGoldenTest {
 
     private lateinit var cases: List<MapTestCase>
 
+    private var mapId = 0L
+
     @BeforeAll
     fun `문서를 적재하고 케이스를 뽑는다`(): Unit = runBlocking {
         val now = Instant.now()
@@ -93,7 +95,21 @@ class MapTestCaseGeneratorGoldenTest {
                 )
             )
         )
-        cases = generator.generate(map.id)
+        mapId = map.id!!
+        cases = generator.generate(map.id!!)
+    }
+
+    /**
+     * **같은 지도를 다시 뽑아도 케이스의 정체가 같다.**
+     *
+     * 정체(`case_key`)가 흔들리면 다시 뽑을 때마다 시나리오가 가리키던 줄이 `broken` 이 되고 새 줄이
+     * 생긴다. 3단계에서 기대 문장을 거르는 잣대가 바뀌며 228 이 그렇게 됐고, 재생성으로야 알았다.
+     */
+    @Test
+    fun `같은 지도를 다시 뽑아도 정체가 같다`(): Unit = runBlocking {
+        val again = generator.generate(mapId)
+
+        assertThat(again.map { it.identity }).containsExactlyElementsOf(cases.map { it.identity })
     }
 
     /**
@@ -173,7 +189,10 @@ class MapTestCaseGeneratorGoldenTest {
         // 2026-08-18) 것이고, 그 사이 SDK 가 조건을 다르게 낸다(ARTEL-700) — `IsStreaming != 0`
         // 처럼 호출 이름으로 적던 자리를 그 getter 가 실제로 하는 비교(`streamingCoroutine != 0`)
         // 로 바꿨다. 규칙이 달라진 것이 아니라 지도가 달라졌다.
-        assertThat(cases).hasSize(88)
+        //
+        // 88 → 84. 이름으로 찾은 `Background` 의 그림 기대를 뺐다. 판독이 GameObject 의 그림을 싣지
+        // 않아 늘 실패했고, 그 기대만 든 케이스 넷이 함께 빠진다. SDK 가 그 그림을 실으면 돌아온다.
+        assertThat(cases).hasSize(84)
     }
 
     /**
@@ -265,8 +284,10 @@ class MapTestCaseGeneratorGoldenTest {
         }
 
         val many = cases.filter { it.expectedItems.size > 1 }
-        assertThat(many).hasSize(18)
-        assertThat(many.sumOf { it.expectedItems.size }).isEqualTo(51)
+        // `ProjectileAnimator` 의 그림 두 항목은 이름을 몰라 둘 다 "갱신된다" 가 되어 한 항목으로 접힌다. 그 케이스가 여럿에서 빠져 두 항목이 함께 빠진다.
+        // `Background` 그림 기대가 빠져 170 도 항목이 하나만 남는다.
+        assertThat(many).hasSize(16)
+        assertThat(many.sumOf { it.expectedItems.size }).isEqualTo(47)
     }
 
     /**
@@ -312,7 +333,7 @@ class MapTestCaseGeneratorGoldenTest {
     /**
      * **형제와 갈리는 것을 먼저 적는다**(ARTEL-662 의 꼬리).
      *
-     * 꼬리에 담는 수가 [MAX_TELLING] 로 잘리는데, 가나다순으로 자르면 **정작 옆줄과 갈라 주는
+     * 꼬리에 담는 수가 개수 상한으로 잘리던 때, 가나다순으로 자르면 **정작 옆줄과 갈라 주는
      * 비교가 뒤로 밀려 잘려 나간다.** 실측에서 `GameClearScene` 의 세 줄이 그랬다 — 셋을 가르는
      * 것은 `stagePosition` 하나인데 그것이 꼬리 맨 끝에 있어, 목록에서 줄을 훑는 사람은 같은
      * 글자 40자를 지나야 다른 데에 닿았다.
@@ -324,7 +345,8 @@ class MapTestCaseGeneratorGoldenTest {
         // 이름에 결과가 붙은 뒤로도 이 셋은 글자까지 같다 — 같은 조작으로 같은 것을 만든다.
         // 갈리는 것이 전제뿐이라, 꼬리가 없으면 목록에서 셋을 구별할 수 없다.
         val same = "아무 키나 눌러 `TypeCard` 을(를) 만들고 " +
-            "`GameObject.GetComponentInChildren().text` 표시를 `Word.name` 로 갱신한다 ("
+            // `Word.name` 은 판독이 주지 않는 값이라 빠졌다(4단계). 무엇으로 바뀌는지는 몰라도 바뀐다는 것은 확인된다.
+            "`GameObject.GetComponentInChildren().text` 표시를 갱신한다 ("
         val group = cases.filter { it.scene == "GameClearScene" && it.step.startsWith(same) }
         assertThat(group).hasSizeGreaterThan(1)
 
@@ -415,7 +437,8 @@ class MapTestCaseGeneratorGoldenTest {
         // 갈래를 갈래대로 내면서 늘었다(ARTEL-667) — 지도의 `Return` 이 스테이지마다 한 줄이다.
         // 26 → 11. 빠진 열다섯은 `Update()` 아래 형제에게서 빌려 온 줄이다(ARTEL-680).
         // 30 → 27 도 같은 이유다(`unity-event` 를 뺐다). 27 → 23 은 문서가 바뀐 것이다.
-        assertThat(byScene["Map_scene"]).isEqualTo(23)
+        // 23 → 19 는 `Background` 그림 기대만 든 넷이 빠진 것이다.
+        assertThat(byScene["Map_scene"]).isEqualTo(19)
     }
 
     /**
@@ -561,8 +584,8 @@ class MapTestCaseGeneratorGoldenTest {
      *
      * `StoryController.backgorunds` 가 셋을 가리킨다(실측). 하나를 골라 적으면 나머지 둘일 때
      * 거짓이지만, **몇 번째인지를 문서가 못 읽은 자리**(`Item[_]`)에서는 코드가 그 목록을 돌며
-     * 전부 건드리므로 셋을 다 적는 것이 참이다. 번호가 있는 자리는 펴지 않는다 — 그때는 어느
-     * 것인지 정해져 있는데 우리가 번호와 참조를 못 맞추는 것이라, 다 적으면 없는 말을 한다.
+     * 전부 건드리므로 셋을 다 적는 것이 참이다. 번호가 있는 자리는 그 번호의 이름으로 적는다(V100) —
+     * 주인이 여럿이면 주인마다의 이름을 적고 그중 하나라고 말한다.
      *
      * 못 푸는 것은 그대로 둔다 — `GetComponentInChildren()` 은 씬이 답할 것이 없다. 다만 `Item`
      * 만은 사람이 쓰는 모양으로 바꾼다. .NET 이 인덱서에 붙이는 이름이라 읽는 사람에게 아무
@@ -576,9 +599,10 @@ class MapTestCaseGeneratorGoldenTest {
             it.contains("`Background 6 (Bonus)` · `Background1` · `Background2`")
         }
         assertThat(outcomes).anyMatch { it.contains("`GameObject.GetComponentInChildren().text`") }
-        // `Item` 은 한 줄도 남지 않는다. `Item[4]` 는 `[4]` 로 남아 번호를 잃지 않는다.
+        // `Item` 은 한 줄도 남지 않는다. `SlimeAnimator.sprites.Item[4]` 는 주인 셋의 다섯째 그림이 된다.
         assertThat(outcomes).noneMatch { it.contains(".Item[") }
-        assertThat(outcomes).anyMatch { it.contains("[4]") }
+        assertThat(outcomes).noneMatch { it.contains("sprites[") }
+        assertThat(outcomes).anyMatch { it.contains("`spriteRenderer`(SlimeAnimator) 표시가 `") && it.contains("중 하나 로 갱신된다") }
     }
 
     /**

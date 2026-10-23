@@ -3,9 +3,9 @@ package kr.artel.orchestration.contentmap.repository
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.contentmap.dto.ContentMapCallEdge
 import kr.artel.orchestration.contentmap.dto.ContentMapCapabilityRow
-import kr.artel.orchestration.contentmap.dto.ContentMapObservationRow
 import kr.artel.orchestration.contentmap.dto.ContentMapScreenElement
 import kr.artel.orchestration.contentmap.dto.CapabilityOwner
+import kr.artel.orchestration.contentmap.dto.ScenePlacedType
 import kr.artel.orchestration.contentmap.dto.MethodArgument
 import kr.artel.orchestration.contentmap.dto.SpecGapRow
 import kr.artel.orchestration.contentmap.entity.ContentMapEntity
@@ -178,6 +178,109 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
     fun findCapabilityOwners(contentMapId: Long): Flow<CapabilityOwner>
 
     /**
+     * 기능마다 거친 호출 경로(ARTEL-1209). TC 생성기가 결과를 빌려 올 공통 호출자를 이 경로 위로 좁힌다.
+     */
+    @Query(
+        """
+        SELECT ce.capability_id, ce.call_path
+        FROM capability_evidence ce
+        JOIN capability c ON c.id = ce.capability_id
+        JOIN scene s ON s.id = c.scene_id
+        WHERE s.content_map_id = :contentMapId AND ce.call_path IS NOT NULL
+        """
+    )
+    fun findCallPaths(contentMapId: Long): Flow<kr.artel.orchestration.contentmap.dto.CapabilityCallPath>
+
+    /**
+     * **이 게임의 코드가 선언한 타입들**. `Map.MapMove` 처럼 전체 이름이다.
+     *
+     * SDK 판독은 근거 문서가 이름 댄 **게임 타입**의 멤버를 읽는다. 사전조건의 비교가 판독으로
+     * 확인되는지 가르려면 그 비교가 부르는 타입이 게임 것인지 알아야 한다 — `MapMove.StagePosition`
+     * 은 읽히고 `Vector3.x` 는 안 읽힌다.
+     *
+     * 기능이 붙은 메서드의 타입만 보면 모자란다. `InteractionLock` 처럼 기능 없이 **불리기만** 하는
+     * 정적 타입도 판독이 읽는다(실측 지도 2). 그래서 문서의 `calls[].targetId` 도 함께 센다 —
+     * 근거 문서는 게임 어셈블리 안의 호출만 적는다. 씬에 귀속되지 못한 `unplaced` 타입
+     * (`TutorialController`)은 기능 행이 없어 둘 다에 안 잡히고, 그 쓰기를 든 표(V95)에만 남는다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT type_name FROM (
+            SELECT split_part(ce.method_id, '|', 2) AS type_name
+            FROM capability_evidence ce
+            JOIN capability c ON c.id = ce.capability_id
+            JOIN scene s ON s.id = c.scene_id
+            WHERE s.content_map_id = :contentMapId AND ce.method_id IS NOT NULL
+            UNION
+            SELECT split_part(call->>'targetId', '|', 2)
+            FROM capability_evidence ce
+            JOIN capability c ON c.id = ce.capability_id
+            JOIN scene s ON s.id = c.scene_id
+            CROSS JOIN LATERAL jsonb_array_elements(ce.calls) AS call
+            WHERE s.content_map_id = :contentMapId AND call->>'targetId' IS NOT NULL
+            UNION
+            SELECT source_type
+            FROM content_map_stray_effect
+            WHERE content_map_id = :contentMapId AND source_type IS NOT NULL
+            UNION
+            -- 진입점의 타입(ARTEL-1209). 1.4.0 의 `TutorialController` 는 기능의 주인도 호출 대상도 아니고
+            -- 진입점으로만 나오는데, 다른 코드의 조건이 그 멤버를 읽고 판독도 그 값을 싣는다.
+            SELECT split_part(ce.entry_id, '|', 2)
+            FROM capability_evidence ce
+            JOIN capability c ON c.id = ce.capability_id
+            JOIN scene s ON s.id = c.scene_id
+            WHERE s.content_map_id = :contentMapId AND ce.entry_id IS NOT NULL
+        ) types
+        ORDER BY type_name ASC
+        """
+    )
+    fun findGameTypeNames(contentMapId: Long): Flow<String>
+
+    /**
+     * **효과가 쓰는 값들**(ARTEL-1209). 조건이 읽는 값 중 여기 든 것이 토글이다 — 조작하면 바뀌는 상태라,
+     * 같은 화면에서 `flag == 0` 과 `flag != 0` 을 차례로 거친다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT f.target
+        FROM capability_effect f
+        JOIN capability c ON c.id = f.capability_id
+        WHERE c.content_map_id = :contentMapId AND f.kind = 'write' AND f.target IS NOT NULL
+        ORDER BY f.target ASC
+        """
+    )
+    fun findWrittenMembers(contentMapId: Long): Flow<String>
+
+    /**
+     * **씬마다 놓인 타입**(ARTEL-1209). 판독은 그 씬에 놓인 오브젝트의 멤버만 싣는다 — TitleScene 의 TC 에
+     * `MapMove.movement` 조건이 붙어도 그 씬에는 `MapMove` 가 없어 확인할 수 없다(실측 1.4.0).
+     *
+     * 씬 오브젝트 표(V114)의 컴포넌트 타입과, 그 씬에 놓인 기능의 주인 타입을 함께 센다. 씬을 넘어 살아남는
+     * 오브젝트는 씬 오브젝트 표에 없어서, 그런 기능의 주인 타입은 `*`(어느 씬에나)로 낸다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT scene_name, type_name FROM (
+            SELECT s.name AS scene_name, comp->>'type' AS type_name
+            FROM scene_object o
+            JOIN scene s ON s.id = o.scene_id
+            CROSS JOIN LATERAL jsonb_array_elements(o.components) AS comp
+            WHERE o.content_map_id = :contentMapId
+            UNION
+            SELECT CASE WHEN c.scene_presence LIKE 'persistent%' THEN '*' ELSE s.name END,
+                   regexp_replace(split_part(split_part(ce.method_id, '|', 2), '/', 1), '^.*\.', '')
+            FROM capability_evidence ce
+            JOIN capability c ON c.id = ce.capability_id
+            JOIN scene s ON s.id = c.scene_id
+            WHERE c.content_map_id = :contentMapId AND ce.method_id IS NOT NULL
+              AND (c.scene_presence = 'placed' OR c.scene_presence LIKE 'persistent%')
+        ) placed
+        WHERE type_name IS NOT NULL AND type_name <> ''
+        """
+    )
+    fun findPlacedTypes(contentMapId: Long): Flow<ScenePlacedType>
+
+    /**
      * 씬마다 **그 씬이 이름으로 아는 오브젝트들**.
      *
      * `GameObject.Find("이름")` 을 맞춰 보는 데 쓴다([MapTestCaseTargets.ofScene]). 인스펙터가
@@ -208,42 +311,6 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
      */
     @Query("SELECT updated_at::text FROM content_map WHERE id = :contentMapId")
     suspend fun findUpdatedAt(contentMapId: Long): String?
-
-    /**
-     * **누를 것은 없고 볼 것은 있는 기능**(ARTEL-681). 위 창구가 `not-a-step` 을 거르므로 따로 낸다.
-     *
-     * 게임이 스스로 하는 일이다 — 화면을 열면 무엇이 보이나, 값이 이러하면 무엇이 보이나. 지금까지
-     * 케이스가 하나도 없었고(지도 31에서 137개 중 0건), 대신 그 결과가 엉뚱하게 조작 케이스의
-     * 기대결과로 흘러들어갔다(ARTEL-680).
-     *
-     * `call_path` 의 뿌리를 함께 낸다. **유니티가 정한 이름이라** 개발자가 무엇을 어떻게 부르든
-     * 흔들리지 않는다 — `Start` 면 화면을 열 때, `Update` 면 머무르는 동안이다.
-     */
-    @Query(
-        """
-        SELECT cm.id AS content_map_id, cm.capture,
-               s.id AS scene_id, s.name AS scene_name, s.summary AS scene_summary,
-               c.id AS capability_id, c.capability_key, c.origin, c.verification,
-               c.scene_presence, c.status,
-               c.actionability, c.observability, c.applicability, c.summary, c.given_text,
-               c.control_selector, c.control_path, c.control_label, c.interaction,
-               c.input_key, c.input_phase, c.repeat_until_done,
-               c.hint_action_method, c.hint_action_params,
-               ce.entry_id, ce.branch_offset, ce.record_kind, ce.trigger_kind,
-               ce.analysis_confidence, ce.condition_tree, ce.gaps,
-               substring(ce.call_path->>0 from '::([A-Za-z0-9_]+)') AS trigger_root
-        FROM capability c
-        JOIN scene s ON s.id = c.scene_id
-        JOIN content_map cm ON cm.id = s.content_map_id
-        JOIN capability_evidence ce ON ce.capability_id = c.id
-        WHERE cm.id = :contentMapId
-          AND c.merged_into IS NULL
-          AND c.actionability = 'not-a-step'
-          AND c.observability = 'observable'
-        ORDER BY s.name ASC, c.id ASC
-        """
-    )
-    fun findObservationRows(contentMapId: Long): Flow<ContentMapObservationRow>
 
     /**
      * **화면에 붙어 있는 UI 요소**(ARTEL-683). 있는지 확인하는 케이스가 여기서 나온다.
@@ -317,6 +384,9 @@ interface ContentMapRepository : CoroutineCrudRepository<ContentMapEntity, Long>
           AND callee_cap.merged_into IS NULL
           AND caller.method_id IS NOT NULL
           AND callee.method_id IS DISTINCT FROM caller.method_id
+        -- **순서를 못 박는다**(ARTEL-1209). 생성기는 같은 형제가 여러 간선으로 나오면 처음 것의 조건을 쓴다. 순서가
+        -- 없으면 같은 지도로 두 번 생성해도 결과가 달랐다(실측 1.4.0: 524 건과 509 건).
+        ORDER BY caller.method_id ASC, callee_cap.id ASC, caller_cap.id ASC, callee.capability_id ASC
         """
     )
     fun findCallEdges(contentMapId: Long): Flow<ContentMapCallEdge>

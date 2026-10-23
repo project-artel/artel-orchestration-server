@@ -124,6 +124,9 @@ artel:
       # ⚠️ 추측된 값이다. 실제 코퍼스의 쌍별 거리 분포를 보고 무릎을 찾기 전까지 믿지 말 것.
       similar-max-distance: ${ARTEL_KNOWLEDGE_GRAPH_SIMILAR_MAX_DISTANCE:0.40}
   testcase:
+    # TC 를 나누고 묶는 방식(ARTEL-1209). legacy 는 지금까지의 방식, reading 은 판독 기준(POC).
+    generator:
+      grouping: ${ARTEL_TESTCASE_GROUPING:legacy}
     # 케이스 벡터 백필(ARTEL-216). knowledge와 같은 이연 워커 패턴이되, 초기 대량 적재를 빨리
     # 소진하도록 버스트 기본값(batch 큰 편, interval 짧은 편). 로컬·테스트는 꺼 둔다.
     embedding:

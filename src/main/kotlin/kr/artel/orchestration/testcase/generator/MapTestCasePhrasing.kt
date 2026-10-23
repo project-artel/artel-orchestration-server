@@ -34,10 +34,14 @@ object MapTestCasePhrasing {
      *
      * 조건이 없으면 화면만 남는다. 그것도 사전조건이다 — "그 화면이기만 하면 된다".
      */
-    fun precondition(scene: String, condition: ConditionNode?, inputKey: String? = null): String {
+    /**
+     * @param compactValues 같은 값의 `==` 를 `또는` 으로 나열한 갈래를 "`x` 가 0 · 1 · 2 중 하나" 로 줄여 적는다
+     *   (ARTEL-1209, 판독 기준). 실측 1.4.0 에서 `stagePosition == 0 또는 1 또는 2 또는 3 또는 4` 꼴이 18 건이었다
+     */
+    fun precondition(scene: String, condition: ConditionNode?, inputKey: String? = null, compactValues: Boolean = false): String {
         val state = "$scene 화면인 상태"
         // 갈래를 묶으면 같은 검사가 갈래마다 되풀이된다. 뜻이 같은 채로 읽을 것만 줄인다(ARTEL-624).
-        val text = stateText(ConditionPrune.of(condition), scene)
+        val text = stateText(ConditionPrune.of(condition), scene, compactValues)
             ?.let { if (inputKey == null) it else withoutInputCheck(it) }
             ?.ifBlank { null }
             ?: return state
@@ -225,7 +229,7 @@ object MapTestCasePhrasing {
      * 없는 케이스는 실행해도 통과·실패를 말할 수 없다.
      */
     fun expectedEach(effects: List<CapabilityEffectEntity>): List<String> =
-        expectedWithSource(effects, emptyMap()).map { it.expected }
+        expectedWithSource(effects, emptyMap()).map { it.expected }.distinct()
 
     /**
      * 효과 하나가 낸 **세 가지 모양**.
@@ -234,7 +238,18 @@ object MapTestCasePhrasing {
      * @property doing 케이스 이름에 붙는 문장 — `\`Map_scene\` 화면으로 넘어간다`
      * @property effect 그것을 낸 효과. 도착 화면처럼 구조로 읽을 것이 있다.
      */
-    data class Told(val expected: String, val doing: Doing, val effect: CapabilityEffectEntity)
+    data class Told(
+        val expected: String,
+        val doing: Doing,
+        val effect: CapabilityEffectEntity,
+        /**
+         * 판독이 확인하지 못하는 기대라 **보이는 기대결과에서는 뺀다.** 효과는 남는다 — 케이스의 정체가
+         * 효과로 잡혀 있어서, 효과까지 버리면 정체가 바뀌고 시나리오가 가리키던 줄이 끊긴다.
+         */
+        val hidden: Boolean = false,
+        /** QA 가 판독에서 이 기대를 무엇으로 확인하나. 문장과 따로 코드 이름을 든다([MapTestCaseChecks]). */
+        val check: MapTestCaseCheck? = null,
+    )
 
     /**
      * [expectedEach] 와 같되 **어느 효과가 그 문장을 냈는지** 함께 낸다(ARTEL-614).
@@ -248,9 +263,12 @@ object MapTestCasePhrasing {
         refs: Map<Pair<String, String>, Set<String>> = emptyMap(),
         methodId: String? = null,
         sceneNames: Set<String> = emptySet(),
+        positions: Map<Pair<String, String>, Map<Int, Set<String>>> = emptyMap(),
+        gameTypes: Set<String>? = null,
     ): List<Told> {
         val seen = mutableSetOf<String>()
-        return effects.filter { EffectCategory.from(it.category)?.assertable == true }
+        val kept = mutableListOf<Pair<String, Told>>()
+        effects.filter { EffectCategory.from(it.category)?.assertable == true }
             .filterNot { it.kind in UNWATCHABLE }
             .mapNotNull { effect ->
                 val target = watchableTarget(effect, refs, methodId, sceneNames) ?: return@mapNotNull null
@@ -260,10 +278,33 @@ object MapTestCasePhrasing {
                 // 안다.** **값 쪽도 씬이 부르는 이름으로**(ARTEL-682): 대상만 풀고 값을 안 풀면 한 줄
                 // 안에서 두 말이 섞인다 — 실측에서 `wordHead 의 위치가
                 // MapMove.battle1.transform.position 로 바뀐다` 가 나왔다.
-                val detail = readable(effect.detail)?.let { MapTestCaseTargets.resolve(it, refs) }
-                Told(outcome(effect.kind, target, detail), doing(effect.kind, target, detail), effect)
+                val sprite = MapTestCaseReadings.isSprite(effect.kind, effect.target)
+                val named = readable(effect.detail)?.let { MapTestCaseTargets.resolve(it, refs, positions) }
+                // **이름을 못 댄 그림 번호는 값이 아니다.** `ProjectileAnimator.sprites[0]` 은 코드가
+                // 그 그림을 고르는 방법이고, 판독은 그림 이름을 준다. 값을 빼고 "갱신된다"로 말한다.
+                val detail = named?.takeUnless { sprite && UNNAMED_INDEX.containsMatchIn(it) }
+                    // **판독이 못 주는 값은 적지 않는다.** 씬·에셋 이름으로 풀렸으면(`battle1` · `Stage2BG`) 판독이
+                    // 그 이름을 주고, 못 풀었으면 값이 판독으로 읽히는지 본다. 무엇으로 바뀌는지는 몰라도 바뀐다는
+                    // 것은 확인된다.
+                    ?.takeIf { value ->
+                        gameTypes == null || value != readable(effect.detail) ||
+                            MapTestCaseReadings.seesValue(value, gameTypes)
+                    }
+                // **판독이 못 보는 그림은 기대결과에서 뺀다.** 사진을 찍어도 그 그림이 `Stage2BG` 인지는 알 수
+                // 없어서, 남기면 근거 없는 통과·실패가 된다. SDK 가 그 그림 이름을 실으면 다시 들어온다.
+                val unread = sprite && gameTypes != null &&
+                    !MapTestCaseReadings.seesSprite(effect.target.orEmpty(), gameTypes)
+                val expected = outcome(effect.kind, target, detail)
+                // 같은 말을 거르는 잣대는 **값을 빼기 전** 문장이다. 값을 뺀 문장으로 거르면 `sprites[0]` ·
+                // `sprites[1]` 이 같은 줄이 되어 한쪽 효과가 사라지고, 그 효과로 잡던 케이스의 정체가
+                // 바뀌어 시나리오가 가리키던 줄이 끊긴다. 보이는 문장은 [MapTestCaseGenerator] 가 한 번 더 거른다.
+                outcome(effect.kind, target, named) to Told(
+                    expected, doing(effect.kind, target, detail, sprite), effect, hidden = unread,
+                    check = MapTestCaseChecks.of(effect, target, detail, methodId, gameTypes),
+                )
             }
-            .filter { seen.add(it.expected) }
+            .filterTo(kept) { (key, _) -> seen.add(key) }
+        return kept.map { it.second }
     }
 
     // --- 조각 ------------------------------------------------------------------------
@@ -296,12 +337,30 @@ object MapTestCasePhrasing {
      * 것을 여럿 적은 자리가 그렇다(`` `Background1` · `Background2` ``). 한 겹 더 두르면
      * 어디까지가 한 이름인지 읽는 사람이 알 수 없다.
      */
-    private fun code(target: String): String = if (target.startsWith("`")) target else "`$target`"
+    private fun code(target: String): String = if (target.startsWith("`")) target else readableName(target)
+
+    /**
+     * **코드 경로를 사람이 읽는 이름으로**(ARTEL-1209). `DialogueWindowPresentation.NameLabel.gameObject` 는
+     * `` `NameLabel`(DialogueWindowPresentation) `` 이 된다.
+     *
+     * 끝의 유니티 접근자(`gameObject` · `transform` · `text` · `sprite`)는 문장이 이미 말한다("표시 상태" · "글자" ·
+     * "표시"). 맨 앞의 타입은 주인이라 괄호로 뒤에 둔다. 씬 경로(`Canvas/…`)와 한 마디 이름은 그대로다. 판정은 이 문장이
+     * 아니라 판정 구조(`checks`)를 읽으므로 코드 이름은 거기에 남아 있다.
+     */
+    fun readableName(target: String): String {
+        if (!CODE_PATH.matches(target)) return "`$target`"
+        val parts = target.split('.').let { all -> if (all.last() in ACCESSORS) all.dropLast(1) else all }
+        if (parts.size < 2) return "`${parts.single()}`"
+        return "`${parts.drop(1).joinToString(".")}`(${parts.first()})"
+    }
+
+    private val CODE_PATH = Regex("""^[A-Z]\w*(\.[A-Za-z_]\w*)+$""")
+    private val ACCESSORS = setOf("gameObject", "transform", "text", "sprite")
 
     private fun outcome(kind: String, target: String, detail: String?): String = when (kind) {
         "scene" -> "${code(target)} 화면으로 전환된다"
         "active-state" -> "${code(target)} 의 표시 상태가 ${detail?.let { "`$it`" } ?: "바뀐다"}"
-        "ui-value" -> "${code(target)} 표시가 ${detail?.let { "`$it` 로 " } ?: ""}갱신된다"
+        "ui-value" -> "${code(target)} 표시가 ${detail?.let { "${code(it)} 로 " } ?: ""}갱신된다"
         "instantiate" -> "${code(target)} 이(가) 생성된다"
         "destroy" -> "${code(target)} 이(가) 사라진다"
         "animation" -> "${code(target)} 애니메이션이 실행된다"
@@ -345,10 +404,19 @@ object MapTestCasePhrasing {
 
     private const val THINGS = "개를"
 
-    private fun doing(kind: String, target: String, detail: String?): Doing {
-        val value = detail?.let { "`$it` 로 " } ?: ""
+    /** 이름을 셀 때 그림을 글자와 가르는 열쇠. 지도의 `kind` 어휘가 아니다. */
+    private const val SPRITE_KIND = "ui-value:sprite"
+
+    private fun doing(kind: String, target: String, detail: String?, sprite: Boolean = false): Doing {
+        val value = detail?.let { "${code(it)} 로 " } ?: ""
         fun of(what: String, ends: String, joins: String, counted: Counted) =
             Doing(kind, what.trim(), ends, joins, counted)
+        // **그림은 글자와 따로 센다.** 둘 다 `ui-value` 로 와서 한 무리로 세면 그림 둘이 "글자 2곳" 이 된다
+        // (실측 228). 묶는 열쇠(`kind`)를 갈라야 따로 센다.
+        if (sprite) {
+            return Doing(SPRITE_KIND, "${code(target)} 표시를 $value".trim(), "갱신한다", "갱신하고",
+                Counted("그림", PLACES, "갱신한다", "갱신하고"))
+        }
         return when (kind) {
             "scene" -> of("${code(target)} 화면으로", "넘어간다", "넘어가고", Counted("화면", PLACES, "넘어간다", "넘어가고"))
             "active-state" -> {
@@ -481,7 +549,7 @@ object MapTestCasePhrasing {
      * 것**이기 때문이다 — 코드가 근거로 쓸 때는 좁혀야 하지만(`ScenarioConditionTree.guards`),
      * 사람에게는 명세가 말한 대로 보여 주는 것이 맞다.
      */
-    private fun stateText(node: ConditionNode?, scene: String): String? = when (node) {
+    private fun stateText(node: ConditionNode?, scene: String, compact: Boolean = false): String? = when (node) {
         null, is ConditionNode.Always, is ConditionNode.Gesture -> null
         // 못 읽은 조건을 사전조건에 적으면 실행하는 사람이 만들 수 없는 상태를 요구받는다.
         is ConditionNode.Unknown -> null
@@ -500,12 +568,15 @@ object MapTestCasePhrasing {
             ) {
                 null
             } else {
+                // **판독이 못 보는 비교는 그렇다고 적는다.** 갈래를 가르는 사실이라 지우지 않지만,
+                // 실행하는 쪽이 이것을 확인하려 들면 없는 값을 찾는다([MapTestCaseReadings]).
                 "${node.left} ${node.operator} ${node.right}".trim().ifBlank { null }
+                    ?.let { if (node.readable) it else "$it$UNREAD_MARK" }
             }
-        is ConditionNode.Group -> {
+        is ConditionNode.Group -> valueList(node, compact) ?: run {
             val joiner = if (node.kind == GroupKind.EVERY) AND else OR
             val nested = if (node.kind == GroupKind.EVERY) OR else AND
-            val parts = node.parts.mapNotNull { stateText(it, scene) }
+            val parts = node.parts.mapNotNull { stateText(it, scene, compact) }
                 // 같은 갈래끼리는 편다. 갈래를 이어 붙이면 같은 비교가 여러 번 들어오고(호출자
                 // 조건과 불린 쪽 조건이 겹친다), 사람이 읽는 글이라 같은 말을 두 번 하지 않는다.
                 .flatMap { if (it.contains(nested)) listOf(it) else it.split(joiner) }
@@ -521,6 +592,22 @@ object MapTestCasePhrasing {
                 else -> parts.joinToString(joiner) { if (it.contains(nested)) "($it)" else it }
             }
         }
+    }
+
+    /** 조건 트리 하나를 사람이 읽는 줄로. 화면 이름은 붙이지 않는다(ARTEL-1209, 준비할 상태). */
+    fun conditionText(node: ConditionNode): String? = stateText(node, "", compact = true)
+
+    /**
+     * `x == a 또는 x == b 또는 …` 를 "`x` 가 a · b · … 중 하나" 로. 셋 이상일 때만 줄인다 — 둘이면 원래 꼴이 더 읽힌다.
+     */
+    private fun valueList(node: ConditionNode.Group, compact: Boolean): String? {
+        if (!compact || node.kind != GroupKind.EITHER || node.parts.size < 3) return null
+        val tests = node.parts.filterIsInstance<ConditionNode.Test>()
+        if (tests.size != node.parts.size || tests.any { it.operator != "==" }) return null
+        val left = tests.map { it.left.trim() }.distinct().singleOrNull() ?: return null
+        val values = tests.map { it.right.trim() }.distinct()
+        val mark = if (tests.any { !it.readable }) UNREAD_MARK else ""
+        return "$left 가 ${values.joinToString(" · ")} 중 하나$mark"
     }
 
     /**
@@ -563,6 +650,12 @@ object MapTestCasePhrasing {
      */
     private fun referenceCheck(node: ConditionNode.Test): Boolean =
         node.operator == "!=" && node.right.trim() == "null"
+
+    /** 이름으로 못 바꾼 목록 번호. `sprites[0]` 꼴로 남은 자리다. */
+    private val UNNAMED_INDEX = Regex("""\w\[\d+\]""")
+
+    /** QA 실행 중 확인할 수 없는 비교 뒤에 붙는 말. */
+    const val UNREAD_MARK = " (확인 불가)"
 
     /** 지금 화면을 코드가 스스로 확인하는 자리. 사전조건이 이미 그 화면을 말했다. */
     private val ACTIVE_SCENE = Regex("""SceneManager\.GetActiveScene\(\)\.name""")

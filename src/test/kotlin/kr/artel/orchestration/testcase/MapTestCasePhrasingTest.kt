@@ -242,7 +242,7 @@ class MapTestCasePhrasingTest {
 
         assertThat(MapTestCasePhrasing.expectedEach(many)).containsExactly(
             "`Canvas/continue` 의 표시 상태가 `false`",
-            "`Text.text` 표시가 `score` 로 갱신된다",
+            "`Text` 표시가 `score` 로 갱신된다",
         )
     }
 
@@ -250,7 +250,7 @@ class MapTestCasePhrasingTest {
     @Test
     fun `어휘를 모르는 효과도 버리지 않는다`() {
         assertThat(MapTestCasePhrasing.expectedEach(listOf(effect("haptic", "Gamepad.rumble", "0.5"))))
-            .containsExactly("`Gamepad.rumble` 이(가) `0.5` 이 된다")
+            .containsExactly("`rumble`(Gamepad) 이(가) `0.5` 이 된다")
     }
 
     @Test

@@ -1,5 +1,6 @@
 package kr.artel.orchestration.contentmap.dto
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import io.swagger.v3.oas.annotations.media.Schema
 import kr.artel.orchestration.contentmap.evidence.ConditionNode
 import kr.artel.orchestration.contentmap.evidence.GroupKind
@@ -68,6 +69,9 @@ sealed interface ConditionNodeResponse {
         @field:Schema(description = "주어를 잃은 사유. context 가 null 일 때만 찬다")
         val subjectLost: String?,
         val offset: Int,
+        @Schema(description = "false 면 QA 실행 중 SDK pulse 로 확인할 수 없는 비교다. 판정에서 뺀다. 확인할 수 있으면 칸이 없다")
+        @get:JsonInclude(JsonInclude.Include.NON_NULL)
+        val readable: Boolean? = null,
     ) : ConditionNodeResponse
 
     /** 입력 조건. [input] 은 `key:RightArrow (down)` 처럼 근거가 이미 렌더해 준 문자열이다. */
@@ -128,6 +132,8 @@ sealed interface ConditionNodeResponse {
                 context = node.context,
                 subjectLost = node.subjectLost,
                 offset = node.offset,
+                // 확인할 수 있는 비교에는 칸을 싣지 않는다. 지도 조회 응답의 모양이 그대로 남는다.
+                readable = false.takeUnless { node.readable },
             )
             is ConditionNode.Gesture -> Gesture(input = node.input, offset = node.offset)
             is ConditionNode.Group -> when (node.kind) {

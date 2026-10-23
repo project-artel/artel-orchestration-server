@@ -118,6 +118,8 @@ class TestCaseReader(
             condition = version.condition,
             expectedValue = version.expectedValue,
             expectedItems = version.expectedItems,
+            // 판정 구조도 그 버전 것이다. 문장만 버전을 따르고 구조가 최신이면 판정이 다른 문장의 항목을 본다.
+            expectedChecks = version.expectedChecks,
             status = version.status,
             capabilityKey = version.capabilityKey,
             metadata = version.metadata,

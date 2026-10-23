@@ -180,8 +180,9 @@ class MapTestCaseWriterGoldenTest {
         // 88 → 92 읽는 곳을 하나로 합치고 남길 자리를 질의가 정한다(같은 곳에 이유).
         // 92 → 85 문서를 2026-09-01 것으로 바꿨다(같은 곳에 이유).
         // 85 → 88 못 푼 매개변수 조건을 버리지 않는다(같은 곳에 이유).
-        assertThat(mine()).hasSize(88)
-        assertThat(first.created).isEqualTo(88)
+        // 88 → 84 판독이 못 보는 `Background` 그림 기대를 뺐다(같은 곳에 이유).
+        assertThat(mine()).hasSize(84)
+        assertThat(first.created).isEqualTo(84)
     }
 
     /**
@@ -326,6 +327,30 @@ class MapTestCaseWriterGoldenTest {
             .allSatisfy { assertThat(it.condition).isNotNull() }
         // 트리는 지도 조회 API 와 같은 표현이다. 표현을 두 벌 만들면 읽는 쪽이 어느 쪽인지 물어야 한다.
         assertThat(withTree.first().condition!!.asString()).contains("\"kind\"")
+    }
+
+    /**
+     * **기대 항목마다 판정 구조가 같은 순서로 붙는다**(V141).
+     *
+     * 항목은 사람용 문장이고, 판정은 이쪽을 읽는다. 두 목록의 길이가 어긋나면 판정이 엉뚱한 항목의
+     * 구조로 통과·실패를 말한다.
+     */
+    @Test
+    fun `기대 항목마다 판정 구조가 붙는다`() {
+        val mapper = com.fasterxml.jackson.databind.ObjectMapper()
+        val rows = mine().filter { it.expectedItems != null }
+
+        assertThat(rows).isNotEmpty()
+        assertThat(rows).allSatisfy {
+            val items = mapper.readTree(it.expectedItems!!.asString())
+            val checks = mapper.readTree(it.expectedChecks!!.asString())
+            assertThat(checks.size()).isEqualTo(items.size())
+        }
+        // 실행 중에 채우는 필드(`chatName`)는 사람용 문장에 코드 이름이 남지만, 판정 구조는 판독의 멤버
+        // 이름을 든다. 판독이 `ChatWindowController.chatName = {label: …}` 으로 싣기 때문이다.
+        val chat = rows.flatMap { mapper.readTree(it.expectedChecks!!.asString()).toList() }
+            .first { it.path("look_at").asText() == "ChatWindowController.chatName" }
+        assertThat(chat.path("field").asText()).isEqualTo("label")
     }
 
     companion object {

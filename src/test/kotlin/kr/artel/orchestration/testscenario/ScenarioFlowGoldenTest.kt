@@ -150,7 +150,8 @@ class ScenarioFlowGoldenTest {
     @Test
     fun `행렬은 아직 모든 짝을 푼다`() {
         val n = caseIds.size
-        assertThat(n).isEqualTo(88)
+        // 88 → 84: 판독이 못 보는 `Background` 그림 기대만 든 케이스 넷이 빠졌다(TC 생성기 3단계).
+        assertThat(n).isEqualTo(84)
         val solved = ScenarioFlowMatrix.Link.entries.sumOf { matrix.count(it) }
         assertThat(solved).isEqualTo(n * (n - 1))
     }

@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test
 class AgentCaseSerializationTest {
     @Test
     fun `omits unspecified functions and preserves the test_step wire name`() {
-        val payload = AgentCase(1, "scene", null, "click", "opened")
+        val payload = AgentCase(1, "scene", null, "click", "opened", checks = null, cannotCheck = emptyList())
         val json = jacksonObjectMapper().valueToTree<com.fasterxml.jackson.databind.JsonNode>(payload)
 
         assertThat(json.has("functions")).isFalse()

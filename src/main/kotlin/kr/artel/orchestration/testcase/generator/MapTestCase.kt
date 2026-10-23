@@ -39,6 +39,21 @@ data class MapTestCase(
      * 것과 같은 이유다(ARTEL-627). 실행이 항목마다 통과·실패를 답하려면 목록이어야 한다.
      */
     val expectedItems: List<String> = emptyList(),
+    /**
+     * [expectedItems] 와 같은 순서로, **QA 가 판독에서 무엇으로 확인하나.** 문장은 사람용이라 씬 이름을 쓰고,
+     * 이쪽은 판독이 싣는 코드 이름을 든다. 항목에 확인할 구조가 없으면 그 자리가 null 이다.
+     */
+    val expectedChecks: List<MapTestCaseCheck?> = emptyList(),
+    /**
+     * 이 사전조건이 읽는 **토글**(ARTEL-1209). 조작하면 바뀌는 상태라 같은 화면에서 차례로 거친다
+     * (`flag == 0` 첫 번째 키, `flag != 0` 두 번째 키). 시나리오가 순서를 세울 때 쓰도록 남긴다.
+     */
+    val toggles: List<String> = emptyList(),
+    /**
+     * **준비할 상태**(ARTEL-1209). 판독으로 확인할 수 없어 판정용 사전조건에서 뺀 비교들이다. 시나리오가 그 상태를
+     * 만든 뒤 QA 가 결과를 본다. 만들 수 없으면 QA 는 `SETUP-FAILED` 로 알린다.
+     */
+    val setup: List<String> = emptyList(),
     val status: String,
     val gaps: List<String> = emptyList(),
     /**

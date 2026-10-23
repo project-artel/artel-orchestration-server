@@ -170,19 +170,21 @@ class MapTestCaseWriter(
      * 그 수가 "49행이 달라졌다"고 거짓말하는 것이다 — 실측에서 세 번을 이어 적재해도 계속
      * `updated=49` 였다.
      *
-     * 여기 실린 JSONB 칸이 셋(`metadata` · `condition` · `expected_items`)이라, 셋 다 빼고
-     * 나머지를 견준 뒤 각각 따로 본다.
+     * 여기 실린 JSONB 칸이 넷(`metadata` · `condition` · `expected_items` · `expected_checks`)이라,
+     * 넷 다 빼고 나머지를 견준 뒤 각각 따로 본다.
      */
     private fun versionChanged(prior: TestCaseVersionEntity, next: TestCaseVersionEntity): Boolean =
         prior.copy(
             metadata = next.metadata,
             condition = next.condition,
             expectedItems = next.expectedItems,
+            expectedChecks = next.expectedChecks,
             updatedAt = next.updatedAt,
         ) != next ||
             !sameJson(prior.metadata, next.metadata) ||
             !sameJson(prior.condition, next.condition) ||
-            !sameJson(prior.expectedItems, next.expectedItems)
+            !sameJson(prior.expectedItems, next.expectedItems) ||
+            !sameJson(prior.expectedChecks, next.expectedChecks)
 
     private fun sameJson(a: Json?, b: Json?): Boolean {
         if (a == null || b == null) return a == null && b == null
@@ -249,6 +251,7 @@ class MapTestCaseWriter(
         condition = conditionJson(case),
         expectedValue = case.expected,
         expectedItems = expectedItemsJson(case),
+        expectedChecks = expectedChecksJson(case),
         status = case.status,
         capabilityKey = case.capabilityKey,
         metadata = metadataOf(contentMapId, case),
@@ -270,6 +273,7 @@ class MapTestCaseWriter(
         condition = conditionJson(case),
         expectedValue = case.expected,
         expectedItems = expectedItemsJson(case),
+        expectedChecks = expectedChecksJson(case),
         status = case.status,
         capabilityKey = case.capabilityKey,
         metadata = metadataOf(contentMapId, case),
@@ -281,6 +285,12 @@ class MapTestCaseWriter(
      * 값이어야 하고, 빈 배열은 "기대결과가 없다"는 다른 말이다.
      */
     private fun expectedItemsJson(case: MapTestCase): Json? = case.expectedItems
+        .takeIf { it.isNotEmpty() }
+        ?.let { objectMapper.writeValueAsString(it) }
+        ?.let(Json::of)
+
+    /** 기대 항목마다 판정 구조를 싣는다. 항목과 같은 이유로 비면 null 이다. */
+    private fun expectedChecksJson(case: MapTestCase): Json? = case.expectedChecks
         .takeIf { it.isNotEmpty() }
         ?.let { objectMapper.writeValueAsString(it) }
         ?.let(Json::of)
@@ -300,6 +310,10 @@ class MapTestCaseWriter(
                 put("gaps", case.gaps)
                 // 문장과 무관한 정체(ARTEL-617). 다음 적재가 이것으로 같은 줄을 찾는다.
                 put(CASE_KEY, case.identity)
+                // 토글(ARTEL-1209). 시나리오가 단계 순서를 세울 때 읽는다.
+                if (case.toggles.isNotEmpty()) put(TOGGLES, case.toggles)
+                // 준비할 상태(ARTEL-1209). QA 계약의 `cannot_check` 로 나간다.
+                if (case.setup.isNotEmpty()) put(SETUP, case.setup)
                 // **어느 화면이 되나**(ARTEL-614). 저작이 브리지를 고를 때 읽는다 — 기대결과
                 // 산문에서 뽑으면 그것이 곧 없애려는 문자열 맞춤이다.
                 case.arrivesAt?.let { put(ARRIVES_AT, it) }
@@ -328,6 +342,8 @@ class MapTestCaseWriter(
 
         /** 문장과 무관한 정체(ARTEL-617). 지도 키와 그 케이스를 낸 효과로 만든다. */
         const val CASE_KEY = "case_key"
+        const val TOGGLES = "toggles"
+        const val SETUP = "setup"
         private const val BROKEN = "BROKEN"
         private const val DRAFT = "DRAFT"
         private const val REGRESSION = "REGRESSION"
