@@ -15,6 +15,7 @@ import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import org.springframework.data.r2dbc.repository.Modifying
 import org.springframework.data.r2dbc.repository.Query
 import org.springframework.data.repository.kotlin.CoroutineCrudRepository
+import kr.artel.orchestration.testcase.dto.CaseListFields
 
 /**
  * TestCase 조회 리포지토리(코루틴). 조회는 프로젝트 스코프이며, 씬(scene)·검증상태로 선택 필터한다.
@@ -23,6 +24,21 @@ import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
 
     fun findByProjectIdOrderByIdDesc(projectId: Long): Flow<TestCaseEntity>
+
+    /**
+     * 케이스 목록에 보일 칸만, 최신순(ARTEL-1212). 지도 케이스인지는 metadata 를 읽어 보내지 않고 DB 가 답한다 —
+     * [kr.artel.orchestration.testcase.dto.isMapOrigin] 과 같은 판단(맨 위 `origin` 이 문자열 `content-map`)이다.
+     */
+    @Query(
+        """
+        SELECT id, scene, step, precondition, expected_value, status, verification_status, created_at,
+               COALESCE(metadata->>'origin' = 'content-map' AND jsonb_typeof(metadata->'origin') = 'string', false) AS from_map
+          FROM test_case
+         WHERE project_id = :projectId
+         ORDER BY id DESC
+        """
+    )
+    fun findListFieldsByProjectIdOrderByIdDesc(projectId: Long): Flow<CaseListFields>
 
     /**
      * 저작 세션에 실을 전량. **id 오름차순은 계약이다** — 이 목록이 프롬프트 앞 고정 블록에 실려
