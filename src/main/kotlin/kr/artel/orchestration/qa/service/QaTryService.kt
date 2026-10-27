@@ -1021,6 +1021,11 @@ class QaTryService(
     suspend fun requireAccessible(qaTryId: Long, userId: Long): QaTryEntity? =
         tryRepository.findAccessibleById(qaTryId, userId)
 
+    suspend fun verdicts(qaTryId: Long, userId: Long): List<QaLogResponse>? {
+        requireAccessible(qaTryId, userId) ?: return null
+        return logService.verdicts(qaTryId)
+    }
+
     suspend fun logs(qaTryId: Long, userId: Long, beforeId: Long?, size: Int): QaLogPageResponse? {
         requireAccessible(qaTryId, userId) ?: return null
         return logService.page(qaTryId, beforeId, size)

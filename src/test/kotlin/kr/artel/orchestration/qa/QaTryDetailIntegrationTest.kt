@@ -37,6 +37,7 @@ import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.qa.service.QaTryDetailService
+import kr.artel.orchestration.qa.service.QaTryService
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
@@ -69,6 +70,7 @@ import java.util.UUID
 class QaTryDetailIntegrationTest {
 
     @Autowired private lateinit var detailService: QaTryDetailService
+    @Autowired private lateinit var tryService: QaTryService
     @Autowired private lateinit var qaTryRepository: QaTryRepository
     @Autowired private lateinit var qaRunRepository: QaRunRepository
     @Autowired private lateinit var qaLogRepository: QaLogRepository
@@ -142,6 +144,36 @@ class QaTryDetailIntegrationTest {
         projectRepository.deleteAll()
         identityRepository.deleteAll()
         appUserRepository.deleteAll()
+    }
+
+    @Test
+    fun `판정 조회는 최근 로그 페이지 밖의 결과를 복원하고 다른 실행은 제외한다`(): Unit = runBlocking {
+        val id = seedRun(status = "RUNNING")
+        val otherId = seedRun(status = "COMPLETED")
+        val payloads = listOf(
+            "STATUS" to """{"step":1,"status":"COMPLETED"}""",
+            "STATUS" to """{"step":2,"status":"FAILED"}""",
+            "CASE_VERDICT" to """{"case_id":11,"verification_status":"VERIFIED"}"""
+        )
+        val saved = payloads.map { (type, payload) ->
+            qaLogRepository.save(QaLogEntity(
+                qaTryId = id, direction = "AGENT_TO_ORCHE", type = type,
+                payload = Json.of(payload), createdAt = now
+            ))!!
+        }
+        repeat(60) { seedLog(id, "LOG") }
+        seedLog(otherId, "STATUS")
+
+        assertThat(tryService.logs(id, ownerId, null, 50)!!.items).hasSize(50)
+            .allMatch { it.type == "LOG" }
+        repeat(2) {
+            val restored = tryService.verdicts(id, ownerId)!!
+            assertThat(restored.map { it.id }).containsExactlyElementsOf(saved.map { it.id.toString() })
+            assertThat(restored[0].payload.path("status").asText()).isEqualTo("COMPLETED")
+            assertThat(restored[1].payload.path("status").asText()).isEqualTo("FAILED")
+        }
+        assertThat(tryService.verdicts(id, strangerId)).isNull()
+        assertThat(tryService.verdicts(Long.MAX_VALUE, ownerId)).isNull()
     }
 
     // ------------------------------------------------------------------ tests
