@@ -3,6 +3,7 @@ package kr.artel.orchestration.testcase.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
+import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
@@ -145,7 +146,18 @@ class TestCaseService(
         // 한 칸을 옮기면 왕복이 사라진다 — 늘 참인 사실은 목록이 한 번 말한다.
         val inputs = caseInputs(projectId)
         // 런이 빌드 버전을 따르면 케이스 내용은 그 버전 몫이다(ARTEL-1064). 맥락이 없으면 대표 행 그대로다.
-        return authoringCases.all(projectId)
+        val all = authoringCases.all(projectId).toList()
+        // **아무 케이스도 만들지 못하는 전제는 요구로 보내지 않는다.** 자연어 TC 에서 뽑은 식은 틀린 칸이
+        // 섞이는데(`저녁까지 쉰다` → 요구: 시간 == 저녁), 저작은 식을 글보다 믿어서 그 한 칸이 사슬 전체를
+        // 막는다 — 실측(등불 골짜기)에서 식을 붙인 판이 글만 준 판보다 낮았다. 케이스 메타가 남기는 값이
+        // 있는 프로젝트에서만 본다. 지도가 있는 프로젝트는 값이 어디서 오르는지 지도가 따로 말한다.
+        val made = all.flatMap { ScenarioStateReader.stateAfter(it, objectMapper).entries }
+            .groupBy({ it.key.lowercase() }, { it.value })
+        fun reachable(guard: Guard): Boolean =
+            made.isEmpty() || guard.operator != "==" || guard.value == "0" ||
+                raisers[ScenarioStateReader.normalize(guard.path)].orEmpty().isNotEmpty() ||
+                made[guard.variable.lowercase()].orEmpty().contains(guard.value)
+        return all.asFlow()
             // **깨진 것은 저작 재료가 아니다**(ARTEL-685). 지도를 다시 적재하면 더 이상 뒷받침되지
             // 않는 케이스가 `BROKEN` 으로 남는다. 보내면 모델이 그것을 담고, 커버리지 기준에는
             // 없으므로 "없는 케이스 번호"로 걸려 저작이 통째로 막힌다 — 실측(런 268)에서 14건.
@@ -162,6 +174,7 @@ class TestCaseService(
                 verificationStatus = case.verificationStatus,
                 // **문장이 아니라 구조에서 읽는다**(ARTEL-627).
                 stateBefore = conditions.guardsOf(case)
+                    .filter(::reachable)
                     .map { guard ->
                         CaseGuard(
                             guard.variable, guard.operator, guard.value,

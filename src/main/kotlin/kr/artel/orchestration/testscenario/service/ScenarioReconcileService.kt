@@ -305,6 +305,26 @@ class ScenarioReconcileService(
         val contradictions = repaired.zip(walked).flatMap { (scenario, found) ->
             found.contradictions.map { scenario.title to it }
         }
+        // **흐름이 만들지 않은 전제를 프로젝트의 다른 케이스가 남기면 짚는다.** 지도가 없는 프로젝트
+        // (자연어 TC)에서는 순서를 바로잡을 근거가 이것뿐이다 — 실측(등불 골짜기 27판)에서 깨진 자리
+        // 16곳 대부분이 "앞에 넣었어야 할 케이스를 안 넣었다"였다. 메타 `state_after` 만 센다.
+        val makers = byId.values
+            .flatMap { fact -> fact.leaves.map { (name, value) -> Triple(name.lowercase(), value, fact.id) } }
+            .groupBy({ it.first to it.second }, { it.third })
+        val missingMakers = repaired.zip(walked).flatMap { (scenario, found) ->
+            found.opening
+                .filter { it.operator == "==" && it.value != "0" }
+                .mapNotNull { guard ->
+                    makers[guard.variable.lowercase() to guard.value]?.let { ids ->
+                        "${scenario.title}: ${guard.variable} == ${guard.value} 를 요구하는 스텝이 있는데 흐름 안에 그 값을 " +
+                            "만드는 스텝이 없습니다. TC ${ids.take(3).joinToString(", ")} 가 그 값을 남깁니다 — 그 앞에 " +
+                            "넣으세요. 요청이 그 상태에서 시작한다고 했으면 그대로 두세요."
+                    }
+                }
+                .distinct()
+        }
+        missingMakers.forEach { logger.info("흐름이 만들지 않은 전제 [runId={}] {}", runId, it) }
+        val reported = contradictions.map { (title, found) -> "$title: ${found.describe()}" } + missingMakers
         val opened = repaired.zip(walked).map { (scenario, found) ->
             scenario.copy(
                 steps = withOpeningNote(scenario.steps, openingFacts(projectId, facts), found.opening)
@@ -362,7 +382,7 @@ class ScenarioReconcileService(
                 runId, findings.summary(), findings.unreviewed, findings.missing, findings.ghost,
                 findings.ungrounded.size, findings.falseUnknowns.size
             )
-            return ReconcileOutcome(0, findings, contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" })
+            return ReconcileOutcome(0, findings, contradicted = reported)
         }
         if (findings.excess.isNotEmpty()) {
             // 거부하지 않는 이유는 ScenarioCoverageAudit.Findings에 적었다. 남기는 이유는, 이 값이
@@ -436,7 +456,7 @@ class ScenarioReconcileService(
             // 0건이라 적었다.
             return ReconcileOutcome(
                 0, findings, allNotices, question, questions, checked,
-                contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" },
+                contradicted = reported,
             )
         }
 
@@ -508,7 +528,7 @@ class ScenarioReconcileService(
         )
         return ReconcileOutcome(
             applied, findings, allNotices, question, questions, checked,
-            contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" },
+            contradicted = reported,
             saved = savedScenarios,
         )
     }
@@ -902,14 +922,24 @@ class ScenarioReconcileService(
     }
 
     private suspend fun caseFacts(projectId: Long): List<ScenarioSiblingCheck.CaseFact> = runCatching {
-        authoringCases.all(projectId).map { case ->
+        val all = authoringCases.all(projectId).toList()
+        // 저작에 보내는 목록과 같은 규칙으로, 아무 케이스도 만들지 못하는 전제는 요구로 세지 않는다
+        // ([kr.artel.orchestration.testcase.service.TestCaseService.getAuthoringCases]). 검사만 그것을
+        // 세면 모델이 본 적 없는 요구로 어긋남을 짚는다.
+        val made = all.flatMap { ScenarioStateReader.stateAfter(it, objectMapper).entries }
+            .groupBy({ it.key.lowercase() }, { it.value })
+        fun reachable(guard: Guard): Boolean =
+            made.isEmpty() || guard.operator != "==" || guard.value == "0" ||
+                made[guard.variable.lowercase()].orEmpty().contains(guard.value)
+        all.map { case ->
             ScenarioSiblingCheck.CaseFact(
                 id = case.id!!,
                 scene = ScenarioStateReader.sceneOf(case),
                 step = case.step.trim(),
-                guards = conditions.guardsOf(case),
+                guards = conditions.guardsOf(case).filter(::reachable),
                 declared = conditions.knownValuesOf(case),
                 arrivesAt = ScenarioStateReader.arrivesAt(case, objectMapper),
+                leaves = ScenarioStateReader.stateAfter(case, objectMapper),
             )
         }
     }.onFailure { logger.warn("케이스 전량 조회 실패 — 검사들을 넘어간다: ${it.message}") }
@@ -1019,7 +1049,9 @@ class ScenarioReconcileService(
             requires = fact?.guards.orEmpty().filterNot { it.momentary },
             sets = fact?.guards.orEmpty()
                 .filter { it.operator == "==" && !it.symbolic && !it.momentary }
-                .associate { it.variable to it.value } + fact?.declared.orEmpty() + bridgeSets,
+                .associate { it.variable to it.value } + fact?.declared.orEmpty() + bridgeSets +
+                // 케이스가 남기는 값이 마지막이다 — 등불을 끄는 케이스는 "켜짐"을 요구하고 "꺼짐"을 남긴다.
+                fact?.leaves.orEmpty(),
             clears = buildSet {
                 gap?.takeIf { !it.contains("→") }?.let(::add)
                 raisedIn.forEach { (value, scenes) ->
