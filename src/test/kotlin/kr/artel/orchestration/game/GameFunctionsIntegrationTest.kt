@@ -555,6 +555,84 @@ class GameFunctionsIntegrationTest {
         }
     }
 
+    // ------------------------------------------------------------------ 액션 시각과 닫힌 전송 큐 (ARTEL-1235)
+
+    @Test
+    fun `ACTION_RESULT 가 오면 네 시각을 담은 action_timing 행이 남는다`(): Unit = runBlocking {
+        val seed = seed()
+        val tryId = qaTryService.create(seed.scenarioId, seed.instanceId, seed.ownerId).id.toLong()
+        val agentMessageId = UUID.randomUUID().toString()
+        router.handle(actionFrame(tryId, agentMessageId, """{"id":1,"jsonrpc":"2.0","method":"key_click","params":["Space",0.1]}"""))
+        val requestId = sdkActionLogs(tryId).single().messageId!!
+
+        bridge.routeActionResult(
+            seed.instanceId,
+            """{"type":"ACTION_RESULT","id":40,"requestId":$requestId,"frame":15605,"receivedFrame":15600,""" +
+                """"receivedAt":1792647722000,"completedAt":"2026-10-22T05:42:02.250Z",""" +
+                """"results":[{"id":1,"success":true,"error":""}]}"""
+        )
+
+        val timingRow = qaLogRepository.findAll().toList()
+            .single { it.qaTryId == tryId && it.direction == "ORCHE_INTERNAL" && it.type == "LOG" }
+        val timing = objectMapper.readTree(timingRow.payload.asString())
+        assertThat(timing["event"].asText()).isEqualTo("action_timing")
+        assertThat(timing["requestId"].asText()).isEqualTo(requestId)
+        assertThat(timing["orchestrationReceivedAt"].isNull).isFalse()
+        assertThat(timing["sentToSdkAt"].isNull).isFalse()
+        assertThat(Instant.parse(timing["sdkReceivedAt"].asText())).isEqualTo(Instant.ofEpochMilli(1792647722000))
+        assertThat(Instant.parse(timing["sdkCompletedAt"].asText())).isEqualTo(Instant.parse("2026-10-22T05:42:02.250Z"))
+        assertThat(timing["resultReceivedAt"].isNull).isFalse()
+        assertThat(timing["sdkMillis"].asLong()).isEqualTo(250)
+        assertThat(timing["sdkReceivedFrame"].asLong()).isEqualTo(15600)
+        assertThat(timing["sdkCompletedFrame"].asLong()).isEqualTo(15605)
+        assertThat(timingRow.correlationId).isEqualTo(agentMessageId)
+        // 결과는 지금처럼 agent 에게 간다.
+        assertThat(recorder.sent.single { it.type == "ACTION_RESULT" }.correlationId).isEqualTo(agentMessageId)
+    }
+
+    @Test
+    fun `SDK 시각을 싣지 않는 결과도 orchestration 시각만으로 기록된다`(): Unit = runBlocking {
+        val seed = seed()
+        val tryId = qaTryService.create(seed.scenarioId, seed.instanceId, seed.ownerId).id.toLong()
+        router.handle(actionFrame(tryId, UUID.randomUUID().toString(), """{"id":1,"jsonrpc":"2.0","method":"key_click","params":["Space",0.1]}"""))
+        val requestId = sdkActionLogs(tryId).single().messageId!!
+
+        bridge.routeActionResult(
+            seed.instanceId,
+            """{"type":"ACTION_RESULT","id":41,"requestId":$requestId,"frame":15605,"results":[{"id":1,"success":true,"error":""}]}"""
+        )
+
+        val timing = objectMapper.readTree(
+            qaLogRepository.findAll().toList()
+                .single { it.qaTryId == tryId && it.direction == "ORCHE_INTERNAL" && it.type == "LOG" }
+                .payload.asString()
+        )
+        assertThat(timing["sdkReceivedAt"].isNull).isTrue()
+        assertThat(timing["sdkMillis"].isNull).isTrue()
+        assertThat(timing["totalMillis"].asLong()).isGreaterThanOrEqualTo(0)
+    }
+
+    @Test
+    fun `전송 큐가 닫힌 세션에 보낸 ACTION 은 SDK 행을 남기지 않고 agent 가 실패를 바로 받는다`(): Unit = runBlocking {
+        val seed = seed()
+        val tryId = qaTryService.create(seed.scenarioId, seed.instanceId, seed.ownerId).id.toLong()
+        // 소켓 write 가 실패하면 전송 파이프라인이 구독을 끊는다. 수신 쪽은 살아 있어 세션은 등록된 그대로다.
+        seed.sdkSubscription.dispose()
+        val agentMessageId = UUID.randomUUID().toString()
+
+        router.handle(actionFrame(tryId, agentMessageId, """{"id":1,"jsonrpc":"2.0","method":"key_click","params":["Space",0.1]}"""))
+
+        assertThat(sdkActionLogs(tryId)).isEmpty()
+        val answer = recorder.sent.single { it.type == "ACTION_RESULT" }
+        assertThat(answer.correlationId).isEqualTo(agentMessageId)
+        val result = answer.payload["results"].single()
+        assertThat(result["success"].asBoolean()).isFalse()
+        assertThat(result["error"].asText()).startsWith("not delivered")
+        assertThat(
+            qaLogRepository.findAll().toList().filter { it.qaTryId == tryId && it.direction == "ORCHE_INTERNAL" && it.type == "ERROR" }
+        ).hasSize(1)
+    }
+
     // ------------------------------------------------------------------ 준비
 
     private data class Seed(
@@ -566,7 +644,9 @@ class GameFunctionsIntegrationTest {
         val scenarioId: Long,
         val testRunId: Long,
         /** 이 인스턴스의 SDK 소켓으로 나가는 프레임. 실제로 SDK 가 받는 것은 이 리스트다. */
-        val toSdk: CopyOnWriteArrayList<String>
+        val toSdk: CopyOnWriteArrayList<String>,
+        /** 전송 파이프라인 구독. 끊으면 소켓 write 가 실패해 전송 쪽만 끝난 세션이 된다. */
+        val sdkSubscription: reactor.core.Disposable
     )
 
     private suspend fun seed(): Seed {
@@ -592,9 +672,10 @@ class GameFunctionsIntegrationTest {
         val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))
         val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))
         testRunService.setScenarios(testRun.id!!, ownerId, listOf(s1.id!!, s2.id!!))
+        val (toSdk, subscription) = connectSdk(instance.id!!)
         return Seed(
             ownerId, jwtService.issue(owner), projectId, build.id!!, instance.id!!, s1.id, testRun.id,
-            connectSdk(instance.id)
+            toSdk, subscription
         )
     }
 
@@ -614,11 +695,11 @@ class GameFunctionsIntegrationTest {
         ScenarioDraft(title = "t", description = "", steps = listOf(ScenarioStep(action = "1", caseId = caseId)))
 
     /** 인스턴스에 mock 소켓을 붙인다. 붙어 있지 않으면 `create` 가 SDK 연결 없음으로 거절한다. */
-    private fun connectSdk(instanceId: Long): CopyOnWriteArrayList<String> {
+    private fun connectSdk(instanceId: Long): Pair<CopyOnWriteArrayList<String>, reactor.core.Disposable> {
         val frames = CopyOnWriteArrayList<String>()
         val outbound = requireNotNull(sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java)))
-        outbound.subscribe { frames.add(it) }
-        return frames
+        val subscription = outbound.subscribe { frames.add(it) }
+        return frames to subscription
     }
 
     private suspend fun sdkActionLogs(tryId: Long) =

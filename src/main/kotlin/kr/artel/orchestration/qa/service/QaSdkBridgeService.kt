@@ -11,6 +11,7 @@ import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.dto.ActionItemDto
 import kr.artel.orchestration.sdk.dto.AgentGameState
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Instant
 import java.util.UUID
@@ -28,6 +29,8 @@ class QaSdkBridgeService(
     private val agentPort: QaAgentPort,
     private val objectMapper: ObjectMapper
 ) : QaScreenFramePort {
+    private val logger = LoggerFactory.getLogger(QaSdkBridgeService::class.java)
+
     suspend fun routeGameState(gameInstanceId: Long, sdkMessageId: String, state: AgentGameState): Boolean {
         val qaTry = tryRepository.findActiveByGameInstanceId(gameInstanceId) ?: return false
         val qaTryId = requireNotNull(qaTry.id)
@@ -138,6 +141,7 @@ class QaSdkBridgeService(
         )
         logService.publish(inbound)
         if (!inbound.inserted) return true
+        recordActionTiming(qaTryId, outerIdString, correlationId, action.createdAt, inbound.log.createdAt, payload)
         if (sessionId == null) return true
         val outbound = logService.append(
             qaTryId = qaTryId,
@@ -232,6 +236,39 @@ class QaSdkBridgeService(
         logService.publish(outbound)
         val sessionId = qaTry.agentSessionId ?: return
         sendAgent(qaTryId, sessionId, "ACTION_RESULT", agentMessageId, payload)
+    }
+
+    /**
+     * 액션 하나의 네 시각을 `qa_log` 에 남긴다([QaActionTiming]). 기록은 진단용이라 실패해도 결과 전달을 막지 않는다.
+     */
+    private suspend fun recordActionTiming(
+        qaTryId: Long,
+        requestId: String,
+        correlationId: String?,
+        sentToSdkAt: Instant?,
+        resultReceivedAt: Instant,
+        resultPayload: JsonNode
+    ) {
+        try {
+            val agentAction = correlationId?.let {
+                logRepository.findByQaTryIdAndDirectionAndMessageId(qaTryId, "AGENT_TO_ORCHE", it)
+            }
+            val timing = QaActionTiming.of(requestId, agentAction?.createdAt, sentToSdkAt, resultReceivedAt, resultPayload)
+            val log = logService.append(
+                qaTryId = qaTryId,
+                direction = "ORCHE_INTERNAL",
+                type = "LOG",
+                messageId = "action-timing-$requestId",
+                correlationId = correlationId,
+                message = timing.summary(),
+                payload = objectMapper.valueToTree(timing)
+            )
+            logService.publish(log)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            logger.warn("액션 시각 기록 실패 [qaTryId={}, requestId={}]: {}", qaTryId, requestId, error.message)
+        }
     }
 
     private suspend fun appendUnknownResult(

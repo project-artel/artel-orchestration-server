@@ -10,6 +10,7 @@ import reactor.core.publisher.Flux
 import reactor.core.publisher.Sinks
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /** 같은 인스턴스의 새 연결에 자리를 넘기며 앞 세션을 닫는 코드. SDK 는 4001 이 아닌 닫힘에서는 다시 연결한다. */
 internal val SESSION_REPLACED = CloseStatus(4009, "Replaced by a new connection")
@@ -111,9 +112,16 @@ class SessionManager(private val objectMapper: ObjectMapper) {
 
     fun getSession(instanceId: String): WebSocketSession? = sessions[instanceId]?.session
 
+    /**
+     * 전송 큐에 들어갔지만 아직 전송 파이프라인이 꺼내 가지 않은 메시지 수. 세션이 없으면 null 이다.
+     *
+     * 큐는 크기 제한이 없어 가득 차서 거절하는 일은 없다. 이 값이 계속 늘면 소켓 write 가 막혀 있다는 뜻이다(ARTEL-1235).
+     */
+    fun pendingOutbound(instanceId: String): Int? = sessions[instanceId]?.pending()
+
     fun hasSession(instanceId: String): Boolean = sessions.containsKey(instanceId)
 
-    suspend fun sendAction(instanceId: String, action: ActionResponseDto) =
+    suspend fun sendAction(instanceId: String, action: ActionResponseDto): Boolean =
         send(instanceId, action)
 
     /**
@@ -123,9 +131,9 @@ class SessionManager(private val objectMapper: ObjectMapper) {
      * "보낼 줄에 세웠다"는 뜻이다. 소켓에 실제로 나갔는지까지 확인하려면 SDK의 응답을 봐야
      * 하는데, 이 프로토콜에서 그 확인이 필요한 메시지는 없다.
      */
-    suspend fun send(instanceId: String, payload: Any) {
+    suspend fun send(instanceId: String, payload: Any): Boolean {
         val json = objectMapper.writeValueAsString(payload)
-        sendRaw(instanceId, json)
+        return sendRaw(instanceId, json)
     }
 
     /**
@@ -136,14 +144,20 @@ class SessionManager(private val objectMapper: ObjectMapper) {
      * 없다"처럼 원인을 찾기 어려운 모습으로 나타나므로, 중계는 원문을 건드리지 않는다.
      *
      * 세션이 없으면 예외를 던진다. 호출자(컨트롤러)가 이를 404로 옮긴다.
+     *
+     * @return 전송 큐에 넣었으면 true. 세션은 있는데 전송 파이프라인이 이미 끝나 큐가 닫혔으면 false 다 — 소켓
+     *   write 가 실패해 전송 쪽만 끝나고 수신 쪽은 살아 있는 세션이 그렇다. 그 세션은 SDK 가 다시 연결하면
+     *   교체된다(ARTEL-1234). 이 값을 보지 않는 호출자는 지금처럼 경고 로그만 남는다
      */
-    suspend fun sendRaw(instanceId: String, json: String) {
+    suspend fun sendRaw(instanceId: String, json: String): Boolean {
         val registered = sessions[instanceId]
             ?: throw IllegalArgumentException("게임 인스턴스에 해당하는 활성화된 웹소켓 세션이 없습니다: $instanceId")
 
-        if (!registered.emit(json)) {
-            logger.warn("SDK 메시지 전송 실패 [instanceId: $instanceId]: 전송 큐가 닫혔거나 가득 찼습니다.")
+        val result = registered.emit(json)
+        if (result != Sinks.EmitResult.OK) {
+            logger.warn("SDK 메시지 전송 실패 [instanceId: $instanceId]: 전송 큐가 닫혔습니다 ($result).")
         }
+        return result == Sinks.EmitResult.OK
     }
 
     /**
@@ -154,13 +168,23 @@ class SessionManager(private val objectMapper: ObjectMapper) {
      */
     private class SdkSession(val session: WebSocketSession, val liveness: SdkLiveness?) {
         private val sink = Sinks.many().unicast().onBackpressureBuffer<String>()
+        private val pending = AtomicInteger()
 
-        fun outbound(): Flux<String> = sink.asFlux()
+        fun outbound(): Flux<String> = sink.asFlux().doOnNext { pending.decrementAndGet() }
 
-        fun emit(json: String): Boolean = sink.tryEmitNext(json) == Sinks.EmitResult.OK
+        /**
+         * 발신자가 여럿이다 — agent 의 ACTION, `RUN_STATUS`, 판독 켜기, 화면 스트리밍 시그널링. unicast sink 의
+         * `tryEmitNext` 는 두 thread 가 동시에 부르면 한쪽에 `FAIL_NON_SERIALIZED` 를 돌려주고 그 메시지를 버린다.
+         * 그래서 넣는 것을 한 줄로 세운다.
+         */
+        fun emit(json: String): Sinks.EmitResult = synchronized(sink) {
+            sink.tryEmitNext(json).also { result -> if (result == Sinks.EmitResult.OK) pending.incrementAndGet() }
+        }
+
+        fun pending(): Int = pending.get()
 
         fun close() {
-            sink.tryEmitComplete()
+            synchronized(sink) { sink.tryEmitComplete() }
         }
     }
 }

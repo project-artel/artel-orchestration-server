@@ -10,6 +10,7 @@ import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.dto.ActionItemDto
 import kr.artel.orchestration.sdk.dto.ActionResponseDto
 import kr.artel.orchestration.sdk.service.SessionManager
+import org.slf4j.LoggerFactory
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.TransactionalOperator
@@ -30,6 +31,8 @@ class QaActionDispatchService(
     private val transactionalOperator: TransactionalOperator,
     private val sdkBridge: QaSdkBridgeService
 ) {
+    private val logger = LoggerFactory.getLogger(QaActionDispatchService::class.java)
+
     suspend fun dispatch(
         qaTryId: Long,
         agentMessageId: String,
@@ -83,16 +86,46 @@ class QaActionDispatchService(
                 val outbound = insertOutbound(qaTryId, agentMessageId, message, actionsPayload)
                 val outboundResponse = logService.response(outbound)
                 val outerId = requireNotNull(outbound.id)
-                sessionManager.sendAction(
-                    qaTry.gameInstanceId.toString(),
-                    ActionResponseDto(id = outerId, actions = actions)
+                val instanceId = qaTry.gameInstanceId.toString()
+                // 큐에 이미 쌓인 수를 남긴다. 액션 결과가 늦을 때 이쪽 전송이 밀렸는지 가르는 값이다(ARTEL-1235).
+                val pendingAhead = sessionManager.pendingOutbound(instanceId)
+                val queued = sessionManager.sendAction(instanceId, ActionResponseDto(id = outerId, actions = actions))
+                logger.info(
+                    "SDK 로 ACTION 전송 [qaTryId={}, requestId={}, queued={}, pendingAhead={}]",
+                    qaTryId, outerId, queued, pendingAhead
                 )
+                if (!queued) throw SdkActionUndeliveredException()
                 logService.publish(inbound)
                 logService.publish(QaLogAppendResult(outboundResponse, true))
                 true
             }
         } catch (error: CancellationException) {
             throw error
+        } catch (error: SdkActionUndeliveredException) {
+            // 큐가 닫힌 세션에 넣은 ACTION 은 SDK 에 닿지 않는다. 예전에는 경고 로그만 남기고 성공으로 커밋해서 agent 가
+            // 결과를 끝까지 기다렸다. 이제 롤백하고 agent 에게 실패 결과를 바로 돌려준다.
+            val audit = logService.append(
+                qaTryId = qaTryId,
+                direction = "ORCHE_INTERNAL",
+                type = "ERROR",
+                correlationId = agentMessageId,
+                message = "SDK action delivery failed.",
+                payload = objectMapper.createObjectNode().put("error", error.message)
+            )
+            logService.publish(audit)
+            val inbound = logService.append(
+                qaTryId = qaTryId,
+                direction = "AGENT_TO_ORCHE",
+                type = "ACTION",
+                messageId = agentMessageId,
+                message = message,
+                payload = actionsPayload
+            )
+            logService.publish(inbound)
+            if (inbound.inserted) {
+                sdkBridge.rejectActions(qaTry, agentMessageId, actions, actions.associate { it.id to UNDELIVERED_REASON })
+            }
+            return false
         } catch (error: Exception) {
             // ERROR 감사 로그는 트랜잭션 밖에서 남긴다. 안에서 남기면 롤백에 함께 지워진다.
             val audit = logService.append(
@@ -170,3 +203,11 @@ class QaActionDispatchService(
         return requireNotNull(logRepository.findById(id))
     }
 }
+
+/** 세션은 있는데 전송 큐가 닫혀 ACTION 을 SDK 로 보내지 못했다. */
+private class SdkActionUndeliveredException :
+    IllegalStateException("SDK send queue is closed; the action was not sent to the game")
+
+/** 큐가 닫혀 보내지 못한 ACTION 에 agent 가 받는 이유. agent 가 읽으므로 영어다. */
+private const val UNDELIVERED_REASON =
+    "not delivered: the game connection is not accepting messages; the game did not receive this action"
