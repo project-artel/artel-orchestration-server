@@ -104,7 +104,7 @@ class QaRunController(
         @PathVariable verdictLogId: String,
         @RequestBody request: QaVerdictReviewRequest,
         @CurrentUserId appUserId: Long
-    ): QaHumanDecision {
+    ): QaHumanDecision? {
         val saved = qaVerdictReviewService.decideOutcome(parseId(qaRunId), parseId(verdictLogId), appUserId, request.decision, request.note)
         return qaVerdictService.decisionOf(saved)
     }

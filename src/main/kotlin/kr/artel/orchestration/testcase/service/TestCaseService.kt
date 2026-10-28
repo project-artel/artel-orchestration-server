@@ -34,6 +34,8 @@ import kr.artel.orchestration.testcase.dto.TestCaseResponse
 import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
 import kr.artel.orchestration.testcase.dto.toTestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.toTestCaseResponse
+import kr.artel.orchestration.testcase.dto.originLabel
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.entity.VerificationStatus
@@ -71,6 +73,7 @@ class TestCaseService(
     private val authoringCases: AuthoringCases,
     private val reader: TestCaseReader,
     private val projectChangeStreamManager: ProjectChangeStreamManager,
+    private val versions: TestCaseVersionRepository,
 ) {
 
     private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
@@ -463,6 +466,29 @@ class TestCaseService(
         val statusName = request.verificationStatus?.let {
             VerificationStatus.fromWire(it)?.name
                 ?: throw BadRequestException("verificationStatus must be one of ${VerificationStatus.NAMES}")
+        }
+        val buildId = parseOptionalWireId(request.gameBuildId, "gameBuildId")
+        if (buildId != null) {
+            gameBuilds.findAccessibleById(buildId, existing.projectId, userId) ?: throw NotFoundException("버전을 찾을 수 없습니다.")
+        }
+        if (buildId != null && existing.originLabel() == "MAP") {
+            val shown = transactionalOperator.executeAndAwait {
+                // lifecycle과 같은 순서로 TC를 잠근 뒤 버전 내용을 수정한다.
+                val identity = repository.findByIdForUpdate(caseId) ?: throw NotFoundException()
+                val version = versions.findByTestCaseIdAndGameBuildId(caseId, buildId) ?: throw NotFoundException("해당 버전에 TC가 없습니다.")
+                versions.save(version.copy(
+                    scene = request.scene?.ifBlank { null } ?: version.scene,
+                    step = request.step?.ifBlank { null } ?: version.step,
+                    precondition = if (request.precondition == null) version.precondition else request.precondition.ifBlank { null },
+                    expectedValue = request.expectedValue?.ifBlank { null } ?: version.expectedValue,
+                    verificationStatus = statusName ?: version.verificationStatus,
+                ))
+                request.functions?.let { repository.save(identity.copy(functions = it.validated())) }
+                versions.syncIdentities(listOf(caseId))
+                reader.overlay(repository.findById(caseId) ?: throw NotFoundException(), CaseScope.Version(buildId))
+            }
+            projectChangeStreamManager.notify(existing.projectId, ProjectChangeTopic.TEST_CASES)
+            return shown.toTestCaseResponse(folderItems.findFirstFolderId(caseId))
         }
         val updated = existing.copy(
             scene = request.scene?.ifBlank { null } ?: existing.scene,

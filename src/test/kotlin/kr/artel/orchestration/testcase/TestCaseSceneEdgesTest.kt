@@ -15,7 +15,7 @@ class TestCaseSceneEdgesTest {
     private val authoringCases = mock<AuthoringCases>()
     private val service = TestCaseService(
         mock(), mock(), mock(), ObjectMapper(), mock(), mock(), mock(), mock(), mock(),
-        authoringCases, mock(), mock(),
+        authoringCases, mock(), mock(), mock(),
     )
 
     @Test

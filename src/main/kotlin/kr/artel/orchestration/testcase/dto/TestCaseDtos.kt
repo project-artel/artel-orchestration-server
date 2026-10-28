@@ -26,6 +26,7 @@ data class TestCaseCreateRequest(
 
 /** 케이스 수정. 검증상태(verificationStatus)도 여기서 바꿀 수 있다. */
 data class TestCaseUpdateRequest(
+    val gameBuildId: String? = null,
     val scene: String? = null,
     val step: String? = null,
     val precondition: String? = null,

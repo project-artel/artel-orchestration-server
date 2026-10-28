@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import org.springframework.r2dbc.core.awaitRowsUpdated
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -99,6 +100,224 @@ class CaseVerdictFromQaIntegrationTest {
     @Autowired private lateinit var attempts: QaCaseAttemptService
     @Autowired private lateinit var reliability: QaReliabilityService
     @Autowired private lateinit var questions: QaOperatorQuestions
+    @Autowired private lateinit var contentReviews: QaCaseContentReviews
+    @Autowired private lateinit var caseService: kr.artel.orchestration.testcase.service.TestCaseService
+    @Autowired private lateinit var database: org.springframework.r2dbc.core.DatabaseClient
+
+    @Test
+    fun `TC 내용 문제와 판단 불가는 legacy 응답의 통과 판정을 실패로 바꾸지 않는다`(): Unit = runBlocking {
+        val run = runningRun()
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true)
+        val logId = qaVerdictService.list(run.qaRunId, run.ownerId).tries.single().verdicts.single().logId.toLong()
+
+        for (decision in listOf("TC_CONTENT_ISSUE", "INCONCLUSIVE")) {
+            val saved = reviewService.decideOutcome(run.qaRunId, logId, run.ownerId, decision, "기준을 확인해 주세요")
+            // 직접 선택한 평가도 추가 검토 건수에 포함되는지 확인한다.
+            database.sql("UPDATE qa_verdict_review SET flagged = TRUE WHERE qa_log_id = :logId")
+                .bind("logId", logId).fetch().awaitRowsUpdated()
+            val listed = qaVerdictService.list(run.qaRunId, run.ownerId).tries.single()
+            val verdict = listed.verdicts.single()
+            assertThat(verdict.passed).isTrue()
+            assertThat(verdict.humanDecision).isNull()
+            assertThat(verdict.needsReview).isFalse()
+            assertThat(qaVerdictService.decisionOf(saved)).isNull()
+            assertThat(listed.reviewedCount).isEqualTo(1)
+            assertThat(listed.reviewCount).isZero()
+            assertThat(versionOf(run.passedCaseId).verificationStatus).isEqualTo("VERIFIED")
+        }
+    }
+
+    @Test
+    fun `TC 내용 문제는 원본 판정과 검증 상태를 보존하고 수정 후 새 검증으로 완료된다`(): Unit = runBlocking {
+        val run = runningRun()
+        val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
+        val result = attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.FAILED, "게임 결과"))
+        val before = testCaseRepository.findById(run.failedCaseId)!!
+        reviewService.decideOutcome(run.qaRunId, result.logId!!.toLong(), run.ownerId, "TC_CONTENT_ISSUE", "기대 결과가 잘못됨")
+        val reported = contentReviews.list(run.projectId, run.ownerId, run.failedCaseId).single()
+        assertThat(reported.state).isEqualTo("NEEDS_REVISION")
+        assertThat(reported.note).isEqualTo("기대 결과가 잘못됨")
+        assertThat(reported.logId).isEqualTo(result.logId)
+        assertThat(reported.attemptId).isEqualTo(attempt.id.toString())
+        assertThat(reported.qaTryId).isEqualTo(run.tryId.toString())
+        assertThat(reported.qaRunId).isEqualTo(run.qaRunId.toString())
+        assertThat(testCaseRepository.findById(run.failedCaseId)!!.verificationStatus).isEqualTo(before.verificationStatus)
+        assertThat(attempts.get(run.projectId, run.ownerId, attempt.id).verdict).isEqualTo("FAILED")
+        assertThat(issueRepository.findAll().toList().single().status).isEqualTo("RESOLVED")
+        val counts = reliability.report(run.projectId, run.ownerId, null, null).overall
+        assertThat(counts.reviewed).isEqualTo(1)
+        assertThat(counts.falsePositiveRate).isNull()
+        assertThat(counts.falseNegativeRate).isNull()
+        assertThat(reliability.history(run.projectId, result.logId.toLong(), run.ownerId, null).single().decision).isEqualTo("TC_CONTENT_ISSUE")
+        testCaseRepository.save(before.copy(verificationStatus = "DRAFT"))
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVISION")
+        testCaseRepository.save(testCaseRepository.findById(run.failedCaseId)!!.copy(expectedValue = "수정한 기대 결과"))
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVALIDATION")
+        val fresh = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVALIDATION")
+        attempts.report(run.tryId, fresh.id, ReportCaseAttempt(CaseOutcome.PASSED, "수정 후 결과"))
+        val done = contentReviews.list(run.projectId, run.ownerId, null).single()
+        assertThat(done.state).isEqualTo("READY")
+        assertThat(done.resolvedAt).isNotNull()
+        assertThat(done.note).isEqualTo(reported.note)
+        assertThat(done.attemptId).isEqualTo(reported.attemptId)
+    }
+
+    @Test
+    fun `과거 내용의 평가는 현재 TC를 수정 필요로 바꾸지 않는다`(): Unit = runBlocking {
+        val run = runningRun()
+        val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        val result = attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.PASSED, "통과"))
+        testCaseRepository.save(testCaseRepository.findById(run.passedCaseId)!!.copy(step = "새 절차"))
+        reviewService.decideOutcome(run.qaRunId, result.logId!!.toLong(), run.ownerId, "TC_CONTENT_ISSUE", "옛 내용의 문제")
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null)).isEmpty()
+        assertThat(reliability.history(run.projectId, result.logId.toLong(), run.ownerId, null).single().note).isEqualTo("옛 내용의 문제")
+    }
+
+    @Test
+    fun `수정 전 시작과 잘못된 snapshot 및 판단 불가 결과는 재검증을 완료하지 않는다`(): Unit = runBlocking {
+        val run = runningRun()
+        val reported = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        val result = attempts.report(run.tryId, reported.id, ReportCaseAttempt(CaseOutcome.PASSED, "통과"))
+        reviewService.decideOutcome(run.qaRunId, result.logId!!.toLong(), run.ownerId, "TC_CONTENT_ISSUE", null)
+        val early = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        testCaseRepository.save(testCaseRepository.findById(run.passedCaseId)!!.copy(step = "수정 절차"))
+        attempts.report(run.tryId, early.id, ReportCaseAttempt(CaseOutcome.PASSED, "수정 전 시작"))
+        val mismatch = objectMapper.readTree("""{"id":${run.passedCaseId},"scene":"S","test_step":"오래된 절차","expected":"x"}""")
+        val stale = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId, mismatch))
+        attempts.report(run.tryId, stale.id, ReportCaseAttempt(CaseOutcome.FAILED, "snapshot 불일치"))
+        val uncertain = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        attempts.report(run.tryId, uncertain.id, ReportCaseAttempt(CaseOutcome.INCONCLUSIVE, "판단 불가"))
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVALIDATION")
+        val snapshot = objectMapper.readTree("""{"id":${run.passedCaseId},"scene":"S","precondition":null,"test_step":"수정 절차","expected":"x","functions":{"cheats":"all","behaviors":"all"},"extra":"비교 제외"}""")
+        val fresh = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId, snapshot))
+        attempts.report(run.tryId, fresh.id, ReportCaseAttempt(CaseOutcome.FAILED, "새 내용으로 확인한 실패"))
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("READY")
+    }
+
+    @Test
+    fun `현재 보고만 철회할 수 있고 내용 수정 뒤에는 평가 철회로 완료하지 않는다`(): Unit = runBlocking {
+        val run = runningRun()
+        suspend fun result(): CaseAttemptResponse {
+            val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+            return attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.PASSED, "결과"))
+        }
+        val first = result()
+        val second = result()
+        reviewService.decideOutcome(run.qaRunId, first.logId!!.toLong(), run.ownerId, "TC_CONTENT_ISSUE", "처음")
+        reviewService.decideOutcome(run.qaRunId, second.logId!!.toLong(), run.ownerId, "TC_CONTENT_ISSUE", "최신")
+        reviewService.decideOutcome(run.qaRunId, first.logId.toLong(), run.ownerId, "PASSED", null)
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().note).isEqualTo("최신")
+        reviewService.decideOutcome(run.qaRunId, second.logId.toLong(), run.ownerId, "PASSED", null)
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("READY")
+        reviewService.decideOutcome(run.qaRunId, second.logId.toLong(), run.ownerId, "TC_CONTENT_ISSUE", "다시 보고")
+        testCaseRepository.save(testCaseRepository.findById(run.passedCaseId)!!.copy(step = "수정됨"))
+        reviewService.decideOutcome(run.qaRunId, second.logId.toLong(), run.ownerId, "PASSED", null)
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVALIDATION")
+    }
+
+    @Test
+    fun `내용 검토 조회는 프로젝트 멤버만 가능하고 삭제 TC는 상태를 다시 변경하지 않는다`(): Unit = runBlocking {
+        val run = runningRun()
+        val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        val result = attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.PASSED, "결과"))
+        reviewService.decideOutcome(run.qaRunId, result.logId!!.toLong(), run.ownerId, "TC_CONTENT_ISSUE", "사유")
+        assertThat(contentReviews.list(run.projectId, run.ownerId, run.failedCaseId)).isEmpty()
+        assertThatThrownBy { runBlocking { contentReviews.list(run.projectId, run.ownerId + 999, null) } }.isInstanceOf(NotFoundException::class.java)
+        testCaseRepository.deleteById(run.passedCaseId)
+        reviewService.decideOutcome(run.qaRunId, result.logId.toLong(), run.ownerId, "TC_CONTENT_ISSUE", "삭제 후 사유")
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null)).isEmpty()
+        assertThat(reliability.history(run.projectId, result.logId.toLong(), run.ownerId, null)).hasSize(2)
+    }
+
+    @Test
+    fun `동시 재검증 완료와 내용 수정은 새 수정의 재검증 대기를 보존한다`(): Unit = runBlocking {
+        val run = runningRun()
+        val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        val result = attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.PASSED, "결과"))
+        reviewService.decideOutcome(run.qaRunId, result.logId!!.toLong(), run.ownerId, "TC_CONTENT_ISSUE", "사유")
+        testCaseRepository.save(testCaseRepository.findById(run.passedCaseId)!!.copy(step = "첫 수정"))
+        val fresh = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        coroutineScope { listOf(async {
+            attempts.report(run.tryId, fresh.id, ReportCaseAttempt(CaseOutcome.PASSED, "새 결과"))
+        }, async {
+            testCaseRepository.save(testCaseRepository.findById(run.passedCaseId)!!.copy(step = "동시 새 수정"))
+        }).awaitAll() }
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVALIDATION")
+    }
+
+    @Test
+    fun `사람이 수정한 TC 내용은 build scope에서도 agent 재검증에 전달된다`(): Unit = runBlocking {
+        val run = runningRun()
+        val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        val result = attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.PASSED, "결과"))
+        reviewService.decideOutcome(run.qaRunId, result.logId!!.toLong(), run.ownerId, "TC_CONTENT_ISSUE", "기준 수정")
+        caseService.updateTestCase(run.passedCaseId, run.ownerId,
+            kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest(step = "수정 절차", expectedValue = "수정 기대 결과"))
+        val draft = ScenarioDraft(title = "재검증", description = "", steps = listOf(ScenarioStep(action = "", caseId = run.passedCaseId)))
+        val agentCase = composition.agentScenario(draft,
+            kr.artel.orchestration.testcase.service.CaseScope.Version(run.gameBuildId), run.gameBuildId).steps.single().case!!
+        assertThat(agentCase.testStep).isEqualTo("수정 절차")
+        assertThat(agentCase.expected).isEqualTo("수정 기대 결과")
+        assertThat(agentCase.reviews!!.single().humanPassed).isNull()
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVALIDATION")
+    }
+
+    @Test
+    fun `구조 조건과 기대 항목 및 functions 변경도 재검증 시각을 갱신한다`(): Unit = runBlocking {
+        val run = runningRun()
+        val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        val result = attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.PASSED, "결과"))
+        reviewService.decideOutcome(run.qaRunId, result.logId!!.toLong(), run.ownerId, "TC_CONTENT_ISSUE", null)
+        var row = testCaseRepository.findById(run.passedCaseId)!!
+        for (changed in listOf(row.copy(condition = Json.of("{}")), row.copy(expectedItems = Json.of("[]")),
+            row.copy(functions = Json.of("""{"cheats":"none"}""")), row.copy(precondition = "새 조건"))) {
+            row = testCaseRepository.save(changed)
+            assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVALIDATION")
+            assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().revisedAt).isNotNull()
+        }
+        val legacy = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        database.sql("UPDATE qa_case_attempt SET started_at = NULL WHERE id = :id").bind("id", legacy.id).fetch().awaitRowsUpdated()
+        attempts.report(run.tryId, legacy.id, ReportCaseAttempt(CaseOutcome.PASSED, "시작시각 없음"))
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVALIDATION")
+        val interrupted = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        database.sql("UPDATE qa_try SET status = 'CANCELLED', completed_at = now() WHERE id = :id").bind("id", run.tryId).fetch().awaitRowsUpdated()
+        assertThat(attempts.get(run.projectId, run.ownerId, interrupted.id).verdict).isEqualTo("INTERRUPTED")
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVALIDATION")
+    }
+
+    @Test
+    fun `지도 TC는 지정한 build 내용만 수정하고 다른 build와 판정을 보존한다`(): Unit = runBlocking {
+        val run = runningRun()
+        val metadata = Json.of("""{"origin":"content-map"}""")
+        val mapped = testCaseRepository.save(testCaseRepository.findById(run.passedCaseId)!!.copy(metadata = metadata))
+        val current = versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.gameBuildId)!!
+        versions.save(current.copy(metadata = metadata))
+        val older = gameBuildRepository.save(GameBuildEntity(projectId = run.projectId, version = "0.9.0",
+            createdAt = Instant.now().minusSeconds(3600), updatedAt = Instant.now()))
+        versions.save(TestCaseVersionEntity.snapshotOf(mapped, older.id!!).copy(step = "옛 버전 절차", verificationStatus = "VERIFIED"))
+        val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        val result = attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.PASSED, "결과"))
+        reviewService.decideOutcome(run.qaRunId, result.logId!!.toLong(), run.ownerId, "TC_CONTENT_ISSUE", "기대 결과 수정")
+        val saved = caseService.updateTestCase(run.passedCaseId, run.ownerId,
+            kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest(gameBuildId = run.gameBuildId.toString(), step = "새 버전 절차", expectedValue = "새 기대 결과"))!!
+        assertThat(saved.step).isEqualTo("새 버전 절차")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, older.id)!!.step).isEqualTo("옛 버전 절차")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, older.id)!!.verificationStatus).isEqualTo("VERIFIED")
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("NEEDS_REVALIDATION")
+        val draft = ScenarioDraft(title = "지도 재검증", description = "", steps = listOf(ScenarioStep(action = "", caseId = run.passedCaseId)))
+        val agentCase = composition.agentScenario(draft, kr.artel.orchestration.testcase.service.CaseScope.Version(run.gameBuildId), run.gameBuildId).steps.single().case!!
+        assertThat(agentCase.testStep).isEqualTo("새 버전 절차")
+        assertThat(agentCase.expected).isEqualTo("새 기대 결과")
+        val fresh = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId, objectMapper.valueToTree(agentCase)))
+        attempts.report(run.tryId, fresh.id, ReportCaseAttempt(CaseOutcome.PASSED, "수정 후 검증"))
+        assertThat(contentReviews.list(run.projectId, run.ownerId, null).single().state).isEqualTo("READY")
+        assertThatThrownBy { runBlocking { caseService.updateTestCase(run.passedCaseId, run.ownerId,
+            kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest(gameBuildId = (run.gameBuildId + 999).toString(), step = "변경 금지")) } }.isInstanceOf(NotFoundException::class.java)
+        val empty = gameBuildRepository.save(GameBuildEntity(projectId = run.projectId, version = "2.0.0", createdAt = Instant.now(), updatedAt = Instant.now()))
+        assertThatThrownBy { runBlocking { caseService.updateTestCase(run.passedCaseId, run.ownerId,
+            kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest(gameBuildId = empty.id.toString(), step = "변경 금지")) } }.isInstanceOf(NotFoundException::class.java)
+    }
 
     @Test
     fun `TC 시도별 평가와 오탐 정정이 원래 issue에 반영된다`(): Unit = runBlocking {

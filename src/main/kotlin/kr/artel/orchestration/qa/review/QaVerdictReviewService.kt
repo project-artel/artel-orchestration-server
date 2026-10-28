@@ -101,7 +101,7 @@ class QaVerdictReviewService(
         decideOutcome(qaRunId, logId, appUserId, if (passed) PASSED else FAILED, note)
 
     suspend fun decideOutcome(qaRunId: Long?, logId: Long, appUserId: Long, decision: String, note: String?): QaVerdictReviewEntity {
-        if (decision !in setOf(PASSED, FAILED, INCONCLUSIVE)) throw BadRequestException("올바른 평가 결과를 선택해 주세요.")
+        if (decision !in setOf(PASSED, FAILED, INCONCLUSIVE, TC_CONTENT_ISSUE)) throw BadRequestException("올바른 평가 결과를 선택해 주세요.")
         if (note != null && note.length > MAX_NOTE) throw BadRequestException("평가 이유는 ${MAX_NOTE}자 이하여야 합니다.")
         val result = transactions.executeAndAwait {
         if (qaRunId != null) qaRuns.findAccessibleById(qaRunId, appUserId) ?: throw NotFoundException()
@@ -134,7 +134,7 @@ class QaVerdictReviewService(
             FAILED -> false
             else -> when (payload.path("status").asText()) { "COMPLETED" -> true; "FAILED" -> false; else -> null }
         }
-        if (caseId != null) caseVerdicts.recordStepVerdict(qaTry, caseId, effective, logId, publish = false)
+        if (caseId != null && decision != TC_CONTENT_ISSUE) caseVerdicts.recordStepVerdict(qaTry, caseId, effective, logId, publish = false)
         reviews.findById(logId) ?: throw NotFoundException()
         }
         val projectId = database.sql("SELECT s.project_id FROM qa_try t JOIN test_scenario s ON s.id = t.test_scenario_id WHERE t.id = :try")
@@ -155,6 +155,7 @@ class QaVerdictReviewService(
         const val PASSED = "PASSED"
         const val FAILED = "FAILED"
         const val INCONCLUSIVE = "INCONCLUSIVE"
+        const val TC_CONTENT_ISSUE = "TC_CONTENT_ISSUE"
         private const val MAX_NOTE = 2000
     }
 }

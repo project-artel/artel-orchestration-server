@@ -91,6 +91,9 @@ class QaVerdictService(
             val calls = if (payloads.values.all { it.hasNonNull("reason") }) emptyList()
             else qaLogs.findVerdictToolCalls(qaTryId).toList()
             val actions = actionsByStep(qaTryId)
+            val verdicts = rows.toSortedMap().map { (step, row) ->
+                verdictOf(row, payloads.getValue(step), steps, captures, calls, actions[step].orEmpty(), checks[row.id])
+            }
             QaTryVerdicts(
                 qaTryId = qaTryId.toString(),
                 testScenarioId = qaTry.testScenarioId.toString(),
@@ -102,10 +105,7 @@ class QaVerdictService(
                 startedAt = qaTry.startedAt,
                 completedAt = qaTry.completedAt,
                 steps = stepViews(steps, scope),
-                verdicts = rows.toSortedMap().map { (step, row) ->
-                    verdictOf(row, payloads.getValue(step), steps, captures, calls, actions[step].orEmpty(), checks[row.id])
-                        .withDecision(decisions[row.id], names)
-                },
+                verdicts = verdicts.map { it.withDecision(decisions[it.logId.toLong()], names) },
                 issues = issues.findPageByQaTry(qaTryId, null, MAX_ISSUES).toList().sortedBy { it.id }.map { issue ->
                     val detail = objectMapper.readTree(issue.detail.asString())
                     QaStepIssue(
@@ -118,7 +118,10 @@ class QaVerdictService(
             ).let { tried ->
                 tried.copy(
                     reviewCount = tried.verdicts.count { it.needsReview },
-                    reviewedCount = tried.verdicts.count { it.humanDecision?.flagged == true },
+                    reviewedCount = verdicts.count { verdict ->
+                        val decision = decisions[verdict.logId.toLong()]
+                        decision?.decision != null && (decision.flagged || verdict.needsReview)
+                    },
                 )
             }
         }
@@ -177,6 +180,9 @@ class QaVerdictService(
     /** 사람이 정한 판정을 얹는다. 정했으면 추가 검토가 끝난 것이다. */
     private fun QaStepVerdict.withDecision(decision: QaVerdictReviewEntity?, names: Map<Long, String?>): QaStepVerdict {
         if (decision?.decision == null) return this
+        if (decision.decision !in setOf(QaVerdictReviewService.PASSED, QaVerdictReviewService.FAILED)) {
+            return copy(needsReview = false, humanDecision = null)
+        }
         return copy(
             needsReview = false,
             humanDecision = QaHumanDecision(
@@ -190,13 +196,16 @@ class QaVerdictService(
     }
 
     /** 방금 정한 판정을 화면에 돌려줄 모양으로. */
-    suspend fun decisionOf(decision: QaVerdictReviewEntity) = QaHumanDecision(
-        passed = decision.decision?.takeUnless { it == QaVerdictReviewService.INCONCLUSIVE }?.let { it == QaVerdictReviewService.PASSED },
-        note = decision.note,
-        decidedBy = decision.decidedBy?.let { users.findById(it)?.displayName },
-        decidedAt = decision.decidedAt,
-        flagged = decision.flagged,
-    )
+    suspend fun decisionOf(decision: QaVerdictReviewEntity): QaHumanDecision? {
+        if (decision.decision !in setOf(QaVerdictReviewService.PASSED, QaVerdictReviewService.FAILED)) return null
+        return QaHumanDecision(
+            passed = decision.decision == QaVerdictReviewService.PASSED,
+            note = decision.note,
+            decidedBy = decision.decidedBy?.let { users.findById(it)?.displayName },
+            decidedAt = decision.decidedAt,
+            flagged = decision.flagged,
+        )
+    }
 
     private fun verdictOf(
         row: QaLogEntity,

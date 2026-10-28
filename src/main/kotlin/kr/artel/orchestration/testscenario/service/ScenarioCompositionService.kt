@@ -102,7 +102,7 @@ class ScenarioCompositionService(
                         reviews = decisions[it.id]?.map { row ->
                             AgentCaseReview(
                                 aiPassed = row.aiPassed,
-                                humanPassed = row.decision.takeUnless { it == QaVerdictReviewService.INCONCLUSIVE }?.let { it == QaVerdictReviewService.PASSED },
+                                humanPassed = row.decision.takeUnless { it in setOf(QaVerdictReviewService.INCONCLUSIVE, QaVerdictReviewService.TC_CONTENT_ISSUE) }?.let { it == QaVerdictReviewService.PASSED },
                                 note = row.note,
                                 gameBuildVersion = row.gameBuildVersion,
                                 decidedAt = row.decidedAt?.toString(),
