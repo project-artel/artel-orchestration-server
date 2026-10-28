@@ -192,7 +192,7 @@ class KnowledgeIntegrationTest {
         assertThat(listByFilters(projectId).items).isEmpty()
         // enum 값 존재 확인(회귀 방지)
         assertThat(KnowledgeTag.NAMES).containsExactlyInAnyOrder("CONTROL", "RULE", "OBJECTIVE", "UI", "MISC")
-        assertThat(KnowledgeSource.NAMES).containsExactlyInAnyOrder("DOCS", "QA", "DEMONSTRATION")
+        assertThat(KnowledgeSource.NAMES).containsExactlyInAnyOrder("DOCS", "QA")
     }
 
     /**

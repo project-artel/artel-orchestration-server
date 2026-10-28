@@ -37,6 +37,7 @@ data class AgentStep(
  * 스텝에 동봉되는 TC 스펙(CSV 미러). 현행 TestCase 필드를 계약 이름으로 투영한다: `scene`=category,
  * `test_step`=title. `basis`(근거)는 TC가 스펙으로 확정될 때 추가 예약.
  */
+@com.fasterxml.jackson.annotation.JsonIgnoreProperties(value = ["verification_procedure", "verificationProcedure"])
 data class AgentCase(
     val id: Long,
     val scene: String,
@@ -48,10 +49,6 @@ data class AgentCase(
      * 둘 다 `all` 이다. 위 계약 DTO 와 달리 이 필드만 NON_NULL 인 것은 `null` 과 "정하지 않음"을 가를 이유가 없어서다.
      */
     @get:JsonInclude(JsonInclude.Include.NON_NULL) val functions: TestCaseFunctions? = null,
-    @get:JsonInclude(JsonInclude.Include.NON_NULL)
-    @param:JsonProperty("verification_procedure")
-    @get:JsonProperty("verification_procedure")
-    val verificationProcedure: kr.artel.orchestration.demonstration.ProcedureSnapshot? = null,
     /**
      * 사람이 이 TC 의 판정을 정한 최근 기록(ARTEL-1256). 같은 실수를 피하라는 참고이고, 판정의 답이 아니다. 기록이 없으면
      * 키를 싣지 않는다 — 이 필드를 모르는 agent 와 기록이 없는 실행은 지금과 같다.

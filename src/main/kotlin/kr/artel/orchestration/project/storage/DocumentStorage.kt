@@ -66,7 +66,21 @@ interface DocumentStorage {
     fun sha256(objectKey: String): Mono<String>
 
     fun delete(objectKey: String): Mono<Void>
+
+    /** 제거된 시연 기능의 전용 prefix만 조회한다. QA 영상은 포함하지 않는다. */
+    fun retiredDemonstrationObjects(): reactor.core.publisher.Flux<RetiredStorageObject> =
+        reactor.core.publisher.Flux.error(UnsupportedOperationException("Storage object listing is unavailable"))
+
+    fun deleteRetiredDemonstrationObject(obj: RetiredStorageObject): Mono<Void> {
+        require(obj.key.startsWith("demonstrations/"))
+        require(obj.versionId == null) { "Version deletion is unavailable" }
+        return delete(obj.key)
+    }
+
+
 }
+
+data class RetiredStorageObject(val key: String, val versionId: String? = null)
 
 /**
  * presigned URL 을 여는 쪽. 같은 객체라도 여는 쪽에 따라 닿는 주소가 다르다.

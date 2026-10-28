@@ -39,9 +39,7 @@ data class SdkRegistration(val outbound: Flux<String>, val replaced: Boolean)
  * 두지 않으면 같은 세션에 동시 write가 걸린다.
  */
 @Service
-class SessionManager(private val objectMapper: ObjectMapper,
-    private val demonstrationGuard: kr.artel.orchestration.demonstration.DemonstrationGuard? = null,
-    private val demonstrationRuntime: kr.artel.orchestration.demonstration.DemonstrationRuntime? = null) {
+class SessionManager(private val objectMapper: ObjectMapper) {
 
     private val logger = LoggerFactory.getLogger(SessionManager::class.java)
     private val sessions = ConcurrentHashMap<String, SdkSession>()
@@ -115,7 +113,6 @@ class SessionManager(private val objectMapper: ObjectMapper,
         }
 
         if (sessions.remove(instanceId, registered)) {
-            demonstrationRuntime?.disconnected(instanceId, session.id)
             registered.close()
         }
     }
@@ -132,9 +129,7 @@ class SessionManager(private val objectMapper: ObjectMapper,
     fun hasSession(instanceId: String): Boolean = sessions.containsKey(instanceId)
 
     suspend fun sendAction(instanceId: String, action: ActionResponseDto): Boolean {
-        val guard = demonstrationGuard
-        return if (guard == null) send(instanceId, action)
-        else guard.dispatch(instanceId.toLong(), action.demonstration) { send(instanceId, action) }
+        return send(instanceId, action)
     }
 
     /**

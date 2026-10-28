@@ -20,7 +20,7 @@
 
 ## 충돌 해결
 
-- `SessionManager.sendAction`은 시연 제어권 검사와 전송 성공 여부 `Boolean` 반환을 함께 유지했다.
+- `SessionManager.sendAction`은 전송 성공 여부 `Boolean` 반환을 유지한다. 시연 제어권 검사는 후속 시연 기능 제거에서 삭제했다.
 - 명령 전송 큐의 동시 emit 보호·대기 수 계측과 최신 영상 ACK 한 개를 유지하는 전송 경로를 함께 보존했다. 영상 ACK는 액션 대기 수에서 제외한다.
 - `AgentCase`와 `ScenarioCompositionService`는 승인된 `verification_procedure`와 사람 평가 `reviews`를 모두 전달한다.
 - `/verdicts`는 `STATUS`·`CASE_VERDICT` 전체를 조회하므로 `step`이 없는 새 TC 판정도 복원한다.
@@ -37,3 +37,7 @@
 - 최종 Surefire 보고서 263개에는 고유 테스트 2,417개, 실패·오류·skip 0개가 기록됐다. 이 수치는 전체 실행과 수정된 class 재실행의 합쳐진 최종 보고서이며, 수정 후 전체 suite를 한 번 더 실행한 수치는 아니다.
 - 원본 head 9개 ancestry와 `git diff --check`를 통과했다. Flyway migration의 중복 version은 없으며 기존 migration 변경·삭제 없이 추가만 포함한다. 독립 통합 리뷰를 통과했다.
 - 사용 중인 로컬 서버·Unity·QA DB는 변경하지 않았다. 실제 유료 QA와 새 UI 시연은 실행하지 않았다.
+
+## TC 시연 기능 제거
+
+사용자 요청으로 시연 API·입력 제어·승인 절차 첨부를 제거했다. V142 이력은 보존하고 V148에서 기존 시연 DB 데이터와 snapshot의 시연 절차를 삭제한다. 서버 내부 정리 작업이 demonstrations/ 전용 prefix의 객체 version과 orphan을 재시도하며 삭제한다. QA 녹화·판정 검토는 유지한다. 자세한 범위는 [TC 시연 기능 제거](tc-demonstration-removal.md)를 참고한다.

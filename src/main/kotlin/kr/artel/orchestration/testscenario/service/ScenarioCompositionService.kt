@@ -4,8 +4,6 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.qa.review.QaVerdictReviewRepository
 import kr.artel.orchestration.qa.review.QaVerdictReviewService
 import kr.artel.orchestration.testcase.dto.functionsOrNull
-import kr.artel.orchestration.demonstration.DemonstrationCase
-import kr.artel.orchestration.demonstration.ProcedureSnapshot
 import kr.artel.orchestration.testcase.service.CaseScope
 import kr.artel.orchestration.testcase.service.TestCaseReader
 import kr.artel.orchestration.testscenario.dto.AgentCase
@@ -33,7 +31,6 @@ import org.springframework.stereotype.Service
 class ScenarioCompositionService(
     private val testCaseReader: TestCaseReader,
     private val reviews: QaVerdictReviewRepository,
-    private val procedures: kr.artel.orchestration.demonstration.VerificationProcedureService? = null,
 ) {
     /**
      * QA 실행용 시나리오 계약([AgentScenario])을 만든다. 직렬화는 Jackson에 맡긴다(예전엔 JsonNode를 손으로
@@ -51,9 +48,6 @@ class ScenarioCompositionService(
         draft: ScenarioDraft,
         caseScope: CaseScope = CaseScope.Latest,
         recordedBuildId: Long? = null,
-        qaTryId: Long? = null,
-        actualGameBuildId: Long? = recordedBuildId,
-        procedureSnapshots: MutableMap<DemonstrationCase, ProcedureSnapshot?> = mutableMapOf(),
     ): AgentScenario {
         val caseIds = draft.steps.mapNotNull { it.caseId }.toSet()
         val recordable = recordedBuildId?.let { testCaseReader.byIds(caseIds, CaseScope.Version(it)).keys }
@@ -61,15 +55,6 @@ class ScenarioCompositionService(
             .filter { recordable == null || it.id in recordable }
             .associateBy { requireNotNull(it.id) }
 
-        for (testCase in caseById.values) {
-            val reference = DemonstrationCase(requireNotNull(testCase.id), testCase.scene, testCase.precondition, testCase.step, testCase.expectedValue)
-            if (!procedureSnapshots.containsKey(reference)) {
-                procedureSnapshots[reference] = procedures?.forCase(testCase.projectId, actualGameBuildId, reference)
-            }
-            procedureSnapshots[reference]?.let { snapshot ->
-                if (qaTryId != null) procedures?.recordUsage(qaTryId, snapshot)
-            }
-        }
         // 사람이 정한 판정 기록(ARTEL-1256). 한 TC 에 최근 몇 건만 — 계획 글이 길어지지 않게.
         val decisions = if (caseById.isEmpty()) emptyMap()
         else reviews.findDecisionsByCases(caseById.keys, REVIEWS_PER_CASE).toList().groupBy { it.testCaseId }
@@ -98,7 +83,6 @@ class ScenarioCompositionService(
                         testStep = it.step,
                         expected = it.expectedValue,
                         functions = it.functionsOrNull(),
-                        verificationProcedure = procedureSnapshots[DemonstrationCase(requireNotNull(it.id), it.scene, it.precondition, it.step, it.expectedValue)],
                         reviews = decisions[it.id]?.map { row ->
                             AgentCaseReview(
                                 aiPassed = row.aiPassed,

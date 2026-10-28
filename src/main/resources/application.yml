@@ -60,9 +60,6 @@ logging:
         web.reactive: DEBUG
 
 artel:
-  demonstration:
-    enabled: ${ARTEL_DEMONSTRATION_ENABLED:false}
-    qa-enabled: ${ARTEL_DEMONSTRATION_QA_ENABLED:false}
   # 무인증 서버-투-서버 API(`/internal/**`) 전용 포트. 공개 포트와 갈라 두는 것이 목적이며,
   # 리버스 프록시는 8080만 프록시하므로 이 포트는 인터넷에서 존재하지 않는다.
   # ⚠️ 이 포트를 호스트에 게시하지 않는 것(=`docker run`에 `-p`를 붙이지 않는 것)이 외부

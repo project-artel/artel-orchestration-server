@@ -7,8 +7,6 @@ data class ActionResponseDto(
     val type: String = "ACTION",
     val id: Long,
     val actions: List<ActionItemDto>,
-    @get:com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
-    val demonstration: kr.artel.orchestration.demonstration.DemonstrationIdentity? = null
 )
 
 /**

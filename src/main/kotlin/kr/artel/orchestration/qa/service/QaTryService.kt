@@ -334,7 +334,6 @@ class QaTryPersistenceService(
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock,
-    private val demonstrationGuard: kr.artel.orchestration.demonstration.DemonstrationGuard? = null
 ) {
     /**
      * @param knowledge 이 런의 지식 스코프와 모드(ARTEL-256). **런이 만들어지는 순간 기록된다.**
@@ -356,7 +355,6 @@ class QaTryPersistenceService(
         functions: QaResolvedFunctions? = null
     ): Pair<QaTryEntity, QaLogAppendResult> =
         transactionalOperator.executeAndAwait {
-            demonstrationGuard?.requireQaAvailable(gameInstanceId)
             val now = Instant.now(clock)
             val qaTry = tryRepository.save(
                 QaTryEntity(
@@ -416,7 +414,6 @@ class QaTryPersistenceService(
         functions: QaResolvedFunctions? = null
     ): QaRunStarting =
         transactionalOperator.executeAndAwait {
-            demonstrationGuard?.requireQaAvailable(gameInstanceId)
             val now = Instant.now(clock)
             // run 하나에 한 번. 모든 try 가 이 같은 객체를 받는 것이 "run = 한 arm" 의 집행이다.
             val gateConfig = Json.of(
@@ -645,7 +642,7 @@ class QaTryService(
             projectId = instance.projectId.toString(),
             gameBuildId = instance.lastGameBuildId?.toString(),
             testScenarioId = testScenarioId.toString(),
-            scenario = objectMapper.valueToTree(compositionService.agentScenario(scenario.toDraft(objectMapper), CaseScope.of(instance.lastGameBuildId), instance.lastGameBuildId, qaTryId)),
+            scenario = objectMapper.valueToTree(compositionService.agentScenario(scenario.toDraft(objectMapper), CaseScope.of(instance.lastGameBuildId), instance.lastGameBuildId)),
             model = settings.model,
             language = settings.language,
             promptVersion = settings.promptVersion,
@@ -746,15 +743,13 @@ class QaTryService(
         // 판정하지 않고 넘긴다. TR 에 버전이 없으면 최신 내용, 게임 버전을 모르면 거르지 않는다.
         val caseScope = CaseScope.of(testRuns.findById(testRunId)?.gameBuildId)
         val recordedBuildId = testCaseReader.judgedBuildId(instance.lastGameBuildId)
-        val procedureSnapshots = mutableMapOf<kr.artel.orchestration.demonstration.DemonstrationCase, kr.artel.orchestration.demonstration.ProcedureSnapshot?>()
         val agentScenarios = started.tries.zip(scenarioIds).map { (qaTry, scenarioId) ->
             val entity = scenarioAccessService.accessibleScenario(scenarioId, userId)
                 ?: throw NotFoundException()
             QaAgentScenario(
                 qaTryId = requireNotNull(qaTry.id).toString(),
                 testScenarioId = scenarioId.toString(),
-                scenario = compositionService.agentScenario(entity.toDraft(objectMapper), caseScope, recordedBuildId, requireNotNull(qaTry.id),
-                    actualGameBuildId = instance.lastGameBuildId, procedureSnapshots = procedureSnapshots)
+                scenario = compositionService.agentScenario(entity.toDraft(objectMapper), caseScope, recordedBuildId)
             )
         }
         val context = QaAgentSessionContext(

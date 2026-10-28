@@ -166,6 +166,31 @@ class FilesystemDocumentStorage(
             HexFormat.of().formatHex(digest.digest())
         }
 
+    override fun retiredDemonstrationObjects(): Flux<RetiredStorageObject> = blocking {
+        if (Files.isSymbolicLink(objectsRoot)) throw InvalidStorageObjectKeyException()
+        val directory = objectsRoot.resolve("demonstrations")
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return@blocking emptyList()
+        Files.walk(directory).use { paths ->
+            paths.filter { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) }
+                .map { RetiredStorageObject(objectsRoot.relativize(it).joinToString("/")) }.toList()
+        }
+    }.flatMapMany { Flux.fromIterable(it) }
+
+    override fun deleteRetiredDemonstrationObject(obj: RetiredStorageObject): Mono<Void> = blocking {
+        require(obj.key.startsWith("demonstrations/"))
+        require(obj.versionId == null)
+        requireValidObjectKey(obj.key)
+        for (base in listOf(objectsRoot,contentTypesRoot)) {
+            if (Files.isSymbolicLink(base)) throw InvalidStorageObjectKeyException()
+            val target = insideRoot(base,obj.key)
+            var parent = target.parent
+            while(parent != base) {
+                if(Files.isSymbolicLink(parent)) throw InvalidStorageObjectKeyException()
+                parent = parent.parent
+            }
+            Files.deleteIfExists(target)
+        }
+    }.then()
     /** S3 처럼 없는 키를 지워도 성공이다. */
     override fun delete(objectKey: String): Mono<Void> =
         blocking {

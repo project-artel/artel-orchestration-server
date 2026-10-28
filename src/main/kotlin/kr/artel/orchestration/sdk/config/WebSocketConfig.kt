@@ -29,7 +29,6 @@ class WebSocketConfig @org.springframework.beans.factory.annotation.Autowired co
     private val viewerWebSocketHandler: ViewerWebSocketHandler,
     private val streamProperties: StreamProperties,
     private val socketProperties: SdkSocketProperties,
-    private val demonstrationHandler: kr.artel.orchestration.demonstration.DemonstrationWebSocketHandler? = null
 ) : WebFluxConfigurer {
 
     /**
@@ -43,7 +42,6 @@ class WebSocketConfig @org.springframework.beans.factory.annotation.Autowired co
     fun webSocketHandlerMapping(): HandlerMapping {
         val map = buildMap<String, WebSocketHandler> {
             put("/ws/sdk", sdkWebSocketHandler)
-            demonstrationHandler?.let { put("/ws/demonstration",it) }
             if (streamProperties.enabled) {
                 put("/ws/viewer", viewerWebSocketHandler)
             }

@@ -47,6 +47,31 @@ class FilesystemDocumentStorageTest {
         clock = clock
     )
 
+    @Test
+    fun `시연 prefix의 orphan만 조회하고 QA 파일은 보존한다`() {
+        val storage = storage()
+        storage.put("demonstrations/old/frame.png",byteArrayOf(1),"image/png").block()
+        storage.put("qa-recordings/keep.webm",byteArrayOf(2),"video/webm").block()
+        val objects = storage.retiredDemonstrationObjects().collectList().block()!!
+        assertThat(objects.map { it.key }).containsExactly("demonstrations/old/frame.png")
+        objects.forEach { storage.deleteRetiredDemonstrationObject(it).block() }
+        assertThat(storage.retiredDemonstrationObjects().collectList().block()).isEmpty()
+        assertThat(storage.read("qa-recordings/keep.webm").block()).containsExactly(2.toByte())
+    }
+
+    @Test
+    fun `시연 경로의 외부 symlink는 따라가지 않고 삭제도 거절한다`() {
+        val storage = storage()
+        val outside = Files.createDirectory(temporaryDirectory.resolve("outside"))
+        Files.write(outside.resolve("keep.png"),byteArrayOf(3))
+        val demo = Files.createDirectories(temporaryDirectory.resolve("storage/objects/demonstrations"))
+        Files.createSymbolicLink(demo.resolve("outside"),outside)
+        assertThat(storage.retiredDemonstrationObjects().collectList().block()).isEmpty()
+        assertThatThrownBy { storage.deleteRetiredDemonstrationObject(
+            kr.artel.orchestration.project.storage.RetiredStorageObject("demonstrations/outside/keep.png")).block() }
+            .isInstanceOf(InvalidStorageObjectKeyException::class.java)
+        assertThat(Files.readAllBytes(outside.resolve("keep.png"))).containsExactly(3.toByte())
+    }
     private fun bodyOf(vararg chunks: String): Flux<DataBuffer> =
         Flux.fromIterable(chunks.map { DefaultDataBufferFactory.sharedInstance.wrap(it.toByteArray()) })
 
