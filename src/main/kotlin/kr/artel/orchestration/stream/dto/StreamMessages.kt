@@ -1,13 +1,6 @@
 package kr.artel.orchestration.stream.dto
 
-/**
- * 화면 스트리밍 시그널링 메시지들. 계약 전체는 `docs/streaming-protocol.md`에 있다.
- *
- * 서버가 만들어 보내는 메시지만 여기 타입으로 있다. 브라우저와 SDK 사이를 오가는 SDP/ICE는
- * 서버가 열어 보지 않고 원문 그대로 넘긴다. 중간에서 다시 직렬화하면 한쪽이 필드를 추가했을 때
- * 서버가 그 필드를 조용히 떨어뜨리게 되는데, WebRTC 협상에서 그 손실은 "연결은 되는데 미디어가
- * 없다"처럼 원인을 찾기 어려운 모습으로 나타난다.
- */
+/** SDK·viewer와 orch 내부 WebRTC peer가 주고받는 시그널 계약이다. */
 object StreamMessageType {
     const val STREAM_START = "STREAM_START"
     const val STREAM_RENEW = "STREAM_RENEW"

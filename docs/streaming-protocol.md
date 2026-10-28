@@ -1,122 +1,38 @@
-# Game Screen Streaming Protocol
+# orch 서버 내부 화면 스트리밍 프로토콜
 
-A signed-in user watches a running game's screen. The Unity SDK captures the
-composited screen and publishes it as a WebRTC video track; this server relays
-signalling only. **Media never passes through the orchestration server.**
+Unity SDK가 보낸 WebRTC 영상을 orch JVM 프로세스에서 수신하고, orch가 별도의 WebRTC peer로 브라우저에 중계한다. 같은 JVM에서 H.264 MP4 segment를 인코딩해 S3에 저장한다. 별도 media-worker와 FFmpeg 자식 프로세스는 없다.
 
-Three parties, two WebSocket connections, one peer connection:
-
-```
-Unity SDK  ──/ws/sdk?token=&instanceId=──▶  orchestration server  ◀──/ws/viewer?instanceId=──  browser
-     │                                (signalling relay)                                    │
-     └──────────────────────────── WebRTC media (P2P) ────────────────────────────────────▶─┘
+```text
+SDK ── WebRTC ──▶ orch JVM ── WebRTC ──▶ 브라우저
+                    │
+                    └── JNI H.264 MP4 변환 ──▶ S3
 ```
 
-## Identifiers
+시그널링은 기존 `/ws/sdk?token=&instanceId=`와 `/ws/viewer?instanceId=`를 사용한다. SDK 수신 peer와 viewer 송신 peer는 독립적이며 서로 다른 `streamId`를 사용한다. native 초기화·인코딩 오류가 나도 직접 SDK↔브라우저 P2P로 전환하지 않는다.
 
-| Name | Meaning |
-|---|---|
-| `token` | The SDK's JWT (`aud=artel-sdk`). Used at the `/ws/sdk` handshake and nowhere else. `SdkWebSocketHandler` decodes it itself, because a query string is not something the security filter chain can read. Never appears in a message body, a log line, or a URL the browser sees. |
-| `instanceId` | The game instance's opaque id. What the browser addresses and what every server-side map is keyed by. |
-| `streamId` | One watching session, minted by this server when a viewer is admitted. |
+## 연결 식별자와 협상 순서
 
-`streamId` is on every signalling message even though at most one is live at a
-time. It is what lets both ends discard signalling that belongs to a session
-that has already ended. Without it, an ICE candidate still in flight from a
-torn-down peer is indistinguishable from one belonging to the peer that
-replaced it, and applying it corrupts the new negotiation. Under the takeover
-policy below, that overlap is the normal case rather than a rare one.
+- `token`: SDK의 `aud=artel-sdk` JWT다. SDK handshake에서만 읽으며 브라우저에 전달하지 않는다.
+- `instanceId`: 프로젝트에 속한 게임 인스턴스 ID다.
+- `streamId`: 수신 ingress 또는 viewer peer를 구분한다. 재연결 시 새 ID를 만들고 이전 ID의 늦은 SDP·ICE·STOPPED를 무시한다.
 
-## Roles
+SDK가 offer를 만들면 orch가 answer를 보낸다. 브라우저 쪽은 orch가 offer를 만들고 브라우저가 answer를 보낸다. 각 peer는 SDP를 먼저 보낸 뒤 모아둔 ICE 후보를 순서대로 전달한다. SDP보다 먼저 받은 원격 ICE는 최대 64개까지 기다린다.
 
-**The SDK offers.** The browser answering avoids it having to declare a
-`recvonly` transceiver up front, and keeps the media-direction decision on the
-side that owns the source.
+## Viewer 접속과 임대
 
-## Viewer admission
+현재 공개 viewer admission은 인스턴스당 하나이며 가장 최근 접속이 기존 접속을 대체한다. 기존 viewer는 `4009`로 종료되며 자동 재접속하지 않는다. 프로젝트 멤버가 아니면 `4403`, 연결된 SDK가 없으면 `4404`다. 내부 peer 자원 상한과 공개 viewer admission 정책은 별개다.
 
-One viewer per instance, **newest wins**.
+브라우저는 10초마다 `RENEW`를 보내고 viewer registry가 접속 임대를 관리한다. 기본 임대는 90초이며 숨겨진 탭의 갱신 지연을 허용하도록 61초 미만 설정은 시작 시 거절한다.
 
-- No SDK connected for that instance → close `4404`.
-- Caller is not a member of the owning project → close `4403`.
-- A viewer already holds the instance → the incumbent is closed with `4009` and
-  the newcomer is admitted with a fresh `streamId`.
+orch는 viewer나 QA 녹화가 ingress를 필요로 하는 동안 SDK에 `STREAM_RENEW`를 보낸다. viewer가 종료돼도 QA 녹화가 진행 중이면 SDK 수신과 인코딩은 계속된다. QA 완료 뒤 5초가 지나고 viewer도 없으면 마지막 segment를 정리하고 `STREAM_STOP`을 보낸다. SDK 자체의 임대 타이머는 서버 장애·연결 유실 시 불필요한 송출을 끝낸다.
 
-Taking over rather than refusing is deliberate, and it is the opposite of what
-`/ws/sdk` does for duplicate SDK connections. There, the incumbent is a running
-game whose session is expensive to lose. Here the incumbent is a browser tab,
-and the common case is one person reloading or reopening the page — making them
-wait out their own stale lease to see their own game is the worse failure.
+owner별 유지·종료 작업과 만료 객체 삭제는 분리되어, 한 인코더 종료나 S3 요청이 다른 SDK의 임대 갱신을 막지 않는다.
 
-A displaced viewer must **not** reconnect automatically. Two tabs that both
-retry on being displaced evict each other indefinitely, burning a peer setup on
-the game each round. `4009` is terminal; recovery is a user action.
+## 메시지
 
-## Lease
+메시지는 JSON이며 `type`으로 구분한다. 아래 wire 필드는 기존 SDK·브라우저 계약을 유지한다.
 
-`STREAM_START` carries `leaseSeconds`. The browser sends `RENEW` every 10s; the
-server forwards it as `STREAM_RENEW`; the SDK runs its own timer per `streamId`
-and tears the peer down when it expires. The same value is the server's receive
-timeout on `/ws/viewer`, so one number governs both ends.
-
-The timer lives in the SDK on purpose. A clean disconnect is not the case worth
-designing for — a closed laptop lid, a killed browser, or this server going down
-all leave the game encoding video for nobody. The SDK stopping on its own is the
-only version of "stop when nobody is watching" that does not depend on being
-told.
-
-### Sizing the lease
-
-**The lease is a missed-renew tolerance, not a multiple of the renew interval.**
-Sizing it against the 10s foreground cadence is what produced the old 15s
-default, and 15s does not survive even a single missed renew: the next one is
-20s away.
-
-The interval to size against is the throttled one. Browsers clamp timers in
-hidden tabs, and the worst documented case is **one wake per minute** — Chrome's
-intensive throttling, which takes effect once a tab has been hidden for about
-five minutes. Before that mark the clamp is one wake per second, which even the
-old default survived; that staging is why the failure looked intermittent and
-read as a network fault rather than a configuration one. An active
-`RTCPeerConnection` exempts the tab in some browsers and versions, but that is
-not a guarantee to design against.
-
-So the floor is 60s. Below it, a viewer whose tab has sat in the background long
-enough to be throttled is cut every cycle, however healthy the connection is.
-
-The default is **90s** — the throttled minute plus room for scheduling drift and
-delivery. In foreground terms that is nine renew cycles, so seven consecutive
-renews can be lost and the eighth still lands inside the window. Going further,
-to 120s, would only help a tab that misses a wake-up entirely; a tab that misses
-one is frozen rather than throttled, and a frozen tab is painting no video for
-anyone. `MINIMUM_LEASE_SECONDS` rejects anything below 61s outright, because
-below that the tolerance is zero.
-
-### What a longer lease costs
-
-Nothing on the normal path. A viewer socket that closes stops the stream
-immediately, through `doFinally` in `ViewerWebSocketHandler` — the lease is not
-consulted, and raising it does not delay that by a millisecond.
-
-The lease only ever runs out for a viewer that **vanished without closing its
-socket**: a closed laptop lid, a killed browser, a dropped network. For those,
-the lease is exactly how long the game keeps encoding and sending video to
-nobody. Raising the default from 15s to 90s lengthens that window by 75s. That is
-the trade being made — a rare wasted 90 seconds of encoding, against a common
-viewer being disconnected every 15.
-
-Deployments that weight it differently set `ARTEL_STREAM_LEASE_SECONDS`. Note
-that `/ws/**` reaches this server through a reverse proxy, whose idle timeout
-caps the real survival time independently: a throttled viewer sends one frame a
-minute and the server sends nothing between events, so a proxy read timeout
-shorter than the lease ends the session first, whatever this value says.
-
-## Messages
-
-Every message is JSON with a `type` discriminator, matching the existing
-`/ws/sdk` convention.
-
-### Server → SDK
+### orch → SDK
 
 | `type` | Fields |
 |---|---|
@@ -126,16 +42,9 @@ Every message is JSON with a `type` discriminator, matching the existing
 | `WEBRTC_ANSWER` | `streamId`, `sdp` |
 | `WEBRTC_ICE` | `streamId`, `candidate: { candidate, sdpMid, sdpMLineIndex }` |
 
-`STREAM_START` arriving while a session is live **replaces** it. No preceding
-`STREAM_STOP` is sent, so replacement is never an assumption about the ordering
-of two messages.
+새 STREAM_START는 SDK의 기존 송출 세션을 대체한다. iceServers는 orch 설정에서 전달한다.
 
-`iceServers` is delivered here rather than compiled into the SDK. The SDK ships
-to customers; a hardcoded default would have every customer's game contacting a
-third-party STUN host. Configuration keeps that a deployment choice — see
-`artel.stream.stun-urls`.
-
-### SDK → Server
+### SDK → orch
 
 | `type` | Fields |
 |---|---|
@@ -143,14 +52,9 @@ third-party STUN host. Configuration keeps that a deployment choice — see
 | `WEBRTC_ICE` | `streamId`, `candidate` |
 | `STREAM_STATE` | `streamId`, `state`, `error` (nullable) |
 
-`state` is one of `CONNECTING`, `LIVE`, `FAILED`, `STOPPED`.
+state 값은 CONNECTING, LIVE, FAILED, STOPPED다. 실패 상태는 orch의 재연결 판단에 반영한다.
 
-`FAILED` must be reported when ICE gives up, not left to time out. Without
-TURN, a game and a browser on different networks negotiate successfully and
-then carry no media; if that surfaces as an endless "connecting" the user files
-a network limitation as a broken stream.
-
-### Browser → Server
+### 브라우저 → orch
 
 | `type` | Fields |
 |---|---|
@@ -159,7 +63,7 @@ a network limitation as a broken stream.
 | `WEBRTC_ANSWER` | `streamId`, `sdp` |
 | `WEBRTC_ICE` | `streamId`, `candidate` |
 
-### Server → Browser
+### orch → 브라우저
 
 | `type` | Fields |
 |---|---|
@@ -169,62 +73,21 @@ a network limitation as a broken stream.
 | `STREAM_STATE` | `streamId`, `state`, `error` |
 | `ERROR` | `code`, `message` |
 
-## Close codes
+## 접속 종료 코드와 인증
 
-| Code | Side | Meaning |
-|---|---|---|
-| `4001` | SDK | Missing or invalid credentials, or an instance the caller cannot reach (pre-existing) |
-| `4002` | SDK | Instance already connected (pre-existing) |
-| `4003` | Viewer | Missing or malformed `instanceId` |
-| `4009` | Viewer | Taken over by a newer viewer |
-| `4403` | Viewer | Not a member of the owning project |
-| `4404` | Viewer | No SDK connected for this instance |
+| 코드 | 대상 | 의미 |
+| --- | --- | --- |
+| `4001` | SDK | 인증 정보 누락·오류 또는 접근할 수 없는 인스턴스 |
+| `4002` | SDK | 같은 인스턴스의 SDK가 이미 연결됨 |
+| `4003` | viewer | 잘못된 instanceId |
+| `4009` | viewer | 새로운 viewer 접속으로 대체됨 |
+| `4403` | viewer | 프로젝트 멤버가 아님 |
+| `4404` | viewer | 연결된 SDK가 없음 |
 
-## Auth
+viewer handshake는 기존 `artel_access_token` 쿠키로 인증한다. viewer의 query string에는 토큰을 넣지 않는다. 쿠키의 SameSite 정책에 맞게 프런트엔드와 서버를 배포한다.
 
-`/ws/viewer` is **not** in the `permitAll` list in `SecurityConfig`;
-`anyExchange().authenticated()` covers it, so the handshake is authenticated by
-the same `artel_access_token` cookie as every other browser call. No token is
-accepted in the query string — that would put a credential into server logs.
+## 실행 설정과 녹화
 
-The cookie is `SameSite=Lax`, so this works only while the client and this
-server share a registrable domain. That is a deployment constraint, not an
-accident: split them across domains and every viewer handshake silently loses
-its cookie and 401s.
+`ARTEL_STREAM_ENABLED`, `ARTEL_STREAM_LEASE_SECONDS`, `ARTEL_STUN_URLS`, `ARTEL_TURN_URL`, `ARTEL_TURN_USERNAME`, `ARTEL_TURN_CREDENTIAL`을 사용한다. 외부 네트워크에서 직접 연결할 수 없으면 도달 가능한 TURN 서버가 필요하다.
 
-## Configuration
-
-```yaml
-artel:
-  stream:
-    enabled: ${ARTEL_STREAM_ENABLED:true}
-    # 갱신 유실 허용 폭. 숨겨진 탭의 1분 갱신 주기 기준이며 61 미만은 거절된다.
-    lease-seconds: ${ARTEL_STREAM_LEASE_SECONDS:90}
-    # 쉼표 구분. 후보가 늘수록 연결이 느려지므로 1~2개면 충분하다.
-    stun-urls: ${ARTEL_STUN_URLS:stun:stun.l.google.com:19302}
-    # 대칭 NAT나 UDP를 막는 방화벽에서만 필요하다. 빈 값은 "없음"으로 읽는다.
-    turn-url: ${ARTEL_TURN_URL:}
-    turn-username: ${ARTEL_TURN_USERNAME:}
-    turn-credential: ${ARTEL_TURN_CREDENTIAL:}
-```
-
-`lease-seconds` below 61 is refused at startup, and the refusal takes the whole
-application down rather than just streaming — it is a `require` in
-`StreamProperties`, evaluated while the context builds. That is deliberate: a
-lease that cannot survive a throttled tab is the defect this default exists to
-remove, and booting with it would keep the failure alive while making it look
-like a network problem. Check for a pinned `ARTEL_STREAM_LEASE_SECONDS` in the
-deployment `.env` before rolling out; the fix is to raise the value or drop the
-line.
-
-STUN는 리스트가 아니라 쉼표 문자열로 받는다. `List` 바인딩은 환경변수로 덮으려면
-`ARTEL_..._0_URLS` 같은 인덱스 변수를 써야 하는데, 배포는 `.env` 한 장으로 이뤄지므로
-그 형태로는 실제로 바꿀 수가 없다.
-
-The default is Google's public STUN host. It is not a service Google offers —
-it is their own infrastructure that happens to be unauthenticated, with no
-terms and no notice if it changes — and the practical hazard is rate limiting
-rather than an outage. With no TURN to fall back to, a throttled STUN shows up
-as a plain connection failure. Fine for development; for deployment run coturn
-in STUN-only mode, which relays no media and is therefore one stateless UDP
-port, and which is also where TURN gets switched on if it is ever needed.
+별도 worker URL은 설정하지 않는다. native 의존성과 임시 파일 경로, 프레임·연결·업로드 상한, 종료 및 30일 보관 정책은 [orch 내부 영상 중계·저장](qa-video-recording.md)을 따른다. 새로운 공개 HTTP 업로드 경로 없이 기존 `DocumentStorage`에 직접 저장하고, 프로젝트 멤버에게만 재생 URL을 제공한다.

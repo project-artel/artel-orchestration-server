@@ -1,119 +1,120 @@
 package kr.artel.orchestration.stream.service
 
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.CancellationException
+import jakarta.annotation.PreDestroy
+import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kr.artel.orchestration.qa.review.QaRecordingStore
+import kr.artel.orchestration.common.error.TooManyRequestsException
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.stream.config.StreamProperties
 import kr.artel.orchestration.stream.dto.*
 import org.slf4j.LoggerFactory
-import org.springframework.http.MediaType
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
-import org.springframework.web.reactive.function.client.WebClient
-import kotlinx.coroutines.reactor.awaitSingleOrNull
-import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-data class MediaConfiguration(val iceServers: List<IceServer>, val recordingId: UUID?)
 data class MediaLease(val created: Boolean, val state: String)
 
 /** 인스턴스당 SDK ingress는 하나다. viewer와 QA의 수명을 따로 유지한다. */
 @Service
 class QaMediaRelay(private val sessions: SessionManager, private val viewers: ViewerSessionRegistry,
-    private val properties: StreamProperties, private val recordings: QaRecordingStore) {
+    private val properties: StreamProperties, private val recordings: QaRecordingStore, private val engine: InProcessMediaService) {
     private val logger = LoggerFactory.getLogger(javaClass)
-    private val client = WebClient.builder().build()
-    private val mutex = Mutex()
+    private val admission = Mutex()
     private val ingress = ConcurrentHashMap<String, Owner>()
-    val enabled: Boolean get() = properties.mediaWorkerUrl.isNotBlank()
+    private val maintenance = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("qa-media-maintenance"))
+    private var expiryJob: Job? = null
+    @Volatile private var stopping = false
 
-    private data class Owner(val instanceId: String, var streamId: UUID = UUID.randomUUID(),
-        var viewerId: String? = null, var recordingId: UUID? = null, var viewerNeedsOffer: Boolean = false,
-        var startPending: Boolean = true)
-
-    suspend fun openViewer(instanceId: String, viewerId: String) {
-        val owner = mutex.withLock {
-            val owner = ingress.computeIfAbsent(instanceId) { Owner(it) }
-            owner.viewerId?.takeIf { it != viewerId }?.let { previous ->
-                request("DELETE", "/${owner.streamId}/viewers/$previous")
-            }
-            owner.viewerId = viewerId
-            owner.viewerNeedsOffer = false
-            lease(owner)
-            owner
-        }
-        val offer = request("POST", "/${owner.streamId}/viewers/$viewerId")
-        if (offer != null) viewers.relayToStream(viewerId, offer)
+    private class Owner(val instanceId: String) {
+        val operations = Mutex()
+        @Volatile var streamId: UUID = UUID.randomUUID()
+        @Volatile var viewerId: String? = null
+        var recordingId: UUID? = null
+        var viewerNeedsOffer = false
+        var startPending = true
+        var maintenanceJob: Job? = null
     }
 
-    suspend fun closeViewer(instanceId: String, viewerId: String) = mutex.withLock {
-        val owner = ingress[instanceId] ?: return@withLock
-        request("DELETE", "/${owner.streamId}/viewers/$viewerId")
-        if (owner.viewerId == viewerId) owner.viewerId = null
-        if (owner.viewerId == null && owner.recordingId == null) close(owner)
+    private suspend fun admit(instanceId: String): Owner = admission.withLock {
+        check(!stopping) { "영상 서비스를 종료하고 있습니다." }
+        ingress[instanceId] ?: run {
+            if (ingress.size >= properties.mediaMaxIngress)
+                throw TooManyRequestsException("동시 영상 수신 상한에 도달했습니다.", 10)
+            Owner(instanceId).also { ingress[instanceId] = it }
+        }
+    }
+
+    suspend fun openViewer(instanceId: String, viewerId: String) {
+        while (true) {
+            val owner = admit(instanceId)
+            val opened = owner.operations.withLock {
+                if (ingress[instanceId] !== owner) return@withLock false
+                owner.viewerId?.takeIf { it != viewerId }?.let { previous -> engine.closeViewer(owner.streamId, previous) }
+                owner.viewerId = viewerId
+                owner.viewerNeedsOffer = false
+                lease(owner)
+                engine.openViewer(owner.streamId, viewerId)
+                true
+            }
+            if (opened) return
+        }
+    }
+
+    suspend fun closeViewer(instanceId: String, viewerId: String) {
+        val owner = ingress[instanceId] ?: return
+        owner.operations.withLock {
+            if (ingress[instanceId] !== owner) return@withLock
+            engine.closeViewer(owner.streamId, viewerId)
+            if (owner.viewerId == viewerId) owner.viewerId = null
+            if (owner.viewerId == null && owner.recordingId == null) close(owner)
+        }
     }
 
     suspend fun viewerSignal(instanceId: String, viewerId: String, rawJson: String) {
         val owner = ingress[instanceId]?.takeIf { it.viewerId == viewerId } ?: return
-        request("POST", "/${owner.streamId}/viewers/$viewerId/signal", rawJson)
+        engine.viewerSignal(owner.streamId, viewerId, rawJson)
     }
 
     suspend fun sdkSignal(instanceId: String, streamId: String?, rawJson: String) {
         val owner = ingress[instanceId]?.takeIf { it.streamId.toString() == streamId } ?: return
-        val response = request("POST", "/${owner.streamId}/signal", rawJson)
-        if (response != null && response != "null") sessions.sendRaw(instanceId, response)
+        engine.sdkSignal(owner.streamId, rawJson)
     }
 
     @Scheduled(fixedDelay = 10000, initialDelay = 2000)
-    fun reconcile() = runBlocking { prepare() }
+    fun reconcile() = runBlocking { prepare(awaitOwners = false) }
 
-    suspend fun prepare() {
+    /** 운영 스케줄러는 느린 종료를 기다리지 않는다. 테스트는 owner 작업의 완료를 기다릴 수 있다. */
+    suspend fun prepare(awaitOwners: Boolean = true) {
+        if (stopping) return
         try {
             val active = recordings.active()
-            if (!enabled) {
-                for (recording in active) recordings.error(recording.id, "영상 저장 서버가 설정되지 않았습니다.")
-                recordings.expire()
+            if (!properties.enabled) {
+                for (recording in active) recordings.error(recording.id, "스트리밍이 비활성화되어 있습니다.")
+                expire(awaitOwners)
                 return
             }
-            mutex.withLock {
-                val byInstance = active.associateBy { it.instanceId }
-                for (recording in active) {
-                    val owner = ingress.computeIfAbsent(recording.instanceId) { Owner(it) }
-                    owner.recordingId = recording.id
-                }
-                for (owner in ingress.values.toList()) {
-                    owner.recordingId = byInstance[owner.instanceId]?.id
-                    try {
-                        if (owner.recordingId == null && owner.viewerId == null) {
-                            close(owner)
-                            continue
+            val byInstance = active.associateBy { it.instanceId }
+            for (recording in active) {
+                try { admit(recording.instanceId) }
+                catch (error: TooManyRequestsException) { recordings.error(recording.id, "동시 영상 수신 상한에 도달했습니다.") }
+            }
+            val jobs = admission.withLock {
+                if (stopping) return@withLock emptyList<Job>()
+                ingress.values.map { owner ->
+                    owner.maintenanceJob?.takeIf { it.isActive } ?: maintenance.launch {
+                        owner.operations.withLock {
+                            if (ingress[owner.instanceId] !== owner) return@withLock
+                            owner.recordingId = byInstance[owner.instanceId]?.id
+                            maintain(owner)
                         }
-                        if (!sessions.hasSession(owner.instanceId)) error("게임 연결이 없어 영상을 받지 못하고 있습니다.")
-                        val state = lease(owner, recoverViewer = true)
-                        if (owner.viewerNeedsOffer && state == "connected") {
-                            owner.viewerId?.let { id -> viewers.findByStream(id)?.let { viewer ->
-                                val offer = request("POST", "/${owner.streamId}/viewers/$id")
-                                if (offer != null) {
-                                    viewers.send(viewer, StreamReadyMessage(id, properties.iceServers))
-                                    viewers.relayToStream(id, offer)
-                                    owner.viewerNeedsOffer = false
-                                }
-                            } }
-                        }
-                        owner.recordingId?.let { recordings.error(it, if (state == "connected") null else "영상 연결을 기다리고 있습니다.") }
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (error: Exception) {
-                        owner.recordingId?.let { recordings.error(it, "영상 연결 또는 저장 서버에 오류가 발생했습니다.") }
-                        logger.warn("영상 연결 유지 실패 [instanceId={}]", owner.instanceId, error)
-                    }
+                    }.also { owner.maintenanceJob = it }
                 }
             }
-            recordings.expire()
+            if (awaitOwners) jobs.joinAll()
+            expire(awaitOwners)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -121,21 +122,63 @@ class QaMediaRelay(private val sessions: SessionManager, private val viewers: Vi
         }
     }
 
+    private suspend fun expire(await: Boolean) {
+        val job = admission.withLock {
+            if (stopping) return@withLock null
+            expiryJob?.takeIf { it.isActive } ?: maintenance.launch {
+                try { recordings.expire() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { logger.warn("QA 영상 보관 기한 처리 실패", error) }
+            }.also { expiryJob = it }
+        }
+        if (await) job?.join()
+    }
+
+    private suspend fun maintain(owner: Owner) {
+        try {
+            if (owner.recordingId == null && owner.viewerId == null) {
+                close(owner)
+                return
+            }
+            if (!sessions.hasSession(owner.instanceId)) error("게임 연결이 없어 영상을 받지 못하고 있습니다.")
+            val state = lease(owner, recoverViewer = true)
+            if (owner.viewerNeedsOffer && state == "connected") {
+                owner.viewerId?.let { id -> viewers.findByStream(id)?.let { viewer ->
+                    viewers.send(viewer, StreamReadyMessage(id, properties.iceServers))
+                    engine.openViewer(owner.streamId, id)
+                    owner.viewerNeedsOffer = false
+                } }
+            }
+            owner.recordingId?.let { recordings.error(it, if (state == "connected") null else "영상 연결을 기다리고 있습니다.") }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            logger.warn("영상 연결 유지 실패 [instanceId={}]", owner.instanceId, error)
+            try { owner.recordingId?.let { recordings.error(it, "영상 연결 또는 저장 서버에 오류가 발생했습니다.") } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (storageError: Exception) { logger.warn("영상 오류 상태 저장 실패 [instanceId={}]", owner.instanceId, storageError) }
+        }
+    }
+
+    @PreDestroy
+    fun shutdown() = runBlocking {
+        admission.withLock { stopping = true }
+        maintenance.cancel()
+        // 실제 peer 해제는 의존 bean인 InProcessMediaService가 담당한다.
+        withTimeoutOrNull(5_000) { (ingress.values.mapNotNull { it.maintenanceJob } + listOfNotNull(expiryJob)).joinAll() }
+    }
+
     private suspend fun lease(owner: Owner, recoverViewer: Boolean = false): String {
-        val lease = client.put().uri(properties.mediaWorkerUrl.trimEnd('/') + "/internal/streams/${owner.streamId}")
-            .bodyValue(MediaConfiguration(properties.iceServers, owner.recordingId)).retrieve().bodyToMono(MediaLease::class.java)
-            .timeout(Duration.ofSeconds(20)).awaitSingleOrNull() ?: error("영상 서버가 응답하지 않았습니다.")
+        val lease = engine.configure(owner.streamId, owner.instanceId, owner.recordingId, properties.iceServers)
         if (lease.created || lease.state in setOf("failed", "closed")) {
             val replacingStartedStream = !lease.created || !owner.startPending
             owner.startPending = true
             if (recoverViewer && owner.viewerId != null) owner.viewerNeedsOffer = true
             if (replacingStartedStream) {
-                request("DELETE", "/${owner.streamId}")
+                engine.closeStream(owner.streamId)
                 // 이전 SDK 세션의 늦은 STOPPED와 ICE가 새 연결에 섞이지 않게 한다.
                 owner.streamId = UUID.randomUUID()
-                client.put().uri(properties.mediaWorkerUrl.trimEnd('/') + "/internal/streams/${owner.streamId}")
-                    .bodyValue(MediaConfiguration(properties.iceServers, owner.recordingId)).retrieve().toBodilessEntity()
-                    .timeout(Duration.ofSeconds(20)).awaitSingleOrNull()
+                engine.configure(owner.streamId, owner.instanceId, owner.recordingId, properties.iceServers)
             }
         }
         if (owner.startPending) {
@@ -147,18 +190,13 @@ class QaMediaRelay(private val sessions: SessionManager, private val viewers: Vi
     }
 
     private suspend fun close(owner: Owner) {
+        // 인코더 종료에 실패하면 owner를 남겨 다음 주기에 안전하게 정리를 재시도한다.
+        engine.closeStream(owner.streamId)
         try {
-            request("DELETE", "/${owner.streamId}")
             if (sessions.hasSession(owner.instanceId)) sessions.send(owner.instanceId, StreamStopMessage(owner.streamId.toString()))
         } finally {
             ingress.remove(owner.instanceId, owner)
         }
     }
 
-    private suspend fun request(method: String, path: String, raw: String? = null): String? {
-        val request = client.method(org.springframework.http.HttpMethod.valueOf(method))
-            .uri(properties.mediaWorkerUrl.trimEnd('/') + "/internal/streams" + path).contentType(MediaType.APPLICATION_JSON)
-        return (if (raw != null) request.bodyValue(raw) else request).retrieve().bodyToMono(String::class.java)
-            .timeout(Duration.ofSeconds(30)).awaitSingleOrNull()
-    }
 }

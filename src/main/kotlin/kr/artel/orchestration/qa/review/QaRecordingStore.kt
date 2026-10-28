@@ -8,7 +8,6 @@ import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.project.storage.DocumentStorage
-import kr.artel.orchestration.project.storage.PresignedUpload
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.r2dbc.core.awaitRowsUpdated
 import org.springframework.r2dbc.core.awaitSingleOrNull
@@ -17,6 +16,7 @@ import org.springframework.stereotype.Service
 import org.springframework.web.bind.annotation.*
 import java.time.Duration
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 data class VideoSegmentRequest(val startedAt: Instant, val endedAt: Instant, val sizeBytes: Long)
@@ -54,22 +54,34 @@ class QaRecordingStore(private val database: DatabaseClient, private val storage
         (if (error == null) statement.bindNull("error", String::class.java) else statement.bind("error", error.take(1000))).fetch().awaitRowsUpdated()
     }
 
-    suspend fun reserve(recordingId: UUID, id: UUID, request: VideoSegmentRequest): PresignedUpload {
+    /** orch 안에서 만든 한 segment만 저장하며 외부 업로드 URL을 만들지 않는다. */
+    suspend fun saveSegment(recordingId: UUID, id: UUID, request: VideoSegmentRequest, content: ByteArray) {
+        if (content.size.toLong() != request.sizeBytes) throw BadRequestException("영상 크기가 일치하지 않습니다.")
+        val key = registerSegment(recordingId, id, request)
+        storage.put(key, content, "video/mp4").awaitSingleOrNull()
+        complete(recordingId, id)
+    }
+
+    private suspend fun registerSegment(recordingId: UUID, id: UUID, request: VideoSegmentRequest): String {
         val recording = find(recordingId) ?: throw NotFoundException()
         if (request.endedAt.plus(Duration.ofDays(30)).isBefore(Instant.now()) || recording.expiresAt?.isBefore(Instant.now()) == true || request.sizeBytes !in 1..33554432L ||
             request.endedAt < request.startedAt || Duration.between(request.startedAt, request.endedAt) > Duration.ofMinutes(2))
             throw BadRequestException("영상 구간 또는 크기가 올바르지 않습니다.")
         val key = "qa-video/$recordingId/$id.mp4"
+        val startedAt = request.startedAt.truncatedTo(ChronoUnit.MICROS)
+        val endedAt = request.endedAt.truncatedTo(ChronoUnit.MICROS)
         database.sql("""
             INSERT INTO qa_video_segment(id, recording_id, started_at, ended_at, object_key, size_bytes)
             VALUES(:id, :recording, :start, :end, :key, :size) ON CONFLICT(id) DO NOTHING
-        """).bind("id", id).bind("recording", recordingId).bind("start", request.startedAt).bind("end", request.endedAt)
+        """).bind("id", id).bind("recording", recordingId).bind("start", startedAt).bind("end", endedAt)
             .bind("key", key).bind("size", request.sizeBytes).fetch().awaitRowsUpdated()
-        val stored = database.sql("SELECT object_key, size_bytes FROM qa_video_segment WHERE id = :id AND recording_id = :recording")
-            .bind("id", id).bind("recording", recordingId).map { row, _ -> row.get("object_key", String::class.java)!! to (row.get("size_bytes") as Number).toLong() }
+        val stored = database.sql("SELECT object_key, size_bytes, started_at, ended_at FROM qa_video_segment WHERE id = :id AND recording_id = :recording")
+            .bind("id", id).bind("recording", recordingId).map { row, _ -> RegisteredSegment(row.get("object_key", String::class.java)!!,
+                (row.get("size_bytes") as Number).toLong(), row.get("started_at", Instant::class.java)!!, row.get("ended_at", Instant::class.java)!!) }
             .awaitSingleOrNull() ?: throw BadRequestException("다른 녹화에서 사용한 구간 ID입니다.")
-        if (stored.first != key || stored.second != request.sizeBytes) throw BadRequestException("영상 구간 정보가 다릅니다.")
-        return storage.presignUpload(key, "video/mp4", request.sizeBytes)
+        if (stored.key != key || stored.size != request.sizeBytes || stored.startedAt != startedAt || stored.endedAt != endedAt)
+            throw BadRequestException("영상 구간 정보가 다릅니다.")
+        return key
     }
 
     suspend fun complete(recordingId: UUID, id: UUID) {
@@ -127,6 +139,7 @@ class QaRecordingStore(private val database: DatabaseClient, private val storage
         .map { row, _ -> recording(row) }.awaitSingleOrNull()
 
     companion object {
+        private data class RegisteredSegment(val key: String, val size: Long, val startedAt: Instant, val endedAt: Instant)
         private fun recording(row: Row) = QaRecording(row.get("id", UUID::class.java)!!, row.get("game_instance_id")!!.toString(),
             row.get("started_at", Instant::class.java)!!, row.get("ended_at", Instant::class.java), row.get("expires_at", Instant::class.java), row.get("error", String::class.java))
     }
@@ -137,12 +150,4 @@ class QaRecordingController(private val recordings: QaRecordingStore) {
     @GetMapping("/api/projects/{projectId}/qa-evaluation/tries/{tryId}/recording")
     suspend fun playback(@PathVariable projectId: Long, @PathVariable tryId: Long, @CurrentUserId userId: Long) = recordings.playback(projectId, tryId, userId)
 
-    @PostMapping("/internal/qa/recordings/{recordingId}/segments/{id}")
-    suspend fun reserve(@PathVariable recordingId: UUID, @PathVariable id: UUID, @RequestBody request: VideoSegmentRequest) = recordings.reserve(recordingId, id, request)
-
-    @PostMapping("/internal/qa/recordings/{recordingId}/segments/{id}/complete")
-    suspend fun complete(@PathVariable recordingId: UUID, @PathVariable id: UUID) = recordings.complete(recordingId, id)
-
-    @PostMapping("/internal/qa/recordings/{recordingId}/gaps")
-    suspend fun gap(@PathVariable recordingId: UUID, @RequestBody request: VideoGapRequest) = recordings.gap(recordingId, request)
 }

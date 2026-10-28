@@ -20,8 +20,10 @@ import java.time.Duration
 @ConfigurationProperties("artel.stream")
 data class StreamProperties(
     val enabled: Boolean = true,
-    /** 내부 media worker 주소. 비어 있으면 기존 직접 스트리밍이며 녹화 불가를 표시한다. */
-    val mediaWorkerUrl: String = "",
+    /** orch 프로세스가 인코딩 중인 segment를 임시 보관한다. */
+    val mediaDirectory: String = "./data/qa-video",
+    val mediaMaxIngress: Int = 8,
+    val mediaMaxViewers: Int = 8,
     val leaseSeconds: Long = 90,
     val stunUrls: String = "",
     val turnUrl: String = "",
@@ -31,6 +33,7 @@ data class StreamProperties(
     val maxFramerate: Int = 30
 ) {
     init {
+        require(mediaMaxIngress in 1..8 && mediaMaxViewers in 1..8) { "Media connection limits must be between 1 and 8" }
         require(leaseSeconds >= MINIMUM_LEASE_SECONDS) {
             "artel.stream.lease-seconds must be at least $MINIMUM_LEASE_SECONDS"
         }

@@ -10,14 +10,14 @@ import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.WebSocketSession
 
 /**
- * 게임이 보낸 시그널링을 그 스트림을 보고 있는 브라우저로 넘긴다.
+ * 게임이 보낸 시그널링을 orch 내부의 해당 WebRTC peer에 전달한다.
  *
  * 세 메시지가 하는 일이 같아서 한 파일에 둔다. [SdkMessageHandler]가 타입 하나만 선언하는
  * 구조라 클래스는 셋이어야 하지만, 타입 상수만 다른 8줄짜리를 파일 셋으로 흩는 것은 얻는 것
  * 없이 읽을 곳만 늘린다. 인터페이스를 여러 타입을 받도록 넓히지 않는 이유는 그쪽이 기존
  * 핸들러 둘을 건드리기 때문이다.
  *
- * 본문은 열어 보지 않는다. 서버가 읽는 것은 `streamId`뿐이고 SDP/ICE는 원문 그대로 간다.
+ * 이 handler는 streamId만 읽는다. 내부 미디어 서비스가 SDP·ICE를 검증하고 처리한다.
  */
 sealed class StreamSignalMessageHandler(
     private val objectMapper: ObjectMapper,
@@ -55,7 +55,7 @@ class WebRtcIceMessageHandler(
 }
 
 /**
- * 상태는 뷰어에게 그대로 넘긴다. 특히 `FAILED`가 중요하다. TURN이 없으면 서로 다른 망에 있는
+ * 상태는 내부 peer의 복구 판단에 반영한다. TURN이 없으면 서로 다른 망에 있는
  * 게임과 브라우저는 협상까지 성공한 뒤 미디어만 오지 않는데, 그 사실이 화면에 "연결 중"으로만
  * 남으면 사용자는 망 제약을 스트림 버그로 신고하게 된다.
  */
