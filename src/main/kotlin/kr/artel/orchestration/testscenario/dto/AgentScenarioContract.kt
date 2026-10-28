@@ -47,4 +47,8 @@ data class AgentCase(
      * 둘 다 `all` 이다. 위 계약 DTO 와 달리 이 필드만 NON_NULL 인 것은 `null` 과 "정하지 않음"을 가를 이유가 없어서다.
      */
     @get:JsonInclude(JsonInclude.Include.NON_NULL) val functions: TestCaseFunctions? = null,
+    @get:JsonInclude(JsonInclude.Include.NON_NULL)
+    @param:JsonProperty("verification_procedure")
+    @get:JsonProperty("verification_procedure")
+    val verificationProcedure: kr.artel.orchestration.demonstration.ProcedureSnapshot? = null,
 )

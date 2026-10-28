@@ -80,6 +80,7 @@ class KnowledgeGraphTraversalRepository(
                   FROM knowledge k
                  WHERE k.project_id = :projectId
                    AND k.deleted_at IS NULL
+                   AND k.source <> 'DEMONSTRATION'
                    AND ${KnowledgeScopeSql.VISIBLE}
             ),
             candidate AS (
@@ -236,6 +237,7 @@ class KnowledgeGraphTraversalRepository(
              CROSS JOIN seed s
              WHERE k.project_id = :projectId
                AND k.deleted_at IS NULL
+                   AND k.source <> 'DEMONSTRATION'
                AND e.kind = :kind
                AND e.model = :model
                AND e.embedding IS NOT NULL

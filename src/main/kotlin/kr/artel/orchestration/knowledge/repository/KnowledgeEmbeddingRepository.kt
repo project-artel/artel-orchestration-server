@@ -37,7 +37,7 @@ class KnowledgeEmbeddingRepository(databaseClient: DatabaseClient) : EmbeddingQu
             // 스캔에 더하는 비용이 싸고, 애초에 만들지 않으므로 Agent 임베딩 호출 비용도 아낀다.
             // 술어는 [KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE] 하나에서 온다 — 그 KDoc이 이유를
             // 적어 뒀다.
-            aliveClause = "deleted_at IS NULL AND NOT (${KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE})",
+            aliveClause = "deleted_at IS NULL AND source <> 'DEMONSTRATION' AND NOT (${KnowledgeDocumentNodeSql.IS_DOCUMENT_NODE})",
         )
     )
 

@@ -11,7 +11,8 @@ package kr.artel.orchestration.knowledge.entity
  */
 enum class KnowledgeSource {
     DOCS,
-    QA;
+    QA,
+    DEMONSTRATION;
 
     companion object {
         val NAMES: Set<String> = entries.mapTo(LinkedHashSet()) { it.name }
