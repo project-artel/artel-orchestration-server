@@ -88,7 +88,7 @@ class QaReadingsTest {
     fun `런이 시작하면 start_readings 가 나간다`(): Unit = runBlocking {
         val instanceId = newInstance()
         val outbound = requireNotNull(
-            sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+            sessionManager.register(instanceId.toString(), mockSession())
         )
 
         readings.start(instanceId)
@@ -118,7 +118,7 @@ class QaReadingsTest {
     fun `살아 있는 시도가 남아 있으면 끄지 않는다`(): Unit = runBlocking {
         val instanceId = newInstance()
         val outbound = requireNotNull(
-            sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+            sessionManager.register(instanceId.toString(), mockSession())
         )
         newTry(instanceId, status = "RUNNING")
 
@@ -139,7 +139,7 @@ class QaReadingsTest {
     fun `살아 있는 런이 남아 있으면 끄지 않는다`(): Unit = runBlocking {
         val instanceId = newInstance()
         val outbound = requireNotNull(
-            sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+            sessionManager.register(instanceId.toString(), mockSession())
         )
         newRun(instanceId, status = "RUNNING")
 
@@ -159,7 +159,7 @@ class QaReadingsTest {
     fun `남은 것이 없으면 stop_readings 가 나간다`(): Unit = runBlocking {
         val instanceId = newInstance()
         val outbound = requireNotNull(
-            sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+            sessionManager.register(instanceId.toString(), mockSession())
         )
         newTry(instanceId, status = "COMPLETED")
 
@@ -255,4 +255,9 @@ class QaReadingsTest {
             )
         )
     }
+
+    private fun mockSession(): WebSocketSession =
+        Mockito.mock(WebSocketSession::class.java).also { session ->
+            Mockito.`when`(session.id).thenReturn("qa-readings-${System.nanoTime()}")
+        }
 }
