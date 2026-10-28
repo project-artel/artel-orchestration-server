@@ -291,6 +291,7 @@ class GameBuildSummaryIntegrationTest {
         ).id!!
         if (connected) {
             val socket = Mockito.mock(WebSocketSession::class.java)
+            Mockito.`when`(socket.id).thenReturn("game-build-summary-$id")
             sessionManager.register(id.toString(), socket)
             registeredSockets[id] = socket
         }

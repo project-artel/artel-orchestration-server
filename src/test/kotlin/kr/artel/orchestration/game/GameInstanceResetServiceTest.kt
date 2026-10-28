@@ -77,7 +77,7 @@ class GameInstanceResetServiceTest {
         val projectId = newProject(userId)
         val instanceId = newInstance(projectId)
         val outbound = requireNotNull(
-            sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+            sessionManager.register(instanceId.toString(), mockSession())
         )
 
         val response = reset.reset(userId, projectId, instanceId, clearPlayerPrefs = false)
@@ -107,7 +107,7 @@ class GameInstanceResetServiceTest {
         val projectId = newProject(userId)
         val instanceId = newInstance(projectId)
         val outbound = requireNotNull(
-            sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+            sessionManager.register(instanceId.toString(), mockSession())
         )
 
         val response = reset.reset(userId, projectId, instanceId, clearPlayerPrefs = true)
@@ -147,7 +147,7 @@ class GameInstanceResetServiceTest {
         val stranger = newUser()
         val projectId = newProject(owner)
         val instanceId = newInstance(projectId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
 
         assertThat(reset.reset(stranger, projectId, instanceId, false)).isNull()
 
@@ -161,7 +161,7 @@ class GameInstanceResetServiceTest {
         val mine = newProject(userId)
         val other = newProject(userId)
         val instanceId = newInstance(mine)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
 
         assertThat(reset.reset(userId, other, instanceId, false)).isNull()
 
@@ -178,7 +178,7 @@ class GameInstanceResetServiceTest {
         val userId = newUser()
         val projectId = newProject(userId)
         val instanceId = newInstance(projectId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
         val testRun = testRuns.save(TestRunEntity(projectId = projectId, name = "런"))
         val activeRun = qaRuns.save(
             QaRunEntity(
@@ -205,7 +205,7 @@ class GameInstanceResetServiceTest {
         val userId = newUser()
         val projectId = newProject(userId)
         val instanceId = newInstance(projectId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
         val scenario = testScenarios.save(TestScenarioEntity(projectId = projectId))
         val activeTry = qaTries.save(
             QaTryEntity(
@@ -263,4 +263,9 @@ class GameInstanceResetServiceTest {
             sessionManager.removeSession(instanceId.toString(), it)
         }
     }
+
+    private fun mockSession(): WebSocketSession =
+        Mockito.mock(WebSocketSession::class.java).also { session ->
+            Mockito.`when`(session.id).thenReturn("game-instance-reset-${System.nanoTime()}")
+        }
 }
