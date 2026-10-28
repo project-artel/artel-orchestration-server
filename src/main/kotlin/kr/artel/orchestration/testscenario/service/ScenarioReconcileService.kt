@@ -1138,9 +1138,19 @@ class ScenarioReconcileService(
         .getOrElse { emptySet() }
 
     private suspend fun movableValues(projectId: Long): Set<String> = runCatching {
-        authoringCases.writtenValues(projectId).toList().toSet()
+        authoringCases.writtenValues(projectId).toList().toSet() +
+            valuesWrittenInMetadata(projectId).values.flatten()
     }.onFailure { logger.warn("지도가 움직이는 값 조회 실패 — 예전처럼 나눈다: ${it.message}") }
         .getOrElse { emptySet() }
+
+    /**
+     * 케이스 메타의 `state_after` 가 말하는 바뀌는 값. 지도가 없는 프로젝트(자연어 TC)에서는 이것만
+     * 있다 — 안 읽으면 등불을 끄는 케이스가 있어도 "켜짐"과 "꺼짐"을 한 시나리오에 못 담는다고 나눈다.
+     */
+    private suspend fun valuesWrittenInMetadata(projectId: Long): Map<Long, Set<String>> =
+        authoringCases.all(projectId).toList()
+            .associate { case -> case.id!! to ScenarioStateReader.stateAfter(case, objectMapper).keys }
+            .filterValues { it.isNotEmpty() }
 
     /**
      * 지도가 부르는 이름과 사전조건이 적는 이름이 **같은 값**인가.
@@ -1153,9 +1163,11 @@ class ScenarioReconcileService(
             guarded.substringBeforeLast('.', "") == written
 
     private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Set<String>> = runCatching {
-        authoringCases.valuesChangedByCases(projectId).toList()
+        val fromMap = authoringCases.valuesChangedByCases(projectId).toList()
             .groupBy({ it.caseId }, { it.target })
             .mapValues { (_, targets) -> targets.toSet() }
+        val fromMetadata = valuesWrittenInMetadata(projectId)
+        (fromMap.keys + fromMetadata.keys).associateWith { fromMap[it].orEmpty() + fromMetadata[it].orEmpty() }
     }.onFailure { logger.warn("케이스가 바꾸는 값 조회 실패 — 순서를 모른 채 나눈다: ${it.message}") }
         .getOrElse { emptyMap() }
 
