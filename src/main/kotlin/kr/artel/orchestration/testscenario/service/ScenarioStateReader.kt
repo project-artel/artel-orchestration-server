@@ -140,12 +140,19 @@ object ScenarioStateReader {
             .filter { it.operator == "==" && !it.symbolic && !it.momentary }
             .associate { it.variable to it.value }
 
-    /** 이 케이스를 실행한 뒤 확정되는 값. `metadata.source.state_after` 가 `Var=value` 형식이다. */
+    /**
+     * 이 케이스를 실행한 뒤 확정되는 값. `metadata.source.state_after` 가 `Var=value` 형식이다.
+     *
+     * 값 여럿은 `;` 로 잇는다(`Lantern=1; Coin=20`). 한 케이스가 여러 상태를 바꾸는 게임에서 하나만
+     * 받으면 나머지가 저작에 안 보인다.
+     */
     fun stateAfter(case: TestCaseEntity, objectMapper: ObjectMapper): Map<String, String> = runCatching {
         val after = objectMapper.readTree(case.metadata.asString())
             .path("source").path("state_after").asText(null) ?: return emptyMap()
-        val (name, value) = after.split("=", limit = 2).let { it[0] to it.getOrNull(1) }
-        if (value.isNullOrBlank()) emptyMap() else mapOf(normalize(name) to value.trim())
+        after.split(";").mapNotNull { part ->
+            val (name, value) = part.split("=", limit = 2).let { it[0].trim() to it.getOrNull(1)?.trim() }
+            if (name.isBlank() || value.isNullOrBlank()) null else normalize(name) to value
+        }.toMap()
     }.getOrElse { emptyMap() }
 
     /**
