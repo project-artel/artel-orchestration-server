@@ -28,6 +28,8 @@ import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -115,9 +117,10 @@ class McpAccessTokenIntegrationTest {
     @Autowired private lateinit var projects: ProjectRepository
     @Autowired private lateinit var members: ProjectMemberRepository
     @Autowired private lateinit var gameBuilds: GameBuildRepository
+    @Autowired private lateinit var testCases: TestCaseRepository
 
     @Test
-    fun `macro read token 이 프로젝트 목록·build 목록·cheat 목록·문법·developer macro 조회를 연다`() {
+    fun `macro read token 이 프로젝트 목록·build 목록·cheat 목록·문법·developer macro·test case 조회를 연다`() {
         val world = newWorld()
         val token = mint(world.userId, scope = "macro:read")
 
@@ -133,6 +136,12 @@ class McpAccessTokenIntegrationTest {
         assertThat(call(token, HttpMethod.GET, "${world.base}/developer-macros").status).isEqualTo(200)
         assertThat(call(token, HttpMethod.GET, "${world.base}/developer-macros/open_shop").status)
             .describedAs("허용된 경로이고 그 이름이 없어서 404 다").isEqualTo(404)
+        val cases = call(token, HttpMethod.GET, "${world.base}/test-cases")
+        assertThat(cases.status).isEqualTo(200)
+        assertThat(cases.body["items"].size()).isEqualTo(1)
+        assertThat(call(token, HttpMethod.GET, "${world.base}/test-cases/${world.caseId}").status).isEqualTo(200)
+        assertThat(call(token, HttpMethod.GET, "${world.base}/test-cases/999999999").status)
+            .describedAs("허용된 경로이고 그 id 가 없어서 404 다").isEqualTo(404)
     }
 
     @Test
@@ -154,6 +163,15 @@ class McpAccessTokenIntegrationTest {
         assertThat(stored.status).isEqualTo(200)
         assertThat(stored.body["updatedBy"]["id"].asText()).isEqualTo(world.userId.toString())
         assertThat(call(writer, HttpMethod.DELETE, "${world.base}/developer-macros/open_shop").status).isEqualTo(204)
+
+        // test case 수정도 같은 줄에 선다(ARTEL-1280). read 만으로는 403 이고, write 는 바꾼 값을 응답으로 받는다.
+        val observe = """{"observe":["Game.Player::hp"]}"""
+        val caseRefused = call(reader, HttpMethod.PUT, "${world.base}/test-cases/${world.caseId}", observe)
+        assertThat(caseRefused.status).isEqualTo(403)
+        assertThat(caseRefused.body["code"].asText()).isEqualTo("insufficient_scope")
+        val caseUpdated = call(writer, HttpMethod.PUT, "${world.base}/test-cases/${world.caseId}", observe)
+        assertThat(caseUpdated.status).isEqualTo(200)
+        assertThat(caseUpdated.body["observe"].map { it.asText() }).containsExactly("Game.Player::hp")
     }
 
     @Test
@@ -178,6 +196,8 @@ class McpAccessTokenIntegrationTest {
             HttpMethod.GET to world.base,
             HttpMethod.GET to "${world.base}/game-builds/${world.buildId}/macros",
             HttpMethod.POST to "/api/projects",
+            HttpMethod.POST to "${world.base}/test-cases",
+            HttpMethod.DELETE to "${world.base}/test-cases/${world.caseId}",
         )
         for ((method, path) in requests) {
             val answer = call(token, method, path, if (method == HttpMethod.GET) null else "{}")
@@ -272,7 +292,7 @@ class McpAccessTokenIntegrationTest {
 
     // ---------- 픽스처 ----------
 
-    private data class World(val userId: Long, val session: String, val base: String, val buildId: Long)
+    private data class World(val userId: Long, val session: String, val base: String, val buildId: Long, val caseId: Long)
 
     private fun newWorld(): World = runBlocking {
         val now = Instant.now()
@@ -294,7 +314,8 @@ class McpAccessTokenIntegrationTest {
         val build = gameBuilds.save(
             GameBuildEntity(projectId = project.id, version = "1.0.$seed", createdAt = now, updatedAt = now)
         )
-        World(user.userId.toLong(), jwtService.issue(user), "/api/projects/${project.id}", build.id!!)
+        val case = testCases.save(TestCaseEntity(projectId = project.id, scene = "상점", step = "구매", expectedValue = "골드가 줄어든다"))
+        World(user.userId.toLong(), jwtService.issue(user), "/api/projects/${project.id}", build.id!!, case.id!!)
     }
 
     private fun mint(

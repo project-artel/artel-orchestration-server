@@ -34,6 +34,9 @@ private class McpRoute(val method: HttpMethod, pattern: String, val scope: McpSc
  * `game-functions` 는 빌드가 보낸 cheat·behavior 목록이다(ARTEL-1147). 개발자 에이전트가 게임 코드에 쓴 cheat 가
  * 빌드에 들어갔는지 확인하는 데 쓴다. 읽기만 하므로 `macro:read` 다.
  *
+ * `test-cases` 는 macro MCP 가 QA 에 필요한 케이스를 읽고 `observe` 같은 칸을 고치는 데 쓴다(ARTEL-1280). 목록·단건 조회는
+ * `macro:read`, 수정(`PUT`)은 `macro:write` 다. 생성·삭제는 열지 않는다 — MCP 가 케이스를 만들거나 지울 일이 없다.
+ *
  * 프로젝트 경로의 멤버 검사는 여기서 하지 않는다. 각 서비스가 `ProjectAccessService` 로 이미 한다.
  */
 private val MCP_ROUTES = listOf(
@@ -46,6 +49,9 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/developer-macros:check", McpScope.MACRO_WRITE),
     McpRoute(HttpMethod.PUT, "/api/projects/{projectId}/developer-macros/{name}", McpScope.MACRO_WRITE),
     McpRoute(HttpMethod.DELETE, "/api/projects/{projectId}/developer-macros/{name}", McpScope.MACRO_WRITE),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-cases", McpScope.MACRO_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-cases/{caseId}", McpScope.MACRO_READ),
+    McpRoute(HttpMethod.PUT, "/api/projects/{projectId}/test-cases/{caseId}", McpScope.MACRO_WRITE),
 )
 
 /** MCP access JWT 로 허용표 밖의 경로를 불렀다. */

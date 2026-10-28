@@ -555,6 +555,40 @@ class GameFunctionsIntegrationTest {
         }
     }
 
+    // ------------------------------------------------------------------ test case 의 observe
+
+    @Test
+    fun `test case 의 observe 는 수정으로 metadata 에 저장되고 읽히고 AgentCase 로 간다`(): Unit = runBlocking {
+        val seed = seed()
+        val plain = testCaseService.createTestCase(
+            seed.projectId, seed.ownerId, TestCaseCreateRequest(scene = "상점", step = "구매", expectedValue = "골드가 줄어든다")
+        )!!
+        assertThat(plain.observe).isNull()
+        assertThat(objectMapper.valueToTree<JsonNode>(composition.agentScenario(draftFor(plain.id.toLong())).steps.single().case!!).has("observe"))
+            .isFalse()
+
+        val updated = testCaseService.updateTestCase(
+            plain.id.toLong(), seed.ownerId, TestCaseUpdateRequest(observe = listOf("Game.Player::hp", "Progress::stage"))
+        )!!
+        assertThat(updated.observe).containsExactly("Game.Player::hp", "Progress::stage")
+        val stored = objectMapper.readTree(testCaseRepository.findById(plain.id.toLong())!!.metadata.asString())
+        assertThat(stored["observe"]).isEqualTo(objectMapper.readTree("""["Game.Player::hp","Progress::stage"]"""))
+        assertThat(testCaseService.getTestCase(plain.id.toLong(), seed.ownerId)!!.observe).isEqualTo(updated.observe)
+
+        val agentCase = composition.agentScenario(draftFor(plain.id.toLong())).steps.single().case!!
+        assertThat(objectMapper.valueToTree<JsonNode>(agentCase)["observe"])
+            .isEqualTo(objectMapper.readTree("""["Game.Player::hp","Progress::stage"]"""))
+
+        // observe 를 보내지 않은 수정은 그대로 두고, 빈 이름은 400 이다.
+        assertThat(testCaseService.updateTestCase(plain.id.toLong(), seed.ownerId, TestCaseUpdateRequest(step = "판매"))!!.observe)
+            .containsExactly("Game.Player::hp", "Progress::stage")
+        assertThatThrownBy {
+            runBlocking {
+                testCaseService.updateTestCase(plain.id.toLong(), seed.ownerId, TestCaseUpdateRequest(observe = listOf("hp", " ")))
+            }
+        }.isInstanceOf(BadRequestException::class.java)
+    }
+
     // ------------------------------------------------------------------ 준비
 
     private data class Seed(

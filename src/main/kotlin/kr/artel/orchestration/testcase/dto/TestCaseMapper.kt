@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testcase.dto
 
 import com.fasterxml.jackson.core.JsonFactory
+import com.fasterxml.jackson.core.JsonParser
 import com.fasterxml.jackson.core.JsonToken
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -11,7 +12,7 @@ import java.time.Instant
 /** 저장된 JSON 칸을 읽는다. 상태가 없는 읽기라 화면용 매핑마다 새로 만들지 않는다. */
 private val metadataReader = jacksonObjectMapper()
 
-/** metadata 의 `origin` 만 훑는 파서를 만든다. */
+/** metadata 맨 위의 `origin` 과 `observe` 만 훑는 파서를 만든다. */
 private val metadataFactory = JsonFactory()
 
 /**
@@ -63,11 +64,45 @@ fun TestCaseEntity.toTestCaseResponse(folderId: Long? = null): TestCaseResponse 
         folderId = folderId?.toString(),
         origin = originLabel(),
         functions = functionsOrNull(),
+        observe = observeOrNull(),
     )
 
 /** 저장된 허용 범위. 정한 적 없으면(컬럼이 NULL) null 이다. 읽을 수 없는 값도 null 로 읽어 목록 전체를 막지 않는다. */
 fun TestCaseEntity.functionsOrNull(): TestCaseFunctions? =
     functions?.let { runCatching { metadataReader.readValue(it.asString(), TestCaseFunctions::class.java) }.getOrNull() }
+
+/**
+ * `metadata.observe`(ARTEL-1280). 문자열 배열이면 그 목록이고, 키가 없거나 다른 모양이면 null 이다 — 읽을 수 없는 값으로
+ * 목록 전체를 막지 않는다. [isMapOrigin] 처럼 트리를 짓지 않고 훑는다: 목록은 줄마다 이 값을 보므로 트리로 읽으면
+ * ARTEL-1212 가 줄인 비용이 되돌아온다. 쓰는 쪽은 [TestCaseObserve.write] 다.
+ */
+fun TestCaseEntity.observeOrNull(): List<String>? =
+    runCatching {
+        metadataFactory.createParser(metadata.asString()).use { parser ->
+            if (parser.nextToken() != JsonToken.START_OBJECT) return@use null
+            while (parser.nextToken() == JsonToken.FIELD_NAME) {
+                val name = parser.currentName()
+                val value = parser.nextToken()
+                if (name == TestCaseObserve.FIELD) {
+                    return@use if (value == JsonToken.START_ARRAY) stringArray(parser) else null
+                }
+                parser.skipChildren()
+            }
+            null
+        }
+    }.getOrNull()
+
+/** 열린 배열을 끝까지 읽는다. 문자열이 아닌 원소가 하나라도 있으면 null 이다. */
+private fun stringArray(parser: JsonParser): List<String>? {
+    val names = ArrayList<String>()
+    while (true) {
+        when (parser.nextToken()) {
+            JsonToken.END_ARRAY -> return names
+            JsonToken.VALUE_STRING -> names += parser.text
+            else -> return null
+        }
+    }
+}
 
 /**
  * 엔티티 → 단건 조회 응답. 목록용 [toTestCaseResponse]에 `evidenceGaps`만 얹는다.
@@ -93,6 +128,7 @@ fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper, folderId
         origin = base.origin,
         evidenceGaps = evidenceGaps(objectMapper),
         functions = base.functions,
+        observe = base.observe,
     )
 }
 

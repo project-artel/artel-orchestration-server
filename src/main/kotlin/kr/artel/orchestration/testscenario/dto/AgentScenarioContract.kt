@@ -47,4 +47,9 @@ data class AgentCase(
      * 둘 다 `all` 이다. 위 계약 DTO 와 달리 이 필드만 NON_NULL 인 것은 `null` 과 "정하지 않음"을 가를 이유가 없어서다.
      */
     @get:JsonInclude(JsonInclude.Include.NON_NULL) val functions: TestCaseFunctions? = null,
+    /**
+     * 이 TC 가 돌 때 SDK 가 읽어 보낼 관측 이름(ARTEL-1280). `functions` 와 같이 정한 적 없으면 키를 싣지 않는다. orchestration
+     * 은 이름을 해석하지 않고 `metadata.observe` 를 그대로 건넨다 — 푸는 쪽은 SDK 다.
+     */
+    @get:JsonInclude(JsonInclude.Include.NON_NULL) val observe: List<String>? = null,
 )

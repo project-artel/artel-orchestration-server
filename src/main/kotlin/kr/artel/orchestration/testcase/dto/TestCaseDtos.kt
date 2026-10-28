@@ -36,6 +36,11 @@ data class TestCaseUpdateRequest(
      * `{"cheats":"all","behaviors":"all"}` 를 보낸다 — 키가 없는 것과 값이 null 인 것을 Jackson 이 가르지 못한다.
      */
     val functions: TestCaseFunctions? = null,
+    /**
+     * 이 케이스가 돌 때 SDK 가 읽어 보낼 관측 이름(ARTEL-1280). null 이면 건드리지 않고, 빈 목록이면 `metadata.observe`
+     * 를 지운다. 원소를 `String?` 로 받는 이유는 [TestCaseBulkDeleteRequest] 와 같다 — `[null]` 을 서비스가 400 으로 막는다.
+     */
+    val observe: List<String?>? = null,
 )
 
 /**
@@ -77,6 +82,8 @@ data class TestCaseResponse(
     val origin: String,
     /** agent 에게 허용할 cheat · behavior(ARTEL-1053). 정한 적 없으면 null 이고, 그때는 둘 다 `all` 이다. */
     val functions: TestCaseFunctions? = null,
+    /** 이 케이스가 돌 때 SDK 가 읽어 보낼 관측 이름(ARTEL-1280). `metadata.observe` 그대로이고, 정한 적 없으면 null 이다. */
+    val observe: List<String>? = null,
 )
 
 data class TestCaseListResponse(val items: List<TestCaseResponse>)
@@ -109,4 +116,6 @@ data class TestCaseDetailResponse(
     val evidenceGaps: List<String>,
     /** [TestCaseResponse.functions] 와 같다. */
     val functions: TestCaseFunctions? = null,
+    /** [TestCaseResponse.observe] 와 같다. */
+    val observe: List<String>? = null,
 )
