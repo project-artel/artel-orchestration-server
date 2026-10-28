@@ -327,6 +327,16 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
 }
 
 interface QaLogRepository : CoroutineCrudRepository<QaLogEntity, Long> {
+    /** 로그 페이지와 무관하게 실행의 스텝 판정, 종단 요약, TC 저장 결과를 복원한다. */
+    @Query(
+        """
+        SELECT * FROM qa_log
+        WHERE qa_try_id = :qaTryId AND type IN ('STATUS', 'CASE_VERDICT')
+        ORDER BY id ASC
+        """
+    )
+    fun findVerdicts(qaTryId: Long): Flow<QaLogEntity>
+
     @Query(
         """
         SELECT * FROM qa_log

@@ -133,6 +133,9 @@ class QaLogService(
         if (result.inserted) streamManager.publish(result.log)
     }
 
+    suspend fun verdicts(qaTryId: Long): List<QaLogResponse> =
+        repository.findVerdicts(qaTryId).toList().map { it.toResponse() }
+
     suspend fun page(qaTryId: Long, beforeId: Long?, size: Int): QaLogPageResponse {
         val selected = repository.findPage(qaTryId, beforeId, size + 1).toList()
         val hasMore = selected.size > size

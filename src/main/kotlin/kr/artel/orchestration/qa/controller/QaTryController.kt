@@ -125,6 +125,15 @@ class QaTryController(
         return ResponseEntity.noContent().build()
     }
 
+    @GetMapping("/{qaTryId}/verdicts")
+    suspend fun verdicts(
+        @PathVariable qaTryId: String,
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<List<QaLogResponse>> =
+        service.verdicts(parseId(qaTryId), appUserId)
+            ?.let { ResponseEntity.ok(it) }
+            ?: ResponseEntity.notFound().build()
+
     @GetMapping("/{qaTryId}/logs")
     suspend fun logs(
         @PathVariable qaTryId: String,
