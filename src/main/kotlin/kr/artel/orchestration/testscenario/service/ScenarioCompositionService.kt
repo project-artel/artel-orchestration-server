@@ -1,6 +1,7 @@
 package kr.artel.orchestration.testscenario.service
 
 import kr.artel.orchestration.testcase.dto.functionsOrNull
+import kr.artel.orchestration.testcase.dto.observeOrNull
 import kr.artel.orchestration.testcase.service.CaseScope
 import kr.artel.orchestration.testcase.service.TestCaseReader
 import kr.artel.orchestration.testscenario.dto.AgentCase
@@ -74,6 +75,7 @@ class ScenarioCompositionService(
                         testStep = it.step,
                         expected = it.expectedValue,
                         functions = it.functionsOrNull(),
+                        observe = it.observeOrNull(),
                     )
                 },
             )

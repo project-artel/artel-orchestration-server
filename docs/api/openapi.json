@@ -11217,6 +11217,12 @@
           },
           "functions": {
             "$ref": "#/components/schemas/TestCaseFunctions"
+          },
+          "observe": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -11272,6 +11278,12 @@
           },
           "functions": {
             "$ref": "#/components/schemas/TestCaseFunctions"
+          },
+          "observe": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -17954,6 +17966,12 @@
           },
           "functions": {
             "$ref": "#/components/schemas/TestCaseFunctions"
+          },
+          "observe": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

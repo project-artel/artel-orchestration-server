@@ -30,6 +30,7 @@ import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.TestCaseListResponse
+import kr.artel.orchestration.testcase.dto.TestCaseObserve
 import kr.artel.orchestration.testcase.dto.TestCaseResponse
 import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
 import kr.artel.orchestration.testcase.dto.toTestCaseDetailResponse
@@ -457,7 +458,11 @@ class TestCaseService(
             .toTestCaseDetailResponse(objectMapper, folderItems.findFirstFolderId(caseId))
     }
 
-    /** 케이스 수정. 준 필드만 반영. verificationStatus는 enum 검증. */
+    /**
+     * 케이스 수정. 준 필드만 반영. verificationStatus는 enum 검증.
+     *
+     * `observe` 는 컬럼이 아니라 `metadata.observe` 다(ARTEL-1280). 다른 키는 그대로 두고 그 키만 바꾼다.
+     */
     suspend fun updateTestCase(caseId: Long, userId: Long, request: TestCaseUpdateRequest): TestCaseResponse? {
         val existing = accessible(caseId, userId) ?: return null
         val statusName = request.verificationStatus?.let {
@@ -471,6 +476,9 @@ class TestCaseService(
             expectedValue = request.expectedValue?.ifBlank { null } ?: existing.expectedValue,
             verificationStatus = statusName ?: existing.verificationStatus,
             functions = request.functions?.validated() ?: existing.functions,
+            metadata = request.observe
+                ?.let { TestCaseObserve.write(existing.metadata, TestCaseObserve.validated(it), objectMapper) }
+                ?: existing.metadata,
         )
         val saved = repository.save(updated)
         projectChangeStreamManager.notify(saved.projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음
