@@ -96,6 +96,12 @@ data class CaseGuard(
      * 실측(A/B, 같은 모델)에서 이 넷을 함께 보내자 여정이 26조각에서 10개로 줄었다.
      */
     val moves: List<ValueMove> = emptyList(),
+    /**
+     * 확인되지 않은 요구면 그 사유, 아니면 null. 자연어 TC 에서 뽑은 식은 틀린 칸이 섞여서, 빼면
+     * 옳은 요구도 함께 사라지고 그대로 두면 틀린 요구가 사슬을 막는다 — 표시해서 보내고 글과 맞춰
+     * 보는 것은 저작에 맡긴다.
+     */
+    val unconfirmed: String? = null,
 )
 
 /**

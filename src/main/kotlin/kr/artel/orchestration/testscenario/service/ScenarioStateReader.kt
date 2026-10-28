@@ -169,6 +169,22 @@ object ScenarioStateReader {
     }.getOrElse { emptyMap() }
 
     /**
+     * 글에 없는 **상식 전제**. `metadata.source.assumed_before` 가 `Var == value; Var2 >= 1` 형식이다.
+     * 자연어 TC 에서 식을 뽑는 쪽이 "무기가 있어야 이긴다"처럼 글에 안 적힌 것을 따로 적어 둔 자리다.
+     */
+    fun assumedBefore(case: TestCaseEntity, objectMapper: ObjectMapper): List<Guard> = runCatching {
+        val written = objectMapper.readTree(case.metadata.asString())
+            .path("source").path("assumed_before").asText(null) ?: return emptyList()
+        written.split(";").mapNotNull { part ->
+            ASSUMED_COMPARISON.matchEntire(part.trim())?.let {
+                Guard(variable = normalize(it.groupValues[1]), operator = it.groupValues[2], value = it.groupValues[3].trim())
+            }
+        }
+    }.getOrElse { emptyList() }
+
+    private val ASSUMED_COMPARISON = Regex("""(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)""")
+
+    /**
      * 이 케이스를 실행하면 **어느 화면에 서 있게 되나**(ARTEL-654).
      *
      * 화면을 넘기는 케이스는 자기가 어디에 도착하는지 적어 둔다(`arrives_at`). 그런데 경로 계산이

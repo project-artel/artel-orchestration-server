@@ -324,7 +324,36 @@ class ScenarioReconcileService(
                 .distinct()
         }
         missingMakers.forEach { logger.info("흐름이 만들지 않은 전제 [runId={}] {}", runId, it) }
-        val reported = contradictions.map { (title, found) -> "$title: ${found.describe()}" } + missingMakers
+        // **개수는 더해 본다.** `동전 >= 50` 을 요구하는데 흐름이 앞에서 모은 것이 20이면, 어긋남 검사는
+        // 아무 말도 못 한다 — 정해진 값이 없기 때문이다. 실측(등불 골짜기)에서 배를 타는 요청이 모든 조건에서
+        // 0/3 이었다. 케이스 메타가 `+N` 으로 남기는 값만 개수로 본다.
+        val adders = byId.values
+            .flatMap { fact -> fact.leaves.filterValues { it.isSigned() }.map { (name, by) -> Triple(name.lowercase(), by, fact.id) } }
+            .groupBy({ it.first }, { it.third to it.second })
+        val shortCounts = repaired.flatMap { scenario ->
+            val counted = mutableMapOf<String, Double>()
+            scenario.steps.mapIndexedNotNull { index, step ->
+                val fact = step.caseId?.let { byId[it] } ?: return@mapIndexedNotNull null
+                val short = fact.guards.firstOrNull { guard ->
+                    val need = guard.value.toDoubleOrNull()
+                    val name = guard.variable.lowercase()
+                    need != null && name in adders && guard.operator in setOf(">=", ">") &&
+                        (counted[name] ?: 0.0).let { if (guard.operator == ">=") it < need else it <= need }
+                }
+                fact.leaves.filterValues { it.isSigned() }.forEach { (name, by) ->
+                    counted.merge(name.lowercase(), by.toDoubleOrNull() ?: 0.0, Double::plus)
+                }
+                short?.let { guard ->
+                    val name = guard.variable.lowercase()
+                    "${scenario.title}: ${index + 1}번째 스텝(TC ${fact.id})이 ${guard.variable} ${guard.operator} ${guard.value} " +
+                        "를 요구하는데, 그 앞까지 흐름이 모은 ${guard.variable} 는 ${(counted[name] ?: 0.0).let { c -> c - (fact.leaves.entries.firstOrNull { it.key.lowercase() == name }?.value?.toDoubleOrNull() ?: 0.0) }.toInt()} 입니다. " +
+                        adders[name].orEmpty().filter { it.first != fact.id }.take(4).joinToString(", ") { (id, by) -> "TC $id($by)" } +
+                        " 가 ${guard.variable} 를 늘립니다 — 모자란 만큼 앞에 넣으세요. 요청이 그만큼 가진 상태에서 시작한다고 했으면 그대로 두세요."
+                }
+            }
+        }
+        shortCounts.forEach { logger.info("흐름이 모자라게 모은 개수 [runId={}] {}", runId, it) }
+        val reported = contradictions.map { (title, found) -> "$title: ${found.describe()}" } + missingMakers + shortCounts
         val opened = repaired.zip(walked).map { (scenario, found) ->
             scenario.copy(
                 steps = withOpeningNote(scenario.steps, openingFacts(projectId, facts), found.opening)
@@ -1051,7 +1080,8 @@ class ScenarioReconcileService(
                 .filter { it.operator == "==" && !it.symbolic && !it.momentary }
                 .associate { it.variable to it.value } + fact?.declared.orEmpty() + bridgeSets +
                 // 케이스가 남기는 값이 마지막이다 — 등불을 끄는 케이스는 "켜짐"을 요구하고 "꺼짐"을 남긴다.
-                fact?.leaves.orEmpty(),
+                // 부호가 붙은 것(`동전 +20`)은 정하는 것이 아니라 더하는 것이라 여기 안 든다. 아래 개수 검사가 센다.
+                fact?.leaves.orEmpty().filterValues { !it.isSigned() },
             clears = buildSet {
                 gap?.takeIf { !it.contains("→") }?.let(::add)
                 raisedIn.forEach { (value, scenes) ->
@@ -1413,5 +1443,7 @@ class ScenarioReconcileService(
          */
         val PROGRESS_OPERATORS = setOf("==", ">=", ">")
     }
-
 }
+
+/** `+20` · `-1` 처럼 정하는 값이 아니라 더하는 값인가. */
+private fun String.isSigned(): Boolean = trim().let { it.length > 1 && (it[0] == '+' || it[0] == '-') && it.substring(1).toDoubleOrNull() != null }

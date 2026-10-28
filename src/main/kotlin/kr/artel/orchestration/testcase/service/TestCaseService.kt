@@ -147,10 +147,11 @@ class TestCaseService(
         val inputs = caseInputs(projectId)
         // 런이 빌드 버전을 따르면 케이스 내용은 그 버전 몫이다(ARTEL-1064). 맥락이 없으면 대표 행 그대로다.
         val all = authoringCases.all(projectId).toList()
-        // **아무 케이스도 만들지 못하는 전제는 요구로 보내지 않는다.** 자연어 TC 에서 뽑은 식은 틀린 칸이
-        // 섞이는데(`저녁까지 쉰다` → 요구: 시간 == 저녁), 저작은 식을 글보다 믿어서 그 한 칸이 사슬 전체를
-        // 막는다 — 실측(등불 골짜기)에서 식을 붙인 판이 글만 준 판보다 낮았다. 케이스 메타가 남기는 값이
-        // 있는 프로젝트에서만 본다. 지도가 있는 프로젝트는 값이 어디서 오르는지 지도가 따로 말한다.
+        // **아무 케이스도 만들지 못하는 전제는 확인 안 된 요구로 표시해 보낸다.** 자연어 TC 에서 뽑은 식은
+        // 틀린 칸이 섞인다(`저녁까지 쉰다` → 요구: 시간 == 저녁). 그런데 빼면 옳은 요구도 함께 사라진다 —
+        // `무기 보유` 는 옳은데 남기는 케이스가 `검 보유` 라고 적어 이름이 어긋났을 뿐이다. 실측(등불
+        // 골짜기)에서 빼는 쪽은 틀린 요구를 지우는 대신 검을 잊게 했다. 그래서 표시해서 보내고 글과 맞춰
+        // 보는 것은 저작에 맡긴다. 케이스 메타가 남기는 값이 있는 프로젝트에서만 본다.
         val made = all.flatMap { ScenarioStateReader.stateAfter(it, objectMapper).entries }
             .groupBy({ it.key.lowercase() }, { it.value })
         fun reachable(guard: Guard): Boolean =
@@ -174,18 +175,19 @@ class TestCaseService(
                 verificationStatus = case.verificationStatus,
                 // **문장이 아니라 구조에서 읽는다**(ARTEL-627).
                 stateBefore = conditions.guardsOf(case)
-                    .filter(::reachable)
                     .map { guard ->
                         CaseGuard(
                             guard.variable, guard.operator, guard.value,
                             raisedIn = raisers[ScenarioStateReader.normalize(guard.path)].orEmpty(),
                             moves = movesFor(moves, guard),
+                            unconfirmed = if (reachable(guard)) null else UNMADE,
                         )
-                    },
+                    } +
+                    // 글에 없는 상식 전제(무기가 있어야 이긴다). 뽑은 쪽이 따로 적어 둔 것만 싣는다.
+                    ScenarioStateReader.assumedBefore(case, objectMapper)
+                        .map { CaseGuard(it.variable, it.operator, it.value, unconfirmed = ASSUMED) },
                 stateBeforeAny = conditions.branchesOf(case)
-                    .map { branch -> branch.filter(::reachable).map { CaseGuard(it.variable, it.operator, it.value) } }
-                    .takeIf { branches -> branches.none { it.isEmpty() } }
-                    .orEmpty(),
+                    .map { branch -> branch.map { CaseGuard(it.variable, it.operator, it.value, unconfirmed = if (reachable(it)) null else UNMADE) } },
                 // 케이스 메타가 먼저다 — 구버전 엑셀 경로로 들어온 행은 거기 답이 있다. 지도가 낸
                 // 행은 그 칸이 없어서 비어 오고, 그때 지도가 답한다(ARTEL-606).
                 stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
@@ -557,4 +559,10 @@ class TestCaseService(
     private fun String?.requireField(name: String): String =
         this?.takeIf { it.isNotBlank() }
             ?: throw BadRequestException("$name is required")
+
+    private companion object {
+        /** 저작에 보내는 사유 문구. 모델이 읽는 글이라 영어로 둔다(프롬프트와 같은 말). */
+        const val UNMADE = "no case leaves this — it may go by another name, or hold from the start"
+        const val ASSUMED = "common sense, not written in the TC"
+    }
 }
