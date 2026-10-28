@@ -15407,7 +15407,7 @@
           }
         }
       },
-      "InternalFeatureModels": {
+      "EffectiveFeatureModels": {
         "type": "object",
         "properties": {
           "scenarioAuthoringModel": {
@@ -15415,6 +15415,23 @@
           },
           "decisionModel": {
             "type": "string"
+          }
+        }
+      },
+      "InternalFeatureModels": {
+        "required": [
+          "effective"
+        ],
+        "type": "object",
+        "properties": {
+          "scenarioAuthoringModel": {
+            "type": "string"
+          },
+          "decisionModel": {
+            "type": "string"
+          },
+          "effective": {
+            "$ref": "#/components/schemas/EffectiveFeatureModels"
           }
         }
       },
