@@ -575,6 +575,7 @@ class QaTryPersistenceService(
 
 @Service
 class QaTryService(
+    private val mediaRelay: kr.artel.orchestration.stream.service.QaMediaRelay,
     private val tryRepository: QaTryRepository,
     private val runRepository: QaRunRepository,
     private val scenarioAccessService: TestScenarioAccessService,
@@ -629,6 +630,7 @@ class QaTryService(
             testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, runKey.keySource, functions
         )
         logService.publish(startLog)
+        mediaRelay.prepare()
         val qaTryId = requireNotNull(starting.id)
         // agent 세션은 아직 없다 — SDK 화면에 "agent 를 기다리는 중" 을 보인다(ARTEL-836).
         runStatusNotifier.waitingAgent(qaTryId, gameInstanceId, starting.qaRunId)
@@ -732,6 +734,7 @@ class QaTryService(
             functions = functions
         )
         // 첫 시나리오 try 가 이 run 의 자리를 대표한다 — agent 세션은 아직 없다(ARTEL-836).
+        mediaRelay.prepare()
         runStatusNotifier.waitingAgent(
             requireNotNull(started.tries.first().id), gameInstanceId, requireNotNull(started.qaRun.id)
         )

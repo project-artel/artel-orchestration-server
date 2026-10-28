@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.OAuthIdentity
@@ -30,6 +33,7 @@ import kr.artel.orchestration.qa.service.QaAgentInboundRouter
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
 import kr.artel.orchestration.qa.service.QaVerdictService
 import kr.artel.orchestration.qa.review.QaVerdictReviewService
+import kr.artel.orchestration.qa.review.*
 import kr.artel.orchestration.qa.service.QaLaunchReadService
 import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
 import kr.artel.orchestration.common.error.NotFoundException
@@ -92,6 +96,88 @@ class CaseVerdictFromQaIntegrationTest {
     @Autowired private lateinit var reviewService: QaVerdictReviewService
     @Autowired private lateinit var launchReadService: QaLaunchReadService
     @Autowired private lateinit var composition: ScenarioCompositionService
+    @Autowired private lateinit var attempts: QaCaseAttemptService
+    @Autowired private lateinit var reliability: QaReliabilityService
+    @Autowired private lateinit var questions: QaOperatorQuestions
+
+    @Test
+    fun `TC 시도별 평가와 오탐 정정이 원래 issue에 반영된다`(): Unit = runBlocking {
+        val run = runningRun()
+        val first = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
+        val failed = attempts.report(run.tryId, first.id, ReportCaseAttempt(CaseOutcome.FAILED, "실제 결과 확인"))
+        attempts.report(run.tryId, first.id, ReportCaseAttempt(CaseOutcome.FAILED, "실제 결과 확인"))
+        val issue = issueRepository.findAll().toList().single()
+        val second = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
+        val repeated = attempts.report(run.tryId, second.id, ReportCaseAttempt(CaseOutcome.FAILED, "재검증 실패"))
+        assertThat(issueRepository.findAll().toList()).hasSize(1)
+        reviewService.decideOutcome(run.qaRunId, failed.logId!!.toLong(), run.ownerId, "PASSED", "오탐")
+        assertThat(issueRepository.findById(issue.id!!)!!.status).isEqualTo("OPEN")
+        reviewService.decideOutcome(run.qaRunId, repeated.logId!!.toLong(), run.ownerId, "PASSED", null)
+        assertThat(issueRepository.findById(issue.id)!!.status).isEqualTo("RESOLVED")
+        reviewService.decideOutcome(run.qaRunId, failed.logId.toLong(), run.ownerId, "FAILED", "평가 수정")
+        assertThat(issueRepository.findById(issue.id)!!.status).isEqualTo("OPEN")
+        assertThat(reliability.history(run.projectId, failed.logId.toLong(), run.ownerId, null)).hasSize(2)
+        val counts = reliability.report(run.projectId, run.ownerId, null, null).overall
+        assertThat(counts.total).isEqualTo(2)
+        assertThat(counts.truePositives).isEqualTo(1)
+        assertThat(counts.falsePositives).isEqualTo(1)
+    }
+
+    @Test
+    fun `첫 사용자 답변만 채택하고 질문을 재전송해도 중복 생성하지 않는다`(): Unit = runBlocking {
+        val run = runningRun()
+        val request = AskOperatorRequest(UUID.randomUUID(), "어느 화면으로 이동할까요?")
+        questions.ask(run.tryId, request)
+        questions.ask(run.tryId, request)
+        assertThat(questions.list(run.projectId, run.ownerId)).hasSize(1)
+        questions.answer(run.projectId, request.id, run.ownerId, AnswerOperatorRequest("설정 화면"))
+        assertThatThrownBy { runBlocking {
+            questions.answer(run.projectId, request.id, run.ownerId, AnswerOperatorRequest("다른 답변"))
+        } }.isInstanceOf(kr.artel.orchestration.common.error.ConflictException::class.java)
+        assertThat(questions.get(run.tryId, request.id)!!.answer).isEqualTo("설정 화면")
+    }
+
+    @Test
+    fun `사람 평가를 판단 불가로 수정하면 원래 실패 판정으로 돌아간다`(): Unit = runBlocking {
+        val run = runningRun()
+        val started = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
+        val failed = attempts.report(run.tryId, started.id, ReportCaseAttempt(CaseOutcome.FAILED, "실패"))
+        reviewService.decideOutcome(run.qaRunId, failed.logId!!.toLong(), run.ownerId, "PASSED", null)
+        assertThat(testCaseRepository.findById(run.failedCaseId)!!.verificationStatus).isEqualTo("VERIFIED")
+        reviewService.decideOutcome(run.qaRunId, failed.logId.toLong(), run.ownerId, "INCONCLUSIVE", null)
+        assertThat(testCaseRepository.findById(run.failedCaseId)!!.verificationStatus).isEqualTo("FAILED")
+        assertThat(issueRepository.findAll().toList().single().status).isEqualTo("OPEN")
+    }
+
+    @Test
+    fun `TC를 삭제해도 시도와 issue를 보존하고 평가를 수정할 수 있다`(): Unit = runBlocking {
+        val run = runningRun()
+        val started = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
+        val failed = attempts.report(run.tryId, started.id, ReportCaseAttempt(CaseOutcome.FAILED, "실패"))
+        reviewService.decideOutcome(run.qaRunId, failed.logId!!.toLong(), run.ownerId, "FAILED", null)
+        testCaseRepository.deleteById(run.failedCaseId)
+        assertThat(attempts.get(run.projectId, run.ownerId, started.id).testCaseId).isEqualTo(run.failedCaseId.toString())
+        assertThat(issueRepository.findAll().toList()).hasSize(1)
+        reviewService.decideOutcome(run.qaRunId, failed.logId.toLong(), run.ownerId, "PASSED", "삭제 이후 평가 수정")
+        assertThat(reliability.history(run.projectId, failed.logId.toLong(), run.ownerId, null)).hasSize(2)
+        assertThatThrownBy { runBlocking { attempts.get(run.projectId, run.ownerId + 999, started.id) } }
+            .isInstanceOf(kr.artel.orchestration.common.error.NotFoundException::class.java)
+    }
+
+    @Test
+    fun `삭제된 TC의 동시 미탐 평가도 하나의 issue에 모인다`(): Unit = runBlocking {
+        val run = runningRun()
+        val results = (1..2).map {
+            val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+            attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.PASSED, "통과"))
+        }
+        testCaseRepository.deleteById(run.passedCaseId)
+        coroutineScope { results.map { result -> async {
+            reviewService.decideOutcome(run.qaRunId, result.logId!!.toLong(), run.ownerId, "FAILED", "미탐")
+        } }.awaitAll() }
+        assertThat(issueRepository.findAll().toList()).hasSize(1)
+        assertThat(reliability.report(run.projectId, run.ownerId, null, null).overall.falseNegatives).isEqualTo(2)
+    }
 
     @BeforeEach
     fun cleanBefore(): Unit = runBlocking { wipe() }
@@ -203,7 +289,7 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(listed.gameBuildVersion).isEqualTo("1.0.0")
         val scenario = listed.tries.single()
         assertThat(scenario.steps.map { it.step to it.expected }).containsExactly(1 to "x", 2 to "x", 3 to "y")
-        assertThat(scenario.issues.map { it.step to it.severity }).containsExactly(3 to "MAJOR")
+        assertThat(scenario.issues.map { it.step to it.severity }).containsExactlyInAnyOrder(3 to "MAJOR", null to "MAJOR")
         // 런의 판정 목록은 스텝 순서로 근거를 싣고, 근거 칸이 없는 판정은 `none` 이다.
         val verdicts = scenario.verdicts
         assertThat(verdicts[1].actions.map { Triple(it.kind, it.label, it.count) }).containsExactly(Triple("key", "Return", 2))
@@ -465,6 +551,16 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.gameBuildId)!!.verificationStatus)
             .isEqualTo("DRAFT")
         assertThat(caseVerdictLogs(run.tryId).single().path("game_build_id").asLong()).isEqualTo(run.runBuildId)
+    }
+
+    @Test
+    fun `TC 보고에서 agent가 제외한 knowledge ID 수를 원본 로그에 보존한다`(): Unit = runBlocking {
+        val run = runningRun()
+        val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        val result = attempts.report(run.tryId, attempt.id,
+            ReportCaseAttempt(CaseOutcome.PASSED, "화면 확인", rejectedKnowledgeIdCount = 2))
+        val log = qaLogRepository.findById(result.logId!!.toLong())!!
+        assertThat(objectMapper.readTree(log.payload.asString()).path("rejected_knowledge_id_count").asInt()).isEqualTo(2)
     }
 
     /** [gameBuildId] 는 케이스가 든 게임 빌드, [runBuildId] 는 qa_run 이 붙은 build 다. editor 실행이면 둘이 다르다. */

@@ -57,10 +57,12 @@ data class AgentCase(
 
 /** 사람이 정한 판정 한 건: AI 가 뭐라 했고, 사람이 뭐라 정했고, 왜인지. */
 data class AgentCaseReview(
-    @param:JsonProperty("ai_passed") val aiPassed: Boolean,
-    @param:JsonProperty("human_passed") val humanPassed: Boolean,
+    @param:JsonProperty("ai_passed") val aiPassed: Boolean?,
+    @param:JsonProperty("human_passed") val humanPassed: Boolean?,
     val note: String?,
     @param:JsonProperty("game_build_version") val gameBuildVersion: String?,
     /** ISO-8601 문자열. `Instant` 로 두면 Jackson 이 숫자로 써서 agent 가 422 로 거절한다. */
     @param:JsonProperty("decided_at") val decidedAt: String?,
+    @param:JsonProperty("case_snapshot") val caseSnapshot: String? = null,
+    @param:JsonProperty("case_version_changed") val caseVersionChanged: Boolean? = null,
 )

@@ -34,7 +34,7 @@ sealed class StreamSignalMessageHandler(
             return
         }
 
-        relay.toViewer(envelope.streamId, payloadText)
+        relay.toViewer(instanceId, envelope.streamId, payloadText)
     }
 }
 

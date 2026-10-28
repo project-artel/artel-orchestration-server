@@ -95,6 +95,7 @@ class QaVerdictService(
                 qaTryId = qaTryId.toString(),
                 testScenarioId = qaTry.testScenarioId.toString(),
                 scenarioTitle = scenario?.title.orEmpty(),
+                reportingUnit = if (qaTry.agentArch == "v28-case-evaluation" || qaTry.runConfig.asString().contains("\"report_test_case\"")) "TEST_CASE" else "STEP",
                 executionMode = scenario?.executionMode?.name ?: "ORDERED",
                 status = qaTry.status,
                 model = qaTry.model,
@@ -190,7 +191,7 @@ class QaVerdictService(
 
     /** 방금 정한 판정을 화면에 돌려줄 모양으로. */
     suspend fun decisionOf(decision: QaVerdictReviewEntity) = QaHumanDecision(
-        passed = decision.decision == QaVerdictReviewService.PASSED,
+        passed = decision.decision?.takeUnless { it == QaVerdictReviewService.INCONCLUSIVE }?.let { it == QaVerdictReviewService.PASSED },
         note = decision.note,
         decidedBy = decision.decidedBy?.let { users.findById(it)?.displayName },
         decidedAt = decision.decidedAt,

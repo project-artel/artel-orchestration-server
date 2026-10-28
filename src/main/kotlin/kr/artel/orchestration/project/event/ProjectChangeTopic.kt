@@ -33,4 +33,5 @@ enum class ProjectChangeTopic {
 
     /** QA 실행이 끝났다(ARTEL-1254). 화면은 실행 목록을 다시 읽어 끝 알림과 남은 추가 검토 수를 보인다. */
     QA_RUNS,
+    QA_QUESTIONS,
 }

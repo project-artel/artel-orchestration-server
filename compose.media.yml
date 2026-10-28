@@ -1,0 +1,23 @@
+services:
+  qa-media-worker:
+    build: ./media-worker
+    restart: unless-stopped
+    environment:
+      ORCHESTRATION_INTERNAL_URL: http://orchestration:8081
+      SEGMENT_DIRECTORY: /segments
+      MAX_INGRESS: 8
+      MAX_VIEWERS_PER_INGRESS: 8
+    networks:
+      - app-net
+    tmpfs:
+      - /segments:size=2304m,uid=10001,gid=10001,mode=0700
+    mem_limit: 3g
+    cpus: 2
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+networks:
+  app-net:
+    external: true

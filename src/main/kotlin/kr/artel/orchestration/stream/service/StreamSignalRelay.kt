@@ -18,7 +18,8 @@ import org.springframework.stereotype.Service
 class StreamSignalRelay(
     private val sessionManager: SessionManager,
     private val viewers: ViewerSessionRegistry,
-    private val properties: StreamProperties
+    private val properties: StreamProperties,
+    private val media: QaMediaRelay,
 ) {
     private val logger = LoggerFactory.getLogger(StreamSignalRelay::class.java)
 
@@ -28,7 +29,8 @@ class StreamSignalRelay(
      * 이미 돌고 있는 세션이 있으면 SDK가 그것을 대체한다. 앞서 [stopStream]을 보내지 않는
      * 이유는, 그렇게 하면 교체가 두 메시지의 도착 순서에 기대는 동작이 되기 때문이다.
      */
-    suspend fun startStream(instanceId: String, streamId: String) =
+    suspend fun startStream(instanceId: String, streamId: String) {
+        if (media.enabled) { media.openViewer(instanceId, streamId); return }
         sessionManager.send(
             instanceId,
             StreamStartMessage(
@@ -38,12 +40,16 @@ class StreamSignalRelay(
                 leaseSeconds = properties.leaseSeconds
             )
         )
+    }
 
-    suspend fun renewStream(instanceId: String, streamId: String) =
-        sessionManager.send(instanceId, StreamRenewMessage(streamId))
+    suspend fun renewStream(instanceId: String, streamId: String) {
+        if (!media.enabled) sessionManager.send(instanceId, StreamRenewMessage(streamId))
+    }
 
-    suspend fun stopStream(instanceId: String, streamId: String) =
-        sessionManager.send(instanceId, StreamStopMessage(streamId))
+    suspend fun stopStream(instanceId: String, streamId: String) {
+        if (media.enabled) media.closeViewer(instanceId, streamId)
+        else sessionManager.send(instanceId, StreamStopMessage(streamId))
+    }
 
     /**
      * 브라우저가 보낸 시그널링을 게임으로 넘긴다. 자기 세션의 streamId가 아니면 버린다.
@@ -54,14 +60,16 @@ class StreamSignalRelay(
             return
         }
 
-        sessionManager.sendRaw(viewer.instanceId, rawJson)
+        if (media.enabled) media.viewerSignal(viewer.instanceId, viewer.streamId, rawJson)
+        else sessionManager.sendRaw(viewer.instanceId, rawJson)
     }
 
     /**
      * 게임이 보낸 시그널링을 브라우저로 넘긴다. 그 streamId를 보고 있는 뷰어가 없으면 버린다.
      * 밀려난 뷰어 앞으로 뒤늦게 도착한 후보가 새 협상에 섞이는 일을 막는 자리다.
      */
-    fun toViewer(streamId: String?, rawJson: String) {
+    suspend fun toViewer(instanceId: String, streamId: String?, rawJson: String) {
+        if (media.enabled) { media.sdkSignal(instanceId, streamId, rawJson); return }
         if (streamId == null || !viewers.relayToStream(streamId, rawJson)) {
             logger.debug("보고 있는 뷰어가 없는 시그널링을 버립니다 [streamId: $streamId]")
         }

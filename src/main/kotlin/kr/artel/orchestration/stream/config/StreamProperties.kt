@@ -20,6 +20,8 @@ import java.time.Duration
 @ConfigurationProperties("artel.stream")
 data class StreamProperties(
     val enabled: Boolean = true,
+    /** 내부 media worker 주소. 비어 있으면 기존 직접 스트리밍이며 녹화 불가를 표시한다. */
+    val mediaWorkerUrl: String = "",
     val leaseSeconds: Long = 90,
     val stunUrls: String = "",
     val turnUrl: String = "",

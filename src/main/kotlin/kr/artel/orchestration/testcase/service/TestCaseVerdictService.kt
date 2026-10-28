@@ -56,11 +56,11 @@ class TestCaseVerdictService(
      * **QA 를 멈추지 않는다.** 여기서 난 오류는 로그만 남긴다 — 상태 반영이 실패했다고 실행 중인 시나리오를
      * 끊으면 잃는 것이 더 크다.
      */
-    suspend fun recordStepVerdict(qaTry: QaTryEntity, testCaseId: Long, passed: Boolean, verdictLogId: Long? = null) {
+    suspend fun recordStepVerdict(qaTry: QaTryEntity, testCaseId: Long, passed: Boolean?, verdictLogId: Long? = null, publish: Boolean = true) {
         val qaTryId = requireNotNull(qaTry.id)
         runCatching {
             val projectId = scenarios.findById(qaTry.testScenarioId)?.projectId ?: return
-            val status = if (passed) VerificationStatus.VERIFIED else VerificationStatus.FAILED
+            val status = when (passed) { true -> VerificationStatus.VERIFIED; false -> VerificationStatus.FAILED; null -> VerificationStatus.DRAFT }
             if (testCases.findById(testCaseId)?.projectId != projectId) {
                 logger.info("TC {} 는 qa_try {} 의 프로젝트에 없어 판정을 옮기지 않는다", testCaseId, qaTryId)
                 return
@@ -87,22 +87,22 @@ class TestCaseVerdictService(
             )
             testCases.markLastVerifiedBuild(testCaseId, gameBuildId)
             versions.syncIdentities(listOf(testCaseId))
-            projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // transaction 없음
+            if (publish) projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES)
             val payload = objectMapper.createObjectNode()
                 .put("case_id", testCaseId)
                 .put("verification_status", status.name)
                 .put("game_build_id", gameBuildId)
             verdictLogId?.let { payload.put("verdict_log_id", it) }
-            logService.publish(
-                logService.append(
+            val appended = logService.append(
                     qaTryId = qaTryId,
                     direction = "ORCHE_INTERNAL",
                     type = "CASE_VERDICT",
                     message = "TC $testCaseId → ${status.name}",
                     payload = payload,
                 )
-            )
+            if (publish) logService.publish(appended)
         }.onFailure { error ->
+            if (!publish || error is kotlinx.coroutines.CancellationException) throw error
             logger.warn("qa_try {} 의 TC {} 판정을 상태로 옮기지 못했다", qaTryId, testCaseId, error)
         }
     }

@@ -105,12 +105,7 @@ class QaRunController(
         @RequestBody request: QaVerdictReviewRequest,
         @CurrentUserId appUserId: Long
     ): QaHumanDecision {
-        val passed = when (request.decision) {
-            QaVerdictReviewService.PASSED -> true
-            QaVerdictReviewService.FAILED -> false
-            else -> throw BadRequestException("decision 은 PASSED 나 FAILED 여야 합니다.")
-        }
-        val saved = qaVerdictReviewService.decide(parseId(qaRunId), parseId(verdictLogId), appUserId, passed, request.note)
+        val saved = qaVerdictReviewService.decideOutcome(parseId(qaRunId), parseId(verdictLogId), appUserId, request.decision, request.note)
         return qaVerdictService.decisionOf(saved)
     }
 

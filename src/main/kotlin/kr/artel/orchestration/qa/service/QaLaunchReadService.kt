@@ -117,6 +117,7 @@ class QaLaunchReadService(
         completedAt = completedAt,
         casesPassed = casesPassed,
         casesTotal = casesTotal,
+        casesFailed = casesFailed,
         issueCount = issueCount,
         startedBy = startedBy.toString(),
         reviewFlagged = reviewFlagged,

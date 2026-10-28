@@ -30,6 +30,7 @@ data class QaRunSummaryRow(
     /** 코드 검사가 추가 검토로 고른 판정 수와, 그중 사람이 아직 정하지 않은 수(ARTEL-1254). */
     val reviewFlagged: Int = 0,
     val reviewPending: Int = 0,
+    val casesFailed: Int? = null,
 )
 
 /** 상단바 알림함 한 줄(ARTEL-1254): 내가 시작해 끝난 실행과 그 프로젝트, 읽었는지. */
@@ -311,6 +312,7 @@ class QaLaunchReadRepository(
         completedAt = instant("completed_at"),
         casesPassed = (get("cases_passed", Number::class.java))?.toInt(),
         casesTotal = (get("cases_total", Number::class.java))?.toInt(),
+        casesFailed = (get("cases_failed", Number::class.java))?.toInt(),
         issueCount = (get("issue_count", Number::class.java))?.toInt() ?: 0,
         startedBy = long("started_by"),
         reviewFlagged = (get("review_flagged", Number::class.java))?.toInt() ?: 0,
@@ -325,7 +327,7 @@ SELECT r.id, r.test_run_id, tr.name AS test_run_name,
        gb.version AS game_build_version,
        ft.model, ft.reasoning_effort, r.key_source,
        r.status, r.started_at, r.completed_at,
-       agg.cases_passed, agg.cases_total,
+       agg.cases_passed, agg.cases_total, agg.cases_failed,
        (SELECT COUNT(*) FROM issue i JOIN qa_try t2 ON t2.id = i.qa_try_id
          WHERE t2.qa_run_id = r.id) AS issue_count,
        r.started_by,
@@ -345,7 +347,13 @@ SELECT r.id, r.test_run_id, tr.name AS test_run_name,
        WHERE t.qa_run_id = r.id ORDER BY t.id LIMIT 1
   ) ft ON TRUE
   LEFT JOIN LATERAL (
-      SELECT SUM(t.cases_passed) AS cases_passed, SUM(t.cases_total) AS cases_total
+      SELECT SUM(t.cases_passed) AS cases_passed, SUM(t.cases_total) AS cases_total,
+             SUM(CASE WHEN EXISTS (SELECT 1 FROM qa_case_attempt a WHERE a.qa_try_id = t.id)
+                 THEN (SELECT COUNT(*) FROM (
+                     SELECT DISTINCT ON (a.test_case_id) a.verdict FROM qa_case_attempt a
+                      WHERE a.qa_try_id = t.id ORDER BY a.test_case_id, a.created_at DESC, a.id DESC
+                 ) latest WHERE latest.verdict = 'FAILED')
+                 ELSE t.cases_total - t.cases_passed END) AS cases_failed
         FROM qa_try t WHERE t.qa_run_id = r.id
   ) agg ON TRUE
         """.trimIndent()

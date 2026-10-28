@@ -20,6 +20,11 @@ import kr.artel.orchestration.testcase.service.TestCaseVerdictService
 import kr.artel.orchestration.testrun.repository.TestRunRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.r2dbc.core.DatabaseClient
+import org.springframework.r2dbc.core.awaitSingle
+import org.springframework.r2dbc.core.awaitSingleOrNull
+import org.springframework.transaction.reactive.TransactionalOperator
+import org.springframework.transaction.reactive.executeAndAwait
 import java.time.Clock
 import java.time.Instant
 
@@ -43,6 +48,8 @@ class QaVerdictReviewService(
     private val projectChanges: ProjectChangeStreamManager,
     private val objectMapper: ObjectMapper,
     private val clock: Clock,
+    private val database: DatabaseClient,
+    private val transactions: TransactionalOperator,
 ) {
     private val logger = LoggerFactory.getLogger(QaVerdictReviewService::class.java)
 
@@ -90,30 +97,52 @@ class QaVerdictReviewService(
      * 사람이 판정을 정한다. 그 판정이 TC 에 붙어 있으면 TC 판정도 사람 결정으로 바꾼다. 보이지 않는 실행이거나
      * 그 실행의 스텝 판정이 아니면 404 다.
      */
-    suspend fun decide(qaRunId: Long, logId: Long, appUserId: Long, passed: Boolean, note: String?): QaVerdictReviewEntity {
-        qaRuns.findAccessibleById(qaRunId, appUserId) ?: throw NotFoundException()
+    suspend fun decide(qaRunId: Long, logId: Long, appUserId: Long, passed: Boolean, note: String?): QaVerdictReviewEntity =
+        decideOutcome(qaRunId, logId, appUserId, if (passed) PASSED else FAILED, note)
+
+    suspend fun decideOutcome(qaRunId: Long?, logId: Long, appUserId: Long, decision: String, note: String?): QaVerdictReviewEntity {
+        if (decision !in setOf(PASSED, FAILED, INCONCLUSIVE)) throw BadRequestException("올바른 평가 결과를 선택해 주세요.")
+        if (note != null && note.length > MAX_NOTE) throw BadRequestException("평가 이유는 ${MAX_NOTE}자 이하여야 합니다.")
+        val result = transactions.executeAndAwait {
+        if (qaRunId != null) qaRuns.findAccessibleById(qaRunId, appUserId) ?: throw NotFoundException()
         val row = qaLogs.findById(logId) ?: throw NotFoundException()
-        val qaTry = qaTries.findById(row.qaTryId)?.takeIf { it.qaRunId == qaRunId } ?: throw NotFoundException()
+        val qaTry = qaTries.findAccessibleById(row.qaTryId, appUserId)?.takeIf { qaRunId == null || it.qaRunId == qaRunId } ?: throw NotFoundException()
+        database.sql("SELECT id FROM qa_log WHERE id = :id FOR UPDATE").bind("id", logId)
+            .map { record, _ -> record.get("id", java.lang.Long::class.java)!!.toLong() }.awaitSingle()
         val payload = payloadOf(row)
-        if (row.type != "STATUS" || !payload.has("step") || payload.hasNonNull("result")) {
+        if (row.type != "STATUS" || (!payload.has("step") && !payload.hasNonNull("attempt_id")) || payload.hasNonNull("result")) {
             throw BadRequestException("스텝 판정이 아닙니다.")
         }
         val caseId = caseIdOf(payload)
+        val existingCaseId = caseId?.let { id -> database.sql("SELECT id FROM test_case WHERE id = :id")
+            .bind("id", id).map { record, _ -> record.get("id", java.lang.Long::class.java)!!.toLong() }.awaitSingleOrNull() }
         val trimmed = note?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_NOTE)
         reviews.decide(
             qaLogId = logId,
-            qaRunId = qaRunId,
+            qaRunId = qaTry.qaRunId,
             qaTryId = row.qaTryId,
-            testCaseId = caseId,
-            aiPassed = passedOf(payload),
-            decision = if (passed) PASSED else FAILED,
+            testCaseId = existingCaseId,
+            aiPassed = if (payload.path("status").asText() in setOf("COMPLETED", "FAILED")) passedOf(payload) else null,
+            decision = decision,
             note = trimmed,
             decidedBy = appUserId,
             decidedAt = Instant.now(clock),
         )
         // TC 판정은 사람 결정을 따른다. 판정 기록은 AI 판정과 같은 STATUS 행을 가리킨다.
-        if (caseId != null) caseVerdicts.recordStepVerdict(qaTry, caseId, passed, logId)
-        return reviews.findById(logId) ?: throw NotFoundException()
+        val effective = when (decision) {
+            PASSED -> true
+            FAILED -> false
+            else -> when (payload.path("status").asText()) { "COMPLETED" -> true; "FAILED" -> false; else -> null }
+        }
+        if (caseId != null) caseVerdicts.recordStepVerdict(qaTry, caseId, effective, logId, publish = false)
+        reviews.findById(logId) ?: throw NotFoundException()
+        }
+        val projectId = database.sql("SELECT s.project_id FROM qa_try t JOIN test_scenario s ON s.id = t.test_scenario_id WHERE t.id = :try")
+            .bind("try", result.qaTryId).map { row, _ -> row.get("project_id", java.lang.Long::class.java)!!.toLong() }.awaitSingle()
+        projectChanges.notify(projectId, ProjectChangeTopic.TEST_CASES)
+        projectChanges.notify(projectId, ProjectChangeTopic.ISSUES)
+        projectChanges.notify(projectId, ProjectChangeTopic.QA_RUNS)
+        return result
     }
 
     private fun payloadOf(row: QaLogEntity): JsonNode = objectMapper.readTree(row.payload.asString())
@@ -125,6 +154,7 @@ class QaVerdictReviewService(
     companion object {
         const val PASSED = "PASSED"
         const val FAILED = "FAILED"
+        const val INCONCLUSIVE = "INCONCLUSIVE"
         private const val MAX_NOTE = 2000
     }
 }

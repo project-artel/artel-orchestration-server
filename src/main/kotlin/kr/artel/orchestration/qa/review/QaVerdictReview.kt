@@ -17,11 +17,11 @@ import java.time.Instant
 @Table("qa_verdict_review")
 data class QaVerdictReviewEntity(
     @Id @Column("qa_log_id") val qaLogId: Long,
-    @Column("qa_run_id") val qaRunId: Long,
+    @Column("qa_run_id") val qaRunId: Long?,
     @Column("qa_try_id") val qaTryId: Long,
     @Column("test_case_id") val testCaseId: Long?,
     val flagged: Boolean,
-    @Column("ai_passed") val aiPassed: Boolean,
+    @Column("ai_passed") val aiPassed: Boolean?,
     val decision: String?,
     val note: String?,
     @Column("decided_by") val decidedBy: Long?,
@@ -32,11 +32,13 @@ data class QaVerdictReviewEntity(
 /** TC 하나에 사람이 정한 판정 한 건(ARTEL-1256). 다음 QA 가 같은 TC 를 판정할 때 참고로 넘긴다. */
 data class CaseDecisionRow(
     val testCaseId: Long,
-    val aiPassed: Boolean,
+    val aiPassed: Boolean?,
     val decision: String,
     val note: String?,
     val decidedAt: Instant?,
     val gameBuildVersion: String?,
+    val caseSnapshot: String? = null,
+    val caseVersionChanged: Boolean? = null,
 )
 
 /** 실행 하나의 추가 검토 수: 고른 것 전부와 그중 사람이 아직 정하지 않은 것. */
@@ -69,10 +71,10 @@ interface QaVerdictReviewRepository : CoroutineCrudRepository<QaVerdictReviewEnt
     )
     suspend fun decide(
         qaLogId: Long,
-        qaRunId: Long,
+        qaRunId: Long?,
         qaTryId: Long,
         testCaseId: Long?,
-        aiPassed: Boolean,
+        aiPassed: Boolean?,
         decision: String,
         note: String?,
         decidedBy: Long,
@@ -87,12 +89,21 @@ interface QaVerdictReviewRepository : CoroutineCrudRepository<QaVerdictReviewEnt
      */
     @Query(
         """
-        SELECT test_case_id, ai_passed, decision, note, decided_at, game_build_version
+        SELECT test_case_id, ai_passed, decision, note, decided_at, game_build_version, case_snapshot, case_version_changed
           FROM (
                 SELECT r.test_case_id, r.ai_passed, r.decision, r.note, r.decided_at, gb.version AS game_build_version,
+                       a.case_snapshot::text AS case_snapshot,
+                       CASE WHEN a.id IS NULL THEN NULL ELSE
+                         (a.case_snapshot->>'scene', a.case_snapshot->>'precondition',
+                          COALESCE(a.case_snapshot->>'test_step', a.case_snapshot->>'step'),
+                          COALESCE(a.case_snapshot->>'expected', a.case_snapshot->>'expected_value'))
+                         IS DISTINCT FROM (c.scene, c.precondition, c.step, c.expected_value)
+                       END AS case_version_changed,
                        ROW_NUMBER() OVER (PARTITION BY r.test_case_id ORDER BY r.decided_at DESC, r.qa_log_id DESC) AS rank
                   FROM qa_verdict_review r
-                  JOIN qa_run run ON run.id = r.qa_run_id
+                  LEFT JOIN qa_case_attempt a ON a.qa_log_id = r.qa_log_id
+                  LEFT JOIN test_case c ON c.id = r.test_case_id
+                  LEFT JOIN qa_run run ON run.id = r.qa_run_id
                   LEFT JOIN game_build gb ON gb.id = run.game_build_id
                  WHERE r.decision IS NOT NULL AND r.test_case_id IN (:testCaseIds)
                ) ranked

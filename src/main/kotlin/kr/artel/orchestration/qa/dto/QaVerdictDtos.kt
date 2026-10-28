@@ -41,6 +41,7 @@ data class QaTryVerdicts(
     val reviewCount: Int = 0,
     /** 추가 검토로 골랐다가 사람이 정한 판정 수. */
     val reviewedCount: Int = 0,
+    val reportingUnit: String = "STEP",
 )
 
 data class QaScenarioStepView(
@@ -96,7 +97,7 @@ data class QaStepVerdict(
 )
 
 data class QaHumanDecision(
-    val passed: Boolean,
+    val passed: Boolean?,
     val note: String?,
     /** 정한 사람의 이름. 계정이 지워졌으면 null. */
     val decidedBy: String?,
@@ -107,7 +108,7 @@ data class QaHumanDecision(
 
 /** `PUT /api/qa-runs/{qaRunId}/verdicts/{verdictLogId}/review` (ARTEL-1254). */
 data class QaVerdictReviewRequest(
-    /** `PASSED` · `FAILED`. */
+    /** `PASSED` · `FAILED` · `INCONCLUSIVE`. */
     val decision: String,
     val note: String? = null,
 )
