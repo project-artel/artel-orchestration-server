@@ -35,6 +35,8 @@ data class AuthoringTestCase(
     @param:JsonProperty("expected_value") val expectedValue: String,
     @param:JsonProperty("verification_status") val verificationStatus: String,
     @param:JsonProperty("state_before") val stateBefore: List<CaseGuard> = emptyList(),
+    /** 이 중 하나만 성립하면 된다(갈래 조건). [stateBefore] 는 갈래의 공통만 담아서, 공통이 없으면 비어 온다. */
+    @param:JsonProperty("state_before_any") val stateBeforeAny: List<List<CaseGuard>> = emptyList(),
     @param:JsonProperty("state_after") val stateAfter: Map<String, String> = emptyMap(),
     val exits: List<SceneExit> = emptyList(),
     /**

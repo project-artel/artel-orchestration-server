@@ -82,6 +82,19 @@ object ScenarioStateReader {
     }
 
     /**
+     * **갈래 조건의 갈래들.** [guardsIn] 은 갈래마다 공통인 것만 남겨서, 공통이 없으면 요구가 통째로
+     * 사라진다 — "동전 출처 둘 중 아무거나"가 "아무 요구 없음"이 된다. 그 갈래들을 따로 낸다.
+     * 맨 처음 만나는 갈래 조건 하나만 본다. 갈래가 하나뿐이면 빈 목록이다.
+     */
+    fun branchesIn(node: ConditionNode?): List<List<Guard>> = when (node) {
+        is ConditionNode.Group -> when (node.kind) {
+            GroupKind.EITHER -> node.parts.map { guardsIn(it) }.takeIf { it.size > 1 }.orEmpty()
+            GroupKind.EVERY -> node.parts.asSequence().map { branchesIn(it) }.firstOrNull { it.isNotEmpty() }.orEmpty()
+        }
+        else -> emptyList()
+    }
+
+    /**
      * 구조가 **확정하는** 값(`==` 만). [knownValuesOf] 의 트리 판이다.
      *
      * `>=` 는 성립 조건이지 값이 아니다 — 여기서 1이라고 읽으면 다음 케이스와의 비교가 거짓말이 된다.

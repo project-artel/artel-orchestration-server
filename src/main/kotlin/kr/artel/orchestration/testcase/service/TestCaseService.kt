@@ -182,6 +182,10 @@ class TestCaseService(
                             moves = movesFor(moves, guard),
                         )
                     },
+                stateBeforeAny = conditions.branchesOf(case)
+                    .map { branch -> branch.filter(::reachable).map { CaseGuard(it.variable, it.operator, it.value) } }
+                    .takeIf { branches -> branches.none { it.isEmpty() } }
+                    .orEmpty(),
                 // 케이스 메타가 먼저다 — 구버전 엑셀 경로로 들어온 행은 거기 답이 있다. 지도가 낸
                 // 행은 그 칸이 없어서 비어 오고, 그때 지도가 답한다(ARTEL-606).
                 stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
