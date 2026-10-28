@@ -188,6 +188,64 @@ class QaLaunchReadIntegrationTest {
             .isInstanceOf(NotFoundException::class.java)
     }
 
+    // ------------------------------------------------------------------ 알림함 (ARTEL-1254)
+
+    @Test
+    fun `알림함은 내가 시작해 끝난 실행을 끝난 순서로 보이고 읽지 않은 수를 센다`(): Unit = runBlocking {
+        val older = newQaRun(longAgo)
+        val newer = newQaRun(lastStart)
+        val running = qaRunRepository.save(
+            QaRunEntity(
+                testRunId = runId, gameInstanceId = instanceId, startedBy = ownerId, status = "RUNNING",
+                startedAt = lastStart, createdAt = lastStart, updatedAt = lastStart,
+            )
+        ).id!!
+
+        val notices = service.listNotices(ownerId, 10)
+
+        assertThat(notices.items.map { it.run.id }).containsExactly(newer.toString(), older.toString())
+        assertThat(notices.items.map { it.run.id }).doesNotContain(running.toString())
+        assertThat(notices.items.first().projectName).isEqualTo("launch-project")
+        assertThat(notices.items.map { it.read }).containsOnly(false)
+        assertThat(notices.unreadCount).isEqualTo(2)
+        assertThat(service.listNotices(strangerId, 10).items).isEmpty()
+    }
+
+    @Test
+    fun `하나를 읽으면 그것만 읽음이 되고 모두 읽음은 수를 0 으로 만든다`(): Unit = runBlocking {
+        val older = newQaRun(longAgo)
+        val newer = newQaRun(lastStart)
+
+        val afterOne = service.readNotice(ownerId, newer)
+        assertThat(afterOne.items.associate { it.run.id to it.read })
+            .isEqualTo(mapOf(newer.toString() to true, older.toString() to false))
+        assertThat(afterOne.unreadCount).isEqualTo(1)
+        // 이미 읽은 것을 다시 읽어도 그대로다.
+        assertThat(service.readNotice(ownerId, newer).unreadCount).isEqualTo(1)
+
+        assertThat(service.readAllNotices(ownerId).unreadCount).isEqualTo(0)
+    }
+
+    @Test
+    fun `남이 시작한 실행은 읽음으로 둘 수 없고 404 다`(): Unit = runBlocking {
+        val run = newQaRun(lastStart)
+
+        assertThatThrownBy { runBlocking { service.readNotice(strangerId, run) } }
+            .isInstanceOf(NotFoundException::class.java)
+        assertThat(service.listNotices(ownerId, 10).unreadCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `나간 프로젝트의 실행은 알림함에서 빠진다`(): Unit = runBlocking {
+        newQaRun(lastStart)
+        projectMemberRepository.deleteAll()
+
+        val notices = service.listNotices(ownerId, 10)
+
+        assertThat(notices.items).isEmpty()
+        assertThat(notices.unreadCount).isEqualTo(0)
+    }
+
     // ------------------------------------------------------------------ 지난 실행 이후
 
     @Test

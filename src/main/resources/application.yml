@@ -199,6 +199,9 @@ artel:
 
   stream:
     enabled: ${ARTEL_STREAM_ENABLED:true}
+    media-directory: ${ARTEL_MEDIA_DIRECTORY:./data/qa-video}
+    media-max-ingress: ${ARTEL_MEDIA_MAX_INGRESS:8}
+    media-max-viewers: ${ARTEL_MEDIA_MAX_VIEWERS:8}
     # 갱신 유실 허용 폭이다. 브라우저는 10초마다 갱신을 보내지만, 탭이 숨겨지면 그 주기가
     # 1분에 1회까지 조여진다. 기본값은 그 1분에 여유를 얹은 값이고, 61 미만은 아예 거절된다.
     # 늘리면 뚜껑 닫은 노트북처럼 소켓이 닫히지 않고 사라진 뷰어를 위해 게임이 헛되이
@@ -216,7 +219,7 @@ artel:
     turn-username: ${ARTEL_TURN_USERNAME:}
     turn-credential: ${ARTEL_TURN_CREDENTIAL:}
     max-width: ${ARTEL_STREAM_MAX_WIDTH:1280}
-    max-framerate: ${ARTEL_STREAM_MAX_FRAMERATE:30}
+    max-framerate: ${ARTEL_STREAM_MAX_FRAMERATE:10}
   # artel-macro-mcp 와 맞물리는 설정(ARTEL-1088). issuer 와 jwks-uri 가 둘 다 있을 때만 MCP access JWT 를 받는다.
   mcp:
     base-url: ${ARTEL_MCP_BASE_URL:}

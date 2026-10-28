@@ -1,8 +1,12 @@
 package kr.artel.orchestration.qa
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.OAuthIdentity
@@ -16,6 +20,10 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.entity.ProjectRole
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import io.r2dbc.postgresql.codec.Json
+import kr.artel.orchestration.qa.entity.QaLogEntity
+import kr.artel.orchestration.issue.entity.IssueEntity
+import kr.artel.orchestration.issue.repository.IssueRepository
 import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
@@ -23,6 +31,14 @@ import kr.artel.orchestration.qa.repository.QaTryScoreRepository
 import kr.artel.orchestration.qa.service.QaAgentEnvelope
 import kr.artel.orchestration.qa.service.QaAgentInboundRouter
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
+import kr.artel.orchestration.qa.service.QaVerdictService
+import kr.artel.orchestration.qa.review.QaVerdictReviewService
+import kr.artel.orchestration.qa.review.*
+import kr.artel.orchestration.qa.service.QaLaunchReadService
+import kr.artel.orchestration.testscenario.service.ScenarioCompositionService
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.testcase.service.TestCaseVerdictService
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -74,6 +90,94 @@ class CaseVerdictFromQaIntegrationTest {
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
     @Autowired private lateinit var oauthUserService: OAuthUserService
     @Autowired private lateinit var objectMapper: ObjectMapper
+    @Autowired private lateinit var qaVerdictService: QaVerdictService
+    @Autowired private lateinit var issueRepository: IssueRepository
+    @Autowired private lateinit var caseVerdictService: TestCaseVerdictService
+    @Autowired private lateinit var reviewService: QaVerdictReviewService
+    @Autowired private lateinit var launchReadService: QaLaunchReadService
+    @Autowired private lateinit var composition: ScenarioCompositionService
+    @Autowired private lateinit var attempts: QaCaseAttemptService
+    @Autowired private lateinit var reliability: QaReliabilityService
+    @Autowired private lateinit var questions: QaOperatorQuestions
+
+    @Test
+    fun `TC 시도별 평가와 오탐 정정이 원래 issue에 반영된다`(): Unit = runBlocking {
+        val run = runningRun()
+        val first = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
+        val failed = attempts.report(run.tryId, first.id, ReportCaseAttempt(CaseOutcome.FAILED, "실제 결과 확인"))
+        attempts.report(run.tryId, first.id, ReportCaseAttempt(CaseOutcome.FAILED, "실제 결과 확인"))
+        val issue = issueRepository.findAll().toList().single()
+        val second = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
+        val repeated = attempts.report(run.tryId, second.id, ReportCaseAttempt(CaseOutcome.FAILED, "재검증 실패"))
+        assertThat(issueRepository.findAll().toList()).hasSize(1)
+        reviewService.decideOutcome(run.qaRunId, failed.logId!!.toLong(), run.ownerId, "PASSED", "오탐")
+        assertThat(issueRepository.findById(issue.id!!)!!.status).isEqualTo("OPEN")
+        reviewService.decideOutcome(run.qaRunId, repeated.logId!!.toLong(), run.ownerId, "PASSED", null)
+        assertThat(issueRepository.findById(issue.id)!!.status).isEqualTo("RESOLVED")
+        reviewService.decideOutcome(run.qaRunId, failed.logId.toLong(), run.ownerId, "FAILED", "평가 수정")
+        assertThat(issueRepository.findById(issue.id)!!.status).isEqualTo("OPEN")
+        assertThat(reliability.history(run.projectId, failed.logId.toLong(), run.ownerId, null)).hasSize(2)
+        val counts = reliability.report(run.projectId, run.ownerId, null, null).overall
+        assertThat(counts.total).isEqualTo(2)
+        assertThat(counts.truePositives).isEqualTo(1)
+        assertThat(counts.falsePositives).isEqualTo(1)
+    }
+
+    @Test
+    fun `첫 사용자 답변만 채택하고 질문을 재전송해도 중복 생성하지 않는다`(): Unit = runBlocking {
+        val run = runningRun()
+        val request = AskOperatorRequest(UUID.randomUUID(), "어느 화면으로 이동할까요?")
+        questions.ask(run.tryId, request)
+        questions.ask(run.tryId, request)
+        assertThat(questions.list(run.projectId, run.ownerId)).hasSize(1)
+        questions.answer(run.projectId, request.id, run.ownerId, AnswerOperatorRequest("설정 화면"))
+        assertThatThrownBy { runBlocking {
+            questions.answer(run.projectId, request.id, run.ownerId, AnswerOperatorRequest("다른 답변"))
+        } }.isInstanceOf(kr.artel.orchestration.common.error.ConflictException::class.java)
+        assertThat(questions.get(run.tryId, request.id)!!.answer).isEqualTo("설정 화면")
+    }
+
+    @Test
+    fun `사람 평가를 판단 불가로 수정하면 원래 실패 판정으로 돌아간다`(): Unit = runBlocking {
+        val run = runningRun()
+        val started = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
+        val failed = attempts.report(run.tryId, started.id, ReportCaseAttempt(CaseOutcome.FAILED, "실패"))
+        reviewService.decideOutcome(run.qaRunId, failed.logId!!.toLong(), run.ownerId, "PASSED", null)
+        assertThat(testCaseRepository.findById(run.failedCaseId)!!.verificationStatus).isEqualTo("VERIFIED")
+        reviewService.decideOutcome(run.qaRunId, failed.logId.toLong(), run.ownerId, "INCONCLUSIVE", null)
+        assertThat(testCaseRepository.findById(run.failedCaseId)!!.verificationStatus).isEqualTo("FAILED")
+        assertThat(issueRepository.findAll().toList().single().status).isEqualTo("OPEN")
+    }
+
+    @Test
+    fun `TC를 삭제해도 시도와 issue를 보존하고 평가를 수정할 수 있다`(): Unit = runBlocking {
+        val run = runningRun()
+        val started = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.failedCaseId))
+        val failed = attempts.report(run.tryId, started.id, ReportCaseAttempt(CaseOutcome.FAILED, "실패"))
+        reviewService.decideOutcome(run.qaRunId, failed.logId!!.toLong(), run.ownerId, "FAILED", null)
+        testCaseRepository.deleteById(run.failedCaseId)
+        assertThat(attempts.get(run.projectId, run.ownerId, started.id).testCaseId).isEqualTo(run.failedCaseId.toString())
+        assertThat(issueRepository.findAll().toList()).hasSize(1)
+        reviewService.decideOutcome(run.qaRunId, failed.logId.toLong(), run.ownerId, "PASSED", "삭제 이후 평가 수정")
+        assertThat(reliability.history(run.projectId, failed.logId.toLong(), run.ownerId, null)).hasSize(2)
+        assertThatThrownBy { runBlocking { attempts.get(run.projectId, run.ownerId + 999, started.id) } }
+            .isInstanceOf(kr.artel.orchestration.common.error.NotFoundException::class.java)
+    }
+
+    @Test
+    fun `삭제된 TC의 동시 미탐 평가도 하나의 issue에 모인다`(): Unit = runBlocking {
+        val run = runningRun()
+        val results = (1..2).map {
+            val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+            attempts.report(run.tryId, attempt.id, ReportCaseAttempt(CaseOutcome.PASSED, "통과"))
+        }
+        testCaseRepository.deleteById(run.passedCaseId)
+        coroutineScope { results.map { result -> async {
+            reviewService.decideOutcome(run.qaRunId, result.logId!!.toLong(), run.ownerId, "FAILED", "미탐")
+        } }.awaitAll() }
+        assertThat(issueRepository.findAll().toList()).hasSize(1)
+        assertThat(reliability.report(run.projectId, run.ownerId, null, null).overall.falseNegatives).isEqualTo(2)
+    }
 
     @BeforeEach
     fun cleanBefore(): Unit = runBlocking { wipe() }
@@ -82,6 +186,7 @@ class CaseVerdictFromQaIntegrationTest {
     fun cleanAfter(): Unit = runBlocking { wipe() }
 
     private suspend fun wipe() {
+        issueRepository.deleteAll()
         scoreRepository.deleteAll()
         qaLogRepository.deleteAll()
         qaTryRepository.deleteAll()
@@ -123,6 +228,184 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(verdicts.map { it.path("case_id").asLong() to it.path("verification_status").asText() })
             .containsExactly(run.passedCaseId to "VERIFIED", run.failedCaseId to "FAILED")
         assertThat(verdicts).allSatisfy { assertThat(it.path("game_build_id").asLong()).isEqualTo(run.gameBuildId) }
+    }
+
+    @Test
+    fun `판정 근거가 TC 판정에 이어지고 런의 판정 목록으로 읽힌다`(): Unit = runBlocking {
+        val run = runningRun()
+
+        reportStep(run.tryId, step = 1, caseId = run.passedCaseId, verification = false, passed = true)
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true) { payload ->
+            payload.put("reason", "Stage 글자가 떴다").put("evidence", "verified")
+            payload.putArray("checks").addObject()
+                .put("expected", "Stage 글자").put("observed", "Stage : 0").put("met", "yes")
+                .putArray("sources").addObject()
+                .put("kind", "pulse").put("key", "MapScene::stage").put("value", "Stage : 0")
+                .put("recorded", "Stage : 0").put("citation", "match")
+        }
+        // 스텝 2 에서 Return 을 두 번 눌렀다. SDK 로 나간 같은 행은 세지 않는다.
+        repeat(2) {
+            qaLogRepository.save(
+                QaLogEntity(
+                    qaTryId = run.tryId, direction = "AGENT_TO_ORCHE", type = "ACTION", message = "Pressing Return",
+                    payload = Json.of("""{"step":2,"message":"Pressing Return","actions":[{"method":"key_click"}]}"""),
+                )
+            )
+        }
+        qaLogRepository.save(
+            QaLogEntity(
+                qaTryId = run.tryId, direction = "ORCHE_TO_SDK", type = "ACTION", message = "Pressing Return",
+                payload = Json.of("""{"step":2,"message":"Pressing Return"}"""),
+            )
+        )
+        issueRepository.save(
+            IssueEntity(
+                qaTryId = run.tryId, severity = "MAJOR", title = "카드가 안 생긴다",
+                detail = Json.of("""{"step":3}"""), reportedAt = Instant.now(),
+            )
+        )
+        // 근거 칸이 없는 판정의 이유는 바로 앞 판정 도구 호출의 `thought` 다.
+        qaLogRepository.save(
+            QaLogEntity(
+                qaTryId = run.tryId, direction = "AGENT_TO_ORCHE", type = "TOOL", message = "report_step",
+                payload = Json.of("""{"tool":"report_step","args":{"step":3,"passed":false,"thought":"적이 남아 있다"}}"""),
+            )
+        )
+        reportStep(run.tryId, step = 3, caseId = run.failedCaseId, verification = true, passed = false)
+
+        // TC 판정은 그 판정을 실은 STATUS 행을 가리킨다.
+        val stepTwo = qaLogRepository.findStepVerdicts(run.tryId).toList()
+            .single { objectMapper.readTree(it.payload.asString()).path("step").asInt() == 2 }
+        assertThat(versions.findByTestCaseIdAndGameBuildId(run.passedCaseId, run.gameBuildId)!!.verdictQaLogId)
+            .isEqualTo(stepTwo.id)
+        assertThat(caseVerdictLogs(run.tryId).first().path("verdict_log_id").asLong()).isEqualTo(stepTwo.id)
+        val history = caseVerdictService.history(run.projectId, run.passedCaseId, run.ownerId).items.single()
+        assertThat(listOf(history.qaRunId, history.qaTryId, history.verdictLogId))
+            .containsExactly(run.qaRunId.toString(), run.tryId.toString(), stepTwo.id.toString())
+
+        // 런의 판정 목록은 출처(TR · 빌드), 시나리오의 모든 스텝과 TC 기대, 스텝에 붙은 이슈를 함께 싣는다.
+        val listed = qaVerdictService.list(run.qaRunId, run.ownerId)
+        assertThat(listed.testRunName).isEqualTo("런")
+        assertThat(listed.gameBuildVersion).isEqualTo("1.0.0")
+        val scenario = listed.tries.single()
+        assertThat(scenario.steps.map { it.step to it.expected }).containsExactly(1 to "x", 2 to "x", 3 to "y")
+        assertThat(scenario.issues.map { it.step to it.severity }).containsExactlyInAnyOrder(3 to "MAJOR", null to "MAJOR")
+        // 런의 판정 목록은 스텝 순서로 근거를 싣고, 근거 칸이 없는 판정은 `none` 이다.
+        val verdicts = scenario.verdicts
+        assertThat(verdicts[1].actions.map { Triple(it.kind, it.label, it.count) }).containsExactly(Triple("key", "Return", 2))
+        assertThat(verdicts.map { it.step }).containsExactly(1, 2, 3)
+        val judged = verdicts[1]
+        assertThat(judged.logId).isEqualTo(stepTwo.id.toString())
+        assertThat(judged.stepTitle).isEqualTo("2")
+        assertThat(judged.reason).isEqualTo("Stage 글자가 떴다")
+        assertThat(judged.evidence).isEqualTo("verified")
+        assertThat(judged.checks!!.path(0).path("sources").path(0).path("citation").asText()).isEqualTo("match")
+        assertThat(verdicts[2].passed).isFalse()
+        assertThat(verdicts[2].evidence).isEqualTo("none")
+        assertThat(verdicts[2].reason).isEqualTo("적이 남아 있다")
+        assertThat(verdicts[0].reason).isNull()
+
+        // 보이지 않는 런은 없는 것이다.
+        assertThatThrownBy { runBlocking { qaVerdictService.list(run.qaRunId, run.ownerId + 999) } }
+            .isInstanceOf(NotFoundException::class.java)
+    }
+
+    @Test
+    fun `판정 목록은 검증 판정마다 코드 검사 결과와 다시 볼 판정을 싣는다`(): Unit = runBlocking {
+        val run = runningRun()
+        // 두 TC 모두 "S 화면에 Canvas/Stage 가 보인다" 를 기대한다(ARTEL-1252).
+        for (caseId in listOf(run.passedCaseId, run.failedCaseId)) {
+            val version = versions.findByTestCaseIdAndGameBuildId(caseId, run.gameBuildId)!!
+            versions.save(version.copy(metadata = Json.of("""{"case_key":"screen\u001fS\u001fCanvas/Stage"}""")))
+        }
+        qaLogRepository.save(
+            QaLogEntity(
+                qaTryId = run.tryId, direction = "SDK_TO_ORCHE", type = "PULSE", message = "Pulse received.",
+                payload = Json.of("""{"scene":"S","active":[{"path":"Canvas/Stage","selector":"Canvas/Stage[3]"}]}"""),
+            )
+        )
+
+        reportStep(run.tryId, step = 1, caseId = run.passedCaseId, verification = false, passed = true)
+        // AI 통과 · 코드 확정 통과: 다시 볼 필요 없다.
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true)
+        // AI 실패 · 코드 확정 통과: 서로 반대라 다시 본다.
+        reportStep(run.tryId, step = 3, caseId = run.failedCaseId, verification = true, passed = false)
+
+        val scenario = qaVerdictService.list(run.qaRunId, run.ownerId).tries.single()
+        val (nonVerification, passed, failed) = scenario.verdicts
+        assertThat(nonVerification.codeCheck).isNull()
+        assertThat(nonVerification.needsReview).isFalse()
+        assertThat(passed.codeCheck!!.result).isEqualTo("PASS")
+        val item = passed.codeCheck!!.items.single()
+        assertThat(listOf(item.target, item.expected, item.observed, item.result)).containsExactly("Canvas/Stage", "true", "true", "PASS")
+        assertThat(passed.needsReview).isFalse()
+        assertThat(failed.codeCheck!!.result).isEqualTo("PASS")
+        assertThat(failed.needsReview).isTrue()
+        assertThat(scenario.reviewCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `사람이 추가 검토 판정을 확정하면 TC 판정이 따르고 남은 검토 수가 준다`(): Unit = runBlocking {
+        val run = runningRun()
+        for (caseId in listOf(run.passedCaseId, run.failedCaseId)) {
+            val version = versions.findByTestCaseIdAndGameBuildId(caseId, run.gameBuildId)!!
+            versions.save(version.copy(metadata = Json.of("""{"case_key":"screen\u001fS\u001fCanvas/Stage"}""")))
+        }
+        qaLogRepository.save(
+            QaLogEntity(
+                qaTryId = run.tryId, direction = "SDK_TO_ORCHE", type = "PULSE", message = "Pulse received.",
+                payload = Json.of("""{"scene":"S","active":[{"path":"Canvas/Stage","selector":"Canvas/Stage[3]"}]}"""),
+            )
+        )
+        reportStep(run.tryId, step = 2, caseId = run.passedCaseId, verification = true, passed = true)
+        // AI 실패 · 코드 확정 통과: 추가 검토로 고른다.
+        reportStep(run.tryId, step = 3, caseId = run.failedCaseId, verification = true, passed = false)
+        assertThat(versionOf(run.failedCaseId).verificationStatus).isEqualTo("FAILED")
+
+        reviewService.flagRun(run.qaRunId, run.gameBuildId)
+        reviewService.flagRun(run.qaRunId, run.gameBuildId)
+        val listed = launchReadService.listRuns(run.projectId, run.ownerId, 20).items.single()
+        assertThat(listOf(listed.reviewFlagged, listed.reviewPending)).containsExactly(1, 1)
+        assertThat(listed.startedBy).isEqualTo(run.ownerId.toString())
+
+        val stepThree = qaVerdictService.list(run.qaRunId, run.ownerId).tries.single().verdicts.single { it.step == 3 }
+        assertThat(stepThree.needsReview).isTrue()
+        reviewService.decide(run.qaRunId, stepThree.logId.toLong(), run.ownerId, passed = true, note = "  영역이 켜졌다  ")
+
+        // TC 판정은 사람 결정을 따른다.
+        assertThat(versionOf(run.failedCaseId).verificationStatus).isEqualTo("VERIFIED")
+        val scenario = qaVerdictService.list(run.qaRunId, run.ownerId).tries.single()
+        val decided = scenario.verdicts.single { it.step == 3 }
+        assertThat(decided.passed).isFalse()
+        assertThat(decided.needsReview).isFalse()
+        assertThat(decided.humanDecision!!.passed).isTrue()
+        assertThat(decided.humanDecision!!.note).isEqualTo("영역이 켜졌다")
+        assertThat(decided.humanDecision!!.decidedBy).isEqualTo("verdict")
+        assertThat(decided.humanDecision!!.flagged).isTrue()
+        assertThat(listOf(scenario.reviewCount, scenario.reviewedCount)).containsExactly(0, 1)
+        assertThat(launchReadService.listRuns(run.projectId, run.ownerId, 20).items.single().reviewPending).isEqualTo(0)
+
+        // 다음 QA 가 같은 TC 를 판정할 때 사람 판정 기록을 함께 받는다(ARTEL-1256). 기록이 없는 TC 는 키가 없다.
+        val draft = ScenarioDraft(
+            title = "다음",
+            description = "",
+            steps = listOf(ScenarioStep(action = "a", caseId = run.failedCaseId), ScenarioStep(action = "b", caseId = run.passedCaseId)),
+        )
+        val (reviewed, plain) = composition.agentScenario(draft).steps
+        val review = reviewed.case!!.reviews!!.single()
+        assertThat(listOf(review.aiPassed, review.humanPassed, review.note, review.gameBuildVersion))
+            .containsExactly(false, true, "영역이 켜졌다", "1.0.0")
+        // agent 는 `decided_at` 을 문자열로 받는다. 숫자로 가면 세션 오픈이 422 다.
+        assertThat(objectMapper.readTree(objectMapper.writeValueAsString(reviewed.case)).path("reviews").path(0).path("decided_at").isTextual).isTrue()
+        assertThat(plain.case!!.reviews).isNull()
+        assertThat(objectMapper.writeValueAsString(plain.case)).doesNotContain("reviews")
+
+        // 다시 정하면 덮어쓴다. 보이지 않는 실행은 없는 것이다.
+        reviewService.decide(run.qaRunId, stepThree.logId.toLong(), run.ownerId, passed = false, note = null)
+        assertThat(versionOf(run.failedCaseId).verificationStatus).isEqualTo("FAILED")
+        assertThat(composition.agentScenario(draft).steps.first().case!!.reviews!!.single().humanPassed).isFalse()
+        assertThatThrownBy { runBlocking { reviewService.decide(run.qaRunId, stepThree.logId.toLong(), run.ownerId + 999, true, null) } }
+            .isInstanceOf(NotFoundException::class.java)
     }
 
     @Test
@@ -270,6 +553,16 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(caseVerdictLogs(run.tryId).single().path("game_build_id").asLong()).isEqualTo(run.runBuildId)
     }
 
+    @Test
+    fun `TC 보고에서 agent가 제외한 knowledge ID 수를 원본 로그에 보존한다`(): Unit = runBlocking {
+        val run = runningRun()
+        val attempt = attempts.start(run.tryId, StartCaseAttempt(UUID.randomUUID(), run.passedCaseId))
+        val result = attempts.report(run.tryId, attempt.id,
+            ReportCaseAttempt(CaseOutcome.PASSED, "화면 확인", rejectedKnowledgeIdCount = 2))
+        val log = qaLogRepository.findById(result.logId!!.toLong())!!
+        assertThat(objectMapper.readTree(log.payload.asString()).path("rejected_knowledge_id_count").asInt()).isEqualTo(2)
+    }
+
     /** [gameBuildId] 는 케이스가 든 게임 빌드, [runBuildId] 는 qa_run 이 붙은 build 다. editor 실행이면 둘이 다르다. */
     private data class RunningRun(
         val tryId: Long,
@@ -277,6 +570,9 @@ class CaseVerdictFromQaIntegrationTest {
         val runBuildId: Long,
         val passedCaseId: Long,
         val failedCaseId: Long,
+        val qaRunId: Long,
+        val projectId: Long,
+        val ownerId: Long,
     )
 
     /**
@@ -337,7 +633,9 @@ class CaseVerdictFromQaIntegrationTest {
             started.qaRun, tryId, "session-verdict-1",
             objectMapper.readTree("""{"model":"anthropic/claude-sonnet-5"}""")
         )
-        return RunningRun(tryId, build.id, runBuild.id!!, passedCase.id!!, failedCase.id!!)
+        return RunningRun(
+            tryId, build.id, runBuild.id!!, passedCase.id!!, failedCase.id!!, started.qaRun.id!!, projectId, ownerId
+        )
     }
 
     private suspend fun reportStep(
@@ -347,6 +645,7 @@ class CaseVerdictFromQaIntegrationTest {
         verification: Boolean,
         passed: Boolean,
         messageId: String = UUID.randomUUID().toString(),
+        evidence: (ObjectNode) -> Unit = {},
     ) {
         val payload = objectMapper.createObjectNode()
             .put("status", if (passed) "COMPLETED" else "FAILED")
@@ -354,6 +653,7 @@ class CaseVerdictFromQaIntegrationTest {
             .put("is_verification", verification)
             .put("message", "step $step")
         caseId?.let { payload.put("case_id", it) }
+        evidence(payload)
         router.handle(
             QaAgentEnvelope(
                 messageId = messageId,

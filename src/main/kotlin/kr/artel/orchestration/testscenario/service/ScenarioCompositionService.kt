@@ -1,11 +1,15 @@
 package kr.artel.orchestration.testscenario.service
 
+import kotlinx.coroutines.flow.toList
+import kr.artel.orchestration.qa.review.QaVerdictReviewRepository
+import kr.artel.orchestration.qa.review.QaVerdictReviewService
 import kr.artel.orchestration.testcase.dto.functionsOrNull
 import kr.artel.orchestration.demonstration.DemonstrationCase
 import kr.artel.orchestration.demonstration.ProcedureSnapshot
 import kr.artel.orchestration.testcase.service.CaseScope
 import kr.artel.orchestration.testcase.service.TestCaseReader
 import kr.artel.orchestration.testscenario.dto.AgentCase
+import kr.artel.orchestration.testscenario.dto.AgentCaseReview
 import kr.artel.orchestration.testscenario.dto.AgentScenario
 import kr.artel.orchestration.testscenario.dto.AgentStep
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
@@ -28,6 +32,7 @@ import org.springframework.stereotype.Service
 @Service
 class ScenarioCompositionService(
     private val testCaseReader: TestCaseReader,
+    private val reviews: QaVerdictReviewRepository,
     private val procedures: kr.artel.orchestration.demonstration.VerificationProcedureService? = null,
 ) {
     /**
@@ -65,6 +70,9 @@ class ScenarioCompositionService(
                 if (qaTryId != null) procedures?.recordUsage(qaTryId, snapshot)
             }
         }
+        // 사람이 정한 판정 기록(ARTEL-1256). 한 TC 에 최근 몇 건만 — 계획 글이 길어지지 않게.
+        val decisions = if (caseById.isEmpty()) emptyMap()
+        else reviews.findDecisionsByCases(caseById.keys, REVIEWS_PER_CASE).toList().groupBy { it.testCaseId }
 
         val free = draft.executionMode == ScenarioExecutionMode.FREE
         val steps = draft.steps.mapNotNull { step ->
@@ -91,10 +99,26 @@ class ScenarioCompositionService(
                         expected = it.expectedValue,
                         functions = it.functionsOrNull(),
                         verificationProcedure = procedureSnapshots[DemonstrationCase(requireNotNull(it.id), it.scene, it.precondition, it.step, it.expectedValue)],
+                        reviews = decisions[it.id]?.map { row ->
+                            AgentCaseReview(
+                                aiPassed = row.aiPassed,
+                                humanPassed = row.decision.takeUnless { it == QaVerdictReviewService.INCONCLUSIVE }?.let { it == QaVerdictReviewService.PASSED },
+                                note = row.note,
+                                gameBuildVersion = row.gameBuildVersion,
+                                decidedAt = row.decidedAt?.toString(),
+                                caseSnapshot = row.caseSnapshot,
+                                caseVersionChanged = row.caseVersionChanged,
+                            )
+                        },
                     )
                 },
             )
         }
         return AgentScenario(title = draft.title, description = draft.description, steps = steps, executionMode = draft.mode)
+    }
+
+    private companion object {
+        /** TC 하나에 넘길 사람 판정 기록 수. */
+        const val REVIEWS_PER_CASE = 3
     }
 }

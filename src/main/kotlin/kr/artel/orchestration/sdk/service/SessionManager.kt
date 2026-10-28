@@ -46,6 +46,13 @@ class SessionManager(private val objectMapper: ObjectMapper,
     private val logger = LoggerFactory.getLogger(SessionManager::class.java)
     private val sessions = ConcurrentHashMap<String, SdkSession>()
 
+    fun sessionIdentity(instanceId: String): Any? = sessions[instanceId]?.session
+
+    /** frame ACK는 응답을 읽지 않는 SDK 앞에서도 최신 하나만 남긴다. */
+    fun sendMediaAck(instanceId: String, payload: Any) {
+        sessions[instanceId]?.ack(objectMapper.writeValueAsString(payload))
+    }
+
     /**
      * 이미 다른 연결이 자리를 잡고 있으면 null이다. 호출자가 새 연결을 거절한다.
      *
@@ -175,8 +182,11 @@ class SessionManager(private val objectMapper: ObjectMapper,
     private class SdkSession(val session: WebSocketSession, val liveness: SdkLiveness?) {
         private val sink = Sinks.many().unicast().onBackpressureBuffer<String>()
         private val pending = AtomicInteger()
+        private val mediaAcks = kr.artel.orchestration.stream.service.LatestMediaMessages()
 
-        fun outbound(): Flux<String> = sink.asFlux().doOnNext { pending.decrementAndGet() }
+        fun outbound(): Flux<String> = Flux.merge(1, sink.asFlux().doOnNext { pending.decrementAndGet() }, mediaAcks.flux)
+
+        fun ack(json: String) { mediaAcks.emit(json) }
 
         /**
          * 발신자가 여럿이다 — agent 의 ACTION, `RUN_STATUS`, 판독 켜기, 화면 스트리밍 시그널링. unicast sink 의
@@ -191,6 +201,7 @@ class SessionManager(private val objectMapper: ObjectMapper,
 
         fun close() {
             synchronized(sink) { sink.tryEmitComplete() }
+            mediaAcks.close()
         }
     }
 }

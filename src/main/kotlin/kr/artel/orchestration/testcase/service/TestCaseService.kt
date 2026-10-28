@@ -305,8 +305,8 @@ class TestCaseService(
     suspend fun sceneEdges(projectId: Long): List<SceneEdge> = runCatching {
         authoringCases.sceneExits(projectId).toList()
             .groupBy { it.fromScene to it.toScene }
-            // 한 화면으로 가는 길이 여럿이면 **누를 것이 있는 쪽**을 먼저 든다.
-            .map { (pair, ways) -> SceneEdge(pair.first, pair.second, ways.firstNotNullOfOrNull { it.byOperation }) }
+            // 조회 계획에 따라 행 순서가 달라도 같은 조작을 선택한다. 조작이 있는 길을 우선한다.
+            .map { (pair, ways) -> SceneEdge(pair.first, pair.second, ways.mapNotNull { it.byOperation }.minOrNull()) }
             .sortedWith(compareBy({ it.fromScene }, { it.toScene }))
     }.onFailure { logger.warn("화면 간선 조회 실패 — 없이 보낸다: ${it.message}") }
         .getOrElse { emptyList() }

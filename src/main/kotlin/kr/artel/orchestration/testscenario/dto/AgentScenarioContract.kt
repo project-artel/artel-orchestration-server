@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testscenario.dto
 
+
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 import kr.artel.orchestration.testcase.dto.TestCaseFunctions
@@ -51,4 +52,21 @@ data class AgentCase(
     @param:JsonProperty("verification_procedure")
     @get:JsonProperty("verification_procedure")
     val verificationProcedure: kr.artel.orchestration.demonstration.ProcedureSnapshot? = null,
+    /**
+     * 사람이 이 TC 의 판정을 정한 최근 기록(ARTEL-1256). 같은 실수를 피하라는 참고이고, 판정의 답이 아니다. 기록이 없으면
+     * 키를 싣지 않는다 — 이 필드를 모르는 agent 와 기록이 없는 실행은 지금과 같다.
+     */
+    @get:JsonInclude(JsonInclude.Include.NON_NULL) val reviews: List<AgentCaseReview>? = null,
+)
+
+/** 사람이 정한 판정 한 건: AI 가 뭐라 했고, 사람이 뭐라 정했고, 왜인지. */
+data class AgentCaseReview(
+    @param:JsonProperty("ai_passed") val aiPassed: Boolean?,
+    @param:JsonProperty("human_passed") val humanPassed: Boolean?,
+    val note: String?,
+    @param:JsonProperty("game_build_version") val gameBuildVersion: String?,
+    /** ISO-8601 문자열. `Instant` 로 두면 Jackson 이 숫자로 써서 agent 가 422 로 거절한다. */
+    @param:JsonProperty("decided_at") val decidedAt: String?,
+    @param:JsonProperty("case_snapshot") val caseSnapshot: String? = null,
+    @param:JsonProperty("case_version_changed") val caseVersionChanged: Boolean? = null,
 )

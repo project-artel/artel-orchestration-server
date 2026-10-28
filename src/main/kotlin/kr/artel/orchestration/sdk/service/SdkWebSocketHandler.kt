@@ -176,7 +176,9 @@ class SdkWebSocketHandler(
             .doOnNext { heartbeat.seen() }
             // 서버가 보낸 ping 의 pong 이다. 생존 신호로만 쓰고 메시지 handler 로는 넘기지 않는다.
             .filter { message -> message.type != WebSocketMessage.Type.PONG }
-            .concatMap { message -> dispatch(instanceId, message.payloadAsText, session) }
+            // Netty가 buffer를 반환하기 전에 복사한다. 처리 대기는 한 메시지로 제한한다.
+            .map { message -> message.payloadAsText }
+            .concatMap({ text -> dispatch(instanceId, text, session) }, 1)
             .doOnError { error ->
                 logger.error("웹소켓 에러 발생 [instanceId: $instanceId]: ${error.message}", error)
             }
@@ -210,7 +212,7 @@ class SdkWebSocketHandler(
         // 전송과 수신을 함께 물려 둘 다 끝나야 핸들러가 끝난다. Spring이 문서에서 보여 주는
         // 형태 그대로다.
         val messages = outbound.map(session::textMessage)
-        return session.send(Flux.merge(messages, heartbeat.pings(receiveEnded.asMono()))).and(receive)
+        return session.send(Flux.merge(1, messages, heartbeat.pings(receiveEnded.asMono()))).and(receive)
     }
 
     /** 미지원·손상 프레임은 그 프레임만 버리고 연결과 다음 프레임은 계속 처리한다. */
