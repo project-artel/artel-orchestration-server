@@ -353,7 +353,9 @@ class ScenarioReconcileService(
             }
         }
         shortCounts.forEach { logger.info("흐름이 모자라게 모은 개수 [runId={}] {}", runId, it) }
-        val reported = contradictions.map { (title, found) -> "$title: ${found.describe()}" } + missingMakers + shortCounts
+        // 흐름이 안 만든 전제는 **로그로만** 남긴다. 시작 상태를 모르는 프로젝트(지도 없음)에서는 처음부터 참인
+        // 값(낮에 시작한다)까지 "만들라"고 짚어, 모델이 밤도 아닌데 아침까지 자는 스텝을 넣었다(측정 h1).
+        val reported = contradictions.map { (title, found) -> "$title: ${found.describe()}" } + shortCounts
         val opened = repaired.zip(walked).map { (scenario, found) ->
             scenario.copy(
                 steps = withOpeningNote(scenario.steps, openingFacts(projectId, facts), found.opening)
