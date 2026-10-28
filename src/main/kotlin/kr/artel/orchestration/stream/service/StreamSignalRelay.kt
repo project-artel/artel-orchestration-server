@@ -3,7 +3,7 @@ package kr.artel.orchestration.stream.service
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
-/** SDK와 viewer는 각각 orch의 WebRTC peer와 연결한다. native 오류 시 직접 P2P로 전환하지 않는다. */
+/** SDK와 viewer의 인증된 WebSocket을 orch 내부 영상 서비스에 연결한다. */
 @Service
 class StreamSignalRelay(private val media: QaMediaRelay) {
     private val logger = LoggerFactory.getLogger(javaClass)

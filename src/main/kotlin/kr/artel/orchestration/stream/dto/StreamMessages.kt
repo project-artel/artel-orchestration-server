@@ -1,12 +1,14 @@
 package kr.artel.orchestration.stream.dto
 
-/** SDK·viewer와 orch 내부 WebRTC peer가 주고받는 시그널 계약이다. */
+/** 인증된 WebSocket에서 영상 frame과 수신 확인을 주고받는다. */
 object StreamMessageType {
     const val STREAM_START = "STREAM_START"
     const val STREAM_RENEW = "STREAM_RENEW"
     const val STREAM_STOP = "STREAM_STOP"
     const val STREAM_READY = "STREAM_READY"
     const val STREAM_STATE = "STREAM_STATE"
+    const val STREAM_FRAME = "STREAM_FRAME"
+    const val STREAM_FRAME_ACK = "STREAM_FRAME_ACK"
     const val WEBRTC_OFFER = "WEBRTC_OFFER"
     const val WEBRTC_ANSWER = "WEBRTC_ANSWER"
     const val WEBRTC_ICE = "WEBRTC_ICE"
@@ -29,7 +31,10 @@ data class IceServer(
  */
 data class VideoConstraints(
     val maxWidth: Int,
-    val maxFramerate: Int
+    val maxFramerate: Int,
+    val jpegQuality: Int = 65,
+    val maxFrameBytes: Int = 131072,
+    val maxHeight: Int = 720
 )
 
 data class StreamStartMessage(
@@ -37,7 +42,8 @@ data class StreamStartMessage(
     val iceServers: List<IceServer>,
     val video: VideoConstraints,
     val leaseSeconds: Long,
-    val type: String = StreamMessageType.STREAM_START
+    val type: String = StreamMessageType.STREAM_START,
+    val transport: String = "JPEG_WS"
 )
 
 data class StreamRenewMessage(
@@ -53,7 +59,8 @@ data class StreamStopMessage(
 data class StreamReadyMessage(
     val streamId: String,
     val iceServers: List<IceServer>,
-    val type: String = StreamMessageType.STREAM_READY
+    val type: String = StreamMessageType.STREAM_READY,
+    val transport: String = "JPEG_WS"
 )
 
 data class StreamErrorMessage(

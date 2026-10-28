@@ -2,6 +2,7 @@ package kr.artel.orchestration.stream.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.auth.service.SessionUserResolver
+import kr.artel.orchestration.common.error.TooManyRequestsException
 import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.stream.config.StreamProperties
@@ -32,8 +33,8 @@ private const val INSTANCE_ID_PARAM = "instanceId"
  * 토큰을 쿼리스트링으로 받지 않는 이유는 그렇게 하면 자격증명이 서버 접근 로그에 남기
  * 때문이다.
  *
- * 미디어는 여기를 지나지 않는다. 이 핸들러가 하는 일은 SDP와 ICE를 게임 쪽 소켓으로 옮기는
- * 것뿐이다.
+ * 영상 frame도 같은 연결로 전달한다. stream별 최신 frame만 대기시키고 control 메시지와
+ * 별도 상한으로 관리한다.
  */
 @Component
 class ViewerWebSocketHandler(
@@ -83,14 +84,8 @@ class ViewerWebSocketHandler(
         }
 
         val streamId = UUID.randomUUID().toString()
-        val (viewer, displaced) = viewers.admit(instanceId, streamId, session)
-
-        if (displaced != null) {
-            logger.info("뷰어 교체 - instanceId: $instanceId, 밀려난 streamId: ${displaced.streamId}")
-            displaced.session
-                .close(CloseStatus(4009, "Taken over by a newer viewer"))
-                .subscribe()
-        }
+        val viewer = try { viewers.admit(instanceId, streamId, session).viewer }
+        catch (_: TooManyRequestsException) { return session.close(CloseStatus(1013, "Viewer limit reached")) }
 
         logger.info("뷰어 연결 성공 - instanceId: $instanceId, streamId: $streamId")
 
@@ -125,9 +120,7 @@ class ViewerWebSocketHandler(
             // 정리는 수신이 끝나는 시점에 건다. 전송 쪽이 끝나기를 기다리는 자리에 두면,
             // 전송은 세션이 지워지며 큐가 닫혀야 끝나므로 서로를 기다리다 멈춘다.
             .doFinally {
-                // 자기가 현재 뷰어일 때만 스트림을 멈춘다. 밀려난 세션이 뒤늦게 정리되면서
-                // 중단을 보내면 방금 시작한 새 스트림이 꺼진다. stopStream은 suspend라
-                // doFinally(동기)에서 mono { } 로 감싸 구독한다.
+                // 해당 viewer만 해제한다. 다른 viewer나 녹화가 남으면 SDK 송출은 유지한다.
                 if (viewers.release(viewer)) {
                     mono { relay.stopStream(instanceId, streamId) }
                         .onErrorResume { Mono.empty() }
@@ -137,7 +130,7 @@ class ViewerWebSocketHandler(
             }
 
         val prologue = mono {
-            viewers.send(viewer, StreamReadyMessage(streamId, properties.iceServers))
+            viewers.send(viewer, StreamReadyMessage(streamId, emptyList()))
             relay.startStream(instanceId, streamId)
         }.then()
 

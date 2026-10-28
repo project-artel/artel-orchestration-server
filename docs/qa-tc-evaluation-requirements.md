@@ -175,13 +175,15 @@ Agent의 실패 판정을 사람이 오탐으로 평가하면 해당 발생 이�
 
 ## 11. 구현 설계 결정 추가
 
-2026-10-28 사용자 지시에 따라 별도 media-worker 구현을 제거하고 아래 방식으로 수정한다. 별도 미디어 프로세스 분리는 사용자에게 승인받은 요구사항이 아니었다. 이 절은 현재 구현 방향을 기록하며 배포 완료를 뜻하지 않는다.
+2026-10-28 사용자 지시에 따라 별도 media-worker 구현을 제거했다. 이어 실제 Unity와 WSL orch 사이의 영상 연결 문제를 수정하기 위해 영상 전송도 기존 인증된 WebSocket으로 변경한다. 이 절은 현재 구현 방향을 기록하며 화면 방향 보정·최종 통합 검증이나 배포 완료를 뜻하지 않는다. 이전 WebRTC·worker 기반 검증 수치는 현재 전송 방식의 검증 결과로 사용하지 않는다.
 
-- orch JVM 안에서 `webrtc-java 0.20.0` JNI로 WebRTC 수신·viewer 중계를 수행하고 `JavaCV 1.5.14`·`FFmpeg 8.1.2-1.5.14` JNI로 H.264 MP4를 변환한다. 별도 Python 서버, worker 컨테이너나 FFmpeg 자식 프로세스를 사용하지 않는다.
-- 동시 ingress는 기본 8개, ingress당 viewer는 기본 8개다. raw frame은 ingress당 3개·8 MiB 중 먼저 도달하는 상한과 최대 1920×1080 해상도로 제한한다. 초과 프레임은 drop/release한다. ingress당 인코딩 thread 1개·FFmpeg thread 1개, 업로드 thread는 서버 전체 2개다.
-- segment는 최대 60초·32 MiB다. 업로드 대기는 서버 전체 10개·256 MiB로 제한하고 3회 재시도 후 실패 구간을 남긴다. `QaRecordingStore`와 `DocumentStorage`를 직접 호출하며 자기 서버의 HTTP API나 presigned 업로드 URL을 거치지 않는다.
-- 첫 프레임의 서버 시각과 monotonic 시각을 기준으로 MP4 PTS를 기록한다. 입력 정지·drop 시간을 프레임 수로 압축하지 않는다. 재연결·해상도·회전 변경은 새 segment를 시작한다.
-- native 초기화는 최초 사용 시 수행한다. 실패해도 API 서버와 QA 실행은 계속하고 오류·누락을 표시한다. SDK↔브라우저 직접 P2P로 자동 전환하지 않는다. 종료 시 callback 차단·프레임 처리/해제·마지막 segment finalize·제한 시간 내 업로드·peer/track/source/factory 해제 순으로 정리한다.
+- SDK의 `/ws/sdk`와 브라우저의 `/ws/viewer`를 통해 `JPEG_WS` frame을 주고받고 orch JVM에서 중계한다. 별도 UDP 포트나 STUN·TURN 서버를 요구하지 않는다. 같은 JVM 안에서 `JavaCV 1.5.14`·`FFmpeg 8.1.2-1.5.14` JNI로 H.264 MP4를 변환한다. 별도 Python 서버, worker 컨테이너나 FFmpeg 자식 프로세스를 사용하지 않는다.
+- 기본 capture 범위는 최대 1280×720, 10fps, JPEG quality 65다. JPEG는 128 KiB, frame JSON은 184 KiB로 제한하고 기존 SDK WebSocket의 전체 메시지 상한 256 KiB를 유지한다. 서버는 JPEG header의 형식·해상도를 검사하며 초당 10개, 순간 burst 2개 제한을 적용한다.
+- SDK는 frame 하나를 보낸 뒤 `STREAM_FRAME_ACK`를 기다린다. ACK는 frame 검증·전송률 확인 결과이며 녹화나 S3 저장 성공을 뜻하지 않는다. 녹화 대기열이 가득 차도 viewer를 갱신하고 다음 capture를 허용할 수 있다. SDK ACK와 viewer frame은 source별 최신 pending 하나를 보관하고 각 merge 단계의 prefetch를 1로 제한한다. 각 단계의 전송 중 값은 있을 수 있으나 frame 이력을 계속 쌓지 않는다. viewer control queue는 16개·64 KiB로 제한한다.
+- 동시 ingress는 기본 8개, 같은 인스턴스의 동시 viewer는 기본 8개다. 새 viewer가 기존 시청자를 대체하지 않으며 상한을 넘는 새 접속만 `1013`으로 거절한다. 각자의 권한과 전송 대기열을 적용하며 한 viewer 종료가 다른 viewer나 QA 녹화를 중단하지 않는다. SDK 송출 재시작 시 등록된 viewer를 모두 다시 연결한다. 녹화 대기 중·처리 중 frame을 합쳐 ingress당 3개·8 MiB 중 먼저 도달하는 상한을 적용하고 메모리는 `width × height × 8 + JPEG bytes`로 계산한다. 서버가 수용하는 JPEG header는 최대 1920×1080이며 이 범위 안에서도 메모리 상한을 넘으면 녹화 대기열에 넣지 않는다. JPEG decode와 H.264 encode는 ingress당 인코딩 thread 1개·FFmpeg thread 1개가 맡고 업로드 thread는 서버 전체 2개다.
+- segment는 최대 60초·32 MiB다. 업로드 대기와 처리 중인 segment를 합쳐 서버 전체 10개·256 MiB로 제한하고 3회 재시도 후 실패 구간을 남긴다. `QaRecordingStore`와 `DocumentStorage`를 직접 호출하며 자기 서버의 HTTP API나 presigned 업로드 URL을 거치지 않는다.
+- 프레임의 서버 수신 시각과 monotonic 시각을 기준으로 MP4 PTS를 기록한다. 입력 정지·drop 시간을 프레임 수로 압축하지 않는다. 재연결·해상도 변경은 새 segment를 시작한다.
+- 인코더 초기화나 저장이 실패해도 API 서버와 QA 실행은 계속하고 오류·누락을 표시한다. 종료 시 새 frame 접수 차단·대기 frame 처리·마지막 segment finalize를 수행하고 segment 업로드는 분리해 제한된 시간 안에 마무리한다. 처리 중인 인코더를 다른 thread에서 강제로 해제하지 않는다. `JPEG_WS` 지원 여부를 확인하지 못하거나 구 WebRTC SDK가 연결되면 `SDK_UPDATE_REQUIRED`를 표시하며, 서버·SDK·home을 함께 업데이트한다.
 - `start_test_case`가 검증 시도 UUID를 만들고 `report_test_case`로 `PASSED`·`FAILED`·`INCONCLUSIVE`를 보고한다. orch 서버가 시작·완료 시각을 기록한다.
 - 앞 10초·뒤 5초는 저장된 영상 경계로 제한한다. 시작 tool 없이 기록된 과거 판정은 시작 시각을 추정하지 않는다. 보고 전 중단된 시도는 `INTERRUPTED`로 남긴다. 재연결·저장 실패 구간은 누락으로 표시한다.
 - 영상 보관은 각 segment 완료 시각부터 30일이다. QA가 대기 중이어도 오래된 segment부터 삭제한다. TC를 삭제해도 검증 당시 snapshot과 논리적 TC ID를 남겨 평가·issue 이력을 조회한다.

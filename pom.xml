@@ -28,13 +28,7 @@
 		<dataframe.version>0.15.0</dataframe.version>
 	</properties>
 	<dependencies>
-		<!-- WebRTC와 H.264 인코더는 orch JVM 안에서 native library로 실행한다. -->
-		<dependency>
-			<groupId>dev.onvoid.webrtc</groupId><artifactId>webrtc-java</artifactId><version>0.20.0</version>
-		</dependency>
-		<dependency>
-			<groupId>dev.onvoid.webrtc</groupId><artifactId>webrtc-java</artifactId><version>0.20.0</version><classifier>linux-x86_64</classifier><scope>runtime</scope>
-		</dependency>
+		<!-- H.264 인코더는 orch JVM 안에서 native library로 실행한다. -->
 		<dependency>
 			<groupId>org.bytedeco</groupId><artifactId>javacv</artifactId><version>1.5.14</version>
 			<exclusions><exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion></exclusions>

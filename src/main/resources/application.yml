@@ -214,7 +214,7 @@ artel:
     turn-username: ${ARTEL_TURN_USERNAME:}
     turn-credential: ${ARTEL_TURN_CREDENTIAL:}
     max-width: ${ARTEL_STREAM_MAX_WIDTH:1280}
-    max-framerate: ${ARTEL_STREAM_MAX_FRAMERATE:30}
+    max-framerate: ${ARTEL_STREAM_MAX_FRAMERATE:10}
   # artel-macro-mcp 와 맞물리는 설정(ARTEL-1088). issuer 와 jwks-uri 가 둘 다 있을 때만 MCP access JWT 를 받는다.
   mcp:
     base-url: ${ARTEL_MCP_BASE_URL:}

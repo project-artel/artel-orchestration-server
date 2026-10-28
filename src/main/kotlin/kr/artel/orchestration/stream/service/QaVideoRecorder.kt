@@ -1,6 +1,5 @@
 package kr.artel.orchestration.stream.service
 
-import dev.onvoid.webrtc.media.video.VideoFrame
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -12,9 +11,10 @@ import kr.artel.orchestration.qa.review.VideoSegmentRequest
 import kr.artel.orchestration.stream.config.StreamProperties
 import org.bytedeco.ffmpeg.global.avutil.AV_PIX_FMT_YUV420P
 import org.bytedeco.javacv.FFmpegFrameRecorder
+import org.bytedeco.javacv.Java2DFrameConverter
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import java.nio.ByteBuffer
+import java.io.ByteArrayInputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
@@ -26,6 +26,8 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.imageio.ImageIO
+import javax.imageio.stream.MemoryCacheImageInputStream
 
 /** 수신 callback을 기다리게 하지 않고 orch 프로세스 안에서만 변환·저장한다. */
 @Service
@@ -55,17 +57,15 @@ class QaVideoRecorder(private val recordings: QaRecordingStore, private val prop
         }
     }
 
-    /** frame은 빌려 쓴다. 대기열에 들어갈 때만 retain하고 encoder가 반드시 release한다. */
-    fun accept(streamId: UUID, frame: VideoFrame) {
-        streams[streamId]?.offer(frame)
-    }
+    /** JPEG와 예상 decode 크기를 함께 제한한다. 실제 decode는 encoder thread에서만 수행한다. */
+    fun accept(streamId: UUID, frame: JpegVideoFrame): Boolean = streams[streamId]?.offer(frame) ?: false
 
     suspend fun closeStream(streamId: UUID) = withContext(Dispatchers.IO) {
         val encoder = streams[streamId] ?: return@withContext
         synchronized(encoder) { encoder.closing.set(true) }
         // JNI 호출을 interrupt하거나 처리 중인 buffer를 다른 thread에서 해제하지 않는다.
         encoder.finished.get(120, TimeUnit.SECONDS)
-        // 업로드 작업은 파일과 byte array만 소유하므로 peer와 frame 해제를 기다리게 하지 않는다.
+        // 업로드 작업은 파일과 byte array만 소유하므로 stream 종료를 기다리게 하지 않는다.
         streams.remove(streamId, encoder)
     }
 
@@ -78,28 +78,28 @@ class QaVideoRecorder(private val recordings: QaRecordingStore, private val prop
         private var retainedCount = 0
         private val thread = Thread({ encode() }, "qa-video-encode-$streamId").apply { isDaemon = true; start() }
 
-        fun offer(frame: VideoFrame) {
-            val recording = recordingId ?: return
-            val now = Instant.now()
-            val size = frame.buffer.width.toLong() * frame.buffer.height +
-                2L * ((frame.buffer.width + 1) / 2) * ((frame.buffer.height + 1) / 2)
-            if (frame.buffer.width !in 2..1920 || frame.buffer.height !in 2..1080) {
-                missing(recording, now, now.plusNanos(FRAME_NANOS), "FRAME_DIMENSIONS_EXCEEDED")
-                return
+        fun offer(frame: JpegVideoFrame): Boolean {
+            val recording = recordingId ?: return false
+            // 대기 중인 JPEG에도 decode raster와 converter surface를 보수적으로 함께 계상한다.
+            val size = frame.width.toLong() * frame.height * 8 + frame.content.size
+            if (frame.width !in 2..1920 || frame.height !in 2..1080 || frame.content.size !in 1..MAX_JPEG_BYTES) {
+                missing(recording, frame.instant, frame.instant.plusNanos(FRAME_NANOS), "FRAME_LIMIT_EXCEEDED")
+                return false
             }
             synchronized(this) {
-                if (closing.get() || stopping.get()) return
+                if (closing.get() || stopping.get()) return false
                 if (retainedCount >= 3 || retainedBytes + size > MAX_FRAME_BYTES) {
-                    missing(recording, now, now.plusNanos(FRAME_NANOS), "ENCODER_BACKPRESSURE")
-                    return
+                    missing(recording, frame.instant, frame.instant.plusNanos(FRAME_NANOS), "ENCODER_BACKPRESSURE")
+                    return false
                 }
-                frame.retain()
                 retainedCount++
                 retainedBytes += size
-                if (!frames.offer(ReceivedFrame(frame, recording, now, System.nanoTime(), size))) {
-                    retainedCount--; retainedBytes -= size; frame.release()
-                    missing(recording, now, now.plusNanos(FRAME_NANOS), "ENCODER_BACKPRESSURE")
+                if (!frames.offer(ReceivedFrame(frame, recording, frame.instant, frame.nanoTime, size))) {
+                    retainedCount--; retainedBytes -= size
+                    missing(recording, frame.instant, frame.instant.plusNanos(FRAME_NANOS), "ENCODER_BACKPRESSURE")
+                    return false
                 }
+                return true
             }
         }
 
@@ -115,8 +115,8 @@ class QaVideoRecorder(private val recordings: QaRecordingStore, private val prop
                         continue
                     }
                     try {
-                        if (writer != null && (writer.recordingId != received.recordingId || writer.width != received.frame.buffer.width ||
-                            writer.height != received.frame.buffer.height || writer.rotation != received.frame.rotation ||
+                        if (writer != null && (writer.recordingId != received.recordingId || writer.width != received.frame.width ||
+                            writer.height != received.frame.height ||
                             received.nanoTime - writer.startNanos >= TimeUnit.SECONDS.toNanos(60) || Files.size(writer.path) >= MAX_SEGMENT_BYTES - 1024 * 1024)) {
                             enqueue(writer.finish()); writer = null
                         }
@@ -128,7 +128,6 @@ class QaVideoRecorder(private val recordings: QaRecordingStore, private val prop
                         writer = null
                         logger.warn("QA 영상 인코딩 실패 [streamId={}]", streamId, failure)
                     } finally {
-                        received.frame.release()
                         synchronized(this) { retainedCount--; retainedBytes -= received.bytes }
                     }
                 }
@@ -142,7 +141,7 @@ class QaVideoRecorder(private val recordings: QaRecordingStore, private val prop
                 try {
                     while (true) {
                         val received = frames.poll() ?: break
-                        try { received.frame.release() } catch (failure: Throwable) { logger.warn("QA 영상 프레임 해제 실패", failure) }
+                        synchronized(this) { retainedCount--; retainedBytes -= received.bytes }
                         missing(received.recordingId, received.instant, received.instant.plusNanos(FRAME_NANOS), "ENCODING_INTERRUPTED")
                     }
                 } finally {
@@ -245,24 +244,24 @@ class QaVideoRecorder(private val recordings: QaRecordingStore, private val prop
         flushGaps()
     }
 
-    private data class ReceivedFrame(val frame: VideoFrame, val recordingId: UUID, val instant: Instant, val nanoTime: Long, val bytes: Long)
+    private data class ReceivedFrame(val frame: JpegVideoFrame, val recordingId: UUID, val instant: Instant, val nanoTime: Long, val bytes: Long)
     private data class EncodedSegment(val id: UUID, val recordingId: UUID, val path: Path, val startedAt: Instant, val endedAt: Instant)
     private data class MissingFrames(val id: UUID, val startedAt: Instant, val endedAt: Instant, val reason: String)
 
     private class Mp4Segment private constructor(
         val recordingId: UUID, val startedAt: Instant, val startNanos: Long, val width: Int, val height: Int,
-        val rotation: Int, directory: Path,
+        directory: Path,
     ) {
         val path: Path
         private val id = UUID.randomUUID()
         private val recorder: FFmpegFrameRecorder
-        private val pixels = ByteBuffer.allocateDirect(width * height + 2 * ((width + 1) / 2) * ((height + 1) / 2))
+        private val converter = Java2DFrameConverter()
         private var lastPtsNanos = 0L
         private var lastTick = -1L
         var lastFrameNanos = startNanos
             private set
         constructor(frame: ReceivedFrame, directory: Path) : this(frame.recordingId, frame.instant, frame.nanoTime,
-            frame.frame.buffer.width, frame.frame.buffer.height, frame.frame.rotation, directory)
+            frame.frame.width, frame.frame.height, directory)
 
         init {
             Files.createDirectories(directory)
@@ -277,53 +276,51 @@ class QaVideoRecorder(private val recordings: QaRecordingStore, private val prop
                 setVideoOption("crf", "28")
                 setVideoOption("tune", "zerolatency")
                 setOption("movflags", "+faststart")
-                setDisplayRotation(rotation.toDouble())
             }
-            try { recorder.start() } catch (failure: Throwable) { recorder.release(); Files.deleteIfExists(path); throw failure }
+            try { recorder.start() } catch (failure: Throwable) { recorder.release(); converter.close(); Files.deleteIfExists(path); throw failure }
         }
 
         fun write(frame: ReceivedFrame) {
             val elapsed = maxOf(0L, frame.nanoTime - startNanos)
             val tick = kotlin.math.round(elapsed / 1_000_000_000.0 * 30).toLong()
             if (tick <= lastTick) return
-            val buffer = frame.frame.buffer.toI420()
-            try {
-                pixels.clear()
-                plane(buffer.dataY, buffer.strideY, width, height)
-                plane(buffer.dataU, buffer.strideU, (width + 1) / 2, (height + 1) / 2)
-                plane(buffer.dataV, buffer.strideV, (width + 1) / 2, (height + 1) / 2)
-                pixels.flip()
+            MemoryCacheImageInputStream(ByteArrayInputStream(frame.frame.content)).use { input ->
+                val readers = ImageIO.getImageReaders(input)
+                require(readers.hasNext()) { "JPEG decoder를 찾을 수 없습니다." }
+                val reader = readers.next()
+                try {
+                    require(reader.formatName.equals("JPEG", ignoreCase = true)) { "JPEG frame이 아닙니다." }
+                    reader.input = input
+                    // decode 전에 다시 metadata를 확인해 잘못된 크기의 raster 할당을 막는다.
+                    require(reader.getWidth(0) == width && reader.getHeight(0) == height) { "JPEG frame 크기가 metadata와 다릅니다." }
+                    val image = reader.read(0)
+                    try {
+                        require(image.width == width && image.height == height) { "JPEG decode 크기가 다릅니다." }
+                        recorder.timestamp = elapsed / 1000
+                        recorder.record(converter.convert(image))
+                    } finally { image.flush() }
+                } finally { reader.dispose() }
                 lastPtsNanos = elapsed
                 lastTick = tick
                 lastFrameNanos = frame.nanoTime
-                recorder.timestamp = lastPtsNanos / 1000
-                recorder.recordImage(width, height, 8, 1, width, AV_PIX_FMT_YUV420P, pixels)
-            } finally {
-                if (buffer !== frame.frame.buffer) buffer.release()
-            }
-        }
-
-        private fun plane(source: ByteBuffer, stride: Int, width: Int, height: Int) {
-            for (row in 0 until height) {
-                val line = source.duplicate()
-                line.position(row * stride).limit(row * stride + width)
-                pixels.put(line)
             }
         }
 
         fun finish(): EncodedSegment {
-            try { recorder.stop() } finally { recorder.release() }
+            try { recorder.stop() } finally { recorder.release(); converter.close() }
             return EncodedSegment(id, recordingId, path, startedAt, startedAt.plusNanos(lastPtsNanos + FRAME_NANOS))
         }
 
         fun abort() {
             try { recorder.release() } catch (_: Exception) { }
+            converter.close()
             Files.deleteIfExists(path)
         }
     }
 
     companion object {
         private const val FRAME_NANOS = 33_333_333L
+        private const val MAX_JPEG_BYTES = 128 * 1024
         private const val MAX_FRAME_BYTES = 8L * 1024 * 1024
         private const val MAX_SEGMENT_BYTES = 32L * 1024 * 1024
         private const val MAX_UPLOAD_BYTES = 256L * 1024 * 1024

@@ -31,6 +31,13 @@ class SessionManager(private val objectMapper: ObjectMapper) {
     private val logger = LoggerFactory.getLogger(SessionManager::class.java)
     private val sessions = ConcurrentHashMap<String, SdkSession>()
 
+    fun sessionIdentity(instanceId: String): Any? = sessions[instanceId]?.session
+
+    /** frame ACK는 응답을 읽지 않는 SDK 앞에서도 최신 하나만 남긴다. */
+    fun sendMediaAck(instanceId: String, payload: Any) {
+        sessions[instanceId]?.ack(objectMapper.writeValueAsString(payload))
+    }
+
     /**
      * 이미 다른 연결이 자리를 잡고 있으면 null이다. 호출자가 새 연결을 거절한다.
      *
@@ -103,13 +110,17 @@ class SessionManager(private val objectMapper: ObjectMapper) {
      */
     private class SdkSession(val session: WebSocketSession) {
         private val sink = Sinks.many().unicast().onBackpressureBuffer<String>()
+        private val mediaAcks = kr.artel.orchestration.stream.service.LatestMediaMessages()
 
-        fun outbound(): Flux<String> = sink.asFlux()
+        fun outbound(): Flux<String> = Flux.merge(1, sink.asFlux(), mediaAcks.flux)
+
+        fun ack(json: String) { mediaAcks.emit(json) }
 
         fun emit(json: String): Boolean = sink.tryEmitNext(json) == Sinks.EmitResult.OK
 
         fun close() {
             sink.tryEmitComplete()
+            mediaAcks.close()
         }
     }
 }

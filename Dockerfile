@@ -1,10 +1,5 @@
 FROM eclipse-temurin:21-jre
 
-# libwebrtc가 로드하는 native 런타임이다. 별도 미디어 실행 파일은 설치하지 않는다.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libx11-6 libxext6 libxfixes3 libxdamage1 libxtst6 libxrandr2 libxcomposite1 libglib2.0-0 libgbm1 libdrm2 \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 ARG JAR_FILE=target/*.jar

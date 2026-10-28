@@ -1,53 +1,50 @@
-# orch 내부 영상 처리 검증 기록
+# orch WebSocket 영상 처리 검증 기록
 
 갱신일: 2026-10-28 (Asia/Seoul)
 
-## 현재 검증 대상
+## 현재 구성
 
-별도 media-worker를 제거하고 orch JVM 내부에서 WebRTC 수신·viewer 중계, H.264 MP4 변환, S3 저장을 수행하는 구조를 검증한다. `webrtc-java 0.20.0`, `JavaCV 1.5.14`, `FFmpeg 8.1.2-1.5.14`의 JNI를 사용한다. native 라이브러리를 로드한 orch 프로세스 안에서 처리하며 미디어 자식 프로세스를 실행하지 않는다.
+SDK와 브라우저는 기존 인증된 WebSocket으로 JPEG frame을 주고받는다. orch JVM이 중계와 H.264 MP4 변환·S3 저장을 담당한다. 별도 TURN·media-worker·Python 서버·FFmpeg 자식 프로세스와 WebRTC peer는 사용하지 않는다. JavaCV 1.5.14와 FFmpeg 8.1.2-1.5.14의 JNI를 사용한다.
 
-검증 환경은 WSL Ubuntu, Java 21, PostgreSQL(pgvector), Redis와 로컬 MinIO다. 검증 전용 DB·bucket과 합성 사용자·TC·QA 실행을 사용한다. 비밀 값, JWT와 presigned URL은 이 문서에 저장하지 않는다.
+## 실제 Windows Unity 검증
 
-## 확인한 범위
+합성 SDK가 아닌 실제 WordVenture Unity 2022.3.62f3(D3D)와 WSL orch, 로컬 MinIO를 사용했다. 기존 WebRTC 경로에서 첫 영상 frame을 받지 못하는 현상을 재현했고, proxy를 127.0.0.1로 바꾸는 것만으로 해결되지 않는 것을 확인했다.
 
-Linux native POC에서 단일 JVM PID `97441`로 H.264 인코딩이 동작하는 것을 확인했다. 이 결과는 JNI 로딩과 인코딩 가능성 확인이며, SDK·viewer·DB·S3를 잇는 최종 통합 검증 결과는 아니다.
+JPEG_WS 전환 후 사용자가 브라우저에서 영상 수신을 확인했다. 최초 캡처는 상하가 반대였고, SDK의 framebuffer UV 방향을 보정한 뒤 원본 JPEG와 S3 영상의 글자가 정상 방향인 것을 확인했다. 구 package의 컴파일 결과가 남아 있던 Unity에는 최종 local SDK package를 다시 연결해 적용했다.
 
-## 최종 검증 결과
-
-| 검증 | 결과 |
+| 검증 | 관측 결과 |
 | --- | --- |
-| 실제 SDK WebSocket → orch JVM → viewer | 640×480 프레임 수신, viewer connected 확인 |
-| viewer 종료 후 QA 녹화 유지 | viewer WebSocket 종료 뒤에도 SDK 송출 유지, QA 종료 뒤 STREAM_STOP 확인 |
-| H.264 MP4 → S3 → 다운로드·decode | READY segment 1개, 37,594 bytes, 757 frames |
-| 단일 프로세스 | orch PID 108203의 자식 프로세스 목록이 비어 있음 |
-| 입력 정지·drop 시간축 | native MP4 decode와 저장 metadata 비교 테스트 통과 |
-| 프레임·연결 상한과 release | burst 입력 retain 상한, 초과 해상도, ICE 후보 상한, native 연결 자리 재사용 테스트 통과 |
-| 종료·실패 | 최초 START 실패, 늦은 시그널, 인코더 종료 실패 재시도, MP4 최종화 실패, 업로드 3회 실패·gap·파일 정리 테스트 통과 |
-| 느린 업로드·종료 | latch로 S3/종료를 막아도 native 종료 반환과 다른 SDK lease 갱신이 진행되는 테스트 통과 |
-| 집중 Kotlin 회귀 | 10개 클래스 55개 항목 통과. 최초 52개와 마지막 native 9개 결과에서 재실행 6개를 중복 제외 |
-| JAR package | 통과 |
-| Docker build | artel-orch-inprocess-media:20261028 통과 |
-| Docker native 실행 | 실제 orch 이미지의 PID 1에서 WebRTC 초기화와 H.264 MP4 인코딩 통과, exit 0 |
-| worker 제거 | media-worker 폴더·compose.media.yml·worker URL·전용 HTTP 업로드 API 삭제 |
+| 실제 Unity→orch viewer WebSocket | 보정 후 1280×720 JPEG 40 frames, 약 9.37fps |
+| 실제 JPEG 크기 | 평균 63,367 bytes, 최대 63,711 bytes, 128KiB 이내 |
+| 실제 QA 6 H.264 MP4→S3→다운로드·decode | 1,350,436 bytes, 472 frames, 마지막 PTS 약 54.57초 |
+| 화면 방향 | 다운로드한 MP4와 새 JPEG의 게임·UI 글자가 정상 방향 |
+| 최종 SDK | GPU EditMode 578개·PlayMode 92개, 총 670개 통과·skip 0 |
+| home | 전체 1,509개·전송 경계 11개 테스트, typecheck·build·수정 파일 eslint 통과 |
+| 서버 | 집중 회귀 14개 클래스·83개 항목과 JAR package 통과 |
+| Docker | artel-orch-websocket-media:20261028 build 통과 |
+| Docker JPEG/H.264 | 실제 이미지에서 JPEG decode→H.264 encode/decode·상하 패턴 보존 통과, JVM PID 1·childProcesses 0 |
 
-집중 검증 명령은 `./mvnw -Dkotlin.compiler.daemon=false -Dtest=QaMediaRelayTest,QaVideoRecorderTest,InProcessMediaServiceTest,StreamPropertiesTest,ViewerSessionRegistryTest,ViewerPayloadLifetimeTest,CaseVerdictFromQaIntegrationTest,VideoCoverageTest,QaReliabilityTest,OpenApiDocumentationIntegrationTest package`다. native 테스트의 Kotlin 반환형을 명시한 뒤 `-Dtest=QaVideoRecorderTest,InProcessMediaServiceTest kotlin:test-compile surefire:test`로 9개가 모두 발견·통과하는 것도 확인했다.
+실제 게임의 QA 결과 정확도 개선을 측정한 결과는 아니다. 영상 전송·저장 검증과 agent 판정 품질 평가는 구분한다. Firefox 화면 자동 확인은 도구의 Windows 브라우저 정책 지원 제한으로 중단됐으며 이후 검증은 서버 viewer API와 S3 다운로드를 사용했다.
 
-실제 송수신 검증은 합성 SDK·viewer 클라이언트, 별도 DB `artel_qa_inprocess_20261028`, 로컬 MinIO와 서버 8190/8191 포트를 사용했다. Python은 테스트 클라이언트로만 사용했으며 orch 서버나 Docker 배포에는 포함되지 않는다. Docker native 검증은 네트워크를 끄고 같은 의존성을 로드한 실행이다. 실제 Unity 게임 QA나 외부 TURN 검증 결과로 해석하지 않는다.
+## 회귀 범위
 
-## 이전 구조의 검증 이력
+- ACK flow-control, 서버 frame rate·JPEG/JSON 크기·metadata 해상도 제한, 중복 frameId·이전 SDK session·구 transport 거부
+- 느린 SDK ACK·viewer의 최신 frame 대기와 실제 최종 merge의 고정된 in-flight 상한
+- JPEG decode/encoder의 대기+처리 중 count·8MiB budget, PTS에 입력 정지 시간을 보존
+- S3 지연 격리, 3회 재시도 실패·gap·임시 파일 정리, finalize 실패 후 자리 재사용
+- SDK의 송신 callback 미반환→실제 소켓 종료→새 socket 송신, 늦은 timer·callback·ACK 차단
+- GPU noise 화면의 JPEG 크기 제한·자동 해상도 축소·surface 재사용·UV 방향 분기
+- home의 decode 1개·최신 대기 1개, 늦은 bitmap 해제, frame stale와 버전 불일치 오류 구분
+- TC 평가 API·신뢰도·영상 coverage·OpenAPI 회귀
 
-2026-10-27~28의 worker 기반 합성 WebRTC·S3 검증, Python worker 테스트 6개와 worker Docker build는 삭제한 구조에 대한 과거 결과다. orch JVM 내부 구현의 통과 근거로 사용하지 않는다.
+서버 명령: `./mvnw -Dkotlin.compiler.daemon=false -Dtest=QaVideoRecorderTest,InProcessMediaServiceTest,QaMediaRelayTest,ViewerSessionRegistryTest,ViewerPayloadLifetimeTest,StreamPropertiesTest,SessionManagerTest,SdkWebSocketHandlerUnknownTypeTest,SdkHeartbeatTest,SdkSocketPropertiesTest,CaseVerdictFromQaIntegrationTest,VideoCoverageTest,QaReliabilityTest,OpenApiDocumentationIntegrationTest package`.
 
-이전 서버 변경은 중단 전·재개·수정 후 검증을 중복 제외해 257개 클래스·2,341개 테스트를 통과했다. 이 수치는 native 미디어 구현을 추가하기 전의 회귀 기준이며 현재 변경이 같은 suite를 통과했다는 뜻이 아니다. 기존 검증 중 발견한 scene 대표 조작의 조회 순서 의존성과 OpenAPI 테스트 버퍼 수정은 코드에 유지한다.
+## 추가 검증과 남은 범위
 
-## 남은 운영 검증
+실제 Windows Unity에 viewer 두 개를 동시에 연결해 각자 다른 streamId로 frame을 받는 것을 확인했다. 첫 viewer의 frameId가 1→2로 증가하는 동안 두 번째도 수신했고, 첫 viewer를 종료한 뒤에도 두 번째는 frameId 1→13까지 새 frame을 받았다. 기존 viewer 교체 경로는 없다. 단위 회귀는 최대 8개·32개 동시 admission·개별 종료·마지막 viewer 종료·녹화 유지·전체 viewer 재연결을 검증한다. QA history의 테스트 런 이름 링크와 실행 기록 명칭도 반영했다. home 전체 lint에는 이번 수정 범위 밖의 기존 오류 5개·경고 4개가 남아 있으며 수정 파일 lint는 통과했다.
 
-실제 Unity 게임을 같은 model·prompt_version·scenario·build로 실행하는 변경 전·후 비교는 LLM 복호화 설정이 없어 미실행이다. 자동 테스트나 합성 영상 검증으로 agent 정확도 개선을 주장하지 않는다.
+운영 장시간 부하, main-thread JPEG encode p95와 느린 외부 TCP 연결에서의 QA action 지연은 별도 측정이 남아 있다. 1280×720·10fps와 128KiB JPEG, ACK·queue 상한은 비용을 제한하는 장치이며 모든 네트워크의 지연 보장값은 아니다.
 
-외부 TURN 연결, 다중 instance의 장시간 부하, 운영 bucket의 30일 삭제 작업, 실제 사용자 알림도 배포 환경에서 확인해야 한다. JNI native 오류가 같은 JVM에 영향을 줄 수 있으므로 연결·프레임·thread·저장 상한과 종료 경로를 함께 검증한다.
+## 이전 구현 기록
 
-## 연관 문서
-
-- [확정 요구사항](qa-tc-evaluation-requirements.md)
-- [내부 미디어 설정과 보관 정책](qa-video-recording.md)
-- Jira: ARTEL-1269, 전체 작업 ARTEL-1268
+별도 worker의 6개 테스트와 synthetic WebRTC 경로의 55개 회귀·757/590 frames 결과는 이전 구현의 기록이다. 현 WebSocket 구현의 검증 수치로 합산하지 않는다. 이전 상세는 서버 PR #383의 commit e45569cf에 보존돼 있다.
