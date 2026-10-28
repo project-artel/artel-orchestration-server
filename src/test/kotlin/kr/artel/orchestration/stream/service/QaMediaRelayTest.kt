@@ -199,15 +199,15 @@ class QaMediaRelayTest {
     }
     private class Fixture(properties: StreamProperties = StreamProperties()) {
         val recording = QaRecording(UUID.randomUUID(), "game", Instant.now(), null, null, null)
-        var active = listOf(recording)
+        @Volatile var active = listOf(recording)
         var failStart = false
         var nativeUnavailable = false
         var failClose = false
         var closeCount = 0
-        var closeGate: CountDownLatch? = null
+        @Volatile var closeGate: CountDownLatch? = null
         val closeStarted = CountDownLatch(1)
         val otherRenews = AtomicInteger()
-        val states = linkedMapOf<UUID, String>()
+        val states = java.util.concurrent.ConcurrentHashMap<UUID, String>()
         val sessions = Mockito.mock(SessionManager::class.java) { invocation ->
             if (failStart && invocation.method.name == "send" && invocation.arguments[1] is StreamStartMessage) error("SDK disconnected")
             if (invocation.method.name == "send" && invocation.arguments[0] == "other" && invocation.arguments[1] is StreamRenewMessage) otherRenews.incrementAndGet()

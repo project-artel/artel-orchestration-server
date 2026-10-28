@@ -18,6 +18,23 @@ class SessionManagerTest {
     private val sessionManager = SessionManager(ObjectMapper())
 
     @Test
+    fun `영상 ACK는 액션 전송 대기 수에 포함하지 않는다`() {
+        val session = Mockito.mock(WebSocketSession::class.java)
+        val outbound = requireNotNull(sessionManager.register("1", session))
+        runBlocking { sessionManager.sendRaw("1", "action") }
+        sessionManager.sendMediaAck("1", mapOf("type" to "MEDIA_FRAME_ACK"))
+        assertThat(sessionManager.pendingOutbound("1")).isEqualTo(1)
+        StepVerifier.create(outbound.take(2))
+            .recordWith { mutableListOf<String>() }
+            .expectNextCount(2)
+            .consumeRecordedWith { messages ->
+                assertThat(messages).containsExactlyInAnyOrder("action", "{\"type\":\"MEDIA_FRAME_ACK\"}")
+            }
+            .verifyComplete()
+        assertThat(sessionManager.pendingOutbound("1")).isZero()
+    }
+
+    @Test
     fun `refuses to register a second session for the same instance`() {
         val first = Mockito.mock(WebSocketSession::class.java)
         val second = Mockito.mock(WebSocketSession::class.java)
