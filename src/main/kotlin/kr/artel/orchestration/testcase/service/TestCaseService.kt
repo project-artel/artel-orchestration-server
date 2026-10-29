@@ -239,7 +239,11 @@ class TestCaseService(
      * 실행할 때 실제로 서 있던 씬뿐이라, 그것으로 짝을 짓는다. 한 게임 씬에 TC 씬 이름이 여럿 붙으면
      * 가장 많이 붙은 쪽이다. 짝이 없는 씬은 게임 이름 그대로 내보낸다 — 지우면 그 길이 없는 것으로 읽힌다.
      */
-    private inner class Observed(cases: List<TestCaseEntity>, raw: List<QaObservationService.Exit>) {
+    private inner class Observed(cases: List<TestCaseEntity>, raw: List<QaObservationService.Exit>, private val current: Long?) {
+        /** 지금 버전이 아닌 build 에서만 본 것. 버리지 않고 표시해 보낸다 — 게임이 바뀌어도 그대로인 것이 더 많다. */
+        private fun older(buildId: Long?) = current != null && buildId != null && buildId != current
+        private fun marked(text: String, buildId: Long?) = if (older(buildId)) "$text $EARLIER_BUILD" else text
+
         private val observed = cases.associate { it.id to observedOf(it) }
         private val names: Map<String, String> = cases.mapNotNull { case ->
             observed[case.id]?.path("scene")?.asText(null)?.takeIf { it.isNotBlank() }
@@ -252,14 +256,20 @@ class TestCaseService(
         val exits: Map<String, List<SceneExit>> = raw
             .filter { name(it.from) != name(it.to) }
             .groupBy { name(it.from) }
-            .mapValues { (_, ways) -> ways.distinctBy { name(it.to) }.map { SceneExit(name(it.to), it.by.ifBlank { null }) } }
+            .mapValues { (_, ways) ->
+                ways.sortedBy { older(it.buildId) }.distinctBy { name(it.to) }
+                    .map { SceneExit(name(it.to), it.by.ifBlank { null }?.let { by -> marked(by, it.buildId) }) }
+            }
 
         fun arrival(case: TestCaseEntity): Map<String, String> =
             observed[case.id]?.path("arrives_at")?.asText(null)?.takeIf { it.isNotBlank() }
                 ?.let { mapOf("scene" to name(it)) }.orEmpty()
 
-        fun input(case: TestCaseEntity): String =
-            observed[case.id]?.path("input")?.asText("").orEmpty()
+        fun input(case: TestCaseEntity): String {
+            val seen = observed[case.id] ?: return ""
+            val input = seen.path("input").asText("").ifBlank { return "" }
+            return marked(input, seen.path("build_id").takeIf { it.isNumber }?.asLong())
+        }
     }
 
     private fun observedOf(case: TestCaseEntity): JsonNode? =
@@ -267,7 +277,11 @@ class TestCaseService(
             ?.takeIf { it.isObject }
 
     private suspend fun observedPaths(cases: List<TestCaseEntity>, projectId: Long): Observed =
-        Observed(cases, runCatching { caseContracts.observedExits(projectId) }.getOrElse { emptyList() })
+        Observed(
+            cases,
+            runCatching { caseContracts.observedExits(projectId) }.getOrElse { emptyList() },
+            kr.artel.orchestration.testscenario.service.authoringGameBuildId() ?: runCatching { caseContracts.latestBuildId(projectId) }.getOrNull(),
+        )
 
     private fun arrival(case: TestCaseEntity): Map<String, String> =
         runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
@@ -618,5 +632,7 @@ class TestCaseService(
         /** 저작에 보내는 사유 문구. 모델이 읽는 글이라 영어로 둔다(프롬프트와 같은 말). */
         const val UNMADE = "no case leaves this — it may go by another name, or hold from the start"
         const val ASSUMED = "common sense, not written in the TC"
+        /** QA 가 지금 버전이 아닌 build 에서만 본 길 · 입력. 게임이 바뀌었으면 틀릴 수 있다. */
+        const val EARLIER_BUILD = "(seen by QA in an earlier build)"
     }
 }

@@ -17,6 +17,8 @@ import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testcase.dto.SceneExit
 import org.springframework.r2dbc.core.DatabaseClient
 import kotlinx.coroutines.reactor.awaitSingle
+import kr.artel.orchestration.game.entity.GameBuildEntity
+import kr.artel.orchestration.game.repository.GameBuildRepository
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -155,6 +157,7 @@ class CaseContractServiceIntegrationTest {
     @Autowired private lateinit var users: AppUserRepository
     @Autowired private lateinit var testCases: TestCaseService
     @Autowired private lateinit var db: DatabaseClient
+    @Autowired private lateinit var builds: GameBuildRepository
 
     @Test
     fun `QA 가 본 씬 출구는 TC 씬 이름으로 옮겨 저작 목록에 실린다`(): Unit = runBlocking {
@@ -168,9 +171,11 @@ class CaseContractServiceIntegrationTest {
         val start = seen("타이틀", "시작하기를 누른다", """{"scene":"TitleScene","arrives_at":"SquareScene","input":"click:Canvas/Start"}""")
         seen("광장", "상점에 들어간다", """{"scene":"SquareScene"}""")
         val forest = seen("숲", "늑대를 공격한다", """{"scene":"ForestScene"}""")
+        val older = builds.save(GameBuildEntity(projectId = project.id!!, version = "0.1.0", createdAt = now.minusSeconds(60), updatedAt = now))
+        val current = builds.save(GameBuildEntity(projectId = project.id!!, version = "0.2.0", createdAt = now, updatedAt = now))
         db.sql("INSERT INTO case_glossary (project_id, exits) VALUES (:p, CAST(:e AS jsonb))")
             .bind("p", project.id!!)
-            .bind("e", """[{"from":"SquareScene","to":"ForestScene","by":"key:W"},{"from":"SquareScene","to":"CaveScene","by":"key:S"}]""")
+            .bind("e", """[{"from":"SquareScene","to":"ForestScene","by":"key:W","build_id":${current.id}},{"from":"SquareScene","to":"CaveScene","by":"key:S","build_id":${older.id}}]""")
             .fetch().rowsUpdated().awaitSingle()
 
         val sent = testCases.getAuthoringCases(project.id!!, user.id!!).associateBy { it.id }
@@ -179,7 +184,11 @@ class CaseContractServiceIntegrationTest {
         assertThat(sent[start.id]!!.input).isEqualTo("click:Canvas/Start")
         val square = sent.values.single { it.scene == "광장" }
         // 짝이 없는 게임 씬(CaveScene)은 이름 그대로 둔다 — 지우면 그 길이 없는 것으로 읽힌다.
-        assertThat(square.exits).containsExactlyInAnyOrder(SceneExit("숲", "key:W"), SceneExit("CaveScene", "key:S"))
+        // 앞 버전에서만 본 길은 버리지 않고 표시해 보낸다.
+        assertThat(square.exits).containsExactlyInAnyOrder(
+            SceneExit("숲", "key:W"),
+            SceneExit("CaveScene", "key:S (seen by QA in an earlier build)"),
+        )
         assertThat(sent[forest.id]!!.exits).isEmpty()
     }
 }

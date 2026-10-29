@@ -43,7 +43,14 @@ class QaObservationService(
     }
 
     data class Observed(val caseId: Long, val scene: String?, val arrivesAt: String?, val input: String?)
-    data class Exit(val from: String, val to: String, val by: String)
+    /** [buildId] 는 그 길을 본 build 다. 다음 버전의 저작이 앞 버전에서만 본 길을 가려 읽는다. */
+    data class Exit(
+        val from: String,
+        val to: String,
+        val by: String,
+        @param:com.fasterxml.jackson.annotation.JsonProperty("build_id") @get:com.fasterxml.jackson.annotation.JsonProperty("build_id")
+        val buildId: Long? = null,
+    )
 
     suspend fun accumulate(qaTryId: Long): Int {
         val projectId = databaseClient.sql(
@@ -52,6 +59,14 @@ class QaObservationService(
         val hasGlossary = databaseClient.sql("SELECT 1 FROM case_glossary WHERE project_id = :p")
             .bind("p", projectId).map { _, _ -> 1 }.one().awaitSingleOrNull() != null
         if (!hasGlossary) return 0
+        // 이 try 가 돈 build. 런이 고정한 것이 먼저고, 없으면 인스턴스가 마지막으로 보고한 것이다.
+        val buildId = databaseClient.sql(
+            """
+            SELECT coalesce(r.game_build_id, i.last_game_build_id) AS build_id
+              FROM qa_try t LEFT JOIN qa_run r ON r.id = t.qa_run_id LEFT JOIN game_instance i ON i.id = t.game_instance_id
+             WHERE t.id = :id
+            """.trimIndent()
+        ).bind("id", qaTryId).map { r, _ -> r.get("build_id", java.lang.Long::class.java)?.toLong() }.one().awaitSingleOrNull()
         val rows = databaseClient.sql(
             "SELECT type, payload::text AS payload FROM qa_log WHERE qa_try_id = :id AND type IN ('PULSE','ACTION','TOOL_RESULT','STATUS') ORDER BY id"
         ).bind("id", qaTryId).map { r, _ -> r.get("type", String::class.java)!! to (r.get("payload", String::class.java) ?: "{}") }.all().collectList().awaitSingle()
@@ -66,6 +81,7 @@ class QaObservationService(
                 o.arrivesAt?.let { put("arrives_at", it) }
                 o.input?.let { put("input", it) }
                 put("qa_try_id", qaTryId)
+                buildId?.let { put("build_id", it) }
                 put("at", Instant.now().toString())
             }
             databaseClient.sql("UPDATE test_case SET metadata = CAST(:m AS jsonb), updated_at = now() WHERE id = :id")
@@ -74,18 +90,21 @@ class QaObservationService(
             written++
         }
         if (exits.isNotEmpty()) {
-            databaseClient.sql(
-                """
-                UPDATE case_glossary
-                   SET exits = (SELECT coalesce(jsonb_agg(DISTINCT e), '[]'::jsonb) FROM jsonb_array_elements(exits || CAST(:new AS jsonb)) e),
-                       updated_at = now()
-                 WHERE project_id = :p
-                """.trimIndent()
-            ).bind("new", objectMapper.writeValueAsString(exits)).bind("p", projectId).fetch().rowsUpdated().awaitSingle()
+            // 같은 길(어디서 · 어디로 · 무엇으로)은 하나만 둔다. 다시 보면 그 길을 본 build 가 이번 것으로 바뀐다 —
+            // 다음 버전에서도 그대로인 길이 "앞 버전에서만 봄" 으로 남지 않게.
+            val seen = exits.map { it.copy(buildId = buildId) }
+            val kept = caseContractsExits(projectId).filter { old -> seen.none { it.from == old.from && it.to == old.to && it.by == old.by } }
+            databaseClient.sql("UPDATE case_glossary SET exits = CAST(:e AS jsonb), updated_at = now() WHERE project_id = :p")
+                .bind("e", objectMapper.writeValueAsString(kept + seen)).bind("p", projectId).fetch().rowsUpdated().awaitSingle()
         }
         logger.info("QA 관측 쌓음 [qaTryId={}, projectId={}] 케이스 {} · 출구 {}", qaTryId, projectId, written, exits.size)
         return written
     }
+
+    private suspend fun caseContractsExits(projectId: Long): List<Exit> =
+        databaseClient.sql("SELECT exits::text AS exits FROM case_glossary WHERE project_id = :p")
+            .bind("p", projectId).map { r, _ -> r.get("exits", String::class.java) ?: "[]" }.one().awaitSingleOrNull()
+            ?.let { objectMapper.readValue(it, Array<Exit>::class.java).toList() }.orEmpty()
 
     companion object {
         /**

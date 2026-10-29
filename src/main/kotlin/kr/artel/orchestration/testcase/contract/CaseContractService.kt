@@ -82,9 +82,15 @@ class CaseContractService(
             ?.let { objectMapper.readTree(it) }
             ?.mapNotNull { e ->
                 val from = e.path("from").asText(""); val to = e.path("to").asText("")
-                if (from.isBlank() || to.isBlank()) null else QaObservationService.Exit(from, to, e.path("by").asText(""))
+                if (from.isBlank() || to.isBlank()) null
+                else QaObservationService.Exit(from, to, e.path("by").asText(""), e.path("build_id").takeIf { it.isNumber }?.asLong())
             }
             .orEmpty()
+
+    /** 프로젝트에서 가장 최근에 등록된 build. 저작에 버전 맥락이 없을 때의 "지금 버전" 이다. */
+    suspend fun latestBuildId(projectId: Long): Long? =
+        databaseClient.sql("SELECT id FROM game_build WHERE project_id = :p ORDER BY created_at DESC, id DESC LIMIT 1")
+            .bind("p", projectId).map { r, _ -> r.get("id", java.lang.Long::class.java)?.toLong() }.one().awaitSingleOrNull()
 
     private data class Glossary(val terms: JsonNode, val startState: Map<String, String>)
 
