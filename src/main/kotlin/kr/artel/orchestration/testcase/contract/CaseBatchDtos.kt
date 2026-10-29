@@ -36,6 +36,8 @@ data class CaseBatchItem(
     val needs: List<String>? = null,
     /** 하고 나면 남는 것. `등불=1`, `동전=+20`, `낮밤=밤`. */
     val leaves: List<String>? = null,
+    /** 하고 나면 다른 화면으로 가면 그 화면(씬 전이 TC). `광장`. */
+    val arrivesAt: String? = null,
 )
 
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
@@ -65,4 +67,6 @@ data class CaseContractRow(
     val leaves: List<String>,
     /** ai: 글에서 뽑음. user: 사람(또는 사용자 AI)이 적음. observed: QA 가 봄. 없으면 아직 계약이 없다. */
     val contractSource: String?,
+    /** 다른 화면으로 가는 TC 면 도착 화면. */
+    val arrivesAt: String? = null,
 )

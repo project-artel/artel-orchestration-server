@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
 import org.slf4j.LoggerFactory
 import org.springframework.r2dbc.core.DatabaseClient
@@ -172,16 +173,21 @@ class CaseContractService(
         val mark = objectMapper.createObjectNode().apply {
             put("hash", hashOf(case))
             put("source", "ai")
+            put("v", CONTRACT_VERSION)
             put("at", Instant.now().toString())
+        }
+        // 도착 화면은 저작이 이미 읽는 자리(`arrives_at`)에 둔다. 다시 뽑아 화면이 안 바뀌면 지운다.
+        val arrival = objectMapper.createObjectNode().apply {
+            contract.arrivesAt.trim().ifBlank { null }?.let { put(MapTestCaseWriter.ARRIVES_AT, it) }
         }
         val spec = databaseClient.sql(
             """
             UPDATE test_case
                SET condition = CAST(:condition AS jsonb),
-                   metadata = jsonb_set(
+                   metadata = (jsonb_set(
                        jsonb_set(coalesce(metadata, '{}'::jsonb), '{source}',
                                  coalesce(metadata->'source', '{}'::jsonb) || CAST(:source AS jsonb), true),
-                       '{contract}', CAST(:mark AS jsonb), true),
+                       '{contract}', CAST(:mark AS jsonb), true) - 'arrives_at') || CAST(:arrival AS jsonb),
                    updated_at = now()
              WHERE id = :id
             """.trimIndent()
@@ -189,6 +195,7 @@ class CaseContractService(
             .bind("id", case.id!!)
             .bind("source", objectMapper.writeValueAsString(source))
             .bind("mark", objectMapper.writeValueAsString(mark))
+            .bind("arrival", objectMapper.writeValueAsString(arrival))
         val bound = contract.condition?.takeUnless { it.isNull }
             ?.let { spec.bind("condition", objectMapper.writeValueAsString(it)) }
             ?: spec.bindNull("condition", String::class.java)
@@ -205,6 +212,8 @@ class CaseContractService(
         }
         // 사람이 고친 계약은 문구가 바뀌어도 다시 뽑지 않는다.
         if (mark.path("source").asText() != "ai") return false
+        // 뽑는 칸이 늘면 판본을 올린다. 앞 판본으로 뽑은 계약은 문구가 그대로여도 한 번 다시 뽑는다.
+        if (mark.path("v").asInt(1) < CONTRACT_VERSION) return true
         return mark.path("hash").asText() != hashOf(case)
     }
 
@@ -311,6 +320,7 @@ class CaseContractService(
                 leaves = meta?.path("source")?.path("state_after")?.asText("").orEmpty()
                     .split(";").map { it.trim() }.filter { it.isNotBlank() },
                 contractSource = meta?.path("contract")?.path("source")?.asText(null),
+                arrivesAt = meta?.path(MapTestCaseWriter.ARRIVES_AT)?.asText(null)?.ifBlank { null },
             )
         }
         return CaseContractList(glossary.terms, glossary.startState, rows)
@@ -327,10 +337,17 @@ class CaseContractService(
      * 사람(또는 사용자의 AI)이 적은 계약을 그대로 쓴다. 출처는 `user` 라 AI 추출이 덮지 않는다. [needs] 는 `(이름, 비교, 값)` 이다.
      * 둘 다 비었으면 아무것도 하지 않는다 — 그 TC 는 AI 가 글에서 뽑는다.
      */
-    suspend fun writeUserContract(projectId: Long, caseId: Long, needs: List<Triple<String, String, String>>, leaves: List<String>) {
-        if (needs.isEmpty() && leaves.isEmpty()) return
+    suspend fun writeUserContract(
+        projectId: Long,
+        caseId: Long,
+        needs: List<Triple<String, String, String>>,
+        leaves: List<String>,
+        arrivesAt: String? = null,
+    ) {
+        if (needs.isEmpty() && leaves.isEmpty() && arrivesAt.isNullOrBlank()) return
         val case = testCases.findById(caseId)?.takeIf { it.projectId == projectId } ?: return
         val meta = objectMapper.readTree(case.metadata.asString()) as ObjectNode
+        arrivesAt?.trim()?.ifBlank { null }?.let { meta.put(MapTestCaseWriter.ARRIVES_AT, it) }
         val source = (meta.path("source") as? ObjectNode) ?: objectMapper.createObjectNode()
         source.put("state_after", leaves.joinToString("; "))
         val parts = needs.map { (name, op, value) -> testNode(name, op, value) }
@@ -447,6 +464,9 @@ class CaseContractService(
         /** 계약을 고친 출처. 사람 말이면 user, QA 가 본 것이면 observed 다. */
         const val USER = "user"
         const val OBSERVED = "observed"
+
+        /** 뽑는 칸의 판본. 2: 다른 화면으로 가는 TC 의 도착 화면(`arrives_at`). */
+        const val CONTRACT_VERSION = 2
 
         /** TC 를 연달아 넣을 때 한 번에 모아 정리하려고 기다리는 시간. */
         private const val REFRESH_DEBOUNCE_MS = 3_000L

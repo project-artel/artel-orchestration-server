@@ -48,7 +48,7 @@ class CaseBatchService(
                     )?.takeIf { it.projectId == projectId.toString() } ?: throw NotFoundException("TC ${item.testCaseId} 를 찾을 수 없습니다.")
                     response.id.also { updated += it }
                 }
-                caseContracts.writeUserContract(projectId, caseId.toLong(), needs, leaves)
+                caseContracts.writeUserContract(projectId, caseId.toLong(), needs, leaves, item.arrivesAt)
             }.onFailure { rejected += CaseBatchRejection(index, it.message ?: it::class.simpleName.orEmpty()) }
         }
         return CaseBatchResponse(created, updated, rejected, addedTerms)

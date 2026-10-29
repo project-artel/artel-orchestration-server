@@ -26,6 +26,8 @@ data class CaseContractItem(
     val condition: JsonNode? = null,
     @param:JsonProperty("state_after") val stateAfter: String = "",
     @param:JsonProperty("assumed_before") val assumedBefore: String = "",
+    /** 다른 화면으로 가는 TC 의 도착 화면(TC 가 부르는 이름). 씬 전이 TC 의 표식이다. */
+    @param:JsonProperty("arrives_at") val arrivesAt: String = "",
 )
 
 data class CaseContractResponse(

@@ -153,6 +153,12 @@ class TestCaseService(
         val all = authoringCases.all(projectId).toList()
         // 지도가 없는 프로젝트는 QA 가 지나가며 본 것으로 채운다. 지도가 있으면 지도가 먼저다.
         val seen = observedPaths(all, projectId)
+        // 씬 전이 TC — 계약이 "하면 다른 화면으로 간다" 고 표시한 TC 는 그 화면으로 가는 길이다. QA 가 지나가기 전
+        // 첫 저작부터 화면 이동을 안다. 무엇을 누르는지는 TC 의 행동 글이 말한다.
+        val byTc = all.filter { it.capabilityKey == null }
+            .mapNotNull { case -> arrival(case)["scene"]?.let { to -> Triple(ScenarioStateReader.sceneOf(case) ?: case.scene, to, case) } }
+            .filter { (from, to, _) -> from != to }
+            .groupBy({ it.first }, { (_, to, case) -> SceneExit(to, "TC ${case.id}: ${case.step}") })
         // **아무 케이스도 만들지 못하는 전제는 확인 안 된 요구로 표시해 보낸다.** 자연어 TC 에서 뽑은 식은
         // 틀린 칸이 섞인다(`저녁까지 쉰다` → 요구: 시간 == 저녁). 그런데 빼면 옳은 요구도 함께 사라진다 —
         // `무기 보유` 는 옳은데 남기는 케이스가 `검 보유` 라고 적어 이름이 어긋났을 뿐이다. 실측(등불
@@ -201,7 +207,10 @@ class TestCaseService(
                 stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
                     .ifEmpty { changed[case.id].orEmpty() } + arrival(case).ifEmpty { seen.arrival(case) },
                 exits = exits[ScenarioStateReader.sceneOf(case) ?: case.scene].orEmpty()
-                    .ifEmpty { seen.exits[ScenarioStateReader.sceneOf(case) ?: case.scene].orEmpty() },
+                    .ifEmpty {
+                        val here = ScenarioStateReader.sceneOf(case) ?: case.scene
+                        (byTc[here].orEmpty() + seen.exits[here].orEmpty()).distinctBy { it.scene }
+                    },
                 input = inputs[case.id].orEmpty().ifEmpty { seen.input(case) },
             )
         }.toList()

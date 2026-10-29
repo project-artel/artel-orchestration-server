@@ -38,6 +38,7 @@ class CaseContractServiceIntegrationTest {
 
     class FakeAgent(private val mapper: ObjectMapper) : AgentCaseContractClient(AgentServerProperties()) {
         val asked = mutableListOf<List<Long>>()
+        var arrivals: Map<Long, String> = emptyMap()
         var slowMs = 0L
         override suspend fun extract(request: CaseContractRequest): CaseContractResponse {
             if (slowMs > 0) kotlinx.coroutines.delay(slowMs)
@@ -51,6 +52,7 @@ class CaseContractServiceIntegrationTest {
                         condition = mapper.readTree("""{"kind":"test","left":"검","operator":"==","right":"1","context":"static","offset":0,"subjectLost":null}"""),
                         stateAfter = "늑대_처치=1",
                         assumedBefore = "",
+                        arrivesAt = arrivals[it.id].orEmpty(),
                     )
                 },
             )
@@ -239,5 +241,30 @@ class CaseContractServiceIntegrationTest {
         val meta = ObjectMapper().readTree(cases.findById(gift.id!!)!!.metadata.asString())
         assertThat(meta.path("source").path("state_after").asText()).contains("등불=1")
         assertThat(meta.path("contract").path("source").asText()).isEqualTo("observed")
+    }
+
+    /** 씬 전이 TC 는 도착 화면이 표식으로 남고, 그 화면에 서 있는 TC 들의 출구에 "그 TC 를 하면 간다" 로 실린다. */
+    @Test
+    fun `a scene-moving case becomes an exit of its screen`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "scene-move", genre = "RPG", createdAt = now, updatedAt = now))
+        val user = users.save(testAppUser("mover", now))
+        members.save(ProjectMemberEntity(projectId = project.id!!, appUserId = user.id!!, role = "OWNER", createdAt = now))
+        val start = cases.save(TestCaseEntity(projectId = project.id!!, scene = "타이틀", step = "시작하기를 누른다.", expectedValue = "광장으로 간다."))
+        val look = cases.save(TestCaseEntity(projectId = project.id!!, scene = "타이틀", step = "제목을 본다.", expectedValue = "제목이 보인다."))
+        val fake = agent as FakeAgent
+        fake.arrivals = mapOf(start.id!! to "광장")
+        try {
+            service.refresh(project.id!!)
+        } finally {
+            fake.arrivals = emptyMap()
+        }
+
+        val meta = ObjectMapper().readTree(cases.findById(start.id!!)!!.metadata.asString())
+        assertThat(meta.path("arrives_at").asText()).isEqualTo("광장")
+        assertThat(meta.path("contract").path("v").asInt()).isEqualTo(CaseContractService.CONTRACT_VERSION)
+        val sent = testCases.getAuthoringCases(project.id!!, user.id!!).associateBy { it.id }
+        assertThat(sent[start.id]!!.stateAfter).containsEntry("scene", "광장")
+        assertThat(sent[look.id]!!.exits).containsExactly(SceneExit("광장", "TC ${start.id}: 시작하기를 누른다."))
     }
 }
