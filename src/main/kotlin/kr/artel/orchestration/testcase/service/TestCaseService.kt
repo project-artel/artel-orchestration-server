@@ -1,5 +1,7 @@
 package kr.artel.orchestration.testcase.service
 
+import com.fasterxml.jackson.databind.JsonNode
+import kr.artel.orchestration.testcase.contract.QaObservationService
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
@@ -149,6 +151,8 @@ class TestCaseService(
         val inputs = caseInputs(projectId)
         // 런이 빌드 버전을 따르면 케이스 내용은 그 버전 몫이다(ARTEL-1064). 맥락이 없으면 대표 행 그대로다.
         val all = authoringCases.all(projectId).toList()
+        // 지도가 없는 프로젝트는 QA 가 지나가며 본 것으로 채운다. 지도가 있으면 지도가 먼저다.
+        val seen = observedPaths(all, projectId)
         // **아무 케이스도 만들지 못하는 전제는 확인 안 된 요구로 표시해 보낸다.** 자연어 TC 에서 뽑은 식은
         // 틀린 칸이 섞인다(`저녁까지 쉰다` → 요구: 시간 == 저녁). 그런데 빼면 옳은 요구도 함께 사라진다 —
         // `무기 보유` 는 옳은데 남기는 케이스가 `검 보유` 라고 적어 이름이 어긋났을 뿐이다. 실측(등불
@@ -195,9 +199,10 @@ class TestCaseService(
                 // 케이스 메타가 먼저다 — 구버전 엑셀 경로로 들어온 행은 거기 답이 있다. 지도가 낸
                 // 행은 그 칸이 없어서 비어 오고, 그때 지도가 답한다(ARTEL-606).
                 stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
-                    .ifEmpty { changed[case.id].orEmpty() } + arrival(case),
-                exits = exits[ScenarioStateReader.sceneOf(case) ?: case.scene].orEmpty(),
-                input = inputs[case.id].orEmpty(),
+                    .ifEmpty { changed[case.id].orEmpty() } + arrival(case).ifEmpty { seen.arrival(case) },
+                exits = exits[ScenarioStateReader.sceneOf(case) ?: case.scene].orEmpty()
+                    .ifEmpty { seen.exits[ScenarioStateReader.sceneOf(case) ?: case.scene].orEmpty() },
+                input = inputs[case.id].orEmpty().ifEmpty { seen.input(case) },
             )
         }.toList()
     }
@@ -227,6 +232,43 @@ class TestCaseService(
      * 것은 다음 케이스의 `scene` 칸과 같은 말이라 맞추는 쪽이 헷갈리지 않기 때문이다 — 실측에서
      * 그 이름의 게임 값을 요구하는 전제는 없다.
      */
+    /**
+     * QA 가 본 것을 TC 의 말로 옮긴 것.
+     *
+     * 게임은 씬을 `SquareScene` 이라 부르고 TC 는 광장이라 부른다. 둘을 잇는 근거는 QA 가 그 TC 를
+     * 실행할 때 실제로 서 있던 씬뿐이라, 그것으로 짝을 짓는다. 한 게임 씬에 TC 씬 이름이 여럿 붙으면
+     * 가장 많이 붙은 쪽이다. 짝이 없는 씬은 게임 이름 그대로 내보낸다 — 지우면 그 길이 없는 것으로 읽힌다.
+     */
+    private inner class Observed(cases: List<TestCaseEntity>, raw: List<QaObservationService.Exit>) {
+        private val observed = cases.associate { it.id to observedOf(it) }
+        private val names: Map<String, String> = cases.mapNotNull { case ->
+            observed[case.id]?.path("scene")?.asText(null)?.takeIf { it.isNotBlank() }
+                ?.let { it to (ScenarioStateReader.sceneOf(case) ?: case.scene) }
+        }.groupBy({ it.first }, { it.second })
+            .mapValues { (_, tcNames) -> tcNames.groupingBy { it }.eachCount().maxBy { it.value }.key }
+
+        fun name(gameScene: String) = names[gameScene] ?: gameScene
+
+        val exits: Map<String, List<SceneExit>> = raw
+            .filter { name(it.from) != name(it.to) }
+            .groupBy { name(it.from) }
+            .mapValues { (_, ways) -> ways.distinctBy { name(it.to) }.map { SceneExit(name(it.to), it.by.ifBlank { null }) } }
+
+        fun arrival(case: TestCaseEntity): Map<String, String> =
+            observed[case.id]?.path("arrives_at")?.asText(null)?.takeIf { it.isNotBlank() }
+                ?.let { mapOf("scene" to name(it)) }.orEmpty()
+
+        fun input(case: TestCaseEntity): String =
+            observed[case.id]?.path("input")?.asText("").orEmpty()
+    }
+
+    private fun observedOf(case: TestCaseEntity): JsonNode? =
+        runCatching { objectMapper.readTree(case.metadata.asString()).path("observed") }.getOrNull()
+            ?.takeIf { it.isObject }
+
+    private suspend fun observedPaths(cases: List<TestCaseEntity>, projectId: Long): Observed =
+        Observed(cases, runCatching { caseContracts.observedExits(projectId) }.getOrElse { emptyList() })
+
     private fun arrival(case: TestCaseEntity): Map<String, String> =
         runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
             ?.path(MapTestCaseWriter.ARRIVES_AT)?.asText(null)

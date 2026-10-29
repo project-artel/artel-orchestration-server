@@ -72,6 +72,20 @@ class CaseContractService(
     suspend fun startState(projectId: Long): Map<String, String> =
         glossary(projectId).startState
 
+    /** QA 가 지나가며 본 씬 출구. 씬 이름은 게임이 부르는 그대로다. */
+    suspend fun observedExits(projectId: Long): List<QaObservationService.Exit> =
+        databaseClient.sql("SELECT exits::text AS exits FROM case_glossary WHERE project_id = :projectId")
+            .bind("projectId", projectId)
+            .map { r, _ -> r.get("exits", String::class.java) ?: "[]" }
+            .one()
+            .awaitSingleOrNull()
+            ?.let { objectMapper.readTree(it) }
+            ?.mapNotNull { e ->
+                val from = e.path("from").asText(""); val to = e.path("to").asText("")
+                if (from.isBlank() || to.isBlank()) null else QaObservationService.Exit(from, to, e.path("by").asText(""))
+            }
+            .orEmpty()
+
     private data class Glossary(val terms: JsonNode, val startState: Map<String, String>)
 
     private suspend fun glossary(projectId: Long): Glossary {
