@@ -9,6 +9,14 @@ import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.settings.config.AgentServerProperties
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.project.entity.ProjectMemberEntity
+import kr.artel.orchestration.project.repository.ProjectMemberRepository
+import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.support.testAppUser
+import kr.artel.orchestration.testcase.service.TestCaseService
+import kr.artel.orchestration.testcase.dto.SceneExit
+import org.springframework.r2dbc.core.DatabaseClient
+import kotlinx.coroutines.reactor.awaitSingle
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -141,5 +149,37 @@ class CaseContractServiceIntegrationTest {
         assertThat(applied).isEqualTo(2)
         assertThat(cases.findById(wolf.id!!)!!.metadata.asString()).contains("\"source\": \"user\"")
         assertThat(service.startState(project.id!!)).containsEntry("낮밤", "밤")
+    }
+
+    @Autowired private lateinit var members: ProjectMemberRepository
+    @Autowired private lateinit var users: AppUserRepository
+    @Autowired private lateinit var testCases: TestCaseService
+    @Autowired private lateinit var db: DatabaseClient
+
+    @Test
+    fun `QA 가 본 씬 출구는 TC 씬 이름으로 옮겨 저작 목록에 실린다`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "observed", genre = "RPG", createdAt = now, updatedAt = now))
+        val user = users.save(testAppUser("observer", now))
+        members.save(ProjectMemberEntity(projectId = project.id!!, appUserId = user.id!!, role = "OWNER", createdAt = now))
+        suspend fun seen(scene: String, step: String, observed: String) = cases.save(
+            TestCaseEntity(projectId = project.id!!, scene = scene, step = step, expectedValue = "-", metadata = Json.of("""{"observed":$observed}""")),
+        )
+        val start = seen("타이틀", "시작하기를 누른다", """{"scene":"TitleScene","arrives_at":"SquareScene","input":"click:Canvas/Start"}""")
+        seen("광장", "상점에 들어간다", """{"scene":"SquareScene"}""")
+        val forest = seen("숲", "늑대를 공격한다", """{"scene":"ForestScene"}""")
+        db.sql("INSERT INTO case_glossary (project_id, exits) VALUES (:p, CAST(:e AS jsonb))")
+            .bind("p", project.id!!)
+            .bind("e", """[{"from":"SquareScene","to":"ForestScene","by":"key:W"},{"from":"SquareScene","to":"CaveScene","by":"key:S"}]""")
+            .fetch().rowsUpdated().awaitSingle()
+
+        val sent = testCases.getAuthoringCases(project.id!!, user.id!!).associateBy { it.id }
+
+        assertThat(sent[start.id]!!.stateAfter).containsEntry("scene", "광장")
+        assertThat(sent[start.id]!!.input).isEqualTo("click:Canvas/Start")
+        val square = sent.values.single { it.scene == "광장" }
+        // 짝이 없는 게임 씬(CaveScene)은 이름 그대로 둔다 — 지우면 그 길이 없는 것으로 읽힌다.
+        assertThat(square.exits).containsExactlyInAnyOrder(SceneExit("숲", "key:W"), SceneExit("CaveScene", "key:S"))
+        assertThat(sent[forest.id]!!.exits).isEmpty()
     }
 }
