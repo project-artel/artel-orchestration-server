@@ -482,7 +482,10 @@ class ScenarioReconcileService(
             }
             if (question == null) addAll(notices)
             // 갈래는 **알림으로만** 남는다(ARTEL-903) — 질문에서 빠졌으니 건너뛸 이유도 없다.
-            addAll(siblingNotices(siblings, describe))
+            // 자연어 계약 프로젝트에서는 "빠진 갈래"를 알리지 않는다. 요청하지 않은 실패 갈래(검 없이 늑대)를
+            // 매 턴 빠졌다고 적으면 잡음이다 — 다른 갈래가 필요하면 저작이 범위 질문으로 묻는다.
+            val naturalLanguage = byId.values.any { it.leaves.isNotEmpty() || it.assumed.isNotEmpty() }
+            addAll(siblingNotices(if (naturalLanguage) siblings.copy(untestedArms = emptyList()) else siblings, describe))
             unsourcedNotice(findings, checked)?.let(::add)
         }
 
