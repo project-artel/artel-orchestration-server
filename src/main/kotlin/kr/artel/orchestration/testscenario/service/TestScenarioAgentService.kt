@@ -323,7 +323,8 @@ class TestScenarioAgentService(
      * 멎은 것으로 본다. 조회가 많은 턴은 오래 걸릴 뿐 멎은 것이 아니다.
      */
     private fun watch(sessionKey: String, runId: Long, appUserId: Long) {
-        val session = sessions[sessionKey] ?: return
+        // 턴을 보낸 사이 연결이 이미 끊겼으면 기다릴 것이 없다 — 지금 알린다.
+        val session = sessions[sessionKey] ?: return notifyDisconnected(sessionKey, runId, appUserId)
         runLocks.hold(runId, session.projectId, appUserId, sessionKey, choosing = session.autoApply)
         session.watchdog?.cancel()
         session.lastHeard = System.currentTimeMillis()
@@ -347,6 +348,19 @@ class TestScenarioAgentService(
             )
             // 기다림이 끝났으니 런도 푼다. 늦게 온 결과는 그래도 반영된다(위 설명) — 그 사이 고친 것은 덮일 수 있다.
             runLocks.release(sessionKey)
+        }
+    }
+
+    /** 답을 기다리던 턴의 Agent 연결이 끊겼다. 다시 보내면 세션이 새로 열리고 대화 기록은 이어진다. */
+    private fun notifyDisconnected(sessionKey: String, runId: Long, appUserId: Long) {
+        logger.warn("답을 기다리던 턴의 Agent 연결이 끊겼다 [sessionKey={}, runId={}]", sessionKey, runId)
+        streamManager.emit(
+            sessionKey,
+            ScenarioStreamEvent(type = "error", code = AGENT_DISCONNECTED, detail = AGENT_DISCONNECTED_MESSAGE),
+        )
+        scope.launch {
+            runCatching { saveMessage(runId, appUserId, "ASSISTANT", AGENT_DISCONNECTED_MESSAGE) }
+                .onFailure { logger.warn("연결 끊김 안내 저장 실패: ${it.message}") }
         }
     }
 
@@ -463,6 +477,9 @@ class TestScenarioAgentService(
     fun closeSession(sessionKey: String) {
         runLocks.release(sessionKey)
         val session = sessions.remove(sessionKey) ?: return
+        // 사용자가 닫은 것이다. 끊김 안내를 띄우지 않게 기다림부터 거둔다.
+        session.watchdog?.cancel()
+        session.watchdog = null
         try {
             val json = objectMapper.writeValueAsString(AgentCloseMessage())
             session.outbound.tryEmitNext(json)
@@ -1593,6 +1610,12 @@ class TestScenarioAgentService(
                 .then()
             send.and(receive)
         }.doFinally {
+            // **답을 기다리던 턴이면 바로 알린다.** 끊긴 턴은 결과가 오지 않는다. 알리지 않으면 사용자는 시한(5분)이
+            // 찰 때까지 돌아가는 화면을 본다 — 실측(2026-10-29): Agent 가 다시 뜨며 끊긴 턴을 194초 기다렸다.
+            val waiting = session.watchdog != null
+            session.watchdog?.cancel()
+            session.watchdog = null
+            if (waiting) notifyDisconnected(sessionKey, runId, appUserId)
             // WS 가 끊기면 턴도 끝난 것이다. 쥔 런 잠금을 놓는다.
             runLocks.release(sessionKey)
             sessions.remove(sessionKey)
@@ -2166,6 +2189,11 @@ class TestScenarioAgentService(
     )
 
     companion object {
+        /** 답을 기다리던 턴의 Agent 연결이 끊겼을 때 화면과 대화 기록에 남기는 것. */
+        const val AGENT_DISCONNECTED = "agent_disconnected"
+        const val AGENT_DISCONNECTED_MESSAGE =
+            "저작 Agent 와 연결이 끊겨 이번 요청을 처리하지 못했어요. 같은 말을 다시 보내 주세요 — 앞의 대화는 이어집니다."
+
         /** 계약 정리를 기다리는 상한. 넘으면 글만으로 짠다 — 다음 저작 때 남은 것을 마저 채운다. */
         const val CONTRACT_TIMEOUT_MS = 8 * 60 * 1000L
 
