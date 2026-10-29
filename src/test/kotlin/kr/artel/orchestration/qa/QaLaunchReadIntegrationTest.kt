@@ -23,6 +23,7 @@ import kr.artel.orchestration.qa.entity.QaRunEntity
 import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
+import kr.artel.orchestration.qa.service.QaVerdictService
 import kr.artel.orchestration.qa.service.QaLaunchReadService
 import kr.artel.orchestration.testrun.entity.TestRunEntity
 import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
@@ -57,6 +58,7 @@ import java.util.UUID
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class QaLaunchReadIntegrationTest {
 
+    @Autowired private lateinit var verdictService: QaVerdictService
     @Autowired private lateinit var service: QaLaunchReadService
     @Autowired private lateinit var databaseClient: DatabaseClient
     @Autowired private lateinit var qaTryRepository: QaTryRepository
@@ -149,6 +151,27 @@ class QaLaunchReadIntegrationTest {
         assertThat(top.casesPassed).isEqualTo(10)
         assertThat(top.casesTotal).isEqualTo(11)
         assertThat(top.issueCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `실행 환경은 현재 instance가 아닌 실행 당시 build에서 읽는다`(): Unit = runBlocking {
+        val standalone = gameBuildRepository.save(GameBuildEntity(projectId = projectId, version = "1.2.0", isEditor = false, createdAt = longAgo, updatedAt = longAgo)).id!!
+        val editor = gameBuildRepository.save(GameBuildEntity(projectId = projectId, version = "1.2.0", isEditor = true, createdAt = longAgo, updatedAt = longAgo)).id!!
+        val standaloneRun = newQaRun(longAgo)
+        val editorRun = newQaRun(lastStart)
+        val unknownRun = newQaRun(lastStart.plusSeconds(1))
+        databaseClient.sql("UPDATE qa_run SET game_build_id = :build WHERE id = :run").bind("build", standalone).bind("run", standaloneRun).fetch().rowsUpdated().awaitSingle()
+        databaseClient.sql("UPDATE qa_run SET game_build_id = :build WHERE id = :run").bind("build", editor).bind("run", editorRun).fetch().rowsUpdated().awaitSingle()
+        databaseClient.sql("UPDATE game_instance SET last_game_build_id = :build WHERE id = :instance").bind("build", standalone).bind("instance", instanceId).fetch().rowsUpdated().awaitSingle()
+
+        val items = service.listRuns(projectId, ownerId, 10).items.associateBy { it.id }
+        assertThat(items[standaloneRun.toString()]!!.gameBuildIsEditor).isFalse()
+        assertThat(items[editorRun.toString()]!!.gameBuildIsEditor).isTrue()
+        assertThat(items[unknownRun.toString()]!!.gameBuildIsEditor).isNull()
+        assertThat(verdictService.list(standaloneRun, ownerId).gameBuildIsEditor).isFalse()
+        assertThat(verdictService.list(editorRun, ownerId).gameBuildIsEditor).isTrue()
+        assertThat(verdictService.list(unknownRun, ownerId).gameBuildIsEditor).isNull()
+        assertThat(service.sinceLastQa(projectId, runId, ownerId).lastQaRun!!.gameBuildIsEditor).isNull()
     }
 
     @Test

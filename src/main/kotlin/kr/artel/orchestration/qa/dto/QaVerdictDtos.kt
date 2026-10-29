@@ -16,6 +16,7 @@ data class QaRunVerdictsResponse(
     val testRunId: String,
     val testRunName: String,
     val gameBuildVersion: String?,
+    val gameBuildIsEditor: Boolean?,
     val status: String,
     val startedAt: Instant,
     val completedAt: Instant?,
