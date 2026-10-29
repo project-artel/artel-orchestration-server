@@ -1,5 +1,13 @@
 package kr.artel.orchestration.testcase.contract
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
@@ -37,6 +45,39 @@ class CaseContractService(
 
     // 같은 프로젝트를 두 저작이 동시에 정리하면 같은 TC 를 두 번 보낸다. 프로젝트마다 하나씩.
     private val locks = ConcurrentHashMap<Long, Mutex>()
+
+    // 정리는 요청과 따로 돈다. 저작을 여는 요청이 끊겨도(브라우저 · 프록시 타임아웃) 정리는 끝까지 간다 —
+    // 요청 안에서 돌렸더니 TC 73건을 정리하던 중 요청이 끊기며 함께 취소되고, 저작이 계약 없이 글만으로 짰다.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val running = ConcurrentHashMap<Long, Deferred<CaseContractRefresh>>()
+
+    /** 돌고 있는 정리가 있으면 그것을, 없으면 새로 시작한 것을 돌려준다. 기다리는 쪽이 취소돼도 정리는 계속된다. */
+    fun refreshInBackground(projectId: Long): Deferred<CaseContractRefresh> {
+        running[projectId]?.takeIf { it.isActive }?.let { return it }
+        val started = scope.async(start = CoroutineStart.LAZY) { refresh(projectId) }
+        val current = running.merge(projectId, started) { old, new -> if (old.isActive) old else new }!!
+        if (current === started) {
+            started.invokeOnCompletion { running.remove(projectId, started) }
+            started.start()
+        } else {
+            started.cancel()
+        }
+        return current
+    }
+
+    /**
+     * TC 를 만들거나 고친 뒤 부른다. 저작을 열 때 기다리지 않게 미리 정리해 둔다. 몇 초 모아서 한 번 돌고, 돌고 있는
+     * 정리가 있으면 끝난 뒤 다시 돈다 — 그 정리는 새 TC 를 읽기 전에 시작했을 수 있다.
+     */
+    fun refreshSoon(projectId: Long) {
+        scope.launch {
+            delay(REFRESH_DEBOUNCE_MS)
+            runCatching {
+                running[projectId]?.join()
+                refreshInBackground(projectId).await()
+            }.onFailure { logger.warn("계약 미리 정리 실패 [projectId=$projectId]: ${it.message}") }
+        }
+    }
 
     suspend fun refresh(projectId: Long): CaseContractRefresh = locks.computeIfAbsent(projectId) { Mutex() }.withLock {
         val cases = testCases.findByProjectIdOrderByIdAsc(projectId).toList()
@@ -302,5 +343,8 @@ class CaseContractService(
         const val YES_BY = "yes-by:"
         const val START = "start"
         const val NO = "no"
+
+        /** TC 를 연달아 넣을 때 한 번에 모아 정리하려고 기다리는 시간. */
+        private const val REFRESH_DEBOUNCE_MS = 3_000L
     }
 }

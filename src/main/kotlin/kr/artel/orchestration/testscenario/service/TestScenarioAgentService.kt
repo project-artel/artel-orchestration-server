@@ -494,7 +494,7 @@ class TestScenarioAgentService(
         val version = authoringVersions.of(runId)
         // 목록의 내용 · 입력 · 바꾸는 값까지 그 버전 것이어야 하므로 맥락 안에서 읽는다(ARTEL-1064).
         // 글만 있는 TC 의 계약을 먼저 채운다 — 빠진 것과 문구가 바뀐 것만. 못 채워도 저작은 한다(예전처럼 글로 짠다).
-        runCatching { withTimeoutOrNull(CONTRACT_TIMEOUT_MS) { caseContracts.refresh(projectId) } }
+        runCatching { withTimeoutOrNull(CONTRACT_TIMEOUT_MS) { caseContracts.refreshInBackground(projectId).await() } }
             .onFailure { logger.warn("계약 정리 실패 — 글만으로 짠다 [projectId=$projectId]: ${it.message}") }
         val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
         trace.record(

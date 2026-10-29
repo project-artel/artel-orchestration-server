@@ -38,7 +38,9 @@ class CaseContractServiceIntegrationTest {
 
     class FakeAgent(private val mapper: ObjectMapper) : AgentCaseContractClient(AgentServerProperties()) {
         val asked = mutableListOf<List<Long>>()
+        var slowMs = 0L
         override suspend fun extract(request: CaseContractRequest): CaseContractResponse {
+            if (slowMs > 0) kotlinx.coroutines.delay(slowMs)
             asked += request.cases.map { it.id }
             return CaseContractResponse(
                 terms = mapper.readTree("""[{"name":"검","kind":"has","meaning":"","start":"없음"}]"""),
@@ -190,5 +192,23 @@ class CaseContractServiceIntegrationTest {
             SceneExit("CaveScene", "key:S (seen by QA in an earlier build)"),
         )
         assertThat(sent[forest.id]!!.exits).isEmpty()
+    }
+
+    /** 저작을 여는 요청이 기다리다 끊겨도 정리는 끝까지 가서 계약을 쓴다. */
+    @Test
+    fun `a refresh keeps going when the waiting request is cancelled`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "detached", genre = "RPG", createdAt = now, updatedAt = now))
+        val plain = cases.save(case(project.id!!, "늑대를 공격한다."))
+        val fake = agent as FakeAgent
+        fake.slowMs = 1_000
+        try {
+            val waited = kotlinx.coroutines.withTimeoutOrNull(100) { service.refreshInBackground(project.id!!).await() }
+            assertThat(waited).isNull()
+            service.refreshInBackground(project.id!!).await()
+            assertThat(cases.findById(plain.id!!)!!.condition).isNotNull
+        } finally {
+            fake.slowMs = 0
+        }
     }
 }
