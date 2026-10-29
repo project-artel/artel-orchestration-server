@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
@@ -98,6 +99,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 @Service
 class TestScenarioAgentService(
+    private val caseContracts: kr.artel.orchestration.testcase.contract.CaseContractService,
     private val authoringCases: AuthoringCases,
     private val authoringVersions: AuthoringVersionResolver,
     agentProperties: AgentServerProperties,
@@ -468,6 +470,9 @@ class TestScenarioAgentService(
         // 저작은 TR 이 고른 TC 버전의 TC 와 지도만 본다(ARTEL-1048). 버전 없는 TR 이면 예전처럼 프로젝트 전체 · 최신 빌드다.
         val version = authoringVersions.of(runId)
         // 목록의 내용 · 입력 · 바꾸는 값까지 그 버전 것이어야 하므로 맥락 안에서 읽는다(ARTEL-1064).
+        // 글만 있는 TC 의 계약을 먼저 채운다 — 빠진 것과 문구가 바뀐 것만. 못 채워도 저작은 한다(예전처럼 글로 짠다).
+        runCatching { withTimeoutOrNull(CONTRACT_TIMEOUT_MS) { caseContracts.refresh(projectId) } }
+            .onFailure { logger.warn("계약 정리 실패 — 글만으로 짠다 [projectId=$projectId]: ${it.message}") }
         val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
         trace.record(
             runId, "판을 연다",
@@ -2116,6 +2121,9 @@ class TestScenarioAgentService(
     )
 
     companion object {
+        /** 계약 정리를 기다리는 상한. 넘으면 글만으로 짠다 — 다음 저작 때 남은 것을 마저 채운다. */
+        const val CONTRACT_TIMEOUT_MS = 8 * 60 * 1000L
+
         /** draft 만 고치는 턴(ARTEL-1074)에 모델에게 붙이는 범위. */
         const val DRAFT_ONLY_NOTE =
             "(지금은 승인 전 draft 만 고친다. current_scenarios 에 있는 draft 의 scenario_id 로 고치고, 새 시나리오는 만들지 않는다.)"

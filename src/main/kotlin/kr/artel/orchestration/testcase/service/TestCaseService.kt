@@ -75,6 +75,8 @@ class TestCaseService(
     private val reader: TestCaseReader,
     private val projectChangeStreamManager: ProjectChangeStreamManager,
     private val versions: TestCaseVersionRepository,
+    // 자연어 TC 의 시작 상태(용어집). 지도가 없을 때만 쓰인다.
+    private val caseContracts: kr.artel.orchestration.testcase.contract.CaseContractService,
 ) {
 
     private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
@@ -154,10 +156,12 @@ class TestCaseService(
         // 보는 것은 저작에 맡긴다. 케이스 메타가 남기는 값이 있는 프로젝트에서만 본다.
         val made = all.flatMap { ScenarioStateReader.stateAfter(it, objectMapper).entries }
             .groupBy({ it.key.lowercase() }, { it.value })
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
         fun reachable(guard: Guard): Boolean =
             made.isEmpty() || guard.operator != "==" || guard.value == "0" ||
                 raisers[ScenarioStateReader.normalize(guard.path)].orEmpty().isNotEmpty() ||
-                made[guard.variable.lowercase()].orEmpty().contains(guard.value)
+                made[guard.variable.lowercase()].orEmpty().contains(guard.value) ||
+                start[guard.variable.lowercase()] == guard.value
         return all.asFlow()
             // **깨진 것은 저작 재료가 아니다**(ARTEL-685). 지도를 다시 적재하면 더 이상 뒷받침되지
             // 않는 케이스가 `BROKEN` 으로 남는다. 보내면 모델이 그것을 담고, 커버리지 기준에는
@@ -345,8 +349,16 @@ class TestCaseService(
             .mapNotNull { row -> ScenarioStateReader.defaultOf(row.detail)?.let { ScenarioStateReader.normalize(row.name) to it } }
             .sortedBy { it.first }
             .toMap()
+            // 지도가 없으면 케이스 메타가 말하는 시작 상태를 쓴다(자연어 TC).
+            .ifEmpty { metadataStart(projectId) }
     }.onFailure { logger.warn("처음 값 조회 실패 — 없이 보낸다: ${it.message}") }
         .getOrElse { emptyMap() }
+
+    /** 케이스 메타의 `start_state` 를 모은 것. 같은 이름이 둘이면 먼저 적힌 쪽이다. */
+    suspend fun metadataStart(projectId: Long): Map<String, String> =
+        authoringCases.all(projectId).flatMap { ScenarioStateReader.startState(it, objectMapper).entries }
+            .fold(sortedMapOf<String, String>()) { acc, (k, v) -> acc.apply { putIfAbsent(k, v) } }
+            .apply { caseContracts.startState(projectId).forEach { (k, v) -> putIfAbsent(ScenarioStateReader.normalize(k), v) } }
 
     private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Map<String, String>> = runCatching {
         authoringCases.valuesChangedByCases(projectId).toList()

@@ -182,6 +182,19 @@ object ScenarioStateReader {
         }
     }.getOrElse { emptyList() }
 
+    /**
+     * 케이스 메타가 말하는 **새 게임의 시작 값**. `metadata.source.start_state` 가 `Var=value; Var2=0` 형식이다.
+     * 지도가 없는 프로젝트(자연어 TC)는 입구 화면의 초기값을 읽을 데가 없어, 사람이 확인한 시작 상태를 여기 둔다.
+     */
+    fun startState(case: TestCaseEntity, objectMapper: ObjectMapper): Map<String, String> = runCatching {
+        val written = objectMapper.readTree(case.metadata.asString())
+            .path("source").path("start_state").asText(null) ?: return emptyMap()
+        written.split(";").mapNotNull { part ->
+            val (name, value) = part.split("=", limit = 2).let { it[0].trim() to it.getOrNull(1)?.trim() }
+            if (name.isBlank() || value.isNullOrBlank()) null else normalize(name) to value
+        }.toMap()
+    }.getOrElse { emptyMap() }
+
     private val ASSUMED_COMPARISON = Regex("""(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)""")
 
     /**

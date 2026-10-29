@@ -68,6 +68,7 @@ class ScenarioReconcileService(
     private val trace: AuthoringTrace,
     private val effectRepository: kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository,
     private val repair: kr.artel.orchestration.testscenario.config.ScenarioRepairProperties,
+    private val caseContracts: kr.artel.orchestration.testcase.contract.CaseContractService,
 ) {
     private val logger = LoggerFactory.getLogger(ScenarioReconcileService::class.java)
 
@@ -217,6 +218,7 @@ class ScenarioReconcileService(
                     ScenarioStateReader.defaultOf(row.detail)
                         ?.let { ScenarioStateReader.normalize(row.name) to it }
                 }.toMap()
+                .ifEmpty { metadataStart(projectId) }
         }.onFailure { logger.warn("처음 값 조회 실패 — 조각 도달성 검사 없이 간다: ${it.message}") }
             .getOrElse { emptyMap() }
         val divided = ScenarioConflictSplit.adoptSplitPieces(
@@ -311,9 +313,12 @@ class ScenarioReconcileService(
         val makers = byId.values
             .flatMap { fact -> fact.leaves.map { (name, value) -> Triple(name.lowercase(), value, fact.id) } }
             .groupBy({ it.first to it.second }, { it.third })
+        // 시작 값을 아는 이름만 짚는다 — 모르면 처음부터 참인 것(낮에 시작)까지 "만들라"고 짚게 된다(측정 h1).
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
         val missingMakers = repaired.zip(walked).flatMap { (scenario, found) ->
             found.opening
                 .filter { it.operator == "==" && it.value != "0" }
+                .filter { guard -> start[guard.variable.lowercase()]?.let { it != guard.value } ?: false }
                 .mapNotNull { guard ->
                     makers[guard.variable.lowercase() to guard.value]?.let { ids ->
                         "${scenario.title}: ${guard.variable} == ${guard.value} 를 요구하는 스텝이 있는데 흐름 안에 그 값을 " +
@@ -353,9 +358,7 @@ class ScenarioReconcileService(
             }
         }
         shortCounts.forEach { logger.info("흐름이 모자라게 모은 개수 [runId={}] {}", runId, it) }
-        // 흐름이 안 만든 전제는 **로그로만** 남긴다. 시작 상태를 모르는 프로젝트(지도 없음)에서는 처음부터 참인
-        // 값(낮에 시작한다)까지 "만들라"고 짚어, 모델이 밤도 아닌데 아침까지 자는 스텝을 넣었다(측정 h1).
-        val reported = contradictions.map { (title, found) -> "$title: ${found.describe()}" } + shortCounts
+        val reported = contradictions.map { (title, found) -> "$title: ${found.describe()}" } + missingMakers + shortCounts
         val opened = repaired.zip(walked).map { (scenario, found) ->
             scenario.copy(
                 steps = withOpeningNote(scenario.steps, openingFacts(projectId, facts), found.opening)
@@ -959,9 +962,11 @@ class ScenarioReconcileService(
         // 세면 모델이 본 적 없는 요구로 어긋남을 짚는다.
         val made = all.flatMap { ScenarioStateReader.stateAfter(it, objectMapper).entries }
             .groupBy({ it.key.lowercase() }, { it.value })
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
         fun reachable(guard: Guard): Boolean =
             made.isEmpty() || guard.operator != "==" || guard.value == "0" ||
-                made[guard.variable.lowercase()].orEmpty().contains(guard.value)
+                made[guard.variable.lowercase()].orEmpty().contains(guard.value) ||
+                start[guard.variable.lowercase()] == guard.value
         all.map { case ->
             ScenarioSiblingCheck.CaseFact(
                 id = case.id!!,
@@ -1211,6 +1216,12 @@ class ScenarioReconcileService(
      * 케이스 메타의 `state_after` 가 말하는 바뀌는 값. 지도가 없는 프로젝트(자연어 TC)에서는 이것만
      * 있다 — 안 읽으면 등불을 끄는 케이스가 있어도 "켜짐"과 "꺼짐"을 한 시나리오에 못 담는다고 나눈다.
      */
+    /** 케이스 메타의 `start_state` 를 모은 것([kr.artel.orchestration.testcase.service.TestCaseService.metadataStart] 와 같은 규칙). */
+    private suspend fun metadataStart(projectId: Long): Map<String, String> =
+        authoringCases.all(projectId).flatMap { ScenarioStateReader.startState(it, objectMapper).entries }
+            .fold(sortedMapOf<String, String>()) { acc, (k, v) -> acc.apply { putIfAbsent(k, v) } }
+            .apply { caseContracts.startState(projectId).forEach { (k, v) -> putIfAbsent(ScenarioStateReader.normalize(k), v) } }
+
     private suspend fun valuesWrittenInMetadata(projectId: Long): Map<Long, Set<String>> =
         authoringCases.all(projectId).toList()
             .associate { case -> case.id!! to ScenarioStateReader.stateAfter(case, objectMapper).keys }
