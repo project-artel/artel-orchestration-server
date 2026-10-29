@@ -6,6 +6,7 @@ import io.r2dbc.postgresql.codec.Json
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.ConflictException
 import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.issue.category.CategoryTag
 import kr.artel.orchestration.issue.category.IssueCategoryRepository
@@ -231,7 +232,11 @@ class IssueService(
     /** 해결 표시를 되돌린다. 이미 미해결이면 그대로 성공한다([resolve]와 같은 이유). */
     suspend fun reopen(issueId: Long, userId: Long) {
         requireAccessible(issueId, userId)
-        val changed = issueRepository.reopen(issueId, updatedAt = Instant.now(clock))
+        val changed = try {
+            issueRepository.reopen(issueId, updatedAt = Instant.now(clock))
+        } catch (error: DataIntegrityViolationException) {
+            throw ConflictException("같은 TC의 열린 issue가 있습니다. 해당 issue에 실패 이력을 모읍니다.")
+        }
         if (changed == 1) {
             trackerSync.launchReopened(issueId)
             notifyIssuesChanged(issueId)

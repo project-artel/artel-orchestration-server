@@ -22,6 +22,9 @@ import kr.artel.orchestration.testcase.dto.CaseListFields
  * 멱등 적재(Agent 재전송 중복 방지)를 위해 spec_id 조회와 (project_id, scene, step) 조회를 함께 제공한다.
  */
 interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
+    @Query("SELECT * FROM test_case WHERE id = :id FOR UPDATE")
+    suspend fun findByIdForUpdate(id: Long): TestCaseEntity?
+
 
     fun findByProjectIdOrderByIdDesc(projectId: Long): Flow<TestCaseEntity>
 

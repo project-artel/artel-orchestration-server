@@ -77,6 +77,10 @@
       "description": "빌드에 등록된 macro 를 읽는다"
     },
     {
+      "name": "QA try performance (internal)",
+      "description": "QA agent 가 런 도중 읽는 SDK 성능 표본"
+    },
+    {
       "name": "Project Events",
       "description": "프로젝트 데이터 변경 알림"
     },
@@ -256,6 +260,54 @@
         }
       }
     },
+    "/api/qa-runs/{qaRunId}/verdicts/{verdictLogId}/review": {
+      "put": {
+        "tags": [
+          "qa-run-controller"
+        ],
+        "operationId": "reviewQaRunVerdict",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "verdictLogId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QaVerdictReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaHumanDecision"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/tracker/github/installation": {
       "put": {
         "tags": [
@@ -420,7 +472,7 @@
         "tags": [
           "test-run-controller"
         ],
-        "operationId": "get_2",
+        "operationId": "get_3",
         "parameters": [
           {
             "name": "projectId",
@@ -1303,6 +1355,126 @@
         }
       }
     },
+    "/api/projects/{projectId}/qa-evaluation/verdicts/{logId}/review": {
+      "put": {
+        "tags": [
+          "qa-case-issue-controller"
+        ],
+        "operationId": "review",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "logId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaVerdictReviewEntity"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/qa-evaluation/question-subscription": {
+      "get": {
+        "tags": [
+          "qa-operator-question-controller"
+        ],
+        "operationId": "subscription",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionSubscription"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "qa-operator-question-controller"
+        ],
+        "operationId": "subscribe",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuestionSubscription"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionSubscription"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/project-agent-model": {
       "get": {
         "tags": [
@@ -2171,6 +2343,56 @@
         }
       }
     },
+    "/api/projects/{projectId}/demonstrations/{id}/procedure": {
+      "put": {
+        "tags": [
+          "demonstration-controller"
+        ],
+        "operationId": "edit",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProcedureEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcedureRevision"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/me/project-agent-model": {
       "get": {
         "tags": [
@@ -2731,6 +2953,138 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TestCaseSpecIngestResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/qa/tries/{tryId}/questions": {
+      "post": {
+        "tags": [
+          "qa-operator-question-controller"
+        ],
+        "operationId": "ask",
+        "parameters": [
+          {
+            "name": "tryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskOperatorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorQuestion"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/qa/tries/{tryId}/case-attempts/{id}/report": {
+      "post": {
+        "tags": [
+          "qa-case-attempt-controller"
+        ],
+        "operationId": "report",
+        "parameters": [
+          {
+            "name": "tryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportCaseAttempt"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseAttemptResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/qa/tries/{tryId}/case-attempts/start": {
+      "post": {
+        "tags": [
+          "qa-case-attempt-controller"
+        ],
+        "operationId": "start",
+        "parameters": [
+          {
+            "name": "tryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartCaseAttempt"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseAttemptResponse"
                 }
               }
             }
@@ -3318,6 +3672,57 @@
         "responses": {
           "200": {
             "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/qa-notices/{qaRunId}/read": {
+      "post": {
+        "tags": [
+          "qa-notice-controller"
+        ],
+        "operationId": "readQaNotice",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaNoticeListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qa-notices/read-all": {
+      "post": {
+        "tags": [
+          "qa-notice-controller"
+        ],
+        "operationId": "readAllQaNotices",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaNoticeListResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -4610,6 +5015,56 @@
         }
       }
     },
+    "/api/projects/{projectId}/qa-evaluation/questions/{id}/answer": {
+      "post": {
+        "tags": [
+          "qa-operator-question-controller"
+        ],
+        "operationId": "answer",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerOperatorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorQuestion"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/issue-folders": {
       "get": {
         "tags": [
@@ -5153,7 +5608,7 @@
         ],
         "summary": "보낸 초대 목록",
         "description": "소유자만 볼 수 있다. 아직 답을 기다리는 초대만 나온다.",
-        "operationId": "list_9",
+        "operationId": "list_11",
         "parameters": [
           {
             "name": "projectId",
@@ -5516,7 +5971,7 @@
         ],
         "summary": "기획서 이력",
         "description": "최신 버전이 앞에 온다.",
-        "operationId": "list_14",
+        "operationId": "list_16",
         "parameters": [
           {
             "name": "projectId",
@@ -5676,12 +6131,364 @@
         }
       }
     },
+    "/api/projects/{projectId}/demonstrations": {
+      "get": {
+        "tags": [
+          "demonstration-controller"
+        ],
+        "operationId": "list_17",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "testCaseId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DemonstrationDetail"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "demonstration-controller"
+        ],
+        "operationId": "create_5",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemonstrationStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemonstrationDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/demonstrations/{id}/stop": {
+      "post": {
+        "tags": [
+          "demonstration-controller"
+        ],
+        "operationId": "stop",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemonstrationDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/demonstrations/{id}/revoke": {
+      "post": {
+        "tags": [
+          "demonstration-controller"
+        ],
+        "operationId": "revoke",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProcedureVersionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcedureRevision"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/demonstrations/{id}/extract": {
+      "post": {
+        "tags": [
+          "demonstration-controller"
+        ],
+        "operationId": "extract",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcedureRevision"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/demonstrations/{id}/evidence": {
+      "post": {
+        "tags": [
+          "demonstration-controller"
+        ],
+        "operationId": "upload",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemonstrationEvent"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/demonstrations/{id}/approve": {
+      "post": {
+        "tags": [
+          "demonstration-controller"
+        ],
+        "operationId": "approve",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProcedureVersionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcedureRevision"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/demonstrations/{id}/annotations": {
+      "post": {
+        "tags": [
+          "demonstration-controller"
+        ],
+        "operationId": "annotate",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemonstrationAnnotation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemonstrationEvent"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/agent/conversations": {
       "get": {
         "tags": [
           "project-agent-controller"
         ],
-        "operationId": "list_15",
+        "operationId": "list_18",
         "parameters": [
           {
             "name": "projectId",
@@ -5710,7 +6517,7 @@
         "tags": [
           "project-agent-controller"
         ],
-        "operationId": "create_5",
+        "operationId": "create_6",
         "parameters": [
           {
             "name": "projectId",
@@ -6466,7 +7273,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "list_17",
+        "operationId": "list_20",
         "responses": {
           "200": {
             "description": "OK",
@@ -6487,7 +7294,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "create_6",
+        "operationId": "create_7",
         "requestBody": {
           "content": {
             "application/json": {
@@ -6711,7 +7518,7 @@
         ],
         "summary": "프로젝트 상세",
         "description": "참여자가 아니면 404.",
-        "operationId": "get_1",
+        "operationId": "get_2",
         "parameters": [
           {
             "name": "projectId",
@@ -7147,7 +7954,7 @@
         "tags": [
           "project-agent-controller"
         ],
-        "operationId": "get_4",
+        "operationId": "get_6",
         "parameters": [
           {
             "name": "projectId",
@@ -7307,7 +8114,7 @@
         "tags": [
           "admin-llm-model-controller"
         ],
-        "operationId": "list_18",
+        "operationId": "list_21",
         "responses": {
           "200": {
             "description": "OK",
@@ -7386,6 +8193,97 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/InternalLlmSettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/qa/tries/{tryId}/questions/{id}": {
+      "get": {
+        "tags": [
+          "qa-operator-question-controller"
+        ],
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "tryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorQuestion"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/qa-tries/{qaTryId}/performance": {
+      "get": {
+        "tags": [
+          "QA try performance (internal)"
+        ],
+        "summary": "QA try 의 최근 성능 표본 조회",
+        "description": "SDK 가 1초마다 보낸 표본을 시각 순으로 준다. `sinceFrame` 은 그 frame 이상, `lastSeconds` 는 마지막 그 초만큼으로 좁힌다. 둘 다 없으면 마지막 60초다. 한 번에 600개까지 준다.",
+        "operationId": "performance",
+        "parameters": [
+          {
+            "name": "qaTryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sinceFrame",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "lastSeconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaTryPerformanceResponse"
                 }
               }
             }
@@ -7616,7 +8514,7 @@
         "tags": [
           "qa-try-controller"
         ],
-        "operationId": "get",
+        "operationId": "get_1",
         "parameters": [
           {
             "name": "qaTryId",
@@ -7634,6 +8532,39 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/QaTryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qa-tries/{qaTryId}/verdicts": {
+      "get": {
+        "tags": [
+          "qa-try-controller"
+        ],
+        "operationId": "verdicts",
+        "parameters": [
+          {
+            "name": "qaTryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/QaLogResponse"
+                  }
                 }
               }
             }
@@ -7979,6 +8910,36 @@
         }
       }
     },
+    "/api/qa-runs/{qaRunId}/verdicts": {
+      "get": {
+        "tags": [
+          "qa-run-controller"
+        ],
+        "operationId": "listQaRunVerdicts",
+        "parameters": [
+          {
+            "name": "qaRunId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRunVerdictsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/qa-runs/{qaRunId}/changes": {
       "get": {
         "tags": [
@@ -8002,6 +8963,61 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/QaRunChangeListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qa-question-subscriptions": {
+      "get": {
+        "tags": [
+          "qa-operator-question-controller"
+        ],
+        "operationId": "subscribedProjects",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qa-notices": {
+      "get": {
+        "tags": [
+          "qa-notice-controller"
+        ],
+        "operationId": "listQaNotices",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaNoticeListResponse"
                 }
               }
             }
@@ -8840,6 +9856,340 @@
         }
       }
     },
+    "/api/projects/{projectId}/qa-evaluation/verdicts/{logId}/reviews": {
+      "get": {
+        "tags": [
+          "qa-reliability-controller"
+        ],
+        "operationId": "history",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "logId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/QaReviewRevision"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/qa-evaluation/tries/{tryId}/recording": {
+      "get": {
+        "tags": [
+          "qa-recording-controller"
+        ],
+        "operationId": "playback",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "tryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaRecordingPlayback"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/qa-evaluation/reliability": {
+      "get": {
+        "tags": [
+          "qa-reliability-controller"
+        ],
+        "operationId": "report_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaReliabilityResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/qa-evaluation/questions": {
+      "get": {
+        "tags": [
+          "qa-operator-question-controller"
+        ],
+        "operationId": "list_7",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OperatorQuestion"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/qa-evaluation/issues/{issueId}": {
+      "get": {
+        "tags": [
+          "qa-case-issue-controller"
+        ],
+        "operationId": "history_1",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "beforeLogId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseIssueHistory"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/qa-evaluation/attempts": {
+      "get": {
+        "tags": [
+          "qa-case-attempt-controller"
+        ],
+        "operationId": "list_8",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "qaTryId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "testCaseId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "beforeId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CaseAttemptResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/qa-evaluation/attempts/{id}": {
+      "get": {
+        "tags": [
+          "qa-case-attempt-controller"
+        ],
+        "operationId": "get_4",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseAttemptResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/members": {
       "get": {
         "tags": [
@@ -8847,7 +10197,7 @@
         ],
         "summary": "멤버 목록",
         "description": "참여자면 누구나 볼 수 있다. 소유자가 먼저, 그 안에서는 참여한 순서다. 참여자가 아니면 404.",
-        "operationId": "list_7",
+        "operationId": "list_9",
         "parameters": [
           {
             "name": "projectId",
@@ -8963,7 +10313,7 @@
         "tags": [
           "project-issue-controller"
         ],
-        "operationId": "list_8",
+        "operationId": "list_10",
         "parameters": [
           {
             "name": "projectId",
@@ -9091,7 +10441,7 @@
         "tags": [
           "project-issue-controller"
         ],
-        "operationId": "get_3",
+        "operationId": "get_5",
         "parameters": [
           {
             "name": "projectId",
@@ -9397,7 +10747,7 @@
         ],
         "summary": "게임 인스턴스 목록",
         "description": "최근에 만든 것이 앞에 온다.",
-        "operationId": "list_10",
+        "operationId": "list_12",
         "parameters": [
           {
             "name": "projectId",
@@ -9431,7 +10781,7 @@
         ],
         "summary": "게임 빌드 목록",
         "description": "최근에 보고된 것이 앞에 온다.",
-        "operationId": "list_11",
+        "operationId": "list_13",
         "parameters": [
           {
             "name": "projectId",
@@ -9514,7 +10864,7 @@
         ],
         "summary": "빌드 하나로 돈 프로젝트의 QA run 목록",
         "description": "새 것이 앞에 온다. `size` 는 1 이상 100 이하이고 벗어나면 400 이다. 프로젝트가 없거나 참여자가 아니면 404 다.",
-        "operationId": "list_12",
+        "operationId": "list_14",
         "parameters": [
           {
             "name": "projectId",
@@ -9608,7 +10958,7 @@
         ],
         "summary": "등록된 macro 목록",
         "description": "이 빌드에 등록된 macro 를 이름 오름차순으로 읽는다. `source` 는 싣지 않는다 — 원문은 상세 조회에 있다. 등록된 것이 없으면 빈 `items` 다.",
-        "operationId": "list_13",
+        "operationId": "list_15",
         "parameters": [
           {
             "name": "projectId",
@@ -10020,6 +11370,80 @@
         }
       }
     },
+    "/api/projects/{projectId}/demonstrations/{id}": {
+      "get": {
+        "tags": [
+          "demonstration-controller"
+        ],
+        "operationId": "detail_2",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemonstrationDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/demonstrations/instances": {
+      "get": {
+        "tags": [
+          "demonstration-controller"
+        ],
+        "operationId": "instances",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DemonstrationInstance"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/agent/conversations/{conversationId}/stream": {
       "get": {
         "tags": [
@@ -10291,7 +11715,7 @@
         ],
         "summary": "받은 초대 목록",
         "description": "로그인한 계정으로 온 초대와 그 계정의 확인된 이메일로 온 초대 중 아직 유효한 것만 나온다. 계정에 이메일이 없어도 계정으로 온 초대는 나온다.",
-        "operationId": "list_16",
+        "operationId": "list_19",
         "responses": {
           "200": {
             "description": "OK",
@@ -10524,7 +11948,7 @@
         ],
         "summary": "초대 취소",
         "description": "소유자만 가능하다. 이미 처리된 초대면 409.",
-        "operationId": "revoke",
+        "operationId": "revoke_1",
         "parameters": [
           {
             "name": "projectId",
@@ -10629,7 +12053,7 @@
         "tags": [
           "cli-token-controller"
         ],
-        "operationId": "revoke_1",
+        "operationId": "revoke_2",
         "parameters": [
           {
             "name": "tokenId",
@@ -10786,6 +12210,44 @@
             "items": {
               "$ref": "#/components/schemas/ExpectedLabelEntry"
             }
+          }
+        }
+      },
+      "QaVerdictReviewRequest": {
+        "required": [
+          "decision"
+        ],
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "QaHumanDecision": {
+        "required": [
+          "flagged"
+        ],
+        "type": "object",
+        "properties": {
+          "passed": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          },
+          "decidedBy": {
+            "type": "string"
+          },
+          "decidedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "flagged": {
+            "type": "boolean"
           }
         }
       },
@@ -11406,6 +12868,82 @@
           }
         }
       },
+      "CaseReviewRequest": {
+        "required": [
+          "decision"
+        ],
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "QaVerdictReviewEntity": {
+        "required": [
+          "createdAt",
+          "flagged",
+          "qaLogId",
+          "qaTryId"
+        ],
+        "type": "object",
+        "properties": {
+          "qaLogId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "qaRunId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "qaTryId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "testCaseId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "flagged": {
+            "type": "boolean"
+          },
+          "aiPassed": {
+            "type": "boolean"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "decidedBy": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "decidedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QuestionSubscription": {
+        "required": [
+          "subscribed"
+        ],
+        "type": "object",
+        "properties": {
+          "subscribed": {
+            "type": "boolean"
+          }
+        }
+      },
       "UpdateProjectAgentModelOfProjectRequest": {
         "type": "object",
         "properties": {
@@ -11999,6 +13537,162 @@
           }
         }
       },
+      "ProcedureAssertion": {
+        "required": [
+          "evidenceEventIds",
+          "expected",
+          "failure",
+          "when"
+        ],
+        "type": "object",
+        "properties": {
+          "expected": {
+            "type": "string"
+          },
+          "failure": {
+            "type": "string"
+          },
+          "when": {
+            "type": "string"
+          },
+          "evidenceEventIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        }
+      },
+      "ProcedureEdit": {
+        "required": [
+          "expectedRevision",
+          "procedure"
+        ],
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "procedure": {
+            "$ref": "#/components/schemas/VerificationProcedure"
+          }
+        }
+      },
+      "ProcedureStep": {
+        "required": [
+          "completionCondition",
+          "evidenceEventIds",
+          "instruction",
+          "target"
+        ],
+        "type": "object",
+        "properties": {
+          "instruction": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "completionCondition": {
+            "type": "string"
+          },
+          "evidenceEventIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        }
+      },
+      "VerificationProcedure": {
+        "required": [
+          "assertions",
+          "facts",
+          "inferences",
+          "observedOutcome",
+          "preconditions",
+          "steps",
+          "title",
+          "unresolvedQuestions"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "preconditions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProcedureStep"
+            }
+          },
+          "assertions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProcedureAssertion"
+            }
+          },
+          "observedOutcome": {
+            "type": "string"
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "inferences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unresolvedQuestions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ProcedureRevision": {
+        "required": [
+          "id",
+          "procedure",
+          "revision",
+          "sourceHash",
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "status": {
+            "type": "string"
+          },
+          "sourceHash": {
+            "type": "string"
+          },
+          "procedure": {
+            "$ref": "#/components/schemas/VerificationProcedure"
+          }
+        }
+      },
       "UpdateUserProjectAgentModelRequest": {
         "type": "object",
         "properties": {
@@ -12551,6 +14245,202 @@
           }
         }
       },
+      "AskOperatorRequest": {
+        "required": [
+          "id",
+          "question"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "question": {
+            "type": "string"
+          }
+        }
+      },
+      "OperatorQuestion": {
+        "required": [
+          "createdAt",
+          "id",
+          "projectId",
+          "qaTryId",
+          "question",
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "qaRunId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          },
+          "answeredBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "answeredAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ReportCaseAttempt": {
+        "required": [
+          "reason",
+          "rejectedKnowledgeIdCount",
+          "usedKnowledgeIds",
+          "verdict"
+        ],
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "PASSED",
+              "FAILED",
+              "INCONCLUSIVE",
+              "INTERRUPTED"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "thought": {
+            "type": "string"
+          },
+          "checks": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "usedKnowledgeIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "usedCheats": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "activeBehaviors": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "rejectedKnowledgeIdCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "CaseAttemptResponse": {
+        "required": [
+          "createdAt",
+          "id",
+          "qaTryId",
+          "startKnown",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "testCaseId": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "logId": {
+            "type": "string"
+          },
+          "review": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startKnown": {
+            "type": "boolean"
+          },
+          "playbackStart": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "playbackEnd": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "qaRunId": {
+            "type": "string"
+          },
+          "caseSnapshot": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "originalReason": {
+            "type": "string"
+          }
+        }
+      },
+      "StartCaseAttempt": {
+        "required": [
+          "id",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "testCaseId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "caseSnapshot": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        }
+      },
       "LlmUsageBatchRequest": {
         "required": [
           "records"
@@ -12779,6 +14669,25 @@
             "items": {
               "$ref": "#/components/schemas/ActionItemDto"
             }
+          },
+          "demonstration": {
+            "$ref": "#/components/schemas/DemonstrationIdentity"
+          }
+        }
+      },
+      "DemonstrationIdentity": {
+        "required": [
+          "generation",
+          "sessionId"
+        ],
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -13493,6 +15402,129 @@
           }
         }
       },
+      "QaNotice": {
+        "required": [
+          "projectId",
+          "projectName",
+          "read",
+          "run"
+        ],
+        "type": "object",
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/QaRunSummaryResponse"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "read": {
+            "type": "boolean"
+          }
+        }
+      },
+      "QaNoticeListResponse": {
+        "required": [
+          "items",
+          "unreadCount"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaNotice"
+            }
+          },
+          "unreadCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "QaRunSummaryResponse": {
+        "required": [
+          "gameInstanceId",
+          "id",
+          "issueCount",
+          "reviewFlagged",
+          "reviewPending",
+          "startedAt",
+          "startedBy",
+          "status",
+          "testRunId"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "testRunId": {
+            "type": "string"
+          },
+          "testRunName": {
+            "type": "string"
+          },
+          "gameInstanceId": {
+            "type": "string"
+          },
+          "gameInstanceName": {
+            "type": "string"
+          },
+          "gameBuildVersion": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "type": "string"
+          },
+          "keySource": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "casesPassed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "casesTotal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "issueCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "startedBy": {
+            "type": "string"
+          },
+          "reviewFlagged": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reviewPending": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "casesFailed": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "CreateProjectRequest": {
         "required": [
           "genre",
@@ -13976,6 +16008,9 @@
         }
       },
       "TestCaseVersionCasesRequest": {
+        "required": [
+          "includeGenerated"
+        ],
         "type": "object",
         "properties": {
           "caseIds": {
@@ -13983,6 +16018,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "includeGenerated": {
+            "type": "boolean"
           }
         }
       },
@@ -14035,6 +16073,17 @@
             "type": "boolean"
           },
           "name": {
+            "type": "string"
+          }
+        }
+      },
+      "AnswerOperatorRequest": {
+        "required": [
+          "answer"
+        ],
+        "type": "object",
+        "properties": {
+          "answer": {
             "type": "string"
           }
         }
@@ -14524,6 +16573,191 @@
           },
           "reason": {
             "type": "string"
+          }
+        }
+      },
+      "DemonstrationStart": {
+        "required": [
+          "gameInstanceId",
+          "scenarioId",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "scenarioId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "gameInstanceId": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DemonstrationDetail": {
+        "required": [
+          "controlReady",
+          "createdAt",
+          "events",
+          "gameBuildId",
+          "gameInstanceId",
+          "generation",
+          "id",
+          "projectId",
+          "scenarioId",
+          "status",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "projectId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "testCaseId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "scenarioId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "gameInstanceId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "gameBuildId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "string"
+          },
+          "controlReady": {
+            "type": "boolean"
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sourceHash": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DemonstrationEvent"
+            }
+          },
+          "procedure": {
+            "$ref": "#/components/schemas/ProcedureRevision"
+          }
+        }
+      },
+      "DemonstrationEvent": {
+        "required": [
+          "createdAt",
+          "id",
+          "kind",
+          "payloadJson"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "payloadJson": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProcedureVersionRequest": {
+        "required": [
+          "expectedRevision"
+        ],
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "DemonstrationAnnotation": {
+        "required": [
+          "evidenceEventId",
+          "expected",
+          "explanation",
+          "observed",
+          "outcome"
+        ],
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string"
+          },
+          "observed": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "evidenceEventId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "region": {
+            "$ref": "#/components/schemas/EvidenceRegion"
+          }
+        }
+      },
+      "EvidenceRegion": {
+        "required": [
+          "height",
+          "width",
+          "x",
+          "y"
+        ],
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          },
+          "width": {
+            "type": "number",
+            "format": "double"
+          },
+          "height": {
+            "type": "number",
+            "format": "double"
           }
         }
       },
@@ -15407,7 +17641,7 @@
           }
         }
       },
-      "InternalFeatureModels": {
+      "EffectiveFeatureModels": {
         "type": "object",
         "properties": {
           "scenarioAuthoringModel": {
@@ -15415,6 +17649,23 @@
           },
           "decisionModel": {
             "type": "string"
+          }
+        }
+      },
+      "InternalFeatureModels": {
+        "required": [
+          "effective"
+        ],
+        "type": "object",
+        "properties": {
+          "scenarioAuthoringModel": {
+            "type": "string"
+          },
+          "decisionModel": {
+            "type": "string"
+          },
+          "effective": {
+            "$ref": "#/components/schemas/EffectiveFeatureModels"
           }
         }
       },
@@ -15432,6 +17683,60 @@
           },
           "typesafeApiKey": {
             "type": "string"
+          }
+        }
+      },
+      "QaTryPerformanceResponse": {
+        "required": [
+          "samples"
+        ],
+        "type": "object",
+        "properties": {
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaTryPerformanceSample"
+            }
+          }
+        }
+      },
+      "QaTryPerformanceSample": {
+        "required": [
+          "at",
+          "fps",
+          "frame",
+          "frameTimeMs",
+          "hitchCount"
+        ],
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "frameTimeMs": {
+            "type": "number",
+            "format": "double"
+          },
+          "fps": {
+            "type": "number",
+            "format": "double"
+          },
+          "hitchCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cpuPercent": {
+            "type": "number",
+            "format": "double"
+          },
+          "memoryMb": {
+            "type": "number",
+            "format": "double"
           }
         }
       },
@@ -16112,27 +18417,6 @@
           }
         }
       },
-      "QaLogPageResponse": {
-        "required": [
-          "hasMore",
-          "items"
-        ],
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/QaLogResponse"
-            }
-          },
-          "nextBeforeId": {
-            "type": "string"
-          },
-          "hasMore": {
-            "type": "boolean"
-          }
-        }
-      },
       "QaLogResponse": {
         "required": [
           "createdAt",
@@ -16171,6 +18455,27 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "QaLogPageResponse": {
+        "required": [
+          "hasMore",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaLogResponse"
+            }
+          },
+          "nextBeforeId": {
+            "type": "string"
+          },
+          "hasMore": {
+            "type": "boolean"
           }
         }
       },
@@ -17079,6 +19384,324 @@
           }
         }
       },
+      "QaCodeCheck": {
+        "required": [
+          "items",
+          "result"
+        ],
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaCodeCheckItem"
+            }
+          }
+        }
+      },
+      "QaCodeCheckItem": {
+        "required": [
+          "kind",
+          "result",
+          "target"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          },
+          "observed": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "QaRunVerdictsResponse": {
+        "required": [
+          "qaRunId",
+          "startedAt",
+          "status",
+          "testRunId",
+          "testRunName",
+          "tries"
+        ],
+        "type": "object",
+        "properties": {
+          "qaRunId": {
+            "type": "string"
+          },
+          "testRunId": {
+            "type": "string"
+          },
+          "testRunName": {
+            "type": "string"
+          },
+          "gameBuildVersion": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaTryVerdicts"
+            }
+          }
+        }
+      },
+      "QaScenarioStepView": {
+        "required": [
+          "step",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "title": {
+            "type": "string"
+          },
+          "caseId": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          }
+        }
+      },
+      "QaStepAction": {
+        "required": [
+          "count",
+          "kind"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "QaStepIssue": {
+        "required": [
+          "issueId",
+          "severity",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "issueId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "QaStepVerdict": {
+        "required": [
+          "actions",
+          "captures",
+          "evidence",
+          "isVerification",
+          "logId",
+          "message",
+          "needsReview",
+          "passed",
+          "step"
+        ],
+        "type": "object",
+        "properties": {
+          "logId": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "stepTitle": {
+            "type": "string"
+          },
+          "caseId": {
+            "type": "string"
+          },
+          "isVerification": {
+            "type": "boolean"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "checks": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "captures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaVerdictCapture"
+            }
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaStepAction"
+            }
+          },
+          "judgedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "codeCheck": {
+            "$ref": "#/components/schemas/QaCodeCheck"
+          },
+          "needsReview": {
+            "type": "boolean"
+          },
+          "humanDecision": {
+            "$ref": "#/components/schemas/QaHumanDecision"
+          }
+        }
+      },
+      "QaTryVerdicts": {
+        "required": [
+          "executionMode",
+          "issues",
+          "qaTryId",
+          "reportingUnit",
+          "reviewCount",
+          "reviewedCount",
+          "scenarioTitle",
+          "startedAt",
+          "status",
+          "steps",
+          "testScenarioId",
+          "verdicts"
+        ],
+        "type": "object",
+        "properties": {
+          "qaTryId": {
+            "type": "string"
+          },
+          "testScenarioId": {
+            "type": "string"
+          },
+          "scenarioTitle": {
+            "type": "string"
+          },
+          "executionMode": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaScenarioStepView"
+            }
+          },
+          "verdicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaStepVerdict"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaStepIssue"
+            }
+          },
+          "reviewCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reviewedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reportingUnit": {
+            "type": "string"
+          }
+        }
+      },
+      "QaVerdictCapture": {
+        "required": [
+          "captureId",
+          "expiresAt",
+          "url"
+        ],
+        "type": "object",
+        "properties": {
+          "captureId": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "QaRunChangeListResponse": {
         "required": [
           "items"
@@ -17513,69 +20136,6 @@
           }
         }
       },
-      "QaRunSummaryResponse": {
-        "required": [
-          "gameInstanceId",
-          "id",
-          "issueCount",
-          "startedAt",
-          "status",
-          "testRunId"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "testRunId": {
-            "type": "string"
-          },
-          "testRunName": {
-            "type": "string"
-          },
-          "gameInstanceId": {
-            "type": "string"
-          },
-          "gameInstanceName": {
-            "type": "string"
-          },
-          "gameBuildVersion": {
-            "type": "string"
-          },
-          "model": {
-            "type": "string"
-          },
-          "reasoningEffort": {
-            "type": "string"
-          },
-          "keySource": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "startedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "completedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "casesPassed": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "casesTotal": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "issueCount": {
-            "type": "integer",
-            "format": "int32"
-          }
-        }
-      },
       "SinceLastQaChange": {
         "required": [
           "at",
@@ -17867,6 +20427,15 @@
             "type": "string"
           },
           "verificationStatus": {
+            "type": "string"
+          },
+          "qaRunId": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "verdictLogId": {
             "type": "string"
           },
           "isEditor": {
@@ -18396,6 +20965,330 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/QaRunSummaryResponse"
+            }
+          }
+        }
+      },
+      "QaReviewRevision": {
+        "required": [
+          "decidedAt",
+          "decision",
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "decidedBy": {
+            "type": "string"
+          },
+          "decidedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QaRecording": {
+        "required": [
+          "id",
+          "instanceId",
+          "startedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instanceId": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "QaRecordingPlayback": {
+        "required": [
+          "gaps",
+          "segments"
+        ],
+        "type": "object",
+        "properties": {
+          "recording": {
+            "$ref": "#/components/schemas/QaRecording"
+          },
+          "segments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VideoSegment"
+            }
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VideoGap"
+            }
+          }
+        }
+      },
+      "VideoGap": {
+        "required": [
+          "endedAt",
+          "reason",
+          "startedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "VideoSegment": {
+        "required": [
+          "endedAt",
+          "id",
+          "startedAt",
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "QaReliabilityResponse": {
+        "required": [
+          "cases",
+          "daily",
+          "from",
+          "includesInterruptedFailures",
+          "overall",
+          "sample",
+          "to"
+        ],
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "overall": {
+            "$ref": "#/components/schemas/ReliabilityCounts"
+          },
+          "daily": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReliabilityGroup"
+            }
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReliabilityGroup"
+            }
+          },
+          "sample": {
+            "type": "string"
+          },
+          "includesInterruptedFailures": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ReliabilityCounts": {
+        "required": [
+          "falseNegatives",
+          "falsePositives",
+          "inconclusiveReviews",
+          "interruptedFalseNegatives",
+          "reviewed",
+          "total",
+          "trueNegatives",
+          "truePositives"
+        ],
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reviewed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "inconclusiveReviews": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "truePositives": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trueNegatives": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "falsePositives": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "falseNegatives": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "interruptedFalseNegatives": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "falsePositiveRate": {
+            "type": "number",
+            "format": "double"
+          },
+          "falseNegativeRate": {
+            "type": "number",
+            "format": "double"
+          },
+          "reviewCoverage": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "ReliabilityGroup": {
+        "required": [
+          "counts",
+          "key"
+        ],
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ReliabilityCounts"
+          }
+        }
+      },
+      "CaseFailureOccurrence": {
+        "required": [
+          "attemptId",
+          "falsePositive",
+          "qaTryId",
+          "testCaseId",
+          "validFailure",
+          "verdict"
+        ],
+        "type": "object",
+        "properties": {
+          "attemptId": {
+            "type": "string"
+          },
+          "testCaseId": {
+            "type": "string"
+          },
+          "qaTryId": {
+            "type": "string"
+          },
+          "qaRunId": {
+            "type": "string"
+          },
+          "logId": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "review": {
+            "type": "string"
+          },
+          "validFailure": {
+            "type": "boolean"
+          },
+          "falsePositive": {
+            "type": "boolean"
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CaseIssueHistory": {
+        "required": [
+          "autoClosed",
+          "issueId",
+          "occurrences"
+        ],
+        "type": "object",
+        "properties": {
+          "issueId": {
+            "type": "string"
+          },
+          "testCaseId": {
+            "type": "string"
+          },
+          "previousIssueId": {
+            "type": "string"
+          },
+          "mergedInto": {
+            "type": "string"
+          },
+          "autoClosed": {
+            "type": "boolean"
+          },
+          "occurrences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseFailureOccurrence"
             }
           }
         }
@@ -20268,6 +23161,34 @@
           },
           "updatedBy": {
             "$ref": "#/components/schemas/DeveloperMacroAuthor"
+          }
+        }
+      },
+      "DemonstrationInstance": {
+        "required": [
+          "connected",
+          "id",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "protocolVersion": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },

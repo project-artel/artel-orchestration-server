@@ -18,6 +18,23 @@ class SessionManagerTest {
     private val sessionManager = SessionManager(ObjectMapper())
 
     @Test
+    fun `영상 ACK는 액션 전송 대기 수에 포함하지 않는다`() {
+        val session = Mockito.mock(WebSocketSession::class.java)
+        val outbound = requireNotNull(sessionManager.register("1", session))
+        runBlocking { sessionManager.sendRaw("1", "action") }
+        sessionManager.sendMediaAck("1", mapOf("type" to "MEDIA_FRAME_ACK"))
+        assertThat(sessionManager.pendingOutbound("1")).isEqualTo(1)
+        StepVerifier.create(outbound.take(2))
+            .recordWith { mutableListOf<String>() }
+            .expectNextCount(2)
+            .consumeRecordedWith { messages ->
+                assertThat(messages).containsExactlyInAnyOrder("action", "{\"type\":\"MEDIA_FRAME_ACK\"}")
+            }
+            .verifyComplete()
+        assertThat(sessionManager.pendingOutbound("1")).isZero()
+    }
+
+    @Test
     fun `refuses to register a second session for the same instance`() {
         val first = Mockito.mock(WebSocketSession::class.java)
         val second = Mockito.mock(WebSocketSession::class.java)
@@ -84,5 +101,44 @@ class SessionManagerTest {
         assertThatThrownBy {
             runBlocking { sessionManager.send("nobody", mapOf("type" to "ACTION")) }
         }.isInstanceOf(IllegalArgumentException::class.java)
+    }
+
+    /**
+     * 발신자가 여러 thread 에서 동시에 보내도 하나도 버리지 않는다(ARTEL-1235). unicast sink 의 `tryEmitNext` 는
+     * 동시 호출 한쪽에 `FAIL_NON_SERIALIZED` 를 돌려주고 그 메시지를 버린다.
+     */
+    @Test
+    fun `concurrent senders lose no message`() {
+        val outbound = requireNotNull(sessionManager.register("1", Mockito.mock(WebSocketSession::class.java)))
+        val received = java.util.concurrent.atomic.AtomicInteger()
+        outbound.subscribe { received.incrementAndGet() }
+        val senders = 8
+        val perSender = 500
+
+        val threads = (1..senders).map { sender ->
+            Thread {
+                runBlocking {
+                    repeat(perSender) { index -> assertThat(sessionManager.send("1", mapOf("s" to sender, "i" to index))).isTrue() }
+                }
+            }.also(Thread::start)
+        }
+        threads.forEach(Thread::join)
+
+        assertThat(received.get()).isEqualTo(senders * perSender)
+        assertThat(sessionManager.pendingOutbound("1")).isZero()
+    }
+
+    @Test
+    fun `counts messages the send pipeline has not taken yet and reports a closed queue`(): Unit = runBlocking {
+        val outbound = requireNotNull(sessionManager.register("1", Mockito.mock(WebSocketSession::class.java)))
+
+        sessionManager.send("1", mapOf("type" to "FIRST"))
+        sessionManager.send("1", mapOf("type" to "SECOND"))
+        assertThat(sessionManager.pendingOutbound("1")).isEqualTo(2)
+
+        // 전송 파이프라인이 꺼내 가고 나서 끊긴다. 소켓 write 가 실패했을 때와 같다.
+        outbound.take(2).collectList().block()
+        assertThat(sessionManager.pendingOutbound("1")).isZero()
+        assertThat(sessionManager.send("1", mapOf("type" to "THIRD"))).isFalse()
     }
 }

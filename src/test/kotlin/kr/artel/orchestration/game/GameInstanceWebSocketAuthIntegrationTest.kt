@@ -152,6 +152,7 @@ class GameInstanceWebSocketAuthIntegrationTest {
         val instance = createGameInstance(member.userId)
         val instanceId = requireNotNull(instance.id).toString()
         val incumbent = Mockito.mock(WebSocketSession::class.java)
+        Mockito.`when`(incumbent.id).thenReturn("incumbent-$instanceId")
         sessionManager.register(instanceId, incumbent)
 
         try {
@@ -159,6 +160,84 @@ class GameInstanceWebSocketAuthIntegrationTest {
             assertThat(closeStatus?.code).isEqualTo(4002)
         } finally {
             sessionManager.removeSession(instanceId, incumbent)
+        }
+    }
+
+    /**
+     * 앞 연결이 살아 있으면(ping 에 pong 을 돌려주면) 같은 인스턴스의 새 연결은 여전히 4002 다(ARTEL-1234).
+     * reactor-netty client 는 ping 에 pong 을 스스로 돌려준다.
+     */
+    @Test
+    fun `a second connection is refused with 4002 while the first one answers pings`(): Unit = runBlocking {
+        val member = signIn("42", "octocat")
+        val instanceId = requireNotNull(createGameInstance(member.userId).id).toString()
+        val first = holdOpen(member.sdkToken, instanceId, answerPings = true)
+        try {
+            awaitRegistered(instanceId)
+
+            assertThat(connectAndAwaitClose(member.sdkToken, instanceId)?.code).isEqualTo(4002)
+            assertThat(closeWithin(first, Duration.ofMillis(300))).isNull()
+        } finally {
+            first.connection.dispose()
+        }
+    }
+
+    /**
+     * 앞 연결이 ping 에 답하지 않으면 새 연결이 자리를 넘겨받고 앞 연결은 4009 로 닫힌다(ARTEL-1234). 게임 쪽 소켓이
+     * close frame 없이 끊긴 경우다 — 2026-10-22 gyemong 런 2 는 이 상황에서 재연결이 41번 거절됐다.
+     */
+    @Test
+    fun `a connection that stops answering pings is replaced by the next one`(): Unit = runBlocking {
+        val member = signIn("42", "octocat")
+        val instanceId = requireNotNull(createGameInstance(member.userId).id).toString()
+        val silent = holdOpen(member.sdkToken, instanceId, answerPings = false)
+        try {
+            awaitRegistered(instanceId)
+            val silentSession = sessionManager.getSession(instanceId)
+
+            val replacement = holdOpen(member.sdkToken, instanceId, answerPings = true)
+            try {
+                assertThat(silent.closeStatus.asMono().block(Duration.ofSeconds(5))?.code).isEqualTo(4009)
+                assertThat(closeWithin(replacement, Duration.ofMillis(300))).isNull()
+                assertThat(sessionManager.getSession(instanceId)).isNotNull().isNotSameAs(silentSession)
+            } finally {
+                replacement.connection.dispose()
+            }
+        } finally {
+            silent.connection.dispose()
+        }
+    }
+
+    private class HeldConnection(val connection: reactor.core.Disposable, val closeStatus: Sinks.One<CloseStatus>)
+
+    /**
+     * 연결을 열어 둔다. [answerPings] 가 false 면 client 가 ping 에 pong 을 돌려주지 않는다 — reactor-netty 의
+     * `handlePing(true)` 는 ping 을 application 으로 넘기고 스스로 답하지 않는다.
+     */
+    private fun holdOpen(token: String, instanceId: String, answerPings: Boolean): HeldConnection {
+        val uri = URI("ws://localhost:$port/ws/sdk?token=$token&instanceId=$instanceId")
+        val closeStatus = Sinks.one<CloseStatus>()
+        val client = ReactorNettyWebSocketClient(
+            reactor.netty.http.client.HttpClient.create(),
+            { reactor.netty.http.client.WebsocketClientSpec.builder().handlePing(!answerPings) }
+        )
+        val connection = client.execute(uri) { session ->
+            session.receive().then().then(session.closeStatus())
+                .doOnNext { status -> closeStatus.tryEmitValue(status) }
+                .then()
+        }.subscribe()
+        return HeldConnection(connection, closeStatus)
+    }
+
+    /** 닫히지 않으면 null 이다. `block(timeout)` 은 시간이 다하면 던지므로 쓰지 않는다. */
+    private fun closeWithin(held: HeldConnection, wait: Duration): CloseStatus? =
+        held.closeStatus.asMono().timeout(wait, Mono.empty()).block()
+
+    private fun awaitRegistered(instanceId: String) {
+        val deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos()
+        while (!sessionManager.hasSession(instanceId)) {
+            check(System.nanoTime() < deadline) { "SDK 연결이 5초 안에 등록되지 않았다" }
+            Thread.sleep(20)
         }
     }
 

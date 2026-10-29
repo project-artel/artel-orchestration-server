@@ -333,6 +333,36 @@ class TestCaseVersionLibraryIntegrationTest {
         assertThat(reply.status).isEqualTo(404)
     }
 
+    @Test
+    fun `전체 추가는 지도 케이스를 포함하고 기존 판정과 다른 프로젝트를 유지한다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val source = ingestedBuild(projectId, "1.3.0", Instant.parse("2026-10-01T00:00:00Z"))
+        call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${source.gameBuildId}/content-map/test-cases")
+        val target = ingestedBuild(projectId, "1.4.0", Instant.parse("2026-10-02T00:00:00Z"))
+        call(token, HttpMethod.POST, "/api/projects/$projectId/game-builds/${target.gameBuildId}/content-map/test-cases")
+        val rows = versions.findByGameBuildId(target.gameBuildId).toList()
+        val missing = rows.first()
+        val existing = rows.last()
+        versions.delete(missing)
+        versions.save(existing.copy(verificationStatus = "FAILED"))
+        val manual = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "수동", expectedValue = "x"))
+        val foreign = testCases.save(TestCaseEntity(projectId = newProject(userId), scene = "S", step = "다른 프로젝트", expectedValue = "x"))
+        val uri = "/api/projects/$projectId/test-case-versions/${target.gameBuildId}/cases"
+        val body = """{"caseIds":["${missing.testCaseId}","${missing.testCaseId}","${existing.testCaseId}","${manual.id}","${foreign.id}"],"includeGenerated":true}"""
+
+        assertThat(call(token, HttpMethod.POST, uri, """{"caseIds":["${missing.testCaseId}"]}""").body["caseIds"]).isEmpty()
+        val added = call(token, HttpMethod.POST, uri, body)
+        assertThat(added.status).isEqualTo(200)
+        assertThat(added.body["caseIds"].map { it.asLong() }).containsExactlyInAnyOrder(missing.testCaseId, manual.id)
+        assertThat(versions.findByTestCaseIdAndGameBuildId(existing.testCaseId, target.gameBuildId)!!.verificationStatus).isEqualTo("FAILED")
+        assertThat(versions.findByTestCaseIdAndGameBuildId(missing.testCaseId, source.gameBuildId)).isNotNull()
+        assertThat(versions.findByTestCaseIdAndGameBuildId(foreign.id!!, target.gameBuildId)).isNull()
+        assertThat(call(token, HttpMethod.POST, uri, body).body["caseIds"]).isEmpty()
+        val (_, strangerToken) = signIn()
+        assertThat(call(strangerToken, HttpMethod.POST, uri, body).status).isEqualTo(404)
+    }
+
     private data class IngestedBuild(val gameBuildId: Long, val contentMapId: Long)
 
     private suspend fun ingestedBuild(projectId: Long, version: String, createdAt: Instant): IngestedBuild {

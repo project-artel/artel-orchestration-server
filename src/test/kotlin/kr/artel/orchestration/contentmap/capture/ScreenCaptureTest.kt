@@ -249,6 +249,7 @@ class ScreenCaptureTest {
      */
     private fun connect(world: World): SentFrames {
         val session = Mockito.mock(WebSocketSession::class.java)
+        Mockito.`when`(session.id).thenReturn("content-map-${System.nanoTime()}")
         val frames = CopyOnWriteArrayList<String>()
         val instanceId = world.gameInstanceId.toString()
         val outbound = requireNotNull(sessionManager.register(instanceId, session))

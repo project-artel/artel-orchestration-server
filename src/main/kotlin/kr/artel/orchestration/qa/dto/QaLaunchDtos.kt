@@ -32,9 +32,30 @@ data class QaRunSummaryResponse(
     val casesPassed: Int?,
     val casesTotal: Int?,
     val issueCount: Int,
+    /** 실행을 시작한 사람(app_user id). 화면이 "내가 시작한 실행" 의 끝 알림을 고른다. */
+    val startedBy: String = "",
+    /** 추가 검토로 고른 판정 수와, 그중 사람이 아직 정하지 않은 수(ARTEL-1254). */
+    val reviewFlagged: Int = 0,
+    val reviewPending: Int = 0,
+    val casesFailed: Int? = null,
 )
 
 data class QaRunSummaryListResponse(val items: List<QaRunSummaryResponse>)
+
+/**
+ * 상단바 알림함 한 줄(ARTEL-1254). 내가 시작해 끝난 실행이다.
+ *
+ * @property read 알림함에서 눌렀거나 모두 읽음으로 둔 것.
+ */
+data class QaNotice(
+    val run: QaRunSummaryResponse,
+    val projectId: String,
+    val projectName: String,
+    val read: Boolean,
+)
+
+/** `GET /api/qa-notices`. [unreadCount] 는 [items] 밖의 오래된 것까지 센다. */
+data class QaNoticeListResponse(val items: List<QaNotice>, val unreadCount: Int)
 
 /**
  * 테스트 런의 마지막 실행에서 나온 이슈 한 건(ARTEL-1083). 화면은 제목만 나열하고, 누르면 이슈로 간다.

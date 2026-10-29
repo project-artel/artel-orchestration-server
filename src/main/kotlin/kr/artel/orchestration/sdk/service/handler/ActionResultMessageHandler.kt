@@ -29,7 +29,7 @@ import org.springframework.web.reactive.socket.WebSocketSession
 class ActionResultMessageHandler(
     private val scanResults: ScanResultRouter,
     private val screenCaptures: ScreenCaptureResultRouter,
-    private val qaBridge: QaSdkBridgeService
+    private val qaBridge: QaSdkBridgeService,
 ) : SdkMessageHandler {
 
     private val logger = LoggerFactory.getLogger(ActionResultMessageHandler::class.java)

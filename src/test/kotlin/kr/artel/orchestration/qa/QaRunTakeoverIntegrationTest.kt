@@ -1,6 +1,7 @@
 package kr.artel.orchestration.qa
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
@@ -20,6 +21,7 @@ import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.qa.service.ActiveQaRunException
 import kr.artel.orchestration.qa.service.QaAgentEnvelope
 import kr.artel.orchestration.qa.service.QaAgentPort
+import kr.artel.orchestration.qa.service.QaAgentRejectedException
 import kr.artel.orchestration.qa.service.QaAgentSession
 import kr.artel.orchestration.qa.service.QaAgentSessionContext
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
@@ -39,6 +41,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.http.HttpStatus
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Primary
@@ -68,11 +71,17 @@ class QaRunTakeoverIntegrationTest {
         private val counter = AtomicInteger()
         val closed: MutableList<String> = CopyOnWriteArrayList()
 
+        /** 채워 두면 세션 개설이 이 예외로 실패한다. agent-server 가 4xx 로 거절한 경우다(ARTEL-1236). */
+        @Volatile var rejection: QaAgentRejectedException? = null
+
         override suspend fun createSession(
             context: QaAgentSessionContext,
             onMessage: suspend (QaAgentEnvelope) -> Unit,
             onDisconnect: suspend () -> Unit
-        ): QaAgentSession = QaAgentSession("takeover-session-${counter.incrementAndGet()}")
+        ): QaAgentSession {
+            rejection?.let { throw it }
+            return QaAgentSession("takeover-session-${counter.incrementAndGet()}")
+        }
 
         override suspend fun send(sessionId: String, envelope: QaAgentEnvelope) = Unit
 
@@ -113,6 +122,7 @@ class QaRunTakeoverIntegrationTest {
 
     private suspend fun wipe() {
         agentPort.closed.clear()
+        agentPort.rejection = null
         qaLogRepository.deleteAll()
         qaTryRepository.deleteAll()
         qaRunRepository.deleteAll()
@@ -181,6 +191,23 @@ class QaRunTakeoverIntegrationTest {
 
         assertThat(started.status).isEqualTo("RUNNING")
         assertThat(started.tries).hasSize(2)
+    }
+
+    @Test
+    fun `agent-server 가 4xx 로 거절하면 그 status 와 이유가 그대로 나가고 런은 FAILED 다`(): Unit = runBlocking {
+        val seed = idleInstance()
+        agentPort.rejection = QaAgentRejectedException(
+            HttpStatus.UNPROCESSABLE_ENTITY,
+            "agent-server 가 run 설정을 거절했습니다: arch.vision: Input should be 'auto', 'on' or 'off'",
+            mapOf("arch.vision" to "Input should be 'auto', 'on' or 'off'")
+        )
+
+        val thrown = runCatching { service.createRun(seed.testRunId, seed.instanceId, seed.ownerId) }
+            .exceptionOrNull()
+
+        // 503 upstream_unavailable 로 바뀌지 않는다.
+        assertThat(thrown).isSameAs(agentPort.rejection)
+        assertThat(qaRunRepository.findAll().toList().map { it.status }).containsExactly("FAILED")
     }
 
     // ----------------------------------------------------------------- helpers

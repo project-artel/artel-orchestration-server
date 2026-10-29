@@ -24,11 +24,11 @@ import org.springframework.core.Ordered
  */
 @Configuration
 @EnableConfigurationProperties(StreamProperties::class, SdkSocketProperties::class)
-class WebSocketConfig(
+class WebSocketConfig @org.springframework.beans.factory.annotation.Autowired constructor(
     private val sdkWebSocketHandler: SdkWebSocketHandler,
     private val viewerWebSocketHandler: ViewerWebSocketHandler,
     private val streamProperties: StreamProperties,
-    private val socketProperties: SdkSocketProperties
+    private val socketProperties: SdkSocketProperties,
 ) : WebFluxConfigurer {
 
     /**

@@ -261,6 +261,23 @@ class S3DocumentStorage internal constructor(
             .then()
             .onErrorMap(::isStorageFault, ::asStorageFault)
 
+    override fun retiredDemonstrationObjects(): Flux<RetiredStorageObject> {
+        val request = software.amazon.awssdk.services.s3.model.ListObjectVersionsRequest.builder()
+            .bucket(properties.bucket).prefix("demonstrations/").build()
+        return Flux.from(client.listObjectVersionsPaginator(request)).concatMapIterable { page ->
+            page.versions().map { RetiredStorageObject(it.key(), it.versionId()) } +
+                page.deleteMarkers().map { RetiredStorageObject(it.key(), it.versionId()) }
+        }.onErrorMap(::isStorageFault, ::asStorageFault)
+    }
+
+    override fun deleteRetiredDemonstrationObject(obj: RetiredStorageObject): Mono<Void> {
+        require(obj.key.startsWith("demonstrations/"))
+        return Mono.fromFuture {
+            client.deleteObject(DeleteObjectRequest.builder().bucket(properties.bucket).key(obj.key)
+                .apply { obj.versionId?.let { versionId(it) } }.build())
+        }.then().onErrorMap(::isStorageFault, ::asStorageFault)
+    }
+
     /** 없는 키는 실패가 아니라 "없음"이다. 비동기 클라이언트는 원인을 한 겹 감싸 던진다. */
     private fun isMissing(error: Throwable): Boolean =
         error is NoSuchKeyException || error.cause is NoSuchKeyException

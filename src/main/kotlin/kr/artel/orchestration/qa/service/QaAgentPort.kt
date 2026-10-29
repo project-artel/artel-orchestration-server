@@ -2,8 +2,10 @@ package kr.artel.orchestration.qa.service
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.JsonNode
+import kr.artel.orchestration.common.error.ApiException
 import kr.artel.orchestration.gamenote.entity.GenreModule
 import kr.artel.orchestration.testscenario.dto.AgentScenario
+import org.springframework.http.HttpStatus
 import java.time.Instant
 
 /**
@@ -107,3 +109,21 @@ interface QaAgentPort {
 }
 
 class QaAgentUnavailableException(message: String) : RuntimeException(message)
+
+/**
+ * agent-server 가 세션 개설 요청을 4xx 로 거절했다(ARTEL-1236). agent-server 는 살아 있고, 틀린 것은 이쪽이 보낸
+ * run 설정이다. 그래서 503 이 아니라 agent-server 가 답한 status 그대로 응답한다.
+ *
+ * [message] 와 [responseFields] 에는 agent-server 응답의 `detail` 이 실린다. `common/error` 의 규약은 4xx 에 잡은
+ * 예외의 raw message 를 싣지 말라고 하지만, 이 `detail` 은 요청 본문의 어느 field 가 왜 틀렸는지에 대한 안내라
+ * 사용자가 고칠 수 있는 정보다. agent-server 가 422 의 `input` 에서 API key 를 가리고, 이쪽은 `input` 을 아예
+ * 읽지 않는다 — `loc` 와 `msg` 만 옮긴다.
+ *
+ * @property responseFields `loc` 를 점으로 이은 field 이름(맨 앞 `body` 는 뺀다)에서 `msg` 로. `detail` 이 문자열이면
+ *   비어 있다
+ */
+class QaAgentRejectedException(
+    status: HttpStatus,
+    message: String,
+    override val responseFields: Map<String, String> = emptyMap()
+) : ApiException(status, "agent_rejected_request", message)

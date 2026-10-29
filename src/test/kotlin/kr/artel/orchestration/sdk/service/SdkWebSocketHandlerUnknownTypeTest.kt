@@ -18,6 +18,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.Mockito.`when`
+import kr.artel.orchestration.qa.service.QaSdkReconnectService
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
 import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Flux
@@ -62,6 +63,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
         SdkSocketProperties(),
         ProjectChangeStreamManager(),
         mock(ScanResultRouter::class.java),
+        mock(QaSdkReconnectService::class.java),
         listOf(knownHandler)
     )
 
@@ -97,6 +99,16 @@ class SdkWebSocketHandlerUnknownTypeTest {
         assertThat(handled).isEqualTo(1)
     }
 
+    @Test
+    fun `제거된 시연 메시지를 무시한 뒤 다음 프레임을 처리한다`() {
+        val handler = handler(strictMapper)
+        val session = mock(WebSocketSession::class.java)
+        handler.dispatch("7", """{"type":"DEMONSTRATION_CAPABILITIES","protocolVersion":1,"methods":["move_mouse"]}""", session).block()
+        handler.dispatch("7", """{"type":"DEMONSTRATION_CONTROL_RESULT","sessionId":"old","generation":1,"accepted":true}""", session).block()
+        handler.dispatch("7", """{"type":"KNOWN"}""", session).block()
+        assertThat(handled).isEqualTo(1)
+        verifyNoInteractions(session)
+    }
     /** 손상된 JSON도 그 프레임만 버린다. */
     @Test
     fun `malformed frame is dropped and the next frame is still processed`() {
@@ -129,6 +141,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
             SdkSocketProperties(),
             ProjectChangeStreamManager(),
             mock(ScanResultRouter::class.java),
+            mock(QaSdkReconnectService::class.java),
             listOf(knownHandler, exploding)
         )
         val session = mock(WebSocketSession::class.java)
@@ -159,6 +172,7 @@ class SdkWebSocketHandlerUnknownTypeTest {
             SdkSocketProperties(),
             ProjectChangeStreamManager(),
             mock(ScanResultRouter::class.java),
+            mock(QaSdkReconnectService::class.java),
             listOf(knownHandler)
         )
         val session = mock(WebSocketSession::class.java)

@@ -80,6 +80,8 @@ class ProjectAgentModelIntegrationTest {
         private const val PROJECT_MODEL = "claude/claude-sonnet-5-5"
         private const val ADMIN_MODEL = "claude/claude-haiku-5-5"
         private const val GPT_MODEL = "gpt/gpt-6.1-sol"
+        /** 설정이 모두 비고 공용 key 가 Anthropic 뿐일 때 `ProviderDefaultModels` 가 고르는 model. */
+        private const val ANTHROPIC_DEFAULT_MODEL = "claude/claude-sonnet-5-5"
         private const val USER_ANTHROPIC_KEY = "sk-ant-api03-user-anthropic-key-0123456789-wxyz"
         private const val TEXT_REPLY = """{"content":"끝났습니다.","tool_calls":[]}"""
 
@@ -218,9 +220,10 @@ class ProjectAgentModelIntegrationTest {
         // 다른 프로젝트의 멤버가 그 프로젝트로 effective 를 물으면 404 다.
         assertThat(callMe(outsider, HttpMethod.GET, query = "?projectId=${owner.projectId}").first).isEqualTo(404)
 
-        // 프로젝트를 주면 effective 가 프로젝트 설정을 따르고, 주지 않으면 관리자 설정 이하를 따른다.
+        // 프로젝트를 주면 effective 가 프로젝트 설정을 따르고, 주지 않으면 관리자 설정 이하를 따른다. 관리자 설정이
+        // 비어 있고 공용 key 는 Anthropic 뿐이라 그 provider 의 기본 model 이다(ARTEL-1237).
         assertThat(me(teammate, owner.projectId)["effectiveModel"].asText()).isEqualTo(PROJECT_MODEL)
-        assertThat(me(teammate)["effectiveModel"].isNull).isTrue()
+        assertThat(me(teammate)["effectiveModel"].asText()).isEqualTo(ANTHROPIC_DEFAULT_MODEL)
 
         val (clearedStatus, cleared) = callProject(owner, owner.projectId, HttpMethod.PUT, """{"model":null}""")
         assertThat(clearedStatus).isEqualTo(200)
@@ -238,8 +241,9 @@ class ProjectAgentModelIntegrationTest {
         assertThat(status).isEqualTo(200)
         assertThat(cleared!!["model"].isNull).isTrue()
         assertThat(cleared["effectiveModel"].asText()).isEqualTo(PROJECT_MODEL)
-        // projectId 가 없으면 관리자 설정 이하를 따른다.
-        assertThat(callMe(owner, HttpMethod.PUT, """{"model":null}""").second!!["effectiveModel"].isNull).isTrue()
+        // projectId 가 없으면 관리자 설정 이하를 따른다. 공용 key 가 Anthropic 뿐이라 그 provider 의 기본 model 이다.
+        assertThat(callMe(owner, HttpMethod.PUT, """{"model":null}""").second!!["effectiveModel"].asText())
+            .isEqualTo(ANTHROPIC_DEFAULT_MODEL)
         // 멤버가 아닌 프로젝트면 404 다.
         assertThat(callMe(outsider, HttpMethod.PUT, """{"model":null}""", "?projectId=${owner.projectId}").first).isEqualTo(404)
     }

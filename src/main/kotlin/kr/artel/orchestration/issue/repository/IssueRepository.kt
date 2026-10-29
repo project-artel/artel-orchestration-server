@@ -105,10 +105,14 @@ interface IssueRepository : CoroutineCrudRepository<IssueEntity, Long> {
     @Modifying
     @Query(
         """
+        WITH case_lock AS MATERIALIZED (
+            SELECT pg_advisory_xact_lock(hashtextextended('qa-tc-issue:' || i.test_case_id::text, 0))
+            FROM issue i WHERE i.id = :id AND i.test_case_id IS NOT NULL
+        )
         UPDATE issue
-        SET status = 'RESOLVED', resolved_at = :resolvedAt, resolved_by = :resolvedBy,
+        SET status = 'RESOLVED', auto_closed = false, resolved_at = :resolvedAt, resolved_by = :resolvedBy,
             updated_at = :updatedAt
-        WHERE id = :id AND status = 'OPEN'
+        WHERE id = :id AND status = 'OPEN' AND (SELECT COUNT(*) FROM case_lock) >= 0
         """
     )
     suspend fun resolve(id: Long, resolvedAt: Instant, resolvedBy: Long, updatedAt: Instant): Int
@@ -122,9 +126,13 @@ interface IssueRepository : CoroutineCrudRepository<IssueEntity, Long> {
     @Modifying
     @Query(
         """
+        WITH case_lock AS MATERIALIZED (
+            SELECT pg_advisory_xact_lock(hashtextextended('qa-tc-issue:' || i.test_case_id::text, 0))
+            FROM issue i WHERE i.id = :id AND i.test_case_id IS NOT NULL
+        )
         UPDATE issue
-        SET status = 'OPEN', resolved_at = NULL, resolved_by = NULL, updated_at = :updatedAt
-        WHERE id = :id AND status = 'RESOLVED'
+        SET status = 'OPEN', auto_closed = false, resolved_at = NULL, resolved_by = NULL, updated_at = :updatedAt
+        WHERE id = :id AND status = 'RESOLVED' AND merged_into IS NULL AND (SELECT COUNT(*) FROM case_lock) >= 0
         """
     )
     suspend fun reopen(id: Long, updatedAt: Instant): Int

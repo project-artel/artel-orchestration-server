@@ -1,7 +1,9 @@
 package kr.artel.orchestration
 
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.test.context.ActiveProfiles
@@ -10,19 +12,30 @@ import java.time.Duration
 
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class OpenApiDocumentationIntegrationTest {
     @LocalServerPort
     private val port: Int = 0
 
-    @Test
-    fun `publishes the orchestration API contract`() {
-        val response = WebClient.create("http://localhost:$port")
+    private lateinit var response: String
+
+    @BeforeAll
+    fun loadContract() {
+        // API 추가 후 계약이 280 KB를 넘어 기본 256 KiB 버퍼로 읽을 수 없다.
+        // 최초 schema 생성은 한 번만 기다리며, 이 검사는 응답 시간 대신 계약 내용을 검증한다.
+        response = WebClient.builder()
+            .baseUrl("http://localhost:$port")
+            .codecs { it.defaultCodecs().maxInMemorySize(1024 * 1024) }
+            .build()
             .get()
             .uri("/v3/api-docs")
             .retrieve()
             .bodyToMono(String::class.java)
-            .block(Duration.ofSeconds(5))
+            .block(Duration.ofSeconds(30)) ?: error("OpenAPI contract is empty")
+    }
 
+    @Test
+    fun `publishes the orchestration API contract`() {
         assertThat(response).contains("Artel Orchestration Server API")
         assertThat(response).contains("/api/sdk/registrations")
         assertThat(response).contains("/internal/action/{instanceId}")
@@ -32,13 +45,6 @@ class OpenApiDocumentationIntegrationTest {
 
     @Test
     fun `publishes the game instance and build endpoints`() {
-        val response = WebClient.create("http://localhost:$port")
-            .get()
-            .uri("/v3/api-docs")
-            .retrieve()
-            .bodyToMono(String::class.java)
-            .block(Duration.ofSeconds(5))
-
         assertThat(response).contains("/api/projects/{projectId}/game-instances")
         assertThat(response).contains("/api/projects/{projectId}/game-instances/{instanceId}")
         assertThat(response).contains("/api/projects/{projectId}/game-builds")
@@ -51,13 +57,6 @@ class OpenApiDocumentationIntegrationTest {
 
     @Test
     fun `publishes the project and planning-document endpoints`() {
-        val response = WebClient.create("http://localhost:$port")
-            .get()
-            .uri("/v3/api-docs")
-            .retrieve()
-            .bodyToMono(String::class.java)
-            .block(Duration.ofSeconds(5))
-
         assertThat(response).contains("/api/projects")
         assertThat(response).contains("/api/projects/{projectId}")
         assertThat(response).contains("/api/projects/{projectId}/documents")
@@ -87,13 +86,6 @@ class OpenApiDocumentationIntegrationTest {
      */
     @Test
     fun `keeps the session-derived user id out of the contract`() {
-        val response = WebClient.create("http://localhost:$port")
-            .get()
-            .uri("/v3/api-docs")
-            .retrieve()
-            .bodyToMono(String::class.java)
-            .block(Duration.ofSeconds(5))
-
         assertThat(response).doesNotContain(""""name":"appUserId"""")
     }
 }
