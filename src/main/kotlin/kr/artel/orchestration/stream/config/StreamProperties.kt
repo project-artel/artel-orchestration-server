@@ -20,15 +20,20 @@ import java.time.Duration
 @ConfigurationProperties("artel.stream")
 data class StreamProperties(
     val enabled: Boolean = true,
+    /** orch 프로세스가 인코딩 중인 segment를 임시 보관한다. */
+    val mediaDirectory: String = "./data/qa-video",
+    val mediaMaxIngress: Int = 8,
+    val mediaMaxViewers: Int = 8,
     val leaseSeconds: Long = 90,
     val stunUrls: String = "",
     val turnUrl: String = "",
     val turnUsername: String = "",
     val turnCredential: String = "",
     val maxWidth: Int = 1280,
-    val maxFramerate: Int = 30
+    val maxFramerate: Int = 10
 ) {
     init {
+        require(mediaMaxIngress in 1..8 && mediaMaxViewers in 1..8) { "Media connection limits must be between 1 and 8" }
         require(leaseSeconds >= MINIMUM_LEASE_SECONDS) {
             "artel.stream.lease-seconds must be at least $MINIMUM_LEASE_SECONDS"
         }
@@ -50,7 +55,7 @@ data class StreamProperties(
      */
     val lease: Duration get() = Duration.ofSeconds(leaseSeconds)
 
-    val video: VideoConstraints get() = VideoConstraints(maxWidth, maxFramerate)
+    val video: VideoConstraints get() = VideoConstraints(maxWidth.coerceIn(2, 1280), maxFramerate.coerceIn(1, 10))
 
     /**
      * TURN은 대칭 NAT처럼 직접 연결이 불가능할 때만 필요하고, 그때는 영상 전체가 중계 서버를

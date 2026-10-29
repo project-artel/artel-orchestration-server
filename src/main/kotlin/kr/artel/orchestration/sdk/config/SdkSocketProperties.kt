@@ -67,6 +67,14 @@ data class SdkSocketProperties(
      * 60초가 걸린다.
      */
     val idleTimeout: Duration = Duration.ofSeconds(45),
+    /**
+     * 같은 인스턴스의 새 연결이 왔을 때 앞 세션의 답을 기다리는 시간(ARTEL-1234). 이 안에 frame 이 오지 않으면 앞
+     * 세션을 닫고 새 연결을 받는다.
+     *
+     * 살아 있는 세션의 pong 은 로컬에서 수 ms 안에 온다. 2초는 그보다 충분히 길고, SDK 가 재연결을 다시 시도하기
+     * 전에 끝난다.
+     */
+    val replaceProbeTimeout: Duration = Duration.ofSeconds(2),
 ) {
     init {
         require(idleTimeout > pingInterval) {

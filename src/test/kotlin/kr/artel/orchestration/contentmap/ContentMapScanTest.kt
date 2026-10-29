@@ -85,7 +85,7 @@ class ContentMapScanTest {
         val buildId = newBuild(projectId)
         val instanceId = newInstance(projectId, buildId, name = "Editor - MacBook")
 
-        val outbound = requireNotNull(sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java)))
+        val outbound = requireNotNull(sessionManager.register(instanceId.toString(), mockSession()))
 
         val status = scan.startScan(userId, projectId, buildId)
 
@@ -158,7 +158,7 @@ class ContentMapScanTest {
         val other = newProject(userId)
         val buildId = newBuild(mine)
         val instanceId = newInstance(mine, buildId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
 
         assertThat(scan.startScan(userId, other, buildId)).isNull()
 
@@ -178,7 +178,7 @@ class ContentMapScanTest {
         val projectId = newProject(userId)
         val buildId = newBuild(projectId)
         val instanceId = newInstance(projectId, buildId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
         val map = contentMaps.save(ContentMapEntity(gameBuildId = buildId))
         val testCase = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "지도", expectedValue = "x"))
         versions.save(TestCaseVersionEntity.snapshotOf(testCase, buildId).copy(contentMapId = map.id))
@@ -204,7 +204,7 @@ class ContentMapScanTest {
         val projectId = newProject(userId)
         val buildId = newBuild(projectId)
         val instanceId = newInstance(projectId, buildId)
-        val outbound = requireNotNull(sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java)))
+        val outbound = requireNotNull(sessionManager.register(instanceId.toString(), mockSession()))
 
         assertThat(scan.startScan(userId, projectId, buildId)).isNotNull()
         assertThatThrownBy { runBlocking { scan.startScan(userId, projectId, buildId) } }
@@ -227,7 +227,7 @@ class ContentMapScanTest {
         val projectId = newProject(userId)
         val buildId = newBuild(projectId)
         val instanceId = newInstance(projectId, buildId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
 
         val outcomes = (1..8).map {
             async(Dispatchers.Default) { runCatching { scan.startScan(userId, projectId, buildId) } }
@@ -248,7 +248,7 @@ class ContentMapScanTest {
         val buildId = newBuild(projectId)
         val gone = newInstance(projectId, buildId, name = "끊긴 게임")
         val instanceId = newInstance(projectId, buildId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
         statuses.put(requested(buildId, gone, Instant.now()))
 
         val status = scan.startScan(userId, projectId, buildId)
@@ -264,7 +264,7 @@ class ContentMapScanTest {
         val projectId = newProject(userId)
         val buildId = newBuild(projectId)
         val instanceId = newInstance(projectId, buildId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
         val longAgo = Instant.now().minus(ContentMapScanService.STALE_AFTER).minusSeconds(1)
         statuses.put(requested(buildId, instanceId, longAgo))
 
@@ -296,7 +296,7 @@ class ContentMapScanTest {
         val projectId = newProject(userId)
         val buildId = newBuild(projectId)
         val instanceId = newInstance(projectId, buildId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
 
         assertThat(scan.startScan(userId, projectId, buildId)).isNotNull()
 
@@ -316,7 +316,7 @@ class ContentMapScanTest {
         val projectId = newProject(userId)
         val buildId = newBuild(projectId)
         val instanceId = newInstance(projectId, buildId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
 
         scan.startScan(userId, projectId, buildId)
         scan.cancelScan(userId, projectId, buildId)
@@ -333,7 +333,7 @@ class ContentMapScanTest {
         val projectId = newProject(userId)
         val buildId = newBuild(projectId)
         val instanceId = newInstance(projectId, buildId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
 
         scan.startScan(userId, projectId, buildId)
         statuses.advance(buildId) { it.copy(phase = ScanPhase.INGESTING) }
@@ -379,7 +379,7 @@ class ContentMapScanTest {
         val projectId = newProject(userId)
         val buildId = newBuild(projectId)
         val instanceId = newInstance(projectId, buildId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
         val map = contentMaps.save(ContentMapEntity(gameBuildId = buildId))
 
         // 앞선 스캔이 남긴 것. 요청보다 전에 받았다.
@@ -452,4 +452,9 @@ class ContentMapScanTest {
             )
         ).id!!
     }
+
+    private fun mockSession(): WebSocketSession =
+        Mockito.mock(WebSocketSession::class.java).also { session ->
+            Mockito.`when`(session.id).thenReturn("content-map-${System.nanoTime()}")
+        }
 }

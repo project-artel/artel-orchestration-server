@@ -1,19 +1,14 @@
 package kr.artel.orchestration.stream.dto
 
-/**
- * 화면 스트리밍 시그널링 메시지들. 계약 전체는 `docs/streaming-protocol.md`에 있다.
- *
- * 서버가 만들어 보내는 메시지만 여기 타입으로 있다. 브라우저와 SDK 사이를 오가는 SDP/ICE는
- * 서버가 열어 보지 않고 원문 그대로 넘긴다. 중간에서 다시 직렬화하면 한쪽이 필드를 추가했을 때
- * 서버가 그 필드를 조용히 떨어뜨리게 되는데, WebRTC 협상에서 그 손실은 "연결은 되는데 미디어가
- * 없다"처럼 원인을 찾기 어려운 모습으로 나타난다.
- */
+/** 인증된 WebSocket에서 영상 frame과 수신 확인을 주고받는다. */
 object StreamMessageType {
     const val STREAM_START = "STREAM_START"
     const val STREAM_RENEW = "STREAM_RENEW"
     const val STREAM_STOP = "STREAM_STOP"
     const val STREAM_READY = "STREAM_READY"
     const val STREAM_STATE = "STREAM_STATE"
+    const val STREAM_FRAME = "STREAM_FRAME"
+    const val STREAM_FRAME_ACK = "STREAM_FRAME_ACK"
     const val WEBRTC_OFFER = "WEBRTC_OFFER"
     const val WEBRTC_ANSWER = "WEBRTC_ANSWER"
     const val WEBRTC_ICE = "WEBRTC_ICE"
@@ -36,7 +31,10 @@ data class IceServer(
  */
 data class VideoConstraints(
     val maxWidth: Int,
-    val maxFramerate: Int
+    val maxFramerate: Int,
+    val jpegQuality: Int = 65,
+    val maxFrameBytes: Int = 131072,
+    val maxHeight: Int = 720
 )
 
 data class StreamStartMessage(
@@ -44,7 +42,8 @@ data class StreamStartMessage(
     val iceServers: List<IceServer>,
     val video: VideoConstraints,
     val leaseSeconds: Long,
-    val type: String = StreamMessageType.STREAM_START
+    val type: String = StreamMessageType.STREAM_START,
+    val transport: String = "JPEG_WS"
 )
 
 data class StreamRenewMessage(
@@ -60,7 +59,8 @@ data class StreamStopMessage(
 data class StreamReadyMessage(
     val streamId: String,
     val iceServers: List<IceServer>,
-    val type: String = StreamMessageType.STREAM_READY
+    val type: String = StreamMessageType.STREAM_READY,
+    val transport: String = "JPEG_WS"
 )
 
 data class StreamErrorMessage(

@@ -130,7 +130,7 @@ class ContentMapEventStreamTest {
         val projectId = newProject(userId)
         val buildId = newBuild(projectId)
         val instanceId = newInstance(projectId, buildId, name = "Editor - MacBook")
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
 
         val flow = view.events(userId, projectId, buildId)
         val collected = collectAsync(flow, 2)
@@ -188,7 +188,7 @@ class ContentMapEventStreamTest {
         val projectId = newProject(userId)
         val buildId = newBuild(projectId)
         val instanceId = newInstance(projectId, buildId)
-        sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java))
+        sessionManager.register(instanceId.toString(), mockSession())
 
         val first = collectAsync(view.events(userId, projectId, buildId), 2)
         val second = collectAsync(view.events(userId, projectId, buildId), 2)
@@ -342,4 +342,9 @@ class ContentMapEventStreamTest {
           "gaps": []
         }
     """
+
+    private fun mockSession(): WebSocketSession =
+        Mockito.mock(WebSocketSession::class.java).also { session ->
+            Mockito.`when`(session.id).thenReturn("content-map-${System.nanoTime()}")
+        }
 }

@@ -9,9 +9,14 @@ import kr.artel.orchestration.qa.dto.CreateQaRunRequest
 import kr.artel.orchestration.qa.dto.QaRunChangeListResponse
 import kr.artel.orchestration.qa.dto.QaRunChangeResponse
 import kr.artel.orchestration.qa.dto.QaRunResponse
+import kr.artel.orchestration.qa.dto.QaHumanDecision
+import kr.artel.orchestration.qa.dto.QaRunVerdictsResponse
+import kr.artel.orchestration.qa.dto.QaVerdictReviewRequest
+import kr.artel.orchestration.qa.review.QaVerdictReviewService
 import kr.artel.orchestration.qa.service.QaRunChangeKind
 import kr.artel.orchestration.qa.service.QaRunChangeService
 import kr.artel.orchestration.qa.service.QaTryService
+import kr.artel.orchestration.qa.service.QaVerdictService
 import kr.artel.orchestration.qa.service.toFunctionOptions
 import kr.artel.orchestration.qa.service.toRunGates
 import kr.artel.orchestration.qa.service.toRunLabel
@@ -22,6 +27,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
@@ -35,6 +41,8 @@ import org.springframework.web.bind.annotation.RestController
 class QaRunController(
     private val qaTryService: QaTryService,
     private val qaRunChangeService: QaRunChangeService,
+    private val qaVerdictService: QaVerdictService,
+    private val qaVerdictReviewService: QaVerdictReviewService,
     private val llmModelService: LlmModelService,
     private val userLlmKeyService: UserLlmKeyService,
     private val objectMapper: ObjectMapper
@@ -74,6 +82,32 @@ class QaRunController(
         @CurrentUserId appUserId: Long
     ): QaRunResponse =
         qaTryService.getRun(parseId(qaRunId), appUserId) ?: throw NotFoundException()
+
+    /**
+     * 이 런의 스텝 판정과 그 근거(ARTEL-1134): 판정 이유, 기대 항목별 근거와 판독 기록 대조, 근거로 댄 캡처.
+     * 접근 규칙은 [getQaRun] 과 같다 — 보이지 않는 런은 404.
+     */
+    @GetMapping("/{qaRunId}/verdicts")
+    suspend fun listQaRunVerdicts(
+        @PathVariable qaRunId: String,
+        @CurrentUserId appUserId: Long
+    ): QaRunVerdictsResponse =
+        qaVerdictService.list(parseId(qaRunId), appUserId)
+
+    /**
+     * 사람이 스텝 판정을 통과 · 실패로 확정한다(ARTEL-1254). 그 판정의 TC 판정도 사람 결정으로 바뀐다. 다시 보내면
+     * 덮어쓴다. 보이지 않는 런이거나 그 런의 스텝 판정이 아니면 404 다.
+     */
+    @PutMapping("/{qaRunId}/verdicts/{verdictLogId}/review")
+    suspend fun reviewQaRunVerdict(
+        @PathVariable qaRunId: String,
+        @PathVariable verdictLogId: String,
+        @RequestBody request: QaVerdictReviewRequest,
+        @CurrentUserId appUserId: Long
+    ): QaHumanDecision? {
+        val saved = qaVerdictReviewService.decideOutcome(parseId(qaRunId), parseId(verdictLogId), appUserId, request.decision, request.note)
+        return qaVerdictService.decisionOf(saved)
+    }
 
     /**
      * 이 런이 knowledge 와 macro 에 한 변경. 대상마다 한 줄이고 run 이전과 이후를 line diff 용 텍스트로

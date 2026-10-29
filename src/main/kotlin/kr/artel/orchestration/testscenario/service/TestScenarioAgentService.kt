@@ -463,7 +463,7 @@ class TestScenarioAgentService(
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
         // ko가 아닌 값)은 en으로 보내 Agent 계약의 허용 값(ko|en)을 벗어나지 않게 한다.
         val locale = localeOf(appUserId)
-        // 저장된 model → 환경 변수 → agent-server 기본값 순이다. 세션을 열 때마다 읽는다.
+        // 저장된 model → 환경 변수 → 공용 key 가 유효한 provider 의 model → agent-server 기본값 순이다. 세션을 열 때마다 읽는다.
         val configuredModel = featureModels.resolveAuthoringModel().orEmpty()
         // 저작은 TR 이 고른 TC 버전의 TC 와 지도만 본다(ARTEL-1048). 버전 없는 TR 이면 예전처럼 프로젝트 전체 · 최신 빌드다.
         val version = authoringVersions.of(runId)

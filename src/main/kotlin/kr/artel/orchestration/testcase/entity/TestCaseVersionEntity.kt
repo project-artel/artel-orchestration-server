@@ -64,6 +64,9 @@ data class TestCaseVersionEntity(
     @Column("verified_at")
     val verifiedAt: Instant? = null,
 
+    /** 이 판정을 낸 스텝 STATUS 행(ARTEL-1134). 판정 근거는 그 행의 payload 에 있다. */
+    @Column("verdict_qa_log_id")
+    val verdictQaLogId: Long? = null,
     /**
      * 이 몫의 판정을 앞 버전 몫에서 이어받았으면 그 build(ARTEL-1180). 이 버전에서 직접 판정이 나거나 다시 검증하도록
      * 돌리면 비운다. 화면이 "이번에 본 것" 과 "물려받은 것" 을 가른다.

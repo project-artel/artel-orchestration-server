@@ -61,7 +61,7 @@ class TestCaseVersionController(
         @CurrentUserId appUserId: Long
     ): TestCaseVersionCasesResponse = service.unversioned(projectId, appUserId)
 
-    /** 사용자 생성 케이스를 이 버전에 넣는다(ARTEL-1031). 지도 케이스와 이미 든 케이스는 건너뛴다. */
+    /** 케이스를 이 버전에 넣는다. `includeGenerated`를 지정하면 지도 케이스도 포함하며, 이미 있는 케이스는 유지한다. */
     @PostMapping("/{gameBuildId}/cases")
     suspend fun addTestCasesToVersion(
         @PathVariable projectId: Long,

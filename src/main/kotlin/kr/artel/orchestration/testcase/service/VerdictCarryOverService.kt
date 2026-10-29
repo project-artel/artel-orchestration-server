@@ -83,7 +83,9 @@ class VerdictCarryOverService(
                     carried += row.testCaseId
                 }
             } else if (row.verificationStatus in VERDICTS) {
-                versions.save(row.copy(verificationStatus = REGRESSION, verifiedAt = null, verdictCarriedFromBuildId = null))
+                versions.save(
+                    row.copy(verificationStatus = REGRESSION, verifiedAt = null, verdictCarriedFromBuildId = null, verdictQaLogId = null),
+                )
                 reset += row.testCaseId
             }
         }
@@ -158,6 +160,8 @@ class VerdictCarryOverService(
         verificationStatus = previous.verificationStatus,
         verifiedAt = previous.verifiedAt,
         verdictCarriedFromBuildId = originOf(previous),
+        // 근거도 판정을 따라온다. 이 판정을 실제로 낸 실행의 STATUS 행이다(ARTEL-1134).
+        verdictQaLogId = previous.verdictQaLogId,
     )
 
     /** 그 몫의 판정을 실제로 본 build. 이어받은 것이면 그 출처, 아니면 자기 버전이다. */

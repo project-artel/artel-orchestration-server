@@ -522,6 +522,7 @@ class ScreenNameTest {
     /** 이 인스턴스에 SDK 가 붙은 것으로 만든다. 붙어 있어야 `capture_screen` 이 나간다. */
     private fun connect(world: World): SentFrames {
         val session = Mockito.mock(WebSocketSession::class.java)
+        Mockito.`when`(session.id).thenReturn("content-map-${System.nanoTime()}")
         val frames = CopyOnWriteArrayList<String>()
         val instanceId = world.gameInstanceId.toString()
         val outbound = requireNotNull(sessionManager.register(instanceId, session))
