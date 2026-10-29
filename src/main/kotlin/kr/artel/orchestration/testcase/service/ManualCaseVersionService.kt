@@ -28,7 +28,7 @@ import org.springframework.transaction.reactive.executeAndAwait
  * 넣은 몫은 정체의 지금 내용으로 만든다. 상태는 지도 케이스의 새 몫과 같은 규칙이다 — 앞 버전에서 판정이 났으면
  * (`VERIFIED` · `FAILED` · `REGRESSION`) `REGRESSION`, 아니면 `DRAFT`.
  *
- * 지도 케이스는 여기서 넣거나 빼지 않는다. 그 몫은 생성기가 지도와 맞춰 관리한다.
+ * QA 실행 전 전체 추가에서 `includeGenerated`를 지정하면 지도 케이스도 넣는다. 자동 이월과 삭제는 사용자 생성 케이스만 다룬다.
  */
 @Service
 class ManualCaseVersionService(
@@ -40,7 +40,7 @@ class ManualCaseVersionService(
     private val projectChangeStreamManager: ProjectChangeStreamManager,
 ) {
 
-    /** 고른 케이스 중 이 프로젝트의 사용자 생성 케이스이고 아직 이 버전에 없는 것을 넣는다. 비멤버 · 다른 프로젝트 build 는 404. */
+    /** 아직 이 버전에 없는 케이스를 넣는다. `includeGenerated`는 지도 케이스도 포함한다. 비멤버 · 다른 프로젝트 build는 404. */
     suspend fun addToVersion(
         projectId: Long,
         userId: Long,
@@ -51,7 +51,7 @@ class ManualCaseVersionService(
         val caseIds = parseWireIds(request.caseIds, "caseIds")
         val added = transactionalOperator.executeAndAwait {
             folderService.lockProjectFolders(projectId)
-            insert(projectId, gameBuildId, caseIds)
+            insert(projectId, gameBuildId, caseIds, request.includeGenerated)
         }
         projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
         return TestCaseVersionCasesChangeResponse(added.map(Long::toString))
@@ -101,9 +101,14 @@ class ManualCaseVersionService(
     }
 
     /** 몫을 만든다. lock 을 잡은 트랜잭션 안에서 불러야 한다. */
-    private suspend fun insert(projectId: Long, gameBuildId: Long, caseIds: Collection<Long>): List<Long> {
+    private suspend fun insert(
+        projectId: Long,
+        gameBuildId: Long,
+        caseIds: Collection<Long>,
+        includeGenerated: Boolean = false,
+    ): List<Long> {
         val candidates = testCases.findAllById(caseIds).toList()
-            .filter { it.projectId == projectId && it.originLabel() == MANUAL }
+            .filter { it.projectId == projectId && (includeGenerated || it.originLabel() == MANUAL) }
             .filter { versions.findByTestCaseIdAndGameBuildId(requireNotNull(it.id), gameBuildId) == null }
         if (candidates.isEmpty()) return emptyList()
         val ids = candidates.mapNotNull { it.id }

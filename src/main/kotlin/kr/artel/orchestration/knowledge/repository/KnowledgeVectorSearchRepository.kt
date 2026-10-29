@@ -93,6 +93,7 @@ class KnowledgeVectorSearchRepository(
               JOIN knowledge k ON k.id = e.knowledge_id
              WHERE k.project_id = :projectId
                AND k.deleted_at IS NULL
+               AND k.source <> 'DEMONSTRATION'
                AND e.kind = :kind
                AND e.model = :model
                AND e.embedding IS NOT NULL

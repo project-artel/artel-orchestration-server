@@ -13,9 +13,11 @@ import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.reactor.mono
 import kr.artel.orchestration.settings.config.AgentServerProperties
+import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.reactive.function.client.WebClientResponseException
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient
 import reactor.core.Disposable
 import reactor.core.publisher.Mono
@@ -116,6 +118,44 @@ internal fun QaAgentSessionContext.toOpenRequest(): QaSessionOpenRequest {
 }
 
 /**
+ * agent-server 의 4xx 응답 본문을 [QaAgentRejectedException] 으로 옮긴다.
+ *
+ * FastAPI 의 `detail` 은 두 모양이다. 요청 검증 실패(422)는 `[{"loc": ["body", "arch", "vision"], "msg": ...}]` 같은
+ * 목록이고, `HTTPException` 은 문자열 하나다. 목록에서는 `loc` 와 `msg` 만 읽는다 — `input` 에는 요청 본문이 통째로
+ * 실릴 수 있다. 본문이 JSON 이 아니거나 `detail` 이 없으면 field 없이 status 만 넘긴다.
+ */
+internal fun agentRejection(status: Int, body: String): QaAgentRejectedException {
+    val httpStatus = HttpStatus.resolve(status)?.takeIf { it.is4xxClientError } ?: HttpStatus.BAD_REQUEST
+    val detail = runCatching { AGENT_ERROR_READER.readTree(body)?.get("detail") }.getOrNull()
+    val fields = linkedMapOf<String, String>()
+    if (detail != null && detail.isArray) {
+        detail.forEach { item ->
+            val location = item.get("loc")
+                ?.map { part -> part.asText() }
+                ?.dropWhile { part -> part == "body" }
+                ?.joinToString(".")
+                ?.ifEmpty { "body" }
+                ?: return@forEach
+            val reason = item.get("msg")?.asText() ?: return@forEach
+            fields[location] = reason.take(MAX_AGENT_DETAIL_LENGTH)
+        }
+    }
+    val summary = when {
+        fields.isNotEmpty() -> fields.entries.joinToString("; ") { (field, reason) -> "$field: $reason" }
+        detail != null && detail.isTextual -> detail.asText()
+        else -> null
+    }?.take(MAX_AGENT_DETAIL_LENGTH)
+    val message = if (summary == null) "agent-server 가 run 설정을 거절했습니다."
+    else "agent-server 가 run 설정을 거절했습니다: $summary"
+    return QaAgentRejectedException(httpStatus, message, fields)
+}
+
+private val AGENT_ERROR_READER = ObjectMapper()
+
+/** agent-server 가 보낸 `detail` 을 응답에 옮길 때의 글자 수 상한. 큰 enum 목록이 와도 응답이 수 KB 를 넘지 않게 한다. */
+private const val MAX_AGENT_DETAIL_LENGTH = 500
+
+/**
  * The QA Agent transport stays on Reactor internally: the WebSocket client, its
  * outbound/ready sinks, and the receive pipeline are all Reactor primitives. The
  * [QaAgentPort] surface is `suspend`, so the seam is bridged here — inbound
@@ -152,6 +192,13 @@ class WebSocketQaAgentAdapter(
             return QaAgentSession(response.sessionId, response.runConfig)
         } catch (error: CancellationException) {
             throw error
+        } catch (error: WebClientResponseException) {
+            // 4xx 는 agent-server 가 요청을 읽고 거절한 것이다. 연결 실패나 5xx 와 달리 다시 보내도 같은 답이 오므로
+            // 503 으로 바꾸지 않고 그 status 와 `detail` 을 넘긴다(ARTEL-1236).
+            if (error.statusCode.is4xxClientError) {
+                throw agentRejection(error.statusCode.value(), error.responseBodyAsString)
+            }
+            throw QaAgentUnavailableException("QA Agent session is unavailable: ${error.message}")
         } catch (error: Exception) {
             throw if (error is QaAgentUnavailableException) error
             else QaAgentUnavailableException("QA Agent session is unavailable: ${error.message}")

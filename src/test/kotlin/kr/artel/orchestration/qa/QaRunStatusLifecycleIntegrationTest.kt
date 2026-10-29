@@ -1,6 +1,7 @@
 package kr.artel.orchestration.qa
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
@@ -23,6 +24,7 @@ import kr.artel.orchestration.qa.service.QaAgentPort
 import kr.artel.orchestration.qa.service.QaAgentSession
 import kr.artel.orchestration.qa.service.QaAgentSessionContext
 import kr.artel.orchestration.qa.service.QaExecutionFailureService
+import kr.artel.orchestration.qa.service.QaSdkReconnectService
 import kr.artel.orchestration.qa.service.QaTryPersistenceService
 import kr.artel.orchestration.qa.service.QaTryService
 import kr.artel.orchestration.sdk.service.SessionManager
@@ -84,6 +86,7 @@ class QaRunStatusLifecycleIntegrationTest {
     @Autowired private lateinit var persistence: QaTryPersistenceService
     @Autowired private lateinit var router: QaAgentInboundRouter
     @Autowired private lateinit var failureService: QaExecutionFailureService
+    @Autowired private lateinit var sdkReconnect: QaSdkReconnectService
     @Autowired private lateinit var testRunService: TestRunService
     @Autowired private lateinit var sessionManager: SessionManager
     @Autowired private lateinit var qaTryRepository: QaTryRepository
@@ -219,6 +222,23 @@ class QaRunStatusLifecycleIntegrationTest {
 
         assertThat(messages).hasSize(1)
         assertThat(messages[0]).contains("\"state\":\"FINISHED\"", "\"outcome\":\"CANCELLED\"")
+    }
+
+    @Test
+    fun `SDK 세션이 교체되면 try 는 RUNNING 그대로이고 qa_log 에 교체 행이 남는다`(): Unit = runBlocking {
+        val seed = idleInstance()
+        subscribe(seed.instanceId)
+        val started = service.create(seed.scenarioId, seed.instanceId, seed.ownerId)
+
+        sdkReconnect.sessionReplaced(seed.instanceId, java.time.Duration.ofSeconds(2))
+
+        assertThat(qaTryRepository.findById(started.id.toLong())!!.status).isEqualTo("RUNNING")
+        val replacedRows = qaLogRepository.findPage(started.id.toLong(), null, 50).toList()
+            .filter { it.type == "LOG" && it.direction == "ORCHE_INTERNAL" }
+            .filter { objectMapper.readTree(it.payload.asString())["event"]?.asText() == "sdk_session_replaced" }
+        assertThat(replacedRows).hasSize(1)
+        assertThat(objectMapper.readTree(replacedRows.single().payload.asString())["probeTimeoutMillis"].asLong())
+            .isEqualTo(2000)
     }
 
     // ----------------------------------------------------------------- helpers

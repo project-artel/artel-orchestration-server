@@ -333,7 +333,7 @@ class QaTryPersistenceService(
     private val logService: QaLogService,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
-    private val clock: Clock
+    private val clock: Clock,
 ) {
     /**
      * @param knowledge 이 런의 지식 스코프와 모드(ARTEL-256). **런이 만들어지는 순간 기록된다.**
@@ -575,6 +575,7 @@ class QaTryPersistenceService(
 
 @Service
 class QaTryService(
+    private val mediaRelay: kr.artel.orchestration.stream.service.QaMediaRelay,
     private val tryRepository: QaTryRepository,
     private val runRepository: QaRunRepository,
     private val scenarioAccessService: TestScenarioAccessService,
@@ -629,6 +630,7 @@ class QaTryService(
             testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, runKey.keySource, functions
         )
         logService.publish(startLog)
+        mediaRelay.prepare()
         val qaTryId = requireNotNull(starting.id)
         // agent 세션은 아직 없다 — SDK 화면에 "agent 를 기다리는 중" 을 보인다(ARTEL-836).
         runStatusNotifier.waitingAgent(qaTryId, gameInstanceId, starting.qaRunId)
@@ -640,7 +642,7 @@ class QaTryService(
             projectId = instance.projectId.toString(),
             gameBuildId = instance.lastGameBuildId?.toString(),
             testScenarioId = testScenarioId.toString(),
-            scenario = objectMapper.valueToTree(scenario.toDraft(objectMapper)),
+            scenario = objectMapper.valueToTree(compositionService.agentScenario(scenario.toDraft(objectMapper), CaseScope.of(instance.lastGameBuildId), instance.lastGameBuildId)),
             model = settings.model,
             language = settings.language,
             promptVersion = settings.promptVersion,
@@ -671,7 +673,8 @@ class QaTryService(
             throw error
         } catch (error: Exception) {
             failureService.failStarting(qaTryId, "QA Agent session creation failed.")
-            throw UpstreamUnavailableException(
+            // agent-server 가 4xx 로 거절했으면 그 status 와 이유를 그대로 돌려준다(ARTEL-1236).
+            throw error as? QaAgentRejectedException ?: UpstreamUnavailableException(
                 error.message ?: "QA Agent 세션 생성에 실패했습니다.",
                 cause = error
             )
@@ -732,6 +735,7 @@ class QaTryService(
             functions = functions
         )
         // 첫 시나리오 try 가 이 run 의 자리를 대표한다 — agent 세션은 아직 없다(ARTEL-836).
+        mediaRelay.prepare()
         runStatusNotifier.waitingAgent(
             requireNotNull(started.tries.first().id), gameInstanceId, requireNotNull(started.qaRun.id)
         )
@@ -787,7 +791,7 @@ class QaTryService(
             throw error
         } catch (error: Exception) {
             failRun(started)
-            throw UpstreamUnavailableException(
+            throw error as? QaAgentRejectedException ?: UpstreamUnavailableException(
                 error.message ?: "QA Run 세션 생성에 실패했습니다.",
                 cause = error
             )
@@ -1020,6 +1024,11 @@ class QaTryService(
 
     suspend fun requireAccessible(qaTryId: Long, userId: Long): QaTryEntity? =
         tryRepository.findAccessibleById(qaTryId, userId)
+
+    suspend fun verdicts(qaTryId: Long, userId: Long): List<QaLogResponse>? {
+        requireAccessible(qaTryId, userId) ?: return null
+        return logService.verdicts(qaTryId)
+    }
 
     suspend fun logs(qaTryId: Long, userId: Long, beforeId: Long?, size: Int): QaLogPageResponse? {
         requireAccessible(qaTryId, userId) ?: return null

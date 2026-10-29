@@ -1,92 +1,111 @@
 package kr.artel.orchestration.stream.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.common.error.TooManyRequestsException
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito
 import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.test.StepVerifier
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
-/**
- * 뷰어 자리는 인스턴스당 하나고, 새 연결이 앞 연결을 밀어낸다.
- *
- * 그래서 밀려난 세션의 종료 처리는 자기를 대신한 세션이 이미 등록된 뒤에 돈다. 교체가 예외가
- * 아니라 정상 경로인 정책이라, "자기 자리일 때만 비운다"가 지켜지는지는 주석이 아니라 테스트가
- * 붙들어야 한다.
- */
 class ViewerSessionRegistryTest {
-
     private val registry = ViewerSessionRegistry(ObjectMapper())
 
     @Test
-    fun `the newest viewer takes the instance and hands back the displaced one`() {
-        val first = Mockito.mock(WebSocketSession::class.java)
-        val second = Mockito.mock(WebSocketSession::class.java)
-
-        val incumbent = registry.admit("1", "stream-a", first)
-        assertThat(incumbent.displaced).isNull()
-
-        val takeover = registry.admit("1", "stream-b", second)
-        assertThat(takeover.displaced).isSameAs(incumbent.viewer)
+    fun `같은 게임의 viewer들이 각자 stream ID로 frame을 받는다`() {
+        val first = registry.admit("game", "viewer-a", socket()).viewer
+        val second = registry.admit("game", "viewer-b", socket()).viewer
+        registry.sendFrame("viewer-a", 7, "frame-a")
+        registry.sendFrame("viewer-b", 7, "frame-b")
+        val mapper = ObjectMapper()
+        StepVerifier.create(first.outbound().take(1)).assertNext {
+            assertThat(mapper.readTree(it)["streamId"].asText()).isEqualTo("viewer-a")
+            assertThat(mapper.readTree(it)["jpeg"].asText()).isEqualTo("frame-a")
+        }.verifyComplete()
+        StepVerifier.create(second.outbound().take(1)).assertNext {
+            assertThat(mapper.readTree(it)["streamId"].asText()).isEqualTo("viewer-b")
+            assertThat(mapper.readTree(it)["jpeg"].asText()).isEqualTo("frame-b")
+        }.verifyComplete()
+        assertThat(registry.findByStream("viewer-a")).isSameAs(first)
+        assertThat(registry.findByStream("viewer-b")).isSameAs(second)
     }
 
     @Test
-    fun `a displaced viewer cleaning up does not free its replacement's slot`() {
-        val first = Mockito.mock(WebSocketSession::class.java)
-        val second = Mockito.mock(WebSocketSession::class.java)
-
-        val displaced = registry.admit("1", "stream-a", first).viewer
-        val live = registry.admit("1", "stream-b", second).viewer
-
-        // 밀려난 쪽의 정리가 뒤늦게 돈다. 여기서 자리를 비우면 연결은 되어 있는데 서버가
-        // 찾지 못하는 브라우저가 남는다.
-        assertThat(registry.release(displaced)).isFalse()
-
-        assertThat(registry.findByStream("stream-b")).isSameAs(live)
-        assertThat(registry.relayToStream("stream-b", """{"type":"WEBRTC_ICE"}""")).isTrue()
-    }
-
-    /**
-     * 돌려주는 값이 "방금까지 현재 뷰어였는가"인 이유는, 호출자가 이 값으로 SDK에 스트림 중단을
-     * 보낼지 정하기 때문이다. 밀려난 세션이 중단을 보내면 방금 시작한 스트림이 꺼진다.
-     */
-    @Test
-    fun `releasing the current viewer reports that the instance is now free`() {
-        val session = Mockito.mock(WebSocketSession::class.java)
-        val viewer = registry.admit("1", "stream-a", session).viewer
-
-        assertThat(registry.release(viewer)).isTrue()
-        assertThat(registry.findByStream("stream-a")).isNull()
-    }
-
-    /**
-     * 교체 직후에는 밀려난 쪽의 ICE 후보가 아직 날아오고 있다. 그것이 새 협상에 섞이면 연결이
-     * 조용히 깨지므로, 자리에서 내려온 streamId 앞으로 온 시그널링은 버려야 한다.
-     */
-    @Test
-    fun `drops signalling addressed to a stream that no longer has a viewer`() {
-        val first = Mockito.mock(WebSocketSession::class.java)
-        val second = Mockito.mock(WebSocketSession::class.java)
-
-        registry.admit("1", "stream-a", first)
-        registry.admit("1", "stream-b", second)
-
-        assertThat(registry.relayToStream("stream-a", """{"type":"WEBRTC_ICE"}""")).isFalse()
+    fun `viewer 하나를 닫아도 다른 viewer는 frame을 계속 받는다`() {
+        val first = registry.admit("game", "viewer-a", socket()).viewer
+        val second = registry.admit("game", "viewer-b", socket()).viewer
+        assertThat(registry.release(first)).isTrue()
+        assertThat(registry.findByStream("viewer-a")).isNull()
+        assertThat(registry.findByStream("viewer-b")).isSameAs(second)
+        assertThat(registry.sendFrame("viewer-a", 8, "stale")).isFalse()
+        assertThat(registry.sendFrame("viewer-b", 8, "current")).isTrue()
+        StepVerifier.create(second.outbound().take(1)).assertNext {
+            assertThat(ObjectMapper().readTree(it)["frameId"].asLong()).isEqualTo(8)
+        }.verifyComplete()
     }
 
     @Test
-    fun `queues outbound messages on the viewer's single stream`() {
-        val session = Mockito.mock(WebSocketSession::class.java)
-        val viewer = registry.admit("1", "stream-a", session).viewer
+    fun `늦은 close가 같은 ID로 새로 등록된 소켓을 지우지 않는다`() {
+        val old = registry.admit("game", "viewer", socket()).viewer
+        assertThat(registry.release(old)).isTrue()
+        val current = registry.admit("game", "viewer", socket()).viewer
+        assertThat(registry.release(old)).isFalse()
+        assertThat(registry.findByStream("viewer")).isSameAs(current)
+        assertThat(registry.sendFrame("viewer", 1, "current")).isTrue()
+    }
 
+    @Test
+    fun `동시 접속 8개를 넘으면 새 접속만 거절하고 기존 viewer는 유지한다`() {
+        val viewers = (1..8).map { registry.admit("game", "viewer-$it", socket()).viewer }
+        val rejected = socket()
+        assertThrows<TooManyRequestsException> { registry.admit("game", "viewer-9", rejected) }
+        viewers.forEach {
+            assertThat(registry.findByStream(it.streamId)).isSameAs(it)
+            Mockito.verify(it.session, Mockito.never()).close(Mockito.any())
+        }
+        assertThat(registry.findByStream("viewer-9")).isNull()
+        assertThat(registry.admit("other-game", "other-viewer", socket()).viewer.instanceId).isEqualTo("other-game")
+    }
+
+    @Test
+    fun `동시 admission과 해제에서도 인스턴스 상한을 지킨다`() {
+        val pool = Executors.newFixedThreadPool(16)
+        val start = CountDownLatch(1)
+        try {
+            val pending = (1..32).map { id -> pool.submit<ViewerSessionRegistry.ViewerSession?> {
+                start.await()
+                try { registry.admit("game", "concurrent-$id", socket()).viewer }
+                catch (_: TooManyRequestsException) { null }
+            } }
+            start.countDown()
+            val viewers = pending.mapNotNull { it.get(5, TimeUnit.SECONDS) }
+            assertThat(viewers).hasSize(8)
+            val closing = viewers.map { viewer -> pool.submit<Boolean> { registry.release(viewer) } }
+            assertThat(closing.map { it.get(5, TimeUnit.SECONDS) }).containsOnly(true)
+            viewers.forEach { assertThat(registry.findByStream(it.streamId)).isNull() }
+            val replacements = (1..8).map { registry.admit("game", "replacement-$it", socket()).viewer }
+            viewers.forEach { assertThat(registry.release(it)).isFalse() }
+            replacements.forEach { assertThat(registry.findByStream(it.streamId)).isSameAs(it) }
+        } finally { pool.shutdownNow() }
+    }
+
+    @Test
+    fun `viewer의 control과 frame queue는 서로 독립적이다`() {
+        val viewer = registry.admit("game", "viewer", socket()).viewer
         StepVerifier.create(viewer.outbound())
             .then {
                 registry.send(viewer, mapOf("type" to "STREAM_READY"))
-                registry.relayToStream("stream-a", """{"type":"WEBRTC_OFFER"}""")
+                registry.relayToStream("viewer", """{"type":"STREAM_ERROR"}""")
                 registry.release(viewer)
             }
             .expectNext("""{"type":"STREAM_READY"}""")
-            .expectNext("""{"type":"WEBRTC_OFFER"}""")
+            .expectNext("""{"type":"STREAM_ERROR"}""")
             .verifyComplete()
     }
+
+    private fun socket(): WebSocketSession = Mockito.mock(WebSocketSession::class.java)
 }

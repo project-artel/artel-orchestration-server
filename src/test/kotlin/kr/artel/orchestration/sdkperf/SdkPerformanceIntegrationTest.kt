@@ -14,7 +14,11 @@ import kr.artel.orchestration.sdkperf.dto.SdkRunStatus
 import kr.artel.orchestration.sdkperf.repository.SdkPerformanceRepository
 import kr.artel.orchestration.sdkperf.service.SdkPerfIngestService
 import kr.artel.orchestration.sdkperf.service.SdkPerfQueryService
+import kr.artel.orchestration.sdkperf.service.QaTryPerformanceService
+import kr.artel.orchestration.common.error.BadRequestException
+import kr.artel.orchestration.common.error.NotFoundException
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.assertj.core.api.Assertions.within
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
@@ -41,6 +45,7 @@ class SdkPerformanceIntegrationTest {
     @Autowired lateinit var ingest: SdkPerfIngestService
     @Autowired lateinit var query: SdkPerfQueryService
     @Autowired lateinit var repository: SdkPerformanceRepository
+    @Autowired lateinit var tryPerformance: QaTryPerformanceService
 
     @Test
     fun `raw samples survive outside runs and the active run gets an incremental summary`(): Unit = runBlocking {
@@ -375,6 +380,15 @@ class SdkPerformanceIntegrationTest {
                 "VALUES($testRun,$instance,$user,'RUNNING',now()-interval '$startedSecondsAgo seconds') RETURNING id"
         )
 
+        /** 시나리오 하나짜리 QA try. 성능 조회는 이 try 의 시작 시각과 인스턴스로 구간을 정한다. */
+        suspend fun startTry(instance: Long, startedSecondsAgo: Long): Long {
+            val scenario = id("INSERT INTO test_scenario(project_id) VALUES($project) RETURNING id")
+            return id(
+                "INSERT INTO qa_try(test_scenario_id,game_instance_id,started_by,status,started_at) " +
+                    "VALUES($scenario,$instance,$user,'RUNNING',now()-interval '$startedSecondsAgo seconds') RETURNING id"
+            )
+        }
+
         suspend fun completeRun(run: Long) =
             exec("UPDATE qa_run SET status='COMPLETED',completed_at=now() WHERE id=$run")
 
@@ -385,6 +399,9 @@ class SdkPerformanceIntegrationTest {
         suspend fun cleanUp() {
             val instances = "SELECT id FROM game_instance WHERE project_id=$project"
             exec("DELETE FROM sdk_performance_sample WHERE game_instance_id IN ($instances)")
+            exec("DELETE FROM qa_log WHERE qa_try_id IN (SELECT id FROM qa_try WHERE game_instance_id IN ($instances))")
+            exec("DELETE FROM qa_try WHERE game_instance_id IN ($instances)")
+            exec("DELETE FROM test_scenario WHERE project_id=$project")
             exec("DELETE FROM sdk_device_context WHERE game_instance_id IN ($instances)")
             exec("DELETE FROM qa_run WHERE game_instance_id IN ($instances)")
             exec("DELETE FROM test_run WHERE project_id=$project")
@@ -435,6 +452,69 @@ class SdkPerformanceIntegrationTest {
         process = process
     )
 
+
+    // ---- QA try 성능 조회 (ARTEL-1223) ----
+
+    @Test
+    fun `try performance gives recent samples with the frame of the pulse before each`(): Unit = runBlocking {
+        val world = seed()
+        val instance = world.instance("try-perf")
+        val qaTry = world.startTry(instance, startedSecondsAgo = 120)
+        pulse(qaTry, frame = 1_000, secondsAgo = 50)
+        sample(instance, secondsAgo = 40, meanMs = 16.0, hitches = 0, cpu = 30.0, workingSetBytes = 512L * 1024 * 1024)
+        pulse(qaTry, frame = 2_000, secondsAgo = 20)
+        sample(instance, secondsAgo = 10, meanMs = 50.0, hitches = 3, cpu = null, workingSetBytes = null)
+        // 이 try 가 시작하기 전의 표본은 나오지 않는다.
+        sample(instance, secondsAgo = 300, meanMs = 16.0, hitches = 0, cpu = 10.0, workingSetBytes = null)
+
+        val samples = tryPerformance.performance(qaTry, sinceFrame = null, lastSeconds = 60).samples
+
+        assertThat(samples.map { it.frame }).containsExactly(1_000L, 2_000L)
+        assertThat(samples[0].frameTimeMs).isEqualTo(16.0)
+        // fps 는 평균 frame time 의 역수가 아니라 그 창에서 그린 frame 수(62)를 창 길이(1초)로 나눈 값이다.
+        assertThat(samples[0].fps).isEqualTo(62.0)
+        assertThat(samples[0].cpuPercent).isEqualTo(30.0)
+        assertThat(samples[0].memoryMb).isEqualTo(512.0)
+        assertThat(samples[1].hitchCount).isEqualTo(3)
+        assertThat(samples[1].cpuPercent).isNull()
+        assertThat(samples[1].memoryMb).isNull()
+        assertThat(samples[0].at).isBefore(samples[1].at)
+
+        // sinceFrame 은 그 frame 이상만 남긴다. lastSeconds 가 없으면 try 시작부터 본다.
+        assertThat(tryPerformance.performance(qaTry, sinceFrame = 1_500, lastSeconds = null).samples.map { it.frame })
+            .containsExactly(2_000L)
+        // lastSeconds 는 마지막 그 초만큼이다.
+        assertThat(tryPerformance.performance(qaTry, sinceFrame = null, lastSeconds = 15).samples).hasSize(1)
+
+        val json = objectMapper.readTree(objectMapper.writeValueAsString(tryPerformance.performance(qaTry, null, 60)))
+        assertThat(json["samples"][0].fieldNames().asSequence().toList())
+            .containsExactly("frame", "at", "frameTimeMs", "fps", "hitchCount", "cpuPercent", "memoryMb")
+        assertThat(json["samples"][0]["at"].isTextual).isTrue()
+    }
+
+    @Test
+    fun `try performance is 404 for an unknown try and 400 for a non-positive window`(): Unit = runBlocking {
+        assertThatThrownBy { runBlocking { tryPerformance.performance(Long.MAX_VALUE, null, null) } }
+            .isInstanceOf(NotFoundException::class.java)
+        assertThatThrownBy { runBlocking { tryPerformance.performance(Long.MAX_VALUE, null, 0) } }
+            .isInstanceOf(BadRequestException::class.java)
+    }
+
+    private suspend fun pulse(qaTry: Long, frame: Long, secondsAgo: Long) = exec(
+        "INSERT INTO qa_log(qa_try_id,direction,type,payload,created_at) VALUES($qaTry,'SDK_TO_ORCHE','PULSE'," +
+            "'{\"type\":\"PULSE\",\"frame\":$frame}',now()-interval '$secondsAgo seconds')"
+    )
+
+    private suspend fun sample(
+        instance: Long, secondsAgo: Long, meanMs: Double, hitches: Int, cpu: Double?, workingSetBytes: Long?
+    ) = exec(
+        "INSERT INTO sdk_performance_sample(websocket_session_id,game_instance_id,received_at,frame_count,sampled_ms," +
+            "mean_ms,min_ms,max_ms,p95_ms,p99_ms,one_percent_low_fps,point_one_percent_low_fps,hitch_count," +
+            "hitch_threshold_ms,budget_ms,is_focused,has_process,process_cpu_percent,process_working_set_bytes) " +
+            "VALUES('ws-try',$instance,now()-interval '$secondsAgo seconds',${(1000 / meanMs).toInt()},1000.0," +
+            "$meanMs,$meanMs,$meanMs,$meanMs,$meanMs,1,1,$hitches,33.3,16.67,true,${cpu != null}," +
+            "${cpu ?: "NULL"},${workingSetBytes ?: "NULL"})"
+    )
 
     // ---- 지표군 확장 (ARTEL-435) ----
 

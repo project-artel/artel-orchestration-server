@@ -1076,6 +1076,8 @@ class TestScenarioReconcileIntegrationTest {
         postMessage(client, projectId, runId, token, "전부 써줘")
 
         assertThat(stream.awaitStage("blocked")).isTrue()
+        // blocked 단계와 거부 notice는 별도 SSE frame이므로 둘 다 도착한 뒤 검사한다.
+        assertThat(stream.awaitNotice("저장하지 않았습니다")).isTrue()
         // 재작성을 한 번 시도한 뒤 막았다 — 두 상태가 별개로 보인다.
         assertThat(stream.stages()).containsSubsequence("repairing", "blocked")
         val notices = stream.notices()
@@ -1146,6 +1148,14 @@ class TestScenarioReconcileIntegrationTest {
         fun stages(): List<String> = typed("progress").map { it.path("stage").asText() }
 
         fun notices(): List<String> = typed("notice").map { it.path("message").asText() }
+
+        fun awaitNotice(text: String): Boolean {
+            repeat(60) {
+                if (notices().any { text in it }) return true
+                Thread.sleep(100)
+            }
+            return notices().any { text in it }
+        }
 
         fun awaitStage(stage: String): Boolean {
             repeat(60) {

@@ -1,11 +1,14 @@
 package kr.artel.orchestration.sdk.service
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import org.springframework.web.reactive.socket.CloseStatus
 import org.springframework.web.reactive.socket.WebSocketMessage
 import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import reactor.core.publisher.Sinks
 import reactor.core.scheduler.Scheduler
 import reactor.core.scheduler.Schedulers
 import java.time.Duration
@@ -14,6 +17,15 @@ import java.util.concurrent.atomic.AtomicLong
 
 /** 4001~4003 은 handshake 거절에 쓴다. SDK 는 4001 이 아닌 닫힘에서는 다시 연결한다. */
 internal val HEARTBEAT_TIMEOUT = CloseStatus(4008, "Heartbeat timeout")
+
+/**
+ * 세션이 지금 살아 있는지 한 번 묻는다. 같은 인스턴스의 새 연결이 왔을 때 [SessionManager] 가 앞 세션에
+ * 묻는다(ARTEL-1234).
+ */
+fun interface SdkLiveness {
+    /** ping 을 하나 보내고 [timeout] 안에 frame 이 하나라도 오면 true 다. 보낼 수 없으면 false 다. */
+    suspend fun answersPing(timeout: Duration): Boolean
+}
 
 /**
  * SDK 세션 하나의 생존 확인.
@@ -39,13 +51,37 @@ class SdkHeartbeat(
     private val pingInterval: Duration,
     private val idleTimeout: Duration,
     private val scheduler: Scheduler = Schedulers.parallel(),
-) {
+) : SdkLiveness {
     private val logger = LoggerFactory.getLogger(SdkHeartbeat::class.java)
     private val lastSeenMillis = AtomicLong(now())
+
+    /** [answersPing] 이 주기와 따로 보내는 ping. 구독자는 [pings] 하나다. */
+    private val probes = Sinks.many().unicast().onBackpressureBuffer<Unit>()
+
+    /** 답을 기다리는 [answersPing]. 다음 frame 이 오면 완료된다. */
+    @Volatile private var pendingProbe: CompletableDeferred<Unit>? = null
 
     /** frame 을 하나 받을 때마다 부른다. */
     fun seen() {
         lastSeenMillis.set(now())
+        pendingProbe?.complete(Unit)
+    }
+
+    /**
+     * 주기를 기다리지 않고 ping 을 하나 보내고 [timeout] 동안 답을 기다린다.
+     *
+     * 주기 ping 으로는 끊긴 소켓을 닫기까지 최대 60초가 걸린다. 그동안 같은 인스턴스의 재연결은 4002 로 거절됐고,
+     * 2026-10-22 gyemong 런 2 는 41번 거절된 끝에 `SDK connection closed` 로 끝났다. 새 연결이 왔을 때 앞 세션에
+     * 이것을 물어 2초 안에 판단한다.
+     *
+     * pong 만이 아니라 ping 을 보낸 뒤 받은 frame 전부를 답으로 본다. [seen] 과 같은 기준이다.
+     */
+    override suspend fun answersPing(timeout: Duration): Boolean {
+        val answered = CompletableDeferred<Unit>()
+        pendingProbe = answered
+        val emitted = synchronized(probes) { probes.tryEmitNext(Unit) }
+        if (emitted.isFailure) return false
+        return withTimeoutOrNull(timeout.toMillis()) { answered.await() } != null
     }
 
     /**
@@ -54,10 +90,10 @@ class SdkHeartbeat(
      * [idleTimeout] 을 넘기면 세션을 닫고 끝난다. [until] 이 끝나도 함께 끝난다. 이 Flux 가 끝나지
      * 않으면 이것을 물고 있는 `session.send` 도 끝나지 않아 핸들러가 영영 반환되지 않는다.
      */
-    fun pings(until: Mono<Void>): Flux<WebSocketMessage> =
-        Flux.interval(pingInterval, scheduler)
+    fun pings(until: Mono<Void>): Flux<WebSocketMessage> {
+        val scheduled = Flux.interval(pingInterval, scheduler)
             .takeUntilOther(until)
-            .handle { _, sink ->
+            .handle<WebSocketMessage> { _, sink ->
                 val silentMillis = now() - lastSeenMillis.get()
                 if (silentMillis >= idleTimeout.toMillis()) {
                     logger.warn("SDK 세션 heartbeat 시간 초과로 닫음 [instanceId: $instanceId]: ${silentMillis}ms 동안 받은 frame 없음")
@@ -67,9 +103,16 @@ class SdkHeartbeat(
                     )
                     sink.complete()
                 } else {
-                    sink.next(session.pingMessage { factory -> factory.wrap(ByteArray(0)) })
+                    sink.next(ping())
                 }
             }
+            // 주기 ping 이 끝나면 따로 보내는 ping 도 끝낸다. 그 뒤의 [answersPing] 은 보낼 수 없어 false 다.
+            .doFinally { synchronized(probes) { probes.tryEmitComplete() } }
+        val probed = probes.asFlux().takeUntilOther(until).map { ping() }
+        return Flux.merge(scheduled, probed)
+    }
+
+    private fun ping(): WebSocketMessage = session.pingMessage { factory -> factory.wrap(ByteArray(0)) }
 
     private fun now(): Long = scheduler.now(TimeUnit.MILLISECONDS)
 }

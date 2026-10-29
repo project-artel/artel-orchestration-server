@@ -25,10 +25,13 @@ data class TestCaseVersionSummary(
     val hidden: Boolean,
 )
 
-/** 버전에 사용자 생성 케이스를 넣거나 빼는 요청(ARTEL-1031). */
-data class TestCaseVersionCasesRequest(val caseIds: List<String?>? = null)
+/** 버전에 케이스를 넣거나 빼는 요청. `includeGenerated`는 추가할 때만 적용한다. */
+data class TestCaseVersionCasesRequest(
+    val caseIds: List<String?>? = null,
+    val includeGenerated: Boolean = false,
+)
 
-/** 실제로 넣거나 뺀 케이스. 지도 케이스 · 다른 프로젝트 · 이미 그 상태인 것은 싣지 않는다. */
+/** 실제로 넣거나 뺀 케이스. 다른 프로젝트와 이미 그 상태인 케이스는 싣지 않는다. */
 data class TestCaseVersionCasesChangeResponse(val caseIds: List<String>)
 
 /** 버전 묶음 한 줄(ARTEL-1023). 버전과 같은 층에 있고, 묶음 안에 묶음은 없다. */

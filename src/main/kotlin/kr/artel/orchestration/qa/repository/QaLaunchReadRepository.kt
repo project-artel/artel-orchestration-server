@@ -2,6 +2,7 @@ package kr.artel.orchestration.qa.repository
 
 import io.r2dbc.spi.Readable
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.reactor.awaitSingle
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.r2dbc.core.flow
 import org.springframework.stereotype.Repository
@@ -25,6 +26,19 @@ data class QaRunSummaryRow(
     val casesPassed: Int?,
     val casesTotal: Int?,
     val issueCount: Int,
+    val startedBy: Long = 0,
+    /** 코드 검사가 추가 검토로 고른 판정 수와, 그중 사람이 아직 정하지 않은 수(ARTEL-1254). */
+    val reviewFlagged: Int = 0,
+    val reviewPending: Int = 0,
+    val casesFailed: Int? = null,
+)
+
+/** 상단바 알림함 한 줄(ARTEL-1254): 내가 시작해 끝난 실행과 그 프로젝트, 읽었는지. */
+data class QaNoticeRow(
+    val run: QaRunSummaryRow,
+    val projectId: Long,
+    val projectName: String,
+    val read: Boolean,
 )
 
 data class SinceLastQaIssueRow(
@@ -75,26 +89,8 @@ class QaLaunchReadRepository(
         val runFilter = if (testRunId != null) "AND r.test_run_id = :testRunId" else ""
         var spec = databaseClient.sql(
             """
-            SELECT r.id, r.test_run_id, tr.name AS test_run_name,
-                   r.game_instance_id, gi.name AS game_instance_name,
-                   gb.version AS game_build_version,
-                   ft.model, ft.reasoning_effort, r.key_source,
-                   r.status, r.started_at, r.completed_at,
-                   agg.cases_passed, agg.cases_total,
-                   (SELECT COUNT(*) FROM issue i JOIN qa_try t2 ON t2.id = i.qa_try_id
-                     WHERE t2.qa_run_id = r.id) AS issue_count
-              FROM qa_run r
-              JOIN game_instance gi ON gi.id = r.game_instance_id
-              LEFT JOIN test_run tr ON tr.id = r.test_run_id
-              LEFT JOIN game_build gb ON gb.id = r.game_build_id
-              LEFT JOIN LATERAL (
-                  SELECT t.model, t.reasoning_effort FROM qa_try t
-                   WHERE t.qa_run_id = r.id ORDER BY t.id LIMIT 1
-              ) ft ON TRUE
-              LEFT JOIN LATERAL (
-                  SELECT SUM(t.cases_passed) AS cases_passed, SUM(t.cases_total) AS cases_total
-                    FROM qa_try t WHERE t.qa_run_id = r.id
-              ) agg ON TRUE
+            $RUN_COLUMNS
+            $RUN_FROM
              WHERE gi.project_id = :projectId
                $runFilter
              ORDER BY r.started_at DESC, r.id DESC
@@ -106,6 +102,93 @@ class QaLaunchReadRepository(
         if (testRunId != null) spec = spec.bind("testRunId", testRunId)
         return spec.map { row: Readable -> row.toRunRow() }.flow().toList()
     }
+
+    /**
+     * 내가 시작해 끝난 실행, 최신순으로 [limit] 개(ARTEL-1254). 프로젝트를 가리지 않지만, 지금 참여하지 않는
+     * 프로젝트의 실행은 뺀다.
+     */
+    suspend fun findNotices(appUserId: Long, limit: Int): List<QaNoticeRow> =
+        databaseClient.sql(
+            """
+            $RUN_COLUMNS,
+                   p.id AS project_id, p.name AS project_name,
+                   EXISTS (SELECT 1 FROM qa_notice_read n WHERE n.app_user_id = :appUserId AND n.qa_run_id = r.id) AS notice_read
+            $RUN_FROM
+              JOIN project p ON p.id = gi.project_id
+             WHERE r.started_by = :appUserId AND r.completed_at IS NOT NULL
+               AND EXISTS (SELECT 1 FROM project_member pm WHERE pm.project_id = gi.project_id AND pm.app_user_id = :appUserId)
+             ORDER BY r.completed_at DESC, r.id DESC
+             LIMIT :limit
+            """.trimIndent()
+        )
+            .bind("appUserId", appUserId)
+            .bind("limit", limit)
+            .map { row: Readable ->
+                QaNoticeRow(
+                    run = row.toRunRow(),
+                    projectId = row.long("project_id"),
+                    projectName = row.get("project_name", String::class.java) ?: "",
+                    read = row.get("notice_read", Boolean::class.javaObjectType) ?: false,
+                )
+            }
+            .flow()
+            .toList()
+
+    /** 알림함 배지의 수: 내가 시작해 끝났는데 읽지 않은 실행. [findNotices] 와 같은 조건이다. */
+    suspend fun countUnreadNotices(appUserId: Long): Int =
+        databaseClient.sql(
+            """
+            SELECT COUNT(*) AS cnt
+              FROM qa_run r
+              JOIN game_instance gi ON gi.id = r.game_instance_id
+             WHERE r.started_by = :appUserId AND r.completed_at IS NOT NULL
+               AND EXISTS (SELECT 1 FROM project_member pm WHERE pm.project_id = gi.project_id AND pm.app_user_id = :appUserId)
+               AND NOT EXISTS (SELECT 1 FROM qa_notice_read n WHERE n.app_user_id = :appUserId AND n.qa_run_id = r.id)
+            """.trimIndent()
+        )
+            .bind("appUserId", appUserId)
+            .map { row: Readable -> row.long("cnt").toInt() }
+            .one()
+            .awaitSingle()
+
+    /** 알림 하나를 읽은 것으로 둔다. 내가 시작한 실행이 아니면 아무것도 하지 않고 0 이다. */
+    suspend fun markNoticeRead(appUserId: Long, qaRunId: Long): Long =
+        databaseClient.sql(
+            """
+            INSERT INTO qa_notice_read (app_user_id, qa_run_id)
+            SELECT r.started_by, r.id FROM qa_run r WHERE r.id = :qaRunId AND r.started_by = :appUserId
+            ON CONFLICT DO NOTHING
+            """.trimIndent()
+        )
+            .bind("appUserId", appUserId)
+            .bind("qaRunId", qaRunId)
+            .fetch()
+            .rowsUpdated()
+            .awaitSingle()
+
+    /** 내가 시작해 끝난 실행인가. 이미 읽은 알림을 다시 읽음으로 두는 요청을 404 와 가른다. */
+    suspend fun isNoticeOf(appUserId: Long, qaRunId: Long): Boolean =
+        databaseClient.sql("SELECT 1 FROM qa_run r WHERE r.id = :qaRunId AND r.started_by = :appUserId")
+            .bind("appUserId", appUserId)
+            .bind("qaRunId", qaRunId)
+            .map { _: Readable -> true }
+            .flow()
+            .toList()
+            .isNotEmpty()
+
+    /** 내가 시작해 끝난 실행 전부를 읽은 것으로 둔다. */
+    suspend fun markAllNoticesRead(appUserId: Long): Long =
+        databaseClient.sql(
+            """
+            INSERT INTO qa_notice_read (app_user_id, qa_run_id)
+            SELECT r.started_by, r.id FROM qa_run r WHERE r.started_by = :appUserId AND r.completed_at IS NOT NULL
+            ON CONFLICT DO NOTHING
+            """.trimIndent()
+        )
+            .bind("appUserId", appUserId)
+            .fetch()
+            .rowsUpdated()
+            .awaitSingle()
 
     /** 한 실행에서 나온 이슈. 나온 순서대로. */
     suspend fun findIssuesOfRun(qaRunId: Long): List<SinceLastQaIssueRow> =
@@ -229,8 +312,52 @@ class QaLaunchReadRepository(
         completedAt = instant("completed_at"),
         casesPassed = (get("cases_passed", Number::class.java))?.toInt(),
         casesTotal = (get("cases_total", Number::class.java))?.toInt(),
+        casesFailed = (get("cases_failed", Number::class.java))?.toInt(),
         issueCount = (get("issue_count", Number::class.java))?.toInt() ?: 0,
+        startedBy = long("started_by"),
+        reviewFlagged = (get("review_flagged", Number::class.java))?.toInt() ?: 0,
+        reviewPending = (get("review_pending", Number::class.java))?.toInt() ?: 0,
     )
+
+    private companion object {
+        /** 실행 목록 한 행의 칸. 부르는 쪽이 칸을 더 붙일 수 있다. */
+        val RUN_COLUMNS = """
+SELECT r.id, r.test_run_id, tr.name AS test_run_name,
+       r.game_instance_id, gi.name AS game_instance_name,
+       gb.version AS game_build_version,
+       ft.model, ft.reasoning_effort, r.key_source,
+       r.status, r.started_at, r.completed_at,
+       agg.cases_passed, agg.cases_total, agg.cases_failed,
+       (SELECT COUNT(*) FROM issue i JOIN qa_try t2 ON t2.id = i.qa_try_id
+         WHERE t2.qa_run_id = r.id) AS issue_count,
+       r.started_by,
+       (SELECT COUNT(*) FROM qa_verdict_review v WHERE v.qa_run_id = r.id AND v.flagged) AS review_flagged,
+       (SELECT COUNT(*) FROM qa_verdict_review v
+         WHERE v.qa_run_id = r.id AND v.flagged AND v.decision IS NULL) AS review_pending
+        """.trimIndent()
+
+        /** 그 칸들이 읽는 표. 부르는 쪽이 JOIN 을 더 붙이고 WHERE 를 쓴다. */
+        val RUN_FROM = """
+  FROM qa_run r
+  JOIN game_instance gi ON gi.id = r.game_instance_id
+  LEFT JOIN test_run tr ON tr.id = r.test_run_id
+  LEFT JOIN game_build gb ON gb.id = r.game_build_id
+  LEFT JOIN LATERAL (
+      SELECT t.model, t.reasoning_effort FROM qa_try t
+       WHERE t.qa_run_id = r.id ORDER BY t.id LIMIT 1
+  ) ft ON TRUE
+  LEFT JOIN LATERAL (
+      SELECT SUM(t.cases_passed) AS cases_passed, SUM(t.cases_total) AS cases_total,
+             SUM(CASE WHEN EXISTS (SELECT 1 FROM qa_case_attempt a WHERE a.qa_try_id = t.id)
+                 THEN (SELECT COUNT(*) FROM (
+                     SELECT DISTINCT ON (a.test_case_id) a.verdict FROM qa_case_attempt a
+                      WHERE a.qa_try_id = t.id ORDER BY a.test_case_id, a.created_at DESC, a.id DESC
+                 ) latest WHERE latest.verdict = 'FAILED')
+                 ELSE t.cases_total - t.cases_passed END) AS cases_failed
+        FROM qa_try t WHERE t.qa_run_id = r.id
+  ) agg ON TRUE
+        """.trimIndent()
+    }
 
     private fun Readable.long(name: String): Long = (get(name, Number::class.java))!!.toLong()
 
