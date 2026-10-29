@@ -56,6 +56,13 @@ class CaseContractServiceIntegrationTest {
             )
         }
 
+        var observedPatches: List<StatementPatch> = emptyList()
+        val observedLines = mutableListOf<String>()
+        override suspend fun observed(request: ObservedContractRequest): StatementResponse {
+            observedLines += request.observed
+            return StatementResponse(observedPatches)
+        }
+
         var patches: List<StatementPatch> = emptyList()
         val heard = mutableListOf<String>()
         override suspend fun statement(request: StatementRequest): StatementResponse {
@@ -210,5 +217,27 @@ class CaseContractServiceIntegrationTest {
         } finally {
             fake.slowMs = 0
         }
+    }
+
+    /** QA 가 본 값의 변화는 '남기는 것' 으로만, 출처 observed 로 들어간다. 요구는 받아도 버린다. */
+    @Test
+    fun `observed changes add only what a passed case leaves`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "observed-leaves", genre = "RPG", createdAt = now, updatedAt = now))
+        val gift = cases.save(case(project.id!!, "할머니한테 말을 건다."))
+        service.refresh(project.id!!)
+        val fake = agent as FakeAgent
+        fake.observedPatches = listOf(
+            StatementPatch(gift.id, "leaves", "등불", "1"),
+            StatementPatch(gift.id, "needs", "검", "1"),
+        )
+
+        val applied = service.applyObserved(project.id!!, mapOf(gift.id!! to mapOf("Inventory.hasLamp" to "false→true")))
+
+        assertThat(applied).isEqualTo(1)
+        assertThat(fake.observedLines.last()).contains("Inventory.hasLamp false→true")
+        val meta = ObjectMapper().readTree(cases.findById(gift.id!!)!!.metadata.asString())
+        assertThat(meta.path("source").path("state_after").asText()).contains("등불=1")
+        assertThat(meta.path("contract").path("source").asText()).isEqualTo("observed")
     }
 }

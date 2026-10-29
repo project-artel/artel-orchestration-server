@@ -49,7 +49,7 @@ class QaObservationWalkTest {
                {"declaring":"Game","member":"Instance","type":"Game","value":{"is":"Game"}}]}""",
         )
         val (observed, _) = QaObservationService.walk(listOf(values(false, 0), key("E"), values(true, 20), done(1, 7)))
-        assertThat(observed.single().changed).containsExactlyInAnyOrderEntriesOf(mapOf("Inventory.hasLamp" to "true", "Inventory.coins" to "20"))
+        assertThat(observed.single().changed).containsExactlyInAnyOrderEntriesOf(mapOf("Inventory.hasLamp" to "false→true", "Inventory.coins" to "0→20"))
     }
 
     @Test

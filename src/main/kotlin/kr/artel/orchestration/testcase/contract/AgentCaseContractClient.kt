@@ -50,4 +50,12 @@ open class AgentCaseContractClient(properties: AgentServerProperties) {
             .bodyValue(request)
             .retrieve()
             .awaitBody()
+
+    open suspend fun observed(request: ObservedContractRequest): StatementResponse =
+        webClient.post()
+            .uri("$agentBaseUrl/case-contracts/observed")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(request)
+            .retrieve()
+            .awaitBody()
 }

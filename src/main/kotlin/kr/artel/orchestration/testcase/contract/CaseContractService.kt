@@ -259,11 +259,7 @@ class CaseContractService(
         val glossary = glossary(projectId)
         if (glossary.terms.size() == 0) return 0
         val cases = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { it.capabilityKey == null }
-        val lines = cases.map { case ->
-            val meta = runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
-            val needs = case.condition?.asString().orEmpty().let { Regex("\"left\":\\s*\"([^\"]+)\"[^}]*?\"right\":\\s*\"([^\"]*)\"").findAll(it).joinToString(", ") { m -> "${m.groupValues[1]}=${m.groupValues[2]}" } }
-            "${case.id} | ${case.step} → ${case.expectedValue} || ${needs.ifBlank { "-" }} | ${meta?.path("source")?.path("state_after")?.asText("")?.ifBlank { "-" } ?: "-"}"
-        }
+        val lines = cases.map(::contractLine)
         val patches = agent.statement(StatementRequest(said, question, glossary.terms, glossary.startState, lines)).patches
         var applied = 0
         for (patch in patches) {
@@ -277,6 +273,34 @@ class CaseContractService(
         }
         if (applied > 0) logger.info("사용자 말을 계약에 옮김 [projectId={}] {}건: {}", projectId, applied, patches)
         return applied
+    }
+
+    /**
+     * QA 가 통과시킨 TC 를 실행하는 동안 바뀐 값([changed], TC id → 코드 이름 → `앞→뒤`)을 용어집 이름으로 옮겨, 계약이
+     * 빠뜨린 '남기는 것' 만 더한다. 요구는 더하지 않는다 — 실행이 무엇을 요구했는지는 값의 변화로 알 수 없다.
+     * 출처는 `observed` 다. 용어집이 없으면(지도 프로젝트) 아무것도 하지 않는다.
+     */
+    suspend fun applyObserved(projectId: Long, changed: Map<Long, Map<String, String>>): Int {
+        val glossary = glossary(projectId)
+        if (glossary.terms.size() == 0 || changed.isEmpty()) return 0
+        val cases = testCases.findAllById(changed.keys).toList().filter { it.projectId == projectId && it.capabilityKey == null }
+        if (cases.isEmpty()) return 0
+        val observed = cases.map { case -> "${case.id}: " + changed[case.id].orEmpty().entries.joinToString(", ") { (k, v) -> "$k $v" } }
+        val patches = agent.observed(ObservedContractRequest(glossary.terms, glossary.startState, cases.map(::contractLine), observed)).patches
+        var applied = 0
+        for (patch in patches.filter { it.op == "leaves" && it.tcId in changed.keys }) {
+            addLeaves(projectId, patch.tcId!!, "${patch.name}=${patch.value}", OBSERVED)
+            applied++
+        }
+        if (applied > 0) logger.info("QA 관측을 계약에 옮김 [projectId={}] {}건: {}", projectId, applied, patches)
+        return applied
+    }
+
+    /** 계약을 사람이 읽는 한 줄로: `id | 행동 → 기대 || 필요 | 남김`. */
+    private fun contractLine(case: kr.artel.orchestration.testcase.entity.TestCaseEntity): String {
+        val meta = runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
+        val needs = case.condition?.asString().orEmpty().let { Regex("\"left\":\\s*\"([^\"]+)\"[^}]*?\"right\":\\s*\"([^\"]*)\"").findAll(it).joinToString(", ") { m -> "${m.groupValues[1]}=${m.groupValues[2]}" } }
+        return "${case.id} | ${case.step} → ${case.expectedValue} || ${needs.ifBlank { "-" }} | ${meta?.path("source")?.path("state_after")?.asText("")?.ifBlank { "-" } ?: "-"}"
     }
 
     /** 값에 상관없이 그 이름의 요구를 뺀다 — "검은 필요 없어"는 어떤 값인지 말하지 않는다. */
@@ -306,24 +330,24 @@ class CaseContractService(
         else -> node
     }
 
-    private suspend fun saveCase(caseId: Long, condition: JsonNode?, source: ObjectNode, meta: ObjectNode) {
+    private suspend fun saveCase(caseId: Long, condition: JsonNode?, source: ObjectNode, meta: ObjectNode, by: String = USER) {
         meta.set<JsonNode>("source", source)
         (meta.path("contract") as? ObjectNode ?: objectMapper.createObjectNode().also { meta.set<JsonNode>("contract", it) })
-            .put("source", "user").put("at", Instant.now().toString())
+            .put("source", by).put("at", Instant.now().toString())
         val spec = databaseClient.sql("UPDATE test_case SET condition = CAST(:condition AS jsonb), metadata = CAST(:meta AS jsonb), updated_at = now() WHERE id = :id")
             .bind("id", caseId).bind("meta", objectMapper.writeValueAsString(meta))
         (condition?.let { spec.bind("condition", objectMapper.writeValueAsString(it)) } ?: spec.bindNull("condition", String::class.java))
             .fetch().rowsUpdated().awaitSingle()
     }
 
-    private suspend fun addLeaves(projectId: Long, caseId: Long, pair: String) {
+    private suspend fun addLeaves(projectId: Long, caseId: Long, pair: String, by: String = USER) {
         val case = testCases.findById(caseId)?.takeIf { it.projectId == projectId } ?: return
         val meta = objectMapper.readTree(case.metadata.asString()) as ObjectNode
         val source = (meta.path("source") as? ObjectNode) ?: objectMapper.createObjectNode()
         val have = source.path("state_after").asText("")
         if (have.split(";").any { it.trim() == pair }) return
         source.put("state_after", listOf(have, pair).filter { it.isNotBlank() }.joinToString("; "))
-        saveCase(caseId, case.condition?.let { objectMapper.readTree(it.asString()) }, source, meta)
+        saveCase(caseId, case.condition?.let { objectMapper.readTree(it.asString()) }, source, meta, by)
     }
 
     private suspend fun setStart(projectId: Long, variable: String, value: String) {
@@ -343,6 +367,10 @@ class CaseContractService(
         const val YES_BY = "yes-by:"
         const val START = "start"
         const val NO = "no"
+
+        /** 계약을 고친 출처. 사람 말이면 user, QA 가 본 것이면 observed 다. */
+        const val USER = "user"
+        const val OBSERVED = "observed"
 
         /** TC 를 연달아 넣을 때 한 번에 모아 정리하려고 기다리는 시간. */
         private const val REFRESH_DEBOUNCE_MS = 3_000L

@@ -58,3 +58,11 @@ data class StatementPatch(
 )
 
 data class StatementResponse(val patches: List<StatementPatch> = emptyList())
+
+/** QA 가 통과시킨 TC 를 실행하는 동안 바뀐 값. [observed] 는 줄마다 `id: 코드이름 앞→뒤, …` 다. */
+data class ObservedContractRequest(
+    val terms: JsonNode,
+    @param:JsonProperty("start_state") @get:JsonProperty("start_state") val startState: Map<String, String>,
+    val cases: List<String>,
+    val observed: List<String>,
+)

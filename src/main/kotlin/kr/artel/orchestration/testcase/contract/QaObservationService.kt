@@ -30,6 +30,7 @@ class QaObservationService(
     private val databaseClient: DatabaseClient,
     private val testCases: TestCaseRepository,
     private val objectMapper: ObjectMapper,
+    private val caseContracts: CaseContractService,
 ) {
     private val logger = LoggerFactory.getLogger(QaObservationService::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -42,7 +43,7 @@ class QaObservationService(
         }
     }
 
-    /** [changed] 는 그 TC 를 실행하는 동안 바뀐 게임 값(코드 이름 → 바뀐 뒤 값)이다. 용어집 이름과 잇기 전의 원본이다. */
+    /** [changed] 는 그 TC 를 실행하는 동안 바뀐 게임 값(코드 이름 → `앞→뒤`)이다. 용어집 이름과 잇기 전의 원본이다. */
     data class Observed(
         val caseId: Long,
         val scene: String?,
@@ -97,6 +98,11 @@ class QaObservationService(
                 .fetch().rowsUpdated().awaitSingle()
             written++
         }
+        // 바뀐 값을 용어집 이름으로 옮겨 계약이 빠뜨린 '남기는 것' 을 더한다. 통과한 TC 만이다(관측은 COMPLETED 에서만 난다).
+        val changed = observed.filter { it.changed.isNotEmpty() && it.caseId in ours }.associate { it.caseId to it.changed }
+        val linked = runCatching { caseContracts.applyObserved(projectId, changed) }
+            .onFailure { logger.warn("QA 관측을 계약에 옮기기 실패 [qaTryId=$qaTryId]: ${it.message}") }
+            .getOrDefault(0)
         if (exits.isNotEmpty()) {
             // 같은 길(어디서 · 어디로 · 무엇으로)은 하나만 둔다. 다시 보면 그 길을 본 build 가 이번 것으로 바뀐다 —
             // 다음 버전에서도 그대로인 길이 "앞 버전에서만 봄" 으로 남지 않게.
@@ -105,7 +111,7 @@ class QaObservationService(
             databaseClient.sql("UPDATE case_glossary SET exits = CAST(:e AS jsonb), updated_at = now() WHERE project_id = :p")
                 .bind("e", objectMapper.writeValueAsString(kept + seen)).bind("p", projectId).fetch().rowsUpdated().awaitSingle()
         }
-        logger.info("QA 관측 쌓음 [qaTryId={}, projectId={}] 케이스 {} · 출구 {}", qaTryId, projectId, written, exits.size)
+        logger.info("QA 관측 쌓음 [qaTryId={}, projectId={}] 케이스 {} · 출구 {} · 계약에 옮긴 값 {}", qaTryId, projectId, written, exits.size, linked)
         return written
     }
 
@@ -179,7 +185,8 @@ class QaObservationService(
                         if (status != "COMPLETED" && status != "FAILED") continue
                         if (caseId > 0 && status == "COMPLETED") {
                             val arrived = scene.takeIf { it != start }
-                            val changed = values.filter { (k, v) -> windowValues[k] != v }.entries.take(MAX_CHANGED).associate { it.key to it.value }
+                            val changed = values.filter { (k, v) -> windowValues[k] != v }.entries.take(MAX_CHANGED)
+                                .associate { (k, v) -> k to "${windowValues[k] ?: "?"}→$v" }
                             observed += Observed(caseId, start, arrived, (if (arrived != null) mover else null) ?: inputs.firstOrNull(), changed)
                         }
                         start = scene; inputs.clear(); mover = null; windowValues = values.toMap()
