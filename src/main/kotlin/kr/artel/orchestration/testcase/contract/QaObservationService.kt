@@ -42,7 +42,14 @@ class QaObservationService(
         }
     }
 
-    data class Observed(val caseId: Long, val scene: String?, val arrivesAt: String?, val input: String?)
+    /** [changed] 는 그 TC 를 실행하는 동안 바뀐 게임 값(코드 이름 → 바뀐 뒤 값)이다. 용어집 이름과 잇기 전의 원본이다. */
+    data class Observed(
+        val caseId: Long,
+        val scene: String?,
+        val arrivesAt: String?,
+        val input: String?,
+        val changed: Map<String, String> = emptyMap(),
+    )
     /** [buildId] 는 그 길을 본 build 다. 다음 버전의 저작이 앞 버전에서만 본 길을 가려 읽는다. */
     data class Exit(
         val from: String,
@@ -80,6 +87,7 @@ class QaObservationService(
                 o.scene?.let { put("scene", it) }
                 o.arrivesAt?.let { put("arrives_at", it) }
                 o.input?.let { put("input", it) }
+                if (o.changed.isNotEmpty()) putObject("changed").apply { o.changed.forEach { (k, v) -> put(k, v) } }
                 put("qa_try_id", qaTryId)
                 buildId?.let { put("build_id", it) }
                 put("at", Instant.now().toString())
@@ -120,11 +128,14 @@ class QaObservationService(
             var start: String? = null
             var mover: String? = null
             val inputs = mutableListOf<String>()
+            val values = mutableMapOf<String, String>()
+            var windowValues: Map<String, String> = emptyMap()
             val observed = mutableListOf<Observed>()
             val exits = mutableListOf<Exit>()
             for ((type, p) in rows) {
                 when (type) {
                     "PULSE" -> {
+                        valuesIn(p).let { seen -> if (seen.isNotEmpty()) { values.putAll(seen); if (windowValues.isEmpty()) windowValues = values.toMap() } }
                         val now = p.path("scene").asText("").ifBlank { null } ?: continue
                         if (scene != null && now != scene) {
                             lastInput?.let { by -> Exit(scene!!, now, by).takeIf { it !in exits }?.let { exits += it }; mover = by }
@@ -168,9 +179,10 @@ class QaObservationService(
                         if (status != "COMPLETED" && status != "FAILED") continue
                         if (caseId > 0 && status == "COMPLETED") {
                             val arrived = scene.takeIf { it != start }
-                            observed += Observed(caseId, start, arrived, (if (arrived != null) mover else null) ?: inputs.firstOrNull())
+                            val changed = values.filter { (k, v) -> windowValues[k] != v }.entries.take(MAX_CHANGED).associate { it.key to it.value }
+                            observed += Observed(caseId, start, arrived, (if (arrived != null) mover else null) ?: inputs.firstOrNull(), changed)
                         }
-                        start = scene; inputs.clear(); mover = null
+                        start = scene; inputs.clear(); mover = null; windowValues = values.toMap()
                     }
                 }
             }
@@ -178,6 +190,19 @@ class QaObservationService(
         }
 
         private const val PENDING_CLICK = "click:?"
+        private const val MAX_CHANGED = 16
+
+        /** 게임 값으로 읽을 것: 수 · 참거짓 · 글자. 계정 · 화면 장식 같은 잡음은 뺀다. */
+        private val NOISE = listOf("Account.", "Vfx", "frames", "Material", "Sprite", "Token", "Localization", "resumedFrame")
+
+        /** PULSE 의 정적 값 가운데 원시 값만. 이름은 `선언 타입.멤버` 다. */
+        fun valuesIn(pulse: JsonNode): Map<String, String> =
+            pulse.path("statics").mapNotNull { s ->
+                val value = s.path("value")
+                if (!(value.isNumber || value.isBoolean || value.isTextual)) return@mapNotNull null
+                val name = "${s.path("declaring").asText()}.${s.path("member").asText()}"
+                if (NOISE.any { it in name }) null else name to value.asText()
+            }.toMap()
         private val CLICKED = Regex("""mouse_down: (\S+) 에 보냄""")
     }
 }

@@ -40,6 +40,19 @@ class QaObservationWalkTest {
     }
 
     @Test
+    fun `TC 를 실행하는 동안 바뀐 게임 값을 남긴다`() {
+        fun values(lamp: Boolean, coins: Int) = row(
+            "PULSE",
+            """{"scene":"SquareScene","statics":[{"declaring":"Inventory","member":"hasLamp","type":"System.Boolean","value":$lamp},
+               {"declaring":"Inventory","member":"coins","type":"System.Int32","value":$coins},
+               {"declaring":"Account.AccountSession","member":"MemberName","type":"System.String","value":"x"},
+               {"declaring":"Game","member":"Instance","type":"Game","value":{"is":"Game"}}]}""",
+        )
+        val (observed, _) = QaObservationService.walk(listOf(values(false, 0), key("E"), values(true, 20), done(1, 7)))
+        assertThat(observed.single().changed).containsExactlyInAnyOrderEntriesOf(mapOf("Inventory.hasLamp" to "true", "Inventory.coins" to "20"))
+    }
+
+    @Test
     fun `전해지지 않은 클릭 뒤에 바뀐 씬은 출구가 아니다`() {
         val (_, exits) = QaObservationService.walk(
             listOf(
