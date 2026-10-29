@@ -175,9 +175,19 @@ class TestScenarioAgentService(
         // 적은 말을 그대로 넣는다 — 어색한 문장보다 알려준 것이 사라지는 쪽이 나쁘다.
         // **계약 질문의 답은 코드가 계약에 옮긴다.** 어느 케이스의 어느 요구인지가 질문 id 에 있다. 옮긴 뒤에는
         // 평소처럼 모델에게 넘겨 다시 짜게 한다 — 바뀐 계약을 보고 짠다.
+        var contractsChanged = false
         contractAnswer(pending, answer)?.let { (ref, option) ->
             runCatching { caseContracts.applyAnswer(projectId, ref, option) }
+                .onSuccess { contractsChanged = true }
                 .onFailure { logger.warn("계약 질문의 답을 옮기지 못했다 [runId=$runId]: ${it.message}") }
+        }
+        // **사용자가 말로 알려 준 게임 사실도 계약에 남긴다.** 질문에 보기 대신 글로 답했든, 묻지 않았는데
+        // 알려 줬든 같다. 남기지 않으면 대화 기억(10턴)이 지나면 같은 것을 다시 묻는다.
+        val said = listOfNotNull(userInput.ifBlank { null }, answer?.text?.ifBlank { null }).joinToString("\n")
+        if (said.isNotBlank()) {
+            runCatching { caseContracts.applyStatement(projectId, said, pending?.text.orEmpty()) }
+                .onSuccess { if (it > 0) contractsChanged = true }
+                .onFailure { logger.warn("사용자 말을 계약에 옮기지 못했다 [runId=$runId]: ${it.message}") }
         }
         gapHowTo(pending, answer)?.let { howTo ->
             val blockedBy = pending!!.id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)
@@ -275,7 +285,14 @@ class TestScenarioAgentService(
             existing.declined = 0
             // 취소는 **그 턴에만** 걸린다(ARTEL-955). 안 내리면 다음 요청의 결과까지 버린다.
             existing.cancelled.set(false)
-            sendTurn(sessionKey, existing, turnInput, currentScenarios)
+            // 계약이 바뀐 턴이면 바뀐 TC 목록과 시작 값을 함께 보낸다. 세션은 열 때 받은 목록을 들고 있다.
+            if (contractsChanged) {
+                val version = authoringVersions.of(runId)
+                val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
+                sendTurn(sessionKey, existing, turnInput, currentScenarios, cases, testCaseService.startingValues(projectId))
+            } else {
+                sendTurn(sessionKey, existing, turnInput, currentScenarios)
+            }
         } else {
             openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly)
         }
@@ -1531,9 +1548,14 @@ class TestScenarioAgentService(
         session: AgentSession,
         userInput: String,
         currentScenarios: List<CurrentScenario>,
+        refreshedCases: List<kr.artel.orchestration.testcase.dto.AuthoringTestCase>? = null,
+        refreshedStart: Map<String, String>? = null,
     ) {
         val json = objectMapper.writeValueAsString(
-            AgentTurnMessage(userInput = userInput, currentScenarios = currentScenarios)
+            AgentTurnMessage(
+                userInput = userInput, currentScenarios = currentScenarios,
+                testCaseList = refreshedCases, startingValues = refreshedStart,
+            )
         )
         trace.record(
             session.runId, "▶ 턴을 보낸다",

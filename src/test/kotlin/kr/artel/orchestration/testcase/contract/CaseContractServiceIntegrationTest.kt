@@ -43,6 +43,13 @@ class CaseContractServiceIntegrationTest {
                 },
             )
         }
+
+        var patches: List<StatementPatch> = emptyList()
+        val heard = mutableListOf<String>()
+        override suspend fun statement(request: StatementRequest): StatementResponse {
+            heard += request.said
+            return StatementResponse(patches)
+        }
     }
 
     @TestConfiguration
@@ -109,6 +116,30 @@ class CaseContractServiceIntegrationTest {
         assertThat(wolfNow.condition!!.asString()).contains("\"left\": \"검\"")
         assertThat(wolfNow.metadata.asString()).contains("\"source\": \"user\"").doesNotContain("검 == 1")
         assertThat(cases.findById(slime.id!!)!!.condition).isNull()
+        assertThat(service.startState(project.id!!)).containsEntry("낮밤", "밤")
+    }
+
+    @Test
+    fun `what the user says in the chat goes into the contract only for a contract project`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "said", genre = "RPG", createdAt = now, updatedAt = now))
+        val wolf = cases.save(case(project.id!!, "늑대를 공격한다."))
+        val fake = agent as FakeAgent
+        fake.heard.clear()
+
+        // 용어집이 없으면(계약을 쓰지 않는 프로젝트) 모델을 부르지 않는다.
+        assertThat(service.applyStatement(project.id!!, "늑대는 검이 있어야 잡혀", "")).isEqualTo(0)
+        assertThat(fake.heard).isEmpty()
+
+        service.refresh(project.id!!)
+        fake.patches = listOf(
+            StatementPatch(tcId = wolf.id, op = "needs", name = "검", value = "1"),
+            StatementPatch(op = "start", name = "낮밤", value = "밤"),
+        )
+        val applied = service.applyStatement(project.id!!, "늑대는 검이 있어야 잡혀. 그리고 게임은 밤에 시작해", "")
+
+        assertThat(applied).isEqualTo(2)
+        assertThat(cases.findById(wolf.id!!)!!.metadata.asString()).contains("\"source\": \"user\"")
         assertThat(service.startState(project.id!!)).containsEntry("낮밤", "밤")
     }
 }

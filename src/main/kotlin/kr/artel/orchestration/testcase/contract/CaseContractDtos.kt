@@ -40,3 +40,21 @@ data class CaseContractRefresh(
     val written: Int,
     val terms: Int,
 )
+
+/** agent `/case-contracts/statement` 요청. 사용자 말과 직전 질문, 지금 계약을 함께 보낸다. */
+data class StatementRequest(
+    val said: String,
+    val question: String,
+    val terms: JsonNode,
+    @param:JsonProperty("start_state") @get:JsonProperty("start_state") val startState: Map<String, String>,
+    val cases: List<String>,
+)
+
+data class StatementPatch(
+    @param:JsonProperty("tc_id") val tcId: Long? = null,
+    val op: String,
+    val name: String,
+    val value: String,
+)
+
+data class StatementResponse(val patches: List<StatementPatch> = emptyList())

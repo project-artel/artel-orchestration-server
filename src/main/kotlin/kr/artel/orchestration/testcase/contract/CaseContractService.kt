@@ -188,6 +188,50 @@ class CaseContractService(
         logger.info("계약 질문에 답함 [projectId={}] TC {} {} {} {} → {}", projectId, ref.caseId, ref.variable, ref.operator, ref.value, option)
     }
 
+    /**
+     * 사용자가 대화에서 한 말 중 게임 사실을 계약에 옮긴다. 옮긴 수를 돌려준다.
+     *
+     * 용어집이 없는 프로젝트(계약을 쓰지 않는 프로젝트)에서는 부르지 않는다 — 지도 프로젝트의 말 한마디마다
+     * 모델을 부를 이유가 없다.
+     */
+    suspend fun applyStatement(projectId: Long, said: String, question: String): Int {
+        val glossary = glossary(projectId)
+        if (glossary.terms.size() == 0) return 0
+        val cases = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { it.capabilityKey == null }
+        val lines = cases.map { case ->
+            val meta = runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
+            val needs = case.condition?.asString().orEmpty().let { Regex("\"left\":\\s*\"([^\"]+)\"[^}]*?\"right\":\\s*\"([^\"]*)\"").findAll(it).joinToString(", ") { m -> "${m.groupValues[1]}=${m.groupValues[2]}" } }
+            "${case.id} | ${case.step} → ${case.expectedValue} || ${needs.ifBlank { "-" }} | ${meta?.path("source")?.path("state_after")?.asText("")?.ifBlank { "-" } ?: "-"}"
+        }
+        val patches = agent.statement(StatementRequest(said, question, glossary.terms, glossary.startState, lines)).patches
+        var applied = 0
+        for (patch in patches) {
+            val ref = ContractAnswerRef(patch.tcId ?: 0, patch.name, "==", patch.value)
+            when (patch.op) {
+                "needs" -> if (patch.tcId != null) { applyAnswer(projectId, ref, YES); applied++ }
+                "not_needs" -> if (patch.tcId != null) { dropAny(projectId, patch.tcId, patch.name); applied++ }
+                "leaves" -> if (patch.tcId != null) { addLeaves(projectId, patch.tcId, "${patch.name}=${patch.value}"); applied++ }
+                "start" -> { setStart(projectId, patch.name, patch.value); applied++ }
+            }
+        }
+        if (applied > 0) logger.info("사용자 말을 계약에 옮김 [projectId={}] {}건: {}", projectId, applied, patches)
+        return applied
+    }
+
+    /** 값에 상관없이 그 이름의 요구를 뺀다 — "검은 필요 없어"는 어떤 값인지 말하지 않는다. */
+    private suspend fun dropAny(projectId: Long, caseId: Long, variable: String) {
+        val case = testCases.findById(caseId)?.takeIf { it.projectId == projectId } ?: return
+        val condition = case.condition?.let { objectMapper.readTree(it.asString()) }
+        val values = condition?.let { c -> Regex("\"left\":\\s*\"${Regex.escape(variable)}\"[^}]*?\"right\":\\s*\"([^\"]*)\"").findAll(c.toString()).map { it.groupValues[1] }.toList() }.orEmpty()
+        val meta = objectMapper.readTree(case.metadata.asString()) as ObjectNode
+        val source = (meta.path("source") as? ObjectNode) ?: objectMapper.createObjectNode()
+        val withoutAssumed = source.path("assumed_before").asText("").split(";")
+            .map { it.trim() }.filter { it.isNotBlank() && !it.startsWith(variable) }.joinToString("; ")
+        var next = condition?.takeUnless { it.isNull }
+        values.forEach { v -> next = next?.let { drop(it, variable, v) } }
+        saveCase(caseId, next, source.put("assumed_before", withoutAssumed), meta)
+    }
+
     private fun drop(node: JsonNode, variable: String, value: String): JsonNode? = when (node.path("kind").asText()) {
         "test" -> node.takeUnless { it.path("left").asText() == variable && it.path("right").asText() == value }
         "every", "either" -> {

@@ -42,4 +42,12 @@ open class AgentCaseContractClient(properties: AgentServerProperties) {
             .retrieve()
             .awaitBody()
     }
+
+    open suspend fun statement(request: StatementRequest): StatementResponse =
+        webClient.post()
+            .uri("$agentBaseUrl/case-contracts/statement")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(request)
+            .retrieve()
+            .awaitBody()
 }
