@@ -3765,11 +3765,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -9573,6 +9573,46 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/RunCasesOutsideBuildResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/authoring-lock": {
+      "get": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "authoringLock",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAuthoringLockResponse"
                 }
               }
             }
@@ -17072,11 +17112,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
@@ -20373,6 +20413,81 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "RunAuthoringLockResponse": {
+        "required": [
+          "scenarios"
+        ],
+        "type": "object",
+        "properties": {
+          "scenarios": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioAuthoringLock"
+            }
+          }
+        }
+      },
+      "ScenarioAuthoringLock": {
+        "required": [
+          "choosing",
+          "mine",
+          "requestedBy",
+          "requestedByName",
+          "scenarioId",
+          "startedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "scenarioId": {
+            "type": "string"
+          },
+          "requestedBy": {
+            "type": "string"
+          },
+          "requestedByName": {
+            "type": "string"
+          },
+          "mine": {
+            "type": "boolean"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "sent",
+              "grouping",
+              "grouped",
+              "bridging",
+              "thinking",
+              "looking_up_cases",
+              "reading_cases",
+              "reading_versions",
+              "reading_verdicts",
+              "reading_qa_runs",
+              "reading_issues",
+              "reading_scenarios",
+              "reading_builds",
+              "splitting",
+              "reading_case",
+              "finding_path",
+              "writing",
+              "checking",
+              "wrote_one",
+              "saving",
+              "modifying",
+              "saved",
+              "repairing",
+              "blocked"
+            ]
+          },
+          "choosing": {
+            "type": "boolean"
           }
         }
       },

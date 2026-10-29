@@ -70,6 +70,10 @@ open class NotFoundException(message: String = "찾을 수 없습니다.", code:
 open class ConflictException(message: String, code: String = "conflict") :
     ApiException(HttpStatus.CONFLICT, code, message)
 
+/** 423 — 잠겨 있어 지금은 쓸 수 없음. 풀리면 다시 할 수 있다(예: Artel Bot 이 런을 고치는 중). */
+open class LockedException(message: String, code: String = "locked") :
+    ApiException(HttpStatus.LOCKED, code, message)
+
 /**
  * 429 — 같은 일을 너무 자주 했음. [retryAfterSeconds] 가 `Retry-After` 헤더로 나간다.
  */
