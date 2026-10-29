@@ -109,17 +109,19 @@ class AuthoringDraftTest {
 
         assertThat(draft.draftsOnly().map { it.scenarioId to it.title }).containsExactly(-1L to "새 흐름")
         // 번호 없이 오면 draft 가 하나일 때만 그 draft 다.
-        assertThat(draft.draftTarget(null)).isEqualTo(-1L)
-        assertThat(draft.draftTarget(-1)).isEqualTo(-1L)
-        // 저장된 시나리오 번호나 없는 번호는 draft 가 아니다.
-        assertThat(draft.draftTarget(7)).isNull()
-        assertThat(draft.draftTarget(-9)).isNull()
+        assertThat(draft.draftSlot(null)).isEqualTo(DraftSlot.Existing(-1))
+        assertThat(draft.draftSlot(-1)).isEqualTo(DraftSlot.Existing(-1))
+        // 저장된 시나리오 번호나 없는 번호는 받지 않는다.
+        assertThat(draft.draftSlot(7)).isEqualTo(DraftSlot.Refused)
+        assertThat(draft.draftSlot(-9)).isEqualTo(DraftSlot.Refused)
+        // 이번 턴에 이미 고친 draft 는 번호 없는 다음 시나리오가 덮지 않는다 — 새 draft 다.
+        assertThat(draft.draftSlot(null, targeted = setOf(-1L))).isEqualTo(DraftSlot.New)
 
         draft.accept(7, listOf(result("고친 흐름", 2, id = 7)), emptyList())
         assertThat(draft.draftsOnly().map { it.scenarioId }).containsExactly(-1L, 7L)
-        assertThat(draft.draftTarget(7)).isEqualTo(7L)
-        // draft 가 여럿이면 번호 없이는 고를 수 없다.
-        assertThat(draft.draftTarget(null)).isNull()
+        assertThat(draft.draftSlot(7)).isEqualTo(DraftSlot.Existing(7))
+        // draft 가 여럿이면 번호 없이 온 것은 새 draft 다.
+        assertThat(draft.draftSlot(null)).isEqualTo(DraftSlot.New)
     }
 
     @Test

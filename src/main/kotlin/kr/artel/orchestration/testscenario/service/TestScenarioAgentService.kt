@@ -282,6 +282,7 @@ class TestScenarioAgentService(
             // [sendTurn] 을 직접 부른다) 앞서 받아 둔 것이 그대로 살아 있다.
             existing.submitted.clear()
             existing.draftQuestions.clear()
+            existing.draftTargeted.clear()
             existing.declined = 0
             // 취소는 **그 턴에만** 걸린다(ARTEL-955). 안 내리면 다음 요청의 결과까지 버린다.
             existing.cancelled.set(false)
@@ -755,11 +756,11 @@ class TestScenarioAgentService(
     ) {
         try {
             val submittedRaw = objectMapper.treeToValue(node.path("scenario"), ScenarioResult::class.java)
-            // draft 만 고치는 턴(ARTEL-1074)은 draft 가 아닌 것을 받지 않는다. 번호 없이 오면 draft 가
-            // 하나일 때만 그 draft 로 읽는다 — 여럿이면 어느 것인지 모델이 골라야 한다.
+            // draft 만 고치는 턴(ARTEL-1074)은 저장된 시나리오를 건드리지 않는다. 번호 없이 오면 새 draft 다 —
+            // 이번 턴에 아직 고치지 않은 draft 가 하나뿐일 때만 그 draft 로 읽는다([AuthoringDraft.draftSlot]).
             val raw = if (!session.draftOnly) submittedRaw else {
-                val target = drafts.of(sessionKey).draftTarget(submittedRaw.scenarioId)
-                if (target == null) {
+                val slot = drafts.of(sessionKey).draftSlot(submittedRaw.scenarioId, session.draftTargeted)
+                if (slot is DraftSlot.Refused) {
                     session.declined += 1
                     sendFrame(
                         sessionKey, session,
@@ -772,6 +773,8 @@ class TestScenarioAgentService(
                     )
                     return
                 }
+                val target = (slot as? DraftSlot.Existing)?.agentId
+                target?.let { session.draftTargeted += it }
                 submittedRaw.copy(scenarioId = target)
             }
             // **음수 번호는 draft 의 새 시나리오다**(ARTEL-1074). 저장된 적이 없으니 검수와 저장에는
@@ -2083,6 +2086,8 @@ class TestScenarioAgentService(
          * 하나일 때만 그 draft 로 읽는다. 매 턴 갱신한다.
          */
         @Volatile var draftOnly: Boolean = false,
+        /** 이번 턴에 이미 고친 draft 번호. 번호 없이 온 다음 시나리오가 그 draft 를 덮지 않게 한다. */
+        val draftTargeted: MutableSet<Long> = java.util.concurrent.ConcurrentHashMap.newKeySet(),
         /**
          * 이번 턴에 모델에게 보인 저장된 시나리오의 스텝(번호 → 스텝). 기존 시나리오를 고친 draft 가 화면에서
          * 견줄 기준이다(ARTEL-1075). 매 턴 갱신한다.
@@ -2166,11 +2171,12 @@ class TestScenarioAgentService(
 
         /** draft 만 고치는 턴(ARTEL-1074)에 모델에게 붙이는 범위. */
         const val DRAFT_ONLY_NOTE =
-            "(지금은 승인 전 draft 만 고친다. current_scenarios 에 있는 draft 의 scenario_id 로 고치고, 새 시나리오는 만들지 않는다.)"
+            "(시스템 안내 — 사용자가 한 말이 아니다: 지금은 승인 전 draft 를 고치는 중이다. 저장된 시나리오는 고치지 않는다. " +
+                "draft 를 고칠 때는 current_scenarios 의 그 scenario_id 로 내고, 새 시나리오가 필요하면 scenario_id 를 비워 새 draft 로 낸다.)"
 
         /** draft 만 고치는 턴에서 draft 가 아닌 것을 낸 모델에게 돌려주는 말. */
         const val DRAFT_ONLY_REFUSAL =
-            "지금은 승인 전 draft 만 고칠 수 있습니다. current_scenarios 에 있는 draft 의 scenario_id 로 다시 내 주세요. 새 시나리오는 만들 수 없습니다."
+            "지금은 승인 전 draft 만 고칠 수 있습니다. current_scenarios 에 있는 draft 의 scenario_id 로 내거나, 새 시나리오면 scenario_id 를 비워 주세요."
 
         /**
          * 재작성을 몇 번까지 시킬지.

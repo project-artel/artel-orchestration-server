@@ -213,7 +213,7 @@ class RunChatDraftIntegrationTest {
         val turn = objectMapper.readTree(inboundFrames.last { it.contains("닫는 것까지") })
         assertThat(turn.get("current_scenarios").map { it.get("scenario_id").asLong() to it.get("title").asText() })
             .containsExactly(-1L to "첫 draft")
-        assertThat(turn.toString()).contains("승인 전 draft 만 고친다")
+        assertThat(turn.toString()).contains("승인 전 draft 를 고치는 중이다")
 
         // 음수 번호로 돌아온 것은 **같은 draft** 를 고친 것이다. 새것이 하나 더 생기지 않는다.
         val second = draft(client, projectId, runId, token)
