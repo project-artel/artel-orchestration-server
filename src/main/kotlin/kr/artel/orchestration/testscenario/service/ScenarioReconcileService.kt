@@ -1246,7 +1246,11 @@ class ScenarioReconcileService(
         val out = mutableListOf<ScenarioQuestionBuilder.ContractBlock>()
         for (scenario in scenarios) {
             val have = start.toMutableMap()
+            // 앞에 TC 초안이 있으면 그 뒤의 "만드는 케이스를 못 찾았다" 는 묻지 않는다. 초안이 그것을 만든다고
+            // 저작이 냈고, 승인되면 계약이 뽑힌다 — 같은 자리를 초안 표와 질문으로 두 번 묻게 된다.
+            var afterDraft = false
             for (step in scenario.steps) {
+                if (step.proposedCase != null) afterDraft = true
                 val fact = step.caseId?.let { byId[it] } ?: continue
                 fun holds(guard: Guard): Boolean {
                     val now = have[guard.variable.lowercase()]
@@ -1256,7 +1260,7 @@ class ScenarioReconcileService(
                         else -> true
                     }
                 }
-                fact.unmade.filterNot(::holds).forEach {
+                if (!afterDraft) fact.unmade.filterNot(::holds).forEach {
                     out += ScenarioQuestionBuilder.ContractBlock(fact.id, fact.step, it, assumed = false, makers = emptyList())
                 }
                 fact.assumed.filterNot(::holds).forEach { guard ->

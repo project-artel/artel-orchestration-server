@@ -30,6 +30,8 @@ data class ChatScenarioStep(
     @param:JsonProperty("step_kind") val stepKind: ScenarioStepKind? = null,
     @param:JsonProperty("step_source_capability_id") val stepSourceCapabilityId: Long? = null,
     @param:JsonProperty("step_unknown_reason") val stepUnknownReason: String? = null,
+    /** 승인 전 TC 초안을 확인하는 스텝이면 그 초안의 임시 번호(Agent 의 `proposed_case`, 음수). */
+    @param:JsonProperty("proposed_case") val proposedCase: Long? = null,
 )
 
 /** 저장 스텝을 작성 챗봇 계약으로 투영한다. 라벨은 여기서 떨어진다 — 그것이 이 함수의 요점이다. */
