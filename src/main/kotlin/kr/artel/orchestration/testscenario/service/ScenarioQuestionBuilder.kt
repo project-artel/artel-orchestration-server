@@ -90,6 +90,10 @@ object ScenarioQuestionBuilder {
     const val CONTRACT_YES_BY = "yes-by:"
     const val CONTRACT_START = "start"
     const val CONTRACT_NO = "no"
+    /** 시작 값 질문의 보기 앞머리. 뒤에 고른 값이 붙는다(`start=낮`). */
+    const val CONTRACT_START_VALUE = "start="
+    /** 시작 값 질문은 어느 케이스의 것도 아니다. 질문 id 의 비교 자리에 이것을 둔다. */
+    const val START_OPERATOR = "start"
 
     /**
      * 짠 경로에서 확인 안 된 요구가 채워지지 않은 자리 하나.
@@ -104,6 +108,9 @@ object ScenarioQuestionBuilder {
         val assumed: Boolean,
         val makers: List<Pair<Long, String>>,
     )
+
+    /** 짠 경로가 처음 쓰는 값인데 게임을 켤 때 무엇인지 모르는 것. 보기는 계약들이 그 값에 쓰는 것들이다. */
+    data class StartBlock(val variable: String, val values: List<String>)
 
     /** 질문 id 에서 되읽은 자리. */
     data class ContractRef(val caseId: Long, val variable: String, val operator: String, val value: String)
@@ -125,6 +132,18 @@ object ScenarioQuestionBuilder {
             else -> "$name ${guard.operator} ${guard.value}"
         }
     }
+
+    /**
+     * 새 게임을 시작할 때의 값을 묻는다. 순환하는 값(낮 · 밤)은 처음이 무엇인지 TC 글에 거의 적히지 않는다 — 모르면
+     * 저작은 밤을 만드는 스텝이 필요한지 모른다. 답은 프로젝트의 시작 상태에 남고 다시 묻지 않는다.
+     */
+    fun startQuestion(block: StartBlock): ScenarioQuestion = ScenarioQuestion(
+        id = "${CONTRACT_PREFIX}0|${block.variable}|$START_OPERATOR|?",
+        text = "새 게임을 시작하면 **${block.variable.replace('_', ' ')}** 은(는) 무엇인가요?",
+        why = "처음 값을 알아야 그 값을 바꾸는 스텝이 필요한지 정할 수 있어요. 답은 이 프로젝트에 저장해 두고 다시 묻지 않아요.",
+        options = block.values.map { ScenarioQuestionOption("$CONTRACT_START_VALUE$it", it.replace('_', ' ')) },
+        source = ScenarioQuestionSource.CODE,
+    )
 
     fun contractQuestion(block: ContractBlock): ScenarioQuestion {
         val what = readable(block.guard)

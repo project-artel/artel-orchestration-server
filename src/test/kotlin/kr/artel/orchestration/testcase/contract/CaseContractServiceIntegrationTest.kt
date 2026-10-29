@@ -267,4 +267,21 @@ class CaseContractServiceIntegrationTest {
         assertThat(sent[start.id]!!.stateAfter).containsEntry("scene", "광장")
         assertThat(sent[look.id]!!.exits).containsExactly(SceneExit("광장", "TC ${start.id}: 시작하기를 누른다."))
     }
+
+    /** 시작 값 질문의 답은 어느 케이스도 고치지 않고 프로젝트 시작 상태에 남는다. */
+    @Test
+    fun `a start value answer goes to the project's start state`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "start-value", genre = "RPG", createdAt = now, updatedAt = now))
+        cases.save(case(project.id!!, "늑대를 공격한다."))
+        service.refresh(project.id!!)
+
+        service.applyAnswer(
+            project.id!!,
+            CaseContractService.ContractAnswerRef(0, "시간대", CaseContractService.START_OPERATOR, "?"),
+            "${CaseContractService.START_VALUE}낮",
+        )
+
+        assertThat(service.startState(project.id!!)).containsEntry("시간대", "낮")
+    }
 }

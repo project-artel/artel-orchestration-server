@@ -227,6 +227,11 @@ class CaseContractService(
      * 무엇으로 바꿀지는 고른 보기에 다 있다. 고친 케이스는 출처를 `user` 로 남겨 다음 정리가 덮지 않는다.
      */
     suspend fun applyAnswer(projectId: Long, ref: ContractAnswerRef, option: String) {
+        // 시작 값 질문은 어느 케이스의 것도 아니다 — 프로젝트의 시작 상태에 남긴다.
+        if (ref.operator == START_OPERATOR) {
+            if (option.startsWith(START_VALUE)) setStart(projectId, ref.variable, option.removePrefix(START_VALUE))
+            return
+        }
         val case = testCases.findById(ref.caseId)?.takeIf { it.projectId == projectId } ?: return
         val test = objectMapper.createObjectNode().apply {
             put("kind", "test"); put("left", ref.variable); put("operator", ref.operator); put("right", ref.value)
@@ -460,6 +465,9 @@ class CaseContractService(
         const val YES_BY = "yes-by:"
         const val START = "start"
         const val NO = "no"
+        /** 시작 값 질문(`contract:0|이름|start|?`)과 그 보기(`start=값`). [ScenarioQuestionBuilder] 와 같은 꼴이다. */
+        const val START_OPERATOR = "start"
+        const val START_VALUE = "start="
 
         /** 계약을 고친 출처. 사람 말이면 user, QA 가 본 것이면 observed 다. */
         const val USER = "user"

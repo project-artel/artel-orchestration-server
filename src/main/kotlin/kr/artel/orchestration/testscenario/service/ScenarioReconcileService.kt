@@ -448,8 +448,10 @@ class ScenarioReconcileService(
         // [ScenarioQuestionBuilder] 에 적었다 — 답이 시나리오를 바꾸는 물음만 카드가 된다.
         // **계약 질문**: 짠 경로에서 확인 안 된 요구가 채워지지 않은 곳만 묻는다. 목표에서 거꾸로 훑으면
         // 큰 프로젝트에서 경로 밖 질문이 쏟아졌다(측정: word-venture 질문 9개 중 8개가 경로 밖).
-        val contractQuestions = contractBlocks(projectId, checked, byId)
-            .map(ScenarioQuestionBuilder::contractQuestion)
+        val contractQuestions = (
+            startBlocks(projectId, checked, byId).map(ScenarioQuestionBuilder::startQuestion) +
+                contractBlocks(projectId, checked, byId).map(ScenarioQuestionBuilder::contractQuestion)
+            )
             .filterNot { it.id in answered }
             .take(CONTRACT_QUESTIONS_PER_TURN)
         val questions = ScenarioQuestionBuilder.all(blocked).filterNot { it.id in answered } + contractQuestions
@@ -1269,6 +1271,40 @@ class ScenarioReconcileService(
             }
         }
         return out.distinctBy { Triple(it.caseId, it.guard.variable, it.guard.value) }
+    }
+
+    /**
+     * 짠 경로가 **처음 읽을 때 아직 아무도 정하지 않은** 고르는 값(낮 · 밤처럼 0/1 · 수가 아닌 것). 시작 값을 모르면 저작은
+     * 그 값을 바꾸는 스텝이 필요한지 모른다 — 측정(등불 골짜기, 제품 추출)에서 시작 값 22개를 잡고 `시간대` 만 비었다.
+     * 보기는 계약들이 그 값에 쓰는 것들이다. 지도가 있는 프로젝트는 지도가 시작 값을 안다.
+     */
+    private suspend fun startBlocks(
+        projectId: Long,
+        scenarios: List<ScenarioResult>,
+        byId: Map<Long, ScenarioSiblingCheck.CaseFact>,
+    ): List<ScenarioQuestionBuilder.StartBlock> {
+        if (byId.values.none { it.leaves.isNotEmpty() }) return emptyList()
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
+        fun chosen(value: String) = value !in setOf("0", "1") && value.toDoubleOrNull() == null && !value.startsWith("+") && !value.startsWith("-")
+        val values = (byId.values.flatMap { f -> f.guards.filter { it.operator == "==" }.map { it.variable to it.value } } +
+            byId.values.flatMap { f -> f.leaves.entries.map { it.key to it.value } })
+            .filter { (_, v) -> chosen(v) }
+            .groupBy({ it.first.lowercase() }, { it.second })
+            .mapValues { (_, vs) -> vs.distinct() }
+        val names = byId.values.flatMap { f -> f.guards.map { it.variable } + f.leaves.keys }.associateBy { it.lowercase() }
+        val out = linkedSetOf<String>()
+        for (scenario in scenarios) {
+            val set = mutableSetOf<String>()
+            for (step in scenario.steps) {
+                val fact = step.caseId?.let { byId[it] } ?: continue
+                fact.guards.filter { it.operator == "==" && chosen(it.value) }.forEach { guard ->
+                    val key = guard.variable.lowercase()
+                    if (key !in start && key !in set && (values[key]?.size ?: 0) >= 2) out += key
+                }
+                set += fact.leaves.keys.map { it.lowercase() }
+            }
+        }
+        return out.map { ScenarioQuestionBuilder.StartBlock(names[it] ?: it, values[it].orEmpty()) }
     }
 
     /** 케이스 메타의 `start_state` 를 모은 것([kr.artel.orchestration.testcase.service.TestCaseService.metadataStart] 와 같은 규칙). */
