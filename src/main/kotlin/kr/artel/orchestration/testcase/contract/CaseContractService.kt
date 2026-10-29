@@ -296,6 +296,82 @@ class CaseContractService(
         return applied
     }
 
+    /** 계약까지 붙인 TC 목록과 용어집. 지도에서 온 TC 는 빼고 글로 쓴 TC 만이다. */
+    suspend fun list(projectId: Long): CaseContractList {
+        val glossary = glossary(projectId)
+        val rows = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { it.capabilityKey == null }.map { case ->
+            val meta = runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
+            CaseContractRow(
+                testCaseId = case.id.toString(),
+                scene = case.scene,
+                precondition = case.precondition,
+                step = case.step,
+                expectedValue = case.expectedValue,
+                needs = case.condition?.asString()?.let { tests(objectMapper.readTree(it)) }.orEmpty(),
+                leaves = meta?.path("source")?.path("state_after")?.asText("").orEmpty()
+                    .split(";").map { it.trim() }.filter { it.isNotBlank() },
+                contractSource = meta?.path("contract")?.path("source")?.asText(null),
+            )
+        }
+        return CaseContractList(glossary.terms, glossary.startState, rows)
+    }
+
+    private fun tests(node: JsonNode): List<String> = when (node.path("kind").asText()) {
+        "test" -> listOf("${node.path("left").asText()} ${node.path("operator").asText()} ${node.path("right").asText()}")
+        "every" -> node.path("parts").flatMap { tests(it) }
+        "either" -> listOf(node.path("parts").joinToString(" | ") { "(" + tests(it).joinToString(", ") + ")" })
+        else -> emptyList()
+    }
+
+    /**
+     * 사람(또는 사용자의 AI)이 적은 계약을 그대로 쓴다. 출처는 `user` 라 AI 추출이 덮지 않는다. [needs] 는 `(이름, 비교, 값)` 이다.
+     * 둘 다 비었으면 아무것도 하지 않는다 — 그 TC 는 AI 가 글에서 뽑는다.
+     */
+    suspend fun writeUserContract(projectId: Long, caseId: Long, needs: List<Triple<String, String, String>>, leaves: List<String>) {
+        if (needs.isEmpty() && leaves.isEmpty()) return
+        val case = testCases.findById(caseId)?.takeIf { it.projectId == projectId } ?: return
+        val meta = objectMapper.readTree(case.metadata.asString()) as ObjectNode
+        val source = (meta.path("source") as? ObjectNode) ?: objectMapper.createObjectNode()
+        source.put("state_after", leaves.joinToString("; "))
+        val parts = needs.map { (name, op, value) -> testNode(name, op, value) }
+        val condition: JsonNode? = when (parts.size) {
+            0 -> null
+            1 -> parts.first()
+            else -> objectMapper.createObjectNode().apply { put("kind", "every"); putArray("parts").addAll(parts) }
+        }
+        saveCase(caseId, condition, source, meta, USER)
+    }
+
+    /** 계약에 쓰는 이름 꼴. Agent 가 뽑은 계약과 같은 규칙이다(공백 → `_`). */
+    fun contractName(text: String): String = text.trim().replace(' ', '_')
+
+    private fun testNode(name: String, op: String, value: String): ObjectNode = objectMapper.createObjectNode().apply {
+        put("kind", "test"); put("left", name); put("operator", op); put("right", value)
+        put("context", "static"); put("offset", 0); putNull("subjectLost")
+    }
+
+    /** 용어집에 없는 이름만 더한다. 시작 값이 있으면 시작 상태에도 넣는다. 더한 이름을 돌려준다. */
+    suspend fun mergeTerms(projectId: Long, terms: List<CaseTermInput>): List<String> {
+        if (terms.isEmpty()) return emptyList()
+        val glossary = glossary(projectId)
+        val known = glossary.terms.map { it.path("name").asText() }.toSet()
+        val fresh = terms.filter { it.name.isNotBlank() && it.name !in known }.distinctBy { it.name }
+        if (fresh.isEmpty()) return emptyList()
+        val all = (glossary.terms.deepCopy() as com.fasterxml.jackson.databind.node.ArrayNode)
+        fresh.forEach { t ->
+            all.addObject().apply {
+                put("name", t.name); put("kind", t.kind); put("meaning", t.meaning)
+                putArray("aliases"); putArray("options").apply { t.options.forEach { add(it) } }
+                put("start", t.start?.ifBlank { null } ?: "unknown")
+                put("start_basis", if (t.start.isNullOrBlank()) "unknown" else "text")
+                putArray("not_same_as")
+            }
+        }
+        val start = glossary.startState + fresh.mapNotNull { t -> t.start?.ifBlank { null }?.let { contractName(t.name) to contractName(it) } }
+        saveGlossary(projectId, all, start)
+        return fresh.map { it.name }
+    }
+
     /** 계약을 사람이 읽는 한 줄로: `id | 행동 → 기대 || 필요 | 남김`. */
     private fun contractLine(case: kr.artel.orchestration.testcase.entity.TestCaseEntity): String {
         val meta = runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
