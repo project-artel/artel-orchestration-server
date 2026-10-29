@@ -151,4 +151,92 @@ class CaseContractService(
         MessageDigest.getInstance("SHA-256")
             .digest(listOf(case.scene, case.precondition.orEmpty(), case.step, case.expectedValue).joinToString("\n").toByteArray())
             .joinToString("") { "%02x".format(it) }
+
+    /**
+     * 계약 질문에 대한 답을 계약에 옮긴다. 모델을 거치지 않는다 — 어느 케이스의 어느 요구인지는 질문 id 에,
+     * 무엇으로 바꿀지는 고른 보기에 다 있다. 고친 케이스는 출처를 `user` 로 남겨 다음 정리가 덮지 않는다.
+     */
+    suspend fun applyAnswer(projectId: Long, ref: ContractAnswerRef, option: String) {
+        val case = testCases.findById(ref.caseId)?.takeIf { it.projectId == projectId } ?: return
+        val test = objectMapper.createObjectNode().apply {
+            put("kind", "test"); put("left", ref.variable); put("operator", ref.operator); put("right", ref.value)
+            put("context", "static"); put("offset", 0); putNull("subjectLost")
+        }
+        val condition = case.condition?.let { objectMapper.readTree(it.asString()) }
+        val meta = objectMapper.readTree(case.metadata.asString()) as ObjectNode
+        val source = (meta.path("source") as? ObjectNode) ?: objectMapper.createObjectNode()
+        val withoutAssumed = source.path("assumed_before").asText("").split(";")
+            .map { it.trim() }.filter { it.isNotBlank() && !it.startsWith(ref.variable) }.joinToString("; ")
+        when {
+            option == YES || option.startsWith(YES_BY) -> {
+                val next = when {
+                    condition == null || condition.isNull -> test
+                    condition.path("kind").asText() == "every" -> (condition.deepCopy<ObjectNode>()).also { (it.path("parts") as com.fasterxml.jackson.databind.node.ArrayNode).add(test) }
+                    else -> objectMapper.createObjectNode().apply { put("kind", "every"); putArray("parts").add(condition).add(test) }
+                }
+                saveCase(case.id!!, next, source.put("assumed_before", withoutAssumed), meta)
+                option.removePrefix(YES_BY).toLongOrNull()?.takeIf { option.startsWith(YES_BY) }?.let { makerId ->
+                    addLeaves(projectId, makerId, "${ref.variable}=${ref.value}")
+                }
+            }
+            option == START -> setStart(projectId, ref.variable, ref.value)
+            option == NO -> {
+                val next = condition?.takeUnless { it.isNull }?.let { drop(it, ref.variable, ref.value) }
+                saveCase(case.id!!, next, source.put("assumed_before", withoutAssumed), meta)
+            }
+        }
+        logger.info("계약 질문에 답함 [projectId={}] TC {} {} {} {} → {}", projectId, ref.caseId, ref.variable, ref.operator, ref.value, option)
+    }
+
+    private fun drop(node: JsonNode, variable: String, value: String): JsonNode? = when (node.path("kind").asText()) {
+        "test" -> node.takeUnless { it.path("left").asText() == variable && it.path("right").asText() == value }
+        "every", "either" -> {
+            val parts = node.path("parts").mapNotNull { drop(it, variable, value) }
+            when {
+                parts.isEmpty() -> null
+                parts.size == 1 && node.path("kind").asText() == "every" -> parts.first()
+                else -> (node.deepCopy<ObjectNode>()).also { it.putArray("parts").addAll(parts) }
+            }
+        }
+        else -> node
+    }
+
+    private suspend fun saveCase(caseId: Long, condition: JsonNode?, source: ObjectNode, meta: ObjectNode) {
+        meta.set<JsonNode>("source", source)
+        (meta.path("contract") as? ObjectNode ?: objectMapper.createObjectNode().also { meta.set<JsonNode>("contract", it) })
+            .put("source", "user").put("at", Instant.now().toString())
+        val spec = databaseClient.sql("UPDATE test_case SET condition = CAST(:condition AS jsonb), metadata = CAST(:meta AS jsonb), updated_at = now() WHERE id = :id")
+            .bind("id", caseId).bind("meta", objectMapper.writeValueAsString(meta))
+        (condition?.let { spec.bind("condition", objectMapper.writeValueAsString(it)) } ?: spec.bindNull("condition", String::class.java))
+            .fetch().rowsUpdated().awaitSingle()
+    }
+
+    private suspend fun addLeaves(projectId: Long, caseId: Long, pair: String) {
+        val case = testCases.findById(caseId)?.takeIf { it.projectId == projectId } ?: return
+        val meta = objectMapper.readTree(case.metadata.asString()) as ObjectNode
+        val source = (meta.path("source") as? ObjectNode) ?: objectMapper.createObjectNode()
+        val have = source.path("state_after").asText("")
+        if (have.split(";").any { it.trim() == pair }) return
+        source.put("state_after", listOf(have, pair).filter { it.isNotBlank() }.joinToString("; "))
+        saveCase(caseId, case.condition?.let { objectMapper.readTree(it.asString()) }, source, meta)
+    }
+
+    private suspend fun setStart(projectId: Long, variable: String, value: String) {
+        databaseClient.sql(
+            """
+            INSERT INTO case_glossary (project_id, start_state) VALUES (:projectId, jsonb_build_object(CAST(:name AS text), CAST(:value AS text)))
+            ON CONFLICT (project_id) DO UPDATE SET start_state = case_glossary.start_state || EXCLUDED.start_state, updated_at = now()
+            """.trimIndent()
+        ).bind("projectId", projectId).bind("name", variable).bind("value", value)
+            .fetch().rowsUpdated().awaitSingle()
+    }
+
+    data class ContractAnswerRef(val caseId: Long, val variable: String, val operator: String, val value: String)
+
+    companion object {
+        const val YES = "yes"
+        const val YES_BY = "yes-by:"
+        const val START = "start"
+        const val NO = "no"
+    }
 }

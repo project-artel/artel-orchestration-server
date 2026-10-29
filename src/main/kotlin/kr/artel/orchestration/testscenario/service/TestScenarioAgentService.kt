@@ -173,6 +173,12 @@ class TestScenarioAgentService(
         // **자리는 코드가, 문장은 모델이.** 어느 자리인지는 질문 id 에 들어 있어 계산으로 끝나고,
         // 사용자가 적은 말을 앞뒤 스텝과 같은 결로 다듬는 것은 모델이 낫다. 다듬기가 실패하면
         // 적은 말을 그대로 넣는다 — 어색한 문장보다 알려준 것이 사라지는 쪽이 나쁘다.
+        // **계약 질문의 답은 코드가 계약에 옮긴다.** 어느 케이스의 어느 요구인지가 질문 id 에 있다. 옮긴 뒤에는
+        // 평소처럼 모델에게 넘겨 다시 짜게 한다 — 바뀐 계약을 보고 짠다.
+        contractAnswer(pending, answer)?.let { (ref, option) ->
+            runCatching { caseContracts.applyAnswer(projectId, ref, option) }
+                .onFailure { logger.warn("계약 질문의 답을 옮기지 못했다 [runId=$runId]: ${it.message}") }
+        }
         gapHowTo(pending, answer)?.let { howTo ->
             val blockedBy = pending!!.id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)
             // 다듬는 데도 모델이 한 번 돌아 몇 초가 걸린다. 말없이 기다리게 두면 답이 먹히지
@@ -1414,6 +1420,18 @@ class TestScenarioAgentService(
      * 적은 문장도 남긴다. 보기만 세다가 자유 서술을 빠뜨렸더니 말풍선이 **빈 줄**로 저장됐다 —
      * 사용자는 방법을 적었는데 대화에는 아무 말도 하지 않은 것으로 남았다.
      */
+    private fun contractAnswer(
+        pending: ScenarioQuestion?,
+        answer: ScenarioQuestionAnswer?,
+    ): Pair<kr.artel.orchestration.testcase.contract.CaseContractService.ContractAnswerRef, String>? {
+        if (pending == null || answer == null || pending.id != answer.questionId) return null
+        val ref = ScenarioQuestionBuilder.contractRef(pending.id) ?: return null
+        val option = answer.optionIds.firstOrNull() ?: return null
+        return kr.artel.orchestration.testcase.contract.CaseContractService.ContractAnswerRef(
+            ref.caseId, ref.variable, ref.operator, ref.value,
+        ) to option
+    }
+
     private fun answerSummary(pending: ScenarioQuestion?, answer: ScenarioQuestionAnswer?): String {
         if (answer == null || pending == null || pending.id != answer.questionId) return ""
         val chosen = pending.options.filter { it.id in answer.optionIds }.map { it.label }

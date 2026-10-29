@@ -86,4 +86,29 @@ class CaseContractServiceIntegrationTest {
         assertThat(saved.metadata.asString()).contains("늑대_처치=1").contains("\"source\": \"ai\"")
         assertThat(service.startState(project.id!!)).containsEntry("낮밤", "낮").containsEntry("검", "0")
     }
+
+    @Test
+    fun `an answer moves into the contract and marks it as the user's`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "answer", genre = "RPG", createdAt = now, updatedAt = now))
+        val wolf = cases.save(
+            case(project.id!!, "늑대를 공격한다.").copy(
+                metadata = Json.of("""{"source":{"assumed_before":"검 == 1"},"contract":{"source":"ai","hash":"x"}}"""),
+            )
+        )
+        val sword = cases.save(case(project.id!!, "검을 받는다.").copy(metadata = Json.of("""{"source":{"state_after":"검=1"}}""")))
+        val slime = cases.save(
+            case(project.id!!, "슬라임을 잡는다.", condition = """{"kind":"test","left":"검_장착","operator":"==","right":"1"}""")
+        )
+
+        service.applyAnswer(project.id!!, CaseContractService.ContractAnswerRef(wolf.id!!, "검", "==", "1"), "yes-by:${sword.id}")
+        service.applyAnswer(project.id!!, CaseContractService.ContractAnswerRef(slime.id!!, "검_장착", "==", "1"), "no")
+        service.applyAnswer(project.id!!, CaseContractService.ContractAnswerRef(wolf.id!!, "낮밤", "==", "밤"), "start")
+
+        val wolfNow = cases.findById(wolf.id!!)!!
+        assertThat(wolfNow.condition!!.asString()).contains("\"left\": \"검\"")
+        assertThat(wolfNow.metadata.asString()).contains("\"source\": \"user\"").doesNotContain("검 == 1")
+        assertThat(cases.findById(slime.id!!)!!.condition).isNull()
+        assertThat(service.startState(project.id!!)).containsEntry("낮밤", "밤")
+    }
 }

@@ -83,4 +83,72 @@ object ScenarioQuestionBuilder {
         source = ScenarioQuestionSource.CODE,
     )
 
+
+    /** 계약 질문의 id 앞머리. 뒤에는 `케이스|이름|비교|값` 이 붙는다 — 답을 코드가 그대로 계약에 옮긴다. */
+    const val CONTRACT_PREFIX = "contract:"
+    const val CONTRACT_YES = "yes"
+    const val CONTRACT_YES_BY = "yes-by:"
+    const val CONTRACT_START = "start"
+    const val CONTRACT_NO = "no"
+
+    /**
+     * 짠 경로에서 확인 안 된 요구가 채워지지 않은 자리 하나.
+     *
+     * @property assumed 상식 추정이면 true, 아무 케이스도 남기지 않는 요구면 false.
+     * @property makers 그 값을 남기는 케이스(추정일 때만) — "맞아요, 이 케이스가 만든다"로 고른다.
+     */
+    data class ContractBlock(
+        val caseId: Long,
+        val caseText: String,
+        val guard: Guard,
+        val assumed: Boolean,
+        val makers: List<Pair<Long, String>>,
+    )
+
+    /** 질문 id 에서 되읽은 자리. */
+    data class ContractRef(val caseId: Long, val variable: String, val operator: String, val value: String)
+
+    fun contractRef(questionId: String): ContractRef? {
+        if (!questionId.startsWith(CONTRACT_PREFIX)) return null
+        val parts = questionId.removePrefix(CONTRACT_PREFIX).split("|")
+        if (parts.size != 4) return null
+        return ContractRef(parts[0].toLongOrNull() ?: return null, parts[1], parts[2], parts[3])
+    }
+
+    /** 사람이 읽는 조건. `검 == 1` → `검`, `검 == 0` → `검 없음`, `낮밤 == 밤` → `낮밤: 밤`. */
+    fun readable(guard: Guard): String {
+        val name = guard.variable.replace('_', ' ')
+        return when {
+            guard.operator == "==" && guard.value == "1" -> name
+            guard.operator == "==" && guard.value == "0" -> "$name 없음"
+            guard.operator == "==" -> "$name: ${guard.value.replace('_', ' ')}"
+            else -> "$name ${guard.operator} ${guard.value}"
+        }
+    }
+
+    fun contractQuestion(block: ContractBlock): ScenarioQuestion {
+        val what = readable(block.guard)
+        val id = "$CONTRACT_PREFIX${block.caseId}|${block.guard.variable}|${block.guard.operator}|${block.guard.value}"
+        return if (block.assumed) ScenarioQuestion(
+            id = id,
+            text = "‘${block.caseText}’ 에 **$what** 이(가) 필요해 보여요. 맞나요?",
+            why = "케이스 글에는 없지만 상식으로 추정했어요. 맞으면 앞에 그것을 만드는 스텝을 넣습니다.",
+            options = block.makers.take(2).map { (makerId, makerText) ->
+                ScenarioQuestionOption("$CONTRACT_YES_BY$makerId", "맞아요 — ‘$makerText’ 가 만들어요")
+            } + listOf(
+                ScenarioQuestionOption(CONTRACT_YES, "맞아요"),
+                ScenarioQuestionOption(CONTRACT_NO, "필요 없음"),
+            ),
+            source = ScenarioQuestionSource.CODE,
+        ) else ScenarioQuestion(
+            id = id,
+            text = "‘${block.caseText}’ 앞에 **$what** 이(가) 필요한데, 이걸 만드는 케이스를 못 찾았어요. 어느 쪽인가요?",
+            why = "답은 이 프로젝트에 저장해 두고 다시 묻지 않아요. 만드는 방법이 따로 있으면 적어 주세요.",
+            options = listOf(
+                ScenarioQuestionOption(CONTRACT_START, "처음부터 그래요"),
+                ScenarioQuestionOption(CONTRACT_NO, "필요 없음"),
+            ),
+            source = ScenarioQuestionSource.CODE,
+        )
+    }
 }

@@ -446,7 +446,13 @@ class ScenarioReconcileService(
         // 물은 것은 하나였다.
         // **묻는 것은 Gap 하나로 좁혔다**(ARTEL-903). 씬별 범위와 빠진 갈래를 걷어낸 기준은
         // [ScenarioQuestionBuilder] 에 적었다 — 답이 시나리오를 바꾸는 물음만 카드가 된다.
-        val questions = ScenarioQuestionBuilder.all(blocked).filterNot { it.id in answered }
+        // **계약 질문**: 짠 경로에서 확인 안 된 요구가 채워지지 않은 곳만 묻는다. 목표에서 거꾸로 훑으면
+        // 큰 프로젝트에서 경로 밖 질문이 쏟아졌다(측정: word-venture 질문 9개 중 8개가 경로 밖).
+        val contractQuestions = contractBlocks(projectId, checked, byId)
+            .map(ScenarioQuestionBuilder::contractQuestion)
+            .filterNot { it.id in answered }
+            .take(CONTRACT_QUESTIONS_PER_TURN)
+        val questions = ScenarioQuestionBuilder.all(blocked).filterNot { it.id in answered } + contractQuestions
         // 옛 화면은 아직 한 개짜리 칸을 읽는다. 첫 질문을 거기 그대로 둬서 옮겨 올 시간을 준다.
         val question = questions.firstOrNull()
         val allNotices = buildList {
@@ -976,6 +982,8 @@ class ScenarioReconcileService(
                 declared = conditions.knownValuesOf(case),
                 arrivesAt = ScenarioStateReader.arrivesAt(case, objectMapper),
                 leaves = ScenarioStateReader.stateAfter(case, objectMapper),
+                unmade = conditions.guardsOf(case).filterNot(::reachable),
+                assumed = ScenarioStateReader.assumedBefore(case, objectMapper),
             )
         }
     }.onFailure { logger.warn("케이스 전량 조회 실패 — 검사들을 넘어간다: ${it.message}") }
@@ -1216,6 +1224,50 @@ class ScenarioReconcileService(
      * 케이스 메타의 `state_after` 가 말하는 바뀌는 값. 지도가 없는 프로젝트(자연어 TC)에서는 이것만
      * 있다 — 안 읽으면 등불을 끄는 케이스가 있어도 "켜짐"과 "꺼짐"을 한 시나리오에 못 담는다고 나눈다.
      */
+    /**
+     * 짠 경로를 앞에서 걸으며, 확인 안 된 요구(아무도 안 남기는 것 · 상식 추정)가 그 자리까지 채워지지 않은 곳.
+     * 시작 값과 앞 스텝이 남긴 값으로 채워졌으면 묻지 않는다 — 흐름이 이미 답을 갖고 있다.
+     */
+    private suspend fun contractBlocks(
+        projectId: Long,
+        scenarios: List<ScenarioResult>,
+        byId: Map<Long, ScenarioSiblingCheck.CaseFact>,
+    ): List<ScenarioQuestionBuilder.ContractBlock> {
+        if (byId.values.none { it.unmade.isNotEmpty() || it.assumed.isNotEmpty() }) return emptyList()
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
+        val makers = byId.values
+            .flatMap { fact -> fact.leaves.map { (name, value) -> Triple(name.lowercase(), value, fact) } }
+            .groupBy({ it.first to it.second }, { it.third })
+        val out = mutableListOf<ScenarioQuestionBuilder.ContractBlock>()
+        for (scenario in scenarios) {
+            val have = start.toMutableMap()
+            for (step in scenario.steps) {
+                val fact = step.caseId?.let { byId[it] } ?: continue
+                fun holds(guard: Guard): Boolean {
+                    val now = have[guard.variable.lowercase()]
+                    return when (guard.operator) {
+                        "==" -> if (now == null) guard.value == "0" else now == guard.value
+                        "!=" -> now != guard.value
+                        else -> true
+                    }
+                }
+                fact.unmade.filterNot(::holds).forEach {
+                    out += ScenarioQuestionBuilder.ContractBlock(fact.id, fact.step, it, assumed = false, makers = emptyList())
+                }
+                fact.assumed.filterNot(::holds).forEach { guard ->
+                    val who = makers[guard.variable.lowercase() to guard.value].orEmpty().filter { it.id != fact.id }
+                    out += ScenarioQuestionBuilder.ContractBlock(fact.id, fact.step, guard, assumed = true, makers = who.map { it.id to it.step })
+                }
+                fact.leaves.forEach { (name, value) ->
+                    val key = name.lowercase()
+                    val delta = value.takeIf { it.length > 1 && (it[0] == '+' || it[0] == '-') }?.toDoubleOrNull()
+                    have[key] = if (delta != null) ((have[key]?.toDoubleOrNull() ?: 0.0) + delta).toString() else value
+                }
+            }
+        }
+        return out.distinctBy { Triple(it.caseId, it.guard.variable, it.guard.value) }
+    }
+
     /** 케이스 메타의 `start_state` 를 모은 것([kr.artel.orchestration.testcase.service.TestCaseService.metadataStart] 와 같은 규칙). */
     private suspend fun metadataStart(projectId: Long): Map<String, String> =
         authoringCases.all(projectId).flatMap { ScenarioStateReader.startState(it, objectMapper).entries }
@@ -1460,3 +1512,6 @@ class ScenarioReconcileService(
 
 /** `+20` · `-1` 처럼 정하는 값이 아니라 더하는 값인가. */
 private fun String.isSigned(): Boolean = trim().let { it.length > 1 && (it[0] == '+' || it[0] == '-') && it.substring(1).toDoubleOrNull() != null }
+
+/** 한 턴에 내는 계약 질문 상한. 질문이 많으면 사용자에게 부담이다(측정: 요청당 1~2개). */
+private const val CONTRACT_QUESTIONS_PER_TURN = 3
