@@ -116,6 +116,23 @@ class CaseContractService(
         CaseContractRefresh(need.size, written, response.terms.size())
     }
 
+    /**
+     * 사람이 미상 구간 질문(`광장→숲 구간을 어떻게 넘어가나요?`)에 답한 길을 출구로 남긴다. 남기지 않으면 그 답은 그 시나리오
+     * 스텝에만 들어가고, 다음 런 · 시나리오에서 같은 구간을 또 묻는다. 같은 구간을 다시 들으면 새 답으로 바꾼다.
+     */
+    suspend fun addUserExit(projectId: Long, from: String, to: String, by: String, buildId: Long?) {
+        if (from.isBlank() || to.isBlank() || by.isBlank()) return
+        val kept = observedExits(projectId).filterNot { it.source == USER_EXIT && it.from == from && it.to == to }
+        val exits = kept + QaObservationService.Exit(from, to, by, buildId, USER_EXIT)
+        databaseClient.sql(
+            """
+            INSERT INTO case_glossary (project_id, exits, updated_at) VALUES (:p, CAST(:e AS jsonb), now())
+            ON CONFLICT (project_id) DO UPDATE SET exits = EXCLUDED.exits, updated_at = now()
+            """.trimIndent()
+        ).bind("p", projectId).bind("e", objectMapper.writeValueAsString(exits)).fetch().rowsUpdated().awaitSingle()
+        logger.info("사람이 알려 준 길을 남김 [projectId={}] {}→{}: {}", projectId, from, to, by)
+    }
+
     /** 새 게임 시작 상태. 없으면 빈 map 이다. */
     suspend fun startState(projectId: Long): Map<String, String> =
         glossary(projectId).startState
@@ -131,7 +148,10 @@ class CaseContractService(
             ?.mapNotNull { e ->
                 val from = e.path("from").asText(""); val to = e.path("to").asText("")
                 if (from.isBlank() || to.isBlank()) null
-                else QaObservationService.Exit(from, to, e.path("by").asText(""), e.path("build_id").takeIf { it.isNumber }?.asLong())
+                else QaObservationService.Exit(
+                    from, to, e.path("by").asText(""), e.path("build_id").takeIf { it.isNumber }?.asLong(),
+                    e.path("source").asText("").ifBlank { null },
+                )
             }
             .orEmpty()
 
@@ -498,6 +518,8 @@ class CaseContractService(
     data class ContractAnswerRef(val caseId: Long, val variable: String, val operator: String, val value: String)
 
     companion object {
+        /** 사람이 알려 준 출구의 `source`. */
+        const val USER_EXIT = "user"
         const val YES = "yes"
         const val YES_BY = "yes-by:"
         const val START = "start"

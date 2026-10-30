@@ -245,6 +245,12 @@ enum class AuthoringStage(@get:JsonValue val wire: String) {
     /** Agent가 케이스를 물어봤다(`uncovered_cases`/`test_case_search`). 멎지 않았다는 첫 증거다. */
     LOOKING_UP_CASES("looking_up_cases"),
 
+    /**
+     * 저작을 열기 전에 글로만 적힌 TC 의 계약을 정리하는 중이다. 프로젝트를 처음 열 때와 TC 를 많이 바꾼 뒤에만 길다
+     * (실측: TC 73건 136초). 이 단계가 없으면 그동안 화면이 멈춘 것처럼 보였다.
+     */
+    PREPARING_CASES("preparing_cases"),
+
     /** 질문 답이 서비스 기록을 읽는 중이다(ARTEL-1086). 무엇을 읽는지 단계마다 한 줄로 보인다. */
     READING_CASES("reading_cases"),
     READING_VERSIONS("reading_versions"),

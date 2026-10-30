@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -139,6 +140,13 @@ class TestScenarioAgentService(
     private val wsClient = ReactorNettyWebSocketClient()
     private val sessions = ConcurrentHashMap<String, AgentSession>()
 
+    // 세션을 여는 중인 턴. 처음 여는 프로젝트는 계약 정리로 몇 분이 걸리는데, 그동안은 [sessions] 에 아직 없어 취소도
+    // 지금 상태 묻기도 닿지 않았다.
+    private val opening = ConcurrentHashMap<String, Job>()
+
+    // 턴마다 마지막으로 알린 진행. 화면이 다시 붙으면(새로고침 · 연결 끊김) 이것으로 지금 어디인지 다시 알린다.
+    private val lastProgress = ConcurrentHashMap<String, ScenarioStreamEvent>()
+
     // WS 수신 콜백(Reactor 컨텍스트)에서 발생하는 DB 저장을 fire-and-forget 코루틴으로 흘리기 위한 스코프.
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -194,6 +202,11 @@ class TestScenarioAgentService(
         }
         gapHowTo(pending, answer)?.let { howTo ->
             val blockedBy = pending!!.id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)
+            // 들은 길은 게임 정보로 남긴다. 채울 시나리오가 아직 draft 여도 남긴다 — 다음 저작이 같은 구간을 다시 묻지 않게.
+            blockedBy.split(GAP_ARROW, limit = 2).takeIf { it.size == 2 }?.let { (from, to) ->
+                runCatching { caseContracts.addUserExit(projectId, from.trim(), to.trim(), howTo, factBuild) }
+                    .onFailure { logger.warn("들은 길을 남기지 못했다 [runId=$runId] $blockedBy: ${it.message}") }
+            }
             // 다듬는 데도 모델이 한 번 돌아 몇 초가 걸린다. 말없이 기다리게 두면 답이 먹히지
             // 않은 것처럼 보인다 — 실제로 일어나는 일이 모델 호출이므로 같은 단계로 말한다.
             progress(sessionKey, AuthoringStage.THINKING)
@@ -257,13 +270,14 @@ class TestScenarioAgentService(
         // 있었지만, 여기서 사용자의 말을 **먼저 저장한 뒤** 보내고 있었다 — 그래서 대화에 답이
         // 오지 않는 말풍선이 남았다(런 152: 같은 요청이 세 줄, 답은 한 번). 새로고침으로 화면이
         // 진행 상태를 잃으면 사람은 당연히 다시 보내므로, 이건 드문 경우가 아니다.
-        sessions[sessionKey]?.takeIf { it.busy }?.let {
+        (sessions[sessionKey]?.takeIf { it.busy } ?: opening[sessionKey]?.takeIf { it.isActive })?.let {
             val message = "앞서 보낸 요청을 아직 처리하고 있습니다. 끝나면 이어서 말씀해 주세요."
             streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
             logger.info("앞선 턴이 도는 중 — 이 요청은 받지 않는다 [runId={}]", runId)
             return
         }
 
+        lastProgress.remove(sessionKey)
         // 물어본 것은 한 턴만 산다. 답이든 딴 얘기든 다음 턴까지 끌고 가면, 한참 뒤의 "응"이
         // 엉뚱한 질문에 붙는다. 화면의 보기는 저장된 질문으로 계속 답할 수 있다.
         sessions[sessionKey]?.question = null
@@ -302,7 +316,7 @@ class TestScenarioAgentService(
             // **세션 열기는 요청과 떼어 돌린다.** 처음 여는 프로젝트는 계약 정리로 몇 분이 걸리는데, 그동안 요청을 붙잡고
             // 있으면 브라우저 · 프록시가 먼저 끊고 메시지가 Agent 에 닿지 않는다(실측: 78초 뒤 끊김). 받았다고 바로 답하고,
             // 결과와 실패는 늘 그렇듯 SSE 로 간다.
-            scope.launch {
+            val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
                     openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly)
                     progress(sessionKey, AuthoringStage.SENT)
@@ -312,10 +326,14 @@ class TestScenarioAgentService(
                 } catch (e: Exception) {
                     logger.error("Agent 세션 열기 실패 [sessionKey=$sessionKey]: ${e.message}")
                     runLocks.release(sessionKey)
+                    lastProgress.remove(sessionKey)
                     streamManager.emit(sessionKey, ScenarioStreamEvent(type = "error", code = "agent_unavailable", detail = OPEN_FAILED_MESSAGE))
                     runCatching { saveMessage(runId, appUserId, "ASSISTANT", OPEN_FAILED_MESSAGE) }
                 }
             }
+            opening[sessionKey] = job
+            job.invokeOnCompletion { opening.remove(sessionKey, job) }
+            job.start()
             return
         }
         // 보낸 뒤에 알린다. 세션 오픈이나 턴 전송이 실패하면 "보냈다"가 거짓이 되고,
@@ -414,7 +432,34 @@ class TestScenarioAgentService(
      * 순서가 중요하다 — **깃발을 먼저 세우고** 프레임을 보낸다. 거꾸로 하면 저쪽 답이 깃발보다
      * 먼저 도착해, 취소한 턴의 결과가 평소대로 반영된다.
      */
+    /**
+     * 지금 이 세션의 턴이 어디인지. 화면이 SSE 에 다시 붙을 때(새로고침 · 연결 끊김) 맨 먼저 보낸다. 끊긴 사이의 진행은
+     * 다시 오지 않으므로, 이것이 없으면 화면은 도는 턴을 모르거나 끝난 턴을 계속 기다린다.
+     *
+     * 턴이 돌고 있으면 마지막 단계를, 아니면 단계 없이 보낸다(화면은 그때 대화와 draft 를 다시 읽는다).
+     */
+    fun turnState(sessionKey: String): ScenarioStreamEvent {
+        val live = opening[sessionKey]?.isActive == true || sessions[sessionKey]?.busy == true
+        if (!live) return ScenarioStreamEvent(type = TURN_STATE)
+        val last = lastProgress[sessionKey]
+        return ScenarioStreamEvent(type = TURN_STATE, stage = last?.stage ?: AuthoringStage.SENT, done = last?.done, total = last?.total)
+    }
+
     suspend fun cancelTurn(sessionKey: String): RunChatCancellation {
+        // 세션을 여는 중이면(계약 정리를 기다리는 동안) 여는 일을 멈춘다. Agent 에는 아직 아무것도 가지 않았다.
+        opening[sessionKey]?.takeIf { it.isActive }?.let { job ->
+            job.cancel()
+            runLocks.release(sessionKey)
+            lastProgress.remove(sessionKey)
+            val runId = sessionKey.substringAfter(':').toLongOrNull()
+            val appUserId = sessionKey.substringBefore(':').toLongOrNull()
+            if (runId != null && appUserId != null) {
+                runCatching { saveMessage(runId, appUserId, "ASSISTANT", cancelNotice(0)) }
+            }
+            streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = cancelNotice(0)))
+            logger.info("세션을 여는 중에 저작 요청을 취소했다 [sessionKey={}]", sessionKey)
+            return RunChatCancellation(cancelled = true, saved = 0)
+        }
         val session = sessions[sessionKey] ?: return RunChatCancellation(cancelled = false)
         // 끊을 턴이 없다. 오류가 아니다 — 답이 방금 왔는데 ESC 를 누른 경우가 이 길이고,
         // 그때 "취소했습니다"를 덧붙이면 방금 받은 답을 의심하게 된다.
@@ -535,9 +580,13 @@ class TestScenarioAgentService(
         // 글만 있는 TC 의 계약을 먼저 채운다 — 빠진 것과 문구가 바뀐 것만. 못 채워도 저작은 한다(예전처럼 글로 짠다).
         // 처음 여는 프로젝트는 TC 마다 계약을 뽑느라 몇 분이 걸린다(TC 73건 2분). 그동안 화면이 멈춘 것처럼 보이지 않게
         // "케이스를 읽는 중" 을 띄운다.
-        if (caseContracts.hasPending(projectId)) progress(sessionKey, AuthoringStage.READING_CASES)
+        if (caseContracts.hasPending(projectId)) progress(sessionKey, AuthoringStage.PREPARING_CASES)
         runCatching { withTimeoutOrNull(CONTRACT_TIMEOUT_MS) { caseContracts.refreshInBackground(projectId).await() } }
-            .onFailure { logger.warn("계약 정리 실패 — 글만으로 짠다 [projectId=$projectId]: ${it.message}") }
+            .onFailure {
+                // 사용자가 취소했다. 삼키면 취소한 턴이 세션을 열고 Agent 에 말을 보낸다. 정리는 따로 돌아 끝까지 간다.
+                if (it is CancellationException) throw it
+                logger.warn("계약 정리 실패 — 글만으로 짠다 [projectId=$projectId]: ${it.message}")
+            }
         val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
         trace.record(
             runId, "판을 연다",
@@ -1415,10 +1464,9 @@ class TestScenarioAgentService(
         done: Int? = null,
         total: Int? = null,
     ) {
-        streamManager.emit(
-            sessionKey,
-            ScenarioStreamEvent(type = "progress", stage = stage, done = done, total = total),
-        )
+        val event = ScenarioStreamEvent(type = "progress", stage = stage, done = done, total = total)
+        lastProgress[sessionKey] = event
+        streamManager.emit(sessionKey, event)
         runLocks.stage(sessionKey, stage)
     }
 
@@ -2231,6 +2279,11 @@ class TestScenarioAgentService(
     companion object {
         /** 답을 기다리던 턴의 Agent 연결이 끊겼을 때 화면과 대화 기록에 남기는 것. */
         const val AGENT_DISCONNECTED = "agent_disconnected"
+        /** SSE 에 다시 붙은 화면에 지금 턴 상태를 알리는 이벤트. */
+        const val TURN_STATE = "turn"
+
+        /** 미상 구간 이름(`광장→숲`)의 화살표. [ScenarioQuestionBuilder] 의 질문 id 가 이 꼴이다. */
+        private const val GAP_ARROW = "→"
         const val OPEN_FAILED_MESSAGE = "저작 Agent 를 열지 못해 이번 요청을 처리하지 못했어요. 잠시 뒤 같은 말을 다시 보내 주세요."
         const val AGENT_DISCONNECTED_MESSAGE =
             "저작 Agent 와 연결이 끊겨 이번 요청을 처리하지 못했어요. 같은 말을 다시 보내 주세요 — 앞의 대화는 이어집니다."

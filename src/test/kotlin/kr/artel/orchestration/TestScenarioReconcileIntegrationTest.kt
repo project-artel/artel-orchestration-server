@@ -1016,8 +1016,8 @@ class TestScenarioReconcileIntegrationTest {
         postMessage(client, projectId, runId, token, "만들어줘")
 
         assertThat(stream.awaitStage("saved")).isTrue()
-        // 글 TC 의 계약을 처음 뽑는 세션이면 그 앞에 reading_cases 가 온다(계약 정리 중).
-        assertThat(stream.stages().dropWhile { it == "reading_cases" }).containsExactly("sent", "checking", "saved")
+        // 글 TC 의 계약을 처음 뽑는 세션이면 그 앞에 preparing_cases 가 온다(계약 정리 중).
+        assertThat(stream.stages().dropWhile { it == "preparing_cases" }).containsExactly("sent", "checking", "saved")
         stream.close()
     }
 
@@ -1045,7 +1045,7 @@ class TestScenarioReconcileIntegrationTest {
         postMessage(client, projectId, runId, token, "남은 거 만들어줘")
 
         assertThat(stream.awaitStage("saved")).isTrue()
-        assertThat(stream.stages().dropWhile { it == "reading_cases" })
+        assertThat(stream.stages().dropWhile { it == "preparing_cases" })
             .containsExactly("sent", "looking_up_cases", "writing", "checking", "saved")
         stream.close()
     }

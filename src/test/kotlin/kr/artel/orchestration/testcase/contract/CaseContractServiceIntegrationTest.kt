@@ -325,4 +325,27 @@ class CaseContractServiceIntegrationTest {
         val sword = sent[wolf.id]!!.stateBefore.single { it.variable == "검" }
         assertThat(sword.unconfirmed).startsWith("confirmed in an earlier build")
     }
+
+    /** 사람이 알려 준 길은 게임 정보로 남아 그 화면 TC 들의 출구에 실린다. 같은 구간을 다시 들으면 새 답으로 바뀐다. */
+    @Test
+    fun `a way the user told stays as an exit and the newer answer wins`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "told-way", genre = "RPG", createdAt = now, updatedAt = now))
+        val user = users.save(testAppUser("teller", now))
+        members.save(ProjectMemberEntity(projectId = project.id!!, appUserId = user.id!!, role = "OWNER", createdAt = now))
+        val square = cases.save(TestCaseEntity(projectId = project.id!!, scene = "광장", step = "우물을 본다.", expectedValue = "우물이 보인다."))
+        db.sql("INSERT INTO case_glossary (project_id, exits) VALUES (:p, CAST(:e AS jsonb))")
+            .bind("p", project.id!!).bind("e", """[{"from":"SquareScene","to":"ForestScene","by":"key:W"}]""")
+            .fetch().rowsUpdated().awaitSingle()
+
+        service.addUserExit(project.id!!, "광장", "숲", "지도를 열고 숲을 누른다", null)
+        service.addUserExit(project.id!!, "광장", "숲", "광장 오른쪽 길로 간다", null)
+
+        val exits = service.observedExits(project.id!!)
+        assertThat(exits.filter { it.source == CaseContractService.USER_EXIT }.map { it.by }).containsExactly("광장 오른쪽 길로 간다")
+        // QA 가 본 길은 그대로 남는다.
+        assertThat(exits.filter { it.source == null }.map { it.by }).containsExactly("key:W")
+        val sent = testCases.getAuthoringCases(project.id!!, user.id!!).associateBy { it.id }
+        assertThat(sent[square.id]!!.exits).contains(SceneExit("숲", "광장 오른쪽 길로 간다"))
+    }
 }

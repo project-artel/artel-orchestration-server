@@ -1396,6 +1396,12 @@ class ScenarioReconcileService(
      */
     private suspend fun knownGapAnswers(projectId: Long): Map<String, List<String>> = runCatching {
         val known = linkedMapOf<String, List<String>>()
+        // 게임 정보로 남긴 길이 먼저다. 같은 구간을 다시 들으면 새 답으로 바뀌어 있다. 저장된 시나리오를 채우지 못한 답
+        // (draft 에 답한 것)은 이쪽에만 있다. 대화 기록은 이것이 생기기 전에 들은 구간만 채운다.
+        caseContracts.observedExits(projectId)
+            .filter { it.source == kr.artel.orchestration.testcase.contract.CaseContractService.USER_EXIT }
+            .forEach { known["${it.from}→${it.to}"] = listOf(it.by) }
+        val told = linkedMapOf<String, List<String>>()
         for (row in runMessageRepository.findAnsweredInProject(projectId).toList()) {
             val payload = row.payload?.let { objectMapper.readTree(it.asString()) } ?: continue
             if (payload.path("kind").asText() != "answered") continue
@@ -1403,8 +1409,9 @@ class ScenarioReconcileService(
             if (!id.startsWith(ScenarioQuestionBuilder.GAP_PREFIX)) continue
             val lines = payload.path("filled").takeIf { it.isArray }?.mapNotNull { it.asText().takeIf(String::isNotBlank) }
                 ?: row.content.lines().filter { it.startsWith("· ") }.map { it.removePrefix("· ").trim() }.filter(String::isNotBlank)
-            if (lines.isNotEmpty()) known[id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)] = lines
+            if (lines.isNotEmpty()) told[id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)] = lines
         }
+        told.forEach { (gap, lines) -> known.putIfAbsent(gap, lines) }
         known.toMap()
     }.onFailure { logger.warn("예전에 들은 경로를 읽지 못했다 — 그 구간을 다시 묻는다: ${it.message}") }
         .getOrDefault(emptyMap())

@@ -75,7 +75,9 @@ class TestRunChatService(
     /** FE가 Agent 응답을 실시간 수신하는 SSE 스트림. 접근 불가면 404. */
     suspend fun stream(appUserId: Long, runId: Long): Flow<ServerSentEvent<ScenarioStreamEvent>> {
         accessible(runId, appUserId) ?: throw NotFoundException()
-        return streamManager.stream(sessionKey(appUserId, runId))
+        val key = sessionKey(appUserId, runId)
+        // 붙자마자 지금 턴 상태부터 보낸다. 끊긴 사이의 진행 · 결과는 다시 오지 않는다.
+        return streamManager.stream(key) { agentService.turnState(key) }
     }
 
     /** 사용자 입력을 Agent로 중계한다. 결과 시나리오는 이 런에 반영된다. 접근 불가면 404. */

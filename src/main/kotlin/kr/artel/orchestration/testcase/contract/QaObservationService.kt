@@ -58,6 +58,8 @@ class QaObservationService(
         val by: String,
         @param:com.fasterxml.jackson.annotation.JsonProperty("build_id") @get:com.fasterxml.jackson.annotation.JsonProperty("build_id")
         val buildId: Long? = null,
+        /** 누가 알려 줬나. null 이면 QA 가 지나가며 본 것, `user` 면 사람이 미상 구간 질문에 답한 것이다. 씬 이름은 TC 의 말이다. */
+        val source: String? = null,
     )
 
     suspend fun accumulate(qaTryId: Long): Int {
