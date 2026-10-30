@@ -284,4 +284,45 @@ class CaseContractServiceIntegrationTest {
 
         assertThat(service.startState(project.id!!)).containsEntry("시간대", "낮")
     }
+
+    /**
+     * 사람 답 · QA 관측은 알게 된 build 를 단다. 새 버전에서 같은 자리를 다시 알게 되면 새것이 이기고, 새 버전의 저작은
+     * 앞 버전에서만 확인된 요구를 버리지 않고 표시해 받는다.
+     */
+    @Test
+    fun `facts carry the build they were learned on and the newer build wins`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "fact-builds", genre = "RPG", createdAt = now, updatedAt = now))
+        val user = users.save(testAppUser("versioner", now))
+        members.save(ProjectMemberEntity(projectId = project.id!!, appUserId = user.id!!, role = "OWNER", createdAt = now))
+        val older = builds.save(GameBuildEntity(projectId = project.id!!, version = "0.1.0", createdAt = now.minusSeconds(60), updatedAt = now))
+        val gift = cases.save(case(project.id!!, "할머니한테 말을 건다."))
+        val wolf = cases.save(case(project.id!!, "늑대를 공격한다."))
+        service.refresh(project.id!!)
+        val fake = agent as FakeAgent
+
+        // 앞 버전: 사람이 "검이 있어야 한다" 고 답했고, QA 가 할머니에게서 등불 0 을 봤다.
+        service.applyAnswer(project.id!!, CaseContractService.ContractAnswerRef(wolf.id!!, "검", "==", "1"), CaseContractService.YES, older.id)
+        fake.observedPatches = listOf(StatementPatch(gift.id, "leaves", "등불", "0"))
+        service.applyObserved(project.id!!, mapOf(gift.id!! to mapOf("Inventory.lamp" to "?→0")), older.id)
+        service.applyAnswer(project.id!!, CaseContractService.ContractAnswerRef(0, "시간대", CaseContractService.START_OPERATOR, "?"), "${CaseContractService.START_VALUE}낮", older.id)
+        assertThat(service.startSeen(project.id!!)).containsEntry("시간대", older.id)
+
+        // 새 버전: QA 가 같은 자리에서 등불 1 을 봤다 — 새것이 이긴다.
+        val newer = builds.save(GameBuildEntity(projectId = project.id!!, version = "0.2.0", createdAt = now, updatedAt = now))
+        fake.observedPatches = listOf(StatementPatch(gift.id, "leaves", "등불", "1"))
+        service.applyObserved(project.id!!, mapOf(gift.id!! to mapOf("Inventory.lamp" to "0→1")), newer.id)
+        fake.observedPatches = emptyList()
+
+        val giftMeta = ObjectMapper().readTree(cases.findById(gift.id!!)!!.metadata.asString())
+        assertThat(giftMeta.path("source").path("state_after").asText()).contains("등불=1").doesNotContain("등불=0")
+        assertThat(giftMeta.path("contract").path("build_id").asLong()).isEqualTo(newer.id)
+
+        // 새 버전의 저작: 앞 버전에서 사람이 답한 요구는 표시해 보낸다. (검을 만드는 TC 가 있어야 '못 만든다' 가 아니다.)
+        val smith = cases.save(case(project.id!!, "검을 산다."))
+        service.writeUserContract(project.id!!, smith.id!!, emptyList(), listOf("검=1"))
+        val sent = testCases.getAuthoringCases(project.id!!, user.id!!).associateBy { it.id }
+        val sword = sent[wolf.id]!!.stateBefore.single { it.variable == "검" }
+        assertThat(sword.unconfirmed).startsWith("confirmed in an earlier build")
+    }
 }

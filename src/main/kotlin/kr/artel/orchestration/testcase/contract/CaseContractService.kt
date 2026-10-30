@@ -93,6 +93,7 @@ class CaseContractService(
                 terms = glossary.terms,
                 about = "",
                 projectId = projectId,
+                knownLeaves = (cases - need.toSet()).flatMap { leavesOf(it).keys }.distinct(),
             )
         )
         val byId = need.associateBy { it.id!! }
@@ -226,10 +227,10 @@ class CaseContractService(
      * 계약 질문에 대한 답을 계약에 옮긴다. 모델을 거치지 않는다 — 어느 케이스의 어느 요구인지는 질문 id 에,
      * 무엇으로 바꿀지는 고른 보기에 다 있다. 고친 케이스는 출처를 `user` 로 남겨 다음 정리가 덮지 않는다.
      */
-    suspend fun applyAnswer(projectId: Long, ref: ContractAnswerRef, option: String) {
+    suspend fun applyAnswer(projectId: Long, ref: ContractAnswerRef, option: String, buildId: Long? = null) {
         // 시작 값 질문은 어느 케이스의 것도 아니다 — 프로젝트의 시작 상태에 남긴다.
         if (ref.operator == START_OPERATOR) {
-            if (option.startsWith(START_VALUE)) setStart(projectId, ref.variable, option.removePrefix(START_VALUE))
+            if (option.startsWith(START_VALUE)) setStart(projectId, ref.variable, option.removePrefix(START_VALUE), buildId)
             return
         }
         val case = testCases.findById(ref.caseId)?.takeIf { it.projectId == projectId } ?: return
@@ -249,15 +250,15 @@ class CaseContractService(
                     condition.path("kind").asText() == "every" -> (condition.deepCopy<ObjectNode>()).also { (it.path("parts") as com.fasterxml.jackson.databind.node.ArrayNode).add(test) }
                     else -> objectMapper.createObjectNode().apply { put("kind", "every"); putArray("parts").add(condition).add(test) }
                 }
-                saveCase(case.id!!, next, source.put("assumed_before", withoutAssumed), meta)
+                saveCase(case.id!!, next, source.put("assumed_before", withoutAssumed), meta, buildId = buildId)
                 option.removePrefix(YES_BY).toLongOrNull()?.takeIf { option.startsWith(YES_BY) }?.let { makerId ->
-                    addLeaves(projectId, makerId, "${ref.variable}=${ref.value}")
+                    addLeaves(projectId, makerId, "${ref.variable}=${ref.value}", buildId = buildId)
                 }
             }
-            option == START -> setStart(projectId, ref.variable, ref.value)
+            option == START -> setStart(projectId, ref.variable, ref.value, buildId)
             option == NO -> {
                 val next = condition?.takeUnless { it.isNull }?.let { drop(it, ref.variable, ref.value) }
-                saveCase(case.id!!, next, source.put("assumed_before", withoutAssumed), meta)
+                saveCase(case.id!!, next, source.put("assumed_before", withoutAssumed), meta, buildId = buildId)
             }
         }
         logger.info("계약 질문에 답함 [projectId={}] TC {} {} {} {} → {}", projectId, ref.caseId, ref.variable, ref.operator, ref.value, option)
@@ -269,7 +270,7 @@ class CaseContractService(
      * 용어집이 없는 프로젝트(계약을 쓰지 않는 프로젝트)에서는 부르지 않는다 — 지도 프로젝트의 말 한마디마다
      * 모델을 부를 이유가 없다.
      */
-    suspend fun applyStatement(projectId: Long, said: String, question: String): Int {
+    suspend fun applyStatement(projectId: Long, said: String, question: String, buildId: Long? = null): Int {
         val glossary = glossary(projectId)
         if (glossary.terms.size() == 0) return 0
         val cases = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { it.capabilityKey == null }
@@ -279,10 +280,10 @@ class CaseContractService(
         for (patch in patches) {
             val ref = ContractAnswerRef(patch.tcId ?: 0, patch.name, "==", patch.value)
             when (patch.op) {
-                "needs" -> if (patch.tcId != null) { applyAnswer(projectId, ref, YES); applied++ }
-                "not_needs" -> if (patch.tcId != null) { dropAny(projectId, patch.tcId, patch.name); applied++ }
-                "leaves" -> if (patch.tcId != null) { addLeaves(projectId, patch.tcId, "${patch.name}=${patch.value}"); applied++ }
-                "start" -> { setStart(projectId, patch.name, patch.value); applied++ }
+                "needs" -> if (patch.tcId != null) { applyAnswer(projectId, ref, YES, buildId); applied++ }
+                "not_needs" -> if (patch.tcId != null) { dropAny(projectId, patch.tcId, patch.name, buildId); applied++ }
+                "leaves" -> if (patch.tcId != null) { addLeaves(projectId, patch.tcId, "${patch.name}=${patch.value}", buildId = buildId); applied++ }
+                "start" -> { setStart(projectId, patch.name, patch.value, buildId); applied++ }
             }
         }
         if (applied > 0) logger.info("사용자 말을 계약에 옮김 [projectId={}] {}건: {}", projectId, applied, patches)
@@ -294,7 +295,7 @@ class CaseContractService(
      * 빠뜨린 '남기는 것' 만 더한다. 요구는 더하지 않는다 — 실행이 무엇을 요구했는지는 값의 변화로 알 수 없다.
      * 출처는 `observed` 다. 용어집이 없으면(지도 프로젝트) 아무것도 하지 않는다.
      */
-    suspend fun applyObserved(projectId: Long, changed: Map<Long, Map<String, String>>): Int {
+    suspend fun applyObserved(projectId: Long, changed: Map<Long, Map<String, String>>, buildId: Long? = null): Int {
         val glossary = glossary(projectId)
         if (glossary.terms.size() == 0 || changed.isEmpty()) return 0
         val cases = testCases.findAllById(changed.keys).toList().filter { it.projectId == projectId && it.capabilityKey == null }
@@ -303,7 +304,7 @@ class CaseContractService(
         val patches = agent.observed(ObservedContractRequest(glossary.terms, glossary.startState, cases.map(::contractLine), observed)).patches
         var applied = 0
         for (patch in patches.filter { it.op == "leaves" && it.tcId in changed.keys }) {
-            addLeaves(projectId, patch.tcId!!, "${patch.name}=${patch.value}", OBSERVED)
+            addLeaves(projectId, patch.tcId!!, "${patch.name}=${patch.value}", OBSERVED, buildId)
             applied++
         }
         if (applied > 0) logger.info("QA 관측을 계약에 옮김 [projectId={}] {}건: {}", projectId, applied, patches)
@@ -394,6 +395,12 @@ class CaseContractService(
         return fresh.map { it.name }
     }
 
+    /** 케이스가 남기는 것(`state_after`), 이름 → 값. */
+    private fun leavesOf(case: TestCaseEntity): Map<String, String> =
+        runCatching { objectMapper.readTree(case.metadata.asString()).path("source").path("state_after").asText("") }.getOrDefault("")
+            .split(";").mapNotNull { pair -> pair.split("=", limit = 2).takeIf { it.size == 2 }?.let { it[0].trim() to it[1].trim() } }
+            .filter { it.first.isNotBlank() }.toMap()
+
     /** 계약을 사람이 읽는 한 줄로: `id | 행동 → 기대 || 필요 | 남김`. */
     private fun contractLine(case: kr.artel.orchestration.testcase.entity.TestCaseEntity): String {
         val meta = runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
@@ -402,7 +409,7 @@ class CaseContractService(
     }
 
     /** 값에 상관없이 그 이름의 요구를 뺀다 — "검은 필요 없어"는 어떤 값인지 말하지 않는다. */
-    private suspend fun dropAny(projectId: Long, caseId: Long, variable: String) {
+    private suspend fun dropAny(projectId: Long, caseId: Long, variable: String, buildId: Long? = null) {
         val case = testCases.findById(caseId)?.takeIf { it.projectId == projectId } ?: return
         val condition = case.condition?.let { objectMapper.readTree(it.asString()) }
         val values = condition?.let { c -> Regex("\"left\":\\s*\"${Regex.escape(variable)}\"[^}]*?\"right\":\\s*\"([^\"]*)\"").findAll(c.toString()).map { it.groupValues[1] }.toList() }.orEmpty()
@@ -412,7 +419,7 @@ class CaseContractService(
             .map { it.trim() }.filter { it.isNotBlank() && !it.startsWith(variable) }.joinToString("; ")
         var next = condition?.takeUnless { it.isNull }
         values.forEach { v -> next = next?.let { drop(it, variable, v) } }
-        saveCase(caseId, next, source.put("assumed_before", withoutAssumed), meta)
+        saveCase(caseId, next, source.put("assumed_before", withoutAssumed), meta, buildId = buildId)
     }
 
     private fun drop(node: JsonNode, variable: String, value: String): JsonNode? = when (node.path("kind").asText()) {
@@ -428,35 +435,60 @@ class CaseContractService(
         else -> node
     }
 
-    private suspend fun saveCase(caseId: Long, condition: JsonNode?, source: ObjectNode, meta: ObjectNode, by: String = USER) {
+    private suspend fun saveCase(
+        caseId: Long,
+        condition: JsonNode?,
+        source: ObjectNode,
+        meta: ObjectNode,
+        by: String = USER,
+        buildId: Long? = null,
+    ) {
         meta.set<JsonNode>("source", source)
         (meta.path("contract") as? ObjectNode ?: objectMapper.createObjectNode().also { meta.set<JsonNode>("contract", it) })
             .put("source", by).put("at", Instant.now().toString())
+            // 어느 build 에서 알게 된 사실인가. 새 버전의 저작은 이것으로 앞 버전 사실을 가려 표시한다.
+            .apply { if (buildId != null) put("build_id", buildId) else remove("build_id") }
         val spec = databaseClient.sql("UPDATE test_case SET condition = CAST(:condition AS jsonb), metadata = CAST(:meta AS jsonb), updated_at = now() WHERE id = :id")
             .bind("id", caseId).bind("meta", objectMapper.writeValueAsString(meta))
         (condition?.let { spec.bind("condition", objectMapper.writeValueAsString(it)) } ?: spec.bindNull("condition", String::class.java))
             .fetch().rowsUpdated().awaitSingle()
     }
 
-    private suspend fun addLeaves(projectId: Long, caseId: Long, pair: String, by: String = USER) {
+    private suspend fun addLeaves(projectId: Long, caseId: Long, pair: String, by: String = USER, buildId: Long? = null) {
         val case = testCases.findById(caseId)?.takeIf { it.projectId == projectId } ?: return
         val meta = objectMapper.readTree(case.metadata.asString()) as ObjectNode
         val source = (meta.path("source") as? ObjectNode) ?: objectMapper.createObjectNode()
-        val have = source.path("state_after").asText("")
-        if (have.split(";").any { it.trim() == pair }) return
-        source.put("state_after", listOf(have, pair).filter { it.isNotBlank() }.joinToString("; "))
-        saveCase(caseId, case.condition?.let { objectMapper.readTree(it.asString()) }, source, meta, by)
+        val have = source.path("state_after").asText("").split(";").map { it.trim() }.filter { it.isNotBlank() }
+        if (pair in have) return
+        // **새로 알게 된 것이 이긴다.** 같은 이름의 앞 값은 지운다 — 앞 버전에서 '등불=0' 이었던 것을 새 버전 QA 가
+        // '등불=1' 로 봤으면 둘 다 남기지 않는다.
+        val name = pair.substringBefore('=').trim()
+        val next = have.filterNot { it.substringBefore('=').trim() == name } + pair
+        source.put("state_after", next.joinToString("; "))
+        saveCase(caseId, case.condition?.let { objectMapper.readTree(it.asString()) }, source, meta, by, buildId)
     }
 
-    private suspend fun setStart(projectId: Long, variable: String, value: String) {
+    private suspend fun setStart(projectId: Long, variable: String, value: String, buildId: Long? = null) {
+        val seen = buildId?.let { objectMapper.writeValueAsString(mapOf(variable to it)) } ?: "{}"
         databaseClient.sql(
             """
-            INSERT INTO case_glossary (project_id, start_state) VALUES (:projectId, jsonb_build_object(CAST(:name AS text), CAST(:value AS text)))
-            ON CONFLICT (project_id) DO UPDATE SET start_state = case_glossary.start_state || EXCLUDED.start_state, updated_at = now()
+            INSERT INTO case_glossary (project_id, start_state, start_seen)
+            VALUES (:projectId, jsonb_build_object(CAST(:name AS text), CAST(:value AS text)), CAST(:seen AS jsonb))
+            ON CONFLICT (project_id) DO UPDATE
+               SET start_state = case_glossary.start_state || EXCLUDED.start_state,
+                   start_seen = (case_glossary.start_seen - CAST(:name AS text)) || EXCLUDED.start_seen,
+                   updated_at = now()
             """.trimIndent()
-        ).bind("projectId", projectId).bind("name", variable).bind("value", value)
+        ).bind("projectId", projectId).bind("name", variable).bind("value", value).bind("seen", seen)
             .fetch().rowsUpdated().awaitSingle()
     }
+
+    /** 시작 값마다 알게 된 build. 사람 답 · QA 관측으로 정해진 것만 있다. */
+    suspend fun startSeen(projectId: Long): Map<String, Long> =
+        databaseClient.sql("SELECT start_seen::text AS s FROM case_glossary WHERE project_id = :p")
+            .bind("p", projectId).map { r, _ -> r.get("s", String::class.java) ?: "{}" }.one().awaitSingleOrNull()
+            ?.let { objectMapper.readTree(it).fields().asSequence().mapNotNull { (k, v) -> v.takeIf { it.isNumber }?.let { k to it.asLong() } }.toMap() }
+            .orEmpty()
 
     data class ContractAnswerRef(val caseId: Long, val variable: String, val operator: String, val value: String)
 

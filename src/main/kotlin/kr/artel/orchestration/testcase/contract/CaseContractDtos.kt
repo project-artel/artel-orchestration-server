@@ -18,6 +18,8 @@ data class CaseContractRequest(
     val terms: JsonNode,
     val about: String,
     @param:JsonProperty("project_id") @get:JsonProperty("project_id") val projectId: Long,
+    /** 이미 계약이 있는 TC 들이 남기는 이름. agent 가 이번에 뽑은 필요를 이 이름에 맞춘다. */
+    @param:JsonProperty("known_leaves") @get:JsonProperty("known_leaves") val knownLeaves: List<String> = emptyList(),
 )
 
 /** agent 가 돌려주는 계약 하나. 오케가 저장하는 모양 그대로다. */

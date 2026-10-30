@@ -176,8 +176,10 @@ class TestScenarioAgentService(
         // **계약 질문의 답은 코드가 계약에 옮긴다.** 어느 케이스의 어느 요구인지가 질문 id 에 있다. 옮긴 뒤에는
         // 평소처럼 모델에게 넘겨 다시 짜게 한다 — 바뀐 계약을 보고 짠다.
         var contractsChanged = false
+        // 사람이 알려 준 사실은 이 런의 build 에서 알게 된 것이다. 새 버전의 저작은 앞 버전 사실을 가려 표시한다.
+        val factBuild = authoringVersions.of(runId).gameBuildId ?: caseContracts.latestBuildId(projectId)
         contractAnswer(pending, answer)?.let { (ref, option) ->
-            runCatching { caseContracts.applyAnswer(projectId, ref, option) }
+            runCatching { caseContracts.applyAnswer(projectId, ref, option, factBuild) }
                 .onSuccess { contractsChanged = true }
                 .onFailure { logger.warn("계약 질문의 답을 옮기지 못했다 [runId=$runId]: ${it.message}") }
         }
@@ -185,7 +187,7 @@ class TestScenarioAgentService(
         // 알려 줬든 같다. 남기지 않으면 대화 기억(10턴)이 지나면 같은 것을 다시 묻는다.
         val said = listOfNotNull(userInput.ifBlank { null }, answer?.text?.ifBlank { null }).joinToString("\n")
         if (said.isNotBlank()) {
-            runCatching { caseContracts.applyStatement(projectId, said, pending?.text.orEmpty()) }
+            runCatching { caseContracts.applyStatement(projectId, said, pending?.text.orEmpty(), factBuild) }
                 .onSuccess { if (it > 0) contractsChanged = true }
                 .onFailure { logger.warn("사용자 말을 계약에 옮기지 못했다 [runId=$runId]: ${it.message}") }
         }

@@ -100,7 +100,7 @@ class QaObservationService(
         }
         // 바뀐 값을 용어집 이름으로 옮겨 계약이 빠뜨린 '남기는 것' 을 더한다. 통과한 TC 만이다(관측은 COMPLETED 에서만 난다).
         val changed = observed.filter { it.changed.isNotEmpty() && it.caseId in ours }.associate { it.caseId to it.changed }
-        val linked = runCatching { caseContracts.applyObserved(projectId, changed) }
+        val linked = runCatching { caseContracts.applyObserved(projectId, changed, buildId) }
             .onFailure { logger.warn("QA 관측을 계약에 옮기기 실패 [qaTryId=$qaTryId]: ${it.message}") }
             .getOrDefault(0)
         if (exits.isNotEmpty()) {

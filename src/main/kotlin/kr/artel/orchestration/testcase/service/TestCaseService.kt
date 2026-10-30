@@ -2,6 +2,7 @@ package kr.artel.orchestration.testcase.service
 
 import com.fasterxml.jackson.databind.JsonNode
 import kr.artel.orchestration.testcase.contract.QaObservationService
+import kr.artel.orchestration.testscenario.service.authoringGameBuildId
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
@@ -153,6 +154,14 @@ class TestCaseService(
         val all = authoringCases.all(projectId).toList()
         // 지도가 없는 프로젝트는 QA 가 지나가며 본 것으로 채운다. 지도가 있으면 지도가 먼저다.
         val seen = observedPaths(all, projectId)
+        // 사람 답 · QA 관측으로 정해진 계약은 그것을 알게 된 build 를 단다. 지금 버전이 아닌 build 의 것은 버리지 않고
+        // 표시해 보낸다 — 게임이 바뀌었으면 틀릴 수 있다. 같은 자리를 새 버전에서 다시 알게 되면 새것으로 바뀐다.
+        val currentBuild = authoringGameBuildId() ?: runCatching { caseContracts.latestBuildId(projectId) }.getOrNull()
+        fun earlierFact(case: TestCaseEntity): Boolean {
+            val mark = runCatching { objectMapper.readTree(case.metadata.asString()).path("contract") }.getOrNull() ?: return false
+            val built = mark.path("build_id").takeIf { it.isNumber }?.asLong() ?: return false
+            return mark.path("source").asText() in setOf("user", "observed") && currentBuild != null && built != currentBuild
+        }
         // 씬 전이 TC — 계약이 "하면 다른 화면으로 간다" 고 표시한 TC 는 그 화면으로 가는 길이다. QA 가 지나가기 전
         // 첫 저작부터 화면 이동을 안다. 무엇을 누르는지는 TC 의 행동 글이 말한다.
         val byTc = all.filter { it.capabilityKey == null }
@@ -194,7 +203,11 @@ class TestCaseService(
                             guard.variable, guard.operator, guard.value,
                             raisedIn = raisers[ScenarioStateReader.normalize(guard.path)].orEmpty(),
                             moves = movesFor(moves, guard),
-                            unconfirmed = if (reachable(guard)) null else UNMADE,
+                            unconfirmed = when {
+                                !reachable(guard) -> UNMADE
+                                earlierFact(case) -> EARLIER_FACT
+                                else -> null
+                            },
                         )
                     } +
                     // 글에 없는 상식 전제(무기가 있어야 이긴다). 뽑은 쪽이 따로 적어 둔 것만 싣는다.
@@ -647,5 +660,7 @@ class TestCaseService(
         const val ASSUMED = "common sense, not written in the TC"
         /** QA 가 지금 버전이 아닌 build 에서만 본 길 · 입력. 게임이 바뀌었으면 틀릴 수 있다. */
         const val EARLIER_BUILD = "(seen by QA in an earlier build)"
+        /** 사람 답 · QA 관측으로 앞 버전에서 정해진 요구. 게임이 바뀌었으면 틀릴 수 있다. */
+        const val EARLIER_FACT = "confirmed in an earlier build — the game may have changed"
     }
 }
