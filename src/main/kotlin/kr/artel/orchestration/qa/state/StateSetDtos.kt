@@ -80,6 +80,8 @@ data class StateSnapshot(
     val gameInstanceId: Long,
     val stateVersion: Long,
     val streamId: String?,
+    /** SDK 가 보낸 프로세스 세대(ARTEL-1300). 옛 SDK 면 null. */
+    val runtime: String? = null,
     val sync: SyncState,
     val reading: Long?,
     val frame: Long?,
@@ -94,6 +96,12 @@ data class StateSnapshot(
     val omittedEntities: Int,
     /** whole 을 기다리는 동안 적용하지 않은 델타 수. */
     val ignoredDeltas: Long,
+    /** `seq` 의 빈자리를 본 횟수. 볼 때마다 whole 을 다시 받았다. */
+    val seqGaps: Int = 0,
+    /** 이미 받은 `seq` 라 버린 수. */
+    val duplicates: Int = 0,
+    /** `runtime` 이 바뀌어 상태를 버린 횟수. */
+    val runtimeChanges: Int = 0,
 ) {
     companion object {
         fun empty(gameInstanceId: Long) = StateSnapshot(

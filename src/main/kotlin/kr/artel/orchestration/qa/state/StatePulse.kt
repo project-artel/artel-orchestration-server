@@ -17,6 +17,14 @@ import com.fasterxml.jackson.databind.JsonNode
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class StatePulse(
+    /** 게임 프로세스의 세대(ARTEL-1299). 바뀌면 SDK 의 객체 id 가 같은 객체를 뜻하지 않는다. 옛 SDK 는 안 보낸다. */
+    val runtime: String? = null,
+    /** `start_readings` 한 번의 세대. 있으면 연결 대신 이것이 stream 을 가른다. */
+    val stream: String? = null,
+    /** 그 stream 에서 보내려고 쥔 `pulse` 의 번호. 1부터 빈자리 없이 오른다 — 빈자리는 곧 누락이다. */
+    val seq: Long? = null,
+    /** 로드된 씬마다 이름과 Unity `Scene.handle`. 같은 이름도 다시 로드하면 handle 이 바뀐다. */
+    val scenes: List<StatePulseScene>? = null,
     val reading: Long? = null,
     val frame: Long? = null,
     /** 활성 씬. 델타에도 실린다. 객체가 다른 씬에 살면 객체가 제 씬을 댄다. */
@@ -32,6 +40,12 @@ data class StatePulse(
     val unwatchable: Int? = null,
     /** `pulse` 가 잘린 자리. 칸이 없으면 이번 `pulse` 가 이 말을 하지 않은 것이고, 빈 목록이면 잘린 데가 없다. */
     val gaps: List<String>? = null,
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class StatePulseScene(
+    val name: String? = null,
+    val handle: Long? = null,
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

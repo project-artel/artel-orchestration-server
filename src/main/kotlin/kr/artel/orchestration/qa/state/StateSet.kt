@@ -28,10 +28,25 @@ import java.time.Instant
  *   지우지 않고 `active=false` 로 둔다. 델타에서 지우는 근거는 `gone` 하나다.
  *
  * `pulse` 하나는 [observe] 안에서 통째로 적용되고 [snapshot] 과 같은 lock 을 쓴다. 읽는 쪽은 적용 중간을 못 본다.
+ *
+ * SDK 가 세대와 번호를 보내면(ARTEL-1300, SDK 쪽 ARTEL-1299) 계약 문서의 `순서와 복구` 를 그대로 따른다.
+ *
+ * - `runtime` 이 바뀌면 쥔 상태를 버린다. 프로세스를 넘으면 객체 id 가 같은 객체를 뜻하지 않는다.
+ * - stream 은 연결 대신 SDK 의 `stream` 으로 가른다. 같은 연결에서 감시를 다시 켜도 새 stream 이다.
+ * - 같은 stream 의 델타는 `seq == last + 1` 일 때만 적용한다. 이미 받은 번호는 버리고, 빈자리면 whole 을 기다리며
+ *   [ObserveOutcome.GAP_DETECTED] 를 한 번 돌려준다 — 부른 쪽이 SDK 에 `resync_readings` 를 청한다.
+ * - `scenes` 의 handle 이 바뀐 씬은 이름이 같아도 세대를 올린다. 없으면 활성 씬 이름이 바뀔 때 올리던 v0.1 규칙이다.
  */
 class StateSet(val gameInstanceId: Long) {
 
-    private var connectionId: String? = null
+    private var streamKey: String? = null
+    private var runtime: String? = null
+    private var lastSeq: Long? = null
+    private var seqGaps = 0
+    private var duplicates = 0
+    private var runtimeChanges = 0
+    /** 씬 이름에서 마지막으로 본 Unity handle. 바뀌면 그 이름의 세대를 올린다. */
+    private val sceneHandles = HashMap<String, Long>()
     private var streamNumber = 0
     private var sync = SyncState.AWAITING_WHOLE
     private var stateVersion = 0L
@@ -50,13 +65,35 @@ class StateSet(val gameInstanceId: Long) {
 
     @Synchronized
     fun observe(connectionId: String, pulse: StatePulse, receivedAt: Instant): ObserveOutcome {
-        if (connectionId != this.connectionId) beginStream(connectionId)
+        if (pulse.runtime != null && runtime != null && pulse.runtime != runtime) forgetRuntime()
+        if (pulse.runtime != null) runtime = pulse.runtime
+        val key = pulse.stream?.let { "sdk:$it" } ?: "connection:$connectionId"
+        if (key != streamKey) beginStream(key)
+
+        val seq = pulse.seq
+        val last = lastSeq
+        if (seq != null && last != null && sync == SyncState.SYNCED) {
+            if (seq <= last) {
+                duplicates += 1
+                return ObserveOutcome.IGNORED_DUPLICATE
+            }
+            if (seq != last + 1 && !pulse.whole) {
+                // 빈자리 뒤의 델타는 놓친 차이 위에 얹히므로 적용하지 않는다. 다음 whole 이 기준을 다시 맞춘다.
+                seqGaps += 1
+                sync = SyncState.AWAITING_WHOLE
+                ignoredDeltas += 1
+                lastSeq = seq
+                return ObserveOutcome.GAP_DETECTED
+            }
+        }
         if (!pulse.whole && sync != SyncState.SYNCED) {
             ignoredDeltas += 1
+            if (seq != null) lastSeq = seq
             return ObserveOutcome.IGNORED_AWAITING_WHOLE
         }
 
-        enterScene(pulse.scene)
+        noteSceneHandles(pulse.scenes)
+        enterScene(pulse.scene, bumpOnNameChange = pulse.scenes == null)
         val operations = operationsOf(pulse, receivedAt)
         if (pulse.whole) markAllStale()
         operations.forEach(::applyOperation)
@@ -68,6 +105,7 @@ class StateSet(val gameInstanceId: Long) {
 
         reading = pulse.reading ?: reading
         frame = pulse.frame ?: frame
+        if (seq != null) lastSeq = seq
         coverage = coverageAfter(pulse)
         stateVersion += 1
         return ObserveOutcome.APPLIED
@@ -107,6 +145,7 @@ class StateSet(val gameInstanceId: Long) {
             gameInstanceId = gameInstanceId,
             stateVersion = stateVersion,
             streamId = streamId,
+            runtime = runtime,
             sync = sync,
             reading = reading,
             frame = frame,
@@ -118,11 +157,15 @@ class StateSet(val gameInstanceId: Long) {
             unobserved = requested.filterNot { it in matchedNames }.sorted(),
             omittedEntities = selected.size - shown.size,
             ignoredDeltas = ignoredDeltas,
+            seqGaps = seqGaps,
+            duplicates = duplicates,
+            runtimeChanges = runtimeChanges,
         )
     }
 
-    private fun beginStream(connectionId: String) {
-        this.connectionId = connectionId
+    private fun beginStream(key: String) {
+        streamKey = key
+        lastSeq = null
         streamNumber += 1
         sync = SyncState.AWAITING_WHOLE
         markAllStale()
@@ -130,9 +173,32 @@ class StateSet(val gameInstanceId: Long) {
         entityByAddress.clear()
     }
 
-    private fun enterScene(scene: String?) {
+    /** 프로세스가 바뀌었다. 옛 프로세스의 객체와 값, 씬 세대를 버린다 — stale 로도 남기지 않는다. */
+    private fun forgetRuntime() {
+        runtimeChanges += 1
+        entities.clear()
+        statics.clear()
+        entityByAddress.clear()
+        sceneHandles.clear()
+        sceneGenerations.clear()
+        activeScene = null
+        coverage = null
+        sync = SyncState.AWAITING_WHOLE
+    }
+
+    private fun noteSceneHandles(scenes: List<StatePulseScene>?) {
+        for (loaded in scenes.orEmpty()) {
+            val name = loaded.name ?: continue
+            val handle = loaded.handle ?: continue
+            if (sceneHandles[name] == handle) continue
+            sceneHandles[name] = handle
+            sceneGenerations[name] = (sceneGenerations[name] ?: 0) + 1
+        }
+    }
+
+    private fun enterScene(scene: String?, bumpOnNameChange: Boolean) {
         if (scene == null || scene == activeScene) return
-        sceneGenerations[scene] = (sceneGenerations[scene] ?: 0) + 1
+        if (bumpOnNameChange) sceneGenerations[scene] = (sceneGenerations[scene] ?: 0) + 1
         activeScene = scene
     }
 
@@ -266,7 +332,15 @@ class StateSet(val gameInstanceId: Long) {
     }
 }
 
-enum class ObserveOutcome { APPLIED, IGNORED_AWAITING_WHOLE }
+enum class ObserveOutcome {
+    APPLIED,
+    IGNORED_AWAITING_WHOLE,
+    /** 같은 stream 에서 이미 받은 `seq` 다. */
+    IGNORED_DUPLICATE,
+
+    /** `seq` 에 빈자리가 있다. whole 을 기다리고, 부른 쪽이 SDK 에 `resync_readings` 를 청한다. */
+    GAP_DETECTED,
+}
 
 /** 한 `pulse` 를 상태에 옮기는 연산. 계약 문서의 delta 연산 표와 같은 이름이다. */
 sealed interface StateOperation {
