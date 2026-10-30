@@ -183,4 +183,71 @@ class StateSetContractTest {
         assertThat(limited.entities.map { it.sdkId }).containsExactly(1L)
         assertThat(limited.omittedEntities).isEqualTo(1)
     }
+
+    // ── SDK 세대·순번(ARTEL-1300) ─────────────────────────────────────────────
+
+    private fun stamped(json: String, runtime: String = "run-a", stream: String = "st-1", seq: Long) =
+        "{\"runtime\":\"$runtime\",\"stream\":\"$stream\",\"seq\":$seq," + json.removePrefix("{")
+
+    @Test
+    fun `seq 가 이어지면 적용하고 이미 받은 번호는 버린다`() {
+        send(stamped(whole("Battle", player("80")), seq = 1))
+        assertThat(send(stamped(delta("Battle", """"active":[${player("70")}]"""), seq = 2))).isEqualTo(ObserveOutcome.APPLIED)
+        assertThat(send(stamped(delta("Battle", """"active":[${player("60")}]"""), seq = 2))).isEqualTo(ObserveOutcome.IGNORED_DUPLICATE)
+
+        assertThat(entity(12).members.getValue("Battle.Player::hp#0").value).isEqualTo(IntNode(70))
+        assertThat(snapshot().duplicates).isEqualTo(1)
+    }
+
+    @Test
+    fun `seq 에 빈자리가 있으면 whole 을 기다리고 한 번만 알린다`() {
+        send(stamped(whole("Battle", player("80")), seq = 1))
+        assertThat(send(stamped(delta("Battle", """"active":[${player("70")}]"""), seq = 3))).isEqualTo(ObserveOutcome.GAP_DETECTED)
+        assertThat(send(stamped(delta("Battle", """"active":[${player("60")}]"""), seq = 4))).isEqualTo(ObserveOutcome.IGNORED_AWAITING_WHOLE)
+
+        val waiting = snapshot()
+        assertThat(waiting.sync).isEqualTo(SyncState.AWAITING_WHOLE)
+        assertThat(waiting.seqGaps).isEqualTo(1)
+        assertThat(entity(12).members.getValue("Battle.Player::hp#0").value).isEqualTo(IntNode(80))
+
+        assertThat(send(stamped(whole("Battle", player("50")), seq = 5))).isEqualTo(ObserveOutcome.APPLIED)
+        assertThat(snapshot().sync).isEqualTo(SyncState.SYNCED)
+        assertThat(entity(12).members.getValue("Battle.Player::hp#0").value).isEqualTo(IntNode(50))
+    }
+
+    @Test
+    fun `같은 연결에서도 SDK stream 이 바뀌면 새 stream 이다`() {
+        send(stamped(whole("Battle", player("80")), stream = "st-1", seq = 1))
+        assertThat(send(stamped(delta("Battle", """"active":[${player("70")}]"""), stream = "st-2", seq = 1)))
+            .isEqualTo(ObserveOutcome.IGNORED_AWAITING_WHOLE)
+        assertThat(snapshot().streamId).isEqualTo("s2")
+
+        send(stamped(whole("Battle", player("70")), stream = "st-2", seq = 2))
+        assertThat(snapshot().entities.map { it.entityId }).containsExactly("s2:12")
+    }
+
+    @Test
+    fun `runtime 이 바뀌면 옛 상태를 stale 로도 남기지 않는다`() {
+        send(stamped(whole("Battle", player("80"), statics = """{"declaring":"Save","member":"stage","value":3}"""), seq = 1))
+        send(stamped(delta("Battle", """"active":[${player("70")}]"""), runtime = "run-b", stream = "st-9", seq = 1))
+
+        val restarted = snapshot()
+        assertThat(restarted.entities).isEmpty()
+        assertThat(restarted.statics).isEmpty()
+        assertThat(restarted.runtime).isEqualTo("run-b")
+        assertThat(restarted.runtimeChanges).isEqualTo(1)
+        assertThat(restarted.sync).isEqualTo(SyncState.AWAITING_WHOLE)
+    }
+
+    @Test
+    fun `같은 이름의 씬을 다시 로드하면 handle 로 세대가 오른다`() {
+        val withScenes = { handle: Int, body: String -> body.replaceFirst("\"scene\":", "\"scenes\":[{\"name\":\"Battle\",\"handle\":$handle}],\"scene\":") }
+        send(stamped(withScenes(101, whole("Battle", """{"id":1,"path":"Player"}""")), seq = 1))
+        assertThat(snapshot().sceneScope).isEqualTo("scene:Battle#1")
+
+        send(stamped(withScenes(202, whole("Battle", """{"id":2,"path":"Player"}""", reading = 2)), seq = 2))
+        val reloaded = snapshot()
+        assertThat(reloaded.sceneScope).isEqualTo("scene:Battle#2")
+        assertThat(reloaded.entities.map { it.sdkId to it.scope }).containsExactly(2L to "scene:Battle#2")
+    }
 }

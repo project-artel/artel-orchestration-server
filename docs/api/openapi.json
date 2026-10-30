@@ -14658,10 +14658,13 @@
       },
       "StateSnapshot": {
         "required": [
+          "duplicates",
           "entities",
           "gameInstanceId",
           "ignoredDeltas",
           "omittedEntities",
+          "runtimeChanges",
+          "seqGaps",
           "stateVersion",
           "statics",
           "sync",
@@ -14678,6 +14681,9 @@
             "format": "int64"
           },
           "streamId": {
+            "type": "string"
+          },
+          "runtime": {
             "type": "string"
           },
           "sync": {
@@ -14729,6 +14735,18 @@
           "ignoredDeltas": {
             "type": "integer",
             "format": "int64"
+          },
+          "seqGaps": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "duplicates": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "runtimeChanges": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },

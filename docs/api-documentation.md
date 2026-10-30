@@ -156,6 +156,8 @@ The server keeps the last observed state of every game instance in memory (`qa/s
 
 `StateSnapshot` carries `stateVersion` (one per applied `pulse`), `streamId` (`s1`, `s2`, … one per SDK connection), `sync` (`AWAITING_WHOLE` until the connection's first whole `pulse`, then `SYNCED`), the last `reading`, `frame` and `scene`, `coverage`, `entities`, `statics`, `unobserved` (requested names seen nowhere in the selected range), `omittedEntities` and `ignoredDeltas`. Every value is an `Observation` with `status` `KNOWN`, `UNREAD` (with `reason`), `UNKNOWN` or `STALE`, plus `observedFrame`, `sourceReading` and `receivedAt`. A value the game read as null is `KNOWN` with `value: null`.
 
+An SDK that sends `runtime`, `stream` and `seq` (ARTEL-1299) gets the contract's ordering rules (ARTEL-1300): a new `runtime` drops the state, a new `stream` marks it stale and waits for a whole `pulse`, a delta applies only when `seq` is the last one plus one, a repeated `seq` is dropped, and a gap leaves the state `AWAITING_WHOLE` and sends the SDK one `resync_readings`. `scenes` handles bump a scene's generation when the same name is loaded again. The snapshot reports `runtime`, `seqGaps`, `duplicates` and `runtimeChanges`. An SDK without those fields keeps the connection-per-stream rule above.
+
 The state belongs to the game instance, not the try: a later try on the same instance reads the newer state. It is lost on restart and comes back with the next whole `pulse`. 404 `not_found` when the try does not exist.
 
 ### MCP access tokens and login handoff
