@@ -596,6 +596,16 @@ class TestScenarioReconcileIntegrationTest {
         val exits = caseContractService.observedExits(projectId).filter { it.source == CaseContractService.USER_EXIT }
         assertThat(exits.map { "${it.from}→${it.to}: ${it.by}" })
             .containsExactlyInAnyOrder("광장→숲: 지도를 열고 숲을 누른다", "숲→광장: 숲 입구로 돌아간다")
+        // 알려 준 길은 씬 전이 TC 로도 추천된다. 그대로 두기를 고른 구간은 없다.
+        val recs = databaseClient.sql("SELECT scene, step, expected_value FROM case_recommendation WHERE test_run_id = :r ORDER BY id")
+            .bind("r", runId).map { row, _ -> "${row.get("scene", String::class.java)} · ${row.get("step", String::class.java)} → ${row.get("expected_value", String::class.java)}" }
+            .all().collectList().awaitSingle()
+        assertThat(recs).containsExactly("광장 · 지도를 열고 숲을 누른다 → 숲 화면으로 바뀐다.", "숲 · 숲 입구로 돌아간다 → 광장 화면으로 바뀐다.")
+        // 그 턴의 답에 추천이 실린다.
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.payload?.asString()?.contains("화면으로 바뀐다") == true }
+        }
     }
 
     /**

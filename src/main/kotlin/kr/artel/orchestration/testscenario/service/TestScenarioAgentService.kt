@@ -147,6 +147,9 @@ class TestScenarioAgentService(
     // 턴마다 마지막으로 알린 진행. 화면이 다시 붙으면(새로고침 · 연결 끊김) 이것으로 지금 어디인지 다시 알린다.
     private val lastProgress = ConcurrentHashMap<String, ScenarioStreamEvent>()
 
+    // 질문지 답에서 나온 추천 TC(사람이 알려 준 길). 그 답이 여는 턴의 결과에 함께 싣는다.
+    private val carriedRecommendations = ConcurrentHashMap<String, MutableList<CaseRecommendationService.Recommendation>>()
+
     // WS 수신 콜백(Reactor 컨텍스트)에서 발생하는 DB 저장을 fire-and-forget 코루틴으로 흘리기 위한 스코프.
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -173,7 +176,7 @@ class TestScenarioAgentService(
         // 앞선 턴이 도는 중이라 막혔다. 답마다 계약 · 길은 따로 남기고, 모델에게는 한 줄로 모아 한 번 보낸다. 경로 공백은
         // 남긴 길로 메우기가 채운다.
         if (answer == null && answers.isNotEmpty()) {
-            val (composed, changed) = absorbAnswers(runId, projectId, appUserId, answers)
+            val (composed, changed) = absorbAnswers(sessionKey, runId, projectId, appUserId, answers)
             return sendMessage(
                 sessionKey, runId, projectId, appUserId,
                 listOfNotNull(composed.ifBlank { null }, userInput.ifBlank { null }).joinToString("\n\n"),
@@ -220,9 +223,8 @@ class TestScenarioAgentService(
         gapHowTo(pending, answer)?.let { howTo ->
             val blockedBy = pending!!.id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)
             // 들은 길은 게임 정보로 남긴다. 채울 시나리오가 아직 draft 여도 남긴다 — 다음 저작이 같은 구간을 다시 묻지 않게.
-            blockedBy.split(GAP_ARROW, limit = 2).takeIf { it.size == 2 }?.let { (from, to) ->
-                runCatching { caseContracts.addUserExit(projectId, from.trim(), to.trim(), howTo, factBuild) }
-                    .onFailure { logger.warn("들은 길을 남기지 못했다 [runId=$runId] $blockedBy: ${it.message}") }
+            val wayCase = blockedBy.split(GAP_ARROW, limit = 2).takeIf { it.size == 2 }?.let { (from, to) ->
+                learnWay(sessionKey, runId, projectId, from.trim(), to.trim(), howTo, factBuild)
             }
             // 다듬는 데도 모델이 한 번 돌아 몇 초가 걸린다. 말없이 기다리게 두면 답이 먹히지
             // 않은 것처럼 보인다 — 실제로 일어나는 일이 모델 호출이므로 같은 단계로 말한다.
@@ -237,9 +239,11 @@ class TestScenarioAgentService(
             if (filled > 0) {
                 sessions[sessionKey]?.question = null
                 saveMessage(runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) })
-                notifyGapFilled(sessionKey, runId, appUserId, blockedBy, written)
+                notifyGapFilled(sessionKey, runId, appUserId, blockedBy, written, listOfNotNull(wayCase))
                 return
             }
+            // 채우지 못해 모델에게 넘긴다. 추천은 그 턴의 결과에 싣는다.
+            wayCase?.let { carriedRecommendations.computeIfAbsent(sessionKey) { java.util.concurrent.CopyOnWriteArrayList() } += it }
             // 채울 자리가 없거나(이미 채워졌다) 적은 말이 통과 방법이 아니었다("잘 모르겠는데").
             // 어느 쪽이든 답을 삼키지 말고 평소대로 대화로 넘긴다.
             logger.info("미상 구간을 채우지 않았다 — 대화로 넘긴다 [runId={}] {}", runId, blockedBy)
@@ -458,6 +462,7 @@ class TestScenarioAgentService(
      * 대화에 남기고 모델에게 보낼 한 줄(`1. 질문 → 답`)과, 계약이 바뀌었는지다. 건너뛴 · 그대로 두기를 고른 답은 빠진다.
      */
     private suspend fun absorbAnswers(
+        sessionKey: String,
         runId: Long,
         projectId: Long,
         appUserId: Long,
@@ -474,8 +479,8 @@ class TestScenarioAgentService(
             }
             gapHowTo(question, answer)?.let { howTo ->
                 question.id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX).split(GAP_ARROW, limit = 2).takeIf { it.size == 2 }?.let { (from, to) ->
-                    runCatching { caseContracts.addUserExit(projectId, from.trim(), to.trim(), howTo, factBuild) }
-                        .onFailure { logger.warn("들은 길을 남기지 못했다 [runId=$runId] ${question.id}: ${it.message}") }
+                    learnWay(sessionKey, runId, projectId, from.trim(), to.trim(), howTo, factBuild)
+                        ?.let { carriedRecommendations.computeIfAbsent(sessionKey) { java.util.concurrent.CopyOnWriteArrayList() } += it }
                 }
             }
             if (ScenarioQuestionBuilder.GAP_LEAVE in answer.optionIds) return@mapNotNull null
@@ -1881,7 +1886,7 @@ class TestScenarioAgentService(
                   try {
                     // 하나씩 받은 시나리오는 그 처리 코루틴이 아직 돌 수 있다. 끝나기를 기다린 뒤 이번 턴의 추천 TC 를 싣는다.
                     session.submitLock.withLock { }
-                    val event = session.turnRecommendations.takeIf { it.isNotEmpty() }
+                    val event = (session.turnRecommendations + carriedRecommendations.remove(sessionKey).orEmpty()).takeIf { it.isNotEmpty() }
                         ?.let { recs -> event.copy(recommendations = recs.map { it.wire() }) } ?: event
                     streamManager.emit(sessionKey, if (needsModes) withExecutionModes(session, event) else event)
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
@@ -2081,6 +2086,7 @@ class TestScenarioAgentService(
         appUserId: Long,
         blockedBy: String,
         written: List<String>,
+        recommendations: List<CaseRecommendationService.Recommendation> = emptyList(),
     ) {
         // 무엇이 들어갔는지 그대로 보여 준다. 다듬은 문장이 사용자가 적은 말과 다를 수 있고,
         // 그 차이를 감추면 시나리오를 열어 보기 전까지 무엇이 저장됐는지 알 수 없다.
@@ -2096,7 +2102,34 @@ class TestScenarioAgentService(
         )
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "applied"))
+        // 알려 준 길을 씬 전이 TC 로 추천한다. 추천 카드는 답 말풍선에 붙으므로 짧은 답 하나로 싣는다.
+        if (recommendations.isNotEmpty()) {
+            val reply = kr.artel.orchestration.testscenario.dto.AgentReply(result = SCENE_MOVE_RECOMMENDED, detail = "", changes = emptyList(), asks = emptyList())
+            val wire = recommendations.map { it.wire() }
+            saveMessage(runId, appUserId, "ASSISTANT", SCENE_MOVE_RECOMMENDED, reply.payload() + ("recommendations" to wire))
+            streamManager.emit(sessionKey, ScenarioStreamEvent(type = "result", message = SCENE_MOVE_RECOMMENDED, reply = reply, recommendations = wire))
+        }
         progress(sessionKey, AuthoringStage.SAVED)
+    }
+
+    /**
+     * 사람이 알려 준 길을 남긴다. 게임 정보의 출구로 남겨 다음 저작이 다시 묻지 않게 하고, 씬 전이 TC 로도 추천한다 — TC 로
+     * 저장하면 QA 가 그 길을 확인하고, 계약 정리가 도착 화면 표식을 단다. 추천은 같은 길이 이미 있으면 내지 않는다.
+     */
+    private suspend fun learnWay(
+        sessionKey: String,
+        runId: Long,
+        projectId: Long,
+        from: String,
+        to: String,
+        how: String,
+        buildId: Long?,
+    ): CaseRecommendationService.Recommendation? {
+        runCatching { caseContracts.addUserExit(projectId, from, to, how, buildId) }
+            .onFailure { logger.warn("들은 길을 남기지 못했다 [sessionKey=$sessionKey] $from→$to: ${it.message}") }
+        return runCatching { caseRecommendations.recommendSceneMove(projectId, runId, from, to, how) }
+            .onFailure { logger.warn("길을 TC 로 추천하지 못했다 [sessionKey=$sessionKey] $from→$to: ${it.message}") }
+            .getOrNull()
     }
 
     /**
@@ -2333,6 +2366,9 @@ class TestScenarioAgentService(
     companion object {
         /** 답을 기다리던 턴의 Agent 연결이 끊겼을 때 화면과 대화 기록에 남기는 것. */
         const val AGENT_DISCONNECTED = "agent_disconnected"
+        /** 알려 준 길을 TC 로 추천할 때의 답 한 줄. */
+        const val SCENE_MOVE_RECOMMENDED = "알려 주신 길을 씬 전이 TC 로 남길 수 있어요."
+
         /** SSE 에 다시 붙은 화면에 지금 턴 상태를 알리는 이벤트. */
         const val TURN_STATE = "turn"
 

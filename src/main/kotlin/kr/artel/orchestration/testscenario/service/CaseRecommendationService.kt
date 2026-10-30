@@ -79,6 +79,29 @@ class CaseRecommendationService(
         return out
     }
 
+    /**
+     * 사람이 알려 준 길(`광장→숲` 을 어떻게 가나)을 씬 전이 TC 로 추천한다. 저장하면 계약 정리가 도착 화면 표식을 달고, 다음
+     * 저작부터 그 길을 TC 로 안다 — QA 가 그 길을 확인할 수도 있게 된다. 이 프로젝트에 같은 길의 추천이 이미 있으면(대기 ·
+     * 저장) 다시 내지 않는다. 버린 것은 다시 낼 수 있다 — 사람이 같은 길을 또 알려 줬다.
+     */
+    suspend fun recommendSceneMove(projectId: Long, runId: Long, from: String, to: String, how: String): Recommendation? {
+        if (from.isBlank() || to.isBlank() || how.isBlank()) return null
+        val expected = "$to 화면으로 바뀐다."
+        val already = databaseClient.sql(
+            """
+            SELECT 1 FROM case_recommendation
+             WHERE project_id = :p AND scene = :scene AND expected_value = :expected AND status IN ('PENDING', 'SAVED')
+             LIMIT 1
+            """.trimIndent()
+        ).bind("p", projectId).bind("scene", from).bind("expected", expected)
+            .map { _, _ -> true }.one().awaitSingleOrNull() == true
+        if (already) return null
+        val draft = objectMapper.createObjectNode()
+            .put("ref", -1).put("scene", from).put("precondition", "").put("action", how).put("expected", expected)
+            .put("why", "$from→$to 로 가는 길을 알려 주셨어요. TC 로 남기면 다음 저작부터 이 길을 알고, QA 도 확인해요.")
+        return record(projectId, runId, objectMapper.createArrayNode().add(draft)).values.firstOrNull()
+    }
+
     suspend fun list(projectId: Long, runId: Long, userId: Long): List<Recommendation> {
         if (!projectAccess.isMember(projectId, userId)) throw NotFoundException("프로젝트를 찾을 수 없습니다.")
         return byIds(runId, null)
