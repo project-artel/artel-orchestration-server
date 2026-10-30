@@ -74,7 +74,10 @@ class QaObservationService(
               FROM qa_try t LEFT JOIN qa_run r ON r.id = t.qa_run_id LEFT JOIN game_instance i ON i.id = t.game_instance_id
              WHERE t.id = :id
             """.trimIndent()
-        ).bind("id", qaTryId).map { r, _ -> r.get("build_id", java.lang.Long::class.java)?.toLong() }.one().awaitSingleOrNull()
+        ).bind("id", qaTryId)
+            // build 를 모르는 try 면 null 이다. 리액터는 null 을 못 싣는다 — Optional 로 감싼다.
+            .map { r, _ -> java.util.Optional.ofNullable(r.get("build_id", java.lang.Long::class.java)?.toLong()) }
+            .one().awaitSingleOrNull()?.orElse(null)
         val rows = databaseClient.sql(
             "SELECT type, payload::text AS payload FROM qa_log WHERE qa_try_id = :id AND type IN ('PULSE','ACTION','TOOL_RESULT','STATUS') ORDER BY id"
         ).bind("id", qaTryId).map { r, _ -> r.get("type", String::class.java)!! to (r.get("payload", String::class.java) ?: "{}") }.all().collectList().awaitSingle()

@@ -32,6 +32,8 @@ data class ChatScenarioStep(
     @param:JsonProperty("step_unknown_reason") val stepUnknownReason: String? = null,
     /** 승인 전 TC 초안을 확인하는 스텝이면 그 초안의 임시 번호(Agent 의 `proposed_case`, 음수). */
     @param:JsonProperty("proposed_case") val proposedCase: Long? = null,
+    /** 저장 전 추천 TC 의 id. Agent 는 보내지 않는다 — 오케가 [proposedCase] 를 받아 추천으로 남기고 채운다. */
+    @param:JsonProperty("recommendation_id") val recommendationId: Long? = null,
 )
 
 /** 저장 스텝을 작성 챗봇 계약으로 투영한다. 라벨은 여기서 떨어진다 — 그것이 이 함수의 요점이다. */
@@ -44,6 +46,7 @@ fun ScenarioStep.toChatStep() = ChatScenarioStep(
     stepKind = stepKind,
     stepSourceCapabilityId = stepSourceCapabilityId,
     stepUnknownReason = stepUnknownReason,
+    recommendationId = recommendationId,
 )
 
 /**
@@ -60,4 +63,5 @@ fun ChatScenarioStep.toStoredStep() = ScenarioStep(
     stepKind = stepKind,
     stepSourceCapabilityId = stepSourceCapabilityId,
     stepUnknownReason = stepUnknownReason,
+    recommendationId = recommendationId,
 )

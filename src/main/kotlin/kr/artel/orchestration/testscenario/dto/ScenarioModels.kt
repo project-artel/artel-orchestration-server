@@ -56,6 +56,8 @@ data class ScenarioStep(
     @param:JsonProperty("step_source_capability_id") val stepSourceCapabilityId: Long? = null,
     /** [stepSource]가 `UNKNOWN`일 때 **무엇이 막는지**. 사용자에게 물어볼 거리가 이 문장이다. */
     @param:JsonProperty("step_unknown_reason") val stepUnknownReason: String? = null,
+    /** 아직 저장하지 않은 추천 TC 를 확인하는 스텝이면 그 추천 id. 저장하면 [caseId] 로 바뀌고 이 칸은 비워진다. */
+    @param:JsonProperty("recommendation_id") val recommendationId: Long? = null,
 )
 
 /**
@@ -344,6 +346,8 @@ data class ScenarioStreamEvent(
      * 보여 줘야 아는 것만 답하고 나머지는 그대로 둘 수 있다.
      */
     val questions: List<ScenarioQuestion> = emptyList(),
+    /** 이 턴이 추천한 TC(저장 전). 답 말풍선의 추천 TC 카드가 읽는다. */
+    val recommendations: List<Map<String, Any?>> = emptyList(),
     /**
      * 이번 턴에 지금까지 받아 검수를 지난 시나리오 수. `progress` 에만 실린다.
      *

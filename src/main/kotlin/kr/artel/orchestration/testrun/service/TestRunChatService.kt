@@ -38,6 +38,7 @@ import org.springframework.stereotype.Service
  */
 @Service
 class TestRunChatService(
+    private val caseRecommendations: kr.artel.orchestration.testscenario.service.CaseRecommendationService,
     private val runRepository: TestRunRepository,
     private val runMessageRepository: TestRunMessageRepository,
     private val projectAccessService: ProjectAccessService,
@@ -141,6 +142,10 @@ class TestRunChatService(
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
         val key = sessionKey(appUserId, runId)
         val draft = drafts.of(key)
+        // **시나리오를 승인하면 그 시나리오가 쓰는 추천 TC 도 한 번에 저장한다.** 먼저 저장해 스텝을 새 TC 로 바꿔 끼운 뒤
+        // 승인한다 — 거꾸로 하면 판정 없는 스텝으로 저장되고 추천만 남는다.
+        val recommended = draft.list().filter { it.draftId in draftIds.toSet() }.flatMap { it.steps }.mapNotNull { it.recommendationId }.distinct()
+        if (recommended.isNotEmpty()) caseRecommendations.save(run.projectId, runId, appUserId, recommended)
         var applied = 0
         val absorbed = mutableListOf<String>()
         val kept = mutableListOf<String>()

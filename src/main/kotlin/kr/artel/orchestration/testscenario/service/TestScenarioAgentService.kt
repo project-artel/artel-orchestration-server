@@ -99,6 +99,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 @Service
 class TestScenarioAgentService(
+    private val caseRecommendations: CaseRecommendationService,
     private val caseContracts: kr.artel.orchestration.testcase.contract.CaseContractService,
     private val authoringCases: AuthoringCases,
     private val authoringVersions: AuthoringVersionResolver,
@@ -285,6 +286,7 @@ class TestScenarioAgentService(
             existing.submitted.clear()
             existing.draftQuestions.clear()
             existing.draftTargeted.clear()
+            existing.turnRecommendations.clear()
             existing.declined = 0
             // 취소는 **그 턴에만** 걸린다(ARTEL-955). 안 내리면 다음 요청의 결과까지 버린다.
             existing.cancelled.set(false)
@@ -798,7 +800,14 @@ class TestScenarioAgentService(
             }
             // **음수 번호는 draft 의 새 시나리오다**(ARTEL-1074). 저장된 적이 없으니 검수와 저장에는
             // 새것으로 넘긴다 — 음수 번호로 저장 경로에 들어가면 없는 시나리오를 고치려 든다.
-            val scenario = if ((raw.scenarioId ?: 0) < 0) raw.copy(scenarioId = null) else raw
+            val unlinked = if ((raw.scenarioId ?: 0) < 0) raw.copy(scenarioId = null) else raw
+            // 스텝이 가리키는 추천 TC 를 남기고, 스텝에는 추천 id 를 단다. 사용자가 저장하면 그 TC 로 바뀐다.
+            val recs = node.path("proposedCases").takeIf { it.isArray && it.size() > 0 }
+                ?.let { caseRecommendations.record(session.projectId, session.runId, it) }.orEmpty()
+            session.turnRecommendations += recs.values
+            val scenario = if (recs.isEmpty()) unlinked else unlinked.copy(
+                steps = unlinked.steps.map { step -> step.proposedCase?.let { recs[it] }?.let { step.copy(recommendationId = it.id) } ?: step },
+            )
             // **그 사이 사람이 고쳤거나 다른 사람의 AI 가 쥐고 있으면 덮지 않는다**(ARTEL-1264). 저장하는 턴이어도
             // 이 시나리오만 draft 로 돌려 사용자가 보고 고르게 한다.
             val diverted = if (session.autoApply) overwriteBlocker(sessionKey, session, scenario.scenarioId) else null
@@ -1733,7 +1742,10 @@ class TestScenarioAgentService(
             }
 
             // Agent 응답을 타입화한 봉투로 파싱해 SSE로 중계한다(type=result|error).
-            val event = objectMapper.readValue(payloadText, ScenarioStreamEvent::class.java)
+            val parsed = objectMapper.readValue(payloadText, ScenarioStreamEvent::class.java)
+            // 이번 턴이 남긴 추천 TC 를 답에 싣는다 — 화면이 답 말풍선 안의 카드로 보인다.
+            val event = session?.turnRecommendations?.takeIf { parsed.type == "result" && it.isNotEmpty() }
+                ?.let { recs -> parsed.copy(recommendations = recs.map { it.wire() }) } ?: parsed
             // 결과든 오류든 **턴은 여기서 끝난다.** 감시를 풀지 않으면 잠시 뒤 "멎었다"고
             // 말하게 되고, 그건 방금 답을 받은 사용자에게 거짓말이다.
             // 결과는 아래에서 저장한 뒤에 런 잠금을 푼다(ARTEL-1264). 오류는 저장할 것이 없어 바로 푼다.
@@ -1758,7 +1770,9 @@ class TestScenarioAgentService(
                         // 대화로 답하고, 저작은 그것을 대화 기억으로 잇는다(ARTEL-942).
                         saveMessage(
                             session.runId, session.appUserId, "ASSISTANT", event.message ?: "",
-                            event.reply?.payload(event.refs),
+                            event.reply?.payload(event.refs)?.let { payload ->
+                                if (event.recommendations.isEmpty()) payload else payload + ("recommendations" to event.recommendations)
+                            },
                         )
                     } catch (err: CancellationException) {
                         throw err
@@ -2113,6 +2127,8 @@ class TestScenarioAgentService(
         @Volatile var draftOnly: Boolean = false,
         /** 이번 턴에 이미 고친 draft 번호. 번호 없이 온 다음 시나리오가 그 draft 를 덮지 않게 한다. */
         val draftTargeted: MutableSet<Long> = java.util.concurrent.ConcurrentHashMap.newKeySet(),
+        /** 이번 턴이 남긴 추천 TC. 답 말풍선의 카드가 읽도록 답과 함께 싣는다. */
+        val turnRecommendations: MutableList<CaseRecommendationService.Recommendation> = java.util.concurrent.CopyOnWriteArrayList(),
         /**
          * 이번 턴에 모델에게 보인 저장된 시나리오의 스텝(번호 → 스텝). 기존 시나리오를 고친 draft 가 화면에서
          * 견줄 기준이다(ARTEL-1075). 매 턴 갱신한다.

@@ -157,6 +157,24 @@ class AuthoringDraft {
         }
     }
 
+    /**
+     * 추천 TC 를 가리키던 스텝을 바꾼다. 값이 TC id 면 그 TC 를 확인하는 스텝이 되고, null 이면 추천 표시만 뗀다.
+     * 바뀐 것이 있으면 true.
+     */
+    @Synchronized
+    fun relink(to: Map<Long, Long?>): Boolean {
+        var changed = false
+        entries.replaceAll { _, draft ->
+            if (draft.steps.none { it.recommendationId in to }) return@replaceAll draft
+            changed = true
+            draft.copy(steps = draft.steps.map { step ->
+                val rec = step.recommendationId ?: return@map step
+                if (rec !in to) step else step.copy(recommendationId = null, caseId = to[rec] ?: step.caseId)
+            })
+        }
+        return changed
+    }
+
     private fun nextNewKey(): String {
         lastNew += 1
         return newKey(lastNew)
