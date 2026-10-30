@@ -144,6 +144,20 @@ A summary is `{name, parameters, docstring, gameBuildId, buildVersion, buildLabe
 
 The internal list is for the agent-server's planner–executer engine and carries `source`. It has no authentication, like everything under `/internal/`, and answers 404 for a deleted project.
 
+### Game state (`STATE_SET`)
+
+The server keeps the last observed state of every game instance in memory (`qa/state/StateSet`), built from the SDK's `pulse` frames before they are relayed to the agent-server. The contract is `artel/docs/architecture/2026-10-29-state-set-contract.md`; this is its v0.1, which needs no SDK change.
+
+| Request | Response |
+|---|---|
+| `POST /internal/qa-tries/{qaTryId}/state` with an optional `ObservationSpec` body | 200 `StateSnapshot` of the try's game instance, internal port only |
+
+`ObservationSpec` is `{scopes, paths, members, statics, includeInactive, includeStale, maxEntities}`. A null field does not filter. `scopes` takes `runtime` (statics), `persistent` (DontDestroyOnLoad), `scene` (the active scene), `scene:*` (every scene) or an exact scope such as `scene:MapScene#2`. `paths` are object path prefixes. `members` and `statics` are `Type::member` names. `maxEntities` defaults to 400.
+
+`StateSnapshot` carries `stateVersion` (one per applied `pulse`), `streamId` (`s1`, `s2`, … one per SDK connection), `sync` (`AWAITING_WHOLE` until the connection's first whole `pulse`, then `SYNCED`), the last `reading`, `frame` and `scene`, `coverage`, `entities`, `statics`, `unobserved` (requested names seen nowhere in the selected range), `omittedEntities` and `ignoredDeltas`. Every value is an `Observation` with `status` `KNOWN`, `UNREAD` (with `reason`), `UNKNOWN` or `STALE`, plus `observedFrame`, `sourceReading` and `receivedAt`. A value the game read as null is `KNOWN` with `value: null`.
+
+The state belongs to the game instance, not the try: a later try on the same instance reads the newer state. It is lost on restart and comes back with the next whole `pulse`. 404 `not_found` when the try does not exist.
+
 ### MCP access tokens and login handoff
 
 `artel-macro-mcp` is a remote MCP server and the OAuth 2.1 authorization server for its clients (Claude Code, Codex). Two JWTs cross between it and this server.

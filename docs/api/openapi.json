@@ -3092,6 +3092,46 @@
         }
       }
     },
+    "/internal/qa-tries/{qaTryId}/state": {
+      "post": {
+        "tags": [
+          "internal-state-set-controller"
+        ],
+        "operationId": "readQaTryState",
+        "parameters": [
+          {
+            "name": "qaTryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObservationSpec"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateSnapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/llm-usage": {
       "post": {
         "tags": [
@@ -14438,6 +14478,275 @@
           },
           "caseSnapshot": {
             "$ref": "#/components/schemas/JsonNode"
+          }
+        }
+      },
+      "ObservationSpec": {
+        "required": [
+          "includeInactive",
+          "includeStale",
+          "maxEntities"
+        ],
+        "type": "object",
+        "properties": {
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "statics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "includeInactive": {
+            "type": "boolean"
+          },
+          "includeStale": {
+            "type": "boolean"
+          },
+          "maxEntities": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "Coverage": {
+        "required": [
+          "gaps"
+        ],
+        "type": "object",
+        "properties": {
+          "watching": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "unresolved": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "unwatchable": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "EntityView": {
+        "required": [
+          "active",
+          "entityId",
+          "fragments",
+          "members",
+          "scope",
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "entityId": {
+            "type": "string"
+          },
+          "sdkId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "KNOWN",
+              "UNREAD",
+              "UNKNOWN",
+              "STALE"
+            ]
+          },
+          "observedReading": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "world": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "rect": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "fragments": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Observation"
+            }
+          },
+          "members": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Observation"
+            }
+          }
+        }
+      },
+      "Observation": {
+        "required": [
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "KNOWN",
+              "UNREAD",
+              "UNKNOWN",
+              "STALE"
+            ]
+          },
+          "value": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "observedFrame": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sourceReading": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "StateSnapshot": {
+        "required": [
+          "entities",
+          "gameInstanceId",
+          "ignoredDeltas",
+          "omittedEntities",
+          "stateVersion",
+          "statics",
+          "sync",
+          "unobserved"
+        ],
+        "type": "object",
+        "properties": {
+          "gameInstanceId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stateVersion": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "streamId": {
+            "type": "string"
+          },
+          "sync": {
+            "type": "string",
+            "enum": [
+              "AWAITING_WHOLE",
+              "SYNCED"
+            ]
+          },
+          "reading": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "frame": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "sceneScope": {
+            "type": "string"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/Coverage"
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityView"
+            }
+          },
+          "statics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaticView"
+            }
+          },
+          "unobserved": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "omittedEntities": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ignoredDeltas": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "StaticView": {
+        "required": [
+          "memberId",
+          "observation"
+        ],
+        "type": "object",
+        "properties": {
+          "memberId": {
+            "type": "string"
+          },
+          "holderPath": {
+            "type": "string"
+          },
+          "observation": {
+            "$ref": "#/components/schemas/Observation"
           }
         }
       },
