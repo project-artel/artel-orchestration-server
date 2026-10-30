@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.project.service.ProjectAccessService
@@ -98,6 +100,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 @Service
 class TestScenarioAgentService(
+    private val caseRecommendations: CaseRecommendationService,
+    private val caseContracts: kr.artel.orchestration.testcase.contract.CaseContractService,
     private val authoringCases: AuthoringCases,
     private val authoringVersions: AuthoringVersionResolver,
     agentProperties: AgentServerProperties,
@@ -136,6 +140,16 @@ class TestScenarioAgentService(
     private val wsClient = ReactorNettyWebSocketClient()
     private val sessions = ConcurrentHashMap<String, AgentSession>()
 
+    // 세션을 여는 중인 턴. 처음 여는 프로젝트는 계약 정리로 몇 분이 걸리는데, 그동안은 [sessions] 에 아직 없어 취소도
+    // 지금 상태 묻기도 닿지 않았다.
+    private val opening = ConcurrentHashMap<String, Job>()
+
+    // 턴마다 마지막으로 알린 진행. 화면이 다시 붙으면(새로고침 · 연결 끊김) 이것으로 지금 어디인지 다시 알린다.
+    private val lastProgress = ConcurrentHashMap<String, ScenarioStreamEvent>()
+
+    // 질문지 답에서 나온 추천 TC(사람이 알려 준 길). 그 답이 여는 턴의 결과에 함께 싣는다.
+    private val carriedRecommendations = ConcurrentHashMap<String, MutableList<CaseRecommendationService.Recommendation>>()
+
     // WS 수신 콜백(Reactor 컨텍스트)에서 발생하는 DB 저장을 fire-and-forget 코루틴으로 흘리기 위한 스코프.
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -154,15 +168,32 @@ class TestScenarioAgentService(
         currentScenarios: List<CurrentScenario>,
         answer: ScenarioQuestionAnswer? = null,
         draftOnly: Boolean = false,
+        answers: List<ScenarioQuestionAnswer> = emptyList(),
+        batchIds: List<String>? = null,
+        batchChanged: Boolean = false,
     ) {
+        // **질문지 한 묶음의 답은 한 번에 받는다.** 하나 답할 때마다 보내면 질문 넷에 요청이 넷 나가고, 둘째부터는
+        // 앞선 턴이 도는 중이라 막혔다. 답마다 계약 · 길은 따로 남기고, 모델에게는 한 줄로 모아 한 번 보낸다. 경로 공백은
+        // 남긴 길로 메우기가 채운다.
+        if (answer == null && answers.isNotEmpty()) {
+            val (composed, changed) = absorbAnswers(sessionKey, runId, projectId, appUserId, answers)
+            return sendMessage(
+                sessionKey, runId, projectId, appUserId,
+                listOfNotNull(composed.ifBlank { null }, userInput.ifBlank { null }).joinToString("\n\n"),
+                autoApply, currentScenarios, null, draftOnly,
+                batchIds = answers.map { it.questionId }, batchChanged = changed,
+            )
+        }
         // 되묻는 질문에 대한 답이면 **무엇에 대한 답인지 함께 실어 보낸다**(ARTEL-487). 보기 id만
         // 보내면 모델은 그것이 무슨 뜻인지 모른다 — 질문과 보기 문구를 여기서 다시 붙인다.
         // 세션에 없으면 **저장된 질문**에서 찾는다. 카드 저장으로 물었거나, 서버가 다시 떴거나,
         // 사용자가 새로고침한 화면에서 답할 수 있다 — 그때 답을 잃으면 물어본 보람이 없다.
         // **답이 지목한 질문을 찾는다**(ARTEL-630). 한 번에 여럿을 내므로 세션이 문 첫 질문이
         // 아닐 수 있다 — 그때 첫 것으로 답하면 엉뚱한 질문에 답한 것이 된다.
-        val pending = sessions[sessionKey]?.question?.takeIf { answer == null || it.id == answer.questionId }
-            ?: lastQuestion(runId, appUserId, answer?.questionId)
+        // 묶음 답을 이미 옮긴 턴이면 물은 것은 없다 — 남은 질문 하나에 이 말을 다시 붙이지 않는다.
+        val pending = if (batchIds != null) null
+            else sessions[sessionKey]?.question?.takeIf { answer == null || it.id == answer.questionId }
+                ?: lastQuestion(runId, appUserId, answer?.questionId)
 
         // 미상 구간에 대한 답은 **코드가 그 자리에 넣는다**(ARTEL-487). 모델에게 넘겨 다시 쓰게
         // 했더니 "StoryScene→Map_scene 을 어떻게 가나요"의 답이 엉뚱한 6번 자리에 들어가고 정작
@@ -171,8 +202,30 @@ class TestScenarioAgentService(
         // **자리는 코드가, 문장은 모델이.** 어느 자리인지는 질문 id 에 들어 있어 계산으로 끝나고,
         // 사용자가 적은 말을 앞뒤 스텝과 같은 결로 다듬는 것은 모델이 낫다. 다듬기가 실패하면
         // 적은 말을 그대로 넣는다 — 어색한 문장보다 알려준 것이 사라지는 쪽이 나쁘다.
+        // **계약 질문의 답은 코드가 계약에 옮긴다.** 어느 케이스의 어느 요구인지가 질문 id 에 있다. 옮긴 뒤에는
+        // 평소처럼 모델에게 넘겨 다시 짜게 한다 — 바뀐 계약을 보고 짠다.
+        var contractsChanged = batchChanged
+        // 사람이 알려 준 사실은 이 런의 build 에서 알게 된 것이다. 새 버전의 저작은 앞 버전 사실을 가려 표시한다.
+        val factBuild = authoringVersions.of(runId).gameBuildId ?: caseContracts.latestBuildId(projectId)
+        contractAnswer(pending, answer)?.let { (ref, option) ->
+            runCatching { caseContracts.applyAnswer(projectId, ref, option, factBuild) }
+                .onSuccess { contractsChanged = true }
+                .onFailure { logger.warn("계약 질문의 답을 옮기지 못했다 [runId=$runId]: ${it.message}") }
+        }
+        // **사용자가 말로 알려 준 게임 사실도 계약에 남긴다.** 질문에 보기 대신 글로 답했든, 묻지 않았는데
+        // 알려 줬든 같다. 남기지 않으면 대화 기억(10턴)이 지나면 같은 것을 다시 묻는다.
+        val said = listOfNotNull(userInput.ifBlank { null }, answer?.text?.ifBlank { null }).joinToString("\n")
+        if (said.isNotBlank()) {
+            runCatching { caseContracts.applyStatement(projectId, said, pending?.text.orEmpty(), factBuild) }
+                .onSuccess { if (it > 0) contractsChanged = true }
+                .onFailure { logger.warn("사용자 말을 계약에 옮기지 못했다 [runId=$runId]: ${it.message}") }
+        }
         gapHowTo(pending, answer)?.let { howTo ->
             val blockedBy = pending!!.id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)
+            // 들은 길은 게임 정보로 남긴다. 채울 시나리오가 아직 draft 여도 남긴다 — 다음 저작이 같은 구간을 다시 묻지 않게.
+            val wayCase = blockedBy.split(GAP_ARROW, limit = 2).takeIf { it.size == 2 }?.let { (from, to) ->
+                learnWay(sessionKey, runId, projectId, from.trim(), to.trim(), howTo, factBuild)
+            }
             // 다듬는 데도 모델이 한 번 돌아 몇 초가 걸린다. 말없이 기다리게 두면 답이 먹히지
             // 않은 것처럼 보인다 — 실제로 일어나는 일이 모델 호출이므로 같은 단계로 말한다.
             progress(sessionKey, AuthoringStage.THINKING)
@@ -186,9 +239,11 @@ class TestScenarioAgentService(
             if (filled > 0) {
                 sessions[sessionKey]?.question = null
                 saveMessage(runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) })
-                notifyGapFilled(sessionKey, runId, appUserId, blockedBy, written)
+                notifyGapFilled(sessionKey, runId, appUserId, blockedBy, written, listOfNotNull(wayCase))
                 return
             }
+            // 채우지 못해 모델에게 넘긴다. 추천은 그 턴의 결과에 싣는다.
+            wayCase?.let { carriedRecommendations.computeIfAbsent(sessionKey) { java.util.concurrent.CopyOnWriteArrayList() } += it }
             // 채울 자리가 없거나(이미 채워졌다) 적은 말이 통과 방법이 아니었다("잘 모르겠는데").
             // 어느 쪽이든 답을 삼키지 말고 평소대로 대화로 넘긴다.
             logger.info("미상 구간을 채우지 않았다 — 대화로 넘긴다 [runId={}] {}", runId, blockedBy)
@@ -236,13 +291,14 @@ class TestScenarioAgentService(
         // 있었지만, 여기서 사용자의 말을 **먼저 저장한 뒤** 보내고 있었다 — 그래서 대화에 답이
         // 오지 않는 말풍선이 남았다(런 152: 같은 요청이 세 줄, 답은 한 번). 새로고침으로 화면이
         // 진행 상태를 잃으면 사람은 당연히 다시 보내므로, 이건 드문 경우가 아니다.
-        sessions[sessionKey]?.takeIf { it.busy }?.let {
+        (sessions[sessionKey]?.takeIf { it.busy } ?: opening[sessionKey]?.takeIf { it.isActive })?.let {
             val message = "앞서 보낸 요청을 아직 처리하고 있습니다. 끝나면 이어서 말씀해 주세요."
             streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
             logger.info("앞선 턴이 도는 중 — 이 요청은 받지 않는다 [runId={}]", runId)
             return
         }
 
+        lastProgress.remove(sessionKey)
         // 물어본 것은 한 턴만 산다. 답이든 딴 얘기든 다음 턴까지 끌고 가면, 한참 뒤의 "응"이
         // 엉뚱한 질문에 붙는다. 화면의 보기는 저장된 질문으로 계속 답할 수 있다.
         sessions[sessionKey]?.question = null
@@ -250,7 +306,11 @@ class TestScenarioAgentService(
         // **대화에는 사용자가 한 말만 남긴다.** 모델에게 붙여 보내는 맥락(직전 질문, 고른 보기)은
         // 전달을 위한 것이지 사용자가 쓴 문장이 아니다 — 말풍선에 그대로 뜨면 자기가 하지 않은
         // 말을 한 것처럼 보인다.
-        saveMessage(runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) })
+        // 묶음 답이면 그 질문들을 닫는다. 안 닫으면 뒤에 한 말에 "직전에 물어본 것" 이 엉뚱하게 붙는다.
+        saveMessage(
+            runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) },
+            batchIds?.let { mapOf("kind" to "answered", "ids" to it) },
+        )
         // 들고 있던 프로젝트 사실을 버린다 — 새 요청 사이에 케이스가 늘거나 질문에 답했을 수 있다.
         reconcileService.forget(projectId)
         val existing = sessions[sessionKey]
@@ -264,12 +324,46 @@ class TestScenarioAgentService(
             // [sendTurn] 을 직접 부른다) 앞서 받아 둔 것이 그대로 살아 있다.
             existing.submitted.clear()
             existing.draftQuestions.clear()
+            existing.draftTargeted.clear()
+            existing.turnRecommendations.clear()
             existing.declined = 0
             // 취소는 **그 턴에만** 걸린다(ARTEL-955). 안 내리면 다음 요청의 결과까지 버린다.
             existing.cancelled.set(false)
-            sendTurn(sessionKey, existing, turnInput, currentScenarios)
+            // 계약이 바뀌었거나 **TC 가 늘거나 준 턴**이면 지금 TC 목록과 시작 값을 함께 보낸다. 세션은 열 때 받은 목록을
+            // 들고 있다. 저작 중에 추천 TC 를 저장하거나 MCP · 화면에서 TC 를 넣으면 Agent 는 그 TC 를 모르는데, 검수는
+            // 프로젝트의 지금 TC 전부를 기준으로 "검토 안 함" 을 띄워 같은 경고가 끝없이 남았다(MCP 로 TR 889, 10건).
+            val version = authoringVersions.of(runId)
+            val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
+            val caseIds = cases.map { it.id }.toSet()
+            if (contractsChanged || caseIds != existing.sentCaseIds) {
+                existing.sentCaseIds = caseIds
+                sendTurn(sessionKey, existing, turnInput, currentScenarios, cases, testCaseService.startingValues(projectId))
+            } else {
+                sendTurn(sessionKey, existing, turnInput, currentScenarios)
+            }
         } else {
-            openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly)
+            // **세션 열기는 요청과 떼어 돌린다.** 처음 여는 프로젝트는 계약 정리로 몇 분이 걸리는데, 그동안 요청을 붙잡고
+            // 있으면 브라우저 · 프록시가 먼저 끊고 메시지가 Agent 에 닿지 않는다(실측: 78초 뒤 끊김). 받았다고 바로 답하고,
+            // 결과와 실패는 늘 그렇듯 SSE 로 간다.
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly)
+                    progress(sessionKey, AuthoringStage.SENT)
+                    watch(sessionKey, runId, appUserId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.error("Agent 세션 열기 실패 [sessionKey=$sessionKey]: ${e.message}")
+                    runLocks.release(sessionKey)
+                    lastProgress.remove(sessionKey)
+                    streamManager.emit(sessionKey, ScenarioStreamEvent(type = "error", code = "agent_unavailable", detail = OPEN_FAILED_MESSAGE))
+                    runCatching { saveMessage(runId, appUserId, "ASSISTANT", OPEN_FAILED_MESSAGE) }
+                }
+            }
+            opening[sessionKey] = job
+            job.invokeOnCompletion { opening.remove(sessionKey, job) }
+            job.start()
+            return
         }
         // 보낸 뒤에 알린다. 세션 오픈이나 턴 전송이 실패하면 "보냈다"가 거짓이 되고,
         // 그 경우 사용자는 진행 중인 것처럼 보이는 화면 앞에서 오지 않을 답을 기다리게 된다.
@@ -297,7 +391,8 @@ class TestScenarioAgentService(
      * 멎은 것으로 본다. 조회가 많은 턴은 오래 걸릴 뿐 멎은 것이 아니다.
      */
     private fun watch(sessionKey: String, runId: Long, appUserId: Long) {
-        val session = sessions[sessionKey] ?: return
+        // 턴을 보낸 사이 연결이 이미 끊겼으면 기다릴 것이 없다 — 지금 알린다.
+        val session = sessions[sessionKey] ?: return notifyDisconnected(sessionKey, runId, appUserId)
         runLocks.hold(runId, session.projectId, appUserId, sessionKey, choosing = session.autoApply)
         session.watchdog?.cancel()
         session.lastHeard = System.currentTimeMillis()
@@ -321,6 +416,19 @@ class TestScenarioAgentService(
             )
             // 기다림이 끝났으니 런도 푼다. 늦게 온 결과는 그래도 반영된다(위 설명) — 그 사이 고친 것은 덮일 수 있다.
             runLocks.release(sessionKey)
+        }
+    }
+
+    /** 답을 기다리던 턴의 Agent 연결이 끊겼다. 다시 보내면 세션이 새로 열리고 대화 기록은 이어진다. */
+    private fun notifyDisconnected(sessionKey: String, runId: Long, appUserId: Long) {
+        logger.warn("답을 기다리던 턴의 Agent 연결이 끊겼다 [sessionKey={}, runId={}]", sessionKey, runId)
+        streamManager.emit(
+            sessionKey,
+            ScenarioStreamEvent(type = "error", code = AGENT_DISCONNECTED, detail = AGENT_DISCONNECTED_MESSAGE),
+        )
+        scope.launch {
+            runCatching { saveMessage(runId, appUserId, "ASSISTANT", AGENT_DISCONNECTED_MESSAGE) }
+                .onFailure { logger.warn("연결 끊김 안내 저장 실패: ${it.message}") }
         }
     }
 
@@ -353,7 +461,68 @@ class TestScenarioAgentService(
      * 순서가 중요하다 — **깃발을 먼저 세우고** 프레임을 보낸다. 거꾸로 하면 저쪽 답이 깃발보다
      * 먼저 도착해, 취소한 턴의 결과가 평소대로 반영된다.
      */
+    /**
+     * 질문지 한 묶음의 답을 옮긴다. 계약 질문의 답은 계약에, 길을 물은 답은 게임 정보의 출구에 남긴다. 돌려주는 것은
+     * 대화에 남기고 모델에게 보낼 한 줄(`1. 질문 → 답`)과, 계약이 바뀌었는지다. 건너뛴 · 그대로 두기를 고른 답은 빠진다.
+     */
+    private suspend fun absorbAnswers(
+        sessionKey: String,
+        runId: Long,
+        projectId: Long,
+        appUserId: Long,
+        answers: List<ScenarioQuestionAnswer>,
+    ): Pair<String, Boolean> {
+        val factBuild = authoringVersions.of(runId).gameBuildId ?: caseContracts.latestBuildId(projectId)
+        var changed = false
+        val lines = answers.mapNotNull { answer ->
+            val question = lastQuestion(runId, appUserId, answer.questionId)?.takeIf { it.id == answer.questionId } ?: return@mapNotNull null
+            contractAnswer(question, answer)?.let { (ref, option) ->
+                runCatching { caseContracts.applyAnswer(projectId, ref, option, factBuild) }
+                    .onSuccess { changed = true }
+                    .onFailure { logger.warn("계약 질문의 답을 옮기지 못했다 [runId=$runId]: ${it.message}") }
+            }
+            gapHowTo(question, answer)?.let { howTo ->
+                question.id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX).split(GAP_ARROW, limit = 2).takeIf { it.size == 2 }?.let { (from, to) ->
+                    learnWay(sessionKey, runId, projectId, from.trim(), to.trim(), howTo, factBuild)
+                        ?.let { carriedRecommendations.computeIfAbsent(sessionKey) { java.util.concurrent.CopyOnWriteArrayList() } += it }
+                }
+            }
+            if (ScenarioQuestionBuilder.GAP_LEAVE in answer.optionIds) return@mapNotNull null
+            val chosen = question.options.filter { it.id in answer.optionIds }.map { it.label }
+            val body = (chosen + listOfNotNull(answer.text?.trim()?.ifBlank { null })).joinToString(" / ")
+            body.ifBlank { null }?.let { question.text to it }
+        }
+        return lines.mapIndexed { index, (asked, said) -> "${index + 1}. $asked → $said" }.joinToString("\n") to changed
+    }
+
+    /**
+     * 지금 이 세션의 턴이 어디인지. 화면이 SSE 에 다시 붙을 때(새로고침 · 연결 끊김) 맨 먼저 보낸다. 끊긴 사이의 진행은
+     * 다시 오지 않으므로, 이것이 없으면 화면은 도는 턴을 모르거나 끝난 턴을 계속 기다린다.
+     *
+     * 턴이 돌고 있으면 마지막 단계를, 아니면 단계 없이 보낸다(화면은 그때 대화와 draft 를 다시 읽는다).
+     */
+    fun turnState(sessionKey: String): ScenarioStreamEvent {
+        val live = opening[sessionKey]?.isActive == true || sessions[sessionKey]?.busy == true
+        if (!live) return ScenarioStreamEvent(type = TURN_STATE)
+        val last = lastProgress[sessionKey]
+        return ScenarioStreamEvent(type = TURN_STATE, stage = last?.stage ?: AuthoringStage.SENT, done = last?.done, total = last?.total)
+    }
+
     suspend fun cancelTurn(sessionKey: String): RunChatCancellation {
+        // 세션을 여는 중이면(계약 정리를 기다리는 동안) 여는 일을 멈춘다. Agent 에는 아직 아무것도 가지 않았다.
+        opening[sessionKey]?.takeIf { it.isActive }?.let { job ->
+            job.cancel()
+            runLocks.release(sessionKey)
+            lastProgress.remove(sessionKey)
+            val runId = sessionKey.substringAfter(':').toLongOrNull()
+            val appUserId = sessionKey.substringBefore(':').toLongOrNull()
+            if (runId != null && appUserId != null) {
+                runCatching { saveMessage(runId, appUserId, "ASSISTANT", cancelNotice(0)) }
+            }
+            streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = cancelNotice(0)))
+            logger.info("세션을 여는 중에 저작 요청을 취소했다 [sessionKey={}]", sessionKey)
+            return RunChatCancellation(cancelled = true, saved = 0)
+        }
         val session = sessions[sessionKey] ?: return RunChatCancellation(cancelled = false)
         // 끊을 턴이 없다. 오류가 아니다 — 답이 방금 왔는데 ESC 를 누른 경우가 이 길이고,
         // 그때 "취소했습니다"를 덧붙이면 방금 받은 답을 의심하게 된다.
@@ -437,6 +606,9 @@ class TestScenarioAgentService(
     fun closeSession(sessionKey: String) {
         runLocks.release(sessionKey)
         val session = sessions.remove(sessionKey) ?: return
+        // 사용자가 닫은 것이다. 끊김 안내를 띄우지 않게 기다림부터 거둔다.
+        session.watchdog?.cancel()
+        session.watchdog = null
         try {
             val json = objectMapper.writeValueAsString(AgentCloseMessage())
             session.outbound.tryEmitNext(json)
@@ -468,6 +640,16 @@ class TestScenarioAgentService(
         // 저작은 TR 이 고른 TC 버전의 TC 와 지도만 본다(ARTEL-1048). 버전 없는 TR 이면 예전처럼 프로젝트 전체 · 최신 빌드다.
         val version = authoringVersions.of(runId)
         // 목록의 내용 · 입력 · 바꾸는 값까지 그 버전 것이어야 하므로 맥락 안에서 읽는다(ARTEL-1064).
+        // 글만 있는 TC 의 계약을 먼저 채운다 — 빠진 것과 문구가 바뀐 것만. 못 채워도 저작은 한다(예전처럼 글로 짠다).
+        // 처음 여는 프로젝트는 TC 마다 계약을 뽑느라 몇 분이 걸린다(TC 73건 2분). 그동안 화면이 멈춘 것처럼 보이지 않게
+        // "케이스를 읽는 중" 을 띄운다.
+        if (caseContracts.hasPending(projectId)) progress(sessionKey, AuthoringStage.PREPARING_CASES)
+        runCatching { withTimeoutOrNull(CONTRACT_TIMEOUT_MS) { caseContracts.refreshInBackground(projectId).await() } }
+            .onFailure {
+                // 사용자가 취소했다. 삼키면 취소한 턴이 세션을 열고 Agent 에 말을 보낸다. 정리는 따로 돌아 끝까지 간다.
+                if (it is CancellationException) throw it
+                logger.warn("계약 정리 실패 — 글만으로 짠다 [projectId=$projectId]: ${it.message}")
+            }
         val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
         trace.record(
             runId, "판을 연다",
@@ -518,6 +700,7 @@ class TestScenarioAgentService(
             .bodyToMono(AgentSessionOpenResponse::class.java)
             .awaitSingle()
         openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply, version)
+        sessions[sessionKey]?.sentCaseIds = cases.map { it.id }.toSet()
         sessions[sessionKey]?.draftOnly = draftOnly
         sessions[sessionKey]?.shownSteps = shownStepsOf(currentScenarios)
         sessions[sessionKey]?.shownModes = shownModesOf(currentScenarios)
@@ -727,11 +910,11 @@ class TestScenarioAgentService(
     ) {
         try {
             val submittedRaw = objectMapper.treeToValue(node.path("scenario"), ScenarioResult::class.java)
-            // draft 만 고치는 턴(ARTEL-1074)은 draft 가 아닌 것을 받지 않는다. 번호 없이 오면 draft 가
-            // 하나일 때만 그 draft 로 읽는다 — 여럿이면 어느 것인지 모델이 골라야 한다.
+            // draft 만 고치는 턴(ARTEL-1074)은 저장된 시나리오를 건드리지 않는다. 번호 없이 오면 새 draft 다 —
+            // 이번 턴에 아직 고치지 않은 draft 가 하나뿐일 때만 그 draft 로 읽는다([AuthoringDraft.draftSlot]).
             val raw = if (!session.draftOnly) submittedRaw else {
-                val target = drafts.of(sessionKey).draftTarget(submittedRaw.scenarioId)
-                if (target == null) {
+                val slot = drafts.of(sessionKey).draftSlot(submittedRaw.scenarioId, session.draftTargeted)
+                if (slot is DraftSlot.Refused) {
                     session.declined += 1
                     sendFrame(
                         sessionKey, session,
@@ -744,11 +927,20 @@ class TestScenarioAgentService(
                     )
                     return
                 }
+                val target = (slot as? DraftSlot.Existing)?.agentId
+                target?.let { session.draftTargeted += it }
                 submittedRaw.copy(scenarioId = target)
             }
             // **음수 번호는 draft 의 새 시나리오다**(ARTEL-1074). 저장된 적이 없으니 검수와 저장에는
             // 새것으로 넘긴다 — 음수 번호로 저장 경로에 들어가면 없는 시나리오를 고치려 든다.
-            val scenario = if ((raw.scenarioId ?: 0) < 0) raw.copy(scenarioId = null) else raw
+            val unlinked = if ((raw.scenarioId ?: 0) < 0) raw.copy(scenarioId = null) else raw
+            // 스텝이 가리키는 추천 TC 를 남기고, 스텝에는 추천 id 를 단다. 사용자가 저장하면 그 TC 로 바뀐다.
+            val recs = node.path("proposedCases").takeIf { it.isArray && it.size() > 0 }
+                ?.let { caseRecommendations.record(session.projectId, session.runId, it) }.orEmpty()
+            session.turnRecommendations += recs.values
+            val scenario = if (recs.isEmpty()) unlinked else unlinked.copy(
+                steps = unlinked.steps.map { step -> step.proposedCase?.let { recs[it] }?.let { step.copy(recommendationId = it.id) } ?: step },
+            )
             // **그 사이 사람이 고쳤거나 다른 사람의 AI 가 쥐고 있으면 덮지 않는다**(ARTEL-1264). 저장하는 턴이어도
             // 이 시나리오만 draft 로 돌려 사용자가 보고 고르게 한다.
             val diverted = if (session.autoApply) overwriteBlocker(sessionKey, session, scenario.scenarioId) else null
@@ -1336,10 +1528,9 @@ class TestScenarioAgentService(
         done: Int? = null,
         total: Int? = null,
     ) {
-        streamManager.emit(
-            sessionKey,
-            ScenarioStreamEvent(type = "progress", stage = stage, done = done, total = total),
-        )
+        val event = ScenarioStreamEvent(type = "progress", stage = stage, done = done, total = total)
+        lastProgress[sessionKey] = event
+        streamManager.emit(sessionKey, event)
         runLocks.stage(sessionKey, stage)
     }
 
@@ -1409,6 +1600,18 @@ class TestScenarioAgentService(
      * 적은 문장도 남긴다. 보기만 세다가 자유 서술을 빠뜨렸더니 말풍선이 **빈 줄**로 저장됐다 —
      * 사용자는 방법을 적었는데 대화에는 아무 말도 하지 않은 것으로 남았다.
      */
+    private fun contractAnswer(
+        pending: ScenarioQuestion?,
+        answer: ScenarioQuestionAnswer?,
+    ): Pair<kr.artel.orchestration.testcase.contract.CaseContractService.ContractAnswerRef, String>? {
+        if (pending == null || answer == null || pending.id != answer.questionId) return null
+        val ref = ScenarioQuestionBuilder.contractRef(pending.id) ?: return null
+        val option = answer.optionIds.firstOrNull() ?: return null
+        return kr.artel.orchestration.testcase.contract.CaseContractService.ContractAnswerRef(
+            ref.caseId, ref.variable, ref.operator, ref.value,
+        ) to option
+    }
+
     private fun answerSummary(pending: ScenarioQuestion?, answer: ScenarioQuestionAnswer?): String {
         if (answer == null || pending == null || pending.id != answer.questionId) return ""
         val chosen = pending.options.filter { it.id in answer.optionIds }.map { it.label }
@@ -1508,9 +1711,14 @@ class TestScenarioAgentService(
         session: AgentSession,
         userInput: String,
         currentScenarios: List<CurrentScenario>,
+        refreshedCases: List<kr.artel.orchestration.testcase.dto.AuthoringTestCase>? = null,
+        refreshedStart: Map<String, String>? = null,
     ) {
         val json = objectMapper.writeValueAsString(
-            AgentTurnMessage(userInput = userInput, currentScenarios = currentScenarios)
+            AgentTurnMessage(
+                userInput = userInput, currentScenarios = currentScenarios,
+                testCaseList = refreshedCases, startingValues = refreshedStart,
+            )
         )
         trace.record(
             session.runId, "▶ 턴을 보낸다",
@@ -1545,6 +1753,12 @@ class TestScenarioAgentService(
                 .then()
             send.and(receive)
         }.doFinally {
+            // **답을 기다리던 턴이면 바로 알린다.** 끊긴 턴은 결과가 오지 않는다. 알리지 않으면 사용자는 시한(5분)이
+            // 찰 때까지 돌아가는 화면을 본다 — 실측(2026-10-29): Agent 가 다시 뜨며 끊긴 턴을 194초 기다렸다.
+            val waiting = session.watchdog != null
+            session.watchdog?.cancel()
+            session.watchdog = null
+            if (waiting) notifyDisconnected(sessionKey, runId, appUserId)
             // WS 가 끊기면 턴도 끝난 것이다. 쥔 런 잠금을 놓는다.
             runLocks.release(sessionKey)
             sessions.remove(sessionKey)
@@ -1669,12 +1883,17 @@ class TestScenarioAgentService(
             // 읽어야 해서 DB 를 거치므로, 그런 결과는 아래 코루틴에서 채워 내보낸다.
             val needsModes = event.type == "result" && session != null &&
                 event.scenarios.orEmpty().any { it.executionMode == null }
-            if (!needsModes) streamManager.emit(sessionKey, event)
+            // 결과는 아래 코루틴에서 내보낸다 — 앞서 받은 시나리오의 처리(추천 TC 남기기)가 끝난 뒤여야 답에 추천을 싣는다.
+            if (event.type != "result" || session == null) streamManager.emit(sessionKey, event)
 
             if (event.type == "result" && session != null) {
                 scope.launch {
                   try {
-                    if (needsModes) streamManager.emit(sessionKey, withExecutionModes(session, event))
+                    // 하나씩 받은 시나리오는 그 처리 코루틴이 아직 돌 수 있다. 끝나기를 기다린 뒤 이번 턴의 추천 TC 를 싣는다.
+                    session.submitLock.withLock { }
+                    val event = (session.turnRecommendations + carriedRecommendations.remove(sessionKey).orEmpty()).takeIf { it.isNotEmpty() }
+                        ?.let { recs -> event.copy(recommendations = recs.map { it.wire() }) } ?: event
+                    streamManager.emit(sessionKey, if (needsModes) withExecutionModes(session, event) else event)
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
                     try {
                         // 결과·설명·질문 칸은 payload 로 함께 든다(ARTEL-927 · ARTEL-1117). `content` 는
@@ -1685,7 +1904,9 @@ class TestScenarioAgentService(
                         // 대화로 답하고, 저작은 그것을 대화 기억으로 잇는다(ARTEL-942).
                         saveMessage(
                             session.runId, session.appUserId, "ASSISTANT", event.message ?: "",
-                            event.reply?.payload(event.refs),
+                            event.reply?.payload(event.refs)?.let { payload ->
+                                if (event.recommendations.isEmpty()) payload else payload + ("recommendations" to event.recommendations)
+                            },
                         )
                     } catch (err: CancellationException) {
                         throw err
@@ -1870,6 +2091,7 @@ class TestScenarioAgentService(
         appUserId: Long,
         blockedBy: String,
         written: List<String>,
+        recommendations: List<CaseRecommendationService.Recommendation> = emptyList(),
     ) {
         // 무엇이 들어갔는지 그대로 보여 준다. 다듬은 문장이 사용자가 적은 말과 다를 수 있고,
         // 그 차이를 감추면 시나리오를 열어 보기 전까지 무엇이 저장됐는지 알 수 없다.
@@ -1885,7 +2107,34 @@ class TestScenarioAgentService(
         )
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "notice", message = message))
         streamManager.emit(sessionKey, ScenarioStreamEvent(type = "applied"))
+        // 알려 준 길을 씬 전이 TC 로 추천한다. 추천 카드는 답 말풍선에 붙으므로 짧은 답 하나로 싣는다.
+        if (recommendations.isNotEmpty()) {
+            val reply = kr.artel.orchestration.testscenario.dto.AgentReply(result = SCENE_MOVE_RECOMMENDED, detail = "", changes = emptyList(), asks = emptyList())
+            val wire = recommendations.map { it.wire() }
+            saveMessage(runId, appUserId, "ASSISTANT", SCENE_MOVE_RECOMMENDED, reply.payload() + ("recommendations" to wire))
+            streamManager.emit(sessionKey, ScenarioStreamEvent(type = "result", message = SCENE_MOVE_RECOMMENDED, reply = reply, recommendations = wire))
+        }
         progress(sessionKey, AuthoringStage.SAVED)
+    }
+
+    /**
+     * 사람이 알려 준 길을 남긴다. 게임 정보의 출구로 남겨 다음 저작이 다시 묻지 않게 하고, 씬 전이 TC 로도 추천한다 — TC 로
+     * 저장하면 QA 가 그 길을 확인하고, 계약 정리가 도착 화면 표식을 단다. 추천은 같은 길이 이미 있으면 내지 않는다.
+     */
+    private suspend fun learnWay(
+        sessionKey: String,
+        runId: Long,
+        projectId: Long,
+        from: String,
+        to: String,
+        how: String,
+        buildId: Long?,
+    ): CaseRecommendationService.Recommendation? {
+        runCatching { caseContracts.addUserExit(projectId, from, to, how, buildId) }
+            .onFailure { logger.warn("들은 길을 남기지 못했다 [sessionKey=$sessionKey] $from→$to: ${it.message}") }
+        return runCatching { caseRecommendations.recommendSceneMove(projectId, runId, from, to, how) }
+            .onFailure { logger.warn("길을 TC 로 추천하지 못했다 [sessionKey=$sessionKey] $from→$to: ${it.message}") }
+            .getOrNull()
     }
 
     /**
@@ -2027,6 +2276,8 @@ class TestScenarioAgentService(
          * 센다. [submitLock] 아래에서만 는다.
          */
         @Volatile var declined: Int = 0,
+        /** 이 세션에 보낸 TC 목록의 id. 프로젝트 TC 가 이것과 달라지면 다음 턴에 목록을 다시 보낸다. */
+        @Volatile var sentCaseIds: Set<Long> = emptySet(),
         /**
          * draft 턴(자동 저장 끔)에서 제출마다 검수가 낸 질문 — 메우지 못한 구간(ARTEL-1117). 저장하는 턴은
          * 턴끝 검수가 다시 계산해 묻지만 draft 턴은 그 검수를 돌지 않으므로, 여기 모았다가 턴 끝에 묻는다.
@@ -2038,6 +2289,10 @@ class TestScenarioAgentService(
          * 하나일 때만 그 draft 로 읽는다. 매 턴 갱신한다.
          */
         @Volatile var draftOnly: Boolean = false,
+        /** 이번 턴에 이미 고친 draft 번호. 번호 없이 온 다음 시나리오가 그 draft 를 덮지 않게 한다. */
+        val draftTargeted: MutableSet<Long> = java.util.concurrent.ConcurrentHashMap.newKeySet(),
+        /** 이번 턴이 남긴 추천 TC. 답 말풍선의 카드가 읽도록 답과 함께 싣는다. */
+        val turnRecommendations: MutableList<CaseRecommendationService.Recommendation> = java.util.concurrent.CopyOnWriteArrayList(),
         /**
          * 이번 턴에 모델에게 보인 저장된 시나리오의 스텝(번호 → 스텝). 기존 시나리오를 고친 draft 가 화면에서
          * 견줄 기준이다(ARTEL-1075). 매 턴 갱신한다.
@@ -2116,13 +2371,31 @@ class TestScenarioAgentService(
     )
 
     companion object {
+        /** 답을 기다리던 턴의 Agent 연결이 끊겼을 때 화면과 대화 기록에 남기는 것. */
+        const val AGENT_DISCONNECTED = "agent_disconnected"
+        /** 알려 준 길을 TC 로 추천할 때의 답 한 줄. */
+        const val SCENE_MOVE_RECOMMENDED = "알려 주신 길을 씬 전이 TC 로 남길 수 있어요."
+
+        /** SSE 에 다시 붙은 화면에 지금 턴 상태를 알리는 이벤트. */
+        const val TURN_STATE = "turn"
+
+        /** 미상 구간 이름(`광장→숲`)의 화살표. [ScenarioQuestionBuilder] 의 질문 id 가 이 꼴이다. */
+        private const val GAP_ARROW = "→"
+        const val OPEN_FAILED_MESSAGE = "저작 Agent 를 열지 못해 이번 요청을 처리하지 못했어요. 잠시 뒤 같은 말을 다시 보내 주세요."
+        const val AGENT_DISCONNECTED_MESSAGE =
+            "저작 Agent 와 연결이 끊겨 이번 요청을 처리하지 못했어요. 같은 말을 다시 보내 주세요 — 앞의 대화는 이어집니다."
+
+        /** 계약 정리를 기다리는 상한. 넘으면 글만으로 짠다 — 다음 저작 때 남은 것을 마저 채운다. */
+        const val CONTRACT_TIMEOUT_MS = 8 * 60 * 1000L
+
         /** draft 만 고치는 턴(ARTEL-1074)에 모델에게 붙이는 범위. */
         const val DRAFT_ONLY_NOTE =
-            "(지금은 승인 전 draft 만 고친다. current_scenarios 에 있는 draft 의 scenario_id 로 고치고, 새 시나리오는 만들지 않는다.)"
+            "(시스템 안내 — 사용자가 한 말이 아니다: 지금은 승인 전 draft 를 고치는 중이다. 저장된 시나리오는 고치지 않는다. " +
+                "draft 를 고칠 때는 current_scenarios 의 그 scenario_id 로 내고, 새 시나리오가 필요하면 scenario_id 를 비워 새 draft 로 낸다.)"
 
         /** draft 만 고치는 턴에서 draft 가 아닌 것을 낸 모델에게 돌려주는 말. */
         const val DRAFT_ONLY_REFUSAL =
-            "지금은 승인 전 draft 만 고칠 수 있습니다. current_scenarios 에 있는 draft 의 scenario_id 로 다시 내 주세요. 새 시나리오는 만들 수 없습니다."
+            "지금은 승인 전 draft 만 고칠 수 있습니다. current_scenarios 에 있는 draft 의 scenario_id 로 내거나, 새 시나리오면 scenario_id 를 비워 주세요."
 
         /**
          * 재작성을 몇 번까지 시킬지.

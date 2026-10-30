@@ -6,6 +6,7 @@ import kr.artel.orchestration.testscenario.dto.DraftScenario
 import kr.artel.orchestration.testscenario.dto.DraftScenarioEdit
 import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
+import kr.artel.orchestration.testscenario.dto.ScenarioStepSource
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import org.springframework.stereotype.Component
 import java.util.concurrent.ConcurrentHashMap
@@ -138,18 +139,64 @@ class AuthoringDraft {
         entries.values.map { CurrentScenario(agentIdOf(it.draftId), it.title, it.description, it.steps, it.executionMode) }
 
     /**
-     * draft 만 고치는 턴에서 Agent 가 낸 번호를 고칠 draft 의 번호로 푼다. draft 의 번호면 그대로, 번호가
-     * 없으면 draft 가 하나일 때만 그 draft 다. 그 밖(저장된 시나리오 · 없는 번호 · 여럿 중 미지정)은 null 이다.
+     * draft 만 고치는 턴에서 Agent 가 낸 번호를 놓을 자리로 푼다.
+     * - draft 의 번호면 그 draft 다.
+     * - 그 밖의 번호(저장된 시나리오 · 없는 번호)는 받지 않는다 — 이 턴은 저장된 것을 건드리지 않는다.
+     * - 번호가 없으면 새 draft 다. 다만 draft 가 하나뿐이고 이번 턴에 아직 아무도 고치지 않았으면 그 draft 로 읽는다
+     *   — 하나를 고치며 번호를 빠뜨린 것이다. 이미 고친 draft 를 번호 없는 두 번째 시나리오가 덮으면, 나누기가
+     *   한쪽을 지운다(실측: 수정 1 · 새것 1 을 냈는데 draft 가 새것 하나만 남았다).
+     *
+     * @param targeted 이번 턴에 이미 고친 draft 번호.
      */
     @Synchronized
-    fun draftTarget(submittedId: Long?): Long? {
+    fun draftSlot(submittedId: Long?, targeted: Set<Long> = emptySet()): DraftSlot {
         val ids = entries.keys.mapNotNull(::agentIdOf)
         return when {
-            submittedId != null -> submittedId.takeIf { it in ids }
-            ids.size == 1 -> ids.single()
-            else -> null
+            submittedId != null -> if (submittedId in ids) DraftSlot.Existing(submittedId) else DraftSlot.Refused
+            ids.size == 1 && ids.single() !in targeted -> DraftSlot.Existing(ids.single())
+            else -> DraftSlot.New
         }
     }
+
+    /**
+     * 추천 TC 를 가리키던 스텝을 바꾼다. 값이 TC id 면 그 TC 를 확인하는 스텝이 되고, null 이면 추천 표시만 뗀다.
+     * 바뀐 것이 있으면 true.
+     */
+    @Synchronized
+    fun relink(to: Map<Long, Long?>): Boolean {
+        var changed = false
+        entries.replaceAll { _, draft ->
+            if (draft.steps.none { it.recommendationId in to }) return@replaceAll draft
+            changed = true
+            draft.copy(steps = draft.steps.map { step ->
+                val rec = step.recommendationId ?: return@map step
+                if (rec !in to) step
+                else to[rec]?.let { step.copy(recommendationId = null, caseId = it, stepSource = ScenarioStepSource.CASE) }
+                    ?: step.copy(recommendationId = null)
+            })
+        }
+        return changed
+    }
+
+    /**
+     * 사람이 알려 준 길로 채운 스텝(`HUMAN`, TC 없음)을 그 길로 저장한 TC 를 확인하는 스텝으로 바꾼다. 글이 같은 스텝만이다 —
+     * 그 길은 사람이 한 말 그대로 스텝이 되고, 추천 TC 의 행동도 같은 말이다.
+     */
+    fun linkHuman(byAction: Map<String, Long>): Boolean {
+        if (byAction.isEmpty()) return false
+        var changed = false
+        entries.replaceAll { _, draft ->
+            if (draft.steps.none { it.humanWay(byAction) != null }) return@replaceAll draft
+            changed = true
+            draft.copy(steps = draft.steps.map { step ->
+                step.humanWay(byAction)?.let { caseId -> step.copy(caseId = caseId, stepSource = ScenarioStepSource.CASE) } ?: step
+            })
+        }
+        return changed
+    }
+
+    private fun ChatScenarioStep.humanWay(byAction: Map<String, Long>): Long? =
+        if (stepSource == ScenarioStepSource.HUMAN && caseId == null) byAction[CaseRecommendationService.sameWords(action)] else null
 
     private fun nextNewKey(): String {
         lastNew += 1
@@ -170,6 +217,13 @@ class AuthoringDraft {
             else -> null
         }
     }
+}
+
+/** [AuthoringDraft.draftSlot] 의 답. */
+sealed interface DraftSlot {
+    data class Existing(val agentId: Long) : DraftSlot
+    data object New : DraftSlot
+    data object Refused : DraftSlot
 }
 
 /**

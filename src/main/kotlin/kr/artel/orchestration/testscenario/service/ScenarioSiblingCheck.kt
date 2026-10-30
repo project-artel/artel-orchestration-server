@@ -34,6 +34,12 @@ object ScenarioSiblingCheck {
         val declared: Map<String, String>,
         /** 실행한 뒤 서 있는 화면(화면을 넘기는 케이스). 다리 근거 되찾기의 앞 닻이다. */
         val arrivesAt: String? = null,
+        /** 실행한 뒤 확정되는 값 — 케이스 메타의 `state_after`. 지도가 없는 프로젝트에서는 이것뿐이다. */
+        val leaves: Map<String, String> = emptyMap(),
+        /** 아무 케이스도 남기지 않아 확인되지 않은 요구. 검사는 세지 않고, 경로에서 막히면 사용자에게 묻는다. */
+        val unmade: List<Guard> = emptyList(),
+        /** 글에 없는 상식 추정 요구(`assumed_before`). 경로에서 채워지지 않으면 맞는지 묻는다. */
+        val assumed: List<Guard> = emptyList(),
     )
 
     /**

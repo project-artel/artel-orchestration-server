@@ -93,6 +93,23 @@ class ManualCaseVersionService(
     }
 
     /**
+     * SDK 가 처음 보는 버전을 등록했을 때 앞 버전의 사용자 생성 케이스를 이어 넣는다. 지도가 없는 프로젝트만이다.
+     *
+     * 지도 프로젝트는 그 버전의 TC 를 생성할 때 [carryOver] 를 부르고, 이어 넣을지는 사용자가 그 화면에서 고른다. 자연어 TC
+     * 만 쓰는 프로젝트에는 그 계기가 없어서, 새 버전으로 만든 TR 의 저작이 케이스를 하나도 받지 못했다. 케이스의 계약 ·
+     * 사용자 답 · QA 관측은 케이스 정체에 있으니 몫만 생기면 그대로 따라온다.
+     */
+    suspend fun carryOverOnNewBuild(projectId: Long, gameBuildId: Long): Int {
+        if (versions.existsContentMapInProject(projectId)) return 0
+        val carried = transactionalOperator.executeAndAwait {
+            folderService.lockProjectFolders(projectId)
+            carryOver(projectId, gameBuildId)
+        }
+        if (carried > 0) projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
+        return carried
+    }
+
+    /**
      * 막 만든 사용자 생성 케이스를 [gameBuildId] 버전에 넣는다(ARTEL-1031). 케이스 생성 트랜잭션 안에서 부른다.
      * build 가 이 프로젝트 것인지는 부르는 쪽이 확인한다.
      */

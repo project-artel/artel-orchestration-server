@@ -244,6 +244,48 @@ class ScenarioPathServiceTest {
         assertThat(answer.blockedBy).isEqualTo("position")
     }
 
+    /**
+     * 지도가 없는 프로젝트(자연어 TC 만 쓴 프로젝트)에서 화면이 바뀌는 자리. 그 화면으로 가는 TC 도, QA 가 본 길도
+     * 없으면 `광장→숲` 구간으로 답한다 — 그래야 저작이 그 길을 묻는다. 같은 화면이나 아는 길은 예전처럼 확인하지 않은
+     * 것으로 둔다.
+     */
+    @Test
+    fun `지도가 없어도 화면이 바뀌는 자리는 TC 와 QA 가 본 길로 판단한다`(): Unit = runBlocking {
+        val now = Instant.now()
+        val bare = projectRepository.save(
+            ProjectEntity(name = "bare-${seq.incrementAndGet()}", genre = "RPG", createdAt = now, updatedAt = now)
+        )
+        memberRepository.save(ProjectMemberEntity(projectId = bare.id!!, appUserId = userId, role = "OWNER", createdAt = now))
+        fun nl(scene: String, step: String, meta: String = "{}") = TestCaseEntity(
+            projectId = bare.id, scene = scene, step = step, expectedValue = "e", metadata = io.r2dbc.postgresql.codec.Json.of(meta),
+        )
+        val square = testCaseRepository.save(nl("광장", "할머니한테 말을 건다.")).id!!
+        val forest = testCaseRepository.save(nl("숲", "덤불을 조사한다.")).id!!
+        val inn = testCaseRepository.save(nl("여관", "저녁까지 쉰다.")).id!!
+
+        // 아무도 모르는 길 — 그 구간을 묻는다.
+        val unknown = service.findPath(bare.id, userId, square, forest)
+        assertThat(unknown.result).isEqualTo(ScenarioPathResult.UNKNOWN)
+        assertThat(unknown.blockedBy).isEqualTo("광장→숲")
+        assertThat(unknown.unchecked).isFalse()
+
+        // 그 화면으로 가는 TC 가 생기면 저작이 그것을 보고 쓴다 — 건드리지 않는다.
+        testCaseRepository.save(nl("광장", "여관 문을 연다.", """{"arrives_at":"여관"}"""))
+        assertThat(service.findPath(bare.id, userId, square, inn).unchecked).isTrue()
+
+        // QA 가 본 길(게임 씬 이름)은 QA 가 그 TC 를 실행할 때 서 있던 씬으로 TC 이름에 잇는다.
+        testCaseRepository.save(nl("숲", "늑대를 본다.", """{"observed":{"scene":"ForestScene"}}"""))
+        testCaseRepository.save(nl("광장", "분수를 본다.", """{"observed":{"scene":"SquareScene"}}"""))
+        template.databaseClient.sql("INSERT INTO case_glossary (project_id, exits) VALUES (:p, CAST(:e AS jsonb))")
+            .bind("p", bare.id).bind("e", """[{"from":"ForestScene","to":"SquareScene","by":"click:Canvas/Travel Bar/이동: 광장"}]""")
+            .fetch().rowsUpdated().awaitSingle()
+        assertThat(service.findPath(bare.id, userId, forest, square).unchecked).isTrue()
+
+        // 같은 화면 사이는 예전처럼 확인하지 않는다.
+        val square2 = testCaseRepository.save(nl("광장", "우물을 본다.")).id!!
+        assertThat(service.findPath(bare.id, userId, square, square2).blockedBy).isEqualTo("content-map")
+    }
+
     @Test
     fun `씬 명세가 없는 프로젝트는 모른다고 답하고 예외를 던지지 않는다`(): Unit = runBlocking {
         val now = Instant.now()

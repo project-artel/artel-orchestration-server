@@ -82,6 +82,19 @@ object ScenarioStateReader {
     }
 
     /**
+     * **갈래 조건의 갈래들.** [guardsIn] 은 갈래마다 공통인 것만 남겨서, 공통이 없으면 요구가 통째로
+     * 사라진다 — "동전 출처 둘 중 아무거나"가 "아무 요구 없음"이 된다. 그 갈래들을 따로 낸다.
+     * 맨 처음 만나는 갈래 조건 하나만 본다. 갈래가 하나뿐이면 빈 목록이다.
+     */
+    fun branchesIn(node: ConditionNode?): List<List<Guard>> = when (node) {
+        is ConditionNode.Group -> when (node.kind) {
+            GroupKind.EITHER -> node.parts.map { guardsIn(it) }.takeIf { it.size > 1 }.orEmpty()
+            GroupKind.EVERY -> node.parts.asSequence().map { branchesIn(it) }.firstOrNull { it.isNotEmpty() }.orEmpty()
+        }
+        else -> emptyList()
+    }
+
+    /**
      * 구조가 **확정하는** 값(`==` 만). [knownValuesOf] 의 트리 판이다.
      *
      * `>=` 는 성립 조건이지 값이 아니다 — 여기서 1이라고 읽으면 다음 케이스와의 비교가 거짓말이 된다.
@@ -140,13 +153,49 @@ object ScenarioStateReader {
             .filter { it.operator == "==" && !it.symbolic && !it.momentary }
             .associate { it.variable to it.value }
 
-    /** 이 케이스를 실행한 뒤 확정되는 값. `metadata.source.state_after` 가 `Var=value` 형식이다. */
+    /**
+     * 이 케이스를 실행한 뒤 확정되는 값. `metadata.source.state_after` 가 `Var=value` 형식이다.
+     *
+     * 값 여럿은 `;` 로 잇는다(`Lantern=1; Coin=20`). 한 케이스가 여러 상태를 바꾸는 게임에서 하나만
+     * 받으면 나머지가 저작에 안 보인다.
+     */
     fun stateAfter(case: TestCaseEntity, objectMapper: ObjectMapper): Map<String, String> = runCatching {
         val after = objectMapper.readTree(case.metadata.asString())
             .path("source").path("state_after").asText(null) ?: return emptyMap()
-        val (name, value) = after.split("=", limit = 2).let { it[0] to it.getOrNull(1) }
-        if (value.isNullOrBlank()) emptyMap() else mapOf(normalize(name) to value.trim())
+        after.split(";").mapNotNull { part ->
+            val (name, value) = part.split("=", limit = 2).let { it[0].trim() to it.getOrNull(1)?.trim() }
+            if (name.isBlank() || value.isNullOrBlank()) null else normalize(name) to value
+        }.toMap()
     }.getOrElse { emptyMap() }
+
+    /**
+     * 글에 없는 **상식 전제**. `metadata.source.assumed_before` 가 `Var == value; Var2 >= 1` 형식이다.
+     * 자연어 TC 에서 식을 뽑는 쪽이 "무기가 있어야 이긴다"처럼 글에 안 적힌 것을 따로 적어 둔 자리다.
+     */
+    fun assumedBefore(case: TestCaseEntity, objectMapper: ObjectMapper): List<Guard> = runCatching {
+        val written = objectMapper.readTree(case.metadata.asString())
+            .path("source").path("assumed_before").asText(null) ?: return emptyList()
+        written.split(";").mapNotNull { part ->
+            ASSUMED_COMPARISON.matchEntire(part.trim())?.let {
+                Guard(variable = normalize(it.groupValues[1]), operator = it.groupValues[2], value = it.groupValues[3].trim())
+            }
+        }
+    }.getOrElse { emptyList() }
+
+    /**
+     * 케이스 메타가 말하는 **새 게임의 시작 값**. `metadata.source.start_state` 가 `Var=value; Var2=0` 형식이다.
+     * 지도가 없는 프로젝트(자연어 TC)는 입구 화면의 초기값을 읽을 데가 없어, 사람이 확인한 시작 상태를 여기 둔다.
+     */
+    fun startState(case: TestCaseEntity, objectMapper: ObjectMapper): Map<String, String> = runCatching {
+        val written = objectMapper.readTree(case.metadata.asString())
+            .path("source").path("start_state").asText(null) ?: return emptyMap()
+        written.split(";").mapNotNull { part ->
+            val (name, value) = part.split("=", limit = 2).let { it[0].trim() to it.getOrNull(1)?.trim() }
+            if (name.isBlank() || value.isNullOrBlank()) null else normalize(name) to value
+        }.toMap()
+    }.getOrElse { emptyMap() }
+
+    private val ASSUMED_COMPARISON = Regex("""(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)""")
 
     /**
      * 이 케이스를 실행하면 **어느 화면에 서 있게 되나**(ARTEL-654).

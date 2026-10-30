@@ -68,6 +68,7 @@ class ScenarioReconcileService(
     private val trace: AuthoringTrace,
     private val effectRepository: kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository,
     private val repair: kr.artel.orchestration.testscenario.config.ScenarioRepairProperties,
+    private val caseContracts: kr.artel.orchestration.testcase.contract.CaseContractService,
 ) {
     private val logger = LoggerFactory.getLogger(ScenarioReconcileService::class.java)
 
@@ -217,6 +218,7 @@ class ScenarioReconcileService(
                     ScenarioStateReader.defaultOf(row.detail)
                         ?.let { ScenarioStateReader.normalize(row.name) to it }
                 }.toMap()
+                .ifEmpty { metadataStart(projectId) }
         }.onFailure { logger.warn("처음 값 조회 실패 — 조각 도달성 검사 없이 간다: ${it.message}") }
             .getOrElse { emptyMap() }
         val divided = ScenarioConflictSplit.adoptSplitPieces(
@@ -305,6 +307,58 @@ class ScenarioReconcileService(
         val contradictions = repaired.zip(walked).flatMap { (scenario, found) ->
             found.contradictions.map { scenario.title to it }
         }
+        // **흐름이 만들지 않은 전제를 프로젝트의 다른 케이스가 남기면 짚는다.** 지도가 없는 프로젝트
+        // (자연어 TC)에서는 순서를 바로잡을 근거가 이것뿐이다 — 실측(등불 골짜기 27판)에서 깨진 자리
+        // 16곳 대부분이 "앞에 넣었어야 할 케이스를 안 넣었다"였다. 메타 `state_after` 만 센다.
+        val makers = byId.values
+            .flatMap { fact -> fact.leaves.map { (name, value) -> Triple(name.lowercase(), value, fact.id) } }
+            .groupBy({ it.first to it.second }, { it.third })
+        // 시작 값을 아는 이름만 짚는다 — 모르면 처음부터 참인 것(낮에 시작)까지 "만들라"고 짚게 된다(측정 h1).
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
+        val missingMakers = repaired.zip(walked).flatMap { (scenario, found) ->
+            found.opening
+                .filter { it.operator == "==" && it.value != "0" }
+                .filter { guard -> start[guard.variable.lowercase()]?.let { it != guard.value } ?: false }
+                .mapNotNull { guard ->
+                    makers[guard.variable.lowercase() to guard.value]?.let { ids ->
+                        "${scenario.title}: ${guard.variable} == ${guard.value} 를 요구하는 스텝이 있는데 흐름 안에 그 값을 " +
+                            "만드는 스텝이 없습니다. TC ${ids.take(3).joinToString(", ")} 가 그 값을 남깁니다 — 그 앞에 " +
+                            "넣으세요. 요청이 그 상태에서 시작한다고 했으면 그대로 두세요."
+                    }
+                }
+                .distinct()
+        }
+        missingMakers.forEach { logger.info("흐름이 만들지 않은 전제 [runId={}] {}", runId, it) }
+        // **개수는 더해 본다.** `동전 >= 50` 을 요구하는데 흐름이 앞에서 모은 것이 20이면, 어긋남 검사는
+        // 아무 말도 못 한다 — 정해진 값이 없기 때문이다. 실측(등불 골짜기)에서 배를 타는 요청이 모든 조건에서
+        // 0/3 이었다. 케이스 메타가 `+N` 으로 남기는 값만 개수로 본다.
+        val adders = byId.values
+            .flatMap { fact -> fact.leaves.filterValues { it.isSigned() }.map { (name, by) -> Triple(name.lowercase(), by, fact.id) } }
+            .groupBy({ it.first }, { it.third to it.second })
+        val shortCounts = repaired.flatMap { scenario ->
+            val counted = mutableMapOf<String, Double>()
+            scenario.steps.mapIndexedNotNull { index, step ->
+                val fact = step.caseId?.let { byId[it] } ?: return@mapIndexedNotNull null
+                val short = fact.guards.firstOrNull { guard ->
+                    val need = guard.value.toDoubleOrNull()
+                    val name = guard.variable.lowercase()
+                    need != null && name in adders && guard.operator in setOf(">=", ">") &&
+                        (counted[name] ?: 0.0).let { if (guard.operator == ">=") it < need else it <= need }
+                }
+                fact.leaves.filterValues { it.isSigned() }.forEach { (name, by) ->
+                    counted.merge(name.lowercase(), by.toDoubleOrNull() ?: 0.0, Double::plus)
+                }
+                short?.let { guard ->
+                    val name = guard.variable.lowercase()
+                    "${scenario.title}: ${index + 1}번째 스텝(TC ${fact.id})이 ${guard.variable} ${guard.operator} ${guard.value} " +
+                        "를 요구하는데, 그 앞까지 흐름이 모은 ${guard.variable} 는 ${(counted[name] ?: 0.0).let { c -> c - (fact.leaves.entries.firstOrNull { it.key.lowercase() == name }?.value?.toDoubleOrNull() ?: 0.0) }.toInt()} 입니다. " +
+                        adders[name].orEmpty().filter { it.first != fact.id }.take(4).joinToString(", ") { (id, by) -> "TC $id($by)" } +
+                        " 가 ${guard.variable} 를 늘립니다 — 모자란 만큼 앞에 넣으세요. 요청이 그만큼 가진 상태에서 시작한다고 했으면 그대로 두세요."
+                }
+            }
+        }
+        shortCounts.forEach { logger.info("흐름이 모자라게 모은 개수 [runId={}] {}", runId, it) }
+        val reported = contradictions.map { (title, found) -> "$title: ${found.describe()}" } + missingMakers + shortCounts
         val opened = repaired.zip(walked).map { (scenario, found) ->
             scenario.copy(
                 steps = withOpeningNote(scenario.steps, openingFacts(projectId, facts), found.opening)
@@ -362,7 +416,7 @@ class ScenarioReconcileService(
                 runId, findings.summary(), findings.unreviewed, findings.missing, findings.ghost,
                 findings.ungrounded.size, findings.falseUnknowns.size
             )
-            return ReconcileOutcome(0, findings, contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" })
+            return ReconcileOutcome(0, findings, contradicted = reported)
         }
         if (findings.excess.isNotEmpty()) {
             // 거부하지 않는 이유는 ScenarioCoverageAudit.Findings에 적었다. 남기는 이유는, 이 값이
@@ -392,7 +446,15 @@ class ScenarioReconcileService(
         // 물은 것은 하나였다.
         // **묻는 것은 Gap 하나로 좁혔다**(ARTEL-903). 씬별 범위와 빠진 갈래를 걷어낸 기준은
         // [ScenarioQuestionBuilder] 에 적었다 — 답이 시나리오를 바꾸는 물음만 카드가 된다.
-        val questions = ScenarioQuestionBuilder.all(blocked).filterNot { it.id in answered }
+        // **계약 질문**: 짠 경로에서 확인 안 된 요구가 채워지지 않은 곳만 묻는다. 목표에서 거꾸로 훑으면
+        // 큰 프로젝트에서 경로 밖 질문이 쏟아졌다(측정: word-venture 질문 9개 중 8개가 경로 밖).
+        val contractQuestions = (
+            startBlocks(projectId, checked, byId).map(ScenarioQuestionBuilder::startQuestion) +
+                contractBlocks(projectId, checked, byId).map(ScenarioQuestionBuilder::contractQuestion)
+            )
+            .filterNot { it.id in answered }
+            .take(CONTRACT_QUESTIONS_PER_TURN)
+        val questions = ScenarioQuestionBuilder.all(blocked).filterNot { it.id in answered } + contractQuestions
         // 옛 화면은 아직 한 개짜리 칸을 읽는다. 첫 질문을 거기 그대로 둬서 옮겨 올 시간을 준다.
         val question = questions.firstOrNull()
         val allNotices = buildList {
@@ -422,7 +484,10 @@ class ScenarioReconcileService(
             }
             if (question == null) addAll(notices)
             // 갈래는 **알림으로만** 남는다(ARTEL-903) — 질문에서 빠졌으니 건너뛸 이유도 없다.
-            addAll(siblingNotices(siblings, describe))
+            // 자연어 계약 프로젝트에서는 "빠진 갈래"를 알리지 않는다. 요청하지 않은 실패 갈래(검 없이 늑대)를
+            // 매 턴 빠졌다고 적으면 잡음이다 — 다른 갈래가 필요하면 저작이 범위 질문으로 묻는다.
+            val naturalLanguage = byId.values.any { it.leaves.isNotEmpty() || it.assumed.isNotEmpty() }
+            addAll(siblingNotices(if (naturalLanguage) siblings.copy(untestedArms = emptyList()) else siblings, describe))
             unsourcedNotice(findings, checked)?.let(::add)
         }
 
@@ -436,7 +501,7 @@ class ScenarioReconcileService(
             // 0건이라 적었다.
             return ReconcileOutcome(
                 0, findings, allNotices, question, questions, checked,
-                contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" },
+                contradicted = reported,
             )
         }
 
@@ -508,7 +573,7 @@ class ScenarioReconcileService(
         )
         return ReconcileOutcome(
             applied, findings, allNotices, question, questions, checked,
-            contradicted = contradictions.map { (title, found) -> "$title: ${found.describe()}" },
+            contradicted = reported,
             saved = savedScenarios,
         )
     }
@@ -902,14 +967,28 @@ class ScenarioReconcileService(
     }
 
     private suspend fun caseFacts(projectId: Long): List<ScenarioSiblingCheck.CaseFact> = runCatching {
-        authoringCases.all(projectId).map { case ->
+        val all = authoringCases.all(projectId).toList()
+        // 저작에 보내는 목록과 같은 규칙으로, 아무 케이스도 만들지 못하는 전제는 요구로 세지 않는다
+        // ([kr.artel.orchestration.testcase.service.TestCaseService.getAuthoringCases]). 검사만 그것을
+        // 세면 모델이 본 적 없는 요구로 어긋남을 짚는다.
+        val made = all.flatMap { ScenarioStateReader.stateAfter(it, objectMapper).entries }
+            .groupBy({ it.key.lowercase() }, { it.value })
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
+        fun reachable(guard: Guard): Boolean =
+            made.isEmpty() || guard.operator != "==" || guard.value == "0" ||
+                made[guard.variable.lowercase()].orEmpty().contains(guard.value) ||
+                start[guard.variable.lowercase()] == guard.value
+        all.map { case ->
             ScenarioSiblingCheck.CaseFact(
                 id = case.id!!,
                 scene = ScenarioStateReader.sceneOf(case),
                 step = case.step.trim(),
-                guards = conditions.guardsOf(case),
+                guards = conditions.guardsOf(case).filter(::reachable),
                 declared = conditions.knownValuesOf(case),
                 arrivesAt = ScenarioStateReader.arrivesAt(case, objectMapper),
+                leaves = ScenarioStateReader.stateAfter(case, objectMapper),
+                unmade = conditions.guardsOf(case).filterNot(::reachable),
+                assumed = ScenarioStateReader.assumedBefore(case, objectMapper),
             )
         }
     }.onFailure { logger.warn("케이스 전량 조회 실패 — 검사들을 넘어간다: ${it.message}") }
@@ -1019,7 +1098,10 @@ class ScenarioReconcileService(
             requires = fact?.guards.orEmpty().filterNot { it.momentary },
             sets = fact?.guards.orEmpty()
                 .filter { it.operator == "==" && !it.symbolic && !it.momentary }
-                .associate { it.variable to it.value } + fact?.declared.orEmpty() + bridgeSets,
+                .associate { it.variable to it.value } + fact?.declared.orEmpty() + bridgeSets +
+                // 케이스가 남기는 값이 마지막이다 — 등불을 끄는 케이스는 "켜짐"을 요구하고 "꺼짐"을 남긴다.
+                // 부호가 붙은 것(`동전 +20`)은 정하는 것이 아니라 더하는 것이라 여기 안 든다. 아래 개수 검사가 센다.
+                fact?.leaves.orEmpty().filterValues { !it.isSigned() },
             clears = buildSet {
                 gap?.takeIf { !it.contains("→") }?.let(::add)
                 raisedIn.forEach { (value, scenes) ->
@@ -1138,9 +1220,107 @@ class ScenarioReconcileService(
         .getOrElse { emptySet() }
 
     private suspend fun movableValues(projectId: Long): Set<String> = runCatching {
-        authoringCases.writtenValues(projectId).toList().toSet()
+        authoringCases.writtenValues(projectId).toList().toSet() +
+            valuesWrittenInMetadata(projectId).values.flatten()
     }.onFailure { logger.warn("지도가 움직이는 값 조회 실패 — 예전처럼 나눈다: ${it.message}") }
         .getOrElse { emptySet() }
+
+    /**
+     * 케이스 메타의 `state_after` 가 말하는 바뀌는 값. 지도가 없는 프로젝트(자연어 TC)에서는 이것만
+     * 있다 — 안 읽으면 등불을 끄는 케이스가 있어도 "켜짐"과 "꺼짐"을 한 시나리오에 못 담는다고 나눈다.
+     */
+    /**
+     * 짠 경로를 앞에서 걸으며, 확인 안 된 요구(아무도 안 남기는 것 · 상식 추정)가 그 자리까지 채워지지 않은 곳.
+     * 시작 값과 앞 스텝이 남긴 값으로 채워졌으면 묻지 않는다 — 흐름이 이미 답을 갖고 있다.
+     */
+    private suspend fun contractBlocks(
+        projectId: Long,
+        scenarios: List<ScenarioResult>,
+        byId: Map<Long, ScenarioSiblingCheck.CaseFact>,
+    ): List<ScenarioQuestionBuilder.ContractBlock> {
+        if (byId.values.none { it.unmade.isNotEmpty() || it.assumed.isNotEmpty() }) return emptyList()
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
+        val makers = byId.values
+            .flatMap { fact -> fact.leaves.map { (name, value) -> Triple(name.lowercase(), value, fact) } }
+            .groupBy({ it.first to it.second }, { it.third })
+        val out = mutableListOf<ScenarioQuestionBuilder.ContractBlock>()
+        for (scenario in scenarios) {
+            val have = start.toMutableMap()
+            // 앞에 TC 초안이 있으면 그 뒤의 "만드는 케이스를 못 찾았다" 는 묻지 않는다. 초안이 그것을 만든다고
+            // 저작이 냈고, 승인되면 계약이 뽑힌다 — 같은 자리를 초안 표와 질문으로 두 번 묻게 된다.
+            var afterDraft = false
+            for (step in scenario.steps) {
+                if (step.proposedCase != null) afterDraft = true
+                val fact = step.caseId?.let { byId[it] } ?: continue
+                fun holds(guard: Guard): Boolean {
+                    val now = have[guard.variable.lowercase()]
+                    return when (guard.operator) {
+                        "==" -> if (now == null) guard.value == "0" else now == guard.value
+                        "!=" -> now != guard.value
+                        else -> true
+                    }
+                }
+                if (!afterDraft) fact.unmade.filterNot(::holds).forEach {
+                    out += ScenarioQuestionBuilder.ContractBlock(fact.id, fact.step, it, assumed = false, makers = emptyList())
+                }
+                fact.assumed.filterNot(::holds).forEach { guard ->
+                    val who = makers[guard.variable.lowercase() to guard.value].orEmpty().filter { it.id != fact.id }
+                    out += ScenarioQuestionBuilder.ContractBlock(fact.id, fact.step, guard, assumed = true, makers = who.map { it.id to it.step })
+                }
+                fact.leaves.forEach { (name, value) ->
+                    val key = name.lowercase()
+                    val delta = value.takeIf { it.length > 1 && (it[0] == '+' || it[0] == '-') }?.toDoubleOrNull()
+                    have[key] = if (delta != null) ((have[key]?.toDoubleOrNull() ?: 0.0) + delta).toString() else value
+                }
+            }
+        }
+        return out.distinctBy { Triple(it.caseId, it.guard.variable, it.guard.value) }
+    }
+
+    /**
+     * 짠 경로가 **처음 읽을 때 아직 아무도 정하지 않은** 고르는 값(낮 · 밤처럼 0/1 · 수가 아닌 것). 시작 값을 모르면 저작은
+     * 그 값을 바꾸는 스텝이 필요한지 모른다 — 측정(등불 골짜기, 제품 추출)에서 시작 값 22개를 잡고 `시간대` 만 비었다.
+     * 보기는 계약들이 그 값에 쓰는 것들이다. 지도가 있는 프로젝트는 지도가 시작 값을 안다.
+     */
+    private suspend fun startBlocks(
+        projectId: Long,
+        scenarios: List<ScenarioResult>,
+        byId: Map<Long, ScenarioSiblingCheck.CaseFact>,
+    ): List<ScenarioQuestionBuilder.StartBlock> {
+        if (byId.values.none { it.leaves.isNotEmpty() }) return emptyList()
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
+        fun chosen(value: String) = value !in setOf("0", "1") && value.toDoubleOrNull() == null && !value.startsWith("+") && !value.startsWith("-")
+        val values = (byId.values.flatMap { f -> f.guards.filter { it.operator == "==" }.map { it.variable to it.value } } +
+            byId.values.flatMap { f -> f.leaves.entries.map { it.key to it.value } })
+            .filter { (_, v) -> chosen(v) }
+            .groupBy({ it.first.lowercase() }, { it.second })
+            .mapValues { (_, vs) -> vs.distinct() }
+        val names = byId.values.flatMap { f -> f.guards.map { it.variable } + f.leaves.keys }.associateBy { it.lowercase() }
+        val out = linkedSetOf<String>()
+        for (scenario in scenarios) {
+            val set = mutableSetOf<String>()
+            for (step in scenario.steps) {
+                val fact = step.caseId?.let { byId[it] } ?: continue
+                fact.guards.filter { it.operator == "==" && chosen(it.value) }.forEach { guard ->
+                    val key = guard.variable.lowercase()
+                    if (key !in start && key !in set && (values[key]?.size ?: 0) >= 2) out += key
+                }
+                set += fact.leaves.keys.map { it.lowercase() }
+            }
+        }
+        return out.map { ScenarioQuestionBuilder.StartBlock(names[it] ?: it, values[it].orEmpty()) }
+    }
+
+    /** 케이스 메타의 `start_state` 를 모은 것([kr.artel.orchestration.testcase.service.TestCaseService.metadataStart] 와 같은 규칙). */
+    private suspend fun metadataStart(projectId: Long): Map<String, String> =
+        authoringCases.all(projectId).flatMap { ScenarioStateReader.startState(it, objectMapper).entries }
+            .fold(sortedMapOf<String, String>()) { acc, (k, v) -> acc.apply { putIfAbsent(k, v) } }
+            .apply { caseContracts.startState(projectId).forEach { (k, v) -> putIfAbsent(ScenarioStateReader.normalize(k), v) } }
+
+    private suspend fun valuesWrittenInMetadata(projectId: Long): Map<Long, Set<String>> =
+        authoringCases.all(projectId).toList()
+            .associate { case -> case.id!! to ScenarioStateReader.stateAfter(case, objectMapper).keys }
+            .filterValues { it.isNotEmpty() }
 
     /**
      * 지도가 부르는 이름과 사전조건이 적는 이름이 **같은 값**인가.
@@ -1153,9 +1333,11 @@ class ScenarioReconcileService(
             guarded.substringBeforeLast('.', "") == written
 
     private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Set<String>> = runCatching {
-        authoringCases.valuesChangedByCases(projectId).toList()
+        val fromMap = authoringCases.valuesChangedByCases(projectId).toList()
             .groupBy({ it.caseId }, { it.target })
             .mapValues { (_, targets) -> targets.toSet() }
+        val fromMetadata = valuesWrittenInMetadata(projectId)
+        (fromMap.keys + fromMetadata.keys).associateWith { fromMap[it].orEmpty() + fromMetadata[it].orEmpty() }
     }.onFailure { logger.warn("케이스가 바꾸는 값 조회 실패 — 순서를 모른 채 나눈다: ${it.message}") }
         .getOrElse { emptyMap() }
 
@@ -1214,6 +1396,12 @@ class ScenarioReconcileService(
      */
     private suspend fun knownGapAnswers(projectId: Long): Map<String, List<String>> = runCatching {
         val known = linkedMapOf<String, List<String>>()
+        // 게임 정보로 남긴 길이 먼저다. 같은 구간을 다시 들으면 새 답으로 바뀌어 있다. 저장된 시나리오를 채우지 못한 답
+        // (draft 에 답한 것)은 이쪽에만 있다. 대화 기록은 이것이 생기기 전에 들은 구간만 채운다.
+        caseContracts.observedExits(projectId)
+            .filter { it.source in kr.artel.orchestration.testcase.contract.CaseContractService.TOLD }
+            .forEach { known["${it.from}→${it.to}"] = listOf(it.by) }
+        val told = linkedMapOf<String, List<String>>()
         for (row in runMessageRepository.findAnsweredInProject(projectId).toList()) {
             val payload = row.payload?.let { objectMapper.readTree(it.asString()) } ?: continue
             if (payload.path("kind").asText() != "answered") continue
@@ -1221,8 +1409,9 @@ class ScenarioReconcileService(
             if (!id.startsWith(ScenarioQuestionBuilder.GAP_PREFIX)) continue
             val lines = payload.path("filled").takeIf { it.isArray }?.mapNotNull { it.asText().takeIf(String::isNotBlank) }
                 ?: row.content.lines().filter { it.startsWith("· ") }.map { it.removePrefix("· ").trim() }.filter(String::isNotBlank)
-            if (lines.isNotEmpty()) known[id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)] = lines
+            if (lines.isNotEmpty()) told[id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)] = lines
         }
+        told.forEach { (gap, lines) -> known.putIfAbsent(gap, lines) }
         known.toMap()
     }.onFailure { logger.warn("예전에 들은 경로를 읽지 못했다 — 그 구간을 다시 묻는다: ${it.message}") }
         .getOrDefault(emptyMap())
@@ -1369,5 +1558,10 @@ class ScenarioReconcileService(
          */
         val PROGRESS_OPERATORS = setOf("==", ">=", ">")
     }
-
 }
+
+/** `+20` · `-1` 처럼 정하는 값이 아니라 더하는 값인가. */
+private fun String.isSigned(): Boolean = trim().let { it.length > 1 && (it[0] == '+' || it[0] == '-') && it.substring(1).toDoubleOrNull() != null }
+
+/** 한 턴에 내는 계약 질문 상한. 질문이 많으면 사용자에게 부담이다(측정: 요청당 1~2개). */
+private const val CONTRACT_QUESTIONS_PER_TURN = 3
