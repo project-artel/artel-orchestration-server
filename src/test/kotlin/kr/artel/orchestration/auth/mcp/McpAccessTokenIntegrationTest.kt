@@ -192,6 +192,10 @@ class McpAccessTokenIntegrationTest {
             .describedAs("허용된 경로이고 그 TR 이 없다").isNotEqualTo(403)
         assertThat(call(writer, HttpMethod.POST, "${world.base}/test-runs", """{"name":"mcp"}""").body["code"].asText())
             .isEqualTo("insufficient_scope")
+        // 추천 TC: 읽기는 read, 저장은 write 다. 없는 TR 이라 404 지만 경로는 열려 있다(403 이 아니다).
+        assertThat(call(reader, HttpMethod.GET, "${world.base}/test-runs/0/case-recommendations").status).isNotEqualTo(403)
+        assertThat(call(reader, HttpMethod.POST, "${world.base}/test-runs/0/case-recommendations/save", """{"ids":[]}""").status).isEqualTo(403)
+        assertThat(call(writer, HttpMethod.POST, "${world.base}/test-runs/0/case-recommendations/save", """{"ids":[]}""").status).isNotEqualTo(403)
     }
 
     @Test
