@@ -81,7 +81,14 @@ class QaObservationService(
             .map { r, _ -> java.util.Optional.ofNullable(r.get("build_id", java.lang.Long::class.java)?.toLong()) }
             .one().awaitSingleOrNull()?.orElse(null)
         val rows = databaseClient.sql(
-            "SELECT type, payload::text AS payload FROM qa_log WHERE qa_try_id = :id AND type IN ('PULSE','ACTION','TOOL_RESULT','STATUS') ORDER BY id"
+            // 클릭이 무엇에 닿았는지는 SDK 가 보낸 액션 결과(`ACTION_RESULT` 의 `returnValue.reached`)가 말한다. 같은 프레임이
+            // Agent 쪽으로 한 번 더 적히므로 SDK 에서 온 것만 읽는다.
+            """
+            SELECT type, payload::text AS payload FROM qa_log
+             WHERE qa_try_id = :id
+               AND (type IN ('PULSE','ACTION','TOOL_RESULT','STATUS') OR (type = 'ACTION_RESULT' AND direction = 'SDK_TO_ORCHE'))
+             ORDER BY id
+            """.trimIndent()
         ).bind("id", qaTryId).map { r, _ -> r.get("type", String::class.java)!! to (r.get("payload", String::class.java) ?: "{}") }.all().collectList().awaitSingle()
         val (observed, exits) = walk(rows.map { (type, payload) -> type to objectMapper.readTree(payload) })
         val ours = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { it.capabilityKey == null }.associateBy { it.id!! }
@@ -143,6 +150,23 @@ class QaObservationService(
             var windowValues: Map<String, String> = emptyMap()
             val observed = mutableListOf<Observed>()
             val exits = mutableListOf<Exit>()
+            // 기다리던 클릭의 대상을 정한다. null 이면 전해지지 않은 클릭이다 — 그 사이 바뀐 씬은 클릭 때문이 아니다.
+            // 이미 정한 클릭이면(같은 결과를 두 길로 읽었을 때) 아무것도 안 한다.
+            fun resolve(target: String?) {
+                if (lastInput != PENDING_CLICK && mover != PENDING_CLICK && PENDING_CLICK !in inputs && exits.none { it.by == PENDING_CLICK }) return
+                if (target != null) {
+                    val click = "click:$target"
+                    exits.replaceAll { if (it.by == PENDING_CLICK) it.copy(by = click) else it }
+                    inputs.replaceAll { if (it == PENDING_CLICK) click else it }
+                    if (mover == PENDING_CLICK) mover = click
+                    if (lastInput == PENDING_CLICK) lastInput = click
+                } else {
+                    exits.removeIf { it.by == PENDING_CLICK }
+                    inputs.removeAll { it == PENDING_CLICK }
+                    if (mover == PENDING_CLICK) mover = null
+                    if (lastInput == PENDING_CLICK) lastInput = null
+                }
+            }
             for ((type, p) in rows) {
                 when (type) {
                     "PULSE" -> {
@@ -167,21 +191,16 @@ class QaObservationService(
                             "mouse_down" -> { inputs += PENDING_CLICK; lastInput = PENDING_CLICK }
                         }
                     }
+                    // **누른 것은 SDK 의 데이터로 읽는다.** `reached` 가 닿은 UI 경로이고, 비었거나 사람이 포인터를 쥐고 있었으면
+                    // 전해지지 않은 클릭이다. Agent 가 모델에게 보이는 문장을 다시 쪼개던 때는 경로의 띄어쓰기 하나에 깨졌다.
+                    "ACTION_RESULT" -> p.path("results").forEach { r ->
+                        val press = r.path("returnValue").takeIf { it.has("reached") } ?: return@forEach
+                        val target = press.path("reached").asText("")
+                        resolve(target.takeIf { it.isNotBlank() && !press.path("pointerHeldByPerson").asBoolean(false) })
+                    }
+                    // 옛 기록: SDK 결과가 로그에 없던 때는 Agent 의 도구 결과 문장에서 읽는다.
                     "TOOL_RESULT" -> if (p.path("content").asText("").contains("mouse_down:")) {
-                        val target = CLICKED.find(p.path("content").asText(""))?.groupValues?.get(1)
-                        if (target != null) {
-                            val click = "click:$target"
-                            exits.replaceAll { if (it.by == PENDING_CLICK) it.copy(by = click) else it }
-                            inputs.replaceAll { if (it == PENDING_CLICK) click else it }
-                            if (mover == PENDING_CLICK) mover = click
-                            if (lastInput == PENDING_CLICK) lastInput = click
-                        } else {
-                            // 전해지지 않은 클릭이다. 그 사이 바뀐 씬은 클릭 때문이 아니다.
-                            exits.removeIf { it.by == PENDING_CLICK }
-                            inputs.removeAll { it == PENDING_CLICK }
-                            if (mover == PENDING_CLICK) mover = null
-                            if (lastInput == PENDING_CLICK) lastInput = null
-                        }
+                        resolve(CLICKED.find(p.path("content").asText(""))?.groupValues?.get(1))
                     }
                     "STATUS" -> {
                         if (p.path("step").isMissingNode || p.path("step").isNull) continue
@@ -215,8 +234,8 @@ class QaObservationService(
                 val name = "${s.path("declaring").asText()}.${s.path("member").asText()}"
                 if (NOISE.any { it in name }) null else name to value.asText()
             }.toMap()
-        // UI 경로에는 띄어쓰기가 들어간다(`Canvas/Travel Bar/이동: 숲`). 공백 없는 이름만 받았더니 그런 클릭을 전해지지
-        // 않은 것으로 여겨, 그 사이 바뀐 씬(광장→숲)을 출구에서 지웠다 — QA 103 에서 길 넷 중 넷을 놓쳤다.
+        // 옛 기록용(SDK 결과가 로그에 없던 때). UI 경로에는 띄어쓰기가 들어간다(`Canvas/Travel Bar/이동: 숲`) — 공백 없는
+        // 이름만 받았더니 그런 클릭을 전해지지 않은 것으로 여겨 QA 103 에서 길 넷을 지웠다. 지금은 `ACTION_RESULT` 를 먼저 읽는다.
         private val CLICKED = Regex("""mouse_down: ([^\n]+?) 에 보냄""")
     }
 }

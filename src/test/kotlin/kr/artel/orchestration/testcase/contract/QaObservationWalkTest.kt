@@ -78,6 +78,28 @@ class QaObservationWalkTest {
         assertThat(observed.single().input).isEqualTo("click:Canvas/Travel Bar/이동: 숲")
     }
 
+    /** 누른 것은 SDK 가 보낸 액션 결과로 읽는다. 도구 결과 문장이 바뀌거나 없어도 같다. */
+    @Test
+    fun `누른 UI 는 SDK 의 액션 결과에서 읽고 전해지지 않은 클릭은 출구가 아니다`() {
+        fun sdk(reached: String, held: Boolean = false) = row(
+            "ACTION_RESULT",
+            """{"type":"ACTION_RESULT","results":[{"id":1,"success":true},{"id":2,"success":true,"returnValue":{"reached":"$reached","pointerHeldByPerson":$held}},{"id":3,"success":true}]}""",
+        )
+        val (_, exits) = QaObservationService.walk(
+            listOf(
+                pulse("SquareScene"), press(), sdk("Canvas/Travel Bar/이동: 숲"), pulse("ForestScene"), done(1, 1),
+                press(), pulse("SquareScene"), sdk("Canvas/Travel Bar/이동: 광장"),
+                // 같은 결과를 도구 결과 문장으로도 읽는다. 이미 정한 클릭은 바꾸지 않는다.
+                row("TOOL_RESULT", """{"content":"  mouse_down: 전해지지 않음 — 포인터를 사람이 쥐고 있다"}"""), done(2, 2),
+                press(), pulse("SmithyScene"), sdk("", held = true), done(3, 3),
+            ),
+        )
+        assertThat(exits).containsExactly(
+            QaObservationService.Exit("SquareScene", "ForestScene", "click:Canvas/Travel Bar/이동: 숲"),
+            QaObservationService.Exit("ForestScene", "SquareScene", "click:Canvas/Travel Bar/이동: 광장"),
+        )
+    }
+
     @Test
     fun `입력 뒤 씬이 한 번 바뀌면 다음 저절로 바뀐 씬은 그 입력 탓이 아니다`() {
         val (_, exits) = QaObservationService.walk(
