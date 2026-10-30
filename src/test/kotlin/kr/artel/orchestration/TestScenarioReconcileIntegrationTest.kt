@@ -297,6 +297,40 @@ class TestScenarioReconcileIntegrationTest {
     }
 
     /**
+     * 저작 중에 TC 가 생기면(추천 TC 저장 · MCP · 화면에서 넣기) 다음 턴에 지금 TC 목록을 다시 보낸다. 세션은 열 때 받은
+     * 목록만 들고 있어, 새 TC 를 모른 채 "목록에서 못 찾는다" 고 답하고 검수는 "검토 안 함" 을 끝없이 띄웠다(TR 889).
+     * TC 가 그대로면 다시 보내지 않는다.
+     */
+    @Test
+    fun `저작 중에 늘어난 TC 는 다음 턴에 목록을 다시 보낸다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        insertCase(projectId, "광장", "할머니한테 말을 건다")
+
+        framesToSend.add("""{"type":"result","message":"알겠어요","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+        turnReplies.add("""{"type":"result","message":"그대로예요","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+        turnReplies.add("""{"type":"result","message":"새 TC 봤어요","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+        postMessage(client, projectId, runId, token, "광장 시나리오")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList().any { it.role == "ASSISTANT" }
+        }
+        val before = receivedFrames.size
+        postMessage(client, projectId, runId, token, "그대로 한 번 더")
+        awaitUntil { receivedFrames.drop(before).any { it.contains("그대로 한 번 더") } }
+        assertThat(receivedFrames.drop(before).single { it.contains("그대로 한 번 더") }).doesNotContain("test_case_list")
+
+        val added = insertCase(projectId, "숲", "덤불을 조사한다")
+        val middle = receivedFrames.size
+        Thread.sleep(300)
+        postMessage(client, projectId, runId, token, "새 TC 도 넣어 줘")
+        awaitUntil { receivedFrames.drop(middle).any { it.contains("새 TC 도 넣어 줘") } }
+        val turn = receivedFrames.drop(middle).single { it.contains("새 TC 도 넣어 줘") }
+        assertThat(turn).contains("test_case_list").contains("\"id\":$added")
+    }
+
+    /**
      * 지도가 없는 프로젝트(자연어 TC 만 쓴 프로젝트)에서 화면이 바뀌는 자리. 모델이 그 사이에 스스로 미상 스텝을
      * 써도, 아무도 모르는 길이면 그 구간을 묻는다. 사람이 그 길을 알려 준 적이 있으면 묻지 않고 그 말로 채운다.
      * 지도 없음을 "확인 못 함" 으로만 보던 때는 미상 스텝이 남고 묻지도 채우지도 않았다(MCP 로 처음 쓴 프로젝트).
@@ -332,6 +366,8 @@ class TestScenarioReconcileIntegrationTest {
 
         caseContractService.addUserExit(projectId, "광장", "숲", "지도를 열고 숲을 누른다", null)
         val fillRun = runRepository.save(TestRunEntity(projectId = projectId, name = "채우는 런")).id!!
+        // 목은 연결마다 줄 전체를 다시 보낸다. 앞 런의 시나리오가 섞이지 않게 비운다.
+        framesToSend.clear()
         framesToSend.add(scenario("아는 길"))
         postMessage(client, projectId, fillRun, token, "할머니 의뢰부터 숲 덤불까지")
         awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(fillRun).toList().isNotEmpty() }

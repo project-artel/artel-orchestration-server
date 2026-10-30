@@ -329,10 +329,14 @@ class TestScenarioAgentService(
             existing.declined = 0
             // 취소는 **그 턴에만** 걸린다(ARTEL-955). 안 내리면 다음 요청의 결과까지 버린다.
             existing.cancelled.set(false)
-            // 계약이 바뀐 턴이면 바뀐 TC 목록과 시작 값을 함께 보낸다. 세션은 열 때 받은 목록을 들고 있다.
-            if (contractsChanged) {
-                val version = authoringVersions.of(runId)
-                val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
+            // 계약이 바뀌었거나 **TC 가 늘거나 준 턴**이면 지금 TC 목록과 시작 값을 함께 보낸다. 세션은 열 때 받은 목록을
+            // 들고 있다. 저작 중에 추천 TC 를 저장하거나 MCP · 화면에서 TC 를 넣으면 Agent 는 그 TC 를 모르는데, 검수는
+            // 프로젝트의 지금 TC 전부를 기준으로 "검토 안 함" 을 띄워 같은 경고가 끝없이 남았다(MCP 로 TR 889, 10건).
+            val version = authoringVersions.of(runId)
+            val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
+            val caseIds = cases.map { it.id }.toSet()
+            if (contractsChanged || caseIds != existing.sentCaseIds) {
+                existing.sentCaseIds = caseIds
                 sendTurn(sessionKey, existing, turnInput, currentScenarios, cases, testCaseService.startingValues(projectId))
             } else {
                 sendTurn(sessionKey, existing, turnInput, currentScenarios)
@@ -696,6 +700,7 @@ class TestScenarioAgentService(
             .bodyToMono(AgentSessionOpenResponse::class.java)
             .awaitSingle()
         openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply, version)
+        sessions[sessionKey]?.sentCaseIds = cases.map { it.id }.toSet()
         sessions[sessionKey]?.draftOnly = draftOnly
         sessions[sessionKey]?.shownSteps = shownStepsOf(currentScenarios)
         sessions[sessionKey]?.shownModes = shownModesOf(currentScenarios)
@@ -2271,6 +2276,8 @@ class TestScenarioAgentService(
          * 센다. [submitLock] 아래에서만 는다.
          */
         @Volatile var declined: Int = 0,
+        /** 이 세션에 보낸 TC 목록의 id. 프로젝트 TC 가 이것과 달라지면 다음 턴에 목록을 다시 보낸다. */
+        @Volatile var sentCaseIds: Set<Long> = emptySet(),
         /**
          * draft 턴(자동 저장 끔)에서 제출마다 검수가 낸 질문 — 메우지 못한 구간(ARTEL-1117). 저장하는 턴은
          * 턴끝 검수가 다시 계산해 묻지만 draft 턴은 그 검수를 돌지 않으므로, 여기 모았다가 턴 끝에 묻는다.
