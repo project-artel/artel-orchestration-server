@@ -25,6 +25,8 @@ import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestion
+import kr.artel.orchestration.testscenario.service.ScenarioQuestionBuilder
+import kr.artel.orchestration.testcase.contract.CaseContractService
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestionOption
 import kr.artel.orchestration.testscenario.dto.ScenarioStep
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
@@ -101,6 +103,7 @@ class TestScenarioReconcileIntegrationTest {
 
     @LocalServerPort private val port: Int = 0
 
+    @Autowired private lateinit var caseContractService: CaseContractService
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var jwtService: JwtService
     @Autowired private lateinit var oauthUserService: OAuthUserService
@@ -542,6 +545,57 @@ class TestScenarioReconcileIntegrationTest {
 
         awaitUntil { receivedFrames.any { it.contains("앞서 물어본 것") } }
         assertThat(receivedFrames.first { it.contains("앞서 물어본 것") }).contains("턴 전투만 담아 줘")
+    }
+
+    /**
+     * 질문지 한 묶음의 답은 한 번에 받는다. 하나씩 보내면 둘째부터 앞선 턴에 막혔다. 길을 물은 답은 게임 정보의 출구로
+     * 남고, 모델에게는 한 턴으로 간다. 그대로 두기를 고른 것은 빠진다.
+     */
+    @Test
+    fun `질문지 묶음의 답은 한 턴으로 가고 들은 길은 출구로 남는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        insertCase(projectId, "TitleScene", "A")
+
+        framesToSend.add("""{"type":"result","message":"알겠어요","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+        turnReplies.add("""{"type":"result","message":"넣었습니다","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+        postMessage(client, projectId, runId, token, "숲 시나리오")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.role == "ASSISTANT" }
+        }
+        val gaps = ScenarioQuestionBuilder.all(listOf("광장→숲", "숲→광장", "광장→대장간"))
+        runMessageRepository.save(
+            TestRunMessageEntity(
+                testRunId = runId, appUserId = appUserId, role = "ASSISTANT", content = gaps.first().text,
+                payload = Json.of(objectMapper.writeValueAsString(ScenarioQuestion.batchPayload(gaps))),
+            )
+        )
+        val turnsBefore = receivedFrames.size
+
+        client.post()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue(
+                """{"message":"","answers":[
+                  {"question_id":"gap:광장→숲","option_ids":[],"text":"지도를 열고 숲을 누른다"},
+                  {"question_id":"gap:숲→광장","option_ids":[],"text":"숲 입구로 돌아간다"},
+                  {"question_id":"gap:광장→대장간","option_ids":["${ScenarioQuestionBuilder.GAP_LEAVE}"]}
+                ]}""".trimIndent()
+            )
+            .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(5))
+
+        awaitUntil { receivedFrames.drop(turnsBefore).any { it.contains("지도를 열고 숲을 누른다") } }
+        Thread.sleep(500)
+        val turns = receivedFrames.drop(turnsBefore).filter { it.contains("광장→숲") || it.contains("숲→광장") }
+        assertThat(turns).hasSize(1)
+        assertThat(turns.single()).contains("숲 입구로 돌아간다").doesNotContain("광장→대장간")
+        val exits = caseContractService.observedExits(projectId).filter { it.source == CaseContractService.USER_EXIT }
+        assertThat(exits.map { "${it.from}→${it.to}: ${it.by}" })
+            .containsExactlyInAnyOrder("광장→숲: 지도를 열고 숲을 누른다", "숲→광장: 숲 입구로 돌아간다")
     }
 
     /**

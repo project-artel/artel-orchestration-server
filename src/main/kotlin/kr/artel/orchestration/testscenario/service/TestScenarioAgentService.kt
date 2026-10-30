@@ -165,15 +165,32 @@ class TestScenarioAgentService(
         currentScenarios: List<CurrentScenario>,
         answer: ScenarioQuestionAnswer? = null,
         draftOnly: Boolean = false,
+        answers: List<ScenarioQuestionAnswer> = emptyList(),
+        batchIds: List<String>? = null,
+        batchChanged: Boolean = false,
     ) {
+        // **질문지 한 묶음의 답은 한 번에 받는다.** 하나 답할 때마다 보내면 질문 넷에 요청이 넷 나가고, 둘째부터는
+        // 앞선 턴이 도는 중이라 막혔다. 답마다 계약 · 길은 따로 남기고, 모델에게는 한 줄로 모아 한 번 보낸다. 경로 공백은
+        // 남긴 길로 메우기가 채운다.
+        if (answer == null && answers.isNotEmpty()) {
+            val (composed, changed) = absorbAnswers(runId, projectId, appUserId, answers)
+            return sendMessage(
+                sessionKey, runId, projectId, appUserId,
+                listOfNotNull(composed.ifBlank { null }, userInput.ifBlank { null }).joinToString("\n\n"),
+                autoApply, currentScenarios, null, draftOnly,
+                batchIds = answers.map { it.questionId }, batchChanged = changed,
+            )
+        }
         // 되묻는 질문에 대한 답이면 **무엇에 대한 답인지 함께 실어 보낸다**(ARTEL-487). 보기 id만
         // 보내면 모델은 그것이 무슨 뜻인지 모른다 — 질문과 보기 문구를 여기서 다시 붙인다.
         // 세션에 없으면 **저장된 질문**에서 찾는다. 카드 저장으로 물었거나, 서버가 다시 떴거나,
         // 사용자가 새로고침한 화면에서 답할 수 있다 — 그때 답을 잃으면 물어본 보람이 없다.
         // **답이 지목한 질문을 찾는다**(ARTEL-630). 한 번에 여럿을 내므로 세션이 문 첫 질문이
         // 아닐 수 있다 — 그때 첫 것으로 답하면 엉뚱한 질문에 답한 것이 된다.
-        val pending = sessions[sessionKey]?.question?.takeIf { answer == null || it.id == answer.questionId }
-            ?: lastQuestion(runId, appUserId, answer?.questionId)
+        // 묶음 답을 이미 옮긴 턴이면 물은 것은 없다 — 남은 질문 하나에 이 말을 다시 붙이지 않는다.
+        val pending = if (batchIds != null) null
+            else sessions[sessionKey]?.question?.takeIf { answer == null || it.id == answer.questionId }
+                ?: lastQuestion(runId, appUserId, answer?.questionId)
 
         // 미상 구간에 대한 답은 **코드가 그 자리에 넣는다**(ARTEL-487). 모델에게 넘겨 다시 쓰게
         // 했더니 "StoryScene→Map_scene 을 어떻게 가나요"의 답이 엉뚱한 6번 자리에 들어가고 정작
@@ -184,7 +201,7 @@ class TestScenarioAgentService(
         // 적은 말을 그대로 넣는다 — 어색한 문장보다 알려준 것이 사라지는 쪽이 나쁘다.
         // **계약 질문의 답은 코드가 계약에 옮긴다.** 어느 케이스의 어느 요구인지가 질문 id 에 있다. 옮긴 뒤에는
         // 평소처럼 모델에게 넘겨 다시 짜게 한다 — 바뀐 계약을 보고 짠다.
-        var contractsChanged = false
+        var contractsChanged = batchChanged
         // 사람이 알려 준 사실은 이 런의 build 에서 알게 된 것이다. 새 버전의 저작은 앞 버전 사실을 가려 표시한다.
         val factBuild = authoringVersions.of(runId).gameBuildId ?: caseContracts.latestBuildId(projectId)
         contractAnswer(pending, answer)?.let { (ref, option) ->
@@ -285,7 +302,11 @@ class TestScenarioAgentService(
         // **대화에는 사용자가 한 말만 남긴다.** 모델에게 붙여 보내는 맥락(직전 질문, 고른 보기)은
         // 전달을 위한 것이지 사용자가 쓴 문장이 아니다 — 말풍선에 그대로 뜨면 자기가 하지 않은
         // 말을 한 것처럼 보인다.
-        saveMessage(runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) })
+        // 묶음 답이면 그 질문들을 닫는다. 안 닫으면 뒤에 한 말에 "직전에 물어본 것" 이 엉뚱하게 붙는다.
+        saveMessage(
+            runId, appUserId, "USER", userInput.ifBlank { answerSummary(pending, answer) },
+            batchIds?.let { mapOf("kind" to "answered", "ids" to it) },
+        )
         // 들고 있던 프로젝트 사실을 버린다 — 새 요청 사이에 케이스가 늘거나 질문에 답했을 수 있다.
         reconcileService.forget(projectId)
         val existing = sessions[sessionKey]
@@ -432,6 +453,39 @@ class TestScenarioAgentService(
      * 순서가 중요하다 — **깃발을 먼저 세우고** 프레임을 보낸다. 거꾸로 하면 저쪽 답이 깃발보다
      * 먼저 도착해, 취소한 턴의 결과가 평소대로 반영된다.
      */
+    /**
+     * 질문지 한 묶음의 답을 옮긴다. 계약 질문의 답은 계약에, 길을 물은 답은 게임 정보의 출구에 남긴다. 돌려주는 것은
+     * 대화에 남기고 모델에게 보낼 한 줄(`1. 질문 → 답`)과, 계약이 바뀌었는지다. 건너뛴 · 그대로 두기를 고른 답은 빠진다.
+     */
+    private suspend fun absorbAnswers(
+        runId: Long,
+        projectId: Long,
+        appUserId: Long,
+        answers: List<ScenarioQuestionAnswer>,
+    ): Pair<String, Boolean> {
+        val factBuild = authoringVersions.of(runId).gameBuildId ?: caseContracts.latestBuildId(projectId)
+        var changed = false
+        val lines = answers.mapNotNull { answer ->
+            val question = lastQuestion(runId, appUserId, answer.questionId)?.takeIf { it.id == answer.questionId } ?: return@mapNotNull null
+            contractAnswer(question, answer)?.let { (ref, option) ->
+                runCatching { caseContracts.applyAnswer(projectId, ref, option, factBuild) }
+                    .onSuccess { changed = true }
+                    .onFailure { logger.warn("계약 질문의 답을 옮기지 못했다 [runId=$runId]: ${it.message}") }
+            }
+            gapHowTo(question, answer)?.let { howTo ->
+                question.id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX).split(GAP_ARROW, limit = 2).takeIf { it.size == 2 }?.let { (from, to) ->
+                    runCatching { caseContracts.addUserExit(projectId, from.trim(), to.trim(), howTo, factBuild) }
+                        .onFailure { logger.warn("들은 길을 남기지 못했다 [runId=$runId] ${question.id}: ${it.message}") }
+                }
+            }
+            if (ScenarioQuestionBuilder.GAP_LEAVE in answer.optionIds) return@mapNotNull null
+            val chosen = question.options.filter { it.id in answer.optionIds }.map { it.label }
+            val body = (chosen + listOfNotNull(answer.text?.trim()?.ifBlank { null })).joinToString(" / ")
+            body.ifBlank { null }?.let { question.text to it }
+        }
+        return lines.mapIndexed { index, (asked, said) -> "${index + 1}. $asked → $said" }.joinToString("\n") to changed
+    }
+
     /**
      * 지금 이 세션의 턴이 어디인지. 화면이 SSE 에 다시 붙을 때(새로고침 · 연결 끊김) 맨 먼저 보낸다. 끊긴 사이의 진행은
      * 다시 오지 않으므로, 이것이 없으면 화면은 도는 턴을 모르거나 끝난 턴을 계속 기다린다.

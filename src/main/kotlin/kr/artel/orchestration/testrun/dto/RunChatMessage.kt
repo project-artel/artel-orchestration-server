@@ -18,6 +18,8 @@ import kr.artel.orchestration.testscenario.dto.ScenarioQuestionAnswer
 data class RunChatMessage(
     val message: String,
     val answer: ScenarioQuestionAnswer? = null,
+    /** 질문지 한 묶음의 답. 하나씩 보내면 앞선 턴이 도는 중이라 둘째부터 막힌다. */
+    val answers: List<ScenarioQuestionAnswer> = emptyList(),
     val autoApply: Boolean = true,
     val draftOnly: Boolean = false,
 )
