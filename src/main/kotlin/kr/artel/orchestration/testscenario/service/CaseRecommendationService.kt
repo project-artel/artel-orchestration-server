@@ -188,7 +188,8 @@ class CaseRecommendationService(
                 val rec = node.path("recommendation_id").takeIf { it.isNumber }?.asLong() ?: return@forEach
                 if (rec !in to) return@forEach
                 node.remove("recommendation_id")
-                to[rec]?.let { node.put("case_id", it) }
+                // TC 가 되면 그 스텝은 그 TC 를 확인하는 스텝이다. 미상(UNKNOWN)으로 남기면 화면이 모르는 스텝으로 그린다.
+                to[rec]?.let { node.put("case_id", it); node.put("step_source", "CASE") }
                 changed = true
             }
             if (changed) {

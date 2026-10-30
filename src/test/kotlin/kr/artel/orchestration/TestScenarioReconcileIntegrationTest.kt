@@ -296,6 +296,55 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(storedSteps(sale.id!!).map { it.caseId }).containsExactly(caseC)
     }
 
+    /**
+     * 지도가 없는 프로젝트(자연어 TC 만 쓴 프로젝트)에서 화면이 바뀌는 자리. 모델이 그 사이에 스스로 미상 스텝을
+     * 써도, 아무도 모르는 길이면 그 구간을 묻는다. 사람이 그 길을 알려 준 적이 있으면 묻지 않고 그 말로 채운다.
+     * 지도 없음을 "확인 못 함" 으로만 보던 때는 미상 스텝이 남고 묻지도 채우지도 않았다(MCP 로 처음 쓴 프로젝트).
+     */
+    @Test
+    fun `지도 없는 프로젝트도 모르는 화면 사이 길은 묻고 알려 준 길은 채운다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val square = insertCase(projectId, "광장", "할머니한테 말을 건다")
+        val forest = insertCase(projectId, "숲", "덤불을 조사한다")
+        fun scenario(title: String) =
+            """{"type":"result","message":"짰어요","scenarios":[{"title":"$title","description":"d","steps":[""" +
+                """{"action":"할머니 의뢰를 받는다","case_id":$square},{"action":"숲으로 가는 길을 확인해 이동한다","step_source":"UNKNOWN"},""" +
+                """{"action":"덤불을 조사한다","case_id":$forest}]}]}"""
+
+        val askRun = runRepository.save(TestRunEntity(projectId = projectId, name = "묻는 런")).id!!
+        framesToSend.add(scenario("모르는 길"))
+        postMessage(client, projectId, askRun, token, "할머니 의뢰부터 숲 덤불까지")
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(askRun).toList().isNotEmpty() }
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(askRun, appUserId).toList()
+                .any { it.payload?.asString()?.contains("gap:광장→숲") == true }
+        }
+        // 가짜 Agent 는 테스트끼리 응답 줄을 나눠 쓴다. 이 테스트가 보낸 시나리오만 제목으로 고른다.
+        suspend fun titled(runId: Long, title: String) = storedSteps(
+            runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+                .map { scenarioRepository.findById(it.testScenarioId)!! }.first { it.title == title }.id!!,
+        )
+        val asked = titled(askRun, "모르는 길")
+        assertThat(asked.map { it.stepKind?.name }).containsExactly("ACTION", "GAP", "ACTION")
+        assertThat(asked[1].stepUnknownReason).isEqualTo("광장→숲")
+
+        caseContractService.addUserExit(projectId, "광장", "숲", "지도를 열고 숲을 누른다", null)
+        val fillRun = runRepository.save(TestRunEntity(projectId = projectId, name = "채우는 런")).id!!
+        framesToSend.add(scenario("아는 길"))
+        postMessage(client, projectId, fillRun, token, "할머니 의뢰부터 숲 덤불까지")
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(fillRun).toList().isNotEmpty() }
+        Thread.sleep(500)
+        val filled = titled(fillRun, "아는 길")
+        assertThat(filled.map { it.action }).contains("지도를 열고 숲을 누른다")
+        assertThat(filled.none { it.stepKind?.name == "GAP" }).isTrue()
+        assertThat(
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(fillRun, appUserId).toList()
+                .none { it.payload?.asString()?.contains("gap:광장→숲") == true }
+        ).isTrue()
+    }
+
     // ---- (b2) 검수 누락 → 재작성 요청 → 합쳐서 저장 (ARTEL-403) ------------------------------
 
     /**

@@ -170,7 +170,9 @@ class AuthoringDraft {
             changed = true
             draft.copy(steps = draft.steps.map { step ->
                 val rec = step.recommendationId ?: return@map step
-                if (rec !in to) step else step.copy(recommendationId = null, caseId = to[rec] ?: step.caseId)
+                if (rec !in to) step
+                else to[rec]?.let { step.copy(recommendationId = null, caseId = it, stepSource = ScenarioStepSource.CASE) }
+                    ?: step.copy(recommendationId = null)
             })
         }
         return changed

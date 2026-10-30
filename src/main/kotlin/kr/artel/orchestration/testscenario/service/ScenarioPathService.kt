@@ -50,6 +50,8 @@ class ScenarioPathService(
     private val capabilityRepository: CapabilityRepository,
     private val pathRepository: ScenarioPathRepository,
     private val factRepository: ScenarioCaseFactRepository,
+    // 지도가 없는 프로젝트의 길 재료(QA 가 본 출구).
+    private val caseContracts: kr.artel.orchestration.testcase.contract.CaseContractService,
 ) {
     private val logger = LoggerFactory.getLogger(ScenarioPathService::class.java)
 
@@ -70,11 +72,7 @@ class ScenarioPathService(
         if (to == null || to.projectId != projectId) return unknownCase(toTestCaseId)
 
         val contentMapId = contentMapIdOf(projectId, appUserId)
-            ?: return ScenarioPathAnswer(
-                ScenarioPathResult.UNKNOWN,
-                blockedBy = "content-map",
-                note = "이 프로젝트에는 씬 명세가 아직 없다.",
-            )
+            ?: return withoutMap(projectId, from, to)
 
         // **출발 화면은 그 케이스를 실행한 뒤에 서 있는 곳이다**(ARTEL-654). 화면을 넘기는
         // 케이스는 자기가 어디에 도착하는지 적어 둔다. 그것을 안 보면 이미 나와 있는 화면에서
@@ -821,6 +819,47 @@ class ScenarioPathService(
     }
 
     // ---- 조립 -----------------------------------------------------------------------
+
+    /**
+     * 지도가 없는 프로젝트의 답. 자연어 TC 만 쓴 프로젝트(게임을 아직 연결하지 않았다)가 이 길이다.
+     *
+     * 같은 화면 사이는 예전처럼 확인하지 않은 것으로 둔다([ScenarioPathAnswer.unchecked]) — 지도가 없을 때 모든 스텝
+     * 사이에 "모른다" 를 붙이지 않으려던 판단이다. 그러나 **화면이 바뀌는 자리는 TC 와 게임 정보만으로 판단할 수
+     * 있다.** 그 화면으로 가는 TC(`arrives_at`)나 QA 가 본 길이 있으면 저작이 그것을 보고 썼으므로 그대로 두고,
+     * 아무도 모르면 `광장→숲` 구간으로 답한다. 그래야 그 구간을 묻고, 사람이 알려 준 길이 있으면 그 말로 채운다.
+     * 이것이 없을 때는 모델이 스스로 쓴 미상 스텝이 남아 길을 묻지도, 들은 길로 채우지도 않았다.
+     */
+    private suspend fun withoutMap(projectId: Long, from: TestCaseEntity, to: TestCaseEntity): ScenarioPathAnswer {
+        val unchecked = ScenarioPathAnswer(
+            ScenarioPathResult.UNKNOWN,
+            blockedBy = "content-map",
+            note = "이 프로젝트에는 씬 명세가 아직 없다.",
+        )
+        val fromScene = ScenarioStateReader.arrivesAt(from, objectMapper) ?: ScenarioStateReader.sceneOf(from)
+        val toScene = ScenarioStateReader.sceneOf(to)
+        if (fromScene == null || toScene == null || fromScene == toScene) return unchecked
+        if (knownHop(projectId, fromScene, toScene)) return unchecked
+        return ScenarioPathAnswer(
+            ScenarioPathResult.UNKNOWN,
+            blockedBy = "$fromScene→$toScene",
+            note = "$fromScene 에서 $toScene 으로 가는 TC 도, QA 가 본 길도 없다.",
+        )
+    }
+
+    /** 그 화면으로 가는 TC 나 QA 가 본 길이 있나. 게임 씬 이름은 QA 가 그 TC 를 실행할 때 서 있던 씬으로 TC 씬 이름에 잇는다. */
+    private suspend fun knownHop(projectId: Long, fromScene: String, toScene: String): Boolean {
+        val cases = authoringCases.all(projectId)
+        if (cases.any { (ScenarioStateReader.sceneOf(it) ?: it.scene) == fromScene && ScenarioStateReader.arrivesAt(it, objectMapper) == toScene }) {
+            return true
+        }
+        val names = cases.mapNotNull { case ->
+            runCatching { objectMapper.readTree(case.metadata.asString()).path("observed").path("scene").asText("") }.getOrNull()
+                ?.takeIf { it.isNotBlank() }?.let { it to (ScenarioStateReader.sceneOf(case) ?: case.scene) }
+        }.groupBy({ it.first }, { it.second }).mapValues { (_, tc) -> tc.groupingBy { it }.eachCount().maxBy { it.value }.key }
+        return runCatching { caseContracts.observedExits(projectId) }.getOrDefault(emptyList())
+            .filter { it.source == null }
+            .any { (names[it.from] ?: it.from) == fromScene && (names[it.to] ?: it.to) == toScene }
+    }
 
     private suspend fun contentMapIdOf(projectId: Long, appUserId: Long): Long? {
         // TR 이 고른 TC 버전의 지도만 본다(ARTEL-1048). 버전이 없는 TR 이면 예전처럼 최신 빌드다.
