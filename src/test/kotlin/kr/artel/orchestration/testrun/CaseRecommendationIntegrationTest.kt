@@ -56,6 +56,7 @@ class CaseRecommendationIntegrationTest {
     @Autowired private lateinit var runScenarioRepository: TestRunScenarioRepository
     @Autowired private lateinit var scenarioRepository: TestScenarioRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
+    @Autowired private lateinit var recommendations: kr.artel.orchestration.testscenario.service.CaseRecommendationService
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
 
     companion object {
@@ -150,4 +151,28 @@ class CaseRecommendationIntegrationTest {
         assertThat(drafted[0]["steps"][1]["case_id"].isNull).isTrue()
         assertThat(objectMapper.readTree(get(client, "$base/case-recommendations", token))[0]["status"].asText()).isEqualTo("DISCARDED")
     }
+
+    /** 길 추천을 저장하면, 그 길을 사람 말 그대로 채운 사람 스텝이 새 TC 를 확인하는 스텝이 된다. 그래야 QA 가 그 TC 를 판정한다. */
+    @Test
+    fun `길 추천을 저장하면 같은 말의 사람 스텝이 그 TC 를 확인한다`(): Unit = runBlocking {
+        val client = WebClient.create("http://localhost:$port")
+        val (projectId, runId, token) = world("3")
+        val steps = """[{"action":"광장 오른쪽 길로 간다","step_source":"HUMAN","step_kind":"ACTION"},{"action":"숲에서 늑대한테 다가간다","step_source":"HUMAN","step_kind":"ACTION"}]"""
+        val scenario = scenarioRepository.save(
+            kr.artel.orchestration.testscenario.entity.TestScenarioEntity(projectId = projectId, title = "숲", steps = io.r2dbc.postgresql.codec.Json.of(steps)),
+        )
+        runScenarioRepository.save(kr.artel.orchestration.testrun.entity.TestRunScenarioEntity(testRunId = runId, testScenarioId = scenario.id!!, position = 0))
+        val rec = recommendations.recommendSceneMove(projectId, runId, "광장", "숲", "광장 오른쪽 길로 간다")!!
+
+        post(client, "/api/projects/$projectId/test-runs/$runId/case-recommendations/save", token, mapOf("ids" to listOf(rec.id.toString())))
+
+        val caseId = objectMapper.readTree(get(client, "/api/projects/$projectId/test-runs/$runId/case-recommendations", token))[0]["testCaseId"].asLong()
+        val after = objectMapper.readTree(scenarioRepository.findById(scenario.id!!)!!.steps.asString())
+        assertThat(after[0]["case_id"].asLong()).isEqualTo(caseId)
+        assertThat(after[0]["step_source"].asText()).isEqualTo("CASE")
+        // 다른 말의 사람 스텝은 그대로다.
+        assertThat(after[1]["step_source"].asText()).isEqualTo("HUMAN")
+        assertThat(after[1].path("case_id").isNumber).isFalse()
+    }
 }
+

@@ -133,7 +133,12 @@ class CaseRecommendationService(
                 .bind("c", caseId).bind("id", rec.id).fetch().rowsUpdated().awaitSingle()
             saved += rec.copy(status = SAVED, testCaseId = caseId)
         }
-        relink(runId, userId, saved.associate { it.id to it.testCaseId })
+        // 길 추천은 스텝에 추천 표시가 없다 — 그 구간은 메우기가 사람이 한 말 그대로 사람 스텝으로 채웠다. 같은 말의 사람 스텝을
+        // 새 TC 를 확인하는 스텝으로 바꾼다. 안 바꾸면 TC 는 저장돼도 어느 시나리오도 쓰지 않아 QA 가 확인하지 않는다.
+        relink(
+            runId, userId, saved.associate { it.id to it.testCaseId },
+            saved.filter { it.step.isNotBlank() && it.testCaseId != null }.associate { it.step.trim() to it.testCaseId!! },
+        )
         logger.info("추천 TC 저장 [runId={}] {}", runId, saved.map { it.id to it.testCaseId })
         return saved
     }
@@ -158,13 +163,13 @@ class CaseRecommendationService(
      * 추천을 가리키던 스텝을 바꾼다. 값이 TC id 면 그 TC 를 확인하는 스텝이 되고, null 이면 추천 표시만 뗀다. 이 런의 저장된
      * 시나리오와 이 사용자의 draft 를 함께 바꾼다.
      */
-    private suspend fun relink(runId: Long, userId: Long, to: Map<Long, Long?>) {
-        if (to.isEmpty()) return
+    private suspend fun relink(runId: Long, userId: Long, to: Map<Long, Long?>, byAction: Map<String, Long> = emptyMap()) {
+        if (to.isEmpty() && byAction.isEmpty()) return
         val rows = databaseClient.sql(
             """
             SELECT s.id, s.steps::text AS steps FROM test_scenario s
               JOIN test_run_scenario r ON r.test_scenario_id = s.id
-             WHERE r.test_run_id = :r AND s.steps::text LIKE '%recommendation_id%'
+             WHERE r.test_run_id = :r AND (s.steps::text LIKE '%recommendation_id%' OR s.steps::text LIKE '%HUMAN%')
             """.trimIndent()
         ).bind("r", runId).map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() to row.get("steps", String::class.java)!! }
             .all().collectList().awaitSingle()
@@ -173,6 +178,13 @@ class CaseRecommendationService(
             var changed = false
             steps.forEach { step ->
                 val node = step as? ObjectNode ?: return@forEach
+                if (node.path("step_source").asText() == "HUMAN" && !node.path("case_id").isNumber) {
+                    byAction[node.path("action").asText("").trim()]?.let { caseId ->
+                        node.put("case_id", caseId)
+                        node.put("step_source", "CASE")
+                        changed = true
+                    }
+                }
                 val rec = node.path("recommendation_id").takeIf { it.isNumber }?.asLong() ?: return@forEach
                 if (rec !in to) return@forEach
                 node.remove("recommendation_id")
@@ -185,7 +197,9 @@ class CaseRecommendationService(
             }
         }
         val key = "$userId:$runId"
-        if (drafts.of(key).relink(to)) drafts.publish(key)
+        val draft = drafts.of(key)
+        val relinked = draft.relink(to)
+        if (draft.linkHuman(byAction) || relinked) drafts.publish(key)
     }
 
     private suspend fun byIds(runId: Long, ids: List<Long>?): List<Recommendation> {

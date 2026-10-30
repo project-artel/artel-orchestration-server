@@ -6,6 +6,7 @@ import kr.artel.orchestration.testscenario.dto.DraftScenario
 import kr.artel.orchestration.testscenario.dto.DraftScenarioEdit
 import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
+import kr.artel.orchestration.testscenario.dto.ScenarioStepSource
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import org.springframework.stereotype.Component
 import java.util.concurrent.ConcurrentHashMap
@@ -174,6 +175,26 @@ class AuthoringDraft {
         }
         return changed
     }
+
+    /**
+     * 사람이 알려 준 길로 채운 스텝(`HUMAN`, TC 없음)을 그 길로 저장한 TC 를 확인하는 스텝으로 바꾼다. 글이 같은 스텝만이다 —
+     * 그 길은 사람이 한 말 그대로 스텝이 되고, 추천 TC 의 행동도 같은 말이다.
+     */
+    fun linkHuman(byAction: Map<String, Long>): Boolean {
+        if (byAction.isEmpty()) return false
+        var changed = false
+        entries.replaceAll { _, draft ->
+            if (draft.steps.none { it.humanWay(byAction) != null }) return@replaceAll draft
+            changed = true
+            draft.copy(steps = draft.steps.map { step ->
+                step.humanWay(byAction)?.let { caseId -> step.copy(caseId = caseId, stepSource = ScenarioStepSource.CASE) } ?: step
+            })
+        }
+        return changed
+    }
+
+    private fun ChatScenarioStep.humanWay(byAction: Map<String, Long>): Long? =
+        if (stepSource == ScenarioStepSource.HUMAN && caseId == null) byAction[action.trim()] else null
 
     private fun nextNewKey(): String {
         lastNew += 1
