@@ -137,7 +137,7 @@ class CaseRecommendationService(
         // 새 TC 를 확인하는 스텝으로 바꾼다. 안 바꾸면 TC 는 저장돼도 어느 시나리오도 쓰지 않아 QA 가 확인하지 않는다.
         relink(
             runId, userId, saved.associate { it.id to it.testCaseId },
-            saved.filter { it.step.isNotBlank() && it.testCaseId != null }.associate { it.step.trim() to it.testCaseId!! },
+            saved.filter { it.step.isNotBlank() && it.testCaseId != null }.associate { sameWords(it.step) to it.testCaseId!! },
         )
         logger.info("추천 TC 저장 [runId={}] {}", runId, saved.map { it.id to it.testCaseId })
         return saved
@@ -179,7 +179,7 @@ class CaseRecommendationService(
             steps.forEach { step ->
                 val node = step as? ObjectNode ?: return@forEach
                 if (node.path("step_source").asText() == "HUMAN" && !node.path("case_id").isNumber) {
-                    byAction[node.path("action").asText("").trim()]?.let { caseId ->
+                    byAction[sameWords(node.path("action").asText(""))]?.let { caseId ->
                         node.put("case_id", caseId)
                         node.put("step_source", "CASE")
                         changed = true
@@ -222,6 +222,12 @@ class CaseRecommendationService(
     }
 
     companion object {
+        /**
+         * 사람 스텝과 추천 TC 의 행동이 같은 말인가를 보는 꼴. 메우기는 사람 말 끝에 마침표를 붙여 넣는데 추천은 말
+         * 그대로다 — 끝 문장부호와 앞뒤 공백 차이로 잇지 못한 적이 있다(MCP 확인, "…숲 버튼을 누른다." 와 "…누른다").
+         */
+        fun sameWords(text: String): String = text.trim().trimEnd('.', '。', '!', '?', ' ').trim()
+
         const val PENDING = "PENDING"
         const val SAVED = "SAVED"
     }

@@ -196,7 +196,7 @@ class AuthoringDraft {
     }
 
     private fun ChatScenarioStep.humanWay(byAction: Map<String, Long>): Long? =
-        if (stepSource == ScenarioStepSource.HUMAN && caseId == null) byAction[action.trim()] else null
+        if (stepSource == ScenarioStepSource.HUMAN && caseId == null) byAction[CaseRecommendationService.sameWords(action)] else null
 
     private fun nextNewKey(): String {
         lastNew += 1

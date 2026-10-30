@@ -157,7 +157,8 @@ class CaseRecommendationIntegrationTest {
     fun `길 추천을 저장하면 같은 말의 사람 스텝이 그 TC 를 확인한다`(): Unit = runBlocking {
         val client = WebClient.create("http://localhost:$port")
         val (projectId, runId, token) = world("3")
-        val steps = """[{"action":"광장 오른쪽 길로 간다","step_source":"HUMAN","step_kind":"ACTION"},{"action":"숲에서 늑대한테 다가간다","step_source":"HUMAN","step_kind":"ACTION"}]"""
+        // 메우기는 사람 말 끝에 마침표를 붙여 넣는다. 추천은 말 그대로라 끝 문장부호가 달라도 같은 말로 본다.
+        val steps = """[{"action":"광장 오른쪽 길로 간다.","step_source":"HUMAN","step_kind":"ACTION"},{"action":"숲에서 늑대한테 다가간다","step_source":"HUMAN","step_kind":"ACTION"}]"""
         val scenario = scenarioRepository.save(
             kr.artel.orchestration.testscenario.entity.TestScenarioEntity(projectId = projectId, title = "숲", steps = io.r2dbc.postgresql.codec.Json.of(steps)),
         )
