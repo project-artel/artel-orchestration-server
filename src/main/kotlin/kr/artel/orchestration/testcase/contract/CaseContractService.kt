@@ -80,6 +80,11 @@ class CaseContractService(
         }
     }
 
+    /** 뽑을 계약이 남았나 — 돌고 있는 정리가 있거나, 계약이 없거나 문구가 바뀐 글 TC 가 있다. */
+    suspend fun hasPending(projectId: Long): Boolean =
+        running[projectId]?.isActive == true ||
+            testCases.findByProjectIdOrderByIdAsc(projectId).toList().any { it.capabilityKey == null && needsContract(it) }
+
     suspend fun refresh(projectId: Long): CaseContractRefresh = locks.computeIfAbsent(projectId) { Mutex() }.withLock {
         val cases = testCases.findByProjectIdOrderByIdAsc(projectId).toList()
         val need = cases.filter { it.capabilityKey == null && needsContract(it) }

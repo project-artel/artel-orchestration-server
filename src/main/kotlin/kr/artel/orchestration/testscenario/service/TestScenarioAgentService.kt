@@ -299,7 +299,24 @@ class TestScenarioAgentService(
                 sendTurn(sessionKey, existing, turnInput, currentScenarios)
             }
         } else {
-            openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly)
+            // **세션 열기는 요청과 떼어 돌린다.** 처음 여는 프로젝트는 계약 정리로 몇 분이 걸리는데, 그동안 요청을 붙잡고
+            // 있으면 브라우저 · 프록시가 먼저 끊고 메시지가 Agent 에 닿지 않는다(실측: 78초 뒤 끊김). 받았다고 바로 답하고,
+            // 결과와 실패는 늘 그렇듯 SSE 로 간다.
+            scope.launch {
+                try {
+                    openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly)
+                    progress(sessionKey, AuthoringStage.SENT)
+                    watch(sessionKey, runId, appUserId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.error("Agent 세션 열기 실패 [sessionKey=$sessionKey]: ${e.message}")
+                    runLocks.release(sessionKey)
+                    streamManager.emit(sessionKey, ScenarioStreamEvent(type = "error", code = "agent_unavailable", detail = OPEN_FAILED_MESSAGE))
+                    runCatching { saveMessage(runId, appUserId, "ASSISTANT", OPEN_FAILED_MESSAGE) }
+                }
+            }
+            return
         }
         // 보낸 뒤에 알린다. 세션 오픈이나 턴 전송이 실패하면 "보냈다"가 거짓이 되고,
         // 그 경우 사용자는 진행 중인 것처럼 보이는 화면 앞에서 오지 않을 답을 기다리게 된다.
@@ -516,6 +533,9 @@ class TestScenarioAgentService(
         val version = authoringVersions.of(runId)
         // 목록의 내용 · 입력 · 바꾸는 값까지 그 버전 것이어야 하므로 맥락 안에서 읽는다(ARTEL-1064).
         // 글만 있는 TC 의 계약을 먼저 채운다 — 빠진 것과 문구가 바뀐 것만. 못 채워도 저작은 한다(예전처럼 글로 짠다).
+        // 처음 여는 프로젝트는 TC 마다 계약을 뽑느라 몇 분이 걸린다(TC 73건 2분). 그동안 화면이 멈춘 것처럼 보이지 않게
+        // "케이스를 읽는 중" 을 띄운다.
+        if (caseContracts.hasPending(projectId)) progress(sessionKey, AuthoringStage.READING_CASES)
         runCatching { withTimeoutOrNull(CONTRACT_TIMEOUT_MS) { caseContracts.refreshInBackground(projectId).await() } }
             .onFailure { logger.warn("계약 정리 실패 — 글만으로 짠다 [projectId=$projectId]: ${it.message}") }
         val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
@@ -1742,10 +1762,7 @@ class TestScenarioAgentService(
             }
 
             // Agent 응답을 타입화한 봉투로 파싱해 SSE로 중계한다(type=result|error).
-            val parsed = objectMapper.readValue(payloadText, ScenarioStreamEvent::class.java)
-            // 이번 턴이 남긴 추천 TC 를 답에 싣는다 — 화면이 답 말풍선 안의 카드로 보인다.
-            val event = session?.turnRecommendations?.takeIf { parsed.type == "result" && it.isNotEmpty() }
-                ?.let { recs -> parsed.copy(recommendations = recs.map { it.wire() }) } ?: parsed
+            val event = objectMapper.readValue(payloadText, ScenarioStreamEvent::class.java)
             // 결과든 오류든 **턴은 여기서 끝난다.** 감시를 풀지 않으면 잠시 뒤 "멎었다"고
             // 말하게 되고, 그건 방금 답을 받은 사용자에게 거짓말이다.
             // 결과는 아래에서 저장한 뒤에 런 잠금을 푼다(ARTEL-1264). 오류는 저장할 것이 없어 바로 푼다.
@@ -1754,12 +1771,17 @@ class TestScenarioAgentService(
             // 읽어야 해서 DB 를 거치므로, 그런 결과는 아래 코루틴에서 채워 내보낸다.
             val needsModes = event.type == "result" && session != null &&
                 event.scenarios.orEmpty().any { it.executionMode == null }
-            if (!needsModes) streamManager.emit(sessionKey, event)
+            // 결과는 아래 코루틴에서 내보낸다 — 앞서 받은 시나리오의 처리(추천 TC 남기기)가 끝난 뒤여야 답에 추천을 싣는다.
+            if (event.type != "result" || session == null) streamManager.emit(sessionKey, event)
 
             if (event.type == "result" && session != null) {
                 scope.launch {
                   try {
-                    if (needsModes) streamManager.emit(sessionKey, withExecutionModes(session, event))
+                    // 하나씩 받은 시나리오는 그 처리 코루틴이 아직 돌 수 있다. 끝나기를 기다린 뒤 이번 턴의 추천 TC 를 싣는다.
+                    session.submitLock.withLock { }
+                    val event = session.turnRecommendations.takeIf { it.isNotEmpty() }
+                        ?.let { recs -> event.copy(recommendations = recs.map { it.wire() }) } ?: event
+                    streamManager.emit(sessionKey, if (needsModes) withExecutionModes(session, event) else event)
                     // Agent 메시지를 ASSISTANT 채팅으로 저장.
                     try {
                         // 결과·설명·질문 칸은 payload 로 함께 든다(ARTEL-927 · ARTEL-1117). `content` 는
@@ -2209,6 +2231,7 @@ class TestScenarioAgentService(
     companion object {
         /** 답을 기다리던 턴의 Agent 연결이 끊겼을 때 화면과 대화 기록에 남기는 것. */
         const val AGENT_DISCONNECTED = "agent_disconnected"
+        const val OPEN_FAILED_MESSAGE = "저작 Agent 를 열지 못해 이번 요청을 처리하지 못했어요. 잠시 뒤 같은 말을 다시 보내 주세요."
         const val AGENT_DISCONNECTED_MESSAGE =
             "저작 Agent 와 연결이 끊겨 이번 요청을 처리하지 못했어요. 같은 말을 다시 보내 주세요 — 앞의 대화는 이어집니다."
 
