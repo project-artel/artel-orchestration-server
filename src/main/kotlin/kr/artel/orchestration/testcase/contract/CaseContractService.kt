@@ -6,7 +6,6 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -66,19 +65,8 @@ class CaseContractService(
         return current
     }
 
-    /**
-     * TC 를 만들거나 고친 뒤 부른다. 저작을 열 때 기다리지 않게 미리 정리해 둔다. 몇 초 모아서 한 번 돌고, 돌고 있는
-     * 정리가 있으면 끝난 뒤 다시 돈다 — 그 정리는 새 TC 를 읽기 전에 시작했을 수 있다.
-     */
-    fun refreshSoon(projectId: Long) {
-        scope.launch {
-            delay(REFRESH_DEBOUNCE_MS)
-            runCatching {
-                running[projectId]?.join()
-                refreshInBackground(projectId).await()
-            }.onFailure { logger.warn("계약 미리 정리 실패 [projectId=$projectId]: ${it.message}") }
-        }
-    }
+    // TC 를 만들거나 고친 뒤 미리 정리하지 않는다. 모델은 사용자의 토큰으로 돈다 — 요청하지 않은 때에 부르면 그 사람의
+    // 토큰을 몰래 쓰는 것이다. 정리는 저작을 여는 요청 안에서만 하고, 그동안은 화면에 그 단계를 보인다.
 
     /** 뽑을 계약이 남았나 — 돌고 있는 정리가 있거나, 계약이 없거나 문구가 바뀐 글 TC 가 있다. */
     suspend fun hasPending(projectId: Long): Boolean =
@@ -534,8 +522,5 @@ class CaseContractService(
 
         /** 뽑는 칸의 판본. 2: 다른 화면으로 가는 TC 의 도착 화면(`arrives_at`). */
         const val CONTRACT_VERSION = 2
-
-        /** TC 를 연달아 넣을 때 한 번에 모아 정리하려고 기다리는 시간. */
-        private const val REFRESH_DEBOUNCE_MS = 3_000L
     }
 }

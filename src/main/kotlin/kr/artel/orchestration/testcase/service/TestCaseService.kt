@@ -512,7 +512,6 @@ class TestCaseService(
         if (folderId == null && gameBuildId == null) {
             val created = repository.save(entity)
             projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음
-            caseContracts.refreshSoon(projectId) // 저작을 열 때 기다리지 않게 계약을 미리 정리한다
             return created.toTestCaseResponse()
         }
         val saved = transactionalOperator.executeAndAwait {
@@ -525,7 +524,6 @@ class TestCaseService(
             created
         }
         projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
-        caseContracts.refreshSoon(projectId) // 저작을 열 때 기다리지 않게 계약을 미리 정리한다
         return saved.toTestCaseResponse(folderId)
     }
 
@@ -553,7 +551,6 @@ class TestCaseService(
             repository.countByProjectIdAndIdIn(projectId, caseIds).toInt()
         }
         projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
-        caseContracts.refreshSoon(projectId) // 저작을 열 때 기다리지 않게 계약을 미리 정리한다
         return TestCaseMoveResponse(moved)
     }
 
@@ -612,7 +609,6 @@ class TestCaseService(
         )
         val saved = repository.save(updated)
         projectChangeStreamManager.notify(saved.projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음
-        caseContracts.refreshSoon(saved.projectId) // 저작을 열 때 기다리지 않게 계약을 미리 정리한다
         return saved.toTestCaseResponse(folderItems.findFirstFolderId(caseId))
     }
 
