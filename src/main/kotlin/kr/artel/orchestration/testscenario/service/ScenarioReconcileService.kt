@@ -1399,7 +1399,7 @@ class ScenarioReconcileService(
         // 게임 정보로 남긴 길이 먼저다. 같은 구간을 다시 들으면 새 답으로 바뀌어 있다. 저장된 시나리오를 채우지 못한 답
         // (draft 에 답한 것)은 이쪽에만 있다. 대화 기록은 이것이 생기기 전에 들은 구간만 채운다.
         caseContracts.observedExits(projectId)
-            .filter { it.source == kr.artel.orchestration.testcase.contract.CaseContractService.USER_EXIT }
+            .filter { it.source in kr.artel.orchestration.testcase.contract.CaseContractService.TOLD }
             .forEach { known["${it.from}→${it.to}"] = listOf(it.by) }
         val told = linkedMapOf<String, List<String>>()
         for (row in runMessageRepository.findAnsweredInProject(projectId).toList()) {

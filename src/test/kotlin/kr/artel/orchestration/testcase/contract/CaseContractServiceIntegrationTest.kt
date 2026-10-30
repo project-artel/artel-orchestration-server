@@ -348,4 +348,25 @@ class CaseContractServiceIntegrationTest {
         val sent = testCases.getAuthoringCases(project.id!!, user.id!!).associateBy { it.id }
         assertThat(sent[square.id]!!.exits).contains(SceneExit("숲", "광장 오른쪽 길로 간다"))
     }
+
+    /** MCP 로 들어온 길은 출처 mcp 로 남고, 사람이 알려 준 길을 덮지 못한다. 사람이 다시 알려 주면 둘 다 바뀐다. */
+    @Test
+    fun `MCP 로 들은 길은 mcp 로 남고 사람이 알려 준 길을 덮지 않는다`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "told-by-mcp", genre = "RPG", createdAt = now, updatedAt = now))
+        val jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg", "none")
+            .claim(kr.artel.orchestration.auth.cli.CREDENTIAL_CLAIM, kr.artel.orchestration.auth.cli.CREDENTIAL_MCP).build()
+        val viaMcp = org.springframework.security.core.context.ReactiveSecurityContextHolder
+            .withAuthentication(org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt))
+        suspend fun mcp(block: suspend () -> Unit) = kotlinx.coroutines.withContext(kotlinx.coroutines.reactor.ReactorContext(viaMcp)) { block() }
+
+        mcp { service.addUserExit(project.id!!, "광장", "숲", "이동 줄에서 숲을 누른다", null) }
+        assertThat(service.observedExits(project.id!!).single().source).isEqualTo(CaseContractService.MCP)
+
+        service.addUserExit(project.id!!, "광장", "숲", "광장 오른쪽 길로 간다", null)
+        mcp { service.addUserExit(project.id!!, "광장", "숲", "지도에서 숲을 누른다", null) }
+        val exits = service.observedExits(project.id!!)
+        assertThat(exits.map { it.source to it.by }).containsExactly(CaseContractService.USER to "광장 오른쪽 길로 간다")
+    }
 }
+

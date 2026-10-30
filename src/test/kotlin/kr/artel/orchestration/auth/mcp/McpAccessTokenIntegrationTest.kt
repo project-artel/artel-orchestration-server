@@ -186,7 +186,16 @@ class McpAccessTokenIntegrationTest {
         val wolf = listed.body["cases"].first { it["step"].asText() == "늑대를 공격한다." }
         assertThat(wolf["needs"].map { it.asText() }).containsExactly("검 == 1")
         assertThat(wolf["leaves"].map { it.asText() }).containsExactly("늑대_처치=1", "동전=+30")
-        assertThat(wolf["contractSource"].asText()).isEqualTo("user")
+        // MCP 로 들어온 계약은 개발자의 Agent 가 알려 준 것이다 — 사람이 정한 것(user)과 가른다.
+        assertThat(wolf["contractSource"].asText()).isEqualTo("mcp")
+        // 사람이 같은 TC 의 계약을 고치면 user 가 되고, 그 뒤 MCP 가 다시 보내도 사람이 정한 것이 남는다.
+        val wolfId = wolf["testCaseId"].asText()
+        fun again(needs: String) = """{"cases":[{"testCaseId":"$wolfId","scene":"숲","step":"늑대를 공격한다.","expectedValue":"늑대가 쓰러진다.","needs":["$needs"]}]}"""
+        assertThat(call(world.session, HttpMethod.POST, "${world.base}/case-contracts/cases", again("검 >= 1")).status).isEqualTo(200)
+        assertThat(call(writer, HttpMethod.POST, "${world.base}/case-contracts/cases", again("검 == 2")).status).isEqualTo(200)
+        val kept = call(reader, HttpMethod.GET, "${world.base}/case-contracts").body["cases"].first { it["testCaseId"].asText() == wolfId }
+        assertThat(kept["contractSource"].asText()).isEqualTo("user")
+        assertThat(kept["needs"].map { it.asText() }).containsExactly("검 >= 1")
         assertThat(listed.body["startState"]["검"].asText()).isEqualTo("0")
         assertThat(call(reader, HttpMethod.GET, "${world.base}/test-runs/0/scenarios").status)
             .describedAs("허용된 경로이고 그 TR 이 없다").isNotEqualTo(403)

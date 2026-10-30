@@ -160,7 +160,7 @@ class TestCaseService(
         fun earlierFact(case: TestCaseEntity): Boolean {
             val mark = runCatching { objectMapper.readTree(case.metadata.asString()).path("contract") }.getOrNull() ?: return false
             val built = mark.path("build_id").takeIf { it.isNumber }?.asLong() ?: return false
-            return mark.path("source").asText() in setOf("user", "observed") && currentBuild != null && built != currentBuild
+            return mark.path("source").asText() in setOf("user", "mcp", "observed") && currentBuild != null && built != currentBuild
         }
         // 씬 전이 TC — 계약이 "하면 다른 화면으로 간다" 고 표시한 TC 는 그 화면으로 가는 길이다. QA 가 지나가기 전
         // 첫 저작부터 화면 이동을 안다. 무엇을 누르는지는 TC 의 행동 글이 말한다.

@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
+import kr.artel.orchestration.auth.mcp.isMcpRequest
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -110,15 +111,22 @@ class CaseContractService(
      */
     suspend fun addUserExit(projectId: Long, from: String, to: String, by: String, buildId: Long?) {
         if (from.isBlank() || to.isBlank() || by.isBlank()) return
-        val kept = observedExits(projectId).filterNot { it.source == USER_EXIT && it.from == from && it.to == to }
-        val exits = kept + QaObservationService.Exit(from, to, by, buildId, USER_EXIT)
+        val who = factBy()
+        val exits = observedExits(projectId)
+        // 사람이 알려 준 길은 MCP 로 들어온 답이 덮지 않는다. 사람이 다시 알려 주면 둘 다 바꾼다.
+        if (who == MCP && exits.any { it.source == USER && it.from == from && it.to == to }) {
+            logger.info("사람이 알려 준 길이 있어 MCP 답은 남기지 않음 [projectId={}] {}→{}", projectId, from, to)
+            return
+        }
+        val kept = exits.filterNot { it.source in TOLD && it.from == from && it.to == to }
+        val next = kept + QaObservationService.Exit(from, to, by, buildId, who)
         databaseClient.sql(
             """
             INSERT INTO case_glossary (project_id, exits, updated_at) VALUES (:p, CAST(:e AS jsonb), now())
             ON CONFLICT (project_id) DO UPDATE SET exits = EXCLUDED.exits, updated_at = now()
             """.trimIndent()
-        ).bind("p", projectId).bind("e", objectMapper.writeValueAsString(exits)).fetch().rowsUpdated().awaitSingle()
-        logger.info("사람이 알려 준 길을 남김 [projectId={}] {}→{}: {}", projectId, from, to, by)
+        ).bind("p", projectId).bind("e", objectMapper.writeValueAsString(next)).fetch().rowsUpdated().awaitSingle()
+        logger.info("알려 준 길을 남김 [projectId={}, by={}] {}→{}: {}", projectId, who, from, to, by)
     }
 
     /** 새 게임 시작 상태. 없으면 빈 map 이다. */
@@ -375,7 +383,7 @@ class CaseContractService(
             1 -> parts.first()
             else -> objectMapper.createObjectNode().apply { put("kind", "every"); putArray("parts").addAll(parts) }
         }
-        saveCase(caseId, condition, source, meta, USER)
+        saveCase(caseId, condition, source, meta)
     }
 
     /** 계약에 쓰는 이름 꼴. Agent 가 뽑은 계약과 같은 규칙이다(공백 → `_`). */
@@ -448,17 +456,27 @@ class CaseContractService(
         else -> node
     }
 
+    /** 지금 요청이 남기는 사실의 출처. MCP 연결로 들어온 요청이면 `mcp`, 아니면 `user` 다. */
+    private suspend fun factBy(): String = if (isMcpRequest()) MCP else USER
+
+    private fun humanWrote(meta: JsonNode): Boolean = meta.path("contract").path("source").asText() == USER
+
     private suspend fun saveCase(
         caseId: Long,
         condition: JsonNode?,
         source: ObjectNode,
         meta: ObjectNode,
-        by: String = USER,
+        by: String? = null,
         buildId: Long? = null,
     ) {
+        val who = by ?: factBy()
+        if (who == MCP && humanWrote(meta)) {
+            logger.info("사람이 정한 계약이라 MCP 답은 덮지 않음 [caseId={}]", caseId)
+            return
+        }
         meta.set<JsonNode>("source", source)
         (meta.path("contract") as? ObjectNode ?: objectMapper.createObjectNode().also { meta.set<JsonNode>("contract", it) })
-            .put("source", by).put("at", Instant.now().toString())
+            .put("source", who).put("at", Instant.now().toString())
             // 어느 build 에서 알게 된 사실인가. 새 버전의 저작은 이것으로 앞 버전 사실을 가려 표시한다.
             .apply { if (buildId != null) put("build_id", buildId) else remove("build_id") }
         val spec = databaseClient.sql("UPDATE test_case SET condition = CAST(:condition AS jsonb), metadata = CAST(:meta AS jsonb), updated_at = now() WHERE id = :id")
@@ -467,7 +485,7 @@ class CaseContractService(
             .fetch().rowsUpdated().awaitSingle()
     }
 
-    private suspend fun addLeaves(projectId: Long, caseId: Long, pair: String, by: String = USER, buildId: Long? = null) {
+    private suspend fun addLeaves(projectId: Long, caseId: Long, pair: String, by: String? = null, buildId: Long? = null) {
         val case = testCases.findById(caseId)?.takeIf { it.projectId == projectId } ?: return
         val meta = objectMapper.readTree(case.metadata.asString()) as ObjectNode
         val source = (meta.path("source") as? ObjectNode) ?: objectMapper.createObjectNode()
@@ -508,6 +526,15 @@ class CaseContractService(
     companion object {
         /** 사람이 알려 준 출구의 `source`. */
         const val USER_EXIT = "user"
+
+        /**
+         * 개발자의 Agent 가 MCP 로 알려 준 사실의 출처. 코드를 보고 답한 것이라 대개 맞지만 사람이 확인한 것은 아니다 —
+         * 그래서 사람이 정한 사실(`user`)을 덮지 않고, 사람이 다시 정하면 덮인다. 모델이 다시 뽑지 않는 것은 `user` 와 같다.
+         */
+        const val MCP = "mcp"
+
+        /** 누군가 알려 준 사실(사람 · MCP). 출구 · 대화로 들은 길이 이 둘이다. */
+        val TOLD = setOf("user", "mcp")
         const val YES = "yes"
         const val YES_BY = "yes-by:"
         const val START = "start"
