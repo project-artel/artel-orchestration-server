@@ -64,6 +64,20 @@ class QaObservationWalkTest {
         assertThat(exits).isEmpty()
     }
 
+    /** QA 103 의 실제 모양: 클릭이 move_mouse · mouse_down · mouse_up 묶음으로 가고, 누른 것의 경로에 띄어쓰기가 있다. */
+    @Test
+    fun `띄어쓰기가 든 UI 경로를 누른 클릭도 출구가 된다`() {
+        val result = row(
+            "TOOL_RESULT",
+            """{"content":"  move_mouse: ok\n  mouse_down: Canvas/Travel Bar/이동: 숲 에 보냄 — 반응했는지는 화면으로 확인할 것\n  mouse_up: ok\n\n<<pulse>>"}""",
+        )
+        val (observed, exits) = QaObservationService.walk(
+            listOf(pulse("SquareScene"), press(), pulse("ForestScene"), result, done(4, 20)),
+        )
+        assertThat(exits).containsExactly(QaObservationService.Exit("SquareScene", "ForestScene", "click:Canvas/Travel Bar/이동: 숲"))
+        assertThat(observed.single().input).isEqualTo("click:Canvas/Travel Bar/이동: 숲")
+    }
+
     @Test
     fun `입력 뒤 씬이 한 번 바뀌면 다음 저절로 바뀐 씬은 그 입력 탓이 아니다`() {
         val (_, exits) = QaObservationService.walk(

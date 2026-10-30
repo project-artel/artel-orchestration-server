@@ -215,6 +215,8 @@ class QaObservationService(
                 val name = "${s.path("declaring").asText()}.${s.path("member").asText()}"
                 if (NOISE.any { it in name }) null else name to value.asText()
             }.toMap()
-        private val CLICKED = Regex("""mouse_down: (\S+) 에 보냄""")
+        // UI 경로에는 띄어쓰기가 들어간다(`Canvas/Travel Bar/이동: 숲`). 공백 없는 이름만 받았더니 그런 클릭을 전해지지
+        // 않은 것으로 여겨, 그 사이 바뀐 씬(광장→숲)을 출구에서 지웠다 — QA 103 에서 길 넷 중 넷을 놓쳤다.
+        private val CLICKED = Regex("""mouse_down: ([^\n]+?) 에 보냄""")
     }
 }
