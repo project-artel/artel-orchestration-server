@@ -2343,6 +2343,47 @@
         }
       }
     },
+    "/api/projects/{projectId}/case-glossary/terms": {
+      "put": {
+        "tags": [
+          "case-contract-controller"
+        ],
+        "operationId": "editCaseGlossaryTerm",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GlossaryTermEditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlossaryTermView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/me/project-agent-model": {
       "get": {
         "tags": [
@@ -11342,6 +11383,37 @@
         }
       }
     },
+    "/api/projects/{projectId}/case-glossary": {
+      "get": {
+        "tags": [
+          "case-contract-controller"
+        ],
+        "operationId": "getCaseGlossary",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseGlossaryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/agent/conversations/{conversationId}/stream": {
       "get": {
         "tags": [
@@ -12595,6 +12667,9 @@
           },
           "kind": {
             "type": "string"
+          },
+          "arrivesAt": {
+            "type": "string"
           }
         }
       },
@@ -12653,6 +12728,9 @@
             "$ref": "#/components/schemas/TestCaseFunctions"
           },
           "kind": {
+            "type": "string"
+          },
+          "arrivesAt": {
             "type": "string"
           }
         }
@@ -13454,6 +13532,91 @@
           },
           "updatedBy": {
             "$ref": "#/components/schemas/DeveloperMacroAuthor"
+          }
+        }
+      },
+      "GlossaryTermEditRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "meaning": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "start": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "GlossaryTermView": {
+        "required": [
+          "aliases",
+          "issues",
+          "kind",
+          "meaning",
+          "name",
+          "options",
+          "setBy",
+          "start",
+          "usedBy"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "meaning": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "start": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "setBy": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "usedBy": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -15712,6 +15875,9 @@
             "$ref": "#/components/schemas/TestCaseFunctions"
           },
           "kind": {
+            "type": "string"
+          },
+          "arrivesAt": {
             "type": "string"
           }
         }
@@ -20370,6 +20536,9 @@
           },
           "kind": {
             "type": "string"
+          },
+          "arrivesAt": {
+            "type": "string"
           }
         }
       },
@@ -20626,6 +20795,9 @@
             "type": "string"
           },
           "kind": {
+            "type": "string"
+          },
+          "arrivesAt": {
             "type": "string"
           }
         }
@@ -23070,6 +23242,20 @@
           },
           "updatedBy": {
             "$ref": "#/components/schemas/DeveloperMacroAuthor"
+          }
+        }
+      },
+      "CaseGlossaryResponse": {
+        "required": [
+          "terms"
+        ],
+        "type": "object",
+        "properties": {
+          "terms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GlossaryTermView"
+            }
           }
         }
       },

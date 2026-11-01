@@ -390,13 +390,14 @@ class CaseContractServiceIntegrationTest {
         assertThat(first.addedTerms).containsExactly("검", "동전")
 
         val newer = builds.save(GameBuildEntity(projectId = project.id!!, version = "1.1.0", createdAt = now, updatedAt = now))
-        val second = batch.save(project.id!!, user.id!!, CaseBatchRequest(
+        // 두 번째는 MCP 로 온다. 사람이 정한 동전은 못 바꾸고, 사람이 비워 둔 검의 칸은 채운다(ARTEL-1312).
+        val second = viaMcp { batch.save(project.id!!, user.id!!, CaseBatchRequest(
             terms = listOf(
                 CaseTermInput("검", "has", meaning = "대장간에서 사는 검", start = "0", aliases = listOf("무기 보유")),
                 CaseTermInput("동전", "counter", meaning = "다른 설명", start = "5"),
             ),
             cases = listOf(CaseBatchItem(testCaseId = swordCase, scene = "대장간", step = "검을 산다.", expectedValue = "검이 생긴다.")),
-        ))
+        )) }
         assertThat(second.created).describedAs("같은 기능은 새 TC 가 되지 않는다").isEmpty()
         assertThat(second.updated).containsExactly(swordCase)
         assertThat(second.updatedTerms).describedAs("동전은 이미 정해져 바꿀 칸이 없다").containsExactly("검")
@@ -409,5 +410,68 @@ class CaseContractServiceIntegrationTest {
         assertThat(terms.getValue("검").path("aliases").map { it.asText() }).containsExactly("무기 보유")
         assertThat(terms.getValue("동전").path("meaning").asText()).isEqualTo("가진 동전")
         assertThat(listed.startState).containsEntry("검", "0").containsEntry("동전", "0")
+    }
+
+    /** 테스트 안에서 MCP 연결로 온 요청처럼 돌린다. */
+    private suspend fun <T> viaMcp(block: suspend () -> T): T {
+        val jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg", "none")
+            .claim(kr.artel.orchestration.auth.cli.CREDENTIAL_CLAIM, kr.artel.orchestration.auth.cli.CREDENTIAL_MCP).build()
+        val context = org.springframework.security.core.context.ReactiveSecurityContextHolder
+            .withAuthentication(org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt))
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.reactor.ReactorContext(context)) { block() }
+    }
+
+    /**
+     * 용어 칸은 사람 > MCP > AI 순으로 덮는다(ARTEL-1312). 사람이 화면에서 고친 칸은 다음 정리(AI)도 MCP 도 못 바꾸고,
+     * AI 가 뽑은 칸은 MCP 가 고친다. 용어집 화면은 확인할 이유와 쓰는 TC 수를 보인다.
+     */
+    @Test
+    fun `사람이 고친 용어는 AI 정리도 MCP 도 덮지 않는다`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "glossary-ranks", genre = "RPG", createdAt = now, updatedAt = now))
+        val wolf = cases.save(case(project.id!!, "늑대를 공격한다."))
+        service.refresh(project.id!!)
+
+        val first = service.glossaryView(project.id!!).terms.single { it.name == "검" }
+        assertThat(first.issues).contains("NO_MEANING")
+        assertThat(first.setBy["meaning"]).isEqualTo("ai")
+        assertThat(first.usedBy).isEqualTo(1)
+
+        val edited = service.editTerm(project.id!!, GlossaryTermEditRequest(name = "검", meaning = "대장간에서 받는 검", start = "1"))
+        assertThat(edited.setBy).containsEntry("meaning", "user").containsEntry("start", "user")
+        assertThat(edited.issues).isEmpty()
+
+        // 문구가 바뀌어 정리가 다시 돈다. 가짜 Agent 는 설명이 빈 검을 돌려주지만 사람이 고친 값이 남는다.
+        cases.save(cases.findById(wolf.id!!)!!.copy(step = "늑대를 검으로 공격한다."))
+        service.refresh(project.id!!)
+        viaMcp { service.mergeTerms(project.id!!, listOf(CaseTermInput("검", "counter", meaning = "MCP 가 바꾼 설명", start = "0"))) }
+        val kept = service.glossaryView(project.id!!).terms.single { it.name == "검" }
+        assertThat(kept.meaning).isEqualTo("대장간에서 받는 검")
+        assertThat(kept.start).isEqualTo("1")
+        assertThat(kept.kind).describedAs("종류는 AI 가 정한 칸이라 MCP 가 고친다").isEqualTo("counter")
+        assertThat(kept.setBy).containsEntry("kind", "mcp").containsEntry("meaning", "user")
+        assertThat(service.startState(project.id!!)).containsEntry("검", "1")
+    }
+
+    /** 도착 화면은 사람이 정하면 AI 정리 · MCP 가 덮지 않는다(ARTEL-1312). 빈 값은 "화면이 안 바뀐다" 로 정한 것이다. */
+    @Test
+    fun `사람이 정한 도착 화면은 AI 정리와 MCP 가 덮지 않는다`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "arrival-ranks", genre = "RPG", createdAt = now, updatedAt = now))
+        val gate = cases.save(case(project.id!!, "성문으로 간다."))
+        val fake = agent as FakeAgent
+        fake.arrivals = mapOf(gate.id!! to "알현실")
+        service.refresh(project.id!!)
+        assertThat(cases.findById(gate.id!!)!!.metadata.asString()).contains("알현실")
+
+        service.setArrival(project.id!!, gate.id!!, "", CaseContractService.USER)
+        cases.save(cases.findById(gate.id!!)!!.copy(step = "성문으로 걸어간다."))
+        service.refresh(project.id!!)
+        viaMcp { service.writeUserContract(project.id!!, gate.id!!, emptyList(), emptyList(), "알현실") }
+        fake.arrivals = emptyMap()
+
+        val meta = ObjectMapper().readTree(cases.findById(gate.id!!)!!.metadata.asString())
+        assertThat(meta.path("arrives_at").isMissingNode).describedAs("사람이 비운 도착 화면").isTrue()
+        assertThat(meta.path("arrives_at_by").asText()).isEqualTo("user")
     }
 }

@@ -118,6 +118,7 @@ class TestCaseVersionService(
                     presence = BOTH,
                     compareVerificationStatus = null,
                     kind = case.kind,
+                    arrivesAt = case.arrivesAt,
                 )
             }
         return TestCaseVersionCasesResponse(gameBuildId = null, compareToGameBuildId = null, items = items)
@@ -156,6 +157,7 @@ class TestCaseVersionService(
             presence = presence,
             compareVerificationStatus = there?.verificationStatus?.takeIf { comparing },
             kind = case.kind,
+            arrivesAt = case.arrivesAt,
         )
     }
 
