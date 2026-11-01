@@ -78,4 +78,15 @@ class ScenarioQuestionBuilderTest {
         assertThat(ScenarioQuestionBuilder::class.java.declaredMethods.map { it.name })
             .noneMatch { it.contains("scope", ignoreCase = true) || it.contains("arm", ignoreCase = true) }
     }
+
+    @Test
+    fun `두 끝 화면 이름이 다 든 모델 질문은 같은 구간을 묻는다`() {
+        val ids = listOf("gap:전투→첫 단어 퍼즐 화면", "gap:StagePosition", "contract:1|낮밤|==|밤")
+        assertThat(ScenarioQuestionBuilder.repeatsGap("두 번째 스테이지 전투에서 첫 단어 퍼즐 화면으로 어떻게 넘어가나요?", ids)).isTrue()
+        // 띄어쓰기가 달라도 같은 이름이다.
+        assertThat(ScenarioQuestionBuilder.repeatsGap("전투에서 첫단어 퍼즐화면으로 가는 법은?", ids)).isTrue()
+        // 한쪽만 들었으면 다른 것을 묻는다. 값이 막은 것과 계약 질문은 견주지 않는다.
+        assertThat(ScenarioQuestionBuilder.repeatsGap("전투 보상도 확인할까요?", ids)).isFalse()
+        assertThat(ScenarioQuestionBuilder.repeatsGap("StagePosition 은 어떻게 오르나요?", ids)).isFalse()
+    }
 }

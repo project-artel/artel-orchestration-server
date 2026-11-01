@@ -381,6 +381,38 @@ class TestScenarioReconcileIntegrationTest {
         ).isTrue()
     }
 
+    /**
+     * 모델과 Artel 이 같은 구간을 묻지 않는다. 모델이 미상 스텝을 남기고 그 길을 묻고, Artel 도 그 구간을 묻던 때는 한 창에
+     * 같은 질문이 둘 나왔다(WV TR 4). 답할 자리가 있는 Artel 의 질문만 남고, 다른 것을 묻는 모델 질문은 그대로다.
+     */
+    @Test
+    fun `같은 구간을 묻는 모델 질문은 Artel 의 구간 질문에 자리를 내준다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val square = insertCase(projectId, "광장", "할머니한테 말을 건다")
+        val forest = insertCase(projectId, "숲", "덤불을 조사한다")
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "겹친 질문")).id!!
+        framesToSend.clear()
+        framesToSend.add(
+            """{"type":"result","message":"짰어요","scenarios":[{"title":"겹친 질문","description":"d","steps":[""" +
+                """{"action":"할머니 의뢰를 받는다","case_id":$square},{"action":"숲으로 이동한다","step_source":"UNKNOWN"},""" +
+                """{"action":"덤불을 조사한다","case_id":$forest}]}],""" +
+                """"reply":{"result":"짰어요","detail":"","asks":[""" +
+                """{"id":"agent:a","text":"광장에서 숲으로 어떻게 가나요?","options":[]},""" +
+                """{"id":"agent:b","text":"덤불에서 나온 것도 확인할까요?","options":[]}]}}"""
+        )
+        postMessage(client, projectId, runId, token, "할머니 의뢰부터 숲 덤불까지")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.payload?.asString()?.contains("gap:광장→숲") == true }
+        }
+        val reply = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+            .mapNotNull { row -> row.payload?.let { objectMapper.readTree(it.asString()) } }
+            .single { it["kind"].asText() == "reply" }
+        assertThat(reply["asks"].map { it["id"].asText() }).containsExactly("agent:b")
+    }
+
     // ---- (b2) 검수 누락 → 재작성 요청 → 합쳐서 저장 (ARTEL-403) ------------------------------
 
     /**

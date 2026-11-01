@@ -92,7 +92,7 @@ class CaseRecommendationService(
 
     suspend fun recommendSceneMove(projectId: Long, runId: Long, from: String, to: String, how: String): Recommendation? {
         if (from.isBlank() || to.isBlank() || how.isBlank()) return null
-        val expected = "$to 화면으로 바뀐다."
+        val expected = "${screenOf(to)}으로 바뀐다."
         val already = databaseClient.sql(
             """
             SELECT 1 FROM case_recommendation
@@ -104,9 +104,33 @@ class CaseRecommendationService(
         if (already) return null
         val draft = objectMapper.createObjectNode()
             .put("ref", -1).put("scene", from).put("precondition", "").put("action", how).put("expected", expected)
-            .put("why", "$from→$to 로 가는 길을 알려 주셨어요. TC 로 남기면 다음 저작부터 이 길을 알고, QA 도 확인해요.")
+            .put("why", "${from}에서 ${screenOf(to)}으로 가는 길을 알려 주셨어요. TC 로 남기면 다음 저작부터 이 길을 알고, QA 도 확인해요.")
             .put("arrives_at", to)
         return record(projectId, runId, objectMapper.createArrayNode().add(draft)).values.firstOrNull()
+    }
+
+    /** 화면 이름이 이미 `화면` 으로 끝나면(`첫 단어 퍼즐 화면`) 한 번 더 붙이지 않는다. 늘 `화면` 으로 끝나 조사는 `으로` 다. */
+    private fun screenOf(scene: String): String = if (scene.trimEnd().endsWith("화면")) scene.trimEnd() else "$scene 화면"
+
+    /**
+     * 버린 draft 만 쓰던 추천을 버린다. draft 를 버렸는데 그 draft 의 스텝에서 나온 추천이 대기로 남으면, 사용자는 쓰는 곳 없는
+     * TC 를 저장할지 또 정해야 한다. 남은 draft 나 저장된 시나리오가 아직 가리키는 추천은 그대로 둔다. 길 추천(사람이 알려 준
+     * 화면 사이 길)은 스텝이 가리키지 않아 여기 오지 않는다 — 그 길은 draft 가 아니라 게임에 대한 사실이다.
+     */
+    suspend fun discardOrphans(projectId: Long, runId: Long, userId: Long, candidates: List<Long>): Int {
+        if (candidates.isEmpty()) return 0
+        val inDrafts = drafts.list("$userId:$runId").flatMap { it.steps }.mapNotNull { it.recommendationId }
+        val inScenarios = databaseClient.sql(
+            """
+            SELECT s.steps::text AS steps FROM test_scenario s
+              JOIN test_run_scenario r ON r.test_scenario_id = s.id
+             WHERE r.test_run_id = :r AND s.steps::text LIKE '%recommendation_id%'
+            """.trimIndent()
+        ).bind("r", runId).map { row, _ -> row.get("steps", String::class.java)!! }.all().collectList().awaitSingle()
+            .flatMap { text -> objectMapper.readTree(text).mapNotNull { it.path("recommendation_id").takeIf { id -> id.isNumber }?.asLong() } }
+        val orphans = candidates.distinct() - (inDrafts + inScenarios).toSet()
+        // 빈 목록은 discard 에게 "전부" 라는 뜻이다. 버릴 것이 없으면 부르지 않는다.
+        return if (orphans.isEmpty()) 0 else discard(projectId, runId, userId, orphans)
     }
 
     suspend fun list(projectId: Long, runId: Long, userId: Long): List<Recommendation> {

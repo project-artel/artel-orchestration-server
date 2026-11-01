@@ -186,10 +186,11 @@ class TestRunChatService(
 
     /** 고른 draft 를 버린다(ARTEL-1074). 남은 draft 를 돌려준다. 접근 불가면 404. */
     suspend fun discardDraft(appUserId: Long, runId: Long, draftIds: List<String>): List<DraftScenario> {
-        accessible(runId, appUserId) ?: throw NotFoundException()
+        val run = accessible(runId, appUserId) ?: throw NotFoundException()
         val key = sessionKey(appUserId, runId)
-        drafts.of(key).take(draftIds)
+        val dropped = drafts.of(key).take(draftIds)
         drafts.publish(key)
+        caseRecommendations.discardOrphans(run.projectId, runId, appUserId, caseRecommendations.referencedBy(dropped.flatMap { it.steps }))
         return drafts.list(key)
     }
 
