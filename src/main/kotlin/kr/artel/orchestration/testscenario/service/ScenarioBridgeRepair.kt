@@ -354,7 +354,8 @@ object ScenarioBridgeRepair {
 
     /** 사용자 말로 채운 구간. 그렇게 적혔다는 사실을 당사자에게 되돌려 준다. */
     private fun attributed(gap: Gap, answer: ScenarioPathAnswer, describe: (Long) -> String): String =
-        "${between(gap, describe)} 의 ${answer.blockedBy ?: "구간"} 은(는) 명세에 없어 " +
+        // `between` 은 "A 에서 B 로 가는" 으로 끝난다 — 뒤에 "길" 을 붙여야 말이 된다("…가는 의 …" 가 아니다).
+        "${between(gap, describe)} 길${answer.blockedBy?.let { "($it)" } ?: ""}은 명세에 없어 " +
             "알려주신 방법으로 채웠습니다. 다르면 고쳐 주세요."
 
     /**
