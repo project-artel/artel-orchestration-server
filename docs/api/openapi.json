@@ -3715,11 +3715,11 @@
             "required": false,
             "schema": {
               "type": "string",
+              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ],
-              "default": "MINE"
+              ]
             }
           }
         ],
@@ -16436,6 +16436,7 @@
       },
       "CaseTermInput": {
         "required": [
+          "aliases",
           "kind",
           "meaning",
           "name",
@@ -16460,6 +16461,12 @@
           },
           "start": {
             "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -16484,7 +16491,8 @@
           "addedTerms",
           "created",
           "rejected",
-          "updated"
+          "updated",
+          "updatedTerms"
         ],
         "type": "object",
         "properties": {
@@ -16507,6 +16515,12 @@
             }
           },
           "addedTerms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updatedTerms": {
             "type": "array",
             "items": {
               "type": "string"
@@ -16825,11 +16839,11 @@
           },
           "kind": {
             "type": "string",
+            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ],
-            "default": "sdk"
+            ]
           }
         }
       },
@@ -23087,6 +23101,7 @@
       "CaseContractRow": {
         "required": [
           "expectedValue",
+          "gameBuildIds",
           "kind",
           "leaves",
           "needs",
@@ -23131,6 +23146,12 @@
           },
           "kind": {
             "type": "string"
+          },
+          "gameBuildIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

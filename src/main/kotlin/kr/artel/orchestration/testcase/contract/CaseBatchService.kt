@@ -5,6 +5,8 @@ import kr.artel.orchestration.common.error.NotFoundException
 import kr.artel.orchestration.project.service.ProjectAccessService
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
+import kr.artel.orchestration.testcase.dto.TestCaseVersionCasesRequest
+import kr.artel.orchestration.testcase.service.ManualCaseVersionService
 import kr.artel.orchestration.testcase.service.TestCaseService
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Service
@@ -20,11 +22,12 @@ class CaseBatchService(
     private val caseContracts: CaseContractService,
     private val projectAccess: ProjectAccessService,
     private val databaseClient: DatabaseClient,
+    private val manualCases: ManualCaseVersionService,
 ) {
     suspend fun save(projectId: Long, userId: Long, request: CaseBatchRequest): CaseBatchResponse {
         if (!projectAccess.isMember(projectId, userId)) throw NotFoundException("프로젝트를 찾을 수 없습니다.")
         if (request.cases.size > MAX_CASES) throw BadRequestException("한 번에 ${MAX_CASES}건까지 넣을 수 있습니다.")
-        val addedTerms = caseContracts.mergeTerms(projectId, request.terms)
+        val (addedTerms, updatedTerms) = caseContracts.mergeTerms(projectId, request.terms)
         val buildId = request.gameBuildId?.ifBlank { null } ?: latestBuild(projectId)?.toString()
         val created = mutableListOf<String>()
         val updated = mutableListOf<String>()
@@ -49,12 +52,14 @@ class CaseBatchService(
                             expectedValue = item.expectedValue, kind = item.kind,
                         ),
                     )?.takeIf { it.projectId == projectId.toString() } ?: throw NotFoundException("TC ${item.testCaseId} 를 찾을 수 없습니다.")
+                    // 같은 기능을 새 버전에서 다시 적은 것이다 — 새 TC 를 만들지 않고 이 TC 를 그 버전에 넣는다(이미 있으면 그대로).
+                    buildId?.let { manualCases.addToVersion(projectId, userId, it.toLong(), TestCaseVersionCasesRequest(listOf(response.id))) }
                     response.id.also { updated += it }
                 }
                 caseContracts.writeUserContract(projectId, caseId.toLong(), needs, leaves, item.arrivesAt)
             }.onFailure { rejected += CaseBatchRejection(index, it.message ?: it::class.simpleName.orEmpty()) }
         }
-        return CaseBatchResponse(created, updated, rejected, addedTerms)
+        return CaseBatchResponse(created, updated, rejected, addedTerms, updatedTerms)
     }
 
     /** `검 == 1` · `동전 >= 30` · `낮밤 = 밤`. `=` 하나는 `==` 로 읽는다. */

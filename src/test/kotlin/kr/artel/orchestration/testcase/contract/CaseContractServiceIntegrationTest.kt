@@ -83,6 +83,7 @@ class CaseContractServiceIntegrationTest {
     @Autowired private lateinit var agent: AgentCaseContractClient
     @Autowired private lateinit var projects: ProjectRepository
     @Autowired private lateinit var cases: TestCaseRepository
+    @Autowired private lateinit var batch: CaseBatchService
 
     private fun case(projectId: Long, step: String, capabilityKey: String? = null, condition: String? = null) =
         TestCaseEntity(
@@ -368,5 +369,45 @@ class CaseContractServiceIntegrationTest {
         val exits = service.observedExits(project.id!!)
         assertThat(exits.map { it.source to it.by }).containsExactly(CaseContractService.USER to "광장 오른쪽 길로 간다")
     }
-}
 
+    /**
+     * 새 버전에서 같은 기능을 다시 적으면 새 TC 를 만들지 않고 그 TC 를 그 버전에 넣는다(ARTEL-1310). 계약 목록은 TC 마다
+     * 든 버전을 보인다. 용어는 있던 이름의 빈 칸만 채우고 별칭을 더하며, 정해진 값은 덮지 않는다.
+     */
+    @Test
+    fun `MCP 배치는 같은 TC 를 새 버전에 넣고, 용어는 빈 칸만 채운다`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "batch-builds", genre = "RPG", createdAt = now, updatedAt = now))
+        val user = users.save(testAppUser("batcher", now))
+        members.save(ProjectMemberEntity(projectId = project.id!!, appUserId = user.id!!, role = "OWNER", createdAt = now))
+        val older = builds.save(GameBuildEntity(projectId = project.id!!, version = "1.0.0", createdAt = now.minusSeconds(60), updatedAt = now))
+        val first = batch.save(project.id!!, user.id!!, CaseBatchRequest(
+            terms = listOf(CaseTermInput("검", "has", meaning = "", start = null), CaseTermInput("동전", "counter", meaning = "가진 동전", start = "0")),
+            cases = listOf(CaseBatchItem(scene = "대장간", step = "검을 산다.", expectedValue = "검이 생긴다.")),
+            gameBuildId = older.id.toString(),
+        ))
+        val swordCase = first.created.single()
+        assertThat(first.addedTerms).containsExactly("검", "동전")
+
+        val newer = builds.save(GameBuildEntity(projectId = project.id!!, version = "1.1.0", createdAt = now, updatedAt = now))
+        val second = batch.save(project.id!!, user.id!!, CaseBatchRequest(
+            terms = listOf(
+                CaseTermInput("검", "has", meaning = "대장간에서 사는 검", start = "0", aliases = listOf("무기 보유")),
+                CaseTermInput("동전", "counter", meaning = "다른 설명", start = "5"),
+            ),
+            cases = listOf(CaseBatchItem(testCaseId = swordCase, scene = "대장간", step = "검을 산다.", expectedValue = "검이 생긴다.")),
+        ))
+        assertThat(second.created).describedAs("같은 기능은 새 TC 가 되지 않는다").isEmpty()
+        assertThat(second.updated).containsExactly(swordCase)
+        assertThat(second.updatedTerms).describedAs("동전은 이미 정해져 바꿀 칸이 없다").containsExactly("검")
+
+        val listed = service.list(project.id!!)
+        assertThat(listed.cases.single { it.testCaseId == swordCase }.gameBuildIds)
+            .describedAs("비운 버전은 최신 버전이다").containsExactly(older.id.toString(), newer.id.toString())
+        val terms = listed.terms.associateBy { it.path("name").asText() }
+        assertThat(terms.getValue("검").path("meaning").asText()).isEqualTo("대장간에서 사는 검")
+        assertThat(terms.getValue("검").path("aliases").map { it.asText() }).containsExactly("무기 보유")
+        assertThat(terms.getValue("동전").path("meaning").asText()).isEqualTo("가진 동전")
+        assertThat(listed.startState).containsEntry("검", "0").containsEntry("동전", "0")
+    }
+}

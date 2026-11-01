@@ -11,7 +11,11 @@ data class CaseBatchRequest(
     /** 새로 쓰는 상태 이름. 이미 용어집에 있는 이름은 건너뛴다 — 이름은 `list` 가 돌려준 것을 다시 쓴다. */
     val terms: List<CaseTermInput> = emptyList(),
     val cases: List<CaseBatchItem> = emptyList(),
-    /** 새 TC 를 넣을 버전. 비우면 프로젝트의 가장 최근 버전이다 — 버전이 정해진 TR 의 저작은 그 버전의 TC 만 본다. */
+    /**
+     * 이 배치의 TC 가 속할 버전. 비우면 프로젝트의 가장 최근 버전이다 — 버전이 정해진 TR 의 저작은 그 버전의 TC 만 본다.
+     * 새 TC 는 이 버전에 만들고, 고치는 TC(`testCaseId`)도 이 버전에 넣는다(ARTEL-1310) — 같은 기능은 같은 TC 번호로
+     * 버전만 오른다.
+     */
     val gameBuildId: String? = null,
 )
 
@@ -23,6 +27,8 @@ data class CaseTermInput(
     val options: List<String> = emptyList(),
     /** 새 게임을 시작할 때 값. has 는 `1`/`0`, value 는 options 중 하나, counter 는 수. 모르면 비운다. */
     val start: String? = null,
+    /** 같은 것을 부르는 다른 이름(ARTEL-1310). 같은 것을 두 이름으로 쓴 것을 하나로 묶는다. */
+    val aliases: List<String> = emptyList(),
 )
 
 data class CaseBatchItem(
@@ -48,6 +54,8 @@ data class CaseBatchResponse(
     val updated: List<String>,
     val rejected: List<CaseBatchRejection>,
     val addedTerms: List<String>,
+    /** 있던 이름인데 빈 설명 · 모르는 시작 값 · 별칭을 채운 것(ARTEL-1310). */
+    val updatedTerms: List<String> = emptyList(),
 )
 
 data class CaseBatchRejection(val index: Int, val reason: String)
@@ -73,4 +81,6 @@ data class CaseContractRow(
     val arrivesAt: String? = null,
     /** `FUNCTION`(기능) 또는 `EXCEPTION`(예외)(ARTEL-1306). */
     val kind: String = "FUNCTION",
+    /** 이 TC 의 몫이 있는 버전(game build) id(ARTEL-1310). 비면 어느 버전에도 없다. */
+    val gameBuildIds: List<String> = emptyList(),
 )

@@ -206,6 +206,18 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
     )
     fun findManualCaseIdsToCarry(fromBuildId: Long, toBuildId: Long): Flow<Long>
 
+    /** 케이스마다 몫이 있는 버전(ARTEL-1310). MCP 가 새 버전의 TC 를 정리할 때 같은 TC 가 어느 버전에 있는지 본다. */
+    @Query(
+        """
+        SELECT v.test_case_id, v.game_build_id
+          FROM test_case_version v
+          JOIN test_case t ON t.id = v.test_case_id
+         WHERE t.project_id = :projectId
+         ORDER BY v.game_build_id
+        """
+    )
+    fun findCaseBuilds(projectId: Long): Flow<kr.artel.orchestration.testcase.dto.CaseBuildRow>
+
     /** 어느 버전이든 몫이 하나라도 있는 케이스. 나머지가 "버전 없음" 이다(ARTEL-1023). */
     @Query(
         """
