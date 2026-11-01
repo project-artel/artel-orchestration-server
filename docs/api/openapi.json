@@ -16690,6 +16690,7 @@
       },
       "CaseTermInput": {
         "required": [
+          "aliases",
           "kind",
           "meaning",
           "name",
@@ -16714,6 +16715,12 @@
           },
           "start": {
             "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -16738,7 +16745,8 @@
           "addedTerms",
           "created",
           "rejected",
-          "updated"
+          "updated",
+          "updatedTerms"
         ],
         "type": "object",
         "properties": {
@@ -16761,6 +16769,12 @@
             }
           },
           "addedTerms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updatedTerms": {
             "type": "array",
             "items": {
               "type": "string"
@@ -23332,6 +23346,7 @@
       "CaseContractRow": {
         "required": [
           "expectedValue",
+          "gameBuildIds",
           "kind",
           "leaves",
           "needs",
@@ -23376,6 +23391,12 @@
           },
           "kind": {
             "type": "string"
+          },
+          "gameBuildIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
