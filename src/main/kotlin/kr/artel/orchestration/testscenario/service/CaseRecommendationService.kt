@@ -44,11 +44,14 @@ class CaseRecommendationService(
         val why: String,
         val status: String,
         val testCaseId: Long?,
+        /** 씬 전이 추천이면 도착 화면(ARTEL-1312). 저장한 TC 의 도착 화면이 된다. */
+        val arrivesAt: String? = null,
     ) {
         /** 대화 기록 · 화면 이벤트에 싣는 모양. */
         fun wire(): Map<String, Any?> = mapOf(
             "id" to id.toString(), "scene" to scene, "precondition" to precondition, "step" to step,
             "expectedValue" to expectedValue, "why" to why, "status" to status, "testCaseId" to testCaseId?.toString(),
+            "arrivesAt" to arrivesAt,
         )
     }
 
@@ -64,26 +67,29 @@ class CaseRecommendationService(
             if (ref >= 0 || expected.isBlank() || ref in out) continue
             val id = databaseClient.sql(
                 """
-                INSERT INTO case_recommendation (project_id, test_run_id, scene, precondition, step, expected_value, why)
-                VALUES (:p, :r, :scene, :pre, :step, :expected, :why) RETURNING id
+                INSERT INTO case_recommendation (project_id, test_run_id, scene, precondition, step, expected_value, why, arrives_at)
+                VALUES (:p, :r, :scene, :pre, :step, :expected, :why, :arrives) RETURNING id
                 """.trimIndent()
             ).bind("p", projectId).bind("r", runId)
                 .bind("scene", draft.path("scene").asText("")).bind("pre", draft.path("precondition").asText(""))
                 .bind("step", draft.path("action").asText("")).bind("expected", expected).bind("why", draft.path("why").asText(""))
+                .let { spec -> arrival(draft)?.let { spec.bind("arrives", it) } ?: spec.bindNull("arrives", String::class.java) }
                 .map { row, _ -> row.get("id", java.lang.Long::class.java)!!.toLong() }.one().awaitSingle()
             out[ref] = Recommendation(
                 id, draft.path("scene").asText(""), draft.path("precondition").asText(""), draft.path("action").asText(""),
-                expected, draft.path("why").asText(""), PENDING, null,
+                expected, draft.path("why").asText(""), PENDING, null, arrival(draft),
             )
         }
         return out
     }
 
     /**
-     * 사람이 알려 준 길(`광장→숲` 을 어떻게 가나)을 씬 전이 TC 로 추천한다. 저장하면 계약 정리가 도착 화면 표식을 달고, 다음
+     * 사람이 알려 준 길(`광장→숲` 을 어떻게 가나)을 씬 전이 TC 로 추천한다. 저장하면 도착 화면을 단 TC 가 되어(ARTEL-1312), 다음
      * 저작부터 그 길을 TC 로 안다 — QA 가 그 길을 확인할 수도 있게 된다. 이 프로젝트에 같은 길의 추천이 이미 있으면(대기 ·
      * 저장) 다시 내지 않는다. 버린 것은 다시 낼 수 있다 — 사람이 같은 길을 또 알려 줬다.
      */
+    private fun arrival(draft: JsonNode): String? = draft.path("arrives_at").asText("").trim().ifBlank { null }
+
     suspend fun recommendSceneMove(projectId: Long, runId: Long, from: String, to: String, how: String): Recommendation? {
         if (from.isBlank() || to.isBlank() || how.isBlank()) return null
         val expected = "$to 화면으로 바뀐다."
@@ -99,6 +105,7 @@ class CaseRecommendationService(
         val draft = objectMapper.createObjectNode()
             .put("ref", -1).put("scene", from).put("precondition", "").put("action", how).put("expected", expected)
             .put("why", "$from→$to 로 가는 길을 알려 주셨어요. TC 로 남기면 다음 저작부터 이 길을 알고, QA 도 확인해요.")
+            .put("arrives_at", to)
         return record(projectId, runId, objectMapper.createArrayNode().add(draft)).values.firstOrNull()
     }
 
@@ -125,6 +132,7 @@ class CaseRecommendationService(
             val request = edits[rec.id] ?: TestCaseCreateRequest(
                 scene = rec.scene.ifBlank { "-" }, step = rec.step.ifBlank { rec.expectedValue },
                 precondition = rec.precondition.ifBlank { null }, expectedValue = rec.expectedValue,
+                arrivesAt = rec.arrivesAt,
             )
             val created = testCaseService.createTestCase(projectId, userId, request.copy(gameBuildId = buildId?.toString()))
                 ?: throw NotFoundException("프로젝트를 찾을 수 없습니다.")
@@ -217,6 +225,7 @@ class CaseRecommendationService(
                 why = row.get("why", String::class.java).orEmpty(),
                 status = row.get("status", String::class.java).orEmpty(),
                 testCaseId = row.get("test_case_id", java.lang.Long::class.java)?.toLong(),
+                arrivesAt = row.get("arrives_at", String::class.java),
             )
         }.all().collectList().awaitSingle()
     }

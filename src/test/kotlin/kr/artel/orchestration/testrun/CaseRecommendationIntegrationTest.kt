@@ -174,6 +174,9 @@ class CaseRecommendationIntegrationTest {
         // 다른 말의 사람 스텝은 그대로다.
         assertThat(after[1]["step_source"].asText()).isEqualTo("HUMAN")
         assertThat(after[1].path("case_id").isNumber).isFalse()
+        // 길 추천은 도착 화면을 안다 — 저장한 TC 가 씬 전이 TC 가 된다(ARTEL-1312).
+        assertThat(rec.arrivesAt).isEqualTo("숲")
+        assertThat(objectMapper.readTree(get(client, "/api/projects/$projectId/test-cases/$caseId", token))["arrivesAt"].asText()).isEqualTo("숲")
     }
 }
 
