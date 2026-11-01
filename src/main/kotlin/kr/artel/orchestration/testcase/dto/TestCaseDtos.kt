@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testcase.dto
 
+import kr.artel.orchestration.testcase.entity.TestCaseKind
 import java.time.Instant
 
 /**
@@ -22,6 +23,8 @@ data class TestCaseCreateRequest(
     val gameBuildId: String? = null,
     /** 이 케이스를 돌릴 때 agent 에게 허용할 cheat · behavior(ARTEL-1053). null 이면 둘 다 `all` 이다. */
     val functions: TestCaseFunctions? = null,
+    /** `FUNCTION`(기능) 또는 `EXCEPTION`(예외)(ARTEL-1306). null 이면 기능이다. */
+    val kind: String? = null,
 )
 
 /** 케이스 수정. 검증상태(verificationStatus)도 여기서 바꿀 수 있다. */
@@ -37,6 +40,8 @@ data class TestCaseUpdateRequest(
      * `{"cheats":"all","behaviors":"all"}` 를 보낸다 — 키가 없는 것과 값이 null 인 것을 Jackson 이 가르지 못한다.
      */
     val functions: TestCaseFunctions? = null,
+    /** 종류를 바꾼다(ARTEL-1306). null 이면 건드리지 않는다. */
+    val kind: String? = null,
 )
 
 /**
@@ -78,6 +83,8 @@ data class TestCaseResponse(
     val origin: String,
     /** agent 에게 허용할 cheat · behavior(ARTEL-1053). 정한 적 없으면 null 이고, 그때는 둘 다 `all` 이다. */
     val functions: TestCaseFunctions? = null,
+    /** `FUNCTION`(기능) 또는 `EXCEPTION`(예외)(ARTEL-1306). */
+    val kind: String = TestCaseKind.FUNCTION.name,
 )
 
 data class TestCaseListResponse(val items: List<TestCaseResponse>)
@@ -110,4 +117,6 @@ data class TestCaseDetailResponse(
     val evidenceGaps: List<String>,
     /** [TestCaseResponse.functions] 와 같다. */
     val functions: TestCaseFunctions? = null,
+    /** [TestCaseResponse.kind] 와 같다. */
+    val kind: String = TestCaseKind.FUNCTION.name,
 )

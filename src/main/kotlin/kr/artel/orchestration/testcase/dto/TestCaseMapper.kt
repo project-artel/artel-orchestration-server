@@ -63,6 +63,7 @@ fun TestCaseEntity.toTestCaseResponse(folderId: Long? = null): TestCaseResponse 
         folderId = folderId?.toString(),
         origin = originLabel(),
         functions = functionsOrNull(),
+        kind = kind,
     )
 
 /** 저장된 허용 범위. 정한 적 없으면(컬럼이 NULL) null 이다. 읽을 수 없는 값도 null 로 읽어 목록 전체를 막지 않는다. */
@@ -93,6 +94,7 @@ fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper, folderId
         origin = base.origin,
         evidenceGaps = evidenceGaps(objectMapper),
         functions = base.functions,
+        kind = base.kind,
     )
 }
 

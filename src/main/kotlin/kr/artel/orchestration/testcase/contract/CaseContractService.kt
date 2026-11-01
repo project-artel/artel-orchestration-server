@@ -348,6 +348,7 @@ class CaseContractService(
                     .split(";").map { it.trim() }.filter { it.isNotBlank() },
                 contractSource = meta?.path("contract")?.path("source")?.asText(null),
                 arrivesAt = meta?.path(MapTestCaseWriter.ARRIVES_AT)?.asText(null)?.ifBlank { null },
+                kind = case.kind,
             )
         }
         return CaseContractList(glossary.terms, glossary.startState, rows)

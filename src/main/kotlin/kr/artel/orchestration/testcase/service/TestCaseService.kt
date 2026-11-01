@@ -42,6 +42,7 @@ import kr.artel.orchestration.testcase.dto.originLabel
 import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
+import kr.artel.orchestration.testcase.entity.TestCaseKind
 import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -225,6 +226,7 @@ class TestCaseService(
                         (byTc[here].orEmpty() + seen.exits[here].orEmpty()).distinctBy { it.scene }
                     },
                 input = inputs[case.id].orEmpty().ifEmpty { seen.input(case) },
+                kind = case.kind.takeIf { it == TestCaseKind.EXCEPTION.name },
             )
         }.toList()
     }
@@ -508,6 +510,7 @@ class TestCaseService(
             expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
             functions = request.functions?.validated(),
+            kind = (TestCaseKind.parse(request.kind) ?: TestCaseKind.FUNCTION).name,
         )
         if (folderId == null && gameBuildId == null) {
             val created = repository.save(entity)
@@ -576,6 +579,7 @@ class TestCaseService(
             VerificationStatus.fromWire(it)?.name
                 ?: throw BadRequestException("verificationStatus must be one of ${VerificationStatus.NAMES}")
         }
+        val kind = TestCaseKind.parse(request.kind)?.name
         val buildId = parseOptionalWireId(request.gameBuildId, "gameBuildId")
         if (buildId != null) {
             gameBuilds.findAccessibleById(buildId, existing.projectId, userId) ?: throw NotFoundException("버전을 찾을 수 없습니다.")
@@ -592,7 +596,13 @@ class TestCaseService(
                     expectedValue = request.expectedValue?.ifBlank { null } ?: version.expectedValue,
                     verificationStatus = statusName ?: version.verificationStatus,
                 ))
-                request.functions?.let { repository.save(identity.copy(functions = it.validated())) }
+                // 허용 범위와 종류는 버전마다 다르지 않은 케이스의 칸이다.
+                if (request.functions != null || kind != null) {
+                    repository.save(identity.copy(
+                        functions = request.functions?.validated() ?: identity.functions,
+                        kind = kind ?: identity.kind,
+                    ))
+                }
                 versions.syncIdentities(listOf(caseId))
                 reader.overlay(repository.findById(caseId) ?: throw NotFoundException(), CaseScope.Version(buildId))
             }
@@ -606,6 +616,7 @@ class TestCaseService(
             expectedValue = request.expectedValue?.ifBlank { null } ?: existing.expectedValue,
             verificationStatus = statusName ?: existing.verificationStatus,
             functions = request.functions?.validated() ?: existing.functions,
+            kind = kind ?: existing.kind,
         )
         val saved = repository.save(updated)
         projectChangeStreamManager.notify(saved.projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음
