@@ -2,6 +2,7 @@ package kr.artel.orchestration.sdk.service.handler
 
 import kr.artel.orchestration.contentmap.observe.ScreenObservationService
 import kr.artel.orchestration.qa.service.QaSdkBridgeService
+import kr.artel.orchestration.qa.state.StateSetRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.WebSocketSession
@@ -25,6 +26,7 @@ import org.springframework.web.reactive.socket.WebSocketSession
 class PulseMessageHandler(
     private val qaBridge: QaSdkBridgeService,
     private val screenObservation: ScreenObservationService,
+    private val stateSets: StateSetRegistry,
 ) : SdkMessageHandler {
 
     private val logger = LoggerFactory.getLogger(PulseMessageHandler::class.java)
@@ -38,6 +40,9 @@ class PulseMessageHandler(
         logger.info("pulse 수신 [instanceId: $instanceId]: ${payloadText.length}자")
 
         val gameInstanceId = instanceId.toLong()
+        // 중계 **앞에** 적용한다. Agent 가 이 `pulse` 를 받자마자 상태를 물으면 이 `pulse` 가 든 stateVersion 을
+        // 받아야 한다. 메모리 안의 적용이라 중계를 늦추지 않고, 실패는 [StateSetRegistry] 가 삼킨다.
+        stateSets.observe(gameInstanceId, session.id, payloadText)
         qaBridge.routePulse(gameInstanceId, payloadText)
 
         // 중계 **뒤에** 부른다. 앞에 두면 화면 적재가 느릴 때 `pulse` 가 agent 에 늦게 닿는다.

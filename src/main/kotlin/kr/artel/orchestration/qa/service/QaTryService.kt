@@ -779,7 +779,7 @@ class QaTryService(
             val agent = agentPort.createSession(
                 context = context,
                 onMessage = { envelope -> inboundRouter.handle(envelope) },
-                onDisconnect = { failRun(started) }
+                onDisconnect = { failRun(started, "QA Agent connection closed before the run finished.") }
             )
             val running = persistence.attachRunAndMarkRunning(
                 started.qaRun, requireNotNull(started.tries.first().id), agent.sessionId, agent.runConfig
@@ -795,7 +795,7 @@ class QaTryService(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            failRun(started)
+            failRun(started, "QA run session could not start: ${error.message ?: error::class.simpleName}")
             throw error as? QaAgentRejectedException ?: UpstreamUnavailableException(
                 error.message ?: "QA Run 세션 생성에 실패했습니다.",
                 cause = error
@@ -812,20 +812,40 @@ class QaTryService(
             QaSessionGameNotes(version = note.version, body = note.body, genres = note.genreModules())
         }
 
-    private suspend fun failRun(started: QaRunStarting) {
+    private suspend fun failRun(started: QaRunStarting, reason: String) {
         val now = Instant.now(clock)
         val runId = requireNotNull(started.qaRun.id)
         // SDK 화면에 마지막으로 떴던 try(ARTEL-836). 세션 개설이 아예 실패했으면 아직 STARTING/
         // RUNNING인 try가 없다 — 그때는 WAITING_AGENT로 알렸던 첫 시나리오 try로 대신한다.
         val activeTryId = tryRepository.findActiveByGameInstanceId(started.qaRun.gameInstanceId)?.id
             ?: requireNotNull(started.tries.first().id)
-        runCatching {
+        val closed = runCatching {
             // 세션이 붙기 전(STARTING)이든 실행 중(RUNNING)이든 모두 FAILED로 닫는다. 둘 중
             // 실제 상태에 맞는 한 문장만 1행을 바꾸고 나머지는 no-op이다. RUNNING을 빠뜨리면
             // 런이 영구히 활성으로 남아 그 게임 인스턴스의 다음 런을 막는다(과거 버그).
             runRepository.transition(runId, "STARTING", "FAILED", now, now)
             runRepository.transition(runId, "RUNNING", "FAILED", now, now)
             tryRepository.failByQaRunId(runId, now)
+        }.getOrDefault(0)
+        if (closed > 0) {
+            // 닫은 try 에 까닭을 남긴다. 전에는 STATUS 도 ERROR 도 없이 FAILED 만 남아(런 238) 무엇이 끝냈는지 읽을 곳이 없었다.
+            // 이미 끝난 런의 소켓이 늦게 닫힌 것이면 닫은 try 가 없어 남기지 않는다.
+            val error = logService.append(
+                qaTryId = activeTryId,
+                direction = "ORCHE_INTERNAL",
+                type = "ERROR",
+                message = reason,
+                payload = objectMapper.createObjectNode().put("reason", reason)
+            )
+            val status = logService.append(
+                qaTryId = activeTryId,
+                direction = "ORCHE_INTERNAL",
+                type = "STATUS",
+                message = "QA execution failed.",
+                payload = objectMapper.valueToTree(QaStatusPayload("FAILED", now))
+            )
+            logService.publish(error)
+            logService.publish(status)
         }
         runStatusNotifier.finished(activeTryId, started.qaRun.gameInstanceId, runId, outcome = "ERROR")
         // try들이 방금 종단으로 갔으므로 미인용 행을 확정한다(ARTEL-293). 세션 개설 실패는
@@ -1035,9 +1055,9 @@ class QaTryService(
         return logService.verdicts(qaTryId)
     }
 
-    suspend fun logs(qaTryId: Long, userId: Long, beforeId: Long?, size: Int): QaLogPageResponse? {
+    suspend fun logs(qaTryId: Long, userId: Long, beforeId: Long?, size: Int, types: Set<String>? = null): QaLogPageResponse? {
         requireAccessible(qaTryId, userId) ?: return null
-        return logService.page(qaTryId, beforeId, size)
+        return logService.page(qaTryId, beforeId, size, types)
     }
 
     fun events(qaTryId: Long, userId: Long, afterId: Long): Flow<QaLogResponse> = flow {

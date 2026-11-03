@@ -107,7 +107,12 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
                expected_value = CASE WHEN t.metadata ->> 'origin' = 'content-map' THEN v.expected_value ELSE t.expected_value END,
                expected_items = CASE WHEN t.metadata ->> 'origin' = 'content-map' THEN v.expected_items ELSE t.expected_items END,
                capability_key = CASE WHEN t.metadata ->> 'origin' = 'content-map' THEN v.capability_key ELSE t.capability_key END,
-               metadata       = CASE WHEN t.metadata ->> 'origin' = 'content-map' THEN v.metadata ELSE t.metadata END,
+               metadata       = CASE WHEN t.metadata ->> 'origin' = 'content-map'
+                                     THEN (COALESCE(v.metadata, '{}'::jsonb) - 'observe') ||
+                                          CASE WHEN t.metadata ? 'observe'
+                                               THEN jsonb_build_object('observe', t.metadata -> 'observe')
+                                               ELSE '{}'::jsonb END
+                                     ELSE t.metadata END,
                updated_at     = now()
           FROM (SELECT DISTINCT ON (tv.test_case_id) tv.*
                   FROM test_case_version tv
