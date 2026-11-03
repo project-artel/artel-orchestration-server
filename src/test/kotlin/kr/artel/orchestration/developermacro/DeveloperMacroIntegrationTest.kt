@@ -78,6 +78,10 @@ class DeveloperMacroIntegrationTest {
             val answer = mapper.createObjectNode().put("ok", true).put("docstring", "$name 의 설명")
             answer.putObject("definition").put("name", name).put("source", source)
             answer.set<JsonNode>("parameters", mapper.readTree("""[{"name":"card","type":"string"},{"name":"count","type":"int"}]"""))
+            // 계약을 받은 검사는 정규화한 계약을 돌려준다. 여기서는 받은 것에 표시 하나를 더해 그것이 저장되는지 본다.
+            request["contract"]?.let { contract ->
+                answer.set<JsonNode>("contract", (contract.deepCopy<JsonNode>() as com.fasterxml.jackson.databind.node.ObjectNode).put("checked", true))
+            }
             return mapper.writeValueAsString(answer)
         }
 
@@ -306,6 +310,42 @@ class DeveloperMacroIntegrationTest {
             .describedAs("공개 포트에는 `/internal` 이 없다").isEqualTo(404)
     }
 
+    @Test
+    fun `계약은 검사를 거쳐 저장되고 상세와 내부 목록에 실리며, 계약 없는 등록은 예전 그대로다`() {
+        val world = newWorld()
+        val contract = """{"params":{"card":{"holds":"Cards.Card::word.tag"}},"effect":{"mode":"state","within":3}}"""
+
+        val plain = call(world.ownerSession, HttpMethod.PUT, "${world.base}/developer-macros/open_shop", putBody(SOURCE, world.buildA))
+        assertThat(plain.body["contract"].isNull).isTrue()
+        assertThat(checkRequests.single().has("contract"))
+            .describedAs("계약이 없으면 agent-server 요청에 contract 를 싣지 않는다").isFalse()
+
+        checkRequests.clear()
+        val withContract = call(
+            world.ownerSession, HttpMethod.PUT, "${world.base}/developer-macros/open_shop",
+            putBody(SOURCE, world.buildA, contract),
+        )
+        assertThat(withContract.status).isEqualTo(200)
+        assertThat(checkRequests.single()["contract"]).isEqualTo(objectMapper.readTree(contract))
+        assertThat(withContract.body["contract"]["checked"].asBoolean())
+            .describedAs("저장하는 것은 보낸 계약이 아니라 검사가 돌려준 계약이다").isTrue()
+        assertThat(withContract.body["version"].asInt()).describedAs("계약이 붙은 것은 정의 변경이다").isEqualTo(2)
+
+        val internal = objectMapper.readTree(
+            WebClient.create("http://localhost:${internalApiServer.port}").get()
+                .uri("/internal/projects/${world.projectId}/developer-macros")
+                .retrieve().bodyToMono(String::class.java).block()
+        )
+        assertThat(internal["items"].single()["contract"]["params"]["card"]["holds"].asText()).isEqualTo("Cards.Card::word.tag")
+
+        val list = call(world.ownerSession, HttpMethod.GET, "${world.base}/developer-macros")
+        assertThat(list.body["items"].single().has("contract")).describedAs("목록에는 계약을 싣지 않는다").isFalse()
+
+        val dropped = call(world.ownerSession, HttpMethod.PUT, "${world.base}/developer-macros/open_shop", putBody(SOURCE, world.buildA))
+        assertThat(dropped.body["contract"].isNull).describedAs("계약 없이 다시 등록하면 계약도 지운다").isTrue()
+        assertThat(dropped.body["version"].asInt()).isEqualTo(3)
+    }
+
     // ---------- 픽스처 ----------
 
     private data class World(
@@ -369,7 +409,8 @@ class DeveloperMacroIntegrationTest {
 
     private fun client() = WebClient.create("http://localhost:$port")
 
-    private fun putBody(source: String, gameBuildId: Long) = """{"source":${json(source)},"gameBuildId":"$gameBuildId"}"""
+    private fun putBody(source: String, gameBuildId: Long, contract: String? = null) =
+        """{"source":${json(source)},"gameBuildId":"$gameBuildId"${contract?.let { ",\"contract\":$it" } ?: ""}}"""
 
     private fun json(value: String) = objectMapper.writeValueAsString(value)
 }
