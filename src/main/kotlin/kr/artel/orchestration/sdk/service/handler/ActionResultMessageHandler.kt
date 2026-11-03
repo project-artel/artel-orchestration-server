@@ -1,5 +1,9 @@
 package kr.artel.orchestration.sdk.service.handler
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import kr.artel.orchestration.sdk.dto.ActionDeliveryResultDto
+import kr.artel.orchestration.sdk.service.SdkActionDelivery
+
 import kr.artel.orchestration.contentmap.capture.ScreenCaptureResultRouter
 import kr.artel.orchestration.contentmap.scan.ScanResultRouter
 import kr.artel.orchestration.qa.service.QaSdkBridgeService
@@ -30,6 +34,8 @@ class ActionResultMessageHandler(
     private val scanResults: ScanResultRouter,
     private val screenCaptures: ScreenCaptureResultRouter,
     private val qaBridge: QaSdkBridgeService,
+    private val mapper: ObjectMapper,
+    private val delivery: SdkActionDelivery,
 ) : SdkMessageHandler {
 
     private val logger = LoggerFactory.getLogger(ActionResultMessageHandler::class.java)
@@ -37,6 +43,7 @@ class ActionResultMessageHandler(
     override val messageType: String = "ACTION_RESULT"
 
     override suspend fun handle(instanceId: String, payloadText: String, session: WebSocketSession) {
+        if (!delivery.isCurrentSession(instanceId, session)) return
         logger.info("액션 결과 수신 [instanceId: $instanceId]: $payloadText")
 
         val gameInstanceId = instanceId.toLong()
@@ -48,6 +55,9 @@ class ActionResultMessageHandler(
             return
         }
 
+        val result = mapper.readValue(payloadText, ActionDeliveryResultDto::class.java)
+        if (!delivery.acceptsResult(instanceId, result, session)) return
         qaBridge.routeActionResult(gameInstanceId, payloadText)
+        delivery.completed(instanceId, result)
     }
 }
