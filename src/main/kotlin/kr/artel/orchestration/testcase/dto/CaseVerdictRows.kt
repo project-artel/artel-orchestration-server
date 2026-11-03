@@ -46,6 +46,12 @@ data class CaseVerdictHistoryResponse(
     val items: List<CaseVerdictHistoryItem>,
 )
 
+/** 케이스 하나와 그 케이스의 몫이 있는 버전 하나(ARTEL-1310). */
+data class CaseBuildRow(
+    val testCaseId: Long,
+    val gameBuildId: Long,
+)
+
 /** TC 하나의 `case_key`(ARTEL-1252). 판정한 빌드의 몫에 있으면 그것을, 없으면 TC 의 것을 쓴다. */
 data class CaseKeyRow(
     val testCaseId: Long,

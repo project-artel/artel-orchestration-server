@@ -39,6 +39,7 @@ import kotlinx.coroutines.sync.withLock
 class CaseContractService(
     private val databaseClient: DatabaseClient,
     private val testCases: TestCaseRepository,
+    private val versions: kr.artel.orchestration.testcase.repository.TestCaseVersionRepository,
     private val agent: AgentCaseContractClient,
     private val objectMapper: ObjectMapper,
 ) {
@@ -335,6 +336,8 @@ class CaseContractService(
     /** 계약까지 붙인 TC 목록과 용어집. 지도에서 온 TC 는 빼고 글로 쓴 TC 만이다. */
     suspend fun list(projectId: Long): CaseContractList {
         val glossary = glossary(projectId)
+        val builds = versions.findCaseBuilds(projectId).toList()
+            .groupBy({ it.testCaseId }, { it.gameBuildId.toString() })
         val rows = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { it.capabilityKey == null }.map { case ->
             val meta = runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
             CaseContractRow(
@@ -349,6 +352,7 @@ class CaseContractService(
                 contractSource = meta?.path("contract")?.path("source")?.asText(null),
                 arrivesAt = meta?.path(MapTestCaseWriter.ARRIVES_AT)?.asText(null)?.ifBlank { null },
                 kind = case.kind,
+                gameBuildIds = builds[case.id].orEmpty(),
             )
         }
         return CaseContractList(glossary.terms, glossary.startState, rows)
@@ -395,26 +399,52 @@ class CaseContractService(
         put("context", "static"); put("offset", 0); putNull("subjectLost")
     }
 
-    /** 용어집에 없는 이름만 더한다. 시작 값이 있으면 시작 상태에도 넣는다. 더한 이름을 돌려준다. */
-    suspend fun mergeTerms(projectId: Long, terms: List<CaseTermInput>): List<String> {
-        if (terms.isEmpty()) return emptyList()
+    /**
+     * 용어를 더하거나 채운다. 없는 이름은 더하고(시작 값이 있으면 시작 상태에도), 있는 이름은 빈 칸만 채우고 별칭을 더한다.
+     * 더한 이름과 채운 이름을 돌려준다.
+     */
+    suspend fun mergeTerms(projectId: Long, terms: List<CaseTermInput>): Pair<List<String>, List<String>> {
+        if (terms.isEmpty()) return emptyList<String>() to emptyList()
         val glossary = glossary(projectId)
-        val known = glossary.terms.map { it.path("name").asText() }.toSet()
-        val fresh = terms.filter { it.name.isNotBlank() && it.name !in known }.distinctBy { it.name }
-        if (fresh.isEmpty()) return emptyList()
         val all = (glossary.terms.deepCopy() as com.fasterxml.jackson.databind.node.ArrayNode)
-        fresh.forEach { t ->
-            all.addObject().apply {
-                put("name", t.name); put("kind", t.kind); put("meaning", t.meaning)
-                putArray("aliases"); putArray("options").apply { t.options.forEach { add(it) } }
-                put("start", t.start?.ifBlank { null } ?: "unknown")
-                put("start_basis", if (t.start.isNullOrBlank()) "unknown" else "text")
-                putArray("not_same_as")
+        val byName = all.filterIsInstance<com.fasterxml.jackson.databind.node.ObjectNode>().associateBy { it.path("name").asText() }
+        val start = glossary.startState.toMutableMap()
+        val added = mutableListOf<String>()
+        val updated = mutableListOf<String>()
+        for (t in terms.filter { it.name.isNotBlank() }.distinctBy { it.name }) {
+            val known = byName[t.name]
+            if (known == null) {
+                all.addObject().apply {
+                    put("name", t.name); put("kind", t.kind); put("meaning", t.meaning)
+                    putArray("aliases").apply { t.aliases.filter { it.isNotBlank() && it != t.name }.distinct().forEach { add(it) } }
+                    putArray("options").apply { t.options.forEach { add(it) } }
+                    put("start", t.start?.ifBlank { null } ?: "unknown")
+                    put("start_basis", if (t.start.isNullOrBlank()) "unknown" else "text")
+                    putArray("not_same_as")
+                }
+                t.start?.ifBlank { null }?.let { start[contractName(t.name)] = contractName(it) }
+                added += t.name
+                continue
             }
+            // 있던 이름은 비어 있는 칸만 채운다(ARTEL-1310). 누가 정한 값이든 덮지 않는다 — 사람이 정한 것을 MCP 가 바꾸지 않고,
+            // 앞서 정해진 것을 뒤의 추측이 흔들지 않는다.
+            var changed = false
+            if (known.path("meaning").asText("").isBlank() && t.meaning.isNotBlank()) { known.put("meaning", t.meaning); changed = true }
+            if (known.path("start").asText("unknown") == "unknown" && !t.start.isNullOrBlank() && contractName(t.name) !in glossary.startState) {
+                known.put("start", t.start); known.put("start_basis", "text")
+                start[contractName(t.name)] = contractName(t.start)
+                changed = true
+            }
+            val options = (known.get("options") as? com.fasterxml.jackson.databind.node.ArrayNode ?: known.putArray("options"))
+            if (options.isEmpty() && t.options.isNotEmpty()) { t.options.forEach { options.add(it) }; changed = true }
+            val aliases = (known.get("aliases") as? com.fasterxml.jackson.databind.node.ArrayNode ?: known.putArray("aliases"))
+            val have = aliases.map { it.asText() }.toSet()
+            t.aliases.filter { it.isNotBlank() && it != t.name && it !in have }.distinct().forEach { aliases.add(it); changed = true }
+            if (changed) updated += t.name
         }
-        val start = glossary.startState + fresh.mapNotNull { t -> t.start?.ifBlank { null }?.let { contractName(t.name) to contractName(it) } }
+        if (added.isEmpty() && updated.isEmpty()) return emptyList<String>() to emptyList()
         saveGlossary(projectId, all, start)
-        return fresh.map { it.name }
+        return added to updated
     }
 
     /** 케이스가 남기는 것(`state_after`), 이름 → 값. */
