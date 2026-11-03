@@ -166,6 +166,15 @@ class McpAccessTokenIntegrationTest {
         assertThat(call(reader, HttpMethod.DELETE, "$identityPath?name=StageDataSingleton.stagePosition").status).isEqualTo(403)
         assertThat(call(writer, HttpMethod.PUT, identityPath, identity).status).isEqualTo(200)
         assertThat(call(writer, HttpMethod.DELETE, "$identityPath?name=StageDataSingleton.stagePosition").status).isEqualTo(204)
+
+        // fact·rule 도 같은 줄에 선다(V174). 읽기는 read, 등록은 write 다.
+        val factPath = "${world.base}/game-facts"
+        val fact = """{"name":"cards_in_hand","gameBuildId":"${world.buildId}","scope":"objects","member":"CardManager.myCards.Count",""" +
+            """"type":"integer","means":"손에 든 카드 수"}"""
+        assertThat(call(reader, HttpMethod.GET, factPath).status).isEqualTo(200)
+        assertThat(call(reader, HttpMethod.PUT, factPath, fact).status).isEqualTo(403)
+        assertThat(call(writer, HttpMethod.PUT, factPath, fact).status).isEqualTo(200)
+        assertThat(call(writer, HttpMethod.DELETE, "$factPath?name=cards_in_hand").status).isEqualTo(204)
     }
 
     /**
