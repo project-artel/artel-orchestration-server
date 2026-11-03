@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CancellationException
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.auth.repository.OAuthIdentityRepository
 import kr.artel.orchestration.auth.service.JwtService
@@ -24,6 +25,8 @@ import kr.artel.orchestration.qa.service.QaAgentInboundRouter
 import kr.artel.orchestration.qa.service.QaAgentPort
 import kr.artel.orchestration.qa.service.QaAgentSession
 import kr.artel.orchestration.qa.service.QaAgentSessionContext
+import kr.artel.orchestration.qa.service.QaActionDispatchService
+import kr.artel.orchestration.qa.service.QaLogService
 import kr.artel.orchestration.qa.service.QaFunctionOptions
 import kr.artel.orchestration.qa.service.QaSdkBridgeService
 import kr.artel.orchestration.qa.service.QaTryService
@@ -32,6 +35,8 @@ import kr.artel.orchestration.qa.repository.QaLogRepository
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
+import kr.artel.orchestration.sdk.service.SdkActionDelivery
+import kr.artel.orchestration.sdk.service.SdkLiveness
 import kr.artel.orchestration.sdk.service.handler.BehaviorEndedMessageHandler
 import kr.artel.orchestration.sdk.service.handler.GameFunctionCatalogMessageHandler
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
@@ -61,10 +66,15 @@ import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Primary
 import org.springframework.http.HttpStatus
+import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientResponseException
 import org.springframework.web.reactive.socket.WebSocketSession
+import org.springframework.transaction.reactive.TransactionCallback
+import org.springframework.transaction.reactive.TransactionalOperator
+import reactor.core.publisher.Flux
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -85,6 +95,8 @@ class GameFunctionsIntegrationTest {
     class RecordingAgentPort : QaAgentPort {
         val contexts: MutableList<QaAgentSessionContext> = CopyOnWriteArrayList()
         val sent: MutableList<QaAgentEnvelope> = CopyOnWriteArrayList()
+        val resultAttempts: MutableList<QaAgentEnvelope> = CopyOnWriteArrayList()
+        var failNextResult = false
 
         override suspend fun createSession(
             context: QaAgentSessionContext,
@@ -96,6 +108,13 @@ class GameFunctionsIntegrationTest {
         }
 
         override suspend fun send(sessionId: String, envelope: QaAgentEnvelope) {
+            if (envelope.type == "ACTION_RESULT") {
+                resultAttempts += envelope
+                if (failNextResult) {
+                    failNextResult = false
+                    throw IllegalStateException("result relay unavailable")
+                }
+            }
             sent += envelope
         }
 
@@ -135,6 +154,10 @@ class GameFunctionsIntegrationTest {
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
+    @Autowired private lateinit var databaseClient: DatabaseClient
+    @Autowired private lateinit var qaLogService: QaLogService
+    @Autowired private lateinit var transactionalOperator: TransactionalOperator
+    @Autowired private lateinit var actionDelivery: SdkActionDelivery
 
     private val recorder: RecordingAgentPort get() = agentPort as RecordingAgentPort
     private val socket: WebSocketSession = Mockito.mock(WebSocketSession::class.java)
@@ -144,6 +167,8 @@ class GameFunctionsIntegrationTest {
         wipe()
         recorder.contexts.clear()
         recorder.sent.clear()
+        recorder.resultAttempts.clear()
+        recorder.failNextResult = false
     }
 
     @AfterEach
@@ -613,7 +638,7 @@ class GameFunctionsIntegrationTest {
     }
 
     @Test
-    fun `전송 큐가 닫힌 세션에 보낸 ACTION 은 SDK 행을 남기지 않고 agent 가 실패를 바로 받는다`(): Unit = runBlocking {
+    fun `전송 큐가 닫히면 commit된 ACTION 로그를 보존하고 agent에 실패를 바로 전달한다`(): Unit = runBlocking {
         val seed = seed()
         val tryId = qaTryService.create(seed.scenarioId, seed.instanceId, seed.ownerId).id.toLong()
         // 소켓 write 가 실패하면 전송 파이프라인이 구독을 끊는다. 수신 쪽은 살아 있어 세션은 등록된 그대로다.
@@ -622,7 +647,7 @@ class GameFunctionsIntegrationTest {
 
         router.handle(actionFrame(tryId, agentMessageId, """{"id":1,"jsonrpc":"2.0","method":"key_click","params":["Space",0.1]}"""))
 
-        assertThat(sdkActionLogs(tryId)).isEmpty()
+        assertThat(sdkActionLogs(tryId)).hasSize(1)
         val answer = recorder.sent.single { it.type == "ACTION_RESULT" }
         assertThat(answer.correlationId).isEqualTo(agentMessageId)
         val result = answer.payload["results"].single()
@@ -631,6 +656,78 @@ class GameFunctionsIntegrationTest {
         assertThat(
             qaLogRepository.findAll().toList().filter { it.qaTryId == tryId && it.direction == "ORCHE_INTERNAL" && it.type == "ERROR" }
         ).hasSize(1)
+    }
+
+    @Test
+    fun `첫 결과 중계가 실패하면 동일한 cached result를 같은 봉투 ID로 재전달한다`(): Unit = runBlocking {
+        val seed = seed()
+        val tryId = qaTryService.create(seed.scenarioId, seed.instanceId, seed.ownerId).id.toLong()
+        val agentMessageId = UUID.randomUUID().toString()
+        router.handle(actionFrame(tryId, agentMessageId,
+            """{"id":1,"jsonrpc":"2.0","method":"key_click","params":["Space",0.1]}"""))
+        val requestId = sdkActionLogs(tryId).single().messageId!!
+        val result = """{"type":"ACTION_RESULT","id":42,"requestId":$requestId,"frame":15605,"results":[{"id":1,"success":true,"error":""}]}"""
+        recorder.failNextResult = true
+
+        assertThatThrownBy { runBlocking { bridge.routeActionResult(seed.instanceId, result) } }
+            .isInstanceOf(IllegalStateException::class.java)
+            .hasMessage("result relay unavailable")
+        assertThat(recorder.sent.filter { it.type == "ACTION_RESULT" }).isEmpty()
+
+        assertThat(bridge.routeActionResult(seed.instanceId, result)).isTrue()
+
+        val delivered = recorder.sent.single { it.type == "ACTION_RESULT" }
+        assertThat(delivered.correlationId).isEqualTo(agentMessageId)
+        assertThat(delivered.payload).isEqualTo(objectMapper.readTree(result))
+        assertThat(recorder.resultAttempts).hasSize(2)
+        assertThat(recorder.resultAttempts.map { it.messageId }).containsOnly("action-result-$requestId")
+        val resultLogs = qaLogRepository.findAll().toList()
+            .filter { it.qaTryId == tryId && it.type == "ACTION_RESULT" }
+        assertThat(resultLogs.map { it.direction }).containsExactlyInAnyOrder("SDK_TO_ORCHE", "ORCHE_TO_AGENT")
+        assertThat(qaLogRepository.findAll().toList().count {
+            it.qaTryId == tryId && it.direction == "ORCHE_INTERNAL" &&
+                objectMapper.readTree(it.payload.asString()).path("event").asText() == "action_timing"
+        }).isEqualTo(1)
+    }
+
+    @Test
+    fun `ACTION 로그 저장 후 commit이 실패하면 SDK 전송과 pending 등록을 하지 않는다`(): Unit = runBlocking {
+        verifyNoDispatchBeforeCommit(IllegalStateException("commit boundary unavailable"))
+    }
+
+    @Test
+    fun `ACTION 로그 저장 후 commit 전에 취소되면 SDK 전송과 pending 등록을 하지 않는다`(): Unit = runBlocking {
+        verifyNoDispatchBeforeCommit(CancellationException("cancelled before commit"))
+    }
+
+    private suspend fun verifyNoDispatchBeforeCommit(failure: RuntimeException) {
+        val seed = seed(UUID.randomUUID().toString())
+        val tryId = qaTryService.create(seed.scenarioId, seed.instanceId, seed.ownerId).id.toLong()
+        seed.toSdk.clear()
+        val pendingBefore = actionDelivery.pendingCount()
+        val failingTransaction = object : TransactionalOperator {
+            override fun <T : Any?> execute(action: TransactionCallback<T>): Flux<T> =
+                transactionalOperator.execute { status ->
+                    Flux.from(action.doInTransaction(status)).concatWith(Flux.error<T>(failure))
+                }
+        }
+        val dispatch = QaActionDispatchService(
+            qaTryRepository, qaLogRepository, qaLogService, databaseClient, sessionManager,
+            objectMapper, failingTransaction, bridge, actionDelivery
+        )
+        val frame = actionFrame(tryId, UUID.randomUUID().toString(),
+            """{"id":1,"jsonrpc":"2.0","method":"key_click","params":["Space",0.1]}""")
+
+        assertThatThrownBy {
+            runBlocking { dispatch.dispatch(tryId, frame.messageId, "act", frame.payload) }
+        }.isInstanceOf(failure.javaClass).hasMessage(failure.message)
+
+        assertThat(seed.toSdk).isEmpty()
+        assertThat(sdkActionLogs(tryId)).isEmpty()
+        assertThat(actionDelivery.pendingCount()).isEqualTo(pendingBefore)
+        assertThat(qaLogRepository.findAll().toList().filter {
+            it.qaTryId == tryId && it.direction == "AGENT_TO_ORCHE" && it.type == "ACTION"
+        }).isEmpty()
     }
 
     // ------------------------------------------------------------------ 준비
@@ -649,7 +746,7 @@ class GameFunctionsIntegrationTest {
         val sdkSubscription: reactor.core.Disposable
     )
 
-    private suspend fun seed(): Seed {
+    private suspend fun seed(processId: String? = null): Seed {
         val owner = signIn("owner")
         val ownerId = owner.userId.toLong()
         val now = Instant.now()
@@ -672,7 +769,7 @@ class GameFunctionsIntegrationTest {
         val s1 = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))
         val s2 = testScenarioRepository.save(TestScenarioEntity(projectId = projectId))
         testRunService.setScenarios(testRun.id!!, ownerId, listOf(s1.id!!, s2.id!!))
-        val (toSdk, subscription) = connectSdk(instance.id!!)
+        val (toSdk, subscription) = connectSdk(instance.id!!, processId)
         return Seed(
             ownerId, jwtService.issue(owner), projectId, build.id!!, instance.id!!, s1.id, testRun.id,
             toSdk, subscription
@@ -695,9 +792,16 @@ class GameFunctionsIntegrationTest {
         ScenarioDraft(title = "t", description = "", steps = listOf(ScenarioStep(action = "1", caseId = caseId)))
 
     /** 인스턴스에 mock 소켓을 붙인다. 붙어 있지 않으면 `create` 가 SDK 연결 없음으로 거절한다. */
-    private fun connectSdk(instanceId: Long): Pair<CopyOnWriteArrayList<String>, reactor.core.Disposable> {
+    private suspend fun connectSdk(instanceId: Long, processId: String? = null): Pair<CopyOnWriteArrayList<String>, reactor.core.Disposable> {
         val frames = CopyOnWriteArrayList<String>()
-        val outbound = requireNotNull(sessionManager.register(instanceId.toString(), Mockito.mock(WebSocketSession::class.java)))
+        val session = Mockito.mock(WebSocketSession::class.java)
+        val outbound = if (processId == null) {
+            requireNotNull(sessionManager.register(instanceId.toString(), session))
+        } else {
+            requireNotNull(sessionManager.registerReplacingSilent(
+                instanceId.toString(), session, SdkLiveness { false }, Duration.ofSeconds(2), processId
+            )).outbound
+        }
         val subscription = outbound.subscribe { frames.add(it) }
         return frames to subscription
     }
