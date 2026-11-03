@@ -20,6 +20,7 @@ import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import kr.artel.orchestration.testscenario.service.TestScenarioService
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.springframework.beans.factory.annotation.Autowired
@@ -113,6 +114,45 @@ class RunAuthoringLockIntegrationTest {
         } finally {
             locks.release(key)
         }
+    }
+
+    /** 번호 없이 같은 제목으로 온 카드도 그 시나리오를 덮는다. 잠금 검사도 그 시나리오로 한다(Codex P2). */
+    @Test
+    fun `제목으로 덮을 시나리오도 잠금을 본다`(): Unit = runBlocking {
+        val f = fixture()
+        val other = member(f.projectId)
+        val key = "${f.userId}:${f.runId}"
+        locks.hold(f.runId, f.projectId, f.userId, key)
+        locks.lockScenarios(key, listOf(f.scenarioId))
+        try {
+            val card = kr.artel.orchestration.testscenario.dto.ScenarioResult(
+                scenarioId = null, title = "시나리오", description = "", steps = emptyList(),
+            )
+            assertThatThrownBy { runBlocking { chatService.commitScenarios(other, f.runId, listOf(card)) } }
+                .isInstanceOf(kr.artel.orchestration.common.error.LockedException::class.java)
+        } finally {
+            locks.release(key)
+        }
+    }
+
+    /** 두 런에 담긴 시나리오를 한 런의 턴이 잠그면, 다른 런의 조회에도 보인다. 저장은 막히는데 화면이 열려 보이면 안 된다(Codex P2). */
+    @Test
+    fun `다른 런에서 잠근 공유 시나리오도 이 런의 잠금으로 보인다`(): Unit = runBlocking {
+        val f = fixture()
+        val second = runService.create(f.projectId, f.userId, TestRunCreateRequest(name = "두 번째 런"))!!.id.toLong()
+        runService.setScenarios(second, f.userId, listOf(f.scenarioId))
+        val key = "${f.userId}:${f.runId}"
+        locks.hold(f.runId, f.projectId, f.userId, key)
+        try {
+            assertThat(chatService.authoringLock(f.userId, second).scenarios.map { it.scenarioId })
+                .describedAs("고르는 중인 턴").containsExactly(f.scenarioId.toString())
+            locks.lockScenarios(key, listOf(f.scenarioId))
+            assertThat(chatService.authoringLock(f.userId, second).scenarios.map { it.scenarioId })
+                .describedAs("고친 시나리오를 쥔 턴").containsExactly(f.scenarioId.toString())
+        } finally {
+            locks.release(key)
+        }
+        assertThat(chatService.authoringLock(f.userId, second).scenarios).isEmpty()
     }
 
     private data class Fixture(val projectId: Long, val userId: Long, val runId: Long, val scenarioId: Long)
