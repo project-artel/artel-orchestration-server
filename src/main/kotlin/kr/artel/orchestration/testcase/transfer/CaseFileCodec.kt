@@ -8,6 +8,10 @@ import org.apache.poi.ss.usermodel.DataFormatter
 import org.apache.poi.ss.usermodel.FillPatternType
 import org.apache.poi.ss.usermodel.IndexedColors
 import org.apache.poi.ss.usermodel.VerticalAlignment
+import org.apache.poi.ss.util.CellRangeAddress
+import org.apache.poi.ss.util.CellRangeAddressList
+import org.apache.poi.xssf.usermodel.XSSFDataValidationHelper
+import org.apache.poi.xssf.usermodel.XSSFSheet
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -24,9 +28,15 @@ import java.nio.charset.CodingErrorAction
  *
  * CSV 는 UTF-8 이 아니면 CP949 로 읽는다. 한국어 Windows 의 엑셀이 "CSV(쉼표로 분리)" 로 저장하면 CP949 다.
  * 내보내는 CSV 는 UTF-8 에 BOM 을 붙인다 — 붙이지 않으면 엑셀이 한글을 깨뜨린다.
+ *
+ * 엑셀에는 머리글 줄에 **필터**(정렬 · 거르기)를 켜고, 종류 칸에 기능 · 예외 **고르기 목록**을 건다(ARTEL-1328). CSV 는 글자뿐이라
+ * 둘 다 담을 수 없다.
  */
 object CaseFileCodec {
     const val MAX_ROWS = 500
+
+    /** 종류 칸에 고를 수 있는 값. 가져올 때는 영어도 읽는다([CaseFileService.kindOf]). */
+    val KIND_CHOICES = listOf("기능", "예외")
 
     fun formatOf(bytes: ByteArray, fileName: String?): CaseFileFormat {
         if (bytes.size >= 4 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte() && bytes[2] == 3.toByte() && bytes[3] == 4.toByte()) {
@@ -99,20 +109,33 @@ object CaseFileCodec {
     }
 
     fun write(format: CaseFileFormat, rows: List<Map<CaseFileColumn, String>>): ByteArray = when (format) {
-        CaseFileFormat.XLSX -> writeXlsx(rows)
+        CaseFileFormat.XLSX -> writeXlsx(rows, guide = false)
         CaseFileFormat.CSV -> writeCsv(rows)
     }
 
-    private fun writeCsv(rows: List<Map<CaseFileColumn, String>>): ByteArray {
+    /**
+     * 가져오기 양식. 머리글만 있는 빈 표다 — 예시 줄을 표에 두면 지우지 않은 채 올려 TC 로 들어간다. 엑셀에는 작성법과 예시를
+     * 둘째 시트(`작성법`)에 둔다. 결과 칸은 가져올 때 읽지 않으므로 양식에 두지 않는다.
+     */
+    fun template(format: CaseFileFormat): ByteArray = when (format) {
+        CaseFileFormat.XLSX -> writeXlsx(emptyList(), guide = true)
+        CaseFileFormat.CSV -> writeCsv(emptyList(), TEMPLATE_COLUMNS)
+    }
+
+    /** 양식의 칸. 내보내는 칸에서 결과(가져올 때 읽지 않음)를 뺀 것이다. */
+    val TEMPLATE_COLUMNS: List<CaseFileColumn> = CaseFileColumn.EXPORTED - CaseFileColumn.RESULT
+
+    private fun writeCsv(rows: List<Map<CaseFileColumn, String>>, columns: List<CaseFileColumn> = CaseFileColumn.EXPORTED): ByteArray {
         val out = StringWriter()
         CSVPrinter(out, CSVFormat.DEFAULT.builder().setRecordSeparator("\r\n").build()).use { printer ->
-            printer.printRecord(CaseFileColumn.EXPORTED.map { it.label })
-            rows.forEach { row -> printer.printRecord(CaseFileColumn.EXPORTED.map { row[it].orEmpty() }) }
+            printer.printRecord(columns.map { it.label })
+            rows.forEach { row -> printer.printRecord(columns.map { row[it].orEmpty() }) }
         }
         return ("﻿" + out.toString()).toByteArray(Charsets.UTF_8)
     }
 
-    private fun writeXlsx(rows: List<Map<CaseFileColumn, String>>): ByteArray {
+    private fun writeXlsx(rows: List<Map<CaseFileColumn, String>>, guide: Boolean): ByteArray {
+        val columns = if (guide) TEMPLATE_COLUMNS else CaseFileColumn.EXPORTED
         XSSFWorkbook().use { book ->
             val sheet = book.createSheet("TC")
             val head = book.createCellStyle().apply {
@@ -122,26 +145,68 @@ object CaseFileCodec {
             }
             val body = book.createCellStyle().apply { wrapText = true; verticalAlignment = VerticalAlignment.TOP }
             sheet.createRow(0).let { row ->
-                CaseFileColumn.EXPORTED.forEachIndexed { col, column -> row.createCell(col).apply { setCellValue(column.label); cellStyle = head } }
+                columns.forEachIndexed { col, column -> row.createCell(col).apply { setCellValue(column.label); cellStyle = head } }
             }
             rows.forEachIndexed { index, values ->
                 val row = sheet.createRow(index + 1)
-                CaseFileColumn.EXPORTED.forEachIndexed { col, column ->
+                columns.forEachIndexed { col, column ->
                     row.createCell(col).apply { setCellValue(values[column].orEmpty()); cellStyle = body }
                 }
             }
             sheet.createFreezePane(0, 1)
+            // 머리글의 ▼ 로 칸마다 정렬 · 거르기를 한다. 빈 양식도 가져올 수 있는 만큼(500줄) 범위를 잡아 둔다.
+            val lastRow = maxOf(rows.size, MAX_ROWS)
+            sheet.setAutoFilter(CellRangeAddress(0, lastRow, 0, columns.lastIndex))
+            kindChoices(sheet, columns.indexOf(CaseFileColumn.KIND), lastRow)
             // 글이 긴 칸(조작 · 기대결과 · 사전조건)은 넓게, 나머지는 좁게. 단위는 글자 1/256.
-            CaseFileColumn.EXPORTED.forEachIndexed { col, column ->
+            columns.forEachIndexed { col, column ->
                 val chars = when (column) {
                     CaseFileColumn.STEP, CaseFileColumn.EXPECTED -> 40
-                    CaseFileColumn.PRECONDITION, CaseFileColumn.NEEDS, CaseFileColumn.LEAVES -> 24
+                    CaseFileColumn.PRECONDITION -> 24
                     CaseFileColumn.SCENE, CaseFileColumn.ARRIVES_AT -> 16
-                    else -> 10
+                    else -> 11
                 }
                 sheet.setColumnWidth(col, chars * 256)
             }
+            if (guide) guideSheet(book, head, body)
             return ByteArrayOutputStream().also { book.write(it) }.toByteArray()
         }
+    }
+
+    /** 종류 칸을 기능 · 예외 중에서 고르게 한다. 다른 글을 쓰면 엑셀이 막는다. */
+    private fun kindChoices(sheet: XSSFSheet, column: Int, lastRow: Int) {
+        if (column < 0) return
+        val helper = XSSFDataValidationHelper(sheet)
+        val validation = helper.createValidation(
+            helper.createExplicitListConstraint(KIND_CHOICES.toTypedArray()),
+            CellRangeAddressList(1, lastRow, column, column),
+        )
+        validation.showErrorBox = true
+        validation.createErrorBox("종류", "기능 · 예외 중 하나를 고르세요. 비우면 기능입니다.")
+        sheet.addValidationData(validation)
+    }
+
+    /** 양식의 둘째 시트: 칸마다 쓰는 법과 예시 한 줄. */
+    private fun guideSheet(book: XSSFWorkbook, head: org.apache.poi.xssf.usermodel.XSSFCellStyle, body: org.apache.poi.xssf.usermodel.XSSFCellStyle) {
+        val sheet = book.createSheet("작성법")
+        val lines = listOf(
+            listOf("칸", "쓰는 법", "예시"),
+            listOf(CaseFileColumn.NUMBER.label, "고칠 TC 의 번호. 비우면 새 TC 를 만듭니다. 번호가 있으면 그 TC 를 고치고, 가져올 버전에 넣습니다.", "TC-012"),
+            listOf(CaseFileColumn.KIND.label, "기능 또는 예외. 예외는 조건이 맞지 않을 때 게임이 막는지 보는 TC 입니다. 비우면 기능입니다.", "예외"),
+            listOf(CaseFileColumn.SCENE.label, "조작하는 화면 · 장소. 사람이 부르는 이름으로, 같은 곳은 늘 같은 이름으로 씁니다. (꼭 채움)", "지하실"),
+            listOf(CaseFileColumn.PRECONDITION.label, "조작 전에 있어야 할 상황(선택).", "열쇠가 없다"),
+            listOf(CaseFileColumn.STEP.label, "조작 하나. 여러 조작을 한 줄에 넣지 않습니다. (꼭 채움)", "문을 연다"),
+            listOf(CaseFileColumn.EXPECTED.label, "화면에서 확인할 수 있는 결과. (꼭 채움)", "문이 열리지 않고 열쇠가 필요하다고 나온다"),
+            listOf(CaseFileColumn.ARRIVES_AT.label, "하고 나면 다른 화면으로 가는 TC 면 그 화면 이름(선택).", ""),
+            listOf("", "", ""),
+            listOf("알아 둘 것", "빈칸은 \"그대로\" 입니다 — 파일로 칸을 지우지는 않습니다. 한 번에 ${MAX_ROWS}줄까지 가져옵니다.", ""),
+        )
+        lines.forEachIndexed { index, values ->
+            val row = sheet.createRow(index)
+            values.forEachIndexed { col, value -> row.createCell(col).apply { setCellValue(value); cellStyle = if (index == 0) head else body } }
+        }
+        sheet.setColumnWidth(0, 14 * 256)
+        sheet.setColumnWidth(1, 70 * 256)
+        sheet.setColumnWidth(2, 36 * 256)
     }
 }

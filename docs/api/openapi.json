@@ -9802,6 +9802,46 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-cases/imports/template": {
+      "get": {
+        "tags": [
+          "case-file-controller"
+        ],
+        "operationId": "downloadTestCaseImportTemplate",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-cases/coverage": {
       "get": {
         "tags": [

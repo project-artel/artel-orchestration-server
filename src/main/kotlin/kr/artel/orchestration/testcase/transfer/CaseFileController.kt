@@ -5,6 +5,7 @@ import org.springframework.http.ContentDisposition
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -29,8 +30,17 @@ class CaseFileController(private val caseFiles: CaseFileService) {
         @PathVariable projectId: Long,
         @RequestBody request: CaseFileExportRequest,
         @CurrentUserId appUserId: Long,
-    ): ResponseEntity<ByteArray> {
-        val download = caseFiles.export(projectId, appUserId, request)
+    ): ResponseEntity<ByteArray> = fileResponse(caseFiles.export(projectId, appUserId, request))
+
+    /** 가져오기 양식. 엑셀은 머리글 필터 · 종류 고르기 목록 · 작성법 시트가 든 빈 표, CSV 는 머리글 한 줄이다. */
+    @GetMapping("/imports/template")
+    suspend fun downloadTestCaseImportTemplate(
+        @PathVariable projectId: Long,
+        @RequestParam(required = false) format: String?,
+        @CurrentUserId appUserId: Long,
+    ): ResponseEntity<ByteArray> = fileResponse(caseFiles.template(projectId, appUserId, format))
+
+    private fun fileResponse(download: CaseFileService.Download): ResponseEntity<ByteArray> {
         return ResponseEntity.ok()
             .header(HttpHeaders.CONTENT_TYPE, download.format.contentType)
             .header(

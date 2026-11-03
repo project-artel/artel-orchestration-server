@@ -24,9 +24,9 @@ import java.time.format.DateTimeFormatter
  * 넣는다(같은 번호는 버전만 오른다). 번호가 없으면 새로 만든다. 저장 전에 같은 계획을 미리 보여 준다([preview]) — 무엇이 새로
  * 생기고 무엇이 고쳐지며 어느 줄을 왜 못 넣는지.
  *
- * **바뀐 칸만 쓴다.** 내보낸 파일에는 AI 가 뽑은 계약(필요 · 남김)도 실린다. 그 파일을 그대로 다시 가져오면서 계약을 쓰면,
- * AI 가 뽑은 값이 사람이 정한 값으로 굳어 다음 정리가 고치지 못한다. 그래서 계약 · 도착 화면 · 종류는 지금 값과 다를 때만 보낸다.
- * 빈칸은 "그대로" 다 — 파일로 지우지는 않는다(지우는 것은 화면에서 한다).
+ * **바뀐 칸만 쓴다.** 도착 화면 · 종류는 지금 값과 다를 때만 보낸다. 빈칸은 "그대로" 다 — 파일로 지우지는 않는다(지우는
+ * 것은 화면에서 한다). 계약(필요 · 남김)은 파일에 싣지 않는다([CaseFileColumn]). 도착 화면을 고치면 계약이 함께 쓰이므로, 그때는
+ * 지금 계약을 그대로 실어 보낸다 — 빈 계약으로 보내면 지워진다.
  *
  * **결과 칸은 읽지 않는다.** 판정은 QA 가 정한다.
  */
@@ -76,10 +76,8 @@ class CaseFileService(
         val statusOf = inTarget.toMap()
         val ids = request.testCaseIds?.mapNotNull { it.toLongOrNull() }?.filter { it in statusOf }
             ?: inTarget.map { it.first }.sortedBy { numbers[it] ?: Long.MAX_VALUE }
-        val contracts = caseContracts.list(projectId).cases.associateBy { it.testCaseId.toLong() }
         val rows = ids.mapNotNull { id ->
             val state = states[id] ?: return@mapNotNull null
-            val contract = contracts[id]
             mapOf(
                 CaseFileColumn.NUMBER to (numbers[id]?.let(::formatNumber) ?: ""),
                 CaseFileColumn.KIND to kindLabel(state.kind),
@@ -89,8 +87,6 @@ class CaseFileService(
                 CaseFileColumn.EXPECTED to state.expectedValue,
                 CaseFileColumn.ARRIVES_AT to state.arrivesAt.orEmpty(),
                 CaseFileColumn.RESULT to statusLabel(statusOf[id] ?: state.status),
-                CaseFileColumn.NEEDS to contract?.needs.orEmpty().joinToString("\n"),
-                CaseFileColumn.LEAVES to contract?.leaves.orEmpty().joinToString("\n"),
             )
         }
         val versionName = when (target) {
@@ -100,6 +96,13 @@ class CaseFileService(
         }
         val day = LocalDate.now(SEOUL).format(DateTimeFormatter.BASIC_ISO_DATE)
         return Download("${safe(project.name)}_${safe(versionName)}_TC_$day.${format.extension}", format, CaseFileCodec.write(format, rows))
+    }
+
+    /** 가져오기 양식(ARTEL-1328). 엑셀은 필터 · 종류 고르기 목록 · 작성법 시트가 든 빈 표다. */
+    suspend fun template(projectId: Long, userId: Long, format: String?): Download {
+        projectAccess.requireMember(projectId, userId)
+        val chosen = CaseFileFormat.of(format ?: "xlsx") ?: throw BadRequestException("format 은 xlsx 또는 csv 여야 합니다.", "invalid_format")
+        return Download("TC_가져오기_양식.${chosen.extension}", chosen, CaseFileCodec.template(chosen))
     }
 
     suspend fun preview(projectId: Long, userId: Long, gameBuildId: String?, fileName: String?, bytes: ByteArray): CaseImportPreview {
@@ -147,8 +150,6 @@ class CaseFileService(
             val step = row[CaseFileColumn.STEP]
             val expected = row[CaseFileColumn.EXPECTED]
             val precondition = row[CaseFileColumn.PRECONDITION].ifBlank { null }
-            val needs = split(row[CaseFileColumn.NEEDS])
-            val leaves = split(row[CaseFileColumn.LEAVES])
             val arrivesAt = row[CaseFileColumn.ARRIVES_AT].ifBlank { null }
             fun reject(reason: String, id: Long? = null) = Planned(
                 CaseImportRowView(
@@ -165,7 +166,6 @@ class CaseFileService(
                 "" -> null
                 else -> kindOf(text) ?: return@map reject("종류는 기능 · 예외 중 하나여야 합니다: $text")
             }
-            batch.contractProblem(needs, leaves)?.let { return@map reject(it) }
             val id = when (val resolved = targetIdOf(row, byNumber, states)) {
                 is Resolved.Missing -> return@map reject(resolved.reason)
                 is Resolved.Found -> resolved.id
@@ -180,7 +180,7 @@ class CaseFileService(
                     CaseImportRowView(row.line, CaseImportStatus.NEW, kind = kind ?: "FUNCTION", scene = scene, step = step, expectedValue = expected),
                     CaseBatchItem(
                         scene = scene, precondition = precondition, step = step, expectedValue = expected,
-                        needs = needs.ifEmpty { null }, leaves = leaves.ifEmpty { null }, arrivesAt = arrivesAt, kind = kind,
+                        arrivesAt = arrivesAt, kind = kind,
                     ),
                 )
             }
@@ -193,8 +193,6 @@ class CaseFileService(
                 if (expected != now.expectedValue) add(CaseFileColumn.EXPECTED.label)
                 if (kind != null && kind != now.kind) add(CaseFileColumn.KIND.label)
                 if (arrivesAt != null && arrivesAt != now.arrivesAt) add(CaseFileColumn.ARRIVES_AT.label)
-                if (needs.isNotEmpty() && !sameContract(needs, contract?.needs)) add(CaseFileColumn.NEEDS.label)
-                if (leaves.isNotEmpty() && !sameContract(leaves, contract?.leaves)) add(CaseFileColumn.LEAVES.label)
                 if (inVersion != null && id !in inVersion) add(IN_VERSION)
             }
             val view = CaseImportRowView(
@@ -207,14 +205,13 @@ class CaseFileService(
                 changes = changes,
             )
             if (changes.isEmpty()) return@map Planned(view, null)
-            // 계약을 쓰면 필요 · 남김 · 도착 화면이 함께 덮인다. 하나만 바뀌어도 나머지는 지금 값을 실어 보낸다 — 빈칸으로
-            // 보내면 그 칸이 지워진다.
-            val contractChanged = listOf(CaseFileColumn.NEEDS.label, CaseFileColumn.LEAVES.label, CaseFileColumn.ARRIVES_AT.label).any { it in changes }
+            // 도착 화면을 쓰면 계약(필요 · 남김)이 함께 덮인다. 지금 계약을 실어 보낸다 — 빈칸으로 보내면 지워진다.
+            val arrivalChanged = CaseFileColumn.ARRIVES_AT.label in changes
             val item = CaseBatchItem(
                 testCaseId = id.toString(), scene = scene, precondition = precondition, step = step, expectedValue = expected,
-                needs = if (contractChanged) needs.ifEmpty { contract?.needs.orEmpty() } else null,
-                leaves = if (contractChanged) leaves.ifEmpty { contract?.leaves.orEmpty() } else null,
-                arrivesAt = if (contractChanged) arrivesAt ?: now.arrivesAt else null,
+                needs = if (arrivalChanged) contract?.needs.orEmpty() else null,
+                leaves = if (arrivalChanged) contract?.leaves.orEmpty() else null,
+                arrivesAt = if (arrivalChanged) arrivesAt else null,
                 kind = kind?.takeIf { it != now.kind },
             )
             Planned(view, item)
@@ -317,15 +314,6 @@ class CaseFileService(
             "REGRESSION" -> "재검증 필요"
             "BROKEN" -> "깨짐"
             else -> "미검증"
-        }
-
-        /** 필요 · 남김 칸 하나를 항목들로. 줄바꿈이나 `;` 로 나눈다. */
-        fun split(text: String): List<String> = text.split('\n', ';').map { it.trim() }.filter { it.isNotEmpty() }
-
-        /** 띄어쓰기 · 밑줄 차이는 같은 계약이다(계약 이름은 공백을 `_` 로 바꿔 저장한다). */
-        private fun sameContract(file: List<String>, now: List<String>?): Boolean {
-            fun norm(items: List<String>) = items.map { it.replace(Regex("[\\s_]"), "") }.toSet()
-            return norm(file) == norm(now.orEmpty())
         }
 
         /** 파일 이름에 못 쓰는 글자를 뺀다. */

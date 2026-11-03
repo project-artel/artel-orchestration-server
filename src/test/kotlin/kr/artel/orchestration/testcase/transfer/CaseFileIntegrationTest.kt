@@ -52,6 +52,7 @@ class CaseFileIntegrationTest {
     @Autowired private lateinit var batch: CaseBatchService
     @Autowired private lateinit var testCases: TestCaseRepository
     @Autowired private lateinit var versions: TestCaseVersionService
+    @Autowired private lateinit var contracts: kr.artel.orchestration.testcase.contract.CaseContractService
 
     @Test
     fun `내보낸 파일을 고쳐 다시 가져오면 고친 줄만 반영된다`(): Unit = runBlocking {
@@ -65,8 +66,6 @@ class CaseFileIntegrationTest {
         assertThat(exported.map { it[CaseFileColumn.STEP] }).containsExactlyInAnyOrder("할머니한테 말을 건다", "열쇠 없이 문을 연다")
         val a = exported.single { it[CaseFileColumn.STEP] == "할머니한테 말을 건다" }
         assertThat(a[CaseFileColumn.NUMBER]).startsWith("TC-")
-        assertThat(a[CaseFileColumn.NEEDS]).isEqualTo("의뢰 == 0")
-        assertThat(a[CaseFileColumn.LEAVES]).isEqualTo("의뢰=1")
         assertThat(a[CaseFileColumn.ARRIVES_AT]).isEqualTo("광장")
         assertThat(a[CaseFileColumn.RESULT]).isEqualTo("미검증")
         assertThat(exported.single { it[CaseFileColumn.STEP] == "열쇠 없이 문을 연다" }[CaseFileColumn.KIND]).isEqualTo("예외")
@@ -74,6 +73,8 @@ class CaseFileIntegrationTest {
         // 화면에 보이는 것만(B) CSV 로.
         val csv = download(world.token, "$base/exports", """{"format":"csv","gameBuildId":"${world.current}","testCaseIds":["${world.b}"]}""")
         assertThat(csv.disposition).contains(".csv")
+        assertThat(String(csv.bytes, Charsets.UTF_8).lines().first()).describedAs("계약 칸(필요 · 남김)은 싣지 않는다")
+            .isEqualTo("\uFEFFTC 번호,종류,화면,사전조건,조작,기대결과,도착 화면,결과")
         assertThat(CaseFileCodec.read(csv.bytes, "b.csv").map { it[CaseFileColumn.STEP] }).containsExactly("열쇠 없이 문을 연다")
 
         // 그대로 다시 가져오면 바뀌는 것이 없다.
@@ -109,9 +110,18 @@ class CaseFileIntegrationTest {
         assertThat(result["updated"]).hasSize(2)
         assertThat(result["rejected"].map { it["line"].asInt() }).containsExactly(6, 7)
         assertThat(testCases.findById(world.a)!!.step).isEqualTo("할머니한테 다시 말을 건다")
+        val aContract = contracts.list(world.projectId).cases.single { it.testCaseId == world.a.toString() }
+        assertThat(aContract.needs).describedAs("파일에 계약 칸이 없어도 있던 계약은 그대로다").containsExactly("의뢰 == 0")
+        assertThat(aContract.leaves).containsExactly("의뢰=1")
         val inCurrent = versions.cases(world.projectId, world.current, null, world.userId).items.map { it.id }
         assertThat(inCurrent).contains(world.c.toString()).containsAll(result["created"].map { it.asText() })
         assertThat(testCases.findById(result["created"][1].asText().toLong())!!.kind).isEqualTo("EXCEPTION")
+
+        // 양식: 엑셀은 필터 · 고르기 목록이 든 빈 표.
+        val template = WebClient.create("http://localhost:$port").get().uri("$base/imports/template?format=xlsx")
+            .cookie("artel_access_token", world.token).retrieve().toEntity(ByteArray::class.java).block()!!
+        assertThat(template.headers.getFirst(HttpHeaders.CONTENT_DISPOSITION)).contains(".xlsx")
+        assertThat(CaseFileCodec.read(template.body!!, null)).isEmpty()
 
         // "버전 없음" 에 넣으면 어느 버전에도 없다.
         val loose = post(world.token, "$base/imports?gameBuildId=unversioned", "화면,조작,기대결과\n광장,게시판을 본다,의뢰 목록이 보인다\n".toByteArray())

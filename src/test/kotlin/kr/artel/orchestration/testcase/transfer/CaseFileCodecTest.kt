@@ -4,6 +4,8 @@ import kr.artel.orchestration.common.error.BadRequestException
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.apache.poi.xssf.usermodel.XSSFWorkbook
+import java.io.ByteArrayInputStream
 import java.nio.charset.Charset
 
 /** TC 파일 읽기 · 쓰기(ARTEL-1327). 형식은 내용으로 정하고, 머리글은 한국어 · 영어를 다 알아본다. */
@@ -16,7 +18,6 @@ class CaseFileCodecTest {
         CaseFileColumn.PRECONDITION to "열쇠가 없다",
         CaseFileColumn.STEP to "문을, \"세게\" 연다",
         CaseFileColumn.EXPECTED to "열리지 않는다\n열쇠가 필요하다고 나온다",
-        CaseFileColumn.NEEDS to "열쇠 == 0",
         CaseFileColumn.RESULT to "미검증",
     )
 
@@ -28,7 +29,35 @@ class CaseFileCodecTest {
         assertThat(read.line).isEqualTo(2)
         assertThat(read[CaseFileColumn.STEP]).isEqualTo("문을, \"세게\" 연다")
         assertThat(read[CaseFileColumn.EXPECTED]).isEqualTo("열리지 않는다\n열쇠가 필요하다고 나온다")
-        assertThat(read[CaseFileColumn.NEEDS]).isEqualTo("열쇠 == 0")
+    }
+
+    @Test
+    fun `엑셀은 머리글 필터와 종류 고르기 목록을 단다`() {
+        val bytes = CaseFileCodec.write(CaseFileFormat.XLSX, listOf(row))
+        XSSFWorkbook(ByteArrayInputStream(bytes)).use { book ->
+            val sheet = book.getSheet("TC")
+            assertThat(sheet.ctWorksheet.autoFilter.ref).describedAs("머리글부터 500줄까지 거른다").isEqualTo("A1:H501")
+            val kind = sheet.dataValidations.single()
+            assertThat(kind.validationConstraint.explicitListValues).containsExactly("기능", "예외")
+            assertThat(kind.regions.cellRangeAddresses.single().formatAsString()).isEqualTo("B2:B501")
+            assertThat(sheet.getRow(0).map { it.stringCellValue })
+                .containsExactly("TC 번호", "종류", "화면", "사전조건", "조작", "기대결과", "도착 화면", "결과")
+        }
+    }
+
+    @Test
+    fun `가져오기 양식은 빈 표와 작성법 시트다`() {
+        XSSFWorkbook(ByteArrayInputStream(CaseFileCodec.template(CaseFileFormat.XLSX))).use { book ->
+            assertThat((0 until book.numberOfSheets).map { book.getSheetName(it) }).containsExactly("TC", "작성법")
+            val sheet = book.getSheet("TC")
+            assertThat(sheet.lastRowNum).describedAs("예시 줄을 표에 두지 않는다").isZero()
+            assertThat(sheet.getRow(0).map { it.stringCellValue }).doesNotContain("결과").contains("TC 번호", "종류", "화면")
+            assertThat(sheet.dataValidations).hasSize(1)
+            assertThat(book.getSheet("작성법").getRow(5).getCell(0).stringCellValue).isEqualTo("조작")
+        }
+        val csv = String(CaseFileCodec.template(CaseFileFormat.CSV), Charsets.UTF_8)
+        assertThat(csv).isEqualTo("\uFEFFTC 번호,종류,화면,사전조건,조작,기대결과,도착 화면\r\n")
+        assertThat(CaseFileCodec.read(CaseFileCodec.template(CaseFileFormat.XLSX), null)).describedAs("빈 양식은 읽을 줄이 없다").isEmpty()
     }
 
     @Test

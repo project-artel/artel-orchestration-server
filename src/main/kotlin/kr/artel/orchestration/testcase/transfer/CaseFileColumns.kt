@@ -4,11 +4,14 @@ package kr.artel.orchestration.testcase.transfer
  * TC 파일의 칸(ARTEL-1327). 내보낼 때는 [label] 로 쓰고, 가져올 때는 [aliases] 중 어느 머리글이든 알아본다 — 한국어 · 영어,
  * 그리고 MCP 가 쓰는 목록 파일(`id,change,kind,scene,…`)의 머리글까지.
  *
+ * 계약 칸(필요 · 남김)은 싣지 않는다. 사람이 표에서 `열쇠 == 1` 꼴로 채우기 어렵고, 잘못 채우면 시나리오를 깨뜨린다. 계약은
+ * 글에서 뽑거나 화면 · MCP 로 정한다. 모르는 머리글은 무시하므로 예전 파일의 필요 · 남김 칸도 그냥 지나간다.
+ *
  * [NUMBER] 는 화면의 TC 번호(`TC-012`, 프로젝트 안 번호)이고 [ID] 는 DB 의 TC id 다. 내보내기는 번호만 쓴다. MCP 목록 파일은
  * DB id 를 `id` 칸에 쓰므로 가져올 때 둘 다 받는다.
  */
 enum class CaseFileColumn(val label: String, val aliases: Set<String>, val exported: Boolean = true) {
-    NUMBER("번호", setOf("번호", "tc번호", "tc", "number", "casenumber", "no")),
+    NUMBER("TC 번호", setOf("번호", "tc번호", "tc", "number", "casenumber", "no")),
     ID("id", setOf("id", "testcaseid", "test_case_id"), exported = false),
     KIND("종류", setOf("종류", "kind", "type")),
     SCENE("화면", setOf("화면", "scene", "장소")),
@@ -16,9 +19,7 @@ enum class CaseFileColumn(val label: String, val aliases: Set<String>, val expor
     STEP("조작", setOf("조작", "스텝", "내용", "step")),
     EXPECTED("기대결과", setOf("기대결과", "expected", "expectedvalue", "기댓값")),
     ARRIVES_AT("도착 화면", setOf("도착화면", "arrivesat", "arrival")),
-    RESULT("결과", setOf("결과", "result", "verificationstatus")),
-    NEEDS("필요", setOf("필요", "needs")),
-    LEAVES("남김", setOf("남김", "leaves"));
+    RESULT("결과", setOf("결과", "result", "verificationstatus"));
 
     companion object {
         /** 내보내는 칸의 순서. */
