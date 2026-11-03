@@ -34,7 +34,8 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      */
     @Query(
         """
-        SELECT id, scene, step, precondition, expected_value, verification_status, created_at,
+        SELECT id, scene, step, precondition, expected_value, verification_status, created_at, kind, review_status,
+               NULLIF(metadata->>'arrives_at', '') AS arrives_at,
                COALESCE(metadata->>'origin' = 'content-map' AND jsonb_typeof(metadata->'origin') = 'string', false) AS from_map
           FROM test_case
          WHERE project_id = :projectId
@@ -66,7 +67,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
         SELECT id, scene, step, precondition, expected_value, verification_status
         FROM test_case
-        WHERE project_id = :projectId
+        WHERE project_id = :projectId AND review_status = 'READY'
         ORDER BY id ASC
         """
     )
@@ -83,7 +84,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      * 덮으라고 요구하면 **저작이 영영 통과하지 못한다**: 실측(런 266)에서 지도가 더 이상 내지 않는
      * `Return` 케이스를 안 담았다고 저장이 막혔다. 담을 수도 없다 — 그 조작은 지도에 없다.
      */
-    @Query("SELECT id FROM test_case WHERE project_id = :projectId AND verification_status <> 'BROKEN'")
+    @Query("SELECT id FROM test_case WHERE project_id = :projectId AND review_status = 'READY' AND verification_status <> 'BROKEN'")
     fun findIdsByProjectId(projectId: Long): Flow<Long>
 
     /**
@@ -110,6 +111,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         """
         SELECT c.id FROM test_case c
         WHERE c.project_id = :projectId
+          AND c.review_status = 'READY'
           AND NOT EXISTS (
             SELECT 1 FROM test_scenario s, jsonb_array_elements(s.steps) e
             WHERE s.project_id = :projectId
@@ -140,6 +142,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         SELECT c.scene AS scene, count(*) AS count
         FROM test_case c
         WHERE c.project_id = :projectId
+          AND c.review_status = 'READY'
           AND NOT EXISTS (
             SELECT 1 FROM test_scenario s, jsonb_array_elements(s.steps) e
             WHERE s.project_id = :projectId
@@ -156,6 +159,9 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     fun findScenesOfUncovered(projectId: Long): Flow<UncoveredScene>
 
     /** 프로젝트의 전체 케이스 수(ARTEL-403). 커버리지의 분모다. */
+    @Query("SELECT COUNT(*) FROM test_case WHERE project_id = :projectId AND review_status = 'READY'")
+    suspend fun countReadyByProjectId(projectId: Long): Long
+
     suspend fun countByProjectId(projectId: Long): Long
 
     /**
@@ -165,6 +171,9 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      * 담을 타입이 필요한데, 있는 타입을 재사용하면 필드 이름이 거짓말을 하게 된다(`scene`에
      * `VERIFIED`가 들어간다). 세 번 세는 값이 세 줄일 뿐이다.
      */
+    @Query("SELECT COUNT(*) FROM test_case WHERE project_id = :projectId AND review_status = 'READY' AND verification_status = :verificationStatus")
+    suspend fun countReadyByProjectIdAndVerificationStatus(projectId: Long, verificationStatus: String): Long
+
     suspend fun countByProjectIdAndVerificationStatus(projectId: Long, verificationStatus: String): Long
 
     /**
@@ -266,7 +275,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         JOIN content_map cm ON cm.id = s.content_map_id
         JOIN game_build gb ON gb.id = cm.game_build_id AND gb.project_id = tc.project_id
         JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind = 'write'
-        WHERE tc.project_id = :projectId
+        WHERE tc.review_status = 'READY' AND tc.project_id = :projectId
           AND tc.capability_key IS NOT NULL
           AND ce.target IS NOT NULL
           AND c.merged_into IS NULL
@@ -311,7 +320,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
             FROM test_case tc
             JOIN capability c2 ON c2.capability_key = tc.capability_key
             JOIN scene s2 ON s2.id = c2.scene_id
-            WHERE tc.project_id = :projectId
+            WHERE tc.review_status = 'READY' AND tc.project_id = :projectId
         )
         """
     )
@@ -342,7 +351,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
             FROM test_case tc
             JOIN capability c2 ON c2.capability_key = tc.capability_key
             JOIN scene s2 ON s2.id = c2.scene_id
-            WHERE tc.project_id = :projectId
+            WHERE tc.review_status = 'READY' AND tc.project_id = :projectId
         )
         """
     )
@@ -373,7 +382,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
                END AS input
         FROM test_case tc
         JOIN capability c ON c.capability_key = tc.capability_key AND c.merged_into IS NULL
-        WHERE tc.project_id = :projectId AND tc.capability_key IS NOT NULL
+        WHERE tc.review_status = 'READY' AND tc.project_id = :projectId AND tc.capability_key IS NOT NULL
         """
     )
     fun findCaseInputs(projectId: Long): Flow<CaseInputRow>
@@ -404,7 +413,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
               FROM test_case tc
               JOIN capability c2 ON c2.capability_key = tc.capability_key
               JOIN scene s2 ON s2.id = c2.scene_id
-              WHERE tc.project_id = :projectId
+              WHERE tc.review_status = 'READY' AND tc.project_id = :projectId
           )
         UNION
         -- 씬 귀속에 실패한 unplaced 타입의 write(V95). 토글로 움직이는 값이 여기만 남는
@@ -418,7 +427,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
               FROM test_case tc
               JOIN capability c2 ON c2.capability_key = tc.capability_key
               JOIN scene s2 ON s2.id = c2.scene_id
-              WHERE tc.project_id = :projectId
+              WHERE tc.review_status = 'READY' AND tc.project_id = :projectId
           )
         """
     )
@@ -439,7 +448,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
               FROM test_case tc
               JOIN capability c2 ON c2.capability_key = tc.capability_key
               JOIN scene s2 ON s2.id = c2.scene_id
-              WHERE tc.project_id = :projectId
+              WHERE tc.review_status = 'READY' AND tc.project_id = :projectId
           )
         """
     )
@@ -471,7 +480,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
               FROM test_case tc
               JOIN capability c2 ON c2.capability_key = tc.capability_key
               JOIN scene s2 ON s2.id = c2.scene_id
-              WHERE tc.project_id = :projectId
+              WHERE tc.review_status = 'READY' AND tc.project_id = :projectId
           )
         """
     )
@@ -595,7 +604,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
               FROM test_case tc
               JOIN capability c2 ON c2.capability_key = tc.capability_key
               JOIN scene s2 ON s2.id = c2.scene_id
-              WHERE tc.project_id = :projectId
+              WHERE tc.review_status = 'READY' AND tc.project_id = :projectId
           )
         ORDER BY 1, 2
         """
@@ -617,7 +626,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         SELECT c.id AS capability_id, tc.id AS test_case_id
         FROM test_case tc
         JOIN capability c ON c.capability_key = tc.capability_key AND c.merged_into IS NULL
-        WHERE tc.project_id = :projectId AND tc.capability_key IS NOT NULL
+        WHERE tc.review_status = 'READY' AND tc.project_id = :projectId AND tc.capability_key IS NOT NULL
         """
     )
     fun findCaseIdByCapability(projectId: Long): Flow<CapabilityCase>
@@ -637,6 +646,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         JOIN scene s ON s.id = c.scene_id AND s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
         JOIN capability_effect ce ON ce.capability_id = c.id AND ce.kind = 'write'
         WHERE v.game_build_id = :gameBuildId
+          AND EXISTS (SELECT 1 FROM test_case identity WHERE identity.id = v.test_case_id AND identity.review_status = 'READY')
           AND v.capability_key IS NOT NULL
           AND ce.target IS NOT NULL
         """
@@ -690,7 +700,8 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         FROM test_case_version v
         JOIN capability c ON c.capability_key = v.capability_key AND c.merged_into IS NULL
         JOIN scene s ON s.id = c.scene_id AND s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
-        WHERE v.game_build_id = :gameBuildId AND v.capability_key IS NOT NULL
+        WHERE v.game_build_id = :gameBuildId
+          AND EXISTS (SELECT 1 FROM test_case identity WHERE identity.id = v.test_case_id AND identity.review_status = 'READY') AND v.capability_key IS NOT NULL
         """
     )
     fun findCaseInputsOfBuild(gameBuildId: Long): Flow<CaseInputRow>
@@ -780,7 +791,8 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
         FROM test_case_version v
         JOIN capability c ON c.capability_key = v.capability_key AND c.merged_into IS NULL
         JOIN scene s ON s.id = c.scene_id AND s.content_map_id IN (SELECT id FROM content_map WHERE game_build_id = :gameBuildId)
-        WHERE v.game_build_id = :gameBuildId AND v.capability_key IS NOT NULL
+        WHERE v.game_build_id = :gameBuildId
+          AND EXISTS (SELECT 1 FROM test_case identity WHERE identity.id = v.test_case_id AND identity.review_status = 'READY') AND v.capability_key IS NOT NULL
         """
     )
     fun findCaseIdByCapabilityOfBuild(gameBuildId: Long): Flow<CapabilityCase>

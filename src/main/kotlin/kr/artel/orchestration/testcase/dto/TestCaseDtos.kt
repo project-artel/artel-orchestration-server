@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testcase.dto
 
+import kr.artel.orchestration.testcase.entity.TestCaseKind
 import java.time.Instant
 
 /**
@@ -22,6 +23,12 @@ data class TestCaseCreateRequest(
     val gameBuildId: String? = null,
     /** 이 케이스를 돌릴 때 agent 에게 허용할 cheat · behavior(ARTEL-1053). null 이면 둘 다 `all` 이다. */
     val functions: TestCaseFunctions? = null,
+    /** `FUNCTION`(기능) 또는 `EXCEPTION`(예외)(ARTEL-1306). null 이면 기능이다. */
+    val kind: String? = null,
+    /** 하고 나면 가는 화면(ARTEL-1312). null 이거나 빈 문자열이면 화면이 바뀌지 않는 TC 다. */
+    val arrivesAt: String? = null,
+    /** true면 검토 전 초안이다. 기존 화면의 생성 동작은 유지한다. */
+    val draft: Boolean = false,
 )
 
 /** 케이스 수정. 검증상태(verificationStatus)도 여기서 바꿀 수 있다. */
@@ -37,6 +44,11 @@ data class TestCaseUpdateRequest(
      * `{"cheats":"all","behaviors":"all"}` 를 보낸다 — 키가 없는 것과 값이 null 인 것을 Jackson 이 가르지 못한다.
      */
     val functions: TestCaseFunctions? = null,
+    /** 종류를 바꾼다(ARTEL-1306). null 이면 건드리지 않는다. */
+    val kind: String? = null,
+    /** 도착 화면을 바꾼다(ARTEL-1312). null 이면 건드리지 않고, 빈 문자열이면 "화면이 바뀌지 않는다" 로 정한다. */
+    val arrivesAt: String? = null,
+    val reviewStatus: String? = null,
 )
 
 /**
@@ -75,6 +87,11 @@ data class TestCaseResponse(
     val origin: String,
     /** agent 에게 허용할 cheat · behavior(ARTEL-1053). 정한 적 없으면 null 이고, 그때는 둘 다 `all` 이다. */
     val functions: TestCaseFunctions? = null,
+    /** `FUNCTION`(기능) 또는 `EXCEPTION`(예외)(ARTEL-1306). */
+    val kind: String = TestCaseKind.FUNCTION.name,
+    /** 하고 나면 가는 화면(씬 전이 TC)(ARTEL-1312). 화면이 안 바뀌면 null. */
+    val arrivesAt: String? = null,
+    val reviewStatus: String = "READY",
 )
 
 data class TestCaseListResponse(val items: List<TestCaseResponse>)
@@ -106,4 +123,12 @@ data class TestCaseDetailResponse(
     val evidenceGaps: List<String>,
     /** [TestCaseResponse.functions] 와 같다. */
     val functions: TestCaseFunctions? = null,
+    /** [TestCaseResponse.kind] 와 같다. */
+    val kind: String = TestCaseKind.FUNCTION.name,
+    /** [TestCaseResponse.arrivesAt] 와 같다. */
+    val arrivesAt: String? = null,
+    val reviewStatus: String = "READY",
 )
+
+/** 생성 전에 검토 상태 API 지원 여부를 확인하는 응답. */
+data class TestCaseReviewStatusOptions(val statuses: List<String> = listOf("DRAFT", "READY"))

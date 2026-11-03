@@ -4,6 +4,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.flow.transformWhile
 import kr.artel.orchestration.testscenario.dto.ScenarioStreamEvent
 import org.slf4j.LoggerFactory
@@ -32,11 +33,13 @@ class TestScenarioStreamManager {
      * 주어진 sessionKey에 대한 SSE 스트림을 구독한다. 스트림이 없으면 생성한다.
      * `closed` 이벤트를 수신하면 그 이벤트까지 전달한 뒤 스트림을 완료하고, 완료 시 정리한다.
      */
-    fun stream(sessionKey: String): Flow<ServerSentEvent<ScenarioStreamEvent>> {
+    fun stream(sessionKey: String, first: (() -> ScenarioStreamEvent)? = null): Flow<ServerSentEvent<ScenarioStreamEvent>> {
         val sink = streams.computeIfAbsent(sessionKey) {
             MutableSharedFlow(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
         }
+        // [first] 는 구독이 걸린 뒤에 만든다. 그 사이에 난 이벤트도 놓치지 않는다.
         return sink
+            .onSubscription { first?.invoke()?.let { emit(ServerSentEvent.builder(it).event(it.type).build()) } }
             .transformWhile { sse ->
                 emit(sse)
                 // `closed` 이벤트를 마지막으로 스트림을 종료한다(그 전까지는 계속 흘린다).

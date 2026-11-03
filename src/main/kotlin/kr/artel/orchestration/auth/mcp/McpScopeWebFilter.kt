@@ -17,6 +17,12 @@ import java.util.Optional
 enum class McpScope(val wire: String) {
     MACRO_READ("macro:read"),
     MACRO_WRITE("macro:write"),
+    /** 글로 쓴 TC · 계약 · 용어집, TR 과 저작 대화 · 시나리오를 읽는다. */
+    TESTCASE_READ("testcase:read"),
+    /** TC 를 계약까지 넣거나 고친다. */
+    TESTCASE_WRITE("testcase:write"),
+    /** TR 을 만들고 저작 Agent 에게 시나리오를 요청한다. 시나리오는 우리 저작 Agent 가 짠다. */
+    SCENARIO_WRITE("scenario:write"),
 }
 
 /** 허용표 한 줄. [pattern] 은 `pathWithinApplication` 에 맞춘다. */
@@ -37,6 +43,10 @@ private class McpRoute(val method: HttpMethod, pattern: String, val scope: McpSc
  * 프로젝트 경로의 멤버 검사는 여기서 하지 않는다. 각 서비스가 `ProjectAccessService` 로 이미 한다.
  */
 private val MCP_ROUTES = listOf(
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-cases/review-status-options", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-cases", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-cases/{caseId}", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.PUT, "/api/projects/{projectId}/test-cases/{caseId}", McpScope.TESTCASE_WRITE),
     McpRoute(HttpMethod.GET, "/api/projects", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds/{buildId}/game-functions", McpScope.MACRO_READ),
@@ -46,6 +56,24 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/developer-macros:check", McpScope.MACRO_WRITE),
     McpRoute(HttpMethod.PUT, "/api/projects/{projectId}/developer-macros/{name}", McpScope.MACRO_WRITE),
     McpRoute(HttpMethod.DELETE, "/api/projects/{projectId}/developer-macros/{name}", McpScope.MACRO_WRITE),
+    // 자연어 TC · 시나리오 저작. 저작 대화는 화면과 같은 경로를 쓴다 — 시나리오는 우리 저작 Agent 가 짜고 검사한다.
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/case-contracts", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/case-contracts/cases", McpScope.TESTCASE_WRITE),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/scenarios", McpScope.TESTCASE_READ),
+    // 시나리오 스텝(ARTEL-1310) — MCP 가 고칠 시나리오를 찾고, 저작 결과를 직접 읽는다.
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-scenario/{testScenarioId}", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/chat/messages", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs", McpScope.SCENARIO_WRITE),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/message", McpScope.SCENARIO_WRITE),
+    // 저작 draft(ARTEL-1310) — MCP 를 쓰는 사람이 콘솔에서 draft 를 보고 저장 · 버린다. 화면과 같은 draft 다.
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/chat/draft", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/draft/apply", McpScope.SCENARIO_WRITE),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/draft/discard", McpScope.SCENARIO_WRITE),
+    // 저작이 추천한 TC — 읽기는 testcase:read, 저장 · 버리기는 TC 를 만드는 일이라 testcase:write.
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations/save", McpScope.TESTCASE_WRITE),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations/discard", McpScope.TESTCASE_WRITE),
 )
 
 /** MCP access JWT 로 허용표 밖의 경로를 불렀다. */

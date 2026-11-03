@@ -38,6 +38,7 @@ import org.springframework.stereotype.Service
  */
 @Service
 class TestRunChatService(
+    private val caseRecommendations: kr.artel.orchestration.testscenario.service.CaseRecommendationService,
     private val runRepository: TestRunRepository,
     private val runMessageRepository: TestRunMessageRepository,
     private val projectAccessService: ProjectAccessService,
@@ -48,6 +49,7 @@ class TestRunChatService(
     private val objectMapper: com.fasterxml.jackson.databind.ObjectMapper,
     private val drafts: AuthoringDraftStore,
     private val absorbService: ScenarioAbsorbService,
+    private val runLocks: RunAuthoringLocks,
 ) {
 
     /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다(재방문 복원). 접근 불가면 빈 목록. */
@@ -73,7 +75,9 @@ class TestRunChatService(
     /** FE가 Agent 응답을 실시간 수신하는 SSE 스트림. 접근 불가면 404. */
     suspend fun stream(appUserId: Long, runId: Long): Flow<ServerSentEvent<ScenarioStreamEvent>> {
         accessible(runId, appUserId) ?: throw NotFoundException()
-        return streamManager.stream(sessionKey(appUserId, runId))
+        val key = sessionKey(appUserId, runId)
+        // 붙자마자 지금 턴 상태부터 보낸다. 끊긴 사이의 진행 · 결과는 다시 오지 않는다.
+        return streamManager.stream(key) { agentService.turnState(key) }
     }
 
     /** 사용자 입력을 Agent로 중계한다. 결과 시나리오는 이 런에 반영된다. 접근 불가면 404. */
@@ -110,6 +114,7 @@ class TestRunChatService(
             },
             answer = message.answer,
             draftOnly = message.draftOnly,
+            answers = message.answers,
         )
     }
 
@@ -140,11 +145,22 @@ class TestRunChatService(
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
         val key = sessionKey(appUserId, runId)
         val draft = drafts.of(key)
+        // **시나리오를 승인하면 그 시나리오가 쓰는 추천 TC 도 한 번에 저장한다.** 먼저 저장해 스텝을 새 TC 로 바꿔 끼운 뒤
+        // 승인한다 — 거꾸로 하면 판정 없는 스텝으로 저장되고 추천만 남는다.
+        val recommended = draft.list().filter { it.draftId in draftIds.toSet() }.flatMap { it.steps }.mapNotNull { it.recommendationId }.distinct()
+        if (recommended.isNotEmpty()) caseRecommendations.save(run.projectId, runId, appUserId, recommended)
         var applied = 0
         val absorbed = mutableListOf<String>()
         val kept = mutableListOf<String>()
         val refused = mutableListOf<String>()
         for (item in draft.take(draftIds)) {
+            // 다른 사람의 Artel Bot 이 고치는 중인 시나리오는 승인하지 않고 draft 에 남긴다(ARTEL-1264).
+            val target = runScenarioReader.targetIdOf(runId, item.toResult().scenarioId, item.title)
+            if (target != null && runLocks.heldByOther(target, key)) {
+                draft.restore(item)
+                refused += "'${item.title}' — 다른 사람의 Artel Bot 이 이 시나리오를 고치는 중이라 승인하지 않았습니다."
+                continue
+            }
             val outcome = reconcileService.reconcile(runId, run.projectId, appUserId, listOf(item.toResult()))
             if (outcome.rejected) {
                 draft.restore(item)
@@ -170,10 +186,11 @@ class TestRunChatService(
 
     /** 고른 draft 를 버린다(ARTEL-1074). 남은 draft 를 돌려준다. 접근 불가면 404. */
     suspend fun discardDraft(appUserId: Long, runId: Long, draftIds: List<String>): List<DraftScenario> {
-        accessible(runId, appUserId) ?: throw NotFoundException()
+        val run = accessible(runId, appUserId) ?: throw NotFoundException()
         val key = sessionKey(appUserId, runId)
-        drafts.of(key).take(draftIds)
+        val dropped = drafts.of(key).take(draftIds)
         drafts.publish(key)
+        caseRecommendations.discardOrphans(run.projectId, runId, appUserId, caseRecommendations.referencedBy(dropped.flatMap { it.steps }))
         return drafts.list(key)
     }
 
@@ -184,6 +201,10 @@ class TestRunChatService(
      */
     suspend fun commitScenarios(appUserId: Long, runId: Long, scenarios: List<ScenarioResult>): Int {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
+        // 다른 사람의 Artel Bot 이 고치는 중인 시나리오는 커밋하지 못한다(ARTEL-1264).
+        val key = sessionKey(appUserId, runId)
+        // 번호가 없어도 런에 같은 제목이 있으면 그것을 덮는다(reconcile 의 규칙). 덮을 대상으로 검사한다.
+        scenarios.mapNotNull { runScenarioReader.targetIdOf(runId, it.scenarioId, it.title) }.forEach { runLocks.assertWritableBy(it, key) }
         // 판정을 넘기지 않는다 — 이 경로의 시나리오는 사용자가 카드로 직접 고른 것이라 "Agent가 다
         // 봤는가"를 물을 대상이 아니다. 사람이 고른 것이 곧 요구다.
         //
@@ -226,6 +247,10 @@ class TestRunChatService(
     }
 
     private fun sessionKey(appUserId: Long, runId: Long) = "$appUserId:$runId"
+
+    /** 이 런에서 Artel Bot 이 고치는 중이라 잠긴 시나리오들(ARTEL-1264). 접근 불가면 404. */
+    suspend fun authoringLock(appUserId: Long, runId: Long) =
+        accessible(runId, appUserId)?.let { runLocks.describe(runId, appUserId) } ?: throw NotFoundException()
 
     companion object {
         /** 승인 전 draft 가 있어 새 요청을 받지 않는다(ARTEL-1074). 화면은 draft 만 고치는 입력으로 안내한다. */

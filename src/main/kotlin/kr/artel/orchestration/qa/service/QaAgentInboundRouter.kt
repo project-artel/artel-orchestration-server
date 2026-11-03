@@ -143,6 +143,7 @@ private const val USED_KNOWLEDGE_IDS_FIELD = "used_knowledge_ids"
 
 @Service
 class QaAgentInboundRouter(
+    private val observations: kr.artel.orchestration.testcase.contract.QaObservationService,
     private val tryRepository: QaTryRepository,
     private val runRepository: QaRunRepository,
     private val runRollupService: QaRunRollupService,
@@ -511,6 +512,8 @@ class QaAgentInboundRouter(
         // 자연스럽다 — 둘 다 "이 런이 끝났고, 그 결과를 기록한다"의 일부다. 채점자는 스스로
         // 삼키므로 여기서 감싸지 않는다.
         grader.grade(qaTryId)
+        // 자연어 계약 프로젝트면 로그에서 씬 · 입력 · 출구를 쌓는다. 뒤에서 돌아 종료 처리를 붙잡지 않는다.
+        observations.accumulateLater(qaTryId)
         val log = logService.append(
             qaTryId = qaTryId,
             direction = "AGENT_TO_ORCHE",

@@ -617,6 +617,9 @@ class QaTryService(
         if (scenario.projectId != instance.projectId) {
             throw NotFoundException()
         }
+        val preparedScenario = compositionService.agentScenario(
+            scenario.toDraft(objectMapper), CaseScope.of(instance.lastGameBuildId), instance.lastGameBuildId
+        )
         if (!sessionManager.hasSession(gameInstanceId.toString())) {
             throw SdkDisconnectedException()
         }
@@ -642,7 +645,7 @@ class QaTryService(
             projectId = instance.projectId.toString(),
             gameBuildId = instance.lastGameBuildId?.toString(),
             testScenarioId = testScenarioId.toString(),
-            scenario = objectMapper.valueToTree(compositionService.agentScenario(scenario.toDraft(objectMapper), CaseScope.of(instance.lastGameBuildId), instance.lastGameBuildId)),
+            scenario = objectMapper.valueToTree(preparedScenario),
             model = settings.model,
             language = settings.language,
             promptVersion = settings.promptVersion,
@@ -711,6 +714,14 @@ class QaTryService(
         if (firstScenario.projectId != instance.projectId) {
             throw NotFoundException()
         }
+        // 판정 기준은 TR의 버전, 기록은 켜진 게임 버전이다. 초안 검사와 실행 내용 구성을 행 생성 전에 마친다.
+        val caseScope = CaseScope.of(testRuns.findById(testRunId)?.gameBuildId)
+        val recordedBuildId = testCaseReader.judgedBuildId(instance.lastGameBuildId)
+        val preparedScenarios = scenarioIds.map { scenarioId ->
+            val scenario = scenarioAccessService.accessibleScenario(scenarioId, userId) ?: throw NotFoundException()
+            if (scenario.projectId != instance.projectId) throw NotFoundException()
+            compositionService.agentScenario(scenario.toDraft(objectMapper), caseScope, recordedBuildId)
+        }
         if (!sessionManager.hasSession(gameInstanceId.toString())) {
             throw SdkDisconnectedException()
         }
@@ -739,17 +750,11 @@ class QaTryService(
         runStatusNotifier.waitingAgent(
             requireNotNull(started.tries.first().id), gameInstanceId, requireNotNull(started.qaRun.id)
         )
-        // 판정 기준은 TR 의 버전 내용이고, 기록은 켜진 게임 버전에 적힌다(ARTEL-1069). 게임 버전에 없는 케이스는
-        // 판정하지 않고 넘긴다. TR 에 버전이 없으면 최신 내용, 게임 버전을 모르면 거르지 않는다.
-        val caseScope = CaseScope.of(testRuns.findById(testRunId)?.gameBuildId)
-        val recordedBuildId = testCaseReader.judgedBuildId(instance.lastGameBuildId)
-        val agentScenarios = started.tries.zip(scenarioIds).map { (qaTry, scenarioId) ->
-            val entity = scenarioAccessService.accessibleScenario(scenarioId, userId)
-                ?: throw NotFoundException()
+        val agentScenarios = started.tries.zip(scenarioIds).mapIndexed { index, (qaTry, scenarioId) ->
             QaAgentScenario(
                 qaTryId = requireNotNull(qaTry.id).toString(),
                 testScenarioId = scenarioId.toString(),
-                scenario = compositionService.agentScenario(entity.toDraft(objectMapper), caseScope, recordedBuildId)
+                scenario = preparedScenarios[index]
             )
         }
         val context = QaAgentSessionContext(

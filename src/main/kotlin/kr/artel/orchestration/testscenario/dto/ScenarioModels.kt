@@ -56,6 +56,8 @@ data class ScenarioStep(
     @param:JsonProperty("step_source_capability_id") val stepSourceCapabilityId: Long? = null,
     /** [stepSource]가 `UNKNOWN`일 때 **무엇이 막는지**. 사용자에게 물어볼 거리가 이 문장이다. */
     @param:JsonProperty("step_unknown_reason") val stepUnknownReason: String? = null,
+    /** 아직 저장하지 않은 추천 TC 를 확인하는 스텝이면 그 추천 id. 저장하면 [caseId] 로 바뀌고 이 칸은 비워진다. */
+    @param:JsonProperty("recommendation_id") val recommendationId: Long? = null,
 )
 
 /**
@@ -243,6 +245,12 @@ enum class AuthoringStage(@get:JsonValue val wire: String) {
     /** Agent가 케이스를 물어봤다(`uncovered_cases`/`test_case_search`). 멎지 않았다는 첫 증거다. */
     LOOKING_UP_CASES("looking_up_cases"),
 
+    /**
+     * 저작을 열기 전에 글로만 적힌 TC 의 계약을 정리하는 중이다. 프로젝트를 처음 열 때와 TC 를 많이 바꾼 뒤에만 길다
+     * (실측: TC 73건 136초). 이 단계가 없으면 그동안 화면이 멈춘 것처럼 보였다.
+     */
+    PREPARING_CASES("preparing_cases"),
+
     /** 질문 답이 서비스 기록을 읽는 중이다(ARTEL-1086). 무엇을 읽는지 단계마다 한 줄로 보인다. */
     READING_CASES("reading_cases"),
     READING_VERSIONS("reading_versions"),
@@ -344,6 +352,8 @@ data class ScenarioStreamEvent(
      * 보여 줘야 아는 것만 답하고 나머지는 그대로 둘 수 있다.
      */
     val questions: List<ScenarioQuestion> = emptyList(),
+    /** 이 턴이 추천한 TC(저장 전). 답 말풍선의 추천 TC 카드가 읽는다. */
+    val recommendations: List<Map<String, Any?>> = emptyList(),
     /**
      * 이번 턴에 지금까지 받아 검수를 지난 시나리오 수. `progress` 에만 실린다.
      *

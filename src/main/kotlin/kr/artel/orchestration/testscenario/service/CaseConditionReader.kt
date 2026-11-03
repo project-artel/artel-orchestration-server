@@ -36,6 +36,10 @@ class CaseConditionReader(private val objectMapper: ObjectMapper) {
         conditionOf(case)?.let(ScenarioStateReader::guardsIn)
             ?: ScenarioStateReader.guardsOf(case.precondition)
 
+    /** 갈래 조건의 갈래들. 트리가 없으면 빈 목록이다 — 문장에서는 갈래를 못 읽는다. */
+    fun branchesOf(case: TestCaseEntity): List<List<Guard>> =
+        conditionOf(case)?.let(ScenarioStateReader::branchesIn).orEmpty()
+
     /** 이 케이스가 **확정하는** 값(`==` 만). */
     fun knownValuesOf(case: TestCaseEntity): Map<String, String> =
         conditionOf(case)?.let(ScenarioStateReader::knownValuesIn)

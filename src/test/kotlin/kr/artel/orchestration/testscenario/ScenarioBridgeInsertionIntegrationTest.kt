@@ -354,7 +354,7 @@ class ScenarioBridgeInsertionIntegrationTest {
     }
 
     @Test
-    fun `씬 명세가 없는 프로젝트에서는 원본 그대로 저장된다`(): Unit = runBlocking {
+    fun `씬 명세가 없는 프로젝트는 같은 화면 사이는 그대로 두고 화면이 바뀌는 모르는 길만 묻는다`(): Unit = runBlocking {
         // 되돌리는 자리이기도 하다 — 지도가 없으면 이 기능은 없는 것과 같이 동작해야 한다.
         val now = Instant.now()
         val bare = projectRepository.save(
@@ -385,11 +385,12 @@ class ScenarioBridgeInsertionIntegrationTest {
         )
 
         assertThat(outcome.applied).isEqualTo(1)
-        // 지도가 없는 것은 "확인했더니 길이 없다"가 아니라 **확인을 못한 것**이다. 그 둘을 같이
-        // 다루면 지도가 아직 없는 모든 프로젝트의 스텝 사이마다 "모른다" 줄이 하나씩 붙는다.
+        // 지도가 없는 것은 "확인했더니 길이 없다"가 아니라 **확인을 못한 것**이다. 그래서 같은 화면 사이에는
+        // "모른다" 줄을 붙이지 않는다. 다만 **화면이 바뀌는 자리는** 그 화면으로 가는 TC 도, QA 가 본 길도 없으면
+        // 그 구간을 묻는다 — 자연어 TC 만 쓴 프로젝트가 길을 쌓는 자리다.
         val stored = storedSteps(bareRun)
-        assertThat(stored.map { it.action }).containsExactly("맵", "전투")
-        assertThat(outcome.notices).isEmpty()
+        assertThat(stored.map { it.stepKind?.name }).containsExactly("ACTION", "GAP", "ACTION")
+        assertThat(stored[1].stepUnknownReason).isEqualTo("Map_scene→TurnBattleScene")
     }
 
     @Test

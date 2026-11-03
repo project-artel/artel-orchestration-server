@@ -1,8 +1,12 @@
 package kr.artel.orchestration.testcase.service
 
+import com.fasterxml.jackson.databind.JsonNode
+import kr.artel.orchestration.testcase.contract.QaObservationService
+import kr.artel.orchestration.testscenario.service.authoringGameBuildId
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.NotFoundException
+import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
@@ -38,6 +42,8 @@ import kr.artel.orchestration.testcase.dto.originLabel
 import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
+import kr.artel.orchestration.testcase.entity.TestCaseKind
+import kr.artel.orchestration.testcase.entity.ReviewStatus
 import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -74,9 +80,16 @@ class TestCaseService(
     private val reader: TestCaseReader,
     private val projectChangeStreamManager: ProjectChangeStreamManager,
     private val versions: TestCaseVersionRepository,
+    // 자연어 TC 의 시작 상태(용어집). 지도가 없을 때만 쓰인다.
+    private val caseContracts: kr.artel.orchestration.testcase.contract.CaseContractService,
 ) {
 
     private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
+
+    suspend fun reviewStatusOptions(projectId: Long, userId: Long): kr.artel.orchestration.testcase.dto.TestCaseReviewStatusOptions {
+        if (!projectAccessService.isMember(projectId, userId)) throw NotFoundException("프로젝트를 찾을 수 없습니다.")
+        return kr.artel.orchestration.testcase.dto.TestCaseReviewStatusOptions()
+    }
     /**
      * 화면이 읽는 케이스 목록(최근 것부터). 비참여자면 빈 목록.
      *
@@ -145,7 +158,37 @@ class TestCaseService(
         // 한 칸을 옮기면 왕복이 사라진다 — 늘 참인 사실은 목록이 한 번 말한다.
         val inputs = caseInputs(projectId)
         // 런이 빌드 버전을 따르면 케이스 내용은 그 버전 몫이다(ARTEL-1064). 맥락이 없으면 대표 행 그대로다.
-        return authoringCases.all(projectId)
+        val all = authoringCases.all(projectId).toList()
+        // 지도가 없는 프로젝트는 QA 가 지나가며 본 것으로 채운다. 지도가 있으면 지도가 먼저다.
+        val seen = observedPaths(all, projectId)
+        // 사람 답 · QA 관측으로 정해진 계약은 그것을 알게 된 build 를 단다. 지금 버전이 아닌 build 의 것은 버리지 않고
+        // 표시해 보낸다 — 게임이 바뀌었으면 틀릴 수 있다. 같은 자리를 새 버전에서 다시 알게 되면 새것으로 바뀐다.
+        val currentBuild = authoringGameBuildId() ?: runCatching { caseContracts.latestBuildId(projectId) }.getOrNull()
+        fun earlierFact(case: TestCaseEntity): Boolean {
+            val mark = runCatching { objectMapper.readTree(case.metadata.asString()).path("contract") }.getOrNull() ?: return false
+            val built = mark.path("build_id").takeIf { it.isNumber }?.asLong() ?: return false
+            return mark.path("source").asText() in setOf("user", "mcp", "observed") && currentBuild != null && built != currentBuild
+        }
+        // 씬 전이 TC — 계약이 "하면 다른 화면으로 간다" 고 표시한 TC 는 그 화면으로 가는 길이다. QA 가 지나가기 전
+        // 첫 저작부터 화면 이동을 안다. 무엇을 누르는지는 TC 의 행동 글이 말한다.
+        val byTc = all.filter { it.capabilityKey == null }
+            .mapNotNull { case -> arrival(case)["scene"]?.let { to -> Triple(ScenarioStateReader.sceneOf(case) ?: case.scene, to, case) } }
+            .filter { (from, to, _) -> from != to }
+            .groupBy({ it.first }, { (_, to, case) -> SceneExit(to, "TC ${case.id}: ${case.step}") })
+        // **아무 케이스도 만들지 못하는 전제는 확인 안 된 요구로 표시해 보낸다.** 자연어 TC 에서 뽑은 식은
+        // 틀린 칸이 섞인다(`저녁까지 쉰다` → 요구: 시간 == 저녁). 그런데 빼면 옳은 요구도 함께 사라진다 —
+        // `무기 보유` 는 옳은데 남기는 케이스가 `검 보유` 라고 적어 이름이 어긋났을 뿐이다. 실측(등불
+        // 골짜기)에서 빼는 쪽은 틀린 요구를 지우는 대신 검을 잊게 했다. 그래서 표시해서 보내고 글과 맞춰
+        // 보는 것은 저작에 맡긴다. 케이스 메타가 남기는 값이 있는 프로젝트에서만 본다.
+        val made = all.flatMap { ScenarioStateReader.stateAfter(it, objectMapper).entries }
+            .groupBy({ it.key.lowercase() }, { it.value })
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
+        fun reachable(guard: Guard): Boolean =
+            made.isEmpty() || guard.operator != "==" || guard.value == "0" ||
+                raisers[ScenarioStateReader.normalize(guard.path)].orEmpty().isNotEmpty() ||
+                made[guard.variable.lowercase()].orEmpty().contains(guard.value) ||
+                start[guard.variable.lowercase()] == guard.value
+        return all.asFlow()
             // **깨진 것은 저작 재료가 아니다**(ARTEL-685). 지도를 다시 적재하면 더 이상 뒷받침되지
             // 않는 케이스가 `BROKEN` 으로 남는다. 보내면 모델이 그것을 담고, 커버리지 기준에는
             // 없으므로 "없는 케이스 번호"로 걸려 저작이 통째로 막힌다 — 실측(런 268)에서 14건.
@@ -167,14 +210,29 @@ class TestCaseService(
                             guard.variable, guard.operator, guard.value,
                             raisedIn = raisers[ScenarioStateReader.normalize(guard.path)].orEmpty(),
                             moves = movesFor(moves, guard),
+                            unconfirmed = when {
+                                !reachable(guard) -> UNMADE
+                                earlierFact(case) -> EARLIER_FACT
+                                else -> null
+                            },
                         )
-                    },
+                    } +
+                    // 글에 없는 상식 전제(무기가 있어야 이긴다). 뽑은 쪽이 따로 적어 둔 것만 싣는다.
+                    ScenarioStateReader.assumedBefore(case, objectMapper)
+                        .map { CaseGuard(it.variable, it.operator, it.value, unconfirmed = ASSUMED) },
+                stateBeforeAny = conditions.branchesOf(case)
+                    .map { branch -> branch.map { CaseGuard(it.variable, it.operator, it.value, unconfirmed = if (reachable(it)) null else UNMADE) } },
                 // 케이스 메타가 먼저다 — 구버전 엑셀 경로로 들어온 행은 거기 답이 있다. 지도가 낸
                 // 행은 그 칸이 없어서 비어 오고, 그때 지도가 답한다(ARTEL-606).
                 stateAfter = ScenarioStateReader.stateAfter(case, objectMapper)
-                    .ifEmpty { changed[case.id].orEmpty() } + arrival(case),
-                exits = exits[ScenarioStateReader.sceneOf(case) ?: case.scene].orEmpty(),
-                input = inputs[case.id].orEmpty(),
+                    .ifEmpty { changed[case.id].orEmpty() } + arrival(case).ifEmpty { seen.arrival(case) },
+                exits = exits[ScenarioStateReader.sceneOf(case) ?: case.scene].orEmpty()
+                    .ifEmpty {
+                        val here = ScenarioStateReader.sceneOf(case) ?: case.scene
+                        (byTc[here].orEmpty() + seen.exits[here].orEmpty()).distinctBy { it.scene }
+                    },
+                input = inputs[case.id].orEmpty().ifEmpty { seen.input(case) },
+                kind = case.kind.takeIf { it == TestCaseKind.EXCEPTION.name },
             )
         }.toList()
     }
@@ -204,6 +262,57 @@ class TestCaseService(
      * 것은 다음 케이스의 `scene` 칸과 같은 말이라 맞추는 쪽이 헷갈리지 않기 때문이다 — 실측에서
      * 그 이름의 게임 값을 요구하는 전제는 없다.
      */
+    /**
+     * QA 가 본 것을 TC 의 말로 옮긴 것.
+     *
+     * 게임은 씬을 `SquareScene` 이라 부르고 TC 는 광장이라 부른다. 둘을 잇는 근거는 QA 가 그 TC 를
+     * 실행할 때 실제로 서 있던 씬뿐이라, 그것으로 짝을 짓는다. 한 게임 씬에 TC 씬 이름이 여럿 붙으면
+     * 가장 많이 붙은 쪽이다. 짝이 없는 씬은 게임 이름 그대로 내보낸다 — 지우면 그 길이 없는 것으로 읽힌다.
+     */
+    private inner class Observed(cases: List<TestCaseEntity>, raw: List<QaObservationService.Exit>, private val current: Long?) {
+        /** 지금 버전이 아닌 build 에서만 본 것. 버리지 않고 표시해 보낸다 — 게임이 바뀌어도 그대로인 것이 더 많다. */
+        private fun older(buildId: Long?) = current != null && buildId != null && buildId != current
+        private fun marked(text: String, buildId: Long?) = if (older(buildId)) "$text $EARLIER_BUILD" else text
+
+        private val observed = cases.associate { it.id to observedOf(it) }
+        private val names: Map<String, String> = cases.mapNotNull { case ->
+            observed[case.id]?.path("scene")?.asText(null)?.takeIf { it.isNotBlank() }
+                ?.let { it to (ScenarioStateReader.sceneOf(case) ?: case.scene) }
+        }.groupBy({ it.first }, { it.second })
+            .mapValues { (_, tcNames) -> tcNames.groupingBy { it }.eachCount().maxBy { it.value }.key }
+
+        fun name(gameScene: String) = names[gameScene] ?: gameScene
+
+        val exits: Map<String, List<SceneExit>> = raw
+            .filter { name(it.from) != name(it.to) }
+            .groupBy { name(it.from) }
+            .mapValues { (_, ways) ->
+                ways.sortedBy { older(it.buildId) }.distinctBy { name(it.to) }
+                    .map { SceneExit(name(it.to), it.by.ifBlank { null }?.let { by -> marked(by, it.buildId) }) }
+            }
+
+        fun arrival(case: TestCaseEntity): Map<String, String> =
+            observed[case.id]?.path("arrives_at")?.asText(null)?.takeIf { it.isNotBlank() }
+                ?.let { mapOf("scene" to name(it)) }.orEmpty()
+
+        fun input(case: TestCaseEntity): String {
+            val seen = observed[case.id] ?: return ""
+            val input = seen.path("input").asText("").ifBlank { return "" }
+            return marked(input, seen.path("build_id").takeIf { it.isNumber }?.asLong())
+        }
+    }
+
+    private fun observedOf(case: TestCaseEntity): JsonNode? =
+        runCatching { objectMapper.readTree(case.metadata.asString()).path("observed") }.getOrNull()
+            ?.takeIf { it.isObject }
+
+    private suspend fun observedPaths(cases: List<TestCaseEntity>, projectId: Long): Observed =
+        Observed(
+            cases,
+            runCatching { caseContracts.observedExits(projectId) }.getOrElse { emptyList() },
+            kr.artel.orchestration.testscenario.service.authoringGameBuildId() ?: runCatching { caseContracts.latestBuildId(projectId) }.getOrNull(),
+        )
+
     private fun arrival(case: TestCaseEntity): Map<String, String> =
         runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
             ?.path(MapTestCaseWriter.ARRIVES_AT)?.asText(null)
@@ -326,8 +435,16 @@ class TestCaseService(
             .mapNotNull { row -> ScenarioStateReader.defaultOf(row.detail)?.let { ScenarioStateReader.normalize(row.name) to it } }
             .sortedBy { it.first }
             .toMap()
+            // 지도가 없으면 케이스 메타가 말하는 시작 상태를 쓴다(자연어 TC).
+            .ifEmpty { metadataStart(projectId) }
     }.onFailure { logger.warn("처음 값 조회 실패 — 없이 보낸다: ${it.message}") }
         .getOrElse { emptyMap() }
+
+    /** 케이스 메타의 `start_state` 를 모은 것. 같은 이름이 둘이면 먼저 적힌 쪽이다. */
+    suspend fun metadataStart(projectId: Long): Map<String, String> =
+        authoringCases.all(projectId).flatMap { ScenarioStateReader.startState(it, objectMapper).entries }
+            .fold(sortedMapOf<String, String>()) { acc, (k, v) -> acc.apply { putIfAbsent(k, v) } }
+            .apply { caseContracts.startState(projectId).forEach { (k, v) -> putIfAbsent(ScenarioStateReader.normalize(k), v) } }
 
     private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Map<String, String>> = runCatching {
         authoringCases.valuesChangedByCases(projectId).toList()
@@ -355,20 +472,20 @@ class TestCaseService(
         if (!projectAccessService.isMember(projectId, userId)) {
             return TestCaseCoverageResponse(0, 0, 0, 0, 0, 0, emptyList())
         }
-        val total = repository.countByProjectId(projectId).toInt()
+        val total = repository.countReadyByProjectId(projectId).toInt()
         val uncoveredScenes = repository.findScenesOfUncovered(projectId).toList()
         val unauthored = uncoveredScenes.sumOf { it.count }.toInt()
         return TestCaseCoverageResponse(
             total = total,
             authored = total - unauthored,
             unauthored = unauthored,
-            verified = repository.countByProjectIdAndVerificationStatus(
+            verified = repository.countReadyByProjectIdAndVerificationStatus(
                 projectId, VerificationStatus.VERIFIED.name
             ).toInt(),
-            draft = repository.countByProjectIdAndVerificationStatus(
+            draft = repository.countReadyByProjectIdAndVerificationStatus(
                 projectId, VerificationStatus.DRAFT.name
             ).toInt(),
-            broken = repository.countByProjectIdAndVerificationStatus(
+            broken = repository.countReadyByProjectIdAndVerificationStatus(
                 projectId, VerificationStatus.BROKEN.name
             ).toInt(),
             uncoveredScenes = uncoveredScenes,
@@ -398,10 +515,12 @@ class TestCaseService(
             precondition = request.precondition?.ifBlank { null },
             expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
+            reviewStatus = if (request.draft) ReviewStatus.DRAFT.name else ReviewStatus.READY.name,
             functions = request.functions?.validated(),
+            kind = (TestCaseKind.parse(request.kind) ?: TestCaseKind.FUNCTION).name,
         )
         if (folderId == null && gameBuildId == null) {
-            val created = repository.save(entity)
+            val created = withArrival(repository.save(entity), request.arrivesAt)
             projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음
             return created.toTestCaseResponse()
         }
@@ -415,7 +534,14 @@ class TestCaseService(
             created
         }
         projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
-        return saved.toTestCaseResponse(folderId)
+        return withArrival(saved, request.arrivesAt).toTestCaseResponse(folderId)
+    }
+
+    /** 도착 화면을 정한다(ARTEL-1312). 주지 않았으면 그대로다. 정한 뒤의 행을 돌려준다. */
+    private suspend fun withArrival(case: TestCaseEntity, arrivesAt: String?): TestCaseEntity {
+        if (arrivesAt == null) return case
+        caseContracts.setArrival(case.projectId, requireNotNull(case.id), arrivesAt)
+        return repository.findById(requireNotNull(case.id)) ?: case
     }
 
     /**
@@ -467,6 +593,8 @@ class TestCaseService(
             VerificationStatus.fromWire(it)?.name
                 ?: throw BadRequestException("verificationStatus must be one of ${VerificationStatus.NAMES}")
         }
+        val reviewStatus = request.reviewStatus?.let(ReviewStatus::parse)
+        val kind = TestCaseKind.parse(request.kind)?.name
         val buildId = parseOptionalWireId(request.gameBuildId, "gameBuildId")
         if (buildId != null) {
             gameBuilds.findAccessibleById(buildId, existing.projectId, userId) ?: throw NotFoundException("버전을 찾을 수 없습니다.")
@@ -483,10 +611,18 @@ class TestCaseService(
                     expectedValue = request.expectedValue?.ifBlank { null } ?: version.expectedValue,
                     verificationStatus = statusName ?: version.verificationStatus,
                 ))
-                request.functions?.let { repository.save(identity.copy(functions = it.validated())) }
+                // 허용 범위와 종류는 버전마다 다르지 않은 케이스의 칸이다.
+                if (request.functions != null || kind != null || reviewStatus != null) {
+                    repository.save(identity.copy(
+                        functions = request.functions?.validated() ?: identity.functions,
+                        kind = kind ?: identity.kind,
+                        reviewStatus = reviewStatus ?: identity.reviewStatus,
+                    ))
+                }
                 versions.syncIdentities(listOf(caseId))
                 reader.overlay(repository.findById(caseId) ?: throw NotFoundException(), CaseScope.Version(buildId))
             }
+            request.arrivesAt?.let { caseContracts.setArrival(existing.projectId, caseId, it) }
             projectChangeStreamManager.notify(existing.projectId, ProjectChangeTopic.TEST_CASES)
             return shown.toTestCaseResponse(folderItems.findFirstFolderId(caseId))
         }
@@ -497,8 +633,10 @@ class TestCaseService(
             expectedValue = request.expectedValue?.ifBlank { null } ?: existing.expectedValue,
             verificationStatus = statusName ?: existing.verificationStatus,
             functions = request.functions?.validated() ?: existing.functions,
+            kind = kind ?: existing.kind,
+            reviewStatus = reviewStatus ?: existing.reviewStatus,
         )
-        val saved = repository.save(updated)
+        val saved = withArrival(repository.save(updated), request.arrivesAt)
         projectChangeStreamManager.notify(saved.projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음
         return saved.toTestCaseResponse(folderItems.findFirstFolderId(caseId))
     }
@@ -540,4 +678,14 @@ class TestCaseService(
     private fun String?.requireField(name: String): String =
         this?.takeIf { it.isNotBlank() }
             ?: throw BadRequestException("$name is required")
+
+    private companion object {
+        /** 저작에 보내는 사유 문구. 모델이 읽는 글이라 영어로 둔다(프롬프트와 같은 말). */
+        const val UNMADE = "no case leaves this — it may go by another name, or hold from the start"
+        const val ASSUMED = "common sense, not written in the TC"
+        /** QA 가 지금 버전이 아닌 build 에서만 본 길 · 입력. 게임이 바뀌었으면 틀릴 수 있다. */
+        const val EARLIER_BUILD = "(seen by QA in an earlier build)"
+        /** 사람 답 · QA 관측으로 앞 버전에서 정해진 요구. 게임이 바뀌었으면 틀릴 수 있다. */
+        const val EARLIER_FACT = "confirmed in an earlier build — the game may have changed"
+    }
 }
