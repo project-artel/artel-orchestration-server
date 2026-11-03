@@ -24,6 +24,30 @@ class InProcessMediaServiceTest {
     }.toByteArray().let { Base64.getEncoder().encodeToString(it) }
 
     @Test
+    fun `첫 응답 시간 초과는 SDK 미지원으로 고정하지 않고 늦은 frame을 수신한다`() = runBlocking<Unit> {
+        var now = 1L
+        val fixture = fixture(nanoTime = { now })
+        val streamId = UUID.randomUUID()
+        fixture.sessions.register("game", Mockito.mock(WebSocketSession::class.java))
+        val viewer = fixture.viewers.admit("game", "viewer", Mockito.mock(WebSocketSession::class.java)).viewer
+        try {
+            assertThat(fixture.service.configure(streamId, "game", null, emptyList()).state).isEqualTo("connecting")
+            now += 10_000_000_000L
+            assertThat(fixture.service.configure(streamId, "game", null, emptyList()).state).isEqualTo("connecting")
+            now += 1L
+            assertThat(fixture.service.configure(streamId, "game", null, emptyList()).state).isEqualTo("failed")
+            fixture.service.openViewer(streamId, "viewer")
+            fixture.service.sdkSignal(streamId, frame(1))
+            assertThat(fixture.service.configure(streamId, "game", null, emptyList()).state).isEqualTo("connected")
+            StepVerifier.create(viewer.outbound().take(1)).assertNext {
+                val message = mapper.readTree(it)
+                assertThat(message["type"].asText()).isEqualTo("STREAM_FRAME")
+                assertThat(message["frameId"].asLong()).isEqualTo(1)
+            }.verifyComplete()
+        } finally { fixture.service.shutdown(); fixture.viewers.release(viewer) }
+    }
+
+    @Test
     fun `연결을 종료하면 동시 영상 수신 자리를 다시 사용할 수 있다`() = runBlocking<Unit> {
         val f = fixture(StreamProperties(mediaMaxIngress = 1))
         val first = UUID.randomUUID()
@@ -157,11 +181,11 @@ class InProcessMediaServiceTest {
     private fun frame(id: Long): String {
         return mapper.writeValueAsString(mapOf("type" to "STREAM_FRAME", "frameId" to id, "jpeg" to jpeg))
     }
-    private fun fixture(properties: StreamProperties = StreamProperties()): Fixture {
+    private fun fixture(properties: StreamProperties = StreamProperties(), nanoTime: () -> Long = System::nanoTime): Fixture {
         val recorder = Mockito.mock(QaVideoRecorder::class.java)
         val sessions = SessionManager(mapper)
         val viewers = ViewerSessionRegistry(mapper)
-        return Fixture(InProcessMediaService(recorder, sessions, viewers, mapper, properties), recorder, sessions, viewers)
+        return Fixture(InProcessMediaService(recorder, sessions, viewers, mapper, properties, nanoTime), recorder, sessions, viewers)
     }
     private data class Fixture(val service: InProcessMediaService, val recorder: QaVideoRecorder, val sessions: SessionManager, val viewers: ViewerSessionRegistry)
 }

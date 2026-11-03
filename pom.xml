@@ -171,6 +171,13 @@
 			<version>${poi.version}</version>
 		</dependency>
 
+		<!-- TC 파일 가져오기 · 내보내기의 CSV(ARTEL-1327). 엑셀이 쓰는 따옴표 · 줄바꿈 규칙을 손으로 짜지 않는다. -->
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-csv</artifactId>
+			<version>1.12.0</version>
+		</dependency>
+
 		<!-- commons-csv 1.12.0은 UnsynchronizedBufferedReader를 써서 Commons IO 2.17.0 이상이
 		     필요하다. Spring Boot dependency management의 2.16.1로 내려가면 CSV 변환이 런타임에
 		     NoClassDefFoundError로 실패하므로 직접 고정한다. -->

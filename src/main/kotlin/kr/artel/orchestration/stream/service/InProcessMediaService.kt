@@ -1,6 +1,7 @@
 package kr.artel.orchestration.stream.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.springframework.beans.factory.annotation.Autowired
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -23,15 +24,18 @@ internal data class MediaSignal(val type: String, val streamId: String? = null, 
 
 /** 영상도 SDK와 viewer의 인증된 WebSocket을 사용한다. 별도 포트나 UDP peer는 만들지 않는다. */
 @org.springframework.stereotype.Service
-class InProcessMediaService(private val recorder: QaVideoRecorder, private val sessions: SessionManager,
-    private val viewers: ViewerSessionRegistry, private val mapper: ObjectMapper, private val properties: StreamProperties) {
+class InProcessMediaService internal constructor(private val recorder: QaVideoRecorder, private val sessions: SessionManager,
+    private val viewers: ViewerSessionRegistry, private val mapper: ObjectMapper, private val properties: StreamProperties,
+    private val nanoTime: () -> Long) {
+    @Autowired
+    constructor(recorder: QaVideoRecorder, sessions: SessionManager, viewers: ViewerSessionRegistry,
+        mapper: ObjectMapper, properties: StreamProperties) : this(recorder, sessions, viewers, mapper, properties, System::nanoTime)
     private val admission = Mutex()
     private val streams = ConcurrentHashMap<UUID, Ingress>()
     @Volatile private var stopping = false
 
-    private class Ingress(val id: UUID, val instanceId: String, val sdkIdentity: Any?) {
+    private class Ingress(val id: UUID, val instanceId: String, val sdkIdentity: Any?, val started: Long) {
         val gate = Mutex()
-        val started = System.nanoTime()
         val viewers = ConcurrentHashMap.newKeySet<String>()
         var capable = false
         var failed = false
@@ -42,13 +46,13 @@ class InProcessMediaService(private val recorder: QaVideoRecorder, private val s
         var tokens = 2.0
         var refillNanos = started
         var latest: Pair<Long, String>? = null
-        fun state(): String = when {
+        fun state(now: Long): String = when {
             closing -> "closed"
             failed -> "failed"
             unsupported -> "unsupported"
-            !capable && System.nanoTime() - started > 10_000_000_000L -> "unsupported"
-            lastFrameNanos != 0L && System.nanoTime() - lastFrameNanos < 5_000_000_000L -> "connected"
-            capable && System.nanoTime() - maxOf(lastFrameNanos, started) > 15_000_000_000L -> "failed"
+            !capable && now - started > 10_000_000_000L -> "failed"
+            lastFrameNanos != 0L && now - lastFrameNanos < 5_000_000_000L -> "connected"
+            capable && now - maxOf(lastFrameNanos, started) > 15_000_000_000L -> "failed"
             else -> "connecting"
         }
     }
@@ -64,13 +68,13 @@ class InProcessMediaService(private val recorder: QaVideoRecorder, private val s
                 existing to false
             } else {
                 if (streams.size >= properties.mediaMaxIngress) throw TooManyRequestsException("동시 영상 수신 상한에 도달했습니다.", 10)
-                Ingress(streamId, instanceId, sessions.sessionIdentity(instanceId)).also { streams[streamId] = it } to true
+                Ingress(streamId, instanceId, sessions.sessionIdentity(instanceId), nanoTime()).also { streams[streamId] = it } to true
             }
         }
         stream.gate.withLock {
             if (stream.closing) throw NotFoundException("종료된 영상 연결입니다.")
             recorder.update(streamId, recordingId)
-            val state = stream.state()
+            val state = stream.state(nanoTime())
             if (state == "unsupported") {
                 stream.unsupported = true
                 stream.viewers.forEach { sendUnsupported(it) }
@@ -86,7 +90,7 @@ class InProcessMediaService(private val recorder: QaVideoRecorder, private val s
             if (!stream.viewers.contains(viewerId) && stream.viewers.size >= properties.mediaMaxViewers)
                 throw TooManyRequestsException("동시 영상 열람 상한에 도달했습니다.", 10)
             stream.viewers.add(viewerId)
-            if (stream.state() == "unsupported") sendUnsupported(viewerId)
+            if (stream.state(nanoTime()) == "unsupported") sendUnsupported(viewerId)
             else stream.latest?.let { viewers.sendFrame(viewerId, it.first, it.second) }
         }
     }
@@ -96,7 +100,7 @@ class InProcessMediaService(private val recorder: QaVideoRecorder, private val s
     /** 상태와 frame은 같은 순서로 처리한다. JPEG decode는 recorder thread가 맡는다. */
     suspend fun sdkSignal(streamId: UUID, rawJson: String) {
         val receivedAt = java.time.Instant.now()
-        val receivedNanos = System.nanoTime()
+        val receivedNanos = nanoTime()
         val stream = streams[streamId] ?: return
         if (rawJson.length > 184 * 1024) throw BadRequestException("영상 메시지 크기 상한을 넘었습니다.")
         val signal = try { mapper.readValue(rawJson, MediaSignal::class.java) }
@@ -121,7 +125,7 @@ class InProcessMediaService(private val recorder: QaVideoRecorder, private val s
         val id = signal.frameId ?: return
         var accepted = false
         try {
-            val now = System.nanoTime()
+            val now = nanoTime()
             stream.tokens = minOf(2.0, stream.tokens + (now - stream.refillNanos) / 100_000_000.0)
             stream.refillNanos = now
             if (id < 0 || id <= stream.lastFrameId || stream.tokens < 1.0 || stream.unsupported || stream.failed) return

@@ -140,8 +140,9 @@ class QaSdkBridgeService(
             payload = payload
         )
         logService.publish(inbound)
-        if (!inbound.inserted) return true
-        recordActionTiming(qaTryId, outerIdString, correlationId, action.createdAt, inbound.log.createdAt, payload)
+        if (inbound.inserted) {
+            recordActionTiming(qaTryId, outerIdString, correlationId, action.createdAt, inbound.log.createdAt, payload)
+        }
         if (sessionId == null) return true
         val outbound = logService.append(
             qaTryId = qaTryId,
@@ -153,7 +154,8 @@ class QaSdkBridgeService(
             payload = payload
         )
         logService.publish(outbound)
-        sendAgent(qaTryId, sessionId, "ACTION_RESULT", correlationId, payload)
+        // 첫 중계가 실패했다면 SDK의 cached result로 다시 시도한다. agent 봉투 id도 동일하게 유지한다.
+        sendAgent(qaTryId, sessionId, "ACTION_RESULT", correlationId, payload, "action-result-$outerIdString")
         return true
     }
 

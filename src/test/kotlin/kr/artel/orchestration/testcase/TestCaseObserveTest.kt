@@ -129,6 +129,7 @@ class TestCaseObserveTest {
             repository,
             untouched(TestCaseVersionRepository::class.java) as TestCaseVersionRepository,
             untouched(GameBuildRepository::class.java) as GameBuildRepository,
+            objectMapper,
         )
         // 사람 판정 기록은 없다(ARTEL-1256).
         val reviews = Proxy.newProxyInstance(javaClass.classLoader, arrayOf(QaVerdictReviewRepository::class.java)) { _, method, _ ->

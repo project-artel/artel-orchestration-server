@@ -11,6 +11,8 @@ import kr.artel.orchestration.qa.entity.QaTryEntity
 import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.service.QaLogService
 import kr.artel.orchestration.testcase.dto.CaseVerdictHistoryItem
+import kr.artel.orchestration.testcase.TestCaseIdentifiers
+import kr.artel.orchestration.testcase.formatTestCaseIdentifier
 import kr.artel.orchestration.testcase.dto.CaseVerdictHistoryResponse
 import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -30,6 +32,7 @@ import java.time.Instant
 @Service
 class TestCaseVerdictService(
     private val testCases: TestCaseRepository,
+    private val identifiers: TestCaseIdentifiers,
     private val versions: TestCaseVersionRepository,
     private val scenarios: TestScenarioRepository,
     private val qaRuns: QaRunRepository,
@@ -88,16 +91,18 @@ class TestCaseVerdictService(
             testCases.markLastVerifiedBuild(testCaseId, gameBuildId)
             versions.syncIdentities(listOf(testCaseId))
             if (publish) projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES)
+            val caseNumber = identifiers.findNumber(projectId, testCaseId)
             val payload = objectMapper.createObjectNode()
                 .put("case_id", testCaseId)
                 .put("verification_status", status.name)
                 .put("game_build_id", gameBuildId)
             verdictLogId?.let { payload.put("verdict_log_id", it) }
+            caseNumber?.let { payload.put("case_number", it) }
             val appended = logService.append(
                     qaTryId = qaTryId,
                     direction = "ORCHE_INTERNAL",
                     type = "CASE_VERDICT",
-                    message = "TC $testCaseId → ${status.name}",
+                    message = "${formatTestCaseIdentifier(caseNumber)} → ${status.name}",
                     payload = payload,
                 )
             if (publish) logService.publish(appended)
