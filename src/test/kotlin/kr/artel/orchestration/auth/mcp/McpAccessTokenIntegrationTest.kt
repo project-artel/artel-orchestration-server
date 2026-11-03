@@ -170,6 +170,7 @@ class McpAccessTokenIntegrationTest {
              "cases":[
                {"scene":"숲","step":"늑대를 공격한다.","expectedValue":"늑대가 쓰러진다.","needs":["검 == 1"],"leaves":["늑대 처치=1","동전=+30"]},
                {"scene":"광장","step":"가방을 연다.","expectedValue":"가방 창이 뜬다."},
+               {"scene":"숲","precondition":"검이 없다","step":"늑대를 공격한다.","expectedValue":"물려서 쫓겨난다.","needs":["검 == 0"],"kind":"EXCEPTION"},
                {"scene":"숲","step":"틀린 줄","expectedValue":"-","needs":["검이 있어야 함"]}
              ]}
         """.trimIndent()
@@ -177,13 +178,16 @@ class McpAccessTokenIntegrationTest {
         assertThat(call(reader, HttpMethod.POST, "${world.base}/case-contracts/cases", body).status).isEqualTo(403)
         val saved = call(writer, HttpMethod.POST, "${world.base}/case-contracts/cases", body)
         assertThat(saved.status).isEqualTo(200)
-        assertThat(saved.body["created"]).describedAs("계약 꼴이 틀린 줄은 TC 를 만들기 전에 걸린다").hasSize(2)
-        assertThat(saved.body["rejected"][0]["index"].asInt()).isEqualTo(2)
+        assertThat(saved.body["created"]).describedAs("계약 꼴이 틀린 줄은 TC 를 만들기 전에 걸린다").hasSize(3)
+        assertThat(saved.body["rejected"][0]["index"].asInt()).isEqualTo(3)
         assertThat(saved.body["addedTerms"][0].asText()).isEqualTo("검")
 
         val listed = call(reader, HttpMethod.GET, "${world.base}/case-contracts")
         assertThat(listed.status).isEqualTo(200)
-        val wolf = listed.body["cases"].first { it["step"].asText() == "늑대를 공격한다." }
+        val wolf = listed.body["cases"].first { it["step"].asText() == "늑대를 공격한다." && it["kind"].asText() == "FUNCTION" }
+        // 예외 TC(ARTEL-1306): 종류가 그대로 남고, 같은 조작의 기능 TC 와 따로 읽힌다.
+        val bitten = listed.body["cases"].single { it["kind"].asText() == "EXCEPTION" }
+        assertThat(bitten["expectedValue"].asText()).isEqualTo("물려서 쫓겨난다.")
         assertThat(wolf["needs"].map { it.asText() }).containsExactly("검 == 1")
         assertThat(wolf["leaves"].map { it.asText() }).containsExactly("늑대_처치=1", "동전=+30")
         // MCP 로 들어온 계약은 개발자의 Agent 가 알려 준 것이다 — 사람이 정한 것(user)과 가른다.

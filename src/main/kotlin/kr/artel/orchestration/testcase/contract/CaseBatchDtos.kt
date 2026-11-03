@@ -38,6 +38,8 @@ data class CaseBatchItem(
     val leaves: List<String>? = null,
     /** 하고 나면 다른 화면으로 가면 그 화면(씬 전이 TC). `광장`. */
     val arrivesAt: String? = null,
+    /** `FUNCTION`(기능) 또는 `EXCEPTION`(예외)(ARTEL-1306). 새 TC 는 비우면 기능, 고칠 TC 는 비우면 그대로다. */
+    val kind: String? = null,
 )
 
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
@@ -69,4 +71,6 @@ data class CaseContractRow(
     val contractSource: String?,
     /** 다른 화면으로 가는 TC 면 도착 화면. */
     val arrivesAt: String? = null,
+    /** `FUNCTION`(기능) 또는 `EXCEPTION`(예외)(ARTEL-1306). */
+    val kind: String = "FUNCTION",
 )

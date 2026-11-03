@@ -36,7 +36,7 @@ class CaseBatchService(
                 val caseId = if (item.testCaseId.isNullOrBlank()) {
                     val response = testCaseService.createTestCase(
                         projectId, userId,
-                        TestCaseCreateRequest(item.scene, item.step, item.precondition, item.expectedValue, gameBuildId = buildId),
+                        TestCaseCreateRequest(item.scene, item.step, item.precondition, item.expectedValue, gameBuildId = buildId, kind = item.kind),
                     ) ?: throw NotFoundException("프로젝트를 찾을 수 없습니다.")
                     response.id.also { created += it }
                 } else {
@@ -44,7 +44,10 @@ class CaseBatchService(
                     if (projectOf(item.testCaseId.toLong()) != projectId) throw NotFoundException("TC ${item.testCaseId} 를 찾을 수 없습니다.")
                     val response = testCaseService.updateTestCase(
                         item.testCaseId.toLong(), userId,
-                        TestCaseUpdateRequest(scene = item.scene, step = item.step, precondition = item.precondition, expectedValue = item.expectedValue),
+                        TestCaseUpdateRequest(
+                            scene = item.scene, step = item.step, precondition = item.precondition,
+                            expectedValue = item.expectedValue, kind = item.kind,
+                        ),
                     )?.takeIf { it.projectId == projectId.toString() } ?: throw NotFoundException("TC ${item.testCaseId} 를 찾을 수 없습니다.")
                     response.id.also { updated += it }
                 }

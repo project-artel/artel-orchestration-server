@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testcase.dto
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 
 /**
@@ -48,6 +49,12 @@ data class AuthoringTestCase(
      * 도구는 예외에서만 돈다**(ARTEL-772).
      */
     val input: String = "",
+    /**
+     * 예외 TC 면 `EXCEPTION`(ARTEL-1306). 기능 TC 는 칸을 싣지 않는다 — 목록 대부분이 기능이라 줄마다 실으면 프롬프트만
+     * 붓는다. 저작은 여정에 기능 TC 만 잇고, 사용자가 예외 확인을 원할 때 예외 TC 를 쓴다.
+     */
+    @get:JsonInclude(JsonInclude.Include.NON_NULL)
+    val kind: String? = null,
 )
 
 /**

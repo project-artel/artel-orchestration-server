@@ -88,6 +88,8 @@ data class TestCaseVersionRow(
     val verificationStatus: String?,
     val presence: String,
     val compareVerificationStatus: String?,
+    /** `FUNCTION`(기능) 또는 `EXCEPTION`(예외)(ARTEL-1306). 버전마다 다르지 않은 케이스의 칸이다. */
+    val kind: String = "FUNCTION",
 )
 
 /** @property gameBuildId "버전 없음" 목록이면 null 이다. */
@@ -119,6 +121,7 @@ data class CaseListFields(
     val verificationStatus: String,
     val createdAt: Instant?,
     val fromMap: Boolean,
+    val kind: String = "FUNCTION",
 )
 
 /** 케이스 목록에 보일 칸만 읽은 버전 몫(ARTEL-1212). */

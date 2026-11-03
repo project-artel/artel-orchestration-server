@@ -34,7 +34,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      */
     @Query(
         """
-        SELECT id, scene, step, precondition, expected_value, verification_status, created_at,
+        SELECT id, scene, step, precondition, expected_value, verification_status, created_at, kind,
                COALESCE(metadata->>'origin' = 'content-map' AND jsonb_typeof(metadata->'origin') = 'string', false) AS from_map
           FROM test_case
          WHERE project_id = :projectId

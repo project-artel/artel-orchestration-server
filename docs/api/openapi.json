@@ -12849,6 +12849,9 @@
           },
           "functions": {
             "$ref": "#/components/schemas/TestCaseFunctions"
+          },
+          "kind": {
+            "type": "string"
           }
         }
       },
@@ -12857,6 +12860,7 @@
           "createdAt",
           "expectedValue",
           "id",
+          "kind",
           "origin",
           "projectId",
           "scene",
@@ -12901,6 +12905,9 @@
           },
           "functions": {
             "$ref": "#/components/schemas/TestCaseFunctions"
+          },
+          "kind": {
+            "type": "string"
           }
         }
       },
@@ -15957,6 +15964,9 @@
           },
           "functions": {
             "$ref": "#/components/schemas/TestCaseFunctions"
+          },
+          "kind": {
+            "type": "string"
           }
         }
       },
@@ -16647,6 +16657,9 @@
             }
           },
           "arrivesAt": {
+            "type": "string"
+          },
+          "kind": {
             "type": "string"
           }
         }
@@ -20540,6 +20553,7 @@
           "evidenceGaps",
           "expectedValue",
           "id",
+          "kind",
           "origin",
           "projectId",
           "scene",
@@ -20590,6 +20604,9 @@
           },
           "functions": {
             "$ref": "#/components/schemas/TestCaseFunctions"
+          },
+          "kind": {
+            "type": "string"
           }
         }
       },
@@ -20800,6 +20817,7 @@
           "createdAt",
           "expectedValue",
           "id",
+          "kind",
           "origin",
           "presence",
           "scene",
@@ -20839,6 +20857,9 @@
             "type": "string"
           },
           "compareVerificationStatus": {
+            "type": "string"
+          },
+          "kind": {
             "type": "string"
           }
         }
@@ -23311,6 +23332,7 @@
       "CaseContractRow": {
         "required": [
           "expectedValue",
+          "kind",
           "leaves",
           "needs",
           "scene",
@@ -23350,6 +23372,9 @@
             "type": "string"
           },
           "arrivesAt": {
+            "type": "string"
+          },
+          "kind": {
             "type": "string"
           }
         }

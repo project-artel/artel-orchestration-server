@@ -81,6 +81,7 @@ class TestCaseVersionLibraryIntegrationTest {
     @Autowired private lateinit var ingest: ContentMapIngestService
     @Autowired private lateinit var testCases: TestCaseRepository
     @Autowired private lateinit var versions: TestCaseVersionRepository
+    @Autowired private lateinit var testCaseService: kr.artel.orchestration.testcase.service.TestCaseService
 
     @Test
     fun `버전 목록과 버전 표, 그리고 이전 버전과의 비교`(): Unit = runBlocking {
@@ -319,6 +320,46 @@ class TestCaseVersionLibraryIntegrationTest {
             call(token, HttpMethod.POST, "/api/projects/$projectId/test-cases",
                 """{"scene":"S","step":"남의 버전","expectedValue":"x","gameBuildId":"${foreign.id}"}""").status
         ).isEqualTo(404)
+    }
+
+    /**
+     * TC 종류(ARTEL-1306). 새 TC 는 기능이고, 만들 때 · 고칠 때 예외로 정할 수 있다. 모르는 값은 400 이다. 목록과 단건이
+     * 종류를 싣고, 저작 목록은 예외 TC 에만 칸을 싣는다 — 대부분인 기능 TC 에 줄마다 실으면 프롬프트만 붓는다.
+     */
+    @Test
+    fun `케이스 종류를 정하고 바꾸고, 목록과 저작 목록이 읽는다`(): Unit = runBlocking {
+        val (userId, token) = signIn()
+        val projectId = newProject(userId)
+        val plain = call(token, HttpMethod.POST, "/api/projects/$projectId/test-cases", """{"scene":"S","step":"상자를 연다","expectedValue":"동전"}""")
+        assertThat(plain.body["kind"].asText()).isEqualTo("FUNCTION")
+        val refused = call(
+            token, HttpMethod.POST, "/api/projects/$projectId/test-cases",
+            """{"scene":"S","precondition":"열쇠가 없다","step":"상자를 연다","expectedValue":"잠겨 있다","kind":"exception"}""",
+        )
+        assertThat(refused.status).isEqualTo(201)
+        assertThat(refused.body["kind"].asText()).isEqualTo("EXCEPTION")
+        assertThat(
+            call(token, HttpMethod.POST, "/api/projects/$projectId/test-cases", """{"scene":"S","step":"x","expectedValue":"x","kind":"EDGE"}""").status
+        ).isEqualTo(400)
+
+        val plainId = plain.body["id"].asText()
+        val changed = call(token, HttpMethod.PUT, "/api/projects/$projectId/test-cases/$plainId", """{"kind":"EXCEPTION"}""")
+        assertThat(changed.body["kind"].asText()).isEqualTo("EXCEPTION")
+        assertThat(changed.body["step"].asText()).describedAs("종류만 바꾸면 내용은 그대로다").isEqualTo("상자를 연다")
+        val back = call(token, HttpMethod.PUT, "/api/projects/$projectId/test-cases/$plainId", """{"step":"상자를 다시 연다"}""")
+        assertThat(back.body["kind"].asText()).describedAs("종류를 안 보내면 그대로다").isEqualTo("EXCEPTION")
+        call(token, HttpMethod.PUT, "/api/projects/$projectId/test-cases/$plainId", """{"kind":"FUNCTION"}""")
+
+        val listed = call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/unversioned/cases").body["items"]
+        assertThat(listed.associate { it["id"].asText() to it["kind"].asText() })
+            .containsEntry(plainId, "FUNCTION").containsEntry(refused.body["id"].asText(), "EXCEPTION")
+        assertThat(call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases/${refused.body["id"].asText()}").body["kind"].asText())
+            .isEqualTo("EXCEPTION")
+
+        val authoring = testCaseService.getAuthoringCases(projectId, userId).associateBy { it.id.toString() }
+        assertThat(authoring.getValue(refused.body["id"].asText()).kind).isEqualTo("EXCEPTION")
+        assertThat(authoring.getValue(plainId).kind).isNull()
+        assertThat(objectMapper.valueToTree<JsonNode>(authoring.getValue(plainId)).has("kind")).isFalse()
     }
 
     @Test

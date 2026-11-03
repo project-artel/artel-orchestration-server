@@ -148,6 +148,10 @@ data class TestCaseEntity(
     @Column("functions")
     val functions: Json? = null,
 
+    /** 기능 · 예외(ARTEL-1306). [TestCaseKind] 의 이름이다. */
+    @Column("kind")
+    val kind: String = TestCaseKind.FUNCTION.name,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,
