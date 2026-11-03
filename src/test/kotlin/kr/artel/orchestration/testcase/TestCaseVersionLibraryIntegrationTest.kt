@@ -356,6 +356,15 @@ class TestCaseVersionLibraryIntegrationTest {
         assertThat(call(token, HttpMethod.GET, "/api/projects/$projectId/test-cases/${refused.body["id"].asText()}").body["kind"].asText())
             .isEqualTo("EXCEPTION")
 
+        // 도착 화면(ARTEL-1312): 만들 때 · 고칠 때 정하고, 목록 · 단건이 읽는다. 빈 문자열은 지운다.
+        val moved = call(token, HttpMethod.PUT, "/api/projects/$projectId/test-cases/$plainId", """{"arrivesAt":"광산 안"}""")
+        assertThat(moved.body["arrivesAt"].asText()).isEqualTo("광산 안")
+        assertThat(call(token, HttpMethod.GET, "/api/projects/$projectId/test-case-versions/unversioned/cases").body["items"]
+            .single { it["id"].asText() == plainId }["arrivesAt"].asText()).isEqualTo("광산 안")
+        assertThat(call(token, HttpMethod.PUT, "/api/projects/$projectId/test-cases/$plainId", """{"arrivesAt":""}""").body["arrivesAt"].isNull).isTrue()
+        val travel = call(token, HttpMethod.POST, "/api/projects/$projectId/test-cases", """{"scene":"광장","step":"숲을 누른다","expectedValue":"숲","arrivesAt":"숲 입구"}""")
+        assertThat(travel.body["arrivesAt"].asText()).isEqualTo("숲 입구")
+
         val authoring = testCaseService.getAuthoringCases(projectId, userId).associateBy { it.id.toString() }
         assertThat(authoring.getValue(refused.body["id"].asText()).kind).isEqualTo("EXCEPTION")
         assertThat(authoring.getValue(plainId).kind).isNull()

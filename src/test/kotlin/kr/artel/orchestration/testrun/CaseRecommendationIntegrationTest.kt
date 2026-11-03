@@ -174,6 +174,35 @@ class CaseRecommendationIntegrationTest {
         // 다른 말의 사람 스텝은 그대로다.
         assertThat(after[1]["step_source"].asText()).isEqualTo("HUMAN")
         assertThat(after[1].path("case_id").isNumber).isFalse()
+        // 길 추천은 도착 화면을 안다 — 저장한 TC 가 씬 전이 TC 가 된다(ARTEL-1312).
+        assertThat(rec.arrivesAt).isEqualTo("숲")
+        assertThat(objectMapper.readTree(get(client, "/api/projects/$projectId/test-cases/$caseId", token))["arrivesAt"].asText()).isEqualTo("숲")
+    }
+
+    /** draft 를 버리면 그 draft 의 스텝에서 나온 추천도 버린다. 남으면 쓰는 곳 없는 TC 를 저장할지 또 정해야 한다. */
+    @Test
+    fun `draft 를 버리면 그 draft 만 쓰던 추천도 버린다`(): Unit = runBlocking {
+        val client = WebClient.create("http://localhost:$port")
+        val (projectId, runId, token) = world("4")
+        val base = "/api/projects/$projectId/test-runs/$runId"
+        post(client, "$base/chat/message", token, mapOf("message" to "밤에 늑대", "autoApply" to false))
+        Thread.sleep(2000)
+        val drafted = objectMapper.readTree(get(client, "$base/chat/draft", token))
+
+        post(client, "$base/chat/draft/discard", token, mapOf("draft_ids" to listOf(drafted[0]["draft_id"].asText())))
+
+        assertThat(objectMapper.readTree(get(client, "$base/case-recommendations", token))[0]["status"].asText()).isEqualTo("DISCARDED")
+    }
+
+    /** 화면 이름이 이미 `화면` 으로 끝나면 한 번 더 붙이지 않는다. */
+    @Test
+    fun `길 추천은 화면 이름에 화면을 겹쳐 붙이지 않는다`(): Unit = runBlocking {
+        val (projectId, runId, _) = world("5")
+        val named = recommendations.recommendSceneMove(projectId, runId, "전투", "첫 단어 퍼즐 화면", "조작 없이 기다린다")!!
+        val plain = recommendations.recommendSceneMove(projectId, runId, "광장", "숲", "광장 오른쪽 길로 간다")!!
+
+        assertThat(named.expectedValue).isEqualTo("첫 단어 퍼즐 화면으로 바뀐다.")
+        assertThat(named.why).startsWith("전투에서 첫 단어 퍼즐 화면으로 가는 길을 알려 주셨어요.")
+        assertThat(plain.expectedValue).isEqualTo("숲 화면으로 바뀐다.")
     }
 }
-

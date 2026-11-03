@@ -63,6 +63,20 @@ object ScenarioQuestionBuilder {
         blockedGaps.distinct().map(::gapQuestion)
 
     /**
+     * 모델이 물은 것([askText])이 이 질문들 가운데 미상 구간([questionIds])과 같은 자리를 묻나. 구간의 두 화면 이름이 다
+     * 들어 있으면 같은 자리로 본다. 같은 구간을 두 번 물으면 사용자는 어느 쪽에 답해야 하는지 모르고, 답할 자리가 있는 것은
+     * 이쪽(답이 그 자리에 들어가고 길로 남는다)이다. 구간이 아니라 값이 막은 것(`StagePosition`)은 견주지 않는다.
+     */
+    fun repeatsGap(askText: String, questionIds: Collection<String>): Boolean {
+        val said = askText.filterNot(Char::isWhitespace)
+        return questionIds.asSequence()
+            .filter { it.startsWith(GAP_PREFIX) }
+            .map { it.removePrefix(GAP_PREFIX).split("→") }
+            .filter { ends -> ends.size == 2 && ends.all { it.isNotBlank() } }
+            .any { ends -> ends.all { said.contains(it.filterNot(Char::isWhitespace)) } }
+    }
+
+    /**
      * 길을 모르는 자리. **자유 서술이 본체이고 보기는 곁들이다** — "어떻게 가는가"는 보기로 다
      * 담기지 않는다. 그래도 두 가지는 보기로 둘 만하다: 저절로 넘어가는 경우와, 그대로 두는 경우.
      */

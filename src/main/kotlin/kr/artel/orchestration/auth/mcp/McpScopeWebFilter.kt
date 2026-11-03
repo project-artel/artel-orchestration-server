@@ -62,6 +62,10 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/chat/messages", McpScope.TESTCASE_READ),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs", McpScope.SCENARIO_WRITE),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/message", McpScope.SCENARIO_WRITE),
+    // 저작 draft(ARTEL-1310) — MCP 를 쓰는 사람이 콘솔에서 draft 를 보고 저장 · 버린다. 화면과 같은 draft 다.
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/chat/draft", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/draft/apply", McpScope.SCENARIO_WRITE),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/draft/discard", McpScope.SCENARIO_WRITE),
     // 저작이 추천한 TC — 읽기는 testcase:read, 저장 · 버리기는 TC 를 만드는 일이라 testcase:write.
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations", McpScope.TESTCASE_READ),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations/save", McpScope.TESTCASE_WRITE),

@@ -513,7 +513,7 @@ class TestCaseService(
             kind = (TestCaseKind.parse(request.kind) ?: TestCaseKind.FUNCTION).name,
         )
         if (folderId == null && gameBuildId == null) {
-            val created = repository.save(entity)
+            val created = withArrival(repository.save(entity), request.arrivesAt)
             projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음
             return created.toTestCaseResponse()
         }
@@ -527,7 +527,14 @@ class TestCaseService(
             created
         }
         projectChangeStreamManager.notify(projectId, ProjectChangeTopic.TEST_CASES) // commit 뒤
-        return saved.toTestCaseResponse(folderId)
+        return withArrival(saved, request.arrivesAt).toTestCaseResponse(folderId)
+    }
+
+    /** 도착 화면을 정한다(ARTEL-1312). 주지 않았으면 그대로다. 정한 뒤의 행을 돌려준다. */
+    private suspend fun withArrival(case: TestCaseEntity, arrivesAt: String?): TestCaseEntity {
+        if (arrivesAt == null) return case
+        caseContracts.setArrival(case.projectId, requireNotNull(case.id), arrivesAt)
+        return repository.findById(requireNotNull(case.id)) ?: case
     }
 
     /**
@@ -606,6 +613,7 @@ class TestCaseService(
                 versions.syncIdentities(listOf(caseId))
                 reader.overlay(repository.findById(caseId) ?: throw NotFoundException(), CaseScope.Version(buildId))
             }
+            request.arrivesAt?.let { caseContracts.setArrival(existing.projectId, caseId, it) }
             projectChangeStreamManager.notify(existing.projectId, ProjectChangeTopic.TEST_CASES)
             return shown.toTestCaseResponse(folderItems.findFirstFolderId(caseId))
         }
@@ -618,7 +626,7 @@ class TestCaseService(
             functions = request.functions?.validated() ?: existing.functions,
             kind = kind ?: existing.kind,
         )
-        val saved = repository.save(updated)
+        val saved = withArrival(repository.save(updated), request.arrivesAt)
         projectChangeStreamManager.notify(saved.projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음
         return saved.toTestCaseResponse(folderItems.findFirstFolderId(caseId))
     }

@@ -63,7 +63,12 @@ fun TestCaseEntity.toTestCaseResponse(folderId: Long? = null): TestCaseResponse 
         origin = originLabel(),
         functions = functionsOrNull(),
         kind = kind,
+        arrivesAt = arrivalOrNull(),
     )
+
+/** 도착 화면(`metadata.arrives_at`). 없거나 비면 null. */
+fun TestCaseEntity.arrivalOrNull(): String? =
+    runCatching { metadataReader.readTree(metadata.asString()).path("arrives_at").asText(null) }.getOrNull()?.ifBlank { null }
 
 /** 저장된 허용 범위. 정한 적 없으면(컬럼이 NULL) null 이다. 읽을 수 없는 값도 null 로 읽어 목록 전체를 막지 않는다. */
 fun TestCaseEntity.functionsOrNull(): TestCaseFunctions? =
@@ -93,6 +98,7 @@ fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper, folderId
         evidenceGaps = evidenceGaps(objectMapper),
         functions = base.functions,
         kind = base.kind,
+        arrivesAt = base.arrivesAt,
     )
 }
 

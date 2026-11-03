@@ -25,6 +25,8 @@ data class TestCaseCreateRequest(
     val functions: TestCaseFunctions? = null,
     /** `FUNCTION`(기능) 또는 `EXCEPTION`(예외)(ARTEL-1306). null 이면 기능이다. */
     val kind: String? = null,
+    /** 하고 나면 가는 화면(ARTEL-1312). null 이거나 빈 문자열이면 화면이 바뀌지 않는 TC 다. */
+    val arrivesAt: String? = null,
 )
 
 /** 케이스 수정. 검증상태(verificationStatus)도 여기서 바꿀 수 있다. */
@@ -42,6 +44,8 @@ data class TestCaseUpdateRequest(
     val functions: TestCaseFunctions? = null,
     /** 종류를 바꾼다(ARTEL-1306). null 이면 건드리지 않는다. */
     val kind: String? = null,
+    /** 도착 화면을 바꾼다(ARTEL-1312). null 이면 건드리지 않고, 빈 문자열이면 "화면이 바뀌지 않는다" 로 정한다. */
+    val arrivesAt: String? = null,
 )
 
 /**
@@ -82,6 +86,8 @@ data class TestCaseResponse(
     val functions: TestCaseFunctions? = null,
     /** `FUNCTION`(기능) 또는 `EXCEPTION`(예외)(ARTEL-1306). */
     val kind: String = TestCaseKind.FUNCTION.name,
+    /** 하고 나면 가는 화면(씬 전이 TC)(ARTEL-1312). 화면이 안 바뀌면 null. */
+    val arrivesAt: String? = null,
 )
 
 data class TestCaseListResponse(val items: List<TestCaseResponse>)
@@ -115,4 +121,6 @@ data class TestCaseDetailResponse(
     val functions: TestCaseFunctions? = null,
     /** [TestCaseResponse.kind] 와 같다. */
     val kind: String = TestCaseKind.FUNCTION.name,
+    /** [TestCaseResponse.arrivesAt] 와 같다. */
+    val arrivesAt: String? = null,
 )

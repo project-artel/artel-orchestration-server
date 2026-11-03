@@ -2,6 +2,8 @@ package kr.artel.orchestration.testscenario.service
 
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.node.ArrayNode
+import com.fasterxml.jackson.databind.node.ObjectNode
 import io.r2dbc.postgresql.codec.Json
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
@@ -45,6 +47,7 @@ import kr.artel.orchestration.assistant.ResourceAnswer
 import kr.artel.orchestration.assistant.ResourceQueryService
 import kr.artel.orchestration.assistant.ResourceRequest
 import kr.artel.orchestration.testscenario.dto.AgentRef
+import kr.artel.orchestration.testscenario.dto.AgentReply
 import kr.artel.orchestration.testscenario.dto.SavedScenarioFrame
 import kr.artel.orchestration.testscenario.dto.AuthoringStage
 import kr.artel.orchestration.testscenario.dto.AgentSessionOpenRequest
@@ -2216,6 +2219,8 @@ class TestScenarioAgentService(
         val first = questions.firstOrNull() ?: return
         session.question = first
         session.asked = questions.map { it.id }
+        // 질문을 저장하기 **전에** 고친다. 대화를 읽는 쪽(MCP)이 이 질문을 보았으면 고친 답도 본다.
+        dropRepeatedAsks(session.runId, session.appUserId, session.asked)
         saveMessage(
             session.runId, session.appUserId, "ASSISTANT", first.text,
             ScenarioQuestion.batchPayload(questions) + AgentRef.field(refs),
@@ -2228,6 +2233,28 @@ class TestScenarioAgentService(
             "되물음 [sessionKey={}, {}건, 첫 id={}, 출처={}]",
             sessionKey, questions.size, first.id, first.source,
         )
+    }
+
+    /**
+     * 이번 턴의 답이 물은 것 가운데, 지금 Artel 이 묻는 미상 구간과 같은 것을 뺀다. 실측(WV TR 4): 모델이
+     * `전투에서 첫 단어 퍼즐 화면으로 어떻게 넘어가나요?` 를 묻고 Artel 이 `전투→첫 단어 퍼즐 화면 구간을 어떻게 넘어가나요?` 를
+     * 또 물어, 한 창에 같은 질문이 둘 나왔다. 답은 이미 저장돼 있어 그 줄의 `asks` 만 고친다. 글(`content`)은 그대로 둔다.
+     */
+    private suspend fun dropRepeatedAsks(runId: Long, appUserId: Long, questionIds: List<String>) {
+        if (questionIds.none { it.startsWith(ScenarioQuestionBuilder.GAP_PREFIX) }) return
+        val turn = runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+            .takeLastWhile { it.role != "USER" }
+        for (message in turn.asReversed()) {
+            val payload = message.payload?.let { objectMapper.readTree(it.asString()) } as? ObjectNode ?: continue
+            if (payload.path("kind").asText() != AgentReply.KIND) continue
+            val asks = payload.path("asks") as? ArrayNode ?: return
+            val kept = asks.filterNot { ScenarioQuestionBuilder.repeatsGap(it.path("text").asText(""), questionIds) }
+            if (kept.size == asks.size()) return
+            if (kept.isEmpty()) payload.remove("asks") else payload.set<ArrayNode>("asks", objectMapper.createArrayNode().addAll(kept))
+            runMessageRepository.save(message.copy(payload = Json.of(objectMapper.writeValueAsString(payload))))
+            logger.info("같은 구간을 묻는 모델 질문을 뺐다 [runId={}, {}건]", runId, asks.size() - kept.size)
+            return
+        }
     }
 
     /**

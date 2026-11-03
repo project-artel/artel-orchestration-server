@@ -98,7 +98,7 @@ class CaseContractService(
             write(case, contract)
             written++
         }
-        saveGlossary(projectId, response.terms, response.startState)
+        saveGlossary(projectId, keepDecided(glossary.terms, response.terms), response.startState)
         logger.info(
             "계약 정리 [projectId={}] 보낸 TC {} · 쓴 계약 {} · 용어 {}",
             projectId, need.size, written, response.terms.size()
@@ -170,15 +170,17 @@ class CaseContractService(
         return Glossary(objectMapper.readTree(row.first), start)
     }
 
-    private suspend fun saveGlossary(projectId: Long, terms: JsonNode, start: Map<String, String>) {
-        // 이미 있는 시작 값이 이긴다. 사람이 확인해 둔 값을 다음 정리가 AI 추정으로 덮으면 안 된다.
+    private suspend fun saveGlossary(projectId: Long, terms: JsonNode, start: Map<String, String>, startWins: Boolean = false) {
+        // 정리(AI)가 저장할 때는 이미 있는 시작 값이 이긴다. 사람이 확인해 둔 값을 다음 정리가 AI 추정으로 덮으면 안 된다.
+        // 용어를 고칠 때([startWins])는 칸마다 정한 쪽을 이미 따졌으므로 받은 값이 이긴다.
+        val merge = if (startWins) "case_glossary.start_state || EXCLUDED.start_state" else "EXCLUDED.start_state || case_glossary.start_state"
         databaseClient.sql(
             """
             INSERT INTO case_glossary (project_id, terms, start_state, updated_at)
             VALUES (:projectId, CAST(:terms AS jsonb), CAST(:start AS jsonb), now())
             ON CONFLICT (project_id) DO UPDATE
                SET terms = EXCLUDED.terms,
-                   start_state = EXCLUDED.start_state || case_glossary.start_state,
+                   start_state = $merge,
                    updated_at = now()
             """.trimIndent()
         )
@@ -199,9 +201,12 @@ class CaseContractService(
             put("v", CONTRACT_VERSION)
             put("at", Instant.now().toString())
         }
-        // 도착 화면은 저작이 이미 읽는 자리(`arrives_at`)에 둔다. 다시 뽑아 화면이 안 바뀌면 지운다.
+        // 도착 화면은 저작이 이미 읽는 자리(`arrives_at`)에 둔다. 다시 뽑아 화면이 안 바뀌면 지운다. 사람 · MCP 가 정한 것은 그대로다.
+        val meta = runCatching { objectMapper.readTree(case.metadata.asString()) }.getOrNull()
+        val decided = meta?.path(ARRIVES_AT_BY)?.asText(AI)?.let { rankOf(it) > rankOf(AI) } == true
         val arrival = objectMapper.createObjectNode().apply {
-            contract.arrivesAt.trim().ifBlank { null }?.let { put(MapTestCaseWriter.ARRIVES_AT, it) }
+            val value = if (decided) meta?.path(MapTestCaseWriter.ARRIVES_AT)?.asText(null) else contract.arrivesAt.trim().ifBlank { null }
+            value?.let { put(MapTestCaseWriter.ARRIVES_AT, it) }
         }
         val spec = databaseClient.sql(
             """
@@ -379,7 +384,12 @@ class CaseContractService(
         if (needs.isEmpty() && leaves.isEmpty() && arrivesAt.isNullOrBlank()) return
         val case = testCases.findById(caseId)?.takeIf { it.projectId == projectId } ?: return
         val meta = objectMapper.readTree(case.metadata.asString()) as ObjectNode
-        arrivesAt?.trim()?.ifBlank { null }?.let { meta.put(MapTestCaseWriter.ARRIVES_AT, it) }
+        arrivesAt?.trim()?.ifBlank { null }?.let { value ->
+            val who = factBy()
+            if (rankOf(who) >= rankOf(meta.path(ARRIVES_AT_BY).asText(AI))) {
+                meta.put(MapTestCaseWriter.ARRIVES_AT, value); meta.put(ARRIVES_AT_BY, who)
+            }
+        }
         val source = (meta.path("source") as? ObjectNode) ?: objectMapper.createObjectNode()
         source.put("state_after", leaves.joinToString("; "))
         val parts = needs.map { (name, op, value) -> testNode(name, op, value) }
@@ -400,14 +410,15 @@ class CaseContractService(
     }
 
     /**
-     * 용어를 더하거나 채운다. 없는 이름은 더하고(시작 값이 있으면 시작 상태에도), 있는 이름은 빈 칸만 채우고 별칭을 더한다.
-     * 더한 이름과 채운 이름을 돌려준다.
+     * 용어를 더하거나 고친다(ARTEL-1312). 없는 이름은 더하고, 있는 이름은 칸마다 정한 쪽([TERM_RANK])이 같거나 아래일 때만
+     * 고친다 — 사람 > MCP > AI. 빈 칸은 누구나 채운다. 별칭은 늘 더한다. 더한 이름과 고친 이름을 돌려준다.
      */
-    suspend fun mergeTerms(projectId: Long, terms: List<CaseTermInput>): Pair<List<String>, List<String>> {
+    suspend fun mergeTerms(projectId: Long, terms: List<CaseTermInput>, by: String? = null): Pair<List<String>, List<String>> {
         if (terms.isEmpty()) return emptyList<String>() to emptyList()
+        val who = by ?: factBy()
         val glossary = glossary(projectId)
         val all = (glossary.terms.deepCopy() as com.fasterxml.jackson.databind.node.ArrayNode)
-        val byName = all.filterIsInstance<com.fasterxml.jackson.databind.node.ObjectNode>().associateBy { it.path("name").asText() }
+        val byName = all.filterIsInstance<ObjectNode>().associateBy { it.path("name").asText() }
         val start = glossary.startState.toMutableMap()
         val added = mutableListOf<String>()
         val updated = mutableListOf<String>()
@@ -421,30 +432,155 @@ class CaseContractService(
                     put("start", t.start?.ifBlank { null } ?: "unknown")
                     put("start_basis", if (t.start.isNullOrBlank()) "unknown" else "text")
                     putArray("not_same_as")
+                    putObject("set_by").apply { TERM_FIELDS.forEach { put(it, who) } }
                 }
                 t.start?.ifBlank { null }?.let { start[contractName(t.name)] = contractName(it) }
                 added += t.name
                 continue
             }
-            // 있던 이름은 비어 있는 칸만 채운다(ARTEL-1310). 누가 정한 값이든 덮지 않는다 — 사람이 정한 것을 MCP 가 바꾸지 않고,
-            // 앞서 정해진 것을 뒤의 추측이 흔들지 않는다.
-            var changed = false
-            if (known.path("meaning").asText("").isBlank() && t.meaning.isNotBlank()) { known.put("meaning", t.meaning); changed = true }
-            if (known.path("start").asText("unknown") == "unknown" && !t.start.isNullOrBlank() && contractName(t.name) !in glossary.startState) {
-                known.put("start", t.start); known.put("start_basis", "text")
-                start[contractName(t.name)] = contractName(t.start)
-                changed = true
-            }
-            val options = (known.get("options") as? com.fasterxml.jackson.databind.node.ArrayNode ?: known.putArray("options"))
-            if (options.isEmpty() && t.options.isNotEmpty()) { t.options.forEach { options.add(it) }; changed = true }
-            val aliases = (known.get("aliases") as? com.fasterxml.jackson.databind.node.ArrayNode ?: known.putArray("aliases"))
-            val have = aliases.map { it.asText() }.toSet()
-            t.aliases.filter { it.isNotBlank() && it != t.name && it !in have }.distinct().forEach { aliases.add(it); changed = true }
-            if (changed) updated += t.name
+            if (applyTerm(known, t.kind, t.meaning, t.options, t.start, t.aliases, who, start)) updated += t.name
         }
         if (added.isEmpty() && updated.isEmpty()) return emptyList<String>() to emptyList()
-        saveGlossary(projectId, all, start)
+        saveGlossary(projectId, all, start, startWins = true)
         return added to updated
+    }
+
+    /** 있는 용어 하나에 값들을 얹는다. 칸마다 [mayWrite] 를 지킨다. 바뀐 것이 있으면 참이다. */
+    private fun applyTerm(
+        term: ObjectNode, kind: String?, meaning: String?, options: List<String>?, startValue: String?,
+        aliases: List<String>, who: String, start: MutableMap<String, String>,
+    ): Boolean {
+        var changed = false
+        fun set(field: String, write: () -> Unit) {
+            if (!mayWrite(term, field, who)) return
+            write()
+            (term.get("set_by") as? ObjectNode ?: term.putObject("set_by")).put(field, who)
+            changed = true
+        }
+        if (!kind.isNullOrBlank() && kind != term.path("kind").asText()) set("kind") { term.put("kind", kind) }
+        if (!meaning.isNullOrBlank() && meaning != term.path("meaning").asText()) set("meaning") { term.put("meaning", meaning) }
+        if (!options.isNullOrEmpty() && options != term.path("options").map { it.asText() }) {
+            set("options") { term.putArray("options").apply { options.forEach { add(it) } } }
+        }
+        val name = term.path("name").asText()
+        if (!startValue.isNullOrBlank() && contractName(startValue) != start[contractName(name)]) {
+            set("start") {
+                term.put("start", startValue); term.put("start_basis", "text")
+                start[contractName(name)] = contractName(startValue)
+            }
+        }
+        val list = term.get("aliases") as? com.fasterxml.jackson.databind.node.ArrayNode ?: term.putArray("aliases")
+        val have = list.map { it.asText() }.toSet()
+        aliases.filter { it.isNotBlank() && it != name && it !in have }.distinct().forEach { list.add(it); changed = true }
+        return changed
+    }
+
+    /** 이 칸을 [who] 가 쓸 수 있나. 비어 있으면 누구나, 아니면 앞서 정한 쪽과 같거나 위일 때만. */
+    private fun mayWrite(term: JsonNode, field: String, who: String): Boolean {
+        val empty = when (field) {
+            "options" -> term.path("options").isEmpty
+            "start" -> term.path("start").asText("").let { it.isBlank() || it == "unknown" }
+            else -> term.path(field).asText("").isBlank()
+        }
+        return empty || rankOf(who) >= rankOf(term.path("set_by").path(field).asText(AI))
+    }
+
+    private fun rankOf(who: String): Int = TERM_RANK[who] ?: 0
+
+    /**
+     * 정리(AI)가 돌려준 용어집에서 사람 · MCP 가 정한 칸을 되살린다. 정리는 용어집 전체를 돌려주므로 그대로 저장하면 사람이
+     * 고친 값이 AI 추정으로 돌아간다. 정리가 빠뜨린 이름도 사람 · MCP 가 정한 칸이 있으면 남긴다.
+     */
+    private fun keepDecided(before: JsonNode, after: JsonNode): JsonNode {
+        val decided = before.filterIsInstance<ObjectNode>().filter { term ->
+            TERM_FIELDS.any { rankOf(term.path("set_by").path(it).asText(AI)) > rankOf(AI) }
+        }.associateBy { it.path("name").asText() }
+        if (decided.isEmpty()) return after
+        val out = (after.deepCopy<JsonNode>() as? com.fasterxml.jackson.databind.node.ArrayNode) ?: objectMapper.createArrayNode()
+        val seen = mutableSetOf<String>()
+        for (term in out.filterIsInstance<ObjectNode>()) {
+            val name = term.path("name").asText()
+            val old = decided[name] ?: continue
+            seen += name
+            val setBy = term.get("set_by") as? ObjectNode ?: term.putObject("set_by")
+            for (field in TERM_FIELDS) {
+                val who = old.path("set_by").path(field).asText(AI)
+                if (rankOf(who) > rankOf(AI)) { term.set<JsonNode>(field, old.path(field)); setBy.put(field, who) }
+            }
+            if (old.path("set_by").path("start").asText(AI) != AI) term.put("start_basis", "text")
+        }
+        decided.filterKeys { it !in seen }.values.forEach { out.add(it) }
+        return out
+    }
+
+    /** 용어집 화면(ARTEL-1312). 용어마다 정한 쪽 · 확인할 이유 · 쓰는 TC 수. */
+    suspend fun glossaryView(projectId: Long): CaseGlossaryResponse {
+        val glossary = glossary(projectId)
+        val used = list(projectId).cases
+            .flatMap { row -> (row.needs.flatMap { NAME_IN_NEED.findAll(it).map { m -> m.groupValues[1] }.toList() } + row.leaves.map { it.substringBefore("=").trim() }).distinct() }
+            .groupingBy { it }.eachCount()
+        return CaseGlossaryResponse(glossary.terms.filterIsInstance<ObjectNode>().map { term -> viewOf(term, glossary.startState, used) })
+    }
+
+    /** 사람이 용어 하나를 고친다. 사람이 정한 칸이 되어 AI · MCP 가 덮지 않는다. 없는 이름은 404. */
+    suspend fun editTerm(projectId: Long, request: GlossaryTermEditRequest): GlossaryTermView {
+        val name = request.name?.trim().orEmpty()
+        if (name.isEmpty()) throw kr.artel.orchestration.common.error.BadRequestException("name 이 필요합니다.")
+        request.kind?.let { if (it !in TERM_KINDS) throw kr.artel.orchestration.common.error.BadRequestException("kind 는 ${TERM_KINDS.joinToString()} 중 하나입니다.") }
+        val glossary = glossary(projectId)
+        val all = glossary.terms.deepCopy<JsonNode>() as com.fasterxml.jackson.databind.node.ArrayNode
+        val term = all.filterIsInstance<ObjectNode>().firstOrNull { it.path("name").asText() == name }
+            ?: throw kr.artel.orchestration.common.error.NotFoundException("용어 $name 을 찾을 수 없습니다.")
+        val start = glossary.startState.toMutableMap()
+        applyTerm(term, request.kind, request.meaning, request.options, request.start, request.aliases.orEmpty(), USER, start)
+        // 사람은 별칭을 지울 수도 있다 — 보낸 목록이 그대로 별칭이 된다.
+        request.aliases?.let { aliases -> term.putArray("aliases").apply { aliases.filter { it.isNotBlank() && it != name }.distinct().forEach { add(it) } } }
+        saveGlossary(projectId, all, start, startWins = true)
+        val used = list(projectId).cases.count { row -> row.needs.any { name in NAME_IN_NEED.findAll(it).map { m -> m.groupValues[1] } } || row.leaves.any { it.substringBefore("=").trim() == name } }
+        return viewOf(term, start, mapOf(name to used))
+    }
+
+    private fun viewOf(term: ObjectNode, startState: Map<String, String>, used: Map<String, Int>): GlossaryTermView {
+        val name = term.path("name").asText()
+        val kind = term.path("kind").asText()
+        val options = term.path("options").map { it.asText() }
+        val start = startState[contractName(name)] ?: term.path("start").asText("unknown").ifBlank { "unknown" }
+        val issues = buildList {
+            if (term.path("meaning").asText("").isBlank()) add("NO_MEANING")
+            if (start == "unknown") add("NO_START")
+            else if (when (kind) {
+                    "has" -> start !in setOf("0", "1")
+                    "value" -> options.isNotEmpty() && start !in options.map(::contractName)
+                    "counter" -> start.toIntOrNull() == null
+                    else -> false
+                }) add("START_MISMATCH")
+        }
+        return GlossaryTermView(
+            name = name, kind = kind, meaning = term.path("meaning").asText(""), options = options, start = start,
+            aliases = term.path("aliases").map { it.asText() },
+            setBy = TERM_FIELDS.associateWith { term.path("set_by").path(it).asText(AI) },
+            issues = issues, usedBy = used[name] ?: 0,
+        )
+    }
+
+    /**
+     * TC 의 도착 화면을 정한다(ARTEL-1312). 빈 값은 "화면이 바뀌지 않는다" 로 정한 것이다. 정한 쪽을 `arrives_at_by` 에 남겨,
+     * 사람이 정한 것은 AI 추출 · MCP 가 덮지 않는다.
+     */
+    suspend fun setArrival(projectId: Long, caseId: Long, arrivesAt: String?, by: String? = null) {
+        val who = by ?: factBy()
+        val case = testCases.findById(caseId)?.takeIf { it.projectId == projectId } ?: return
+        val meta = objectMapper.readTree(case.metadata.asString()) as ObjectNode
+        if (rankOf(who) < rankOf(meta.path(ARRIVES_AT_BY).asText(AI))) {
+            logger.info("사람이 정한 도착 화면이라 {} 답은 덮지 않음 [caseId={}]", who, caseId)
+            return
+        }
+        val value = arrivesAt?.trim().orEmpty()
+        if (value.isEmpty()) meta.remove(MapTestCaseWriter.ARRIVES_AT) else meta.put(MapTestCaseWriter.ARRIVES_AT, value)
+        meta.put(ARRIVES_AT_BY, who)
+        databaseClient.sql("UPDATE test_case SET metadata = CAST(:meta AS jsonb), updated_at = now() WHERE id = :id")
+            .bind("id", caseId).bind("meta", objectMapper.writeValueAsString(meta))
+            .fetch().rowsUpdated().awaitSingle()
     }
 
     /** 케이스가 남기는 것(`state_after`), 이름 → 값. */
@@ -563,6 +699,16 @@ class CaseContractService(
          * 그래서 사람이 정한 사실(`user`)을 덮지 않고, 사람이 다시 정하면 덮인다. 모델이 다시 뽑지 않는 것은 `user` 와 같다.
          */
         const val MCP = "mcp"
+        const val AI = "ai"
+
+        /** 용어 칸을 덮을 수 있는 순서(ARTEL-1312). 같거나 위만 덮는다. */
+        val TERM_RANK = mapOf(AI to 1, "mcp" to 2, "user" to 3)
+        val TERM_FIELDS = listOf("kind", "meaning", "options", "start")
+        val TERM_KINDS = setOf("has", "value", "counter")
+        /** 도착 화면을 정한 쪽. `arrives_at` 옆에 둔다. */
+        const val ARRIVES_AT_BY = "arrives_at_by"
+        /** 필요 한 줄(`검 == 1`, `(a == 1, b == 2) | (…)`)에서 이름. */
+        private val NAME_IN_NEED = Regex("""([^\s(),|]+)\s*(?:==|!=|>=|<=|>|<)""")
 
         /** 누군가 알려 준 사실(사람 · MCP). 출구 · 대화로 들은 길이 이 둘이다. */
         val TOLD = setOf("user", "mcp")

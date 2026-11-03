@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RestController
 
@@ -19,6 +20,25 @@ class CaseContractController(
     private val caseBatch: CaseBatchService,
     private val projectAccess: ProjectAccessService,
 ) {
+    /** 용어집 화면(ARTEL-1312): 용어마다 정한 쪽 · 확인할 이유 · 쓰는 TC 수. */
+    @GetMapping("/api/projects/{projectId}/case-glossary")
+    suspend fun getCaseGlossary(
+        @PathVariable projectId: Long,
+        @CurrentUserId appUserId: Long,
+    ): ResponseEntity<CaseGlossaryResponse> =
+        if (!projectAccess.isMember(projectId, appUserId)) ResponseEntity.notFound().build()
+        else ResponseEntity.ok(caseContracts.glossaryView(projectId))
+
+    /** 사람이 용어 하나를 고친다. 고친 칸은 사람이 정한 것이라 AI · MCP 가 덮지 않는다. */
+    @PutMapping("/api/projects/{projectId}/case-glossary/terms")
+    suspend fun editCaseGlossaryTerm(
+        @PathVariable projectId: Long,
+        @RequestBody request: GlossaryTermEditRequest,
+        @CurrentUserId appUserId: Long,
+    ): ResponseEntity<GlossaryTermView> =
+        if (!projectAccess.isMember(projectId, appUserId)) ResponseEntity.notFound().build()
+        else ResponseEntity.ok(caseContracts.editTerm(projectId, request))
+
     /** 글로 쓴 TC 와 그 계약, 용어집(MCP 의 `list_test_cases`). */
     @GetMapping("/api/projects/{projectId}/case-contracts")
     suspend fun listCaseContracts(
