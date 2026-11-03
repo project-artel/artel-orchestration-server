@@ -16,6 +16,7 @@ import kr.artel.orchestration.qa.dto.SendQaMessageRequest
 import com.fasterxml.jackson.databind.ObjectMapper
 import kr.artel.orchestration.qa.service.QaTryDetailService
 import kr.artel.orchestration.qa.service.QaTryService
+import kr.artel.orchestration.qa.service.TYPES as QA_LOG_TYPES
 import kr.artel.orchestration.qa.service.toContentMapMode
 import kr.artel.orchestration.qa.service.toFunctionOptions
 import kr.artel.orchestration.qa.service.toKnowledgeSettings
@@ -139,10 +140,15 @@ class QaTryController(
         @PathVariable qaTryId: String,
         @RequestParam(required = false) beforeId: String?,
         @RequestParam(defaultValue = "50") size: Int,
+        // 쉼표로 이은 로그 타입(`LOG,STATUS`). 없으면 전부다. home 의 흐름 탭이 `PULSE` 를 빼고 받는다.
+        @RequestParam(required = false) types: String?,
         @CurrentUserId appUserId: Long
     ): ResponseEntity<QaLogPageResponse> {
         if (size !in 1..100) throw BadRequestException("size must be between 1 and 100")
-        return service.logs(parseId(qaTryId), appUserId, beforeId?.let(::parseId), size)
+        val wanted = types?.split(',')?.map(String::trim)?.filter(String::isNotEmpty)?.toSet()
+        val unknown = wanted.orEmpty() - QA_LOG_TYPES
+        if (unknown.isNotEmpty()) throw BadRequestException("unknown log types: ${unknown.joinToString()}")
+        return service.logs(parseId(qaTryId), appUserId, beforeId?.let(::parseId), size, wanted)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
     }

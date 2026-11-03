@@ -87,16 +87,29 @@ class QaTryDetailRepository(
      * 한 런의 `qa_log`는 대부분 `PULSE`이고 수천 행까지 간다(실측 2,735행 중 TOOL 75행). 인덱스가
      * `qa_try_id`로 좁힌 뒤 `type`으로 떨구고 큰 `payload`는 TOAST에 있어 매칭된 행만 펼쳐진다 —
      * 실측 1.6ms.
+     *
+     * planner–executer 엔진은 `TOOL` 을 남기지 않는다. 그 엔진에서 같은 자리는 executer 가 turn 마다 고른 macro action
+     * 이라, turn `LOG` 의 `picked` 를 같은 칸으로 센다. 고르지 않은 turn(`none_fits`)과 범위 요청(`EXPAND_STATE`·`REPLAN`)은
+     * 행동이 아니므로 뺀다. 한 try 는 한 엔진만 돌아 두 출처가 섞이지 않는다.
      */
     suspend fun findToolCalls(qaTryId: Long): List<QaTryToolCallRow> =
         databaseClient.sql(
             """
-            SELECT COALESCE(ql.payload ->> 'tool', ql.message) AS tool,
-                   COUNT(*)                                    AS calls
-              FROM qa_log ql
-             WHERE ql.qa_try_id = :qaTryId
-               AND ql.type = 'TOOL'
-               AND COALESCE(ql.payload ->> 'tool', ql.message) IS NOT NULL
+            SELECT tool, COUNT(*) AS calls
+              FROM (
+                SELECT COALESCE(ql.payload ->> 'tool', ql.message) AS tool
+                  FROM qa_log ql
+                 WHERE ql.qa_try_id = :qaTryId
+                   AND ql.type = 'TOOL'
+                UNION ALL
+                SELECT ql.payload -> 'turn' ->> 'picked' AS tool
+                  FROM qa_log ql
+                 WHERE ql.qa_try_id = :qaTryId
+                   AND ql.type = 'LOG'
+                   AND ql.payload ->> 'kind' = 'turn'
+                   AND ql.payload -> 'turn' ->> 'picked' NOT IN ('none_fits', 'EXPAND_STATE', 'REPLAN')
+              ) calls
+             WHERE tool IS NOT NULL
              GROUP BY 1
              -- 동점 도구의 순서가 실행마다 흔들리면 같은 런을 두 번 열었을 때 목록이 달라 보인다.
              ORDER BY calls DESC, tool ASC

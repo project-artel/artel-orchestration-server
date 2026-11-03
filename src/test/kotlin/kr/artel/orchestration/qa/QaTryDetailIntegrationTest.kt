@@ -179,6 +179,26 @@ class QaTryDetailIntegrationTest {
     // ------------------------------------------------------------------ tests
 
     @Test
+    fun `로그 페이지를 타입으로 거르면 그 타입 행만 세고 커서도 그 사이를 넘긴다`(): Unit = runBlocking {
+        val id = seedRun(status = "RUNNING")
+        seedLog(id, "LOG")
+        repeat(30) { seedLog(id, "PULSE") }
+        seedLog(id, "STATUS")
+        repeat(30) { seedLog(id, "PULSE") }
+        seedLog(id, "LOG")
+
+        val first = tryService.logs(id, ownerId, null, 2, setOf("LOG", "STATUS"))!!
+        assertThat(first.items.map { it.type }).containsExactly("STATUS", "LOG")
+        assertThat(first.hasMore).isTrue()
+
+        val rest = tryService.logs(id, ownerId, first.nextBeforeId!!.toLong(), 2, setOf("LOG", "STATUS"))!!
+        assertThat(rest.items.map { it.type }).containsExactly("LOG")
+        assertThat(rest.hasMore).isFalse()
+        // 거르지 않으면 종전대로 `PULSE` 가 페이지를 채운다.
+        assertThat(tryService.logs(id, ownerId, null, 2)!!.items.map { it.type }).containsExactly("PULSE", "LOG")
+    }
+
+    @Test
     fun `펼친 자리에 시나리오와 실행 설정이 함께 선다`(): Unit = runBlocking {
         val qaTryId = seedRun(status = "COMPLETED", stepsPassed = 17, stepsTotal = 17)
 
@@ -259,6 +279,21 @@ class QaTryDetailIntegrationTest {
         )
         assertThat(tools.first().calls).isEqualTo(19)
         assertThat(tools.sumOf { it.calls }).isEqualTo(38)
+    }
+
+    @Test
+    fun `planner–executer 런은 turn 마다 고른 macro action 을 도구 자리에 센다`(): Unit = runBlocking {
+        val qaTryId = seedRun(status = "COMPLETED")
+        listOf("developer:dismiss_dialogue", "cast_at", "developer:dismiss_dialogue", "none_fits", "EXPAND_STATE")
+            .forEach { picked -> seedTurn(qaTryId, picked) }
+        // 고르지 않은 turn(`done()` 만 읽은 turn)과 `kind` 없는 LOG 는 안 센다.
+        seedTurn(qaTryId, null)
+        seedLog(qaTryId, type = "LOG")
+
+        val tools = detailService.detail(qaTryId, ownerId).toolCalls
+
+        assertThat(tools.map { it.tool to it.calls })
+            .containsExactly("developer:dismiss_dialogue" to 2, "cast_at" to 1)
     }
 
     @Test
@@ -427,6 +462,19 @@ class QaTryDetailIntegrationTest {
                 type = "TOOL",
                 message = tool,
                 payload = Json.of("""{"tool":"$tool","tool_call_id":"${UUID.randomUUID()}"}"""),
+                createdAt = now
+            )
+        )
+    }
+
+    private suspend fun seedTurn(qaTryId: Long, picked: String?) {
+        val turn = if (picked == null) """{"turn":0,"done":false}""" else """{"turn":1,"done":false,"picked":"$picked"}"""
+        qaLogRepository.save(
+            QaLogEntity(
+                qaTryId = qaTryId,
+                direction = "AGENT_TO_ORCHE",
+                type = "LOG",
+                payload = Json.of("""{"kind":"turn","step":1,"turn":$turn}"""),
                 createdAt = now
             )
         )

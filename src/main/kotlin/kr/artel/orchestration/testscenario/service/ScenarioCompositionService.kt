@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.qa.review.QaVerdictReviewRepository
 import kr.artel.orchestration.qa.review.QaVerdictReviewService
 import kr.artel.orchestration.testcase.dto.functionsOrNull
+import kr.artel.orchestration.testcase.dto.observeOrNull
 import kr.artel.orchestration.testcase.service.CaseScope
 import kr.artel.orchestration.testcase.service.TestCaseReader
 import kr.artel.orchestration.testscenario.dto.AgentCase
@@ -95,6 +96,7 @@ class ScenarioCompositionService(
                                 caseVersionChanged = row.caseVersionChanged,
                             )
                         },
+                        observe = it.observeOrNull(),
                     )
                 },
             )
