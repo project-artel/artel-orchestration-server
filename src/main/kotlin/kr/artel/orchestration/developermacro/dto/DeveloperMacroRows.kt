@@ -26,10 +26,11 @@ data class DeveloperMacroSummaryRow(
     @Column("updated_by_nickname") val updatedByNickname: String?,
 )
 
-/** 상세와 내부 목록이 읽는 한 줄. [DeveloperMacroSummaryRow] 에 원문을 더한 것이다. */
+/** 상세와 내부 목록이 읽는 한 줄. [DeveloperMacroSummaryRow] 에 원문과 계약(V172, 없으면 null)을 더한 것이다. */
 data class DeveloperMacroDetailRow(
     @Column("name") val name: String,
     @Column("source") val source: String,
+    @Column("contract") val contract: Json?,
     @Column("parameter_names") val parameterNames: Json,
     @Column("docstring") val docstring: String,
     @Column("game_build_id") val gameBuildId: Long,

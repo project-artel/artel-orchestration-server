@@ -53,11 +53,11 @@ interface DeveloperMacroRepository : CoroutineCrudRepository<DeveloperMacroEntit
         """
         INSERT INTO developer_macro (
             project_id, name, source, definition_json, parameter_names, docstring,
-            game_build_id, created_by, updated_by
+            game_build_id, contract, created_by, updated_by
         )
         VALUES (
             :projectId, :name, :source, :definitionJson, :parameterNames, :docstring,
-            :gameBuildId, :createdBy, :updatedBy
+            :gameBuildId, :contract, :createdBy, :updatedBy
         )
         ON CONFLICT (project_id, name) DO UPDATE SET
             source = EXCLUDED.source,
@@ -65,10 +65,12 @@ interface DeveloperMacroRepository : CoroutineCrudRepository<DeveloperMacroEntit
             parameter_names = EXCLUDED.parameter_names,
             docstring = EXCLUDED.docstring,
             game_build_id = EXCLUDED.game_build_id,
+            contract = EXCLUDED.contract,
             version = CASE
                 WHEN developer_macro.source IS DISTINCT FROM EXCLUDED.source
                   OR developer_macro.definition_json IS DISTINCT FROM EXCLUDED.definition_json
                   OR developer_macro.parameter_names IS DISTINCT FROM EXCLUDED.parameter_names
+                  OR developer_macro.contract IS DISTINCT FROM EXCLUDED.contract
                 THEN developer_macro.version + 1
                 ELSE developer_macro.version
             END,
@@ -85,6 +87,7 @@ interface DeveloperMacroRepository : CoroutineCrudRepository<DeveloperMacroEntit
         parameterNames: Json,
         docstring: String,
         gameBuildId: Long,
+        contract: Json?,
         createdBy: Long,
         updatedBy: Long,
     ): DeveloperMacroUpsertRow
@@ -103,7 +106,7 @@ interface DeveloperMacroRepository : CoroutineCrudRepository<DeveloperMacroEntit
     /** 이름 하나를 원문까지. 없으면 null. */
     @Query(
         """
-        SELECT $DEVELOPER_MACRO_COLUMNS, dm.source
+        SELECT $DEVELOPER_MACRO_COLUMNS, dm.source, dm.contract
         $DEVELOPER_MACRO_JOINS
         WHERE dm.project_id = :projectId AND dm.name = :name
         """
@@ -113,7 +116,7 @@ interface DeveloperMacroRepository : CoroutineCrudRepository<DeveloperMacroEntit
     /** agent-server 엔진이 읽는 전부, 원문까지. 이름 오름차순. */
     @Query(
         """
-        SELECT $DEVELOPER_MACRO_COLUMNS, dm.source
+        SELECT $DEVELOPER_MACRO_COLUMNS, dm.source, dm.contract
         $DEVELOPER_MACRO_JOINS
         WHERE dm.project_id = :projectId
         ORDER BY dm.name ASC

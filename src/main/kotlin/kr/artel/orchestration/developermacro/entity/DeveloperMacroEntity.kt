@@ -42,6 +42,10 @@ data class DeveloperMacroEntity(
     @Column("docstring")
     val docstring: String,
 
+    /** agent-server 검사가 통과시킨 행동 계약(V172). 계약 없이 올라온 macro 면 null 이다. */
+    @Column("contract")
+    val contract: Json? = null,
+
     /** 이 macro 를 쓸 때 기준으로 삼은 build. 마지막 등록의 값이다. */
     @Column("game_build_id")
     val gameBuildId: Long,

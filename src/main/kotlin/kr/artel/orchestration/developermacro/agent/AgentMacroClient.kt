@@ -50,24 +50,32 @@ class AgentMacroClient(
     }
 
     /** macro 하나를 검사한다. [imports] 는 같은 프로젝트의 다른 developer macro 원문이다. */
-    suspend fun check(name: String, source: String, imports: Map<String, String>): MacroCheckOutcome {
+    suspend fun check(
+        name: String,
+        source: String,
+        imports: Map<String, String>,
+        contract: JsonNode? = null,
+    ): MacroCheckOutcome {
         val response = callAgent("macro check") {
             webClient.post().uri("/macros/check")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(AgentMacroCheckRequest(name = name, source = source, imports = imports))
+                .bodyValue(AgentMacroCheckRequest(name = name, source = source, imports = imports, contract = contract))
                 .retrieve().awaitBody<AgentMacroCheckResponse>()
         }
-        return outcomeOf(response)
+        return outcomeOf(response, contract)
     }
 
-    private fun outcomeOf(response: AgentMacroCheckResponse): MacroCheckOutcome {
+    private fun outcomeOf(response: AgentMacroCheckResponse, asked: JsonNode?): MacroCheckOutcome {
         if (!response.ok) {
             val rejection = response.rejection ?: throw contractBroken("rejection 없는 ok=false")
             return MacroCheckOutcome.Rejected(rejection.line, rejection.reason)
         }
         val definition = response.definition?.takeUnless { it.isNull } ?: throw contractBroken("definition 없는 ok=true")
         val docstring = response.docstring?.takeUnless { it.isBlank() } ?: throw contractBroken("docstring 없는 ok=true")
-        return MacroCheckOutcome.Passed(definition, parameterNamesOf(response.parameters), docstring)
+        // 계약을 보냈는데 통과 응답에 계약이 없으면 계약을 모르는 agent-server 다. 검사하지 않은 계약을 저장하지 않는다.
+        val contract = response.contract?.takeUnless { it.isNull }
+        if (asked != null && contract == null) throw contractBroken("contract 를 검사하지 않은 ok=true")
+        return MacroCheckOutcome.Passed(definition, parameterNamesOf(response.parameters), docstring, contract)
     }
 
     /** 원소가 이름 문자열이면 그대로, `{name, ...}` 객체면 `name` 을 읽는다. 그 밖의 모양은 계약 위반이다. */

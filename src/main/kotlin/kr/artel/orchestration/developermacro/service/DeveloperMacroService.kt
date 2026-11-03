@@ -1,5 +1,6 @@
 package kr.artel.orchestration.developermacro.service
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import io.r2dbc.postgresql.codec.Json
@@ -68,7 +69,7 @@ class DeveloperMacroService(
     suspend fun check(userId: Long, projectId: Long, request: CheckDeveloperMacroRequest): DeveloperMacroCheckResponse {
         projectAccess.requireMember(projectId, userId)
         requireBuildOfProject(userId, projectId, request.gameBuildId!!.toLong())
-        return when (val outcome = checkAgainstProject(projectId, request.name, request.source)) {
+        return when (val outcome = checkAgainstProject(projectId, request.name, request.source, request.contract)) {
             is MacroCheckOutcome.Passed -> DeveloperMacroCheckResponse(
                 ok = true,
                 parameters = outcome.parameterNames,
@@ -99,7 +100,7 @@ class DeveloperMacroService(
         projectAccess.requireMember(projectId, userId)
         val gameBuildId = request.gameBuildId!!.toLong()
         requireBuildOfProject(userId, projectId, gameBuildId)
-        val passed = when (val outcome = checkAgainstProject(projectId, name, request.source)) {
+        val passed = when (val outcome = checkAgainstProject(projectId, name, request.source, request.contract)) {
             is MacroCheckOutcome.Passed -> outcome
             is MacroCheckOutcome.Rejected -> throw DeveloperMacroRejectedException(outcome.line, outcome.reason)
         }
@@ -111,6 +112,7 @@ class DeveloperMacroService(
             parameterNames = Json.of(objectMapper.writeValueAsString(passed.parameterNames)),
             docstring = passed.docstring,
             gameBuildId = gameBuildId,
+            contract = passed.contract?.let { Json.of(objectMapper.writeValueAsString(it)) },
             createdBy = userId,
             updatedBy = userId,
         )
@@ -142,9 +144,14 @@ class DeveloperMacroService(
      * docstring 폭은 이 서버의 저장 제약이라 agent-server 가 모른다. 통과한 결과라도 그 폭을 넘으면 여기서 거절로
      * 바꾼다 — 그래야 검사(`check`)와 등록(`put`)이 같은 답을 한다.
      */
-    private suspend fun checkAgainstProject(projectId: Long, name: String, source: String): MacroCheckOutcome {
+    private suspend fun checkAgainstProject(
+        projectId: Long,
+        name: String,
+        source: String,
+        contract: JsonNode? = null,
+    ): MacroCheckOutcome {
         val imports = repository.findSourcesExcept(projectId, name).toList().associate { it.name to it.source }
-        val outcome = agent.check(name, source, imports)
+        val outcome = agent.check(name, source, imports, contract)
         if (outcome is MacroCheckOutcome.Passed && outcome.docstring.length > MAX_DEVELOPER_MACRO_DOCSTRING_LENGTH) {
             return MacroCheckOutcome.Rejected(
                 line = null,
@@ -187,6 +194,7 @@ class DeveloperMacroService(
     private fun DeveloperMacroDetailRow.toResponse() = DeveloperMacroDetailResponse(
         name = name,
         source = source,
+        contract = contract?.let { objectMapper.readTree(it.asString()) },
         parameters = parameterNamesOf(parameterNames),
         docstring = docstring,
         gameBuildId = gameBuildId.toString(),
