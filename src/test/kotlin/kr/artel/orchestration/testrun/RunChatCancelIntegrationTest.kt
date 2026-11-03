@@ -74,6 +74,12 @@ class RunChatCancelIntegrationTest {
     @Autowired
     private lateinit var projectMemberRepository: ProjectMemberRepository
 
+    @Autowired
+    private lateinit var scenarioRepository: kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+
+    @Autowired
+    private lateinit var runScenarioRepository: kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+
     companion object {
         private lateinit var mockAgent: DisposableServer
 
@@ -218,6 +224,43 @@ class RunChatCancelIntegrationTest {
         assertThat(cancel(client, projectId, runId, token)?.cancelled).isFalse()
 
         stream.dispose()
+    }
+
+    /**
+     * 요청을 취소하면 Artel Bot 잠금도 풀린다(ARTEL-1264). 맵 · 편집 화면은 `RUN_LOCKS` 알림을 받고
+     * `authoring-lock` 을 다시 읽어 잠금 표시를 지운다 — 그 응답이 비는 것을 본다. 프로세스가 죽으면 잠금은 메모리와 함께
+     * 사라지고, 답이 끊기면 턴 시한이 푼다. 사람이 기다리지 않고 풀 길은 이 취소다.
+     */
+    @Test
+    fun `취소하면 Artel Bot 잠금이 풀린다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser("cancel-lock-${seq.incrementAndGet()}")
+        val projectId = memberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val scenarioId = scenarioRepository.save(
+            kr.artel.orchestration.testscenario.entity.TestScenarioEntity(
+                projectId = projectId, title = "잠길 시나리오", steps = io.r2dbc.postgresql.codec.Json.of("[]"),
+            ),
+        ).id!!
+        runScenarioRepository.save(kr.artel.orchestration.testrun.entity.TestRunScenarioEntity(testRunId = runId, testScenarioId = scenarioId, position = 0))
+        fun locked(): List<String> = objectMapper.readTree(
+            client.get().uri("/api/projects/$projectId/test-runs/$runId/authoring-lock").cookie("artel_access_token", token)
+                .retrieve().bodyToMono(String::class.java).block(Duration.ofSeconds(5)),
+        ).path("scenarios").map { it.path("scenarioId").asText() }
+
+        client.post()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue("""{"message":"이 시나리오 고쳐줘 run$runId"}""")
+            .retrieve()
+            .toEntity(String::class.java)
+            .block(Duration.ofSeconds(5))
+        Thread.sleep(800)
+        assertThat(locked()).describedAs("요청이 도는 동안 런의 TS 가 잠긴다").containsExactly(scenarioId.toString())
+
+        assertThat(cancel(client, projectId, runId, token)?.cancelled).isTrue()
+        assertThat(locked()).describedAs("취소하면 잠금이 풀린다").isEmpty()
     }
 
     @Test
