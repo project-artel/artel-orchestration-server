@@ -14,7 +14,7 @@ class SpecXlsxWriterTest {
 
     private val writer = SpecXlsxWriter()
 
-    private fun entry(scene: String, step: String, precondition: String? = null, status: String = "ready") =
+    private fun entry(scene: String, step: String, precondition: String? = null) =
         TestCaseSpecEntry(
             schemaVersion = "test-case.v1",
             spec = TestCaseSpecBody(
@@ -22,7 +22,6 @@ class SpecXlsxWriterTest {
                 precondition = precondition,
                 step = step,
                 expectedValue = "$step 의 기대 결과",
-                status = status,
             ),
             metadata = null,
         )
@@ -31,15 +30,15 @@ class SpecXlsxWriterTest {
         XSSFWorkbook(writer.write(entries).inputStream()).getSheetAt(0)
 
     @Test
-    fun `열 순서는 씬 테스트스텝 사전조건 기대결과 상태다`() {
+    fun `열 순서는 씬 테스트스텝 사전조건 기대결과다`() {
         val sheet = sheetOf(listOf(entry("TitleScene", "상점 입장", precondition = "로비에 있음")))
 
         assertThat(sheet.getRow(0).map { it.stringCellValue })
-            .containsExactly("씬", "테스트 스텝", "사전조건", "기대 결과", "상태")
+            .containsExactly("씬", "테스트 스텝", "사전조건", "기대 결과")
 
         // 값이 헤더와 같은 자리에 실린다 — 헤더만 맞고 값이 밀리면 표가 통째로 거짓말이 된다.
         assertThat(sheet.getRow(1).map { it.stringCellValue })
-            .containsExactly("TitleScene", "상점 입장", "로비에 있음", "상점 입장 의 기대 결과", "ready")
+            .containsExactly("TitleScene", "상점 입장", "로비에 있음", "상점 입장 의 기대 결과")
     }
 
     @Test
@@ -103,7 +102,7 @@ class SpecXlsxWriterTest {
         val sheet = sheetOf(emptyList())
 
         assertThat(sheet.getRow(0).map { it.stringCellValue })
-            .containsExactly("씬", "테스트 스텝", "사전조건", "기대 결과", "상태")
+            .containsExactly("씬", "테스트 스텝", "사전조건", "기대 결과")
         assertThat(sheet.lastRowNum).isZero()
         assertThat(sheet.mergedRegions).isEmpty()
     }

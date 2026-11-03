@@ -138,7 +138,7 @@ class MapTestCaseGeneratorGoldenTest {
         val where = System.getenv("ARTEL_DUMP_CASES") ?: return
         java.io.File(where).writeText(
             cases.joinToString("\n") { case ->
-                listOf(case.scene, case.step, case.precondition, case.expected, case.status)
+                listOf(case.scene, case.step, case.precondition, case.expected)
                     .joinToString("\t") { it.replace("\n", " ").replace("\t", " ") }
             }
         )
@@ -638,14 +638,6 @@ class MapTestCaseGeneratorGoldenTest {
         assertThat(cases).allSatisfy { assertThat(it.expected).contains("`") }
     }
 
-    /**
-     * 등급은 지도가 낸 것을 그대로 옮긴다. 생성기가 다시 판단하지 않는다 — 세 축에서 유도된 값이고,
-     * 여기서 고쳐 쓰면 판정이 두 곳이 된다.
-     */
-    @Test
-    fun `등급은 지도의 세 축이 낸 값이다`() {
-        assertThat(cases.map { it.status }.distinct()).isSubsetOf("runnable", "needs-probe")
-    }
 
     private companion object {
         const val DOCUMENT = "src/test/resources/contentmap/wv-play-2026-09-01.json"
