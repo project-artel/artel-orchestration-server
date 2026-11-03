@@ -27,8 +27,17 @@ class CaseBatchService(
     suspend fun save(projectId: Long, userId: Long, request: CaseBatchRequest): CaseBatchResponse {
         if (!projectAccess.isMember(projectId, userId)) throw NotFoundException("프로젝트를 찾을 수 없습니다.")
         if (request.cases.size > MAX_CASES) throw BadRequestException("한 번에 ${MAX_CASES}건까지 넣을 수 있습니다.")
+        val buildId = request.gameBuildId?.ifBlank { null }?.toLongOrNull() ?: latestBuild(projectId)
+        return saveInto(projectId, userId, request, buildId)
+    }
+
+    /**
+     * [save] 의 본문. 버전을 부르는 쪽이 정한다 — null 이면 어느 버전에도 넣지 않는다("버전 없음"). 파일 가져오기(ARTEL-1327)가
+     * "버전 없음" 에 넣을 때 쓴다. 권한과 크기는 부르는 쪽이 이미 봤다.
+     */
+    suspend fun saveInto(projectId: Long, userId: Long, request: CaseBatchRequest, targetBuildId: Long?): CaseBatchResponse {
         val (addedTerms, updatedTerms) = caseContracts.mergeTerms(projectId, request.terms)
-        val buildId = request.gameBuildId?.ifBlank { null } ?: latestBuild(projectId)?.toString()
+        val buildId = targetBuildId?.toString()
         val created = mutableListOf<String>()
         val updated = mutableListOf<String>()
         val rejected = mutableListOf<CaseBatchRejection>()
@@ -62,6 +71,12 @@ class CaseBatchService(
         return CaseBatchResponse(created, updated, rejected, addedTerms, updatedTerms)
     }
 
+    /** 계약 칸이 꼴에 맞지 않으면 그 까닭, 맞으면 null. 저장 전에 미리 보여 줄 때 쓴다(ARTEL-1327). */
+    fun contractProblem(needs: List<String>, leaves: List<String>): String? = runCatching {
+        needs.forEach { parseNeed(it) }
+        leaves.forEach { parseLeave(it) }
+    }.exceptionOrNull()?.message
+
     /** `검 == 1` · `동전 >= 30` · `낮밤 = 밤`. `=` 하나는 `==` 로 읽는다. */
     private fun parseNeed(text: String): Triple<String, String, String> {
         val m = NEED.matchEntire(text.trim()) ?: throw BadRequestException("필요한 것은 `이름 == 값` 꼴이어야 합니다: $text")
@@ -83,9 +98,9 @@ class CaseBatchService(
         databaseClient.sql("SELECT id FROM game_build WHERE project_id = :p AND NOT is_editor ORDER BY created_at DESC, id DESC LIMIT 1")
             .bind("p", projectId).map { r, _ -> r.get("id", java.lang.Long::class.java)?.toLong() }.one().awaitSingleOrNull()
 
-    private companion object {
+    companion object {
         const val MAX_CASES = 50
-        val NEED = Regex("""(.+?)\s*(==|!=|>=|<=|>|<|=)\s*(.+)""")
-        val LEAVE = Regex("""(.+?)\s*=\s*(.+)""")
+        private val NEED = Regex("""(.+?)\s*(==|!=|>=|<=|>|<|=)\s*(.+)""")
+        private val LEAVE = Regex("""(.+?)\s*=\s*(.+)""")
     }
 }
