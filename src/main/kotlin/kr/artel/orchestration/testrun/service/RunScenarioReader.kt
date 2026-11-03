@@ -28,6 +28,26 @@ class RunScenarioReader(
     suspend fun currentSteps(scenarioId: Long): List<ChatScenarioStep>? =
         scenarioRepository.findById(scenarioId)?.toDraft(objectMapper)?.steps?.map { it.toChatStep() }
 
+    /** 시나리오 하나의 지금 제목 · 설명 · 실행 방식. 없으면 null. 스텝과 함께 저장 직전 비교에 쓴다(ARTEL-1264). */
+    suspend fun currentHead(scenarioId: Long): ScenarioHead? {
+        val scenario = scenarioRepository.findById(scenarioId) ?: return null
+        val draft = scenario.toDraft(objectMapper)
+        return ScenarioHead(draft.title, draft.description, scenario.executionMode)
+    }
+
+    /**
+     * 이 결과가 실제로 덮을 시나리오. 번호가 있으면 그것이고, 없으면 이 런에서 제목이 같은 시나리오다 —
+     * [kr.artel.orchestration.testscenario.service.ScenarioReconcileService.reconcile] 이 그렇게 갈아끼운다. 잠금 검사는
+     * 저장할 대상과 같은 것을 봐야 한다. 새로 생길 것이면 null.
+     */
+    suspend fun targetIdOf(runId: Long, scenarioId: Long?, title: String): Long? {
+        if (scenarioId != null && scenarioId > 0) return scenarioId
+        val wanted = title.trim()
+        return runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().firstNotNullOfOrNull { link ->
+            scenarioRepository.findById(link.testScenarioId)?.takeIf { it.title.trim() == wanted }?.id
+        }
+    }
+
     suspend fun currentScenarios(runId: Long): List<CurrentScenario> {
         val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
         return links.mapNotNull { link ->
@@ -45,3 +65,10 @@ class RunScenarioReader(
         }
     }
 }
+
+/** 시나리오의 스텝 밖 본문. 이것만 바뀌어도 AI 결과가 덮으면 사람이 고친 것이 사라진다(ARTEL-1264). */
+data class ScenarioHead(
+    val title: String,
+    val description: String,
+    val executionMode: kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode?,
+)
