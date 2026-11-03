@@ -155,8 +155,8 @@ class TestRunChatService(
         val refused = mutableListOf<String>()
         for (item in draft.take(draftIds)) {
             // 다른 사람의 Artel Bot 이 고치는 중인 시나리오는 승인하지 않고 draft 에 남긴다(ARTEL-1264).
-            val target = item.toResult().scenarioId
-            if (target != null && target > 0 && runLocks.heldByOther(target, key)) {
+            val target = runScenarioReader.targetIdOf(runId, item.toResult().scenarioId, item.title)
+            if (target != null && runLocks.heldByOther(target, key)) {
                 draft.restore(item)
                 refused += "'${item.title}' — 다른 사람의 Artel Bot 이 이 시나리오를 고치는 중이라 승인하지 않았습니다."
                 continue
@@ -203,7 +203,8 @@ class TestRunChatService(
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
         // 다른 사람의 Artel Bot 이 고치는 중인 시나리오는 커밋하지 못한다(ARTEL-1264).
         val key = sessionKey(appUserId, runId)
-        scenarios.mapNotNull { it.scenarioId?.takeIf { id -> id > 0 } }.forEach { runLocks.assertWritableBy(it, key) }
+        // 번호가 없어도 런에 같은 제목이 있으면 그것을 덮는다(reconcile 의 규칙). 덮을 대상으로 검사한다.
+        scenarios.mapNotNull { runScenarioReader.targetIdOf(runId, it.scenarioId, it.title) }.forEach { runLocks.assertWritableBy(it, key) }
         // 판정을 넘기지 않는다 — 이 경로의 시나리오는 사용자가 카드로 직접 고른 것이라 "Agent가 다
         // 봤는가"를 물을 대상이 아니다. 사람이 고른 것이 곧 요구다.
         //
