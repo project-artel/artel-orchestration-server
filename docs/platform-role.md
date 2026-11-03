@@ -82,8 +82,9 @@
 
 **첫 이메일 가입자가 `ADMIN` 이다.** `POST /api/auth/signup` 이 `app_user` 가 비어 있는 것을 보면 그
 계정을 `ADMIN` 으로 만든다. 판정과 행 삽입은 한 트랜잭션 안에서 `pg_advisory_xact_lock` 뒤에 있어,
-두 가입이 동시에 와도 `ADMIN` 은 하나다(`FirstUserGate`). 그 뒤로 공개 가입은 `ARTEL_SIGNUP_OPEN=true`
-일 때만 열리고, 들어오는 계정은 `USER` 다.
+두 가입이 동시에 와도 `ADMIN` 은 하나다(`FirstUserGate`). 공개 가입은 기본으로 열려 있고
+(`ARTEL_SIGNUP_OPEN=true`), 이후 가입하는 계정은 `USER` 다. 첫 가입만 허용하려면
+`ARTEL_SIGNUP_OPEN=false` 로 설정한다.
 
 GitHub 로 처음 들어온 사람은 `app_user` 가 비어 있어도 `ADMIN` 이 되지 않는다. 테스트 스위트의
 여러 클래스가 `app_user` 를 비우고 GitHub 신원으로 사용자를 만들기 때문이다.

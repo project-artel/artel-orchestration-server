@@ -255,9 +255,9 @@ artel:
       # 처음 보는 GitHub 계정에 새 사용자를 만드는지. false 면 이미 있는 사용자와 ADMIN 이 이메일로 만들어
       # 둔 계정만 들어오고, 나머지는 /login?error=signup_closed 로 돌아간다. 기본값 true 는 지금 동작이다.
       signup-open: ${ARTEL_GITHUB_SIGNUP_OPEN:true}
-    # 첫 이메일 가입자는 ADMIN 이 된다. 그 뒤 공개 가입은 이 값이 true 일 때만 열린다.
+    # 첫 이메일 가입자는 ADMIN 이 된다. false 로 설정하면 첫 가입 이후 공개 가입을 닫는다.
     signup:
-      open: ${ARTEL_SIGNUP_OPEN:false}
+      open: ${ARTEL_SIGNUP_OPEN:true}
     # POST /api/auth/login 실패 제한. 한 이메일이 window 안에 max-failures 번 틀리면 맞는 비밀번호도 429 다.
     # 한 주소가 address-max-failures 번 틀리면 틀린 비밀번호는 429, 맞는 비밀번호는 그대로 통과한다.
     login-rate-limit:
