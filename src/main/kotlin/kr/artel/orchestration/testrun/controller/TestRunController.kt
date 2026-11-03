@@ -55,7 +55,8 @@ import org.springframework.web.bind.annotation.RestController
 class TestRunController(
     private val service: TestRunService,
     private val chatService: TestRunChatService,
-    private val libraryService: ScenarioLibraryService
+    private val libraryService: ScenarioLibraryService,
+    private val recommendationService: kr.artel.orchestration.testscenario.service.CaseRecommendationService,
 ) {
 
     @GetMapping
@@ -298,6 +299,35 @@ class TestRunController(
         chatService.updateDraft(appUserId, runId, draftId, edit)
 
     /** 고른 draft 를 자동저장과 같은 엔진으로 반영한다(ARTEL-1074). */
+    // --- 추천 TC: 저작이 추천한 TC 를 저장하거나 버린다 ---
+
+    /** 이 런의 추천 TC. 답 말풍선의 카드가 상태(대기 · 저장됨 · 버림)를 다시 읽는다. */
+    @GetMapping("/{runId}/case-recommendations")
+    suspend fun caseRecommendations(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @CurrentUserId appUserId: Long,
+    ): List<Map<String, Any?>> = recommendationService.list(projectId, runId, appUserId).map { it.wire() }
+
+    /** 추천 TC 를 저장한다. `ids` 를 비우면 이 런의 대기 중인 추천 전부다. 스텝은 새 TC 를 확인하는 스텝으로 바뀐다. */
+    @PostMapping("/{runId}/case-recommendations/save")
+    suspend fun saveCaseRecommendations(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestBody request: CaseRecommendationIds,
+        @CurrentUserId appUserId: Long,
+    ): List<Map<String, Any?>> =
+        recommendationService.save(projectId, runId, appUserId, request.longIds()).map { it.wire() }
+
+    /** 추천 TC 를 버린다. 그 스텝은 판정 없는 스텝으로 남는다. */
+    @PostMapping("/{runId}/case-recommendations/discard")
+    suspend fun discardCaseRecommendations(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestBody request: CaseRecommendationIds,
+        @CurrentUserId appUserId: Long,
+    ): Map<String, Int> = mapOf("discarded" to recommendationService.discard(projectId, runId, appUserId, request.longIds()))
+
     @PostMapping("/{runId}/chat/draft/apply")
     suspend fun applyChatDraft(
         @PathVariable projectId: Long,
@@ -343,4 +373,9 @@ class TestRunController(
         chatService.close(appUserId, runId)
         return ResponseEntity.ok("세션 종료 완료")
     }
+}
+
+/** 추천 TC id 목록. 비우면 이 런의 대기 중인 추천 전부다. */
+data class CaseRecommendationIds(val ids: List<String> = emptyList()) {
+    fun longIds(): List<Long> = ids.mapNotNull { it.toLongOrNull() }
 }

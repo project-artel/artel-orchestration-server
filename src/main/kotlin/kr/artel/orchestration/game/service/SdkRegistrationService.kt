@@ -1,5 +1,6 @@
 package kr.artel.orchestration.game.service
 
+import kr.artel.orchestration.testcase.service.ManualCaseVersionService
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.r2dbc.postgresql.codec.Json
 import kr.artel.orchestration.game.dto.SdkRegistrationRequest
@@ -51,8 +52,11 @@ class SdkRegistrationService(
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock,
-    private val projectChangeStreamManager: ProjectChangeStreamManager
+    private val projectChangeStreamManager: ProjectChangeStreamManager,
+    private val manualCaseVersions: ManualCaseVersionService,
 ) {
+    private val logger = org.slf4j.LoggerFactory.getLogger(SdkRegistrationService::class.java)
+
     /**
      * 프로젝트를 찾지 못하거나 요청자가 그 프로젝트의 참여자가 아니면 null이다. 컨트롤러가
      * 404로 옮긴다. 둘을 같은 응답으로 묶는 이유는, 구분해서 알려주면 프로젝트 id를 훑어
@@ -66,8 +70,10 @@ class SdkRegistrationService(
         val now = Instant.now(clock)
         val sceneScan = request.sceneScan?.let { Json.of(objectMapper.writeValueAsString(it)) }
         // 빌드 조회·생성과 인스턴스 갱신을 한 트랜잭션으로 묶는다.
+        var created: Long? = null
         val response = transactionalOperator.executeAndAwait {
-            val build = findOrCreateBuild(projectId, request.gameVersion.trim(), request.isEditor == true, sceneScan, now)
+            val (build, isNew) = findOrCreateBuild(projectId, request.gameVersion.trim(), request.isEditor == true, sceneScan, now)
+            if (isNew) created = build.id
             val instance = findOrCreateInstance(projectId, sdkUuid, request.instanceName, now)
             // 빌드 id를 인스턴스에 남긴다. 곧 열릴 웹소켓의 성능 런이 이 값을 읽어 자신을
             // 빌드에 묶는다(ARTEL-378 빌드 추세). 응답으로만 돌려주면 소켓 쪽에서 알 길이 없다.
@@ -86,6 +92,12 @@ class SdkRegistrationService(
                 gameVersion = build.version,
                 isEditor = build.isEditor
             )
+        }
+        // 처음 보는 버전이면 앞 버전의 사용자 생성 TC 를 이어 넣는다. 실패해도 등록은 그대로다 — 사람이 TC 라이브러리에서
+        // 버전에 넣을 수 있다.
+        created?.let { buildId ->
+            runCatching { manualCaseVersions.carryOverOnNewBuild(projectId, buildId) }
+                .onFailure { logger.warn("새 버전에 사용자 TC 이어 넣기 실패 [gameBuildId=$buildId]: ${it.message}") }
         }
         // commit 뒤에 알린다. 인스턴스의 접속 시각과 빌드(생성·version 변경)가 함께 바뀐다.
         projectChangeStreamManager.notify(projectId, ProjectChangeTopic.GAME_INSTANCES)
@@ -169,7 +181,7 @@ class SdkRegistrationService(
         isEditor: Boolean,
         sceneScan: Json?,
         now: Instant
-    ): GameBuildEntity {
+    ): Pair<GameBuildEntity, Boolean> {
         var remaining = BUILD_RETRY_ATTEMPTS
         while (true) {
             try {
@@ -188,11 +200,11 @@ class SdkRegistrationService(
                             createdAt = now,
                             updatedAt = now
                         )
-                    )
-                    existing.version == version && sceneScan == null -> existing
+                    ) to true
+                    existing.version == version && sceneScan == null -> existing to false
                     else -> buildRepository.save(
                         existing.copy(version = version, sceneScan = sceneScan ?: existing.sceneScan, updatedAt = now)
-                    )
+                    ) to false
                 }
             } catch (e: DataIntegrityViolationException) {
                 if (remaining-- <= 0) throw e

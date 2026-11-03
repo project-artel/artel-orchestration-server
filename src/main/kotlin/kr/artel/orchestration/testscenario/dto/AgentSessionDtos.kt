@@ -172,7 +172,12 @@ data class AgentTurnMessage(
     val type: String = "turn",
     @param:JsonProperty("user_input") val userInput: String,
     @param:JsonProperty("current_scenarios") val currentScenarios: List<CurrentScenario> = emptyList(),
-    val model: String? = null
+    val model: String? = null,
+    /** 대화 중 계약이 바뀐 턴에만 싣는다. 세션을 다시 열면 대화 기억이 사라져서 목록만 갈아 끼운다. */
+    @param:JsonProperty("test_case_list") @get:JsonInclude(JsonInclude.Include.NON_NULL)
+    val testCaseList: List<kr.artel.orchestration.testcase.dto.AuthoringTestCase>? = null,
+    @param:JsonProperty("starting_values") @get:JsonInclude(JsonInclude.Include.NON_NULL)
+    val startingValues: Map<String, String>? = null,
 )
 
 /**

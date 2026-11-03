@@ -25,6 +25,8 @@ import kr.artel.orchestration.testrun.repository.TestRunRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestion
+import kr.artel.orchestration.testscenario.service.ScenarioQuestionBuilder
+import kr.artel.orchestration.testcase.contract.CaseContractService
 import kr.artel.orchestration.testscenario.dto.ScenarioQuestionOption
 import kr.artel.orchestration.testscenario.dto.ScenarioStep
 import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
@@ -101,6 +103,7 @@ class TestScenarioReconcileIntegrationTest {
 
     @LocalServerPort private val port: Int = 0
 
+    @Autowired private lateinit var caseContractService: CaseContractService
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var jwtService: JwtService
     @Autowired private lateinit var oauthUserService: OAuthUserService
@@ -291,6 +294,91 @@ class TestScenarioReconcileIntegrationTest {
         assertThat(purchaseSteps.map { it.action }).containsExactly("상점 이동", "A확인", "B확인")
         assertThat(purchaseSteps.map { it.caseId }).containsExactly(null, caseA, caseB)
         assertThat(storedSteps(sale.id!!).map { it.caseId }).containsExactly(caseC)
+    }
+
+    /**
+     * 저작 중에 TC 가 생기면(추천 TC 저장 · MCP · 화면에서 넣기) 다음 턴에 지금 TC 목록을 다시 보낸다. 세션은 열 때 받은
+     * 목록만 들고 있어, 새 TC 를 모른 채 "목록에서 못 찾는다" 고 답하고 검수는 "검토 안 함" 을 끝없이 띄웠다(TR 889).
+     * TC 가 그대로면 다시 보내지 않는다.
+     */
+    @Test
+    fun `저작 중에 늘어난 TC 는 다음 턴에 목록을 다시 보낸다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        insertCase(projectId, "광장", "할머니한테 말을 건다")
+
+        framesToSend.add("""{"type":"result","message":"알겠어요","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+        turnReplies.add("""{"type":"result","message":"그대로예요","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+        turnReplies.add("""{"type":"result","message":"새 TC 봤어요","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+        postMessage(client, projectId, runId, token, "광장 시나리오")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList().any { it.role == "ASSISTANT" }
+        }
+        val before = receivedFrames.size
+        postMessage(client, projectId, runId, token, "그대로 한 번 더")
+        awaitUntil { receivedFrames.drop(before).any { it.contains("그대로 한 번 더") } }
+        assertThat(receivedFrames.drop(before).single { it.contains("그대로 한 번 더") }).doesNotContain("test_case_list")
+
+        val added = insertCase(projectId, "숲", "덤불을 조사한다")
+        val middle = receivedFrames.size
+        Thread.sleep(300)
+        postMessage(client, projectId, runId, token, "새 TC 도 넣어 줘")
+        awaitUntil { receivedFrames.drop(middle).any { it.contains("새 TC 도 넣어 줘") } }
+        val turn = receivedFrames.drop(middle).single { it.contains("새 TC 도 넣어 줘") }
+        assertThat(turn).contains("test_case_list").contains("\"id\":$added")
+    }
+
+    /**
+     * 지도가 없는 프로젝트(자연어 TC 만 쓴 프로젝트)에서 화면이 바뀌는 자리. 모델이 그 사이에 스스로 미상 스텝을
+     * 써도, 아무도 모르는 길이면 그 구간을 묻는다. 사람이 그 길을 알려 준 적이 있으면 묻지 않고 그 말로 채운다.
+     * 지도 없음을 "확인 못 함" 으로만 보던 때는 미상 스텝이 남고 묻지도 채우지도 않았다(MCP 로 처음 쓴 프로젝트).
+     */
+    @Test
+    fun `지도 없는 프로젝트도 모르는 화면 사이 길은 묻고 알려 준 길은 채운다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val square = insertCase(projectId, "광장", "할머니한테 말을 건다")
+        val forest = insertCase(projectId, "숲", "덤불을 조사한다")
+        fun scenario(title: String) =
+            """{"type":"result","message":"짰어요","scenarios":[{"title":"$title","description":"d","steps":[""" +
+                """{"action":"할머니 의뢰를 받는다","case_id":$square},{"action":"숲으로 가는 길을 확인해 이동한다","step_source":"UNKNOWN"},""" +
+                """{"action":"덤불을 조사한다","case_id":$forest}]}]}"""
+
+        val askRun = runRepository.save(TestRunEntity(projectId = projectId, name = "묻는 런")).id!!
+        framesToSend.add(scenario("모르는 길"))
+        postMessage(client, projectId, askRun, token, "할머니 의뢰부터 숲 덤불까지")
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(askRun).toList().isNotEmpty() }
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(askRun, appUserId).toList()
+                .any { it.payload?.asString()?.contains("gap:광장→숲") == true }
+        }
+        // 가짜 Agent 는 테스트끼리 응답 줄을 나눠 쓴다. 이 테스트가 보낸 시나리오만 제목으로 고른다.
+        suspend fun titled(runId: Long, title: String) = storedSteps(
+            runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+                .map { scenarioRepository.findById(it.testScenarioId)!! }.first { it.title == title }.id!!,
+        )
+        val asked = titled(askRun, "모르는 길")
+        assertThat(asked.map { it.stepKind?.name }).containsExactly("ACTION", "GAP", "ACTION")
+        assertThat(asked[1].stepUnknownReason).isEqualTo("광장→숲")
+
+        caseContractService.addUserExit(projectId, "광장", "숲", "지도를 열고 숲을 누른다", null)
+        val fillRun = runRepository.save(TestRunEntity(projectId = projectId, name = "채우는 런")).id!!
+        // 목은 연결마다 줄 전체를 다시 보낸다. 앞 런의 시나리오가 섞이지 않게 비운다.
+        framesToSend.clear()
+        framesToSend.add(scenario("아는 길"))
+        postMessage(client, projectId, fillRun, token, "할머니 의뢰부터 숲 덤불까지")
+        awaitUntil { runScenarioRepository.findByTestRunIdOrderByPosition(fillRun).toList().isNotEmpty() }
+        Thread.sleep(500)
+        val filled = titled(fillRun, "아는 길")
+        assertThat(filled.map { it.action }).contains("지도를 열고 숲을 누른다")
+        assertThat(filled.none { it.stepKind?.name == "GAP" }).isTrue()
+        assertThat(
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(fillRun, appUserId).toList()
+                .none { it.payload?.asString()?.contains("gap:광장→숲") == true }
+        ).isTrue()
     }
 
     // ---- (b2) 검수 누락 → 재작성 요청 → 합쳐서 저장 (ARTEL-403) ------------------------------
@@ -542,6 +630,67 @@ class TestScenarioReconcileIntegrationTest {
 
         awaitUntil { receivedFrames.any { it.contains("앞서 물어본 것") } }
         assertThat(receivedFrames.first { it.contains("앞서 물어본 것") }).contains("턴 전투만 담아 줘")
+    }
+
+    /**
+     * 질문지 한 묶음의 답은 한 번에 받는다. 하나씩 보내면 둘째부터 앞선 턴에 막혔다. 길을 물은 답은 게임 정보의 출구로
+     * 남고, 모델에게는 한 턴으로 간다. 그대로 두기를 고른 것은 빠진다.
+     */
+    @Test
+    fun `질문지 묶음의 답은 한 턴으로 가고 들은 길은 출구로 남는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        insertCase(projectId, "TitleScene", "A")
+
+        framesToSend.add("""{"type":"result","message":"알겠어요","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+        turnReplies.add("""{"type":"result","message":"넣었습니다","reviewed":{"in":[],"out":[]},"scenarios":[]}""")
+        postMessage(client, projectId, runId, token, "숲 시나리오")
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.role == "ASSISTANT" }
+        }
+        val gaps = ScenarioQuestionBuilder.all(listOf("광장→숲", "숲→광장", "광장→대장간"))
+        runMessageRepository.save(
+            TestRunMessageEntity(
+                testRunId = runId, appUserId = appUserId, role = "ASSISTANT", content = gaps.first().text,
+                payload = Json.of(objectMapper.writeValueAsString(ScenarioQuestion.batchPayload(gaps))),
+            )
+        )
+        val turnsBefore = receivedFrames.size
+
+        client.post()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue(
+                """{"message":"","answers":[
+                  {"question_id":"gap:광장→숲","option_ids":[],"text":"지도를 열고 숲을 누른다"},
+                  {"question_id":"gap:숲→광장","option_ids":[],"text":"숲 입구로 돌아간다"},
+                  {"question_id":"gap:광장→대장간","option_ids":["${ScenarioQuestionBuilder.GAP_LEAVE}"]}
+                ]}""".trimIndent()
+            )
+            .retrieve().toEntity(String::class.java).block(Duration.ofSeconds(5))
+
+        awaitUntil { receivedFrames.drop(turnsBefore).any { it.contains("지도를 열고 숲을 누른다") } }
+        Thread.sleep(500)
+        val turns = receivedFrames.drop(turnsBefore).filter { it.contains("광장→숲") || it.contains("숲→광장") }
+        assertThat(turns).hasSize(1)
+        assertThat(turns.single()).contains("숲 입구로 돌아간다").doesNotContain("광장→대장간")
+        val exits = caseContractService.observedExits(projectId).filter { it.source == CaseContractService.USER_EXIT }
+        assertThat(exits.map { "${it.from}→${it.to}: ${it.by}" })
+            .containsExactlyInAnyOrder("광장→숲: 지도를 열고 숲을 누른다", "숲→광장: 숲 입구로 돌아간다")
+        // 알려 준 길은 씬 전이 TC 로도 추천된다. 그대로 두기를 고른 구간은 없다.
+        val recs = databaseClient.sql("SELECT scene, step, expected_value FROM case_recommendation WHERE test_run_id = :r ORDER BY id")
+            .bind("r", runId).map { row, _ -> "${row.get("scene", String::class.java)} · ${row.get("step", String::class.java)} → ${row.get("expected_value", String::class.java)}" }
+            .all().collectList().awaitSingle()
+        assertThat(recs).containsExactly("광장 · 지도를 열고 숲을 누른다 → 숲 화면으로 바뀐다.", "숲 · 숲 입구로 돌아간다 → 광장 화면으로 바뀐다.")
+        // 그 턴의 답에 추천이 실린다.
+        awaitUntil {
+            runMessageRepository.findByTestRunIdAndAppUserIdOrderByCreatedAtAsc(runId, appUserId).toList()
+                .any { it.payload?.asString()?.contains("화면으로 바뀐다") == true }
+        }
     }
 
     /**
@@ -1016,7 +1165,8 @@ class TestScenarioReconcileIntegrationTest {
         postMessage(client, projectId, runId, token, "만들어줘")
 
         assertThat(stream.awaitStage("saved")).isTrue()
-        assertThat(stream.stages()).containsExactly("sent", "checking", "saved")
+        // 글 TC 의 계약을 처음 뽑는 세션이면 그 앞에 preparing_cases 가 온다(계약 정리 중).
+        assertThat(stream.stages().dropWhile { it == "preparing_cases" }).containsExactly("sent", "checking", "saved")
         stream.close()
     }
 
@@ -1044,7 +1194,7 @@ class TestScenarioReconcileIntegrationTest {
         postMessage(client, projectId, runId, token, "남은 거 만들어줘")
 
         assertThat(stream.awaitStage("saved")).isTrue()
-        assertThat(stream.stages())
+        assertThat(stream.stages().dropWhile { it == "preparing_cases" })
             .containsExactly("sent", "looking_up_cases", "writing", "checking", "saved")
         stream.close()
     }

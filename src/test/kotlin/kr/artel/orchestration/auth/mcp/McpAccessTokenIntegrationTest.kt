@@ -156,6 +156,57 @@ class McpAccessTokenIntegrationTest {
         assertThat(call(writer, HttpMethod.DELETE, "${world.base}/developer-macros/open_shop").status).isEqualTo(204)
     }
 
+    /**
+     * 자연어 TC 를 계약까지 넣고 읽는다. 계약 칸은 출처 user 로 남고, 새 TC 는 가장 최근 버전에 들어간다 — 버전이
+     * 정해진 TR 의 저작은 그 버전의 TC 만 본다. 읽기만 받은 연결은 넣지 못하고, TR 을 만드는 것은 scenario:write 다.
+     */
+    @Test
+    fun `testcase write token 이 TC 를 계약까지 넣고, read token 은 계약까지 읽는다`() {
+        val world = newWorld()
+        val writer = mint(world.userId, scope = "testcase:read testcase:write")
+        val reader = mint(world.userId, scope = "testcase:read")
+        val body = """
+            {"terms":[{"name":"검","kind":"has","meaning":"대장간에서 사는 검","start":"0"}],
+             "cases":[
+               {"scene":"숲","step":"늑대를 공격한다.","expectedValue":"늑대가 쓰러진다.","needs":["검 == 1"],"leaves":["늑대 처치=1","동전=+30"]},
+               {"scene":"광장","step":"가방을 연다.","expectedValue":"가방 창이 뜬다."},
+               {"scene":"숲","step":"틀린 줄","expectedValue":"-","needs":["검이 있어야 함"]}
+             ]}
+        """.trimIndent()
+
+        assertThat(call(reader, HttpMethod.POST, "${world.base}/case-contracts/cases", body).status).isEqualTo(403)
+        val saved = call(writer, HttpMethod.POST, "${world.base}/case-contracts/cases", body)
+        assertThat(saved.status).isEqualTo(200)
+        assertThat(saved.body["created"]).describedAs("계약 꼴이 틀린 줄은 TC 를 만들기 전에 걸린다").hasSize(2)
+        assertThat(saved.body["rejected"][0]["index"].asInt()).isEqualTo(2)
+        assertThat(saved.body["addedTerms"][0].asText()).isEqualTo("검")
+
+        val listed = call(reader, HttpMethod.GET, "${world.base}/case-contracts")
+        assertThat(listed.status).isEqualTo(200)
+        val wolf = listed.body["cases"].first { it["step"].asText() == "늑대를 공격한다." }
+        assertThat(wolf["needs"].map { it.asText() }).containsExactly("검 == 1")
+        assertThat(wolf["leaves"].map { it.asText() }).containsExactly("늑대_처치=1", "동전=+30")
+        // MCP 로 들어온 계약은 개발자의 Agent 가 알려 준 것이다 — 사람이 정한 것(user)과 가른다.
+        assertThat(wolf["contractSource"].asText()).isEqualTo("mcp")
+        // 사람이 같은 TC 의 계약을 고치면 user 가 되고, 그 뒤 MCP 가 다시 보내도 사람이 정한 것이 남는다.
+        val wolfId = wolf["testCaseId"].asText()
+        fun again(needs: String) = """{"cases":[{"testCaseId":"$wolfId","scene":"숲","step":"늑대를 공격한다.","expectedValue":"늑대가 쓰러진다.","needs":["$needs"]}]}"""
+        assertThat(call(world.session, HttpMethod.POST, "${world.base}/case-contracts/cases", again("검 >= 1")).status).isEqualTo(200)
+        assertThat(call(writer, HttpMethod.POST, "${world.base}/case-contracts/cases", again("검 == 2")).status).isEqualTo(200)
+        val kept = call(reader, HttpMethod.GET, "${world.base}/case-contracts").body["cases"].first { it["testCaseId"].asText() == wolfId }
+        assertThat(kept["contractSource"].asText()).isEqualTo("user")
+        assertThat(kept["needs"].map { it.asText() }).containsExactly("검 >= 1")
+        assertThat(listed.body["startState"]["검"].asText()).isEqualTo("0")
+        assertThat(call(reader, HttpMethod.GET, "${world.base}/test-runs/0/scenarios").status)
+            .describedAs("허용된 경로이고 그 TR 이 없다").isNotEqualTo(403)
+        assertThat(call(writer, HttpMethod.POST, "${world.base}/test-runs", """{"name":"mcp"}""").body["code"].asText())
+            .isEqualTo("insufficient_scope")
+        // 추천 TC: 읽기는 read, 저장은 write 다. 없는 TR 이라 404 지만 경로는 열려 있다(403 이 아니다).
+        assertThat(call(reader, HttpMethod.GET, "${world.base}/test-runs/0/case-recommendations").status).isNotEqualTo(403)
+        assertThat(call(reader, HttpMethod.POST, "${world.base}/test-runs/0/case-recommendations/save", """{"ids":[]}""").status).isEqualTo(403)
+        assertThat(call(writer, HttpMethod.POST, "${world.base}/test-runs/0/case-recommendations/save", """{"ids":[]}""").status).isNotEqualTo(403)
+    }
+
     @Test
     fun `cheat 목록은 macro read 가 없으면 403 insufficient_scope 다`() {
         val world = newWorld()

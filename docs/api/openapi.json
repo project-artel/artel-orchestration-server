@@ -4258,6 +4258,116 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/case-recommendations/save": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "saveCaseRecommendations",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseRecommendationIds"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-runs/{runId}/case-recommendations/discard": {
+      "post": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "discardCaseRecommendations",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseRecommendationIds"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "integer",
+                    "format": "int32"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-run-folders": {
       "get": {
         "tags": [
@@ -6162,6 +6272,107 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/DeveloperMacroCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/case-contracts": {
+      "get": {
+        "tags": [
+          "case-contract-controller"
+        ],
+        "operationId": "listCaseContracts",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseContractList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "case-contract-controller"
+        ],
+        "operationId": "refreshCaseContracts",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseContractRefresh"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/case-contracts/cases": {
+      "post": {
+        "tags": [
+          "case-contract-controller"
+        ],
+        "operationId": "saveCaseContracts",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseBatchResponse"
                 }
               }
             }
@@ -9266,6 +9477,52 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-runs/{runId}/case-recommendations": {
+      "get": {
+        "tags": [
+          "test-run-controller"
+        ],
+        "operationId": "caseRecommendations",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-runs/{runId}/authoring-lock": {
       "get": {
         "tags": [
@@ -11878,6 +12135,10 @@
           },
           "step_unknown_reason": {
             "type": "string"
+          },
+          "recommendation_id": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -12437,6 +12698,14 @@
           },
           "step_unknown_reason": {
             "type": "string"
+          },
+          "proposed_case": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "recommendation_id": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -15519,6 +15788,7 @@
       },
       "RunChatMessage": {
         "required": [
+          "answers",
           "autoApply",
           "draftOnly",
           "message"
@@ -15530,6 +15800,12 @@
           },
           "answer": {
             "$ref": "#/components/schemas/ScenarioQuestionAnswer"
+          },
+          "answers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioQuestionAnswer"
+            }
           },
           "autoApply": {
             "type": "boolean"
@@ -15627,6 +15903,20 @@
           "saved": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "CaseRecommendationIds": {
+        "required": [
+          "ids"
+        ],
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -16296,6 +16586,172 @@
           },
           "reason": {
             "type": "string"
+          }
+        }
+      },
+      "CaseContractRefresh": {
+        "required": [
+          "asked",
+          "terms",
+          "written"
+        ],
+        "type": "object",
+        "properties": {
+          "asked": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "written": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "terms": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "CaseBatchItem": {
+        "required": [
+          "expectedValue",
+          "scene",
+          "step"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "precondition": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
+          },
+          "expectedValue": {
+            "type": "string"
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "leaves": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "arrivesAt": {
+            "type": "string"
+          }
+        }
+      },
+      "CaseBatchRequest": {
+        "required": [
+          "cases",
+          "terms"
+        ],
+        "type": "object",
+        "properties": {
+          "terms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseTermInput"
+            }
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseBatchItem"
+            }
+          },
+          "gameBuildId": {
+            "type": "string"
+          }
+        }
+      },
+      "CaseTermInput": {
+        "required": [
+          "kind",
+          "meaning",
+          "name",
+          "options"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "meaning": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "start": {
+            "type": "string"
+          }
+        }
+      },
+      "CaseBatchRejection": {
+        "required": [
+          "index",
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "CaseBatchResponse": {
+        "required": [
+          "addedTerms",
+          "created",
+          "rejected",
+          "updated"
+        ],
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rejected": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseBatchRejection"
+            }
+          },
+          "addedTerms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -19964,6 +20420,7 @@
               "bridging",
               "thinking",
               "looking_up_cases",
+              "preparing_cases",
               "reading_cases",
               "reading_versions",
               "reading_verdicts",
@@ -22823,6 +23280,77 @@
           },
           "updatedBy": {
             "$ref": "#/components/schemas/DeveloperMacroAuthor"
+          }
+        }
+      },
+      "CaseContractList": {
+        "required": [
+          "cases",
+          "startState",
+          "terms"
+        ],
+        "type": "object",
+        "properties": {
+          "terms": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "startState": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseContractRow"
+            }
+          }
+        }
+      },
+      "CaseContractRow": {
+        "required": [
+          "expectedValue",
+          "leaves",
+          "needs",
+          "scene",
+          "step",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "precondition": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
+          },
+          "expectedValue": {
+            "type": "string"
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "leaves": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "contractSource": {
+            "type": "string"
+          },
+          "arrivesAt": {
+            "type": "string"
           }
         }
       },

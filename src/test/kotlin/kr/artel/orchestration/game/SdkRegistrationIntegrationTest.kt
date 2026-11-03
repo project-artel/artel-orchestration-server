@@ -15,6 +15,11 @@ import kr.artel.orchestration.game.repository.GameInstanceRepository
 import kr.artel.orchestration.project.repository.ProjectDocumentRepository
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
+import kr.artel.orchestration.testcase.service.ManualCaseVersionService
+import kr.artel.orchestration.testcase.dto.TestCaseVersionCasesRequest
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -49,6 +54,9 @@ class SdkRegistrationIntegrationTest {
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var appUserRepository: AppUserRepository
     @Autowired private lateinit var identityRepository: OAuthIdentityRepository
+    @Autowired private lateinit var testCaseRepository: TestCaseRepository
+    @Autowired private lateinit var versionRepository: TestCaseVersionRepository
+    @Autowired private lateinit var manualCaseVersions: ManualCaseVersionService
 
     @BeforeEach
     fun clean(): Unit = runBlocking {
@@ -80,6 +88,32 @@ class SdkRegistrationIntegrationTest {
         assertThat(builds["items"]).hasSize(1)
         assertThat(builds["items"][0]["version"].asText()).isEqualTo("1.2.3")
         assertThat(builds["items"][0]["label"].isNull).isTrue()
+    }
+
+    /**
+     * 지도 없는 프로젝트(자연어 TC 만 쓰는)는 처음 보는 버전이 등록되면 앞 버전의 사용자 생성 TC 가 따라온다. 같은 버전의
+     * 재등록은 아무것도 넣지 않는다 — 사람이 그 버전에서 일부러 뺀 케이스가 되살아나면 안 된다.
+     */
+    @Test
+    fun `a new version carries the user-written cases of the previous version`(): Unit = runBlocking {
+        val user = signIn()
+        val projectId = createProject(user.webToken)
+        val first = register(user.sdkToken, projectId, "sdk-uuid-1", "1.0.0")["gameBuildId"].asLong()
+        val case = testCaseRepository.save(
+            TestCaseEntity(projectId = projectId.toLong(), scene = "광장", step = "상점에 들어간다", expectedValue = "상점 화면이 뜬다"),
+        )
+        try {
+            manualCaseVersions.attachNewCase(projectId.toLong(), first, case.id!!)
+
+            val second = register(user.sdkToken, projectId, "sdk-uuid-1", "1.1.0")["gameBuildId"].asLong()
+            assertThat(versionRepository.findByTestCaseIdAndGameBuildId(case.id!!, second)).isNotNull
+
+            manualCaseVersions.removeFromVersion(projectId.toLong(), user.user.userId.toLong(), second, TestCaseVersionCasesRequest(listOf(case.id.toString())))
+            register(user.sdkToken, projectId, "sdk-uuid-1", "1.1.0")
+            assertThat(versionRepository.findByTestCaseIdAndGameBuildId(case.id!!, second)).isNull()
+        } finally {
+            testCaseRepository.deleteById(case.id!!)
+        }
     }
 
     /** 같은 설치본이 다시 실행됐을 뿐인데 인스턴스가 늘어나면 목록이 금세 쓸모없어진다. */

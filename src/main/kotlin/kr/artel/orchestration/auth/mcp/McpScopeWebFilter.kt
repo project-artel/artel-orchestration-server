@@ -17,6 +17,12 @@ import java.util.Optional
 enum class McpScope(val wire: String) {
     MACRO_READ("macro:read"),
     MACRO_WRITE("macro:write"),
+    /** 글로 쓴 TC · 계약 · 용어집, TR 과 저작 대화 · 시나리오를 읽는다. */
+    TESTCASE_READ("testcase:read"),
+    /** TC 를 계약까지 넣거나 고친다. */
+    TESTCASE_WRITE("testcase:write"),
+    /** TR 을 만들고 저작 Agent 에게 시나리오를 요청한다. 시나리오는 우리 저작 Agent 가 짠다. */
+    SCENARIO_WRITE("scenario:write"),
 }
 
 /** 허용표 한 줄. [pattern] 은 `pathWithinApplication` 에 맞춘다. */
@@ -46,6 +52,18 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/developer-macros:check", McpScope.MACRO_WRITE),
     McpRoute(HttpMethod.PUT, "/api/projects/{projectId}/developer-macros/{name}", McpScope.MACRO_WRITE),
     McpRoute(HttpMethod.DELETE, "/api/projects/{projectId}/developer-macros/{name}", McpScope.MACRO_WRITE),
+    // 자연어 TC · 시나리오 저작. 저작 대화는 화면과 같은 경로를 쓴다 — 시나리오는 우리 저작 Agent 가 짜고 검사한다.
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/case-contracts", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/case-contracts/cases", McpScope.TESTCASE_WRITE),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/scenarios", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/chat/messages", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs", McpScope.SCENARIO_WRITE),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/message", McpScope.SCENARIO_WRITE),
+    // 저작이 추천한 TC — 읽기는 testcase:read, 저장 · 버리기는 TC 를 만드는 일이라 testcase:write.
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations/save", McpScope.TESTCASE_WRITE),
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations/discard", McpScope.TESTCASE_WRITE),
 )
 
 /** MCP access JWT 로 허용표 밖의 경로를 불렀다. */
