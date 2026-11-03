@@ -67,7 +67,7 @@ class QaCaseHistoryService(
         }
         val chosen = attempts.firstOrNull()
         val selectedQuestions = chosen?.let { history.questions(it.qaTryId.toLong(), afterQuestionId, current.startedAt) }.orEmpty()
-        val selectedEvents = chosen?.let { history.events(it.qaTryId.toLong(), caseId, afterLogId, limit + 1) }.orEmpty()
+        val selectedEvents = chosen?.let { history.events(it.qaTryId.toLong(), caseId, current.startedAt, afterLogId, limit + 1) }.orEmpty()
         val events = selectedEvents.take(limit).map { event ->
             val log = event.log
             val metadata = objectMapper.readValue(log.payload.asString(), HistoryLogMetadata::class.java)

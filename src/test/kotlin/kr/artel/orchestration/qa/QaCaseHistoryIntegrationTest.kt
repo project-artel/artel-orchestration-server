@@ -127,6 +127,31 @@ class QaCaseHistoryIntegrationTest {
     }
 
     @Test
+    fun `현재 실행 시작 이후의 과거 판정 수정 로그는 모든 cursor 페이지에서 제외한다`(): Unit = runBlocking {
+        val prior = attempt(-100)
+        val originalVerdict = verdict(prior)
+        val current = attempt(0, status = "RUNNING")
+        val atCutoff = logs.save(QaLogEntity(
+            qaTryId = prior, type = "CASE_VERDICT", direction = "ORCHE_INTERNAL",
+            payload = Json.of("""{"case_id":$caseId,"status":"FAILED"}"""),
+            message = "시작 시각의 사람 수정", createdAt = now,
+        ))!!.id!!
+        val afterCutoff = logs.save(QaLogEntity(
+            qaTryId = prior, type = "CASE_VERDICT", direction = "ORCHE_INTERNAL",
+            payload = Json.of("""{"case_id":$caseId,"status":"VERIFIED"}"""),
+            message = "시작 이후의 사람 수정", createdAt = now.plusSeconds(1),
+        ))!!.id!!
+
+        val first = history.read(current, caseId, limit = 1)
+        assertThat(first.events.map { it.id }).containsExactly(originalVerdict.toString())
+        val next = history.read(current, caseId, previousTryId = prior, afterLogId = first.nextAfterLogId!!.toLong(), limit = 1)
+        assertThat(next.events.map { it.id }).containsExactly(atCutoff.toString())
+        assertThat(next.events.map { it.id }).doesNotContain(afterCutoff.toString())
+        assertThat(next.nextAfterLogId).isNull()
+        assertThat(history.read(current, caseId, previousTryId = prior, afterLogId = atCutoff).events).isEmpty()
+    }
+
+    @Test
     fun `TC 시도 페이지를 바꿔도 같은 조작 로그의 scope는 유지한다`(): Unit = runBlocking {
         val prior = attempt(-100)
         repeat(4) { index ->

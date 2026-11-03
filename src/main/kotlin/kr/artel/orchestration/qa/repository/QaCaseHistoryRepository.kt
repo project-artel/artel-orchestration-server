@@ -133,7 +133,7 @@ class QaCaseHistoryRepository(private val databaseClient: DatabaseClient, privat
             }.flow().toList()
 
     /** CHAT 중계 사본과 history 조회 결과는 다시 읽지 않는다. */
-    suspend fun events(qaTryId: Long, caseId: Long, afterLogId: Long, limit: Int): List<QaCaseHistoryLogRow> =
+    suspend fun events(qaTryId: Long, caseId: Long, cutoff: Instant, afterLogId: Long, limit: Int): List<QaCaseHistoryLogRow> =
         databaseClient.sql(
             """
             SELECT q.*, EXISTS (
@@ -142,6 +142,7 @@ class QaCaseHistoryRepository(private val databaseClient: DatabaseClient, privat
                    AND a.started_at <= q.created_at AND a.finished_at >= q.created_at
             ) AS in_case_attempt FROM qa_log q
              WHERE qa_try_id = :qaTryId AND id > :afterLogId
+               AND q.created_at <= :cutoff
                AND (
                    (direction = 'USER_TO_ORCHE' AND type = 'CHAT')
                    OR (direction = 'AGENT_TO_ORCHE' AND type IN
@@ -152,7 +153,8 @@ class QaCaseHistoryRepository(private val databaseClient: DatabaseClient, privat
                AND COALESCE(payload ->> 'tool', '') <> 'read_test_case_history'
              ORDER BY id ASC LIMIT :limit
             """.trimIndent()
-        ).bind("qaTryId", qaTryId).bind("caseId", caseId).bind("afterLogId", afterLogId).bind("limit", limit)
+        ).bind("qaTryId", qaTryId).bind("caseId", caseId).bind("cutoff", cutoff)
+            .bind("afterLogId", afterLogId).bind("limit", limit)
             .map { row, _ ->
                 val log = QaLogEntity(
                     id = row.get("id", java.lang.Long::class.java)!!.toLong(),
