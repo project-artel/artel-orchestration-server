@@ -47,21 +47,24 @@ class CaseFileCodecTest {
     }
 
     @Test
-    fun `가져오기 양식은 빈 표와 작성법 시트다`() {
+    fun `가져오기 양식은 예시 한 줄과 작성법 시트다`() {
         XSSFWorkbook(ByteArrayInputStream(CaseFileCodec.template(CaseFileFormat.XLSX))).use { book ->
             assertThat((0 until book.numberOfSheets).map { book.getSheetName(it) }).containsExactly("TC", "작성법")
             val sheet = book.getSheet("TC")
             assertThat(sheet.lastRowNum).describedAs("머리글과 예시 한 줄").isEqualTo(1)
-            assertThat(sheet.getRow(1).getCell(0).stringCellValue).isEqualTo(CaseFileCodec.EXAMPLE_MARK)
+            assertThat(sheet.getRow(1).getCell(0).stringCellValue).describedAs("새 TC 는 Artel 번호를 비운다").isEmpty()
+            assertThat(sheet.getRow(0).getCell(0).cellComment.string.string).isEqualTo(CaseFileCodec.NUMBER_NOTE)
             assertThat(sheet.getRow(1).getCell(5).stringCellValue).isEqualTo("문을 연다")
             assertThat(sheet.getRow(0).map { it.stringCellValue }).doesNotContain("결과").contains("Artel 번호", "종류", "화면")
             assertThat(sheet.dataValidations).hasSize(1)
             assertThat(book.getSheet("작성법").getRow(6).getCell(0).stringCellValue).isEqualTo("조작")
         }
         val csv = String(CaseFileCodec.template(CaseFileFormat.CSV), Charsets.UTF_8)
-        assertThat(csv).isEqualTo("\uFEFFArtel 번호,번호,종류,화면,사전조건,조작,기대결과,도착 화면\r\n(예시),로그인-01,예외,지하실,열쇠가 없다,문을 연다,문이 열리지 않고 열쇠가 필요하다고 나온다,\r\n")
+        assertThat(csv).isEqualTo("\uFEFFArtel 번호,번호,종류,화면,사전조건,조작,기대결과,도착 화면\r\n\"\",로그인-01,예외,지하실,열쇠가 없다,문을 연다,문이 열리지 않고 열쇠가 필요하다고 나온다,\r\n")
         assertThat(CaseFileCodec.read(CaseFileCodec.template(CaseFileFormat.XLSX), null)).describedAs("예시 줄은 건너뛴다").isEmpty()
         assertThat(CaseFileCodec.read(CaseFileCodec.template(CaseFileFormat.CSV), null)).isEmpty()
+        val rewritten = String(CaseFileCodec.template(CaseFileFormat.CSV), Charsets.UTF_8).replace("문을 연다", "문을 두드린다")
+        assertThat(CaseFileCodec.read(rewritten.toByteArray(), null).single()[CaseFileColumn.STEP]).describedAs("예시를 고쳐 쓰면 읽는다").isEqualTo("문을 두드린다")
     }
 
     @Test

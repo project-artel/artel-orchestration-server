@@ -106,7 +106,7 @@ class CaseFileService(
         return Download("${safe(project.name)}_${safe(versionName)}_TC_$day.${format.extension}", format, CaseFileCodec.write(format, rows))
     }
 
-    /** 가져오기 양식(ARTEL-1328). 엑셀은 필터 · 종류 고르기 목록 · 작성법 시트가 든 표다. 지우지 않아도 되는 예시 한 줄((예시))이 들어 있다. */
+    /** 가져오기 양식(ARTEL-1328). 엑셀은 필터 · 종류 고르기 목록 · 작성법 시트가 든 표다. 지우지 않아도 되는 예시 한 줄이 들어 있다. */
     suspend fun template(projectId: Long, userId: Long, format: String?): Download {
         projectAccess.requireMember(projectId, userId)
         val chosen = CaseFileFormat.of(format ?: "xlsx") ?: throw BadRequestException("format 은 xlsx 또는 csv 여야 합니다.", "invalid_format")
