@@ -64,7 +64,8 @@ class SdkWebSocketHandlerUnknownTypeTest {
         ProjectChangeStreamManager(),
         mock(ScanResultRouter::class.java),
         mock(QaSdkReconnectService::class.java),
-        listOf(knownHandler)
+        listOf(knownHandler),
+        mock(SdkActionDelivery::class.java),
     )
 
     @Test
@@ -142,7 +143,8 @@ class SdkWebSocketHandlerUnknownTypeTest {
             ProjectChangeStreamManager(),
             mock(ScanResultRouter::class.java),
             mock(QaSdkReconnectService::class.java),
-            listOf(knownHandler, exploding)
+            listOf(knownHandler, exploding),
+            mock(SdkActionDelivery::class.java),
         )
         val session = mock(WebSocketSession::class.java)
 
@@ -173,7 +175,8 @@ class SdkWebSocketHandlerUnknownTypeTest {
             ProjectChangeStreamManager(),
             mock(ScanResultRouter::class.java),
             mock(QaSdkReconnectService::class.java),
-            listOf(knownHandler)
+            listOf(knownHandler),
+            mock(SdkActionDelivery::class.java),
         )
         val session = mock(WebSocketSession::class.java)
         `when`(session.receive()).thenReturn(Flux.never())

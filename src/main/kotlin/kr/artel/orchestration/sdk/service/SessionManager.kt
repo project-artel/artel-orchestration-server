@@ -46,6 +46,15 @@ class SessionManager(private val objectMapper: ObjectMapper) {
 
     fun sessionIdentity(instanceId: String): Any? = sessions[instanceId]?.session
 
+    fun deliveryProcessId(instanceId: String): String? = sessions[instanceId]?.processId
+
+    /** 확인한 세션 객체에만 넣는다. 교체 뒤의 구버전 SDK에 재전송이 넘어가면 안 된다. */
+    fun sendRawToSession(instanceId: String, identity: Any?, processId: String, json: String): Boolean {
+        val registered = sessions[instanceId] ?: return false
+        if (registered.session !== identity || registered.processId != processId) return false
+        return registered.emit(json) == Sinks.EmitResult.OK
+    }
+
     /** frame ACK는 응답을 읽지 않는 SDK 앞에서도 최신 하나만 남긴다. */
     fun sendMediaAck(instanceId: String, payload: Any) {
         sessions[instanceId]?.ack(objectMapper.writeValueAsString(payload))
@@ -80,9 +89,10 @@ class SessionManager(private val objectMapper: ObjectMapper) {
         instanceId: String,
         session: WebSocketSession,
         liveness: SdkLiveness,
-        probeTimeout: Duration
+        probeTimeout: Duration,
+        processId: String? = null
     ): SdkRegistration? {
-        val candidate = SdkSession(session, liveness)
+        val candidate = SdkSession(session, liveness, processId)
         val incumbent = sessions.putIfAbsent(instanceId, candidate)
             ?: return SdkRegistration(candidate.outbound(), replaced = false)
         val incumbentLiveness = incumbent.liveness ?: return null
@@ -137,7 +147,7 @@ class SessionManager(private val objectMapper: ObjectMapper) {
      *
      * 실제 write는 세션의 전송 파이프라인이 한다. 이 함수가 반환됐다는 것은 "보냈다"가 아니라
      * "보낼 줄에 세웠다"는 뜻이다. 소켓에 실제로 나갔는지까지 확인하려면 SDK의 응답을 봐야
-     * 하는데, 이 프로토콜에서 그 확인이 필요한 메시지는 없다.
+     * 한다. QA ACTION의 수신 확인과 재전송은 SdkActionDelivery가 맡는다.
      */
     suspend fun send(instanceId: String, payload: Any): Boolean {
         val json = objectMapper.writeValueAsString(payload)
@@ -174,7 +184,11 @@ class SessionManager(private val objectMapper: ObjectMapper) {
      * unicast인 이유는 구독자가 정확히 하나(전송 파이프라인)이기 때문이다. multicast로 두면
      * 구독이 붙기 전에 넣은 메시지가 조용히 버려진다.
      */
-    private class SdkSession(val session: WebSocketSession, val liveness: SdkLiveness?) {
+    private class SdkSession(
+        val session: WebSocketSession,
+        val liveness: SdkLiveness?,
+        val processId: String? = null
+    ) {
         private val sink = Sinks.many().unicast().onBackpressureBuffer<String>()
         private val pending = AtomicInteger()
         private val mediaAcks = kr.artel.orchestration.stream.service.LatestMediaMessages()

@@ -168,6 +168,10 @@ class QaExecutionFailureService(
     suspend fun agentDisconnected(qaTryId: Long) =
         fail(qaTryId, "QA Agent connection closed.", closeAgent = false)
 
+    /** 재접속 대기 뒤에도 복구되지 않은 원래 try만 종료한다. 뒤에 시작한 try는 건드리지 않는다. */
+    suspend fun sdkReconnectExpired(qaTryId: Long) =
+        fail(qaTryId, "SDK connection did not recover within 5 seconds.", closeAgent = true)
+
     /**
      * Ends a run because the operator asked. `false` when it had already ended.
      *
