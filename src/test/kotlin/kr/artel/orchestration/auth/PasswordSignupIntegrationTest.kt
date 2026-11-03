@@ -28,12 +28,15 @@ import org.springframework.test.context.DynamicPropertySource
 import org.springframework.web.reactive.function.client.WebClient
 
 /**
- * 첫 가입자가 ADMIN 이 되고, 그 뒤로 공개 가입이 닫히는지(`ARTEL_SIGNUP_OPEN` 기본값 false).
+ * `ARTEL_SIGNUP_OPEN=false` 로 설정하면 첫 가입자가 ADMIN 이 되고, 그 뒤로 공개 가입이 닫힌다.
  *
  * 빈 `app_user` 가 있어야 확인할 수 있어 자기 database 에서 돈다([PrivateTestDatabase]).
  */
 @ActiveProfiles("test")
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(
+    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+    properties = ["artel.auth.signup.open=false"]
+)
 class PasswordSignupIntegrationTest {
 
     companion object {
