@@ -1,5 +1,6 @@
 package kr.artel.orchestration.developermacro.agent
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.JsonNode
 
 /**
@@ -12,6 +13,9 @@ data class AgentMacroCheckRequest(
     val name: String,
     val source: String,
     val imports: Map<String, String>,
+    /** 행동 계약. 없으면 싣지 않는다 — 계약을 모르는 agent-server 에도 같은 요청이 간다. */
+    @field:JsonInclude(JsonInclude.Include.NON_NULL)
+    val contract: JsonNode? = null,
 )
 
 /**
@@ -28,6 +32,8 @@ data class AgentMacroCheckResponse(
     val parameters: JsonNode? = null,
     val docstring: String? = null,
     val rejection: AgentMacroRejection? = null,
+    /** 검사가 통과시킨 계약(정규화한 것). 계약 없이 검사했으면 없다. */
+    val contract: JsonNode? = null,
 )
 
 /** 검사가 거절한 이유. [line] 은 원문의 1부터 세는 줄 번호이고, 줄을 특정할 수 없는 거절이면 null 이다. */
@@ -43,6 +49,8 @@ sealed interface MacroCheckOutcome {
         val definition: JsonNode,
         val parameterNames: List<String>,
         val docstring: String,
+        /** 저장할 계약. 계약 없이 검사했으면 null 이다. */
+        val contract: JsonNode? = null,
     ) : MacroCheckOutcome
 
     data class Rejected(val line: Int?, val reason: String) : MacroCheckOutcome
