@@ -161,7 +161,6 @@ class MapTestCaseGenerator(
                     // 자리를 ` / ` 로 잇는다.
                     expected = shown.joinToString(OUTCOME_SEPARATOR) { it.outcome },
                     expectedItems = shown.map { it.outcome },
-                    status = first.status,
                     gaps = group.flatMap { it.gaps }.distinct(),
                     arrivesAt = group.firstNotNullOfOrNull { it.arrivesAt },
                     // 정체는 **기능과 그 케이스가 덮는 관측들**이다. 문구가 바뀌어도, 관측을 어떤
@@ -540,7 +539,6 @@ class MapTestCaseGenerator(
         /** 이 효과를 이름에 붙일 능동꼴. 종류끼리 모아 세려면 그 종류까지 들어야 한다. */
         val does: MapTestCasePhrasing.Doing? = null,
         val outcome: String,
-        val status: String,
         val gaps: List<String>,
         val arrivesAt: String? = null,
         val identity: String = "",
@@ -631,7 +629,6 @@ class MapTestCaseGenerator(
                     aimedAt = row.controlPath,
                     step = step,
                     outcome = outcome,
-                    status = caseGrade(row),
                     gaps = reasons,
                     // 씬 효과의 대상이 곧 도착 화면이다. 산문에서 다시 뽑지 않는다.
                     arrivesAt = effect.target?.takeIf { effect.kind == SCENE },
@@ -685,7 +682,6 @@ class MapTestCaseGenerator(
                 step = "`${element.path}` 이(가) 화면에 있는지 확인한다",
                 expected = "`${element.path}` 이(가) 화면에 있다",
                 expectedItems = listOf("`${element.path}` 이(가) 화면에 있다"),
-                status = "runnable",
                 identity = "screen\u001F${element.sceneName}\u001F${element.path}",
             )
         }
@@ -718,22 +714,6 @@ class MapTestCaseGenerator(
      * `SaveLoadController` 하나가 여섯 `scene` 에 앉아 *"`this.gameObject` 이(가) 사라진다"* 를
      * 여섯 벌 냈다 — 아무도 확인한 적 없고, 실행하는 사람이 찾을 이름도 아니다.
      */
-    /**
-     * **케이스로서의 등급**(ARTEL-681).
-     *
-     * 지도의 `status` 를 그대로 쓰면 안 된다. 그것은 *"이 기능이 단독 명세가 되나"* 에 답하는
-     * 값이고, `SpecStatus.derive` 가 `actionability` 를 맨 앞에 두어 `not-a-step` 이 다른 축을
-     * 이긴다. 그래서 누를 것이 없는 행은 눈에 보이는 효과를 들고 있어도 `not-a-step` 이다.
-     *
-     * 케이스가 묻는 것은 다르다 — **실행하는 사람이 이 줄을 돌릴 수 있나.** 누를 것이 없어도
-     * 볼 것이 있으면 돌릴 수 있다. 보면 된다.
-     *
-     * 그대로 실었더니 실측(2026-09-01)에서 `test_case.status` 가 `not-a-step` 인 줄이 70 건
-     * 나갔다. 화면은 이 값을 등급으로 보여 주므로 *"단계가 아님"* 이라고 적힌 케이스가 표에 선다.
-     */
-    private fun caseGrade(row: ContentMapCapabilityRow): String =
-        if (row.actionability == NOT_A_STEP) "runnable" else row.status
-
     private suspend fun keptAsObservation(row: ContentMapObservationRow): Boolean {
         if (row.triggerKind != ENGINE_CALLBACK) return false
         if (row.scenePresence == UNCONFIRMED_HERE) return false
