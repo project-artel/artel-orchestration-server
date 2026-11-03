@@ -34,6 +34,7 @@ import kr.artel.orchestration.testcase.dto.TestCaseCoverageResponse
 import kr.artel.orchestration.testcase.dto.TestCaseCreateRequest
 import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.TestCaseListResponse
+import kr.artel.orchestration.testcase.dto.TestCaseObserve
 import kr.artel.orchestration.testcase.dto.TestCaseResponse
 import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
 import kr.artel.orchestration.testcase.dto.toTestCaseDetailResponse
@@ -586,7 +587,11 @@ class TestCaseService(
             .toTestCaseDetailResponse(objectMapper, folderItems.findFirstFolderId(caseId))
     }
 
-    /** 케이스 수정. 준 필드만 반영. verificationStatus는 enum 검증. */
+    /**
+     * 케이스 수정. 준 필드만 반영. verificationStatus는 enum 검증.
+     *
+     * `observe` 는 컬럼이 아니라 `metadata.observe` 다(ARTEL-1280). 다른 키는 그대로 두고 그 키만 바꾼다.
+     */
     suspend fun updateTestCase(caseId: Long, userId: Long, request: TestCaseUpdateRequest): TestCaseResponse? {
         val existing = accessible(caseId, userId) ?: return null
         val statusName = request.verificationStatus?.let {
@@ -611,12 +616,15 @@ class TestCaseService(
                     expectedValue = request.expectedValue?.ifBlank { null } ?: version.expectedValue,
                     verificationStatus = statusName ?: version.verificationStatus,
                 ))
-                // 허용 범위와 종류는 버전마다 다르지 않은 케이스의 칸이다.
-                if (request.functions != null || kind != null || reviewStatus != null) {
+                // 허용 범위·종류·observe 는 버전마다 다르지 않은 케이스의 칸이다.
+                if (request.functions != null || kind != null || reviewStatus != null || request.observe != null) {
                     repository.save(identity.copy(
                         functions = request.functions?.validated() ?: identity.functions,
                         kind = kind ?: identity.kind,
                         reviewStatus = reviewStatus ?: identity.reviewStatus,
+                        metadata = request.observe
+                            ?.let { TestCaseObserve.write(identity.metadata, TestCaseObserve.validated(it), objectMapper) }
+                            ?: identity.metadata,
                     ))
                 }
                 versions.syncIdentities(listOf(caseId))
@@ -635,6 +643,9 @@ class TestCaseService(
             functions = request.functions?.validated() ?: existing.functions,
             kind = kind ?: existing.kind,
             reviewStatus = reviewStatus ?: existing.reviewStatus,
+            metadata = request.observe
+                ?.let { TestCaseObserve.write(existing.metadata, TestCaseObserve.validated(it), objectMapper) }
+                ?: existing.metadata,
         )
         val saved = withArrival(repository.save(updated), request.arrivesAt)
         projectChangeStreamManager.notify(saved.projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음

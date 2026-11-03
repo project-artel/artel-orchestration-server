@@ -1,5 +1,6 @@
 package kr.artel.orchestration.developermacro.dto
 
+import com.fasterxml.jackson.databind.JsonNode
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Size
@@ -43,9 +44,15 @@ data class CheckDeveloperMacroRequest(
     @field:NotBlank
     @field:Pattern(regexp = WIRE_ID_PATTERN, message = "숫자로 된 id 여야 합니다.")
     val gameBuildId: String?,
+
+    /** 행동 계약(대상·준비·효과). 없으면 계약 없이 검사한다. 모양은 agent-server 검사가 정하고 이 서버는 읽지 않는다. */
+    val contract: JsonNode? = null,
 )
 
-/** 등록 요청. 이름은 경로에 있다. [gameBuildId] 는 [CheckDeveloperMacroRequest.gameBuildId] 와 같다. */
+/**
+ * 등록 요청. 이름은 경로에 있다. [gameBuildId]·[contract] 는 [CheckDeveloperMacroRequest] 의 것과 같다.
+ * [contract] 없이 다시 등록하면 저장된 계약도 지운다 — 등록은 그 macro 의 정의 전부를 바꾸는 일이다.
+ */
 data class PutDeveloperMacroRequest(
     @field:NotBlank
     @field:Size(max = MAX_DEVELOPER_MACRO_SOURCE_LENGTH)
@@ -54,6 +61,8 @@ data class PutDeveloperMacroRequest(
     @field:NotBlank
     @field:Pattern(regexp = WIRE_ID_PATTERN, message = "숫자로 된 id 여야 합니다.")
     val gameBuildId: String?,
+
+    val contract: JsonNode? = null,
 )
 
 /**
@@ -114,10 +123,11 @@ data class DeveloperMacroSummaryResponse(
     val updatedBy: DeveloperMacroAuthor?,
 )
 
-/** 상세. 목록 한 줄에 원문을 더한 것이고, 등록(`PUT`)의 응답도 이 모양이다. */
+/** 상세. 목록 한 줄에 원문과 계약을 더한 것이고, 등록(`PUT`)의 응답도 이 모양이다. 계약이 없으면 [contract] 가 null 이다. */
 data class DeveloperMacroDetailResponse(
     val name: String,
     val source: String,
+    val contract: JsonNode?,
     val parameters: List<String>,
     val docstring: String,
     val gameBuildId: String,

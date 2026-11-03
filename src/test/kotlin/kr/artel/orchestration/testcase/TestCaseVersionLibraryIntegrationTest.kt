@@ -22,6 +22,7 @@ import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.project.storage.DocumentStorage
+import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -82,6 +83,36 @@ class TestCaseVersionLibraryIntegrationTest {
     @Autowired private lateinit var testCases: TestCaseRepository
     @Autowired private lateinit var versions: TestCaseVersionRepository
     @Autowired private lateinit var testCaseService: kr.artel.orchestration.testcase.service.TestCaseService
+
+    @Test
+    fun `MAP observe는 버전 동기화와 과거 버전 조회 뒤에도 공통 설정을 유지한다`(): Unit = runBlocking {
+        val (userId, _token) = signIn()
+        val projectId = newProject(userId)
+        val now = Instant.now()
+        val older = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "observe-old", createdAt = now.minusSeconds(60), updatedAt = now))
+        val newer = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "observe-new", createdAt = now, updatedAt = now))
+        val case = testCases.save(TestCaseEntity(projectId = projectId, scene = "S", step = "지도 조작", expectedValue = "결과",
+            metadata = Json.of("""{"origin":"content-map","observe":["Old::stale"]}""")))
+        versions.save(TestCaseVersionEntity.snapshotOf(case, older.id!!))
+        versions.save(TestCaseVersionEntity.snapshotOf(case, newer.id!!))
+        val caseId = case.id!!
+        val names = listOf("Game.Player::hp")
+        assertThat(testCaseService.updateTestCase(caseId, userId,
+            TestCaseUpdateRequest(gameBuildId = older.id.toString(), observe = names))!!.observe).isEqualTo(names)
+        versions.syncIdentities(listOf(caseId))
+        assertThat(testCaseService.getTestCase(caseId, userId)!!.observe).isEqualTo(names)
+        assertThat(testCaseService.getTestCase(caseId, userId, older.id)!!.observe).isEqualTo(names)
+        assertThat(testCaseService.getTestCase(caseId, userId, newer.id)!!.observe).isEqualTo(names)
+        assertThat(testCaseService.updateTestCase(caseId, userId, TestCaseUpdateRequest(observe = listOf("Progress::stage")))!!.observe)
+            .containsExactly("Progress::stage")
+        assertThat(testCaseService.getTestCase(caseId, userId, older.id)!!.observe).containsExactly("Progress::stage")
+        testCaseService.updateTestCase(caseId, userId, TestCaseUpdateRequest(observe = emptyList()))
+        versions.syncIdentities(listOf(caseId))
+        assertThat(testCaseService.getTestCase(caseId, userId, older.id)!!.observe).isNull()
+        assertThat(testCaseService.getTestCase(caseId, userId, newer.id)!!.observe).isNull()
+        val projected = testCases.findById(caseId)!!
+        assertThat(objectMapper.readTree(projected.metadata.asString())["origin"].asText()).isEqualTo("content-map")
+    }
 
     @Test
     fun `버전 목록과 버전 표, 그리고 이전 버전과의 비교`(): Unit = runBlocking {
