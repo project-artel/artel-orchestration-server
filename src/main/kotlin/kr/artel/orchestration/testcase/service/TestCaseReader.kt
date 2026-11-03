@@ -118,7 +118,6 @@ class TestCaseReader(
             condition = version.condition,
             expectedValue = version.expectedValue,
             expectedItems = version.expectedItems,
-            status = version.status,
             capabilityKey = version.capabilityKey,
             metadata = version.metadata,
         )
@@ -130,9 +129,9 @@ class TestCaseReader(
      */
     fun projectListRow(case: CaseListFields, version: VersionListFields): ShownContent =
         if (case.fromMap) {
-            ShownContent(version.scene, version.step, version.precondition, version.expectedValue, version.status)
+            ShownContent(version.scene, version.step, version.precondition, version.expectedValue)
         } else {
-            ShownContent(case.scene, case.step, case.precondition, case.expectedValue, case.status)
+            ShownContent(case.scene, case.step, case.precondition, case.expectedValue)
         }
 
     private suspend fun rowsOf(gameBuildId: Long): Map<Long, TestCaseVersionEntity> =
@@ -149,5 +148,4 @@ data class ShownContent(
     val step: String,
     val precondition: String?,
     val expectedValue: String,
-    val status: String?,
 )

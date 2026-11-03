@@ -80,7 +80,6 @@ class TestCaseFolderItemService(
                 step = content?.step ?: identity.step,
                 precondition = if (content != null) content.precondition else identity.precondition,
                 expectedValue = content?.expectedValue ?: identity.expectedValue,
-                status = if (content != null) content.status else identity.status,
                 verificationStatus = if (buildId == null) identity.verificationStatus else version?.verificationStatus,
                 createdAt = identity.createdAt ?: Instant.EPOCH,
             )

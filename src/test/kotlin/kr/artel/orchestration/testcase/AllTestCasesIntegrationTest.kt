@@ -2,6 +2,8 @@ package kr.artel.orchestration.testcase
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.reactor.awaitSingle
+import org.springframework.r2dbc.core.DatabaseClient
 import kr.artel.orchestration.auth.repository.AppUserRepository
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
@@ -41,6 +43,24 @@ class AllTestCasesIntegrationTest {
     @Autowired private lateinit var projectRepository: ProjectRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
     @Autowired private lateinit var objectMapper: ObjectMapper
+    @Autowired private lateinit var databaseClient: DatabaseClient
+
+
+    @Test
+    fun `TC DB 컬럼과 목록 응답에서 명세 등급이 제거된다`(): Unit = runBlocking {
+        val columns = databaseClient.sql("""
+            SELECT COUNT(*) AS total FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name IN ('test_case', 'test_case_version') AND column_name = 'status'
+        """).map { row, _ -> (row.get("total") as Number).toLong() }.one().awaitSingle()
+        assertThat(columns).isZero()
+        val (projectId, userId) = newProjectWithMember()
+        createCase(projectId, userId, 1)
+        val item = testCaseService.listTestCases(projectId, userId).items.single()
+        val json = objectMapper.readTree(objectMapper.writeValueAsString(item))
+        assertThat(json.has("status")).isFalse()
+        assertThat(json["verificationStatus"].asText()).isEqualTo("DRAFT")
+    }
 
     private suspend fun newUser(): Long {
         val now = Instant.now()

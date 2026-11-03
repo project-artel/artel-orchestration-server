@@ -18,7 +18,7 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
     /** 케이스 목록에 보일 칸만(ARTEL-1212). 2천여 줄이면 행 전체가 약 5MB, 이 칸들은 그 일부다. */
     @Query(
         """
-        SELECT test_case_id, scene, step, precondition, expected_value, status, verification_status
+        SELECT test_case_id, scene, step, precondition, expected_value, verification_status
           FROM test_case_version
          WHERE game_build_id = :gameBuildId
         """
@@ -106,7 +106,6 @@ interface TestCaseVersionRepository : CoroutineCrudRepository<TestCaseVersionEnt
                condition      = CASE WHEN t.metadata ->> 'origin' = 'content-map' THEN v.condition ELSE t.condition END,
                expected_value = CASE WHEN t.metadata ->> 'origin' = 'content-map' THEN v.expected_value ELSE t.expected_value END,
                expected_items = CASE WHEN t.metadata ->> 'origin' = 'content-map' THEN v.expected_items ELSE t.expected_items END,
-               status         = CASE WHEN t.metadata ->> 'origin' = 'content-map' THEN v.status ELSE t.status END,
                capability_key = CASE WHEN t.metadata ->> 'origin' = 'content-map' THEN v.capability_key ELSE t.capability_key END,
                metadata       = CASE WHEN t.metadata ->> 'origin' = 'content-map' THEN v.metadata ELSE t.metadata END,
                updated_at     = now()

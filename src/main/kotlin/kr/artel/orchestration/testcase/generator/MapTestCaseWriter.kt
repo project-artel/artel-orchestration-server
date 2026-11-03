@@ -249,7 +249,6 @@ class MapTestCaseWriter(
         condition = conditionJson(case),
         expectedValue = case.expected,
         expectedItems = expectedItemsJson(case),
-        status = case.status,
         capabilityKey = case.capabilityKey,
         metadata = metadataOf(contentMapId, case),
     )
@@ -270,7 +269,6 @@ class MapTestCaseWriter(
         condition = conditionJson(case),
         expectedValue = case.expected,
         expectedItems = expectedItemsJson(case),
-        status = case.status,
         capabilityKey = case.capabilityKey,
         metadata = metadataOf(contentMapId, case),
         verificationStatus = verificationStatus,
