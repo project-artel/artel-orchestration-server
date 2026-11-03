@@ -447,6 +447,9 @@ class CaseVerdictFromQaIntegrationTest {
         assertThat(verdicts.map { it.path("case_id").asLong() to it.path("verification_status").asText() })
             .containsExactly(run.passedCaseId to "VERIFIED", run.failedCaseId to "FAILED")
         assertThat(verdicts).allSatisfy { assertThat(it.path("game_build_id").asLong()).isEqualTo(run.gameBuildId) }
+        assertThat(verdicts.map { it.path("case_number").asText() }).containsExactly("1", "2")
+        val rows = qaLogRepository.findAll().toList().filter { it.qaTryId == run.tryId && it.type == "CASE_VERDICT" }.sortedBy { it.id }
+        assertThat(rows.map { it.message }).containsExactly("TC-001 → VERIFIED", "TC-002 → FAILED")
     }
 
     @Test
