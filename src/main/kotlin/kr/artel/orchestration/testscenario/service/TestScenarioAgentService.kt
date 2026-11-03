@@ -33,6 +33,7 @@ import kr.artel.orchestration.testrun.entity.TestRunMessageEntity
 import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
 import kr.artel.orchestration.testrun.service.RunAuthoringLocks
 import kr.artel.orchestration.testrun.service.RunScenarioReader
+import kr.artel.orchestration.testrun.service.ScenarioHead
 import kr.artel.orchestration.testscenario.agent.PhrasedStep
 import kr.artel.orchestration.testscenario.agent.ScenarioStepPhrasingClient
 import kr.artel.orchestration.testscenario.config.AuthoringExperimentProperties
@@ -320,6 +321,7 @@ class TestScenarioAgentService(
             existing.draftOnly = draftOnly
             existing.shownSteps = shownStepsOf(currentScenarios)
             existing.shownModes = shownModesOf(currentScenarios)
+            existing.shownHeads = shownHeadsOf(currentScenarios)
             // **새 요청이면 지난 턴에 받아 둔 것을 비운다.** 재작성 턴은 이 길로 오지 않으므로(그쪽은
             // [sendTurn] 을 직접 부른다) 앞서 받아 둔 것이 그대로 살아 있다.
             existing.submitted.clear()
@@ -704,6 +706,7 @@ class TestScenarioAgentService(
         sessions[sessionKey]?.draftOnly = draftOnly
         sessions[sessionKey]?.shownSteps = shownStepsOf(currentScenarios)
         sessions[sessionKey]?.shownModes = shownModesOf(currentScenarios)
+        sessions[sessionKey]?.shownHeads = shownHeadsOf(currentScenarios)
         // 진행률의 분모. 흐름 하나가 시나리오 하나가 되는 것이 계산의 뜻이므로 그 수를 쓴다.
         sessions[sessionKey]?.expected = flows.size.takeIf { it > 0 }
     }
@@ -898,6 +901,12 @@ class TestScenarioAgentService(
     private fun shownStepsOf(currentScenarios: List<CurrentScenario>): Map<Long, List<ChatScenarioStep>> =
         currentScenarios.mapNotNull { scenario -> scenario.scenarioId?.takeIf { it > 0 }?.let { it to scenario.steps } }.toMap()
 
+    /** 저장된 시나리오(양수 번호)의 제목 · 설명 · 실행 방식. 저장 직전 비교에서 스텝과 함께 본다(ARTEL-1264). */
+    private fun shownHeadsOf(currentScenarios: List<CurrentScenario>): Map<Long, ScenarioHead> =
+        currentScenarios.mapNotNull { scenario ->
+            scenario.scenarioId?.takeIf { it > 0 }?.let { it to ScenarioHead(scenario.title, scenario.description, scenario.executionMode) }
+        }.toMap()
+
     /** 저장된 시나리오(양수 번호)의 실행 방식(ARTEL-1109). draft 가 방식을 잃지 않도록 [shownStepsOf] 와 짝으로 든다. */
     private fun shownModesOf(currentScenarios: List<CurrentScenario>): Map<Long, ScenarioExecutionMode> =
         currentScenarios.mapNotNull { scenario -> scenario.scenarioId?.takeIf { it > 0 }?.let { it to scenario.executionMode } }.toMap()
@@ -943,7 +952,7 @@ class TestScenarioAgentService(
             )
             // **그 사이 사람이 고쳤거나 다른 사람의 AI 가 쥐고 있으면 덮지 않는다**(ARTEL-1264). 저장하는 턴이어도
             // 이 시나리오만 draft 로 돌려 사용자가 보고 고르게 한다.
-            val diverted = if (session.autoApply) overwriteBlocker(sessionKey, session, scenario.scenarioId) else null
+            val diverted = if (session.autoApply) overwriteBlocker(sessionKey, session, scenario) else null
             val save = session.autoApply && diverted == null
             val absorbedIds = node.path("absorbedScenarioIds").mapNotNull {
                 it.takeIf { n -> n.isNumber }?.asLong()
@@ -1123,12 +1132,17 @@ class TestScenarioAgentService(
      * - 다른 사람의 Artel Bot 이 이 턴에 고쳐 쥐고 있다.
      * - 이 턴을 시작할 때 AI 에게 보여 준 본문과 지금 저장된 본문이 다르다 — 그 사이 누가 고쳤다. 덮으면 그것이 사라진다.
      */
-    private suspend fun overwriteBlocker(sessionKey: String, session: AgentSession, scenarioId: Long?): String? {
-        if (scenarioId == null || scenarioId <= 0) return null
+    private suspend fun overwriteBlocker(sessionKey: String, session: AgentSession, scenario: ScenarioResult): String? {
+        // 번호가 없어도 런에 같은 제목이 있으면 reconcile 이 그것을 덮는다. 덮을 대상으로 본다.
+        val scenarioId = runScenarioReader.targetIdOf(session.runId, scenario.scenarioId, scenario.title) ?: return null
         if (runLocks.heldByOther(scenarioId, sessionKey)) return "다른 사람의 Artel Bot 이 고치는 중"
         val shown = session.shownSteps[scenarioId] ?: return null
         val now = runScenarioReader.currentSteps(scenarioId) ?: return null
-        return if (now != shown) "AI 가 읽은 뒤 다른 사람이 고친 것" else null
+        if (now != shown) return "AI 가 읽은 뒤 다른 사람이 고친 것"
+        // 스텝 밖(제목 · 설명 · 실행 방식)만 바꿔도 덮으면 사라진다. 같은 턴에 먼저 저장한 것이 잠금을 풀면 그 틈에 고칠 수 있다.
+        val shownHead = session.shownHeads[scenarioId] ?: return null
+        val nowHead = runScenarioReader.currentHead(scenarioId) ?: return null
+        return if (nowHead != shownHead) "AI 가 읽은 뒤 다른 사람이 고친 것" else null
     }
 
     private fun divertedNotice(title: String, why: String): String =
@@ -1140,6 +1154,7 @@ class TestScenarioAgentService(
         runLocks.lockScenarios(sessionKey, scenarioIds)
         val now = scenarioIds.mapNotNull { id -> runScenarioReader.currentSteps(id)?.let { id to it } }
         session.shownSteps = session.shownSteps + now
+        session.shownHeads = session.shownHeads + scenarioIds.mapNotNull { id -> runScenarioReader.currentHead(id)?.let { id to it } }
     }
 
     private suspend fun applyOrRepair(
@@ -1166,7 +1181,7 @@ class TestScenarioAgentService(
         progress(sessionKey, AuthoringStage.CHECKING)
         // 결과 봉투로 한꺼번에 온 것도 저장 직전에 비교한다(ARTEL-1264). 덮으면 안 되는 것은 draft 로 돌린다.
         val held = if (saveHere && session.autoApply) {
-            scenarios.mapNotNull { s -> overwriteBlocker(sessionKey, session, s.scenarioId)?.let { s to it } }
+            scenarios.mapNotNull { s -> overwriteBlocker(sessionKey, session, s)?.let { s to it } }
         } else emptyList()
         if (held.isNotEmpty()) {
             held.forEach { (s, _) ->
@@ -2300,6 +2315,8 @@ class TestScenarioAgentService(
         @Volatile var shownSteps: Map<Long, List<ChatScenarioStep>> = emptyMap(),
         /** 이번 턴에 모델에게 보인 저장된 시나리오의 실행 방식(ARTEL-1109). 매 턴 갱신한다. */
         @Volatile var shownModes: Map<Long, ScenarioExecutionMode> = emptyMap(),
+        /** 이번 턴에 모델에게 보인 저장된 시나리오의 제목 · 설명 · 실행 방식(ARTEL-1264). 저장 직전 비교 기준. */
+        @Volatile var shownHeads: Map<Long, ScenarioHead> = emptyMap(),
         /**
          * 시나리오를 **한 번에 하나씩** 받게 하는 잠금.
          *
