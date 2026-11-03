@@ -56,7 +56,6 @@ fun TestCaseEntity.toTestCaseResponse(folderId: Long? = null): TestCaseResponse 
         step = step,
         precondition = precondition,
         expectedValue = expectedValue,
-        status = status,
         verificationStatus = verificationStatus,
         lastVerifiedBuildId = lastVerifiedBuildId?.toString(),
         createdAt = createdAt ?: Instant.EPOCH,
@@ -65,6 +64,7 @@ fun TestCaseEntity.toTestCaseResponse(folderId: Long? = null): TestCaseResponse 
         functions = functionsOrNull(),
         kind = kind,
         arrivesAt = arrivalOrNull(),
+        reviewStatus = reviewStatus,
     )
 
 /** 도착 화면(`metadata.arrives_at`). 없거나 비면 null. */
@@ -91,7 +91,6 @@ fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper, folderId
         step = base.step,
         precondition = base.precondition,
         expectedValue = base.expectedValue,
-        status = base.status,
         verificationStatus = base.verificationStatus,
         lastVerifiedBuildId = base.lastVerifiedBuildId,
         createdAt = base.createdAt,
@@ -101,6 +100,7 @@ fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper, folderId
         functions = base.functions,
         kind = base.kind,
         arrivesAt = base.arrivesAt,
+        reviewStatus = base.reviewStatus,
     )
 }
 

@@ -17,6 +17,8 @@ data class CaseBatchRequest(
      * 버전만 오른다.
      */
     val gameBuildId: String? = null,
+    /** 신규 TC에만 적용하며 기존 TC 수정은 검토 상태를 보존한다. */
+    val draft: Boolean = true,
 )
 
 data class CaseTermInput(
@@ -83,4 +85,5 @@ data class CaseContractRow(
     val kind: String = "FUNCTION",
     /** 이 TC 의 몫이 있는 버전(game build) id(ARTEL-1310). 비면 어느 버전에도 없다. */
     val gameBuildIds: List<String> = emptyList(),
+    val reviewStatus: String = "READY",
 )

@@ -43,6 +43,7 @@ import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.generator.MapTestCaseWriter
 import kr.artel.orchestration.testcase.entity.TestCaseKind
+import kr.artel.orchestration.testcase.entity.ReviewStatus
 import kr.artel.orchestration.testcase.entity.VerificationStatus
 import kr.artel.orchestration.testcase.repository.TestCaseFolderItemRepository
 import kr.artel.orchestration.testcase.repository.TestCaseRepository
@@ -84,6 +85,11 @@ class TestCaseService(
 ) {
 
     private val logger = LoggerFactory.getLogger(TestCaseService::class.java)
+
+    suspend fun reviewStatusOptions(projectId: Long, userId: Long): kr.artel.orchestration.testcase.dto.TestCaseReviewStatusOptions {
+        if (!projectAccessService.isMember(projectId, userId)) throw NotFoundException("프로젝트를 찾을 수 없습니다.")
+        return kr.artel.orchestration.testcase.dto.TestCaseReviewStatusOptions()
+    }
     /**
      * 화면이 읽는 케이스 목록(최근 것부터). 비참여자면 빈 목록.
      *
@@ -466,20 +472,20 @@ class TestCaseService(
         if (!projectAccessService.isMember(projectId, userId)) {
             return TestCaseCoverageResponse(0, 0, 0, 0, 0, 0, emptyList())
         }
-        val total = repository.countByProjectId(projectId).toInt()
+        val total = repository.countReadyByProjectId(projectId).toInt()
         val uncoveredScenes = repository.findScenesOfUncovered(projectId).toList()
         val unauthored = uncoveredScenes.sumOf { it.count }.toInt()
         return TestCaseCoverageResponse(
             total = total,
             authored = total - unauthored,
             unauthored = unauthored,
-            verified = repository.countByProjectIdAndVerificationStatus(
+            verified = repository.countReadyByProjectIdAndVerificationStatus(
                 projectId, VerificationStatus.VERIFIED.name
             ).toInt(),
-            draft = repository.countByProjectIdAndVerificationStatus(
+            draft = repository.countReadyByProjectIdAndVerificationStatus(
                 projectId, VerificationStatus.DRAFT.name
             ).toInt(),
-            broken = repository.countByProjectIdAndVerificationStatus(
+            broken = repository.countReadyByProjectIdAndVerificationStatus(
                 projectId, VerificationStatus.BROKEN.name
             ).toInt(),
             uncoveredScenes = uncoveredScenes,
@@ -509,6 +515,7 @@ class TestCaseService(
             precondition = request.precondition?.ifBlank { null },
             expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
+            reviewStatus = if (request.draft) ReviewStatus.DRAFT.name else ReviewStatus.READY.name,
             functions = request.functions?.validated(),
             kind = (TestCaseKind.parse(request.kind) ?: TestCaseKind.FUNCTION).name,
         )
@@ -586,6 +593,7 @@ class TestCaseService(
             VerificationStatus.fromWire(it)?.name
                 ?: throw BadRequestException("verificationStatus must be one of ${VerificationStatus.NAMES}")
         }
+        val reviewStatus = request.reviewStatus?.let(ReviewStatus::parse)
         val kind = TestCaseKind.parse(request.kind)?.name
         val buildId = parseOptionalWireId(request.gameBuildId, "gameBuildId")
         if (buildId != null) {
@@ -604,10 +612,11 @@ class TestCaseService(
                     verificationStatus = statusName ?: version.verificationStatus,
                 ))
                 // 허용 범위와 종류는 버전마다 다르지 않은 케이스의 칸이다.
-                if (request.functions != null || kind != null) {
+                if (request.functions != null || kind != null || reviewStatus != null) {
                     repository.save(identity.copy(
                         functions = request.functions?.validated() ?: identity.functions,
                         kind = kind ?: identity.kind,
+                        reviewStatus = reviewStatus ?: identity.reviewStatus,
                     ))
                 }
                 versions.syncIdentities(listOf(caseId))
@@ -625,6 +634,7 @@ class TestCaseService(
             verificationStatus = statusName ?: existing.verificationStatus,
             functions = request.functions?.validated() ?: existing.functions,
             kind = kind ?: existing.kind,
+            reviewStatus = reviewStatus ?: existing.reviewStatus,
         )
         val saved = withArrival(repository.save(updated), request.arrivesAt)
         projectChangeStreamManager.notify(saved.projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음

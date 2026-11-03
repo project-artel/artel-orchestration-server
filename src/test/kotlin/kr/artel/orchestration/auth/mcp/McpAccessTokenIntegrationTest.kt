@@ -165,6 +165,10 @@ class McpAccessTokenIntegrationTest {
         val world = newWorld()
         val writer = mint(world.userId, scope = "testcase:read testcase:write")
         val reader = mint(world.userId, scope = "testcase:read")
+        val supported = call(reader, HttpMethod.GET, "${world.base}/test-cases/review-status-options")
+        assertThat(supported.status).isEqualTo(200)
+        assertThat(supported.body["statuses"].map { it.asText() }).containsExactly("DRAFT", "READY")
+        assertThat(call(mint(world.userId, scope = "macro:read"), HttpMethod.GET, "${world.base}/test-cases/review-status-options").status).isEqualTo(403)
         val body = """
             {"terms":[{"name":"검","kind":"has","meaning":"대장간에서 사는 검","start":"0"}],
              "cases":[
@@ -194,6 +198,13 @@ class McpAccessTokenIntegrationTest {
         assertThat(wolf["contractSource"].asText()).isEqualTo("mcp")
         // 사람이 같은 TC 의 계약을 고치면 user 가 되고, 그 뒤 MCP 가 다시 보내도 사람이 정한 것이 남는다.
         val wolfId = wolf["testCaseId"].asText()
+        assertThat(wolf["reviewStatus"].asText()).isEqualTo("DRAFT")
+        assertThat(call(reader, HttpMethod.GET, "${world.base}/test-cases/$wolfId").body["reviewStatus"].asText()).isEqualTo("DRAFT")
+        assertThat(call(reader, HttpMethod.PUT, "${world.base}/test-cases/$wolfId", """{"reviewStatus":"READY"}""").status).isEqualTo(403)
+        val approved = call(writer, HttpMethod.PUT, "${world.base}/test-cases/$wolfId", """{"reviewStatus":"READY"}""")
+        assertThat(approved.status).isEqualTo(200)
+        assertThat(approved.body["reviewStatus"].asText()).isEqualTo("READY")
+        assertThat(approved.body["verificationStatus"].asText()).isEqualTo("DRAFT")
         fun again(needs: String) = """{"cases":[{"testCaseId":"$wolfId","scene":"숲","step":"늑대를 공격한다.","expectedValue":"늑대가 쓰러진다.","needs":["$needs"]}]}"""
         assertThat(call(world.session, HttpMethod.POST, "${world.base}/case-contracts/cases", again("검 >= 1")).status).isEqualTo(200)
         assertThat(call(writer, HttpMethod.POST, "${world.base}/case-contracts/cases", again("검 == 2")).status).isEqualTo(200)

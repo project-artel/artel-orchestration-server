@@ -55,6 +55,7 @@ class TestCaseVectorSearchRepository(
               FROM test_case_embedding e
               JOIN test_case t ON t.id = e.test_case_id
              WHERE t.project_id = :projectId
+               AND t.review_status = 'READY'
                AND e.kind = :kind
                AND e.model = :model
                AND e.embedding IS NOT NULL

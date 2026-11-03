@@ -73,10 +73,10 @@ class CaseContractService(
     /** 뽑을 계약이 남았나 — 돌고 있는 정리가 있거나, 계약이 없거나 문구가 바뀐 글 TC 가 있다. */
     suspend fun hasPending(projectId: Long): Boolean =
         running[projectId]?.isActive == true ||
-            testCases.findByProjectIdOrderByIdAsc(projectId).toList().any { it.capabilityKey == null && needsContract(it) }
+            testCases.findByProjectIdOrderByIdAsc(projectId).toList().any { it.reviewStatus == "READY" && it.capabilityKey == null && needsContract(it) }
 
     suspend fun refresh(projectId: Long): CaseContractRefresh = locks.computeIfAbsent(projectId) { Mutex() }.withLock {
-        val cases = testCases.findByProjectIdOrderByIdAsc(projectId).toList()
+        val cases = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { it.reviewStatus == "READY" }
         val need = cases.filter { it.capabilityKey == null && needsContract(it) }
         val glossary = glossary(projectId)
         if (need.isEmpty()) return@withLock CaseContractRefresh(0, 0, glossary.terms.size())
@@ -300,7 +300,7 @@ class CaseContractService(
     suspend fun applyStatement(projectId: Long, said: String, question: String, buildId: Long? = null): Int {
         val glossary = glossary(projectId)
         if (glossary.terms.size() == 0) return 0
-        val cases = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { it.capabilityKey == null }
+        val cases = testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { it.reviewStatus == "READY" && it.capabilityKey == null }
         val lines = cases.map(::contractLine)
         val patches = agent.statement(StatementRequest(said, question, glossary.terms, glossary.startState, lines)).patches
         var applied = 0
@@ -357,6 +357,7 @@ class CaseContractService(
                 contractSource = meta?.path("contract")?.path("source")?.asText(null),
                 arrivesAt = meta?.path(MapTestCaseWriter.ARRIVES_AT)?.asText(null)?.ifBlank { null },
                 kind = case.kind,
+                reviewStatus = case.reviewStatus,
                 gameBuildIds = builds[case.id].orEmpty(),
             )
         }

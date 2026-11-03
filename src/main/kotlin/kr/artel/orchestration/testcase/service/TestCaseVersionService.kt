@@ -110,7 +110,6 @@ class TestCaseVersionService(
                     step = case.step,
                     precondition = case.precondition,
                     expectedValue = case.expectedValue,
-                    status = case.status,
                     origin = if (case.fromMap) MAP else MANUAL,
                     folderId = folderIds[case.id]?.toString(),
                     createdAt = case.createdAt ?: Instant.EPOCH,
@@ -118,6 +117,7 @@ class TestCaseVersionService(
                     presence = BOTH,
                     compareVerificationStatus = null,
                     kind = case.kind,
+                    reviewStatus = case.reviewStatus,
                     arrivesAt = case.arrivesAt,
                 )
             }
@@ -149,7 +149,6 @@ class TestCaseVersionService(
             step = shown.step,
             precondition = shown.precondition,
             expectedValue = shown.expectedValue,
-            status = shown.status,
             origin = if (case.fromMap) MAP else MANUAL,
             folderId = folderId?.toString(),
             createdAt = case.createdAt ?: Instant.EPOCH,
@@ -157,6 +156,7 @@ class TestCaseVersionService(
             presence = presence,
             compareVerificationStatus = there?.verificationStatus?.takeIf { comparing },
             kind = case.kind,
+            reviewStatus = case.reviewStatus,
             arrivesAt = case.arrivesAt,
         )
     }

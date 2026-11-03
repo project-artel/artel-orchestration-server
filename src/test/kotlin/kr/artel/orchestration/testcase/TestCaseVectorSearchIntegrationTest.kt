@@ -20,7 +20,9 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Primary
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.test.context.ActiveProfiles
-import java.util.concurrent.atomic.AtomicLong
+import java.time.Instant
+import kr.artel.orchestration.project.entity.ProjectEntity
+import kr.artel.orchestration.project.repository.ProjectRepository
 
 /** V23의 vector(1024)와 같아야 한다. */
 private const val DIMENSIONS = 1024
@@ -68,7 +70,12 @@ class TestCaseVectorSearchIntegrationTest {
     @Autowired private lateinit var databaseClient: DatabaseClient
     @Autowired private lateinit var fake: FixedQueryEmbeddingClient
 
-    private val projectSeq = AtomicLong(80_000)
+    @Autowired private lateinit var projects: ProjectRepository
+
+    private suspend fun newProject(): Long {
+        val now = Instant.now()
+        return projects.save(ProjectEntity(name = "vector-search", genre = "ACTION", createdAt = now, updatedAt = now)).id!!
+    }
     private val model: String get() = properties.model
 
     @BeforeEach
@@ -81,9 +88,21 @@ class TestCaseVectorSearchIntegrationTest {
     }
 
     @Test
+    fun `초안은 벡터 검색에서 제외하고 승인하면 검색할 수 있다`(): Unit = runBlocking {
+        val project = newProject()
+        val id = insertCase(project, "RULE", "검토 전 구매")
+        insertVector(id, axis(0))
+        val saved = testCaseRepository.findById(id)!!
+        testCaseRepository.save(saved.copy(reviewStatus = "DRAFT"))
+        assertThat(searchService.search(project, NEAR, null, 10).results).isEmpty()
+        testCaseRepository.save(saved.copy(reviewStatus = "READY"))
+        assertThat(searchService.search(project, NEAR, null, 10).results.map { it.id }).containsExactly(id.toString())
+    }
+
+    @Test
     fun `다른 프로젝트의 케이스는 새지 않는다`(): Unit = runBlocking {
-        val mine = projectSeq.incrementAndGet()
-        val other = projectSeq.incrementAndGet()
+        val mine = newProject()
+        val other = newProject()
         val a = insertCase(mine, "RULE", "구매")
         insertVector(a, axis(0))
         val x = insertCase(other, "RULE", "구매")
@@ -96,7 +115,7 @@ class TestCaseVectorSearchIntegrationTest {
 
     @Test
     fun `category로 좁힐 수 있다`(): Unit = runBlocking {
-        val project = projectSeq.incrementAndGet()
+        val project = newProject()
         val rule = insertCase(project, "RULE", "골드 차감")
         insertVector(rule, axis(0))
         val ui = insertCase(project, "UI", "상점 버튼")
@@ -109,7 +128,7 @@ class TestCaseVectorSearchIntegrationTest {
 
     @Test
     fun `가까운 순으로 정렬된다`(): Unit = runBlocking {
-        val project = projectSeq.incrementAndGet()
+        val project = newProject()
         val near = insertCase(project, "RULE", "구매")
         insertVector(near, axis(0))
         val far = insertCase(project, "RULE", "판매")
@@ -123,7 +142,7 @@ class TestCaseVectorSearchIntegrationTest {
 
     @Test
     fun `결과 상한을 지킨다`(): Unit = runBlocking {
-        val project = projectSeq.incrementAndGet()
+        val project = newProject()
         repeat(5) { insertVector(insertCase(project, "RULE", "케이스 $it"), axis(0)) }
 
         val result = searchService.search(project, NEAR, null, 3)
@@ -133,7 +152,7 @@ class TestCaseVectorSearchIntegrationTest {
 
     @Test
     fun `벡터가 없으면 빈 결과다`(): Unit = runBlocking {
-        val project = projectSeq.incrementAndGet()
+        val project = newProject()
         insertCase(project, "RULE", "아직 임베딩 안 됨") // 벡터 없음
 
         val result = searchService.search(project, NEAR, null, 10)
@@ -143,7 +162,7 @@ class TestCaseVectorSearchIntegrationTest {
 
     @Test
     fun `대기 행(벡터 없음)은 결과에서 빠진다`(): Unit = runBlocking {
-        val project = projectSeq.incrementAndGet()
+        val project = newProject()
         val ready = insertCase(project, "RULE", "완성")
         insertVector(ready, axis(0))
         val pending = insertCase(project, "RULE", "대기중")
@@ -156,7 +175,7 @@ class TestCaseVectorSearchIntegrationTest {
 
     @Test
     fun `모델이 설정과 다르면 예외를 던진다`(): Unit = runBlocking {
-        val project = projectSeq.incrementAndGet()
+        val project = newProject()
         insertVector(insertCase(project, "RULE", "구매"), axis(0))
         fake.modelOverride = "openai/some-other-embedding-model"
 

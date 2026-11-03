@@ -27,6 +27,8 @@ data class TestCaseCreateRequest(
     val kind: String? = null,
     /** 하고 나면 가는 화면(ARTEL-1312). null 이거나 빈 문자열이면 화면이 바뀌지 않는 TC 다. */
     val arrivesAt: String? = null,
+    /** true면 검토 전 초안이다. 기존 화면의 생성 동작은 유지한다. */
+    val draft: Boolean = false,
 )
 
 /** 케이스 수정. 검증상태(verificationStatus)도 여기서 바꿀 수 있다. */
@@ -46,6 +48,7 @@ data class TestCaseUpdateRequest(
     val kind: String? = null,
     /** 도착 화면을 바꾼다(ARTEL-1312). null 이면 건드리지 않고, 빈 문자열이면 "화면이 바뀌지 않는다" 로 정한다. */
     val arrivesAt: String? = null,
+    val reviewStatus: String? = null,
 )
 
 /**
@@ -64,8 +67,6 @@ data class TestCaseBulkDeleteResponse(val deleted: Int)
 /**
  * 조회 응답 한 줄. id 계열은 FE 64비트 정밀도 손실 방지로 문자열로 낸다.
  *
- * @property status 명세를 만든 쪽이 매긴 상태. [verificationStatus](우리 QA 런의 결과)와 다른 축이라
- *   둘 다 낸다 — 화면에서 하나로 합치면 "명세는 준비됐지만 아직 검증 안 됨"을 표현할 수 없다.
  */
 data class TestCaseResponse(
     val id: String,
@@ -74,7 +75,6 @@ data class TestCaseResponse(
     val step: String,
     val precondition: String?,
     val expectedValue: String,
-    val status: String?,
     val verificationStatus: String,
     val lastVerifiedBuildId: String?,
     val createdAt: Instant,
@@ -91,6 +91,7 @@ data class TestCaseResponse(
     val kind: String = TestCaseKind.FUNCTION.name,
     /** 하고 나면 가는 화면(씬 전이 TC)(ARTEL-1312). 화면이 안 바뀌면 null. */
     val arrivesAt: String? = null,
+    val reviewStatus: String = "READY",
 )
 
 data class TestCaseListResponse(val items: List<TestCaseResponse>)
@@ -103,7 +104,7 @@ data class TestCaseListResponse(val items: List<TestCaseResponse>)
  * 전량(1000건 규모)이고 목록을 읽는 쪽은 이 값을 쓰지 않는다 — 상세는 사용자가 케이스 하나를 열었을
  * 때 1건이다. 보여줄 곳이 상세 하나뿐이면 실어 나르는 곳도 상세 하나여야 한다.
  *
- * @property evidenceGaps 명세 쪽이 이 케이스를 [status]로 매긴 **이유 코드**
+ * @property evidenceGaps 명세 근거에서 확인이 필요한 이유 코드
  *   (`metadata.source.evidence_gaps`). 없으면 빈 목록이다. 저작 Agent에는 보내지 않는다 —
  *   왜 근거가 부족한지에 대해 Agent가 할 수 있는 일이 없다(ARTEL-380).
  */
@@ -114,7 +115,6 @@ data class TestCaseDetailResponse(
     val step: String,
     val precondition: String?,
     val expectedValue: String,
-    val status: String?,
     val verificationStatus: String,
     val lastVerifiedBuildId: String?,
     val createdAt: Instant,
@@ -127,4 +127,8 @@ data class TestCaseDetailResponse(
     val kind: String = TestCaseKind.FUNCTION.name,
     /** [TestCaseResponse.arrivesAt] 와 같다. */
     val arrivesAt: String? = null,
+    val reviewStatus: String = "READY",
 )
+
+/** 생성 전에 검토 상태 API 지원 여부를 확인하는 응답. */
+data class TestCaseReviewStatusOptions(val statuses: List<String> = listOf("DRAFT", "READY"))

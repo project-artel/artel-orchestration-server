@@ -109,7 +109,6 @@ class SpecXlsxWriter {
             "테스트 스텝" to { it.spec.step.orEmpty() },
             "사전조건" to { it.spec.precondition.orEmpty() },
             "기대 결과" to { it.spec.expectedValue.orEmpty() },
-            "상태" to { it.spec.status.orEmpty() },
         )
     }
 }

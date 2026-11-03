@@ -220,7 +220,6 @@ class TestCaseSpecService(
             step = step,
             precondition = entry.spec.precondition?.takeIf { it.isNotBlank() },
             expectedValue = expectedValue,
-            status = entry.spec.status?.takeIf { it.isNotBlank() },
             metadata = entry.metadata?.let { Json.of(objectMapper.writeValueAsBytes(it)) }
                 ?: Json.of("{}"),
         )
@@ -233,7 +232,6 @@ class TestCaseSpecService(
         val step: String,
         val precondition: String?,
         val expectedValue: String,
-        val status: String?,
         val metadata: Json,
     ) {
         /** 같은 배열 안의 중복을 접는 키. spec_id가 있으면 그것이, 없으면 씬+스텝이 정체성이다. */
@@ -245,7 +243,6 @@ class TestCaseSpecService(
             step = step,
             precondition = precondition,
             expectedValue = expectedValue,
-            status = status,
             schemaVersion = schemaVersion,
             metadata = metadata,
             specId = specId,
@@ -259,7 +256,6 @@ class TestCaseSpecService(
             step = step,
             precondition = precondition,
             expectedValue = expectedValue,
-            status = status,
             schemaVersion = schemaVersion,
             metadata = metadata,
             // spec_id는 한 번 붙으면 유지한다. 새 명세가 값을 안 줘도(구버전) 이미 이어 둔 정체성을

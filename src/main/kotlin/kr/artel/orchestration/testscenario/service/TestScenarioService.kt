@@ -41,7 +41,18 @@ class TestScenarioService(
     private val objectMapper: ObjectMapper,
     /** Artel Bot 이 고치는 중인 런의 시나리오는 사람이 쓰지 못한다(ARTEL-1264). */
     private val runLocks: RunAuthoringLocks,
+    private val testCases: kr.artel.orchestration.testcase.repository.TestCaseRepository,
 ) {
+
+    private suspend fun validateReviewedCases(projectId: Long, draft: ScenarioDraft) {
+        val ids = draft.steps.mapNotNull { it.caseId }.toSet()
+        if (ids.isEmpty()) return
+        val cases = testCases.findAllById(ids).toList()
+        // 없는 참조를 다루던 기존 동작은 유지하되, 다른 프로젝트나 초안은 추가할 수 없다.
+        if (cases.any { it.projectId != projectId || it.reviewStatus != "READY" }) {
+            throw kr.artel.orchestration.common.error.BadRequestException("사용 가능한 TC만 시나리오에 넣을 수 있습니다.")
+        }
+    }
 
     /** 새 시나리오를 빈 본문으로 생성하고 testScenarioId를 반환한다. 비참여자면 null(→404). */
     suspend fun createScenario(projectId: Long, appUserId: Long): Long? {
@@ -108,6 +119,7 @@ class TestScenarioService(
         // execution_mode 를 보내지 않은 요청은 기존 값을 유지하므로, 검사도 유지될 값으로 한다.
         val stated = draft.copy(executionMode = draft.executionMode ?: entity.executionMode)
         ScenarioExecutionRules.validate(stated)
+        validateReviewedCases(entity.projectId, stated)
         // 기대 판정 라벨은 이 경로로 못 들어온다(ARTEL-301). 저작 화면은 라벨을 모르므로 자동저장이
         // 라벨 없는 steps를 보내고, 그대로 저장하면 스텝을 한 글자 고쳤을 뿐인데 그 시나리오의
         // 정답지가 통째로 사라진다. 규칙과 이유는 [ExpectedLabelPolicy]에 있다.
@@ -134,6 +146,7 @@ class TestScenarioService(
         if (draft != null) {
             val stated = draft.copy(executionMode = draft.executionMode ?: entity.executionMode)
             ScenarioExecutionRules.validate(stated)
+            validateReviewedCases(entity.projectId, stated)
             // 승인도 본문 저장 경로라 같은 규칙을 진다 — 라벨은 여기로 들어오지도 나가지도 않는다.
             val safe = stated.copy(
                 steps = ExpectedLabelPolicy.carryOver(stated.steps, entity.toDraft(objectMapper).steps)

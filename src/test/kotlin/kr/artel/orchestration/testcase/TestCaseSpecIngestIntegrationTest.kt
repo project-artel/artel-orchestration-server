@@ -1,5 +1,6 @@
 package kr.artel.orchestration.testcase
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kr.artel.orchestration.common.error.BadRequestException
@@ -119,6 +120,7 @@ class TestCaseSpecIngestIntegrationTest {
     @Autowired private lateinit var service: TestCaseSpecService
     @Autowired private lateinit var storage: DocumentStorage
     @Autowired private lateinit var xlsxWriter: SpecXlsxWriter
+    @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
     @Autowired private lateinit var testCaseService: TestCaseService
     @Autowired private lateinit var appUserRepository: AppUserRepository
@@ -142,7 +144,6 @@ class TestCaseSpecIngestIntegrationTest {
         assertThat(cases.map { it.step }).containsExactlyInAnyOrder("상점 입장", "검 구매")
         assertThat(cases.map { it.scene }).containsOnly("TitleScene")
         // 명세 쪽 상태와 우리 QA 런의 상태는 다른 축이고, 적재는 앞의 것만 채운다.
-        assertThat(cases.map { it.status }).containsOnly("ready")
         assertThat(cases.map { it.verificationStatus }).containsOnly("DRAFT")
         assertThat(cases.first { it.step == "검 구매" }.expectedValue).isEqualTo("골드 차감 + 검 획득")
 
@@ -450,7 +451,6 @@ class TestCaseSpecIngestIntegrationTest {
                         specId = "scenario:gap:1",
                         step = "장비 강화",
                         expectedValue = "강화 성공 연출",
-                        status = "candidate",
                         evidenceGaps = listOf("no_expected_value_in_build", "scene_not_reached"),
                     ),
                     case(specId = "scenario:gap:2", step = "상점 입장", expectedValue = "상점 화면 진입"),
@@ -460,7 +460,8 @@ class TestCaseSpecIngestIntegrationTest {
 
         val gapped = testCaseRepository.findByProjectIdAndSpecId(projectId, "scenario:gap:1")!!
         val detail = testCaseService.getTestCase(gapped.id!!, userId)!!
-        assertThat(detail.status).isEqualTo("candidate")
+        assertThat(objectMapper.readTree(objectMapper.writeValueAsString(detail)).has("status")).isFalse()
+        assertThat(objectMapper.readTree(objectMapper.writeValueAsString(detail))["verificationStatus"].asText()).isEqualTo("DRAFT")
         assertThat(detail.evidenceGaps)
             .containsExactly("no_expected_value_in_build", "scene_not_reached")
 
@@ -471,7 +472,7 @@ class TestCaseSpecIngestIntegrationTest {
         // 목록 응답 타입에는 이 필드가 아예 없다(1000건 × 매 조회로 불어나는 값이라 상세에만 둔다).
         val listed = testCaseService.listTestCases(projectId, userId).items
         assertThat(listed).hasSize(2)
-        assertThat(listed.map { it.status }).containsExactlyInAnyOrder("candidate", "ready")
+        assertThat(objectMapper.readTree(objectMapper.writeValueAsString(listed)).all { !it.has("status") }).isTrue()
     }
 
     private fun objectKeyOf(projectId: Long) = "projects/$projectId/test-case-spec/test-cases.xlsx"

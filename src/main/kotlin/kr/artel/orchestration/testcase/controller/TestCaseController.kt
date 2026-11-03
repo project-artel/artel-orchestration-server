@@ -59,7 +59,7 @@ class TestCaseController(
      * 때문이다 — 서버에 씬/상태 파라미터가 있었지만 **보내는 쪽이 없어** 지웠다.
      *
      * [getAllTestCases]와 둘 다 "전량"이지만 받는 쪽이 다르다: 이쪽은 화면용이라 id를 문자열로
-     * 내고 명세 등급·생성시각까지 담는 [TestCaseResponse]이고, 저쪽은 Agent 계약이라 필드가 좁고
+     * 내고 생성시각까지 담는 [TestCaseResponse]이고, 저쪽은 Agent 계약이라 필드가 좁고
      * snake_case이며 순서가 `id ASC`로 고정된다(캐시 접두사).
      */
     @GetMapping
@@ -97,6 +97,10 @@ class TestCaseController(
         @CurrentUserId appUserId: Long
     ): TestCaseCoverageResponse =
         service.coverage(projectId, appUserId)
+
+    @GetMapping("/review-status-options")
+    suspend fun reviewStatusOptions(@PathVariable projectId: Long, @CurrentUserId appUserId: Long) =
+        service.reviewStatusOptions(projectId, appUserId)
 
     @PostMapping
     suspend fun createTestCase(
