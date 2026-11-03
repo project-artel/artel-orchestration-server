@@ -61,19 +61,13 @@ data class TestCaseSpecEntry(
     val metadata: JsonNode? = null,
 )
 
-/**
- * `spec` 블록. 이 다섯이 그대로 `test_case`의 컬럼이 된다.
- *
- * @property status 명세를 만든 쪽이 매긴 상태("ready" 등). 우리 QA 런의 결과인
- *   `verification_status`와 **다른 축**이라 다른 컬럼으로 간다. 적재는 후자를 건드리지 않는다.
- */
+/** `spec` 블록. TC의 씬, 사전조건, 스텝, 기대 결과를 담는다. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class TestCaseSpecBody(
     val scene: String? = null,
     val precondition: String? = null,
     val step: String? = null,
     @param:JsonProperty("expected_value") val expectedValue: String? = null,
-    val status: String? = null,
 )
 
 /**
