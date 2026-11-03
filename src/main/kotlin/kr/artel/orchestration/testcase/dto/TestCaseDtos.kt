@@ -67,8 +67,6 @@ data class TestCaseBulkDeleteResponse(val deleted: Int)
 /**
  * 조회 응답 한 줄. id 계열은 FE 64비트 정밀도 손실 방지로 문자열로 낸다.
  *
- * @property status 명세를 만든 쪽이 매긴 상태. [verificationStatus](우리 QA 런의 결과)와 다른 축이라
- *   둘 다 낸다 — 화면에서 하나로 합치면 "명세는 준비됐지만 아직 검증 안 됨"을 표현할 수 없다.
  */
 data class TestCaseResponse(
     val id: String,
@@ -77,7 +75,6 @@ data class TestCaseResponse(
     val step: String,
     val precondition: String?,
     val expectedValue: String,
-    val status: String?,
     val verificationStatus: String,
     val lastVerifiedBuildId: String?,
     val createdAt: Instant,
@@ -107,7 +104,7 @@ data class TestCaseListResponse(val items: List<TestCaseResponse>)
  * 전량(1000건 규모)이고 목록을 읽는 쪽은 이 값을 쓰지 않는다 — 상세는 사용자가 케이스 하나를 열었을
  * 때 1건이다. 보여줄 곳이 상세 하나뿐이면 실어 나르는 곳도 상세 하나여야 한다.
  *
- * @property evidenceGaps 명세 쪽이 이 케이스를 [status]로 매긴 **이유 코드**
+ * @property evidenceGaps 명세 근거에서 확인이 필요한 이유 코드
  *   (`metadata.source.evidence_gaps`). 없으면 빈 목록이다. 저작 Agent에는 보내지 않는다 —
  *   왜 근거가 부족한지에 대해 Agent가 할 수 있는 일이 없다(ARTEL-380).
  */
@@ -118,7 +115,6 @@ data class TestCaseDetailResponse(
     val step: String,
     val precondition: String?,
     val expectedValue: String,
-    val status: String?,
     val verificationStatus: String,
     val lastVerifiedBuildId: String?,
     val createdAt: Instant,

@@ -114,11 +114,22 @@ class RunAuthoringLocks(
     /** 다른 세션의 AI 가 쥐고 있나. */
     suspend fun heldByOther(testScenarioId: Long, sessionKey: String): Boolean = holderOf(testScenarioId)?.let { it.sessionKey != sessionKey } ?: false
 
+    /**
+     * 이 런의 시나리오에 걸린 잠금. **다른 런에서 시작한 턴도 센다** — 같은 시나리오가 두 런에 담겨 있으면, 저쪽 턴의 잠금이
+     * 이 런의 편집도 막는다([holderOf] 는 런을 가리지 않는다). 조회가 그것을 빼면 화면은 편집할 수 있다고 보이는데 저장은 423 이다.
+     */
     suspend fun describe(runId: Long, viewerId: Long): RunAuthoringLockResponse {
-        val inRun by lazy { runScenarioRepository.findByTestRunIdOrderByPosition(runId) }
-        val locks = turns.values.filter { it.runId == runId && (it.choosing || it.scenarioIds.isNotEmpty()) }.flatMap { turn ->
+        val active = turns.values.filter { it.choosing || it.scenarioIds.isNotEmpty() }
+        if (active.isEmpty()) return RunAuthoringLockResponse(scenarios = emptyList())
+        val inRun = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().map { it.testScenarioId }.toSet()
+        val locks = active.flatMap { turn ->
+            // 고르는 중인 턴은 자기 런의 TS 전부를 쥔다. 이 런과 겹치는 것만 보인다.
+            val chosen = if (!turn.choosing) emptySet()
+            else if (turn.runId == runId) inRun
+            else runScenarioRepository.findByTestRunIdOrderByPosition(turn.runId).toList().map { it.testScenarioId }.toSet()
+            val ids = (chosen + turn.scenarioIds).filter { it in inRun }
+            if (ids.isEmpty()) return@flatMap emptyList()
             val name = nameOf(turn.appUserId)
-            val ids = if (turn.choosing) inRun.toList().map { it.testScenarioId }.toSet() + turn.scenarioIds else turn.scenarioIds
             ids.map { id ->
                 ScenarioAuthoringLock(
                     scenarioId = id.toString(),
