@@ -35,6 +35,19 @@ import java.nio.charset.CodingErrorAction
 object CaseFileCodec {
     const val MAX_ROWS = 500
 
+    /** 양식의 예시 줄 표시. 번호 칸이 이 글이면 가져올 때 건너뛴다 — 지우지 않고 올려도 TC 가 되지 않는다. */
+    const val EXAMPLE_MARK = "(예시)"
+
+    /** 양식의 예시 한 줄. 작성법 시트의 예시와 같다. */
+    val EXAMPLE_ROW: Map<CaseFileColumn, String> = mapOf(
+        CaseFileColumn.NUMBER to EXAMPLE_MARK,
+        CaseFileColumn.KIND to "예외",
+        CaseFileColumn.SCENE to "지하실",
+        CaseFileColumn.PRECONDITION to "열쇠가 없다",
+        CaseFileColumn.STEP to "문을 연다",
+        CaseFileColumn.EXPECTED to "문이 열리지 않고 열쇠가 필요하다고 나온다",
+    )
+
     /** 종류 칸에 고를 수 있는 값. 가져올 때는 영어도 읽는다([CaseFileService.kindOf]). */
     val KIND_CHOICES = listOf("기능", "예외")
 
@@ -72,7 +85,8 @@ object CaseFileCodec {
             val values = columns.zip(cells + List((columns.size - cells.size).coerceAtLeast(0)) { "" })
                 .mapNotNull { (column, value) -> column?.let { it to value } }
                 .toMap()
-            if (values.values.all { it.isBlank() }) null else CaseFileRow(line = index + 2, cells = values)
+            val example = listOf(CaseFileColumn.NUMBER, CaseFileColumn.ID).any { values[it]?.trim() == EXAMPLE_MARK }
+            if (example || values.values.all { it.isBlank() }) null else CaseFileRow(line = index + 2, cells = values)
         }
         if (rows.size > MAX_ROWS) throw BadRequestException("한 번에 ${MAX_ROWS}줄까지 가져올 수 있습니다. 이 파일은 ${rows.size}줄입니다.", "too_many_rows")
         return rows
@@ -114,12 +128,12 @@ object CaseFileCodec {
     }
 
     /**
-     * 가져오기 양식. 머리글만 있는 빈 표다 — 예시 줄을 표에 두면 지우지 않은 채 올려 TC 로 들어간다. 엑셀에는 작성법과 예시를
-     * 둘째 시트(`작성법`)에 둔다. 결과 칸은 가져올 때 읽지 않으므로 양식에 두지 않는다.
+     * 가져오기 양식. 머리글과 예시 한 줄이다. 예시 줄은 번호 칸이 [EXAMPLE_MARK] 라 지우지 않고 올려도 건너뛴다. 엑셀에는
+     * 작성법을 둘째 시트(`작성법`)에 둔다. 결과 칸은 가져올 때 읽지 않으므로 양식에 두지 않는다.
      */
     fun template(format: CaseFileFormat): ByteArray = when (format) {
-        CaseFileFormat.XLSX -> writeXlsx(emptyList(), guide = true)
-        CaseFileFormat.CSV -> writeCsv(emptyList(), TEMPLATE_COLUMNS)
+        CaseFileFormat.XLSX -> writeXlsx(listOf(EXAMPLE_ROW), guide = true)
+        CaseFileFormat.CSV -> writeCsv(listOf(EXAMPLE_ROW), TEMPLATE_COLUMNS)
     }
 
     /** 양식의 칸. 내보내는 칸에서 결과(가져올 때 읽지 않음)를 뺀 것이다. */
@@ -144,13 +158,19 @@ object CaseFileCodec {
                 fillPattern = FillPatternType.SOLID_FOREGROUND
             }
             val body = book.createCellStyle().apply { wrapText = true; verticalAlignment = VerticalAlignment.TOP }
+            // 예시 줄은 회색 기울임꼴이다. 사람이 덮어쓰거나 지울 줄이라는 것이 보이게.
+            val example = book.createCellStyle().apply {
+                cloneStyleFrom(body)
+                setFont(book.createFont().apply { italic = true; color = IndexedColors.GREY_50_PERCENT.index })
+            }
             sheet.createRow(0).let { row ->
                 columns.forEachIndexed { col, column -> row.createCell(col).apply { setCellValue(column.label); cellStyle = head } }
             }
             rows.forEachIndexed { index, values ->
                 val row = sheet.createRow(index + 1)
+                val style = if (values[CaseFileColumn.NUMBER] == EXAMPLE_MARK) example else body
                 columns.forEachIndexed { col, column ->
-                    row.createCell(col).apply { setCellValue(values[column].orEmpty()); cellStyle = body }
+                    row.createCell(col).apply { setCellValue(values[column].orEmpty()); cellStyle = style }
                 }
             }
             sheet.createFreezePane(0, 1)
@@ -200,6 +220,7 @@ object CaseFileCodec {
             listOf(CaseFileColumn.ARRIVES_AT.label, "하고 나면 다른 화면으로 가는 TC 면 그 화면 이름(선택).", ""),
             listOf("", "", ""),
             listOf("알아 둘 것", "빈칸은 \"그대로\" 입니다 — 파일로 칸을 지우지는 않습니다. 한 번에 ${MAX_ROWS}줄까지 가져옵니다.", ""),
+            listOf("예시 줄", "TC 시트의 첫 줄(번호 칸이 $EXAMPLE_MARK)은 예시입니다. 지우지 않고 올려도 가져올 때 건너뜁니다.", ""),
         )
         lines.forEachIndexed { index, values ->
             val row = sheet.createRow(index)

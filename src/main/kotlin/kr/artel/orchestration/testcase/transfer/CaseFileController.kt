@@ -32,7 +32,7 @@ class CaseFileController(private val caseFiles: CaseFileService) {
         @CurrentUserId appUserId: Long,
     ): ResponseEntity<ByteArray> = fileResponse(caseFiles.export(projectId, appUserId, request))
 
-    /** 가져오기 양식. 엑셀은 머리글 필터 · 종류 고르기 목록 · 작성법 시트가 든 빈 표, CSV 는 머리글 한 줄이다. */
+    /** 가져오기 양식. 엑셀은 머리글 필터 · 종류 고르기 목록 · 작성법 시트가 든 표, CSV 는 머리글이다. 둘 다 번호 칸이 `(예시)` 인 예시 한 줄이 있고, 가져올 때 건너뛴다. */
     @GetMapping("/imports/template")
     suspend fun downloadTestCaseImportTemplate(
         @PathVariable projectId: Long,
