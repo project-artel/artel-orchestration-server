@@ -346,6 +346,27 @@ class DeveloperMacroIntegrationTest {
         assertThat(dropped.body["version"].asInt()).isEqualTo(3)
     }
 
+    @Test
+    fun `명시적인 contract null도 계약 없는 검사와 등록으로 처리한다`() {
+        val world = newWorld()
+        val checked = call(
+            world.ownerSession, HttpMethod.POST, "${world.base}/developer-macros:check",
+            """{"name":"open_shop","source":${json(SOURCE)},"gameBuildId":"${world.buildA}","contract":null}""",
+        )
+        assertThat(checked.status).isEqualTo(200)
+        assertThat(checked.body["ok"].asBoolean()).isTrue()
+        assertThat(checkRequests.single().has("contract")).isFalse()
+
+        checkRequests.clear()
+        val saved = call(
+            world.ownerSession, HttpMethod.PUT, "${world.base}/developer-macros/open_shop",
+            putBody(SOURCE, world.buildA, "null"),
+        )
+        assertThat(saved.status).isEqualTo(200)
+        assertThat(saved.body["contract"].isNull).isTrue()
+        assertThat(checkRequests.single().has("contract")).isFalse()
+    }
+
     // ---------- 픽스처 ----------
 
     private data class World(
