@@ -24,6 +24,7 @@ data class QaRunSummaryResponse(
     val gameInstanceId: String,
     val gameInstanceName: String?,
     val gameBuildVersion: String?,
+    val gameBuildIsEditor: Boolean?,
     val model: String?,
     val reasoningEffort: String?,
     val keySource: String?,

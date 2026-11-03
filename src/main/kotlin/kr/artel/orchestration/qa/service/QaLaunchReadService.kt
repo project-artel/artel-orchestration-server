@@ -109,6 +109,7 @@ class QaLaunchReadService(
         gameInstanceId = gameInstanceId.toString(),
         gameInstanceName = gameInstanceName,
         gameBuildVersion = gameBuildVersion,
+        gameBuildIsEditor = gameBuildIsEditor,
         model = model,
         reasoningEffort = reasoningEffort,
         keySource = keySource,
