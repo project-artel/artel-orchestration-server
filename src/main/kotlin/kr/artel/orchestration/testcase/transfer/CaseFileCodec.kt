@@ -41,6 +41,7 @@ object CaseFileCodec {
     /** 양식의 예시 한 줄. 작성법 시트의 예시와 같다. */
     val EXAMPLE_ROW: Map<CaseFileColumn, String> = mapOf(
         CaseFileColumn.NUMBER to EXAMPLE_MARK,
+        CaseFileColumn.USER_NUMBER to "로그인-01",
         CaseFileColumn.KIND to "예외",
         CaseFileColumn.SCENE to "지하실",
         CaseFileColumn.PRECONDITION to "열쇠가 없다",
@@ -84,8 +85,10 @@ object CaseFileCodec {
         val rows = table.drop(1).mapIndexedNotNull { index, cells ->
             val values = columns.zip(cells + List((columns.size - cells.size).coerceAtLeast(0)) { "" })
                 .mapNotNull { (column, value) -> column?.let { it to value } }
-                .toMap()
-            val example = listOf(CaseFileColumn.NUMBER, CaseFileColumn.ID).any { values[it]?.trim() == EXAMPLE_MARK }
+                // 같은 칸으로 읽히는 머리글이 둘이면(`No` · `ID`) 채워진 쪽이다.
+                .groupBy({ it.first }, { it.second })
+                .mapValues { (_, found) -> found.firstOrNull { it.isNotBlank() } ?: found.first() }
+            val example = values[CaseFileColumn.NUMBER]?.trim() == EXAMPLE_MARK
             if (example || values.values.all { it.isBlank() }) null else CaseFileRow(line = index + 2, cells = values)
         }
         if (rows.size > MAX_ROWS) throw BadRequestException("한 번에 ${MAX_ROWS}줄까지 가져올 수 있습니다. 이 파일은 ${rows.size}줄입니다.", "too_many_rows")
@@ -211,7 +214,8 @@ object CaseFileCodec {
         val sheet = book.createSheet("작성법")
         val lines = listOf(
             listOf("칸", "쓰는 법", "예시"),
-            listOf(CaseFileColumn.NUMBER.label, "고칠 TC 의 번호. 비우면 새 TC 를 만듭니다. 번호가 있으면 그 TC 를 고치고, 가져올 버전에 넣습니다.", "TC-012"),
+            listOf(CaseFileColumn.NUMBER.label, "비워 두세요. Artel 에서 내보낸 파일에만 채워져 있고, 그 TC 를 고칠 때 씁니다. 비운 줄은 화면 · 사전조건 · 조작 · 기대결과가 같은 TC 가 있으면 그 TC 로, 없으면 새 TC 로 들어갑니다.", "TC-012"),
+            listOf(CaseFileColumn.USER_NUMBER.label, "팀에서 쓰는 번호(선택). 적은 그대로 저장하고 내보낼 때 그대로 나옵니다. 겹쳐도 됩니다 — 같은 TC 를 찾는 데는 쓰지 않습니다.", "로그인-01"),
             listOf(CaseFileColumn.KIND.label, "기능 또는 예외. 예외는 조건이 맞지 않을 때 게임이 막는지 보는 TC 입니다. 비우면 기능입니다.", "예외"),
             listOf(CaseFileColumn.SCENE.label, "조작하는 화면 · 장소. 사람이 부르는 이름으로, 같은 곳은 늘 같은 이름으로 씁니다. (꼭 채움)", "지하실"),
             listOf(CaseFileColumn.PRECONDITION.label, "조작 전에 있어야 할 상황(선택).", "열쇠가 없다"),

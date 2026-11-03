@@ -74,7 +74,7 @@ class CaseFileIntegrationTest {
         val csv = download(world.token, "$base/exports", """{"format":"csv","gameBuildId":"${world.current}","testCaseIds":["${world.b}"]}""")
         assertThat(csv.disposition).contains(".csv")
         assertThat(String(csv.bytes, Charsets.UTF_8).lines().first()).describedAs("계약 칸(필요 · 남김)은 싣지 않는다")
-            .isEqualTo("\uFEFFTC 번호,종류,화면,사전조건,조작,기대결과,도착 화면,결과")
+            .isEqualTo("\uFEFFArtel 번호,번호,종류,화면,사전조건,조작,기대결과,도착 화면,결과")
         assertThat(CaseFileCodec.read(csv.bytes, "b.csv").map { it[CaseFileColumn.STEP] }).containsExactly("열쇠 없이 문을 연다")
 
         // 그대로 다시 가져오면 바뀌는 것이 없다.
@@ -82,33 +82,62 @@ class CaseFileIntegrationTest {
         assertThat(same["counts"]["same"].asInt()).isEqualTo(2)
         assertThat(same["counts"]["edit"].asInt() + same["counts"]["new"].asInt()).isZero()
 
-        // 고친 파일: A 의 조작을 고치고, 1.0.0 에만 있던 C 를 이 버전에 넣고, 새 줄 둘, 못 넣는 줄 둘.
+        // 고친 파일: A 의 조작을 고치고, 1.0.0 에만 있던 C 를 이 버전에 넣고, 새 줄 둘, 번호 없이 B 와 같은 내용 하나, 못 넣는 줄 넷.
+        // `No` 는 사용자 번호다 — 우리 번호(1 · 2 …)와 겹쳐도 같은 TC 를 찾는 데 쓰지 않고, 받은 그대로 적어 둔다(3 이 두 번).
         val cNumber = numberOf(world, world.c)
+        val bNumber = numberOf(world, world.b)
         val edited = """
-            번호,종류,화면,조작,기대결과,필요
-            ${a[CaseFileColumn.NUMBER]},기능,광장,할머니한테 다시 말을 건다,의뢰를 받는다,의뢰 == 0
-            $cNumber,,여관,저녁까지 쉰다,밤이 된다,
-            ,,숲,덤불을 조사한다,고양이가 따라온다,
-            ,예외,숲,고양이 없이 할머니한테 간다,보상을 주지 않는다,고양이 == 0
-            TC-999,,숲,무엇,무엇,
-            ${a[CaseFileColumn.NUMBER]},,광장,또 적은 A,무엇,
+            No,Artel 번호,종류,화면,조작,기대결과,필요
+            1,${a[CaseFileColumn.NUMBER]},기능,광장,할머니한테 다시 말을 건다,의뢰를 받는다,의뢰 == 0
+            2,$cNumber,,여관,저녁까지 쉰다,밤이 된다,
+            3,,,숲,덤불을 조사한다,고양이가 따라온다,
+            3,,예외,숲,고양이 없이 할머니한테 간다,보상을 주지 않는다,고양이 == 0
+            5,TC-999,,숲,무엇,무엇,
+            6,${a[CaseFileColumn.NUMBER]},,광장,또 적은 A,무엇,
+            7,,,지하실,열쇠 없이  문을 연다,열리지 않는다,
+            8,,,숲,덤불을 조사한다,고양이가 따라온다,
+            9,$bNumber,,성,왕을 만난다,작위를 받는다,
         """.trimIndent() + "\n"
         val preview = post(world.token, "$base/imports/preview?gameBuildId=${world.current}", edited.toByteArray())
         val byLine = preview["rows"].associateBy { it["line"].asInt() }
         assertThat(byLine.getValue(2)["status"].asText()).isEqualTo("EDIT")
-        assertThat(byLine.getValue(2)["changes"].map { it.asText() }).containsExactly("조작")
+        assertThat(byLine.getValue(2)["changes"].map { it.asText() }).containsExactly("조작", "번호")
         assertThat(byLine.getValue(3)["status"].asText()).isEqualTo("EDIT")
-        assertThat(byLine.getValue(3)["changes"].map { it.asText() }).containsExactly(CaseFileService.IN_VERSION)
+        assertThat(byLine.getValue(3)["changes"].map { it.asText() }).containsExactly(CaseFileService.IN_VERSION, "번호")
         assertThat(byLine.getValue(4)["status"].asText()).isEqualTo("NEW")
         assertThat(byLine.getValue(5)["kind"].asText()).isEqualTo("EXCEPTION")
         assertThat(byLine.getValue(6)["reason"].asText()).contains("TC-999")
         assertThat(byLine.getValue(7)["reason"].asText()).contains("2번째 줄")
-        assertThat(preview["counts"].toString()).isEqualTo("""{"new":2,"edit":2,"same":0,"rejected":2}""")
+        assertThat(byLine.getValue(8)["changes"].map { it.asText() }).describedAs("번호가 없어도 내용이 같으면 그 TC 다(공백은 가리지 않는다)").containsExactly("번호")
+        assertThat(byLine.getValue(8)["testCaseId"].asText()).isEqualTo(world.b.toString())
+        assertThat(byLine.getValue(9)["reason"].asText()).describedAs("파일 안의 같은 내용은 한 번만").contains("4번째 줄")
+        assertThat(byLine.getValue(10)["reason"].asText()).describedAs("번호만 같고 내용이 전혀 다르면 다른 TC 다").contains("모두 다릅니다")
+        assertThat(preview["counts"].toString()).isEqualTo("""{"new":2,"edit":3,"same":0,"rejected":4}""")
 
         val result = post(world.token, "$base/imports?gameBuildId=${world.current}", edited.toByteArray())
         assertThat(result["created"]).hasSize(2)
-        assertThat(result["updated"]).hasSize(2)
-        assertThat(result["rejected"].map { it["line"].asInt() }).containsExactly(6, 7)
+        assertThat(result["updated"]).hasSize(3)
+        assertThat(result["rejected"].map { it["line"].asInt() }).containsExactly(6, 7, 9, 10)
+        assertThat(testCases.findById(world.b)!!.step).isEqualTo("열쇠 없이 문을 연다")
+
+        // 같은 파일을 한 번 더 가져와도 새로 생기지 않는다 — 번호 없던 줄도 내용으로 찾는다. 그대로인 줄은 목록에 싣지 않는다.
+        val again = post(world.token, "$base/imports/preview?gameBuildId=${world.current}", edited.toByteArray())
+        assertThat(again["counts"].toString()).isEqualTo("""{"new":0,"edit":0,"same":5,"rejected":4}""")
+        assertThat(again["rows"].map { it["status"].asText() }).containsOnly("REJECTED")
+
+        // 사용자 번호는 겹쳐도 그대로 내보낸다.
+        val userNumbers = CaseFileCodec.read(download(world.token, "$base/exports", """{"format":"csv"}""").bytes, null)
+            .associate { it[CaseFileColumn.STEP] to it[CaseFileColumn.USER_NUMBER] }
+        assertThat(userNumbers).containsEntry("할머니한테 다시 말을 건다", "1").containsEntry("저녁까지 쉰다", "2")
+            .containsEntry("덤불을 조사한다", "3").containsEntry("고양이 없이 할머니한테 간다", "3").containsEntry("열쇠 없이 문을 연다", "7")
+
+        // 사용자 번호만 바꾼 줄도 고침이다.
+        val renumbered = "Artel 번호,번호,화면,조작,기대결과\n${a[CaseFileColumn.NUMBER]},A-1,광장,할머니한테 다시 말을 건다,의뢰를 받는다\n"
+        val renumberPreview = post(world.token, "$base/imports/preview?gameBuildId=${world.current}", renumbered.toByteArray())
+        assertThat(renumberPreview["rows"].single()["changes"].map { it.asText() }).containsExactly("번호")
+        assertThat(post(world.token, "$base/imports?gameBuildId=${world.current}", renumbered.toByteArray())["updated"].map { it.asText() })
+            .containsExactly(world.a.toString())
+        assertThat(testCases.findById(world.a)!!.metadata.asString()).contains("\"user_number\": \"A-1\"")
         assertThat(testCases.findById(world.a)!!.step).isEqualTo("할머니한테 다시 말을 건다")
         val aContract = contracts.list(world.projectId).cases.single { it.testCaseId == world.a.toString() }
         assertThat(aContract.needs).describedAs("파일에 계약 칸이 없어도 있던 계약은 그대로다").containsExactly("의뢰 == 0")
@@ -117,7 +146,7 @@ class CaseFileIntegrationTest {
         assertThat(inCurrent).contains(world.c.toString()).containsAll(result["created"].map { it.asText() })
         assertThat(testCases.findById(result["created"][1].asText().toLong())!!.kind).isEqualTo("EXCEPTION")
 
-        // 양식: 엑셀은 필터 · 고르기 목록이 든 빈 표.
+        // 양식: 엑셀은 필터 · 고르기 목록이 든 표이고, 예시 줄은 읽지 않는다.
         val template = WebClient.create("http://localhost:$port").get().uri("$base/imports/template?format=xlsx")
             .cookie("artel_access_token", world.token).retrieve().toEntity(ByteArray::class.java).block()!!
         assertThat(template.headers.getFirst(HttpHeaders.CONTENT_DISPOSITION)).contains(".xlsx")

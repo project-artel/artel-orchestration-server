@@ -7,12 +7,13 @@ package kr.artel.orchestration.testcase.transfer
  * 계약 칸(필요 · 남김)은 싣지 않는다. 사람이 표에서 `열쇠 == 1` 꼴로 채우기 어렵고, 잘못 채우면 시나리오를 깨뜨린다. 계약은
  * 글에서 뽑거나 화면 · MCP 로 정한다. 모르는 머리글은 무시하므로 예전 파일의 필요 · 남김 칸도 그냥 지나간다.
  *
- * [NUMBER] 는 화면의 TC 번호(`TC-012`, 프로젝트 안 번호)이고 [ID] 는 DB 의 TC id 다. 내보내기는 번호만 쓴다. MCP 목록 파일은
- * DB id 를 `id` 칸에 쓰므로 가져올 때 둘 다 받는다.
+ * [NUMBER] 는 화면의 TC 번호(`TC-012`, 프로젝트 안 번호)다. **`Artel 번호` 라는 머리글로만 알아본다.** 사용자 파일의 `번호` ·
+ * `No` · `TC 번호` · `ID` 칸은 사용자가 붙인 번호([USER_NUMBER])다 — 우리 번호와 겹쳐도 같은 TC 가 아니고, 같은 TC 를 찾는 데
+ * 쓰지 않는다. 받은 그대로 TC 에 적어 두고(`metadata.user_number`) 내보낼 때 그대로 낸다. 겹쳐도 가리지 않는다.
  */
 enum class CaseFileColumn(val label: String, val aliases: Set<String>, val exported: Boolean = true) {
-    NUMBER("TC 번호", setOf("번호", "tc번호", "tc", "number", "casenumber", "no")),
-    ID("id", setOf("id", "testcaseid", "test_case_id"), exported = false),
+    NUMBER("Artel 번호", setOf("artel번호", "artelnumber", "artelno")),
+    USER_NUMBER("번호", setOf("번호", "사용자번호", "tc번호", "tc", "number", "casenumber", "no", "id")),
     KIND("종류", setOf("종류", "kind", "type")),
     SCENE("화면", setOf("화면", "scene", "장소")),
     PRECONDITION("사전조건", setOf("사전조건", "precondition")),
