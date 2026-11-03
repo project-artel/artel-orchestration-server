@@ -11,8 +11,8 @@ import java.time.Instant
  * developer macro(`developer_macro`)는 실행하는 행동이고 이 행은 읽는 값이다. 읽는 쪽은 agent-server 의
  * planner–executer 엔진이고 런 시작 때 읽는다.
  *
- * 쓰기는 `GameIdentityRepository.upsertByName` 하나로만 한다. `save()` 로 쓰면 버전 비교가 SQL 밖으로 나가 같은 이름이
- * 동시에 둘 올 때 그 사이로 빠져나간다(`DeveloperMacroEntity` 와 같다). 이 타입은 repository 의 타입 인자로만 쓴다.
+ * V174 이후에는 기존 행을 migration source로 보존한다. 신규 쓰기는 별도 revision과 build binding query를 사용한다.
+ * 이 타입은 repository의 타입 인자로만 쓴다.
  */
 @Table("game_identity")
 data class GameIdentityEntity(

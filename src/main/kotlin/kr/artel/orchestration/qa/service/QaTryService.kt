@@ -1,5 +1,8 @@
 package kr.artel.orchestration.qa.service
 
+import kr.artel.orchestration.gameidentity.dto.InternalGameIdentityResponse
+import kr.artel.orchestration.gameidentity.service.GameIdentityService
+
 import kr.artel.orchestration.auth.service.PlatformAccessService
 import kr.artel.orchestration.common.error.BadRequestException
 import kr.artel.orchestration.common.error.ConflictException
@@ -104,6 +107,9 @@ internal fun mergeCarriedGates(carrier: String, agentConfig: JsonNode?, objectMa
             val value = carried.path(field)
             if (value.isTextual) put(field, value.asText())
         }
+        val identities = carried.get("game_identities")
+        if (identities != null) set<JsonNode>("game_identities", identities)
+        else remove("game_identities")
         // cheat · behavior 옵션은 배열도 싣는다(허용 목록과 보낸 이름들). 값을 그대로 옮긴다.
         for (field in CARRIED_FUNCTION_FIELDS) {
             val value = carried.path(field)
@@ -352,7 +358,8 @@ class QaTryPersistenceService(
         knowledge: QaKnowledgeSettings,
         contentMapMode: ContentMapMode = ContentMapMode.DEFAULT,
         keySource: KeySource = KeySource.PLATFORM,
-        functions: QaResolvedFunctions? = null
+        functions: QaResolvedFunctions? = null,
+        gameIdentities: List<InternalGameIdentityResponse>? = null
     ): Pair<QaTryEntity, QaLogAppendResult> =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -369,7 +376,10 @@ class QaTryPersistenceService(
                             objectMapper.createObjectNode()
                                 .put(KNOWLEDGE_MODE_FIELD, knowledge.mode.wire)
                                 .put(CONTENT_MAP_MODE_FIELD, contentMapMode.wire)
-                                .also { config -> functions?.writeTo(config) }
+                                .also { config ->
+                                    functions?.writeTo(config)
+                                    gameIdentities?.let { config.set<JsonNode>("game_identities", objectMapper.valueToTree(it)) }
+                                }
                         )
                     ),
                     startedAt = now
@@ -411,7 +421,8 @@ class QaTryPersistenceService(
         label: String? = null,
         gameBuildId: Long? = null,
         keySource: KeySource = KeySource.PLATFORM,
-        functions: QaResolvedFunctions? = null
+        functions: QaResolvedFunctions? = null,
+        gameIdentities: List<InternalGameIdentityResponse>? = null
     ): QaRunStarting =
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
@@ -422,6 +433,7 @@ class QaTryPersistenceService(
                         gates.knowledgeMode?.let { put(KNOWLEDGE_MODE_FIELD, it.wire) }
                         gates.contentMapMode?.let { put(CONTENT_MAP_MODE_FIELD, it.wire) }
                         functions?.writeTo(this)
+                        gameIdentities?.let { set<JsonNode>("game_identities", objectMapper.valueToTree(it)) }
                     }
                 )
             )
@@ -433,6 +445,9 @@ class QaTryPersistenceService(
                     startedBy = startedBy,
                     status = "STARTING",
                     label = label,
+                    runConfig = Json.of(objectMapper.writeValueAsString(objectMapper.createObjectNode().apply {
+                        gameIdentities?.let { set<JsonNode>("game_identities", objectMapper.valueToTree(it)) }
+                    })),
                     keySource = keySource.wire,
                     startedAt = now
                 )
@@ -477,7 +492,9 @@ class QaTryPersistenceService(
         transactionalOperator.executeAndAwait {
             val now = Instant.now(clock)
             val runId = requireNotNull(qaRun.id)
-            val configJson = objectMapper.writeValueAsString(runConfig ?: objectMapper.createObjectNode())
+            val configJson = objectMapper.writeValueAsString(
+                mergeCarriedGates(qaRun.runConfig.asString(), runConfig, objectMapper)
+            )
             // qa_run 의 스냅샷에는 gate 를 얹지 않는다. gate 는 try 마다 집행되고 읽는 쪽도 전부
             // qa_try.run_config 를 본다 — 두 곳에 두면 어느 쪽이 진실인지가 질문이 된다.
             //
@@ -575,6 +592,7 @@ class QaTryPersistenceService(
 
 @Service
 class QaTryService(
+    private val gameIdentityService: GameIdentityService,
     private val mediaRelay: kr.artel.orchestration.stream.service.QaMediaRelay,
     private val tryRepository: QaTryRepository,
     private val runRepository: QaRunRepository,
@@ -629,8 +647,9 @@ class QaTryService(
 
         // 카탈로그와 맞춰 보는 것은 행을 만들기 **전에** 한다. 허용 목록의 이름이 틀렸으면 400 이고 STARTING 행은 남지 않는다.
         val functions = functionOptions.resolve(functionCatalogs.catalogOfBuild(instance.lastGameBuildId))
+        val gameIdentities = gameIdentityService.snapshot(instance.projectId, instance.lastGameBuildId)
         val (starting, startLog) = persistence.createStarting(
-            testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, runKey.keySource, functions
+            testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, runKey.keySource, functions, gameIdentities
         )
         logService.publish(startLog)
         mediaRelay.prepare()
@@ -644,6 +663,7 @@ class QaTryService(
             // 인스턴스에서 비고, 그때는 Agent 가 조회 없이 런을 시작한다 — 런을 막지 않는다.
             projectId = instance.projectId.toString(),
             gameBuildId = instance.lastGameBuildId?.toString(),
+            gameIdentities = gameIdentities,
             testScenarioId = testScenarioId.toString(),
             scenario = objectMapper.valueToTree(preparedScenario),
             model = settings.model,
@@ -739,11 +759,13 @@ class QaTryService(
 
         // 행을 만들기 전에 카탈로그와 맞춘다. 이름이 틀렸으면 400 이고 qa_run 이 남지 않는다.
         val functions = functionOptions.resolve(functionCatalogs.catalogOfBuild(instance.lastGameBuildId))
+        val gameIdentities = gameIdentityService.snapshot(instance.projectId, instance.lastGameBuildId)
         val started = persistence.createRunStarting(
             testRunId, gameInstanceId, userId, scenarioIds, gates, label,
             gameBuildId = instance.lastGameBuildId,
             keySource = runKey.keySource,
-            functions = functions
+            functions = functions,
+            gameIdentities = gameIdentities
         )
         // 첫 시나리오 try 가 이 run 의 자리를 대표한다 — agent 세션은 아직 없다(ARTEL-836).
         mediaRelay.prepare()
@@ -762,6 +784,7 @@ class QaTryService(
             // 단일 시나리오 경로와 같다 (ARTEL-676).
             projectId = instance.projectId.toString(),
             gameBuildId = instance.lastGameBuildId?.toString(),
+            gameIdentities = gameIdentities,
             qaRunId = requireNotNull(started.qaRun.id).toString(),
             scenarios = agentScenarios,
             model = settings.model,

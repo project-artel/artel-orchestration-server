@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.JsonNode
 import kr.artel.orchestration.common.error.ApiException
 import kr.artel.orchestration.gamenote.entity.GenreModule
+import kr.artel.orchestration.gameidentity.dto.InternalGameIdentityResponse
 import kr.artel.orchestration.testscenario.dto.AgentScenario
 import org.springframework.http.HttpStatus
 import java.time.Instant
@@ -78,6 +79,7 @@ data class QaAgentSessionContext(
     // 아직 SDK 가 붙은 적 없는 인스턴스에서는 비고, 그때는 조회 없이 런이 그대로 돈다.
     val projectId: String? = null,
     val gameBuildId: String? = null,
+    val gameIdentities: List<InternalGameIdentityResponse>? = null,
     // 런 단위
     val qaRunId: String? = null,
     val scenarios: List<QaAgentScenario>? = null,

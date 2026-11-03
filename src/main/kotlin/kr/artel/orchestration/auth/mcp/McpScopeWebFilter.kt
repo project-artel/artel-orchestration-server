@@ -78,6 +78,7 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations/save", McpScope.TESTCASE_WRITE),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations/discard", McpScope.TESTCASE_WRITE),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-identities", McpScope.MACRO_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-identities/history", McpScope.MACRO_READ),
     McpRoute(HttpMethod.PUT, "/api/projects/{projectId}/game-identities", McpScope.MACRO_WRITE),
     McpRoute(HttpMethod.DELETE, "/api/projects/{projectId}/game-identities", McpScope.MACRO_WRITE),
 )

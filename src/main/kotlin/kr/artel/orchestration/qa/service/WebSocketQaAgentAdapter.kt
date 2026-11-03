@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.JsonNodeFactory
 import com.fasterxml.jackson.databind.node.ObjectNode
 import kr.artel.orchestration.testscenario.dto.AgentScenario
+import kr.artel.orchestration.gameidentity.dto.InternalGameIdentityResponse
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
@@ -59,6 +60,7 @@ internal data class QaSessionOpenContext(
     // 값이 없으면 필드가 아예 나가지 않고, Agent 는 조회를 건너뛴 채 런을 시작한다.
     @param:JsonProperty("project_id") val projectId: String? = null,
     @param:JsonProperty("game_build_id") val gameBuildId: String? = null,
+    @param:JsonProperty("game_identities") val gameIdentities: List<InternalGameIdentityResponse>? = null,
     @param:JsonProperty("qa_run_id") val qaRunId: String? = null,
     val scenarios: List<QaSessionOpenScenario>? = null,
     // 이 런에 열어 준 cheat · behavior 항목(ARTEL-1053). 비면 필드가 나가지 않는다.
@@ -107,6 +109,7 @@ internal fun QaAgentSessionContext.toOpenRequest(): QaSessionOpenRequest {
             gameInstanceId = gameInstanceId,
             projectId = projectId,
             gameBuildId = gameBuildId,
+            gameIdentities = gameIdentities,
             qaRunId = qaRunId,
             scenarios = scenarios?.map { QaSessionOpenScenario(it.qaTryId, it.testScenarioId, it.scenario) },
             cheats = sentCheats,

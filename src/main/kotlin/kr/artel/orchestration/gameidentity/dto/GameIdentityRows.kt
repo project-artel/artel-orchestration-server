@@ -16,4 +16,8 @@ data class GameIdentityRow(
     @Column("game_build_id") val gameBuildId: Long,
     @Column("version") val version: Int,
     @Column("updated_at") val updatedAt: Instant,
+    @Column("source") val source: String,
+    @Column("deleted") val deleted: Boolean,
+    @Column("created_by") val createdBy: Long?,
+    @Column("created_at") val createdAt: Instant,
 )
