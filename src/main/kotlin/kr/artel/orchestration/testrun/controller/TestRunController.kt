@@ -317,7 +317,7 @@ class TestRunController(
         @RequestBody request: CaseRecommendationIds,
         @CurrentUserId appUserId: Long,
     ): List<Map<String, Any?>> =
-        recommendationService.save(projectId, runId, appUserId, request.longIds()).map { it.wire() }
+        recommendationService.save(projectId, runId, appUserId, request.longIds(), draft = request.draft).map { it.wire() }
 
     /** 추천 TC 를 버린다. 그 스텝은 판정 없는 스텝으로 남는다. */
     @PostMapping("/{runId}/case-recommendations/discard")
@@ -376,6 +376,6 @@ class TestRunController(
 }
 
 /** 추천 TC id 목록. 비우면 이 런의 대기 중인 추천 전부다. */
-data class CaseRecommendationIds(val ids: List<String> = emptyList()) {
+data class CaseRecommendationIds(val ids: List<String> = emptyList(), val draft: Boolean = false) {
     fun longIds(): List<Long> = ids.mapNotNull { it.toLongOrNull() }
 }

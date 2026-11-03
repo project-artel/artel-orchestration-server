@@ -152,6 +152,9 @@ data class TestCaseEntity(
     @Column("kind")
     val kind: String = TestCaseKind.FUNCTION.name,
 
+    @Column("review_status")
+    val reviewStatus: String = ReviewStatus.READY.name,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,
