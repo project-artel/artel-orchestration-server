@@ -12962,9 +12962,6 @@
           "expectedValue": {
             "type": "string"
           },
-          "status": {
-            "type": "string"
-          },
           "verificationStatus": {
             "type": "string"
           },
@@ -20763,9 +20760,6 @@
           "expectedValue": {
             "type": "string"
           },
-          "status": {
-            "type": "string"
-          },
           "verificationStatus": {
             "type": "string"
           },
@@ -21029,9 +21023,6 @@
           "expectedValue": {
             "type": "string"
           },
-          "status": {
-            "type": "string"
-          },
           "origin": {
             "type": "string"
           },
@@ -21236,9 +21227,6 @@
             "type": "string"
           },
           "expectedValue": {
-            "type": "string"
-          },
-          "status": {
             "type": "string"
           },
           "verificationStatus": {

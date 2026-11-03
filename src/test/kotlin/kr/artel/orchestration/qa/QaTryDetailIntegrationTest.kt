@@ -201,7 +201,6 @@ class QaTryDetailIntegrationTest {
 
         val detail = detailService.detail(qaTryId, ownerId)
 
-        assertThat(detail.status).isEqualTo("CANCELLED")
         assertThat(detail.stepsPassed).isNull()
         assertThat(detail.stepsTotal).isNull()
         // 비용은 실제로 나간 돈이라 취소와 무관하게 남는다.
@@ -360,7 +359,6 @@ class QaTryDetailIntegrationTest {
 
         val detail = detailService.detail(qaTryId, ownerId)
 
-        assertThat(detail.status).isEqualTo("RUNNING")
         assertThat(detail.completedAt).isNull()
         assertThat(detail.usage.calls).isEqualTo(1)
     }

@@ -16,7 +16,7 @@ import java.time.Instant
  *
  * ```
  * { "schema_version": "test-case.v1",
- *   "spec":     { scene, precondition, step, expected_value, status },   → 컬럼
+ *   "spec":     { scene, precondition, step, expected_value },   → 컬럼
  *   "metadata": { source: {...}, generation: {...} } }                   → JSONB 한 칸
  * ```
  *
@@ -85,13 +85,6 @@ data class TestCaseEntity(
      */
     @Column("expected_items")
     val expectedItems: Json? = null,
-
-    /**
-     * 명세를 만든 쪽이 매긴 상태("ready" 등). **[verificationStatus]와 다른 축이다** —
-     * 이쪽은 입력값이고 저쪽은 우리 QA 런의 결과다. 이 컬럼이 생기기 전 행에는 실제로 없어 nullable.
-     */
-    @Column("status")
-    val status: String? = null,
 
     /** 명세 계약의 버전(`schema_version`). 계약이 바뀌었을 때 대상 행을 고르는 축. */
     @Column("schema_version")
