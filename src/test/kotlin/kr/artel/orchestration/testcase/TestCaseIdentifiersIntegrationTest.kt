@@ -59,6 +59,8 @@ class TestCaseIdentifiersIntegrationTest {
         assertThat(identifiers.list(projectA, owner.id)).containsExactly(
             TestCaseIdentifierResponse(first.id.toString(), "1"), TestCaseIdentifierResponse(second.id.toString(), "2"))
         assertThat(identifiers.list(projectB, owner.id)).containsExactly(TestCaseIdentifierResponse(other.id.toString(), "1"))
+        assertThat(identifiers.findNumber(projectA, requireNotNull(second.id))).isEqualTo("2")
+        assertThat(identifiers.findNumber(projectB, requireNotNull(second.id))).isNull()
         val response = get(projectA, owner.token)
         assertThat(response.status).isEqualTo(200)
         assertThat(response.body[0]["testCaseId"].isTextual).isTrue()
@@ -83,6 +85,7 @@ class TestCaseIdentifiersIntegrationTest {
         val first = newCase(projectId)
         val second = newCase(projectId)
         cases.delete(first)
+        assertThat(identifiers.findNumber(projectId, requireNotNull(first.id))).isEqualTo("1")
         val third = newCase(projectId)
         assertThat(identifiers.list(projectId, owner.id)).containsExactly(
             TestCaseIdentifierResponse(first.id.toString(), "1"), TestCaseIdentifierResponse(second.id.toString(), "2"),
