@@ -126,6 +126,7 @@ class TestCaseVersionLibraryIntegrationTest {
         assertThat(plain.status).isEqualTo(200)
         val plainRows = plain.body["items"].associateBy { it["id"].asLong() }
         assertThat(plainRows).hasSize(mapCases - 1)
+        assertThat(plainRows.values.all { !it.has("status") }).isTrue()
         assertThat(plainRows).doesNotContainKey(onlyInOld.testCaseId)
         assertThat(plainRows).doesNotContainKey(manual.id!!)
         assertThat(plainRows.getValue(passedThenFailed.testCaseId)["verificationStatus"].asText()).isEqualTo("FAILED")

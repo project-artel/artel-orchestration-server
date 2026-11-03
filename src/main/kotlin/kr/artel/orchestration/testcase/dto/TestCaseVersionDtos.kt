@@ -82,7 +82,6 @@ data class TestCaseVersionRow(
     val step: String,
     val precondition: String?,
     val expectedValue: String,
-    val status: String?,
     val origin: String,
     val folderId: String?,
     val createdAt: Instant,
@@ -119,7 +118,6 @@ data class CaseListFields(
     val step: String,
     val precondition: String?,
     val expectedValue: String,
-    val status: String?,
     val verificationStatus: String,
     val createdAt: Instant?,
     val fromMap: Boolean,
@@ -133,6 +131,5 @@ data class VersionListFields(
     val step: String,
     val precondition: String?,
     val expectedValue: String,
-    val status: String?,
     val verificationStatus: String,
 )

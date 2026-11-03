@@ -12,9 +12,7 @@ import kr.artel.orchestration.contentmap.evidence.ConditionNode
  * @property capabilityKey 이 케이스를 만든 지도 기능의 **안정 참조 키**(ARTEL-553). 재적재를 넘어
  *   같은 값이 나오므로 저작이 이것으로 지도를 되짚는다. 문자열 맞춤이 사라지는 자리다.
  * @property scene 이 케이스가 시작하는 화면.
- * @property status `ready` · `candidate` · `review` — 얼마나 믿을 수 있나. **저작 판단에는 쓰지
- *   않는다**(모델 자평 순환 회피). 화면 표시용이다.
- * @property gaps 이 등급이 나온 이유 코드. 비어 있으면 걸린 것이 없다.
+ * @property gaps 근거에서 확인이 필요한 이유 코드. 비어 있으면 걸린 것이 없다.
  */
 data class MapTestCase(
     val capabilityKey: String,
@@ -39,7 +37,6 @@ data class MapTestCase(
      * 것과 같은 이유다(ARTEL-627). 실행이 항목마다 통과·실패를 답하려면 목록이어야 한다.
      */
     val expectedItems: List<String> = emptyList(),
-    val status: String,
     val gaps: List<String> = emptyList(),
     /**
      * 이 케이스를 실행하면 **어느 화면이 되나**(ARTEL-614). 씬 전환이 아니면 `null` 이다.
