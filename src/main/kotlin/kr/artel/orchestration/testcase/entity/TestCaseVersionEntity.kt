@@ -49,8 +49,6 @@ data class TestCaseVersionEntity(
     @Column("expected_items")
     val expectedItems: Json? = null,
 
-    @Column("status")
-    val status: String? = null,
 
     @Column("capability_key")
     val capabilityKey: String? = null,
@@ -93,7 +91,6 @@ data class TestCaseVersionEntity(
             condition = testCase.condition,
             expectedValue = testCase.expectedValue,
             expectedItems = testCase.expectedItems,
-            status = testCase.status,
             capabilityKey = testCase.capabilityKey,
             metadata = testCase.metadata,
             verificationStatus = VerificationStatus.DRAFT.name,

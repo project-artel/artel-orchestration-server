@@ -129,7 +129,6 @@ data class TestCaseFolderItemResponse(
     val step: String,
     val precondition: String?,
     val expectedValue: String,
-    val status: String?,
     val verificationStatus: String?,
     val createdAt: java.time.Instant,
 )
