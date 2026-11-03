@@ -48,6 +48,7 @@ class TestRunChatService(
     private val objectMapper: com.fasterxml.jackson.databind.ObjectMapper,
     private val drafts: AuthoringDraftStore,
     private val absorbService: ScenarioAbsorbService,
+    private val runLocks: RunAuthoringLocks,
 ) {
 
     /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다(재방문 복원). 접근 불가면 빈 목록. */
@@ -145,6 +146,13 @@ class TestRunChatService(
         val kept = mutableListOf<String>()
         val refused = mutableListOf<String>()
         for (item in draft.take(draftIds)) {
+            // 다른 사람의 Artel Bot 이 고치는 중인 시나리오는 승인하지 않고 draft 에 남긴다(ARTEL-1264).
+            val target = runScenarioReader.targetIdOf(runId, item.toResult().scenarioId, item.title)
+            if (target != null && runLocks.heldByOther(target, key)) {
+                draft.restore(item)
+                refused += "'${item.title}' — 다른 사람의 Artel Bot 이 이 시나리오를 고치는 중이라 승인하지 않았습니다."
+                continue
+            }
             val outcome = reconcileService.reconcile(runId, run.projectId, appUserId, listOf(item.toResult()))
             if (outcome.rejected) {
                 draft.restore(item)
@@ -184,6 +192,10 @@ class TestRunChatService(
      */
     suspend fun commitScenarios(appUserId: Long, runId: Long, scenarios: List<ScenarioResult>): Int {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
+        // 다른 사람의 Artel Bot 이 고치는 중인 시나리오는 커밋하지 못한다(ARTEL-1264).
+        val key = sessionKey(appUserId, runId)
+        // 번호가 없어도 런에 같은 제목이 있으면 그것을 덮는다(reconcile 의 규칙). 덮을 대상으로 검사한다.
+        scenarios.mapNotNull { runScenarioReader.targetIdOf(runId, it.scenarioId, it.title) }.forEach { runLocks.assertWritableBy(it, key) }
         // 판정을 넘기지 않는다 — 이 경로의 시나리오는 사용자가 카드로 직접 고른 것이라 "Agent가 다
         // 봤는가"를 물을 대상이 아니다. 사람이 고른 것이 곧 요구다.
         //
@@ -226,6 +238,10 @@ class TestRunChatService(
     }
 
     private fun sessionKey(appUserId: Long, runId: Long) = "$appUserId:$runId"
+
+    /** 이 런에서 Artel Bot 이 고치는 중이라 잠긴 시나리오들(ARTEL-1264). 접근 불가면 404. */
+    suspend fun authoringLock(appUserId: Long, runId: Long) =
+        accessible(runId, appUserId)?.let { runLocks.describe(runId, appUserId) } ?: throw NotFoundException()
 
     companion object {
         /** 승인 전 draft 가 있어 새 요청을 받지 않는다(ARTEL-1074). 화면은 draft 만 고치는 입력으로 안내한다. */

@@ -19,6 +19,7 @@ import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.reactive.executeAndAwait
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import kr.artel.orchestration.testrun.service.RunAuthoringLocks
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import org.springframework.transaction.reactive.TransactionalOperator
 
@@ -37,7 +38,9 @@ class TestScenarioService(
     private val runScenarioRepository: TestRunScenarioRepository,
     private val qaTryRepository: QaTryRepository,
     private val transactionalOperator: TransactionalOperator,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    /** Artel Bot 이 고치는 중인 런의 시나리오는 사람이 쓰지 못한다(ARTEL-1264). */
+    private val runLocks: RunAuthoringLocks,
 ) {
 
     /** 새 시나리오를 빈 본문으로 생성하고 testScenarioId를 반환한다. 비참여자면 null(→404). */
@@ -101,6 +104,7 @@ class TestScenarioService(
     suspend fun testScenarioUpdate(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft): ScenarioResponse {
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
             ?: throw NotFoundException()
+        runLocks.assertScenarioWritable(testScenarioId)
         // execution_mode 를 보내지 않은 요청은 기존 값을 유지하므로, 검사도 유지될 값으로 한다.
         val stated = draft.copy(executionMode = draft.executionMode ?: entity.executionMode)
         ScenarioExecutionRules.validate(stated)
@@ -126,6 +130,7 @@ class TestScenarioService(
     suspend fun testScenarioApprove(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft?) {
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
             ?: throw NotFoundException()
+        runLocks.assertScenarioWritable(testScenarioId)
         if (draft != null) {
             val stated = draft.copy(executionMode = draft.executionMode ?: entity.executionMode)
             ScenarioExecutionRules.validate(stated)

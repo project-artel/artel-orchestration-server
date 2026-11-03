@@ -4,6 +4,7 @@ import kr.artel.orchestration.common.error.BadRequestException
 import kotlinx.coroutines.flow.Flow
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testrun.dto.CommitScenariosRequest
+import kr.artel.orchestration.testrun.dto.RunAuthoringLockResponse
 import kr.artel.orchestration.testrun.dto.RunChatCancellation
 import kr.artel.orchestration.testrun.dto.RunChatMessage
 import kr.artel.orchestration.testrun.dto.RunCasesOutsideBuildResponse
@@ -263,6 +264,18 @@ class TestRunController(
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
     }
+
+    /**
+     * 이 런이 Artel Bot 에게 잠겨 있나(ARTEL-1264). 맵 · TS 편집 화면이 잠금 화면을 띄울지 읽는다.
+     * 잠금 · 풀림 · 진행 단계가 바뀌면 프로젝트 변경 stream 이 `RUN_LOCKS` 로 알린다.
+     */
+    @GetMapping("/{runId}/authoring-lock")
+    suspend fun authoringLock(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @CurrentUserId appUserId: Long
+    ): RunAuthoringLockResponse =
+        chatService.authoringLock(appUserId, runId)
 
     /** 자동저장을 끈 턴이 모아 둔 draft(ARTEL-1074). 대화가 없으면 빈 배열. */
     @GetMapping("/{runId}/chat/draft")
