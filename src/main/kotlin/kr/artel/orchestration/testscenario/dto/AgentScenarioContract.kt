@@ -54,6 +54,11 @@ data class AgentCase(
      * 키를 싣지 않는다 — 이 필드를 모르는 agent 와 기록이 없는 실행은 지금과 같다.
      */
     @get:JsonInclude(JsonInclude.Include.NON_NULL) val reviews: List<AgentCaseReview>? = null,
+    /**
+     * 이 TC 가 돌 때 SDK 가 읽어 보낼 관측 이름(ARTEL-1280). `functions` 와 같이 정한 적 없으면 키를 싣지 않는다. orchestration
+     * 은 이름을 해석하지 않고 `metadata.observe` 를 그대로 건넨다 — 푸는 쪽은 SDK 다.
+     */
+    @get:JsonInclude(JsonInclude.Include.NON_NULL) val observe: List<String>? = null,
 )
 
 /** 사람이 정한 판정 한 건: AI 가 뭐라 했고, 사람이 뭐라 정했고, 왜인지. */

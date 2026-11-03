@@ -1,10 +1,13 @@
 package kr.artel.orchestration.testcase.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.game.repository.GameBuildRepository
 import kr.artel.orchestration.testcase.dto.CaseListFields
 import kr.artel.orchestration.testcase.dto.VersionListFields
 import kr.artel.orchestration.testcase.dto.originLabel
+import kr.artel.orchestration.testcase.dto.TestCaseObserve
+import kr.artel.orchestration.testcase.dto.observeOrNull
 import kr.artel.orchestration.testcase.entity.TestCaseEntity
 import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
 import kr.artel.orchestration.testcase.entity.VerificationStatus
@@ -45,6 +48,7 @@ class TestCaseReader(
     private val testCases: TestCaseRepository,
     private val versions: TestCaseVersionRepository,
     private val gameBuilds: GameBuildRepository,
+    private val objectMapper: ObjectMapper,
 ) {
     /** 프로젝트의 케이스, id 오름차순. [CaseScope.Version] 이면 그 버전에 든 것만 그 버전 내용으로. */
     suspend fun inScope(projectId: Long, scope: CaseScope): List<TestCaseEntity> {
@@ -120,7 +124,8 @@ class TestCaseReader(
             expectedValue = version.expectedValue,
             expectedItems = version.expectedItems,
             capabilityKey = version.capabilityKey,
-            metadata = version.metadata,
+            // observe는 버전 내용과 무관한 TC 공통 설정이다.
+            metadata = TestCaseObserve.write(version.metadata, identity.observeOrNull().orEmpty(), objectMapper),
         )
     }
 

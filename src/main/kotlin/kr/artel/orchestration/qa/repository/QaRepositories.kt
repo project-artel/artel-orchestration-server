@@ -347,6 +347,17 @@ interface QaLogRepository : CoroutineCrudRepository<QaLogEntity, Long> {
     )
     fun findPage(qaTryId: Long, beforeId: Long?, limit: Int): Flow<QaLogEntity>
 
+    /** [findPage] 에서 `types` 의 행만. `PULSE` 가 대부분인 런에서 흐름을 그릴 행만 고를 때 쓴다. */
+    @Query(
+        """
+        SELECT * FROM qa_log
+        WHERE qa_try_id = :qaTryId AND type IN (:types) AND (:beforeId IS NULL OR id < :beforeId)
+        ORDER BY id DESC
+        LIMIT :limit
+        """
+    )
+    fun findPageOfTypes(qaTryId: Long, types: Collection<String>, beforeId: Long?, limit: Int): Flow<QaLogEntity>
+
     @Query(
         """
         SELECT * FROM qa_log
