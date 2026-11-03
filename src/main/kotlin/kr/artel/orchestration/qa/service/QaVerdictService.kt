@@ -125,11 +125,13 @@ class QaVerdictService(
                 )
             }
         }
+        val gameBuild = run.gameBuildId?.let { gameBuilds.findById(it) }
         return QaRunVerdictsResponse(
             qaRunId = qaRunId.toString(),
             testRunId = run.testRunId.toString(),
             testRunName = testRuns.findById(run.testRunId)?.name.orEmpty(),
-            gameBuildVersion = run.gameBuildId?.let { gameBuilds.findById(it) }?.version,
+            gameBuildVersion = gameBuild?.version,
+            gameBuildIsEditor = gameBuild?.isEditor,
             status = run.status,
             startedAt = run.startedAt,
             completedAt = run.completedAt,
