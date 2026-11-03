@@ -4599,6 +4599,164 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-cases/imports/preview": {
+      "post": {
+        "tags": [
+          "case-file-controller"
+        ],
+        "operationId": "previewTestCaseImport",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fileName",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "*/*": {
+              "schema": {
+                "type": "string",
+                "format": "byte"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseImportPreview"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-cases/imports": {
+      "post": {
+        "tags": [
+          "case-file-controller"
+        ],
+        "operationId": "importTestCases",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fileName",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "*/*": {
+              "schema": {
+                "type": "string",
+                "format": "byte"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseImportResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-cases/exports": {
+      "post": {
+        "tags": [
+          "case-file-controller"
+        ],
+        "operationId": "exportTestCases",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseFileExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-cases/bulk-delete": {
       "post": {
         "tags": [
@@ -9668,6 +9826,46 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/TestCaseReviewStatusOptions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/test-cases/imports/template": {
+      "get": {
+        "tags": [
+          "case-file-controller"
+        ],
+        "operationId": "downloadTestCaseImportTemplate",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
                 }
               }
             }
@@ -16207,6 +16405,162 @@
           "moved": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "CaseImportCounts": {
+        "required": [
+          "edit",
+          "new",
+          "rejected",
+          "same"
+        ],
+        "type": "object",
+        "properties": {
+          "new": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "edit": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "same": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "CaseImportPreview": {
+        "required": [
+          "counts",
+          "format",
+          "rows"
+        ],
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseImportRowView"
+            }
+          },
+          "counts": {
+            "$ref": "#/components/schemas/CaseImportCounts"
+          }
+        }
+      },
+      "CaseImportRowView": {
+        "required": [
+          "changes",
+          "expectedValue",
+          "kind",
+          "line",
+          "scene",
+          "status",
+          "step"
+        ],
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "NEW",
+              "EDIT",
+              "SAME",
+              "REJECTED"
+            ]
+          },
+          "testCaseId": {
+            "type": "string"
+          },
+          "caseNumber": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
+          },
+          "expectedValue": {
+            "type": "string"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "CaseImportResult": {
+        "required": [
+          "created",
+          "rejected",
+          "unchanged",
+          "updated"
+        ],
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unchanged": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "rejected": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseImportRowView"
+            }
+          }
+        }
+      },
+      "CaseFileExportRequest": {
+        "required": [
+          "format"
+        ],
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "testCaseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
