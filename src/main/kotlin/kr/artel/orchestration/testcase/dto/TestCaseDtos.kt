@@ -27,6 +27,8 @@ data class TestCaseCreateRequest(
     val kind: String? = null,
     /** 하고 나면 가는 화면(ARTEL-1312). null 이거나 빈 문자열이면 화면이 바뀌지 않는 TC 다. */
     val arrivesAt: String? = null,
+    /** true면 검토 전 초안이다. 기존 화면의 생성 동작은 유지한다. */
+    val draft: Boolean = false,
 )
 
 /** 케이스 수정. 검증상태(verificationStatus)도 여기서 바꿀 수 있다. */
@@ -46,6 +48,7 @@ data class TestCaseUpdateRequest(
     val kind: String? = null,
     /** 도착 화면을 바꾼다(ARTEL-1312). null 이면 건드리지 않고, 빈 문자열이면 "화면이 바뀌지 않는다" 로 정한다. */
     val arrivesAt: String? = null,
+    val reviewStatus: String? = null,
 )
 
 /**
@@ -91,6 +94,7 @@ data class TestCaseResponse(
     val kind: String = TestCaseKind.FUNCTION.name,
     /** 하고 나면 가는 화면(씬 전이 TC)(ARTEL-1312). 화면이 안 바뀌면 null. */
     val arrivesAt: String? = null,
+    val reviewStatus: String = "READY",
 )
 
 data class TestCaseListResponse(val items: List<TestCaseResponse>)
@@ -127,4 +131,8 @@ data class TestCaseDetailResponse(
     val kind: String = TestCaseKind.FUNCTION.name,
     /** [TestCaseResponse.arrivesAt] 와 같다. */
     val arrivesAt: String? = null,
+    val reviewStatus: String = "READY",
 )
+
+/** 생성 전에 검토 상태 API 지원 여부를 확인하는 응답. */
+data class TestCaseReviewStatusOptions(val statuses: List<String> = listOf("DRAFT", "READY"))

@@ -65,6 +65,7 @@ fun TestCaseEntity.toTestCaseResponse(folderId: Long? = null): TestCaseResponse 
         functions = functionsOrNull(),
         kind = kind,
         arrivesAt = arrivalOrNull(),
+        reviewStatus = reviewStatus,
     )
 
 /** 도착 화면(`metadata.arrives_at`). 없거나 비면 null. */
@@ -101,6 +102,7 @@ fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper, folderId
         functions = base.functions,
         kind = base.kind,
         arrivesAt = base.arrivesAt,
+        reviewStatus = base.reviewStatus,
     )
 }
 

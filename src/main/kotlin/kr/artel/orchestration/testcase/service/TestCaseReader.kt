@@ -89,6 +89,7 @@ class TestCaseReader(
         versions.findByGameBuildId(gameBuildId).toList()
             .filter { it.verificationStatus != VerificationStatus.BROKEN.name }
             .map { it.testCaseId }
+            .let { ids -> testCases.findAllById(ids).toList().filter { it.reviewStatus == "READY" }.map { requireNotNull(it.id) } }
             .toSet()
 
     /**

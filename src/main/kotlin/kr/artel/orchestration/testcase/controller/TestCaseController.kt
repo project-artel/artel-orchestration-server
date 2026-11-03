@@ -98,6 +98,10 @@ class TestCaseController(
     ): TestCaseCoverageResponse =
         service.coverage(projectId, appUserId)
 
+    @GetMapping("/review-status-options")
+    suspend fun reviewStatusOptions(@PathVariable projectId: Long, @CurrentUserId appUserId: Long) =
+        service.reviewStatusOptions(projectId, appUserId)
+
     @PostMapping
     suspend fun createTestCase(
         @PathVariable projectId: Long,

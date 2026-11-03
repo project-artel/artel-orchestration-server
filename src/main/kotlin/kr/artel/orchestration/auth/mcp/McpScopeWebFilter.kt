@@ -43,6 +43,10 @@ private class McpRoute(val method: HttpMethod, pattern: String, val scope: McpSc
  * 프로젝트 경로의 멤버 검사는 여기서 하지 않는다. 각 서비스가 `ProjectAccessService` 로 이미 한다.
  */
 private val MCP_ROUTES = listOf(
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-cases/review-status-options", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-cases", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-cases/{caseId}", McpScope.TESTCASE_READ),
+    McpRoute(HttpMethod.PUT, "/api/projects/{projectId}/test-cases/{caseId}", McpScope.TESTCASE_WRITE),
     McpRoute(HttpMethod.GET, "/api/projects", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds", McpScope.MACRO_READ),
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-builds/{buildId}/game-functions", McpScope.MACRO_READ),

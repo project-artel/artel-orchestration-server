@@ -66,7 +66,7 @@ class QaCaseAttemptService(
             INSERT INTO qa_case_attempt(id, qa_try_id, test_case_id, project_id, case_snapshot, started_at)
             SELECT :id, t.id, c.id, c.project_id, COALESCE(CAST(:snapshot AS jsonb), to_jsonb(c)), :started
             FROM qa_try t JOIN test_scenario s ON s.id = t.test_scenario_id
-            JOIN test_case c ON c.project_id = s.project_id AND c.id = :caseId
+            JOIN test_case c ON c.project_id = s.project_id AND c.id = :caseId AND c.review_status = 'READY'
             WHERE t.id = :tryId AND EXISTS (SELECT 1 FROM jsonb_array_elements(s.steps) AS reference(value) WHERE reference.value->>'case_id' = c.id::text)
             ON CONFLICT (id) DO NOTHING
         """).bind("id", request.id).bind("caseId", request.testCaseId).bind("tryId", qaTry.id!!)

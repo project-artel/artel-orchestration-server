@@ -36,15 +36,15 @@ class AuthoringCases(
 ) {
     /** 프로젝트의 케이스 전부, id 오름차순. 버전이 있으면 그 버전 몫이 있는 케이스는 그 버전으로 비춘다. */
     suspend fun all(projectId: Long): List<TestCaseEntity> =
-        reader.overlay(testCases.findByProjectIdOrderByIdAsc(projectId).toList(), scope())
+        reader.overlay(testCases.findByProjectIdOrderByIdAsc(projectId).toList().filter { it.reviewStatus == "READY" }, scope())
 
     /** 케이스 하나. 버전이 있고 그 버전 몫이 있으면 그 버전으로 비춘다. */
     suspend fun byId(testCaseId: Long): TestCaseEntity? =
-        testCases.findById(testCaseId)?.let { reader.overlay(it, scope()) }
+        testCases.findById(testCaseId)?.takeIf { it.reviewStatus == "READY" }?.let { reader.overlay(it, scope()) }
 
     /** [byId] 의 여러 건판. 없는 id 는 빠진다. */
     suspend fun byIds(ids: Collection<Long>): List<TestCaseEntity> =
-        if (ids.isEmpty()) emptyList() else reader.overlay(testCases.findAllById(ids).toList(), scope())
+        if (ids.isEmpty()) emptyList() else reader.overlay(testCases.findAllById(ids).toList().filter { it.reviewStatus == "READY" }, scope())
 
     // ── 지도 사실: 빌드가 있으면 그 빌드 지도 하나, 없으면 프로젝트판 ─────────────────────────────
 

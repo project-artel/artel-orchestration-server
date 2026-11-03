@@ -23,7 +23,7 @@ import org.springframework.stereotype.Service
  * - **버리기**: 스텝은 판정 없는 스텝으로 남는다(`recommendation_id` 만 뗀다).
  * - **시나리오 draft 승인**은 그 draft 가 가리키는 추천을 먼저 저장한다 — 한 번에 저장된다.
  *
- * "draft" 는 시나리오에만 쓰는 말이라, 이것은 추천(recommendation)이라 부른다.
+ * 추천(recommendation)은 저장 전 제안이다. TC로 저장한 뒤에는 별도의 검토 상태를 갖는다.
  */
 @Service
 class CaseRecommendationService(
@@ -142,7 +142,7 @@ class CaseRecommendationService(
      * 추천을 TC 로 저장한다. [ids] 가 비면 이 런의 대기 중인 추천 전부다. 저장한 TC 는 이 런의 build 버전에 들어가고,
      * 이 런의 시나리오와 이 사용자의 draft 에서 그 추천을 가리키던 스텝이 새 TC 를 확인하는 스텝으로 바뀐다.
      */
-    suspend fun save(projectId: Long, runId: Long, userId: Long, ids: List<Long>, edits: Map<Long, TestCaseCreateRequest> = emptyMap()): List<Recommendation> {
+    suspend fun save(projectId: Long, runId: Long, userId: Long, ids: List<Long>, edits: Map<Long, TestCaseCreateRequest> = emptyMap(), draft: Boolean = false): List<Recommendation> {
         if (!projectAccess.isMember(projectId, userId)) throw NotFoundException("프로젝트를 찾을 수 없습니다.")
         val pending = byIds(runId, ids.ifEmpty { null }).filter { it.status == PENDING }
         if (pending.isEmpty()) return emptyList()
@@ -158,7 +158,7 @@ class CaseRecommendationService(
                 precondition = rec.precondition.ifBlank { null }, expectedValue = rec.expectedValue,
                 arrivesAt = rec.arrivesAt,
             )
-            val created = testCaseService.createTestCase(projectId, userId, request.copy(gameBuildId = buildId?.toString()))
+            val created = testCaseService.createTestCase(projectId, userId, request.copy(gameBuildId = buildId?.toString(), draft = draft))
                 ?: throw NotFoundException("프로젝트를 찾을 수 없습니다.")
             val caseId = created.id.toLong()
             databaseClient.sql("UPDATE case_recommendation SET status = 'SAVED', test_case_id = :c, updated_at = now() WHERE id = :id")

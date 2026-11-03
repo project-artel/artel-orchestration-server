@@ -50,6 +50,7 @@ class ScenarioCompositionService(
         recordedBuildId: Long? = null,
     ): AgentScenario {
         val caseIds = draft.steps.mapNotNull { it.caseId }.toSet()
+        validateReviewStatus(draft)
         val recordable = recordedBuildId?.let { testCaseReader.byIds(caseIds, CaseScope.Version(it)).keys }
         val caseById = testCaseReader.overlay(testCaseReader.byIds(caseIds, CaseScope.Latest).values.toList(), caseScope)
             .filter { recordable == null || it.id in recordable }
@@ -99,6 +100,14 @@ class ScenarioCompositionService(
             )
         }
         return AgentScenario(title = draft.title, description = draft.description, steps = steps, executionMode = draft.mode)
+    }
+
+    /** 실행 상태를 만들기 전에 검토 상태를 확인한다. 저장된 옛 시나리오도 현재 TC 상태를 따른다. */
+    suspend fun validateReviewStatus(draft: ScenarioDraft) {
+        val cases = testCaseReader.byIds(draft.steps.mapNotNull { it.caseId }.toSet(), CaseScope.Latest)
+        if (cases.values.any { it.reviewStatus != "READY" }) {
+            throw kr.artel.orchestration.common.error.BadRequestException("검토 전 초안 TC는 QA에 사용할 수 없습니다.")
+        }
     }
 
     private companion object {

@@ -93,6 +93,7 @@ data class TestCaseVersionRow(
     val kind: String = "FUNCTION",
     /** 도착 화면(ARTEL-1312). 화면이 안 바뀌는 TC 면 null. */
     val arrivesAt: String? = null,
+    val reviewStatus: String = "READY",
 )
 
 /** @property gameBuildId "버전 없음" 목록이면 null 이다. */
@@ -127,6 +128,7 @@ data class CaseListFields(
     val fromMap: Boolean,
     val kind: String = "FUNCTION",
     val arrivesAt: String? = null,
+    val reviewStatus: String = "READY",
 )
 
 /** 케이스 목록에 보일 칸만 읽은 버전 몫(ARTEL-1212). */

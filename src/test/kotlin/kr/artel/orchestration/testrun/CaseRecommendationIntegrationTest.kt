@@ -196,6 +196,20 @@ class CaseRecommendationIntegrationTest {
 
     /** 화면 이름이 이미 `화면` 으로 끝나면 한 번 더 붙이지 않는다. */
     @Test
+    fun `추천 저장도 초안 여부를 받아 검토 상태와 검증 상태를 구분한다`(): Unit = runBlocking {
+        val client = WebClient.create("http://localhost:$port")
+        val (projectId, runId, token) = world("review-draft")
+        val rec = recommendations.recommendSceneMove(projectId, runId, "광장", "숲", "길을 간다")!!
+        post(client, "/api/projects/$projectId/test-runs/$runId/case-recommendations/save", token,
+            mapOf("ids" to listOf(rec.id.toString()), "draft" to true))
+        val saved = objectMapper.readTree(get(client, "/api/projects/$projectId/test-runs/$runId/case-recommendations", token))
+        val caseId = saved[0]["testCaseId"].asText()
+        val tc = objectMapper.readTree(get(client, "/api/projects/$projectId/test-cases/$caseId", token))
+        assertThat(tc["reviewStatus"].asText()).isEqualTo("DRAFT")
+        assertThat(tc["verificationStatus"].asText()).isEqualTo("DRAFT")
+    }
+
+    @Test
     fun `길 추천은 화면 이름에 화면을 겹쳐 붙이지 않는다`(): Unit = runBlocking {
         val (projectId, runId, _) = world("5")
         val named = recommendations.recommendSceneMove(projectId, runId, "전투", "첫 단어 퍼즐 화면", "조작 없이 기다린다")!!

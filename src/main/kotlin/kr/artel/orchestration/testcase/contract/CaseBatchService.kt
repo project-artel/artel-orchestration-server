@@ -39,7 +39,7 @@ class CaseBatchService(
                 val caseId = if (item.testCaseId.isNullOrBlank()) {
                     val response = testCaseService.createTestCase(
                         projectId, userId,
-                        TestCaseCreateRequest(item.scene, item.step, item.precondition, item.expectedValue, gameBuildId = buildId, kind = item.kind),
+                        TestCaseCreateRequest(item.scene, item.step, item.precondition, item.expectedValue, gameBuildId = buildId, kind = item.kind, draft = request.draft),
                     ) ?: throw NotFoundException("프로젝트를 찾을 수 없습니다.")
                     response.id.also { created += it }
                 } else {

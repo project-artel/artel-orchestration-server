@@ -9556,6 +9556,37 @@
         }
       }
     },
+    "/api/projects/{projectId}/test-cases/review-status-options": {
+      "get": {
+        "tags": [
+          "test-case-controller"
+        ],
+        "operationId": "reviewStatusOptions",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseReviewStatusOptions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/test-cases/coverage": {
       "get": {
         "tags": [
@@ -12670,6 +12701,9 @@
           },
           "arrivesAt": {
             "type": "string"
+          },
+          "reviewStatus": {
+            "type": "string"
           }
         }
       },
@@ -12681,6 +12715,7 @@
           "kind",
           "origin",
           "projectId",
+          "reviewStatus",
           "scene",
           "step",
           "verificationStatus"
@@ -12731,6 +12766,9 @@
             "type": "string"
           },
           "arrivesAt": {
+            "type": "string"
+          },
+          "reviewStatus": {
             "type": "string"
           }
         }
@@ -15824,6 +15862,7 @@
       },
       "CaseRecommendationIds": {
         "required": [
+          "draft",
           "ids"
         ],
         "type": "object",
@@ -15833,6 +15872,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "draft": {
+            "type": "boolean"
           }
         }
       },
@@ -15851,6 +15893,9 @@
         }
       },
       "TestCaseCreateRequest": {
+        "required": [
+          "draft"
+        ],
         "type": "object",
         "properties": {
           "scene": {
@@ -15879,6 +15924,9 @@
           },
           "arrivesAt": {
             "type": "string"
+          },
+          "draft": {
+            "type": "boolean"
           }
         }
       },
@@ -16579,6 +16627,7 @@
       "CaseBatchRequest": {
         "required": [
           "cases",
+          "draft",
           "terms"
         ],
         "type": "object",
@@ -16597,6 +16646,9 @@
           },
           "gameBuildId": {
             "type": "string"
+          },
+          "draft": {
+            "type": "boolean"
           }
         }
       },
@@ -20482,6 +20534,7 @@
           "kind",
           "origin",
           "projectId",
+          "reviewStatus",
           "scene",
           "step",
           "verificationStatus"
@@ -20539,6 +20592,23 @@
           },
           "arrivesAt": {
             "type": "string"
+          },
+          "reviewStatus": {
+            "type": "string"
+          }
+        }
+      },
+      "TestCaseReviewStatusOptions": {
+        "required": [
+          "statuses"
+        ],
+        "type": "object",
+        "properties": {
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -20752,6 +20822,7 @@
           "kind",
           "origin",
           "presence",
+          "reviewStatus",
           "scene",
           "step"
         ],
@@ -20798,6 +20869,9 @@
             "type": "string"
           },
           "arrivesAt": {
+            "type": "string"
+          },
+          "reviewStatus": {
             "type": "string"
           }
         }
@@ -23291,6 +23365,7 @@
           "kind",
           "leaves",
           "needs",
+          "reviewStatus",
           "scene",
           "step",
           "testCaseId"
@@ -23338,6 +23413,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "reviewStatus": {
+            "type": "string"
           }
         }
       },
