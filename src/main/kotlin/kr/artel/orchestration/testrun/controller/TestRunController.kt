@@ -13,6 +13,7 @@ import kr.artel.orchestration.testrun.dto.RunDeletionPreview
 import kr.artel.orchestration.testrun.dto.RunDeletionResult
 import kr.artel.orchestration.testrun.dto.RunScenariosResponse
 import kr.artel.orchestration.testrun.dto.ScenarioImportRequest
+import kr.artel.orchestration.testrun.dto.TestRunCopyRequest
 import kr.artel.orchestration.testrun.dto.ScenarioImportResponse
 import kr.artel.orchestration.testrun.dto.SetRunScenariosRequest
 import kr.artel.orchestration.testrun.dto.TestRunCreateRequest
@@ -22,6 +23,7 @@ import kr.artel.orchestration.testrun.dto.TestRunResponse
 import kr.artel.orchestration.testrun.dto.TestRunUpdateRequest
 import kr.artel.orchestration.testrun.service.ScenarioLibraryService
 import kr.artel.orchestration.testrun.service.TestRunChatService
+import kr.artel.orchestration.testrun.service.TestRunCopyService
 import kr.artel.orchestration.testrun.service.TestRunService
 import kr.artel.orchestration.testscenario.dto.DraftApplyResult
 import kr.artel.orchestration.testscenario.dto.DraftScenario
@@ -56,6 +58,7 @@ class TestRunController(
     private val service: TestRunService,
     private val chatService: TestRunChatService,
     private val libraryService: ScenarioLibraryService,
+    private val copyService: TestRunCopyService,
     private val recommendationService: kr.artel.orchestration.testscenario.service.CaseRecommendationService,
 ) {
 
@@ -108,6 +111,19 @@ class TestRunController(
         service.update(runId, appUserId, request)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
+
+    /**
+     * TR 을 복제한다(ARTEL-1377). 시나리오는 원래 순서대로 복사본이 되고, 이름 뒤에 "사본" 이 붙는다. body 를 비우면
+     * 원본과 같은 버전 · 폴더에 만든다. 다른 프로젝트 경로의 TR 은 없는 것이다(404).
+     */
+    @PostMapping("/{runId}/copies")
+    @ResponseStatus(HttpStatus.CREATED)
+    suspend fun copy(
+        @PathVariable projectId: Long,
+        @PathVariable runId: Long,
+        @RequestBody(required = false) request: TestRunCopyRequest?,
+        @CurrentUserId appUserId: Long
+    ): TestRunResponse = copyService.copy(projectId, runId, appUserId, request ?: TestRunCopyRequest())
 
     /** 이 런을 지우면 무엇이 같이 없어지는지(ARTEL-487). 삭제 확인창이 물어보기 위해 읽는다. */
     @GetMapping("/{runId}/deletion-preview")
