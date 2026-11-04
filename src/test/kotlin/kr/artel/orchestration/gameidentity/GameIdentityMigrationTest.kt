@@ -28,7 +28,7 @@ class GameIdentityMigrationTest {
                         VALUES (1, 'Stage.position', 'ordinal', 0, '현재 stage', 'stage 진입', 'stage', 'current', 1, 8, '2026-11-03T00:00:00Z')""")
                 }
             }
-            Flyway.configure().dataSource(url, username, password).locations("classpath:db/migration").target("174").load().migrate()
+            Flyway.configure().dataSource(url, username, password).locations("classpath:db/migration").target("175").load().migrate()
             DriverManager.getConnection(url, username, password).use { connection ->
                 connection.createStatement().executeQuery("""SELECT r.*, b.game_build_id AS selected_build
                     FROM game_identity_revision r JOIN game_identity_build_binding b ON b.revision_id = r.id""").use { row ->

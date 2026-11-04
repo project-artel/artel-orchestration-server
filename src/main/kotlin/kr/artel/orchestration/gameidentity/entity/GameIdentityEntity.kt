@@ -11,7 +11,7 @@ import java.time.Instant
  * developer macro(`developer_macro`)는 실행하는 행동이고 이 행은 읽는 값이다. 읽는 쪽은 agent-server 의
  * planner–executer 엔진이고 런 시작 때 읽는다.
  *
- * V174 이후에는 기존 행을 migration source로 보존한다. 신규 쓰기는 별도 revision과 build binding query를 사용한다.
+ * V175 이후에는 기존 행을 migration source로 보존한다. 신규 쓰기는 별도 revision과 build binding query를 사용한다.
  * 이 타입은 repository의 타입 인자로만 쓴다.
  */
 @Table("game_identity")
