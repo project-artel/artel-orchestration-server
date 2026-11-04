@@ -2,19 +2,25 @@ package kr.artel.orchestration.gameidentity
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
-import kr.artel.orchestration.auth.service.AuthenticatedUser
 import kr.artel.orchestration.auth.service.JwtService
 import kr.artel.orchestration.auth.service.OAuthIdentity
 import kr.artel.orchestration.auth.service.OAuthUserService
 import kr.artel.orchestration.config.InternalApiServer
 import kr.artel.orchestration.game.entity.GameBuildEntity
+import kr.artel.orchestration.game.entity.GameInstanceEntity
 import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.gameidentity.dto.*
+import kr.artel.orchestration.gameidentity.service.GameIdentityService
 import kr.artel.orchestration.project.entity.ProjectEntity
 import kr.artel.orchestration.project.entity.ProjectMemberEntity
 import kr.artel.orchestration.project.repository.ProjectMemberRepository
 import kr.artel.orchestration.project.repository.ProjectRepository
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -23,270 +29,180 @@ import org.springframework.http.HttpMethod
 import org.springframework.http.MediaType
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.web.reactive.function.client.WebClient
-import reactor.core.publisher.Mono
 import java.time.Instant
 import java.util.UUID
 
-/**
- * 게임 값 선언의 등록·목록·삭제와 내부 목록(V173).
- *
- * 표를 비우지 않는다. 테스트마다 새 프로젝트를 만들어 자기 행만 쓴다(`DeveloperMacroIntegrationTest` 와 같은 이유).
- */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class GameIdentityIntegrationTest {
-
-    @LocalServerPort
-    private val port: Int = 0
-
+    @LocalServerPort private val port: Int = 0
     @Autowired private lateinit var jwtService: JwtService
     @Autowired private lateinit var oauthUsers: OAuthUserService
     @Autowired private lateinit var objectMapper: ObjectMapper
     @Autowired private lateinit var projects: ProjectRepository
     @Autowired private lateinit var members: ProjectMemberRepository
     @Autowired private lateinit var gameBuilds: GameBuildRepository
+    @Autowired private lateinit var instances: GameInstanceRepository
+    @Autowired private lateinit var identities: GameIdentityService
     @Autowired private lateinit var internalApiServer: InternalApiServer
 
     @Test
-    fun `등록하면 저장된 행을 돌려주고 선언한 칸이 바뀔 때만 version 이 오른다`() {
+    fun `build별 revision과 tombstone을 보존하고 stale version은 409다`() {
         val world = newWorld()
-        val path = "${world.base}/game-identities"
-
-        val first = call(world.ownerSession, HttpMethod.PUT, path, putBody(world.buildA))
+        val first = put(world, world.buildA)
         assertThat(first.status).isEqualTo(200)
-        assertThat(first.body.fieldNames().asSequence().toList()).containsExactlyInAnyOrder(
-            "id", "name", "kind", "base", "meaning", "changesWhen", "identifies", "role", "gameBuildId", "version", "updatedAt",
-        )
-        assertThat(first.body["id"].isTextual).describedAs("id 는 다른 응답처럼 문자열이다").isTrue()
-        assertThat(first.body["name"].asText()).isEqualTo(NAME)
-        assertThat(first.body["kind"].asText()).isEqualTo("ordinal")
-        assertThat(first.body["base"].asInt()).isEqualTo(0)
-        assertThat(first.body["meaning"].asText()).isEqualTo(MEANING)
-        assertThat(first.body["changesWhen"].asText()).isEqualTo(CHANGES_WHEN)
-        assertThat(first.body["identifies"].asText()).isEqualTo(IDENTIFIES)
-        assertThat(first.body["role"].asText()).isEqualTo("current")
-        assertThat(first.body["gameBuildId"].isTextual).isTrue()
-        assertThat(first.body["gameBuildId"].asText()).isEqualTo(world.buildA.toString())
-        assertThat(first.body["version"].asInt()).isEqualTo(1)
-
-        val same = call(world.ownerSession, HttpMethod.PUT, path, putBody(world.buildA))
-        assertThat(same.body["id"].asText()).isEqualTo(first.body["id"].asText())
-        assertThat(same.body["version"].asInt()).describedAs("같은 선언은 버전을 올리지 않는다").isEqualTo(1)
-
-        val movedBuild = call(world.ownerSession, HttpMethod.PUT, path, putBody(world.buildB))
-        assertThat(movedBuild.body["version"].asInt()).describedAs("기준 build 만 옮긴 것은 선언 변경이 아니다").isEqualTo(1)
-        assertThat(movedBuild.body["gameBuildId"].asText()).isEqualTo(world.buildB.toString())
-
-        val changed = call(world.ownerSession, HttpMethod.PUT, path, putBody(world.buildB, base = "1"))
-        assertThat(changed.body["version"].asInt()).isEqualTo(2)
-        assertThat(changed.body["base"].asInt()).isEqualTo(1)
-
-        val baseDropped = call(world.ownerSession, HttpMethod.PUT, path, putBody(world.buildB, base = null))
-        assertThat(baseDropped.body["base"].isNull).isTrue()
-        assertThat(baseDropped.body["version"].asInt()).describedAs("base 를 비운 것도 선언 변경이다").isEqualTo(3)
-
-        val roleChanged = call(world.ownerSession, HttpMethod.PUT, path, putBody(world.buildB, base = null, role = "progress"))
-        assertThat(roleChanged.body["role"].asText()).isEqualTo("progress")
-        assertThat(roleChanged.body["version"].asInt()).describedAs("role 도 선언한 칸이다").isEqualTo(4)
-
-        val identifiesChanged = call(
-            world.ownerSession, HttpMethod.PUT, path,
-            putBody(world.buildB, base = null, role = "progress", identifies = "map chapter"),
-        )
-        assertThat(identifiesChanged.body["identifies"].asText()).isEqualTo("map chapter")
-        assertThat(identifiesChanged.body["version"].asInt()).describedAs("identifies 도 선언한 칸이다").isEqualTo(5)
-
-        call(world.ownerSession, HttpMethod.PUT, path, putBody(world.buildB, name = "MapMove.StagePosition"))
-        val list = call(world.ownerSession, HttpMethod.GET, path)
-        assertThat(list.status).isEqualTo(200)
-        assertThat(list.body["identities"].map { it["name"].asText() })
-            .describedAs("이름 오름차순")
-            .containsExactly("MapMove.StagePosition", NAME)
-        assertThat(list.body["identities"][1]["version"].asInt()).isEqualTo(5)
+        assertThat(first.body["source"].asText()).isEqualTo("WEB")
+        assertThat(first.body["revisionId"].isTextual).isTrue()
+        assertThat(first.body["createdBy"].asText()).isEqualTo(world.userId.toString())
+        assertThat(first.body["deleted"].asBoolean()).isFalse()
+        assertThat(put(world, world.buildA, 1).body).isEqualTo(first.body)
+        assertThat(put(world, world.buildB, meaning = "다른 build").body["version"].asInt()).isEqualTo(2)
+        assertThat(list(world, world.buildA).single()).isEqualTo(first.body)
+        assertThat(put(world, world.buildA).status).isEqualTo(409)
+        assertThat(put(world, world.buildA, 1, "수정").body["version"].asInt()).isEqualTo(3)
+        assertThat(delete(world, world.buildA, 3).status).isEqualTo(204)
+        assertThat(list(world, world.buildA).size()).isZero()
+        val tombstone = list(world, world.buildA, true).single()
+        assertThat(tombstone["deleted"].asBoolean()).isTrue()
+        assertThat(tombstone["version"].asInt()).isEqualTo(4)
+        put(world, world.buildB, 2)
+        assertThat(put(world, world.buildA, 4).body["version"].asInt()).isEqualTo(6)
+        val history = call(world, HttpMethod.GET, "/history?name=$NAME").body["identities"]
+        assertThat(history.size()).isEqualTo(6)
+        assertThat(history.last()).isEqualTo(first.body)
+        assertThat(history[2]).isEqualTo(tombstone)
     }
 
     @Test
-    fun `이름·kind·base·identifies·role·문장 칸이 규칙에 맞지 않으면 400 이고 아무것도 쓰지 않는다`() {
+    fun `SDK 재전송은 revision을 늘리지 않고 수동 override와 다른 build를 보존한다`(): Unit = runBlocking {
         val world = newWorld()
-        val path = "${world.base}/game-identities"
-
-        val rejected = listOf(
-            "name" to putBody(world.buildA, name = "stagePosition"),
-            "name" to putBody(world.buildA, name = "Stage.1st"),
-            "name" to putBody(world.buildA, name = "Stage Data.position"),
-            "kind" to putBody(world.buildA, kind = "number"),
-            "kind" to putBody(world.buildA, kind = null),
-            "base" to putBody(world.buildA, base = "2"),
-            "base" to putBody(world.buildA, base = "-1"),
-            "meaning" to putBody(world.buildA, meaning = " "),
-            "meaning" to putBody(world.buildA, meaning = "가".repeat(501)),
-            "changesWhen" to putBody(world.buildA, changesWhen = null),
-            "identifies" to putBody(world.buildA, identifies = null),
-            "identifies" to putBody(world.buildA, identifies = "Stage"),
-            "identifies" to putBody(world.buildA, identifies = "map  chapter"),
-            "identifies" to putBody(world.buildA, identifies = "x".repeat(61)),
-            "role" to putBody(world.buildA, role = null),
-            "role" to putBody(world.buildA, role = "selected"),
-            "gameBuildId" to putBody(world.buildA, gameBuildIdJson = "\"abc\""),
-        )
-        for ((field, body) in rejected) {
-            val answer = call(world.ownerSession, HttpMethod.PUT, path, body)
-            assertThat(answer.status).describedAs(body).isEqualTo(400)
-            assertThat(answer.body["fields"].has(field)).describedAs(body).isTrue()
-        }
-
-        assertThat(call(world.ownerSession, HttpMethod.GET, path).body["identities"].size()).isZero()
+        val now = Instant.now()
+        val instance = instances.save(GameInstanceEntity(projectId = world.projectId, name = "identity-sdk",
+            platform = "UNITY", lastGameBuildId = world.buildA, createdAt = now, updatedAt = now))
+        val instanceId = requireNotNull(instance.id)
+        val declaration = SdkGameIdentityDeclaration(NAME, "ordinal", 0, MEANING, "stage 진입", "stage", "current")
+        val catalog = SdkGameIdentityCatalog("GAME_IDENTITY_CATALOG", listOf(declaration))
+        identities.recordSdkCatalog(instanceId, catalog)
+        identities.recordSdkCatalog(instanceId, catalog)
+        assertThat(call(world, HttpMethod.GET, "/history?name=$NAME").body["identities"].size()).isEqualTo(1)
+        val first = list(world, world.buildA).single()
+        assertThat(first["source"].asText()).isEqualTo("SDK")
+        assertThat(first["createdBy"].isNull).isTrue()
+        val invalid = catalog.copy(identities = listOf(declaration.copy(name = "invalid")))
+        assertThatThrownBy { runBlocking { identities.recordSdkCatalog(instanceId, invalid) } }
+            .isInstanceOf(kr.artel.orchestration.common.error.BadRequestException::class.java)
+        val duplicate = catalog.copy(identities = listOf(declaration, declaration))
+        assertThatThrownBy { runBlocking { identities.recordSdkCatalog(instanceId, duplicate) } }
+            .isInstanceOf(kr.artel.orchestration.common.error.BadRequestException::class.java)
+        assertThat(list(world, world.buildA).single()).isEqualTo(first)
+        identities.recordSdkCatalog(instanceId, catalog.copy(identities = emptyList()))
+        assertThat(list(world, world.buildA).size()).isZero()
+        identities.recordSdkCatalog(instanceId, catalog)
+        assertThat(put(world, world.buildA, 3, "웹 수정").status).isEqualTo(200)
+        identities.recordSdkCatalog(instanceId, catalog)
+        identities.recordSdkCatalog(instanceId, catalog.copy(identities = emptyList()))
+        val overridden = list(world, world.buildA).single()
+        assertThat(overridden["meaning"].asText()).isEqualTo("웹 수정")
+        assertThat(overridden["source"].asText()).isEqualTo("WEB")
+        assertThat(list(world, world.buildB).size()).isZero()
+        val manual = objectMapper.readValue(body(world.buildA, 4), PutGameIdentityRequest::class.java)
+        val mcp = identities.put(world.userId, world.projectId, manual, "MCP")
+        assertThat(mcp.version).isEqualTo(5)
+        identities.recordSdkCatalog(instanceId, catalog)
+        assertThat(list(world, world.buildA).single()["source"].asText()).isEqualTo("MCP")
+        identities.delete(world.userId, world.projectId, NAME, world.buildA, 5, "MCP")
+        identities.recordSdkCatalog(instanceId, catalog)
+        assertThat(list(world, world.buildA).size()).isZero()
+        assertThat(list(world, world.buildA, true).single()["source"].asText()).isEqualTo("MCP")
     }
 
     @Test
-    fun `멤버가 아니면 프로젝트가 없는 것처럼 404 이고, 다른 프로젝트의 build 는 404 다`() {
+    fun `같은 expectedVersion 동시 요청은 하나만 반영된다`(): Unit = runBlocking {
+        val world = newWorld()
+        val request = objectMapper.readValue(body(world.buildA), PutGameIdentityRequest::class.java)
+        val results = coroutineScope {
+            listOf(async { runCatching { identities.put(world.userId, world.projectId, request) } },
+                async { runCatching { identities.put(world.userId, world.projectId, request) } }).map { it.await() }
+        }
+        assertThat(results.count { it.isSuccess }).isEqualTo(1)
+        assertThat(results.single { it.isFailure }.exceptionOrNull())
+            .isInstanceOf(kr.artel.orchestration.common.error.ConflictException::class.java)
+    }
+
+    @Test
+    fun `멤버와 build 소속을 확인하고 내부 목록도 build별로 읽는다`() {
         val world = newWorld()
         val outsider = newWorld()
-        val path = "${world.base}/game-identities"
-        call(world.ownerSession, HttpMethod.PUT, path, putBody(world.buildA))
-
-        val requests = listOf(
-            Triple(HttpMethod.GET, path, null),
-            Triple(HttpMethod.PUT, path, putBody(world.buildA)),
-            Triple(HttpMethod.DELETE, "$path?name=$NAME", null),
-        )
-        for ((method, requestPath, body) in requests) {
-            assertThat(call(outsider.ownerSession, method, requestPath, body).status)
-                .describedAs("$method $requestPath").isEqualTo(404)
+        put(world, world.buildA)
+        for ((method, suffix, payload) in listOf(
+            Triple(HttpMethod.GET, "?gameBuildId=${world.buildA}", null),
+            Triple(HttpMethod.GET, "/history?name=$NAME", null),
+            Triple(HttpMethod.PUT, "", body(world.buildA)),
+            Triple(HttpMethod.DELETE, "?name=$NAME&gameBuildId=${world.buildA}&expectedVersion=1", null))) {
+            assertThat(call(world.copy(session = outsider.session), method, suffix, payload).status).isEqualTo(404)
         }
-
-        val foreignBuild = call(world.ownerSession, HttpMethod.PUT, path, putBody(outsider.buildA, name = "MapMove.StagePosition"))
-        assertThat(foreignBuild.status).isEqualTo(404)
-        assertThat(call(world.ownerSession, HttpMethod.GET, path).body["identities"].map { it["name"].asText() })
-            .containsExactly(NAME)
+        assertThat(put(world, outsider.buildA).status).isEqualTo(404)
+        assertThat(call(world, HttpMethod.GET, "?gameBuildId=${outsider.buildA}").status).isEqualTo(404)
+        val internal = WebClient.create("http://localhost:${internalApiServer.port}").get()
+            .uri("/internal/projects/${world.projectId}/game-identities?gameBuildId=${world.buildA}")
+            .retrieve().bodyToMono(String::class.java).block()!!
+        val snapshot = objectMapper.readTree(internal)["identities"].single()
+        assertThat(snapshot["revisionId"]).isEqualTo(list(world, world.buildA).single()["revisionId"])
+        assertThat(snapshot["source"].asText()).isEqualTo("WEB")
+        val noBuild = WebClient.create("http://localhost:${internalApiServer.port}").get()
+            .uri("/internal/projects/${world.projectId}/game-identities")
+            .retrieve().bodyToMono(String::class.java).block()!!
+        assertThat(objectMapper.readTree(noBuild)["identities"].size()).isZero()
     }
 
     @Test
-    fun `삭제는 204, 없는 이름은 404 다`() {
+    fun `잘못된 선언과 expectedVersion 누락은 400이고 source를 위조할 수 없다`() {
         val world = newWorld()
-        val path = "${world.base}/game-identities"
-        call(world.ownerSession, HttpMethod.PUT, path, putBody(world.buildA))
-
-        assertThat(call(world.ownerSession, HttpMethod.DELETE, "$path?name=$NAME").status).isEqualTo(204)
-        assertThat(call(world.ownerSession, HttpMethod.DELETE, "$path?name=$NAME").status).isEqualTo(404)
-        assertThat(call(world.ownerSession, HttpMethod.GET, path).body["identities"].size()).isZero()
+        for (payload in listOf(body(world.buildA).replace(NAME, "invalid"),
+            body(world.buildA).replace("\"base\":0", "\"base\":2"),
+            body(world.buildA).replace("\"identifies\":\"stage\"", "\"identifies\":\"Stage\""),
+            body(world.buildA).replace("\"role\":\"current\"", "\"role\":\"unknown\""),
+            body(world.buildA).replace("\"meaning\":\"$MEANING\"", "\"meaning\":\" \""),
+            body(world.buildA).replace("ordinal", "number"),
+            body(world.buildA).replace("\"expectedVersion\":0,", ""))) {
+            assertThat(call(world, HttpMethod.PUT, "", payload).status).isEqualTo(400)
+        }
+        val spoofed = body(world.buildA).replace("\"kind\":", "\"source\":\"SDK\",\"kind\":")
+        val answer = call(world, HttpMethod.PUT, "", spoofed)
+        assertThat(answer.status).isEqualTo(200)
+        assertThat(answer.body["source"].asText()).isEqualTo("WEB")
+        assertThat(call(world, HttpMethod.DELETE, "?name=$NAME").status).isEqualTo(400)
     }
 
-    @Test
-    fun `내부 목록은 내부 포트에서 엔진이 읽는 칸을 싣고 공개 포트에는 없다`() {
-        val world = newWorld()
-        call(world.ownerSession, HttpMethod.PUT, "${world.base}/game-identities", putBody(world.buildA))
-        val internalPath = "/internal/projects/${world.projectId}/game-identities"
-
-        val internal = objectMapper.readTree(
-            WebClient.create("http://localhost:${internalApiServer.port}").get().uri(internalPath)
-                .retrieve().bodyToMono(String::class.java).block()
-        )
-        val item = internal["identities"].single()
-        assertThat(item.fieldNames().asSequence().toList()).containsExactlyInAnyOrder(
-            "name", "kind", "base", "meaning", "changesWhen", "identifies", "role", "gameBuildId", "version",
-        )
-        assertThat(item["name"].asText()).isEqualTo(NAME)
-        assertThat(item["kind"].asText()).isEqualTo("ordinal")
-        assertThat(item["base"].asInt()).isEqualTo(0)
-        assertThat(item["identifies"].asText()).isEqualTo(IDENTIFIES)
-        assertThat(item["role"].asText()).isEqualTo("current")
-        assertThat(item["gameBuildId"].asText()).isEqualTo(world.buildA.toString())
-        assertThat(item["version"].asInt()).isEqualTo(1)
-
-        val missing = WebClient.create("http://localhost:${internalApiServer.port}").get()
-            .uri("/internal/projects/${Long.MAX_VALUE}/game-identities")
-            .exchangeToMono { Mono.just(it.statusCode().value()) }.block()
-        assertThat(missing).isEqualTo(404)
-
-        assertThat(call(world.ownerSession, HttpMethod.GET, internalPath).status)
-            .describedAs("공개 포트에는 `/internal` 이 없다").isEqualTo(404)
-    }
-
-    // ---------- 픽스처 ----------
-
-    private data class World(
-        val ownerSession: String,
-        val projectId: Long,
-        val base: String,
-        val buildA: Long,
-        val buildB: Long,
-    )
-
+    private data class World(val session: String, val userId: Long, val projectId: Long, val buildA: Long, val buildB: Long)
     private fun newWorld(): World = runBlocking {
         val now = Instant.now()
-        val seed = UUID.randomUUID().toString().take(8)
-        val owner = signIn(seed)
-        val project = projects.save(
-            ProjectEntity(name = "game-identity-$seed", genre = "ACTION", createdAt = now, updatedAt = now)
-        )
-        members.save(
-            ProjectMemberEntity(projectId = project.id!!, appUserId = owner.userId.toLong(), role = "OWNER", createdAt = now)
-        )
-        val buildA = gameBuilds.save(
-            GameBuildEntity(projectId = project.id, version = "1.0.$seed", createdAt = now, updatedAt = now)
-        )
-        val buildB = gameBuilds.save(
-            GameBuildEntity(projectId = project.id, version = "1.1.$seed", createdAt = now, updatedAt = now)
-        )
-        World(
-            ownerSession = jwtService.issue(owner),
-            projectId = project.id,
-            base = "/api/projects/${project.id}",
-            buildA = buildA.id!!,
-            buildB = buildB.id!!,
-        )
+        val seed = UUID.randomUUID().toString()
+        val owner = oauthUsers.upsert(OAuthIdentity(provider = "github", providerUserId = "identity-$seed",
+            login = "gi-$seed", displayName = "gi", avatarUrl = null, email = "gi-$seed@example.com"))
+        val project = projects.save(ProjectEntity(name = "identity-$seed", genre = "ACTION", createdAt = now, updatedAt = now))
+        val projectId = requireNotNull(project.id)
+        members.save(ProjectMemberEntity(projectId = projectId, appUserId = owner.userId.toLong(), role = "OWNER", createdAt = now))
+        val buildA = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "1.0", createdAt = now, updatedAt = now))
+        val buildB = gameBuilds.save(GameBuildEntity(projectId = projectId, version = "2.0", createdAt = now, updatedAt = now))
+        World(jwtService.issue(owner), owner.userId.toLong(), projectId, buildA.id!!, buildB.id!!)
     }
-
-    private suspend fun signIn(seed: String): AuthenticatedUser = oauthUsers.upsert(
-        OAuthIdentity(
-            provider = "github",
-            providerUserId = "gameidentity-$seed",
-            login = "gi-$seed",
-            displayName = "gi-$seed",
-            avatarUrl = null,
-            email = "gi-$seed@example.com",
-        )
-    )
-
     private data class Answer(val status: Int, val body: JsonNode)
-
-    private fun call(session: String, method: HttpMethod, path: String, body: String? = null): Answer {
-        val request = client().method(method).uri(path).cookie(COOKIE, session)
-        val withBody = if (body == null) request else request.contentType(MediaType.APPLICATION_JSON).bodyValue(body)
-        return withBody.exchangeToMono { response ->
-            response.bodyToMono(String::class.java).defaultIfEmpty("null")
-                .map { Answer(response.statusCode().value(), objectMapper.readTree(it)) }
-        }.block()!!
+    private fun call(world: World, method: HttpMethod, suffix: String = "", payload: String? = null): Answer {
+        val request = WebClient.create("http://localhost:$port").method(method)
+            .uri("/api/projects/${world.projectId}/game-identities$suffix").cookie("artel_access_token", world.session)
+        val withBody = if (payload == null) request else request.contentType(MediaType.APPLICATION_JSON).bodyValue(payload)
+        return withBody.exchangeToMono { response -> response.bodyToMono(String::class.java).defaultIfEmpty("null")
+            .map { Answer(response.statusCode().value(), objectMapper.readTree(it)) } }.block()!!
     }
-
-    private fun client() = WebClient.create("http://localhost:$port")
-
-    /**
-     * 기본값은 [NAME] 의 정상 선언이다. 문자열 칸에 null 을 주면 그 칸을 JSON null 로 보낸다. [base] 와
-     * [gameBuildIdJson] 은 JSON 조각 그대로 싣는다 — 숫자가 아닌 값을 보내는 검사가 쓴다.
-     */
-    private fun putBody(
-        gameBuildId: Long,
-        name: String = NAME,
-        kind: String? = "ordinal",
-        base: String? = "0",
-        meaning: String? = MEANING,
-        changesWhen: String? = CHANGES_WHEN,
-        identifies: String? = IDENTIFIES,
-        role: String? = "current",
-        gameBuildIdJson: String = "\"$gameBuildId\"",
-    ): String =
-        """{"name":${json(name)},"gameBuildId":$gameBuildIdJson,"kind":${json(kind)},"base":${base ?: "null"},""" +
-            """"meaning":${json(meaning)},"changesWhen":${json(changesWhen)},""" +
-            """"identifies":${json(identifies)},"role":${json(role)}}"""
-
-    private fun json(value: String?) = objectMapper.writeValueAsString(value)
+    private fun put(world: World, buildId: Long, expectedVersion: Int = 0, meaning: String = MEANING) =
+        call(world, HttpMethod.PUT, "", body(buildId, expectedVersion, meaning))
+    private fun delete(world: World, buildId: Long, expectedVersion: Int) =
+        call(world, HttpMethod.DELETE, "?name=$NAME&gameBuildId=$buildId&expectedVersion=$expectedVersion")
+    private fun list(world: World, buildId: Long, includeDeleted: Boolean = false) =
+        call(world, HttpMethod.GET, "?gameBuildId=$buildId&includeDeleted=$includeDeleted").body["identities"]
+    private fun body(buildId: Long, expectedVersion: Int = 0, meaning: String = MEANING) =
+        """{"name":"$NAME","gameBuildId":"$buildId","expectedVersion":$expectedVersion,"kind":"ordinal","base":0,"meaning":"$meaning","changesWhen":"stage 진입","identifies":"stage","role":"current"}"""
 }
-
-private const val COOKIE = "artel_access_token"
-
 private const val NAME = "StageDataSingleton.stagePosition"
-private const val MEANING = "방금 들어간 stage 의 번호"
-private const val CHANGES_WHEN = "stage 에 들어갈 때"
-private const val IDENTIFIES = "stage"
+private const val MEANING = "방금 들어간 stage 번호"

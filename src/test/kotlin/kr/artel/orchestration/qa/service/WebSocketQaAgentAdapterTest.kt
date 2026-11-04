@@ -30,6 +30,17 @@ class WebSocketQaAgentAdapterTest {
     private val objectMapper = ObjectMapper().registerKotlinModule().registerModule(JavaTimeModule())
     private var agent: DisposableServer? = null
 
+    @Test
+    fun `빈 game identity snapshot도 context의 snake_case 필드로 직렬화한다`() {
+        val request = QaAgentSessionContext(gameInstanceId = "1", model = null, gameIdentities = emptyList()).toOpenRequest()
+        val wire = objectMapper.valueToTree<com.fasterxml.jackson.databind.JsonNode>(request)
+        assertThat(wire["context"]["game_identities"]).isEqualTo(objectMapper.createArrayNode())
+        assertThat(wire["context"].has("gameIdentities")).isFalse()
+        val legacy = objectMapper.valueToTree<com.fasterxml.jackson.databind.JsonNode>(
+            QaAgentSessionContext(gameInstanceId = "1", model = null).toOpenRequest())
+        assertThat(legacy["context"].has("game_identities")).isFalse()
+    }
+
     @AfterEach
     fun stopAgent() {
         agent?.disposeNow()

@@ -39,7 +39,7 @@ const val MAX_GAME_IDENTITY_IDENTIFIES_LENGTH = 60
  * nullable 로 받고 `@NotBlank`·`@NotNull` 로 거르는 이유는 `CheckDeveloperMacroRequest.gameBuildId` 와 같다 — 빠진 필드를
  * 역직렬화 오류가 아니라 필드 이름이 실린 검증 400 으로 돌려주기 위해서다.
  *
- * @property gameBuildId 이 선언을 쓸 때 기준으로 삼은 build(`GameBuildResponse.id`). 같은 프로젝트의 것이어야 한다.
+ * @property gameBuildId 이 revision을 선택할 build(`GameBuildResponse.id`). 같은 프로젝트의 것이어야 한다.
  *   문자열 id 다([WIRE_ID_PATTERN])
  * @property base `ordinal` 이 세기 시작하는 수. 0 또는 1, 선언하지 않으면 null
  * @property identifies 값이 서로 가르는 대상의 짧은 소문자 명사. 예: `stage`, `map chapter`, `enemy wave`
@@ -50,6 +50,10 @@ data class PutGameIdentityRequest(
     @field:Size(max = MAX_GAME_IDENTITY_NAME_LENGTH)
     @field:Pattern(regexp = GAME_IDENTITY_NAME_PATTERN, message = "`Type.member` 모양이어야 합니다.")
     val name: String?,
+
+    @field:NotNull
+    @field:Min(0)
+    val expectedVersion: Int? = null,
 
     @field:NotBlank
     @field:Pattern(regexp = WIRE_ID_PATTERN, message = "숫자로 된 id 여야 합니다.")
@@ -84,9 +88,9 @@ data class PutGameIdentityRequest(
 /**
  * 저장된 선언 한 줄. 등록(`PUT`)의 응답도 이 모양이다.
  *
- * @property id `game_identity.id`. 이 저장소의 다른 id 처럼 문자열이다
- * @property gameBuildId 마지막 등록이 기준으로 삼은 build. `GameBuildResponse.id` 와 같은 문자열 id 다
- * @property version 선언한 칸이 실제로 바뀔 때만 오르는 번호. 처음 등록이 1 이다
+ * @property id `revisionId`와 같은 revision id. 이 저장소의 다른 id처럼 문자열이다
+ * @property gameBuildId 이 revision을 등록한 build. `GameBuildResponse.id` 와 같은 문자열 id 다
+ * @property version 프로젝트·이름별로 증가하는 revision 번호. build의 선택은 서로 독립적이다
  */
 data class GameIdentityResponse(
     val id: String,
@@ -100,6 +104,11 @@ data class GameIdentityResponse(
     val gameBuildId: String,
     val version: Int,
     val updatedAt: Instant,
+    val revisionId: String,
+    val source: String,
+    val deleted: Boolean,
+    val createdBy: String?,
+    val createdAt: Instant,
 )
 
 /** 목록 응답 봉투. */
@@ -118,9 +127,27 @@ data class InternalGameIdentityResponse(
     val role: String,
     val gameBuildId: String,
     val version: Int,
+    val revisionId: String,
+    val source: String,
+    val deleted: Boolean,
+    val createdBy: String?,
+    val createdAt: Instant,
 )
 
 /** 내부 목록 응답 봉투(agent-server 엔진용). */
 data class InternalGameIdentityListResponse(
     val identities: List<InternalGameIdentityResponse>,
 )
+
+/** SDK frame의 build와 사용자 정보는 인증된 instance에서 정한다. */
+data class SdkGameIdentityCatalog(val type: String, val identities: List<SdkGameIdentityDeclaration>)
+data class SdkGameIdentityDeclaration(
+    val name: String, val kind: String, val base: Int? = null, val meaning: String,
+    val changesWhen: String, val identifies: String, val role: String,
+) {
+    fun forBuild(buildId: Long) = PutGameIdentityRequest(
+        name = name, gameBuildId = buildId.toString(), expectedVersion = 0,
+        kind = kind, base = base, meaning = meaning, changesWhen = changesWhen,
+        identifies = identifies, role = role,
+    )
+}
