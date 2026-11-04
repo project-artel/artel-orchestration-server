@@ -45,6 +45,14 @@
       "description": "SDK 가 보고하는 근거 문서 수용"
     },
     {
+      "name": "QA Stats",
+      "description": "QA 판정 집계"
+    },
+    {
+      "name": "Game Identity",
+      "description": "게임 값 선언과 build별 revision"
+    },
+    {
       "name": "Project Member",
       "description": "프로젝트 멤버 조회·내보내기"
     },
@@ -2303,6 +2311,148 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-identities": {
+      "get": {
+        "tags": [
+          "Game Identity"
+        ],
+        "summary": "게임 값 선언 목록",
+        "description": "build를 지정하면 선택된 revision을 읽는다. includeDeleted=true는 tombstone도 포함한다.",
+        "operationId": "listGameIdentities",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "includeDeleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameIdentityListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Game Identity"
+        ],
+        "summary": "게임 값 선언 등록",
+        "description": "build의 expectedVersion을 확인해 revision을 선택한다. 최초 등록은 0이며 충돌은 409다.",
+        "operationId": "putGameIdentity",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutGameIdentityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameIdentityResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Game Identity"
+        ],
+        "summary": "게임 값 선언 삭제",
+        "description": "build의 expectedVersion을 확인하고 tombstone revision을 기록한다.",
+        "operationId": "deleteGameIdentity",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/developer-macros/{name}": {
       "get": {
         "tags": [
@@ -3884,11 +4034,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "MINE",
               "enum": [
                 "MINE",
                 "ALL"
-              ]
+              ],
+              "default": "MINE"
             }
           }
         ],
@@ -8376,6 +8526,102 @@
         }
       }
     },
+    "/internal/qa-tries/{qaTryId}/test-cases/{caseId}/verification-history": {
+      "get": {
+        "tags": [
+          "internal-qa-case-history-controller"
+        ],
+        "operationId": "readCaseVerificationHistory",
+        "parameters": [
+          {
+            "name": "qaTryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "caseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "previousTryId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "beforeTryId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "afterLogId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "default": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 12
+            }
+          },
+          {
+            "name": "afterQuestionId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "beforeCaseAttemptId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaCaseHistoryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/qa-tries/{qaTryId}/performance": {
       "get": {
         "tags": [
@@ -8420,6 +8666,46 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/QaTryPerformanceResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/projects/{projectId}/game-identities": {
+      "get": {
+        "tags": [
+          "internal-game-identity-controller"
+        ],
+        "operationId": "listGameIdentitiesForAgent",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalGameIdentityListResponse"
                 }
               }
             }
@@ -8739,6 +9025,14 @@
               "type": "integer",
               "format": "int32",
               "default": 50
+            }
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -10133,6 +10427,95 @@
         }
       }
     },
+    "/api/projects/{projectId}/qa-verdict-trend": {
+      "get": {
+        "tags": [
+          "QA Stats"
+        ],
+        "summary": "QA 판정 추이",
+        "description": "기간 안의 Test Case 판정을 날 · 주 · 실행마다 묶어 통과 · 실패 · 회귀 · 미판정 수와 가장 많이 실패한 Test Case 를 돌려준다. 기간은 최대 366일이고, `from` 이 `to` 보다 앞서야 한다. 참여자가 아니면 404 다.",
+        "operationId": "getQaVerdictTrend",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "기간 시작(포함)",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "기간 끝(제외)",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "description": "묶는 단위",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DAY",
+                "WEEK",
+                "RUN"
+              ],
+              "default": "DAY"
+            }
+          },
+          {
+            "name": "timeZone",
+            "in": "query",
+            "description": "날 · 주를 나눌 시간대(IANA)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "Asia/Seoul"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "query",
+            "description": "이 게임 빌드의 판정만",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/QaVerdictTrendResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/qa-runs": {
       "get": {
         "tags": [
@@ -11137,6 +11520,47 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/GameInstanceListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-identities/history": {
+      "get": {
+        "tags": [
+          "Game Identity"
+        ],
+        "summary": "게임 값 선언 변경 이력",
+        "description": "프로젝트와 이름별 revision을 최신순으로 읽는다. 삭제 기록도 포함한다.",
+        "operationId": "gameIdentityHistory",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameIdentityListResponse"
                 }
               }
             }
@@ -13994,6 +14418,139 @@
           }
         }
       },
+      "PutGameIdentityRequest": {
+        "required": [
+          "changesWhen",
+          "expectedVersion",
+          "gameBuildId",
+          "identifies",
+          "kind",
+          "meaning",
+          "name",
+          "role"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 0,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$",
+            "type": "string"
+          },
+          "expectedVersion": {
+            "minimum": 0,
+            "type": "integer",
+            "format": "int32"
+          },
+          "gameBuildId": {
+            "pattern": "^[0-9]{1,18}$",
+            "type": "string"
+          },
+          "kind": {
+            "pattern": "^(ordinal|enum|id|flag|text)$",
+            "type": "string"
+          },
+          "base": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "integer",
+            "format": "int32"
+          },
+          "meaning": {
+            "maxLength": 500,
+            "minLength": 0,
+            "type": "string"
+          },
+          "changesWhen": {
+            "maxLength": 500,
+            "minLength": 0,
+            "type": "string"
+          },
+          "identifies": {
+            "maxLength": 60,
+            "minLength": 0,
+            "pattern": "^[a-z0-9]+([ -][a-z0-9]+)*$",
+            "type": "string"
+          },
+          "role": {
+            "pattern": "^(current|progress|other)$",
+            "type": "string"
+          }
+        }
+      },
+      "GameIdentityResponse": {
+        "required": [
+          "changesWhen",
+          "createdAt",
+          "deleted",
+          "gameBuildId",
+          "id",
+          "identifies",
+          "kind",
+          "meaning",
+          "name",
+          "revisionId",
+          "role",
+          "source",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "base": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "meaning": {
+            "type": "string"
+          },
+          "changesWhen": {
+            "type": "string"
+          },
+          "identifies": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "PutDeveloperMacroRequest": {
         "required": [
           "gameBuildId",
@@ -14009,6 +14566,9 @@
           "gameBuildId": {
             "pattern": "^[0-9]{1,18}$",
             "type": "string"
+          },
+          "contract": {
+            "$ref": "#/components/schemas/JsonNode"
           }
         }
       },
@@ -14045,6 +14605,9 @@
           },
           "source": {
             "type": "string"
+          },
+          "contract": {
+            "$ref": "#/components/schemas/JsonNode"
           },
           "parameters": {
             "type": "array",
@@ -15378,6 +15941,22 @@
           }
         }
       },
+      "ActionDeliveryDto": {
+        "required": [
+          "expiresAtUnixMs",
+          "processId"
+        ],
+        "type": "object",
+        "properties": {
+          "processId": {
+            "type": "string"
+          },
+          "expiresAtUnixMs": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ActionItemDto": {
         "required": [
           "id",
@@ -15425,6 +16004,9 @@
             "items": {
               "$ref": "#/components/schemas/ActionItemDto"
             }
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/ActionDeliveryDto"
           }
         }
       },
@@ -15872,6 +16454,23 @@
           }
         }
       },
+      "QaStopResponse": {
+        "required": [
+          "code"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "QaTryResponse": {
         "required": [
           "behaviorMode",
@@ -16043,6 +16642,7 @@
       },
       "QaRunResponse": {
         "required": [
+          "discarded",
           "gameInstanceId",
           "id",
           "startedAt",
@@ -16222,6 +16822,9 @@
           "gameBuildVersion": {
             "type": "string"
           },
+          "gameBuildIsEditor": {
+            "type": "boolean"
+          },
           "model": {
             "type": "string"
           },
@@ -16266,6 +16869,14 @@
             "format": "int32"
           },
           "casesFailed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "stepsPassed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "stepsTotal": {
             "type": "integer",
             "format": "int32"
           }
@@ -17474,6 +18085,9 @@
           "gameBuildId": {
             "pattern": "^[0-9]{1,18}$",
             "type": "string"
+          },
+          "contract": {
+            "$ref": "#/components/schemas/JsonNode"
           }
         }
       },
@@ -18013,11 +18627,11 @@
           },
           "kind": {
             "type": "string",
-            "default": "sdk",
             "enum": [
               "sdk",
               "cli"
-            ]
+            ],
+            "default": "sdk"
           }
         }
       },
@@ -18627,6 +19241,213 @@
           }
         }
       },
+      "QaCaseHistoryAttempt": {
+        "required": [
+          "caseAttempts",
+          "caseAttemptsTruncated",
+          "caseSteps",
+          "completedAt",
+          "qaTryId",
+          "startedAt",
+          "status",
+          "testScenarioId"
+        ],
+        "type": "object",
+        "properties": {
+          "qaTryId": {
+            "type": "string"
+          },
+          "testScenarioId": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "caseSteps": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "caseAttempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaCaseHistoryCaseAttempt"
+            }
+          },
+          "caseAttemptsTruncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "QaCaseHistoryCaseAttempt": {
+        "required": [
+          "caseSnapshot",
+          "id",
+          "snapshotOrigin"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "caseSnapshot": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "snapshotOrigin": {
+            "type": "string"
+          },
+          "originalReason": {
+            "type": "string"
+          },
+          "humanDecision": {
+            "type": "string"
+          },
+          "humanNote": {
+            "type": "string"
+          }
+        }
+      },
+      "QaCaseHistoryEvent": {
+        "required": [
+          "createdAt",
+          "direction",
+          "id",
+          "payload",
+          "scope",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QaCaseHistoryQuestion": {
+        "required": [
+          "answer",
+          "answeredAt",
+          "createdAt",
+          "id",
+          "question"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          },
+          "answeredBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "answeredAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QaCaseHistoryResponse": {
+        "required": [
+          "attempts",
+          "events",
+          "questions",
+          "testCaseId"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "currentGameBuildId": {
+            "type": "string"
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaCaseHistoryAttempt"
+            }
+          },
+          "nextBeforeTryId": {
+            "type": "string"
+          },
+          "selectedTryId": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaCaseHistoryEvent"
+            }
+          },
+          "nextAfterLogId": {
+            "type": "string"
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaCaseHistoryQuestion"
+            }
+          },
+          "nextAfterQuestionId": {
+            "type": "string"
+          },
+          "nextBeforeCaseAttemptId": {
+            "type": "string"
+          }
+        }
+      },
       "QaTryPerformanceResponse": {
         "required": [
           "samples"
@@ -18678,6 +19499,84 @@
           "memoryMb": {
             "type": "number",
             "format": "double"
+          }
+        }
+      },
+      "InternalGameIdentityListResponse": {
+        "required": [
+          "identities"
+        ],
+        "type": "object",
+        "properties": {
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InternalGameIdentityResponse"
+            }
+          }
+        }
+      },
+      "InternalGameIdentityResponse": {
+        "required": [
+          "changesWhen",
+          "createdAt",
+          "deleted",
+          "gameBuildId",
+          "identifies",
+          "kind",
+          "meaning",
+          "name",
+          "revisionId",
+          "role",
+          "source",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "base": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "meaning": {
+            "type": "string"
+          },
+          "changesWhen": {
+            "type": "string"
+          },
+          "identifies": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -20394,6 +21293,9 @@
           "gameBuildVersion": {
             "type": "string"
           },
+          "gameBuildIsEditor": {
+            "type": "boolean"
+          },
           "status": {
             "type": "string"
           },
@@ -22020,6 +22922,141 @@
           }
         }
       },
+      "QaVerdictTrendBucketResponse": {
+        "required": [
+          "failed",
+          "key",
+          "passed",
+          "regression",
+          "runs",
+          "undecided"
+        ],
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "runs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "regression": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "undecided": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "topFailing": {
+            "$ref": "#/components/schemas/QaVerdictTrendCaseResponse"
+          }
+        }
+      },
+      "QaVerdictTrendBuildResponse": {
+        "required": [
+          "createdAt",
+          "gameBuildId",
+          "isEditor",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "QaVerdictTrendCaseResponse": {
+        "required": [
+          "failures",
+          "testCaseId",
+          "title"
+        ],
+        "type": "object",
+        "properties": {
+          "testCaseId": {
+            "type": "string"
+          },
+          "caseNumber": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          },
+          "failures": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "QaVerdictTrendResponse": {
+        "required": [
+          "bucket",
+          "buckets",
+          "builds",
+          "from",
+          "timeZone",
+          "to"
+        ],
+        "type": "object",
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "enum": [
+              "DAY",
+              "WEEK",
+              "RUN"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "timeZone": {
+            "type": "string"
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaVerdictTrendBucketResponse"
+            }
+          },
+          "builds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QaVerdictTrendBuildResponse"
+            }
+          }
+        }
+      },
       "QaRunSummaryListResponse": {
         "required": [
           "items"
@@ -22923,6 +23960,20 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GameInstanceResponse"
+            }
+          }
+        }
+      },
+      "GameIdentityListResponse": {
+        "required": [
+          "identities"
+        ],
+        "type": "object",
+        "properties": {
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GameIdentityResponse"
             }
           }
         }
@@ -25051,23 +26102,6 @@
           "keptForQaHistoryCount": {
             "type": "integer",
             "format": "int32"
-          }
-        }
-      },
-      "QaStopResponse": {
-        "required": [
-          "code"
-        ],
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "string"
-          },
-          "provider": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
           }
         }
       }
