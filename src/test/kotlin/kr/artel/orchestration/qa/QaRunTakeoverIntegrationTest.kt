@@ -70,6 +70,7 @@ class QaRunTakeoverIntegrationTest {
     class RecordingAgentPort : QaAgentPort {
         private val counter = AtomicInteger()
         val closed: MutableList<String> = CopyOnWriteArrayList()
+        val contexts: MutableList<QaAgentSessionContext> = CopyOnWriteArrayList()
 
         /** 채워 두면 세션 개설이 이 예외로 실패한다. agent-server 가 4xx 로 거절한 경우다(ARTEL-1236). */
         @Volatile var rejection: QaAgentRejectedException? = null
@@ -79,6 +80,7 @@ class QaRunTakeoverIntegrationTest {
             onMessage: suspend (QaAgentEnvelope) -> Unit,
             onDisconnect: suspend () -> Unit
         ): QaAgentSession {
+            contexts += context
             rejection?.let { throw it }
             return QaAgentSession("takeover-session-${counter.incrementAndGet()}")
         }
@@ -95,6 +97,8 @@ class QaRunTakeoverIntegrationTest {
         @Bean @Primary fun recordingAgentPort() = RecordingAgentPort()
     }
 
+    @Autowired private lateinit var identityService: kr.artel.orchestration.gameidentity.service.GameIdentityService
+    @Autowired private lateinit var gameBuildRepository: kr.artel.orchestration.game.repository.GameBuildRepository
     @Autowired private lateinit var service: QaTryService
     @Autowired private lateinit var persistence: QaTryPersistenceService
     @Autowired private lateinit var testRunService: TestRunService
@@ -122,6 +126,7 @@ class QaRunTakeoverIntegrationTest {
 
     private suspend fun wipe() {
         agentPort.closed.clear()
+        agentPort.contexts.clear()
         agentPort.rejection = null
         qaLogRepository.deleteAll()
         qaTryRepository.deleteAll()
@@ -208,6 +213,34 @@ class QaRunTakeoverIntegrationTest {
         // 503 upstream_unavailable 로 바뀌지 않는다.
         assertThat(thrown).isSameAs(agentPort.rejection)
         assertThat(qaRunRepository.findAll().toList().map { it.status }).containsExactly("FAILED")
+    }
+
+    @Test
+    fun `단일 QA와 multi scenario가 build snapshot을 context와 저장된 config에 함께 쓴다`(): Unit = runBlocking {
+        for (multiScenario in listOf(false, true)) {
+            val seed = idleInstance()
+            val instance = gameInstanceRepository.findById(seed.instanceId)!!
+            val now = Instant.now()
+            val build = gameBuildRepository.save(kr.artel.orchestration.game.entity.GameBuildEntity(
+                projectId = instance.projectId, version = UUID.randomUUID().toString(), createdAt = now, updatedAt = now))
+            gameInstanceRepository.save(instance.copy(lastGameBuildId = build.id))
+            val request = kr.artel.orchestration.gameidentity.dto.PutGameIdentityRequest(
+                name = "Stage.position", gameBuildId = build.id.toString(), expectedVersion = 0,
+                kind = "ordinal", base = 0, meaning = "현재 stage", changesWhen = "stage 진입", identifies = "stage", role = "current")
+            identityService.put(seed.ownerId, instance.projectId, request)
+            val scenarioId = testRunService.getScenarios(seed.testRunId, seed.ownerId)!!.items.first().testScenarioId.toLong()
+            val tryIds = if (multiScenario) service.createRun(seed.testRunId, seed.instanceId, seed.ownerId).tries.map { it.id.toLong() }
+                else listOf(service.create(scenarioId, seed.instanceId, seed.ownerId).id.toLong())
+            val context = agentPort.contexts.last()
+            val snapshot = objectMapper.valueToTree<com.fasterxml.jackson.databind.JsonNode>(context.gameIdentities)
+            assertThat(snapshot.size()).isEqualTo(1)
+            assertThat(snapshot[0]["source"].asText()).isEqualTo("WEB")
+            identityService.delete(seed.ownerId, instance.projectId, "Stage.position", build.id!!, 1)
+            for (tryId in tryIds) {
+                val qaTry = qaTryRepository.findById(tryId)!!
+                assertThat(objectMapper.readTree(qaTry.runConfig.asString())["game_identities"]).isEqualTo(snapshot)
+            }
+        }
     }
 
     // ----------------------------------------------------------------- helpers

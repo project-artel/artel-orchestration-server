@@ -6,7 +6,7 @@ import org.springframework.data.relational.core.mapping.Table
 import java.time.Instant
 
 /**
- * game_rule — 게임 개발자가 MCP 로 선언한 rule 하나(V174). 값과 행동의 관계를 말하는 게임 지식 한 문장이고, 자기가 말하는
+ * game_rule — 게임 개발자가 MCP 로 선언한 rule 하나(V177). 값과 행동의 관계를 말하는 게임 지식 한 문장이고, 자기가 말하는
  * fact 의 이름을 `facts` 에 싣는다.
  *
  * 쓰기는 `GameRuleRepository.upsertByName` 하나로만 한다. 이 타입은 repository 의 타입 인자로만 쓴다.

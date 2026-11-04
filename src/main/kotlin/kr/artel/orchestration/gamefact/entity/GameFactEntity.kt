@@ -6,7 +6,7 @@ import org.springframework.data.relational.core.mapping.Table
 import java.time.Instant
 
 /**
- * game_fact — 게임 개발자가 MCP 로 선언한 fact 하나(V174). 게임 값 하나에 플레이어 말의 이름과 뜻을 붙인 것이다.
+ * game_fact — 게임 개발자가 MCP 로 선언한 fact 하나(V177). 게임 값 하나에 플레이어 말의 이름과 뜻을 붙인 것이다.
  *
  * 쓰기는 `GameFactRepository.upsertByName` 하나로만 한다(`GameIdentityEntity` 와 같은 이유). 이 타입은 repository 의
  * 타입 인자로만 쓴다.

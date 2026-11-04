@@ -14,16 +14,16 @@ const val GAME_FACT_NAME_PATTERN = "^[a-z][a-z0-9_]{0,39}$"
 /** rule 이름 규칙. */
 const val GAME_RULE_NAME_PATTERN = "^[a-z][a-z0-9_]{0,59}$"
 
-/** `game_fact.scope` 의 CHECK 와 같은 집합(V174). */
+/** `game_fact.scope` 의 CHECK 와 같은 집합(V177). */
 const val GAME_FACT_SCOPE_PATTERN = "^(objects|statics)$"
 
-/** `game_fact.type` 의 CHECK 와 같은 집합(V174). */
+/** `game_fact.type` 의 CHECK 와 같은 집합(V177). */
 const val GAME_FACT_TYPE_PATTERN = "^(integer|number|boolean|string)$"
 
 /** 엔진이 읽는 이름. 점으로 이은 identifier 둘 이상(`Type.member`, `Type.member.Count`, `Type.Instance.member`). */
 const val GAME_FACT_MEMBER_PATTERN = "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
 
-/** 칸 폭(V174). */
+/** 칸 폭(V177). */
 const val MAX_GAME_FACT_MEMBER_LENGTH = 200
 const val MAX_GAME_FACT_UNIT_LENGTH = 30
 const val MAX_GAME_FACT_MEANS_LENGTH = 120

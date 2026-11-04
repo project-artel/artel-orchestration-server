@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * agent-server 의 planner–executer 엔진이 프로젝트의 fact·rule 을 읽는 경로(V174). `facts` knob 이 켜진 런이 시작할 때 읽는다.
+ * agent-server 의 planner–executer 엔진이 프로젝트의 fact·rule 을 읽는 경로(V177). `facts` knob 이 켜진 런이 시작할 때 읽는다.
  *
  * `/internal/` 아래라 내부 포트에만 있고 인증이 없다(`.agents/docs/project.md` 의 신뢰 경계).
  */

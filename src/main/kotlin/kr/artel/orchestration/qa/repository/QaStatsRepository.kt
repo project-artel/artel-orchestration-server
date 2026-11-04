@@ -123,6 +123,10 @@ class QaStatsRepository(
                    $testRunFilter
                    -- 실험 묶음. 위와 독립이라 둘 다 걸면 AND 로 좁혀진다 — "1차 실험의 9013 런".
                    $labelFilter
+                   -- 미판정(모델 API 오류로 게임을 검증하지 못한 시도)과 버린 런은 세지 않는다(ARTEL-1371).
+                   -- runs · verdict_known 분모에 들어가면 게임 결함이 아닌 것이 통과율을 깎는다.
+                   AND qt.status <> 'UNDECIDED'
+                   AND NOT EXISTS (SELECT 1 FROM qa_run qrd WHERE qrd.id = qt.qa_run_id AND qrd.discarded_at IS NOT NULL)
             ),
             run_usage AS (
                 SELECT u.reference_id                AS qa_try_id,

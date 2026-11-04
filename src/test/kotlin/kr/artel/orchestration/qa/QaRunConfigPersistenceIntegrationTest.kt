@@ -576,6 +576,42 @@ class QaRunConfigPersistenceIntegrationTest {
             .isInstanceOf(BadRequestException::class.java)
     }
 
+    @Test
+    fun `game identity snapshot은 STARTING부터 저장되고 Agent 설정이 덮어쓰지 못한다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val snapshot = listOf(kr.artel.orchestration.gameidentity.dto.InternalGameIdentityResponse(
+            name = "Stage.position", kind = "ordinal", base = 0, meaning = "현재 stage",
+            changesWhen = "stage 진입", identifies = "stage", role = "current", gameBuildId = "10",
+            version = 7, revisionId = "70", source = "SDK", deleted = false, createdBy = null,
+            createdAt = Instant.parse("2026-11-03T00:00:00Z")))
+        val expected = objectMapper.valueToTree<com.fasterxml.jackson.databind.JsonNode>(snapshot)
+        val (starting, _) = persistence.createStarting(ids.scenarioId, ids.instanceId, ids.ownerId,
+            QaKnowledgeSettings(), gameIdentities = snapshot)
+        assertThat(objectMapper.readTree(starting.runConfig.asString())["game_identities"]).isEqualTo(expected)
+        val forged = objectMapper.readTree("""{"game_identities":[{"name":"forged"}]}""")
+        val (running, _) = persistence.attachAndMarkRunning(starting, "identity-session", forged)
+        assertThat(objectMapper.readTree(running.runConfig.asString())["game_identities"]).isEqualTo(expected)
+    }
+
+    @Test
+    fun `multi scenario의 모든 try와 run은 같은 빈 snapshot을 보존한다`(): Unit = runBlocking {
+        val ids = seedIds()
+        val second = testScenarioRepository.save(TestScenarioEntity(projectId = ids.projectId)).id!!
+        val started = persistence.createRunStarting(ids.testRunId, ids.instanceId, ids.ownerId,
+            listOf(ids.scenarioId, second), gameIdentities = emptyList())
+        val empty = objectMapper.createArrayNode()
+        assertThat(objectMapper.readTree(started.qaRun.runConfig.asString())["game_identities"]).isEqualTo(empty)
+        for (qaTry in started.tries) {
+            assertThat(objectMapper.readTree(qaTry.runConfig.asString())["game_identities"]).isEqualTo(empty)
+        }
+        val forged = objectMapper.readTree("""{"game_identities":[{"name":"forged"}]}""")
+        persistence.attachRunAndMarkRunning(started.qaRun, started.tries.first().id!!, "identity-run", forged)
+        val run = qaRunRepository.findById(started.qaRun.id!!)!!
+        val first = qaTryRepository.findById(started.tries.first().id!!)!!
+        assertThat(objectMapper.readTree(run.runConfig.asString())["game_identities"]).isEqualTo(empty)
+        assertThat(objectMapper.readTree(first.runConfig.asString())["game_identities"]).isEqualTo(empty)
+    }
+
     // ----------------------------------------------------------------- seeding
 
     private data class SeedIds(

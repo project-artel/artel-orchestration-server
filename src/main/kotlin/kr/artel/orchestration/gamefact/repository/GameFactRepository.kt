@@ -10,7 +10,7 @@ import org.springframework.data.repository.kotlin.CoroutineCrudRepository
 private const val GAME_FACT_COLUMNS = "id, name, scope, member, type, unit, means, game_build_id, version, updated_at"
 
 /**
- * fact 저장소(V174). **접근 확인은 하지 않는다** — 프로젝트 멤버 검사는 `GameFactService` 가 먼저 한다.
+ * fact 저장소(V177). **접근 확인은 하지 않는다** — 프로젝트 멤버 검사는 `GameFactService` 가 먼저 한다.
  */
 interface GameFactRepository : CoroutineCrudRepository<GameFactEntity, Long> {
 

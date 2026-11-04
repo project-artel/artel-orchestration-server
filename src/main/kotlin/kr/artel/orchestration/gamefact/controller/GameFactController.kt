@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * 게임 개발자의 코딩 에이전트가 MCP 로 선언하는 fact·rule(V174). `GameIdentityController` 처럼 MCP 서버가 사용자의 MCP
+ * 게임 개발자의 코딩 에이전트가 MCP 로 선언하는 fact·rule(V177). `GameIdentityController` 처럼 MCP 서버가 사용자의 MCP
  * access JWT 를 그대로 실어 부르고, 브라우저 세션과 CLI 토큰으로도 같은 경로가 열린다.
  *
  * 이름은 등록에서 본문, 삭제에서 `name` 쿼리로 받는다. 메서드 이름에 자원 이름을 붙이는 이유는 OpenAPI operationId 다.

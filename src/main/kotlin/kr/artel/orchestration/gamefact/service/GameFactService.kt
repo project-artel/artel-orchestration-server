@@ -22,7 +22,7 @@ import kr.artel.orchestration.project.service.ProjectAccessService
 import org.springframework.stereotype.Service
 
 /**
- * fact·rule 의 조회·등록·삭제(V174).
+ * fact·rule 의 조회·등록·삭제(V177).
  *
  * 공개 경로는 모두 프로젝트 멤버 검사를 먼저 한다. 멤버가 아니면 프로젝트가 없는 것처럼 404 다(`GameIdentityService` 와
  * 같은 규칙). 칸의 모양은 DTO 검증이 보고, 이 서비스는 rule 과 fact 의 짝을 본다 — rule 이 가리키는 fact 는 같은 프로젝트에

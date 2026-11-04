@@ -27,7 +27,7 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * fact·rule 의 등록·목록·삭제와 내부 목록(V174).
+ * fact·rule 의 등록·목록·삭제와 내부 목록(V177).
  *
  * 표를 비우지 않는다. 테스트마다 새 프로젝트를 만들어 자기 행만 쓴다(`GameIdentityIntegrationTest` 와 같은 이유).
  */
