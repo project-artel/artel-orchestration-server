@@ -43,6 +43,9 @@ private class McpRoute(val method: HttpMethod, pattern: String, val scope: McpSc
  * `game-identities` 는 개발자 에이전트가 게임 state 의 값이 무엇을 가리키는지 선언하는 자원이다(V173). 목록은 `macro:read`,
  * 등록·삭제는 `macro:write` 다 — developer macro 와 같은 사람이 같은 연결로 쓴다.
  *
+ * `game-facts`·`game-rules` 는 개발자 에이전트가 선언하는 fact 와 rule 이다(V177). 목록은 `macro:read`, 등록·삭제는
+ * `macro:write` 다 — 같은 사람이 같은 연결로 macro·identity 와 함께 쓴다.
+ *
  * 프로젝트 경로의 멤버 검사는 여기서 하지 않는다. 각 서비스가 `ProjectAccessService` 로 이미 한다.
  */
 private val MCP_ROUTES = listOf(
@@ -81,6 +84,11 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-identities/history", McpScope.MACRO_READ),
     McpRoute(HttpMethod.PUT, "/api/projects/{projectId}/game-identities", McpScope.MACRO_WRITE),
     McpRoute(HttpMethod.DELETE, "/api/projects/{projectId}/game-identities", McpScope.MACRO_WRITE),
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/game-facts", McpScope.MACRO_READ),
+    McpRoute(HttpMethod.PUT, "/api/projects/{projectId}/game-facts", McpScope.MACRO_WRITE),
+    McpRoute(HttpMethod.DELETE, "/api/projects/{projectId}/game-facts", McpScope.MACRO_WRITE),
+    McpRoute(HttpMethod.PUT, "/api/projects/{projectId}/game-rules", McpScope.MACRO_WRITE),
+    McpRoute(HttpMethod.DELETE, "/api/projects/{projectId}/game-rules", McpScope.MACRO_WRITE),
 )
 
 /** MCP access JWT 로 허용표 밖의 경로를 불렀다. */
