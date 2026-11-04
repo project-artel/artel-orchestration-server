@@ -37,6 +37,8 @@ interface TestRunRepository : CoroutineCrudRepository<TestRunEntity, Long> {
           FROM qa_run qr
           JOIN test_run tr ON tr.id = qr.test_run_id
          WHERE tr.project_id = :projectId
+           -- 버린 런(ARTEL-1371)은 그 TR 의 마지막 QA 가 아니다. 판정 없이 오류로 끝난 흔적일 뿐이다.
+           AND qr.discarded_at IS NULL
          ORDER BY qr.test_run_id, qr.started_at DESC, qr.id DESC
         """
     )

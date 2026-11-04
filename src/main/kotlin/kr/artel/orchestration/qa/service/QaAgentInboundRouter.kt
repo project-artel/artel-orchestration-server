@@ -468,6 +468,8 @@ class QaAgentInboundRouter(
             status == "CANCELLED" -> "CANCELLED"
             result == "PASSED" -> "COMPLETED"
             result == "FAILED" -> "FAILED"
+            // 모델 API 오류로 게임을 검증하지 못했다(ARTEL-1371). 까닭은 `payload.stop` 에 있다.
+            result == QaEndStatus.UNDECIDED -> QaEndStatus.UNDECIDED
             else -> null
         }
         if (resolved == null) {
@@ -489,7 +491,13 @@ class QaAgentInboundRouter(
             return
         }
         val completedAt = Instant.now(clock)
-        if (tryRepository.transition(qaTryId, currentStatus, resolved, completedAt, completedAt) != 1) {
+        val stop = if (resolved == QaEndStatus.UNDECIDED) stopOf(envelope.payload, message) else null
+        val transitioned = if (stop != null) {
+            tryRepository.endUndecided(qaTryId, currentStatus, stop.code, stop.provider, stop.message, completedAt)
+        } else {
+            tryRepository.transition(qaTryId, currentStatus, resolved, completedAt, completedAt)
+        }
+        if (transitioned != 1) {
             throw IllegalStateException("Illegal QA status transition")
         }
         // try 가 방금 종단됐다 — SDK 화면에 FINISHED 와 결과를 알린다(ARTEL-836). qa_try.status
@@ -501,17 +509,24 @@ class QaAgentInboundRouter(
             outcome = when (resolved) {
                 "COMPLETED" -> "PASSED"
                 "CANCELLED" -> "CANCELLED"
+                // SDK 화면에는 게임 결과가 아니라 실행 오류로 알린다. 미판정은 실패가 아니다.
+                QaEndStatus.UNDECIDED -> "ERROR"
                 else -> "FAILED"
             }
         )
         // 판정 승격은 **이 분기 안에서만** 일어난다 — 위 resolved == null `branch`(스텝 판정 프레임)는
         // 런을 끝내지도, 판정을 싣지도 않는다. 전이 **뒤**인 것도 의도다: 앞에 두면 종단되지 않은
         // 런에 판정이 새겨질 수 있다.
-        promoteVerdict(qaTryId, envelope, completedAt)
-        // 자기채점된 판정을 사람이 단 기대 라벨과 대조한다(ARTEL-301). 승격과 같은 자리인 것이
-        // 자연스럽다 — 둘 다 "이 런이 끝났고, 그 결과를 기록한다"의 일부다. 채점자는 스스로
-        // 삼키므로 여기서 감싸지 않는다.
-        grader.grade(qaTryId)
+        //
+        // 미판정 시도는 판정을 올리지도 채점하지도 않는다(ARTEL-1371). agent 는 멈춘 시나리오에도 요약을 싣지만,
+        // 그 0 은 "검증해 보니 0" 이 아니라 "검증하지 못했다" 라서 컬럼에 들어가면 통과율 분모를 부풀린다.
+        if (stop == null) {
+            promoteVerdict(qaTryId, envelope, completedAt)
+            // 자기채점된 판정을 사람이 단 기대 라벨과 대조한다(ARTEL-301). 승격과 같은 자리인 것이
+            // 자연스럽다 — 둘 다 "이 런이 끝났고, 그 결과를 기록한다"의 일부다. 채점자는 스스로
+            // 삼키므로 여기서 감싸지 않는다.
+            grader.grade(qaTryId)
+        }
         // 자연어 계약 프로젝트면 로그에서 씬 · 입력 · 출구를 쌓는다. 뒤에서 돌아 종료 처리를 붙잡지 않는다.
         observations.accumulateLater(qaTryId)
         val log = logService.append(
@@ -533,12 +548,62 @@ class QaAgentInboundRouter(
         // try 단위인 것이 요점이다** — 세션 하나가 시나리오들을 순차 실행하므로, 런이나 세션이
         // 끝날 때까지 미루면 앞선 시나리오들의 확정이 늦거나 다음 시나리오의 검색과 뒤섞인다.
         knowledgeCitationService.finalizeTry(qaTryId)
-        // 방금 이 시나리오 try가 종단됐다. 모두 끝났으면 FAILED > CANCELLED > COMPLETED 우선순위로
+        // agent 는 런을 여기서 멈췄다. 차례를 기다리던 시도는 다시 오지 않으므로 지금 닫는다 — 안 그러면
+        // 런이 RUNNING 으로 남아 다음 런을 막는다.
+        if (stop != null) endNotStarted(qaTry, stop, completedAt)
+        // 방금 이 시나리오 try가 종단됐다. 모두 끝났으면 FAILED > CANCELLED > UNDECIDED > COMPLETED 우선순위로
         // 부모 run에 올린다 — 안 그러면 RUNNING으로 남아 다음 런을 영구 차단한다.
         runRollupService.rollUpIfAllTriesDone(qaTry.qaRunId, completedAt)
         // 런이 정말 끝났을 때만 `pulse` 가 멈춘다 — 시나리오가 여럿이면 이 시도가 끝나도 다음이 남아
         // 있고, 그 판단은 `stopIfIdle` 안에 있다 (ARTEL-507).
         readings.stopIfIdle(qaTry.gameInstanceId)
+    }
+
+    /** 미판정으로 끝난 까닭(ARTEL-1371). agent 의 `payload.stop` 을 읽고, 코드가 없으면 일반 모델 오류로 둔다. */
+    private data class QaStop(val code: String, val provider: String?, val message: String)
+
+    private fun stopOf(payload: JsonNode, fallbackMessage: String): QaStop {
+        val stop = payload.path("stop")
+        return QaStop(
+            code = stop.path("code").takeIf { it.isTextual }?.asText()?.takeIf { it.isNotBlank() }?.take(64)
+                ?: "llm_error",
+            provider = stop.path("provider").takeIf { it.isTextual }?.asText()?.take(32),
+            message = stop.path("message").takeIf { it.isTextual }?.asText() ?: fallbackMessage
+        )
+    }
+
+    /**
+     * 앞 시도가 멈춰 시작하지 못한 시도를 미판정 `not_started` 로 닫고, 런에 멈춘 까닭을 남긴다(ARTEL-1371).
+     * 시도마다 STATUS 줄을 하나씩 남긴다 — 화면의 시나리오 목록과 흐름 탭이 그 줄로 "실행 안 함" 을 그린다.
+     */
+    private suspend fun endNotStarted(qaTry: QaTryEntity, stop: QaStop, completedAt: Instant) {
+        val qaRunId = qaTry.qaRunId ?: return
+        runRepository.recordStop(qaRunId, stop.code, stop.provider, stop.message, completedAt)
+        val message = "The previous scenario stopped on a model API error, so this scenario did not run."
+        for (waiting in tryRepository.findByQaRunId(qaRunId).toList().filter { it.status == "PENDING" }) {
+            val waitingId = requireNotNull(waiting.id)
+            if (tryRepository.endUndecided(waitingId, "PENDING", QaEndStatus.NOT_STARTED, stop.provider, message, completedAt) != 1) {
+                continue
+            }
+            val payload = objectMapper.createObjectNode()
+                .put("status", QaEndStatus.UNDECIDED)
+                .put("completedAt", completedAt.toString())
+            payload.putObject("stop")
+                .put("code", QaEndStatus.NOT_STARTED)
+                .put("cause", stop.code)
+                .put("provider", stop.provider)
+                .put("message", message)
+            logService.publish(
+                logService.append(
+                    qaTryId = waitingId,
+                    direction = "ORCHE_INTERNAL",
+                    type = "STATUS",
+                    message = message,
+                    payload = payload
+                )
+            )
+            streamManager.complete(waitingId)
+        }
     }
 
     /**

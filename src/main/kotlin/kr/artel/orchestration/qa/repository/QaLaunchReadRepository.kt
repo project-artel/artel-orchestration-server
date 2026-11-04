@@ -95,6 +95,8 @@ class QaLaunchReadRepository(
             $RUN_COLUMNS
             $RUN_FROM
              WHERE gi.project_id = :projectId
+               -- 판정 없이 오류로 끝나 버린 런은 히스토리에 싣지 않는다(ARTEL-1371).
+               AND r.discarded_at IS NULL
                $runFilter
              ORDER BY r.started_at DESC, r.id DESC
              LIMIT :limit
@@ -119,6 +121,7 @@ class QaLaunchReadRepository(
             $RUN_FROM
               JOIN project p ON p.id = gi.project_id
              WHERE r.started_by = :appUserId AND r.completed_at IS NOT NULL
+               AND r.discarded_at IS NULL
                AND EXISTS (SELECT 1 FROM project_member pm WHERE pm.project_id = gi.project_id AND pm.app_user_id = :appUserId)
              ORDER BY r.completed_at DESC, r.id DESC
              LIMIT :limit
@@ -145,6 +148,7 @@ class QaLaunchReadRepository(
               FROM qa_run r
               JOIN game_instance gi ON gi.id = r.game_instance_id
              WHERE r.started_by = :appUserId AND r.completed_at IS NOT NULL
+               AND r.discarded_at IS NULL
                AND EXISTS (SELECT 1 FROM project_member pm WHERE pm.project_id = gi.project_id AND pm.app_user_id = :appUserId)
                AND NOT EXISTS (SELECT 1 FROM qa_notice_read n WHERE n.app_user_id = :appUserId AND n.qa_run_id = r.id)
             """.trimIndent()
@@ -184,7 +188,7 @@ class QaLaunchReadRepository(
         databaseClient.sql(
             """
             INSERT INTO qa_notice_read (app_user_id, qa_run_id)
-            SELECT r.started_by, r.id FROM qa_run r WHERE r.started_by = :appUserId AND r.completed_at IS NOT NULL
+            SELECT r.started_by, r.id FROM qa_run r WHERE r.started_by = :appUserId AND r.completed_at IS NOT NULL AND r.discarded_at IS NULL
             ON CONFLICT DO NOTHING
             """.trimIndent()
         )
