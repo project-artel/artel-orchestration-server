@@ -59,7 +59,8 @@ class SdkWebSocketHandler(
     private val projectChangeStreamManager: ProjectChangeStreamManager,
     private val scanResults: ScanResultRouter,
     private val sdkReconnect: QaSdkReconnectService,
-    handlers: List<SdkMessageHandler>
+    handlers: List<SdkMessageHandler>,
+    private val actionDelivery: SdkActionDelivery,
 ) : WebSocketHandler {
 
     private val logger = LoggerFactory.getLogger(SdkWebSocketHandler::class.java)
@@ -122,7 +123,8 @@ class SdkWebSocketHandler(
         // 우연한 두 번째 실행 때문에 소켓을 빼앗기는 쪽이 더 나쁘다. 답하지 않으면 앞 세션은 끊긴 것이고, 새 연결이
         // 그 자리를 넘겨받는다(ARTEL-1234).
         val registration = sessionManager.registerReplacingSilent(
-            instanceId, session, heartbeat, socketProperties.replaceProbeTimeout
+            instanceId, session, heartbeat, socketProperties.replaceProbeTimeout,
+            deliveryProcessId(session)
         )
         if (registration == null) {
             logger.warn("웹소켓 연결 거부: 이미 연결된 게임 인스턴스 - instanceId: $instanceId")
@@ -144,7 +146,11 @@ class SdkWebSocketHandler(
         heartbeat: SdkHeartbeat
     ): Mono<Void> {
         val outbound = registration.outbound
+        val connectedProcessId = sessionManager.deliveryProcessId(instanceId)
         logger.info("웹소켓 연결 성공 - instanceId: $instanceId, replaced: ${registration.replaced}")
+        mono { actionDelivery.onReconnect(instanceId) }.subscribe(
+            {}, { error -> logger.warn("SDK ACTION 재접속 복구 실패 [instanceId=$instanceId]", error) }
+        )
         if (registration.replaced) {
             mono { sdkReconnect.sessionReplaced(instanceId.toLong(), socketProperties.replaceProbeTimeout) }
                 .subscribe(
@@ -200,7 +206,9 @@ class SdkWebSocketHandler(
                         .onFailure { error -> logger.error("스캔 연결 종료 처리 실패 [instanceId=$instanceId]", error) }
                     // sdkDisconnected는 이제 suspend라 doFinally(동기 Reactor 콜백)에서
                     // mono { } 로 감싸 fire-and-forget으로 흘린다.
-                    mono { qaExecutionFailureService.sdkDisconnected(instanceId.toLong()) }
+                    mono {
+                        handleSdkDisconnect(instanceId, connectedProcessId)
+                    }
                         .subscribe(
                             {},
                             { error -> logger.error("QA SDK 연결 종료 처리 실패 [instanceId=$instanceId]", error) }
@@ -242,4 +250,29 @@ class SdkWebSocketHandler(
             .queryParams
             .getFirst(name)
             ?.let { URLDecoder.decode(it, StandardCharsets.UTF_8) }
+
+    private fun deliveryProcessId(session: WebSocketSession): String? {
+        if (queryParam(session, "actionDelivery") != "1") return null
+        val value = queryParam(session, "processId") ?: return null
+        return runCatching { java.util.UUID.fromString(value).toString() }.getOrNull()
+            ?.takeIf { it == value }
+    }
+
+    internal suspend fun handleSdkDisconnect(
+        instanceId: String,
+        processId: String?,
+        waitForReconnect: suspend () -> Unit = { kotlinx.coroutines.delay(5000) }
+    ) {
+        if (processId != null && sessionManager.deliveryProcessId(instanceId) == processId) return
+        val recoveringTries = actionDelivery.disconnectedTries(instanceId, processId)
+        if (recoveringTries.isEmpty()) {
+            if (!sessionManager.hasSession(instanceId)) qaExecutionFailureService.sdkDisconnected(instanceId.toLong())
+            return
+        }
+        // 새 소켓이 등록될 시간을 주되, 원래 try ID를 잡아 뒤에 시작한 QA를 종료하지 않는다.
+        waitForReconnect()
+        if (sessionManager.deliveryProcessId(instanceId) != processId || !sessionManager.hasSession(instanceId)) {
+            for (qaTryId in recoveringTries) qaExecutionFailureService.sdkReconnectExpired(qaTryId)
+        }
+    }
 }

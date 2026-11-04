@@ -49,6 +49,11 @@ data class TestCaseUpdateRequest(
     /** 도착 화면을 바꾼다(ARTEL-1312). null 이면 건드리지 않고, 빈 문자열이면 "화면이 바뀌지 않는다" 로 정한다. */
     val arrivesAt: String? = null,
     val reviewStatus: String? = null,
+    /**
+     * 이 케이스가 돌 때 SDK 가 읽어 보낼 관측 이름(ARTEL-1280). null 이면 건드리지 않고, 빈 목록이면 `metadata.observe`
+     * 를 지운다. 원소를 `String?` 로 받는 이유는 [TestCaseBulkDeleteRequest] 와 같다 — `[null]` 을 서비스가 400 으로 막는다.
+     */
+    val observe: List<String?>? = null,
 )
 
 /**
@@ -92,6 +97,8 @@ data class TestCaseResponse(
     /** 하고 나면 가는 화면(씬 전이 TC)(ARTEL-1312). 화면이 안 바뀌면 null. */
     val arrivesAt: String? = null,
     val reviewStatus: String = "READY",
+    /** 이 케이스가 돌 때 SDK 가 읽어 보낼 관측 이름(ARTEL-1280). `metadata.observe` 그대로이고, 정한 적 없으면 null 이다. */
+    val observe: List<String>? = null,
 )
 
 data class TestCaseListResponse(val items: List<TestCaseResponse>)
@@ -128,6 +135,8 @@ data class TestCaseDetailResponse(
     /** [TestCaseResponse.arrivesAt] 와 같다. */
     val arrivesAt: String? = null,
     val reviewStatus: String = "READY",
+    /** [TestCaseResponse.observe] 와 같다. */
+    val observe: List<String>? = null,
 )
 
 /** 생성 전에 검토 상태 API 지원 여부를 확인하는 응답. */

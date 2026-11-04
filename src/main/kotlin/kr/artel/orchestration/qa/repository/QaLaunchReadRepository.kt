@@ -17,6 +17,7 @@ data class QaRunSummaryRow(
     val gameInstanceId: Long,
     val gameInstanceName: String?,
     val gameBuildVersion: String?,
+    val gameBuildIsEditor: Boolean?,
     val model: String?,
     val reasoningEffort: String?,
     val keySource: String?,
@@ -31,6 +32,8 @@ data class QaRunSummaryRow(
     val reviewFlagged: Int = 0,
     val reviewPending: Int = 0,
     val casesFailed: Int? = null,
+    val stepsPassed: Int? = null,
+    val stepsTotal: Int? = null,
 )
 
 /** 상단바 알림함 한 줄(ARTEL-1254): 내가 시작해 끝난 실행과 그 프로젝트, 읽었는지. */
@@ -304,6 +307,7 @@ class QaLaunchReadRepository(
         gameInstanceId = long("game_instance_id"),
         gameInstanceName = get("game_instance_name", String::class.java),
         gameBuildVersion = get("game_build_version", String::class.java),
+        gameBuildIsEditor = get("game_build_is_editor", java.lang.Boolean::class.java)?.booleanValue(),
         model = get("model", String::class.java),
         reasoningEffort = get("reasoning_effort", String::class.java),
         keySource = get("key_source", String::class.java),
@@ -313,6 +317,8 @@ class QaLaunchReadRepository(
         casesPassed = (get("cases_passed", Number::class.java))?.toInt(),
         casesTotal = (get("cases_total", Number::class.java))?.toInt(),
         casesFailed = (get("cases_failed", Number::class.java))?.toInt(),
+        stepsPassed = (get("steps_passed", Number::class.java))?.toInt(),
+        stepsTotal = (get("steps_total", Number::class.java))?.toInt(),
         issueCount = (get("issue_count", Number::class.java))?.toInt() ?: 0,
         startedBy = long("started_by"),
         reviewFlagged = (get("review_flagged", Number::class.java))?.toInt() ?: 0,
@@ -324,10 +330,10 @@ class QaLaunchReadRepository(
         val RUN_COLUMNS = """
 SELECT r.id, r.test_run_id, tr.name AS test_run_name,
        r.game_instance_id, gi.name AS game_instance_name,
-       gb.version AS game_build_version,
+       gb.version AS game_build_version, gb.is_editor AS game_build_is_editor,
        ft.model, ft.reasoning_effort, r.key_source,
        r.status, r.started_at, r.completed_at,
-       agg.cases_passed, agg.cases_total, agg.cases_failed,
+       agg.cases_passed, agg.cases_total, agg.cases_failed, agg.steps_passed, agg.steps_total,
        (SELECT COUNT(*) FROM issue i JOIN qa_try t2 ON t2.id = i.qa_try_id
          WHERE t2.qa_run_id = r.id) AS issue_count,
        r.started_by,
@@ -353,7 +359,8 @@ SELECT r.id, r.test_run_id, tr.name AS test_run_name,
                      SELECT DISTINCT ON (a.test_case_id) a.verdict FROM qa_case_attempt a
                       WHERE a.qa_try_id = t.id ORDER BY a.test_case_id, a.created_at DESC, a.id DESC
                  ) latest WHERE latest.verdict = 'FAILED')
-                 ELSE t.cases_total - t.cases_passed END) AS cases_failed
+                 ELSE t.cases_total - t.cases_passed END) AS cases_failed,
+             SUM(t.steps_passed) AS steps_passed, SUM(t.steps_total) AS steps_total
         FROM qa_try t WHERE t.qa_run_id = r.id
   ) agg ON TRUE
         """.trimIndent()

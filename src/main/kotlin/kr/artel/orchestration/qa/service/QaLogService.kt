@@ -136,8 +136,11 @@ class QaLogService(
     suspend fun verdicts(qaTryId: Long): List<QaLogResponse> =
         repository.findVerdicts(qaTryId).toList().map { it.toResponse() }
 
-    suspend fun page(qaTryId: Long, beforeId: Long?, size: Int): QaLogPageResponse {
-        val selected = repository.findPage(qaTryId, beforeId, size + 1).toList()
+    /** 최신순 한 페이지. `types` 가 있으면 그 타입의 행만 센다 — `nextBeforeId` 도 그 행들 사이의 커서다. */
+    suspend fun page(qaTryId: Long, beforeId: Long?, size: Int, types: Set<String>? = null): QaLogPageResponse {
+        val selected =
+            (if (types.isNullOrEmpty()) repository.findPage(qaTryId, beforeId, size + 1)
+            else repository.findPageOfTypes(qaTryId, types, beforeId, size + 1)).toList()
         val hasMore = selected.size > size
         val page = selected.take(size).reversed().map { it.toResponse() }
         return QaLogPageResponse(

@@ -12,7 +12,8 @@ import java.time.Instant
  * 첫 try 의 값을 쓴다. try 가 하나도 없는 실행(시작 직후 실패)이면 null 이다.
  *
  * [casesPassed] · [casesTotal] 은 완주한 try 의 합이다. 판정이 하나도 없으면 둘 다 null —
- * 0 이 아니라 모르는 것이다([QaTryDetailResponse] 와 같은 규칙).
+ * 0 이 아니라 모르는 것이다([QaTryDetailResponse] 와 같은 규칙). [stepsPassed] · [stepsTotal] 도 같다.
+ * TC 없이 자연어 step 만 있는 시나리오는 case 수가 없어 step 수로 결과를 보인다.
  *
  * @property testRunName 실행 뒤 런이 지워졌으면 null.
  */
@@ -23,6 +24,7 @@ data class QaRunSummaryResponse(
     val gameInstanceId: String,
     val gameInstanceName: String?,
     val gameBuildVersion: String?,
+    val gameBuildIsEditor: Boolean?,
     val model: String?,
     val reasoningEffort: String?,
     val keySource: String?,
@@ -38,6 +40,8 @@ data class QaRunSummaryResponse(
     val reviewFlagged: Int = 0,
     val reviewPending: Int = 0,
     val casesFailed: Int? = null,
+    val stepsPassed: Int? = null,
+    val stepsTotal: Int? = null,
 )
 
 data class QaRunSummaryListResponse(val items: List<QaRunSummaryResponse>)

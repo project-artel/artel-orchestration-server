@@ -56,13 +56,14 @@ class AgentMacroClient(
         imports: Map<String, String>,
         contract: JsonNode? = null,
     ): MacroCheckOutcome {
+        val requestedContract = contract?.takeUnless { it.isNull }
         val response = callAgent("macro check") {
             webClient.post().uri("/macros/check")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(AgentMacroCheckRequest(name = name, source = source, imports = imports, contract = contract))
+                .bodyValue(AgentMacroCheckRequest(name = name, source = source, imports = imports, contract = requestedContract))
                 .retrieve().awaitBody<AgentMacroCheckResponse>()
         }
-        return outcomeOf(response, contract)
+        return outcomeOf(response, requestedContract)
     }
 
     private fun outcomeOf(response: AgentMacroCheckResponse, asked: JsonNode?): MacroCheckOutcome {

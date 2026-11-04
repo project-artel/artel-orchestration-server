@@ -13,6 +13,7 @@ import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.reactor.mono
 import kr.artel.orchestration.settings.config.AgentServerProperties
+import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
@@ -269,14 +270,24 @@ class WebSocketQaAgentAdapter(
                 .doOnNext { frame -> inbound.tryEmitNext(frame.payloadAsText) }
                 .then()
             send.and(receive)
-        }.doFinally {
+        }.doFinally { signal ->
+            // 런 238 은 세션이 열린 지 0.2초 만에 이 소켓이 끝나 `onDisconnect` 로 실패 처리됐는데, 왜 끝났는지 남은 것이 없었다.
+            if (!connection.closing) logger.warn("QA Agent 웹소켓이 먼저 끝났다 [sessionId={}, signal={}]", sessionId, signal)
             inbound.tryEmitComplete()
         }.subscribe(
             {},
-            { error -> ready.tryEmitError(error) }
+            { error ->
+                // `ready` 를 낸 뒤의 오류는 `tryEmitError` 가 받지 않아 그대로 사라진다. 여기서 남긴다.
+                logger.warn("QA Agent 웹소켓 오류 [sessionId={}]: {}", sessionId, error.toString())
+                ready.tryEmitError(error)
+            }
         )
         connection.disposable = disposable
         ready.asMono().awaitSingleOrNull()
+    }
+
+    private companion object {
+        val logger = LoggerFactory.getLogger(WebSocketQaAgentAdapter::class.java)
     }
 
     private class AgentConnection(

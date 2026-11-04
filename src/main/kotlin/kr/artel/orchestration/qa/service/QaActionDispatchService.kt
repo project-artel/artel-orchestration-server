@@ -10,6 +10,7 @@ import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.dto.ActionItemDto
 import kr.artel.orchestration.sdk.dto.ActionResponseDto
 import kr.artel.orchestration.sdk.service.SessionManager
+import kr.artel.orchestration.sdk.service.SdkActionDelivery
 import org.slf4j.LoggerFactory
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Service
@@ -29,7 +30,8 @@ class QaActionDispatchService(
     private val sessionManager: SessionManager,
     private val objectMapper: ObjectMapper,
     private val transactionalOperator: TransactionalOperator,
-    private val sdkBridge: QaSdkBridgeService
+    private val sdkBridge: QaSdkBridgeService,
+    private val delivery: SdkActionDelivery,
 ) {
     private val logger = LoggerFactory.getLogger(QaActionDispatchService::class.java)
 
@@ -39,6 +41,7 @@ class QaActionDispatchService(
         message: String?,
         actionsPayload: JsonNode
     ): Boolean {
+        val deliveryDeadline = System.currentTimeMillis() + SdkActionDelivery.LIFETIME_MILLIS
         require(agentMessageId.isNotBlank()) { "ACTION messageId is required" }
         val actionsNode = actionsPayload.path("actions")
         require(actionsNode.isArray && !actionsNode.isEmpty) { "ACTION payload.actions must be a non-empty array" }
@@ -70,10 +73,9 @@ class QaActionDispatchService(
         }
 
         try {
-            // inbound append + outbound append + SDK 전송을 한 트랜잭션으로 묶는다. 원자화 전에는
-            // inbound만 커밋되고 outbound 전에 죽으면, Agent 재시도가 !inserted로 걸려 ACTION이
-            // 영영 안 나가고 무음 삼켜졌다. 이제 실패 시 전부 롤백돼 재시도가 깨끗이 다시 보낸다.
-            return transactionalOperator.executeAndAwait {
+            // 로그 둘을 먼저 commit한다. rollback된 요청이 복구 루프에서 실행되지 않도록
+            // pending 등록과 최초 SDK 전송은 executeAndAwait가 반환된 뒤에만 수행한다.
+            val stored = transactionalOperator.executeAndAwait {
                 val inbound = logService.append(
                     qaTryId = qaTryId,
                     direction = "AGENT_TO_ORCHE",
@@ -82,28 +84,27 @@ class QaActionDispatchService(
                     message = message,
                     payload = actionsPayload
                 )
-                if (!inbound.inserted) return@executeAndAwait false
+                if (!inbound.inserted) return@executeAndAwait null
                 val outbound = insertOutbound(qaTryId, agentMessageId, message, actionsPayload)
                 val outboundResponse = logService.response(outbound)
-                val outerId = requireNotNull(outbound.id)
-                val instanceId = qaTry.gameInstanceId.toString()
-                // 큐에 이미 쌓인 수를 남긴다. 액션 결과가 늦을 때 이쪽 전송이 밀렸는지 가르는 값이다(ARTEL-1235).
-                val pendingAhead = sessionManager.pendingOutbound(instanceId)
-                val queued = sessionManager.sendAction(instanceId, ActionResponseDto(id = outerId, actions = actions))
-                logger.info(
-                    "SDK 로 ACTION 전송 [qaTryId={}, requestId={}, queued={}, pendingAhead={}]",
-                    qaTryId, outerId, queued, pendingAhead
-                )
-                if (!queued) throw SdkActionUndeliveredException()
-                logService.publish(inbound)
-                logService.publish(QaLogAppendResult(outboundResponse, true))
-                true
-            }
+                Triple(inbound, outboundResponse, requireNotNull(outbound.id))
+            } ?: return false
+            val (inbound, outboundResponse, outerId) = stored
+            logService.publish(inbound)
+            logService.publish(QaLogAppendResult(outboundResponse, true))
+            val instanceId = qaTry.gameInstanceId.toString()
+            val pendingAhead = sessionManager.pendingOutbound(instanceId)
+            val registered = delivery.send(instanceId, qaTryId, ActionResponseDto(id = outerId, actions = actions), deliveryDeadline)
+            logger.info(
+                "SDK ACTION 전달 등록 [qaTryId={}, requestId={}, registered={}, pendingAhead={}]",
+                qaTryId, outerId, registered, pendingAhead
+            )
+            if (!registered) throw SdkActionUndeliveredException()
+            return true
         } catch (error: CancellationException) {
             throw error
         } catch (error: SdkActionUndeliveredException) {
-            // 큐가 닫힌 세션에 넣은 ACTION 은 SDK 에 닿지 않는다. 예전에는 경고 로그만 남기고 성공으로 커밋해서 agent 가
-            // 결과를 끝까지 기다렸다. 이제 롤백하고 agent 에게 실패 결과를 바로 돌려준다.
+            // DB 로그는 이미 commit됐다. 닫힌 전송 큐의 요청은 복구 대상으로 등록하지 않고 실패를 돌려준다.
             val audit = logService.append(
                 qaTryId = qaTryId,
                 direction = "ORCHE_INTERNAL",
@@ -113,18 +114,7 @@ class QaActionDispatchService(
                 payload = objectMapper.createObjectNode().put("error", error.message)
             )
             logService.publish(audit)
-            val inbound = logService.append(
-                qaTryId = qaTryId,
-                direction = "AGENT_TO_ORCHE",
-                type = "ACTION",
-                messageId = agentMessageId,
-                message = message,
-                payload = actionsPayload
-            )
-            logService.publish(inbound)
-            if (inbound.inserted) {
-                sdkBridge.rejectActions(qaTry, agentMessageId, actions, actions.associate { it.id to UNDELIVERED_REASON })
-            }
+            sdkBridge.rejectActions(qaTry, agentMessageId, actions, actions.associate { it.id to UNDELIVERED_REASON })
             return false
         } catch (error: Exception) {
             // ERROR 감사 로그는 트랜잭션 밖에서 남긴다. 안에서 남기면 롤백에 함께 지워진다.
