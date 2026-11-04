@@ -43,6 +43,15 @@ data class QaRunEntity(
     /** 이 run 이 공용 key(`platform`)와 사용자 key(`user`) 중 무엇으로 돌았는지. 지출 화면이 둘을 가르는 근거다. */
     @Column("key_source") val keySource: String = "platform",
     @Column("run_config") val runConfig: Json = Json.of("{}"),
+    /**
+     * 런을 멈춘 모델 API 오류(ARTEL-1371). agent 의 코드(`llm_credit_exhausted` 등) · 제공사 · 한 줄이다. 멈추지
+     * 않은 런은 셋 다 null 이다.
+     */
+    @Column("stop_code") val stopCode: String? = null,
+    @Column("stop_provider") val stopProvider: String? = null,
+    @Column("stop_message") val stopMessage: String? = null,
+    /** 판정 없이 오류로 끝나 버린 때. 값이 있으면 히스토리 · 통계 · 알림함 조회에서 빠진다. */
+    @Column("discarded_at") val discardedAt: Instant? = null,
     @Column("started_at") val startedAt: Instant,
     @Column("completed_at") val completedAt: Instant? = null,
     @Column("created_at") val createdAt: Instant? = null,
@@ -94,6 +103,13 @@ data class QaTryEntity(
     // 이 try 가 공용 key(`platform`)와 사용자 key(`user`) 중 무엇으로 돌았는지. run 경로는 run 의 값과 같다.
     // 단일 시나리오 경로는 qa_run 이 없어 이 열이 유일한 기록이다.
     @Column("key_source") val keySource: String = "platform",
+    /**
+     * 미판정(`UNDECIDED`)으로 끝난 까닭(ARTEL-1371). 오류로 멈춘 시도는 agent 의 코드, 그 때문에 시작하지 못한
+     * 시도는 `not_started` 다. 다른 끝 상태에서는 null 이다.
+     */
+    @Column("stop_code") val stopCode: String? = null,
+    @Column("stop_provider") val stopProvider: String? = null,
+    @Column("stop_message") val stopMessage: String? = null,
     @Column("started_at") val startedAt: Instant,
     @Column("completed_at") val completedAt: Instant? = null,
     @Column("created_at") val createdAt: Instant? = null,

@@ -25,6 +25,7 @@ import kr.artel.orchestration.qa.dto.QaLogPageResponse
 import kr.artel.orchestration.qa.dto.QaLogResponse
 import kr.artel.orchestration.project.repository.ProjectRepository
 import kr.artel.orchestration.qa.dto.QaRunListResponse
+import kr.artel.orchestration.qa.dto.QaStopResponse
 import kr.artel.orchestration.qa.dto.QaRunResponse
 import kr.artel.orchestration.qa.dto.QaStatusPayload
 import kr.artel.orchestration.qa.dto.QaTryResponse
@@ -869,7 +870,9 @@ class QaTryService(
         completedAt = completedAt,
         label = label,
         tries = tries.map { it.toResponse() },
-        testRunGameBuildId = testRuns.findById(testRunId)?.gameBuildId?.toString()
+        testRunGameBuildId = testRuns.findById(testRunId)?.gameBuildId?.toString(),
+        stop = stopCode?.let { QaStopResponse(it, stopProvider, stopMessage) },
+        discarded = discardedAt != null
     )
 
     /**
@@ -1066,7 +1069,7 @@ class QaTryService(
             logService.stream(
                 qaTryId,
                 afterId,
-                qaTry.status in setOf("COMPLETED", "FAILED", "CANCELLED")
+                qaTry.status in QaEndStatus.TERMINAL
             )
         )
     }
@@ -1093,6 +1096,7 @@ class QaTryService(
         allowedBehaviors = functions.allowedBehaviors,
         effectiveCheats = functions.effectiveCheats,
         effectiveBehaviors = functions.effectiveBehaviors,
-        qaRunId = qaRunId?.toString()
+        qaRunId = qaRunId?.toString(),
+        stop = stopCode?.let { QaStopResponse(it, stopProvider, stopMessage) }
     )
 }

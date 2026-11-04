@@ -213,7 +213,20 @@ data class QaTryResponse(
      * 단독 실행(하위호환) try다 — `qa_try.qa_run_id` 가 nullable 인 것과 같은 이유다. 화면이
      * try 화면에서 run 콘솔로 올라가는 링크를 만드는 재료다.
      */
-    val qaRunId: String? = null
+    val qaRunId: String? = null,
+    /**
+     * [status] 가 `UNDECIDED` 일 때만 채운다(ARTEL-1371): 왜 판정하지 못했는가. 모델 API 오류로 멈춘 시도는
+     * agent 의 코드(`llm_credit_exhausted` · `llm_auth_failed` · `llm_model_unavailable`), 그 때문에 시작하지
+     * 못한 시도는 `not_started` 다.
+     */
+    val stop: QaStopResponse? = null
+)
+
+/** 미판정으로 끝난 까닭(ARTEL-1371). [provider] 는 `anthropic` · `openai` · `openrouter` · `bedrock` 이다. */
+data class QaStopResponse(
+    val code: String,
+    val provider: String?,
+    val message: String?
 )
 
 /**
@@ -237,7 +250,11 @@ data class QaRunResponse(
      * 판정 기준이 된 케이스 내용의 버전 — 이 run 의 TR 이 따르는 게임 빌드다(ARTEL-1069). TR 에 버전이 없으면 null 이고
      * 그때는 최신 내용으로 판정했다. 화면이 FREE 시나리오의 케이스를 같은 버전으로 보인다.
      */
-    val testRunGameBuildId: String? = null
+    val testRunGameBuildId: String? = null,
+    /** 런을 멈춘 모델 API 오류(ARTEL-1371). 멈추지 않은 런은 null 이다. */
+    val stop: QaStopResponse? = null,
+    /** 판정 없이 오류로 끝나 버린 런이다. 히스토리 · 알림함에는 나오지 않고, 런 화면만 이 값을 본다. */
+    val discarded: Boolean = false
 )
 
 data class QaLogResponse(

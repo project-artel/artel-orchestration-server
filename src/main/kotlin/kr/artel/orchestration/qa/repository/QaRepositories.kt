@@ -50,6 +50,8 @@ interface QaRunRepository : CoroutineCrudRepository<QaRunEntity, Long> {
         JOIN test_run tr ON tr.id = qr.test_run_id
         WHERE tr.project_id = :projectId
           AND (CAST(:gameBuildId AS BIGINT) IS NULL OR qr.game_build_id = :gameBuildId)
+          -- 판정 없이 오류로 끝나 버린 런은 히스토리에 싣지 않는다(ARTEL-1371).
+          AND qr.discarded_at IS NULL
         ORDER BY qr.started_at DESC, qr.id DESC
         LIMIT :limit
         """
@@ -71,6 +73,42 @@ interface QaRunRepository : CoroutineCrudRepository<QaRunEntity, Long> {
         completedAt: Instant?,
         updatedAt: Instant
     ): Int
+
+    /**
+     * 런을 멈춘 모델 API 오류를 남긴다(ARTEL-1371). 처음 멈춘 까닭 하나만 둔다 — 이미 있으면 그대로다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_run
+        SET stop_code = :stopCode, stop_provider = :stopProvider, stop_message = :stopMessage, updated_at = :updatedAt
+        WHERE id = :id AND stop_code IS NULL
+        """
+    )
+    suspend fun recordStop(id: Long, stopCode: String, stopProvider: String?, stopMessage: String?, updatedAt: Instant): Int
+
+    /** 판정 없이 오류로 끝난 런을 버림으로 둔다(ARTEL-1371). 행은 지우지 않는다. */
+    @Modifying
+    @Query("UPDATE qa_run SET discarded_at = :discardedAt, updated_at = :discardedAt WHERE id = :id AND discarded_at IS NULL")
+    suspend fun discard(id: Long, discardedAt: Instant): Int
+
+    /**
+     * 이 런에서 agent 가 스텝 판정을 하나라도 남겼는가. [QaLogRepository.findStepVerdicts] 와 같은 조건이다 —
+     * 끝남 프레임(`result` 있음)은 판정이 아니다.
+     */
+    @Query(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM qa_log l JOIN qa_try t ON t.id = l.qa_try_id
+             WHERE t.qa_run_id = :qaRunId
+               AND l.direction = 'AGENT_TO_ORCHE'
+               AND l.type = 'STATUS'
+               AND l.payload ->> 'result' IS NULL
+               AND l.payload ->> 'step' IS NOT NULL
+        )
+        """
+    )
+    suspend fun hasStepVerdicts(qaRunId: Long): Boolean
 
     /** 세션 부착 + Agent가 확정한 세션 공통 run_config를 한 문장으로 반영. */
     @Modifying
@@ -167,6 +205,28 @@ interface QaTryRepository : CoroutineCrudRepository<QaTryEntity, Long> {
         nextStatus: String,
         completedAt: Instant?,
         updatedAt: Instant
+    ): Int
+
+    /**
+     * 시도를 미판정으로 끝내고 까닭을 남긴다(ARTEL-1371). 오류로 멈춘 시도는 RUNNING 에서, 그 때문에 시작하지
+     * 못한 시도는 PENDING 에서 온다(`stop_code = not_started`).
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE qa_try
+        SET status = 'UNDECIDED', stop_code = :stopCode, stop_provider = :stopProvider, stop_message = :stopMessage,
+            completed_at = :completedAt, updated_at = :completedAt
+        WHERE id = :id AND status = :expectedStatus
+        """
+    )
+    suspend fun endUndecided(
+        id: Long,
+        expectedStatus: String,
+        stopCode: String,
+        stopProvider: String?,
+        stopMessage: String?,
+        completedAt: Instant
     ): Int
 
     /**

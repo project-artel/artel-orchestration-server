@@ -67,7 +67,7 @@ internal val TYPES =
 
 data class QaLogAppendResult(val log: QaLogResponse, val inserted: Boolean)
 
-private val TERMINAL_STATUSES = setOf("COMPLETED", "FAILED", "CANCELLED")
+private val TERMINAL_STATUSES = QaEndStatus.TERMINAL
 
 /**
  * Whether a STATUS log ends the whole run.

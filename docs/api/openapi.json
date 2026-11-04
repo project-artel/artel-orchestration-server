@@ -15960,6 +15960,9 @@
           },
           "qaRunId": {
             "type": "string"
+          },
+          "stop": {
+            "$ref": "#/components/schemas/QaStopResponse"
           }
         }
       },
@@ -16087,6 +16090,12 @@
           },
           "testRunGameBuildId": {
             "type": "string"
+          },
+          "stop": {
+            "$ref": "#/components/schemas/QaStopResponse"
+          },
+          "discarded": {
+            "type": "boolean"
           }
         }
       },
@@ -25042,6 +25051,23 @@
           "keptForQaHistoryCount": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "QaStopResponse": {
+        "required": [
+          "code"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
           }
         }
       }
