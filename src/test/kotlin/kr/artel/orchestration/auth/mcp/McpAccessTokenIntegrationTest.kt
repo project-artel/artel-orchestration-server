@@ -158,14 +158,18 @@ class McpAccessTokenIntegrationTest {
 
         // 게임 값 선언도 같은 줄에 선다(V173). 등록·삭제는 write 가 있어야 한다.
         val identityPath = "${world.base}/game-identities"
-        val identity = """{"name":"StageDataSingleton.stagePosition","gameBuildId":"${world.buildId}","kind":"ordinal",""" +
+        val identity = """{"name":"StageDataSingleton.stagePosition","gameBuildId":"${world.buildId}","expectedVersion":0,"kind":"ordinal",""" +
             """"base":0,"meaning":"방금 들어간 stage","changesWhen":"stage 에 들어갈 때","identifies":"stage","role":"current"}"""
         val identityRefused = call(reader, HttpMethod.PUT, identityPath, identity)
         assertThat(identityRefused.status).isEqualTo(403)
         assertThat(identityRefused.body["code"].asText()).isEqualTo("insufficient_scope")
-        assertThat(call(reader, HttpMethod.DELETE, "$identityPath?name=StageDataSingleton.stagePosition").status).isEqualTo(403)
-        assertThat(call(writer, HttpMethod.PUT, identityPath, identity).status).isEqualTo(200)
-        assertThat(call(writer, HttpMethod.DELETE, "$identityPath?name=StageDataSingleton.stagePosition").status).isEqualTo(204)
+        assertThat(call(reader, HttpMethod.DELETE, "$identityPath?name=StageDataSingleton.stagePosition&gameBuildId=${world.buildId}&expectedVersion=1").status).isEqualTo(403)
+        val identityStored = call(writer, HttpMethod.PUT, identityPath, identity)
+        assertThat(identityStored.status).isEqualTo(200)
+        assertThat(identityStored.body["source"].asText()).isEqualTo("MCP")
+        assertThat(identityStored.body["createdBy"].asText()).isEqualTo(world.userId.toString())
+        assertThat(call(reader, HttpMethod.GET, "$identityPath/history?name=StageDataSingleton.stagePosition").status).isEqualTo(200)
+        assertThat(call(writer, HttpMethod.DELETE, "$identityPath?name=StageDataSingleton.stagePosition&gameBuildId=${world.buildId}&expectedVersion=1").status).isEqualTo(204)
     }
 
     /**
