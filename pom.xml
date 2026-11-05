@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>kr.artel</groupId>
 	<artifactId>artel-orchestration-server</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>0.0.1</version>
 	<name>artel-orchestration-server</name>
 	<description>Orchestration Server for Artel</description>
 	<licenses>
