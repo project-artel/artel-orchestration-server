@@ -26,6 +26,16 @@ data class TestRunGameBuildRequest(
     val folderId: String? = null,
 )
 
+/**
+ * TR 을 복제할 자리(ARTEL-1377). 아무것도 주지 않으면 원본과 같은 버전 · 폴더다. [folderId] 를 주면 그 폴더 안(버전은
+ * 폴더의 것), [unversioned] 면 버전 없음, [gameBuildId] 면 그 버전 바로 아래다 — [TestRunCreateRequest] 와 같은 순서로 고른다.
+ */
+data class TestRunCopyRequest(
+    val gameBuildId: String? = null,
+    val unversioned: Boolean = false,
+    val folderId: String? = null,
+)
+
 data class TestRunUpdateRequest(
     val name: String? = null,
     val description: String? = null,
