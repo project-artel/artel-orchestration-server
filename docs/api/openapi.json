@@ -13212,6 +13212,26 @@
           }
         }
       }
+    },
+    "/api/review-notices": {
+      "get": {
+        "tags": [
+          "review-notice-controller"
+        ],
+        "operationId": "listReviewNotices",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewNoticeListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -26852,6 +26872,45 @@
           "keptForQaHistoryCount": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "ReviewNotice": {
+        "required": [
+          "projectId",
+          "projectName",
+          "scenarioCount",
+          "testCaseCount"
+        ],
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string"
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "testCaseCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "scenarioCount": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ReviewNoticeListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewNotice"
+            }
           }
         }
       }
