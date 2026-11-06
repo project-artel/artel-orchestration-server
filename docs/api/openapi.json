@@ -101,6 +101,10 @@
       "description": "SDK 브라우저 로그인"
     },
     {
+      "name": "Release",
+      "description": "빌드 검증 진행과 출시 기준"
+    },
+    {
       "name": "Game Instance",
       "description": "프로젝트에 연결된 SDK 설치본 관리"
     },
@@ -1444,6 +1448,114 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/TestCaseFolderItemsChangeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/release-criteria": {
+      "get": {
+        "tags": [
+          "Release"
+        ],
+        "summary": "출시 기준",
+        "description": "프로젝트의 출시 기준 숫자. 정한 적이 없으면 기본값이다.",
+        "operationId": "getReleaseCriteria",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseCriteriaResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Release"
+        ],
+        "summary": "출시 기준 바꾸기",
+        "description": "OWNER 만 바꾼다. 건수는 0 이상, 비율은 0~100 이다.",
+        "operationId": "updateReleaseCriteria",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseCriteria"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseCriteriaResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Release"
+        ],
+        "summary": "출시 기준을 기본값으로",
+        "description": "OWNER 만 되돌린다.",
+        "operationId": "resetReleaseCriteria",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseCriteriaResponse"
                 }
               }
             }
@@ -11781,6 +11893,60 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/verification-progress": {
+      "get": {
+        "tags": [
+          "Release"
+        ],
+        "summary": "빌드 검증 진행",
+        "description": "그 빌드의 TC 를 마지막 판정으로 센 상태(통과 · 실패 · 회귀 · 판정 못함 · 판정 전)와, 빌드가 올라온 날부터 오늘까지(최대 90일) 날마다의 누적 상태 · QA 실행 수를 돌려준다. 다른 프로젝트의 빌드거나 참여자가 아니면 404 다.",
+        "operationId": "getBuildVerificationProgress",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "description": "게임 빌드 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "timeZone",
+            "in": "query",
+            "description": "날을 나눌 시간대(IANA)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "Asia/Seoul"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildVerificationProgressResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-builds/{gameBuildId}/test-cases/verdict-carry-over/preview": {
       "get": {
         "tags": [
@@ -12367,6 +12533,51 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/CaseGlossaryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/build-verification-summaries": {
+      "get": {
+        "tags": [
+          "Release"
+        ],
+        "summary": "빌드별 검증 요약",
+        "description": "케이스 라이브러리에 보이는 빌드마다 TC 상태 수와 안 닫힌 BLOCKER · CRITICAL 이슈 수를, 최근에 올라온 것부터 돌려준다.",
+        "operationId": "listBuildVerificationSummaries",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "몇 개(1~20)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 5
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildVerificationSummariesResponse"
                 }
               }
             }
@@ -14008,6 +14219,61 @@
           },
           "hidden": {
             "type": "boolean"
+          }
+        }
+      },
+      "ReleaseCriteria": {
+        "required": [
+          "maxInconclusiveRate",
+          "maxOpenBlockers",
+          "maxPending",
+          "maxRegression",
+          "minPassRate"
+        ],
+        "type": "object",
+        "properties": {
+          "maxPending": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxRegression": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "minPassRate": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxOpenBlockers": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxInconclusiveRate": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "ReleaseCriteriaResponse": {
+        "required": [
+          "criteria",
+          "defaults",
+          "isDefault"
+        ],
+        "type": "object",
+        "properties": {
+          "criteria": {
+            "$ref": "#/components/schemas/ReleaseCriteria"
+          },
+          "isDefault": {
+            "type": "boolean"
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/ReleaseCriteria"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -24328,6 +24594,146 @@
           }
         }
       },
+      "BuildRefResponse": {
+        "required": [
+          "createdAt",
+          "gameBuildId",
+          "isEditor",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BuildVerificationDayResponse": {
+        "required": [
+          "date",
+          "failed",
+          "inconclusive",
+          "passed",
+          "regression",
+          "runs"
+        ],
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "regression": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "inconclusive": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "runs": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "BuildVerificationProgressResponse": {
+        "required": [
+          "days",
+          "summary",
+          "timeZone"
+        ],
+        "type": "object",
+        "properties": {
+          "summary": {
+            "$ref": "#/components/schemas/BuildVerificationSummaryResponse"
+          },
+          "previousBuild": {
+            "$ref": "#/components/schemas/BuildRefResponse"
+          },
+          "timeZone": {
+            "type": "string"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildVerificationDayResponse"
+            }
+          }
+        }
+      },
+      "BuildVerificationSummaryResponse": {
+        "required": [
+          "build",
+          "carried",
+          "failed",
+          "inconclusive",
+          "openBlockers",
+          "passed",
+          "pending",
+          "regression",
+          "total"
+        ],
+        "type": "object",
+        "properties": {
+          "build": {
+            "$ref": "#/components/schemas/BuildRefResponse"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "regression": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "inconclusive": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "carried": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "openBlockers": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lastJudgedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "VerdictCarryPreviewItem": {
         "required": [
           "carryable",
@@ -25785,6 +26191,20 @@
           },
           "reviewStatus": {
             "type": "string"
+          }
+        }
+      },
+      "BuildVerificationSummariesResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildVerificationSummaryResponse"
+            }
           }
         }
       },
