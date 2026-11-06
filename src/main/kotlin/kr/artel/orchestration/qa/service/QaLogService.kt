@@ -101,9 +101,22 @@ class QaLogService(
     ): QaLogAppendResult {
         require(direction in DIRECTIONS) { "Unsupported QA log direction: $direction" }
         require(type in TYPES) { "Unsupported QA log type: $type" }
-        val serialized = objectMapper.writeValueAsString(payload)
-        require(serialized.toByteArray(StandardCharsets.UTF_8).size <= MAX_QA_PAYLOAD_BYTES) {
-            "QA log payload exceeds 1 MiB"
+        val original = objectMapper.writeValueAsString(payload)
+        val payloadBytes = original.toByteArray(StandardCharsets.UTF_8).size
+        val serialized = if (type == "PULSE" && payloadBytes > MAX_QA_PAYLOAD_BYTES) {
+            // QA 로그 한도가 Agent로 보내는 전체 판독을 막지 않도록 헤더만 기록한다.
+            val metadata = objectMapper.createObjectNode()
+                .put("payloadOmitted", true)
+                .put("payloadBytes", payloadBytes)
+            for (key in listOf("id", "type", "stream", "seq", "frame", "scene", "whole")) {
+                payload.get(key)?.let { metadata.set<JsonNode>(key, it) }
+            }
+            objectMapper.writeValueAsString(metadata)
+        } else {
+            require(payloadBytes <= MAX_QA_PAYLOAD_BYTES) {
+                "QA log payload exceeds 1 MiB"
+            }
+            original
         }
         val entity = QaLogEntity(
             qaTryId = qaTryId,
