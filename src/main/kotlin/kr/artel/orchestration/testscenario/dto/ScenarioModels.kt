@@ -1,0 +1,449 @@
+package kr.artel.orchestration.testscenario.dto
+
+import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonValue
+
+/**
+ * 시나리오 스텝 하나 = **행위 하나**(재설계 2026-08-07). 시나리오는 스텝의 순서 있는 집합이고,
+ * 스텝이 1급 단위다.
+ *
+ * @property action 이 스텝에서 하는 행위(자연어). @property caseId 이 스텝이 속한 TC(검증 대상).
+ *   **nullable** — 대부분의 스텝은 그냥 조작이라 검증 대상이 없다. **연속된 동일 caseId = 그 TC의 검증
+ *   구간**이고, 그 구간의 마지막 스텝을 수행한 뒤 그 TC의 `expected`로 판정한다. @property hint 선택적
+ *   근거(키/백도어). @property input 선택: `keyboard`|`click` 등.
+ */
+data class ScenarioStep(
+    val action: String = "",
+    @param:JsonProperty("case_id") val caseId: Long? = null,
+    val hint: String? = null,
+    val input: String? = null,
+    /**
+     * 이 스텝이 **통과해야 하는지 실패해야 하는지**에 대한 사람의 판단(ARTEL-301). QA 에이전트의
+     * 스텝 판정은 자기채점이라, 이 라벨과 대조하지 않으면 관대한 모델이 높은 점수를 받고 "전부
+     * 통과"라고 답하는 전략이 만점이 된다.
+     *
+     * **nullable이고 기본값이 없다. null은 "채점하지 않음"이지 "통과해야 함"이 아니다.** 기본값을
+     * true로 두면 라벨을 안 단 스텝이 전부 통과 기대로 세어져 정확도가 부풀려지고, 그 오류는 조용히
+     * 지나간다(V27의 `knowledge_usage.cited`와 같은 규율). 이 필드가 생기기 전에 만들어진 시나리오는
+     * 전부 null이며 백필하지 않는다 — 사람이 판단해야 하는 값을 기계가 지어내면 정답지가 오염된다.
+     *
+     * 검증 스텝(구간의 마지막 스텝)의 라벨이 곧 그 TC의 기대 판정이다. 일반 스텝의 라벨은 부가지만
+     * 둘 다 채점 대상이다.
+     *
+     * ⚠️ **이 값은 실행 계약으로 나가면 안 된다.** 에이전트가 답을 알고 실행하면 이 측정 전체가
+     * 무의미해지고, 그 사고는 점수가 좋아 보일 뿐이라 조용하다. 에이전트가 읽는 두 경로는 타입으로
+     * 갈라져 있다: QA 실행은 [AgentStep], 작성 챗봇은 [ChatScenarioStep] — 둘 다 이 필드가 없다.
+     */
+    @param:JsonProperty("expected_passed") val expectedPassed: Boolean? = null,
+    /**
+     * 이 스텝을 **어디서 가져왔는가**(ARTEL-467). `CASE`|`CAPABILITY`|`UNKNOWN`.
+     *
+     * 검증 스텝은 원래 근거가 있었다 — [caseId]가 "이 스텝은 이 케이스를 본다"고 말해 준다.
+     * **브리지 스텝만 근거가 없었고**, 그래서 지어낸 스텝과 알고 쓴 스텝을 기계가 구분할 수 없었다.
+     * 그 구분이 없는 것이 실행 중에 터지는 지점이다.
+     *
+     * **null이면 검사를 건너뛴다.** 이 필드를 보내지 않는 구버전 Agent와 함께 배포되기 위해서이고,
+     * 되돌리는 스위치가 이 null 하나뿐이라 롤백이 Agent 재배포만으로 끝난다([ReviewedCases]와 같은 규율).
+     */
+    @param:JsonProperty("step_source") val stepSource: ScenarioStepSource? = null,
+    /**
+     * 할 일인가 알림인가(ARTEL-468). null은 [ScenarioStepKind.ACTION] — 이 필드가 없던 시절의
+     * 시나리오다. [ScenarioStepKind.GAP]은 수행 대상도 판정 대상도 아니다.
+     */
+    @param:JsonProperty("step_kind") val stepKind: ScenarioStepKind? = null,
+    /** [stepSource]가 `CAPABILITY`일 때 그 기능의 id. `capability.id`와 타입이 같아 검사가 조건문 하나다. */
+    @param:JsonProperty("step_source_capability_id") val stepSourceCapabilityId: Long? = null,
+    /** [stepSource]가 `UNKNOWN`일 때 **무엇이 막는지**. 사용자에게 물어볼 거리가 이 문장이다. */
+    @param:JsonProperty("step_unknown_reason") val stepUnknownReason: String? = null,
+    /** 아직 저장하지 않은 추천 TC 를 확인하는 스텝이면 그 추천 id. 저장하면 [caseId] 로 바뀌고 이 칸은 비워진다. */
+    @param:JsonProperty("recommendation_id") val recommendationId: Long? = null,
+)
+
+/**
+ * 스텝의 근거 종류(ARTEL-467).
+ *
+ * 한 문자열에 담지 않고 [ScenarioStep.stepSource]·[ScenarioStep.stepSourceCapabilityId]·
+ * [ScenarioStep.stepUnknownReason] 셋으로 나눈 것은 프로토타입에서 한 필드(`"unknown:StagePosition을…"`)로
+ * 두었다가 파싱이 필요해졌고, `case_id`가 있는데 근거는 간선이라고 적은 **계약 위반이 8건** 나왔기
+ * 때문이다. 셋으로 나누면 검사가 조건문 셋으로 끝난다.
+ */
+enum class ScenarioStepSource {
+    /** 이 스텝은 [ScenarioStep.caseId]의 케이스를 검증한다. */
+    CASE,
+
+    /** 이 스텝은 씬 명세의 그 기능을 탄다. `find_path`가 답한 것을 그대로 옮긴 자리다. */
+    CAPABILITY,
+
+    /**
+     * 길을 모른다.
+     *
+     * **통과 사유이면서 검사 대상이다.** 무조건 통과시키면 전부 이것으로 적는 것이 가장 싼 통과
+     * 방법이 되어 검사가 무의미해진다. 명세가 아는 길에 이것을 적었으면 거짓이므로 거부한다.
+     */
+    UNKNOWN,
+
+    /**
+     * 사람이 직접 쓴 스텝.
+     *
+     * 명세가 모르는 자리를 사용자가 메운 것이라 **코드가 건드리지 않는다** — 지우지도, 알림
+     * 블록으로 접지도 않는다. 근거를 묻는 검사도 여기서 멈춘다: 사람이 적었다는 것이 근거다.
+     *
+     * 이 값이 없으면 사용자가 손으로 채운 스텝이 다음 저장 때 "확인되지 않은 브리지"로 취급돼
+     * 알림 안의 인용문으로 접힌다 — 사용자가 답을 줬는데 그 답이 사라진다.
+     */
+    HUMAN,
+}
+
+/**
+ * 이 줄이 **할 일인가, 알림인가**(ARTEL-468).
+ *
+ * [GAP]은 실행할 것이 아니다 — 두 검증 사이의 경로를 명세가 몰라 **비워 둔 자리**이고, 그 사실을
+ * 사람에게 알리는 블록이다. 수행 대상도 판정 대상도 아니다.
+ *
+ * 예전에는 이것도 스텝으로 넣었다. 그러면 "명세에 없다"는 문장을 실행 에이전트가 수행하려 들고
+ * 판정 대상으로도 세어진다 — **못 한 일이 실패로 기록되는 셈**이라 실측이 오염된다. 종류를 나눠
+ * 두면 반대로 쓸모가 생긴다: 여기가 모르는 구간이라는 것을 실행하는 쪽이 미리 알고, 그 자리를
+ * 먼저 탐색할 수 있다.
+ *
+ * null은 [ACTION]이다 — 이 필드가 없던 시절에 저장된 시나리오가 전부 그렇다.
+ */
+enum class ScenarioStepKind {
+    /** 수행하는 줄. */
+    ACTION,
+
+    /** 메우지 못한 자리를 알리는 블록. 수행하지도 판정하지도 않는다. */
+    GAP,
+
+    /**
+     * **여기까지 와야 시작한다**를 적는 첫 줄(ARTEL-636). 수행하지도 판정하지도 않는다.
+     *
+     * 시나리오는 하나가 끝날 때마다 게임을 초기화하는데 검증하는 순간은 게임 곳곳에 흩어져 있다 —
+     * 엔딩을 보는 시나리오는 매번 엔딩까지 다시 가야 한다. 아무 말도 없이 시작하면 실행하는
+     * 쪽에게는 "알아서 네 번 이겨라"와 같다.
+     *
+     * [GAP] 과 같은 이유로 스텝이 아니다. 이것을 수행하려 들면 "…인 상태에서 시작한다"가 조작으로
+     * 읽히고, 판정 대상으로 세면 **아직 시작도 안 한 일이 실패로 기록된다.**
+     */
+    OPENING,
+}
+
+/**
+ * 시나리오를 QA agent 가 어떻게 수행하는가(ARTEL-1028). 와이어 값은 이름 그대로 `"ORDERED"` / `"FREE"` 다.
+ *
+ * [ORDERED]는 steps 가 순서 있는 행위 목록이고 agent 가 그 순서대로 수행한다. [FREE]는 TC 묶음이다 —
+ * step 하나가 TC 하나(`case_id` 만 필수)이고, 수행 순서와 검증 방법은 agent 가 정한다. 두 모드 모두
+ * qa_try·판정·채점은 step 번호로 이어지며, FREE 에서 step N 은 N 번째 TC 다.
+ */
+enum class ScenarioExecutionMode {
+    ORDERED,
+    FREE,
+}
+
+/**
+ * 시나리오 초안(ScenarioDraft). test_scenario의 title/description/steps 컬럼으로 저장되고(ARTEL-291),
+ * SSE 이벤트·조회 응답으로 FE에 전달된다. **시나리오 = steps의 순서 집합**(재설계). 생성 직후(빈 시나리오)를 위해 기본값을 둔다.
+ */
+data class ScenarioDraft(
+    val title: String = "",
+    val description: String = "",
+    val steps: List<ScenarioStep> = emptyList(),
+    /**
+     * 실행 방식(ARTEL-1028). **null 은 "요청이 말하지 않았다"** 이고, 저장할 때 기존 값을 유지한다
+     * ([kr.artel.orchestration.testscenario.entity.withDraft]). 기본값을 ORDERED 로 두면 이 필드를
+     * 모르는 client(지금의 `artel scenario update`)가 본문을 저장할 때 FREE 시나리오가 조용히 ORDERED 로
+     * 바뀐다. 조회 응답은 엔티티에서 만들어지므로 항상 값이 있다. 읽을 때는 [mode] 를 쓴다.
+     */
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
+) {
+    /** 값이 없으면 ORDERED 로 읽은 실행 방식. */
+    @get:JsonIgnore
+    val mode: ScenarioExecutionMode get() = executionMode ?: ScenarioExecutionMode.ORDERED
+}
+
+/**
+ * Agent 턴 결과가 참조하는 시나리오 하나(ARTEL-206 Step 5·6, 재설계 2026-08-07). Agent는 시나리오를
+ * **여러 개** 돌려주며, 각 시나리오는 [steps]의 순서 집합이다. 한 응답에 **추가와 수정이 섞여** 올 수 있다.
+ *
+ * @property scenarioId `null`이면 **새 시나리오 추가**(INSERT + 런 append), 값이 있으면 그 **기존 시나리오
+ *   수정**(본문 통째 교체). Agent 계약의 `scenario_id`에 대응한다.
+ * @property steps 이 시나리오의 스텝들(순서=실행 순서). 각 스텝은 행위 + 선택적 caseId. Agent 계약의
+ *   `steps`에 대응한다. 타입이 [ScenarioStep]이 아니라 [ChatScenarioStep]인 것은 의도다 — 에이전트는
+ *   기대 판정 라벨을 본 적이 없고, 이 타입에는 그 필드가 아예 없어 되돌려 보낼 수도 없다(ARTEL-301).
+ * @property executionMode 실행 방식(ARTEL-1028). null 은 "말하지 않았다" 이다 — 새 시나리오는 ORDERED,
+ *   기존 시나리오 수정은 저장된 값을 유지한다. 해석은
+ *   [kr.artel.orchestration.testscenario.service.ScenarioReconcileService.withExecutionModes] 한 곳에서 한다.
+ */
+data class ScenarioResult(
+    @param:JsonProperty("scenario_id") val scenarioId: Long? = null,
+    val title: String = "",
+    val description: String = "",
+    val steps: List<ChatScenarioStep> = emptyList(),
+    @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode? = null,
+)
+
+/**
+ * Agent가 이번 요청에 대해 프로젝트 TestCase **전 건**을 어떻게 판정했는지(2단계).
+ *
+ * 포함 목록만 받지 않는 이유가 이 클래스의 존재 이유다. 포함된 것만 오면 나머지를 *검토하고 뺀 것*
+ * 인지 *아예 안 본 것*인지 구분할 수단이 없어, "다 봤는가"를 검사할 대상 자체가 생기지 않는다.
+ * 전 건 판정을 받으면 **판정이 빠진 id = 검토하지 않은 케이스**가 되어 기계가 뺄셈으로 센다
+ * ([kr.artel.orchestration.testscenario.service.ScenarioCoverageAudit]).
+ *
+ * 두 배열로 나눈 것은 비용 때문이다. 실측(2026-08-13) 1000건 기준 이 모양이 3,005 tok인 반면
+ * `{"82":1,…}` 맵 모양은 5,001 tok으로 40% 비싸고, 검사도 이쪽이 단순하다 — `in ∪ out`이 전량과
+ * 같은지만 보면 된다.
+ *
+ * 제외 사유는 받지 않는다. 건당 사유를 붙이면 1000건에서 출력이 배로 뛰고, 무엇보다 그것도 다시
+ * Agent의 자기 서술이라 검사할 수 없다. 포함 쪽의 근거는 스텝이 증명한다.
+ */
+data class ReviewedCases(
+    @param:JsonProperty("in") val included: List<Long> = emptyList(),
+    @param:JsonProperty("out") val excluded: List<Long> = emptyList(),
+)
+
+/**
+ * 저작 한 턴이 지나는 단계(ARTEL-419). `progress` 이벤트의 유일한 내용이다.
+ *
+ * **누군가가 실제로 본 것만 단계가 된다.** 대부분은 오케스트레이션이 본 것이고([SENT]·도구 프레임·
+ * 검사 결과), [THINKING] 하나만 Agent 가 알려 준다 — 모델이 도는 시간은 이쪽에서 보이지 않는데
+ * 그 시간이 턴의 대부분이라, 없으면 "케이스 조회" 한 줄만 띄운 채 몇십 초가 지나간다.
+ *
+ * 순서는 [SENT] → ([THINKING] ↔ 도구) → [WRITING] → [CHECKING] → 종착([SAVED]/[REPAIRING]/[BLOCKED])이지만
+ * **가운데는 없을 수 있다.** 도구를 부르지 않는 턴이 정상이기 때문이다. 그래서 화면은 고정된
+ * 눈금을 그려 놓고 채우는 것이 아니라 **받은 단계만** 그린다 — 일어나지 않은 일을 지나갔다고
+ * 말하지 않기 위해서다. 같은 단계가 잇달아 오면 화면이 한 줄로 접고 횟수를 센다(도는 중이라는 뜻).
+ */
+enum class AuthoringStage(@get:JsonValue val wire: String) {
+    /** 턴을 Agent로 보냈다. 여기서부터 응답이 오기 전까지 오케스트레이션은 아무것도 보지 못한다. */
+    SENT("sent"),
+
+    /**
+     * 케이스를 묶고 순서를 잡는 중이다(ARTEL-952). 워크플로 B 노드의 시작.
+     *
+     * 실측(런 87 trace, 2026-10-06)에서 이 구간이 **25.7초·50.3초**였고 그 사이 프레임이
+     * 하나도 없었다. [THINKING]만으로는 어느 노드에서 멈춰 있는지 말할 수 없다.
+     */
+    GROUPING("grouping"),
+
+    /**
+     * 묶기가 끝났다. [ScenarioStreamEvent.total]에 **묶음 수**가 실려 온다 —
+     * 뒤따르는 [WRITING]의 분모다.
+     */
+    GROUPED("grouped"),
+
+    /** 걷기 검증에서 순서가 어긋나 다시 묶는 중이다. 워크플로 B 미니 루프. */
+    BRIDGING("bridging"),
+
+    /**
+     * 모델이 한 턴을 시작했다(ARTEL-487). **Agent가 알려 주는 유일한 단계다** — 도구 호출은
+     * 프레임으로 보이지만 그 사이의 시간은 오케에서 보이지 않아, 길어질수록 침묵과 구분되지 않았다.
+     * 도구와 번갈아 나타나므로 몇 번을 돌고 있는지도 이 줄로 읽힌다.
+     */
+    THINKING("thinking"),
+
+    /** Agent가 케이스를 물어봤다(`uncovered_cases`/`test_case_search`). 멎지 않았다는 첫 증거다. */
+    LOOKING_UP_CASES("looking_up_cases"),
+
+    /**
+     * 저작을 열기 전에 글로만 적힌 TC 의 계약을 정리하는 중이다. 프로젝트를 처음 열 때와 TC 를 많이 바꾼 뒤에만 길다
+     * (실측: TC 73건 136초). 이 단계가 없으면 그동안 화면이 멈춘 것처럼 보였다.
+     */
+    PREPARING_CASES("preparing_cases"),
+
+    /** 질문 답이 서비스 기록을 읽는 중이다(ARTEL-1086). 무엇을 읽는지 단계마다 한 줄로 보인다. */
+    READING_CASES("reading_cases"),
+    READING_VERSIONS("reading_versions"),
+    READING_VERDICTS("reading_verdicts"),
+    READING_QA_RUNS("reading_qa_runs"),
+    READING_ISSUES("reading_issues"),
+    READING_SCENARIOS("reading_scenarios"),
+    READING_BUILDS("reading_builds"),
+
+    /** 한 말에 섞인 요청을 나누는 중이다(ARTEL-1086). 나뉜 요청은 차례로 제 갈래를 탄다. */
+    SPLITTING("splitting"),
+
+    /** Agent가 케이스 하나의 근거를 물어봤다(`explain_case`). 무엇으로 스텝을 쓸지 확인하는 중이다. */
+    READING_CASE("reading_case"),
+
+    /** Agent가 두 케이스 사이의 경로를 물어봤다(`find_path`). 씬 명세를 걷는 시간이다. */
+    FINDING_PATH("finding_path"),
+
+    /**
+     * 케이스를 넘겨줬고 아직 결과가 오지 않았다.
+     *
+     * **이것만은 관측이 아니라 추론이다.** 넘겨준 자료로 쓰고 있는지, 도구를 한 번 더 부를지
+     * 오케스트레이션은 알지 못한다. 아는 것은 자료가 건너갔다는 사실뿐이라 문구도 거기까지만 말한다.
+     */
+    /**
+     * 문장을 쓰는 중이다. 워크플로 C — 묶음마다 모델 한 번, 병렬.
+     *
+     * [ScenarioStreamEvent.done]/[ScenarioStreamEvent.total]이 n/N으로 실려 온다. 실측에서
+     * 한 묶음이 **29.4초·54.2초**였으므로, 수가 없으면 여러 묶음을 쓰는 동안 화면이 한 줄로
+     * 멈춰 있는다.
+     */
+    WRITING("writing"),
+
+    /** 결과가 도착해 전 건 판정과 대조하는 중(ARTEL-403). */
+    CHECKING("checking"),
+
+    /** 시나리오 하나를 받아 검수를 지났다. 턴은 계속된다 — 나머지가 더 온다. */
+    WROTE_ONE("wrote_one"),
+
+    /** 검사를 통과해 시나리오를 저장했다. */
+    /** 제출·검수·저장을 시작한다. 워크플로 D. [ScenarioStreamEvent.total]에 저장할 개수. */
+    SAVING("saving"),
+
+    /** 기존 시나리오를 고치는 중이다. 워크플로 E. */
+    MODIFYING("modifying"),
+
+    SAVED("saved"),
+
+    /** 빠진 부분을 다시 쓰라고 되돌려 보냈다. 종착이 아니다 — 결과가 한 번 더 온다. */
+    REPAIRING("repairing"),
+
+    /** 검사를 통과하지 못했고 더 고칠 수 없어 **한 줄도 저장하지 않았다.** */
+    BLOCKED("blocked"),
+}
+
+/**
+ * SSE로 FE에 전달하는 이벤트 봉투. Agent 응답(result/error)과 서버가 만든 알림을 타입화한다.
+ *
+ * - `type == "result"`   → `message` + `scenarios`(0개 이상. 빈 배열은 "질문/거절/무매치" 같은 정상 턴이다)
+ * - `type == "error"`    → `code` + `detail`
+ * - `type == "progress"` → `stage`(ARTEL-419)
+ * - `type == "notice"`   → `message`. 서버가 쓴 ASSISTANT 메시지다(재작성 통보·검사 실패·잔량 안내).
+ *
+ * `type`이 그대로 SSE 이벤트명이 되므로([TestScenarioStreamManager.emit]) 새 타입을 더하는 것은
+ * **하위 호환이 공짜다** — 모르는 이벤트명은 `EventSource`가 리스너 없이 흘려보낸다.
+ *
+ * @property reviewed 전 건 판정(2단계). **null이면 검사를 건너뛴다** — 이 필드를 보내지 않는 구버전
+ *   Agent와 함께 배포되기 위해서다. 검사를 끄는 스위치가 이 null 하나뿐이라 롤백이 Agent
+ *   재배포만으로 끝난다.
+ * @property stage `progress`의 내용(ARTEL-419).
+ */
+data class ScenarioStreamEvent(
+    val type: String,
+    val message: String? = null,
+    val scenarios: List<ScenarioResult>? = null,
+    val reviewed: ReviewedCases? = null,
+    val code: String? = null,
+    val detail: String? = null,
+    val stage: AuthoringStage? = null,
+    /**
+     * 셀 수 있는 단계의 진행(ARTEL-952). 둘 다 null이면 셀 것이 없는 단계다.
+     *
+     * 수가 필요한 이유는 [AuthoringStage.WRITING]이 묶음마다 반복되기 때문이다. 수가 없으면
+     * 같은 단계가 잇달아 온 것으로만 보이고, 몇 개 중 몇 번째인지 말할 수 없다 —
+     * 화면은 그것을 "되풀이 횟수"로 접어 버린다.
+     */
+    val done: Int? = null,
+    val total: Int? = null,
+    /**
+     * 사용자에게 되묻는 질문(ARTEL-487). Agent 결과에 실려 오거나, 오케가 계산된 사실로 만들어
+     * `question` 이벤트로 내보낸다. **저장을 막지 않는다** — 답하지 않아도 그 턴의 결과물은 남는다.
+     */
+    val question: ScenarioQuestion? = null,
+    /**
+     * 모르는 자리 **전부**(ARTEL-630). [question] 은 그중 첫 것이고, 옛 화면을 위해 남긴다.
+     *
+     * 하나만 보내던 때는 막힌 자리가 여럿이어도 나머지가 아무 말 없이 미상으로 남았다 —
+     * 실측(런 178)에서 일곱 중 하나만 물었고, 사용자는 시나리오가 완성된 줄 안다. 한 번에
+     * 보여 줘야 아는 것만 답하고 나머지는 그대로 둘 수 있다.
+     */
+    val questions: List<ScenarioQuestion> = emptyList(),
+    /** 이 턴이 추천한 TC(저장 전). 답 말풍선의 추천 TC 카드가 읽는다. */
+    val recommendations: List<Map<String, Any?>> = emptyList(),
+    /**
+     * 이번 턴에 지금까지 받아 검수를 지난 시나리오 수. `progress` 에만 실린다.
+     *
+     * 시나리오를 하나씩 받게 되면서 생겼다. 그전에는 결과가 통째로 한 번에 왔으므로 화면이
+     * 셀 것이 없었고, 기다리는 동안 무엇이 되고 있는지는 단계 이름 하나가 전부였다.
+     *
+     * 전체 수는 [expected] 다. 모델이 몇 개를 쓸지는 쓰기 전에는 아무도 모르므로 계산이 낸
+     * 흐름 수로 어림한다 — 맞지 않을 수 있고, 그때는 실제 수가 어림을 넘어선다.
+     */
+    val written: Int? = null,
+    /** 어림잡은 전체 시나리오 수. 모르면 null 이고, 그때 화면은 진행률 대신 세는 수만 보인다. */
+    val expected: Int? = null,
+    /**
+     * Agent 답의 결과·설명·질문 칸(ARTEL-927, 질문 칸은 ARTEL-1117). `result` 에만 실리고, 인사·실패
+     * 문구처럼 글만 있는 답에는 없다. 모델이 물은 것은 [AgentReply.asks] 로 답 안에 든다 — [questions] 는
+     * 이제 오케가 계산으로 만드는 질문(경로 공백)만 싣는다.
+     */
+    val reply: AgentReply? = null,
+    /**
+     * 답과 질문 속 `[[tc:N]]`·`[[ts:N]]` 표식이 가리키는 것(ARTEL-932). 화면은 이것으로 이름
+     * 칩을 그린다. Agent 가 검사해서 보내므로 여기 없는 표식은 이미 지워져 있다.
+     */
+    val refs: List<AgentRef> = emptyList(),
+    /**
+     * 자동저장을 끈 턴이 모아 둔 draft **전부**(ARTEL-1074). `draft` 이벤트에만 실린다.
+     * 조각이 아니라 전부라, 화면은 받은 것으로 갈아 끼우기만 한다.
+     */
+    val drafts: List<DraftScenario>? = null,
+)
+
+/**
+ * 이번 턴에 바뀐 시나리오 하나(ARTEL-937). `action` 은 `created`·`updated`·`removed`.
+ * 지운 것은 이제 없으므로 [scenarioId] 가 없을 수 있다.
+ */
+data class AgentChange(
+    val action: String,
+    val title: String,
+    @param:com.fasterxml.jackson.annotation.JsonProperty("scenario_id") val scenarioId: Long? = null,
+) {
+    fun one(): Map<String, Any?> = mapOf("action" to action, "title" to title, "scenario_id" to scenarioId)
+}
+
+/**
+ * 답 속 표식 하나가 가리키는 TC·TS(ARTEL-932).
+ *
+ * 번호는 표식 안에서 기계만 읽고, 사람에게는 [label] 이 보인다. TC 는 따로 볼 화면이 없어서
+ * 칩을 누르면 [detail](사전조건·기대값)을 띄운다.
+ */
+data class AgentRef(
+    val kind: String,
+    val id: Long,
+    val label: String,
+    val detail: String? = null,
+) {
+    fun one(): Map<String, Any?> = mapOf("kind" to kind, "id" to id, "label" to label, "detail" to detail)
+
+    companion object {
+        /** payload 에 덧붙일 칸. 없으면 아무것도 붙이지 않는다 — 옛 화면이 보던 모양 그대로다. */
+        fun field(refs: List<AgentRef>): Map<String, Any?> =
+            if (refs.isEmpty()) emptyMap() else mapOf("refs" to refs.map { it.one() })
+    }
+}
+
+/**
+ * Agent 답을 사람이 읽는 세 칸으로 나눈 것(ARTEL-927, 질문 칸은 ARTEL-1117).
+ *
+ * 한 덩어리 글이던 답에서는 무엇을 했는지와 왜 그랬는지가 섞여, 사용자가 반박하거나 결정할
+ * 자리가 보이지 않았다. [result] 는 Agent 코드가 센 사실(무엇을 몇 스텝으로 저장), [detail] 은
+ * 판단한 모델의 설명(마크다운 — 문단·목록·표), [asks] 는 모델이 사용자에게 묻는 것이다.
+ */
+data class AgentReply(
+    val result: String,
+    val detail: String = "",
+    /** 바뀐 시나리오(ARTEL-937). 화면이 결과 박스에 추가·수정·삭제 색으로 나눠 그린다. */
+    val changes: List<AgentChange> = emptyList(),
+    /**
+     * 모델이 묻는 것(ARTEL-1117). 예전에는 답과 따로 `question` 메시지로 저장해 화면이 모달로 받았다.
+     * 저작이 대화를 기억하게 되어(ARTEL-942) 답 맨 아래에 싣고, 사용자는 평범한 대화로 답한다 —
+     * 그래서 기다리는 질문(`lastQuestion`)으로 걸지 않는다.
+     */
+    val asks: List<ScenarioQuestion> = emptyList(),
+) {
+    /** 답 말풍선에 붙일 `payload`. 화면은 `kind` 로 질문(`question`)·답한 질문(`answered`)과 가른다. */
+    fun payload(refs: List<AgentRef> = emptyList()): Map<String, Any?> =
+        mapOf("kind" to KIND, "result" to result, "detail" to detail) +
+            (if (changes.isEmpty()) emptyMap() else mapOf("changes" to changes.map { it.one() })) +
+            (if (asks.isEmpty()) emptyMap() else mapOf("asks" to asks.map { it.copy(source = ScenarioQuestionSource.AGENT).one() })) +
+            AgentRef.field(refs)
+
+    companion object {
+        const val KIND = "reply"
+    }
+}

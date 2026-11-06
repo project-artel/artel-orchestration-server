@@ -1,0 +1,962 @@
+package kr.artel.orchestration.scenecontext
+
+import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.common.error.NotFoundException
+import kr.artel.orchestration.config.InternalApiServer
+import kr.artel.orchestration.contentmap.entity.Capture
+import kr.artel.orchestration.contentmap.entity.ContentMapMode
+import kr.artel.orchestration.contentmap.entity.SceneOrigin
+import kr.artel.orchestration.contentmap.repository.CapabilityRepository
+import kr.artel.orchestration.contentmap.repository.ContentMapRepository
+import kr.artel.orchestration.contentmap.repository.SceneRepository
+import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.knowledge.repository.KnowledgeAnchorRepository
+import kr.artel.orchestration.knowledge.repository.KnowledgeRepository
+import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.scenecontext.dto.SceneContextMacroParameter
+import kr.artel.orchestration.scenecontext.dto.SceneContextMacroScreen
+import kr.artel.orchestration.scenecontext.dto.SceneContextResponse
+import kr.artel.orchestration.scenecontext.service.SceneContextService
+import kr.artel.orchestration.support.deleteQaRuns
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.web.server.LocalServerPort
+import org.springframework.http.HttpStatus
+import org.springframework.r2dbc.core.DatabaseClient
+import org.springframework.test.context.ActiveProfiles
+import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.reactive.function.client.WebClientResponseException
+import reactor.core.publisher.Mono
+import java.time.Duration
+import java.time.Instant
+
+/**
+ * QA agent 가 런 시작에 한 번 받아 가는 씬별 맥락(ARTEL-611)의 계약 테스트.
+ *
+ * **HTTP 로 두드린다.** 이 응답의 계약은 agent-server(ARTEL-612)가 지금 이 순간 코딩하고 있는
+ * 대상이라, 검증해야 하는 것이 서비스의 반환 객체가 아니라 **실제로 나가는 JSON** 이다. 특히
+ * "본문(`description`)이 payload 에 없다"는 직렬화된 문자열로만 확인할 수 있다 — DTO 에 필드가
+ * 없다는 사실은 다음 사람이 필드를 더하는 것을 막지 못한다.
+ *
+ * 실제 소켓을 쓰는 김에 **내부 포트에서만** 두드린다. 이 경로가 공개 포트에 뜨지 않는다는 것은
+ * `InternalApiPortIntegrationTest` 가 접두사 단위로 이미 지키므로 여기서 다시 보지 않는다.
+ */
+@ActiveProfiles("test")
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+class SceneContextIntegrationTest {
+
+    @Autowired private lateinit var sceneContext: SceneContextService
+    @Autowired private lateinit var internalApiServer: InternalApiServer
+    @Autowired private lateinit var projects: ProjectRepository
+    @Autowired private lateinit var gameBuilds: GameBuildRepository
+    @Autowired private lateinit var contentMaps: ContentMapRepository
+    @Autowired private lateinit var scenes: SceneRepository
+    @Autowired private lateinit var capabilities: CapabilityRepository
+    @Autowired private lateinit var knowledge: KnowledgeRepository
+    @Autowired private lateinit var anchors: KnowledgeAnchorRepository
+    @Autowired private lateinit var db: DatabaseClient
+
+    @LocalServerPort private val publicPort: Int = 0
+
+    private lateinit var fixture: SceneContextFixture
+
+    /**
+     * 앵커는 knowledge 를 FK 없이 논리참조하므로(V55) knowledge 를 지워도 따라 사라지지 않는다.
+     * 남기면 다음 테스트의 프로젝트 조회에 섞인다.
+     */
+    @BeforeEach
+    fun setUp(): Unit = runBlocking {
+        anchors.deleteAll()
+        knowledge.deleteAll()
+        fixture = SceneContextFixture(projects, gameBuilds, contentMaps, scenes, capabilities, knowledge, anchors, db)
+    }
+
+    /**
+     * `newQaTry` 가 SQL 로 세운 행을 치운다.
+     *
+     * 없으면 그 `qa_try` 가 스위트 끝까지 살아남아, **뒤에 도는 다른 클래스의**
+     * `DELETE FROM app_user` · `DELETE FROM project` 가 `qa_try_started_by_fkey` ·
+     * `qa_try_game_instance_id_fkey` 로 막힌다. 실패가 이 파일이 아니라 남의 파일에서 나므로
+     * 원인을 찾기 어렵고, 클래스 실행 순서가 바뀔 때마다 피해자가 달라진다.
+     */
+    @AfterEach
+    fun cleanQaRows(): Unit = runBlocking {
+        // 남의 클래스가 남긴 qa_run 이 아래 삭제를 FK 로 막지 않게 먼저 비운다(ARTEL-1163).
+        db.deleteQaRuns()
+        db.sql("DELETE FROM game_instance").then().block()
+        db.sql("DELETE FROM test_scenario").then().block()
+        db.sql("DELETE FROM app_user WHERE display_name = 'agent'").then().block()
+    }
+
+    // ------------------------------------------------------------------ 두 반쪽
+
+    /**
+     * 응답의 본론. 씬 이름 하나 아래에 **무엇을 할 수 있는지**와 **여기서만 참인 것**이 같이 온다.
+     *
+     * 지금까지 agent 는 이 둘을 각각 도구 호출로 물어야 했고, 물을 생각을 해야 물을 수 있었다.
+     */
+    @Test
+    fun `한 컨트롤이 한 줄이다 — 메서드로 갈린 것을 접는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        val title = fixture.newScene(mapId, "TitleScene")
+
+        // 실측 `Canvas/MapSceneButton` 의 모양이다. 컨트롤도 조작도 같고 조건도 없는데,
+        // 적재가 효과가 사는 메서드까지 정체에 넣어 셋으로 갈렸다.
+        val entry = "Assembly-CSharp|Scenes.TitleSceneManager|OnClick|System.Void()"
+        listOf(
+            "SavePlayData() 를 부른다" to "unknown",
+            "LoadPlayData() 를 부른다" to "unknown",
+            "맵 화면으로 넘어간다" to "observable",
+        ).forEach { (summary, observability) ->
+            fixture.newCapability(
+                mapId, title,
+                summary = summary,
+                observability = observability,
+                controlPath = "Canvas/MapSceneButton",
+                controlSelector = "Canvas[4]/MapSceneButton[1]",
+                entryId = entry,
+            )
+        }
+
+        val scene = get(projectId, buildId).scenes.single()
+
+        // 셋이 한 줄이 된다. 이것이 없으면 agent 가 그 버튼을 한 번 누르고도 셋 중 어디에
+        // 판정을 찍어야 하는지 고를 수 없다(ARTEL-805).
+        val capability = scene.capabilities.single()
+        assertThat(capability.covers).isEqualTo(3)
+
+        // 대표는 관측 가능한 쪽이다. 그 이름이 줄의 제목이 되어야 agent 가 화면에서 본 것과
+        // 맞댈 수 있다 — 메서드 이름은 화면에 나타나지 않는다.
+        assertThat(capability.summary).isEqualTo("맵 화면으로 넘어간다")
+        assertThat(capability.observability).isEqualTo("observable")
+    }
+
+    @Test
+    fun `근거 출신이 아닌 기능은 접히지 않는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        val scene = fixture.newScene(mapId, "TitleScene")
+
+        // `entry_id` 가 없으면 접을 열쇠가 없다. 같은 컨트롤이어도 각자 남는 것이 정직하다 —
+        // 근거가 이 둘을 한 진입점이라고 말한 적이 없다.
+        fixture.newCapability(mapId, scene, summary = "하나", controlPath = "Canvas/Button")
+        fixture.newCapability(mapId, scene, summary = "둘", controlPath = "Canvas/Button")
+
+        val entry = get(projectId, buildId).scenes.single()
+
+        assertThat(entry.capabilities).hasSize(2)
+        assertThat(entry.capabilities.map { it.covers }).containsOnly(1)
+    }
+
+    @Test
+    fun `capability 와 앵커 지식이 같은 씬 아래 붙는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        val combat = fixture.newScene(mapId, "Combat", summary = "전투 화면")
+        fixture.newCapability(
+            mapId, combat,
+            summary = "적을 공격한다",
+            givenText = "적이 살아 있을 때",
+            controlPath = "Canvas/AttackButton",
+            controlLabel = "공격",
+            controlSelector = "Canvas/Panel[0]/Button[2]",
+        )
+        fixture.newKnowledge(projectId, "전투 중 ESC 는 아무것도 하지 않는다", "본문", sceneName = "Combat")
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.contentMapId).isEqualTo(mapId.toString())
+        assertThat(response.capture).isEqualTo("player")
+        val scene = response.scenes.single()
+        assertThat(scene.sceneName).isEqualTo("Combat")
+        assertThat(scene.knownToContentMap).isTrue()
+        assertThat(scene.origin).isEqualTo("evidence")
+        assertThat(scene.sceneSummary).isEqualTo("전투 화면")
+
+        val capability = scene.capabilities.single()
+        assertThat(capability.summary).isEqualTo("적을 공격한다")
+        assertThat(capability.interaction).isEqualTo("click")
+        assertThat(capability.controlPath).isEqualTo("Canvas/AttackButton")
+        assertThat(capability.controlLabel).isEqualTo("공격")
+        assertThat(capability.status).isEqualTo("runnable")
+        assertThat(capability.verification).isEqualTo("unverified")
+        // 형제 인덱스가 박힌 경로라 런마다 흔들린다. 이름에 Hint 를 박아 조준 키로 오해받지 않게 한다.
+        assertThat(capability.controlSelectorHint).isEqualTo("Canvas/Panel[0]/Button[2]")
+
+        assertThat(scene.knowledge.single().summary).isEqualTo("전투 중 ESC 는 아무것도 하지 않는다")
+    }
+
+    /**
+     * **앵커에만 있는 씬을 떨어뜨리지 않는다.**
+     *
+     * 앵커는 content map 과 대조하지 않고 저장되므로(ARTEL-591, V55), 지도가 들어 본 적 없는 씬
+     * 이름을 든 앵커가 정상적으로 존재한다. 씬 이름이 유일한 조인 키라 안쪽 조인으로 짜면 그런
+     * 앵커는 소리 없이 사라지고, agent 는 이미 배운 사실을 잃는다.
+     */
+    @Test
+    fun `앵커에만 있는 씬도 capability 없이 나온다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val combat = fixture.newScene(mapId, "Combat")
+        fixture.newCapability(mapId, combat, summary = "적을 공격한다")
+        fixture.newKnowledge(projectId, "상점은 밤에 닫는다", "본문", sceneName = "ShopNotInMap")
+
+        val response = get(projectId, buildId)
+
+        val shop = response.scenes.single { it.sceneName == "ShopNotInMap" }
+        assertThat(shop.knownToContentMap).isFalse()
+        assertThat(shop.capabilities).isEmpty()
+        assertThat(shop.sceneSummary).isNull()
+        // 지도에 행이 없으니 출처도 없다. `observed` 로 채우면 아무도 기록한 적 없는 씬이
+        // QA 런이 서 봤던 씬으로 읽힌다.
+        assertThat(shop.origin).isNull()
+        assertThat(shop.knowledge.single().summary).isEqualTo("상점은 밤에 닫는다")
+    }
+
+    /**
+     * 관측이 만든 씬과 근거가 만든 씬을 agent 가 가릴 수 있어야 한다 (ARTEL-689).
+     *
+     * `knownToContentMap` 은 둘 다 `true` 라 그것만으로는 안 갈린다. 뭉개면 agent 는 `observed` 씬의
+     * 빈 목록을 "근거가 훑었는데 할 게 없더라"로 읽고, 실은 아무도 그 씬을 훑은 적이 없다.
+     */
+    @Test
+    fun `관측이 만든 씬과 근거가 만든 씬이 origin 으로 갈린다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        fixture.newScene(mapId, "Combat", summary = "전투 화면")
+        fixture.newScene(mapId, "Bonus", origin = SceneOrigin.OBSERVED)
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.scenes.associate { it.sceneName to it.origin })
+            .containsEntry("Combat", "evidence")
+            .containsEntry("Bonus", "observed")
+        assertThat(response.scenes.single { it.sceneName == "Bonus" }.knownToContentMap).isTrue()
+    }
+
+    /**
+     * 지도에는 있는데 할 수 있는 것이 하나도 없는 씬도 남긴다.
+     *
+     * `walked=false` 인 씬은 비어 있는 것이 정상이고(V40), 목록에서 사라지면 agent 는 "지도에
+     * 있지만 아직 안 걸어 본 씬"과 "지도가 모르는 씬"을 구분할 수 없다.
+     */
+    @Test
+    fun `기능이 없는 지도의 씬도 남는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        fixture.newScene(mapId, "EmptyScene")
+
+        val scene = get(projectId, buildId).scenes.single()
+
+        assertThat(scene.sceneName).isEqualTo("EmptyScene")
+        assertThat(scene.knownToContentMap).isTrue()
+        assertThat(scene.capabilities).isEmpty()
+        assertThat(scene.knowledge).isEmpty()
+    }
+
+    // ------------------------------------------------------------------ 가르기
+
+    /**
+     * `not-a-step` 도 나가되 **다른 목록으로** 나간다(ARTEL-680).
+     *
+     * 실측 472 행 중 418 행이 `not-a-step` 이라, 안 내보내면 agent 는 이 빌드의 89 퍼센트를 못 보고
+     * ARTEL-644 가 연 쓰기 경로에 닿을 대상이 51 행뿐이다. 그렇다고 한 목록에 쏟으면 누를 수 있는
+     * 51 개가 418 개 사이에 묻힌다. 그래서 `status` 로 갈라 두 칸으로 낸다.
+     */
+    @Test
+    fun `not-a-step 은 다른 목록으로 나간다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val scene = fixture.newScene(mapId, "Town")
+        fixture.newCapability(mapId, scene, summary = "누를 수 있다")
+        fixture.newCapability(
+            mapId, scene,
+            summary = "조작이 아니다",
+            interaction = "none",
+            actionability = "not-a-step",
+        )
+
+        val entry = get(projectId, buildId).scenes.single()
+
+        assertThat(entry.capabilities.map { it.summary }).containsExactly("누를 수 있다")
+        assertThat(entry.notAStepCapabilities.map { it.summary }).containsExactly("조작이 아니다")
+        // 갈린 축이 `status` 라는 것을 줄 자체가 말한다. 목록 이름만 믿게 두지 않는다.
+        assertThat(entry.notAStepCapabilities.single().status).isEqualTo("not-a-step")
+        assertThat(entry.capabilities.single().status).isNotEqualTo("not-a-step")
+    }
+
+    /**
+     * **본문이 payload 에 없다.** DTO 를 보는 것으로는 부족해 직렬화된 문자열을 본다 — 다음 사람이
+     * `description` 을 더하는 순간 이 테스트가 빨개져야 한다.
+     *
+     * 이 블록은 매 모델 호출마다 다시 그려진다. 본문을 실으면 그 비용을 런 내내 매 턴 다시 낸다.
+     */
+    @Test
+    fun `지식 본문은 payload 에 실리지 않는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        fixture.newKnowledge(
+            projectId,
+            summary = "상점은 밤에 닫는다",
+            description = "이 문장이 응답에 나오면 안 된다",
+            sceneName = "Shop",
+        )
+
+        val body = rawBody(projectId, buildId)
+
+        assertThat(body).contains("상점은 밤에 닫는다")
+        assertThat(body).doesNotContain("이 문장이 응답에 나오면 안 된다")
+        assertThat(body).doesNotContain("description")
+    }
+
+    /**
+     * **전제 문장은 payload 에 실리지 않는다**(ARTEL-447).
+     *
+     * `capability.given_text` 는 조건을 사람이 읽는 한 줄로 옮긴 칸이다. 옮기는 과정에서 값의
+     * 소속과 `either` / `every` 구분이 사라져, 그것을 되읽는 쪽은 명세가 말하지 않은 것을 읽게
+     * 된다. 스키마가 문장과 트리를 나눠 둔 뜻이 그것이고 `capability_evidence.condition_tree` 를
+     * "원본"이라 부르는 이유도 같다.
+     *
+     * 그런데 이 응답이 그 칸을 실어 보내고 있었다. 419 행 전부 `null` 이라 증상이 없었을 뿐이고,
+     * 문장을 만들기 시작하는 순간 agent 가 그것을 받는다. 그래서 **채우기 전에** 끊었다.
+     *
+     * 직렬화된 문자열을 보는 이유는 위와 같다 — DTO 에서 칸을 지운 것은 다음 사람이 다시 더하는
+     * 것을 막지 못한다. 조건은 [SceneCapabilityView.given] 이 트리로 싣는다.
+     */
+    @Test
+    fun `전제 문장은 payload 에 실리지 않는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        val combat = fixture.newScene(mapId, "Combat", summary = "전투 화면")
+        fixture.newCapability(
+            mapId, combat,
+            summary = "적을 공격한다",
+            givenText = "이 전제가 응답에 나오면 안 된다",
+        )
+
+        val body = rawBody(projectId, buildId)
+
+        assertThat(body).contains("적을 공격한다")
+        assertThat(body).doesNotContain("이 전제가 응답에 나오면 안 된다")
+        assertThat(body).doesNotContain("givenText")
+        assertThat(body).doesNotContain("given_text")
+    }
+
+    /**
+     * **앵커가 없는 지식은 이 응답에 없다.** 그것이 지식창고의 대부분이고 게임 전체의 사실이라,
+     * 담기 시작하면 "씬별"이라는 말이 뜻을 잃고 프롬프트가 지식창고 전체를 지고 다니게 된다.
+     */
+    @Test
+    fun `앵커 없는 지식은 담기지 않는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        fixture.newKnowledge(projectId, "낙하 데미지는 5m 부터", "본문")
+        fixture.newKnowledge(projectId, "상점은 밤에 닫는다", "본문", sceneName = "Shop")
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.scenes.flatMap { it.knowledge }.map { it.summary })
+            .containsExactly("상점은 밤에 닫는다")
+    }
+
+    /**
+     * 스코프에 가려진 지식은 앵커째 빠진다.
+     *
+     * 이 조회가 [kr.artel.orchestration.knowledge.entity.KnowledgeScopeSql].VISIBLE 을 지나는지를
+     * 보는 자리다. 빠뜨리면 실험 런이 자기가 고친 항목의 **원본과 수정본을 둘 다** 프롬프트에
+     * 싣는데, 둘 다 그럴듯해서 실험이 끝날 때까지 아무도 못 알아챈다.
+     */
+    @Test
+    fun `스코프에 가려진 지식은 앵커째 빠진다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val scopeId = 77_611L
+        val baseline = fixture.newKnowledge(projectId, "baseline 사실", "본문", sceneName = "Combat")
+        val shadow = fixture.newKnowledge(
+            projectId, "스코프가 고친 사실", "본문",
+            sceneName = "Combat", scopeId = scopeId, shadowsId = baseline,
+        )
+        val qaTryId = newQaTry(projectId, scopeId)
+
+        // 운영 런은 baseline 만 본다. 스코프 행은 남의 것이라 아예 보이지 않는다.
+        assertThat(sceneContext.read(projectId, buildId, qaTryId = null)!!.scenes.flatMap { it.knowledge })
+            .extracting<String> { it.knowledgeId }
+            .containsExactly(baseline.toString())
+
+        // 스코프 런은 자기 수정본만 본다. 가려진 baseline 이 함께 나오면 같은 사실이 두 줄이 된다.
+        assertThat(sceneContext.read(projectId, buildId, qaTryId)!!.scenes.flatMap { it.knowledge })
+            .extracting<String> { it.knowledgeId }
+            .containsExactly(shadow.toString())
+    }
+
+    /** 소프트삭제된 지식의 앵커만 남아 나오면 agent 가 이미 지운 사실을 계속 참으로 읽는다. */
+    @Test
+    fun `지워진 지식의 앵커는 나오지 않는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val id = fixture.newKnowledge(projectId, "이제 틀린 사실", "본문", sceneName = "Combat")
+        knowledge.save(knowledge.findById(id)!!.copy(deletedAt = Instant.now()))
+
+        assertThat(get(projectId, buildId).scenes).isEmpty()
+    }
+
+    /** 다른 프로젝트의 앵커가 같은 씬 이름을 써도 섞이지 않는다. 씬 이름은 게임이 부르는 대로다. */
+    @Test
+    fun `다른 프로젝트의 앵커는 섞이지 않는다`(): Unit = runBlocking {
+        val mine = fixture.newProject()
+        val other = fixture.newProject()
+        val buildId = fixture.newBuild(mine)
+        fixture.newKnowledge(mine, "내 사실", "본문", sceneName = "Combat")
+        fixture.newKnowledge(other, "남의 사실", "본문", sceneName = "Combat")
+
+        assertThat(get(mine, buildId).scenes.single().knowledge.map { it.summary })
+            .containsExactly("내 사실")
+    }
+
+    // ---------------------------------------------------------- content_map_mode
+
+    /**
+     * **`content_map_mode = off` 는 `capability` 만 지우고 앵커 지식은 남긴다.**
+     *
+     * 여기서 앵커까지 지우면 두 축이 섞여 2×2 가 성립하지 않는다 — 앵커 지식은 지식창고에서 오는
+     * 것이지 지도에서 오는 것이 아니고, 지식 축은 `knowledge_mode` 가 따로 끈다.
+     *
+     * 그 결과 지도만 아는 씬은 목록에서 빠지고 앵커가 이름을 든 씬만 남는다. 그것이 `evidence` 를
+     * 한 번도 올리지 않은 빌드의 응답과 같은 모양이고, 그 상태는 이미 정상으로 취급된다.
+     */
+    @Test
+    fun `off 런은 지도 없는 빌드와 같은 답을 내고 앵커 지식은 남긴다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        val combat = fixture.newScene(mapId, "Combat", summary = "전투 화면")
+        fixture.newCapability(mapId, combat, summary = "적을 공격한다")
+        // 지도만 아는 씬. 앵커가 없으므로 off 에서는 목록에서 빠져야 한다.
+        val shop = fixture.newScene(mapId, "Shop")
+        fixture.newCapability(mapId, shop, summary = "물건을 산다")
+        fixture.newKnowledge(projectId, "전투 중 ESC 는 아무것도 하지 않는다", "본문", sceneName = "Combat")
+
+        val off = sceneContext.read(projectId, buildId, newQaTry(projectId, contentMapMode = ContentMapMode.OFF))!!
+
+        assertThat(off.contentMapId).isNull()
+        assertThat(off.capture).isNull()
+        val scene = off.scenes.single()
+        assertThat(scene.sceneName).isEqualTo("Combat")
+        assertThat(scene.knownToContentMap).isFalse()
+        assertThat(scene.capabilities).isEmpty()
+        assertThat(scene.notAStepCapabilities).isEmpty()
+        // 지도에서 오던 것은 전부 빠진다. 그 씬을 지도가 안다는 사실 자체가 지도에서 오기 때문이다.
+        assertThat(scene.origin).isNull()
+        assertThat(scene.sceneSummary).isNull()
+        // 앵커 지식은 그대로다. 이 한 줄이 두 축을 가른다.
+        assertThat(scene.knowledge.map { it.summary })
+            .containsExactly("전투 중 ESC 는 아무것도 하지 않는다")
+    }
+
+    /**
+     * `off` 의 응답이 `evidence` 없는 빌드의 응답과 **같은 식**인지 본다. 흉내가 아니라 이미
+     * 정상으로 취급되고 있는 그 답을 그대로 내는 것이 이 대조군의 요점이다.
+     */
+    @Test
+    fun `off 응답은 지도가 아예 없는 빌드의 응답과 같다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val mapped = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(mapped, Capture.PLAYER)
+        fixture.newCapability(mapId, fixture.newScene(mapId, "Combat"), summary = "적을 공격한다")
+        val bare = fixture.newBuild(projectId)
+        fixture.newKnowledge(projectId, "상점은 밤에 닫는다", "본문", sceneName = "Shop")
+
+        val offQaTry = newQaTry(projectId, contentMapMode = ContentMapMode.OFF)
+        val off = sceneContext.read(projectId, mapped, offQaTry)!!
+        val noMap = sceneContext.read(projectId, bare, qaTryId = null)!!
+
+        assertThat(off.copy(gameBuildId = "")).isEqualTo(noMap.copy(gameBuildId = ""))
+    }
+
+    /** `on`(기본) 과 값이 없는 런은 둘 다 지도를 그대로 본다 — 이 게이트 이전과 동작이 같다. */
+    @Test
+    fun `on 과 값이 없는 런은 지도를 그대로 본다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        fixture.newCapability(mapId, fixture.newScene(mapId, "Combat"), summary = "적을 공격한다")
+
+        for (qaTryId in listOf(newQaTry(projectId), newQaTry(projectId, contentMapMode = ContentMapMode.ON))) {
+            val response = sceneContext.read(projectId, buildId, qaTryId)!!
+            assertThat(response.contentMapId).isEqualTo(mapId.toString())
+            assertThat(response.scenes.single().capabilities.map { it.summary })
+                .containsExactly("적을 공격한다")
+        }
+    }
+
+    /**
+     * `frozen` 은 읽기만 막지 않는다 — 읽기는 `on` 과 같다. 쓰기 거절은
+     * `AgentCapabilityWriteTest` 가 본다.
+     */
+    @Test
+    fun `frozen 런은 지도를 그대로 읽는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId, Capture.PLAYER)
+        fixture.newCapability(mapId, fixture.newScene(mapId, "Combat"), summary = "적을 공격한다")
+
+        val response = sceneContext.read(
+            projectId, buildId, newQaTry(projectId, contentMapMode = ContentMapMode.FROZEN)
+        )!!
+
+        assertThat(response.contentMapId).isEqualTo(mapId.toString())
+        assertThat(response.scenes.single().capabilities).hasSize(1)
+    }
+
+    // ------------------------------------------------------------------ 경계
+
+    /**
+     * `evidence` 를 한 번도 올리지 않은 빌드는 **404 가 아니다.** 빌드는 존재하고, 없는 것은 아직 아무도
+     * 올리지 않은 문서다. 그때도 앵커 지식은 답한다 — 앵커는 프로젝트에 매달린 사실이라 빌드에
+     * 지도가 있는지와 수명이 다르다.
+     */
+    @Test
+    fun `지도가 없는 빌드는 200 이고 앵커만 나온다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        fixture.newKnowledge(projectId, "상점은 밤에 닫는다", "본문", sceneName = "Shop")
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.contentMapId).isNull()
+        assertThat(response.capture).isNull()
+        assertThat(response.scenes.single().sceneName).isEqualTo("Shop")
+        assertThat(response.scenes.single().knownToContentMap).isFalse()
+    }
+
+    /** 지도도 앵커도 없으면 빈 응답이다. 그것도 200 이다. */
+    @Test
+    fun `아무것도 없는 빌드는 빈 200 이다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.contentMapId).isNull()
+        assertThat(response.scenes).isEmpty()
+    }
+
+    /**
+     * 경로의 `projectId` 를 **실제로 검사한다.** 무인증 내부 경로라는 사실은 검사를 생략할 이유가
+     * 되지 못한다 — 검사하지 않으면 그 값은 장식이고, 다음 호출자는 장식을 보증으로 읽는다.
+     */
+    @Test
+    fun `경로의 프로젝트가 다르면 404 다`(): Unit = runBlocking {
+        val mine = fixture.newProject()
+        val other = fixture.newProject()
+        val buildId = fixture.newBuild(mine)
+
+        assertThat(status(other, buildId)).isEqualTo(HttpStatus.NOT_FOUND)
+        assertThat(status(mine, buildId)).isEqualTo(HttpStatus.OK)
+    }
+
+    @Test
+    fun `없는 빌드는 404 다`(): Unit = runBlocking {
+        assertThat(status(fixture.newProject(), gameBuildId = 987_654_321L)).isEqualTo(HttpStatus.NOT_FOUND)
+    }
+
+    /**
+     * 없는 `qaTryId` 는 조용히 운영 스코프로 떨어지지 않는다. 떨어지면 실험 런이 운영 지식을 읽고도
+     * 아무도 못 알아채고, 그 런의 결과는 그럴듯하다.
+     */
+    @Test
+    fun `없는 QA 런 id 는 404 다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+
+        assertThatThrownBy { runBlocking { sceneContext.read(projectId, buildId, qaTryId = 987_654_321L) } }
+            .isInstanceOf(NotFoundException::class.java)
+    }
+
+    // ------------------------------------------------------------------ macro (ARTEL-934)
+
+    /**
+     * 두 `macro` 가 서로 다른 `screen` 에 달리면 각자 **자기** `screen` 과 `scene` 이름을 들고 온다.
+     *
+     * 관계를 `macro` id 로 묶는 자리가 틀리면 두 `macro` 가 같은 `screen` 목록을 들고 나온다.
+     * `macro` 가 하나뿐인 테스트로는 잡히지 않는다. 한 `macro` 에는 서로 다른 `scene` 의 `screen`
+     * 둘을 달아, `screen` id 순서와 `scene` 이름이 함께 맞는지도 본다.
+     */
+    @Test
+    fun `macro 마다 자기 screen 과 scene 이름이 붙는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val title = fixture.newScene(mapId, "TitleScene")
+        val hand = fixture.newScreen(battle, "손패")
+        val dialog = fixture.newScreen(battle)
+        val menu = fixture.newScreen(title, "메뉴")
+
+        // 거꾸로 단다. 관계를 적은 순서가 아니라 screen id 순서로 나와야 한다.
+        fixture.newMacro(
+            mapId, "attack_with_card",
+            parameters = listOf("card" to "object", "count" to "int"),
+            docstring = "손패의 카드로 적을 공격한다",
+            screenIds = listOf(dialog, hand),
+        )
+        fixture.newMacro(mapId, "open_menu", screenIds = listOf(menu))
+
+        val response = get(projectId, buildId)
+
+        val attack = response.macros.single { it.name == "attack_with_card" }
+        assertThat(attack.screens).containsExactly(
+            SceneContextMacroScreen(screenId = hand.toString(), sceneName = "BattleScene"),
+            SceneContextMacroScreen(screenId = dialog.toString(), sceneName = "BattleScene"),
+        )
+        assertThat(attack.parameters).containsExactly(
+            SceneContextMacroParameter("card", "object"),
+            SceneContextMacroParameter("count", "int"),
+        )
+        assertThat(attack.summary).isEqualTo("손패의 카드로 적을 공격한다")
+
+        val menuMacro = response.macros.single { it.name == "open_menu" }
+        assertThat(menuMacro.screens)
+            .containsExactly(SceneContextMacroScreen(screenId = menu.toString(), sceneName = "TitleScene"))
+        assertThat(menuMacro.parameters).isEmpty()
+        assertThat(menuMacro.summary).isNull()
+        assertThat(response.macrosTotal).isEqualTo(2)
+    }
+
+    /**
+     * `summary` 는 `macro.docstring` 칸이고 `source` 를 읽지 않는다(ARTEL-985). 원문에 `#` 주석이 있어도
+     * 칸이 비어 있으면 null 이고, 칸에 값이 있으면 원문과 상관없이 그 값이다.
+     */
+    @Test
+    fun `macro summary 는 source 의 주석이 아니라 docstring 칸에서 온다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        fixture.newMacro(
+            mapId, "commented",
+            source = "def commented():\n    # 주석은 요약이 아니다\n    click(selector(\"Canvas/Button\"))\n",
+        )
+        fixture.newMacro(
+            mapId, "documented",
+            docstring = "칸에 적힌 docstring",
+            source = "def documented():\n    click(selector(\"Canvas/Button\"))\n",
+        )
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.macros.single { it.name == "commented" }.summary).isNull()
+        assertThat(response.macros.single { it.name == "documented" }.summary).isEqualTo("칸에 적힌 docstring")
+    }
+
+    /**
+     * `screen` 이 없는 `macro` 도 목록에 선다. 빈 `screens` 의 뜻은 "아직 어디서 쓸지 모른다" 라서,
+     * 이 `macro` 를 빼면 이전 런이 등록해 둔 것을 이번 런이 영영 못 찾는다.
+     */
+    @Test
+    fun `screen 이 없는 macro 도 빈 screens 로 나온다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        fixture.newMacro(mapId, "unplaced")
+
+        val response = get(projectId, buildId)
+
+        val macro = response.macros.single()
+        assertThat(macro.name).isEqualTo("unplaced")
+        assertThat(macro.screens).isEmpty()
+        assertThat(response.macrosTotal).isEqualTo(1)
+    }
+
+    /** 이름 오름차순이다. 등록한 순서로 내면 프롬프트 캐시가 등록 순서에 흔들린다. */
+    @Test
+    fun `macro 는 이름 오름차순이다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        listOf("zeta", "alpha", "mid").forEach { fixture.newMacro(mapId, it) }
+
+        assertThat(get(projectId, buildId).macros.map { it.name }).containsExactly("alpha", "mid", "zeta")
+    }
+
+    /**
+     * 30 개를 넘으면 이름순 앞 30 개만 오고 `macrosTotal` 이 자르기 전 수를 말한다. 이름을 두 자리
+     * 숫자로 적어 사전순과 숫자순이 같게 하므로, 잘린 뒤 남는 것이 `m00`..`m29` 여야 한다.
+     */
+    @Test
+    fun `macro 는 30 개에서 잘리고 macrosTotal 은 전체 수다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        (0 until 33).reversed().forEach { fixture.newMacro(mapId, "m%02d".format(it)) }
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.macros).hasSize(30)
+        assertThat(response.macros.map { it.name }).isEqualTo((0 until 30).map { "m%02d".format(it) })
+        assertThat(response.macrosTotal).isEqualTo(33)
+    }
+
+    /** 지도가 없으면 `macro` 도 없다. */
+    @Test
+    fun `지도가 없는 빌드는 macro 가 비어 있다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.macros).isEmpty()
+        assertThat(response.macrosTotal).isEqualTo(0)
+    }
+
+    /** 다른 빌드의 `macro` 는 섞이지 않는다 — 이름의 유일 범위가 지도 하나다. */
+    @Test
+    fun `다른 빌드의 macro 는 오지 않는다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val otherMapId = fixture.newContentMap(fixture.newBuild(projectId))
+        fixture.newMacro(mapId, "mine")
+        fixture.newMacro(otherMapId, "theirs")
+
+        val response = get(projectId, buildId)
+
+        assertThat(response.macros.map { it.name }).containsExactly("mine")
+        assertThat(response.macrosTotal).isEqualTo(1)
+    }
+
+    /** `content_map_mode = off` 인 런은 지도가 없는 빌드와 같은 답이다. `macro` 도 비어야 한다. */
+    @Test
+    fun `content map 모드가 off 면 macro 도 비어 있다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        fixture.newMacro(mapId, "hidden")
+        val qaTryId = newQaTry(projectId, contentMapMode = ContentMapMode.OFF)
+
+        val response = sceneContext.read(projectId, buildId, qaTryId)!!
+
+        assertThat(response.macros).isEmpty()
+        assertThat(response.macrosTotal).isEqualTo(0)
+    }
+
+    /**
+     * 나가는 JSON 한 줄. `source` 와 `definition_json` 이 key 로도 없어야 하고, 이름 · 필드 이름은
+     * agent-server 가 코딩하는 계약 그대로다.
+     */
+    @Test
+    fun `macro 한 개가 나가는 JSON 모양`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val hand = fixture.newScreen(battle, "손패")
+        fixture.newMacro(
+            mapId, "fire_ball",
+            parameters = listOf("enemy" to "object"),
+            docstring = "적에게 화염구를 던진다",
+            screenIds = listOf(hand),
+        )
+
+        val root = ObjectMapper().readTree(rawBody(projectId, buildId))
+
+        assertThat(root.path("macrosTotal").asInt()).isEqualTo(1)
+        val macro = root.path("macros").single()
+        assertThat(macro.fieldNames().asSequence().toList())
+            .containsExactlyInAnyOrder("name", "parameters", "summary", "screens")
+        assertThat(macro.path("parameters").single().toString())
+            .isEqualTo("""{"name":"enemy","type":"object"}""")
+        assertThat(macro.path("screens").single().toString())
+            .isEqualTo("""{"screenId":"$hand","sceneName":"BattleScene"}""")
+        assertThat(rawBody(projectId, buildId)).doesNotContain("definition_json", "definitionJson", "\"source\"")
+    }
+
+    // ------------------------------------------------------------------ 오브젝트와 writes (ARTEL-1059)
+
+    /**
+     * 나가는 JSON 한 `scene`. 오브젝트는 `scene` 아래 문서(id) 순서로, 코드가 쓰는 필드는 `capability` 의
+     * `writes` 로 온다. 칸 이름은 agent-server 가 camelCase 로 읽는 계약 그대로다.
+     */
+    @Test
+    fun `scene 의 오브젝트와 capability 의 writes 가 나가는 JSON 모양`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val title = fixture.newScene(mapId, "TitleScene")
+        fixture.newSceneObject(mapId, battle, "Word[13]", active = false,
+            components = listOf("SelectableObject" to listOf("selectable"), "Player" to listOf("HpText", "hp")))
+        fixture.newSceneObject(mapId, battle, "Canvas[0]/CombineButton[2]",
+            components = listOf("Button" to emptyList()))
+        fixture.newSceneObject(mapId, title, "TitleMenu", components = listOf("TitleMenu" to emptyList()))
+        val combine = fixture.newCapability(mapId, battle, summary = "합친다", controlPath = "Canvas/CombineButton")
+        fixture.newWrite(combine, "SelectableObject.selectable")
+        fixture.newWrite(combine, "Canvas/CombinePanel", kind = "active-state")
+
+        val root = ObjectMapper().readTree(rawBody(projectId, buildId))
+
+        val battleScene = root.path("scenes").single { it.path("sceneName").asText() == "BattleScene" }
+        assertThat(battleScene.path("objectsTotal").asInt()).isEqualTo(2)
+        assertThat(battleScene.path("objects").toString()).isEqualTo(
+            """[{"selector":"Word[13]","active":false,"components":[{"type":"SelectableObject","fields":["selectable"]},""" +
+                """{"type":"Player","fields":["HpText","hp"]}]},""" +
+                """{"selector":"Canvas[0]/CombineButton[2]","active":true,"components":[{"type":"Button","fields":[]}]}]"""
+        )
+        // `active-state` 는 `write` 가 아니다.
+        assertThat(battleScene.path("capabilities").single().path("writes").toString())
+            .isEqualTo("""["SelectableObject.selectable"]""")
+
+        val titleScene = root.path("scenes").single { it.path("sceneName").asText() == "TitleScene" }
+        assertThat(titleScene.path("objects").map { it.path("selector").asText() }).containsExactly("TitleMenu")
+    }
+
+    /**
+     * `scene` 하나에 오브젝트 60 개, 컴포넌트 하나에 필드 16 개까지다. `objectsTotal` 이 자르기 전 수를
+     * 말한다. 잘리고 남는 것은 앞쪽이다 — 문서 순서와 이름 오름차순이 고정이라 조회마다 같은 줄이 남는다.
+     */
+    @Test
+    fun `오브젝트는 60 개, 필드는 16 개에서 잘린다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val manyFields = (0 until 20).map { "field%02d".format(it) }
+        fixture.newSceneObject(mapId, battle, "Manager[0]", components = listOf("StageManager" to manyFields))
+        (1 until 61).forEach { fixture.newSceneObject(mapId, battle, "Enemy[$it]") }
+
+        val scene = get(projectId, buildId).scenes.single()
+
+        assertThat(scene.objectsTotal).isEqualTo(61)
+        assertThat(scene.objects).hasSize(60)
+        assertThat(scene.objects.first().components.single().fields).isEqualTo(manyFields.take(16))
+        assertThat(scene.objects.last().selector).isEqualTo("Enemy[59]")
+    }
+
+    /**
+     * 접힌 줄의 `writes` 는 무리 전부의 것을 중복 없이 합치고 8 개에서 자른다. 같은 진입점이 부르는 메서드들이
+     * 나눠 쓰는 값이라, 대표 행 하나의 것만 실으면 버튼이 바꾸는 값 일부가 빠진다.
+     */
+    @Test
+    fun `접힌 줄의 writes 는 무리 전부를 합쳐 8 개에서 자른다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val battle = fixture.newScene(mapId, "BattleScene")
+        val entry = "Assembly-CSharp|Combat.CombineZone|OnButtonClick|System.Void()"
+        val first = fixture.newCapability(mapId, battle, summary = "하나", entryId = entry)
+        val second = fixture.newCapability(mapId, battle, summary = "둘", entryId = entry)
+        listOf("Zone.a", "Zone.b").forEach { fixture.newWrite(first, it) }
+        listOf("Zone.b", "Zone.c", "Zone.d", "Zone.e", "Zone.f", "Zone.g", "Zone.h", "Zone.i").forEach {
+            fixture.newWrite(second, it)
+        }
+
+        val capability = get(projectId, buildId).scenes.single().capabilities.single()
+
+        assertThat(capability.covers).isEqualTo(2)
+        assertThat(capability.writes)
+            .containsExactly("Zone.a", "Zone.b", "Zone.c", "Zone.d", "Zone.e", "Zone.f", "Zone.g", "Zone.h")
+    }
+
+    /**
+     * 오브젝트도 `write` 도 없으면 빈 목록과 0 이다. 칸이 아예 빠지지 않는다 — V114 이전에 적재되어 아직
+     * 백필되지 않은 지도도 이 모양이고, agent-server 는 "없음" 을 빈 목록으로 읽는다.
+     */
+    @Test
+    fun `오브젝트와 writes 가 없으면 빈 목록이다`(): Unit = runBlocking {
+        val projectId = fixture.newProject()
+        val buildId = fixture.newBuild(projectId)
+        val mapId = fixture.newContentMap(buildId)
+        val title = fixture.newScene(mapId, "TitleScene")
+        fixture.newCapability(mapId, title, summary = "시작한다")
+
+        val scene = ObjectMapper().readTree(rawBody(projectId, buildId)).path("scenes").single()
+
+        assertThat(scene.path("objects").toString()).isEqualTo("[]")
+        assertThat(scene.path("objectsTotal").asInt(-1)).isEqualTo(0)
+        assertThat(scene.path("capabilities").single().path("writes").toString()).isEqualTo("[]")
+    }
+
+    // ---------- 호출 ----------
+
+    private fun internalClient() = WebClient.create("http://localhost:${internalApiServer.port}")
+
+    private fun path(projectId: Long, gameBuildId: Long) =
+        "/internal/projects/$projectId/game-builds/$gameBuildId/scene-context"
+
+    private fun get(projectId: Long, gameBuildId: Long): SceneContextResponse =
+        internalClient().get().uri(path(projectId, gameBuildId))
+            .retrieve()
+            .bodyToMono(SceneContextResponse::class.java)
+            .block(TIMEOUT)!!
+
+    private fun rawBody(projectId: Long, gameBuildId: Long): String =
+        internalClient().get().uri(path(projectId, gameBuildId))
+            .retrieve()
+            .bodyToMono(String::class.java)
+            .block(TIMEOUT)!!
+
+    private fun status(projectId: Long, gameBuildId: Long): HttpStatus =
+        internalClient().get().uri(path(projectId, gameBuildId))
+            .exchangeToMono { Mono.just(it.statusCode()) }
+            .onErrorResume(WebClientResponseException::class.java) { Mono.just(it.statusCode) }
+            .block(TIMEOUT) as HttpStatus
+
+    /**
+     * 스코프를 든 QA 런 한 줄. `qa_try` 는 시나리오·인스턴스·사용자를 전부 참조하므로 엔티티로
+     * 세우면 이 테스트가 QA 도메인 전체를 끌고 온다 — 이 조회가 읽는 칸은
+     * `knowledge_scope_id` 하나뿐이라 SQL 로 최소한만 세운다.
+     */
+    private suspend fun newQaTry(
+        projectId: Long,
+        scopeId: Long? = null,
+        contentMapMode: ContentMapMode? = null,
+    ): Long {
+        val userId = insertId("INSERT INTO app_user (display_name, nickname, user_tag) VALUES ('agent', 'agent-' || gen_random_uuid(), '0000') RETURNING id")
+        val scenarioId = insertId(
+            """
+            INSERT INTO test_scenario (project_id, title)
+            VALUES ($projectId, 'scene-context') RETURNING id
+            """
+        )
+        val instanceId = insertId(
+            """
+            INSERT INTO game_instance (project_id, name, platform)
+            VALUES ($projectId, 'scene-context', 'Editor') RETURNING id
+            """
+        )
+        // run_config 는 값이 없으면 `{}` 다 — 이 게이트가 생기기 전 런과 같은 모양이다.
+        val runConfig = contentMapMode
+            ?.let { """'{"content_map_mode": "${it.wire}"}'::jsonb""" }
+            ?: "'{}'::jsonb"
+        return insertId(
+            """
+            INSERT INTO qa_try (test_scenario_id, game_instance_id, started_by, status,
+                                knowledge_scope_id, run_config, started_at)
+            VALUES ($scenarioId, $instanceId, $userId, 'RUNNING', ${scopeId ?: "NULL"}, $runConfig,
+                    CURRENT_TIMESTAMP)
+            RETURNING id
+            """
+        )
+    }
+
+    private suspend fun insertId(sql: String): Long =
+        db.sql(sql).map { row, _ -> (row.get(0) as Number).toLong() }.one().block()!!
+
+    companion object {
+        private val TIMEOUT: Duration = Duration.ofSeconds(20)
+    }
+}

@@ -1,0 +1,259 @@
+package kr.artel.orchestration.contentmap.scan
+
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.CancellationException
+import kr.artel.orchestration.contentmap.dto.ContentMapStreamEvent
+import kr.artel.orchestration.contentmap.dto.LastScanResponse
+import kr.artel.orchestration.contentmap.ingest.ContentMapIngestService
+import kr.artel.orchestration.contentmap.ingest.IngestOutcome
+import kr.artel.orchestration.common.error.ApiException
+import kr.artel.orchestration.game.repository.GameInstanceRepository
+import kr.artel.orchestration.testcase.service.ContentMapTestCaseService
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Service
+import java.time.Clock
+import java.time.Instant
+
+/**
+ * `ACTION_RESULT` 중 **근거 스캔의 결과만** 집어 적재까지 잇는다.
+ *
+ * 지금까지 `ACTION_RESULT` 는 전부 QA 브리지로 갔다. 스캔 결과를 이쪽으로 데려오되 QA 를 깨뜨리면
+ * 안 되므로, **가르는 축을 액션 이름 하나로 둔다.**
+ *
+ * id 로 가르지 않는 이유: 우리에게는 `qa_log` 같은 id 발급처가 없다. 별도 카운터를 두면 그 값이
+ * `qa_log` id 와 겹칠 수 있고, 겹치는 순간 QA 결과가 스캔으로 잘못 샌다. 액션 이름은 우리가 보낸
+ * 액션에만 실리고, QA 가 보내는 액션의 method 는 agent 가 정하며 `scan_evidence` 가 아니다.
+ *
+ * [handle] 은 **스캔 결과가 아닌 모든 프레임에 대해 `false` 이고 아무것도 하지 않는다.** 파싱
+ * 실패조차 `false` 다 — 이 분기가 QA 쪽 동작을 한 글자도 바꾸지 않게 하려는 것이다.
+ */
+@Service
+class ScanResultRouter(
+    private val gameInstances: GameInstanceRepository,
+    private val ingest: ContentMapIngestService,
+    private val statuses: ScanStatusRegistry,
+    private val streamManager: ContentMapEventStreamManager,
+    private val testCaseService: ContentMapTestCaseService,
+    private val objectMapper: ObjectMapper,
+    private val clock: Clock,
+) {
+
+    private val logger = LoggerFactory.getLogger(ScanResultRouter::class.java)
+
+    /**
+     * @return 이 프레임이 근거 스캔의 결과여서 여기서 처리했으면 true. 그 밖에는 전부 false 이고,
+     *   호출자가 지금까지 하던 대로 QA 브리지로 넘긴다.
+     */
+    suspend fun handle(gameInstanceId: Long, payloadText: String): Boolean {
+        val payload = runCatching { objectMapper.readTree(payloadText) }.getOrNull() ?: return false
+        val result = scanResultOf(payload) ?: return false
+
+        // 인스턴스가 마지막으로 보고한 빌드가 곧 SDK 가 문서를 올린 빌드다. 우리가 인스턴스를 고른
+        // 기준도 그 칸이었으므로 둘은 구성상 같은 값이다.
+        val gameBuildId = gameInstances.findById(gameInstanceId)?.lastGameBuildId
+        if (gameBuildId == null) {
+            // 등록 전이라 앉힐 곳을 모른다. 결과를 버리지 않고 상태로 남겨 화면이 이유를 말하게 한다.
+            logger.warn("스캔 결과를 받았으나 인스턴스가 보고한 빌드가 없다 [gameInstanceId={}]", gameInstanceId)
+            fail(gameInstanceId, NO_BUILD)
+            return true
+        }
+
+        if (!result.path(SUCCESS_FIELD).asBoolean(false)) {
+            // 게임이 스캔에 실패했다고 답했다. 올라온 문서가 없으니 문서 행에 적을 것이 없다 —
+            // 이 자리가 그 사실을 남길 유일한 곳이다.
+            val reason = sdkErrorOf(result)
+            logger.warn("근거 스캔 실패 [gameBuildId={}]: {}", gameBuildId, reason)
+            fail(gameBuildId, reason)
+            return true
+        }
+
+        // 끊긴 스캔의 늦은 결과는 앉히지 않는다(ARTEL-1183). 취소는 게임에 멈추라고 보내지만, 그 사이 이미 올라간
+        // 문서의 성공 결과가 뒤늦게 도착할 수 있다. 앉히면 사람이 끊은 스캔이 지도를 바꾸고, 그 지도는 반쯤 돈 순회의
+        // 것이라 못 돈 씬이 사라진 모습이 된다.
+        //
+        // **모르는 것은 막지 않는다.** 상태는 프로세스 메모리에 살아서 서버가 다시 뜨면 비어 있다. 그때 `find` 는
+        // null 이고, 그 결과는 끊긴 것이 아니라 재시작을 건너온 것이므로 지금까지 하던 대로 앉힌다.
+        val known = statuses.find(gameBuildId)
+        if (known != null && known.state != ScanState.REQUESTED) {
+            logger.info(
+                "이미 닫힌 스캔의 결과가 늦게 도착해 앉히지 않는다 [gameBuildId={}, state={}, cancelled={}]",
+                gameBuildId, known.state, known.cancelled,
+            )
+            return true
+        }
+
+        enterPhase(gameBuildId, ScanPhase.INGESTING)
+        ingestFor(gameBuildId)
+        return true
+    }
+
+    /**
+     * 프레임에서 근거 스캔 결과 항목을 골라낸다. 없으면 null 이고, 그때 이 프레임은 우리 것이 아니다.
+     *
+     * **`results[]` 를 먼저 봐야 한다.** SDK 의 `ACTION_RESULT` 는 액션 하나가 아니라 **여러 결과를
+     * 배열로** 싣는다 — 실측 프레임이 그렇다:
+     *
+     * ```
+     * {"type":"ACTION_RESULT","id":12,"requestId":1,
+     *  "results":[{"id":1,"success":true,"action":"scan_evidence","returnValue":{...}}]}
+     * ```
+     *
+     * 최상위에서 `action` 을 찾으면 없다. 처음 이 클래스는 그렇게 찾았고, 그래서 스캔 결과가 조용히
+     * QA 브리지로 흘러가 **적재가 한 번도 돌지 않았다.** 로그에는 "액션 결과 수신"만 남고 오류는
+     * 없었다 — 문서는 등록되는데 씬·기능 행이 0인 상태가 된다.
+     *
+     * 최상위도 함께 보는 이유는 방어다. 프레임이 한 결과만 평평하게 싣는 모양으로 바뀌어도 이쪽이
+     * 조용히 멎지 않는다.
+     */
+    private fun scanResultOf(payload: JsonNode): JsonNode? {
+        if (payload.path(ACTION_FIELD).asText(null) == ContentMapScanService.SCAN_EVIDENCE) {
+            return payload
+        }
+        val results = payload.path(RESULTS_FIELD)
+        if (!results.isArray) return null
+        return results.firstOrNull {
+            it.path(ACTION_FIELD).asText(null) == ContentMapScanService.SCAN_EVIDENCE
+        }
+    }
+
+    /**
+     * 이 빌드의 대기 문서를 앉힌다.
+     *
+     * **이 프레임을 처리하는 코루틴 안에서 그대로 돈다.** `SdkWebSocketHandler` 가 `concatMap` 이라
+     * 그동안 그 세션의 다음 프레임이 기다린다 — 실측 1.4MB 문서를 파싱하는 만큼이다. 사람이 눌러야
+     * 생기는 드문 일이고, 떼어내면 순서와 오류 귀속이 흐려진다. 문제가 되면 답은 큐이지 이 자리가
+     * 아니다.
+     */
+    private suspend fun ingestFor(gameBuildId: Long) {
+        val outcomes = try {
+            ingest.ingestBuild(gameBuildId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            // 문서마다의 실패는 ingestBuild 가 이미 문서에 적는다. 여기까지 온 것은 문서를 고르는
+            // 일 자체가 깨진 경우다. 원문은 로그에만 남기고 화면에는 우리 문구를 낸다.
+            logger.error("근거 스캔 결과 적재 실패 [gameBuildId={}]", gameBuildId, failure)
+            fail(gameBuildId, GENERIC_INGEST_FAILURE)
+            return
+        }
+
+        val failed = outcomes.filterIsInstance<IngestOutcome.Failed>()
+        val ingested = outcomes.size - failed.size
+        // 스캔하고 TC 생성(ARTEL-1040). 문서가 하나도 깨지지 않았을 때만 만든다 — 깨진 지도로 만든 TC 는 다시 만들 수 없다.
+        val requested = statuses.find(gameBuildId)?.takeIf { it.state == ScanState.REQUESTED }?.testCases
+        val testCases = if (failed.isEmpty() && requested != null) {
+            enterPhase(gameBuildId, ScanPhase.GENERATING_TEST_CASES)
+            generateTestCases(gameBuildId, requested)
+        } else {
+            requested
+        }
+        statuses.complete(gameBuildId) { current ->
+            if (failed.isEmpty()) {
+                current.copy(
+                    state = ScanState.SUCCEEDED,
+                    finishedAt = Instant.now(clock),
+                    updatedAt = Instant.now(clock),
+                    ingestedDocuments = ingested,
+                    testCases = testCases,
+                )
+            } else {
+                // 깨진 문서의 사유는 이미 ingest_error 에 durable 하게 남았다. 여기서는 화면이
+                // 곧바로 볼 수 있게 첫 사유 하나만 되풀이한다.
+                current.copy(
+                    state = ScanState.FAILED,
+                    finishedAt = Instant.now(clock),
+                    updatedAt = Instant.now(clock),
+                    ingestedDocuments = ingested,
+                    error = failed.first().reason,
+                )
+            }
+        }?.let { publishScan(gameBuildId, it) }
+        logger.info("근거 스캔 적재 완료 [gameBuildId={}, 앉힘={}, 깨짐={}]", gameBuildId, ingested, failed.size)
+    }
+
+    /**
+     * 스캔이 앉힌 지도로 TC 를 만든다. 실패해도 스캔은 성공이다 — TC 쪽 결과만 [ScanTestCases] 에 적는다. 그사이
+     * 누가 같은 build 의 TC 를 만들었으면 건너뛴다.
+     */
+    private suspend fun generateTestCases(gameBuildId: Long, request: ScanTestCases): ScanTestCases =
+        try {
+            val result = testCaseService.generateAfterScan(gameBuildId, request.carryOver)
+            request.copy(state = ScanTestCaseState.GENERATED, created = result.created, carriedOver = result.carriedOver)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (rejected: ApiException) {
+            val skipped = rejected.code == ContentMapTestCaseService.TEST_CASES_ALREADY_GENERATED
+            request.copy(state = if (skipped) ScanTestCaseState.SKIPPED else ScanTestCaseState.FAILED, reason = rejected.message)
+        } catch (failure: Exception) {
+            logger.error("스캔 뒤 TC 생성 실패 [gameBuildId={}]", gameBuildId, failure)
+            request.copy(state = ScanTestCaseState.FAILED, reason = GENERIC_TEST_CASE_FAILURE)
+        }
+
+    /**
+     * 게임 연결이 끊겼을 때 `SdkWebSocketHandler` 가 부른다(ARTEL-1178). 그 게임이 돌던 스캔은 결과가 오지 않으므로
+     * 실패로 닫고 화면에 알린다. 이것이 없으면 화면은 영영 "스캔하는 중" 이고, 다음 요청만 60분 뒤에 풀렸다.
+     */
+    fun gameDisconnected(gameInstanceId: Long) {
+        val now = Instant.now(clock)
+        statuses.completeGameSideOn(gameInstanceId) {
+            it.copy(state = ScanState.FAILED, finishedAt = now, updatedAt = now, error = GAME_DISCONNECTED)
+        }.forEach {
+            logger.warn("스캔 도중 게임 연결이 끊겼다 [gameBuildId={}, gameInstanceId={}]", it.gameBuildId, gameInstanceId)
+            publishScan(it.gameBuildId, it)
+        }
+    }
+
+    private fun fail(gameBuildId: Long, reason: String) {
+        statuses.complete(gameBuildId) {
+            val now = Instant.now(clock)
+            it.copy(state = ScanState.FAILED, finishedAt = now, updatedAt = now, error = reason)
+        }?.let { publishScan(gameBuildId, it) }
+    }
+
+    /**
+     * 서버 쪽 단계로 옮기고 흘린다(ARTEL-1178). 적재 · TC 생성은 큰 게임에서 수십 초가 걸려, 옮긴 것을 알리지
+     * 않으면 화면은 게임이 아직 씬을 도는 줄 안다. 게임이 준 진행은 이 단계의 것이 아니라 비운다.
+     */
+    private fun enterPhase(gameBuildId: Long, phase: ScanPhase) {
+        statuses.advance(gameBuildId) {
+            it.copy(phase = phase, progress = null, updatedAt = Instant.now(clock))
+        }?.let { publishScan(gameBuildId, it) }
+    }
+
+    /**
+     * `scan` 이벤트를 흘린다. [statuses] 가 [ScanStatus.state] 를 끝으로 옮긴 **결과가 있을 때만**
+     * 부른다 — [ScanStatusRegistry.complete] 가 null 을 돌려주는 것은 REQUESTED 인 행이 없었다는
+     * 뜻이고(서버 재시작 · 게임이 스스로 돈 스캔), 그때는 흘릴 상태 자체가 없다.
+     */
+    private fun publishScan(gameBuildId: Long, status: ScanStatus) {
+        streamManager.emit(gameBuildId, ContentMapStreamEvent(type = "scan", scan = LastScanResponse.of(status)))
+    }
+
+    /**
+     * 게임이 준 실패 사유.
+     *
+     * 이것은 **게임 클라이언트가 쓴 문장이지 서버 예외의 원문이 아니다.** 그래서 화면에 그대로
+     * 낸다 — `error-handling.md` 가 막는 것은 우리 내부 구조가 새는 것이고, 이 값에는 그런 것이
+     * 없다. 다만 길이는 자른다. 상대가 보낸 값이 화면 계약의 길이를 정하게 두지 않는다.
+     */
+    private fun sdkErrorOf(payload: JsonNode): String =
+        payload.path(ERROR_FIELD).asText(null)?.takeIf { it.isNotBlank() }?.take(ERROR_WIDTH)
+            ?: GENERIC_SCAN_FAILURE
+
+    private companion object {
+        const val ACTION_FIELD = "action"
+        const val RESULTS_FIELD = "results"
+        const val SUCCESS_FIELD = "success"
+        const val ERROR_FIELD = "error"
+
+        /** `ingest_error` 의 컬럼 폭과 같은 값으로 맞춘다. 두 사유가 같은 칸에서 보이기 때문이다. */
+        const val ERROR_WIDTH = 512
+
+        const val GENERIC_SCAN_FAILURE = "게임이 근거 스캔에 실패했습니다."
+        const val GENERIC_INGEST_FAILURE = "근거 문서를 씬 명세로 앉히지 못했습니다."
+        const val GENERIC_TEST_CASE_FAILURE = "스캔은 끝났지만 test case 를 만들지 못했습니다."
+        const val GAME_DISCONNECTED = "스캔 도중 게임 연결이 끊겼습니다. 게임을 다시 켠 뒤 스캔해 주세요."
+        const val NO_BUILD = "이 게임이 어느 빌드인지 아직 서버에 보고되지 않았습니다."
+    }
+}

@@ -1,0 +1,316 @@
+{
+  "schema": 7,
+  "capture": "editor-play",
+  "types": {
+    "Map.MapMove": [
+      {
+        "owner": "Map.MapMove",
+        "entryId": "Assembly-CSharp|Map.MapMove|Update|System.Void()",
+        "methodId": "Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()",
+        "recordKind": "candidate",
+        "triggerKind": "lifecycle",
+        "condition": {
+          "kind": "EVERY",
+          "parts": [
+            {
+              "left": "MapMove.StagePosition",
+              "right": "1",
+              "offset": 49,
+              "context": "static",
+              "operator": ">=",
+              "subjectLost": null
+            },
+            {
+              "kind": "EVERY",
+              "parts": [
+                {
+                  "input": "key:RightArrow (down)",
+                  "offset": 21
+                },
+                {
+                  "left": "MapMove.position",
+                  "right": "0",
+                  "offset": 14,
+                  "context": "this",
+                  "operator": "==",
+                  "subjectLost": null
+                },
+                {
+                  "left": "InteractionLock.IsLocked",
+                  "right": "0",
+                  "offset": 5,
+                  "context": "static",
+                  "operator": "==",
+                  "subjectLost": null
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "owner": "Map.MapMove",
+        "entryId": "Assembly-CSharp|Map.MapMove|Update|System.Void()",
+        "methodId": "Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()",
+        "recordKind": "candidate",
+        "triggerKind": "lifecycle",
+        "condition": {
+          "kind": "EVERY",
+          "parts": [
+            {
+              "left": "MapMove.StagePosition",
+              "right": "1",
+              "offset": 49,
+              "context": "static",
+              "operator": ">=",
+              "subjectLost": null
+            },
+            {
+              "kind": "EVERY",
+              "parts": [
+                {
+                  "input": "key:UpArrow (down)",
+                  "offset": 33
+                },
+                {
+                  "left": "MapMove.position",
+                  "right": "0",
+                  "offset": 14,
+                  "context": "this",
+                  "operator": "==",
+                  "subjectLost": null
+                },
+                {
+                  "left": "InteractionLock.IsLocked",
+                  "right": "0",
+                  "offset": 5,
+                  "context": "static",
+                  "operator": "==",
+                  "subjectLost": null
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "owner": "Map.MapMove",
+        "entryId": "Assembly-CSharp|Map.MapMove|Update|System.Void()",
+        "methodId": "Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()",
+        "recordKind": "candidate",
+        "triggerKind": "lifecycle",
+        "condition": {
+          "kind": "EVERY",
+          "parts": [
+            {
+              "input": "key:LeftArrow (down)",
+              "offset": 202
+            },
+            {
+              "left": "MapMove.position",
+              "right": "1",
+              "offset": 119,
+              "context": "this",
+              "operator": "==",
+              "subjectLost": null
+            },
+            {
+              "left": "InteractionLock.IsLocked",
+              "right": "0",
+              "offset": 5,
+              "context": "static",
+              "operator": "==",
+              "subjectLost": null
+            }
+          ]
+        }
+      },
+      {
+        "owner": "Map.MapMove",
+        "entryId": "Assembly-CSharp|Map.MapMove|Update|System.Void()",
+        "methodId": "Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()",
+        "recordKind": "candidate",
+        "triggerKind": "lifecycle",
+        "condition": {
+          "kind": "EVERY",
+          "parts": [
+            {
+              "input": "key:DownArrow (down)",
+              "offset": 214
+            },
+            {
+              "left": "MapMove.position",
+              "right": "1",
+              "offset": 119,
+              "context": "this",
+              "operator": "==",
+              "subjectLost": null
+            },
+            {
+              "left": "InteractionLock.IsLocked",
+              "right": "0",
+              "offset": 5,
+              "context": "static",
+              "operator": "==",
+              "subjectLost": null
+            }
+          ]
+        }
+      },
+      {
+        "owner": "Map.MapMove",
+        "entryId": "Assembly-CSharp|Map.MapMove|Update|System.Void()",
+        "methodId": "Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()",
+        "recordKind": "candidate",
+        "triggerKind": "lifecycle",
+        "condition": {
+          "kind": "EVERY",
+          "parts": [
+            {
+              "left": "MapMove.StagePosition",
+              "right": "3",
+              "offset": 324,
+              "context": "static",
+              "operator": ">=",
+              "subjectLost": null
+            },
+            {
+              "kind": "EVERY",
+              "parts": [
+                {
+                  "input": "key:RightArrow (down)",
+                  "offset": 299
+                },
+                {
+                  "left": "MapMove.position",
+                  "right": "2",
+                  "offset": 289,
+                  "context": "this",
+                  "operator": "==",
+                  "subjectLost": null
+                },
+                {
+                  "left": "InteractionLock.IsLocked",
+                  "right": "0",
+                  "offset": 5,
+                  "context": "static",
+                  "operator": "==",
+                  "subjectLost": null
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "owner": "Map.MapMove",
+        "entryId": "Assembly-CSharp|Map.MapMove|Update|System.Void()",
+        "methodId": "Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()",
+        "recordKind": "candidate",
+        "triggerKind": "lifecycle",
+        "condition": {
+          "kind": "EVERY",
+          "parts": [
+            {
+              "left": "MapMove.StagePosition",
+              "right": "3",
+              "offset": 324,
+              "context": "static",
+              "operator": ">=",
+              "subjectLost": null
+            },
+            {
+              "kind": "EVERY",
+              "parts": [
+                {
+                  "input": "key:UpArrow (down)",
+                  "offset": 311
+                },
+                {
+                  "left": "MapMove.position",
+                  "right": "2",
+                  "offset": 289,
+                  "context": "this",
+                  "operator": "==",
+                  "subjectLost": null
+                },
+                {
+                  "left": "InteractionLock.IsLocked",
+                  "right": "0",
+                  "offset": 5,
+                  "context": "static",
+                  "operator": "==",
+                  "subjectLost": null
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "owner": "Map.MapMove",
+        "entryId": "Assembly-CSharp|Map.MapMove|Update|System.Void()",
+        "methodId": "Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()",
+        "recordKind": "candidate",
+        "triggerKind": "lifecycle",
+        "condition": {
+          "kind": "EVERY",
+          "parts": [
+            {
+              "input": "key:LeftArrow (down)",
+              "offset": 542
+            },
+            {
+              "left": "MapMove.position",
+              "right": "3",
+              "offset": 459,
+              "context": "this",
+              "operator": "==",
+              "subjectLost": null
+            },
+            {
+              "left": "InteractionLock.IsLocked",
+              "right": "0",
+              "offset": 5,
+              "context": "static",
+              "operator": "==",
+              "subjectLost": null
+            }
+          ]
+        }
+      },
+      {
+        "owner": "Map.MapMove",
+        "entryId": "Assembly-CSharp|Map.MapMove|Update|System.Void()",
+        "methodId": "Assembly-CSharp|Map.MapMove|CharacterMove|System.Void()",
+        "recordKind": "candidate",
+        "triggerKind": "lifecycle",
+        "condition": {
+          "kind": "EVERY",
+          "parts": [
+            {
+              "input": "key:DownArrow (down)",
+              "offset": 554
+            },
+            {
+              "left": "MapMove.position",
+              "right": "3",
+              "offset": 459,
+              "context": "this",
+              "operator": "==",
+              "subjectLost": null
+            },
+            {
+              "left": "InteractionLock.IsLocked",
+              "right": "0",
+              "offset": 5,
+              "context": "static",
+              "operator": "==",
+              "subjectLost": null
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

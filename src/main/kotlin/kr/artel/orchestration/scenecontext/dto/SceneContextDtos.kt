@@ -1,0 +1,253 @@
+package kr.artel.orchestration.scenecontext.dto
+
+/**
+ * agent-server 가 **런 시작에 한 번** 받아 두는 씬별 맥락(ARTEL-611).
+ *
+ * ARTEL-612 가 이것을 메모리에 들고 매 턴 **현재 씬의 조각만** 프롬프트에 그린다. 그래서 이
+ * payload 의 설계 축은 둘이다 — 런당 왕복 하나, 그리고 프롬프트가 감당할 수 있는 부피.
+ *
+ * **브라우저 조회(ARTEL-446)와 겸하지 않는다.** 한 엔드포인트로 겸하면 사람이 읽을 것의 요구가
+ * 프롬프트의 부피를 정하게 되고, 그 순간 어느 쪽도 줄일 수 없어진다.
+ *
+ * id 계열은 전부 문자열이다. 다른 payload 와 같은 이유로 — 64비트 정밀도 손실을 피한다.
+ *
+ * @property contentMapId 고른 지도. **null 이 정상이다** — 아직 아무도 `evidence` 를 올리지 않은
+ *   빌드에서 이 응답은 404 가 아니라 200 이고, 그때 이 값과 [capture] 가 비어 있다.
+ * @property capture `editor` · `editor-play` · `player`. 어느 관측으로 만든 지도인지에 따라 같은
+ *   필드가 다른 뜻이라(V40), agent 가 무엇을 읽고 있는지 알 수 있게 함께 낸다.
+ * @property scenes 지도가 아는 씬이 이름 오름차순으로 먼저 오고, 앵커에만 있는 씬이 역시 이름
+ *   오름차순으로 뒤에 붙는다. 순서를 고정하는 것은 취향이 아니다 — 이 목록이 프롬프트에 실려
+ *   프롬프트 캐시를 타므로, 줄 순서가 조회마다 흔들리면 캐시가 통째로 깨진다. 두 무리를 섞어
+ *   한 번에 정렬하지 않는 것은 지도에 씬이 생기고 사라져도 지도 쪽 블록의 순서가 흔들리지 않게
+ *   하기 위해서다.
+ * @property macros 이 지도에 등록된 `macro` 를 이름 오름차순으로 최대 30 개(ARTEL-934). 이전 런이
+ *   등록한 `macro` 를 이번 런이 알아보게 하려는 칸이다. 지도가 없으면 비어 있다. 순서를 고정하는
+ *   이유는 [scenes] 와 같다 — 이 목록도 프롬프트 캐시를 탄다. 이름·parameter·한 줄 요약·붙은
+ *   `screen` 까지만 싣고 `source` 와 `definition_json` 은 싣지 않는다. 원문은 agent 가 필요할 때
+ *   `MACRO_READ` frame 으로 읽는다.
+ * @property macrosTotal 자르기 전 `macro` 수. [macros] 가 30 개에서 잘렸는지는 이 값이 [macros] 의
+ *   크기보다 큰지로 안다. 지도가 없으면 0 이다.
+ */
+data class SceneContextResponse(
+    val gameBuildId: String,
+    val contentMapId: String? = null,
+    val capture: String? = null,
+    val scenes: List<SceneContextEntry> = emptyList(),
+    val macros: List<SceneContextMacro> = emptyList(),
+    val macrosTotal: Int = 0,
+)
+
+/**
+ * 등록된 `macro` 한 줄(ARTEL-934). **이름으로 찾고 `MACRO_READ` 로 원문을 읽으라는 색인**이다.
+ *
+ * 원문(`source`)도 실행용 tree(`definition_json`)도 담지 않는다. 한 건이 20,000자와 200,000자까지
+ * 가고, 이 payload 는 런을 시작할 때마다 내므로 `macro` 수십 개가 그대로 프롬프트 부피가 된다.
+ *
+ * @property parameters 진입점 `def` 가 선언한 parameter. 선언한 순서 그대로다 — `run_macro` 가
+ *   인자를 위치로 대응시키므로 순서가 바뀌면 호출이 틀린다. parameter 가 없으면 빈 목록이다.
+ * @property summary `macro.docstring` 칸 그대로(ARTEL-985). 진입점 `def` 의 docstring 이고, agent-server
+ *   가 `MACRO_REGISTER` 로 보낸 값이다. docstring 이 없는 macro 는 null 이다. `#` 주석 줄은 더 이상
+ *   읽지 않는다 — V101 이 기존 macro 의 그 줄을 docstring 으로 옮겼다.
+ * @property screens 이 `macro` 가 쓰일 수 있다고 달아 둔 `screen`, `screen` id 오름차순.
+ *   **빈 목록은 "아직 어디서 쓸지 모른다" 는 뜻이지 "어디서든 쓸 수 있다" 가 아니다.** 등록할 때
+ *   `screen` 을 달지 않은 `macro` 도 이 목록에 들어오고, 그때 이 칸이 비어 있다.
+ */
+data class SceneContextMacro(
+    val name: String,
+    val parameters: List<SceneContextMacroParameter> = emptyList(),
+    val summary: String? = null,
+    val screens: List<SceneContextMacroScreen> = emptyList(),
+)
+
+/**
+ * `macro` parameter 하나.
+ *
+ * @property type 진입점 `def` 가 적은 타입 이름(예 `object`, `string`). tree 에서 읽지 못하면
+ *   `unknown` 이다 — 저장할 때 모든 parameter 에 타입을 적도록 강제하므로 정상 행에서는 나오지 않는다.
+ */
+data class SceneContextMacroParameter(
+    val name: String,
+    val type: String,
+)
+
+/**
+ * `macro` 가 달린 `screen` 하나. 지식 앵커와 같은 이유로 id 는 문자열이다.
+ *
+ * @property sceneName `screen` 이 속한 `scene` 의 이름. `scene.name` 이 NOT NULL 이라 항상 있으나,
+ *   agent-server 쪽 계약이 null 을 허용하므로 타입은 nullable 로 둔다.
+ */
+data class SceneContextMacroScreen(
+    val screenId: String,
+    val sceneName: String?,
+)
+
+/**
+ * 씬 하나에서 **무엇을 할 수 있고 무엇이 그 씬에만 참인가**.
+ *
+ * **씬 이름이 두 반쪽을 잇는 유일한 키다.** 앵커는 content map 과 대조하지 않고 저장되므로
+ * (ARTEL-591, V55), content map 이 들어 본 적 없는 씬 이름을 든 앵커가 정상적으로 존재한다.
+ * 그런 씬도 이 목록에 들어오고, 그때 [capabilities] 가 비고 [knownToContentMap] 이 false 다.
+ *
+ * 반대로 지도에는 있는데 할 수 있는 것이 하나도 없는 씬도 남긴다. "이 씬은 아는데 할 게 없다"와
+ * "이 씬을 모른다"는 다른 답이고, 뭉개면 agent 가 지도에 있는 씬을 미지의 씬으로 읽는다.
+ *
+ * @property knownToContentMap 이 씬이 지도에 있는가. false 면 앵커 지식만으로 들어온 씬이다.
+ * @property origin 지도가 이 씬을 어디서 알아냈나. `evidence` 는 정적 분석이 설명한 씬이고
+ *   `observed` 는 **QA 런이 서 봤다는 사실뿐인 씬**이다(ARTEL-689). [knownToContentMap] 과 묻는
+ *   것이 다르다 — 저쪽은 지도가 이 씬을 아느냐이고 이쪽은 그 앎이 무엇에 근거하느냐다. 뭉개면
+ *   agent 는 `observed` 씬의 빈 [capabilities] 를 "근거가 훑었는데 할 게 없더라" 로 읽고, 실제로는
+ *   아무도 그 씬을 훑은 적이 없다. 앵커로만 들어온 씬에서는 null 이다.
+ * @property sceneSummary 지도가 아는 씬 설명. 앵커로만 들어온 씬에서는 null 이다.
+ * @property capabilities **agent 가 직접 할 수 있는 것.** `status` 가 `not-a-step` 이 아닌 행이고,
+ *   TC 생성기가 받는 것과 같은 집합이다. 접힌(`merged_into`) 행은 뷰에서 이미 빠진다.
+ * @property notAStepCapabilities **누를 수 없고 일어나는 것.** `status = 'not-a-step'` 인 행이다.
+ *   [capabilities] 와 같은 표에서 오고 모양도 같지만, 목록을 가르지 않으면 실측 51 개의
+ *   조작이 418 개 사이에 묻혀 agent 가 무엇을 시도해야 할지 흐려진다(ARTEL-680). 이쪽은
+ *   시도할 목록이 아니라 **일어난 것을 알아볼 목록**이다 — "적을 처치하면 보상을 받는다" 처럼
+ *   화면을 보고 확인해 `capability` 에 적는 대상(ARTEL-644, ARTEL-645).
+ *
+ *   칸 이름에 `status` 값을 그대로 박은 것은, 이 목록이 무슨 축으로 갈렸는지를 payload 만 보는
+ *   쪽도 알 수 있게 하기 위해서다. 각 줄의 `status` 를 읽으면 같은 값이 나온다.
+ * @property knowledge 이 씬에 묶인 지식. **본문은 없다** — 이 블록은 매 모델 호출마다 다시
+ *   그려지므로 본문을 실으면 그 비용을 런 내내 매 턴 다시 낸다.
+ * @property objects 이 씬에 놓인 오브젝트, 문서 순서로 최대 60 개(ARTEL-1059). planner 가 아직 가 보지
+ *   않은 씬의 스크립트를 쓸 때 selector 와 필드 이름을 지어내지 않게 하려는 칸이다. 지도가 없거나 V114
+ *   이전에 적재되어 아직 백필되지 않은 지도면 비어 있다.
+ * @property objectsTotal 자르기 전 오브젝트 수. [objects] 가 60 개에서 잘렸는지는 이 값으로 안다.
+ */
+data class SceneContextEntry(
+    val sceneName: String,
+    val knownToContentMap: Boolean,
+    val origin: String? = null,
+    val sceneSummary: String? = null,
+    val capabilities: List<SceneCapabilityView> = emptyList(),
+    val notAStepCapabilities: List<SceneCapabilityView> = emptyList(),
+    val knowledge: List<SceneKnowledgeView> = emptyList(),
+    val objects: List<SceneObjectView> = emptyList(),
+    val objectsTotal: Int = 0,
+)
+
+/**
+ * 씬에 놓인 오브젝트 하나(ARTEL-1059). `scene_object` 한 행이다.
+ *
+ * @property selector `Canvas[2]/continue[2]` 처럼 형제 인덱스가 박힌 경로. [SceneCapabilityView.controlSelectorHint]
+ *   와 같은 값이라 같은 한계가 있다 — 런마다 흔들릴 수 있어 조준 키로 믿으면 안 된다.
+ * @property active 스캔 시점의 활성 상태. 실행 중에는 바뀔 수 있다.
+ * @property components 문서의 컴포넌트 순서 그대로다.
+ */
+data class SceneObjectView(
+    val selector: String,
+    val active: Boolean,
+    val components: List<SceneObjectComponentView> = emptyList(),
+)
+
+/**
+ * 오브젝트의 컴포넌트 하나.
+ *
+ * @property type 타입 이름의 마지막 마디(`SelectableObject`). 코드의 표현식이 타입을 부르는 이름이다.
+ * @property fields 코드가 조건에서 읽거나 효과로 쓰는 이 타입의 필드, 이름 오름차순으로 최대 16 개.
+ *   `Type.field` 로 이어 쓰면 코드가 쓰는 표현식이 된다. 코드가 건드리지 않는 타입이면 비어 있다.
+ */
+data class SceneObjectComponentView(
+    val type: String,
+    val fields: List<String> = emptyList(),
+)
+
+/**
+ * 프롬프트 한 줄이 될 capability 하나.
+ *
+ * **`condition_tree` · `evidence` 주소(`entry_id`) · 효과는 여기 없다.** 프롬프트에 그릴 수 없는 것을
+ * 실으면 런당 payload 만 부풀고 agent 는 그것을 읽지 않는다. 필요해지면 그때 브라우저 조회가
+ * 이미 내주고 있다. 효과 중 `write` 의 대상만은 [writes] 로 싣는다(ARTEL-1059) — planner 가 그것을
+ * 한 줄로 그려 쓴다.
+ *
+ * @property capabilityId 액션·관측을 되짚을 때 쓰는 표시·조인용 id.
+ * @property capabilityKey 재적재를 넘어 살아남는 참조 키. **기억해 둘 값은 이쪽이다.** evidence
+ *   출신이 아니면 null 이다.
+ * @property status 세 축에서 유도된 값. "TC 로 만들 수 있나"에 대한 답이다.
+ *   [SceneContextEntry.notAStepCapabilities] 의 줄에서는 항상 `not-a-step` 이고, 나머지 줄에서는
+ *   결코 그 값이 아니다 — 목록이 갈린 축이 이 칸이다.
+ * @property actionability 실행 가능성. 이 조작을 실제로 할 수 있는가.
+ * @property observability 관측 가능성. `unobservable` 이어도 조작 스텝으로는 쓸 수 있다.
+ * @property applicability 적용 가능성. `not-applicable` 은 이 빌드에 아예 없다.
+ * @property verification 실행으로 확인됐나. [status] 와 다른 축이다 — 이쪽은 우리가 눌러 봤는지고
+ *   저쪽은 누를 수 있는지다. agent 가 무엇을 먼저 시도할지 고르는 재료다.
+ * @property scenePresence 이 줄이 왜 이 `scene` 에 있나(ARTEL-460). `placed` 는 근거가 이 `scene` 에
+ *   놓은 것이고, `persistent-unconfirmed` 는 `scene` 을 넘어 살아남는 오브젝트가 여기 있다는 사실뿐
+ *   이라 **여기서 되는지는 아무도 안 봤다.** 그 둘을 같은 줄로 읽으면 agent 는 `TurnBattleScene` 의
+ *   목록에 딸려 온 tutorial capability 를 그 `scene` 의 사실로 읽는다. `persistent-evidenced` 는
+ *   근거가 이 `scene` 을 지목한 것이고, 무엇을 읽고 그랬는지는 `capability_proof` 가 든다
+ * @property repeatUntilDone 한 번인지 끝날 때까지인지. `false` 가 기본이라 이 칸을 모르는
+ *   소비자도 기존과 같이 읽는다.
+ * @property controlSelectorHint **조준 키가 아니다.** 형제 인덱스가 박힌 경로라 런마다 흔들리고,
+ *   액션 프로토콜은 애초에 int instance id 를 받는다. 이름에 `Hint` 를 박아 둔 것은 이 값으로
+ *   맞추려 드는 것을 막기 위해서다 — 조준은 [controlPath] · [controlLabel] 과 게임 상태
+ *   프레임이 맡는다.
+ */
+data class SceneCapabilityView(
+    val capabilityId: String,
+    val capabilityKey: String? = null,
+    val summary: String,
+    /**
+     * **전제의 구조.** 조건을 실어 보내는 칸은 이것 하나다 — `condition_tree` 를 그대로 실은
+     * 것이고 419 / 419 있다.
+     *
+     * `capability.given_text` 는 여기 없다. 그 칸은 조건을 사람이 읽는 한 줄로 옮긴 것이라
+     * 옮기는 과정에서 값의 소속과 `either` / `every` 구분이 사라진다. 스키마가 두 칸을 나눈
+     * 뜻이 그것이다 — 문장은 화면이 읽고 기계는 트리를 읽는다(ARTEL-447).
+     *
+     * 조회 API 가 쓰는 것과 같은 모양이다([ConditionNodeResponse]) — 같은 트리를 두 벌로
+     * 직렬화하면 읽는 쪽이 어느 것이 맞는지 물어야 한다.
+     *
+     * `null` 은 근거 출신이 아니라 조건을 아예 모르는 것이고, `{kind:"always"}` 와 다른 말이다.
+     */
+    val given: kr.artel.orchestration.contentmap.dto.ConditionNodeResponse? = null,
+    val interaction: String,
+    val inputKey: String? = null,
+    val controlPath: String? = null,
+    val controlLabel: String? = null,
+    val status: String,
+    val actionability: String,
+    val observability: String,
+    val applicability: String,
+    val verification: String,
+    val scenePresence: String,
+    val repeatUntilDone: Boolean,
+    val controlSelectorHint: String? = null,
+    /**
+     * 이 줄이 대표하는 `capability` 행 수. 1 이면 접힌 것이 없다.
+     *
+     * 적재는 **효과가 사는 메서드까지** 정체에 넣는다([CapabilityKey] 의 표). 그것이 필요해서
+     * 그렇게 하지만, 그 결과 사람이 "기능 하나" 로 세는 것이 여러 줄로 갈린다 — 실측
+     * `Canvas/MapSceneButton` 이 한 `scene` 에서 7 줄이다. agent 는 그 버튼을 한 번 누르고
+     * 화면이 바뀐 것만 보므로, 7 줄 중 어디에 판정을 찍어야 하는지 고를 수가 없다(ARTEL-805).
+     *
+     * 그래서 읽는 쪽에서 접는다. 이 수는 접혔다는 사실 자체를 숨기지 않기 위한 것이다.
+     */
+    val covers: Int = 1,
+    /**
+     * 이 `capability` 의 코드가 쓰는 상태 필드(`SelectableObject.selectable`), 최대 8 개(ARTEL-1059).
+     *
+     * `capability_effect` 의 `kind = 'write'` 행의 `target` 이다. 접힌 줄이면 [covers] 의 행 전부의 것을
+     * 중복 없이 합친다 — 같은 진입점이 부르는 메서드들이 나눠 쓰는 값이고, 버튼 하나를 누르면 그 전부가
+     * 바뀐다. "누르면 무엇이 바뀌나"를 알아야 planner 가 조작의 순서를 정한다. 없으면 빈 목록이다.
+     */
+    val writes: List<String> = emptyList(),
+)
+
+/**
+ * 이 씬에서만 참인 사실 한 줄(ARTEL-591 의 앵커).
+ *
+ * **id 와 요약뿐이다.** 본문(`description`)은 담지 않는다 — agent 는 필요할 때 [knowledgeId] 로
+ * 검색해 본문을 가져올 수 있고, 그 편이 매 턴 다시 그려지는 블록에 본문을 상주시키는 것보다
+ * 훨씬 싸다.
+ *
+ * **앵커가 없는 지식은 여기 없다.** 그것은 게임 전체의 사실이고 지식창고의 대부분이라, 이
+ * 응답에 담으면 "씬별"이라는 말이 뜻을 잃는다. 그쪽은 검색이 답한다.
+ *
+ * 화면(`screen_id`)까지는 내리지 않는다. 화면 판정은 ARTEL-453 이 먼저이고 이 응답은 씬 단위다.
+ */
+data class SceneKnowledgeView(
+    val knowledgeId: String,
+    val summary: String,
+)

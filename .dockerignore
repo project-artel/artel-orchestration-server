@@ -1,0 +1,12 @@
+# Dockerfile 은 target/*.jar 만 COPY 한다. Jenkins 의 docker build 도 이 파일을 그대로
+# 쓰므로, 여기서 뺀 것이 곧 Jenkins build context 에서도 빠진다 — COPY 대상인 fat jar 는
+# 반드시 남겨야 한다.
+target/*
+!target/*.jar
+
+.git
+.env
+.env.*
+.plan
+.agents
+.claude

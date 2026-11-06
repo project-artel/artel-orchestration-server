@@ -1,0 +1,41 @@
+package kr.artel.orchestration.issue.entity
+
+import io.r2dbc.postgresql.codec.Json
+import org.springframework.data.annotation.Id
+import org.springframework.data.relational.core.mapping.Column
+import org.springframework.data.relational.core.mapping.Table
+import java.time.Instant
+
+/**
+ * QA 실행 중 Agent가 보고한 이슈 한 건.
+ *
+ * [detail]에는 Agent가 보낸 payload 전체가 JSONB로 담긴다(qa_log.payload와 동일 방식).
+ * created/updated는 컬럼 기본값 대신 서비스에서 stamp한다 — R2DBC는 insert 후 기본값 컬럼을
+ * 다시 읽어오지 않아, 그러지 않으면 저장된 엔티티의 createdAt이 null로 나온다(QaLogEntity와 동일).
+ *
+ * [reportedAt]은 Agent가 프레임에 찍은 이벤트 시각(envelope.timestamp) — 버그가 실제로 관측된
+ * 순간이다. 우리가 저장한 시각인 [createdAt]과 구분된다(네트워크 지연·재전송으로 벌어질 수 있음).
+ *
+ * [status]/[resolvedAt]/[resolvedBy]는 사람이 남기는 유일한 흔적이다(ARTEL-245). 저장 경로는
+ * 이 셋을 넘기지 않으므로 기본값이 곧 신규 이슈의 상태다 — Agent가 보고한 이슈는 항상 OPEN이다.
+ */
+@Table("issue")
+data class IssueEntity(
+    @Id val id: Long? = null,
+    @Column("qa_try_id") val qaTryId: Long,
+    @Column("message_id") val messageId: String? = null,
+    @Column("correlation_id") val correlationId: String? = null,
+    val severity: String,
+    val title: String,
+    val detail: Json = Json.of("{}"),
+    @Column("reported_at") val reportedAt: Instant,
+    val status: String = IssueStatus.OPEN.name,
+    @Column("resolved_at") val resolvedAt: Instant? = null,
+    @Column("resolved_by") val resolvedBy: Long? = null,
+    @Column("created_at") val createdAt: Instant? = null,
+    @Column("updated_at") val updatedAt: Instant? = null,
+    /** 프로젝트 안 번호(V120). 넣을 때 DB 트리거가 채우므로 새 행은 null 로 보낸다. */
+    @Column("project_no") val projectNo: Long? = null,
+    /** 보관한 때. null 이면 보관하지 않았다(V120). */
+    @Column("archived_at") val archivedAt: Instant? = null
+)

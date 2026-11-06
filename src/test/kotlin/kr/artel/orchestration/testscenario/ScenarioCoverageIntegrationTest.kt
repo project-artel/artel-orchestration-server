@@ -1,0 +1,240 @@
+package kr.artel.orchestration.testscenario
+
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
+import kr.artel.orchestration.auth.repository.AppUserRepository
+import kr.artel.orchestration.game.entity.GameBuildEntity
+import kr.artel.orchestration.game.repository.GameBuildRepository
+import kr.artel.orchestration.project.entity.ProjectEntity
+import kr.artel.orchestration.project.entity.ProjectMemberEntity
+import kr.artel.orchestration.project.repository.ProjectMemberRepository
+import kr.artel.orchestration.project.repository.ProjectRepository
+import kr.artel.orchestration.support.testAppUser
+import kr.artel.orchestration.testcase.entity.TestCaseEntity
+import kr.artel.orchestration.testcase.entity.TestCaseVersionEntity
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testcase.repository.TestCaseVersionRepository
+import kr.artel.orchestration.testrun.entity.TestRunEntity
+import kr.artel.orchestration.testrun.repository.TestRunRepository
+import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
+import kr.artel.orchestration.testscenario.dto.ReviewedCases
+import kr.artel.orchestration.testscenario.dto.ScenarioResult
+import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+import kr.artel.orchestration.testscenario.service.ScenarioReconcileService
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.context.ActiveProfiles
+import java.time.Instant
+
+/**
+ * 검수가 **실제 저장을 막는지**를 본다. 규칙 자체는 [ScenarioCoverageAuditTest]가 DB 없이 따로
+ * 검증하고, 여기서는 "막혔다면 정말 한 줄도 안 들어갔는가"만 확인한다 — 부분 저장은 "일부만 검증된
+ * 시나리오"를 남기고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어 보인다).
+ *
+ * 미커버 조회도 함께 본다. 커버 집합을 테이블로 저장하지 않고 `steps`의 `case_id`에서 매번 계산하므로,
+ * 이 질의가 틀리면 화면 수치와 Agent 제안이 동시에 틀린다.
+ */
+@ActiveProfiles("test")
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+class ScenarioCoverageIntegrationTest {
+
+    @Autowired private lateinit var reconcileService: ScenarioReconcileService
+    @Autowired private lateinit var scenarioRepository: TestScenarioRepository
+    @Autowired private lateinit var testCaseRepository: TestCaseRepository
+    @Autowired private lateinit var testCaseService: kr.artel.orchestration.testcase.service.TestCaseService
+    @Autowired private lateinit var runRepository: TestRunRepository
+    @Autowired private lateinit var appUserRepository: AppUserRepository
+    @Autowired private lateinit var projectRepository: ProjectRepository
+    @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
+    @Autowired private lateinit var gameBuildRepository: GameBuildRepository
+    @Autowired private lateinit var versionRepository: TestCaseVersionRepository
+
+    // 제목을 케이스로 가른다 — 같은 런에서 같은 제목은 **갈아끼우는 것**이 저장 계약이라
+    // (재작성 턴의 중복 저장을 막는 규칙, 계측 2026-09-08), 픽스처끼리 제목이 겹치면 안 된다.
+    private fun scenario(vararg caseIds: Long?) = ScenarioResult(
+        title = "저작된 시나리오 ${caseIds.filterNotNull().joinToString("-")}",
+        steps = caseIds.map { ChatScenarioStep(action = "행위", caseId = it) },
+    )
+
+    @Test
+    fun `판정한 케이스가 빠지면 한 줄도 저장되지 않는다`(): Unit = runBlocking {
+        val (projectId, runId, cases) = fixture(3)
+
+        val outcome = reconcileService.reconcile(
+            runId, projectId, memberOf(projectId),
+            listOf(scenario(cases[0])),
+            ReviewedCases(included = listOf(cases[0], cases[1]), excluded = listOf(cases[2])),
+        )
+
+        assertThat(outcome.rejected).isTrue()
+        assertThat(outcome.applied).isZero()
+        assertThat(outcome.findings.missing).containsExactly(cases[1])
+        // 부분 저장이 없다는 것이 이 테스트의 요점이다.
+        assertThat(scenarioRepository.findByProjectId(projectId).toList()).isEmpty()
+    }
+
+    @Test
+    fun `검토하지 않은 케이스가 있으면 저장되지 않는다`(): Unit = runBlocking {
+        val (projectId, runId, cases) = fixture(3)
+
+        // 판정이 두 건만 덮는다. 셋째는 어느 배열에도 없다 = 보지 않았다.
+        val outcome = reconcileService.reconcile(
+            runId, projectId, memberOf(projectId),
+            listOf(scenario(cases[0])),
+            ReviewedCases(included = listOf(cases[0]), excluded = listOf(cases[1])),
+        )
+
+        assertThat(outcome.findings.unreviewed).containsExactly(cases[2])
+        assertThat(scenarioRepository.findByProjectId(projectId).toList()).isEmpty()
+    }
+
+    @Test
+    fun `없는 케이스 번호를 가리키면 저장되지 않는다`(): Unit = runBlocking {
+        val (projectId, runId, cases) = fixture(2)
+        val ghost = cases.max() + 9_999
+
+        val outcome = reconcileService.reconcile(
+            runId, projectId, memberOf(projectId),
+            listOf(scenario(cases[0], ghost)),
+            ReviewedCases(included = listOf(cases[0]), excluded = listOf(cases[1])),
+        )
+
+        assertThat(outcome.findings.ghost).containsExactly(ghost)
+        assertThat(scenarioRepository.findByProjectId(projectId).toList()).isEmpty()
+    }
+
+    @Test
+    fun `검수를 통과하면 평소대로 저장된다`(): Unit = runBlocking {
+        val (projectId, runId, cases) = fixture(3)
+
+        val outcome = reconcileService.reconcile(
+            runId, projectId, memberOf(projectId),
+            listOf(scenario(cases[0], null), scenario(cases[1])),
+            ReviewedCases(included = listOf(cases[0], cases[1]), excluded = listOf(cases[2])),
+        )
+
+        assertThat(outcome.rejected).isFalse()
+        assertThat(outcome.applied).isEqualTo(2)
+        assertThat(scenarioRepository.findByProjectId(projectId).toList()).hasSize(2)
+    }
+
+    @Test
+    fun `판정이 없으면 검사 없이 저장된다`(): Unit = runBlocking {
+        // 구버전 Agent 경로. 이 null 하나가 롤백 스위치이므로 저장이 막히면 안 된다.
+        val (projectId, runId, cases) = fixture(2)
+
+        val outcome = reconcileService.reconcile(runId, projectId, memberOf(projectId), listOf(scenario(cases[0])))
+
+        assertThat(outcome.rejected).isFalse()
+        assertThat(outcome.applied).isEqualTo(1)
+        assertThat(scenarioRepository.findByProjectId(projectId).toList()).hasSize(1)
+    }
+
+    @Test
+    fun `미커버 조회는 시나리오가 건드리지 않은 케이스만 낸다`(): Unit = runBlocking {
+        val (projectId, runId, cases) = fixture(4)
+
+        // 셋 중 둘만 담는다. 브리지 스텝(case_id null)은 아무것도 커버하지 않아야 한다.
+        reconcileService.reconcile(runId, projectId, memberOf(projectId), listOf(scenario(cases[0], null, cases[2])))
+
+        assertThat(testCaseRepository.findUncoveredIdsByProjectId(projectId).toList())
+            .containsExactly(cases[1], cases[3])
+    }
+
+    @Test
+    fun `시나리오가 없으면 전량이 미커버다`(): Unit = runBlocking {
+        val (projectId, _, cases) = fixture(3)
+
+        assertThat(testCaseRepository.findUncoveredIdsByProjectId(projectId).toList())
+            .containsExactlyElementsOf(cases)
+    }
+
+    @Test
+    fun `커버리지는 저작 축과 검증 축을 함께 낸다`(): Unit = runBlocking {
+        val (projectId, runId, cases) = fixture(4)
+        // 하나는 QA 런이 통과시킨 상태로 만든다 — 저작 여부와 검증 여부는 다른 축이다.
+        testCaseRepository.findById(cases[0])!!
+            .let { testCaseRepository.save(it.copy(verificationStatus = "VERIFIED")) }
+        reconcileService.reconcile(runId, projectId, memberOf(projectId), listOf(scenario(cases[0], cases[1])))
+
+        val coverage = testCaseService.coverage(projectId, memberOf(projectId))
+
+        assertThat(coverage.total).isEqualTo(4)
+        assertThat(coverage.authored).isEqualTo(2)
+        assertThat(coverage.unauthored).isEqualTo(2)
+        // 저작된 2건 중 1건만 검증됐다. 두 축이 같은 값이 아니라는 것이 이 응답의 요점이다.
+        assertThat(coverage.verified).isEqualTo(1)
+        assertThat(coverage.draft).isEqualTo(3)
+        assertThat(coverage.broken).isZero()
+        assertThat(coverage.uncoveredScenes.sumOf { it.count }).isEqualTo(2)
+    }
+
+    @Test
+    fun `비참여자에게는 전부 0으로 답한다`(): Unit = runBlocking {
+        val (projectId, _, _) = fixture(3)
+        val outsider = appUserRepository.save(
+            testAppUser("outsider")
+        ).id!!
+
+        val coverage = testCaseService.coverage(projectId, outsider)
+
+        // 건수를 흘리는 것도 존재를 알리는 일이다 — 목록과 같은 판단.
+        assertThat(coverage.total).isZero()
+        assertThat(coverage.uncoveredScenes).isEmpty()
+    }
+
+    /** 이 프로젝트의 참여자 id. fixture가 만든 사용자를 되찾는다. */
+    /**
+     * 빌드 버전을 따르는 런은 그 버전에 든 케이스만 저작에 보내므로, 판정도 그만큼만 요구한다(ARTEL-1048). 프로젝트
+     * 전체로 세면 보내지도 않은 케이스(버전 없는 사용자 TC · 다른 버전에만 있는 TC)가 "검토 안 함" 이 되어 저장이 늘
+     * 막혔다. 버전 없는 런은 예전처럼 프로젝트 전체다.
+     */
+    @Test
+    fun `빌드 버전을 따르는 런은 그 버전에 든 케이스만 판정을 요구한다`(): Unit = runBlocking {
+        val (projectId, runId, cases) = fixture(3)
+        val now = Instant.now()
+        val build = gameBuildRepository.save(GameBuildEntity(projectId = projectId, version = "1.0.0", createdAt = now, updatedAt = now))
+        cases.take(2).forEach { id -> versionRepository.save(TestCaseVersionEntity.snapshotOf(testCaseRepository.findById(id)!!, build.id!!)) }
+        val versioned = runRepository.save(runRepository.findById(runId)!!.copy(gameBuildId = build.id))
+        val review = ReviewedCases(included = listOf(cases[0]), excluded = listOf(cases[1]))
+
+        val inVersion = reconcileService.reconcile(versioned.id!!, projectId, memberOf(projectId), listOf(scenario(cases[0])), review)
+        assertThat(inVersion.findings.unreviewed).isEmpty()
+
+        val unversioned = runRepository.save(TestRunEntity(projectId = projectId, name = "버전 없는 런")).id!!
+        val wholeProject = reconcileService.reconcile(unversioned, projectId, memberOf(projectId), listOf(scenario(cases[0])), review)
+        assertThat(wholeProject.findings.unreviewed).containsExactly(cases[2])
+        assertThat(wholeProject.rejected).isTrue()
+    }
+
+    private suspend fun memberOf(projectId: Long): Long =
+        projectMemberRepository.findByProjectId(projectId).toList().first().appUserId
+
+    /** 프로젝트 + 참여자 + 런 + 케이스 [count]건. 케이스 id는 오름차순. */
+    private suspend fun fixture(count: Int): Triple<Long, Long, List<Long>> {
+        val now = Instant.now()
+        val userId = appUserRepository.save(
+            testAppUser("coverage-user", now)
+        ).id!!
+        val projectId = projectRepository.save(
+            ProjectEntity(name = "coverage-project", genre = "ACTION", createdAt = now, updatedAt = now)
+        ).id!!
+        projectMemberRepository.save(
+            ProjectMemberEntity(projectId = projectId, appUserId = userId, role = "MEMBER", createdAt = now)
+        )
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val cases = (1..count).map { n ->
+            testCaseRepository.save(
+                TestCaseEntity(
+                    projectId = projectId,
+                    scene = "TitleScene",
+                    step = "스텝 $n",
+                    expectedValue = "기대 $n",
+                )
+            ).id!!
+        }
+        return Triple(projectId, runId, cases)
+    }
+}

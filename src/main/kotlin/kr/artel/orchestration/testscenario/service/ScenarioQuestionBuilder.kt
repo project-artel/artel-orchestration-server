@@ -1,0 +1,187 @@
+package kr.artel.orchestration.testscenario.service
+
+import kr.artel.orchestration.testscenario.dto.ScenarioQuestion
+import kr.artel.orchestration.testscenario.dto.ScenarioQuestionOption
+import kr.artel.orchestration.testscenario.dto.ScenarioQuestionSource
+
+/**
+ * 저장하고 나서 **메우지 못한 구간을 되묻는다**(ARTEL-487).
+ *
+ * 코드가 이미 아는 것이라 선택지까지 계산된다. 통보로만 나가던 동안 사용자는 읽고 나서 무엇을
+ * 어떻게 말해야 반영되는지 스스로 지어내야 했고, 보기를 주면 한 번 누르는 것으로 끝난다.
+ *
+ * **묻는 것은 Gap 하나로 좁혔다**(ARTEL-903). 앞서는 셋을 물었다 — 메우지 못한 구간, 빠진
+ * 갈래, 담은 범위. 뒤의 둘을 걷어낸 기준은 **답이 시나리오를 바꾸는가**다.
+ *
+ * - Gap 은 답이 곧 스텝이 된다("저절로 넘어감" → 그 문장이 자리에 들어간다). 답하지 않으면
+ *   실행하는 사람이 거기서 멎는다.
+ * - 담은 범위는 씬별 집계였는데, **씬은 저작의 단위가 아니다.** 시나리오는 여러 씬을 지나는
+ *   흐름이라 "TurnBattleScene 8/29" 로는 다음에 무엇을 할지 정할 수 없다. 저작이 씬 단위였던
+ *   시절의 물음이다. 이 런이 무엇을 담았는지는 조회로 본다(`GET …/test-runs/{runId}/coverage`).
+ * - 빠진 갈래는 [ScenarioReconcileService.siblingNotices] 의 **알림으로 남긴다.** 사실 자체는
+ *   계산으로만 알 수 있어 말해 주어야 하지만, "더 만들까요" 는 답해도 이 시나리오가 나아지지
+ *   않는 물음이라 카드를 차지할 값이 없다.
+ *
+ * 보기 문구를 **사용자가 할 말 그대로** 쓴다. 고른 답은 그 문장으로 모델에게 되돌아가므로,
+ * 모델이 따로 해석할 것이 없다 — 오케에 새 실행 경로를 만들지 않아도 된다.
+ */
+object ScenarioQuestionBuilder {
+
+    /** 미상 구간 질문의 id 앞머리. 뒤에는 막은 것(`StoryScene→Map_scene`)이 그대로 붙는다. */
+    const val GAP_PREFIX = "gap:"
+
+    /** 조작 없이 넘어간다는 답. 사용자가 따로 적지 않으면 이 문장이 스텝이 된다. */
+    const val GAP_AUTO = "auto"
+
+    /** 지금은 채우지 않겠다는 답. */
+    const val GAP_LEAVE = "leave"
+
+    /** [GAP_AUTO] 를 골랐을 때 자리에 남길 말. */
+    const val AUTOMATIC_HOP = "조작 없이 다음 화면으로 전환될 때까지 기다린다."
+
+    /**
+     * **함께 담을 수 없는 케이스는 묻지 않는다**(ARTEL-497). 계산되는 것을 물어 왕복하는 동안
+     * 값을 치르고 정확도를 잃었고, 답이 무엇을 뜻하는지 모델이 몰라 **같은 질문이 답할 때마다
+     * 다시 나갔다**(런 152). 지금은 [ScenarioConflictSplit] 이 나누고, 나눴다고 알린다.
+     *
+     * @param blockedGaps 메우지 못한 구간을 막은 것들(씬 쌍 또는 변수명).
+     */
+    fun from(blockedGaps: List<String>): ScenarioQuestion? = all(blockedGaps).firstOrNull()
+
+    /**
+     * **모르는 자리를 전부 낸다**(ARTEL-630).
+     *
+     * 앞서는 [from] 이 하나만 골라 냈다. 막힌 자리가 여럿이면 나머지는 **아무 말 없이 미상으로**
+     * 남고, 사용자는 시나리오가 완성된 줄 안다 — 실측(런 178)에서 못 간다고 적은 자리가 일곱인데
+     * 물은 것은 하나였다.
+     *
+     * 하나만 묻던 것은 "같은 질문이 매 턴 다시 나가는" 것을 막으려던 것이었는데(런 152), 그건
+     * **답한 질문을 다시 안 묻는 것**으로 풀 일이지 모르는 것을 감춰서 풀 일이 아니다. 한 번에
+     * 다 보여 주면 아는 것만 답하고 나머지는 그대로 둘 수 있다.
+     */
+    fun all(blockedGaps: List<String>): List<ScenarioQuestion> =
+        blockedGaps.distinct().map(::gapQuestion)
+
+    /**
+     * 모델이 물은 것([askText])이 이 질문들 가운데 미상 구간([questionIds])과 같은 자리를 묻나. 구간의 두 화면 이름이 다
+     * 들어 있으면 같은 자리로 본다. 같은 구간을 두 번 물으면 사용자는 어느 쪽에 답해야 하는지 모르고, 답할 자리가 있는 것은
+     * 이쪽(답이 그 자리에 들어가고 길로 남는다)이다. 구간이 아니라 값이 막은 것(`StagePosition`)은 견주지 않는다.
+     */
+    fun repeatsGap(askText: String, questionIds: Collection<String>): Boolean {
+        val said = askText.filterNot(Char::isWhitespace)
+        return questionIds.asSequence()
+            .filter { it.startsWith(GAP_PREFIX) }
+            .map { it.removePrefix(GAP_PREFIX).split("→") }
+            .filter { ends -> ends.size == 2 && ends.all { it.isNotBlank() } }
+            .any { ends -> ends.all { said.contains(it.filterNot(Char::isWhitespace)) } }
+    }
+
+    /**
+     * 길을 모르는 자리. **자유 서술이 본체이고 보기는 곁들이다** — "어떻게 가는가"는 보기로 다
+     * 담기지 않는다. 그래도 두 가지는 보기로 둘 만하다: 저절로 넘어가는 경우와, 그대로 두는 경우.
+     */
+    private fun gapQuestion(blockedBy: String) = ScenarioQuestion(
+        id = "$GAP_PREFIX$blockedBy",
+        text = "$blockedBy 구간을 어떻게 넘어가나요?",
+        why = "이 전환이 씬 명세에 없어 시나리오에 미상으로 남겨 두었습니다.",
+        options = listOf(
+            ScenarioQuestionOption(
+                GAP_AUTO, "저절로 넘어감",
+                "조작 없이 전환되는 구간이면 그렇게 적습니다.",
+            ),
+            ScenarioQuestionOption(
+                GAP_LEAVE, "그대로 두기",
+                "지금은 미상으로 두고 나중에 채웁니다.",
+            ),
+        ),
+        source = ScenarioQuestionSource.CODE,
+    )
+
+
+    /** 계약 질문의 id 앞머리. 뒤에는 `케이스|이름|비교|값` 이 붙는다 — 답을 코드가 그대로 계약에 옮긴다. */
+    const val CONTRACT_PREFIX = "contract:"
+    const val CONTRACT_YES = "yes"
+    const val CONTRACT_YES_BY = "yes-by:"
+    const val CONTRACT_START = "start"
+    const val CONTRACT_NO = "no"
+    /** 시작 값 질문의 보기 앞머리. 뒤에 고른 값이 붙는다(`start=낮`). */
+    const val CONTRACT_START_VALUE = "start="
+    /** 시작 값 질문은 어느 케이스의 것도 아니다. 질문 id 의 비교 자리에 이것을 둔다. */
+    const val START_OPERATOR = "start"
+
+    /**
+     * 짠 경로에서 확인 안 된 요구가 채워지지 않은 자리 하나.
+     *
+     * @property assumed 상식 추정이면 true, 아무 케이스도 남기지 않는 요구면 false.
+     * @property makers 그 값을 남기는 케이스(추정일 때만) — "맞아요, 이 케이스가 만든다"로 고른다.
+     */
+    data class ContractBlock(
+        val caseId: Long,
+        val caseText: String,
+        val guard: Guard,
+        val assumed: Boolean,
+        val makers: List<Pair<Long, String>>,
+    )
+
+    /** 짠 경로가 처음 쓰는 값인데 게임을 켤 때 무엇인지 모르는 것. 보기는 계약들이 그 값에 쓰는 것들이다. */
+    data class StartBlock(val variable: String, val values: List<String>)
+
+    /** 질문 id 에서 되읽은 자리. */
+    data class ContractRef(val caseId: Long, val variable: String, val operator: String, val value: String)
+
+    fun contractRef(questionId: String): ContractRef? {
+        if (!questionId.startsWith(CONTRACT_PREFIX)) return null
+        val parts = questionId.removePrefix(CONTRACT_PREFIX).split("|")
+        if (parts.size != 4) return null
+        return ContractRef(parts[0].toLongOrNull() ?: return null, parts[1], parts[2], parts[3])
+    }
+
+    /** 사람이 읽는 조건. `검 == 1` → `검`, `검 == 0` → `검 없음`, `낮밤 == 밤` → `낮밤: 밤`. */
+    fun readable(guard: Guard): String {
+        val name = guard.variable.replace('_', ' ')
+        return when {
+            guard.operator == "==" && guard.value == "1" -> name
+            guard.operator == "==" && guard.value == "0" -> "$name 없음"
+            guard.operator == "==" -> "$name: ${guard.value.replace('_', ' ')}"
+            else -> "$name ${guard.operator} ${guard.value}"
+        }
+    }
+
+    /**
+     * 새 게임을 시작할 때의 값을 묻는다. 순환하는 값(낮 · 밤)은 처음이 무엇인지 TC 글에 거의 적히지 않는다 — 모르면
+     * 저작은 밤을 만드는 스텝이 필요한지 모른다. 답은 프로젝트의 시작 상태에 남고 다시 묻지 않는다.
+     */
+    fun startQuestion(block: StartBlock): ScenarioQuestion = ScenarioQuestion(
+        id = "${CONTRACT_PREFIX}0|${block.variable}|$START_OPERATOR|?",
+        text = "새 게임을 시작하면 **${block.variable.replace('_', ' ')}** 은(는) 무엇인가요?",
+        why = "처음 값을 알아야 그 값을 바꾸는 스텝이 필요한지 정할 수 있어요. 답은 이 프로젝트에 저장해 두고 다시 묻지 않아요.",
+        options = block.values.map { ScenarioQuestionOption("$CONTRACT_START_VALUE$it", it.replace('_', ' ')) },
+        source = ScenarioQuestionSource.CODE,
+    )
+
+    fun contractQuestion(block: ContractBlock): ScenarioQuestion {
+        val what = readable(block.guard)
+        val id = "$CONTRACT_PREFIX${block.caseId}|${block.guard.variable}|${block.guard.operator}|${block.guard.value}"
+        return if (block.assumed) ScenarioQuestion(
+            id = id,
+            text = "‘${block.caseText}’ 에 **$what** 이(가) 필요해 보여요. 맞나요?",
+            why = "케이스 글에는 없지만 상식으로 추정했어요. 맞으면 앞에 그것을 만드는 스텝을 넣습니다.",
+            options = block.makers.take(2).map { (makerId, makerText) ->
+                ScenarioQuestionOption("$CONTRACT_YES_BY$makerId", "맞아요 — ‘$makerText’ 가 만들어요")
+            } + listOf(
+                ScenarioQuestionOption(CONTRACT_YES, "맞아요"),
+                ScenarioQuestionOption(CONTRACT_NO, "필요 없음"),
+            ),
+            source = ScenarioQuestionSource.CODE,
+        ) else ScenarioQuestion(
+            id = id,
+            text = "‘${block.caseText}’ 앞에 **$what** 이(가) 필요한데, 이걸 만드는 케이스를 못 찾았어요. 어느 쪽인가요?",
+            why = "답은 이 프로젝트에 저장해 두고 다시 묻지 않아요. 만드는 방법이 따로 있으면 적어 주세요.",
+            options = listOf(
+                ScenarioQuestionOption(CONTRACT_START, "처음부터 그래요"),
+                ScenarioQuestionOption(CONTRACT_NO, "필요 없음"),
+            ),
+            source = ScenarioQuestionSource.CODE,
+        )
+    }
+}

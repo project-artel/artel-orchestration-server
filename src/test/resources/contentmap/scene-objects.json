@@ -1,0 +1,162 @@
+{
+  "schema": 7,
+  "capture": "player",
+  "capabilities": ["build-info-v1", "selector-v1", "visual-roles-v1", "persistent-objects-v1"],
+  "build": {
+    "unity": "2022.3.62f3", "platform": "OSXPlayer", "backend": "mono",
+    "development": true, "sdk": "0.1.0", "evidence": "5ce0b1ec7a11d00d"
+  },
+  "scenes": ["BattleScene", "TitleScene"],
+  "types": {
+    "Combat.CombineZone": [
+      {
+        "owner": "Combat.CombineZone",
+        "entry": "System.Void Combat.CombineZone::OnButtonClick()",
+        "entryId": "Assembly-CSharp|Combat.CombineZone|OnButtonClick|System.Void()",
+        "source": "System.Void Combat.CombineZone::SetSelectable()",
+        "methodId": "Assembly-CSharp|Combat.CombineZone|SetSelectable|System.Void()",
+        "recordKind": "candidate",
+        "triggerKind": "unity-event",
+        "confidence": "verified",
+        "calledBy": [],
+        "callPath": [
+          "System.Void Combat.CombineZone::OnButtonClick()",
+          "System.Void Combat.CombineZone::SetSelectable()"
+        ],
+        "condition": {
+          "kind": "every",
+          "parts": [
+            {
+              "kind": "test", "left": "SelectableObject.selectable", "operator": "==", "right": "false",
+              "context": "Combat.Enemies.SelectableObject", "offset": 3
+            },
+            {
+              "kind": "either",
+              "parts": [
+                {
+                  "kind": "test", "left": "Player.hp", "operator": ">", "right": "0",
+                  "context": "Combat.Enemies.Player", "offset": 5
+                },
+                {
+                  "kind": "test", "left": "count", "operator": ">", "right": "0",
+                  "context": null, "offset": 6, "subjectLost": "local-variable"
+                },
+                {
+                  "kind": "test", "left": "Enemy.Find().hp", "operator": ">", "right": "0",
+                  "context": null, "offset": 7, "subjectLost": "call-result"
+                }
+              ]
+            }
+          ]
+        },
+        "inputs": [],
+        "effects": [
+          {
+            "kind": "write", "category": "state", "target": "SelectableObject.selectable", "detail": "true",
+            "source": "System.Void Combat.CombineZone::SetSelectable()", "offset": 11
+          },
+          {
+            "kind": "write", "category": "state", "target": "Player.HpText.text", "detail": null,
+            "source": "System.Void Combat.CombineZone::SetSelectable()", "offset": 14
+          },
+          {
+            "kind": "write", "category": "state", "target": "(not a simple receiver)", "detail": null,
+            "source": "System.Void Combat.CombineZone::SetSelectable()", "offset": 17
+          },
+          {
+            "kind": "active-state", "category": "availability", "target": "Canvas/CombinePanel", "detail": "true",
+            "source": "System.Void Combat.CombineZone::SetSelectable()", "offset": 20
+          }
+        ],
+        "calls": [], "handles": [], "alsoReachedBy": [], "gaps": []
+      }
+    ],
+    "Ui.TitleMenu": [
+      {
+        "owner": "Ui.TitleMenu",
+        "entry": "System.Void Ui.TitleMenu::Update()",
+        "entryId": "Assembly-CSharp|Ui.TitleMenu|Update|System.Void()",
+        "source": "System.Void Ui.TitleMenu::Update()",
+        "methodId": "Assembly-CSharp|Ui.TitleMenu|Update|System.Void()",
+        "recordKind": "candidate",
+        "triggerKind": "lifecycle",
+        "confidence": "derived",
+        "calledBy": [],
+        "callPath": ["System.Void Ui.TitleMenu::Update()"],
+        "condition": {"kind": "gesture", "input": "key:Return (down)", "offset": 2},
+        "inputs": [
+          {"kind": "key", "control": "Return", "phase": "down", "absent": false, "offset": 2}
+        ],
+        "effects": [
+          {
+            "kind": "scene", "category": "observable", "target": "BattleScene", "detail": null,
+            "source": "System.Void Ui.TitleMenu::Update()", "offset": 9
+          }
+        ],
+        "calls": [], "handles": [], "alsoReachedBy": [], "gaps": []
+      }
+    ]
+  },
+  "unplaced": {},
+  "objects": [
+    {
+      "path": "Canvas/CombineButton",
+      "selector": "Canvas[0]/CombineButton[2]",
+      "scene": "BattleScene",
+      "active": true,
+      "visuals": [
+        {"role": "control-caption", "value": "COMBINE", "from": "Canvas/CombineButton", "type": "UnityEngine.UI.Text"}
+      ],
+      "components": [
+        {
+          "type": "UnityEngine.UI.Button",
+          "calls": [
+            {
+              "event": "m_OnClick", "targetType": "Combat.CombineZone",
+              "targetPath": "Canvas/CombineButton", "method": "OnButtonClick"
+            }
+          ],
+          "refs": []
+        },
+        {"type": "Combat.CombineZone", "calls": [], "refs": []}
+      ]
+    },
+    {
+      "path": "Word",
+      "selector": "Word[13]",
+      "scene": "BattleScene",
+      "active": false,
+      "visuals": [],
+      "components": [
+        {"type": "Combat.Enemies.SelectableObject", "calls": [], "refs": []},
+        {"type": "Combat.Enemies.Player", "calls": [], "refs": []}
+      ]
+    },
+    {
+      "path": "TitleMenu",
+      "scene": "TitleScene",
+      "active": true,
+      "visuals": [],
+      "components": [{"type": "Ui.TitleMenu", "calls": [], "refs": []}]
+    },
+    {
+      "path": "Ghost",
+      "selector": "Ghost[0]",
+      "scene": "SceneTheDocumentNeverListed",
+      "active": true,
+      "visuals": [],
+      "components": [{"type": "UnityEngine.UI.Image", "calls": [], "refs": []}]
+    }
+  ],
+  "persistentObjects": [
+    {
+      "path": "SaveLoadController",
+      "selector": "SaveLoadController[0]",
+      "scene": "DontDestroyOnLoad",
+      "active": true,
+      "visuals": [],
+      "components": [{"type": "Core.SaveLoadController", "calls": [], "refs": []}]
+    }
+  ],
+  "gaps": []
+}

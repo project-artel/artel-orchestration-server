@@ -1,0 +1,78 @@
+spring:
+  # 테스트 DB는 스위트가 직접 띄우는 PostgreSQL 컨테이너다(PostgresTestContainer). 아래 DB_* 값은
+  # 스위트 시작 시 시스템 프로퍼티로 주입되고, 기본값(localhost)은 그 주입이 없을 때의 안전망일 뿐이다.
+  # H2가 아닌 실 PostgreSQL이어야 하는 이유는 둘이다: JSONB(payload)와 pgvector(knowledge 벡터 색인).
+  r2dbc:
+    url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:postgres}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    # 스위트에는 @TestConfiguration이 붙은 클래스만큼 서로 다른 Spring 컨텍스트가 뜨고, 각 컨텍스트가
+    # 자기 커넥션 풀을 잡은 채 스위트 끝까지 살아 있다. 기본값(max 10)이면 컨텍스트 열 몇 개만으로
+    # PostgreSQL 기본 한도(max_connections=100)를 넘겨, 그 뒤에 뜨는 컨텍스트가 Flyway 단계에서
+    # "sorry, too many clients already"로 통째로 실패한다. 테스트는 동시성이 필요 없으므로 작게 잡는다.
+    pool:
+      initial-size: 1
+      max-size: 3
+  # 스키마는 Flyway(JDBC)가 구성한다. 볼륨 없는 Docker 컨테이너를 재구동하면 빈 DB가 되고,
+  # 부팅 시 Flyway가 마이그레이션을 새로 적용해 스키마가 초기화된다.
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:postgres}
+    user: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    locations: classpath:db/migration
+    clean-disabled: false
+
+artel:
+  retired-demonstration-cleanup:
+    enabled: false
+  # 스위트에는 서로 다른 Spring 컨텍스트가 여럿 뜨고 각자 내부 API 서버를 하나씩 띄운다.
+  # 고정 포트면 두 번째 컨텍스트부터 바인드 충돌로 죽는다. 0이면 OS가 빈 포트를 고르고,
+  # 테스트는 InternalApiServer.port로 실제 값을 읽는다.
+  internal-api:
+    port: 0
+  agent:
+    base-url: http://localhost:8000
+    ws-base-url: ws://localhost:8000
+    # **비운 채로 못 둔다.** `spring-dotenv` 가 테스트에서도 `.env` 를 읽어, 사람마다 다른 로컬
+    # 모델 설정이 여기로 새어 든다 — 그러면 "설정하지 않은 모델은 보내지 않는다"를 보는 검사가
+    # 그 기계에서만 깨진다. 계약을 보는 검사는 사람의 `.env` 를 타면 안 된다.
+    model: ""
+    # 문서 업로드 테스트가 실제 Agent /extract를 부르지 않도록 기본은 끔.
+    # 추출 파이프라인 테스트는 mock Agent를 띄우고 코디네이터를 직접 호출해 검증한다.
+    extract:
+      enabled: false
+  auth:
+    frontend-url: http://localhost:5173
+    issuer: artel-orchestration-server-test
+    audience: artel-home-test
+    jwt-secret: test-only-secret-that-is-at-least-32-bytes-long
+    access-token-ttl: PT15M
+    cookie-name: artel_access_token
+    secure-cookie: false
+    refresh-audience: artel-refresh-test
+    refresh-token-ttl: P14D
+    refresh-cookie-name: artel_refresh_token
+    # GitHub 로그인이 켜진 상태가 기본이다. 꺼진 기동은 GitHubOAuthOptionalIntegrationTest 가 덮어써 확인한다.
+    github:
+      client-id: test-github-client
+      client-secret: test-github-secret
+  storage:
+    # 테스트는 가짜 DocumentStorage를 등록하므로 실제 S3에 닿지 않는다.
+    # 다만 StorageProperties는 그대로 만들어지므로 버킷 값은 있어야 한다.
+    bucket: test-bucket
+    region: ap-northeast-2
+    upload-url-ttl: PT10M
+    download-url-ttl: PT5M
+    max-upload-bytes: 1048576
+  # macro embedding 백필은 기본으로 켜져 있다(application.yml). 테스트에서는 scheduler 가 10초마다
+  # 없는 Agent 의 /embed 를 부르지 않도록 끈다. 백필을 보는 테스트는 worker 를 직접 부른다.
+  macro:
+    search:
+      enabled: false
+  # scene_object 백필은 기동할 때 한 번 돈다(application.yml). 테스트 컨텍스트마다 공유 DB 의 지도를 가짜
+  # 스토리지로 읽으려 들지 않도록 끈다. 백필을 보는 테스트는 worker 를 직접 부른다.
+  content-map:
+    scene-object-backfill:
+      enabled: false

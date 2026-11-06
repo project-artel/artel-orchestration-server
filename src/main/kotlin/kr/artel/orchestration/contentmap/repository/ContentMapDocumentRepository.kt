@@ -1,0 +1,178 @@
+package kr.artel.orchestration.contentmap.repository
+
+import kotlinx.coroutines.flow.Flow
+import kr.artel.orchestration.contentmap.entity.ContentMapDocumentEntity
+import org.springframework.data.r2dbc.repository.Modifying
+import org.springframework.data.r2dbc.repository.Query
+import org.springframework.data.repository.kotlin.CoroutineCrudRepository
+import java.time.Instant
+
+/**
+ * 근거 문서 포인터 조회.
+ *
+ * [findByContentMapIdAndContentHash] 가 멱등의 축이다 — 같은 내용이 다시 오면 저장도 적재도
+ * 건너뛴다. SDK 는 게임 실행마다 등록하므로 같은 빌드의 같은 문서가 반복해서 온다.
+ */
+interface ContentMapDocumentRepository : CoroutineCrudRepository<ContentMapDocumentEntity, Long> {
+
+    suspend fun findByContentMapIdAndContentHash(
+        contentMapId: Long,
+        contentHash: String,
+    ): ContentMapDocumentEntity?
+
+    fun findByContentMapIdOrderByReceivedAtDesc(contentMapId: Long): Flow<ContentMapDocumentEntity>
+
+    /** 이 content map 에 적재를 마친 문서가 하나라도 있나. test case 생성의 전제다(ARTEL-971). */
+    suspend fun existsByContentMapIdAndIngestedAtIsNotNull(contentMapId: Long): Boolean
+
+    /**
+     * 아직 적재되지 않은 문서. ARTEL-442 가 집어 간다.
+     *
+     * 오래된 것부터인 이유: 같은 지도에 문서가 여럿이면 시간순으로 적재해야 나중 것이 이긴다.
+     */
+    @Query(
+        """
+        SELECT * FROM content_map_document
+        WHERE ingested_at IS NULL
+        ORDER BY received_at ASC
+        LIMIT :limit
+        """
+    )
+    fun findPending(limit: Int): Flow<ContentMapDocumentEntity>
+
+    /**
+     * 이 빌드의 아직 앉지 않은 문서. 화면의 스캔 버튼이 돌려받는 결과가 이것을 집어 간다.
+     *
+     * 전역 [findPending] 을 그대로 쓸 수 없다. 한 사람의 스캔 결과에 남의 프로젝트 문서가 섞이면
+     * 그 사람의 요청 시간에 남의 적재가 실리고, 남의 실패가 그 응답에 나타난다.
+     *
+     * `content_map` 을 조인하는 이유는 문서가 빌드를 직접 들고 있지 않기 때문이다 —
+     * `content_map_document` → `content_map` → `game_build` 순으로 묶인다.
+     *
+     * **한 번도 시도하지 않은 문서를 먼저 본다**(`ingest_failed_at ASC NULLS FIRST`). 받은 순서로만
+     * 고르면 깨진 문서가 큐 머리를 잡고, 상한만큼 쌓이는 순간 새로 올라온 문서에는 차례가 영영
+     * 오지 않는다. 그 다음이 오래된 순인 것은 같은 지도에 문서가 여럿이면 시간순으로 앉아야
+     * 나중 것이 이기기 때문이다.
+     */
+    @Query(
+        """
+        SELECT d.* FROM content_map_document d
+        JOIN content_map m ON m.id = d.content_map_id
+        WHERE m.game_build_id = :gameBuildId AND d.ingested_at IS NULL
+        ORDER BY d.ingest_failed_at ASC NULLS FIRST, d.received_at ASC
+        LIMIT :limit
+        """
+    )
+    fun findPendingByGameBuild(gameBuildId: Long, limit: Int): Flow<ContentMapDocumentEntity>
+
+    /**
+     * 끊긴 스캔이 올려 둔 접수증을 지운다(ARTEL-1183).
+     *
+     * **[since] 로 좁히는 것이 요점이다.** [findPendingByGameBuild] 는 "이 스캔의 문서" 가 아니라 "이 빌드의 안 앉은
+     * 문서 전부" 를 고른다. 거기에는 앞선 스캔에서 적재하다 깨진 문서가 섞여 있고(그 정렬의
+     * `ingest_failed_at ASC NULLS FIRST` 가 그것들을 다음에 다시 시도하려고 남겨 둔 것이다), 통째로 지우면 취소와
+     * 무관한 그 문서까지 날아간다. 이 스캔이 요청된 뒤에 받은 것만 이 스캔의 것이다.
+     *
+     * 지우지 않으면 반쪽 순회의 문서가 대기에 남아 **다음 스캔의 적재가 그것까지 같이 앉힌다.** 그 문서는 "이 게임엔
+     * 씬이 이것뿐" 이라고 말하므로, 앉으면 지도에서 못 돈 씬이 사라진다.
+     *
+     * 스토리지의 파일은 남는다. [kr.artel.orchestration.project.storage.DocumentStorage] 에 삭제가 없다 — 포트를
+     * 넓히는 일이라 여기서 하지 않는다. 접수증이 없으면 다시 앉을 길도 없으므로 목적은 이것으로 선다.
+     */
+    @Modifying
+    @Query(
+        """
+        DELETE FROM content_map_document d
+        USING content_map m
+        WHERE d.content_map_id = m.id
+          AND m.game_build_id = :gameBuildId
+          AND d.ingested_at IS NULL
+          AND d.received_at >= :since
+        """
+    )
+    suspend fun deletePendingReceivedSince(gameBuildId: Long, since: Instant): Int
+
+    /**
+     * `scene_object` 가 하나도 없는 지도마다 **가장 나중에 적재된** 문서 한 장(ARTEL-1059 백필).
+     *
+     * 지도의 `scene` · `capability` 행은 지금 그 문서의 것이다. 오브젝트도 같은 문서에서 와야 `scene-context`
+     * 가 한 `scene` 아래 싣는 `capabilities` 와 `objects` 가 같은 코드를 말한다.
+     */
+    @Query(
+        """
+        SELECT DISTINCT ON (d.content_map_id) d.* FROM content_map_document d
+        WHERE d.ingested_at IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM scene_object o WHERE o.content_map_id = d.content_map_id)
+        ORDER BY d.content_map_id, d.ingested_at DESC, d.id DESC
+        """
+    )
+    fun findLatestIngestedWithoutSceneObjects(): Flow<ContentMapDocumentEntity>
+
+    /**
+     * 적재 도장. **행 전체를 저장하지 않고 두 칸만 갱신한다.**
+     *
+     * `save(entity.copy(...))` 는 UPDATE 에 모든 칸을 실어, 읽어 온 엔티티에 없던 값(`received_at` 은
+     * DB 기본값으로 채워진다)을 null 로 덮어쓴다. 도장은 도장만 찍어야 한다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE content_map_document
+           SET ingested_by = :ingestedBy, ingested_at = :ingestedAt
+         WHERE id = :id
+        """
+    )
+    suspend fun stampIngested(id: Long, ingestedBy: String, ingestedAt: Instant): Long
+
+    /**
+     * 적재가 왜 깨졌는지 적는다. [stampIngested] 와 마찬가지로 두 칸만 갱신한다.
+     *
+     * **호출자는 이것을 적재 트랜잭션 밖에서 불러야 한다.** 적재는 실패하면 트랜잭션째 되돌아가므로,
+     * 안에서 쓴 기록은 함께 지워지고 문서는 `ingested_at IS NULL` 인 채로 남아 **아무 일도 없었던
+     * 것과 똑같은 모양**이 된다. 그러면 사람이 화면에서 "왜 안 됐나"를 물을 자리가 없다.
+     *
+     * `ingested_at` 은 건드리지 않는다. 실패해도 문서는 대기 상태 그대로이고, 다음 시도가 다시
+     * 집어 갈 수 있어야 한다 — 이 두 칸은 "왜 못 앉았나"를 적을 뿐 큐에서 빼지 않는다.
+     */
+    @Modifying
+    @Query(
+        """
+        UPDATE content_map_document
+           SET ingest_failed_at = :failedAt, ingest_error = :error
+         WHERE id = :id
+        """
+    )
+    suspend fun recordIngestFailure(id: Long, failedAt: Instant, error: String): Long
+
+    /**
+     * 이 빌드의 적재 진행 세 수. SSE `ingest` 이벤트가 문서 하나가 앉거나 실패할 때마다 되풀이해
+     * 묻는 값이라 가벼운 집계 하나로 둔다.
+     *
+     * [findByContentMapIdOrderByReceivedAtDesc] 로 전체 문서를 끌어와 Kotlin 에서 세지 않는 이유:
+     * 그러면 문서 하나가 앉을 때마다 지도 전체의 문서 행을 다시 읽는 꼴이 된다.
+     * `CapabilityRepository.countByScene` 이 `capability` 전체를 훑지 않는 것과 같은 판단이다.
+     *
+     * `content_map` 을 조인하는 이유는 [findPendingByGameBuild] 와 같다 — 문서가 빌드를 직접 들고
+     * 있지 않다. `GROUP BY` 가 없는 순수 집계라 이 빌드에 지도조차 없어도 행 하나(전부 0)가
+     * 돌아온다.
+     */
+    @Query(
+        """
+        SELECT
+            count(*)                                                                   AS received,
+            count(*) FILTER (WHERE d.ingested_at IS NOT NULL)                          AS ingested,
+            count(*) FILTER (WHERE d.ingest_failed_at IS NOT NULL AND d.ingested_at IS NULL) AS failed
+        FROM content_map_document d
+        JOIN content_map m ON m.id = d.content_map_id
+        WHERE m.game_build_id = :gameBuildId
+        """
+    )
+    suspend fun countIngestProgressByGameBuild(gameBuildId: Long): IngestProgressCount?
+}
+
+/** [ContentMapDocumentRepository.countIngestProgressByGameBuild] 결과. */
+data class IngestProgressCount(
+    val received: Long,
+    val ingested: Long,
+    val failed: Long,
+)

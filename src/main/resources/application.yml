@@ -1,0 +1,367 @@
+server:
+  # 공개 포트. 리버스 프록시가 넘기는 유일한 포트이며 `/api/**`·`/oauth2/**`·`/ws/**`가 여기 산다.
+  # 무인증 내부 API(`/internal/**`)는 여기에 **없다** — 아래 artel.internal-api.port 참고.
+  # Boot 기본값과 같지만, 두 포트가 한눈에 보이도록 명시한다. 환경변수로 받는 이유는
+  # 아래 internal-api.port와 대칭을 맞추기 위해서다 — 컨테이너에서는 relaxed binding으로
+  # SERVER_PORT가 먹지만 로컬 `.env`는 spring-dotenv가 키를 그대로만 찾으므로, 명시하지
+  # 않으면 같은 변수가 배포에서만 동작하고 로컬에서는 조용히 무시된다.
+  port: ${SERVER_PORT:8080}
+  # 리버스 프록시(Nginx Proxy Manager) 뒤에서는 프록시-백엔드 구간이 http라, 기본값 none이면
+  # OAuth2의 {baseUrl}이 http로 조립되어 redirect_uri가 등록값(https)과 어긋난다.
+  # 프록시가 넘기는 X-Forwarded-Proto를 반영하도록 한다. WebFlux라 native가 아닌 framework다.
+  forward-headers-strategy: framework
+  # 큰 JSON 응답을 gzip 으로 보낸다(ARTEL-1212). TC 2천여 개 목록이 약 2MB 였다. `text/event-stream` 은
+  # 목록에 넣지 않는다 — 압축기가 이벤트를 버퍼에 모아 SSE 가 늦게 닿는다. 2KB 보다 작은 응답은 압축하지 않는다.
+  compression:
+    enabled: true
+    mime-types: application/json,application/problem+json,text/plain,text/html,text/css,application/javascript
+    min-response-size: 2KB
+
+spring:
+  config:
+    import:
+      - optional:classpath:application-db.yml
+  # 명세 CSV는 본문을 통째로 바이트 배열로 받는다. WebFlux 기본 상한(256KB)은 CsvReader.MAX_ROWS가
+  # 허용하는 크기보다 작아서, 규격 안의 파일이 도메인 검증에 닿기도 전에 DataBufferLimitException으로
+  # 떨어진다. 두 상한이 어긋나면 "왜 거절됐는지" 알 수 없는 실패가 된다. 5,000행 CSV를 여유 있게
+  # 담는 값으로 맞춘다.
+  codec:
+    max-in-memory-size: 2MB
+  # @Scheduled는 앱 전체가 하나의 TaskScheduler 풀을 공유하고 기본 크기가 1이다. 그러면 knowledge·
+  # testcase 백필 tick이 스레드 하나를 두고 직렬화되어, 한쪽이 Agent 응답을 기다리는 동안(최대 PT2M)
+  # 다른 쪽이 굶는다. 독립 백필 워커 수만큼 스레드를 준다(knowledge, testcase, macro 에 telemetry report 를 더해 4개).
+  # 워커가 늘면 이 값도 올린다.
+  task:
+    scheduling:
+      pool:
+        size: ${ARTEL_SCHEDULING_POOL_SIZE:4}
+  # SDK 로그인 일회용 코드가 여기 산다. DB와 달리 application-db.yml로 빼지 않는다 —
+  # 그 파일은 optional import라 없으면 조용히 넘어가는데, Redis 설정이 조용히 빠지면
+  # 기본값 localhost로 붙는다. 컨테이너 안에서 localhost는 앱 자신이라 기동은 정상이고
+  # SDK 로그인만 전부 실패하는, 원인이 드러나지 않는 고장이 된다.
+  data:
+    redis:
+      # spring.r2dbc.url, spring.flyway.url과 같은 형식으로 받는다. 비밀번호는
+      # redis://:password@host:port로 URL 안에 싣는다(rediss://면 TLS).
+      #
+      # 경로(redis://host:6379/0)는 붙여도 무시된다. Boot의 parseUrl은 scheme과
+      # userInfo만 읽고, database는 아래 spring.data.redis.database에서만 온다.
+      # /1을 적으면 0번에 조용히 붙으므로 아예 쓰지 않는다.
+      url: ${REDIS_URL:redis://localhost:6379}
+  # GitHub OAuth registration 은 여기 두지 않는다. Boot 의 `spring.security.oauth2.client.registration` 은
+  # client id 가 비면 기동을 멈춘다. GitHub 로그인은 선택이라 artel.auth.github 로 받고, 두 값이 다 있을
+  # 때만 GitHubOAuthClientConfig 가 registration 을 만든다.
+
+logging:
+  level:
+    org:
+      springframework:
+        web: DEBUG
+        web.reactive: DEBUG
+
+artel:
+  # 무인증 서버-투-서버 API(`/internal/**`) 전용 포트. 공개 포트와 갈라 두는 것이 목적이며,
+  # 리버스 프록시는 8080만 프록시하므로 이 포트는 인터넷에서 존재하지 않는다.
+  # ⚠️ 이 포트를 호스트에 게시하지 않는 것(=`docker run`에 `-p`를 붙이지 않는 것)이 외부
+  # 차단의 실질 근거다. docs/deployment.md 참고.
+  internal-api:
+    port: ${ARTEL_INTERNAL_API_PORT:8081}
+  agent:
+    base-url: ${ARTEL_AGENT_BASE_URL:http://localhost:8000}
+    # 관리 화면이 key 나 model 을 바꾼 뒤 POST {base-url}/llm-cache/invalidate 를 기다리는 상한.
+    cache-invalidate-timeout: ${ARTEL_AGENT_CACHE_INVALIDATE_TIMEOUT:PT3S}
+    ws-base-url: ${ARTEL_AGENT_WS_BASE_URL:ws://localhost:8000}
+    # 비우면 모델 필드를 생략하고 Agent 가 자기 카탈로그의 기본 모델을 고른다. 모델을 갈아 끼울
+    # 때 여기 적힌 옛 slug 를 강제하지 않으려는 것이다(`extract.model` 과 같은 규칙).
+    #
+    # **이 줄이 없어서 `.env` 의 `ARTEL_AGENT_MODEL` 이 닿지 않았다.** `TestScenarioAgentService`
+    # 가 `${artel.agent.model:}` 을 읽는데 여기에 매핑이 없으면 늘 빈 값이고, 그러면 지정한 모델이
+    # 조용히 무시된다 — 로그에는 Agent 의 기본 모델이 찍혀서 설정이 먹은 것처럼 보인다.
+    model: ${ARTEL_AGENT_MODEL:}
+    # 업로드 문서 → /extract → reference_context 적재(pull 파이프라인).
+    extract:
+      # 로컬에 Agent가 없으면 업로드마다 FAILED로 남으니 끌 수 있게 둔다.
+      enabled: ${ARTEL_AGENT_EXTRACT_ENABLED:true}
+      # 비우면 모델 필드를 생략하고 Agent가 자신의 기본 모델을 선택한다.
+      model: ${ARTEL_AGENT_EXTRACT_MODEL:}
+      # LLM 추출이 길어질 수 있어 넉넉히. 논블로킹이라 스레드를 잡지 않는다.
+      timeout: ${ARTEL_AGENT_EXTRACT_TIMEOUT:PT3M}
+  knowledge:
+    # knowledge에 검색용 벡터를 채우는 백필 워커. Agent가 없으면 매 tick 실패만 쌓이므로
+    # 기본은 끈다(로컬·테스트). 배포 환경에서 켠다.
+    backfill:
+      enabled: ${ARTEL_KNOWLEDGE_BACKFILL_ENABLED:false}
+      # Agent 서버의 embedding_model 설정과 반드시 같아야 한다. 다르면 워커가 저장을 거부한다.
+      # 이 값이 바뀌면 그 model로 새 벡터 행이 채워지고, 다 차면 검색을 새 model로 전환한다.
+      model: ${ARTEL_KNOWLEDGE_BACKFILL_MODEL:openai/text-embedding-3-large}
+      # 한 tick 처리 상한. Agent의 /knowledge-queries 배치 상한(32)보다 작아야 한다.
+      batch-size: ${ARTEL_KNOWLEDGE_BACKFILL_BATCH_SIZE:16}
+      # 이 횟수를 넘긴 항목은 큐에서 빠진다(행은 last_error와 함께 남아 조회 가능).
+      max-attempts: ${ARTEL_KNOWLEDGE_BACKFILL_MAX_ATTEMPTS:5}
+      interval-millis: ${ARTEL_KNOWLEDGE_BACKFILL_INTERVAL_MILLIS:60000}
+      timeout: ${ARTEL_KNOWLEDGE_BACKFILL_TIMEOUT:PT2M}
+    # QA WS의 KNOWLEDGE_SEARCH가 쓰는 벡터 검색. 어느 모델의 벡터를 읽을지는 위 backfill.model을
+    # 그대로 따른다(설정을 둘로 두면 어긋난 순간 결과가 항상 비고, 그것이 오류로 드러나지 않는다).
+    search:
+      default-limit: ${ARTEL_KNOWLEDGE_SEARCH_DEFAULT_LIMIT:5}
+      # 결과가 Agent 컨텍스트로 들어간다. 요청이 더 큰 값을 보내도 여기서 잘린다.
+      max-limit: ${ARTEL_KNOWLEDGE_SEARCH_MAX_LIMIT:20}
+    # 지식 그래프 탐색(ARTEL-275). 여기 값 전부가 Agent 컨텍스트 예산이다 — 이웃은 검색 결과에
+    # 딸려 나가 런이 끝날 때까지 전사에 남으므로, 상한이 없으면 검색 한 번이 그래프 전부를 끈다.
+    graph:
+      # 검색 히트마다 1홉 이웃을 붙인다. edge가 비어 있으면 빈 결과를 내는 인덱스 질의 하나라
+      # 관계가 쌓이기 전의 부담이 사실상 없다. 문제가 되면 재배포 없이 끄는 킬 스위치다.
+      expand-search-hits: ${ARTEL_KNOWLEDGE_GRAPH_EXPAND_SEARCH_HITS:true}
+      search-fanout: ${ARTEL_KNOWLEDGE_GRAPH_SEARCH_FANOUT:2}
+      # 히트 수 × fanout이 아니라 별도 상한이다. 이것이 검색당 전사 증가를 한 자릿수 줄에서 멈춘다.
+      search-neighbour-limit: ${ARTEL_KNOWLEDGE_GRAPH_SEARCH_NEIGHBOUR_LIMIT:8}
+      default-depth: ${ARTEL_KNOWLEDGE_GRAPH_DEFAULT_DEPTH:1}
+      # 3 이상은 노드 수가 컨텍스트 예산을 넘는다(fanout 3에서 깊이 2는 13노드, 깊이 3은 40노드).
+      max-depth: ${ARTEL_KNOWLEDGE_GRAPH_MAX_DEPTH:2}
+      fanout: ${ARTEL_KNOWLEDGE_GRAPH_FANOUT:3}
+      node-budget: ${ARTEL_KNOWLEDGE_GRAPH_NODE_BUDGET:20}
+      similar-limit: ${ARTEL_KNOWLEDGE_GRAPH_SIMILAR_LIMIT:3}
+      # ⚠️ 추측된 값이다. 실제 코퍼스의 쌍별 거리 분포를 보고 무릎을 찾기 전까지 믿지 말 것.
+      similar-max-distance: ${ARTEL_KNOWLEDGE_GRAPH_SIMILAR_MAX_DISTANCE:0.40}
+  testcase:
+    # 케이스 벡터 백필(ARTEL-216). knowledge와 같은 이연 워커 패턴이되, 초기 대량 적재를 빨리
+    # 소진하도록 버스트 기본값(batch 큰 편, interval 짧은 편). 로컬·테스트는 꺼 둔다.
+    embedding:
+      enabled: ${ARTEL_TESTCASE_EMBEDDING_ENABLED:false}
+      # Agent embedding_model 및 knowledge 백필 model과 같아야 한다(다르면 워커가 저장을 거부).
+      model: ${ARTEL_TESTCASE_EMBEDDING_MODEL:openai/text-embedding-3-large}
+      # CONTENT 1벡터/케이스 → /embed 한 번에 이만큼. Agent /embed 상한(기본 128)보다 작게.
+      batch-size: ${ARTEL_TESTCASE_EMBEDDING_BATCH_SIZE:64}
+      max-attempts: ${ARTEL_TESTCASE_EMBEDDING_MAX_ATTEMPTS:5}
+      interval-millis: ${ARTEL_TESTCASE_EMBEDDING_INTERVAL_MILLIS:10000}
+    # 케이스 벡터 검색. model은 위 embedding.model을 그대로 쓴다(같은 파티션을 읽어야 함).
+    search:
+      default-limit: ${ARTEL_TESTCASE_SEARCH_DEFAULT_LIMIT:5}
+      # 결과가 Agent 컨텍스트로 들어간다. 요청이 더 커도 여기서 잘린다.
+      max-limit: ${ARTEL_TESTCASE_SEARCH_MAX_LIMIT:20}
+  macro:
+    # MACRO_SEARCH(ARTEL-986): macro 의 이름, parameter, docstring 으로 벡터를 채우고 키워드 검색과
+    # 합쳐 돌려준다. knowledge 와 testcase 백필과 달리 기본으로 켠다 — 켜는 것을 잊은 배포 환경에서
+    # 검색이 조용히 키워드 결과만 내는 쪽이, Agent 없는 로컬에서 tick 마다 실패 로그가 쌓이는 쪽보다
+    # 알아채기 어렵다. 로컬에서는 `ARTEL_MACRO_SEARCH_ENABLED=false` 로 끄고, 테스트는
+    # application-test.yml 이 끈다. 꺼 둬도 MACRO_SEARCH 는 키워드 결과만으로 답한다.
+    search:
+      enabled: ${ARTEL_MACRO_SEARCH_ENABLED:true}
+      # 벡터 모델은 knowledge 백필과 같아야 한다(Agent 의 embedding_model 과도 같아야 한다).
+      model: ${ARTEL_MACRO_SEARCH_MODEL:${ARTEL_KNOWLEDGE_BACKFILL_MODEL:openai/text-embedding-3-large}}
+      # 한 tick 처리 상한. macro 는 build 당 수십 개라 한 번의 /embed 로 끝난다.
+      batch-size: ${ARTEL_MACRO_SEARCH_BATCH_SIZE:64}
+      max-attempts: ${ARTEL_MACRO_SEARCH_MAX_ATTEMPTS:5}
+      fixed-delay: ${ARTEL_MACRO_SEARCH_FIXED_DELAY:PT10S}
+      default-limit: ${ARTEL_MACRO_SEARCH_DEFAULT_LIMIT:5}
+      # 결과가 Agent 컨텍스트로 들어간다. 요청이 더 커도 거절한다(조용히 자르지 않는다).
+      max-limit: ${ARTEL_MACRO_SEARCH_MAX_LIMIT:10}
+      rrf-k: ${ARTEL_MACRO_SEARCH_RRF_K:60}
+      # 질의 임베딩이 이 시간을 넘기면 키워드 결과만으로 답한다.
+      query-timeout: ${ARTEL_MACRO_SEARCH_QUERY_TIMEOUT:PT5S}
+  content-map:
+    # V114 이전에 적재된 지도에 scene_object 를 채운다(ARTEL-1059). 기동할 때 한 번 돌고, 이미 채운 지도는
+    # 다시 고르지 않는다. 테스트는 application-test.yml 이 끈다.
+    scene-object-backfill:
+      enabled: ${ARTEL_SCENE_OBJECT_BACKFILL_ENABLED:true}
+  scenario:
+    # 저작 한 판을 처음부터 끝까지 파일로 받아 적는다(ARTEL-650). 답 하나가 여러 손을 거치며
+    # 모양을 바뀌는데 어느 손에서 뒤집혔는지가 곧 원인이라, 그것을 되짚으려고 둔다.
+    # 케이스 전량 목록과 모델 답 원문이 통째로 들어가 판마다 수십 KB 다 — 로컬에서만 켠다.
+    trace:
+      enabled: ${ARTEL_SCENARIO_TRACE_ENABLED:false}
+      dir: ${ARTEL_SCENARIO_TRACE_DIR:.trace}
+    # 저작을 모델에게 되돌려 보는 실험. 기본은 지금 그대로다 — 끄고 켜며 나란히 잰다.
+    experiment:
+      # false 면 흐름을 안 세우고 안 보낸다. 짝 행렬도 안 푼다.
+      # 기본은 끈다(ARTEL-962) — 지금 agent 의 저작·수정 워크플로는 흐름을 읽지 않는데, 켜 두면
+      # 케이스 쌍마다 경로를 물어 큰 프로젝트에서 DB 요청 큐를 넘긴다.
+      flows: ${ARTEL_SCENARIO_FLOWS:false}
+      # 0 이면 추론을 안 켠다. Haiku 4.5 는 1,024~32,000 이고 사양 기본값이 4,096 이다.
+      reasoning-max-tokens: ${ARTEL_SCENARIO_REASONING_TOKENS:0}
+  sdk:
+    socket:
+      # 웹소켓 한 메시지의 최대 바이트. Spring 은 이 값을 프레임 상한이자 합계 상한으로 함께 쓴다.
+      #
+      # 정하지 않으면 Reactor Netty 기본값 65536 이 걸리고, 정상 동작이 그것을 밟는다 — stage 에서
+      # 전투 씬의 전량 판독 78,946 바이트가 소켓을 끊었다. 무엇에 맞춰 이 값을 잡았는지는
+      # SdkSocketProperties 가 적어 두었다: 벽은 서버 메모리가 아니라 에이전트의 컨텍스트다.
+      max-message-bytes: ${ARTEL_SDK_SOCKET_MAX_MESSAGE_BYTES:262144}
+      # 서버가 SDK 세션에 ping 을 보내는 주기와, 아무 frame 도 받지 못하면 세션을 닫는 시간.
+      # close frame 없이 끊긴 세션이 연결됨으로 남아 SDK 의 재연결을 막지 않게 한다(ARTEL-1111).
+      ping-interval: ${ARTEL_SDK_SOCKET_PING_INTERVAL:15s}
+      idle-timeout: ${ARTEL_SDK_SOCKET_IDLE_TIMEOUT:45s}
+      # 같은 인스턴스의 새 연결이 오면 앞 세션에 ping 을 보내고 이 시간 안에 답이 없으면 새 연결로 교체한다(ARTEL-1234).
+      replace-probe-timeout: ${ARTEL_SDK_SOCKET_REPLACE_PROBE_TIMEOUT:2s}
+
+  stream:
+    enabled: ${ARTEL_STREAM_ENABLED:true}
+    media-directory: ${ARTEL_MEDIA_DIRECTORY:./data/qa-video}
+    media-max-ingress: ${ARTEL_MEDIA_MAX_INGRESS:8}
+    media-max-viewers: ${ARTEL_MEDIA_MAX_VIEWERS:8}
+    # 갱신 유실 허용 폭이다. 브라우저는 10초마다 갱신을 보내지만, 탭이 숨겨지면 그 주기가
+    # 1분에 1회까지 조여진다. 기본값은 그 1분에 여유를 얹은 값이고, 61 미만은 아예 거절된다.
+    # 늘리면 뚜껑 닫은 노트북처럼 소켓이 닫히지 않고 사라진 뷰어를 위해 게임이 헛되이
+    # 인코딩하는 시간도 함께 늘어난다. 정상 종료는 임대와 무관하게 즉시 멈춘다.
+    lease-seconds: ${ARTEL_STREAM_LEASE_SECONDS:90}
+    # 쉼표 구분. 후보가 늘수록 연결이 느려지므로 1~2개면 충분하다.
+    # 기본값은 Google의 공개 STUN인데, 이것은 Google이 제공하는 서비스가 아니라 인증을 걸어
+    # 두지 않은 자사 인프라다. 약관도 예고도 없고 실제 위험은 다운이 아니라 rate limit이며,
+    # TURN이 없는 구성에서는 그것이 그냥 연결 실패로 나타난다. 배포 시에는 coturn을
+    # STUN-only로 띄워 여기를 가리키게 한다.
+    stun-urls: ${ARTEL_STUN_URLS:stun:stun.l.google.com:19302}
+    # 대칭 NAT나 UDP를 막는 방화벽에서만 필요하다. 그때는 영상 전체가 중계 서버를 지나간다.
+    # 빈 값은 "없음"으로 읽고 ICE 목록에서 아예 뺀다.
+    turn-url: ${ARTEL_TURN_URL:}
+    turn-username: ${ARTEL_TURN_USERNAME:}
+    turn-credential: ${ARTEL_TURN_CREDENTIAL:}
+    max-width: ${ARTEL_STREAM_MAX_WIDTH:1280}
+    max-framerate: ${ARTEL_STREAM_MAX_FRAMERATE:10}
+  # artel-macro-mcp 와 맞물리는 설정(ARTEL-1088). issuer 와 jwks-uri 가 둘 다 있을 때만 MCP access JWT 를 받는다.
+  mcp:
+    base-url: ${ARTEL_MCP_BASE_URL:}
+    issuer: ${ARTEL_MCP_ISSUER:}
+    jwks-uri: ${ARTEL_MCP_JWKS_URI:}
+    audience: ${ARTEL_MCP_AUDIENCE:artel-orchestration}
+    handoff:
+      # handoff JWT 의 iss. MCP 서버의 HANDOFF_ISSUER(비면 그쪽 ORCHESTRATION_BASE_URL)와 같아야 한다.
+      # 이 서버의 공개 base URL 을 쓴다.
+      issuer: ${ARTEL_MCP_HANDOFF_ISSUER:}
+      # RSA PKCS#8 PEM. 한 줄 환경변수면 개행을 \n 으로 적는다.
+      private-key: ${ARTEL_MCP_HANDOFF_PRIVATE_KEY:}
+      generate-dev-key: ${ARTEL_MCP_HANDOFF_GENERATE_DEV_KEY:false}
+  auth:
+    frontend-url: ${ARTEL_HOME_URL:http://localhost:5173}
+    onboarding-url: ${ARTEL_ONBOARDING_URL:https://artel.kr}
+    # CORS 허용 origin(콤마 구분). frontend-url은 항상 자동 포함된다. 와일드카드(https://*.artel.kr) 허용.
+    allowed-origins: ${ARTEL_ALLOWED_ORIGINS:https://home.stage.artel.kr,https://artel.kr,https://www.artel.kr,https://admin.artel.kr}
+    issuer: ${ARTEL_JWT_ISSUER:artel-orchestration-server}
+    audience: ${ARTEL_JWT_AUDIENCE:artel-home}
+    jwt-secret: ${ARTEL_JWT_SECRET}
+    access-token-ttl: ${ARTEL_JWT_TTL:PT15M}
+    cookie-name: ${ARTEL_AUTH_COOKIE:artel_access_token}
+    secure-cookie: ${ARTEL_SECURE_COOKIE:true}
+    # refresh 토큰. audience가 access와 달라 이 토큰으로는 API를 부를 수 없다.
+    # 회전시키지 않으므로 이 TTL이 재로그인 없이 유지되는 세션의 절대 상한이다.
+    refresh-audience: ${ARTEL_JWT_REFRESH_AUDIENCE:artel-refresh}
+    refresh-token-ttl: ${ARTEL_JWT_REFRESH_TTL:P14D}
+    refresh-cookie-name: ${ARTEL_REFRESH_COOKIE:artel_refresh_token}
+    sdk-refresh-token-ttl: ${ARTEL_SDK_REFRESH_TTL:P90D}
+    # GitHub OAuth 로그인 앱. 둘 다 있어야 켜진다. 비우면 이메일 로그인만 쓰고,
+    # /oauth2/authorization/github 는 404 다. Callback: <server>/login/oauth2/code/github
+    github:
+      client-id: ${GITHUB_CLIENT_ID:}
+      client-secret: ${GITHUB_CLIENT_SECRET:}
+      # 처음 보는 GitHub 계정에 새 사용자를 만드는지. false 면 이미 있는 사용자와 ADMIN 이 이메일로 만들어
+      # 둔 계정만 들어오고, 나머지는 /login?error=signup_closed 로 돌아간다. 기본값 true 는 지금 동작이다.
+      signup-open: ${ARTEL_GITHUB_SIGNUP_OPEN:true}
+    # 첫 이메일 가입자는 ADMIN 이 된다. false 로 설정하면 첫 가입 이후 공개 가입을 닫는다.
+    signup:
+      open: ${ARTEL_SIGNUP_OPEN:true}
+    # POST /api/auth/login 실패 제한. 한 이메일이 window 안에 max-failures 번 틀리면 맞는 비밀번호도 429 다.
+    # 한 주소가 address-max-failures 번 틀리면 틀린 비밀번호는 429, 맞는 비밀번호는 그대로 통과한다.
+    login-rate-limit:
+      max-failures: ${ARTEL_LOGIN_MAX_FAILURES:10}
+      address-max-failures: ${ARTEL_LOGIN_ADDRESS_MAX_FAILURES:100}
+      window: ${ARTEL_LOGIN_FAILURE_WINDOW:PT15M}
+  # OpenRouter key 확인 호출. key 는 관리 화면에서 넣은 값(platform_setting)뿐이고 환경 변수는 없다.
+  # agent-server 는 내부 포트(GET /internal/settings/llm)로 key 를 받아 간다.
+  llm:
+    openrouter-base-url: ${ARTEL_OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
+    check-timeout: ${ARTEL_OPENROUTER_CHECK_TIMEOUT:PT15S}
+  # 관리 화면의 Bedrock key 확인이 Converse 를 부르는 곳. key 는 platform_setting 에만 있다.
+  bedrock:
+    # agent-server 의 BEDROCK_REGION 과 같은 값이어야 확인 결과가 실제 호출과 맞는다.
+    region: ${BEDROCK_REGION:us-west-2}
+    # 비우면 https://bedrock-runtime.{region}.amazonaws.com 이다.
+    runtime-base-url: ${ARTEL_BEDROCK_RUNTIME_BASE_URL:}
+    check-timeout: ${ARTEL_BEDROCK_CHECK_TIMEOUT:PT15S}
+  # 관리 화면의 Claude API key 확인이 GET /v1/models 를 부르는 곳. key 는 platform_setting 에만 있다.
+  anthropic:
+    base-url: ${ARTEL_ANTHROPIC_BASE_URL:https://api.anthropic.com}
+    check-timeout: ${ARTEL_ANTHROPIC_CHECK_TIMEOUT:PT15S}
+  # 사용자가 넣은 OpenAI API key 를 PUT /api/auth/me/llm-keys/openai 가 확인하는 곳(GET {base-url}/v1/models).
+  # 사용자 Claude API key 는 위 anthropic.base-url 로, 사용자 OpenRouter key 는 llm.openrouter-base-url 의 /key 로 확인한다.
+  openai:
+    base-url: ${ARTEL_OPENAI_BASE_URL:https://api.openai.com}
+    check-timeout: ${ARTEL_OPENAI_CHECK_TIMEOUT:PT15S}
+  # 관리 화면에서 넣은 비밀(OpenRouter, Bedrock, Claude API key)을 AES-GCM 으로 잠그는 키의 원천. 32 글자 이상이고
+  # 예시 문구를 담으면 기동하지 않는다. 비우면 관리 화면에서 key 를 저장할 수 없다. 바꾸면 저장된 값을 열 수 없어
+  # key 를 다시 넣어야 한다.
+  secrets:
+    key: ${ARTEL_SECRETS_KEY:}
+  # 결함을 외부 이슈 tracker 로 내보내는 연동(ARTEL-671).
+  tracker:
+    # 굳은 PENDING 을 다시 claim 할 수 있게 되기까지의 유예. ⚠️ github.request-timeout 보다 훨씬
+    # 커야 한다 — 정상 호출이 이 유예 안에 끝나지 않으면 같은 결함이 두 번 나간다.
+    claim-stale-after: ${ARTEL_TRACKER_CLAIM_STALE_AFTER:PT5M}
+    github:
+      # 비어 있으면 연동 endpoint 만 503 이고, 기존 QA 경로는 그대로 돈다. 그래서 기동을 막지 않는다.
+      # client-id/secret 은 이슈를 쓰는 데가 아니라 installation_id 의 소유를 확인하는 데 쓴다.
+      # App 의 Callback URL 이 /api/tracker/github/setup 이어야 authorize-url 흐름(이미 설치된
+      # installation 고르기)이 이 서버로 돌아온다.
+      app-id: ${ARTEL_GITHUB_APP_ID:}
+      app-slug: ${ARTEL_GITHUB_APP_SLUG:}
+      private-key: ${ARTEL_GITHUB_APP_PRIVATE_KEY:}
+      client-id: ${ARTEL_GITHUB_APP_CLIENT_ID:}
+      client-secret: ${ARTEL_GITHUB_APP_CLIENT_SECRET:}
+      api-base-url: ${ARTEL_GITHUB_API_BASE_URL:https://api.github.com}
+      web-base-url: ${ARTEL_GITHUB_WEB_BASE_URL:https://github.com}
+      token-refresh-skew: ${ARTEL_GITHUB_TOKEN_REFRESH_SKEW:PT5M}
+      request-timeout: ${ARTEL_GITHUB_REQUEST_TIMEOUT:PT15S}
+      # 사용자 인가로 확인한 installation 목록을 Redis 에 두는 시간. 이 안에 하나를 골라야 한다.
+      installation-choice-ttl: ${ARTEL_GITHUB_INSTALLATION_CHOICE_TTL:PT10M}
+  storage:
+    # s3 | filesystem. filesystem 은 MinIO 없이 도는 데스크톱 번들용이고, 객체를 dir 아래에 두며
+    # 이 서버의 /api/storage/objects/ 가 서명한 URL 로 올리고 내려준다. 그때 dir 은 필수다.
+    backend: ${ARTEL_STORAGE:s3}
+    dir: ${ARTEL_STORAGE_DIR:}
+    # filesystem 에서 agent-server 에 내주는 URL 의 앞부분(예: http://orchestration:8080). 서명은 주소와
+    # 무관하므로 같은 컨트롤러가 받는다. 비우면 ARTEL_HOME_URL 을 쓴다. S3 에서는 endpoint 가 이 역할을 한다.
+    internal-base-url: ${ARTEL_INTERNAL_BASE_URL:}
+    # 기획서 원본을 담을 S3.
+    bucket: ${ARTEL_S3_BUCKET:artel-local}
+    region: ${ARTEL_S3_REGION:ap-northeast-2}
+    # 로컬 MinIO 등으로 돌릴 때만 지정한다. 빈 값은 "지정하지 않음"으로 읽힌다.
+    # (@ConfigurationProperties 바인딩은 SpEL을 처리하지 않아 #{null}을 쓸 수 없다.)
+    endpoint: ${ARTEL_S3_ENDPOINT:}
+    # 브라우저에 내주는 presigned URL 의 주소. 서버가 붙는 주소(위 endpoint)를 브라우저가 풀지 못할 때만
+    # 지정한다(compose 의 http://minio:9000 대 http://localhost:9000). 비우면 endpoint 를 쓴다.
+    presign-endpoint: ${ARTEL_S3_PRESIGN_ENDPOINT:}
+    # 선택. 비워 두면 AWS 기본 제공자 체인을 쓰고, 그마저 없으면 서명 없이 보낸다
+    # (버킷이 익명 접근을 허용할 때만 통한다).
+    # spring-dotenv는 .env를 Spring Environment에만 넣고 프로세스 환경변수로 만들지 못해,
+    # .env에 AWS_ACCESS_KEY_ID를 적어도 AWS SDK는 보지 못한다. 그래서 이 두 키로 받는다.
+    access-key: ${ARTEL_S3_ACCESS_KEY:}
+    secret-key: ${ARTEL_S3_SECRET_KEY:}
+    upload-url-ttl: ${ARTEL_S3_UPLOAD_URL_TTL:PT10M}
+    download-url-ttl: ${ARTEL_S3_DOWNLOAD_URL_TTL:PT5M}
+    max-upload-bytes: ${ARTEL_UPLOAD_MAX_BYTES:52428800}
+    # QA 캡처는 기획서와 수명이 다르다. 런이 끝날 때까지(Agent RUN_DEADLINE_SECONDS=600)
+    # 에이전트가 열 수 있어야 하므로 그보다 길게 잡는다. 짧으면 기동 시 검증에서 막힌다.
+    capture-download-url-ttl: ${ARTEL_S3_CAPTURE_DOWNLOAD_URL_TTL:PT30M}
+    # 화면 한 장. 전체 화면 최장 변 1024 JPEG면 수백 KB라 여유가 크다.
+    max-capture-bytes: ${ARTEL_CAPTURE_MAX_BYTES:5242880}
+
+  # 원본 성능 표본 보존 정책 (ARTEL-435). 요약·시계열은 영구 보존이라 조회 응답은 영향받지
+  # 않는다. 지워지는 것은 표본 단위 드릴다운뿐이다.
+  # 배포의 부수 효과로 운영 데이터가 지워지지 않도록 기본값은 꺼짐이다.
+  sdk-performance:
+    retention:
+      enabled: ${ARTEL_SDK_PERFORMANCE_RETENTION_ENABLED:false}
+      days: ${ARTEL_SDK_PERFORMANCE_RETENTION_DAYS:30}
+      batch-size: ${ARTEL_SDK_PERFORMANCE_RETENTION_BATCH_SIZE:5000}
+      max-rows-per-tick: ${ARTEL_SDK_PERFORMANCE_RETENTION_MAX_ROWS_PER_TICK:500000}
+      interval-millis: ${ARTEL_SDK_PERFORMANCE_RETENTION_INTERVAL_MILLIS:3600000}
+
+  # 이 서버 이미지의 버전. 이미지 빌드가 넣는다. 비어 있으면 telemetry report 에 null 로 나간다(pom 값은 보내지 않는다).
+  version: ${ARTEL_VERSION:}
+
+  # 직접 설치한 서버가 하루 한 번 보내는 telemetry report 와 artel.kr 의 receiver(TelemetryProperties).
+  # endpoint 가 비어 있으면 보내지 않고 관리 화면의 telemetry 항목도 숨는다. artel.kr 은 비워 둔다.
+  telemetry:
+    endpoint: ${ARTEL_TELEMETRY_URL:}
+    # on 또는 off. 관리자가 화면에서 한 번 고르면 platform_setting 값이 이 값보다 우선한다.
+    consent: ${ARTEL_TELEMETRY:off}
+    send-timeout: ${ARTEL_TELEMETRY_SEND_TIMEOUT:PT10S}
+    interval-millis: ${ARTEL_TELEMETRY_INTERVAL_MILLIS:3600000}

@@ -1,0 +1,521 @@
+package kr.artel.orchestration.auth.config
+
+import com.nimbusds.jose.jwk.source.ImmutableSecret
+import com.nimbusds.jose.proc.SecurityContext
+import kotlinx.coroutines.reactor.awaitSingleOrNull
+import kotlinx.coroutines.reactor.mono
+import kr.artel.orchestration.auth.cli.CliTokenAuthenticationManager
+import kr.artel.orchestration.auth.cli.cliTokenOrNull
+import kr.artel.orchestration.auth.mcp.McpAccessTokenAuthenticationManager
+import kr.artel.orchestration.auth.mcp.McpAccessTokenDetector
+import kr.artel.orchestration.auth.mcp.McpProperties
+import kr.artel.orchestration.auth.mcp.McpScopeWebFilter
+import kr.artel.orchestration.auth.oauth.OAuthIdentityResolver
+import kr.artel.orchestration.auth.service.AccountDisabledException
+import kr.artel.orchestration.auth.service.AccountStateService
+import kr.artel.orchestration.auth.service.OAuthLoginService
+import kr.artel.orchestration.auth.service.OAuthSignupClosedException
+import kr.artel.orchestration.auth.service.JwtService
+import kr.artel.orchestration.auth.service.RefreshTokenService
+import kr.artel.orchestration.auth.web.AccountStateWebFilter
+import kr.artel.orchestration.project.storage.FilesystemDocumentStorage
+import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.ObjectProvider
+import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.boot.context.properties.EnableConfigurationProperties
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.context.annotation.Primary
+import org.springframework.core.annotation.Order
+import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpStatus
+import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity
+import org.springframework.security.config.web.server.ServerHttpSecurity
+import org.springframework.security.core.Authentication
+import org.springframework.security.oauth2.client.registration.ReactiveClientRegistrationRepository
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator
+import org.springframework.security.oauth2.core.OAuth2TokenValidator
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm
+import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.security.oauth2.jwt.JwtClaimValidator
+import org.springframework.security.oauth2.jwt.JwtEncoder
+import org.springframework.security.oauth2.jwt.JwtValidators
+import org.springframework.security.oauth2.jwt.NimbusJwtEncoder
+import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder
+import org.springframework.security.oauth2.server.resource.authentication.BearerTokenAuthenticationToken
+import org.springframework.security.oauth2.server.resource.web.server.authentication.ServerBearerTokenAuthenticationConverter
+import org.springframework.security.config.web.server.SecurityWebFiltersOrder
+import org.springframework.security.web.server.SecurityWebFilterChain
+import org.springframework.security.web.server.ServerAuthenticationEntryPoint
+import org.springframework.security.web.server.context.NoOpServerSecurityContextRepository
+import org.springframework.security.web.server.authentication.AuthenticationWebFilter
+import org.springframework.security.web.server.authentication.ServerAuthenticationConverter
+import org.springframework.security.web.server.authentication.ServerAuthenticationEntryPointFailureHandler
+import org.springframework.security.web.server.authentication.ServerAuthenticationSuccessHandler
+import org.springframework.security.web.server.authentication.logout.ServerLogoutSuccessHandler
+import org.springframework.security.web.server.util.matcher.PathPatternParserServerWebExchangeMatcher
+import org.springframework.web.cors.CorsConfiguration
+import org.springframework.web.cors.reactive.CorsConfigurationSource
+import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource
+import reactor.core.publisher.Mono
+import java.net.URI
+import java.time.Clock
+import javax.crypto.spec.SecretKeySpec
+
+@Configuration
+@EnableWebFluxSecurity
+@EnableConfigurationProperties(
+    AuthProperties::class,
+    SignupProperties::class,
+    GitHubOAuthProperties::class,
+    LoginRateLimitProperties::class,
+    McpProperties::class
+)
+class SecurityConfig {
+
+    private val logger = LoggerFactory.getLogger(SecurityConfig::class.java)
+
+    /**
+     * SDK 런타임 전용 체인. 브라우저 체인보다 먼저 잡아야 SDK 경로가 쿠키 세션으로
+     * 통과하지 못한다.
+     *
+     * 체인을 나누는 이유는 audience다. SDK 토큰은 수명이 30일이라 같은 체인에 두면 한 번
+     * 새어나간 토큰이 한 달짜리 대시보드 세션이 된다. 여기서는 `aud=artel-sdk`만 받고,
+     * 브라우저 체인은 `aud=artel-home`만 받는다.
+     *
+     * 자격증명은 Authorization 헤더뿐이다. 쿠키 컨버터를 붙이지 않으므로 브라우저 세션으로는
+     * 이 경로에 들어올 수 없다.
+     */
+    @Bean
+    @Order(1)
+    fun sdkSecurityWebFilterChain(
+        http: ServerHttpSecurity,
+        // 이름만으로는 @Primary인 브라우저 디코더가 주입된다. 그러면 SDK 토큰이 전부 401이 된다.
+        @Qualifier("sdkJwtDecoder") sdkJwtDecoder: NimbusReactiveJwtDecoder,
+        accountStateService: AccountStateService
+    ): SecurityWebFilterChain = http
+        .securityMatcher(PathPatternParserServerWebExchangeMatcher("/api/sdk/**"))
+        .addFilterBefore(AccountStateWebFilter(accountStateService), SecurityWebFiltersOrder.EXCEPTION_TRANSLATION)
+        .csrf { it.disable() }
+        .cors { }
+        .httpBasic { it.disable() }
+        .formLogin { it.disable() }
+        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+        .authorizeExchange { it.anyExchange().authenticated() }
+        .oauth2ResourceServer {
+            it.jwt { jwt -> jwt.jwtDecoder(sdkJwtDecoder) }
+            it.authenticationEntryPoint(jsonAuthenticationEntryPoint())
+        }
+        .exceptionHandling {
+            it.authenticationEntryPoint(jsonAuthenticationEntryPoint())
+        }
+        .build()
+
+    /**
+     * 파일시스템 저장소의 서명 URL 전용 체인(`ARTEL_STORAGE=filesystem` 일 때만 있다).
+     *
+     * 이 경로의 자격증명은 URL 의 서명이고 `StorageObjectController` 가 직접 확인한다. SDK, CLI, agent-server 는
+     * 세션 없이 이 URL 을 부른다. 기본 체인에 permitAll 로만 두면 만료된 세션 쿠키를 실은 브라우저 요청이 resource
+     * server 단계에서 401 이 되므로, 쿠키와 bearer 를 아예 읽지 않는 체인으로 가른다. 범위는 이 접두사 하나다.
+     */
+    @Bean
+    @Order(2)
+    @ConditionalOnProperty(prefix = "artel.storage", name = ["backend"], havingValue = "filesystem")
+    fun storageObjectSecurityWebFilterChain(http: ServerHttpSecurity): SecurityWebFilterChain = http
+        .securityMatcher(PathPatternParserServerWebExchangeMatcher("${FilesystemDocumentStorage.OBJECTS_PATH}/**"))
+        .csrf { it.disable() }
+        .cors { }
+        .httpBasic { it.disable() }
+        .formLogin { it.disable() }
+        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+        .authorizeExchange { it.anyExchange().permitAll() }
+        .build()
+
+    /**
+     * GitHub App 설치 복귀 경로 전용 체인.
+     *
+     * 경로는 여전히 **인증 대상**이다(`project.md` 규칙 2 — 무인증 라우트를 `/api/` 아래 두지 않는다).
+     * 이 체인이 따로 있는 이유는 인증 **실패의 모양** 때문이다: 이 요청을 여는 것은 GitHub 에서 돌아온
+     * 브라우저인데, 기본 체인의 jsonAuthenticationEntryPoint 는 `{"code":"unauthorized"}` 라는 JSON을
+     * 화면에 그대로 뱉는다. access 쿠키 수명이 15분이고 App 설치는 조직 승인까지 그보다 오래 걸릴 수
+     * 있어, 실제로 밟게 되는 경로다. 그래서 여기서는 home 으로 302 를 준다.
+     */
+    @Bean
+    @Order(0)
+    fun trackerSetupSecurityWebFilterChain(
+        http: ServerHttpSecurity,
+        properties: AuthProperties,
+        accountStateService: AccountStateService,
+        mcpAccessTokenDetector: McpAccessTokenDetector
+    ): SecurityWebFilterChain = http
+        .securityMatcher(PathPatternParserServerWebExchangeMatcher("/api/tracker/github/setup"))
+        .addFilterBefore(AccountStateWebFilter(accountStateService), SecurityWebFiltersOrder.EXCEPTION_TRANSLATION)
+        .csrf { it.disable() }
+        .cors { }
+        .httpBasic { it.disable() }
+        .formLogin { it.disable() }
+        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+        .authorizeExchange { it.anyExchange().authenticated() }
+        .oauth2ResourceServer {
+            it.bearerTokenConverter(cookieTokenConverter(properties, mcpAccessTokenDetector))
+            it.jwt { }
+            it.authenticationEntryPoint(trackerSetupEntryPoint(properties))
+        }
+        .exceptionHandling { it.authenticationEntryPoint(trackerSetupEntryPoint(properties)) }
+        .build()
+
+    /** 세션이 없거나 만료됐을 때 JSON 대신 home 으로 되돌린다. 어느 프로젝트인지는 아직 모른다. */
+    private fun trackerSetupEntryPoint(properties: AuthProperties) =
+        ServerAuthenticationEntryPoint { exchange, _ ->
+            exchange.response.statusCode = HttpStatus.FOUND
+            exchange.response.headers.location =
+                URI.create("${properties.frontendOrigin}/projects?tracker=failed")
+            exchange.response.setComplete()
+        }
+
+    @Bean
+    fun securityWebFilterChain(
+        http: ServerHttpSecurity,
+        properties: AuthProperties,
+        jwtService: JwtService,
+        refreshTokenService: RefreshTokenService,
+        authCookies: AuthCookies,
+        identityResolver: OAuthIdentityResolver,
+        oauthLoginService: OAuthLoginService,
+        cliTokenAuthenticationManager: CliTokenAuthenticationManager,
+        mcpAccessTokenDetector: McpAccessTokenDetector,
+        mcpProperties: McpProperties,
+        accountStateService: AccountStateService,
+        // GitHub 두 변수가 다 있을 때만 있다(GitHubOAuthClientConfig).
+        clientRegistrationRepository: ObjectProvider<ReactiveClientRegistrationRepository>
+    ): SecurityWebFilterChain = http
+        .csrf { it.disable() }
+        .cors { }
+        .httpBasic { it.disable() }
+        .formLogin { it.disable() }
+        // 인증 주체는 JWT 쿠키 하나뿐이다. 기본값(WebSession 저장)을 두면 oauth2Login 성공 시점의
+        // OAuth2AuthenticationToken이 세션에 남아, JWT 쿠키 없이도 요청이 인증을 통과한다.
+        // 그 경우 principal이 Jwt가 아니라 OAuth2User라 컨트롤러가 401 대신 500을 낸다.
+        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+        .authorizeExchange {
+            it.pathMatchers(
+                "/oauth2/**",
+                "/login/oauth2/**",
+                "/v3/api-docs/**",
+                "/swagger-ui.html",
+                "/swagger-ui/**",
+                // 핸드셰이크가 쿼리 파라미터로 SDK 토큰을 싣는다. 헤더가 아니라 여기서는
+                // 걸러낼 수 없어, 검증은 SdkWebSocketHandler가 직접 한다.
+                "/ws/sdk",
+                // SDK가 코드를 토큰으로 바꾸는 경로. 이 요청에는 아직 세션도 토큰도 없다.
+                "/api/auth/sdk/token",
+                "/api/auth/sdk/login",
+                // CLI가 코드를 CLI 토큰으로 바꾸는 경로. 같은 이유로 열려 있다 — 자격증명은
+                // 일회용 코드와 code_verifier이며 CliTokenController.exchangeLoginCode가 직접 검증한다.
+                // 이 줄이 아래 "/api/auth/**" 규칙보다 먼저 있어야 한다. 먼저 맞는 규칙이 이긴다.
+                "/api/auth/cli-tokens/exchange",
+                // 재발급 경로. access 토큰이 만료된 뒤에 부르는 것이 목적이라 인증을 걸면 쓸 수 없다.
+                // 자격증명은 refresh 토큰이며 컨트롤러가 직접 검증한다.
+                "/api/auth/refresh",
+                "/api/auth/sdk/token/refresh",
+                // 이메일 로그인 화면이 세션 없이 부르는 셋. 로그인 수단 안내, 가입, 로그인이다.
+                "/api/auth/providers",
+                "/api/auth/signup",
+                "/api/auth/login",
+                // handoff 서명 공개키(ARTEL-1088). MCP 서버가 세션 없이 읽는다. `/api` 밖이고 공개키만 낸다.
+                "/.well-known/artel-handoff-jwks.json",
+                // 직접 설치한 서버가 보내는 telemetry report 와 그 지우기. 보내는 쪽은 다른 설치라 세션이 없고,
+                // 인터넷 너머에서 오므로 `/internal` 에 둘 수 없다. 무인증이라 `/api` 밖에 둔다(project.md 규칙 2). 한도·크기·모양 검사는 TelemetryReceiverController 가 한다.
+                // `/**` 가 아니라 두 줄로 적어 아래 경로가 더 생겨도 저절로 열리지 않게 한다.
+                "/telemetry/reports",
+                "/telemetry/reports/*",
+                // 내부 서버-투-서버 경로 전부. 보내는 주체가 사람이 아니라 Agent 서버라
+                // 엔드유저 JWT가 없다. 이 접두사가 곧 신뢰 경계이므로, 새 내부 엔드포인트는
+                // 여기에 줄을 더하는 것이 아니라 `/internal/` 아래에 두어야 한다.
+                // 이름이 비슷한 /api/projects/{id}/test-case-spec/download는 엔드유저용이라
+                // 이 접두사 밖에 있고 인증 대상으로 남는다.
+                "/internal/**"
+            ).permitAll()
+            it.pathMatchers("/api/auth/**").authenticated()
+            // test-scenario는 외부(FE) 요청이므로 JWT 인증/인가 대상이다.
+            it.pathMatchers("/api/test-scenario/**").authenticated()
+            // QA 실행/로그/SSE도 프로젝트 멤버만 접근하는 엔드유저 API다.
+            it.pathMatchers("/api/qa-tries/**").authenticated()
+            // 런(TR) 단위 QA 실행/조회도 같은 엔드유저 API(ARTEL-259).
+            it.pathMatchers("/api/qa-runs/**").authenticated()
+            it.anyExchange().authenticated()
+        }
+        // GitHub OAuth 는 선택이다. registration 이 없으면 oauth2Login 을 붙이지 않는다 — 붙이면 빈을
+        // 찾지 못해 기동이 멈춘다. 그때 `/oauth2/authorization/github` 는 처리할 곳이 없어 404 다.
+        .apply {
+            if (clientRegistrationRepository.ifAvailable != null) {
+                oauth2Login {
+                    it.authenticationSuccessHandler(
+                        oauthSuccessHandler(
+                            properties,
+                            jwtService,
+                            refreshTokenService,
+                            authCookies,
+                            identityResolver,
+                            oauthLoginService
+                        )
+                    )
+                    it.authenticationFailureHandler { webFilterExchange, _ ->
+                        webFilterExchange.exchange.response.statusCode = HttpStatus.FOUND
+                        webFilterExchange.exchange.response.headers.location =
+                            OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties, "oauth")
+                        webFilterExchange.exchange.response.setComplete()
+                    }
+                }
+            }
+        }
+        // CLI 토큰은 브라우저 세션과 같은 경로 집합을 연다. 그래서 별도 체인이 아니라 같은 체인에
+        // 필터 하나를 더한다. 별도 체인을 두려면 authorizeExchange 규칙을 두 벌로 복사해야 하고,
+        // 그 둘은 반드시 어긋난다. SDK 체인이 따로인 것은 반대 이유다 — 그쪽은 audience 로 경로를
+        // 좁히는 것이 목적이라 체인이 맞다.
+        .addFilterBefore(OAuthReturnTargetFilter(properties), SecurityWebFiltersOrder.FIRST)
+        .addFilterBefore(
+            cliTokenAuthenticationFilter(cliTokenAuthenticationManager),
+            SecurityWebFiltersOrder.AUTHENTICATION
+        )
+        // MCP access JWT 도 CLI 토큰과 같은 이유로 같은 체인에 필터 하나를 더한다(ARTEL-1088). 다른 것은 MCP 가
+        // 여는 경로가 좁다는 점이고, 그 좁힘은 아래 McpScopeWebFilter 가 맡는다. MCP 가 꺼져 있으면 detector 가
+        // 아무 요청도 고르지 않아 이 필터는 그냥 지나간다.
+        .addFilterBefore(
+            mcpAccessTokenAuthenticationFilter(mcpAccessTokenDetector, McpAccessTokenAuthenticationManager(mcpProperties)),
+            SecurityWebFiltersOrder.AUTHENTICATION
+        )
+        // 인증이 끝난 뒤, 인가보다 먼저 계정이 막혔는지 본다. 세 체인 모두에 붙여 SDK 와 tracker 경로도
+        // 막힌 계정을 받지 않는다.
+        .addFilterBefore(AccountStateWebFilter(accountStateService), SecurityWebFiltersOrder.EXCEPTION_TRANSLATION)
+        // 인증이 끝난 뒤, 인가보다 먼저 MCP access JWT 의 scope → 경로 허용표를 본다. 다른 자격증명은 건드리지 않는다.
+        .addFilterBefore(McpScopeWebFilter(), SecurityWebFiltersOrder.EXCEPTION_TRANSLATION)
+        .oauth2ResourceServer {
+            it.bearerTokenConverter(cookieTokenConverter(properties, mcpAccessTokenDetector))
+            it.jwt { }
+            it.authenticationEntryPoint(jsonAuthenticationEntryPoint())
+        }
+        .exceptionHandling {
+            it.authenticationEntryPoint(jsonAuthenticationEntryPoint())
+        }
+        .logout {
+            it.logoutUrl("/api/auth/logout")
+            it.logoutSuccessHandler(cookieLogoutHandler(authCookies))
+        }
+        .build()
+
+    @Bean
+    fun jwtEncoder(properties: AuthProperties): JwtEncoder {
+        val key = SecretKeySpec(properties.jwtSecret.toByteArray(Charsets.UTF_8), "HmacSHA256")
+        return NimbusJwtEncoder(ImmutableSecret<SecurityContext>(key))
+    }
+
+    // 두 디코더가 같은 타입이라, 리소스 서버가 타입으로 찾아 쓰는 브라우저 쪽을 @Primary로 둔다.
+    // SDK 체인은 sdkJwtDecoder를 이름으로 받아 명시적으로 지정한다.
+    @Bean
+    @Primary
+    fun jwtDecoder(properties: AuthProperties): NimbusReactiveJwtDecoder =
+        decoderFor(properties, properties.audience)
+
+    /** SDK 토큰 전용 디코더. audience가 다른 토큰(브라우저 세션)은 여기서 떨어진다. */
+    @Bean
+    fun sdkJwtDecoder(properties: AuthProperties): NimbusReactiveJwtDecoder =
+        decoderFor(properties, properties.sdkAudience)
+
+    /** refresh 토큰 전용 디코더. access 토큰을 재발급 경로에 내밀면 여기서 떨어진다. */
+    @Bean
+    fun refreshJwtDecoder(properties: AuthProperties): NimbusReactiveJwtDecoder =
+        decoderFor(properties, properties.refreshAudience)
+
+    /**
+     * tracker 설치 `state` 전용 디코더. 세션 토큰을 state 자리에 내밀면 audience가 달라 떨어진다.
+     *
+     * 이 디코더는 필터 체인에 붙지 않는다 — state는 Authorization 자격증명이 아니라 쿼리 파라미터로
+     * 실려 오는 값이라, 검증은 TrackerSetupStateService가 직접 한다.
+     */
+    @Bean
+    fun trackerSetupJwtDecoder(properties: AuthProperties): NimbusReactiveJwtDecoder =
+        decoderFor(properties, properties.trackerSetupAudience)
+
+    private fun decoderFor(properties: AuthProperties, audience: String): NimbusReactiveJwtDecoder {
+        val key = SecretKeySpec(properties.jwtSecret.toByteArray(Charsets.UTF_8), "HmacSHA256")
+        val decoder = NimbusReactiveJwtDecoder.withSecretKey(key)
+            .macAlgorithm(MacAlgorithm.HS256)
+            .build()
+        // createDefaultWithIssuer bundles the timestamp (exp/nbf) and issuer validators;
+        // setJwtValidator replaces the decoder default, so the timestamp check must be
+        // included here explicitly or expired tokens would pass.
+        val validators: OAuth2TokenValidator<Jwt> = DelegatingOAuth2TokenValidator(
+            JwtValidators.createDefaultWithIssuer(properties.issuer),
+            JwtClaimValidator<List<String>?>("aud") { it != null && it.contains(audience) }
+        )
+        decoder.setJwtValidator(validators)
+        return decoder
+    }
+
+    @Bean
+    fun clock(): Clock = Clock.systemUTC()
+
+    @Bean
+    fun corsConfigurationSource(properties: AuthProperties): CorsConfigurationSource {
+        val configuration = CorsConfiguration().apply {
+            // allowCredentials=true에서는 allowedOrigins="*"가 금지되므로, 와일드카드(https://*.artel.kr)까지
+            // 지원하도록 allowedOriginPatterns를 사용한다. stage/prod/프리뷰 등 복수 출처를 설정에서 주입한다.
+            allowedOriginPatterns = properties.corsAllowedOrigins
+            allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+            allowedHeaders = listOf(HttpHeaders.CONTENT_TYPE, HttpHeaders.AUTHORIZATION)
+            allowCredentials = true
+            maxAge = 3600L
+        }
+        return UrlBasedCorsConfigurationSource().apply {
+            registerCorsConfiguration("/**", configuration)
+        }
+    }
+
+    private fun oauthSuccessHandler(
+        properties: AuthProperties,
+        jwtService: JwtService,
+        refreshTokenService: RefreshTokenService,
+        authCookies: AuthCookies,
+        identityResolver: OAuthIdentityResolver,
+        oauthLoginService: OAuthLoginService
+    ) = ServerAuthenticationSuccessHandler { webFilterExchange, authentication ->
+        // Spring Security의 리액티브 콜백은 Mono<Void>를 요구한다. upsert가 suspend라 mono {}로 브리지한다.
+        mono {
+            val identity = identityResolver.resolve(authentication as org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken)
+            // 닫힌 가입과 막힌 계정에는 쿠키를 주지 않고, 무엇 때문인지 로그인 화면에 알린다.
+            val persistedIdentity = try {
+                oauthLoginService.signIn(identity)
+            } catch (closed: OAuthSignupClosedException) {
+                return@mono redirectToLogin(webFilterExchange.exchange, properties, "signup_closed")
+            } catch (disabled: AccountDisabledException) {
+                return@mono redirectToLogin(webFilterExchange.exchange, properties, "disabled")
+            }
+            val token = jwtService.issue(persistedIdentity)
+            val refresh = refreshTokenService.issue(
+                persistedIdentity.userId,
+                properties.audience,
+                properties.refreshTokenTtl
+            )
+            val response = webFilterExchange.exchange.response
+            response.addCookie(authCookies.access(token))
+            response.addCookie(authCookies.refresh(refresh.token))
+            response.statusCode = HttpStatus.FOUND
+            response.headers.location = OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties)
+            response.setComplete().awaitSingleOrNull()
+        }
+            .onErrorResume { error ->
+                // 여기서 실패하면 JWT 쿠키가 발급되지 않아 로그인이 조용히 깨진다.
+                // 원인을 남기지 않으면 프런트에는 error=server만 보이고 서버에는 아무 흔적이 없다.
+                logger.error("OAuth 로그인 후처리 실패", error)
+                val response = webFilterExchange.exchange.response
+                response.statusCode = HttpStatus.FOUND
+                response.headers.location =
+                    OAuthReturnTargetFilter.destination(webFilterExchange.exchange, properties, "server")
+                response.setComplete()
+            }
+    }
+
+    private suspend fun redirectToLogin(
+        exchange: org.springframework.web.server.ServerWebExchange,
+        properties: AuthProperties,
+        error: String
+    ): Void? {
+        exchange.response.statusCode = HttpStatus.FOUND
+        exchange.response.headers.location = OAuthReturnTargetFilter.destination(exchange, properties, error)
+        return exchange.response.setComplete().awaitSingleOrNull()
+    }
+
+    /**
+     * 브라우저 세션의 자격증명을 집어낸다. `Authorization: Bearer` 가 먼저이고, 없으면 access 쿠키다.
+     *
+     * 브라우저 체인과 tracker 체인이 둘 다 이 함수를 쓴다. 즉 이 분기를 잘못 쓰면 세션 로그인
+     * 전체가 401 이 된다.
+     *
+     * `artel_` bearer 는 여기서 명시적으로 거절한다. 앞에 끼운 CLI 토큰 필터가 이미 그 요청을
+     * 인증해 두었지만 `AuthenticationWebFilter` 는 SecurityContext 가 찼는지 보지 않으므로,
+     * 거르지 않으면 리소스 서버 필터가 같은 헤더를 JWT 로 한 번 더 해석해 401 을 낸다.
+     *
+     * 쿠키로 떨어뜨리지 않고 곧장 `Mono.empty()` 인 것이 중요하다. `artel_` bearer 와 세션 쿠키를
+     * 함께 실은 요청에서 쿠키로 넘어가면, 앞 필터가 CLI 토큰 주인으로 인증해 둔 것을 뒤 필터가
+     * 쿠키 주인으로 덮어쓴다. 헤더에 `artel_` 이 있으면 그 요청은 CLI 토큰 요청이고 그것으로 끝이다.
+     *
+     * MCP access JWT 도 같은 이유로 거절한다(ARTEL-1088). 앞에 끼운 MCP 필터가 이미 인증해 두었고, 여기서 받으면
+     * 세션 디코더가 MCP 서명을 몰라 401 을 낸다. [McpAccessTokenDetector] 는 MCP 가 꺼져 있으면 늘 null 이다.
+     */
+    private fun cookieTokenConverter(
+        properties: AuthProperties,
+        mcpAccessTokenDetector: McpAccessTokenDetector
+    ): ServerAuthenticationConverter {
+        val headerConverter = ServerBearerTokenAuthenticationConverter()
+        return ServerAuthenticationConverter { exchange ->
+            if (exchange.request.cliTokenOrNull() != null || mcpAccessTokenDetector.tokenOrNull(exchange.request) != null) {
+                Mono.empty()
+            } else {
+                headerConverter.convert(exchange).switchIfEmpty(Mono.defer {
+                    val token = exchange.request.cookies.getFirst(properties.cookieName)?.value
+                    if (token.isNullOrBlank()) Mono.empty<Authentication>()
+                    else Mono.just<Authentication>(BearerTokenAuthenticationToken(token))
+                })
+            }
+        }
+    }
+
+    /**
+     * `artel_` bearer 를 `cli_token` 조회로 해석하는 필터.
+     *
+     * **`@Bean` 으로 내지 않는다.** `AuthenticationWebFilter` 는 `WebFilter` 라, 빈으로 두면 Spring
+     * WebFlux 가 security 체인 밖의 전역 `WebFilter` 목록에도 집어넣어 두 번 돈다. 여기서 만들어
+     * 그 자리에서 `addFilterBefore` 로 넘긴다.
+     *
+     * `NoOpServerSecurityContextRepository` 를 명시하는 이유는 체인이 같은 것을 고른 이유와 같다 —
+     * 세션에 남은 principal 로 요청이 통과하는 것을 막는다.
+     */
+    private fun cliTokenAuthenticationFilter(
+        cliTokenAuthenticationManager: CliTokenAuthenticationManager
+    ): AuthenticationWebFilter =
+        AuthenticationWebFilter(cliTokenAuthenticationManager).apply {
+            setServerAuthenticationConverter { exchange ->
+                Mono.justOrEmpty(exchange.request.cliTokenOrNull())
+                    .map<Authentication> { BearerTokenAuthenticationToken(it) }
+            }
+            setSecurityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+            setAuthenticationFailureHandler(
+                ServerAuthenticationEntryPointFailureHandler(jsonAuthenticationEntryPoint())
+            )
+        }
+
+    /**
+     * MCP access JWT 를 MCP JWKS 로 검증하는 필터. [cliTokenAuthenticationFilter] 와 같은 이유로 `@Bean` 이 아니고,
+     * 같은 이유로 `NoOpServerSecurityContextRepository` 를 쓴다. 실패는 다른 자격증명과 같은 401 JSON 이다.
+     */
+    private fun mcpAccessTokenAuthenticationFilter(
+        detector: McpAccessTokenDetector,
+        authenticationManager: McpAccessTokenAuthenticationManager
+    ): AuthenticationWebFilter =
+        AuthenticationWebFilter(authenticationManager).apply {
+            setServerAuthenticationConverter { exchange ->
+                Mono.justOrEmpty(detector.tokenOrNull(exchange.request))
+                    .map<Authentication> { BearerTokenAuthenticationToken(it) }
+            }
+            setSecurityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+            setAuthenticationFailureHandler(
+                ServerAuthenticationEntryPointFailureHandler(jsonAuthenticationEntryPoint())
+            )
+        }
+
+    private fun jsonAuthenticationEntryPoint() = ServerAuthenticationEntryPoint { exchange, _ ->
+        exchange.response.statusCode = HttpStatus.UNAUTHORIZED
+        exchange.response.headers.contentType = org.springframework.http.MediaType.APPLICATION_JSON
+        val body = exchange.response.bufferFactory()
+            .wrap("{\"code\":\"unauthorized\",\"message\":\"Authentication is required\"}".toByteArray())
+        exchange.response.writeWith(Mono.just(body))
+    }
+
+    private fun cookieLogoutHandler(authCookies: AuthCookies) = ServerLogoutSuccessHandler { exchange, _ ->
+        authCookies.cleared().forEach(exchange.exchange.response::addCookie)
+        exchange.exchange.response.statusCode = HttpStatus.NO_CONTENT
+        exchange.exchange.response.setComplete()
+    }
+}

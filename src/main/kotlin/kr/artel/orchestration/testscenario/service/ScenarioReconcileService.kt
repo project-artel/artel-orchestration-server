@@ -1,0 +1,1567 @@
+package kr.artel.orchestration.testscenario.service
+
+import kr.artel.orchestration.project.event.ProjectChangeStreamManager
+import kr.artel.orchestration.project.event.ProjectChangeTopic
+
+import kr.artel.orchestration.testscenario.dto.ScenarioExecutionMode
+import java.util.concurrent.ConcurrentHashMap
+import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.toSet
+import kotlinx.coroutines.withContext
+import kr.artel.orchestration.testcase.repository.TestCaseRepository
+import kr.artel.orchestration.testrun.entity.TestRunScenarioEntity
+import kr.artel.orchestration.testrun.repository.TestRunMessageRepository
+import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
+import kr.artel.orchestration.testscenario.dto.ChatScenarioStep
+import kr.artel.orchestration.testscenario.dto.ScenarioDraft
+import kr.artel.orchestration.testscenario.dto.ReviewedCases
+import kr.artel.orchestration.testscenario.dto.ScenarioQuestion
+import kr.artel.orchestration.testscenario.dto.ScenarioResult
+import kr.artel.orchestration.testscenario.dto.ScenarioStepKind
+import kr.artel.orchestration.testscenario.dto.ScenarioStepSource
+import kr.artel.orchestration.testscenario.dto.ScenarioStep
+import kr.artel.orchestration.testscenario.dto.toStoredStep
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
+import kr.artel.orchestration.testscenario.entity.toDraft
+import kr.artel.orchestration.testscenario.entity.withDraft
+import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Service
+import org.springframework.transaction.reactive.TransactionalOperator
+import org.springframework.transaction.reactive.executeAndAwait
+
+/**
+ * Agent가 낸 시나리오 결과를 런에 반영하는 공용 서비스(ARTEL-206 Step 5·6, 재설계 2026-08-07).
+ *
+ * 저장 경로는 하나(이 서비스)지만 트리거는 둘이다:
+ * - **자동 반영**: [TestScenarioAgentService]가 result 프레임을 받고 사용자의 autoApply가 켜져 있을 때.
+ * - **수동 커밋**: 카드 검토 모드에서 사용자가 카드로 고른/편집한 결과를 커밋할 때.
+ *
+ * **재설계**: 시나리오 본문 = **steps 리스트** 하나. 별도 케이스 조합 테이블(test_scenario_case)은
+ * 폐기됐다 — 각 스텝은 행위 하나이며 검증 대상 TC를 `caseId`로 옵션 참조한다. 따라서 upsert는
+ * 본문(title/description/steps) 통째 저장뿐이다.
+ *
+ * 항목별로 [ScenarioResult.scenarioId]로 분기한다:
+ * - `null` → 새 시나리오 INSERT + 런 끝에 append.
+ * - 값 있음 → 그 기존 시나리오 본문 UPDATE(방어적으로 같은 프로젝트 소속일 때만).
+ *
+ * ⚠️ **안전규칙(협상 불가): [scenarios]가 비면 DB를 절대 건드리지 않는다** — 빈 배열은 질문·거절·무매치
+ * 같은 정상 턴이지 "런을 비워라"가 아니다. 이 경로에는 어떤 삭제도 없다.
+ */
+@Service
+class ScenarioReconcileService(
+    private val projectChanges: ProjectChangeStreamManager,
+    private val authoringCases: AuthoringCases,
+    private val authoringVersions: AuthoringVersionResolver,
+    // 케이스의 전제를 읽는 유일한 창구(ARTEL-627). 문장이 아니라 구조에서 읽는다.
+    private val conditions: CaseConditionReader,
+
+    private val scenarioRepository: TestScenarioRepository,
+    private val runScenarioRepository: TestRunScenarioRepository,
+    private val transactionalOperator: TransactionalOperator,
+    private val objectMapper: ObjectMapper,
+    private val testCaseRepository: TestCaseRepository,
+    private val pathService: ScenarioPathService,
+    private val caseFactService: ScenarioCaseFactService,
+    private val runMessageRepository: TestRunMessageRepository,
+    private val trace: AuthoringTrace,
+    private val effectRepository: kr.artel.orchestration.contentmap.repository.CapabilityEffectRepository,
+    private val repair: kr.artel.orchestration.testscenario.config.ScenarioRepairProperties,
+    private val caseContracts: kr.artel.orchestration.testcase.contract.CaseContractService,
+) {
+    private val logger = LoggerFactory.getLogger(ScenarioReconcileService::class.java)
+
+    /**
+     * 반영 결과. 개수만으로는 **"0건 반영"과 "검수에서 막힘"이 구분되지 않는다** — 앞은 정상 턴이고
+     * 뒤는 사용자에게 이유를 말해야 하는 실패다.
+     *
+     * @property applied 실제로 반영된 시나리오 수(추가 + 수정).
+     * @property findings 검수 결과. 판정 필드가 없어 검사를 건너뛴 경우에도 빈 [Findings]가 들어온다.
+     * @property notices 미상으로 남은 구간을 사용자에게 알릴 문장들(ARTEL-468). 저장된 턴에만 채워진다.
+     * @property question 되묻는 한 가지(ARTEL-487). **저장을 막지 않는다** — 답하지 않아도 결과물은
+     *   남는다. 없으면 물을 것이 없는 턴이다.
+     */
+    data class ReconcileOutcome(
+        val applied: Int,
+        val findings: ScenarioCoverageAudit.Findings = ScenarioCoverageAudit.Findings(),
+        val notices: List<String> = emptyList(),
+        val question: ScenarioQuestion? = null,
+        /**
+         * 모르는 자리 **전부**(ARTEL-630). [question] 은 그중 첫 것이고, 옛 화면을 위해 남긴다.
+         *
+         * 하나만 내던 것은 같은 질문이 매 턴 다시 나가는 것을 막으려던 것이었는데(런 152), 그건
+         * 답한 질문을 다시 안 묻는 것으로 풀 일이지 모르는 것을 감춰서 풀 일이 아니다.
+         */
+        val questions: List<ScenarioQuestion> = emptyList(),
+        /**
+         * 검수를 지난 최종본. 모델이 낸 것과 다르다 — 나누기와 메우기가 지난 뒤의 모습이다.
+         *
+         * 카드로 내보내는 쪽이 이것을 쓴다. 모델이 낸 것을 그대로 보내면 사용자는 코드가 끼운
+         * `bridge` 가 빠진 시나리오를 보고 커밋하게 되고, 저장된 것과 화면에 뜬 것이 갈린다.
+         */
+        val checked: List<ScenarioResult> = emptyList(),
+        /**
+         * 걷기가 짚은 **스스로 어긋난 자리**(제목: 어긋남). 막지 않지만(ARTEL-656) 실험의 주
+         * 잣대라, 판 요약이 세도록 밖으로 낸다 — 트레이스 산문을 되파싱하게 두지 않는다.
+         */
+        val contradicted: List<String> = emptyList(),
+        /**
+         * 이번에 저장한 시나리오(ARTEL-937). 무엇을 새로 만들고 무엇을 고쳤는지는 여기서만 정확하다 —
+         * 나누기가 하나를 둘로 만들고, 같은 제목이면 새로 만들지 않고 기존 것을 고친다.
+         */
+        val saved: List<SavedScenario> = emptyList(),
+    ) {
+        val rejected: Boolean get() = findings.rejected
+    }
+
+    /** 저장한 시나리오 하나. [created] 가 거짓이면 기존 시나리오 본문을 바꾼 것이다. */
+    data class SavedScenario(val scenarioId: Long, val title: String, val created: Boolean)
+
+    /**
+     * [scenarios]를 [runId]/[projectId]에 upsert한다. 빈 배열이면 아무것도 하지 않는다.
+     *
+     * [reviewed]가 있으면 **저장 전에** 검수한다(2단계). 통과하지 못하면 한 줄도 저장하지 않는다 —
+     * 절반만 저장하면 "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어
+     * 보인다). 규칙은 [ScenarioCoverageAudit]에 있다.
+     */
+    suspend fun reconcile(
+        runId: Long,
+        projectId: Long,
+        appUserId: Long,
+        scenarios: List<ScenarioResult>,
+        reviewed: ReviewedCases? = null,
+        save: Boolean = true,
+    ): ReconcileOutcome =
+        // 검수가 경로 · 기능을 비춰 볼 지도는 TR 이 고른 TC 버전의 것이다(ARTEL-1048).
+        withContext(authoringVersions.of(runId)) {
+            reconcileInVersion(runId, projectId, appUserId, scenarios, reviewed, save)
+        }
+
+    private suspend fun reconcileInVersion(
+        runId: Long,
+        projectId: Long,
+        appUserId: Long,
+        scenarios: List<ScenarioResult>,
+        reviewed: ReviewedCases?,
+        save: Boolean,
+    ): ReconcileOutcome {
+        // SAFETY: 빈 배열은 정상 턴 — DB 무변경(삽입도 삭제도 없음).
+        if (scenarios.isEmpty()) {
+            logger.info("빈 scenarios — DB 무변경(정상 턴) [runId=$runId]")
+            return ReconcileOutcome(0)
+        }
+
+        // **FREE 는 아래의 step 재작성을 지나지 않는다**(ARTEL-1028). 나누기·브리지 메우기·조작 채우기·
+        // 시작 안내는 순서 있는 step 목록을 전제로 step 을 더하거나 고치는데, FREE 는 step 하나가 TC 하나인
+        // 묶음이라 그대로 저장해야 한다. 규칙 검사는 저장 여부와 무관하게 먼저 한다 — 카드로만 내는 턴도
+        // 저장할 수 없는 모양을 내보내지 않는다. 어기면 [InvalidFreeScenarioException] 이고, 한 줄도
+        // 저장하지 않는다.
+        val stated = withExecutionModes(runId, projectId, scenarios)
+        val free = stated.filter { it.executionMode == ScenarioExecutionMode.FREE }
+        free.forEach { ScenarioExecutionRules.validate(draftFor(it, emptyList())) }
+        val ordered = stated.filterNot { it.executionMode == ScenarioExecutionMode.FREE }
+
+        // 같은 자리의 케이스들을 본다(ARTEL-466). 나누고 합치는 문제는 말만 한다 — 그건 요청이
+        // 정하는 것이지 코드가 정할 일이 아니다.
+        val known = projectFacts(projectId)
+        val facts = known.cases
+        // 케이스를 사람 말로 부르는 함수. 내부 번호는 사용자가 읽는 글에 넣지 않는다.
+        val byId = facts.associateBy { it.id }
+        val describe: (Long) -> String = { id -> byId[id]?.let(ScenarioSiblingCheck::describe).orEmpty() }
+
+        // **함께 담을 수 없는 것은 묻지 않고 나눈다**(ARTEL-497). 되묻기로는 끝나지 않았다 —
+        // 이유는 [ScenarioConflictSplit] 에 적었다(런 152: 같은 질문이 답할 때마다 다시 나갔다).
+        val contested: (Long, Long) -> Set<String> = { a, b ->
+            val left = byId[a]
+            val right = byId[b]
+            if (left == null || right == null) emptySet() else ScenarioSiblingCheck.contested(left, right)
+        }
+        // **걸어가는 것을 모순이라 하지 않는다**(ARTEL-581). 앞 스텝이 바꿔 놓은 값을 뒤 스텝이
+        // 전제로 삼는 것은 함께 못 서는 것이 아니라 순서다 — 실측(런 159)에서 `MapMove.position` 이
+        // 그랬고, 걸어가는 시나리오 하나가 네 조각이 났다.
+        val changedBy = known.changedBy
+        // **게임이 스스로 움직이는 값도 움직이는 값이다**(ARTEL-625). 위의 [changedBy] 는 케이스가
+        // 된 기능만 알아서, 전투를 이겨야 오르는 값이 영영 얼어 있는 것으로 보인다.
+        val movable = known.movable
+        // **다리의 근거를 먼저 되찾는다.** 계측 30판의 반려 41건 전원이 "근거 없는 스텝"
+        // 이었고, 원인은 모델이 알 수 없는 capability id 를 계약이 요구한 것이다. 되돌려서
+        // 다시 쓰게 하는 대신 코드가 그 자리에서 채우거나(위치+조작 표기로 결정적 매칭),
+        // 못 채우면 UNKNOWN 으로 정직하게 남긴다 — 반려 헛바퀴(같은 자리 9~10연속)가
+        // 원천에서 사라진다. 규칙은 [ScenarioBridgeGrounding] 에 있다.
+        val citedIds = ordered.flatMap { it.steps }.mapNotNull { it.stepSourceCapabilityId }.toSet()
+        val liveCited =
+            if (citedIds.isEmpty()) emptySet()
+            else runCatching { pathService.liveCapabilities(projectId, appUserId, citedIds) }
+                .onFailure { logger.warn("기능 실재 확인 실패 — 되찾기를 건너뛴다: ${it.message}") }
+                .getOrDefault(citedIds)
+        val groundingEdges = runCatching {
+            authoringCases.groundedSceneEdges(projectId).toList().map {
+                ScenarioBridgeGrounding.Edge(it.fromScene, it.toScene, it.byOperation, it.capabilityId)
+            }
+        }.onFailure { logger.warn("간선 조회 실패 — 되찾기를 건너뛴다: ${it.message}") }
+            .getOrDefault(emptyList())
+        val groundedBridges = ScenarioBridgeGrounding.apply(
+            ordered,
+            sceneOf = { id -> byId[id]?.scene },
+            arrivesAt = { id -> byId[id]?.arrivesAt ?: byId[id]?.scene },
+            edges = groundingEdges,
+            live = liveCited,
+        )
+        if (groundedBridges.notes.isNotEmpty()) {
+            trace.record(runId, "근거를 되찾는다", groundedBridges.notes.joinToString("\n"))
+        }
+
+        val startingValues = runCatching {
+            authoringCases.startingValues(projectId).toList()
+                .mapNotNull { row ->
+                    ScenarioStateReader.defaultOf(row.detail)
+                        ?.let { ScenarioStateReader.normalize(row.name) to it }
+                }.toMap()
+                .ifEmpty { metadataStart(projectId) }
+        }.onFailure { logger.warn("처음 값 조회 실패 — 조각 도달성 검사 없이 간다: ${it.message}") }
+            .getOrElse { emptyMap() }
+        val divided = ScenarioConflictSplit.adoptSplitPieces(
+            guardsOf = { id -> byId[id]?.guards.orEmpty() },
+            startingValues = startingValues,
+            outcome = ScenarioConflictSplit.apply(
+            groundedBridges.scenarios,
+            contested,
+            movable = { value -> movable.any { written -> sameTail(written, value) } },
+        ) { changedBy[it].orEmpty() },
+        )
+        val given = divided.scenarios
+        divided.notes.forEach { (title, parts) ->
+            logger.info("함께 담을 수 없어 나눴다 [runId={}] {} → {}조각", runId, title, parts)
+        }
+        if (divided.notes.isEmpty()) trace.record(runId, "1. 나눈다", "나눌 것 없음")
+        else trace.record(
+            runId, "1. 나눈다",
+            divided.notes.joinToString("\n") { (title, parts) -> "$title → ${parts}조각" } +
+                (if (divided.droppedCases.isEmpty()) ""
+                 else "\n홀로 남아 뺌: " + divided.droppedCases.joinToString(" · ") { (_, ids) -> ids.toString() }),
+        )
+        // 나누다 홀로 남아 뺀 케이스. 전 건 판정에서는 "뺐다"(out)로 재분류한다 — 모델은 담았다고
+        // 선언했지만 실물에서 코드가 뺐으니, in 으로 두면 검수가 "안 담음"으로 막고 비싼 재작성이
+        // 불려 나온다. 사용자에게는 아래 안내문이 사유와 함께 나간다.
+        val droppedSolo = divided.droppedCases.flatMap { it.second }.toSet()
+
+        val split = repairedSplit(given)
+        // **덜 담긴 것은 런 전체로 본다**(ARTEL-516). 이번 턴에 쓴 것만 보면, 다른 시나리오에
+        // 이미 있는 갈래를 "빠졌다"고 세어 전건을 담은 뒤에도 되묻기가 멈추지 않는다.
+        // FREE 에 담긴 케이스도 이 런에 담긴 것이다. 빼고 세면 그 케이스를 빠졌다고 알린다.
+        val covered = coveredInRun(runId, given + free, repairedSplit(given + free))
+        val siblings = ScenarioSiblingCheck.analyze(facts, split, covered) { value -> movable.any { written -> sameTail(written, value) } }
+        if (siblings.conflicting.isNotEmpty()) {
+            // 나눈 뒤에도 남았다면 나누는 쪽에 구멍이 있다는 뜻이다. 저장은 막지 않되 남긴다.
+            logger.warn("나눈 뒤에도 동거 불가가 남았다 [runId={}] {}", runId, siblings.conflicting)
+        }
+
+        // 경로 조회는 한 번만 한다. 메우는 쪽과 검수하는 쪽이 같은 질문을 하기 때문에, 따로 물으면
+        // 한 턴에 같은 케이스 쌍을 두 번씩 조회하게 된다.
+        val routes = PathLookup(projectId, appUserId)
+
+        // 검수보다 **먼저** 메운다. 순서가 반대면 코드가 고칠 수 있는 것 때문에 저장이 막히고,
+        // 그러면 에이전트에게 다시 쓰라고 시키게 된다 — 그 방법이 안 통한다는 것이 이 작업의 전제다.
+        // **메우기는 끌 수 있다**(ARTEL-673). 끄면 모델이 쓴 스텝만 남는다 — 못 이어지는 자리를
+        // 코드가 채우는 대신 검사가 짚는다.
+        // 예전에 사용자가 알려 준 구간(ARTEL-1117) — 그 구간은 다시 묻지 않고 그 말로 채운다.
+        val knownHow = if (repair.bridges) knownGapAnswers(projectId) else emptyMap()
+        val (bridged, notices, blocked) =
+            if (repair.bridges)
+                repairByInsertion(
+                    routes, given, describe, openingFacts(projectId, facts), known.caseOfCapability,
+                    { id -> byId[id]?.scene },
+                    { id -> byId[id]?.guards.orEmpty() }, ::writesOfCapabilities,
+                    knownHow::get,
+                )
+            else Triple(given, emptyList(), emptyList())
+        trace.record(
+            runId, "2. 메운다",
+            bridged.mapIndexed { index, after ->
+                val before = given.getOrNull(index)?.steps?.size ?: 0
+                "${after.title}: 스텝 $before → ${after.steps.size}"
+            }.joinToString("\n") +
+                (if (notices.isEmpty()) "" else "\n못 메운 구간:\n" + notices.joinToString("\n")) +
+                (if (blocked.isEmpty()) "" else "\n막힌 것: $blocked"),
+        )
+        // 글자까지 같은 스텝이 서로 다른 케이스를 보면 무엇이 다른지 붙인다. 화면에서는 같은 줄이
+        // 두 번 있는 것으로 보이고, 실행하는 사람은 중복이라 여겨 하나를 건너뛴다.
+        val repaired = ScenarioSiblingLabel.apply(
+            withCaseOperations(projectId, appUserId, bridged),
+        ) { id -> byId[id]?.guards.orEmpty() }
+
+        val raised = known.raisedIn
+        // **코드가 끼운 브리지도 값을 바꾼다.** 그것을 안 읽으면 멀쩡한 걸음을 어긋났다고 한다 —
+        // 실측(런 225)에서 `position` 을 한 칸씩 옮기는 브리지 여섯을 못 읽고 여섯 건을 잘못 짚었다.
+        val bridgeEffects = effectsOfBridges(repaired)
+        // **한 번 걷고 둘을 함께 받는다**(ARTEL-660). 어긋남과 시작 조건을 따로 계산하면 규칙이
+        // 둘이 되고, 그러면 갈라진다 — 실측(런 233)에서 저장된 안내가 계산과 정반대를 적었다.
+        // **줄지 않는 값과 아예 모르게 되는 값을 가른다**(ARTEL-672).
+        val climbing = known.climbing
+        val walked = repaired.map {
+            ScenarioContradictionCheck.walk(
+                walkOf(it, byId, loosens(raised, known.changedIn), bridgeEffects, climbing, known.strayMovers)
+            )
+        }
+        val contradictions = repaired.zip(walked).flatMap { (scenario, found) ->
+            found.contradictions.map { scenario.title to it }
+        }
+        // **흐름이 만들지 않은 전제를 프로젝트의 다른 케이스가 남기면 짚는다.** 지도가 없는 프로젝트
+        // (자연어 TC)에서는 순서를 바로잡을 근거가 이것뿐이다 — 실측(등불 골짜기 27판)에서 깨진 자리
+        // 16곳 대부분이 "앞에 넣었어야 할 케이스를 안 넣었다"였다. 메타 `state_after` 만 센다.
+        val makers = byId.values
+            .flatMap { fact -> fact.leaves.map { (name, value) -> Triple(name.lowercase(), value, fact.id) } }
+            .groupBy({ it.first to it.second }, { it.third })
+        // 시작 값을 아는 이름만 짚는다 — 모르면 처음부터 참인 것(낮에 시작)까지 "만들라"고 짚게 된다(측정 h1).
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
+        val missingMakers = repaired.zip(walked).flatMap { (scenario, found) ->
+            found.opening
+                .filter { it.operator == "==" && it.value != "0" }
+                .filter { guard -> start[guard.variable.lowercase()]?.let { it != guard.value } ?: false }
+                .mapNotNull { guard ->
+                    makers[guard.variable.lowercase() to guard.value]?.let { ids ->
+                        "${scenario.title}: ${guard.variable} == ${guard.value} 를 요구하는 스텝이 있는데 흐름 안에 그 값을 " +
+                            "만드는 스텝이 없습니다. TC ${ids.take(3).joinToString(", ")} 가 그 값을 남깁니다 — 그 앞에 " +
+                            "넣으세요. 요청이 그 상태에서 시작한다고 했으면 그대로 두세요."
+                    }
+                }
+                .distinct()
+        }
+        missingMakers.forEach { logger.info("흐름이 만들지 않은 전제 [runId={}] {}", runId, it) }
+        // **개수는 더해 본다.** `동전 >= 50` 을 요구하는데 흐름이 앞에서 모은 것이 20이면, 어긋남 검사는
+        // 아무 말도 못 한다 — 정해진 값이 없기 때문이다. 실측(등불 골짜기)에서 배를 타는 요청이 모든 조건에서
+        // 0/3 이었다. 케이스 메타가 `+N` 으로 남기는 값만 개수로 본다.
+        val adders = byId.values
+            .flatMap { fact -> fact.leaves.filterValues { it.isSigned() }.map { (name, by) -> Triple(name.lowercase(), by, fact.id) } }
+            .groupBy({ it.first }, { it.third to it.second })
+        val shortCounts = repaired.flatMap { scenario ->
+            val counted = mutableMapOf<String, Double>()
+            scenario.steps.mapIndexedNotNull { index, step ->
+                val fact = step.caseId?.let { byId[it] } ?: return@mapIndexedNotNull null
+                val short = fact.guards.firstOrNull { guard ->
+                    val need = guard.value.toDoubleOrNull()
+                    val name = guard.variable.lowercase()
+                    need != null && name in adders && guard.operator in setOf(">=", ">") &&
+                        (counted[name] ?: 0.0).let { if (guard.operator == ">=") it < need else it <= need }
+                }
+                fact.leaves.filterValues { it.isSigned() }.forEach { (name, by) ->
+                    counted.merge(name.lowercase(), by.toDoubleOrNull() ?: 0.0, Double::plus)
+                }
+                short?.let { guard ->
+                    val name = guard.variable.lowercase()
+                    "${scenario.title}: ${index + 1}번째 스텝(TC ${fact.id})이 ${guard.variable} ${guard.operator} ${guard.value} " +
+                        "를 요구하는데, 그 앞까지 흐름이 모은 ${guard.variable} 는 ${(counted[name] ?: 0.0).let { c -> c - (fact.leaves.entries.firstOrNull { it.key.lowercase() == name }?.value?.toDoubleOrNull() ?: 0.0) }.toInt()} 입니다. " +
+                        adders[name].orEmpty().filter { it.first != fact.id }.take(4).joinToString(", ") { (id, by) -> "TC $id($by)" } +
+                        " 가 ${guard.variable} 를 늘립니다 — 모자란 만큼 앞에 넣으세요. 요청이 그만큼 가진 상태에서 시작한다고 했으면 그대로 두세요."
+                }
+            }
+        }
+        shortCounts.forEach { logger.info("흐름이 모자라게 모은 개수 [runId={}] {}", runId, it) }
+        val reported = contradictions.map { (title, found) -> "$title: ${found.describe()}" } + missingMakers + shortCounts
+        val opened = repaired.zip(walked).map { (scenario, found) ->
+            scenario.copy(
+                steps = withOpeningNote(scenario.steps, openingFacts(projectId, facts), found.opening)
+            )
+        }
+        // 재작성을 지난 ORDERED 뒤에 FREE 를 그대로 붙인다. 나누기가 만든 자리 번호([divided] 의
+        // anchorOf)는 앞쪽 ORDERED 목록의 번호라, 뒤에 붙여야 그 번호가 그대로 맞는다.
+        val checked = opened + free
+        // 검수는 저장 **전에** 끝난다. 통과하지 못한 결과는 한 줄도 들어가지 않는다 — 절반만 저장하면
+        // "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어 보인다).
+        val liveCaseIds = testCaseRepository.findIdsByProjectId(projectId).toSet()
+        // 판정을 요구하는 것은 저작에 보낸 케이스뿐이다 — 런이 빌드 버전을 따르면 그 버전에 든 것(ARTEL-1048).
+        // 프로젝트 전체로 세면 보내지도 않은 다른 버전의 케이스가 "검토 안 함" 이 되어 저장이 늘 막힌다.
+        // 보낸 목록은 그 버전의 판정 상태로 거르므로(ARTEL-1064) 같은 집합을 쓴다. 그 버전에서 살아 있는 케이스는
+        // 대표 행이 BROKEN 이어도 있는 케이스라 유령이 아니다.
+        val versionCaseIds = authoringGameBuildId()?.let { authoringVersions.caseIds(it) }
+        val findings = ScenarioCoverageAudit.audit(
+            projectCaseIds = liveCaseIds + versionCaseIds.orEmpty(),
+            reviewScope = versionCaseIds ?: liveCaseIds,
+            reviewed = if (droppedSolo.isEmpty()) reviewed else reviewed?.let {
+                ReviewedCases(
+                    included = it.included.filterNot(droppedSolo::contains),
+                    excluded = (it.excluded + it.included.filter(droppedSolo::contains)).distinct(),
+                )
+            },
+            scenarios = checked,
+        ).let {
+            it.copy(
+                ungrounded = it.ungrounded + ghostCapabilities(projectId, appUserId, checked),
+                falseUnknowns = falseUnknowns(routes, checked, blocked.toSet()),
+                conflicting = siblings.conflicting,
+            )
+        }
+        // **이 흐름이 자기가 말한 것과 어긋나나**(ARTEL-656). 게임을 돌리지 않는다 — 지도가
+        // 적어 둔 것끼리 부딪히는지만 본다. 지금은 **막지 않고 남긴다**: 저작이 검수에 막혀
+        // 결과가 통째로 버려지는 것이 사용자가 가장 싫어한 일이고, 흐름 계산이 들어와 이런
+        // 자리가 애초에 안 생기게 된 뒤에 관문으로 올리는 것이 순서다.
+        contradictions.forEach { (title, found) ->
+            logger.warn("흐름이 스스로 어긋난다 [runId={}] {} — {}", runId, title, found.describe())
+        }
+        trace.record(
+            runId, "3. 검수한다",
+            "판정: ${if (findings.rejected) "막음 — 한 줄도 저장하지 않는다" else "통과"}\n" +
+                "안 담은 것 ${findings.missing} · 판정 안 한 것 ${findings.unreviewed} · " +
+                "없는 번호 ${findings.ghost} · 없는 근거 ${findings.ungrounded.size}건 · " +
+                "모른다고 했으나 아는 자리 ${findings.falseUnknowns.size}건 · " +
+                "함께 못 서는 것 ${findings.conflicting.size}건 · " +
+                "스스로 어긋남 ${contradictions.size}건(막지 않음)" +
+                contradictions.joinToString("") { (title, found) -> "\n  $title: ${found.describe()}" },
+        )
+        if (findings.rejected) {
+            logger.warn(
+                "저작 검수 실패 — 저장하지 않음 [runId={}] {} · unreviewed={} missing={} ghost={} " +
+                    "ungrounded={} falseUnknown={}",
+                runId, findings.summary(), findings.unreviewed, findings.missing, findings.ghost,
+                findings.ungrounded.size, findings.falseUnknowns.size
+            )
+            return ReconcileOutcome(0, findings, contradicted = reported)
+        }
+        if (findings.excess.isNotEmpty()) {
+            // 거부하지 않는 이유는 ScenarioCoverageAudit.Findings에 적었다. 남기는 이유는, 이 값이
+            // 늘어나면 1패스 판정이 좁다는 뜻이라 프롬프트를 고칠 근거가 되기 때문이다.
+            logger.info("판정 밖 케이스 담김(허용) [runId={}] excess={}", runId, findings.excess)
+        }
+        if (findings.unsourced.isNotEmpty()) {
+            // 막지 않는 이유는 ScenarioCoverageAudit.Findings 에 적었다. 남기는 이유도 excess 와
+            // 같다 — 이 값이 늘어나면 스텝 계약에 자리가 없다는 뜻이라 계약을 고칠 근거가 된다.
+            logger.info("근거를 적지 않은 스텝(허용) [runId={}] {}개", runId, findings.unsourced.size)
+        }
+
+        // **물은 것은 통보로 되풀이하지 않는다.** 같은 말이 두 줄로 붙으면 어느 쪽에 답해야 하는지
+        // 알 수 없고, 질문은 답할 자리가 있는 쪽이다.
+        // **한 번 거절한 질문은 다시 묻지 않는다**(ARTEL-487). 조건은 그대로이므로 매 턴 같은
+        // 질문이 다시 만들어지는데, 그것을 그대로 내보내면 "그대로 두기"를 누른 사용자에게 같은
+        // 것을 계속 묻는 셈이 된다. 답한 기록은 대화에 `answered` 로 남아 있다.
+        //
+        // **판이 아니라 프로젝트에서 읽는다**(ARTEL-676). 판 단위로 읽던 동안에는 새 판마다
+        // `Map_scene→TurnBattleScene 을 어떻게 가나요` 가 다시 나갔다 — 지도가 그대로면 답도
+        // 그대로인데도. 첫 판에 많이 묻고 그 뒤로 줄어드는 것이 이 되묻기의 전제다.
+        // **이것만은 들고 있지 않는다.** 사용자가 질문을 거절하면 그 자리에서 바뀌는 값이라,
+        // 낡은 것을 읽으면 방금 "그대로 두기"를 누른 질문을 다시 묻는다.
+        val answered = answeredQuestionIds(projectId)
+        // **모르는 자리를 전부 낸다**(ARTEL-630). 하나만 내면 나머지는 아무 말 없이 미상으로 남고,
+        // 사용자는 시나리오가 완성된 줄 안다 — 실측(런 178)에서 못 간다고 적은 자리가 일곱인데
+        // 물은 것은 하나였다.
+        // **묻는 것은 Gap 하나로 좁혔다**(ARTEL-903). 씬별 범위와 빠진 갈래를 걷어낸 기준은
+        // [ScenarioQuestionBuilder] 에 적었다 — 답이 시나리오를 바꾸는 물음만 카드가 된다.
+        // **계약 질문**: 짠 경로에서 확인 안 된 요구가 채워지지 않은 곳만 묻는다. 목표에서 거꾸로 훑으면
+        // 큰 프로젝트에서 경로 밖 질문이 쏟아졌다(측정: word-venture 질문 9개 중 8개가 경로 밖).
+        val contractQuestions = (
+            startBlocks(projectId, checked, byId).map(ScenarioQuestionBuilder::startQuestion) +
+                contractBlocks(projectId, checked, byId).map(ScenarioQuestionBuilder::contractQuestion)
+            )
+            .filterNot { it.id in answered }
+            .take(CONTRACT_QUESTIONS_PER_TURN)
+        val questions = ScenarioQuestionBuilder.all(blocked).filterNot { it.id in answered } + contractQuestions
+        // 옛 화면은 아직 한 개짜리 칸을 읽는다. 첫 질문을 거기 그대로 둬서 옮겨 올 시간을 준다.
+        val question = questions.firstOrNull()
+        val allNotices = buildList {
+            // 나눈 것은 **먼저** 말한다. 시나리오 수가 달라진 이유이므로, 아래 알림들보다 먼저
+            // 읽혀야 화면에 늘어난 카드가 무엇인지 알 수 있다.
+            // **위의 답변과 어긋나지 않게 말한다**(ARTEL-518). 모델은 "기존 시나리오에 담았다"고
+            // 답했는데 화면에는 새 시나리오가 늘어나 있는 일이 실제로 나왔다(런 155) — 모델이
+            // 거짓말을 한 것이 아니라 그 뒤에 코드가 나눴기 때문이다. 몇 개가 새로 생겼는지까지
+            // 말해 주면 둘이 이어진다.
+            divided.droppedCases.forEach { (title, ids) ->
+                val causes = ids.flatMap { divided.causeOf[it].orEmpty() }.toSet()
+                add(
+                    "‘$title’ 에서 함께 설 자리가 없어 홀로 남은 케이스(" +
+                        ids.joinToString(", ") { describe(it) } +
+                        ")는 저장하지 않았습니다" +
+                        (if (causes.isEmpty()) "" else " — 막은 값: ${causes.joinToString(", ")}") +
+                        ". 케이스 하나짜리 시나리오는 흐름이 아니어서," +
+                        " 함께 설 흐름이 생길 때 다시 담는 쪽이 낫습니다."
+                )
+            }
+            divided.notes.forEach { (title, parts) ->
+                add(
+                    "‘$title’ 은 함께 담을 수 없는 케이스가 있어 코드가 ${parts}개로 나눴습니다" +
+                        "(새 시나리오 ${parts - 1}개가 바로 뒤에 붙었습니다) — " +
+                        "사전조건이 어긋나 한 번의 실행으로 다 볼 수 없습니다."
+                )
+            }
+            if (question == null) addAll(notices)
+            // 갈래는 **알림으로만** 남는다(ARTEL-903) — 질문에서 빠졌으니 건너뛸 이유도 없다.
+            // 자연어 계약 프로젝트에서는 "빠진 갈래"를 알리지 않는다. 요청하지 않은 실패 갈래(검 없이 늑대)를
+            // 매 턴 빠졌다고 적으면 잡음이다 — 다른 갈래가 필요하면 저작이 범위 질문으로 묻는다.
+            val naturalLanguage = byId.values.any { it.leaves.isNotEmpty() || it.assumed.isNotEmpty() }
+            addAll(siblingNotices(if (naturalLanguage) siblings.copy(untestedArms = emptyList()) else siblings, describe))
+            unsourcedNotice(findings, checked)?.let(::add)
+        }
+
+        // **검수만 하고 돌려주는 자리**(시나리오 하나씩 받기). 저장은 카드가 나간 뒤에 한다는
+        // 경로가 따로 있고, 그 경로도 카드를 내보내기 전에 같은 검수를 지나야 한다. 통과한 결과를
+        // 함께 돌려주는 것은 코드가 메운 `bridge` 까지 담긴 것이 최종본이기 때문이다.
+        if (!save) {
+            trace.record(runId, "4. 저장한다", "저장하지 않는다(검수만) — 시나리오 ${checked.size}개")
+            // 이 출구도 어긋남을 실어야 한다 — 하나씩 받는 턴의 끝(검수만)이 이 길로 오고,
+            // 판 요약이 세는 것이 바로 이 값이다. 실측(런 16): 검수는 1건을 짚었는데 요약은
+            // 0건이라 적었다.
+            return ReconcileOutcome(
+                0, findings, allNotices, question, questions, checked,
+                contradicted = reported,
+            )
+        }
+
+        var applied = 0
+        val savedScenarios = mutableListOf<SavedScenario>()
+        transactionalOperator.executeAndAwait {
+            val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+            // **이 런에 이미 있는 제목은 갈아끼운다.** 하나씩 받으며 저장하는 턴에서 재작성이
+            // 전체를 다시 제출하면 같은 제목이 새 행으로 또 들어갔다 — 계측(런 28: 33행/17종,
+            // 런 31: 82행/40종). 턴끝 병합(repaired)이 제목으로 갈아끼우는 것과 같은 규칙을
+            // 저장에도 둔다. 런 스코프다 — 다른 런의 같은 제목은 남의 것이다.
+            val idByTitle = links.mapNotNull { link ->
+                scenarioRepository.findById(link.testScenarioId)?.let { it.title.trim() to it.id!! }
+            }.toMap(mutableMapOf())
+            // 새 시나리오는 런의 현재 마지막 position 다음부터 붙인다. 비어 있으면 0부터.
+            var runPosition = (links.maxOfOrNull { it.position } ?: -1) + 1
+            // 나눠서 생긴 조각을 원본 옆으로 옮기려면 저장된 id 를 자리별로 들고 있어야 한다.
+            val savedId = arrayOfNulls<Long>(checked.size)
+            val fromSplit = mutableListOf<Pair<Long, Int>>()
+            for ((index, scenario) in checked.withIndex()) {
+                val scenarioId = scenario.scenarioId ?: idByTitle[scenario.title.trim()]
+                if (scenarioId != null) {
+                    // 수정: 기존 시나리오 본문을 통째로 교체한다.
+                    val existing = scenarioRepository.findById(scenarioId)
+                    if (existing == null || existing.projectId != projectId) {
+                        // 방어: 없는/남의 프로젝트 시나리오는 건드리지 않는다(엉뚱한 덮어쓰기 방지).
+                        logger.warn("수정 대상 시나리오 무효 — 스킵 [runId=$runId, scenarioId=$scenarioId]")
+                        continue
+                    }
+                    // 교체 전에 사람이 단 기대 판정 라벨을 건져 온다(ARTEL-301). 에이전트는 라벨을
+                    // 본 적도 돌려준 적도 없으므로, 그냥 덮어쓰면 챗봇으로 시나리오를 한 번 고칠
+                    // 때마다 그 시나리오의 정답지가 통째로 사라진다.
+                    val previous = existing.toDraft(objectMapper).steps
+                    scenarioRepository.save(
+                        existing.withDraft(draftFor(scenario, previous), objectMapper)
+                    )
+                    // 런 링크는 그대로 둔다(수정은 위치를 바꾸지 않는다).
+                    savedId[index] = scenarioId
+                    savedScenarios += SavedScenario(scenarioId, scenario.title, created = false)
+                    applied++
+                } else {
+                    // 추가: 새 시나리오 INSERT + 런 끝에 append. 새 시나리오에는 살릴 라벨이 없다.
+                    val saved = scenarioRepository.save(
+                        TestScenarioEntity(projectId = projectId)
+                            .withDraft(draftFor(scenario, emptyList()), objectMapper)
+                    )
+                    runScenarioRepository.save(
+                        TestRunScenarioEntity(testRunId = runId, testScenarioId = saved.id!!, position = runPosition)
+                    )
+                    runPosition++
+                    savedId[index] = saved.id
+                    savedScenarios += SavedScenario(saved.id, scenario.title, created = true)
+                    idByTitle[scenario.title.trim()] = saved.id
+                    divided.anchorOf[index]?.let { anchor -> fromSplit += saved.id to anchor }
+                    applied++
+                }
+            }
+            if (fromSplit.isNotEmpty()) {
+                placeBesideOrigin(runId, fromSplit.mapNotNull { (id, anchor) -> savedId[anchor]?.let { id to it } })
+            }
+        }
+        if (applied > 0) projectChanges.notify(projectId, ProjectChangeTopic.TEST_RUNS)
+        logger.info("시나리오 반영 완료 [runId=$runId, applied=$applied/${checked.size}]")
+        trace.record(
+            runId, "4. 저장한다",
+            "시나리오 $applied/${checked.size}개\n" +
+                checked.joinToString("\n") { "  · ${it.title} — 스텝 ${it.steps.size}" } +
+                (if (questions.isEmpty()) "" else "\n되묻는다: " + questions.joinToString(" · ") { it.id }),
+        )
+        return ReconcileOutcome(
+            applied, findings, allNotices, question, questions, checked,
+            contradicted = reported,
+            saved = savedScenarios,
+        )
+    }
+
+    /**
+     * 결과마다 실행 방식을 채운다(ARTEL-1028). 값이 있으면 그대로 둔다. 없으면 수정 대상의 저장된 값을
+     * 쓰고, 수정 대상이 없으면(새 시나리오) ORDERED 다.
+     *
+     * 수정 대상은 저장할 때와 같은 규칙으로 찾는다 — `scenario_id` 가 있으면 그 시나리오(같은 프로젝트일
+     * 때만), 없으면 이 런에서 제목이 같은 시나리오. 규칙이 갈리면 FREE 를 고치는 결과가 ORDERED 로
+     * 읽혀 재작성을 지나고, 저장할 때 모드까지 ORDERED 로 바뀐다.
+     *
+     * 화면으로 나가는 제안도 이 함수를 지난다 — 화면은 값이 늘 있다고 읽는다.
+     */
+    suspend fun withExecutionModes(
+        runId: Long,
+        projectId: Long,
+        scenarios: List<ScenarioResult>,
+    ): List<ScenarioResult> {
+        if (scenarios.all { it.executionMode != null }) return scenarios
+        val inRun = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+            .mapNotNull { scenarioRepository.findById(it.testScenarioId) }
+        val modeByTitle = inRun.associate { it.title.trim() to it.executionMode }
+        return scenarios.map { scenario ->
+            if (scenario.executionMode != null) return@map scenario
+            val storedMode = when (val scenarioId = scenario.scenarioId) {
+                null -> modeByTitle[scenario.title.trim()]
+                else -> (inRun.firstOrNull { it.id == scenarioId } ?: scenarioRepository.findById(scenarioId))
+                    ?.takeIf { it.projectId == projectId }
+                    ?.executionMode
+            }
+            scenario.copy(executionMode = storedMode ?: ScenarioExecutionMode.ORDERED)
+        }
+    }
+
+    /**
+     * 나눠서 생긴 조각을 **원본 바로 뒤로** 옮긴다(ARTEL-518).
+     *
+     * 새 시나리오는 런 끝에 붙는다. 대부분은 그게 맞다 — 새로 만든 것은 마지막에 하면 된다.
+     * 그런데 나눠서 생긴 조각은 새로 만든 것이 아니라 **원본의 나머지 반쪽**이다. 실측(런 155)에서
+     * 맵 구간(position 2~8)을 나눈 조각이 EndingScene 뒤인 position 21 에 놓였다. 흐름을 순서대로
+     * 읽는 화면에서 그 조각은 아무 데서도 이어지지 않는다.
+     *
+     * `(test_run_id, position)` 이 유일하므로 한 번에 옮길 수 없다. 전부 멀리 밀어 둔 뒤 최종
+     * 번호를 다시 매긴다 — 그 사이에도 유일성이 깨지지 않는다.
+     *
+     * @param parts `조각 시나리오 id → 원본 시나리오 id`. 같은 원본의 조각들은 받은 순서대로 붙는다.
+     */
+    private suspend fun placeBesideOrigin(runId: Long, parts: List<Pair<Long, Long>>) {
+        val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+        val order = links.map { it.testScenarioId }.toMutableList()
+
+        // 한 원본에서 여러 조각이 나오면 **받은 순서대로** 이어 붙인다. 매번 원본 바로 뒤에
+        // 꽂으면 순서가 뒤집힌다.
+        val after = mutableMapOf<Long, Long>()
+        var moved = false
+        for ((part, origin) in parts) {
+            val from = order.indexOf(part)
+            val previous = after[origin] ?: origin
+            // 원본이 이 런에 없으면(다른 런의 시나리오를 고친 경우) 끝에 그대로 둔다.
+            if (from < 0 || order.indexOf(previous) < 0) continue
+            order.removeAt(from)
+            order.add(order.indexOf(previous) + 1, part)
+            after[origin] = part
+            moved = true
+        }
+        if (!moved || order == links.map { it.testScenarioId }) return
+
+        // 1) 자리를 비운다. 유일 제약 때문에 한 행씩 최종 번호로 바로 못 간다.
+        //
+        // 밀어 두는 거리는 **지금 쓰이는 자리에서 계산한다.** 최종 번호는 0부터 `links.size - 1`
+        // 까지이므로, 지금 가장 큰 자리보다 하나 더 큰 곳부터 밀면 그 구간과 겹치지 않는다.
+        // 상수로 박아 두면 그 수를 넘는 런에서 조용히 부딪힌다.
+        val parking = maxOf(links.maxOf { it.position } + 1, links.size)
+        links.forEach { runScenarioRepository.save(it.copy(position = it.position + parking)) }
+        // 2) 최종 번호.
+        val byScenario = links.associateBy { it.testScenarioId }
+        order.forEachIndexed { position, scenarioId ->
+            byScenario[scenarioId]?.let { runScenarioRepository.save(it.copy(position = position)) }
+        }
+        logger.info("나눈 조각을 원본 옆으로 옮겼다 [runId={}] {}건", runId, parts.size)
+    }
+
+    /**
+     * 검증 스텝 사이를 계산된 경로로 메운다(ARTEL-468).
+     *
+     * 저작이 만드는 시나리오는 상태를 **만들지 않고 그렇다고 치는 스텝**을 쓴다 — 실측(2026-08-18)에서
+     * 같은 씬 안의 상태 전이 66.7%, 씬 넷을 건너뛴 경우 100%가 그랬다. 지적해서 다시 쓰게 하는 것은
+     * 통하지 않았고(해소 0/3), 여기서 계산값을 끼워 넣자 0%가 됐다.
+     *
+     * 실패는 **손대지 않는 쪽으로** 떨어진다. 씬 명세가 없는 프로젝트, 케이스가 지워진 경우, 조회
+     * 자체가 터진 경우 모두 원본 그대로 흘려보낸다 — 저작을 막을 일이 아니다.
+     *
+     * 같은 케이스 쌍은 한 번만 묻는다. 한 턴에 시나리오 여럿이 같은 전이를 쓰는 일이 흔하고, 답은
+     * 그 사이에 바뀌지 않는다.
+     */
+    private suspend fun repairByInsertion(
+        routes: PathLookup,
+        scenarios: List<ScenarioResult>,
+        describe: (Long) -> String,
+        openingFacts: OpeningFacts,
+        caseOf: (Long) -> Long?,
+        sceneOf: (Long) -> String?,
+        guardsOf: (Long) -> List<Guard>,
+        writesOf: suspend (List<Long>) -> Map<String, String?>,
+        knownHow: (String) -> List<String>? = { null },
+    ): Triple<List<ScenarioResult>, List<String>, List<String>> {
+        val notices = mutableListOf<String>()
+        // 무엇이 막았는지를 따로 모은다 — 알림 문장에서 되뽑으면 문구를 다듬을 때마다 깨진다.
+        val blocked = mutableListOf<String>()
+
+        val repaired = scenarios.map { scenario ->
+            // **메울 구간이 없어도 지나간다.** 여기서 건너뛰면 근거를 확정하는 일까지 함께 건너뛰어,
+            // 씬 이동이 없는 시나리오(1스텝짜리 포함)만 근거가 비어 저장된다 — 검사는 통과하는데
+            // 실행하는 쪽에서 보면 그 스텝만 출처를 모르는 상태다.
+            val gaps = ScenarioBridgeRepair.gaps(scenario.steps)
+            val answers = buildMap {
+                gaps.forEachIndexed { index, gap ->
+                    val found = routes.between(gap.fromCaseId, gap.toCaseId)
+                    // 확인 자체를 못한 답은 답으로 치지 않는다 — 지도가 없는 프로젝트에까지
+                    // 미상 스텝을 뿌리면 저작이 온통 "모른다"로 덮인다.
+                    if (found != null && !found.unchecked) {
+                        // **뒤를 깨는 길은 조용히 끼우지 않고 묻는다**(ARTEL-675).
+                        val answer = askInsteadIfItBreaksLater(
+                            found,
+                            scenario.steps.drop(gap.at.last + 1).mapNotNull { it.caseId }.flatMap(guardsOf),
+                            writesOf,
+                        )
+                        put(index, answer)
+                        // 예전에 들은 구간은 채워지므로 막힌 것으로 세지 않는다 — 세면 그 구간을 또 묻는다.
+                        if (answer.result == ScenarioPathResult.UNKNOWN &&
+                            answer.blockedBy?.let(knownHow).isNullOrEmpty()
+                        ) {
+                            answer.blockedBy?.let(blocked::add)
+                        }
+                    }
+                }
+            }
+            val result = ScenarioBridgeRepair.apply(
+                scenario.steps, answers, describe, caseOf, sceneOf, knownHow,
+            )
+            if (result.steps.size != scenario.steps.size) {
+                logger.info(
+                    "교정 · 브리지 {}건 삽입 [scenarioId={}] {} → {} 스텝",
+                    result.steps.size - scenario.steps.size, scenario.scenarioId,
+                    scenario.steps.size, result.steps.size,
+                )
+            }
+            notices += result.notices
+            // **시작 안내는 여기서 안 붙인다**(ARTEL-660). 무엇이 미리 참이어야 하는지는 메운
+            // 뒤에 흐름을 한 번 걸어 봐야 알고, 그 걸음은 어긋남 검사가 이미 걷는다.
+            scenario.copy(steps = result.steps)
+        }
+        return Triple(repaired, notices.distinct(), blocked.distinct())
+    }
+
+    /**
+     * **여기까지 와야 시작한다**를 첫 스텝 앞에 적는다(ARTEL-636).
+     *
+     * 시나리오는 하나가 끝날 때마다 게임을 초기화하는데 검증하는 순간은 게임 곳곳에 흩어져 있다.
+     * 엔딩을 보는 시나리오는 매번 엔딩까지 다시 가야 한다. 첫 스텝이 `StagePosition >= 4` 를
+     * 요구하는데 아무 말도 없으면, 실행하는 쪽에게는 "알아서 네 번 이겨라"와 같다.
+     *
+     * **길을 찾아 주지는 않는다.** 무엇이 참이어야 시작하는지와 그 값이 어디서 오르는지만 적는다 —
+     * 어떻게 가는지는 실행하는 쪽과 지도가 풀 문제다.
+     *
+     * 그 시나리오가 **스스로 만드는 값은 빼고** 본다. 앞 스텝이 만들어 주는 것까지 "미리 와 있으라"
+     * 고 하면 할 수 있는 일을 못 하게 막는 셈이다.
+     */
+    private fun withOpeningNote(
+        steps: List<ChatScenarioStep>,
+        facts: OpeningFacts,
+        selfMade: List<Guard>,
+    ): List<ChatScenarioStep> {
+        val first = steps.firstOrNull() ?: return steps
+        // 이미 붙어 있으면 다시 붙이지 않는다 — 재작성 턴이 같은 시나리오를 다시 낸다.
+        if (first.stepKind == ScenarioStepKind.OPENING) return steps
+        val note = ScenarioOpeningNote.of(openingNeeds(selfMade, facts)) ?: return steps
+        return listOf(
+            // 근거를 달지 않는다. 이 줄은 모델이 쓴 것이 아니라 **지도에서 계산한 것**이고,
+            // `CAPABILITY` 로 적으면 어느 기능인지를 대야 하는데 댈 것이 없다.
+            ChatScenarioStep(action = note, stepKind = ScenarioStepKind.OPENING)
+        ) + steps
+    }
+
+    /**
+     * 시작할 때 이미 참이어야 하는 것들(ARTEL-636 · ARTEL-660).
+     *
+     * **무엇이 그것인지는 걸음이 정한다.** 흐름을 위에서 아래로 걸어 보면, 한 번도 정해진 적 없고
+     * 모르게 된 적도 없이 요구된 것이 곧 스스로 못 만드는 것이다([ScenarioContradictionCheck.walk]).
+     *
+     * 앞서는 여기서 따로 훑어 세었고, 그래서 **저장되는 안내가 계산과 갈라졌다.** 실측(런 233)에서
+     * 한 시나리오는 계산이 `flag != 0` 인데 안내는 `진행도 >= 4 로 시작하라`고 적었고, 다른 하나는
+     * 계산이 `!= 5` 인데 안내는 `== 5` 로 **정반대**였다. 그리고 값을 변수별 최댓값으로 고르다 보니
+     * 흐름이 사이에서 만들어 내는 값까지 미리 와 있으라고 했다 — "보스 앞까지 이겨 놓고 와서 전투를
+     * 세 번 더 해라"가 된다(런 235, 시나리오 799).
+     *
+     * 여기 남은 것은 **무엇을 적지 않을지**뿐이다. 진행을 요구하는 비교만 보고, `!= 5` 나 `== 0`
+     * 처럼 초기화 직후로도 성립하는 것은 뺀다 — 적으면 매 시나리오에 한 줄이 붙어 소음이 된다.
+     * 어디서 오르는지 모르는 것도 뺀다: 찾아갈 실마리가 없는 안내는 "알아서 하라"와 같다.
+     */
+    private fun openingNeeds(
+        opening: List<Guard>,
+        facts: OpeningFacts,
+    ): List<ScenarioOpeningNote.Requirement> = opening
+        .filter { guard -> guard.operator in PROGRESS_OPERATORS }
+        .filter { guard -> (guard.value.toDoubleOrNull() ?: 0.0) > 0 }
+        .mapNotNull { guard ->
+            val raisedIn = facts.raisedIn[ScenarioStateReader.normalize(guard.path)].orEmpty()
+            if (raisedIn.isEmpty()) null
+            else ScenarioOpeningNote.Requirement(
+                variable = guard.variable,
+                comparison = "${guard.operator} ${guard.value}",
+                raisedIn = raisedIn.toList(),
+            )
+        }
+        .distinctBy { it.variable to it.comparison }
+        .sortedBy { it.variable }
+
+    /**
+     * 시작 안내를 쓰는 데 필요한 사실들. 케이스마다 한 벌씩 미리 모아 둔다 — 시나리오마다 다시
+     * 조회하면 같은 값을 판마다 여러 번 읽는다.
+     */
+    private data class OpeningFacts(
+        val guards: Map<Long, List<Guard>>,
+        val arrivesAt: Map<Long, String?>,
+        val raisedIn: Map<String, List<String>>,
+    )
+
+    private suspend fun openingFacts(projectId: Long, facts: List<ScenarioSiblingCheck.CaseFact>): OpeningFacts =
+        OpeningFacts(
+            guards = facts.associate { it.id to it.guards },
+            arrivesAt = runCatching {
+                authoringCases.all(projectId).associate { case ->
+                    case.id!! to runCatching { objectMapper.readTree(case.metadata.asString()) }
+                        .getOrNull()?.path("arrives_at")?.asText(null)?.takeIf { it.isNotBlank() }
+                }
+            }.getOrElse { emptyMap() },
+            raisedIn = runCatching {
+                authoringCases.valueRaisers(projectId).toList()
+                    .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
+                    .mapValues { (_, scenes) -> scenes.distinct().sorted() }
+            }.getOrElse { emptyMap() },
+        )
+
+    /**
+     * **모른다고 적었는데 명세는 아는 길**인 자리를 찾는다(ARTEL-467).
+     *
+     * `UNKNOWN`을 무조건 통과시키면 전부 그것으로 적는 것이 가장 싼 통과 방법이 되어 검사가
+     * 무의미해진다. 그래서 통과 사유이면서 동시에 검사 대상이다 — 이 대조를 하려면 검사하는 쪽이
+     * 씬 명세를 쥐고 있어야 하고, 경로 계산을 Agent가 아니라 여기 둔 이유가 그것이다.
+     *
+     * 대조는 그 브리지를 감싼 **두 검증 스텝** 사이에 대해 한다. 브리지 자신은 케이스가 없어
+     * 물어볼 좌표가 없기 때문이다. 앞뒤 어느 한쪽이라도 없으면(시나리오 처음이나 끝) 판정하지
+     * 않는다 — 비교할 상대가 없는 것을 거짓이라 말할 수는 없다.
+     */
+    private suspend fun falseUnknowns(
+        routes: PathLookup,
+        scenarios: List<ScenarioResult>,
+        /**
+         * **코드가 일부러 남긴 미상**(ARTEL-675). 이 검사에서 뺀다.
+         *
+         * 이 검사는 *모델이* 길을 모른다고 해 놓고 실은 명세에 있는 자리를 잡는 것이다. 그런데
+         * 뒤를 깨는 길을 안 끼우고 묻기로 한 자리는 **명세가 아는 길이면서 일부러 남긴 미상**이라,
+         * 빼 두지 않으면 그 결정이 그대로 저작을 막는다(실측 런 260, 4곳).
+         */
+        deliberate: Set<String> = emptySet(),
+    ): List<ScenarioCoverageAudit.StepRef> = buildList {
+        scenarios.forEachIndexed { scenarioIndex, scenario ->
+            scenario.steps.forEachIndexed { stepIndex, step ->
+                if (step.stepSource != ScenarioStepSource.UNKNOWN) return@forEachIndexed
+                if (step.stepUnknownReason in deliberate) return@forEachIndexed
+                val before = scenario.steps.take(stepIndex).lastOrNull { it.caseId != null }?.caseId
+                val after = scenario.steps.drop(stepIndex + 1).firstOrNull { it.caseId != null }?.caseId
+                if (before == null || after == null) return@forEachIndexed
+
+                val answer = routes.between(before, after) ?: return@forEachIndexed
+                if (answer.result == ScenarioPathResult.KNOWN) {
+                    add(
+                        ScenarioCoverageAudit.StepRef(
+                            scenarioIndex, stepIndex,
+                            "모른다고 했지만 명세는 그 길을 안다(${answer.capabilityIds.joinToString()})",
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 검증 스텝에 **그 케이스의 조작**을 채운다(ARTEL-466).
+     *
+     * 브리지에는 계산된 조작이 들어가는데 검증 스텝은 비어 있었다. 그래서 "맵을 확인한다"까지만
+     * 적히고 무엇을 눌러 확인하는지는 실행하는 쪽이 다시 추측해야 했다.
+     *
+     * **근거 키로 짚은 조작이 딱 하나일 때만** 채운다. 여럿이면 어느 것인지 모르고, 값으로 닿은
+     * 것(`effect`)은 같은 값을 건드리는 기능이 여럿일 수 있어 이 자리에 쓸 수 없다 — 하나로
+     * 좁혀지지 않는 것을 채우면 그게 곧 지어내는 것이다.
+     *
+     * 모델이 이미 적어 둔 `input` 은 건드리지 않는다. 사용자가 고친 값일 수도 있다.
+     */
+    private suspend fun withCaseOperations(
+        projectId: Long,
+        appUserId: Long,
+        scenarios: List<ScenarioResult>,
+    ): List<ScenarioResult> {
+        val needed = scenarios.flatMap { it.steps }
+            .filter { it.caseId != null && it.input.isNullOrBlank() }
+            .mapNotNull { it.caseId }
+            .distinct()
+        if (needed.isEmpty()) return scenarios
+
+        val operation = needed.associateWith { caseId ->
+            runCatching { caseFactService.explain(projectId, appUserId, caseId) }
+                .onFailure { logger.warn("케이스 조작 조회 실패 — 비워 둔다: ${it.message}") }
+                .getOrNull()
+                ?.operations
+                ?.filter { it.matchedBy == "evidence" }
+                ?.singleOrNull()
+                ?.input
+                ?.ifBlank { null }
+        }
+
+        return scenarios.map { scenario ->
+            scenario.copy(
+                steps = scenario.steps.map { step ->
+                    val input = step.caseId?.let { operation[it] }
+                    if (step.input.isNullOrBlank() && input != null) step.copy(input = input) else step
+                }
+            )
+        }
+    }
+
+    /** 시나리오별로 담긴 케이스 id. 순서는 여기서 보지 않는다 — 순서는 경로 쪽 질문이다. */
+    private fun repairedSplit(scenarios: List<ScenarioResult>): List<List<Long>> =
+        scenarios.map { scenario -> scenario.steps.mapNotNull { it.caseId }.distinct() }
+
+    /**
+     * 이 프로젝트의 케이스 전량을 판정에 쓸 모양으로 읽는다.
+     *
+     * 전량인 이유는 **안 담긴 것**을 말하려면 담긴 것만으로 모자라기 때문이다. 조회가 터지면 빈
+     * 목록이고, 그러면 아래 검사들이 전부 조용해진다 — 이것들이 저작을 막을 이유는 없다.
+     */
+    /**
+     * 한 턴 동안 변하지 않는 프로젝트의 사실들.
+     *
+     * 검수를 시나리오마다 부르게 되면서 생겼다. 여기 담긴 여덟 가지는 전부 `projectId` 하나로
+     * 정해지고 턴 중에 바뀌지 않는데, 부를 때마다 케이스 전량과 지도를 다시 읽었다 — 시나리오
+     * 일곱이면 일곱 번이다.
+     *
+     * 오래 들고 있지 않는다. 새 요청이 시작될 때 [forget] 으로 버린다 — 그 사이에 케이스가
+     * 늘거나 사용자가 질문에 답했을 수 있고, 낡은 값으로 검수하면 있지도 않은 것을 짚는다.
+     */
+    private data class ProjectFacts(
+        val cases: List<ScenarioSiblingCheck.CaseFact>,
+        val raisedIn: Map<String, Set<String>>,
+        /**
+         * 값이 **어떤 방식으로든** 바뀌는 화면들 — 확정 대입 포함. [raisedIn] 은 증감만 세지만,
+         * 걷기가 "그 화면을 지나면 이 값을 더는 모른다"로 놓아 줄 때는 대입도 바뀜이다 —
+         * 실측: `flag` 는 GameClearScene 에서 `=1` 로 적히는데 증감이 아니라 안 놓아 줘서
+         * 하네스 어긋남 40건 중 23건이 그 하나였다.
+         */
+        val changedIn: Map<String, Set<String>>,
+        val climbing: Set<String>,
+        val caseOfCapability: (Long) -> Long?,
+        val movable: Set<String>,
+        val strayMovers: Set<String> = emptySet(),
+        val changedBy: Map<Long, Set<String>>,
+    )
+
+    // 프로젝트와 빌드 버전마다 따로 든다(ARTEL-1064). 버전이 다른 두 런의 사실이 섞이면 안 된다.
+    private val held = ConcurrentHashMap<Pair<Long, Long?>, ProjectFacts>()
+
+    /** 이 프로젝트에 대해 들고 있던 것을 버린다. 새 요청이 시작될 때 부른다. */
+    fun forget(projectId: Long) {
+        held.keys.removeIf { it.first == projectId }
+    }
+
+    private suspend fun projectFacts(projectId: Long): ProjectFacts {
+        val key = projectId to authoringGameBuildId()
+        return held[key] ?: ProjectFacts(
+            cases = caseFacts(projectId),
+            raisedIn = raisedIn(projectId),
+            changedIn = changedIn(projectId),
+            climbing = onlyClimbing(projectId),
+            caseOfCapability = caseOfCapability(projectId),
+            movable = movableValues(projectId),
+            strayMovers = strayMoverNames(projectId),
+            changedBy = valuesChangedByCases(projectId),
+        ).also { held[key] = it }
+    }
+
+    private suspend fun caseFacts(projectId: Long): List<ScenarioSiblingCheck.CaseFact> = runCatching {
+        val all = authoringCases.all(projectId).toList()
+        // 저작에 보내는 목록과 같은 규칙으로, 아무 케이스도 만들지 못하는 전제는 요구로 세지 않는다
+        // ([kr.artel.orchestration.testcase.service.TestCaseService.getAuthoringCases]). 검사만 그것을
+        // 세면 모델이 본 적 없는 요구로 어긋남을 짚는다.
+        val made = all.flatMap { ScenarioStateReader.stateAfter(it, objectMapper).entries }
+            .groupBy({ it.key.lowercase() }, { it.value })
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
+        fun reachable(guard: Guard): Boolean =
+            made.isEmpty() || guard.operator != "==" || guard.value == "0" ||
+                made[guard.variable.lowercase()].orEmpty().contains(guard.value) ||
+                start[guard.variable.lowercase()] == guard.value
+        all.map { case ->
+            ScenarioSiblingCheck.CaseFact(
+                id = case.id!!,
+                scene = ScenarioStateReader.sceneOf(case),
+                step = case.step.trim(),
+                guards = conditions.guardsOf(case).filter(::reachable),
+                declared = conditions.knownValuesOf(case),
+                arrivesAt = ScenarioStateReader.arrivesAt(case, objectMapper),
+                leaves = ScenarioStateReader.stateAfter(case, objectMapper),
+                unmade = conditions.guardsOf(case).filterNot(::reachable),
+                assumed = ScenarioStateReader.assumedBefore(case, objectMapper),
+            )
+        }
+    }.onFailure { logger.warn("케이스 전량 조회 실패 — 검사들을 넘어간다: ${it.message}") }
+        .getOrElse { emptyList() }
+
+    /**
+     * 케이스마다 **바꾸는 값들**(ARTEL-581). 지도를 못 되짚는 케이스는 여기 없고, 그때는 바꾸는
+     * 것을 모르는 것이라 예전처럼 나눈다 — 모르면 나누는 쪽이 안전하다.
+     */
+    /**
+     * **지도 안에서 움직이는 값들**(ARTEL-625). 케이스가 아니라 지도 전체에 묻는다.
+     *
+     * 못 읽으면 빈 목록이고, 그때는 이 칸이 생기기 전과 똑같이 나눈다.
+     */
+    /**
+     * **그 값이 어느 화면에서 저절로 움직이나.** 흐름이 그 화면을 지나면 그 값은 모르는 것이 된다.
+     *
+     * 이것을 안 읽으면 멀쩡한 흐름을 틀렸다고 한다 — 전투에 들어갔다 나오면 진행도가 올라 있는데,
+     * 그것을 안 놓으면 다음 자리가 전부 어긋나 보인다.
+     */
+    /**
+     * 코드가 끼운 브리지가 **무엇을 바꾸나**. 값 → (대상, 어떻게) 로 돌려준다.
+     *
+     * 스텝의 글이 아니라 그 스텝이 든 기능 번호로 읽는다 — 문구를 다듬을 때마다 검사가 조용히
+     * 깨지는 길은 이 저장소가 이미 걷어냈다.
+     */
+    private suspend fun effectsOfBridges(
+        scenarios: List<ScenarioResult>,
+    ): Map<Long, List<Pair<String, String?>>> {
+        val ids = scenarios.flatMap { it.steps }
+            .filter { it.caseId == null }
+            .mapNotNull { it.stepSourceCapabilityId }
+            .distinct()
+        if (ids.isEmpty()) return emptyMap()
+        return ids.associateWith { id ->
+            runCatching {
+                effectRepository.findByCapabilityIdOrderByIdAsc(id).toList()
+                    .filter { it.kind == "write" || it.kind == "saved" }
+                    .mapNotNull { effect -> effect.target?.let { it to effect.detail } }
+            }.getOrDefault(emptyList())
+        }
+    }
+
+    /** 값이 어떤 방식으로든 적히는 화면들 — 걷기의 놓아주기(clears) 전용. */
+    private suspend fun changedIn(projectId: Long): Map<String, Set<String>> = runCatching {
+        authoringCases.valueMoves(projectId).toList()
+            .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
+            .mapValues { (_, scenes) -> scenes.toSet() }
+    }.onFailure { logger.warn("값이 바뀌는 화면 조회 실패 — 어긋남을 더 잡는다: ${it.message}") }
+        .getOrDefault(emptyMap())
+
+    /** 놓아주기용 병합 — 증감([raisedIn])과 대입([ProjectFacts.changedIn])을 합친다. */
+    private fun loosens(
+        raised: Map<String, Set<String>>,
+        changed: Map<String, Set<String>>,
+    ): Map<String, Set<String>> =
+        (raised.keys + changed.keys).associateWith { raised[it].orEmpty() + changed[it].orEmpty() }
+
+    private suspend fun raisedIn(projectId: Long): Map<String, Set<String>> = runCatching {
+        authoringCases.valueRaisers(projectId).toList()
+            .groupBy({ ScenarioStateReader.normalize(it.target) }, { it.scene })
+            .mapValues { (_, scenes) -> scenes.toSet() }
+    }.onFailure { logger.warn("저절로 바뀌는 자리 조회 실패 — 어긋남을 덜 잡는다: ${it.message}") }
+        .getOrDefault(emptyMap())
+
+    /**
+     * 흐름 하나를 [ScenarioContradictionCheck] 가 읽을 사실로 옮긴다(ARTEL-656).
+     *
+     * **스텝의 글을 되읽지 않는다.** 값은 케이스의 전제 구조와 스텝의 칸(`step_unknown_reason`)에서
+     * 온다 — 문구를 다듬을 때마다 검사가 조용히 깨지는 길은 이 저장소가 이미 걷어냈다.
+     */
+    private fun walkOf(
+        scenario: ScenarioResult,
+        byId: Map<Long, ScenarioSiblingCheck.CaseFact>,
+        raisedIn: Map<String, Set<String>>,
+        bridgeEffects: Map<Long, List<Pair<String, String?>>>,
+        onlyClimbs: Set<String>,
+        // 씬 귀속 없이 움직이는 값(V95). 어디서 바뀌는지 모르므로 걸음마다 놓아 준다 —
+        // 안 놓으면 토글이 "앞이 0 으로 만들어 두었다"는 순서 오판을 만든다(run 60).
+        strayMovers: Set<String> = emptySet(),
+    ): List<ScenarioContradictionCheck.Step> = scenario.steps.mapIndexed { index, step ->
+        val fact = step.caseId?.let { byId[it] }
+        // 메우지 못한 구간을 지나면 그 자리가 무엇으로 바뀌는지 모른다. 막은 것이 화면 쌍이면
+        // (`A→B`) 그 화면들을 지나는 것이므로 거기서 오르는 값도 함께 놓아 준다.
+        val gap = step.stepUnknownReason?.takeIf { step.stepKind == ScenarioStepKind.GAP }
+        val passed = buildSet {
+            fact?.scene?.let(::add)
+            gap?.split("→")?.map { it.trim() }?.takeIf { it.size == 2 }?.let(::addAll)
+        }
+        // 브리지가 값을 **정하면** 그 값이고, 몇 칸씩 미는 것이거나 무엇이 될지 모르면 놓아 준다.
+        //
+        // **부호가 붙은 것은 정하는 것이 아니다.** `+1` 은 물론이고 `-1` 도 그렇다 — 적재기가
+        // 음수 대입과 감소를 같은 글자로 내기 때문에 형식이 둘을 못 가른다(경로 서비스도 같은
+        // 자리에서 감소로 읽는다). 실측(런 226)에서 `-1` 을 대입으로 읽어 멀쩡한 걸음을 어긋났다고
+        // 짚었다. 되풀이 브리지도 여기서 놓아 주는 쪽이 맞다 — 몇 번 눌러 어디에 멈추는지는
+        // 그 다음 케이스의 전제가 말한다.
+        val written = step.stepSourceCapabilityId?.let { bridgeEffects[it] }.orEmpty()
+        val bridgeSets = written.mapNotNull { (target, detail) ->
+            detail?.trim()
+                ?.takeIf { it.toDoubleOrNull() != null && it.first() != '+' && it.first() != '-' }
+                ?.let { ScenarioStateReader.normalize(target) to it }
+        }.toMap()
+        ScenarioContradictionCheck.Step(
+            at = index + 1,
+            caseId = step.caseId,
+            // 호출식 가드는 상태가 아니다 — 요구로도 확정으로도 세지 않는다(momentary).
+            requires = fact?.guards.orEmpty().filterNot { it.momentary },
+            sets = fact?.guards.orEmpty()
+                .filter { it.operator == "==" && !it.symbolic && !it.momentary }
+                .associate { it.variable to it.value } + fact?.declared.orEmpty() + bridgeSets +
+                // 케이스가 남기는 값이 마지막이다 — 등불을 끄는 케이스는 "켜짐"을 요구하고 "꺼짐"을 남긴다.
+                // 부호가 붙은 것(`동전 +20`)은 정하는 것이 아니라 더하는 것이라 여기 안 든다. 아래 개수 검사가 센다.
+                fact?.leaves.orEmpty().filterValues { !it.isSigned() },
+            clears = buildSet {
+                gap?.takeIf { !it.contains("→") }?.let(::add)
+                raisedIn.forEach { (value, scenes) ->
+                    // 오르기만 하는 값은 놓아 주지 않고 바닥을 들고 간다 — 아래 `climbs` 로 간다.
+                    if (scenes.any { it in passed } && value.lowercase() !in onlyClimbs) add(value)
+                }
+                written.map { ScenarioStateReader.normalize(it.first) }
+                    .filterNotTo(this) { it in bridgeSets }
+                addAll(strayMovers)
+            },
+            climbs = raisedIn.keys.filterTo(mutableSetOf()) { value ->
+                value.lowercase() in onlyClimbs && raisedIn.getValue(value).any { it in passed }
+            },
+        )
+    }
+
+    /**
+     * **올리는 법만 있고 내리는 법이 없는 값**(ARTEL-672).
+     *
+     * 지도가 그 값을 어떻게 바꾸는지로 갈린다 — `StagePosition` 은 부호 붙은 쓰기가 `+1` 뿐이고
+     * `position` 은 `+1` 도 `-1` 도 있다. 앞엣것은 지나가면 *줄지 않았다*는 것을 알고, 뒤엣것은
+     * 어디로 갔는지 모른다.
+     *
+     * **게임을 보고 고르는 것이 아니라 지도가 갈라 준다.** 방향키로 오갈 수 있는 값은 여기 안 든다.
+     *
+     * 못 읽으면 빈 집합이고, 그러면 예전처럼 전부 놓아 준다 — 조회 실패가 저작을 막을 이유는 아니다.
+     */
+    private suspend fun onlyClimbing(projectId: Long): Set<String> = runCatching {
+        authoringCases.valueMoves(projectId).toList()
+            .mapNotNull { row -> row.detail?.trim()?.takeIf { it.length > 1 && (it[0] == '+' || it[0] == '-') }
+                ?.let { ScenarioStateReader.normalize(row.target).lowercase() to it[0] } }
+            .groupBy({ it.first }, { it.second })
+            .filterValues { signs -> signs.contains('+') && !signs.contains('-') }
+            .keys
+    }.onFailure { logger.warn("오르기만 하는 값 조회 실패 — 없이 간다: ${it.message}") }
+        .getOrDefault(emptySet())
+
+    /**
+     * 기능 번호로 **그 기능을 검증하는 케이스**를 찾는 함수(ARTEL-674).
+     *
+     * 못 읽으면 아무것도 못 찾는 함수를 돌려준다 — 예전처럼 이름 없는 걸음으로 메운다.
+     */
+    /**
+     * **뒤를 깨는 길이면 끼우는 대신 묻는다**(ARTEL-675).
+     *
+     * 메우는 조작이 값을 다시 정하는 경우가 있다 — 실측(런 254)에서 타이틀의 `MapSceneButton`
+     * 클릭이 그랬다. 진행도를 저장소에서 다시 불러오게 만들고, 그러면 그 뒤 스텝이 기대던 값이
+     * 사라진다. 코드가 조용히 끼우면 실행하는 사람은 왜 안 되는지 모르고, 어긋남 검사도 그
+     * 자리에서 눈을 감는다(그 값이 "이제 모른다"가 되므로).
+     *
+     * 그래서 그 자리는 미상으로 남긴다. 미상은 곧 **질문**이 되고(`gap:<값>`), 사용자가 답하면
+     * 코드가 그 자리를 찾아 끼운다([ScenarioGapFiller]) — 지어내는 것보다 묻는 쪽이 낫다.
+     *
+     * 깨지 않는 길은 그대로 끼운다. 화면을 넘기거나 지도 위를 걷는 조작이 대부분 그렇다.
+     */
+    private suspend fun askInsteadIfItBreaksLater(
+        answer: ScenarioPathAnswer,
+        later: List<Guard>,
+        writesOf: suspend (List<Long>) -> Map<String, String?>,
+    ): ScenarioPathAnswer {
+        if (answer.result != ScenarioPathResult.KNOWN || later.isEmpty()) return answer
+        val writes = writesOf(answer.capabilityIds)
+        if (writes.isEmpty()) return answer
+        val broken = later.firstOrNull { guard ->
+            val key = ScenarioStateReader.normalize(guard.variable).lowercase()
+            if (key !in writes) false
+            // **무엇이 될지 모르는 쓰기가 가장 나쁘다.** `PlayerPrefs.GetInt("StagePosition", -1)`
+            // 은 그 값을 저장소에서 다시 불러온다 — 얼마가 될지 모르고, 그래서 뒤 스텝이 기대던
+            // 것을 지운다. 값을 알 수 있는 쓰기는 정말로 어긋날 때만 짚는다.
+            else writes[key]?.let { !guard.holds(it) } ?: true
+        } ?: return answer
+        logger.info("메우지 않고 묻는다 — {} 를 다시 정해 뒤를 깬다", broken.variable)
+        return answer.copy(
+            result = ScenarioPathResult.UNKNOWN,
+            capabilityIds = emptyList(),
+            actions = emptyList(),
+            inputs = emptyList(),
+            blockedBy = ScenarioStateReader.normalize(broken.variable),
+            playable = true,
+        )
+    }
+
+    /** 그 기능들이 **정하는** 값. 부호가 붙은 것은 정하는 것이 아니다(적재기가 둘을 같은 글자로 낸다). */
+    private suspend fun writesOfCapabilities(ids: List<Long>): Map<String, String?> = runCatching {
+        ids.flatMap { id -> effectRepository.findByCapabilityIdOrderByIdAsc(id).toList() }
+            .filter { it.kind == "write" || it.kind == "saved" }
+            .mapNotNull { effect ->
+                val target = effect.target ?: return@mapNotNull null
+                val detail = effect.detail?.trim()
+                // 오르기만 하는 쓰기는 지우는 것이 아니다 — 걸어 오르는 자리라 물을 것이 없다.
+                if (detail != null && detail.startsWith("+")) return@mapNotNull null
+                ScenarioStateReader.normalize(target).lowercase() to
+                    detail?.takeIf { it.toDoubleOrNull() != null }
+            }.toMap()
+    }.onFailure { logger.warn("메울 길의 효과 조회 실패 — 그대로 끼운다: ${it.message}") }
+        .getOrDefault(emptyMap())
+
+    private suspend fun caseOfCapability(projectId: Long): (Long) -> Long? = runCatching {
+        authoringCases.caseIdByCapability(projectId).toList()
+            .associate { it.capabilityId to it.testCaseId }
+    }.onFailure { logger.warn("기능의 케이스 조회 실패 — 이름 없이 메운다: ${it.message}") }
+        .getOrDefault(emptyMap())
+        .let { found -> { capabilityId: Long -> found[capabilityId] } }
+
+    /**
+     * 씬 없이 움직이는 값의 이름들 — 걷기의 놓아주기 키. 가드는 꼬리 이름
+     * (`waitingForAcknowledge`)으로 적히므로 전체 경로와 꼬리를 둘 다 담는다.
+     */
+    private suspend fun strayMoverNames(projectId: Long): Set<String> = runCatching {
+        authoringCases.strayWrittenValues(projectId).toList()
+            .flatMap { target ->
+                val normalized = ScenarioStateReader.normalize(target)
+                listOf(normalized, normalized.substringAfterLast('.'))
+            }.toSet()
+    }.onFailure { logger.warn("씬 없는 무버 조회 실패 — 없이 걷는다: ${it.message}") }
+        .getOrElse { emptySet() }
+
+    private suspend fun movableValues(projectId: Long): Set<String> = runCatching {
+        authoringCases.writtenValues(projectId).toList().toSet() +
+            valuesWrittenInMetadata(projectId).values.flatten()
+    }.onFailure { logger.warn("지도가 움직이는 값 조회 실패 — 예전처럼 나눈다: ${it.message}") }
+        .getOrElse { emptySet() }
+
+    /**
+     * 케이스 메타의 `state_after` 가 말하는 바뀌는 값. 지도가 없는 프로젝트(자연어 TC)에서는 이것만
+     * 있다 — 안 읽으면 등불을 끄는 케이스가 있어도 "켜짐"과 "꺼짐"을 한 시나리오에 못 담는다고 나눈다.
+     */
+    /**
+     * 짠 경로를 앞에서 걸으며, 확인 안 된 요구(아무도 안 남기는 것 · 상식 추정)가 그 자리까지 채워지지 않은 곳.
+     * 시작 값과 앞 스텝이 남긴 값으로 채워졌으면 묻지 않는다 — 흐름이 이미 답을 갖고 있다.
+     */
+    private suspend fun contractBlocks(
+        projectId: Long,
+        scenarios: List<ScenarioResult>,
+        byId: Map<Long, ScenarioSiblingCheck.CaseFact>,
+    ): List<ScenarioQuestionBuilder.ContractBlock> {
+        if (byId.values.none { it.unmade.isNotEmpty() || it.assumed.isNotEmpty() }) return emptyList()
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
+        val makers = byId.values
+            .flatMap { fact -> fact.leaves.map { (name, value) -> Triple(name.lowercase(), value, fact) } }
+            .groupBy({ it.first to it.second }, { it.third })
+        val out = mutableListOf<ScenarioQuestionBuilder.ContractBlock>()
+        for (scenario in scenarios) {
+            val have = start.toMutableMap()
+            // 앞에 TC 초안이 있으면 그 뒤의 "만드는 케이스를 못 찾았다" 는 묻지 않는다. 초안이 그것을 만든다고
+            // 저작이 냈고, 승인되면 계약이 뽑힌다 — 같은 자리를 초안 표와 질문으로 두 번 묻게 된다.
+            var afterDraft = false
+            for (step in scenario.steps) {
+                if (step.proposedCase != null) afterDraft = true
+                val fact = step.caseId?.let { byId[it] } ?: continue
+                fun holds(guard: Guard): Boolean {
+                    val now = have[guard.variable.lowercase()]
+                    return when (guard.operator) {
+                        "==" -> if (now == null) guard.value == "0" else now == guard.value
+                        "!=" -> now != guard.value
+                        else -> true
+                    }
+                }
+                if (!afterDraft) fact.unmade.filterNot(::holds).forEach {
+                    out += ScenarioQuestionBuilder.ContractBlock(fact.id, fact.step, it, assumed = false, makers = emptyList())
+                }
+                fact.assumed.filterNot(::holds).forEach { guard ->
+                    val who = makers[guard.variable.lowercase() to guard.value].orEmpty().filter { it.id != fact.id }
+                    out += ScenarioQuestionBuilder.ContractBlock(fact.id, fact.step, guard, assumed = true, makers = who.map { it.id to it.step })
+                }
+                fact.leaves.forEach { (name, value) ->
+                    val key = name.lowercase()
+                    val delta = value.takeIf { it.length > 1 && (it[0] == '+' || it[0] == '-') }?.toDoubleOrNull()
+                    have[key] = if (delta != null) ((have[key]?.toDoubleOrNull() ?: 0.0) + delta).toString() else value
+                }
+            }
+        }
+        return out.distinctBy { Triple(it.caseId, it.guard.variable, it.guard.value) }
+    }
+
+    /**
+     * 짠 경로가 **처음 읽을 때 아직 아무도 정하지 않은** 고르는 값(낮 · 밤처럼 0/1 · 수가 아닌 것). 시작 값을 모르면 저작은
+     * 그 값을 바꾸는 스텝이 필요한지 모른다 — 측정(등불 골짜기, 제품 추출)에서 시작 값 22개를 잡고 `시간대` 만 비었다.
+     * 보기는 계약들이 그 값에 쓰는 것들이다. 지도가 있는 프로젝트는 지도가 시작 값을 안다.
+     */
+    private suspend fun startBlocks(
+        projectId: Long,
+        scenarios: List<ScenarioResult>,
+        byId: Map<Long, ScenarioSiblingCheck.CaseFact>,
+    ): List<ScenarioQuestionBuilder.StartBlock> {
+        if (byId.values.none { it.leaves.isNotEmpty() }) return emptyList()
+        val start = metadataStart(projectId).mapKeys { it.key.lowercase() }
+        fun chosen(value: String) = value !in setOf("0", "1") && value.toDoubleOrNull() == null && !value.startsWith("+") && !value.startsWith("-")
+        val values = (byId.values.flatMap { f -> f.guards.filter { it.operator == "==" }.map { it.variable to it.value } } +
+            byId.values.flatMap { f -> f.leaves.entries.map { it.key to it.value } })
+            .filter { (_, v) -> chosen(v) }
+            .groupBy({ it.first.lowercase() }, { it.second })
+            .mapValues { (_, vs) -> vs.distinct() }
+        val names = byId.values.flatMap { f -> f.guards.map { it.variable } + f.leaves.keys }.associateBy { it.lowercase() }
+        val out = linkedSetOf<String>()
+        for (scenario in scenarios) {
+            val set = mutableSetOf<String>()
+            for (step in scenario.steps) {
+                val fact = step.caseId?.let { byId[it] } ?: continue
+                fact.guards.filter { it.operator == "==" && chosen(it.value) }.forEach { guard ->
+                    val key = guard.variable.lowercase()
+                    if (key !in start && key !in set && (values[key]?.size ?: 0) >= 2) out += key
+                }
+                set += fact.leaves.keys.map { it.lowercase() }
+            }
+        }
+        return out.map { ScenarioQuestionBuilder.StartBlock(names[it] ?: it, values[it].orEmpty()) }
+    }
+
+    /** 케이스 메타의 `start_state` 를 모은 것([kr.artel.orchestration.testcase.service.TestCaseService.metadataStart] 와 같은 규칙). */
+    private suspend fun metadataStart(projectId: Long): Map<String, String> =
+        authoringCases.all(projectId).flatMap { ScenarioStateReader.startState(it, objectMapper).entries }
+            .fold(sortedMapOf<String, String>()) { acc, (k, v) -> acc.apply { putIfAbsent(k, v) } }
+            .apply { caseContracts.startState(projectId).forEach { (k, v) -> putIfAbsent(ScenarioStateReader.normalize(k), v) } }
+
+    private suspend fun valuesWrittenInMetadata(projectId: Long): Map<Long, Set<String>> =
+        authoringCases.all(projectId).toList()
+            .associate { case -> case.id!! to ScenarioStateReader.stateAfter(case, objectMapper).keys }
+            .filterValues { it.isNotEmpty() }
+
+    /**
+     * 지도가 부르는 이름과 사전조건이 적는 이름이 **같은 값**인가.
+     *
+     * 효과는 물건을 가리키고(`CombineButton.combineZone`) 전제는 그 물건의 속성을 읽는다
+     * (`...combineZone.activeSelf`). 마디 하나 차이라 꼬리로는 안 만난다.
+     */
+    private fun sameTail(written: String, guarded: String): Boolean =
+        written == guarded || written.endsWith(".$guarded") || guarded.endsWith(".$written") ||
+            guarded.substringBeforeLast('.', "") == written
+
+    private suspend fun valuesChangedByCases(projectId: Long): Map<Long, Set<String>> = runCatching {
+        val fromMap = authoringCases.valuesChangedByCases(projectId).toList()
+            .groupBy({ it.caseId }, { it.target })
+            .mapValues { (_, targets) -> targets.toSet() }
+        val fromMetadata = valuesWrittenInMetadata(projectId)
+        (fromMap.keys + fromMetadata.keys).associateWith { fromMap[it].orEmpty() + fromMetadata[it].orEmpty() }
+    }.onFailure { logger.warn("케이스가 바꾸는 값 조회 실패 — 순서를 모른 채 나눈다: ${it.message}") }
+        .getOrElse { emptyMap() }
+
+    /**
+     * **이 런에 지금 담겨 있는 케이스 전량**(ARTEL-516).
+     *
+     * 이번 턴에 쓴 것과, 런의 다른 시나리오에 이미 들어 있는 것을 합친 값이다. 이번 턴이 기존
+     * 시나리오를 고쳐 쓰는 경우 **그 시나리오의 옛 내용은 세지 않는다** — 곧 덮어쓸 것이라,
+     * 그것까지 담긴 것으로 세면 방금 빠진 케이스가 담겨 있다고 나온다.
+     *
+     * 조회가 터지면 이번 턴만 돌려준다. 예전 동작이고, 되묻기가 한 번 더 나갈 뿐이다 — 읽지
+     * 못했다고 저작을 막을 일은 아니다.
+     */
+    private suspend fun coveredInRun(
+        runId: Long,
+        turn: List<ScenarioResult>,
+        split: List<List<Long>>,
+    ): Set<Long> {
+        val thisTurn = split.flatten().toSet()
+        val rewritten = turn.mapNotNull { it.scenarioId }.toSet()
+        return runCatching {
+            val elsewhere = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
+                .map { it.testScenarioId }
+                .filterNot { it in rewritten }
+                .flatMap { scenarioId ->
+                    scenarioRepository.findById(scenarioId)
+                        ?.toDraft(objectMapper)?.steps.orEmpty()
+                        .mapNotNull { it.caseId }
+                }
+            thisTurn + elsewhere
+        }.onFailure { logger.warn("런에 담긴 케이스를 읽지 못했다 — 이번 턴만 본다: ${it.message}") }
+            .getOrDefault(thisTurn)
+    }
+
+    /**
+     * 형제에 대해 **말만 하는** 두 가지.
+     *
+     * 막지 않는 이유는 하나다. 무엇을 어떤 묶음으로 검증할지는 요청이 정하는 것이고, 코드가
+     * 이기면 "133번만 보고 싶다"는 요청이 영영 통하지 않는다.
+     */
+    /**
+     * 이 런에서 **이미 답한** 질문의 id(ARTEL-487).
+     *
+     * 거절도 답이다. 답한 질문을 다시 묻지 않으려면 무엇에 답했는지 알아야 하고, 그 기록은
+     * 대화에 남는다 — 질문은 `kind=question`, 답하고 닫힌 것은 `kind=answered` 다.
+     *
+     * 읽지 못하면 빈 집합이다. 그때는 예전처럼 한 번 더 묻게 되는데, 못 읽었다고 질문을 통째로
+     * 삼키는 것보다는 낫다.
+     */
+    /**
+     * 사용자가 경로 공백에 알려 준 방법 — 구간(`blockedBy`) → 채운 줄들(ARTEL-1117). 같은 구간에 답이 여럿이면
+     * 나중 것이다. "그대로 두기" 처럼 채운 줄이 없는 답은 빠진다(그 구간은 묻지 않고 비워 둔다).
+     *
+     * 채운 줄은 답 기록의 `filled` 에 있다. 그 칸이 생기기 전의 기록은 본문의 `· ` 줄에서 읽는다 —
+     * [TestScenarioAgentService.notifyGapFilled] 가 쓰는 모양이다.
+     */
+    private suspend fun knownGapAnswers(projectId: Long): Map<String, List<String>> = runCatching {
+        val known = linkedMapOf<String, List<String>>()
+        // 게임 정보로 남긴 길이 먼저다. 같은 구간을 다시 들으면 새 답으로 바뀌어 있다. 저장된 시나리오를 채우지 못한 답
+        // (draft 에 답한 것)은 이쪽에만 있다. 대화 기록은 이것이 생기기 전에 들은 구간만 채운다.
+        caseContracts.observedExits(projectId)
+            .filter { it.source in kr.artel.orchestration.testcase.contract.CaseContractService.TOLD }
+            .forEach { known["${it.from}→${it.to}"] = listOf(it.by) }
+        val told = linkedMapOf<String, List<String>>()
+        for (row in runMessageRepository.findAnsweredInProject(projectId).toList()) {
+            val payload = row.payload?.let { objectMapper.readTree(it.asString()) } ?: continue
+            if (payload.path("kind").asText() != "answered") continue
+            val id = payload.path("id").asText()
+            if (!id.startsWith(ScenarioQuestionBuilder.GAP_PREFIX)) continue
+            val lines = payload.path("filled").takeIf { it.isArray }?.mapNotNull { it.asText().takeIf(String::isNotBlank) }
+                ?: row.content.lines().filter { it.startsWith("· ") }.map { it.removePrefix("· ").trim() }.filter(String::isNotBlank)
+            if (lines.isNotEmpty()) told[id.removePrefix(ScenarioQuestionBuilder.GAP_PREFIX)] = lines
+        }
+        told.forEach { (gap, lines) -> known.putIfAbsent(gap, lines) }
+        known.toMap()
+    }.onFailure { logger.warn("예전에 들은 경로를 읽지 못했다 — 그 구간을 다시 묻는다: ${it.message}") }
+        .getOrDefault(emptyMap())
+
+    private suspend fun answeredQuestionIds(projectId: Long): Set<String> = runCatching {
+        runMessageRepository.findAnsweredInProject(projectId)
+            .toList()
+            .mapNotNull { row -> row.payload?.let { objectMapper.readTree(it.asString()) } }
+            .filter { it.path("kind").asText() == "answered" }
+            .mapNotNull { it.path("id").asText().takeIf(String::isNotBlank) }
+            .toSet()
+    }.onFailure { logger.warn("답한 질문을 읽지 못했다 — 다시 물을 수 있다: ${it.message}") }
+        .getOrDefault(emptySet())
+
+    /**
+     * 근거를 적지 않은 스텝을 **말만 한다**(ARTEL-515). 막지 않는 이유는 [ScenarioCoverageAudit.Findings]에 있다.
+     *
+     * 실측에서 이런 스텝은 전부 한 종류였다 — `case_id` 가 없는 전제 세팅 동작("스테이지 위치가
+     * 5인 상태로 EndingScene에 진입한다"). 실행하는 사람이 **그 자리에서 막힌다**는 뜻이므로,
+     * 조용히 저장하면 실행하다 만난다.
+     *
+     * 한 예만 든다. 열세 줄을 늘어놓으면 읽히지 않고, 어느 것을 손볼지는 어차피 사람이 정한다.
+     */
+    private fun unsourcedNotice(
+        findings: ScenarioCoverageAudit.Findings,
+        scenarios: List<ScenarioResult>,
+    ): String? {
+        val first = findings.unsourced.firstOrNull() ?: return null
+        val example = scenarios.getOrNull(first.scenarioIndex)
+            ?.steps?.getOrNull(first.stepIndex)?.action?.trim()?.ifBlank { null }
+        return "어떻게 하는지 적히지 않은 준비 동작이 ${findings.unsourced.size}개 있습니다" +
+            (example?.let { " — 예: $it" } ?: "") +
+            ". 실행하기 전에 그 자리를 채워 두세요."
+    }
+
+    private fun siblingNotices(
+        findings: ScenarioSiblingCheck.Findings,
+        describe: (Long) -> String,
+    ): List<String> = buildList {
+        // 함께 담을 수 없는 것은 [ScenarioConflictSplit] 이 이미 나눴다. 여기까지 남았다면 나누는
+        // 쪽이 못 푼 것이므로 **말은 해 준다** — 조용히 두면 실행하다 멎는 이유를 알 수 없다.
+        if (findings.conflicting.isNotEmpty()) {
+            val (a, b) = findings.conflicting.first()
+            add(
+                "함께 담을 수 없는 케이스가 ${findings.conflicting.size}쌍 남았습니다 — " +
+                    "예: ${describe(a)} ↔ ${describe(b)}. 사전조건이 어긋나 한 번의 실행으로 둘 다 " +
+                    "볼 수 없습니다."
+            )
+        }
+        findings.splitApart.forEach { (a, b) ->
+            add(
+                "${describe(a)} 와 ${describe(b)} 는 같은 자리의 케이스이고 동시에 성립합니다 — " +
+                    "한 시나리오로 합쳐도 됩니다. 일부러 나눈 것이면 그대로 두세요."
+            )
+        }
+        findings.untestedArms.forEach { (taken, missing) ->
+            add(
+                "${describe(taken)} 를 담았는데 ${describe(missing)} 가 빠졌습니다 — 같은 자리의 " +
+                    "다른 갈래라 함께 볼 수는 없고, 따로 시나리오가 필요합니다."
+            )
+        }
+    }
+
+    /**
+     * **없는 기능을 인용한** 자리를 찾는다(ARTEL-467).
+     *
+     * 없는 케이스 번호를 지어낸 것([ScenarioCoverageAudit.Findings.ghost])과 같은 종류다. 인용한
+     * 번호가 실재하는지 보지 않으면 아무 숫자나 적는 것이 가장 싼 통과 방법이 되고, 그러면 근거
+     * 필드는 근거가 아니라 형식이 된다.
+     *
+     * 코드가 메운 자리는 여기에 걸릴 수 없다 — 그 번호는 명세에서 읽어 온 것이다. 걸리는 것은
+     * 계산이 닿지 않은 자리(사이가 필요 없다고 판정된 구간, 시나리오의 처음·끝)에 모델이 스스로
+     * 적은 번호뿐이다.
+     */
+    private suspend fun ghostCapabilities(
+        projectId: Long,
+        appUserId: Long,
+        scenarios: List<ScenarioResult>,
+    ): List<ScenarioCoverageAudit.StepRef> {
+        val cited = scenarios.flatMap { it.steps }
+            .filter { it.stepSource == ScenarioStepSource.CAPABILITY }
+            .mapNotNull { it.stepSourceCapabilityId }
+        if (cited.isEmpty()) return emptyList()
+
+        val live = runCatching { pathService.liveCapabilities(projectId, appUserId, cited) }
+            .onFailure { logger.warn("기능 실재 확인 실패 — 통과시킨다: ${it.message}") }
+            .getOrNull() ?: return emptyList()
+
+        return buildList {
+            scenarios.forEachIndexed { scenarioIndex, scenario ->
+                scenario.steps.forEachIndexed { stepIndex, step ->
+                    val id = step.stepSourceCapabilityId ?: return@forEachIndexed
+                    if (step.stepSource == ScenarioStepSource.CAPABILITY && id !in live) {
+                        add(
+                            ScenarioCoverageAudit.StepRef(
+                                scenarioIndex, stepIndex, "명세에 없는 기능을 인용했다($id)",
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 한 번의 reconcile 안에서 쓰는 경로 조회. **같은 케이스 쌍은 한 번만 묻는다** — 한 턴에
+     * 시나리오 여럿이 같은 전이를 쓰는 일이 흔하고, 그 사이에 답이 바뀌지 않는다.
+     *
+     * 조회가 터지면 `null`이다. 부르는 쪽은 전부 "그 구간은 손대지 않는다"로 떨어진다 — 씬 명세를
+     * 못 읽은 것이 저작을 막을 이유는 아니다.
+     */
+    private inner class PathLookup(private val projectId: Long, private val appUserId: Long) {
+        private val asked = mutableMapOf<Pair<Long, Long>, ScenarioPathAnswer?>()
+
+        suspend fun between(fromCaseId: Long, toCaseId: Long): ScenarioPathAnswer? {
+            val key = fromCaseId to toCaseId
+            if (asked.containsKey(key)) return asked[key]
+            val answer = runCatching { pathService.findPath(projectId, appUserId, fromCaseId, toCaseId) }
+                .onFailure { logger.warn("경로 조회 실패 — 그 구간은 손대지 않는다: ${it.message}") }
+                .getOrNull()
+            asked[key] = answer
+            return answer
+        }
+    }
+
+    /**
+     * 에이전트가 돌려준 시나리오를 저장 본문으로 만든다. [previous]는 교체되기 전의 스텝들이다.
+     *
+     * 에이전트 계약([ChatScenarioStep])에는 기대 판정 라벨이 없다 — 보여준 적이 없으니 돌려받을
+     * 것도 없다(ARTEL-301). 그래서 [ExpectedLabelPolicy]를 통과시키지 않으면 챗봇 편집 한 번에 그
+     * 시나리오의 정답지가 통째로 지워진다. 규칙 자체는 그쪽에 있다 — 저장 경로가 셋이라 각자
+     * 적어 두면 그중 하나가 언젠가 빠진다.
+     */
+    private fun draftFor(scenario: ScenarioResult, previous: List<ScenarioStep>) = ScenarioDraft(
+        title = scenario.title,
+        description = scenario.description,
+        steps = ExpectedLabelPolicy.carryOver(scenario.steps.map { it.toStoredStep() }, previous),
+        executionMode = scenario.executionMode,
+    )
+    private companion object {
+        /**
+         * 진행을 요구하는 비교. `!= 5` 나 `== 0` 은 초기화 직후로도 성립할 수 있어 시작 안내에
+         * 적을 것이 없고, 적으면 매 시나리오에 한 줄이 붙어 그 자체가 소음이 된다.
+         */
+        val PROGRESS_OPERATORS = setOf("==", ">=", ">")
+    }
+}
+
+/** `+20` · `-1` 처럼 정하는 값이 아니라 더하는 값인가. */
+private fun String.isSigned(): Boolean = trim().let { it.length > 1 && (it[0] == '+' || it[0] == '-') && it.substring(1).toDoubleOrNull() != null }
+
+/** 한 턴에 내는 계약 질문 상한. 질문이 많으면 사용자에게 부담이다(측정: 요청당 1~2개). */
+private const val CONTRACT_QUESTIONS_PER_TURN = 3

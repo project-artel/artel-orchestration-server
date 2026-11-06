@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>3.3.1</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+	<groupId>kr.artel</groupId>
+	<artifactId>artel-orchestration-server</artifactId>
+	<version>0.0.1</version>
+	<name>artel-orchestration-server</name>
+	<description>Orchestration Server for Artel</description>
+	<licenses>
+		<license>
+			<name>GNU Affero General Public License v3.0</name>
+			<url>https://www.gnu.org/licenses/agpl-3.0.txt</url>
+		</license>
+	</licenses>
+	<properties>
+		<java.version>21</java.version>
+		<kotlin.version>2.3.21</kotlin.version>
+		<aws.sdk.version>2.28.29</aws.sdk.version>
+		<poi.version>5.3.0</poi.version>
+		<commons-io.version>2.17.0</commons-io.version>
+		<dataframe.version>0.15.0</dataframe.version>
+	</properties>
+	<dependencies>
+		<!-- H.264 인코더는 orch JVM 안에서 native library로 실행한다. -->
+		<dependency>
+			<groupId>org.bytedeco</groupId><artifactId>javacv</artifactId><version>1.5.14</version>
+			<exclusions><exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion></exclusions>
+		</dependency>
+		<dependency>
+			<groupId>org.bytedeco</groupId><artifactId>javacpp</artifactId><version>1.5.14</version>
+		</dependency>
+		<dependency>
+			<groupId>org.bytedeco</groupId><artifactId>javacpp</artifactId><version>1.5.14</version><classifier>linux-x86_64</classifier><scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.bytedeco</groupId><artifactId>ffmpeg</artifactId><version>8.1.2-1.5.14</version>
+		</dependency>
+		<dependency>
+			<groupId>org.bytedeco</groupId><artifactId>ffmpeg</artifactId><version>8.1.2-1.5.14</version><classifier>linux-x86_64-gpl</classifier><scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webflux</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
+			<version>2.6.0</version>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-oauth2-client</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.module</groupId>
+			<artifactId>jackson-module-kotlin</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.jetbrains.kotlin</groupId>
+			<artifactId>kotlin-reflect</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.jetbrains.kotlin</groupId>
+			<artifactId>kotlin-stdlib</artifactId>
+		</dependency>
+		<!-- Kotlin 코루틴 (Reactor 브리지). 버전은 Spring Boot BOM 관리. -->
+		<dependency>
+			<groupId>org.jetbrains.kotlinx</groupId>
+			<artifactId>kotlinx-coroutines-reactor</artifactId>
+		</dependency>
+
+		<!-- R2DBC (앱 런타임 - 논블로킹 DB 접근) -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-r2dbc</artifactId>
+		</dependency>
+		<!-- Redis (SDK 로그인 일회용 코드). reactive 스타터라야 Lettuce를 논블로킹으로 쓴다.
+		     블로킹 RedisTemplate을 WebFlux 이벤트 루프에서 부르면 스레드가 묶인다. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-redis-reactive</artifactId>
+		</dependency>
+		<!-- compile 스코프: JSONB 매핑을 위해 io.r2dbc.postgresql.codec.Json 타입을 코드에서 사용 -->
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>r2dbc-postgresql</artifactId>
+		</dependency>
+		<!-- PostgreSQL JDBC 드라이버 - Flyway 마이그레이션 전용 (Flyway는 JDBC로만 동작) -->
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+
+		<!-- Flyway Migration -->
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+
+		<!-- Dotenv Support -->
+		<dependency>
+			<groupId>me.paulschwarz</groupId>
+			<artifactId>spring-dotenv</artifactId>
+			<version>4.0.0</version>
+		</dependency>
+
+		<!-- 요청 DTO 검증 (@Valid) -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
+		</dependency>
+
+		<!-- S3 - 기획서 원본 저장. presigner는 로컬 서명만 하므로 네트워크 I/O가 없고,
+		     실제 호출(headObject/getObject)은 논블로킹 비동기 클라이언트로 한다. -->
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>s3</artifactId>
+			<version>${aws.sdk.version}</version>
+			<exclusions>
+				<!-- Spring's spring-jcl already supplies the Commons Logging API. -->
+				<exclusion>
+					<groupId>commons-logging</groupId>
+					<artifactId>commons-logging</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>netty-nio-client</artifactId>
+			<version>${aws.sdk.version}</version>
+		</dependency>
+
+		<!-- XLSX 쓰기(ARTEL-329). 명세가 CSV에서 JSON으로 바뀌면서 표를 손으로 조립할 이유가 없어졌다 —
+		     파싱한 객체 목록을 그대로 DataFrame으로 만들어 시트로 내보낸다.
+		     **umbrella `dataframe`를 쓰지 않는다.** 그쪽은 csv/json/arrow/jdbc 모듈을 전부 끌고 오는데
+		     우리가 필요한 것은 엑셀 출력 하나뿐이고, JSON 파싱은 이미 Jackson이 한다.
+		     POI는 이 모듈이 필요한 만큼 가져온다(우리가 직접 쓰지 않는다). -->
+		<dependency>
+			<groupId>org.jetbrains.kotlinx</groupId>
+			<artifactId>dataframe-excel</artifactId>
+			<version>${dataframe.version}</version>
+		</dependency>
+
+		<!-- XSSFWorkbook 하나 때문에 명시한다. DataFrame의 writeExcel은 File/경로/Workbook만 받고
+		     OutputStream 오버로드가 없어서, 바이트로 만들려면 워크북을 직접 쥐어야 한다(임시 파일을
+		     거치지 않기 위해서다). dataframe-excel이 poi-ooxml을 runtime 스코프로만 가져오므로
+		     컴파일 클래스패스에는 여기서 올린다. 시트 조립은 여전히 DataFrame이 한다. -->
+		<dependency>
+			<groupId>org.apache.poi</groupId>
+			<artifactId>poi-ooxml</artifactId>
+			<version>${poi.version}</version>
+		</dependency>
+
+		<!-- TC 파일 가져오기 · 내보내기의 CSV(ARTEL-1327). 엑셀이 쓰는 따옴표 · 줄바꿈 규칙을 손으로 짜지 않는다. -->
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-csv</artifactId>
+			<version>1.12.0</version>
+		</dependency>
+
+		<!-- commons-csv 1.12.0은 UnsynchronizedBufferedReader를 써서 Commons IO 2.17.0 이상이
+		     필요하다. Spring Boot dependency management의 2.16.1로 내려가면 CSV 변환이 런타임에
+		     NoClassDefFoundError로 실패하므로 직접 고정한다. -->
+		<dependency>
+			<groupId>commons-io</groupId>
+			<artifactId>commons-io</artifactId>
+			<version>${commons-io.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.projectreactor</groupId>
+			<artifactId>reactor-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- Testcontainers - 테스트 DB를 스위트가 직접 띄운다. knowledge 벡터 색인이 pgvector 확장을
+		     요구하는데 Flyway는 모든 @SpringBootTest에서 마이그레이션 전체를 돌리므로, pgvector 없는
+		     DB에서는 벡터 테스트만이 아니라 통합 테스트 전부가 깨진다. 배경은
+		     src/test/kotlin/kr/artel/orchestration/support/PostgresTestContainer.kt 주석 참조.
+		     (H2는 JSONB도 pgvector도 없어 애초에 후보가 아니었고, test 프로파일이 이미 실 PostgreSQL을
+		     보고 있었으므로 남아 있던 H2 의존성을 함께 걷어낸다.) -->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- LauncherSessionListener(테스트 DB 컨테이너 기동)를 컴파일하려면 필요하다. surefire는 이걸
+		     런타임에만 넣어 주므로 명시하지 않으면 test-compile에서 심볼을 못 찾는다. -->
+		<dependency>
+			<groupId>org.junit.platform</groupId>
+			<artifactId>junit-platform-launcher</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<sourceDirectory>${project.basedir}/src/main/kotlin</sourceDirectory>
+		<testSourceDirectory>${project.basedir}/src/test/kotlin</testSourceDirectory>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.jetbrains.kotlin</groupId>
+				<artifactId>kotlin-maven-plugin</artifactId>
+				<configuration>
+					<args>
+						<arg>-Xjsr305=strict</arg>
+					</args>
+					<compilerPlugins>
+						<plugin>spring</plugin>
+					</compilerPlugins>
+				</configuration>
+				<dependencies>
+					<dependency>
+						<groupId>org.jetbrains.kotlin</groupId>
+						<artifactId>kotlin-maven-allopen</artifactId>
+						<version>${kotlin.version}</version>
+					</dependency>
+				</dependencies>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<!-- Mockito appends to the bootstrap classpath; CDS cannot be used by these tests. -->
+					<!-- Load instrumentation at JVM startup instead of dynamic attachment. -->
+					<argLine>-Xshare:off -Dnet.bytebuddy.experimental=true -javaagent:"${settings.localRepository}/net/bytebuddy/byte-buddy-agent/${byte-buddy.version}/byte-buddy-agent-${byte-buddy.version}.jar"</argLine>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+</project>

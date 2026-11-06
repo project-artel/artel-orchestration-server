@@ -1,0 +1,332 @@
+package kr.artel.orchestration.testscenario.service
+
+import kr.artel.orchestration.testscenario.dto.ScenarioResult
+
+/**
+ * 함께 담을 수 없는 케이스를 **묻지 않고 나눈다**(ARTEL-497).
+ *
+ * 앞서 이것은 되묻기였다. 실제로 써 보니 되묻기로는 끝나지 않았다(런 152):
+ *
+ * 1. "네, 나눠 주세요"가 모델에게 갔지만 **어느 쌍이 문제인지는 함께 가지 않는다** — 질문 문구만
+ *    간다. 모델은 무엇을 나눠야 하는지 모른 채 다시 썼고, 같은 묶음이 그대로 돌아왔다.
+ * 2. 조건이 그대로이므로 검수가 같은 쌍을 또 찾아냈고, **같은 질문이 다시 나갔다.** 사용자가 본
+ *    것은 "나눠 주세요"를 눌러도 같은 질문이 계속 뜨는 화면이다.
+ * 3. 한 번은 모델이 요청과 무관한 씬을 저작해 돌려주기까지 했다 — 답이 무엇을 뜻하는지 몰라서다.
+ *
+ * 나누는 일 자체는 **계산이다.** 어느 둘이 동시에 성립할 수 없는지는 [ScenarioSiblingCheck]가
+ * 이미 알고, 그것을 갈래별로 모으는 것은 색칠 문제다. 계산되는 것을 모델에게 물어 왕복하는 동안
+ * 값을 치르고 정확도를 잃었다. 그래서 여기서 나누고, 나눴다고 말한다.
+ *
+ * **순서는 지킨다.** 담긴 순서대로 훑어 들어갈 곳을 찾으므로, 나눠진 시나리오 안의 상대 순서는
+ * 원래 순서 그대로다 — 순서 판정([ScenarioOrderCheck])은 그다음 자리에서 따로 돈다.
+ */
+object ScenarioConflictSplit {
+
+    /**
+     * @property scenarios 나눈 결과. 나눌 것이 없으면 받은 것 그대로다.
+     * @property notes 나눈 시나리오의 `제목 → 조각 수`. 사용자에게 알릴 것이 여기서 나온다.
+     * @property anchorOf `조각의 자리 → 첫 조각의 자리`(ARTEL-518). 나눠서 생긴 조각을 **원본 옆에**
+     *   놓으려면 어느 것에서 갈라졌는지 알아야 한다. 첫 조각은 자기 자신을 가리키지 않는다 —
+     *   여기 있는 것은 새로 생기는 조각뿐이다.
+     */
+    data class Outcome(
+        val scenarios: List<ScenarioResult>,
+        val notes: List<Pair<String, Int>> = emptyList(),
+        val anchorOf: Map<Int, Int> = emptyMap(),
+        /**
+         * 나누다 홀로 남아 **저장하지 않은** 케이스들 — `제목 → 케이스 id`. 케이스 하나짜리
+         * 조각은 흐름이 아니라서, 저장하면 없느니만 못하다(run 57 실측 — 사용자 판정).
+         * 뺀 것은 사용자에게 알리고, 전 건 판정에서도 "뺐다"로 재분류해야 한다.
+         */
+        val droppedCases: List<Pair<String, List<Long>>> = emptyList(),
+        /** 케이스가 첫 무리에 못 든 이유 — `케이스 id → 막은 값들`. 파편 안내가 원인을 말하게 한다. */
+        val causeOf: Map<Long, Set<String>> = emptyMap(),
+    )
+
+    /**
+     * @param contested 두 케이스가 **어느 값 때문에** 동시에 성립할 수 없나. 비어 있으면 함께 설 수
+     *   있다. [ScenarioSiblingCheck.contested] 의 판정을 그대로 받는다.
+     * @param writes 이 케이스가 **바꾸는 값들**(ARTEL-581). 지도의 `capability_effect` 에서 온다.
+     *   못 찾으면 비어 있고, 그때는 예전처럼 순서를 모른 채 나눈다.
+     * @param movable 그 값이 **게임 안에서 움직이나**(ARTEL-625). 케이스가 아니라 지도 전체에 묻는다.
+     *   모르면 언제나 false 이고, 그때는 이 칸이 생기기 전과 똑같이 동작한다.
+     */
+    fun apply(
+        scenarios: List<ScenarioResult>,
+        contested: (Long, Long) -> Set<String>,
+        movable: (String) -> Boolean = { false },
+        // 후행 람다 자리를 지킨다. 부르는 쪽 대부분이 이것만 넘긴다.
+        writes: (Long) -> Set<String> = { emptySet() },
+    ): Outcome {
+        val out = mutableListOf<ScenarioResult>()
+        val notes = mutableListOf<Pair<String, Int>>()
+        val anchorOf = mutableMapOf<Int, Int>()
+        val causeOf = mutableMapOf<Long, Set<String>>()
+
+        for (scenario in scenarios) {
+            val groups = group(scenario.steps.mapNotNull { it.caseId }.distinct(), contested, writes, movable, causeOf)
+            if (groups.size <= 1) {
+                out += scenario
+                continue
+            }
+            val first = out.size
+            val parts = cut(scenario, groups)
+            out += parts
+            // 첫 조각을 뺀 나머지가 새로 생기는 것이고, 그것들이 원본 옆에 놓여야 한다.
+            for (offset in 1 until parts.size) anchorOf[first + offset] = first
+            notes += scenario.title to parts.size
+        }
+        return Outcome(out, notes, anchorOf, causeOf = causeOf)
+    }
+
+    /**
+     * 나뉜 결과에서 **홀로 남은 조각을 채택하지 않는다**(run 57 — 사용자 판정).
+     *
+     * 케이스 하나짜리 시나리오는 흐름이 아니라서, 저장하면 없느니만 못하다. 나누는 일은
+     * 계산이고([apply]) 무엇을 저장할지는 정책이라, 두 결정을 한 함수에 섞지 않는다 —
+     * 나누기 계산의 검사가 정책에 가려지면 안 된다.
+     *
+     * 조각이 전부 홀로면 가장 큰 것 하나는 남긴다 — 통째로 사라지면 "나눴다"는 안내가
+     * 가리킬 것이 없다. 뺀 케이스는 [Outcome.droppedCases] 로 알리고, 부른 쪽이 전 건
+     * 판정에서 "뺐다"로 재분류할 책임을 진다.
+     */
+    fun adoptSplitPieces(
+        outcome: Outcome,
+        // 조각이 **시작값에서 성립하는가**(run 60 실측). 나뉜 조각은 원인 값의 요구를 스스로
+        // 못 만드니(그래서 나뉘었다), 시작값이 그 요구를 충족해 주지 않으면 개별 시나리오로
+        // 돌 수 없다 — 2스텝짜리 "(2)" 가 부팅부터의 도달 경로 없이 저장되던 자리다.
+        guardsOf: (Long) -> List<Guard> = { emptyList() },
+        startingValues: Map<String, String> = emptyMap(),
+    ): Outcome {
+        if (outcome.notes.isEmpty()) return outcome
+        val caseCount = { part: ScenarioResult -> part.steps.mapNotNull { it.caseId }.distinct().size }
+        val tailMatch = { a: String, b: String ->
+            a == b || a.endsWith(".$b") || b.endsWith(".$a")
+        }
+        // 원인 값에 걸린 요구 중 하나라도 시작값으로 성립하면 도달 가능으로 본다. 원인 값이
+        // 없거나(첫 무리) 그 값의 요구가 없으면 이 검사는 관여하지 않는다 — 여기서 재는 것은
+        // "나뉜 이유가 시작에서 풀리는가"뿐이고, 그 밖의 도달성은 걷기·메움의 몫이다.
+        val standsAtStart = { part: ScenarioResult ->
+            val ids = part.steps.mapNotNull { it.caseId }.distinct()
+            val causes = ids.flatMap { outcome.causeOf[it].orEmpty() }.toSet()
+            val relevant = ids.flatMap(guardsOf)
+                .filter { g -> !g.momentary && !g.symbolic && causes.any { tailMatch(g.variable, it) } }
+            causes.isEmpty() || relevant.isEmpty() || relevant.any { satisfiedBy(it, startingValues) }
+        }
+        // 조각들을 원본별 무리로 되묶는다: anchorOf 가 "새 조각 → 첫 조각" 을 안다.
+        val families = mutableMapOf<Int, MutableList<Int>>()
+        outcome.scenarios.indices.forEach { index ->
+            val root = outcome.anchorOf[index] ?: index
+            families.getOrPut(root) { mutableListOf() } += index
+        }
+        val keptIndex = mutableListOf<Int>()
+        val dropped = mutableListOf<Pair<String, List<Long>>>()
+        for ((root, members) in families.toSortedMap()) {
+            if (members.size == 1) { keptIndex += members; continue }
+            var kept = members.filter {
+                caseCount(outcome.scenarios[it]) >= 2 && standsAtStart(outcome.scenarios[it])
+            }
+            if (kept.isEmpty()) kept = listOf(members.maxBy { caseCount(outcome.scenarios[it]) })
+            keptIndex += kept
+            val solo = members - kept.toSet()
+            if (solo.isNotEmpty()) {
+                dropped += outcome.scenarios[root].title to
+                    solo.flatMap { outcome.scenarios[it].steps.mapNotNull { step -> step.caseId } }.distinct()
+            }
+        }
+        keptIndex.sort()
+        val newIndexOf = keptIndex.withIndex().associate { (new, old) -> old to new }
+        val anchors = outcome.anchorOf
+            .filterKeys { it in newIndexOf }
+            .mapNotNull { (piece, root) ->
+                newIndexOf[root]?.let { newRoot -> newIndexOf.getValue(piece) to newRoot }
+            }.toMap()
+        return Outcome(
+            scenarios = keptIndex.map { outcome.scenarios[it] },
+            notes = outcome.notes,
+            anchorOf = anchors,
+            droppedCases = dropped,
+            causeOf = outcome.causeOf,
+        )
+    }
+
+    /**
+     * 케이스를 **이어서 실행할 수 있는 무리**로 모은다.
+     *
+     * 담긴 순서대로 훑어 이미 있는 무리 중 아무와도 어긋나지 않는 첫 자리에 넣는다. 무리 안의
+     * **모든** 원소와 견준다.
+     *
+     * 가장 적은 수로 나누는 것을 목표로 하지 않는다 — 그건 어려운 문제이고, 여기서 필요한 것은
+     * "실행할 수 있는 묶음"이지 "가장 적은 묶음"이 아니다.
+     */
+    /** 시작값 하나로 요구 하나가 성립하는가. 숫자면 수로, 아니면 글자로 비교한다. */
+    private fun satisfiedBy(guard: Guard, starting: Map<String, String>): Boolean {
+        val start = starting.entries.firstOrNull { (name, _) ->
+            name == guard.variable || name.endsWith(".${guard.variable}") || guard.variable.endsWith(".$name")
+        }?.value ?: return false
+        val left = start.toDoubleOrNull()
+        val right = guard.value.toDoubleOrNull()
+        if (left != null && right != null) return when (guard.operator) {
+            "==" -> left == right; "!=" -> left != right
+            "<=" -> left <= right; ">=" -> left >= right
+            "<" -> left < right; ">" -> left > right
+            else -> false
+        }
+        return when (guard.operator) { "==" -> start == guard.value; "!=" -> start != guard.value; else -> false }
+    }
+
+    private fun group(
+        caseIds: List<Long>,
+        contested: (Long, Long) -> Set<String>,
+        writes: (Long) -> Set<String>,
+        movable: (String) -> Boolean,
+        causeOf: MutableMap<Long, Set<String>> = mutableMapOf(),
+    ): List<Set<Long>> {
+        val groups = mutableListOf<MutableSet<Long>>()
+        for ((index, id) in caseIds.withIndex()) {
+            val home = groups.firstOrNull { group ->
+                group.none { blocks(it, id, index, caseIds, contested, writes, movable) }
+            }
+            if (home != null) home += id
+            else {
+                // 첫 무리의 무엇과 어떤 값으로 어긋났는지를 남긴다 — 파편이 스스로 원인을
+                // 말하게 하는 유일한 자리다(계산은 여기서만 그 답을 안다).
+                if (groups.isNotEmpty()) {
+                    causeOf[id] = groups.first()
+                        .flatMap { contested(it, id) }
+                        .toSet()
+                        .ifEmpty { setOf("(순서상 함께 못 섬)") }
+                }
+                groups += mutableSetOf(id)
+            }
+        }
+        return groups
+    }
+
+    /**
+     * [earlier] 다음에 [id] 를 **이어서 실행할 수 없나**(ARTEL-581).
+     *
+     * 앞의 것이 [id] 를 못 서게 하려면 두 가지가 함께여야 한다 — 사전조건이 어긋나고, **그 사이에
+     * 그 값을 바꾸는 것이 아무것도 없어야** 한다.
+     *
+     * 시나리오는 한 시점이 아니라 시간 위의 순서다. 실측(런 159)에서 이 구분이 없어 걸어가는
+     * 시나리오가 네 조각이 났다:
+     *
+     * ```
+     * position == 0 인 자리에서 오른쪽 → position 이 1이 된다
+     * position == 1 인 자리에서 오른쪽 → position 이 2가 된다
+     * ```
+     *
+     * 두 전제는 **한 순간에는** 함께 설 수 없다. 그런데 앞엣것이 뒤엣것의 자리를 만든다. 그것을
+     * 모순이라 부르면, 캐릭터가 밟고 지나가는 계단이 서로를 부정하게 된다.
+     *
+     * 앞의 것 자신이 바꾸는 것도 센다. 사이에 낀 것들도 함께 본다 — 시나리오가 다른 조작을 거쳐
+     * 그 값에 닿는 길도 실제로 있다.
+     *
+     * **순서가 뒤집힌 자리는 여전히 막는다.** 뒤엣것이 앞엣것의 전제를 만드는 경우인데, 그것은
+     * 나눌 일이 아니라 순서를 고칠 일이라 [ScenarioOrderCheck] 가 답한다.
+     *
+     * ## 케이스가 안 바꿔도 게임이 바꾸는 값이 있다(ARTEL-625)
+     *
+     * [writes] 는 **케이스가 된 기능**만 안다. 그래서 게임이 스스로 움직이는 값은 영영 안 바뀌는
+     * 것으로 보이고, 그 값을 두고 갈리는 갈래들이 전부 따로 잘린다.
+     *
+     * 실측(프로젝트 24)에서 맵의 `Return` 케이스가 그랬다 — `StagePosition` 이 1·2·3 일 때 배경이
+     * 달라지는 세 갈래인데, 그 값을 올리는 것은 전투를 이기는 일이라 어떤 케이스도 안 쓴다. 그래서
+     * 20스텝짜리 하나에서 1스텝짜리 셋이 떨어져 나왔다.
+     *
+     * 한 순간만 보면 `== 1` 과 `== 2` 는 함께 못 선다. **시간 위에서는 계단이다** — 이겨서 올라간다.
+     * 그 사이를 무엇으로 메울지는 [ScenarioPathService] 가 "저절로 일어난다"로 답하는 자리이고
+     * (ARTEL-534), 여기서 자르면 그 답이 나갈 기회 자체가 사라진다.
+     *
+     * 지도의 아무도 안 쓰는 값은 여전히 얼어 있는 것이라 예전처럼 나눈다.
+     */
+    private fun blocks(
+        earlier: Long,
+        id: Long,
+        index: Int,
+        caseIds: List<Long>,
+        contested: (Long, Long) -> Set<String>,
+        writes: (Long) -> Set<String>,
+        movable: (String) -> Boolean,
+    ): Boolean {
+        val disputed = contested(earlier, id)
+        if (disputed.isEmpty()) return false
+
+        val from = caseIds.indexOf(earlier)
+        // 앞에 있지 않으면 순서로 풀 수 있는 어긋남이 아니다. 예전처럼 나눈다.
+        if (from < 0 || from >= index) return true
+
+        val changed = (from until index).flatMapTo(mutableSetOf()) { writes(caseIds[it]) }
+        return disputed.any { value ->
+            changed.none { sameValue(it, value) } && !movable(value)
+        }
+    }
+
+    /**
+     * 지도가 부르는 이름과 사전조건이 적은 이름이 **같은 값**인가.
+     *
+     * 지도는 `MapMove.position`, 사전조건은 `MapMove.position` 또는 그냥 `position` 으로 적는다.
+     * 서로의 꼬리일 때만 같은 것으로 본다 — [ScenarioSiblingCheck] 가 가드끼리 견줄 때 쓰는 규칙과
+     * 같다. 마지막 마디만 맞추면 `magicTypeCards.Count` 와 `spellCards.Count` 가 한 값이 된다.
+     */
+    private fun sameValue(written: String, guarded: String): Boolean =
+        written == guarded || written.endsWith(".$guarded") || guarded.endsWith(".$written")
+
+    /**
+     * 시나리오를 무리 수만큼 자른다.
+     *
+     * **첫 조각이 원래 시나리오다.** `scenarioId`를 물려받아 그 자리를 덮어쓰고, 나머지는 새
+     * 시나리오로 런 끝에 붙는다 — 그러지 않으면 수정 요청 한 번에 원본이 남고 사본이 생긴다.
+     *
+     * 케이스가 없는 스텝(모델이 적은 준비 동작, 미상 블록)은 **뒤따르는 검증 스텝**을 따라간다.
+     * 준비는 다음에 볼 것을 위한 것이기 때문이다. 뒤에 검증이 없으면 앞의 것을 따라간다.
+     */
+    private fun cut(scenario: ScenarioResult, groups: List<Set<Long>>): List<ScenarioResult> {
+        val ownerOf = buildMap {
+            groups.forEachIndexed { index, group -> group.forEach { put(it, index) } }
+        }
+        val steps = scenario.steps
+        // 스텝마다 어느 조각인지. 케이스가 없는 스텝은 뒤에서 앞으로 물려받는다.
+        val owner = IntArray(steps.size) { -1 }
+        steps.forEachIndexed { index, step -> owner[index] = step.caseId?.let { ownerOf[it] } ?: -1 }
+        for (index in steps.indices.reversed()) {
+            if (owner[index] == -1) owner[index] = owner.getOrElse(index + 1) { -1 }
+        }
+        var carried = 0
+        for (index in steps.indices) {
+            if (owner[index] == -1) owner[index] = carried else carried = owner[index]
+        }
+
+        return groups.indices.map { part ->
+            ScenarioResult(
+                scenarioId = if (part == 0) scenario.scenarioId else null,
+                title = titleOf(scenario.title, part),
+                description = scenario.description,
+                steps = steps.filterIndexed { index, _ -> owner[index] == part },
+                // 조각도 원본의 실행 방식을 따른다. 빠지면 FREE 에서 ORDERED 로 바꾸는 수정이 null 로
+                // 읽혀 저장된 FREE 가 남는다.
+                executionMode = scenario.executionMode,
+            )
+        }
+    }
+
+    /**
+     * 조각의 제목.
+     *
+     * **접미를 겹쳐 붙이지 않는다**(ARTEL-518). 이미 나뉜 조각을 또 나누는 일이 실제로 일어나고
+     * (런 155: 사용자가 지운 케이스를 "다시 담아줘" 하자 `…(5)` 를 다시 나눴다), 그때 그냥 붙이면
+     * `…(5) (2)` 가 된다. 한 번 더 나누면 `(5) (2) (2)` 다. 번호를 점으로 이어 괄호는 하나로 둔다.
+     */
+    private fun titleOf(title: String, part: Int): String {
+        if (part == 0) return title
+        val trimmed = title.trim()
+        val nested = PART_SUFFIX.find(trimmed)
+        if (nested != null) {
+            return trimmed.removeRange(nested.range).trimEnd() + " (${nested.groupValues[1]}.${part + 1})"
+        }
+        return "$trimmed (${part + 1})"
+    }
+
+    private val PART_SUFFIX = Regex("""\s*\((\d+(?:\.\d+)*)\)$""")
+}
