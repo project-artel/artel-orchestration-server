@@ -97,6 +97,8 @@ data class TestCaseResponse(
     /** 하고 나면 가는 화면(씬 전이 TC)(ARTEL-1312). 화면이 안 바뀌면 null. */
     val arrivesAt: String? = null,
     val reviewStatus: String = "READY",
+    /** 승인을 요청한 사람의 `app_user.id`. 요청 중이 아니면 null. */
+    val reviewRequestedBy: String? = null,
     /** 이 케이스가 돌 때 SDK 가 읽어 보낼 관측 이름(ARTEL-1280). `metadata.observe` 그대로이고, 정한 적 없으면 null 이다. */
     val observe: List<String>? = null,
 )
@@ -135,6 +137,8 @@ data class TestCaseDetailResponse(
     /** [TestCaseResponse.arrivesAt] 와 같다. */
     val arrivesAt: String? = null,
     val reviewStatus: String = "READY",
+    /** 승인을 요청한 사람의 `app_user.id`. 요청 중이 아니면 null. */
+    val reviewRequestedBy: String? = null,
     /** [TestCaseResponse.observe] 와 같다. */
     val observe: List<String>? = null,
 )

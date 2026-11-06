@@ -42,9 +42,10 @@ class TestScenarioService(
     /** Artel Bot 이 고치는 중인 런의 시나리오는 사람이 쓰지 못한다(ARTEL-1264). */
     private val runLocks: RunAuthoringLocks,
     private val testCases: kr.artel.orchestration.testcase.repository.TestCaseRepository,
+    private val absorbService: ScenarioAbsorbService,
 ) {
 
-    private suspend fun validateReviewedCases(projectId: Long, draft: ScenarioDraft) {
+    internal suspend fun validateReviewedCases(projectId: Long, draft: ScenarioDraft) {
         val ids = draft.steps.mapNotNull { it.caseId }.toSet()
         if (ids.isEmpty()) return
         val cases = testCases.findAllById(ids).toList()
@@ -67,7 +68,8 @@ class TestScenarioService(
         return ScenarioResponse(
             testScenarioId = entity.id!!,
             projectId = entity.projectId,
-            payload = entity.toDraft(objectMapper)
+            payload = entity.toDraft(objectMapper),
+            reviewStatus = entity.reviewStatus,
         )
     }
 
@@ -92,7 +94,8 @@ class TestScenarioService(
         return ScenarioResponse(
             testScenarioId = entity.id!!,
             projectId = entity.projectId,
-            payload = entity.toDraft(objectMapper)
+            payload = entity.toDraft(objectMapper),
+            reviewStatus = entity.reviewStatus,
         )
     }
 
@@ -103,6 +106,7 @@ class TestScenarioService(
             projectId = entity.projectId,
             title = entity.title,
             executionMode = entity.executionMode,
+            reviewStatus = entity.reviewStatus,
             createdAt = entity.createdAt,
             updatedAt = entity.updatedAt
         )
@@ -131,18 +135,27 @@ class TestScenarioService(
         return ScenarioResponse(
             testScenarioId = saved.id!!,
             projectId = saved.projectId,
-            payload = saved.toDraft(objectMapper)
+            payload = saved.toDraft(objectMapper),
+            reviewStatus = saved.reviewStatus,
         )
     }
 
     /**
-     * 시나리오를 승인(확정)한다. 최종 draft가 있으면 본문 컬럼에 저장한다. 대화 세션은 런 단위라 시나리오
+     * 시나리오를 승인(확정)한다. 승인 대기면 `READY` 로 바꾼다. 최종 draft가 있으면 본문 컬럼에 저장한다. 대화 세션은 런 단위라 시나리오
      * 하나의 승인으로 닫지 않는다(런 대화는 계속된다). 접근 불가면 404.
      */
     suspend fun testScenarioApprove(appUserId: Long, testScenarioId: Long, draft: ScenarioDraft?) {
         val entity = accessService.accessibleScenario(testScenarioId, appUserId)
             ?: throw NotFoundException()
         runLocks.assertScenarioWritable(testScenarioId)
+        if (draft == null && entity.reviewStatus == "DRAFT") {
+            validateReviewedCases(entity.projectId, entity.toDraft(objectMapper))
+            scenarioRepository.save(
+                entity.copy(reviewStatus = "READY", reviewRequestedBy = null, reviewEditsApproved = false, reviewAbsorbs = null)
+            )
+            absorbService.absorbOnApproval(entity)
+            projectChanges.notify(entity.projectId, ProjectChangeTopic.TEST_RUNS)
+        }
         if (draft != null) {
             val stated = draft.copy(executionMode = draft.executionMode ?: entity.executionMode)
             ScenarioExecutionRules.validate(stated)
@@ -151,7 +164,11 @@ class TestScenarioService(
             val safe = stated.copy(
                 steps = ExpectedLabelPolicy.carryOver(stated.steps, entity.toDraft(objectMapper).steps)
             )
-            scenarioRepository.save(entity.withDraft(safe, objectMapper))
+            scenarioRepository.save(
+                entity.withDraft(safe, objectMapper)
+                    .copy(reviewStatus = "READY", reviewRequestedBy = null, reviewEditsApproved = false, reviewAbsorbs = null)
+            )
+            if (entity.reviewStatus == "DRAFT") absorbService.absorbOnApproval(entity)
             projectChanges.notify(entity.projectId, ProjectChangeTopic.TEST_RUNS)
         }
     }
@@ -191,7 +208,8 @@ class TestScenarioService(
         return ScenarioResponse(
             testScenarioId = saved.id!!,
             projectId = saved.projectId,
-            payload = saved.toDraft(objectMapper)
+            payload = saved.toDraft(objectMapper),
+            reviewStatus = saved.reviewStatus,
         )
     }
 

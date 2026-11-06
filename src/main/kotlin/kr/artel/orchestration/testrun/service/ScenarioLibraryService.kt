@@ -123,6 +123,8 @@ class ScenarioLibraryService(
                         title = source.title,
                         description = source.description,
                         executionMode = source.executionMode,
+                        reviewStatus = source.reviewStatus,
+                        reviewRequestedBy = source.reviewRequestedBy,
                         steps = remap?.let { rewriteSteps(source.steps, it) } ?: source.steps,
                     )
                 )

@@ -17,7 +17,7 @@ data class CaseBatchRequest(
      * 버전만 오른다.
      */
     val gameBuildId: String? = null,
-    /** 신규 TC에만 적용하며 기존 TC 수정은 검토 상태를 보존한다. */
+    /** 신규 TC 는 승인 대기로 만들고, 기존 TC 는 내용이 바뀔 때 승인 대기로 되돌린다. */
     val draft: Boolean = true,
 )
 

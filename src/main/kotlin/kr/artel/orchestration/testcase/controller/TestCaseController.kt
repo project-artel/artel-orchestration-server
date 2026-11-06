@@ -2,7 +2,9 @@ package kr.artel.orchestration.testcase.controller
 
 import kr.artel.orchestration.auth.web.CurrentUserId
 import kr.artel.orchestration.testcase.dto.AllTestCasesResponse
+import kr.artel.orchestration.testcase.dto.CaseReviewItem
 import kr.artel.orchestration.testcase.dto.CaseVerdictHistoryResponse
+import kr.artel.orchestration.testcase.dto.ReviewDecisionRequest
 import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteRequest
 import kr.artel.orchestration.testcase.dto.TestCaseBulkDeleteResponse
 import kr.artel.orchestration.testcase.dto.TestCaseMoveRequest
@@ -13,6 +15,7 @@ import kr.artel.orchestration.testcase.dto.TestCaseDetailResponse
 import kr.artel.orchestration.testcase.dto.TestCaseListResponse
 import kr.artel.orchestration.testcase.dto.TestCaseResponse
 import kr.artel.orchestration.testcase.dto.TestCaseUpdateRequest
+import kr.artel.orchestration.testcase.service.CaseReviewService
 import kr.artel.orchestration.testcase.service.TestCaseService
 import kr.artel.orchestration.testcase.service.TestCaseVerdictService
 import org.springframework.http.HttpStatus
@@ -35,7 +38,8 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/projects/{projectId}/test-cases")
 class TestCaseController(
     private val service: TestCaseService,
-    private val verdictService: TestCaseVerdictService
+    private val verdictService: TestCaseVerdictService,
+    private val caseReviewService: CaseReviewService,
 ) {
 
     /**
@@ -97,6 +101,25 @@ class TestCaseController(
         @CurrentUserId appUserId: Long
     ): TestCaseCoverageResponse =
         service.coverage(projectId, appUserId)
+
+    /** 내가 승인을 요청한 Test Case. 비참여자면 404. */
+    @GetMapping("/review-queue")
+    suspend fun reviewQueue(
+        @PathVariable projectId: Long,
+        @CurrentUserId appUserId: Long,
+    ): List<CaseReviewItem> = caseReviewService.queue(projectId, appUserId)
+
+    /** 승인 대기 Test Case 를 승인하거나 거절(삭제)한다. 읽은 뒤 내용이 바뀌었거나 이미 처리됐으면 409. */
+    @PostMapping("/{caseId}/review")
+    suspend fun review(
+        @PathVariable projectId: Long,
+        @PathVariable caseId: Long,
+        @RequestBody request: ReviewDecisionRequest,
+        @CurrentUserId appUserId: Long,
+    ): ResponseEntity<Void> {
+        caseReviewService.decide(projectId, caseId, appUserId, request)
+        return ResponseEntity.noContent().build()
+    }
 
     @GetMapping("/review-status-options")
     suspend fun reviewStatusOptions(@PathVariable projectId: Long, @CurrentUserId appUserId: Long) =

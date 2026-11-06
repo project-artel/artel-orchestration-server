@@ -50,6 +50,7 @@ class TestRunChatService(
     private val drafts: AuthoringDraftStore,
     private val absorbService: ScenarioAbsorbService,
     private val runLocks: RunAuthoringLocks,
+    private val reviewAbsorbs: kr.artel.orchestration.testscenario.service.ScenarioReviewService,
 ) {
 
     /** 사용자별 프라이빗 채팅 스레드를 시간순으로 조회한다(재방문 복원). 접근 불가면 빈 목록. */
@@ -141,14 +142,17 @@ class TestRunChatService(
      * 합치기의 걷어내기는 [ScenarioAbsorbService]. 하나씩 반영해서, 하나가 막혀도 나머지는 들어간다.
      * 막힌 것은 draft 에 되돌려 두고 이유를 낸다. 접근 불가면 404.
      */
-    suspend fun applyDraft(appUserId: Long, runId: Long, draftIds: List<String>): DraftApplyResult {
+    suspend fun applyDraft(appUserId: Long, runId: Long, draftIds: List<String>, pendingReview: Boolean = false): DraftApplyResult {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
         val key = sessionKey(appUserId, runId)
         val draft = drafts.of(key)
+        if (pendingReview) {
+            assertTargetsById(runId, draft.list().filter { it.draftId in draftIds.toSet() }.map { it.toResult() })
+        }
         // **시나리오를 승인하면 그 시나리오가 쓰는 추천 TC 도 한 번에 저장한다.** 먼저 저장해 스텝을 새 TC 로 바꿔 끼운 뒤
         // 승인한다 — 거꾸로 하면 판정 없는 스텝으로 저장되고 추천만 남는다.
         val recommended = draft.list().filter { it.draftId in draftIds.toSet() }.flatMap { it.steps }.mapNotNull { it.recommendationId }.distinct()
-        if (recommended.isNotEmpty()) caseRecommendations.save(run.projectId, runId, appUserId, recommended)
+        if (recommended.isNotEmpty()) caseRecommendations.save(run.projectId, runId, appUserId, recommended, draft = pendingReview)
         var applied = 0
         val absorbed = mutableListOf<String>()
         val kept = mutableListOf<String>()
@@ -161,7 +165,10 @@ class TestRunChatService(
                 refused += "'${item.title}' — 다른 사람의 Artel Bot 이 이 시나리오를 고치는 중이라 승인하지 않았습니다."
                 continue
             }
-            val outcome = reconcileService.reconcile(runId, run.projectId, appUserId, listOf(item.toResult()))
+            val outcome = reconcileService.reconcile(
+                runId, run.projectId, appUserId, listOf(item.toResult()),
+                pendingReviewBy = appUserId.takeIf { pendingReview },
+            )
             if (outcome.rejected) {
                 draft.restore(item)
                 refused += "'${item.title}' — ${outcome.findings.rejectionMessage()}"
@@ -171,7 +178,10 @@ class TestRunChatService(
             // 합치기는 **저장된 최종본**으로 센다. draft 본문으로 세면 코드가 손댄 뒤의 실제 본문과 달라
             // 실제로는 빠진 케이스를 있다고 세고 원본을 지울 수 있다.
             val keeper = outcome.saved.firstOrNull()
-            if (keeper != null && item.absorbedScenarioIds.isNotEmpty()) {
+            if (keeper != null && item.absorbedScenarioIds.isNotEmpty() && pendingReview) {
+                // 승인 전에 걷어내면 거절했을 때 원본과 합친 쪽이 모두 사라진다. 승인할 때 걷어낸다.
+                reviewAbsorbs.record(keeper.scenarioId, item.absorbedScenarioIds)
+            } else if (keeper != null && item.absorbedScenarioIds.isNotEmpty()) {
                 val result = absorbService.absorb(
                     runId, keeper.scenarioId, outcome.checked.firstOrNull() ?: item.toResult(), item.absorbedScenarioIds,
                 )
@@ -197,10 +207,12 @@ class TestRunChatService(
     /**
      * 카드 검토 모드에서 사용자가 카드로 고른/편집한 [scenarios]를 이 런에 커밋한다(수동 트리거).
      * 자동저장과 **같은 reconcile 엔진**을 쓴다 — 추가/수정은 항목별 scenario_id로 갈린다. 접근 불가면 404.
+     * [draft]면 승인 대기로 저장한다(MCP). 이때는 고칠 대상을 `scenario_id` 로만 받는다.
      * @return 실제로 반영된 시나리오 수(추가 + 수정).
      */
-    suspend fun commitScenarios(appUserId: Long, runId: Long, scenarios: List<ScenarioResult>): Int {
+    suspend fun commitScenarios(appUserId: Long, runId: Long, scenarios: List<ScenarioResult>, draft: Boolean = false): Int {
         val run = accessible(runId, appUserId) ?: throw NotFoundException()
+        if (draft) assertTargetsById(runId, scenarios)
         // 다른 사람의 Artel Bot 이 고치는 중인 시나리오는 커밋하지 못한다(ARTEL-1264).
         val key = sessionKey(appUserId, runId)
         // 번호가 없어도 런에 같은 제목이 있으면 그것을 덮는다(reconcile 의 규칙). 덮을 대상으로 검사한다.
@@ -208,7 +220,9 @@ class TestRunChatService(
         // 판정을 넘기지 않는다 — 이 경로의 시나리오는 사용자가 카드로 직접 고른 것이라 "Agent가 다
         // 봤는가"를 물을 대상이 아니다. 사람이 고른 것이 곧 요구다.
         //
-        val outcome = reconcileService.reconcile(runId, run.projectId, appUserId, scenarios)
+        val outcome = reconcileService.reconcile(
+            runId, run.projectId, appUserId, scenarios, pendingReviewBy = appUserId.takeIf { draft },
+        )
         // **알림과 질문은 저장 경로와 무관하게 나간다**(ARTEL-487). 이 경로의 응답은 반영 건수
         // 하나라 거기 실을 자리가 없어서, 챗봇과 같은 자리(대화 기록 + SSE)로 흘린다 — 예전에는
         // 여기서 조용히 버려져, 카드로 저장한 사용자에게는 미상 스텝만 남고 이유도 답할 방법도
@@ -241,6 +255,30 @@ class TestRunChatService(
         streamManager.complete(key)
     }
 
+    /**
+     * MCP 저장은 제목으로 시나리오를 찾아 덮어쓰지 않는다. 다른 일을 하려던 저장이 제목이 겹쳤다는 이유로 승인된
+     * 시나리오를 바꾸면 안 된다. 고치려면 이 런에 든 `scenario_id` 를 준다.
+     */
+    private suspend fun assertTargetsById(runId: Long, scenarios: List<ScenarioResult>) {
+        val inRun = runScenarioReader.currentScenarios(runId)
+        val titles = scenarios.map { it.title.trim() }
+        titles.groupingBy { it }.eachCount().filterValues { it > 1 }.keys.firstOrNull()?.let { title ->
+            throw ConflictException("제목이 같은 시나리오 '$title' 이 요청에 둘 이상 있습니다.", SCENARIO_TITLE_TAKEN)
+        }
+        scenarios.forEach { scenario ->
+            val id = scenario.scenarioId?.takeIf { it > 0 }
+            if (id != null) {
+                if (inRun.none { it.scenarioId == id }) throw NotFoundException("이 런에 시나리오 $id 가 없습니다.")
+                return@forEach
+            }
+            val taken = inRun.firstOrNull { it.title.trim() == scenario.title.trim() } ?: return@forEach
+            throw ConflictException(
+                "이 런에 제목이 같은 시나리오 ${taken.scenarioId} 가 있습니다. 고치려면 scenario_id 를 주고, 새로 만들려면 제목을 바꾸세요.",
+                SCENARIO_TITLE_TAKEN,
+            )
+        }
+    }
+
     private suspend fun accessible(runId: Long, appUserId: Long): TestRunEntity? {
         val run = runRepository.findById(runId) ?: return null
         return if (projectAccessService.isMember(run.projectId, appUserId)) run else null
@@ -255,6 +293,9 @@ class TestRunChatService(
     companion object {
         /** 승인 전 draft 가 있어 새 요청을 받지 않는다(ARTEL-1074). 화면은 draft 만 고치는 입력으로 안내한다. */
         const val DRAFT_PENDING = "draft_pending"
+
+        /** MCP 저장이 이 런에 있는 제목을 `scenario_id` 없이 보냈다. */
+        const val SCENARIO_TITLE_TAKEN = "scenario_title_taken"
 
         /** draft 만 고치는 말인데 고칠 draft 가 없다. */
         const val NO_DRAFT = "no_draft"

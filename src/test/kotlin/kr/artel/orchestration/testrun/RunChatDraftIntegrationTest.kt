@@ -250,4 +250,57 @@ class RunChatDraftIntegrationTest {
 
         stream.dispose()
     }
+
+    @Test
+    fun `MCP 가 저장한 draft 는 승인 대기로 런에 들어가고 제목이 같으면 덮어쓰지 않는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser("draft-${seq.incrementAndGet()}")
+        val projectId = memberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val stream = client.get()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/stream")
+            .accept(MediaType.TEXT_EVENT_STREAM)
+            .cookie("artel_access_token", token)
+            .retrieve()
+            .bodyToFlux(sseType)
+            .subscribe()
+        Thread.sleep(1000)
+        say(client, projectId, runId, token, "메뉴 시나리오 만들어줘")
+        Thread.sleep(1500)
+        val pending = draft(client, projectId, runId, token).single()
+
+        // 같은 제목이 런에 이미 있으면 그 시나리오를 덮지 않고 거절한다.
+        val approved = scenarioRepository.save(
+            kr.artel.orchestration.testscenario.entity.TestScenarioEntity(projectId = projectId, title = pending.title)
+        )
+        val link = runScenarioRepository.save(
+            kr.artel.orchestration.testrun.entity.TestRunScenarioEntity(testRunId = runId, testScenarioId = approved.id!!, position = 0)
+        )
+        val refused = applyDraft(client, projectId, runId, token, pending.draftId)
+        assertThat(refused.first).isEqualTo(409)
+        assertThat(refused.second).contains("scenario_title_taken")
+        assertThat(scenarioRepository.findById(approved.id!!)!!.reviewStatus).isEqualTo("READY")
+
+        runScenarioRepository.delete(link)
+        scenarioRepository.deleteById(approved.id!!)
+        assertThat(applyDraft(client, projectId, runId, token, pending.draftId).first).isEqualTo(200)
+
+        val saved = scenarioRepository.findById(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().single().testScenarioId)!!
+        assertThat(saved.reviewStatus).isEqualTo("DRAFT")
+        assertThat(saved.reviewRequestedBy).isEqualTo(appUserId)
+        assertThat(saved.reviewEditsApproved).isFalse()
+
+        stream.dispose()
+    }
+
+    private fun applyDraft(client: WebClient, projectId: Long, runId: Long, token: String, draftId: String): Pair<Int, String> =
+        client.post()
+            .uri("/api/projects/$projectId/test-runs/$runId/chat/draft/apply")
+            .contentType(MediaType.APPLICATION_JSON)
+            .cookie("artel_access_token", token)
+            .bodyValue(mapOf("draft_ids" to listOf(draftId), "draft" to true))
+            .exchangeToMono { response ->
+                response.bodyToMono(String::class.java).defaultIfEmpty("").map { response.statusCode().value() to it }
+            }
+            .block(Duration.ofSeconds(10))!!
 }

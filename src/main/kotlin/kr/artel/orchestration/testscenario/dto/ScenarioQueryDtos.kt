@@ -12,7 +12,8 @@ import java.time.Instant
 data class ScenarioResponse(
     val testScenarioId: Long,
     val projectId: Long,
-    val payload: ScenarioDraft
+    val payload: ScenarioDraft,
+    val reviewStatus: String = "READY",
 )
 
 /**
@@ -40,6 +41,7 @@ data class ScenarioSummary(
     val projectId: Long,
     val title: String,
     @param:JsonProperty("execution_mode") val executionMode: ScenarioExecutionMode,
+    val reviewStatus: String = "READY",
     val createdAt: Instant?,
     val updatedAt: Instant?
 )

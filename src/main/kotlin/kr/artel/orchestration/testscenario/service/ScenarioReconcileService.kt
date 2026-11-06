@@ -124,6 +124,9 @@ class ScenarioReconcileService(
      * [reviewed]가 있으면 **저장 전에** 검수한다(2단계). 통과하지 못하면 한 줄도 저장하지 않는다 —
      * 절반만 저장하면 "일부만 검증된 시나리오"가 남고, 그건 검사를 안 한 것보다 나쁘다(믿을 수 있어
      * 보인다). 규칙은 [ScenarioCoverageAudit]에 있다.
+     *
+     * [pendingReviewBy]가 있으면 그 사람의 승인 요청으로 `DRAFT` 저장한다. 없으면 고치는 시나리오는 지금 상태를
+     * 지키고 새 시나리오는 `READY` 다.
      */
     suspend fun reconcile(
         runId: Long,
@@ -132,10 +135,11 @@ class ScenarioReconcileService(
         scenarios: List<ScenarioResult>,
         reviewed: ReviewedCases? = null,
         save: Boolean = true,
+        pendingReviewBy: Long? = null,
     ): ReconcileOutcome =
         // 검수가 경로 · 기능을 비춰 볼 지도는 TR 이 고른 TC 버전의 것이다(ARTEL-1048).
         withContext(authoringVersions.of(runId)) {
-            reconcileInVersion(runId, projectId, appUserId, scenarios, reviewed, save)
+            reconcileInVersion(runId, projectId, appUserId, scenarios, reviewed, save, pendingReviewBy)
         }
 
     private suspend fun reconcileInVersion(
@@ -145,6 +149,7 @@ class ScenarioReconcileService(
         scenarios: List<ScenarioResult>,
         reviewed: ReviewedCases?,
         save: Boolean,
+        pendingReviewBy: Long?,
     ): ReconcileOutcome {
         // SAFETY: 빈 배열은 정상 턴 — DB 무변경(삽입도 삭제도 없음).
         if (scenarios.isEmpty()) {
@@ -537,6 +542,13 @@ class ScenarioReconcileService(
                     val previous = existing.toDraft(objectMapper).steps
                     scenarioRepository.save(
                         existing.withDraft(draftFor(scenario, previous), objectMapper)
+                            .let { edited ->
+                                if (pendingReviewBy == null) edited else edited.copy(
+                                    reviewStatus = "DRAFT",
+                                    reviewRequestedBy = pendingReviewBy,
+                                    reviewEditsApproved = existing.reviewEditsApproved || existing.reviewStatus == "READY",
+                                )
+                            }
                     )
                     // 런 링크는 그대로 둔다(수정은 위치를 바꾸지 않는다).
                     savedId[index] = scenarioId
@@ -545,7 +557,11 @@ class ScenarioReconcileService(
                 } else {
                     // 추가: 새 시나리오 INSERT + 런 끝에 append. 새 시나리오에는 살릴 라벨이 없다.
                     val saved = scenarioRepository.save(
-                        TestScenarioEntity(projectId = projectId)
+                        TestScenarioEntity(
+                            projectId = projectId,
+                            reviewStatus = if (pendingReviewBy == null) "READY" else "DRAFT",
+                            reviewRequestedBy = pendingReviewBy,
+                        )
                             .withDraft(draftFor(scenario, emptyList()), objectMapper)
                     )
                     runScenarioRepository.save(

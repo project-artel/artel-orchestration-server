@@ -41,6 +41,22 @@ data class TestScenarioEntity(
     @Column("execution_mode")
     val executionMode: ScenarioExecutionMode = ScenarioExecutionMode.ORDERED,
 
+    /** 검토 상태. `DRAFT` 는 승인 전이라 QA 와 커버리지에 쓰지 않는다. */
+    @Column("review_status")
+    val reviewStatus: String = "READY",
+
+    /** 승인을 요청한 사람. 승인 알림은 이 사람에게만 간다. */
+    @Column("review_requested_by")
+    val reviewRequestedBy: Long? = null,
+
+    /** 승인된 시나리오를 고친 것인가. 이전 본문이 남지 않아 거절(삭제)할 수 없다. */
+    @Column("review_edits_approved")
+    val reviewEditsApproved: Boolean = false,
+
+    /** 승인하면 걷어낼 시나리오 번호의 JSON 배열(합치기). 승인 전에는 원본을 지우지 않는다. */
+    @Column("review_absorbs")
+    val reviewAbsorbs: Json? = null,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,

@@ -276,7 +276,7 @@ class TestRunController(
         @RequestBody request: CommitScenariosRequest,
         @CurrentUserId appUserId: Long
     ): ResponseEntity<RunScenariosResponse> {
-        chatService.commitScenarios(appUserId, runId, request.scenarios)
+        chatService.commitScenarios(appUserId, runId, request.scenarios, request.draft)
         return service.getScenarios(runId, appUserId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
@@ -351,7 +351,7 @@ class TestRunController(
         @RequestBody selection: DraftSelection,
         @CurrentUserId appUserId: Long
     ): DraftApplyResult =
-        chatService.applyDraft(appUserId, runId, selection.draftIds)
+        chatService.applyDraft(appUserId, runId, selection.draftIds, selection.draft)
 
     /** 고른 draft 를 버린다(ARTEL-1074). 남은 draft 를 돌려준다. */
     @PostMapping("/{runId}/chat/draft/discard")

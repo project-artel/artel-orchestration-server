@@ -42,6 +42,8 @@ data class DraftScenarioEdit(
 /** 승인 · 버리기가 고른 draft 들(ARTEL-1074). */
 data class DraftSelection(
     @param:JsonProperty("draft_ids") val draftIds: List<String> = emptyList(),
+    /** MCP 저장. 승인 대기로 저장하고, 제목이 같다고 덮어쓰지 않는다. */
+    val draft: Boolean = false,
 )
 
 /**

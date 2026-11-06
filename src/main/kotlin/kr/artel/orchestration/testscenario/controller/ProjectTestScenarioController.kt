@@ -1,12 +1,17 @@
 package kr.artel.orchestration.testscenario.controller
 
 import kr.artel.orchestration.auth.web.CurrentUserId
+import kr.artel.orchestration.testcase.dto.ReviewDecisionRequest
 import kr.artel.orchestration.testscenario.dto.ScenarioListResponse
 import kr.artel.orchestration.testscenario.dto.ScenarioResponse
+import kr.artel.orchestration.testscenario.dto.ScenarioReviewItem
+import kr.artel.orchestration.testscenario.service.ScenarioReviewService
 import kr.artel.orchestration.testscenario.service.TestScenarioService
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
@@ -20,8 +25,29 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/projects/{projectId}/test-scenario")
 class ProjectTestScenarioController(
-    private val service: TestScenarioService
+    private val service: TestScenarioService,
+    private val reviewService: ScenarioReviewService,
 ) {
+
+    /** 승인 대기 시나리오. 어느 런에 들었는지와 스텝이 쓰는 Test Case 내용까지 싣는다. 비참여자면 404. */
+    @GetMapping("/review-queue")
+    suspend fun reviewQueue(
+        @PathVariable projectId: Long,
+        @CurrentUserId appUserId: Long
+    ): List<ScenarioReviewItem> =
+        reviewService.queue(projectId, appUserId)
+
+    /** 승인 대기 시나리오를 승인하거나 거절(삭제)한다. 읽은 뒤 내용이 바뀌었거나 이미 처리됐으면 409. */
+    @PostMapping("/{testScenarioId}/review")
+    suspend fun review(
+        @PathVariable projectId: Long,
+        @PathVariable testScenarioId: Long,
+        @RequestBody request: ReviewDecisionRequest,
+        @CurrentUserId appUserId: Long,
+    ): ResponseEntity<Void> {
+        reviewService.decide(projectId, testScenarioId, appUserId, request)
+        return ResponseEntity.noContent().build()
+    }
 
     /** 프로젝트의 시나리오 목록(요약). FE 목록 화면 렌더용. 비참여자면 404. */
     @GetMapping

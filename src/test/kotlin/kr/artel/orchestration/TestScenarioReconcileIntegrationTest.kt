@@ -110,10 +110,12 @@ class TestScenarioReconcileIntegrationTest {
     @Autowired private lateinit var scenarioRepository: TestScenarioRepository
     @Autowired private lateinit var compositionService: kr.artel.orchestration.testscenario.service.ScenarioCompositionService
     @Autowired private lateinit var runScenarioRepository: TestRunScenarioRepository
+    @Autowired private lateinit var authoringDrafts: kr.artel.orchestration.testscenario.service.AuthoringDraftStore
     @Autowired private lateinit var runRepository: TestRunRepository
     @Autowired private lateinit var runMessageRepository: kr.artel.orchestration.testrun.repository.TestRunMessageRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
+    @Autowired private lateinit var gameInstanceRepository: kr.artel.orchestration.game.repository.GameInstanceRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
     @Autowired private lateinit var databaseClient: DatabaseClient
     @Autowired private lateinit var fake: FixedQueryEmbeddingClient
@@ -1384,6 +1386,307 @@ class TestScenarioReconcileIntegrationTest {
             Thread.sleep(100)
         }
         return predicate()
+    }
+
+    /** 시나리오 승인. MCP 저장은 승인 대기로 남고, 사람이 승인해야 QA 에 쓰인다. */
+    @Test
+    fun `MCP 저장은 승인 대기로 남고 승인하면 READY 다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val case = insertCase(projectId, "Map_scene", "지도를 연다")
+
+        val saved = commitDraft(client, projectId, runId, token, """[{"title":"지도 여정","description":"d","steps":[{"action":"연다","case_id":$case}]}]""")
+        assertThat(saved.first).isEqualTo(200)
+        val scenario = scenarioRepository.findByProjectId(projectId).toList().single()
+        assertThat(scenario.reviewStatus).isEqualTo("DRAFT")
+
+        val queue = objectMapper.readTree(send(client, "GET", "/api/projects/$projectId/test-scenario/review-queue", token).second)
+        assertThat(queue.single()["title"].asText()).isEqualTo("지도 여정")
+        assertThat(queue.single()["runs"].single()["name"].asText()).isEqualTo("런")
+        assertThat(queue.single()["steps"].single()["expectedValue"].asText()).isEqualTo("지도를 연다 기대결과")
+
+        assertThat(send(client, "POST", "/api/test-scenario/${scenario.id}/approve", token).first).isEqualTo(200)
+        assertThat(scenarioRepository.findById(scenario.id!!)!!.reviewStatus).isEqualTo("READY")
+        assertThat(objectMapper.readTree(send(client, "GET", "/api/projects/$projectId/test-scenario/review-queue", token).second)).isEmpty()
+    }
+
+    @Test
+    fun `MCP 저장은 제목으로 덮어쓰지 않고 scenario_id 로만 고친다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val first = insertCase(projectId, "Map_scene", "지도를 연다")
+        val second = insertCase(projectId, "Map_scene", "지도를 닫는다")
+        commitScenarios(client, projectId, runId, token, """[{"title":"지도 여정","description":"d","steps":[{"action":"연다","case_id":$first}]}]""")
+        val approved = scenarioRepository.findByProjectId(projectId).toList().single()
+        assertThat(approved.reviewStatus).isEqualTo("READY")
+
+        val sameTitle = commitDraft(client, projectId, runId, token, """[{"title":"지도 여정","description":"d","steps":[{"action":"닫는다","case_id":$second}]}]""")
+        assertThat(sameTitle.first).isEqualTo(409)
+        assertThat(sameTitle.second).contains("scenario_title_taken")
+        assertThat(storedSteps(approved.id!!).single().caseId).isEqualTo(first)
+
+        val byId = commitDraft(client, projectId, runId, token, """[{"scenario_id":${approved.id},"title":"지도 여정","description":"d","steps":[{"action":"닫는다","case_id":$second}]}]""")
+        assertThat(byId.first).isEqualTo(200)
+        assertThat(storedSteps(approved.id!!).single().caseId).isEqualTo(second)
+        assertThat(scenarioRepository.findById(approved.id!!)!!.reviewStatus).isEqualTo("DRAFT")
+
+        val otherRun = runRepository.save(TestRunEntity(projectId = projectId, name = "다른 런")).id!!
+        val notInRun = commitDraft(client, projectId, otherRun, token, """[{"scenario_id":${approved.id},"title":"지도 여정","description":"d","steps":[{"action":"닫는다","case_id":$second}]}]""")
+        assertThat(notInRun.first).isEqualTo(404)
+    }
+
+    @Test
+    fun `웹 저장은 승인 대기 시나리오의 상태를 바꾸지 않는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val case = insertCase(projectId, "Map_scene", "지도를 연다")
+        commitDraft(client, projectId, runId, token, """[{"title":"지도 여정","description":"d","steps":[{"action":"연다","case_id":$case}]}]""")
+        val draft = scenarioRepository.findByProjectId(projectId).toList().single()
+
+        commitScenarios(client, projectId, runId, token, """[{"scenario_id":${draft.id},"title":"지도 여정","description":"고침","steps":[{"action":"연다","case_id":$case}]}]""")
+
+        val after = scenarioRepository.findById(draft.id!!)!!
+        assertThat(after.description).isEqualTo("고침")
+        assertThat(after.reviewStatus).isEqualTo("DRAFT")
+    }
+
+    @Test
+    fun `승인 대기 시나리오는 QA 와 커버리지에 쓰지 않는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val case = insertCase(projectId, "Map_scene", "지도를 연다")
+        commitDraft(client, projectId, runId, token, """[{"title":"지도 여정","description":"d","steps":[{"action":"연다","case_id":$case}]}]""")
+        val draft = scenarioRepository.findByProjectId(projectId).toList().single()
+
+        val now = java.time.Instant.now()
+        val instance = gameInstanceRepository.save(
+            kr.artel.orchestration.game.entity.GameInstanceEntity(
+                projectId = projectId, name = "qa", platform = "UNITY", sdkUuid = java.util.UUID.randomUUID().toString(), createdAt = now, updatedAt = now,
+            )
+        ).id!!
+        val started = send(client, "POST", "/api/qa-runs", token, """{"testRunId":"$runId","gameInstanceId":"$instance"}""")
+        assertThat(started.first).isEqualTo(409)
+        val refusal = objectMapper.readTree(started.second)
+        assertThat(refusal["code"].asText()).isEqualTo("test_run_review_pending")
+        assertThat(refusal["message"].asText()).contains("시나리오 1건")
+        assertThat(testCaseRepository.findUncoveredIdsByProjectId(projectId).toList()).containsExactly(case)
+        val coverage = objectMapper.readTree(send(client, "GET", "/api/projects/$projectId/test-runs/$runId/coverage", token).second)
+        assertThat(coverage["covered"].asInt()).isEqualTo(0)
+
+        send(client, "POST", "/api/test-scenario/${draft.id}/approve", token)
+
+        assertThat(testCaseRepository.findUncoveredIdsByProjectId(projectId).toList()).isEmpty()
+        val approved = objectMapper.readTree(send(client, "GET", "/api/projects/$projectId/test-runs/$runId/coverage", token).second)
+        assertThat(approved["covered"].asInt()).isEqualTo(1)
+    }
+
+    @Test
+    fun `승인 알림 목록은 요청한 사람의 것만 주고 결정은 멤버 누구나 할 수 있다`(): Unit = runBlocking {
+        val client = webClient()
+        val (requester, requesterToken) = issueUser()
+        val (other, otherToken) = issueUser()
+        val projectId = createMemberProject(requester)
+        addMember(projectId, other)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val case = insertCase(projectId, "Map_scene", "지도를 연다")
+        commitDraft(client, projectId, runId, requesterToken, """[{"title":"지도 여정","description":"d","steps":[{"action":"연다","case_id":$case}]}]""")
+        val queue = "/api/projects/$projectId/test-scenario/review-queue"
+
+        val item = objectMapper.readTree(send(client, "GET", queue, requesterToken).second).single()
+        assertThat(item["rejectable"].asBoolean()).isTrue()
+        assertThat(objectMapper.readTree(send(client, "GET", queue, otherToken).second)).isEmpty()
+
+        val approved = reviewScenario(client, projectId, item, otherToken, "APPROVE")
+        assertThat(approved.first).isEqualTo(204)
+        val after = scenarioRepository.findById(item["testScenarioId"].asLong())!!
+        assertThat(after.reviewStatus).isEqualTo("READY")
+        assertThat(after.reviewRequestedBy).isNull()
+    }
+
+    @Test
+    fun `읽은 뒤 내용이 바뀐 시나리오는 승인도 거절도 받지 않는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val case = insertCase(projectId, "Map_scene", "지도를 연다")
+        commitDraft(client, projectId, runId, token, """[{"title":"지도 여정","description":"d","steps":[{"action":"연다","case_id":$case}]}]""")
+        val read = objectMapper.readTree(send(client, "GET", "/api/projects/$projectId/test-scenario/review-queue", token).second).single()
+        val id = read["testScenarioId"].asLong()
+
+        commitDraft(client, projectId, runId, token, """[{"scenario_id":$id,"title":"지도 여정","description":"고침","steps":[{"action":"연다","case_id":$case}]}]""")
+
+        val approve = reviewScenario(client, projectId, read, token, "APPROVE")
+        assertThat(approve.first).isEqualTo(409)
+        assertThat(approve.second).contains("review_stale")
+        val reject = reviewScenario(client, projectId, read, token, "REJECT")
+        assertThat(reject.first).isEqualTo(409)
+        assertThat(reject.second).contains("review_stale")
+        assertThat(scenarioRepository.findById(id)!!.reviewStatus).isEqualTo("DRAFT")
+    }
+
+    @Test
+    fun `승인된 시나리오는 거절로 지우지 못하고 새로 만든 것만 거절하면 런에서도 사라진다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val case = insertCase(projectId, "Map_scene", "지도를 연다")
+        val queue = "/api/projects/$projectId/test-scenario/review-queue"
+        commitDraft(client, projectId, runId, token, """[{"title":"새 여정","description":"d","steps":[{"action":"연다","case_id":$case}]}]""")
+        val fresh = objectMapper.readTree(send(client, "GET", queue, token).second).single()
+
+        assertThat(reviewScenario(client, projectId, fresh, token, "APPROVE").first).isEqualTo(204)
+        val second = reviewScenario(client, projectId, fresh, token, "REJECT")
+        assertThat(second.first).isEqualTo(409)
+        assertThat(second.second).contains("review_settled")
+        val id = fresh["testScenarioId"].asLong()
+        assertThat(scenarioRepository.findById(id)).isNotNull
+
+        commitDraft(client, projectId, runId, token, """[{"scenario_id":$id,"title":"새 여정","description":"고침","steps":[{"action":"연다","case_id":$case}]}]""")
+        val edited = objectMapper.readTree(send(client, "GET", queue, token).second).single()
+        assertThat(edited["rejectable"].asBoolean()).isFalse()
+        val refused = reviewScenario(client, projectId, edited, token, "REJECT")
+        assertThat(refused.first).isEqualTo(409)
+        assertThat(refused.second).contains("review_not_rejectable")
+
+        commitDraft(client, projectId, runId, token, """[{"title":"버릴 여정","description":"d","steps":[{"action":"연다","case_id":$case}]}]""")
+        val toDrop = objectMapper.readTree(send(client, "GET", queue, token).second).first { it["title"].asText() == "버릴 여정" }
+        assertThat(reviewScenario(client, projectId, toDrop, token, "REJECT").first).isEqualTo(204)
+        val dropped = toDrop["testScenarioId"].asLong()
+        assertThat(scenarioRepository.findById(dropped)).isNull()
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().map { it.testScenarioId }).containsExactly(id)
+    }
+
+    @Test
+    fun `Test Case 승인 대기는 요청자에게만 보이고 승인과 거절이 겹쳐도 승인된 것을 지우지 않는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (requester, requesterToken) = issueUser()
+        val (other, otherToken) = issueUser()
+        val projectId = createMemberProject(requester)
+        addMember(projectId, other)
+        val cases = "/api/projects/$projectId/test-cases"
+        fun save(token: String, step: String) = send(
+            client, "POST", "/api/projects/$projectId/case-contracts/cases", token,
+            """{"draft":true,"terms":[],"cases":[{"scene":"Map","step":"$step","expectedValue":"$step 결과"}]}""",
+        )
+        save(requesterToken, "연다")
+
+        val item = objectMapper.readTree(send(client, "GET", "$cases/review-queue", requesterToken).second).single()
+        assertThat(objectMapper.readTree(send(client, "GET", "$cases/review-queue", otherToken).second)).isEmpty()
+        val id = item["id"].asText()
+        fun review(token: String, read: com.fasterxml.jackson.databind.JsonNode, decision: String) = send(
+            client, "POST", "$cases/${read["id"].asText()}/review", token,
+            """{"decision":"$decision","expectedUpdatedAt":"${read["updatedAt"].asText()}"}""",
+        )
+
+        // 에이전트가 그 사이 고치면 읽은 내용으로는 승인하지 못한다.
+        send(client, "POST", "/api/projects/$projectId/case-contracts/cases", requesterToken, """{"draft":true,"terms":[],"cases":[{"testCaseId":"$id","scene":"Map","step":"연다","expectedValue":"바뀐 결과"}]}""")
+        val stale = review(requesterToken, item, "APPROVE")
+        assertThat(stale.first).isEqualTo(409)
+        assertThat(stale.second).contains("review_stale")
+
+        val fresh = objectMapper.readTree(send(client, "GET", "$cases/review-queue", requesterToken).second).single()
+        assertThat(fresh["expectedValue"].asText()).isEqualTo("바뀐 결과")
+        assertThat(review(otherToken, fresh, "APPROVE").first).isEqualTo(204)
+        val late = review(requesterToken, fresh, "REJECT")
+        assertThat(late.first).isEqualTo(409)
+        assertThat(late.second).contains("review_settled")
+        assertThat(testCaseRepository.findById(id.toLong())!!.reviewStatus).isEqualTo("READY")
+
+        save(requesterToken, "버린다")
+        val toDrop = objectMapper.readTree(send(client, "GET", "$cases/review-queue", requesterToken).second).single()
+        assertThat(review(requesterToken, toDrop, "REJECT").first).isEqualTo(204)
+        assertThat(testCaseRepository.findById(toDrop["id"].asLong())).isNull()
+        assertThat(review(requesterToken, toDrop, "APPROVE").first).isEqualTo(404)
+    }
+
+    @Test
+    fun `승인했다가 되돌린 Test Case 는 알림에 뜨지 않고 거절로 지우지 못한다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val cases = "/api/projects/$projectId/test-cases"
+        send(client, "POST", "/api/projects/$projectId/case-contracts/cases", token, """{"draft":true,"terms":[],"cases":[{"scene":"Map","step":"연다","expectedValue":"결과"}]}""")
+        val item = objectMapper.readTree(send(client, "GET", "$cases/review-queue", token).second).single()
+        val id = item["id"].asLong()
+        send(client, "PUT", "$cases/$id", token, """{"reviewStatus":"READY"}""")
+        send(client, "PUT", "$cases/$id", token, """{"reviewStatus":"DRAFT"}""")
+
+        assertThat(objectMapper.readTree(send(client, "GET", "$cases/review-queue", token).second)).isEmpty()
+        val current = testCaseRepository.findById(id)!!
+        val refused = send(client, "POST", "$cases/$id/review", token, """{"decision":"REJECT","expectedUpdatedAt":"${current.updatedAt}"}""")
+        assertThat(refused.first).isEqualTo(409)
+        assertThat(refused.second).contains("review_not_rejectable")
+        assertThat(testCaseRepository.findById(id)).isNotNull
+    }
+
+    @Test
+    fun `MCP 로 저장한 합치기는 승인할 때 원본을 걷어내고 거절하면 원본이 남는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser()
+        val projectId = createMemberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+        val case = insertCase(projectId, "Map_scene", "지도를 연다")
+        commitScenarios(client, projectId, runId, token, """[{"title":"원본","description":"d","steps":[{"action":"연다","case_id":$case}]}]""")
+        val original = scenarioRepository.findByProjectId(projectId).toList().single().id!!
+        val queue = "/api/projects/$projectId/test-scenario/review-queue"
+        suspend fun applyMerged(title: String) {
+            val draft = authoringDrafts.of("$appUserId:$runId")
+            val merged = objectMapper.readValue(
+                """{"title":"$title","description":"d","steps":[{"action":"연다","case_id":$case}]}""",
+                kr.artel.orchestration.testscenario.dto.ScenarioResult::class.java,
+            )
+            val id = draft.accept(null, listOf(merged), listOf(original)).single().draftId
+            val applied = send(client, "POST", "/api/projects/$projectId/test-runs/$runId/chat/draft/apply", token, """{"draft_ids":["$id"],"draft":true}""")
+            assertThat(applied.first).isEqualTo(200)
+        }
+
+        applyMerged("합친 여정")
+        assertThat(scenarioRepository.findById(original)!!.reviewStatus).isEqualTo("READY")
+        assertThat(runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList().map { it.testScenarioId }).contains(original)
+
+        val rejected = objectMapper.readTree(send(client, "GET", queue, token).second).single()
+        assertThat(reviewScenario(client, projectId, rejected, token, "REJECT").first).isEqualTo(204)
+        assertThat(scenarioRepository.findById(original)).isNotNull
+
+        applyMerged("다시 합친 여정")
+        val approved = objectMapper.readTree(send(client, "GET", queue, token).second).single()
+        assertThat(reviewScenario(client, projectId, approved, token, "APPROVE").first).isEqualTo(204)
+        assertThat(scenarioRepository.findById(original)).isNull()
+        assertThat(scenarioRepository.findById(approved["testScenarioId"].asLong())!!.reviewAbsorbs).isNull()
+    }
+
+    private fun reviewScenario(client: WebClient, projectId: Long, read: com.fasterxml.jackson.databind.JsonNode, token: String, decision: String) =
+        send(
+            client, "POST", "/api/projects/$projectId/test-scenario/${read["testScenarioId"].asText()}/review", token,
+            """{"decision":"$decision","expectedUpdatedAt":"${read["updatedAt"].asText()}"}""",
+        )
+
+    private suspend fun addMember(projectId: Long, appUserId: Long) {
+        projectMemberRepository.save(
+            ProjectMemberEntity(projectId = projectId, appUserId = appUserId, role = "MEMBER", createdAt = java.time.Instant.now())
+        )
+    }
+
+    private fun commitDraft(client: WebClient, projectId: Long, runId: Long, token: String, scenariosJson: String) =
+        send(client, "POST", "/api/projects/$projectId/test-runs/$runId/scenarios/commit", token, """{"draft":true,"scenarios":$scenariosJson}""")
+
+    /** 오류 응답도 상태와 본문으로 돌려준다. */
+    private fun send(client: WebClient, method: String, uri: String, token: String, body: String? = null): Pair<Int, String> {
+        val request = client.method(org.springframework.http.HttpMethod.valueOf(method)).uri(uri).cookie("artel_access_token", token)
+        val ready = if (body == null) request else request.contentType(MediaType.APPLICATION_JSON).bodyValue(body)
+        return ready.exchangeToMono { response ->
+            response.bodyToMono(String::class.java).defaultIfEmpty("").map { response.statusCode().value() to it }
+        }.block(Duration.ofSeconds(10))!!
     }
 
     private suspend fun issueUser(): Pair<Long, String> {

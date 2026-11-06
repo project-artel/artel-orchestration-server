@@ -118,6 +118,7 @@ class TestCaseVersionService(
                     compareVerificationStatus = null,
                     kind = case.kind,
                     reviewStatus = case.reviewStatus,
+                    reviewRequestedBy = case.reviewRequestedBy?.toString(),
                     arrivesAt = case.arrivesAt,
                 )
             }
@@ -157,6 +158,7 @@ class TestCaseVersionService(
             compareVerificationStatus = there?.verificationStatus?.takeIf { comparing },
             kind = case.kind,
             reviewStatus = case.reviewStatus,
+            reviewRequestedBy = case.reviewRequestedBy?.toString(),
             arrivesAt = case.arrivesAt,
         )
     }

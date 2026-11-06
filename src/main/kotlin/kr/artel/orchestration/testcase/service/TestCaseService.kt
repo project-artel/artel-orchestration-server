@@ -517,6 +517,7 @@ class TestCaseService(
             expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
             reviewStatus = if (request.draft) ReviewStatus.DRAFT.name else ReviewStatus.READY.name,
+            reviewRequestedBy = if (request.draft) userId else null,
             functions = request.functions?.validated(),
             kind = (TestCaseKind.parse(request.kind) ?: TestCaseKind.FUNCTION).name,
         )
@@ -591,8 +592,16 @@ class TestCaseService(
      * 케이스 수정. 준 필드만 반영. verificationStatus는 enum 검증.
      *
      * `observe` 는 컬럼이 아니라 `metadata.observe` 다(ARTEL-1280). 다른 키는 그대로 두고 그 키만 바꾼다.
+     *
+     * [pendingReviewBy] 가 있으면 사람이 승인 팝업에서 읽는 내용이 바뀔 때 그 사람의 승인 요청으로 `DRAFT` 가 된다. MCP 배치만
+     * 넘기고, 그 배치는 `gameBuildId` 를 주지 않아 버전 몫을 고치는 길로는 오지 않는다.
      */
-    suspend fun updateTestCase(caseId: Long, userId: Long, request: TestCaseUpdateRequest): TestCaseResponse? {
+    suspend fun updateTestCase(
+        caseId: Long,
+        userId: Long,
+        request: TestCaseUpdateRequest,
+        pendingReviewBy: Long? = null,
+    ): TestCaseResponse? {
         val existing = accessible(caseId, userId) ?: return null
         val statusName = request.verificationStatus?.let {
             VerificationStatus.fromWire(it)?.name
@@ -622,6 +631,9 @@ class TestCaseService(
                         functions = request.functions?.validated() ?: identity.functions,
                         kind = kind ?: identity.kind,
                         reviewStatus = reviewStatus ?: identity.reviewStatus,
+                        // 승인하거나 되돌리면 요청은 끝났다. 알림을 더 보내지 않고, 거절로 지울 수도 없다.
+                        reviewRequestedBy = if (reviewStatus == null) identity.reviewRequestedBy else null,
+                        reviewEditsApproved = reviewStatus == null && identity.reviewEditsApproved,
                         metadata = request.observe
                             ?.let { TestCaseObserve.write(identity.metadata, TestCaseObserve.validated(it), objectMapper) }
                             ?: identity.metadata,
@@ -634,7 +646,7 @@ class TestCaseService(
             projectChangeStreamManager.notify(existing.projectId, ProjectChangeTopic.TEST_CASES)
             return shown.toTestCaseResponse(folderItems.findFirstFolderId(caseId))
         }
-        val updated = existing.copy(
+        val edited = existing.copy(
             scene = request.scene?.ifBlank { null } ?: existing.scene,
             step = request.step?.ifBlank { null } ?: existing.step,
             precondition = if (request.precondition == null) existing.precondition else request.precondition.ifBlank { null },
@@ -643,9 +655,18 @@ class TestCaseService(
             functions = request.functions?.validated() ?: existing.functions,
             kind = kind ?: existing.kind,
             reviewStatus = reviewStatus ?: existing.reviewStatus,
+            // 승인하거나 되돌리면 요청은 끝났다. 알림을 더 보내지 않고, 거절로 지울 수도 없다.
+            reviewRequestedBy = if (reviewStatus == null) existing.reviewRequestedBy else null,
+            reviewEditsApproved = reviewStatus == null && existing.reviewEditsApproved,
             metadata = request.observe
                 ?.let { TestCaseObserve.write(existing.metadata, TestCaseObserve.validated(it), objectMapper) }
                 ?: existing.metadata,
+        )
+        val updated = if (pendingReviewBy == null || edited.hasSameReviewedContent(existing)) edited else edited.copy(
+            reviewStatus = ReviewStatus.DRAFT.name,
+            reviewRequestedBy = pendingReviewBy,
+            // 요청자가 없으면 승인 요청 중이 아니라 이미 쓸 수 있던 것이다. 이전 내용이 남지 않으니 거절로 지우지 못하게 한다.
+            reviewEditsApproved = existing.reviewEditsApproved || existing.reviewRequestedBy == null,
         )
         val saved = withArrival(repository.save(updated), request.arrivesAt)
         projectChangeStreamManager.notify(saved.projectId, ProjectChangeTopic.TEST_CASES) // 단일 save, transaction 없음
@@ -685,6 +706,14 @@ class TestCaseService(
         val entity = repository.findById(caseId) ?: return null
         return if (projectAccessService.isMember(entity.projectId, userId)) entity else null
     }
+
+    /**
+     * 승인 팝업([kr.artel.orchestration.testcase.dto.CaseReviewItem])이 보여 주는 칸이 같은지. 같은 내용을 다시 보내 버전에 넣는 것만으로
+     * 승인을 다시 받지 않게 한다.
+     */
+    private fun TestCaseEntity.hasSameReviewedContent(other: TestCaseEntity): Boolean =
+        scene == other.scene && step == other.step && precondition == other.precondition &&
+            expectedValue == other.expectedValue && kind == other.kind
 
     private fun String?.requireField(name: String): String =
         this?.takeIf { it.isNotBlank() }

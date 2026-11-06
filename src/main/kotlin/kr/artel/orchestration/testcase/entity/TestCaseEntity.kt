@@ -155,6 +155,14 @@ data class TestCaseEntity(
     @Column("review_status")
     val reviewStatus: String = ReviewStatus.READY.name,
 
+    /** 승인을 요청한 사람. 승인 알림은 이 사람에게만 간다. */
+    @Column("review_requested_by")
+    val reviewRequestedBy: Long? = null,
+
+    /** 승인된 Test Case 를 MCP 로 고친 것이면 true. 이전 내용이 남지 않아 거절(삭제)할 수 없다. */
+    @Column("review_edits_approved")
+    val reviewEditsApproved: Boolean = false,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,
