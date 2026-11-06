@@ -8,10 +8,12 @@ import com.fasterxml.jackson.annotation.JsonValue
  *
  * - [PLATFORM]: 관리자가 넣은 공용 key(`platform_setting`). 플랫폼이 낸다
  * - [USER]: 사용자가 넣은 key(`user_llm_key`). 사용자가 낸다
+ * - [PROJECT]: 프로젝트에 직접 등록했거나 개인 키를 연결한 key(`project_llm_key`).
  */
 enum class KeySource(@get:JsonValue val wire: String) {
     PLATFORM("platform"),
-    USER("user");
+    USER("user"),
+    PROJECT("project");
 
     companion object {
         val WIRE_NAMES: List<String> = entries.map { it.wire }

@@ -22,6 +22,9 @@ import kr.artel.orchestration.qa.service.toRunGates
 import kr.artel.orchestration.qa.service.toRunLabel
 import kr.artel.orchestration.qa.service.toRunSettings
 import kr.artel.orchestration.userllmkey.service.UserLlmKeyService
+import kr.artel.orchestration.userllmkey.service.ProjectLlmKeyService
+import kr.artel.orchestration.userllmkey.entity.KeySource
+import kr.artel.orchestration.qa.service.QaRunKey
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
@@ -45,6 +48,7 @@ class QaRunController(
     private val qaVerdictReviewService: QaVerdictReviewService,
     private val llmModelService: LlmModelService,
     private val userLlmKeyService: UserLlmKeyService,
+    private val projectLlmKeys: ProjectLlmKeyService,
     private val objectMapper: ObjectMapper
 ) {
     /**
@@ -59,7 +63,7 @@ class QaRunController(
         @CurrentUserId appUserId: Long
     ): ResponseEntity<QaRunResponse> {
         llmModelService.requireSelectable(request.model)
-        val runKey = userLlmKeyService.resolveForRun(appUserId, request.model, request.keySource)
+        val useProjectKey = request.keySource == KeySource.PROJECT.wire
         return ResponseEntity.status(HttpStatus.CREATED).body(
             qaTryService.createRun(
                 parseId(request.testRunId),
@@ -69,8 +73,9 @@ class QaRunController(
                 request.force,
                 request.toRunGates(),
                 request.toRunLabel(),
-                runKey,
-                request.toFunctionOptions()
+                if (useProjectKey) QaRunKey() else userLlmKeyService.resolveForRun(appUserId, request.model, request.keySource),
+                request.toFunctionOptions(),
+                if (useProjectKey) ({ projectId -> projectLlmKeys.resolve(projectId, appUserId, request.model) }) else null
             )
         )
     }

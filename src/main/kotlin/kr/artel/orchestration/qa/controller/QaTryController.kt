@@ -22,6 +22,9 @@ import kr.artel.orchestration.qa.service.toFunctionOptions
 import kr.artel.orchestration.qa.service.toKnowledgeSettings
 import kr.artel.orchestration.qa.service.toRunSettings
 import kr.artel.orchestration.userllmkey.service.UserLlmKeyService
+import kr.artel.orchestration.userllmkey.service.ProjectLlmKeyService
+import kr.artel.orchestration.userllmkey.entity.KeySource
+import kr.artel.orchestration.qa.service.QaRunKey
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
@@ -46,6 +49,7 @@ class QaTryController(
     private val detailService: QaTryDetailService,
     private val llmModelService: LlmModelService,
     private val userLlmKeyService: UserLlmKeyService,
+    private val projectLlmKeys: ProjectLlmKeyService,
     private val objectMapper: ObjectMapper
 ) {
     /**
@@ -58,7 +62,7 @@ class QaTryController(
         @CurrentUserId appUserId: Long
     ): ResponseEntity<QaTryResponse> {
         llmModelService.requireSelectable(request.model)
-        val runKey = userLlmKeyService.resolveForRun(appUserId, request.model, request.keySource)
+        val useProjectKey = request.keySource == KeySource.PROJECT.wire
         return ResponseEntity.status(HttpStatus.CREATED).body(
             service.create(
                 parseId(request.testScenarioId),
@@ -67,8 +71,9 @@ class QaTryController(
                 request.toRunSettings(objectMapper),
                 request.toKnowledgeSettings(),
                 request.toContentMapMode(),
-                runKey,
-                request.toFunctionOptions()
+                if (useProjectKey) QaRunKey() else userLlmKeyService.resolveForRun(appUserId, request.model, request.keySource),
+                request.toFunctionOptions(),
+                if (useProjectKey) ({ projectId -> projectLlmKeys.resolve(projectId, appUserId, request.model) }) else null
             )
         )
     }
