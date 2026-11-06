@@ -21,7 +21,7 @@ enum class McpScope(val wire: String) {
     TESTCASE_READ("testcase:read"),
     /** TC 를 계약까지 넣거나 고친다. */
     TESTCASE_WRITE("testcase:write"),
-    /** TR 을 만들고 저작 Agent 에게 시나리오를 요청한다. 시나리오는 우리 저작 Agent 가 짠다. */
+    /** TR 을 만들고 시나리오를 저장한다. 저작 Agent 에게 맡기거나(`author_scenarios`), 쓴 것을 승인 대기로 올린다(`save_scenarios`). */
     SCENARIO_WRITE("scenario:write"),
 }
 
@@ -76,6 +76,8 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/chat/draft", McpScope.TESTCASE_READ),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/draft/apply", McpScope.SCENARIO_WRITE),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/draft/discard", McpScope.SCENARIO_WRITE),
+    // 에이전트가 쓴 시나리오의 저장(`save_scenarios`). 승인 대기로 들어가며 사람이 웹에서 승인한다.
+    McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/scenarios/commit", McpScope.SCENARIO_WRITE),
     // 저작이 추천한 TC — 읽기는 testcase:read, 저장 · 버리기는 TC 를 만드는 일이라 testcase:write.
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations", McpScope.TESTCASE_READ),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/case-recommendations/save", McpScope.TESTCASE_WRITE),
