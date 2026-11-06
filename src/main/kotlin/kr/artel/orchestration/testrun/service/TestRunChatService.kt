@@ -115,6 +115,7 @@ class TestRunChatService(
             answer = message.answer,
             draftOnly = message.draftOnly,
             answers = message.answers,
+            route = message.route,
         )
     }
 

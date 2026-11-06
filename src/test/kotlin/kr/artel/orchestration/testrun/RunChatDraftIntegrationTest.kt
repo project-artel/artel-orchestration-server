@@ -92,6 +92,7 @@ class RunChatDraftIntegrationTest {
 
         /** 목 Agent 가 받은 프레임. 둘째 턴의 `current_scenarios` 를 여기서 본다. */
         private val inboundFrames = CopyOnWriteArrayList<String>()
+        private val openBodies = CopyOnWriteArrayList<String>()
 
         private val seq = AtomicLong(8000)
 
@@ -99,10 +100,12 @@ class RunChatDraftIntegrationTest {
         @DynamicPropertySource
         fun registerAgentUrls(registry: DynamicPropertyRegistry) {
             mockAgent = HttpServer.create().port(0).route { routes ->
-                routes.post("/sessions") { _, response ->
-                    response.header("Content-Type", "application/json")
-                        .sendString(Mono.just("""{"session_id":"draft-sid-1"}"""))
-                        .then()
+                routes.post("/sessions") { request, response ->
+                    request.receive().aggregate().asString().doOnNext { openBodies.add(it) }.then(
+                        response.header("Content-Type", "application/json")
+                            .sendString(Mono.just("""{"session_id":"draft-sid-1"}"""))
+                            .then()
+                    )
                 }
                 routes.ws("/sessions/{id}") { inbound, outbound ->
                     val replies = inbound.receive().asString().flatMapIterable { frame ->
@@ -154,13 +157,13 @@ class RunChatDraftIntegrationTest {
 
     /** 말을 보내고 응답 상태와 본문을 돌려준다. draft 가 있는 동안의 거절(409)도 그대로 본다. */
     private fun say(
-        client: WebClient, projectId: Long, runId: Long, token: String, text: String, draftOnly: Boolean = false,
+        client: WebClient, projectId: Long, runId: Long, token: String, text: String, draftOnly: Boolean = false, route: String? = null
     ): Pair<Int, String> =
         client.post()
             .uri("/api/projects/$projectId/test-runs/$runId/chat/message")
             .contentType(MediaType.APPLICATION_JSON)
             .cookie("artel_access_token", token)
-            .bodyValue(mapOf("message" to text, "autoApply" to false, "draftOnly" to draftOnly))
+            .bodyValue(mapOf("message" to text, "autoApply" to false, "draftOnly" to draftOnly, "route" to route))
             .exchangeToMono { response ->
                 response.bodyToMono(String::class.java).defaultIfEmpty("").map { response.statusCode().value() to it }
             }
@@ -174,6 +177,29 @@ class RunChatDraftIntegrationTest {
             .bodyToFlux(DraftScenario::class.java)
             .collectList()
             .block(Duration.ofSeconds(5))!!
+
+    @Test
+    fun `MCP 의 말은 세션을 열 때와 이후 턴에 route 를 싣고, 콘솔의 말은 싣지 않는다`(): Unit = runBlocking {
+        val client = webClient()
+        val (appUserId, token) = issueUser("draft-${seq.incrementAndGet()}")
+        val projectId = memberProject(appUserId)
+        val runId = runRepository.save(TestRunEntity(projectId = projectId, name = "런")).id!!
+
+        assertThat(say(client, projectId, runId, token, "route 시험 첫 말", route = "authoring").first).isEqualTo(200)
+        Thread.sleep(1500)
+        assertThat(objectMapper.readTree(openBodies.last { it.contains("route 시험 첫 말") }).get("route").asText())
+            .isEqualTo("authoring")
+
+        assertThat(say(client, projectId, runId, token, "route 시험 둘째 말", draftOnly = true, route = "authoring").first)
+            .isEqualTo(200)
+        Thread.sleep(1500)
+        assertThat(objectMapper.readTree(inboundFrames.last { it.contains("route 시험 둘째 말") }).get("route").asText())
+            .isEqualTo("authoring")
+
+        assertThat(say(client, projectId, runId, token, "route 시험 셋째 말", draftOnly = true).first).isEqualTo(200)
+        Thread.sleep(1500)
+        assertThat(objectMapper.readTree(inboundFrames.last { it.contains("route 시험 셋째 말") }).has("route")).isFalse()
+    }
 
     @Test
     fun `자동저장을 끄면 draft 로 남고, 이어 말하면 draft 를 고치고, 승인해야 저장된다`(): Unit = runBlocking {

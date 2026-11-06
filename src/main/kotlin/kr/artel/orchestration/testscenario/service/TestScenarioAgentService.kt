@@ -175,6 +175,7 @@ class TestScenarioAgentService(
         answers: List<ScenarioQuestionAnswer> = emptyList(),
         batchIds: List<String>? = null,
         batchChanged: Boolean = false,
+        route: String? = null,
     ) {
         // **질문지 한 묶음의 답은 한 번에 받는다.** 하나 답할 때마다 보내면 질문 넷에 요청이 넷 나가고, 둘째부터는
         // 앞선 턴이 도는 중이라 막혔다. 답마다 계약 · 길은 따로 남기고, 모델에게는 한 줄로 모아 한 번 보낸다. 경로 공백은
@@ -185,7 +186,7 @@ class TestScenarioAgentService(
                 sessionKey, runId, projectId, appUserId,
                 listOfNotNull(composed.ifBlank { null }, userInput.ifBlank { null }).joinToString("\n\n"),
                 autoApply, currentScenarios, null, draftOnly,
-                batchIds = answers.map { it.questionId }, batchChanged = changed,
+                batchIds = answers.map { it.questionId }, batchChanged = changed, route = route,
             )
         }
         // 되묻는 질문에 대한 답이면 **무엇에 대한 답인지 함께 실어 보낸다**(ARTEL-487). 보기 id만
@@ -340,6 +341,7 @@ class TestScenarioAgentService(
             val version = authoringVersions.of(runId)
             val cases = withContext(version) { testCaseList(projectId, appUserId, version.gameBuildId) }
             val caseIds = cases.map { it.id }.toSet()
+            existing.route = route
             if (contractsChanged || caseIds != existing.sentCaseIds) {
                 existing.sentCaseIds = caseIds
                 sendTurn(sessionKey, existing, turnInput, currentScenarios, cases, testCaseService.startingValues(projectId))
@@ -352,7 +354,7 @@ class TestScenarioAgentService(
             // 결과와 실패는 늘 그렇듯 SSE 로 간다.
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
-                    openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly)
+                    openSession(sessionKey, runId, projectId, appUserId, turnInput, autoApply, currentScenarios, draftOnly, route)
                     progress(sessionKey, AuthoringStage.SENT)
                     watch(sessionKey, runId, appUserId)
                 } catch (e: CancellationException) {
@@ -635,6 +637,7 @@ class TestScenarioAgentService(
         autoApply: Boolean,
         currentScenarios: List<CurrentScenario>,
         draftOnly: Boolean = false,
+        route: String? = null,
     ) {
         logger.info("Agent 세션 오픈 시도 [sessionKey=$sessionKey, url=$agentBaseUrl/sessions]")
         // 사용자의 계정 locale을 Agent에 함께 전달해 응답 언어를 맞춘다. locale 미설정(또는
@@ -679,6 +682,7 @@ class TestScenarioAgentService(
             // 모델 선택의 기본값은 모델 카탈로그를 소유한 Agent가 결정한다. Orchestration은
             // 명시적 override가 있을 때만 model을 보내 모델 교체 때 구 slug를 강제하지 않는다.
             model = configuredModel.takeIf { it.isNotBlank() },
+            route = route,
             reasoning = experiment.reasoningMaxTokens
                 .takeIf { it > 0 }
                 ?.let { AgentReasoning(maxTokens = it) },
@@ -707,6 +711,7 @@ class TestScenarioAgentService(
         openWebSocket(sessionKey, runId, projectId, appUserId, resp.sessionId, autoApply, version)
         sessions[sessionKey]?.sentCaseIds = cases.map { it.id }.toSet()
         sessions[sessionKey]?.draftOnly = draftOnly
+        sessions[sessionKey]?.route = route
         sessions[sessionKey]?.shownSteps = shownStepsOf(currentScenarios)
         sessions[sessionKey]?.shownModes = shownModesOf(currentScenarios)
         sessions[sessionKey]?.shownHeads = shownHeadsOf(currentScenarios)
@@ -1736,6 +1741,7 @@ class TestScenarioAgentService(
             AgentTurnMessage(
                 userInput = userInput, currentScenarios = currentScenarios,
                 testCaseList = refreshedCases, startingValues = refreshedStart,
+                route = session.route,
             )
         )
         trace.record(
@@ -2331,6 +2337,8 @@ class TestScenarioAgentService(
          * 하나일 때만 그 draft 로 읽는다. 매 턴 갱신한다.
          */
         @Volatile var draftOnly: Boolean = false,
+        /** 지금 턴에 부르는 쪽이 정한 route. 되돌림 턴도 같은 값을 실어 보낸다. */
+        @Volatile var route: String? = null,
         /** 이번 턴에 이미 고친 draft 번호. 번호 없이 온 다음 시나리오가 그 draft 를 덮지 않게 한다. */
         val draftTargeted: MutableSet<Long> = java.util.concurrent.ConcurrentHashMap.newKeySet(),
         /** 이번 턴이 남긴 추천 TC. 답 말풍선의 카드가 읽도록 답과 함께 싣는다. */

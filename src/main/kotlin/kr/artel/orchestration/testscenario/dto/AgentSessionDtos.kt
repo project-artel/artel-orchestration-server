@@ -89,6 +89,9 @@ data class AgentSessionOpenRequest(
     @param:JsonProperty("test_case_list") val testCaseList: List<AuthoringTestCase> = emptyList(),
     @get:JsonInclude(JsonInclude.Include.NON_NULL)
     val model: String? = null,
+    /** [RunChatMessage.route] 를 그대로 싣는다. */
+    @get:JsonInclude(JsonInclude.Include.NON_NULL)
+    val route: String? = null,
     /**
      * 모델에게 줄 추론 예산. 안 보내면 agent 가 안 켠다 — 지금까지의 저작이 그랬다.
      *
@@ -178,6 +181,8 @@ data class AgentTurnMessage(
     val testCaseList: List<kr.artel.orchestration.testcase.dto.AuthoringTestCase>? = null,
     @param:JsonProperty("starting_values") @get:JsonInclude(JsonInclude.Include.NON_NULL)
     val startingValues: Map<String, String>? = null,
+    @get:JsonInclude(JsonInclude.Include.NON_NULL)
+    val route: String? = null,
 )
 
 /**

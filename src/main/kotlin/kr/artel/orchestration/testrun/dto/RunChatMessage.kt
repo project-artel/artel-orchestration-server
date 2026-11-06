@@ -22,4 +22,6 @@ data class RunChatMessage(
     val answers: List<ScenarioQuestionAnswer> = emptyList(),
     val autoApply: Boolean = true,
     val draftOnly: Boolean = false,
+    /** 부르는 쪽이 정한 route(`authoring`·`modify`). 있으면 Agent 는 라우터를 부르지 않는다. MCP 가 보낸다. */
+    val route: String? = null,
 )
