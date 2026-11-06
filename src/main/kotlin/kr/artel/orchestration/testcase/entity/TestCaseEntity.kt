@@ -159,6 +159,10 @@ data class TestCaseEntity(
     @Column("review_requested_by")
     val reviewRequestedBy: Long? = null,
 
+    /** 승인된 Test Case 를 MCP 로 고친 것이면 true. 이전 내용이 남지 않아 거절(삭제)할 수 없다. */
+    @Column("review_edits_approved")
+    val reviewEditsApproved: Boolean = false,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,

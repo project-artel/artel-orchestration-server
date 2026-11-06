@@ -115,6 +115,7 @@ class TestScenarioReconcileIntegrationTest {
     @Autowired private lateinit var runMessageRepository: kr.artel.orchestration.testrun.repository.TestRunMessageRepository
     @Autowired private lateinit var testCaseRepository: TestCaseRepository
     @Autowired private lateinit var projectRepository: ProjectRepository
+    @Autowired private lateinit var gameInstanceRepository: kr.artel.orchestration.game.repository.GameInstanceRepository
     @Autowired private lateinit var projectMemberRepository: ProjectMemberRepository
     @Autowired private lateinit var databaseClient: DatabaseClient
     @Autowired private lateinit var fake: FixedQueryEmbeddingClient
@@ -1465,9 +1466,17 @@ class TestScenarioReconcileIntegrationTest {
         commitDraft(client, projectId, runId, token, """[{"title":"지도 여정","description":"d","steps":[{"action":"연다","case_id":$case}]}]""")
         val draft = scenarioRepository.findByProjectId(projectId).toList().single()
 
-        val started = send(client, "POST", "/api/qa-runs", token, """{"testRunId":"$runId","gameInstanceId":"1"}""")
+        val now = java.time.Instant.now()
+        val instance = gameInstanceRepository.save(
+            kr.artel.orchestration.game.entity.GameInstanceEntity(
+                projectId = projectId, name = "qa", platform = "UNITY", sdkUuid = java.util.UUID.randomUUID().toString(), createdAt = now, updatedAt = now,
+            )
+        ).id!!
+        val started = send(client, "POST", "/api/qa-runs", token, """{"testRunId":"$runId","gameInstanceId":"$instance"}""")
         assertThat(started.first).isEqualTo(409)
-        assertThat(started.second).contains("test_run_empty")
+        val refusal = objectMapper.readTree(started.second)
+        assertThat(refusal["code"].asText()).isEqualTo("test_run_review_pending")
+        assertThat(refusal["message"].asText()).contains("시나리오 1건")
         assertThat(testCaseRepository.findUncoveredIdsByProjectId(projectId).toList()).containsExactly(case)
         val coverage = objectMapper.readTree(send(client, "GET", "/api/projects/$projectId/test-runs/$runId/coverage", token).second)
         assertThat(coverage["covered"].asInt()).isEqualTo(0)

@@ -30,6 +30,7 @@ class CaseReviewService(
 ) {
     suspend fun queue(projectId: Long, userId: Long): List<CaseReviewItem> {
         if (!projectAccess.isMember(projectId, userId)) throw NotFoundException()
+        val cited = testCases.findCaseIdsCitedByScenarios(projectId).toList().toSet()
         return testCases
             .findByProjectIdAndReviewStatusAndReviewRequestedByOrderByIdAsc(projectId, ReviewStatus.DRAFT.name, userId)
             .map { case ->
@@ -41,6 +42,7 @@ class CaseReviewService(
                     expectedValue = case.expectedValue,
                     kind = case.kind,
                     updatedAt = requireNotNull(case.updatedAt),
+                    rejectable = !case.reviewEditsApproved && case.id !in cited,
                 )
             }
             .toList()

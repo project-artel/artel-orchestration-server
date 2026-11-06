@@ -25,3 +25,21 @@ class ActiveQaRunException(message: String = "An active QA run already exists") 
 /** 실행할 시나리오가 하나도 없는 테스트 런. */
 class EmptyTestRunException :
     ConflictException("Test run has no scenarios to execute", code = "test_run_empty")
+
+/**
+ * 승인 대기 시나리오나 Test Case 가 든 테스트 런. 사람이 승인하면 풀린다.
+ *
+ * 승인된 것만 돌리지 않는 것은 사용자가 고른 런과 다른 범위가 결과로 남기 때문이다. Test Case 는 고치면 이전 내용이 남지 않아
+ * 옛 내용으로도 돌릴 수 없다. 화면이 `message` 를 그대로 보여 주므로 건수를 문장에 넣는다.
+ */
+class TestRunReviewPendingException(pendingScenarios: Int, pendingCases: Int) :
+    ConflictException(reviewPendingMessage(pendingScenarios, pendingCases), code = "test_run_review_pending")
+
+private fun reviewPendingMessage(pendingScenarios: Int, pendingCases: Int): String {
+    val pending = when {
+        pendingCases == 0 -> "시나리오 ${pendingScenarios}건이"
+        pendingScenarios == 0 -> "Test Case ${pendingCases}건이"
+        else -> "시나리오 ${pendingScenarios}건과 Test Case ${pendingCases}건이"
+    }
+    return "승인 대기 중인 $pending 있어 QA 를 시작할 수 없습니다. 승인한 뒤 다시 시작해 주세요."
+}
