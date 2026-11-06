@@ -254,6 +254,24 @@ class McpAccessTokenIntegrationTest {
     }
 
     @Test
+    fun `save_scenarios 는 MCP 토큰으로 시나리오를 승인 대기로 저장한다`() {
+        val world = newWorld()
+        val author = mint(world.userId, scope = "testcase:read scenario:write")
+        val reader = mint(world.userId, scope = "testcase:read")
+        val runId = call(author, HttpMethod.POST, "${world.base}/test-runs", """{"name":"mcp"}""").body["id"].asText()
+        val commit = "${world.base}/test-runs/$runId/scenarios/commit"
+        val body = """{"draft":true,"scenarios":[{"title":"mcp 여정","description":"d","steps":[{"action":"메뉴를 연다"}]}]}"""
+
+        assertThat(call(reader, HttpMethod.POST, commit, body).body["code"].asText()).isEqualTo("insufficient_scope")
+
+        val saved = call(author, HttpMethod.POST, commit, body)
+        assertThat(saved.status).isEqualTo(200)
+        val scenarioId = saved.body["items"].single()["testScenarioId"].asText()
+        val scenario = call(author, HttpMethod.GET, "${world.base}/test-scenario/$scenarioId")
+        assertThat(scenario.body["reviewStatus"].asText()).isEqualTo("DRAFT")
+    }
+
+    @Test
     fun `cheat 목록은 macro read 가 없으면 403 insufficient_scope 다`() {
         val world = newWorld()
         val writeOnly = mint(world.userId, scope = "macro:write")
