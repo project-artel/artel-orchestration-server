@@ -3,6 +3,13 @@ package kr.artel.orchestration.settings.config
 import org.springframework.boot.context.properties.ConfigurationProperties
 import java.time.Duration
 
+@ConfigurationProperties("artel.model-discovery")
+class ModelDiscoveryProperties(
+    val openrouterApiKey: String = "",
+    val openaiApiKey: String = "",
+    val claudeApiKey: String = ""
+)
+
 /**
  * OpenRouter API key 를 확인하는 호출.
  *
