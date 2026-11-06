@@ -48,6 +48,29 @@ class InProcessMediaServiceTest {
     }
 
     @Test
+    fun `썸네일은 viewer 없이 같은 녹화의 최신 JPEG만 반환한다`() = runBlocking<Unit> {
+        var now = 1L
+        val f = fixture(nanoTime = { now })
+        val stream = UUID.randomUUID()
+        val first = UUID.randomUUID()
+        val next = UUID.randomUUID()
+        f.sessions.register("game", Mockito.mock(WebSocketSession::class.java))
+        try {
+            f.service.configure(stream, "game", first, emptyList())
+            assertThat(f.service.latestFrame(stream, first)).isNull()
+            f.service.sdkSignal(stream, frame(1))
+            assertThat(f.service.latestFrame(stream, first)).containsExactly(*Base64.getDecoder().decode(jpeg))
+            f.service.configure(stream, "game", next, emptyList())
+            assertThat(f.service.latestFrame(stream, first)).isNull()
+            assertThat(f.service.latestFrame(stream, next)).isNull()
+            f.service.sdkSignal(stream, frame(2))
+            assertThat(f.service.latestFrame(stream, next)).isNotNull()
+            now += 5_000_000_000L
+            assertThat(f.service.latestFrame(stream, next)).isNull()
+        } finally { f.service.shutdown() }
+    }
+
+    @Test
     fun `연결을 종료하면 동시 영상 수신 자리를 다시 사용할 수 있다`() = runBlocking<Unit> {
         val f = fixture(StreamProperties(mediaMaxIngress = 1))
         val first = UUID.randomUUID()
