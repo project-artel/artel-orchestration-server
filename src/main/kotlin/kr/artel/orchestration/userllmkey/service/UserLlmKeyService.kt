@@ -70,18 +70,8 @@ class UserLlmKeyService(
      */
     suspend fun register(appUserId: Long, service: String, apiKey: String?): UserLlmKeyResponse {
         val provider = parseProvider(service)
-        val trimmed = apiKey?.trim().orEmpty()
-        requireKeyShape(provider, trimmed)
-        if (!secretCipher.configured) throw SecretsKeyMissingException()
+        val trimmed = verify(provider, apiKey)
 
-        when (checkClient.check(provider, trimmed)) {
-            UserLlmKeyCheck.ACCEPTED -> Unit
-            UserLlmKeyCheck.INVALID -> throw LlmKeyInvalidException(provider)
-            UserLlmKeyCheck.PERMISSION_DENIED -> throw LlmKeyPermissionDeniedException(provider)
-            UserLlmKeyCheck.UNAVAILABLE -> throw LlmKeyCheckUnavailableException(provider)
-        }
-
-        // timestamptz 는 마이크로초까지 담는다. 잘라 두어야 이 응답과 다음 GET 의 `verifiedAt` 이 같다.
         val now = Instant.now(clock).truncatedTo(ChronoUnit.MICROS)
         val keyHint = keyHintOf(trimmed)
         repository.upsert(
@@ -94,6 +84,21 @@ class UserLlmKeyService(
         )
         logger.info("app_user {} saved a {} API key", appUserId, provider.wire)
         return UserLlmKeyResponse(service = provider.wire, keyHint = keyHint, verifiedAt = now)
+    }
+
+    internal suspend fun verify(provider: LlmKeyProvider, apiKey: String?): String {
+        val trimmed = apiKey?.trim().orEmpty()
+        requireKeyShape(provider, trimmed)
+        if (!secretCipher.configured) throw SecretsKeyMissingException()
+
+        when (checkClient.check(provider, trimmed)) {
+            UserLlmKeyCheck.ACCEPTED -> Unit
+            UserLlmKeyCheck.INVALID -> throw LlmKeyInvalidException(provider)
+            UserLlmKeyCheck.PERMISSION_DENIED -> throw LlmKeyPermissionDeniedException(provider)
+            UserLlmKeyCheck.UNAVAILABLE -> throw LlmKeyCheckUnavailableException(provider)
+        }
+
+        return trimmed
     }
 
     /** 없어도 성공이다. 모르는 서비스만 400 `invalid_request` 다. */
@@ -121,6 +126,7 @@ class UserLlmKeyService(
         val source = keySource?.let {
             KeySource.fromWire(it) ?: throw BadRequestException("keySource must be one of ${KeySource.WIRE_NAMES}")
         } ?: KeySource.PLATFORM
+        if (source == KeySource.PROJECT) throw BadRequestException("프로젝트 QA 실행에서만 프로젝트 키를 선택할 수 있습니다.")
         val model = modelId?.takeIf { it.isNotBlank() }
 
         if (source == KeySource.PLATFORM) {
@@ -150,7 +156,7 @@ class UserLlmKeyService(
         return QaRunKey(KeySource.USER, QaSessionLlmKey(service = provider.wire, apiKey = apiKey))
     }
 
-    private fun parseProvider(service: String): LlmKeyProvider =
+    internal fun parseProvider(service: String): LlmKeyProvider =
         LlmKeyProvider.fromWire(service)
             ?: throw BadRequestException("service must be one of ${LlmKeyProvider.WIRE_NAMES}")
 

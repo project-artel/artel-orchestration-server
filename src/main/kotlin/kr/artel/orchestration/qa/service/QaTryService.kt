@@ -627,7 +627,8 @@ class QaTryService(
         knowledge: QaKnowledgeSettings = QaKnowledgeSettings(),
         contentMapMode: ContentMapMode = ContentMapMode.DEFAULT,
         runKey: QaRunKey = QaRunKey(),
-        functionOptions: QaFunctionOptions = QaFunctionOptions()
+        functionOptions: QaFunctionOptions = QaFunctionOptions(),
+        resolveProjectKey: (suspend (Long) -> QaRunKey)? = null
     ): QaTryResponse {
         val scenario = scenarioAccessService.accessibleScenario(testScenarioId, userId)
             ?: throw NotFoundException()
@@ -639,6 +640,7 @@ class QaTryService(
         if (scenario.reviewStatus != "READY") {
             throw ConflictException("승인 전 시나리오는 실행할 수 없습니다.", "scenario_not_approved")
         }
+        val executionKey = resolveProjectKey?.invoke(instance.projectId) ?: runKey
         val preparedScenario = compositionService.agentScenario(
             scenario.toDraft(objectMapper), CaseScope.of(instance.lastGameBuildId), instance.lastGameBuildId
         )
@@ -653,7 +655,7 @@ class QaTryService(
         val functions = functionOptions.resolve(functionCatalogs.catalogOfBuild(instance.lastGameBuildId))
         val gameIdentities = gameIdentityService.snapshot(instance.projectId, instance.lastGameBuildId)
         val (starting, startLog) = persistence.createStarting(
-            testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, runKey.keySource, functions, gameIdentities
+            testScenarioId, gameInstanceId, userId, knowledge, contentMapMode, executionKey.keySource, functions, gameIdentities
         )
         logService.publish(startLog)
         mediaRelay.prepare()
@@ -675,7 +677,7 @@ class QaTryService(
             promptVersion = settings.promptVersion,
             reasoning = settings.reasoning,
             arch = settings.arch,
-            llmKey = runKey.llmKey,
+            llmKey = executionKey.llmKey,
             cheats = functions.cheats,
             behaviors = functions.behaviors,
             gameNotes = latestGameNotes(instance.projectId)
@@ -723,7 +725,8 @@ class QaTryService(
         gates: QaRunGates = QaRunGates(),
         label: String? = null,
         runKey: QaRunKey = QaRunKey(),
-        functionOptions: QaFunctionOptions = QaFunctionOptions()
+        functionOptions: QaFunctionOptions = QaFunctionOptions(),
+        resolveProjectKey: (suspend (Long) -> QaRunKey)? = null
     ): QaRunResponse {
         val scenarios = testRunService.getScenarios(testRunId, userId)
             ?: throw NotFoundException()
@@ -740,6 +743,7 @@ class QaTryService(
         if (firstScenario.projectId != instance.projectId) {
             throw NotFoundException()
         }
+        val executionKey = resolveProjectKey?.invoke(instance.projectId) ?: runKey
         // 판정 기준은 TR의 버전, 기록은 켜진 게임 버전이다. 초안 검사와 실행 내용 구성을 행 생성 전에 마친다.
         val caseScope = CaseScope.of(testRuns.findById(testRunId)?.gameBuildId)
         val recordedBuildId = testCaseReader.judgedBuildId(instance.lastGameBuildId)
@@ -769,7 +773,7 @@ class QaTryService(
         val started = persistence.createRunStarting(
             testRunId, gameInstanceId, userId, scenarioIds, gates, label,
             gameBuildId = instance.lastGameBuildId,
-            keySource = runKey.keySource,
+            keySource = executionKey.keySource,
             functions = functions,
             gameIdentities = gameIdentities
         )
@@ -798,7 +802,7 @@ class QaTryService(
             promptVersion = settings.promptVersion,
             reasoning = settings.reasoning,
             arch = settings.arch,
-            llmKey = runKey.llmKey,
+            llmKey = executionKey.llmKey,
             cheats = functions.cheats,
             behaviors = functions.behaviors,
             gameNotes = latestGameNotes(instance.projectId)
