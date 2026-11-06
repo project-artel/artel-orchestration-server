@@ -15276,6 +15276,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "gameVariable": {
+            "type": "string"
           }
         }
       },
@@ -15332,6 +15335,9 @@
           "usedBy": {
             "type": "integer",
             "format": "int32"
+          },
+          "gameVariable": {
+            "type": "string"
           }
         }
       },
@@ -26061,6 +26067,7 @@
       },
       "CaseGlossaryResponse": {
         "required": [
+          "exits",
           "terms"
         ],
         "type": "object",
@@ -26070,6 +26077,34 @@
             "items": {
               "$ref": "#/components/schemas/GlossaryTermView"
             }
+          },
+          "exits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GlossaryExitView"
+            }
+          }
+        }
+      },
+      "GlossaryExitView": {
+        "required": [
+          "by",
+          "from",
+          "to"
+        ],
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
           }
         }
       },
