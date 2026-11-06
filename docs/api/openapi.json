@@ -101,6 +101,10 @@
       "description": "SDK 브라우저 로그인"
     },
     {
+      "name": "Release",
+      "description": "빌드 검증 진행과 출시 기준"
+    },
+    {
       "name": "Game Instance",
       "description": "프로젝트에 연결된 SDK 설치본 관리"
     },
@@ -111,6 +115,10 @@
     {
       "name": "Game Build",
       "description": "SDK가 보고한 게임 버전 조회·수정"
+    },
+    {
+      "name": "Game Fact",
+      "description": "게임 개발자가 MCP 로 선언하는 fact 와 rule"
     },
     {
       "name": "Game notes",
@@ -1447,6 +1455,114 @@
         }
       }
     },
+    "/api/projects/{projectId}/release-criteria": {
+      "get": {
+        "tags": [
+          "Release"
+        ],
+        "summary": "출시 기준",
+        "description": "프로젝트의 출시 기준 숫자. 정한 적이 없으면 기본값이다.",
+        "operationId": "getReleaseCriteria",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseCriteriaResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Release"
+        ],
+        "summary": "출시 기준 바꾸기",
+        "description": "OWNER 만 바꾼다. 건수는 0 이상, 비율은 0~100 이다.",
+        "operationId": "updateReleaseCriteria",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseCriteria"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseCriteriaResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Release"
+        ],
+        "summary": "출시 기준을 기본값으로",
+        "description": "OWNER 만 되돌린다.",
+        "operationId": "resetReleaseCriteria",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseCriteriaResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/qa-evaluation/verdicts/{logId}/review": {
       "put": {
         "tags": [
@@ -2231,6 +2347,84 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-rules": {
+      "put": {
+        "tags": [
+          "Game Fact"
+        ],
+        "summary": "rule 등록",
+        "description": "이름으로 넣거나 갱신한다. 가리키는 fact 가 프로젝트에 없으면 400 이다.",
+        "operationId": "putGameRule",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutGameRuleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameRuleResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Game Fact"
+        ],
+        "summary": "rule 삭제",
+        "description": "행을 지운다. 없으면 404 다.",
+        "operationId": "deleteGameRule",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "rule 이름",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-notes": {
       "get": {
         "tags": [
@@ -2439,6 +2633,116 @@
             "schema": {
               "type": "integer",
               "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-facts": {
+      "get": {
+        "tags": [
+          "Game Fact"
+        ],
+        "summary": "fact·rule 목록",
+        "description": "프로젝트의 fact 와 rule 을 이름 오름차순으로 함께 읽는다.",
+        "operationId": "listGameFacts",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameFactListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Game Fact"
+        ],
+        "summary": "fact 등록",
+        "description": "이름으로 넣거나 갱신한다. 선언한 칸이 바뀌면 `version` 이 오른다.",
+        "operationId": "putGameFact",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutGameFactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameFactResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Game Fact"
+        ],
+        "summary": "fact 삭제",
+        "description": "행을 지운다. 없으면 404, 그 fact 를 말하는 rule 이 있으면 409 다.",
+        "operationId": "deleteGameFact",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "fact 이름",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -8758,6 +9062,37 @@
         }
       }
     },
+    "/internal/projects/{projectId}/game-facts": {
+      "get": {
+        "tags": [
+          "internal-game-fact-controller"
+        ],
+        "operationId": "listGameFactsForAgent",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalGameFactListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/projects/{projectId}/game-builds/{gameBuildId}/scene-context": {
       "get": {
         "tags": [
@@ -11558,6 +11893,60 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-builds/{gameBuildId}/verification-progress": {
+      "get": {
+        "tags": [
+          "Release"
+        ],
+        "summary": "빌드 검증 진행",
+        "description": "그 빌드의 TC 를 마지막 판정으로 센 상태(통과 · 실패 · 회귀 · 판정 못함 · 판정 전)와, 빌드가 올라온 날부터 오늘까지(최대 90일) 날마다의 누적 상태 · QA 실행 수를 돌려준다. 다른 프로젝트의 빌드거나 참여자가 아니면 404 다.",
+        "operationId": "getBuildVerificationProgress",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "gameBuildId",
+            "in": "path",
+            "description": "게임 빌드 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "timeZone",
+            "in": "query",
+            "description": "날을 나눌 시간대(IANA)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "Asia/Seoul"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildVerificationProgressResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-builds/{gameBuildId}/test-cases/verdict-carry-over/preview": {
       "get": {
         "tags": [
@@ -12144,6 +12533,51 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/CaseGlossaryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/build-verification-summaries": {
+      "get": {
+        "tags": [
+          "Release"
+        ],
+        "summary": "빌드별 검증 요약",
+        "description": "케이스 라이브러리에 보이는 빌드마다 TC 상태 수와 안 닫힌 BLOCKER · CRITICAL 이슈 수를, 최근에 올라온 것부터 돌려준다.",
+        "operationId": "listBuildVerificationSummaries",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "몇 개(1~20)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 5
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildVerificationSummariesResponse"
                 }
               }
             }
@@ -13788,6 +14222,61 @@
           }
         }
       },
+      "ReleaseCriteria": {
+        "required": [
+          "maxInconclusiveRate",
+          "maxOpenBlockers",
+          "maxPending",
+          "maxRegression",
+          "minPassRate"
+        ],
+        "type": "object",
+        "properties": {
+          "maxPending": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxRegression": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "minPassRate": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxOpenBlockers": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxInconclusiveRate": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "ReleaseCriteriaResponse": {
+        "required": [
+          "criteria",
+          "defaults",
+          "isDefault"
+        ],
+        "type": "object",
+        "properties": {
+          "criteria": {
+            "$ref": "#/components/schemas/ReleaseCriteria"
+          },
+          "isDefault": {
+            "type": "boolean"
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/ReleaseCriteria"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "CaseReviewRequest": {
         "required": [
           "decision"
@@ -14300,6 +14789,78 @@
           }
         }
       },
+      "PutGameRuleRequest": {
+        "required": [
+          "facts",
+          "gameBuildId",
+          "name",
+          "says"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,59}$",
+            "type": "string"
+          },
+          "gameBuildId": {
+            "pattern": "^[0-9]{1,18}$",
+            "type": "string"
+          },
+          "says": {
+            "maxLength": 160,
+            "minLength": 0,
+            "type": "string"
+          },
+          "facts": {
+            "maxItems": 8,
+            "minItems": 0,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "GameRuleResponse": {
+        "required": [
+          "facts",
+          "gameBuildId",
+          "id",
+          "name",
+          "says",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "says": {
+            "type": "string"
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "UpdateGameNotesRequest": {
         "required": [
           "baseVersion",
@@ -14502,6 +15063,99 @@
             "type": "string"
           },
           "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PutGameFactRequest": {
+        "required": [
+          "gameBuildId",
+          "means",
+          "member",
+          "name",
+          "scope",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,39}$",
+            "type": "string"
+          },
+          "gameBuildId": {
+            "pattern": "^[0-9]{1,18}$",
+            "type": "string"
+          },
+          "scope": {
+            "pattern": "^(objects|statics)$",
+            "type": "string"
+          },
+          "member": {
+            "maxLength": 200,
+            "minLength": 0,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$",
+            "type": "string"
+          },
+          "type": {
+            "pattern": "^(integer|number|boolean|string)$",
+            "type": "string"
+          },
+          "unit": {
+            "maxLength": 30,
+            "minLength": 0,
+            "type": "string"
+          },
+          "means": {
+            "maxLength": 120,
+            "minLength": 0,
+            "type": "string"
+          }
+        }
+      },
+      "GameFactResponse": {
+        "required": [
+          "gameBuildId",
+          "id",
+          "means",
+          "member",
+          "name",
+          "scope",
+          "type",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "member": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "means": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
             "type": "string",
             "format": "date-time"
           }
@@ -19553,6 +20207,89 @@
           }
         }
       },
+      "InternalGameFactListResponse": {
+        "required": [
+          "facts",
+          "rules"
+        ],
+        "type": "object",
+        "properties": {
+          "facts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InternalGameFactResponse"
+            }
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InternalGameRuleResponse"
+            }
+          }
+        }
+      },
+      "InternalGameFactResponse": {
+        "required": [
+          "means",
+          "member",
+          "name",
+          "scope",
+          "type",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "member": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "means": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "InternalGameRuleResponse": {
+        "required": [
+          "facts",
+          "name",
+          "says",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "says": {
+            "type": "string"
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "Always": {
         "required": [
           "kind"
@@ -23816,6 +24553,27 @@
           }
         }
       },
+      "GameFactListResponse": {
+        "required": [
+          "facts",
+          "rules"
+        ],
+        "type": "object",
+        "properties": {
+          "facts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GameFactResponse"
+            }
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GameRuleResponse"
+            }
+          }
+        }
+      },
       "GameBuildListResponse": {
         "required": [
           "items"
@@ -23827,6 +24585,146 @@
             "items": {
               "$ref": "#/components/schemas/GameBuildResponse"
             }
+          }
+        }
+      },
+      "BuildRefResponse": {
+        "required": [
+          "createdAt",
+          "gameBuildId",
+          "isEditor",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "isEditor": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BuildVerificationDayResponse": {
+        "required": [
+          "date",
+          "failed",
+          "inconclusive",
+          "passed",
+          "regression",
+          "runs"
+        ],
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "regression": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "inconclusive": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "runs": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "BuildVerificationProgressResponse": {
+        "required": [
+          "days",
+          "summary",
+          "timeZone"
+        ],
+        "type": "object",
+        "properties": {
+          "summary": {
+            "$ref": "#/components/schemas/BuildVerificationSummaryResponse"
+          },
+          "previousBuild": {
+            "$ref": "#/components/schemas/BuildRefResponse"
+          },
+          "timeZone": {
+            "type": "string"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildVerificationDayResponse"
+            }
+          }
+        }
+      },
+      "BuildVerificationSummaryResponse": {
+        "required": [
+          "build",
+          "carried",
+          "failed",
+          "inconclusive",
+          "openBlockers",
+          "passed",
+          "pending",
+          "regression",
+          "total"
+        ],
+        "type": "object",
+        "properties": {
+          "build": {
+            "$ref": "#/components/schemas/BuildRefResponse"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "regression": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "inconclusive": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "carried": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "openBlockers": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lastJudgedAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -25258,6 +26156,20 @@
           },
           "reviewStatus": {
             "type": "string"
+          }
+        }
+      },
+      "BuildVerificationSummariesResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildVerificationSummaryResponse"
+            }
           }
         }
       },
