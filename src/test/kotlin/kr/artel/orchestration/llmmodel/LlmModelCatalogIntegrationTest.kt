@@ -153,7 +153,12 @@ class LlmModelCatalogIntegrationTest {
         call(adminSession, HttpMethod.PATCH, path, """{"id":"$IMPORTED_ID","enabled":false}""")
         val duplicate = call(adminSession, HttpMethod.POST, "$path/import", request)
         assertThat(duplicate["enabled"].asBoolean()).isFalse()
-        assertThat(internal().count { it["id"].asText() == IMPORTED_ID }).isEqualTo(1)
+        val importedRows = internal().filter { it["id"].asText() == IMPORTED_ID }
+        assertThat(importedRows).hasSize(1)
+        val imported = importedRows.single()
+        assertThat(imported["reasoning"]["efforts"].map { it.asText() })
+            .containsExactly("max", "xhigh", "high", "medium", "low")
+        assertThat(imported["pricing"].isNull).isTrue()
     }
 
     @Test

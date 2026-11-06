@@ -132,10 +132,9 @@ class LlmModelDiscovery(
     private fun fromOpenAi(node: JsonNode): DiscoveredLlmModel? {
         val id = node.text("id") ?: return null
         val name = OPENAI_MODELS[id] ?: return null
-        val efforts = if (id in OPENAI_MODELS_WITH_NONE) STANDARD_EFFORTS + "none" else STANDARD_EFFORTS
         return DiscoveredLlmModel(
             "$GPT_MODEL_PREFIX$id", "$name (OpenAI API)", "openai", 922_000,
-            QA_MODALITIES, true, efforts
+            QA_MODALITIES, true, STANDARD_EFFORTS
         )
     }
 
@@ -192,6 +191,5 @@ class LlmModelDiscovery(
             "gpt-6.1-terra" to "GPT-6.1 Terra",
             "gpt-6-luna" to "GPT-6 Luna"
         )
-        val OPENAI_MODELS_WITH_NONE = setOf("gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna")
     }
 }
