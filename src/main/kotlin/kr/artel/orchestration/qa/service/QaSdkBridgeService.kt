@@ -14,6 +14,7 @@ import kr.artel.orchestration.sdk.dto.AgentGameState
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Instant
+import java.util.Base64
 import java.util.UUID
 
 /**
@@ -104,7 +105,24 @@ class QaSdkBridgeService(
             payload = payload
         )
         logService.publish(outbound)
-        sendAgent(qaTryId, sessionId, "PULSE", messageId, payload)
+        val bytes = payloadText.toByteArray(Charsets.UTF_8)
+        if (bytes.size <= PULSE_CHUNK_BYTES) {
+            sendAgent(qaTryId, sessionId, "PULSE", messageId, payload)
+        } else {
+            val groupId = UUID.randomUUID().toString()
+            val count = (bytes.size + PULSE_CHUNK_BYTES - 1) / PULSE_CHUNK_BYTES
+            for (index in 0 until count) {
+                val offset = index * PULSE_CHUNK_BYTES
+                val chunk = objectMapper.createObjectNode()
+                    .put("id", groupId)
+                    .put("index", index)
+                    .put("count", count)
+                    .put("data", Base64.getEncoder().encodeToString(
+                        bytes.copyOfRange(offset, minOf(offset + PULSE_CHUNK_BYTES, bytes.size))
+                    ))
+                sendAgent(qaTryId, sessionId, "PULSE_CHUNK", messageId, chunk)
+            }
+        }
         return true
     }
 
@@ -405,6 +423,7 @@ class QaSdkBridgeService(
     }
 
     private companion object {
+        const val PULSE_CHUNK_BYTES = 175 * 1024
         /**
          * 전달 실패를 삼키는 타입.
          *
