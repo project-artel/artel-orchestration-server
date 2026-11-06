@@ -66,6 +66,7 @@ fun TestCaseEntity.toTestCaseResponse(folderId: Long? = null): TestCaseResponse 
         kind = kind,
         arrivesAt = arrivalOrNull(),
         reviewStatus = reviewStatus,
+        reviewRequestedBy = reviewRequestedBy?.toString(),
         observe = observeOrNull(),
     )
 
@@ -136,6 +137,7 @@ fun TestCaseEntity.toTestCaseDetailResponse(objectMapper: ObjectMapper, folderId
         kind = base.kind,
         arrivesAt = base.arrivesAt,
         reviewStatus = base.reviewStatus,
+        reviewRequestedBy = base.reviewRequestedBy,
         observe = base.observe,
     )
 }

@@ -11,5 +11,7 @@ import kr.artel.orchestration.testscenario.dto.ScenarioResult
  * @property scenarios 사용자가 카드에서 적용하기로 한(필요하면 편집한) 시나리오들. 빈 배열은 무동작.
  */
 data class CommitScenariosRequest(
-    val scenarios: List<ScenarioResult> = emptyList()
+    val scenarios: List<ScenarioResult> = emptyList(),
+    /** MCP 저장. 승인 대기로 저장하고, 제목이 같다고 덮어쓰지 않는다. */
+    val draft: Boolean = false,
 )

@@ -636,6 +636,9 @@ class QaTryService(
         if (scenario.projectId != instance.projectId) {
             throw NotFoundException()
         }
+        if (scenario.reviewStatus != "READY") {
+            throw ConflictException("승인 전 시나리오는 실행할 수 없습니다.", "scenario_not_approved")
+        }
         val preparedScenario = compositionService.agentScenario(
             scenario.toDraft(objectMapper), CaseScope.of(instance.lastGameBuildId), instance.lastGameBuildId
         )
@@ -724,7 +727,9 @@ class QaTryService(
     ): QaRunResponse {
         val scenarios = testRunService.getScenarios(testRunId, userId)
             ?: throw NotFoundException()
+        // 승인 전 시나리오는 런에 들어 있어도 돌리지 않는다.
         val scenarioIds = scenarios.items.map { it.testScenarioId.toLong() }
+            .filter { scenarioAccessService.accessibleScenario(it, userId)?.reviewStatus != "DRAFT" }
         if (scenarioIds.isEmpty()) {
             throw EmptyTestRunException()
         }

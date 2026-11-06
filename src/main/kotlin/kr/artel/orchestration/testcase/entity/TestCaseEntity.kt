@@ -155,6 +155,10 @@ data class TestCaseEntity(
     @Column("review_status")
     val reviewStatus: String = ReviewStatus.READY.name,
 
+    /** 승인을 요청한 사람. 승인 알림은 이 사람에게만 간다. */
+    @Column("review_requested_by")
+    val reviewRequestedBy: Long? = null,
+
     @CreatedDate
     @Column("created_at")
     val createdAt: Instant? = null,

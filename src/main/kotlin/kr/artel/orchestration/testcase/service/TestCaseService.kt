@@ -517,6 +517,7 @@ class TestCaseService(
             expectedValue = request.expectedValue.requireField("expectedValue"),
             verificationStatus = VerificationStatus.DRAFT.name,
             reviewStatus = if (request.draft) ReviewStatus.DRAFT.name else ReviewStatus.READY.name,
+            reviewRequestedBy = if (request.draft) userId else null,
             functions = request.functions?.validated(),
             kind = (TestCaseKind.parse(request.kind) ?: TestCaseKind.FUNCTION).name,
         )
@@ -622,6 +623,8 @@ class TestCaseService(
                         functions = request.functions?.validated() ?: identity.functions,
                         kind = kind ?: identity.kind,
                         reviewStatus = reviewStatus ?: identity.reviewStatus,
+                        // 승인하거나 되돌리면 요청은 끝났다. 알림을 더 보내지 않고, 거절로 지울 수도 없다.
+                        reviewRequestedBy = if (reviewStatus == null) identity.reviewRequestedBy else null,
                         metadata = request.observe
                             ?.let { TestCaseObserve.write(identity.metadata, TestCaseObserve.validated(it), objectMapper) }
                             ?: identity.metadata,
@@ -643,6 +646,8 @@ class TestCaseService(
             functions = request.functions?.validated() ?: existing.functions,
             kind = kind ?: existing.kind,
             reviewStatus = reviewStatus ?: existing.reviewStatus,
+            // 승인하거나 되돌리면 요청은 끝났다. 알림을 더 보내지 않고, 거절로 지울 수도 없다.
+            reviewRequestedBy = if (reviewStatus == null) existing.reviewRequestedBy else null,
             metadata = request.observe
                 ?.let { TestCaseObserve.write(existing.metadata, TestCaseObserve.validated(it), objectMapper) }
                 ?: existing.metadata,

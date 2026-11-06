@@ -272,7 +272,7 @@ class TestRunService(
                 executionMode = draft.mode,
                 steps = draft.steps.size,
                 cases = cases.size,
-            ) to cases
+            ) to cases.takeIf { scenario.reviewStatus == "READY" }.orEmpty()
         }
         // 런 합계는 시나리오별 수의 덧셈이 아니다 — 같은 케이스가 두 시나리오에 들어가는 것은
         // 정상이고(맥락이 다르면 다른 검증이다), 그것을 2로 세면 덮은 범위보다 커진다.
@@ -302,6 +302,7 @@ class TestRunService(
             ?: return RunCasesOutsideBuildResponse(runId.toString(), gameBuildId = null, testCaseIds = emptyList())
         val caseIds = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
             .mapNotNull { scenarioRepository.findById(it.testScenarioId) }
+            .filter { it.reviewStatus == "READY" }
             .flatMap { scenario -> scenario.toDraft(objectMapper).steps.mapNotNull { it.caseId } }
             .toSortedSet()
         val present = testCaseReader.byIds(caseIds, CaseScope.Version(judged)).keys
