@@ -506,7 +506,11 @@ class CaseContractService(
             val setBy = term.get("set_by") as? ObjectNode ?: term.putObject("set_by")
             for (field in TERM_FIELDS) {
                 val who = old.path("set_by").path(field).asText(AI)
-                if (rankOf(who) > rankOf(AI)) { term.set<JsonNode>(field, old.path(field)); setBy.put(field, who) }
+                if (rankOf(who) > rankOf(AI)) {
+                    // 사람이 끊은 게임 변수처럼 칸이 없는 것도 "정한 값" 이다 — 없는 채로 되살린다.
+                    if (old.path(field).isMissingNode) term.remove(field) else term.set<JsonNode>(field, old.path(field))
+                    setBy.put(field, who)
+                }
             }
             if (old.path("set_by").path("start").asText(AI) != AI) term.put("start_basis", "text")
         }
@@ -520,7 +524,8 @@ class CaseContractService(
         val used = list(projectId).cases
             .flatMap { row -> (row.needs.flatMap { NAME_IN_NEED.findAll(it).map { m -> m.groupValues[1] }.toList() } + row.leaves.map { it.substringBefore("=").trim() }).distinct() }
             .groupingBy { it }.eachCount()
-        return CaseGlossaryResponse(glossary.terms.filterIsInstance<ObjectNode>().map { term -> viewOf(term, glossary.startState, used) })
+        val exits = observedExits(projectId).map { GlossaryExitView(it.from, it.to, it.by, it.source) }
+        return CaseGlossaryResponse(glossary.terms.filterIsInstance<ObjectNode>().map { term -> viewOf(term, glossary.startState, used) }, exits)
     }
 
     /** 사람이 용어 하나를 고친다. 사람이 정한 칸이 되어 AI · MCP 가 덮지 않는다. 없는 이름은 404. */
@@ -536,6 +541,11 @@ class CaseContractService(
         applyTerm(term, request.kind, request.meaning, request.options, request.start, request.aliases.orEmpty(), USER, start)
         // 사람은 별칭을 지울 수도 있다 — 보낸 목록이 그대로 별칭이 된다.
         request.aliases?.let { aliases -> term.putArray("aliases").apply { aliases.filter { it.isNotBlank() && it != name }.distinct().forEach { add(it) } } }
+        // 게임 변수 연결(ARTEL-1395). 사람은 끊을 수도 있다 — 빈 값이 곧 "연결 안 함" 이다.
+        request.gameVariable?.let { variable ->
+            if (variable.isBlank()) term.remove(GAME_VARIABLE) else term.put(GAME_VARIABLE, variable.trim())
+            (term.get("set_by") as? ObjectNode ?: term.putObject("set_by")).put(GAME_VARIABLE, USER)
+        }
         saveGlossary(projectId, all, start, startWins = true)
         val used = list(projectId).cases.count { row -> row.needs.any { name in NAME_IN_NEED.findAll(it).map { m -> m.groupValues[1] } } || row.leaves.any { it.substringBefore("=").trim() == name } }
         return viewOf(term, start, mapOf(name to used))
@@ -561,6 +571,7 @@ class CaseContractService(
             aliases = term.path("aliases").map { it.asText() },
             setBy = TERM_FIELDS.associateWith { term.path("set_by").path(it).asText(AI) },
             issues = issues, usedBy = used[name] ?: 0,
+            gameVariable = term.path(GAME_VARIABLE).asText("").ifBlank { null },
         )
     }
 
@@ -704,7 +715,11 @@ class CaseContractService(
 
         /** 용어 칸을 덮을 수 있는 순서(ARTEL-1312). 같거나 위만 덮는다. */
         val TERM_RANK = mapOf(AI to 1, "mcp" to 2, "user" to 3)
-        val TERM_FIELDS = listOf("kind", "meaning", "options", "start")
+        /** 정한 쪽을 칸마다 남기는 용어 칸. 사람 · MCP 가 정한 칸은 다음 정리(AI)가 덮지 않는다. */
+        val TERM_FIELDS = listOf("kind", "meaning", "options", "start", "game_variable")
+
+        /** 용어에 연결한 게임 변수(ARTEL-1395). 정리(AI)는 이 칸을 만들지 않는다 — 사람 · MCP 만 정한다. */
+        const val GAME_VARIABLE = "game_variable"
         val TERM_KINDS = setOf("has", "value", "counter")
         /** 도착 화면을 정한 쪽. `arrives_at` 옆에 둔다. */
         const val ARRIVES_AT_BY = "arrives_at_by"
