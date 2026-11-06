@@ -74,6 +74,11 @@ class QaMediaRelay(private val sessions: SessionManager, private val viewers: Vi
         }
     }
 
+    suspend fun latestFrame(instanceId: String, recordingId: UUID): ByteArray? {
+        val owner = ingress[instanceId] ?: return null
+        return engine.latestFrame(owner.streamId, recordingId)
+    }
+
     suspend fun viewerSignal(instanceId: String, viewerId: String, rawJson: String) {
         val owner = ingress[instanceId]?.takeIf { it.viewerIds.contains(viewerId) } ?: return
         engine.viewerSignal(owner.streamId, viewerId, rawJson)
