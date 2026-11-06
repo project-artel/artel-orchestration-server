@@ -6,7 +6,7 @@ import org.springframework.data.relational.core.mapping.Column
 import org.springframework.data.relational.core.mapping.Table
 import java.time.Instant
 
-/** model 카탈로그의 한 줄. 추가는 migration 이 하고, 런타임에 바뀌는 것은 [enabled] 뿐이다. */
+/** 모델 카탈로그의 한 줄. 등록된 모델은 관리 화면에서 사용 여부를 바꿀 수 있다. */
 @Table("llm_model")
 data class LlmModelEntity(
     @Id

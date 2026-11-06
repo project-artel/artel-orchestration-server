@@ -137,6 +137,27 @@ class LlmModelService(
     suspend fun listForAdmin(): List<AdminLlmModelResponse> =
         repository.findAllByOrderBySortOrderAsc().map(::toAdmin)
 
+    suspend fun importModel(model: DiscoveredLlmModel, adminUserId: Long): AdminLlmModelResponse {
+        val changed = repository.insertDiscovered(
+            id = model.id,
+            label = model.label,
+            provider = model.provider,
+            supportsStrictJson = model.supportsStrictJson,
+            maxInputTokens = model.maxInputTokens,
+            inputModalities = Json.of(objectMapper.writeValueAsString(model.inputModalities)),
+            reasoningKind = model.reasoningEfforts.takeIf { it.isNotEmpty() }?.let { "effort" },
+            reasoningEfforts = model.reasoningEfforts.takeIf { it.isNotEmpty() }
+                ?.let { Json.of(objectMapper.writeValueAsString(it)) },
+            updatedBy = adminUserId,
+            updatedAt = Instant.now(clock)
+        )
+        if (changed > 0) {
+            logger.info("llm_model {} imported by app_user {}", model.id, adminUserId)
+            agentCacheInvalidator.invalidateAfterChange("import llm_model ${model.id}")
+        }
+        return toAdmin(requireNotNull(repository.findById(model.id)))
+    }
+
     /**
      * model 을 켜고 끈다. 바꾼 뒤에는 agent-server 의 카탈로그 캐시를 비우라고 요청한다. 그 요청이 실패해도
      * 바꾼 것은 그대로이고, agent-server 는 30초 안에 새 카탈로그를 읽는다.
