@@ -28,6 +28,10 @@ data class QaRecordingPlayback(val recording: QaRecording?, val segments: List<V
 
 @Service
 class QaRecordingStore(private val database: DatabaseClient, private val storage: DocumentStorage, private val access: ProjectAccessService) {
+    suspend fun findActiveRunRecording(runId: Long): QaRecording? =
+        database.sql("SELECT * FROM qa_recording WHERE qa_run_id = :run AND ended_at IS NULL")
+            .bind("run", runId).map { row, _ -> recording(row) }.awaitSingleOrNull()
+
     suspend fun active(): List<QaRecording> {
         // run이 시나리오를 바꿔도 같은 recording을 유지한다. 단독 try는 별도 소유 키를 쓴다.
         database.sql("""
