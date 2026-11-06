@@ -2,13 +2,16 @@ package kr.artel.orchestration.llmusage.service
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.llmusage.dto.LlmUsageRecord
 import kr.artel.orchestration.llmusage.entity.LlmUsageEntity
+import kr.artel.orchestration.llmusage.entity.LlmUsageServiceType
 import kr.artel.orchestration.llmusage.entity.costOriginOf
 import kr.artel.orchestration.llmusage.repository.LlmUsageRepository
 import kr.artel.orchestration.llmusage.repository.LlmUsageStatsRepository
 import kr.artel.orchestration.project.event.ProjectChangeStreamManager
 import kr.artel.orchestration.project.event.ProjectChangeTopic
+import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.userllmkey.entity.KeySource
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -27,6 +30,7 @@ class LlmUsageService(
     private val clock: Clock,
     private val llmUsageStatsRepository: LlmUsageStatsRepository,
     private val projectChangeStreamManager: ProjectChangeStreamManager,
+    private val qaTryRepository: QaTryRepository,
 ) {
     private val logger = LoggerFactory.getLogger(LlmUsageService::class.java)
 
@@ -39,7 +43,16 @@ class LlmUsageService(
      */
     suspend fun record(records: List<LlmUsageRecord>) {
         val now = Instant.now(clock)
-        val entities = records.map { it.toEntity(now) }
+        val qaIds = records.filter { it.service == LlmUsageServiceType.QA_RUN && it.keySource == KeySource.USER }
+            .mapNotNull { it.referenceId }.distinct()
+        val projectKeyTries = if (qaIds.isEmpty()) emptySet() else qaTryRepository.findAllById(qaIds)
+            .toList().filter { it.keySource == KeySource.PROJECT.wire }.mapNotNull { it.id }.toSet()
+        val entities = records.map { record ->
+            val entity = record.toEntity(now)
+            if (record.service == LlmUsageServiceType.QA_RUN && record.keySource == KeySource.USER &&
+                record.referenceId in projectKeyTries
+            ) entity.copy(keySource = KeySource.PROJECT.wire) else entity
+        }
         // ponytail: saveAll은 왕복 1회지만 INSERT 문은 N개다(건당 하나). 배치 200건까지는 이 정도로
         // 충분하고, 프로파일링에서 여기가 병목으로 잡히면 DatabaseClient 다중 VALUES 한 문장으로 올린다.
         // saveAll이 돌려주는 Flow는 소비해야 실제로 실행된다 — collect()를 빼면 조용히 0행이 된다.

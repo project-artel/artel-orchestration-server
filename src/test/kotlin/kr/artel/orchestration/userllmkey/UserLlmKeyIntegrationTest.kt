@@ -512,7 +512,63 @@ class UserLlmKeyIntegrationTest {
 
     private fun keysByService() = mapOf("anthropic" to ANTHROPIC_KEY, "openai" to OPENAI_KEY, "openrouter" to OPENROUTER_KEY)
 
-    private data class RunnableSeed(val testRunId: String, val scenarioId: String, val instanceId: String)
+    @Test
+    fun `a member can run QA with a linked personal key until the owner deletes it`(): Unit = runBlocking {
+        val seed = seedRunnableInstance()
+        val keysPath = "/api/projects/${seed.projectId}/llm-keys"
+        val modelsPath = "/api/qa-models?projectId=${seed.projectId}"
+        val ownerSession = session
+        val member = appUserRepository.save(testAppUser("project-key-member"))
+        val memberId = requireNotNull(member.id)
+        val memberSession = jwtService.issue(AuthenticatedUser(memberId.toString(), "password", "member", "member", null))
+        try {
+            session = memberSession
+            assertThat(exchange(HttpMethod.GET, keysPath).first).isEqualTo(404)
+            projectMemberRepository.save(
+                ProjectMemberEntity(
+                    projectId = seed.projectId, appUserId = memberId, role = ProjectRole.MEMBER.name, createdAt = Instant.now()
+                )
+            )
+            assertThat(exchange(HttpMethod.PUT, "$keysPath/openai", """{"apiKey":"$OPENAI_KEY"}""").first).isEqualTo(403)
+            session = ownerSession
+            assertThat(exchange(HttpMethod.PUT, "$keysPath/openai", """{"apiKey":"$OPENAI_KEY"}""").first).isEqualTo(204)
+            assertThat(call(HttpMethod.GET, keysPath).single()["linked"].asBoolean()).isFalse()
+            assertThat(exchange(HttpMethod.DELETE, "$keysPath/openai").first).isEqualTo(204)
+            put("openai", OPENAI_KEY)
+            assertThat(exchange(HttpMethod.PUT, "$keysPath/openai/link").first).isEqualTo(204)
+
+            session = memberSession
+            val linked = call(HttpMethod.GET, keysPath).single()
+            assertThat(linked["linked"].asBoolean()).isTrue()
+            assertThat(linked["ownLink"].asBoolean()).isFalse()
+            val model = call(HttpMethod.GET, modelsPath).single {
+                it["id"].asText() == "gpt/gpt-6.1-sol"
+            }
+            assertThat(model["keySource"].asText()).isEqualTo("project")
+            assertThat(model["keyRegistered"].asBoolean()).isTrue()
+            val request = requestBody(
+                "/api/qa-runs", seed.testRunId, seed.instanceId,
+                """"model":"gpt/gpt-6.1-sol","keySource":"project""""
+            )
+            val (status, body) = exchange(HttpMethod.POST, "/api/qa-runs", request)
+            assertThat(status).describedAs(body).isEqualTo(201)
+            assertThat(body).doesNotContain(OPENAI_KEY)
+            assertThat(agentPort.contexts.single().llmKey).isEqualTo(QaSessionLlmKey(service = "openai", apiKey = OPENAI_KEY))
+            assertThat(qaRunRepository.findById(objectMapper.readTree(body)["id"].asLong())!!.keySource).isEqualTo("project")
+
+            session = ownerSession
+            assertThat(exchange(HttpMethod.DELETE, "/api/auth/me/llm-keys/openai").first).isEqualTo(204)
+            session = memberSession
+            assertThat(call(HttpMethod.GET, keysPath).size()).isZero()
+            assertThat(exchange(HttpMethod.POST, "/api/qa-runs", request).first).isEqualTo(400)
+        } finally {
+            session = ownerSession
+            wipe()
+            appUserRepository.deleteById(memberId)
+        }
+    }
+
+    private data class RunnableSeed(val testRunId: String, val scenarioId: String, val instanceId: String, val projectId: Long)
 
     /** 이 사용자가 OWNER 인 프로젝트, SDK 가 붙은 인스턴스, 시나리오 하나짜리 테스트 런. */
     private suspend fun seedRunnableInstance(): RunnableSeed {
@@ -531,7 +587,7 @@ class UserLlmKeyIntegrationTest {
         val testRun = testRunRepository.save(TestRunEntity(projectId = project.id, name = "런"))
         val scenario = testScenarioRepository.save(TestScenarioEntity(projectId = project.id))
         testRunService.setScenarios(testRun.id!!, userId, listOf(scenario.id!!))
-        return RunnableSeed(testRun.id.toString(), scenario.id.toString(), instance.id.toString())
+        return RunnableSeed(testRun.id.toString(), scenario.id.toString(), instance.id.toString(), project.id)
     }
 
     private fun requestBody(path: String, targetId: String, instanceId: String, fields: String): String {
