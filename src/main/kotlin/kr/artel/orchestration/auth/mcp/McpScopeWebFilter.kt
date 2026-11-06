@@ -72,6 +72,8 @@ private val MCP_ROUTES = listOf(
     McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/chat/messages", McpScope.TESTCASE_READ),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs", McpScope.SCENARIO_WRITE),
     McpRoute(HttpMethod.POST, "/api/projects/{projectId}/test-runs/{runId}/chat/message", McpScope.SCENARIO_WRITE),
+    // 시나리오를 짤 때 쓰는 게임 정보 — 콘솔의 저작 Agent 가 받는 것과 같다.
+    McpRoute(HttpMethod.GET, "/api/projects/{projectId}/test-runs/{runId}/authoring-context", McpScope.TESTCASE_READ),
     // QA 실행. 개발자 에이전트가 모델 · 시나리오 · 실행 설정을 골라 QA 를 돌리고 결과를 읽는다. 시작 · 취소는 TR 의 시나리오를
     // 실행하는 일이라 `scenario:write`, 목록 · 상태 · 판정은 `testcase:read` 다. 멤버 검사와 "인스턴스 · 시나리오가 같은 프로젝트"
     // 검사는 [kr.artel.orchestration.qa.service.QaTryService] 가 한다.
