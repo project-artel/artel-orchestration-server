@@ -28,14 +28,22 @@ class CaseBatchService(
         if (!projectAccess.isMember(projectId, userId)) throw NotFoundException("프로젝트를 찾을 수 없습니다.")
         if (request.cases.size > MAX_CASES) throw BadRequestException("한 번에 ${MAX_CASES}건까지 넣을 수 있습니다.")
         val buildId = request.gameBuildId?.ifBlank { null }?.toLongOrNull() ?: latestBuild(projectId)
-        return saveInto(projectId, userId, request, buildId)
+        return saveInto(projectId, userId, request, buildId, editsNeedReview = request.draft)
     }
 
     /**
      * [save] 의 본문. 버전을 부르는 쪽이 정한다 — null 이면 어느 버전에도 넣지 않는다("버전 없음"). 파일 가져오기(ARTEL-1327)가
      * "버전 없음" 에 넣을 때 쓴다. 권한과 크기는 부르는 쪽이 이미 봤다.
+     *
+     * [editsNeedReview] 면 내용이 바뀐 TC 를 요청자의 승인 대기로 되돌린다. 파일 가져오기는 사람이 화면에서 하는 수정이라 넘기지 않는다.
      */
-    suspend fun saveInto(projectId: Long, userId: Long, request: CaseBatchRequest, targetBuildId: Long?): CaseBatchResponse {
+    suspend fun saveInto(
+        projectId: Long,
+        userId: Long,
+        request: CaseBatchRequest,
+        targetBuildId: Long?,
+        editsNeedReview: Boolean = false,
+    ): CaseBatchResponse {
         val (addedTerms, updatedTerms) = caseContracts.mergeTerms(projectId, request.terms)
         val buildId = targetBuildId?.toString()
         val created = mutableListOf<String>()
@@ -60,6 +68,7 @@ class CaseBatchService(
                             scene = item.scene, step = item.step, precondition = item.precondition,
                             expectedValue = item.expectedValue, kind = item.kind,
                         ),
+                        pendingReviewBy = userId.takeIf { editsNeedReview },
                     )?.takeIf { it.projectId == projectId.toString() } ?: throw NotFoundException("TC ${item.testCaseId} 를 찾을 수 없습니다.")
                     // 같은 기능을 새 버전에서 다시 적은 것이다 — 새 TC 를 만들지 않고 이 TC 를 그 버전에 넣는다(이미 있으면 그대로).
                     buildId?.let { manualCases.addToVersion(projectId, userId, it.toLong(), TestCaseVersionCasesRequest(listOf(response.id))) }

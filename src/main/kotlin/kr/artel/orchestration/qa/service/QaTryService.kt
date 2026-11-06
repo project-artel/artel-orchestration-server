@@ -41,6 +41,7 @@ import kr.artel.orchestration.qa.repository.QaRunRepository
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.sdk.service.SessionManager
 import kr.artel.orchestration.testrun.service.TestRunService
+import kr.artel.orchestration.testscenario.dto.ScenarioDraft
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testcase.service.CaseScope
 import kr.artel.orchestration.testcase.service.TestCaseReader
@@ -730,9 +731,7 @@ class QaTryService(
     ): QaRunResponse {
         val scenarios = testRunService.getScenarios(testRunId, userId)
             ?: throw NotFoundException()
-        // 승인 전 시나리오는 런에 들어 있어도 돌리지 않는다.
         val scenarioIds = scenarios.items.map { it.testScenarioId.toLong() }
-            .filter { scenarioAccessService.accessibleScenario(it, userId)?.reviewStatus != "DRAFT" }
         if (scenarioIds.isEmpty()) {
             throw EmptyTestRunException()
         }
@@ -747,10 +746,14 @@ class QaTryService(
         // 판정 기준은 TR의 버전, 기록은 켜진 게임 버전이다. 초안 검사와 실행 내용 구성을 행 생성 전에 마친다.
         val caseScope = CaseScope.of(testRuns.findById(testRunId)?.gameBuildId)
         val recordedBuildId = testCaseReader.judgedBuildId(instance.lastGameBuildId)
-        val preparedScenarios = scenarioIds.map { scenarioId ->
+        val runScenarios = scenarioIds.map { scenarioId ->
             val scenario = scenarioAccessService.accessibleScenario(scenarioId, userId) ?: throw NotFoundException()
             if (scenario.projectId != instance.projectId) throw NotFoundException()
-            compositionService.agentScenario(scenario.toDraft(objectMapper), caseScope, recordedBuildId)
+            scenario.toDraft(objectMapper) to scenario.reviewStatus
+        }
+        assertNoPendingReview(runScenarios)
+        val preparedScenarios = runScenarios.map { (draft, _) ->
+            compositionService.agentScenario(draft, caseScope, recordedBuildId)
         }
         if (!sessionManager.hasSession(gameInstanceId.toString())) {
             throw SdkDisconnectedException()
@@ -834,6 +837,14 @@ class QaTryService(
                 cause = error
             )
         }
+    }
+
+    /** 런의 시나리오와 그 시나리오가 쓰는 Test Case 가 모두 승인됐는지 본다. 이어받기로 남의 런을 끊기 전에 부른다. */
+    private suspend fun assertNoPendingReview(runScenarios: List<Pair<ScenarioDraft, String>>) {
+        val pendingScenarios = runScenarios.count { (_, reviewStatus) -> reviewStatus != "READY" }
+        val caseIds = runScenarios.flatMap { (draft, _) -> draft.steps.mapNotNull { it.caseId } }.toSet()
+        val pendingCases = testCaseReader.byIds(caseIds, CaseScope.Latest).values.count { it.reviewStatus != "READY" }
+        if (pendingScenarios > 0 || pendingCases > 0) throw TestRunReviewPendingException(pendingScenarios, pendingCases)
     }
 
     /**

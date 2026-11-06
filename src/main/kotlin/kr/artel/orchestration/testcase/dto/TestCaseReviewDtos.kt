@@ -13,7 +13,12 @@ data class ReviewDecisionRequest(
     val expectedUpdatedAt: Instant,
 )
 
-/** 승인 대기 Test Case 하나. 사람이 팝업에서 읽고 결정하는 데 필요한 것을 싣는다. */
+/**
+ * 승인 대기 Test Case 하나. 사람이 팝업에서 읽고 결정하는 데 필요한 것을 싣는다.
+ *
+ * @property rejectable 거절(삭제)할 수 있는지. 승인된 것을 고친 Test Case 는 이전 내용이 남지 않고, 시나리오가 쓰는 Test Case 는
+ * 참조가 끊어져 거절할 수 없다.
+ */
 data class CaseReviewItem(
     val id: String,
     val scene: String,
@@ -22,4 +27,5 @@ data class CaseReviewItem(
     val expectedValue: String,
     val kind: String,
     val updatedAt: Instant,
+    val rejectable: Boolean,
 )
