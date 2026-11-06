@@ -18,7 +18,7 @@ class PulseChunkMessageHandler(
         val id = chunk.path("id").longValue()
         val index = chunk.path("index").asInt(-1)
         val count = chunk.path("count").asInt(-1)
-        require(chunk.path("id").isIntegralNumber && count in 2..6 && index in 0 until count)
+        require(chunk.path("id").isIntegralNumber && count >= 2 && index in 0 until count)
         val bytes = Base64.getDecoder().decode(chunk.path("data").asText())
         require(bytes.isNotEmpty() && bytes.size <= 175 * 1024)
 
@@ -29,9 +29,7 @@ class PulseChunkMessageHandler(
         } else {
             attributes[messageType] as? Assembly ?: return
         }
-        if (assembly.id != id || assembly.count != count || assembly.nextIndex != index ||
-            assembly.data.size() + bytes.size > 1024 * 1024
-        ) {
+        if (assembly.id != id || assembly.count != count || assembly.nextIndex != index) {
             attributes.remove(messageType)
             return
         }

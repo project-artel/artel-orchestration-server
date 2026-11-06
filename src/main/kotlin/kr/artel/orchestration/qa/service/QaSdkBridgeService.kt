@@ -110,7 +110,7 @@ class QaSdkBridgeService(
             sendAgent(qaTryId, sessionId, "PULSE", messageId, payload)
         } else {
             val groupId = UUID.randomUUID().toString()
-            val count = (bytes.size + PULSE_CHUNK_BYTES - 1) / PULSE_CHUNK_BYTES
+            val count = 1 + (bytes.size - 1) / PULSE_CHUNK_BYTES
             for (index in 0 until count) {
                 val offset = index * PULSE_CHUNK_BYTES
                 val chunk = objectMapper.createObjectNode()
@@ -118,7 +118,7 @@ class QaSdkBridgeService(
                     .put("index", index)
                     .put("count", count)
                     .put("data", Base64.getEncoder().encodeToString(
-                        bytes.copyOfRange(offset, minOf(offset + PULSE_CHUNK_BYTES, bytes.size))
+                        bytes.copyOfRange(offset, offset + minOf(PULSE_CHUNK_BYTES, bytes.size - offset))
                     ))
                 sendAgent(qaTryId, sessionId, "PULSE_CHUNK", messageId, chunk)
             }
