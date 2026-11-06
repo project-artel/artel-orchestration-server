@@ -13,6 +13,8 @@ import kr.artel.orchestration.qa.dto.QaHumanDecision
 import kr.artel.orchestration.qa.dto.QaRunVerdictsResponse
 import kr.artel.orchestration.qa.dto.QaVerdictReviewRequest
 import kr.artel.orchestration.qa.review.QaVerdictReviewService
+import kr.artel.orchestration.qa.review.QaRecordingStore
+import kr.artel.orchestration.stream.service.QaMediaRelay
 import kr.artel.orchestration.qa.service.QaRunChangeKind
 import kr.artel.orchestration.qa.service.QaRunChangeService
 import kr.artel.orchestration.qa.service.QaTryService
@@ -26,6 +28,8 @@ import kr.artel.orchestration.userllmkey.service.ProjectLlmKeyService
 import kr.artel.orchestration.userllmkey.entity.KeySource
 import kr.artel.orchestration.qa.service.QaRunKey
 import org.springframework.http.HttpStatus
+import org.springframework.http.CacheControl
+import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -49,7 +53,9 @@ class QaRunController(
     private val llmModelService: LlmModelService,
     private val userLlmKeyService: UserLlmKeyService,
     private val projectLlmKeys: ProjectLlmKeyService,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val recordings: QaRecordingStore,
+    private val mediaRelay: QaMediaRelay
 ) {
     /**
      * 요청의 `model` 이 카탈로그에 없으면 400 `llm_model_unknown`, 꺼져 있으면 400 `llm_model_disabled` 다.
@@ -87,6 +93,18 @@ class QaRunController(
         @CurrentUserId appUserId: Long
     ): QaRunResponse =
         qaTryService.getRun(parseId(qaRunId), appUserId) ?: throw NotFoundException()
+
+    @GetMapping("/{qaRunId}/thumbnail")
+    suspend fun getQaRunThumbnail(
+        @PathVariable qaRunId: String,
+        @CurrentUserId appUserId: Long
+    ): ResponseEntity<ByteArray> {
+        val run = getQaRun(qaRunId, appUserId)
+        val recording = if (run.status == "RUNNING") recordings.findActiveRunRecording(parseId(qaRunId)) else null
+        val frame = recording?.let { mediaRelay.latestFrame(run.gameInstanceId, it.id) }
+            ?: return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build()
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).contentType(MediaType.IMAGE_JPEG).body(frame)
+    }
 
     /**
      * 이 런의 스텝 판정과 그 근거(ARTEL-1134): 판정 이유, 기대 항목별 근거와 판독 기록 대조, 근거로 댄 캡처.
