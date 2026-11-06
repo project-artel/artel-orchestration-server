@@ -113,6 +113,10 @@
       "description": "SDK가 보고한 게임 버전 조회·수정"
     },
     {
+      "name": "Game Fact",
+      "description": "게임 개발자가 MCP 로 선언하는 fact 와 rule"
+    },
+    {
       "name": "Game notes",
       "description": "planner 에게 주는 프로젝트별 게임 노트와 genre module"
     },
@@ -2231,6 +2235,84 @@
         }
       }
     },
+    "/api/projects/{projectId}/game-rules": {
+      "put": {
+        "tags": [
+          "Game Fact"
+        ],
+        "summary": "rule 등록",
+        "description": "이름으로 넣거나 갱신한다. 가리키는 fact 가 프로젝트에 없으면 400 이다.",
+        "operationId": "putGameRule",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutGameRuleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameRuleResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Game Fact"
+        ],
+        "summary": "rule 삭제",
+        "description": "행을 지운다. 없으면 404 다.",
+        "operationId": "deleteGameRule",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "rule 이름",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
     "/api/projects/{projectId}/game-notes": {
       "get": {
         "tags": [
@@ -2439,6 +2521,116 @@
             "schema": {
               "type": "integer",
               "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/game-facts": {
+      "get": {
+        "tags": [
+          "Game Fact"
+        ],
+        "summary": "fact·rule 목록",
+        "description": "프로젝트의 fact 와 rule 을 이름 오름차순으로 함께 읽는다.",
+        "operationId": "listGameFacts",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameFactListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Game Fact"
+        ],
+        "summary": "fact 등록",
+        "description": "이름으로 넣거나 갱신한다. 선언한 칸이 바뀌면 `version` 이 오른다.",
+        "operationId": "putGameFact",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutGameFactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameFactResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Game Fact"
+        ],
+        "summary": "fact 삭제",
+        "description": "행을 지운다. 없으면 404, 그 fact 를 말하는 rule 이 있으면 409 다.",
+        "operationId": "deleteGameFact",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "description": "프로젝트 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "fact 이름",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -8758,6 +8950,37 @@
         }
       }
     },
+    "/internal/projects/{projectId}/game-facts": {
+      "get": {
+        "tags": [
+          "internal-game-fact-controller"
+        ],
+        "operationId": "listGameFactsForAgent",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalGameFactListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/projects/{projectId}/game-builds/{gameBuildId}/scene-context": {
       "get": {
         "tags": [
@@ -14300,6 +14523,78 @@
           }
         }
       },
+      "PutGameRuleRequest": {
+        "required": [
+          "facts",
+          "gameBuildId",
+          "name",
+          "says"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,59}$",
+            "type": "string"
+          },
+          "gameBuildId": {
+            "pattern": "^[0-9]{1,18}$",
+            "type": "string"
+          },
+          "says": {
+            "maxLength": 160,
+            "minLength": 0,
+            "type": "string"
+          },
+          "facts": {
+            "maxItems": 8,
+            "minItems": 0,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "GameRuleResponse": {
+        "required": [
+          "facts",
+          "gameBuildId",
+          "id",
+          "name",
+          "says",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "says": {
+            "type": "string"
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "UpdateGameNotesRequest": {
         "required": [
           "baseVersion",
@@ -14507,6 +14802,99 @@
           }
         }
       },
+      "PutGameFactRequest": {
+        "required": [
+          "gameBuildId",
+          "means",
+          "member",
+          "name",
+          "scope",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,39}$",
+            "type": "string"
+          },
+          "gameBuildId": {
+            "pattern": "^[0-9]{1,18}$",
+            "type": "string"
+          },
+          "scope": {
+            "pattern": "^(objects|statics)$",
+            "type": "string"
+          },
+          "member": {
+            "maxLength": 200,
+            "minLength": 0,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$",
+            "type": "string"
+          },
+          "type": {
+            "pattern": "^(integer|number|boolean|string)$",
+            "type": "string"
+          },
+          "unit": {
+            "maxLength": 30,
+            "minLength": 0,
+            "type": "string"
+          },
+          "means": {
+            "maxLength": 120,
+            "minLength": 0,
+            "type": "string"
+          }
+        }
+      },
+      "GameFactResponse": {
+        "required": [
+          "gameBuildId",
+          "id",
+          "means",
+          "member",
+          "name",
+          "scope",
+          "type",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "member": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "means": {
+            "type": "string"
+          },
+          "gameBuildId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "PutDeveloperMacroRequest": {
         "required": [
           "gameBuildId",
@@ -14622,6 +15010,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "gameVariable": {
+            "type": "string"
           }
         }
       },
@@ -14678,6 +15069,9 @@
           "usedBy": {
             "type": "integer",
             "format": "int32"
+          },
+          "gameVariable": {
+            "type": "string"
           }
         }
       },
@@ -19553,6 +19947,89 @@
           }
         }
       },
+      "InternalGameFactListResponse": {
+        "required": [
+          "facts",
+          "rules"
+        ],
+        "type": "object",
+        "properties": {
+          "facts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InternalGameFactResponse"
+            }
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InternalGameRuleResponse"
+            }
+          }
+        }
+      },
+      "InternalGameFactResponse": {
+        "required": [
+          "means",
+          "member",
+          "name",
+          "scope",
+          "type",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "member": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "means": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "InternalGameRuleResponse": {
+        "required": [
+          "facts",
+          "name",
+          "says",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "says": {
+            "type": "string"
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "Always": {
         "required": [
           "kind"
@@ -23816,6 +24293,27 @@
           }
         }
       },
+      "GameFactListResponse": {
+        "required": [
+          "facts",
+          "rules"
+        ],
+        "type": "object",
+        "properties": {
+          "facts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GameFactResponse"
+            }
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GameRuleResponse"
+            }
+          }
+        }
+      },
       "GameBuildListResponse": {
         "required": [
           "items"
@@ -25163,6 +25661,7 @@
       },
       "CaseGlossaryResponse": {
         "required": [
+          "exits",
           "terms"
         ],
         "type": "object",
@@ -25172,6 +25671,34 @@
             "items": {
               "$ref": "#/components/schemas/GlossaryTermView"
             }
+          },
+          "exits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GlossaryExitView"
+            }
+          }
+        }
+      },
+      "GlossaryExitView": {
+        "required": [
+          "by",
+          "from",
+          "to"
+        ],
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
           }
         }
       },
