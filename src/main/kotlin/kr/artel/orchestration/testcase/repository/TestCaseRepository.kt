@@ -35,6 +35,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
     @Query(
         """
         SELECT id, scene, step, precondition, expected_value, verification_status, created_at, kind, review_status,
+               review_requested_by,
                NULLIF(metadata->>'arrives_at', '') AS arrives_at,
                COALESCE(metadata->>'origin' = 'content-map' AND jsonb_typeof(metadata->'origin') = 'string', false) AS from_map
           FROM test_case
@@ -115,6 +116,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
           AND NOT EXISTS (
             SELECT 1 FROM test_scenario s, jsonb_array_elements(s.steps) e
             WHERE s.project_id = :projectId
+              AND s.review_status = 'READY'
               AND e->>'case_id' IS NOT NULL
               AND (e->>'case_id')::bigint = c.id
               AND EXISTS (
@@ -146,6 +148,7 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
           AND NOT EXISTS (
             SELECT 1 FROM test_scenario s, jsonb_array_elements(s.steps) e
             WHERE s.project_id = :projectId
+              AND s.review_status = 'READY'
               AND e->>'case_id' IS NOT NULL
               AND (e->>'case_id')::bigint = c.id
               AND EXISTS (
@@ -183,6 +186,41 @@ interface TestCaseRepository : CoroutineCrudRepository<TestCaseEntity, Long> {
      * 문장 하나라 Postgres 가 한 트랜잭션으로 실행한다. `test_case_embedding` 은
      * `ON DELETE CASCADE` 로 함께 지워진다(V23).
      */
+    fun findByProjectIdAndReviewStatusAndReviewRequestedByOrderByIdAsc(
+        projectId: Long,
+        reviewStatus: String,
+        reviewRequestedBy: Long,
+    ): Flow<TestCaseEntity>
+
+    /** 사람이 본 내용 그대로일 때만 승인한다. 바뀐 수는 0 또는 1 이다. */
+    @Modifying
+    @Query(
+        """
+        UPDATE test_case
+           SET review_status = 'READY', review_requested_by = NULL, updated_at = now()
+         WHERE id = :id AND project_id = :projectId AND review_status = 'DRAFT' AND updated_at = :expectedUpdatedAt
+        """
+    )
+    suspend fun approveDraft(id: Long, projectId: Long, expectedUpdatedAt: java.time.Instant): Int
+
+    /**
+     * 사람이 본 내용 그대로이고 승인을 요청받은 것일 때만 지운다. 승인했다가 되돌린 Test Case 는 요청자가 비어 있어
+     * 지우지 않는다. 승인 대기 시나리오가 추천으로 쓰는 Test Case 도 참조가 끊어지므로 지우지 않는다. 바뀐 수는 0 또는 1 이다.
+     */
+    @Modifying
+    @Query(
+        """
+        DELETE FROM test_case
+         WHERE id = :id AND project_id = :projectId AND review_status = 'DRAFT' AND updated_at = :expectedUpdatedAt
+           AND review_requested_by IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM test_scenario s, jsonb_array_elements(s.steps) e
+              WHERE s.project_id = :projectId AND e->>'case_id' = CAST(:id AS text)
+           )
+        """
+    )
+    suspend fun rejectDraft(id: Long, projectId: Long, expectedUpdatedAt: java.time.Instant): Int
+
     @Modifying
     @Query("DELETE FROM test_case WHERE project_id = :projectId AND id IN (:ids)")
     suspend fun deleteByProjectIdAndIdIn(projectId: Long, ids: Collection<Long>): Int

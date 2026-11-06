@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.toList
 import kr.artel.orchestration.qa.repository.QaTryRepository
 import kr.artel.orchestration.testrun.repository.TestRunScenarioRepository
 import kr.artel.orchestration.testscenario.dto.ScenarioResult
+import kr.artel.orchestration.testscenario.entity.TestScenarioEntity
 import kr.artel.orchestration.testscenario.entity.toDraft
 import kr.artel.orchestration.testscenario.repository.TestScenarioRepository
 import org.slf4j.LoggerFactory
@@ -69,13 +70,34 @@ class ScenarioAbsorbService(
         keeperId: Long?,
         keeper: ScenarioResult,
         absorbedIds: List<Long>,
+    ): Outcome = absorb(runId, keeperId, keeper.steps.mapNotNull { it.caseId }.toSet(), absorbedIds)
+
+    /**
+     * 승인 대기로 저장할 때 미뤄 둔 합치기를 승인된 [keeper] 로 끝낸다. 승인 전에 걷어내면 거절했을 때 원본과 합친 쪽이
+     * 모두 사라진다. [keeper] 가 담긴 런 안에서 걷어낸다.
+     */
+    suspend fun absorbOnApproval(keeper: TestScenarioEntity): Outcome {
+        val ids = keeper.reviewAbsorbs?.let { objectMapper.readValue(it.asString(), LongArray::class.java).toList() }.orEmpty()
+        if (ids.isEmpty()) return Outcome()
+        val keeperId = requireNotNull(keeper.id)
+        val covered = keeper.toDraft(objectMapper).steps.mapNotNull { it.caseId }.toSet()
+        val outcomes = runScenarioRepository.findByTestScenarioId(keeperId).toList().map { link ->
+            absorb(link.testRunId, keeperId, covered, ids)
+        }
+        return Outcome(outcomes.flatMap { it.absorbed }, outcomes.flatMap { it.kept })
+    }
+
+    private suspend fun absorb(
+        runId: Long,
+        keeperId: Long?,
+        covered: Set<Long>,
+        absorbedIds: List<Long>,
     ): Outcome {
         val wanted = absorbedIds.filter { it != keeperId }.distinct()
         if (wanted.isEmpty()) return Outcome()
 
         val links = runScenarioRepository.findByTestRunIdOrderByPosition(runId).toList()
         val inRun = links.map { it.testScenarioId }.toSet()
-        val covered = keeper.steps.mapNotNull { it.caseId }.toSet()
 
         val absorbed = mutableListOf<String>()
         val kept = mutableListOf<String>()
