@@ -453,6 +453,35 @@ class CaseContractServiceIntegrationTest {
         assertThat(service.startState(project.id!!)).containsEntry("검", "1")
     }
 
+    /** 사람이 이은 게임 변수는 정리(AI)가 다시 돌아도 남고, 빈 값으로 끊는다. 용어집은 화면 이동도 싣는다(ARTEL-1395). */
+    @Test
+    fun `사람이 이은 게임 변수는 정리가 다시 돌아도 남고 화면 이동도 싣는다`(): Unit = runBlocking {
+        val now = Instant.now()
+        val project = projects.save(ProjectEntity(name = "glossary-variable", genre = "RPG", createdAt = now, updatedAt = now))
+        val wolf = cases.save(case(project.id!!, "늑대를 공격한다."))
+        service.refresh(project.id!!)
+        assertThat(service.glossaryView(project.id!!).terms.single { it.name == "검" }.gameVariable).isNull()
+
+        val linked = service.editTerm(project.id!!, GlossaryTermEditRequest(name = "검", gameVariable = " inventory.sword "))
+        assertThat(linked.gameVariable).isEqualTo("inventory.sword")
+        assertThat(linked.setBy).containsEntry("game_variable", "user")
+
+        cases.save(cases.findById(wolf.id!!)!!.copy(step = "늑대를 검으로 공격한다."))
+        service.refresh(project.id!!)
+        assertThat(service.glossaryView(project.id!!).terms.single { it.name == "검" }.gameVariable).isEqualTo("inventory.sword")
+
+        val unlinked = service.editTerm(project.id!!, GlossaryTermEditRequest(name = "검", gameVariable = ""))
+        assertThat(unlinked.gameVariable).isNull()
+        cases.save(cases.findById(wolf.id!!)!!.copy(step = "늑대를 검으로 다시 공격한다."))
+        service.refresh(project.id!!)
+        assertThat(service.glossaryView(project.id!!).terms.single { it.name == "검" }.gameVariable).isNull()
+
+        service.addUserExit(project.id!!, "광장", "숲", "아래 이동 줄에서 숲을 누른다", null)
+        assertThat(service.glossaryView(project.id!!).exits).singleElement().satisfies({ exit ->
+            assertThat(listOf(exit.from, exit.to, exit.by, exit.source)).containsExactly("광장", "숲", "아래 이동 줄에서 숲을 누른다", "user")
+        })
+    }
+
     /** 도착 화면은 사람이 정하면 AI 정리 · MCP 가 덮지 않는다(ARTEL-1312). 빈 값은 "화면이 안 바뀐다" 로 정한 것이다. */
     @Test
     fun `사람이 정한 도착 화면은 AI 정리와 MCP 가 덮지 않는다`(): Unit = runBlocking {
