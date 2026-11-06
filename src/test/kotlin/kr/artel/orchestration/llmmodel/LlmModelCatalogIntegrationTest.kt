@@ -54,8 +54,9 @@ class LlmModelCatalogIntegrationTest {
                     } else {
                         response.header("Content-Type", "application/json").sendString(Mono.just("""
                             {"data":[
-                              {"id":"test/vision","name":"Vision","context_length":100000,"top_provider":{"max_completion_tokens":10000},"architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},"supported_parameters":["tools"]},
-                              {"id":"test/text","context_length":100000,"top_provider":{"max_completion_tokens":10000},"architecture":{"input_modalities":["text"],"output_modalities":["text"]},"supported_parameters":["tools"]}
+                              {"id":"google/vision","name":"Vision","context_length":100000,"top_provider":{"max_completion_tokens":10000},"architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},"supported_parameters":["tools"]},
+                              {"id":"google/text","context_length":100000,"top_provider":{"max_completion_tokens":10000},"architecture":{"input_modalities":["text"],"output_modalities":["text"]},"supported_parameters":["tools"]},
+                              {"id":"test/vision","context_length":100000,"top_provider":{"max_completion_tokens":10000},"architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},"supported_parameters":["tools"]}
                             ]}
                         """.trimIndent()))
                     }
@@ -129,7 +130,7 @@ class LlmModelCatalogIntegrationTest {
         val path = "/api/admin/llm-models/discovery"
         val router = call(adminSession, HttpMethod.GET, "$path?provider=openrouter")
         val claude = call(adminSession, HttpMethod.GET, "$path?provider=claude")
-        assertThat(router.map { it["id"].asText() }).containsExactly("test/vision")
+        assertThat(router.map { it["id"].asText() }).containsExactly("google/vision")
         assertThat(claude.map { it["id"].asText() }).containsExactly("claude/claude-test")
     }
 

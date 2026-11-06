@@ -112,7 +112,7 @@ class LlmModelDiscovery(
     private fun fromOpenRouter(node: JsonNode): DiscoveredLlmModel? {
         val id = node.text("id")?.takeIf { it.length <= 200 && ROUTER_ID.matches(it) } ?: return null
         val owner = id.substringBefore('/')
-        if (owner in RESERVED_ROUTES || owner.length > 32) return null
+        if (owner !in OPENROUTER_AGENT_PROVIDERS) return null
         val architecture = node.path("architecture")
         val inputs = architecture.path("input_modalities").mapNotNull { it.takeIf(JsonNode::isTextual)?.asText() }
         val outputs = architecture.path("output_modalities").map(JsonNode::asText)
@@ -179,7 +179,8 @@ class LlmModelDiscovery(
     private companion object {
         val ROUTER_ID = Regex("[a-zA-Z0-9._-]+/[a-zA-Z0-9._:-]+")
         val CLAUDE_ID = Regex("claude-[a-z0-9-]{1,180}")
-        val RESERVED_ROUTES = setOf("gpt", "claude", "bedrock")
+        // agent-server의 `LLMProvider`가 지원하는 공급자만 등록한다.
+        val OPENROUTER_AGENT_PROVIDERS = setOf("openai", "anthropic", "google", "x-ai", "moonshotai", "z-ai", "qwen")
         val QA_MODALITIES = listOf("text", "image", "file")
         val STANDARD_EFFORTS = listOf("max", "xhigh", "high", "medium", "low")
 
